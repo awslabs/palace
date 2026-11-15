@@ -27,6 +27,7 @@
 #include "linalg/ksp.hpp"
 #include "linalg/vector.hpp"
 #include "models/laplaceoperator.hpp"
+#include "models/postoperator.hpp"
 #include "models/spaceoperator.hpp"
 #include "models/surfaceresponseoperator.hpp"
 #include "utils/communication.hpp"
@@ -821,6 +822,145 @@ TEST_CASE_METHOD(
       }
     }
   }
+#endif
+}
+
+// Lane L1 (decision 1634 (1); rulings 1641 (2) / (5), 1649 Q3; REPORT STEP 10): a patch the
+// conductor-consistency gate excluded is NOT served. The PEC island with the convex library
+// under the surface mortar and a potential growing along z (the gate fires on the cells of
+// the edges x = const, as in the case above). On E = -grad V the coverage partition with
+// the gate's portions as a kept-raw class (a) leaves the excluded claims' energy out of the
+// served bins: per interface the served bins plus the unclaimed remainder are the within-R
+// raw energy the corrected interface energy replaces, (raw - outside R) - the kept raw
+// conductor-consistency energy (ElectrostaticSolver's ApplyResponse), and the class's bins
+// are that kept energy; (b) THE ACCOUNTING BEFORE LANE L1 (the PatchEnergy model-raw
+// partition of the same claims) serves the excluded claims: it fails the identity of (a) by
+// exactly the kept energy (> 0).
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "Coverage partition keeps a conductor-consistency-excluded patch's claim "
+                 "out of the served bins (electrostatic)",
+                 "[postoperator][surfaceresponseoperator][conductorconsistency][r0a][3d]"
+                 "[Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  const auto library_path = temp.temp_dir / "fabrication-process-r0a-coverage-3d.json";
+  // The root writes the library copy; whether it could read the source is asserted on every
+  // rank AFTER the barrier (decision 1616: no root-only REQUIRE before a barrier).
+  int input_ok = 1;
+  if (Mpi::Root(Mpi::World()))
+  {
+    std::ifstream input(convex_library_3d_path);
+    input_ok = input ? 1 : 0;
+    if (input_ok)
+    {
+      json library = json::parse(input);
+      library["Name"] = "unit-test-process-r0a-coverage-3d";
+      for (auto &model : library["Models"])
+      {
+        model["Interfaces"] = {{{"Type", "SA"}, {"Coupon", 1}}};
+      }
+      std::ofstream output(library_path);
+      output << library.dump(2) << "\n";
+    }
+  }
+  Mpi::Barrier(Mpi::World());
+  Mpi::Broadcast(1, &input_ok, 0, Mpi::World());
+  REQUIRE(input_ok == 1);
+  json config = IslandConfig();
+  auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
+  correction.erase("PatchConstruction");
+  correction["Library"] = library_path.string();
+  correction["TraceCoupling"] = "SurfaceMortar";
+  correction["MortarOversampling"] = 2;
+  IoData iodata(config, false);
+  iodata.boundaries.cracked_attributes.insert(9);
+  std::vector<std::unique_ptr<Mesh>> meshes;
+  meshes.push_back(std::make_unique<Mesh>(MakeIslandMesh()));
+  LaplaceOperator laplace(iodata, meshes);
+  SurfaceResponseOperator response(iodata, laplace);
+  REQUIRE(response.GetPatchCount() == 20);
+  mfem::ParGridFunction potential(&laplace.GetH1Space().Get());
+  mfem::FunctionCoefficient coefficient([](const mfem::Vector &x) { return x[2] - 0.5; });
+  potential.ProjectCoefficient(coefficient);
+  Vector V;
+  potential.GetTrueDofs(V);
+  const auto records = response.ApplyConductorConsistencyGate(V, 1);
+  REQUIRE(std::any_of(records.begin(), records.end(),
+                      [](const auto &record) { return record.excluded; }));
+
+  auto Portions = [](const auto &list)
+  {
+    std::vector<SurfacePostOperator::UncoveredPerimeterPortion> portions;
+    for (const auto &portion : list)
+    {
+      portions.push_back({portion.p0, portion.p1, portion.topology, portion.feature});
+    }
+    return portions;
+  };
+  // The served claims exist on every run since lane L1 (no PatchEnergy in this config).
+  const auto served = response.GetModelRawClaimPortions().portions.Expand();
+  const auto excluded = Portions(response.GetConductorConsistencyPortions());
+  REQUIRE_FALSE(served.empty());
+  REQUIRE_FALSE(excluded.empty());
+
+  PostOperator<ProblemType::ELECTROSTATIC> post_op(iodata, laplace);
+  mfem::ParDiscreteLinearOperator gradient(&laplace.GetH1Space().Get(),
+                                           &laplace.GetNDSpace().Get());
+  gradient.AddDomainInterpolator(new mfem::GradientInterpolator());
+  gradient.Assemble();
+  GridFunction field(laplace.GetNDSpace());
+  gradient.Mult(potential, field.Real());
+  field.Real() *= -1.0;
+  Vector e(laplace.GetNDSpace().GetTrueVSize());
+  field.Real().GetTrueDofs(e);
+  field.Real().SetFromTrueDofs(e);
+  field.Real().ExchangeFaceNbrData();
+
+  const auto &surf_post_op = post_op.GetSurfacePostOp();
+  const double kept =
+      surf_post_op.GetInterfaceUncoveredEdgeEnergies({4}, field, nullptr, excluded)
+          .at(4)
+          .energy;
+  REQUIRE(kept > 0.0);
+  const double raw = surf_post_op.GetInterfaceElectricFieldEnergy(4, field);
+  const double outside =
+      surf_post_op.GetInterfaceOuterElectricFieldEnergy(4, field).energy_outside;
+  const double replaced = (raw - outside) - kept;
+
+  // (a) The closed partition: the kept class first, then the served claims.
+  const auto coverage = surf_post_op.GetInterfaceCoveragePartition(
+      {4}, field, nullptr, {{"ConductorConsistency", &excluded}}, served);
+  const auto &partition = coverage.at(4);
+  double served_energy = 0.0, kept_bins = 0.0;
+  for (const auto &[label, energy] : partition.served)
+  {
+    (void)label;
+    served_energy += energy;
+  }
+  for (const auto &[key, energy] : partition.classes)
+  {
+    CHECK(key.first == "ConductorConsistency");
+    kept_bins += energy;
+  }
+  CHECK_THAT(kept_bins, WithinRel(kept, 1.0e-12));
+  CHECK_THAT(served_energy + kept_bins + partition.unclaimed,
+             WithinRel(partition.within, 1.0e-12));
+  CHECK_THAT(partition.within, WithinRel(raw - outside, 1.0e-10));
+  CHECK_THAT(served_energy + partition.unclaimed, WithinRel(replaced, 1.0e-10));
+
+  // (b) The accounting before lane L1 serves the excluded claims.
+  const auto model_raw =
+      surf_post_op.GetInterfacePartitionedEdgeEnergies({4}, field, nullptr, served);
+  double old_served = 0.0, old_unclaimed = 0.0;
+  for (const auto &[label, energy] : model_raw.at(4))
+  {
+    (label == "unclaimed" ? old_unclaimed : old_served) += energy;
+  }
+  CHECK_THAT(old_unclaimed, WithinAbs(partition.unclaimed, 1.0e-12 * partition.within));
+  CHECK_THAT(old_served - served_energy, WithinRel(kept, 1.0e-12));
+  CHECK(old_served + old_unclaimed - replaced > 0.5 * kept);
 #endif
 }
 
@@ -2389,7 +2529,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   {
     std::ifstream input(cache_path);
     json cache = json::parse(input);
-    REQUIRE(cache.at("Version").get<int>() == 24);
+    REQUIRE(cache.at("Version").get<int>() == 25);
     REQUIRE(cache.at("ExclusionPortions").size() == identification_portions.size());
     cache.erase("ExclusionPortions");
     std::ofstream output(stale_path);
@@ -2473,6 +2613,88 @@ TEST_CASE_METHOD(
 #endif
 }
 
+// Erratum 1784 E-3 (review MJ-C): under AMR the root palace.json holds the last COMPLETED
+// level's coverage block until the next level writes, so the block names its Level of
+// Levels and "Final": true is written only after the AMR loop has ended: an archived level
+// (iteration1) never carries Final, the root of a finished run does, and so does a run
+// without AMR (Level 1 of 1). A run killed during its last level keeps the earlier level's
+// block without Final (the run-level test of the erratum).
+TEST_CASE_METHOD(
+    test::SurfaceResponseFiles,
+    "Coverage block names its AMR level and is Final only after the AMR loop",
+    "[electrostaticsolver][surfaceresponseoperator][surfaceresponsecoverage][amr]"
+    "[3d][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  const fs::path mesh_path = temp.temp_dir / "shorted-cpw-stub-final.mesh";
+  if (Mpi::Root(Mpi::World()))
+  {
+    mfem::Mesh serial = MakeSerialShortedCpwMesh();
+    std::ofstream output(mesh_path);
+    serial.Print(output);
+  }
+  Mpi::Barrier(Mpi::World());
+  const auto library_path =
+      WriteStubLibrary(temp.temp_dir, convex_library_3d_path, 0.1, "esfinal");
+  json config = ConvexIslandConfig();
+  config["Model"]["Mesh"] = mesh_path.string();
+  config["Model"]["L0"] = 1.0;
+  config["Model"]["Lc"] = 1.0;
+  auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
+  correction.erase("PatchConstruction");
+  correction["Library"] = library_path.string();
+  correction["UnmatchedPolicy"] = "Warn";
+  config["Solver"]["Linear"] = {{"Tol", 1.0e-12}, {"MaxIts", 400}};
+  auto ReadCoverage = [](const fs::path &path)
+  {
+    std::ifstream input(path);
+    REQUIRE(input);
+    const json meta = json::parse(input);
+    REQUIRE(meta.contains("SurfaceResponse"));
+    REQUIRE(meta.at("SurfaceResponse").contains("Coverage"));
+    return meta.at("SurfaceResponse").at("Coverage");
+  };
+
+  // AMR, MaxIts 1: two levels; the first archived in iteration1 before the second solve.
+  json adaptive = config;
+  adaptive["Model"]["Refinement"] = {{"MaxIts", 1},
+                                     {"Tol", 1.0e-9},
+                                     {"UpdateFraction", 0.5},
+                                     {"Nonconformal", true},
+                                     {"SaveAdaptIterations", true}};
+  const fs::path amr_dir = temp.temp_dir / "coverage-final-amr";
+  adaptive["Problem"]["Output"] = amr_dir.string();
+  test::RunElectrostatic(adaptive);
+  Mpi::Barrier(Mpi::World());
+  // A run without AMR.
+  json single = config;
+  single["Model"]["Refinement"] = {{"MaxIts", 0}};
+  const fs::path single_dir = temp.temp_dir / "coverage-final-single";
+  single["Problem"]["Output"] = single_dir.string();
+  test::RunElectrostatic(single);
+  Mpi::Barrier(Mpi::World());
+  if (!Mpi::Root(Mpi::World()))
+  {
+    return;
+  }
+  const json archived = ReadCoverage(amr_dir / "iteration1" / "palace.json");
+  CHECK(archived.at("Level") == 1);
+  CHECK(archived.at("Levels") == 2);
+  CHECK(archived.at("Complete") == true);
+  CHECK_FALSE(archived.contains("Final"));
+  const json final_level = ReadCoverage(amr_dir / "palace.json");
+  CHECK(final_level.at("Level") == 2);
+  CHECK(final_level.at("Levels") == 2);
+  CHECK(final_level.at("Final") == true);
+  const json no_amr = ReadCoverage(single_dir / "palace.json");
+  CHECK(no_amr.at("Level") == 1);
+  CHECK(no_amr.at("Levels") == 1);
+  CHECK(no_amr.at("Final") == true);
+#endif
+}
+
 TEST_CASE_METHOD(test::SurfaceResponseFiles,
                  "Electrostatic Diagnostics.ExclusionEnergy writes the exclusion-energy "
                  "table and changes nothing else (section 8)",
@@ -2539,6 +2761,11 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     compared++;
   }
   CHECK(compared > 0);
+  // Lane L1 (ruling 1641 (b)): the coverage tables are among them: U and every share are
+  // the same bytes with the export on and off (the Excluded classes only label points of
+  // the unserved remainder), on a case WITH excluded energy (the NonManifold rim below).
+  CHECK(fs::exists(off_dir / "surface-response-coverage.csv"));
+  CHECK(fs::exists(off_dir / "surface-response-uncovered-energy-by-key.csv"));
   // The table: the header of record, one row per class x type for the single source; the
   // NonManifold class (the plane's rim on the grounded walls) reads > 0 against the
   // classified tree (decision 1076); every energy non-negative; P == S: the classes and

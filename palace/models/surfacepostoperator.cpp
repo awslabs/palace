@@ -7,8 +7,10 @@
 #include <array>
 #include <cmath>
 #include <complex>
+#include <cstring>
 #include <fstream>
 #include <limits>
+#include <optional>
 #include <set>
 #include <sstream>
 #include <tuple>
@@ -214,6 +216,19 @@ public:
 // The uncovered intervals of one interface's edge-distance tree (decision 394 F2): per tree
 // segment, the closed foot-parameter intervals [a, b] (from the segment's first end) of the
 // uncovered portions lying on it, each with its type index into `types`.
+// Rulings 1714 / 1715: the end census of one list (and, with `snap`, the served claims'
+// round-off-short ends moved to exactly 0 / L). `ends` maps (segment, end 0 | 1) to a mask:
+// 1 round-off short, 2 near, 4 (ruling 1731; set only where a round-off-short end of a
+// list sharing this check lies) an UNSNAPPED portion of this list has its clamped foot at
+// exactly that segment end (the list holds the vertex without the snap).
+struct ClaimEndCheck
+{
+  double radius = 0.0;
+  bool snap = false;
+  std::map<std::pair<std::size_t, int>, int> ends;
+  SurfacePostOperator::InterfaceCoveragePartition::EndCensus census;
+};
+
 struct UncoveredEdgeIntervals
 {
   struct Interval
@@ -224,24 +239,34 @@ struct UncoveredEdgeIntervals
   std::map<std::size_t, std::vector<Interval>> by_segment;
   std::vector<std::string> types;
 
-  UncoveredEdgeIntervals(
-      const EdgeDistanceTree &tree,
-      const std::vector<SurfacePostOperator::UncoveredPerimeterPortion> &portions,
-      double tolerance)
+  UncoveredEdgeIntervals(const EdgeDistanceTree &tree,
+                         SurfacePostOperator::PerimeterPortionView portions,
+                         double tolerance, ClaimEndCheck *check = nullptr)
   {
-    for (const auto &portion : portions)
+    // A portion on this interface's perimeter: its midpoint's tree segment, the segment's
+    // length and the clamped foot parameters (from the segment's first end) of its two
+    // ends with their distances off the segment.
+    struct Located
     {
+      bool on_tree = false;
+      std::size_t segment = 0;
+      double length = 0.0, a0 = 0.0, a1 = 0.0, off0 = 0.0, off1 = 0.0;
+    };
+    auto Locate = [&](std::size_t i)
+    {
+      Located located;
+      const auto &portion_p0 = portions.P0(i), &portion_p1 = portions.P1(i);
       mfem::Vector midpoint(3), p0(3), p1(3);
       for (int d = 0; d < 3; d++)
       {
-        p0(d) = portion.p0[d];
-        p1(d) = portion.p1[d];
-        midpoint(d) = 0.5 * (portion.p0[d] + portion.p1[d]);
+        p0(d) = portion_p0[d];
+        p1(d) = portion_p1[d];
+        midpoint(d) = 0.5 * (portion_p0[d] + portion_p1[d]);
       }
       const auto nearest = tree.Nearest(midpoint);
       if (std::sqrt(nearest.distance_squared) > tolerance)
       {
-        continue;  // not on this interface's perimeter (another plane)
+        return located;  // not on this interface's perimeter (another plane)
       }
       const auto &segment = tree.GetSegment(nearest.segment);
       mfem::Vector origin(3), chord(3);
@@ -262,24 +287,106 @@ struct UncoveredEdgeIntervals
         residual.Add(-t, chord);
         return std::make_pair(std::clamp(t, 0.0, 1.0) * length, residual.Norml2());
       };
-      const auto [a0, off0] = Foot(p0);
-      const auto [a1, off1] = Foot(p1);
-      MFEM_VERIFY(off0 <= tolerance && off1 <= tolerance,
+      located.on_tree = true;
+      located.segment = nearest.segment;
+      located.length = length;
+      std::tie(located.a0, located.off0) = Foot(p0);
+      std::tie(located.a1, located.off1) = Foot(p1);
+      return located;
+    };
+    bool short_inside = false;
+    for (std::size_t i = 0; i < portions.Size(); i++)
+    {
+      const auto &portion_p0 = portions.P0(i), &portion_p1 = portions.P1(i);
+      const std::string &portion_type = portions.Label(i);
+      const Located located = Locate(i);
+      if (!located.on_tree)
+      {
+        continue;
+      }
+      const auto &segment = tree.GetSegment(located.segment);
+      const double length = located.length, a0 = located.a0, a1 = located.a1;
+      MFEM_VERIFY(located.off0 <= tolerance && located.off1 <= tolerance,
                   "An uncovered perimeter portion of feature "
-                      << portion.feature << " (" << portion.type
+                      << portions.Feature(i) << " (" << portion_type
                       << ") lies within the tolerance of a perimeter segment at its "
                          "midpoint but not at its ends (ends "
-                      << off0 << " / " << off1
+                      << located.off0 << " / " << located.off1
                       << " off the segment): the identification's perimeter differs from "
                          "the postprocessing perimeter!");
-      auto type = std::find(types.begin(), types.end(), portion.type);
+      auto type = std::find(types.begin(), types.end(), portion_type);
       if (type == types.end())
       {
-        types.push_back(portion.type);
+        types.push_back(portion_type);
         type = std::prev(types.end());
       }
-      by_segment[nearest.segment].push_back(
-          {std::min(a0, a1), std::max(a0, a1), static_cast<int>(type - types.begin())});
+      double e0 = a0, e1 = a1;
+      if (check)
+      {
+        for (int k = 0; k < 2; k++)
+        {
+          for (int j = 0; j < 2; j++)
+          {
+            const auto [match, distance] = SurfacePostOperator::ClassifyClaimEnd(
+                k == 0 ? portion_p0 : portion_p1, j == 0 ? segment.p0 : segment.p1,
+                check->radius);
+            auto &census = check->census;
+            if (match == SurfacePostOperator::ClaimEndMatch::ROUNDOFF)
+            {
+              // Ruling 1731: the direction, on the clamped foot before any snap.
+              if ((k == 0 ? a0 : a1) == (j == 0 ? 0.0 : length))
+              {
+                census.roundoff_beyond_count++;
+                census.roundoff_beyond_distance =
+                    std::max(census.roundoff_beyond_distance, distance);
+                continue;
+              }
+              census.roundoff_count++;
+              census.roundoff_distance = std::max(census.roundoff_distance, distance);
+              check->ends[{located.segment, j}] |= 1;
+              short_inside = true;
+              if (check->snap)
+              {
+                (k == 0 ? e0 : e1) = j == 0 ? 0.0 : length;
+              }
+            }
+            else if (match == SurfacePostOperator::ClaimEndMatch::NEAR)
+            {
+              census.near_count++;
+              census.near_distance = std::max(census.near_distance, distance);
+              check->ends[{located.segment, j}] |= 2;
+            }
+          }
+        }
+      }
+      by_segment[located.segment].push_back(
+          {std::min(e0, e1), std::max(e0, e1), static_cast<int>(type - types.begin())});
+    }
+    // Ruling 1731: bit 4 at the round-off-short ends this list also reaches unsnapped (a
+    // second pass, so that the order of the portions does not matter; nothing is stored
+    // for the other ends).
+    if (check && (short_inside ||
+                  std::any_of(check->ends.begin(), check->ends.end(),
+                              [](const auto &end) { return (end.second & 1) != 0; })))
+    {
+      for (std::size_t i = 0; i < portions.Size(); i++)
+      {
+        const Located located = Locate(i);
+        if (!located.on_tree)
+        {
+          continue;
+        }
+        for (int j = 0; j < 2; j++)
+        {
+          const double segment_end = j == 0 ? 0.0 : located.length;
+          const auto found = check->ends.find({located.segment, j});
+          if (found != check->ends.end() && (found->second & 1) &&
+              (located.a0 == segment_end || located.a1 == segment_end))
+          {
+            found->second |= 4;
+          }
+        }
+      }
     }
   }
 };
@@ -1348,7 +1455,7 @@ SurfacePostOperator::GetInterfaceUncoveredEdgeEnergies(
 std::map<int, std::map<std::string, double>>
 SurfacePostOperator::GetInterfacePartitionedEdgeEnergies(
     const std::set<int> &indices, const GridFunction &E, const GridFunction *D,
-    const std::vector<UncoveredPerimeterPortion> &portions) const
+    PerimeterPortionView portions) const
 {
   // PatchEnergy (decision 922 B-1): the physical tree, the remainder "unclaimed".
   return PartitionInterfaceEdgeEnergies(indices, E, D, portions, false, "unclaimed");
@@ -1367,7 +1474,7 @@ SurfacePostOperator::GetInterfaceClassifiedEdgeEnergies(
 std::map<int, std::map<std::string, double>>
 SurfacePostOperator::PartitionInterfaceEdgeEnergies(
     const std::set<int> &indices, const GridFunction &E, const GridFunction *D,
-    const std::vector<UncoveredPerimeterPortion> &portions, bool classified,
+    PerimeterPortionView portions, bool classified,
     const std::string &remainder_label) const
 {
   // One integral per (interface, group) and one for the remainder; the groups come from
@@ -1419,6 +1526,689 @@ SurfacePostOperator::PartitionInterfaceEdgeEnergies(
     energies.at(entries[i].first)[entries[i].second] += local_energies[i];
   }
   return energies;
+}
+
+std::map<int, std::map<std::pair<std::string, std::string>, double>>
+SurfacePostOperator::GetInterfaceUncoveredFeatureEdgeEnergies(
+    const std::set<int> &indices, const GridFunction &E, const GridFunction *D,
+    const std::vector<UncoveredPerimeterPortion> &portions) const
+{
+  // Per type (in the order of first appearance) the type's portions relabelled by feature:
+  // the token "m<feature>" makes PartitionedEdgePieces order a union label by feature id.
+  std::vector<std::string> types;
+  std::vector<std::vector<UncoveredPerimeterPortion>> portions_by_type;
+  for (const auto &portion : portions)
+  {
+    auto type = std::find(types.begin(), types.end(), portion.type);
+    if (type == types.end())
+    {
+      types.push_back(portion.type);
+      portions_by_type.emplace_back();
+      type = std::prev(types.end());
+    }
+    auto relabelled = portion;
+    relabelled.type = "m" + std::to_string(portion.feature);
+    portions_by_type[type - types.begin()].push_back(std::move(relabelled));
+  }
+  auto FeatureLabel = [](const std::string &label)
+  {
+    // "m12+m40" -> "12+40".
+    std::string features;
+    for (std::size_t i = 0; i < label.size(); i++)
+    {
+      if (label[i] == 'm' && (i == 0 || label[i - 1] == '+'))
+      {
+        continue;
+      }
+      features += label[i];
+    }
+    return features;
+  };
+  auto &mesh = *h1_fespace.GetParMesh();
+  const int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+  std::map<int, std::map<std::pair<std::string, std::string>, double>> energies;
+  std::vector<double> local_energies;
+  std::vector<std::tuple<int, std::size_t, std::string>>
+      entries;  // (interface, type, label)
+  for (const int idx : indices)
+  {
+    auto it = eps_surfs.find(idx);
+    MFEM_VERIFY(it != eps_surfs.end(),
+                "Unknown interface dielectric postprocessing index requested!");
+    const auto &data = it->second;
+    MFEM_VERIFY(!data.edge_distances.empty() && data.edge_distance_tree,
+                "Uncovered feature energies require a matching edge distance!");
+    energies.emplace(idx, std::map<std::pair<std::string, std::string>, double>{});
+    const EdgeDistanceTree &tree = *data.edge_distance_tree;
+    const double radius = data.edge_distances.back();
+    std::vector<PartitionedEdgePieces> pieces;
+    std::vector<std::size_t> offsets;  // the type's first entry in local_energies
+    for (std::size_t type = 0; type < types.size(); type++)
+    {
+      const UncoveredEdgeIntervals intervals(
+          tree, portions_by_type[type], kSignatureParameterToleranceOverRadius * radius);
+      pieces.emplace_back(intervals);
+      offsets.push_back(local_energies.size());
+      for (const auto &label : pieces.back().groups)
+      {
+        local_energies.push_back(0.0);
+        entries.emplace_back(idx, type, FeatureLabel(label));
+      }
+    }
+    if (entries.empty() || std::get<0>(entries.back()) != idx)
+    {
+      continue;  // no portion on this interface's perimeter
+    }
+    const auto attr_marker = mesh::AttrToMarker(bdr_attr_max, data.attr_list);
+    auto coefficient = data.GetCoefficient(E, D, mat_op);
+    const int quadrature_order = data.ownership_quadrature_order;
+    const std::optional<OwnershipQuadrature> ownership_rules =
+        quadrature_order > 0 ? std::optional<OwnershipQuadrature>(quadrature_order)
+                             : std::nullopt;
+    mfem::Vector point(mesh.SpaceDimension());
+    for (int be = 0; be < mesh.GetNBE(); be++)
+    {
+      const int attr = mesh.GetBdrAttribute(be);
+      if (attr <= 0 || attr > attr_marker.Size() || !attr_marker[attr - 1])
+      {
+        continue;
+      }
+      auto *T = mesh.GetBdrElementTransformation(be);
+      const auto geometry = h1_fespace.GetBE(be)->GetGeomType();
+      const mfem::IntegrationRule &rule =
+          ownership_rules
+              ? ownership_rules->Get(geometry)
+              : mfem::IntRules.Get(geometry, fem::DefaultIntegrationOrder::Get(*T));
+      for (int q = 0; q < rule.GetNPoints(); q++)
+      {
+        const auto &ip = rule.IntPoint(q);
+        T->SetIntPoint(&ip);
+        T->Transform(ip, point);
+        const auto nearest = tree.Nearest(point);
+        const double within =
+            1.0 - EdgeDistanceOutsideWeight(std::sqrt(nearest.distance_squared), radius,
+                                            data.edge_distance_smoothing);
+        if (within <= 0.0)
+        {
+          continue;
+        }
+        // PartitionedEdgeCoefficient's foot test, per type.
+        const auto &segment = tree.GetSegment(nearest.segment);
+        double length2 = 0.0, projection = 0.0;
+        for (int d = 0; d < point.Size(); d++)
+        {
+          const double chord = segment.p1[d] - segment.p0[d];
+          length2 += chord * chord;
+          projection += (point(d) - segment.p0[d]) * chord;
+        }
+        const double foot = std::clamp(projection / length2, 0.0, 1.0) * std::sqrt(length2);
+        std::optional<double> value;
+        for (std::size_t type = 0; type < types.size(); type++)
+        {
+          const auto list = pieces[type].by_segment.find(nearest.segment);
+          if (list == pieces[type].by_segment.end() || list->second.empty())
+          {
+            continue;
+          }
+          auto piece = std::upper_bound(list->second.begin(), list->second.end(), foot,
+                                        [](double x, const auto &p) { return x < p.a; });
+          if (piece == list->second.begin())
+          {
+            continue;
+          }
+          piece = std::prev(piece);
+          const bool last = std::next(piece) == list->second.end();
+          if (!(foot >= piece->a && (foot < piece->b || (last && foot == piece->b))))
+          {
+            continue;
+          }
+          if (!value)
+          {
+            value = PhysicalQuadratureWeight(*T, ip, axisymmetric) *
+                    (within * coefficient->Eval(*T, ip));
+          }
+          local_energies[offsets[type] + piece->group] += *value;
+        }
+      }
+    }
+  }
+  if (!local_energies.empty())
+  {
+    Mpi::GlobalSum(static_cast<int>(local_energies.size()), local_energies.data(),
+                   E.GetComm());
+  }
+  for (std::size_t i = 0; i < entries.size(); i++)
+  {
+    const auto &[idx, type, label] = entries[i];
+    energies.at(idx)[{types[type], label}] += local_energies[i];
+  }
+  return energies;
+}
+
+std::pair<SurfacePostOperator::ClaimEndMatch, double>
+SurfacePostOperator::ClassifyClaimEnd(const std::array<double, 3> &p,
+                                      const std::array<double, 3> &v, double radius)
+{
+  bool exact = true, roundoff = true;
+  double distance2 = 0.0;
+  for (int d = 0; d < 3; d++)
+  {
+    const double difference = p[d] - v[d];
+    exact = exact && difference == 0.0;
+    roundoff =
+        roundoff && std::abs(difference) <= kClaimEndRoundoffUlps *
+                                                std::numeric_limits<double>::epsilon() *
+                                                std::max(std::abs(v[d]), radius);
+    distance2 += difference * difference;
+  }
+  const double distance = std::sqrt(distance2);
+  const ClaimEndMatch match = exact      ? ClaimEndMatch::EXACT
+                              : roundoff ? ClaimEndMatch::ROUNDOFF
+                              : distance <= kSupportEndCoincidenceOverRadius * radius
+                                  ? ClaimEndMatch::NEAR
+                                  : ClaimEndMatch::BEYOND;
+  return {match, distance};
+}
+
+std::map<int, SurfacePostOperator::InterfacePerimeterLengths>
+SurfacePostOperator::GetInterfacePerimeterLengths(
+    const std::set<int> &indices, const std::vector<PerimeterPortionView> &lists) const
+{
+  std::map<int, InterfacePerimeterLengths> lengths;
+  for (const int idx : indices)
+  {
+    auto it = eps_surfs.find(idx);
+    MFEM_VERIFY(it != eps_surfs.end(),
+                "Unknown interface dielectric postprocessing index requested!");
+    const auto &data = it->second;
+    auto &entry = lengths[idx];
+    entry.lists.assign(lists.size(), 0.0);
+    if (data.edge_distances.empty() || !data.edge_distance_tree)
+    {
+      continue;
+    }
+    const EdgeDistanceTree &tree = *data.edge_distance_tree;
+    for (std::size_t i = 0; i < tree.Size(); i++)
+    {
+      const auto &segment = tree.GetSegment(i);
+      double length2 = 0.0;
+      for (int d = 0; d < 3; d++)
+      {
+        length2 += (segment.p1[d] - segment.p0[d]) * (segment.p1[d] - segment.p0[d]);
+      }
+      entry.total += std::sqrt(length2);
+    }
+    const double radius = data.edge_distances.back();
+    for (std::size_t k = 0; k < lists.size(); k++)
+    {
+      if (lists[k].Empty())
+      {
+        continue;
+      }
+      const UncoveredEdgeIntervals intervals(
+          tree, lists[k], kSignatureParameterToleranceOverRadius * radius);
+      for (const auto &[segment, pieces] : intervals.by_segment)
+      {
+        std::vector<std::pair<double, double>> sorted;
+        for (const auto &piece : pieces)
+        {
+          sorted.emplace_back(piece.a, piece.b);
+        }
+        std::sort(sorted.begin(), sorted.end());
+        double a = sorted.front().first, b = sorted.front().second;
+        for (const auto &[a1, b1] : sorted)
+        {
+          if (a1 > b)
+          {
+            entry.lists[k] += b - a;
+            a = a1;
+            b = b1;
+          }
+          else
+          {
+            b = std::max(b, b1);
+          }
+        }
+        entry.lists[k] += b - a;
+      }
+    }
+  }
+  return lengths;
+}
+
+std::map<int, SurfacePostOperator::InterfaceCoveragePartition>
+SurfacePostOperator::GetInterfaceCoveragePartition(
+    const std::set<int> &indices, const GridFunction &E, const GridFunction *D,
+    const std::vector<CoveragePartitionClass> &kept_classes, PerimeterPortionView served,
+    const std::vector<CoveragePartitionClass> &remainder_classes) const
+{
+  // Per interface the local bins in a fixed order (identical on every rank: the portion
+  // lists are): per kept class its piece groups, the served groups, the remainder and the
+  // within-R total; ONE reduction for all of them.
+  auto &mesh = *h1_fespace.GetParMesh();
+  const int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+  struct InterfaceBins
+  {
+    int idx = 0;
+    std::vector<PartitionedEdgePieces> pieces;  // the kept classes, then the served claims
+    std::vector<std::size_t> offsets;           // each one's first bin
+    std::size_t unclaimed = 0, within = 0;
+    // Rulings 1714 / 1715: the served claims' and the kept classes' end census; `stake`
+    // = the first of the 4 bins of the energy at those segment ends (served round-off /
+    // near, kept round-off / near).
+    ClaimEndCheck served_check, kept_check;
+    std::size_t stake = 0;
+  };
+  std::vector<InterfaceBins> bins;
+  std::vector<double> local_energies;
+  for (const int idx : indices)
+  {
+    auto it = eps_surfs.find(idx);
+    MFEM_VERIFY(it != eps_surfs.end(),
+                "Unknown interface dielectric postprocessing index requested!");
+    const auto &data = it->second;
+    MFEM_VERIFY(!data.edge_distances.empty() && data.edge_distance_tree,
+                "The coverage partition requires a matching edge distance!");
+    const EdgeDistanceTree &tree = *data.edge_distance_tree;
+    const double radius = data.edge_distances.back();
+    const double tolerance = kSignatureParameterToleranceOverRadius * radius;
+    auto &interface = bins.emplace_back();
+    interface.idx = idx;
+    interface.served_check.radius = interface.kept_check.radius = radius;
+    interface.served_check.snap = true;  // ruling 1714 (B): the served claims only
+    auto AddPieces = [&](PerimeterPortionView portions, ClaimEndCheck *check)
+    {
+      interface.pieces.emplace_back(
+          UncoveredEdgeIntervals(tree, portions, tolerance, check));
+      interface.offsets.push_back(local_energies.size());
+      local_energies.resize(local_energies.size() + interface.pieces.back().groups.size(),
+                            0.0);
+    };
+    for (const auto &kept : kept_classes)
+    {
+      MFEM_VERIFY(kept.portions, "A coverage-partition class requires its portions!");
+      AddPieces(*kept.portions, &interface.kept_check);
+    }
+    AddPieces(served, &interface.served_check);
+    for (const auto &remainder : remainder_classes)
+    {
+      MFEM_VERIFY(remainder.portions, "A coverage-partition class requires its portions!");
+      AddPieces(*remainder.portions, nullptr);
+    }
+    interface.unclaimed = local_energies.size();
+    local_energies.push_back(0.0);
+    interface.within = local_energies.size();
+    local_energies.push_back(0.0);
+    interface.stake = local_energies.size();
+    local_energies.resize(local_energies.size() + 4, 0.0);
+
+    const auto attr_marker = mesh::AttrToMarker(bdr_attr_max, data.attr_list);
+    auto coefficient = data.GetCoefficient(E, D, mat_op);
+    const int quadrature_order = data.ownership_quadrature_order;
+    const std::optional<OwnershipQuadrature> ownership_rules =
+        quadrature_order > 0 ? std::optional<OwnershipQuadrature>(quadrature_order)
+                             : std::nullopt;
+    mfem::Vector point(mesh.SpaceDimension());
+    for (int be = 0; be < mesh.GetNBE(); be++)
+    {
+      const int attr = mesh.GetBdrAttribute(be);
+      if (attr <= 0 || attr > attr_marker.Size() || !attr_marker[attr - 1])
+      {
+        continue;
+      }
+      auto *T = mesh.GetBdrElementTransformation(be);
+      const auto geometry = h1_fespace.GetBE(be)->GetGeomType();
+      const mfem::IntegrationRule &rule =
+          ownership_rules
+              ? ownership_rules->Get(geometry)
+              : mfem::IntRules.Get(geometry, fem::DefaultIntegrationOrder::Get(*T));
+      for (int q = 0; q < rule.GetNPoints(); q++)
+      {
+        const auto &ip = rule.IntPoint(q);
+        T->SetIntPoint(&ip);
+        T->Transform(ip, point);
+        const auto nearest = tree.Nearest(point);
+        const double within =
+            1.0 - EdgeDistanceOutsideWeight(std::sqrt(nearest.distance_squared), radius,
+                                            data.edge_distance_smoothing);
+        if (within <= 0.0)
+        {
+          continue;
+        }
+        // PartitionedEdgeCoefficient's foot test; the first piece list holding the foot
+        // takes the point.
+        const auto &segment = tree.GetSegment(nearest.segment);
+        double length2 = 0.0, projection = 0.0;
+        for (int d = 0; d < point.Size(); d++)
+        {
+          const double chord = segment.p1[d] - segment.p0[d];
+          length2 += chord * chord;
+          projection += (point(d) - segment.p0[d]) * chord;
+        }
+        const double t = projection / length2;
+        const double foot = std::clamp(t, 0.0, 1.0) * std::sqrt(length2);
+        std::size_t bin = interface.unclaimed;
+        std::size_t held = interface.pieces.size();  // the holding list (none: unclaimed)
+        for (std::size_t list = 0; list < interface.pieces.size(); list++)
+        {
+          const auto found = interface.pieces[list].by_segment.find(nearest.segment);
+          if (found == interface.pieces[list].by_segment.end() || found->second.empty())
+          {
+            continue;
+          }
+          auto piece = std::upper_bound(found->second.begin(), found->second.end(), foot,
+                                        [](double x, const auto &p) { return x < p.a; });
+          if (piece == found->second.begin())
+          {
+            continue;
+          }
+          piece = std::prev(piece);
+          const bool last = std::next(piece) == found->second.end();
+          if (foot >= piece->a && (foot < piece->b || (last && foot == piece->b)))
+          {
+            bin = interface.offsets[list] + piece->group;
+            held = list;
+            break;
+          }
+        }
+        const double value = PhysicalQuadratureWeight(*T, ip, axisymmetric) *
+                             (within * coefficient->Eval(*T, ip));
+        local_energies[bin] += value;
+        local_energies[interface.within] += value;
+        if (t <= 0.0 || t >= 1.0)
+        {
+          // The clamped foot at a segment end: the vertex quadrant (census only). Ruling
+          // 1731: round-off short = EXACT energies: served, what the snap gives back (the
+          // served list holds the point and no unsnapped served claim reaches the end);
+          // kept, what no kept class holds. Near: every point there (an upper bound).
+          const std::pair<std::size_t, int> end{nearest.segment, t <= 0.0 ? 0 : 1};
+          const std::size_t served_list = kept_classes.size();
+          for (const auto &[check, first, short_inside_held] :
+               {std::make_tuple(&interface.served_check, interface.stake,
+                                held == served_list),
+                std::make_tuple(&interface.kept_check, interface.stake + 2,
+                                held >= served_list)})
+          {
+            const auto found = check->ends.find(end);
+            if (found != check->ends.end())
+            {
+              local_energies[first] +=
+                  ((found->second & 1) && !(found->second & 4) && short_inside_held) ? value
+                                                                                     : 0.0;
+              local_energies[first + 1] += (found->second & 2) ? value : 0.0;
+            }
+          }
+        }
+      }
+    }
+  }
+  if (!local_energies.empty())
+  {
+    Mpi::GlobalSum(static_cast<int>(local_energies.size()), local_energies.data(),
+                   E.GetComm());
+  }
+  std::map<int, InterfaceCoveragePartition> partitions;
+  for (const auto &interface : bins)
+  {
+    auto &partition = partitions[interface.idx];
+    for (std::size_t list = 0; list < interface.pieces.size(); list++)
+    {
+      const auto &groups = interface.pieces[list].groups;
+      for (std::size_t group = 0; group < groups.size(); group++)
+      {
+        const double energy = local_energies[interface.offsets[list] + group];
+        if (list < kept_classes.size())
+        {
+          partition.classes[{kept_classes[list].name, groups[group]}] += energy;
+        }
+        else if (list == kept_classes.size())
+        {
+          partition.served[groups[group]] += energy;
+        }
+        else
+        {
+          partition.classes[{remainder_classes[list - kept_classes.size() - 1].name,
+                             groups[group]}] += energy;
+        }
+      }
+    }
+    partition.unclaimed = local_energies[interface.unclaimed];
+    partition.within = local_energies[interface.within];
+    partition.served_ends = interface.served_check.census;
+    partition.served_ends.roundoff_energy = local_energies[interface.stake];
+    partition.served_ends.near_energy = local_energies[interface.stake + 1];
+    partition.kept_ends = interface.kept_check.census;
+    partition.kept_ends.roundoff_energy = local_energies[interface.stake + 2];
+    partition.kept_ends.near_energy = local_energies[interface.stake + 3];
+  }
+  return partitions;
+}
+
+std::vector<SurfacePostOperator::UncoveredPerimeterPortion>
+SurfacePostOperator::CoverageMissingByFeature(
+    const std::vector<UncoveredPerimeterPortion> &uncovered)
+{
+  std::vector<UncoveredPerimeterPortion> by_feature;
+  by_feature.reserve(uncovered.size());
+  for (const auto &portion : uncovered)
+  {
+    by_feature.push_back(
+        {portion.p0, portion.p1, "m" + std::to_string(portion.feature), portion.feature});
+  }
+  return by_feature;
+}
+
+void SurfacePostOperator::MoveCoverageServedLabel(
+    std::map<int, InterfaceCoveragePartition> &partitions, const std::string &label,
+    const std::string &name)
+{
+  for (auto &[interface, partition] : partitions)
+  {
+    (void)interface;
+    const auto served = partition.served.find(label);
+    if (served != partition.served.end())
+    {
+      partition.classes[{name, label}] += served->second;
+      partition.served.erase(served);
+    }
+  }
+}
+
+void SurfacePostOperator::MoveCoverageLoopRemainder(
+    std::map<int, InterfaceCoveragePartition> &partitions,
+    const std::map<int, std::map<std::string, double>> &remainder)
+{
+  // A served label holds a model token when one of its '+'-joined tokens equals it.
+  auto HoldsToken = [](const std::string &label, const std::string &token)
+  {
+    std::size_t begin = 0;
+    while (begin <= label.size())
+    {
+      const std::size_t end = std::min(label.find('+', begin), label.size());
+      if (label.compare(begin, end - begin, token) == 0 && end - begin == token.size())
+      {
+        return true;
+      }
+      begin = end + 1;
+    }
+    return false;
+  };
+  for (const auto &[interface, rows] : remainder)
+  {
+    auto found = partitions.find(interface);
+    if (found == partitions.end())
+    {
+      continue;
+    }
+    auto &partition = found->second;
+    for (const auto &[row, energy] : rows)
+    {
+      partition.classes[{"LoopRemainder", row}] += energy;
+      double holding = 0.0;
+      for (const auto &[label, served] : partition.served)
+      {
+        if (served > 0.0 && HoldsToken(label, row))
+        {
+          holding += served;
+        }
+      }
+      const double taken = std::min(energy, holding);
+      if (holding > 0.0)
+      {
+        for (auto &[label, served] : partition.served)
+        {
+          if (served > 0.0 && HoldsToken(label, row))
+          {
+            served -= taken * (served / holding);
+          }
+        }
+      }
+      partition.loop_remainder_unserved += energy - taken;
+    }
+  }
+}
+
+namespace
+{
+
+// The three coordinates' bit patterns: the exact-point lookup's key (no tolerance; -0.0 and
+// +0.0 differ).
+std::array<std::uint64_t, 3> PointBits(const std::array<double, 3> &point)
+{
+  std::array<std::uint64_t, 3> bits;
+  static_assert(sizeof(bits) == sizeof(point));
+  std::memcpy(bits.data(), point.data(), sizeof(bits));
+  return bits;
+}
+
+std::uint64_t PointHash(const std::array<std::uint64_t, 3> &bits)
+{
+  // splitmix64 finalizer over the combined patterns.
+  std::uint64_t h = 0x9E3779B97F4A7C15ull;
+  for (const std::uint64_t b : bits)
+  {
+    std::uint64_t z = h ^ (b + 0x9E3779B97F4A7C15ull + (h << 6) + (h >> 2));
+    z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
+    z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
+    h = z ^ (z >> 31);
+  }
+  return h;
+}
+
+}  // namespace
+
+std::uint32_t SurfacePostOperator::CompactPerimeterPortions::FindOrAddPoint(
+    const std::array<double, 3> &point)
+{
+  MFEM_VERIFY(!std::isnan(point[0]) && !std::isnan(point[1]) && !std::isnan(point[2]),
+              "A perimeter portion end point has a NaN coordinate!");
+  const auto bits = PointBits(point);
+  // Keep the table at most half full (power-of-two size); rebuilt after FinishAppending.
+  if (2 * (points.size() + 1) > point_slots.size())
+  {
+    std::size_t size = 16;
+    while (size < 4 * (points.size() + 1))
+    {
+      size *= 2;
+    }
+    point_slots.assign(size, kEmptySlot);
+    for (std::size_t i = 0; i < points.size(); i++)
+    {
+      std::size_t slot = PointHash(PointBits(points[i])) & (size - 1);
+      while (point_slots[slot] != kEmptySlot)
+      {
+        slot = (slot + 1) & (size - 1);
+      }
+      point_slots[slot] = static_cast<std::uint32_t>(i);
+    }
+  }
+  const std::size_t mask = point_slots.size() - 1;
+  std::size_t slot = PointHash(bits) & mask;
+  while (point_slots[slot] != kEmptySlot)
+  {
+    if (PointBits(points[point_slots[slot]]) == bits)
+    {
+      return point_slots[slot];
+    }
+    slot = (slot + 1) & mask;
+  }
+  MFEM_VERIFY(points.size() < kEmptySlot, "Too many perimeter portion end points!");
+  point_slots[slot] = static_cast<std::uint32_t>(points.size());
+  points.push_back(point);
+  return point_slots[slot];
+}
+
+void SurfacePostOperator::CompactPerimeterPortions::Append(const std::array<double, 3> &p0,
+                                                           const std::array<double, 3> &p1,
+                                                           const std::string &label,
+                                                           int feature)
+{
+  if (label_lookup.empty() && !labels.empty())
+  {
+    for (std::size_t i = 0; i < labels.size(); i++)
+    {
+      label_lookup.emplace(labels[i], static_cast<std::int32_t>(i));
+    }
+  }
+  const auto [entry, added] =
+      label_lookup.emplace(label, static_cast<std::int32_t>(labels.size()));
+  if (added)
+  {
+    labels.push_back(label);
+  }
+  Portion portion;
+  portion.p0 = FindOrAddPoint(p0);
+  portion.p1 = FindOrAddPoint(p1);
+  portion.label = entry->second;
+  portion.feature = feature;
+  portions.push_back(portion);
+}
+
+void SurfacePostOperator::CompactPerimeterPortions::FinishAppending()
+{
+  std::vector<std::uint32_t>().swap(point_slots);
+  std::unordered_map<std::string, std::int32_t>().swap(label_lookup);
+  points.shrink_to_fit();
+  labels.shrink_to_fit();
+  portions.shrink_to_fit();
+}
+
+std::size_t SurfacePostOperator::CompactPerimeterPortions::HeapBytes() const
+{
+  std::size_t bytes = points.capacity() * sizeof(points[0]) +
+                      labels.capacity() * sizeof(std::string) +
+                      portions.capacity() * sizeof(Portion) +
+                      point_slots.capacity() * sizeof(std::uint32_t);
+  for (const auto &label : labels)
+  {
+    // A label beyond the small-string buffer holds its characters on the heap (the memory
+    // census's rule).
+    const char *data = label.data(), *self = reinterpret_cast<const char *>(&label);
+    if (!(data >= self && data < self + sizeof(label)))
+    {
+      bytes += label.capacity() + 1;
+    }
+  }
+  // The label lookup while appending: one node (key, value, link, cached hash) per label
+  // and the buckets.
+  if (!label_lookup.empty())
+  {
+    bytes += label_lookup.size() * (sizeof(std::string) + 4 * sizeof(void *)) +
+             label_lookup.bucket_count() * sizeof(void *);
+  }
+  return bytes;
+}
+
+std::vector<SurfacePostOperator::UncoveredPerimeterPortion>
+SurfacePostOperator::CompactPerimeterPortions::Expand() const
+{
+  std::vector<UncoveredPerimeterPortion> expanded;
+  expanded.reserve(portions.size());
+  for (std::size_t i = 0; i < portions.size(); i++)
+  {
+    expanded.push_back({P0(i), P1(i), Label(i), Feature(i)});
+  }
+  return expanded;
 }
 
 std::map<int, std::map<std::string, double>>

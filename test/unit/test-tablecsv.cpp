@@ -162,6 +162,59 @@ TEST_CASE("TableCSV nonfinite integer formatting", "[tablecsv][Serial]")
   CHECK(formatted.find("nan") == std::string::npos);
 }
 
+// Lane L1 (decision 1634 (3)): a text column (the coverage / regime status columns) prints
+// its strings right-aligned at the numeric column width; a numeric column beside it is
+// unchanged.
+TEST_CASE("TableCSV text column", "[tablecsv][Serial]")
+{
+  Table table;
+  table.insert("value", "value");
+  table.insert(Column::Text("status", "coverage status"));
+  table["value"] << 0.5;
+  table["status"] << std::string("NOT-ACHIEVABLE");
+  table["value"] << 1.0;
+  table["status"] << std::string("OK");
+  CHECK(table.n_rows() == 2);
+  // Every column is 27 wide (8 + 12 + 7, the header shorter): right-aligned cells.
+  auto Pad = [](const std::string &cell)
+  { return std::string(27 - cell.size(), ' ') + cell; };
+  CHECK(table.format_table() == Pad("value") + "," + Pad("coverage status") + "\n" +
+                                    Pad("+5.000000000000e-01") + "," +
+                                    Pad("NOT-ACHIEVABLE") + "\n" +
+                                    Pad("+1.000000000000e+00") + "," + Pad("OK") + "\n");
+}
+
+// Lane L1: a printed table with text columns reads back (Table(std::string_view) with
+// text_columns): a column whose first cell is not a number is a text column; a text cell
+// below a number is refused. Without text_columns (every product reader: review m-2) a
+// non-numeric cell is refused as before.
+TEST_CASE("TableCSV text column round-trips", "[tablecsv][Serial]")
+{
+  Table table;
+  table.insert("value", "value");
+  table.insert(Column::Text("type", "coverage Type"));
+  table.insert(Column::Text("status", "coverage status"));
+  const std::vector<std::string> types = {"SA", "MS", "MA", "Default"};
+  const std::vector<std::string> statuses = {"IN", "NO-RANGE", "NOT-TARGET", "NO-ENERGY"};
+  for (std::size_t i = 0; i < types.size(); i++)
+  {
+    table["value"] << 0.25 * static_cast<double>(i);
+    table["type"] << types[i];
+    table["status"] << statuses[i];
+  }
+  Table parsed(table.format_table(), std::nullopt, std::nullopt, /*text_columns=*/true);
+  REQUIRE(parsed.n_cols() == 3);
+  CHECK(!parsed[0].print_as_text);
+  CHECK(parsed[1].print_as_text);
+  CHECK(parsed[2].print_as_text);
+  CHECK(parsed[1].text == types);
+  CHECK(parsed[2].text == statuses);
+  CHECK(parsed[0].data == std::vector<double>{0.0, 0.25, 0.5, 0.75});
+  CHECK(parsed.format_table() == table.format_table());
+  CHECK_THROWS(Table(table.format_table()));
+  CHECK_THROWS(Table("value\n1.0\nSA\n", std::nullopt, std::nullopt, true));
+}
+
 // OI-PATCH-ENERGY-CSV-INDEX-PRECISION (fix round P2, decision 1265): the former index idiom
 // Column(name, header, 0, 0, 2, "") printed an integer through the 3-significant-digit
 // float form, so an index beyond 999 collapsed ("1.24e+02" for 124 kept 3 digits; 1234 and

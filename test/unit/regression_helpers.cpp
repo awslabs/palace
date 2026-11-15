@@ -211,7 +211,8 @@ std::optional<std::size_t> GetRequestedEigenmodeRows(const nlohmann::json &confi
 // constructor.
 Table LoadTable(const std::filesystem::path &path)
 {
-  TableWithCSVFile wrapped(path.string(), /*load_existing_file=*/true);
+  TableWithCSVFile wrapped(path.string(), /*load_existing_file=*/true,
+                           /*text_columns=*/true);
   return std::move(wrapped.table);
 }
 

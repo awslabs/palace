@@ -11,6 +11,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iterator>
+#include <limits>
 #include <map>
 #include <memory>
 #include <set>
@@ -943,7 +944,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator corner-arm
     std::ifstream cache_input(cache_path);
     REQUIRE(cache_input);
     const json cache = json::parse(cache_input);
-    CHECK(cache["Version"] == 24);
+    CHECK(cache["Version"] == 25);
     const auto &cached_patches = cache["Patches"];
     for (const std::size_t p : extended)
     {
@@ -2390,7 +2391,9 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   CHECK_THAT(csv_ft - Joule(model_ft) + Joule(cells), WithinRel(Joule(raw), 1.0e-10));
 
   // (d) The Maxwell uncovered table: (ConvexCorner, Total) x (fixed trace, fixed flux,
-  // self-consistent) for mode 1, excitation 0.
+  // self-consistent) for mode 1, excitation 0. Diagnostics.UncoveredFeatureEnergy is off:
+  // its table is not written (decision 1567 (b)).
+  CHECK_FALSE(fs::exists(output_dir / "surface-response-uncovered-feature-energy.csv"));
   REQUIRE(fs::is_regular_file(output_dir / "surface-response-uncovered-energy.csv"));
   const TextCsv uncovered_table =
       ReadTrimmedCsv(output_dir / "surface-response-uncovered-energy.csv");
@@ -2429,6 +2432,738 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     }
   }
 #endif
+}
+
+// Diagnostics.UncoveredFeatureEnergy (lane ctx002-miss, decision 1567 (b)): on the lead
+// fixture above (one isolated-edge model; two Missing convex corners, 4 portions of total
+// length 2 R each) the eigenmode PostOperator fed E = -grad V writes
+// surface-response-uncovered-feature-energy.csv: (a) the per-(type, feature) energies of
+// GetInterfaceUncoveredFeatureEdgeEnergies sum per type to
+// GetInterfaceUncoveredEdgeEnergies (one row per corner); (b) with the portions split over
+// two types and one portion copied under another feature id (an overlap), every type's
+// labels still sum to its by_type entry and the overlap is one union label; (c) the CSV
+// rows sum to the raw-field rows of surface-response-uncovered-energy.csv and carry each
+// corner's portions and length.
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "Maxwell uncovered feature energies sum to the uncovered table",
+                 "[postoperator][surfaceresponseoperator][cornerarmtrim][3d][maxwell]"
+                 "[Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  constexpr double R = 0.2;
+  const fs::path mesh_path = temp.temp_dir / "maxwell-uncovered-feature-lead.mesh";
+  const auto basis_path = temp.temp_dir / "maxwell-uncovered-feature-basis-points.csv";
+  const auto edge_library_path =
+      temp.temp_dir / "fabrication-process-maxwell-uncovered-feature-edges.json";
+  if (Mpi::Root(Mpi::World()))
+  {
+    {
+      mfem::Mesh serial = MakeSerialLeadMesh(0.0, 0.75);
+      std::ofstream output(mesh_path);
+      serial.Print(output);
+    }
+    {
+      std::ofstream output(basis_path);
+      output << "x,y,z\n"
+             << "-0.2,-0.2,0.0\n"
+             << "0.2,-0.2,0.0\n"
+             << "0.2,0.2,0.0\n"
+             << "-0.2,0.2,0.0\n";
+    }
+    std::ifstream input(convex_library_3d_path);
+    REQUIRE(input);
+    json library = json::parse(input);
+    library["Name"] = "unit-test-process-maxwell-uncovered-feature-edges";
+    json models = json::array();
+    for (auto &model : library["Models"])
+    {
+      if (model["Topology"] == "IsolatedEdge")
+      {
+        model["Interfaces"] = {{{"Type", "SA"}, {"Coupon", 1}}};
+        model["BasisPoints"] = basis_path.string();
+        models.push_back(model);
+      }
+    }
+    REQUIRE(models.size() == 1);
+    library["Models"] = std::move(models);
+    std::ofstream output(edge_library_path);
+    output << library.dump(2) << "\n";
+  }
+  Mpi::Barrier(Mpi::World());
+
+  const fs::path output_dir = temp.temp_dir / "maxwell-uncovered-feature";
+  json config = IslandConfig();
+  config["Model"]["Mesh"] = mesh_path.string();
+  config["Model"]["L0"] = 1.0;
+  config["Problem"]["Type"] = "Eigenmode";
+  config["Problem"]["Output"] = output_dir.string();
+  config["Boundaries"]["Ground"]["Attributes"] = {4, 9};
+  config["Boundaries"].erase("Terminal");
+  config["Solver"] = {{"Order", 1},
+                      {"Eigenmode", {{"Target", 1.0}}},
+                      {"SurfaceResponseCorrection",
+                       {{"Library", edge_library_path.string()},
+                        {"TargetInterfaces", {4}},
+                        {"UnmatchedPolicy", "Warn"},
+                        {"CorrectionMode", "Both"},
+                        {"Diagnostics", {{"UncoveredFeatureEnergy", true}}}}}};
+  IoData iodata(config, false);
+  iodata.boundaries.cracked_attributes.insert(9);
+  MPI_Comm comm = Mpi::World();
+  MakeOutputFolder(iodata, comm);
+  std::vector<std::unique_ptr<Mesh>> meshes;
+  meshes.push_back(std::make_unique<Mesh>(MakeLeadMesh(0.0, 0.75)));
+  SpaceOperator space_op(iodata, meshes);
+  PostOperator<ProblemType::EIGENMODE> post_op(iodata, space_op);
+  auto *response = ReplicatedRecords(post_op.GetSurfaceResponseOperator());
+  REQUIRE(response);
+  std::vector<SurfacePostOperator::UncoveredPerimeterPortion> perimeter;
+  for (const auto &portion : response->GetUncoveredPortions())
+  {
+    perimeter.push_back({portion.p0, portion.p1, portion.topology, portion.feature});
+  }
+  REQUIRE(perimeter.size() == 8);
+  std::set<int> features;
+  for (const auto &portion : perimeter)
+  {
+    CHECK(portion.type == "ConvexCorner");
+    features.insert(portion.feature);
+  }
+  REQUIRE(features.size() == 2);
+
+  mfem::ParGridFunction potential(&space_op.GetH1Space().Get());
+  mfem::FunctionCoefficient potential_coefficient(
+      [](const mfem::Vector &x)
+      { return std::sin(1.3 * x[0] + 0.4) * std::cosh(0.7 * x[1]) + 0.3 * x[2] * x[2]; });
+  potential.ProjectCoefficient(potential_coefficient);
+  mfem::ParDiscreteLinearOperator gradient(&space_op.GetH1Space().Get(),
+                                           &space_op.GetNDSpace().Get());
+  gradient.AddDomainInterpolator(new mfem::GradientInterpolator());
+  gradient.Assemble();
+  GridFunction field(space_op.GetNDSpace(), true);
+  gradient.Mult(potential, field.Real());
+  field.Real() *= -1.0;
+  ComplexVector e(space_op.GetNDSpace().GetTrueVSize());
+  field.Real().GetTrueDofs(e.Real());
+  e.Imag() = 0.0;
+  field.Real().SetFromTrueDofs(e.Real());
+  field.Imag() = 0.0;
+  field.Real().ExchangeFaceNbrData();
+  field.Imag().ExchangeFaceNbrData();
+  ComplexVector b(space_op.GetRTSpace().GetTrueVSize());
+  b = 0.0;
+  const std::complex<double> omega(1.0, 0.0);
+  post_op.SetSurfaceResponseCorrectedField(e, nullptr, omega, 1.0);
+  post_op.MeasureAndPrintAll(0, e, b, omega, 0.0, 0.0, 1);
+
+  // (a) One label per corner; per type the labels sum to the uncovered energy.
+  const auto &surf_post_op = post_op.GetSurfacePostOp();
+  auto CheckSums =
+      [&](const std::vector<SurfacePostOperator::UncoveredPerimeterPortion> &portions)
+  {
+    const auto by_type =
+        surf_post_op.GetInterfaceUncoveredEdgeEnergies({4}, field, nullptr, portions);
+    const auto by_feature = surf_post_op.GetInterfaceUncoveredFeatureEdgeEnergies(
+        {4}, field, nullptr, portions);
+    REQUIRE(by_type.count(4) == 1);
+    REQUIRE(by_feature.count(4) == 1);
+    std::map<std::string, double> sums;
+    for (const auto &[key, energy] : by_feature.at(4))
+    {
+      CHECK(energy > 0.0);
+      sums[key.first] += energy;
+    }
+    CHECK(sums.size() == by_type.at(4).by_type.size());
+    for (const auto &[type, energy] : by_type.at(4).by_type)
+    {
+      REQUIRE(sums.count(type) == 1);
+      CHECK_THAT(sums.at(type), WithinRel(energy, 1.0e-12));
+    }
+    return by_feature.at(4);
+  };
+  const auto corners = CheckSums(perimeter);
+  REQUIRE(corners.size() == 2);
+  for (const int feature : features)
+  {
+    CHECK(corners.count({"ConvexCorner", std::to_string(feature)}) == 1);
+  }
+
+  // (b) The second corner retyped and one of the first corner's portions copied under
+  // another feature id: the copy's piece is one union label of the two ids.
+  auto mixed = perimeter;
+  const int first = *features.begin(), second = *features.rbegin();
+  for (auto &portion : mixed)
+  {
+    if (portion.feature == second)
+    {
+      portion.type = "SpatialEdgeCluster";
+    }
+  }
+  const auto copied = std::find_if(mixed.begin(), mixed.end(), [&](const auto &portion)
+                                   { return portion.feature == first; });
+  REQUIRE(copied != mixed.end());
+  auto overlap = *copied;
+  overlap.feature = 1000 + second;
+  mixed.push_back(overlap);
+  const auto split = CheckSums(mixed);
+  CHECK(split.count({"SpatialEdgeCluster", std::to_string(second)}) == 1);
+  CHECK(split.count({"ConvexCorner", std::to_string(first)}) == 1);
+  CHECK(split.count({"ConvexCorner",
+                     std::to_string(first) + "+" + std::to_string(1000 + second)}) == 1);
+  double split_total = 0.0, corners_total = 0.0;
+  for (const auto &[key, energy] : split)
+  {
+    (void)key;
+    split_total += energy;
+  }
+  for (const auto &[key, energy] : corners)
+  {
+    (void)key;
+    corners_total += energy;
+  }
+  CHECK_THAT(split_total, WithinRel(corners_total, 1.0e-12));
+
+  Mpi::Barrier(comm);
+  if (!Mpi::Root(comm))
+  {
+    return;
+  }
+  // (c) The CSV: one row per corner (4 portions, length 2 R, a box around the portions);
+  // the rows sum to the uncovered table's raw-field ConvexCorner rows.
+  auto Trim = [](std::string text)
+  {
+    const auto begin = text.find_first_not_of(" \t\r");
+    const auto end = text.find_last_not_of(" \t\r");
+    return begin == std::string::npos ? std::string() : text.substr(begin, end - begin + 1);
+  };
+  auto ReadTrimmedCsv = [&](const fs::path &path)
+  {
+    TextCsv csv = ReadTextCsv(path);
+    for (auto &name : csv.header)
+    {
+      name = Trim(name);
+    }
+    for (auto &row : csv.rows)
+    {
+      for (auto &cell : row)
+      {
+        cell = Trim(cell);
+      }
+    }
+    return csv;
+  };
+  const fs::path feature_path =
+      output_dir / "surface-response-uncovered-feature-energy.csv";
+  REQUIRE(fs::is_regular_file(feature_path));
+  const TextCsv feature_table = ReadTrimmedCsv(feature_path);
+  REQUIRE(feature_table.rows.size() == 2);
+  double csv_sum = 0.0;
+  for (const auto &row : feature_table.rows)
+  {
+    CHECK(std::stoi(row[feature_table.Column("m")]) == 1);
+    CHECK(std::stoi(row[feature_table.Column("exc")]) == 0);
+    CHECK(row[feature_table.Column("type")] == "ConvexCorner");
+    CHECK(features.count(std::stoi(row[feature_table.Column("features")])) == 1);
+    CHECK(std::stoi(row[feature_table.Column("portions")]) == 4);
+    CHECK_THAT(std::stod(row[feature_table.Column("length (m)")]),
+               WithinAbs(2.0 * R, 1.0e-9));
+    for (const char *axis : {"x", "y", "z"})
+    {
+      CHECK(std::stod(row[feature_table.Column(fmt::format("{} min (m)", axis))]) <=
+            std::stod(row[feature_table.Column(fmt::format("{} max (m)", axis))]));
+    }
+    csv_sum += std::stod(row[feature_table.Column("uncovered raw energy[4] (J)")]);
+  }
+  const TextCsv uncovered_table =
+      ReadTrimmedCsv(output_dir / "surface-response-uncovered-energy.csv");
+  int raw_rows = 0;
+  for (const auto &row : uncovered_table.rows)
+  {
+    const int evaluation = std::stoi(row[uncovered_table.Column("evaluation")]);
+    if (evaluation < 2 && row[uncovered_table.Column("type")] == "ConvexCorner")
+    {
+      raw_rows++;
+      CHECK_THAT(
+          csv_sum,
+          WithinRel(std::stod(row[uncovered_table.Column("uncovered raw energy[4] (J)")]),
+                    1.0e-11));
+    }
+  }
+  CHECK(raw_rows == 2);
+
+  // (d) Lane L1 (decision 1634 (1) / (2); ruling 1641 (5)): the coverage tables of the same
+  // measurement, always written. The by-key rows (one per Missing corner KEY HASH, class
+  // Missing: the two corners of this fixture are congruent, so they may share one key and
+  // then one row holds both features and their 8 portions) sum to the uncovered table's
+  // raw-field Total row and their key set is the uncovered features' key records; the
+  // coverage row's W is surface-Q-corrected.csv's; U = the Missing share + the method gap;
+  // and the served energy W (1 - U) is the raw within-R energy the corrected total replaces
+  // (W minus the kept-raw uncovered energy: every other point of this fixture lies under
+  // the model's claims).
+  std::map<std::string, std::set<int>> key_features;
+  for (const auto &key : response->GetUncoveredKeys())
+  {
+    key_features[key.hash].insert(key.feature);
+  }
+  REQUIRE(!key_features.empty());
+  const TextCsv by_key_table =
+      ReadTrimmedCsv(output_dir / "surface-response-uncovered-energy-by-key.csv");
+  REQUIRE(by_key_table.rows.size() == key_features.size());
+  std::set<std::string> hashes, record_hashes;
+  std::set<int> by_key_features;
+  double by_key_sum = 0.0, by_key_share = 0.0;
+  for (const auto &row : by_key_table.rows)
+  {
+    const std::string hash = row[by_key_table.Column("key hash")];
+    INFO("key " << hash);
+    CHECK(std::stoi(row[by_key_table.Column("m")]) == 1);
+    CHECK(std::stoi(row[by_key_table.Column("evaluation")]) == 0);
+    CHECK(row[by_key_table.Column("class")] == "Missing");
+    CHECK(std::stoi(row[by_key_table.Column("method gap")]) == 0);
+    REQUIRE(key_features.count(hash) == 1);
+    std::string expected_features;
+    for (const int feature : key_features.at(hash))
+    {
+      CHECK(features.count(feature) == 1);
+      by_key_features.insert(feature);
+      expected_features += (expected_features.empty() ? "" : "+") + std::to_string(feature);
+    }
+    CHECK(row[by_key_table.Column("features")] == expected_features);
+    CHECK(std::stoi(row[by_key_table.Column("portions")]) ==
+          4 * static_cast<int>(key_features.at(hash).size()));
+    hashes.insert(hash);
+    by_key_sum += std::stod(row[by_key_table.Column("raw within-R energy[4] (J)")]);
+    by_key_share += std::stod(row[by_key_table.Column("raw share of W[4]")]);
+  }
+  for (const auto &[hash, key_feature_set] : key_features)
+  {
+    (void)key_feature_set;
+    record_hashes.insert(hash);
+  }
+  CHECK(hashes == record_hashes);
+  CHECK(by_key_features == features);
+  double uncovered_total = 0.0;
+  for (const auto &row : uncovered_table.rows)
+  {
+    if (std::stoi(row[uncovered_table.Column("evaluation")]) == 0 &&
+        row[uncovered_table.Column("type")] == "Total")
+    {
+      uncovered_total =
+          std::stod(row[uncovered_table.Column("uncovered raw energy[4] (J)")]);
+    }
+  }
+  CHECK_THAT(by_key_sum, WithinRel(uncovered_total, 1.0e-12));
+  const TextCsv coverage_table =
+      ReadTrimmedCsv(output_dir / "surface-response-coverage.csv");
+  const TextCsv corrected_table = ReadTrimmedCsv(output_dir / "surface-Q-corrected.csv");
+  REQUIRE(coverage_table.rows.size() == 1);
+  const auto corrected_it = std::find_if(
+      corrected_table.rows.begin(), corrected_table.rows.end(), [&](const auto &row)
+      { return std::stoi(row[corrected_table.Column("interface")]) == 4; });
+  REQUIRE(corrected_it != corrected_table.rows.end());
+  const auto &cell = coverage_table.rows[0];
+  const auto &corrected_row = *corrected_it;
+  CHECK(cell[coverage_table.Column("Type")] ==
+        corrected_row[corrected_table.Column("coverage Type")]);
+  CHECK(cell[coverage_table.Column("W within-R raw (J)")] ==
+        corrected_row[corrected_table.Column("W within-R raw (J)")]);
+  const double W = std::stod(cell[coverage_table.Column("W within-R raw (J)")]);
+  const double U = std::stod(cell[coverage_table.Column("uncovered raw share of W")]);
+  const double missing = std::stod(cell[coverage_table.Column("missing raw share of W")]);
+  const double method_gap =
+      std::stod(cell[coverage_table.Column("method-gap raw share of W")]);
+  CHECK_THAT(missing, WithinRel(by_key_share, 1.0e-12));
+  CHECK_THAT(missing, WithinRel(uncovered_total / W, 1.0e-12));
+  CHECK_THAT(U, WithinAbs(missing + method_gap, 1.0e-15));
+  CHECK_THAT(W * (1.0 - U), WithinRel(W - uncovered_total, 1.0e-12));
+  // Ruling 1694 (i) (OI-CORRECTED-TOTAL-CC-LOOPREMAINDER-OVERLAP): served = (W - kept raw)
+  // + the loop remainder of the conductor-consistency-excluded patches; this fixture has no
+  // exclusion, so that term is 0 EXACTLY (in the cell and on the interface's row).
+  constexpr auto excluded_column = "loop remainder of excluded patches kept raw twice (J)";
+  CHECK(std::stod(cell[coverage_table.Column(excluded_column)]) == 0.0);
+  CHECK(std::stod(corrected_row[corrected_table.Column(excluded_column)]) == 0.0);
+  CHECK(std::stod(cell[coverage_table.Column("untargeted raw energy of the Type (J)")]) ==
+        0.0);
+  CHECK(U > 0.0);
+  CHECK(cell[coverage_table.Column("regime status")] == "NO-RANGE");
+  CHECK(std::stod(cell[coverage_table.Column("covered correction factor")]) > 0.0);
+  CHECK(cell[coverage_table.Column("validated factor min")] == "nan");
+#endif
+}
+
+// Lane L1 (decision 1634 (1), ruling 1641): THE CLOSED COVERAGE PARTITION on the lead
+// fixture above (one isolated-edge model; two Missing convex corners, 8 portions). With E =
+// -grad V: (a) the bins (the Missing class by feature, the served claims, the remainder)
+// sum to `within` and `within` = the raw interface energy minus its energy outside R; the
+// Missing class's feature bins sum to GetInterfaceUncoveredEdgeEnergies (no claim overlaps
+// them); (b) a served claim laid over the first corner's portions takes nothing from the
+// Missing class (a kept-raw class is binned first, as the corrected total keeps it raw);
+// with no kept class the same claim takes exactly the first corner's Missing energy;
+// (c) a second kept class over the same portions after Missing takes nothing.
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "Coverage partition bins sum to the within-R energy by ownership order",
+                 "[postoperator][surfaceresponseoperator][cornerarmtrim][3d][maxwell]"
+                 "[Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  constexpr double R = 0.2;
+  const fs::path mesh_path = temp.temp_dir / "coverage-partition-lead.mesh";
+  const auto basis_path = temp.temp_dir / "coverage-partition-basis-points.csv";
+  const auto edge_library_path =
+      temp.temp_dir / "fabrication-process-coverage-partition-edges.json";
+  // The root writes the inputs; its two checks are asserted on every rank AFTER the barrier
+  // (decision 1616: no root-only REQUIRE before a barrier).
+  int inputs_ok[2] = {1, 1};  // {library source readable, exactly one IsolatedEdge model}
+  if (Mpi::Root(Mpi::World()))
+  {
+    {
+      mfem::Mesh serial = MakeSerialLeadMesh(0.0, 0.75);
+      std::ofstream output(mesh_path);
+      serial.Print(output);
+    }
+    {
+      std::ofstream output(basis_path);
+      output << "x,y,z\n"
+             << "-0.2,-0.2,0.0\n"
+             << "0.2,-0.2,0.0\n"
+             << "0.2,0.2,0.0\n"
+             << "-0.2,0.2,0.0\n";
+    }
+    std::ifstream input(convex_library_3d_path);
+    inputs_ok[0] = input ? 1 : 0;
+    if (inputs_ok[0])
+    {
+      json library = json::parse(input);
+      library["Name"] = "unit-test-process-coverage-partition-edges";
+      json models = json::array();
+      for (auto &model : library["Models"])
+      {
+        if (model["Topology"] == "IsolatedEdge")
+        {
+          model["Interfaces"] = {{{"Type", "SA"}, {"Coupon", 1}}};
+          model["BasisPoints"] = basis_path.string();
+          models.push_back(model);
+        }
+      }
+      inputs_ok[1] = models.size() == 1 ? 1 : 0;
+      library["Models"] = std::move(models);
+      std::ofstream output(edge_library_path);
+      output << library.dump(2) << "\n";
+    }
+  }
+  Mpi::Barrier(Mpi::World());
+  Mpi::Broadcast(2, inputs_ok, 0, Mpi::World());
+  REQUIRE(inputs_ok[0] == 1);
+  REQUIRE(inputs_ok[1] == 1);
+
+  const fs::path output_dir = temp.temp_dir / "coverage-partition";
+  json config = IslandConfig();
+  config["Model"]["Mesh"] = mesh_path.string();
+  config["Model"]["L0"] = 1.0;
+  config["Problem"]["Type"] = "Eigenmode";
+  config["Problem"]["Output"] = output_dir.string();
+  config["Boundaries"]["Ground"]["Attributes"] = {4, 9};
+  config["Boundaries"].erase("Terminal");
+  config["Solver"] = {{"Order", 1},
+                      {"Eigenmode", {{"Target", 1.0}}},
+                      {"SurfaceResponseCorrection",
+                       {{"Library", edge_library_path.string()},
+                        {"TargetInterfaces", {4}},
+                        {"UnmatchedPolicy", "Warn"},
+                        {"CorrectionMode", "Both"}}}};
+  IoData iodata(config, false);
+  iodata.boundaries.cracked_attributes.insert(9);
+  MPI_Comm comm = Mpi::World();
+  MakeOutputFolder(iodata, comm);
+  std::vector<std::unique_ptr<Mesh>> meshes;
+  meshes.push_back(std::make_unique<Mesh>(MakeLeadMesh(0.0, 0.75)));
+  SpaceOperator space_op(iodata, meshes);
+  PostOperator<ProblemType::EIGENMODE> post_op(iodata, space_op);
+  auto *response = ReplicatedRecords(post_op.GetSurfaceResponseOperator());
+  REQUIRE(response);
+  std::vector<SurfacePostOperator::UncoveredPerimeterPortion> perimeter, missing;
+  for (const auto &portion : response->GetUncoveredPortions())
+  {
+    perimeter.push_back({portion.p0, portion.p1, portion.topology, portion.feature});
+    missing.push_back(
+        {portion.p0, portion.p1, "m" + std::to_string(portion.feature), portion.feature});
+  }
+  REQUIRE(perimeter.size() == 8);
+  std::set<int> features;
+  for (const auto &portion : perimeter)
+  {
+    features.insert(portion.feature);
+  }
+  REQUIRE(features.size() == 2);
+  const int first = *features.begin();
+
+  mfem::ParGridFunction potential(&space_op.GetH1Space().Get());
+  mfem::FunctionCoefficient potential_coefficient(
+      [](const mfem::Vector &x)
+      { return std::sin(1.3 * x[0] + 0.4) * std::cosh(0.7 * x[1]) + 0.3 * x[2] * x[2]; });
+  potential.ProjectCoefficient(potential_coefficient);
+  mfem::ParDiscreteLinearOperator gradient(&space_op.GetH1Space().Get(),
+                                           &space_op.GetNDSpace().Get());
+  gradient.AddDomainInterpolator(new mfem::GradientInterpolator());
+  gradient.Assemble();
+  GridFunction field(space_op.GetNDSpace(), true);
+  gradient.Mult(potential, field.Real());
+  field.Real() *= -1.0;
+  ComplexVector e(space_op.GetNDSpace().GetTrueVSize());
+  field.Real().GetTrueDofs(e.Real());
+  field.Real().SetFromTrueDofs(e.Real());
+  field.Imag() = 0.0;
+  field.Real().ExchangeFaceNbrData();
+  field.Imag().ExchangeFaceNbrData();
+
+  const auto &surf_post_op = post_op.GetSurfacePostOp();
+  auto BinSum = [](const SurfacePostOperator::InterfaceCoveragePartition &partition)
+  {
+    double sum = partition.unclaimed;
+    for (const auto &[key, energy] : partition.classes)
+    {
+      (void)key;
+      sum += energy;
+    }
+    for (const auto &[label, energy] : partition.served)
+    {
+      (void)label;
+      sum += energy;
+    }
+    return sum;
+  };
+  const auto by_type =
+      surf_post_op.GetInterfaceUncoveredEdgeEnergies({4}, field, nullptr, perimeter);
+  REQUIRE(by_type.count(4) == 1);
+  const double missing_energy = by_type.at(4).energy;
+  REQUIRE(missing_energy > 0.0);
+
+  // (a) The closed identity and the class identity.
+  const std::vector<SurfacePostOperator::UncoveredPerimeterPortion> no_claims;
+  const auto plain = surf_post_op.GetInterfaceCoveragePartition(
+      {4}, field, nullptr, {{"Missing", &missing}}, no_claims);
+  REQUIRE(plain.count(4) == 1);
+  const auto &a = plain.at(4);
+  CHECK_THAT(BinSum(a), WithinRel(a.within, 1.0e-12));
+  const double raw = surf_post_op.GetInterfaceElectricFieldEnergy(4, field);
+  const double outside =
+      surf_post_op.GetInterfaceOuterElectricFieldEnergy(4, field).energy_outside;
+  CHECK_THAT(a.within, WithinRel(raw - outside, 1.0e-10));
+  double missing_bins = 0.0;
+  for (const auto &[key, energy] : a.classes)
+  {
+    CHECK(key.first == "Missing");
+    missing_bins += energy;
+  }
+  CHECK(a.classes.size() == 2);
+  CHECK(a.classes.count({"Missing", "m" + std::to_string(first)}) == 1);
+  CHECK_THAT(missing_bins, WithinRel(missing_energy, 1.0e-12));
+  CHECK(a.served.empty());
+  CHECK_THAT(a.unclaimed, WithinRel(a.within - missing_energy, 1.0e-12));
+
+  // (b) A served claim over the first corner: the kept class is binned first.
+  std::vector<SurfacePostOperator::UncoveredPerimeterPortion> claim;
+  for (const auto &portion : missing)
+  {
+    if (portion.feature == first)
+    {
+      claim.push_back({portion.p0, portion.p1, "m7", -1});
+    }
+  }
+  const double first_energy = a.classes.at({"Missing", "m" + std::to_string(first)});
+  const auto owned = surf_post_op.GetInterfaceCoveragePartition(
+      {4}, field, nullptr, {{"Missing", &missing}}, claim);
+  const auto &b = owned.at(4);
+  CHECK_THAT(BinSum(b), WithinRel(b.within, 1.0e-12));
+  CHECK(b.classes == a.classes);
+  CHECK(b.served.count("m7") == 1);
+  CHECK(std::abs(b.served.at("m7")) <= 1.0e-14 * b.within);
+  const auto served_only =
+      surf_post_op.GetInterfaceCoveragePartition({4}, field, nullptr, {}, claim);
+  const auto &s = served_only.at(4);
+  CHECK(s.classes.empty());
+  CHECK_THAT(s.served.at("m7"), WithinRel(first_energy, 1.0e-12));
+  CHECK_THAT(s.served.at("m7") + s.unclaimed, WithinRel(s.within, 1.0e-12));
+
+  // (b2) Rulings 1714 / 1715: every claim end moved k ulps per coordinate INTO its portion
+  // (toward the other end). 1 ulp: round-off short, the served ends snapped to the segment
+  // ends: the served energy is the exact claims' to the last bit. 1000 ulps: beyond the
+  // round-off rule, within 1e-5 R (near): counted, never snapped. The same list as a KEPT
+  // class is counted and never snapped (OI-FOOT-TEST-VERTEX-ROUNDOFF). On THIS fixture no
+  // point of interface 4 has its foot clamped at these ends (the surface lies inside its
+  // corners: no exterior vertex quadrant), so the energies at stake are exactly 0 and the
+  // moved lists' energies equal the exact ones bitwise (measured at b209a62331; the
+  // quadrant energy > 0 leg is the electrostatic saved-mesh restart case's producer: 0.79 %
+  // of W snapped back, its partition identity closing).
+  // (1 ulp: the next double toward the other end; 1000: an absolute step of 1000 eps
+  // max(|x|, 1) along the portion, far below 1e-5 R and beyond the 16-ulp rule.)
+  auto Nudge = [&](bool one)
+  {
+    auto moved = claim;
+    for (auto &portion : moved)
+    {
+      const auto p0 = portion.p0, p1 = portion.p1;
+      for (int d = 0; d < 3; d++)
+      {
+        if (p0[d] == p1[d])
+        {
+          continue;
+        }
+        const double step = 1000.0 * std::numeric_limits<double>::epsilon();
+        portion.p0[d] = one ? std::nextafter(p0[d], p1[d])
+                            : p0[d] + std::copysign(step * std::max(std::abs(p0[d]), 1.0),
+                                                    p1[d] - p0[d]);
+        portion.p1[d] = one ? std::nextafter(p1[d], p0[d])
+                            : p1[d] + std::copysign(step * std::max(std::abs(p1[d]), 1.0),
+                                                    p0[d] - p1[d]);
+      }
+    }
+    return moved;
+  };
+  const auto one_ulp = Nudge(true), thousand_ulps = Nudge(false);
+  const auto snapped =
+      surf_post_op.GetInterfaceCoveragePartition({4}, field, nullptr, {}, one_ulp).at(4);
+  CHECK(snapped.served.at("m7") == s.served.at("m7"));
+  CHECK(snapped.served_ends.roundoff_count > s.served_ends.roundoff_count);
+  CHECK(snapped.served_ends.roundoff_energy == 0.0);
+  CHECK(snapped.served_ends.near_count == s.served_ends.near_count);
+  const auto near =
+      surf_post_op.GetInterfaceCoveragePartition({4}, field, nullptr, {}, thousand_ulps)
+          .at(4);
+  CHECK(near.served_ends.near_count > 0);
+  CHECK(near.served_ends.near_energy == 0.0);
+  CHECK(near.served_ends.roundoff_count == s.served_ends.roundoff_count);
+  CHECK(near.served.at("m7") == s.served.at("m7"));
+  CHECK_THAT(BinSum(near), WithinRel(near.within, 1.0e-12));
+  const auto kept = surf_post_op.GetInterfaceCoveragePartition(
+      {4}, field, nullptr, {{"Missing", &one_ulp}}, no_claims);
+  const auto exact_kept = surf_post_op.GetInterfaceCoveragePartition(
+      {4}, field, nullptr, {{"Missing", &claim}}, no_claims);
+  CHECK(kept.at(4).kept_ends.roundoff_count > exact_kept.at(4).kept_ends.roundoff_count);
+  CHECK(kept.at(4).kept_ends.roundoff_energy == 0.0);
+  CHECK(kept.at(4).classes.at({"Missing", "m7"}) ==
+        exact_kept.at(4).classes.at({"Missing", "m7"}));
+  CHECK(kept.at(4).served_ends.roundoff_count == 0);
+
+  // (c) A second kept class over the same portions comes after Missing: it takes nothing.
+  const auto ordered = surf_post_op.GetInterfaceCoveragePartition(
+      {4}, field, nullptr, {{"Missing", &missing}, {"ConductorConsistency", &perimeter}},
+      no_claims);
+  const auto &c = ordered.at(4);
+  CHECK_THAT(BinSum(c), WithinRel(c.within, 1.0e-12));
+  for (const auto &[key, energy] : c.classes)
+  {
+    if (key.first == "ConductorConsistency")
+    {
+      CHECK(std::abs(energy) <= 1.0e-14 * c.within);
+    }
+    else
+    {
+      CHECK(energy == a.classes.at(key));
+    }
+  }
+
+  // (e) Ruling 1688 (the stage-0 Missing LENGTH line): on the lead fixture the Missing
+  // portions (no method-gap key here) and the applied patches' claims tile interface 4's
+  // perimeter: Missing + method gap + covered = the edge-tree length (round-off); the
+  // line prints the Type's share and "n/a" for the identification figure only without a
+  // feature pass.
+  const auto [missing_split, gap_split] =
+      SplitCoverageUncoveredByKeyClass(perimeter, response->GetCoverageKeyRecords());
+  CHECK(missing_split.size() == perimeter.size());
+  CHECK(gap_split.empty());
+  const auto lengths = surf_post_op.GetInterfacePerimeterLengths(
+      {4}, {missing_split, gap_split, post_op.GetSurfaceResponseModelRawPortions()});
+  REQUIRE(lengths.count(4) == 1);
+  const auto &l = lengths.at(4);
+  REQUIRE(l.lists.size() == 3);
+  CHECK(l.total > 0.0);
+  CHECK(l.lists[0] > 0.0);
+  CHECK(l.lists[1] == 0.0);
+  CHECK(l.lists[2] > 0.0);
+  CHECK_THAT(l.lists[0] + l.lists[1] + l.lists[2], WithinRel(l.total, 1.0e-12));
+  const auto identification = response->GetIdentificationFeatureLengths();
+  CHECK(identification.first > 0.0);
+  CHECK(identification.second > 0.0);
+  const auto types = post_op.GetInterfaceTypes();
+  const std::string line =
+      CoverageStageZeroLine(types, {4}, lengths, identification, iodata.units);
+  CHECK(line.find(fmt::format("{} {:.3f} %", types.at(4), 100.0 * l.lists[0] / l.total)) !=
+        std::string::npos);
+  CHECK(line.find("a LENGTH figure") != std::string::npos);
+  CHECK(line.find("unmatched / (matched + unmatched) = n/a") == std::string::npos);
+  const std::string no_target =
+      CoverageStageZeroLine(types, {}, {}, {-1.0, -1.0}, iodata.units);
+  CHECK(no_target.find(types.at(4) + " n/a (no target interface)") != std::string::npos);
+  CHECK(no_target.find("unmatched / (matched + unmatched) = n/a") != std::string::npos);
+#endif
+}
+
+// Lane L1 (ruling 1649 Q3): the coverage partition's bookkeeping helpers. (a) A served
+// `unpatched` label alone moves to the class UnpatchedPairs; a joined label stays served.
+// (b) A loop-remainder row is taken from the served labels holding its model token in
+// proportion to their energy ("m3" and "m3+m5", not "m35"), the class LoopRemainder gets
+// the whole row, and the part no served label holds is `loop_remainder_unserved`; the bins
+// then sum to `within` plus that part.
+TEST_CASE("Coverage partition moves the unpatched label and the loop remainder",
+          "[postoperator][surfaceresponseoperator][cornerarmtrim][Serial]")
+{
+  using Partition = SurfacePostOperator::InterfaceCoveragePartition;
+  auto BinSum = [](const Partition &partition)
+  {
+    double sum = partition.unclaimed;
+    for (const auto &[key, energy] : partition.classes)
+    {
+      (void)key;
+      sum += energy;
+    }
+    for (const auto &[label, energy] : partition.served)
+    {
+      (void)label;
+      sum += energy;
+    }
+    return sum;
+  };
+  std::map<int, Partition> partitions;
+  auto &p = partitions[4];
+  p.classes[{"Missing", "m2"}] = 0.5;
+  p.served = {{"m3", 3.0},
+              {"m3+m5", 1.0},
+              {"m35", 2.0},
+              {"unpatched", 0.25},
+              {"m5+unpatched", 0.75}};
+  p.unclaimed = 0.5;
+  p.within = 8.0;
+  REQUIRE(BinSum(p) == 8.0);
+
+  SurfacePostOperator::MoveCoverageServedLabel(partitions, "unpatched", "UnpatchedPairs");
+  CHECK(p.served.count("unpatched") == 0);
+  CHECK(p.served.at("m5+unpatched") == 0.75);
+  CHECK(p.classes.at({"UnpatchedPairs", "unpatched"}) == 0.25);
+  CHECK(BinSum(p) == 8.0);
+
+  // m3: 2.0 of the 4.0 its labels hold (3/4 from "m3", 1/4 from "m3+m5"); m7: no label.
+  SurfacePostOperator::MoveCoverageLoopRemainder(partitions,
+                                                 {{4, {{"m3", 2.0}, {"m7", 0.125}}}});
+  CHECK_THAT(p.served.at("m3"), WithinRel(1.5, 1.0e-15));
+  CHECK_THAT(p.served.at("m3+m5"), WithinRel(0.5, 1.0e-15));
+  CHECK(p.served.at("m35") == 2.0);
+  CHECK(p.classes.at({"LoopRemainder", "m3"}) == 2.0);
+  CHECK(p.classes.at({"LoopRemainder", "m7"}) == 0.125);
+  CHECK(p.loop_remainder_unserved == 0.125);
+  CHECK_THAT(BinSum(p), WithinRel(8.0 + 0.125, 1.0e-15));
+
+  // A row larger than what its labels hold: they are emptied, the rest is unserved.
+  SurfacePostOperator::MoveCoverageLoopRemainder(partitions, {{4, {{"m35", 3.0}}}});
+  CHECK(p.served.at("m35") == 0.0);
+  CHECK(p.loop_remainder_unserved == 0.125 + 1.0);
+  // An interface absent from the partitions is ignored.
+  SurfacePostOperator::MoveCoverageLoopRemainder(partitions, {{6, {{"m3", 1.0}}}});
+  CHECK(partitions.count(6) == 0);
 }
 
 // M-5 (decisions 845 O-C / 846): the Maxwell path writes surface-response-model-energy.csv
@@ -2829,11 +3564,11 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   // of the model on it, the same portion count (the same placed patches).
   const auto &electrostatic_claims = electrostatic_response.GetModelRawClaimPortions();
   const auto &maxwell_claims = response->GetModelRawClaimPortions();
-  REQUIRE(!electrostatic_claims.portions.empty());
+  REQUIRE(!electrostatic_claims.portions.Empty());
   // Round 2b B1: the Maxwell operator's claims are taken into the PostOperator's list.
-  REQUIRE(maxwell_claims.portions.empty());
+  REQUIRE(maxwell_claims.portions.Empty());
   const auto &maxwell_portions = post_op.GetSurfaceResponseModelRawPortions();
-  REQUIRE(electrostatic_claims.portions.size() == maxwell_portions.size());
+  REQUIRE(electrostatic_claims.portions.Size() == maxwell_portions.Size());
   REQUIRE(electrostatic_claims.members.size() == 1);
   REQUIRE(maxwell_claims.members.size() == 1);
   const auto &member = electrostatic_claims.members.front();
@@ -2845,9 +3580,9 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   CHECK_THAT(maxwell_claims.members.front().weight_length,
              WithinRel(member.weight_length, 1.0e-12));
   CHECK_THAT(maxwell_claims.length, WithinRel(electrostatic_claims.length, 1.0e-12));
-  for (const auto &portion : electrostatic_claims.portions)
+  for (const auto &portion : electrostatic_claims.portions.Expand())
   {
-    CHECK(portion.topology == label);
+    CHECK(portion.type == label);
   }
   auto Perimeter = [](const auto &portions)
   {
@@ -2892,7 +3627,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
         {4}, field, nullptr, Perimeter(response->GetUncoveredPortions()));
     std::map<std::string, double> reference;
     for (const auto &portions :
-         {Perimeter(electrostatic_claims.portions), maxwell_portions})
+         {electrostatic_claims.portions.Expand(), maxwell_portions.Expand()})
     {
       const auto partition =
           surf_post_op.GetInterfacePartitionedEdgeEnergies({4}, field, nullptr, portions);
@@ -3264,8 +3999,10 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     auto *response = ReplicatedRecords(post_op.GetSurfaceResponseOperator());
     REQUIRE(response);
     // Round 2b B1: the claims are taken from the operator into the PostOperator's list.
-    CHECK(response->GetModelRawClaimPortions().portions.empty());
-    CHECK(post_op.GetSurfaceResponseModelRawPortions().empty() == !patch_energy);
+    CHECK(response->GetModelRawClaimPortions().portions.Empty());
+    // Lane L1 (decision 1634 (1)): the served claims of the coverage partition exist with
+    // PatchEnergy on or off.
+    CHECK(!post_op.GetSurfaceResponseModelRawPortions().Empty());
     mfem::FunctionCoefficient potential_coefficient(
         [](const mfem::Vector &x) { return std::sinh(0.7 * (x[1] - 0.5)); });
     mfem::ParGridFunction potential(&space_op.GetH1Space().Get());
@@ -4199,6 +4936,208 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 #endif
 }
 
+// Lane L1 (rulings 1694 (i) / 1723 / 1727 (A)): THE CONDUCTOR-CONSISTENCY / LOOP-REMAINDER
+// OVERLAP AT UNIT LEVEL (OI-CORRECTED-TOTAL-CC-LOOPREMAINDER-OVERLAP). The exclusion is
+// declared; the corrected total's own bookkeeping (MeasureSurfaceResponseCorrection) is
+// mirrored, not called: the real path is the run-level cell V-CCLR (PREREG-L1B).
+// LoopFitLeadFixture's real Maxwell field at c = 0.5 (circulating: loop remainders with
+// rho_p > 0 on the isolated-edge cells) with the convex corner model added (the two corners
+// served). EVERY isolated-edge patch is declared conductor-consistency EXCLUDED (the suite
+// eig2 form: a whole model excluded, so its remainder lies on no served bin): the kept
+// class "ConductorConsistency" = their raw claims. The corrected total keeps raw, each
+// integrated on its own: Missing + CC + LR (the loop remainder of every remainder patch).
+// d_indep = the loop remainder of the EXCLUDED patches alone (its own integral). (a) served
+// (after MoveCoverageLoopRemainder) + unclaimed = (W - kept_raw) + d_indep (1e-12 of W),
+// d_indep > 0 = loop_remainder_unserved; NEGATIVE: without the d_indep term the identity
+// fails by exactly d_indep. (b) The class empty (no exclusion): d_indep = 0 exactly and
+// served + unclaimed = W - kept_raw; NEGATIVE: without the move the identity fails by
+// exactly the loop remainder the move takes out (with the exclusion the excluded remainder
+// lies on no served bin, so the move-sensitivity shows on this leg).
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "Coverage partition with a declared conductor-consistency exclusion keeps "
+                 "the excluded loop remainder once (Maxwell)",
+                 "[postoperator][surfaceresponseoperator][cornerarmtrim][3d][maxwell]"
+                 "[loopfit][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  const fs::path output_dir = temp.temp_dir / "coverage-cc-lr";
+  json config = LoopFitLeadFixture::Config(*this, output_dir, "coverage-cc-lr");
+  // The convex corner model added to the fixture's isolated-edge library (root writes;
+  // checked on every rank after the barrier: decision 1616).
+  const fs::path library_path =
+      config["Solver"]["SurfaceResponseCorrection"]["Library"].get<std::string>();
+  int input_ok[2] = {1, 1};  // {sources readable, exactly one ConvexCorner model added}
+  if (Mpi::Root(Mpi::World()))
+  {
+    std::ifstream edges_input(library_path), convex_input(convex_library_3d_path);
+    input_ok[0] = edges_input && convex_input ? 1 : 0;
+    if (input_ok[0])
+    {
+      json library = json::parse(edges_input);
+      int added = 0;
+      const json convex = json::parse(convex_input);
+      for (auto model : convex["Models"])
+      {
+        if (model["Topology"] == "ConvexCorner")
+        {
+          model["Interfaces"] = {{{"Type", "SA"}, {"Coupon", 1}}};
+          library["Models"].push_back(model);
+          added++;
+        }
+      }
+      input_ok[1] = added == 1 ? 1 : 0;
+      edges_input.close();
+      std::ofstream output(library_path);
+      output << library.dump(2) << "\n";
+    }
+  }
+  Mpi::Barrier(Mpi::World());
+  Mpi::Broadcast(2, input_ok, 0, Mpi::World());
+  REQUIRE(input_ok[0] == 1);
+  REQUIRE(input_ok[1] == 1);
+  IoData iodata(config, false);
+  iodata.boundaries.cracked_attributes.insert(9);
+  MPI_Comm comm = Mpi::World();
+  MakeOutputFolder(iodata, comm);
+  std::vector<std::unique_ptr<Mesh>> meshes;
+  meshes.push_back(std::make_unique<Mesh>(MakeLeadMesh(0.0, 0.75)));
+  SpaceOperator space_op(iodata, meshes);
+  PostOperator<ProblemType::EIGENMODE> post_op(iodata, space_op);
+  auto *response = ReplicatedRecords(post_op.GetSurfaceResponseOperator());
+  REQUIRE(response);
+  Vector e_real;
+  const auto field = LoopFitLeadFixture::MakeField(space_op, 0.5, e_real);
+  // The fixture exchanges the real part's face-neighbour data only; the interface integrals
+  // below read both parts on shared faces (at 8 ranks an unexchanged imaginary part is read
+  // out of bounds), as the PostOperator exchanges both before its integrals.
+  field->Imag().ExchangeFaceNbrData();
+  const auto measured =
+      response->GetMaxwellResponse(*field, std::complex<double>(1.0), true);
+  REQUIRE_FALSE(measured.loop_remainders.empty());
+
+  // The excluded model's label = the label of the first remainder patch's claims (the
+  // isolated-edge cells on this fixture); every remainder patch of that label is excluded.
+  const auto all_portions = response->GetLoopRemainderPortions(measured.loop_remainders);
+  REQUIRE_FALSE(all_portions.portions.empty());
+  const std::string edge_label = all_portions.portions.front().topology;
+  std::vector<SurfaceResponseOperator::MaxwellResponse::LoopRemainder> excluded_remainders;
+  for (const auto &remainder : measured.loop_remainders)
+  {
+    const auto portions = response->GetLoopRemainderPortions({remainder});
+    REQUIRE_FALSE(portions.portions.empty());
+    if (portions.portions.front().topology == edge_label)
+    {
+      excluded_remainders.push_back(remainder);
+    }
+  }
+  REQUIRE_FALSE(excluded_remainders.empty());
+  auto Perimeter = [](const SurfaceResponseOperator::LoopRemainderPortions &remainder)
+  {
+    std::vector<SurfacePostOperator::UncoveredPerimeterPortion> perimeter;
+    for (const auto &portion : remainder.portions)
+    {
+      perimeter.push_back({portion.p0, portion.p1, portion.topology, portion.feature});
+    }
+    return perimeter;
+  };
+  const auto served = post_op.GetSurfaceResponseModelRawPortions().Expand();
+  std::vector<SurfacePostOperator::UncoveredPerimeterPortion> cc, missing;
+  for (const auto &portion : served)
+  {
+    if (portion.type == edge_label)
+    {
+      cc.push_back(portion);
+    }
+  }
+  REQUIRE_FALSE(cc.empty());
+  for (const auto &portion : response->GetUncoveredPortions())
+  {
+    missing.push_back(
+        {portion.p0, portion.p1, "m" + std::to_string(portion.feature), portion.feature});
+  }
+
+  const auto &surf_post_op = post_op.GetSurfacePostOp();
+  auto Energy = [&](const std::vector<SurfacePostOperator::UncoveredPerimeterPortion> &list)
+  {
+    if (list.empty())
+    {
+      return 0.0;
+    }
+    const auto energies =
+        surf_post_op.GetInterfaceUncoveredEdgeEnergies({4}, *field, nullptr, list);
+    return energies.count(4) ? energies.at(4).energy : 0.0;
+  };
+  auto Weighted = [&](const SurfaceResponseOperator::LoopRemainderPortions &remainder)
+  {
+    // The map is held by name: a range-for over a member of the call's temporary result
+    // would iterate a destroyed map (the temporary ends before the loop body).
+    const auto energies = surf_post_op.GetInterfaceWeightedPortionEdgeEnergies(
+        {4}, *field, nullptr, Perimeter(remainder), remainder.weights);
+    double total = 0.0;
+    for (const auto &[label, energy] : energies.at(4))
+    {
+      (void)label;
+      total += energy;
+    }
+    return total;
+  };
+  const auto loop_remainder = surf_post_op.GetInterfaceWeightedPortionEdgeEnergies(
+      {4}, *field, nullptr, Perimeter(all_portions), all_portions.weights);
+  const double lr_total = Weighted(all_portions);
+  const double d_indep = Weighted(response->GetLoopRemainderPortions(excluded_remainders));
+  const double missing_energy = Energy(missing), cc_energy = Energy(cc);
+  REQUIRE(lr_total > 0.0);
+  auto ServedPlusUnclaimed = [](const SurfacePostOperator::InterfaceCoveragePartition &p)
+  {
+    double sum = p.unclaimed;
+    for (const auto &[label, energy] : p.served)
+    {
+      (void)label;
+      sum += energy;
+    }
+    return sum;
+  };
+
+  // (a) The declared exclusion: the excluded remainder is kept raw twice by the corrected
+  // total's bookkeeping (in CC whole and in LR), once by the partition.
+  {
+    auto partition = surf_post_op.GetInterfaceCoveragePartition(
+        {4}, *field, nullptr, {{"Missing", &missing}, {"ConductorConsistency", &cc}},
+        served);
+    const double W = partition.at(4).within;
+    REQUIRE(W > 0.0);
+    SurfacePostOperator::MoveCoverageLoopRemainder(partition, loop_remainder);
+    const auto &p = partition.at(4);
+    const double kept_raw = missing_energy + cc_energy + lr_total;
+    const double lhs = ServedPlusUnclaimed(p);
+    CHECK(d_indep > 1.0e-6 * W);
+    CHECK_THAT(lhs, WithinAbs((W - kept_raw) + d_indep, 1.0e-12 * W));
+    CHECK_THAT(p.loop_remainder_unserved, WithinAbs(d_indep, 1.0e-12 * W));
+    // NEGATIVE: the identity without d_indep fails by exactly d_indep.
+    CHECK_THAT(lhs - (W - kept_raw), WithinAbs(d_indep, 1.0e-12 * W));
+    CHECK(std::abs(lhs - (W - kept_raw)) > 1.0e3 * 1.0e-12 * W);
+  }
+
+  // (b) The class empty (no exclusion): d_indep = 0 by its definition (no excluded patch).
+  {
+    auto partition = surf_post_op.GetInterfaceCoveragePartition(
+        {4}, *field, nullptr, {{"Missing", &missing}}, served);
+    const double W = partition.at(4).within;
+    const double unmoved = ServedPlusUnclaimed(partition.at(4));
+    SurfacePostOperator::MoveCoverageLoopRemainder(partition, loop_remainder);
+    const auto &p = partition.at(4);
+    const double kept_raw = missing_energy + lr_total;
+    CHECK(p.loop_remainder_unserved == 0.0);
+    CHECK_THAT(ServedPlusUnclaimed(p), WithinAbs(W - kept_raw, 1.0e-12 * W));
+    // NEGATIVE: without the move the identity fails by exactly the moved loop remainder.
+    CHECK_THAT(unmoved - (W - kept_raw), WithinAbs(lr_total, 1.0e-12 * W));
+    CHECK(lr_total > 1.0e3 * 1.0e-12 * W);
+  }
+#endif
+}
+
 // PatchEnergy's spatial-trace export on the Maxwell path (decision 922 B-3; the d919 review
 // MAJOR-3): the Legacy spatial-cluster fixture (the offset corner pair: one spatial
 // edge-cluster patch, six corner patches, the isolated-edge cells) under an Eigenmode
@@ -4490,12 +5429,17 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   };
   const TextCsv with = ReadTrimmedCsv(with_dir / "surface-Q-corrected.csv");
   const TextCsv without = ReadTrimmedCsv(without_dir / "surface-Q-corrected.csv");
-  // The flag column exists only with the untargeted interface; the other columns are the
-  // same set in the same order.
+  // The flag column exists only with the untargeted interface (after the existing columns,
+  // before lane L1's appended coverage columns); the other columns are the same set in the
+  // same order.
   REQUIRE(with.header.size() == without.header.size() + 1);
-  CHECK(with.header.back() == "response target");
-  CHECK(std::vector<std::string>(with.header.begin(), with.header.end() - 1) ==
-        without.header);
+  const auto flag = std::find(with.header.begin(), with.header.end(), "response target");
+  REQUIRE(flag != with.header.end());
+  REQUIRE(flag + 1 != with.header.end());
+  CHECK(*(flag + 1) == "coverage Type");
+  std::vector<std::string> with_without_flag(with.header.begin(), flag);
+  with_without_flag.insert(with_without_flag.end(), flag + 1, with.header.end());
+  CHECK(with_without_flag == without.header);
   REQUIRE(without.rows.size() == 1);
   REQUIRE(with.rows.size() == 2);
   auto Row = [&](const TextCsv &csv, int interface) -> const std::vector<std::string> &
@@ -4531,22 +5475,72 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   CHECK_THAT(std::stod(untargeted[with.Column("E_surf corrected fixed-flux (J)")]),
              WithinRel(raw, 1.0e-12));
   CHECK(std::stod(untargeted[with.Column("trace closure spread")]) == 0.0);
-  CHECK(std::stod(untargeted[with.Column("matched edge fraction")]) == 0.0);
+  CHECK(std::stod(untargeted[with.Column("matched edge length fraction")]) == 0.0);
   CHECK(std::stod(untargeted[with.Column("unmodeled corner neighborhood fraction")]) ==
         0.0);
   // p_surf corrected = raw / E_norm corrected (the corrected normalisation of the run).
   CHECK_THAT(
       std::stod(untargeted[with.Column("p_surf corrected")]),
       WithinRel(raw / std::stod(untargeted[with.Column("E_norm corrected (J)")]), 1.0e-9));
-  for (const auto &name : with.header)
+  // Every OLD column finite (outside the self-consistent ones); lane L1's appended
+  // coverage columns (from "coverage Type" on) exactly as ruling 1694 (A) defines an
+  // untargeted row: its Type, W = 0 (no target = no correction radius = an empty within-R
+  // region), the shares and the factor nan, NOT-TARGET, NO-MODEL, no loop remainder.
+  const std::size_t first_coverage = with.Column("coverage Type");
+  for (std::size_t c = 0; c < first_coverage; c++)
   {
+    const auto &name = with.header[c];
     if (name.find("self-consistent") != std::string::npos)
     {
       continue;
     }
     INFO(name);
-    CHECK(!std::isnan(std::stod(untargeted[with.Column(name)])));
+    CHECK(!std::isnan(std::stod(untargeted[c])));
   }
+  CHECK(untargeted[with.Column("coverage Type")] == "SA");
+  CHECK(std::stod(untargeted[with.Column("W within-R raw (J)")]) == 0.0);
+  for (const auto &name :
+       {"uncovered raw share of W", "Type uncovered raw share of W",
+        "Type method-gap raw share of W", "Type pending-model share of W",
+        "Type covered correction factor"})
+  {
+    INFO(name);
+    CHECK(untargeted[with.Column(name)] == "nan");
+  }
+  CHECK(untargeted[with.Column("coverage status")] == "NOT-TARGET");
+  CHECK(untargeted[with.Column("regime status")] == "NO-MODEL");
+  CHECK(std::stod(untargeted[with.Column("loop remainder unserved (J)")]) == 0.0);
+  CHECK(std::stod(untargeted[with.Column(
+            "loop remainder of excluded patches kept raw twice (J)")]) == 0.0);
+  // Ruling 1694 (1): the SA cell of surface-response-coverage.csv carries the untargeted
+  // interface's raw energy and its share of the Type's raw interface energy; its shares are
+  // over the targeted interface only (the same text as without the untargeted interface).
+  const TextCsv coverage_with = ReadTrimmedCsv(with_dir / "surface-response-coverage.csv");
+  const TextCsv coverage_without =
+      ReadTrimmedCsv(without_dir / "surface-response-coverage.csv");
+  REQUIRE(coverage_with.rows.size() == 1);
+  REQUIRE(coverage_without.rows.size() == 1);
+  const auto &sa_with = coverage_with.rows.front();
+  const auto &sa_without = coverage_without.rows.front();
+  CHECK(sa_with[coverage_with.Column("Type")] == "SA");
+  for (const auto &name : {"W within-R raw (J)", "uncovered raw share of W",
+                           "method-gap raw share of W", "coverage status"})
+  {
+    INFO(name);
+    CHECK(sa_with[coverage_with.Column(name)] == sa_without[coverage_without.Column(name)]);
+  }
+  const double raw_target = std::stod(target_with[with.Column("E_surf raw (J)")]);
+  CHECK_THAT(
+      std::stod(sa_with[coverage_with.Column("untargeted raw energy of the Type (J)")]),
+      WithinRel(raw, 1.0e-12));
+  CHECK_THAT(std::stod(sa_with[coverage_with.Column(
+                 "untargeted raw share of the Type interface energy")]),
+             WithinRel(raw / (raw + raw_target), 1.0e-12));
+  CHECK(std::stod(
+            sa_without[coverage_without.Column("untargeted raw energy of the Type (J)")]) ==
+        0.0);
+  CHECK(std::stod(sa_without[coverage_without.Column(
+            "untargeted raw share of the Type interface energy")]) == 0.0);
 #endif
 }
 

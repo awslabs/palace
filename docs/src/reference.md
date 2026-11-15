@@ -1567,7 +1567,7 @@ evaluated before the exclusion reads zero), with the portions under
 `Diagnostics.ConductorConsistency.RawPortions`. A solve with no exclusion writes nothing
 new. On the Maxwell path a postprocessing interface that is not a response target carries
 its raw energy in the corrected and fixed-flux columns of `surface-Q-corrected.csv` (the
-electrostatic driver's convention; trace closure spread 0, matched edge fraction and
+electrostatic driver's convention; trace closure spread 0, matched edge length fraction and
 unmodeled corner neighborhood fraction 0 / 0), and a run with such an interface adds the
 column `response target` (1 / 0) to that table; the self-consistent columns stay NaN when
 no self-consistent solve was requested. A corner / vertex coupon that an exact spatial cluster drops whole (its basis-point
@@ -2038,7 +2038,21 @@ the electrostatic path (fixed trace and fixed flux on the raw field, self-consis
 the corrected field); that share is reported per feature type in the Maxwell
 `surface-response-uncovered-energy.csv`, the electrostatic table's columns with the mode
 `m` (or `f (GHz)` for a driven solve) and `exc` in place of `source`, written only when
-something is uncovered and recorded under `Diagnostics.Uncovered` of `palace.json`. The
+something is uncovered and recorded under `Diagnostics.Uncovered` of `palace.json`. With
+`"Diagnostics": {"UncoveredFeatureEnergy": true}` (off by default; Maxwell drivers only,
+refused on the electrostatic path) the same raw within-`R` energy is also written per FEATURE
+to `surface-response-uncovered-feature-energy.csv`: rows `m` (or `f (GHz)`), `exc`, `type`
+(the feature type of the uncovered table), `features` (the identification feature id whose
+uncovered portions hold the nearest perimeter foot; where portions of several features of
+one type cover the same perimeter piece, their ids joined by `+`), `portions`, `length (m)`
+and the bounding box `x min (m)` .. `z max (m)` of those portions, then `uncovered raw
+energy[k] (J)` per target interface, raw field only (the energies of the uncovered table's
+`evaluation` 0 and 1 rows). Per mode, type and interface the rows sum to the uncovered
+table's row up to the quadrature round-off; the feature id is the one of the requirements
+manifest (`--surface-response-preflight`) of the same configuration, so a feature row maps
+to its key (`Hash`). The partition costs one quadrature pass per target interface and
+measurement and keeps only the uncovered portions (already held for the uncovered table)
+and one reduced vector per measurement; every other output is unchanged. The
 Maxwell correction also writes `surface-response-model-energy.csv` (decisions 845 / 846):
 the electrostatic driver's column set exactly and in order as a strict prefix — `source`,
 `evaluation`, `model`, `patch count`, `patch weight`, `domain correction (J)` and
@@ -2540,7 +2554,7 @@ corrected fields.
 | `loop-response fraction above limit`           | Fraction of fabricated surface response assigned to paths whose loop residual exceeds 0.05                                    | ``\leq 0.01``                 |
 | `hat residual`                                 | Maximum, over cap-interior hats, of the hat's value by its cap-rim line minus its value by the direct anchor line, divided by the sum of the absolute terms | information only |
 | `response-weighted hat residual`               | RMS hat residual weighted by the fabricated surface response of the hat's patch                                               | information only              |
-| `matched edge fraction`                        | Minimum, over target interfaces, of the selected physical edge length assigned a library model                                | effectively 1                 |
+| `matched edge length fraction`                 | Minimum, over target interfaces, of the selected physical edge LENGTH assigned a library model (a length figure, not an energy coverage) | effectively 1                 |
 | `unmodeled corner neighborhood fraction`       | Maximum, over target interfaces, of the matched edge length within ``R`` of an unmatched corner, endpoint, or junction        | ``\leq 0.1``                  |
 | `max R/rho`                                    | Largest matching-radius to local-curvature-radius ratio                                                                       | ``\leq 0.25``                 |
 | `max library distance`                         | Largest normalized paired-edge mismatch, separation-interpolation span, corner mismatch, or rounded-radius interpolation span | ``\leq 0.8``                  |
@@ -2605,6 +2619,213 @@ fraction, not a statistical confidence interval.
 
 The implementation and validation work required for production use is tracked in the
 [thin-metal surface-response roadmap](developer/surface_response_roadmap.md).
+
+### Coverage of the response correction
+
+Every corrected run (both solve families) measures how much of the surface energy the
+correction actually covers. The definitions are energies of the RAW field:
+
+  - ``W`` is the raw within-``R`` surface energy of an interface: its raw energy minus its
+    energy outside the matching radius ``R`` (the corrected energies' own split). A cell
+    (an eigenmode, a driven frequency and excitation, or an electrostatic source) sums
+    ``W`` over the target interfaces of one interface `Type`. By definition, a
+    postprocessing interface that no model targets has no correction radius, so its
+    within-``R`` region is empty and its ``W`` is 0: it carries its raw energy, not
+    corrected. Every share of a cell is over the TARGETED interfaces of its `Type` only; the
+    raw energy on the `Type`'s untargeted interfaces is printed beside them.
+  - ``U`` is the part of ``W`` where NO correction is applied in that cell (fail-closed:
+    whatever is not served by an applied patch is uncovered, whatever diagnostic switch is
+    on or off). ``U`` = missing + method gap: the missing share lies on uncovered features
+    whose key the identification reports `Missing` (a library could hold a model for it);
+    the method gap is everything else left raw (DomainBoundary, SpatialClusterPriority and
+    conductor-consistency-excluded claims, the circulating loop remainder, unpatched pairs,
+    the Unboxable and placement-rejected keys, the unclaimed remainder). The method gap is a
+    LOWER BOUND of what no library can cover today, so `NOT-ACHIEVABLE` is conservative.
+    One named part of the unclaimed remainder: the window of a corner coupon dropped by
+    `SpatialClusterPriority` that lies INSIDE the owner cluster's box is given to the owner
+    by the corrected total (not kept raw) but no applied claim holds it.
+  - A served claim whose end point differs from the end point of the perimeter segment it
+    lies on by arithmetic round-off only (at most 16 units in the last place per coordinate)
+    is taken to end exactly there, so ``U`` no longer counts a convex vertex's exterior
+    quadrant as uncovered because a claim end sits one round-off short of the vertex (0.8 to
+    1.3 % of ``W`` on a refined test case). Only the coverage partition does this; the
+    corrected values are unchanged. `palace.json` `SurfaceResponse.Coverage.ClaimEndCensus`
+    and one banner line count, per run, the served ends so snapped and the kept-class ends
+    (Missing, DomainBoundary, SpatialClusterPriority, conductor consistency) that are a
+    round-off short of a segment end (counted, never changed: the corrected value then
+    leaves that quadrant's raw energy out of its kept part), each with the largest distance
+    and the exact quadrant energy concerned (served: the raw energy the snap gives back;
+    kept: the raw energy at that vertex no kept class holds), the ends within round-off
+    whose foot on the segment already reaches the vertex (round-off beyond: the end lies
+    past the vertex; nothing is snapped and nothing is at stake), and the ends beyond
+    round-off but within ``10^{-5} R`` (never snapped; their energy, all of the raw energy
+    at those vertices, is an upper bound).
+  - The pending-model share is the served energy on model-set labels that hold a model
+    admitted with a non-`Qualified` `QualificationStatus` (or `LibraryQualified` false and no
+    status), counted whole; the no-status-model share is the served energy on labels that
+    hold a model whose record carries no `QualificationStatus` (information only: most 2D
+    families of a library carry no qualification record today). A configuration with
+    explicit models instead of a `"Library"` has no records at all: all of its served energy
+    is no-status.
+  - The covered correction factor is the corrected (fabricated) energy of the covered part
+    divided by its raw energy, on the closed partition: the fabricated energy of the
+    applied patches over the SERVED raw within-``R`` energy ``W - U``. The raw energy of
+    conductor-consistency-excluded claims is NOT served (it is kept raw and counted in
+    ``U``), so it is in neither term. A validated range must be derived on this same basis:
+    a ratio that counts those claims in its denominator (the fabricated energy over the
+    raw energy of every model claim, excluded ones included) is smaller than this factor by
+    the factor ``1 + E_{CC} / (W - U)`` (``E_{CC}`` the excluded claims' raw energy)
+    where such an exclusion is the only one of these terms that acts (a moved loop
+    remainder, an end snap or an owner credit also separates the two), and equal to it
+    where no exclusion, moved loop remainder, end snap or owner credit acts.
+
+The files (plain text, the cell keys of the run's other tables; written as each mode,
+frequency or source completes; under AMR in every iteration's directory; `nan` where a
+value does not exist):
+
+  - `surface-response-coverage.csv`: one row per cell and `Type`: `W within-R raw (J)`,
+    `uncovered raw share of W`, `missing raw share of W`, `method-gap raw share of W`,
+    `pending-model share of W`, `no-status-model share of W`, `covered correction factor`,
+    `validated factor min`, `validated factor max`, `coverage status`, `regime status`,
+    `partition within-R raw (J)` (the partition pass's own within-``R`` total: it differs
+    from ``W`` by round-off only), `untargeted raw energy of the Type (J)` and `untargeted
+    raw share of the Type interface energy` (over the targeted plus untargeted raw interface
+    energy of the `Type`; `nan` when that total is 0), `loop remainder unserved (J)` (the
+    circulating loop remainder that lies on no served claim) and `loop remainder of
+    excluded patches kept raw twice (J)` (see below), and `method-gap raw share of W signed
+    (before the clamp at 0)` (the method-gap share is clamped at 0; this column keeps the
+    signed value, so that served plus Missing energy above ``W`` is never hidden; it never
+    sets a status). A `Type` whose interfaces are all
+    untargeted has a `NOT-TARGET` row: ``W = 0``, shares and factor `nan`.
+  - `surface-response-uncovered-energy-by-key.csv`: one row per Missing-class key (the
+    identification's feature `Hash`): `class` (`Missing`, `Unboxable`, `PlacementRejected`),
+    `reason` (the placement rejection's class), `method gap` (1 for Unboxable and
+    placement-rejected keys), `features`, `portions`, `length (m)`, then per target
+    interface `raw within-R energy[k] (J)` and `raw share of W[k]`. Where portions of
+    several keys cover one perimeter piece, the row's key joins their hashes with `+`: such
+    a row cannot be attributed to one key. A Missing key is a model to build; a
+    PlacementRejected key has a model whose placement the geometry refused (its reason says
+    why: the model or the layout must change); an Unboxable key has a signature no coupon box
+    can hold (the chain cannot build it today).
+  - `terminal-C-corrected-coverage.csv` (electrostatic terminals): entry (i, j) is the worse
+    coverage status of sources i and j. The corrected matrix is formed with the FINAL patch
+    weights, so a source measured before a later conductor-consistency exclusion is
+    re-measured with the final exclusions for this file; each row also carries the source's
+    final worst status, its largest uncovered share and whether it was re-measured. Its own
+    rows in `surface-response-coverage.csv` keep the measurement that matches what they
+    print.
+  - Appended columns (every existing column keeps its position, name and value): the
+    Maxwell `surface-Q-corrected.csv` gains `coverage Type`, `W within-R raw (J)`,
+    `uncovered raw share of W` of the row's interface and `Type uncovered raw share of W`,
+    `Type method-gap raw share of W`, `Type pending-model share of W`, `Type covered
+    correction factor`, `coverage status`, `regime status` of its cell, then the row's
+    `loop remainder unserved (J)` and `loop remainder of excluded patches kept raw twice
+    (J)`; an untargeted interface's row reads its `Type`, ``W = 0``, `nan` shares and factor,
+    `NOT-TARGET` and `NO-MODEL`; the electrostatic `surface-Q-corrected.csv` gains per
+    interface `W within-R raw[k] (J)` and `uncovered raw share of W[k]`, then per `Type` the
+    six columns suffixed with the `Type`; `surface-response-confidence.csv` gains `worst
+    uncovered raw share of W`, `worst coverage status` and `worst regime status`.
+  - INTERIM: every coverage-status column (`coverage status` in
+    `surface-response-coverage.csv` and `surface-Q-corrected.csv`, `worst coverage status`
+    in `surface-response-confidence.csv`, the entries and `source final worst coverage
+    status` of `terminal-C-corrected-coverage.csv`) is read on the INTERIM bars below
+    (placeholders until the status validation fixes them). The CSV column names carry no
+    marker of it; `palace.json` (`SurfaceResponse.Coverage.Thresholds.Interim`: true) and the
+    end-of-run banner ("interim thresholds") do.
+
+The coverage status of a cell, on ``(U + U_{pending}) / W`` with the INTERIM bars of
+`"Coverage"`: `OK` at or below `BuildTarget`, `LOW` at or below `MaxUncoveredShare`,
+`PARTIAL` above; `NOT-ACHIEVABLE` when the method-gap share alone exceeds
+`MaxUncoveredShare`; `NO-ENERGY` when ``W = 0`` (its shares print `nan`, never 0);
+`NOT-MEASURED` when no partition exists for the cell (a SelfConsistent-only run of either
+solve family, which evaluates no response on the raw field); `NOT-TARGET` for an untargeted
+interface and for a `Type` with untargeted interfaces only (never counted as a covered
+cell); `INCONSISTENT` when the signed method-gap share is below ``-10^{-9}``: the served and
+Missing energy exceed ``W``, so the partition and the corrected total disagree: a defect to
+report (never `OK`; ``U`` is printed as computed; the worst status of all);
+`TARGET-NOT-SERVED` for a `Type` holding a configured target that no loaded model serves
+(an interface of `TargetInterfaces`, or without that list any typed interface with
+`EdgeDistances`, on which no loaded model has a fabricated surface: it is not corrected at
+all, its corrected values are its raw values): its within-``R`` raw energy is in its
+`Type`'s ``W`` and counts as uncovered, and the cell reads `TARGET-NOT-SERVED` whatever its
+band (worse than every band, never `OK`); a startup warning names the interface. Every
+cell whose status is not `OK` (`NOT-TARGET` aside) or whose regime status is not `IN` (an
+`OK` cell that reads `NO-RANGE` or `OUT`: its correction factor is computed, NOT VALIDATED
+in this regime) is listed by the end-of-run banner, one line per cell and at most 40 such
+lines (then one line counting the others), which names the bars as interim thresholds and
+the untargeted interfaces once, and in `SurfaceResponse.Coverage` of `palace.json`: the
+status counts, the regime counts, every flagged cell (`Flagged`: all of them, also those
+beyond the banner's 40 lines), the counts of served pending and status-less models, `UntargetedInterfaces`,
+`ConfiguredTargetsNotServed` (each such interface with its `Type` and the reason),
+`CellSet` (the kind of cell key, the number of measurements, the `Type`s and the number of
+cells: the rows of `surface-response-coverage.csv`), `"Complete": true`, `Level` and
+`Levels`. That block is written at the END of each solve (also when no cell was measured:
+`Cells` 0, `NoCellsReason` naming why, e.g. `RawFallback: NoMatchedFeature: no correction
+applied`, and a banner line; with no cell and no reason `"Complete"` is false): `Level` is
+the solve of the adaptive sequence that wrote it (1 = the initial mesh) and `Levels` the
+largest number of solves (`Refinement.MaxIts` + 1; 1 without AMR). `"Final": true` is added
+only once the AMR loop has ended (a run without AMR: after its only solve), by the run's
+end-of-run write of the timing record (no load of `palace.json` of its own). Under AMR the
+root output holds the last COMPLETED level until the next level writes, so a run killed
+during a later level keeps an earlier level's block, which reads `"Complete": true` but
+has no `Final`; a run killed during its first solve has no block at all, except an
+electrostatic raw-fallback run, which writes its 0-cell block before the solve (killed
+during that solve, it keeps that block; it has no `Final`). Only a block with
+`"Final": true` is the coverage of a finished run; the tables of a killed run hold the
+finished cells only. The expected cell set of a design (the cells a run should have
+measured) and a coverage certificate are not written by this version.
+
+The regime status says whether the covered correction factor lies in the range validated
+for this library and excitation class (`ElectrostaticTerminal`, `Eigenmode`, `Driven`; a
+file with a `Driven` range is refused by name in this version, because that class lumps
+every driven excitation, so every driven cell reads `NO-RANGE`):
+`IN` (the factor lies in the validated range; it does not say that the corrected value is
+right), `OUT` (the covered part is corrected by a factor outside what was validated for
+this library and excitation class; its physical cause is not established: it does not say
+that the value is wrong, nor by how much), `NO-RANGE` (the factor is computed but NOT
+VALIDATED in this regime: no validated range for the `Type` and class; every eigenmode and
+driven cell reads `NO-RANGE` today, since the ranges of record are electrostatic only) or
+`NO-MODEL` (nothing served: the factor prints `nan`). A regime status is a status,
+never a correction: no value depends on it. The ranges are data, not code: an optional
+sidecar file named by `"Coverage": {"ValidatedRegime": <path>}` (`Version` 1; `Library`
+with the `Sha256` of the loaded library file, refused when it does not match; `Tolerance`
+``\tau`` in ``[0, 0.1]``; `Ranges` of `Type`, `ExcitationClass`, `FactorMin`, `FactorMax`,
+`N` (the number of validation windows, an integer of at least 1: printed in the banner) and
+`Provenance` (a non-empty object or text), each required); `IN` when ``F_{min}/(1+\tau) \leq F \leq F_{max}(1+\tau)``. Without the file
+every cell reads `NO-RANGE`. The product does not check on which basis a file's ranges were
+derived: they must be on the basis of the covered correction factor above (the
+fabricated energy over the served raw energy on the closed partition, the
+conductor-consistency-excluded claims not served), and the range's `Provenance` should name
+that basis in its rule text.
+
+The configuration block, on both paths (`Solver.SurfaceResponseCorrection.Coverage` and
+`Solver.Electrostatic.ResponseCorrection.Coverage`): `"Policy"` accepts `"Warn"` only (any
+other value is an error until a policy is ruled), `"MaxUncoveredShare"` 0.05 and
+`"BuildTarget"` 0.02 (interim bars, FIXED: any other value is an error until the status
+validation rules otherwise), and `"ValidatedRegime"`.
+
+The corrected surface energy of a Maxwell run keeps raw the energy of the
+conductor-consistency-excluded patches' claims and, separately, the circulating loop
+remainder of every patch with a remainder, the excluded ones included: where an excluded
+patch has a loop remainder, that part of its raw energy is counted twice and the printed
+corrected energy is overstated by it (a known open item of the corrected bookkeeping; the
+coverage outputs do not change it). The column `loop remainder of excluded patches kept raw
+twice (J)` prints that amount, integrated on its own; the coverage partition counts every
+point once.
+
+Before the solve, the log prints one stage-0 line: per interface `Type`, the length of the
+Missing-class uncovered portions on the `Type`'s target interfaces over the length of
+their perimeter, with the method-gap (placement-rejected or unboxable) length beside it
+("n/a" for a `Type` with no target interface), and the identification's all-feature
+figure, unmatched / (matched + unmatched) length ("n/a" when the features were read from
+the response-geometry cache). It is a LENGTH figure: it is not the energy share, and a
+small value does not mean good coverage: on one device, 0.83 % of the perimeter by length
+stood beside 22 to 60 % of ``W`` by energy uncovered in some modes.
+
+A coverage status is about coverage only; the regime status says whether the covered
+part's correction factor lies in the range validated for this library and excitation
+class; NEITHER says that the mesh of the solve resolves the field at the correction
+radius.
 
 ## Lumped parameter extraction
 

@@ -296,7 +296,7 @@ protected:
   // PatchEnergy (decision 922 B-1; the 851 (C) export): the applied patches' raw claims by
   // model set (empty without PatchEnergy), whose within-R raw energy is partitioned per
   // model set (surface-response-model-raw-energy.csv).
-  std::vector<SurfacePostOperator::UncoveredPerimeterPortion> surface_response_model_raw;
+  SurfacePostOperator::CompactPerimeterPortions surface_response_model_raw;
   // OI-COVERAGE-EXCLUSION-ENERGY (idfix DESIGN section 8; decisions 1064 (2) / 1074): the
   // excluded / unclaimed perimeter portions by class (empty without
   // Diagnostics.ExclusionEnergy), whose within-R raw energy is partitioned per class
@@ -306,6 +306,9 @@ protected:
       surface_response_exclusion_energy;
   bool surface_response_exclusion_energy_enabled = false;
   bool surface_response_within_r_volume_energy_enabled = false;  // COL-3 (R-MAG-15)
+  // Diagnostics.UncoveredFeatureEnergy (decision 1567 (b)): off by default (every output
+  // then byte-identical to a run without the option).
+  bool surface_response_uncovered_feature_energy_enabled = false;
   bool surface_response_postprocess_enabled = false;
   bool surface_response_self_consistent_enabled = false;
   // PatchEnergy on the Maxwell path (decisions 913 / 920 / 922 B): the per-patch export
@@ -361,6 +364,28 @@ protected:
     // Section 8: per target interface, the raw field's within-R energy per exclusion class
     // (surface-response-exclusion-energy.csv); empty without Diagnostics.ExclusionEnergy.
     std::map<int, std::map<std::string, double>> exclusion_energy_partition;
+    // Diagnostics.UncoveredFeatureEnergy (decision 1567 (b)): per target interface, the raw
+    // field's uncovered within-R energy per (type, feature label); empty when off.
+    std::map<int, std::map<std::pair<std::string, std::string>, double>> uncovered_feature;
+    // Lane L1 (decision 1634 (1); rulings 1641 / 1649 Q3): THE CLOSED COVERAGE PARTITION of
+    // the raw field, per target interface, ALWAYS measured with the postprocessed
+    // correction: the kept-raw classes "Missing" (by "m<feature>" label, the key records of
+    // SurfaceResponseOperator::GetUncoveredKeys), "DomainBoundary",
+    // "SpatialClusterPriority" and "ConductorConsistency" (by portion type), then the
+    // served claims (by model-set label), then "UnpatchedPairs" (the served list's
+    // `unpatched` label alone) and "Excluded" (by exclusion class;
+    // Diagnostics.ExclusionEnergy only), then the unclaimed remainder. The loop remainder
+    // (`loop_remainder`) lies inside the served bins: the coverage shares move it out of
+    // them.
+    std::map<int, SurfacePostOperator::InterfaceCoveragePartition> coverage;
+    // Lane L1 (decision 1634 (2) / (4)): the coverage of this measurement per Type (W, U
+    // and its shares, the interim coverage status, the covered correction factor and the
+    // regime status) and the key rows, from `coverage` and the corrected bookkeeping's W
+    // and fabricated energy (ComputeCoverageMeasurement). ROOT ONLY (the writers' rank;
+    // the library's qualification records are read there): empty elsewhere. The writers of
+    // surface-Q-corrected.csv, surface-response-confidence.csv and the coverage tables read
+    // the per-cell status from here (a coverage policy's hook, lane L4).
+    CoverageMeasurement coverage_measurement;
     // COL-3 (mx-sc-magnetic Phase 3 (b), R-MAG-15; Diagnostics.WithinRVolumeEnergy): per
     // placed patch the raw field's within-box volume energies (empty when off).
     std::vector<SurfaceResponseOperator::PatchVolumeEnergy> within_r_volume_energies;
@@ -371,6 +396,12 @@ protected:
     // lengths are recomputed by the printer (PrintSurfaceResponseLoopFit).
     std::map<int, std::map<std::string, double>> loop_remainder;
     std::map<int, std::map<std::string, double>> self_consistent_loop_remainder;
+    // Lane L1 (ruling 1694 (i); OI-CORRECTED-TOTAL-CC-LOOPREMAINDER-OVERLAP): the part of
+    // `loop_remainder` on the conductor-consistency-EXCLUDED patches, by its own integral
+    // (the same weighted portion integral restricted to those patches' remainders): the
+    // corrected total keeps it raw twice. A coverage output only; no corrected value reads
+    // it.
+    std::map<int, std::map<std::string, double>> loop_remainder_excluded;
 
     double raw_normalization_energy = 0.0;
     double corrected_normalization_energy = 0.0;
@@ -444,6 +475,11 @@ protected:
   void PrintSurfaceResponsePatchEnergies(double output_index, int excitation) const;
   mutable bool surface_response_warning_printed = false;
   mutable bool surface_response_portion_tables_started = false;
+  // OI-MAXWELL-CC-CSV-HEADERLESS-AFTER-FIRST-PRINT (lane L1, decision 1634 (6)): the paths
+  // of the plain appended tables (the per-type portion tables, the loop-fit tables) whose
+  // header is written; a table writes its header with its FIRST rows, whichever print
+  // that is.
+  mutable std::set<std::string> surface_response_tables_with_header;
   // The per-type portion tables of the Maxwell correction (decision 751): the uncovered
   // requirements' and the DomainBoundary claims' raw within-R energies and shares per
   // evaluation, written like the electrostatic driver's tables of the same names.
@@ -464,6 +500,13 @@ protected:
   // Maxwell keys), a plain text table appended per print, root only.
   void PrintSurfaceResponseExclusionEnergies(double output_index, int excitation) const;
   mutable bool surface_response_exclusion_energy_started = false;
+  // Diagnostics.UncoveredFeatureEnergy (decision 1567 (b)):
+  // surface-response-uncovered-feature-energy.csv (per type and feature label of the
+  // uncovered requirements: portions, length, bounding box and the raw field's within-R
+  // energy per target interface), a plain text table appended per print, root only.
+  void PrintSurfaceResponseUncoveredFeatureEnergies(double output_index,
+                                                    int excitation) const;
+  mutable bool surface_response_uncovered_feature_started = false;
   // OI-MX-LOOPGATE (decision 955): surface-response-loop-fit.csv (per evaluation the
   // maximum and response-weighted circulating share, the remainder / fallback patch counts
   // and the rho-weighted claim length) and surface-response-loop-remainder-energy.csv (per
@@ -472,6 +515,16 @@ protected:
   // removed at the first print before the writes (decision 473 MAJOR-3).
   void PrintSurfaceResponseLoopFit(double output_index, int excitation) const;
   mutable bool surface_response_loop_fit_started = false;
+  // Lane L1 (decision 1634 (2); DESIGN-v2 s4.2): surface-response-coverage.csv (one row
+  // per cell x Type: W, the uncovered / missing / method-gap / pending / no-status shares,
+  // the covered correction factor, the validated range, the coverage and regime statuses)
+  // and surface-response-uncovered-energy-by-key.csv (per Missing-class key: kind,
+  // reason, features, portions, length and the raw within-R energy and share of W per
+  // target interface), plain text tables appended per print (each measurement as it
+  // completes), root only; both removed at the first print. Records the cells for the
+  // end-of-run banner.
+  void PrintSurfaceResponseCoverage(double output_index, int excitation) const;
+  mutable bool surface_response_coverage_started = false;
 
   // Per-entry impedance postprocessing configuration (keyed by config index).
   struct ImpedancePostproConfig
@@ -511,6 +564,14 @@ protected:
   void MeasureFarField() const;
   void MeasureInterfaceEFieldEnergy() const;      // Depends: LumpedPorts
   void MeasureSurfaceResponseCorrection() const;  // Depends: Domain, ports, interfaces
+  // Lane L1: the excitation class of this solver's coverage cells (the validated-regime
+  // ranges' key).
+  static constexpr CoverageExcitationClass SurfaceResponseCoverageExcitation()
+  {
+    return solver_t == ProblemType::EIGENMODE ? CoverageExcitationClass::EIGENMODE
+           : solver_t == ProblemType::DRIVEN  ? CoverageExcitationClass::DRIVEN
+                                              : CoverageExcitationClass::NONE;
+  }
   void MeasureProbes() const;
   void PrintSurfaceResponseCorrection(double output_index, int excitation) const;
   void RegisterSurfaceResponseParaviewFields();
@@ -629,9 +690,14 @@ public:
 
   bool NeedsRecoveredElectricFlux() const { return D_recovered != nullptr; }
 
+  // Lane L1 (decision 1634 (2)): the configured Type of every postprocessing interface
+  // (only those in `targets` when given): the coverage cells' Types.
+  std::map<int, std::string>
+  GetInterfaceTypes(const std::set<int> *targets = nullptr) const;
+
   // PatchEnergy: the applied patches' raw claims as the partition reads them (taken from
   // the operator at the construction, round 2b B1).
-  const std::vector<SurfacePostOperator::UncoveredPerimeterPortion> &
+  const SurfacePostOperator::CompactPerimeterPortions &
   GetSurfaceResponseModelRawPortions() const
   {
     return surface_response_model_raw;
@@ -926,12 +992,27 @@ public:
   template <ProblemType U = solver_t>
   auto GetElectrostaticPartitionedEdgeEnergies(
       const std::set<int> &response_targets,
-      const std::vector<SurfacePostOperator::UncoveredPerimeterPortion> &portions) const
+      SurfacePostOperator::PerimeterPortionView portions) const
       -> std::enable_if_t<U == ProblemType::ELECTROSTATIC,
                           std::map<int, std::map<std::string, double>>>
   {
     return surf_post_op.GetInterfacePartitionedEdgeEnergies(response_targets, *E,
                                                             D_recovered.get(), portions);
+  }
+  // Lane L1 (decision 1634 (1); rulings 1641 / 1649 Q3): the closed coverage partition of
+  // the same field (SurfacePostOperator::GetInterfaceCoveragePartition).
+  template <ProblemType U = solver_t>
+  auto GetElectrostaticCoveragePartition(
+      const std::set<int> &response_targets,
+      const std::vector<SurfacePostOperator::CoveragePartitionClass> &kept_classes,
+      SurfacePostOperator::PerimeterPortionView served,
+      const std::vector<SurfacePostOperator::CoveragePartitionClass> &remainder_classes)
+      const
+      -> std::enable_if_t<U == ProblemType::ELECTROSTATIC,
+                          std::map<int, SurfacePostOperator::InterfaceCoveragePartition>>
+  {
+    return surf_post_op.GetInterfaceCoveragePartition(
+        response_targets, *E, D_recovered.get(), kept_classes, served, remainder_classes);
   }
 
   // Evaluate localized interface energies for an electrostatic field without producing
