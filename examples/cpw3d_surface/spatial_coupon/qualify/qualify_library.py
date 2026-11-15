@@ -1143,6 +1143,13 @@ def empty_state_left(record, job, *, remote, profile, log):
     submission = job["Submission"]
     evidence = remote_side.exit_evidence(remote["Host"], profile["PBSBin"], submission["Job"], job["RemoteDirectory"])
     monitor = job["Monitor"]
+    if evidence["Reachable"] and remote_side.in_queue(evidence["FinishedState"]):
+        # Decision 1836 m-5 (a): the finished-job query shows the job in the queue: no absence; the count is reset.
+        monitor.pop("AbsentAnswers", None)
+        monitor["LastExitEvidence"] = evidence
+        log(f"== {evidence['UTC']} {record['Case']} {job['Name']} job {submission['Job']} empty job state, qstat -xf state "
+            f"{evidence['FinishedState']}: in the queue, job kept active")
+        return False
     absent = monitor.setdefault("AbsentAnswers", {"Count": 0, "FirstUTC": evidence["UTC"], "FirstTime": time.time()})
     absent["Count"] += 1
     absent["Last"] = evidence
