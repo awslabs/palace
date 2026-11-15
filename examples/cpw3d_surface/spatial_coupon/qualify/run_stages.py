@@ -30,7 +30,11 @@ the host's node file) and the stage's PALACE_RESPONSE_* variables set and forwar
 More than one node, or a stage naming its own executable, is refused.  After a stage killed by
 its cap or by the memory stop, no process of its session may remain (<= 300 s, else the job
 stops: exit 4) and the next launch waits 90 s; a stage that failed at MPI start in libfabric
-fi_domain with no result file is retried ONCE (decision 1710).  A plan without the
+fi_domain with no result file is retried ONCE (decision 1710).  A stage is a CAP when its wall
+reached its cap with rc != 0 (124, or -9 / 137 after timeout's KILL escalation; decision 1721):
+never retried, always followed by the wait.  The memory stop fails closed: a sampler failure
+kills the running stage, starts nothing more and ends the job with exit 5; every launch first
+checks that no stop is raised and that the sampler is alive.  A plan without the
 block runs exactly as before.
 
 usage: run_stages.py PLAN.json
@@ -209,6 +213,10 @@ AFTER_KILL_PAUSE_SECONDS = 90
 FI_DOMAIN_PATTERN = re.compile(r"failed an OFI Libfabric library call \(fi_domain\)")
 ALLOCATION_PATTERN = re.compile(r"Cannot allocate memory")
 PALACE_STARTED_PATTERN = re.compile(r"^Running with \d+ MPI process", re.M)  # Palace's first line after MPI_Init
+# Form X (decision 1721 F-1): the return codes of a stage ended by `timeout -k 30 CAP`: 124 (its
+# SIGTERM honoured) and, by its KILL escalation 30 s later, -9 (Popen: timeout kills its own
+# process group, itself included) or 137.
+CAP_RETURN_CODES = (124, -9, 137)
 
 
 def launcher_preflight(launcher, plan, *, digest=None, run=None, environment=None):
@@ -343,12 +351,27 @@ def stage_result_files(stage):
     return sorted(str(path) for root in roots if root.is_dir() for path in root.rglob("*") if path.is_file())
 
 
-def retry_reason(code, log_text, result_files):
+def stage_capped(code, wall_seconds, cap_seconds):
+    """Form X (decision 1721 F-1): the stage was ended by its cap.  The cap is the whole seconds
+    given to `timeout`; a stage whose wall reached it is a cap whatever its return code (124, or
+    -9 / 137 after the KILL escalation, or what a killed launcher returned), except rc 0: timeout
+    returns the command's own status only when the command ended before the cap fired."""
+    return code != 0 and wall_seconds >= int(cap_seconds)
+
+
+def cap_end(code):
+    """Form X: how a capped stage ended (the record's CapEnd)."""
+    return {124: "SIGTERM", -9: "SIGKILL", 137: "SIGKILL"}.get(code, f"rc {code}")
+
+
+def retry_reason(code, log_text, result_files, *, capped=False):
     """Form X (decision 1710): the reason line for ONE retry of a failed stage, or None.  ALL must
-    hold: rc != 0 and not the cap's 124; the log has the libfabric fi_domain allocation failure;
-    the failure is at MPI start (no PALACE_STARTED_PATTERN line, hence no solver line); the stage
-    wrote no result file.  A memory-stop stage is never retried (the job ends there)."""
-    if code in (0, 124) or result_files:
+    hold: rc != 0 and not the cap's 124; the stage was not ended by its cap (decision 1721 F-1:
+    stage_capped, which also covers the KILL escalation's -9 / 137); the log has the libfabric
+    fi_domain allocation failure; the failure is at MPI start (no PALACE_STARTED_PATTERN line,
+    hence no solver line); the stage wrote no result file.  A memory-stop stage is never retried
+    (the job ends there)."""
+    if code in (0, 124) or capped or result_files:
         return None
     if not (FI_DOMAIN_PATTERN.search(log_text) and ALLOCATION_PATTERN.search(log_text)):
         return None
@@ -485,6 +508,9 @@ def main(argv):
     if image is not None:
         preflight["Launcher"] = image
         preflight["MemoryStopBarBytes"] = memory_stop_bar(launcher, memory0["MemTotal"])
+        # Decision 1721 F-3: the plan this runner read and the runner itself, compared after the job.
+        preflight["PlanSHA256"] = sha(plan_path)
+        preflight["RunnerSHA256"] = sha(Path(__file__).resolve())
     other_hosts = [host for host in ordered_hosts if host != status["Host"]]
     node_shell = None
     if nodes > 1:
@@ -537,33 +563,68 @@ def main(argv):
     current_stage = ["preflight"]
     stage_peaks = {}
     # Form X only (E-3 (a), decision 1702): the memory STOP on the MEASURED node use of these samples.
-    current_process, memory_stop, stage_samples = [None], {}, []
+    # Decision 1721 F-2: it fails CLOSED: on a crossing the running stage is killed BEFORE the stop
+    # file is written; on ANY exception in the sampler the running stage is killed first, then
+    # SamplerFailed is recorded, no further stage starts and the job exits 5; every launch is
+    # preceded by launch_blocked() (a stop already raised, or a sampler failed / not alive).
+    current_process, memory_stop, stage_samples, sampler_failure = [None], {}, [], {}
     memory_bar = preflight.get("MemoryStopBarBytes")
 
-    def sampler():
-        with samples_path.open("w") as stream:
-            stream.write("unix,stage,used_bytes\n")
-            while not stop_sampling.is_set():
-                values = meminfo()
-                used = values["MemTotal"] - values["MemAvailable"]
-                stage_peaks[current_stage[0]] = max(stage_peaks.get(current_stage[0], 0), used)
-                stream.write(f"{time.time():.0f},{current_stage[0]},{used}\n")
-                stream.flush()
-                if memory_bar is not None:
-                    stage_samples.append((round(time.time()), current_stage[0], used))
-                    if not memory_stop and memory_stop_index([used], memory_bar) is not None:
-                        memory_stop.update(Stage=current_stage[0], UsedBytes=used, BarBytes=memory_bar,
-                                           MemTotalBytes=values["MemTotal"], UTC=time.strftime("%FT%TZ", time.gmtime()),
-                                           Samples=[list(sample) for sample in stage_samples])
-                        (base / "memory-stop.json").write_text(json.dumps(memory_stop, indent=1) + "\n")
-                        process = current_process[0]
-                        if process is not None and process.poll() is None:
-                            os.killpg(process.pid, signal.SIGTERM)
-                            if stop_sampling.wait(10.0) is False and process.poll() is None:
-                                os.killpg(process.pid, signal.SIGKILL)
-                stop_sampling.wait(5.0)
+    def kill_stage():
+        """SIGTERM to the running stage's process group, SIGKILL after 10 s (no stage: nothing)."""
+        process = current_process[0]
+        if process is not None and process.poll() is None:
+            try:
+                os.killpg(process.pid, signal.SIGTERM)
+                if stop_sampling.wait(10.0) is False and process.poll() is None:
+                    os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass  # the group is gone: nothing left to kill
 
-    threading.Thread(target=sampler, daemon=True).start()
+    def sampler():
+        try:
+            with samples_path.open("w") as stream:
+                stream.write("unix,stage,used_bytes\n")
+                while not stop_sampling.is_set():
+                    values = meminfo()
+                    used = values["MemTotal"] - values["MemAvailable"]
+                    stage_peaks[current_stage[0]] = max(stage_peaks.get(current_stage[0], 0), used)
+                    stream.write(f"{time.time():.0f},{current_stage[0]},{used}\n")
+                    stream.flush()
+                    if memory_bar is not None:
+                        stage_samples.append((round(time.time()), current_stage[0], used))
+                        if not memory_stop and memory_stop_index([used], memory_bar) is not None:
+                            memory_stop.update(Stage=current_stage[0], UsedBytes=used, BarBytes=memory_bar,
+                                               MemTotalBytes=values["MemTotal"], UTC=time.strftime("%FT%TZ", time.gmtime()),
+                                               Samples=[list(sample) for sample in stage_samples])
+                            kill_stage()
+                            try:
+                                (base / "memory-stop.json").write_text(json.dumps(memory_stop, indent=1) + "\n")
+                            except OSError as error:
+                                memory_stop["StopFileError"] = f"{type(error).__name__}: {error}"[:300]
+                    stop_sampling.wait(5.0)
+        except BaseException as error:
+            if memory_bar is None:
+                raise
+            sampler_failure.update(Reason=f"{type(error).__name__}: {error}"[:300], Stage=current_stage[0],
+                                   UTC=time.strftime("%FT%TZ", time.gmtime()))
+            kill_stage()
+
+    sampler_thread = threading.Thread(target=sampler, daemon=True)
+    sampler_thread.start()
+
+    def launch_blocked():
+        """Form X (decision 1721 F-2 / F-5), right before EVERY launch (the retry included): the
+        reason the stage may not start, or None.  A memory stop raised (also during an after-kill
+        wait or pause), or a sampler that failed or is no longer alive."""
+        if launcher is None:
+            return None
+        if memory_stop:
+            return "memory-stop"
+        if not sampler_failure and not sampler_thread.is_alive():
+            sampler_failure.update(Reason="the memory sampler thread is not alive", Stage=current_stage[0],
+                                   UTC=time.strftime("%FT%TZ", time.gmtime()))
+        return "sampler-failed" if sampler_failure else None
     # The other nodes' samplers (this script in --node-sampler mode through the node shell),
     # stopped by the stop file at the end; their CSVs give every stage's per-node peaks.
     node_samplers, node_sample_paths = [], []
@@ -631,6 +692,9 @@ def main(argv):
                 process = subprocess.Popen(command, env=environment, stdout=stream, stderr=subprocess.STDOUT,
                                            start_new_session=True)
                 current_process[0] = process
+                if launch_blocked():
+                    # Decision 1721 F-2: a stop raised between the guard and this start.
+                    kill_stage()
                 try:
                     code = process.wait()
                 except KeyboardInterrupt:
@@ -638,10 +702,17 @@ def main(argv):
                     code = process.wait()
             return process, code, time.monotonic() - started, started_epoch
 
+        blocked = launch_blocked()
+        if blocked:
+            record.update(State=blocked, NotLaunched=True)
+            status["Stages"].append(record)
+            save()
+            break
         process, code, wall, started_epoch = launch(command)
+        capped = launcher is not None and stage_capped(code, wall, cap)
         reason = None
-        if launcher is not None and not memory_stop:
-            reason = retry_reason(code, log.read_text(errors="replace"), stage_result_files(stage))
+        if launcher is not None and not memory_stop and not sampler_failure:
+            reason = retry_reason(code, log.read_text(errors="replace"), stage_result_files(stage), capped=capped)
         if reason:
             # Form X (decision 1710): ONE retry of a stage that failed at MPI start in fi_domain.
             current_process[0] = None
@@ -660,18 +731,24 @@ def main(argv):
                 cap = min(stage["CapSeconds"], remaining)
                 if cap < stage["MinimumSeconds"]:
                     attempt["Retry"] = "skipped-no-time"
+                elif launch_blocked():
+                    attempt["Retry"] = "not-launched-" + launch_blocked()
                 else:
                     command = launcher_command(launcher, cap=cap, timefile=timefile, exports=exports, ranks=plan["Ranks"],
                                                config=stage["Config"])
                     record.update(Command=command, CapSeconds=cap, StartUTC=time.strftime("%FT%TZ", time.gmtime()))
                     process, code, wall, started_epoch = launch(command)
-        parsed = parse_log(log.read_text(errors="replace"))
+                    capped = stage_capped(code, wall, cap)
+        # The log of a retry that did not start was moved to its attempt-1 name.
+        parsed = parse_log(log.read_text(errors="replace") if log.exists() else "")
         time_text = timefile.read_text() if timefile.exists() else ""
         match = re.search(r"Maximum resident set size \(kbytes\): (\d+)", time_text)
-        record.update(ReturnCode=code, WallSeconds=wall, TimedOut=code == 124,
+        record.update(ReturnCode=code, WallSeconds=wall, TimedOut=capped if launcher is not None else code == 124,
                       MaxSingleProcessRSSBytes=int(match.group(1)) * 1024 if match else None,
                       NodePeakUsedBytesSampled=stage_peaks.get(name), Parsed=parsed,
                       EndUTC=time.strftime("%FT%TZ", time.gmtime()))
+        if capped:
+            record["CapEnd"] = cap_end(code)
         if nodes > 1:
             peaks = per_node_peaks(node_sample_paths, int(started_epoch), int(time.time()) + 1)
             peaks[status["Host"]] = stage_peaks.get(name, 0)
@@ -679,31 +756,41 @@ def main(argv):
             record["NodePeakUsedBytesSampled"] = max(peaks.values()) if peaks else stage_peaks.get(name)
             record["Nodes"] = nodes
         ok = code == 0 and not parsed["Nonconvergence"]
-        record["State"] = "complete" if ok else ("timed-out" if code == 124 else "failed")
+        record["State"] = "complete" if ok else ("timed-out" if record["TimedOut"] else "failed")
         current_process[0] = None
         if memory_stop:
             # No partial output of a stopped job is a result: this stage and the job end here.
             ok = False
             record["State"] = "memory-stop"
             record["MemoryStop"] = {key: value for key, value in memory_stop.items() if key != "Samples"}
-        if launcher is not None and record["State"] in ("timed-out", "memory-stop"):
+        elif sampler_failure:
+            # Decision 1721 F-2: the stage ran (or was killed) without a working memory stop.
+            ok = False
+            record["State"] = "sampler-failed"
+            record["SamplerFailed"] = dict(sampler_failure)
+        if launcher is not None and record["State"] in ("timed-out", "memory-stop", "sampler-failed"):
             # Form X (decision 1710): no process of the killed stage may remain; then the pause before
-            # anything else starts (after a memory stop nothing else starts).
+            # anything else starts (after a memory stop or a sampler failure nothing else starts).
             current_stage[0] = "after-kill-wait"
             record["AfterKill"] = wait_for_session_exit(process.pid)
             if record["AfterKill"]["Remaining"]:
                 after_kill_stop = {"Stage": name, **record["AfterKill"]}
-            elif not memory_stop:
+            elif not memory_stop and not sampler_failure:
                 pending_pause = AFTER_KILL_PAUSE_SECONDS
         if ok:
             completed.add(name)
         status["Stages"].append(record)
         save()
         current_stage[0] = "between-stages"
-        if memory_stop or after_kill_stop:
+        if memory_stop or after_kill_stop or sampler_failure:
             break
 
+    if launcher is not None and not sampler_failure and not sampler_thread.is_alive():
+        sampler_failure.update(Reason="the memory sampler thread ended before the job", Stage=current_stage[0],
+                               UTC=time.strftime("%FT%TZ", time.gmtime()))
     stop_sampling.set()
+    if launcher is not None:
+        sampler_thread.join(timeout=15)  # a stop file write after its kill (decision 1721 F-2) ends first
     time.sleep(0.2)
     if node_samplers:
         stop_file.write_text(time.strftime("%FT%TZ", time.gmtime()) + "\n")
@@ -716,6 +803,11 @@ def main(argv):
     if after_kill_stop:
         state = "after-kill-stop"
         status["AfterKillStop"] = after_kill_stop
+    if sampler_failure:
+        state = "sampler-failed"
+        status["SamplerFailed"] = dict(sampler_failure)
+    if memory_stop:
+        status["MemoryStop"] = {key: value for key, value in memory_stop.items() if key != "Samples"}
     status.update(State="memory-stop" if memory_stop else state,
                   EndUTC=time.strftime("%FT%TZ", time.gmtime()), TotalSeconds=time.monotonic() - job_start,
                   StagePeakUsedBytesSampled=stage_peaks)
@@ -727,7 +819,7 @@ def main(argv):
     for record in status["Stages"]:
         print(record["Name"], record["State"], record.get("WallSeconds"), record.get("Parsed", {}).get("H1"),
               record.get("Parsed", {}).get("PCG"))
-    return 0 if status["State"] == "complete" else (3 if memory_stop else (4 if after_kill_stop else 1))
+    return 0 if status["State"] == "complete" else (3 if memory_stop else (5 if sampler_failure else (4 if after_kill_stop else 1)))
 
 
 if __name__ == "__main__":

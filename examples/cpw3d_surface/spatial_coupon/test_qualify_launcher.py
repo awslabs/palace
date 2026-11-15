@@ -186,6 +186,15 @@ if rest == ["env"]:
     for key, value in sorted(inner.items()):
         print(key + "=" + value)
     sys.exit(0)
+if os.environ.get("FAKE_IGNORE_TERM_STAGE") == rest[-1]:
+    # Decision 1721 F-1: a stage that ignores the cap's SIGTERM (timeout's KILL escalation ends it).
+    import signal
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    open(os.environ["FAKE_IGNORE_TERM_COUNT"], "a").write("x")
+    if os.environ.get("FAKE_IGNORE_TERM_FI_DOMAIN"):
+        print("Open MPI failed an OFI Libfabric library call (fi_domain).  This is highly")
+        print("  Error: Cannot allocate memory (1)", flush=True)
+    time.sleep(60)
 if os.environ.get("FAKE_SLEEP_STAGE") == rest[-1]:
     time.sleep(30)
 if os.environ.get("FAKE_FI_DOMAIN_STAGE") == rest[-1]:
@@ -500,6 +509,117 @@ class RunStagesLauncherTest(unittest.TestCase):
         self.assertEqual((status["State"], status["AfterKillStop"]["Remaining"]), ("after-kill-stop", [99999]))
         self.assertEqual([stage["State"] for stage in status["Stages"]], ["timed-out"])
         self.assertFalse(self.record.exists())
+
+    # Decision 1721 F-1: a cap is recognised by the wall, whatever the rc the kill produced.
+    def test_stage_capped_rule(self):
+        self.assertTrue(run_stages.stage_capped(124, 20.0, 20))
+        self.assertTrue(run_stages.stage_capped(-9, 50.1, 20))
+        self.assertTrue(run_stages.stage_capped(137, 50.0, 20.7))  # the cap given to timeout = 20
+        self.assertTrue(run_stages.stage_capped(1, 20.3, 20))  # a stage at its cap, whatever its rc
+        self.assertFalse(run_stages.stage_capped(0, 20.01, 20))  # rc 0: the command ended before the cap
+        self.assertFalse(run_stages.stage_capped(14, 3.0, 20))
+        self.assertEqual([run_stages.cap_end(code) for code in (124, -9, 137, 1)], ["SIGTERM", "SIGKILL", "SIGKILL", "rc 1"])
+        self.assertIsNone(run_stages.retry_reason(-9, self.FI_DOMAIN_LOG, [], capped=True))
+        self.assertIsNotNone(run_stages.retry_reason(-9, self.FI_DOMAIN_LOG, [], capped=False))
+
+    def term_ignoring_plan(self, **extra):
+        plan_path = self.capped_plan()
+        os.environ.pop("FAKE_SLEEP_STAGE")
+        os.environ.update(FAKE_IGNORE_TERM_STAGE=json.loads(plan_path.read_text())["Stages"][0]["Config"],
+                          FAKE_IGNORE_TERM_COUNT=str(self.root / "term-count"), **extra)
+        return plan_path
+
+    def assert_kill_escalation_cap(self, plan_path):
+        with mock.patch.object(run_stages, "AFTER_KILL_PAUSE_SECONDS", 1):
+            self.assertEqual(self.run_plan(plan_path), 1)
+        worker, reducer = self.status_of(plan_path)["Stages"]
+        self.assertIn(worker["ReturnCode"], (-9, 137))
+        self.assertGreaterEqual(worker["WallSeconds"], 30)
+        self.assertEqual((worker["State"], worker["TimedOut"], worker["CapEnd"]), ("timed-out", True, "SIGKILL"))
+        self.assertEqual(worker["AfterKill"]["Remaining"], [])
+        self.assertNotIn("Attempts", worker)
+        self.assertEqual((self.root / "term-count").read_text(), "x")
+        self.assertEqual((reducer["State"], reducer["AfterKillPauseSeconds"]), ("complete", 1))
+
+    def test_a_cap_ended_by_the_kill_escalation_is_a_cap(self):
+        self.assert_kill_escalation_cap(self.term_ignoring_plan())
+
+    def test_a_cap_kill_with_the_fi_domain_text_is_never_retried(self):
+        self.assert_kill_escalation_cap(self.term_ignoring_plan(FAKE_IGNORE_TERM_FI_DOMAIN="1"))
+
+    # Decision 1721 F-2 / F-5: the memory stop fails closed.
+    def test_a_sampler_failure_kills_the_stage_and_ends_the_job(self):
+        flag = self.root / "stage-started"
+        os.environ["FAKE_FLAG"] = str(flag)
+        plan_path = self.plan()
+        total = 100 << 30
+
+        def failing_meminfo():
+            if flag.exists():
+                raise OSError("a sampler read fails")
+            return {"MemTotal": total, "MemAvailable": total - (1 << 30)}
+
+        with mock.patch.object(run_stages, "meminfo", side_effect=failing_meminfo):
+            started = time.monotonic()
+            self.assertEqual(self.run_plan(plan_path), 5)
+            self.assertLess(time.monotonic() - started, 25)
+        status = self.status_of(plan_path)
+        self.assertEqual(status["State"], "sampler-failed")
+        self.assertIn("a sampler read fails", status["SamplerFailed"]["Reason"])
+        self.assertEqual([stage["State"] for stage in status["Stages"]], ["sampler-failed"])
+        self.assertNotEqual(status["Stages"][0]["ReturnCode"], 0)
+        self.assertFalse(self.record.exists())
+
+    def test_a_sampler_not_alive_blocks_every_launch(self):
+        plan_path = self.plan()
+        with mock.patch.object(run_stages.threading.Thread, "is_alive", return_value=False):
+            self.assertEqual(self.run_plan(plan_path), 5)
+        status = self.status_of(plan_path)
+        self.assertEqual(status["State"], "sampler-failed")
+        self.assertEqual([(stage["State"], stage.get("NotLaunched")) for stage in status["Stages"]], [("sampler-failed", True)])
+        self.assertIn("not alive", status["SamplerFailed"]["Reason"])
+        self.assertFalse(self.record.exists())
+
+    def test_a_stop_file_write_failure_still_kills_the_stage(self):
+        flag = self.root / "stage-started"
+        os.environ["FAKE_FLAG"] = str(flag)
+        plan_path = self.plan()
+        (plan_path.parent / "memory-stop.json").mkdir()  # the write of the stop file fails
+        with mock.patch.object(run_stages, "meminfo", side_effect=self.fake_meminfo(flag)):
+            started = time.monotonic()
+            self.assertEqual(self.run_plan(plan_path), 3)
+            self.assertLess(time.monotonic() - started, 25)
+        status = self.status_of(plan_path)
+        self.assertEqual([stage["State"] for stage in status["Stages"]], ["memory-stop"])
+        self.assertNotEqual(status["Stages"][0]["ReturnCode"], 0)
+        self.assertIn("IsADirectoryError", status["MemoryStop"]["StopFileError"])
+        self.assertFalse(self.record.exists())
+
+    def test_a_crossing_during_the_after_kill_pause_blocks_the_next_launch(self):
+        plan_path = self.capped_plan()
+        flag, real_sleep = self.root / "in-pause", time.sleep
+
+        def sleep(seconds):
+            if seconds == 6:  # the after-kill pause
+                flag.touch()
+            real_sleep(seconds)
+
+        with mock.patch.object(run_stages, "AFTER_KILL_PAUSE_SECONDS", 6), \
+                mock.patch.object(run_stages, "meminfo", side_effect=self.fake_meminfo(flag)), \
+                mock.patch.object(run_stages.time, "sleep", side_effect=sleep):
+            self.assertEqual(self.run_plan(plan_path), 3)
+        status = self.status_of(plan_path)
+        self.assertEqual([(stage["State"], stage.get("NotLaunched")) for stage in status["Stages"]],
+                         [("timed-out", None), ("memory-stop", True)])
+        self.assertEqual(json.loads((plan_path.parent / "memory-stop.json").read_text())["Stage"], "after-kill-pause")
+        self.assertFalse(self.record.exists())
+
+    def test_the_plan_and_the_runner_are_hashed(self):
+        plan_path = self.plan()
+        self.assertEqual(self.run_plan(plan_path), 0)
+        preflight = self.status_of(plan_path)["Preflight"]
+        self.assertEqual(preflight["PlanSHA256"], run_stages.sha(plan_path))
+        self.assertEqual(preflight["RunnerSHA256"], run_stages.sha(Path(run_stages.__file__).resolve()))
 
 
 class PalaceInImageTest(unittest.TestCase):
