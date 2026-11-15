@@ -682,6 +682,13 @@ void BaseSolver::SaveMetadata(SurfaceResponseOperator &response) const
           "RawFallback" + (classes.empty() ? std::string() : ": " + classes) +
           ": no correction applied";
     }
+    // Lane rescensus-product (review r1817 mn-1): the census block of a run without a cell
+    // names the same reason as the coverage block.
+    if (response.GetResolutionRunRecord().entries.empty())
+    {
+      response.GetResolutionRunRecord().no_cells_reason =
+          response.GetCoverageRunRecord().no_cells_reason;
+    }
     meta["SurfaceResponse"]["Coverage"] = CoverageRunMetadata(
         response.GetCoverageRunRecord(), response.GetCoverageThresholds(),
         response.GetCoverageValidatedRegime(),

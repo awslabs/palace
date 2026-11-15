@@ -189,13 +189,21 @@ struct ResolutionRunRecord
   long long int mesh_elements = 0;
   std::vector<ResolutionPreflightRow> preflight;
   std::vector<Entry> entries;
+  // Why the run measured no census cell (the coverage record's reason: a raw fallback
+  // applies no patch); empty when it has cells. With no cell and no reason the block does
+  // not read Complete (the coverage block's rule, ruling 1738).
+  std::string no_cells_reason;
 };
 // palace.json SurfaceResponse.Resolution (Level / Levels as the coverage block; "Final" is
-// added by BaseSolver once the AMR loop has ended).
+// added by BaseSolver once the AMR loop has ended). StatusCounts, WorstByType, Flagged,
+// FlaggedCount and the m50 / share ranges are taken over EVERY cell (each plane and the
+// all-planes cell): a Type whose energy on one plane is not RESOLVED never reads RESOLVED.
 nlohmann::json ResolutionRunMetadata(const ResolutionRunRecord &record, int level,
                                      int levels);
-// The end-of-run banner: one line per Type (its worst status over the cells, the m50 range,
-// the bars' source) and "RESOLVED is necessary, not sufficient".
+// The end-of-run banner: one line per Type (its worst status over every cell, the count of
+// cells not RESOLVED, the m50 range and the range of the share beyond b10, the bars'
+// source and scope) and "RESOLVED is necessary, not sufficient"; a run without a census
+// cell says so, with its reason.
 std::string ResolutionRunBanner(const nlohmann::json &metadata);
 
 }  // namespace palace

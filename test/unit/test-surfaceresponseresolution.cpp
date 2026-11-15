@@ -395,7 +395,102 @@ TEST_CASE("Resolution census palace.json block and banner",
   CHECK(metadata["WorstByType"]["MS"]["m50Min"].is_null());
   CHECK(metadata["FlaggedCount"] == 2);
   const std::string banner = ResolutionRunBanner(metadata);
-  CHECK(banner.find("SA UNDER-RESOLVED (m50 3 .. 3;") != std::string::npos);
+  CHECK(banner.find("SA UNDER-RESOLVED over every cell and plane (m50 3 .. 3;") !=
+        std::string::npos);
   CHECK(banner.find("NOT valid for this radius") != std::string::npos);
+  CHECK(banner.find("INTERIM in-sample built-in bars, valid for R = 1.9 um ONLY") !=
+        std::string::npos);
   CHECK(banner.find("RESOLVED is necessary, not sufficient.") != std::string::npos);
+}
+
+TEST_CASE("Resolution census summary reads every plane's cell",
+          "[SurfaceResponseResolution][Serial]")
+{
+  // Review r1817 MJ-2: 85 % of a Type's energy RESOLVED on one plane, 15 % on another plane
+  // at 1 / 3 RESOLVED and 2 / 3 UNDER-RESOLVED: the all-planes cell reads RESOLVED (s_R =
+  // 0.90), the second plane UNDER-RESOLVED; the summary must read UNDER-RESOLVED and count
+  // the plane's cell.
+  using S = ResolutionStatus;
+  auto Summary = [](S second_status)
+  {
+    ResolutionAccumulator sums;
+    sums.Reset(1, 3);
+    sums.Add(0, 1, S::RESOLVED, 0.3, 85.0);
+    sums.Add(0, 2, S::RESOLVED, 0.3, 5.0);
+    sums.Add(0, 2, second_status, second_status == S::NOT_EVALUATED ? kNaN : 2.0, 10.0);
+    ResolutionRunRecord record;
+    record.order = 2;
+    record.radius = kResolutionBuiltInRadius;
+    record.bars = BuiltInResolutionBars();
+    record.bars_hold = ResolutionBarsHold(record.bars, record.radius);
+    std::vector<ResolutionCell> cells;
+    for (int slot = 0; slot < 3; slot++)
+    {
+      cells.push_back(ComputeResolutionCell(sums.Slot(0, slot), "SA", slot == 0,
+                                            slot == 2 ? 4.8 : 0.0, true, 1.0, ""));
+      record.entries.push_back({{{"i", 1.0}}, cells.back()});
+    }
+    return std::make_pair(cells, ResolutionRunMetadata(record, 1, 1));
+  };
+  {
+    const auto [cells, metadata] = Summary(S::UNDER_RESOLVED);
+    CHECK(cells[0].status == S::RESOLVED);
+    CHECK(cells[0].shares[0] == Catch::Approx(0.90));
+    CHECK(cells[1].status == S::RESOLVED);
+    CHECK(cells[2].status == S::UNDER_RESOLVED);
+    CHECK(cells[2].shares[2] == Catch::Approx(2.0 / 3.0));
+    CHECK(metadata["WorstByType"]["SA"]["Worst"] == "UNDER-RESOLVED");
+    CHECK(metadata["WorstByType"]["SA"]["Flagged"] == 1);
+    CHECK(metadata["WorstByType"]["SA"]["Cells"] == 3);
+    CHECK(metadata["WorstByType"]["SA"]["ShareUnderResolvedMax"].get<double>() ==
+          Catch::Approx(2.0 / 3.0));
+    CHECK(metadata["FlaggedCount"] == 1);
+    REQUIRE(metadata["Flagged"].size() == 1);
+    CHECK(metadata["Flagged"][0]["Plane"].get<double>() == 4.8);
+    CHECK(metadata["Flagged"][0]["Status"] == "UNDER-RESOLVED");
+    // The m50 range over every cell: the second plane's m50 lies in the UNDER bin.
+    CHECK(metadata["WorstByType"]["SA"]["m50Max"].get<double>() ==
+          ResolutionHistogramCentre(ResolutionHistogramBin(2.0)));
+    const std::string banner = ResolutionRunBanner(metadata);
+    CHECK(banner.find("SA UNDER-RESOLVED over every cell and plane") != std::string::npos);
+    CHECK(banner.find("1 of 3 cell(s) not RESOLVED") != std::string::npos);
+    CHECK(banner.find("SA RESOLVED") == std::string::npos);
+  }
+  {
+    // The same with the 2 / 3 NOT-EVALUATED: the plane reads NOT-EVALUATED, the Type is
+    // never RESOLVED.
+    const auto [cells, metadata] = Summary(S::NOT_EVALUATED);
+    CHECK(cells[0].status == S::RESOLVED);
+    CHECK(cells[2].status == S::NOT_EVALUATED);
+    CHECK(metadata["WorstByType"]["SA"]["Worst"] == "NOT-EVALUATED");
+    CHECK(metadata["FlaggedCount"] == 1);
+    CHECK(ResolutionRunBanner(metadata).find("1 of 3 cell(s) not RESOLVED") !=
+          std::string::npos);
+  }
+}
+
+TEST_CASE("Resolution census block without a cell names its reason",
+          "[SurfaceResponseResolution][Serial]")
+{
+  // Review r1817 mn-1 (the coverage block's rule): a raw fallback with no applied patch.
+  ResolutionRunRecord record;
+  record.order = 1;
+  record.radius = kResolutionBuiltInRadius;
+  record.bars = BuiltInResolutionBars();
+  record.bars_hold = true;
+  {
+    const auto metadata = ResolutionRunMetadata(record, 1, 1);
+    CHECK(metadata["Cells"] == 0);
+    CHECK(metadata["NoCellsReason"].is_null());
+    CHECK_FALSE(metadata["Complete"].get<bool>());
+    CHECK(ResolutionRunBanner(metadata).find("no census cell was measured in this run:") !=
+          std::string::npos);
+  }
+  record.no_cells_reason = "RawFallback: NoMatchedFeature: no correction applied";
+  const auto metadata = ResolutionRunMetadata(record, 1, 1);
+  CHECK(metadata["NoCellsReason"] == record.no_cells_reason);
+  CHECK(metadata["Complete"].get<bool>());
+  CHECK(ResolutionRunBanner(metadata).find("no census cell was measured in this run "
+                                           "(RawFallback: NoMatchedFeature: no "
+                                           "correction applied)") != std::string::npos);
 }

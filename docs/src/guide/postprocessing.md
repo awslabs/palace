@@ -163,7 +163,8 @@ file. These include:
     (`surface-response-resolution.csv`, `SurfaceResponse.Resolution` in `palace.json`, a
     PREFLIGHT line and a banner; see
     [Resolution census of the response correction](../reference.md#resolution-census-of-the-response-correction)):
-    RESOLVED is necessary, not sufficient.
+    RESOLVED is necessary, not sufficient; read it only from a block with `"Final": true`
+    and the intended `Level`.
     Every corrected run (both solve families) also reports its coverage: ``W`` is the
     raw surface energy within the matching radius of an interface and ``U`` the part of
     it where no correction is applied. `surface-response-coverage.csv` gives per cell

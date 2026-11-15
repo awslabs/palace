@@ -2837,8 +2837,8 @@ contour, controlled by `"Resolution"` in the correction block (`"Enabled"`, defa
 whenever the correction is on; `"BarsFile"`, optional). The census changes outputs only: no
 corrected value, coverage status or policy reads it.
 
-The measure is the one validated offline on 64 graded electrostatic window cases (in-sample;
-two windows): for each applied patch, the knots are the basis points of its runtime model
+The measure was tested offline, in-sample, on 64 graded electrostatic window cases of two
+windows (selected from three measures on those same cases; a thin margin): for each applied patch, the knots are the basis points of its runtime model
 (a curvature blend uses its anchor's), placed as the correction places them; the owner of a
 knot is the mesh element containing it (the correction's own point locator, no fallback
 search; a knot on a shared face takes the lowest rank, then the lowest local element); its
@@ -2867,10 +2867,23 @@ quantiles `m10`, `m50` and `m90` of ``m`` come from a histogram of 600 bins in
 `Diagnostics.Directory`), to `palace.json` `SurfaceResponse.Resolution` (the measure, the
 radius, the bars and their source, the knot counts, the status counts, the worst status
 per `Type`, the flagged cells, the PREFLIGHT rows, `"Complete"`, `Level` / `Levels` and
-`"Final"` like the coverage block) and to one banner line per `Type`. With `PatchEnergy`,
+`"Final"` like the coverage block) and to one banner line per `Type`. The status counts,
+the worst status per `Type`, the flagged cells and the banner's `m50` range, share beyond
+``b_{10}`` and count of cells not RESOLVED are taken over EVERY cell, each plane and the
+all-planes cell: a `Type` whose energy on one plane is not RESOLVED never reads RESOLVED. A
+run that measures no cell (a raw fallback that applies no patch) names its reason in
+`"NoCellsReason"`, as the coverage block does; without a reason it does not read
+`"Complete"`. With `PatchEnergy`,
 `surface-response-resolution-patches.csv` gives every patch's reading. A SelfConsistent-only
 run has no postprocessed energy: its cells are NOT-EVALUATED; with `"Enabled": false`
 nothing is located and every cell reads NOT-EVALUATED (reason `disabled`).
+
+Read the census of a run only from a `palace.json` whose `SurfaceResponse.Resolution` has
+`"Final": true` and the `Level` / `Levels` you intend (for an AMR run, the last level). A run
+ended inside a level keeps the previous level's block without `"Final"` (in the iteration
+directory) and may leave a truncated top-level `palace.json`; the top-level
+`surface-response-resolution.csv` has no level column and may already hold rows of the
+level that did not finish.
 
 Before the first solve of each level, the log prints a PREFLIGHT line per `Type` and plane
 (geometry only, an indicator): edge patches weighted by their longitudinal cell length,
@@ -2881,10 +2894,12 @@ validated in this weight; the energy-weighted census after the solve is the read
 RESOLVED IS NECESSARY, NOT SUFFICIENT: it says that the mesh at the trace contour is as fine
 as the interim bars ask, never that a corrected value is accurate (the exact-trace floor,
 coverage, the regime and every other three-dimensional error remain). The bars and share
-placeholders are interim and in-sample; their transfer from electrostatic windows to
-eigenmode chips is a hypothesis. An UNDER-RESOLVED reading asks for a finer mesh near the
-metal edges (toward ``h \approx R`` at orders 2-3, ``\approx 2.5`` µm at order 4 for
-``R = 1.9`` µm) or AMR, whose census is printed per level.
+placeholders are interim, in-sample and valid for ``R = 1.9`` µm ONLY; their transfer from
+electrostatic windows to eigenmode chips is a hypothesis. An UNDER-RESOLVED or MARGINAL
+reading asks for a finer mesh near the metal edges, with the bar values as the target: at
+orders 2-3 RESOLVED needs ``h \le b_5 R = 0.541 R`` (about 1.03 µm at ``R = 1.9`` µm), at
+order 4 ``h \le 1.328 R`` (about 2.52 µm); order 1 has no RESOLVED bar (MARGINAL needs
+``h \le 0.266 R``, about 0.50 µm). AMR prints its census per level.
 
 ## Lumped parameter extraction
 

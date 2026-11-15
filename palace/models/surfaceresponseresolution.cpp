@@ -585,40 +585,43 @@ nlohmann::json ResolutionRunMetadata(const ResolutionRunRecord &record, int leve
          {"Status", std::string(ResolutionStatusName(row.status))}});
   }
   metadata["Preflight"] = std::move(preflight);
+  // The summary over EVERY cell (each plane and the all-planes cell; review r1817 MJ-2): a
+  // plane carrying a small part of a Type's energy can be UNDER-RESOLVED or NOT-EVALUATED
+  // under an all-planes cell that reads RESOLVED.
+  struct TypeSummary
+  {
+    ResolutionStatus worst = ResolutionStatus::RESOLVED;
+    std::array<double, 2> m50{kNaN, kNaN}, share_under{kNaN, kNaN};
+    int cells = 0, flagged = 0;
+  };
+  auto Widen = [](std::array<double, 2> &range, double value)
+  {
+    if (!std::isnan(value))
+    {
+      range[0] = std::isnan(range[0]) ? value : std::min(range[0], value);
+      range[1] = std::isnan(range[1]) ? value : std::max(range[1], value);
+    }
+  };
   std::map<std::string, int> counts;
-  std::map<std::string, std::pair<ResolutionStatus, std::array<double, 2>>> worst;
-  std::map<std::string, int> flagged_by_type;
+  std::map<std::string, TypeSummary> by_type_summary;
   nlohmann::json flagged = nlohmann::json::array();
   int flagged_count = 0;
   for (const auto &entry : record.entries)
   {
     const auto &cell = entry.cell;
     counts[std::string(ResolutionStatusName(cell.status))]++;
-    if (!cell.all_planes)
+    auto [it, inserted] = by_type_summary.try_emplace(cell.type);
+    auto &summary = it->second;
+    if (inserted || ResolutionStatusRank(cell.status) > ResolutionStatusRank(summary.worst))
     {
-      continue;
+      summary.worst = cell.status;
     }
-    auto [it, inserted] =
-        worst.try_emplace(cell.type, cell.status,
-                          std::array<double, 2>{cell.quantiles[1], cell.quantiles[1]});
-    if (!inserted)
-    {
-      if (ResolutionStatusRank(cell.status) > ResolutionStatusRank(it->second.first))
-      {
-        it->second.first = cell.status;
-      }
-      if (!std::isnan(cell.quantiles[1]))
-      {
-        auto &range = it->second.second;
-        range[0] = std::isnan(range[0]) ? cell.quantiles[1]
-                                        : std::min(range[0], cell.quantiles[1]);
-        range[1] = std::isnan(range[1]) ? cell.quantiles[1]
-                                        : std::max(range[1], cell.quantiles[1]);
-      }
-    }
+    summary.cells++;
+    Widen(summary.m50, cell.quantiles[1]);
+    Widen(summary.share_under, cell.shares[2]);
     if (cell.status != ResolutionStatus::RESOLVED)
     {
-      flagged_by_type[cell.type]++;
+      summary.flagged++;
       if (++flagged_count <= 200)
       {
         nlohmann::json keys = nlohmann::json::object();
@@ -628,6 +631,8 @@ nlohmann::json ResolutionRunMetadata(const ResolutionRunRecord &record, int leve
         }
         flagged.push_back({{"Keys", keys},
                            {"Type", cell.type},
+                           {"Plane", cell.all_planes ? nlohmann::json(nullptr)
+                                                     : nlohmann::json(cell.plane)},
                            {"Status", std::string(ResolutionStatusName(cell.status))},
                            {"ShareUnderResolved", JsonNumber(cell.shares[2])},
                            {"ShareNotEvaluated", JsonNumber(cell.shares[3])},
@@ -638,18 +643,29 @@ nlohmann::json ResolutionRunMetadata(const ResolutionRunRecord &record, int leve
   }
   metadata["StatusCounts"] = counts;
   nlohmann::json by_type = nlohmann::json::object();
-  for (const auto &[type, value] : worst)
+  for (const auto &[type, summary] : by_type_summary)
   {
-    by_type[type] = {{"Worst", std::string(ResolutionStatusName(value.first))},
-                     {"m50Min", JsonNumber(value.second[0])},
-                     {"m50Max", JsonNumber(value.second[1])},
-                     {"Flagged", flagged_by_type[type]}};
+    by_type[type] = {{"Worst", std::string(ResolutionStatusName(summary.worst))},
+                     {"m50Min", JsonNumber(summary.m50[0])},
+                     {"m50Max", JsonNumber(summary.m50[1])},
+                     {"ShareUnderResolvedMin", JsonNumber(summary.share_under[0])},
+                     {"ShareUnderResolvedMax", JsonNumber(summary.share_under[1])},
+                     {"Cells", summary.cells},
+                     {"Flagged", summary.flagged}};
   }
   metadata["WorstByType"] = std::move(by_type);
   metadata["Flagged"] = std::move(flagged);
   metadata["FlaggedCount"] = flagged_count;
   metadata["Cells"] = static_cast<int>(record.entries.size());
-  metadata["Complete"] = true;
+  // Review r1817 mn-1 (the coverage block's rule, ruling 1738): a run with no cell says
+  // why; without a reason it is not complete.
+  if (record.entries.empty())
+  {
+    metadata["NoCellsReason"] = record.no_cells_reason.empty()
+                                    ? nlohmann::json(nullptr)
+                                    : nlohmann::json(record.no_cells_reason);
+  }
+  metadata["Complete"] = !record.entries.empty() || !record.no_cells_reason.empty();
   metadata["Level"] = level;
   metadata["Levels"] = levels;
   return metadata;
@@ -666,22 +682,33 @@ std::string ResolutionRunBanner(const nlohmann::json &metadata)
   const bool hold = metadata["Bars"].value("Hold", false);
   for (const auto &[type, value] : metadata["WorstByType"].items())
   {
-    const auto m50 = [&](const char *key)
+    const auto number = [&](const char *key)
     {
       return value[key].is_number() ? fmt::format("{:.3g}", value[key].get<double>())
                                     : std::string("n/a");
     };
     banner += fmt::format(
-        "\n*** Resolution census (knot-owner size / R, Order {:d}, {}{}): {} {} (m50 {} .. "
-        "{}; {:d} cell(s) not RESOLVED: surface-response-resolution.csv, "
-        "SurfaceResponse.Resolution of palace.json). RESOLVED is necessary, not "
-        "sufficient. "
-        "***\n",
+        "\n*** Resolution census (knot-owner size / R, Order {:d}, {}{}): {} {} over every "
+        "cell and plane (m50 {} .. {}; share beyond b10 {} .. {}; {:d} of {:d} cell(s) not "
+        "RESOLVED: surface-response-resolution.csv, SurfaceResponse.Resolution of "
+        "palace.json). RESOLVED is necessary, not sufficient. ***\n",
         metadata.value("Order", 0),
-        built_in ? "INTERIM built-in bars of R = 1.9 um" : "bars file",
+        built_in ? "INTERIM in-sample built-in bars, valid for R = 1.9 um ONLY"
+                 : "bars file",
         hold ? "" : ": NOT valid for this radius", type,
-        value.value("Worst", std::string("NOT-EVALUATED")), m50("m50Min"), m50("m50Max"),
-        value.value("Flagged", 0));
+        value.value("Worst", std::string("NOT-EVALUATED")), number("m50Min"),
+        number("m50Max"), number("ShareUnderResolvedMin"), number("ShareUnderResolvedMax"),
+        value.value("Flagged", 0), value.value("Cells", 0));
+  }
+  if (metadata.value("Cells", 0) == 0)
+  {
+    const auto reason = metadata.find("NoCellsReason");
+    banner += fmt::format(
+        "\n*** Resolution census: no census cell was measured in this run{}: no resolution "
+        "reading exists for its output ***\n",
+        reason != metadata.end() && reason->is_string()
+            ? " (" + reason->get<std::string>() + ")"
+            : std::string());
   }
   if (!metadata.value("Enabled", true))
   {
