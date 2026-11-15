@@ -755,7 +755,8 @@ class PaladinJob:
             raise PaladinError(f"{name}: the stage configuration names no absolute Problem.Output ({output!r})")
         log_path = os.path.join(self.remote_dir, f"{name}.log")
         qo, ql = shlex.quote(output), shlex.quote(log_path)
-        text = remote_text(self.host, f"mkdir -p {qo} && cp -a {q}/postpro/. {qo}/ && cp -a {q}/log.out {ql} && "
+        text = remote_text(self.host, f"mkdir -p {qo} {shlex.quote(self.remote_dir)} && cp -a {q}/postpro/. {qo}/ && "
+                                      f"cp -a {q}/log.out {ql} && "
                                       f"(cd {q}/postpro && find . -type f -exec sha256sum {{}} + | sort -k2) && echo '--SPLIT--' && "
                                       f"(cd {qo} && find . -type f -exec sha256sum {{}} + | sort -k2)",
                            timeout=900, what=f"the copy of {run_dir}/postpro to {output}")
