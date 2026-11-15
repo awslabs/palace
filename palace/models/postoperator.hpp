@@ -434,6 +434,11 @@ protected:
   // decided at the first print from the measured interfaces.
   mutable bool surface_response_untargeted_interface = false;
   mutable std::unique_ptr<TableWithCSVFile> surface_response_confidence;
+  // Lane L4 (decision 1829; DESIGN-L4-v2 s2.3 M5): whether the last printed measurement's
+  // whole-measurement values were marked (Coverage.Policy "MarkNotApplied"; root only;
+  // unset when no measurement was printed since the last
+  // TakeSurfaceResponseMeasurementMarked).
+  mutable std::optional<bool> surface_response_measurement_marked;
   // surface-response-model-energy.csv on the Maxwell path (decisions 845 O-C / 846): the
   // electrostatic driver's column set EXACTLY and in order as a strict prefix (`source` =
   // the excitation index on Driven, the mode index on Eigenmode / BoundaryMode), then the
@@ -705,6 +710,14 @@ public:
   SurfaceResponseOperator *GetSurfaceResponseOperator()
   {
     return surface_response_op.get();
+  }
+  // Lane L4 (M5): the mark of the last printed measurement (root; nullopt when none was
+  // printed since the last call), then cleared.
+  std::optional<bool> TakeSurfaceResponseMeasurementMarked() const
+  {
+    auto marked = surface_response_measurement_marked;
+    surface_response_measurement_marked.reset();
+    return marked;
   }
 
   const SurfacePostOperator &GetSurfacePostOp() const { return surf_post_op; }
