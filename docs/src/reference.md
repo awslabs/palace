@@ -2589,6 +2589,21 @@ correction actually covers. The definitions are energies of the RAW field:
     conductor-consistency-excluded claims, the circulating loop remainder, unpatched pairs,
     the Unboxable and placement-rejected keys, the unclaimed remainder). The method gap is a
     LOWER BOUND of what no library can cover today, so `NOT-ACHIEVABLE` is conservative.
+    One named part of the unclaimed remainder: the window of a corner coupon dropped by
+    `SpatialClusterPriority` that lies INSIDE the owner cluster's box is given to the owner
+    by the corrected total (not kept raw) but no applied claim holds it.
+  - A served claim whose end point differs from the end point of the perimeter segment it
+    lies on by arithmetic round-off only (at most 16 units in the last place per coordinate)
+    is taken to end exactly there, so ``U`` no longer counts a convex vertex's exterior
+    quadrant as uncovered because a claim end sits one round-off short of the vertex (0.8 to
+    1.3 % of ``W`` on a refined test case). Only the coverage partition does this; the
+    corrected values are unchanged. `palace.json` `SurfaceResponse.Coverage.ClaimEndCensus`
+    and one banner line count, per run, the served ends so snapped and the kept-class ends
+    (Missing, DomainBoundary, SpatialClusterPriority, conductor consistency) that are a
+    round-off short of a segment end (counted, never changed: the corrected value then
+    leaves that quadrant's raw energy out of its kept part), each with the largest distance
+    and the quadrant energy at stake, and the ends beyond round-off but within ``10^{-5} R``
+    (never snapped).
   - The pending-model share is the served energy on model-set labels that hold a model
     admitted with a non-`Qualified` `QualificationStatus` (or `LibraryQualified` false and no
     status), counted whole; the no-status-model share is the served energy on labels that
@@ -2653,7 +2668,9 @@ The coverage status of a cell, on ``(U + U_{pending}) / W`` with the INTERIM bar
 `NOT-MEASURED` when no partition exists for the cell (a SelfConsistent-only run of either
 solve family, which evaluates no response on the raw field); `NOT-TARGET` for an untargeted
 interface and for a `Type` with untargeted interfaces only (never counted as a covered
-cell). Every status but `OK` and `NOT-TARGET` is listed by the end-of-run banner, which
+cell); `INCONSISTENT` when the signed method-gap share is below ``-10^{-9}``: the served and
+Missing energy exceed ``W``, so the partition and the corrected total disagree: a defect to
+report (never `OK`; ``U`` is printed as computed; the worst status of all). Every status but `OK` and `NOT-TARGET` is listed by the end-of-run banner, which
 names the bars as interim thresholds and the untargeted interfaces once, and in
 `SurfaceResponse.Coverage` of `palace.json`: the status counts, the regime counts, every
 flagged cell, the counts of served pending and status-less models, `UntargetedInterfaces`,

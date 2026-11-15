@@ -65,6 +65,12 @@ private:
 //
 // A class handling boundary surface postprocessing.
 //
+// Ruling 1715 (lane L1): a served claim's end is snapped to a tree-segment end only when
+// the two POINTS differ by arithmetic noise alone (16 units in the last place of the larger
+// of the coordinate and R, per coordinate: the round-off of a point formed as key0 + s / L
+// (key1 - key0)); never a geometric tolerance.
+inline constexpr double kClaimEndRoundoffUlps = 16.0;
+
 class SurfacePostOperator
 {
 public:
@@ -471,7 +477,35 @@ public:
     // in the class "LoopRemainder" and in another bin both (the bins then sum to `within`
     // plus this amount).
     double loop_remainder_unserved = 0.0;
+    // Rulings 1714 / 1715 (lane L1): the census of portion ends at a tree-segment end, for
+    // the SERVED claims and for the KEPT classes. "Round-off short": the end POINT agrees
+    // with the segment's end point within kClaimEndRoundoffUlps ulps per coordinate but not
+    // exactly (a served end is snapped to the segment end; a kept end is counted and never
+    // changed: OI-FOOT-TEST-VERTEX-ROUNDOFF). "Near": beyond that rule but within
+    // kSupportEndCoincidenceOverRadius R (never snapped). Per population: the count of
+    // portion ends, the largest distance (mesh units) and the within-R raw energy whose
+    // clamped foot lies at those segment ends (the vertex quadrants at stake).
+    struct EndCensus
+    {
+      int roundoff_count = 0, near_count = 0;
+      double roundoff_distance = 0.0, near_distance = 0.0;
+      double roundoff_energy = 0.0, near_energy = 0.0;
+    };
+    EndCensus served_ends, kept_ends;
   };
+  // Rulings 1714 / 1715: a portion end against a tree-segment end point. EXACT: every
+  // coordinate equal; ROUNDOFF: |p_d - v_d| <= kClaimEndRoundoffUlps eps max(|v_d|, R) for
+  // every d; NEAR: otherwise within kSupportEndCoincidenceOverRadius R; FAR: beyond.
+  enum class ClaimEndMatch : char
+  {
+    EXACT,
+    ROUNDOFF,
+    NEAR,
+    FAR
+  };
+  static std::pair<ClaimEndMatch, double> ClassifyClaimEnd(const std::array<double, 3> &p,
+                                                           const std::array<double, 3> &v,
+                                                           double radius);
   std::map<int, InterfaceCoveragePartition> GetInterfaceCoveragePartition(
       const std::set<int> &indices, const GridFunction &E, const GridFunction *D,
       const std::vector<CoveragePartitionClass> &kept_classes, PerimeterPortionView served,

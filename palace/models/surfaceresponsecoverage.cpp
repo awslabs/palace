@@ -4,6 +4,7 @@
 #include "surfaceresponsecoverage.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <fstream>
 #include <iterator>
@@ -77,6 +78,8 @@ std::string_view CoverageStatusName(CoverageStatus status)
       return "NOT-MEASURED";
     case CoverageStatus::NOT_TARGET:
       return "NOT-TARGET";
+    case CoverageStatus::INCONSISTENT:
+      return "INCONSISTENT";
   }
   return "NOT-MEASURED";
 }
@@ -131,6 +134,8 @@ int CoverageStatusRank(CoverageStatus status)
       return 5;
     case CoverageStatus::NOT_TARGET:
       return -1;
+    case CoverageStatus::INCONSISTENT:
+      return 6;  // a defect of the partition: worse than any coverage reading
   }
   return 5;
 }
@@ -313,6 +318,8 @@ SummarizeCoverageInterface(const SurfacePostOperator::InterfaceCoveragePartition
   summary.fabricated = fabricated;
   summary.partition_within = partition.within;
   summary.loop_remainder_unserved = partition.loop_remainder_unserved;
+  summary.served_ends = partition.served_ends;
+  summary.kept_ends = partition.kept_ends;
   for (const auto &[label, energy] : partition.served)
   {
     summary.served += energy;
@@ -372,6 +379,17 @@ CoverageCell ComputeCoverageCell(const std::string &type,
     cell.partition_within += interface.partition_within;
     cell.loop_remainder_unserved += interface.loop_remainder_unserved;
     cell.loop_remainder_excluded += interface.loop_remainder_excluded;
+    for (const auto &[sum, add] :
+         {std::make_pair(&cell.served_ends, &interface.served_ends),
+          std::make_pair(&cell.kept_ends, &interface.kept_ends)})
+    {
+      sum->roundoff_count += add->roundoff_count;
+      sum->near_count += add->near_count;
+      sum->roundoff_distance = std::max(sum->roundoff_distance, add->roundoff_distance);
+      sum->near_distance = std::max(sum->near_distance, add->near_distance);
+      sum->roundoff_energy += add->roundoff_energy;
+      sum->near_energy += add->near_energy;
+    }
   }
   // Ruling 1641: U is fail-closed, whatever is not served is uncovered. The method gap
   // (U - missing) is clamped at 0: a negative value is round-off of the two integrals
@@ -388,7 +406,13 @@ CoverageCell ComputeCoverageCell(const std::string &type,
     cell.method_gap_signed_share = (cell.uncovered - cell.missing) / cell.within;
     cell.pending_share = cell.pending / cell.within;
     cell.no_status_share = cell.no_status / cell.within;
-    if (cell.method_gap_share > thresholds.max_uncovered_share)
+    if (cell.method_gap_signed_share < -kCoverageInconsistentShare)
+    {
+      // Ruling 1714 (B)(3): served + Missing above W beyond round-off: the partition and
+      // the corrected total disagree (U stays as computed).
+      cell.status = CoverageStatus::INCONSISTENT;
+    }
+    else if (cell.method_gap_share > thresholds.max_uncovered_share)
     {
       cell.status = CoverageStatus::NOT_ACHIEVABLE;
     }
@@ -926,9 +950,53 @@ nlohmann::json CoverageRunMetadata(const CoverageRunRecord &record,
   nlohmann::json status_counts = nlohmann::json::object(),
                  regime_counts = nlohmann::json::object();
   nlohmann::json flagged = nlohmann::json::array();
+  // Rulings 1714 / 1715: the end census per population over the cells (the largest count,
+  // distance and energy share of W of any cell; the cells with a nonzero count listed).
+  using EndCensus = SurfacePostOperator::InterfaceCoveragePartition::EndCensus;
+  nlohmann::json end_cells = nlohmann::json::array();
+  std::map<std::string, std::array<double, 4>> end_totals;  // count, distance, J, share
+  auto EndPopulation =
+      [&](const std::string &name, int count, double distance, double energy, double within)
+  {
+    auto &total = end_totals[name];
+    total[0] = std::max(total[0], double(count));
+    total[1] = std::max(total[1], distance);
+    total[2] = std::max(total[2], energy * energy_scale);
+    total[3] = std::max(total[3], within > 0.0 ? energy / within : 0.0);
+    return nlohmann::json{
+        {"Count", count}, {"MaxDistance", distance}, {"Energy (J)", energy * energy_scale}};
+  };
   for (const auto &entry : record.entries)
   {
     const auto &cell = entry.cell;
+    {
+      auto Populations = [&](const std::string &prefix, const EndCensus &census)
+      {
+        return nlohmann::json{
+            {"RoundoffShort",
+             EndPopulation(prefix + "RoundoffShort", census.roundoff_count,
+                           census.roundoff_distance, census.roundoff_energy, cell.within)},
+            {"NearNotRoundoff",
+             EndPopulation(prefix + "NearNotRoundoff", census.near_count,
+                           census.near_distance, census.near_energy, cell.within)}};
+      };
+      auto served = Populations("Served", cell.served_ends);
+      auto kept = Populations("Kept", cell.kept_ends);
+      if (cell.served_ends.roundoff_count + cell.served_ends.near_count +
+              cell.kept_ends.roundoff_count + cell.kept_ends.near_count >
+          0)
+      {
+        nlohmann::json keys = nlohmann::json::object();
+        for (const auto &[name, value] : entry.keys)
+        {
+          keys[name] = value;
+        }
+        end_cells.push_back({{"Cell", std::move(keys)},
+                             {"Type", cell.type},
+                             {"Served", std::move(served)},
+                             {"Kept", std::move(kept)}});
+      }
+    }
     const std::string status(CoverageStatusName(cell.status));
     const std::string regime_status(RegimeStatusName(cell.regime));
     status_counts[status] = status_counts.value(status, 0) + 1;
@@ -962,6 +1030,21 @@ nlohmann::json CoverageRunMetadata(const CoverageRunRecord &record,
                        {"loop remainder of excluded patches kept raw twice (J)",
                         Number(cell.loop_remainder_excluded * energy_scale)}});
   }
+  nlohmann::json end_census = {
+      {"Rule", fmt::format("a served claim end within {:g} ulps per coordinate of a tree-"
+                           "segment end point is snapped to it (round-off short); kept-"
+                           "class ends are counted, never changed (OI-FOOT-TEST-VERTEX-"
+                           "ROUNDOFF); near = beyond that, within {:g} R (never snapped)",
+                           kClaimEndRoundoffUlps, kSupportEndCoincidenceOverRadius)},
+      {"Cells", std::move(end_cells)}};
+  for (const auto &[name, total] : end_totals)
+  {
+    end_census[name] = {{"MaxCount", static_cast<int>(total[0])},
+                        {"MaxDistance", total[1]},
+                        {"MaxEnergy (J)", total[2]},
+                        {"MaxShareOfW", total[3]}};
+  }
+  metadata["ClaimEndCensus"] = std::move(end_census);
   metadata["StatusCounts"] = std::move(status_counts);
   metadata["RegimeCounts"] = std::move(regime_counts);
   metadata["Flagged"] = std::move(flagged);
@@ -1089,6 +1172,24 @@ std::string CoverageRunBanner(const nlohmann::json &metadata)
                     "covered correction factor for this library and excitation "
                     "class)\n",
                     no_range, metadata.at("Cells").get<int>());
+  }
+  if (const auto census = metadata.find("ClaimEndCensus"); census != metadata.end())
+  {
+    // Rulings 1714 / 1715: one line per run (zeros included).
+    auto Population = [&](const char *name)
+    {
+      const auto entry = census->find(name);
+      return entry == census->end() ? std::string("0")
+                                    : fmt::format("{:d} (max share of W {:.3e})",
+                                                  entry->at("MaxCount").get<int>(),
+                                                  entry->at("MaxShareOfW").get<double>());
+    };
+    banner += fmt::format(
+        "Coverage claim-end census: served ends snapped (round-off short) {}, near {}; "
+        "kept-class ends round-off short {} (OI-FOOT-TEST-VERTEX-ROUNDOFF: counted, not "
+        "changed), near {}\n",
+        Population("ServedRoundoffShort"), Population("ServedNearNotRoundoff"),
+        Population("KeptRoundoffShort"), Population("KeptNearNotRoundoff"));
   }
   const int no_status = metadata.at("ServedNoStatusModels").get<int>();
   if (no_status > 0)

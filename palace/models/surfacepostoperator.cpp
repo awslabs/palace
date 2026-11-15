@@ -216,6 +216,17 @@ public:
 // The uncovered intervals of one interface's edge-distance tree (decision 394 F2): per tree
 // segment, the closed foot-parameter intervals [a, b] (from the segment's first end) of the
 // uncovered portions lying on it, each with its type index into `types`.
+// Rulings 1714 / 1715: the end census of one list (and, with `snap`, the served claims'
+// round-off-short ends moved to exactly 0 / L). `ends` maps (segment, end 0 | 1) to a mask:
+// 1 round-off short, 2 near.
+struct ClaimEndCheck
+{
+  double radius = 0.0;
+  bool snap = false;
+  std::map<std::pair<std::size_t, int>, int> ends;
+  SurfacePostOperator::InterfaceCoveragePartition::EndCensus census;
+};
+
 struct UncoveredEdgeIntervals
 {
   struct Interval
@@ -228,7 +239,7 @@ struct UncoveredEdgeIntervals
 
   UncoveredEdgeIntervals(const EdgeDistanceTree &tree,
                          SurfacePostOperator::PerimeterPortionView portions,
-                         double tolerance)
+                         double tolerance, ClaimEndCheck *check = nullptr)
   {
     for (std::size_t i = 0; i < portions.Size(); i++)
     {
@@ -281,8 +292,38 @@ struct UncoveredEdgeIntervals
         types.push_back(portion_type);
         type = std::prev(types.end());
       }
+      double e0 = a0, e1 = a1;
+      if (check)
+      {
+        for (int k = 0; k < 2; k++)
+        {
+          for (int j = 0; j < 2; j++)
+          {
+            const auto [match, distance] = SurfacePostOperator::ClassifyClaimEnd(
+                k == 0 ? portion_p0 : portion_p1, j == 0 ? segment.p0 : segment.p1,
+                check->radius);
+            auto &census = check->census;
+            if (match == SurfacePostOperator::ClaimEndMatch::ROUNDOFF)
+            {
+              census.roundoff_count++;
+              census.roundoff_distance = std::max(census.roundoff_distance, distance);
+              check->ends[{nearest.segment, j}] |= 1;
+              if (check->snap)
+              {
+                (k == 0 ? e0 : e1) = j == 0 ? 0.0 : length;
+              }
+            }
+            else if (match == SurfacePostOperator::ClaimEndMatch::NEAR)
+            {
+              census.near_count++;
+              census.near_distance = std::max(census.near_distance, distance);
+              check->ends[{nearest.segment, j}] |= 2;
+            }
+          }
+        }
+      }
       by_segment[nearest.segment].push_back(
-          {std::min(a0, a1), std::max(a0, a1), static_cast<int>(type - types.begin())});
+          {std::min(e0, e1), std::max(e0, e1), static_cast<int>(type - types.begin())});
     }
   }
 };
@@ -1581,6 +1622,31 @@ SurfacePostOperator::GetInterfaceUncoveredFeatureEdgeEnergies(
   return energies;
 }
 
+std::pair<SurfacePostOperator::ClaimEndMatch, double>
+SurfacePostOperator::ClassifyClaimEnd(const std::array<double, 3> &p,
+                                      const std::array<double, 3> &v, double radius)
+{
+  bool exact = true, roundoff = true;
+  double distance2 = 0.0;
+  for (int d = 0; d < 3; d++)
+  {
+    const double difference = p[d] - v[d];
+    exact = exact && difference == 0.0;
+    roundoff =
+        roundoff && std::abs(difference) <= kClaimEndRoundoffUlps *
+                                                std::numeric_limits<double>::epsilon() *
+                                                std::max(std::abs(v[d]), radius);
+    distance2 += difference * difference;
+  }
+  const double distance = std::sqrt(distance2);
+  const ClaimEndMatch match = exact      ? ClaimEndMatch::EXACT
+                              : roundoff ? ClaimEndMatch::ROUNDOFF
+                              : distance <= kSupportEndCoincidenceOverRadius * radius
+                                  ? ClaimEndMatch::NEAR
+                                  : ClaimEndMatch::FAR;
+  return {match, distance};
+}
+
 std::map<int, SurfacePostOperator::InterfaceCoveragePartition>
 SurfacePostOperator::GetInterfaceCoveragePartition(
     const std::set<int> &indices, const GridFunction &E, const GridFunction *D,
@@ -1598,6 +1664,11 @@ SurfacePostOperator::GetInterfaceCoveragePartition(
     std::vector<PartitionedEdgePieces> pieces;  // the kept classes, then the served claims
     std::vector<std::size_t> offsets;           // each one's first bin
     std::size_t unclaimed = 0, within = 0;
+    // Rulings 1714 / 1715: the served claims' and the kept classes' end census; `stake`
+    // = the first of the 4 bins of the energy at those segment ends (served round-off /
+    // near, kept round-off / near).
+    ClaimEndCheck served_check, kept_check;
+    std::size_t stake = 0;
   };
   std::vector<InterfaceBins> bins;
   std::vector<double> local_energies;
@@ -1614,9 +1685,12 @@ SurfacePostOperator::GetInterfaceCoveragePartition(
     const double tolerance = kSignatureParameterToleranceOverRadius * radius;
     auto &interface = bins.emplace_back();
     interface.idx = idx;
-    auto AddPieces = [&](PerimeterPortionView portions)
+    interface.served_check.radius = interface.kept_check.radius = radius;
+    interface.served_check.snap = true;  // ruling 1714 (B): the served claims only
+    auto AddPieces = [&](PerimeterPortionView portions, ClaimEndCheck *check)
     {
-      interface.pieces.emplace_back(UncoveredEdgeIntervals(tree, portions, tolerance));
+      interface.pieces.emplace_back(
+          UncoveredEdgeIntervals(tree, portions, tolerance, check));
       interface.offsets.push_back(local_energies.size());
       local_energies.resize(local_energies.size() + interface.pieces.back().groups.size(),
                             0.0);
@@ -1624,18 +1698,20 @@ SurfacePostOperator::GetInterfaceCoveragePartition(
     for (const auto &kept : kept_classes)
     {
       MFEM_VERIFY(kept.portions, "A coverage-partition class requires its portions!");
-      AddPieces(*kept.portions);
+      AddPieces(*kept.portions, &interface.kept_check);
     }
-    AddPieces(served);
+    AddPieces(served, &interface.served_check);
     for (const auto &remainder : remainder_classes)
     {
       MFEM_VERIFY(remainder.portions, "A coverage-partition class requires its portions!");
-      AddPieces(*remainder.portions);
+      AddPieces(*remainder.portions, nullptr);
     }
     interface.unclaimed = local_energies.size();
     local_energies.push_back(0.0);
     interface.within = local_energies.size();
     local_energies.push_back(0.0);
+    interface.stake = local_energies.size();
+    local_energies.resize(local_energies.size() + 4, 0.0);
 
     const auto attr_marker = mesh::AttrToMarker(bdr_attr_max, data.attr_list);
     auto coefficient = data.GetCoefficient(E, D, mat_op);
@@ -1680,7 +1756,8 @@ SurfacePostOperator::GetInterfaceCoveragePartition(
           length2 += chord * chord;
           projection += (point(d) - segment.p0[d]) * chord;
         }
-        const double foot = std::clamp(projection / length2, 0.0, 1.0) * std::sqrt(length2);
+        const double t = projection / length2;
+        const double foot = std::clamp(t, 0.0, 1.0) * std::sqrt(length2);
         std::size_t bin = interface.unclaimed;
         for (std::size_t list = 0; list < interface.pieces.size(); list++)
         {
@@ -1707,6 +1784,22 @@ SurfacePostOperator::GetInterfaceCoveragePartition(
                              (within * coefficient->Eval(*T, ip));
         local_energies[bin] += value;
         local_energies[interface.within] += value;
+        if (t <= 0.0 || t >= 1.0)
+        {
+          // The clamped foot at a segment end: the vertex quadrant at stake (census only).
+          const std::pair<std::size_t, int> end{nearest.segment, t <= 0.0 ? 0 : 1};
+          for (const auto &[check, first] :
+               {std::make_pair(&interface.served_check, interface.stake),
+                std::make_pair(&interface.kept_check, interface.stake + 2)})
+          {
+            const auto found = check->ends.find(end);
+            if (found != check->ends.end())
+            {
+              local_energies[first] += (found->second & 1) ? value : 0.0;
+              local_energies[first + 1] += (found->second & 2) ? value : 0.0;
+            }
+          }
+        }
       }
     }
   }
@@ -1742,6 +1835,12 @@ SurfacePostOperator::GetInterfaceCoveragePartition(
     }
     partition.unclaimed = local_energies[interface.unclaimed];
     partition.within = local_energies[interface.within];
+    partition.served_ends = interface.served_check.census;
+    partition.served_ends.roundoff_energy = local_energies[interface.stake];
+    partition.served_ends.near_energy = local_energies[interface.stake + 1];
+    partition.kept_ends = interface.kept_check.census;
+    partition.kept_ends.roundoff_energy = local_energies[interface.stake + 2];
+    partition.kept_ends.near_energy = local_energies[interface.stake + 3];
   }
   return partitions;
 }

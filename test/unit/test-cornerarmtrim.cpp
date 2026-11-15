@@ -11,6 +11,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iterator>
+#include <limits>
 #include <map>
 #include <memory>
 #include <set>
@@ -2986,6 +2987,62 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   CHECK(s.classes.empty());
   CHECK_THAT(s.served.at("m7"), WithinRel(first_energy, 1.0e-12));
   CHECK_THAT(s.served.at("m7") + s.unclaimed, WithinRel(s.within, 1.0e-12));
+
+  // (b2) Rulings 1714 / 1715: every claim end moved k ulps per coordinate INTO its portion
+  // (toward the other end). 1 ulp: round-off short, the served ends snapped to the segment
+  // ends: the served energy is the exact claims' to the last bit, the vertex quadrants'
+  // energy counted at stake. 1000 ulps: beyond the round-off rule, within 1e-5 R (near):
+  // never snapped, the quadrants fall out of the claim. The same list as a KEPT class is
+  // counted and never snapped (OI-FOOT-TEST-VERTEX-ROUNDOFF).
+  // (1 ulp: the next double toward the other end; 1000: an absolute step of 1000 eps
+  // max(|x|, 1) along the portion, far below 1e-5 R and beyond the 16-ulp rule.)
+  auto Nudge = [&](bool one)
+  {
+    auto moved = claim;
+    for (auto &portion : moved)
+    {
+      const auto p0 = portion.p0, p1 = portion.p1;
+      for (int d = 0; d < 3; d++)
+      {
+        if (p0[d] == p1[d])
+        {
+          continue;
+        }
+        const double step = 1000.0 * std::numeric_limits<double>::epsilon();
+        portion.p0[d] = one ? std::nextafter(p0[d], p1[d])
+                            : p0[d] + std::copysign(step * std::max(std::abs(p0[d]), 1.0),
+                                                    p1[d] - p0[d]);
+        portion.p1[d] = one ? std::nextafter(p1[d], p0[d])
+                            : p1[d] + std::copysign(step * std::max(std::abs(p1[d]), 1.0),
+                                                    p0[d] - p1[d]);
+      }
+    }
+    return moved;
+  };
+  const auto one_ulp = Nudge(true), thousand_ulps = Nudge(false);
+  const auto snapped =
+      surf_post_op.GetInterfaceCoveragePartition({4}, field, nullptr, {}, one_ulp).at(4);
+  CHECK(snapped.served.at("m7") == s.served.at("m7"));
+  CHECK(snapped.served_ends.roundoff_count > s.served_ends.roundoff_count);
+  CHECK(snapped.served_ends.roundoff_energy > 0.0);
+  CHECK(snapped.served_ends.near_count == s.served_ends.near_count);
+  const auto near =
+      surf_post_op.GetInterfaceCoveragePartition({4}, field, nullptr, {}, thousand_ulps)
+          .at(4);
+  CHECK(near.served_ends.near_count > 0);
+  CHECK(near.served_ends.near_energy > 0.0);
+  CHECK(near.served_ends.roundoff_count == s.served_ends.roundoff_count);
+  CHECK(near.served.at("m7") < s.served.at("m7"));
+  CHECK_THAT(BinSum(near), WithinRel(near.within, 1.0e-12));
+  const auto kept = surf_post_op.GetInterfaceCoveragePartition(
+      {4}, field, nullptr, {{"Missing", &one_ulp}}, no_claims);
+  const auto exact_kept = surf_post_op.GetInterfaceCoveragePartition(
+      {4}, field, nullptr, {{"Missing", &claim}}, no_claims);
+  CHECK(kept.at(4).kept_ends.roundoff_count > exact_kept.at(4).kept_ends.roundoff_count);
+  CHECK(kept.at(4).kept_ends.roundoff_energy > 0.0);
+  CHECK(kept.at(4).classes.at({"Missing", "m7"}) <
+        exact_kept.at(4).classes.at({"Missing", "m7"}));
+  CHECK(kept.at(4).served_ends.roundoff_count == 0);
 
   // (c) A second kept class over the same portions comes after Missing: it takes nothing.
   const auto ordered = surf_post_op.GetInterfaceCoveragePartition(

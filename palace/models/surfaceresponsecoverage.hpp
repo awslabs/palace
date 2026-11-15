@@ -47,8 +47,13 @@ enum class CoverageStatus : char
   NOT_ACHIEVABLE,
   NO_ENERGY,
   NOT_MEASURED,
-  NOT_TARGET
+  NOT_TARGET,
+  // Ruling 1714 (B)(3): the signed method gap is below -kCoverageInconsistentShare x W: the
+  // partition serves MORE than the corrected total removes (a defect to report; never OK).
+  INCONSISTENT
 };
+// Ruling 1714 (B)(3): the round-off margin of the signed method-gap share.
+inline constexpr double kCoverageInconsistentShare = 1.0e-9;
 
 // The regime status of a cell (DESIGN-v2 s6.2; decision 1636 (1)): whether the covered
 // part's correction factor lies in the range validated for this library and excitation
@@ -157,6 +162,8 @@ struct CoverageInterfaceSummary
   // OVERLAP: the corrected total keeps it raw twice, in the ConductorConsistency term and
   // in the loop-remainder term). Maxwell only (0 on the electrostatic path).
   double loop_remainder_unserved = 0.0, loop_remainder_excluded = 0.0;
+  // Rulings 1714 / 1715: the partition's end census (served claims; kept classes).
+  SurfacePostOperator::InterfaceCoveragePartition::EndCensus served_ends, kept_ends;
 };
 CoverageInterfaceSummary
 SummarizeCoverageInterface(const SurfacePostOperator::InterfaceCoveragePartition &partition,
@@ -193,6 +200,8 @@ struct CoverageCell
   double untargeted_raw = 0.0, untargeted_share = 0.0;
   // The Type's sums of CoverageInterfaceSummary's two loop-remainder terms (J).
   double loop_remainder_unserved = 0.0, loop_remainder_excluded = 0.0;
+  // The Type's sums of the end census (counts and energies summed, distances the largest).
+  SurfacePostOperator::InterfaceCoveragePartition::EndCensus served_ends, kept_ends;
   // Lane rescensus (decision 1637 (e)): its per-cell edge-resolution status is appended
   // here and printed after the last column; its stage-0 line beside the Missing length
   // share. Not part of this lane.

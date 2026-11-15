@@ -8,6 +8,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <map>
 #include <set>
 #include <sstream>
@@ -121,6 +122,47 @@ TEST_CASE("Coverage cell shares and the sum identities",
   CHECK(clamped.method_gap == 0.0);
   CHECK(clamped.method_gap_share == 0.0);
   CHECK(clamped.method_gap_signed_share == -0.5 / 16.0);
+  // Ruling 1714 (B)(3): below -1e-9 W the cell is INCONSISTENT (never OK), U as computed;
+  // a round-off excess (-1e-10 W) keeps the band.
+  CHECK(clamped.status == CoverageStatus::INCONSISTENT);
+  CHECK(clamped.uncovered == 16.0 - 15.0);
+  CHECK(CoverageStatusName(clamped.status) == "INCONSISTENT");
+  CHECK(CoverageStatusRank(CoverageStatus::INCONSISTENT) >
+        CoverageStatusRank(CoverageStatus::NOT_MEASURED));
+  auto roundoff = summary;
+  roundoff.served = 16.0 - 1.0e-10 * 16.0 - 1.0;
+  roundoff.missing = 1.0 + 2.0e-10 * 16.0;
+  const auto kept_band =
+      ComputeCoverageCell("SA", {roundoff}, CoverageThresholds{}, CoverageValidatedRegime{},
+                          CoverageExcitationClass::ELECTROSTATIC_TERMINAL);
+  CHECK(kept_band.method_gap_signed_share < 0.0);
+  CHECK(kept_band.status != CoverageStatus::INCONSISTENT);
+}
+
+TEST_CASE("Coverage claim-end match by the round-off rule",
+          "[SurfaceResponseCoverage][Serial]")
+{
+  // Ruling 1715: 16 ulps per coordinate of max(|v_d|, R); near = within 1e-5 R beyond it.
+  using Match = SurfacePostOperator::ClaimEndMatch;
+  const double R = 0.04;
+  const std::array<double, 3> v = {0.9, 0.1, 0.24};
+  CHECK(SurfacePostOperator::ClassifyClaimEnd(v, v, R).first == Match::EXACT);
+  auto p = v;
+  p[0] = std::nextafter(v[0], 0.0);  // the restart case: 1.1e-16 short of x = 0.9
+  CHECK(SurfacePostOperator::ClassifyClaimEnd(p, v, R).first == Match::ROUNDOFF);
+  p[0] = v[0] - 1000.0 * std::numeric_limits<double>::epsilon() * v[0];
+  const auto [near, distance] = SurfacePostOperator::ClassifyClaimEnd(p, v, R);
+  CHECK(near == Match::NEAR);
+  CHECK(distance > 0.0);
+  p[0] = v[0] - 2.0e-5 * R;
+  CHECK(SurfacePostOperator::ClassifyClaimEnd(p, v, R).first == Match::FAR);
+  // A zero coordinate: the bar is 16 eps R there.
+  const std::array<double, 3> zero = {0.0, 0.0, 0.0};
+  auto q = zero;
+  q[1] = 8.0 * std::numeric_limits<double>::epsilon() * R;
+  CHECK(SurfacePostOperator::ClassifyClaimEnd(q, zero, R).first == Match::ROUNDOFF);
+  q[1] = 32.0 * std::numeric_limits<double>::epsilon() * R;
+  CHECK(SurfacePostOperator::ClassifyClaimEnd(q, zero, R).first == Match::NEAR);
 }
 
 TEST_CASE("Coverage status bands on U + pending", "[SurfaceResponseCoverage][Serial]")
