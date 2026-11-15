@@ -71,6 +71,7 @@ RUN if [ -n "$PALACE_TARGET" ]; then \
       cd {{ paths.environment }} && spack env activate . && \
       spack concretize && \
       target="$(spack find -c --format '{architecture.target}' palace)" && \
+      target="${target##* }" && \
       if [ "$target" != "$PALACE_TARGET" ]; then \
         echo "palace concretized to target=$target, expected $PALACE_TARGET" >&2; \
         exit 1; \
