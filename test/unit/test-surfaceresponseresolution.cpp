@@ -26,7 +26,7 @@ using namespace palace;
 namespace
 {
 
-constexpr double nan = std::numeric_limits<double>::quiet_NaN();
+constexpr double kNaN = std::numeric_limits<double>::quiet_NaN();
 
 // The longest edge of a linear element from its raw vertices (independent of the census).
 double RawLongestEdge(const mfem::Mesh &mesh, int element)
@@ -75,9 +75,9 @@ TEST_CASE("Resolution census bars, patch statuses and the share rule",
   CHECK(ResolutionPatchStatus(0.1, 1, bars, true) == S::MARGINAL);  // no b5 at Order 1
   CHECK(ResolutionPatchStatus(0.3, 1, bars, true) == S::UNDER_RESOLVED);
   CHECK(ResolutionPatchStatus(1.0, 5, bars, true) == S::RESOLVED);  // Order 4's bars
-  CHECK(ResolutionPatchStatus(nan, 2, bars, true) == S::NOT_EVALUATED);
+  CHECK(ResolutionPatchStatus(kNaN, 2, bars, true) == S::NOT_EVALUATED);
   CHECK(ResolutionPatchStatus(0.5, 2, bars, false) == S::NO_BARS);
-  CHECK(ResolutionPatchStatus(nan, 2, bars, false) == S::NOT_EVALUATED);
+  CHECK(ResolutionPatchStatus(kNaN, 2, bars, false) == S::NOT_EVALUATED);
 
   CHECK(ResolutionShareStatus({0.9, 0.05, 0.05, 0.0}) == S::RESOLVED);
   CHECK(ResolutionShareStatus({0.89, 0.06, 0.05, 0.0}) == S::MARGINAL);
@@ -111,7 +111,7 @@ TEST_CASE("Resolution census cells from known patch energies",
   sums.Add(0, 1, S::RESOLVED, 0.4, 6.0);
   sums.Add(0, 1, S::MARGINAL, 1.0, 3.0);
   sums.Add(0, 1, S::UNDER_RESOLVED, 2.0, 1.0);
-  sums.Add(0, 1, S::NOT_EVALUATED, nan, 0.5);
+  sums.Add(0, 1, S::NOT_EVALUATED, kNaN, 0.5);
   sums.Add(0, 1, S::RESOLVED, 0.4, 0.0);
   for (const int slot : {0, 1})
   {
@@ -138,7 +138,7 @@ TEST_CASE("Resolution census cells from known patch energies",
     CHECK(
         ComputeResolutionCell(resolved.Slot(0, 0), "MS", true, 0.0, true, 1.0, "").status ==
         S::RESOLVED);
-    resolved.Add(0, 0, S::NOT_EVALUATED, nan, 150.0);
+    resolved.Add(0, 0, S::NOT_EVALUATED, kNaN, 150.0);
     const auto ne =
         ComputeResolutionCell(resolved.Slot(0, 0), "MS", true, 0.0, true, 1.0, "");
     CHECK(ne.status == S::NOT_EVALUATED);
@@ -149,7 +149,7 @@ TEST_CASE("Resolution census cells from known patch energies",
     ResolutionAccumulator no_bars;
     no_bars.Reset(1, 1);
     no_bars.Add(0, 0, S::NO_BARS, 0.4, 2.0);
-    no_bars.Add(0, 0, S::NOT_EVALUATED, nan, 1.0);
+    no_bars.Add(0, 0, S::NOT_EVALUATED, kNaN, 1.0);
     const auto cell =
         ComputeResolutionCell(no_bars.Slot(0, 0), "MA", true, 0.0, false, 1.0, "");
     CHECK(cell.status == S::NO_BARS);
@@ -162,8 +162,8 @@ TEST_CASE("Resolution census cells from known patch energies",
     // Disabled: every patch NOT-EVALUATED (counted), the energy kept.
     ResolutionAccumulator off;
     off.Reset(1, 1);
-    off.Add(0, 0, S::NOT_EVALUATED, nan, 2.0);
-    off.Add(0, 0, S::NOT_EVALUATED, nan, 1.0);
+    off.Add(0, 0, S::NOT_EVALUATED, kNaN, 2.0);
+    off.Add(0, 0, S::NOT_EVALUATED, kNaN, 1.0);
     const auto cell =
         ComputeResolutionCell(off.Slot(0, 0), "SA", true, 0.0, true, 1.0, "disabled");
     CHECK(cell.status == S::NOT_EVALUATED);
@@ -381,7 +381,7 @@ TEST_CASE("Resolution census palace.json block and banner",
   under.quantiles = {2.0, 3.0, 4.0};
   no_bars.type = "MS";
   no_bars.status = S::NO_BARS;
-  no_bars.quantiles = {nan, nan, nan};
+  no_bars.quantiles = {kNaN, kNaN, kNaN};
   record.entries = {{{{"i", 1.0}}, under}, {{{"i", 1.0}}, no_bars}};
   const auto metadata = ResolutionRunMetadata(record, 2, 3);
   CHECK_FALSE(metadata["Bars"]["Hold"].get<bool>());
