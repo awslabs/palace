@@ -149,6 +149,7 @@ import locate_sources  # noqa: E402
 import ma_ms_offsets  # noqa: E402
 import ma_tail  # noqa: E402
 import p_sequence  # noqa: E402
+import paladin_backend  # noqa: E402
 import reference_campaign  # noqa: E402
 import remote as remote_side  # noqa: E402
 import summarize_cost  # noqa: E402
@@ -895,6 +896,16 @@ def executables_of(args, profile, remote_root, binary_sha256):
     when given, else the cluster profile's BinaryPattern / MPIExecWrapper under the remote root
     (BINARY_OF_RECORD_RULE).  A form-X profile (build_plan.launcher_of) names the executable and
     the MPI launcher INSIDE its image; the frozen digest must then be the image executable's."""
+    paladin = paladin_backend.paladin_block_of(profile)
+    if paladin is not None:
+        # Form Y-b: paladin launches the pinned image's executable; the plans name it and its digest.
+        if getattr(args, "frozen_binary_remote_path", None) or getattr(args, "mpiexec_remote_path", None):
+            raise ValueError("--frozen-binary-remote-path / --mpiexec-remote-path do not apply to the paladin backend: the "
+                             "Paladin block names the executable inside the pinned image")
+        if binary_sha256 != paladin["ImageBinarySHA256"]:
+            raise ValueError(f"the frozen digest {binary_sha256} is not the pinned image executable's "
+                             f"{paladin['ImageBinarySHA256']} (pass --frozen-binary-sha256 {paladin['ImageBinarySHA256']})")
+        return paladin["ImageBinary"], "paladin"
     launcher = build_plan.launcher_of(profile)
     if launcher is not None:
         if getattr(args, "frozen_binary_remote_path", None) or getattr(args, "mpiexec_remote_path", None):
@@ -1129,6 +1140,63 @@ def poll_case(record, *, remote, profile, log):
     return poll_job(record, job, remote=remote, profile=profile, log=log)
 
 
+def paladin_job_of(record, context, job, *, log=None):
+    """Form Y-b: the job's paladin_backend.PaladinJob (one per job and driver process): its plan's
+    stages as paladin runs, the stage configurations read from the local case root, the archive
+    estimates of the stage estimate (ArchiveGBEstimate per response stage)."""
+    machines = context.setdefault("paladin_jobs", {})
+    if job["Name"] not in machines:
+        remote_main = f"{record['Remote']['Case']}/main"
+        estimate = json.loads(Path(record["Estimate"]["Path"]).read_text())
+        archives = {f"{remote_main}/{item['Prefix']}/archive": estimate["Stages"][item["EstimateKey"]]["ArchiveGBEstimate"]
+                    for item in context["layout"] if item["Kind"] == "response"}
+        machines[job["Name"]] = paladin_backend.PaladinJob(
+            job["Plan"], block=context["paladin"], remote_dir=job["RemoteDirectory"], local_dir=job["Directory"],
+            mapping=[(remote_main, str(Path(record["Root"]) / "main"))], archive_estimates_gb=archives,
+            log=log or log_line)
+    return machines[job["Name"]]
+
+
+def poll_paladin_job(record, context, job, *, log):
+    """Form Y-b: one step of the job's paladin runs (paladin_backend.PaladinJob.advance); True when
+    every stage completed and its status.json is written; a paladin STOP stops the coupon."""
+    try:
+        machine = paladin_job_of(record, context, job, log=log)
+        done = machine.advance()
+    except paladin_backend.PaladinError as error:
+        raise CaseStop("Paladin", str(error), Job=job["Name"], Submission=job.get("Submission"))
+    stages = [(name, stage.get("State") or stage.get("RowStatus"), stage.get("RunID"))
+              for name, stage in machine.state["Stages"].items()]
+    job["Monitor"]["Polls"] += 1
+    job["Monitor"]["LastPollUTC"] = remote_side.utc()
+    job["Monitor"]["LastJobState"] = "complete" if done else next((state for _, state, _ in stages if state != "complete"), None)
+    job["Monitor"]["LastStages"] = stages
+    job["Paladin"] = {"State": machine.state_path, "Runs": {name: run for name, _, run in stages},
+                      "NodeHours": machine.state.get("NodeHours")}
+    log(f"== {job['Monitor']['LastPollUTC']} {record['Case']} {job['Name']} paladin stages {stages}")
+    return done
+
+
+def submit_paladin_job(record, context, job, *, remote, profile, log, adopt_remote_case=False):
+    """Form Y-b, step 5a: the upload as for PBS (once, before the coupon's first job), a submission
+    record naming the job (its runs are found by their metadata: paladin_backend.RESUME_RULE), and
+    the job's first stage submitted at once."""
+    if not record.get("Upload"):
+        record["Upload"] = upload_case(record, context, remote=remote, profile=profile, adopt_remote_case=adopt_remote_case)
+    submission = {"Job": f"paladin:{record['Case']}/{job['Name']}", "UTC": remote_side.utc(), "Backend": "paladin",
+                  "Selector": context["paladin"]["Selector"], "UserJobsBefore": None}
+    job["Submission"] = submission
+    job["Monitor"] = {"Polls": 0, "LastJobState": None, "LastStages": None}
+    job["SubmittedAt"] = time.time()
+    write_json(job["SubmissionRecord"], submission)
+    if job["Kind"] == "single":
+        record["Submission"] = submission
+        record["Monitor"] = job["Monitor"]
+    log(f"{record['Case']}: {job['Name']} through paladin ({context['paladin']['Selector']}; {record['Remote']['Case']})")
+    poll_paladin_job(record, context, job, log=log)
+    return submission
+
+
 def status_failures(status):
     """The incomplete stages and PCG non-convergences of a runner status (empty = complete)."""
     incomplete = [stage["Name"] for stage in status["Stages"] if stage["State"] != "complete"]
@@ -1161,7 +1229,8 @@ def complete_worker_job(record, context, job, *, remote, profile):
     complete, no PCG non-convergence - else the coupon stops (fail closed; the coupon's other
     jobs are left to finish on their own and are recorded)."""
     job["FinishedAt"] = time.time()
-    check_job_exit(record, job, remote=remote)
+    if context.get("paladin") is None:
+        check_job_exit(record, job, remote=remote)
     status = remote_side.read_json(remote["Host"], f"{job['RemoteDirectory']}/status.json")
     if status is None:
         raise CaseStop("Stages", f"{job['Name']} job {job['Submission']['Job']} left the queue without a status.json "
@@ -1208,8 +1277,9 @@ def finish_case(record, context, *, remote, profile):
     case_root = Path(record["Root"])
     remote_case = record["Remote"]["Case"]
     jobs = context["jobs"]
+    paladin = context.get("paladin")
     for job in jobs:
-        if job.get("ExitCheck") is None or not job["ExitCheck"]["OK"]:
+        if paladin is None and (job.get("ExitCheck") is None or not job["ExitCheck"]["OK"]):
             check_job_exit(record, job, remote=remote)
     results = case_root / "results"
     results.mkdir(exist_ok=True)
@@ -1219,22 +1289,33 @@ def finish_case(record, context, *, remote, profile):
         raise CaseStop("Fetch", f"rsync of {remote_case}/main returned {error.returncode} (transport failure; the job's "
                                 f"results stay on the remote: run again with --resume)",
                        Submission=[job.get("Submission") for job in jobs], Command=error.cmd)
-    record["Fetch"] = {"Command": fetch_command, "UTC": remote_side.utc(),
-                       "QStatHistory": {job["Name"]: remote_side.qstat_history(remote["Host"], profile["PBSBin"], job["Submission"]["Job"])
-                                        for job in jobs}}
-    for job in jobs:
-        suffix = "" if job["Kind"] == "single" else f"-{job['Name']}"
-        (results / f"qstat-xf{suffix}.txt").write_text(record["Fetch"]["QStatHistory"][job["Name"]])
-    if len(jobs) == 1:
-        # One job: the single job of an unsplit coupon or the controls-only job (CONTROLS_ONLY_RULE).
-        record["Fetch"]["QStatHistory"] = record["Fetch"]["QStatHistory"][jobs[0]["Name"]]
+    if paladin is not None:
+        # Form Y-b: every stage's run was checked by paladin_backend when it ended (its record in status.json).
+        record["Fetch"] = {"Command": fetch_command, "UTC": remote_side.utc(),
+                           "PaladinRuns": {job["Name"]: job.get("Paladin") for job in jobs}}
+    else:
+        record["Fetch"] = {"Command": fetch_command, "UTC": remote_side.utc(),
+                           "QStatHistory": {job["Name"]: remote_side.qstat_history(remote["Host"], profile["PBSBin"], job["Submission"]["Job"])
+                                            for job in jobs}}
+        for job in jobs:
+            suffix = "" if job["Kind"] == "single" else f"-{job['Name']}"
+            (results / f"qstat-xf{suffix}.txt").write_text(record["Fetch"]["QStatHistory"][job["Name"]])
+        if len(jobs) == 1:
+            # One job: the single job of an unsplit coupon or the controls-only job (CONTROLS_ONLY_RULE).
+            record["Fetch"]["QStatHistory"] = record["Fetch"]["QStatHistory"][jobs[0]["Name"]]
     statuses = {}
     for job in jobs:
         status_path = results / "main" / Path(job["RemoteDirectory"]).relative_to(f"{remote_case}/main") / "status.json"
         if not status_path.is_file():
             raise CaseStop("Fetch", f"no status.json fetched for {job['Name']} ({status_path})", Submission=job.get("Submission"))
         status = json.loads(status_path.read_text())
-        if status.get("PBSJobID") != job["Submission"]["Job"]:
+        if paladin is not None:
+            runs = [stage.get("RunID") for stage in paladin_job_of(record, context, job).state["Stages"].values()]
+            if status.get("Backend") != "paladin" or status.get("PaladinRunIDs") != runs:
+                raise CaseStop("JobExit", f"the fetched status.json of {job['Name']} names the paladin runs "
+                                          f"{status.get('PaladinRunIDs')!r}, not the job's {runs!r}", Submission=job.get("Submission"),
+                               StatusPath=str(status_path))
+        elif status.get("PBSJobID") != job["Submission"]["Job"]:
             raise CaseStop("JobExit", f"the fetched status.json of {job['Name']} was written by job {status.get('PBSJobID')!r}, not "
                                       f"by the submitted {job['Submission']['Job']!r}", Submission=job.get("Submission"),
                            StatusPath=str(status_path), Rule=remote_side.JOB_EXIT_RULE)
@@ -2029,6 +2110,10 @@ def run_qualify(args, *, log=log_line):
     if sha256(manifest_path) != build["Library"]["Manifest"]["SHA256"]:
         raise ValueError(f"the manifest {manifest_path} changed since the build record ({build['Library']['Manifest']['SHA256'][:12]}...)")
     profile = json.loads(Path(args.cluster_profile).read_text())
+    # Decision 1799 (l): --backend pbs (the default: the chain of record) | paladin (form Y-b).
+    paladin = paladin_backend.backend_of(getattr(args, "backend", "pbs"), profile)
+    if paladin is not None:
+        log(paladin_backend.route_line(paladin))
     cost_model = estimate_stages.load_cost_model(args.cost_model)
     gates, gates_digest = gate_evaluation.load_gates(args.gates)
     remote = parse_remote(args.remote)
@@ -2080,6 +2165,8 @@ def run_qualify(args, *, log=log_line):
                                            remote=remote, profile=profile, cost_model=cost_model, gates=gates,
                                            gates_digest=gates_digest)
             contexts[record["Case"]] = context
+            if paladin is not None:
+                context["paladin"] = paladin
             log(f"{record['Case']}: planned {record['Plan']['StageNames']} ({record['Split']['Decision']})")
             if not args.dry_run:
                 pending.append((record, context))
@@ -2135,15 +2222,19 @@ def run_qualify(args, *, log=log_line):
     executables_verified = None
     if pending:
         try:
-            executables_verified = verify_remote_executables(
-                remote["Host"], [(record["Remote"]["Binary"], record["FrozenExecutable"]["SHA256"], record["Remote"]["MPIExec"])
-                                 for record, _ in pending],
-                profile=profile, remote_root=remote["Root"])
+            if paladin is not None:
+                executables_verified = paladin_backend.verify_route(paladin)
+            else:
+                executables_verified = verify_remote_executables(
+                    remote["Host"], [(record["Remote"]["Binary"], record["FrozenExecutable"]["SHA256"], record["Remote"]["MPIExec"])
+                                     for record, _ in pending],
+                    profile=profile, remote_root=remote["Root"])
         except RuntimeError as error:
             log(f"STOP before any submission: {error}")
             raise
         log(f"executables of record verified on {remote['Host']}: "
-            f"{[(item['Binary'], item['SHA256'][:12]) for item in executables_verified['Executables']]}")
+            f"{[(item['Binary'], item['SHA256'][:12]) for item in executables_verified['Executables']]}"
+            + (f" (paladin: {executables_verified['PinCheck']})" if paladin is not None else ""))
 
     def ready(record, context, job):
         done = {j["Name"] for j in context["jobs"] if j.get("Status", {}).get("State") == "complete"}
@@ -2160,8 +2251,9 @@ def run_qualify(args, *, log=log_line):
                     verify_archive_union(record, context, remote=remote, profile=profile)
                     log(f"{record['Case']}: archive union complete "
                         f"{[(k, v['Found']) for k, v in record['ArchiveUnion']['Stages'].items()]}")
-                submit_job(record, context, job, remote=remote, profile=profile, log=log,
-                           adopt_remote_case=getattr(args, "adopt_remote_case", False))
+                (submit_paladin_job if paladin is not None else submit_job)(
+                    record, context, job, remote=remote, profile=profile, log=log,
+                    adopt_remote_case=getattr(args, "adopt_remote_case", False))
             except CaseStop as exception:
                 stop(record, None, exception)
                 # A qsub that went through before the stop is a job of this run (counted).
@@ -2192,7 +2284,8 @@ def run_qualify(args, *, log=log_line):
             if record.get("StoppedBy") is not None:
                 continue
             try:
-                done = poll_job(record, job, remote=remote, profile=profile, log=log)
+                done = (poll_paladin_job(record, context, job, log=log) if paladin is not None else
+                        poll_job(record, job, remote=remote, profile=profile, log=log))
                 if not done and job["Monitor"]["Polls"] >= args.monitor_polls:
                     raise CaseStop("Monitor", f"{job['Name']} job {job['Submission']['Job']} still {job['Monitor']['LastJobState']} after "
                                               f"{job['Monitor']['Polls']} polls: fetch later with the recorded job id",
@@ -2227,6 +2320,10 @@ def run_qualify(args, *, log=log_line):
                                         cap=profile["UserJobCap"])}
     if executables_verified is not None:
         record["ExecutablesVerified"] = executables_verified
+    if paladin is not None:
+        record["Backend"] = {"Route": "paladin", "Selector": paladin["Selector"], "PinRecord": paladin["PinRecord"],
+                             "ImageSHA256": paladin["ImageSHA256"], "ImageBinarySHA256": paladin["ImageBinarySHA256"],
+                             "Rule": paladin_backend.PALADIN_ROUTE_RULE}
     library = process_library_entries(records, contexts, manifest_path=manifest_path, manifest=manifest, root=root,
                                       merge_into=args.merge_into)
     write_json(root / PROCESS_LIBRARY_RECORD, library)
@@ -2292,6 +2389,10 @@ def add_arguments(parser):
                         help="a previous qualify run's process-library.json (read only): ROOT/process-library.json holds "
                              "its models this run did not qualify plus this run's (the same Name replaced), MergedFrom recorded")
     parser.add_argument("--dry-run", action="store_true", help="write plans / configs / estimates / gates; contact nothing")
+    parser.add_argument("--backend", choices=("pbs", "paladin"), default="pbs",
+                        help="pbs (default: the chain's PBS job scripts, byte for byte as before) or paladin (form Y-b: every "
+                             "stage one paladin run on the pinned container of the cluster profile's Paladin block; "
+                             "paladin_backend.py)")
     parser.add_argument("--resume", action="store_true", help="adopt the job ids a previous driver of this --root recorded "
                                                                "(<case>/submission.json, plan byte-identical) instead of "
                                                                "submitting again; monitor / fetch / analyze from there")
