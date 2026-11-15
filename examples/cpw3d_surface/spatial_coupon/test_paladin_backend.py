@@ -183,7 +183,7 @@ class RecordingBackstops:
     """A stand-in for paladin_backend.ClusterBackstops (BACKSTOP_RULE): records each install, start and status read,
     nothing runs; the START_LIMIT-th start request fails the test.  mode: ok | install-fails | start-fails | gone (every
     status: dead, no end record) | gone-once (the next status: dead, then ok) | refused (end exit 13) | unread (no answer) |
-    fired (end exit 11 after a qdel)."""
+    fired (end exit 11 after a qdel) | left-at-start / refused-at-start (the start: the backstop ended at once)."""
 
     HOST = "fake-cluster-host"
 
@@ -200,7 +200,11 @@ class RecordingBackstops:
         if len(self.started) + 1 >= START_LIMIT:
             raise AssertionError(f"backstop start request {len(self.started) + 1}: the test's bound (decision 1830 (2))")
         self.started.append((directory, state))
-        return None if self.mode == "start-fails" else 777
+        if self.mode == "left-at-start":
+            return {"PID": None, "End": {"Exit": 0, "Reason": "the job has left PBS (job_state F, Exit_status 0)", "Qdels": []}}
+        if self.mode == "refused-at-start":
+            return {"PID": None, "End": {"Exit": 13, "Reason": "REFUSED: job owner 'other'", "Qdels": []}}
+        return {"PID": None if self.mode == "start-fails" else 777, "End": None}
 
     def status(self, host, directory):
         self.statuses.append(directory)
@@ -1612,6 +1616,22 @@ class BackstopDrive(FakeCLICase):
         self.assertEqual(self.submitted(), ["chainport-w"])
         self.assertTrue(record["Backstops"][0]["EarlyEnded"])
 
+    def test_a_stage_that_left_pbs_before_its_backstop_started_is_no_stop(self):
+        """The real form (round-3 job 122610 on soca-green-job): a backstop started for a job that has already left PBS ends
+        at its first read with exit 0: no backstop needed, never 'did not start'."""
+        self.backstops.mode = "left-at-start"
+        state = self.drive()
+        self.assertEqual(state["Stages"]["local-edge"]["State"], "complete")
+        self.assertEqual([call for call in self.calls() if call[:2] == ["palace", "cancel"]], [])
+        self.assertEqual(state["Stages"]["w"]["Backstops"][0]["End"]["Exit"], 0)
+
+    def test_a_backstop_that_refuses_at_its_start_ends_the_run_early(self):
+        self.backstops.mode = "refused-at-start"
+        with self.assertRaises(paladin_backend.BackstopNotStarted) as stop:
+            self.drive()
+        self.assertIn("the backstop ended at once: REFUSED", str(stop.exception))
+        self.assertEqual(len([call for call in self.calls() if call[:2] == ["palace", "cancel"]]), 1)
+
     def test_a_profile_without_a_backstop_submits_and_records_it(self):
         self.block = {**self.block, "Backstop": {"Mode": "none"}}
         state = self.drive()
@@ -1743,17 +1763,17 @@ class ClusterBackstopCommands(GuardedTestCase):
     def test_start_waits_for_the_first_read_within_its_count_bound(self):
         self.answers = [(0, "STARTED\n"), (0, "ip-1\nALIVE 9\n0\n---END---\n"), (0, "ip-1\nALIVE 9\n0\n---END---\n"),
                         (0, "ip-1\nALIVE 9\n1\n---END---\n")]
-        self.assertEqual(self.starter.start("h", "/d/run-7", "/d/paladin_backstop.py", {"RunID": 7}), 9)
+        self.assertEqual(self.starter.start("h", "/d/run-7", "/d/paladin_backstop.py", {"RunID": 7}), {"PID": 9, "End": None})
         self.assertEqual(self.slept, [paladin_backend.BACKSTOP_START_READ_SECONDS] * 2)
         self.assertIn("setsid nohup python3 /d/paladin_backstop.py /d/run-7/state.json", self.commands[0][1])
         self.assertEqual(json.loads(self.commands[0][2]), {"RunID": 7})
         reads = int(paladin_backend.BACKSTOP_START_WAIT_SECONDS / paladin_backend.BACKSTOP_START_READ_SECONDS) + 1
         self.answers = [(0, "STARTED\n")] + [(0, "ip-1\nALIVE 9\n0\n---END---\n")] * reads
-        self.assertIsNone(self.starter.start("h", "/d/run-7", "/d/paladin_backstop.py", {"RunID": 7}))
+        self.assertEqual(self.starter.start("h", "/d/run-7", "/d/paladin_backstop.py", {"RunID": 7}), {"PID": None, "End": None})
         self.assertEqual(self.answers, [])
         refused = {"Exit": 13, "Reason": "REFUSED", "Qdels": []}
         self.answers = [(0, "STARTED\n"), (0, f"ip-1\nDEAD 9\n1\n---END---\n{json.dumps(refused)}")]
-        self.assertIsNone(self.starter.start("h", "/d/run-7", "/d/paladin_backstop.py", {"RunID": 7}))
+        self.assertEqual(self.starter.start("h", "/d/run-7", "/d/paladin_backstop.py", {"RunID": 7}), {"PID": None, "End": refused})
 
 
 class FakeClock:

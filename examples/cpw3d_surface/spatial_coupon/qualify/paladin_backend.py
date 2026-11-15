@@ -797,8 +797,9 @@ class ClusterBackstops:
                 "End": end}
 
     def start(self, host, directory, script, state):
-        """The backstop started in directory (an earlier end record kept aside); its pid once it has read the job, else
-        None (it did not start, it ended, or it refused)."""
+        """The backstop started in directory (an earlier end record kept aside): {PID, End}: PID once it has read the job
+        and lives; End = its end record when it ended at once (the job had left PBS, or it refused); both None = it did not
+        start within the count bound."""
         q = shlex.quote
         d = q(directory)
         remote_text(host, f"mkdir -p {d} && if [ -f {d}/backstop.end.json ]; then mv {d}/backstop.end.json "
@@ -811,10 +812,10 @@ class ClusterBackstops:
                 self.sleep(BACKSTOP_START_READ_SECONDS)
             status = self.status(host, directory)
             if status and status["End"]:
-                return None
+                return {"PID": None, "End": status["End"]}
             if status and status["Alive"] and status["FirstRead"]:
-                return int(status["PID"])
-        return None
+                return {"PID": int(status["PID"]), "End": None}
+        return {"PID": None, "End": None}
 
 
 SESSION_RULE = ("decision 1822 (b): before every paladin submit the Midway session's expiry must be >= max(1800 s, the "
@@ -1255,11 +1256,18 @@ class PaladinJob:
                      "LifeUntilEpoch": submitted.timestamp() + BACKSTOP_LIFE_SECONDS + cap + self.backstop["GraceSeconds"],
                      "PBSBin": self.pbs_bin}
             entry.update(Host=check["Host"], Script=check["Script"], ScriptSHA256=check["SHA256"], State=state)
-            entry["PID"] = self.backstops.start(self.host, directory, check["Script"], state)
+            started = self.backstops.start(self.host, directory, check["Script"], state)
+            entry["PID"], entry["End"] = started["PID"], started["End"]
         except PaladinError as error:
             entry["Error"] = str(error)[:300]
         starts.append(entry)
         self.save()
+        if (entry.get("End") or {}).get("Exit") in (0, 11):
+            self.log(f"{self.case}: {name} run {run_id}: no backstop needed: the job has already left PBS "
+                     f"({entry['End'].get('Reason')})")
+            return
+        if entry.get("End"):
+            entry["Error"] = f"the backstop ended at once: {entry['End'].get('Reason')}"
         if entry["PID"]:
             self.log(f"{self.case}: {name} run {run_id}: PBS-side backstop pid {entry['PID']} on {entry['Host']} (limit "
                      f"{entry['State']['LimitSeconds']:.0f} + {entry['State']['GraceSeconds']:.0f} s from the PBS start)")
