@@ -3425,9 +3425,9 @@ void PostOperator<solver_t>::PrintSurfaceResponseLoopFit(double output_index,
         CsvNumber(response.response_weighted_loop_fit_share),
         response.loop_remainder_patch_count, response.loop_fallback_patch_count,
         CsvNumber(units.Dimensionalize<VT::LENGTH>(total.weighted_length)),
-        units.Dimensionalize<VT::ENERGY>(
+        CsvNumber(units.Dimensionalize<VT::ENERGY>(
             evaluation == 1 ? response.loop_fallback_domain_correction_fixed_flux
-                            : response.loop_fallback_domain_correction));
+                            : response.loop_fallback_domain_correction)));
     auto Line = [&](const std::string &label,
                     const SurfaceResponseOperator::LoopRemainderPortions::Row &row)
     {
