@@ -78,6 +78,9 @@ constexpr double WAVEPORT_SYNTHESIS_AUX_RANK_TOL = 1.0e-6;
 // residue norm (a far pole's residue can be O(10-100)×W via near-cancellation with the poly
 // part).
 constexpr double WAVEPORT_SYNTHESIS_MODAL_PART_FLOOR = 1.0e-10;
+// Chebyshev nodes of the fits of the frequency-dependent PML terms, and of the independent
+// grid to check them.
+constexpr int PML_FIT_SAMPLES = 30, PML_CHECK_SAMPLES = 20;
 // Index of `target` in `labels`, or -1 when absent. Used to address rows of the
 // synthesized matrices by their node label.
 inline long LabelIndex(const std::vector<std::string> &labels, const std::string &target)
@@ -757,8 +760,7 @@ void RomOperator::PrepareOnlineExcitations()
   {
     constexpr double online_tol = 1.0e-10;
     constexpr int max_poles = 16;
-    const auto &samples = GetPMLSamples();
-    if (sweep_omega_samples.size() > samples.w_fit.size() + samples.w_check.size())
+    if (sweep_omega_samples.size() > PML_FIT_SAMPLES + PML_CHECK_SAMPLES)
     {
       for (int m = 0; m <= max_poles; m++)
       {
@@ -2832,14 +2834,14 @@ Eigen::MatrixXcd RomOperator::ProjectPMLExtraSystem(double omega) const
 
 const RomOperator::PMLSamples &RomOperator::GetPMLSamples() const
 {
-  // Chebyshev nodes for the fits, and an independent grid to check them.
-  constexpr int n_fit = 30, n_check = 20;
   if (!pml_samples)
   {
     const auto n = static_cast<long>(V.size());
     PMLSamples samples;
-    samples.w_fit = SampleChebyshevLobatto(sweep_omega_min, sweep_omega_max, n_fit);
-    samples.w_check = SampleChebyshevGauss(sweep_omega_min, sweep_omega_max, n_check);
+    samples.w_fit =
+        SampleChebyshevLobatto(sweep_omega_min, sweep_omega_max, PML_FIT_SAMPLES);
+    samples.w_check =
+        SampleChebyshevGauss(sweep_omega_min, sweep_omega_max, PML_CHECK_SAMPLES);
     for (auto [ws, Y] : {std::pair{&samples.w_fit, &samples.Y_fit},
                          std::pair{&samples.w_check, &samples.Y_check}})
     {
