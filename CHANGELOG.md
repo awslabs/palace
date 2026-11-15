@@ -57,6 +57,16 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     words "computed, NOT VALIDATED in this regime". A `ValidatedRegime` file with a
     `Driven` range is refused by name (the class lumps every driven excitation).
 
+  - Added `Coverage.Policy` `"MarkNotApplied"` to the surface-response correction (both solve
+    families; `"Warn"` stays the default and prints every value as before): a corrected value
+    built from a cell whose coverage status is `PARTIAL`, `NOT-ACHIEVABLE`, `INCONSISTENT`,
+    `TARGET-NOT-SERVED` or `NOT-MEASURED` prints `nan` and its value moves to an appended
+    `<column> partial (uncovered part raw)` column; the corrected normalizations, frequency
+    shifts, self-consistent frequencies and terminal matrices built from such a cell are
+    marked the same way (palace.json nulls + `FixedTracePartial` / `SelfConsistentPartial`;
+    `MarkedCells` / `MarkedMeasurements` / `Flagged[].Marked`; banner lines). No computed
+    value changes.
+
   - Added `Diagnostics.UncoveredFeatureEnergy` to the Maxwell `SurfaceResponseCorrection`
     (off by default; refused by the electrostatic driver): the raw within-`R` energy of the
     uncovered requirements (`surface-response-uncovered-energy.csv`) split per type by

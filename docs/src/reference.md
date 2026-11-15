@@ -2799,10 +2799,40 @@ conductor-consistency-excluded claims not served), and the range's `Provenance` 
 that basis in its rule text.
 
 The configuration block, on both paths (`Solver.SurfaceResponseCorrection.Coverage` and
-`Solver.Electrostatic.ResponseCorrection.Coverage`): `"Policy"` accepts `"Warn"` only (any
-other value is an error until a policy is ruled), `"MaxUncoveredShare"` 0.05 and
-`"BuildTarget"` 0.02 (interim bars, FIXED: any other value is an error until the status
+`Solver.Electrostatic.ResponseCorrection.Coverage`): `"Policy"` (`"Warn"`, the default, or
+`"MarkNotApplied"`; `"Abort"` and any other value are an error), `"MaxUncoveredShare"` 0.05
+and `"BuildTarget"` 0.02 (interim bars, FIXED: any other value is an error until the status
 validation rules otherwise), and `"ValidatedRegime"`.
+
+`"Policy": "MarkNotApplied"` (not the default) prints no corrected value that a cell with a
+marked coverage status was built from. The marked statuses are `PARTIAL`, `NOT-ACHIEVABLE`,
+`INCONSISTENT`, `TARGET-NOT-SERVED` and `NOT-MEASURED` (`palace.json`
+`SurfaceResponse.Coverage.MarkedStatuses`); `OK`, `LOW`, `NO-ENERGY` and `NOT-TARGET` cells
+and every regime status never mark. A marked cell prints the bare token `nan` and its value
+moves to an appended column with the same header and the suffix ` partial (uncovered part
+raw)` (nan where the cell is not marked): the value is the covered part corrected plus the
+uncovered within-`R` part raw. Per interface of `surface-Q-corrected.csv` the `E` / `p` /
+`Q` corrected, corrected fixed-flux and self-consistent columns follow the interface's `Type`
+cell (the electrostatic `E` / `p` / `Q` postprocessed fixed-trace, fixed-flux and corrected
+columns the same); the corrected normalizations (`E_norm` / `E_elec` corrected, fixed-flux,
+self-consistent), the self-consistent frequency, the fixed-trace frequency shift and
+corrected frequency, the magnetic domain correction and the self-consistent magnetic
+frequency follow ANY marked cell of their measurement. An unmarked `Type` beside a marked one
+keeps its `p` / `Q` (its normalization is the partial one: the appended column `not-applied
+uncovered raw share of E_norm` / `E_elec` prints the raw within-`R` energy the marked cells
+leave uncorrected over the raw normalization). Entry `(i, j)` of
+`terminal-C-corrected.csv` is marked when ANY cell of the final measurement of source `i`
+or `j` is (not by the worse-of-two status of `terminal-C-corrected-coverage.csv`); a
+diagonal entry of `terminal-Cm-corrected.csv` when any entry of its row of `C` is; every
+entry of `terminal-Cinv-corrected.csv` when any entry of `C` is; `palace.json`
+`SurfaceResponse.TerminalCapacitance` prints null for a marked entry and the value in
+`FixedTracePartial` / `SelfConsistentPartial`. On the eigenmode path the log's corrected
+eigenvalue line names no value and the self-consistent mode-matching table is printed after
+the modes are measured. The `palace.json` block gains `MarkedCells`, `MarkedMeasurements` and
+`Flagged[].Marked`; the banner names the marked cells. No computed number changes and every
+raw column is unchanged. The product prints no uncertainty band: a reader of its tables
+alone has the coverage and regime columns but no uncertainty statement. `"Warn"` prints
+every value as before.
 
 The corrected surface energy of a Maxwell run keeps raw the energy of the
 conductor-consistency-excluded patches' claims and, separately, the circulating loop
