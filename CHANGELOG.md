@@ -155,7 +155,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     and above on meshes with pyramids. The libCEED element restrictions did not apply the
     DoF transformation of the triangular faces of pyramids, so the assembled operators and
     the eigenfrequencies, fields and S-parameters computed on such meshes were wrong.
-    [Issue 1204](https://github.com/awslabs/palace/issues/1204).
+    [PR 1207](https://github.com/awslabs/palace/pull/1207).
   - Fixed driven frequency sweeps aborting with "... not found in sample frequencies!" when
     overlapping `"Samples"` ranges compute the same frequency with different rounding.
     [PR 1192](https://github.com/awslabs/palace/pull/1192).
