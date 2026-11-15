@@ -276,11 +276,186 @@ TEST_CASE("ExtrudePML with a segment core", "[pml][geodata][Serial]")
   CHECK_THAT(z_below, Matchers::WithinAbs(-0.5, 1.0e-12));
   CHECK_THAT(z_above, Matchers::WithinAbs(-0.5, 1.0e-12));
 
-  // With the default point core, the interface would tilt into a cone.
+  // With the default point core, the interface would tilt into a cone, and the error gives
+  // the core grown to span it, which keeps it flat.
   mesh = std::make_unique<mfem::Mesh>(MakeBox(type, 4, 2, true));
   pml = MakePML();
-  CHECK_THROWS_WITH(ExtrudeEntry(mesh, pml, {}),
-                    Matchers::ContainsSubstring("make the core span the layers"));
+  CHECK_THROWS_WITH(
+      ExtrudeEntry(mesh, pml, {}),
+      Matchers::ContainsSubstring("The interface between the materials of the domain "
+                                  "attributes 1 and 2 crosses") &&
+          Matchers::ContainsSubstring("\"Center\": [[0, 0, -0.5], [0, 0, 0]]"));
+  mesh = std::make_unique<mfem::Mesh>(MakeBox(type, 4, 2, true));
+  pml = MakePML({{"Center", {{0.0, 0.0, -0.5}, {0.0, 0.0, 0.0}}}});
+  CHECK_NOTHROW(ExtrudeEntry(mesh, pml, {}));
+}
+
+TEST_CASE("ExtrudePML keeps a boundary across a box flat", "[pml][geodata][Serial]")
+{
+  // An interior PEC boundary (attribute 2) of the box, of the faces with all of their
+  // vertices on it, through the PML (attribute 1): on the plane z = z₀, a strip |y| < 0.5
+  // for x > 0 through the face x = 1, or a sheet through the whole box; on the plane x = y,
+  // which runs into the vertical edges of the box, a sheet through the whole box, or a fin
+  // x > 0.5, |z| < 0.5, which touches the box only along its edge.
+  const auto type = GENERATE(mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON);
+  auto MakeMesh = [&](auto &&on)
+  {
+    auto box = MakeBox(type, 4, 1);
+    std::vector<int> sheet;
+    mfem::Array<int> verts;
+    for (int f = 0; f < box.GetNumFaces(); f++)
+    {
+      int e1, e2;
+      box.GetFaceElements(f, &e1, &e2);
+      box.GetFaceVertices(f, verts);
+      bool all = (e2 >= 0);
+      for (const int v : verts)
+      {
+        all = all && on(box.GetVertex(v));
+      }
+      if (all)
+      {
+        sheet.push_back(f);
+      }
+    }
+    auto mesh = std::make_unique<mfem::Mesh>(
+        3, box.GetNV(), box.GetNE(), box.GetNBE() + static_cast<int>(sheet.size()), 3);
+    for (int v = 0; v < box.GetNV(); v++)
+    {
+      mesh->AddVertex(box.GetVertex(v));
+    }
+    for (int e = 0; e < box.GetNE(); e++)
+    {
+      mesh->AddElement(box.GetElement(e)->Duplicate(mesh.get()));
+    }
+    for (int be = 0; be < box.GetNBE(); be++)
+    {
+      mesh->AddBdrElement(box.GetBdrElement(be)->Duplicate(mesh.get()));
+    }
+    for (const int f : sheet)
+    {
+      auto *el = box.GetFace(f)->Duplicate(mesh.get());
+      el->SetAttribute(2);
+      mesh->AddBdrElement(el);
+    }
+    mesh->FinalizeTopology(false);
+    mesh->SetCurvature(1);
+    return mesh;
+  };
+  auto Strip = [](const double *x)
+  { return std::abs(x[2]) < 1.0e-12 && x[0] > -1.0e-12 && std::abs(x[1]) < 0.5 + 1.0e-12; };
+  auto Sheet = [](double z0)
+  { return [z0](const double *x) { return std::abs(x[2] - z0) < 1.0e-12; }; };
+  config::BoundaryData pec;
+  pec.attributes = {2};
+
+  // The default core, the centre of the box, would widen the strip in the layer: the error
+  // gives the core grown to span it.
+  auto mesh = MakeMesh(Strip);
+  auto pml = MakePML();
+  CHECK_THROWS_WITH(
+      ExtrudeEntry(mesh, pml, pec),
+      Matchers::ContainsSubstring("Boundary attribute 2 crosses") &&
+          Matchers::ContainsSubstring(" at (1, ") &&
+          Matchers::ContainsSubstring("\"Center\": [[0, -0.5, 0], [0, 0.5, 0]]"));
+
+  // A boundary without a boundary condition does not need to stay flat.
+  mesh = MakeMesh(Strip);
+  pml = MakePML();
+  CHECK_NOTHROW(ExtrudeEntry(mesh, pml, {}));
+
+  // With that core, the strip continues straight and flat through the layer, with one
+  // quadrilateral per layer on each of its two edges on the face.
+  auto CountStrip = [](const mfem::Mesh &mesh)
+  {
+    int count = 0;
+    for (int be = 0; be < mesh.GetNBE(); be++)
+    {
+      count += (mesh.GetBdrAttribute(be) == 2);
+    }
+    return count;
+  };
+  // The largest |x_c| and |x_0 - x_1| of the nodes of the boundary.
+  auto Extent = [](const mfem::Mesh &mesh)
+  {
+    std::array<double, 4> ext{};
+    for (int be = 0; be < mesh.GetNBE(); be++)
+    {
+      for (int j = 0; mesh.GetBdrAttribute(be) == 2 &&
+                      j < mesh.GetNodes()->FESpace()->GetBE(be)->GetDof();
+           j++)
+      {
+        const auto x = NodePosition(mesh, be, j, true);
+        for (int c = 0; c < 3; c++)
+        {
+          ext[c] = std::max(ext[c], std::abs(x(c)));
+        }
+        ext[3] = std::max(ext[3], std::abs(x(0) - x(1)));
+      }
+    }
+    return ext;
+  };
+  mesh = MakeMesh(Strip);
+  const int n_strip = CountStrip(*mesh);
+  pml = MakePML({{"Center", {{0.0, -0.5, 0.0}, {0.0, 0.5, 0.0}}}});
+  ExtrudeEntry(mesh, pml, pec);
+  CHECK(CountStrip(*mesh) == n_strip + 2 * 2);
+  CHECK_THAT(Extent(*mesh)[1], Matchers::WithinAbs(0.5, 1.0e-12));
+  CHECK(Extent(*mesh)[2] < 1.0e-12);
+
+  // The sheet through the whole box stays flat with the default core, which is on it, and
+  // not on the plane z = 0.5, off the core.
+  mesh = MakeMesh(Sheet(0.0));
+  pml = MakePML();
+  CHECK_NOTHROW(ExtrudeEntry(mesh, pml, pec));
+  mesh = MakeMesh(Sheet(0.5));
+  pml = MakePML();
+  CHECK_THROWS_WITH(
+      ExtrudeEntry(mesh, pml, pec),
+      Matchers::ContainsSubstring("Boundary attribute 2 crosses") &&
+          Matchers::ContainsSubstring("\"Center\": [[0, 0, 0], [0, 0, 0.5]]"));
+  mesh = MakeMesh(Sheet(0.5));
+  pml = MakePML({{"Center", {{0.0, 0.0, 0.0}, {0.0, 0.0, 0.5}}}});
+  CHECK_NOTHROW(ExtrudeEntry(mesh, pml, pec));
+
+  // A boundary along an edge of the box continues there. On the plane x = y, which has
+  // faces on the tetrahedral mesh only, the sheet stays in its plane with the default core,
+  // out to the back of the layer, with its 16 edges on the box (4 on the top and the bottom
+  // and on each of the two edges of the box) extended. The fin, with its two edges along
+  // the edge of the box, would grow in the layer: the error gives the core which spans it.
+  if (type != mfem::Element::TETRAHEDRON)
+  {
+    return;
+  }
+  auto Diagonal = [](const double *x) { return std::abs(x[0] - x[1]) < 1.0e-12; };
+  mesh = MakeMesh(Diagonal);
+  const int n_sheet = CountStrip(*mesh);
+  REQUIRE(n_sheet == 2 * 4 * 4);
+  pml = MakePML();
+  CHECK_NOTHROW(ExtrudeEntry(mesh, pml, pec));
+  CHECK(CountStrip(*mesh) == n_sheet + 16 * 2);
+  CHECK_THAT(Extent(*mesh)[0], Matchers::WithinAbs(1.5, 1.0e-12));
+  CHECK(Extent(*mesh)[3] < 1.0e-12);
+  auto Fin = [](const double *x)
+  {
+    return std::abs(x[0] - x[1]) < 1.0e-12 && x[0] > 0.5 - 1.0e-12 &&
+           std::abs(x[2]) < 0.5 + 1.0e-12;
+  };
+  mesh = MakeMesh(Fin);
+  const int n_fin = CountStrip(*mesh);
+  REQUIRE(n_fin == 2 * 2);
+  pml = MakePML();
+  CHECK_THROWS_WITH(
+      ExtrudeEntry(mesh, pml, pec),
+      Matchers::ContainsSubstring("Boundary attribute 2 crosses") &&
+          Matchers::ContainsSubstring(" at (1, 1, ") &&
+          Matchers::ContainsSubstring("\"Center\": [[0, 0, -0.5], [0, 0, 0.5]]"));
+  mesh = MakeMesh(Fin);
+  pml = MakePML({{"Center", {{0.0, 0.0, -0.5}, {0.0, 0.0, 0.5}}}});
+  ExtrudeEntry(mesh, pml, pec);
+  CHECK(CountStrip(*mesh) == n_fin + 2 * 2);
+  CHECK_THAT(Extent(*mesh)[2], Matchers::WithinAbs(0.5, 1.0e-12));
+  CHECK(Extent(*mesh)[3] < 1.0e-12);
 }
 
 TEST_CASE("ExtrudePML rejects invalid surfaces", "[pml][geodata][Serial]")

@@ -1249,7 +1249,7 @@
         "Center": {
           "$ref": "#/$defs/PointOrBox",
           "title": "Center",
-          "description": "Core of the radial extrusion, in mesh length units: a point `[x, y, z]`, or the two corners `[[x1, y1, z1], [x2, y2, z2]]` of an axis-aligned box, which is a rectangle or a segment where the corners share coordinates. Each node moves away from its closest point on the core. Defaults to the center of the bounding box of each part, moved onto the open sides of a box. Not used with `\"Extrusion\": \"Normal\"`. A box just inside of a box-shaped boundary gives straight columns over it, and for a layered medium which crosses a box-shaped boundary, such as a substrate, a segment through the layers keeps each layer flat through the PML.",
+          "description": "Core of the radial extrusion, in mesh length units: a point `[x, y, z]`, or the two corners `[[x1, y1, z1], [x2, y2, z2]]` of an axis-aligned box, which is a rectangle or a segment where the corners share coordinates. Each node moves away from its closest point on the core. Defaults to the center of the bounding box of each part, moved onto the open sides of a box. Not used with `\"Extrusion\": \"Normal\"`. A box just inside of a box-shaped boundary gives straight columns over it, and for a layered medium or a boundary which crosses a box-shaped boundary, such as a substrate or a trace, a core which spans it, as a segment through the layers, keeps it flat through the PML.",
           "x-palace-advanced": true
         },
         "Extrusion": {

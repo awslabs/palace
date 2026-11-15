@@ -3766,8 +3766,28 @@ void ExtrudePML(std::unique_ptr<mfem::Mesh> &orig_mesh, std::vector<config::PMLD
     return std::array<double, 3>{x(0), x(1), x(2)};
   };
 
-  // In a box, an interface between two materials across a face must stay flat in the layer:
-  // the nodes on it must not move across it.
+  // In a box, an interface between two materials or a boundary with a boundary condition
+  // (such as a trace) across a face must stay flat in the layer: the nodes on it must not
+  // move across it, and where the trace of a boundary on the box ends, they must not move
+  // along the trace, or the boundary would widen in the layer. The error gives the core
+  // grown to span them, which keeps them flat.
+  std::map<std::pair<int, int>, std::vector<int>> bdr_edges;  // edge → attributes
+  const bool box =
+      std::ranges::any_of(parts, [](const auto &p)
+                          { return p.block.extrusion.depth == Extrusion::Depth::BOX; });
+  for (int be = 0; box && be < nbe; be++)
+  {
+    if (!face_plane.contains(mesh.GetBdrElementFaceIndex(be)) &&
+        std::ranges::binary_search(boundaries.attributes, mesh.GetBdrAttribute(be)))
+    {
+      mesh.GetBdrElementVertices(be, verts);
+      for (int j = 0; j < verts.Size(); j++)
+      {
+        bdr_edges[std::minmax(verts[j], verts[(j + 1) % verts.Size()])].push_back(
+            mesh.GetBdrAttribute(be));
+      }
+    }
+  }
   for (const auto &p : parts)
   {
     if (p.block.extrusion.depth != Extrusion::Depth::BOX)
@@ -3782,17 +3802,55 @@ void ExtrudePML(std::unique_ptr<mfem::Mesh> &orig_mesh, std::vector<config::PMLD
         edge_faces[e].push_back(f);
       }
     }
+    // The nodes at y on the face of normal n must not move along v, the normal of the
+    // interface (or the direction of the end of a trace) on the face.
+    auto core = p.block.extrusion.center;
+    std::string crossing;
+    auto Keep = [&](const std::array<double, 3> &y, const double *v, const double *n,
+                    const std::string &what)
+    {
+      double d[3];
+      Direction(p, y.data(), d);
+      const double v_norm = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+      if (std::abs(d[0] * v[0] + d[1] * v[1] + d[2] * v[2]) <= 1.0e-8 * v_norm)
+      {
+        return;
+      }
+      for (int c = 0; c < 3; c++)
+      {
+        if (std::abs(n[c]) < 0.5 && std::abs(v[c]) > 1.0e-8 * v_norm)
+        {
+          core[0][c] = std::min(core[0][c], y[c]);
+          core[1][c] = std::max(core[1][c], y[c]);
+        }
+      }
+      if (crossing.empty())
+      {
+        crossing = fmt::format("{} crosses {} at ({:.6g}, {:.6g}, {:.6g})", what, p.name,
+                               y[0], y[1], y[2]);
+      }
+    };
+    struct TraceEnd
+    {
+      int edges = 0;
+      std::array<double, 3> y, u, n;
+    };
+    std::map<std::pair<int, int>, TraceEnd> ends;  // (attribute, vertex) → trace end
     for (const auto &[e, f] : edge_faces)
     {
       int e1, e2, e3, e4;
-      if (f.size() != 2 || !SamePlane(face_plane.at(f[0]), face_plane.at(f[1]), tol))
+      if (f.size() != 2)
       {
         continue;
       }
+      // Along an edge of the box, there is no face to cross, but a boundary along it
+      // continues there: its edges count for the ends of its trace.
+      const bool across = SamePlane(face_plane.at(f[0]), face_plane.at(f[1]), tol);
       mesh.GetFaceElements(f[0], &e1, &e2);
       mesh.GetFaceElements(f[1], &e3, &e4);
       const int a1 = mesh.GetAttribute(e1), a2 = mesh.GetAttribute(e3);
-      if (a1 == a2)
+      const auto it = bdr_edges.find(e);
+      if ((a1 == a2 || !across) && it == bdr_edges.end())
       {
         continue;
       }
@@ -3803,20 +3861,45 @@ void ExtrudePML(std::unique_ptr<mfem::Mesh> &orig_mesh, std::vector<config::PMLD
       const double u[3] = {x2[0] - x1[0], x2[1] - x1[1], x2[2] - x1[2]};
       double m[3] = {u[1] * n[2] - u[2] * n[1], u[2] * n[0] - u[0] * n[2],
                      u[0] * n[1] - u[1] * n[0]};
-      const double m_norm = std::sqrt(m[0] * m[0] + m[1] * m[1] + m[2] * m[2]);
-      for (const auto &y : {x1, x2})
+      const auto what =
+          (a1 != a2) ? fmt::format("The interface between the materials of the domain "
+                                   "attributes {} and {}",
+                                   a1, a2)
+                     : fmt::format("Boundary attribute {}", it->second[0]);
+      if (across)
       {
-        double d[3];
-        Direction(p, y.data(), d);
-        MFEM_VERIFY(std::abs(d[0] * m[0] + d[1] * m[1] + d[2] * m[2]) <= 1.0e-8 * m_norm,
-                    "The interface between the materials of the domain attributes "
-                        << a1 << " and " << a2 << " crosses " << p.name << " at (" << y[0]
-                        << ", " << y[1] << ", " << y[2]
-                        << "), and the extrusion would move it across: make the core "
-                           "span the layers, as a segment \"Center\" through a substrate, "
-                           "so that each layer stays flat through the PML.");
+        for (const auto &y : {x1, x2})
+        {
+          Keep(y, m, n.data(), what);
+        }
+      }
+      for (const int attr : (it == bdr_edges.end()) ? std::vector<int>{} : it->second)
+      {
+        for (const auto &[v, y] : {std::pair{e.first, x1}, std::pair{e.second, x2}})
+        {
+          auto &end = ends[{attr, v}];
+          end.edges++;
+          end.y = y;
+          end.u = {u[0], u[1], u[2]};
+          end.n = {n[0], n[1], n[2]};
+        }
       }
     }
+    for (const auto &[key, end] : ends)
+    {
+      if (end.edges == 1)
+      {
+        Keep(end.y, end.u.data(), end.n.data(),
+             fmt::format("Boundary attribute {}", key.first));
+      }
+    }
+    MFEM_VERIFY(crossing.empty(),
+                crossing << ", where the extrusion would not keep it flat: make the core "
+                            "span it, as \"Center\": "
+                         << fmt::format("[[{}, {}, {}], [{}, {}, {}]]", core[0][0],
+                                        core[0][1], core[0][2], core[1][0], core[1][1],
+                                        core[1][2])
+                         << ", so that it stays flat through the PML.");
   }
 
   // Columns of vertices along the directions of the vertices of each part (two parts which

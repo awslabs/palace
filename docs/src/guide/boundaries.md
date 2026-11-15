@@ -194,8 +194,10 @@ position. This limits the shapes of the parts extruded radially:
     without a face, such as a port face or a ground plane, are open: the core must lie on
     them, so that the layer ends flush with them and their boundaries continue across its
     ends, and by default it is the center of the bounding box moved onto the open sides. An
-    interface between two materials which crosses the box, such as a substrate, stays flat
-    in the layer only if the core spans the layers, as a segment through the substrate.
+    interface between two materials or a boundary with a boundary condition which crosses a
+    face of the box, such as a substrate or a trace, stays flat in the layer only if the
+    core spans it, as a segment through the substrate: otherwise, the extrusion stops with
+    the `"Center"` which would.
   - Any other part moves each node along its ray from its closest point on the core, and
     must be at a constant distance from the core, within 5% of the thickness: a sphere
     around its center, or the wall of a cylinder around its axis. On a sphere, the stretch
