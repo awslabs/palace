@@ -880,6 +880,7 @@ class PaladinJob:
                                   f"submit; run mwinit, then resume ({SESSION_RULE})")
         path, config = self.write_run_config(stage)
         record["RunConfig"] = {"Path": path, "SHA256": sha256_of(path)}
+        record["ExpectedOutputs"] = expected_outputs(config)  # OUTPUTS_RULE: a stage type without a list is not submitted
         record["SchemaCheck"] = self.tool_line([self.block["SchemaCheck"], self.block["Selector"], path], r"VALID ",
                                                f"the schema check of {name}")
         mode = config.get("Solver", {}).get("Electrostatic", {}).get("ResponseArchive", {})
