@@ -32,7 +32,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     search region. With the region, a warm-started solve with a starting vector from K
     eigenvectors uses the tighter linear solver tolerance of its first Krylov cycle only for
     its first K + 1 linear solves. SchemaVer 4-4-0.
-    [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
+    [PR 1205](https://github.com/awslabs/palace/pull/1205).
   - When `Solver.Linear.Type` is `"Default"` (or omitted) for frequency domain problems,
     and for the wave port and boundary mode eigenvalue solves, *Palace* now prefers
     STRUMPACK over SuperLU_DIST, then MUMPS, as the sparse direct solver when built with
