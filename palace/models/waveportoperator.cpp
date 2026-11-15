@@ -24,11 +24,8 @@
 #include "linalg/solver.hpp"
 #include "linalg/strumpack.hpp"
 #include "linalg/superlu.hpp"
-#include "models/farfieldboundaryoperator.hpp"
 #include "models/materialoperator.hpp"
-#include "models/surfaceconductivityoperator.hpp"
-#include "models/surfaceimpedanceoperator.hpp"
-#include "models/surfacerationalimpedanceoperator.hpp"
+#include "models/surfaceterms.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
@@ -769,16 +766,8 @@ WavePortData::WavePortData(const config::WavePortData &data,
   // attribute lookups which correctly reference the remapped submesh.
   port_mat_op = std::make_unique<MaterialOperator>(domains.materials, boundaries.periodic,
                                                    problem_type, *port_mesh);
-  port_surf_z_op = std::make_unique<SurfaceImpedanceOperator>(
-      boundaries.impedance, boundaries.split_impedance_attributes, units, *port_mat_op,
-      mesh);
-  port_farfield_op = std::make_unique<FarfieldBoundaryOperator>(
-      boundaries.farfield, problem_type, *port_mat_op, mesh);
-  port_surf_sigma_op = std::make_unique<SurfaceConductivityOperator>(
-      boundaries.conductivity, problem_type, units, *port_mat_op, mesh);
-  port_surf_rz_op = std::make_unique<SurfaceRationalImpedanceOperator>(
-      boundaries.rational_impedance, boundaries.split_impedance_attributes, problem_type,
-      units, *port_mat_op, mesh);
+  port_surface_terms =
+      std::make_unique<SurfaceTerms>(boundaries, problem_type, units, *port_mat_op, mesh);
 
   // Construct mapping from parent (boundary) element indices to submesh (domain)
   // elements.
@@ -840,10 +829,10 @@ WavePortData::WavePortData(const config::WavePortData &data,
   // processes. The solver_comm (port_comm) restricts solver setup to port processes only.
   {
     mode_solver = std::make_unique<ModeEigenSolver>(
-        *port_mat_op, &port_normal, *port_surf_z_op, *port_farfield_op, *port_surf_sigma_op,
-        *port_surf_rz_op, *port_nd_fespace, *port_h1_fespace, port_dbc_tdof_list, mode_idx,
-        data.max_size, data.eig_tol, EigenvalueSolver::WhichType::LARGEST_MAGNITUDE,
-        port_linear, data.eigen_solver, data.verbose, port_comm);
+        *port_mat_op, &port_normal, *port_surface_terms, *port_nd_fespace, *port_h1_fespace,
+        port_dbc_tdof_list, mode_idx, data.max_size, data.eig_tol,
+        EigenvalueSolver::WhichType::LARGEST_MAGNITUDE, port_linear, data.eigen_solver,
+        data.verbose, port_comm);
   }
 
   // Configure port mode sign convention: 1ᵀ Re{-n x H} >= 0 on the "upper-right quadrant"

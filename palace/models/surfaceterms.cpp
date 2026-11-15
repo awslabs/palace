@@ -4,9 +4,29 @@
 #include "surfaceterms.hpp"
 
 #include "utils/configfile.hpp"
+#include "utils/iodata.hpp"
 
 namespace palace
 {
+
+namespace
+{
+
+// Surface conductivity groups with nonzero conductivity.
+std::vector<std::size_t> GetActiveGroups(const SurfaceConductivityOperator &surf_sigma_op)
+{
+  std::vector<std::size_t> groups;
+  for (std::size_t g = 0; g < surf_sigma_op.Size(); g++)
+  {
+    if (surf_sigma_op.IsActive(g))
+    {
+      groups.push_back(g);
+    }
+  }
+  return groups;
+}
+
+}  // namespace
 
 SurfaceTerms::SurfaceTerms(const config::BoundaryData &boundaries, ProblemType problem_type,
                            const Units &units, const MaterialOperator &mat_op,
@@ -16,7 +36,16 @@ SurfaceTerms::SurfaceTerms(const config::BoundaryData &boundaries, ProblemType p
     surf_z_op(boundaries.impedance, boundaries.split_impedance_attributes, units, mat_op,
               mesh),
     surf_rz_op(boundaries.rational_impedance, boundaries.split_impedance_attributes,
-               problem_type, units, mat_op, mesh)
+               problem_type, units, mat_op, mesh),
+    sigma_terms(GetActiveGroups(surf_sigma_op))
+{
+}
+
+SurfaceTerms::SurfaceTerms(const IoData &iodata, const MaterialOperator &mat_op,
+                           const mfem::ParMesh &mesh)
+  : farfield_op(iodata, mat_op, mesh), surf_sigma_op(iodata, mat_op, mesh),
+    surf_z_op(iodata, mat_op, mesh), surf_rz_op(iodata, mat_op, mesh),
+    sigma_terms(GetActiveGroups(surf_sigma_op))
 {
 }
 
@@ -28,6 +57,11 @@ mfem::Array<int> SurfaceTerms::GetAttrList() const
   attr_list.Append(surf_z_op.GetAttrList());
   attr_list.Append(surf_rz_op.GetAttrList());
   return attr_list;
+}
+
+bool SurfaceTerms::HasDamping() const
+{
+  return surf_z_op.GetRsAttrList().Size() > 0 || farfield_op.GetAttrList().Size() > 0;
 }
 
 void SurfaceTerms::AddStiffnessBdrCoefficients(double coeff,
@@ -47,6 +81,13 @@ void SurfaceTerms::AddMassBdrCoefficients(double coeff, MaterialPropertyCoeffici
   surf_z_op.AddMassBdrCoefficients(coeff, fb);
 }
 
+void SurfaceTerms::AddScalarDampingBdrCoefficients(double coeff,
+                                                   MaterialPropertyCoefficient &fb)
+{
+  farfield_op.AddScalarDampingBdrCoefficients(coeff, fb);
+  surf_z_op.AddDampingBdrCoefficients(coeff, fb);
+}
+
 template <typename OmegaType>
 void SurfaceTerms::AddExtraSystemBdrMassImpl(OmegaType omega,
                                              MaterialPropertyCoefficient &fbr,
@@ -54,6 +95,13 @@ void SurfaceTerms::AddExtraSystemBdrMassImpl(OmegaType omega,
 {
   surf_sigma_op.AddExtraSystemBdrCoefficients(omega, fbr, fbi);
   surf_rz_op.AddExtraSystemBdrCoefficients(omega, fbr, fbi);
+}
+
+void SurfaceTerms::AddExtraSystemBdrMassCoefficients(double omega,
+                                                     MaterialPropertyCoefficient &fbr,
+                                                     MaterialPropertyCoefficient &fbi)
+{
+  AddExtraSystemBdrMassImpl(omega, fbr, fbi);
 }
 
 void SurfaceTerms::AddExtraSystemBdrCoefficients(
@@ -75,6 +123,37 @@ void SurfaceTerms::AddExtraSystemBdrCoefficients(
 {
   farfield_op.AddExtraSystemBdrCoefficients(omega, dfbr, dfbi, frbr, frbi, fpbr, fpbi);
   AddExtraSystemBdrMassImpl(omega, fbr, fbi);
+}
+
+int SurfaceTerms::GetNumExtraSystemBdrMassTerms() const
+{
+  return static_cast<int>(sigma_terms.size()) + surf_rz_op.GetNumBoundaries();
+}
+
+void SurfaceTerms::AddExtraSystemBdrMassTermCoefficients(
+    int i, MaterialPropertyCoefficient &fb) const
+{
+  const int num_sigma = static_cast<int>(sigma_terms.size());
+  if (i < num_sigma)
+  {
+    surf_sigma_op.AddBoundaryMassBdrCoefficients(sigma_terms[i], fb);
+  }
+  else
+  {
+    surf_rz_op.AddUnitBdrCoefficients(i - num_sigma, fb);
+  }
+}
+
+std::complex<double>
+SurfaceTerms::GetExtraSystemBdrMassTermScale(int i, std::complex<double> omega) const
+{
+  const int num_sigma = static_cast<int>(sigma_terms.size());
+  if (i < num_sigma)
+  {
+    return surf_sigma_op.EvaluateScalar(sigma_terms[i], omega);
+  }
+  return surf_rz_op.EvalRobinCoefficient(i - num_sigma,
+                                         std::complex<double>(0.0, 1.0) * omega);
 }
 
 }  // namespace palace

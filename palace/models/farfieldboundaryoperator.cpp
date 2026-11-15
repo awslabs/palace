@@ -90,6 +90,27 @@ void FarfieldBoundaryOperator::AddDampingBdrCoefficients(double coeff,
   }
 }
 
+void FarfieldBoundaryOperator::AddScalarDampingBdrCoefficients(
+    double coeff, MaterialPropertyCoefficient &fb) const
+{
+  if (farfield_attr.Size() == 0)
+  {
+    return;
+  }
+  // Scalar inverse impedance of the domain material adjacent to each farfield boundary
+  // element, like for the in-plane term. The boundary attribute to material map is indexed
+  // by libCEED boundary attribute: a mesh boundary attribute maps to one of these per
+  // neighboring domain attribute.
+  const auto &inv_z = mat_op.GetInvImpedance();
+  const auto bdr_attr_to_mat = mat_op.GetBdrAttributeToMaterial();
+  for (auto ceed_attr : mat_op.GetCeedBdrAttributes(farfield_attr))
+  {
+    const int mat_idx = bdr_attr_to_mat[ceed_attr - 1];
+    MFEM_ASSERT(mat_idx >= 0, "Missing material for farfield boundary attribute!");
+    fb.AddMaterialProperty(ceed_attr, inv_z(0, 0, mat_idx), coeff);
+  }
+}
+
 namespace
 {
 

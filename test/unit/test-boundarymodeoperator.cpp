@@ -25,13 +25,10 @@
 #include "fixtures.hpp"
 #include "linalg/vector.hpp"
 #include "models/boundarymodeoperator.hpp"
-#include "models/farfieldboundaryoperator.hpp"
 #include "models/materialoperator.hpp"
 #include "models/modeeigensolver.hpp"
 #include "models/modeoperatorassembly.hpp"
-#include "models/surfaceconductivityoperator.hpp"
-#include "models/surfaceimpedanceoperator.hpp"
-#include "models/surfacerationalimpedanceoperator.hpp"
+#include "models/surfaceterms.hpp"
 #include "models/waveportoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/constants.hpp"
@@ -112,10 +109,7 @@ ModeResult SolveRectangularModes(double width, double height, double freq_ghz,
   FiniteElementSpace h1_fespace(palace_mesh, h1_fec.get());
   MaterialOperator mat_op(iodata, palace_mesh);
 
-  SurfaceImpedanceOperator surf_z_op(iodata, mat_op, palace_mesh.Get());
-  FarfieldBoundaryOperator farfield_op(iodata, mat_op, palace_mesh.Get());
-  SurfaceConductivityOperator surf_sigma_op(iodata, mat_op, palace_mesh.Get());
-  SurfaceRationalImpedanceOperator surf_rz_op(iodata, mat_op, palace_mesh.Get());
+  SurfaceTerms surface_terms(iodata, mat_op, palace_mesh.Get());
 
   mfem::Array<int> nd_dbc_tdof_list, h1_dbc_tdof_list;
   {
@@ -140,11 +134,10 @@ ModeResult SolveRectangularModes(double width, double height, double freq_ghz,
   // ModeEigenSolver requires a positive Krylov subspace size (num_vec). Mirror the
   // formula used by IoData::CheckConfiguration for eigenmode.max_size.
   const int num_vec = std::max(2 * num_modes, num_modes + 15);
-  ModeEigenSolver mode_solver(mat_op, nullptr, surf_z_op, farfield_op, surf_sigma_op,
-                              surf_rz_op, nd_fespace, h1_fespace, dbc_tdof_list, num_modes,
-                              num_vec, eig_tol, EigenvalueSolver::WhichType::LARGEST_REAL,
-                              iodata.solver.linear, iodata.solver.boundary_mode.type, 0,
-                              nd_fespace.GetComm());
+  ModeEigenSolver mode_solver(
+      mat_op, nullptr, surface_terms, nd_fespace, h1_fespace, dbc_tdof_list, num_modes,
+      num_vec, eig_tol, EigenvalueSolver::WhichType::LARGEST_REAL, iodata.solver.linear,
+      iodata.solver.boundary_mode.type, 0, nd_fespace.GetComm());
 
   auto target_at = [&](std::complex<double> w)
   { return w.real() * std::sqrt(1.1 * mat_op.GetMaxMuEpsilon()); };
@@ -292,10 +285,7 @@ private:
   std::unique_ptr<mfem::H1_FECollection> h1_fec;
   std::unique_ptr<FiniteElementSpace> nd_fespace, h1_fespace;
   std::unique_ptr<MaterialOperator> mat_op;
-  std::unique_ptr<SurfaceImpedanceOperator> surf_z_op;
-  std::unique_ptr<FarfieldBoundaryOperator> farfield_op;
-  std::unique_ptr<SurfaceConductivityOperator> surf_sigma_op;
-  std::unique_ptr<SurfaceRationalImpedanceOperator> surf_rz_op;
+  std::unique_ptr<SurfaceTerms> surface_terms;
   std::unique_ptr<mfem::HypreParMatrix> Atnr, Atni, Btnr, Bttr;
   mfem::Array<int> dbc_tdof_list;
   std::unique_ptr<mode_assembly::ModeOperatorModel> model;
@@ -342,12 +332,7 @@ public:
     nd_fespace = std::make_unique<FiniteElementSpace>(*mesh, nd_fec.get());
     h1_fespace = std::make_unique<FiniteElementSpace>(*mesh, h1_fec.get());
     mat_op = std::make_unique<MaterialOperator>(iodata, *mesh);
-    surf_z_op = std::make_unique<SurfaceImpedanceOperator>(iodata, *mat_op, mesh->Get());
-    farfield_op = std::make_unique<FarfieldBoundaryOperator>(iodata, *mat_op, mesh->Get());
-    surf_sigma_op =
-        std::make_unique<SurfaceConductivityOperator>(iodata, *mat_op, mesh->Get());
-    surf_rz_op =
-        std::make_unique<SurfaceRationalImpedanceOperator>(iodata, *mat_op, mesh->Get());
+    surface_terms = std::make_unique<SurfaceTerms>(iodata, *mat_op, mesh->Get());
 
     std::tie(Atnr, Atni) = mode_assembly::AssembleAtn(*nd_fespace, *h1_fespace, *mat_op);
     Btnr.reset(Atnr->Transpose());
@@ -369,14 +354,14 @@ public:
       }
     }
     model = std::make_unique<mode_assembly::ModeOperatorModel>(
-        *nd_fespace, *h1_fespace, *mat_op, nullptr, *surf_z_op, *farfield_op,
-        *surf_sigma_op, *surf_rz_op, *Bttr, Atnr.get(), Atni.get(), Btnr.get(),
-        dbc_tdof_list);
+        *nd_fespace, *h1_fespace, *mat_op, nullptr, *surface_terms, *Bttr, Atnr.get(),
+        Atni.get(), Btnr.get(), dbc_tdof_list);
   }
 
   const auto &GetModel() const { return *model; }
   const auto &GetDbcTDofList() const { return dbc_tdof_list; }
   const auto &GetUnits() const { return iodata.units; }
+  const auto &GetSurfaceTerms() const { return *surface_terms; }
 
   const mode_assembly::OperatorComponent &
   GetComponent(mode_assembly::CoefficientType type) const
@@ -534,10 +519,7 @@ double SolveLondonSlabMode(double w, double h, double d, double lambda, bool pec
   FiniteElementSpace nd_fespace(palace_mesh, nd_fec.get());
   FiniteElementSpace h1_fespace(palace_mesh, h1_fec.get());
   MaterialOperator mat_op(iodata, palace_mesh);
-  SurfaceImpedanceOperator surf_z_op(iodata, mat_op, palace_mesh.Get());
-  FarfieldBoundaryOperator farfield_op(iodata, mat_op, palace_mesh.Get());
-  SurfaceConductivityOperator surf_sigma_op(iodata, mat_op, palace_mesh.Get());
-  SurfaceRationalImpedanceOperator surf_rz_op(iodata, mat_op, palace_mesh.Get());
+  SurfaceTerms surface_terms(iodata, mat_op, palace_mesh.Get());
 
   mfem::Array<int> nd_dbc_tdof_list, h1_dbc_tdof_list;
   {
@@ -560,11 +542,10 @@ double SolveLondonSlabMode(double w, double h, double d, double lambda, bool pec
       iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(freq_ghz);
   // Shift-and-invert about the target, as in BoundaryModeSolver with a target n_eff.
   const int num_vec = 16;
-  ModeEigenSolver mode_solver(mat_op, nullptr, surf_z_op, farfield_op, surf_sigma_op,
-                              surf_rz_op, nd_fespace, h1_fespace, dbc_tdof_list, 1, num_vec,
-                              1.0e-12, EigenvalueSolver::WhichType::LARGEST_MAGNITUDE,
-                              iodata.solver.linear, iodata.solver.boundary_mode.type, 0,
-                              nd_fespace.GetComm());
+  ModeEigenSolver mode_solver(
+      mat_op, nullptr, surface_terms, nd_fespace, h1_fespace, dbc_tdof_list, 1, num_vec,
+      1.0e-12, EigenvalueSolver::WhichType::LARGEST_MAGNITUDE, iodata.solver.linear,
+      iodata.solver.boundary_mode.type, 0, nd_fespace.GetComm());
   const double kn_target = omega * n_target;
   auto result = mode_solver.Solve(omega, -kn_target * kn_target);
   REQUIRE(result.num_converged >= 1);
@@ -1266,7 +1247,8 @@ TEST_CASE("ModeOperatorModel boundary components on processes without the bounda
   // Surface conductivity and rational impedance boundaries contribute a unit boundary mass
   // component each (the frequency dependence is applied separately), which is assembled
   // collectively also by processes without elements on the boundary (all but the last
-  // here).
+  // here). The conductivity term comes first, scaled by its surface admittance iω/Z(ω),
+  // then the rational impedance term, scaled by its Robin coefficient iω/Zs(iω).
   using RMM = RectangleModeModel;
   RMM rect(
       [](IoData &iodata)
@@ -1279,10 +1261,25 @@ TEST_CASE("ModeOperatorModel boundary components on processes without the bounda
         rz.num = {1.0e-12, 50.0};
         rz.den = {1.0};
       });
-  for (auto type : {mode_assembly::CoefficientType::SURFACE_CONDUCTIVITY,
-                    mode_assembly::CoefficientType::RATIONAL_IMPEDANCE})
+  const std::complex<double> omega = 1.0e-2;
+  const auto &terms = rect.GetSurfaceTerms();
+  const std::complex<double> scales[] = {
+      terms.GetSurfaceConductivityOp().EvaluateScalar(0, omega),
+      terms.GetRationalImpedanceOp().EvalRobinCoefficient(
+          0, std::complex<double>(0.0, 1.0) * omega)};
+  REQUIRE(std::abs(scales[0] - scales[1]) > 1.0e-3 * std::abs(scales[0]));
+  std::vector<int> indices;
+  for (const auto &component : rect.GetModel().GetComponents())
   {
-    const auto &component = rect.GetComponent(type);
+    if (component.type != mode_assembly::CoefficientType::SURFACE_TERM)
+    {
+      continue;
+    }
+    CAPTURE(component.index);
+    indices.push_back(component.index);
+    REQUIRE((component.index == 0 || component.index == 1));
+    CHECK(rect.GetModel().EvaluateCoefficient(component, omega, 0.0) ==
+          scales[component.index]);
     const auto pair_t = rect.Pairing(component, 1.0, 0.0);
     const auto pair_n = rect.Pairing(component, 0.0, 1.0);
     CHECK_THAT(pair_t.real(), WithinRel(RMM::H, 1.0e-12));
@@ -1290,6 +1287,7 @@ TEST_CASE("ModeOperatorModel boundary components on processes without the bounda
     CHECK_THAT(pair_n.real(), WithinRel(-RMM::H, 1.0e-12));
     CHECK(pair_n.imag() == 0.0);
   }
+  CHECK(indices == std::vector<int>{0, 1});
 }
 
 TEST_CASE("ModeEigenSolver London slab", "[boundarymodeoperator][Serial][Parallel]")
