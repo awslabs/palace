@@ -96,11 +96,16 @@ class RecordingWatchers:
     def alive(self, directory):
         return directory in self.live
 
+    END_LINE = "END exit 0: the row is terminal (the recording stand-in)"
+
     def start(self, argv, directory):
         if len(self.started) + 1 >= START_LIMIT:
             raise AssertionError(f"watcher start request {len(self.started) + 1}: the test's bound (decision 1830 (2))")
         self.started.append((argv, directory))
         self.live.add(directory)
+        os.makedirs(directory, exist_ok=True)  # its events.log: a watcher that ended with its run (COMPLETION_RULE (5))
+        with open(os.path.join(directory, "events.log"), "a") as f:
+            f.write(f"2026-11-15T00:00:00Z START (the recording stand-in)\n2026-11-15T00:00:00Z {self.END_LINE}\n")
         return 4242
 
     def runs(self):
@@ -1073,6 +1078,71 @@ class DriveWithFakeCLI(FakeCLICase):
                 self.assertRaises(paladin_backend.PaladinError):
             self.drive()
         self.assertFalse(self.records()["w"]["CompletionRead"]["Conditions"]["5-NoStop"])
+
+    # Decision 1836 m-6 (review r1833 MINOR-6): the completion read = the five conditions exactly.
+    def test_every_error_line_is_judged_not_only_the_first_twenty(self):
+        self.script({"chainport-w": "failed-deep-error"})
+        with self.assertRaises(paladin_backend.PaladinError):
+            self.drive()
+        read = self.records()["w"]["CompletionRead"]
+        self.assertFalse(read["Conditions"]["3-OnlyUploadErrors"])
+        self.assertEqual(read["ErrorCount"], 26)
+        self.assertIn("artifact index", read["Offending"][0])
+
+    def test_the_traceback_s_last_line_is_judged(self):
+        for end, offending in (("failed-stray-exception", "ValueError: the result table was truncated"),
+                               ("failed-foreign-traceback", "Traceback (most recent call last):")):
+            with self.subTest(end=end):
+                self.setUp_fresh()
+                self.script({"chainport-w": end})
+                with self.assertRaises(paladin_backend.PaladinError):
+                    self.drive()
+                read = self.records()["w"]["CompletionRead"]
+                self.assertFalse(read["Conditions"]["3-OnlyUploadErrors"])
+                self.assertEqual(read["Offending"][0], offending)
+                self.assertEqual(self.records()["w"]["State"], "failed")
+
+    def test_the_harness_s_own_traceback_passes_and_is_quoted(self):
+        holds, offending, last = paladin_backend.judge_console(
+            [(1, "ERROR qdash_das.palace.runner.process_harness: harness upload final tick failed"),
+             (2, "Traceback (most recent call last):"), (9, "KeyError: 'x'"), (10, "Traceback (most recent call last):"),
+             (14, "pyarrow.lib.ArrowTypeError: (1)")], 1)
+        self.assertEqual((holds, offending, last), (True, [], "pyarrow.lib.ArrowTypeError: (1)"))  # a chained exception
+        self.assertFalse(paladin_backend.judge_console([(1, "ERROR x: harness upload")], 2)[0])  # not all ERROR lines read
+
+    def test_every_name_difference_is_reported(self):
+        self.script({"chainport-w": "failed-upload-extra", "chainport-local-edge": "completed-extra"})
+        with self.assertRaises(paladin_backend.PaladinError):
+            self.drive()
+        read = self.records()["w"]["CompletionRead"]
+        self.assertEqual((read["ExtraOutputs"], read["Conditions"]["4-ExpectedOutputs"]), (["surprise.csv"], False))  # NOTE-1
+        self.setUp_fresh()
+        self.script({"chainport-local-edge": "completed-extra"})
+        state = self.drive()  # a completed row: the extra name is reported, not a stop
+        self.assertEqual(state["Stages"]["local-edge"]["CompletionRead"]["NameDifferences"],
+                         {"Missing": [], "Extra": ["surprise.csv"]})
+        self.assertEqual(state["Stages"]["local-edge"]["State"], "complete")
+
+    def test_the_watcher_s_end_line_is_read(self):
+        for line, holds in ((RecordingWatchers.END_LINE, True), ("END exit 11: verified (the row terminal)", False),
+                            ("CAP 1000 s from the PBS start >= cap 900 s -> the end request", False), (None, False)):
+            with self.subTest(line=line):
+                self.setUp_fresh()
+                del self.slept[:]
+                self.script({"chainport-w": "failed-upload"})
+                RecordingWatchers.END_LINE, saved = (line or "START again"), RecordingWatchers.END_LINE
+                try:
+                    if holds:
+                        self.drive()
+                    else:
+                        with self.assertRaises(paladin_backend.PaladinError):
+                            self.drive()
+                finally:
+                    RecordingWatchers.END_LINE = saved
+                read = self.records()["w"]["CompletionRead"]
+                self.assertEqual(read["Conditions"]["5-NoStop"], holds)
+                if line is None:
+                    self.assertEqual(self.slept.count(paladin_backend.WATCHER_INTERVAL_SECONDS), 3)  # waited for the END line
 
     def test_the_expected_outputs_per_stage_type(self):
         main = self.plan_path.parent

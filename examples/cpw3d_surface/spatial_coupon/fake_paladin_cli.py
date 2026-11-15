@@ -13,7 +13,10 @@ The state's "Plan" maps a run label to its scripted end:
   transport-once (the first submit only) | short-archive (an archive writer leaves one file out) |
   drift (paladin ran a configuration with one more changed leaf) | missing-table (a full solve
   leaves its last table out) | failed-other-error (as failed-upload, plus one other ERROR line
-  that names an upload but is not the harness's).
+  that names an upload but is not the harness's) | failed-deep-error (25 harness ERROR lines, then one other
+  ERROR line: beyond a first-20 read) | failed-stray-exception (an exception line after the harness traceback's
+  own, with no traceback of its own) | failed-foreign-traceback (a traceback before any ERROR line) |
+  failed-upload-extra / completed-extra (as failed-upload / completed, plus a postpro file no rule names).
 The state's "Lookups" is a list of answers for the next `palace my-jobs` calls, one consumed per
 call (decision 1820 (1); the review r1799's R1 / R2 / R3): empty (rc 0, no rows) | omitted (rc 0,
 the first row dropped, the warning rows_omitted: the installed client's form) | nokey (rc 0, data
@@ -71,17 +74,26 @@ def write_outputs(run, end):
     config = run["config"]
     ranks = run["ranks"]
     os.makedirs(os.path.join(run_dir, "postpro"), exist_ok=True)
-    finished = end in ("completed", "failed-upload", "failed-other-error", "short-archive", "drift", "missing-table")
+    finished = end in ("completed", "failed-upload", "failed-other-error", "short-archive", "drift", "missing-table",
+                       "failed-deep-error", "failed-stray-exception", "failed-foreign-traceback", "failed-upload-extra",
+                       "completed-extra")
     with open(os.path.join(run_dir, "log.out"), "w") as f:
         f.write(LOG.format(ranks=ranks, tail=TIME_REPORT if finished else "MPI_ABORT\n"))
     with open(os.path.join(run_dir, "console.log"), "w") as f:
         f.write("Palace SIF:     dev/fake/neoverse_v1.sif\nPaladin addon:  paladin:0.2.16\n")
-        if end in ("failed-upload", "failed-other-error"):
+        if end == "failed-foreign-traceback":
+            f.write("Traceback (most recent call last):\n  File \"runner.py\", line 1\nRuntimeError: the solver step failed\n")
+        if end.startswith("failed-"):
             f.write("ERROR qdash_das.palace.runner.process_harness: harness upload final tick failed for run\n"
                     "Traceback (most recent call last):\n"
                     "pyarrow.lib.ArrowTypeError: (\"Expected bytes, got a 'float' object\")\n")
         if end == "failed-other-error":
             f.write("ERROR qdash_das.palace.runner.mesh_upload: upload of the output mesh failed\n")
+        if end == "failed-deep-error":
+            f.write("ERROR qdash_das.palace.runner.process_harness: harness upload retry\n" * 24 +
+                    "ERROR qdash_das.palace.runner.artifacts: the artifact index was not written\n")
+        if end == "failed-stray-exception":
+            f.write("ValueError: the result table was truncated\n")
         f.write("Runner finished (exit 0)\n" if finished else "Runner finished (exit 1)\n")
     ran = copy.deepcopy(config)
     ran.setdefault("Model", {})["Mesh"] = "mesh.msh"
@@ -94,6 +106,9 @@ def write_outputs(run, end):
         json.dump(ran, f)
     if not finished:
         return
+    if end.endswith("-extra"):
+        with open(os.path.join(run_dir, "postpro", "surprise.csv"), "w") as f:
+            f.write("i\n1\n")
     electrostatic = config.get("Solver", {}).get("Electrostatic", {})
     archive = electrostatic.get("ResponseArchive", {})
     with open(os.path.join(run_dir, "postpro", "palace.json"), "w") as f:
@@ -205,8 +220,8 @@ def locked_main(argv, state_path):
         if run["status"] == "queued":
             run["status"], run["started"] = "running", now.isoformat()
         elif run["status"] == "running" and run["end"] != "hang":
-            run["status"] = {"failed": "failed", "failed-upload": "failed", "failed-other-error": "failed",
-                             "oom": "out_of_memory"}.get(run["end"], "completed")
+            run["status"] = ("failed" if run["end"].startswith("failed") else
+                             {"oom": "out_of_memory"}.get(run["end"], "completed"))
             started = datetime.datetime.fromisoformat(run["started"])
             run["completed"] = (started + datetime.timedelta(seconds=600)).isoformat()
             write_outputs(run, run["end"])

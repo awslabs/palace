@@ -516,37 +516,79 @@ def expected_outputs(config):
 
 
 UPLOAD_HARNESS_ERROR = "qdash_das.palace.runner.process_harness: harness upload"
-COMPLETION_RULE = ("PREREG-ESSURR-NOTE-1: a row failed by the qdash upload ALONE is a completed run iff (1) log.out has 'Elapsed "
-                   "Time Report (s)', (2) console.log has 'Runner finished (exit 0)', (3) every ERROR line of console.log is the "
-                   "upload harness's ('" + UPLOAD_HARNESS_ERROR + "'; at least one), (4) every expected output is present by "
-                   "name (OUTPUTS_RULE), (5) no cap / memory stop fired (no cancel by this backend, no end.json of the run "
-                   "watcher; paladin's own guard ends a row out_of_memory, not failed); a completed row must show (1), (2) and (4)")
+COMPLETION_RULE = ("PREREG-ESSURR-NOTE-1 (decision 1836 m-6: exactly): a row failed by the qdash upload ALONE is a completed run "
+                   "iff (1) log.out has 'Elapsed Time Report (s)', (2) console.log has 'Runner finished (exit 0)', (3) EVERY ERROR "
+                   "line of console.log is the upload harness's ('" + UPLOAD_HARNESS_ERROR + "'; at least one), every traceback "
+                   "follows such a line and every exception line follows such a traceback (its last line judged and quoted), (4) the "
+                   "postpro file names equal OUTPUTS_RULE's list (every difference reported; an untraced one = not shown), (5) no "
+                   "cap / memory stop fired (no cancel by this backend, no end.json of the run watcher, its events.log without a CAP "
+                   "/ MEMORY line and its END line read: 'END exit 0' (or 5, its life bound: no stop); paladin's own guard ends a row out_of_memory, not failed); a "
+                   "completed row must show (1), (2) and every expected name (extras reported)")
+MARKED_LINES_LIMIT = 2000
 
 
-def completion_read(host, run_dir, expected, *, row_status, cancelled_by_backend, watcher_end=None):
-    """The five conditions of COMPLETION_RULE read on the run directory."""
+def judge_console(marks, error_count):
+    """COMPLETION_RULE (3) on the marked console lines [(line number, text)]: (holds, offending lines, the last exception line)."""
+    offending, anchor, traceback_ok, last = [], None, False, None
+    errors = [text for _, text in marks if "ERROR" in text]
+    if error_count != len(errors) or len(marks) >= MARKED_LINES_LIMIT:
+        offending.append(f"{error_count} ERROR lines, {len(errors)} read ({len(marks)} marked lines): not all judged")
+    for _, text in marks:
+        if "ERROR" in text:
+            anchor = UPLOAD_HARNESS_ERROR in text
+            if not anchor:
+                offending.append(text)
+        elif text.startswith("Traceback (most recent call last)"):
+            traceback_ok = bool(anchor)
+            if not traceback_ok:
+                offending.append(text)
+        else:  # an exception line: it must end a traceback of the harness's (one exception line per traceback)
+            last = text
+            if not traceback_ok:
+                offending.append(text)
+            traceback_ok = False
+    return bool(errors) and not offending, offending[:5], last
+
+
+def completion_read(host, run_dir, expected, *, row_status, cancelled_by_backend, watcher_end=None, watcher_events=None):
+    """The five conditions of COMPLETION_RULE read on the run directory (watcher_events: the run watcher's
+    events.log text, None = none found)."""
     q = shlex.quote(run_dir)
     text = remote_text(host, f"cd {q} && echo ELAPSED $(grep -c 'Elapsed Time Report (s)' log.out 2>/dev/null); "
                              f"echo FINISHED $(grep -a -c 'Runner finished (exit 0)' console.log 2>/dev/null); "
-                             f"grep -a 'ERROR' console.log 2>/dev/null | sed 's/^/ERRORLINE /' | head -20; "
-                             f"grep -a -E '^[A-Za-z_.]+(Error|Exception)' console.log 2>/dev/null | tail -1 | sed 's/^/LAST /'; "
-                             f"ls -1 postpro 2>/dev/null | sed 's/^/FILE /'", what=f"the completion read of {run_dir}")
+                             f"echo ERRORCOUNT $(grep -a -c 'ERROR' console.log 2>/dev/null); "
+                             f"grep -a -n -E 'ERROR|^Traceback \\(most recent call last\\)|^[A-Za-z_.]+(Error|Exception)' console.log "
+                             f"2>/dev/null | head -{MARKED_LINES_LIMIT} | sed 's/^/MARK /'; "
+                             f"find postpro -maxdepth 1 -type f -printf 'FILE %f\\n' 2>/dev/null",
+                       what=f"the completion read of {run_dir}")
     lines = text.splitlines()
     value = {line.split()[0]: line.split()[1] if len(line.split()) > 1 else "0" for line in lines
-             if line.startswith(("ELAPSED ", "FINISHED "))}
-    errors = [line[len("ERRORLINE "):] for line in lines if line.startswith("ERRORLINE ")]
-    last = next((line[len("LAST "):] for line in lines if line.startswith("LAST ")), None)
+             if line.startswith(("ELAPSED ", "FINISHED ", "ERRORCOUNT "))}
+    marks = []
+    for line in lines:
+        if line.startswith("MARK "):
+            number, _, rest = line[len("MARK "):].partition(":")
+            marks.append((int(number) if number.isdigit() else 0, rest))
+    errors = [rest for _, rest in marks if "ERROR" in rest]
+    judged, offending, last = judge_console(marks, int(value.get("ERRORCOUNT", "0") or 0))
     files = {line[len("FILE "):] for line in lines if line.startswith("FILE ")}
+    missing, extra = sorted(set(expected) - files), sorted(files - set(expected))
     failed = str(row_status).lower() == "failed"
+    events = (watcher_events or "").splitlines()
+    stops = [line for line in events if len(line.split()) > 1 and line.split()[1] in ("CAP", "MEMORY")]
+    end_lines = [line for line in events if len(line.split()) > 2 and line.split()[1:3] == ["END", "exit"]]
     conditions = {
         "1-ElapsedTimeReport": int(value.get("ELAPSED", "0") or 0) >= 1,
         "2-RunnerFinishedExit0": int(value.get("FINISHED", "0") or 0) >= 1,
-        "3-OnlyUploadErrors": (bool(errors) and all(UPLOAD_HARNESS_ERROR in line for line in errors)) if failed else True,
-        "4-ExpectedOutputs": all(name in files for name in expected),
-        "5-NoStop": not cancelled_by_backend and watcher_end is None and str(row_status).lower() != "out_of_memory",
+        "3-OnlyUploadErrors": judged if failed else True,
+        "4-ExpectedOutputs": not missing and (not extra if failed else True),
+        "5-NoStop": (not cancelled_by_backend and watcher_end is None and str(row_status).lower() != "out_of_memory" and
+                     not stops and bool(end_lines) and all(line.split()[3].rstrip(":") in ("0", "5") for line in end_lines)),
     }
-    return {"Conditions": conditions, "Holds": all(conditions.values()), "ErrorLines": errors, "TracebackLast": last,
-            "MissingOutputs": [name for name in expected if name not in files], "RowStatus": row_status, "Rule": COMPLETION_RULE}
+    return {"Conditions": conditions, "Holds": all(conditions.values()), "ErrorLines": errors[:20], "ErrorCount": len(errors),
+            "Offending": offending, "TracebackLast": last, "MissingOutputs": missing, "ExtraOutputs": extra,
+            "NameDifferences": {"Missing": missing, "Extra": extra}, "WatcherEndLines": end_lines[-3:], "WatcherStops": stops[:3],
+            "RowStatus": row_status, "Rule": COMPLETION_RULE}
 
 
 def leaves(value, prefix=""):
@@ -1362,8 +1404,11 @@ class PaladinJob:
                                f"1 x {self.ranks}: STOP")
         config = self.stage_run_config(stage)
         read = completion_read(self.host, run_dir, expected_outputs(config), row_status=status,
-                               cancelled_by_backend=bool(record.get("CapCancel")), watcher_end=self.watcher_end(record))
+                               cancelled_by_backend=bool(record.get("CapCancel")), watcher_end=self.watcher_end(record),
+                               watcher_events=self.watcher_events(record))
         record["CompletionRead"] = read
+        if read["MissingOutputs"] or read["ExtraOutputs"]:
+            self.log(f"{self.case}: {name} run {record['RunID']}: postpro names differ from OUTPUTS_RULE: {read['NameDifferences']}")
         conditions = read["Conditions"]
         holds = read["Holds"] if cls == "failed" else all(conditions[key] for key in
                                                           ("1-ElapsedTimeReport", "2-RunnerFinishedExit0", "4-ExpectedOutputs"))
@@ -1420,6 +1465,27 @@ class PaladinJob:
         record["State"] = "complete"
         self.save()
         self.log(f"{self.case}: {name} run {record['RunID']} complete ({record.get('WallSeconds', 0):.0f} s)")
+
+    def watcher_events(self, record, *, waits=3):
+        """COMPLETION_RULE (5): the events.log text of the run's watcher (run-<id>, else its nonce directories), waited for
+        its END line up to `waits` watcher intervals while a watcher lives; None when no events.log exists."""
+        intents = record.get("SubmitIntents") or []
+        directories = [os.path.join(self.watchers_root(), f"run-{record.get('RunID')}")]
+        directories += [self.nonce_dir(intent) for intent in intents if intent.get("RunID") == record.get("RunID")]
+        for attempt in range(waits + 1):
+            texts = []
+            for directory in directories:
+                path = os.path.join(directory, "events.log")
+                if os.path.isfile(path):
+                    with open(path) as f:
+                        texts.append(f.read())
+            text = texts[0] if texts else None
+            if text and " END exit " in text:
+                return text
+            if attempt == waits or not any(self.watchers.alive(directory) for directory in directories):
+                return text
+            self.sleep(WATCHER_INTERVAL_SECONDS)
+        return None
 
     def watcher_end(self, record):
         """The end.json of the record's watcher (WATCHER_RULE), or None."""
