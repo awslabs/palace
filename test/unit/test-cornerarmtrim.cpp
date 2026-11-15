@@ -3444,8 +3444,12 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     INFO(name);
     REQUIRE(fs::is_regular_file(off_dir / "iteration1" / name));
     REQUIRE(fs::is_regular_file(off_dir / name));
-    // The second measurement's tables differ from the first's (the field doubled).
-    CHECK(ReadFile(off_dir / "iteration1" / name) != ReadFile(off_dir / name));
+    // The second measurement's energy tables differ from the first's (the field doubled);
+    // the patch list is the geometry's and is the same.
+    if (name != "surface-response-patches.csv")
+    {
+      CHECK(ReadFile(off_dir / "iteration1" / name) != ReadFile(off_dir / name));
+    }
   }
   for (const auto &level : {fs::path(), fs::path("iteration1")})
   {
