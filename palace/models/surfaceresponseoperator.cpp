@@ -32146,6 +32146,10 @@ void SurfaceResponseOperator::WriteResolutionPatchTable(const std::string &path)
   std::iota(order.begin(), order.end(), 0);
   std::sort(order.begin(), order.end(), [&](std::size_t a, std::size_t b)
             { return records[stride * a] < records[stride * b]; });
+  // The adaptive archive (SaveIteration) leaves a link at the top level to the previous
+  // level's file: removed first, so that this level never writes into the archive
+  // (decision 1831; the pre-existing writers' form).
+  std::filesystem::remove(path);
   std::ofstream output(path);
   MFEM_VERIFY(output, "Unable to open " << path << " for writing!");
   output << "patch,model,origin x (m),origin y (m),origin z (m),axis u x,axis u y,axis u "
