@@ -123,7 +123,7 @@ class GuardedTestCase(unittest.TestCase):
 
         def session_check(cookie, need_seconds, **options):
             if under_the_real_session_directory(cookie):
-                violation(f"the real session file was read: {cookie}")
+                violation(f"the real session file was reached (refused before any read): {cookie}")
             return real_session_check(cookie, need_seconds, **options)
 
         patches = [mock.patch.object(paladin_backend, "RunWatchers", DefaultStarterReached),
