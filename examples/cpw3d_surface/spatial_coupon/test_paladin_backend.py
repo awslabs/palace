@@ -1093,9 +1093,10 @@ class DriveWithFakeCLI(FakeCLICase):
         directory.mkdir(parents=True, exist_ok=True)  # the recording stand-in writes nothing
         (directory / paladin_backend.UNVERIFIED_MARKER).write_text(json.dumps(
             {"RunID": record["RunID"], "Job": record["JobID"], "Check": "by hand: paladin palace status ..."}))
-        for _ in range(2):  # the driver, then a resume
+        for _ in range(2):  # the driver, then a resume (a bound of 3 advances: without the STOP the test fails fast)
             count = len(self.calls())
-            with self.assertRaises(paladin_backend.PaladinError) as stop:
+            with mock.patch.object(paladin_backend, "DRIVE_MAX_ADVANCES", 3), \
+                    self.assertRaises(paladin_backend.PaladinError) as stop:
                 self.drive()
             self.assertIn("NOT VERIFIED", str(stop.exception))
             self.assertIn(str(record["RunID"]), str(stop.exception))
