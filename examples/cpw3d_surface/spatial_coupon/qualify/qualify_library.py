@@ -1130,7 +1130,36 @@ def poll_job(record, job, *, remote, profile, log):
     held = re.search(r"(comment = .*|error_message = .*)", poll["QStat"]) if poll["JobState"] == "H" else None
     log(f"== {poll['UTC']} {record['Case']} {job['Name']} job {submission['Job']} state {poll['JobState']} stages {stages}"
         + (f" (held, still queued: {held.group(1).strip()})" if held else ""))
-    return not remote_side.in_queue(poll["JobState"])
+    if poll["JobState"] is not None:
+        job["Monitor"].pop("AbsentAnswers", None)
+        return not remote_side.in_queue(poll["JobState"])
+    return empty_state_left(record, job, remote=remote, profile=profile, log=log)
+
+
+def empty_state_left(record, job, *, remote, profile, log):
+    """A reachable poll with an EMPTY job state (remote.EMPTY_STATE_RULE): True only on the job's
+    end record, the finished-job query's F / Exit_status, or enough consecutive empty answers;
+    otherwise the job stays active (counted in Monitor.AbsentAnswers)."""
+    submission = job["Submission"]
+    evidence = remote_side.exit_evidence(remote["Host"], profile["PBSBin"], submission["Job"], job["RemoteDirectory"])
+    monitor = job["Monitor"]
+    absent = monitor.setdefault("AbsentAnswers", {"Count": 0, "FirstUTC": evidence["UTC"], "FirstTime": time.time()})
+    absent["Count"] += 1
+    absent["Last"] = evidence
+    if evidence["Reachable"] and (evidence["EndRecord"] or evidence["FinishedState"] == "F" or evidence["ExitStatus"] is not None):
+        monitor["LeftBy"] = {"Evidence": evidence, "Rule": remote_side.EMPTY_STATE_RULE}
+        log(f"== {evidence['UTC']} {record['Case']} {job['Name']} job {submission['Job']} left the queue (end record "
+            f"{evidence['EndRecord']}, qstat -xf state {evidence['FinishedState']}, Exit_status {evidence['ExitStatus']})")
+        return True
+    span = time.time() - absent["FirstTime"]
+    if absent["Count"] >= remote_side.ABSENT_ANSWERS and span >= remote_side.ABSENT_SECONDS:
+        monitor["LeftBy"] = {"AbsentAnswers": absent["Count"], "Seconds": round(span), "Rule": remote_side.EMPTY_STATE_RULE}
+        log(f"== {record['Case']} {job['Name']} job {submission['Job']} left the queue by {absent['Count']} empty answers "
+            f"over {span:.0f} s (no end record, no finished-job state)")
+        return True
+    log(f"== {evidence['UTC']} {record['Case']} {job['Name']} job {submission['Job']} empty job state {absent['Count']} "
+        f"(no end record; qstat -xf state {evidence['FinishedState']}; reachable {evidence['Reachable']}): job kept active")
+    return False
 
 
 def poll_case(record, *, remote, profile, log):

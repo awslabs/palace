@@ -145,21 +145,121 @@ class MonitorTransportFailureTest(unittest.TestCase):
         record = {"Case": "c", "Submission": {"Job": "1.h"}, "Remote": {"Case": "/r/case"},
                   "Monitor": {"Polls": 0, "LastJobState": "R", "LastStages": None}}
         logged = []
-        saved_poll = remote_side.poll
+        saved_poll, saved_evidence = remote_side.poll, remote_side.exit_evidence
         try:
             remote_side.poll = lambda *args: dict(unreachable)
             done_unreachable = qualify_library.poll_case(record, remote={"Host": "h"}, profile={"PBSBin": "/pbs"}, log=logged.append)
             state_after_unreachable = record["Monitor"]["LastJobState"]
             remote_side.poll = lambda *args: dict(finished)
+            # Decision 1820 (3): the empty state is read as an exit only with its end record (here present).
+            remote_side.exit_evidence = lambda *args: {"UTC": "u", "Reachable": True, "EndRecord": True, "FinishedState": None,
+                                                       "ExitStatus": None, "QStatX": "", "SSHReturnCode": 0}
             done_finished = qualify_library.poll_case(record, remote={"Host": "h"}, profile={"PBSBin": "/pbs"}, log=logged.append)
         finally:
-            remote_side.poll = saved_poll
+            remote_side.poll, remote_side.exit_evidence = saved_poll, saved_evidence
         self.assertFalse(done_unreachable)
         self.assertEqual(record["Monitor"]["TransportFailures"], 1)
         self.assertEqual(state_after_unreachable, "R")     # the unreachable poll changes no job state
         self.assertIn("unreachable", logged[0])
         self.assertTrue(done_finished)
         self.assertEqual(record["Monitor"]["Polls"], 2)
+
+    def test_an_empty_qstat_answer_is_not_a_job_exit(self):
+        """Decision 1820 (3), OI-CHAIN-DRIVER-EMPTY-QSTAT-READ-AS-JOB-EXIT (remote.EMPTY_STATE_RULE): a reachable
+        poll with an empty qstat part leaves the job active unless the end record or the finished-job
+        query says it ended, or 5 empty answers span >= 600 s."""
+        remote_side = qualify_library.remote_side
+        empty = {"UTC": "u", "JobState": None, "QStat": "", "Status": None, "Reachable": True, "SSHReturnCode": 0}
+        running_x = {"UTC": "u", "Reachable": True, "EndRecord": False, "FinishedState": "R", "ExitStatus": None, "QStatX": "job_state = R",
+                     "SSHReturnCode": 0}
+        record = {"Case": "c", "Submission": {"Job": "1.h"}, "Remote": {"Case": "/r/case"},
+                  "Monitor": {"Polls": 0, "LastJobState": "R", "LastStages": None}}
+        clock = [1000.0]
+        saved = remote_side.poll, remote_side.exit_evidence, qualify_library.time.time
+        answers = {"evidence": running_x}
+        try:
+            remote_side.poll = lambda *args: dict(empty)
+            remote_side.exit_evidence = lambda *args: dict(answers["evidence"])
+            qualify_library.time.time = lambda: clock[0]
+            poll = lambda: qualify_library.poll_case(record, remote={"Host": "h"}, profile={"PBSBin": "/pbs"}, log=lambda line: None)
+            self.assertFalse(poll())                                       # qstat -xf still R: active
+            answers["evidence"] = dict(running_x, Reachable=False, FinishedState=None)
+            self.assertFalse(poll())                                       # the second read did not answer: active
+            answers["evidence"] = running_x
+            for _ in range(3):
+                clock[0] += 60
+                self.assertFalse(poll())                                   # 5 empty answers, but over 180 s only
+            self.assertEqual(record["Monitor"]["AbsentAnswers"]["Count"], 5)
+            clock[0] += 460
+            self.assertTrue(poll())                                        # 6 answers over 640 s: left by absence
+            self.assertEqual(record["Monitor"]["LeftBy"]["AbsentAnswers"], 6)
+            record["Monitor"] = {"Polls": 0, "LastJobState": "R", "LastStages": None}
+            self.assertFalse(poll())
+            remote_side.poll = lambda *args: dict(empty, JobState="R")
+            self.assertFalse(poll())
+            self.assertNotIn("AbsentAnswers", record["Monitor"])           # a state resets the count
+            remote_side.poll = lambda *args: dict(empty)
+            for evidence in (dict(running_x, FinishedState="F"), dict(running_x, FinishedState=None, ExitStatus=271),
+                             dict(running_x, FinishedState=None, EndRecord=True)):
+                record["Monitor"] = {"Polls": 0, "LastJobState": "R", "LastStages": None}
+                answers["evidence"] = evidence
+                self.assertTrue(poll())                                    # the end shown: left at once
+                self.assertIn("Evidence", record["Monitor"]["LeftBy"])
+        finally:
+            remote_side.poll, remote_side.exit_evidence, qualify_library.time.time = saved
+
+    PILOT_STOP = Path("/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/readiness-20261029/stageF/pilot/keys/x/drive/"
+                      "stop-20261115T130537Z-fab-spatial-20-edge-fd64f8d9162e")
+
+    @unittest.skipUnless(PILOT_STOP.is_dir(), "the pilot's stop records of 2026-11-15 are absent on this host")
+    def test_the_pilot_case_of_2026_11_15_replayed(self):
+        """The real false stop (pilot-keys, PBS 121054 RUNNING at 13:05:28Z and after): the poll's marker came
+        back, its qstat part was empty, status.json named the job with no stage yet, and no pbs-status.json
+        existed.  Replayed through remote.poll's and remote.exit_evidence's own parsers from the stop record's
+        job (read only): the job stays active and no exit check runs."""
+        remote_side = qualify_library.remote_side
+        lane = json.loads(next(self.PILOT_STOP.glob("root/**/library-qualification.json")).read_text())
+        recorded = lane["Cases"][0]["Jobs"][0]
+        job_id = recorded["Submission"]["Job"]
+        self.assertEqual((job_id.split(".")[0], recorded["Monitor"]["LastJobState"], recorded["Monitor"]["LastStages"]),
+                         ("121054", None, []))
+        status = json.dumps({"PBSJobID": job_id, "State": "running", "Stages": []})
+        answers = iter(["---STATUS---\n" + status + "\n" + remote_side.POLL_MARKER + "\n",      # 13:05:28Z: empty qstat part
+                        "job_state = R\n" + remote_side.EXIT_EVIDENCE_MARKER + "\n"])           # no end record; qstat -xf R
+        job = {"Name": recorded["Name"], "Submission": recorded["Submission"], "RemoteDirectory": recorded["RemoteDirectory"],
+               "Monitor": {"Polls": 23, "LastJobState": "R", "LastStages": []}}
+        saved = remote_side.ssh, qualify_library.check_job_exit
+        exits = []
+        try:
+            remote_side.ssh = lambda host, command, check=True, **options: subprocess.CompletedProcess(
+                ["ssh"], 0, stdout=next(answers), stderr="")
+            qualify_library.check_job_exit = lambda *args, **kwargs: exits.append(args)
+            left = qualify_library.poll_job({"Case": lane["Cases"][0]["Case"]}, job, remote={"Host": "soca-green-job"},
+                                            profile={"PBSBin": "/pbs"}, log=lambda line: None)
+        finally:
+            remote_side.ssh, qualify_library.check_job_exit = saved
+        self.assertFalse(left)
+        self.assertEqual(exits, [])
+        self.assertEqual((job["Monitor"]["LastJobState"], job["Monitor"]["AbsentAnswers"]["Count"]), (None, 1))
+        self.assertEqual(job["Monitor"]["AbsentAnswers"]["Last"]["FinishedState"], "R")
+
+    def test_exit_evidence_reads_the_end_record_and_the_finished_job_query(self):
+        remote_side = qualify_library.remote_side
+        commands = []
+        outputs = iter(["job_state = F\nExit_status = 0\n" + remote_side.EXIT_EVIDENCE_MARKER + "\n",
+                        "END-RECORD-PRESENT\n" + remote_side.EXIT_EVIDENCE_MARKER + "\n",
+                        "job_state = R\n" + remote_side.EXIT_EVIDENCE_MARKER + "\n", ""])
+        saved = remote_side.ssh
+        try:
+            remote_side.ssh = lambda host, command, check=True, **options: (commands.append(command) or subprocess.CompletedProcess(
+                ["ssh"], 0, stdout=next(outputs), stderr=""))
+            read = [remote_side.exit_evidence("h", "/pbs", "1.h", "/r/case/main") for _ in range(4)]
+        finally:
+            remote_side.ssh = saved
+        self.assertIn("/pbs/qstat -xf 1.h", commands[0])
+        self.assertIn("test -s /r/case/main/pbs-status.json", commands[0])
+        self.assertEqual([(r["Reachable"], r["EndRecord"], r["FinishedState"], r["ExitStatus"]) for r in read],
+                         [(True, False, "F", 0), (True, True, None, None), (True, False, "R", None), (False, False, None, None)])
 
     def test_held_job_is_still_in_the_queue(self):
         """PBS H (the SOCA dispatcher's capacity retry: 'Job held by root', error_message
