@@ -882,6 +882,24 @@ class DriveWithFakeCLI(FakeCLICase):
         with self.assertRaises(paladin_backend.PaladinError):
             paladin_backend.expected_outputs(estimate)  # no list: not submitted
 
+    def test_a_stage_type_without_an_output_list_is_not_submitted(self):
+        plan = json.loads(self.plan_path.read_text())
+        plan["Stages"][0]["Environment"] = {"PALACE_RESPONSE_ESTIMATE_ONLY": "1", "PALACE_RESPONSE_ARCHIVE_DIR": self.archive}
+        self.plan_path.write_text(json.dumps(plan))
+        with self.assertRaises(paladin_backend.PaladinError) as stop:
+            self.drive()
+        self.assertIn("no expected-output list", str(stop.exception))
+        self.assertEqual(self.submitted(), [])
+
+    def test_an_archive_marked_unusable_does_not_verify(self):
+        self.drive()
+        job = self.job()
+        config = job.stage_run_config(job.plan["Stages"][0])
+        self.assertTrue(job.archive_verify(self.archive, config, {"Name": "w"})["OK"])
+        (Path(self.archive) / paladin_backend.UNUSABLE_MARKER).write_text("{}")
+        verification = job.archive_verify(self.archive, config, {"Name": "w"})
+        self.assertEqual((verification["OK"], verification["Unusable"]), (False, True))
+
     REHEARSAL = Path("/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/readiness-20261029/stageF/chainport/"
                      "yb-rehearsal-1/driver/thin-spatial-3-edge-a61f856dce13/spatial-3-edge-a61f856dce13-thin")
 
