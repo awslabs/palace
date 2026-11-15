@@ -4758,6 +4758,204 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 #endif
 }
 
+// Lane L1 (rulings 1694 (i) / 1723 / 1727 (A)): THE CONDUCTOR-CONSISTENCY / LOOP-REMAINDER
+// OVERLAP AT UNIT LEVEL (OI-CORRECTED-TOTAL-CC-LOOPREMAINDER-OVERLAP). The exclusion is
+// declared; the corrected total's own bookkeeping (MeasureSurfaceResponseCorrection) is
+// mirrored, not called: the real path is the run-level cell V-CCLR (PREREG-L1B).
+// LoopFitLeadFixture's real Maxwell field at c = 0.5 (circulating: loop remainders with
+// rho_p > 0 on the isolated-edge cells) with the convex corner model added (the two corners
+// served). EVERY isolated-edge patch is declared conductor-consistency EXCLUDED (the suite
+// eig2 form: a whole model excluded, so its remainder lies on no served bin): the kept
+// class "ConductorConsistency" = their raw claims. The corrected total keeps raw, each
+// integrated on its own: Missing + CC + LR (the loop remainder of every remainder patch).
+// d_indep = the loop remainder of the EXCLUDED patches alone (its own integral). (a) served
+// (after MoveCoverageLoopRemainder) + unclaimed = (W - kept_raw) + d_indep (1e-12 of W),
+// d_indep > 0 = loop_remainder_unserved; NEGATIVE: without the d_indep term the identity
+// fails by exactly d_indep. (b) The class empty (no exclusion): d_indep = 0 exactly and
+// served + unclaimed = W - kept_raw; NEGATIVE: without the move the identity fails by
+// exactly the loop remainder the move takes out (with the exclusion the excluded remainder
+// lies on no served bin, so the move-sensitivity shows on this leg).
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "Coverage partition with a declared conductor-consistency exclusion keeps "
+                 "the excluded loop remainder once (Maxwell)",
+                 "[postoperator][surfaceresponseoperator][cornerarmtrim][3d][maxwell]"
+                 "[loopfit][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  const fs::path output_dir = temp.temp_dir / "coverage-cc-lr";
+  json config = LoopFitLeadFixture::Config(*this, output_dir, "coverage-cc-lr");
+  // The convex corner model added to the fixture's isolated-edge library (root writes;
+  // checked on every rank after the barrier: decision 1616).
+  const fs::path library_path =
+      config["Solver"]["SurfaceResponseCorrection"]["Library"].get<std::string>();
+  int input_ok[2] = {1, 1};  // {sources readable, exactly one ConvexCorner model added}
+  if (Mpi::Root(Mpi::World()))
+  {
+    std::ifstream edges_input(library_path), convex_input(convex_library_3d_path);
+    input_ok[0] = edges_input && convex_input ? 1 : 0;
+    if (input_ok[0])
+    {
+      json library = json::parse(edges_input);
+      int added = 0;
+      const json convex = json::parse(convex_input);
+      for (auto model : convex["Models"])
+      {
+        if (model["Topology"] == "ConvexCorner")
+        {
+          model["Interfaces"] = {{{"Type", "SA"}, {"Coupon", 1}}};
+          library["Models"].push_back(model);
+          added++;
+        }
+      }
+      input_ok[1] = added == 1 ? 1 : 0;
+      edges_input.close();
+      std::ofstream output(library_path);
+      output << library.dump(2) << "\n";
+    }
+  }
+  Mpi::Barrier(Mpi::World());
+  Mpi::Broadcast(2, input_ok, 0, Mpi::World());
+  REQUIRE(input_ok[0] == 1);
+  REQUIRE(input_ok[1] == 1);
+  IoData iodata(config, false);
+  iodata.boundaries.cracked_attributes.insert(9);
+  MPI_Comm comm = Mpi::World();
+  MakeOutputFolder(iodata, comm);
+  std::vector<std::unique_ptr<Mesh>> meshes;
+  meshes.push_back(std::make_unique<Mesh>(MakeLeadMesh(0.0, 0.75)));
+  SpaceOperator space_op(iodata, meshes);
+  PostOperator<ProblemType::EIGENMODE> post_op(iodata, space_op);
+  auto *response = ReplicatedRecords(post_op.GetSurfaceResponseOperator());
+  REQUIRE(response);
+  Vector e_real;
+  const auto field = LoopFitLeadFixture::MakeField(space_op, 0.5, e_real);
+  const auto measured =
+      response->GetMaxwellResponse(*field, std::complex<double>(1.0), true);
+  REQUIRE_FALSE(measured.loop_remainders.empty());
+
+  // The excluded model's label = the label of the first remainder patch's claims (the
+  // isolated-edge cells on this fixture); every remainder patch of that label is excluded.
+  const auto all_portions = response->GetLoopRemainderPortions(measured.loop_remainders);
+  REQUIRE_FALSE(all_portions.portions.empty());
+  const std::string edge_label = all_portions.portions.front().topology;
+  std::vector<SurfaceResponseOperator::MaxwellResponse::LoopRemainder> excluded_remainders;
+  for (const auto &remainder : measured.loop_remainders)
+  {
+    const auto portions = response->GetLoopRemainderPortions({remainder});
+    REQUIRE_FALSE(portions.portions.empty());
+    if (portions.portions.front().topology == edge_label)
+    {
+      excluded_remainders.push_back(remainder);
+    }
+  }
+  REQUIRE_FALSE(excluded_remainders.empty());
+  auto Perimeter = [](const SurfaceResponseOperator::LoopRemainderPortions &remainder)
+  {
+    std::vector<SurfacePostOperator::UncoveredPerimeterPortion> perimeter;
+    for (const auto &portion : remainder.portions)
+    {
+      perimeter.push_back({portion.p0, portion.p1, portion.topology, portion.feature});
+    }
+    return perimeter;
+  };
+  const auto served = post_op.GetSurfaceResponseModelRawPortions().Expand();
+  std::vector<SurfacePostOperator::UncoveredPerimeterPortion> cc, missing;
+  for (const auto &portion : served)
+  {
+    if (portion.type == edge_label)
+    {
+      cc.push_back(portion);
+    }
+  }
+  REQUIRE_FALSE(cc.empty());
+  for (const auto &portion : response->GetUncoveredPortions())
+  {
+    missing.push_back(
+        {portion.p0, portion.p1, "m" + std::to_string(portion.feature), portion.feature});
+  }
+
+  const auto &surf_post_op = post_op.GetSurfacePostOp();
+  auto Energy = [&](const std::vector<SurfacePostOperator::UncoveredPerimeterPortion> &list)
+  {
+    if (list.empty())
+    {
+      return 0.0;
+    }
+    const auto energies =
+        surf_post_op.GetInterfaceUncoveredEdgeEnergies({4}, *field, nullptr, list);
+    return energies.count(4) ? energies.at(4).energy : 0.0;
+  };
+  auto Weighted = [&](const SurfaceResponseOperator::LoopRemainderPortions &remainder)
+  {
+    double total = 0.0;
+    for (const auto &[label, energy] :
+         surf_post_op
+             .GetInterfaceWeightedPortionEdgeEnergies(
+                 {4}, *field, nullptr, Perimeter(remainder), remainder.weights)
+             .at(4))
+    {
+      (void)label;
+      total += energy;
+    }
+    return total;
+  };
+  const auto loop_remainder = surf_post_op.GetInterfaceWeightedPortionEdgeEnergies(
+      {4}, *field, nullptr, Perimeter(all_portions), all_portions.weights);
+  const double lr_total = Weighted(all_portions);
+  const double d_indep = Weighted(response->GetLoopRemainderPortions(excluded_remainders));
+  const double missing_energy = Energy(missing), cc_energy = Energy(cc);
+  REQUIRE(lr_total > 0.0);
+  auto ServedPlusUnclaimed = [](const SurfacePostOperator::InterfaceCoveragePartition &p)
+  {
+    double sum = p.unclaimed;
+    for (const auto &[label, energy] : p.served)
+    {
+      (void)label;
+      sum += energy;
+    }
+    return sum;
+  };
+
+  // (a) The declared exclusion: the excluded remainder is kept raw twice by the corrected
+  // total's bookkeeping (in CC whole and in LR), once by the partition.
+  {
+    auto partition = surf_post_op.GetInterfaceCoveragePartition(
+        {4}, *field, nullptr, {{"Missing", &missing}, {"ConductorConsistency", &cc}},
+        served);
+    const double W = partition.at(4).within;
+    REQUIRE(W > 0.0);
+    SurfacePostOperator::MoveCoverageLoopRemainder(partition, loop_remainder);
+    const auto &p = partition.at(4);
+    const double kept_raw = missing_energy + cc_energy + lr_total;
+    const double lhs = ServedPlusUnclaimed(p);
+    CHECK(d_indep > 1.0e-6 * W);
+    CHECK_THAT(lhs, WithinAbs((W - kept_raw) + d_indep, 1.0e-12 * W));
+    CHECK_THAT(p.loop_remainder_unserved, WithinAbs(d_indep, 1.0e-12 * W));
+    // NEGATIVE: the identity without d_indep fails by exactly d_indep.
+    CHECK_THAT(lhs - (W - kept_raw), WithinAbs(d_indep, 1.0e-12 * W));
+    CHECK(std::abs(lhs - (W - kept_raw)) > 1.0e3 * 1.0e-12 * W);
+  }
+
+  // (b) The class empty (no exclusion): d_indep = 0 by its definition (no excluded patch).
+  {
+    auto partition = surf_post_op.GetInterfaceCoveragePartition(
+        {4}, *field, nullptr, {{"Missing", &missing}}, served);
+    const double W = partition.at(4).within;
+    const double unmoved = ServedPlusUnclaimed(partition.at(4));
+    SurfacePostOperator::MoveCoverageLoopRemainder(partition, loop_remainder);
+    const auto &p = partition.at(4);
+    const double kept_raw = missing_energy + lr_total;
+    CHECK(p.loop_remainder_unserved == 0.0);
+    CHECK_THAT(ServedPlusUnclaimed(p), WithinAbs(W - kept_raw, 1.0e-12 * W));
+    // NEGATIVE: without the move the identity fails by exactly the moved loop remainder.
+    CHECK_THAT(unmoved - (W - kept_raw), WithinAbs(lr_total, 1.0e-12 * W));
+    CHECK(lr_total > 1.0e3 * 1.0e-12 * W);
+  }
+#endif
+}
+
 // PatchEnergy's spatial-trace export on the Maxwell path (decision 922 B-3; the d919 review
 // MAJOR-3): the Legacy spatial-cluster fixture (the offset corner pair: one spatial
 // edge-cluster patch, six corner patches, the isolated-edge cells) under an Eigenmode

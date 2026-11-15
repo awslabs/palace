@@ -33,6 +33,7 @@
 #include "models/boundarymodeoperator.hpp"
 #include "models/cornertracebasis.hpp"
 #include "models/laplaceoperator.hpp"
+#include "models/postoperator.hpp"
 #include "models/spaceoperator.hpp"
 #include "models/surfaceresponseidentification.hpp"
 #include "models/surfaceresponseoperator.hpp"
@@ -14911,6 +14912,179 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   };
   CompareTable("surface-Q-corrected.csv");
   CompareTable("terminal-C-corrected.csv");
+#endif
+}
+
+// Lane L1 (rulings 1714 / 1715; decision 1723: the snap's energy leg on a unit fixture).
+// One metal bar on the cracked sheet with the SA interface (attribute 10) around it
+// (IslandConfig, R = 0.2; the convex library's isolated edge and 90-degree convex corner on
+// SA): the sheet surrounds the bar's four convex corners, so a sheet point diagonal from a
+// corner has its nearest foot AT the corner vertex, the clamped end of a tree segment (the
+// exterior vertex quadrant). Every served claim end moved 1 ulp per coordinate into its
+// portion (toward the other end): (a) as the SERVED list, the ends at a segment end are
+// round-off short and snapped: the served bins equal the exact claims' (round-off) and the
+// round-off-short population carries energy > 0 (the quadrants the snap gives back); (b) as
+// a KEPT class the same list is counted and never snapped: its energy is LOWER than the
+// exact list's, by more than 0 and by at most the population's energy (the direction of
+// OI-FOOT-TEST-VERTEX- ROUNDOFF: a kept portion one round-off short of a convex vertex
+// drops that quadrant).
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "Coverage snap gives back an exterior vertex quadrant's energy",
+                 "[postoperator][surfaceresponseoperator][3d][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  MPI_Comm comm = Mpi::World();
+  const fs::path mesh_path = temp.temp_dir / "coverage-snap-bar.mesh";
+  const fs::path basis_path = temp.temp_dir / "coverage-snap-basis-points.csv";
+  const fs::path library_path = temp.temp_dir / "fabrication-process-coverage-snap-3d.json";
+  // The root writes the inputs; whether it could read the library source is asserted on
+  // every rank AFTER the barrier (decision 1616: no root-only REQUIRE before a barrier).
+  int input_ok = 1;
+  if (Mpi::Root(comm))
+  {
+    mfem::Mesh serial = MakeSheetPlanMesh(3.0, 3.0, {{1.0, 1.0, 2.0, 2.0}}, 10);
+    std::ofstream output(mesh_path);
+    serial.Print(output);
+    {
+      std::ofstream basis(basis_path);
+      basis << "x,y,z\n"
+            << "-0.2,-0.2,0.0\n"
+            << "0.2,-0.2,0.0\n"
+            << "0.2,0.2,0.0\n"
+            << "-0.2,0.2,0.0\n";
+    }
+    std::ifstream input(convex_library_3d_path);
+    input_ok = input ? 1 : 0;
+    if (input_ok)
+    {
+      json library = json::parse(input);
+      library["Name"] = "unit-test-process-coverage-snap-3d";
+      for (auto &model : library["Models"])
+      {
+        model["Interfaces"] = {{{"Type", "SA"}, {"Coupon", 1}}};
+        if (model["Topology"] == "IsolatedEdge")
+        {
+          model["BasisPoints"] = basis_path.string();
+        }
+      }
+      std::ofstream output_library(library_path);
+      output_library << library.dump(2) << "\n";
+    }
+  }
+  Mpi::Barrier(comm);
+  Mpi::Broadcast(1, &input_ok, 0, comm);
+  REQUIRE(input_ok == 1);
+  json config = IslandConfig();
+  config["Model"]["Mesh"] = mesh_path.string();
+  config["Model"]["L0"] = 1.0;
+  config["Boundaries"]["Postprocessing"]["Dielectric"][0]["Attributes"] = {10};
+  auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
+  correction["Library"] = library_path.string();
+  correction["UnmatchedPolicy"] = "Warn";
+  correction.erase("PatchConstruction");  // Features (the default)
+  IoData iodata(config, false);
+  std::vector<std::unique_ptr<Mesh>> meshes;
+  meshes.push_back(std::make_unique<Mesh>(mesh::ReadMesh(iodata, comm)));
+  LaplaceOperator laplace(iodata, meshes);
+  SurfaceResponseOperator response(iodata, laplace);
+  REQUIRE(response.GetPatchCount() > 0);
+  const auto served = response.GetModelRawClaimPortions().portions.Expand();
+  REQUIRE_FALSE(served.empty());
+
+  PostOperator<ProblemType::ELECTROSTATIC> post_op(iodata, laplace);
+  // A smooth potential with a tangential field on the whole sheet (no solve: the partition
+  // only integrates the given field).
+  mfem::ParGridFunction potential(&laplace.GetH1Space().Get());
+  mfem::FunctionCoefficient potential_coefficient(
+      [](const mfem::Vector &x)
+      { return std::sin(1.3 * x[0] + 0.4) * std::cosh(0.7 * x[2]) + 0.3 * x[1] * x[1]; });
+  potential.ProjectCoefficient(potential_coefficient);
+  mfem::ParDiscreteLinearOperator gradient(&laplace.GetH1Space().Get(),
+                                           &laplace.GetNDSpace().Get());
+  gradient.AddDomainInterpolator(new mfem::GradientInterpolator());
+  gradient.Assemble();
+  GridFunction field(laplace.GetNDSpace());
+  gradient.Mult(potential, field.Real());
+  field.Real() *= -1.0;
+  Vector e(laplace.GetNDSpace().GetTrueVSize());
+  field.Real().GetTrueDofs(e);
+  field.Real().SetFromTrueDofs(e);
+  field.Real().ExchangeFaceNbrData();
+
+  // Every end 1 ulp toward the other end in each coordinate along which the portion runs.
+  auto moved = served;
+  for (auto &portion : moved)
+  {
+    const auto p0 = portion.p0, p1 = portion.p1;
+    for (int d = 0; d < 3; d++)
+    {
+      if (p0[d] != p1[d])
+      {
+        portion.p0[d] = std::nextafter(p0[d], p1[d]);
+        portion.p1[d] = std::nextafter(p1[d], p0[d]);
+      }
+    }
+  }
+  const auto &surf_post_op = post_op.GetSurfacePostOp();
+  const std::vector<SurfacePostOperator::UncoveredPerimeterPortion> no_claims;
+  auto Served = [](const SurfacePostOperator::InterfaceCoveragePartition &partition)
+  {
+    double sum = 0.0;
+    for (const auto &[label, energy] : partition.served)
+    {
+      (void)label;
+      sum += energy;
+    }
+    return sum;
+  };
+  auto Kept = [](const SurfacePostOperator::InterfaceCoveragePartition &partition)
+  {
+    double sum = 0.0;
+    for (const auto &[key, energy] : partition.classes)
+    {
+      (void)key;
+      sum += energy;
+    }
+    return sum;
+  };
+
+  // (a) The served list: snapped.
+  const auto exact =
+      surf_post_op.GetInterfaceCoveragePartition({4}, field, nullptr, {}, served).at(4);
+  const auto snapped =
+      surf_post_op.GetInterfaceCoveragePartition({4}, field, nullptr, {}, moved).at(4);
+  REQUIRE(exact.within > 0.0);
+  REQUIRE(Served(exact) > 0.0);
+  CHECK(snapped.served_ends.roundoff_count > exact.served_ends.roundoff_count);
+  CHECK(snapped.served_ends.roundoff_distance > 0.0);
+  CHECK(snapped.served_ends.roundoff_energy > 0.0);  // THE quadrants given back
+  CHECK(snapped.served_ends.roundoff_energy <= Served(exact));
+  CHECK_THAT(Served(snapped), WithinRel(Served(exact), 1.0e-12));
+  CHECK_THAT(snapped.unclaimed, WithinAbs(exact.unclaimed, 1.0e-12 * exact.within));
+  for (const auto &[label, energy] : exact.served)
+  {
+    REQUIRE(snapped.served.count(label) == 1);
+    CHECK_THAT(snapped.served.at(label), WithinAbs(energy, 1.0e-12 * exact.within));
+  }
+
+  // (b) The same list as a kept class: counted, never snapped.
+  const auto kept_exact = surf_post_op
+                              .GetInterfaceCoveragePartition(
+                                  {4}, field, nullptr, {{"Missing", &served}}, no_claims)
+                              .at(4);
+  const auto kept_moved = surf_post_op
+                              .GetInterfaceCoveragePartition(
+                                  {4}, field, nullptr, {{"Missing", &moved}}, no_claims)
+                              .at(4);
+  CHECK(kept_moved.kept_ends.roundoff_count > kept_exact.kept_ends.roundoff_count);
+  CHECK(kept_moved.kept_ends.roundoff_energy > 0.0);
+  CHECK(kept_moved.served_ends.roundoff_count == 0);
+  const double lost = Kept(kept_exact) - Kept(kept_moved);
+  CHECK(lost > 0.0);
+  CHECK(lost <= kept_moved.kept_ends.roundoff_energy * (1.0 + 1.0e-12));
+  CHECK_THAT(Kept(kept_exact), WithinRel(Served(exact), 1.0e-12));
 #endif
 }
 
