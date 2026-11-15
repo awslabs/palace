@@ -406,6 +406,44 @@ private:
                                       reference, kLinearSimplexReferenceTolerance);
   }
 
+  // Whether the candidate element contains the point (Find's test: the barycentric test on
+  // a linear simplex, else the inverse transformation, retried from the closest reference
+  // node on a curved element); `reference` = the point's reference coordinates.
+  bool CandidateContains(int candidate, const std::array<double, 3> &point,
+                         const mfem::Vector &physical,
+                         mfem::InverseElementTransformation &inverse,
+                         mfem::IntegrationPoint &reference)
+  {
+    const auto geometry = mesh.GetElement(candidate)->GetGeometryType();
+    const bool linear_simplex =
+        linear_mesh && ((dimension == 2 && geometry == mfem::Geometry::TRIANGLE) ||
+                        (dimension == 3 && geometry == mfem::Geometry::TETRAHEDRON));
+    if (linear_simplex)
+    {
+      return FindInLinearSimplex(candidate, point, reference);
+    }
+    auto &transformation = *mesh.GetElementTransformation(candidate);
+    inverse.SetTransformation(transformation);
+    inverse.SetInitialGuessType(transformation.Order() > 1
+                                    ? mfem::InverseElementTransformation::ClosestPhysNode
+                                    : mfem::InverseElementTransformation::Center);
+    if (inverse.Transform(physical, reference) ==
+        mfem::InverseElementTransformation::Inside)
+    {
+      return true;
+    }
+    if (transformation.Order() > 1)
+    {
+      inverse.SetInitialGuessType(mfem::InverseElementTransformation::ClosestRefNode);
+      if (inverse.Transform(physical, reference) ==
+          mfem::InverseElementTransformation::Inside)
+      {
+        return true;
+      }
+    }
+    return false;
+  }
+
 public:
   // A point is inside a linear simplex when every barycentric coordinate is >= minus this
   // (Find); a segment is coplanar with a face when both its ends are within it of that
@@ -538,42 +576,51 @@ public:
     inverse.SetPhysicalRelTol(1.0e-12);
     for (const int candidate : candidates)
     {
-      const auto geometry = mesh.GetElement(candidate)->GetGeometryType();
-      const bool linear_simplex =
-          linear_mesh && ((dimension == 2 && geometry == mfem::Geometry::TRIANGLE) ||
-                          (dimension == 3 && geometry == mfem::Geometry::TETRAHEDRON));
-      if (linear_simplex)
-      {
-        if (FindInLinearSimplex(candidate, point, reference))
-        {
-          element = candidate;
-          return true;
-        }
-        continue;
-      }
-      auto &transformation = *mesh.GetElementTransformation(candidate);
-      inverse.SetTransformation(transformation);
-      inverse.SetInitialGuessType(transformation.Order() > 1
-                                      ? mfem::InverseElementTransformation::ClosestPhysNode
-                                      : mfem::InverseElementTransformation::Center);
-      if (inverse.Transform(physical, reference) ==
-          mfem::InverseElementTransformation::Inside)
+      if (CandidateContains(candidate, point, physical, inverse, reference))
       {
         element = candidate;
         return true;
       }
-      if (transformation.Order() > 1)
-      {
-        inverse.SetInitialGuessType(mfem::InverseElementTransformation::ClosestRefNode);
-        if (inverse.Transform(physical, reference) ==
-            mfem::InverseElementTransformation::Inside)
-        {
-          element = candidate;
-          return true;
-        }
-      }
     }
     return false;
+  }
+
+  // The resolution census's owner rule (decision 1863; OI-RESCENSUS-TIE-RULE): of EVERY
+  // local element containing the point (the same candidates and containment test as Find),
+  // the one of the LARGEST `element_value` (equal values: the lowest element); its value in
+  // `value`. False when no local element contains the point.
+  bool FindLargest(const std::array<double, 3> &point, double tolerance,
+                   const std::function<double(int element)> &element_value, int &element,
+                   double &value, mfem::IntegrationPoint &reference,
+                   std::vector<int> &candidates)
+  {
+    candidates.clear();
+    FindCandidates(0, point, tolerance, candidates);
+    std::sort(candidates.begin(), candidates.end());
+
+    mfem::Vector physical(dimension);
+    std::copy_n(point.data(), dimension, physical.HostWrite());
+    mfem::InverseElementTransformation inverse;
+    inverse.SetReferenceTol(1.0e-12);
+    inverse.SetPhysicalRelTol(1.0e-12);
+    mfem::IntegrationPoint candidate_reference;
+    bool found = false;
+    for (const int candidate : candidates)
+    {
+      if (!CandidateContains(candidate, point, physical, inverse, candidate_reference))
+      {
+        continue;
+      }
+      const double candidate_value = element_value(candidate);
+      if (!found || candidate_value > value)
+      {
+        found = true;
+        element = candidate;
+        value = candidate_value;
+        reference = candidate_reference;
+      }
+    }
+    return found;
   }
 
   // The exact intersections of the segment p0-p1 with the local linear simplices, as
@@ -1122,12 +1169,20 @@ public:
   // Locates the local list of points (byNODES: every x, then every y, then every z). With
   // `element_value`, the owner evaluates it on the owning element. `fallback` false (the
   // resolution census, ruling 1819 F2): a point no candidate rank finds stays unresolved
-  // (no rank-local gslib search); every rank passes the same value.
+  // (no rank-local gslib search); every rank passes the same value. `largest_value` true
+  // (the resolution census's owner rule, decision 1863; requires `element_value` and no
+  // fallback): every candidate rank answers with the LARGEST value over ALL its local
+  // elements containing the point, and the point keeps the largest answer over the ranks
+  // (equal values: the lowest rank, then the lowest element): the value is that of the
+  // largest container in the whole mesh, whatever the partition. The exchange is the same
+  // (the same queries to the same candidate ranks, the same answer size).
   Result Locate(const mfem::Vector &xyz,
                 const std::function<double(int element)> *element_value = nullptr,
-                bool fallback = true)
+                bool fallback = true, bool largest_value = false)
   {
     MFEM_VERIFY(xyz.Size() % dimension == 0, "Invalid point-coordinate array!");
+    MFEM_VERIFY(!largest_value || (element_value && !fallback),
+                "The largest-value owner rule requires an element value and no fallback!");
     const int point_count = xyz.Size() / dimension;
     std::vector<std::array<double, 3>> points(point_count);
     for (int point = 0; point < point_count; point++)
@@ -1163,7 +1218,17 @@ public:
         int element = -1;
         mfem::IntegrationPoint reference;
         double *answer = answers.data() + answer_size * i;
-        if (local.Find(coordinate, box_tolerance, element, reference, candidates))
+        if (largest_value)
+        {
+          double value = 0.0;
+          if (local.FindLargest(coordinate, box_tolerance, *element_value, element, value,
+                                reference, candidates))
+          {
+            reference.Get(answer + 1, dimension);
+            answer[1 + dimension] = value;
+          }
+        }
+        else if (local.Find(coordinate, box_tolerance, element, reference, candidates))
         {
           reference.Get(answer + 1, dimension);
           if (element_value)
@@ -1203,8 +1268,18 @@ public:
             continue;
           }
           const int point = static_cast<int>(round_begin) + exchange.query_indices[packed];
-          if (candidate_rank > result.owners[point] ||
-              (candidate_rank == result.owners[point] && element >= result.elements[point]))
+          // The lowest rank, then the lowest element; with `largest_value` the largest
+          // answer first (equal answers: that same order).
+          const bool earlier =
+              candidate_rank < result.owners[point] ||
+              (candidate_rank == result.owners[point] && element < result.elements[point]);
+          const bool replace =
+              largest_value
+                  ? (result.owners[point] == size ||
+                     answer[1 + dimension] > result.owner_values[point] ||
+                     (answer[1 + dimension] == result.owner_values[point] && earlier))
+                  : earlier;
+          if (!replace)
           {
             continue;
           }
@@ -1387,8 +1462,10 @@ namespace
 constexpr std::size_t kResolutionKnotChunk = std::size_t(1) << 20;
 
 // The census readings of `patch_count` local patches whose knots (mesh coordinates)
-// `knots_of` lists, located through `locator` without the fallback search; the owner's
-// longest edge (ResolutionElementLongestEdge) evaluated on the owning rank; per patch the
+// `knots_of` lists, located through `locator` without the fallback search; a knot's size =
+// the LARGEST longest edge (ResolutionElementLongestEdge) over every element containing it
+// (a knot on a face shared by elements of different size: decision 1863; rank-count
+// independent: every candidate rank answers for its own containers); per patch the
 // lower median over its located knots. Collective: every rank loops until all are done.
 std::vector<ResolutionPatchReading> LocateResolutionKnotsWith(
     DistributedPointLocator &locator, mfem::ParMesh &mesh, int dimension,
@@ -1431,7 +1508,7 @@ std::vector<ResolutionPatchReading> LocateResolutionKnotsWith(
         xyz(d * static_cast<int>(chunk.size()) + static_cast<int>(point)) = chunk[point][d];
       }
     }
-    const auto located = locator.Locate(xyz, &longest_edge, false);
+    const auto located = locator.Locate(xyz, &longest_edge, false, true);
     for (std::size_t k = 0; k < chunk_patches.size(); k++)
     {
       const std::size_t begin = chunk_offsets[k];

@@ -594,7 +594,9 @@ nlohmann::json ResolutionRunMetadata(const ResolutionRunRecord &record, int leve
   metadata["Enabled"] = record.enabled;
   metadata["Measure"] =
       "K3: per patch the lower median over its model's basis-point knots of the longest "
-      "edge of the leaf element owning each knot, over the matching radius; per cell the "
+      "edge of the leaf element owning each knot (a knot on a face shared by several "
+      "elements: the largest of their longest edges), over the matching radius; per cell "
+      "the "
       "energy-weighted shares (the fixed-trace fabricated surface energy of the "
       "postprocessed response) of the patch statuses. RESOLVED is necessary, not "
       "sufficient.";

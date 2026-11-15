@@ -20,14 +20,16 @@ namespace palace
 // decision 1817; the offline measure K3 of lane rescensus, ERRATUM-1662; ruling 1819). Per
 // applied patch: the knots = every basis point of its runtime model, placed as the
 // correction places them; the owner of a knot = the leaf element containing it (the
-// correction's distributed point locator, no fallback search); h = the owner's LONGEST
-// EDGE; the patch's h = the LOWER median of h over its located knots (NOT-EVALUATED when it
-// has no knot or fewer than half of them located); m = h / R, R the library matching
-// radius. Per cell (measurement x Type x plane) the energy-weighted shares of the patch
-// statuses, the energy quantiles of m and a status on INTERIM bars (the 2D map at R = 1.9
-// um only). RESOLVED IS NECESSARY, NOT SUFFICIENT: it says the mesh at the trace contour is
-// as fine as the interim bars ask, never that a corrected value is accurate. Outputs only:
-// no value, no coverage status and no policy reads a census status (Warn only).
+// correction's distributed point locator, no fallback search; a knot on a face shared by
+// several elements: the one of the LARGEST longest edge, decision 1863, rank-count
+// independent); h = the owner's LONGEST EDGE; the patch's h = the LOWER median of h over
+// its located knots (NOT-EVALUATED when it has no knot or fewer than half of them located);
+// m = h / R, R the library matching radius. Per cell (measurement x Type x plane) the
+// energy-weighted shares of the patch statuses, the energy quantiles of m and a status on
+// INTERIM bars (the 2D map at R = 1.9 um only). RESOLVED IS NECESSARY, NOT SUFFICIENT: it
+// says the mesh at the trace contour is as fine as the interim bars ask, never that a
+// corrected value is accurate. Outputs only: no value, no coverage status and no policy
+// reads a census status (Warn only).
 
 enum class ResolutionStatus : char
 {

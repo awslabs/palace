@@ -363,6 +363,19 @@ TEST_CASE("Resolution census locates knots on meshes of known element sizes",
           ResolutionStatus::RESOLVED);
     CHECK(ResolutionPatchStatus(readings[1].h, 4, bars, true) ==
           ResolutionStatus::MARGINAL);
+    // Decision 1863 (the owner rule of a knot on a face shared by several elements): knots
+    // ON the face x = 2 between the refined leaves (h = 1) and the coarse boxes (h = 2)
+    // read the LARGEST container, 2, at every rank count (the two sides may lie on
+    // different ranks); knots on the face x = 1 between two refined leaves read 1.
+    const std::vector<std::vector<std::array<double, 3>>> face_knots = {
+        {{2.0, 0.7, 0.2}, {2.0, 3.3, 1.6}, {2.0, 2.1, 0.9}},
+        {{1.0, 0.7, 0.2}, {1.0, 3.3, 1.6}, {1.0, 2.1, 0.9}}};
+    const auto face_readings = LocateResolutionPatchKnots(mesh, 3, face_knots);
+    REQUIRE(face_readings.size() == 2);
+    CHECK(face_readings[0].located == 3);
+    CHECK(face_readings[0].h == Catch::Approx(2.0).epsilon(1e-14));
+    CHECK(face_readings[1].located == 3);
+    CHECK(face_readings[1].h == Catch::Approx(1.0).epsilon(1e-14));
   }
 #endif
 }

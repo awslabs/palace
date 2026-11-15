@@ -1022,8 +1022,10 @@ private:
   // The ONE added point location of the census (ruling 1819 F2): every local patch's knots
   // (`knots_of`, mesh coordinates) through the construction's own locator, after its
   // existing locates, in chunks of at most kResolutionKnotChunk knots per rank and
-  // collective call, without the fallback search; the owners' longest edge evaluated on the
-  // owning rank. `origin_z_of` = the local patch's origin z (mesh units). Collective.
+  // collective call, without the fallback search; a knot's size = the largest longest edge
+  // over every element containing it (decision 1863: rank-count independent), evaluated on
+  // the ranks holding them. `origin_z_of` = the local patch's origin z (mesh units).
+  // Collective.
   void LocateResolutionKnots(
       DistributedPointLocator &locator, mfem::ParMesh &mesh, int dimension,
       const std::function<void(std::size_t, std::vector<std::array<double, 3>> &)>

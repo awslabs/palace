@@ -2841,8 +2841,9 @@ The measure was tested offline, in-sample, on 64 graded electrostatic window cas
 windows (selected from three measures on those same cases; a thin margin): for each applied patch, the knots are the basis points of its runtime model
 (a curvature blend uses its anchor's), placed as the correction places them; the owner of a
 knot is the mesh element containing it (the correction's own point locator, no fallback
-search; a knot on a shared face takes the lowest rank, then the lowest local element); its
-size is the owner's LONGEST EDGE (its own vertices: a nonconforming leaf's hanging nodes do
+search; a knot on a face shared by several elements takes the one of the LARGEST longest
+edge, so a patch never reads finer than an element holding one of its knots and the
+reading does not depend on the rank count); its size is the owner's LONGEST EDGE (its own vertices: a nonconforming leaf's hanging nodes do
 not enter); the patch's size ``h`` is the LOWER median over its located knots, and the
 patch is NOT-EVALUATED when it has no knot or fewer than half of them are located. With
 ``m = h / R`` the patch is RESOLVED when ``m \le b_5(p)``, MARGINAL when ``m \le b_{10}(p)``

@@ -24,7 +24,8 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     `"Resolution": {"Enabled", "BarsFile"}`): one added point location of every applied
     patch's contour knots per AMR level (the construction's own locator, no fallback
     search); per patch the lower median of the owning elements' longest edge over the
-    matching radius; `surface-response-resolution.csv` (per cell, interface `Type` and
+    matching radius (a knot on a face shared by several elements: the largest of their
+    longest edges, independent of the rank count); `surface-response-resolution.csv` (per cell, interface `Type` and
     plane: the energy-weighted shares of RESOLVED / MARGINAL / UNDER-RESOLVED /
     NOT-EVALUATED patches, the `m10` / `m50` / `m90` quantiles, a status on INTERIM bars
     valid at `R` = 1.9 µm only, NO-BARS otherwise), the `palace.json` block
