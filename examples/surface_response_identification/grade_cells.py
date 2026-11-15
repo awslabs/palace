@@ -451,12 +451,17 @@ def row_of_source(rows, src):
     return out[0]
 
 
+# The suffix of the MarkNotApplied twin columns (kCoveragePartialColumnSuffix, surfaceresponsecoverage.hpp): a twin is never
+# read as the column it twins (decision 1847 E-1).
+PARTIAL_COLUMN_SUFFIX = " partial (uncovered part raw)"
+
+
 def offdiag(row, prefix, src):
-    """{j: value} of the `<prefix>[i][j]` columns with j != src."""
+    """{j: value} of the `<prefix>[i][j]` columns with j != src (never a MarkNotApplied twin column)."""
     out = {}
     for k, v in row.items():
         m = re.match(re.escape(prefix) + r"\[i\]\[(\d+)\]", k)
-        if m and int(m.group(1)) != src:
+        if m and int(m.group(1)) != src and not k.endswith(PARTIAL_COLUMN_SUFFIX):
             out[int(m.group(1))] = fnum(v)
     return out
 

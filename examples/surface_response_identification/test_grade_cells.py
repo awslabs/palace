@@ -341,6 +341,10 @@ class SyntheticWindows(unittest.TestCase):
             self.assertEqual(g["cells"][T]["n_pass"], 0)
         self.assertNotIn("PASS", gc.summary_line("m", g))
         self.assertIn("SA NOT-APPLIED (2 of 2 members", gc.summary_line("m", g))
+        # the off-diagonal C rows (information) read the corrected column (nan), never its twin (the partial value)
+        off = g["per_member"]["1"]["grade"]["C_offdiag"]["2"]
+        self.assertNotEqual(off["dev_ft_F"], off["dev_ft_F"])
+        self.assertEqual(gc.PARTIAL_COLUMN_SUFFIX, PARTIAL_SUFFIX)
         # source 1 FAILS SA (6 % high), source 2 marked: SA FAIL; MS / MA_sharp / C NOT-APPLIED (source 1 PASSES them)
         p_ft[1][1] = 1.06e-4
         mixed = synthetic_es_run(os.path.join(self.tmp, "mixed"), sources, p_ft, c_ft, {s: -0.1 * c_ref[s] for s in sources})
