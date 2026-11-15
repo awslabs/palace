@@ -840,6 +840,8 @@ class DriveWithFakeCLI(FakeCLICase):
             self.drive()
         self.assertEqual(self.submitted(), ["chainport-w"])
         self.assertEqual(self.live_runs_without_a_watcher(), [])
+        record = self.records()["w"]  # NONCE_RULE: the run id handed to the nonce watcher at the submit (no adoption here)
+        self.assertEqual((Path(record["SubmitIntents"][-1]["Watcher"]["Dir"]) / "run-id").read_text().strip(), str(record["RunID"]))
 
     def test_r5_an_explicit_unlisted_status_is_unknown(self):
         self.describes(["unlisted"])
@@ -1208,7 +1210,9 @@ class DriveWithFakeCLI(FakeCLICase):
              (2, "Traceback (most recent call last):"), (9, "KeyError: 'x'"), (10, "Traceback (most recent call last):"),
              (14, "pyarrow.lib.ArrowTypeError: (1)")], 1)
         self.assertEqual((holds, offending, last), (True, [], "pyarrow.lib.ArrowTypeError: (1)"))  # a chained exception
-        self.assertFalse(paladin_backend.judge_console([(1, "ERROR x: harness upload")], 2)[0])  # not all ERROR lines read
+        harness = (1, "ERROR " + paladin_backend.UPLOAD_HARNESS_ERROR + " final tick failed")
+        self.assertTrue(paladin_backend.judge_console([harness], 1)[0])
+        self.assertFalse(paladin_backend.judge_console([harness], 2)[0])  # 2 ERROR lines counted, 1 read: not all judged
 
     def test_every_name_difference_is_reported(self):
         self.script({"chainport-w": "failed-upload-extra", "chainport-local-edge": "completed-extra"})
