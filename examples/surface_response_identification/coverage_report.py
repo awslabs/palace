@@ -30,6 +30,12 @@ coverage-report.{json,md} with four blocks (DESIGN.md, readiness-20261029/covera
      100 x [r_other |g| + sum_c r_c b_c] (band_table; b_CornerArmTrim = |g_corner|).
   D  QUOTABILITY: the AMR ladder (ft per Type and its steps), the DEPTH rule, the closure spread.
 
+NOT-APPLIED (decision 1847 E-1): under Coverage.Policy MarkNotApplied a marked corrected cell prints nan (its value in the
+`... partial (uncovered part raw)` twin). A ladder solve whose ft of a Type (or whose E_elec / E_norm corrected) is such a nan
+is NOT dropped: the Type's DEPTH reading is NOT-APPLIED when the ladder would have had >= 2 solves, and its band (block C)
+is WITHHELD (no band, never a narrower one) with a LOW reason. A Type whose predictors are unavailable for another reason (a
+single solve) keeps its band as before. A tree without a non-finite corrected cell reads exactly as before.
+
 Pure Python (no numpy); exit 0 when the report was written, 2 when a required input is missing.
 """
 
@@ -113,6 +119,8 @@ CALIBRATED_MIN_WINDOWS = 3
 # The DEPTH rule (DESIGN 1.2): the last ft step > 0.3 pt is not quotable; a step ratio >= 0.7 over the
 # last three solves is not shrinking (DEPTH-UNBOUNDED); the Richardson tail is capped at 3 x the step.
 QUOTABLE_LAST_STEP_PT = 0.3
+# The DEPTH status of a Type whose ladder holds a marked (nan) corrected value (decision 1847 E-1): no DEPTH reading, no band.
+LADDER_NOT_APPLIED = "NOT-APPLIED (a marked corrected value in the ladder)"
 DEPTH_RATIO_UNBOUNDED = 0.7
 DEPTH_TAIL_CAP_FACTOR = 3.0
 INDUCTIVE_EMAG_OVER_EELEC = 1.0
@@ -193,13 +201,19 @@ def _parse_cell(cell):
         return cell
 
 
+# The suffix of the MarkNotApplied twin columns (kCoveragePartialColumnSuffix, surfaceresponsecoverage.hpp): a twin is never
+# read as the column it twins (decision 1847 E-1: 'E_surf postprocessed fixed-trace[1] (J) partial (uncovered part raw)' matched
+# the prefix 'E_surf postprocessed fixed-trace' and, appended last, overwrote the marked nan with the partial value).
+PARTIAL_COLUMN_SUFFIX = " partial (uncovered part raw)"
+
+
 def indexed_columns(row, prefix):
-    """{interface index: value} for columns like 'E_surf raw[3] (J)' / 'raw energy[3] (J)' / 'share[3]'."""
+    """{interface index: value} for columns like 'E_surf raw[3] (J)' / 'raw energy[3] (J)' / 'share[3]' (never a twin column)."""
     out = {}
     pat = re.compile(r"^" + re.escape(prefix) + r"\[(\d+)\]")
     for key, value in row.items():
         m = pat.match(key)
-        if m:
+        if m and not key.endswith(PARTIAL_COLUMN_SUFFIX):
             out[int(m.group(1))] = value
     return out
 
@@ -1083,6 +1097,9 @@ def ladder(postpro, interfaces, targets, kind, ladder_dir=None, source=None):
         for t, w in W.items():
             entry["ft"][t] = (w["ft"] / denom) if (is_number(denom) and denom and w["ft"] is not None) else None
             entry["raw"][t] = (w["E_raw"] / denom) if (is_number(denom) and denom) else None
+        marked = marked_ft_types(e, W)
+        if marked:
+            entry["not_applied"] = marked
         solves.append(entry)
     dofs = None
     pj = os.path.join(base, "palace.json")
@@ -1096,18 +1113,37 @@ def ladder(postpro, interfaces, targets, kind, ladder_dir=None, source=None):
             "types": depth_rule(solves)}
 
 
+def marked_ft_types(energies, W):
+    """The Types whose ft reading of this solve is a NON-FINITE corrected cell (decision 1847 E-1: a MarkNotApplied tree's
+    marked cell): an interface's ft cell, or the corrected E_elec / E_norm (every Type). A column absent is not a mark."""
+    denom = energies.get("E_elec_ft")
+    whole = isinstance(denom, float) and not math.isfinite(denom)
+    out = []
+    for t, w in W.items():
+        cells = [energies["interfaces"][i].get("ft") for i in w["interfaces"]]
+        if whole or any(isinstance(c, float) and not math.isfinite(c) for c in cells):
+            out.append(t)
+    return sorted(out)
+
+
 def depth_rule(solves):
     """Per Type: the last ft step (pt of the final ft), the step ratio over the last three solves, the
-    quotability verdict, and the Richardson tail (DESIGN 1.2 DEPTH)."""
+    quotability verdict, and the Richardson tail (DESIGN 1.2 DEPTH). A Type with a marked solve (decision 1847 E-1) whose
+    ladder would have >= 2 solves is LADDER_NOT_APPLIED: no step, no tail, no quotability."""
     out = {}
     types = set()
     for s in solves:
         types.update(s["ft"].keys())
     for t in sorted(types):
         values = [s["ft"].get(t) for s in solves if s["ft"].get(t) is not None]
+        n_marked = sum(1 for s in solves if t in s.get("not_applied", ()))
         rec = {"solves": len(values), "last_step_pt": None, "step_ratio": None, "quotable": None,
                "tail_pt": 0.0, "status": "ladder: not in this run" if len(values) < 2 else "ok",
                "steps_pt": []}
+        if n_marked and len(values) + n_marked >= 2:
+            rec.update({"status": LADDER_NOT_APPLIED, "not_applied_solves": n_marked})
+            out[t] = rec
+            continue
         if len(values) >= 2 and values[-1]:
             steps = [100.0 * (values[i] - values[i - 1]) / values[-1] for i in range(1, len(values))]
             rec["steps_pt"] = steps
@@ -1405,6 +1441,12 @@ def band_table(bands, family, energy, lengths, ladder_types, residuals, proxy):
         pred = class_predictors(lengths["types"].get(t))
         pred["last_step_pt"] = lad.get("last_step_pt")
         row = {"calibrated": cal is not None and not cal.get("uncalibrated"), "predictors": pred}
+        if lad.get("status") == LADDER_NOT_APPLIED:
+            # decision 1847 E-1: the DEPTH predictor reads a marked corrected value: NO band (never one without its extension)
+            row.update({"not_applied": True, "note": f"NOT-APPLIED {family} / {t}: no band: the ladder holds a marked corrected "
+                        f"value ({lad.get('not_applied_solves')} solve(s); Coverage.Policy MarkNotApplied)"})
+            out[t] = row
+            continue
         if cal is None:
             row["note"] = f"no calibration for {family} / {t}"
             out[t] = row
@@ -1541,7 +1583,9 @@ def label_run(energy, lengths, ladder_types, residuals, flags, bands_family, pro
             reasons_not_high.append(f"{t}: SCP owner credit {fmt_pct(credit_share)} > 1 % of W_t (premise unmeasured; decision 1133): "
                                     "capped at MEDIUM")
         lad = ladder_types.get(t, {})
-        if lad.get("status") == "DEPTH-UNBOUNDED":
+        if lad.get("status") == LADDER_NOT_APPLIED:
+            reasons_low.append(f"{t}: NOT-APPLIED: the ladder holds a marked corrected value (no DEPTH reading, no band)")
+        elif lad.get("status") == "DEPTH-UNBOUNDED":
             reasons_low.append(f"{t}: DEPTH-UNBOUNDED (step ratio {lad.get('step_ratio')})")
         elif lad.get("status") == "DEPTH":
             reasons_not_high.append(f"{t}: not quotable (last step {fmt_pt(lad.get('last_step_pt'))})")
@@ -1875,7 +1919,7 @@ def render_markdown(report):
         lines.append("|---|---|---|---|---|---|---|---|")
         form = (report.get("block_D") or {}).get("flags", {}).get("form")
         for t, row in C.items():
-            if not row.get("calibrated"):
+            if not row.get("calibrated") or row.get("not_applied"):
                 lines.append(f"| {t} | — | | | | {row.get('note')} | | |")
                 continue
             loo = row.get("loo_coverage") or {}
@@ -1914,7 +1958,9 @@ def summary_line(report):
             continue
         e = A["energy"].get(t, {})
         band = (report.get("block_C") or {}).get(t, {})
-        b = f" band [{band['low_pt']:+.2f}, {band['high_pt']:+.2f}]" if band.get("calibrated") else ""
+        b = f" band [{band['low_pt']:+.2f}, {band['high_pt']:+.2f}]" if band.get("calibrated") and not band.get("not_applied") else ""
+        if band.get("not_applied"):
+            b = " band NOT-APPLIED"
         parts.append(f"{t} exact {fmt_pct(e.get('exact_share'))} / raw {fmt_pct(e.get('raw_share_total'))}{b}")
     fired = [r["term"] for r in report.get("block_B", []) if isinstance(r, dict) and r.get("fired")]
     return f"COVERAGE {report['label']['label']}: " + "; ".join(parts) + (f"; flags {', '.join(fired)}" if fired else "")

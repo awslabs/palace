@@ -279,6 +279,87 @@ class EnergyPartitionTest(unittest.TestCase):
         self.assertAlmostEqual(rule["tail_pt"], rule["last_step_pt"] / 0.5, places=9)
 
 
+PARTIAL_SUFFIX = " partial (uncovered part raw)"  # kCoveragePartialColumnSuffix (surfaceresponsecoverage.hpp)
+
+
+def mark_surface_q(dirpath, interfaces=(), whole=False):
+    """The MarkNotApplied form of write_surface_q's table (decision 1829; DESIGN-L4-v2 s2.3): the fixed-trace cells of the marked
+    interfaces (and, `whole`, the corrected E_elec) print nan, their values moved to appended ' partial (uncovered part raw)' twins."""
+    path = os.path.join(dirpath, "surface-Q-corrected.csv")
+    with open(path) as f:
+        lines = [ln.rstrip("\n").split(",") for ln in f]
+    header = lines[0]
+    names = [f"{q} postprocessed fixed-trace[{i}]" for i in interfaces for q in ("E_surf", "p_surf", "Q_surf")]
+    names += ["E_elec postprocessed fixed-trace (J)"] if whole else []
+    cols = [j for j, h in enumerate(header) if any(h.startswith(n) for n in names)]
+    out = [header + [header[j] + PARTIAL_SUFFIX for j in cols]]
+    for r in lines[1:]:
+        out.append([("nan" if j in cols else v) for j, v in enumerate(r)] + [r[j] for j in cols])
+    with open(path, "w") as f:
+        f.write("".join(",".join(r) + "\n" for r in out))
+
+
+class MarkNotAppliedTest(unittest.TestCase):
+    """Decision 1847 E-1 (c): a ladder solve with a marked (nan) corrected cell is NOT-APPLIED for its Type: no DEPTH reading and
+    NO band (the old reading dropped the solve, lost the DEPTH tail extension and printed a NARROWER band: fail open)."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="covrep-")
+        self.bands = cr.load_bands(write_bands(os.path.join(self.tmp, "bands.json")))
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_marked_type_has_no_band_and_the_others_read_as_before(self):
+        warn_post, warn_manifest = write_fixture(os.path.join(self.tmp, "warn"), iterations=("depth",))
+        warn = cr.build_report(warn_post, warn_manifest, self.bands, ma_reading="sharp")
+        self.assertEqual(warn["block_D"]["ladder"]["types"]["SA"]["status"], "DEPTH-UNBOUNDED")
+        self.assertTrue(warn["block_C"]["SA"]["extensions"])
+        self.assertFalse(any("not_applied" in s for s in warn["block_D"]["ladder"]["solves"]))
+        post, manifest = write_fixture(os.path.join(self.tmp, "mark"), iterations=("depth",))
+        for d in cr.iteration_dirs(post) + [post]:
+            mark_surface_q(d, interfaces=(1,))  # SA marked in every solve (the product marks by the solve's own coverage)
+        report = cr.build_report(post, manifest, self.bands, ma_reading="sharp")
+        lad = report["block_D"]["ladder"]["types"]
+        self.assertEqual(lad["SA"]["status"], cr.LADDER_NOT_APPLIED)
+        self.assertEqual(lad["SA"]["not_applied_solves"], 4)
+        self.assertIsNone(lad["SA"]["last_step_pt"])
+        row = report["block_C"]["SA"]
+        self.assertTrue(row["not_applied"])
+        self.assertNotIn("low_pt", row)
+        self.assertNotIn("high_pt", row)
+        self.assertTrue(row["note"].startswith("NOT-APPLIED ES / SA"))
+        for t in ("MS", "MA"):
+            self.assertEqual(lad[t], warn["block_D"]["ladder"]["types"][t])
+            self.assertEqual(report["block_C"][t], warn["block_C"][t])
+        self.assertEqual(report["label"]["label"], "LOW")
+        self.assertTrue(any(r.startswith("SA: NOT-APPLIED") for r in report["label"]["reasons_low"]))
+        self.assertIn("SA exact", cr.summary_line(report))
+        self.assertIn("band NOT-APPLIED", cr.summary_line(report))
+        self.assertIn("NOT-APPLIED ES / SA", cr.render_markdown(report))
+        self.assertIn(cr.LADDER_NOT_APPLIED, cr.render_markdown(report))
+
+    def test_a_twin_column_is_never_read_as_the_column_it_twins(self):
+        row = {"E_surf postprocessed fixed-trace[1] (J)": float("nan"),
+               "E_surf postprocessed fixed-trace[1] (J)" + PARTIAL_SUFFIX: 2.0e-16}
+        self.assertEqual(list(cr.indexed_columns(row, "E_surf postprocessed fixed-trace")), [1])
+        self.assertNotEqual(cr.indexed_columns(row, "E_surf postprocessed fixed-trace")[1], 2.0e-16)
+        self.assertEqual(cr.PARTIAL_COLUMN_SUFFIX, PARTIAL_SUFFIX)
+
+    def test_whole_measurement_mark_and_the_single_solve_rule(self):
+        post, manifest = write_fixture(os.path.join(self.tmp, "whole"))
+        mark_surface_q(post, whole=True)  # the final solve's corrected E_elec marked: every Type of that solve
+        report = cr.build_report(post, manifest, self.bands, ma_reading="sharp")
+        for t in ("SA", "MS", "MA"):
+            self.assertEqual(report["block_D"]["ladder"]["types"][t]["status"], cr.LADDER_NOT_APPLIED, t)
+            self.assertTrue(report["block_C"][t]["not_applied"], t)
+        self.assertEqual(report["block_D"]["ladder"]["solves"][-1]["not_applied"], ["MA", "MS", "SA"])
+        # one solve only: the DEPTH predictor is unavailable whatever the marks (no ladder): the status and band as without marks
+        rule = cr.depth_rule([{"ft": {"SA": None}, "not_applied": ["SA"]}])["SA"]
+        self.assertEqual(rule["status"], "ladder: not in this run")
+        self.assertNotIn("not_applied_solves", rule)
+
+
 class LabelAndFormsTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="covrep-")
