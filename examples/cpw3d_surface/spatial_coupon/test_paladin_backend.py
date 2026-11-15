@@ -913,11 +913,44 @@ class DriveWithFakeCLI(FakeCLICase):
             self.assertEqual(paladin_backend.main(common + ["--dry-run"]), 0)
             self.assertEqual(self.calls(), [])
             self.script({"chainport-local-edge": "failed"})
-            self.assertEqual(paladin_backend.main(common + ["--submit", "--remote-dir", str(self.plan_path.parent),
-                                                            "--archive-gb", f"{self.archive}=0.001",
-                                                            "--poll-seconds", "0"]), 3)
+            submit = ["--submit", "--remote-dir", str(self.plan_path.parent), "--archive-gb", f"{self.archive}=0.001",
+                      "--poll-seconds", "0"]
+            for refused in ([], ["--lane-root", "relative/root"], ["--lane-root", str(self.root / "elsewhere")]):
+                with self.subTest(refused=refused), self.assertRaises(SystemExit):
+                    paladin_backend.main(common + submit + refused)  # m-3: no lane root / the archive outside it
+            self.assertEqual(self.calls(), [])
+            self.assertEqual(paladin_backend.main(common + submit + ["--lane-root", str(self.root)]), 3)
         states = {name: record["State"] for name, record in self.records().items()}
         self.assertEqual(states, {"w": "complete", "r": "complete", "local-edge": "failed"})
+        self.assertTrue(all(record["DataGuard"]["FreeBytes"] > 0 for record in self.records().values()))
+
+    def test_m2_the_data_guard_runs_before_every_submit(self):
+        with mock.patch.object(paladin_backend, "ARCHIVE_FREE_BYTES", 1e18), self.assertRaises(paladin_backend.PaladinError) as stop:
+            self.drive()
+        self.assertIn("/data guard refuses", str(stop.exception))
+        self.assertEqual(self.submitted(), [])
+        real = paladin_backend.PaladinJob.data_guard
+        guarded = []
+
+        def data_guard(job):
+            guarded.append(job.remote_dir)
+            return real(job)
+
+        with mock.patch.object(paladin_backend.PaladinJob, "data_guard", data_guard):
+            self.drive()
+        self.assertEqual(len(guarded), 3)  # one per submit, the non-writers included
+
+    def test_m3_an_archive_outside_the_lane_root_is_refused_before_its_submit(self):
+        job = paladin_backend.PaladinJob(str(self.plan_path), block=self.block, remote_dir=str(self.plan_path.parent),
+                                         local_dir=str(self.out), archive_estimates_gb={self.archive: 0.001},
+                                         log=lambda message: None, watchers=self.watchers, session_cookie=self.cookie,
+                                         lane_root=str(self.root / "elsewhere"))
+        with self.assertRaises(paladin_backend.PaladinError) as stop:
+            paladin_backend.drive(job, poll_seconds=0, sleep=lambda seconds: None)
+        self.assertIn("outside the lane root", str(stop.exception))
+        self.assertEqual(self.submitted(), [])
+        self.assertTrue(paladin_backend.under("/data/a/b", "/data/a") and not paladin_backend.under("/data/ab", "/data/a"))
+        self.assertFalse(paladin_backend.under("/data/a/../b", "/data/a"))
 
 
 class RunWatcherProcesses(FakeCLICase):

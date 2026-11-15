@@ -574,6 +574,17 @@ ARCHIVE_RULE = ("decision 1799 (j): before an archive writer's submit its absolu
                 "the reducer's outputs verify (finish_case, as in the PBS and form-X routes)")
 
 
+DATA_GUARD_RULE = ("decision 1820 m-2 (CTR-HOWTO-v2 s9): before EVERY submit the plan's directory on /data is created and its "
+                   "file system must have >= 150 GB free (an archive writer's guard adds its own checks); a standalone --submit "
+                   "names its --lane-root, and every archive Directory of its plan and of --archive-gb must lie under it (m-3)")
+
+
+def under(path, root):
+    """True when the absolute `path` is `root` or lies under it (normalised strings; no '..' escapes)."""
+    path, root = os.path.normpath(path), os.path.normpath(root)
+    return path == root or path.startswith(root.rstrip("/") + "/")
+
+
 def archive_name(source, rank):
     return f"source-{int(source):06d}-rank-{int(rank):06d}-V.bin"
 
@@ -667,7 +678,7 @@ class PaladinJob:
 
     def __init__(self, plan_path, *, block, remote_dir, local_dir, mapping=(), archive_estimates_gb=None,
                  log=print, now=utc_now, sleep=None, exclusive=True, watchers=None, pbs_bin=DEFAULT_PBS_BIN,
-                 session_cookie=None):
+                 session_cookie=None, lane_root=None):
         with open(plan_path, "rb") as f:
             data = f.read()
         self.plan = json.loads(data)
@@ -683,6 +694,7 @@ class PaladinJob:
         self.exclusive, self.locks = exclusive, []
         self.watchers, self.pbs_bin = watchers or RunWatchers(), pbs_bin
         self.session_cookie = session_cookie
+        self.lane_root = lane_root  # m-3: the standalone form's root on /data (None: qualify_library's own roots)
         self.host = None if block["Host"] == "local" else block["Host"]
         self.confirmed = set()
         self.case = self.plan["Case"]
@@ -796,6 +808,17 @@ class PaladinJob:
         self.state["Preflight"] = record
         self.save()
 
+    def data_guard(self):
+        """DATA_GUARD_RULE before a submit: the record of the free space of the plan's directory, or PaladinError."""
+        q = shlex.quote(self.remote_dir)
+        text = remote_text(self.host, f"mkdir -p {q} && df -Pk {q} | tail -1", what=f"the /data guard of {self.remote_dir}")
+        free = int(text.split()[3]) * 1024
+        guard = {"Directory": self.remote_dir, "FreeBytes": free, "UTC": self.now().isoformat(), "Rule": DATA_GUARD_RULE}
+        if free < ARCHIVE_FREE_BYTES:
+            raise PaladinError(f"the /data guard refuses the submit: {free / 1e9:.1f} GB free under {self.remote_dir} "
+                               f"(< 150 GB; {DATA_GUARD_RULE})")
+        return guard
+
     def archive_guard(self, directory):
         estimate_gb = self.archive_estimates_gb.get(directory)
         if estimate_gb is None:
@@ -884,6 +907,10 @@ class PaladinJob:
         record["SchemaCheck"] = self.tool_line([self.block["SchemaCheck"], self.block["Selector"], path], r"VALID ",
                                                f"the schema check of {name}")
         mode = config.get("Solver", {}).get("Electrostatic", {}).get("ResponseArchive", {})
+        if self.lane_root and mode.get("Directory") and not under(mode["Directory"], self.lane_root):
+            raise PaladinError(f"{name}: the archive {mode['Directory']} lies outside the lane root {self.lane_root} "
+                               f"({DATA_GUARD_RULE})")
+        record["DataGuard"] = self.data_guard()
         if mode.get("Mode") == "Archive":
             record["ArchiveGuard"] = self.archive_guard(mode["Directory"])
         elif mode.get("Directory"):
@@ -1359,6 +1386,7 @@ def main(argv=None):
     parser.add_argument("--archive-gb", action="append", default=[], help="DIRECTORY=GB: an archive writer's estimate")
     parser.add_argument("--poll-seconds", type=float, default=60.0)
     parser.add_argument("--pbs-bin", default=DEFAULT_PBS_BIN, help="the PBS bin directory on Host (the run watchers' qstat / qdel)")
+    parser.add_argument("--lane-root", help="--submit: the lane's root on /data; every archive Directory must lie under it")
     args = parser.parse_args(argv)
     with open(args.profile) as f:
         block = backend_of("paladin", json.load(f))
@@ -1378,11 +1406,16 @@ def main(argv=None):
         return 0
     if not args.remote_dir:
         parser.error("--submit needs --remote-dir")
+    if not args.lane_root or not os.path.isabs(args.lane_root):
+        parser.error("--submit needs an absolute --lane-root (decision 1820 m-3)")
+    outside = [directory for directory in estimates if not under(directory, args.lane_root)]
+    if outside:
+        parser.error(f"--archive-gb {outside} outside --lane-root {args.lane_root} (decision 1820 m-3)")
     code = 0
     job = None
     try:
         job = PaladinJob(args.plan, block=block, remote_dir=args.remote_dir, local_dir=args.out, mapping=mapping,
-                         archive_estimates_gb=estimates, pbs_bin=args.pbs_bin)
+                         archive_estimates_gb=estimates, pbs_bin=args.pbs_bin, lane_root=args.lane_root)
         drive(job, poll_seconds=args.poll_seconds)
     except PaladinError as error:
         print(f"STOP: {error}", file=sys.stderr)
