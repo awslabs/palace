@@ -223,17 +223,18 @@ SpaceOperator::SpaceOperator(const IoData &iodata,
 
 void SpaceOperator::SetUpCeedElementSets(const std::vector<std::unique_ptr<Mesh>> &mesh)
 {
-  // The lossy volume set is the union of the exact nonzero supports of the loss-type
-  // MaterialOperator coefficients, each extracted on its own (summing the tensors first
-  // could cancel entries of opposite sign and drop an attribute). This MaterialOperator has
-  // no imaginary permeability property; add it here if one is introduced.
+  // The active domain set is the lossy volume set, the union of the exact nonzero supports
+  // of the loss-type MaterialOperator coefficients, each extracted on its own (summing the
+  // tensors first could cancel entries of opposite sign and drop an attribute). This
+  // MaterialOperator has no imaginary permeability property; add it here if one is
+  // introduced.
   MaterialPropertyCoefficient loss_epsilon(mat_op.GetAttributeToMaterial(),
                                            mat_op.GetPermittivityImag());
   MaterialPropertyCoefficient loss_conductivity(mat_op.GetAttributeToMaterial(),
                                                 mat_op.GetConductivity());
-  std::vector<int> lossy_attr;
-  loss_epsilon.AddNonzeroAttributes(lossy_attr);
-  loss_conductivity.AddNonzeroAttributes(lossy_attr);
+  std::vector<int> active_attr;
+  loss_epsilon.AddNonzeroAttributes(active_attr);
+  loss_conductivity.AddNonzeroAttributes(active_attr);
   // A frequency-dependent material is lossy too, and its unit mass, energy and flux forms
   // are supported on its attributes only. Its exact zero poles are in the conductivity
   // above, its other terms are not in any loss coefficient.
@@ -244,12 +245,30 @@ void SpaceOperator::SetUpCeedElementSets(const std::vector<std::unique_ptr<Mesh>
       for (auto attr :
            mat_op.GetCeedAttributes(mat_op.GetFrequencyDependentPermittivityAttributes(m)))
       {
-        lossy_attr.push_back(attr);
+        active_attr.push_back(attr);
       }
     }
   }
-  std::sort(lossy_attr.begin(), lossy_attr.end());
-  lossy_attr.erase(std::unique(lossy_attr.begin(), lossy_attr.end()), lossy_attr.end());
+  std::sort(active_attr.begin(), active_attr.end());
+  active_attr.erase(std::unique(active_attr.begin(), active_attr.end()), active_attr.end());
+
+  // Without loss, the active domain set of a problem with PML regions is the elements
+  // outside of them: the bulk material terms vanish on the PML regions (see
+  // MaterialOperator::GetBulkAttributeToMaterial), whose terms are separate integrators on
+  // their own elements, so the matrix-free operators skip the PML elements for them.
+  int has_lossy = !active_attr.empty();
+  Mpi::GlobalMax(1, &has_lossy, mat_op.GetMesh().GetComm());
+  if (!has_lossy && mat_op.HasPML())
+  {
+    for (const auto &[attr, local_attr] : mat_op.GetMesh().GetCeedAttributes())
+    {
+      if (!mat_op.IsPMLCeedAttribute(local_attr))
+      {
+        active_attr.push_back(local_attr);
+      }
+    }
+    std::sort(active_attr.begin(), active_attr.end());
+  }
 
   // All boundary bilinear-form coefficients are supported on this global attribute union.
   std::vector<int> active_bdr_global;
@@ -263,54 +282,25 @@ void SpaceOperator::SetUpCeedElementSets(const std::vector<std::unique_ptr<Mesh>
   active_bdr_global.erase(std::unique(active_bdr_global.begin(), active_bdr_global.end()),
                           active_bdr_global.end());
 
-  // Convert the fine-mesh process-local lossy set back to global attributes. Then map both
+  // Convert the fine-mesh process-local active set back to global attributes. Then map both
   // global unions directly into the local numbering of every h-level mesh. The p-levels
   // share the finest mesh and ordering.
-  std::vector<int> lossy_global;
+  std::vector<int> active_global;
   for (const auto &[attr, local_attr] : mat_op.GetMesh().GetCeedAttributes())
   {
-    if (std::binary_search(lossy_attr.begin(), lossy_attr.end(), local_attr))
+    if (std::binary_search(active_attr.begin(), active_attr.end(), local_attr))
     {
-      lossy_global.push_back(attr);
+      active_global.push_back(attr);
     }
   }
   for (const auto &mesh_l : mesh)
   {
-    auto lossy_attr_l = mesh_l->GetCeedAttributes(lossy_global);
+    auto active_attr_l = mesh_l->GetCeedAttributes(active_global);
     auto active_bdr_attr_l = mesh_l->GetCeedBdrAttributes(active_bdr_global);
     mesh_l->SetCeedActiveAttributes(
-        std::vector<int>(lossy_attr_l.begin(), lossy_attr_l.end()),
+        std::vector<int>(active_attr_l.begin(), active_attr_l.end()),
         std::vector<int>(active_bdr_attr_l.begin(), active_bdr_attr_l.end()));
   }
-
-  // The bulk material coefficients vanish on the PML regions (see
-  // MaterialOperator::GetBulkAttributeToMaterial), whose terms are separate integrators on
-  // their own elements, so the bulk terms of the matrix-free operators are assembled on the
-  // other elements only. The levels of the preconditioner above the coarsest do the same,
-  // except on CPU with lossy materials: their bulk terms with stored quadrature data are
-  // then packed with the lossy imaginary terms over the shared lossy subset of all elements
-  // (see ceed::CreateComplexOperator), which a restricted real term would prevent.
-  bulk_attr.clear();
-  if (mat_op.HasPML())
-  {
-    const auto &attributes = mat_op.GetMesh().Get().attributes;
-    for (auto attr : attributes)
-    {
-      if (std::ranges::none_of(mat_op.GetPMLLayers(),
-                               [attr](const auto &layer)
-                               {
-                                 return std::ranges::find(layer.GetAttributes(), attr) !=
-                                        layer.GetAttributes().end();
-                               }))
-      {
-        bulk_attr.push_back(attr);
-      }
-    }
-  }
-  int has_lossy = !lossy_global.empty();
-  Mpi::GlobalMax(1, &has_lossy, mat_op.GetMesh().GetComm());
-  pc_bulk_attr = !bulk_attr.empty() &&
-                 (mfem::Device::Allows(mfem::Backend::DEVICE_MASK) || !has_lossy);
 }
 
 void SpaceOperator::SetUpFrequencyDependentPermittivityMassOperators()
@@ -836,19 +826,13 @@ auto AssembleOperator(
     const MaterialPropertyCoefficient *fb, const MaterialPropertyCoefficient *fp,
     const MaterialPropertyCoefficient *frb, const MaterialPropertyCoefficient *fpb,
     bool skip_zeros = false, bool assemble_q_data = false,
-    const std::vector<PMLIntegrator> *pml = nullptr,
-    const std::vector<int> *support = nullptr)
+    const std::vector<PMLIntegrator> *pml = nullptr)
 {
   BilinearForm a(fespace);
   // System matrices are only ever applied matrix-free (their sums are assembled into
   // SumOperator, which has no sparse representation), so elements where a coefficient is
-  // exactly zero can be left out of the partially assembled operator, as can the elements
-  // outside of the domain attributes support where the bulk coefficients vanish.
+  // exactly zero can be left out of the partially assembled operator.
   a.SkipZeroCoefficientElements();
-  if (support)
-  {
-    a.SetCoefficientSupport(*support);
-  }
   AddIntegrators(a, df, f, dfb, fb, fp, frb, fpb, assemble_q_data, pml);
   return a.Assemble(skip_zeros);
 }
@@ -861,13 +845,11 @@ auto AssembleOperators(
     bool skip_zeros = false, bool assemble_q_data = false, bool flip_coarse_dfb = false,
     const MaterialPropertyCoefficient *dfb_flip_add = nullptr,
     const std::vector<PMLIntegrator> *pml = nullptr,
-    const std::vector<PMLIntegrator> *coarse_pml = nullptr,
-    const std::vector<int> *support = nullptr)
+    const std::vector<PMLIntegrator> *coarse_pml = nullptr)
 {
   // Optionally flip the sign of dfb on the coarse level only (see AssemblePreconditioner),
   // and add dfb_flip_add to the flipped copy. The PML integrators of the coarse level are
-  // pml, or coarse_pml if given. The levels above the coarsest assemble the bulk terms on
-  // the elements of support only, if given.
+  // pml, or coarse_pml if given.
   std::optional<MaterialPropertyCoefficient> dfb_flip;
   const MaterialPropertyCoefficient *dfb_coarse = dfb;
   const bool flip_add = dfb_flip_add && !dfb_flip_add->empty();
@@ -901,12 +883,8 @@ auto AssembleOperators(
     BilinearForm fine(fespaces.GetFinestFESpace());
     // Levels above the coarsest are only applied matrix-free (their smoothers use the
     // operator action and its diagonal), so elements where a coefficient is exactly zero
-    // can be left out. The coarsest level keeps them, for its sparsity pattern.
+    // can be left out.
     fine.SkipZeroCoefficientElements();
-    if (support)
-    {
-      fine.SetCoefficientSupport(*support);
-    }
     AddIntegrators(fine, df, f, dfb, fb, fp, frb, fpb, assemble_q_data, pml);
     auto fine_ops = fine.Assemble(fespaces, skip_zeros, 1);
     for (auto &op : fine_ops)
@@ -922,8 +900,7 @@ auto AssembleAuxOperators(const FiniteElementSpaceHierarchy &fespaces,
                           const MaterialPropertyCoefficient *fb,
                           const MaterialPropertyCoefficient *frb, bool skip_zeros = false,
                           bool assemble_q_data = false,
-                          const std::vector<PMLIntegrator> *pml = nullptr,
-                          const std::vector<int> *support = nullptr)
+                          const std::vector<PMLIntegrator> *pml = nullptr)
 {
   // Match the configured coarse-support policy of the primary hierarchy above.
   BilinearForm coarse(fespaces.GetFESpaceAtLevel(0));
@@ -935,10 +912,6 @@ auto AssembleAuxOperators(const FiniteElementSpaceHierarchy &fespaces,
   {
     BilinearForm fine(fespaces.GetFinestFESpace());
     fine.SkipZeroCoefficientElements();
-    if (support)
-    {
-      fine.SetCoefficientSupport(*support);
-    }
     AddAuxIntegrators(fine, f, fb, frb, assemble_q_data, pml);
     auto fine_ops = fine.Assemble(fespaces, skip_zeros, 1);
     for (auto &op : fine_ops)
@@ -961,16 +934,14 @@ enum class PMLFilter : char
 // Append the PML integrator(s) for the complex terms c_muinv μ̃⁻¹ and/or c_eps ε̃ of the
 // given kind (the prefactor not used by the kind is ignored), for each PML block whose
 // stretch is selected by filter, with a frequency-dependent stretch evaluated at omega. The
-// real part is appended to re and the imaginary part to im. For a real-valued operator
-// (null im), re_part selects the part assembled into re. With stretch_magnitude, the
-// tensors use the magnitudes of the stretch factors (see pml::TensorPart). Nothing is
-// appended if the terms are identically zero.
+// real part is appended to re and the imaginary part to im. For a real-valued
+// approximation (null im), or with stretch_magnitude, the tensors use the magnitudes of the
+// stretch factors (see pml::TensorPart). Nothing is appended if the terms are identically
+// zero.
 void AppendPML(std::vector<PMLIntegrator> &re, std::vector<PMLIntegrator> *im,
                const MaterialOperator &mat_op, PMLIntegKind kind,
                std::complex<double> c_muinv, std::complex<double> c_eps, PMLFilter filter,
-               std::complex<double> omega = 0.0,
-               pml::TensorPart re_part = pml::TensorPart::REAL,
-               bool stretch_magnitude = false)
+               std::complex<double> omega = 0.0, bool stretch_magnitude = false)
 {
   const bool floquet =
       (kind == PMLIntegKind::FLOQUET_MASS || kind == PMLIntegKind::FLOQUET_CROSS ||
@@ -1010,12 +981,12 @@ void AppendPML(std::vector<PMLIntegrator> &re, std::vector<PMLIntegrator> *im,
     {
       continue;
     }
-    const auto real_part = stretch_magnitude ? pml::TensorPart::STRETCH_MAGNITUDE_REAL
-                                             : pml::TensorPart::REAL,
-               imag_part = stretch_magnitude ? pml::TensorPart::STRETCH_MAGNITUDE_IMAG
-                                             : pml::TensorPart::IMAG;
+    const bool magnitude = stretch_magnitude || !im;
     for (auto [dst, part] :
-         {std::pair{&re, im ? real_part : re_part}, std::pair{im, imag_part}})
+         {std::pair{&re, magnitude ? pml::TensorPart::STRETCH_MAGNITUDE_REAL
+                                   : pml::TensorPart::REAL},
+          std::pair{im, magnitude ? pml::TensorPart::STRETCH_MAGNITUDE_IMAG
+                                  : pml::TensorPart::IMAG}})
     {
       if (!dst)
       {
@@ -1053,9 +1024,10 @@ struct PMLPencil
 // Append the PML integrators for the pencil terms if the stretch is selected by filter,
 // with the stretch evaluated at omega (frequency-dependent stretch) or at its reference
 // frequency (static stretch). The auxiliary space terms are the gradient subspace
-// projections of the mass terms. For a real-valued approximation (null im), re_part selects
-// the part assembled into re and the Floquet cross terms are dropped. With
-// stretch_magnitude, the tensors use the magnitudes of the stretch factors.
+// projections of the mass terms. For a real-valued approximation (null im), the tensors use
+// the magnitudes of the stretch factors and the Floquet cross terms are dropped. With
+// stretch_magnitude, the complex-valued terms use the magnitudes of the stretch factors
+// too.
 //
 // For a frequency-dependent stretch, A2(ω) = K_pml(ω) + iω C_pml(ω) - ω² M_pml(ω). The
 // stretch factors s(ω) = κ + σ / (α + iω) and therefore the PML tensors are analytic in ω,
@@ -1066,31 +1038,29 @@ void AppendPMLPencil(std::vector<PMLIntegrator> &re, std::vector<PMLIntegrator> 
                      std::vector<PMLIntegrator> *aux_re, std::vector<PMLIntegrator> *aux_im,
                      const MaterialOperator &mat_op, PMLFilter filter,
                      std::complex<double> omega, const PMLPencil &c,
-                     pml::TensorPart re_part = pml::TensorPart::REAL,
                      bool stretch_magnitude = false)
 {
   AppendPML(re, im, mat_op, PMLIntegKind::CURL_CURL_MASS, c.a0, c.a2, filter, omega,
-            re_part, stretch_magnitude);
+            stretch_magnitude);
   if (aux_re)
   {
-    AppendPML(*aux_re, aux_im, mat_op, PMLIntegKind::DIFFUSION, 0.0, c.a2, filter, omega,
-              re_part);
+    AppendPML(*aux_re, aux_im, mat_op, PMLIntegKind::DIFFUSION, 0.0, c.a2, filter, omega);
   }
   if (mat_op.HasWaveVector())
   {
     const bool scaled = mat_op.HasFloquetFrequencyScaling();
     const auto c_mass = scaled ? -c.a2_floquet : c.a0, c_cross = scaled ? c.a1 : 1i * c.a0;
     AppendPML(re, im, mat_op, PMLIntegKind::FLOQUET_MASS, c_mass, 0.0, filter, omega,
-              re_part, stretch_magnitude);
+              stretch_magnitude);
     if (im)
     {
       AppendPML(re, im, mat_op, PMLIntegKind::FLOQUET_CROSS, c_cross, 0.0, filter, omega,
-                pml::TensorPart::REAL, stretch_magnitude);
+                stretch_magnitude);
     }
     if (aux_re)
     {
       AppendPML(*aux_re, aux_im, mat_op, PMLIntegKind::FLOQUET_DIFFUSION, c_mass, 0.0,
-                filter, omega, re_part);
+                filter, omega);
     }
   }
 }
@@ -1283,15 +1253,13 @@ SpaceOperator::GetStiffnessMatrix(Operator::DiagonalPolicy diag_policy)
   if (!empty[0])
   {
     kr = AssembleOperator(GetNDSpace(), &df, &f, nullptr, &fb, nullptr, nullptr, &fpb,
-                          skip_zeros, false, &pml_re,
-                          bulk_attr.empty() ? nullptr : &bulk_attr);
+                          skip_zeros, false, &pml_re);
   }
   if (!empty[1])
   {
     // Imaginary branch: periodic imaginary coefficient (fc) plus PML imag μ̃⁻¹ curl-curl.
     ki = AssembleOperator(GetNDSpace(), nullptr, nullptr, nullptr, nullptr, &fc, nullptr,
-                          nullptr, skip_zeros, false, &pml_im,
-                          bulk_attr.empty() ? nullptr : &bulk_attr);
+                          nullptr, skip_zeros, false, &pml_im);
   }
   if constexpr (std::is_same_v<OperType, ComplexOperator>)
   {
@@ -1341,8 +1309,7 @@ SpaceOperator::GetDampingMatrix(Operator::DiagonalPolicy diag_policy)
   if (!empty[0])
   {
     cr = AssembleOperator(GetNDSpace(), nullptr, &f, nullptr, &fb, &fp, &frb, nullptr,
-                          skip_zeros, false, &pml_re,
-                          bulk_attr.empty() ? nullptr : &bulk_attr);
+                          skip_zeros, false, &pml_re);
   }
   if (!empty[1])
   {
@@ -1398,14 +1365,12 @@ std::unique_ptr<OperType> SpaceOperator::GetMassMatrix(Operator::DiagonalPolicy 
   if (!empty[0])
   {
     mr = AssembleOperator(GetNDSpace(), nullptr, &fr, nullptr, &fbr, nullptr, nullptr,
-                          nullptr, skip_zeros, false, &pml_re,
-                          bulk_attr.empty() ? nullptr : &bulk_attr);
+                          nullptr, skip_zeros, false, &pml_re);
   }
   if (!empty[1])
   {
     mi = AssembleOperator(GetNDSpace(), nullptr, &fi, nullptr, &fbi, nullptr, nullptr,
-                          nullptr, skip_zeros, false, &pml_im,
-                          bulk_attr.empty() ? nullptr : &bulk_attr);
+                          nullptr, skip_zeros, false, &pml_im);
   }
   if constexpr (std::is_same_v<OperType, ComplexOperator>)
   {
@@ -1983,8 +1948,9 @@ std::unique_ptr<Operator> SpaceOperator::GetInnerProductMatrix(double a0, double
   {
     // The real parts of the PML tensors are not positive definite (multiple stretched
     // directions in the edge and corner regions of the layer), and the frequency-dependent
-    // PML terms are not in K or M. Instead, assemble the matrix with the entrywise
-    // magnitudes of the PML tensors, as for the real-valued preconditioner approximation.
+    // PML terms are not in K or M. Instead, assemble the matrix with the PML tensors of the
+    // magnitudes of the stretch factors, as for the real-valued preconditioner
+    // approximation.
     MFEM_VERIFY(a0 >= 0.0 && a2 >= 0.0,
                 "Invalid coefficients for the inner product matrix with PML!");
     MaterialPropertyCoefficient df(mat_op.MaxCeedAttribute()), f(mat_op.MaxCeedAttribute()),
@@ -2010,17 +1976,15 @@ std::unique_ptr<Operator> SpaceOperator::GetInnerProductMatrix(double a0, double
     }
     std::vector<PMLIntegrator> pml;
     const PMLPencil c = {.a0 = c0, .a2 = c2, .a2_floquet = c2};
-    AppendPMLPencil(pml, nullptr, nullptr, nullptr, mat_op, PMLFilter::STATIC, 0.0, c,
-                    pml::TensorPart::ABS);
+    AppendPMLPencil(pml, nullptr, nullptr, nullptr, mat_op, PMLFilter::STATIC, 0.0, c);
     if (omega > 0.0)
     {
       AppendPMLPencil(pml, nullptr, nullptr, nullptr, mat_op,
-                      PMLFilter::FREQUENCY_DEPENDENT, omega, c, pml::TensorPart::ABS);
+                      PMLFilter::FREQUENCY_DEPENDENT, omega, c);
     }
     constexpr bool skip_zeros = false;
-    auto b =
-        AssembleOperator(GetNDSpace(), &df, &f, nullptr, &fb, nullptr, nullptr, nullptr,
-                         skip_zeros, false, &pml, bulk_attr.empty() ? nullptr : &bulk_attr);
+    auto b = AssembleOperator(GetNDSpace(), &df, &f, nullptr, &fb, nullptr, nullptr,
+                              nullptr, skip_zeros, false, &pml);
     return std::make_unique<ParOperator>(std::move(b), GetNDSpace());
   }
   const auto *PtAP_K = (K) ? dynamic_cast<const ComplexParOperator *>(K) : nullptr;
@@ -2256,11 +2220,10 @@ void SpaceOperator::AssemblePreconditioner(
   {
     auto &[coarse_re, coarse_im] = coarse_pml.emplace();
     AppendPMLPencil(coarse_re, &coarse_im, nullptr, nullptr, mat_op, PMLFilter::STATIC, 0.0,
-                    {a0, a1, ShiftedMassCoefficient(a2, pc_mat_shifted), a2},
-                    pml::TensorPart::REAL, true);
+                    {a0, a1, ShiftedMassCoefficient(a2, pc_mat_shifted), a2}, true);
     AppendPMLPencil(coarse_re, &coarse_im, nullptr, nullptr, mat_op,
                     PMLFilter::FREQUENCY_DEPENDENT, a3,
-                    ExtraSystemPMLPencil(a3, pc_mat_shifted), pml::TensorPart::REAL, true);
+                    ExtraSystemPMLPencil(a3, pc_mat_shifted), true);
   }
 
   int empty[2] = {
@@ -2273,21 +2236,17 @@ void SpaceOperator::AssemblePreconditioner(
   {
     br_vec = AssembleOperators(GetNDSpaces(), &dfr, &fr, &dfbr, &fbr, &fpr, &frbr, &fpbr,
                                skip_zeros, assemble_q_data, pc_coarse_real, &dfbr_flip_add,
-                               &pml_re, coarse_pml ? &(*coarse_pml)[0] : nullptr,
-                               pc_bulk_attr ? &bulk_attr : nullptr);
-    br_aux_vec =
-        AssembleAuxOperators(GetH1Spaces(), &fr, &fbr, &frbr, skip_zeros, assemble_q_data,
-                             &aux_pml_re, pc_bulk_attr ? &bulk_attr : nullptr);
+                               &pml_re, coarse_pml ? &(*coarse_pml)[0] : nullptr);
+    br_aux_vec = AssembleAuxOperators(GetH1Spaces(), &fr, &fbr, &frbr, skip_zeros,
+                                      assemble_q_data, &aux_pml_re);
   }
   if (!empty[1])
   {
     bi_vec = AssembleOperators(GetNDSpaces(), &dfi, &fi, &dfbi, &fbi, &fpi, &frbi, &fpbi,
                                skip_zeros, assemble_q_data, pc_coarse_real, &dfbi_flip_add,
-                               &pml_im, coarse_pml ? &(*coarse_pml)[1] : nullptr,
-                               pc_bulk_attr ? &bulk_attr : nullptr);
-    bi_aux_vec =
-        AssembleAuxOperators(GetH1Spaces(), &fi, &fbi, &frbi, skip_zeros, assemble_q_data,
-                             &aux_pml_im, pc_bulk_attr ? &bulk_attr : nullptr);
+                               &pml_im, coarse_pml ? &(*coarse_pml)[1] : nullptr);
+    bi_aux_vec = AssembleAuxOperators(GetH1Spaces(), &fi, &fbi, &frbi, skip_zeros,
+                                      assemble_q_data, &aux_pml_im);
   }
   if (pml_block)
   {
@@ -2340,17 +2299,14 @@ void SpaceOperator::AssemblePreconditioner(
     AddRealPeriodicCoefficients(a0.real(), fr);
   }
 
-  // Real-valued approximation of the PML terms: Re{c} |T| with the entrywise magnitudes of
-  // the PML tensors T, which are positive like the bulk material properties, and the
-  // prefactors of the corresponding bulk terms above.
+  // Real-valued approximation of the PML terms: Re{c} T̂ with the tensors T̂ of the
+  // magnitudes of the stretch factors, which are positive definite like the bulk material
+  // properties, and the prefactors of the corresponding bulk terms above.
   std::vector<PMLIntegrator> pml, aux_pml;
-  {
-    constexpr auto abs = pml::TensorPart::ABS;
-    AppendPMLPencil(pml, nullptr, &aux_pml, nullptr, mat_op, PMLFilter::STATIC, 0.0,
-                    {a0.real(), 0.0, a2_pc, a2_pc}, abs);
-    AppendPMLPencil(pml, nullptr, &aux_pml, nullptr, mat_op, PMLFilter::FREQUENCY_DEPENDENT,
-                    a3, ExtraSystemPMLPencil(a3, pc_mat_shifted, pc_mat_shifted), abs);
-  }
+  AppendPMLPencil(pml, nullptr, &aux_pml, nullptr, mat_op, PMLFilter::STATIC, 0.0,
+                  {a0.real(), 0.0, a2_pc, a2_pc});
+  AppendPMLPencil(pml, nullptr, &aux_pml, nullptr, mat_op, PMLFilter::FREQUENCY_DEPENDENT,
+                  a3, ExtraSystemPMLPencil(a3, pc_mat_shifted, pc_mat_shifted));
 
   int empty = (dfr.empty() && fr.empty() && dfbr.empty() && fbr.empty() && frbr.empty() &&
                pml.empty());
@@ -2358,11 +2314,9 @@ void SpaceOperator::AssemblePreconditioner(
   if (!empty)
   {
     br_vec = AssembleOperators(GetNDSpaces(), &dfr, &fr, &dfbr, &fbr, nullptr, &frbr,
-                               nullptr, skip_zeros, assemble_q_data, false, nullptr, &pml,
-                               nullptr, pc_bulk_attr ? &bulk_attr : nullptr);
-    br_aux_vec =
-        AssembleAuxOperators(GetH1Spaces(), &fr, &fbr, &frbr, skip_zeros, assemble_q_data,
-                             &aux_pml, pc_bulk_attr ? &bulk_attr : nullptr);
+                               nullptr, skip_zeros, assemble_q_data, false, nullptr, &pml);
+    br_aux_vec = AssembleAuxOperators(GetH1Spaces(), &fr, &fbr, &frbr, skip_zeros,
+                                      assemble_q_data, &aux_pml);
   }
 }
 
@@ -2543,15 +2497,10 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(ScalarType a0,
   {
     if (pml_block)
     {
-      const auto *A = dynamic_cast<const ComplexParOperator *>(pml_block.get());
-      MFEM_VERIFY(A, "Unexpected operator type for the PML subdomain correction!");
-      auto Assemble = [](const Operator *op) -> std::unique_ptr<mfem::HypreParMatrix>
-      {
-        return op ? dynamic_cast<const ParOperator &>(*op).StealParallelAssemble()
-                  : nullptr;
-      };
-      B->SetPMLSubdomain(GetPMLTrueDofs(GetNDSpaces().GetFinestFESpace(), mat_op),
-                         Assemble(A->Real()), Assemble(A->Imag()));
+      // The PML regions are the subdomain of the subdomain correction of the multigrid
+      // preconditioner (see PMLSubdomainSolver).
+      B->SetSubdomain(GetPMLTrueDofs(GetNDSpaces().GetFinestFESpace(), mat_op),
+                      std::move(pml_block));
     }
   }
 

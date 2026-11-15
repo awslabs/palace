@@ -431,7 +431,7 @@ ConfigurePreconditionerSolver(const config::LinearSolverData &linear,
     {
       if (linear.pml_subdomain_solver == PMLSubdomainSolver::DIRECT)
       {
-        gmg->SetPMLSubdomainSolver(
+        gmg->SetSubdomainSolver(
             ConfigurePMLSubdomainSolver(linear, pc_mat_sym, verbose, comm));
       }
     }

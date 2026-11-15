@@ -21,38 +21,35 @@ using namespace ceed;
 namespace
 {
 
-// All PML integrators share everything except the QFunctions and the evaluation modes.
-// With quadrature data assembly (the default, see PMLIntegratorBase), the PML tensors are
-// evaluated once at assembly by the build QFunction and the operator is applied using the
-// generic quadrature data QFunctions, f_apply_33_cross for the Floquet cross term (cross).
-void AssemblePMLOperator(CeedQFunctionUser apply_qf, const char *apply_qf_loc,
-                         CeedQFunctionUser build_qf, const char *build_qf_loc,
-                         unsigned int ops, bool assemble_q_data, const void *ctx,
-                         std::size_t ctx_size, Ceed ceed, CeedElemRestriction trial_restr,
-                         CeedElemRestriction test_restr, CeedBasis trial_basis,
-                         CeedBasis test_basis, CeedVector geom_data,
+// All PML integrators share everything except the QFunctions and the evaluation modes. The
+// PML tensors are evaluated once at assembly by the build QFunction and stored, and the
+// operator is applied using the generic quadrature data QFunctions, f_apply_33_cross for
+// the Floquet cross term (cross).
+void AssemblePMLOperator(CeedQFunctionUser build_qf, const char *build_qf_loc,
+                         unsigned int ops, const void *ctx, std::size_t ctx_size, Ceed ceed,
+                         CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
+                         CeedBasis trial_basis, CeedBasis test_basis, CeedVector geom_data,
                          CeedElemRestriction geom_data_restr, CeedOperator *op,
                          bool cross = false)
 {
-  CeedInt dim, space_dim;
+  // The geometry factor data of the PML attributes has the coordinates of the quadrature
+  // points (see BilinearForm::AddDomainIntegratorOnAttributes), and for an extruded PML the
+  // depth of the mesh nodes into the layer and its gradient (see Mesh::SetGeomFactorField).
+  CeedInt dim, geom_data_size;
   PalaceCeedCall(ceed, CeedBasisGetDimension(trial_basis, &dim));
-  PalaceCeedCall(ceed, CeedGeometryDataGetSpaceDimension(geom_data_restr, dim, &space_dim));
-  MFEM_VERIFY(space_dim == 3 && dim == 3,
-              "PML integrators are only available for 3D elements (got (space_dim, dim) = ("
-                  << space_dim << ", " << dim << "))!");
-  MFEM_VERIFY(CeedGeometryDataHasCoordinates(geom_data_restr, dim),
-              "PML integrators require the quadrature point coordinates in the geometry "
-              "factor data (see BilinearForm::AddDomainIntegratorOnAttributes)!");
-  MFEM_VERIFY(!PMLIsExtruded(static_cast<const CeedIntScalar *>(ctx)) ||
-                  CeedGeometryDataHasDepth(geom_data_restr, dim),
-              "The extruded PML requires the depth of the mesh nodes into the layer in the "
-              "geometry factor data (see Mesh::SetPMLDepth)!");
+  PalaceCeedCall(ceed,
+                 CeedElemRestrictionGetNumComponents(geom_data_restr, &geom_data_size));
+  MFEM_VERIFY(dim == 3, "PML integrators are only available for 3D elements!");
+  const bool extruded = PMLIsExtruded(static_cast<const CeedIntScalar *>(ctx));
+  MFEM_VERIFY(
+      geom_data_size == CeedGeometryDataSize(3, 3, true, extruded),
+      "PML integrators require the geometry factor data of the PML attributes, with "
+      "the depth of the mesh nodes for an extruded PML!");
   CeedQFunctionInfo info;
-  info.assemble_q_data = assemble_q_data;
+  info.assemble_q_data = true;
   info.q_data_cross = cross;
-  info.apply_qf = info.assemble_q_data ? build_qf : apply_qf;
-  info.apply_qf_path =
-      PalaceQFunctionRelativePath(info.assemble_q_data ? build_qf_loc : apply_qf_loc);
+  info.apply_qf = build_qf;
+  info.apply_qf_path = PalaceQFunctionRelativePath(build_qf_loc);
   info.trial_ops = ops;
   info.test_ops = ops;
   AssembleCeedOperator(info, const_cast<void *>(ctx), ctx_size, ceed, trial_restr,
@@ -67,10 +64,9 @@ void CurlCurlPMLIntegrator::Assemble(Ceed ceed, CeedElemRestriction trial_restr,
                                      CeedElemRestriction geom_data_restr,
                                      CeedOperator *op) const
 {
-  AssemblePMLOperator(f_apply_hcurl_pml_curl_33, f_apply_hcurl_pml_curl_33_loc,
-                      f_build_hcurl_pml_curl_33, f_build_hcurl_pml_curl_33_loc,
-                      EvalMode::Curl, assemble_q_data, ctx, ctx_size, ceed, trial_restr,
-                      test_restr, trial_basis, test_basis, geom_data, geom_data_restr, op);
+  AssemblePMLOperator(f_build_hcurl_pml_curl_33, f_build_hcurl_pml_curl_33_loc,
+                      EvalMode::Curl, ctx, ctx_size, ceed, trial_restr, test_restr,
+                      trial_basis, test_basis, geom_data, geom_data_restr, op);
 }
 
 void VectorFEMassPMLIntegrator::Assemble(Ceed ceed, CeedElemRestriction trial_restr,
@@ -80,10 +76,9 @@ void VectorFEMassPMLIntegrator::Assemble(Ceed ceed, CeedElemRestriction trial_re
                                          CeedElemRestriction geom_data_restr,
                                          CeedOperator *op) const
 {
-  AssemblePMLOperator(f_apply_hcurl_pml_mass_33, f_apply_hcurl_pml_mass_33_loc,
-                      f_build_hcurl_pml_mass_33, f_build_hcurl_pml_mass_33_loc,
-                      EvalMode::Interp, assemble_q_data, ctx, ctx_size, ceed, trial_restr,
-                      test_restr, trial_basis, test_basis, geom_data, geom_data_restr, op);
+  AssemblePMLOperator(f_build_hcurl_pml_mass_33, f_build_hcurl_pml_mass_33_loc,
+                      EvalMode::Interp, ctx, ctx_size, ceed, trial_restr, test_restr,
+                      trial_basis, test_basis, geom_data, geom_data_restr, op);
 }
 
 void CurlCurlMassPMLIntegrator::Assemble(Ceed ceed, CeedElemRestriction trial_restr,
@@ -93,11 +88,9 @@ void CurlCurlMassPMLIntegrator::Assemble(Ceed ceed, CeedElemRestriction trial_re
                                          CeedElemRestriction geom_data_restr,
                                          CeedOperator *op) const
 {
-  AssemblePMLOperator(f_apply_hcurl_pml_curlmass_33, f_apply_hcurl_pml_curlmass_33_loc,
-                      f_build_hcurl_pml_curlmass_33, f_build_hcurl_pml_curlmass_33_loc,
-                      EvalMode::Interp | EvalMode::Curl, assemble_q_data, ctx, ctx_size,
-                      ceed, trial_restr, test_restr, trial_basis, test_basis, geom_data,
-                      geom_data_restr, op);
+  AssemblePMLOperator(f_build_hcurl_pml_curlmass_33, f_build_hcurl_pml_curlmass_33_loc,
+                      EvalMode::Interp | EvalMode::Curl, ctx, ctx_size, ceed, trial_restr,
+                      test_restr, trial_basis, test_basis, geom_data, geom_data_restr, op);
 }
 
 void DiffusionPMLIntegrator::Assemble(Ceed ceed, CeedElemRestriction trial_restr,
@@ -109,10 +102,9 @@ void DiffusionPMLIntegrator::Assemble(Ceed ceed, CeedElemRestriction trial_restr
   // H1 gradients pull back from the reference element with adj(J)ᵀ / |J| like H(curl)
   // fields, so the mass QFunction computes the diffusion form for the gradient evaluation
   // mode.
-  AssemblePMLOperator(f_apply_hcurl_pml_mass_33, f_apply_hcurl_pml_mass_33_loc,
-                      f_build_hcurl_pml_mass_33, f_build_hcurl_pml_mass_33_loc,
-                      EvalMode::Grad, assemble_q_data, ctx, ctx_size, ceed, trial_restr,
-                      test_restr, trial_basis, test_basis, geom_data, geom_data_restr, op);
+  AssemblePMLOperator(f_build_hcurl_pml_mass_33, f_build_hcurl_pml_mass_33_loc,
+                      EvalMode::Grad, ctx, ctx_size, ceed, trial_restr, test_restr,
+                      trial_basis, test_basis, geom_data, geom_data_restr, op);
 }
 
 void FloquetMassPMLIntegrator::Assemble(Ceed ceed, CeedElemRestriction trial_restr,
@@ -122,11 +114,10 @@ void FloquetMassPMLIntegrator::Assemble(Ceed ceed, CeedElemRestriction trial_res
                                         CeedElemRestriction geom_data_restr,
                                         CeedOperator *op) const
 {
-  AssemblePMLOperator(
-      f_apply_hcurl_pml_floquet_mass_33, f_apply_hcurl_pml_floquet_mass_33_loc,
-      f_build_hcurl_pml_floquet_mass_33, f_build_hcurl_pml_floquet_mass_33_loc,
-      EvalMode::Interp, assemble_q_data, ctx, ctx_size, ceed, trial_restr, test_restr,
-      trial_basis, test_basis, geom_data, geom_data_restr, op);
+  AssemblePMLOperator(f_build_hcurl_pml_floquet_mass_33,
+                      f_build_hcurl_pml_floquet_mass_33_loc, EvalMode::Interp, ctx,
+                      ctx_size, ceed, trial_restr, test_restr, trial_basis, test_basis,
+                      geom_data, geom_data_restr, op);
 }
 
 void FloquetDiffusionPMLIntegrator::Assemble(Ceed ceed, CeedElemRestriction trial_restr,
@@ -136,11 +127,10 @@ void FloquetDiffusionPMLIntegrator::Assemble(Ceed ceed, CeedElemRestriction tria
                                              CeedElemRestriction geom_data_restr,
                                              CeedOperator *op) const
 {
-  AssemblePMLOperator(
-      f_apply_hcurl_pml_floquet_mass_33, f_apply_hcurl_pml_floquet_mass_33_loc,
-      f_build_hcurl_pml_floquet_mass_33, f_build_hcurl_pml_floquet_mass_33_loc,
-      EvalMode::Grad, assemble_q_data, ctx, ctx_size, ceed, trial_restr, test_restr,
-      trial_basis, test_basis, geom_data, geom_data_restr, op);
+  AssemblePMLOperator(f_build_hcurl_pml_floquet_mass_33,
+                      f_build_hcurl_pml_floquet_mass_33_loc, EvalMode::Grad, ctx, ctx_size,
+                      ceed, trial_restr, test_restr, trial_basis, test_basis, geom_data,
+                      geom_data_restr, op);
 }
 
 void FloquetCrossPMLIntegrator::Assemble(Ceed ceed, CeedElemRestriction trial_restr,
@@ -153,10 +143,9 @@ void FloquetCrossPMLIntegrator::Assemble(Ceed ceed, CeedElemRestriction trial_re
   // The cross term couples the field to the curl and the curl to the field, so its
   // quadrature data is applied by f_apply_33_cross rather than f_apply_33.
   AssemblePMLOperator(
-      f_apply_hcurl_pml_floquet_cross_33, f_apply_hcurl_pml_floquet_cross_33_loc,
       f_build_hcurl_pml_floquet_cross_33, f_build_hcurl_pml_floquet_cross_33_loc,
-      EvalMode::Interp | EvalMode::Curl, assemble_q_data, ctx, ctx_size, ceed, trial_restr,
-      test_restr, trial_basis, test_basis, geom_data, geom_data_restr, op, true);
+      EvalMode::Interp | EvalMode::Curl, ctx, ctx_size, ceed, trial_restr, test_restr,
+      trial_basis, test_basis, geom_data, geom_data_restr, op, true);
 }
 
 }  // namespace palace

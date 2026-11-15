@@ -540,8 +540,6 @@ double ExpectedPart(pml::TensorPart part, std::complex<double> c, std::complex<d
       return (c * t).real();
     case pml::TensorPart::IMAG:
       return (c * t).imag();
-    case pml::TensorPart::ABS:
-      return c.real() * std::abs(t);
     case pml::TensorPart::STRETCH_MAGNITUDE_REAL:
       return (c * t_mag).real();
     case pml::TensorPart::STRETCH_MAGNITUDE_IMAG:
@@ -550,9 +548,9 @@ double ExpectedPart(pml::TensorPart part, std::complex<double> c, std::complex<d
   return 0.0;
 }
 
-constexpr std::array<pml::TensorPart, 5> all_parts = {
-    pml::TensorPart::REAL, pml::TensorPart::IMAG, pml::TensorPart::ABS,
-    pml::TensorPart::STRETCH_MAGNITUDE_REAL, pml::TensorPart::STRETCH_MAGNITUDE_IMAG};
+constexpr std::array<pml::TensorPart, 4> all_parts = {
+    pml::TensorPart::REAL, pml::TensorPart::IMAG, pml::TensorPart::STRETCH_MAGNITUDE_REAL,
+    pml::TensorPart::STRETCH_MAGNITUDE_IMAG};
 
 }  // namespace
 
@@ -657,8 +655,9 @@ TEST_CASE("Extruded PML stretch", "[pml][Serial]")
           const auto ctx_s = pml::PackContext(header, cartesian, {0}, {b});
           const auto ctx_j = pml::PackContext(header, p, {0}, {b});
           std::array<double, 9> coeff_s, coeff_j;
-          muinv ? PMLMuInvCoeff(ctx_s.data(), 1, x.data(), coeff_s.data())
-                : PMLEpsCoeff(ctx_s.data(), 1, x.data(), coeff_s.data());
+          const CeedScalar zero[3] = {0.0, 0.0, 0.0};
+          PMLCoeffAt(ctx_s.data(), 1, x.data(), 0.0, zero, muinv ? coeff_s.data() : nullptr,
+                     muinv ? nullptr : coeff_s.data());
           const bool magnitude = (part == pml::TensorPart::STRETCH_MAGNITUDE_REAL ||
                                   part == pml::TensorPart::STRETCH_MAGNITUDE_IMAG);
           const auto s_part = magnitude ? std::complex<double>(std::abs(s)) : s;
@@ -764,6 +763,7 @@ TEST_CASE("SpaceOperator extruded PML matches an MFEM coefficient reference",
   mesh::ExtrudePML(serial_mesh, domains.pml[0], {});
   std::vector<std::unique_ptr<Mesh>> mesh;
   mesh.push_back(std::make_unique<Mesh>(comm, *serial_mesh));
+  mesh[0]->SetGeomFactorField(mesh::GetExtrudedPMLDepth(mesh[0]->Get(), domains.pml[0]));
 
   const int pa_order_threshold = BilinearForm::pa_order_threshold;
   const int p_trial = fem::DefaultIntegrationOrder::p_trial;
@@ -783,7 +783,7 @@ TEST_CASE("SpaceOperator extruded PML matches an MFEM coefficient reference",
   REQUIRE(space_op.GetMaterialOp().HasPML());
   const auto &p = space_op.GetMaterialOp().GetPMLLayers().at(0).GetStretch();
   REQUIRE(p.extruded);
-  const auto *depth = mesh[0]->GetPMLDepth();
+  const auto *depth = mesh[0]->GetGeomFactorField();
   REQUIRE(depth);
 
   const auto &pfes = space_op.GetNDSpace().Get();
