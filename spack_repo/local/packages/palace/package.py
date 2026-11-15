@@ -300,6 +300,13 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     with when("+libxsmm"):
         # NOTE: @=main != @main since libxsmm has a version main-2023-22, which matches @2:
         depends_on("libxsmm@=main blas=0")
+        # The develop container pins the libxsmm commit of cmake/ExternalGitTags.cmake
+        # (EXTERN_LIBXSMM_GIT_TAG), so the container and the CMake superbuild build the same
+        # libxsmm: the unpinned @=main resolved to a commit whose API no longer matched the
+        # libCEED below (OI-SPACK-RECIPE-MOVING-LIBCEED-LIBXSMM).
+        depends_on(
+            "libxsmm@=main commit=ea0b20499a41377bab148257240adbbfe1b4a333 blas=0", when="@develop"
+        )
         # TODO: depends_on("libxsmm@2: blas=0") when spack-package > 2026.06 is relased
         depends_on("libxsmm+debug", when="build_type=Debug")
         depends_on("libceed+libxsmm", when="@0.14:")
@@ -309,6 +316,12 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
 
     with when("@0.14:"):
         depends_on("libceed@0.13:")
+        # The develop container pins the libCEED commit of cmake/ExternalGitTags.cmake
+        # (EXTERN_LIBCEED_GIT_TAG), as upstream's recipe pins it for 0.15-0.17: the open range
+        # resolved to the moving libceed@develop head (OI-SPACK-RECIPE-MOVING-LIBCEED-LIBXSMM).
+        depends_on(
+            "libceed@develop commit=95bd1e908b16e04a70015e3a9a7fddec5e9c3fc8", when="@develop"
+        )
         depends_on("libceed+openmp", when="+openmp")
         depends_on("libceed~openmp", when="~openmp")
         depends_on("libceed+shared", when="+shared")

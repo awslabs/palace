@@ -26,6 +26,7 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 #include "driver.hpp"
+#include "drivers/basesolver.hpp"
 #include "fem/fespace.hpp"
 #include "fem/gridfunction.hpp"
 #include "fem/integrator.hpp"
@@ -4041,6 +4042,183 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   {
     INFO(name);
     CHECK(ReadFile(on_dir / name) == ReadFile(off_dir / name));
+  }
+#endif
+}
+
+// Decision 1685 (lane diagdir): the Maxwell per-patch tables (surface-response-patches.csv,
+// -patch-energy.csv, -patch-loops.csv) under Diagnostics.Directory across the adaptive
+// archive step: the 922-B lead measured twice in one output directory (a different field
+// the second time) with SaveIteration between the two (the drivers' AMR sequence), with
+// and without the key. With it, iteration1/diagnostics/ and diagnostics/ hold the tables
+// byte-equal to the default's iteration1/ and top-level ones (the second measurement never
+// writes into the archive), the top level and iteration1/ hold no moved table, every other
+// file is byte-equal and the default's file set is unchanged.
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "Maxwell Diagnostics.Directory moves the per-patch tables per adaptive "
+                 "iteration",
+                 "[postoperator][surfaceresponseoperator][cornerarmtrim][3d][maxwell]"
+                 "[patchenergy][diagnosticsdirectory][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  const fs::path mesh_path = temp.temp_dir / "diagdir-lead.mesh";
+  const auto basis_path = temp.temp_dir / "diagdir-basis-points.csv";
+  const auto edge_library_path = temp.temp_dir / "fabrication-process-diagdir-edges.json";
+  MPI_Comm comm = Mpi::World();
+  if (Mpi::Root(comm))
+  {
+    {
+      mfem::Mesh serial = MakeSerialLeadMesh(0.0, 0.75);
+      std::ofstream output(mesh_path);
+      serial.Print(output);
+    }
+    {
+      std::ofstream output(basis_path);
+      output << "x,y,z\n"
+             << "-0.2,-0.2,0.0\n"
+             << "0.2,-0.2,0.0\n"
+             << "0.2,0.2,0.0\n"
+             << "-0.2,0.2,0.0\n";
+    }
+    std::ifstream input(convex_library_3d_path);
+    REQUIRE(input);
+    json library = json::parse(input);
+    library["Name"] = "unit-test-process-diagdir-edges";
+    json models = json::array();
+    for (auto &model : library["Models"])
+    {
+      if (model["Topology"] == "IsolatedEdge")
+      {
+        model["Interfaces"] = {{{"Type", "SA"}, {"Coupon", 1}}};
+        model["BasisPoints"] = basis_path.string();
+        models.push_back(model);
+      }
+    }
+    library["Models"] = std::move(models);
+    std::ofstream output(edge_library_path);
+    output << library.dump(2) << "\n";
+  }
+  Mpi::Barrier(comm);
+  json config = IslandConfig();
+  config["Model"]["Mesh"] = mesh_path.string();
+  config["Model"]["L0"] = 1.0;
+  config["Problem"]["Type"] = "Eigenmode";
+  config["Boundaries"]["Ground"]["Attributes"] = {4, 9};
+  config["Boundaries"].erase("Terminal");
+  auto Measure = [&](const fs::path &output_dir, const json &diagnostics, double scale)
+  {
+    json run = config;
+    run["Problem"]["Output"] = output_dir.string();
+    run["Solver"] = {{"Order", 1},
+                     {"Eigenmode", {{"Target", 1.0}}},
+                     {"SurfaceResponseCorrection",
+                      {{"Library", edge_library_path.string()},
+                       {"TargetInterfaces", {4}},
+                       {"UnmatchedPolicy", "Warn"},
+                       {"CorrectionMode", "PostprocessOnly"},
+                       {"PatchEnergy", true}}}};
+    if (!diagnostics.is_null())
+    {
+      run["Solver"]["SurfaceResponseCorrection"]["Diagnostics"] = diagnostics;
+    }
+    IoData iodata(run, false);
+    iodata.boundaries.cracked_attributes.insert(9);
+    MakeOutputFolder(iodata, comm);
+    std::vector<std::unique_ptr<Mesh>> meshes;
+    meshes.push_back(std::make_unique<Mesh>(MakeLeadMesh(0.0, 0.75)));
+    SpaceOperator space_op(iodata, meshes);
+    PostOperator<ProblemType::EIGENMODE> post_op(iodata, space_op);
+    REQUIRE(ReplicatedRecords(post_op.GetSurfaceResponseOperator()));
+    mfem::FunctionCoefficient potential_coefficient(
+        [scale](const mfem::Vector &x) { return scale * std::sinh(0.7 * (x[1] - 0.5)); });
+    mfem::ParGridFunction potential(&space_op.GetH1Space().Get());
+    potential.ProjectCoefficient(potential_coefficient);
+    mfem::ParDiscreteLinearOperator gradient(&space_op.GetH1Space().Get(),
+                                             &space_op.GetNDSpace().Get());
+    gradient.AddDomainInterpolator(new mfem::GradientInterpolator());
+    gradient.Assemble();
+    GridFunction field(space_op.GetNDSpace(), true);
+    gradient.Mult(potential, field.Real());
+    field.Real() *= -1.0;
+    ComplexVector e(space_op.GetNDSpace().GetTrueVSize());
+    field.Real().GetTrueDofs(e.Real());
+    e.Imag() = 0.0;
+    ComplexVector b(space_op.GetRTSpace().GetTrueVSize());
+    b = 0.0;
+    post_op.MeasureAndPrintAll(0, e, b, std::complex<double>(1.0, 0.0), 0.0, 0.0, 1);
+    Mpi::Barrier(comm);
+  };
+  auto TwoIterations = [&](const char *stem, const json &diagnostics)
+  {
+    const fs::path output_dir = temp.temp_dir / stem;
+    Measure(output_dir, diagnostics, 1.0);
+    SaveIteration(comm, output_dir, 1, 1);
+    Measure(output_dir, diagnostics, 2.0);
+    return output_dir;
+  };
+  const fs::path off_dir = TwoIterations("diagdir-mx-off", json());
+  const fs::path on_dir = TwoIterations("diagdir-mx-on", {{"Directory", "diagnostics"}});
+  if (!Mpi::Root(comm))
+  {
+    return;
+  }
+  const std::set<std::string> moved = {"surface-response-patches.csv",
+                                       "surface-response-patch-energy.csv",
+                                       "surface-response-patch-loops.csv"};
+  auto Entries = [](const fs::path &dir)
+  {
+    std::set<std::string> names;
+    for (const auto &entry : fs::directory_iterator(dir))
+    {
+      names.insert(entry.path().filename().string());
+    }
+    return names;
+  };
+  for (const auto &name : moved)
+  {
+    INFO(name);
+    REQUIRE(fs::is_regular_file(off_dir / "iteration1" / name));
+    REQUIRE(fs::is_regular_file(off_dir / name));
+    // The second measurement's energy tables differ from the first's (the field doubled);
+    // the patch list is the geometry's and is the same.
+    if (name != "surface-response-patches.csv")
+    {
+      CHECK(ReadFile(off_dir / "iteration1" / name) != ReadFile(off_dir / name));
+    }
+  }
+  for (const auto &level : {fs::path(), fs::path("iteration1")})
+  {
+    INFO(level.string());
+    std::set<std::string> expected_top, expected_moved;
+    for (const auto &name : Entries(off_dir / level))
+    {
+      if (name == "iteration1")
+      {
+        expected_top.insert(name);
+        continue;
+      }
+      (moved.count(name) ? expected_moved : expected_top).insert(name);
+      if (!fs::is_regular_file(off_dir / level / name))
+      {
+        continue;
+      }
+      const fs::path path =
+          moved.count(name) ? on_dir / level / "diagnostics" / name : on_dir / level / name;
+      INFO(name);
+      REQUIRE(fs::is_regular_file(path));
+      if (moved.count(name))
+      {
+        CHECK_FALSE(fs::is_symlink(path));
+      }
+      CHECK(ReadFile(path) == ReadFile(off_dir / level / name));
+    }
+    expected_top.insert("diagnostics");
+    CHECK(Entries(on_dir / level) == expected_top);
+    REQUIRE(fs::is_directory(on_dir / level / "diagnostics"));
+    CHECK_FALSE(fs::is_symlink(on_dir / level / "diagnostics"));
+    CHECK(Entries(on_dir / level / "diagnostics") == expected_moved);
   }
 #endif
 }

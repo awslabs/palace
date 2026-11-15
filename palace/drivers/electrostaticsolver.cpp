@@ -58,31 +58,17 @@ enum class ArchivedField : std::uint32_t
 // Decision 1471 (2) (C10): the PALACE_RESPONSE_* run-mode gates below select code paths
 // with collectives (the solve, the archive streams, the source-timing reduction), so each
 // is read COLLECTIVELY: the root's value on every rank (utils/collectiveenvironment.hpp).
-bool EnvironmentFlag(MPI_Comm comm, const char *name)
+// Their Solver.Electrostatic.ResponseArchive keys are identical on every rank.
+std::filesystem::path ResponseArchivePath(const std::string &value)
 {
-  return CollectiveEnvironmentFlag(comm, name);
+  return std::filesystem::absolute(value).lexically_normal();
 }
 
-std::optional<std::filesystem::path> ResponseArchiveDirectory(MPI_Comm comm)
+void ResponseArchiveConflict(const char *key, const char *variable)
 {
-  const auto value = CollectiveGetenv(comm, "PALACE_RESPONSE_ARCHIVE_DIR");
-  if (!value || value->empty())
-  {
-    return std::nullopt;
-  }
-  return std::filesystem::absolute(*value).lexically_normal();
-}
-
-int ResponseArchiveBlockSize(MPI_Comm comm)
-{
-  const auto value = CollectiveGetenv(comm, "PALACE_RESPONSE_BLOCK_SIZE");
-  if (!value)
-  {
-    return 3;
-  }
-  const int size = std::stoi(*value);
-  MFEM_VERIFY(size > 0, "PALACE_RESPONSE_BLOCK_SIZE must be positive!");
-  return size;
+  MFEM_ABORT("Solver.Electrostatic.ResponseArchive \""
+             << key << "\" and its alias variable " << variable
+             << " are both set and differ!");
 }
 
 std::filesystem::path ArchivePath(const std::filesystem::path &directory, int source,
@@ -230,25 +216,245 @@ CorrectedSolveRecord SolveCorrectedField(KspSolver &ksp, const Operator &K,
   return record;
 }
 
-void ValidateArchiveEstimateOptions(const IoData &iodata, MPI_Comm comm, bool check_output)
+ResponseArchiveSettings
+ResolveResponseArchive(const config::ElectrostaticSolverData &electrostatic, MPI_Comm comm)
 {
-  if (!EnvironmentFlag(comm, "PALACE_RESPONSE_ESTIMATE_ONLY"))
+  using Mode = config::ElectrostaticSolverData::ResponseArchiveData::Mode;
+  const auto keys = electrostatic.response_archive.value_or(
+      config::ElectrostaticSolverData::ResponseArchiveData{});
+  ResponseArchiveSettings settings;
+  auto SourceOf = [](bool from_key, bool from_variable)
+  {
+    return from_key ? (from_variable ? ResponseArchiveSource::KEY_AND_VARIABLE
+                                     : ResponseArchiveSource::KEY)
+                    : (from_variable ? ResponseArchiveSource::VARIABLE
+                                     : ResponseArchiveSource::DEFAULT);
+  };
+
+  // A boolean alias variable is on when it reads "1". An archive estimate refuses
+  // ARCHIVE_ONLY, REDUCE_ONLY, RECYCLE_INITIAL_GUESS and BLOCK_SIZE when they are set at
+  // all (in this order), and the BlockSize / RecycleInitialGuess keys when they are given.
+  auto Resolve = [&](const char *variable, const char *key,
+                     const std::optional<bool> &from_key, bool refused_by_estimate,
+                     bool &variable_set)
+  {
+    const auto value = CollectiveGetenv(comm, variable);
+    variable_set = value.has_value();
+    if (value && refused_by_estimate)
+    {
+      settings.estimate_conflicts.emplace_back(variable);
+    }
+    const bool from_variable = value && *value == "1";
+    if (!from_key)
+    {
+      return from_variable;
+    }
+    if (value && from_variable != *from_key)
+    {
+      ResponseArchiveConflict(key, variable);
+    }
+    return *from_key;
+  };
+  auto ModeIs = [&](Mode mode)
+  { return keys.mode ? std::optional<bool>(*keys.mode == mode) : std::nullopt; };
+  bool archive_variable = false, reduce_variable = false, estimate_variable = false;
+  settings.archive_only = Resolve("PALACE_RESPONSE_ARCHIVE_ONLY", "Mode",
+                                  ModeIs(Mode::ARCHIVE), true, archive_variable);
+  settings.reduce_only = Resolve("PALACE_RESPONSE_REDUCE_ONLY", "Mode",
+                                 ModeIs(Mode::REDUCE), true, reduce_variable);
+  settings.estimate_only = Resolve("PALACE_RESPONSE_ESTIMATE_ONLY", "Mode",
+                                   ModeIs(Mode::ESTIMATE), false, estimate_variable);
+  settings.mode_source = SourceOf(keys.mode.has_value(),
+                                  archive_variable || reduce_variable || estimate_variable);
+  bool recycle_variable = false;
+  settings.recycle_initial_guess =
+      Resolve("PALACE_RESPONSE_RECYCLE_INITIAL_GUESS", "RecycleInitialGuess",
+              keys.recycle_initial_guess, true, recycle_variable);
+  settings.recycle_initial_guess_source =
+      SourceOf(keys.recycle_initial_guess.has_value(), recycle_variable);
+  if (keys.recycle_initial_guess)
+  {
+    settings.estimate_conflicts.emplace_back(
+        "Solver.Electrostatic.ResponseArchive.RecycleInitialGuess");
+  }
+  bool timing_variable = false;
+  settings.source_timing = Resolve("PALACE_RESPONSE_SOURCE_TIMING", "SourceTiming",
+                                   keys.source_timing, false, timing_variable);
+  settings.source_timing_source = SourceOf(keys.source_timing.has_value(), timing_variable);
+
+  // The reduction's block size: the variable is parsed only where it is used (a reduction)
+  // or compared with its key, as before the keys existed.
+  bool block_size_variable = false;
+  if (const auto value = CollectiveGetenv(comm, "PALACE_RESPONSE_BLOCK_SIZE"))
+  {
+    settings.estimate_conflicts.emplace_back("PALACE_RESPONSE_BLOCK_SIZE");
+    if (settings.reduce_only || keys.block_size)
+    {
+      settings.block_size = std::stoi(*value);
+      MFEM_VERIFY(settings.block_size > 0, "PALACE_RESPONSE_BLOCK_SIZE must be positive!");
+      if (keys.block_size && *keys.block_size != settings.block_size)
+      {
+        ResponseArchiveConflict("BlockSize", "PALACE_RESPONSE_BLOCK_SIZE");
+      }
+      block_size_variable = true;
+    }
+  }
+  if (keys.block_size)
+  {
+    settings.estimate_conflicts.emplace_back(
+        "Solver.Electrostatic.ResponseArchive.BlockSize");
+    settings.block_size = *keys.block_size;
+  }
+  settings.block_size_source = SourceOf(keys.block_size.has_value(), block_size_variable);
+
+  // A path given by both the key and the variable must name the same path. The comparison
+  // is made on the root and broadcast (a relative spelling is taken against the root's
+  // working directory), so that every rank refuses or none does.
+  auto PathsDiffer = [&](const std::filesystem::path &a, const std::filesystem::path &b)
+  {
+    bool differ = Mpi::Root(comm) && a != b;
+    Mpi::Broadcast(1, &differ, 0, comm);
+    return differ;
+  };
+
+  // The archive directory: an empty variable is unset.
+  if (const auto value = CollectiveGetenv(comm, "PALACE_RESPONSE_ARCHIVE_DIR");
+      value && !value->empty())
+  {
+    settings.directory = ResponseArchivePath(*value);
+  }
+  settings.directory_source =
+      SourceOf(keys.directory.has_value(), settings.directory.has_value());
+  if (keys.directory)
+  {
+    const auto from_key = ResponseArchivePath(*keys.directory);
+    if (settings.directory && PathsDiffer(*settings.directory, from_key))
+    {
+      ResponseArchiveConflict("Directory", "PALACE_RESPONSE_ARCHIVE_DIR");
+    }
+    settings.directory = from_key;
+  }
+
+  // The estimate request file (used as given; an empty variable is set).
+  settings.estimate_request = CollectiveGetenv(comm, "PALACE_RESPONSE_ESTIMATE_REQUEST");
+  settings.estimate_request_source =
+      SourceOf(keys.estimate_request.has_value(), settings.estimate_request.has_value());
+  if (keys.estimate_request)
+  {
+    if (settings.estimate_request &&
+        PathsDiffer(ResponseArchivePath(*settings.estimate_request),
+                    ResponseArchivePath(*keys.estimate_request)))
+    {
+      ResponseArchiveConflict("EstimateRequest", "PALACE_RESPONSE_ESTIMATE_REQUEST");
+    }
+    settings.estimate_request = *keys.estimate_request;
+  }
+  return settings;
+}
+
+std::string ResponseArchiveSummary(const ResponseArchiveSettings &settings)
+{
+  auto Source = [](ResponseArchiveSource source)
+  {
+    switch (source)
+    {
+      case ResponseArchiveSource::KEY:
+        return "key";
+      case ResponseArchiveSource::VARIABLE:
+        return "variable";
+      case ResponseArchiveSource::KEY_AND_VARIABLE:
+        return "key and variable";
+      case ResponseArchiveSource::DEFAULT:
+        break;
+    }
+    return "default";
+  };
+  std::vector<std::string> modes;
+  if (settings.archive_only)
+  {
+    modes.emplace_back("Archive");
+  }
+  if (settings.reduce_only)
+  {
+    modes.emplace_back("Reduce");
+  }
+  if (settings.estimate_only)
+  {
+    modes.emplace_back("Estimate");
+  }
+  std::string mode = modes.empty() ? "None" : modes.front();
+  for (std::size_t i = 1; i < modes.size(); i++)
+  {
+    mode += "+" + modes[i];
+  }
+  return fmt::format(
+      "Response-archive settings: Mode={} ({}), Directory={} ({}), BlockSize={} ({}), "
+      "SourceTiming={} ({}), RecycleInitialGuess={} ({}), EstimateRequest={} ({})",
+      mode, Source(settings.mode_source),
+      settings.directory ? settings.directory->string() : std::string("-"),
+      Source(settings.directory_source), settings.block_size,
+      Source(settings.block_size_source), settings.source_timing,
+      Source(settings.source_timing_source), settings.recycle_initial_guess,
+      Source(settings.recycle_initial_guess_source),
+      settings.estimate_request ? *settings.estimate_request : std::string("-"),
+      Source(settings.estimate_request_source));
+}
+
+namespace
+{
+
+// The key path only: a Solver.Electrostatic.ResponseArchive key that has no effect in the
+// resolved mode is refused, and so is a key-given Archive / Reduce mode without a
+// Directory. The estimate refuses its own (RecycleInitialGuess, BlockSize). The alias
+// variables keep their silent semantics.
+void ValidateResponseArchiveKeys(const config::ElectrostaticSolverData &electrostatic,
+                                 const ResponseArchiveSettings &settings)
+{
+  using Mode = config::ElectrostaticSolverData::ResponseArchiveData::Mode;
+  if (!electrostatic.response_archive)
   {
     return;
   }
-  for (const char *flag :
-       {"PALACE_RESPONSE_ARCHIVE_ONLY", "PALACE_RESPONSE_REDUCE_ONLY",
-        "PALACE_RESPONSE_RECYCLE_INITIAL_GUESS", "PALACE_RESPONSE_BLOCK_SIZE"})
+  const auto &keys = *electrostatic.response_archive;
+  auto Inert = [](bool given, bool effective, const char *key, const char *mode)
   {
-    MFEM_VERIFY(!CollectiveGetenv(comm, flag),
-                "Archive estimation conflicts with " << flag);
+    MFEM_VERIFY(!given || effective, "Solver.Electrostatic.ResponseArchive \""
+                                         << key << "\" has no effect outside Mode \""
+                                         << mode << "\"!");
+  };
+  Inert(keys.source_timing.has_value(), settings.archive_only, "SourceTiming", "Archive");
+  Inert(keys.recycle_initial_guess.has_value(),
+        settings.archive_only || settings.estimate_only, "RecycleInitialGuess", "Archive");
+  Inert(keys.block_size.has_value(), settings.reduce_only || settings.estimate_only,
+        "BlockSize", "Reduce");
+  Inert(keys.estimate_request.has_value(), settings.estimate_only, "EstimateRequest",
+        "Estimate");
+  MFEM_VERIFY(!keys.mode || (*keys.mode != Mode::ARCHIVE && *keys.mode != Mode::REDUCE) ||
+                  settings.directory,
+              "Solver.Electrostatic.ResponseArchive \"Mode\" \""
+                  << (*keys.mode == Mode::ARCHIVE ? "Archive" : "Reduce")
+                  << "\" requires a \"Directory\" (or PALACE_RESPONSE_ARCHIVE_DIR)!");
+}
+
+}  // namespace
+
+void ValidateArchiveEstimateOptions(const IoData &iodata, MPI_Comm comm, bool check_output)
+{
+  const auto settings = ResolveResponseArchive(iodata.solver.electrostatic, comm);
+  ValidateResponseArchiveKeys(iodata.solver.electrostatic, settings);
+  if (!settings.estimate_only)
+  {
+    return;
   }
-  const auto archive = ResponseArchiveDirectory(comm);
+  MFEM_VERIFY(settings.estimate_conflicts.empty(),
+              "Archive estimation conflicts with " << settings.estimate_conflicts.front());
+  const auto &archive = settings.directory;
   MFEM_VERIFY(archive && std::filesystem::is_directory(*archive),
-              "Archive estimation requires an existing PALACE_RESPONSE_ARCHIVE_DIR!");
-  const auto estimate_request = CollectiveGetenv(comm, "PALACE_RESPONSE_ESTIMATE_REQUEST");
-  MFEM_VERIFY(estimate_request,
-              "Archive estimation requires PALACE_RESPONSE_ESTIMATE_REQUEST!");
+              "Archive estimation requires an existing response-archive Directory "
+              "(PALACE_RESPONSE_ARCHIVE_DIR)!");
+  const auto &estimate_request = settings.estimate_request;
+  MFEM_VERIFY(estimate_request, "Archive estimation requires a response-archive "
+                                "EstimateRequest (PALACE_RESPONSE_ESTIMATE_REQUEST)!");
   MFEM_VERIFY(iodata.problem.type == ProblemType::ELECTROSTATIC &&
                   !iodata.boundaries.prescribed_potential.empty() &&
                   !iodata.solver.electrostatic.response_correction &&
@@ -299,16 +505,14 @@ void ValidateArchiveEstimateOptions(const IoData &iodata, MPI_Comm comm, bool ch
 
 ErrorIndicator
 ElectrostaticSolver::EstimateArchivedFields(LaplaceOperator &laplace_op, const Operator &K,
-                                            const std::filesystem::path &archive) const
+                                            const std::filesystem::path &archive,
+                                            const std::string &estimate_request) const
 {
   using json = nlohmann::json;
   using VT = Units::ValueType;
   const auto comm = laplace_op.GetComm();
   const auto &Grad = laplace_op.GetGradMatrix();
-  const auto estimate_request = CollectiveGetenv(comm, "PALACE_RESPONSE_ESTIMATE_REQUEST");
-  MFEM_VERIFY(estimate_request,
-              "Archive estimation requires PALACE_RESPONSE_ESTIMATE_REQUEST!");
-  std::ifstream request_stream(*estimate_request);
+  std::ifstream request_stream(estimate_request);
   MFEM_VERIFY(request_stream, "Cannot read archive estimate request!");
   const auto request = json::parse(request_stream);
   MFEM_VERIFY(request.at("Version") == 1, "Unsupported archive estimate request version!");
@@ -843,23 +1047,29 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // The archive reduction solves nothing: it needs the gradient, the electric energy mass
   // operator and the grid functions, not the stiffness matrix nor the preconditioner
   // setup (decision 62(4)).
-  const bool archive_reduce_only =
-      EnvironmentFlag(laplace_op.GetComm(), "PALACE_RESPONSE_REDUCE_ONLY");
+  const auto response_archive_settings =
+      ResolveResponseArchive(iodata.solver.electrostatic, laplace_op.GetComm());
+  if (response_archive_settings.Active())
+  {
+    Mpi::Print(laplace_op.GetComm(), "\n{}\n",
+               ResponseArchiveSummary(response_archive_settings));
+  }
+  const bool archive_reduce_only = response_archive_settings.reduce_only;
   decltype(laplace_op.GetStiffnessMatrix()) K;
   if (!archive_reduce_only)
   {
     K = laplace_op.GetStiffnessMatrix();
   }
-  if (EnvironmentFlag(laplace_op.GetComm(), "PALACE_RESPONSE_ESTIMATE_ONLY"))
+  if (response_archive_settings.estimate_only)
   {
-    MFEM_VERIFY(
-        !archive_reduce_only,
-        "PALACE_RESPONSE_ESTIMATE_ONLY and PALACE_RESPONSE_REDUCE_ONLY exclude each "
-        "other!");
+    MFEM_VERIFY(!archive_reduce_only,
+                "The response-archive modes Estimate (PALACE_RESPONSE_ESTIMATE_ONLY) and "
+                "Reduce (PALACE_RESPONSE_REDUCE_ONLY) exclude each other!");
     ValidateArchiveEstimateOptions(iodata, laplace_op.GetComm(), false);
     SaveMetadata(laplace_op.GetH1Spaces());
-    auto indicator = EstimateArchivedFields(
-        laplace_op, *K, *ResponseArchiveDirectory(laplace_op.GetComm()));
+    auto indicator =
+        EstimateArchivedFields(laplace_op, *K, *response_archive_settings.directory,
+                               *response_archive_settings.estimate_request);
     SaveLinearSolverMetadata(laplace_op.GetComm(), 0, 0);
     return {std::move(indicator), laplace_op.GlobalTrueVSize()};
   }
@@ -874,8 +1084,8 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // are evaluated and written only on request; every other output is unchanged.
   bool patch_energy_response = response_config && response_config->patch_energy;
   MFEM_VERIFY(!archive_reduce_only || !response_config,
-              "PALACE_RESPONSE_REDUCE_ONLY reduces archived fields of a configuration "
-              "without ResponseCorrection!");
+              "The response-archive mode Reduce (PALACE_RESPONSE_REDUCE_ONLY) reduces "
+              "archived fields of a configuration without ResponseCorrection!");
   std::unique_ptr<SurfaceResponseOperator> response_correction;
   std::unique_ptr<SumOperator> corrected_K;
   const Operator *system_K = K.get();
@@ -886,7 +1096,8 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   {
     if (root && !response_correction->GetPatchAssignments().empty())
     {
-      TableWithCSVFile patches(post_dir / "surface-response-patches.csv");
+      TableWithCSVFile patches(
+          response_correction->DiagnosticsPath(post_dir, "surface-response-patches.csv"));
       patches.table.insert(Column::Integer("model", "model"));
       for (const char *coordinate : {"x", "y", "z"})
       {
@@ -974,26 +1185,25 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   MFEM_VERIFY(n_step > 0,
               "No terminal or prescribed potential boundaries specified for electrostatic "
               "simulation!");
-  const auto response_archive = ResponseArchiveDirectory(laplace_op.GetComm());
-  const bool archive_stream_only =
-      EnvironmentFlag(laplace_op.GetComm(), "PALACE_RESPONSE_ARCHIVE_ONLY");
-  const bool response_source_timing =
-      EnvironmentFlag(laplace_op.GetComm(), "PALACE_RESPONSE_SOURCE_TIMING");
+  const auto &response_archive = response_archive_settings.directory;
+  const bool archive_stream_only = response_archive_settings.archive_only;
+  const bool response_source_timing = response_archive_settings.source_timing;
   const bool archive_recycle_initial_guess =
-      archive_stream_only &&
-      EnvironmentFlag(laplace_op.GetComm(), "PALACE_RESPONSE_RECYCLE_INITIAL_GUESS");
+      archive_stream_only && response_archive_settings.recycle_initial_guess;
   MFEM_VERIFY(!archive_stream_only ||
                   (response_archive && !iodata.boundaries.prescribed_potential.empty() &&
                    iodata.solver.electrostatic.response_matrix &&
                    iodata.solver.electrostatic.aggregate_response_matrix),
-              "PALACE_RESPONSE_ARCHIVE_ONLY requires PALACE_RESPONSE_ARCHIVE_DIR and an "
-              "aggregated prescribed-potential response-matrix configuration!");
+              "The response-archive mode Archive (PALACE_RESPONSE_ARCHIVE_ONLY) requires a "
+              "Directory (PALACE_RESPONSE_ARCHIVE_DIR) and an aggregated "
+              "prescribed-potential response-matrix configuration!");
   MFEM_VERIFY(!archive_reduce_only ||
                   (response_archive && !iodata.boundaries.prescribed_potential.empty() &&
                    iodata.solver.electrostatic.response_matrix &&
                    iodata.solver.electrostatic.aggregate_response_matrix),
-              "PALACE_RESPONSE_REDUCE_ONLY requires PALACE_RESPONSE_ARCHIVE_DIR and an "
-              "aggregated prescribed-potential response-matrix configuration!");
+              "The response-archive mode Reduce (PALACE_RESPONSE_REDUCE_ONLY) requires a "
+              "Directory (PALACE_RESPONSE_ARCHIVE_DIR) and an aggregated "
+              "prescribed-potential response-matrix configuration!");
   if (response_archive)
   {
     if (root)
@@ -1451,8 +1661,8 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     using VT = Units::ValueType;
     if (!traces_output)
     {
-      traces_output =
-          std::make_unique<TableWithCSVFile>(post_dir / "surface-response-traces.csv");
+      traces_output = std::make_unique<TableWithCSVFile>(
+          response_correction->DiagnosticsPath(post_dir, "surface-response-traces.csv"));
       traces_output->table.insert(Column::Integer("source", "i"));
       traces_output->table.insert(Column::Integer("patch", "patch"));
       traces_output->table.insert(Column::Integer("model", "model"));
@@ -1500,8 +1710,9 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       {
         patch_assignments.emplace(assignment.global_index, &assignment);
       }
-      patch_output = std::make_unique<TableWithCSVFile>(
-          post_dir / "surface-response-patch-energy.csv");
+      patch_output =
+          std::make_unique<TableWithCSVFile>(response_correction->DiagnosticsPath(
+              post_dir, "surface-response-patch-energy.csv"));
       patch_output->table.insert(Column::Integer("source", "source"));
       patch_output->table.insert(Column::Integer("evaluation", "evaluation"));
       patch_output->table.insert(Column::Integer("patch", "patch"));
@@ -1600,7 +1811,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     Mpi::Print("\nReducing archived electrostatic response fields from {}\n",
                response_archive->string());
     PostprocessArchivedResponseMatrix(post_op, laplace_op, Grad, *response_archive,
-                                      ResponseArchiveBlockSize(laplace_op.GetComm()));
+                                      response_archive_settings.block_size);
     SaveLinearSolverMetadata(laplace_op.GetComm(), 0, 0);
     return {indicator, laplace_op.GlobalTrueVSize()};
   }

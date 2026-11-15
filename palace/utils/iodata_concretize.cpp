@@ -212,6 +212,9 @@ void ConcretizeElectrostatic(const config::ElectrostaticSolverData &electrostati
   Concretize(j_electrostatic, "ResponseMatrix", electrostatic.response_matrix);
   Concretize(j_electrostatic, "AggregateResponseMatrix",
              electrostatic.aggregate_response_matrix);
+  // Solver.Electrostatic.ResponseArchive is echoed as given: an absent key leaves its alias
+  // variable in charge, so no default is filled in (the settings that ran are printed by
+  // the solver).
   if (electrostatic.response_correction)
   {
     const auto &response = *electrostatic.response_correction;

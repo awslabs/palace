@@ -1083,6 +1083,77 @@ TEST_CASE("Config electrostatic response correction", "[config][Serial]")
   CHECK_THROWS(IoData(explicit_maxwell, false));
 }
 
+// Decision 1685 (lane diagdir): Diagnostics.Directory (one directory name inside
+// Problem.Output for the per-patch tables) and Diagnostics.ConductorConsistencyRecords
+// ("Metadata" | "Directory"), both absent by default = every output as before; the same
+// keys on the Maxwell SurfaceResponseCorrection.
+TEST_CASE("Config surface-response Diagnostics.Directory and ConductorConsistencyRecords",
+          "[config][Serial]")
+{
+  using Records = config::ElectrostaticSolverData::ResponseCorrectionData::
+      ConductorConsistencyRecordsOutput;
+  const json automatic_correction = {{"Library", "fabrication-process.json"},
+                                     {"TargetInterfaces", {4, 5, 6}},
+                                     {"UnmatchedPolicy", "Error"}};
+  const config::ElectrostaticSolverData defaults(
+      json{{"ResponseCorrection", automatic_correction}});
+  REQUIRE(defaults.response_correction);
+  CHECK(defaults.response_correction->diagnostics_directory.empty());
+  CHECK(defaults.response_correction->conductor_consistency_records == Records::METADATA);
+
+  auto moved = automatic_correction;
+  moved["Diagnostics"] = {{"Directory", "diagnostics"},
+                          {"ConductorConsistencyRecords", "Directory"}};
+  const config::ElectrostaticSolverData electrostatic(json{{"ResponseCorrection", moved}});
+  REQUIRE(electrostatic.response_correction);
+  CHECK(electrostatic.response_correction->diagnostics_directory == "diagnostics");
+  CHECK(electrostatic.response_correction->conductor_consistency_records ==
+        Records::DIRECTORY);
+  const config::SolverData maxwell(json{{"SurfaceResponseCorrection", moved}});
+  REQUIRE(maxwell.surface_response_correction);
+  CHECK(maxwell.surface_response_correction->diagnostics_directory == "diagnostics");
+  CHECK(maxwell.surface_response_correction->conductor_consistency_records ==
+        Records::DIRECTORY);
+
+  auto directory_only = automatic_correction;
+  directory_only["Diagnostics"] = {{"Directory", "heavy.tables_1"}};
+  const config::ElectrostaticSolverData only(json{{"ResponseCorrection", directory_only}});
+  REQUIRE(only.response_correction);
+  CHECK(only.response_correction->diagnostics_directory == "heavy.tables_1");
+  CHECK(only.response_correction->conductor_consistency_records == Records::METADATA);
+
+  for (const auto *name :
+       {"", "a/b", "..", ".", ".hidden", "-dash", "iteration1", "iterations", "with space"})
+  {
+    CAPTURE(name);
+    auto invalid = automatic_correction;
+    invalid["Diagnostics"] = {{"Directory", name}};
+    CHECK_THROWS_WITH(
+        config::ElectrostaticSolverData(json{{"ResponseCorrection", invalid}}),
+        Catch::Matchers::ContainsSubstring("Diagnostics.Directory"));
+  }
+  auto not_a_string = automatic_correction;
+  not_a_string["Diagnostics"] = {{"Directory", 1}};
+  CHECK_THROWS_WITH(
+      config::ElectrostaticSolverData(json{{"ResponseCorrection", not_a_string}}),
+      Catch::Matchers::ContainsSubstring("Diagnostics.Directory"));
+  auto records_without_directory = automatic_correction;
+  records_without_directory["Diagnostics"] = {{"ConductorConsistencyRecords", "Directory"}};
+  CHECK_THROWS_WITH(config::ElectrostaticSolverData(
+                        json{{"ResponseCorrection", records_without_directory}}),
+                    Catch::Matchers::ContainsSubstring("requires"));
+  auto invalid_records = automatic_correction;
+  invalid_records["Diagnostics"] = {{"Directory", "diagnostics"},
+                                    {"ConductorConsistencyRecords", "palace.json"}};
+  CHECK_THROWS_WITH(
+      config::ElectrostaticSolverData(json{{"ResponseCorrection", invalid_records}}),
+      Catch::Matchers::ContainsSubstring("ConductorConsistencyRecords"));
+  auto unknown = automatic_correction;
+  unknown["Diagnostics"] = {{"Directories", "diagnostics"}};
+  CHECK_THROWS_WITH(config::ElectrostaticSolverData(json{{"ResponseCorrection", unknown}}),
+                    Catch::Matchers::ContainsSubstring("unknown key"));
+}
+
 TEST_CASE("Config axisymmetric model electrostatic only", "[config][Serial]")
 {
   // The 2 pi r measure is carried by the libCEED geometry factors and the electrostatic

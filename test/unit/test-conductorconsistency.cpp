@@ -14,6 +14,7 @@
 #include <iterator>
 #include <map>
 #include <memory>
+#include <set>
 #include <string>
 #include <tuple>
 #include <utility>
@@ -1603,6 +1604,190 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   REQUIRE_NOTHROW(placeholder = Preflight(placeholder_library, "placeholder"));
   CHECK(Placed(placeholder.first));
   CHECK(placeholder.second == control_csv);
+#endif
+}
+
+// Decision 1685 (lane diagdir): Diagnostics.Directory writes the per-patch tables
+// (surface-response-patches.csv, -patch-energy.csv, -traces.csv) into that sub-directory
+// of Problem.Output with the bytes of the default run, leaves every other file at the top
+// level byte-equal and palace.json's SurfaceResponse unchanged; with
+// ConductorConsistencyRecords "Directory" the Records array leaves palace.json (nothing
+// else does) for surface-response-conductor-consistency-records.json there, in the text
+// palace.json holds by default. The S7diag islands with the INCONSISTENT spatial coupon:
+// one tested patch per source, excluded at source 1 (the patch table is rewritten).
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "Electrostatic Diagnostics.Directory moves the per-patch tables and the "
+                 "conductor-consistency records byte for byte",
+                 "[electrostaticsolver][surfaceresponseoperator][conductorconsistency]"
+                 "[diagnosticsdirectory][3d][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  const fs::path mesh_path = temp.temp_dir / "diagnostics-directory-islands.mesh";
+  if (Mpi::Root(Mpi::World()))
+  {
+    mfem::Mesh serial = MakeSerialIslandMesh(false, false, false, true);
+    std::ofstream output(mesh_path);
+    serial.Print(output);
+  }
+  Mpi::Barrier(Mpi::World());
+  const auto inconsistent = WriteCoupon(temp.temp_dir, CouponVariant::INCONSISTENT);
+  json config = HighOrderSpatialConfig();
+  config["Model"]["Mesh"] = mesh_path.string();
+  config["Model"]["L0"] = 1.0;
+  config["Model"]["Lc"] = 1.0;
+  auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
+  correction.erase("PatchConstruction");
+  correction["TraceCoupling"] = "SurfaceMortar";
+  correction["MortarOversampling"] = 2;
+  correction["CorrectionMode"] = "Both";
+  correction["PatchEnergy"] = true;
+  config["Solver"]["Linear"] = {{"Tol", 1.0e-12}, {"MaxIts", 400}};
+  auto Run = [&](const char *stem, const json &diagnostics)
+  {
+    json run = config;
+    if (!diagnostics.is_null())
+    {
+      run["Solver"]["Electrostatic"]["ResponseCorrection"]["Diagnostics"] = diagnostics;
+    }
+    const fs::path dir = temp.temp_dir / stem;
+    run["Problem"]["Output"] = dir.string();
+    test::GeometryCacheEnvGuard cache_env(inconsistent.cache.string(), false);
+    test::RunElectrostatic(run);
+    return dir;
+  };
+  const fs::path off_dir = Run("diagdir-off", json());
+  const fs::path dir_dir = Run("diagdir-dir", {{"Directory", "diagnostics"}});
+  const fs::path records_dir =
+      Run("diagdir-records",
+          {{"Directory", "diagnostics"}, {"ConductorConsistencyRecords", "Directory"}});
+  Mpi::Barrier(Mpi::World());
+  if (!Mpi::Root(Mpi::World()))
+  {
+    return;
+  }
+
+  const std::set<std::string> moved = {
+      "surface-response-patches.csv", "surface-response-patch-energy.csv",
+      "surface-response-traces.csv", "surface-response-patch-loops.csv"};
+  auto Entries = [](const fs::path &dir)
+  {
+    std::set<std::string> names;
+    for (const auto &entry : fs::directory_iterator(dir))
+    {
+      names.insert(entry.path().filename().string());
+    }
+    return names;
+  };
+  auto Metadata = [](const fs::path &dir)
+  {
+    std::ifstream input(dir / "palace.json");
+    REQUIRE(input);
+    return json::parse(input);
+  };
+  std::function<void(json &)> EraseVolatile = [&](json &node)
+  {
+    if (node.is_object())
+    {
+      node.erase("WallTime");
+      node.erase("GeometryCache");
+      for (auto &[key, value] : node.items())
+      {
+        EraseVolatile(value);
+      }
+    }
+    else if (node.is_array())
+    {
+      for (auto &value : node)
+      {
+        EraseVolatile(value);
+      }
+    }
+  };
+  auto SurfaceResponse = [&](const fs::path &dir)
+  {
+    json record = Metadata(dir).at("SurfaceResponse");
+    EraseVolatile(record);
+    return record;
+  };
+
+  // The default: every table at the top level, no sub-directory.
+  const auto off = Entries(off_dir);
+  CHECK_FALSE(off.count("diagnostics"));
+  for (const char *name :
+       {"surface-response-patches.csv", "surface-response-patch-energy.csv",
+        "surface-response-traces.csv"})
+  {
+    INFO(name);
+    REQUIRE(fs::is_regular_file(off_dir / name));
+  }
+  const json off_record = SurfaceResponse(off_dir);
+  const auto &off_gate = off_record.at("Diagnostics").at("ConductorConsistency");
+  REQUIRE(off_gate.at("TestedPatches").get<int>() >= 1);
+  REQUIRE(off_gate.at("Count").get<int>() == 1);
+  REQUIRE(off_gate.at("Records").size() == off_gate.at("TestedPatches").get<std::size_t>());
+
+  for (const fs::path &dir : {dir_dir, records_dir})
+  {
+    INFO(dir.filename().string());
+    const bool records_moved = dir == records_dir;
+    // The top level = the default's minus the moved tables plus the directory; every file
+    // at the top level but palace.json is byte-equal to the default's.
+    std::set<std::string> expected_top, expected_moved;
+    for (const auto &name : off)
+    {
+      (moved.count(name) ? expected_moved : expected_top).insert(name);
+    }
+    expected_top.insert("diagnostics");
+    if (records_moved)
+    {
+      expected_moved.insert(SurfaceResponseOperator::kConductorConsistencyRecordsFile);
+    }
+    CHECK(Entries(dir) == expected_top);
+    REQUIRE(fs::is_directory(dir / "diagnostics"));
+    CHECK(Entries(dir / "diagnostics") == expected_moved);
+    for (const auto &name : off)
+    {
+      INFO(name);
+      if (name == "palace.json")
+      {
+        continue;
+      }
+      const fs::path path = moved.count(name) ? dir / "diagnostics" / name : dir / name;
+      REQUIRE(fs::is_regular_file(path));
+      CHECK(test::ReadFile(path) == test::ReadFile(off_dir / name));
+    }
+    // palace.json: SurfaceResponse as the default's, without Records when they moved.
+    json expected = off_record;
+    if (records_moved)
+    {
+      expected["Diagnostics"]["ConductorConsistency"].erase("Records");
+    }
+    CHECK(SurfaceResponse(dir) == expected);
+    CHECK(Metadata(dir).size() == Metadata(off_dir).size());
+  }
+
+  // The records file: the array at the same key path, in palace.json's own text.
+  const std::string text =
+      test::ReadFile(records_dir / "diagnostics" /
+                     SurfaceResponseOperator::kConductorConsistencyRecordsFile);
+  const std::string head = "{\n  \"SurfaceResponse\": {\n    \"Diagnostics\": {\n      "
+                           "\"ConductorConsistency\": {\n        \"Records\": ";
+  const std::string tail = "\n      }\n    }\n  }\n}\n";
+  REQUIRE(text.size() > head.size() + tail.size());
+  CHECK(text.compare(0, head.size(), head) == 0);
+  CHECK(text.compare(text.size() - tail.size(), tail.size(), tail) == 0);
+  const std::string array =
+      text.substr(head.size(), text.size() - head.size() - tail.size());
+  CHECK(array.front() == '[');
+  CHECK(test::ReadFile(off_dir / "palace.json").find("\"Records\": " + array + ",\n") !=
+        std::string::npos);
+  const json records = json::parse(text);
+  CHECK(records.at("SurfaceResponse")
+            .at("Diagnostics")
+            .at("ConductorConsistency")
+            .at("Records") == off_gate.at("Records"));
 #endif
 }
 
