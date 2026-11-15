@@ -2830,7 +2830,12 @@ entry of `terminal-Cinv-corrected.csv` when any entry of `C` is; `palace.json`
 eigenvalue line names no value and the self-consistent mode-matching table is printed after
 the modes are measured. The `palace.json` block gains `MarkedCells`, `MarkedMeasurements` and
 `Flagged[].Marked`; the banner names the marked cells. No computed number changes and every
-raw column is unchanged. The product prints no uncertainty band: a reader of its tables
+raw column is unchanged. For a marked cell, the shares of the uncovered-energy and portion
+tables (`surface-response-uncovered-energy.csv` and the conductor-consistency, domain-boundary,
+spatial-cluster-priority and exclusion portion tables) are taken on its PARTIAL corrected
+energy, the value of its ` partial (uncovered part raw)` column: a share is a diagnostic, not
+a corrected value, and the marked number is printed on purpose in that column (the banner
+says so in one line). The product prints no uncertainty band: a reader of its tables
 alone has the coverage and regime columns but no uncertainty statement. `"Warn"` prints
 every value as before.
 

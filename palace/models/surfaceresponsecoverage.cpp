@@ -1365,9 +1365,12 @@ std::string CoverageRunBanner(const nlohmann::json &metadata)
         "REGIME (validated-range status) = whether its covered correction factor lies "
         "in the range validated for this library and excitation class; the product "
         "prints no uncertainty band\n";
-    banner +=
-        "Coverage: the share denominators of the portion tables are the partial values "
-        "of marked cells\n";
+    // ERRATUM-1847 E-4: a share of these diagnostic tables is taken on the marked cell's
+    // partial corrected energy (printed on purpose in its twin column).
+    banner += fmt::format(
+        "Coverage: for a marked cell the shares of the uncovered-energy and portion "
+        "tables are taken on its PARTIAL corrected energy (the '...{}' value)\n",
+        kCoveragePartialColumnSuffix);
   }
   if (metadata.at("Cells").get<int>() == 0)
   {

@@ -210,7 +210,11 @@ TEST_CASE("Coverage policy run metadata and banner", "[CoveragePolicy][Serial]")
   }
   // The banner starts with an empty line; its first line is the summary line.
   const auto first = unmarked.find('\n', unmarked.find("Surface-response coverage")) + 1;
-  const auto extra_end = unmarked.find("Coverage: the share denominators");
+  // ERRATUM-1847 E-4: the share line names the PARTIAL corrected energy.
+  const auto extra_end = unmarked.find(
+      "Coverage: for a marked cell the shares of the uncovered-energy and portion tables "
+      "are taken on its PARTIAL corrected energy (the '... partial (uncovered part raw)' "
+      "value)\n");
   REQUIRE(extra_end != std::string::npos);
   unmarked.erase(first, unmarked.find('\n', extra_end) + 1 - first);
   CHECK(unmarked == warn_banner);
