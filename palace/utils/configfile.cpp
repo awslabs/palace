@@ -4,6 +4,7 @@
 #include "configfile.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <iterator>
 #include <sstream>
@@ -1805,14 +1806,56 @@ ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
           "Response-correction \"Diagnostics.WithinRVolumeEnergy\" writes per-patch "
           "columns of surface-response-patch-energy.csv and requires "
           "\"PatchEnergy\": true!");
+      if (auto directory = diagnostics->find("Directory"); directory != diagnostics->end())
+      {
+        // Decision 1685: one directory name inside Problem.Output. A name starting with
+        // "iteration" is refused: SaveIteration leaves such entries in place.
+        MFEM_VERIFY(directory->is_string(),
+                    "Response-correction \"Diagnostics.Directory\" must be a string!");
+        const std::string name = directory->get<std::string>();
+        const bool valid_characters =
+            !name.empty() &&
+            std::all_of(name.begin(), name.end(),
+                        [](char c)
+                        {
+                          return std::isalnum(static_cast<unsigned char>(c)) || c == '_' ||
+                                 c == '-' || c == '.';
+                        });
+        MFEM_VERIFY(valid_characters && name.front() != '.' && name.front() != '-' &&
+                        name.rfind("iteration", 0) != 0,
+                    "Response-correction \"Diagnostics.Directory\" must be one directory "
+                    "name of letters, digits, '_', '-' and '.' that does not start with "
+                    "'.', '-' or \"iteration\" (got \""
+                        << name << "\")!");
+        data.diagnostics_directory = name;
+      }
+      if (auto records = diagnostics->find("ConductorConsistencyRecords");
+          records != diagnostics->end())
+      {
+        MFEM_VERIFY(
+            records->is_string() && (*records == "Metadata" || *records == "Directory"),
+            "Response-correction \"Diagnostics.ConductorConsistencyRecords\" must be "
+            "\"Metadata\" or \"Directory\"!");
+        data.conductor_consistency_records =
+            *records == "Directory"
+                ? ResponseCorrectionData::ConductorConsistencyRecordsOutput::DIRECTORY
+                : ResponseCorrectionData::ConductorConsistencyRecordsOutput::METADATA;
+        MFEM_VERIFY(
+            data.conductor_consistency_records !=
+                    ResponseCorrectionData::ConductorConsistencyRecordsOutput::DIRECTORY ||
+                !data.diagnostics_directory.empty(),
+            "Response-correction \"Diagnostics.ConductorConsistencyRecords\": "
+            "\"Directory\" requires \"Diagnostics.Directory\"!");
+      }
       for (const auto &[key, value] : diagnostics->items())
       {
         (void)value;
-        MFEM_VERIFY(
-            key == "ExclusionEnergy" || key == "WithinRVolumeEnergy",
-            "Response-correction \"Diagnostics\" has an unknown key \""
-                << key
-                << "\" (ExclusionEnergy and WithinRVolumeEnergy are the only keys)!");
+        MFEM_VERIFY(key == "ExclusionEnergy" || key == "WithinRVolumeEnergy" ||
+                        key == "Directory" || key == "ConductorConsistencyRecords",
+                    "Response-correction \"Diagnostics\" has an unknown key \""
+                        << key
+                        << "\" (ExclusionEnergy, WithinRVolumeEnergy, Directory and "
+                           "ConductorConsistencyRecords are the only keys)!");
       }
     }
     if (auto domain_boundary = correction.find("DomainBoundary");

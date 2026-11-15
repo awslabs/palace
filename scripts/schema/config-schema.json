@@ -3521,6 +3521,17 @@
                   "type": "boolean",
                   "description": "Write per placed patch the DEVICE FIELD's energies by a VOLUME integral over the patch's own box into `surface-response-patch-energy.csv` (`within-R magnetic energy (J)` = 1/2 int mu^-1 |B|^2, `within-R electric energy (J)` = 1/2 int eps |E|^2, `within-R volume (m^3)` = the box volume the quadrature resolves): a translational patch's box = its model's edge span +- R laterally, +- R normally, its longitudinal cell; a spatial patch's = its support box x [-R, R]. Summed over the element quadrature points inside the box (a point is in or out: the box faces are resolved to ~h, an ESTIMATE for a share census, not a trace form; a patch without a box prints NaN). Requires `PatchEnergy: true`. Off by default: bitwise off (mx-sc-magnetic Phase 3 (b) COL-3, R-MAG-15: the census of the spatial families' magnetic energy that decides the (A)-3D scope).",
                   "default": false
+                },
+                "Directory": {
+                  "type": "string",
+                  "pattern": "^(?!iteration)[A-Za-z0-9_][A-Za-z0-9._-]*$",
+                  "description": "Decision 1685: one directory name inside `Problem.Output` for the heavy per-patch tables (`surface-response-patches.csv`, `surface-response-patch-energy.csv`, `surface-response-traces.csv`, `surface-response-patch-loops.csv`): written there with the same names and bytes; every other output stays at the top level. Absent (the default): every table at the top level. Under AMR each `iterationNN/` folder holds its own copy of the directory. A name may not start with `iteration` (refused at load: SaveIteration leaves such entries in place)."
+                },
+                "ConductorConsistencyRecords": {
+                  "type": "string",
+                  "enum": ["Metadata", "Directory"],
+                  "description": "Decision 1685: where the `Records` array of `SurfaceResponse.Diagnostics.ConductorConsistency` (one entry per tested patch and excitation) is written. `Metadata` (default): `palace.json`. `Directory` (requires `Directory`): `surface-response-conductor-consistency-records.json` in that directory, the array at the same key path and in the same text; `palace.json` lacks only that member (`TestedPatches` = the record count and the gate summary stay).",
+                  "default": "Metadata"
                 }
               }
             },

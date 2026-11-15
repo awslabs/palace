@@ -1899,6 +1899,27 @@ within-`R` energy partitioned exactly over the applied patches' claims, the labe
 `unclaimed` summing to the within-`R` energy) and `surface-response-model-raw-groups.csv`
 (`label`, `model`, `patches`, `weight length (m)`).
 
+The per-patch tables can be kept out of the top level of `Problem.Output` (decision 1685;
+a tool that collects the top-level CSV / JSON files of the output directory, such as a run
+service that uploads them, then leaves them out). `"Diagnostics": {"Directory": "<name>"}`
+in `ResponseCorrection` / `SurfaceResponseCorrection` (one directory name of letters,
+digits, `_`, `-` and `.`, not starting with `.`, `-` or `iteration`; absent by default)
+writes `surface-response-patches.csv`, `surface-response-patch-energy.csv`,
+`surface-response-traces.csv` and `surface-response-patch-loops.csv` into
+`<Output>/<name>/` with the same names and bytes; every other table (the corrected,
+confidence, model, class-energy and terminal tables) and `palace.json` stay at the top level,
+unchanged. Under adaptive mesh refinement each `iterationNN/` folder holds its own
+`<name>/` (the final iteration's is `<Output>/<name>/`). `"ConductorConsistencyRecords":
+"Directory"` (default `"Metadata"`; requires `Directory`) moves the `Records` array of
+`SurfaceResponse.Diagnostics.ConductorConsistency` (one entry per tested patch and
+excitation, the bulk of `palace.json` on a full chip) out of `palace.json` into
+`<Output>/<name>/surface-response-conductor-consistency-records.json`, a JSON document with
+the array at the same key path and in the same text; `palace.json` then lacks only that
+member (`TestedPatches`, the record count, and the gate's summary stay). The preflight's
+patch list stays beside its manifest. `Diagnostics.Directory` names a sub-directory of
+`Problem.Output`; it is not `Solver.Electrostatic.ResponseArchive.Directory`, which is the
+path of the field archive (relative to the working directory of the process).
+
 Two placement rules of the corner class (decision 394; `SURFACE-RESPONSE-IDENTIFICATION.md`
 section (e)): at a matched corner whose arms are not perpendicular, the second arm's
 straight cells begin where that arm exits the corner coupon's matching square, at
