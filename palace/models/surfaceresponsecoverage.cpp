@@ -15,6 +15,7 @@
 #include <mfem.hpp>
 #include <nlohmann/json.hpp>
 #include "models/surfaceresponseidentification.hpp"
+#include "utils/tablecsv.hpp"
 
 namespace palace
 {
@@ -797,7 +798,7 @@ namespace
 
 std::string CoverageNumber(double value)
 {
-  return std::isnan(value) ? std::string("nan") : fmt::format("{:+.12e}", value);
+  return CsvNumber(value);
 }
 
 }  // namespace
