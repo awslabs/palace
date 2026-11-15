@@ -1066,6 +1066,30 @@ TEST_CASE("ModeOperatorModel farfield damping uses the neighboring material",
   CHECK_THAT(pair_n.imag(), WithinRel(-expected, 1.0e-12));
 }
 
+TEST_CASE("ModeOperatorModel impedance damping with an anisotropic absorbing boundary",
+          "[boundarymodeoperator][Serial][Parallel]")
+{
+  // The absorbing side y = 0 lies along the substrate, here of permittivity diag(4, 9, 1),
+  // so its in-plane inverse impedance diag(2, 3) has the first entry of the conductance 2
+  // of the impedance side x = W. The impedance side must keep its own coefficient 2 I: a
+  // unit field ŷ, tangential to it and normal to the absorbing side, gives 2 H in the
+  // in-plane block, and 3 H with the tensor of the absorbing side.
+  using RMM = RectangleModeModel;
+  RMM rect(
+      [](IoData &iodata)
+      {
+        iodata.domains.materials[0].epsilon_r.s = {4.0, 9.0, 1.0};
+        iodata.boundaries.farfield.attributes = {1};
+        auto &imp = iodata.boundaries.impedance.emplace_back();
+        imp.attributes = {2};
+        imp.Rs = 0.5 * electromagnetics::Z0_;
+      });
+  const auto &component = rect.GetComponent(mode_assembly::CoefficientType::OMEGA);
+  const auto pair_t = rect.Pairing(component, 1.0, 0.0);
+  CHECK(pair_t.real() == 0.0);
+  CHECK_THAT(pair_t.imag(), WithinRel(2.0 * RMM::H, 1.0e-12));
+}
+
 TEST_CASE("ModeOperatorModel decouples essential DOFs in every component",
           "[boundarymodeoperator][Serial][Parallel]")
 {
