@@ -589,13 +589,17 @@ def archive_name(source, rank):
     return f"source-{int(source):06d}-rank-{int(rank):06d}-V.bin"
 
 
-WATCHER_RULE = ("decision 1820 (4): every run has an UNATTENDED run watcher (paladin_run_watcher.py; nohup, its own session, "
-                "its own lock, pid file, events.log and end.json under <local>/watchers/<stage>-<run>) started at its submit and "
-                "for an adopted run without a live one: it ends the run early at the stage's CapSeconds (from the PBS start, "
-                "else the submit time) and at the memory bar (0.85 of MemTotal, measured), with 'palace cancel' and, when the "
-                "row is not terminal 120 s later, qdel by the PBS job id; the driver's own cap stays as a second line; a run "
-                "whose watcher does not start is ended early (never left without one)")
+WATCHER_RULE = ("decision 1820 (4) / 1836: every run has an UNATTENDED run watcher (paladin_run_watcher.py; nohup, its own "
+                "session, its own lock, pid file, events.log and end.json under <local>/watchers/run-<id>) started at its submit "
+                "and for an adopted run without a live one: it ends the run early at the stage's CapSeconds (from the PBS start, "
+                "else the submit time) and at the memory bar (0.85 of MemTotal, measured); an empty or failed PBS read is a missing "
+                "read, never 'ended', and the limits stay in force under it (its READ_RULE); the early end = 'palace cancel', then "
+                "qdel by the PBS job id (the primary path when the session has expired: no session needed), repeated with a "
+                "back-off until VERIFIED (the row terminal or a finished-job answer; its END_RULE); an end not verified leaves "
+                "END-UNVERIFIED.json, on which every advance STOPs; the driver's own cap stays as a second line; a run whose "
+                "watcher does not start is ended early")
 WATCHER_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "paladin_run_watcher.py")
+UNVERIFIED_MARKER = "END-UNVERIFIED.json"  # paladin_run_watcher.UNVERIFIED_MARKER (its END_RULE)
 WATCHER_INTERVAL_SECONDS, WATCHER_GRACE_SECONDS, WATCHER_MEMORY_BAR = 30.0, 120.0, 0.85
 # Decision 1830 (3): hard bounds in code, whatever the checks around them: watcher starts per run id per driver process; the
 # standalone drive loop's advances and its minimum sleep (the re-poll loops are bounded where they are: 3 describe-run asks with
@@ -948,7 +952,7 @@ class PaladinJob:
     def ensure_watcher(self, name, run_id, *, job_id, submitted, cap_seconds):
         """WATCHER_RULE: a missing watcher started (its record), None when a live one holds the directory."""
         # ONE directory, hence ONE lock and ONE watcher, per run id (decision 1830 (3)).
-        directory = os.path.join(os.path.abspath(self.local_dir), "watchers", f"run-{run_id}")
+        directory = os.path.join(self.watchers_root(), f"run-{run_id}")
         if self.watchers.alive(directory):
             return None
         argv = [sys.executable, WATCHER_PATH, "--run-id", str(run_id), "--job", str(job_id or ""), "--cli", self.block["CLI"],
@@ -977,6 +981,19 @@ class PaladinJob:
         raise WatcherNotStarted(f"{name}: the run watcher of run {run_id} did not start (twice): the run is ended early "
                                 f"({'done' if watcher['EarlyEnded'] else 'FAILED: end it by hand'}): STOP ({WATCHER_RULE})",
                                 watcher)
+
+    def watchers_root(self):
+        return os.path.join(os.path.abspath(self.local_dir), "watchers")
+
+    def unverified_ends(self):
+        """The END-UNVERIFIED.json markers of this job's run watchers (WATCHER_RULE)."""
+        root, found = self.watchers_root(), []
+        for name in sorted(os.listdir(root)) if os.path.isdir(root) else []:
+            path = os.path.join(root, name, UNVERIFIED_MARKER)
+            if os.path.isfile(path):
+                with open(path) as f:
+                    found.append({**json.load(f), "Path": path})
+        return found
 
     def watch(self, stage, record):
         """ensure_watcher for the stage's recorded run, kept in its record (the submit time: the record's,
@@ -1304,7 +1321,7 @@ class PaladinJob:
             if os.path.isfile(path):
                 with open(path) as f:
                     return json.load(f)
-        directory = os.path.join(os.path.abspath(self.local_dir), "watchers", f"run-{record.get('RunID')}")
+        directory = os.path.join(self.watchers_root(), f"run-{record.get('RunID')}")
         if os.path.isfile(os.path.join(directory, "end.json")):
             with open(os.path.join(directory, "end.json")) as f:
                 return json.load(f)
@@ -1323,6 +1340,13 @@ class PaladinJob:
     def advance(self):
         """One step of the job: True when every stage is complete (status.json written)."""
         self.lock()
+        unverified = self.unverified_ends()
+        if unverified:
+            self.state["UnverifiedEnds"] = unverified
+            self.save()
+            raise PaladinError(f"{self.case}: an early end NOT VERIFIED by the run watcher of "
+                               f"{[(entry.get('RunID'), entry.get('Job')) for entry in unverified]}: STOP; check "
+                               f"{unverified[0].get('Check')} (markers {[entry['Path'] for entry in unverified]}; {WATCHER_RULE})")
         self.preflight()
         for stage in self.plan["Stages"]:
             name = stage["Name"]

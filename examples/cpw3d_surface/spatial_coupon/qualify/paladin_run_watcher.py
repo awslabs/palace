@@ -7,19 +7,36 @@ walltime, so without it a stage whose driver has ended would hold its node up to
 for an adopted run that has none; it runs on the driver's host, never on a compute node.
 
 Every --interval seconds: `paladin palace status RUN` (status, terminal, job id) and one read of
---host (the cluster's ssh host): `qstat -xf -F json JOB` (job state, start time, exec hosts) and,
-while the job runs, each exec host's /proc/meminfo (the logic of ctr_memwatch_remote_v1.sh).
-  CAP:    the job running and now - start >= --cap-seconds (start = the PBS start time, else the
+--host (the cluster's ssh host): `qstat -xf -F json JOB` (job state, start time, Exit_status, exec
+hosts) and, while the job runs, each exec host's /proc/meminfo (the logic of ctr_memwatch_remote_v1.sh).
+READ_RULE (decision 1836, review r1833 MAJOR-1 (a) / (c)): an empty qstat answer (NOTFOUND), a failed
+ssh or an answer without its STATE line is a MISSING PBS read, never 'the job has ended'.  The run has
+ended only on a finished-job answer (job_state F / X or an Exit_status) or a terminal row.  While the
+PBS read is missing the row's status says whether the run is running, the exec hosts of the last good
+read are still read for memory, and the cap clock is the last PBS start seen, else the submit time;
+when NEITHER read has answered for BLIND_SECONDS the cap is judged by that clock alone.  So the cap
+and the memory bar stay in force under a missing read.
+  CAP:    the run running (PBS R, or the row's 'running' under a missing PBS read; or no read for
+          BLIND_SECONDS) and now - start >= --cap-seconds (start = the PBS start time, else the
           submit time; a queued job has no cap clock) -> the run is ended early;
-  MEMORY: the job running and MemTotal - MemAvailable >= --bar x MemTotal on ANY exec host,
+  MEMORY: the run running and MemTotal - MemAvailable >= --bar x MemTotal on ANY exec host,
           MEASURED in that read (never projected) -> the run is ended early.
-  Missing reads never end a run.  The watcher ends (exit 0) when the row is terminal or the PBS job
-  has ended, and when its directory is removed.
-AN EARLY END = `paladin palace cancel RUN`, then the row must read terminal within --grace seconds;
-a failed cancel or a row still not terminal = `qdel JOB` through --host (decision 1822 (iii): this
-does not depend on the paladin session), then the PBS job must end within --grace.  All of it is in
-end.json and events.log of --dir; exit 11 (cap) / 10 (memory); 3 = another watcher holds --dir (the
-driver names --dir by the run id: one watcher per run); 5 = the read bound (the cap + one day) reached.
+  Missing memory reads never end a run.  The watcher ends (exit 0) when the row is terminal or the
+  PBS job has ended (a finished-job answer), and when its directory is removed.
+END_RULE (decision 1836, review r1833 MAJOR-1 (b) / (c)): AN EARLY END is repeated until it is
+VERIFIED (the row terminal or a finished-job answer; an empty qstat answer verifies nothing).  One
+round = `paladin palace cancel RUN` (the end request); refused, or the run not verified within
+--grace = `qdel JOB` through --host, then verified within --grace.  Not verified: the next round
+after a back-off min(grace x 2^(k-1), END_BACKOFF_MAX_SECONDS), at most END_MAX_ROUNDS rounds.
+THE SESSION AND THE QUEUE WAIT: the cap counts from the PBS START, the driver's session check
+from the SUBMIT (paladin_backend.SESSION_RULE), so a run that waits in the queue longer than the
+session's life meets an EXPIRED session at its cap: the end request is then refused and the qdel
+by the PBS job id, which needs no paladin session, is the PRIMARY end path.  end.json (in --dir)
+records every round and Verified true / false; an early end not verified after the last round
+leaves END-UNVERIFIED.json beside it (the driver and every resume STOP on it, naming the run and
+the manual check).  Exit 11 (cap) / 10 (memory) verified, 12 not verified; 3 = another watcher
+holds --dir (the driver names --dir by the run id: one watcher per run); 5 = the read bound (the
+cap + one day) reached.
 
   python3 paladin_run_watcher.py --run-id R --cli PALADIN --host HOST --pbs-bin DIR --cap-seconds S
       --submitted UTC --dir DIR [--job PBS] [--bar 0.85] [--interval 30] [--grace 120]
@@ -35,40 +52,49 @@ import paladin_backend  # noqa: E402  (the same qualify/ directory)
 
 # One read of the cluster (bash on --host, the job id and the PBS bin directory as arguments).
 SAMPLE_SCRIPT = r'''set -u
-JOB="$1"; PBS_BIN="$2"
-read -r STATE STIME HOSTS < <(timeout 30 "$PBS_BIN/qstat" -xf -F json "$JOB" 2>/dev/null | python3 -c '
+JOB="$1"; PBS_BIN="$2"; shift 2; KEPT_HOSTS="$*"
+read -r STATE STIME EXIT HOSTS < <(timeout 30 "$PBS_BIN/qstat" -xf -F json "$JOB" 2>/dev/null | python3 -c '
 import json, sys, time
 try:
     jobs = json.load(sys.stdin).get("Jobs", {})
 except Exception:
     jobs = {}
 if not jobs:
-    print("NOTFOUND -")
+    print("NOTFOUND - -")
     sys.exit(0)
 job = next(iter(jobs.values()))
 try:
     start = str(int(time.mktime(time.strptime(job["stime"], "%a %b %d %H:%M:%S %Y"))))
 except Exception:
     start = "-"
+code = job.get("Exit_status")
 hosts = []
 for part in (job.get("exec_host") or "").split("+"):
     host = part.split("/")[0].strip()
     if host and host not in hosts:
         hosts.append(host)
-print(job.get("job_state", "UNKNOWN"), start, " ".join(hosts))
+print(job.get("job_state", "UNKNOWN"), start, "-" if code is None else code, " ".join(hosts))
 ')
 echo "STATE ${STATE:-NOTFOUND}"
 echo "STIME ${STIME:--}"
-[ "${STATE:-}" = "R" ] || exit 0
+echo "EXIT ${EXIT:--}"
+if [ "${STATE:-}" = "R" ]; then echo "HOSTS $HOSTS"
+elif [ "${STATE:-NOTFOUND}" = "NOTFOUND" ] && [ -n "$KEPT_HOSTS" ]; then HOSTS="$KEPT_HOSTS"  # READ_RULE: the kept hosts
+else exit 0
+fi
 for h in $HOSTS; do
     out=$(timeout 20 ssh -n -o BatchMode=yes -o ConnectTimeout=8 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
           -o LogLevel=ERROR "$h" "awk '/^MemTotal:/{t=\$2} /^MemAvailable:/{a=\$2} END{print t, a}' /proc/meminfo" 2>/dev/null)
     if [ $? -eq 0 ] && [ -n "$out" ]; then echo "MEM $h $out"; else echo "MEMERR $h"; fi
 done
 '''
-ENDED_STATES = ("F", "X")
+ENDED_STATES = ("F", "X")  # PBS's finished job / finished subjob
 # Decision 1830 (3): a minimum sleep between reads and a hard bound on the reads (the cap + one day, at the interval).
 WATCHER_MIN_INTERVAL_SECONDS, WATCHER_LIFE_BEYOND_CAP_SECONDS = 1.0, 86400.0
+# READ_RULE / END_RULE (module docstring; decision 1836).
+BLIND_SECONDS = 600.0
+END_MAX_ROUNDS, END_BACKOFF_MAX_SECONDS = 8, 1800.0
+UNVERIFIED_MARKER = "END-UNVERIFIED.json"
 
 
 def utc():
@@ -81,6 +107,7 @@ class Watcher:
         self.host = None if args.host == "local" else args.host
         self.job = args.job or None
         self.start_epoch = None
+        self.hosts = []  # the exec hosts of the last good PBS read (READ_RULE)
         self.events = os.path.join(args.dir, "events.log")
 
     def event(self, line):
@@ -97,72 +124,119 @@ class Watcher:
             return None
 
     def sample(self):
-        """One cluster read: {State, StartEpoch, Memory [(host, total kB, available kB)]}, or None."""
+        """One cluster read: {State, StartEpoch, ExitStatus, Hosts, Memory [(host, total kB, available kB)]},
+        or None (no job id, a failed ssh, no STATE line).  State NOTFOUND = an empty qstat answer: a missing
+        PBS read (READ_RULE), whose Memory comes from the kept exec hosts."""
         if not self.job:
             return None
         try:
-            result = paladin_backend.remote_shell(self.host, f"bash -s -- {self.job} {self.args.pbs_bin}", timeout=120,
-                                                  stdin=SAMPLE_SCRIPT)
+            result = paladin_backend.remote_shell(self.host, " ".join(["bash", "-s", "--", self.job, self.args.pbs_bin,
+                                                                       *self.hosts]),
+                                                  timeout=120, stdin=SAMPLE_SCRIPT)
         except paladin_backend.PaladinError as error:
             self.event(f"READERR cluster: {str(error)[:200]}")
             return None
-        fields = {}
-        memory = []
+        fields, hosts, memory = {}, [], []
         for line in result.stdout.splitlines():
             parts = line.split()
-            if len(parts) >= 2 and parts[0] in ("STATE", "STIME"):
+            if len(parts) >= 2 and parts[0] in ("STATE", "STIME", "EXIT"):
                 fields[parts[0]] = parts[1]
+            elif parts[:1] == ["HOSTS"]:
+                hosts = parts[1:]
             elif len(parts) == 4 and parts[0] == "MEM" and parts[2].isdigit() and parts[3].isdigit():
                 memory.append((parts[1], int(parts[2]), int(parts[3])))
         if "STATE" not in fields:
             self.event(f"READERR cluster: no STATE line (rc {result.returncode})")
             return None
-        start = fields.get("STIME", "-")
-        return {"State": fields["STATE"], "StartEpoch": int(start) if start.isdigit() else None, "Memory": memory}
+        start, code = fields.get("STIME", "-"), fields.get("EXIT", "-")
+        return {"State": fields["STATE"], "StartEpoch": int(start) if start.isdigit() else None,
+                "ExitStatus": int(code) if code.lstrip("-").isdigit() else None, "Hosts": hosts, "Memory": memory}
 
-    def wait_until(self, done, seconds):
+    @staticmethod
+    def pbs_read(sample):
+        """True for a PBS read that shows the job (READ_RULE): not None, not NOTFOUND, not without a job_state."""
+        return sample is not None and sample["State"] not in ("NOTFOUND", "UNKNOWN")
+
+    @staticmethod
+    def finished(sample):
+        """The finished-job answer of READ_RULE ('ended' only on it or a terminal row), or None."""
+        if Watcher.pbs_read(sample) and (sample["State"] in ENDED_STATES or sample["ExitStatus"] is not None):
+            return f"PBS job_state {sample['State']}, Exit_status {sample['ExitStatus']}"
+        return None
+
+    def verified(self):
+        """END_RULE: what shows the run has ended (the row terminal, a finished-job answer), or None."""
+        status = self.status()
+        if status and status.get("terminal") is True:
+            return f"the row terminal ({status.get('status')})"
+        if status and not self.job and status.get("job_id"):
+            self.job = str(status["job_id"])
+        return self.finished(self.sample())
+
+    def wait_verified(self, seconds):
         deadline = time.time() + seconds
         while True:
-            if done():
-                return True
-            if time.time() >= deadline:
-                return False
+            shown = self.verified()
+            if shown or time.time() >= deadline:
+                return shown
             time.sleep(min(10.0, max(1.0, self.args.interval)))
 
     def end_early(self, kind, reason):
-        """The early end of the run (module docstring); end.json; the exit code."""
-        record = {"Kind": kind, "Reason": reason, "RunID": self.args.run_id, "Job": self.job, "UTC": utc()}
-        self.event(f"{kind.upper()} {reason} -> paladin palace cancel {self.args.run_id}")
-        try:
-            paladin_backend.paladin_call(self.args.cli, ["palace", "cancel", str(self.args.run_id), "--json"], timeout=240)
-            record["Cancel"] = {"OK": True}
-        except paladin_backend.PaladinError as error:
-            record["Cancel"] = {"OK": False, "Error": str(error)[:300]}
-        terminal = record["Cancel"]["OK"] and self.wait_until(lambda: (self.status() or {}).get("terminal") is True,
-                                                              self.args.grace)
-        record["TerminalAfterCancel"] = terminal
-        self.event(f"cancel {'ok' if record['Cancel']['OK'] else 'FAILED'}; row terminal within {self.args.grace:.0f} s: "
-                   f"{terminal}")
-        if not terminal:
-            if self.job:
-                command = f"{self.args.pbs_bin}/qdel {self.job}"
-                try:
-                    result = paladin_backend.remote_shell(self.host, command, timeout=120)
-                    record["Fallback"] = {"Command": command, "ReturnCode": result.returncode,
-                                          "Output": (result.stdout + result.stderr).strip()[:300]}
-                except paladin_backend.PaladinError as error:
-                    record["Fallback"] = {"Command": command, "Error": str(error)[:300]}
-                ended = self.wait_until(lambda: (self.sample() or {}).get("State") in ENDED_STATES + ("NOTFOUND",),
-                                        self.args.grace)
-                record["Fallback"]["JobEnded"] = ended
-                self.event(f"FALLBACK {command}: rc {record['Fallback'].get('ReturnCode')}; PBS job ended within "
-                           f"{self.args.grace:.0f} s: {ended}")
-            else:
-                record["Fallback"] = {"Error": "no PBS job id known: no qdel possible"}
-                self.event("FALLBACK impossible: no PBS job id known")
-        paladin_backend.write_json_atomic(os.path.join(self.args.dir, "end.json"), record)
+        """END_RULE: the end request, then the qdel by the job id, in rounds until VERIFIED; end.json; the exit code."""
+        path = os.path.join(self.args.dir, "end.json")
+        record = {"Kind": kind, "Reason": reason, "RunID": self.args.run_id, "Job": self.job, "UTC": utc(), "Rounds": [],
+                  "Verified": False, "VerifiedBy": None, "Rule": "END_RULE of paladin_run_watcher.py (decision 1836)"}
+        self.event(f"{kind.upper()} {reason} -> the end request (paladin palace cancel {self.args.run_id})")
+        for round_number in range(1, END_MAX_ROUNDS + 1):
+            entry = {"Round": round_number, "UTC": utc()}
+            try:
+                paladin_backend.paladin_call(self.args.cli, ["palace", "cancel", str(self.args.run_id), "--json"], timeout=240)
+                entry["Cancel"] = {"OK": True}
+            except paladin_backend.PaladinError as error:
+                entry["Cancel"] = {"OK": False, "Error": str(error)[:300]}
+            shown = self.wait_verified(self.args.grace) if entry["Cancel"]["OK"] else None
+            self.event(f"round {round_number}: end request {'ok' if entry['Cancel']['OK'] else 'REFUSED'}; verified within "
+                       f"{self.args.grace:.0f} s: {shown}")
+            if not shown:
+                if not self.job:
+                    self.verified()  # the row's job id, when it answers
+                if self.job:
+                    command = f"{self.args.pbs_bin}/qdel {self.job}"
+                    try:
+                        result = paladin_backend.remote_shell(self.host, command, timeout=120)
+                        entry["Qdel"] = {"Command": command, "ReturnCode": result.returncode,
+                                         "Output": (result.stdout + result.stderr).strip()[:300]}
+                    except paladin_backend.PaladinError as error:
+                        entry["Qdel"] = {"Command": command, "Error": str(error)[:300]}
+                    shown = self.wait_verified(self.args.grace)
+                    self.event(f"round {round_number}: {command}: rc {entry['Qdel'].get('ReturnCode')}; verified within "
+                               f"{self.args.grace:.0f} s: {shown}")
+                else:
+                    entry["Qdel"] = {"Error": "no PBS job id known: no qdel possible"}
+                    self.event(f"round {round_number}: no qdel possible: no PBS job id known")
+            entry["VerifiedBy"] = shown
+            record["Rounds"].append(entry)
+            record["Job"] = self.job
+            if shown:
+                record["Verified"], record["VerifiedBy"] = True, shown
+                break
+            paladin_backend.write_json_atomic(path, record)  # the rounds so far, on disk
+            if round_number < END_MAX_ROUNDS:
+                backoff = min(self.args.grace * 2 ** (round_number - 1), END_BACKOFF_MAX_SECONDS)
+                self.event(f"round {round_number}: NOT VERIFIED; the next round in {backoff:.0f} s")
+                time.sleep(backoff)
+        paladin_backend.write_json_atomic(path, record)
+        if not record["Verified"]:
+            marker = {"RunID": self.args.run_id, "Job": self.job, "Kind": kind, "UTC": utc(), "Rounds": len(record["Rounds"]),
+                      "Check": f"by hand: paladin palace status {self.args.run_id} --json; qstat -xf {self.job or '<job>'}; "
+                               f"qdel {self.job or '<job>'}; then delete this file",
+                      "Rule": "END_RULE of paladin_run_watcher.py (decision 1836)"}
+            paladin_backend.write_json_atomic(os.path.join(self.args.dir, UNVERIFIED_MARKER), marker)
+            self.event(f"END exit 12: the early end is NOT VERIFIED after {len(record['Rounds'])} rounds: {UNVERIFIED_MARKER} "
+                       f"written; check run {self.args.run_id} by hand")
+            return 12
         code = 11 if kind == "cap" else 10
-        self.event(f"END exit {code}")
+        self.event(f"END exit {code}: verified ({record['VerifiedBy']})")
         return code
 
     def run(self):
@@ -171,6 +245,7 @@ class Watcher:
         self.event(f"START run={args.run_id} job={self.job} cap={args.cap_seconds:.0f}s bar={args.bar} "
                    f"interval={args.interval:.0f}s host={args.host} pid={os.getpid()}")
         interval = max(float(args.interval), WATCHER_MIN_INTERVAL_SECONDS)
+        last_read = time.time()
         for _ in range(int((args.cap_seconds + WATCHER_LIFE_BEYOND_CAP_SECONDS) / interval) + 10):
             if not os.path.isdir(args.dir):
                 return 0
@@ -181,19 +256,31 @@ class Watcher:
             if status and not self.job and status.get("job_id"):
                 self.job = str(status["job_id"])
             sample = self.sample()
-            state = sample["State"] if sample else None
-            if sample and sample["StartEpoch"]:
-                self.start_epoch = sample["StartEpoch"]
-            if state in ENDED_STATES:
-                self.event(f"END exit 0: the PBS job has ended (state {state}; row {(status or {}).get('status')})")
+            finished = self.finished(sample)
+            if finished:
+                self.event(f"END exit 0: the PBS job has ended ({finished}; row {(status or {}).get('status')})")
                 return 0
-            running = state == "R" or (state is None and (status or {}).get("status") == "running")
-            clock = self.start_epoch or (submitted if running else None)
-            if running and clock is not None and time.time() - clock >= args.cap_seconds:
+            now = time.time()
+            if status or self.pbs_read(sample):
+                last_read = now
+            if self.pbs_read(sample):
+                if sample["StartEpoch"]:
+                    self.start_epoch = sample["StartEpoch"]
+                if sample["Hosts"]:
+                    self.hosts = sample["Hosts"]
+                running, how = sample["State"] == "R", f"PBS {sample['State']}"
+            else:
+                running, how = (status or {}).get("status") == "running", "the row's status (a missing PBS read)"
+                self.event(f"READ missing PBS read ({'an empty qstat answer' if sample else 'no answer'}): running from "
+                           f"{how}: {running}")
+            blind = now - last_read >= BLIND_SECONDS
+            clock = self.start_epoch or submitted
+            if (running or blind) and now - clock >= args.cap_seconds:
                 origin = "the PBS start" if self.start_epoch else "the submit time"
-                return self.end_early("cap", f"{time.time() - clock:.0f} s from {origin} >= cap {args.cap_seconds:.0f} s")
-            if state == "R":
-                for host, total, available in sample["Memory"]:
+                why = f"no read for {now - last_read:.0f} s: by the clock" if blind and not running else f"running by {how}"
+                return self.end_early("cap", f"{now - clock:.0f} s from {origin} >= cap {args.cap_seconds:.0f} s ({why})")
+            if running:
+                for host, total, available in (sample or {}).get("Memory", []):
                     used = (total - available) / total if total else 0.0
                     if used >= args.bar:
                         return self.end_early("memory", f"{host} used {used:.4f} of MemTotal >= bar {args.bar}")

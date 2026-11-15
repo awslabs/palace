@@ -819,6 +819,29 @@ class DriveWithFakeCLI(FakeCLICase):
         self.assertEqual(self.records()["w"]["State"], "timed-out")
         self.assertEqual(self.submitted(), ["chainport-w"])
 
+    def test_an_end_its_watcher_could_not_verify_stops_every_advance(self):
+        """Decision 1836 (1)(b): END-UNVERIFIED.json of a run watcher: the driver and every resume STOP, naming the run."""
+        def ended(seconds):
+            raise KeyboardInterrupt("the driver process ends in its wait")
+
+        self.script({"chainport-w": "hang"})
+        with self.assertRaises(KeyboardInterrupt):
+            paladin_backend.drive(self.job(), poll_seconds=0, sleep=ended)
+        record = self.records()["w"]
+        directory = Path(record["Watchers"][-1]["Dir"])
+        directory.mkdir(parents=True, exist_ok=True)  # the recording stand-in writes nothing
+        (directory / paladin_backend.UNVERIFIED_MARKER).write_text(json.dumps(
+            {"RunID": record["RunID"], "Job": record["JobID"], "Check": "by hand: paladin palace status ..."}))
+        for _ in range(2):  # the driver, then a resume
+            count = len(self.calls())
+            with self.assertRaises(paladin_backend.PaladinError) as stop:
+                self.drive()
+            self.assertIn("NOT VERIFIED", str(stop.exception))
+            self.assertIn(str(record["RunID"]), str(stop.exception))
+            self.assertEqual(len(self.calls()), count)  # nothing asked, nothing submitted
+        self.assertEqual(json.loads((self.out / "paladin-status.json").read_text())["UnverifiedEnds"][0]["RunID"], record["RunID"])
+        self.assertEqual(self.submitted(), ["chainport-w"])
+
     def test_a_stage_without_a_cap_is_not_submitted(self):
         plan = json.loads(self.plan_path.read_text())
         plan["Stages"][0]["CapSeconds"] = None
@@ -1076,7 +1099,7 @@ class RunWatcherProcesses(FakeCLICase):
 
     def test_the_watcher_ends_the_run_at_its_cap_after_the_driver_ended(self):
         record, end, events = self.ended_in_its_wait()
-        self.assertEqual((end["Kind"], end["Cancel"]["OK"], end["TerminalAfterCancel"]), ("cap", True, True))
+        self.assertEqual((end["Kind"], end["Rounds"][0]["Cancel"]["OK"], end["Verified"]), ("cap", True, True))
         self.assertIn("from the PBS start", end["Reason"])
         self.assertIn("CAP ", events)
         self.assertIn("END exit 11", events)
@@ -1102,10 +1125,10 @@ class RunWatcherProcesses(FakeCLICase):
     def test_a_failed_cancel_falls_back_to_qdel_by_the_job_id(self):
         with mock.patch.dict(os.environ, {"FAKE_CANCEL_FAIL": "1"}):
             record, end, events = self.ended_in_its_wait()
-        self.assertFalse(end["Cancel"]["OK"])
-        self.assertEqual(end["Fallback"]["Command"], f"{self.fake_bin}/qdel {record['JobID']}")
-        self.assertEqual((end["Fallback"]["ReturnCode"], end["Fallback"]["JobEnded"]), (0, True))
-        self.assertIn("FALLBACK", events)
+        self.assertFalse(end["Rounds"][0]["Cancel"]["OK"])
+        self.assertEqual(end["Rounds"][0]["Qdel"]["Command"], f"{self.fake_bin}/qdel {record['JobID']}")
+        self.assertEqual((end["Rounds"][0]["Qdel"]["ReturnCode"], end["Verified"]), (0, True))
+        self.assertIn("qdel", events)
         self.assertEqual(json.loads(self.state.read_text())["Runs"][str(record["RunID"])]["status"], "canceled")
 
     def test_a_watcher_ends_with_its_run(self):
@@ -1150,9 +1173,24 @@ class Bounds(FakeCLICase):
         self.assertEqual(slept, [paladin_backend.DRIVE_MIN_POLL_SECONDS] * 4)
 
 
+class FakeTime:
+    """A clock for the in-process watcher: sleep() advances time() (no real wait); the sleeps recorded."""
+
+    def __init__(self):
+        self.now, self.slept = time.time(), []
+
+    def time(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.slept.append(seconds)
+        self.now += seconds
+
+
 class WatcherInProcess(unittest.TestCase):
-    """paladin_run_watcher.Watcher run IN THIS PROCESS against scripted reads (no process started; decision 1830 (2)):
-    the cap, the memory bar, the qdel fallback, the read bound, one watcher per directory."""
+    """paladin_run_watcher.Watcher run IN THIS PROCESS against scripted reads and a fake clock (no process started;
+    decision 1830 (2)): the cap, the memory bar, the qdel fallback, the read bound, one watcher per directory; and
+    decision 1836 (review r1833 MAJOR-1): W1 / W2 / W3, the expired session, an unverified end, the blind clock."""
 
     def setUp(self):
         import paladin_run_watcher
@@ -1160,31 +1198,54 @@ class WatcherInProcess(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.dir = Path(self.tmp.name) / "watchers" / "run-7"
         self.dir.mkdir(parents=True)
-        self.calls, self.status, self.cancel_fails, self.after_qdel = [], "running", False, "F"
-        self.sample_text = f"STATE R\nSTIME {int(time.time()) - 100}\nMEM node 1000 900\n"
+        self.clock = FakeTime()
+        self.calls, self.status, self.cancel = [], "running", "ok"  # cancel: ok | refused | accepted (the row stays)
+        self.status_fails = False  # the row's read missing
+        self.qdel = []  # the outcomes of the next qdel calls: ok | rc1 | ssh; none left = ok
+        self.pbs = "R"  # R | Q | NOTFOUND | F | ssh (the cluster read fails)
+        self.start_ago, self.memory = 100, (1000, 900)
+        self.commands = []
 
         def paladin_call(cli, arguments, **options):
             self.calls.append(arguments[:2])
             if len(self.calls) > 200:  # the fake's own bound: a watcher without its read bound fails here, it never spins
                 raise AssertionError("200 reads: the watcher did not end")
             if arguments[1] == "cancel":
-                if self.cancel_fails:
-                    raise paladin_backend.PaladinError("palace cancel: refused")
-                self.status = "canceled"
+                if self.cancel == "refused":
+                    raise paladin_backend.PaladinError("palace cancel: 'failed transport: the session has expired; run mwinit'")
+                if self.cancel == "ok":
+                    self.status = "canceled"
                 return {}
+            if self.status_fails:
+                raise paladin_backend.PaladinError("palace status: no answer")
             return {"run_id": 7, "job_id": "j7", "status": self.status,
                     "terminal": self.status in ("canceled", "completed", "failed")}
 
         def remote_shell(host, command, **options):
             self.calls.append(command.split()[0].split("/")[-1])
+            self.commands.append(command)
             if "qdel" in command:
-                self.sample_text = f"STATE {self.after_qdel}\nSTIME -\n"
-                return subprocess.CompletedProcess(["qdel"], 0, stdout="", stderr="")
-            return subprocess.CompletedProcess(["bash"], 0, stdout=self.sample_text, stderr="")
+                outcome = self.qdel.pop(0) if self.qdel else "ok"
+                if outcome == "ssh":
+                    raise paladin_backend.PaladinError("ssh soca-green-job: no answer in 120 s")
+                if outcome == "ok":
+                    self.pbs = "F"
+                return subprocess.CompletedProcess(["qdel"], 0 if outcome == "ok" else 1, stdout="",
+                                                   stderr="" if outcome == "ok" else "qdel: Server connection failed")
+            if self.pbs == "ssh":
+                raise paladin_backend.PaladinError("ssh soca-green-job: no answer in 120 s")
+            kept = command.split()[5:]  # bash -s -- JOB PBS_BIN [KEPT_HOSTS...]
+            lines = [f"STATE {self.pbs}", f"STIME {int(self.clock.now) - self.start_ago if self.pbs == 'R' else '-'}",
+                     f"EXIT {0 if self.pbs == 'F' else '-'}"]
+            hosts = ["node"] if self.pbs == "R" else kept if self.pbs == "NOTFOUND" else []
+            if self.pbs == "R":
+                lines.append("HOSTS node")
+            lines += [f"MEM {host} {self.memory[0]} {self.memory[1]}" for host in hosts]
+            return subprocess.CompletedProcess(["bash"], 0, stdout="\n".join(lines) + "\n", stderr="")
 
         self.patches = [mock.patch.object(paladin_backend, "paladin_call", paladin_call),
                         mock.patch.object(paladin_backend, "remote_shell", remote_shell),
-                        mock.patch.object(self.module.time, "sleep", lambda seconds: None)]
+                        mock.patch.object(self.module, "time", self.clock)]
         for patch in self.patches:
             patch.start()
 
@@ -1193,10 +1254,11 @@ class WatcherInProcess(unittest.TestCase):
             patch.stop()
         self.tmp.cleanup()
 
-    def run_watcher(self, cap=50.0, bar=0.85):
+    def run_watcher(self, cap=50.0, bar=0.85, submitted_ago=0.0, interval=1.0):
+        submitted = paladin_backend.utc_now() - datetime.timedelta(seconds=submitted_ago)
         args = ["--run-id", "7", "--job", "j7", "--cli", "paladin", "--host", "local", "--pbs-bin", "/pbs",
-                "--cap-seconds", str(cap), "--submitted", paladin_backend.utc_now().isoformat(), "--dir", str(self.dir),
-                "--bar", str(bar), "--interval", "1", "--grace", "1"]
+                "--cap-seconds", str(cap), "--submitted", submitted.isoformat(), "--dir", str(self.dir),
+                "--bar", str(bar), "--interval", str(interval), "--grace", "1"]
         return self.module.main(args)
 
     def end(self):
@@ -1204,22 +1266,125 @@ class WatcherInProcess(unittest.TestCase):
 
     def test_the_cap_from_the_pbs_start(self):
         self.assertEqual(self.run_watcher(cap=50), 11)
-        self.assertEqual((self.end()["Kind"], self.end()["Cancel"]["OK"], self.end()["TerminalAfterCancel"]), ("cap", True, True))
+        self.assertEqual((self.end()["Kind"], self.end()["Rounds"][0]["Cancel"]["OK"], self.end()["Verified"]), ("cap", True, True))
         self.assertIn("from the PBS start", self.end()["Reason"])
+        self.assertIn("row terminal", self.end()["VerifiedBy"])
 
     def test_the_memory_bar(self):
-        self.sample_text = f"STATE R\nSTIME {int(time.time())}\nMEM node 1000 100\n"
+        self.memory = (1000, 100)
         self.assertEqual(self.run_watcher(cap=10**6), 10)
         self.assertEqual(self.end()["Kind"], "memory")
 
     def test_a_failed_cancel_falls_back_to_qdel(self):
-        self.cancel_fails = True
+        self.cancel = "refused"
         self.assertEqual(self.run_watcher(cap=50), 11)
-        self.assertEqual((self.end()["Fallback"]["Command"], self.end()["Fallback"]["JobEnded"]), ("/pbs/qdel j7", True))
-        self.assertIn("qdel", self.calls)
+        round_one = self.end()["Rounds"][0]
+        self.assertEqual((round_one["Qdel"]["Command"], self.end()["Verified"]), ("/pbs/qdel j7", True))
+        self.assertIn("PBS job_state F", self.end()["VerifiedBy"])
+
+    def test_w1_an_empty_qstat_answer_throughout_keeps_the_cap_in_force_by_the_row_s_status(self):
+        """Review r1833 W1: qstat answers empty (NOTFOUND) throughout while the row runs 1000 s past a 50-s cap."""
+        self.pbs = "NOTFOUND"
+        self.assertEqual(self.run_watcher(cap=50, submitted_ago=1000), 11)
+        self.assertEqual(self.calls.count(["palace", "cancel"]), 1)
+        self.assertIn("from the submit time", self.end()["Reason"])
+        self.assertIn("running by the row's status (a missing PBS read)", self.end()["Reason"])
+        self.assertTrue(self.end()["Verified"])
+
+    def test_w2_an_empty_qstat_answer_after_a_failed_qdel_is_not_an_end(self):
+        """Review r1833 W2: the end request refused, qdel rc 1 ('Server connection failed'), then an empty qstat answer:
+        NOT ended (was: JobEnded true, exit 11); the second round's qdel is verified by the finished-job answer."""
+        self.cancel, self.qdel = "refused", ["rc1", "ok"]
+        real = paladin_backend.remote_shell
+
+        def empty_after_the_first_qdel(host, command, **options):
+            result = real(host, command, **options)
+            if "qdel" in command and result.returncode == 1:
+                self.pbs = "NOTFOUND"  # the next reads answer empty, the job still runs
+            return result
+
+        with mock.patch.object(paladin_backend, "remote_shell", empty_after_the_first_qdel):
+            self.assertEqual(self.run_watcher(cap=50), 11)
+        rounds = self.end()["Rounds"]
+        self.assertEqual([entry["VerifiedBy"] for entry in rounds][0], None)
+        self.assertEqual((len(rounds), rounds[1]["Qdel"]["ReturnCode"]), (2, 0))
+        self.assertIn("PBS job_state F", self.end()["VerifiedBy"])
+        self.assertEqual(self.calls.count(["palace", "cancel"]), 2)  # the end request again, then the qdel again
+        self.assertIn(1.0, self.clock.slept)  # the back-off of round 1 (grace 1 s x 2^0)
+
+    def test_w3_a_qdel_that_meets_an_ssh_error_is_repeated(self):
+        """Review r1833 W3: the end request refused, then an ssh error on the qdel (was: exit 11, no retry)."""
+        self.cancel, self.qdel = "refused", ["ssh", "ssh", "ok"]
+        self.assertEqual(self.run_watcher(cap=50), 11)
+        rounds = self.end()["Rounds"]
+        self.assertEqual([("Error" in entry["Qdel"], entry["VerifiedBy"] is None) for entry in rounds],
+                         [(True, True), (True, True), (False, False)])
+        self.assertIn(2.0, self.clock.slept)  # the back-off of round 2 (grace 1 s x 2^1)
+
+    def test_an_expired_session_ends_the_run_by_the_qdel_by_job_id(self):
+        """Decision 1836 (1)(c): a run that queued beyond the session's life: the end request is refused at its cap
+        (an expired session), the qdel by the PBS job id (no session) ends it, verified."""
+        self.cancel = "refused"
+        self.assertEqual(self.run_watcher(cap=50), 11)
+        rounds = self.end()["Rounds"]
+        self.assertEqual(len(rounds), 1)
+        self.assertIn("session has expired", rounds[0]["Cancel"]["Error"])
+        self.assertEqual(rounds[0]["Qdel"]["ReturnCode"], 0)
+        self.assertTrue(self.end()["Verified"])
+
+    def test_an_end_not_verified_at_the_bound_leaves_a_marker_and_exit_12(self):
+        self.cancel, self.qdel = "refused", ["rc1"] * self.module.END_MAX_ROUNDS
+        self.assertEqual(self.run_watcher(cap=50), 12)
+        self.assertEqual((self.end()["Verified"], len(self.end()["Rounds"])), (False, self.module.END_MAX_ROUNDS))
+        marker = json.loads((self.dir / self.module.UNVERIFIED_MARKER).read_text())
+        self.assertEqual((marker["RunID"], marker["Job"]), (7, "j7"))
+        self.assertEqual([seconds for seconds in self.clock.slept if seconds > 1.0][:3], [2.0, 4.0, 8.0])
+        self.assertIn("END exit 12", (self.dir / "events.log").read_text())
+
+    def test_the_end_request_accepted_but_not_verified_is_followed_by_the_qdel(self):
+        self.cancel = "accepted"  # the request is accepted, the row keeps running
+        self.assertEqual(self.run_watcher(cap=50), 11)
+        self.assertEqual(self.end()["Rounds"][0]["Cancel"]["OK"], True)
+        self.assertIn("PBS job_state F", self.end()["VerifiedBy"])
+
+    def test_no_read_for_the_blind_time_judges_the_cap_by_the_clock(self):
+        self.status_fails, self.pbs = True, "ssh"
+        real = paladin_backend.paladin_call
+
+        def recovers_at_the_end_request(cli, arguments, **options):
+            if arguments[1] == "cancel":
+                self.status_fails = False
+            return real(cli, arguments, **options)
+
+        with mock.patch.object(paladin_backend, "paladin_call", recovers_at_the_end_request):
+            self.assertEqual(self.run_watcher(cap=50, submitted_ago=1000, interval=30), 11)
+        self.assertIn("by the clock", self.end()["Reason"])
+        self.assertGreaterEqual(sum(self.clock.slept), self.module.BLIND_SECONDS)
+
+    def test_a_missing_pbs_read_keeps_the_memory_bar_on_the_kept_hosts(self):
+        real = paladin_backend.remote_shell
+        reads = []
+
+        def empty_after_one_good_read(host, command, **options):
+            result = real(host, command, **options)
+            if "qdel" not in command:
+                reads.append(command)
+                self.pbs, self.memory = "NOTFOUND", (1000, 100)  # after the first read: empty answers, the memory high
+            return result
+
+        with mock.patch.object(paladin_backend, "remote_shell", empty_after_one_good_read):
+            self.assertEqual(self.run_watcher(cap=10**6), 10)
+        self.assertTrue(reads[1].endswith(" node"))  # the kept exec host is read under the missing PBS read
+        self.assertEqual(self.end()["Kind"], "memory")
+
+    def test_a_queued_row_under_an_empty_qstat_answer_is_not_capped(self):
+        self.status, self.pbs = "queued", "NOTFOUND"
+        with mock.patch.object(self.module, "WATCHER_LIFE_BEYOND_CAP_SECONDS", 0.0):
+            self.assertEqual(self.run_watcher(cap=5, submitted_ago=1000), 5)
+        self.assertEqual(self.calls.count(["palace", "cancel"]), 0)
 
     def test_the_read_bound(self):
-        self.status, self.sample_text = "queued", "STATE Q\nSTIME -\n"
+        self.status, self.pbs = "queued", "Q"
         with mock.patch.object(self.module, "WATCHER_LIFE_BEYOND_CAP_SECONDS", 0.0):
             self.assertEqual(self.run_watcher(cap=5), 5)
         self.assertEqual(self.calls.count(["palace", "status"]), 15)  # int(5 / 1) + 10 reads
