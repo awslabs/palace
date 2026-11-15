@@ -898,14 +898,21 @@ postprocessing solve and must remain tight even if the simulation performs no AM
 Coupon libraries with many basis traces can split this work between runs with
 `Solver.Electrostatic.ResponseArchive`. `"Mode": "Archive"` solves every
 prescribed-potential source and writes its potential (and recovered flux) to `Directory`
-without postprocessing; `"Mode": "Reduce"` then assembles `surface-response-matrix.csv`
-and `domain-response-matrix.csv` from that archive without solving, streaming
-`BlockSize` sources at a time; `"Mode": "Estimate"` evaluates the error indicator of the
-archived fields for the excitations listed in `EstimateRequest`. Both archive modes
-require `ResponseMatrix` and `AggregateResponseMatrix`. The archive holds one file per
-source, rank and field, so the reduction runs at the rank count of the archiving run. A
-relative `Directory` is taken against the working directory of the process: a reduction in
-another run, or on more than one node, needs an absolute path on a shared file system.
+without postprocessing; `"SourceTiming": true` then prints one timing line per source and
+`"RecycleInitialGuess": true` starts each solve from the previous source's field.
+`"Mode": "Reduce"` assembles `surface-response-matrix.csv` and
+`domain-response-matrix.csv` from that archive without solving, streaming `BlockSize`
+sources at a time (default 3); `"Mode": "Estimate"` evaluates the error indicator of the
+archived fields for the excitations listed in `EstimateRequest`. `"Mode": "None"` (the
+default) with a `Directory` is the ordinary solve that also writes the archive. Both
+archive modes require `ResponseMatrix` and `AggregateResponseMatrix`. The archive holds one
+file per source, rank and field, so the reduction runs at the rank count of the archiving
+run. A relative `Directory` is taken against the working directory of the process: a
+reduction in another run, or on more than one node, needs an absolute path on a shared file
+system. A key that has no effect in the resolved mode (`SourceTiming` or
+`RecycleInitialGuess` outside `"Archive"`, `BlockSize` outside `"Reduce"`,
+`EstimateRequest` outside `"Estimate"`), and a `"Mode"` of `"Archive"` or `"Reduce"`
+without a `Directory`, stop Palace before the mesh is loaded.
 
 Each key has an alias environment variable, read on the root rank and broadcast:
 `PALACE_RESPONSE_ARCHIVE_ONLY=1`, `PALACE_RESPONSE_REDUCE_ONLY=1` and
@@ -913,7 +920,11 @@ Each key has an alias environment variable, read on the root rank and broadcast:
 `PALACE_RESPONSE_BLOCK_SIZE`, `PALACE_RESPONSE_SOURCE_TIMING=1`,
 `PALACE_RESPONSE_RECYCLE_INITIAL_GUESS=1` and `PALACE_RESPONSE_ESTIMATE_REQUEST`. A setting
 given only by its key or only by its variable takes that value; a key and its variable that
-are both set must agree, otherwise Palace stops with an error naming both.
+are both set must agree, otherwise Palace stops with an error naming both. The resolved
+configuration echoes the `ResponseArchive` block as given (an absent key is left to its
+variable); when a mode or a `Directory` is active, the log has one
+`Response-archive settings:` line naming each resolved setting and its source (key,
+variable, both, or default).
 
 ### Self-consistent thin-metal response correction
 

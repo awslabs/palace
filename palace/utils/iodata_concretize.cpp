@@ -212,24 +212,9 @@ void ConcretizeElectrostatic(const config::ElectrostaticSolverData &electrostati
   Concretize(j_electrostatic, "ResponseMatrix", electrostatic.response_matrix);
   Concretize(j_electrostatic, "AggregateResponseMatrix",
              electrostatic.aggregate_response_matrix);
-  if (electrostatic.response_archive && j_electrostatic.contains("ResponseArchive"))
-  {
-    // Echoed only when given (the resolved configs of record stay bitwise); the alias
-    // variables of the keys are not reflected here.
-    using Mode = config::ElectrostaticSolverData::ResponseArchiveData::Mode;
-    const auto &archive = *electrostatic.response_archive;
-    const auto mode = archive.mode.value_or(Mode::NONE);
-    auto &j_archive = j_electrostatic["ResponseArchive"];
-    Concretize(j_archive, "Mode",
-               mode == Mode::ARCHIVE    ? "Archive"
-               : mode == Mode::REDUCE   ? "Reduce"
-               : mode == Mode::ESTIMATE ? "Estimate"
-                                        : "None");
-    Concretize(j_archive, "BlockSize", archive.block_size.value_or(3));
-    Concretize(j_archive, "SourceTiming", archive.source_timing.value_or(false));
-    Concretize(j_archive, "RecycleInitialGuess",
-               archive.recycle_initial_guess.value_or(false));
-  }
+  // Solver.Electrostatic.ResponseArchive is echoed as given: an absent key leaves its alias
+  // variable in charge, so no default is filled in (the settings that ran are printed by
+  // the solver).
   if (electrostatic.response_correction)
   {
     const auto &response = *electrostatic.response_correction;

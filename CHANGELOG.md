@@ -23,7 +23,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     `"Reduce"` / `"Estimate"`, `Directory`, `BlockSize`, `SourceTiming`,
     `RecycleInitialGuess`, `EstimateRequest`): the archived coupon-response generation
     modes as configuration keys, so that a run launched with a configuration file only (a
-    container job) can select them (lane chainport; USER decision 1674 (2)). The
+    container job) can select them. The
     `PALACE_RESPONSE_ARCHIVE_ONLY` / `_REDUCE_ONLY` / `_ESTIMATE_ONLY` / `_ARCHIVE_DIR` /
     `_BLOCK_SIZE` / `_SOURCE_TIMING` / `_RECYCLE_INITIAL_GUESS` / `_ESTIMATE_REQUEST`
     variables stay as aliases with their meaning unchanged; a key and its variable that are

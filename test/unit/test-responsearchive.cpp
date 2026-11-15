@@ -8,6 +8,7 @@
 #include <vector>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 #include "drivers/electrostaticsolver.hpp"
 #include "utils/communication.hpp"
 #include "utils/configfile.hpp"
@@ -16,6 +17,7 @@
 
 using json = nlohmann::json;
 using namespace palace;
+using Catch::Matchers::ContainsSubstring;
 
 namespace
 {
@@ -109,31 +111,27 @@ TEST_CASE("Response archive keys: schema, parse and resolved configuration",
   CHECK_THROWS(Keys({{"EstimateRequest", ""}}));
   CHECK_THROWS(Keys(json::array()));
 
-  // The resolved configuration: unchanged without the block; its defaults with it.
+  // The resolved configuration: unchanged without the block; the block as given with it
+  // (an absent key stays absent: its alias variable decides).
   {
     const auto config = ElectrostaticConfig({{"Save", 0}});
     IoData iodata(config, false);
     const auto resolved = IoData::ConcretizeDefaults(iodata, config);
     CHECK(!resolved["Solver"]["Electrostatic"].contains("ResponseArchive"));
   }
+  for (const json &given : {json::object(), json({{"Directory", "a"}}),
+                            json({{"Mode", "Reduce"}, {"Directory", "a"}})})
   {
-    const auto config = ElectrostaticConfig(
-        {{"ResponseArchive", {{"Mode", "Reduce"}, {"Directory", "a"}}}});
+    const auto config = ElectrostaticConfig({{"ResponseArchive", given}});
     IoData iodata(config, false);
     const auto resolved = IoData::ConcretizeDefaults(iodata, config);
-    CHECK(resolved["Solver"]["Electrostatic"]["ResponseArchive"] ==
-          json({{"Mode", "Reduce"},
-                {"Directory", "a"},
-                {"BlockSize", 3},
-                {"SourceTiming", false},
-                {"RecycleInitialGuess", false}}));
+    CHECK(resolved["Solver"]["Electrostatic"]["ResponseArchive"] == given);
   }
 }
 
 // The alias rule of Solver.Electrostatic.ResponseArchive: key only -> the key, variable
-// only
-// -> the variable (the job scripts of record keep their meaning), both equal -> that value,
-// both different -> an error; the variables are the root's on every rank.
+// only -> the variable, both equal -> that value, both different -> an error; the
+// variables are the root's on every rank.
 TEST_CASE("Response archive keys and alias variables resolve collectively",
           "[responsearchive][Serial][Parallel]")
 {
@@ -147,6 +145,7 @@ TEST_CASE("Response archive keys and alias variables resolve collectively",
   // Nothing given: the ordinary solve.
   {
     const auto settings = ResolveResponseArchive(config::ElectrostaticSolverData(), comm);
+    CHECK(!settings.Active());
     CHECK(!settings.archive_only);
     CHECK(!settings.reduce_only);
     CHECK(!settings.estimate_only);
@@ -158,11 +157,12 @@ TEST_CASE("Response archive keys and alias variables resolve collectively",
     CHECK(settings.estimate_conflicts.empty());
   }
 
-  // The worker of record by its variables, by its keys, and by both (equal).
+  // The archive worker by its variables, by its keys, and by both (equal).
   const auto worker_keys =
       Keys({{"Mode", "Archive"}, {"Directory", "archive/./w"}, {"SourceTiming", true}});
   const auto CheckWorker = [&](const ResponseArchiveSettings &settings)
   {
+    CHECK(settings.Active());
     CHECK(settings.archive_only);
     CHECK(!settings.reduce_only);
     CHECK(!settings.estimate_only);
@@ -171,12 +171,44 @@ TEST_CASE("Response archive keys and alias variables resolve collectively",
     CHECK(settings.source_timing);
     CHECK(!settings.recycle_initial_guess);
   };
-  CheckWorker(ResolveResponseArchive(worker_keys, comm));
+  {
+    const auto settings = ResolveResponseArchive(worker_keys, comm);
+    CheckWorker(settings);
+    CHECK(settings.mode_source == ResponseArchiveSource::KEY);
+    CHECK(settings.directory_source == ResponseArchiveSource::KEY);
+    CHECK(settings.block_size_source == ResponseArchiveSource::DEFAULT);
+  }
   Set("PALACE_RESPONSE_ARCHIVE_ONLY", "1");
   Set("PALACE_RESPONSE_SOURCE_TIMING", "1");
   Set("PALACE_RESPONSE_ARCHIVE_DIR", "archive/w");
-  CheckWorker(ResolveResponseArchive(config::ElectrostaticSolverData(), comm));
-  CheckWorker(ResolveResponseArchive(worker_keys, comm));
+  {
+    const auto settings = ResolveResponseArchive(config::ElectrostaticSolverData(), comm);
+    CheckWorker(settings);
+    CHECK(settings.mode_source == ResponseArchiveSource::VARIABLE);
+    CHECK(settings.source_timing_source == ResponseArchiveSource::VARIABLE);
+  }
+  {
+    const auto settings = ResolveResponseArchive(worker_keys, comm);
+    CheckWorker(settings);
+    CHECK(settings.mode_source == ResponseArchiveSource::KEY_AND_VARIABLE);
+    CHECK(settings.directory_source == ResponseArchiveSource::KEY_AND_VARIABLE);
+    CHECK(settings.source_timing_source == ResponseArchiveSource::KEY_AND_VARIABLE);
+  }
+  // A partial block: the absent keys are decided by their variables, and the log line
+  // names each setting's source.
+  {
+    const auto settings = ResolveResponseArchive(Keys({{"Directory", "archive/w"}}), comm);
+    CheckWorker(settings);
+    CHECK(ResponseArchiveSummary(settings) ==
+          "Response-archive settings: Mode=Archive (variable), Directory=" +
+              Path("archive/w").string() +
+              " (key and variable), BlockSize=3 (default), SourceTiming=true (variable), "
+              "RecycleInitialGuess=false (default), EstimateRequest=- (default)");
+  }
+  // A relative variable and an absolute key naming the same directory agree (compared on
+  // the root).
+  CheckWorker(ResolveResponseArchive(
+      Keys({{"Mode", "Archive"}, {"Directory", Path("archive/w").string()}}), comm));
   // Both set and different: refused for every key.
   CHECK_THROWS(ResolveResponseArchive(Keys({{"Mode", "Reduce"}}), comm));
   CHECK_THROWS(ResolveResponseArchive(Keys({{"Mode", "None"}}), comm));
@@ -186,9 +218,24 @@ TEST_CASE("Response archive keys and alias variables resolve collectively",
   CHECK_THROWS(ResolveResponseArchive(Keys({{"RecycleInitialGuess", true}}), comm));
   CHECK(!ResolveResponseArchive(Keys({{"RecycleInitialGuess", false}}), comm)
              .recycle_initial_guess);
+  // Recycling is turned on by its variable and by its key.
+  Set("PALACE_RESPONSE_RECYCLE_INITIAL_GUESS", "1");
+  CHECK(ResolveResponseArchive(config::ElectrostaticSolverData(), comm)
+            .recycle_initial_guess);
+  ResponseArchiveEnvironmentGuard::Clear();
+  CHECK(ResolveResponseArchive(Keys({{"RecycleInitialGuess", true}}), comm)
+            .recycle_initial_guess);
+  // The Reduce and Estimate variables against a different Mode key.
+  Set("PALACE_RESPONSE_REDUCE_ONLY", "1");
+  CHECK_THROWS_WITH(ResolveResponseArchive(Keys({{"Mode", "Archive"}}), comm),
+                    ContainsSubstring("PALACE_RESPONSE_REDUCE_ONLY"));
+  ResponseArchiveEnvironmentGuard::Clear();
+  Set("PALACE_RESPONSE_ESTIMATE_ONLY", "1");
+  CHECK_THROWS_WITH(ResolveResponseArchive(Keys({{"Mode", "None"}}), comm),
+                    ContainsSubstring("PALACE_RESPONSE_ESTIMATE_ONLY"));
   ResponseArchiveEnvironmentGuard::Clear();
 
-  // The reducer of record; BLOCK_SIZE is parsed by a reduction only.
+  // The archive reducer; BLOCK_SIZE is parsed by a reduction only.
   Set("PALACE_RESPONSE_BLOCK_SIZE", "not a number");
   CHECK(ResolveResponseArchive(config::ElectrostaticSolverData(), comm).block_size == 3);
   Set("PALACE_RESPONSE_REDUCE_ONLY", "1");
@@ -222,7 +269,7 @@ TEST_CASE("Response archive keys and alias variables resolve collectively",
   CHECK(*ResolveResponseArchive(Keys({{"Directory", "d"}}), comm).directory == Path("d"));
   ResponseArchiveEnvironmentGuard::Clear();
 
-  // The estimate: the refused settings, set at all, in the order of record.
+  // The estimate: the refused settings, set at all, in a fixed order.
   Set("PALACE_RESPONSE_ESTIMATE_ONLY", "1");
   Set("PALACE_RESPONSE_ESTIMATE_REQUEST", "request.json");
   Set("PALACE_RESPONSE_BLOCK_SIZE", "4");
@@ -270,4 +317,79 @@ TEST_CASE("Response archive keys and alias variables resolve collectively",
   }
   CHECK(!ResolveResponseArchive(config::ElectrostaticSolverData(), comm).reduce_only);
   CHECK_NOTHROW(ResolveResponseArchive(worker_keys, comm));
+}
+
+// The startup checks of every run (ValidateArchiveEstimateOptions): on the key path, a key
+// with no effect in the resolved mode and a key-given Archive / Reduce mode without a
+// Directory are refused naming the key; the variables keep their silent semantics; an
+// archive estimate refuses its conflicting settings.
+TEST_CASE("Response archive startup checks", "[responsearchive][Serial][Parallel]")
+{
+  MPI_Comm comm = Mpi::World();
+  ResponseArchiveEnvironmentGuard guard;
+  const auto Set = [](const char *name, const char *value) { setenv(name, value, 1); };
+  const auto Validate = [&](const json &electrostatic)
+  {
+    const IoData iodata(ElectrostaticConfig(electrostatic), false);
+    ValidateArchiveEstimateOptions(iodata, comm, false);
+  };
+  const auto Block = [](const json &archive) { return json{{"ResponseArchive", archive}}; };
+
+  // The key path.
+  CHECK_NOTHROW(Validate(json::object()));
+  CHECK_NOTHROW(Validate(Block(json::object())));
+  CHECK_NOTHROW(
+      Validate(Block({{"Mode", "Archive"}, {"Directory", "a"}, {"SourceTiming", true}})));
+  CHECK_NOTHROW(
+      Validate(Block({{"Mode", "Reduce"}, {"Directory", "a"}, {"BlockSize", 8}})));
+  CHECK_NOTHROW(Validate(Block({{"Mode", "None"}, {"Directory", "a"}})));
+  CHECK_THROWS_WITH(Validate(Block({{"SourceTiming", true}})),
+                    ContainsSubstring("\"SourceTiming\" has no effect"));
+  CHECK_THROWS_WITH(
+      Validate(
+          Block({{"Mode", "None"}, {"Directory", "a"}, {"RecycleInitialGuess", false}})),
+      ContainsSubstring("\"RecycleInitialGuess\" has no effect"));
+  CHECK_THROWS_WITH(
+      Validate(Block({{"Mode", "Archive"}, {"Directory", "a"}, {"BlockSize", 8}})),
+      ContainsSubstring("\"BlockSize\" has no effect"));
+  CHECK_THROWS_WITH(
+      Validate(
+          Block({{"Mode", "Reduce"}, {"Directory", "a"}, {"EstimateRequest", "r.json"}})),
+      ContainsSubstring("\"EstimateRequest\" has no effect"));
+  CHECK_THROWS_WITH(Validate(Block({{"Mode", "Archive"}})),
+                    ContainsSubstring("requires a \"Directory\""));
+  CHECK_THROWS_WITH(Validate(Block({{"Mode", "Reduce"}, {"BlockSize", 8}})),
+                    ContainsSubstring("requires a \"Directory\""));
+
+  // A key made effective by a variable's mode, a key-given mode with the variable's
+  // Directory.
+  Set("PALACE_RESPONSE_ARCHIVE_ONLY", "1");
+  Set("PALACE_RESPONSE_ARCHIVE_DIR", "a");
+  CHECK_NOTHROW(Validate(Block({{"SourceTiming", true}})));
+  ResponseArchiveEnvironmentGuard::Clear();
+  Set("PALACE_RESPONSE_ARCHIVE_DIR", "a");
+  CHECK_NOTHROW(Validate(Block({{"Mode", "Archive"}})));
+  ResponseArchiveEnvironmentGuard::Clear();
+
+  // The variables path: no startup refusal of a variable without effect, nor of a Reduce
+  // mode without a Directory (the solve refuses it, as before the keys existed).
+  Set("PALACE_RESPONSE_SOURCE_TIMING", "1");
+  Set("PALACE_RESPONSE_BLOCK_SIZE", "4");
+  Set("PALACE_RESPONSE_ESTIMATE_REQUEST", "r.json");
+  CHECK_NOTHROW(Validate(json::object()));
+  ResponseArchiveEnvironmentGuard::Clear();
+  Set("PALACE_RESPONSE_REDUCE_ONLY", "1");
+  CHECK_NOTHROW(Validate(json::object()));
+  ResponseArchiveEnvironmentGuard::Clear();
+
+  // The archive estimate refuses a conflicting variable set at all, and its BlockSize key.
+  Set("PALACE_RESPONSE_ESTIMATE_ONLY", "1");
+  Set("PALACE_RESPONSE_ARCHIVE_ONLY", "0");
+  CHECK_THROWS_WITH(Validate(json::object()),
+                    ContainsSubstring("conflicts with PALACE_RESPONSE_ARCHIVE_ONLY"));
+  ResponseArchiveEnvironmentGuard::Clear();
+  CHECK_THROWS_WITH(
+      Validate(
+          Block({{"Mode", "Estimate"}, {"EstimateRequest", "r.json"}, {"BlockSize", 4}})),
+      ContainsSubstring("conflicts with Solver.Electrostatic.ResponseArchive.BlockSize"));
 }
