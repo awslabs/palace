@@ -37,9 +37,18 @@ leaves END-UNVERIFIED.json beside it (the driver and every resume STOP on it, na
 the manual check).  Exit 11 (cap) / 10 (memory) verified, 12 not verified; 3 = another watcher
 holds --dir (the driver names --dir by the run id: one watcher per run); 5 = the read bound (the
 cap + one day) reached.
+NONCE_RULE (decision 1836 m-1, review r1833 MINOR-1: the submit window): with --run-id 0 the watcher
+is started BEFORE the submit call, keyed by the SubmitIntent's --nonce, in <local>/watchers/nonce-<N>.
+Until it knows its run it only reads: every --interval the driver's hint file 'run-id' in --dir
+(written as soon as the driver knows the run), else `paladin palace my-jobs -m <--identity> -m
+nonce=N` (a failed or warned listing is a missing read).  A no-run row (submission_failed without a
+job id) = that submit made no run: exit 0.  A run found: it takes the lock of the sibling run-<id>
+directory (held by another watcher: exit 0, that one watches) and watches the run there as above.
+No run within --search-seconds: exit 0.
 
   python3 paladin_run_watcher.py --run-id R --cli PALADIN --host HOST --pbs-bin DIR --cap-seconds S
       --submitted UTC --dir DIR [--job PBS] [--bar 0.85] [--interval 30] [--grace 120]
+  python3 paladin_run_watcher.py --run-id 0 --nonce N --identity JSON [--search-seconds 3600] ... (NONCE_RULE)
 """
 import argparse
 import json
@@ -95,6 +104,7 @@ WATCHER_MIN_INTERVAL_SECONDS, WATCHER_LIFE_BEYOND_CAP_SECONDS = 1.0, 86400.0
 BLIND_SECONDS = 600.0
 END_MAX_ROUNDS, END_BACKOFF_MAX_SECONDS = 8, 1800.0
 UNVERIFIED_MARKER = "END-UNVERIFIED.json"
+NONCE_SEARCH_SECONDS, RUN_HINT = 3600.0, "run-id"  # NONCE_RULE
 
 
 def utc():
@@ -239,6 +249,65 @@ class Watcher:
         self.event(f"END exit {code}: verified ({record['VerifiedBy']})")
         return code
 
+    def find_run(self):
+        """NONCE_RULE: the lock of the run's own directory once the run is known (the watcher then watches it there),
+        or None (ended: no run, a no-run row, another watcher, the directory removed)."""
+        args = self.args
+        identity = {**json.loads(args.identity), "nonce": args.nonce}
+        self.event(f"START nonce={args.nonce} (the submit window) search={args.search_seconds:.0f}s pid={os.getpid()}")
+        interval = max(float(args.interval), WATCHER_MIN_INTERVAL_SECONDS)
+        deadline = time.time() + args.search_seconds
+        run_id = None
+        for _ in range(int(args.search_seconds / interval) + 10):
+            if not os.path.isdir(args.dir):
+                return None
+            hint = os.path.join(args.dir, RUN_HINT)
+            if os.path.isfile(hint):
+                with open(hint) as f:
+                    text = f.read().strip()
+                if text.isdigit():
+                    run_id, how = int(text), "the driver's hint"
+                    break
+            try:
+                envelope = paladin_backend.paladin_envelope(args.cli, ["palace", "my-jobs",
+                                                                        *paladin_backend.metadata_arguments(identity),
+                                                                        "--json"], timeout=120)
+                data = envelope.get("data")
+                if envelope.get("warnings") or not isinstance(data, dict) or not isinstance(data.get("jobs"), list):
+                    raise paladin_backend.PaladinError("a listing with warnings or without a 'jobs' list")
+                rows = [row for row in data["jobs"] if (row.get("metadata") or {}).get("nonce") == args.nonce]
+            except paladin_backend.PaladinError as error:
+                self.event(f"READERR palace my-jobs: {str(error)[:200]}")
+                rows = []
+            runs = [row for row in rows if not paladin_backend.no_run(row)]
+            if runs:
+                row = min(runs, key=lambda item: int(item["run_id"]))
+                run_id, how = int(row["run_id"]), "the lookup by the nonce"
+                self.job = self.job or (str(row["job_id"]) if row.get("job_id") else None)
+                break
+            if rows:
+                self.event("END exit 0: the nonce's submit made no run (a submission_failed row without a job id)")
+                return None
+            if time.time() >= deadline:
+                break
+            time.sleep(interval)
+        if run_id is None:
+            self.event(f"END exit 0: no run with this nonce in {args.search_seconds:.0f} s")
+            return None
+        directory = os.path.join(os.path.dirname(os.path.abspath(args.dir)), f"run-{run_id}")
+        os.makedirs(directory, exist_ok=True)
+        try:
+            lock = paladin_backend.DriverLock(os.path.join(directory, "watcher.lock"), log=self.event).acquire()
+        except paladin_backend.PaladinError:
+            self.event(f"END exit 0: run {run_id} (found by {how}) is watched by another watcher ({directory} is held)")
+            return None
+        self.event(f"run {run_id} found by {how}: watching it from {directory}")
+        with open(os.path.join(directory, "watcher.pid"), "w") as f:
+            f.write(f"{os.getpid()}\n")
+        args.run_id, args.dir = run_id, directory
+        self.events = os.path.join(directory, "events.log")
+        return lock
+
     def run(self):
         args = self.args
         submitted = paladin_backend.parse_time(args.submitted).timestamp()
@@ -292,7 +361,10 @@ class Watcher:
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--run-id", type=int, required=True)
+    parser.add_argument("--run-id", type=int, default=0, help="0 = the submit window: find the run by --nonce (NONCE_RULE)")
+    parser.add_argument("--nonce", default="")
+    parser.add_argument("--identity", default="{}", help="the stage identity (JSON) of the nonce lookup")
+    parser.add_argument("--search-seconds", type=float, default=NONCE_SEARCH_SECONDS)
     parser.add_argument("--job", default="")
     parser.add_argument("--cli", required=True)
     parser.add_argument("--host", required=True, help="the cluster's ssh host; 'local' = this host (the tests' form)")
@@ -304,6 +376,8 @@ def main(argv=None):
     parser.add_argument("--interval", type=float, default=30.0)
     parser.add_argument("--grace", type=float, default=120.0)
     args = parser.parse_args(argv)
+    if not args.run_id and not args.nonce:
+        parser.error("--run-id 0 needs --nonce (NONCE_RULE)")
     os.makedirs(args.dir, exist_ok=True)
     watcher = Watcher(args)
     try:
@@ -314,7 +388,15 @@ def main(argv=None):
     with open(os.path.join(args.dir, "watcher.pid"), "w") as f:
         f.write(f"{os.getpid()}\n")
     try:
-        return watcher.run()
+        if args.run_id:
+            return watcher.run()
+        run_lock = watcher.find_run()
+        if run_lock is None:
+            return 0
+        try:
+            return watcher.run()
+        finally:
+            run_lock.release()
     finally:
         lock.release()
 

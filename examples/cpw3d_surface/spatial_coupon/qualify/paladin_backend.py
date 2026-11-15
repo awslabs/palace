@@ -933,6 +933,7 @@ class PaladinJob:
                   "Rule": INTENT_RULE}
         record.setdefault("SubmitIntents", []).append(intent)
         self.save()  # on disk before the call (INTENT_RULE)
+        self.start_nonce_watcher(stage, record, intent)  # WATCHER_RULE: the submit window is watched too
         try:
             data = paladin_call(self.block["CLI"], self.submit_arguments(stage, path, intent["Nonce"]))
         except PaladinError as error:
@@ -943,17 +944,19 @@ class PaladinJob:
         run_id = int(data["jobs"][0]["run_id"])
         record["RunID"], record["Submitted"] = run_id, self.now().isoformat()
         record["JobID"] = data["jobs"][0].get("job_id")
-        intent["Outcome"] = f"run {run_id}"
+        intent["Outcome"], intent["RunID"] = f"run {run_id}", run_id
         self.save()
+        self.write_run_hint(intent, run_id)
         self.watch(stage, record)
         self.log(f"{self.case}: submitted {name} as paladin run {run_id} ({self.sizing['Type']} x {self.ranks})")
         return run_id
 
-    def ensure_watcher(self, name, run_id, *, job_id, submitted, cap_seconds):
-        """WATCHER_RULE: a missing watcher started (its record), None when a live one holds the directory."""
+    def ensure_watcher(self, name, run_id, *, job_id, submitted, cap_seconds, nonce_dirs=()):
+        """WATCHER_RULE: a missing watcher started (its record), None when a live one holds the run's directory
+        or one of `nonce_dirs` (the run's nonce watcher: NONCE_RULE of paladin_run_watcher.py)."""
         # ONE directory, hence ONE lock and ONE watcher, per run id (decision 1830 (3)).
         directory = os.path.join(self.watchers_root(), f"run-{run_id}")
-        if self.watchers.alive(directory):
+        if any(self.watchers.alive(path) for path in (directory, *nonce_dirs)):
             return None
         argv = [sys.executable, WATCHER_PATH, "--run-id", str(run_id), "--job", str(job_id or ""), "--cli", self.block["CLI"],
                 "--host", self.block["Host"], "--pbs-bin", self.pbs_bin, "--cap-seconds", str(float(cap_seconds)),
@@ -982,6 +985,47 @@ class PaladinJob:
                                 f"({'done' if watcher['EarlyEnded'] else 'FAILED: end it by hand'}): STOP ({WATCHER_RULE})",
                                 watcher)
 
+    def nonce_dir(self, intent):
+        return os.path.join(self.watchers_root(), f"nonce-{intent['Nonce']}")
+
+    def start_nonce_watcher(self, stage, record, intent):
+        """WATCHER_RULE / NONCE_RULE: the watcher of the submit window, started BEFORE the submit call (twice at most);
+        not started = the intent closed 'not sent' and STOP with no call (no run exists)."""
+        name = stage["Name"]
+        directory = self.nonce_dir(intent)
+        identity = stage_identity(self.block["Lane"], self.case, name, self.plan_sha256)
+        argv = [sys.executable, WATCHER_PATH, "--run-id", "0", "--nonce", intent["Nonce"], "--identity",
+                json.dumps(identity, sort_keys=True), "--cli", self.block["CLI"], "--host", self.block["Host"], "--pbs-bin",
+                self.pbs_bin, "--cap-seconds", str(float(stage["CapSeconds"])), "--submitted", intent["UTC"], "--bar",
+                str(WATCHER_MEMORY_BAR), "--interval", str(WATCHER_INTERVAL_SECONDS), "--grace", str(WATCHER_GRACE_SECONDS),
+                "--dir", directory]
+        key, pid, attempt = ("nonce", name), None, 0
+        for attempt in range(1, 3):
+            if self.watcher_starts.get(key, 0) >= WATCHER_STARTS_PER_RUN:
+                break  # decision 1830 (3): no further start in this driver process
+            self.watcher_starts[key] = self.watcher_starts.get(key, 0) + 1
+            pid = self.watchers.start(argv, directory)
+            if pid:
+                break
+        intent["Watcher"] = {"Dir": directory, "PID": pid, "Started": attempt, "UTC": self.now().isoformat()}
+        if pid:
+            self.save()
+            self.log(f"{self.case}: {name}: the submit-window watcher pid {pid} (nonce {intent['Nonce'][:8]})")
+            return
+        intent["Outcome"] = "not sent: the submit-window watcher did not start"
+        self.save()
+        raise WatcherNotStarted(f"{name}: the submit-window watcher did not start (twice, or {WATCHER_STARTS_PER_RUN} starts of "
+                                f"this stage in this driver process): STOP with NO submit call ({WATCHER_RULE})",
+                                intent["Watcher"])
+
+    def write_run_hint(self, intent, run_id):
+        """NONCE_RULE: the run id handed to the intent's nonce watcher (its hint file)."""
+        directory = self.nonce_dir(intent)
+        os.makedirs(directory, exist_ok=True)
+        with open(os.path.join(directory, "run-id.tmp"), "w") as f:
+            f.write(f"{int(run_id)}\n")
+        os.replace(os.path.join(directory, "run-id.tmp"), os.path.join(directory, "run-id"))
+
     def watchers_root(self):
         return os.path.join(os.path.abspath(self.local_dir), "watchers")
 
@@ -1000,9 +1044,10 @@ class PaladinJob:
         else its last SubmitIntent's, else the adoption time)."""
         intents = record.get("SubmitIntents") or []
         submitted = record.get("Submitted") or (intents[-1]["UTC"] if intents else None) or record["Adopted"]["UTC"]
+        nonce_dirs = [self.nonce_dir(intent) for intent in intents if intent.get("RunID") == record["RunID"]]
         try:
             started = self.ensure_watcher(stage["Name"], record["RunID"], job_id=record.get("JobID"), submitted=submitted,
-                                          cap_seconds=stage["CapSeconds"])
+                                          cap_seconds=stage["CapSeconds"], nonce_dirs=nonce_dirs)
         except WatcherNotStarted as error:
             record.setdefault("Watchers", []).append(error.watcher)
             self.save()
@@ -1088,10 +1133,14 @@ class PaladinJob:
         if record.get("RunID") not in (None, int(row["run_id"])):
             raise PaladinError(f"{name}: the recorded run {record['RunID']} is not the stage's run {row['run_id']}")
         intent = self.open_intent(record)
+        nonce = (row.get("metadata") or {}).get("nonce")
         if intent is not None:
-            nonce = (row.get("metadata") or {}).get("nonce")
             intent["Outcome"] = f"adopted run {row['run_id']}"
             intent["NonceMatches"] = nonce == intent["Nonce"]
+        for known in record.get("SubmitIntents") or []:
+            if known["Nonce"] == nonce:
+                known["RunID"] = int(row["run_id"])
+                self.write_run_hint(known, row["run_id"])  # NONCE_RULE: its nonce watcher learns the run
         if record.get("RunID") is None:
             record["RunID"] = int(row["run_id"])
             record["Adopted"] = {"UTC": self.now().isoformat(), "Status": row.get("status"),

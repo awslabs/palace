@@ -106,6 +106,13 @@ class RecordingWatchers:
     def runs(self):
         return [int(argv[argv.index("--run-id") + 1]) for argv, _ in self.started]
 
+    def covered(self, runs):
+        """The fake's run ids with a recorded watcher: by --run-id, or by --nonce (paladin_run_watcher's NONCE_RULE:
+        the nonce watcher finds its run; WatcherInProcess shows that part)."""
+        nonces = {argv[argv.index("--nonce") + 1] for argv, _ in self.started if "--nonce" in argv}
+        return ({run_id for run_id in self.runs() if run_id} |
+                {int(run_id) for run_id, run in runs.items() if (run.get("metadata") or {}).get("nonce") in nonces})
+
 
 def three_stage_plan(root, *, nodes=None):
     """A worker, its reducer and a response-matrix stage; configurations under root/remote/main."""
@@ -520,6 +527,7 @@ class DriveWithFakeCLI(FakeCLICase):
             shutil.rmtree(directory, ignore_errors=True)
         (self.root / "runs").mkdir()
         self.script()
+        self.watchers = RecordingWatchers()  # a fresh recording stand-in (its start bound counts per fake cluster)
 
     def test_an_open_intent_with_no_run_found_stops_after_three_lookups_over_60_s(self):
         self.killed_after_the_submit()
@@ -732,16 +740,41 @@ class DriveWithFakeCLI(FakeCLICase):
     def live_runs_without_a_watcher(self):
         runs = json.loads(self.state.read_text())["Runs"]
         live = [int(run_id) for run_id, run in runs.items() if paladin_backend.run_class(run["status"]) == "live"]
-        return sorted(set(live) - set(self.watchers.runs()))
+        return sorted(set(live) - self.watchers.covered(runs))
 
     def test_every_submitted_run_gets_a_watcher_with_its_stage_cap(self):
+        """Decision 1836 m-1: the watcher of each run is started BEFORE its submit call, keyed by the intent's nonce
+        (NONCE_RULE); it learns the run id from the hint file; no second watcher is started for the run."""
         state = self.drive()
-        self.assertEqual(self.watchers.runs(), [state["Stages"][name]["RunID"] for name in ("w", "r", "local-edge")])
-        argv, directory = self.watchers.started[0]
-        for flag, value in (("--cap-seconds", "900.0"), ("--host", "local"), ("--bar", "0.85"), ("--grace", "120.0"),
-                            ("--job", state["Stages"]["w"]["JobID"])):
-            self.assertEqual(argv[argv.index(flag) + 1], value)
-        self.assertEqual(directory, str(self.out / "watchers" / f"run-{state['Stages']['w']['RunID']}"))
+        self.assertEqual(len(self.watchers.started), 3)
+        for (argv, directory), name in zip(self.watchers.started, ("w", "r", "local-edge")):
+            intent = state["Stages"][name]["SubmitIntents"][-1]
+            for flag, value in (("--run-id", "0"), ("--nonce", intent["Nonce"]), ("--cap-seconds", "900.0"), ("--host", "local"),
+                                ("--bar", "0.85"), ("--grace", "120.0"), ("--submitted", intent["UTC"])):
+                self.assertEqual(argv[argv.index(flag) + 1], value)
+            self.assertEqual(json.loads(argv[argv.index("--identity") + 1])["stage"], name)
+            self.assertEqual(directory, str(self.out / "watchers" / f"nonce-{intent['Nonce']}"))
+            self.assertEqual((Path(directory) / "run-id").read_text().strip(), str(state["Stages"][name]["RunID"]))
+            self.assertEqual(intent["RunID"], state["Stages"][name]["RunID"])
+
+    def test_b1_a_driver_ended_in_the_submit_window_leaves_its_run_watched(self):
+        """Review r1833 B1: the driver ends between the submit and the save, the resume meets a rows_omitted lookup
+        and STOPs: the live run is watched by the nonce watcher started before the submit (was: no watcher)."""
+        self.killed_after_the_submit()
+        self.lookups(["omitted"])
+        with self.assertRaises(paladin_backend.PaladinError):
+            self.drive()
+        self.assertEqual(self.live_runs_without_a_watcher(), [])
+        argv, _ = self.watchers.started[0]
+        self.assertEqual(argv[argv.index("--nonce") + 1], self.records()["w"]["SubmitIntents"][-1]["Nonce"])
+
+    def test_a_submit_window_watcher_that_does_not_start_means_no_submit_call(self):
+        self.watchers.start = lambda argv, directory: None
+        with self.assertRaises(paladin_backend.WatcherNotStarted):
+            self.drive()
+        self.assertEqual(self.submitted(), [])
+        intent = self.records()["w"]["SubmitIntents"][-1]
+        self.assertEqual((intent["Outcome"], intent["Watcher"]["Started"]), ("not sent: the submit-window watcher did not start", 2))
 
     def test_a_resume_re_attaches_to_a_live_watcher_and_restarts_a_missing_one(self):
         def ended(seconds):
@@ -757,7 +790,9 @@ class DriveWithFakeCLI(FakeCLICase):
         self.watchers.live.clear()  # the watcher process is gone (a host reboot)
         with self.assertRaises(KeyboardInterrupt):
             paladin_backend.drive(self.job(), poll_seconds=0, sleep=ended)
-        self.assertEqual([directory for _, directory in self.watchers.started], [self.watchers.started[0][1]] * 2)
+        run_id = self.records()["w"]["RunID"]
+        self.assertEqual([Path(directory).name for _, directory in self.watchers.started],
+                         [f"nonce-{self.records()['w']['SubmitIntents'][-1]['Nonce']}", f"run-{run_id}"])
         self.assertEqual(self.submitted(), ["chainport-w"])
 
     def test_every_stop_path_leaves_each_live_run_with_a_live_watcher(self):
@@ -781,7 +816,7 @@ class DriveWithFakeCLI(FakeCLICase):
         self.setUp_fresh()
         self.watchers = RecordingWatchers()
         self.killed_after_the_submit()  # the window of MAJOR-1: the run is live, its RunID never saved
-        self.assertEqual(self.live_runs_without_a_watcher(), [int(json.loads(self.state.read_text())["NextID"]) - 1])
+        self.assertEqual(self.live_runs_without_a_watcher(), [])  # decision 1836 m-1: its nonce watcher (was: unwatched)
         state = json.loads(self.state.read_text())
         first = state["NextID"] - 1
         state["Runs"][str(first + 1)] = dict(state["Runs"][str(first)], run_dir=str(self.root / "runs" / "twin"),
@@ -791,11 +826,15 @@ class DriveWithFakeCLI(FakeCLICase):
         with mock.patch.dict(os.environ, {"FAKE_CANCEL_FAIL": "1"}), self.assertRaises(paladin_backend.DuplicateRuns):
             self.drive()  # two runs: the newer one's early end fails
         self.assertEqual(self.live_runs_without_a_watcher(), [])
-        caps = {int(argv[argv.index("--run-id") + 1]): argv[argv.index("--cap-seconds") + 1] for argv, _ in self.watchers.started}
+        caps = {int(argv[argv.index("--run-id") + 1]): argv[argv.index("--cap-seconds") + 1] for argv, _ in self.watchers.started
+                if argv[argv.index("--run-id") + 1] != "0"}  # the run watchers (the nonce watcher of the window aside)
         self.assertEqual(caps, {first: "900.0", first + 1: "0.0"})
 
     def test_a_run_whose_watcher_does_not_start_is_ended_early(self):
-        self.watchers.start = lambda argv, directory: None
+        recording = self.watchers.start
+        self.watchers.start = lambda argv, directory: None if "/run-" in directory else recording(argv, directory)
+        self.killed_after_the_submit()
+        self.watchers.live.clear()  # the nonce watcher is gone: the adoption must start a run watcher, which does not start
         with self.assertRaises(paladin_backend.WatcherNotStarted):
             self.drive()
         record = self.records()["w"]
@@ -811,8 +850,9 @@ class DriveWithFakeCLI(FakeCLICase):
         with self.assertRaises(KeyboardInterrupt):
             paladin_backend.drive(self.job(), poll_seconds=0, sleep=ended)
         record = self.records()["w"]
-        Path(record["Watchers"][-1]["Dir"]).mkdir(parents=True, exist_ok=True)
-        (Path(record["Watchers"][-1]["Dir"]) / "end.json").write_text(json.dumps({"Kind": "cap"}))
+        directory = self.out / "watchers" / f"run-{record['RunID']}"  # where the nonce watcher writes (NONCE_RULE)
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / "end.json").write_text(json.dumps({"Kind": "cap"}))
         paladin_backend.paladin_call(self.block["CLI"], ["palace", "cancel", str(record["RunID"]), "--json"])
         with self.assertRaises(paladin_backend.PaladinError):
             self.drive()
@@ -828,7 +868,7 @@ class DriveWithFakeCLI(FakeCLICase):
         with self.assertRaises(KeyboardInterrupt):
             paladin_backend.drive(self.job(), poll_seconds=0, sleep=ended)
         record = self.records()["w"]
-        directory = Path(record["Watchers"][-1]["Dir"])
+        directory = self.out / "watchers" / f"run-{record['RunID']}"
         directory.mkdir(parents=True, exist_ok=True)  # the recording stand-in writes nothing
         (directory / paladin_backend.UNVERIFIED_MARKER).write_text(json.dumps(
             {"RunID": record["RunID"], "Job": record["JobID"], "Check": "by hand: paladin palace status ..."}))
@@ -1091,8 +1131,8 @@ class RunWatcherProcesses(FakeCLICase):
         with self.assertRaises(KeyboardInterrupt):
             paladin_backend.drive(self.job(), poll_seconds=0, sleep=ended)
         record = self.records()["w"]
-        directory = Path(record["Watchers"][-1]["Dir"])
-        self.assertTrue(self.watchers.alive(str(directory)))  # it outlives the driver
+        directory = self.out / "watchers" / f"run-{record['RunID']}"  # the nonce watcher moves there (NONCE_RULE)
+        self.assertTrue(self.wait_for(lambda: self.watchers.alive(str(directory)), 30))  # it outlives the driver
         self.assertTrue(self.wait_for(lambda: (directory / "end.json").is_file(), 30))
         self.assertTrue(self.wait_for(lambda: not self.watchers.alive(str(directory)), 30))
         return record, json.loads((directory / "end.json").read_text()), (directory / "events.log").read_text()
@@ -1137,7 +1177,9 @@ class RunWatcherProcesses(FakeCLICase):
         self.plan_path.write_text(json.dumps(plan))
         state = self.drive()
         for name in ("w", "r", "local-edge"):
-            directory = Path(state["Stages"][name]["Watchers"][-1]["Dir"])
+            nonce = Path(state["Stages"][name]["SubmitIntents"][-1]["Watcher"]["Dir"])
+            self.assertTrue(self.wait_for(lambda: not self.watchers.alive(str(nonce)), 30))
+            directory = self.out / "watchers" / f"run-{state['Stages'][name]['RunID']}"
             self.assertTrue(self.wait_for(lambda: not self.watchers.alive(str(directory)), 30))
             self.assertFalse((directory / "end.json").exists())
             self.assertRegex((directory / "events.log").read_text(), r"END exit 0: the (row is terminal|PBS job has ended)")
@@ -1243,7 +1285,15 @@ class WatcherInProcess(unittest.TestCase):
             lines += [f"MEM {host} {self.memory[0]} {self.memory[1]}" for host in hosts]
             return subprocess.CompletedProcess(["bash"], 0, stdout="\n".join(lines) + "\n", stderr="")
 
+        self.listings = []  # the next my-jobs answers of the nonce phase: (rows, warnings); none left = no rows
+
+        def paladin_envelope(cli, arguments, **options):
+            self.calls.append(arguments[:2])
+            rows, warnings = self.listings.pop(0) if self.listings else ([], [])
+            return {"ok": True, "data": {"jobs": rows}, "warnings": warnings}
+
         self.patches = [mock.patch.object(paladin_backend, "paladin_call", paladin_call),
+                        mock.patch.object(paladin_backend, "paladin_envelope", paladin_envelope),
                         mock.patch.object(paladin_backend, "remote_shell", remote_shell),
                         mock.patch.object(self.module, "time", self.clock)]
         for patch in self.patches:
@@ -1389,6 +1439,55 @@ class WatcherInProcess(unittest.TestCase):
             self.assertEqual(self.run_watcher(cap=5), 5)
         self.assertEqual(self.calls.count(["palace", "status"]), 15)  # int(5 / 1) + 10 reads
         self.assertFalse((self.dir / "end.json").exists())
+
+    # Decision 1836 m-1 (review r1833 MINOR-1): the nonce phase of the submit-window watcher (NONCE_RULE).
+    def run_nonce(self, search=600.0):
+        self.nonce_dir = self.dir.parent / "nonce-abc"
+        args = ["--run-id", "0", "--nonce", "abc", "--identity", json.dumps({"stage": "w"}), "--search-seconds", str(search),
+                "--cli", "paladin", "--host", "local", "--pbs-bin", "/pbs", "--cap-seconds", "50",
+                "--submitted", paladin_backend.utc_now().isoformat(), "--dir", str(self.nonce_dir), "--interval", "30",
+                "--grace", "1"]
+        return self.module.main(args)
+
+    ROW = {"run_id": 7, "job_id": "j7", "status": "running", "metadata": {"stage": "w", "nonce": "abc"}}
+
+    def test_the_nonce_watcher_finds_its_run_by_the_driver_s_hint_and_watches_it(self):
+        (self.dir.parent / "nonce-abc").mkdir()
+        (self.dir.parent / "nonce-abc" / "run-id").write_text("7\n")
+        self.assertEqual(self.run_nonce(), 11)
+        self.assertEqual(self.end()["RunID"], 7)  # end.json in run-7, the run's own directory
+        self.assertIn("found by the driver's hint", (self.nonce_dir / "events.log").read_text())
+        self.assertNotIn(["palace", "my-jobs"], self.calls)
+
+    def test_the_nonce_watcher_finds_its_run_by_the_lookup_after_a_missing_read(self):
+        self.listings = [([], [{"code": "rows_omitted"}]), ([dict(self.ROW, metadata={"nonce": "other"})], []), ([self.ROW], [])]
+        self.assertEqual(self.run_nonce(), 11)
+        self.assertEqual(self.calls.count(["palace", "my-jobs"]), 3)
+        events = (self.nonce_dir / "events.log").read_text()
+        self.assertIn("READERR palace my-jobs", events)
+        self.assertIn("found by the lookup by the nonce", events)
+
+    def test_the_nonce_watcher_ends_on_a_no_run_row(self):
+        self.listings = [([dict(self.ROW, status="submission_failed", job_id=None)], [])]
+        self.assertEqual(self.run_nonce(), 0)
+        self.assertIn("made no run", (self.nonce_dir / "events.log").read_text())
+        self.assertNotIn(["palace", "status"], self.calls)
+
+    def test_the_nonce_watcher_ends_when_no_run_appears_in_its_search_time(self):
+        self.assertEqual(self.run_nonce(search=300), 0)
+        self.assertIn("no run with this nonce in 300 s", (self.nonce_dir / "events.log").read_text())
+        self.assertEqual(self.calls.count(["palace", "my-jobs"]), 11)  # every 30 s over 300 s
+        self.assertLessEqual(sum(self.clock.slept), 300)
+
+    def test_the_nonce_watcher_leaves_a_run_another_watcher_holds(self):
+        held = paladin_backend.DriverLock(self.dir / "watcher.lock", log=lambda line: None).acquire()
+        try:
+            self.listings = [([self.ROW], [])]
+            self.assertEqual(self.run_nonce(), 0)
+        finally:
+            held.release()
+        self.assertIn("watched by another watcher", (self.nonce_dir / "events.log").read_text())
+        self.assertNotIn(["palace", "status"], self.calls)
 
     def test_one_watcher_per_directory(self):
         held = paladin_backend.DriverLock(self.dir / "watcher.lock", log=lambda line: None).acquire()
