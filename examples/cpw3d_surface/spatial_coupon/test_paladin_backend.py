@@ -83,8 +83,12 @@ def write_cookie(path, seconds_ahead):
     return str(path)
 
 
+START_LIMIT = 5  # decision 1830 (2): a test that requests a 5th watcher start FAILS there (no unbounded starts)
+
+
 class RecordingWatchers:
-    """A stand-in for paladin_backend.RunWatchers: records each watcher start (argv, directory), none runs."""
+    """A stand-in for paladin_backend.RunWatchers: records each watcher start (argv, directory), none runs;
+    the START_LIMIT-th start request fails the test."""
 
     def __init__(self):
         self.started, self.live = [], set()
@@ -93,6 +97,8 @@ class RecordingWatchers:
         return directory in self.live
 
     def start(self, argv, directory):
+        if len(self.started) + 1 >= START_LIMIT:
+            raise AssertionError(f"watcher start request {len(self.started) + 1}: the test's bound (decision 1830 (2))")
         self.started.append((argv, directory))
         self.live.add(directory)
         return 4242
@@ -592,8 +598,12 @@ class DriveWithFakeCLI(FakeCLICase):
             except paladin_backend.PaladinError as error:
                 outcomes["B"] = str(error)
 
+        starts = []
+
         def find(cli, identity):
             if not outcomes:  # the first driver's first lookup: the second driver starts now, in its own thread
+                starts.append(1)
+                self.assertLess(len(starts), START_LIMIT)  # decision 1830 (2)
                 outcomes["B"] = "started"
                 thread = threading.Thread(target=second_driver)
                 thread.start()
@@ -654,6 +664,20 @@ class DriveWithFakeCLI(FakeCLICase):
                 self.assertNotIn("WaitTransport", state["Stages"]["w"])
                 self.assertIn(10.0, self.slept)  # the back-off
                 self.assertEqual(self.submitted(), ["chainport-w", "chainport-r", "chainport-local-edge"])
+
+    def test_one_failed_poll_below_the_bound_is_re_polled_and_the_run_completes(self):
+        self.describes(["true", "empty", "empty", "empty"])  # three bad answers in a row = ONE failed poll
+        state = self.drive()
+        self.assertEqual(state["Stages"]["w"]["State"], "complete")
+        self.assertEqual(self.slept.count(10.0), 1)
+        self.assertEqual(self.submitted(), ["chainport-w", "chainport-r", "chainport-local-edge"])
+
+    def test_a_stop_right_after_a_submit_leaves_the_run_with_its_watcher(self):
+        self.lookups(["true", "true", "fail"])  # the lookup after the submit fails: STOP
+        with self.assertRaises(paladin_backend.PaladinError):
+            self.drive()
+        self.assertEqual(self.submitted(), ["chainport-w"])
+        self.assertEqual(self.live_runs_without_a_watcher(), [])
 
     def test_r5_an_explicit_unlisted_status_is_unknown(self):
         self.describes(["unlisted"])
@@ -717,7 +741,7 @@ class DriveWithFakeCLI(FakeCLICase):
         for flag, value in (("--cap-seconds", "900.0"), ("--host", "local"), ("--bar", "0.85"), ("--grace", "120.0"),
                             ("--job", state["Stages"]["w"]["JobID"])):
             self.assertEqual(argv[argv.index(flag) + 1], value)
-        self.assertEqual(directory, str(self.out / "watchers" / f"w-{state['Stages']['w']['RunID']}"))
+        self.assertEqual(directory, str(self.out / "watchers" / f"run-{state['Stages']['w']['RunID']}"))
 
     def test_a_resume_re_attaches_to_a_live_watcher_and_restarts_a_missing_one(self):
         def ended(seconds):
@@ -972,6 +996,20 @@ class DriveWithFakeCLI(FakeCLICase):
         self.assertFalse(paladin_backend.under("/data/a/../b", "/data/a"))
 
 
+class CountingRunWatchers(paladin_backend.RunWatchers):
+    """The real watcher starts, counted: the START_LIMIT-th start request fails the test (decision 1830 (2))."""
+
+    def __init__(self):
+        super().__init__()
+        self.requests = 0
+
+    def start(self, argv, directory, **options):
+        self.requests += 1
+        if self.requests >= START_LIMIT:
+            raise AssertionError(f"real watcher start request {self.requests}: the test's bound (decision 1830 (2))")
+        return super().start(argv, directory, **options)
+
+
 class RunWatcherProcesses(FakeCLICase):
     """Decision 1820 (4): REAL paladin_run_watcher.py processes (nohup, their own session) against the fake
     CLI and a fake PBS (qstat / qdel) and exec-host ssh on PATH; the watcher's interval 1 s, grace 5 s,
@@ -994,7 +1032,7 @@ class RunWatcherProcesses(FakeCLICase):
         plan = json.loads(self.plan_path.read_text())
         plan["Stages"][0]["CapSeconds"] = 3
         self.plan_path.write_text(json.dumps(plan))
-        self.watchers = paladin_backend.RunWatchers()
+        self.watchers = CountingRunWatchers()
 
     def tearDown(self):
         for patch in self.timing:
@@ -1081,6 +1119,117 @@ class RunWatcherProcesses(FakeCLICase):
             self.assertFalse((directory / "end.json").exists())
             self.assertRegex((directory / "events.log").read_text(), r"END exit 0: the (row is terminal|PBS job has ended)")
         self.assertEqual(state["Stages"]["local-edge"]["State"], "complete")
+
+
+class Bounds(FakeCLICase):
+    """Decision 1830 (3): the bounds in code (no real process is started here)."""
+
+    def test_at_most_three_watcher_starts_per_run_id_per_driver_process(self):
+        self.watchers.start = lambda argv, directory: self.watchers.started.append(argv) or None  # never starts
+        job = self.job()
+        with self.assertRaises(paladin_backend.WatcherNotStarted):
+            job.ensure_watcher("w", 999, job_id=None, submitted=paladin_backend.utc_now().isoformat(), cap_seconds=60)
+        with self.assertRaises(paladin_backend.PaladinError) as stop:
+            job.ensure_watcher("w", 999, job_id=None, submitted=paladin_backend.utc_now().isoformat(), cap_seconds=60)
+        self.assertIn("3 watcher starts in this driver process", str(stop.exception))
+        self.assertEqual(len(self.watchers.started), 3)
+        self.assertEqual(job.watcher_starts, {999: 3})
+
+    def test_one_watcher_directory_per_run_id(self):
+        job = self.job()
+        job.ensure_watcher("w", 7, job_id="j", submitted=paladin_backend.utc_now().isoformat(), cap_seconds=60)
+        job.ensure_watcher("other-name", 7, job_id="j", submitted=paladin_backend.utc_now().isoformat(), cap_seconds=60)
+        self.assertEqual([directory for _, directory in self.watchers.started], [str(self.out / "watchers" / "run-7")])
+
+    def test_the_drive_loop_is_bounded_and_sleeps_at_least_its_minimum(self):
+        self.script({"chainport-w": "hang"})
+        slept = []
+        with mock.patch.object(paladin_backend, "DRIVE_MAX_ADVANCES", 4), self.assertRaises(paladin_backend.PaladinError) as stop:
+            paladin_backend.drive(self.job(), poll_seconds=0, sleep=slept.append)
+        self.assertIn("4 advances without completion", str(stop.exception))
+        self.assertEqual(slept, [paladin_backend.DRIVE_MIN_POLL_SECONDS] * 4)
+
+
+class WatcherInProcess(unittest.TestCase):
+    """paladin_run_watcher.Watcher run IN THIS PROCESS against scripted reads (no process started; decision 1830 (2)):
+    the cap, the memory bar, the qdel fallback, the read bound, one watcher per directory."""
+
+    def setUp(self):
+        import paladin_run_watcher
+        self.module = paladin_run_watcher
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.tmp.name) / "watchers" / "run-7"
+        self.dir.mkdir(parents=True)
+        self.calls, self.status, self.cancel_fails, self.after_qdel = [], "running", False, "F"
+        self.sample_text = f"STATE R\nSTIME {int(time.time()) - 100}\nMEM node 1000 900\n"
+
+        def paladin_call(cli, arguments, **options):
+            self.calls.append(arguments[:2])
+            if arguments[1] == "cancel":
+                if self.cancel_fails:
+                    raise paladin_backend.PaladinError("palace cancel: refused")
+                self.status = "canceled"
+                return {}
+            return {"run_id": 7, "job_id": "j7", "status": self.status,
+                    "terminal": self.status in ("canceled", "completed", "failed")}
+
+        def remote_shell(host, command, **options):
+            self.calls.append(command.split()[0].split("/")[-1])
+            if "qdel" in command:
+                self.sample_text = f"STATE {self.after_qdel}\nSTIME -\n"
+                return subprocess.CompletedProcess(["qdel"], 0, stdout="", stderr="")
+            return subprocess.CompletedProcess(["bash"], 0, stdout=self.sample_text, stderr="")
+
+        self.patches = [mock.patch.object(paladin_backend, "paladin_call", paladin_call),
+                        mock.patch.object(paladin_backend, "remote_shell", remote_shell),
+                        mock.patch.object(self.module.time, "sleep", lambda seconds: None)]
+        for patch in self.patches:
+            patch.start()
+
+    def tearDown(self):
+        for patch in self.patches:
+            patch.stop()
+        self.tmp.cleanup()
+
+    def run_watcher(self, cap=50.0, bar=0.85):
+        args = ["--run-id", "7", "--job", "j7", "--cli", "paladin", "--host", "local", "--pbs-bin", "/pbs",
+                "--cap-seconds", str(cap), "--submitted", paladin_backend.utc_now().isoformat(), "--dir", str(self.dir),
+                "--bar", str(bar), "--interval", "1", "--grace", "1"]
+        return self.module.main(args)
+
+    def end(self):
+        return json.loads((self.dir / "end.json").read_text())
+
+    def test_the_cap_from_the_pbs_start(self):
+        self.assertEqual(self.run_watcher(cap=50), 11)
+        self.assertEqual((self.end()["Kind"], self.end()["Cancel"]["OK"], self.end()["TerminalAfterCancel"]), ("cap", True, True))
+        self.assertIn("from the PBS start", self.end()["Reason"])
+
+    def test_the_memory_bar(self):
+        self.sample_text = f"STATE R\nSTIME {int(time.time())}\nMEM node 1000 100\n"
+        self.assertEqual(self.run_watcher(cap=10**6), 10)
+        self.assertEqual(self.end()["Kind"], "memory")
+
+    def test_a_failed_cancel_falls_back_to_qdel(self):
+        self.cancel_fails = True
+        self.assertEqual(self.run_watcher(cap=50), 11)
+        self.assertEqual((self.end()["Fallback"]["Command"], self.end()["Fallback"]["JobEnded"]), ("/pbs/qdel j7", True))
+        self.assertIn("qdel", self.calls)
+
+    def test_the_read_bound(self):
+        self.status, self.sample_text = "queued", "STATE Q\nSTIME -\n"
+        with mock.patch.object(self.module, "WATCHER_LIFE_BEYOND_CAP_SECONDS", 0.0):
+            self.assertEqual(self.run_watcher(cap=5), 5)
+        self.assertEqual(self.calls.count(["palace", "status"]), 15)  # int(5 / 1) + 10 reads
+        self.assertFalse((self.dir / "end.json").exists())
+
+    def test_one_watcher_per_directory(self):
+        held = paladin_backend.DriverLock(self.dir / "watcher.lock", log=lambda line: None).acquire()
+        try:
+            self.assertEqual(self.run_watcher(), 3)
+        finally:
+            held.release()
+        self.assertEqual(self.calls, [])
 
 
 @unittest.skipUnless((RECORDS / "plan.json").exists(), "records of 274fe1a150c0 absent")

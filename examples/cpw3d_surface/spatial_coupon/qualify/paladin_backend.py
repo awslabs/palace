@@ -597,6 +597,10 @@ WATCHER_RULE = ("decision 1820 (4): every run has an UNATTENDED run watcher (pal
                 "whose watcher does not start is ended early (never left without one)")
 WATCHER_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "paladin_run_watcher.py")
 WATCHER_INTERVAL_SECONDS, WATCHER_GRACE_SECONDS, WATCHER_MEMORY_BAR = 30.0, 120.0, 0.85
+# Decision 1830 (3): hard bounds in code, whatever the checks around them: watcher starts per run id per driver process; the
+# standalone drive loop's advances and its minimum sleep (the re-poll loops are bounded where they are: 3 describe-run asks with
+# 10 / 20 s back-off, 3 lookups 30 s apart, 3 submit rounds).
+WATCHER_STARTS_PER_RUN, DRIVE_MAX_ADVANCES, DRIVE_MIN_POLL_SECONDS = 3, 20000, 5.0
 DEFAULT_PBS_BIN = "/opt/soca/soca-green1/schedulers/default/pbs/bin"
 
 
@@ -693,6 +697,7 @@ class PaladinJob:
         # plan are refused too); False when the caller holds its root's lock (qualify_library.run_qualify).
         self.exclusive, self.locks = exclusive, []
         self.watchers, self.pbs_bin = watchers or RunWatchers(), pbs_bin
+        self.watcher_starts = {}  # run id -> watcher starts in this driver process (<= WATCHER_STARTS_PER_RUN)
         self.session_cookie = session_cookie
         self.lane_root = lane_root  # m-3: the standalone form's root on /data (None: qualify_library's own roots)
         self.host = None if block["Host"] == "local" else block["Host"]
@@ -942,20 +947,25 @@ class PaladinJob:
 
     def ensure_watcher(self, name, run_id, *, job_id, submitted, cap_seconds):
         """WATCHER_RULE: a missing watcher started (its record), None when a live one holds the directory."""
-        directory = os.path.join(os.path.abspath(self.local_dir), "watchers", f"{name}-{run_id}")
+        # ONE directory, hence ONE lock and ONE watcher, per run id (decision 1830 (3)).
+        directory = os.path.join(os.path.abspath(self.local_dir), "watchers", f"run-{run_id}")
         if self.watchers.alive(directory):
             return None
         argv = [sys.executable, WATCHER_PATH, "--run-id", str(run_id), "--job", str(job_id or ""), "--cli", self.block["CLI"],
                 "--host", self.block["Host"], "--pbs-bin", self.pbs_bin, "--cap-seconds", str(float(cap_seconds)),
                 "--submitted", submitted, "--bar", str(WATCHER_MEMORY_BAR), "--interval", str(WATCHER_INTERVAL_SECONDS),
                 "--grace", str(WATCHER_GRACE_SECONDS), "--dir", directory]
-        pid = None
-        for attempt in range(2):
+        pid, attempt = None, 0
+        for attempt in range(1, 3):
+            if self.watcher_starts.get(run_id, 0) >= WATCHER_STARTS_PER_RUN:
+                raise PaladinError(f"{name}: run {run_id}: {WATCHER_STARTS_PER_RUN} watcher starts in this driver process "
+                                   f"already: no further start (decision 1830 (3)); check the watchers by hand")
+            self.watcher_starts[run_id] = self.watcher_starts.get(run_id, 0) + 1
             pid = self.watchers.start(argv, directory)
             if pid:
                 break
-        watcher = {"Dir": directory, "PID": pid, "Started": attempt + 1, "UTC": self.now().isoformat(), "Argv": argv,
-                   "Rule": WATCHER_RULE}
+        watcher = {"Dir": directory, "Stage": name, "PID": pid, "Started": attempt, "UTC": self.now().isoformat(),
+                   "Argv": argv, "Rule": WATCHER_RULE}
         if pid:
             self.log(f"{self.case}: {name} run {run_id}: run watcher pid {pid} (cap {float(cap_seconds):.0f} s)")
             return watcher
@@ -1294,7 +1304,7 @@ class PaladinJob:
             if os.path.isfile(path):
                 with open(path) as f:
                     return json.load(f)
-        directory = os.path.join(os.path.abspath(self.local_dir), "watchers", f"{record['Name']}-{record.get('RunID')}")
+        directory = os.path.join(os.path.abspath(self.local_dir), "watchers", f"run-{record.get('RunID')}")
         if os.path.isfile(os.path.join(directory, "end.json")):
             with open(os.path.join(directory, "end.json")) as f:
                 return json.load(f)
@@ -1366,11 +1376,14 @@ def drive(job, *, poll_seconds, sleep=time.sleep):
     """advance() until the job completes (the standalone form; qualify_library polls itself); the
     driver lock released at the end, whatever the end."""
     try:
-        while not job.advance():
-            sleep(poll_seconds)
+        for _ in range(DRIVE_MAX_ADVANCES):
+            if job.advance():
+                return job.state
+            sleep(max(float(poll_seconds), DRIVE_MIN_POLL_SECONDS))
+        raise PaladinError(f"{job.case}: {DRIVE_MAX_ADVANCES} advances without completion: STOP (decision 1830 (3)); the runs "
+                           f"stay with their run watchers")
     finally:
         job.unlock()
-    return job.state
 
 
 def main(argv=None):

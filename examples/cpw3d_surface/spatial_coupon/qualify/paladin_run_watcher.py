@@ -18,7 +18,8 @@ while the job runs, each exec host's /proc/meminfo (the logic of ctr_memwatch_re
 AN EARLY END = `paladin palace cancel RUN`, then the row must read terminal within --grace seconds;
 a failed cancel or a row still not terminal = `qdel JOB` through --host (decision 1822 (iii): this
 does not depend on the paladin session), then the PBS job must end within --grace.  All of it is in
-end.json and events.log of --dir; exit 11 (cap) / 10 (memory); 3 = another watcher holds --dir.
+end.json and events.log of --dir; exit 11 (cap) / 10 (memory); 3 = another watcher holds --dir (the
+driver names --dir by the run id: one watcher per run); 5 = the read bound (the cap + one day) reached.
 
   python3 paladin_run_watcher.py --run-id R --cli PALADIN --host HOST --pbs-bin DIR --cap-seconds S
       --submitted UTC --dir DIR [--job PBS] [--bar 0.85] [--interval 30] [--grace 120]
@@ -66,6 +67,8 @@ for h in $HOSTS; do
 done
 '''
 ENDED_STATES = ("F", "X")
+# Decision 1830 (3): a minimum sleep between reads and a hard bound on the reads (the cap + one day, at the interval).
+WATCHER_MIN_INTERVAL_SECONDS, WATCHER_LIFE_BEYOND_CAP_SECONDS = 1.0, 86400.0
 
 
 def utc():
@@ -167,7 +170,8 @@ class Watcher:
         submitted = paladin_backend.parse_time(args.submitted).timestamp()
         self.event(f"START run={args.run_id} job={self.job} cap={args.cap_seconds:.0f}s bar={args.bar} "
                    f"interval={args.interval:.0f}s host={args.host} pid={os.getpid()}")
-        while True:
+        interval = max(float(args.interval), WATCHER_MIN_INTERVAL_SECONDS)
+        for _ in range(int((args.cap_seconds + WATCHER_LIFE_BEYOND_CAP_SECONDS) / interval) + 10):
             if not os.path.isdir(args.dir):
                 return 0
             status = self.status()
@@ -193,7 +197,10 @@ class Watcher:
                     used = (total - available) / total if total else 0.0
                     if used >= args.bar:
                         return self.end_early("memory", f"{host} used {used:.4f} of MemTotal >= bar {args.bar}")
-            time.sleep(args.interval)
+            time.sleep(interval)
+        self.event(f"END exit 5: the iteration bound (cap + {WATCHER_LIFE_BEYOND_CAP_SECONDS:.0f} s) reached with the run "
+                   f"not terminal (decision 1830 (3))")
+        return 5
 
 
 def main(argv=None):
