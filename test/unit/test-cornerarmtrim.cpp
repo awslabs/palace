@@ -4831,6 +4831,10 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   REQUIRE(response);
   Vector e_real;
   const auto field = LoopFitLeadFixture::MakeField(space_op, 0.5, e_real);
+  // The fixture exchanges the real part's face-neighbour data only; the interface integrals
+  // below read both parts on shared faces (at 8 ranks an unexchanged imaginary part is read
+  // out of bounds), as the PostOperator exchanges both before its integrals.
+  field->Imag().ExchangeFaceNbrData();
   const auto measured =
       response->GetMaxwellResponse(*field, std::complex<double>(1.0), true);
   REQUIRE_FALSE(measured.loop_remainders.empty());
