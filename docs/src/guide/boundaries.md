@@ -171,14 +171,15 @@ example in place of the `"Absorbing"` boundary on the outer sphere of the
 Each entry of the array gives a surface and its layer. The surface is split into parts, and
 each part becomes one PML block:
 
-  - By default, the parts are the connected parts of the surface. A flat part without
-    `"Center"` is extruded along its outward normal, and any other part radially, from a
-    core: the center of the bounding box of the part, or `"Center"`, a point or the two
-    corners of an axis-aligned box (a rectangle or a segment where they share coordinates).
+  - By default, the parts are the connected parts of the surface. A flat part is extruded
+    along its outward normal, and any other part radially, from a core: the center of the
+    bounding box of the part, or `"Center"`, a point or the two corners of an axis-aligned
+    box (a rectangle or a segment where they share coordinates), which only shapes the
+    parts which are not flat and must be used by one of them.
   - `"Extrusion": "Normal"` is for separate flat faces, such as the two ends of a pipe: the
     parts are the flat patches of the surface (its connected, coplanar faces), each
     extruded along its own normal, and a curved face is an error.
-  - With `"Extrusion": "Radial"`, every connected part is extruded radially, flat or not.
+  - `"Extrusion": "Radial"` extrudes the parts as the default does, and rejects a flat part.
 
 Each face becomes a column of `"Layers"` prisms (triangles) or hexahedra (quadrilaterals),
 curved on curved meshes, and the layer has the same thickness everywhere, measured straight

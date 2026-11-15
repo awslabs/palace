@@ -557,12 +557,14 @@ TEST_CASE("ExtrudePML rejects invalid surfaces", "[pml][geodata][Serial]")
     return pml.extrusion.depth;
   };
   CHECK(ExtrudeFace(json::object()) == config::PMLData::Extrusion::Depth::NORMAL);
-  // Radially, the face is a box whose core must lie on its open sides around the face, and
-  // inside of its PML side.
+  // "Center" only shapes the parts which are not flat, and the radial extrusion rejects a
+  // flat face.
   CHECK_THROWS_WITH(ExtrudeFace({{"Center", {0.0, 0.0, -10.0}}}),
-                    ContainsSubstring("is not on its open side"));
+                    ContainsSubstring("\"Center\" is not used by the PML boundary with "
+                                      "attributes 1, whose parts are flat"));
   CHECK_THROWS_WITH(ExtrudeFace({{"Extrusion", "Radial"}}),
-                    ContainsSubstring("is not inside of its side"));
+                    ContainsSubstring("which is flat! A flat face is extruded along its "
+                                      "normal"));
   // A sphere of flat faces, whose distance from its centre varies by
   // more than the tolerance for a thin layer.
   {
@@ -2143,7 +2145,8 @@ TEST_CASE("Config extruded PML", "[config][pml][Serial]")
   }
 
   // The entries form an array, and the extrusion is "Normal" or "Radial", with "Center"
-  // only for the radial extrusion.
+  // only for the radial extrusion. The schema accepts "Center" with "Normal", so that the
+  // error of the parser, which says why, reaches the user.
   {
     auto config = MakeConfig(pml);
     config["Boundaries"]["PML"] = pml;
@@ -2164,7 +2167,7 @@ TEST_CASE("Config extruded PML", "[config][pml][Serial]")
       entry["Center"] = {0.0, 0.0, 0.0};
     }
     INFO("Extrusion: " << extrusion << ", Center: " << center);
-    CHECK(ValidateConfig(MakeConfig(entry)).empty() == valid);
+    CHECK(ValidateConfig(MakeConfig(entry)).empty() == (valid || center));
     if (valid)
     {
       IoData iodata(MakeConfig(entry), false);
@@ -2177,7 +2180,9 @@ TEST_CASE("Config extruded PML", "[config][pml][Serial]")
     }
     else
     {
-      CHECK_THROWS_WITH(IoData(MakeConfig(entry), false), ContainsSubstring("PML."));
+      CHECK_THROWS_WITH(IoData(MakeConfig(entry), false),
+                        ContainsSubstring(center ? "is only used for the radial extrusion"
+                                                 : "PML.Extrusion"));
     }
   }
 

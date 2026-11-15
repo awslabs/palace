@@ -268,14 +268,14 @@ public:
     int layers = 4;
 
     // By default, the parts of the surface are its connected parts, and a flat part is
-    // extruded along its normal, unless the center is configured. For NORMAL, the parts are
-    // the flat patches (connected, coplanar faces), each extruded along its normal. For
-    // RADIAL, every connected part is extruded radially. Any other part is extruded away
-    // from the closest point of each surface point on the core, the axis-aligned box with
-    // the lower and upper corners center[0] and center[1] (a point, a segment, or a
-    // rectangle where they share coordinates), in mesh length units (nondimensionalized at
-    // load time). Unless configured (has_center), this is the centre of the bounding box of
-    // the part, moved onto the open sides of a box, set by the extrusion.
+    // extruded along its normal. For NORMAL, the parts are the flat patches (connected,
+    // coplanar faces), each extruded along its normal. RADIAL is the default, and a flat
+    // part is an error. Any other part is extruded away from the closest point of each
+    // surface point on the core, the axis-aligned box with the lower and upper corners
+    // center[0] and center[1] (a point, a segment, or a rectangle where they share
+    // coordinates), in mesh length units (nondimensionalized at load time). Unless
+    // configured (has_center), this is the centre of the bounding box of the part, moved
+    // onto the open sides of a box, set by the extrusion.
     enum class Type
     {
       DEFAULT,

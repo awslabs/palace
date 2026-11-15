@@ -3313,8 +3313,8 @@ void ExtrudePML(std::unique_ptr<mfem::Mesh> &orig_mesh, config::DomainData &doma
   // part moves along its direction d to the depths ξ_k = k t / N, k = 1, ..., N: each
   // triangle becomes N prisms and each quadrilateral N hexahedra. Two parts do not share an
   // edge, and a vertex of two parts moves once for each. A flat part is extruded along its
-  // outward normal, unless a core is configured or the extrusion is radial; any other part
-  // along the ray of each node from its closest point on the core. With the face vertices
+  // outward normal (an error for the radial extrusion), and any other part along the ray of
+  // each node from its closest point on the core. With the face vertices
   // ordered so that their normal points out of the element below (as for the faces of MFEM
   // meshes on the exterior boundary), the bottom face of each new element is its face 0,
   // with its outward normal pointing along d (the reference coordinate z of the prism or
@@ -3602,8 +3602,12 @@ void ExtrudePML(std::unique_ptr<mfem::Mesh> &orig_mesh, config::DomainData &doma
     const auto &plane0 = face_plane.at(p.faces[0]);
     const bool flat = std::ranges::all_of(
         p.faces, [&](int f) { return SamePlane(plane0, face_plane.at(f), tol); });
-    p.normal = (ex.type == Extrusion::Type::NORMAL) ||
-               (ex.type == Extrusion::Type::DEFAULT && flat && !ex.has_center);
+    MFEM_VERIFY(!flat || ex.type != Extrusion::Type::RADIAL,
+                "\"Extrusion\": \"Radial\" cannot extrude "
+                    << p.name
+                    << ", which is flat! A flat face is extruded along its normal: remove "
+                       "\"Extrusion\": \"Radial\".");
+    p.normal = (ex.type == Extrusion::Type::NORMAL) || flat;
     if (p.normal)
     {
       ex.depth = Extrusion::Depth::NORMAL;
@@ -3755,6 +3759,18 @@ void ExtrudePML(std::unique_ptr<mfem::Mesh> &orig_mesh, config::DomainData &doma
     depth_text.push_back(fmt::format("along the rays from the {}, at the distance {:.6g} "
                                      "(within {:.2g}% of the thickness)",
                                      core, ex.distance, 100.0 * deviation / ex.thickness));
+  }
+
+  // "Center" shapes only the parts which are not flat, and an entry must use it.
+  for (int k = 0; k < num_entries; k++)
+  {
+    MFEM_VERIFY(!pml[entries[k]].extrusion.has_center ||
+                    std::ranges::any_of(parts, [&](const Part &p)
+                                        { return p.entry == k && !p.normal; }),
+                "\"Center\" is not used by "
+                    << Surface(k)
+                    << ", whose parts are flat and extruded along their normals! Remove "
+                       "\"Center\", which only shapes the parts which are not flat.");
   }
 
   // Position of the vertex v of the face f.

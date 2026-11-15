@@ -1213,23 +1213,12 @@
     "BoundaryPML": {
       "type": "object",
       "title": "Extruded Perfectly Matched Layer",
-      "description": "Entry of the perfectly matched layer (PML) extruded from farfield boundaries. The parts of the surface are its connected parts, and two parts, of one entry or of two, must not share an edge. A flat part without `\"Center\"` is extruded along its outward normal, and any other part radially from a core, the point or box `\"Center\"` or by default the center of the bounding box of the part, so that each triangle becomes a column of `\"Layers\"` prisms and each quadrilateral one of hexahedra, curved on curved meshes, and the layer has the same thickness everywhere. A box (whose faces are all flat, normal to the coordinate axes, and on the sides of its bounding box) is extruded per component into its bounding box grown by the thickness on its sides with a face, as the Cartesian PML of `config[\"Domains\"][\"PML\"]`, and the core must lie on its sides without a face, where the layer ends flush. Any other part extruded radially must be at a constant distance from the core (a sphere around its centre, or the wall of a cylinder around its axis). Each extruded element takes the material of the element below it, so that materials which reach the boundaries continue through the layer. The coordinates are stretched with the same parameters as `config[\"Domains\"][\"PML\"]` at the depth into the layer. The boundaries become interior boundaries, whose attributes can still be used for postprocessing, the other boundaries through their edges extend through the layer with their attributes, and the outer surface of the layer is PEC by default. Every face of the boundaries must face its direction, ports and Floquet boundaries must not touch them, and periodic boundaries may only cross parts extruded along their normal. Adaptive mesh refinement must be nonconformal.",
+      "description": "Entry of the perfectly matched layer (PML) extruded from farfield boundaries. The parts of the surface are its connected parts, and two parts, of one entry or of two, must not share an edge. A flat part is extruded along its outward normal, and any other part radially from a core, the point or box `\"Center\"` or by default the center of the bounding box of the part, so that each triangle becomes a column of `\"Layers\"` prisms and each quadrilateral one of hexahedra, curved on curved meshes, and the layer has the same thickness everywhere. A box (whose faces are all flat, normal to the coordinate axes, and on the sides of its bounding box) is extruded per component into its bounding box grown by the thickness on its sides with a face, as the Cartesian PML of `config[\"Domains\"][\"PML\"]`, and the core must lie on its sides without a face, where the layer ends flush. Any other part extruded radially must be at a constant distance from the core (a sphere around its centre, or the wall of a cylinder around its axis). Each extruded element takes the material of the element below it, so that materials which reach the boundaries continue through the layer. The coordinates are stretched with the same parameters as `config[\"Domains\"][\"PML\"]` at the depth into the layer. The boundaries become interior boundaries, whose attributes can still be used for postprocessing, the other boundaries through their edges extend through the layer with their attributes, and the outer surface of the layer is PEC by default. Every face of the boundaries must face its direction, ports and Floquet boundaries must not touch them, and periodic boundaries may only cross parts extruded along their normal. Adaptive mesh refinement must be nonconformal.",
       "additionalProperties": false,
       "required": [
         "Attributes",
         "Thickness"
       ],
-      "not": {
-        "required": [
-          "Center",
-          "Extrusion"
-        ],
-        "properties": {
-          "Extrusion": {
-            "const": "Normal"
-          }
-        }
-      },
       "properties": {
         "Attributes": {
           "$ref": "#/$defs/Attributes",
@@ -1249,12 +1238,12 @@
         "Center": {
           "$ref": "#/$defs/PointOrBox",
           "title": "Center",
-          "description": "Core of the radial extrusion, in mesh length units: a point `[x, y, z]`, or the two corners `[[x1, y1, z1], [x2, y2, z2]]` of an axis-aligned box, which is a rectangle or a segment where the corners share coordinates. Each node moves away from its closest point on the core. Defaults to the center of the bounding box of each part, moved onto the open sides of a box. Not used with `\"Extrusion\": \"Normal\"`. A box just inside of a box-shaped boundary gives straight columns over it, and for a layered medium or a boundary which crosses a box-shaped boundary, such as a substrate or a trace, a core which spans it, as a segment through the layers, keeps it flat through the PML.",
+          "description": "Core of the radial extrusion, in mesh length units: a point `[x, y, z]`, or the two corners `[[x1, y1, z1], [x2, y2, z2]]` of an axis-aligned box, which is a rectangle or a segment where the corners share coordinates. Each node moves away from its closest point on the core. Defaults to the center of the bounding box of each part, moved onto the open sides of a box. Only shapes the parts which are not flat, and one of them must use it; not used with `\"Extrusion\": \"Normal\"`. A box just inside of a box-shaped boundary gives straight columns over it, and for a layered medium or a boundary which crosses a box-shaped boundary, such as a substrate or a trace, a core which spans it, as a segment through the layers, keeps it flat through the PML.",
           "x-palace-advanced": true
         },
         "Extrusion": {
           "type": "string",
-          "description": "`\"Normal\"` is for separate flat faces, such as the two ends of a pipe: it extrudes each flat patch of the surface (its connected, coplanar faces) along its own outward normal, as a part, and rejects curved faces and patches which share an edge. Without it, a flat part is extruded along its normal too, and a connected surface of several flat patches, such as a cube, is one part. `\"Radial\"` extrudes each connected part along rays, flat or not.",
+          "description": "`\"Normal\"` is for separate flat faces, such as the two ends of a pipe: it extrudes each flat patch of the surface (its connected, coplanar faces) along its own outward normal, as a part, and rejects curved faces and patches which share an edge. Without it, a flat part is extruded along its normal too, and a connected surface of several flat patches, such as a cube, is one part. `\"Radial\"` extrudes each connected part along rays, as without it, and rejects a flat part, which is extruded along its normal.",
           "enum": [
             "Normal",
             "Radial"
