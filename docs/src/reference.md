@@ -2623,7 +2623,9 @@ correction actually covers. The definitions are energies of the RAW field:
     a ratio that counts those claims in its denominator (the fabricated energy over the
     raw energy of every model claim, excluded ones included) is smaller than this factor by
     the factor ``1 + E_{CC} / (W - U)`` (``E_{CC}`` the excluded claims' raw energy)
-    wherever such an exclusion acts, and equal to it where none does.
+    where such an exclusion is the only one of these terms that acts (a moved loop
+    remainder, an end snap or an owner credit also separates the two), and equal to it
+    where no exclusion, moved loop remainder, end snap or owner credit acts.
 
 The files (plain text, the cell keys of the run's other tables; written as each mode,
 frequency or source completes; under AMR in every iteration's directory; `nan` where a
