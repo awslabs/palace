@@ -29,6 +29,11 @@ that is not F / X and no Exit_status: R / Q / H / E / S / W / T / B ...).  If th
 DISAGREE line is recorded and nothing has ended: the watcher keeps watching with the limits (the cap
 from the PBS start and the memory bar, 'running' by PBS R), and an early end goes on to the qdel by the
 job id.  The PBS read of the verifying round is recorded (end.json PBSAtVerification; the END line).
+JOB_RULE (decision 1844, review r1836 MINOR-2): a read is of THIS run's job only.  The PBS answer's Jobs
+entry is read only when its key has the job id's numeric prefix (JOB_PARSER; entries of other jobs only
+= OTHERJOB, a missing PBS read).  The row's job_id is compared with the kept job id (the numeric prefix)
+in every read: a CHANGED job id makes the whole round a MISSING read (the row and the PBS read of the
+kept job are set aside: never 'ended', never 'verified'), recorded (end.json / the marker RowJobIDs).
 END_RULE (decision 1836, review r1833 MAJOR-1 (b) / (c)): AN EARLY END is repeated until it is
 VERIFIED (the row terminal or a finished-job answer; an empty qstat answer verifies nothing).  One
 round = `paladin palace cancel RUN` (the end request); refused, or the run not verified within
@@ -66,19 +71,24 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import paladin_backend  # noqa: E402  (the same qualify/ directory)
 
-# One read of the cluster (bash on --host, the job id and the PBS bin directory as arguments).
-SAMPLE_SCRIPT = r'''set -u
-JOB="$1"; PBS_BIN="$2"; shift 2; KEPT_HOSTS="$*"
-read -r STATE STIME EXIT HOSTS < <(timeout 30 "$PBS_BIN/qstat" -xf -F json "$JOB" 2>/dev/null | python3 -c '
+# JOB_RULE: the parser of one `qstat -xf -F json JOB` answer (argv[1] = JOB): only the entry whose key has JOB's numeric
+# prefix is read; no entry = NOTFOUND, entries of other jobs only = OTHERJOB (both a missing PBS read).  No single quote in
+# it: it is embedded in SAMPLE_SCRIPT between single quotes.
+JOB_PARSER = r'''
 import json, sys, time
 try:
     jobs = json.load(sys.stdin).get("Jobs", {})
 except Exception:
     jobs = {}
-if not jobs:
+if not isinstance(jobs, dict) or not jobs:
     print("NOTFOUND - -")
     sys.exit(0)
-job = next(iter(jobs.values()))
+wanted = sys.argv[1].split(".")[0]
+mine = [value for key, value in jobs.items() if str(key).split(".")[0] == wanted]
+if not mine:
+    print("OTHERJOB - -")
+    sys.exit(0)
+job = mine[0]
 try:
     start = str(int(time.mktime(time.strptime(job["stime"], "%a %b %d %H:%M:%S %Y"))))
 except Exception:
@@ -90,12 +100,16 @@ for part in (job.get("exec_host") or "").split("+"):
     if host and host not in hosts:
         hosts.append(host)
 print(job.get("job_state", "UNKNOWN"), start, "-" if code is None else code, " ".join(hosts))
-')
+'''
+# One read of the cluster (bash on --host, the job id and the PBS bin directory as arguments).
+SAMPLE_SCRIPT = r'''set -u
+JOB="$1"; PBS_BIN="$2"; shift 2; KEPT_HOSTS="$*"
+read -r STATE STIME EXIT HOSTS < <(timeout 30 "$PBS_BIN/qstat" -xf -F json "$JOB" 2>/dev/null | python3 -c ''' + "'" + JOB_PARSER + "'" + r''' "$JOB")
 echo "STATE ${STATE:-NOTFOUND}"
 echo "STIME ${STIME:--}"
 echo "EXIT ${EXIT:--}"
 if [ "${STATE:-}" = "R" ]; then echo "HOSTS $HOSTS"
-elif [ "${STATE:-NOTFOUND}" = "NOTFOUND" ] && [ -n "$KEPT_HOSTS" ]; then HOSTS="$KEPT_HOSTS"  # READ_RULE: the kept hosts
+elif { [ "${STATE:-NOTFOUND}" = "NOTFOUND" ] || [ "${STATE:-}" = "OTHERJOB" ]; } && [ -n "$KEPT_HOSTS" ]; then HOSTS="$KEPT_HOSTS"  # READ_RULE / JOB_RULE
 else exit 0
 fi
 for h in $HOSTS; do
@@ -127,6 +141,7 @@ class Watcher:
         self.start_epoch = None
         self.hosts = []  # the exec hosts of the last good PBS read (READ_RULE)
         self.verification = None  # the PBS read of the last verifying round (ROW_RULE)
+        self.row_jobs = []  # the other job ids a row named (JOB_RULE)
         self.events = os.path.join(args.dir, "events.log")
 
     def event(self, line):
@@ -141,6 +156,21 @@ class Watcher:
         except paladin_backend.PaladinError as error:
             self.event(f"READERR palace status: {str(error)[:200]}")
             return None
+
+    def row_read(self):
+        """JOB_RULE: (the row's read, changed).  The first job id the row names is kept; a row naming another job id (by the
+        numeric prefix) = changed: the round is a missing read (recorded)."""
+        status = self.status()
+        named = str(status["job_id"]) if status and status.get("job_id") else None
+        if named and not self.job:
+            self.job = named
+        elif named and named.split(".")[0] != self.job.split(".")[0]:
+            if named not in self.row_jobs:
+                self.row_jobs.append(named)
+            self.event(f"READ missing read: the row names job {named}, the watcher keeps job {self.job}: the round is set "
+                       f"aside (JOB_RULE)")
+            return None, True
+        return status, False
 
     def sample(self):
         """One cluster read: {State, StartEpoch, ExitStatus, Hosts, Memory [(host, total kB, available kB)]},
@@ -173,8 +203,9 @@ class Watcher:
 
     @staticmethod
     def pbs_read(sample):
-        """True for a PBS read that shows the job (READ_RULE): not None, not NOTFOUND, not without a job_state."""
-        return sample is not None and sample["State"] not in ("NOTFOUND", "UNKNOWN")
+        """True for a PBS read that shows the job (READ_RULE / JOB_RULE): not None, not NOTFOUND, not another job's answer
+        (OTHERJOB), not without a job_state."""
+        return sample is not None and sample["State"] not in ("NOTFOUND", "OTHERJOB", "UNKNOWN")
 
     @staticmethod
     def finished(sample):
@@ -198,9 +229,10 @@ class Watcher:
     def verified(self):
         """END_RULE: what shows the run has ended (the row terminal with no in-queue PBS read in the same round, a
         finished-job answer), or None.  self.verification = the PBS read of the last verifying round (ROW_RULE)."""
-        status = self.status()
-        if status and not self.job and status.get("job_id"):
-            self.job = str(status["job_id"])
+        status, changed = self.row_read()
+        if changed:
+            self.verification = None
+            return None
         sample = self.sample()
         self.verification = self.pbs_shown(sample)
         if status and status.get("terminal") is True:
@@ -253,7 +285,7 @@ class Watcher:
                     self.event(f"round {round_number}: no qdel possible: no PBS job id known")
             entry["VerifiedBy"] = shown
             record["Rounds"].append(entry)
-            record["Job"] = self.job
+            record["Job"], record["RowJobIDs"] = self.job, self.row_jobs
             if shown:
                 record["Verified"], record["VerifiedBy"] = True, shown
                 record["PBSAtVerification"] = self.verification
@@ -265,9 +297,12 @@ class Watcher:
                 time.sleep(backoff)
         paladin_backend.write_json_atomic(path, record)
         if not record["Verified"]:
-            marker = {"RunID": self.args.run_id, "Job": self.job, "Kind": kind, "UTC": utc(), "Rounds": len(record["Rounds"]),
+            marker = {"RunID": self.args.run_id, "Job": self.job, "RowJobIDs": self.row_jobs, "Kind": kind, "UTC": utc(),
+                      "Rounds": len(record["Rounds"]),
                       "Check": f"by hand: paladin palace status {self.args.run_id} --json; qstat -xf {self.job or '<job>'}; "
-                               f"qdel {self.job or '<job>'}; then delete this file",
+                               f"qdel {self.job or '<job>'}"
+                               f"{' (the row also named ' + ', '.join(self.row_jobs) + ')' if self.row_jobs else ''}; "
+                               f"then delete this file",
                       "Rule": "END_RULE of paladin_run_watcher.py (decision 1836)"}
             paladin_backend.write_json_atomic(os.path.join(self.args.dir, UNVERIFIED_MARKER), marker)
             self.event(f"END exit 12: the early end is NOT VERIFIED after {len(record['Rounds'])} rounds: {UNVERIFIED_MARKER} "
@@ -351,10 +386,8 @@ class Watcher:
                 break
             if not os.path.isdir(args.dir):
                 return 0
-            status = self.status()
-            if status and not self.job and status.get("job_id"):
-                self.job = str(status["job_id"])
-            sample = self.sample()
+            status, changed = self.row_read()
+            sample = None if changed else self.sample()
             finished = self.finished(sample)
             if finished:
                 self.event(f"END exit 0: the PBS job has ended ({finished}; row {(status or {}).get('status')})")
@@ -376,7 +409,9 @@ class Watcher:
                 running, how = sample["State"] == "R", f"PBS {sample['State']}"
             else:
                 running, how = (status or {}).get("status") == "running", "the row's status (a missing PBS read)"
-                self.event(f"READ missing PBS read ({'an empty qstat answer' if sample else 'no answer'}): running from "
+                kind = ("another job's answer (OTHERJOB)" if sample and sample["State"] == "OTHERJOB" else
+                        "an empty qstat answer" if sample else "no answer")
+                self.event(f"READ missing PBS read ({kind}): running from "
                            f"{how}: {running}")
             blind = now - last_read >= BLIND_SECONDS
             clock = self.start_epoch or submitted

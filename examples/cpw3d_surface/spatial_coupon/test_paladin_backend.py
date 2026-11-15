@@ -10,8 +10,10 @@ after a submit, while waiting, after a run completed), the five-condition comple
 cap cancel, out-of-memory, transport failures (one re-submit), refusals, the pin / schema /
 archive / configuration checks, two runs of one stage; and, when the records of key
 274fe1a150c0 are present on this host, the dry run of its fab plan of record."""
+import contextlib
 import datetime
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
@@ -1551,7 +1553,7 @@ class WatcherInProcess(GuardedTestCase):
         self.calls, self.status, self.cancel = [], "running", "ok"
         self.status_fails = False  # the row's read missing
         self.qdel = []  # the outcomes of the next qdel calls: ok | rc1 | ssh; none left = ok
-        self.pbs = "R"  # R | Q | NOTFOUND | F | ssh (the cluster read fails)
+        self.pbs = "R"  # R | Q | NOTFOUND | OTHERJOB | F | ssh (the cluster read fails)
         self.start_ago, self.start_at, self.memory = 100, None, (1000, 900)  # the PBS start: now - start_ago, or start_at
         self.commands = []
 
@@ -1589,7 +1591,7 @@ class WatcherInProcess(GuardedTestCase):
             stime = self.start_at or int(self.clock.now) - self.start_ago
             lines = [f"STATE {self.pbs}", f"STIME {stime if self.pbs == 'R' else '-'}",
                      f"EXIT {0 if self.pbs == 'F' else '-'}"]
-            hosts = ["node"] if self.pbs == "R" else kept if self.pbs == "NOTFOUND" else []
+            hosts = ["node"] if self.pbs == "R" else kept if self.pbs in ("NOTFOUND", "OTHERJOB") else []
             if self.pbs == "R":
                 lines.append("HOSTS node")
             lines += [f"MEM {host} {self.memory[0]} {self.memory[1]}" for host in hosts]
@@ -1815,6 +1817,66 @@ class WatcherInProcess(GuardedTestCase):
         self.assertEqual(self.run_watcher(cap=50), 11)
         self.assertEqual(self.end()["PBSAtVerification"], {"State": "F", "ExitStatus": 0})
         self.assertIn("row terminal (canceled); PBS", self.end()["VerifiedBy"])
+
+    # Decision 1844 (review r1836 MINOR-2, attacks X1a / X1b): JOB_RULE: a read is of this run's job only.
+    def test_x1a_a_row_naming_another_job_id_is_a_missing_read_never_an_end(self):
+        """Was: exit 0 'the PBS job has ended' (the read of the kept j7 = F) while the row runs and names j8."""
+        self.pbs = "F"  # the PBS read of the kept job j7: finished
+        real = paladin_backend.paladin_call
+
+        def the_row_names_j8(cli, arguments, **options):
+            answer = real(cli, arguments, **options)
+            if arguments[1] == "status":
+                answer["job_id"] = "j8"
+            return answer
+
+        with mock.patch.object(paladin_backend, "paladin_call", the_row_names_j8):
+            self.assertEqual(self.run_watcher(cap=50, submitted_ago=1000, interval=30), 12)
+        events = (self.dir / "events.log").read_text()
+        self.assertNotIn("END exit 0", events)
+        self.assertIn("the row names job j8, the watcher keeps job j7: the round is set aside (JOB_RULE)", events)
+        self.assertIn("by the clock", self.end()["Reason"])
+        self.assertEqual((self.end()["Verified"], self.end()["RowJobIDs"]), (False, ["j8"]))
+        marker = json.loads((self.dir / self.module.UNVERIFIED_MARKER).read_text())
+        self.assertEqual((marker["Job"], marker["RowJobIDs"]), ("j7", ["j8"]))
+        self.assertIn("the row also named j8", marker["Check"])
+
+    def parse(self, job, answer):
+        """JOB_PARSER executed IN THIS PROCESS on one qstat -xf -F json answer (no process started)."""
+        with mock.patch.object(sys, "argv", ["-c", job]), mock.patch.object(sys, "stdin", io.StringIO(answer)), \
+                contextlib.redirect_stdout(io.StringIO()) as printed:
+            try:
+                exec(compile(self.module.JOB_PARSER, "<JOB_PARSER>", "exec"), {"__name__": "__main__"})
+            except SystemExit:
+                pass
+        return printed.getvalue().strip()
+
+    def test_x1b_the_pbs_answer_is_read_only_for_the_job_it_asked_for(self):
+        """Was: the FIRST Jobs entry whatever its key ('F 1794736800 0' for an answer keyed 999.other-server)."""
+        other = json.dumps({"Jobs": {"999.other-server": {"job_state": "F", "Exit_status": 0,
+                                                          "stime": "Sun Nov 15 10:00:00 2026"}}})
+        self.assertEqual(self.parse("121051", other), "OTHERJOB - -")
+        self.assertEqual(self.parse("121051.soca-green", other), "OTHERJOB - -")
+        mine = json.dumps({"Jobs": {"999.other-server": {"job_state": "F", "Exit_status": 0},
+                                    "121051.soca-green": {"job_state": "R", "exec_host": "n1/0*4+n2/0*4"}}})
+        self.assertEqual(self.parse("121051", mine), "R - - n1 n2")
+        self.assertEqual(self.parse("121051", json.dumps({"Jobs": {}})), "NOTFOUND - -")
+        self.assertNotIn("'", self.module.JOB_PARSER)  # embedded between single quotes
+        self.assertIn("python3 -c '" + self.module.JOB_PARSER + "' \"$JOB\")", self.module.SAMPLE_SCRIPT)
+
+    def test_another_job_s_answer_is_a_missing_read_that_keeps_the_memory_bar_on_the_kept_hosts(self):
+        real = paladin_backend.remote_shell
+
+        def other_job_after_one_good_read(host, command, **options):
+            result = real(host, command, **options)
+            if "qdel" not in command:
+                self.pbs, self.memory = "OTHERJOB", (1000, 100)
+            return result
+
+        with mock.patch.object(paladin_backend, "remote_shell", other_job_after_one_good_read):
+            self.assertEqual(self.run_watcher(cap=10**6), 10)
+        self.assertIn("READ missing PBS read (another job's answer (OTHERJOB))", (self.dir / "events.log").read_text())
+        self.assertEqual(self.end()["Kind"], "memory")
 
     # Decision 1836 m-1 (review r1833 MINOR-1): the nonce phase of the submit-window watcher (NONCE_RULE).
     def run_nonce(self, search=600.0):
