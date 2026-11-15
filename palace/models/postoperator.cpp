@@ -391,6 +391,19 @@ PostOperator<solver_t>::PostOperator(
       // same order; the operator reads them nowhere after the construction), held once,
       // in the compact exact form (lane L1, ruling 1682).
       surface_response_model_raw = surface_response_op->ReleaseModelRawClaimPortionList();
+      // Ruling 1688 (lane L1): the stage-0 Missing LENGTH line (root; log only).
+      if (!surface_response_op->IsRawFallback())
+      {
+        const auto [missing, method_gap] = SplitCoverageUncoveredByKeyClass(
+            surface_response_uncovered, surface_response_op->GetCoverageKeyRecords());
+        const auto targets = surface_response_op->GetTargetInterfaces();
+        Mpi::Print(
+            "\n{}",
+            CoverageStageZeroLine(
+                GetInterfaceTypes(), targets,
+                surf_post_op.GetInterfacePerimeterLengths(targets, {missing, method_gap}),
+                surface_response_op->GetIdentificationFeatureLengths(), iodata.units));
+      }
       surface_response_exclusion_energy_enabled =
           surface_response_op->ExclusionEnergyRequested();
       surface_response_within_r_volume_energy_enabled =

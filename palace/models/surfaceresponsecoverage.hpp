@@ -338,6 +338,24 @@ nlohmann::json CoverageRunMetadata(const CoverageRunRecord &record,
 // NO-RANGE summary line; one line naming the status-less served models).
 std::string CoverageRunBanner(const nlohmann::json &metadata);
 
+// Ruling 1688 (the stage-0 Missing LENGTH line; a log line only): the uncovered portions
+// split by their feature's key class: first = Missing (and a feature without a key record),
+// second = method gap (PlacementRejected, Unboxable).
+std::pair<std::vector<SurfacePostOperator::UncoveredPerimeterPortion>,
+          std::vector<SurfacePostOperator::UncoveredPerimeterPortion>>
+SplitCoverageUncoveredByKeyClass(
+    const std::vector<SurfacePostOperator::UncoveredPerimeterPortion> &uncovered,
+    const std::map<int, CoverageKeyRecord> &keys_by_feature);
+// The line: per interface Type (of `types`, every interface) the Missing length over the
+// edge-tree length of the Type's TARGET interfaces (`lengths` per target: lists = {Missing,
+// method gap}), the method-gap length beside it; "n/a" for a Type without a target
+// interface or with a zero length; then the identification's all-feature figure
+// unmatched / (matched + unmatched) ("n/a" when no feature pass ran in this process).
+std::string CoverageStageZeroLine(
+    const std::map<int, std::string> &types, const std::set<int> &targets,
+    const std::map<int, SurfacePostOperator::InterfacePerimeterLengths> &lengths,
+    std::pair<double, double> identification_lengths, const Units &units);
+
 }  // namespace palace
 
 #endif  // PALACE_MODELS_SURFACE_RESPONSE_COVERAGE_HPP

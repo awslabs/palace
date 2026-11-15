@@ -15965,6 +15965,8 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
         curved_matches, corner_matches, mirror_band.image_frames, mirror_band.planes,
         &geometry_ledger, mesh.GetComm());
     GeometryStageLine("patches built: " + std::to_string(result.patches.size()));
+    result.identification_matched_length = summary.matched_length;
+    result.identification_unmatched_length = summary.unmatched_length;
     if (requirements && !summary.unpatched_pairs.empty())
     {
       nlohmann::json records = nlohmann::json::array();
@@ -31109,6 +31111,8 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
     }
     uncovered_portions = config.uncovered_portions;
     uncovered_keys = config.uncovered_keys;
+    identification_matched_length = config.identification_matched_length;
+    identification_unmatched_length = config.identification_unmatched_length;
     exclusion_portions = config.exclusion_portions;  // section 8's export set, by class
     mirror_planes = config.mirror_planes;
     mirror_band = config.mirror_band_over_radius * config.matching_radius;

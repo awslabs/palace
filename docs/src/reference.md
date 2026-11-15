@@ -2713,6 +2713,15 @@ coverage outputs do not change it). The column `loop remainder of excluded patch
 twice (J)` prints that amount, integrated on its own; the coverage partition counts every
 point once.
 
+Before the solve, the log prints one stage-0 line: per interface `Type`, the length of the
+Missing-class uncovered portions on the `Type`'s target interfaces over the length of
+their perimeter, with the method-gap (placement-rejected or unboxable) length beside it
+("n/a" for a `Type` with no target interface), and the identification's all-feature
+figure, unmatched / (matched + unmatched) length ("n/a" when the features were read from
+the response-geometry cache). It is a LENGTH figure: it is not the energy share, and a
+small value does not mean good coverage: on one device, 0.83 % of the perimeter by length
+stood beside 22 to 60 % of ``W`` by energy uncovered in some modes.
+
 A coverage status is about coverage only; the regime status says whether the covered
 part's correction factor lies in the range validated for this library and excitation
 class; NEITHER says that the mesh of the solve resolves the field at the correction

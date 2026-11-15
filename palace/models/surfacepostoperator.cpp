@@ -1647,6 +1647,72 @@ SurfacePostOperator::ClassifyClaimEnd(const std::array<double, 3> &p,
   return {match, distance};
 }
 
+std::map<int, SurfacePostOperator::InterfacePerimeterLengths>
+SurfacePostOperator::GetInterfacePerimeterLengths(
+    const std::set<int> &indices, const std::vector<PerimeterPortionView> &lists) const
+{
+  std::map<int, InterfacePerimeterLengths> lengths;
+  for (const int idx : indices)
+  {
+    auto it = eps_surfs.find(idx);
+    MFEM_VERIFY(it != eps_surfs.end(),
+                "Unknown interface dielectric postprocessing index requested!");
+    const auto &data = it->second;
+    auto &entry = lengths[idx];
+    entry.lists.assign(lists.size(), 0.0);
+    if (data.edge_distances.empty() || !data.edge_distance_tree)
+    {
+      continue;
+    }
+    const EdgeDistanceTree &tree = *data.edge_distance_tree;
+    for (std::size_t i = 0; i < tree.Size(); i++)
+    {
+      const auto &segment = tree.GetSegment(i);
+      double length2 = 0.0;
+      for (int d = 0; d < 3; d++)
+      {
+        length2 += (segment.p1[d] - segment.p0[d]) * (segment.p1[d] - segment.p0[d]);
+      }
+      entry.total += std::sqrt(length2);
+    }
+    const double radius = data.edge_distances.back();
+    for (std::size_t k = 0; k < lists.size(); k++)
+    {
+      if (lists[k].Empty())
+      {
+        continue;
+      }
+      const UncoveredEdgeIntervals intervals(
+          tree, lists[k], kSignatureParameterToleranceOverRadius * radius);
+      for (const auto &[segment, pieces] : intervals.by_segment)
+      {
+        std::vector<std::pair<double, double>> sorted;
+        for (const auto &piece : pieces)
+        {
+          sorted.emplace_back(piece.a, piece.b);
+        }
+        std::sort(sorted.begin(), sorted.end());
+        double a = sorted.front().first, b = sorted.front().second;
+        for (const auto &[a1, b1] : sorted)
+        {
+          if (a1 > b)
+          {
+            entry.lists[k] += b - a;
+            a = a1;
+            b = b1;
+          }
+          else
+          {
+            b = std::max(b, b1);
+          }
+        }
+        entry.lists[k] += b - a;
+      }
+    }
+  }
+  return lengths;
+}
+
 std::map<int, SurfacePostOperator::InterfaceCoveragePartition>
 SurfacePostOperator::GetInterfaceCoveragePartition(
     const std::set<int> &indices, const GridFunction &E, const GridFunction *D,

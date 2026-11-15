@@ -1941,6 +1941,11 @@ public:
       bool unboxable = false;
     };
     std::vector<UncoveredKeyData> uncovered_keys;
+    // Lane L1 (ruling 1688; the stage-0 Missing LENGTH line, a log line only): the
+    // identification's matched and unmatched feature lengths (mesh units) of THIS process's
+    // feature pass; negative when no feature pass ran here (a response-geometry cache load,
+    // explicit models). Not carried by the geometry cache.
+    double identification_matched_length = -1.0, identification_unmatched_length = -1.0;
     // The excluded / unclaimed perimeter portions of the identification (idfix DESIGN
     // section 8; the exclusion-energy export): `topology` = the exclusion Class by name (a
     // whole-segment exclusion's class, an analytic CrossLayer zone's, CornerArmTrim for the

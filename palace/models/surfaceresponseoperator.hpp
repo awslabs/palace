@@ -961,6 +961,9 @@ private:
   // uncovered_portions (the identification's Hash, matched / rejected, Unboxable).
   std::vector<config::ElectrostaticSolverData::ResponseCorrectionData::UncoveredKeyData>
       uncovered_keys;
+  // Lane L1 (ruling 1688): the identification's matched / unmatched feature lengths (mesh
+  // units; negative when no feature pass ran in this process).
+  double identification_matched_length = -1.0, identification_unmatched_length = -1.0;
   // The placement's clip of those portions by the matched clusters' support boxes
   // (decision 399 MAJOR-1); uncovered_portions holds the clipped portions.
   UncoveredSpatialSupportClipping uncovered_spatial_support_clipping;
@@ -1784,6 +1787,10 @@ public:
   GetUncoveredKeys() const
   {
     return uncovered_keys;
+  }
+  std::pair<double, double> GetIdentificationFeatureLengths() const
+  {
+    return {identification_matched_length, identification_unmatched_length};
   }
   // The parts of the uncovered requirements removed inside the matched clusters' support
   // boxes at placement (decision 399 MAJOR-1; GetUncoveredPortions holds the remainder).

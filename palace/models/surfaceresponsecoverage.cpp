@@ -1202,4 +1202,93 @@ std::string CoverageRunBanner(const nlohmann::json &metadata)
   return banner;
 }
 
+std::pair<std::vector<SurfacePostOperator::UncoveredPerimeterPortion>,
+          std::vector<SurfacePostOperator::UncoveredPerimeterPortion>>
+SplitCoverageUncoveredByKeyClass(
+    const std::vector<SurfacePostOperator::UncoveredPerimeterPortion> &uncovered,
+    const std::map<int, CoverageKeyRecord> &keys_by_feature)
+{
+  std::pair<std::vector<SurfacePostOperator::UncoveredPerimeterPortion>,
+            std::vector<SurfacePostOperator::UncoveredPerimeterPortion>>
+      split;
+  for (const auto &portion : uncovered)
+  {
+    const auto record = keys_by_feature.find(portion.feature);
+    const bool method_gap = record != keys_by_feature.end() && record->second.method_gap;
+    (method_gap ? split.second : split.first).push_back(portion);
+  }
+  return split;
+}
+
+std::string CoverageStageZeroLine(
+    const std::map<int, std::string> &types, const std::set<int> &targets,
+    const std::map<int, SurfacePostOperator::InterfacePerimeterLengths> &lengths,
+    std::pair<double, double> identification_lengths, const Units &units)
+{
+  struct TypeLengths
+  {
+    int targets = 0;
+    double total = 0.0, missing = 0.0, method_gap = 0.0;
+  };
+  std::vector<std::pair<std::string, TypeLengths>> by_type;  // order of first appearance
+  for (const auto &[interface, type] : types)
+  {
+    auto it = std::find_if(by_type.begin(), by_type.end(), [&type = type](const auto &entry)
+                           { return entry.first == type; });
+    if (it == by_type.end())
+    {
+      by_type.emplace_back(type, TypeLengths{});
+      it = std::prev(by_type.end());
+    }
+    const auto length = lengths.find(interface);
+    if (targets.count(interface) == 0 || length == lengths.end())
+    {
+      continue;
+    }
+    it->second.targets++;
+    it->second.total += length->second.total;
+    it->second.missing += length->second.lists.size() > 0 ? length->second.lists[0] : 0.0;
+    it->second.method_gap +=
+        length->second.lists.size() > 1 ? length->second.lists[1] : 0.0;
+  }
+  std::string line =
+      "Coverage stage 0: Missing LENGTH share per Type (a LENGTH figure: it is "
+      "not the energy share and a small value does not mean good coverage):";
+  for (std::size_t i = 0; i < by_type.size(); i++)
+  {
+    const auto &[type, entry] = by_type[i];
+    line += fmt::format("{} {} ", i == 0 ? "" : ",", type);
+    if (entry.targets == 0)
+    {
+      line += "n/a (no target interface)";
+    }
+    else if (!(entry.total > 0.0))
+    {
+      line += "n/a (zero perimeter length)";
+    }
+    else
+    {
+      line += fmt::format("{:.3f} % (Missing {:.6e} m, method gap {:.6e} m, of {:.6e} m)",
+                          100.0 * entry.missing / entry.total,
+                          units.Dimensionalize<Units::ValueType::LENGTH>(entry.missing),
+                          units.Dimensionalize<Units::ValueType::LENGTH>(entry.method_gap),
+                          units.Dimensionalize<Units::ValueType::LENGTH>(entry.total));
+    }
+  }
+  const auto [matched, unmatched] = identification_lengths;
+  line += "; identification (all features): unmatched / (matched + unmatched) = ";
+  if (matched >= 0.0 && unmatched >= 0.0 && matched + unmatched > 0.0)
+  {
+    line += fmt::format("{:.3f} %", 100.0 * unmatched / (matched + unmatched));
+  }
+  else
+  {
+    line += "n/a (no feature pass in this process: a response-geometry cache load or "
+            "explicit models)";
+  }
+  // ERRATUM-1662 HOOK (lane rescensus; no code here): the length-weighted resolution
+  // census of the target edges adds its per-Type stage-0 line beside this one.
+  return line + "\n";
+}
+
 }  // namespace palace

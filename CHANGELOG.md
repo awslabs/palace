@@ -35,6 +35,14 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     optional `ValidatedRegime` sidecar checked against the library's SHA-256). Every existing column keeps its
     position, name and value. The geometry cache is version 25 (the uncovered features' key
     records; an older cache is refused by name).
+    The coverage table also prints the signed method-gap share before its clamp at 0; a
+    cell whose partition serves more than the correction removes reads `INCONSISTENT`
+    (never `OK`); a served claim end one round-off short of its edge segment's end is
+    snapped to it in the coverage partition only (every corrected value unchanged), and
+    `SurfaceResponse.Coverage.ClaimEndCensus` counts such ends (served and kept); a
+    `ValidatedRegime` range requires `N` >= 1 and a `Provenance`; a served model without a
+    qualification record counts as no-status; the log prints, per interface `Type`, the
+    Missing share of the target perimeter LENGTH before the solve.
 
   - Added `Diagnostics.UncoveredFeatureEnergy` to the Maxwell `SurfaceResponseCorrection`
     (off by default; refused by the electrostatic driver): the raw within-`R` energy of the

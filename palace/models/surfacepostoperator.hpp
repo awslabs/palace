@@ -511,6 +511,19 @@ public:
       const std::set<int> &indices, const GridFunction &E, const GridFunction *D,
       const std::vector<CoveragePartitionClass> &kept_classes, PerimeterPortionView served,
       const std::vector<CoveragePartitionClass> &remainder_classes = {}) const;
+  // Ruling 1688 (lane L1, the stage-0 Missing LENGTH line): per interface the length of its
+  // edge-distance tree and, per portion list, the length of the union of the list's
+  // intervals on that tree (the energies' foot assignment: a portion on its midpoint's
+  // segment; each segment once, overlapping intervals counted once). Mesh units; local
+  // (the trees and the lists are replicated): no reduction.
+  struct InterfacePerimeterLengths
+  {
+    double total = 0.0;
+    std::vector<double> lists;
+  };
+  std::map<int, InterfacePerimeterLengths>
+  GetInterfacePerimeterLengths(const std::set<int> &indices,
+                               const std::vector<PerimeterPortionView> &lists) const;
   // The uncovered portions relabelled by feature ("m<feature>"): the Missing class's bins
   // of the coverage partition, one per feature (joined by '+' where portions overlap).
   static std::vector<UncoveredPerimeterPortion>

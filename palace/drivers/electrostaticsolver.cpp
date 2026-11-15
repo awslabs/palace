@@ -1312,6 +1312,19 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     // same order; the operator reads them nowhere after the construction), held once, in
     // the compact exact form (lane L1, ruling 1682).
     model_raw_portions = response_correction->ReleaseModelRawClaimPortionList();
+    // Ruling 1688 (lane L1): the stage-0 Missing LENGTH line (root; log only).
+    if (!response_correction->IsRawFallback())
+    {
+      const auto [missing, method_gap] = SplitCoverageUncoveredByKeyClass(
+          uncovered_portions, response_correction->GetCoverageKeyRecords());
+      const auto targets = response_correction->GetTargetInterfaces();
+      Mpi::Print("\n{}",
+                 CoverageStageZeroLine(
+                     post_op.GetInterfaceTypes(), targets,
+                     post_op.GetSurfacePostOp().GetInterfacePerimeterLengths(
+                         targets, {missing, method_gap}),
+                     response_correction->GetIdentificationFeatureLengths(), iodata.units));
+    }
     if (response_correction->ExclusionEnergyRequested())
     {
       for (const auto &portion : response_correction->GetExclusionEnergyPortions())

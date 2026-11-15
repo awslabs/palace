@@ -2990,10 +2990,14 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 
   // (b2) Rulings 1714 / 1715: every claim end moved k ulps per coordinate INTO its portion
   // (toward the other end). 1 ulp: round-off short, the served ends snapped to the segment
-  // ends: the served energy is the exact claims' to the last bit, the vertex quadrants'
-  // energy counted at stake. 1000 ulps: beyond the round-off rule, within 1e-5 R (near):
-  // never snapped, the quadrants fall out of the claim. The same list as a KEPT class is
-  // counted and never snapped (OI-FOOT-TEST-VERTEX-ROUNDOFF).
+  // ends: the served energy is the exact claims' to the last bit. 1000 ulps: beyond the
+  // round-off rule, within 1e-5 R (near): counted, never snapped. The same list as a KEPT
+  // class is counted and never snapped (OI-FOOT-TEST-VERTEX-ROUNDOFF). On THIS fixture no
+  // point of interface 4 has its foot clamped at these ends (the surface lies inside its
+  // corners: no exterior vertex quadrant), so the energies at stake are exactly 0 and the
+  // moved lists' energies equal the exact ones bitwise (measured at b209a62331; the
+  // quadrant energy > 0 leg is the electrostatic saved-mesh restart case's producer: 0.79 %
+  // of W snapped back, its partition identity closing).
   // (1 ulp: the next double toward the other end; 1000: an absolute step of 1000 eps
   // max(|x|, 1) along the portion, far below 1e-5 R and beyond the 16-ulp rule.)
   auto Nudge = [&](bool one)
@@ -3024,23 +3028,23 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
       surf_post_op.GetInterfaceCoveragePartition({4}, field, nullptr, {}, one_ulp).at(4);
   CHECK(snapped.served.at("m7") == s.served.at("m7"));
   CHECK(snapped.served_ends.roundoff_count > s.served_ends.roundoff_count);
-  CHECK(snapped.served_ends.roundoff_energy > 0.0);
+  CHECK(snapped.served_ends.roundoff_energy == 0.0);
   CHECK(snapped.served_ends.near_count == s.served_ends.near_count);
   const auto near =
       surf_post_op.GetInterfaceCoveragePartition({4}, field, nullptr, {}, thousand_ulps)
           .at(4);
   CHECK(near.served_ends.near_count > 0);
-  CHECK(near.served_ends.near_energy > 0.0);
+  CHECK(near.served_ends.near_energy == 0.0);
   CHECK(near.served_ends.roundoff_count == s.served_ends.roundoff_count);
-  CHECK(near.served.at("m7") < s.served.at("m7"));
+  CHECK(near.served.at("m7") == s.served.at("m7"));
   CHECK_THAT(BinSum(near), WithinRel(near.within, 1.0e-12));
   const auto kept = surf_post_op.GetInterfaceCoveragePartition(
       {4}, field, nullptr, {{"Missing", &one_ulp}}, no_claims);
   const auto exact_kept = surf_post_op.GetInterfaceCoveragePartition(
       {4}, field, nullptr, {{"Missing", &claim}}, no_claims);
   CHECK(kept.at(4).kept_ends.roundoff_count > exact_kept.at(4).kept_ends.roundoff_count);
-  CHECK(kept.at(4).kept_ends.roundoff_energy > 0.0);
-  CHECK(kept.at(4).classes.at({"Missing", "m7"}) <
+  CHECK(kept.at(4).kept_ends.roundoff_energy == 0.0);
+  CHECK(kept.at(4).classes.at({"Missing", "m7"}) ==
         exact_kept.at(4).classes.at({"Missing", "m7"}));
   CHECK(kept.at(4).served_ends.roundoff_count == 0);
 
@@ -3061,6 +3065,40 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
       CHECK(energy == a.classes.at(key));
     }
   }
+
+  // (e) Ruling 1688 (the stage-0 Missing LENGTH line): on the lead fixture the Missing
+  // portions (no method-gap key here) and the applied patches' claims tile interface 4's
+  // perimeter: Missing + method gap + covered = the edge-tree length (round-off); the
+  // line prints the Type's share and "n/a" for the identification figure only without a
+  // feature pass.
+  const auto [missing_split, gap_split] =
+      SplitCoverageUncoveredByKeyClass(perimeter, response->GetCoverageKeyRecords());
+  CHECK(missing_split.size() == perimeter.size());
+  CHECK(gap_split.empty());
+  const auto lengths = surf_post_op.GetInterfacePerimeterLengths(
+      {4}, {missing_split, gap_split, post_op.GetSurfaceResponseModelRawPortions()});
+  REQUIRE(lengths.count(4) == 1);
+  const auto &l = lengths.at(4);
+  REQUIRE(l.lists.size() == 3);
+  CHECK(l.total > 0.0);
+  CHECK(l.lists[0] > 0.0);
+  CHECK(l.lists[1] == 0.0);
+  CHECK(l.lists[2] > 0.0);
+  CHECK_THAT(l.lists[0] + l.lists[1] + l.lists[2], WithinRel(l.total, 1.0e-12));
+  const auto identification = response->GetIdentificationFeatureLengths();
+  CHECK(identification.first > 0.0);
+  CHECK(identification.second > 0.0);
+  const auto types = post_op.GetInterfaceTypes();
+  const std::string line =
+      CoverageStageZeroLine(types, {4}, lengths, identification, iodata.units);
+  CHECK(line.find(fmt::format("{} {:.3f} %", types.at(4), 100.0 * l.lists[0] / l.total)) !=
+        std::string::npos);
+  CHECK(line.find("a LENGTH figure") != std::string::npos);
+  CHECK(line.find("unmatched / (matched + unmatched) = n/a") == std::string::npos);
+  const std::string no_target =
+      CoverageStageZeroLine(types, {}, {}, {-1.0, -1.0}, iodata.units);
+  CHECK(no_target.find(types.at(4) + " n/a (no target interface)") != std::string::npos);
+  CHECK(no_target.find("unmatched / (matched + unmatched) = n/a") != std::string::npos);
 #endif
 }
 
