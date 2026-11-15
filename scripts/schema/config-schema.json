@@ -3524,7 +3524,7 @@
                 },
                 "Directory": {
                   "type": "string",
-                  "pattern": "^[A-Za-z0-9_][A-Za-z0-9._-]*$",
+                  "pattern": "^(?!iteration)[A-Za-z0-9_][A-Za-z0-9._-]*$",
                   "description": "Decision 1685: one directory name inside `Problem.Output` for the heavy per-patch tables (`surface-response-patches.csv`, `surface-response-patch-energy.csv`, `surface-response-traces.csv`, `surface-response-patch-loops.csv`): written there with the same names and bytes; every other output stays at the top level. Absent (the default): every table at the top level. Under AMR each `iterationNN/` folder holds its own copy of the directory. A name may not start with `iteration` (refused at load: SaveIteration leaves such entries in place)."
                 },
                 "ConductorConsistencyRecords": {

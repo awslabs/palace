@@ -1916,7 +1916,9 @@ excitation, the bulk of `palace.json` on a full chip) out of `palace.json` into
 `<Output>/<name>/surface-response-conductor-consistency-records.json`, a JSON document with
 the array at the same key path and in the same text; `palace.json` then lacks only that
 member (`TestedPatches`, the record count, and the gate's summary stay). The preflight's
-patch list stays beside its manifest.
+patch list stays beside its manifest. `Diagnostics.Directory` names a sub-directory of
+`Problem.Output`; it is not `Solver.Electrostatic.ResponseArchive.Directory`, which is the
+path of the field archive (relative to the working directory of the process).
 
 Two placement rules of the corner class (decision 394; `SURFACE-RESPONSE-IDENTIFICATION.md`
 section (e)): at a matched corner whose arms are not perpendicular, the second arm's

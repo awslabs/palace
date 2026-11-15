@@ -1008,7 +1008,8 @@ TEST_CASE("Schema Validator Smoke Tests", "[schema][Serial]")
     diagnostics_directory["ResponseCorrection"]["Diagnostics"]
                          ["ConductorConsistencyRecords"] = "Metadata";
     CHECK(ValidateConfig(diagnostics_directory, "Electrostatic").empty());
-    for (const auto *name : {"", "a/b", "../up", ".hidden", "-dash", "with space"})
+    for (const auto *name :
+         {"", "a/b", "../up", ".hidden", "-dash", "with space", "iteration1"})
     {
       CAPTURE(name);
       auto invalid_directory = automatic;
