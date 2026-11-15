@@ -89,13 +89,23 @@ class BackendSwitch(test_paladin_backend.GuardedTestCase):
             return args
 
         lock = self.root / "run" / "chain-driver.lock"
+        past_the_lock = []
+
+        def counting_fake(*arguments, **options):
+            """Decision 1844 (the host-safety rule, 1830): the first act of run_qualify past the root lock (the gates copy) is
+            a counting fake while the lock is held: a driver that is not refused stops HERE, before anything runs."""
+            past_the_lock.append(arguments)
+            raise AssertionError("a second driver went past the held root lock (stopped by the counting fake)")
+
         held = paladin_backend.DriverLock(lock, log=lambda line: None).acquire()
         try:
-            with self.assertRaises(paladin_backend.PaladinError) as stop:
+            with mock.patch.object(qualify_library.shutil, "copyfile", counting_fake), \
+                    self.assertRaises(paladin_backend.PaladinError) as stop:
                 self.run_qualify(arguments())
             self.assertIn("held by a live driver", str(stop.exception))
         finally:
             held.release()
+        self.assertEqual(past_the_lock, [])
         self.assertFalse((self.root / "run" / qualify_library.GATES_COPY).exists())  # refused before anything is written
         observed = []
         real = paladin_backend.DriverLock.acquire
