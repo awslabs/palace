@@ -53,7 +53,7 @@ private:
   // Enable timer contribution for Timer::KSP_COARSE_SOLVE.
   bool use_timer;
 
-  // The Chebyshev smoothers may raise their order at setup (see ChebyshevSmoother). A short
+  // The Chebyshev smoothers may raise their orders at setup (see ChebyshevSmoother). A short
   // GMRES probe with the whole cycle (see CompareWithGmresProbe) then keeps the base orders
   // if the raised ones are predicted to need more than 25% more iterations (an inaccurate
   // coarse-grid correction, for example the real-valued coarse solve of a complex

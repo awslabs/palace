@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <complex>
+#include <limits>
 #include <memory>
 #include <vector>
 #include <mfem.hpp>
@@ -119,6 +120,22 @@ void CheckSameSolution(MPI_Comm comm, const ComplexVector &x0, ComplexVector &x1
 }
 
 }  // namespace
+
+TEST_CASE("Chebyshev smoothing order bound from the indefiniteness", "[chebyshev][Serial]")
+{
+  // From order 4, orders 8, 7, 6 and 5 are admissible up to ρ = 2.3e-2, 2.7e-2, 3.2e-2 and
+  // 3.8e-2; definite operators (ρ <= 0) take the maximum order.
+  CHECK(GetChebyshevOrder(4, 8, -0.5) == 8);
+  CHECK(GetChebyshevOrder(4, 8, 0.0) == 8);
+  CHECK(GetChebyshevOrder(4, 8, 2.3e-2) == 8);
+  CHECK(GetChebyshevOrder(4, 8, 2.5e-2) == 7);
+  CHECK(GetChebyshevOrder(4, 8, 3.0e-2) == 6);
+  CHECK(GetChebyshevOrder(4, 8, 3.5e-2) == 5);
+  CHECK(GetChebyshevOrder(4, 8, 4.0e-2) == 4);
+  CHECK(GetChebyshevOrder(4, 8, 0.33) == 4);
+  CHECK(GetChebyshevOrder(4, 8, std::numeric_limits<double>::infinity()) == 4);
+  CHECK(GetChebyshevOrder(4, 4, 0.0) == 4);
+}
 
 TEST_CASE("Chebyshev smoothing order raised for nearly definite operators",
           "[chebyshev][Serial][Parallel]")

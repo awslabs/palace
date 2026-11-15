@@ -28,14 +28,15 @@ of inductive lumped ports. The participation matrix is output in an ASCII file n
 
 If
 [`config["Solver"]["Linear"]["MGSmoothOrder"]`](../config/reference.md#config-solver-linear-mgsmoothorder)
-is not set, eigenmode simulations of solution order 2 use Chebyshev smoothers of order 8
-instead of 4 on the multigrid levels whose shifted operator is nearly positive
-semi-definite. A short GMRES probe with the multigrid preconditioner at setup keeps
-order 4 if it already reduces the residual by more than a factor 5 per iteration, as for
-small problems, where order 8 cannot save enough linear solver iterations to pay for its
-more expensive cycles, or if order 8 is predicted to need more than 25% more iterations.
-The latter happens when the coarse-grid correction is a poor approximation, for example
-with Floquet periodic boundaries
+is not set, eigenmode simulations of solution order 2 use Chebyshev smoothers of order up to
+8 instead of 4: each multigrid level raises its order as far as the indefiniteness of its
+shifted operator, estimated at setup, allows (order 8 when the most negative eigenvalue of
+the Jacobi-scaled operator is at most 2.3e-2 times its largest). A short GMRES probe with
+the multigrid preconditioner at setup keeps order 4 if it already reduces the residual by
+more than a factor 5 per iteration, as for small problems, where order 8 cannot save enough
+linear solver iterations to pay for its more expensive cycles, or if order 8 is predicted to
+need more than 25% more iterations. The latter happens when the coarse-grid correction is a
+poor approximation, for example with Floquet periodic boundaries
 ([`config["Boundaries"]["Periodic"]["FloquetWaveVector"]`](../config/reference.md#config-boundaries-periodic-floquetwavevector))
 and absorbing boundaries, whose complex operator the default real-valued coarse solve
 ([`config["Solver"]["Linear"]["ComplexCoarseSolve"]`](../config/reference.md#config-solver-linear-complexcoarsesolve))

@@ -3010,7 +3010,7 @@
         },
         "MGSmoothOrder": {
           "type": "integer",
-          "description": "Polynomial smoothing order for geometric multigrid. If omitted, Palace uses `max(2 \u00d7 solution order, 4)`, except when [`/Problem/Type`](@ref config-problem-type) is `\"Eigenmode\"` and the solution order is 2: then, order 8 is used on the multigrid levels whose shifted operator is estimated at setup to be nearly positive semi-definite, unless a short GMRES probe with the multigrid preconditioner at setup favors the base order.",
+          "description": "Polynomial smoothing order for geometric multigrid. If omitted, Palace uses `max(2 \u00d7 solution order, 4)`, except when [`/Problem/Type`](@ref config-problem-type) is `\"Eigenmode\"` and the solution order is 2: then, orders up to 8 are used, as high as the indefiniteness of the shifted operator of each multigrid level, estimated at setup, allows, unless a short GMRES probe with the multigrid preconditioner at setup favors the base order.",
           "exclusiveMinimum": 0
         },
         "MGSmoothEigScaleMax": {
