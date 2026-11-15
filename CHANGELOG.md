@@ -54,7 +54,8 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     AMR loop has ended, so the block of a run killed during a later level is not read as
     final. A cell whose coverage is `OK` but whose regime is `NO-RANGE` is flagged per cell
     (banner and `SurfaceResponse.Coverage.Flagged`) as an `OK` + `OUT` cell is, with the
-    words "computed, NOT VALIDATED in this regime".
+    words "computed, NOT VALIDATED in this regime". A `ValidatedRegime` file with a
+    `Driven` range is refused by name (the class lumps every driven excitation).
 
   - Added `Diagnostics.UncoveredFeatureEnergy` to the Maxwell `SurfaceResponseCorrection`
     (off by default; refused by the electrostatic driver): the raw within-`R` energy of the

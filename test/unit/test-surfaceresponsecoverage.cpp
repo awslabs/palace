@@ -17,6 +17,7 @@
 #include <fmt/format.h>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 #include "models/surfaceresponsecoverage.hpp"
 #include "models/surfaceresponseidentification.hpp"
 
@@ -336,6 +337,14 @@ TEST_CASE("Coverage validated-regime file", "[SurfaceResponseCoverage][Serial]")
   auto unknown = data;
   unknown["Ranges"][0]["ExcitationClass"] = "JunctionPort";
   CHECK_THROWS(ReadCoverageValidatedRegime(Write(unknown), library.string()));
+  // Erratum 1784 (review m-6): a Driven range is refused by name (the class lumps every
+  // driven excitation), also beside a valid range.
+  auto driven = data;
+  driven["Ranges"].push_back(data["Ranges"][0]);
+  driven["Ranges"][1]["ExcitationClass"] = "Driven";
+  CHECK_THROWS_WITH(ReadCoverageValidatedRegime(Write(driven), library.string()),
+                    Catch::Matchers::ContainsSubstring(
+                        "driven ranges are not supported in this version"));
   // Review m-1: N >= 1 and a Provenance per range, a bounded Tolerance.
   CHECK(range.provenance == data["Ranges"][0]["Provenance"].dump());
   for (const auto &n : {nlohmann::json(0), nlohmann::json(1.5), nlohmann::json("6")})

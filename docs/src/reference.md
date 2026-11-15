@@ -2705,7 +2705,9 @@ finished cells only. The expected cell set of a design (the cells a run should h
 measured) and a coverage certificate are not written by this version.
 
 The regime status says whether the covered correction factor lies in the range validated
-for this library and excitation class (`ElectrostaticTerminal`, `Eigenmode`, `Driven`):
+for this library and excitation class (`ElectrostaticTerminal`, `Eigenmode`, `Driven`; a
+file with a `Driven` range is refused by name in this version, because that class lumps
+every driven excitation, so every driven cell reads `NO-RANGE`):
 `IN` (the factor lies in the validated range; it does not say that the corrected value is
 right), `OUT` (the covered part is corrected by a factor outside what was validated for
 this library and excitation class; its physical cause is not established: it does not say

@@ -223,6 +223,16 @@ CoverageValidatedRegime ReadCoverageValidatedRegime(const std::string &path,
         "Coverage ValidatedRegime ExcitationClass must be \"ElectrostaticTerminal\", "
         "\"Eigenmode\" or \"Driven\", not \""
             << name << "\"!");
+    // Erratum 1784 (review m-6): the Driven class lumps every driven excitation (a range
+    // validated with junction-port drives would be applied to any port drive), so a file
+    // with a Driven range is refused until a driven sub-class exists: every driven cell
+    // stays NO-RANGE.
+    MFEM_VERIFY(excitation != CoverageExcitationClass::DRIVEN,
+                "Coverage ValidatedRegime file \""
+                    << path << "\" lists a range for " << type
+                    << " / Driven: driven ranges are not supported in this version (the "
+                       "Driven class lumps every driven excitation; every driven cell "
+                       "stays NO-RANGE)!");
     CoverageValidatedRange range;
     range.factor_min = entry.at("FactorMin").get<double>();
     range.factor_max = entry.at("FactorMax").get<double>();
