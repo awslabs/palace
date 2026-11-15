@@ -2800,7 +2800,8 @@ that basis in its rule text.
 
 The configuration block, on both paths (`Solver.SurfaceResponseCorrection.Coverage` and
 `Solver.Electrostatic.ResponseCorrection.Coverage`): `"Policy"` (`"Warn"`, the default, or
-`"MarkNotApplied"`; `"Abort"` and any other value are an error), `"MaxUncoveredShare"` 0.05
+`"MarkNotApplied"`; any other value is an error; `"Abort"` is not in this version: the schema's
+enum refuses it in a run with its generic message, like any other value), `"MaxUncoveredShare"` 0.05
 and `"BuildTarget"` 0.02 (interim bars, FIXED: any other value is an error until the status
 validation rules otherwise), and `"ValidatedRegime"`.
 
@@ -2808,7 +2809,10 @@ validation rules otherwise), and `"ValidatedRegime"`.
 marked coverage status was built from. The marked statuses are `PARTIAL`, `NOT-ACHIEVABLE`,
 `INCONSISTENT`, `TARGET-NOT-SERVED` and `NOT-MEASURED` (`palace.json`
 `SurfaceResponse.Coverage.MarkedStatuses`); `OK`, `LOW`, `NO-ENERGY` and `NOT-TARGET` cells
-and every regime status never mark. A marked cell prints the bare token `nan` and its value
+and every regime status never mark. Two fail-closed marks need no marked status: a
+measurement without any coverage cell marks its whole values, and a coverage interface whose
+`Type` has no cell marks that interface's values (both counted in `MarkedMeasurements` and
+listed in `MarkedWithoutCell` with the reason). A marked cell prints the bare token `nan` and its value
 moves to an appended column with the same header and the suffix ` partial (uncovered part
 raw)` (nan where the cell is not marked): the value is the covered part corrected plus the
 uncovered within-`R` part raw. Per interface of `surface-Q-corrected.csv` the `E` / `p` /
@@ -2828,8 +2832,8 @@ entry of `terminal-Cinv-corrected.csv` when any entry of `C` is; `palace.json`
 `SurfaceResponse.TerminalCapacitance` prints null for a marked entry and the value in
 `FixedTracePartial` / `SelfConsistentPartial`. On the eigenmode path the log's corrected
 eigenvalue line names no value and the self-consistent mode-matching table is printed after
-the modes are measured. The `palace.json` block gains `MarkedCells`, `MarkedMeasurements` and
-`Flagged[].Marked`; the banner names the marked cells. No computed number changes and every
+the modes are measured. The `palace.json` block gains `MarkedStatuses`, `MarkedCells`, `MarkedMeasurements`,
+`MarkedWithoutCell` (when any) and `Flagged[].Marked`; the banner names the marked cells. No computed number changes and every
 raw column is unchanged. For a marked cell, the shares of the uncovered-energy and portion
 tables (`surface-response-uncovered-energy.csv` and the conductor-consistency, domain-boundary,
 spatial-cluster-priority and exclusion portion tables) are taken on its PARTIAL corrected
