@@ -4,6 +4,7 @@
 #include <cmath>
 #include <iterator>
 #include <limits>
+#include <fmt/format.h>
 #include <scn/scan.h>
 #include <catch2/catch_test_macros.hpp>
 #include "utils/communication.hpp"
@@ -161,6 +162,42 @@ TEST_CASE("TableCSV nonfinite integer formatting", "[tablecsv][Serial]")
   CHECK(formatted.find("+inf") != std::string::npos);
   CHECK(formatted.find("-inf") != std::string::npos);
   CHECK(formatted.find("nan") == std::string::npos);
+}
+
+// Decisions 1829 / 1835 (OI-CSV-SIGNED-NAN-DIRECT-WRITERS): a number of a directly written
+// CSV table prints as "{:+.12e}" (finite and +inf / -inf: "+inf" / "-inf"), a NaN of either
+// sign as the bare token "nan" (fmt's "+" flag would print "+nan", which pandas reads as
+// text); the token is the trimmed cell of a Table column of the same value.
+TEST_CASE("TableCSV CsvNumber direct-writer cells", "[tablecsv][Serial]")
+{
+  const double nan = std::numeric_limits<double>::quiet_NaN();
+  const double inf = std::numeric_limits<double>::infinity();
+  CHECK(fmt::format("{:+.12e}", nan) == "+nan");  // the form CsvNumber replaces
+  CHECK(CsvNumber(nan) == "nan");
+  CHECK(CsvNumber(-nan) == "nan");
+  CHECK(CsvNumber(inf) == "+inf");
+  CHECK(CsvNumber(-inf) == "-inf");
+  CHECK(CsvNumber(0.5) == "+5.000000000000e-01");
+  CHECK(CsvNumber(-1.25e-18) == "-1.250000000000e-18");
+  CHECK(CsvNumber(0.0) == "+0.000000000000e+00");
+  Table table;
+  table.insert("value", "value");
+  for (const double value : {0.5, -1.25e-18, nan, inf, -inf})
+  {
+    table["value"] << value;
+  }
+  for (std::size_t i = 0; i < 5; i++)
+  {
+    const std::string cell = table.format_row(i);
+    const auto begin = cell.find_first_not_of(' ');
+    CHECK(cell.substr(begin, cell.size() - 1 - begin) == CsvNumber(table["value"].data[i]));
+  }
+  for (const double value : {0.5, -1.25e-18, nan, inf, -inf})
+  {
+    auto result = scn::scan<double>(CsvNumber(value), "{}");
+    REQUIRE(result);
+    CHECK((std::isnan(value) ? std::isnan(result->value()) : result->value() == value));
+  }
 }
 
 // Lane L4 (decision 1829 C1): a non-finite numeric cell prints as a BARE token (no padding)

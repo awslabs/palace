@@ -17,6 +17,11 @@
 namespace palace
 {
 
+std::string CsvNumber(double value)
+{
+  return std::isnan(value) ? std::string("nan") : fmt::format("{:+.12e}", value);
+}
+
 [[nodiscard]] std::size_t Column::col_width(const ColumnOptions &defaults) const
 {
   // Quickfix to specify full column width in integer case to match current formatting.
