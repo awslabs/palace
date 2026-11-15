@@ -16,8 +16,10 @@ import json
 import os
 from pathlib import Path
 import shutil
+import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from unittest import mock
 
@@ -539,6 +541,64 @@ class DriveWithFakeCLI(unittest.TestCase):
             job.refuse_unusable_archive("r", self.archive)  # a reducer refuses it
         with self.assertRaises(paladin_backend.PaladinError):
             job.archive_guard(self.archive)  # a writer refuses it (not empty)
+
+    # Decision 1820 (2), MAJOR-2 of review r1799: one driver per root (LOCK_RULE).
+    def test_r8_a_second_driver_of_one_plan_is_refused_while_the_first_lives(self):
+        real = paladin_backend.find_runs
+        outcomes = {}
+
+        def second_driver():
+            job = paladin_backend.PaladinJob(str(self.plan_path), block=self.block, remote_dir=str(self.plan_path.parent),
+                                             local_dir=str(self.root / "out-B"), archive_estimates_gb={self.archive: 0.001},
+                                             log=lambda message: None)
+            try:
+                paladin_backend.drive(job, poll_seconds=0, sleep=lambda seconds: None)
+                outcomes["B"] = "drove"
+            except paladin_backend.PaladinError as error:
+                outcomes["B"] = str(error)
+
+        def find(cli, identity):
+            if "B" not in outcomes:  # the first driver's first lookup: the second driver starts now, in its own thread
+                thread = threading.Thread(target=second_driver)
+                thread.start()
+                thread.join(60)
+            return real(cli, identity)
+
+        with mock.patch.object(paladin_backend, "find_runs", side_effect=find):
+            state = self.drive()
+        self.assertIn("held by a live driver", outcomes["B"])
+        self.assertEqual(self.submitted(), ["chainport-w", "chainport-r", "chainport-local-edge"])
+        self.assertEqual(state["Stages"]["local-edge"]["State"], "complete")
+        self.assertFalse((self.root / "out-B" / "paladin-status.json").exists())
+
+    def test_a_lock_held_by_another_live_process_is_refused(self):
+        lock = self.plan_path.parent / "paladin-driver.lock"
+        holder = subprocess.Popen([sys.executable, "-c", "import fcntl, os, sys; d = os.open(sys.argv[1], os.O_RDWR | os.O_CREAT); "
+                                   "fcntl.flock(d, fcntl.LOCK_EX); print('held', flush=True); sys.stdin.read()", str(lock)],
+                                  stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+        try:
+            self.assertEqual(holder.stdout.readline().strip(), "held")
+            with self.assertRaises(paladin_backend.PaladinError) as stop:
+                self.drive()
+            self.assertIn("held by a live driver", str(stop.exception))
+            self.assertEqual(self.calls(), [])  # no paladin call at all
+        finally:
+            holder.stdin.close()
+            holder.wait(30)
+        self.drive()  # the holder ended: the lock is free
+        self.assertEqual(self.submitted(), ["chainport-w", "chainport-r", "chainport-local-edge"])
+
+    def test_a_stale_lock_is_taken_over_with_a_recorded_line(self):
+        ended = subprocess.run([sys.executable, "-c", "import os; print(os.getpid())"], capture_output=True, text=True)
+        stale = json.dumps({"PID": int(ended.stdout), "Host": "this host", "StartUTC": "2026-11-15T00:00:00Z", "Argv": []})
+        self.out.mkdir(parents=True, exist_ok=True)
+        (self.out / "paladin-driver.lock").write_text(stale)  # a record under a free lock: its driver ended
+        self.drive()
+        lines = (self.out / "paladin-driver.lock.takeovers").read_text().splitlines()
+        self.assertEqual(len(lines), 1)
+        self.assertIn("took over the stale lock of " + stale, lines[0])
+        self.assertEqual((self.out / "paladin-driver.lock").read_text(), "")  # released at the end of the drive
+        self.assertEqual(self.submitted(), ["chainport-w", "chainport-r", "chainport-local-edge"])
 
     def test_a_multi_node_plan_is_refused(self):
         plan_path, _ = three_stage_plan(self.root / "multi", nodes=2)

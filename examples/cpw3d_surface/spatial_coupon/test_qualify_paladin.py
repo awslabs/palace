@@ -80,6 +80,39 @@ class BackendSwitch(unittest.TestCase):
                     self.run_qualify(self.arguments(profile, "--backend", backend))
                 self.assertFalse((self.root / "run").exists())
 
+    def test_a_paladin_run_holds_the_root_lock_and_a_second_driver_is_refused(self):
+        # Decision 1820 (2): one driver per root (paladin_backend.LOCK_RULE); a dry run takes no lock.
+        def arguments():
+            args = self.arguments({**PROFILE, "Paladin": self.block}, "--backend", "paladin", "--remote", "host:/data/r")
+            args.dry_run = False
+            return args
+
+        lock = self.root / "run" / "chain-driver.lock"
+        held = paladin_backend.DriverLock(lock, log=lambda line: None).acquire()
+        try:
+            with self.assertRaises(paladin_backend.PaladinError) as stop:
+                self.run_qualify(arguments())
+            self.assertIn("held by a live driver", str(stop.exception))
+        finally:
+            held.release()
+        self.assertFalse((self.root / "run" / qualify_library.GATES_COPY).exists())  # refused before anything is written
+        observed = []
+        real = paladin_backend.DriverLock.acquire
+
+        def acquire(lock_object):
+            observed.append(lock_object.path)
+            return real(lock_object)
+
+        with mock.patch.object(paladin_backend.DriverLock, "acquire", acquire):
+            try:
+                self.run_qualify(arguments())
+            except Exception:  # noqa: BLE001  (no cluster here: only the lock's life is checked)
+                pass
+        self.assertEqual(observed, [str(lock)])
+        self.assertEqual(lock.read_text(), "")  # released at the end, whatever the end
+        self.run_qualify(self.arguments({**PROFILE, "Paladin": self.block}, "--backend", "paladin"))  # a dry run: no lock
+        self.assertEqual(lock.read_text(), "")
+
     def test_executables_of_names_the_pinned_image(self):
         profile = {**PROFILE, "Paladin": self.block}
         args = types.SimpleNamespace(frozen_binary_remote_path=None, mpiexec_remote_path=None)

@@ -42,11 +42,13 @@ the stages of one plan in order, one step per advance():
 import argparse
 import copy
 import datetime
+import fcntl
 import hashlib
 import json
 import os
 import re
 import shlex
+import socket
 import subprocess
 import sys
 import time
@@ -291,6 +293,55 @@ def write_json_atomic(path, value):
         os.close(directory)
 
 
+LOCK_RULE = ("decision 1820 (2): one driver per root: an exclusive flock on the root's lock file, held on an open descriptor "
+             "for the driver's life (the kernel releases it when the driver process ends); the file names its holder (PID, "
+             "Host, StartUTC, Argv); a held lock = refused; a holder record under a free lock = a stale lock (its driver ended "
+             "without release): taken over with one line in <lock>.takeovers")
+
+
+class DriverLock:
+    """LOCK_RULE on `path`; acquire() -> self (PaladinError when another driver holds it); release()."""
+
+    def __init__(self, path, *, log=print, now=utc_now):
+        self.path, self.log, self.now = str(path), log, now
+        self.descriptor = None
+
+    def acquire(self):
+        os.makedirs(os.path.dirname(os.path.abspath(self.path)), exist_ok=True)
+        descriptor = os.open(self.path, os.O_RDWR | os.O_CREAT, 0o644)
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            holder = os.pread(descriptor, 4096, 0).decode(errors="replace").strip()
+            os.close(descriptor)
+            raise PaladinError(f"the driver lock {self.path} is held by a live driver {holder or '(no record yet)'}: "
+                               f"refused ({LOCK_RULE})") from None
+        previous = os.pread(descriptor, 4096, 0).decode(errors="replace").strip()
+        utc = self.now().strftime("%Y-%m-%dT%H:%M:%SZ")
+        if previous:
+            line = f"{utc} pid {os.getpid()} on {socket.gethostname()} took over the stale lock of {previous}\n"
+            with open(self.path + ".takeovers", "a") as f:
+                f.write(line)
+                f.flush()
+                os.fsync(f.fileno())
+            self.log(f"driver lock {self.path}: {line.strip()} ({LOCK_RULE})")
+        holder = json.dumps({"PID": os.getpid(), "Host": socket.gethostname(), "StartUTC": utc, "Argv": sys.argv[:6]})
+        os.ftruncate(descriptor, 0)
+        os.pwrite(descriptor, holder.encode(), 0)
+        os.fsync(descriptor)
+        self.descriptor = descriptor
+        return self
+
+    def release(self):
+        if self.descriptor is None:
+            return
+        os.ftruncate(self.descriptor, 0)
+        os.fsync(self.descriptor)
+        fcntl.flock(self.descriptor, fcntl.LOCK_UN)
+        os.close(self.descriptor)
+        self.descriptor = None
+
+
 def tool_line(block, arguments, pattern, what, *, timeout=600):
     """Run a check tool with the block's ToolPython: its PASS line, or PaladinError (fail closed)."""
     try:
@@ -493,16 +544,20 @@ class PaladinJob:
     """The paladin runs of ONE run_stages plan, in order (module docstring)."""
 
     def __init__(self, plan_path, *, block, remote_dir, local_dir, mapping=(), archive_estimates_gb=None,
-                 log=print, now=utc_now, sleep=None):
+                 log=print, now=utc_now, sleep=None, exclusive=True):
         with open(plan_path, "rb") as f:
             data = f.read()
         self.plan = json.loads(data)
+        self.plan_path = plan_path
         self.plan_sha256 = hashlib.sha256(data).hexdigest()
         self.block, self.remote_dir, self.local_dir = block, remote_dir, local_dir
         self.mapping = list(mapping)
         self.archive_estimates_gb = dict(archive_estimates_gb or {})
         self.log, self.now = log, now
         self.sleep = sleep or (lambda seconds: pause(seconds))
+        # LOCK_RULE: the job's local state directory and the plan's directory (two --out directories of one
+        # plan are refused too); False when the caller holds its root's lock (qualify_library.run_qualify).
+        self.exclusive, self.locks = exclusive, []
         self.host = None if block["Host"] == "local" else block["Host"]
         self.confirmed = set()
         self.case = self.plan["Case"]
@@ -524,6 +579,25 @@ class PaladinJob:
                                    f"{self.plan_sha256[:16]}: not resumable")
         else:
             self.state = {"Backend": "paladin", "Case": self.case, "PlanSHA256": self.plan_sha256, "Stages": {}}
+
+    def lock(self):
+        """LOCK_RULE, once per driver process (at the first advance(); a dry run takes no lock)."""
+        if not self.exclusive or self.locks:
+            return
+        os.makedirs(self.local_dir, exist_ok=True)
+        paths = sorted({os.path.join(os.path.realpath(self.local_dir), "paladin-driver.lock"),
+                        os.path.join(os.path.dirname(os.path.realpath(self.plan_path)), "paladin-driver.lock")})
+        try:
+            for path in paths:
+                self.locks.append(DriverLock(path, log=self.log, now=self.now).acquire())
+        except PaladinError:
+            self.unlock()
+            raise
+
+    def unlock(self):
+        for lock in self.locks:
+            lock.release()
+        self.locks = []
 
     def save(self):
         os.makedirs(self.local_dir, exist_ok=True)
@@ -940,6 +1014,7 @@ class PaladinJob:
 
     def advance(self):
         """One step of the job: True when every stage is complete (status.json written)."""
+        self.lock()
         self.preflight()
         for stage in self.plan["Stages"]:
             name = stage["Name"]
@@ -990,9 +1065,13 @@ class PaladinJob:
 
 
 def drive(job, *, poll_seconds, sleep=time.sleep):
-    """advance() until the job completes (the standalone form; qualify_library polls itself)."""
-    while not job.advance():
-        sleep(poll_seconds)
+    """advance() until the job completes (the standalone form; qualify_library polls itself); the
+    driver lock released at the end, whatever the end."""
+    try:
+        while not job.advance():
+            sleep(poll_seconds)
+    finally:
+        job.unlock()
     return job.state
 
 

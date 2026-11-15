@@ -1153,7 +1153,7 @@ def paladin_job_of(record, context, job, *, log=None):
         machines[job["Name"]] = paladin_backend.PaladinJob(
             job["Plan"], block=context["paladin"], remote_dir=job["RemoteDirectory"], local_dir=job["Directory"],
             mapping=[(remote_main, str(Path(record["Root"]) / "main"))], archive_estimates_gb=archives,
-            log=log or log_line)
+            log=log or log_line, exclusive=not context.get("paladin_root_locked"))
     return machines[job["Name"]]
 
 
@@ -2102,6 +2102,16 @@ def log_line(message):
 
 
 def run_qualify(args, *, log=log_line):
+    """run_qualify_run; a driver lock it took (form Y-b, paladin_backend.LOCK_RULE) released at its end, whatever the end."""
+    driver_locks = []
+    try:
+        return run_qualify_run(args, log=log, driver_locks=driver_locks)
+    finally:
+        for lock in driver_locks:
+            lock.release()
+
+
+def run_qualify_run(args, *, log, driver_locks):
     build_path = Path(args.build_record).resolve()
     build = json.loads(build_path.read_text())
     manifest_path = Path(build["Library"]["Manifest"]["Path"])
@@ -2127,6 +2137,9 @@ def run_qualify(args, *, log=log_line):
     root = Path(args.root) if args.root else Path(
         f"/tmp/coupon-library-qualify-{build['Library']['Commit']}-{time.strftime('%Y%m%d-%H%M%S')}")
     root.mkdir(parents=True, exist_ok=True)
+    if paladin is not None and not args.dry_run:
+        # Decision 1820 (2): one driver per root, for the run's life (paladin_backend.LOCK_RULE).
+        driver_locks.append(paladin_backend.DriverLock(root / "chain-driver.lock", log=log).acquire())
     shutil.copyfile(args.gates, root / GATES_COPY)
     selected = build["Cases"]
     if args.case:
@@ -2167,6 +2180,7 @@ def run_qualify(args, *, log=log_line):
             contexts[record["Case"]] = context
             if paladin is not None:
                 context["paladin"] = paladin
+                context["paladin_root_locked"] = bool(driver_locks)
             log(f"{record['Case']}: planned {record['Plan']['StageNames']} ({record['Split']['Decision']})")
             if not args.dry_run:
                 pending.append((record, context))
