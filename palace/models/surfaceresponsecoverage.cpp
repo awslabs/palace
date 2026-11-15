@@ -186,8 +186,10 @@ CoverageValidatedRegime ReadCoverageValidatedRegime(const std::string &path,
                   << "\" (SHA-256 " << library_sha256
                   << "): a range of another library would print a wrong regime status!");
   regime.tolerance = data.value("Tolerance", 0.0);
-  MFEM_VERIFY(std::isfinite(regime.tolerance) && regime.tolerance >= 0.0,
-              "Coverage ValidatedRegime \"Tolerance\" must be a nonnegative number!");
+  MFEM_VERIFY(std::isfinite(regime.tolerance) && regime.tolerance >= 0.0 &&
+                  regime.tolerance <= kCoverageRegimeToleranceMax,
+              "Coverage ValidatedRegime \"Tolerance\" must be a number in [0, "
+                  << kCoverageRegimeToleranceMax << "]!");
   for (const auto &entry : data.value("Ranges", nlohmann::json::array()))
   {
     MFEM_VERIFY(entry.is_object() && entry.contains("Type") &&
@@ -215,7 +217,21 @@ CoverageValidatedRegime ReadCoverageValidatedRegime(const std::string &path,
     CoverageValidatedRange range;
     range.factor_min = entry.at("FactorMin").get<double>();
     range.factor_max = entry.at("FactorMax").get<double>();
-    range.n = entry.value("N", 0);
+    // Review m-1: a range names how many windows validated it and where they come from.
+    MFEM_VERIFY(entry.contains("N") && entry.at("N").is_number_integer() &&
+                    entry.at("N").get<int>() >= 1,
+                "Coverage ValidatedRegime range for "
+                    << type << " / " << name
+                    << " requires N (the number of validation windows) >= 1!");
+    range.n = entry.at("N").get<int>();
+    const auto provenance = entry.find("Provenance");
+    MFEM_VERIFY(provenance != entry.end() &&
+                    ((provenance->is_object() && !provenance->empty()) ||
+                     (provenance->is_string() && !provenance->get<std::string>().empty())),
+                "Coverage ValidatedRegime range for "
+                    << type << " / " << name
+                    << " requires a non-empty Provenance (object or text)!");
+    range.provenance = provenance->dump();
     MFEM_VERIFY(std::isfinite(range.factor_min) && std::isfinite(range.factor_max) &&
                     range.factor_min <= range.factor_max,
                 "Coverage ValidatedRegime range for " << type << " / " << name
@@ -303,12 +319,13 @@ SummarizeCoverageInterface(const SurfacePostOperator::InterfaceCoveragePartition
     bool pending = false, no_status = false;
     for (const auto &token : LabelTokens(label))
     {
+      // Review m-5: a served model without a qualification record (an explicit-model
+      // configuration has none at all) is NO_STATUS, never silently qualified.
       const auto model = models.find(TokenIndex(token));
-      if (model != models.end())
-      {
-        pending = pending || model->second == CoverageModelQualification::PENDING;
-        no_status = no_status || model->second == CoverageModelQualification::NO_STATUS;
-      }
+      const auto qualification =
+          model != models.end() ? model->second : CoverageModelQualification::NO_STATUS;
+      pending = pending || qualification == CoverageModelQualification::PENDING;
+      no_status = no_status || qualification == CoverageModelQualification::NO_STATUS;
     }
     // Shared labels count WHOLE (DESIGN-v2 s1: an upper bound); a label holding a pending
     // model is pending, not no-status.
@@ -359,6 +376,8 @@ CoverageCell ComputeCoverageCell(const std::string &type,
   // Ruling 1641: U is fail-closed, whatever is not served is uncovered. The method gap
   // (U - missing) is clamped at 0: a negative value is round-off of the two integrals
   // (review m-3); the partition's own within-R total is printed beside W (the residual).
+  // Decision 1708 (1): the clamp must not hide a negative gap, so the signed share before
+  // the clamp is printed beside it (its own column; never used for a status).
   cell.uncovered = cell.within - cell.served;
   cell.method_gap = std::max(0.0, cell.uncovered - cell.missing);
   if (cell.within > 0.0)
@@ -366,6 +385,7 @@ CoverageCell ComputeCoverageCell(const std::string &type,
     cell.uncovered_share = cell.uncovered / cell.within;
     cell.missing_share = cell.missing / cell.within;
     cell.method_gap_share = cell.method_gap / cell.within;
+    cell.method_gap_signed_share = (cell.uncovered - cell.missing) / cell.within;
     cell.pending_share = cell.pending / cell.within;
     cell.no_status_share = cell.no_status / cell.within;
     if (cell.method_gap_share > thresholds.max_uncovered_share)
@@ -384,7 +404,7 @@ CoverageCell ComputeCoverageCell(const std::string &type,
   {
     // Ruling 1654 (III) Q1: nothing to cover; the shares print nan, never 0.
     cell.uncovered_share = cell.missing_share = cell.method_gap_share = cell.pending_share =
-        cell.no_status_share = nan;
+        cell.no_status_share = cell.method_gap_signed_share = nan;
     cell.status = CoverageStatus::NO_ENERGY;
   }
   const auto range = regime.ranges.find({type, excitation});
@@ -405,6 +425,7 @@ CoverageCell ComputeCoverageCell(const std::string &type,
     cell.factor = cell.fabricated / cell.served;
     cell.validated_min = range->second.factor_min;
     cell.validated_max = range->second.factor_max;
+    cell.validated_n = range->second.n;
     const double tau = regime.tolerance;
     cell.regime = (cell.factor >= cell.validated_min / (1.0 + tau) &&
                    cell.factor <= cell.validated_max * (1.0 + tau))
@@ -423,7 +444,7 @@ CoverageCell NotMeasuredCoverageCell(const std::string &type)
       cell.no_status = cell.served = cell.fabricated = cell.partition_within =
           cell.loop_remainder_unserved = cell.loop_remainder_excluded = nan;
   cell.uncovered_share = cell.missing_share = cell.method_gap_share = cell.pending_share =
-      cell.no_status_share = nan;
+      cell.no_status_share = cell.method_gap_signed_share = nan;
   cell.factor = cell.validated_min = cell.validated_max = nan;
   cell.status = CoverageStatus::NOT_MEASURED;
   cell.regime = RegimeStatus::NO_MODEL;
@@ -689,7 +710,7 @@ void AddCoverageUntargetedInterfaces(CoverageMeasurement &measurement,
     CoverageCell cell;
     cell.type = type;
     cell.uncovered_share = cell.missing_share = cell.method_gap_share = cell.pending_share =
-        cell.no_status_share = nan;
+        cell.no_status_share = cell.method_gap_signed_share = nan;
     cell.partition_within = 0.0;
     cell.factor = cell.validated_min = cell.validated_max = nan;
     cell.status = CoverageStatus::NOT_TARGET;
@@ -711,13 +732,15 @@ std::string CoverageNumber(double value)
 
 std::string CoverageTableHeader(const std::string &key_header)
 {
-  return key_header + ",Type,W within-R raw (J),uncovered raw share of W,missing raw share "
-                      "of W,method-gap raw share of W,pending-model share of W,no-status-"
-                      "model share of W,covered correction factor,validated factor "
-                      "min,validated factor max,coverage status,regime status,partition "
-                      "within-R raw (J),untargeted raw energy of the Type (J),untargeted "
-                      "raw share of the Type interface energy,loop remainder unserved "
-                      "(J),loop remainder of excluded patches kept raw twice (J)\n";
+  return key_header +
+         ",Type,W within-R raw (J),uncovered raw share of W,missing raw share "
+         "of W,method-gap raw share of W,pending-model share of W,no-status-"
+         "model share of W,covered correction factor,validated factor "
+         "min,validated factor max,coverage status,regime status,partition "
+         "within-R raw (J),untargeted raw energy of the Type (J),untargeted "
+         "raw share of the Type interface energy,loop remainder unserved "
+         "(J),loop remainder of excluded patches kept raw twice (J),method-gap "
+         "raw share of W signed (before the clamp at 0)\n";
 }
 
 std::string CoverageByKeyTableHeader(const std::string &key_header,
@@ -756,7 +779,7 @@ void WriteCoverageRows(std::ostream &output, const std::string &keys,
            << CoverageNumber(units.Dimensionalize<VT::ENERGY>(cell.loop_remainder_unserved))
            << ','
            << CoverageNumber(units.Dimensionalize<VT::ENERGY>(cell.loop_remainder_excluded))
-           << '\n';
+           << ',' << CoverageNumber(cell.method_gap_signed_share) << '\n';
   }
 }
 
@@ -931,6 +954,7 @@ nlohmann::json CoverageRunMetadata(const CoverageRunRecord &record,
                        {"covered correction factor", Number(cell.factor)},
                        {"validated factor min", Number(cell.validated_min)},
                        {"validated factor max", Number(cell.validated_max)},
+                       {"validated N", cell.validated_n},
                        {"coverage status", status},
                        {"regime status", regime_status},
                        {"untargeted raw share of the Type interface energy",
@@ -1014,10 +1038,11 @@ std::string CoverageRunBanner(const nlohmann::json &metadata)
     }
     else
     {
-      factor = fmt::format("covered factor {} (validated [{}, {}]: {})",
+      factor = fmt::format("covered factor {} (validated [{}, {}] by {} window(s): {})",
                            Factor(entry.at("covered correction factor")),
                            Factor(entry.at("validated factor min")),
-                           Factor(entry.at("validated factor max")), regime_status);
+                           Factor(entry.at("validated factor max")),
+                           entry.value("validated N", 0), regime_status);
     }
     if (status == "NO-ENERGY" || status == "NOT-MEASURED")
     {

@@ -184,8 +184,10 @@ TEST_CASE("TableCSV text column", "[tablecsv][Serial]")
                                     Pad("+1.000000000000e+00") + "," + Pad("OK") + "\n");
 }
 
-// Lane L1: a printed table with text columns reads back (Table(std::string_view)): a column
-// whose first cell is not a number is a text column; a text cell below a number is refused.
+// Lane L1: a printed table with text columns reads back (Table(std::string_view) with
+// text_columns): a column whose first cell is not a number is a text column; a text cell
+// below a number is refused. Without text_columns (every product reader: review m-2) a
+// non-numeric cell is refused as before.
 TEST_CASE("TableCSV text column round-trips", "[tablecsv][Serial]")
 {
   Table table;
@@ -200,7 +202,7 @@ TEST_CASE("TableCSV text column round-trips", "[tablecsv][Serial]")
     table["type"] << types[i];
     table["status"] << statuses[i];
   }
-  Table parsed(table.format_table());
+  Table parsed(table.format_table(), std::nullopt, std::nullopt, /*text_columns=*/true);
   REQUIRE(parsed.n_cols() == 3);
   CHECK(!parsed[0].print_as_text);
   CHECK(parsed[1].print_as_text);
@@ -209,6 +211,8 @@ TEST_CASE("TableCSV text column round-trips", "[tablecsv][Serial]")
   CHECK(parsed[2].text == statuses);
   CHECK(parsed[0].data == std::vector<double>{0.0, 0.25, 0.5, 0.75});
   CHECK(parsed.format_table() == table.format_table());
+  CHECK_THROWS(Table(table.format_table()));
+  CHECK_THROWS(Table("value\n1.0\nSA\n", std::nullopt, std::nullopt, true));
 }
 
 // OI-PATCH-ENERGY-CSV-INDEX-PRECISION (fix round P2, decision 1265): the former index idiom

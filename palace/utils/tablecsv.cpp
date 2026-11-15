@@ -231,7 +231,7 @@ std::string_view trim_space(std::string_view str_v)
 
 Table::Table(std::string_view table_str,
              std::optional<std::string_view> print_col_separator_,
-             std::optional<std::string_view> print_row_separator_)
+             std::optional<std::string_view> print_row_separator_, bool text_columns)
 {
   using namespace std::literals;
   if (table_str.empty())
@@ -271,10 +271,11 @@ Table::Table(std::string_view table_str,
         {
           auto result = scn::scan<double>(entry_trim, "{}");
           auto &column = (*this)[col_i];
-          // A column whose FIRST cell is not a number is a text column (Column::Text:
-          // lane L1's Type and status columns); a text cell below a number is refused.
+          // With text_columns, a column whose FIRST cell is not a number is a text column
+          // (Column::Text: lane L1's Type and status columns); a text cell below a number
+          // is refused. Without it every cell must be a number.
           MFEM_VERIFY(
-              result || column.print_as_text || column.data.empty(),
+              result || (text_columns && (column.print_as_text || column.data.empty())),
               fmt::format("Could not parse CSV entry \"{}\" as double", entry_trim));
           if (!result || column.print_as_text)
           {
@@ -300,7 +301,8 @@ Table::Table(std::string_view table_str,
 template void Table::append_header(fmt::memory_buffer &) const;
 template void Table::append_row(fmt::memory_buffer &, std::size_t) const;
 
-TableWithCSVFile::TableWithCSVFile(std::string csv_file_fullpath, bool load_existing_file)
+TableWithCSVFile::TableWithCSVFile(std::string csv_file_fullpath, bool load_existing_file,
+                                   bool text_columns)
   : csv_file_fullpath_{std::move(csv_file_fullpath)}
 {
   if (!load_existing_file)
@@ -320,7 +322,7 @@ TableWithCSVFile::TableWithCSVFile(std::string csv_file_fullpath, bool load_exis
   std::stringstream file_buffer_str;
   file_buffer_str << file_buffer.rdbuf();
   file_buffer.close();
-  table = Table(file_buffer_str.str());
+  table = Table(file_buffer_str.str(), std::nullopt, std::nullopt, text_columns);
 }
 
 void TableWithCSVFile::WriteFullTableTrunc()

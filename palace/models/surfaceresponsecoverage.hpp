@@ -103,8 +103,14 @@ struct CoverageThresholds
 struct CoverageValidatedRange
 {
   double factor_min = 0.0, factor_max = 0.0;
+  // The number of validation windows behind the range (>= 1) and their provenance (the
+  // file's Provenance entry as JSON text); review m-1: both required.
   int n = 0;
+  std::string provenance;
 };
+// The largest regime tolerance a ValidatedRegime file may carry (review m-1: a sanity bound
+// on a data file, not a validated value; tau itself is set by the validation track).
+inline constexpr double kCoverageRegimeToleranceMax = 0.1;
 struct CoverageValidatedRegime
 {
   std::string path, library_name, library_sha256;
@@ -172,7 +178,11 @@ struct CoverageCell
   double partition_within = 0.0;
   double uncovered_share = 0.0, missing_share = 0.0, method_gap_share = 0.0,
          pending_share = 0.0, no_status_share = 0.0;
+  // (U - missing) / W BEFORE the clamp at 0 (decision 1708 (1)): printed, never a status.
+  double method_gap_signed_share = 0.0;
   double factor = 0.0, validated_min = 0.0, validated_max = 0.0;
+  // The validated range's window count (0 unless the regime is IN or OUT).
+  int validated_n = 0;
   CoverageStatus status = CoverageStatus::NOT_MEASURED;
   RegimeStatus regime = RegimeStatus::NO_MODEL;
   // Ruling 1694 (1): the raw interface energy (whole interface, J) of this Type's

@@ -2593,7 +2593,9 @@ correction actually covers. The definitions are energies of the RAW field:
     admitted with a non-`Qualified` `QualificationStatus` (or `LibraryQualified` false and no
     status), counted whole; the no-status-model share is the served energy on labels that
     hold a model whose record carries no `QualificationStatus` (information only: most 2D
-    families of a library carry no qualification record today).
+    families of a library carry no qualification record today). A configuration with
+    explicit models instead of a `"Library"` has no records at all: all of its served energy
+    is no-status.
   - The covered correction factor is the corrected (fabricated) energy of the covered part
     divided by its raw energy.
 
@@ -2610,7 +2612,10 @@ value does not exist):
     raw share of the Type interface energy` (over the targeted plus untargeted raw interface
     energy of the `Type`; `nan` when that total is 0), `loop remainder unserved (J)` (the
     circulating loop remainder that lies on no served claim) and `loop remainder of
-    excluded patches kept raw twice (J)` (see below). A `Type` whose interfaces are all
+    excluded patches kept raw twice (J)` (see below), and `method-gap raw share of W signed
+    (before the clamp at 0)` (the method-gap share is clamped at 0; this column keeps the
+    signed value, so that served plus Missing energy above ``W`` is never hidden; it never
+    sets a status). A `Type` whose interfaces are all
     untargeted has a `NOT-TARGET` row: ``W = 0``, shares and factor `nan`.
   - `surface-response-uncovered-energy-by-key.csv`: one row per Missing-class key (the
     identification's feature `Hash`): `class` (`Missing`, `Unboxable`, `PlacementRejected`),
@@ -2671,8 +2676,9 @@ driven cell reads `NO-RANGE` today, since the ranges of record are electrostatic
 never a correction: no value depends on it. The ranges are data, not code: an optional
 sidecar file named by `"Coverage": {"ValidatedRegime": <path>}` (`Version` 1; `Library`
 with the `Sha256` of the loaded library file, refused when it does not match; `Tolerance`
-``\tau``; `Ranges` of `Type`, `ExcitationClass`, `FactorMin`, `FactorMax`, `N` and
-`Provenance`); `IN` when ``F_{min}/(1+\tau) \leq F \leq F_{max}(1+\tau)``. Without the file
+``\tau`` in ``[0, 0.1]``; `Ranges` of `Type`, `ExcitationClass`, `FactorMin`, `FactorMax`,
+`N` (the number of validation windows, an integer of at least 1: printed in the banner) and
+`Provenance` (a non-empty object or text), each required); `IN` when ``F_{min}/(1+\tau) \leq F \leq F_{max}(1+\tau)``. Without the file
 every cell reads `NO-RANGE`.
 
 The configuration block, on both paths (`Solver.SurfaceResponseCorrection.Coverage` and

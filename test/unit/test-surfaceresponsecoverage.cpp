@@ -86,6 +86,12 @@ TEST_CASE("Coverage cell shares and the sum identities",
   CHECK(summary.pending == 2.0);    // m1 whole
   CHECK(summary.no_status == 1.5);  // m0+m2 whole + m2
   CHECK(summary.partition_within == 16.0);
+  // Review m-5: without qualification records (an explicit-model configuration) every
+  // served label is no-status, never silently qualified.
+  const auto unrecorded = SummarizeCoverageInterface(partition, 16.0, 13.5, Keys(), {});
+  CHECK(unrecorded.served == 11.5);
+  CHECK(unrecorded.no_status == 11.5);
+  CHECK(unrecorded.pending == 0.0);
 
   const auto cell =
       ComputeCoverageCell("SA", {summary}, CoverageThresholds{}, CoverageValidatedRegime{},
@@ -94,6 +100,7 @@ TEST_CASE("Coverage cell shares and the sum identities",
   CHECK(cell.uncovered == 4.5);  // fail-closed: W - served
   CHECK(cell.missing + cell.method_gap == cell.uncovered);
   CHECK(cell.method_gap == 3.25);
+  CHECK(cell.method_gap_signed_share == 3.25 / 16.0);  // positive: the clamp is inactive
   CHECK(cell.uncovered_share == 4.5 / 16.0);
   CHECK(cell.pending_share == 2.0 / 16.0);
   CHECK(cell.no_status_share == 1.5 / 16.0);
@@ -103,6 +110,17 @@ TEST_CASE("Coverage cell shares and the sum identities",
   CHECK(cell.regime == RegimeStatus::NO_RANGE);
   CHECK(std::isnan(cell.validated_min));
   CHECK(std::isnan(cell.validated_max));
+  // Decision 1708 (1): served + missing above W (round-off of two integrals, or an overlap
+  // term) clamps the method gap at 0 and the signed share keeps the negative value.
+  auto over = summary;
+  over.served = 15.0;
+  over.missing = 1.5;
+  const auto clamped =
+      ComputeCoverageCell("SA", {over}, CoverageThresholds{}, CoverageValidatedRegime{},
+                          CoverageExcitationClass::ELECTROSTATIC_TERMINAL);
+  CHECK(clamped.method_gap == 0.0);
+  CHECK(clamped.method_gap_share == 0.0);
+  CHECK(clamped.method_gap_signed_share == -0.5 / 16.0);
 }
 
 TEST_CASE("Coverage status bands on U + pending", "[SurfaceResponseCoverage][Serial]")
@@ -156,7 +174,8 @@ TEST_CASE("Coverage cell without energy or without a served model",
   CHECK(none.status == CoverageStatus::NO_ENERGY);
   for (const double share :
        {none.uncovered_share, none.missing_share, none.method_gap_share, none.pending_share,
-        none.no_status_share, none.factor, none.validated_min, none.validated_max})
+        none.no_status_share, none.method_gap_signed_share, none.factor, none.validated_min,
+        none.validated_max})
   {
     CHECK(std::isnan(share));
   }
@@ -275,6 +294,36 @@ TEST_CASE("Coverage validated-regime file", "[SurfaceResponseCoverage][Serial]")
   auto unknown = data;
   unknown["Ranges"][0]["ExcitationClass"] = "JunctionPort";
   CHECK_THROWS(ReadCoverageValidatedRegime(Write(unknown), library.string()));
+  // Review m-1: N >= 1 and a Provenance per range, a bounded Tolerance.
+  CHECK(range.provenance == data["Ranges"][0]["Provenance"].dump());
+  for (const auto &n : {nlohmann::json(0), nlohmann::json(1.5), nlohmann::json("6")})
+  {
+    auto bad_n = data;
+    bad_n["Ranges"][0]["N"] = n;
+    CHECK_THROWS(ReadCoverageValidatedRegime(Write(bad_n), library.string()));
+  }
+  auto no_n = data;
+  no_n["Ranges"][0].erase("N");
+  CHECK_THROWS(ReadCoverageValidatedRegime(Write(no_n), library.string()));
+  for (const auto &provenance :
+       {nlohmann::json(nullptr), nlohmann::json(""), nlohmann::json::object()})
+  {
+    auto bad_provenance = data;
+    bad_provenance["Ranges"][0]["Provenance"] = provenance;
+    CHECK_THROWS(ReadCoverageValidatedRegime(Write(bad_provenance), library.string()));
+  }
+  auto no_provenance = data;
+  no_provenance["Ranges"][0].erase("Provenance");
+  CHECK_THROWS(ReadCoverageValidatedRegime(Write(no_provenance), library.string()));
+  auto text_provenance = data;
+  text_provenance["Ranges"][0]["Provenance"] = "windows FQ1 / FQ2";
+  CHECK_NOTHROW(ReadCoverageValidatedRegime(Write(text_provenance), library.string()));
+  auto edge_tolerance = data;
+  edge_tolerance["Tolerance"] = kCoverageRegimeToleranceMax;
+  CHECK_NOTHROW(ReadCoverageValidatedRegime(Write(edge_tolerance), library.string()));
+  auto wide_tolerance = data;
+  wide_tolerance["Tolerance"] = 0.5;
+  CHECK_THROWS(ReadCoverageValidatedRegime(Write(wide_tolerance), library.string()));
   fs::remove_all(dir);
 }
 
@@ -414,14 +463,18 @@ TEST_CASE("Coverage table rows", "[SurfaceResponseCoverage][Serial]")
   CHECK(header.find(",coverage status,regime status,partition within-R raw (J),untargeted "
                     "raw energy of the Type (J),untargeted raw share of the Type interface "
                     "energy,loop remainder unserved (J),loop remainder of excluded patches "
-                    "kept raw twice (J)\n") != std::string::npos);
+                    "kept raw twice (J),method-gap raw share of W signed (before the clamp "
+                    "at 0)\n") != std::string::npos);
   const std::string row = rows.str();
   CHECK(std::count(header.begin(), header.end(), ',') ==
         std::count(row.begin(), row.end(), ','));
   CHECK(row.find(fmt::format(
             ",nan,nan,NOT-ACHIEVABLE,NO-RANGE,{:+.12e},+0.000000000000e+00,"
-            "+0.000000000000e+00,+0.000000000000e+00,+0.000000000000e+00\n",
-            units.Dimensionalize<Units::ValueType::ENERGY>(16.0))) != std::string::npos);
+            "+0.000000000000e+00,+0.000000000000e+00,+0.000000000000e+00,{:+.12e}\n",
+            units.Dimensionalize<Units::ValueType::ENERGY>(16.0),
+            measurement.cells.at(0).method_gap_signed_share)) != std::string::npos);
+  CHECK(measurement.cells.at(0).method_gap_signed_share ==
+        measurement.cells.at(0).method_gap_share);
   WriteCoverageByKeyRows(keys, "1,0", measurement, {1},
                          {{3, {2, 0.5, false}}, {5, {1, 0.25, true}}}, units);
   const std::string by_key_header = CoverageByKeyTableHeader("m,exc", {1});
@@ -518,7 +571,7 @@ TEST_CASE("Coverage untargeted interfaces, the cell set and the banner edge case
   with_null["Flagged"][0]["regime status"] = "OUT";
   std::string null_banner;
   CHECK_NOTHROW(null_banner = CoverageRunBanner(with_null));
-  CHECK(null_banner.find("covered factor nan (validated [nan, nan]: OUT)") !=
+  CHECK(null_banner.find("covered factor nan (validated [nan, nan] by 0 window(s): OUT)") !=
         std::string::npos);
   // Review m-6: an empty record is never silent.
   const auto empty = CoverageRunMetadata(CoverageRunRecord{}, CoverageThresholds{},
