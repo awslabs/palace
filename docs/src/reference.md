@@ -2714,7 +2714,9 @@ only once the AMR loop has ended (a run without AMR: after its only solve), by t
 end-of-run write of the timing record (no load of `palace.json` of its own). Under AMR the
 root output holds the last COMPLETED level until the next level writes, so a run killed
 during a later level keeps an earlier level's block, which reads `"Complete": true` but
-has no `Final`; a run killed during its first solve has no block at all. Only a block with
+has no `Final`; a run killed during its first solve has no block at all, except an
+electrostatic raw-fallback run, which writes its 0-cell block before the solve (killed
+during that solve, it keeps that block; it has no `Final`). Only a block with
 `"Final": true` is the coverage of a finished run; the tables of a killed run hold the
 finished cells only. The expected cell set of a design (the cells a run should have
 measured) and a coverage certificate are not written by this version.
