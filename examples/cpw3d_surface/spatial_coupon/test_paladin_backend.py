@@ -529,6 +529,88 @@ class DriveWithFakeCLI(FakeCLICase):
         self.script()
         self.watchers = RecordingWatchers()  # a fresh recording stand-in (its start bound counts per fake cluster)
 
+    # Decision 1836 m-2 / m-3 (review r1833 MINOR-2 / MINOR-3): an unknown receipt keeps the intent open; the close tool.
+    def submit_without_an_answer(self, *, answer=None):
+        """The submit call makes the run and then gives no usable answer (the 600-s timeout form; or `answer`)."""
+        real = paladin_backend.paladin_call
+
+        def call(cli, arguments, **options):
+            if arguments[:2] == ["palace", "submit-detailed"]:
+                real(cli, arguments, **options)
+                if answer is not None:
+                    return answer
+                raise paladin_backend.PaladinUnanswered("palace submit-detailed: no answer in 600 s")
+            return real(cli, arguments, **options)
+
+        return mock.patch.object(paladin_backend, "paladin_call", side_effect=call)
+
+    def test_b2_a_submit_without_an_answer_keeps_the_intent_open_and_never_submits_again(self):
+        """Review r1833 B2: the submit made the run and then timed out; the listings answer empty (was: Outcome 'error',
+        then a resume with two empty answers submitted a SECOND copy)."""
+        self.lookups(["true", "true", "empty", "empty", "empty"])  # the two lookups before the submit, three after it
+        del self.slept[:]
+        with self.submit_without_an_answer(), self.assertRaises(paladin_backend.PaladinError) as stop:
+            self.drive()
+        self.assertIn("receipt is unknown", str(stop.exception))
+        self.assertIn("RECOVERY", str(stop.exception))
+        intent = self.records()["w"]["SubmitIntents"][-1]
+        self.assertNotIn("Outcome", intent)
+        self.assertEqual(self.records()["w"]["SubmitErrors"][-1]["Receipt"], "unknown")
+        self.assertEqual(self.slept, [20.0, 30.0, 30.0])
+        self.lookups(["empty"] * 4)  # a resume meets empty answers again (its first lookup + 3): STOP, no second submit
+        with self.assertRaises(paladin_backend.PaladinError):
+            self.drive()
+        self.assertEqual(self.submitted(), ["chainport-w"])
+        state = self.drive()  # a true listing: the run is adopted
+        self.assertEqual(self.submitted(), ["chainport-w", "chainport-r", "chainport-local-edge"])
+        self.assertEqual((state["Stages"]["w"]["SubmitIntents"][-1]["NonceMatches"], state["Stages"]["w"]["State"]), (True, "complete"))
+
+    def test_a_submit_answer_without_a_run_id_keeps_the_intent_open(self):
+        with self.submit_without_an_answer(answer={"jobs": []}):
+            state = self.drive()  # the run made by the call is found by the repeated lookup and adopted
+        self.assertEqual(self.submitted(), ["chainport-w", "chainport-r", "chainport-local-edge"])
+        self.assertTrue(state["Stages"]["w"]["SubmitIntents"][-1]["Outcome"].startswith("adopted"))
+
+    def test_b3_an_intent_whose_submit_was_never_sent_is_closed_by_the_tool_after_recorded_lookups(self):
+        """Review r1833 B3: every resume STOPs with no recovery named, and only a hand edit could close the intent."""
+        real = paladin_backend.paladin_call
+
+        def ended_before_the_call(cli, arguments, **options):
+            if arguments[:2] == ["palace", "submit-detailed"]:
+                raise KeyboardInterrupt("the driver process ends after the intent, before the call")
+            return real(cli, arguments, **options)
+
+        with mock.patch.object(paladin_backend, "paladin_call", side_effect=ended_before_the_call), \
+                self.assertRaises(KeyboardInterrupt):
+            self.drive()
+        for _ in range(2):
+            with self.assertRaises(paladin_backend.PaladinError) as stop:
+                self.drive()
+            self.assertIn("RECOVERY", str(stop.exception))
+            self.assertIn("--close-intent w", str(stop.exception))
+        self.assertEqual(self.submitted(), [])
+        profile = self.root / "profile.json"
+        profile.write_text(json.dumps({"Paladin": self.block}))
+        del self.slept[:]
+        with mock.patch("sys.stdout"), mock.patch("sys.stderr"):
+            code = paladin_backend.main([str(self.plan_path), "--profile", str(profile), "--out", str(self.out), "--close-intent", "w"])
+        self.assertEqual(code, 0)
+        intent = self.records()["w"]["SubmitIntents"][-1]
+        self.assertEqual((intent["Outcome"], len(intent["ClosedBy"]["Lookups"])), ("closed: no run after the recorded lookups", 3))
+        self.assertEqual(self.slept, [30.0, 30.0])
+        state = self.drive()  # the resume submits the stage once
+        self.assertEqual(self.submitted(), ["chainport-w", "chainport-r", "chainport-local-edge"])
+        self.assertEqual(state["Stages"]["w"]["State"], "complete")
+
+    def test_the_close_tool_refuses_when_a_run_of_the_stage_is_listed(self):
+        self.killed_after_the_submit()  # an open intent AND a live run
+        profile = self.root / "profile.json"
+        profile.write_text(json.dumps({"Paladin": self.block}))
+        with mock.patch("sys.stdout"), mock.patch("sys.stderr"):
+            code = paladin_backend.main([str(self.plan_path), "--profile", str(profile), "--out", str(self.out), "--close-intent", "w"])
+        self.assertEqual(code, 3)
+        self.assertNotIn("Outcome", self.records()["w"]["SubmitIntents"][-1])
+
     def test_an_open_intent_with_no_run_found_stops_after_three_lookups_over_60_s(self):
         self.killed_after_the_submit()
         del self.slept[:]

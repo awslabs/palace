@@ -132,6 +132,10 @@ class PaladinError(RuntimeError):
     the drive stops (fail closed; nothing is resubmitted)."""
 
 
+class PaladinUnanswered(PaladinError):
+    """A paladin call without an answer (the timeout, no JSON envelope): what it did is unknown (UNKNOWN_RECEIPT_RULE)."""
+
+
 # The cluster profile's Paladin block: exactly these keys.
 PALADIN_KEYS = {
     "Selector": "the container selector (dev-simlapointe-sp-pin-<sha10>): --palace of every submit",
@@ -245,11 +249,11 @@ def paladin_envelope(cli, arguments, *, timeout=600):
     try:
         completed = subprocess.run([cli] + list(arguments), capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired:
-        raise PaladinError(f"{' '.join(arguments[:2])}: no answer in {timeout} s") from None
+        raise PaladinUnanswered(f"{' '.join(arguments[:2])}: no answer in {timeout} s") from None
     try:
         envelope = json.loads(completed.stdout)
     except ValueError:
-        raise PaladinError(f"{' '.join(arguments[:2])}: no JSON envelope (rc {completed.returncode})") from None
+        raise PaladinUnanswered(f"{' '.join(arguments[:2])}: no JSON envelope (rc {completed.returncode})") from None
     if completed.returncode != 0 or not isinstance(envelope, dict) or not envelope.get("ok"):
         error = envelope.get("error") if isinstance(envelope, dict) else None
         raise PaladinError(f"{' '.join(arguments[:2])}: {error!r} (rc {completed.returncode})")
@@ -406,6 +410,14 @@ INTENT_RULE = ("decision 1820 (1): a SubmitIntent (stage, plan sha, UTC, a nonce
                "found = adopted, none = STOP (never a submit); any submit needs two consistent empty lookups >= 20 s apart; two "
                "runs of one stage = the newer live run(s) early-ended by 'palace cancel' (recorded) before the STOP, and an "
                "archive writer's Directory marked unusable (ARCHIVE-UNUSABLE.json: no reducer and no writer uses it)")
+UNKNOWN_RECEIPT_RULE = ("decision 1836 m-2 (review r1833 MINOR-2): a submit call without an answer (the timeout, no JSON envelope) or "
+                        "with an ok answer without a usable jobs[0].run_id keeps its intent OPEN (its receipt is unknown: the server "
+                        "may have made the run): the lookup is repeated 3 times over >= 60 s, a run found = adopted, none = STOP; an "
+                        "ANSWERED refusal (ok false) closes the intent 'refused' and the NO-RUN rule applies")
+CLOSE_INTENT_RULE = ("decision 1836 m-3 (review r1833 MINOR-3): an open intent whose run never appears is closed ONLY by "
+                     "`paladin_backend.py PLAN --profile P --out DIR --close-intent STAGE`: under the driver lock, 3 recorded lookups "
+                     "30 s apart, each complete (LOOKUP_RULE) and showing no run of the stage; then Outcome 'closed: no run after the "
+                     "recorded lookups' with ClosedBy; a run listed = not closed (a resume adopts it); no hand edit of the status file")
 LOOKUP_REPEATS, LOOKUP_REPEAT_SECONDS, SUBMIT_LOOKUP_GAP_SECONDS = 3, 30.0, 20.0
 UNUSABLE_MARKER = "ARCHIVE-UNUSABLE.json"
 WAIT_RULE = ("decision 1820 (3): a describe-run answer that is not an object, names another run_id, has no status, or reads "
@@ -936,12 +948,21 @@ class PaladinJob:
         self.start_nonce_watcher(stage, record, intent)  # WATCHER_RULE: the submit window is watched too
         try:
             data = paladin_call(self.block["CLI"], self.submit_arguments(stage, path, intent["Nonce"]))
+            run_id = int(data["jobs"][0]["run_id"])
+        except (PaladinUnanswered, KeyError, IndexError, TypeError, ValueError) as error:
+            # UNKNOWN_RECEIPT_RULE: the intent stays OPEN; the caller repeats the lookup (never a second submit on it).
+            record.setdefault("SubmitErrors", []).append({"UTC": self.now().isoformat(), "Error": repr(error)[:300],
+                                                          "Receipt": "unknown"})
+            intent["Unanswered"] = {"UTC": self.now().isoformat(), "Rule": UNKNOWN_RECEIPT_RULE}
+            self.save()
+            self.log(f"{self.case}: {name}: the submit call has no usable answer ({repr(error)[:120]}): the intent stays open")
+            return None
         except PaladinError as error:
-            record.setdefault("SubmitErrors", []).append({"UTC": self.now().isoformat(), "Error": str(error)[:300]})
-            intent["Outcome"] = "error"
+            record.setdefault("SubmitErrors", []).append({"UTC": self.now().isoformat(), "Error": str(error)[:300],
+                                                          "Receipt": "refused"})
+            intent["Outcome"] = "refused"
             self.save()
             return None
-        run_id = int(data["jobs"][0]["run_id"])
         record["RunID"], record["Submitted"] = run_id, self.now().isoformat()
         record["JobID"] = data["jobs"][0].get("job_id")
         intent["Outcome"], intent["RunID"] = f"run {run_id}", run_id
@@ -1124,9 +1145,40 @@ class PaladinJob:
             decision, value = self.lookup(stage, record, identity)
             if decision == "adopt":
                 return decision, value
+        recovery = ""
+        if self.open_intent(record) is not None:
+            recovery = (f"; RECOVERY: check by hand `{self.block['CLI']} palace my-jobs {' '.join(metadata_arguments(identity))} "
+                        f"--json`: a run listed = resume (it is adopted); none = close the intent with `python3 "
+                        f"{os.path.abspath(__file__)} {os.path.abspath(self.plan_path)} --profile <the profile> --out "
+                        f"{os.path.abspath(self.local_dir)} --close-intent {stage['Name']}` (it records its own lookups), then "
+                        f"resume ({CLOSE_INTENT_RULE})")
         raise PaladinError(f"{stage['Name']}: {why}, and {LOOKUP_REPEATS} lookups over "
                            f"{(LOOKUP_REPEATS - 1) * LOOKUP_REPEAT_SECONDS:.0f} s show no run of the stage {identity}: STOP, no "
-                           f"second submit ({INTENT_RULE})")
+                           f"second submit ({INTENT_RULE}){recovery}")
+
+    def close_open_intent(self, name):
+        """CLOSE_INTENT_RULE: the open intent of stage `name` closed after recorded lookups, or PaladinError."""
+        self.lock()
+        record = self.state["Stages"].get(name) or {}
+        intent = self.open_intent(record)
+        if intent is None:
+            raise PaladinError(f"{name}: no open submit intent to close ({CLOSE_INTENT_RULE})")
+        identity = stage_identity(self.block["Lane"], self.case, name, self.plan_sha256)
+        lookups = []
+        for attempt in range(LOOKUP_REPEATS):
+            if attempt:
+                self.sleep(LOOKUP_REPEAT_SECONDS)
+            rows = find_runs(self.block["CLI"], identity)  # a failed lookup raises: not closed
+            lookups.append({"UTC": self.now().isoformat(), "Rows": [[row.get("run_id"), row.get("status")] for row in rows]})
+            runs = [row for row in rows if not no_run(row)]
+            if runs:
+                raise PaladinError(f"{name}: a run of the stage is listed {[row['run_id'] for row in runs]}: the intent is NOT "
+                                   f"closed; resume (the run is adopted) ({CLOSE_INTENT_RULE})")
+        intent["Outcome"] = "closed: no run after the recorded lookups"
+        intent["ClosedBy"] = {"UTC": self.now().isoformat(), "Lookups": lookups, "PID": os.getpid(), "Rule": CLOSE_INTENT_RULE}
+        self.save()
+        self.log(f"{self.case}: {name}: the open intent {intent['Nonce'][:8]} closed after {len(lookups)} recorded lookups")
+        return intent
 
     def adopt(self, stage, record, row, identity):
         name = record["Name"]
@@ -1185,6 +1237,10 @@ class PaladinJob:
                 record["NoRunRowsBeforeSubmit"] = value
             if self.submit(stage, record) is not None:
                 continue  # the lookup must now find exactly this run
+            if self.open_intent(record) is not None:  # UNKNOWN_RECEIPT_RULE
+                decision, value = self.repeated_lookup(stage, record, identity,
+                                                       "a submit call without a usable answer (its receipt is unknown)")
+                return self.adopt(stage, record, value, identity)
             decision, value = self.lookup(stage, record, identity)
             if decision == "submit" and value == 0:
                 raise PaladinError(f"{name}: the submit was refused and left no row: STOP "
@@ -1465,6 +1521,7 @@ def main(argv=None):
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--dry-run", action="store_true")
     mode.add_argument("--submit", action="store_true")
+    mode.add_argument("--close-intent", metavar="STAGE", help="close the open submit intent of STAGE (CLOSE_INTENT_RULE)")
     parser.add_argument("--profile", required=True, help="a cluster profile with a Paladin block")
     parser.add_argument("--out", required=True, help="the local directory of the job's state and run configurations")
     parser.add_argument("--remote-dir", help="the plan's directory on /data (outputs, logs, status.json); --submit")
@@ -1489,6 +1546,18 @@ def main(argv=None):
         for run in runs:
             print(json.dumps({"Stage": run["Stage"], "ResponseArchive": run["ResponseArchive"], "Requires": run["Requires"],
                               "Instance": run["Instance"]["Type"]}))
+        return 0
+    if args.close_intent:
+        job = PaladinJob(args.plan, block=block, remote_dir=args.remote_dir or "", local_dir=args.out, mapping=mapping)
+        try:
+            intent = job.close_open_intent(args.close_intent)
+        except PaladinError as error:
+            print(f"STOP: {error}", file=sys.stderr)
+            return 3
+        finally:
+            job.unlock()
+        print(json.dumps({"Stage": args.close_intent, "Nonce": intent["Nonce"], "Outcome": intent["Outcome"],
+                          "Lookups": len(intent["ClosedBy"]["Lookups"])}))
         return 0
     if not args.remote_dir:
         parser.error("--submit needs --remote-dir")
