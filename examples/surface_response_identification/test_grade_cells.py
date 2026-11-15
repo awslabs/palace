@@ -231,12 +231,18 @@ class CellRules(unittest.TestCase):
         self.assertIsNone(cell["x_range_pct"])
         self.assertEqual((cell["n_not_applied"], cell["n_members"], cell["n_pass"]), (2, 2, 0))
         self.assertIsNone(cell["in_band"])
-        # one PASS member beside a marked one: NOT-APPLIED, not PASS
+        # one PASS member beside a marked one: NOT-APPLIED, not PASS; the unmarked member's x is quoted under its own names only
+        # (decision 1875: never as the Type's x_pct / worst_member / x_range_pct)
         g[1] = {"x_pct": {"SA": 0.5}, "letters": {"SA": "PASS"}, "band": {"SA": {"in": True}}}
         cell = gc.aggregate_cell([1, 2], g, "SA", "rule")
         self.assertEqual(cell["letter"], gc.NOT_APPLIED)
-        self.assertEqual((cell["x_pct"], cell["worst_member"], cell["x_range_pct"]), (0.5, 1, [0.5, 0.5]))
+        self.assertEqual((cell["x_pct"], cell["worst_member"], cell["x_range_pct"]), (None, None, None))
+        self.assertEqual((cell["unmarked_members_x_pct"], cell["unmarked_members_worst_member"], cell["unmarked_members_x_range_pct"],
+                          cell["n_unmarked_members"]), (0.5, 1, [0.5, 0.5], 1))
         self.assertEqual(cell["not_applied_members"], ["2"])
+        line = gc.summary_line("m", {"member_kind": "source", "members": [1, 2], "cells": {"SA": cell}})
+        self.assertIn("SA NOT-APPLIED (1 of 2 members: a non-finite corrected value); 1 of 2 members only, the others NOT-APPLIED: "
+                      "worst +0.500 % [+0.500, +0.500] (not the Type's value)", line)
         # one FAIL member beside a marked one: FAIL
         g[1] = {"x_pct": {"SA": -5.5}, "letters": {"SA": "FAIL"}, "band": {"SA": {"in": False}}}
         cell = gc.aggregate_cell([1, 2], g, "SA", "rule")
@@ -356,7 +362,11 @@ class SyntheticWindows(unittest.TestCase):
         for T in ("MS", "MA_sharp", "C"):
             self.assertEqual(g["cells"][T]["letter"], gc.NOT_APPLIED, T)
             self.assertEqual(g["cells"][T]["letters_by_member"], {"1": "PASS", "2": gc.NOT_APPLIED})
+            self.assertIsNone(g["cells"][T]["x_pct"], T)
+            self.assertEqual(g["cells"][T]["n_unmarked_members"], 1, T)
         self.assertIn("(1 of 2 members NOT-APPLIED)", gc.summary_line("m", g))
+        self.assertIn("MS NOT-APPLIED (1 of 2 members: a non-finite corrected value); 1 of 2 members only, the others NOT-APPLIED",
+                      gc.summary_line("m", g))
 
     def test_es_fixed_shell_form(self):
         """--tail-form fixed-shell on the synthetic window: a values reference without the R10 rings is refused (exit 3), graded as

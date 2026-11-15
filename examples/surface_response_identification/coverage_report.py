@@ -33,8 +33,11 @@ coverage-report.{json,md} with four blocks (DESIGN.md, readiness-20261029/covera
 NOT-APPLIED (decision 1847 E-1): under Coverage.Policy MarkNotApplied a marked corrected cell prints nan (its value in the
 `... partial (uncovered part raw)` twin). A ladder solve whose ft of a Type (or whose E_elec / E_norm corrected) is such a nan
 is NOT dropped: the Type's DEPTH reading is NOT-APPLIED when the ladder would have had >= 2 solves, and its band (block C)
-is WITHHELD (no band, never a narrower one) with a LOW reason. A Type whose predictors are unavailable for another reason (a
-single solve) keeps its band as before. A tree without a non-finite corrected cell reads exactly as before.
+is WITHHELD (no band, never a narrower one) with a LOW reason. A Type whose corrected cell is MARKED in the EVALUATED solve
+(the report's own solve and source; decision 1875: single-solve trees as ladders; MARKED = non-finite AND (palace.json
+SurfaceResponse.Coverage.Policy MarkNotApplied OR the cell's twin column present), decision 1880) gets NO band either
+(NOT-APPLIED, a LOW reason); the JSON lists those Types per evaluated source (`not_applied_types`) and the C band of that
+source is withheld too. A tree without a non-finite corrected cell reads exactly as before; so does a Warn tree without twins.
 
 Pure Python (no numpy); exit 0 when the report was written, 2 when a required input is missing.
 """
@@ -316,6 +319,7 @@ def load_surface_energies(postpro, kind, source=None):
             out["interfaces"][i] = {"raw": raw[i], "ft": ft.get(i), "ff": ff.get(i), "sc": sc.get(i)}
         out["E_elec_raw"] = row.get("E_elec raw (J)")
         out["E_elec_ft"] = row.get("E_elec postprocessed fixed-trace (J)")
+        out["twins"] = {k for k in row if k.endswith(PARTIAL_COLUMN_SUFFIX)}
         out["closure"] = {
             "max trace closure spread": row.get("max trace closure spread"),
             "response-weighted local trace closure spread": row.get("response-weighted local trace closure spread"),
@@ -333,6 +337,7 @@ def load_surface_energies(postpro, kind, source=None):
                                     "sc": row.get("E_surf self-consistent (J)")}
         out["E_elec_raw"] = first.get("E_norm raw (J)")
         out["E_elec_ft"] = first.get("E_norm corrected (J)")
+        out["twins"] = {k for k in first if k.endswith(PARTIAL_COLUMN_SUFFIX)}
         out["evaluation_key"] = {"f_GHz": key[0], "exc": key[1]}
         conf = read_csv(os.path.join(postpro, "surface-response-confidence.csv"))
         if conf:
@@ -1126,6 +1131,23 @@ def marked_ft_types(energies, W):
     return sorted(out)
 
 
+def evaluated_marked_types(energies, W, kind, policy):
+    """The Types of the EVALUATED solve with a MARKED corrected cell (decisions 1875 / 1880): non-finite AND (Coverage.Policy
+    MarkNotApplied OR the cell's ' partial (uncovered part raw)' twin column present); the corrected E_elec / E_norm marks every
+    Type. A non-finite cell of a Warn tree without its twin is not a mark (the Warn readings are frozen)."""
+    twins = energies.get("twins") or set()
+
+    def marked(value, column):
+        return isinstance(value, float) and not math.isfinite(value) and (
+            policy == "MarkNotApplied" or column + PARTIAL_COLUMN_SUFFIX in twins)
+
+    es = kind == "ES"
+    whole = marked(energies.get("E_elec_ft"), "E_elec postprocessed fixed-trace (J)" if es else "E_norm corrected (J)")
+    return sorted(t for t, w in W.items() if whole or any(
+        marked(energies["interfaces"][i].get("ft"), f"E_surf postprocessed fixed-trace[{i}] (J)" if es else "E_surf corrected (J)")
+        for i in w["interfaces"]))
+
+
 def depth_rule(solves):
     """Per Type: the last ft step (pt of the final ft), the step ratio over the last three solves, the
     quotability verdict, and the Richardson tail (DESIGN 1.2 DEPTH). A Type with a marked solve (decision 1847 E-1) whose
@@ -1430,8 +1452,9 @@ def load_bands(path):
     return bands
 
 
-def band_table(bands, family, energy, lengths, ladder_types, residuals, proxy):
-    """Per Type: b +- h in pt with the gap term r_t |g_t| and the fired extensions; C beside (M0 only)."""
+def band_table(bands, family, energy, lengths, ladder_types, residuals, proxy, marked=()):
+    """Per Type: b +- h in pt with the gap term r_t |g_t| and the fired extensions; C beside (M0 only). `marked`: the Types whose
+    corrected cell is marked in the evaluated solve (decision 1875): NO band for them, nor for C when any is marked."""
     fam = (bands.get("families") or {}).get(family) or {}
     types_cal = fam.get("types") or {}
     out = {}
@@ -1445,6 +1468,12 @@ def band_table(bands, family, energy, lengths, ladder_types, residuals, proxy):
             # decision 1847 E-1: the DEPTH predictor reads a marked corrected value: NO band (never one without its extension)
             row.update({"not_applied": True, "note": f"NOT-APPLIED {family} / {t}: no band: the ladder holds a marked corrected "
                         f"value ({lad.get('not_applied_solves')} solve(s); Coverage.Policy MarkNotApplied)"})
+            out[t] = row
+            continue
+        if t in marked:
+            # decision 1875: the evaluated solve's corrected value of this Type is marked: NO band (a band on a value not printed)
+            row.update({"not_applied": True, "note": f"NOT-APPLIED {family} / {t}: no band: the evaluated solve's corrected value "
+                        "is marked (Coverage.Policy MarkNotApplied)"})
             out[t] = row
             continue
         if cal is None:
@@ -1543,6 +1572,10 @@ def band_table(bands, family, energy, lengths, ladder_types, residuals, proxy):
                     "widened": c.get("widened", 1.0), "loo_coverage": c.get("loo_coverage"), "loo_coverage_unwidened": unwidened_loo(c),
                     "n": c.get("n"), "low_pt": beta0 - half, "high_pt": beta0 + half,
                     "note": "C is printed beside; it never enters the label (DESIGN 5.5)"}
+    if marked and (out.get("C") or {}).get("calibrated"):
+        # decision 1875: a marked cell of the evaluated source marks its corrected C (ERRATUM-1829 E-1): no C band
+        out["C"] = {"calibrated": True, "not_applied": True, "note": f"NOT-APPLIED {family} / C: no band: the evaluated solve holds "
+                    f"a marked corrected value ({', '.join(marked)}; Coverage.Policy MarkNotApplied)"}
     return out
 
 
@@ -1553,7 +1586,7 @@ def unwidened_loo(cal):
     return ((cal.get("candidates") or {}).get(cal.get("model")) or {}).get("loo_coverage")
 
 
-def label_run(energy, lengths, ladder_types, residuals, flags, bands_family, proxy, ma_reading):
+def label_run(energy, lengths, ladder_types, residuals, flags, bands_family, proxy, ma_reading, marked=()):
     """HIGH / MEDIUM / LOW with the list of reasons (DESIGN 1.3; PLAN section 4 item 3 + MINOR-7)."""
     census = (bands_family or {}).get("class_census") or {}
     reasons_low = []
@@ -1583,6 +1616,8 @@ def label_run(energy, lengths, ladder_types, residuals, flags, bands_family, pro
             reasons_not_high.append(f"{t}: SCP owner credit {fmt_pct(credit_share)} > 1 % of W_t (premise unmeasured; decision 1133): "
                                     "capped at MEDIUM")
         lad = ladder_types.get(t, {})
+        if t in marked and lad.get("status") != LADDER_NOT_APPLIED:
+            reasons_low.append(f"{t}: NOT-APPLIED: the evaluated solve's corrected value is marked (no band)")
         if lad.get("status") == LADDER_NOT_APPLIED:
             reasons_low.append(f"{t}: NOT-APPLIED: the ladder holds a marked corrected value (no DEPTH reading, no band)")
         elif lad.get("status") == "DEPTH-UNBOUNDED":
@@ -1629,6 +1664,8 @@ def build_report(postpro, manifest_path, bands=None, discovery_path=None, ladder
     source = energies.get("source") if kind == "ES" else None
     edges = load_edge_energies(postpro, source)
     W = within_r_by_type(interfaces, targets, energies, edges)
+    policy = ((palace.get("SurfaceResponse") or {}).get("Coverage") or {}).get("Policy")
+    marked = evaluated_marked_types(energies, W, kind, policy)  # decisions 1875 / 1880: no band for these Types
     catalog = load_catalog(palace)
     loaded = load_manifest(manifest_path)
     discovery = read_json(discovery_path) if discovery_path else None
@@ -1676,7 +1713,7 @@ def build_report(postpro, manifest_path, bands=None, discovery_path=None, ladder
     }
     if bands is not None:
         fam = (bands.get("families") or {}).get(family) or {}
-        report["block_C"] = band_table(bands, family, energy, lengths, lad["types"], residuals, proxy)
+        report["block_C"] = band_table(bands, family, energy, lengths, lad["types"], residuals, proxy, marked)
         if "C" in report["block_C"] and kind == "Maxwell":
             # DESIGN 1.2: the C column labelled by class (R-50 / junction) and FORM (a P-embedded R2a port)
             report["block_C"]["C"]["c_class"] = flags.get("c_class")
@@ -1684,10 +1721,12 @@ def build_report(postpro, manifest_path, bands=None, discovery_path=None, ladder
         report["bands"] = {"path": bands["_path"], "sha256": bands["_sha256"], "version": bands.get("version"),
                            "fit_date": bands.get("fit_date"), "provenance": bands.get("provenance"),
                            "dev_set_caveat": bands.get("dev_set_caveat")}
-        report["label"] = label_run(energy, lengths, lad["types"], residuals, flags, fam, proxy, ma_reading)
+        report["label"] = label_run(energy, lengths, lad["types"], residuals, flags, fam, proxy, ma_reading, marked)
     else:
         report["block_C"] = None
         report["label"] = {"label": "n/a (no band file)", "reasons_low": [], "reasons_not_high": []}
+    if marked:
+        report["not_applied_types"] = marked
     if all_sources and len(sources) > 1:
         report["sources"], report["source_union"] = multi_source_blocks(
             postpro, manifest_path, sources, report, bands=bands, discovery_path=discovery_path, ladder_dir=ladder_dir,
@@ -1712,6 +1751,8 @@ def multi_source_blocks(postpro, manifest_path, sources, first_report, **kwargs)
                                          for t in rep["types"]},
                               "block_C": rep.get("block_C"), "label": rep.get("label"),
                               "ladder_types": rep["block_D"]["ladder"]["types"]}
+        if rep.get("not_applied_types"):
+            per_source[str(s)]["not_applied_types"] = rep["not_applied_types"]
     union = {"rule": "fail-closed over sources (decision 1210 (a)): a cell is in band only if EVERY source's deviation lies in that "
                      "source's own band (band_by_source; the grader's check); the label = the lowest over the sources", "types": {}}
     for t in first_report["types"] + ["C"]:

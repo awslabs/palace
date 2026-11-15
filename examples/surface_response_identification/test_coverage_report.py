@@ -1407,3 +1407,156 @@ class TestStageERecordsV2(unittest.TestCase):
             self.assertAlmostEqual(e["raw"]["Unclaimed"], 0.0, delta=1e-30)
             self.assertGreater(e["raw_share_total"], 0.22)
             self.assertLess(abs(e["bookkeeping_miss_rel"]), cr.ENERGY_BOOKKEEPING_REL_TOL)
+
+
+MX_MARKED_COLUMNS = ("E_norm corrected (J)", "E_norm corrected fixed-flux (J)", "E_norm self-consistent (J)", "E_surf corrected (J)",
+                     "p_surf corrected", "Q_surf corrected", "E_surf corrected fixed-flux (J)", "p_surf corrected fixed-flux",
+                     "Q_surf corrected fixed-flux", "E_surf self-consistent (J)", "p_surf self-consistent", "Q_surf self-consistent")
+
+
+def mark_rows(path, columns, row_marked):
+    """The MarkNotApplied form of a corrected table: the named columns (EXACT header match) of the rows `row_marked` selects print
+    nan, their values in appended ' partial (uncovered part raw)' twins (nan on an unmarked row)."""
+    with open(path) as f:
+        lines = [ln.rstrip("\n").split(",") for ln in f]
+    header = lines[0]
+    cols = [j for j, h in enumerate(header) if h.strip() in columns]
+    out = [header + [header[j] + PARTIAL_SUFFIX for j in cols]]
+    for r in lines[1:]:
+        m = row_marked(dict(zip([h.strip() for h in header], r)))
+        out.append([("nan" if (m and j in cols) else v) for j, v in enumerate(r)] + [(r[j] if m else "nan") for j in cols])
+    with open(path, "w") as f:
+        f.write("".join(",".join(r) + "\n" for r in out))
+
+
+class SingleSolveMarkTest(unittest.TestCase):
+    """Decision 1875: a Type whose corrected cell is marked in the EVALUATED solve gets NO band on a SINGLE-SOLVE tree too (the
+    eig2-Mark / drv-u-Mark forms of the L4 cases: one Maxwell solve, every cell marked; the old reading kept the Warn band on a
+    value that is not printed), its C band is withheld, and the report carries the marks of every source it evaluates."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="covrep-single-")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _maxwell_pair(self, name, eigen):
+        out = []
+        for side in ("warn", "mark"):
+            post, manifest = write_maxwell_fixture(os.path.join(self.tmp, name, side))
+            if eigen:
+                config = _load(os.path.join(post, "config_resolved.json"))
+                config["Problem"]["Type"] = "Eigenmode"
+                _dump(config, os.path.join(post, "config_resolved.json"))
+                path = os.path.join(post, "surface-Q-corrected.csv")
+                with open(path) as f:
+                    text = f.read()
+                with open(path, "w") as f:
+                    f.write(text.replace("f (GHz),", "m,", 1))
+            if side == "mark":
+                mark_rows(os.path.join(post, "surface-Q-corrected.csv"), MX_MARKED_COLUMNS, lambda row: True)
+            out.append((post, manifest))
+        return out
+
+    def _check_maxwell(self, name, eigen):
+        bands = cr.load_bands(write_maxwell_bands(os.path.join(self.tmp, name + "-bands.json")))
+        (wp, wm), (mp, mm) = self._maxwell_pair(name, eigen)
+        warn = cr.build_report(wp, wm, bands, ma_reading="sharp")
+        mark = cr.build_report(mp, mm, bands, ma_reading="sharp")
+        self.assertNotIn("not_applied_types", warn)
+        for t in ("SA", "MS"):
+            self.assertIn("low_pt", warn["block_C"][t], t)
+            self.assertNotIn("not_applied", warn["block_C"][t], t)
+            row = mark["block_C"][t]
+            self.assertTrue(row["not_applied"], t)
+            self.assertNotIn("low_pt", row, t)
+            self.assertNotIn("high_pt", row, t)
+            self.assertTrue(row["note"].startswith(f"NOT-APPLIED Maxwell / {t}: no band"), t)
+            self.assertEqual(mark["block_D"]["ladder"]["types"][t]["status"], "ladder: not in this run", t)
+            self.assertTrue(any(r.startswith(f"{t}: NOT-APPLIED: the evaluated solve") for r in mark["label"]["reasons_low"]), t)
+        self.assertIn("low_pt", warn["block_C"]["C"])
+        self.assertTrue(mark["block_C"]["C"]["not_applied"])
+        self.assertNotIn("low_pt", mark["block_C"]["C"])
+        self.assertEqual(mark["not_applied_types"], ["MS", "SA"])
+        self.assertEqual(mark["block_A"]["energy"], warn["block_A"]["energy"])
+        self.assertNotIn("band [", cr.summary_line(mark))
+        self.assertEqual(cr.summary_line(mark).count("band NOT-APPLIED"), 2)
+        self.assertIn("NOT-APPLIED Maxwell / C", cr.render_markdown(mark))
+
+    def test_drv_u_form_single_driven_solve_every_cell_marked(self):
+        self._check_maxwell("drv-u", eigen=False)
+
+    def test_eig2_form_single_eigen_solve_every_cell_marked(self):
+        self._check_maxwell("eig2", eigen=True)
+
+    def test_es_multi_source_single_solve_marks_of_every_source(self):
+        bands = cr.load_bands(write_bands(os.path.join(self.tmp, "bands.json")))
+        reports = {}
+        for side in ("warn", "mark"):
+            post, manifest = write_fixture(os.path.join(self.tmp, "es2", side), sources=(1, 2))
+            for d in cr.iteration_dirs(post):
+                shutil.rmtree(d)
+            if side == "mark":  # source 2 only: every corrected cell of its row (its E_elec corrected too)
+                with open(os.path.join(post, "surface-Q-corrected.csv")) as f:
+                    cols = {h for h in f.readline().rstrip("\n").split(",") if "postprocessed" in h or h.startswith("E_elec corrected")}
+                mark_rows(os.path.join(post, "surface-Q-corrected.csv"), cols, lambda row: float(row["i"]) == 2.0)
+            reports[side] = cr.build_report(post, manifest, bands, ma_reading="sharp")
+        warn, mark = reports["warn"], reports["mark"]
+        # the headline source 1 is unmarked: its blocks read as on the Warn tree; no not_applied_types at the top
+        self.assertNotIn("not_applied_types", mark)
+        self.assertEqual(mark["block_C"], warn["block_C"])
+        self.assertEqual(mark["sources"]["1"], warn["sources"]["1"])
+        s2 = mark["sources"]["2"]
+        self.assertEqual(s2["not_applied_types"], ["MA", "MS", "SA"])
+        for t in ("SA", "MS", "MA", "C"):
+            self.assertTrue(s2["block_C"][t]["not_applied"], t)
+            self.assertNotIn("low_pt", s2["block_C"][t], t)
+            self.assertIn("band_intersection_pt", warn["source_union"]["types"][t], t)
+            # the fail-closed union: a source without a band removes the union band (never the other source's band alone)
+            self.assertNotIn("band_intersection_pt", mark["source_union"]["types"][t], t)
+            self.assertNotIn("band_by_source", mark["source_union"]["types"][t], t)
+        self.assertNotIn("not_applied_types", warn["sources"]["2"])
+
+    def _nan_without_twins(self, post, policy):
+        """The self-consistent-only form (status NOT-MEASURED): the fixed-trace corrected cells nan BY DESIGN, no twin column;
+        `policy` written into palace.json SurfaceResponse.Coverage (None = an older tree without the block)."""
+        path = os.path.join(post, "surface-Q-corrected.csv")
+        with open(path) as f:
+            lines = [ln.rstrip("\n").split(",") for ln in f]
+        cols = [j for j, h in enumerate(lines[0]) if h.strip() in ("E_norm corrected (J)", "E_surf corrected (J)")]
+        with open(path, "w") as f:
+            f.write("".join(",".join(("nan" if (k and j in cols) else v) for j, v in enumerate(r)) + "\n" for k, r in enumerate(lines)))
+        if policy is not None:
+            palace = _load(os.path.join(post, "palace.json"))
+            palace["SurfaceResponse"]["Coverage"] = {"Policy": policy}
+            _dump(palace, os.path.join(post, "palace.json"))
+
+    def test_marked_means_nonfinite_and_policy_or_twin(self):
+        """Decision 1880: MARKED = non-finite AND (Policy MarkNotApplied OR the cell's twin present). (i) Policy MarkNotApplied, a
+        nan cell WITHOUT its twin: no band (the Policy arm); (ii) a Warn tree carrying the twins by a hand-made edit (hostile):
+        no band (the twin arm); (iii) a Warn tree with the nan by design and no twin: the band of record is kept (the Warn
+        readings are frozen: OI-READER-BAND-PRINTED-FOR-NAN-FIXED-TRACE-ON-SELFCONSISTENT-ONLY-WARN-TREE)."""
+        bands = cr.load_bands(write_maxwell_bands(os.path.join(self.tmp, "bands.json")))
+        cases = {}
+        for name in ("policy-arm", "twin-arm", "warn-nan"):
+            post, manifest = write_maxwell_fixture(os.path.join(self.tmp, name))
+            if name == "policy-arm":
+                self._nan_without_twins(post, "MarkNotApplied")
+            elif name == "twin-arm":
+                palace = _load(os.path.join(post, "palace.json"))
+                palace["SurfaceResponse"]["Coverage"] = {"Policy": "Warn"}
+                _dump(palace, os.path.join(post, "palace.json"))
+                mark_rows(os.path.join(post, "surface-Q-corrected.csv"), MX_MARKED_COLUMNS, lambda row: True)
+            else:
+                self._nan_without_twins(post, "Warn")
+            cases[name] = cr.build_report(post, manifest, bands, ma_reading="sharp")
+        for name in ("policy-arm", "twin-arm"):
+            self.assertEqual(cases[name]["not_applied_types"], ["MS", "SA"], name)
+            for t in ("SA", "MS", "C"):
+                self.assertTrue(cases[name]["block_C"][t]["not_applied"], (name, t))
+                self.assertNotIn("low_pt", cases[name]["block_C"][t], (name, t))
+        warn = cases["warn-nan"]
+        self.assertNotIn("not_applied_types", warn)
+        for t in ("SA", "MS", "C"):
+            self.assertIn("low_pt", warn["block_C"][t], t)
+            self.assertNotIn("not_applied", warn["block_C"][t], t)

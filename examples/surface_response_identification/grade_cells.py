@@ -51,7 +51,9 @@ stored CSVs (test_grade_cells.py). Pure Python; exit 0 when the grade was writte
 NOT-APPLIED (decision 1847 E-1): a member whose x is not finite -- the corrected device value is a marked cell's nan (Coverage.Policy
 MarkNotApplied prints a marked corrected cell as nan, its value in the `... partial (uncovered part raw)` column) or the reference is
 non-finite -- carries the letter NOT-APPLIED (no grade); the cell letter is FAIL if any member FAILs, else NOT-APPLIED if any member is
-NOT-APPLIED: a non-finite corrected cell never reads PASS. The partial twin columns are never graded.
+NOT-APPLIED: a non-finite corrected cell never reads PASS. The partial twin columns are never graded. A NOT-APPLIED cell quotes
+its unmarked members' worst / range only as unmarked_members_x_pct / _x_range_pct with n_unmarked_members (decision 1875), never
+as the cell's x_pct.
 """
 
 import argparse
@@ -744,7 +746,12 @@ def aggregate_cell(members, grades, T, rule_text):
            "n_in_band": sum(bool(b) for b in bands), "rule": rule_text}
     if graded:
         worst = max(graded, key=lambda m: abs(graded[m]))
-        out.update({"x_pct": graded[worst], "worst_member": worst, "x_range_pct": [min(graded.values()), max(graded.values())]})
+        quoted = {"x_pct": graded[worst], "worst_member": worst, "x_range_pct": [min(graded.values()), max(graded.values())]}
+        if not_applied and letter != "FAIL":
+            # decision 1875: a NOT-APPLIED cell quotes its unmarked members under their own names, never as the Type's value
+            quoted = {"unmarked_members_" + k: v for k, v in quoted.items()}
+            quoted["n_unmarked_members"] = len(graded)
+        out.update(quoted)
     if not_applied:
         out.update({"n_not_applied": len(not_applied), "not_applied_members": [str(m) for m in not_applied]})
     return out
@@ -854,7 +861,12 @@ def summary_line(label, out):
     parts = []
     for T, c in out["cells"].items():
         if c.get("n_not_applied") and c.get("x_pct") is None:
-            parts.append(f"{T} {c['letter']} ({c['n_not_applied']} of {c['n_members']} members: a non-finite corrected value)")
+            part = f"{T} {c['letter']} ({c['n_not_applied']} of {c['n_members']} members: a non-finite corrected value)"
+            if c.get("n_unmarked_members"):
+                lo, hi = c["unmarked_members_x_range_pct"]
+                part += (f"; {c['n_unmarked_members']} of {c['n_members']} members only, the others NOT-APPLIED: worst "
+                         f"{c['unmarked_members_x_pct']:+.3f} % [{lo:+.3f}, {hi:+.3f}] (not the Type's value)")
+            parts.append(part)
             continue
         if c.get("x_pct") is None:
             parts.append(f"{T} n/a")
