@@ -1,0 +1,14 @@
+diff --git a/fem/fe/fe_nd.hpp b/fem/fe/fe_nd.hpp
+index 8b783be66..776bdbc9a 100644
+--- a/fem/fe/fe_nd.hpp
++++ b/fem/fe/fe_nd.hpp
+@@ -533,6 +533,9 @@ public:
+                             DenseMatrix &curl) const
+    { ProjectCurl_ND(tk, dof2tk, fe, Trans, curl); }
+ 
++   const StatelessDofTransformation *GetDofTransformation() const override
++   { return &doftrans; }
++
+    void CalcRawVShape(const IntegrationPoint &ip,
+                       DenseMatrix &shape) const;
+ 
