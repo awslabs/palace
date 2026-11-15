@@ -41,8 +41,9 @@ enum class ProblemType : char;
 // it has a damping term, each Add* method to which it contributes a term, and if a term
 // depends on frequency, the list of frequency-dependent terms (sigma_terms and the
 // ExtraSystemBdrMassTerm methods). Outside this class, SpaceOperator names each type for
-// its 3D boundary checks (CheckBoundaryProperties), and WavePortData and
-// BoundaryModeSolver::Preprocess for the boundary edges of 2D cross-sections.
+// its 3D boundary checks (CheckBoundaryProperties), and
+// config::BoundaryData::GetCrossSectionEdgeAttributes for the boundary edges of 2D
+// cross-sections.
 //
 class SurfaceTerms
 {

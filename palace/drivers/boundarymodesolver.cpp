@@ -269,29 +269,12 @@ void BoundaryModeSolver::Preprocess(IoData &iodata, std::unique_ptr<mfem::Mesh> 
     mfem::Array<int> attr_list;
     attr_list.Append(bm.attributes.data(), bm.attributes.size());
 
-    // Parent boundary face types whose intersection with the cross-section should
-    // become 2D boundary edges: BCs that pin the tangential E-field (PEC, auxpec,
-    // impedance, conductivity, rational impedance, farfield) plus other-waveports
-    // (relabeled to PEC below).
-    std::vector<int> internal_bdr_attrs;
+    // Parent boundary faces whose intersection with the cross-section should become 2D
+    // boundary edges: the boundary conditions of the 2D solve (see
+    // config::BoundaryData::GetCrossSectionEdgeAttributes) plus other-waveports (relabeled
+    // to PEC below).
     const auto &bdr = iodata.boundaries;
-    auto append = [&](const auto &src)
-    { internal_bdr_attrs.insert(internal_bdr_attrs.end(), src.begin(), src.end()); };
-    append(bdr.pec.attributes);
-    append(bdr.auxpec.attributes);
-    for (const auto &d : bdr.impedance)
-    {
-      append(d.attributes);
-    }
-    for (const auto &d : bdr.conductivity)
-    {
-      append(d.attributes);
-    }
-    for (const auto &d : bdr.rational_impedance)
-    {
-      append(d.attributes);
-    }
-    append(bdr.farfield.attributes);
+    std::vector<int> internal_bdr_attrs = bdr.GetCrossSectionEdgeAttributes();
 
     std::unordered_set<int> other_waveport_attrs;
     for (const auto &[idx, data] : bdr.waveport)

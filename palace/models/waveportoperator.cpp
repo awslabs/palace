@@ -682,48 +682,12 @@ WavePortData::WavePortData(const config::WavePortData &data,
       mfem::ParSubMesh::CreateFromBoundary(mesh, attr_list));
 
   // Add internal boundary elements for edges where the port face intersects other boundary
-  // faces (PEC, impedance, conductivity, rational impedance, absorbing).
+  // faces (see config::BoundaryData::GetCrossSectionEdgeAttributes).
   // ParSubMesh::CreateFromBoundary only creates boundary elements at the geometric boundary
   // of the selected face region, but internal intersections need boundary elements for the
   // 2D eigenvalue problem BCs.
-  {
-    std::vector<int> internal_bdr_attrs;
-    for (auto a : boundaries.pec.attributes)
-    {
-      internal_bdr_attrs.push_back(a);
-    }
-    for (auto a : boundaries.auxpec.attributes)
-    {
-      internal_bdr_attrs.push_back(a);
-    }
-    for (const auto &d : boundaries.impedance)
-    {
-      for (auto a : d.attributes)
-      {
-        internal_bdr_attrs.push_back(a);
-      }
-    }
-    for (const auto &d : boundaries.conductivity)
-    {
-      for (auto a : d.attributes)
-      {
-        internal_bdr_attrs.push_back(a);
-      }
-    }
-    for (const auto &d : boundaries.rational_impedance)
-    {
-      for (auto a : d.attributes)
-      {
-        internal_bdr_attrs.push_back(a);
-      }
-    }
-    for (auto a : boundaries.farfield.attributes)
-    {
-      internal_bdr_attrs.push_back(a);
-    }
-    mesh::AddSubMeshInternalBoundaryElements(*port_submesh_ptr, attr_list,
-                                             internal_bdr_attrs);
-  }
+  mesh::AddSubMeshInternalBoundaryElements(*port_submesh_ptr, attr_list,
+                                           boundaries.GetCrossSectionEdgeAttributes());
 
   port_mesh = std::make_unique<Mesh>(std::move(port_submesh_ptr));
   port_normal = mesh::GetSurfaceNormal(*port_mesh);
