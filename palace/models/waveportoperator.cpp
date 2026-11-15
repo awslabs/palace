@@ -133,20 +133,6 @@ void GetEssentialTrueDofs(mfem::ParFiniteElementSpace &port_nd_fespace,
   GetEssentialTrueDofs(port_h1_fespace, dbc_marker, port_h1_dbc_tdof_list);
 }
 
-void GetInitialSpace(const mfem::ParFiniteElementSpace &nd_fespace,
-                     const mfem::ParFiniteElementSpace &h1_fespace,
-                     const mfem::Array<int> &dbc_tdof_list, ComplexVector &v)
-{
-  // Initial space which satisfies Dirichlet BCs.
-  const int nd_size = nd_fespace.GetTrueVSize(), h1_size = h1_fespace.GetTrueVSize();
-  v.SetSize(nd_size + h1_size);
-  v.UseDevice(true);
-  v = std::complex<double>(1.0, 0.0);
-  // linalg::SetRandomReal(nd_fespace.GetComm(), v);
-  linalg::SetSubVector(v, nd_size, nd_size + h1_size, 0.0);
-  linalg::SetSubVector(v, dbc_tdof_list, 0.0);
-}
-
 std::complex<double> Normalize(const GridFunction &S0t, GridFunction &E0t,
                                GridFunction &E0n, mfem::LinearForm &sr,
                                mfem::LinearForm &si)
@@ -761,8 +747,7 @@ WavePortData::WavePortData(const config::WavePortData &data,
     }
   }
 
-  // Create vector for initial space for eigenvalue solves and eigenmode solution.
-  GetInitialSpace(*port_nd_fespace, *port_h1_fespace, port_dbc_tdof_list, v0);
+  // Create vector for the eigenmode solution.
   e0.SetSize(port_nd_fespace->GetTrueVSize() + port_h1_fespace->GetTrueVSize());
   e0.UseDevice(true);
 
@@ -961,7 +946,7 @@ void WavePortData::Initialize(double omega)
   {
     BlockTimer bt(Timer::WAVE_PORT_SOLVE);
     const bool has_solver = (port_comm != MPI_COMM_NULL);
-    auto result = mode_solver->Solve(omega, sigma, has_solver ? &v0 : nullptr);
+    auto result = mode_solver->Solve(omega, sigma);
     if (has_solver)
     {
       MFEM_VERIFY(result.num_converged >= mode_idx,
@@ -1179,7 +1164,7 @@ const WavePortData::ModeSolveCache &WavePortData::EvalModeSolve(std::complex<dou
   std::complex<double> lambda;
   ComplexVector e_tmp;
   {
-    auto result = mode_solver->Solve(omega, sigma, has_solver ? &v0 : nullptr);
+    auto result = mode_solver->Solve(omega, sigma);
     if (has_solver)
     {
       MFEM_VERIFY(result.num_converged >= mode_idx,
