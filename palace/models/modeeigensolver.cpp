@@ -156,6 +156,13 @@ void ModeEigenSolver::Init(MPI_Comm solver_comm)
   auto [Br, Bi] = BuildSystemMatrixB(Bttr, nullptr, Btnr, Btni, Dnn.get());
   opB = std::make_unique<ComplexWrapperOperator>(std::move(Br), std::move(Bi));
 
+  // Initial space which satisfies the Dirichlet BCs.
+  v0.SetSize(nd_size + h1_size);
+  v0.UseDevice(true);
+  v0 = std::complex<double>(1.0, 0.0);
+  linalg::SetSubVector(v0, nd_size, nd_size + h1_size, 0.0);
+  linalg::SetSubVector(v0, dbc_tdof_list, 0.0);
+
   // Pick a communicator for the solvers: `solver_comm` if non-null (WavePort sub-
   // communicator), else the FE space comm. Ranks with no DOFs and no solver_comm
   // (WavePort non-port ranks) skip solver setup entirely.
@@ -188,8 +195,7 @@ void ModeEigenSolver::AssembleFrequencyDependent(std::complex<double> omega, dou
 }
 
 ModeEigenSolver::SolveResult ModeEigenSolver::Solve(std::complex<double> omega,
-                                                    double sigma,
-                                                    const ComplexVector *initial_space)
+                                                    double sigma)
 {
   sigma_cached = sigma;
   omega_cached = omega;
@@ -335,14 +341,15 @@ ModeEigenSolver::SolveResult ModeEigenSolver::Solve(std::complex<double> omega,
   }
   eigen->SetOperators(*opB, *opA, EigenvalueSolver::ScaleType::NONE);
 
-  if (real_frequency && warm_start.Size() > 0)
-  {
-    eigen->SetInitialSpace(warm_start);
-  }
-  else if (initial_space)
-  {
-    eigen->SetInitialSpace(*initial_space);
-  }
+  // Every exact solve starts from the same vector, so that its result depends on the
+  // frequency and the shift only, not on the solves before it. Within a degenerate pair of
+  // modes (TE11 of a circular guide), the solver then selects the same polarization at
+  // every frequency: the projection of the start onto the pair. The mode of the previous
+  // frequency is a poor start: it has only roundoff along the other wanted modes, the
+  // second vector of its own pair among them, so roundoff decides which of them converge.
+  // From any single start, the second vector of an exactly degenerate pair still grows from
+  // roundoff only, so the index of a mode above such a pair is not reliable.
+  eigen->SetInitialSpace(v0);
 
   int num_conv = eigen->Solve();
   if (real_frequency)
@@ -373,11 +380,6 @@ ModeEigenSolver::SolveResult ModeEigenSolver::Solve(std::complex<double> omega,
 
   if (real_frequency && num_conv > 0)
   {
-    const int selected = std::min(num_modes - 1, num_conv - 1);
-    warm_start.SetSize(nd_size + h1_size);
-    warm_start.UseDevice(true);
-    eigen->GetEigenvector(mode_perm[selected], warm_start);
-    linalg::Normalize(solver_comm, warm_start);
     reduced_model->ObserveExactEigenvectors(num_conv, *eigen, mode_perm);
   }
   return {num_conv, sigma};

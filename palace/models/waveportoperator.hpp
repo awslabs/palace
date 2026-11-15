@@ -134,7 +134,7 @@ private:
   // The local copy allows per-port overrides without changing the full 3D linear solver.
   config::LinearSolverData port_linear;
   std::unique_ptr<ModeEigenSolver> mode_solver;
-  ComplexVector v0, e0;
+  ComplexVector e0;
 
   // Cache of the last complex-ω EVP solve, so kₙ (SolveKnComplex) and the reactions
   // (ComputeComplexReactions) at the same ω share one solve on the same eigenbranch. Keyed
