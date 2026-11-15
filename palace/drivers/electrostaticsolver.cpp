@@ -1096,7 +1096,8 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   {
     if (root && !response_correction->GetPatchAssignments().empty())
     {
-      TableWithCSVFile patches(post_dir / "surface-response-patches.csv");
+      TableWithCSVFile patches(
+          response_correction->DiagnosticsPath(post_dir, "surface-response-patches.csv"));
       patches.table.insert(Column::Integer("model", "model"));
       for (const char *coordinate : {"x", "y", "z"})
       {
@@ -1639,8 +1640,8 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     using VT = Units::ValueType;
     if (!traces_output)
     {
-      traces_output =
-          std::make_unique<TableWithCSVFile>(post_dir / "surface-response-traces.csv");
+      traces_output = std::make_unique<TableWithCSVFile>(
+          response_correction->DiagnosticsPath(post_dir, "surface-response-traces.csv"));
       traces_output->table.insert(Column::Integer("source", "i"));
       traces_output->table.insert(Column::Integer("patch", "patch"));
       traces_output->table.insert(Column::Integer("model", "model"));
@@ -1688,8 +1689,9 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       {
         patch_assignments.emplace(assignment.global_index, &assignment);
       }
-      patch_output = std::make_unique<TableWithCSVFile>(
-          post_dir / "surface-response-patch-energy.csv");
+      patch_output =
+          std::make_unique<TableWithCSVFile>(response_correction->DiagnosticsPath(
+              post_dir, "surface-response-patch-energy.csv"));
       patch_output->table.insert(Column::Integer("source", "source"));
       patch_output->table.insert(Column::Integer("evaluation", "evaluation"));
       patch_output->table.insert(Column::Integer("patch", "patch"));

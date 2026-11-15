@@ -130,6 +130,52 @@ void WriteMetadata(const fs::path &post_dir, const json &meta,
   }
 }
 
+// Lane diagdir (decision 1685): the ConductorConsistency Records written to `path` as the
+// JSON document {"SurfaceResponse": {"Diagnostics": {"ConductorConsistency": {"Records":
+// [...]}}}} (dump(2) + '\n'; the spilled entries spliced in as in palace.json, so the
+// array's text is the one palace.json holds by default), checked like palace.json.
+void WriteConductorConsistencyRecords(const fs::path &path, const json &records,
+                                      const JsonArraySpill *spill)
+{
+  std::ofstream fo(path);
+  if (!fo.is_open())
+  {
+    MFEM_ABORT("Unable to open conductor-consistency records file \"" << path.string()
+                                                                      << "\"!");
+  }
+  const bool written = StreamJsonMetadata(fo, records, spill);
+  fo.close();
+  if (!written || fo.fail())
+  {
+    MFEM_ABORT("Writing the conductor-consistency records file \""
+               << path.string()
+               << "\" failed (a short write: the disk is full "
+                  "or an I/O error); the file is incomplete!");
+  }
+}
+
+// The ConductorConsistency object of palace.json's SurfaceResponse.Diagnostics when it
+// holds a Records member, else null (nothing is created in `meta`).
+json *FindConductorConsistencyWithRecords(json &meta)
+{
+  const auto response = meta.find("SurfaceResponse");
+  if (response == meta.end() || !response->is_object())
+  {
+    return nullptr;
+  }
+  const auto diagnostics = response->find("Diagnostics");
+  if (diagnostics == response->end() || !diagnostics->is_object())
+  {
+    return nullptr;
+  }
+  const auto gate = diagnostics->find("ConductorConsistency");
+  if (gate == diagnostics->end() || !gate->is_object() || !gate->contains("Records"))
+  {
+    return nullptr;
+  }
+  return &*gate;
+}
+
 // Returns an array of indices corresponding to marked elements.
 mfem::Array<int> MarkedElements(const Vector &e, double threshold)
 {
@@ -611,7 +657,28 @@ void BaseSolver::SaveMetadata(SurfaceResponseOperator &response) const
                   "ConductorConsistency.Records array for the "
                       << spill->Size() << " spilled conductor-consistency record(s)!");
     }
-    WriteMetadata(post_dir, meta, spill);
+    json *gate = response.ConductorConsistencyRecordsInDirectory()
+                     ? FindConductorConsistencyWithRecords(meta)
+                     : nullptr;
+    if (gate)
+    {
+      // Decision 1685 (Diagnostics.ConductorConsistencyRecords "Directory"): palace.json
+      // without the Records member (everything else as above); the array (the spilled
+      // entries or the in-memory ones) at the same key path in the records file.
+      json records;
+      records["SurfaceResponse"]["Diagnostics"]["ConductorConsistency"]["Records"] =
+          std::move((*gate)["Records"]);
+      gate->erase("Records");
+      WriteMetadata(post_dir, meta);
+      WriteConductorConsistencyRecords(
+          response.DiagnosticsPath(
+              post_dir, SurfaceResponseOperator::kConductorConsistencyRecordsFile),
+          records, spill);
+    }
+    else
+    {
+      WriteMetadata(post_dir, meta, spill);
+    }
     if (spill)
     {
       MFEM_VERIFY(spill->Remove(), "Removing the conductor-consistency records scratch "

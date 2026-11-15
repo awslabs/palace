@@ -974,6 +974,10 @@ private:
   ExcludedPatchPortions unprobed_model_portions;
   bool within_r_volume_energy = false;  // COL-3 (R-MAG-15), from the request
   bool exclusion_energy = false;
+  // Diagnostics.Directory / Diagnostics.ConductorConsistencyRecords (decision 1685), from
+  // the request: empty = every table at the top level of the output directory.
+  std::string diagnostics_directory;
+  bool conductor_consistency_records_in_directory = false;
   // OI-SCP-HOLE (decisions 915 / 918 / 922): the corner / vertex coupons dropped whole by
   // the SpatialClusterPriority rule, with the parts of their raw claims OUTSIDE every
   // matched cluster's box as the drivers' fourth raw class (counted, uncorrected).
@@ -1771,6 +1775,23 @@ public:
   // identification's portions by class, the unprobed patches' raw claims, and the whole
   // export set (every portion's `topology` = its Class).
   bool ExclusionEnergyRequested() const { return exclusion_energy; }
+  // Lane diagdir (decision 1685): the path of the heavy per-patch table `name` (patches,
+  // patch energy, traces, patch loops). Diagnostics.Directory unset: post_dir / name, with
+  // no filesystem access. Set: post_dir / Directory / name, the directory created first; a
+  // symlink at that path (SaveIteration's link into the previous adaptive iteration's
+  // archive) is removed before, so that an iteration never writes into an archived folder.
+  // Called by the root writers when they create the file.
+  std::filesystem::path DiagnosticsPath(const std::filesystem::path &post_dir,
+                                        const std::string &name) const;
+  const std::string &GetDiagnosticsDirectory() const { return diagnostics_directory; }
+  // Diagnostics.ConductorConsistencyRecords "Directory": the Records array leaves
+  // palace.json for DiagnosticsPath(post_dir, kConductorConsistencyRecordsFile).
+  bool ConductorConsistencyRecordsInDirectory() const
+  {
+    return conductor_consistency_records_in_directory;
+  }
+  static constexpr const char *kConductorConsistencyRecordsFile =
+      "surface-response-conductor-consistency-records.json";
   const std::vector<
       config::ElectrostaticSolverData::ResponseCorrectionData::UncoveredPortionData> &
   GetIdentificationExclusionPortions() const
