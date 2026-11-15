@@ -16,6 +16,10 @@ The state's "Lookups" is a list of answers for the next `palace my-jobs` calls, 
 call (decision 1820 (1); the review r1799's R1 / R2 / R3): empty (rc 0, no rows) | omitted (rc 0,
 the first row dropped, the warning rows_omitted: the installed client's form) | nokey (rc 0, data
 without 'jobs') | fail (rc 1, ok false).  An empty list or none = the true listing.
+The state's "Describes" is the same for `palace describe-run` (decision 1820 (3); R4 / R5 / R6):
+true (the true answer) | empty (rc 0, data {}) | nostatus (status "") | unlisted (status
+"suspended") | otherid (another run_id) | truncated (only run_id and status) | fail (rc 1).  The
+run's own progress (queued -> running -> ended) happens at every describe-run call.
 A run is 'queued' at the submit, 'running' at its first describe-run (started = now) and ends
 at the next one (completed = started + 600 s), when its run_dir is written: log.out, console.log,
 palace_config.json (paladin's rewrite of Mesh / Output / Device / SaveAdaptMesh) and postpro/
@@ -153,6 +157,22 @@ def main(argv):
                 "output_artifacts": ([{"artifact_id": "A1", "label": "log", "type": "FILE_UPLOAD"},
                                       {"artifact_id": "A2", "label": "palace", "type": "DICT"}]
                                      if run["status"] == "completed" else [])}
+        answer = state.get("Describes", []).pop(0) if state.get("Describes") else "true"
+        if answer == "empty":
+            data = {}
+        elif answer == "nostatus":
+            data = dict(data, status="")
+        elif answer == "unlisted":
+            data = dict(data, status="suspended")
+        elif answer == "otherid":
+            data = dict(data, run_id=data["run_id"] + 1)
+        elif answer == "truncated":
+            data = {"run_id": data["run_id"], "status": data["status"]}
+        elif answer == "fail":
+            with open(state_path, "w") as f:
+                json.dump(state, f)
+            print(json.dumps(envelope(command, None, ok=False, error="the fake's failed describe")))
+            return 1
     elif command == "palace cancel":
         run = runs[argv[2]]
         run["status"], run["completed"] = "canceled", now.isoformat()

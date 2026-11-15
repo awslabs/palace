@@ -585,6 +585,7 @@ class DriveWithFakeCLI(unittest.TestCase):
         finally:
             holder.stdin.close()
             holder.wait(30)
+            holder.stdout.close()
         self.drive()  # the holder ended: the lock is free
         self.assertEqual(self.submitted(), ["chainport-w", "chainport-r", "chainport-local-edge"])
 
@@ -599,6 +600,73 @@ class DriveWithFakeCLI(unittest.TestCase):
         self.assertIn("took over the stale lock of " + stale, lines[0])
         self.assertEqual((self.out / "paladin-driver.lock").read_text(), "")  # released at the end of the drive
         self.assertEqual(self.submitted(), ["chainport-w", "chainport-r", "chainport-local-edge"])
+
+    # Decision 1820 (3), MAJOR-3 of review r1799: a transport answer during the wait is not a state (WAIT_RULE).
+    def describes(self, answers):
+        state = json.loads(self.state.read_text())
+        state["Describes"] = list(answers)
+        self.state.write_text(json.dumps(state))
+
+    def test_r4_one_empty_answer_while_running_is_re_asked_and_the_run_completes(self):
+        for answer in ("empty", "nostatus", "otherid", "fail"):
+            with self.subTest(answer=answer):
+                self.setUp_fresh()
+                self.describes(["true", answer])  # the run's second describe-run (running -> completed) answers badly
+                del self.slept[:]
+                state = self.drive()
+                self.assertEqual(state["Stages"]["w"]["State"], "complete")
+                self.assertNotIn("WaitTransport", state["Stages"]["w"])
+                self.assertIn(10.0, self.slept)  # the back-off
+                self.assertEqual(self.submitted(), ["chainport-w", "chainport-r", "chainport-local-edge"])
+
+    def test_r5_an_explicit_unlisted_status_is_unknown(self):
+        self.describes(["unlisted"])
+        with self.assertRaises(paladin_backend.PaladinError):
+            self.drive()
+        self.assertEqual(self.records()["w"]["State"], "unknown")
+        self.assertEqual(self.submitted(), ["chainport-w"])
+
+    def test_r6_a_completed_answer_without_its_run_directory_is_re_asked(self):
+        self.describes(["true", "truncated"])
+        state = self.drive()
+        self.assertEqual(state["Stages"]["w"]["State"], "complete")
+        self.assertEqual(self.submitted(), ["chainport-w", "chainport-r", "chainport-local-edge"])
+
+    def test_ten_failed_polls_over_600_s_stop_with_no_state_and_a_resume_continues(self):
+        clock = [paladin_backend.utc_now()]
+
+        def now():
+            clock[0] += datetime.timedelta(seconds=20)
+            return clock[0]
+
+        self.describes(["true"] + ["empty"] * 60)
+        with self.assertRaises(paladin_backend.PaladinError) as stop:
+            paladin_backend.drive(self.job(now), poll_seconds=0, sleep=lambda seconds: None)
+        self.assertIn("no State recorded", str(stop.exception))
+        record = self.records()["w"]
+        self.assertNotIn("State", record)
+        self.assertGreaterEqual(record["WaitTransport"]["Count"], paladin_backend.WAIT_TRANSPORT_POLLS)
+        self.assertEqual([call for call in self.calls() if call[:2] == ["palace", "cancel"]], [])
+        self.describes([])
+        state = self.drive()  # the resume is not refused: it confirms the run and reads it
+        self.assertEqual(state["Stages"]["w"]["State"], "complete")
+        self.assertEqual(self.submitted(), ["chainport-w", "chainport-r", "chainport-local-edge"])
+
+    def test_a_running_answer_without_started_counts_the_cap_from_the_submit_time(self):
+        clock = [paladin_backend.utc_now()]
+
+        def now():  # 1000 s per reading: the cap (900 s) is past at the first poll after the submit
+            clock[0] += datetime.timedelta(seconds=1000)
+            return clock[0]
+
+        self.script({"chainport-w": "hang"})
+        self.describes(["truncated"])  # the first describe-run (queued -> running) answers without 'started'
+        with self.assertRaises(paladin_backend.PaladinError):
+            self.drive(now)
+        record = self.records()["w"]
+        self.assertTrue(record["CapCancel"]["From"].startswith("submitted"))
+        self.assertEqual(record["State"], "timed-out")
+        self.assertEqual(len([call for call in self.calls() if call[:2] == ["palace", "cancel"]]), 1)
 
     def test_a_multi_node_plan_is_refused(self):
         plan_path, _ = three_stage_plan(self.root / "multi", nodes=2)

@@ -408,6 +408,13 @@ INTENT_RULE = ("decision 1820 (1): a SubmitIntent (stage, plan sha, UTC, a nonce
                "archive writer's Directory marked unusable (ARCHIVE-UNUSABLE.json: no reducer and no writer uses it)")
 LOOKUP_REPEATS, LOOKUP_REPEAT_SECONDS, SUBMIT_LOOKUP_GAP_SECONDS = 3, 30.0, 20.0
 UNUSABLE_MARKER = "ARCHIVE-UNUSABLE.json"
+WAIT_RULE = ("decision 1820 (3): a describe-run answer that is not an object, names another run_id, has no status, or reads "
+             "'completed' / 'failed' without its run directory is a TRANSPORT answer, not a state: re-asked after 10 s and 20 s; "
+             "three in a row = one failed poll (counted; a usable answer resets the count); STOP at >= 10 failed polls spanning "
+             ">= 600 s, with no State recorded and the run left to its run watcher; 'unknown' only from an explicit non-empty "
+             "status the backend does not list; the stage cap counts from 'started', from the submit time for a live answer "
+             "without 'started'")
+WAIT_BACKOFF_SECONDS, WAIT_TRANSPORT_POLLS, WAIT_TRANSPORT_SECONDS = (10.0, 20.0), 10, 600.0
 
 
 def pause(seconds):
@@ -890,23 +897,79 @@ class PaladinJob:
                                    f"({record['SubmitErrors'][-1]['Error']})")
         raise PaladinError(f"{name}: no run after its submits ({record.get('SubmitErrors')}; {RESUME_RULE})")
 
+    def transport_fault(self, record, data):
+        """Why a describe-run answer is a transport answer (WAIT_RULE), or None for a usable one."""
+        if not isinstance(data, dict):
+            return "not an object"
+        if str(data.get("run_id")) != str(record["RunID"]):
+            return f"run_id {data.get('run_id')!r}, not {record['RunID']}"
+        status = str(data.get("status") or "").strip().lower()
+        if not status:
+            return "no status"
+        if status in ("completed", "failed") and not (data.get("block") or {}).get("backend_data", {}).get("run_dir"):
+            return f"'{status}' without its run directory"
+        return None
+
+    def describe_checked(self, record):
+        """describe-run, re-asked after WAIT_BACKOFF_SECONDS when the answer is a transport answer;
+        (data, None) or (None, the last fault)."""
+        fault = None
+        for attempt, backoff in enumerate((0.0, *WAIT_BACKOFF_SECONDS)):
+            if attempt:
+                self.sleep(backoff)
+            try:
+                data = self.describe(record["RunID"])
+            except PaladinError as error:
+                fault = f"describe-run failed: {str(error)[:200]}"
+                continue
+            fault = self.transport_fault(record, data)
+            if fault is None:
+                return data, None
+        return None, fault
+
+    def cap_clock(self, record, data):
+        """(the time the stage cap counts from, its name) of a live answer (WAIT_RULE)."""
+        started = parse_time(data.get("started"))
+        if started:
+            return started, "started"
+        if str(data.get("status", "")).lower() in ("submitted", "queued"):
+            return None, "not started"
+        submitted = parse_time(record.get("Submitted") or (record.get("Adopted") or {}).get("UTC"))
+        return submitted, ("submitted (a live answer without 'started')" if submitted else "none")
+
     def poll(self, stage, record):
-        """One describe-run of the stage's run; the cap cancel; the data when the run ended."""
-        data = self.describe(record["RunID"])
+        """One describe-run of the stage's run; the cap cancel; the data when the run ended.  A
+        transport answer is counted and re-polled, never a State (WAIT_RULE)."""
+        data, fault = self.describe_checked(record)
+        if data is None:
+            wait = record.setdefault("WaitTransport", {"Count": 0, "FirstUTC": self.now().isoformat()})
+            wait["Count"] += 1
+            wait["Last"] = {"UTC": self.now().isoformat(), "Fault": fault}
+            self.save()
+            span = (self.now() - parse_time(wait["FirstUTC"])).total_seconds()
+            self.log(f"{self.case}: {stage['Name']} run {record['RunID']}: transport answer {wait['Count']} ({fault}); "
+                     f"re-polled ({WAIT_RULE})")
+            if wait["Count"] >= WAIT_TRANSPORT_POLLS and span >= WAIT_TRANSPORT_SECONDS:
+                raise PaladinError(f"{stage['Name']}: run {record['RunID']}: {wait['Count']} failed polls over {span:.0f} s "
+                                   f"({fault}): STOP with no State recorded; the run stays with its run watcher ({WAIT_RULE})")
+            return None
+        record.pop("WaitTransport", None)
         status = str(data.get("status", "")).lower()
         record["RowStatus"] = status
         if run_class(status) != "live":
             return data
-        started = parse_time(data.get("started"))
+        clock, clock_name = self.cap_clock(record, data)
+        record["CapClock"] = clock_name
         cap = stage.get("CapSeconds")
-        if cap and started and (self.now() - started).total_seconds() > float(cap) and not record.get("CapCancel", {}).get("OK"):
+        if cap and clock and (self.now() - clock).total_seconds() > float(cap) and not record.get("CapCancel", {}).get("OK"):
             cancel = record.setdefault("CapCancel", {"Attempts": 0, "CapSeconds": cap})
             cancel["Attempts"] += 1
             cancel["UTC"] = self.now().isoformat()
+            cancel["From"] = clock_name
             try:
                 paladin_call(self.block["CLI"], ["palace", "cancel", str(record["RunID"]), "--json"])
                 cancel["OK"] = True
-                self.log(f"{self.case}: {stage['Name']} run {record['RunID']} past its cap {cap} s: cancelled")
+                self.log(f"{self.case}: {stage['Name']} run {record['RunID']} past its cap {cap} s from {clock_name}: ended early")
             except PaladinError as error:
                 cancel["Error"] = str(error)[:300]
                 if cancel["Attempts"] >= 3:
