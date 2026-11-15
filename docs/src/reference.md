@@ -2827,6 +2827,65 @@ part's correction factor lies in the range validated for this library and excita
 class; NEITHER says that the mesh of the solve resolves the field at the correction
 radius.
 
+### Resolution census of the response correction
+
+The fixed-trace correction samples the thin-metal solution on the coupon contour, between
+``R`` and ``\sqrt{2} R`` around the edge, and replaces the raw energy within ``R``. It can
+only be right where the mesh resolves the field at that distance. Every corrected run (both
+solve families, every AMR level) therefore reports an edge-resolution census of the trace
+contour, controlled by `"Resolution"` in the correction block (`"Enabled"`, default `true`
+whenever the correction is on; `"BarsFile"`, optional). The census changes outputs only: no
+corrected value, coverage status or policy reads it.
+
+The measure is the one validated offline on 64 graded electrostatic window cases (in-sample;
+two windows): for each applied patch, the knots are the basis points of its runtime model
+(a curvature blend uses its anchor's), placed as the correction places them; the owner of a
+knot is the mesh element containing it (the correction's own point locator, no fallback
+search; a knot on a shared face takes the lowest rank, then the lowest local element); its
+size is the owner's LONGEST EDGE (its own vertices: a nonconforming leaf's hanging nodes do
+not enter); the patch's size ``h`` is the LOWER median over its located knots, and the
+patch is NOT-EVALUATED when it has no knot or fewer than half of them are located. With
+``m = h / R`` the patch is RESOLVED when ``m \le b_5(p)``, MARGINAL when ``m \le b_{10}(p)``
+and UNDER-RESOLVED otherwise, at the solve's order ``p`` (order 5 and above use the order 4
+bars). The built-in bars are INTERIM placeholders from a two-dimensional map at
+``R = 1.9`` µm ONLY: order 1 ``-`` / 0.266, order 2 0.541 / 1.328, order 3 0.541 / 2.597,
+order 4 1.328 / 3.242. A run whose matching radius differs from 1.9 µm (relative 10⁻⁶)
+reads NO-BARS unless `"BarsFile"` gives bars for its radius (a JSON file
+`{"RadiusMicrons": R, "Bars": {"1": {"b5": null, "b10": x}, ..., "4": {...}}}`; a file of
+another radius than the run's is a configuration error).
+
+Per cell (source, mode, or frequency and excitation), interface `Type` and plane (every
+plane, and each plane: the patch origin's ``z`` rounded to 0.1 µm), the shares of the
+patches' fixed-trace fabricated energy of the postprocessed response on RESOLVED,
+MARGINAL, UNDER-RESOLVED and NOT-EVALUATED patches give the status: NOT-EVALUATED when more
+than half of the energy is on patches without a reading (or the cell has no energy),
+RESOLVED when at least 90 % is on RESOLVED patches, UNDER-RESOLVED when more than half is
+on UNDER-RESOLVED patches, MARGINAL otherwise (INTERIM share placeholders). The energy
+quantiles `m10`, `m50` and `m90` of ``m`` come from a histogram of 600 bins in
+``\log_{10} m \in [-3, 3]`` (bin centres: 0.01 decade resolution). They are written to
+`surface-response-resolution.csv` (top level, one row per cell, `Type` and plane, also with
+`Diagnostics.Directory`), to `palace.json` `SurfaceResponse.Resolution` (the measure, the
+radius, the bars and their source, the knot counts, the status counts, the worst status
+per `Type`, the flagged cells, the PREFLIGHT rows, `"Complete"`, `Level` / `Levels` and
+`"Final"` like the coverage block) and to one banner line per `Type`. With `PatchEnergy`,
+`surface-response-resolution-patches.csv` gives every patch's reading. A SelfConsistent-only
+run has no postprocessed energy: its cells are NOT-EVALUATED; with `"Enabled": false`
+nothing is located and every cell reads NOT-EVALUATED (reason `disabled`).
+
+Before the first solve of each level, the log prints a PREFLIGHT line per `Type` and plane
+(geometry only, an indicator): edge patches weighted by their longitudinal cell length,
+spatial patches (no cell) by count, and the WORSE of the two groups' statuses by the same
+share rule. It is not the offline length-weighted form of record and its share rule is not
+validated in this weight; the energy-weighted census after the solve is the reading.
+
+RESOLVED IS NECESSARY, NOT SUFFICIENT: it says that the mesh at the trace contour is as fine
+as the interim bars ask, never that a corrected value is accurate (the exact-trace floor,
+coverage, the regime and every other three-dimensional error remain). The bars and share
+placeholders are interim and in-sample; their transfer from electrostatic windows to
+eigenmode chips is a hypothesis. An UNDER-RESOLVED reading asks for a finer mesh near the
+metal edges (toward ``h \approx R`` at orders 2-3, ``\approx 2.5`` µm at order 4 for
+``R = 1.9`` µm) or AMR, whose census is printed per level.
+
 ## Lumped parameter extraction
 
 For electrostatic simulations, the Maxwell capacitance matrix is computed in the following

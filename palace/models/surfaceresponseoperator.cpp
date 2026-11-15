@@ -1120,9 +1120,12 @@ public:
   }
 
   // Locates the local list of points (byNODES: every x, then every y, then every z). With
-  // `element_value`, the owner evaluates it on the owning element.
+  // `element_value`, the owner evaluates it on the owning element. `fallback` false (the
+  // resolution census, ruling 1819 F2): a point no candidate rank finds stays unresolved
+  // (no rank-local gslib search); every rank passes the same value.
   Result Locate(const mfem::Vector &xyz,
-                const std::function<double(int element)> *element_value = nullptr)
+                const std::function<double(int element)> *element_value = nullptr,
+                bool fallback = true)
   {
     MFEM_VERIFY(xyz.Size() % dimension == 0, "Invalid point-coordinate array!");
     const int point_count = xyz.Size() / dimension;
@@ -1221,6 +1224,10 @@ public:
                                     static_cast<long long int>(points.size()));
     }
 
+    if (!fallback)
+    {
+      return result;
+    }
     std::vector<int> fallback_indices;
     for (int point = 0; point < point_count; point++)
     {
@@ -1370,6 +1377,94 @@ LocateDistributedPoints(mfem::ParMesh &mesh, int dimension, const mfem::Vector &
   location.candidate_queries = located.candidate_queries;
   location.fallback_queries = located.fallback_queries;
   return location;
+}
+
+namespace
+{
+
+// Lane rescensus-product (ruling 1819 F2): the knots of at most this many local points per
+// rank and collective Locate call (~0.1 GB of per-point buffers per rank).
+constexpr std::size_t kResolutionKnotChunk = std::size_t(1) << 20;
+
+// The census readings of `patch_count` local patches whose knots (mesh coordinates)
+// `knots_of` lists, located through `locator` without the fallback search; the owner's
+// longest edge (ResolutionElementLongestEdge) evaluated on the owning rank; per patch the
+// lower median over its located knots. Collective: every rank loops until all are done.
+std::vector<ResolutionPatchReading> LocateResolutionKnotsWith(
+    DistributedPointLocator &locator, mfem::ParMesh &mesh, int dimension,
+    std::size_t patch_count,
+    const std::function<void(std::size_t, std::vector<std::array<double, 3>> &)> &knots_of)
+{
+  std::vector<ResolutionPatchReading> readings(patch_count);
+  const std::function<double(int)> longest_edge = [&mesh](int element)
+  { return ResolutionElementLongestEdge(mesh, element); };
+  const int size = Mpi::Size(mesh.GetComm());
+  std::vector<std::array<double, 3>> patch_knots;
+  std::vector<std::array<double, 3>> chunk;
+  std::vector<std::size_t> chunk_patches, chunk_offsets;
+  std::vector<double> owner_edges;
+  std::size_t next = 0;
+  while (true)
+  {
+    chunk.clear();
+    chunk_patches.clear();
+    chunk_offsets.clear();
+    while (next < patch_count && (chunk.empty() || chunk.size() < kResolutionKnotChunk))
+    {
+      knots_of(next, patch_knots);
+      chunk_patches.push_back(next);
+      chunk_offsets.push_back(chunk.size());
+      chunk.insert(chunk.end(), patch_knots.begin(), patch_knots.end());
+      next++;
+    }
+    int pending = chunk_patches.empty() ? 0 : 1;
+    Mpi::GlobalMax(1, &pending, mesh.GetComm());
+    if (pending == 0)
+    {
+      break;
+    }
+    mfem::Vector xyz(dimension * static_cast<int>(chunk.size()));
+    for (std::size_t point = 0; point < chunk.size(); point++)
+    {
+      for (int d = 0; d < dimension; d++)
+      {
+        xyz(d * static_cast<int>(chunk.size()) + static_cast<int>(point)) = chunk[point][d];
+      }
+    }
+    const auto located = locator.Locate(xyz, &longest_edge, false);
+    for (std::size_t k = 0; k < chunk_patches.size(); k++)
+    {
+      const std::size_t begin = chunk_offsets[k];
+      const std::size_t end =
+          k + 1 < chunk_patches.size() ? chunk_offsets[k + 1] : chunk.size();
+      auto &reading = readings[chunk_patches[k]];
+      reading.knots = static_cast<int>(end - begin);
+      owner_edges.clear();
+      for (std::size_t point = begin; point < end; point++)
+      {
+        if (located.owners[point] < size)
+        {
+          owner_edges.push_back(located.owner_values[point]);
+        }
+      }
+      reading.located = static_cast<int>(owner_edges.size());
+      reading.h = ResolutionLowerMedian(owner_edges);
+    }
+  }
+  return readings;
+}
+
+}  // namespace
+
+std::vector<ResolutionPatchReading>
+LocateResolutionPatchKnots(mfem::ParMesh &mesh, int dimension,
+                           const std::vector<std::vector<std::array<double, 3>>> &knots)
+{
+  DistributedPointLocator locator(mesh, dimension);
+  return LocateResolutionKnotsWith(
+      locator, mesh, dimension, knots.size(),
+      [&knots](std::size_t patch, std::vector<std::array<double, 3>> &points)
+      { points = knots[patch]; });
 }
 
 namespace
@@ -31784,6 +31879,318 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
   return placement;
 }
 
+void SurfaceResponseOperator::ConfigureResolutionCensus(
+    const ResponseCorrectionData &request, const IoData &iodata, double matching_radius)
+{
+  // Lane rescensus-product (decision 1817; ruling 1819): the census settings; a bars file
+  // for another radius than the run's is a config error (every rank reads the small file).
+  resolution_enabled = request.resolution.enabled;
+  resolution_order = iodata.solver.order;
+  resolution_radius = matching_radius;
+  resolution_length_scale = iodata.units.Dimensionalize<Units::ValueType::LENGTH>(1.0);
+  const double radius = matching_radius * resolution_length_scale;
+  if (request.resolution.bars_file.empty())
+  {
+    resolution_bars = BuiltInResolutionBars();
+    resolution_bars_hold = ResolutionBarsHold(resolution_bars, radius);
+  }
+  else
+  {
+    resolution_bars = ReadResolutionBars(request.resolution.bars_file);
+    resolution_bars_hold = ResolutionBarsHold(resolution_bars, radius);
+    MFEM_VERIFY(resolution_bars_hold,
+                "Response-correction \"Resolution.BarsFile\" \""
+                    << request.resolution.bars_file
+                    << "\" holds bars for R = " << resolution_bars.radius * 1.0e6
+                    << " um, not for this run's matching radius R = " << radius * 1.0e6
+                    << " um!");
+  }
+  resolution_readings.clear();
+  resolution_plane_slots.clear();
+  resolution_planes.clear();
+  resolution_run_record = ResolutionRunRecord{};
+  resolution_run_record.enabled = resolution_enabled;
+  resolution_run_record.order = resolution_order;
+  resolution_run_record.radius = radius;
+  resolution_run_record.bars = resolution_bars;
+  resolution_run_record.bars_hold = resolution_bars_hold;
+}
+
+void SurfaceResponseOperator::LocateResolutionKnots(
+    DistributedPointLocator &locator, mfem::ParMesh &mesh, int dimension,
+    const std::function<void(std::size_t, std::vector<std::array<double, 3>> &)> &knots_of,
+    const std::function<double(std::size_t)> &origin_z_of)
+{
+  const MPI_Comm comm = fespace.GetComm();
+  const std::size_t patch_count = patches.size();
+  resolution_readings =
+      resolution_enabled
+          ? LocateResolutionKnotsWith(locator, mesh, dimension, patch_count, knots_of)
+          : std::vector<ResolutionPatchReading>(patch_count);
+  // The planes: the patch origin's z in um rounded to 0.1 um (the offline census's key).
+  std::vector<double> local_planes(patch_count);
+  for (std::size_t i = 0; i < patch_count; i++)
+  {
+    local_planes[i] = std::round(origin_z_of(i) * resolution_length_scale * 1.0e7) / 10.0;
+  }
+  std::vector<double> unique_planes(local_planes);
+  std::sort(unique_planes.begin(), unique_planes.end());
+  unique_planes.erase(std::unique(unique_planes.begin(), unique_planes.end()),
+                      unique_planes.end());
+  resolution_planes = AllgatherRecords(unique_planes);
+  std::sort(resolution_planes.begin(), resolution_planes.end());
+  resolution_planes.erase(std::unique(resolution_planes.begin(), resolution_planes.end()),
+                          resolution_planes.end());
+  resolution_plane_slots.resize(patch_count);
+  for (std::size_t i = 0; i < patch_count; i++)
+  {
+    resolution_plane_slots[i] =
+        1 + static_cast<int>(std::lower_bound(resolution_planes.begin(),
+                                              resolution_planes.end(), local_planes[i]) -
+                             resolution_planes.begin());
+  }
+  std::array<long long int, 4> totals{};
+  for (const auto &reading : resolution_readings)
+  {
+    totals[0] += 1;
+    totals[1] += reading.knots;
+    totals[2] += reading.located;
+    totals[3] += reading.Evaluated() ? 0 : 1;
+  }
+  Mpi::GlobalSum(static_cast<int>(totals.size()), totals.data(), comm);
+  resolution_run_record.patches = totals[0];
+  resolution_run_record.knots = totals[1];
+  resolution_run_record.located = totals[2];
+  resolution_run_record.patches_not_evaluated = totals[3];
+  resolution_run_record.mesh_elements = mesh.GetGlobalNE();
+  if (resolution_enabled)
+  {
+    Mpi::Print(comm,
+               " Resolution census (decision 1817): {:d} knot(s) of {:d} patch(es) located "
+               "{:d}; {:d} patch(es) NOT-EVALUATED (no knot or fewer than half located); "
+               "matching radius {:.6e} m, Order {:d}, {} bars{}\n",
+               totals[1], totals[0], totals[2], totals[3], resolution_run_record.radius,
+               resolution_order, resolution_bars.built_in ? "built-in INTERIM" : "file",
+               resolution_bars_hold ? "" : " NOT valid for this radius (NO-BARS)");
+  }
+}
+
+ResolutionStatus SurfaceResponseOperator::ResolutionPatchStatusOf(std::size_t patch_index,
+                                                                  double *m) const
+{
+  *m = std::numeric_limits<double>::quiet_NaN();
+  if (patch_index < resolution_readings.size() &&
+      resolution_readings[patch_index].Evaluated() && resolution_radius > 0.0)
+  {
+    *m = resolution_readings[patch_index].h / resolution_radius;
+  }
+  return ResolutionPatchStatus(*m, resolution_order, resolution_bars, resolution_bars_hold);
+}
+
+void SurfaceResponseOperator::ConfigureResolutionTypes(
+    const std::map<int, std::string> &types)
+{
+  resolution_types.clear();
+  resolution_interface_types.clear();
+  for (const auto &[interface, type] : types)
+  {
+    const auto it = std::find(resolution_types.begin(), resolution_types.end(), type);
+    resolution_interface_types[interface] = static_cast<int>(it - resolution_types.begin());
+    if (it == resolution_types.end())
+    {
+      resolution_types.push_back(type);
+    }
+  }
+  // The PREFLIGHT (ruling 1819 F1): per Type and plane slot the edge patches' cell lengths
+  // and the spatial patches' counts by patch status; every patch into every Type.
+  const int type_count = static_cast<int>(resolution_types.size());
+  const int slots = static_cast<int>(resolution_planes.size()) + 1;
+  std::vector<double> sums(
+      static_cast<std::size_t>(type_count) * slots * kResolutionPreflightStride, 0.0);
+  for (std::size_t i = 0; i < patches.size(); i++)
+  {
+    double m = 0.0;
+    const auto status = ResolutionPatchStatusOf(i, &m);
+    const int bin = status == ResolutionStatus::RESOLVED         ? 0
+                    : status == ResolutionStatus::MARGINAL       ? 1
+                    : status == ResolutionStatus::UNDER_RESOLVED ? 2
+                    : status == ResolutionStatus::NO_BARS        ? 3
+                                                                 : 4;
+    const double length =
+        patches[i].mortar_longitudinal_strip[1] - patches[i].mortar_longitudinal_strip[0];
+    const int plane_slot =
+        i < resolution_plane_slots.size() ? resolution_plane_slots[i] : 0;
+    for (int t = 0; t < type_count; t++)
+    {
+      for (const int slot : {0, plane_slot > 0 ? plane_slot : -1})
+      {
+        if (slot < 0)
+        {
+          continue;
+        }
+        double *values = sums.data() + (t * slots + slot) * kResolutionPreflightStride;
+        if (length > 0.0)
+        {
+          values[bin] += length;
+          values[10] += 1.0;
+        }
+        else
+        {
+          values[5 + bin] += 1.0;
+          values[11] += 1.0;
+        }
+      }
+    }
+  }
+  Mpi::GlobalSum(static_cast<int>(sums.size()), sums.data(), fespace.GetComm());
+  resolution_run_record.preflight.clear();
+  for (int t = 0; t < type_count; t++)
+  {
+    for (int slot = 0; slot < slots; slot++)
+    {
+      resolution_run_record.preflight.push_back(ComputeResolutionPreflightRow(
+          sums.data() + (t * slots + slot) * kResolutionPreflightStride,
+          resolution_types[t], slot == 0, slot == 0 ? 0.0 : resolution_planes[slot - 1],
+          resolution_bars_hold, resolution_length_scale));
+    }
+  }
+  Mpi::Print(fespace.GetComm(), "\n{}",
+             ResolutionPreflightLine(resolution_run_record.preflight, resolution_enabled));
+}
+
+ResolutionAccumulator SurfaceResponseOperator::NewResolutionAccumulator() const
+{
+  ResolutionAccumulator accumulator;
+  accumulator.Reset(static_cast<int>(resolution_types.size()),
+                    static_cast<int>(resolution_planes.size()) + 1);
+  return accumulator;
+}
+
+std::vector<ResolutionCell>
+SurfaceResponseOperator::MeasureResolution(ResolutionAccumulator *accumulator,
+                                           double energy_scale) const
+{
+  // No evaluation-0 energy (a SelfConsistent-only run): the counts only, every cell
+  // NOT-EVALUATED.
+  ResolutionAccumulator counts;
+  if (!accumulator)
+  {
+    counts = NewResolutionAccumulator();
+    for (std::size_t i = 0; i < patches.size(); i++)
+    {
+      for (int t = 0; t < counts.types; t++)
+      {
+        counts.Add(t, i < resolution_plane_slots.size() ? resolution_plane_slots[i] : 0,
+                   ResolutionStatus::NOT_EVALUATED,
+                   std::numeric_limits<double>::quiet_NaN(), 0.0);
+      }
+    }
+  }
+  ResolutionAccumulator &sums = accumulator ? *accumulator : counts;
+  Mpi::GlobalSum(static_cast<int>(sums.values.size()), sums.values.data(),
+                 fespace.GetComm());
+  std::vector<ResolutionCell> cells;
+  if (!Mpi::Root(fespace.GetComm()))
+  {
+    return cells;
+  }
+  const std::string reason = !accumulator          ? "no evaluation-0 energy"
+                             : !resolution_enabled ? "disabled"
+                                                   : "";
+  for (int t = 0; t < sums.types; t++)
+  {
+    for (int slot = 0; slot < sums.slots; slot++)
+    {
+      cells.push_back(ComputeResolutionCell(sums.Slot(t, slot), resolution_types[t],
+                                            slot == 0,
+                                            slot == 0 ? 0.0 : resolution_planes[slot - 1],
+                                            resolution_bars_hold, energy_scale, reason));
+    }
+  }
+  return cells;
+}
+
+void SurfaceResponseOperator::WriteResolutionPatchTable(const std::string &path) const
+{
+  // PatchEnergy only (the caller): per applied patch its census reading, gathered on the
+  // root and joined with the root's patch assignments (origin, axes, model).
+  std::vector<double> local;
+  local.reserve(8 * patches.size());
+  for (std::size_t i = 0; i < patches.size(); i++)
+  {
+    const auto &reading =
+        i < resolution_readings.size() ? resolution_readings[i] : ResolutionPatchReading{};
+    local.insert(
+        local.end(),
+        {static_cast<double>(patches[i].global_index),
+         models[patches[i].model].spatial_basis ? 1.0 : 0.0,
+         patches[i].mortar_longitudinal_strip[1] - patches[i].mortar_longitudinal_strip[0],
+         static_cast<double>(reading.knots), static_cast<double>(reading.located),
+         reading.Evaluated() ? reading.h : std::numeric_limits<double>::quiet_NaN(),
+         i < resolution_plane_slots.size() && resolution_plane_slots[i] > 0
+             ? resolution_planes[resolution_plane_slots[i] - 1]
+             : std::numeric_limits<double>::quiet_NaN()});
+  }
+  const auto records = Mpi::GatherLarge(local, 0, fespace.GetComm());
+  if (!Mpi::Root(fespace.GetComm()))
+  {
+    return;
+  }
+  std::map<int, const PatchAssignment *> assignments;
+  for (const auto &assignment : patch_assignments)
+  {
+    assignments.emplace(assignment.global_index, &assignment);
+  }
+  constexpr std::size_t stride = 7;
+  std::vector<std::size_t> order(records.size() / stride);
+  std::iota(order.begin(), order.end(), 0);
+  std::sort(order.begin(), order.end(), [&](std::size_t a, std::size_t b)
+            { return records[stride * a] < records[stride * b]; });
+  std::ofstream output(path);
+  MFEM_VERIFY(output, "Unable to open " << path << " for writing!");
+  output << "patch,model,origin x (m),origin y (m),origin z (m),axis u x,axis u y,axis u "
+            "z,axis v x,axis v y,axis v z,axis w x,axis w y,axis w z,spatial,cell length "
+            "(m),plane z (um),knots,located,h median (m),h/R,status\n";
+  const double nan = std::numeric_limits<double>::quiet_NaN();
+  auto Number = [](double value)
+  { return std::isnan(value) ? std::string("nan") : fmt::format("{:+.16e}", value); };
+  for (const std::size_t k : order)
+  {
+    const double *r = records.data() + stride * k;
+    const int global_index = static_cast<int>(std::llround(r[0]));
+    const auto assignment = assignments.find(global_index);
+    const PatchAssignment *a =
+        assignment != assignments.end() ? assignment->second : nullptr;
+    output << global_index + 1 << ',' << (a ? a->model : 0);
+    for (int d = 0; d < 3; d++)
+    {
+      output << ',' << Number(a ? a->origin[d] * resolution_length_scale : nan);
+    }
+    for (const auto *axis :
+         {a ? &a->axis_u : nullptr, a ? &a->axis_v : nullptr, a ? &a->axis_w : nullptr})
+    {
+      for (int d = 0; d < 3; d++)
+      {
+        output << ',' << Number(axis ? (*axis)[d] : nan);
+      }
+    }
+    const ResolutionPatchReading reading{static_cast<int>(std::llround(r[3])),
+                                         static_cast<int>(std::llround(r[4])), r[5]};
+    const double m = reading.Evaluated() && resolution_radius > 0.0
+                         ? reading.h / resolution_radius
+                         : nan;
+    output << ',' << static_cast<int>(r[1]) << ',' << Number(r[2] * resolution_length_scale)
+           << ',' << (std::isnan(r[6]) ? std::string("nan") : fmt::format("{:.1f}", r[6]))
+           << ',' << reading.knots << ',' << reading.located << ','
+           << Number(reading.Evaluated() ? reading.h * resolution_length_scale : nan) << ','
+           << Number(m) << ','
+           << ResolutionStatusName(ResolutionPatchStatus(
+                  m, resolution_order, resolution_bars, resolution_bars_hold))
+           << '\n';
+  }
+  MFEM_VERIFY(output.good(), "Failed writing " << path << "!");
+}
+
 void SurfaceResponseOperator::ConfigureCoverage(const ResponseCorrectionData &request,
                                                 MPI_Comm comm)
 {
@@ -31991,6 +32398,9 @@ SurfaceResponseOperator::SurfaceResponseOperator(
       TargetInterfaceMatchingRadius(iodata, config->target_interfaces);
   configured_target_interfaces = ConfiguredTargetInterfaces(iodata, request->IsAutomatic(),
                                                             request->target_interfaces);
+  // Lane rescensus-product (decision 1817): the census settings (a bars file of another
+  // radius is a config error here, before any solve).
+  ConfigureResolutionCensus(*request, iodata, target_matching_radius);
   const auto derived_cache_before = GetDerivedResponseMatrixCacheCounters();
   // setupmem S1 (decision 1546): the root builds every model's matrices here (the
   // all-model records and log lines); another rank builds the metadata only and, after the
@@ -33334,6 +33744,38 @@ SurfaceResponseOperator::SurfaceResponseOperator(
                global_diagnostic_patch_count, global_diagnostic_point_count);
   }
   geometry_ledger.Enforce("electrostatic surface-response configuration");
+  {
+    // Lane rescensus-product (decision 1817; ruling 1819 F2): the ONE added locate of the
+    // census knots, through this construction's locator, after its existing locates. The
+    // knots of a local applied patch = its model's basis points placed as the correction
+    // places them (the w component for a spatial model).
+    BlockTimer resolution_timer(Timer::CONSTRUCT_RESPONSE_POINTS);
+    LocateResolutionKnots(
+        point_locator, response_mesh, dimension,
+        [&](std::size_t i, std::vector<std::array<double, 3>> &points)
+        {
+          const auto &patch_config = placed_patches[local_patch_indices[i]];
+          const auto &model = models[patches[i].model];
+          const auto &local_points = basis_points[patches[i].model];
+          points.assign(local_points.size(), {0.0, 0.0, 0.0});
+          for (std::size_t k = 0; k < local_points.size(); k++)
+          {
+            const auto &local = local_points[k];
+            for (int d = 0; d < dimension; d++)
+            {
+              points[k][d] =
+                  patch_config.origin[d] +
+                  (local[0] * patch_config.axis_u[d] + local[1] * patch_config.axis_v[d] +
+                   (model.spatial_basis ? local[2] * patch_config.axis_w[d] : 0.0)) /
+                      coordinate_scale;
+            }
+          }
+        },
+        [&](std::size_t i)
+        {
+          return dimension == 3 ? placed_patches[local_patch_indices[i]].origin[2] : 0.0;
+        });
+  }
   if (cached_geometry)
   {
     // C6 (decision 1446): the shared geometry keeps this rank's local patches only until
@@ -33543,6 +33985,9 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
       TargetInterfaceMatchingRadius(iodata, config.target_interfaces);
   configured_target_interfaces = ConfiguredTargetInterfaces(iodata, request->IsAutomatic(),
                                                             request->target_interfaces);
+  // Lane rescensus-product (decision 1817): the census settings (a bars file of another
+  // radius is a config error here, before any solve).
+  ConfigureResolutionCensus(*request, iodata, target_matching_radius);
   // setupmem S1 (decision 1546): as the electrostatic constructor (the root builds every
   // model's matrices here; another rank the metadata, then BuildReferencedModelMatrices).
   const bool build_every_model_matrix = Mpi::Root(fespace.GetComm());
@@ -34065,6 +34510,7 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
                             basis_size, 0, patch_config.longitudinal_cell, 1, 0.0,
                             patch_config.weight, patch_config.domain_weight});
     local_patch_configs.push_back(&patch_config);
+    resolution_patch_origin_z.push_back(patch_config.origin[2]);
     // The provenance of the conductor-consistency record (R0-a on the Maxwell path): the
     // feature, the claimed portions, the cell and the translational edge probes.
     auto &placed = patches.back();
@@ -35958,6 +36404,27 @@ void SurfaceResponseOperator::ConfigureMaxwellLines(
                                         dimension);
   ConfigurePointCommunication(point_locator, xyz, dimension, &weighted_tangents, nullptr,
                               has_magnetic_models ? &weighted_normals : nullptr);
+  // Lane rescensus-product (decision 1817; ruling 1819 F2): the ONE added locate of the
+  // census knots (the local patches' contour knots as placed in maxwell_contours), through
+  // this locator, after the point exchange above.
+  LocateResolutionKnots(
+      point_locator, const_cast<mfem::ParMesh &>(fespace.GetParMesh()), dimension,
+      [&](std::size_t i, std::vector<std::array<double, 3>> &points)
+      {
+        const auto &contour = maxwell_contours[i];
+        points.assign(contour.size(), {0.0, 0.0, 0.0});
+        for (std::size_t k = 0; k < contour.size(); k++)
+        {
+          for (int d = 0; d < dimension; d++)
+          {
+            points[k][d] = contour[k](d);
+          }
+        }
+      },
+      [&](std::size_t i)
+      {
+        return i < resolution_patch_origin_z.size() ? resolution_patch_origin_z[i] : 0.0;
+      });
 }
 
 void SurfaceResponseOperator::ConfigurePointCommunication(
@@ -37757,10 +38224,13 @@ SurfaceResponseOperator::GetFabricatedSurfaceEnergy(const Vector &x) const
 
 SurfaceResponseOperator::ElectrostaticResponse
 SurfaceResponseOperator::GetElectrostaticResponse(const Vector &x, bool include_fixed_flux,
-                                                  bool include_patches) const
+                                                  bool include_patches,
+                                                  ResolutionAccumulator *resolution) const
 {
   ApplyTrace(x, trace);
   ElectrostaticResponse result;
+  // Lane rescensus-product: the patch's fixed-trace fabricated energy per census Type.
+  std::vector<double> resolution_energy(resolution ? resolution->types : 0);
   double weighted_trace_closure_spread_squared = 0.0;
   double trace_closure_response_weight = 0.0;
   double failed_trace_closure_response_weight = 0.0;
@@ -37849,12 +38319,21 @@ SurfaceResponseOperator::GetElectrostaticResponse(const Vector &x, bool include_
            patch_domain_correction, include_fixed_flux ? domain_correction_fixed_flux : 0.0,
            static_cast<double>(model.fabricated_surfaces.size())});
     }
+    std::fill(resolution_energy.begin(), resolution_energy.end(), 0.0);
     for (const auto &[interface, matrix] : model.fabricated_surfaces)
     {
       const double fixed_trace_energy =
           patch.weight * QuadraticForm(matrix, patch_trace, response);
       result.fabricated_surface_energy[interface] += fixed_trace_energy;
       contribution.fabricated_surface_energy[interface] += fixed_trace_energy;
+      if (resolution)
+      {
+        const auto type = resolution_interface_types.find(interface);
+        if (type != resolution_interface_types.end())
+        {
+          resolution_energy[type->second] += fixed_trace_energy;
+        }
+      }
       double fixed_flux_energy = 0.0;
       if (include_fixed_flux)
       {
@@ -37883,6 +38362,19 @@ SurfaceResponseOperator::GetElectrostaticResponse(const Vector &x, bool include_
                     local_patch_records.size() ==
                         patch_record_offset + 9 + 3 * model.fabricated_surfaces.size(),
                 "Incorrect per-patch response record!");
+    if (resolution)
+    {
+      const std::size_t patch_index = static_cast<std::size_t>(&patch - patches.data());
+      double m = 0.0;
+      const auto status = ResolutionPatchStatusOf(patch_index, &m);
+      const int plane_slot = patch_index < resolution_plane_slots.size()
+                                 ? resolution_plane_slots[patch_index]
+                                 : 0;
+      for (int t = 0; t < resolution->types; t++)
+      {
+        resolution->Add(t, plane_slot, status, m, resolution_energy[t]);
+      }
+    }
   }
   const std::size_t values_per_interface = include_fixed_flux ? 2 : 1;
   std::vector<double> reduction;
@@ -38225,8 +38717,11 @@ SurfaceResponseOperator::GatherPatchTraces(const Vector &x, bool spatial_only,
 }
 
 SurfaceResponseOperator::MaxwellResponse SurfaceResponseOperator::GetMaxwellResponse(
-    const GridFunction &E, std::complex<double> omega, bool include_patches) const
+    const GridFunction &E, std::complex<double> omega, bool include_patches,
+    ResolutionAccumulator *resolution) const
 {
+  // Lane rescensus-product: the patch's fixed-trace fabricated energy per census Type.
+  std::vector<double> resolution_energy(resolution ? resolution->types : 0);
   MFEM_VERIFY(maxwell && maxwell_contours.size() == patches.size(),
               "Maxwell surface response was not configured!");
   MFEM_ASSERT(maxwell_conductor_anchors.size() == patches.size(),
@@ -38498,12 +38993,21 @@ SurfaceResponseOperator::MaxwellResponse SurfaceResponseOperator::GetMaxwellResp
            static_cast<double>(model.fabricated_surfaces.size())});
     }
     const double surface_weight = fallback ? 0.0 : patch.weight;
+    std::fill(resolution_energy.begin(), resolution_energy.end(), 0.0);
     for (const auto &[interface, matrix] : model.fabricated_surfaces)
     {
       const double fixed_trace_energy =
           surface_weight * HermitianForm(matrix, patch_trace_real, patch_trace_imag);
       const double fixed_flux_energy =
           surface_weight * HermitianForm(matrix, fixed_flux_real, fixed_flux_imag);
+      if (resolution)
+      {
+        const auto type = resolution_interface_types.find(interface);
+        if (type != resolution_interface_types.end())
+        {
+          resolution_energy[type->second] += fixed_trace_energy;
+        }
+      }
       result.fabricated_surface_energy[interface] += fixed_trace_energy;
       result.fabricated_surface_energy_fixed_flux[interface] += fixed_flux_energy;
       contribution.fabricated_surface_energy[interface] += fixed_trace_energy;
@@ -38525,6 +39029,18 @@ SurfaceResponseOperator::MaxwellResponse SurfaceResponseOperator::GetMaxwellResp
         {
           failed_trace_closure_response_weight += weight;
         }
+      }
+    }
+    if (resolution)
+    {
+      double m = 0.0;
+      const auto status = ResolutionPatchStatusOf(patch_index, &m);
+      const int plane_slot = patch_index < resolution_plane_slots.size()
+                                 ? resolution_plane_slots[patch_index]
+                                 : 0;
+      for (int t = 0; t < resolution->types; t++)
+      {
+        resolution->Add(t, plane_slot, status, m, resolution_energy[t]);
       }
     }
     double path_scale_squared = 0.0;

@@ -208,9 +208,8 @@ struct CoverageCell
   double loop_remainder_unserved = 0.0, loop_remainder_excluded = 0.0;
   // The Type's sums of the end census (counts and energies summed, distances the largest).
   SurfacePostOperator::InterfaceCoveragePartition::EndCensus served_ends, kept_ends;
-  // Lane rescensus (decision 1637 (e)): its per-cell edge-resolution status is appended
-  // here and printed after the last column; its stage-0 line beside the Missing length
-  // share. Not part of this lane.
+  // The edge-resolution census (decision 1817) is not a column here: it writes its own
+  // table, block, PREFLIGHT line and banner (models/surfaceresponseresolution.hpp).
 };
 CoverageCell ComputeCoverageCell(const std::string &type,
                                  const std::vector<CoverageInterfaceSummary> &interfaces,
@@ -315,8 +314,7 @@ using CoverageFeaturePortionsMap = std::map<int, CoverageFeaturePortions>;
 // surface-response-uncovered-energy-by-key.csv for one measurement (both solve families):
 // `keys` = the row's leading cells ("m,exc" | "f (GHz),exc" | "i" values, comma-joined),
 // `key_header` their header; energies in J and lengths in m through `units`; nan prints
-// "nan". `portions_by_feature`: CoveragePortionsByFeature. Lane rescensus (decision 1637
-// (e)) appends its per-cell edge-resolution status column after `regime status`.
+// "nan". `portions_by_feature`: CoveragePortionsByFeature.
 std::string CoverageTableHeader(const std::string &key_header);
 std::string CoverageByKeyTableHeader(const std::string &key_header,
                                      const std::set<int> &targets);

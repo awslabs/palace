@@ -599,6 +599,11 @@ void BaseSolver::SaveMetadata(const Timer &timer) const
     if (coverage_final)
     {
       meta["SurfaceResponse"]["Coverage"]["Final"] = true;
+      // Lane rescensus-product (decision 1817): the census block of the same last level.
+      if (meta["SurfaceResponse"].contains("Resolution"))
+      {
+        meta["SurfaceResponse"]["Resolution"]["Final"] = true;
+      }
     }
     WriteMetadata(post_dir, meta);
   }
@@ -640,7 +645,7 @@ void BaseSolver::SaveMetadata(SurfaceResponseOperator &response) const
   // The final write (round 2a R1, decision 1475 (1)): the operator's diagnostics record is
   // moved, not copied (ReleaseStatistics; the record is the same).
   auto statistics = response.ReleaseStatistics();
-  std::string coverage_banner;
+  std::string coverage_banner, resolution_banner;
   if (root)
   {
     nlohmann::json meta = LoadMetadata(post_dir);
@@ -684,6 +689,11 @@ void BaseSolver::SaveMetadata(SurfaceResponseOperator &response) const
         solve_levels);
     coverage_block_written = true;
     coverage_banner = CoverageRunBanner(meta["SurfaceResponse"]["Coverage"]);
+    // Lane rescensus-product (decision 1817; ruling 1819): the edge-resolution census of
+    // the level (written beside the coverage block; "Final" set with the coverage block's).
+    meta["SurfaceResponse"]["Resolution"] =
+        ResolutionRunMetadata(response.GetResolutionRunRecord(), solve_level, solve_levels);
+    resolution_banner = ResolutionRunBanner(meta["SurfaceResponse"]["Resolution"]);
     // Round 2a R2 (decision 1475 (1)): the Records spilled by the root are spliced in place
     // of the empty in-memory array (the same bytes), then the scratch file is removed.
     auto *spill = response.GetConductorConsistencyRecordsSpill();
@@ -778,6 +788,10 @@ void BaseSolver::SaveMetadata(SurfaceResponseOperator &response) const
   if (!coverage_banner.empty())
   {
     Mpi::Print("{}", coverage_banner);
+  }
+  if (!resolution_banner.empty())
+  {
+    Mpi::Print("{}", resolution_banner);
   }
 }
 

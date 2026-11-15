@@ -3569,6 +3569,22 @@
                 }
               }
             },
+            "Resolution": {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "The edge-resolution census of the correction (lane rescensus-product; written on every corrected run: `surface-response-resolution.csv`, the palace.json block `SurfaceResponse.Resolution`, a PREFLIGHT line before the first solve and the end-of-run banner; with `PatchEnergy` also `surface-response-resolution-patches.csv`). Per patch: the lower median over its model's basis-point knots of the longest edge of the mesh element owning each knot, over the matching radius; per cell the energy-weighted shares of RESOLVED / MARGINAL / UNDER-RESOLVED / NOT-EVALUATED patches on INTERIM bars (valid at R = 1.9 um only; another radius reads NO-BARS). Outputs only: no value and no coverage status changes. RESOLVED is necessary, not sufficient.",
+              "properties": {
+                "Enabled": {
+                  "type": "boolean",
+                  "description": "Whether the census locates the knots (one added point location per AMR level). `false`: nothing is located and every cell reads NOT-EVALUATED (reason `disabled`); the table is still written.",
+                  "default": true
+                },
+                "BarsFile": {
+                  "type": "string",
+                  "description": "Optional bars file for the run's matching radius: {\"RadiusMicrons\": R, \"Bars\": {\"1\": {\"b5\": null or a number, \"b10\": a number}, ..., \"4\": ...}}. Its radius must equal the run's matching radius (else a config error). Absent: the built-in INTERIM bars (R = 1.9 um only)."
+                }
+              }
+            },
             "ConductorConsistency": {
               "type": "object",
               "additionalProperties": false,
