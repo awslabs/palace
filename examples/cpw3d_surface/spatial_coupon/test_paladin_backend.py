@@ -1165,6 +1165,8 @@ class WatcherInProcess(unittest.TestCase):
 
         def paladin_call(cli, arguments, **options):
             self.calls.append(arguments[:2])
+            if len(self.calls) > 200:  # the fake's own bound: a watcher without its read bound fails here, it never spins
+                raise AssertionError("200 reads: the watcher did not end")
             if arguments[1] == "cancel":
                 if self.cancel_fails:
                     raise paladin_backend.PaladinError("palace cancel: refused")
