@@ -47,11 +47,17 @@ single-frequency window is the same rule with one member.
 The letters, tails, class rule and verdict are the 994 / 995 tabulators' (tabulate_rerun2.py: model_class / tail_of / TAILS /
 verdict; collect17.py: ma_sharp) ported verbatim so that the 47 stage-E cells and the 995 Maxwell card are reproduced from the
 stored CSVs (test_grade_cells.py). Pure Python; exit 0 when the grade was written.
+
+NOT-APPLIED (decision 1847 E-1): a member whose x is not finite -- the corrected device value is a marked cell's nan (Coverage.Policy
+MarkNotApplied prints a marked corrected cell as nan, its value in the `... partial (uncovered part raw)` column) or the reference is
+non-finite -- carries the letter NOT-APPLIED (no grade); the cell letter is FAIL if any member FAILs, else NOT-APPLIED if any member is
+NOT-APPLIED: a non-finite corrected cell never reads PASS. The partial twin columns are never graded.
 """
 
 import argparse
 import csv
 import json
+import math
 import os
 import re
 import sys
@@ -163,10 +169,15 @@ def pct(a, b):
     return 100.0 * (a / b - 1.0)
 
 
+# The letter of a member whose x is not finite (decision 1847 E-1): no grade, never PASS.
+NOT_APPLIED = "NOT-APPLIED"
+
+
 def verdict(value, limit, bracket=None):
-    """tabulate_rerun2.verdict: |x| > bar FAIL; ft inside with the bracket outside INCONCLUSIVE; else PASS."""
-    if value != value:
-        return "n/a"
+    """tabulate_rerun2.verdict: |x| > bar FAIL; ft inside with the bracket outside INCONCLUSIVE; else PASS. A non-finite x (a
+    marked corrected cell's nan) is NOT_APPLIED (decision 1847 E-1; it was 'n/a', which the cell rule read as PASS)."""
+    if not math.isfinite(value):
+        return NOT_APPLIED
     if abs(value) > limit:
         return "FAIL"
     if bracket and (abs(bracket[0]) > limit or abs(bracket[1]) > limit):
@@ -655,6 +666,10 @@ def band_check(x, band):
             out[T] = {"x_pt": x.get(T), "band": None, "in": None}
             continue
         lo, hi = band[bt]["low_pt"], band[bt]["high_pt"]
+        if not math.isfinite(x[T]):
+            # NOT-APPLIED (decision 1847 E-1): a non-finite x has no band reading
+            out[T] = {"x_pt": x[T], "band": [lo, hi], "in": None}
+            continue
         out[T] = {"x_pt": x[T], "band": [lo, hi], "in": bool(lo - BAND_TOL_PT <= x[T] <= hi + BAND_TOL_PT)}
     return out
 
@@ -701,20 +716,33 @@ def grade_member(dev, ref, band, c_dev_key, c_ref_key):
 
 
 def aggregate_cell(members, grades, T, rule_text):
-    """The fail-closed cell letter over the members (1210 (a) / 1213 (a)): F if any F, else I if any I, else P; the
-    worst-|x| member quoted with the range and the counts; in band only if every member is."""
+    """The fail-closed cell letter over the members (1210 (a) / 1213 (a)): F if any F, else NOT-APPLIED if any member's x is not
+    finite (decision 1847 E-1: a marked corrected cell), else I if any I, else P; the worst-|x| member (over the finite ones) quoted
+    with the range and the counts; in band only if every member is."""
     xs = {m: grades[m]["x_pct"][T] for m in members if grades[m]["x_pct"].get(T) is not None}
     if not xs:
         return {"letter": "n/a", "x_pct": None, "rule": rule_text, "n_members": 0}
     letters = {m: grades[m]["letters"][T] for m in xs}
     ls = list(letters.values())
-    letter = "FAIL" if "FAIL" in ls else ("INCONCLUSIVE (ft inside, bracket outside)" if any(l.startswith("INCONCLUSIVE") for l in ls) else "PASS")
-    worst = max(xs, key=lambda m: abs(xs[m]))
+    not_applied = [m for m in xs if not math.isfinite(xs[m])]
+    if "FAIL" in ls:
+        letter = "FAIL"
+    elif not_applied:
+        letter = NOT_APPLIED
+    else:
+        letter = "INCONCLUSIVE (ft inside, bracket outside)" if any(l.startswith("INCONCLUSIVE") for l in ls) else "PASS"
+    graded = {m: x for m, x in xs.items() if m not in not_applied}
     bands = [grades[m]["band"][T]["in"] for m in xs]
-    return {"letter": letter, "x_pct": xs[worst], "worst_member": worst, "x_range_pct": [min(xs.values()), max(xs.values())],
-            "letters_by_member": {str(m): letters[m] for m in xs}, "n_members": len(xs), "n_pass": sum(l == "PASS" for l in ls),
-            "n_fail": sum(l == "FAIL" for l in ls), "in_band": (all(bands) if None not in bands else None),
-            "n_in_band": sum(bool(b) for b in bands), "rule": rule_text}
+    out = {"letter": letter, "x_pct": None, "worst_member": None, "x_range_pct": None,
+           "letters_by_member": {str(m): letters[m] for m in xs}, "n_members": len(xs), "n_pass": sum(l == "PASS" for l in ls),
+           "n_fail": sum(l == "FAIL" for l in ls), "in_band": (all(bands) if None not in bands else None),
+           "n_in_band": sum(bool(b) for b in bands), "rule": rule_text}
+    if graded:
+        worst = max(graded, key=lambda m: abs(graded[m]))
+        out.update({"x_pct": graded[worst], "worst_member": worst, "x_range_pct": [min(graded.values()), max(graded.values())]})
+    if not_applied:
+        out.update({"n_not_applied": len(not_applied), "not_applied_members": [str(m) for m in not_applied]})
+    return out
 
 
 def static_limit_cell(freqs, per, band):
@@ -820,12 +848,16 @@ def grade_mx(a, catalog, cat_src, sp_tails, band, values):
 def summary_line(label, out):
     parts = []
     for T, c in out["cells"].items():
+        if c.get("n_not_applied") and c.get("x_pct") is None:
+            parts.append(f"{T} {c['letter']} ({c['n_not_applied']} of {c['n_members']} members: a non-finite corrected value)")
+            continue
         if c.get("x_pct") is None:
             parts.append(f"{T} n/a")
             continue
         rng = f" [{c['x_range_pct'][0]:+.3f}, {c['x_range_pct'][1]:+.3f}]" if c.get("x_range_pct") and c.get("n_members", 1) > 1 else ""
         band = "in" if c.get("in_band") else ("OUT" if c.get("in_band") is False else "-")
-        parts.append(f"{T} {c['x_pct']:+.3f} %{rng} {c['letter']} band {band}")
+        na = f" ({c['n_not_applied']} of {c['n_members']} members NOT-APPLIED)" if c.get("n_not_applied") else ""
+        parts.append(f"{T} {c['x_pct']:+.3f} %{rng} {c['letter']}{na} band {band}")
     return f"{label}: {out['member_kind']} {len(out['members'])}; " + "; ".join(parts)
 
 

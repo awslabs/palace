@@ -79,6 +79,30 @@ def synthetic_es_run(root, sources, p_ft, c_ft, c_off, e_elec=1.0e-12):
     return root
 
 
+PARTIAL_SUFFIX = " partial (uncovered part raw)"  # kCoveragePartialColumnSuffix (surfaceresponsecoverage.hpp)
+
+
+def mark_es_run(root, marked_sources):
+    """The MarkNotApplied form of a synthetic ES run (decision 1829 / DESIGN-L4-v2 s2.3 E1 / E2): every corrected column of
+    surface-Q-corrected.csv and terminal-C-corrected.csv gets an appended partial twin; a marked source's corrected cells print
+    nan (its value moved to the twin), the twin is nan on an unmarked row."""
+    post = os.path.join(root, "postpro")
+    for name, corrected in (("surface-Q-corrected.csv", "postprocessed fixed-trace"), ("terminal-C-corrected.csv", "fixed-trace")):
+        path = os.path.join(post, name)
+        with open(path) as handle:
+            lines = [ln.rstrip("\n").split(",") for ln in handle]
+        header, rows = lines[0], lines[1:]
+        cols = [j for j, h in enumerate(header) if corrected in h]
+        out = [header + [header[j] + PARTIAL_SUFFIX for j in cols]]
+        for r in rows:
+            marked = int(float(r[0])) in marked_sources
+            twins = [r[j] if marked else "nan" for j in cols]
+            out.append([("nan" if (marked and j in cols) else v) for j, v in enumerate(r)] + twins)
+        with open(path, "w") as handle:
+            handle.write("".join(",".join(r) + "\n" for r in out))
+    return root
+
+
 def es_values_reference(sources, p_ref, c_ref, ma_sharp_ref):
     return {"members": {str(s): {"SA_p": p_ref[s][1], "MS_p": p_ref[s][2], "MA_p": p_ref[s][3], "MA_sharp_p": ma_sharp_ref[s],
                                  "C_F": c_ref[s], "E_elec_J": 1.0e-12, "C_offdiag_F": {str(j): -0.1 * c_ref[s] for j in sources if j != s}}
@@ -91,7 +115,11 @@ class LetterRules(unittest.TestCase):
         self.assertEqual(gc.verdict(-5.1, 5.0), "FAIL")
         self.assertEqual(gc.verdict(1.0, 5.0, [-6.0, 2.0]), "INCONCLUSIVE (ft inside, bracket outside)")
         self.assertEqual(gc.verdict(1.0, 5.0, [-4.0, 2.0]), "PASS")
-        self.assertEqual(gc.verdict(float("nan"), 5.0), "n/a")
+        # a non-finite x (a MarkNotApplied corrected cell prints nan; decision 1847 E-1) is NOT-APPLIED, never PASS (it was "n/a",
+        # which the cell rule read as PASS)
+        self.assertEqual(gc.verdict(float("nan"), 5.0), gc.NOT_APPLIED)
+        self.assertEqual(gc.verdict(float("inf"), 5.0), gc.NOT_APPLIED)
+        self.assertEqual(gc.verdict(float("nan"), 5.0, [-1.0, 1.0]), gc.NOT_APPLIED)
 
     def test_model_class_and_tails(self):
         self.assertEqual(gc.model_class("convex-corner-90deg"), "corner")
@@ -191,6 +219,34 @@ class CellRules(unittest.TestCase):
         self.assertEqual(cell["letter"], "PASS")
         self.assertTrue(cell["in_band"])
 
+    def test_not_applied_members(self):
+        """Decision 1847 E-1: a member whose x is not finite (a marked corrected cell) is NOT-APPLIED: the cell is FAIL if any member
+        FAILs, else NOT-APPLIED (never PASS); the worst / range are over the finite members; no band reading."""
+        nan = float("nan")
+        g = {1: {"x_pct": {"SA": nan}, "letters": {"SA": gc.NOT_APPLIED}, "band": {"SA": {"in": None}}},
+             2: {"x_pct": {"SA": nan}, "letters": {"SA": gc.NOT_APPLIED}, "band": {"SA": {"in": None}}}}
+        cell = gc.aggregate_cell([1, 2], g, "SA", "rule")
+        self.assertEqual(cell["letter"], gc.NOT_APPLIED)
+        self.assertIsNone(cell["x_pct"])
+        self.assertIsNone(cell["x_range_pct"])
+        self.assertEqual((cell["n_not_applied"], cell["n_members"], cell["n_pass"]), (2, 2, 0))
+        self.assertIsNone(cell["in_band"])
+        # one PASS member beside a marked one: NOT-APPLIED, not PASS
+        g[1] = {"x_pct": {"SA": 0.5}, "letters": {"SA": "PASS"}, "band": {"SA": {"in": True}}}
+        cell = gc.aggregate_cell([1, 2], g, "SA", "rule")
+        self.assertEqual(cell["letter"], gc.NOT_APPLIED)
+        self.assertEqual((cell["x_pct"], cell["worst_member"], cell["x_range_pct"]), (0.5, 1, [0.5, 0.5]))
+        self.assertEqual(cell["not_applied_members"], ["2"])
+        # one FAIL member beside a marked one: FAIL
+        g[1] = {"x_pct": {"SA": -5.5}, "letters": {"SA": "FAIL"}, "band": {"SA": {"in": False}}}
+        cell = gc.aggregate_cell([1, 2], g, "SA", "rule")
+        self.assertEqual(cell["letter"], "FAIL")
+        self.assertEqual(cell["x_pct"], -5.5)
+        # a finite cell set carries no NOT-APPLIED key (a Warn tree's grade is unchanged)
+        g[2] = {"x_pct": {"SA": 0.1}, "letters": {"SA": "PASS"}, "band": {"SA": {"in": True}}}
+        self.assertNotIn("n_not_applied", gc.aggregate_cell([1, 2], g, "SA", "rule"))
+        self.assertEqual(gc.band_check({"SA": nan}, {"SA": {"low_pt": -1.0, "high_pt": 1.0}})["SA"]["in"], None)
+
     def test_static_limit_fit(self):
         freqs = [5.2, 5.7, 6.2]
         c_s, a = 2.0e-13, 0.004
@@ -248,6 +304,55 @@ class SyntheticWindows(unittest.TestCase):
             g1 = json.load(handle)
         self.assertEqual(g1["cells"]["SA"]["rule"], "single source")
         self.assertEqual(g1["cells"]["SA"]["letter"], "PASS")
+
+    def test_es_marked_window_not_applied(self):
+        """Decision 1847 E-1: a MarkNotApplied tree (a marked source's corrected cells print nan, the value in the appended
+        `... partial (uncovered part raw)` twin) grades NOT-APPLIED in every Type, never PASS; the twins are never graded; a FAIL
+        source beside a marked one keeps the cell FAIL. On the same window without marks (the Warn form) every cell PASSES."""
+        sources = [1, 2]
+        p_ref = {s: {1: 1.0e-4, 2: 2.0e-4, 3: 1.0e-5} for s in sources}
+        p_ft = {s: dict(p_ref[s]) for s in sources}
+        c_ref = {1: 1.0e-14, 2: 2.0e-14}
+        c_ft = dict(c_ref)
+        ma_sharp_ref = {s: p_ref[s][3] * (1.0 + 0.5 * 0.0678) for s in sources}
+        values = os.path.join(self.tmp, "ref.json")
+        with open(values, "w") as handle:
+            json.dump(es_values_reference(sources, p_ref, c_ref, ma_sharp_ref), handle)
+        out = os.path.join(self.tmp, "grade.json")
+
+        def grade(run):
+            self.assertEqual(gc.main(["--form", "es", "--device", run, "--reference-values", values, "--out", out, "--tail-form", "422"]), 0)
+            with open(out) as handle:
+                return json.load(handle)
+
+        warn = synthetic_es_run(os.path.join(self.tmp, "warn"), sources, p_ft, c_ft, {s: -0.1 * c_ref[s] for s in sources})
+        g = grade(warn)
+        for T in gc.TYPES:
+            self.assertEqual(g["cells"][T]["letter"], "PASS")
+            self.assertNotIn("n_not_applied", g["cells"][T])
+        # every source marked: the product's MarkNotApplied form of the same window
+        mark = synthetic_es_run(os.path.join(self.tmp, "mark"), sources, p_ft, c_ft, {s: -0.1 * c_ref[s] for s in sources})
+        mark_es_run(mark, sources)
+        g = grade(mark)
+        for T in gc.TYPES:
+            self.assertEqual(g["cells"][T]["letter"], gc.NOT_APPLIED, T)
+            self.assertIsNone(g["cells"][T]["x_pct"])
+            self.assertEqual(g["cells"][T]["n_not_applied"], 2)
+            self.assertEqual(g["cells"][T]["n_pass"], 0)
+        self.assertNotIn("PASS", gc.summary_line("m", g))
+        self.assertIn("SA NOT-APPLIED (2 of 2 members", gc.summary_line("m", g))
+        # source 1 FAILS SA (6 % high), source 2 marked: SA FAIL; MS / MA_sharp / C NOT-APPLIED (source 1 PASSES them)
+        p_ft[1][1] = 1.06e-4
+        mixed = synthetic_es_run(os.path.join(self.tmp, "mixed"), sources, p_ft, c_ft, {s: -0.1 * c_ref[s] for s in sources})
+        mark_es_run(mixed, [2])
+        g = grade(mixed)
+        self.assertEqual(g["cells"]["SA"]["letter"], "FAIL")
+        self.assertAlmostEqual(g["cells"]["SA"]["x_pct"], 6.0, places=9)
+        self.assertEqual(g["cells"]["SA"]["not_applied_members"], ["2"])
+        for T in ("MS", "MA_sharp", "C"):
+            self.assertEqual(g["cells"][T]["letter"], gc.NOT_APPLIED, T)
+            self.assertEqual(g["cells"][T]["letters_by_member"], {"1": "PASS", "2": gc.NOT_APPLIED})
+        self.assertIn("(1 of 2 members NOT-APPLIED)", gc.summary_line("m", g))
 
     def test_es_fixed_shell_form(self):
         """--tail-form fixed-shell on the synthetic window: a values reference without the R10 rings is refused (exit 3), graded as
