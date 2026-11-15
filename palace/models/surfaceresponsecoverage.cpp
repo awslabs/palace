@@ -389,6 +389,9 @@ CoverageCell ComputeCoverageCell(const std::string &type,
       sum->near_distance = std::max(sum->near_distance, add->near_distance);
       sum->roundoff_energy += add->roundoff_energy;
       sum->near_energy += add->near_energy;
+      sum->roundoff_beyond_count += add->roundoff_beyond_count;
+      sum->roundoff_beyond_distance =
+          std::max(sum->roundoff_beyond_distance, add->roundoff_beyond_distance);
     }
   }
   // Ruling 1641: U is fail-closed, whatever is not served is uncovered. The method gap
@@ -978,12 +981,16 @@ nlohmann::json CoverageRunMetadata(const CoverageRunRecord &record,
                            census.roundoff_distance, census.roundoff_energy, cell.within)},
             {"NearNotRoundoff",
              EndPopulation(prefix + "NearNotRoundoff", census.near_count,
-                           census.near_distance, census.near_energy, cell.within)}};
+                           census.near_distance, census.near_energy, cell.within)},
+            {"RoundoffBeyond",
+             EndPopulation(prefix + "RoundoffBeyond", census.roundoff_beyond_count,
+                           census.roundoff_beyond_distance, 0.0, cell.within)}};
       };
       auto served = Populations("Served", cell.served_ends);
       auto kept = Populations("Kept", cell.kept_ends);
       if (cell.served_ends.roundoff_count + cell.served_ends.near_count +
-              cell.kept_ends.roundoff_count + cell.kept_ends.near_count >
+              cell.served_ends.roundoff_beyond_count + cell.kept_ends.roundoff_count +
+              cell.kept_ends.near_count + cell.kept_ends.roundoff_beyond_count >
           0)
       {
         nlohmann::json keys = nlohmann::json::object();
@@ -1031,11 +1038,18 @@ nlohmann::json CoverageRunMetadata(const CoverageRunRecord &record,
                         Number(cell.loop_remainder_excluded * energy_scale)}});
   }
   nlohmann::json end_census = {
-      {"Rule", fmt::format("a served claim end within {:g} ulps per coordinate of a tree-"
-                           "segment end point is snapped to it (round-off short); kept-"
-                           "class ends are counted, never changed (OI-FOOT-TEST-VERTEX-"
-                           "ROUNDOFF); near = beyond that, within {:g} R (never snapped)",
-                           kClaimEndRoundoffUlps, kSupportEndCoincidenceOverRadius)},
+      {"Rule",
+       fmt::format("by direction (ruling 1731): a served claim end within {:g} ulps per "
+                   "coordinate of a tree-segment end point whose clamped foot falls short "
+                   "of the segment end (round-off short) is snapped to it; its energy = "
+                   "the within-R raw energy at that end the snap gives back; kept-class "
+                   "ends are counted, never changed (OI-FOOT-TEST-VERTEX-ROUNDOFF), their "
+                   "energy = the within-R raw energy at that end no kept class holds; an "
+                   "end within the same ulps whose clamped foot reaches the segment end "
+                   "exactly (round-off beyond) is counted only (nothing at stake); near = "
+                   "beyond the ulps, within {:g} R (never snapped; its energy an upper "
+                   "bound)",
+                   kClaimEndRoundoffUlps, kSupportEndCoincidenceOverRadius)},
       {"Cells", std::move(end_cells)}};
   for (const auto &[name, total] : end_totals)
   {
@@ -1187,9 +1201,11 @@ std::string CoverageRunBanner(const nlohmann::json &metadata)
     banner += fmt::format(
         "Coverage claim-end census: served ends snapped (round-off short) {}, near {}; "
         "kept-class ends round-off short {} (OI-FOOT-TEST-VERTEX-ROUNDOFF: counted, not "
-        "changed), near {}\n",
+        "changed), near {}; round-off beyond (the foot reaches the segment end: nothing "
+        "at stake) served {}, kept {}\n",
         Population("ServedRoundoffShort"), Population("ServedNearNotRoundoff"),
-        Population("KeptRoundoffShort"), Population("KeptNearNotRoundoff"));
+        Population("KeptRoundoffShort"), Population("KeptNearNotRoundoff"),
+        Population("ServedRoundoffBeyond"), Population("KeptRoundoffBeyond"));
   }
   const int no_status = metadata.at("ServedNoStatusModels").get<int>();
   if (no_status > 0)

@@ -2602,8 +2602,12 @@ correction actually covers. The definitions are energies of the RAW field:
     (Missing, DomainBoundary, SpatialClusterPriority, conductor consistency) that are a
     round-off short of a segment end (counted, never changed: the corrected value then
     leaves that quadrant's raw energy out of its kept part), each with the largest distance
-    and the quadrant energy at stake, and the ends beyond round-off but within ``10^{-5} R``
-    (never snapped).
+    and the exact quadrant energy concerned (served: the raw energy the snap gives back;
+    kept: the raw energy at that vertex no kept class holds), the ends within round-off
+    whose foot on the segment already reaches the vertex (round-off beyond: the end lies
+    past the vertex; nothing is snapped and nothing is at stake), and the ends beyond
+    round-off but within ``10^{-5} R`` (never snapped; their energy, all of the raw energy
+    at those vertices, is an upper bound).
   - The pending-model share is the served energy on model-set labels that hold a model
     admitted with a non-`Qualified` `QualificationStatus` (or `LibraryQualified` false and no
     status), counted whole; the no-status-model share is the served energy on labels that

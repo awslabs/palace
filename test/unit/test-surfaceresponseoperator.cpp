@@ -13540,9 +13540,46 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
       // residual) is read against that scale. The scale is taken over the FINITE entries
       // only and a non-finite entry (the +inf Q of an interface without LossTan, a NaN of
       // an absent evaluation) must be reproduced as such: an infinite scale would make
-      // every finite comparison vacuous.
-      double table_scale = 0.0;
+      // every finite comparison vacuous. Lane L1: the coverage columns are APPENDED after
+      // main's columns (DESIGN-v2 s4.3) and the scale is taken over main's columns only,
+      // so that main's columns keep main's check: an appended covered correction factor (a
+      // covered corrected energy over a near-zero within-R raw W, of order 1e11 here)
+      // would make every other comparison vacuous. An appended status must be reproduced
+      // exactly; a covered correction factor to 1e-8 beyond the largest relative
+      // difference of the table's W entries (its denominator is a sum of them: at 2 ranks
+      // the follow-on's W of the islands' SA interface, 3e-22 J, moves by 1.1e-8 relative
+      // and the factor with it); every other appended column by main's rule.
+      constexpr std::array<std::string_view, 14> coverage_header_stems = {
+          "coverage Type",
+          "W within-R raw",
+          "uncovered raw share of W",
+          "Type uncovered raw share of W",
+          "Type method-gap raw share of W",
+          "Type pending-model share of W",
+          "Type covered correction factor",
+          "coverage status",
+          "regime status",
+          "loop remainder unserved (J)",
+          "loop remainder of excluded patches kept raw twice (J)",
+          "method-gap raw share of W ",
+          "pending-model share of W ",
+          "covered correction factor "};
+      auto HeaderStartsWith = [](const std::string &header, std::string_view stem)
+      { return header.compare(0, stem.size(), stem) == 0; };
+      std::size_t n_main_cols = producer_table.n_cols();
       for (std::size_t c = 0; c < producer_table.n_cols(); c++)
+      {
+        const std::string &header = producer_table[c].header_text;
+        if (std::any_of(coverage_header_stems.begin(), coverage_header_stems.end(),
+                        [&](std::string_view stem)
+                        { return HeaderStartsWith(header, stem); }))
+        {
+          n_main_cols = c;
+          break;
+        }
+      }
+      double table_scale = 0.0;
+      for (std::size_t c = 0; c < n_main_cols; c++)
       {
         for (const double value : producer_table[c].data)
         {
@@ -13553,11 +13590,35 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
         }
       }
       REQUIRE(table_scale > 0.0);
+      double within_relative_difference = 0.0;
+      for (std::size_t c = n_main_cols; c < producer_table.n_cols(); c++)
+      {
+        if (!HeaderStartsWith(producer_table[c].header_text, "W within-R raw"))
+        {
+          continue;
+        }
+        for (std::size_t i = 0;
+             i < producer_table[c].data.size() && i < follow_on_table[c].data.size(); i++)
+        {
+          const double producer_w = producer_table[c].data[i];
+          if (std::isfinite(producer_w) && producer_w != 0.0)
+          {
+            within_relative_difference = std::max(
+                within_relative_difference,
+                std::abs(follow_on_table[c].data[i] - producer_w) / std::abs(producer_w));
+          }
+        }
+      }
       for (std::size_t c = 0; c < producer_table.n_cols(); c++)
       {
         const Column &producer_column = producer_table[c];
         const Column &follow_on_column = follow_on_table[c];
         REQUIRE(producer_column.data.size() == follow_on_column.data.size());
+        REQUIRE(follow_on_column.header_text == producer_column.header_text);
+        CHECK(follow_on_column.text == producer_column.text);
+        const bool covered_factor =
+            c >= n_main_cols && producer_column.header_text.find(
+                                    "covered correction factor") != std::string::npos;
         for (std::size_t i = 0; i < producer_column.data.size(); i++)
         {
           if (!std::isfinite(producer_column.data[i]))
@@ -13565,6 +13626,14 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
             CHECK(((std::isnan(producer_column.data[i]) &&
                     std::isnan(follow_on_column.data[i])) ||
                    follow_on_column.data[i] == producer_column.data[i]));
+            continue;
+          }
+          if (covered_factor)
+          {
+            CHECK_THAT(follow_on_column.data[i],
+                       WithinAbs(producer_column.data[i],
+                                 (1.0e-8 + within_relative_difference) *
+                                     std::max(std::abs(producer_column.data[i]), 1.0e-30)));
             continue;
           }
           const double scale =
@@ -15083,8 +15152,46 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   CHECK(kept_moved.served_ends.roundoff_count == 0);
   const double lost = Kept(kept_exact) - Kept(kept_moved);
   CHECK(lost > 0.0);
-  CHECK(lost <= kept_moved.kept_ends.roundoff_energy * (1.0 + 1.0e-12));
+  // Ruling 1731: the directional census is EXACT: the kept loss IS the round-off-short
+  // energy, and the same vertex quadrants the snap gives back to the served list.
+  CHECK_THAT(lost,
+             WithinAbs(kept_moved.kept_ends.roundoff_energy, 1.0e-12 * kept_exact.within));
+  CHECK_THAT(kept_moved.kept_ends.roundoff_energy,
+             WithinAbs(snapped.served_ends.roundoff_energy, 1.0e-12 * exact.within));
   CHECK_THAT(Kept(kept_exact), WithinRel(Served(exact), 1.0e-12));
+
+  // (c) Ruling 1731: every end 1 ulp OUTWARD (beyond its vertex): round-off beyond, the
+  // clamped foot reaches the segment end, nothing snapped and nothing at stake; the bins
+  // are the exact claims' bitwise, served and kept.
+  auto outward = served;
+  for (auto &portion : outward)
+  {
+    const auto p0 = portion.p0, p1 = portion.p1;
+    for (int d = 0; d < 3; d++)
+    {
+      if (p0[d] != p1[d])
+      {
+        portion.p0[d] = std::nextafter(p0[d], p0[d] + (p0[d] - p1[d]));
+        portion.p1[d] = std::nextafter(p1[d], p1[d] + (p1[d] - p0[d]));
+      }
+    }
+  }
+  const auto beyond =
+      surf_post_op.GetInterfaceCoveragePartition({4}, field, nullptr, {}, outward).at(4);
+  CHECK(beyond.served_ends.roundoff_beyond_count > exact.served_ends.roundoff_beyond_count);
+  CHECK(beyond.served_ends.roundoff_beyond_distance > 0.0);
+  CHECK(beyond.served_ends.roundoff_count == exact.served_ends.roundoff_count);
+  CHECK(beyond.served_ends.roundoff_energy == 0.0);
+  CHECK(beyond.unclaimed == exact.unclaimed);
+  CHECK(beyond.served == exact.served);
+  const auto kept_beyond = surf_post_op
+                               .GetInterfaceCoveragePartition(
+                                   {4}, field, nullptr, {{"Missing", &outward}}, no_claims)
+                               .at(4);
+  CHECK(kept_beyond.kept_ends.roundoff_beyond_count > 0);
+  CHECK(kept_beyond.kept_ends.roundoff_count == kept_exact.kept_ends.roundoff_count);
+  CHECK(kept_beyond.kept_ends.roundoff_energy == 0.0);
+  CHECK(kept_beyond.classes == kept_exact.classes);
 #endif
 }
 

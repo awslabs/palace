@@ -477,19 +477,27 @@ public:
     // in the class "LoopRemainder" and in another bin both (the bins then sum to `within`
     // plus this amount).
     double loop_remainder_unserved = 0.0;
-    // Rulings 1714 / 1715 (lane L1): the census of portion ends at a tree-segment end, for
-    // the SERVED claims and for the KEPT classes. "Round-off short": the end POINT agrees
-    // with the segment's end point within kClaimEndRoundoffUlps ulps per coordinate but not
-    // exactly (a served end is snapped to the segment end; a kept end is counted and never
-    // changed: OI-FOOT-TEST-VERTEX-ROUNDOFF). "Near": beyond that rule but within
-    // kSupportEndCoincidenceOverRadius R (never snapped). Per population: the count of
-    // portion ends, the largest distance (mesh units) and the within-R raw energy whose
-    // clamped foot lies at those segment ends (the vertex quadrants at stake).
+    // Rulings 1714 / 1715 / 1731 (lane L1): the census of portion ends at a tree-segment
+    // end, for the SERVED claims and for the KEPT classes, by DIRECTION. "Round-off short":
+    // the end POINT agrees with the segment's end point within kClaimEndRoundoffUlps ulps
+    // per coordinate but not exactly AND its clamped foot falls short of the segment end
+    // (inside the segment; a served end is snapped to the segment end; a kept end is
+    // counted and never changed: OI-FOOT-TEST-VERTEX-ROUNDOFF); its energy is EXACT: the
+    // within-R raw energy whose clamped foot lies at those segment ends that the snap gives
+    // back to the served claims (no unsnapped served claim reaches the end) or that no kept
+    // class holds. "Round-off beyond": within that rule but its clamped foot reaches the
+    // segment end exactly (beyond the end, or short by less than the foot's own round-off):
+    // the foot test already holds the vertex, nothing is snapped, nothing is at stake
+    // (count and largest distance only). "Near": beyond the round-off rule but within
+    // kSupportEndCoincidenceOverRadius R (never snapped; its energy, the within-R raw
+    // energy at those segment ends, is an upper bound). Distances in mesh units.
     struct EndCensus
     {
       int roundoff_count = 0, near_count = 0;
       double roundoff_distance = 0.0, near_distance = 0.0;
       double roundoff_energy = 0.0, near_energy = 0.0;
+      int roundoff_beyond_count = 0;
+      double roundoff_beyond_distance = 0.0;
     };
     EndCensus served_ends, kept_ends;
   };

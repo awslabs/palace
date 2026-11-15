@@ -218,7 +218,9 @@ public:
 // uncovered portions lying on it, each with its type index into `types`.
 // Rulings 1714 / 1715: the end census of one list (and, with `snap`, the served claims'
 // round-off-short ends moved to exactly 0 / L). `ends` maps (segment, end 0 | 1) to a mask:
-// 1 round-off short, 2 near.
+// 1 round-off short, 2 near, 4 (ruling 1731; set only where a round-off-short end of a
+// list sharing this check lies) an UNSNAPPED portion of this list has its clamped foot at
+// exactly that segment end (the list holds the vertex without the snap).
 struct ClaimEndCheck
 {
   double radius = 0.0;
@@ -241,10 +243,19 @@ struct UncoveredEdgeIntervals
                          SurfacePostOperator::PerimeterPortionView portions,
                          double tolerance, ClaimEndCheck *check = nullptr)
   {
-    for (std::size_t i = 0; i < portions.Size(); i++)
+    // A portion on this interface's perimeter: its midpoint's tree segment, the segment's
+    // length and the clamped foot parameters (from the segment's first end) of its two
+    // ends with their distances off the segment.
+    struct Located
     {
+      bool on_tree = false;
+      std::size_t segment = 0;
+      double length = 0.0, a0 = 0.0, a1 = 0.0, off0 = 0.0, off1 = 0.0;
+    };
+    auto Locate = [&](std::size_t i)
+    {
+      Located located;
       const auto &portion_p0 = portions.P0(i), &portion_p1 = portions.P1(i);
-      const std::string &portion_type = portions.Label(i);
       mfem::Vector midpoint(3), p0(3), p1(3);
       for (int d = 0; d < 3; d++)
       {
@@ -255,7 +266,7 @@ struct UncoveredEdgeIntervals
       const auto nearest = tree.Nearest(midpoint);
       if (std::sqrt(nearest.distance_squared) > tolerance)
       {
-        continue;  // not on this interface's perimeter (another plane)
+        return located;  // not on this interface's perimeter (another plane)
       }
       const auto &segment = tree.GetSegment(nearest.segment);
       mfem::Vector origin(3), chord(3);
@@ -276,14 +287,31 @@ struct UncoveredEdgeIntervals
         residual.Add(-t, chord);
         return std::make_pair(std::clamp(t, 0.0, 1.0) * length, residual.Norml2());
       };
-      const auto [a0, off0] = Foot(p0);
-      const auto [a1, off1] = Foot(p1);
-      MFEM_VERIFY(off0 <= tolerance && off1 <= tolerance,
+      located.on_tree = true;
+      located.segment = nearest.segment;
+      located.length = length;
+      std::tie(located.a0, located.off0) = Foot(p0);
+      std::tie(located.a1, located.off1) = Foot(p1);
+      return located;
+    };
+    bool short_inside = false;
+    for (std::size_t i = 0; i < portions.Size(); i++)
+    {
+      const auto &portion_p0 = portions.P0(i), &portion_p1 = portions.P1(i);
+      const std::string &portion_type = portions.Label(i);
+      const Located located = Locate(i);
+      if (!located.on_tree)
+      {
+        continue;
+      }
+      const auto &segment = tree.GetSegment(located.segment);
+      const double length = located.length, a0 = located.a0, a1 = located.a1;
+      MFEM_VERIFY(located.off0 <= tolerance && located.off1 <= tolerance,
                   "An uncovered perimeter portion of feature "
                       << portions.Feature(i) << " (" << portion_type
                       << ") lies within the tolerance of a perimeter segment at its "
                          "midpoint but not at its ends (ends "
-                      << off0 << " / " << off1
+                      << located.off0 << " / " << located.off1
                       << " off the segment): the identification's perimeter differs from "
                          "the postprocessing perimeter!");
       auto type = std::find(types.begin(), types.end(), portion_type);
@@ -305,9 +333,18 @@ struct UncoveredEdgeIntervals
             auto &census = check->census;
             if (match == SurfacePostOperator::ClaimEndMatch::ROUNDOFF)
             {
+              // Ruling 1731: the direction, on the clamped foot before any snap.
+              if ((k == 0 ? a0 : a1) == (j == 0 ? 0.0 : length))
+              {
+                census.roundoff_beyond_count++;
+                census.roundoff_beyond_distance =
+                    std::max(census.roundoff_beyond_distance, distance);
+                continue;
+              }
               census.roundoff_count++;
               census.roundoff_distance = std::max(census.roundoff_distance, distance);
-              check->ends[{nearest.segment, j}] |= 1;
+              check->ends[{located.segment, j}] |= 1;
+              short_inside = true;
               if (check->snap)
               {
                 (k == 0 ? e0 : e1) = j == 0 ? 0.0 : length;
@@ -317,13 +354,39 @@ struct UncoveredEdgeIntervals
             {
               census.near_count++;
               census.near_distance = std::max(census.near_distance, distance);
-              check->ends[{nearest.segment, j}] |= 2;
+              check->ends[{located.segment, j}] |= 2;
             }
           }
         }
       }
-      by_segment[nearest.segment].push_back(
+      by_segment[located.segment].push_back(
           {std::min(e0, e1), std::max(e0, e1), static_cast<int>(type - types.begin())});
+    }
+    // Ruling 1731: bit 4 at the round-off-short ends this list also reaches unsnapped (a
+    // second pass, so that the order of the portions does not matter; nothing is stored
+    // for the other ends).
+    if (check && (short_inside ||
+                  std::any_of(check->ends.begin(), check->ends.end(),
+                              [](const auto &end) { return (end.second & 1) != 0; })))
+    {
+      for (std::size_t i = 0; i < portions.Size(); i++)
+      {
+        const Located located = Locate(i);
+        if (!located.on_tree)
+        {
+          continue;
+        }
+        for (int j = 0; j < 2; j++)
+        {
+          const double segment_end = j == 0 ? 0.0 : located.length;
+          const auto found = check->ends.find({located.segment, j});
+          if (found != check->ends.end() && (found->second & 1) &&
+              (located.a0 == segment_end || located.a1 == segment_end))
+          {
+            found->second |= 4;
+          }
+        }
+      }
     }
   }
 };
@@ -1825,6 +1888,7 @@ SurfacePostOperator::GetInterfaceCoveragePartition(
         const double t = projection / length2;
         const double foot = std::clamp(t, 0.0, 1.0) * std::sqrt(length2);
         std::size_t bin = interface.unclaimed;
+        std::size_t held = interface.pieces.size();  // the holding list (none: unclaimed)
         for (std::size_t list = 0; list < interface.pieces.size(); list++)
         {
           const auto found = interface.pieces[list].by_segment.find(nearest.segment);
@@ -1843,6 +1907,7 @@ SurfacePostOperator::GetInterfaceCoveragePartition(
           if (foot >= piece->a && (foot < piece->b || (last && foot == piece->b)))
           {
             bin = interface.offsets[list] + piece->group;
+            held = list;
             break;
           }
         }
@@ -1852,16 +1917,24 @@ SurfacePostOperator::GetInterfaceCoveragePartition(
         local_energies[interface.within] += value;
         if (t <= 0.0 || t >= 1.0)
         {
-          // The clamped foot at a segment end: the vertex quadrant at stake (census only).
+          // The clamped foot at a segment end: the vertex quadrant (census only). Ruling
+          // 1731: round-off short = EXACT energies: served, what the snap gives back (the
+          // served list holds the point and no unsnapped served claim reaches the end);
+          // kept, what no kept class holds. Near: every point there (an upper bound).
           const std::pair<std::size_t, int> end{nearest.segment, t <= 0.0 ? 0 : 1};
-          for (const auto &[check, first] :
-               {std::make_pair(&interface.served_check, interface.stake),
-                std::make_pair(&interface.kept_check, interface.stake + 2)})
+          const std::size_t served_list = kept_classes.size();
+          for (const auto &[check, first, short_inside_held] :
+               {std::make_tuple(&interface.served_check, interface.stake,
+                                held == served_list),
+                std::make_tuple(&interface.kept_check, interface.stake + 2,
+                                held >= served_list)})
           {
             const auto found = check->ends.find(end);
             if (found != check->ends.end())
             {
-              local_energies[first] += (found->second & 1) ? value : 0.0;
+              local_energies[first] +=
+                  ((found->second & 1) && !(found->second & 4) && short_inside_held) ? value
+                                                                                     : 0.0;
               local_energies[first + 1] += (found->second & 2) ? value : 0.0;
             }
           }
