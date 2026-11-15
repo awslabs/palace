@@ -3311,14 +3311,13 @@ void ExtrudePML(std::unique_ptr<mfem::Mesh> &orig_mesh, config::DomainData &doma
   // Each extruded block of pml is an entry of config["Boundaries"]["PML"], whose surface is
   // split into parts, each of which becomes one block. Each geometry node of a face of a
   // part moves along its direction d to the depths ξ_k = k t / N, k = 1, ..., N: each
-  // triangle becomes N prisms and each quadrilateral N hexahedra. Two parts do not share an
-  // edge, and a vertex of two parts moves once for each. A flat part is extruded along its
-  // outward normal (an error for the radial extrusion), and any other part along the ray of
-  // each node from its closest point on the core. With the face vertices
-  // ordered so that their normal points out of the element below (as for the faces of MFEM
-  // meshes on the exterior boundary), the bottom face of each new element is its face 0,
-  // with its outward normal pointing along d (the reference coordinate z of the prism or
-  // hexahedron is the depth into its layer).
+  // triangle becomes N prisms and each quadrilateral N hexahedra. Two parts do not touch. A
+  // flat part is extruded along its outward normal (an error for the radial extrusion), and
+  // any other part along the ray of each node from its closest point on the core. With the
+  // face vertices ordered so that their normal points out of the element below (as for the
+  // faces of MFEM meshes on the exterior boundary), the bottom face of each new element is
+  // its face 0, with its outward normal pointing along d (the reference coordinate z of the
+  // prism or hexahedron is the depth into its layer).
   using Extrusion = config::PMLData::Extrusion;
   const mfem::Mesh &mesh = *orig_mesh;
   auto &pml = domains.pml;
@@ -3554,6 +3553,28 @@ void ExtrudePML(std::unique_ptr<mfem::Mesh> &orig_mesh, config::DomainData &doma
                                 "faces, so that they are extruded as one layer."
                               : "list their attributes in one entry, so that they are "
                                 "extruded as one layer.")));
+      }
+    }
+  }
+  // Nor meet at a vertex, so that each vertex of the surface moves along one direction.
+  std::unordered_map<int, int> vertex_part;  // vertex → part
+  for (std::size_t p = 0; p < parts.size(); p++)
+  {
+    for (const int f : parts[p].faces)
+    {
+      mesh.GetFaceVertices(f, verts);
+      for (const int v : verts)
+      {
+        const auto [it, inserted] = vertex_part.try_emplace(v, static_cast<int>(p));
+        const double *x0 = mesh.GetVertex(v);
+        MFEM_VERIFY(inserted || it->second == static_cast<int>(p),
+                    "The PML is extruded from "
+                        << parts[it->second].name << " and from " << parts[p].name
+                        << ", which meet at the vertex "
+                        << fmt::format("({:.6g}, {:.6g}, {:.6g})", x0[0], x0[1], x0[2])
+                        << "! Two extruded parts must not touch: extrude the PML from "
+                           "surfaces apart from each other, or from one surface around "
+                           "them, which is extruded as one layer.");
       }
     }
   }
@@ -3919,18 +3940,16 @@ void ExtrudePML(std::unique_ptr<mfem::Mesh> &orig_mesh, config::DomainData &doma
                          << ", so that it stays flat through the PML.");
   }
 
-  // Columns of vertices along the directions of the vertices of each part (two parts which
-  // meet at a vertex have a column each), and the edges of each part with their number of
-  // faces in it.
+  // Columns of vertices along the directions of the vertices of the parts, and the edges of
+  // each part with their number of faces in it.
   struct Column
   {
     double x[3], d[3], h;
     int layers;
   };
-  std::map<std::pair<int, int>, int> column;  // (part, vertex) → first new vertex
+  std::unordered_map<int, int> column;  // vertex → first new vertex
   std::vector<Column> column_base;
   std::vector<std::map<std::pair<int, int>, int>> part_edges(parts.size());
-  std::unordered_map<int, std::vector<int>> vertex_parts;
   int num_new_vertices = 0;
   for (std::size_t p = 0; p < parts.size(); p++)
   {
@@ -3941,11 +3960,9 @@ void ExtrudePML(std::unique_ptr<mfem::Mesh> &orig_mesh, config::DomainData &doma
       mesh.GetFaceTransformation(f, &T);
       for (int j = 0; j < verts.Size(); j++)
       {
-        if (column.try_emplace({static_cast<int>(p), verts[j]}, nv + num_new_vertices)
-                .second)
+        if (column.try_emplace(verts[j], nv + num_new_vertices).second)
         {
           num_new_vertices += N;
-          vertex_parts[verts[j]].push_back(static_cast<int>(p));
           T.Transform(mfem::Geometries.GetVertices(T.GetGeometryType())->IntPoint(j), x);
           auto &c = column_base.emplace_back();
           std::copy_n(x.GetData(), 3, c.x);
@@ -3957,8 +3974,7 @@ void ExtrudePML(std::unique_ptr<mfem::Mesh> &orig_mesh, config::DomainData &doma
       }
     }
   }
-  auto LayerVertex = [&](int p, int v, int k)
-  { return (k == 0) ? v : column.at({p, v}) + k - 1; };
+  auto LayerVertex = [&](int v, int k) { return (k == 0) ? v : column.at(v) + k - 1; };
 
   // Ports and Floquet boundaries must not touch the surface, and periodic boundaries only
   // parts extruded along their normal, the same direction on the two sides of the periodic
@@ -4018,10 +4034,10 @@ void ExtrudePML(std::unique_ptr<mfem::Mesh> &orig_mesh, config::DomainData &doma
     std::set<int> touched;
     for (const int v : verts)
     {
-      const auto it = vertex_parts.find(v);
-      if (it != vertex_parts.end())
+      const auto it = vertex_part.find(v);
+      if (it != vertex_part.end())
       {
-        touched.insert(it->second.begin(), it->second.end());
+        touched.insert(it->second);
       }
     }
     for (const int p : touched)
@@ -4175,8 +4191,8 @@ void ExtrudePML(std::unique_ptr<mfem::Mesh> &orig_mesh, config::DomainData &doma
         int v[8];
         for (int j = 0; j < m; j++)
         {
-          v[j] = LayerVertex(static_cast<int>(p), verts[j], k);
-          v[m + j] = LayerVertex(static_cast<int>(p), verts[j], k + 1);
+          v[j] = LayerVertex(verts[j], k);
+          v[m + j] = LayerVertex(verts[j], k + 1);
         }
         (m == 3) ? new_mesh->AddWedge(v, face_attr[p][i])
                  : new_mesh->AddHex(v, face_attr[p][i]);
@@ -4197,7 +4213,7 @@ void ExtrudePML(std::unique_ptr<mfem::Mesh> &orig_mesh, config::DomainData &doma
       int v[4];
       for (int j = 0; j < verts.Size(); j++)
       {
-        v[j] = LayerVertex(static_cast<int>(p), verts[j], ex.layers);
+        v[j] = LayerVertex(verts[j], ex.layers);
       }
       (verts.Size() == 3) ? new_mesh->AddBdrTriangle(v, ex.back_attribute)
                           : new_mesh->AddBdrQuad(v, ex.back_attribute);
@@ -4210,9 +4226,9 @@ void ExtrudePML(std::unique_ptr<mfem::Mesh> &orig_mesh, config::DomainData &doma
     {
       for (int k = 0; k < parts[p].block.extrusion.layers; k++)
       {
-        new_mesh->AddBdrQuad(LayerVertex(p, edge.first, k), LayerVertex(p, edge.second, k),
-                             LayerVertex(p, edge.second, k + 1),
-                             LayerVertex(p, edge.first, k + 1), attr);
+        new_mesh->AddBdrQuad(LayerVertex(edge.first, k), LayerVertex(edge.second, k),
+                             LayerVertex(edge.second, k + 1),
+                             LayerVertex(edge.first, k + 1), attr);
       }
     }
   }

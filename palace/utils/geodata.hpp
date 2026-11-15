@@ -60,12 +60,12 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(IoData &iodata, MPI_Comm comm);
 // interior boundary, and the outer surface of each layer a boundary with the back
 // attribute. Each entry is replaced by one block for each part, with the attributes of the
 // extruded elements and of the elements below them, the back attribute, the default core,
-// and the form of the depth into the layer. Checks that no two parts share an edge, that
-// each part has one of the shapes of the depth, that every face faces its direction, that
-// the layer ends flush on the other boundaries and keeps the material interfaces and the
-// boundaries with a boundary condition across a box flat, that every extruded element has a
-// positive Jacobian, that no port or Floquet boundary touches the surface, and that only
-// parts extruded along their normal have periodic boundaries along their edges.
+// and the form of the depth into the layer. Checks that no two parts touch, that each part
+// has one of the shapes of the depth, that every face faces its direction, that the layer
+// ends flush on the other boundaries and keeps the material interfaces and the boundaries
+// with a boundary condition across a box flat, that every extruded element has a positive
+// Jacobian, that no port or Floquet boundary touches the surface, and that only parts
+// extruded along their normal have periodic boundaries along their edges.
 void ExtrudePML(std::unique_ptr<mfem::Mesh> &mesh, config::DomainData &domains,
                 const config::BoundaryData &boundaries);
 

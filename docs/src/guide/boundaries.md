@@ -207,9 +207,12 @@ position. This limits the shapes of the parts extruded radially:
 
 Other parts, such as an L-shaped box or a box whose faces are not normal to the axes, are
 rejected, and every face must face its direction. Two parts, of one entry or of two, must not
-share an edge: a closed surface is one part, with one layer around it, so that the corners of
-a cube go out along its diagonals. A closed cylinder, whose flat caps meet its curved wall,
-cannot be extruded, and the wall of a cylinder between PEC caps can. For example:
+touch, not even at a vertex: a closed surface is one part, with one layer around it, so that
+the corners of a cube go out along its diagonals. A closed cylinder, whose flat caps meet its
+curved wall, cannot be extruded, and the wall of a cylinder between PEC caps can. A layer
+must not overlap the domain or another layer either, which the extrusion does not check: a
+layer thicker than a slot it faces overlaps the domain, and the layers on two walls of a
+re-entrant corner overlap each other, even if their parts do not touch. For example:
 
 ```json
 // The end of a waveguide is flat, so it is extruded along its normal, and the side walls

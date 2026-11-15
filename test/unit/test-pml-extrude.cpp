@@ -1379,8 +1379,7 @@ TEST_CASE("ExtrudePML splits the surface into parts", "[pml][geodata][Serial]")
   SECTION("Two parts which meet at a vertex")
   {
     // The quadrilaterals x, y > 0 of the face z = 1 and y < 0, z > 0 of the face x = 1
-    // (attributes 3 and 4) meet at the vertex (1, 0, 1) only, from which each part has a
-    // column of its own, along its normal.
+    // (attributes 3 and 4) meet at the vertex (1, 0, 1) only.
     auto mesh = std::make_unique<mfem::Mesh>(MakeBox(mfem::Element::HEXAHEDRON, n, 1));
     for (int be = 0; be < mesh->GetNBE(); be++)
     {
@@ -1393,13 +1392,11 @@ TEST_CASE("ExtrudePML splits the surface into parts", "[pml][geodata][Serial]")
                                                                                      : 1);
     }
     mesh->SetAttributes();
-    const int ne = mesh->GetNE(), nv = mesh->GetNV();
-    const auto blocks =
-        ExtrudeEntries(mesh, {{{"Attributes", {3, 4}}, {"Thickness", 0.5}, {"Layers", 2}}});
-    REQUIRE(blocks.size() == 2);
-    CHECK(mesh->GetNV() == nv + 2 * (4 + 4));
-    CHECK(MinExtrudedJacobian(*mesh, ne, 1) > 0.0);
-    CHECK(ExteriorHasBdrElements(*mesh));
+    CHECK_THROWS_WITH(
+        ExtrudeEntries(mesh, {{{"Attributes", {3, 4}}, {"Thickness", 0.5}, {"Layers", 2}}}),
+        Matchers::ContainsSubstring(
+            "which meet at the vertex (1, 0, 1)! Two extruded parts "
+            "must not touch"));
   }
 }
 
