@@ -92,15 +92,14 @@ can be:
     [Meshed perfectly matched layer](#Meshed-perfectly-matched-layer)).
   - Extruded by *Palace* from farfield boundaries of the mesh when it is loaded, with
     [`config["Boundaries"]["PML"]`](../config/reference.md#config-boundaries-pml): the
-    coordinates are stretched along rays from a core point or segment, for example as a
-    spherical PML on the outer sphere of the domain (see
+    coordinates are stretched along the normal of a flat boundary, per component on a box,
+    or along rays from a core, for example as a spherical PML on the outer sphere of the
+    domain (see
     [Extruded perfectly matched layer](#Extruded-perfectly-matched-layer)).
 
-The meshed PML is the more general one: it terminates flat faces, periodic boundaries may
-cross it, and it supports parallel uniform and adaptive mesh refinement. The extruded PML
-does not require meshing the layer and terminates curved boundaries, but a simulation with
-an extruded PML cannot use parallel uniform or adaptive mesh refinement, anywhere in the
-mesh. Both use the same stretch parameters, and the guidelines on the
+The extruded PML does not require meshing the layer, and terminates flat and curved
+boundaries; the meshed PML terminates any box-shaped domain. Both use the same stretch
+parameters, and the guidelines on the
 [absorption of the layer](#Absorption-and-discretization-of-the-layer),
 [eigenmode simulations and postprocessing](#Eigenmode-simulations-and-postprocessing-with-PML-regions),
 and [linear solvers](#Linear-solvers-with-PML-regions) apply to both.
@@ -165,36 +164,131 @@ example in place of the `"Absorbing"` boundary on the outer sphere of the
 ```json
 "Boundaries":
 {
-  "PML": { "Attributes": [4], "Thickness": 1.0, "Layers": 4 }
+  "PML": [{ "Attributes": [4], "Thickness": 1.0, "Layers": 4 }]
 }
 ```
 
-Each geometry node of the boundary moves along its ray from its closest point on a core, by
-default the center of the bounding box of the boundary, or the point or the segment
-`"Center"`, so that each face becomes a column of `"Layers"` prisms (triangles) or hexahedra
-(quadrilaterals), curved on curved meshes. The coordinates are stretched along the rays,
-with the same parameters as `config["Domains"]["PML"]` at the depth into the layer: on a
-sphere, this is the spherical PML. Every face of the boundary must face its closest point on
-the core. Flat boundaries are best terminated by the Cartesian PML of
-`config["Domains"]["PML"]`, since the rays from a point or a segment are not normal to a
-flat face.
+Each entry of the array gives a surface and its layer. The surface is split into parts, and
+each part becomes one PML block:
+
+  - By default, the parts are the connected parts of the surface. A flat part is extruded
+    along its outward normal, and any other part radially, from a core: the center of the
+    bounding box of the part, or `"Center"`, a point or the two corners of an axis-aligned
+    box (a rectangle or a segment where they share coordinates), which only shapes the
+    parts which are not flat and must be used by one of them.
+  - `"Extrusion": "Normal"` is for separate flat faces, such as the two ends of a pipe: the
+    parts are the flat patches of the surface (its connected, coplanar faces), each
+    extruded along its own normal, and a curved face is an error.
+  - `"Extrusion": "Radial"` extrudes the parts as the default does, and rejects a flat part.
+
+Each face becomes a column of `"Layers"` prisms (triangles) or hexahedra (quadrilaterals),
+curved on curved meshes, and the layer has the same thickness everywhere, measured straight
+out from the surface. The coordinates are stretched with the same parameters as
+`config["Domains"]["PML"]`, at the depth into the layer, which is a function of the
+position. This limits the shapes of the parts extruded radially:
+
+  - A box, whose faces are all flat, normal to the coordinate axes, and on the sides of its
+    bounding box, moves each node component by component, away from its closest point on
+    the core, so that the outside of the layer is the bounding box grown by the thickness
+    on its sides with a face. Its stretch is that of a block of `config["Domains"]["PML"]`
+    with the bounding box as its inner faces, with edge and corner regions. The sides
+    without a face, such as a port face or a ground plane, are open: the core must lie on
+    them, so that the layer ends flush with them and their boundaries continue across its
+    ends, and by default it is the center of the bounding box moved onto the open sides. An
+    interface between two materials or a boundary with a boundary condition which crosses a
+    face of the box, such as a substrate or a trace, stays flat in the layer only if the
+    core spans it, as a segment through the substrate: otherwise, the extrusion stops with
+    the `"Center"` which would. A boundary which runs into an edge between two faces of the
+    box stays flat only if it leaves the edge at 45° to both faces, along which the edge
+    moves whatever the core, as the plane x = y does from the edges of a cube: otherwise it
+    bends there, and the extrusion does not check this.
+  - Any other part moves each node along its ray from its closest point on the core, and
+    must be at a constant distance from the core, within 5% of the thickness: a sphere
+    around its center, or the wall of a cylinder around its axis. On a sphere, the stretch
+    is the spherical PML. A part of a sphere which ends on a flat boundary, such as a half
+    sphere on a ground plane, needs its center on that boundary.
+
+Other parts, such as an L-shaped box or a box whose faces are not normal to the axes, are
+rejected, and every face must face its direction. Two parts, of one entry or of two, must not
+touch, not even at a vertex: a closed surface is one part, with one layer around it, so that
+the corners of a cube go out along its diagonals. A closed cylinder, whose flat caps meet its
+curved wall, cannot be extruded, and the wall of a cylinder between PEC caps can. A layer
+must not overlap the domain or another layer either, which the extrusion does not check: a
+layer thicker than a slot it faces overlaps the domain, and the layers on two walls of a
+re-entrant corner overlap each other, even if their parts do not touch. For example:
+
+```json
+// The end of a waveguide is flat, so it is extruded along its normal, and the side walls
+// continue straight through the layer.
+"PML": [{ "Attributes": [3], "Thickness": 0.1, "Layers": 6 }]
+
+// Both ends of a pipe are two flat parts, each along its own normal, here with a thicker
+// layer at one end.
+"PML": [{ "Attributes": [5], "Thickness": 0.1, "Layers": 6 },
+        { "Attributes": [6], "Thickness": 0.2, "Layers": 8 }]
+
+// A cube is one closed layer extruded from its center, whose outside is a larger cube, or
+// from a box just inside of it (with straight columns over the box).
+"PML": [{ "Attributes": [7], "Thickness": 0.5, "Layers": 4 }]
+"PML": [{ "Attributes": [7], "Thickness": 0.5, "Layers": 4,
+          "Center": [[-0.9, -0.9, -0.9], [0.9, 0.9, 0.9]] }]
+
+// A patch antenna in a box with the PML on its top, its two sides, and its back: the core
+// is on the port face and on the ground plane, as a segment through the substrate, so that
+// the layer ends flush with both and the substrate stays flat.
+"PML": [{ "Attributes": [7], "Thickness": 4.0, "Layers": 4,
+          "Center": [[0, 0, 0], [0, 0, 0.794]] }]
+
+// The wall of a cylinder between PEC caps is extruded along the rays from its axis, and
+// the caps continue through the layer.
+"PML": [{ "Attributes": [4], "Thickness": 0.1, "Layers": 6,
+          "Center": [[0, 0, -1], [0, 0, 1]] }]
+```
+
+The figure shows cross-sections of the layers of some of these cases, with their entry under
+each: (a) a sphere, extruded along the rays from its center; (b) the end of a waveguide and
+(c) both ends of a pipe, flat parts extruded along their normals; a cube (d) extruded from
+its center, (e) from a box inside of it, with straight columns over the box and fans at its
+edges and corners; (f) the top of a Floquet cell, with the periodic boundaries through the
+layer; and (g) the [patch antenna example](../examples/patch_antenna.md), extruded from a
+segment through the substrate on the ground plane.
+
+```@raw html
+<br/><p align="center">
+  <img src="../../assets/examples/pml-extrusion.svg" width="100%" />
+</p><br/>
+```
+
+In the edge and corner regions of a box, the layer is made of the columns of the boundary
+elements next to the edges, which fan out the more, the closer the core comes to the faces:
+from a box just inside, the whole fan is in the last column, as wide as one element. This is
+less accurate unless the mesh is refined along the edges between the faces with a PML to
+about the element size of the layer, `"Thickness"` / `"Layers"`, as in the
+[patch antenna example](../examples/patch_antenna.md#Truncation). On a cube of 8
+hexahedra across with a layer of 4 elements, third-order elements give the field of a dipole
+at its center within 0.07 to 0.33% of that in free space at nine probes with the layer
+extruded from the center, and within 0.5 to 1.0% from a box one element inside or less (0.4
+to 3.7% and 2.3 to 5.1% with second-order elements).
 
 The extruded elements take the material of the elements below them, and the other boundaries
 through the edges of the extruded boundary, such as a ground plane, extend through the
 layer. The outer boundary of the layer is PEC, unless a boundary condition is given for its
 `"BackAttribute"`. The extruded boundary becomes an interior boundary, whose attribute can
-still be used for postprocessing. For a layered medium which reaches the boundary, such as a
-substrate, a segment `"Center"` normal to the layers and spanning all of the layers which
-reach the boundary keeps each layer in its plane through the PML.
+still be used for postprocessing, such as the far field of
+[`config["Boundaries"]["Postprocessing"]["FarField"]`](../config/reference.md#config-boundaries-postprocessing-farfield):
+for the antenna example, the far field with the extruded PML above agrees with the one with
+the second-order absorbing boundary to 0.06 dB.
 
-The extruded layer cannot be refined, so that `config["Boundaries"]["PML"]` cannot be
-combined with parallel uniform refinement
-([`"UniformLevels"`](../config/reference.md#config-model-refinement-uniformlevels)) or
+The extruded layer is refined with the rest of the mesh by parallel uniform refinement
+([`"UniformLevels"`](../config/reference.md#config-model-refinement-uniformlevels)) and by
 adaptive mesh refinement
-([`"MaxIts"`](../config/reference.md#config-model-refinement-maxits)) anywhere in the mesh.
-`"SerialUniformLevels"` and the refinement `"Boxes"` and `"Spheres"` are applied before the
-extrusion, and can be used. Ports, periodic, or Floquet boundaries which touch the extruded
-boundary are not supported either.
+([`"MaxIts"`](../config/reference.md#config-model-refinement-maxits)), which must be
+nonconformal for its prisms and hexahedra. `"SerialUniformLevels"` and the refinement
+`"Boxes"` and `"Spheres"` are applied before the extrusion. Periodic boundaries may cross a
+flat boundary extruded along its normal, as on top of a Floquet cell, and continue through
+the layer, but not a boundary extruded along rays, which would flare the two sides of the
+periodic boundary differently. Ports or Floquet boundaries which touch the extruded boundary
+are not supported.
 
 ### Absorption and discretization of the layer
 
@@ -202,13 +296,22 @@ The absorption of the layer is limited by its discretization: a strongly absorbi
 reflects and absorbs spuriously when its stretch changes too much between neighboring
 elements. By default (`"SigmaMax": "Auto"`), the conductivity of each face is therefore
 computed from the size ``h`` of the PML elements normal to the face, measured on the mesh
-(`"Thickness"` / `"Layers"` for the extruded PML), and the finite element order ``p``, as
+after its refinement for the meshed and the extruded PML alike, over the elements in the
+layer of that face only if there are any (not the edges and corners of a box), and the
+finite element order ``p``, as
 ``\sigma_\text{max} = 0.8 (n + 1) p / (\eta_0 n_r h)`` for the grading order ``n`` and
 the smallest refractive index ``n_r`` of the materials of the PML regions of the block. The
 theoretical reflection at normal incidence of a layer of ``N`` elements is then
 ``e^{-1.6 p N}``, and ``e^{-1.6 p N \cos\theta}`` at the angle of incidence ``\theta``:
 for a given order, it is set by the number of elements across the layer, and not by its
-thickness. The thickness ``d`` still matters through the element size ``h = d / N``, which
+thickness. A guided mode reflects as a plane wave with ``\cos\theta = k_z / k``, for its
+wavenumber ``k_z`` along the guide and ``k`` at the reference frequency, so that its
+reflection grows toward cutoff: with the default `"SigmaMax"` and `"ReferenceFrequency"`,
+the waveguide of
+[`examples/pml_waveguide`](https://github.com/awslabs/palace/blob/main/examples/pml_waveguide)
+reflects -65 dB at 6.7% above cutoff, -47 dB at 3.4%, and -22 dB at 0.7%, which the formula
+gives to 0.1 dB up to 3.4%.
+The thickness ``d`` still matters through the element size ``h = d / N``, which
 must resolve the fields in the layer like the mesh of the physical region does (for
 example, about ``\lambda / 10`` for second-order elements, for the wavelength
 ``\lambda`` in the materials of the PML regions at the highest frequency of interest): a
@@ -234,11 +337,65 @@ incidence (such as the backscattered field of a scatterer), a weaker absorption,
 5 to 20 dB less with 8 to 12 second-order elements and a target of ``10^{-6}`` to
 ``10^{-7}``), at the cost of larger reflections at grazing incidence.
 
+The figure shows both regimes for a plane wave on the periodic vacuum cell of
+[`examples/pml_oblique`](https://github.com/awslabs/palace/blob/main/examples/pml_oblique)
+at 3 GHz, against its angle of incidence ``\theta``, with a layer of 24 second-order
+elements of size ``\lambda / 8`` and the theory as lines. With `"ReflectionTarget": 1e-3`,
+the reflection follows the theory of the continuous layer, ``R(0)^{\cos\theta}``, to
+1.2 dB at normal incidence and 0.5 dB from 15°. With `1e-12`, it follows the
+theory from 70° to grazing incidence, and below 65° it is set by the
+discretization of the layer: -77 dB at normal incidence, falling to -100 dB at
+60°. The figure shows the meshed PML. The same layer extruded along the normal of the
+back of the cell, where it follows 0.3 m more of the cell, reflects the same as the meshed PML
+on a cell of that length, to ``10^{-8}`` dB. The length of the cell changes the reflection by
+up to 0.1 dB with `1e-12`, and by up to 1.1 dB with `1e-3` from 10° to 30°, where the
+reflections of the two lengths differ by ``2 \times 10^{-4}`` of the incident amplitude. The
+script
+[`pml_oblique.jl`](https://github.com/awslabs/palace/blob/main/examples/pml_oblique/pml_oblique.jl)
+runs the cases and draws the figure:
+
+```bash
+julia --project=examples -e 'include("examples/pml_oblique/pml_oblique.jl"); generate_reflection_data()'
+```
+
+```@raw html
+<br/><p align="center">
+  <img src="../../assets/examples/pml-reflection-angle.svg" width="90%" />
+</p><br/>
+```
+
+For comparison, the figure includes the absorbing boundaries on the same cell. A boundary
+condition which imposes the normal wavenumber ``q`` on a plane wave with the normal
+wavenumber ``k_n = k \cos\theta`` reflects ``R = (k_n - q) / (k_n + q)``. The first-order
+condition imposes ``q = k``, so that ``\lvert R \rvert = (1 - \cos\theta) / (1 + \cos\theta)``
+in both polarizations (-15.3 dB at 45°). The second-order condition imposes
+``q = k - k_t^2 / (2k) = k (1 + \cos^2\theta) / 2`` in TE polarization (see
+[Other boundary conditions](../reference.md#Other-boundary-conditions)), so that
+``\lvert R \rvert = (1 - \cos\theta)^2 / (1 + \cos\theta)^2``, the square of the first-order
+reflection (-30.6 dB at 45°), and it is the first-order condition in TM
+polarization. *Palace* matches these to 0.1 dB from 5° (first order) and
+0.2 dB from 25° (second order). Below 25°, the reflection of the
+second-order condition approaches the discretization error of the cell, -108 dB at normal
+incidence.
+
 A PML absorbs the propagating waves leaving the domain, but not the evanescent near fields
 of the structures, which it distorts instead. The PML regions should therefore be placed at
 a distance of at least about ``\lambda / 2\pi`` from the radiating structures, at the
 lowest frequency of interest. Otherwise, a weaker absorption (a larger `"ReflectionTarget"`)
 reduces the spurious losses, at the cost of larger reflections of the propagating waves.
+
+The PML assumes that waves in the layer carry their phase and their energy the same way
+along the stretch direction, and amplifies a wave whose phase runs the other way, such as
+the backward wave of a guide of constant cross-section [[1]](#References), which *Palace*
+does not detect. A strongly anisotropic material whose axes are tilted from the normal of
+the layer also carries such a wave. The reflection of the continuous layer is then still
+right, but the field grows across the layer by ``R(0)^{-\lvert k_z \rvert / 2k}``, so near
+total reflection a strong layer gives a result which depends on the mesh and the linear
+solver: for TM waves at 47° from a relative permittivity of 9 into principal permittivities
+9, 1, and 9 on axes rotated by 45°, with `"ReflectionTarget": 1e-12` and the mesh of
+`examples/pml_oblique` refined once, 6.1 dB off the Fresnel reflection with STRUMPACK and
+0.7 dB with MUMPS. A larger `"ReflectionTarget"` avoids this, at the cost of a larger
+reflection of the layer.
 
 By default, the stretch factors are evaluated at a fixed `"ReferenceFrequency"`: the lowest
 frequency for driven simulations, or the target frequency for eigenmode simulations. This
@@ -247,6 +404,18 @@ remain linear, while the absorption in the layer grows with frequency. With
 `"FrequencyDependent": true`, the stretch factors are instead evaluated at the solve
 frequency, for an absorption independent of frequency, and a complex frequency shift
 `"AlphaMax"` can be added (CFS-PML), which reduces the absorption below this frequency.
+
+With the static stretch, the absorption across each element of the layer grows with
+frequency, so over a wide sweep the layer becomes too coarse for the wave at the upper
+frequencies, and reflects more of it. For a vacuum cell at normal incidence, swept from 0.3
+to 3 GHz, a layer of 8 third-order elements that is ``\lambda / 10`` thick at 0.3 GHz
+reflects -109 dB at 0.3 GHz and -70 dB at 3 GHz, while 16 elements in the same thickness
+stay below -110 dB. With `"FrequencyDependent": true`, the 8 elements stay below -109 dB.
+An adaptive sweep of a waveguide over 1001 frequencies then takes 4% longer with 186,820
+unknowns and 25% longer with 25,252, where a rational fit of the PML terms in frequency
+passes its accuracy check. Where the fit fails, as on this cell, *Palace* assembles and
+projects the PML terms at every output frequency, and an adaptive sweep over 301
+frequencies takes 30% longer, with 4.5 s instead of 0.2 s spent at the output frequencies.
 
 ### Eigenmode simulations and postprocessing with PML regions
 
@@ -277,21 +446,44 @@ participation ratios, relative to the energy of the physical region, can exceed 
 PML can cause convergence difficulties in iterative linear solvers. By default,
 ([`config["Solver"]["Linear"]["PMLSubdomainSolver"]`](../config/reference.md#config-solver-linear-pmlsubdomainsolver)),
 the multigrid preconditioner is therefore complemented by a sparse direct solve of the
-PML regions, which restores the convergence of the multigrid preconditioner without PML.
-Simulations with PML regions therefore require a sparse direct solver (SuperLU_DIST,
-STRUMPACK, or MUMPS) and AMS is not supported with PML regions.
+PML regions. The coarse-level solve uses the real-valued approximation of the operator,
+in which the PML terms are those of the magnitudes of the stretch factors, unless the
+complex-valued coarse solve is enabled. For domains several wavelengths across, such as the
+air region around a radiating antenna, the complex-valued coarse solve
+([`config["Solver"]["Linear"]["ComplexCoarseSolve"]`](../config/reference.md#config-solver-linear-complexcoarsesolve))
+is recommended: the number of iterations with the real-valued coarse solve grows quickly
+with the size of the domain, for example 150 against 26 for the half-wave dipole antenna
+with an extruded PML, three wavelengths across, and 188 against 7 for a box 3.6
+wavelengths across with a PML on all faces. On domains under about one wavelength across,
+the complex-valued coarse solve does not reduce the number of iterations, and its
+coarse-level factorization needs more memory. Simulations with PML regions therefore
+require a sparse direct solver (SuperLU_DIST, STRUMPACK, or MUMPS) and AMS is not
+supported with PML regions. The static pivoting of SuperLU_DIST can be unstable for the
+indefinite matrix of the PML regions, so the accuracy of its factorization is checked: an
+inaccurate factorization is repeated with tiny pivot replacement and iterative refinement,
+and a warning suggests STRUMPACK or MUMPS if it is still inaccurate.
+
+The sparse direct solve of the PML regions dominates the cost of the simulation when they
+hold a large fraction of the unknowns, and its share grows with the number of PML elements:
+for a box of 1.15 million unknowns, half of which are in a PML of 4 elements on all faces,
+on 16 processes and with the complex-valued coarse solve, it takes 34 s of the 50 s of the
+simulation and 26 GB of its 43 GB of memory. This is 4.6 times the time and 3.6 times the
+memory of the same mesh with a first-order absorbing boundary (11 s and 12 GB), but less
+than a sparse direct solve of the whole system: for a box of 546,000 unknowns, 81% of which
+are in the PML, 38 s and 35 GB, against 77 s and 57 GB. PML regions are therefore best
+limited to the faces through which waves leave the domain, with few elements across the
+layer.
 
 Sample configurations are provided in the
 [`examples/pml_waveguide`](https://github.com/awslabs/palace/blob/main/examples/pml_waveguide),
 [`examples/pml_layered`](https://github.com/awslabs/palace/blob/main/examples/pml_layered),
 and [`examples/pml_oblique`](https://github.com/awslabs/palace/blob/main/examples/pml_oblique)
-directories: a rectangular waveguide terminated by a PML (driven simulations, also with a
-PML extruded from its end, an adaptive sweep with circuit synthesis, eigenmode simulations
-of a cavity coupled to the waveguide through an iris, and an E-plane bifurcation whose arms
-of different lengths are terminated by two PML blocks), a layered substrate and vacuum
-parallel-plate waveguide whose material interface crosses the PML, and a periodic cell with
-a Floquet port for plane-wave absorption at oblique incidence (at grazing incidence, and
-with an adaptive sweep at 45°).
+directories: a rectangular waveguide terminated by a PML (driven simulations, an adaptive
+sweep with circuit synthesis, eigenmode simulations of a cavity coupled to the waveguide
+through an iris, and an E-plane bifurcation whose arms of different lengths are terminated
+by two PML blocks), a layered substrate and vacuum parallel-plate waveguide whose material
+interface crosses the PML, and a periodic cell with a Floquet port for plane-wave absorption
+at oblique incidence (at grazing incidence, and with an adaptive sweep at 45°).
 
 ## Finite conductivity boundary
 
@@ -641,3 +833,9 @@ The mesh must be topologically compatible with the flux loop geometry, with hole
 defined as boundary surfaces within the conducting region. Currently, only planar holes are
 supported; the hole axis is taken from the flux loop `"Direction"` and may point along any
 Cartesian direction. Both conformal and nonconformal adaptive mesh refinement are supported.
+
+## References
+
+[1] P.-R. Loh, A. F. Oskooi, M. Ibanescu, M. Skorobogatiy and S. G. Johnson, Fundamental
+relation between phase and group velocity, and application to the failure of perfectly
+matched layers in backward-wave structures, _Physical Review E_ 79 (2009) 065601.

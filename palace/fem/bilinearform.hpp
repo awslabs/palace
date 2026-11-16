@@ -36,10 +36,8 @@ protected:
   std::vector<std::vector<int>> domain_integ_attr;
 
   // Assemble eligible integrators over shared support unions which omit elements where
-  // their coefficients are identically zero (see SkipZeroCoefficientElements), or over the
-  // elements of the (global, sorted) domain attributes support_attr.
+  // their coefficients are identically zero (see SkipZeroCoefficientElements).
   bool skip_zero_coeff_elems = false;
-  std::vector<int> support_attr;
 
   std::unique_ptr<ceed::Operator> PartialAssemble(const FiniteElementSpace &trial_fespace,
                                                   const FiniteElementSpace &test_fespace,
@@ -89,26 +87,13 @@ public:
 
   void AssembleQuadratureData();
 
-  // Assemble an integrator over the shared lossy-domain or active-boundary support union
+  // Assemble an integrator over the shared active-domain or active-boundary support union
   // when that union contains its coefficient support. Elements outside the union contribute
   // exactly 0.0, so partially assembled application is unchanged. A fully assembled matrix
   // would lose corresponding explicit zeros from its sparsity pattern, so only enable this
   // for operators which are never fully assembled (BilinearForm::FullAssemble or
   // ParOperator::ParallelAssemble).
   void SkipZeroCoefficientElements(bool skip = true) { skip_zero_coeff_elems = skip; }
-
-  // With SkipZeroCoefficientElements, assemble the domain integrators which are not over a
-  // shared support union, and whose coefficients vanish outside of the given (global)
-  // domain attributes, on the elements of these attributes only (for example all but the
-  // PML regions, whose terms are separate integrators restricted to their own elements).
-  // The geometry factor data of all elements is read for them (see
-  // Mesh::GetCeedGeomFactorDataSubset).
-  void SetCoefficientSupport(std::vector<int> attr_list)
-  {
-    std::ranges::sort(attr_list);
-    attr_list.erase(std::ranges::unique(attr_list).begin(), attr_list.end());
-    support_attr = std::move(attr_list);
-  }
 
   std::unique_ptr<ceed::Operator> PartialAssemble() const
   {

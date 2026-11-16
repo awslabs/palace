@@ -57,13 +57,6 @@ private:
   // Helper variables for log file printing.
   bool print_hdr, print_prec_hdr;
 
-  // With PML regions, the (global) domain attributes outside of them, on which the bulk
-  // material terms are assembled in the matrix-free operators (see
-  // BilinearForm::SetCoefficientSupport), and whether the levels of the preconditioner
-  // above the coarsest do too.
-  std::vector<int> bulk_attr;
-  bool pc_bulk_attr;
-
   // Perfect electrical conductor essential boundary condition attributes.
   mfem::Array<int> dbc_attr, aux_bdr_attr;
   std::vector<mfem::Array<int>> nd_dbc_tdof_lists, h1_dbc_tdof_lists, aux_bdr_tdof_lists;
@@ -400,9 +393,9 @@ public:
   // It is assumed that the inputs have been constructed using previous calls to
   // GetSystemMatrix() and the returned operator does not inherit ownership of any of them.
   // If K or M have eliminated boundary conditions, they are not eliminated from the
-  // returned operator. With PML regions, the matrix is instead assembled using the
-  // entrywise magnitudes of the PML material tensors (with a frequency-dependent stretch
-  // evaluated at omega, if positive).
+  // returned operator. With PML regions, the matrix is instead assembled using the PML
+  // material tensors of the magnitudes of the stretch factors (with a frequency-dependent
+  // stretch evaluated at omega, if positive).
   std::unique_ptr<Operator> GetInnerProductMatrix(double a0, double a2,
                                                   const ComplexOperator *K,
                                                   const ComplexOperator *M,

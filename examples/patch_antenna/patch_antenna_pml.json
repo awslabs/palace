@@ -1,0 +1,83 @@
+{
+  // The patch antenna of patch_antenna.json, with a PML extruded from the open faces of the
+  // box (attribute 7) in place of the absorbing boundary. The rest of the y = 0 face keeps
+  // its absorbing boundary.
+  "Problem": {
+    "Type": "Driven",
+    "Verbose": 2,
+    "Output": "postpro/pml",
+    "OutputFormats": {
+      "Paraview": false
+    }
+  },
+  "Model": {
+    "Mesh": "mesh/patch_antenna.msh",
+    "L0": 1.0e-3
+  },
+  "Domains": {
+    "Materials": [
+      {
+        "Attributes": [1],
+        "Permeability": 1.0,
+        "Permittivity": 2.2
+      },
+      {
+        "Attributes": [2],
+        "Permeability": 1.0,
+        "Permittivity": 1.0
+      }
+    ]
+  },
+  "Boundaries": {
+    "PEC": {
+      "Attributes": [3, 4]
+    },
+    "WavePort": [
+      {
+        "Index": 1,
+        "Attributes": [5],
+        "Mode": 1,
+        "Offset": 16.0,
+        "Excitation": true
+      }
+    ],
+    "WavePortPEC": {
+      "Attributes": [6]
+    },
+    "Absorbing": {
+      "Attributes": [6],
+      "Order": 2
+    },
+    "PML": [
+      {
+        "Attributes": [7],
+        "Thickness": 4.0,
+        "Layers": 4,
+        // On the port face and the ground plane, through the substrate
+        "Center": [[0.0, 0.0, 0.0], [0.0, 0.0, 0.794]]
+      }
+    ]
+  },
+  "Solver": {
+    "Order": 2,
+    "Device": "CPU",
+    "Driven": {
+      "MinFreq": 4.0,
+      "MaxFreq": 20.0,
+      "FreqStep": 0.02,
+      "SaveStep": 0,
+      "AdaptiveTol": 1.0e-2,
+      "AdaptiveMaxSamples": 60
+    },
+    "Linear": {
+      "Type": "Default",
+      "KSPType": "GMRES",
+      "Tol": 1.0e-8,
+      "MaxIts": 200,
+      // The box is two wavelengths across at 20 GHz, where the complex coarse solve needs
+      // far fewer iterations
+      "ComplexCoarseSolve": true,
+      "EstimatorTol": 1.0e-2
+    }
+  }
+}

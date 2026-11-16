@@ -13,6 +13,7 @@
 #include <memory>
 #include <numbers>
 #include <numeric>
+#include <span>
 #include <string_view>
 #include <tuple>
 #include <utility>
@@ -77,6 +78,9 @@ constexpr double WAVEPORT_SYNTHESIS_AUX_RANK_TOL = 1.0e-6;
 // residue norm (a far pole's residue can be O(10-100)×W via near-cancellation with the poly
 // part).
 constexpr double WAVEPORT_SYNTHESIS_MODAL_PART_FLOOR = 1.0e-10;
+// Chebyshev nodes of the fits of the frequency-dependent PML terms, and of the independent
+// grid to check them.
+constexpr int PML_FIT_SAMPLES = 30, PML_CHECK_SAMPLES = 20;
 // Index of `target` in `labels`, or -1 when absent. Used to address rows of the
 // synthesized matrices by their node label.
 inline long LabelIndex(const std::vector<std::string> &labels, const std::string &target)
@@ -311,26 +315,6 @@ inline void ComputeMRI(const Eigen::MatrixXcd &R, Eigen::VectorXcd &q)
     m--;
   }
   q = svd.matrixV().col(m);
-}
-
-template <typename VecType>
-inline void ProlongatePROMSolution(std::size_t n, const std::vector<Vector> &V,
-                                   const VecType &y, ComplexVector &u)
-{
-  u = 0.0;
-  for (std::size_t j = 0; j < n; j += 2)
-  {
-    if (j + 1 < n)
-    {
-      linalg::AXPBYPCZ(y(j).real(), V[j], y(j + 1).real(), V[j + 1], 1.0, u.Real());
-      linalg::AXPBYPCZ(y(j).imag(), V[j], y(j + 1).imag(), V[j + 1], 1.0, u.Imag());
-    }
-    else
-    {
-      linalg::AXPY(y(j).real(), V[j], u.Real());
-      linalg::AXPY(y(j).imag(), V[j], u.Imag());
-    }
-  }
 }
 
 }  // namespace
@@ -776,8 +760,7 @@ void RomOperator::PrepareOnlineExcitations()
   {
     constexpr double online_tol = 1.0e-10;
     constexpr int max_poles = 16;
-    const auto &samples = GetPMLSamples();
-    if (sweep_omega_samples.size() > samples.w_fit.size() + samples.w_check.size())
+    if (sweep_omega_samples.size() > PML_FIT_SAMPLES + PML_CHECK_SAMPLES)
     {
       for (int m = 0; m <= max_poles; m++)
       {
@@ -1654,7 +1637,7 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
   // numerically poorly conditioned to due the splitting of HDM solutions into Re and Im
   // into separate columns.
   RHSr = Ar_solver.solve(RHSr);
-  ProlongatePROMSolution(V.size(), V, RHSr, u);
+  linalg::LinearCombination(V, {RHSr.data(), static_cast<std::size_t>(RHSr.size())}, u);
 }
 
 RomOperator::WavePortDispersionFit
@@ -2851,14 +2834,14 @@ Eigen::MatrixXcd RomOperator::ProjectPMLExtraSystem(double omega) const
 
 const RomOperator::PMLSamples &RomOperator::GetPMLSamples() const
 {
-  // Chebyshev nodes for the fits, and an independent grid to check them.
-  constexpr int n_fit = 30, n_check = 20;
   if (!pml_samples)
   {
     const auto n = static_cast<long>(V.size());
     PMLSamples samples;
-    samples.w_fit = SampleChebyshevLobatto(sweep_omega_min, sweep_omega_max, n_fit);
-    samples.w_check = SampleChebyshevGauss(sweep_omega_min, sweep_omega_max, n_check);
+    samples.w_fit =
+        SampleChebyshevLobatto(sweep_omega_min, sweep_omega_max, PML_FIT_SAMPLES);
+    samples.w_check =
+        SampleChebyshevGauss(sweep_omega_min, sweep_omega_max, PML_CHECK_SAMPLES);
     for (auto [ws, Y] : {std::pair{&samples.w_fit, &samples.Y_fit},
                          std::pair{&samples.w_check, &samples.Y_check}})
     {
@@ -3867,14 +3850,13 @@ void RomOperator::ComputeEigenvalueEstimateErrors(
 
     // Prolongate the basis block: u = Σ_j (v_conc_j y_j) V[j] (V real, y complex; the
     // v_conc factor undoes the port-row scaling baked into the synthesized pencil).
-    u = 0.0;
-    for (std::size_t j = 0; j < n_basis && j < static_cast<std::size_t>(est.eigvec.size());
-         j++)
+    const auto m = std::min(n_basis, static_cast<std::size_t>(est.eigvec.size()));
+    std::vector<std::complex<double>> y(m);
+    for (std::size_t j = 0; j < m; j++)
     {
-      const std::complex<double> yj = v_conc[static_cast<long>(j)] * est.eigvec(j);
-      linalg::AXPY(yj.real(), V[j], u.Real());
-      linalg::AXPY(yj.imag(), V[j], u.Imag());
+      y[j] = v_conc[static_cast<long>(j)] * est.eigvec(j);
     }
+    linalg::LinearCombination(std::span(V).first(m), y, u);
     const double unorm = linalg::Norml2(comm, u);
     if (unorm == 0.0)
     {

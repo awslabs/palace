@@ -22,15 +22,24 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Added perfectly matched layer (PML) absorbing regions for 3D frequency domain driven and
     eigenmode simulations. A PML meshed with the model is configured with blocks of
     `config["Domains"]["PML"]`, whose `"Attributes"` are the domains of the PML regions (the
-    other parameters have suitable defaults). With `config["Boundaries"]["PML"]`, *Palace*
-    instead extrudes the PML from farfield boundaries of the mesh, for example in place of
-    an absorbing boundary on a sphere: each face becomes a column of prisms or hexahedra
-    along rays from a core point or segment, and the coordinates are stretched along the
-    rays. The stretch can be evaluated at a fixed reference frequency or at the solve
-    frequency (`"FrequencyDependent"`). For eigenmode simulations, the fraction of the field
-    energy of each mode in the PML regions is written to `eig.csv`, which identifies the
-    spurious modes of the layer. SchemaVer 4-3-0
+    other parameters have suitable defaults). With the entries of
+    `config["Boundaries"]["PML"]`, *Palace* instead extrudes the PML from farfield
+    boundaries of the mesh, for example in place of an absorbing boundary on a sphere: each
+    face becomes a column of prisms or hexahedra, along the normal of a flat part of the
+    boundary, per component on a box (whose layer is the Cartesian PML of the box grown by
+    the thickness), or along rays from a core point or axis-aligned box, and the coordinates
+    are stretched across the layer. Periodic boundaries may cross a part extruded along its
+    normal, as on top of a Floquet cell. The stretch can be evaluated at a fixed reference
+    frequency or at the solve frequency (`"FrequencyDependent"`). For eigenmode simulations,
+    the fraction of the field energy of each mode in the PML regions is written to
+    `eig.csv`, which identifies the spurious modes of the layer. The multigrid
+    preconditioner is complemented by a sparse direct solve of the PML regions
+    (`Solver.Linear.PMLSubdomainSolver`); with SuperLU_DIST, the accuracy of its
+    factorization is checked, and an inaccurate factorization is repeated with tiny pivot
+    replacement and iterative refinement. SchemaVer 4-3-0
     [PR 1048](https://github.com/awslabs/palace/pull/1048).
+  - `validate-config` accepts several configuration files and validates them in one Julia
+    session. [PR 1180](https://github.com/awslabs/palace/pull/1180).
 
 #### Interface Changes
 
@@ -56,8 +65,22 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     instead of aborting without output.
     [PR 1048](https://github.com/awslabs/palace/pull/1048).
 
+#### New Features
+
+  - Far-field extraction (`Boundaries.Postprocessing.FarField`) on interior surfaces, so
+    that far fields can be computed when the outer boundary is not a valid integration
+    surface, or away from the truncation. The fields of each face are taken from the side
+    facing the center of the bounding box of the surface. SchemaVer 4-2-3.
+    [PR 1110](https://github.com/awslabs/palace/pull/1110).
+
 #### Performance Improvements
 
+  - Added a STRUMPACK patch for
+    [pghysels/STRUMPACK#165](https://github.com/pghysels/STRUMPACK/pull/165), which lowers
+    the latency of the distributed triangular solves of the solve phase for a few
+    right-hand sides, such as the real and imaginary parts of a complex vector. This
+    speeds up STRUMPACK as the coarse solver at high process counts. Results are
+    unchanged. [PR 1170](https://github.com/awslabs/palace/pull/1170).
   - Added a hypre patch, based on
     [hypre-space/hypre#1652](https://github.com/hypre-space/hypre/pull/1652), for
     multicomponent vectors in hybrid Gauss-Seidel relaxation and Gaussian elimination, and
@@ -125,6 +148,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     same pass as the next search direction, with any preconditioner and on CPUs and GPUs.
     This speeds up the error estimator's flux recovery and the GMRES orthogonalization of
     driven and eigenmode simulations. [PR 1146](https://github.com/awslabs/palace/pull/1146).
+  - Expanded the reduced-order solution at each frequency of an adaptive sweep into the
+    full space in one pass over memory on CPUs, reading each basis vector once.
+    [PR 1165](https://github.com/awslabs/palace/pull/1165).
   - The Floquet port DtN correction and the wave-port modal correction now use a single MPI
     reduction per operator application instead of four per rank-one term, and only touch
     the port degrees of freedom instead of full-length vectors.
@@ -148,6 +174,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Bug Fixes
 
+  - With a Floquet wave vector and `Solver.Linear.PCMatShifted`, the preconditioner matrix
+    is now unsymmetric for the sparse direct solvers, which were told that it is symmetric
+    positive definite: with MUMPS, the linear solver did not converge and gave wrong
+    S-parameters. [PR 1048](https://github.com/awslabs/palace/pull/1048).
+  - Fixed driven frequency sweeps aborting with "... not found in sample frequencies!" when
+    overlapping `"Samples"` ranges compute the same frequency with different rounding.
+    [PR 1192](https://github.com/awslabs/palace/pull/1192).
   - Added a STRUMPACK patch for
     [pghysels/STRUMPACK#164](https://github.com/pghysels/STRUMPACK/pull/164), which fixes
     the solves after the matrix values change when STRUMPACK compression is enabled
@@ -156,6 +189,18 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     [PR 1143](https://github.com/awslabs/palace/pull/1143), these solves could abort with
     an MPI error at high process counts, or give a poor preconditioner which needs more
     linear solver iterations. [PR 1164](https://github.com/awslabs/palace/pull/1164).
+  - Fixed SuperLU_DIST solves with `config["Solver"]["Linear"]["SuperLU3DCommunicator"]`,
+    which gave wrong solutions and crashed at exit. SuperLU_DIST patches for
+    [xiaoyeli/superlu_dist#254](https://github.com/xiaoyeli/superlu_dist/pull/254) and
+    [xiaoyeli/superlu_dist#255](https://github.com/xiaoyeli/superlu_dist/pull/255) fix the
+    solutions with several right-hand sides and uneven rows, and the refactorizations with
+    the same sparsity pattern, on a 3D process grid. An MFEM patch for
+    [mfem/mfem#5732](https://github.com/mfem/mfem/pull/5732) frees the factors on all the
+    process layers. ParMETIS ordering, which SuperLU_DIST does not support with a 3D process
+    grid and with which it hung, now falls back to METIS with a warning, and a patch for
+    [xiaoyeli/superlu_dist#256](https://github.com/xiaoyeli/superlu_dist/pull/256) makes
+    SuperLU_DIST return an error for it instead of hanging.
+    [PR 1167](https://github.com/awslabs/palace/pull/1167).
   - Fixed STRUMPACK sparse direct solves which could crash, fail with `ZERO_PIVOT`, or hang
     when a process holds very few rows of the matrix, for example a coarse multigrid level
     at a high MPI rank count. The sparsity pattern of the matrix passed to STRUMPACK is no
@@ -253,6 +298,14 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Documentation
 
+  - Added the microstrip patch antenna example of Sheen et al. (1990), whose substrate and
+    ground plane run through the truncation of the domain, comparing the extruded PML with
+    the second-order absorbing boundary against the published measured and computed
+    reflection coefficient, and a section on the extruded PML to the dipole antenna
+    example, with the input impedance for several layers and the far-field pattern and
+    directivity against the half-wave dipole. The guide shows the shapes of the extruded PML
+    and the reflection of the PML and of the absorbing boundaries against the angle of
+    incidence. [PR 1048](https://github.com/awslabs/palace/pull/1048).
   - Updated the configuration schema descriptions of `"AdaptiveCircuitSynthesis"`, which
     listed frequency-dependent boundary conditions it supports as unsupported, and of the
     absorbing boundary `"Order"`, and documented the limitations of the second-order
@@ -267,6 +320,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     it was built only with SuperLU_DIST, STRUMPACK, or MUMPS, so configuring with cuDSS as
     the only sparse direct solver failed.
     [PR 1133](https://github.com/awslabs/palace/pull/1133).
+  - The superbuild's sub-makes (the unit tests, GSLIB, LIBXSMM, libCEED, SLEPc, and MFEM's
+    test step) now inherit the make jobserver, so GNU make 4.3 and later build them in
+    parallel instead of serially. The superbuild also skips Eigen's BLAS, LAPACK, and demos,
+    which *Palace* does not use, and clones PETSc and SLEPc shallowly.
+    [PR 1180](https://github.com/awslabs/palace/pull/1180).
 
 ## [0.19.0] - 2026-11-02
 

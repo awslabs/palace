@@ -338,54 +338,26 @@ int CeedGeometryDataGetSpaceDimension(CeedElemRestriction geom_data_restr, CeedI
     PalaceCeedCallBackend(CeedElemRestrictionGetCeed(geom_data_restr, &ceed));
     PalaceCeedCall(ceed,
                    CeedElemRestrictionGetNumComponents(geom_data_restr, &geom_data_size));
-    // See CeedGeometryDataSize. The sizes with coordinates (only for 3D domain elements)
-    // do not match any size without them.
-    const bool coords = CeedGeometryDataHasCoordinates(geom_data_restr, dim);
-    *space_dim = coords ? 3 : (geom_data_size - 2) / dim;
-    MFEM_ASSERT(geom_data_size ==
-                    CeedGeometryDataSize(*space_dim, dim, coords,
-                                         CeedGeometryDataHasDepth(geom_data_restr, dim)),
+    *space_dim = (geom_data_size - 2) / dim;
+    MFEM_ASSERT(2 + (*space_dim) * dim == geom_data_size,
                 "Invalid size for geometry quadrature data!");
   }
   return CEED_ERROR_SUCCESS;
-}
-
-bool CeedGeometryDataHasCoordinates(CeedElemRestriction geom_data_restr, CeedInt dim)
-{
-  Ceed ceed;
-  CeedInt geom_data_size;
-  PalaceCeedCallBackend(CeedElemRestrictionGetCeed(geom_data_restr, &ceed));
-  PalaceCeedCall(ceed,
-                 CeedElemRestrictionGetNumComponents(geom_data_restr, &geom_data_size));
-  return (dim == 3 && (geom_data_size == CeedGeometryDataSize(3, 3, true) ||
-                       geom_data_size == CeedGeometryDataSize(3, 3, true, true)));
-}
-
-bool CeedGeometryDataHasDepth(CeedElemRestriction geom_data_restr, CeedInt dim)
-{
-  Ceed ceed;
-  CeedInt geom_data_size;
-  PalaceCeedCallBackend(CeedElemRestrictionGetCeed(geom_data_restr, &ceed));
-  PalaceCeedCall(ceed,
-                 CeedElemRestrictionGetNumComponents(geom_data_restr, &geom_data_size));
-  return (dim == 3 && geom_data_size == CeedGeometryDataSize(3, 3, true, true));
 }
 
 void AssembleCeedGeometryData(Ceed ceed, CeedElemRestriction mesh_restr,
                               CeedBasis mesh_basis, CeedVector mesh_nodes,
                               CeedElemRestriction attr_restr, CeedBasis attr_basis,
                               CeedVector elem_attr, CeedVector geom_data,
-                              CeedElemRestriction geom_data_restr,
-                              CeedElemRestriction depth_restr, CeedBasis depth_basis,
-                              CeedVector depth)
+                              CeedElemRestriction geom_data_restr, bool coords)
 {
   CeedInt dim, space_dim, num_qpts;
   PalaceCeedCall(ceed, CeedBasisGetDimension(mesh_basis, &dim));
   PalaceCeedCall(ceed, CeedBasisGetNumComponents(mesh_basis, &space_dim));
   PalaceCeedCall(ceed, CeedBasisGetNumQuadraturePoints(mesh_basis, &num_qpts));
-  const bool coords = CeedGeometryDataHasCoordinates(geom_data_restr, dim);
-  MFEM_VERIFY(CeedGeometryDataHasDepth(geom_data_restr, dim) == (depth != nullptr),
-              "Storage for geometry quadrature data does not match the PML depth!");
+  MFEM_VERIFY(!coords || (space_dim == 3 && dim == 3),
+              "Geometry factor quadrature data with coordinates is only available for 3D "
+              "elements!");
 
   // Create the QFunction that computes the quadrature data.
   CeedQFunction build_qf;
@@ -398,15 +370,7 @@ void AssembleCeedGeometryData(Ceed ceed, CeedElemRestriction mesh_restr,
                                &build_qf));
       break;
     case 33:
-      if (depth)
-      {
-        PalaceCeedCall(ceed,
-                       CeedQFunctionCreateInterior(
-                           ceed, 1, f_build_geom_factor_depth_33,
-                           PalaceQFunctionRelativePath(f_build_geom_factor_depth_33_loc),
-                           &build_qf));
-      }
-      else if (coords)
+      if (coords)
       {
         PalaceCeedCall(ceed,
                        CeedQFunctionCreateInterior(
@@ -455,17 +419,11 @@ void AssembleCeedGeometryData(Ceed ceed, CeedElemRestriction mesh_restr,
   {
     PalaceCeedCall(ceed, CeedQFunctionAddInput(build_qf, "x", space_dim, CEED_EVAL_INTERP));
   }
-  if (depth)
-  {
-    PalaceCeedCall(ceed, CeedQFunctionAddInput(build_qf, "xi", 1, CEED_EVAL_INTERP));
-    PalaceCeedCall(ceed, CeedQFunctionAddInput(build_qf, "grad_xi", dim, CEED_EVAL_GRAD));
-  }
   {
     CeedInt geom_data_size;
     PalaceCeedCall(ceed,
                    CeedElemRestrictionGetNumComponents(geom_data_restr, &geom_data_size));
-    MFEM_VERIFY(geom_data_size ==
-                    CeedGeometryDataSize(space_dim, dim, coords, depth != nullptr),
+    MFEM_VERIFY(geom_data_size == CeedGeometryDataSize(space_dim, dim, coords),
                 "Insufficient storage for geometry quadrature data!");
     PalaceCeedCall(ceed, CeedQFunctionAddOutput(build_qf, "geom_data", geom_data_size,
                                                 CEED_EVAL_NONE));
@@ -486,13 +444,6 @@ void AssembleCeedGeometryData(Ceed ceed, CeedElemRestriction mesh_restr,
   {
     PalaceCeedCall(ceed, CeedOperatorSetField(build_op, "x", mesh_restr, mesh_basis,
                                               CEED_VECTOR_ACTIVE));
-  }
-  if (depth)
-  {
-    PalaceCeedCall(ceed,
-                   CeedOperatorSetField(build_op, "xi", depth_restr, depth_basis, depth));
-    PalaceCeedCall(
-        ceed, CeedOperatorSetField(build_op, "grad_xi", depth_restr, depth_basis, depth));
   }
   PalaceCeedCall(ceed, CeedOperatorSetField(build_op, "geom_data", geom_data_restr,
                                             CEED_BASIS_NONE, CEED_VECTOR_ACTIVE));

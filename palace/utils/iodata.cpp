@@ -264,8 +264,14 @@ IoData::IoData(const nlohmann::json &config, bool print) : units(1.0, 1.0), init
   boundaries = config::BoundaryData(*boundaries_it);
   if (auto pml_it = boundaries_it->find("PML"); pml_it != boundaries_it->end())
   {
-    // The PML extruded from boundaries is the last PML block.
-    domains.pml.emplace_back(*pml_it, true);
+    // The entries of the PML extruded from boundaries are the last PML blocks.
+    MFEM_VERIFY(pml_it->is_array(),
+                "config[\"Boundaries\"][\"PML\"] should specify an array of entries in the "
+                "configuration file!");
+    for (std::size_t i = 0; i < pml_it->size(); i++)
+    {
+      domains.pml.emplace_back((*pml_it)[i], true).extrusion.entry = static_cast<int>(i);
+    }
   }
   if (auto err = config::Validate(boundaries))
   {
@@ -582,9 +588,21 @@ void IoData::CheckConfiguration()
       "Superconductor boundary \"TwoSided\" cannot be used with "
       "\"CrackInternalBoundaryElements\": true, which cracks the mesh along the film!");
 
-  // The extruded PML of config["Boundaries"]["PML"] is built on the serial mesh, and later
-  // steps cannot refine it. Its boundary becomes an interior boundary, between the physical
-  // region and the layer.
+  // The extruded PML of config["Boundaries"]["PML"] is built on the serial mesh, of prisms
+  // and hexahedra, which only nonconformal adaptive refinement refines. Its boundary
+  // becomes an interior boundary, between the physical region and the layer.
+  std::vector<int> extruded_attributes;
+  for (const auto &pml : domains.pml)
+  {
+    extruded_attributes.insert(extruded_attributes.end(), pml.extrusion.attributes.begin(),
+                               pml.extrusion.attributes.end());
+  }
+  std::ranges::sort(extruded_attributes);
+  const auto dup = std::ranges::adjacent_find(extruded_attributes);
+  MFEM_VERIFY(dup == extruded_attributes.end(),
+              "Boundary attribute " << ((dup != extruded_attributes.end()) ? *dup : 0)
+                                    << " is in more than one entry of "
+                                       "config[\"Boundaries\"][\"PML\"]!");
   for (const auto &pml : domains.pml)
   {
     if (!pml.IsExtruded())
@@ -595,10 +613,9 @@ void IoData::CheckConfiguration()
                     problem.type == ProblemType::EIGENMODE,
                 "config[\"Boundaries\"][\"PML\"] is only available for driven and "
                 "eigenmode simulations!");
-    MFEM_VERIFY(model.refinement.uniform_ref_levels == 0 && model.refinement.max_it == 0,
-                "config[\"Boundaries\"][\"PML\"] does not support parallel uniform or "
-                "adaptive mesh refinement, which would refine the extruded layer "
-                "(\"SerialUniformLevels\" refines the mesh before the extrusion)!");
+    MFEM_VERIFY(model.refinement.max_it == 0 || model.refinement.nonconformal,
+                "config[\"Boundaries\"][\"PML\"] extrudes prisms and hexahedra, which "
+                "require nonconformal adaptive mesh refinement!");
     for (auto attr : pml.extrusion.attributes)
     {
       MFEM_VERIFY(!std::ranges::binary_search(boundaries.attributes, attr),

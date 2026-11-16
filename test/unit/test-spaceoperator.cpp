@@ -17,6 +17,7 @@
 #include "fem/libceed/operator.hpp"
 #include "fem/mesh.hpp"
 #include "fem/qfunctions/coeff/coeff_qf.h"
+#include "fem/qfunctions/coeff/pml_qf.h"
 #include "fixtures.hpp"
 #include "linalg/hypre.hpp"
 #include "linalg/rap.hpp"
@@ -521,10 +522,9 @@ TEST_CASE("SpaceOperator real-valued coarse solve with PML regions",
   B_real.Real()->Mult(x, y_real);
 
   // With a real-valued coarse solve, the coarse-level operator of the complex
-  // preconditioner has the real-valued approximation Re{c} |T| of the PML terms as its real
-  // part, and no PML terms in its imaginary part (zero for this lossless problem): the sum
-  // of the two parts factored by the coarse solver is the coarse-level operator of the
-  // real-valued approximation.
+  // preconditioner has the PML terms Re{c T̂} and Im{c T̂} of the magnitudes of the stretch
+  // factors (Im{c T̂} = 0 for this lossless problem): the sum of the two parts factored by
+  // the coarse solver is the coarse-level operator of the real-valued approximation.
   for (bool complex_coarse_solve : {false, true})
   {
     auto space_op = MakeSpaceOperator(false, complex_coarse_solve);
@@ -756,7 +756,7 @@ TEST_CASE("SpaceOperator PML subdomain true DOFs are independent of the partitio
   const auto *mg = dynamic_cast<const ComplexMultigridOperator *>(P.get());
   REQUIRE(mg);
   REQUIRE(mg->GetNumLevels() > 1);
-  const auto &tdofs = mg->GetPMLTrueDofs();
+  const auto &tdofs = mg->GetSubdomainTrueDofs();
   CHECK(std::ranges::is_sorted(tdofs));
   CHECK(std::ranges::adjacent_find(tdofs) == tdofs.end());
   long long n_pml = static_cast<long long>(tdofs.size());
@@ -828,8 +828,10 @@ TEST_CASE("SpaceOperator PML with unit stretch reproduces the bulk operators",
     serial_mesh.SetAttribute(i, (center(0) > 2.0 / 3.0 || center(2) > 2.0 / 3.0) ? 2 : 1);
   }
   serial_mesh.SetAttributes();
-  std::vector<std::unique_ptr<Mesh>> mesh;
+  // The lossy and lossless layers have different libCEED element sets, so separate meshes.
+  std::vector<std::unique_ptr<Mesh>> mesh, mesh_lossless;
   mesh.push_back(std::make_unique<Mesh>(comm, serial_mesh));
+  mesh_lossless.push_back(std::make_unique<Mesh>(comm, serial_mesh));
 
   IntegrationSettingsGuard settings_guard;
   config::SolverData solver;
@@ -846,6 +848,7 @@ TEST_CASE("SpaceOperator PML with unit stretch reproduces the bulk operators",
 
   const bool isotropic = GENERATE(false, true);
   const bool scaled = GENERATE(false, true);
+  bool lossy = true;
   auto MakeSpaceOperator = [&](bool with_pml)
   {
     config::MaterialData vacuum, layer;
@@ -870,6 +873,10 @@ TEST_CASE("SpaceOperator PML with unit stretch reproduces the bulk operators",
       layer.tandelta.s = {1.0e-2, 2.0e-2, 3.0e-2};
       layer.tandelta.v = axes;
     }
+    if (!lossy)
+    {
+      layer.tandelta.s = {0.0, 0.0, 0.0};
+    }
     config::DomainData domains;
     domains.attributes = {1, 2};
     domains.materials = {vacuum, layer};
@@ -889,7 +896,7 @@ TEST_CASE("SpaceOperator PML with unit stretch reproduces the bulk operators",
     Units units(1.0, 1.0);
     return std::make_unique<SpaceOperator>(
         solver, domains, boundaries, scaled ? ProblemType::DRIVEN : ProblemType::EIGENMODE,
-        units, mesh);
+        units, lossy ? mesh : mesh_lossless);
   };
   auto pml_op = MakeSpaceOperator(true), ref_op = MakeSpaceOperator(false);
   REQUIRE(pml_op->GetMaterialOp().HasPML());
@@ -947,15 +954,13 @@ TEST_CASE("SpaceOperator PML with unit stretch reproduces the bulk operators",
 
   SECTION("Preconditioner")
   {
-    // The real-valued approximation uses the entrywise magnitudes of the PML tensors, which
-    // matches the bulk approximation for isotropic materials.
+    // The real-valued approximation uses the PML tensors of the magnitudes of the stretch
+    // factors with Re{ε}, which matches the bulk approximation with |ε| for a lossless
+    // background.
     for (bool pc_mat_real : {false, true})
     {
-      if (pc_mat_real && !isotropic)
-      {
-        continue;
-      }
       solver.linear.pc_mat_real = pc_mat_real;
+      lossy = !pc_mat_real;
       auto pml_pc_op = MakeSpaceOperator(true), ref_pc_op = MakeSpaceOperator(false);
       const std::complex<double> omega = {2.0, 0.1}, lambda = 1i * omega;
       auto P1 = pml_pc_op->GetPreconditionerMatrix<ComplexOperator>(1.0 + 0.0i, lambda,
@@ -985,8 +990,10 @@ TEST_CASE("SpaceOperator PML operators match an MFEM coefficient reference",
   // Unit cube with a PML layer on the +x and +z faces (including the edge region), on
   // tetrahedral and hexahedral meshes. The PML curl-curl and mass operators are compared
   // to MFEM integrators with the PML tensors evaluated at the quadrature points by an
-  // independent implementation of the stretch.
+  // independent implementation of the stretch. Without loss, the bulk terms are assembled
+  // on the elements outside of the PML regions only (the active domain set).
   const auto element = GENERATE(mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON);
+  const bool lossy = GENERATE(true, false);
   MPI_Comm comm = Mpi::World();
   auto serial_mesh = mfem::Mesh::MakeCartesian3D(3, 3, 3, element);
   for (int i = 0; i < serial_mesh.GetNE(); i++)
@@ -1011,6 +1018,10 @@ TEST_CASE("SpaceOperator PML operators match an MFEM coefficient reference",
   layer.mu_r.s = {1.0, 2.0, 1.5};
   layer.epsilon_r.s = {2.0, 3.0, 4.0};
   layer.tandelta.s = {1.0e-2, 2.0e-2, 3.0e-2};
+  if (!lossy)
+  {
+    layer.tandelta.s = {0.0, 0.0, 0.0};
+  }
   config::PMLData layer_pml;
   layer_pml.autodetect_geometry = false;
   layer_pml.directions = {false, true, false, false, false, true};
@@ -1028,6 +1039,18 @@ TEST_CASE("SpaceOperator PML operators match an MFEM coefficient reference",
   Units units(1.0, 1.0);
   SpaceOperator space_op(solver, domains, boundaries, ProblemType::DRIVEN, units, mesh);
   REQUIRE(space_op.GetMaterialOp().HasPML());
+  {
+    // The lossy layer (attribute 2), or the physical region (attribute 1).
+    std::vector<int> active_attr;
+    for (const auto &[attr, ceed_attr] : mesh[0]->GetCeedAttributes())
+    {
+      if (attr == (lossy ? 2 : 1))
+      {
+        active_attr.push_back(ceed_attr);
+      }
+    }
+    CHECK(mesh[0]->GetCeedActiveAttributes(false) == active_attr);
+  }
   const auto &p = space_op.GetMaterialOp().GetPMLLayers().at(0).GetStretch();
 
   // Diagonal background material of the layer.
@@ -1146,7 +1169,8 @@ TEST_CASE("SpaceOperator PML operators match an MFEM coefficient reference",
     y_ref.Imag().Add(1.0, t);
     const double norm = linalg::Norml2(comm, y_ref);
     y.Add(-1.0, y_ref);
-    INFO("muinv = " << muinv << ", element = " << static_cast<int>(element));
+    INFO("muinv = " << muinv << ", element = " << static_cast<int>(element)
+                    << ", lossy = " << lossy);
     CHECK_THAT(linalg::Norml2(comm, y) / norm, Catch::Matchers::WithinAbs(0.0, 1.0e-12));
   }
 }
@@ -1154,27 +1178,36 @@ TEST_CASE("SpaceOperator PML operators match an MFEM coefficient reference",
 namespace
 {
 
-// Unit cube of tetrahedra with a lossy dielectric (attribute 1, z < 1/3) and vacuum
-// (attribute 3), under a Cartesian PML layer on +z (attribute 2, z > 2/3) with the lossy
-// dielectric as background, or the cube of the lossy dielectric with a layer of prisms
-// extruded from its boundary (attribute 2), static or frequency-dependent with α > 0.
+// Unit cube of tetrahedra (or hexahedra) with a lossy dielectric (attribute 1, z < 1/3) and
+// vacuum (attribute 3), under a Cartesian PML layer on +z (attribute 2, z > 2/3) with the
+// lossy dielectric as background, or the cube of the lossy dielectric with a layer of
+// prisms (or hexahedra) extruded along the normal of its top (attribute 2), static or
+// frequency-dependent with α > 0.
 std::unique_ptr<SpaceOperator>
 MakePMLSpaceOperator(std::vector<std::unique_ptr<Mesh>> &mesh, bool frequency_dependent,
-                     int order = 2, int mg_max_levels = 1, bool extruded = false)
+                     int order = 2, int mg_max_levels = 1, bool extruded = false,
+                     mfem::Element::Type element = mfem::Element::TETRAHEDRON)
 {
-  auto serial_mesh = std::make_unique<mfem::Mesh>(
-      mfem::Mesh::MakeCartesian3D(3, 3, 3, mfem::Element::TETRAHEDRON));
+  auto serial_mesh =
+      std::make_unique<mfem::Mesh>(mfem::Mesh::MakeCartesian3D(3, 3, 3, element));
   config::PMLData pml;
   if (extruded)
   {
     for (int i = 0; i < serial_mesh->GetNBE(); i++)
     {
-      serial_mesh->SetBdrAttribute(i, 1);
+      mfem::Vector center(3);
+      mfem::IsoparametricTransformation T;
+      serial_mesh->GetBdrElementTransformation(i, &T);
+      T.Transform(mfem::Geometries.GetCenter(T.GetGeometryType()), center);
+      serial_mesh->SetBdrAttribute(i, (center(2) > 1.0 - 1.0e-12) ? 1 : 2);
     }
     serial_mesh->SetAttributes();
-    pml = config::PMLData(
-        nlohmann::json{{"Attributes", {1}}, {"Thickness", 0.25}, {"Layers", 2}}, true);
-    mesh::ExtrudePML(serial_mesh, pml, {});
+    config::DomainData domains;
+    domains.pml = {config::PMLData(
+        nlohmann::json{{"Attributes", {1}}, {"Thickness", 0.25}, {"Layers", 2}}, true)};
+    mesh::ExtrudePML(serial_mesh, domains, {});
+    REQUIRE(domains.pml.size() == 1);
+    pml = domains.pml[0];
   }
   else
   {
@@ -1242,55 +1275,174 @@ double RelativeError(MPI_Comm comm, const Vector &y, const Vector &y_ref)
   return std::sqrt(norm[0] / norm[1]);
 }
 
-// The PML integrator T with its default stored quadrature data gives the action of the
-// evaluation of the tensors at every application, on the local elements of the layer.
-template <typename T>
-void CheckPMLQuadratureData(const FiniteElementSpace &space, const pml::Layer &layer,
-                            const pml::ContextHeader &header)
+// The PML tensors of a QFunction context at the quadrature points, evaluated on the host by
+// the helpers of the QFunctions (see fem/qfunctions/coeff/pml_qf.h), as the coefficient of
+// an MFEM integrator: c T, [k ×]ᵀ c T [k ×], [k ×]ᵀ c T, or -c T [k ×] for the part of c
+// μ̃⁻¹ or c ε̃ of the context.
+class PMLTensorCoefficient : public mfem::MatrixCoefficient
 {
-  const auto ctx = layer.PackContext(header);
-  Vector y, y_ref;
-  if (!ctx.empty())
+public:
+  enum class Form
   {
-    auto Assemble = [&](bool assemble_q_data)
-    {
-      BilinearForm a(space);
-      a.AddDomainIntegratorOnAttributes<T>(layer.GetAttributes(), ctx.data(),
-                                           ctx.size() * sizeof(CeedIntScalar),
-                                           assemble_q_data);
-      return a.PartialAssemble();
-    };
-    const auto A = Assemble(true), A_ref = Assemble(false);
-    Vector x(A->Width());
-    y.SetSize(A->Height());
-    y_ref.SetSize(A->Height());
-    x.UseDevice(true);
-    y.UseDevice(true);
-    y_ref.UseDevice(true);
-    x.Randomize(42);
-    A->Mult(x, y);
-    A_ref->Mult(x, y_ref);
+    TENSOR,
+    FLOQUET_MASS,
+    FLOQUET_CURL,
+    FLOQUET_WEAK_CURL
+  };
+
+private:
+  const std::vector<CeedIntScalar> &ctx;
+  const int ceed_attr;
+  const bool muinv;
+  const Form form;
+
+public:
+  PMLTensorCoefficient(const std::vector<CeedIntScalar> &ctx, int ceed_attr, bool muinv,
+                       Form form)
+    : mfem::MatrixCoefficient(3), ctx(ctx), ceed_attr(ceed_attr), muinv(muinv), form(form)
+  {
   }
+
+  void Eval(mfem::DenseMatrix &K, mfem::ElementTransformation &T,
+            const mfem::IntegrationPoint &ip) override
+  {
+    T.SetIntPoint(&ip);
+    mfem::Vector x(3);
+    T.Transform(ip, x);
+    double t[9];
+    REQUIRE(PMLCoeffAt(ctx.data(), ceed_attr, x.GetData(), muinv ? t : nullptr,
+                       muinv ? nullptr : t));
+    mfem::DenseMatrix C(t, 3, 3), Kx(3, 3);
+    const CeedIntScalar *kx = PMLWaveVectorCross(ctx.data());
+    for (int k = 0; k < 9; k++)
+    {
+      Kx.GetData()[k] = kx[k].second;
+    }
+    K.SetSize(3, 3);
+    switch (form)
+    {
+      case Form::TENSOR:
+        K = C;
+        break;
+      case Form::FLOQUET_MASS:
+        {
+          mfem::DenseMatrix CK(3, 3);
+          mfem::Mult(C, Kx, CK);
+          mfem::MultAtB(Kx, CK, K);
+        }
+        break;
+      case Form::FLOQUET_CURL:
+        mfem::MultAtB(Kx, C, K);
+        break;
+      case Form::FLOQUET_WEAK_CURL:
+        mfem::Mult(C, Kx, K);
+        K.Neg();
+        break;
+    }
+  }
+};
+
+// The PML integrator T, with its stored quadrature data, against MFEM integrators with the
+// tensors of the same QFunction context evaluated on the host, on the elements of the
+// layer.
+template <typename T>
+void CheckPMLIntegrator(const FiniteElementSpace &space, const pml::Layer &layer,
+                        const pml::ContextHeader &header, const Mesh &mesh, int q_order)
+{
+  using Form = PMLTensorCoefficient::Form;
+  const auto ctx = layer.PackContext(header);
+  REQUIRE(layer.GetAttributes().size() == 1);
+  const int attr = layer.GetAttributes()[0];
+  const auto it = mesh.GetCeedAttributes().find(attr);
+  const int ceed_attr = (it == mesh.GetCeedAttributes().end()) ? 0 : it->second;
+
+  BilinearForm a(space);
+  a.AddDomainIntegratorOnAttributes<T>(layer.GetAttributes(), ctx.data(),
+                                       ctx.size() * sizeof(CeedIntScalar));
+  ParOperator A(a.PartialAssemble(), space);
+
+  // MFEM reference.
+  auto &pfes = const_cast<mfem::ParFiniteElementSpace &>(space.Get());
+  mfem::ParBilinearForm a_ref(&pfes);
+  int attr_max = mesh.Get().attributes.Size() ? mesh.Get().attributes.Max() : 0;
+  Mpi::GlobalMax(1, &attr_max, space.GetComm());
+  mfem::Array<int> marker(attr_max);
+  marker = 0;
+  marker[attr - 1] = 1;
+  const auto &ir = mfem::IntRules.Get(mfem::Geometry::CUBE, q_order);
+  std::vector<std::unique_ptr<PMLTensorCoefficient>> coeffs;
+  auto Coefficient = [&](bool muinv, Form form) -> PMLTensorCoefficient &
+  {
+    return *coeffs.emplace_back(
+        std::make_unique<PMLTensorCoefficient>(ctx, ceed_attr, muinv, form));
+  };
+  auto Add = [&](mfem::BilinearFormIntegrator *integ)
+  {
+    integ->SetIntRule(&ir);
+    a_ref.AddDomainIntegrator(integ, marker);
+  };
+  if constexpr (std::is_same_v<T, CurlCurlPMLIntegrator> ||
+                std::is_same_v<T, CurlCurlMassPMLIntegrator>)
+  {
+    Add(new mfem::CurlCurlIntegrator(Coefficient(true, Form::TENSOR)));
+  }
+  if constexpr (std::is_same_v<T, VectorFEMassPMLIntegrator> ||
+                std::is_same_v<T, CurlCurlMassPMLIntegrator>)
+  {
+    Add(new mfem::VectorFEMassIntegrator(Coefficient(false, Form::TENSOR)));
+  }
+  if constexpr (std::is_same_v<T, DiffusionPMLIntegrator>)
+  {
+    Add(new mfem::DiffusionIntegrator(Coefficient(false, Form::TENSOR)));
+  }
+  if constexpr (std::is_same_v<T, FloquetMassPMLIntegrator>)
+  {
+    Add(new mfem::VectorFEMassIntegrator(Coefficient(true, Form::FLOQUET_MASS)));
+  }
+  if constexpr (std::is_same_v<T, FloquetDiffusionPMLIntegrator>)
+  {
+    Add(new mfem::DiffusionIntegrator(Coefficient(true, Form::FLOQUET_MASS)));
+  }
+  if constexpr (std::is_same_v<T, FloquetCrossPMLIntegrator>)
+  {
+    Add(new mfem::MixedVectorCurlIntegrator(Coefficient(true, Form::FLOQUET_CURL)));
+    Add(new mfem::MixedVectorWeakCurlIntegrator(
+        Coefficient(true, Form::FLOQUET_WEAK_CURL)));
+  }
+  a_ref.Assemble();
+  a_ref.Finalize();
+  std::unique_ptr<mfem::HypreParMatrix> A_ref(a_ref.ParallelAssemble());
+
+  Vector x(A.Width()), y(A.Height()), y_ref(A.Height());
+  x.UseDevice(true);
+  y.UseDevice(true);
+  y_ref.UseDevice(true);
+  x.Randomize(42 + Mpi::Rank(space.GetComm()));
+  A.Mult(x, y);
+  A_ref->Mult(x, y_ref);
   CHECK_THAT(RelativeError(space.GetComm(), y, y_ref),
              Catch::Matchers::WithinAbs(0.0, 1.0e-12));
 }
 
 }  // namespace
 
-TEST_CASE("SpaceOperator PML quadrature data matches the evaluation of the tensors",
+TEST_CASE("SpaceOperator PML quadrature data matches an MFEM reference",
           "[spaceoperator][pml][Serial][Parallel][GPU]")
 {
-  // Every PML term and output part with the stored tensors, against their evaluation at
-  // every application, for a static stretch and a frequency-dependent one with α > 0, of a
-  // Cartesian and of an extruded layer.
+  // Every PML term and output part with the stored tensors, against MFEM integrators with
+  // the tensors evaluated on the host, for a static stretch and a frequency-dependent one
+  // with α > 0, of a Cartesian and of an extruded layer on hexahedra.
   const bool frequency_dependent = GENERATE(false, true);
   const bool extruded = GENERATE(false, true);
   IntegrationSettingsGuard settings_guard;
   std::vector<std::unique_ptr<Mesh>> mesh;
-  auto space_op = MakePMLSpaceOperator(mesh, frequency_dependent, 2, 1, extruded);
+  auto space_op = MakePMLSpaceOperator(mesh, frequency_dependent, 2, 1, extruded,
+                                       mfem::Element::HEXAHEDRON);
   REQUIRE(space_op->GetMaterialOp().GetPMLLayers()[0].GetStretch().extruded == extruded);
   const auto &layer = space_op->GetMaterialOp().GetPMLLayers()[0];
   const auto &nd = space_op->GetNDSpace(), &h1 = space_op->GetH1Space();
+  const int q_order =
+      fem::DefaultIntegrationOrder::Get(mesh[0]->Get(), mfem::Geometry::CUBE);
   pml::ContextHeader header;
   header.c_muinv = {0.7, -0.4};
   header.c_eps = {1.3, 0.2};
@@ -1298,106 +1450,18 @@ TEST_CASE("SpaceOperator PML quadrature data matches the evaluation of the tenso
   const std::array<double, 3> k = {0.3, -0.2, 0.5};
   header.wave_vector_cross = {0.0, k[2], -k[1], -k[2], 0.0, k[0], k[1], -k[0], 0.0};
   for (auto part :
-       {pml::TensorPart::REAL, pml::TensorPart::IMAG, pml::TensorPart::ABS,
+       {pml::TensorPart::REAL, pml::TensorPart::IMAG,
         pml::TensorPart::STRETCH_MAGNITUDE_REAL, pml::TensorPart::STRETCH_MAGNITUDE_IMAG})
   {
     header.part = part;
     INFO("part = " << static_cast<int>(part));
-    CheckPMLQuadratureData<CurlCurlPMLIntegrator>(nd, layer, header);
-    CheckPMLQuadratureData<VectorFEMassPMLIntegrator>(nd, layer, header);
-    CheckPMLQuadratureData<CurlCurlMassPMLIntegrator>(nd, layer, header);
-    CheckPMLQuadratureData<FloquetMassPMLIntegrator>(nd, layer, header);
-    CheckPMLQuadratureData<FloquetCrossPMLIntegrator>(nd, layer, header);
-    CheckPMLQuadratureData<DiffusionPMLIntegrator>(h1, layer, header);
-    CheckPMLQuadratureData<FloquetDiffusionPMLIntegrator>(h1, layer, header);
-  }
-}
-
-TEST_CASE("SpaceOperator bulk terms on the support of their coefficients",
-          "[spaceoperator][pml][Serial][Parallel][GPU]")
-{
-  // With BilinearForm::SetCoefficientSupport (all but the PML attributes), the bulk terms
-  // whose coefficients vanish on the PML are assembled on the other elements only. The
-  // levels of a p-multigrid hierarchy coarsened from them, with the stored PML terms, and
-  // the complex operators with the lossy imaginary terms on the shared lossy subset, must
-  // give the action and the diagonal of the same terms over all elements. A term with a
-  // coefficient on the PML too keeps every element.
-  const bool on_pml = GENERATE(false, true);
-  IntegrationSettingsGuard settings_guard;
-  std::vector<std::unique_ptr<Mesh>> mesh;
-  auto space_op = MakePMLSpaceOperator(mesh, false, 3, 3);
-  const auto &mat_op = space_op->GetMaterialOp();
-  const auto &layer = mat_op.GetPMLLayers()[0];
-  const auto &spaces = space_op->GetNDSpaces();
-  REQUIRE(spaces.GetNumLevels() == 3);
-  std::vector<int> support;
-  for (auto attr : mesh[0]->Get().attributes)
-  {
-    if (std::ranges::find(layer.GetAttributes(), attr) == layer.GetAttributes().end())
-    {
-      support.push_back(attr);
-    }
-  }
-  MaterialPropertyCoefficient muinv(mat_op.GetBulkAttributeToMaterial(),
-                                    mat_op.GetCurlCurlInvPermeability()),
-      eps(on_pml ? mat_op.GetAttributeToMaterial() : mat_op.GetBulkAttributeToMaterial(),
-          mat_op.GetPermittivityReal()),
-      loss(mat_op.GetBulkAttributeToMaterial(), mat_op.GetPermittivityImag());
-  pml::ContextHeader header;
-  header.c_muinv = 1.0;
-  header.c_eps = -4.0;
-  const auto ctx = layer.PackContext(header);
-  auto Assemble = [&](bool real, bool restrict)
-  {
-    BilinearForm a(spaces.GetFinestFESpace());
-    a.SkipZeroCoefficientElements();
-    if (restrict)
-    {
-      a.SetCoefficientSupport(support);
-    }
-    if (real)
-    {
-      a.AddDomainIntegrator<CurlCurlMassIntegrator>(muinv, eps);
-      if (!ctx.empty())
-      {
-        a.AddDomainIntegratorOnAttributes<CurlCurlMassPMLIntegrator>(
-            layer.GetAttributes(), ctx.data(), ctx.size() * sizeof(CeedIntScalar));
-      }
-    }
-    else
-    {
-      a.AddDomainIntegrator<VectorFEMassIntegrator>(loss);
-    }
-    a.AssembleQuadratureData();
-    return a.Assemble(spaces, false, 1);
-  };
-  auto ar = Assemble(true, true), ai = Assemble(false, true);
-  const auto ar_ref = Assemble(true, false), ai_ref = Assemble(false, false);
-  MPI_Comm comm = space_op->GetComm();
-  for (std::size_t l = 0; l < ar.size(); l++)
-  {
-    INFO("level " << l + 1);
-    Vector d(ar[l]->Height()), d_ref(ar[l]->Height());
-    d.UseDevice(true);
-    d_ref.UseDevice(true);
-    ar[l]->AssembleDiagonal(d);
-    ar_ref[l]->AssembleDiagonal(d_ref);
-    CHECK_THAT(RelativeError(comm, d, d_ref), Catch::Matchers::WithinAbs(0.0, 1.0e-14));
-    const ComplexWrapperOperator A_ref(ar_ref[l].get(), ai_ref[l].get());
-    const auto A = ceed::CreateComplexOperator(std::move(ar[l]), std::move(ai[l]),
-                                               spaces.GetFESpaceAtLevel(l + 1));
-    ComplexVector x(A->Width()), y(A->Height()), y_ref(A->Height());
-    x.UseDevice(true);
-    y.UseDevice(true);
-    y_ref.UseDevice(true);
-    x.Real().Randomize(42);
-    x.Imag().Randomize(43);
-    A->Mult(x, y);
-    A_ref.Mult(x, y_ref);
-    CHECK_THAT(RelativeError(comm, y.Real(), y_ref.Real()),
-               Catch::Matchers::WithinAbs(0.0, 1.0e-14));
-    CHECK_THAT(RelativeError(comm, y.Imag(), y_ref.Imag()),
-               Catch::Matchers::WithinAbs(0.0, 1.0e-14));
+    CheckPMLIntegrator<CurlCurlPMLIntegrator>(nd, layer, header, *mesh[0], q_order);
+    CheckPMLIntegrator<VectorFEMassPMLIntegrator>(nd, layer, header, *mesh[0], q_order);
+    CheckPMLIntegrator<CurlCurlMassPMLIntegrator>(nd, layer, header, *mesh[0], q_order);
+    CheckPMLIntegrator<FloquetMassPMLIntegrator>(nd, layer, header, *mesh[0], q_order);
+    CheckPMLIntegrator<FloquetCrossPMLIntegrator>(nd, layer, header, *mesh[0], q_order);
+    CheckPMLIntegrator<DiffusionPMLIntegrator>(h1, layer, header, *mesh[0], q_order);
+    CheckPMLIntegrator<FloquetDiffusionPMLIntegrator>(h1, layer, header, *mesh[0], q_order);
   }
 }
 

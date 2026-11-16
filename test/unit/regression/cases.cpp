@@ -72,6 +72,67 @@ palace::test::CustomCheck TestFarfield(double rtol)
   };
 }
 
+// Far field of a z-directed Hertzian dipole (I l = 1 A m). Check the result against the
+// closed form r E = i eta k I l sin(theta) / (4 pi) theta_hat, which does not depend on the
+// reference data: the co-polar magnitude |r E . theta_hat| and the residual (cross-polar
+// and radial) components, relative to the maximum eta k I l / (4 pi). The magnitude
+// comparison with the reference data (as in TestFarfield) has an absolute floor relative to
+// the same maximum, since the field vanishes on the dipole axis and the values there are
+// numerical noise, which depends on the partitioning.
+palace::test::CustomCheck TestFarfieldDipole(double rtol, double tol_dipole)
+{
+  return
+      [rtol, tol_dipole](palace::Table &a, palace::Table &r, const std::filesystem::path &)
+  {
+    REQUIRE(a.n_cols() >= 8);
+    REQUIRE(a.n_cols() == r.n_cols());
+    constexpr double c0 = 299792458.0;      // m/s
+    constexpr double eta0 = 376.730313668;  // Ohm
+    const std::size_t e0 = a.n_cols() - 6, it = e0 - 2, ip = e0 - 1;
+    for (std::size_t i = 0; i < a.n_rows(); ++i)
+    {
+      const double k = 2.0 * std::numbers::pi * a[0].data[i] * 1.0e9 / c0;
+      const double amax = eta0 * k / (4.0 * std::numbers::pi);
+      const double theta = a[it].data[i] * std::numbers::pi / 180.0;
+      const double phi = a[ip].data[i] * std::numbers::pi / 180.0;
+      const double st = std::sin(theta), ct = std::cos(theta);
+      const double sp = std::sin(phi), cp = std::cos(phi);
+      const double th[3] = {ct * cp, ct * sp, -st};
+      std::complex<double> E[3], e_th = 0.0;
+      double res = 0.0;
+      for (int d = 0; d < 3; d++)
+      {
+        E[d] = {a[e0 + 2 * d].data[i], a[e0 + 2 * d + 1].data[i]};
+        e_th += E[d] * th[d];
+      }
+      for (int d = 0; d < 3; d++)
+      {
+        res += std::norm(E[d] - e_th * th[d]);
+      }
+      INFO("row " << i + 1 << ": theta = " << a[it].data[i] << ", phi = " << a[ip].data[i]
+                  << ", |r E_theta| = " << std::abs(e_th) << ", closed form = "
+                  << amax * std::abs(st) << ", residual = " << std::sqrt(res));
+      CHECK(std::abs(std::abs(e_th) - amax * std::abs(st)) <= tol_dipole * amax);
+      CHECK(std::sqrt(res) <= tol_dipole * amax);
+      if (i < r.n_rows())
+      {
+        auto mag = [i, e0](palace::Table &t)
+        {
+          double m = 0.0;
+          for (std::size_t j = e0; j < e0 + 6; j++)
+          {
+            m += t[j].data[i] * t[j].data[i];
+          }
+          return std::sqrt(m);
+        };
+        const double m_a = mag(a), m_r = mag(r);
+        INFO("|r E| actual = " << m_a << ", reference = " << m_r);
+        CHECK(std::abs(m_a - m_r) <= rtol * std::max(m_a, m_r) + 1.0e-6 * amax);
+      }
+    }
+  };
+}
+
 // Generalised comparison for any CSV with paired "Re{X} (unit)" / "Im{X} (unit)" complex
 // columns. For each Re column it pairs the matching Im (looked up by header_text), then
 // compares either the magnitudes |X| = sqrt(Re^2 + Im^2), or the complex values with a
@@ -2114,6 +2175,23 @@ TEST_CASE("dielectric_grating_uniform", "[Serial][Parallel][GPU][Regression]")
                                   "uniform", opts);
 }
 
+// The cell of dielectric_grating_uniform with a PML extruded along the normal of its top
+// (1 cm in 4 layers, with the periodic boundaries through the layer) in place of the second
+// Floquet port. The specular reflection is that of the second Floquet port to 0.07 dB, and
+// that of a meshed slab of the same elements to 1e-9 dB.
+TEST_CASE("dielectric_grating_pml", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-3;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum"};
+  opts.skip_rowcount = true;
+  opts.paraview_fields = false;
+  opts.custom_checks["port-floquet-S.csv"] = TestFloquetSParams(opts.rtol, opts.atol);
+  palace::test::RunRegressionCase("dielectric_grating", "dielectric_grating_pml.json",
+                                  "pml", opts);
+}
+
 // Mixed Floquet + lumped/wave port S-parameter tests: validate the sqrt(2) power
 // normalization bridge for cross-type observations. Use custom checks to verify power
 // balance (sum |S|^2 = 1 for the lossless structure). Floquet NaN and negligible
@@ -2167,12 +2245,14 @@ TEST_CASE("pml_waveguide", "[Serial][Parallel][GPU][Regression]")
   RunPMLDrivenCase("pml_waveguide", "waveguide_pml", "port-S.csv", -55.0);
 }
 
-// The same waveguide terminated by a PML extruded from its end (z = 0.4, beyond the meshed
-// layer, which is part of the guide), with the lateral PEC walls extending through the
-// layer. |S11| (-59 dB) is that of the meshed layer to within 5 dB.
-TEST_CASE("pml_waveguide_extruded", "[Serial][Parallel][GPU][Regression]")
+// The guide of waveguide_absorbing terminated by a PML extruded along the normal of its end
+// (10 mm in 4 layers), in place of the absorbing boundary, with the PEC walls extending
+// through the layer. |S11| is -58 to -84 dB from 8 to 14 GHz, against -13 to -43 dB for
+// the second-order absorbing boundary, and the same as for the meshed slab of the same
+// elements.
+TEST_CASE("waveguide_absorbing_pml", "[Serial][Parallel][GPU][Regression]")
 {
-  RunPMLDrivenCase("pml_waveguide", "waveguide_pml_extruded", "port-S.csv", -55.0);
+  RunPMLDrivenCase("waveguide_absorbing", "waveguide_absorbing_pml", "port-S.csv", -55.0);
 }
 
 // E-plane bifurcation with arms of different lengths, each terminated by its own block of
@@ -2376,7 +2456,114 @@ TEST_CASE("pml_oblique_45_tm_adaptive", "[Serial][Parallel][GPU][Regression]")
   RunPMLDrivenCase("pml_oblique", "oblique_45_tm_adaptive", "port-floquet-S.csv", -70.0);
 }
 
-// --- antenna: reltol=2e-2, atol=50*1e-10 = 5e-9 for all three ---
+// TM plane wave at the angle θ from a dielectric of relative permittivity eps_r onto the
+// half-space z > 0 of a uniaxial crystal of principal permittivities eps_o, eps_e, and
+// eps_o on the material axes (1, 0, 0), (0, c, s), and (0, -s, c), rotated by the tilt
+// about x. In the plane of incidence, the crystal has the permittivity
+// [ε_yy ε_yz; ε_yz ε_zz]. With k_y = √eps_r sin θ in units of k₀, its TM waves have
+// k_z = (-ε_yz k_y ± √D) / ε_zz with D = det ε (ε_zz - k_y²), and the Fresnel reflection
+// is R = (Z_i - Z_t) / (Z_i + Z_t) for the impedances Z_i = √(eps_r - k_y²) / eps_r
+// and Z_t = √D / det ε, the same for both signs of the tilt.
+struct UniaxialHalfSpaceTM
+{
+  double eps_r, eps_o, eps_e, tilt_deg, theta_deg;
+
+  double ReflectionDB() const
+  {
+    const double c = std::cos(tilt_deg * std::numbers::pi / 180.0),
+                 s = std::sin(tilt_deg * std::numbers::pi / 180.0);
+    const double eps_yy = eps_e * c * c + eps_o * s * s,
+                 eps_zz = eps_e * s * s + eps_o * c * c, eps_yz = (eps_e - eps_o) * c * s;
+    const double det = eps_yy * eps_zz - eps_yz * eps_yz;
+    const double k_y = std::sqrt(eps_r) * std::sin(theta_deg * std::numbers::pi / 180.0);
+    const double D = det * (eps_zz - k_y * k_y);
+    const double Z_i = std::sqrt(eps_r - k_y * k_y) / eps_r, Z_t = std::sqrt(D) / det;
+    return 20.0 * std::log10(std::abs((Z_i - Z_t) / (Z_i + Z_t)));
+  }
+};
+
+// Reference-free check of the TM reflection in port-floquet-S.csv against the Fresnel
+// reflection of the half-space within tol_db, after the reference diff of the magnitudes.
+palace::test::CustomCheck TestPMLHalfSpaceReflection(UniaxialHalfSpaceTM half_space,
+                                                     double tol_db, double rtol,
+                                                     double atol)
+{
+  const auto reference_check = TestFloquetSParams(rtol, atol);
+  return [=](palace::Table &actual, palace::Table &reference,
+             const std::filesystem::path &path)
+  {
+    reference_check(actual, reference, path);
+    const palace::Column *s_tm = nullptr;
+    for (auto &column : actual)
+    {
+      if (column.header_text == "|S[P1(0;0)TM][1]| (dB)")
+      {
+        s_tm = &column;
+      }
+    }
+    REQUIRE(s_tm != nullptr);
+    REQUIRE(actual.n_rows() == 1);
+    const double r_db = half_space.ReflectionDB();
+    INFO("|S11| (TM) = " << s_tm->data[0] << " dB, Fresnel reflection " << r_db << " dB");
+    CHECK_THAT(s_tm->data[0], Catch::Matchers::WithinAbs(r_db, tol_db));
+  };
+}
+
+// A tensor material in a PML region: the periodic cell of pml_oblique filled with a
+// dielectric (relative permittivity 9) in front of a +z PML region whose background is a
+// uniaxial crystal of principal permittivities 9, 1, and 9 on material axes rotated by
+// -45° about x. The layer stands for a half-space of the crystal, so the TM reflection at
+// 30° is the Fresnel reflection of the half-space, -10.065 dB. The wave going into the
+// crystal has its phase running towards the interface (k_z / k₀ = -0.205), so the stretch
+// amplifies it, by e^(|k_z| A) = 17 across the layer for R(0) = e^(-2 k₀ A) = 1e-12: the
+// electric energy in the layer is 1.4e3 times that in the cell. The angle stays away from
+// total reflection (48.2°), towards which this growth reaches 1.5e5 at 40° and 9.5e8 at
+// 47°, and the computed reflection then depends on the mesh and the linear solver. The
+// tolerance of 0.01 dB is 2.6 times the discretization error, which converges as h⁴
+// (0.0038 dB here, and 0.0002 dB with one uniform refinement).
+TEST_CASE("pml_oblique_uniaxial_30_tm", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-3;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.excluded_files = {"error-indicators.csv"};
+  opts.paraview_fields = false;
+  opts.custom_checks["port-floquet-S.csv"] = TestPMLHalfSpaceReflection(
+      UniaxialHalfSpaceTM{9.0, 9.0, 1.0, -45.0, 30.0}, 1.0e-2, opts.rtol, opts.atol);
+  palace::test::RunRegressionCase("pml_oblique", "uniaxial_30_tm.json", "uniaxial_30_tm",
+                                  opts);
+}
+
+// The microstrip patch antenna of examples/patch_antenna at 6, 7.5, 10 and 14.5 GHz, whose
+// substrate and ground plane run through the open faces of the box: with the second-order
+// absorbing boundary, and (without 6 GHz) with the PML extruded from the open faces as one
+// closed layer from a segment through the substrate, which ends flush with the ground plane
+// and the port face (the absorbing boundary continues across its ends). At 7.5 GHz, near
+// the first resonance, |S11| is -17.8 dB with the absorbing boundary and -19.9 dB with the
+// PML.
+void RunPatchAntennaCase(const std::string &config)
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-3;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.excluded_files = {"error-indicators.csv"};
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("patch_antenna", config + ".json", config, opts);
+}
+
+TEST_CASE("patch_antenna", "[Serial][Parallel][GPU][Regression]")
+{
+  RunPatchAntennaCase("patch_antenna");
+}
+
+TEST_CASE("patch_antenna_pml", "[Serial][Parallel][GPU][Regression]")
+{
+  RunPatchAntennaCase("patch_antenna_pml");
+}
+
+// --- antenna: reltol=2e-2, atol=50*1e-10 = 5e-9 for all four ---
 
 TEST_CASE("antenna_halfwave_dipole", "[Serial][Parallel][GPU][Regression]")
 {
@@ -2385,6 +2572,15 @@ TEST_CASE("antenna_halfwave_dipole", "[Serial][Parallel][GPU][Regression]")
   opts.atol = 5.0e-9;
   palace::test::RunRegressionCase("antenna", "antenna_halfwave_dipole.json",
                                   "antenna_halfwave_dipole", opts);
+}
+
+TEST_CASE("antenna_halfwave_dipole_pml", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 2.0e-2;
+  opts.atol = 5.0e-9;
+  palace::test::RunRegressionCase("antenna", "antenna_halfwave_dipole_pml.json",
+                                  "antenna_halfwave_dipole_pml", opts);
 }
 
 TEST_CASE("antenna_short_dipole", "[Serial][Parallel][GPU][Regression]")
@@ -2405,6 +2601,17 @@ TEST_CASE("antenna_halfwave_dipole_surfacecurrent", "[Serial][Parallel][GPU][Reg
   opts.paraview_fields = false;
   palace::test::RunRegressionCase("antenna", "antenna_halfwave_dipole_surfacecurrent.json",
                                   "antenna_halfwave_dipole_surfacecurrent", opts);
+}
+
+TEST_CASE("farfield_interior", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 2.0e-2;
+  opts.atol = 5.0e-9;
+  opts.paraview_fields = false;  // "SaveStep": 0
+  opts.custom_checks["farfield-rE.csv"] = TestFarfieldDipole(opts.rtol, 1.0e-2);
+  palace::test::RunRegressionCase("farfield_interior", "farfield_interior.json",
+                                  "farfield_interior", opts);
 }
 
 // --- coaxial + cpw non-adaptive + cpw eigen: reltol still 2e-2 (from  ---

@@ -242,9 +242,10 @@ public:
 
 // PML configuration (the "PML" object of config["Domains"]): the domain attributes of the
 // PML regions, whose materials define the background material properties, and the
-// coordinate stretch, the same in all PML regions. For config["Boundaries"]["PML"]
-// (extruded), the PML regions are extruded from boundaries of the mesh instead (see
-// mesh::ExtrudePML), and this is one more block.
+// coordinate stretch, the same in all PML regions. For an entry of
+// config["Boundaries"]["PML"] (extruded), the PML regions are extruded from boundaries of
+// the mesh instead (see mesh::ExtrudePML), and the extrusion replaces the entry with one
+// more block for each part of its surface.
 struct PMLData
 {
 public:
@@ -256,29 +257,60 @@ public:
   // nonempty.
   struct Extrusion
   {
-    // Boundary attributes of the surface to extrude from.
+    // Boundary attributes of the surface to extrude from, and the index of the entry in
+    // config["Boundaries"]["PML"].
     std::vector<int> attributes = {};
+    int entry = 0;
 
     // Thickness of the layer in mesh length units (nondimensionalized at load time), and
     // number of layers of elements.
     double thickness = 0.0;
     int layers = 4;
 
-    // The rays of the extrusion start from the closest point of each surface point on the
-    // core, the segment from center[0] to center[1] (a point if they are equal), in mesh
-    // length units (nondimensionalized at load time). Unless configured (has_center), this
-    // is the centre of the bounding box of the surface, set by the extrusion.
+    // By default, the parts of the surface are its connected parts, and a flat part is
+    // extruded along its normal. For NORMAL, the parts are the flat patches (connected,
+    // coplanar faces), each extruded along its normal. RADIAL is the default, and a flat
+    // part is an error. Any other part is extruded away from the closest point of each
+    // surface point on the core, the axis-aligned box with the lower and upper corners
+    // center[0] and center[1] (a point, a segment, or a rectangle where they share
+    // coordinates), in mesh length units (nondimensionalized at load time). Unless
+    // configured (has_center), this is the centre of the bounding box of the part, moved
+    // onto the open sides of a box, set by the extrusion.
+    enum class Type
+    {
+      DEFAULT,
+      NORMAL,
+      RADIAL
+    } type = Type::DEFAULT;
     bool has_center = false;
     std::array<std::array<double, 3>, 2> center{};
 
     // Boundary attribute of the outer (back) surface of the layer, PEC unless it has
     // another boundary condition. By default (0), the extrusion assigns one larger than the
-    // largest boundary attribute of the mesh.
+    // largest boundary attribute of the mesh, of the configuration, and of the configured
+    // back attributes.
     int back_attribute = 0;
 
     // Domain attribute of the elements below the extruded elements of each attribute of
     // the block, whose material they share. Set by the extrusion.
     std::vector<int> base_attributes = {};
+
+    // Form of the depth into the layer, set by the extrusion (see
+    // fem/qfunctions/coeff/pml_qf.h): a flat surface extruded along its normal, on the
+    // plane n · x = h of plane = (n, h), or a surface extruded along the rays from the core
+    // at the distance r₀ (distance) from it, or a box extruded per component, whose layer
+    // is the Cartesian PML with the inner faces box (its lower and upper corners) on the
+    // sides with a face of the surface (box_sides, ordered {-x, +x, -y, +y, -z, +z}).
+    enum class Depth : int
+    {
+      NORMAL = 1,
+      DISTANCE = 2,
+      BOX = 3
+    } depth = Depth::NORMAL;
+    std::array<double, 4> plane{};
+    double distance = 0.0;
+    std::array<std::array<double, 3>, 2> box{};
+    std::array<bool, 6> box_sides{};
   } extrusion;
 
   bool IsExtruded() const { return !extrusion.attributes.empty(); }
