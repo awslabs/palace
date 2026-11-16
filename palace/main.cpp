@@ -323,13 +323,15 @@ int main(int argc, char *argv[])
   // reuse the exact same code path on an in-process IoData. See palace/driver.hpp
   // for the preconditions it expects.
   PrintPalaceInfo(world_comm, world_size, omp_threads, ngpu, *device);
+  int exit_status = 0;
   if (mesh_statistics)
   {
     palace::RunMeshStatistics(iodata, world_comm, omp_threads, GetPalaceGitTag());
   }
   else if (surface_response_preflight)
   {
-    palace::RunSurfaceResponsePreflight(iodata, world_comm, omp_threads, GetPalaceGitTag());
+    exit_status = palace::RunSurfaceResponsePreflight(iodata, world_comm, omp_threads,
+                                                      GetPalaceGitTag());
   }
   else
   {
@@ -344,5 +346,5 @@ int main(int argc, char *argv[])
   slepc::Finalize();
 #endif
 
-  return 0;
+  return exit_status;
 }

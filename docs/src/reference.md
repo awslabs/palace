@@ -1108,7 +1108,9 @@ the preflight writes `surface-response-requirements.json`
 it aborts, so the manifest predicts every geometry fallback of the solve (a Missing-only
 manifest is the normal discovery state: a solve with no matched feature is predicted by
 `Summary.Counts`, not by a fallback entry). A configuration with fallbacks is never written
-to the response-geometry cache. Nothing is written when no site fires.
+to the response-geometry cache. Nothing is written when no site fires. A preflight that
+ends this way exits with status `3` after writing its manifest (see the preflight below);
+a solve keeps the abort.
 
 In 3D, targets selecting the same automatically extracted physical metal segments form
 one interface group. Palace infers the process normal and the in-plane direction from
@@ -2121,6 +2123,15 @@ boundary law, count, total edge length, geometric signature, and exact, interpol
 missing library selection. Its `Complete` field is true only when no requirement is
 missing. During preflight only, `UnmatchedPolicy: "Error"` is treated as `"Warn"` so all
 missing requirements can be reported in one pass.
+
+Exit status of a preflight: `0` when it completed; `3` when it wrote its complete manifest
+and patch dry run and then ended because `GeometryFailurePolicy` is `FailClosed` (the
+preflight's default) and geometry fallbacks were recorded: the last log line names their
+count and classes and the files written (see `Identification.Diagnostics.GeometryFallbacks`
+of the manifest). A run service shows a nonzero status as a failed run with that exit
+code; the manifest and the patch dry run are written in full (as before this exit status
+existed, `palace.json` then carries no timing or memory record). Every other error still
+stops the run as before.
 
 A direct preflight uses the configured library's production partition. To discover the
 complete geometry inventory from an empty or partial seed in one user-visible operation,

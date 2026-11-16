@@ -22280,11 +22280,11 @@ void GeometryFallbackLedger::Record(GeometryFallbackData entry)
   entries.push_back(std::move(entry));
 }
 
-void GeometryFallbackLedger::Enforce(const std::string &where) const
+std::string GeometryFallbackLedger::FailClosedSummary() const
 {
   if (policy != GeometryFailurePolicy::FAIL_CLOSED || entries.empty())
   {
-    return;
+    return {};
   }
   std::map<std::string, int> classes;
   for (const auto &entry : entries)
@@ -22296,8 +22296,19 @@ void GeometryFallbackLedger::Enforce(const std::string &where) const
   {
     summary += (summary.empty() ? "" : ", ") + cls + " " + std::to_string(count);
   }
+  return std::to_string(entries.size()) + " geometry fallback(s) recorded (" + summary +
+         ")";
+}
+
+void GeometryFallbackLedger::Enforce(const std::string &where) const
+{
+  const std::string summary = FailClosedSummary();
+  if (summary.empty())
+  {
+    return;
+  }
   MFEM_ABORT("Surface-response GeometryFailurePolicy FailClosed: "
-             << entries.size() << " geometry fallback(s) recorded (" << summary << "); see "
+             << summary << "; see "
              << (preflight ? "Identification.Diagnostics.GeometryFallbacks of the manifest"
                            : "SurfaceResponse.Diagnostics.GeometryFallbacks")
              << " (" << where << ")!");
@@ -22879,8 +22890,9 @@ nlohmann::json DescribeMagneticLeaves(const std::string &library_path, const Uni
   return result;
 }
 
-void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
-                                      const std::string &path)
+SurfaceResponsePreflightOutcome WriteSurfaceResponseRequirements(const IoData &iodata,
+                                                                 const Mesh &mesh,
+                                                                 const std::string &path)
 {
   const auto &configured_request = iodata.problem.type == ProblemType::ELECTROSTATIC
                                        ? iodata.solver.electrostatic.response_correction
@@ -23467,15 +23479,25 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
     Mpi::Print(parallel_mesh.GetComm(), " Patch dry run: {} ({:d} patches)\n", patches_path,
                static_cast<int>(patches.patches.size()));
   }
+  SurfaceResponsePreflightOutcome outcome;
+  outcome.written.push_back(path);
+  if (parallel_mesh.Dimension() == 3)
+  {
+    outcome.written.push_back(patches_path);
+  }
   if (!geometry_fallbacks.is_null())
   {
     Mpi::Print(
         parallel_mesh.GetComm(), "{}",
         GeometryFallbackBanner(geometry_fallbacks,
                                "Identification.Diagnostics.GeometryFallbacks of " + path));
-    GeometryFallbackLedger(geometry_policy, true, patches.geometry_fallbacks)
-        .Enforce("surface-response preflight");
+    // FailClosed ends the preflight here, after the write; the ledger is replicated on
+    // every rank, so every rank returns the same outcome (the driver's exit status).
+    outcome.fail_closed_summary =
+        GeometryFallbackLedger(geometry_policy, true, patches.geometry_fallbacks)
+            .FailClosedSummary();
   }
+  return outcome;
 }
 
 // The first construction's domain-boundary containment result, kept with the automatic

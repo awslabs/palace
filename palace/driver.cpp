@@ -5,6 +5,7 @@
 
 #include <fstream>
 #include <memory>
+#include <string>
 #include <vector>
 #include <mfem.hpp>
 #include <nlohmann/json.hpp>
@@ -147,16 +148,31 @@ void Run(IoData &iodata, MPI_Comm comm, int omp_threads, const char *git_tag)
   Mpi::Print(comm, "\n");
 }
 
-void RunSurfaceResponsePreflight(IoData &iodata, MPI_Comm comm, int omp_threads,
-                                 const char *git_tag)
+int RunSurfaceResponsePreflight(IoData &iodata, MPI_Comm comm, int omp_threads,
+                                const char *git_tag)
 {
   auto solver = MakeSolver(iodata, Mpi::Root(comm), Mpi::Size(comm), omp_threads, git_tag);
   MFEM_VERIFY(solver, "Unknown problem type in surface-response preflight!");
   auto mesh = LoadMesh(iodata, comm, *solver);
   MFEM_VERIFY(!mesh.empty(), "Surface-response preflight produced no mesh!");
-  WriteSurfaceResponseRequirements(
+  const auto outcome = WriteSurfaceResponseRequirements(
       iodata, *mesh.back(),
       (fs::path(iodata.problem.output) / "surface-response-requirements.json").string());
+  if (!outcome.fail_closed_summary.empty())
+  {
+    std::string written;
+    for (const auto &file : outcome.written)
+    {
+      written += (written.empty() ? "" : " and ") + file;
+    }
+    Mpi::Print(
+        comm,
+        "\nSurface-response preflight ended: GeometryFailurePolicy FailClosed with {}; "
+        "written: {} (complete); exit status {:d}\n",
+        outcome.fail_closed_summary, written,
+        kSurfaceResponsePreflightFailClosedExitStatus);
+    return kSurfaceResponsePreflightFailClosedExitStatus;
+  }
 
   // Preserve the same structured timing and memory metadata as an ordinary solve so
   // geometry-only preflight benchmarks do not need to scrape formatted terminal output.
@@ -171,6 +187,7 @@ void RunSurfaceResponsePreflight(IoData &iodata, MPI_Comm comm, int omp_threads,
   solver->SaveMetadata(peak_mem);
   solver->SaveMetadata(peak_node_mem);
   Mpi::Print(comm, "\n");
+  return 0;
 }
 
 void RunMeshStatistics(IoData &iodata, MPI_Comm comm, int omp_threads, const char *git_tag)

@@ -2080,11 +2080,24 @@ public:
   void MultTranspose(const Vector &x, Vector &y) const override { Mult(x, y); }
 };
 
+// How a surface-response preflight ended. The manifest (and, in 3D, the patch dry run) is
+// written in full either way.
+struct SurfaceResponsePreflightOutcome
+{
+  // Empty when the preflight completed; otherwise GeometryFailurePolicy FailClosed ended
+  // it: the summary of the recorded geometry fallbacks ("N geometry fallback(s) recorded
+  // (<class> <count>, ...)").
+  std::string fail_closed_summary;
+  // The files written (the manifest, then the patch dry run in 3D).
+  std::vector<std::string> written;
+};
+
 // Classify the configured automatic surface-response neighborhoods without assembling a
 // finite-element operator or solving a field problem. The deterministic JSON manifest
 // reports exact, interpolated, and missing process-library requirements.
-void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
-                                      const std::string &path);
+SurfaceResponsePreflightOutcome WriteSurfaceResponseRequirements(const IoData &iodata,
+                                                                 const Mesh &mesh,
+                                                                 const std::string &path);
 
 // The magnetic (inductive) leaves of a fabrication-process library as the operator would
 // load them, without a device (mx-sc-magnetic DESIGN-v2 section 3; the Phase-1 gate G-d
@@ -2100,7 +2113,8 @@ nlohmann::json DescribeMagneticLeaves(const std::string &library_path, const Uni
 // converted former-abort site records into when its condition holds. Under RecordRaw the
 // site takes its raw branch and the run continues; under FailClosed the same record is
 // taken and the abort is DEFERRED to Enforce() at the end of the configuration (the
-// preflight writes its manifest first), so every fallback is reported at once and the
+// preflight writes its manifest first and then ends with its FailClosed exit status instead
+// of the abort: FailClosedSummary()), so every fallback is reported at once and the
 // preflight predicts the solve. Absent leaf: RecordRaw on a solve, FailClosed on the
 // preflight. Every conversion decision is taken on replicated data (the root's
 // identification broadcast, the replicated patch table), so the ledger is rank-consistent.
@@ -2134,6 +2148,9 @@ public:
   void Record(GeometryFallbackData entry);
   // The deferred FailClosed abort: a no-op under RecordRaw or without a record.
   void Enforce(const std::string &where) const;
+  // The summary Enforce reports ("N geometry fallback(s) recorded (<class> <count>, ...)");
+  // empty when Enforce is a no-op.
+  std::string FailClosedSummary() const;
 };
 
 // H13-I2 / R-1 (fix round P2, OI-IDENT-CHAIN-VERTEX-DEGREE): the BranchingPerimeter

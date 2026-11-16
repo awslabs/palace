@@ -23,10 +23,16 @@ class IoData;
 //     rewritten to absolute paths by the caller).
 void Run(IoData &iodata, MPI_Comm comm, int omp_threads, const char *git_tag = nullptr);
 
+// The process exit status of a surface-response preflight that wrote its complete manifest
+// and then ended because GeometryFailurePolicy FailClosed recorded geometry fallbacks.
+constexpr int kSurfaceResponsePreflightFailClosedExitStatus = 3;
+
 // Load and preprocess the configured mesh, classify automatic surface-response
 // neighborhoods, write a requirements manifest, and exit without assembling or solving.
-void RunSurfaceResponsePreflight(IoData &iodata, MPI_Comm comm, int omp_threads,
-                                 const char *git_tag = nullptr);
+// Returns the process exit status: 0, or kSurfaceResponsePreflightFailClosedExitStatus
+// (then the timing and memory metadata are not written, as before this status existed).
+int RunSurfaceResponsePreflight(IoData &iodata, MPI_Comm comm, int omp_threads,
+                                const char *git_tag = nullptr);
 
 // Load through the normal preprocessing path (including internal-boundary cracking)
 // and report the resulting global H1 size without constructing a PDE operator.
