@@ -253,6 +253,19 @@ ConfigurePreconditionerSolver(const config::LinearSolverData &linear,
       break;
   }
 
+  // With ComplexCoarseSolve, say how the complex-valued matrix is factored: the real-valued
+  // system of twice the size takes more memory and time.
+  if constexpr (std::is_same_v<OperType, ComplexOperator>)
+  {
+    if (linear.complex_coarse_solve && !linear.pc_mat_real && verbose > 0)
+    {
+      Mpi::Print(comm, " Coarse solve with the complex-valued matrix {}\n",
+                 dynamic_cast<MfemWrapperSolver<OperType> *>(pc.get())
+                     ? "as a real-valued system of twice the size"
+                     : "in complex arithmetic");
+    }
+  }
+
   // Construct the actual solver, which has the right value type.
   if (fespaces.GetNumLevels() > 1)
   {
