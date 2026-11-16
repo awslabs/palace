@@ -1141,9 +1141,14 @@ void RunCeedIntegratorTests(MPI_Comm comm, const std::string &input, int ref_lev
     }
     SECTION("RT Div-Div Integrator")
     {
+      // MFEM's DivDivIntegrator uses order 2p - 2, plus 2 on elements of
+      // FunctionSpace::Uk (pyramids). The extra order of Palace depends only on whether
+      // the mesh element is simplicial, so it matches MFEM on meshes with pyramids only
+      // when they have no other non-simplicial element.
       fem::DefaultIntegrationOrder::q_order_jac = false;
       fem::DefaultIntegrationOrder::q_order_extra_pk = -2;
-      fem::DefaultIntegrationOrder::q_order_extra_qk = -2;
+      fem::DefaultIntegrationOrder::q_order_extra_qk =
+          mesh.Get().HasGeometry(mfem::Geometry::PYRAMID) ? 0 : -2;
       mesh.ResetCeedObjects();
       BilinearForm a_test(rt_fespace);
       mfem::BilinearForm a_ref(&rt_fespace.Get());
@@ -1950,6 +1955,15 @@ TEMPLATE_TEST_CASE_SIG("3D libCEED Operators", "[libCEED][Serial][Parallel]",
   RunCeedIntegratorTests(MPI_COMM_WORLD, TestMeshPath(Mesh), 0, amr, order);
 }
 
+TEST_CASE("3D libCEED Operators on Pyramids", "[libCEED][Serial][Parallel]")
+{
+  // The meshes above have no pyramids. Nedelec spaces of order 2 and above on pyramids need
+  // the DoF transformation of the triangular faces in the element restriction (#1204).
+  auto order = GENERATE(1, 2, 3);
+  RunCeedIntegratorTests(MPI_COMM_WORLD, TestMeshPath("cube-pyramid.mesh"), 0, false,
+                         order);
+}
+
 TEST_CASE("2D libCEED Interpolators", "[libCEED][Interpolator][Serial][Parallel]")
 {
   auto mesh = GENERATE("star-quad.mesh", "star-tri.mesh", "star-mixed-p2.mesh");
@@ -1964,6 +1978,14 @@ TEST_CASE("3D libCEED Interpolators", "[libCEED][Interpolator][Serial][Parallel]
   auto amr = GENERATE(false, true);
   auto order = GENERATE(1, 2, 3);
   RunCeedInterpolatorTests(MPI_COMM_WORLD, TestMeshPath(mesh), 0, amr, order);
+}
+
+TEST_CASE("3D libCEED Interpolators on Pyramids",
+          "[libCEED][Interpolator][Serial][Parallel]")
+{
+  auto order = GENERATE(1, 2, 3);
+  RunCeedInterpolatorTests(MPI_COMM_WORLD, TestMeshPath("cube-pyramid.mesh"), 0, false,
+                           order);
 }
 
 // Test the 31 (SpaceDim=3, Dim=1) libCEED qfunctions for boundary integrators on a 2D

@@ -530,6 +530,15 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 sha256="7226ea4e223b0e2bd1bc4b21de93498f22b2d8c1dcb194415a377848f9200cc0",
                 when="@4.10:",
             ),
+            # GetDofTransformation for Nedelec pyramids (the libCEED element restrictions
+            # skip the triangular face transformations for order 2 and above without it)
+            patch(
+                "https://raw.githubusercontent.com/awslabs/palace/"
+                "54eecba1e993876cb8aedaf531e16b95e90eed61/extern/patch/mfem/"
+                "mfem_nd_pyramid_doftrans.diff",
+                sha256="86e9378f942bc3d36e15f0131d1258c4d4df1bdc18cb6676938cde6f92a12a44",
+                when="@4.10:",
+            ),
         ],
     )
 

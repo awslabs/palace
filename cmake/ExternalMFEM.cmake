@@ -534,6 +534,14 @@ download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
   "https://github.com/mfem/mfem/commit/5e9a26308ef95e6a8337f7b266e9a92914adcca0.diff"
   7226ea4e223b0e2bd1bc4b21de93498f22b2d8c1dcb194415a377848f9200cc0
 )
+# Nedelec pyramids return their DoF transformation from GetDofTransformation, so that
+# ND_FECollection::DofTransformationForGeometry is not null for pyramids and the libCEED
+# element restrictions apply the triangular face transformations for order 2 and above.
+download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
+  mfem_nd_pyramid_doftrans.diff
+  "https://raw.githubusercontent.com/awslabs/palace/54eecba1e993876cb8aedaf531e16b95e90eed61/extern/patch/mfem/mfem_nd_pyramid_doftrans.diff"
+  86e9378f942bc3d36e15f0131d1258c4d4df1bdc18cb6676938cde6f92a12a44
+)
 
 include(ExternalProject)
 ExternalProject_Add(mfem
