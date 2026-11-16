@@ -210,8 +210,9 @@ std::unique_ptr<mfem::Mesh> Load(IoData &iodata, MPI_Comm comm)
     SplitMeshElements(smesh, iodata.model.make_simplex, iodata.model.make_hex);
   }
 
-  // Optionally reorder elements/vertices by spatial location for cache locality.
-  if (iodata.model.reorder_elements)
+  // Optionally reorder elements/vertices by spatial location for cache locality. MFEM does
+  // not reorder nonconforming or NURBS meshes.
+  if (iodata.model.reorder_elements && smesh->Conforming() && !smesh->NURBSext)
   {
     ReorderMeshElements(*smesh);
   }
