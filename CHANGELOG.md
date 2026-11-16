@@ -52,6 +52,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Performance Improvements
 
+  - Nonconforming adapted meshes are now rebalanced with a METIS partition of their element
+    graph instead of MFEM's default partition, which fragments the subdomains. This speeds
+    up adaptive simulations. [PR 1130](https://github.com/awslabs/palace/pull/1130).
   - Added a STRUMPACK patch for
     [pghysels/STRUMPACK#165](https://github.com/pghysels/STRUMPACK/pull/165), which lowers
     the latency of the distributed triangular solves of the solve phase for a few
