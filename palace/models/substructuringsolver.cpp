@@ -456,6 +456,13 @@ void SubstructuringSolver::CondenseEnvironment()
     // kept until it is replaced).
     impl->WriteModel(model_path, true, [](std::ofstream &) {});
   }
+  // The versions of the interface DOFs on a two-sided film crossing Gamma are told apart
+  // by the faces of their sides (InterfaceSignatures), of which a coarse face of a
+  // nonconforming mesh has several on one side.
+  MFEM_VERIFY(
+      model_path.empty() || !impl->InterfaceSplit() || !impl->parent.Nonconforming(),
+      "A saved substructuring model with \"TwoSided\" superconductor films crossing "
+      "the interface needs a conforming mesh!");
   bool loaded = false;
   if (online && !model_path.empty())
   {

@@ -153,8 +153,9 @@ std::unique_ptr<mfem::HypreParMatrix> EliminateToIdentity(const mfem::HypreParMa
 // The mesh of the region written next to a saved substructuring model: <model>_region.mesh.
 std::string RegionMeshPath(const std::string &model_path);
 
-// Write a mesh of the region for online substructuring runs, from rank 0 in mesh length
-// units (coordinates times length_scale): the region, and the environment elements touching
+// Write a mesh of the region for online substructuring runs from a conforming mesh, from
+// rank 0 in mesh length units (coordinates times length_scale): the region, and the
+// environment elements touching
 // the marked local true DOFs, with their boundary elements. The local boundary elements
 // marked in plain_bdr (if not empty) are written with the attribute of the boundary faces
 // the submesh generates. Returns the local environment elements written. Collective.

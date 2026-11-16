@@ -1547,6 +1547,71 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
                     Catch::Matchers::ContainsSubstring("is incomplete"));
 }
 
+TEST_CASE_METHOD(
+    palace::test::SharedTempDir,
+    "SubstructuringSolver writes no mesh of the region of a nonconforming mesh",
+    "[substructure][Serial][Parallel]")
+{
+  // On a nonconforming mesh, whose refined environment elements next to the interface are
+  // among those written with the mesh of the region (they touch the grounded faces that
+  // reach the interface), no mesh of the region is written; the model still serves an
+  // online run on the full mesh.
+  const std::string model_path = (temp_dir / "substruct_nc_model.bin").string();
+  auto make_config = [&model_path](const std::string &mode)
+  {
+    json config = {
+        {"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains",
+         {{"Materials",
+           {{{"Attributes", {1}}, {"Permittivity", 1.0}},
+            {{"Attributes", {2}}, {"Permittivity", 10.0}}}}}},
+        {"Boundaries",
+         {{"Terminal",
+           {{{"Index", 1}, {"Attributes", {1}}}, {{"Index", 2}, {"Attributes", {2}}}}},
+          {"Ground", {{"Attributes", {3}}}}}},
+        {"Solver",
+         {{"Order", 1},
+          {"Substructuring",
+           {{"Region", {{"Attributes", {1}}}},
+            {"Environment", {{"Attributes", {2}}}},
+            {"Mode", mode},
+            {"SaveModel", model_path}}}}}};
+    return IoData(config, false);
+  };
+  auto capacitance = [](const IoData &iodata)
+  {
+    auto pmesh = MakeGradedSplit(4, 4, 4, {}, true);
+    mfem::Array<int> refs;
+    mfem::Vector c;
+    for (int e = 0; e < pmesh->GetNE(); e++)
+    {
+      pmesh->GetElementCenter(e, c);
+      if (c(0) > 0.5 && c(0) < 0.75)
+      {
+        refs.Append(e);
+      }
+    }
+    pmesh->GeneralRefinement(refs, 1);
+    std::vector<std::unique_ptr<Mesh>> mesh;
+    mesh.push_back(std::make_unique<Mesh>(std::move(pmesh)));
+    REQUIRE(mesh.back()->Get().Nonconforming());
+    SubstructuringSolver ss(iodata, mesh);
+    ss.CondenseEnvironment();
+    return ss.CapacitanceMatrix({1, 2});
+  };
+  const mfem::DenseMatrix C_off = capacitance(make_config("Offline"));
+  CHECK_FALSE(std::filesystem::exists(RegionMeshPath(model_path)));
+  const mfem::DenseMatrix C_on = capacitance(make_config("Online"));
+  for (int i = 0; i < 2; i++)
+  {
+    for (int j = 0; j < 2; j++)
+    {
+      CHECK(std::abs(C_on(i, j) - C_off(i, j)) <= 1.0e-10 * C_off(i, i));
+    }
+  }
+}
+
 TEST_CASE_METHOD(palace::test::SharedTempDir,
                  "SubstructuringSolver capacitance from a model without terminal modes",
                  "[substructure][Serial][Parallel]")

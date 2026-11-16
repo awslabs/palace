@@ -12,6 +12,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
 #include <catch2/generators/catch_generators.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 #include "fem/bilinearform.hpp"
 #include "fem/fespace.hpp"
 #include "fem/integrator.hpp"
@@ -573,6 +574,21 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   CHECK(E_off > 0.0);
   CHECK(std::abs(E_on - E_off) <= 1.0e-9 * E_off);
   CHECK(std::abs(E_region - E_off) <= 1.0e-9 * E_off);
+}
+
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "Substructuring model with a two-sided film needs a conforming mesh",
+                 "[substructure][Serial][Parallel]")
+{
+  // A model with a two-sided film crossing the interface on a nonconforming mesh, whose
+  // coarse faces have several neighbors, is rejected before the condensation.
+  json config = MagnetostaticConfig(1, false, true);
+  config["Solver"]["Substructuring"]["SaveModel"] = (temp_dir / "film_nc.model").string();
+  IoData iodata(config, false);
+  auto mesh = MakeMesh(MakeParitySerial(8, {false, 0, false, true}));
+  SubstructuringSolver ss(iodata, mesh);
+  CHECK_THROWS_WITH(ss.CondenseEnvironment(),
+                    Catch::Matchers::ContainsSubstring("needs a conforming mesh"));
 }
 
 }  // namespace palace

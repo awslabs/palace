@@ -438,6 +438,15 @@ SubstructuringSolver::Impl::RegionFilmClosure(std::vector<char> &keep,
 std::vector<char> SubstructuringSolver::Impl::WriteRegionMesh(const std::string &path)
 {
   BlockTimer bt(Timer::IO);
+  if (parent.Nonconforming())
+  {
+    // The submesh of a nonconforming mesh also selects by the attributes of the parents of
+    // refined elements, which the written environment elements do not shift.
+    Mpi::Warning(parent.GetComm(),
+                 "No mesh of the region is written for a nonconforming mesh: online runs "
+                 "need the full mesh!\n");
+    return std::vector<char>(parent.GetNE(), 0);
+  }
   std::vector<char> keep(parent_fes.GetTrueVSize(), 0);
   for (int t = 0; t < nt; t++)
   {

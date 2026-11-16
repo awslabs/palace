@@ -611,6 +611,8 @@ std::vector<char> WriteRegionMesh(const std::string &path,
   // On a copy of the mesh, the environment elements touching the kept DOFs take shifted
   // attributes for the domain submesh, and get theirs back in the written mesh.
   const auto &parent = *fespace.GetParMesh();
+  MFEM_VERIFY(!parent.Nonconforming(),
+              "The mesh of the region is written from a conforming mesh only!");
   mfem::Vector tmark(fespace.GetTrueVSize()), lmark(fespace.GetVSize());
   for (int i = 0; i < fespace.GetTrueVSize(); i++)
   {
@@ -678,42 +680,15 @@ std::vector<char> WriteRegionMesh(const std::string &path,
                           smesh.Mesh::Print(out);
                         });
   };
-  if (mesh.Nonconforming())
+  mfem::Mesh smesh = mesh.GetSerialMesh(0);
+  SerialRegionMesh sub(Mpi::Root(comm)
+                           ? mfem::Mesh(mfem::SubMesh::CreateFromDomain(smesh, attrs))
+                           : mfem::Mesh());
+  if (Mpi::Root(comm))
   {
-    // Written as cracked: the online run does not preprocess a nonconforming mesh.
-    mfem::Array<int> rank0(mesh.GetNE());
-    rank0 = 0;
-    mesh.Rebalance(rank0);
-    auto sub = mfem::ParSubMesh::CreateFromDomain(mesh, attrs);
-    for (int e = 0; e < sub.GetNE(); e++)
-    {
-      if (sub.GetAttribute(e) > shift)
-      {
-        sub.SetAttribute(e, sub.GetAttribute(e) - shift);
-      }
-    }
-    for (int be = 0; plain && be < sub.GetNBE(); be++)
-    {
-      if (sub.GetBdrAttribute(be) == plain + 1)
-      {
-        sub.SetBdrAttribute(be, plain);
-      }
-    }
-    sub.SetAttributes();
-    write(sub);
+    sub.PrepareForPrint(shift, plain);
   }
-  else
-  {
-    mfem::Mesh smesh = mesh.GetSerialMesh(0);
-    SerialRegionMesh sub(Mpi::Root(comm)
-                             ? mfem::Mesh(mfem::SubMesh::CreateFromDomain(smesh, attrs))
-                             : mfem::Mesh());
-    if (Mpi::Root(comm))
-    {
-      sub.PrepareForPrint(shift, plain);
-    }
-    write(sub);
-  }
+  write(sub);
   return written;
 }
 
