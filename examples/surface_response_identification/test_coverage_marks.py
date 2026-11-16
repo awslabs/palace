@@ -5,6 +5,8 @@
 MarkNotApplied signals of a table header / a tree, and read_cell's rule (mark 1 NOT-APPLIED whatever the token; mark 0 and a finite
 number read; any other unmarked token or a missing mark column a Refusal; a Warn tree refuses a text token only)."""
 
+import contextlib
+import io
 import json
 import math
 import os
@@ -222,6 +224,20 @@ class ProvenanceTest(unittest.TestCase):
         """Decision 1944 (3): the guard's tree rule (R-2 (b)'s only use) is no longer in this module."""
         for name in ("guard_rule_signals", "palace_signals", "GuardRuleRefuse", "GUARD_PARSE_LIMIT", "GUARD_MARK_KEYS"):
             self.assertFalse(hasattr(cm, name), name)
+
+    def test_explicit_marks_string_and_number_forms_refused(self):
+        """Decision 1954 (the round-4 review's m-3): explicit_marks must be the JSON true itself: the strings "true" and "1" and the
+        number 1 are refused with the exact line, and accept_report prints nothing."""
+        good = cm.provenance(self.writer)
+        line = (f"REFUSED (decision 1942): r.json: {cm.REPORT_REFUSAL_TEXT} (its provenance does not state explicit_marks true "
+                f"(the allowed writer {good['writer_sha256'][:16]}))")
+        for form in ("true", "1", 1):
+            buf, err = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(err):
+                with self.assertRaises(cm.ReportRefusal, msg=repr(form)) as caught:
+                    cm.accept_report({cm.PROVENANCE_KEY: dict(good, explicit_marks=form)}, "r.json", self.allowed)
+            self.assertEqual(str(caught.exception), line, repr(form))
+            self.assertEqual((buf.getvalue(), err.getvalue()), ("", ""), repr(form))
 
 if __name__ == "__main__":
     unittest.main()

@@ -1113,5 +1113,130 @@ class ReportProvenanceWindows(unittest.TestCase):
         self.assertEqual(g[cm.PROVENANCE_KEY], cm.provenance(gc.__file__))
 
 
+class BandWithheldBySource(unittest.TestCase):
+    """Decisions 1954 / 1955 (the round-4 review's M-1): an ES member reads the --band marks of ITS OWN source block (and the
+    default source's: the band values are the default source's block_C): a Type the report withholds for the member's source reads
+    'band NOT-APPLIED (marked solve)' for that member (no band interval, `in` null), never a band pass or fail, and is listed in
+    band_not_applied_types; the band values of the unmarked members stay the default source's; a report without a withheld row
+    reads exactly as before; a member whose source has no block reads the default block only."""
+
+    WIDE = {T: {"calibrated": True, "low_pt": -9.0, "high_pt": 9.0} for T in ("SA", "MS", "MA", "C")}
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.sources = [1, 2, 3, 4]
+        self.p_ref = {s: {1: 1.0e-4, 2: 2.0e-4, 3: 1.0e-5} for s in self.sources}
+        self.c_ref = {s: 1.0e-14 * s for s in self.sources}
+        ma_sharp_ref = {s: self.p_ref[s][3] * (1.0 + 0.5 * 0.0678) for s in self.sources}
+        self.values = os.path.join(self.tmp, "ref.json")
+        with open(self.values, "w") as handle:
+            json.dump(es_values_reference(self.sources, self.p_ref, self.c_ref, ma_sharp_ref), handle)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp)
+
+    def run_of(self, name, sources=None):
+        sources = sources or self.sources
+        return synthetic_es_run(os.path.join(self.tmp, name), sources, {s: dict(self.p_ref[s]) for s in sources},
+                                {s: self.c_ref[s] for s in sources}, {s: -0.1 * self.c_ref[s] for s in sources})
+
+    @staticmethod
+    def block(withheld=()):
+        """A per-source block_C in coverage_report's form: the wide band, the `withheld` Types in the NOT-APPLIED form."""
+        out = {T: dict(v) for T, v in BandWithheldBySource.WIDE.items()}
+        for T in withheld:
+            out[T] = {"calibrated": True, "predictors": {}, "not_applied": True, "note": f"NOT-APPLIED ES / {T}: no band"}
+        return out
+
+    def report(self, withheld_by_source, with_sources=True):
+        """A multi-source report of the allowed writer: source 1 the default (headline) block, `withheld_by_source` {s: Types}."""
+        head = withheld_by_source.get(1, ())
+        extra = {"source": 1, "sources_in_run": list(self.sources)}
+        if head:
+            extra["not_applied_types"] = sorted(T for T in head if T != "C")
+        if with_sources:
+            extra["sources"] = {}
+            for s in self.sources:
+                blk = {"block_C": self.block(withheld_by_source.get(s, ()))}
+                if withheld_by_source.get(s):
+                    blk["not_applied_types"] = sorted(T for T in withheld_by_source[s] if T != "C")
+                extra["sources"][str(s)] = blk
+        return allowed_band_report(self.block(head), **extra)
+
+    def grade(self, run, report, name, band_name="band.json"):
+        band = os.path.join(self.tmp, band_name)
+        with open(band, "w") as handle:
+            json.dump(report, handle)
+        out = os.path.join(self.tmp, "grade.json")
+        buf, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(err):
+            rc = gc.main(["--form", "es", "--device", run, "--reference-values", self.values, "--out", out, "--tail-form", "422",
+                          "--label", "w", "--band", band])
+        self.assertEqual((rc, err.getvalue()), (0, ""), (name, buf.getvalue()))
+        with open(out) as handle:
+            text = handle.read()
+        return json.loads(text), text, buf.getvalue()
+
+    def withheld_members(self, g):
+        """{(member, Type)} read 'band NOT-APPLIED (marked solve)', each checked to carry no band interval and `in` null."""
+        out = set()
+        for m, v in g["per_member"].items():
+            for T, b in v["grade"]["band"].items():
+                if b.get("band_note") == gc.BAND_NOT_APPLIED:
+                    self.assertEqual((b["band"], b["in"]), (None, None), (m, T))
+                    out.add((m, T))
+        return out
+
+    def test_ht2b_form_member_reads_its_own_source(self):
+        """The review's HT2b: source 2's MS withheld (a marked FIRST solve of its ladder), every final value unmarked: member 2 MS
+        reads NOT-APPLIED; members 1 / 3 / 4 MS keep the default source's band reading; the MS cell is no band pass or fail; MS in
+        band_not_applied_types; the top-level band (the default source's values) unchanged."""
+        g, _, stdout = self.grade(self.run_of("ht2b"), self.report({2: ("MS",)}), "ht2b")
+        self.assertEqual(self.withheld_members(g), {("2", "MS")})
+        for m in ("1", "3", "4"):
+            self.assertEqual(g["per_member"][m]["grade"]["band"]["MS"]["band"], [-9.0, 9.0], m)
+            self.assertIs(g["per_member"][m]["grade"]["band"]["MS"]["in"], True, m)
+        self.assertIsNone(g["cells"]["MS"]["in_band"])
+        self.assertEqual(g["cells"]["MS"]["n_in_band"], 3)
+        self.assertEqual(g["cells"]["MS"]["band_note"], gc.BAND_NOT_APPLIED)
+        self.assertIs(g["cells"]["SA"]["in_band"], True)
+        self.assertEqual(g.get("band_not_applied_types"), ["MS"])
+        self.assertEqual(g["band"], {T: [-9.0, 9.0] for T in ("SA", "MS", "MA", "C")})
+        self.assertIn("MS +0.000 % [+0.000, +0.000] PASS band NOT-APPLIED (marked solve)", stdout)
+
+    def test_ht4_form_own_and_default_marks(self):
+        """The review's HT4: the default source 1 withholds SA (and C), source 2 MS (and C): every member reads SA and C NOT-APPLIED
+        (no value exists: the default row is withheld), member 2 MS too; members 1 / 3 / 4 MS keep the band reading."""
+        g, _, _ = self.grade(self.run_of("ht4"), self.report({1: ("SA", "C"), 2: ("MS", "C")}), "ht4")
+        want = {(str(s), T) for s in self.sources for T in ("SA", "C")} | {("2", "MS")}
+        self.assertEqual(self.withheld_members(g), want)
+        self.assertEqual(g["band_not_applied_types"], ["C", "MS", "SA"])
+        self.assertIs(g["per_member"]["3"]["grade"]["band"]["MS"]["in"], True)
+
+    def test_report_without_withheld_rows_reads_as_before(self):
+        """Keyed on withheld rows only: a report whose per-source blocks withhold nothing, and a headline-only withheld form whose
+        other sources are clean, give byte-identical stdout and grade JSON to the same report without its per-source blocks (the
+        reading of round 4, which never opened them)."""
+        run = self.run_of("same")
+        for name, withheld in (("unmarked", {}), ("headline", {1: ("SA", "C")})):
+            _, text_with, out_with = self.grade(run, self.report(withheld), name)
+            _, text_without, out_without = self.grade(run, self.report(withheld, with_sources=False), name)
+            self.assertEqual(text_with, text_without, name)
+            self.assertEqual(out_with, out_without, name)
+        g, _, _ = self.grade(run, self.report({}), "unmarked")
+        self.assertNotIn("band_not_applied_types", g)
+        self.assertEqual(self.withheld_members(g), set())
+
+    def test_member_without_a_source_block_reads_the_default_block(self):
+        """A member whose source has no block in the report (here source 4) reads the default block only; source 2's own withheld MS
+        is NOT-APPLIED for member 2 only."""
+        report = self.report({2: ("MS",)})
+        del report["sources"]["4"]
+        g, _, _ = self.grade(self.run_of("noblock"), report, "noblock")
+        self.assertEqual(self.withheld_members(g), {("2", "MS")})
+        self.assertIs(g["per_member"]["4"]["grade"]["band"]["MS"]["in"], True)
+        self.assertEqual(g["band_not_applied_types"], ["MS"])
+
+
 if __name__ == "__main__":
     unittest.main()

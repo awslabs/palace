@@ -74,6 +74,15 @@ ROUND 4 (decision 1942): the no-provenance branch is REMOVED: a --band report is
 ALLOWED_REPORT_WRITERS (coverage_report.py of the round-4 commit, by sha256, with its coverage_marks sha256 and explicit_marks true);
 any other report, an old report of an unmarked tree included, is a REFUSAL ('report without an allowed provenance: re-create it with
 the allowed reader'; one line, exit 5, no output file). No tree is read for the decision.
+
+ROUND 5 (decisions 1954 / 1955): an ES member reads the --band marks of ITS OWN source: a Type the report withholds for the member's
+source (its per-source not_applied_types or block_C row with not_applied) or for the default source (the band values are the default
+source's block_C, the window band form of decision 1455 (b): where that row is withheld no value exists) reads 'band NOT-APPLIED
+(marked solve)' for that member, never a band pass or fail, and the Type is listed in band_not_applied_types. The marks are read by
+the rule of the banner's marks_by_source (f_report_banner_v8), so the two consumers withhold the same (member, Type). A member whose
+source has no block in the report reads the default block only: its graded value comes from the tree with the explicit marks (a
+marked final value is NOT-APPLIED from the tree itself); a source's own marks add only the marks of earlier solves of its ladder,
+which enter nothing this reader computes for the member. A report without a withheld row reads as in round 4.
 """
 
 import argparse
@@ -765,6 +774,43 @@ def static_limit_fit(freqs_ghz, c_eff):
             "rule": "unweighted least squares of C_eff on f^2: C_eff(f) = C_s (1 + a f^2); C_s = the static limit"}
 
 
+def band_withheld_by_source(report):
+    """{source (str): the block_C Types the --band report withholds for it} (decisions 1954 / 1955): the default source's from the
+    report's own not_applied_types and block_C rows, every other source's from its per-source block -- the rule of
+    f_report_banner_v8.marks_by_source, so that the two consumers read the same marks."""
+    def of(block):
+        rows = block.get("block_C")
+        m = set(block.get("not_applied_types") or [])
+        m.update(t for t, row in (rows.items() if isinstance(rows, dict) else []) if isinstance(row, dict) and row.get("not_applied"))
+        return m
+    out = {str(report.get("source")): of(report)}
+    per = report.get("sources") or {}
+    for s, block in (per.items() if isinstance(per, dict) else []):
+        out.setdefault(str(s), set()).update(of(block) if isinstance(block, dict) else set())
+    return out
+
+
+class BandWithheld:
+    """The Types a --band report withholds for each ES member (decisions 1954 / 1955): the member's own source block OR the default
+    source's block (a member whose source has no block: the default block only)."""
+
+    def __init__(self, report):
+        self.by_source = band_withheld_by_source(report)
+        self.default = self.by_source[str(report.get("source"))]
+
+    def of_member(self, member):
+        return self.by_source.get(str(member), set()) | self.default
+
+
+def member_band(band, withheld):
+    """The band rows one member reads: the default source's rows, every Type of `withheld` read as a withheld row (decision 1884:
+    no band reading). The same object when nothing changes (a report without a withheld row reads as in round 4)."""
+    extra = sorted(T for T in withheld if not (isinstance(band.get(T), dict) and band[T].get("not_applied")))
+    if not extra:
+        return band
+    return dict(band, **{T: dict(band[T] if isinstance(band.get(T), dict) else {}, not_applied=True) for T in extra})
+
+
 def band_check(x, band):
     out = {}
     for T, bt in (("SA", "SA"), ("MS", "MS"), ("MA_sharp", "MA"), ("C", "C")):
@@ -911,7 +957,7 @@ def tree_marks(post, config, palace_policy):
     return Marks(bool(signals)), signals
 
 
-def grade_es(a, catalog, cat_src, sp_tails, band, values, palace_policy=None):
+def grade_es(a, catalog, cat_src, sp_tails, band, values, palace_policy=None, band_withheld=None):
     final, ncyc = final_cycle_dir(a.device)
     iface, cfg = interfaces_by_type(os.path.join(a.device, "postpro", "config_resolved.json"))
     marks, signals = tree_marks(os.path.join(a.device, "postpro"), cfg, palace_policy)
@@ -929,7 +975,9 @@ def grade_es(a, catalog, cat_src, sp_tails, band, values, palace_policy=None):
         d = es_device_source(final, s, iface, catalog, sp_tails, a.tail_form, marks)
         r = (reference_from_values(values, s, a.tail_form, a.reference_rings_information) if values is not None
              else es_reference_source(a.reference, s, iface, a.shells_dir, a.tail_form, a.reference_rings_information))
-        per[s] = {"device": d, "reference": r, "grade": grade_member(d, r, band, "C_ft_F", "C_F")}
+        # decisions 1954 / 1955: the member reads the marks of its own source block (and the default source's)
+        mb = member_band(band, band_withheld.of_member(s)) if (band and band_withheld is not None) else band
+        per[s] = {"device": d, "reference": r, "grade": grade_member(d, r, mb, "C_ft_F", "C_F")}
     rule = "every source must PASS (fail-closed; decision 1210 (a)); the worst-|x| source quoted" if len(sources) > 1 else "single source"
     cells = {T: aggregate_cell(sources, {s: per[s]["grade"] for s in sources}, T, rule) for T in TYPES}
     for T in TYPES:
@@ -1060,13 +1108,17 @@ def main(argv=None):
         catalog, cat_src, palace_policy = model_catalog(post, a.model_catalog)
         tails = spatial_tails(a.library)
         band = None
+        band_withheld = None
         if a.band:
             with open(a.band) as handle:
                 report = json.load(handle)
             cm.accept_report(report, a.band, ALLOWED_REPORT_WRITERS)  # decision 1942: provenance only; ReportRefusal, exit 5
             band = report["block_C"]
-        grade = grade_es if a.form == "es" else grade_mx
-        out = grade(a, catalog, cat_src, tails, band, values, palace_policy)
+            band_withheld = BandWithheld(report) if band else None
+        if a.form == "es":
+            out = grade_es(a, catalog, cat_src, tails, band, values, palace_policy, band_withheld=band_withheld)
+        else:
+            out = grade_mx(a, catalog, cat_src, tails, band, values, palace_policy)
     except MissingInput as e:
         print(f"grade_cells.py: missing input {e}", file=sys.stderr)
         return 2
@@ -1086,8 +1138,13 @@ def main(argv=None):
                 "band_file": a.band, "band": ({T: [band[T]["low_pt"], band[T]["high_pt"]] for T in ("SA", "MS", "MA", "C")
                                                if T in band and not band[T].get("not_applied")} if band else None),
                 "c_form": a.c_form if a.form == "maxwell" else "diagonal C fixed-trace[i][i] (ES)"})
-    if band and any(v.get("not_applied") for v in band.values() if isinstance(v, dict)):
-        out["band_not_applied_types"] = sorted(T for T, v in band.items() if isinstance(v, dict) and v.get("not_applied"))
+    withheld_types = {T for T, v in band.items() if isinstance(v, dict) and v.get("not_applied")} if band else set()
+    if band and a.form == "es":
+        # decisions 1954 / 1955: the Types withheld for any graded member's own source are listed too
+        for m in out["members"]:
+            withheld_types |= band_withheld.of_member(m)
+    if withheld_types:
+        out["band_not_applied_types"] = sorted(withheld_types)
     out[cm.PROVENANCE_KEY] = cm.provenance(os.path.abspath(__file__))  # decision 1934 (R-1)
     os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
     with open(a.out, "w") as handle:
