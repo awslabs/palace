@@ -101,7 +101,10 @@ SubstructuringSolver::Impl::Impl(const IoData &iodata,
 
   // Dirichlet true DOFs: the terminals (per terminal) and the grounded boundaries. The
   // set is fixed across excitations, so the interface/interior partition is too.
-  const auto &terminals = iodata.boundaries.terminal;
+  // Terminals are Dirichlet boundaries in electrostatics only: the regular curl-curl
+  // operator ignores them (CurlCurlOperator::SetUpBoundaryProperties).
+  const std::map<int, config::TerminalData> no_terminals;
+  const auto &terminals = magnetostatic ? no_terminals : iodata.boundaries.terminal;
   mfem::Array<int> dir_mark(nt);
   dir_mark = 0;
   {
@@ -1137,6 +1140,8 @@ mfem::DenseMatrix SubstructuringSolver::EnergyMatrixDbc(const std::vector<int> &
                                                         std::vector<Vector> *region_fields)
 {
   MFEM_VERIFY(impl->mat_dtn, "CondenseEnvironment must be called before solving!");
+  MFEM_VERIFY(!impl->magnetostatic,
+              "Dirichlet-lift energies are for electrostatic substructuring problems!");
   const int nt = impl->nt;
   const int n = static_cast<int>(xd.size());
   const int nf = fields ? std::max(0, std::min(n_fields, n)) : 0;
@@ -1150,19 +1155,6 @@ mfem::DenseMatrix SubstructuringSolver::EnergyMatrixDbc(const std::vector<int> &
     }
     return x;
   };
-
-  // Magnetostatics without the energy interface operator S^K: environment path (full
-  // fields, then the energy u_i^T K u_j).
-  if (impl->EnergyDiffers() && !impl->mat_dtn_K)
-  {
-    std::vector<Vector> u = SolveDirichletBatch(full());
-    mfem::DenseMatrix E = impl->EnergyGram(u);
-    if (fields)
-    {
-      fields->assign(u.begin(), u.begin() + nf);
-    }
-    return E;
-  }
 
   // Modes of these lifts: reuse the saved / current ones if they match (id + environment
   // fingerprint), else compute them (needs the environment once; appended to the model in
@@ -1180,9 +1172,7 @@ mfem::DenseMatrix SubstructuringSolver::EnergyMatrixDbc(const std::vector<int> &
     }
   }
   const int K = static_cast<int>(impl->mode_ids.size());
-  const std::vector<double> &GE = impl->have_gk ? impl->GK_rows : impl->G_rows;
-  const substructuring::MaterializedDtN &SK =
-      impl->mat_dtn_K ? *impl->mat_dtn_K : *impl->mat_dtn;
+  const std::vector<double> &G = impl->G_rows;
   auto row = [&](int i)
   { return static_cast<std::size_t>(impl->gamma_global[i] - impl->gamma_off) * K; };
 
@@ -1199,7 +1189,7 @@ mfem::DenseMatrix SubstructuringSolver::EnergyMatrixDbc(const std::vector<int> &
       double *trr = tr.HostReadWrite();
       for (int i : gm)
       {
-        trr[i] += impl->G_rows[row(i) + col[j]];
+        trr[i] += G[row(i) + col[j]];
       }
       tr.Neg();
       tr.GetSubVector(impl->rf_idx, xr[j]);
@@ -1207,7 +1197,7 @@ mfem::DenseMatrix SubstructuringSolver::EnergyMatrixDbc(const std::vector<int> &
   }
   impl->SolveRegion(xr);
 
-  // Per lift, on the region elements' DOFs: u_j and K_R u_j; on Gamma: u_j and S^K u_j.
+  // Per lift, on the region elements' DOFs: u_j and K_R u_j; on Gamma: u_j and S_E u_j.
   // Full fields only for the saved ones (and all of them for region_fields).
   std::vector<Vector> uc(n), Kuc(n), ug(n), Sug(n);
   if (fields)
@@ -1225,7 +1215,7 @@ mfem::DenseMatrix SubstructuringSolver::EnergyMatrixDbc(const std::vector<int> &
       Vector u = impl->RegionField(xr[j], &xd[j]);
       xr[j].Destroy();
       impl->K_region_e->Mult(u, Ku);
-      SK.Mult(u, Su);
+      impl->mat_dtn->Mult(u, Su);
       u.GetSubVector(rc, uc[j]);
       Ku.GetSubVector(rc, Kuc[j]);
       u.GetSubVector(gm, ug[j]);
@@ -1241,7 +1231,7 @@ mfem::DenseMatrix SubstructuringSolver::EnergyMatrixDbc(const std::vector<int> &
     }
   }
 
-  // E_ij = u_i^T K_R u_j + [u_G,i; e_i]^T [S^K, G^K; G^K^T, Cmode] [u_G,j; e_j]: the region
+  // E_ij = u_i^T K_R u_j + [u_G,i; e_i]^T [S_E, G; G^T, Cmode] [u_G,j; e_j]: the region
   // energy plus the environment's exact condensed energy.
   mfem::DenseMatrix E(n);
   for (int i = 0; i < n; i++)
@@ -1251,7 +1241,7 @@ mfem::DenseMatrix SubstructuringSolver::EnergyMatrixDbc(const std::vector<int> &
       double a = (uc[i] * Kuc[j]) + (ug[i] * Sug[j]);
       for (int q = 0; q < gm.Size(); q++)
       {
-        a += ug[i](q) * GE[row(gm[q]) + col[j]] + GE[row(gm[q]) + col[i]] * ug[j](q);
+        a += ug[i](q) * G[row(gm[q]) + col[j]] + G[row(gm[q]) + col[i]] * ug[j](q);
       }
       E(i, j) = a;
     }

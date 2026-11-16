@@ -427,18 +427,15 @@ struct SubstructuringSolver::Impl
   int gamma_off = 0, gamma_nloc = 0;
   std::unique_ptr<substructuring::MaterializedDtN> mat_dtn;
 
-  // Dirichlet-lift modes: the environment condensed onto Gamma + a set of Dirichlet lifts
-  // x_k (e.g. the terminal unit potentials). With t_k = A_env x_k and
+  // Dirichlet-lift modes (electrostatics): the environment condensed onto Gamma + a set of
+  // Dirichlet lifts x_k (the terminal unit potentials). With t_k = A_env x_k and
   // w_k = A_EE^-1 t_k|_E: the region-solve interface load g_k = (t_k - A_env w_k)|_Gamma
-  // (G_rows, owned interface rows: G_rows[r * K + k]). For the energy (operator K_env;
-  // equal to A_env for electrostatics, the volume terms for magnetostatics) the
-  // environment's exact condensed energy is [u_G; V]^T [S^K, G^K; G^K^T, Cmode] [u_G; V]
-  // with S^K = P^T K P = S_E - P^T D P (D = A_env - K_env, P the A-harmonic lifting), G^K
-  // (GK_rows; empty when K_env = A_env) and the replicated Cmode. A partition-invariant
-  // fingerprint per mode (LiftFingerprint) guards reuse.
+  // (G_rows, owned interface rows: G_rows[r * K + k]), and the environment's exact
+  // condensed energy [u_G; V]^T [S_E, G; G^T, Cmode] [u_G; V] with the replicated Cmode. A
+  // partition-invariant fingerprint per mode (LiftFingerprint) guards reuse.
   std::vector<int> mode_ids;
   std::vector<double> mode_fp;  // 2 per mode
-  std::vector<double> G_rows, GK_rows, Cmode;
+  std::vector<double> G_rows, Cmode;
   bool modes_ready = false;
   bool modes_saved = false;  // appended to the model file in this run
   // Magnetostatic energy interface operator S^K (distributed like S_rows), materialized
@@ -447,7 +444,7 @@ struct SubstructuringSolver::Impl
   std::vector<double> SK_rows;
   // Rank-independent presence flags (the distributed arrays are empty on ranks that own no
   // interface DOFs, so their emptiness must not gate collectives).
-  bool have_sk = false, have_gk = false;
+  bool have_sk = false;
   std::unique_ptr<substructuring::MaterializedDtN> mat_dtn_K;
   bool env_built = false;  // environment interior solver set up
 
@@ -625,9 +622,8 @@ struct SubstructuringSolver::Impl
   // (x + r)^T A_env (x + r) for a fixed field r. Collective.
   std::array<double, 2> LiftFingerprint(const mfem::Vector &x, const mfem::Vector &t) const;
 
-  // Modes (see the members) of the lifts x_k from batched environment solves: K solves,
-  // plus K more for the energy correction when it differs. Lifts that do not reach the
-  // environment interior skip the solve.
+  // Modes (see the members) of the lifts x_k from K batched environment solves. Lifts that
+  // do not reach the environment interior skip the solve.
   void ComputeModes(const std::vector<int> &ids, const std::vector<mfem::Vector> &x);
 
   // Whether the current modes cover the given lifts (same ids + environment fingerprints);
@@ -651,10 +647,10 @@ struct SubstructuringSolver::Impl
   // magnetostatic regularization eps] (magnetostatics), [kEnvMeshMagic][ElementMoments of
   // the environment and of its elements in the mesh of the region, 12 doubles],
   // [kSKenMagic][S^K nG x nG] (magnetostatics), [kModesMagic][K][ids][fingerprints
-  // 2K][has_GK][G nG x K][G^K nG x K if has_GK][Cmode KxK], and
+  // 2K][G nG x K][Cmode KxK] (electrostatics), and
   // [kSourceModesMagic][K][ids][fingerprints 2K][g nG x K][h nG x K][c KxK][B KxK].
   static constexpr int kModelMagic = 0x4c444d53;  // "SMDL"
-  static constexpr int kModelVersion = 1;
+  static constexpr int kModelVersion = 2;
   static constexpr int kHeadInts = 5;
   static constexpr int kSKenMagic = 0x4e454b53;     // "SKEN"
   static constexpr int kModesMagic = 0x33444f4d;    // "MOD3"

@@ -471,10 +471,7 @@ void SubstructuringSolver::Impl::AppendModes(const std::string &path)
 {
   BlockTimer bt(Timer::IO);
   const int K = static_cast<int>(mode_ids.size());
-  const int has_gk = have_gk ? 1 : 0;
   const std::vector<double> G_full = GatherRows(G_rows, K);
-  const std::vector<double> GK_full =
-      has_gk ? GatherRows(GK_rows, K) : std::vector<double>();
   WriteModel(path, true,
              [&](std::ofstream &f)
              {
@@ -483,11 +480,8 @@ void SubstructuringSolver::Impl::AppendModes(const std::string &path)
                f.write(reinterpret_cast<const char *>(mode_ids.data()), sizeof(int) * K);
                f.write(reinterpret_cast<const char *>(mode_fp.data()),
                        sizeof(double) * 2 * K);
-               f.write(reinterpret_cast<const char *>(&has_gk), sizeof(int));
                f.write(reinterpret_cast<const char *>(G_full.data()),
                        sizeof(double) * G_full.size());
-               f.write(reinterpret_cast<const char *>(GK_full.data()),
-                       sizeof(double) * GK_full.size());
                f.write(reinterpret_cast<const char *>(Cmode.data()),
                        sizeof(double) * Cmode.size());
              });
@@ -617,35 +611,23 @@ void SubstructuringSolver::Impl::LoadSections(const std::string &path, std::stre
     else if (magic == kModesMagic)
     {
       holds(I);
-      int hdr[2] = {0, 0};  // K, has_gk
+      int K = 0;
       if (root)
       {
-        f.read(reinterpret_cast<char *>(&hdr[0]), sizeof(int));
+        f.read(reinterpret_cast<char *>(&K), sizeof(int));
       }
-      // ids, fingerprints and has_gk, then the G (and G^K) rows and Cmode.
-      holds((hdr[0] < 0) ? -1.0 : I * hdr[0] + D * 2.0 * hdr[0] + I);
-      std::vector<int> ids;
-      std::vector<double> fp;
+      // ids, fingerprints, the G rows and Cmode.
+      const double k = K;
+      holds((k < 0.0) ? -1.0 : I * k + D * (2.0 * k + k * nG + k * k));
+      MPI_Bcast(&K, 1, MPI_INT, 0, comm);
+      std::vector<int> ids(K);
+      std::vector<double> fp(2 * K), C(static_cast<std::size_t>(K) * K), G_full;
       if (root)
       {
-        ids.resize(hdr[0]);
-        fp.resize(2 * hdr[0]);
-        f.read(reinterpret_cast<char *>(ids.data()), sizeof(int) * hdr[0]);
-        f.read(reinterpret_cast<char *>(fp.data()), sizeof(double) * 2 * hdr[0]);
-        f.read(reinterpret_cast<char *>(&hdr[1]), sizeof(int));
+        f.read(reinterpret_cast<char *>(ids.data()), sizeof(int) * K);
+        f.read(reinterpret_cast<char *>(fp.data()), sizeof(double) * 2 * K);
       }
-      const double k = hdr[0];
-      holds(D * (k * nG * (hdr[1] ? 2.0 : 1.0) + k * k));
-      MPI_Bcast(hdr, 2, MPI_INT, 0, comm);
-      const int K = hdr[0];
-      ids.resize(K);
-      fp.resize(2 * K);
-      std::vector<double> C(static_cast<std::size_t>(K) * K), G_full, GK_full;
       read_rows(K, G_full);
-      if (hdr[1])
-      {
-        read_rows(K, GK_full);
-      }
       if (root)
       {
         f.read(reinterpret_cast<char *>(C.data()), sizeof(double) * C.size());
@@ -654,12 +636,6 @@ void SubstructuringSolver::Impl::LoadSections(const std::string &path, std::stre
       MPI_Bcast(fp.data(), 2 * K, MPI_DOUBLE, 0, comm);
       MPI_Bcast(C.data(), K * K, MPI_DOUBLE, 0, comm);
       ScatterRows(G_full, K, G_rows);
-      GK_rows.clear();
-      have_gk = (hdr[1] != 0);
-      if (have_gk)
-      {
-        ScatterRows(GK_full, K, GK_rows);
-      }
       mode_ids = ids;
       mode_fp = fp;
       Cmode = C;

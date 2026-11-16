@@ -277,6 +277,33 @@ mfem::DenseMatrix CurrentEnergies(SubstructuringSolver &ss, const std::vector<in
   return ss.MagnetostaticEnergyMatrix(ids, J, {}, {}, {}, nullptr, fields, n_fields);
 }
 
+// The closed current J = curl(0, 0, psi), psi = (x(1-x) y(1-y) z(1-z))^2 (zero normal
+// component on the faces of the unit cube), as a dual vector of the Nédélec space of the
+// given order.
+Vector ClosedCurrent(Mesh &mesh, int order)
+{
+  mfem::VectorFunctionCoefficient jc(3,
+                                     [](const mfem::Vector &x, mfem::Vector &j)
+                                     {
+                                       const double a = x(0) * (1.0 - x(0)),
+                                                    b = x(1) * (1.0 - x(1)),
+                                                    c = x(2) * (1.0 - x(2));
+                                       j(0) = 2.0 * a * a * b * (1.0 - 2.0 * x(1)) * c * c;
+                                       j(1) = -2.0 * a * (1.0 - 2.0 * x(0)) * b * b * c * c;
+                                       j(2) = 0.0;
+                                     });
+  mfem::ND_FECollection fec(order, 3);
+  mfem::ParFiniteElementSpace pfes(&mesh.Get(), &fec);
+  mfem::ParLinearForm lf(&pfes);
+  auto *lfi = new mfem::VectorFEDomainLFIntegrator(jc);
+  lfi->SetIntRule(&mfem::IntRules.Get(mesh.Get().GetTypicalElementGeometry(), 14));
+  lf.AddDomainIntegrator(lfi);
+  lf.Assemble();
+  Vector J(pfes.GetTrueVSize());
+  lf.ParallelAssemble(J);
+  return J;
+}
+
 }  // namespace
 
 TEST_CASE("SubstructuringSolver reproduces full-domain electrostatics",
@@ -604,112 +631,6 @@ TEST_CASE("SubstructuringSolver reproduces full-domain magnetostatic energy",
         1.0e-6 * std::abs(e_mono));  // substructuring == monolith (same operator)
 }
 
-TEST_CASE("SubstructuringSolver magnetostatic Dirichlet excitation",
-          "[substructure][Serial][Parallel]")
-{
-  // A magnetostatic Dirichlet-lift excitation (prescribed tangential A on a boundary) gives
-  // the same gauge-invariant energy region-condensed and monolithic.
-  const int order = 1;
-  const double mu_r = 1.0, mu_e = 4.0;
-  json config = {
-      {"Problem", {{"Type", "Magnetostatic"}, {"Output", "test_output"}}},
-      {"Model", {{"Mesh", "test.msh"}}},
-      {"Domains",
-       {{"Materials",
-         {{{"Attributes", {1}}, {"Permeability", mu_r}, {"Permittivity", 1.0}},
-          {{"Attributes", {2}}, {"Permeability", mu_e}, {"Permittivity", 1.0}}}}}},
-      {"Boundaries",
-       {{"Terminal",
-         {{{"Index", 1}, {"Attributes", {1}}}, {{"Index", 2}, {"Attributes", {2}}}}}}},
-      {"Solver",
-       {{"Order", order},
-        {"Substructuring",
-         {{"Region", {{"Attributes", {1}}}}, {"Environment", {{"Attributes", {2}}}}}}}}};
-  IoData iodata(config, false);
-
-  std::vector<std::unique_ptr<Mesh>> mesh;
-  mesh.push_back(std::make_unique<Mesh>(MakeSplitCube(6)));
-  SubstructuringSolver ss(iodata, mesh);
-  ss.CondenseEnvironment();
-  Vector u = ss.SolveExcitation(1);  // tangential A = 1 on attr-1 boundary, 0 on attr-2
-  const double e_sub = Energy(ss, u);
-
-  // Monolith: same Dirichlet data, curl-curl + small mass (definite), pure-curl-curl
-  // energy.
-  auto &pmesh = mesh.back()->Get();
-  mfem::ND_FECollection fec(order, 3);
-  mfem::ParFiniteElementSpace pfes(&pmesh, &fec);
-  const int max_attr = pmesh.attributes.Max();
-  mfem::Vector nu_by_attr(max_attr), mass_by_attr(max_attr);
-  nu_by_attr = 0.0;
-  mass_by_attr = 0.0;
-  nu_by_attr(0) = 1.0 / mu_r;
-  nu_by_attr(1) = 1.0 / mu_e;
-  mass_by_attr(0) = 1.0e-3;  // match kMagRegularization
-  mass_by_attr(1) = 1.0e-3;
-  mfem::PWConstCoefficient nu(nu_by_attr), massc(mass_by_attr);
-  mfem::ParBilinearForm asolve(&pfes);
-  asolve.AddDomainIntegrator(new mfem::CurlCurlIntegrator(nu));
-  asolve.AddDomainIntegrator(new mfem::VectorFEMassIntegrator(massc));
-  asolve.Assemble();
-  mfem::ParBilinearForm aenergy(&pfes);
-  aenergy.AddDomainIntegrator(new mfem::CurlCurlIntegrator(nu));
-  aenergy.Assemble();
-  aenergy.Finalize();
-  std::unique_ptr<mfem::HypreParMatrix> Kpure(aenergy.ParallelAssemble());
-
-  const int maxb = pmesh.bdr_attributes.Max();
-  mfem::Array<int> ess_bdr(maxb), ess_tdofs, t1_bdr(maxb), t1_tdofs;
-  ess_bdr = 0;
-  ess_bdr[0] = 1;
-  ess_bdr[1] = 1;
-  pfes.GetEssentialTrueDofs(ess_bdr, ess_tdofs);
-  t1_bdr = 0;
-  t1_bdr[0] = 1;
-  pfes.GetEssentialTrueDofs(t1_bdr, t1_tdofs);
-  mfem::ParGridFunction xgf(&pfes);
-  {
-    mfem::Vector td(pfes.GetTrueVSize());
-    td = 0.0;
-    for (int i = 0; i < t1_tdofs.Size(); i++)
-    {
-      td(t1_tdofs[i]) = 1.0;
-    }
-    xgf.SetFromTrueDofs(td);
-  }
-  mfem::ParLinearForm bform(&pfes);
-  bform = 0.0;
-  bform.Assemble();
-  mfem::OperatorPtr A;
-  mfem::Vector B, X;
-  asolve.FormLinearSystem(ess_tdofs, xgf, bform, A, X, B);
-  mfem::HypreParMatrix *Ah = A.As<mfem::HypreParMatrix>();
-  mfem::HypreAMS ams(*Ah, &pfes);
-  ams.SetPrintLevel(0);
-  mfem::HyprePCG pcg(*Ah);
-  pcg.SetTol(1e-13);
-  pcg.SetMaxIter(2000);
-  pcg.SetPrintLevel(0);
-  pcg.SetPreconditioner(ams);
-  pcg.Mult(B, X);
-  asolve.RecoverFEMSolution(X, bform, xgf);
-  mfem::Vector u_full;
-  xgf.GetTrueDofs(u_full);
-  mfem::Vector t(pfes.GetTrueVSize());
-  Kpure->Mult(u_full, t);
-  double local = 0.0;
-  for (int i = 0; i < pfes.GetTrueVSize(); i++)
-  {
-    local += u_full(i) * t(i);
-  }
-  double e_mono = 0.0;
-  MPI_Allreduce(&local, &e_mono, 1, MPI_DOUBLE, MPI_SUM, Mpi::World());
-  e_mono *= 0.5;
-
-  CHECK(e_sub > 1.0e-8);
-  CHECK(std::abs(e_sub - e_mono) <= 1.0e-6 * std::abs(e_mono));
-}
-
 TEST_CASE_METHOD(palace::test::SharedTempDir,
                  "SubstructuringSolver offline/online model reuse",
                  "[substructure][Serial][Parallel]")
@@ -1012,192 +933,6 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
 }
 
 TEST_CASE_METHOD(palace::test::SharedTempDir,
-                 "SubstructuringSolver environment-free magnetostatic energies",
-                 "[substructure][Serial][Parallel]")
-{
-  // Magnetostatics: the energy operator (pure curl-curl K) differs from the solve operator
-  // (curl-curl + eps mass, A). The condensed energy uses S^K = S_E - P^T D P (D = A - K)
-  // and the D-corrected lift couplings. An offline run that saves a model must reproduce
-  // the full-field energies u_i^T K u_j, and the online run must reproduce them without
-  // factoring the environment (lifts matched by id + fingerprint). Tolerance: the synthetic
-  // unit lifts are mostly curl-free, so the order-1 energies are tiny (~1e-6) and the full-
-  // field reference itself is only good to ~5e-9 (its own asymmetry); omitting the
-  // eps-correction errs by orders of magnitude more.
-  const int order = GENERATE(1, 2);
-  const bool tet = GENERATE(false, true);
-  CAPTURE(order, tet);
-  const std::string model_path = (temp_dir / "substruct_mag_energy_model.bin").string();
-  auto make_config = [order, &model_path](const std::string &mode)
-  {
-    json config = {
-        {"Problem", {{"Type", "Magnetostatic"}, {"Output", "test_output"}}},
-        {"Model", {{"Mesh", "test.msh"}}},
-        {"Domains",
-         {{"Materials",
-           {{{"Attributes", {1}}, {"Permeability", 1.0}, {"Permittivity", 1.0}},
-            {{"Attributes", {2}}, {"Permeability", 4.0}, {"Permittivity", 1.0}}}}}},
-        {"Boundaries",
-         {{"Terminal",
-           {{{"Index", 1}, {"Attributes", {1}}}, {{"Index", 2}, {"Attributes", {2}}}}}}},
-        {"Solver",
-         {{"Order", order},
-          {"Substructuring",
-           {{"Region", {{"Attributes", {1}}}},
-            {"Environment", {{"Attributes", {2}}}},
-            {"Mode", mode},
-            {"SaveModel", model_path}}}}}};
-    return IoData(config, false);
-  };
-  auto make_mesh = [tet]() { return tet ? MakeWavyTetSplit(4) : MakeSplitCube(4); };
-  const std::vector<int> ids = {1, 2};
-  auto rel_diff = [](const mfem::DenseMatrix &A, const mfem::DenseMatrix &B)
-  {
-    double d = 0.0, m = 0.0;
-    for (int i = 0; i < A.Height(); i++)
-    {
-      for (int j = 0; j < A.Width(); j++)
-      {
-        d = std::max(d, std::abs(A(i, j) - B(i, j)));
-        m = std::max(m, std::abs(B(i, j)));
-      }
-    }
-    return d / m;
-  };
-  auto full_field_E = [&ids](SubstructuringSolver &ss)
-  {
-    std::vector<Vector> lifts = {ss.TerminalLift(1), ss.TerminalLift(2)};
-    std::vector<Vector> u = ss.SolveDirichlets(lifts);
-    mfem::DenseMatrix E(2);
-    for (int i = 0; i < 2; i++)
-    {
-      for (int j = 0; j < 2; j++)
-      {
-        E(i, j) = ss.MutualEnergy(u[i], u[j]);
-      }
-    }
-    return E;
-  };
-
-  IoData iodata_off = make_config("Offline");
-  std::vector<std::unique_ptr<Mesh>> mesh_off;
-  mesh_off.push_back(std::make_unique<Mesh>(make_mesh()));
-  SubstructuringSolver off(iodata_off, mesh_off);
-  off.CondenseEnvironment();
-  const std::vector<Vector> lifts_off = {off.TerminalLift(1), off.TerminalLift(2)};
-  const mfem::DenseMatrix E_off = off.EnergyMatrix(ids, lifts_off);
-  const mfem::DenseMatrix E_ref = full_field_E(off);
-  CHECK(rel_diff(E_off, E_ref) <= 1.0e-7);
-
-  IoData iodata_on = make_config("Online");
-  std::vector<std::unique_ptr<Mesh>> mesh_on;
-  mesh_on.push_back(std::make_unique<Mesh>(make_mesh()));
-  SubstructuringSolver on(iodata_on, mesh_on);
-  on.CondenseEnvironment();
-  const std::vector<Vector> lifts_on = {on.TerminalLift(1), on.TerminalLift(2)};
-  std::vector<Vector> fields;
-  const mfem::DenseMatrix E_on = on.EnergyMatrix(ids, lifts_on);
-  CHECK_FALSE(on.EnvironmentFactored());
-  // Same arithmetic up to the run-to-run rounding of the parallel direct solvers, which the
-  // tiny order-1 energies amplify to ~1e-8 (as for the full-field reference above).
-  CHECK(rel_diff(E_on, E_off) <= 5.0e-8);
-  // Recover a field on demand; it matches the full solve.
-  (void)on.EnergyMatrix(ids, lifts_on, &fields, 1);
-  CHECK(on.EnvironmentFactored());
-  const Vector u_full = on.SolveDirichlets({lifts_on[0]})[0];
-  Vector d(fields[0]);
-  d -= u_full;
-  const double un = std::sqrt(mfem::InnerProduct(Mpi::World(), u_full, u_full));
-  CHECK(std::sqrt(mfem::InnerProduct(Mpi::World(), d, d)) <= 1.0e-8 * un);
-}
-
-TEST_CASE_METHOD(palace::test::SharedTempDir,
-                 "SubstructuringSolver magnetostatic energies across face orientations",
-                 "[substructure][Serial][Parallel]")
-{
-  // A model saved on tetrahedra, reused online on the same tetrahedra in another element
-  // and vertex order: other face orientations (as another partition gives), so second-order
-  // Nédélec face DOFs on Gamma have another basis, not a signed permutation of the saved
-  // one. The lifts are the same fields on both meshes, projected on all DOFs so that they
-  // reach Gamma (and their fingerprints see it); the online energies need no environment
-  // solve and equal the offline ones.
-  const int order = GENERATE(1, 2);
-  CAPTURE(order);
-  const std::string model_path = (temp_dir / "substruct_mag_orient_model.bin").string();
-  auto make_config = [order, &model_path](const std::string &mode)
-  {
-    json config = {
-        {"Problem", {{"Type", "Magnetostatic"}, {"Output", "test_output"}}},
-        {"Model", {{"Mesh", "test.msh"}}},
-        {"Domains",
-         {{"Materials",
-           {{{"Attributes", {1}}, {"Permeability", 1.0}, {"Permittivity", 1.0}},
-            {{"Attributes", {2}}, {"Permeability", 4.0}, {"Permittivity", 1.0}}}}}},
-        {"Boundaries",
-         {{"Terminal",
-           {{{"Index", 1}, {"Attributes", {1}}}, {{"Index", 2}, {"Attributes", {2}}}}}}},
-        {"Solver",
-         {{"Order", order},
-          {"Substructuring",
-           {{"Region", {{"Attributes", {1}}}},
-            {"Environment", {{"Attributes", {2}}}},
-            {"Mode", mode},
-            {"SaveModel", model_path}}}}}};
-    return IoData(config, false);
-  };
-  const std::vector<int> ids = {1, 2};
-  auto lifts = [order, &ids](Mesh &mesh)
-  {
-    mfem::ND_FECollection fec(order, 3);
-    mfem::ParFiniteElementSpace fes(&mesh.Get(), &fec);
-    std::vector<Vector> x;
-    for (int id : ids)
-    {
-      mfem::VectorFunctionCoefficient f(3,
-                                        [id](const mfem::Vector &p, mfem::Vector &v)
-                                        {
-                                          v.SetSize(3);
-                                          const double k = 3.0 * id;
-                                          v(0) = std::sin(k * p(1)) * p(2);
-                                          v(1) = std::cos(k * p(2)) * p(0);
-                                          v(2) = std::sin(k * p(0) + p(1));
-                                        });
-      mfem::ParGridFunction gf(&fes);
-      gf.ProjectCoefficient(f);
-      Vector t(fes.GetTrueVSize());
-      gf.GetTrueDofs(t);
-      x.push_back(std::move(t));
-    }
-    return x;
-  };
-
-  IoData iodata_off = make_config("Offline");
-  std::vector<std::unique_ptr<Mesh>> mesh_off;
-  mesh_off.push_back(std::make_unique<Mesh>(MakeWavyTetSplit(4)));
-  SubstructuringSolver off(iodata_off, mesh_off);
-  off.CondenseEnvironment();
-  const mfem::DenseMatrix E_off = off.EnergyMatrix(ids, lifts(*mesh_off.back()));
-
-  IoData iodata_on = make_config("Online");
-  std::vector<std::unique_ptr<Mesh>> mesh_on;
-  mesh_on.push_back(std::make_unique<Mesh>(MakeWavyTetSplit(4, true)));
-  SubstructuringSolver on(iodata_on, mesh_on);
-  on.CondenseEnvironment();
-  const mfem::DenseMatrix E_on = on.EnergyMatrix(ids, lifts(*mesh_on.back()));
-  CHECK_FALSE(on.EnvironmentFactored());
-  double d = 0.0, m = 0.0;
-  for (int i = 0; i < 2; i++)
-  {
-    for (int j = 0; j < 2; j++)
-    {
-      d = std::max(d, std::abs(E_on(i, j) - E_off(i, j)));
-      m = std::max(m, std::abs(E_off(i, j)));
-    }
-  }
-  CAPTURE(d, m);
-  CHECK(d <= 1.0e-9 * m);
-}
-
-TEST_CASE_METHOD(palace::test::SharedTempDir,
                  "SubstructuringSolver surface-current energies across face orientations",
                  "[substructure][Serial][Parallel]")
 {
@@ -1279,67 +1014,6 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   CHECK(std::abs(E_on(0, 0) - E_off(0, 0)) <= 1.0e-9 * std::abs(E_off(0, 0)));
 }
 
-TEST_CASE_METHOD(palace::test::SharedTempDir,
-                 "SubstructuringSolver magnetostatic energies on a re-meshed region",
-                 "[substructure][Serial][Parallel]")
-{
-  // Offline on one region mesh, online on a re-meshed region (fixed Gamma + environment,
-  // signed H(curl) re-ordering of S_E, S^K and the lift couplings): the online condensed
-  // energies, computed without an environment solve, must equal the online full-field
-  // energies.
-  const int order = GENERATE(1, 2);
-  CAPTURE(order);
-  auto make_config = [this, order](const std::string &mode)
-  {
-    json config = {
-        {"Problem", {{"Type", "Magnetostatic"}, {"Output", "test_output"}}},
-        {"Model", {{"Mesh", "test.msh"}}},
-        {"Domains",
-         {{"Materials",
-           {{{"Attributes", {1}}, {"Permeability", 1.0}, {"Permittivity", 1.0}},
-            {{"Attributes", {2}}, {"Permeability", 4.0}, {"Permittivity", 1.0}}}}}},
-        {"Boundaries",
-         {{"Terminal",
-           {{{"Index", 1}, {"Attributes", {1}}}, {{"Index", 2}, {"Attributes", {2}}}}}}},
-        {"Solver",
-         {{"Order", order},
-          {"Substructuring",
-           {{"Region", {{"Attributes", {1}}}},
-            {"Environment", {{"Attributes", {2}}}},
-            {"Mode", mode},
-            {"SaveModel", (temp_dir / "substruct_mag_remesh_energy.bin").string()}}}}}};
-    return IoData(config, false);
-  };
-  const std::vector<int> ids = {1, 2};
-  IoData iodata_off = make_config("Offline");
-  std::vector<std::unique_ptr<Mesh>> mesh_off;
-  mesh_off.push_back(std::make_unique<Mesh>(MakeGradedSplit(3, 4, 4)));
-  SubstructuringSolver off(iodata_off, mesh_off);
-  off.CondenseEnvironment();
-  (void)off.EnergyMatrix(ids, {off.TerminalLift(1), off.TerminalLift(2)});
-
-  IoData iodata_on = make_config("Online");
-  std::vector<std::unique_ptr<Mesh>> mesh_on;
-  mesh_on.push_back(std::make_unique<Mesh>(MakeGradedSplit(5, 4, 4)));
-  SubstructuringSolver on(iodata_on, mesh_on);
-  on.CondenseEnvironment();
-  const std::vector<Vector> lifts = {on.TerminalLift(1), on.TerminalLift(2)};
-  const mfem::DenseMatrix E_on = on.EnergyMatrix(ids, lifts);
-  CHECK_FALSE(on.EnvironmentFactored());
-  std::vector<Vector> u = on.SolveDirichlets(lifts);
-  double d = 0.0, m = 0.0;
-  for (int i = 0; i < 2; i++)
-  {
-    for (int j = 0; j < 2; j++)
-    {
-      const double e = on.MutualEnergy(u[i], u[j]);
-      d = std::max(d, std::abs(E_on(i, j) - e));
-      m = std::max(m, std::abs(e));
-    }
-  }
-  CHECK(d <= 1.0e-7 * m);  // see the tolerance note above
-}
-
 TEST_CASE("SubstructuringSolver block low-rank environment factorization",
           "[substructure][Serial][Parallel]")
 {
@@ -1394,16 +1068,6 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "SubstructuringSolver column order
   // a saved magnetostatic model has no Schur variables, so ParMETIS analyzes it in
   // parallel. The energy of a closed current does not depend on the ordering.
   const std::string model_path = (temp_dir / "substruct_ordering_model.bin").string();
-  mfem::VectorFunctionCoefficient jc(3,
-                                     [](const mfem::Vector &x, mfem::Vector &j)
-                                     {
-                                       const double a = x(0) * (1.0 - x(0)),
-                                                    b = x(1) * (1.0 - x(1)),
-                                                    c = x(2) * (1.0 - x(2));
-                                       j(0) = 2.0 * a * a * b * (1.0 - 2.0 * x(1)) * c * c;
-                                       j(1) = -2.0 * a * (1.0 - 2.0 * x(0)) * b * b * c * c;
-                                       j(2) = 0.0;
-                                     });
   auto energy = [&](const std::string &ordering)
   {
     json config = {{"Problem", {{"Type", "Magnetostatic"}, {"Output", "test_output"}}},
@@ -1424,15 +1088,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "SubstructuringSolver column order
     IoData iodata(config, false);
     std::vector<std::unique_ptr<Mesh>> mesh;
     mesh.push_back(std::make_unique<Mesh>(MakeWavyTetSplit(4)));
-    mfem::ND_FECollection fec(1, 3);
-    mfem::ParFiniteElementSpace pfes(&mesh.back()->Get(), &fec);
-    mfem::ParLinearForm lf(&pfes);
-    auto *lfi = new mfem::VectorFEDomainLFIntegrator(jc);
-    lfi->SetIntRule(&mfem::IntRules.Get(mfem::Geometry::TETRAHEDRON, 14));
-    lf.AddDomainIntegrator(lfi);
-    lf.Assemble();
-    Vector J(pfes.GetTrueVSize());
-    lf.ParallelAssemble(J);
+    const Vector J = ClosedCurrent(*mesh.back(), 1);
     SubstructuringSolver ss(iodata, mesh);
     ss.CondenseEnvironment();
     return CurrentEnergies(ss, {1}, {J})(0, 0);
@@ -1444,6 +1100,39 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "SubstructuringSolver column order
     CAPTURE(ordering, E, E0);
     CHECK(std::abs(E - E0) <= 1.0e-10 * std::abs(E0));
   }
+}
+
+TEST_CASE("SubstructuringSolver magnetostatics ignores terminals",
+          "[substructure][Serial][Parallel]")
+{
+  // As the regular curl-curl operator, magnetostatic substructuring does not ground
+  // "Terminal" boundaries: one leaves the energy of a closed current unchanged.
+  auto energy = [](bool terminal)
+  {
+    json config = {
+        {"Problem", {{"Type", "Magnetostatic"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains",
+         {{"Materials",
+           {{{"Attributes", {1}}, {"Permeability", 1.0}},
+            {{"Attributes", {2}}, {"Permeability", 4.0}}}}}},
+        {"Boundaries", terminal ? json{{"Terminal", {{{"Index", 1}, {"Attributes", {1}}}}}}
+                                : json::object()},
+        {"Solver",
+         {{"Order", 1},
+          {"Substructuring",
+           {{"Region", {{"Attributes", {1}}}}, {"Environment", {{"Attributes", {2}}}}}}}}};
+    IoData iodata(config, false);
+    std::vector<std::unique_ptr<Mesh>> mesh;
+    mesh.push_back(std::make_unique<Mesh>(MakeSplitCube(4)));
+    const Vector J = ClosedCurrent(*mesh.back(), 1);
+    SubstructuringSolver ss(iodata, mesh);
+    ss.CondenseEnvironment();
+    return CurrentEnergies(ss, {1}, {J})(0, 0);
+  };
+  const double E0 = energy(false), E1 = energy(true);
+  CHECK(E0 > 0.0);
+  CHECK(std::abs(E1 - E0) <= 1.0e-12 * E0);
 }
 
 TEST_CASE_METHOD(palace::test::SharedTempDir,
@@ -1513,162 +1202,6 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
     for (int j = 0; j < 2; j++)
     {
       CHECK(std::abs(C_on(i, j) - C_off(i, j)) <= 1.0e-9 * std::abs(C_off(0, 0)));
-    }
-  }
-}
-
-TEST_CASE("SubstructuringSolver magnetostatic inductance matrix",
-          "[substructure][Serial][Parallel]")
-{
-  // Inductance matrix M = R^-1 of two Dirichlet-lift excitations, with the reluctance
-  // R_ij = A_i^T K A_j / (Phi_i Phi_j) (pure curl-curl energy): the region-condensed matrix
-  // must match a monolith and be symmetric.
-  const int order = GENERATE(1, 2);
-  const bool tet = GENERATE(false, true);
-  CAPTURE(order);
-  CAPTURE(tet);
-  const double mu_r = 1.0, mu_e = 4.0;
-  json config = {
-      {"Problem", {{"Type", "Magnetostatic"}, {"Output", "test_output"}}},
-      {"Model", {{"Mesh", "test.msh"}}},
-      {"Domains",
-       {{"Materials",
-         {{{"Attributes", {1}}, {"Permeability", mu_r}, {"Permittivity", 1.0}},
-          {{"Attributes", {2}}, {"Permeability", mu_e}, {"Permittivity", 1.0}}}}}},
-      {"Boundaries",
-       {{"Terminal",
-         {{{"Index", 1}, {"Attributes", {1}}}, {{"Index", 2}, {"Attributes", {2}}}}}}},
-      {"Solver",
-       {{"Order", order},
-        {"Substructuring",
-         {{"Region", {{"Attributes", {1}}}}, {"Environment", {{"Attributes", {2}}}}}}}}};
-  IoData iodata(config, false);
-
-  std::vector<std::unique_ptr<Mesh>> mesh;
-  mesh.push_back(std::make_unique<Mesh>(tet ? MakeWavyTetSplit(6) : MakeSplitCube(6)));
-  SubstructuringSolver ss(iodata, mesh);
-  ss.CondenseEnvironment();
-  std::vector<Vector> As = {ss.SolveExcitation(1), ss.SolveExcitation(2)};
-  auto invert2 = [](mfem::DenseMatrix &R)
-  {
-    mfem::DenseMatrix M(R);
-    M.Invert();
-    return M;
-  };
-  mfem::DenseMatrix R_sub(2);
-  for (int i = 0; i < 2; i++)
-  {
-    for (int j = 0; j < 2; j++)
-    {
-      R_sub(i, j) = ss.MutualEnergy(As[i], As[j]);  // Phi = 1
-    }
-  }
-  mfem::DenseMatrix M_sub = invert2(R_sub);
-  // Symmetric up to iterative-solver residual (cross-energies are analytically symmetric).
-  CHECK(std::abs(M_sub(0, 1) - M_sub(1, 0)) <=
-        1.0e-5 * std::max(std::abs(M_sub(0, 0)), std::abs(M_sub(1, 1))));
-
-  // Monolith: same two Dirichlet excitations, curl-curl + small mass, pure-curl-curl
-  // cross-energies, then reluctance inversion.
-  auto &pmesh = mesh.back()->Get();
-  mfem::ND_FECollection fec(order, 3);
-  mfem::ParFiniteElementSpace pfes(&pmesh, &fec);
-  const int max_attr = pmesh.attributes.Max();
-  mfem::Vector nu_by_attr(max_attr), mass_by_attr(max_attr);
-  nu_by_attr = 0.0;
-  mass_by_attr = 0.0;
-  nu_by_attr(0) = 1.0 / mu_r;
-  nu_by_attr(1) = 1.0 / mu_e;
-  mass_by_attr(0) = 1.0e-3;
-  mass_by_attr(1) = 1.0e-3;
-  mfem::PWConstCoefficient nu(nu_by_attr), massc(mass_by_attr);
-  mfem::ParBilinearForm asolve(&pfes);
-  asolve.AddDomainIntegrator(new mfem::CurlCurlIntegrator(nu));
-  asolve.AddDomainIntegrator(new mfem::VectorFEMassIntegrator(massc));
-  asolve.Assemble();
-  mfem::ParBilinearForm aenergy(&pfes);
-  aenergy.AddDomainIntegrator(new mfem::CurlCurlIntegrator(nu));
-  aenergy.Assemble();
-  aenergy.Finalize();
-  std::unique_ptr<mfem::HypreParMatrix> Kpure(aenergy.ParallelAssemble());
-  const int maxb = pmesh.bdr_attributes.Max();
-  mfem::Array<int> ess_bdr(maxb), ess_tdofs;
-  ess_bdr = 0;
-  ess_bdr[0] = 1;
-  ess_bdr[1] = 1;
-  pfes.GetEssentialTrueDofs(ess_bdr, ess_tdofs);
-  auto solve_dir = [&](int drive_attr)
-  {
-    mfem::Array<int> d_bdr(maxb), d_tdofs;
-    d_bdr = 0;
-    d_bdr[drive_attr - 1] = 1;
-    pfes.GetEssentialTrueDofs(d_bdr, d_tdofs);
-    mfem::ParGridFunction xgf(&pfes);
-    mfem::Vector td(pfes.GetTrueVSize());
-    td = 0.0;
-    for (int i = 0; i < d_tdofs.Size(); i++)
-    {
-      td(d_tdofs[i]) = 1.0;
-    }
-    xgf.SetFromTrueDofs(td);
-    mfem::ParLinearForm bform(&pfes);
-    bform = 0.0;
-    bform.Assemble();
-    mfem::OperatorPtr A;
-    mfem::Vector B, X;
-    asolve.FormLinearSystem(ess_tdofs, xgf, bform, A, X, B);
-    mfem::HypreParMatrix *Ah = A.As<mfem::HypreParMatrix>();
-    mfem::HypreAMS amsp(*Ah, &pfes);
-    amsp.SetPrintLevel(0);
-    mfem::HyprePCG pcg(*Ah);
-    pcg.SetTol(1e-13);
-    pcg.SetMaxIter(2000);
-    pcg.SetPrintLevel(0);
-    pcg.SetPreconditioner(amsp);
-    pcg.Mult(B, X);
-    asolve.RecoverFEMSolution(X, bform, xgf);
-    mfem::Vector uu;
-    xgf.GetTrueDofs(uu);
-    return uu;
-  };
-  std::vector<mfem::Vector> Am = {solve_dir(1), solve_dir(2)};
-  auto cross = [&](const mfem::Vector &a, const mfem::Vector &b)
-  {
-    mfem::Vector t(pfes.GetTrueVSize());
-    Kpure->Mult(b, t);
-    double loc = 0.0;
-    for (int i = 0; i < pfes.GetTrueVSize(); i++)
-    {
-      loc += a(i) * t(i);
-    }
-    double g = 0.0;
-    MPI_Allreduce(&loc, &g, 1, MPI_DOUBLE, MPI_SUM, Mpi::World());
-    return g;
-  };
-  mfem::DenseMatrix R_mono(2);
-  for (int i = 0; i < 2; i++)
-  {
-    for (int j = 0; j < 2; j++)
-    {
-      R_mono(i, j) = cross(Am[i], Am[j]);
-    }
-  }
-  mfem::DenseMatrix M_mono = invert2(R_mono);
-  // Scale the comparison by the largest inductance entry (M(0,0) is tiny at higher order,
-  // so scaling by it alone would make the tolerance meaningless for the other entries).
-  double scale = 0.0;
-  for (int i = 0; i < 2; i++)
-  {
-    for (int j = 0; j < 2; j++)
-    {
-      scale = std::max(scale, std::abs(M_mono(i, j)));
-    }
-  }
-  for (int i = 0; i < 2; i++)
-  {
-    for (int j = 0; j < 2; j++)
-    {
-      CHECK(std::abs(M_sub(i, j) - M_mono(i, j)) <= 1.0e-5 * scale);
     }
   }
 }
@@ -3413,75 +2946,62 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
                  "[substructure][Serial][Parallel]")
 {
   // H(curl) region re-meshing: the environment (attr 2, b=5) is identical between a coarse-
-  // region offline run and a re-meshed (finer) online run, so the loaded+reordered S_E (via
-  // signed edge-signature matching) must reproduce a freshly materialized S_E on the online
-  // mesh. Compare the recovered field of an Online (loaded) solve to an Offline (fresh)
-  // solve on the same re-meshed mesh.
+  // region offline run and a re-meshed (finer) online run, so the loaded S_E, S^K and
+  // source modes, reordered by signed edge-signature matching, give the energy of a closed
+  // current without an environment solve, and its field, as a fresh condensation on the
+  // online mesh.
   const auto res = GENERATE(std::make_pair(4, 8), std::make_pair(6, 6));
   const int a_off = res.first, a_on = res.second;
   const int order = GENERATE(1, 2);
   CAPTURE(a_off, a_on, order);
-  const double mu_r = 1.0, mu_e = 4.0;
   auto make_config = [&](const std::string &mode, const std::string &path)
   {
-    json config = {
-        {"Problem", {{"Type", "Magnetostatic"}, {"Output", "test_output"}}},
-        {"Model", {{"Mesh", "test.msh"}}},
-        {"Domains",
-         {{"Materials",
-           {{{"Attributes", {1}}, {"Permeability", mu_r}, {"Permittivity", 1.0}},
-            {{"Attributes", {2}}, {"Permeability", mu_e}, {"Permittivity", 1.0}}}}}},
-        {"Boundaries",
-         {{"Terminal",
-           {{{"Index", 1}, {"Attributes", {1}}}, {{"Index", 2}, {"Attributes", {2}}}}}}},
-        {"Solver",
-         {{"Order", order},
-          {"Substructuring",
-           {{"Region", {{"Attributes", {1}}}},
-            {"Environment", {{"Attributes", {2}}}},
-            {"Mode", mode},
-            {"SaveModel", path}}}}}};
+    json config = {{"Problem", {{"Type", "Magnetostatic"}, {"Output", "test_output"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains",
+                    {{"Materials",
+                      {{{"Attributes", {1}}, {"Permeability", 1.0}},
+                       {{"Attributes", {2}}, {"Permeability", 4.0}}}}}},
+                   {"Boundaries", json::object()},
+                   {"Solver",
+                    {{"Order", order},
+                     {"Substructuring",
+                      {{"Region", {{"Attributes", {1}}}},
+                       {"Environment", {{"Attributes", {2}}}},
+                       {"Mode", mode},
+                       {"SaveModel", path}}}}}};
     return IoData(config, false);
   };
+  auto solve = [&](const std::string &mode, const std::string &path, int a, Vector *u)
+  {
+    IoData io = make_config(mode, path);
+    std::vector<std::unique_ptr<Mesh>> m;
+    m.push_back(std::make_unique<Mesh>(MakeGradedSplit(a, 5, 6)));
+    SubstructuringSolver s(io, m);
+    s.CondenseEnvironment();
+    std::vector<Vector> fields;
+    const double E = CurrentEnergies(s, {1}, {ClosedCurrent(*m.back(), order)}, &fields,
+                                     u ? 1 : 0)(0, 0);
+    if (u)
+    {
+      *u = fields[0];
+    }
+    return E;
+  };
 
+  // Offline on the coarse region (the model with the source modes), a fresh condensation on
+  // the re-meshed region, and the online run on it with the coarse-region model.
   const std::string model_path = (temp_dir / "substruct_mag_remesh.bin").string();
-  // Offline on the coarse region: materialize + save S_E (signed edge signature).
-  {
-    IoData io = make_config("Offline", model_path);
-    std::vector<std::unique_ptr<Mesh>> m;
-    m.push_back(std::make_unique<Mesh>(MakeGradedSplit(a_off, 5, 6)));
-    SubstructuringSolver off(io, m);
-    off.CondenseEnvironment();
-    (void)off.SolveExcitation(1);
-  }
-  // Fresh reference on the re-meshed online mesh (materialize S_E on the same environment).
-  Vector ref;
-  {
-    IoData io = make_config("Offline", (temp_dir / "substruct_mag_ref.bin").string());
-    std::vector<std::unique_ptr<Mesh>> m;
-    m.push_back(std::make_unique<Mesh>(MakeGradedSplit(a_on, 5, 6)));
-    SubstructuringSolver s(io, m);
-    s.CondenseEnvironment();
-    ref = s.SolveExcitation(1);
-  }
-  // Online on the re-meshed mesh: load the coarse-region model and reorder S_E onto the new
-  // interface edge DOFs (with orientation signs).
-  Vector got;
-  {
-    IoData io = make_config("Online", model_path);
-    std::vector<std::unique_ptr<Mesh>> m;
-    m.push_back(std::make_unique<Mesh>(MakeGradedSplit(a_on, 5, 6)));
-    SubstructuringSolver s(io, m);
-    s.CondenseEnvironment();
-    got = s.SolveExcitation(1);
-  }
-  Vector d(got);
-  d -= ref;
-  CHECK(ref.Norml2() > 1.0e-30);
-  // The offline and online runs materialize S_E independently (different region meshes/
-  // partitions) with iterative solves, so the fields agree to ~solver tolerance, not to
-  // machine precision.
-  CHECK(d.Norml2() <= 1.0e-5 * (ref.Norml2() + 1.0e-30));
+  (void)solve("Offline", model_path, a_off, nullptr);
+  Vector u_ref, u_on;
+  const double E_ref =
+      solve("Offline", (temp_dir / "substruct_mag_ref.bin").string(), a_on, &u_ref);
+  const double E_on = solve("Online", model_path, a_on, &u_on);
+  CHECK(E_ref > 0.0);
+  CHECK(std::abs(E_on - E_ref) <= 1.0e-10 * E_ref);
+  Vector d(u_on);
+  d -= u_ref;
+  CHECK(d.Norml2() <= 1.0e-9 * u_ref.Norml2());
 }
 
 }  // namespace palace

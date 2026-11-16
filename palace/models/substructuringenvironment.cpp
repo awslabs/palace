@@ -320,86 +320,52 @@ void SubstructuringSolver::Impl::ComputeModes(const std::vector<int> &ids,
   {
     MPI_Allreduce(MPI_IN_PLACE, touches.data(), K, MPI_INT, MPI_MAX, comm);
   }
-  auto solve_touching = [&](std::vector<mfem::Vector> &in, std::vector<mfem::Vector> &out)
+  // w_k = A_EE^-1 t_k|_E, for the lifts that touch the environment interior (zero for the
+  // others).
   {
     std::vector<const mfem::Vector *> X;
     std::vector<mfem::Vector *> Y;
     for (int k = 0; k < K; k++)
     {
-      out[k] = 0.0;
+      w[k] = 0.0;
       if (touches[k])
       {
-        X.push_back(&in[k]);
-        Y.push_back(&out[k]);
+        X.push_back(&t[k]);
+        Y.push_back(&w[k]);
       }
     }
     if (!X.empty())
     {
       ApplyAeeInvMulti(X, Y);
     }
-  };
-  solve_touching(t, w);
-  // g = (a - A_env b)|_Gamma, C_kl = x_k . a_l - t_k . b_l  for (a, b) = (t, w) [solve]
-  // or (v, z) [energy correction].
+  }
+  // g_k = (t_k - A_env w_k)|_Gamma and C_kl = x_k . t_l - t_k . w_l.
   mfem::Vector tmp(nt);
-  auto couplings = [&](const std::vector<mfem::Vector> &a,
-                       const std::vector<mfem::Vector> &b, std::vector<double> &Grows,
-                       std::vector<double> &C)
+  G_rows.assign(static_cast<std::size_t>(gamma_nloc) * K, 0.0);
+  for (int k = 0; k < K; k++)
   {
-    Grows.assign(static_cast<std::size_t>(gamma_nloc) * K, 0.0);
-    for (int k = 0; k < K; k++)
+    Aenv().Mult(w[k], tmp);
+    const double *tk = t[k].HostRead(), *tt = tmp.HostRead();
+    for (int i = 0; i < nt; i++)
     {
-      Aenv().Mult(b[k], tmp);
-      const double *ak = a[k].HostRead(), *tt = tmp.HostRead();
-      for (int i = 0; i < nt; i++)
+      if (is_gamma[i])
       {
-        if (is_gamma[i])
-        {
-          Grows[static_cast<std::size_t>(gamma_global[i] - gamma_off) * K + k] =
-              ak[i] - tt[i];
-        }
+        G_rows[static_cast<std::size_t>(gamma_global[i] - gamma_off) * K + k] =
+            tk[i] - tt[i];
       }
     }
-    C.assign(static_cast<std::size_t>(K) * K, 0.0);
-    for (int k = 0; k < K; k++)
-    {
-      for (int l = 0; l < K; l++)
-      {
-        C[static_cast<std::size_t>(k) * K + l] = (x[k] * a[l]) - (t[k] * b[l]);
-      }
-    }
-    if (K > 0)
-    {
-      MPI_Allreduce(MPI_IN_PLACE, C.data(), K * K, MPI_DOUBLE, MPI_SUM, comm);
-    }
-  };
-  couplings(t, w, G_rows, Cmode);
-  GK_rows.clear();
-  have_gk = EnergyDiffers();
-  if (have_gk)
+  }
+  Cmode.assign(static_cast<std::size_t>(K) * K, 0.0);
+  for (int k = 0; k < K; k++)
   {
-    // P^T D P blocks: p_k = x_k - w_k (the A-harmonic lift), v_k = D p_k,
-    // z_k = A_EE^-1 v_k|_E; subtract them from the A-blocks.
-    std::vector<mfem::Vector> v(K, mfem::Vector(nt)), z(K, mfem::Vector(nt));
-    for (int k = 0; k < K; k++)
+    for (int l = 0; l < K; l++)
     {
-      tmp = x[k];
-      tmp -= w[k];
-      Denv().Mult(tmp, v[k]);
-      touches[k] = 1;  // v_k is generally nonzero in E
+      Cmode[static_cast<std::size_t>(k) * K + l] = (x[k] * t[l]) - (t[k] * w[l]);
     }
-    solve_touching(v, z);
-    std::vector<double> GD, CD;
-    couplings(v, z, GD, CD);
-    GK_rows = G_rows;
-    for (std::size_t q = 0; q < GK_rows.size(); q++)
-    {
-      GK_rows[q] -= GD[q];
-    }
-    for (std::size_t q = 0; q < Cmode.size(); q++)
-    {
-      Cmode[q] -= CD[q];
-    }
+  }
+  if (K > 0)
+  {
+    MPI_Allreduce(MPI_IN_PLACE, Cmode.data(), K * K, MPI_DOUBLE, MPI_SUM, comm);
   }
   modes_ready = true;
   modes_saved = false;

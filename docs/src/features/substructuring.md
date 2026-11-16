@@ -30,9 +30,9 @@ problem with one extra term on the interface, the environment's Schur complement
 a dense ``|\Gamma| \times |\Gamma|`` matrix (the discrete Dirichlet-to-Neumann map of the
 environment). The condensation is an exact algebraic rearrangement: the region solution, and the
 capacitance or inductance matrix, are those of the full solve (for magnetostatics up to a small
-regularization, see [Magnetostatics](#Magnetostatics)). Terminals and `"PEC"`
-boundaries (grounded, as in a regular electrostatic simulation) may lie in the region, in the
-environment, or span both; the environment's coupling to its terminals is condensed together
+regularization, see [Magnetostatics](#Magnetostatics)). Electrostatic terminals and `"PEC"`
+boundaries (grounded, as in a regular simulation) may lie in the region, in the environment, or
+span both; the environment's coupling to its terminals is condensed together
 with ``\bm{S}_E``, so terminal energies need no environment solve.
 
 The environment model (``\bm{S}_E`` and the terminal couplings) can be saved to a file. A later
