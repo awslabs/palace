@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""check_surface_response_output.py on synthetic Maxwell trees (decision 1847 E-1 (c)): a valid corrected tree passes (exit 0);
-the MarkNotApplied form of the same tree (corrected cells nan, their values in the ' partial (uncovered part raw)' twins) reads
-NOT-APPLIED (exit 3, never the 'valid' line; CorrectionNotApplied is a RuntimeError, so callers of check() fail closed); a nan
-without a twin keeps the 'Invalid ...' error."""
+"""check_surface_response_output.py on synthetic Maxwell trees (decisions 1847 E-1 (c) / 1908 / 1914): a valid corrected tree passes
+(exit 0); the MarkNotApplied form of the same tree (corrected cells nan, their values in the ' partial (uncovered part raw)' twins,
+the explicit 'coverage mark E_norm' / 'coverage mark E_surf' columns 1) reads NOT-APPLIED (exit 3, never the 'valid' line;
+CorrectionNotApplied is a RuntimeError, so callers of check() fail closed); a MarkNotApplied tree with every mark 0 is checked as its
+Warn twin (the 1892 false positive: a by-design nan beside its twin is not a mark); an unmarked non-finite / text cell or a missing
+mark column on a marked tree is a REFUSAL (exit 5); a text token on a Warn tree is a REFUSAL; a nan without any signal keeps the
+'Invalid ...' error."""
 
 import contextlib
 import io
@@ -18,11 +21,15 @@ CPW2D = Path(__file__).resolve().parent
 sys.path.insert(0, str(CPW2D))
 import check_surface_response_output as CSRO  # noqa: E402
 
+cm = CSRO.cm
 CORRECTED = ("E_norm corrected (J)", "E_surf corrected (J)", "p_surf corrected", "Q_surf corrected")
 
 
-def write_tree(root, marked=False, nan_without_twin=False):
-    """One frequency, one excitation, interfaces 1 / 2. marked: the MarkNotApplied form (every corrected column nan + its twin)."""
+def write_tree(root, marked=False, nan_without_twin=False, explicit=True, marks=None, token="nan", edits=None):
+    """One frequency, one excitation, interfaces 1 / 2. marked: the MarkNotApplied form (every corrected column + its twin; the
+    cells of the rows `marks` selects ({interface: (E_norm mark, E_surf mark)}; default every row (1, 1)) print `token`, their
+    values in the twins); `explicit` appends the mark columns (decision 1914; False = the form before it); `edits` =
+    {(interface, column): token} applied last."""
     post = Path(root) / "postpro"
     post.mkdir(parents=True)
     norm_raw, norm_corr = 1.0e-12, 1.1e-12
@@ -38,17 +45,28 @@ def write_tree(root, marked=False, nan_without_twin=False):
         rows.append([5.0, 1, k, norm_raw, norm_corr, e_raw[k], e_raw[k] / norm_raw, norm_raw / e_raw[k], e_corr[k],
                      e_corr[k] / norm_corr, norm_corr / e_corr[k]])
     cols = [header.index(h) for h in CORRECTED]
+    marks = marks if marks is not None else {1: (1, 1), 2: (1, 1)}
     out_header = list(header)
     if marked:
         out_header += [header[j] + CSRO.PARTIAL_COLUMN_SUFFIX for j in cols]
+        if explicit:
+            out_header += [cm.MARK_E_NORM, cm.MARK_E_SURF]
     text = [",".join(out_header)]
     for r in rows:
+        k = r[2]
         cells = [str(v) if isinstance(v, int) else f"{v:+.12e}" for v in r]
-        if marked or nan_without_twin:
-            twins = [cells[j] for j in cols]
+        if nan_without_twin:
             cells = ["nan" if j in cols else c for j, c in enumerate(cells)]
-            if marked:
-                cells += twins
+        elif marked:
+            norm_mark, surf_mark = marks.get(k, (0, 0))
+            moved = {j for j in cols if (norm_mark if header[j].startswith("E_norm") else surf_mark)}
+            twins = [cells[j] if j in moved else "nan" for j in cols]
+            cells = [token if j in moved else c for j, c in enumerate(cells)] + twins
+            if explicit:
+                cells += [str(norm_mark), str(surf_mark)]
+        for (iface, column), tok in (edits or {}).items():
+            if iface == k:
+                cells[out_header.index(column)] = tok
         text.append(",".join(cells))
     (post / "surface-Q-corrected.csv").write_text("\n".join(text) + "\n")
     return post
@@ -73,15 +91,38 @@ class NotAppliedTest(unittest.TestCase):
         self.assertEqual(text, "Raw outputs are unchanged and corrected surface output is valid.\n")
 
     def test_marked_tree_reads_not_applied(self):
-        post = write_tree(self.tmp / "mark", marked=True)
-        rc, text = self.run_main(post)
-        self.assertEqual(rc, CSRO.NOT_APPLIED_EXIT)
-        self.assertNotEqual(rc, 0)
-        self.assertTrue(text.startswith("NOT-APPLIED: 'E_norm corrected (J)' in corrected row 1, interface 1.0"), text)
-        self.assertNotIn("valid", text)
-        with self.assertRaises(RuntimeError) as caught:
-            CSRO.check(post, post, 1.0e-10)
-        self.assertIsInstance(caught.exception, CSRO.CorrectionNotApplied)
+        for token in ("nan", "", "NA"):
+            post = write_tree(self.tmp / f"mark-{token or 'empty'}", marked=True, token=token)
+            rc, text = self.run_main(post)
+            self.assertEqual(rc, CSRO.NOT_APPLIED_EXIT, token)
+            self.assertTrue(text.startswith("NOT-APPLIED: corrected row 1, interface 1.0 is marked not applied"), text)
+            self.assertIn("'coverage mark E_norm' = 1", text)
+            self.assertNotIn("is valid", text)
+            with self.assertRaises(RuntimeError) as caught:
+                CSRO.check(post, post, 1.0e-10)
+            self.assertIsInstance(caught.exception, CSRO.CorrectionNotApplied)
+
+    def test_unmarked_marknotapplied_tree_reads_as_its_warn_twin(self):
+        """Decision 1892's false positive gone: every mark 0 (a 0-mark MarkNotApplied tree whose twins exist on every row): valid."""
+        rc, text = self.run_main(write_tree(self.tmp / "zero", marked=True, marks={}))
+        self.assertEqual(rc, 0)
+        self.assertEqual(text, "Raw outputs are unchanged and corrected surface output is valid.\n")
+
+    def test_refusals(self):
+        cases = {
+            "unmarked nan": write_tree(self.tmp / "r1", marked=True, marks={1: (0, 1)}, edits={(2, "E_surf corrected (J)"): "nan"}),
+            "unmarked text": write_tree(self.tmp / "r2", marked=True, marks={}, edits={(1, "p_surf corrected"): "NA"}),
+            "no mark column": write_tree(self.tmp / "r3", marked=True, explicit=False),
+            "Warn text token": write_tree(self.tmp / "r4", edits={(1, "E_norm corrected (J)"): ""}),
+        }
+        for name, post in cases.items():
+            rc, text = self.run_main(post)
+            self.assertEqual(rc, cm.REFUSAL_EXIT, (name, text))
+            self.assertTrue(text.startswith("REFUSED (decision 1908)"), (name, text))
+        # a refusal outranks a NOT-APPLIED row on the same tree (never dropped)
+        rc, text = self.run_main(write_tree(self.tmp / "r5", marked=True, marks={1: (1, 1), 2: (1, 0)},
+                                            edits={(2, "p_surf corrected"): ""}))
+        self.assertEqual(rc, cm.REFUSAL_EXIT, text)
 
     def test_nan_without_twin_is_invalid(self):
         post = write_tree(self.tmp / "nan", nan_without_twin=True)

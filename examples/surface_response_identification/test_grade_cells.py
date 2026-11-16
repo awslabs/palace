@@ -21,6 +21,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import grade_cells as gc  # noqa: E402
+import coverage_marks as cm  # noqa: E402
 
 RECORDS = "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913"
 E = os.path.join(RECORDS, "readiness-20261029", "stageE")
@@ -82,22 +83,43 @@ def synthetic_es_run(root, sources, p_ft, c_ft, c_off, e_elec=1.0e-12):
 PARTIAL_SUFFIX = " partial (uncovered part raw)"  # kCoveragePartialColumnSuffix (surfaceresponsecoverage.hpp)
 
 
-def mark_es_run(root, marked_sources):
-    """The MarkNotApplied form of a synthetic ES run (decision 1829 / DESIGN-L4-v2 s2.3 E1 / E2): every corrected column of
-    surface-Q-corrected.csv and terminal-C-corrected.csv gets an appended partial twin; a marked source's corrected cells print
-    nan (its value moved to the twin), the twin is nan on an unmarked row."""
+def mark_es_run(root, marked_sources, interfaces=None, explicit=True, token="nan", exposure=0.0123):
+    """The MarkNotApplied form of a synthetic ES run (decisions 1829 / 1914; DESIGN-L4-v2 s2.3 E1 / E2): every corrected column of
+    surface-Q-corrected.csv and terminal-C-corrected.csv gets an appended partial twin. A marked source's E_elec and its interfaces
+    `interfaces` (None: every interface) print `token` (Palace: nan), their values moved to the twins (the twin is nan where
+    unmarked); terminal-C-corrected entry (i, j) is marked iff source i or j is (E-1). `explicit` (the product since decision 1914)
+    appends the exposure column and the explicit mark columns (`coverage mark E_elec`, `coverage mark[k]`, `coverage mark[i][j]`:
+    1 where marked); False = the form of a policy binary before decision 1914 (twins only)."""
     post = os.path.join(root, "postpro")
-    for name, corrected in (("surface-Q-corrected.csv", "postprocessed fixed-trace"), ("terminal-C-corrected.csv", "fixed-trace")):
+    for name in ("surface-Q-corrected.csv", "terminal-C-corrected.csv"):
         path = os.path.join(post, name)
         with open(path) as handle:
             lines = [ln.rstrip("\n").split(",") for ln in handle]
         header, rows = lines[0], lines[1:]
-        cols = [j for j, h in enumerate(header) if corrected in h]
-        out = [header + [header[j] + PARTIAL_SUFFIX for j in cols]]
+        matrix = name.startswith("terminal")
+        if matrix:
+            index = {j: int(h.split("[i][")[1].split("]")[0]) for j, h in enumerate(header) if "fixed-trace[i][" in h}
+            marks = [cm.MARK_MATRIX_ENTRY.format(c) for c in sorted(set(index.values()))] if explicit else []
+        else:
+            index = {j: (int(h.split("[")[1].split("]")[0]) if "[" in h else None) for j, h in enumerate(header)
+                     if "postprocessed fixed-trace" in h}
+            ks = sorted({k for k in index.values() if k is not None})
+            marks = ([cm.EXPOSURE_HEADERS[1], cm.MARK_E_ELEC] + [cm.MARK_INTERFACE.format(k) for k in ks]) if explicit else []
+        cols = sorted(index)
+        out = [header + [header[j] + PARTIAL_SUFFIX for j in cols] + marks]
         for r in rows:
-            marked = int(float(r[0])) in marked_sources
-            twins = [r[j] if marked else "nan" for j in cols]
-            out.append([("nan" if (marked and j in cols) else v) for j, v in enumerate(r)] + twins)
+            src = int(float(r[0]))
+            whole = src in marked_sources
+            if matrix:
+                cell_marked = {j: whole or index[j] in marked_sources for j in cols}
+                flags = ["1" if (whole or c in marked_sources) else "0" for c in sorted(set(index.values()))]
+            else:
+                def iface_marked(k):
+                    return whole and (interfaces is None or k in interfaces)
+                cell_marked = {j: (whole if index[j] is None else iface_marked(index[j])) for j in cols}
+                flags = [f"{exposure if whole else 0.0:+.12e}", "1" if whole else "0"] + ["1" if iface_marked(k) else "0" for k in ks]
+            twins = [r[j] if cell_marked[j] else "nan" for j in cols]
+            out.append([(token if cell_marked.get(j) else v) for j, v in enumerate(r)] + twins + (flags if explicit else []))
         with open(path, "w") as handle:
             handle.write("".join(",".join(r) + "\n" for r in out))
     return root
@@ -737,6 +759,124 @@ class MaxwellCard995(unittest.TestCase):
             self.assertTrue(row["status"].startswith("CARRIED"), w)
             for T in ("SA", "MS", "MA_sharp"):
                 self.assertEqual(row["cells"][T]["letter"], "P", f"{w} {T}")
+
+
+class ExplicitMarkWindows(unittest.TestCase):
+    """Decisions 1908 / 1914: grade_cells keys on the product's EXPLICIT marks (coverage_marks.py), never on a token: a marked cell
+    whatever its token reads NOT-APPLIED; an unmarked cell that is not a finite number, or a MarkNotApplied table without its mark
+    columns, is a REFUSAL (exit 5, no output file); the USER's Q3 (keep + flag): the kept p of an unmarked Type under a marked E_elec
+    is graded WITH the flag, and what this reader builds from the marked E_elec (MA_sharp, C) is NOT-APPLIED."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.sources = [1, 2]
+        self.p_ref = {s: {1: 1.0e-4, 2: 2.0e-4, 3: 1.0e-5} for s in self.sources}
+        self.c_ref = {1: 1.0e-14, 2: 2.0e-14}
+        ma_sharp_ref = {s: self.p_ref[s][3] * (1.0 + 0.5 * 0.0678) for s in self.sources}
+        self.values = os.path.join(self.tmp, "ref.json")
+        with open(self.values, "w") as handle:
+            json.dump(es_values_reference(self.sources, self.p_ref, self.c_ref, ma_sharp_ref), handle)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp)
+
+    def run_of(self, name, p_ft=None):
+        p_ft = p_ft or {s: dict(self.p_ref[s]) for s in self.sources}
+        return synthetic_es_run(os.path.join(self.tmp, name), self.sources, p_ft, dict(self.c_ref),
+                                {s: -0.1 * self.c_ref[s] for s in self.sources})
+
+    def grade(self, run, name):
+        out = os.path.join(self.tmp, f"{name}.json")
+        rc = gc.main(["--form", "es", "--device", run, "--reference-values", self.values, "--out", out, "--tail-form", "422"])
+        g = None
+        if os.path.isfile(out):
+            with open(out) as handle:
+                g = json.load(handle)
+        return rc, g, out
+
+    def edit_cell(self, run, column, source, token):
+        path = os.path.join(run, "postpro", "surface-Q-corrected.csv")
+        with open(path) as handle:
+            lines = [ln.rstrip("\n").split(",") for ln in handle]
+        j = [h.strip() for h in lines[0]].index(column)
+        for r in lines[1:]:
+            if int(float(r[0])) == source:
+                r[j] = token
+        with open(path, "w") as handle:
+            handle.write("".join(",".join(r) + "\n" for r in lines))
+
+    def test_marked_cell_is_not_applied_whatever_its_token(self):
+        """The review's HT5 / HT5b form: a marked cell whose token is '' or 'NA' (a re-writer) reads NOT-APPLIED (no grade), never a
+        traceback and never a number."""
+        for token in ("nan", "", "NA"):
+            run = mark_es_run(self.run_of(f"tok-{token or 'empty'}"), [2], token=token)
+            rc, g, _ = self.grade(run, f"tok-{token or 'empty'}")
+            self.assertEqual(rc, 0, token)
+            for T in gc.TYPES:
+                self.assertEqual(g["cells"][T]["letters_by_member"]["2"], gc.NOT_APPLIED, (token, T))
+                self.assertEqual(g["cells"][T]["letters_by_member"]["1"], "PASS", (token, T))
+                self.assertEqual(g["cells"][T]["letter"], gc.NOT_APPLIED, (token, T))
+            self.assertEqual(g["mark_not_applied_signals"][:1], ["twin column in surface-Q-corrected.csv"])
+
+    def test_refusal_unmarked_non_number_and_no_explicit_mark(self):
+        """REFUSAL (exit 5, one line, no output file): an unmarked cell holding nan / '' / NA on a marked tree; a marked tree whose
+        tables carry the twins but no mark column (a policy binary before decision 1914); a TEXT token on a Warn tree."""
+        cases = {}
+        for token in ("nan", "", "NA", "+inf"):
+            run = mark_es_run(self.run_of(f"un-{token or 'empty'}"), [2])
+            self.edit_cell(run, "p_surf postprocessed fixed-trace[1]", 1, token)
+            cases[f"unmarked {token!r}"] = run
+        cases["no mark column"] = mark_es_run(self.run_of("old-form"), [2], explicit=False)
+        warn = self.run_of("warn-text")
+        self.edit_cell(warn, "p_surf postprocessed fixed-trace[2]", 1, "NA")
+        cases["Warn text token"] = warn
+        for name, run in cases.items():
+            rc, g, out = self.grade(run, name.replace(" ", "-").replace("'", ""))
+            self.assertEqual(rc, cm.REFUSAL_EXIT, name)
+            self.assertIsNone(g, name)
+            self.assertFalse(os.path.exists(out), name)
+
+    def test_warn_nan_keeps_the_frozen_reading(self):
+        """A Warn tree (no signal) with a nan in a corrected cell: the reading of 4cadc9516f (NOT-APPLIED letter, exit 0), not a
+        refusal: the Warn readings are frozen (decision 1914 (2): only a text token is refused there)."""
+        run = self.run_of("warn-nan")
+        self.edit_cell(run, "p_surf postprocessed fixed-trace[1]", 1, "nan")
+        rc, g, _ = self.grade(run, "warn-nan")
+        self.assertEqual(rc, 0)
+        self.assertEqual(g["cells"]["SA"]["letters_by_member"]["1"], gc.NOT_APPLIED)
+        self.assertNotIn("mark_not_applied_signals", g)
+
+    def test_q3_kept_value_graded_with_the_flag(self):
+        """USER 1867 Q3: source 2's E_elec and its MA interface marked, SA / MS unmarked: SA / MS of source 2 are graded on the kept
+        p WITH the flag beside the letter (never counted in n_pass; the cell letter carries the flag), MA_sharp (built from the
+        marked E_elec) and C (entry (2, 2) marked) are NOT-APPLIED; source 1 reads as on the Warn twin."""
+        warn_rc, warn, _ = self.grade(self.run_of("q3-warn"), "q3-warn")
+        self.assertEqual(warn_rc, 0)
+        run = mark_es_run(self.run_of("q3"), [2], interfaces=(3,))
+        rc, g, _ = self.grade(run, "q3")
+        self.assertEqual(rc, 0)
+        flagged = "PASS" + gc.FLAG_SUFFIX
+        for T in ("SA", "MS"):
+            self.assertEqual(g["cells"][T]["letters_by_member"], {"1": "PASS", "2": flagged}, T)
+            self.assertEqual(g["cells"][T]["letter"], flagged, T)
+            self.assertEqual(g["cells"][T]["n_pass"], 1, T)
+            self.assertEqual(g["cells"][T]["n_flagged"], 1, T)
+            self.assertEqual(g["cells"][T]["x_pct"], warn["cells"][T]["x_pct"], T)
+            self.assertIn(cm.FLAG_Q3, g["per_member"]["2"]["grade"]["flags"][T])
+        for T in ("MA_sharp", "C"):
+            self.assertEqual(g["cells"][T]["letters_by_member"]["2"], gc.NOT_APPLIED, T)
+            self.assertEqual(g["cells"][T]["letter"], gc.NOT_APPLIED, T)
+        self.assertEqual(g["per_member"]["1"]["grade"]["letters"], warn["per_member"]["1"]["grade"]["letters"])
+        line = gc.summary_line("q3", g)
+        self.assertIn(f"SA +0.000 % [+0.000, +0.000] PASS [{cm.FLAG_Q3}]", line)
+        self.assertNotIn("SA +0.000 % [+0.000, +0.000] PASS band", line)
+        # a flagged FAIL stays FAIL (counted as a fail) with the flag beside it in the summary
+        p_ft = {s: dict(self.p_ref[s]) for s in self.sources}
+        p_ft[2][1] = 1.06e-4
+        rc, g, _ = self.grade(mark_es_run(self.run_of("q3-fail", p_ft), [2], interfaces=(3,)), "q3-fail")
+        self.assertEqual(g["cells"]["SA"]["letter"], "FAIL")
+        self.assertEqual(g["cells"]["SA"]["n_fail"], 1)
+        self.assertIn(f"FAIL [{cm.FLAG_Q3}: 1 of 2 members", gc.summary_line("q3-fail", g))
 
 
 if __name__ == "__main__":

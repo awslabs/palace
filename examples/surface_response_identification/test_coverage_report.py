@@ -15,6 +15,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import coverage_report as cr  # noqa: E402
+import coverage_marks as cm  # noqa: E402
 
 RECORD_S1 = ("/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/v3h/"
              "stretchfix-regrade/runs/j2/sct002-S1-thin-P4-sfr/postpro")
@@ -282,9 +283,12 @@ class EnergyPartitionTest(unittest.TestCase):
 PARTIAL_SUFFIX = " partial (uncovered part raw)"  # kCoveragePartialColumnSuffix (surfaceresponsecoverage.hpp)
 
 
-def mark_surface_q(dirpath, interfaces=(), whole=False):
-    """The MarkNotApplied form of write_surface_q's table (decision 1829; DESIGN-L4-v2 s2.3): the fixed-trace cells of the marked
-    interfaces (and, `whole`, the corrected E_elec) print nan, their values moved to appended ' partial (uncovered part raw)' twins."""
+def mark_surface_q(dirpath, interfaces=(), whole=False, explicit=True, token="nan", exposure=0.0123):
+    """The MarkNotApplied form of write_surface_q's table (decisions 1829 / 1914; DESIGN-L4-v2 s2.3): the fixed-trace cells of the
+    marked interfaces (and, `whole`, the corrected E_elec) print `token` (Palace: nan), their values moved to appended
+    ' partial (uncovered part raw)' twins; `explicit` (the product since decision 1914) appends the exposure column and the explicit
+    mark columns (`coverage mark E_elec`, `coverage mark[k]` for every interface: 1 where marked); False = the form of a policy binary
+    before decision 1914 (twins only)."""
     path = os.path.join(dirpath, "surface-Q-corrected.csv")
     with open(path) as f:
         lines = [ln.rstrip("\n").split(",") for ln in f]
@@ -292,9 +296,13 @@ def mark_surface_q(dirpath, interfaces=(), whole=False):
     names = [f"{q} postprocessed fixed-trace[{i}]" for i in interfaces for q in ("E_surf", "p_surf", "Q_surf")]
     names += ["E_elec postprocessed fixed-trace (J)"] if whole else []
     cols = [j for j, h in enumerate(header) if any(h.startswith(n) for n in names)]
-    out = [header + [header[j] + PARTIAL_SUFFIX for j in cols]]
+    ks = sorted(int(h.split("[")[1].split("]")[0]) for h in header if h.startswith("E_surf raw["))
+    marks = ([cm.EXPOSURE_HEADERS[1], cm.MARK_E_ELEC] + [cm.MARK_INTERFACE.format(k) for k in ks]) if explicit else []
+    flags = ([f"{exposure if whole else 0.0:+.12e}", "1" if whole else "0"] + ["1" if k in interfaces else "0" for k in ks]
+             if explicit else [])
+    out = [header + [header[j] + PARTIAL_SUFFIX for j in cols] + marks]
     for r in lines[1:]:
-        out.append([("nan" if j in cols else v) for j, v in enumerate(r)] + [r[j] for j in cols])
+        out.append([(token if j in cols else v) for j, v in enumerate(r)] + [r[j] for j in cols] + flags)
     with open(path, "w") as f:
         f.write("".join(",".join(r) + "\n" for r in out))
 
@@ -348,6 +356,8 @@ class MarkNotAppliedTest(unittest.TestCase):
 
     def test_whole_measurement_mark_and_the_single_solve_rule(self):
         post, manifest = write_fixture(os.path.join(self.tmp, "whole"))
+        for d in cr.iteration_dirs(post):
+            mark_surface_q(d)  # decision 1914: every level of a MarkNotApplied tree states its marks (none here)
         mark_surface_q(post, whole=True)  # the final solve's corrected E_elec marked: every Type of that solve
         report = cr.build_report(post, manifest, self.bands, ma_reading="sharp")
         for t in ("SA", "MS", "MA"):
@@ -358,6 +368,165 @@ class MarkNotAppliedTest(unittest.TestCase):
         rule = cr.depth_rule([{"ft": {"SA": None}, "not_applied": ["SA"]}])["SA"]
         self.assertEqual(rule["status"], "ladder: not in this run")
         self.assertNotIn("not_applied_solves", rule)
+
+
+class ExplicitMarkTest(unittest.TestCase):
+    """Decisions 1908 / 1914: coverage_report keys on the product's EXPLICIT marks (coverage_marks.py), never on a token. A marked
+    cell whatever its token gives no band (the review's BLOCKER-1 form: an empty / NA token in a marked cell printed a NARROWER
+    band and dropped the solve); an unmarked ft / E_elec cell that is not a finite number, or a level without its mark columns, is a
+    REFUSAL (exit 5, no report); a Warn tree's nan keeps its frozen reading, a text token there is refused; the ladder's
+    not_applied entry is keyed on marks only (decision 1897); the USER's Q3 (keep + flag)."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="covrep-explicit-")
+        self.bands = cr.load_bands(write_bands(os.path.join(self.tmp, "bands.json")))
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def single_solve(self, name):
+        post, manifest = write_fixture(os.path.join(self.tmp, name))
+        for d in cr.iteration_dirs(post):
+            shutil.rmtree(d)
+        return post, manifest
+
+    def set_cell(self, post, column, token):
+        path = os.path.join(post, "surface-Q-corrected.csv")
+        with open(path) as f:
+            lines = [ln.rstrip("\n").split(",") for ln in f]
+        j = [h.strip() for h in lines[0]].index(column)
+        for r in lines[1:]:
+            r[j] = token
+        with open(path, "w") as f:
+            f.write("".join(",".join(r) + "\n" for r in lines))
+
+    def test_marked_cell_with_a_text_token_gets_no_band(self):
+        """The review's HT5 / HT5b: SA marked in the final solve of a ladder with the token '' / 'NA': SA NOT-APPLIED (no band, the
+        solve kept in the ladder, never 'not in this run'); MS / MA as on the explicit nan form."""
+        reports = {}
+        for token in ("nan", "", "NA"):
+            post, manifest = write_fixture(os.path.join(self.tmp, f"ht5-{token or 'empty'}"), iterations=("depth",))
+            for d in cr.iteration_dirs(post):
+                mark_surface_q(d)
+            mark_surface_q(post, interfaces=(1,), token=token)
+            reports[token] = cr.build_report(post, manifest, self.bands, ma_reading="sharp")
+        for token, report in reports.items():
+            self.assertEqual(report["block_D"]["ladder"]["types"]["SA"]["status"], cr.LADDER_NOT_APPLIED, token)
+            self.assertTrue(report["block_C"]["SA"]["not_applied"], token)
+            self.assertNotIn("low_pt", report["block_C"]["SA"], token)
+            self.assertEqual(report["block_D"]["ladder"]["solves"][-1]["not_applied"], ["SA"], token)
+            self.assertEqual(report["not_applied_types"], ["SA"], token)
+            for t in ("MS", "MA"):
+                self.assertEqual(report["block_C"][t], reports["nan"]["block_C"][t], (token, t))
+
+    def test_refusal_unmarked_non_number_and_no_explicit_mark(self):
+        """REFUSAL: an unmarked ft / E_elec cell holding nan / '' / NA / inf on a marked tree; a marked tree's level without its mark
+        columns (a policy binary before decision 1914); a text token on a Warn tree. main() exits 5 and writes no report."""
+        cases = {}
+        for column, token in (("E_surf postprocessed fixed-trace[2] (J)", "nan"), ("E_surf postprocessed fixed-trace[2] (J)", ""),
+                              ("E_surf postprocessed fixed-trace[2] (J)", "NA"), ("E_elec postprocessed fixed-trace (J)", "+inf"),
+                              ("E_surf postprocessed fixed-flux[3] (J)", "null")):
+            post, manifest = self.single_solve(f"un-{len(cases)}")
+            mark_surface_q(post, interfaces=(1,))
+            self.set_cell(post, column, token)
+            cases[f"{column} {token!r}"] = (post, manifest)
+        post, manifest = self.single_solve("old-form")
+        mark_surface_q(post, interfaces=(1,), explicit=False)
+        cases["no mark column"] = (post, manifest)
+        post, manifest = write_fixture(os.path.join(self.tmp, "one-level-unmarked"))
+        mark_surface_q(post, interfaces=(1,))
+        cases["a level without its marks"] = (post, manifest)
+        post, manifest = self.single_solve("warn-text")
+        self.set_cell(post, "E_surf postprocessed fixed-trace[2] (J)", "NA")
+        cases["Warn text token"] = (post, manifest)
+        for name, (post, manifest) in cases.items():
+            with self.assertRaises(cm.Refusal, msg=name):
+                cr.build_report(post, manifest, self.bands, ma_reading="sharp")
+            out = os.path.join(self.tmp, "out-" + str(abs(hash(name))))
+            rc = cr.main([post, "--manifest", manifest, "--bands", self.bands["_path"], "--ma-reading", "sharp", "--output", out])
+            self.assertEqual(rc, cm.REFUSAL_EXIT, name)
+            self.assertFalse(os.path.exists(out), name)
+
+    def test_warn_nan_frozen_and_the_ladder_entry_keyed_on_marks(self):
+        """Decision 1897: a Warn ladder whose ft cells are nan BY DESIGN (the self-consistent-only form) carries NO not_applied entry
+        (the reader of record's JSON), and its readings are the frozen ones (no refusal on a Warn nan)."""
+        post, manifest = write_fixture(os.path.join(self.tmp, "warn-nan"))
+        for d in cr.iteration_dirs(post) + [post]:
+            for i in (1, 2, 3):
+                self.set_cell(d, f"E_surf postprocessed fixed-trace[{i}] (J)", "nan")
+        report = cr.build_report(post, manifest, self.bands, ma_reading="sharp")
+        self.assertFalse(any("not_applied" in s for s in report["block_D"]["ladder"]["solves"]))
+        self.assertNotIn("not_applied_types", report)
+        self.assertNotIn("mark_not_applied_signals", report)
+
+    def test_q3_single_solve_keeps_and_flags(self):
+        """USER 1867 Q3 on a single solve: the E_elec marked with SA's interface; SA no band; MS / MA keep their bands WITH the
+        EXPOSURE flag (no ladder step is built from the marked E_elec); the C band withheld; q3_flagged_types; a LOW reason; the
+        summary line and the markdown carry the flag."""
+        wpost, wmanifest = self.single_solve("q3-warn")
+        warn = cr.build_report(wpost, wmanifest, self.bands, ma_reading="sharp")
+        post, manifest = self.single_solve("q3")
+        mark_surface_q(post, interfaces=(1,), whole=True, exposure=0.0321)
+        report = cr.build_report(post, manifest, self.bands, ma_reading="sharp")
+        self.assertEqual(report["not_applied_types"], ["SA"])
+        self.assertEqual(report["q3_flagged_types"], ["MA", "MS"])
+        self.assertTrue(report["block_C"]["SA"]["not_applied"])
+        for t in ("MS", "MA"):
+            row = report["block_C"][t]
+            self.assertEqual((row["low_pt"], row["high_pt"]), (warn["block_C"][t]["low_pt"], warn["block_C"][t]["high_pt"]), t)
+            self.assertEqual(row["flag"], cm.FLAG_Q3, t)
+            self.assertIn("EXPOSURE", row["exposure"], t)
+            self.assertIn("0.0321", row["exposure"], t)
+            self.assertTrue(any(r.startswith(f"{t}: {cm.FLAG_Q3}") for r in report["label"]["reasons_low"]), t)
+        self.assertTrue(report["block_C"]["C"]["not_applied"])
+        self.assertEqual(report["label"]["label"], "LOW")
+        self.assertIn(f"[{cm.FLAG_Q3}]", cr.summary_line(report))
+        self.assertIn("EXPOSURE", cr.render_markdown(report))
+        self.assertNotIn("q3_flagged_types", warn)
+
+    def test_q3_ladder_step_built_from_the_marked_normalization_is_not_applied(self):
+        """Q3 on a ladder: the final solve's E_elec marked (SA's interface too): the ft fraction of EVERY Type is built from it, so
+        every Type's DEPTH reading is NOT-APPLIED and no Type has a band (a covered Type keeps a band only without such a step)."""
+        post, manifest = write_fixture(os.path.join(self.tmp, "q3-ladder"), iterations=("depth",))
+        for d in cr.iteration_dirs(post):
+            mark_surface_q(d)
+        mark_surface_q(post, interfaces=(1,), whole=True)
+        report = cr.build_report(post, manifest, self.bands, ma_reading="sharp")
+        for t in ("SA", "MS", "MA", "C"):
+            self.assertTrue(report["block_C"][t]["not_applied"], t)
+            self.assertNotIn("low_pt", report["block_C"][t], t)
+        for t in ("SA", "MS", "MA"):
+            self.assertEqual(report["block_D"]["ladder"]["types"][t]["status"], cr.LADDER_NOT_APPLIED, t)
+        self.assertEqual(report["q3_flagged_types"], ["MA", "MS"])
+
+    def test_maxwell_explicit_marks_and_q3(self):
+        """Maxwell: SA rows marked ('coverage mark E_surf' 1), E_norm marked on every row, MS rows unmarked: SA no band, MS its band
+        WITH the EXPOSURE flag (from the confidence table's exposure column), the C band withheld."""
+        bands = cr.load_bands(write_maxwell_bands(os.path.join(self.tmp, "mx-bands.json")))
+        wpost, wmanifest = write_maxwell_fixture(os.path.join(self.tmp, "mx-warn"))
+        warn = cr.build_report(wpost, wmanifest, bands, ma_reading="sharp")
+        post, manifest = write_maxwell_fixture(os.path.join(self.tmp, "mx-q3"))
+        path = os.path.join(post, "surface-Q-corrected.csv")
+        mark_rows(path, ("E_surf corrected (J)", "p_surf corrected", "Q_surf corrected"), lambda row: float(row["interface"]) == 1.0)
+        with open(path) as f:
+            lines = [ln.rstrip("\n").split(",") for ln in f]
+        with open(path, "w") as f:
+            f.write(",".join(lines[0] + [cm.MARK_E_NORM, cm.MARK_E_SURF]) + "\n")
+            for r in lines[1:]:
+                f.write(",".join(r + ["1", "1" if float(r[2]) == 1.0 else "0"]) + "\n")
+        conf = os.path.join(post, "surface-response-confidence.csv")
+        with open(conf) as f:
+            lines = [ln.rstrip("\n") for ln in f]
+        with open(conf, "w") as f:
+            f.write(lines[0] + "," + cm.EXPOSURE_HEADERS[0] + "," + cm.MARK_MEASUREMENT + "\n")
+            f.write("".join(ln + ",+4.5e-02,1\n" for ln in lines[1:]))
+        report = cr.build_report(post, manifest, bands, ma_reading="sharp")
+        self.assertEqual(report["not_applied_types"], ["SA"])
+        self.assertEqual(report["q3_flagged_types"], ["MS"])
+        self.assertNotIn("low_pt", report["block_C"]["SA"])
+        self.assertEqual(report["block_C"]["MS"]["low_pt"], warn["block_C"]["MS"]["low_pt"])
+        self.assertIn("0.045", report["block_C"]["MS"]["exposure"])
+        self.assertTrue(report["block_C"]["C"]["not_applied"])
 
 
 class LabelAndFormsTest(unittest.TestCase):
@@ -1414,19 +1583,25 @@ MX_MARKED_COLUMNS = ("E_norm corrected (J)", "E_norm corrected fixed-flux (J)", 
                      "Q_surf corrected fixed-flux", "E_surf self-consistent (J)", "p_surf self-consistent", "Q_surf self-consistent")
 
 
-def mark_rows(path, columns, row_marked):
+def mark_rows(path, columns, row_marked, marks=()):
     """The MarkNotApplied form of a corrected table: the named columns (EXACT header match) of the rows `row_marked` selects print
-    nan, their values in appended ' partial (uncovered part raw)' twins (nan on an unmarked row)."""
+    nan, their values in appended ' partial (uncovered part raw)' twins (nan on an unmarked row); `marks` = the explicit mark
+    columns appended (decision 1914: 1 on a marked row, 0 elsewhere; () = the form before decision 1914)."""
     with open(path) as f:
         lines = [ln.rstrip("\n").split(",") for ln in f]
     header = lines[0]
     cols = [j for j, h in enumerate(header) if h.strip() in columns]
-    out = [header + [header[j] + PARTIAL_SUFFIX for j in cols]]
+    out = [header + [header[j] + PARTIAL_SUFFIX for j in cols] + list(marks)]
     for r in lines[1:]:
         m = row_marked(dict(zip([h.strip() for h in header], r)))
-        out.append([("nan" if (m and j in cols) else v) for j, v in enumerate(r)] + [(r[j] if m else "nan") for j in cols])
+        out.append([("nan" if (m and j in cols) else v) for j, v in enumerate(r)] + [(r[j] if m else "nan") for j in cols]
+                   + [("1" if m else "0") for _ in marks])
     with open(path, "w") as f:
         f.write("".join(",".join(r) + "\n" for r in out))
+
+
+MX_MARKS = (cm.MARK_E_NORM, cm.MARK_E_SURF)
+ES_MARKS = (cm.MARK_E_ELEC,) + tuple(cm.MARK_INTERFACE.format(k) for k in (1, 2, 3))
 
 
 class SingleSolveMarkTest(unittest.TestCase):
@@ -1454,7 +1629,7 @@ class SingleSolveMarkTest(unittest.TestCase):
                 with open(path, "w") as f:
                     f.write(text.replace("f (GHz),", "m,", 1))
             if side == "mark":
-                mark_rows(os.path.join(post, "surface-Q-corrected.csv"), MX_MARKED_COLUMNS, lambda row: True)
+                mark_rows(os.path.join(post, "surface-Q-corrected.csv"), MX_MARKED_COLUMNS, lambda row: True, MX_MARKS)
             out.append((post, manifest))
         return out
 
@@ -1499,7 +1674,7 @@ class SingleSolveMarkTest(unittest.TestCase):
             if side == "mark":  # source 2 only: every corrected cell of its row (its E_elec corrected too)
                 with open(os.path.join(post, "surface-Q-corrected.csv")) as f:
                     cols = {h for h in f.readline().rstrip("\n").split(",") if "postprocessed" in h or h.startswith("E_elec corrected")}
-                mark_rows(os.path.join(post, "surface-Q-corrected.csv"), cols, lambda row: float(row["i"]) == 2.0)
+                mark_rows(os.path.join(post, "surface-Q-corrected.csv"), cols, lambda row: float(row["i"]) == 2.0, ES_MARKS)
             reports[side] = cr.build_report(post, manifest, bands, ma_reading="sharp")
         warn, mark = reports["warn"], reports["mark"]
         # the headline source 1 is unmarked: its blocks read as on the Warn tree; no not_applied_types at the top
@@ -1531,11 +1706,11 @@ class SingleSolveMarkTest(unittest.TestCase):
             palace["SurfaceResponse"]["Coverage"] = {"Policy": policy}
             _dump(palace, os.path.join(post, "palace.json"))
 
-    def test_marked_means_nonfinite_and_policy_or_twin(self):
-        """Decision 1880: MARKED = non-finite AND (Policy MarkNotApplied OR the cell's twin present). (i) Policy MarkNotApplied, a
-        nan cell WITHOUT its twin: no band (the Policy arm); (ii) a Warn tree carrying the twins by a hand-made edit (hostile):
-        no band (the twin arm); (iii) a Warn tree with the nan by design and no twin: the band of record is kept (the Warn
-        readings are frozen: OI-READER-BAND-PRINTED-FOR-NAN-FIXED-TRACE-ON-SELFCONSISTENT-ONLY-WARN-TREE)."""
+    def test_marked_means_an_explicit_mark(self):
+        """Decision 1914 (supersedes 1880's token rule): a cell is MARKED only by its explicit mark column. (i) Policy MarkNotApplied
+        in palace.json, nan cells, no mark column (the Policy signal alone): REFUSAL; (ii) a Warn tree carrying twins by a hand-made
+        edit (a signal) without mark columns: REFUSAL; (iii) a Warn tree with the nan by design and no signal: the band of record is
+        kept (the Warn readings are frozen: OI-READER-BAND-PRINTED-FOR-NAN-FIXED-TRACE-ON-SELFCONSISTENT-ONLY-WARN-TREE)."""
         bands = cr.load_bands(write_maxwell_bands(os.path.join(self.tmp, "bands.json")))
         cases = {}
         for name in ("policy-arm", "twin-arm", "warn-nan"):
@@ -1549,14 +1724,14 @@ class SingleSolveMarkTest(unittest.TestCase):
                 mark_rows(os.path.join(post, "surface-Q-corrected.csv"), MX_MARKED_COLUMNS, lambda row: True)
             else:
                 self._nan_without_twins(post, "Warn")
-            cases[name] = cr.build_report(post, manifest, bands, ma_reading="sharp")
+            cases[name] = (post, manifest)
         for name in ("policy-arm", "twin-arm"):
-            self.assertEqual(cases[name]["not_applied_types"], ["MS", "SA"], name)
-            for t in ("SA", "MS", "C"):
-                self.assertTrue(cases[name]["block_C"][t]["not_applied"], (name, t))
-                self.assertNotIn("low_pt", cases[name]["block_C"][t], (name, t))
-        warn = cases["warn-nan"]
+            with self.assertRaises(cm.Refusal, msg=name) as caught:
+                cr.build_report(*cases[name], bands, ma_reading="sharp")
+            self.assertIn("no explicit mark column", str(caught.exception), name)
+        warn = cr.build_report(*cases["warn-nan"], bands, ma_reading="sharp")
         self.assertNotIn("not_applied_types", warn)
+        self.assertNotIn("mark_not_applied_signals", warn)
         for t in ("SA", "MS", "C"):
             self.assertIn("low_pt", warn["block_C"][t], t)
             self.assertNotIn("not_applied", warn["block_C"][t], t)
