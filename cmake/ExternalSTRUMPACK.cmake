@@ -271,8 +271,9 @@ list(APPEND STRUMPACK_OPTIONS
 # endif()
 
 # PBLAS block size of the distributed fronts: 128 instead of the STRUMPACK default of 32
-# gives faster factorizations and solves (only without SLATE, whose default is 512). Needs
-# the patch for https://github.com/pghysels/STRUMPACK/pull/169 below
+# gives faster factorizations and solves. The value set here would also replace the block
+# size of 512 that STRUMPACK uses with SLATE, which is not built here. Needs the patch for
+# https://github.com/pghysels/STRUMPACK/pull/169 below
 list(APPEND STRUMPACK_OPTIONS
   "-DSTRUMPACK_PBLAS_BLOCKSIZE=128"
 )
@@ -304,7 +305,9 @@ download_patch(STRUMPACK_PATCH_FILES "${CMAKE_BINARY_DIR}/extern/STRUMPACK-patch
 )
 # Lower-latency distributed triangular solves for a few right-hand sides
 # (https://github.com/pghysels/STRUMPACK/pull/165), without its test and CI changes, which
-# need test infrastructure added after STRUMPACK 8.1.0
+# need test infrastructure added after STRUMPACK 8.1.0. These solves handle block sizes up
+# to 32, so they are not used with the block size set above. The patch is kept because the
+# patch for PR 169 below changes its sources
 download_patch(STRUMPACK_PATCH_FILES "${CMAKE_BINARY_DIR}/extern/STRUMPACK-patches"
   strumpack_pr165.diff
   "https://raw.githubusercontent.com/awslabs/palace/0bbc11478dd7faa1a5f89b4f52d34c1205273e1f/extern/patch/STRUMPACK/strumpack_pr165.diff"

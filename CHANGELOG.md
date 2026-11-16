@@ -60,12 +60,18 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Performance Improvements
 
-  - STRUMPACK is now built with a PBLAS block size of 128 instead of 32, which lowers the
-    time of the STRUMPACK coarse solver by 4-17% and its memory. The STRUMPACK patch for
-    [pghysels/STRUMPACK#169](https://github.com/pghysels/STRUMPACK/pull/169), which allows
-    setting the block size, also uses the narrow triangular solves of
-    [pghysels/STRUMPACK#165](https://github.com/pghysels/STRUMPACK/pull/165) only for the
-    block sizes they handle. [PR 1197](https://github.com/awslabs/palace/pull/1197).
+  - STRUMPACK is now built with a PBLAS block size of 128 instead of 32 in the superbuild
+    and in Spack builds of STRUMPACK without SLATE, such as the containers. Spack builds
+    of STRUMPACK with SLATE, the default of its Spack package, keep the block size of 512
+    of SLATE. The block size is set with a STRUMPACK patch for
+    [pghysels/STRUMPACK#169](https://github.com/pghysels/STRUMPACK/pull/169). The patch
+    for [pghysels/STRUMPACK#165](https://github.com/pghysels/STRUMPACK/pull/165)
+    ([PR 1170](https://github.com/awslabs/palace/pull/1170)) is still applied, but its
+    lower-latency distributed triangular solves for a few right-hand sides only handle
+    block sizes up to 32 and are thus no longer used. With a block size of 128, the time
+    of the STRUMPACK coarse solver is 4-17% lower than with these solves and a block size
+    of 32, and its memory is lower.
+    [PR 1197](https://github.com/awslabs/palace/pull/1197).
   - Used two levels of aggressive coarsening in the BoomerAMG coarse solver of the
     multigrid preconditioner of the divergence-free projection, instead of one. Its
     V-cycle is latency bound at high process counts, and the shorter hierarchy makes it
@@ -74,12 +80,6 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     matrices after the last solve, before the final field output and error estimation.
     This lowers the peak memory when the final postprocessing sets it.
     [PR 1087](https://github.com/awslabs/palace/pull/1087).
-  - Added a STRUMPACK patch for
-    [pghysels/STRUMPACK#165](https://github.com/pghysels/STRUMPACK/pull/165), which lowers
-    the latency of the distributed triangular solves of the solve phase for a few
-    right-hand sides, such as the real and imaginary parts of a complex vector. This
-    speeds up STRUMPACK as the coarse solver at high process counts. Results are
-    unchanged. [PR 1170](https://github.com/awslabs/palace/pull/1170).
   - Added a hypre patch, based on
     [hypre-space/hypre#1652](https://github.com/hypre-space/hypre/pull/1652), for
     multicomponent vectors in hybrid Gauss-Seidel relaxation and Gaussian elimination, and
