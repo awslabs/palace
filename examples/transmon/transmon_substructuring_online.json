@@ -48,6 +48,11 @@
     ]
   },
   "Boundaries": {
+    "PEC": {
+      "Attributes": [
+        5
+      ]
+    },
     "Terminal": [
       {
         "Index": 1,
@@ -59,12 +64,6 @@
         "Index": 2,
         "Attributes": [
           8
-        ]
-      },
-      {
-        "Index": 3,
-        "Attributes": [
-          5
         ]
       }
     ]

@@ -356,8 +356,42 @@ def constraint_segments(face, nodes, layout, dnodes):
     return segs
 
 
-def check_environment(face, layout, model_layout):
-    """Compare the layouts outside the region, in both directions."""
+def feature_segments(layout, nodes):
+    """The feature edges of the layout as point pairs, with a uniform grid of their bounding
+    boxes."""
+    segs = [
+        (np.asarray(nodes[a][:2]), np.asarray(nodes[b][:2]))
+        for a, b, _ in layout.feature_edges()
+    ]
+    grid = collections.defaultdict(list)
+    for k, (p, q) in enumerate(segs):
+        lo = np.floor((np.minimum(p, q) - layout.lo) / layout.cell).astype(int)
+        hi = np.floor((np.maximum(p, q) - layout.lo) / layout.cell).astype(int)
+        for i in range(lo[0], hi[0] + 1):
+            for j in range(lo[1], hi[1] + 1):
+                grid[(i, j)].append(k)
+    return segs, grid
+
+
+def distance_to_segments(m, segs, grid, lo, cell):
+    """Distance from the point m to the nearest segment in the cells around it."""
+    i, j = np.floor((m - lo) / cell).astype(int)
+    best = np.inf
+    for di in (-1, 0, 1):
+        for dj in (-1, 0, 1):
+            for k in grid.get((i + di, j + dj), ()):
+                p, q = segs[k]
+                d = q - p
+                s = np.clip(np.dot(m - p, d) / max(np.dot(d, d), 1e-300), 0.0, 1.0)
+                best = min(best, np.linalg.norm(m - (p + s * d)))
+    return best
+
+
+def check_environment(face, layout, nodes, model_layout, model_nodes):
+    """Compare the layouts outside the region, in both directions: the attributes at the
+    triangle centroids, and the vertices of the feature edges, each of which must lie on a
+    feature edge of the other layout (to within a tenth of the length of its edges, for
+    curves meshed differently), which also sees an edge moved by less than a triangle."""
     mismatch, total = 0, 0
     for a, b in ((model_layout, layout), (layout, model_layout)):
         for t in range(len(a.attr)):
@@ -368,6 +402,47 @@ def check_environment(face, layout, model_layout):
     print("Environment layout check: %d of %d triangles differ" % (mismatch, total))
     if mismatch > 1e-3 * total:
         sys.exit("the design differs from the model outside the region")
+    edges = [feature_segments(model_layout, model_nodes), feature_segments(layout, nodes)]
+    off, count = 0, 0
+    pairs = ((edges[0], edges[1], layout), (edges[1], edges[0], model_layout))
+    for (a, _), (b, grid), l in pairs:
+        for p, q in a:
+            for v in (p, q):
+                if not face.contains(v):
+                    count += 1
+                    d = distance_to_segments(v, b, grid, l.lo, l.cell)
+                    off += d > 0.1 * np.linalg.norm(q - p)
+    print("Environment feature edge check: %d of %d vertices differ" % (off, count))
+    if off > 0:
+        sys.exit("the design differs from the model outside the region")
+
+
+def face_components(elements, attributes):
+    """The number of face-connected components of the tetrahedra with the given
+    attributes."""
+    parent = {}
+
+    def find(a):
+        while parent.setdefault(a, a) != a:
+            parent[a] = parent[parent[a]]
+            a = parent[a]
+        return a
+
+    owner = {}
+    tets = [
+        e
+        for e, (t, tags, _) in enumerate(elements)
+        if t in TETRAHEDRA and tags[0] in attributes
+    ]
+    for e in tets:
+        nd = elements[e][2]
+        for f in TET_FACES:
+            key = frozenset(nd[j] for j in f)
+            if key in owner:
+                parent[find(e)] = find(owner[key])
+            else:
+                owner[key] = e
+    return len({find(e) for e in tets})
 
 
 def size_field(dnodes, delements, lo, hi):
@@ -517,6 +592,29 @@ def main():
             fixed[1 if r[0] == below else 2].append(tuple(sorted(key)))
     if not plane:
         sys.exit("no region faces between attributes %d and %d" % (below, above))
+    plane_z = sorted({nodes[v][2] for f in plane for v in f})
+    if plane_z[-1] - plane_z[0] > 1e-9 or abs(plane_z[0] - args.plane_z) > 1e-9:
+        sys.exit(
+            "the region faces between attributes %d and %d span z = %g to %g, not only "
+            "the layout plane z = %g (--plane-z)"
+            % (below, above, plane_z[0], plane_z[-1], args.plane_z)
+        )
+    plane_keys = {frozenset(f) for f in plane}
+    inner = sorted(
+        {
+            tags[0]
+            for t, tags, nd in elements
+            if t in TRIANGLES
+            and frozenset(nd[:3]) not in plane_keys
+            and len(attrs.get(frozenset(nd[:3]), ())) == 2
+            and all(x in region for x in attrs[frozenset(nd[:3])])
+        }
+    )
+    if inner:
+        sys.exit(
+            "boundary attributes %s lie inside the region off the layout plane: the "
+            "re-meshing keeps only the layout on the plane" % inner
+        )
     face = Face(nodes, plane)
     print(
         "Model: region face on the layout plane with %d triangles (%d boundary loops), "
@@ -526,7 +624,7 @@ def main():
     # Design: layout inside the face, checked against the model elsewhere.
     _, dnodes, delements = read_msh2(args.design)
     layout = Layout(dnodes, delements, args.plane_z)
-    check_environment(face, layout, Layout(nodes, elements, args.plane_z))
+    check_environment(face, layout, dnodes, Layout(nodes, elements, args.plane_z), nodes)
     segs = constraint_segments(face, nodes, layout, dnodes)
     box = np.array([nodes[v] for f in plane + fixed[1] + fixed[2] for v in f])
     pad = 0.1 * (box.max(axis=0) - box.min(axis=0))

@@ -192,8 +192,8 @@ magnetostatic solution and is rejected.
 The [transmon example](../examples/transmon.md) mesh contains a transmon island, a feedline, and
 a ground plane with a readout resonator, all as a single metal boundary. The script
 [`examples/transmon/transmon_substructuring.py`](https://github.com/awslabs/palace/blob/main/examples/transmon/transmon_substructuring.py)
-splits the metal into its three conductors (the terminals) and assigns the elements in a box
-around the qubit to the region:
+splits the metal into its three conductors, the ground plane (a `"PEC"` boundary), the feedline and
+the island (the terminals), and assigns the elements in a box around the qubit to the region:
 
 ```bash
 cd examples/transmon
@@ -202,7 +202,7 @@ palace transmon_substructuring_offline.json   # condense the environment, save t
 palace transmon_substructuring_online.json    # reuse the model: only the region is solved
 ```
 
-Both runs write the ``3 \times 3`` Maxwell capacitance matrix to `terminal-C.csv`; the online
+Both runs write the ``2 \times 2`` Maxwell capacitance matrix to `terminal-C.csv`; the online
 run solves only the region. The box can be changed with `--box`.
 
 ### Redesigning the region
