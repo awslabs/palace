@@ -52,6 +52,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Performance Improvements
 
+  - Computed complex inner products on GPUs in a single fused pass instead of four separate
+    real reductions, which is one kernel launch and one copy back to the host instead of
+    four. The host path has computed them in one pass since
+    [PR 1146](https://github.com/awslabs/palace/pull/1146), which left device builds on the
+    separate reductions. This speeds up the GMRES orthogonalization of complex-valued
+    simulations on GPUs.
   - Added a STRUMPACK patch for
     [pghysels/STRUMPACK#165](https://github.com/pghysels/STRUMPACK/pull/165), which lowers
     the latency of the distributed triangular solves of the solve phase for a few
