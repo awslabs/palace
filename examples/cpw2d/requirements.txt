@@ -1,0 +1,11 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Python packages of the surface-response helper scripts
+# (discover_surface_response_requirements.py and prepare_surface_response_coupons.py and the
+# modules they import); Python 3.11 or newer (the helpers use tomllib). The coupon builds of
+# --execute also need Julia with Gmsh.
+#   python3.11 -m venv .venv && .venv/bin/pip install -r examples/cpw2d/requirements.txt
+numpy
+scipy
+meshio

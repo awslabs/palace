@@ -1746,6 +1746,11 @@ public:
     // off for a solve run (the solve reads the preflight's); set = as given (DESIGN section
     // 9 (i) of the identification fix round). Diagnostic only.
     std::optional<bool> knife_edge_census = std::nullopt;
+    // PreflightOnly: the run is the surface-response preflight, exactly what the
+    // command-line option --surface-response-preflight selects, for front ends that start
+    // Palace without options. Read from the block of the configured problem type; default
+    // false.
+    bool preflight_only = false;
 
     // DomainBoundary rule (decisions 442 / 454 / 455; boundary-cut DESIGN 2.2): the
     // mirror-extended identification across the planar NATURAL vertical truncation planes

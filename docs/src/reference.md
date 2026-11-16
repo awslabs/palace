@@ -972,6 +972,12 @@ of all configured metal boundary conditions. This removes points introduced only
 change in boundary attribute, such as a ground plane continuing into a bump bond. It
 also removes endpoints on exterior simulation-domain truncations.
 
+A target interface must border metal: an entry (typically `SA`) whose surfaces have no metal
+edge of their own, such as the walls of a cavity or an extruded vacuum region, cannot be
+corrected, and Palace stops with "No physical metal perimeter was found for automatically
+extracted interface <i>!". Leave such an entry out of `TargetInterfaces`; it is still
+postprocessed, uncorrected, like every other `Dielectric` entry.
+
 `PatchConstruction` selects how the three-dimensional patches are built from the automatic
 classification: `Features` (the default) consumes the geometry identification's feature list
 (`Identification.Features` of the preflight manifest): every feature matched by signature
@@ -1108,7 +1114,9 @@ the preflight writes `surface-response-requirements.json`
 it aborts, so the manifest predicts every geometry fallback of the solve (a Missing-only
 manifest is the normal discovery state: a solve with no matched feature is predicted by
 `Summary.Counts`, not by a fallback entry). A configuration with fallbacks is never written
-to the response-geometry cache. Nothing is written when no site fires.
+to the response-geometry cache. Nothing is written when no site fires. A preflight that
+ends this way exits with status `3` after writing its manifest (see the preflight below);
+a solve keeps the abort.
 
 In 3D, targets selecting the same automatically extracted physical metal segments form
 one interface group. Palace infers the process normal and the in-plane direction from
@@ -1194,7 +1202,7 @@ characteristic lengths. `CouponDepth` is required for 3D; a model-level value ov
 the library default. Omitting it preserves the legacy 2D assumption that coupon and
 application use the same `Lc`.
 
-Curved coupons (a curvature family, decision 92) are built on axisymmetric $(r, z)$ meshes
+Curved coupons (a curvature family) are built on axisymmetric $(r, z)$ meshes
 (`Model.Axisymmetric`: the cross-section placed at $r = \rho$ with the metal inside the
 circle, `"Convexity": "Convex"`, or outside, `"Concave"`). Their records carry
 `"Topology": "CurvedEdge"`, `"Kappa"` $= R / \rho$ and `"Convexity"`, and their response
@@ -1281,7 +1289,7 @@ matrices:
   "Fabrication": {
     "InterfaceLayers": {
       "SA": {"Thickness": 0.002, "Permittivity": 4.0},
-      "MS": {"Thickness": 0.002, "Permittivity": 11.47},
+      "MS": {"Thickness": 0.002, "Permittivity": 11.45},
       "MA": {"Thickness": 0.002, "Permittivity": 10.0}
     }
   }
@@ -1295,6 +1303,20 @@ the same type, thickness, and relative permittivity. A mismatch is fatal because
 surface-response matrices already include both layer properties. Version-1 and
 version-2 libraries remain usable, but Palace warns that their interface properties
 cannot be verified when they omit this metadata.
+
+The numbers above are one process's: copy the values from the `Fabrication` block of the
+library you use, never from this page (a device configuration written for silicon at 11.47
+does not match a library whose process uses 11.45 for its `MS` layer and its substrate).
+Before it corrects anything, Palace compares a device configuration with the library as
+follows:
+
+| In the device configuration | In the library | On a mismatch |
+|:--- |:--- |:--- |
+| `Thickness` of every target `Boundaries.Postprocessing.Dielectric` entry (mesh units) | `Fabrication.InterfaceLayers.<Type>.Thickness` | error: the run stops |
+| `Permittivity` of every target `Dielectric` entry | `Fabrication.InterfaceLayers.<Type>.Permittivity` | error: the run stops; the message names the library value and the entry to change |
+| the largest `EdgeDistances` value of every target entry (mesh units) | `MatchingRadius` | error: the run stops |
+| the boundary law of the metal (`PEC`, `Impedance` with its `Rs` / `Ls` / `Cs`, ...) | each model's `BoundaryCondition` | no error: the features have no model (Missing, uncorrected); the warning names the law when the library holds the same geometry under another law |
+| `Domains.Materials` `Permittivity` of the domains next to the corrected metal | `Fabrication.SubstratePermittivity` (and 1 for vacuum) | a warning only: the library's coupons were computed with the library's substrate |
 
 `OpenContourPaths` is required when conductor cuts interrupt the free matching contour.
 Each one-based `Indices` list orders a disjoint subset of `BasisPoints` from
@@ -1479,7 +1501,7 @@ uncovered portions; older caches are refused. The placed cells
 are reported under `Diagnostics.ContinuationOwnership` (per cell, per coupon) and the
 stretch record `Diagnostics.TranslationalStretchesInsideSpatialSupport` carries the owned
 length per record. A stretch that enters a coupon's box on one of its `Chain: true` context
-edges without lying wholly inside it (decision 984, OI-T5-PARTIAL-STRETCH-CONTEXT) is judged
+edges without lying wholly inside it is judged
 per cell on the cell's inside interval: its cells inside the box are owned, a cell straddling
 a box face is re-cut at the face like a continuing cell (the inside part owned, the outside
 part kept), a cell outside stays; such stretches are recorded under
@@ -1899,8 +1921,8 @@ within-`R` energy partitioned exactly over the applied patches' claims, the labe
 `unclaimed` summing to the within-`R` energy) and `surface-response-model-raw-groups.csv`
 (`label`, `model`, `patches`, `weight length (m)`).
 
-The per-patch tables can be kept out of the top level of `Problem.Output` (decision 1685;
-a tool that collects the top-level CSV / JSON files of the output directory, such as a run
+The per-patch tables can be kept out of the top level of `Problem.Output` (a
+tool that collects the top-level CSV / JSON files of the output directory, such as a run
 service that uploads them, then leaves them out). `"Diagnostics": {"Directory": "<name>"}`
 in `ResponseCorrection` / `SurfaceResponseCorrection` (one directory name of letters,
 digits, `_`, `-` and `.`, not starting with `.`, `-` or `iteration`; absent by default)
@@ -1916,11 +1938,18 @@ excitation, the bulk of `palace.json` on a full chip) out of `palace.json` into
 `<Output>/<name>/surface-response-conductor-consistency-records.json`, a JSON document with
 the array at the same key path and in the same text; `palace.json` then lacks only that
 member (`TestedPatches`, the record count, and the gate's summary stay). The preflight's
-patch list stays beside its manifest. `Diagnostics.Directory` names a sub-directory of
+patch list stays beside its manifest. How large `palace.json` gets: on a full design the
+conductor-consistency `Records` are nearly all of it (measured on one corrected eigenmode
+run of a full chip at element order 4: 362.7 of 363.4 MB, 99.8 %, were
+`SurfaceResponse.Diagnostics.ConductorConsistency.Records`); a service that stores
+`palace.json` as run metadata may refuse a file that large. `"Diagnostics": {"Directory":
+"records", "ConductorConsistencyRecords": "Directory"}` moves that array into
+`<Output>/records/surface-response-conductor-consistency-records.json` and leaves the rest
+of `palace.json` as it was; both keys are off by default. `Diagnostics.Directory` names a sub-directory of
 `Problem.Output`; it is not `Solver.Electrostatic.ResponseArchive.Directory`, which is the
 path of the field archive (relative to the working directory of the process).
 
-Two placement rules of the corner class (decision 394; `SURFACE-RESPONSE-IDENTIFICATION.md`
+Two placement rules of the corner class (`SURFACE-RESPONSE-IDENTIFICATION.md`
 section (e)): at a matched corner whose arms are not perpendicular, the second arm's
 straight cells begin where that arm exits the corner coupon's matching square, at
 `R / max(|cos t|, |sin t|)` from the vertex (t the corner angle) instead of `R` — that
@@ -1941,7 +1970,7 @@ cluster is recorded under `Diagnostics.Uncovered.ClippedBySpatialSupport` and in
 column above; without a matched cluster nothing changes. Trimmed corners whose coupon is
 then not applied (domain boundary, vertex ownership) are counted under
 `Diagnostics.CornerArmTrim.ExcludedCoupons` (their trimmed stretch is modelled by nothing).
-The same rule in the other direction (decision 511): a matched ROUNDED corner's claim runs
+The same rule in the other direction: a matched ROUNDED corner's claim runs
 `R` along each arm from the fillet's tangent point, `t_d = r / tan(t / 2)` beyond the
 square exit, so its arm cells (or an unmatched neighbour's uncovered portion) beginning at
 the claim end are extended back to the exit — the stretch was modelled by nothing — and
@@ -2053,7 +2082,7 @@ manifest (`--surface-response-preflight`) of the same configuration, so a featur
 to its key (`Hash`). The partition costs one quadrature pass per target interface and
 measurement and keeps only the uncovered portions (already held for the uncovered table)
 and one reduced vector per measurement; every other output is unchanged. The
-Maxwell correction also writes `surface-response-model-energy.csv` (decisions 845 / 846):
+Maxwell correction also writes `surface-response-model-energy.csv`:
 the electrostatic driver's column set exactly and in order as a strict prefix — `source`,
 `evaluation`, `model`, `patch count`, `patch weight`, `domain correction (J)` and
 `fabricated surface energy[k] (J)` for every postprocessing interface (0 for an interface
@@ -2122,6 +2151,24 @@ missing library selection. Its `Complete` field is true only when no requirement
 missing. During preflight only, `UnmatchedPolicy: "Error"` is treated as `"Warn"` so all
 missing requirements can be reported in one pass.
 
+The same preflight can be requested from the configuration, for front ends that start
+Palace without command-line options (a cluster run service runs `palace config.json`):
+`"PreflightOnly": true` in `Solver.SurfaceResponseCorrection` (Maxwell) or in
+`Solver.Electrostatic.ResponseCorrection` (electrostatic; the block of the configured
+`Problem.Type` is read) runs exactly the code path of `--surface-response-preflight`, with
+the same outputs and the same exit status; the log says in one line that no field solve is
+run. Remove the key (default `false`) to solve. The key requires `Library`, and like the
+option it cannot be combined with `--mesh-statistics`.
+
+Exit status of a preflight: `0` when it completed; `3` when it wrote its complete manifest
+and patch dry run and then ended because `GeometryFailurePolicy` is `FailClosed` (the
+preflight's default) and geometry fallbacks were recorded: the last log line names their
+count and classes and the files written (see `Identification.Diagnostics.GeometryFallbacks`
+of the manifest). A run service shows a nonzero status as a failed run with that exit
+code; the manifest and the patch dry run are written in full (as before this exit status
+existed, `palace.json` then carries no timing or memory record). Every other error still
+stops the run as before.
+
 A direct preflight uses the configured library's production partition. To discover the
 complete geometry inventory from an empty or partial seed in one user-visible operation,
 run exhaustive closure discovery:
@@ -2131,6 +2178,13 @@ python3 examples/cpw2d/discover_surface_response_requirements.py config.json \
   --output /tmp/device-requirements \
   --palace build/bin/palace
 ```
+
+The two helper scripts (this one and the coupon planner below) need Python 3.11 or newer and
+the packages of `examples/cpw2d/requirements.txt` (`numpy`, `scipy`, `meshio`); a system
+Python without them fails at the first import. A private environment is enough, for
+example `python3.11 -m venv .venv && .venv/bin/pip install -r examples/cpw2d/requirements.txt`,
+then run the helpers with `.venv/bin/python`. The coupon builds of `--execute` also need
+Julia with Gmsh for the coupon meshes.
 
 The helper adds in-memory/on-disk virtual model descriptors and repeats only the cheap
 geometry preflight until the canonical partition is stable. It performs no coupon mesh or
@@ -2157,6 +2211,11 @@ python3 examples/cpw2d/prepare_surface_response_coupons.py \
   --palace build/bin/palace \
   --orders 2 3
 ```
+
+With `--execute` the coupon meshing and the coupon Palace solves run on the machine where
+the command is started (a workstation build, through the `--palace` binary given); no
+cluster form of this build is documented yet. Without `--execute` the planner only writes
+the work plan, including the reason for every coupon it cannot build.
 
 The generated library is written under `library/process-library.json`. Coupon FEM order
 is independent of device FEM order: qualify candidate orders with `--probe-study-only`,
@@ -2347,16 +2406,16 @@ containing the thin sheet, so the frequency goes UP, consistent with ``dL' < 0``
 first-order fixed-trace frequency shift of the RAW mode,
 ``\delta\omega / \omega = (U_{m,defect} - U_{e,defect}) / (2 U_{raw})`` with
 ``U_{m,defect} = \tfrac{1}{2} \sum_p w_p a_m^H dS_m a_m`` and ``U_{e,defect}`` the
-electric domain correction, is THE CORRECTED FREQUENCY OF RECORD (USER decision 1221 D6):
+electric domain correction, is THE CORRECTED FREQUENCY OF RECORD:
 `fixed-trace frequency shift` and `f fixed-trace corrected (GHz)` in
 `surface-response-confidence.csv`, gated by the magnetic term's own loop gate (`magnetic
 confidence pass`: the response-weighted dual loop residual, the in-plane circulation of
 ``\bm{B} \cdot \hat{n}`` around every closed contour, at most 0.05, and the
 response-weight fraction of paths above 0.05 at most 0.01, the electric gate's two
 components) and NOT by the closure-independent confidence gates nor the trace-closure
-spread, which are printed beside it (decision 1250: the shift follows the SAME coverage
+spread, which are printed beside it (the shift follows the SAME coverage
 rule as the electric fixed-trace correction it extends, which is printed on partial
-coverage with the uncovered requirements kept raw, decision 394 F2; the closure-independent
+coverage with the uncovered requirements kept raw; the closure-independent
 gate's coverage criterion ``\geq 1 - 10^{-10}`` had withheld the shift on every device with
 ends). `fixed-trace shift coverage` is the matched energy share the shift rests on: one
 minus the raw within-R energy of the target interfaces that the electric correction keeps
@@ -2374,7 +2433,7 @@ OI-MAGNETIC-DETECTOR-WEIGHT, so the unweighted `magnetic loop residual` is print
 the gated weighted one. The MAGNETIC conductor-consistency gate (the dual R0-a gate: the
 probes' H-line integrals at the conductor cross-sections against the conductor's flux
 state) reads the optional library rule `MagneticRules.ConductorConsistencyTolerance`
-(decision 1251, INTERIM; absent = the electric gate's 0.02, bitwise as before): on a device
+(an interim value; absent = the electric gate's 0.02, bitwise as before): on a device
 its probe line integrals read the discretisation error of the singular edge field (the
 (ii) stub: ratio medians 7.1e-2 / 3.7e-2 / 2.3e-2 at ``p = 2 / 3 / 4``, excluding 96 / 84 /
 57 % of a line whose unwithheld term sits inside the Phase-0 band), so a library sets the
@@ -2391,8 +2450,7 @@ LIFTED mode-1 maximum measured at that order, the discrimination control holding
 4\times`` at each value); the run's order selects its entry, an order ABSENT from the object
 is refused at configuration by name (the gate is not calibrated there), a scalar keeps its
 one-value meaning; the value in effect is printed on the gate line and recorded
-(`palace.json` `Correction.MagneticGateTolerance`). THE PROBE FORM (Phase 3 (a), OI-MAGNETIC-DUAL-GATE-PROBE-DISCRETISATION resolved;
-decisions 1256 / 1284 Q-1 / 1292): the magnetic probes read their flux along LIFTED legs
+(`palace.json` `Correction.MagneticGateTolerance`). THE PROBE FORM: the magnetic probes read their flux along LIFTED legs
 instead of the electric gate's flat chain. On a PEC piece ``A_z`` is constant, so the flux
 ``\int (\hat{w} \times \bm{B}) \cdot d\bm{l}`` from a point of the anchor's piece to a point
 of the probe's piece has the same continuum value along ANY path in the current-free region
@@ -2415,7 +2473,7 @@ are untouched; the term ``dK`` is untouched; with no magnetic leaf nothing is bu
 form and its leaves are printed at configuration and recorded (`palace.json`
 `Correction.MagneticProbeForm` / `MagneticProbeLines`; the manifest's
 `Library.Magnetic.Rules`). The DIAGNOSTIC CONTROL `SurfaceResponseCorrection.
-ConductorConsistency.ControlFlipProbePiece: [{Model, Edge, Piece}]` (decision 1292; NOT a
+ConductorConsistency.ControlFlipProbePiece: [{Model, Edge, Piece}]` (NOT a
 modelling option) relabels the local piece of one model edge's probes at the probe
 construction so that the gate's discrimination of a one-label mis-mapping is MEASURED on a
 device; it is admitted only with `RecordOnly: true`, refused when it applies to no probe,
@@ -2436,11 +2494,11 @@ effect and the patches re-anchored are printed and recorded (`palace.json`
 `Correction.MagneticStateAnchorSetbackOverR` / `MagneticStateAnchorPatches`). A conductor
 anchor is the DEVICE's edge point while the patch's probe edges carry the device sides' feet
 at the origin cross-section, which differ by roundoff or by the local geometry (a tapered or
-curved pair): the library leaf `MagneticRules.StateAnchorEdgeToleranceOverR` (decision 1323;
-in ``[0, 1]``, absent = 0.1) makes an anchor within that fraction of ``R`` of an edge offset
+curved pair): the library leaf `MagneticRules.StateAnchorEdgeToleranceOverR`
+(in ``[0, 1]``, absent = 0.1) makes an anchor within that fraction of ``R`` of an edge offset
 lie ON that edge (its piece; the setback measured from the edge offset); an anchor farther
 from every edge must lie in a metal piece (refused by name otherwise). ONE set-back rule
-(decision 1334) serves the term's state anchors (with `StateAnchorSetbackOverR` > 0) and the
+serves the term's state anchors (with `StateAnchorSetbackOverR` > 0) and the
 LIFTED probe form's anchor end (with `ProbeSetbackOverR` > 0: the device anchor a hair into
 the gap by roundoff would otherwise be read at the edge point with no record); a library with
 both setbacks 0 is bitwise. The tolerance must stay below half the narrowest magnetic model
@@ -2449,8 +2507,8 @@ setback is in effect (the minimum is recorded as `StateAnchorMinGapOverR`), and 
 every device gap of a patch; the anchors on an edge, those snapped from a nonzero distance
 and the farthest snap (``/ R``) are printed and recorded
 (`Correction.MagneticStateAnchorSnapped`). The
-DIAGNOSTIC CONTROL `ConductorConsistency.ControlStateAnchorSetbackOverR` (decision 1302;
-`RecordOnly: true` and `CorrectionMode: "PostprocessOnly"` only) applies the same setback
+DIAGNOSTIC CONTROL `ConductorConsistency.ControlStateAnchorSetbackOverR`
+(`RecordOnly: true` and `CorrectionMode: "PostprocessOnly"` only) applies the same setback
 to a library in the legacy form and is refused by name on a library whose leaf already sets
 the anchors back. The per-model
 `magnetic domain correction (J)` / `magnetic thin energy (J)` (COL-1: the "energy" rows and
@@ -2516,7 +2574,7 @@ endpoints, SpatialEdgeCluster) have no scalar duality and stay ELECTRIC-ONLY; th
 are NAMED in the coverage report's `MagneticElectricOnly` row (count, length, energy share).
 The kinetic (London) inductance of a real superconductor is a MATERIAL term, not the
 thin-to-fabricated geometric defect, and is OUT OF SCOPE of this term (both coupon sides
-are PEC): OI-MAGNETIC-KINETIC-LONDON-TERM (USER decision 1221 D5). A two-dimensional
+are PEC); it is not modelled. A two-dimensional
 device mesh has no in-plane ``\bm{B}`` (the trace is identically zero): a magnetic leaf
 is refused there by name.
 

@@ -542,7 +542,7 @@ def restore_source_status(manifest, source_library, placeholder_requirements):
             requirement["Reason"] = (
                 f"{requirement['Status']} within the near-match band to the placeholder of "
                 f"requirement {source['Hash'][:12]}: served by the coupon planned for it "
-                "(decisions 1075 / 1079 / 1097 Q3; no coupon of its own)"
+                "(no coupon of its own)"
             )
             requirement.pop("SelectedModels", None)
             requirement.pop("NormalizedLibraryDistance", None)

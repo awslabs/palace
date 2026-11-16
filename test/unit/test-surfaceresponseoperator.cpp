@@ -776,7 +776,11 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator automatic 
   CHECK_THROWS_WITH(
       SurfaceResponseOperator(permittivity_mismatch_iodata, automatic_laplace),
       Catch::Matchers::ContainsSubstring("does not match fabrication-process response "
-                                         "library \"unit-test-process\" permittivity"));
+                                         "library \"unit-test-process\" permittivity") &&
+          Catch::Matchers::ContainsSubstring(
+              "(the process value Fabrication.InterfaceLayers.SA.Permittivity of the "
+              "library): set \"Permittivity\" of the Boundaries.Postprocessing.Dielectric "
+              "entry with \"Index\": 4 to 4!"));
 
   auto missing_layer_config = automatic_config;
   missing_layer_config["Solver"]["Electrostatic"]["ResponseCorrection"]["Library"] =
@@ -12662,7 +12666,7 @@ TEST_CASE("SurfaceResponseOperatorPartialStretchContextOwnership",
     const std::string line = DescribeContinuationOwnershipSummary(summary);
     CHECK(line.find("5 translational cell(s)") != std::string::npos);
     CHECK(line.find("4 wholly, 1 clipped at a box face") != std::string::npos);
-    CHECK(line.find("partial-stretch ownership (decision 984") != std::string::npos);
+    CHECK(line.find("partial-stretch ownership: ") != std::string::npos);
     CHECK(line.find("3 context-edge cell(s) some partially inside stretch pair contains") !=
           std::string::npos);
     CHECK(line.find("(1 re-cut at a box face") != std::string::npos);
