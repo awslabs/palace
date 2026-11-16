@@ -2185,8 +2185,10 @@ statuses: `PEC`, `SUBSTITUTED`, `EXACT` (a verified library model of the device 
 along one conductor or a corner at one: `Missing`), `NOT-DECLARED`, `SERVED-BY-OVERRIDE`,
 `NOT-SERVED-BY-OVERRIDE`. The candidate is postprocessing-only (no self-consistent candidate,
 no magnetic term); two-dimensional boundary-mode runs, `PatchConstruction` `"Legacy"` and
-electrostatic runs are not served. When nothing is substituted no second operator is built
-and the law reading runs on the operator of record (on separate lines). `"Apply"` is
+electrostatic runs are not served. The candidate is always a second operator built beside
+the operator of record (its setup time and memory are printed); when nothing is substituted
+it is a twin of the operator of record, and every measurement checks that the candidate
+equals the record cell for cell (a mismatch ends the run with an error). `"Apply"` is
 reserved and refused in this build.
 
 Exit status of a preflight: `0` when it completed; `3` when it wrote its complete manifest

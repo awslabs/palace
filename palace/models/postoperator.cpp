@@ -349,14 +349,13 @@ PostOperator<solver_t>::PostOperator(
           solver_t != ProblemType::BOUNDARYMODE && response.IncludesSelfConsistent();
       surface_response_patch_energy_enabled = response.patch_energy;
       surface_response_uncovered_feature_energy_enabled = response.uncovered_feature_energy;
-      // The impedance-metal rule (ImpedanceMetalRule "Record"; decisions 2006 / 2012): the
-      // film rule is resolved BEFORE the operator of record so that, when the rule
-      // substitutes nothing, the operator of record takes the law reading (on lines after
-      // every line of record) and no second operator is built. "Off": nothing here.
+      // The impedance-metal rule (ImpedanceMetalRule "Record"; decisions 2006 / 2012 /
+      // 2024): the operator of record is built exactly as under "Off" (its setup cost
+      // measured); the candidate is built after every object of record
+      // (SetUpImpedanceRuleCandidate). "Off": nothing here.
       const bool impedance_record = response.impedance_metal_rule ==
                                     config::ElectrostaticSolverData::
                                         ResponseCorrectionData::ImpedanceMetalRule::RECORD;
-      bool record_law_reading = false;
       double record_setup_seconds = 0.0;
       long record_setup_bytes = 0;
       std::chrono::steady_clock::time_point record_setup_start;
@@ -371,12 +370,11 @@ PostOperator<solver_t>::PostOperator(
           impedance_film_rule = std::make_unique<FilmRuleResolution>(
               ResolveImpedanceMetalFilm(iodata.boundaries, response, iodata.units,
                                         iodata.InputsNondimensionalized()));
-          record_law_reading = !impedance_film_rule->candidate_differs;
           record_setup_start = std::chrono::steady_clock::now();
           record_setup_bytes = memory_reporting::GetCurrentMemory();
         }
-        surface_response_op = std::make_unique<SurfaceResponseOperator>(
-            iodata, fem_op_, response_geometry, nullptr, record_law_reading);
+        surface_response_op =
+            std::make_unique<SurfaceResponseOperator>(iodata, fem_op_, response_geometry);
         if (impedance_film_rule)
         {
           record_setup_seconds = std::chrono::duration<double>(
@@ -4785,18 +4783,15 @@ void PostOperator<solver_t>::SetUpImpedanceRuleCandidate(const IoData &iodata,
                "candidate values in surface-response-impedance-candidate.csv\n");
     double candidate_setup_seconds = 0.0;
     long candidate_setup_bytes = 0;
-    if (!impedance_film_rule->candidate_differs)
     {
-      record["Candidate"] = "the operator of record (nothing substituted)";
-      Mpi::Print("Impedance-metal rule (RECORD): nothing substituted: the candidate is the "
-                 "operator of record; the law reading runs on its patches (separate "
-                 "lines)\n");
-    }
-    else
-    {
-      record["Candidate"] = "a candidate operator beside the operator of record";
-      Mpi::Print("Impedance-metal rule (RECORD): building the CANDIDATE operator (NOT OF "
-                 "RECORD; the film rule at its seam)\n");
+      // Ruling 2024: the candidate is ALWAYS built (a twin of the operator of record when
+      // the film rule substitutes nothing); the law reading runs only on it. Its output is
+      // bracketed by the begin / end lines.
+      Mpi::Print("Impedance-metal rule (CANDIDATE: NOT OF RECORD): begin: building the "
+                 "candidate operator (the film rule at its seam{})\n",
+                 impedance_film_rule->candidate_differs
+                     ? ""
+                     : "; it substitutes nothing: a twin of the operator of record");
       const auto start = std::chrono::steady_clock::now();
       const long bytes = memory_reporting::GetCurrentMemory();
       impedance_candidate_op = std::make_unique<SurfaceResponseOperator>(
@@ -4806,8 +4801,18 @@ void PostOperator<solver_t>::SetUpImpedanceRuleCandidate(const IoData &iodata,
       candidate_setup_seconds =
           std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
       candidate_setup_bytes = memory_reporting::GetCurrentMemory() - bytes;
-      Mpi::Print("Impedance-metal rule (RECORD): the CANDIDATE operator is built (NOT OF "
-                 "RECORD)\n");
+      Mpi::Print("Impedance-metal rule (CANDIDATE: NOT OF RECORD): end: the candidate "
+                 "operator is built\n");
+      impedance_candidate_acts = impedance_candidate_op->ImpedanceRuleActs();
+      record["Candidate"] = "a candidate operator beside the operator of record";
+      record["RuleActs"] = impedance_candidate_acts;
+      Mpi::Print(
+          "Impedance-metal rule (RECORD): {}\n",
+          impedance_candidate_acts
+              ? "the rule acts on the candidate's features (substituted or refused): "
+                "the candidate differs from the record where it acts"
+              : "nothing substituted: the candidate is a twin of the operator of "
+                "record; every measurement checks candidate = record cell for cell");
       if (!impedance_candidate_op->IsRawFallback())
       {
         for (const auto &portion : impedance_candidate_op->GetUncoveredPortions())
@@ -4892,12 +4897,11 @@ void PostOperator<solver_t>::SetUpImpedanceRuleCandidate(const IoData &iodata,
                       {"RecordSetupMemoryNodeMaxBytes", record_memory.max},
                       {"CandidateSetupSeconds", seconds[1]},
                       {"CandidateSetupMemoryNodeMaxBytes", candidate_memory.max},
-                      {"LawReadingOn", impedance_candidate_op ? "candidate" : "record"}};
+                      {"LawReadingOn", "candidate"}};
     Mpi::Print("Impedance-metal rule (RECORD): cost: operator of record {:.2f} s, +{} "
-               "(node max); candidate {:.2f} s, +{} (node max){}\n",
+               "(node max); candidate {:.2f} s, +{} (node max)\n",
                seconds[0], memory_reporting::FormatBytes(record_memory.max), seconds[1],
-               memory_reporting::FormatBytes(candidate_memory.max),
-               impedance_candidate_op ? "" : " (none built: nothing substituted)");
+               memory_reporting::FormatBytes(candidate_memory.max));
     record["OutOfStage"] = out_of_stage;
     record["Measurements"] = nlohmann::json::array();
   }
@@ -4936,23 +4940,20 @@ void PostOperator<solver_t>::MeasureAndPrintImpedanceRuleCandidate(
       }
     }
 
-    // The candidate's values: its own operator (gate, response, kept-raw energies), or the
-    // record's when nothing is substituted.
+    // The candidate's values: its own operator (gate, response, kept-raw energies; always
+    // built in RECORD, ruling 2024); raw where it applies no correction.
+    MFEM_VERIFY(candidate, "Impedance-metal rule (RECORD): no candidate operator!");
     std::map<int, double> candidate_corrected, candidate_fabricated, candidate_kept;
-    double candidate_normalization = record_normalization;
+    double candidate_normalization = raw_normalization;
     bool candidate_applied = false;
-    if (!candidate)
-    {
-      candidate_corrected = record_corrected;
-      candidate_applied = record_applied;
-    }
-    else if (!candidate->IsRawFallback())
+    Mpi::Print("Impedance-metal rule (CANDIDATE: NOT OF RECORD): begin: the candidate's "
+               "measurement (source {:d})\n",
+               source);
+    if (!candidate->IsRawFallback())
     {
       auto &op = *impedance_candidate_op;
       if (op.HasConductorConsistencyProbes())
       {
-        Mpi::Print("Impedance-metal rule (CANDIDATE: NOT OF RECORD): the candidate's "
-                   "conductor-consistency gate:\n");
         op.ApplyConductorConsistencyGate(e, source, frequency, false);
       }
       const auto confidence = op.GetMaxwellResponse(*E, measurement_cache.freq, false);
@@ -5039,7 +5040,52 @@ void PostOperator<solver_t>::MeasureAndPrintImpedanceRuleCandidate(
       candidate_normalization = raw_normalization + confidence.domain_correction;
       candidate_applied = true;
     }
-    const SurfaceResponseOperator &reader = candidate ? *candidate : *surface_response_op;
+    Mpi::Print("Impedance-metal rule (CANDIDATE: NOT OF RECORD): end: the candidate's "
+               "measurement\n");
+    const SurfaceResponseOperator &reader = *candidate;
+    // Ruling 2024 (2): when the rule acts on no feature the candidate is a twin of the
+    // operator of record: candidate = record cell for cell, EXACTLY, or the run ends (the
+    // twin construction itself would be wrong).
+    nlohmann::json self_check;
+    if (!impedance_candidate_acts)
+    {
+      MFEM_VERIFY(surface_response_op->IsRawFallback() == candidate->IsRawFallback(),
+                  "Impedance-metal rule (RECORD): nothing is substituted but the candidate "
+                  "twin and the operator of record differ in their raw fallback: the twin "
+                  "construction is wrong (an ERROR of the run)!");
+      if (!surface_response_op->IsRawFallback() && !surface_response_postprocess_enabled)
+      {
+        self_check = {{"Skipped", "the record evaluates no postprocessed response"}};
+        Mpi::Print("Impedance-metal rule (RECORD): nothing substituted: the self-check "
+                   "compares nothing (the record evaluates no postprocessed response)\n");
+      }
+      else
+      {
+        int cells = 1;
+        bool equal = record_applied == candidate_applied &&
+                     record_normalization == candidate_normalization;
+        for (const auto &raw : measurement_cache.interface_eps_i)
+        {
+          const double r =
+              record_corrected.count(raw.idx) ? record_corrected.at(raw.idx) : raw.energy;
+          const double c = candidate_corrected.count(raw.idx)
+                               ? candidate_corrected.at(raw.idx)
+                               : raw.energy;
+          equal = equal && (r == c || (std::isnan(r) && std::isnan(c)));
+          cells++;
+        }
+        MFEM_VERIFY(equal,
+                    "Impedance-metal rule (RECORD): nothing is substituted but the "
+                    "candidate twin differs from the record (source "
+                        << source
+                        << "): the twin construction is wrong (an ERROR of the run)!");
+        self_check = {{"Cells", cells}, {"Equal", true}};
+        Mpi::Print(
+            "Impedance-metal rule (RECORD): nothing substituted: candidate equals the "
+            "record on {:d} cells\n",
+            cells);
+      }
+    }
     impedance_candidate_measure_seconds +=
         std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
     if (!root)
@@ -5154,7 +5200,7 @@ void PostOperator<solver_t>::MeasureAndPrintImpedanceRuleCandidate(
     {
       const int status = reader.ImpedanceLawStatusOfFeature(reading.feature);
       const std::string status_name =
-          status < 0 ? std::string("RECORD (nothing substituted)")
+          status < 0 ? std::string("NOT-IDENTIFIED")
                      : std::string(
                            ImpedanceLawStatusName(static_cast<ImpedanceLawStatus>(status)));
       const std::string &topology = reader.ModelTopology(reading.model);
@@ -5203,7 +5249,9 @@ void PostOperator<solver_t>::MeasureAndPrintImpedanceRuleCandidate(
          {"Excitation", excitation},
          {"Source", source},
          {"FrequencyGHz", frequency},
-         {"LawReadingFrom", candidate ? "candidate" : "record"},
+         {"LawReadingFrom", "candidate"},
+         {"SelfCheck", self_check.is_null() ? nlohmann::json("the rule acts: no self-check")
+                                            : self_check},
          {"Readings", static_cast<int>(readings.size())},
          {"Families", std::move(family_rows)},
          {"Interfaces", std::move(interfaces)}});

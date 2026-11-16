@@ -31026,6 +31026,68 @@ const char *SurfaceResponseOperator::LawLegClassName(LawLegClass leg_class)
   return "LAW-UNPROBED";
 }
 
+SurfaceResponseOperator::LawLegClass
+SurfaceResponseOperator::LawLegClassOfTopology(const std::string &topology, bool has_probes,
+                                               bool has_on_metal_leg, bool *known)
+{
+  const bool translational = IsTranslationalTopology(topology);
+  const bool convex = topology == TopologyName(LibraryTopology::CONVEX_CORNER) ||
+                      topology == "ConvexCorner";
+  const bool conditional =
+      topology == TopologyName(LibraryTopology::CONCAVE_CORNER) ||
+      topology == "ConcaveCorner" ||
+      topology == TopologyName(LibraryTopology::SPATIAL_EDGE_CLUSTER) ||
+      topology == TopologyName(LibraryTopology::ENDPOINT) ||
+      topology == TopologyName(LibraryTopology::JUNCTION);
+  if (known)
+  {
+    *known = translational || convex || conditional;
+  }
+  if (!has_probes)
+  {
+    return LawLegClass::UNPROBED;
+  }
+  if (translational)
+  {
+    return has_on_metal_leg ? LawLegClass::LEG : LawLegClass::NO_LEG;
+  }
+  return convex ? LawLegClass::LEG_DERIVED : LawLegClass::CONDITIONAL_UNTESTED;
+}
+
+std::vector<std::string> SurfaceResponseOperator::LawReadingTopologyNames()
+{
+  std::vector<std::string> names;
+  for (const auto topology :
+       {LibraryTopology::ISOLATED_EDGE, LibraryTopology::SAME_CONDUCTOR_GAP,
+        LibraryTopology::DIFFERENT_CONDUCTOR_GAP, LibraryTopology::SAME_CONDUCTOR_STRIP,
+        LibraryTopology::PARALLEL_EDGE_CLUSTER, LibraryTopology::SPATIAL_EDGE_CLUSTER,
+        LibraryTopology::CONVEX_CORNER, LibraryTopology::CONCAVE_CORNER,
+        LibraryTopology::ENDPOINT, LibraryTopology::JUNCTION, LibraryTopology::CURVED_EDGE,
+        LibraryTopology::CURVED_SAME_CONDUCTOR_GAP,
+        LibraryTopology::CURVED_DIFFERENT_CONDUCTOR_GAP,
+        LibraryTopology::CURVED_SAME_CONDUCTOR_STRIP})
+  {
+    names.push_back(TopologyName(topology));
+  }
+  // The corner-family blends' runtime topology = the identification feature type.
+  names.push_back("ConvexCorner");
+  names.push_back("ConcaveCorner");
+  return names;
+}
+
+bool SurfaceResponseOperator::ImpedanceRuleActs() const
+{
+  return std::any_of(impedance_law_feature_status.begin(),
+                     impedance_law_feature_status.end(),
+                     [](signed char status)
+                     {
+                       const auto law = static_cast<ImpedanceLawStatus>(status);
+                       return law != ImpedanceLawStatus::PEC &&
+                              law != ImpedanceLawStatus::NOT_DECLARED &&
+                              law != ImpedanceLawStatus::EXACT;
+                     });
+}
+
 int SurfaceResponseOperator::ImpedanceLawStatusOfFeature(int feature) const
 {
   if (!impedance_rule_candidate || feature < 0 ||
@@ -36457,28 +36519,38 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
     }
     std::vector<PendingLawLeg>().swap(pending_law_legs);
     law_patch_class.assign(patches.size(), LawLegClass::UNPROBED);
+    std::map<std::string, int> unknown_names;
     for (std::size_t p = 0; p < patches.size(); p++)
     {
-      const auto &probes = maxwell_probes[p];
-      if (probes.empty())
+      bool any = false;
+      for (const auto &legs : law_patch_legs[p])
       {
-        continue;
+        any = any || !legs.empty();
       }
-      if (probes.front().kind == 1)
+      bool known = true;
+      const auto &topology = models[patches[p].model].topology;
+      law_patch_class[p] =
+          LawLegClassOfTopology(topology, !maxwell_probes[p].empty(), any, &known);
+      if (!known)
       {
-        bool any = false;
-        for (const auto &legs : law_patch_legs[p])
-        {
-          any = any || !legs.empty();
-        }
-        law_patch_class[p] = any ? LawLegClass::LEG : LawLegClass::NO_LEG;
+        unknown_names[topology]++;
       }
-      else
-      {
-        law_patch_class[p] = models[patches[p].model].topology == "ConvexCorner"
-                                 ? LawLegClass::LEG_DERIVED
-                                 : LawLegClass::CONDITIONAL_UNTESTED;
-      }
+    }
+    // An unknown runtime topology name fails closed as CONDITIONAL-UNTESTED, counted
+    // (ruling 2024 (4)).
+    int unknown = 0;
+    std::string names;
+    for (const auto &[name, count] : unknown_names)
+    {
+      unknown += count;
+      names += (names.empty() ? "" : ", ") + name;
+    }
+    Mpi::GlobalSum(1, &unknown, fespace.GetComm());
+    if (unknown > 0)
+    {
+      Mpi::Print(" Impedance-metal rule law reading: {:d} patch(es) of a topology name the "
+                 "reading does not know (on the root: {}) read CONDITIONAL-UNTESTED\n",
+                 unknown, names.empty() ? "none" : names);
     }
   }
   {

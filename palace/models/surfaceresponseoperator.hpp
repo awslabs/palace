@@ -1790,6 +1790,20 @@ public:
     LEG_DERIVED
   };
   static const char *LawLegClassName(LawLegClass leg_class);
+  // The leg class of a patch from its RUNTIME model topology name (ruling 2024 (4)): the
+  // translational families read LEG when an on-metal leg was built (LAW-NO-LEG otherwise);
+  // the convex corner ("convex corner", the corner blend "ConvexCorner") LEG-DERIVED; the
+  // concave corners, the spatial edge cluster, the endpoint and the junction
+  // CONDITIONAL-UNTESTED; no probes LAW-UNPROBED. Any other name (unknown, "Explicit")
+  // fails closed as CONDITIONAL-UNTESTED with `known` false (the run prints their count).
+  static LawLegClass LawLegClassOfTopology(const std::string &topology, bool has_probes,
+                                           bool has_on_metal_leg, bool *known = nullptr);
+  // Every runtime model topology name the code emits (the library topologies' names and
+  // the two corner-blend names).
+  static std::vector<std::string> LawReadingTopologyNames();
+  // Whether the impedance-metal rule acts on any feature of this candidate (a status other
+  // than PEC, NOT-DECLARED or EXACT): false = a twin of the operator of record.
+  bool ImpedanceRuleActs() const;
   struct LawReadingRecord
   {
     int patch = -1;    // global 0-based index

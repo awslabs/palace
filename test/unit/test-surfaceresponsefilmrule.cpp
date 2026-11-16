@@ -316,45 +316,59 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   const auto twin_field = Field(*twin->space, 0.3, 1.0, 0.7);
   const auto twin_response = twin_op.GetMaxwellResponse(twin_field, 0.0);
 
-  SECTION("RECORD on the perfect conductor: nothing substituted; the law reading on "
-          "separate lines leaves every value of the operator unchanged")
+  SECTION("RECORD on the perfect conductor: the candidate is a twin of the operator of "
+          "record (ruling 2024); the law reading runs on the twin only")
   {
-    CHECK_FALSE(Film(*twin).candidate_differs);
-    SurfaceResponseOperator reading_op(*twin->iodata, *twin->space, nullptr, nullptr, true);
-    CHECK(reading_op.LawReadingEnabled());
-    CHECK_FALSE(reading_op.IsImpedanceRuleCandidate());
-    CHECK(reading_op.GetPatchCount() == twin_op.GetPatchCount());
-    const auto response = reading_op.GetMaxwellResponse(twin_field, 0.0);
+    const auto film = Film(*twin);
+    CHECK_FALSE(film.candidate_differs);
+    SurfaceResponseOperator candidate(*twin->iodata, *twin->space, nullptr, &film, true);
+    CHECK(candidate.LawReadingEnabled());
+    CHECK(candidate.IsImpedanceRuleCandidate());
+    CHECK_FALSE(candidate.ImpedanceRuleActs());
+    CHECK_FALSE(twin_op.LawReadingEnabled());
+    CHECK(candidate.GetPatchCount() == twin_op.GetPatchCount());
+    const auto response = candidate.GetMaxwellResponse(twin_field, 0.0);
     for (const auto &[interface, energy] : twin_response.fabricated_surface_energy)
     {
       CHECK(response.fabricated_surface_energy.at(interface) == energy);  // bitwise
     }
     CHECK(response.domain_correction == twin_response.domain_correction);
     CHECK(response.loop_residual == twin_response.loop_residual);
+    for (const auto &feature : candidate.GetImpedanceLawFeatures())
+    {
+      CHECK(feature.status == "PEC");
+      CHECK(feature.device_hash == feature.served_hash);
+    }
     if (twin_op.HasConductorConsistencyProbes())
     {
-      // The gate's records are the same with the reading on (it refuses nothing).
+      // The gate's records are the same on the twin with the reading on (it refuses
+      // nothing); the operator of record takes no reading.
       SurfaceResponseOperator gate_op(*twin->iodata, *twin->space);
       const auto E = TrueField(twin_field);
       const auto records = gate_op.ApplyConductorConsistencyGate(E, 0, 1.0, false);
-      const auto reading_records =
-          reading_op.ApplyConductorConsistencyGate(E, 0, 1.0, false);
-      REQUIRE(records.size() == reading_records.size());
+      const auto twin_records = candidate.ApplyConductorConsistencyGate(E, 0, 1.0, false);
+      REQUIRE(records.size() == twin_records.size());
       for (std::size_t i = 0; i < records.size(); i++)
       {
-        CHECK(records[i].max_ratio == reading_records[i].max_ratio);
-        CHECK(records[i].excluded == reading_records[i].excluded);
+        CHECK(records[i].max_ratio == twin_records[i].max_ratio);
+        CHECK(records[i].excluded == twin_records[i].excluded);
       }
       CHECK(gate_op.GetLawReadings().empty());
-      const auto &readings = reading_op.GetLawReadings();
-      CHECK(static_cast<int>(readings.size()) <= reading_op.GetPatchCount());
+      const auto &readings = candidate.GetLawReadings();
+      CHECK(static_cast<int>(readings.size()) <= candidate.GetPatchCount());
       CHECK(!readings.empty());
       // t5: a field normal to the sheet reads zero on every on-metal leg; a tangential
-      // field reads its drop.
-      const auto normal_field = Field(*twin->space, 0.0, 1.0, 0.0);
-      reading_op.ApplyConductorConsistencyGate(TrueField(normal_field), 1, 1.0, false);
+      // field reads its drop. A FRESH twin per field: the gate's exclusion is sticky, so a
+      // patch the first field excluded would not be read by a later one.
+      auto Readings = [&](double ex, double ey, double ez)
+      {
+        SurfaceResponseOperator fresh(*twin->iodata, *twin->space, nullptr, &film, true);
+        const auto field = Field(*twin->space, ex, ey, ez);
+        fresh.ApplyConductorConsistencyGate(TrueField(field), 0, 1.0, false);
+        return fresh.GetLawReadings();
+      };
       int legs = 0;
-      for (const auto &reading : reading_op.GetLawReadings())
+      for (const auto &reading : Readings(0.0, 1.0, 0.0))
       {
         if (reading.leg_class == SurfaceResponseOperator::LawLegClass::LEG)
         {
@@ -363,20 +377,19 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
           CHECK(reading.max_leg <= 1.0e-12);
         }
       }
-      const auto tangential_field = Field(*twin->space, 1.0, 0.0, 1.0);
-      reading_op.ApplyConductorConsistencyGate(TrueField(tangential_field), 2, 1.0, false);
+      CHECK(legs > 0);
       double largest = 0.0;
-      for (const auto &reading : reading_op.GetLawReadings())
+      int tangential_legs = 0;
+      for (const auto &reading : Readings(1.0, 0.0, 1.0))
       {
         if (reading.leg_class == SurfaceResponseOperator::LawLegClass::LEG)
         {
+          tangential_legs++;
           largest = std::max(largest, reading.max_leg);
         }
       }
-      if (legs > 0)
-      {
-        CHECK(largest > 1.0e-3);
-      }
+      CHECK(tangential_legs > 0);
+      CHECK(largest > 1.0e-3);
     }
   }
 
@@ -538,4 +551,63 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     CHECK(exact > 0);
   }
 #endif
+}
+
+// Ruling 2024 (4): every runtime model topology name the code emits decides the leg class;
+// an unknown name fails closed as CONDITIONAL-UNTESTED (never a tested class).
+TEST_CASE("Impedance-metal rule law reading leg class of every runtime topology name",
+          "[surfaceresponsefilmrule][impedancemetalrule][Serial]")
+{
+  using LawLegClass = SurfaceResponseOperator::LawLegClass;
+  const auto names = SurfaceResponseOperator::LawReadingTopologyNames();
+  CHECK(names.size() == 16);
+  const std::set<std::string> translational = {"isolated edge",
+                                               "same-conductor gap",
+                                               "different-conductor gap",
+                                               "same-conductor strip",
+                                               "parallel-edge cluster",
+                                               "curved edge",
+                                               "curved same-conductor gap",
+                                               "curved different-conductor gap",
+                                               "curved same-conductor strip"};
+  const std::set<std::string> derived = {"convex corner", "ConvexCorner"};
+  const std::set<std::string> conditional = {
+      "concave corner", "ConcaveCorner", "spatial edge cluster", "endpoint", "junction"};
+  for (const auto &name : names)
+  {
+    INFO(name);
+    bool known = false;
+    const auto with_leg =
+        SurfaceResponseOperator::LawLegClassOfTopology(name, true, true, &known);
+    CHECK(known);
+    const auto without_leg =
+        SurfaceResponseOperator::LawLegClassOfTopology(name, true, false, nullptr);
+    CHECK(SurfaceResponseOperator::LawLegClassOfTopology(name, false, true, nullptr) ==
+          LawLegClass::UNPROBED);
+    if (translational.count(name))
+    {
+      CHECK(with_leg == LawLegClass::LEG);
+      CHECK(without_leg == LawLegClass::NO_LEG);
+    }
+    else if (derived.count(name))
+    {
+      CHECK(with_leg == LawLegClass::LEG_DERIVED);
+      CHECK(without_leg == LawLegClass::LEG_DERIVED);
+    }
+    else
+    {
+      CHECK(conditional.count(name) == 1);
+      CHECK(with_leg == LawLegClass::CONDITIONAL_UNTESTED);
+      CHECK(without_leg == LawLegClass::CONDITIONAL_UNTESTED);
+    }
+  }
+  CHECK(translational.size() + derived.size() + conditional.size() == names.size());
+  for (const std::string name : {"Explicit", "IsolatedEdge", "bogus", ""})
+  {
+    INFO(name);
+    bool known = true;
+    CHECK(SurfaceResponseOperator::LawLegClassOfTopology(name, true, true, &known) ==
+          LawLegClass::CONDITIONAL_UNTESTED);
+    CHECK_FALSE(known);
+  }
 }

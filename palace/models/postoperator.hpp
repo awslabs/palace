@@ -295,6 +295,8 @@ protected:
   mutable std::unique_ptr<TableWithCSVFile> impedance_candidate_table, impedance_law_table;
   mutable nlohmann::json impedance_candidate_record;
   mutable double impedance_candidate_measure_seconds = 0.0;
+  // Whether the rule acts on any candidate feature (false = a twin: the self-check).
+  bool impedance_candidate_acts = false;
   // RECORD: the film rule, the printed lines and (when it substitutes) the candidate
   // operator, with the setup cost of both operators measured.
   void SetUpImpedanceRuleCandidate(const IoData &iodata, const SpaceOperator &space_op,
