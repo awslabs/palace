@@ -2160,6 +2160,35 @@ the same outputs and the same exit status; the log says in one line that no fiel
 run. Remove the key (default `false`) to solve. The key requires `Library`, and like the
 option it cannot be combined with `--mesh-statistics`.
 
+**Impedance metals: the measuring-only mode (EXPERIMENTAL).** Library models are perfect
+conductor coupons of one fabricated film, so a device metal with an `Impedance`,
+`Conductivity` or `RationalImpedance` boundary law matches no model and stays raw (its
+features are `Missing`). `"ImpedanceMetalRule": "Record"` in `Solver.SurfaceResponseCorrection`
+(three-dimensional driven or eigenmode runs, `PatchConstruction` `"Features"`) measures what
+serving such metals would give, without changing any value of record: every corrected value,
+table and `palace.json` block of record is computed and written exactly as with `"Off"` (the
+default). Beside them a CANDIDATE is written, marked `CANDIDATE: NOT OF RECORD`:
+`surface-response-impedance-candidate.csv` (per mode or frequency and interface: the
+participation of record and the candidate's), `surface-response-impedance-features.csv` (per
+candidate feature: device law, law status, both key hashes) and
+`surface-response-impedance-law.csv` (per corrected patch and source: the on-metal law reading
+L of the conductor-consistency probes) in the diagnostics directory, and the `palace.json`
+block `SurfaceResponse.ImpedanceRuleCandidate` (including the measured setup cost); a
+preflight writes `surface-response-impedance-candidate-requirements.json`. The candidate
+treats a metal as the library's film iff it is a perfect conductor or a purely inductive
+`Impedance` sheet (`Rs` = 0 and `Cs` = 0, any `Ls`), an assumption printed on every run; other
+laws are not served (one line names each). `"ImpedanceMetalFilmOverrides": [{"Attributes":
+[...], "Serve": true | false}]` serves or un-serves an attribute whatever its law; every
+override is printed and a served non-inductive law is named on every candidate row. Law
+statuses: `PEC`, `SUBSTITUTED`, `EXACT` (a verified library model of the device law matches),
+`MIXED-LAW` (film metals of different laws on different conductors), `LAW-JOINT` (a law change
+along one conductor or a corner at one: `Missing`), `NOT-DECLARED`, `SERVED-BY-OVERRIDE`,
+`NOT-SERVED-BY-OVERRIDE`. The candidate is postprocessing-only (no self-consistent candidate,
+no magnetic term); two-dimensional boundary-mode runs, `PatchConstruction` `"Legacy"` and
+electrostatic runs are not served. When nothing is substituted no second operator is built
+and the law reading runs on the operator of record (on separate lines). `"Apply"` is
+reserved and refused in this build.
+
 Exit status of a preflight: `0` when it completed; `3` when it wrote its complete manifest
 and patch dry run and then ended because `GeometryFailurePolicy` is `FailClosed` (the
 preflight's default) and geometry fallbacks were recorded: the last log line names their

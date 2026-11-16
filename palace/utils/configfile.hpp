@@ -1744,6 +1744,40 @@ public:
     // false.
     bool preflight_only = false;
 
+    // ImpedanceMetalRule (decisions 2006 / 2012; EXPERIMENTAL, stage A of the
+    // impedance-metal rule): OFF (default) = no new object, file, column or line; RECORD =
+    // the measuring-only mode: the operator of record is built and evaluated as under OFF,
+    // and a CANDIDATE (what the rule would give: the library's film metals served as
+    // perfect conductors) is written to separate files marked "CANDIDATE: NOT OF RECORD".
+    // "Apply" is refused at load in this stage.
+    enum class ImpedanceMetalRule : char
+    {
+      OFF,
+      RECORD
+    };
+    ImpedanceMetalRule impedance_metal_rule = ImpedanceMetalRule::OFF;
+    // ImpedanceMetalFilmOverrides: per metal boundary attribute, serve (true) or do not
+    // serve (false) it as the library's film, whatever its law (ruling 2012); RECORD only;
+    // every override is printed.
+    struct ImpedanceMetalFilmOverrideData
+    {
+      std::vector<int> attributes;
+      bool serve = true;
+    };
+    std::vector<ImpedanceMetalFilmOverrideData> impedance_metal_film_overrides;
+    // Filled by the automatic 3D construction of an impedance-metal-rule CANDIDATE operator
+    // only (empty on every operator of record): the law status of every identified feature
+    // (index = feature id; palace::ImpedanceLawStatus codes, every rank) and the rows of
+    // the candidate features table (the root's).
+    std::vector<signed char> impedance_law_feature_status;
+    struct ImpedanceLawFeatureData
+    {
+      int feature = -1;
+      std::string type, device_law, status, override_status, device_hash, served_hash,
+          model;
+      double length = 0.0;
+    };
+    std::vector<ImpedanceLawFeatureData> impedance_law_features;
     // DomainBoundary rule (decisions 442 / 454 / 455; boundary-cut DESIGN 2.2): the
     // mirror-extended identification across the planar NATURAL vertical truncation planes
     // (window cuts, symmetry planes, natural outlines). Mirror = "Natural" (default): the

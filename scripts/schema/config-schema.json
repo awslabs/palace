@@ -3391,6 +3391,39 @@
               "description": "Run the surface-response preflight instead of a solve: exactly what the command-line option `--surface-response-preflight` does (the same code path, outputs and exit status), for front ends that start Palace without command-line options. The block of the configured `Problem.Type` is read (`Solver.Electrostatic.ResponseCorrection` for an electrostatic problem, `Solver.SurfaceResponseCorrection` otherwise); the log says in one line that no field solve is run. Requires `Library`; cannot be combined with `--mesh-statistics`. Remove the key to solve.",
               "default": false
             },
+            "ImpedanceMetalRule": {
+              "type": "string",
+              "enum": [
+                "Off",
+                "Record"
+              ],
+              "description": "EXPERIMENTAL (stage A of the impedance-metal rule). `\"Off\"` (default): today's behaviour, unchanged. `\"Record\"`: the measuring-only mode on a three-dimensional Maxwell (driven / eigenmode) run with `PatchConstruction` `\"Features\"`: every corrected value of record is computed and written exactly as under `\"Off\"`, and a CANDIDATE (what serving the library's film metals as perfect conductors would give) is written to separate files marked `CANDIDATE: NOT OF RECORD` (`surface-response-impedance-candidate.csv`; in the diagnostics directory `surface-response-impedance-features.csv` and `surface-response-impedance-law.csv`; palace.json `SurfaceResponse.ImpedanceRuleCandidate`; a preflight writes `surface-response-impedance-candidate-requirements.json`). By default a metal boundary is the library's film iff it is a perfect conductor or a purely inductive `Impedance` sheet (`Rs` = 0 and `Cs` = 0, any `Ls`): an assumption, printed on every run. `\"Apply\"` is reserved and refused in this build."
+            },
+            "ImpedanceMetalFilmOverrides": {
+              "type": "array",
+              "description": "EXPERIMENTAL; only with `ImpedanceMetalRule` `\"Record\"`. Per metal boundary attribute, serve (`Serve` true) or do not serve (`Serve` false) it as the library's film in the candidate, whatever its law; every override is printed, and a served boundary that is not a perfect conductor or a purely inductive sheet is named on every candidate row (`SERVED-BY-OVERRIDE`).",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "Attributes",
+                  "Serve"
+                ],
+                "properties": {
+                  "Attributes": {
+                    "type": "array",
+                    "items": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0
+                    },
+                    "minItems": 1
+                  },
+                  "Serve": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            },
             "GeometryFailurePolicy": {
               "type": "string",
               "enum": [
@@ -3853,6 +3886,12 @@
             ],
             "PreflightOnly": [
               "Library"
+            ],
+            "ImpedanceMetalRule": [
+              "Library"
+            ],
+            "ImpedanceMetalFilmOverrides": [
+              "ImpedanceMetalRule"
             ],
             "PatchConstruction": [
               "Library"
