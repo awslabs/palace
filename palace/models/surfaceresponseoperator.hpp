@@ -24,6 +24,7 @@
 #include "models/surfaceresponsecoverage.hpp"
 #include "models/surfaceresponsemirror.hpp"
 #include "models/surfaceresponseorientedbox.hpp"
+#include "models/surfaceresponseresolution.hpp"
 #include "utils/configfile.hpp"
 #include "utils/metadatafile.hpp"
 
@@ -998,6 +999,39 @@ private:
   // Diagnostics.Directory / Diagnostics.ConductorConsistencyRecords (decision 1685), from
   // the request: empty = every table at the top level of the output directory.
   std::string diagnostics_directory;
+  // Lane rescensus-product (decision 1817; ruling 1819): the edge-resolution census. Per
+  // LOCAL patch (aligned with `patches`) its knot reading and plane slot (>= 1; slot k + 1
+  // = resolution_planes[k], um); the census Types (the coverage interfaces' Types in order
+  // of first appearance) and each target interface's Type index; the root's run record.
+  bool resolution_enabled = true;
+  bool resolution_bars_hold = false;
+  int resolution_order = 0;
+  double resolution_radius = 0.0;        // mesh units (the library matching radius)
+  double resolution_length_scale = 1.0;  // m per mesh unit
+  ResolutionBars resolution_bars;
+  std::vector<ResolutionPatchReading> resolution_readings;
+  std::vector<int> resolution_plane_slots;
+  std::vector<double> resolution_planes;
+  std::vector<std::string> resolution_types;
+  std::map<int, int> resolution_interface_types;
+  std::vector<double> resolution_patch_origin_z;  // Maxwell: per local patch (mesh units)
+  ResolutionRunRecord resolution_run_record;
+  void ConfigureResolutionCensus(
+      const config::ElectrostaticSolverData::ResponseCorrectionData &request,
+      const IoData &iodata, double matching_radius);
+  // The ONE added point location of the census (ruling 1819 F2): every local patch's knots
+  // (`knots_of`, mesh coordinates) through the construction's own locator, after its
+  // existing locates, in chunks of at most kResolutionKnotChunk knots per rank and
+  // collective call, without the fallback search; a knot's size = the largest longest edge
+  // over every element containing it (decision 1863: rank-count independent), evaluated on
+  // the ranks holding them. `origin_z_of` = the local patch's origin z (mesh units).
+  // Collective.
+  void LocateResolutionKnots(
+      DistributedPointLocator &locator, mfem::ParMesh &mesh, int dimension,
+      const std::function<void(std::size_t, std::vector<std::array<double, 3>> &)>
+          &knots_of,
+      const std::function<double(std::size_t)> &origin_z_of);
+  ResolutionStatus ResolutionPatchStatusOf(std::size_t patch_index, double *m) const;
   bool conductor_consistency_records_in_directory = false;
   // OI-SCP-HOLE (decisions 915 / 918 / 922): the corner / vertex coupons dropped whole by
   // the SpatialClusterPriority rule, with the parts of their raw claims OUTSIDE every
@@ -1557,9 +1591,12 @@ public:
   // fabricated fixed-trace surface evaluation. With include_patches, also return every
   // applied patch's own increments (PatchContribution; their sums per model are the
   // ModelContribution values to roundoff), gathered on all ranks.
-  ElectrostaticResponse GetElectrostaticResponse(const Vector &x,
-                                                 bool include_fixed_flux = true,
-                                                 bool include_patches = false) const;
+  // With `resolution`, the census adds every local patch's fixed-trace fabricated energy
+  // per Type to it (nothing else in the evaluation changes).
+  ElectrostaticResponse
+  GetElectrostaticResponse(const Vector &x, bool include_fixed_flux = true,
+                           bool include_patches = false,
+                           ResolutionAccumulator *resolution = nullptr) const;
 
   // The (ii-a) clipped-correction diagnostic of the SpatialClusterPriority-dropped coupons
   // (OI-SCP-BOXGROW, decisions 958 (b) / 960 / 969 Q1): per dropped patch (the order of
@@ -1740,7 +1777,8 @@ public:
   // voltages are reconstructed from transverse contour integrals and applied through
   // Hermitian response-matrix quadratic forms.
   MaxwellResponse GetMaxwellResponse(const GridFunction &E, std::complex<double> omega,
-                                     bool include_patches = false) const;
+                                     bool include_patches = false,
+                                     ResolutionAccumulator *resolution = nullptr) const;
 
   bool HasSurfaceResponse() const;
   std::set<int> GetTargetInterfaces() const;
@@ -1764,6 +1802,25 @@ public:
   // banner and palace.json SurfaceResponse.Coverage (BaseSolver::SaveMetadata).
   CoverageRunRecord &GetCoverageRunRecord() { return coverage_run_record; }
   const CoverageRunRecord &GetCoverageRunRecord() const { return coverage_run_record; }
+  // Lane rescensus-product (decision 1817; ruling 1819): the edge-resolution census.
+  // ConfigureResolutionTypes (collective; after the construction, before the first solve):
+  // the census Types from `types` (coverage interface -> Type) and the PREFLIGHT rows, the
+  // line printed by the root. NewResolutionAccumulator: an empty accumulator of this
+  // level's Types and planes. MeasureResolution (collective): the cells of one measurement
+  // from the summed accumulator (`accumulator` null = no evaluation-0 energy: every cell
+  // NOT-EVALUATED); the root's cells, empty elsewhere. WriteResolutionPatchTable
+  // (collective; PatchEnergy): the per-patch readings on the root.
+  void ConfigureResolutionTypes(const std::map<int, std::string> &types);
+  ResolutionAccumulator NewResolutionAccumulator() const;
+  std::vector<ResolutionCell> MeasureResolution(ResolutionAccumulator *accumulator,
+                                                double energy_scale) const;
+  void WriteResolutionPatchTable(const std::string &path) const;
+  bool ResolutionEnabled() const { return resolution_enabled; }
+  ResolutionRunRecord &GetResolutionRunRecord() { return resolution_run_record; }
+  const ResolutionRunRecord &GetResolutionRunRecord() const
+  {
+    return resolution_run_record;
+  }
   const CoverageValidatedRegime &GetCoverageValidatedRegime() const
   {
     return coverage_validated_regime;
@@ -2883,6 +2940,13 @@ DistributedPointLocation
 LocateDistributedPoints(mfem::ParMesh &mesh, int dimension, const mfem::Vector &xyz,
                         int block_queries,
                         const std::function<double(int element)> *element_value = nullptr);
+// Lane rescensus-product (ruling 1819 F2): the census readings of patches whose knots (mesh
+// coordinates) are `knots` (this rank's patches), through a locator of `mesh` as the
+// operator's construction uses it (no fallback search; the owner's longest edge; the lower
+// median); exposed for the unit tests of the census. Collective.
+std::vector<ResolutionPatchReading>
+LocateResolutionPatchKnots(mfem::ParMesh &mesh, int dimension,
+                           const std::vector<std::vector<std::array<double, 3>>> &knots);
 
 // The containment test's block size in tested points (lane fix-response-memory, decision
 // 1446 C3 / DESIGN s2.5): PALACE_RESPONSE_CONTAINMENT_BLOCK_POINTS, default 2^20 (~0.04 GB

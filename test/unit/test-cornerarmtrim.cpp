@@ -4164,9 +4164,10 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   {
     return;
   }
-  const std::set<std::string> moved = {"surface-response-patches.csv",
-                                       "surface-response-patch-energy.csv",
-                                       "surface-response-patch-loops.csv"};
+  // Decision 1817: the census's per-patch readings are a per-patch table too.
+  const std::set<std::string> moved = {
+      "surface-response-patches.csv", "surface-response-patch-energy.csv",
+      "surface-response-patch-loops.csv", "surface-response-resolution-patches.csv"};
   auto Entries = [](const fs::path &dir)
   {
     std::set<std::string> names;
@@ -4182,10 +4183,26 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     REQUIRE(fs::is_regular_file(off_dir / "iteration1" / name));
     REQUIRE(fs::is_regular_file(off_dir / name));
     // The second measurement's energy tables differ from the first's (the field doubled);
-    // the patch list is the geometry's and is the same.
-    if (name != "surface-response-patches.csv")
+    // the patch list and the census readings are the geometry's (the same mesh) and the
+    // same. Decision 1831: no table of either level is a link (a writer that opened the
+    // archive's link would write the second level into iteration1/).
+    if (name != "surface-response-patches.csv" &&
+        name != "surface-response-resolution-patches.csv")
     {
       CHECK(ReadFile(off_dir / "iteration1" / name) != ReadFile(off_dir / name));
+    }
+    CHECK_FALSE(fs::is_symlink(off_dir / "iteration1" / name));
+    CHECK_FALSE(fs::is_symlink(off_dir / name));
+  }
+  // Decision 1831: the census's per-cell table is rewritten at each level, never a link.
+  for (const auto &level : {fs::path(), fs::path("iteration1")})
+  {
+    for (const auto &dir : {off_dir, on_dir})
+    {
+      const fs::path table = dir / level / "surface-response-resolution.csv";
+      INFO(table.string());
+      CHECK(fs::is_regular_file(table));
+      CHECK_FALSE(fs::is_symlink(table));
     }
   }
   for (const auto &level : {fs::path(), fs::path("iteration1")})

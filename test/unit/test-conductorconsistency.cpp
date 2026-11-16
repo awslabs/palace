@@ -1668,9 +1668,11 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     return;
   }
 
+  // Decision 1817: the census's per-patch readings are a per-patch table too.
   const std::set<std::string> moved = {
       "surface-response-patches.csv", "surface-response-patch-energy.csv",
-      "surface-response-traces.csv", "surface-response-patch-loops.csv"};
+      "surface-response-traces.csv", "surface-response-patch-loops.csv",
+      "surface-response-resolution-patches.csv"};
   auto Entries = [](const fs::path &dir)
   {
     std::set<std::string> names;
