@@ -27,8 +27,7 @@ int MarkInterfaceTrueDofs(const mfem::ParMesh &mesh, int vsize,
                           const mfem::HypreParMatrix &P, const ElementDofs &element_dofs,
                           const mfem::Array<int> &region_attrs,
                           const mfem::Array<int> &environment_attrs,
-                          mfem::Array<int> &region_marker, mfem::Array<int> &env_marker,
-                          mfem::Array<int> &interface_marker)
+                          mfem::Array<int> &region_marker, mfem::Array<int> &env_marker)
 {
   auto in = [](const mfem::Array<int> &s, int a)
   {
@@ -78,15 +77,13 @@ int MarkInterfaceTrueDofs(const mfem::ParMesh &mesh, int vsize,
 
   region_marker.SetSize(nt);
   env_marker.SetSize(nt);
-  interface_marker.SetSize(nt);
   const double *rt = reg_t.HostRead(), *et = env_t.HostRead();
   int local_iface = 0;
   for (int i = 0; i < nt; i++)
   {
     region_marker[i] = (rt[i] > 0.5) ? 1 : 0;
     env_marker[i] = (et[i] > 0.5) ? 1 : 0;
-    interface_marker[i] = (region_marker[i] && env_marker[i]) ? 1 : 0;
-    local_iface += interface_marker[i];
+    local_iface += region_marker[i] && env_marker[i];
   }
   int global_iface = 0;
   MPI_Allreduce(&local_iface, &global_iface, 1, MPI_INT, MPI_SUM, mesh.GetComm());
@@ -121,30 +118,26 @@ void CheckSubstructuringAttributes(const mfem::ParMesh &mesh,
 int MarkInterfaceTrueDofs(mfem::ParFiniteElementSpace &parent_fespace,
                           const mfem::Array<int> &region_attrs,
                           const mfem::Array<int> &environment_attrs,
-                          mfem::Array<int> &region_marker, mfem::Array<int> &env_marker,
-                          mfem::Array<int> &interface_marker)
+                          mfem::Array<int> &region_marker, mfem::Array<int> &env_marker)
 {
   auto element_dofs = [&](int e, mfem::Array<int> &dofs)
   { parent_fespace.GetElementDofs(e, dofs); };
   return MarkInterfaceTrueDofs(*parent_fespace.GetParMesh(), parent_fespace.GetVSize(),
                                *parent_fespace.Dof_TrueDof_Matrix(), element_dofs,
-                               region_attrs, environment_attrs, region_marker, env_marker,
-                               interface_marker);
+                               region_attrs, environment_attrs, region_marker, env_marker);
 }
 
 int MarkInterfaceTrueDofs(const FiniteElementSpace &parent_fespace,
                           const mfem::Array<int> &region_attrs,
                           const mfem::Array<int> &environment_attrs,
-                          mfem::Array<int> &region_marker, mfem::Array<int> &env_marker,
-                          mfem::Array<int> &interface_marker)
+                          mfem::Array<int> &region_marker, mfem::Array<int> &env_marker)
 {
   mfem::DofTransformation dof_trans;
   auto element_dofs = [&](int e, mfem::Array<int> &dofs)
   { parent_fespace.GetElementDofs(e, dofs, dof_trans); };
   return MarkInterfaceTrueDofs(parent_fespace.GetParMesh(), parent_fespace.GetVSize(),
                                *parent_fespace.Dof_TrueDof_Matrix(), element_dofs,
-                               region_attrs, environment_attrs, region_marker, env_marker,
-                               interface_marker);
+                               region_attrs, environment_attrs, region_marker, env_marker);
 }
 
 namespace
@@ -462,7 +455,11 @@ SignatureMap MatchSignatureBasis(const std::vector<double> &current,
       mfem::Mult(Mg, Sm, R);
       R -= Cm;
       worst = std::max(worst, R.MaxMaxNorm());
-      ok = (R.MaxMaxNorm() <= tol);  // also false for a singular block (NaN)
+      ok = (R.MaxMaxNorm() <= tol);  // also false for a NaN residual
+      if (!ok)
+      {
+        break;  // M_g can be singular: do not invert it
+      }
       // Row i of M_g^-T: column i of M_g^-1.
       mfem::DenseMatrix Mi(Mg);
       Mi.Invert();
@@ -488,8 +485,11 @@ SignatureMap MatchSignatureBasis(const std::vector<double> &current,
     }
   }
   ok = ok && std::find(used.begin(), used.end(), 0) == used.end();
-  MFEM_VERIFY(ok, "Online interface DOFs do not match the saved model (max mismatch "
-                      << worst << "); the interface Gamma must be identical.");
+  const auto unmatched = std::count(matched.begin(), matched.end(), 0);
+  MFEM_VERIFY(ok, "Online interface DOFs do not match the saved model ("
+                      << unmatched << " of " << n
+                      << " not matched one to one, largest block residual " << worst
+                      << "): the interface (Gamma) must be identical!");
   return map;
 }
 

@@ -6,6 +6,8 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <system_error>
+#include "utils/outputdir.hpp"
 #include "utils/timer.hpp"
 
 namespace palace
@@ -15,19 +17,25 @@ void SubstructuringSolver::Impl::WriteModel(
     const std::string &path, bool append,
     const std::function<void(std::ofstream &)> &write) const
 {
-  int ok = 1;
-  if (Mpi::Root(parent_fes.GetComm()))
-  {
-    std::ofstream f(path, std::ios::binary | (append ? std::ios::app : std::ios::trunc));
-    if (f)
-    {
-      write(f);
-      f.close();
-    }
-    ok = !f.fail();
-  }
-  Mpi::Broadcast(1, &ok, 0, parent_fes.GetComm());
-  MFEM_VERIFY(ok, "Cannot write the substructuring model \"" << path << "\"!");
+  ApplyOnRootFilesystem(
+      parent_fes.GetComm(), fmt::format("Writing the substructuring model \"{}\"", path),
+      [&]()
+      {
+        std::ofstream f(path,
+                        std::ios::binary | (append ? std::ios::app : std::ios::trunc));
+        if (!f)
+        {
+          throw fs::filesystem_error("Could not open the model file", path,
+                                     std::make_error_code(std::errc::io_error));
+        }
+        write(f);
+        f.close();
+        if (f.fail())
+        {
+          throw fs::filesystem_error("Could not write the model file", path,
+                                     std::make_error_code(std::errc::io_error));
+        }
+      });
 }
 
 void SubstructuringSolver::Impl::AppendSourceModes(const std::string &path)
@@ -51,7 +59,6 @@ void SubstructuringSolver::Impl::AppendSourceModes(const std::string &path)
         f.write(reinterpret_cast<const char *>(SC.data()), sizeof(double) * SC.size());
         f.write(reinterpret_cast<const char *>(SB.data()), sizeof(double) * SB.size());
       });
-  src_saved = true;
 }
 
 int SubstructuringSolver::Impl::SignatureFileWidth(int sig_type)
@@ -115,8 +122,8 @@ SubstructuringSolver::Impl::ReadSavedHead(const std::string &path, MPI_Comm comm
         }
         else if (magic == kEnvFpMagic)
         {
-          h.env_fp.resize(kEnvFpSize);
-          head[5] = read(h.env_fp.data(), kEnvFpSize);
+          f.seekg(sizeof(double) * kEnvFpSize, std::ios::cur);  // read by LoadSections
+          head[5] = f && f.tellg() <= size;
         }
         else if (magic == kEnvMeshMagic)
         {
@@ -137,15 +144,19 @@ SubstructuringSolver::Impl::ReadSavedHead(const std::string &path, MPI_Comm comm
   h.width = (head[5] && head[6]) ? head[4] : 0;
   if (h.width == 0)
   {
-    return h;
+    // Only the broadcast fields: rank 0 may have read more of an incomplete model.
+    SavedHead incomplete;
+    incomplete.version = h.version;
+    incomplete.order = h.order;
+    incomplete.nG = h.nG;
+    incomplete.sig_type = h.sig_type;
+    return incomplete;
   }
   Mpi::Broadcast(1, &h.length, 0, comm);
   Mpi::Broadcast(1, &h.regularization, 0, comm);
   offsets(h.nG, h.width);
   h.sig.resize(static_cast<std::size_t>(h.nG) * h.width);
   Mpi::Broadcast(static_cast<int>(h.sig.size()), h.sig.data(), 0, comm);
-  h.env_fp.resize(kEnvFpSize);
-  Mpi::Broadcast(kEnvFpSize, h.env_fp.data(), 0, comm);
   Mpi::Broadcast(6, h.env_moments.data(), 0, comm);
   Mpi::Broadcast(6, h.region_moments.data(), 0, comm);
   return h;
@@ -264,8 +275,8 @@ void SubstructuringSolver::Impl::AppendEnvMoments(const std::string &path,
 
 void SubstructuringSolver::Impl::AppendEnvFingerprint(const std::string &path)
 {
-  BlockTimer bt(Timer::IO);
   const std::array<double, kEnvFpSize> fp = EnvironmentFingerprint();  // collective
+  BlockTimer bt(Timer::IO);
   WriteModel(path, true,
              [&](std::ofstream &f)
              {
@@ -539,7 +550,6 @@ void SubstructuringSolver::Impl::AppendModes(const std::string &path)
                f.write(reinterpret_cast<const char *>(Cmode.data()),
                        sizeof(double) * Cmode.size());
              });
-  modes_saved = true;
 }
 
 void SubstructuringSolver::Impl::LoadSections(const std::string &path, std::streamoff pos,
@@ -660,7 +670,6 @@ void SubstructuringSolver::Impl::LoadSections(const std::string &path, std::stre
       SC = C;
       SB = B;
       src_ready = true;
-      src_saved = true;  // already in the file
     }
     else if (magic == kModesMagic)
     {
@@ -694,7 +703,6 @@ void SubstructuringSolver::Impl::LoadSections(const std::string &path, std::stre
       mode_fp = fp;
       Cmode = C;
       modes_ready = true;
-      modes_saved = true;  // already in the file
     }
     else
     {
@@ -707,18 +715,17 @@ void SubstructuringSolver::Impl::LoadModel(const std::string &model_path, int si
 {
   const int nG = nG_global;
   const int rank = Mpi::Rank(parent_fes.GetComm());
-  BlockTimer bt_io(Timer::IO);
   MFEM_VERIFY(saved.nG == nG,
               "Saved substructuring model interface size ("
                   << saved.nG << ") does not match this run (" << nG
                   << "); the interface (Gamma) must be identical between the offline and "
-                     "online runs.");
+                     "online runs!");
   MFEM_VERIFY(saved.width == sig_w,
               "The interface of the saved substructuring model "
                   << ((saved.width == 13) ? "is" : "is not")
                   << " split by \"TwoSided\" superconductor films, unlike in this run; "
                      "the interface (Gamma) must be identical between the offline and "
-                     "online runs.");
+                     "online runs!");
   // Signature match: the saved interface DOFs on the current ones (dual quantities, S_E
   // and the sections' interface rows, transform as x_cur = M^-T x_saved). H1: a
   // permutation. H(curl): signed matches, and blocks for the DOFs whose basis depends on
@@ -727,6 +734,7 @@ void SubstructuringSolver::Impl::LoadModel(const std::string &model_path, int si
       MatchSignatureBasis(InterfaceSignatures(sig_w), saved.sig, saved.width);
   {
     // Rank 0 reads the saved S_E onto the current numbering and scatters its rows.
+    BlockTimer bt_io(Timer::IO);
     std::vector<double> S_full;
     if (rank == 0)
     {
@@ -738,8 +746,11 @@ void SubstructuringSolver::Impl::LoadModel(const std::string &model_path, int si
     }
     ScatterRows(S_full, nG, S_rows);
   }
-  // Sections after S_E (fingerprint, S^K, modes).
-  LoadSections(model_path, saved.sections_pos, map);
+  {
+    // Sections after S_E (fingerprint, S^K, modes).
+    BlockTimer bt_io(Timer::IO);
+    LoadSections(model_path, saved.sections_pos, map);
+  }
   if (region_only)
   {
     Mpi::Print(" The mesh holds the region (the environment is that of the model)\n");
@@ -753,23 +764,26 @@ void SubstructuringSolver::Impl::LoadModel(const std::string &model_path, int si
 void SubstructuringSolver::Impl::SaveModel(const std::string &model_path, int sig_w)
 {
   const int nG = nG_global;
-  BlockTimer bt_io(Timer::IO);
   const int sig_type = magnetostatic ? ((sig_w == 13) ? 3 : 2) : 1;
   const std::vector<double> sig =
       InterfaceSignatures(sig_w);  // collective: all ranks participate
-  const std::vector<double> S_full = GatherRows(S_rows, nG);
-  WriteModel(
-      model_path, false,
-      [&](std::ofstream &f)
-      {
-        const int head[kHeadInts] = {kModelMagic, kModelVersion, iodata.solver.order, nG,
-                                     sig_type};
-        f.write(reinterpret_cast<const char *>(head), sizeof(head));
-        f.write(reinterpret_cast<const char *>(sig.data()), sizeof(double) * nG * sig_w);
-        f.write(reinterpret_cast<const char *>(S_full.data()), sizeof(double) * nG * nG);
-        f.write(reinterpret_cast<const char *>(&kLengthMagic), sizeof(int));
-        f.write(reinterpret_cast<const char *>(&iodata.model.Lc), sizeof(double));
-      });
+  {
+    // Freed before the sections, so that rank 0 holds one |Gamma|^2 array at a time.
+    BlockTimer bt_io(Timer::IO);
+    const std::vector<double> S_full = GatherRows(S_rows, nG);
+    WriteModel(
+        model_path, false,
+        [&](std::ofstream &f)
+        {
+          const int head[kHeadInts] = {kModelMagic, kModelVersion, iodata.solver.order, nG,
+                                       sig_type};
+          f.write(reinterpret_cast<const char *>(head), sizeof(head));
+          f.write(reinterpret_cast<const char *>(sig.data()), sizeof(double) * nG * sig_w);
+          f.write(reinterpret_cast<const char *>(S_full.data()), sizeof(double) * nG * nG);
+          f.write(reinterpret_cast<const char *>(&kLengthMagic), sizeof(int));
+          f.write(reinterpret_cast<const char *>(&iodata.model.Lc), sizeof(double));
+        });
+  }
   AppendEnvFingerprint(model_path);  // collective
   AppendEnvMoments(model_path, WriteRegionMesh(RegionMeshPath(model_path)));
   if (have_sk)

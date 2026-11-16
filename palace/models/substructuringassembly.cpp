@@ -374,7 +374,7 @@ std::vector<HYPRE_BigInt> SubstructuringSolver::Impl::InterfaceTrueDofs() const
     }
   }
   std::vector<int> cnt, disp;
-  RowLayout(1, cnt, disp);
+  RowLayout(cnt, disp);
   MPI_Allgatherv(mine.data(), gamma_nloc, HYPRE_MPI_BIG_INT, g2t.data(), cnt.data(),
                  disp.data(), HYPRE_MPI_BIG_INT, parent_fes.GetComm());
   return g2t;
@@ -412,7 +412,7 @@ std::vector<double> SubstructuringSolver::Impl::InterfaceSignatures(int width) c
     }
   }
   std::vector<int> cnt, disp;
-  RowLayout(1, cnt, disp);
+  RowLayout(cnt, disp);
   MPI_Allgatherv(mine.data(), gamma_nloc, MPI_INT, row.data(), cnt.data(), disp.data(),
                  MPI_INT, comm);
   const std::vector<double> sig0 = TrueDofSignatures(parent_fes, index, nG_global);

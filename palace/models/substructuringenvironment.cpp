@@ -119,7 +119,6 @@ void SubstructuringSolver::Impl::ComputeSourceModes(const std::vector<int> &ids,
     MPI_Allreduce(MPI_IN_PLACE, SB.data(), K * K, MPI_DOUBLE, MPI_SUM, comm);
   }
   src_ready = true;
-  src_saved = false;
 }
 
 bool SubstructuringSolver::Impl::SourceModesMatch(const std::vector<int> &ids,
@@ -368,7 +367,6 @@ void SubstructuringSolver::Impl::ComputeModes(const std::vector<int> &ids,
     MPI_Allreduce(MPI_IN_PLACE, Cmode.data(), K * K, MPI_DOUBLE, MPI_SUM, comm);
   }
   modes_ready = true;
-  modes_saved = false;
 }
 
 bool SubstructuringSolver::Impl::ModesMatch(const std::vector<int> &ids,
@@ -446,47 +444,77 @@ bool SubstructuringSolver::Impl::ModesMatch(const std::vector<int> &ids,
   return ok;
 }
 
-void SubstructuringSolver::Impl::RowLayout(int w, std::vector<int> &cnt,
+void SubstructuringSolver::Impl::RowLayout(std::vector<int> &cnt,
                                            std::vector<int> &disp) const
 {
   MPI_Comm comm = parent_fes.GetComm();
   const int nranks = Mpi::Size(comm);
   cnt.assign(nranks, 0);
   disp.assign(nranks, 0);
-  const int mine = gamma_nloc * w;
-  MPI_Allgather(&mine, 1, MPI_INT, cnt.data(), 1, MPI_INT, comm);
+  MPI_Allgather(&gamma_nloc, 1, MPI_INT, cnt.data(), 1, MPI_INT, comm);
   for (int r = 1; r < nranks; r++)
   {
     disp[r] = disp[r - 1] + cnt[r - 1];
   }
 }
 
+namespace
+{
+
+// A row of w doubles, so that the counts of a row exchange are rows (|Gamma| w doubles can
+// overflow an int).
+class RowType
+{
+public:
+  explicit RowType(int w)
+  {
+    MPI_Type_contiguous(w, MPI_DOUBLE, &type);
+    MPI_Type_commit(&type);
+  }
+  ~RowType() { MPI_Type_free(&type); }
+  RowType(const RowType &) = delete;
+  RowType &operator=(const RowType &) = delete;
+  MPI_Datatype type;
+};
+
+}  // namespace
+
 std::vector<double> SubstructuringSolver::Impl::GatherRows(const std::vector<double> &rows,
                                                            int w) const
 {
-  std::vector<int> cnt, disp;
-  RowLayout(w, cnt, disp);
   MPI_Comm comm = parent_fes.GetComm();
   const bool root = (Mpi::Rank(comm) == 0);
   std::vector<double> full;
+  if (w == 0)
+  {
+    return full;
+  }
+  std::vector<int> cnt, disp;
+  RowLayout(cnt, disp);
   if (root)
   {
     full.assign(static_cast<std::size_t>(nG_global) * w, 0.0);
   }
-  MPI_Gatherv(rows.data(), gamma_nloc * w, MPI_DOUBLE, root ? full.data() : nullptr,
-              cnt.data(), disp.data(), MPI_DOUBLE, 0, comm);
+  const RowType row(w);
+  MPI_Gatherv(rows.data(), gamma_nloc, row.type, root ? full.data() : nullptr, cnt.data(),
+              disp.data(), row.type, 0, comm);
   return full;
 }
 
 void SubstructuringSolver::Impl::ScatterRows(const std::vector<double> &full, int w,
                                              std::vector<double> &rows) const
 {
-  std::vector<int> cnt, disp;
-  RowLayout(w, cnt, disp);
-  MPI_Comm comm = parent_fes.GetComm();
   rows.assign(static_cast<std::size_t>(gamma_nloc) * w, 0.0);
+  if (w == 0)
+  {
+    return;
+  }
+  std::vector<int> cnt, disp;
+  RowLayout(cnt, disp);
+  MPI_Comm comm = parent_fes.GetComm();
+  const RowType row(w);
   MPI_Scatterv(Mpi::Rank(comm) == 0 ? full.data() : nullptr, cnt.data(), disp.data(),
-               MPI_DOUBLE, rows.data(), gamma_nloc * w, MPI_DOUBLE, 0, comm);
+               row.type, rows.data(), gamma_nloc, row.type, 0, comm);
 }
 
 void SubstructuringSolver::Impl::FactorEnvironmentInterior()
@@ -530,11 +558,6 @@ void SubstructuringSolver::Impl::MaskToEnvInterior(
       }
     }
   }
-}
-
-void SubstructuringSolver::Impl::ApplyAeeInv(const mfem::Vector &x, mfem::Vector &y) const
-{
-  ApplyAeeInvMulti({&x}, {&y});
 }
 
 void SubstructuringSolver::Impl::MaterializeWithEnergy()

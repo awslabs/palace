@@ -1035,12 +1035,16 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   }
   CHECK_THROWS_WITH(condense(make_config("Electrostatic", "Online", 1)),
                     Catch::Matchers::ContainsSubstring("Cannot read the saved"));
-  // A model that cannot be written.
+  // A model that cannot be written, found before the condensation.
   IoData unwritable = make_config("Electrostatic", "Offline", 1);
   unwritable.solver.substructuring->save_model =
       (temp_dir / "missing" / "model.bin").string();
-  CHECK_THROWS_WITH(condense(unwritable), Catch::Matchers::ContainsSubstring(
-                                              "Cannot write the substructuring model"));
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  mesh.push_back(std::make_unique<Mesh>(MakeGradedSplit(3, 4, 4)));
+  SubstructuringSolver ss(unwritable, mesh);
+  CHECK_THROWS_WITH(ss.CondenseEnvironment(),
+                    Catch::Matchers::ContainsSubstring("Writing the substructuring model"));
+  CHECK_FALSE(ss.EnvironmentFactored());
 }
 #endif
 
@@ -1475,6 +1479,72 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
       CHECK(std::abs(C_region(i, j) - C_ref(i, j)) <= 1.0e-10 * C_ref(i, i));
     }
   }
+}
+
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "SubstructuringSolver incomplete model on every process",
+                 "[substructure][Serial][Parallel]")
+{
+  // A model cut after its reference length is incomplete: every process reads the same of
+  // it (the length is not used), and the online run says that it is incomplete.
+  const std::string model_path = (temp_dir / "substruct_incomplete_model.bin").string();
+  auto make_config = [&model_path](const std::string &mode, double Lc)
+  {
+    json config = {
+        {"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains",
+         {{"Materials",
+           {{{"Attributes", {1}}, {"Permittivity", 1.0}},
+            {{"Attributes", {2}}, {"Permittivity", 10.0}}}}}},
+        {"Boundaries",
+         {{"Terminal",
+           {{{"Index", 1}, {"Attributes", {1}}}, {{"Index", 2}, {"Attributes", {2}}}}}}},
+        {"Solver",
+         {{"Order", 1},
+          {"Substructuring",
+           {{"Region", {{"Attributes", {1}}}},
+            {"Environment", {{"Attributes", {2}}}},
+            {"Mode", mode},
+            {"SaveModel", model_path}}}}}};
+    if (Lc > 0.0)
+    {
+      config["Model"]["Lc"] = Lc;
+    }
+    return IoData(config, false);
+  };
+  {
+    IoData offline = make_config("Offline", 2.0);
+    std::vector<std::unique_ptr<Mesh>> mesh;
+    mesh.push_back(std::make_unique<Mesh>(MakeSplitCube(4)));
+    SubstructuringSolver off(offline, mesh);
+    off.CondenseEnvironment();
+  }
+  // Keep the head (5 ints, nG the fourth), the signatures (nG x 3), S_E (nG x nG) and the
+  // reference length (1 int + 1 double).
+  if (Mpi::Root(Mpi::World()))
+  {
+    int head[5] = {0, 0, 0, 0, 0};
+    {
+      std::ifstream f(model_path, std::ios::binary);
+      f.read(reinterpret_cast<char *>(head), sizeof(head));
+    }
+    const int nG = head[3];
+    std::filesystem::resize_file(model_path,
+                                 static_cast<std::uintmax_t>(6 * sizeof(int)) +
+                                     static_cast<std::uintmax_t>(sizeof(double)) *
+                                         (nG * 3 + nG * nG + 1));
+  }
+  Mpi::Barrier(Mpi::World());
+  IoData online = make_config("Online", 0.0);
+  SubstructuringSolver::UseModelLength(online, Mpi::World());
+  double Lc[2] = {online.model.Lc, -online.model.Lc};
+  Mpi::GlobalMin(2, Lc, Mpi::World());
+  CHECK(Lc[0] == -Lc[1]);
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  mesh.push_back(std::make_unique<Mesh>(MakeSplitCube(4)));
+  CHECK_THROWS_WITH(SubstructuringSolver(online, mesh),
+                    Catch::Matchers::ContainsSubstring("is incomplete"));
 }
 
 TEST_CASE_METHOD(palace::test::SharedTempDir,

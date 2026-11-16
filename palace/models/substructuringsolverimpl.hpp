@@ -441,7 +441,6 @@ struct SubstructuringSolver::Impl
   std::vector<double> mode_fp;  // 2 per mode
   std::vector<double> G_rows, Cmode;
   bool modes_ready = false;
-  bool modes_saved = false;  // appended to the model file in this run
   // Magnetostatic energy interface operator S^K (distributed like S_rows), materialized
   // with a saved model; otherwise the energies use environment solves (electrostatics: S^K
   // = S_E).
@@ -544,7 +543,7 @@ struct SubstructuringSolver::Impl
   static constexpr int kSourceModesMagic = 0x33435253;  // "SRC3"
   std::vector<int> src_ids;
   std::vector<double> src_fp, SG_rows, SH_rows, SC, SB;
-  bool src_ready = false, src_saved = false;
+  bool src_ready = false;
 
   // Environment source b^E = M_sheet^E a + J|_E (J on the environment interior; its
   // interface entries load the region), zero on the Dirichlet DOFs, and its fingerprint,
@@ -636,9 +635,9 @@ struct SubstructuringSolver::Impl
   bool ModesMatch(const std::vector<int> &ids, const std::vector<mfem::Vector> &xd,
                   std::vector<int> &col, std::vector<char> &need) const;
 
-  // Per-rank counts/displacements of an interface-row-distributed array (gamma_nloc * w
-  // each).
-  void RowLayout(int w, std::vector<int> &cnt, std::vector<int> &disp) const;
+  // Per-rank counts/displacements of the rows of an interface-row-distributed array
+  // (gamma_nloc each).
+  void RowLayout(std::vector<int> &cnt, std::vector<int> &disp) const;
 
   // Gather an interface-row-distributed array (width w) to rank 0 (full, global row order).
   std::vector<double> GatherRows(const std::vector<double> &rows, int w) const;
@@ -677,7 +676,7 @@ struct SubstructuringSolver::Impl
   struct SavedHead
   {
     int version = -1, order = 0, nG = 0, sig_type = 0, width = 0;
-    std::vector<double> sig, env_fp;
+    std::vector<double> sig;
     std::array<double, 6> env_moments = {}, region_moments = {};
     double length = 0.0, regularization = 0.0;
     std::streamoff S_pos = 0, sections_pos = 0;
@@ -792,8 +791,6 @@ struct SubstructuringSolver::Impl
   // the environment solver. y_k may alias x_k.
   void ApplyAeeInvMulti(const std::vector<const mfem::Vector *> &X,
                         const std::vector<mfem::Vector *> &Y) const;
-
-  void ApplyAeeInv(const mfem::Vector &x, mfem::Vector &y) const;
 
   // Zero the entries outside the environment interior.
   void MaskToEnvInterior(const std::vector<mfem::Vector *> &Y) const;

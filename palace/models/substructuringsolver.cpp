@@ -95,8 +95,8 @@ SubstructuringSolver::Impl::Impl(const IoData &iodata,
   }
 
   // Interface / region / environment true-DOF markers.
-  mfem::Array<int> rm, em, im;
-  MarkInterfaceTrueDofs(SolutionSpace(), ra_arr, ea_arr, rm, em, im);
+  mfem::Array<int> rm, em;
+  MarkInterfaceTrueDofs(SolutionSpace(), ra_arr, ea_arr, rm, em);
 
   // Dirichlet true DOFs: the terminals (per terminal) and the grounded boundaries. The
   // set is fixed across excitations, so the interface/interior partition is too.
@@ -443,8 +443,6 @@ void SubstructuringSolver::CondenseEnvironment()
   // Interface true-DOF geometric signature (replicated), to re-order a saved S_E onto the
   // current interface after re-meshing or re-partitioning the region (with the side moments
   // of the versions of the DOFs split by two-sided films, see InterfaceSignatures).
-  MFEM_VERIFY(SignatureWidth(impl->parent_fes) == (impl->magnetostatic ? 12 : 3),
-              "Unexpected finite element space for the interface signatures!");
   const int sig_w = impl->magnetostatic ? (impl->InterfaceSplit() ? 13 : 12) : 3;
 
   // Online with a saved model: load S_E (and the model's sections); otherwise materialize
@@ -452,6 +450,12 @@ void SubstructuringSolver::CondenseEnvironment()
   const auto &subcfg = *impl->iodata.solver.substructuring;
   const bool online = (subcfg.mode == SubstructuringMode::ONLINE);
   const std::string &model_path = subcfg.save_model;
+  if (!online && !model_path.empty())
+  {
+    // Fail before the condensation if the model cannot be written (an existing one is
+    // kept until it is replaced).
+    impl->WriteModel(model_path, true, [](std::ofstream &) {});
+  }
   bool loaded = false;
   if (online && !model_path.empty())
   {

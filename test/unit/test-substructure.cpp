@@ -38,8 +38,8 @@ TEST_CASE("Interface true DOFs are identified consistently in parallel",
     mfem::Array<int> ra(1), ea(1);
     ra[0] = 1;
     ea[0] = 2;
-    mfem::Array<int> rm, em, im;
-    return MarkInterfaceTrueDofs(pfes, ra, ea, rm, em, im);
+    mfem::Array<int> rm, em;
+    return MarkInterfaceTrueDofs(pfes, ra, ea, rm, em);
   };
   CHECK(count(1) == 49);
   CHECK(count(2) == 169);
