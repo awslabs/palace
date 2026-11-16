@@ -3350,7 +3350,7 @@ void ExtrudePML(std::unique_ptr<mfem::Mesh> &orig_mesh, config::DomainData &doma
     }
   };
   mfem::Vector bbmin, bbmax;
-  orig_mesh->GetBoundingBox(bbmin, bbmax);
+  orig_mesh->GetBoundingBox(bbmin, bbmax, 0);  // Of the corners of the elements
   bbmax -= bbmin;
   const double tol = 1.0e-10 * bbmax.Normlinf();
 
@@ -4246,35 +4246,25 @@ void ExtrudePML(std::unique_ptr<mfem::Mesh> &orig_mesh, config::DomainData &doma
   new_mesh->FinalizeTopology(generate_bdr);
   new_mesh->CheckBdrElementOrientation(true);
 
-  // High-order nodes: the original elements keep their geometry, and each node of an
-  // extruded element is the point of the face below at its reference coordinates (x, y),
-  // moved along its own direction to its depth.
+  // High-order nodes: the original elements keep theirs, and each node of an extruded
+  // element is the point of the face below at its reference coordinates (x, y), moved along
+  // its own direction to its depth.
   if (nodes)
   {
-    const auto *fespace = nodes->FESpace();
-    new_mesh->SetCurvature(
-        order, dynamic_cast<const mfem::L2_FECollection *>(fespace->FEColl()) != nullptr, 3,
-        fespace->GetOrdering());
+    TransferHighOrderNodes(mesh, *new_mesh);
     mfem::GridFunction &new_nodes = *new_mesh->GetNodes();
     mfem::Array<int> vdofs;
     mfem::Vector loc;
-    for (int e = 0; e < new_mesh->GetNE(); e++)
+    for (int e = ne; e < new_mesh->GetNE(); e++)
     {
+      const auto &[p, f, k] = new_elements[e - ne];
+      const auto &ex = parts[p].block.extrusion;
       const mfem::IntegrationRule &ir = new_nodes.FESpace()->GetFE(e)->GetNodes();
-      if (e < ne)
-      {
-        mesh.GetElementTransformation(e, &T);
-      }
-      else
-      {
-        mesh.GetFaceTransformation(new_elements[e - ne].face, &T);
-      }
+      mesh.GetFaceTransformation(f, &T);
       // For a box, the displacements of the vertices of the face, interpolated bilinearly:
       // the displacement has kinks at the sides of the core, which would fold elements of
       // higher order across them.
-      const bool box =
-          (e >= ne) &&
-          parts[new_elements[e - ne].part].block.extrusion.depth == Extrusion::Depth::BOX;
+      const bool box = (ex.depth == Extrusion::Depth::BOX);
       double d_vertex[4][3];
       if (box)
       {
@@ -4282,7 +4272,7 @@ void ExtrudePML(std::unique_ptr<mfem::Mesh> &orig_mesh, config::DomainData &doma
         for (int j = 0; j < corners.GetNPoints(); j++)
         {
           T.Transform(corners.IntPoint(j), x);
-          Direction(parts[new_elements[e - ne].part], x.GetData(), d_vertex[j]);
+          Direction(parts[p], x.GetData(), d_vertex[j]);
         }
       }
       new_nodes.FESpace()->GetElementVDofs(e, vdofs);
@@ -4290,39 +4280,30 @@ void ExtrudePML(std::unique_ptr<mfem::Mesh> &orig_mesh, config::DomainData &doma
       for (int j = 0; j < ir.GetNPoints(); j++)
       {
         const mfem::IntegrationPoint &ip = ir.IntPoint(j);
-        if (e < ne)
+        mfem::IntegrationPoint ip_face;
+        ip_face.Set2(ip.x, ip.y);
+        T.Transform(ip_face, x);
+        double d[3];
+        if (box)
         {
-          T.Transform(ip, x);
+          const bool triangle = (T.GetGeometryType() == mfem::Geometry::TRIANGLE);
+          const double w[4] = {triangle ? 1.0 - ip.x - ip.y : (1.0 - ip.x) * (1.0 - ip.y),
+                               triangle ? ip.x : ip.x * (1.0 - ip.y),
+                               triangle ? ip.y : ip.x * ip.y,
+                               triangle ? 0.0 : (1.0 - ip.x) * ip.y};
+          for (int c = 0; c < 3; c++)
+          {
+            d[c] = w[0] * d_vertex[0][c] + w[1] * d_vertex[1][c] + w[2] * d_vertex[2][c] +
+                   (triangle ? 0.0 : w[3] * d_vertex[3][c]);
+          }
         }
         else
         {
-          const auto &[p, f, k] = new_elements[e - ne];
-          const auto &ex = parts[p].block.extrusion;
-          mfem::IntegrationPoint ip_face;
-          ip_face.Set2(ip.x, ip.y);
-          T.Transform(ip_face, x);
-          double d[3];
-          if (box)
-          {
-            const bool triangle = (T.GetGeometryType() == mfem::Geometry::TRIANGLE);
-            const double w[4] = {triangle ? 1.0 - ip.x - ip.y : (1.0 - ip.x) * (1.0 - ip.y),
-                                 triangle ? ip.x : ip.x * (1.0 - ip.y),
-                                 triangle ? ip.y : ip.x * ip.y,
-                                 triangle ? 0.0 : (1.0 - ip.x) * ip.y};
-            for (int c = 0; c < 3; c++)
-            {
-              d[c] = w[0] * d_vertex[0][c] + w[1] * d_vertex[1][c] + w[2] * d_vertex[2][c] +
-                     (triangle ? 0.0 : w[3] * d_vertex[3][c]);
-            }
-          }
-          else
-          {
-            Direction(parts[p], x.GetData(), d);
-          }
-          for (int c = 0; c < 3; c++)
-          {
-            x(c) += (k + ip.z) * ex.thickness / ex.layers * d[c];
-          }
+          Direction(parts[p], x.GetData(), d);
+        }
+        for (int c = 0; c < 3; c++)
+        {
+          x(c) += (k + ip.z) * ex.thickness / ex.layers * d[c];
         }
         for (int c = 0; c < 3; c++)
         {
