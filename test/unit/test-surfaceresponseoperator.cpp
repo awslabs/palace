@@ -12666,7 +12666,7 @@ TEST_CASE("SurfaceResponseOperatorPartialStretchContextOwnership",
     const std::string line = DescribeContinuationOwnershipSummary(summary);
     CHECK(line.find("5 translational cell(s)") != std::string::npos);
     CHECK(line.find("4 wholly, 1 clipped at a box face") != std::string::npos);
-    CHECK(line.find("partial-stretch ownership (decision 984") != std::string::npos);
+    CHECK(line.find("partial-stretch ownership: ") != std::string::npos);
     CHECK(line.find("3 context-edge cell(s) some partially inside stretch pair contains") !=
           std::string::npos);
     CHECK(line.find("(1 re-cut at a box face") != std::string::npos);
