@@ -478,7 +478,6 @@ TEST_CASE("Substructured magnetostatic operators match CurlCurlOperator",
   const auto [order, sheets, film, opt] = GENERATE(
       table<int, bool, bool, ParityMesh>({{1, false, false, {}},
                                           {2, false, false, {}},
-                                          {3, false, false, {}},
                                           {2, false, false, {false, 0, false, true}},
                                           {1, true, false, {}},
                                           {2, true, false, {}},
@@ -486,11 +485,20 @@ TEST_CASE("Substructured magnetostatic operators match CurlCurlOperator",
                                           {1, false, true, {}},
                                           {2, false, true, {}},
                                           {1, true, true, {}},
-                                          {3, true, true, {}},
                                           {1, true, true, {true, 2}}}));
   CAPTURE(order, sheets, film, opt.tet, opt.curvature, opt.nc);
   IoData iodata(MagnetostaticConfig(order, sheets, film), false);
   CheckMagnetostatic(iodata, MakeMesh(MakeParitySerial(8, opt)), sheets || film);
+}
+
+TEST_CASE("Substructured third-order magnetostatic operators match CurlCurlOperator",
+          "[substructure][Serial][Parallel][GPU][Long]")
+{
+  // As above, without sheets and with both kinds.
+  const bool sheets = GENERATE(false, true);
+  CAPTURE(sheets);
+  IoData iodata(MagnetostaticConfig(3, sheets, sheets), false);
+  CheckMagnetostatic(iodata, MakeMesh(MakeParitySerial(8, {})), sheets);
 }
 
 TEST_CASE("Substructured operators match on processes owning one side only",

@@ -287,7 +287,7 @@ mfem::DenseMatrix CurrentEnergies(SubstructuringSolver &ss, const std::vector<in
 // The closed current J = curl(0, 0, psi), psi = (x(x1-x) y(1-y) z(1-z))^2 for x < x1 and
 // zero beyond (zero normal component on the faces of the unit cube and on x = x1), as a
 // dual vector of the Nédélec space of the given order.
-Vector ClosedCurrent(Mesh &mesh, int order, double x1 = 1.0)
+Vector ClosedCurrent(mfem::ParMesh &mesh, int order, double x1 = 1.0)
 {
   mfem::VectorFunctionCoefficient jc(3,
                                      [x1](const mfem::Vector &x, mfem::Vector &j)
@@ -301,15 +301,19 @@ Vector ClosedCurrent(Mesh &mesh, int order, double x1 = 1.0)
                                        j(2) = 0.0;
                                      });
   mfem::ND_FECollection fec(order, 3);
-  mfem::ParFiniteElementSpace pfes(&mesh.Get(), &fec);
+  mfem::ParFiniteElementSpace pfes(&mesh, &fec);
   mfem::ParLinearForm lf(&pfes);
   auto *lfi = new mfem::VectorFEDomainLFIntegrator(jc);
-  lfi->SetIntRule(&mfem::IntRules.Get(mesh.Get().GetTypicalElementGeometry(), 14));
+  lfi->SetIntRule(&mfem::IntRules.Get(mesh.GetTypicalElementGeometry(), 14));
   lf.AddDomainIntegrator(lfi);
   lf.Assemble();
   Vector J(pfes.GetTrueVSize());
   lf.ParallelAssemble(J);
   return J;
+}
+Vector ClosedCurrent(Mesh &mesh, int order, double x1 = 1.0)
+{
+  return ClosedCurrent(mesh.Get(), order, x1);
 }
 
 }  // namespace
@@ -507,7 +511,7 @@ TEST_CASE("SubstructuringSolver rejects attribute sets that do not split the mes
 
 TEST_CASE_METHOD(palace::test::SharedTempDir,
                  "SubstructuringSolver mesh of the region takes no a priori refinement",
-                 "[substructure][Serial][Parallel]")
+                 "[substructure][Serial][Parallel][GPU]")
 {
   // The offline run writes the mesh of the region refined: an online run on it with a
   // priori refinement would refine the region again, its interface included, so it is
@@ -673,11 +677,10 @@ TEST_CASE("SubstructuringSolver anisotropic permittivity",
 TEST_CASE("SubstructuringSolver reproduces full-domain magnetostatic energy",
           "[substructure][Serial][Parallel]")
 {
-  // Gauge-free H(curl) magnetostatics: pure curl-curl (singular). Fields are
-  // gauge-ambiguous, but the magnetic energy is gauge-invariant. A divergence-free
-  // (rotational) current source is a valid magnetostatic excitation; the region-condensed
-  // energy must match a monolith AMS-singular (min-norm) solve of the identical pure
-  // curl-curl operator.
+  // Gauge-free H(curl) magnetostatics: the fields are gauge-ambiguous, but the magnetic
+  // energy is gauge-invariant. A closed current (divergence-free, with no normal component
+  // on the boundary) is a valid magnetostatic excitation; the region-condensed energy must
+  // match a monolith of the same regularized operator.
   const int order = 1;
   const double mu_r = 1.0, mu_e = 4.0;
   json config = {
@@ -699,24 +702,10 @@ TEST_CASE("SubstructuringSolver reproduces full-domain magnetostatic energy",
   SubstructuringSolver ss(iodata, mesh);
   ss.CondenseEnvironment();
 
-  // Divergence-free rotational current source on the parent ND space.
   auto &pmesh = mesh.back()->Get();
   mfem::ND_FECollection fec(order, 3);
   mfem::ParFiniteElementSpace pfes(&pmesh, &fec);
-  auto jfun = [](const mfem::Vector &x, mfem::Vector &j)
-  {
-    j.SetSize(3);
-    j(0) = -(x(1) - 0.5);
-    j(1) = (x(0) - 0.5);
-    j(2) = 0.0;
-  };
-  mfem::VectorFunctionCoefficient jc(3, jfun);
-  mfem::ParLinearForm lf(&pfes);
-  lf.AddDomainIntegrator(new mfem::VectorFEDomainLFIntegrator(jc));
-  lf.Assemble();
-  Vector f(pfes.GetTrueVSize());
-  lf.ParallelAssemble(f);
-
+  const Vector f = ClosedCurrent(pmesh, order);
   Vector u = ss.SolveSource(f);
   const double e_sub = Energy(ss, u);  // 1/2 u^T K_curlcurl u (magnetic energy)
 
@@ -763,14 +752,13 @@ TEST_CASE("SubstructuringSolver reproduces full-domain magnetostatic energy",
   MPI_Allreduce(&local, &e_mono, 1, MPI_DOUBLE, MPI_SUM, Mpi::World());
   e_mono *= 0.5;
 
-  CHECK(e_sub > 1.0e-6);  // nontrivial magnetic energy
-  CHECK(std::abs(e_sub - e_mono) <=
-        1.0e-6 * std::abs(e_mono));  // substructuring == monolith (same operator)
+  CHECK(e_sub > 0.0);
+  CHECK(std::abs(e_sub - e_mono) <= 1.0e-10 * std::abs(e_mono));
 }
 
 TEST_CASE_METHOD(palace::test::SharedTempDir,
                  "SubstructuringSolver offline/online model reuse",
-                 "[substructure][Serial][Parallel]")
+                 "[substructure][Serial][Parallel][GPU]")
 {
   const std::string model_path = (temp_dir / "substruct_model_roundtrip.bin").string();
   auto make_config = [](const std::string &mode, const std::string &path)
@@ -819,7 +807,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
 #if defined(MFEM_USE_EXCEPTIONS)
 TEST_CASE_METHOD(palace::test::SharedTempDir,
                  "SubstructuringSolver saved model rejects a changed environment",
-                 "[substructure][Serial][Parallel]")
+                 "[substructure][Serial][Parallel][GPU]")
 {
   // The model records a fingerprint of the environment operator: loading it with a changed
   // environment (material or mesh) must fail instead of silently reusing a stale S_E, while
@@ -874,7 +862,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
 
 TEST_CASE_METHOD(palace::test::SharedTempDir,
                  "SubstructuringSolver saved model rejects mirrored environment changes",
-                 "[substructure][Serial][Parallel]")
+                 "[substructure][Serial][Parallel][GPU]")
 {
   // An environment of two halves mirrored about y = 0: swapping their materials, or moving
   // a grounded boundary to its mirror image (with as many Dirichlet DOFs), changes the
@@ -1244,16 +1232,15 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   CHECK(std::abs(E_on(0, 0) - E_off(0, 0)) <= 1.0e-9 * std::abs(E_off(0, 0)));
 }
 
+#if defined(MFEM_USE_MUMPS)
 TEST_CASE("SubstructuringSolver block low-rank environment factorization",
           "[substructure][Serial][Parallel]")
 {
   // Solver.Substructuring.FactorizationTol > 0 selects a block low-rank (BLR) MUMPS
   // environment factorization (the matrix is scaled so the tolerance is relative; the Schur
-  // and the solves are rescaled). The capacitance matrix must stay within ~the tolerance of
-  // the exact factorization. Without MUMPS the tolerance is ignored (exact).
-  const int order = GENERATE(1, 2);
-  CAPTURE(order);
-  auto capacitance = [order](double tol)
+  // and the solves are rescaled). On fronts large enough to compress, it changes the
+  // capacitance matrix by about the tolerance, and not more.
+  auto capacitance = [](double tol)
   {
     json config = {
         {"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
@@ -1266,14 +1253,14 @@ TEST_CASE("SubstructuringSolver block low-rank environment factorization",
          {{"Terminal",
            {{{"Index", 1}, {"Attributes", {1}}}, {{"Index", 2}, {"Attributes", {2}}}}}}},
         {"Solver",
-         {{"Order", order},
+         {{"Order", 2},
           {"Substructuring",
            {{"Region", {{"Attributes", {1}}}},
             {"Environment", {{"Attributes", {2}}}},
             {"FactorizationTol", tol}}}}}};
     IoData iodata(config, false);
     std::vector<std::unique_ptr<Mesh>> mesh;
-    mesh.push_back(std::make_unique<Mesh>(MakeSplitCube(8)));
+    mesh.push_back(std::make_unique<Mesh>(MakeSplitCube(16)));
     SubstructuringSolver ss(iodata, mesh);
     ss.CondenseEnvironment();
     return ss.CapacitanceMatrix({1, 2});
@@ -1288,8 +1275,11 @@ TEST_CASE("SubstructuringSolver block low-rank environment factorization",
       m = std::max(m, std::abs(C0(i, j)));
     }
   }
+  CAPTURE(d / m);
+  CHECK(d > 1.0e-12 * m);  // compressed (rounding changes it by about 1e-14)
   CHECK(d <= 1.0e-6 * m);
 }
+#endif
 
 TEST_CASE_METHOD(palace::test::SharedTempDir, "SubstructuringSolver column orderings",
                  "[substructure][Serial][Parallel]")
@@ -1335,7 +1325,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "SubstructuringSolver column order
 TEST_CASE_METHOD(palace::test::SharedTempDir,
                  "SubstructuringSolver online London sheets added to or removed from the "
                  "region",
-                 "[substructure][Serial][Parallel]")
+                 "[substructure][Serial][Parallel][GPU]")
 {
   // The environment of a model was condensed with the regularization of the model, which
   // depends on whether there are London sheets: an online run that adds the first sheet of
@@ -1420,7 +1410,7 @@ TEST_CASE("SubstructuringSolver magnetostatics ignores terminals",
 
 TEST_CASE_METHOD(palace::test::SharedTempDir,
                  "SubstructuringSolver online terminal added in the region",
-                 "[substructure][Serial][Parallel]")
+                 "[substructure][Serial][Parallel][GPU]")
 {
   // A terminal added inside the region does not reach the environment, so its modes are
   // zero: online runs on the full mesh and on the mesh of the region solve no environment
@@ -1490,7 +1480,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
 
 TEST_CASE_METHOD(palace::test::SharedTempDir,
                  "SubstructuringSolver incomplete model on every process",
-                 "[substructure][Serial][Parallel]")
+                 "[substructure][Serial][Parallel][GPU]")
 {
   // A model cut after its reference length is incomplete: every process reads the same of
   // it (the length is not used), and the online run says that it is incomplete.
@@ -1557,7 +1547,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
 TEST_CASE_METHOD(
     palace::test::SharedTempDir,
     "SubstructuringSolver writes no mesh of the region of a nonconforming mesh",
-    "[substructure][Serial][Parallel]")
+    "[substructure][Serial][Parallel][GPU]")
 {
   // On a nonconforming mesh, whose refined environment elements next to the interface are
   // among those written with the mesh of the region (they touch the grounded faces that
@@ -1621,7 +1611,7 @@ TEST_CASE_METHOD(
 
 TEST_CASE_METHOD(palace::test::SharedTempDir,
                  "SubstructuringSolver capacitance from a model without terminal modes",
-                 "[substructure][Serial][Parallel]")
+                 "[substructure][Serial][Parallel][GPU]")
 {
   // Modes missing from a saved model are recomputed on demand (this needs the environment
   // once) and give the same matrix.
@@ -1668,7 +1658,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
     const int nG = head[3];
     const auto kept = static_cast<std::uintmax_t>(8 * sizeof(int)) +
                       static_cast<std::uintmax_t>(sizeof(double)) * (nG * 3 + nG * nG + 24);
-    REQUIRE(std::filesystem::file_size(model_path) > kept);
+    CHECK(std::filesystem::file_size(model_path) > kept);
     std::filesystem::resize_file(model_path, kept);
   }
   Mpi::Barrier(Mpi::World());
@@ -1692,7 +1682,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
 
 TEST_CASE_METHOD(palace::test::SharedTempDir,
                  "SubstructuringSolver cross-run region re-meshing",
-                 "[substructure][Serial][Parallel]")
+                 "[substructure][Serial][Parallel][GPU]")
 {
   // Offline: condense the environment on one region mesh and save S_E. Online: RE-MESH the
   // region (different x-resolution) while keeping the interface Gamma and the environment
@@ -1808,7 +1798,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   e_mono *= 0.5;
 
   CHECK(e_sub > 1.0e-8);
-  CHECK(std::abs(e_sub - e_mono) <= 1.0e-6 * std::abs(e_mono));
+  CHECK(std::abs(e_sub - e_mono) <= 1.0e-10 * std::abs(e_mono));
 }
 
 namespace
@@ -1903,6 +1893,71 @@ std::unique_ptr<mfem::ParMesh> MakeRefinedGradedSplit(int a, int b, int n,
 }
 
 }  // namespace
+
+TEST_CASE("SubstructuringSolver region solve by conjugate gradients",
+          "[substructure][Serial][Parallel]")
+{
+  // With one excitation and an interface of over 1000 DOFs, the region is solved by CG,
+  // preconditioned by the factor of the region operator without S_E, also for a region
+  // without a Dirichlet boundary, whose region operator is singular (its factor still
+  // preconditions the nonsingular condensed operator). The capacitance is that of a
+  // monolith, of the terminal at x = 1 against the grounded sides of the environment, with
+  // the region grounded at x = 0 or not.
+  const bool grounded = GENERATE(true, false);
+  CAPTURE(grounded);
+  const std::vector<int> ground = grounded ? std::vector<int>{2, 4} : std::vector<int>{4};
+  json boundaries = {{"Terminal", {{{"Index", 1}, {"Attributes", {1}}}}},
+                     {"Ground", {{"Attributes", ground}}}};
+  json config = {
+      {"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+      {"Model", {{"Mesh", "test.msh"}}},
+      {"Domains",
+       {{"Materials",
+         {{{"Attributes", {1}}, {"Permittivity", 1.0}},
+          {{"Attributes", {2}}, {"Permittivity", 10.0}}}}}},
+      {"Boundaries", boundaries},
+      {"Solver",
+       {{"Order", 2},
+        {"Substructuring",
+         {{"Region", {{"Attributes", {1}}}}, {"Environment", {{"Attributes", {2}}}}}}}}};
+  IoData iodata(config, false);
+  // The split cube with the boundary attributes 1 at x = 1, 2 at x = 0, 4 on the sides of
+  // the environment away from the interface (x > 9 / 16) and 3 elsewhere.
+  mfem::Mesh serial = mfem::Mesh::MakeCartesian3D(16, 16, 16, mfem::Element::HEXAHEDRON);
+  mfem::Vector c;
+  for (int e = 0; e < serial.GetNE(); e++)
+  {
+    serial.GetElementCenter(e, c);
+    serial.SetAttribute(e, (c(0) < 0.5) ? 1 : 2);
+  }
+  for (int b = 0; b < serial.GetNBE(); b++)
+  {
+    mfem::Array<int> vtx;
+    serial.GetBdrElementVertices(b, vtx);
+    double xc = 0.0;
+    for (int j = 0; j < vtx.Size(); j++)
+    {
+      xc += serial.GetVertex(vtx[j])[0] / vtx.Size();
+    }
+    serial.SetBdrAttribute(b, (xc > 1.0 - 1e-9) ? 1
+                              : (xc < 1e-9)     ? 2
+                              : (xc > 0.5625)   ? 4
+                                                : 3);
+  }
+  serial.SetAttributes();
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  mesh.push_back(
+      std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(Mpi::World(), serial)));
+  SubstructuringSolver ss(iodata, mesh);
+  ss.CondenseEnvironment();
+  const double C_sub = ss.CapacitanceMatrix({1})(0, 0);
+  mfem::Vector eps(2);
+  eps(0) = 1.0;
+  eps(1) = 10.0;
+  const double C_ref = MonolithCapacitance(mesh.back()->Get(), 2, eps, 1, ground)(0, 0);
+  CAPTURE(C_sub, C_ref);
+  CHECK(std::abs(C_sub - C_ref) <= 1.0e-8 * C_ref);
+}
 
 TEST_CASE("SubstructuringSolver grounded PEC boundaries",
           "[substructure][Serial][Parallel]")
@@ -2290,18 +2345,18 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "SubstructuringSolver London sheet
   }
 }
 
-TEST_CASE_METHOD(palace::test::SharedTempDir,
-                 "SubstructuringSolver surface-current energies",
-                 "[substructure][Serial][Parallel]")
+namespace
 {
-  // Magnetostatics in a box with PEC walls, driven by surface currents on an interior plane
-  // crossing the interface (from the x = 0 wall to the x = 1 wall, returning through the
-  // walls): region and environment parts of the excitation. The energies must match a
-  // monolith, offline and after reloading the model (also with an added port in the
-  // region), with and without a London sheet on the plane; a current that does not close is
-  // rejected.
-  const int order = GENERATE(1, 2);
-  const bool london = GENERATE(false, true);
+
+// Magnetostatics in a box with PEC walls, driven by surface currents on an interior plane
+// crossing the interface (from the x = 0 wall to the x = 1 wall, returning through the
+// walls): region and environment parts of the excitation. The energies must match a
+// monolith, offline and after reloading the model (also with an added port in the
+// region), with and without a London sheet on the plane; a current that does not close is
+// rejected.
+void CheckSurfaceCurrentEnergies(const std::filesystem::path &temp_dir, int order,
+                                 bool london)
+{
   CAPTURE(order, london);
   const double mu_r = 1.0, mu_e = 4.0, lambda = 0.2, thickness = 0.05;
   const std::string model_path = (temp_dir / "substruct_current_model.bin").string();
@@ -2630,6 +2685,22 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   }
 }
 
+}  // namespace
+
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "SubstructuringSolver surface-current energies",
+                 "[substructure][Serial][Parallel]")
+{
+  CheckSurfaceCurrentEnergies(temp_dir, 1, GENERATE(false, true));
+}
+
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "SubstructuringSolver second-order surface-current energies",
+                 "[substructure][Serial][Parallel][Long]")
+{
+  CheckSurfaceCurrentEnergies(temp_dir, 2, GENERATE(false, true));
+}
+
 TEST_CASE_METHOD(palace::test::SharedTempDir,
                  "SubstructuringSolver on a nonconforming mesh",
                  "[substructure][Serial][Parallel]")
@@ -2714,21 +2785,14 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   CHECK(don <= 1.0e-12 * m);
 }
 
-TEST_CASE_METHOD(palace::test::SharedTempDir,
-                 "SubstructuringSolver magnetostatic energy on a nonconforming mesh",
-                 "[substructure][Serial][Parallel]")
+namespace
 {
-  // H(curl) on an adapted (nonconforming) mesh with hanging edges on the interface: the
-  // condensed magnetic energy of a divergence-free current source must match a monolith of
-  // the same operator on the same mesh.
-  //
-  // The monolith uses the operators of the regular solve: the source has a normal flux on
-  // the boundary (no PEC), so it is not discretely divergence-free and u has a gradient
-  // part about 3e3 times its curl part. In 1/2 u^T K u the rounding of K on that gradient
-  // part (zero in exact arithmetic) is up to 1e-7 of the energy; it only cancels against a
-  // reference with the same element matrices. The curl parts of the two solutions agree to
-  // 1e-12.
-  const int order = GENERATE(1, 2);
+
+// H(curl) on an adapted (nonconforming) mesh with hanging edges on the interface: the
+// condensed magnetic energy of a closed current must match a monolith of the operators of
+// the regular solve on the same mesh.
+void CheckNonconformingMagnetostaticEnergy(const std::filesystem::path &temp_dir, int order)
+{
   CAPTURE(order);
   const double mu_r = 1.0, mu_e = 4.0;
   const std::string model_path = (temp_dir / "substruct_nc_mag_model.bin").string();
@@ -2761,19 +2825,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   auto &pmesh = mesh.back()->Get();
   mfem::ND_FECollection fec(order, 3);
   mfem::ParFiniteElementSpace pfes(&pmesh, &fec);
-  auto jfun = [](const mfem::Vector &x, mfem::Vector &j)
-  {
-    j.SetSize(3);
-    j(0) = -(x(1) - 0.5);
-    j(1) = (x(0) - 0.5);
-    j(2) = 0.0;
-  };
-  mfem::VectorFunctionCoefficient jc(3, jfun);
-  mfem::ParLinearForm lf(&pfes);
-  lf.AddDomainIntegrator(new mfem::VectorFEDomainLFIntegrator(jc));
-  lf.Assemble();
-  Vector f(pfes.GetTrueVSize());
-  lf.ParallelAssemble(f);
+  const Vector f = ClosedCurrent(pmesh, order);
   const double e_sub = Energy(ss, ss.SolveSource(f));
 
   const double mag_eps = 1.0e-3;  // SubstructuringSolver's regularization
@@ -2802,8 +2854,8 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   Kpure.Mult(u, t);
   const double e_mono = 0.5 * mfem::InnerProduct(pmesh.GetComm(), u, t);
   CAPTURE(e_sub, e_mono);
-  CHECK(e_sub > 1.0e-6);
-  CHECK(std::abs(e_sub - e_mono) <= 1.0e-6 * std::abs(e_mono));
+  CHECK(e_sub > 0.0);
+  CHECK(std::abs(e_sub - e_mono) <= 1.0e-10 * std::abs(e_mono));
 
   // The refinement changes the energy by far more than the mismatch above, so the match is
   // meaningful.
@@ -2815,11 +2867,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
     mfem::PWConstCoefficient nu(nu_by_attr), massc(mass_by_attr);
     auto coarse = MakeGradedSplit(4, 5, 6);
     mfem::ParFiniteElementSpace cfes(coarse.get(), &fec);
-    mfem::ParLinearForm clf(&cfes);
-    clf.AddDomainIntegrator(new mfem::VectorFEDomainLFIntegrator(jc));
-    clf.Assemble();
-    Vector cf(cfes.GetTrueVSize());
-    clf.ParallelAssemble(cf);
+    const Vector cf = ClosedCurrent(*coarse, order);
     mfem::ParBilinearForm cs(&cfes), ce(&cfes);
     cs.AddDomainIntegrator(new mfem::CurlCurlIntegrator(nu));
     cs.AddDomainIntegrator(new mfem::VectorFEMassIntegrator(massc));
@@ -2854,7 +2902,24 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   on.CondenseEnvironment();
   const double e_on = Energy(on, on.SolveSource(f));
   CAPTURE(e_on);
-  CHECK(std::abs(e_on - e_sub) <= 1.0e-7 * std::abs(e_sub));  // iterative region solves
+  CHECK(std::abs(e_on - e_sub) <= 1.0e-10 * std::abs(e_sub));
+}
+
+}  // namespace
+
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "SubstructuringSolver magnetostatic energy on a nonconforming mesh",
+                 "[substructure][Serial][Parallel]")
+{
+  CheckNonconformingMagnetostaticEnergy(temp_dir, 1);
+}
+
+TEST_CASE_METHOD(
+    palace::test::SharedTempDir,
+    "SubstructuringSolver second-order magnetostatic energy on a nonconforming mesh",
+    "[substructure][Serial][Parallel][Long]")
+{
+  CheckNonconformingMagnetostaticEnergy(temp_dir, 2);
 }
 
 TEST_CASE_METHOD(palace::test::SharedTempDir,
@@ -3406,7 +3471,7 @@ TEST_CASE("SubstructuringSolver region error indicators",
 
 TEST_CASE_METHOD(palace::test::SharedTempDir,
                  "SubstructuringSolver geometric redesign of the region",
-                 "[substructure][Serial][Parallel]")
+                 "[substructure][Serial][Parallel][GPU]")
 {
   // A real design change inside the region between the offline and online runs: the region
   // conductor (terminal 1) changes shape, a dielectric block inside the region changes
@@ -3530,7 +3595,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
 
 TEST_CASE_METHOD(palace::test::SharedTempDir,
                  "SubstructuringSolver magnetostatic cross-run re-meshing",
-                 "[substructure][Serial][Parallel]")
+                 "[substructure][Serial][Parallel][GPU]")
 {
   // H(curl) region re-meshing: the environment (attr 2, b=5) is identical between a coarse-
   // region offline run and a re-meshed (finer) online run, so the loaded S_E, S^K and
