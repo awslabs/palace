@@ -4,6 +4,7 @@
 #ifndef PALACE_DRIVER_HPP
 #define PALACE_DRIVER_HPP
 
+#include <string>
 #include <mpi.h>
 
 namespace palace
@@ -23,10 +24,24 @@ class IoData;
 //     rewritten to absolute paths by the caller).
 void Run(IoData &iodata, MPI_Comm comm, int omp_threads, const char *git_tag = nullptr);
 
+// The configuration key that selects the surface-response preflight exactly as the
+// command-line option --surface-response-preflight does, for front ends that pass no
+// option: "Solver.SurfaceResponseCorrection.PreflightOnly", or
+// "Solver.Electrostatic.ResponseCorrection.PreflightOnly" for an electrostatic problem (the
+// block of the configured problem type, the one the preflight reads). Returns the key's
+// path when it is true, else an empty string.
+std::string SurfaceResponsePreflightKey(const IoData &iodata);
+
+// The process exit status of a surface-response preflight that wrote its complete manifest
+// and then ended because GeometryFailurePolicy FailClosed recorded geometry fallbacks.
+constexpr int kSurfaceResponsePreflightFailClosedExitStatus = 3;
+
 // Load and preprocess the configured mesh, classify automatic surface-response
 // neighborhoods, write a requirements manifest, and exit without assembling or solving.
-void RunSurfaceResponsePreflight(IoData &iodata, MPI_Comm comm, int omp_threads,
-                                 const char *git_tag = nullptr);
+// Returns the process exit status: 0, or kSurfaceResponsePreflightFailClosedExitStatus
+// (then the timing and memory metadata are not written, as before this status existed).
+int RunSurfaceResponsePreflight(IoData &iodata, MPI_Comm comm, int omp_threads,
+                                const char *git_tag = nullptr);
 
 // Load through the normal preprocessing path (including internal-boundary cracking)
 // and report the resulting global H1 size without constructing a PDE operator.
