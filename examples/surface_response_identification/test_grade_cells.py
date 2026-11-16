@@ -1238,5 +1238,144 @@ class BandWithheldBySource(unittest.TestCase):
         self.assertEqual(g["band_not_applied_types"], ["MS"])
 
 
+
+class UncalibratedBandRow(unittest.TestCase):
+    """Decision 1966 (FLIP-LIST-v5 s0; OI-GRADE-CELLS-BAND-KEYERROR-ON-UNCALIBRATED-ROW): a --band row that is not withheld and has
+    no band ends (coverage_report's UNCALIBRATED row, or its 'no calibration' row) is no band of record: a member with an x for that
+    Type reads band null, in null, band_note 'band n/a (uncalibrated)', never a band pass or fail; the cell's in_band is null; the
+    top-level 'band' lists the Type in band_uncalibrated_types without ends. Before, main() ended with KeyError 'low_pt' (exit 1,
+    nothing written). A report without such a row writes no such key and no such note."""
+
+    WIDE = {"calibrated": True, "low_pt": -9.0, "high_pt": 9.0}
+    UNCAL = {"calibrated": False, "uncalibrated": True, "predictors": {}, "note": "UNCALIBRATED ES / MA (bands v6 rule (5)): r"}
+    NO_CAL = {"calibrated": False, "predictors": {}, "note": "no calibration for ES / C"}
+    WITHHELD = {"calibrated": True, "predictors": {}, "not_applied": True, "note": "NOT-APPLIED ES / MA: no band"}
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp)
+
+    def main(self, args, report):
+        band = os.path.join(self.tmp, "band.json")
+        with open(band, "w") as handle:
+            json.dump(report, handle)
+        out = os.path.join(self.tmp, "grade.json")
+        if os.path.exists(out):
+            os.remove(out)
+        buf, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(err):
+            rc = gc.main(args + ["--band", band, "--out", out, "--tail-form", "422", "--label", "w"])
+        self.assertEqual((rc, err.getvalue()), (0, ""), buf.getvalue())
+        with open(out) as handle:
+            return json.load(handle), buf.getvalue()
+
+    def es(self, block_c, with_c=True, **extra):
+        sources = [1, 2]
+        p_ref = {s: {1: 1.0e-4, 2: 2.0e-4, 3: 1.0e-5} for s in sources}
+        c_ref = {1: 1.0e-14, 2: 2.0e-14}
+        run = synthetic_es_run(os.path.join(self.tmp, "es"), sources, {s: dict(p_ref[s]) for s in sources}, dict(c_ref),
+                               {s: -0.1 * c_ref[s] for s in sources})
+        ref = es_values_reference(sources, p_ref, c_ref, {s: p_ref[s][3] * (1.0 + 0.5 * 0.0678) for s in sources})
+        if not with_c:
+            for m in ref["members"].values():
+                m.pop("C_F")
+        values = os.path.join(self.tmp, "ref.json")
+        with open(values, "w") as handle:
+            json.dump(ref, handle)
+        try:
+            return self.main(["--form", "es", "--device", run, "--reference-values", values], allowed_band_report(block_c, **extra))
+        finally:
+            shutil.rmtree(os.path.join(self.tmp, "es"))
+
+    def assert_no_band_of_record(self, g, T, members):
+        for m in members:
+            b = g["per_member"][m]["grade"]["band"][T]
+            self.assertEqual((b["band"], b["in"], b.get("band_note")), (None, None, gc.BAND_UNCALIBRATED), (m, T))
+        self.assertIsNone(g["cells"][T]["in_band"], T)
+        self.assertEqual(g["cells"][T]["n_in_band"], 0, T)
+        self.assertEqual(g["cells"][T].get("band_note"), gc.BAND_UNCALIBRATED, T)
+
+    def test_es_uncalibrated_rows_x_present(self):
+        """ES, x present for every Type: MA uncalibrated, C 'no calibration' (both without ends) -> no band of record for MA_sharp
+        and C; SA / MS keep their band readings; the letters are unchanged; the top-level band holds only the rows with ends."""
+        g, stdout = self.es({"SA": dict(self.WIDE), "MS": dict(self.WIDE), "MA": dict(self.UNCAL), "C": dict(self.NO_CAL)})
+        self.assert_no_band_of_record(g, "MA_sharp", ("1", "2"))
+        self.assert_no_band_of_record(g, "C", ("1", "2"))
+        self.assertIs(g["cells"]["SA"]["in_band"], True)
+        self.assertNotIn("band_note", g["cells"]["SA"])
+        self.assertEqual(g["cells"]["C"]["letter"], "PASS")
+        self.assertEqual(g["band"], {"SA": [-9.0, 9.0], "MS": [-9.0, 9.0]})
+        self.assertEqual(g.get("band_uncalibrated_types"), ["C", "MA"])
+        self.assertNotIn("band_not_applied_types", g)
+        self.assertIn("C +0.000 % [+0.000, +0.000] PASS band n/a (uncalibrated)", stdout)
+        self.assertNotIn("band band", stdout)
+
+    def test_es_uncalibrated_row_x_absent(self):
+        """ES, no C reference (no member has an x for C): the C row uncalibrated -> the members' C band reading is the no-x form,
+        the cell n/a; the top-level band still lists C without ends (it describes the report, not the members)."""
+        g, _ = self.es({"SA": dict(self.WIDE), "MS": dict(self.WIDE), "MA": dict(self.WIDE), "C": dict(self.UNCAL)}, with_c=False)
+        for m in ("1", "2"):
+            self.assertEqual(g["per_member"][m]["grade"]["band"]["C"], {"x_pt": None, "band": None, "in": None})
+        self.assertEqual(g["cells"]["C"]["letter"], "n/a")
+        self.assertIs(g["cells"]["MA_sharp"]["in_band"], True)
+        self.assertEqual(g["band"], {"SA": [-9.0, 9.0], "MS": [-9.0, 9.0], "MA": [-9.0, 9.0]})
+        self.assertEqual(g.get("band_uncalibrated_types"), ["C"])
+
+    def test_es_withheld_row_beside_an_uncalibrated_row(self):
+        """The row withheld and not: the default withholds MA (not_applied) and leaves C uncalibrated; source 2's own block withholds
+        C. MA reads NOT-APPLIED for both members; C reads NOT-APPLIED for member 2 (its own block) and no band of record for member 1;
+        the C cell carries the NOT-APPLIED note (the withheld reading outranks); the withheld MA is never listed as uncalibrated."""
+        g, _ = self.es({"SA": dict(self.WIDE), "MS": dict(self.WIDE), "MA": dict(self.WITHHELD), "C": dict(self.UNCAL)},
+                       source=1, not_applied_types=["MA"],
+                       sources={"1": {"block_C": {"MA": dict(self.WITHHELD), "C": dict(self.UNCAL)}, "not_applied_types": ["MA"]},
+                                "2": {"block_C": {"C": dict(self.WITHHELD)}}})
+        for m in ("1", "2"):
+            self.assertEqual(g["per_member"][m]["grade"]["band"]["MA_sharp"].get("band_note"), gc.BAND_NOT_APPLIED, m)
+        self.assertEqual(g["per_member"]["2"]["grade"]["band"]["C"].get("band_note"), gc.BAND_NOT_APPLIED)
+        b1 = g["per_member"]["1"]["grade"]["band"]["C"]
+        self.assertEqual((b1["band"], b1["in"], b1.get("band_note")), (None, None, gc.BAND_UNCALIBRATED))
+        self.assertEqual(g["cells"]["C"].get("band_note"), gc.BAND_NOT_APPLIED)
+        self.assertIsNone(g["cells"]["C"]["in_band"])
+        self.assertEqual(g.get("band_not_applied_types"), ["C", "MA"])
+        self.assertEqual(g.get("band_uncalibrated_types"), ["C"])
+        self.assertEqual(g["band"], {"SA": [-9.0, 9.0], "MS": [-9.0, 9.0]})
+
+    def test_maxwell_uncalibrated_rows(self):
+        """Maxwell (the bands v6 form of every Maxwell-family report: MA and C uncalibrated), x present for MA_sharp and C: rc 0;
+        MA_sharp and the direct C cell read no band of record; the static-limit C cell reads band null, in null."""
+        freqs = [5.2, 5.7, 6.2]
+        p = {1: 1.0e-4, 2: 2.0e-4, 3: 1.0e-5}
+        e_norm, c_s = 1.0e-12, 2.0e-13
+        v2 = {F: 2.0 * e_norm / (c_s * (1.0 + 0.006 * F * F)) for F in freqs}
+        run = SyntheticWindows.synthetic_mx_run(self, os.path.join(self.tmp, "mx"), freqs, {F: dict(p) for F in freqs}, v2)
+        values = os.path.join(self.tmp, "ref.json")
+        with open(values, "w") as handle:
+            json.dump({"members": {str(F): {"SA_p": p[1], "MS_p": p[2], "MA_p": p[3], "MA_sharp_p": p[3] * (1.0 + 0.5 * 0.0678),
+                                            "E_elec_J": e_norm, "C_eff_F": c_s * (1.0 + 0.006 * F * F)} for F in freqs}}, handle)
+        block_c = {"SA": dict(self.WIDE), "MS": dict(self.WIDE), "MA": dict(self.UNCAL), "C": dict(self.UNCAL)}
+        base = ["--form", "maxwell", "--device", run, "--reference-values", values]
+        g, stdout = self.main(base + ["--c-form", "direct"], allowed_band_report(block_c))
+        members = [str(F) for F in freqs]
+        self.assert_no_band_of_record(g, "MA_sharp", members)
+        self.assert_no_band_of_record(g, "C", members)
+        self.assertIs(g["cells"]["SA"]["in_band"], True)
+        self.assertEqual(g["band"], {"SA": [-9.0, 9.0], "MS": [-9.0, 9.0]})
+        self.assertEqual(g.get("band_uncalibrated_types"), ["C", "MA"])
+        self.assertIn("MA_sharp", stdout)
+        sl, _ = self.main(base + ["--c-form", "static-limit"], allowed_band_report(block_c))
+        self.assertEqual((sl["cells"]["C"]["band"], sl["cells"]["C"]["in_band"]), (None, None))
+        self.assertEqual(sl.get("band_uncalibrated_types"), ["C", "MA"])
+
+    def test_report_without_an_uncalibrated_row_writes_no_new_key(self):
+        """Every row with ends (or withheld): no band_uncalibrated_types key and no uncalibrated note anywhere in the grade JSON."""
+        g, _ = self.es({"SA": dict(self.WIDE), "MS": dict(self.WIDE), "MA": dict(self.WITHHELD), "C": dict(self.WIDE)},
+                       not_applied_types=["MA"])
+        self.assertNotIn("band_uncalibrated_types", g)
+        self.assertNotIn(gc.BAND_UNCALIBRATED, json.dumps(g))
+        self.assertEqual(g["band"], {"SA": [-9.0, 9.0], "MS": [-9.0, 9.0], "C": [-9.0, 9.0]})
+
+
 if __name__ == "__main__":
     unittest.main()

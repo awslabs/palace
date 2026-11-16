@@ -83,6 +83,14 @@ the rule of the banner's marks_by_source (f_report_banner_v8), so the two consum
 source has no block in the report reads the default block only: its graded value comes from the tree with the explicit marks (a
 marked final value is NOT-APPLIED from the tree itself); a source's own marks add only the marks of earlier solves of its ladder,
 which enter nothing this reader computes for the member. A report without a withheld row reads as in round 4.
+
+THE UNCALIBRATED ROW (decision 1966; FLIP-LIST-v5 s0, OI-GRADE-CELLS-BAND-KEYERROR-ON-UNCALIBRATED-ROW): a --band report row that
+is not withheld and has no band ends (no low_pt / high_pt: an UNCALIBRATED Type of the bands file, or a Type the file does not
+calibrate) is NO BAND OF RECORD: a member that has an x for that Type reads band null, in null and the band_note
+'band n/a (uncalibrated)' (never a band pass or fail; the cell's in_band null), and the output's top-level 'band' lists such a
+Type in band_uncalibrated_types WITHOUT ends (never [low, high]). Before this rule the reader ended with a KeyError (exit 1,
+nothing written) on every report holding such a row (every Maxwell-family report of the bands v6). A report without such a row
+reads as before, byte for byte.
 """
 
 import argparse
@@ -227,6 +235,8 @@ def pct(a, b):
 NOT_APPLIED = "NOT-APPLIED"
 # A Type whose band coverage_report withheld (its row carries not_applied: a marked solve; decision 1884).
 BAND_NOT_APPLIED = "NOT-APPLIED (marked solve)"
+# A --band row without band ends that is not withheld: no band of record (decision 1966; FLIP-LIST-v5 s0): never a band pass / fail.
+BAND_UNCALIBRATED = "band n/a (uncalibrated)"
 # USER 1867 Q3 / decision 1914: the flag printed beside the letter of a kept value under a marked normalization.
 FLAG_SUFFIX = f" [{cm.FLAG_Q3}]"
 
@@ -811,6 +821,17 @@ def member_band(band, withheld):
     return dict(band, **{T: dict(band[T] if isinstance(band.get(T), dict) else {}, not_applied=True) for T in extra})
 
 
+def has_band_ends(row):
+    """A --band block_C row that carries its band ends (low_pt and high_pt)."""
+    return "low_pt" in row and "high_pt" in row
+
+
+def uncalibrated_band_types(band):
+    """The Types of the output's top-level 'band' whose row is not withheld and has no band ends (decision 1966)."""
+    return sorted(T for T in ("SA", "MS", "MA", "C")
+                  if isinstance(band.get(T), dict) and not band[T].get("not_applied") and not has_band_ends(band[T]))
+
+
 def band_check(x, band):
     out = {}
     for T, bt in (("SA", "SA"), ("MS", "MS"), ("MA_sharp", "MA"), ("C", "C")):
@@ -820,6 +841,10 @@ def band_check(x, band):
         if band[bt].get("not_applied"):
             # decision 1884: coverage_report withheld this Type's band (a marked solve): no band reading, the reason said
             out[T] = {"x_pt": x.get(T), "band": None, "in": None, "band_note": BAND_NOT_APPLIED}
+            continue
+        if not has_band_ends(band[bt]):
+            # decision 1966 (FLIP-LIST-v5 s0 (a)): an uncalibrated row is no band of record: no band reading, never a pass or a fail
+            out[T] = {"x_pt": x.get(T), "band": None, "in": None, "band_note": BAND_UNCALIBRATED}
             continue
         lo, hi = band[bt]["low_pt"], band[bt]["high_pt"]
         if not math.isfinite(x[T]):
@@ -921,8 +946,11 @@ def aggregate_cell(members, grades, T, rule_text):
     if flagged:
         out.update({"n_flagged": len(flagged), "flagged_members": [str(m) for m in flagged],
                     "flag": f"{cm.FLAG_Q3}: {len(flagged)} of {len(xs)} members graded on a kept value under a marked normalization"})
-    if any(grades[m]["band"][T].get("band_note") for m in xs):
+    notes = {grades[m]["band"][T].get("band_note") for m in xs} - {None}
+    if BAND_NOT_APPLIED in notes:
         out["band_note"] = BAND_NOT_APPLIED
+    elif notes:
+        out["band_note"] = BAND_UNCALIBRATED
     return out
 
 
@@ -1059,6 +1087,8 @@ def summary_line(label, out):
             continue
         rng = f" [{c['x_range_pct'][0]:+.3f}, {c['x_range_pct'][1]:+.3f}]" if c.get("x_range_pct") and c.get("n_members", 1) > 1 else ""
         band = "in" if c.get("in_band") else ("OUT" if c.get("in_band") is False else c.get("band_note", "-"))
+        if band == BAND_UNCALIBRATED:
+            band = band[len("band "):]  # the line reads 'band n/a (uncalibrated)'
         na = f" ({c['n_not_applied']} of {c['n_members']} members NOT-APPLIED)" if c.get("n_not_applied") else ""
         fl = f" [{c['flag']}]" if c.get("flag") and c["letter"] == "FAIL" else ""
         parts.append(f"{T} {c['x_pct']:+.3f} %{rng} {c['letter']}{fl}{na} band {band}")
@@ -1136,7 +1166,7 @@ def main(argv=None):
                 "device_run": a.device, "reference": a.reference or a.reference_at or a.reference_values, "shells_dir": a.shells_dir,
                 "library": a.library, "model_catalog_source": cat_src, "models": {str(k): v for k, v in catalog.items()},
                 "band_file": a.band, "band": ({T: [band[T]["low_pt"], band[T]["high_pt"]] for T in ("SA", "MS", "MA", "C")
-                                               if T in band and not band[T].get("not_applied")} if band else None),
+                                               if T in band and not band[T].get("not_applied") and has_band_ends(band[T])} if band else None),
                 "c_form": a.c_form if a.form == "maxwell" else "diagonal C fixed-trace[i][i] (ES)"})
     withheld_types = {T for T, v in band.items() if isinstance(v, dict) and v.get("not_applied")} if band else set()
     if band and a.form == "es":
@@ -1145,6 +1175,10 @@ def main(argv=None):
             withheld_types |= band_withheld.of_member(m)
     if withheld_types:
         out["band_not_applied_types"] = sorted(withheld_types)
+    uncalibrated_types = uncalibrated_band_types(band) if band else []
+    if uncalibrated_types:
+        # decision 1966 (FLIP-LIST-v5 s0 (b)): listed without ends; a report without such a row writes no such key
+        out["band_uncalibrated_types"] = uncalibrated_types
     out[cm.PROVENANCE_KEY] = cm.provenance(os.path.abspath(__file__))  # decision 1934 (R-1)
     os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
     with open(a.out, "w") as handle:
