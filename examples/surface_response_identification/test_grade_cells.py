@@ -23,6 +23,14 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import grade_cells as gc  # noqa: E402
 import coverage_marks as cm  # noqa: E402
 
+# Decision 1934 (R-2): a --band report is read only with the provenance of an allowed writer (coverage_report.py beside this file).
+CR_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "coverage_report.py")
+
+
+def allowed_band_report(block_c, **extra):
+    """A band report in the form coverage_report.write_report writes it: block_C + the writer's provenance object."""
+    return dict({"block_C": block_c, cm.PROVENANCE_KEY: cm.provenance(CR_PATH)}, **extra)
+
 RECORDS = "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913"
 E = os.path.join(RECORDS, "readiness-20261029", "stageE")
 V3H = os.path.join(RECORDS, "stage2-20261004", "v3h")
@@ -409,10 +417,10 @@ class SyntheticWindows(unittest.TestCase):
                     for T in ("SA", "MS", "MA", "C")}
         direct = os.path.join(self.tmp, "band-direct.json")
         with open(direct, "w") as handle:
-            json.dump({"block_C": withheld}, handle)
+            json.dump(allowed_band_report(withheld), handle)
         prefiltered = os.path.join(self.tmp, "band-prefiltered.json")
         with open(prefiltered, "w") as handle:
-            json.dump({"block_C": {T: v for T, v in withheld.items() if v.get("calibrated") is True and "low_pt" in v}}, handle)
+            json.dump(allowed_band_report({T: v for T, v in withheld.items() if v.get("calibrated") is True and "low_pt" in v}), handle)
 
         def grade(run, band, name):
             out = os.path.join(self.tmp, f"{name}.json")
@@ -877,6 +885,124 @@ class ExplicitMarkWindows(unittest.TestCase):
         self.assertEqual(g["cells"]["SA"]["letter"], "FAIL")
         self.assertEqual(g["cells"]["SA"]["n_fail"], 1)
         self.assertIn(f"FAIL [{cm.FLAG_Q3}: 1 of 2 members", gc.summary_line("q3-fail", g))
+
+    def test_q3_ma_sharp_not_applied_with_its_interface_unmarked(self):
+        """Decision 1934 (the round-2 gc7 mutation's discriminating form): source 2's E_elec marked and NO interface marked: MA_sharp
+        (built from the marked E_elec) is NOT-APPLIED although its MA interface is kept; SA / MS are graded flagged."""
+        rc, g, _ = self.grade(mark_es_run(self.run_of("q3-noiface"), [2], interfaces=()), "q3-noiface")
+        self.assertEqual(rc, 0)
+        self.assertEqual(g["cells"]["MA_sharp"]["letters_by_member"]["2"], gc.NOT_APPLIED)
+        self.assertEqual(g["cells"]["MA_sharp"]["letter"], gc.NOT_APPLIED)
+        for T in ("SA", "MS"):
+            self.assertEqual(g["cells"][T]["letters_by_member"]["2"], "PASS" + gc.FLAG_SUFFIX, T)
+
+    def test_duplicate_mark_column_refused(self):
+        """Decision 1934 (R-3; the review's N3): the product's 'coverage mark[1]' = 1 AND an appended second 'coverage mark[1]' = 0,
+        with a FINITE token in the marked cell: a REFUSAL (exit 5, no output file), never the last statement's reading."""
+        run = mark_es_run(self.run_of("dup"), [2])
+        path = os.path.join(run, "postpro", "surface-Q-corrected.csv")
+        with open(path) as handle:
+            lines = [ln.rstrip("\n").split(",") for ln in handle]
+        j = lines[0].index("p_surf postprocessed fixed-trace[1]")
+        lines[0].append(cm.MARK_INTERFACE.format(1))
+        for r in lines[1:]:
+            if int(float(r[0])) == 2:
+                r[j] = "1.0e-4"
+            r.append("0")
+        with open(path, "w") as handle:
+            handle.write("".join(",".join(r) + "\n" for r in lines))
+        rc, g, out = self.grade(run, "dup")
+        self.assertEqual(rc, cm.REFUSAL_EXIT)
+        self.assertIsNone(g)
+        self.assertFalse(os.path.exists(out))
+
+    def test_mark_token_read_one_way(self):
+        """Decision 1934 (R-4; the review's N2): a mark token '1.0' is a REFUSAL (as in every reader), not a mark."""
+        run = mark_es_run(self.run_of("tok10"), [2])
+        path = os.path.join(run, "postpro", "surface-Q-corrected.csv")
+        with open(path) as handle:
+            lines = [ln.rstrip("\n").split(",") for ln in handle]
+        j = lines[0].index(cm.MARK_INTERFACE.format(1))
+        for r in lines[1:]:
+            if int(float(r[0])) == 2:
+                r[j] = "1.0"
+        with open(path, "w") as handle:
+            handle.write("".join(",".join(r) + "\n" for r in lines))
+        rc, g, out = self.grade(run, "tok10")
+        self.assertEqual(rc, cm.REFUSAL_EXIT)
+        self.assertFalse(os.path.exists(out))
+
+
+class ReportProvenanceWindows(unittest.TestCase):
+    """Decision 1934 (R-1 / R-2): grade_cells reads a --band report only with an allowed provenance, or without one only when the
+    report's tree is on this host and reads unmarked (the guard's rule); else a REFUSAL (exit 5, one line, no output file). Its own
+    grade JSON carries its provenance."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.sources = [1, 2]
+        self.p_ref = {s: {1: 1.0e-4, 2: 2.0e-4, 3: 1.0e-5} for s in self.sources}
+        self.c_ref = {1: 1.0e-14, 2: 2.0e-14}
+        ma_sharp_ref = {s: self.p_ref[s][3] * (1.0 + 0.5 * 0.0678) for s in self.sources}
+        self.values = os.path.join(self.tmp, "ref.json")
+        with open(self.values, "w") as handle:
+            json.dump(es_values_reference(self.sources, self.p_ref, self.c_ref, ma_sharp_ref), handle)
+        self.band = {T: {"calibrated": True, "low_pt": -9.0, "high_pt": 9.0} for T in ("SA", "MS", "MA", "C")}
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp)
+
+    def run_of(self, name, marked=()):
+        run = synthetic_es_run(os.path.join(self.tmp, name), self.sources, {s: dict(self.p_ref[s]) for s in self.sources},
+                               dict(self.c_ref), {s: -0.1 * self.c_ref[s] for s in self.sources})
+        return mark_es_run(run, list(marked)) if marked else run
+
+    def grade(self, run, report, name):
+        band = os.path.join(self.tmp, f"{name}-band.json")
+        with open(band, "w") as handle:
+            json.dump(report, handle)
+        out = os.path.join(self.tmp, f"{name}.json")
+        rc = gc.main(["--form", "es", "--device", run, "--reference-values", self.values, "--out", out, "--tail-form", "422",
+                      "--band", band])
+        g = None
+        if os.path.isfile(out):
+            with open(out) as handle:
+                g = json.load(handle)
+        return rc, g, out
+
+    def test_allowed_provenance_read(self):
+        run = self.run_of("marked", [2])
+        rc, g, _ = self.grade(run, allowed_band_report(self.band, postpro="/elsewhere/postpro"), "allowed")
+        self.assertEqual(rc, 0)
+        self.assertEqual(g["cells"]["SA"]["letters_by_member"], {"1": "PASS", "2": gc.NOT_APPLIED})
+        self.assertEqual(g["band"]["SA"], [-9.0, 9.0])
+
+    def test_old_reader_report_refused(self):
+        """The review's B-1 report attack: a report WITHOUT provenance (an old reader's) of a MARKED tree: refused with the tree on
+        this host and with the tree absent; a forged writer sha refused."""
+        marked = self.run_of("marked", [2])
+        forms = {"tree on host, marked": {"block_C": self.band, "postpro": os.path.join(marked, "postpro")},
+                 "tree absent": {"block_C": self.band, "postpro": "/data/home/simlap/elsewhere/postpro"},
+                 "no postpro key": {"block_C": self.band},
+                 "a writer not on the list": dict(allowed_band_report(self.band),
+                                                  **{cm.PROVENANCE_KEY: dict(cm.provenance(CR_PATH), writer_sha256="f" * 64)})}
+        for name, report in forms.items():
+            rc, g, out = self.grade(marked, report, name.replace(" ", "-").replace(",", ""))
+            self.assertEqual(rc, cm.REFUSAL_EXIT, name)
+            self.assertIsNone(g, name)
+            self.assertFalse(os.path.exists(out), name)
+
+    def test_old_report_of_an_unmarked_tree_on_host_read(self):
+        warn = self.run_of("warn")
+        rc, g, _ = self.grade(warn, {"block_C": self.band, "postpro": os.path.join(warn, "postpro")}, "old-unmarked")
+        self.assertEqual(rc, 0)
+        self.assertEqual(g["cells"]["SA"]["letter"], "PASS")
+        self.assertTrue(g["cells"]["SA"]["in_band"])
+
+    def test_grade_json_carries_the_provenance(self):
+        rc, g, _ = self.grade(self.run_of("warn"), allowed_band_report(self.band), "prov")
+        self.assertEqual(rc, 0)
+        self.assertEqual(g[cm.PROVENANCE_KEY], cm.provenance(gc.__file__))
 
 
 if __name__ == "__main__":

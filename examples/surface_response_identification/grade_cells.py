@@ -64,6 +64,11 @@ under a marked normalization is graded WITH the flag (`... [FLAG Q3: normalizati
 FAIL stays `FAIL` with its `flag`); a flagged grade never counts in n_pass; anything this reader BUILDS from the marked
 normalization (MA_sharp_p, C_eff, E_norm minus E_cap) is NOT-APPLIED. A Warn / pre-policy tree reads as before, except that a text
 token in a read corrected cell is a REFUSAL.
+
+ROUND 3 (decision 1934): a --band report is read ONLY when coverage_marks.accept_report accepts it: its provenance names a writer of
+ALLOWED_REPORT_WRITERS (coverage_report.py of this commit, by sha256), or it has no provenance and its tree is on this host and reads
+unmarked by the guard's rule; else a REFUSAL (one line, exit 5, no output file). The grade JSON carries this writer's provenance. A
+table naming a mark / twin / exposure column twice is a REFUSAL; a mark token is read one way ('1' / '0' exactly).
 """
 
 import argparse
@@ -85,7 +90,7 @@ if HERE not in sys.path:
 import coverage_marks as cm  # noqa: E402
 
 # The explicit-mark rule's module (decision 1914): this reader is of record only with this file (sha256-16 asserted).
-COVERAGE_MARKS_SHA256_16 = "f3a125791151a293"
+COVERAGE_MARKS_SHA256_16 = "b5ae7f33385046c1"
 
 
 def _assert_coverage_marks():
@@ -97,6 +102,10 @@ def _assert_coverage_marks():
 
 
 _assert_coverage_marks()
+
+# Decision 1934 (R-2): the report writers whose --band reports this reader accepts by provenance: {writer sha256: the
+# coverage_marks.py sha256 it requires} (coverage_report.py of this commit).
+ALLOWED_REPORT_WRITERS = {"7e120dd655eec0babc9cf5fdb275c5d9adaaed6f0a2e3e38d334b767de2ab588": "b5ae7f33385046c157e80282c310ef8f0e9dbb841e301663692efdbdd6401239"}
 
 TYPES = ("SA", "MS", "MA_sharp", "C")
 D4 = {"SA": 5.0, "MS": 5.0, "MA_sharp": 5.0, "C": 0.5}
@@ -188,6 +197,7 @@ def read_csv(path):
     with open(path, newline="") as handle:
         rows = [r for r in csv.reader(handle) if r and not r[0].lstrip().startswith("#")]
     header = [h.strip() for h in rows[0]]
+    cm.refuse_duplicate_columns(header, path)
     return [dict(zip(header, [v.strip() for v in r])) for r in rows[1:]]
 
 
@@ -1047,7 +1057,9 @@ def main(argv=None):
         band = None
         if a.band:
             with open(a.band) as handle:
-                band = json.load(handle)["block_C"]
+                report = json.load(handle)
+            cm.accept_report(report, a.band, ALLOWED_REPORT_WRITERS)  # decision 1934 (R-2): ReportRefusal, exit 5
+            band = report["block_C"]
         grade = grade_es if a.form == "es" else grade_mx
         out = grade(a, catalog, cat_src, tails, band, values, palace_policy)
     except MissingInput as e:
@@ -1071,6 +1083,7 @@ def main(argv=None):
                 "c_form": a.c_form if a.form == "maxwell" else "diagonal C fixed-trace[i][i] (ES)"})
     if band and any(v.get("not_applied") for v in band.values() if isinstance(v, dict)):
         out["band_not_applied_types"] = sorted(T for T, v in band.items() if isinstance(v, dict) and v.get("not_applied"))
+    out[cm.PROVENANCE_KEY] = cm.provenance(os.path.abspath(__file__))  # decision 1934 (R-1)
     os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
     with open(a.out, "w") as handle:
         json.dump(out, handle, indent=1, default=str)

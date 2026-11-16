@@ -50,6 +50,11 @@ Type under the marked normalization keeps its band WITH the EXPOSURE flag when i
 q3_flagged_types; a LOW reason), and the C band of that source is withheld. A Warn / pre-policy tree reads as before, except that a
 text token (one float() refuses) in a read ft / ff / E_elec / E_norm cell is a REFUSAL.
 
+ROUND 3 (decision 1934): the JSON carries `provenance` (this file's name and sha256, the sha256 of coverage_marks.py, explicit_marks
+true; coverage_marks.provenance), so that a consumer can tell a report of this writer from one of a reader that is not on its allowed
+list; the markdown and stdout are unchanged. A mark column's token is kept as its text and read one way (coverage_marks.mark_token:
+'1' / '0' exactly); a table naming a mark / twin / exposure column twice is a REFUSAL.
+
 Pure Python (no numpy); exit 0 when the report was written, 2 when a required input is missing.
 """
 
@@ -68,7 +73,7 @@ if HERE not in sys.path:
 import coverage_marks as cm  # noqa: E402
 
 # The explicit-mark rule's module (decision 1914): this reader is of record only with this file (sha256-16 asserted).
-COVERAGE_MARKS_SHA256_16 = "f3a125791151a293"
+COVERAGE_MARKS_SHA256_16 = "b5ae7f33385046c1"
 
 
 def _assert_coverage_marks():
@@ -203,7 +208,9 @@ def read_json(path):
 
 
 def read_csv(path, required=False):
-    """Palace CSV -> list of dict rows (stripped headers; '#' comment lines skipped; floats parsed)."""
+    """Palace CSV -> list of dict rows (stripped headers; '#' comment lines skipped; floats parsed; a MARK column's token kept as
+    its text: the one reading of coverage_marks.mark_token, decision 1934). A header naming a mark / twin / exposure column twice
+    is a Refusal (decision 1934)."""
     if not os.path.isfile(path):
         if required:
             raise MissingInput(path)
@@ -218,10 +225,12 @@ def read_csv(path, required=False):
             cells = [c.strip() for c in line.split(",")]
             if header is None:
                 header = cells
+                cm.refuse_duplicate_columns(header, path)
+                raw = {key for key in header if cm.is_mark_header(key)}
                 continue
             row = {}
             for key, cell in zip(header, cells):
-                row[key] = _parse_cell(cell)
+                row[key] = cell if key in raw else _parse_cell(cell)
             rows.append(row)
     return rows
 
@@ -2095,10 +2104,11 @@ def summary_line(report):
 
 
 def write_report(report, out_dir, stem="coverage-report"):
+    """The JSON carries this writer's provenance (decision 1934 R-1; the markdown and stdout do not)."""
     os.makedirs(out_dir, exist_ok=True)
     jpath = os.path.join(out_dir, stem + ".json")
     with open(jpath, "w") as f:
-        json.dump(report, f, indent=1, sort_keys=True)
+        json.dump(dict(report, **{cm.PROVENANCE_KEY: cm.provenance(os.path.abspath(__file__))}), f, indent=1, sort_keys=True)
         f.write("\n")
     with open(os.path.join(out_dir, stem + ".md"), "w") as f:
         f.write(render_markdown(report))

@@ -108,6 +108,31 @@ class NotAppliedTest(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertEqual(text, "Raw outputs are unchanged and corrected surface output is valid.\n")
 
+    def test_zero_mark_tree_with_a_by_design_infinity_beside_its_twin_is_valid(self):
+        """Decision 1934 (the round-2 cs4 mutation's discriminating form): a 0-mark MarkNotApplied tree whose interface 2 has E = p = 0
+        and Q = +inf BY DESIGN (Q_surf's own rule), its twin column present: valid, as its Warn twin (a twin beside a non-finite
+        token is not a mark; only the mark column says so)."""
+        edits = {(2, "E_surf corrected (J)"): "+0.000000000000e+00", (2, "p_surf corrected"): "+0.000000000000e+00",
+                 (2, "Q_surf corrected"): "inf"}
+        rc_w, text_w = self.run_main(write_tree(self.tmp / "inf-warn", edits=edits))
+        rc, text = self.run_main(write_tree(self.tmp / "inf-zero", marked=True, marks={}, edits=edits))
+        self.assertEqual((rc, text), (rc_w, text_w))
+        self.assertEqual(rc, 0, text)
+
+    def test_duplicate_mark_column_and_the_one_mark_token(self):
+        """Decision 1934: a second 'coverage mark E_surf' column (R-3), and a mark token '1.0' (R-4): REFUSALS (exit 5)."""
+        post = write_tree(self.tmp / "dup", marked=True, marks={1: (0, 1), 2: (0, 0)})
+        path = post / "surface-Q-corrected.csv"
+        lines = path.read_text().splitlines()
+        path.write_text("\n".join([lines[0] + "," + cm.MARK_E_SURF] + [ln + ",0" for ln in lines[1:]]) + "\n")
+        rc, text = self.run_main(post)
+        self.assertEqual(rc, cm.REFUSAL_EXIT, text)
+        self.assertIn("a duplicate mark / twin / exposure column name", text)
+        post = write_tree(self.tmp / "tok", marked=True, marks={1: (0, 1), 2: (0, 0)}, edits={(1, cm.MARK_E_SURF): "1.0"})
+        rc, text = self.run_main(post)
+        self.assertEqual(rc, cm.REFUSAL_EXIT, text)
+        self.assertIn("neither the token 0 nor the token 1", text)
+
     def test_refusals(self):
         cases = {
             "unmarked nan": write_tree(self.tmp / "r1", marked=True, marks={1: (0, 1)}, edits={(2, "E_surf corrected (J)"): "nan"}),

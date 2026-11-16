@@ -1386,6 +1386,121 @@ class TestBandFileLocation(unittest.TestCase):
         self.assertGreater(found, 0)
 
 
+class Round3Test(unittest.TestCase):
+    """Decision 1934: the writer's provenance (R-1: the JSON only; a one-object difference), duplicate mark / twin / exposure columns
+    (R-3) and the one reading of a mark token (R-4) refused, and the round-2 mutations' discriminating forms (cr1 / cr9: a FINITE
+    token in a marked cell never becomes a number of the report; cr6: a marked normalization with NO marked Type withholds C)."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="covrep-r3-")
+        self.bands = cr.load_bands(write_bands(os.path.join(self.tmp, "bands.json")))
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def single_solve(self, name):
+        post, manifest = write_fixture(os.path.join(self.tmp, name))
+        for d in cr.iteration_dirs(post):
+            shutil.rmtree(d)
+        return post, manifest
+
+    def edit(self, path, fn):
+        with open(path) as f:
+            lines = [ln.rstrip("\n").split(",") for ln in f]
+        fn(lines)
+        with open(path, "w") as f:
+            f.write("".join(",".join(r) + "\n" for r in lines))
+
+    def test_written_json_carries_the_provenance_and_nothing_else_changes(self):
+        post, manifest = self.single_solve("prov")
+        report = cr.build_report(post, manifest, self.bands, ma_reading="sharp")
+        out = os.path.join(self.tmp, "out")
+        self.assertEqual(cr.main([post, "--manifest", manifest, "--bands", self.bands["_path"], "--ma-reading", "sharp", "--output", out]), 0)
+        with open(os.path.join(out, "coverage-report.json")) as f:
+            written = json.load(f)
+        self.assertEqual(written[cm.PROVENANCE_KEY], cm.provenance(cr.__file__))
+        self.assertEqual(written[cm.PROVENANCE_KEY]["writer"], "coverage_report.py")
+        del written[cm.PROVENANCE_KEY]
+        with open(os.path.join(out, "coverage-report.json")) as f:
+            text = f.read()
+        self.assertEqual(json.dumps(written, indent=1, sort_keys=True) + "\n", json.dumps(json.loads(json.dumps(report)), indent=1, sort_keys=True) + "\n")
+        self.assertNotIn("provenance\": {\n  \"coverage_marks", open(os.path.join(out, "coverage-report.md")).read())
+        with open(os.path.join(out, "coverage-report.md")) as f:
+            self.assertEqual(f.read(), cr.render_markdown(report))
+        self.assertIn('"explicit_marks": true', text)
+
+    def test_finite_token_in_a_marked_cell_is_never_a_number(self):
+        """cr1: SA's interface marked with a FINITE token in its ft / ff cells (a hostile edit): the report carries no number from
+        it (W.SA ft / ff None, the ladder's SA ft None) and no SA band."""
+        post, manifest = self.single_solve("finite")
+        mark_surface_q(post, interfaces=(1,), token="+8.0e-16")
+        report = cr.build_report(post, manifest, self.bands, ma_reading="sharp")
+        self.assertIsNone(report["W"]["SA"]["ft_J"])
+        self.assertTrue(report["block_C"]["SA"]["not_applied"])
+        self.assertNotIn("low_pt", report["block_C"]["SA"])
+        for solve in report["block_D"]["ladder"]["solves"]:
+            self.assertIsNone((solve.get("ft") or {}).get("SA"), solve)
+
+    def test_maxwell_finite_token_in_a_marked_cell_is_never_a_number(self):
+        """cr9: Maxwell SA rows marked ('coverage mark E_surf' 1) with a FINITE token in 'E_surf corrected (J)': W.SA ft None."""
+        bands = cr.load_bands(write_maxwell_bands(os.path.join(self.tmp, "mx-bands.json")))
+        post, manifest = write_maxwell_fixture(os.path.join(self.tmp, "mx-finite"))
+        path = os.path.join(post, "surface-Q-corrected.csv")
+        mark_rows(path, ("E_surf corrected (J)", "p_surf corrected", "Q_surf corrected"), lambda row: float(row["interface"]) == 1.0)
+
+        def finite(lines):
+            j = [h.strip() for h in lines[0]].index("E_surf corrected (J)")
+            lines[0] += [cm.MARK_E_NORM, cm.MARK_E_SURF]
+            for r in lines[1:]:
+                sa = float(r[2]) == 1.0
+                if sa:
+                    r[j] = "+3.5e-16"
+                r += ["0", "1" if sa else "0"]
+        self.edit(path, finite)
+        report = cr.build_report(post, manifest, bands, ma_reading="sharp")
+        self.assertEqual(report["not_applied_types"], ["SA"])
+        self.assertIsNone(report["W"]["SA"]["ft_J"])
+
+    def test_marked_normalization_without_a_marked_type_withholds_c(self):
+        """cr6: a single solve whose E_elec is marked and NO interface is marked: every Type keeps its band WITH the flag, the C
+        band (built from the marked normalization) is withheld."""
+        post, manifest = self.single_solve("whole-only")
+        mark_surface_q(post, interfaces=(), whole=True, exposure=0.0111)
+        report = cr.build_report(post, manifest, self.bands, ma_reading="sharp")
+        self.assertNotIn("not_applied_types", report)
+        self.assertEqual(report["q3_flagged_types"], ["MA", "MS", "SA"])
+        self.assertTrue(report["block_C"]["C"]["not_applied"])
+        self.assertNotIn("low_pt", report["block_C"]["C"])
+
+    def test_duplicate_mark_column_refused(self):
+        """R-3 (the review's N3): a second 'coverage mark[1]' = 0 appended beside the product's 1, a FINITE token in the marked cell:
+        a REFUSAL (build_report raises; main exits 5, no report)."""
+        post, manifest = self.single_solve("dup")
+        mark_surface_q(post, interfaces=(1,), token="+8.0e-16")
+        self.edit(os.path.join(post, "surface-Q-corrected.csv"),
+                  lambda lines: [lines[0].append(cm.MARK_INTERFACE.format(1))] + [r.append("0") for r in lines[1:]])
+        with self.assertRaises(cm.Refusal) as caught:
+            cr.build_report(post, manifest, self.bands, ma_reading="sharp")
+        self.assertIn("a duplicate mark / twin / exposure column name", str(caught.exception))
+        out = os.path.join(self.tmp, "dup-out")
+        self.assertEqual(cr.main([post, "--manifest", manifest, "--bands", self.bands["_path"], "--output", out]), cm.REFUSAL_EXIT)
+        self.assertFalse(os.path.exists(out))
+
+    def test_mark_token_read_one_way(self):
+        """R-4 (the review's N2): the mark token '1.0' is a REFUSAL here as in every reader (this reader floated it to 1 before)."""
+        post, manifest = self.single_solve("tok")
+        mark_surface_q(post, interfaces=(1,))
+
+        def one_point_zero(lines):
+            j = [h.strip() for h in lines[0]].index(cm.MARK_INTERFACE.format(1))
+            for r in lines[1:]:
+                r[j] = "1.0"
+        self.edit(os.path.join(post, "surface-Q-corrected.csv"), one_point_zero)
+        with self.assertRaises(cm.Refusal) as caught:
+            cr.build_report(post, manifest, self.bands, ma_reading="sharp")
+        self.assertIn("neither the token 0 nor the token 1", str(caught.exception))
+
+
 if __name__ == "__main__":
     unittest.main()
 

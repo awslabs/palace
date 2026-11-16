@@ -7,7 +7,8 @@ signal: a twin / exposure / mark column of a postpro table, or config_resolved.j
 check reads are read through their mark columns ('coverage mark E_norm', 'coverage mark E_surf'): an unmarked E / p cell that is
 not a finite number, or a missing mark column, is a REFUSAL (exit 5); a row with a mark 1 is NOT-APPLIED (exit 3: the corrected
 output is not checked, never 'valid'). Q_surf keeps this check's own rule (+inf only where p is 0). A Warn / pre-policy tree is
-checked as before, except that a text token in a read corrected cell is a REFUSAL.
+checked as before, except that a text token in a read corrected cell is a REFUSAL. Decision 1934: a mark token is read one
+way ('1' / '0' exactly, kept as its text); a table naming a mark / twin / exposure column twice is a REFUSAL.
 """
 
 import argparse
@@ -22,7 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "surface_respons
 import coverage_marks as cm  # noqa: E402
 
 # The explicit-mark rule's module (decision 1914): this check is of record only with this file (sha256-16 asserted).
-COVERAGE_MARKS_SHA256_16 = "f3a125791151a293"
+COVERAGE_MARKS_SHA256_16 = "b5ae7f33385046c1"
 if hashlib.sha256(Path(cm.__file__).read_bytes()).hexdigest()[:16] != COVERAGE_MARKS_SHA256_16:
     raise SystemExit(f"{cm.__file__}: sha256-16 != {COVERAGE_MARKS_SHA256_16} (this check reads marks with that file only)")
 
@@ -96,10 +97,17 @@ def _cell(value):
 
 
 def read_rows(path):
+    """The rows of a CSV (values parsed by _cell; a MARK column's token kept as its text: the one reading of
+    coverage_marks.mark_token). A header naming a mark / twin / exposure column twice is a Refusal (decision 1934)."""
     with path.open(newline="") as stream:
+        reader = csv.DictReader(stream, skipinitialspace=True)
+        cm.refuse_duplicate_columns([name.strip() for name in reader.fieldnames or []], str(path))
         return [
-            {key.strip(): _cell(value) for key, value in row.items()}
-            for row in csv.DictReader(stream, skipinitialspace=True)
+            {
+                key.strip(): (value if cm.is_mark_header(key.strip()) else _cell(value))
+                for key, value in row.items()
+            }
+            for row in reader
         ]
 
 
