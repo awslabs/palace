@@ -1,8 +1,10 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <cmath>
 #include <iterator>
 #include <limits>
+#include <fmt/format.h>
 #include <scn/scan.h>
 #include <catch2/catch_test_macros.hpp>
 #include "utils/communication.hpp"
@@ -150,7 +152,7 @@ TEST_CASE("TableCSV nonfinite integer formatting", "[tablecsv][Serial]")
   table.insert(Column("status", "status", 0, 0, 0, ""));
   table["status"].print_as_int = true;
   table["status"] << std::numeric_limits<double>::quiet_NaN();
-  CHECK(table.format_table() == "status\n   nan\n");
+  CHECK(table.format_table() == "status\nnan\n");
 
   Table floating;
   floating.insert("quality", "quality");
@@ -160,6 +162,90 @@ TEST_CASE("TableCSV nonfinite integer formatting", "[tablecsv][Serial]")
   CHECK(formatted.find("+inf") != std::string::npos);
   CHECK(formatted.find("-inf") != std::string::npos);
   CHECK(formatted.find("nan") == std::string::npos);
+}
+
+// Decisions 1829 / 1835 (OI-CSV-SIGNED-NAN-DIRECT-WRITERS): a number of a directly written
+// CSV table prints as "{:+.12e}" (finite and +inf / -inf: "+inf" / "-inf"), a NaN of either
+// sign as the bare token "nan" (fmt's "+" flag would print "+nan", which pandas reads as
+// text); the token is the trimmed cell of a Table column of the same value.
+TEST_CASE("TableCSV CsvNumber direct-writer cells", "[tablecsv][Serial]")
+{
+  const double nan = std::numeric_limits<double>::quiet_NaN();
+  const double inf = std::numeric_limits<double>::infinity();
+  CHECK(fmt::format("{:+.12e}", nan) == "+nan");  // the form CsvNumber replaces
+  CHECK(CsvNumber(nan) == "nan");
+  CHECK(CsvNumber(-nan) == "nan");
+  CHECK(CsvNumber(inf) == "+inf");
+  CHECK(CsvNumber(-inf) == "-inf");
+  CHECK(CsvNumber(0.5) == "+5.000000000000e-01");
+  CHECK(CsvNumber(-1.25e-18) == "-1.250000000000e-18");
+  CHECK(CsvNumber(0.0) == "+0.000000000000e+00");
+  Table table;
+  table.insert("value", "value");
+  for (const double value : {0.5, -1.25e-18, nan, inf, -inf})
+  {
+    table["value"] << value;
+  }
+  for (std::size_t i = 0; i < 5; i++)
+  {
+    const std::string cell = table.format_row(i);
+    const auto begin = cell.find_first_not_of(' ');
+    CHECK(cell.substr(begin, cell.size() - 1 - begin) == CsvNumber(table["value"].data[i]));
+  }
+  for (const double value : {0.5, -1.25e-18, nan, inf, -inf})
+  {
+    auto result = scn::scan<double>(CsvNumber(value), "{}");
+    REQUIRE(result);
+    CHECK((std::isnan(value) ? std::isnan(result->value()) : result->value() == value));
+  }
+}
+
+// Lane L4 (decision 1829 C1): a non-finite numeric cell prints as a BARE token (no padding)
+// in float and integer columns, beside text columns; every finite cell, every text cell,
+// the header and the padded empty cell ("NULL", out of scope) are printed as before; the
+// table reads back with the same values.
+TEST_CASE("TableCSV bare non-finite cells", "[tablecsv][Serial]")
+{
+  const double nan = std::numeric_limits<double>::quiet_NaN();
+  const double inf = std::numeric_limits<double>::infinity();
+  Table table;
+  table.insert("value", "value");
+  table.insert(Column::Integer("index", "index"));
+  table.insert(Column::Text("status", "coverage status"));
+  table["value"] << 0.5 << nan << inf << -inf;
+  table["index"] << 3 << nan << inf << -inf;
+  table["status"] << std::string("OK") << std::string("nan") << std::string("PARTIAL")
+                  << std::string("NO-ENERGY");
+  auto Pad = [](const std::string &cell, std::size_t width)
+  { return std::string(width - cell.size(), ' ') + cell; };
+  const auto index_width = table["index"].col_width(table.col_options);
+  CHECK(table.format_header() == Pad("value", 27) + "," + Pad("index", index_width) + "," +
+                                     Pad("coverage status", 27) + "\n");
+  CHECK(table.format_row(0) == Pad("+5.000000000000e-01", 27) + "," +
+                                   Pad("3", index_width) + "," + Pad("OK", 27) + "\n");
+  CHECK(table.format_row(1) == "nan,nan," + Pad("nan", 27) + "\n");
+  CHECK(table.format_row(2) == "+inf,inf," + Pad("PARTIAL", 27) + "\n");
+  CHECK(table.format_row(3) == "-inf,-inf," + Pad("NO-ENERGY", 27) + "\n");
+
+  // A shorter column pads its missing cell with the empty-cell value, as before.
+  table["value"] << 1.0;
+  CHECK(table.format_row(4) == Pad("+1.000000000000e+00", 27) + "," +
+                                   Pad("NULL", index_width) + "," + Pad("NULL", 27) + "\n");
+
+  Table parsed(table.format_table(), std::nullopt, std::nullopt, /*text_columns=*/true);
+  REQUIRE(parsed.n_cols() == 3);
+  REQUIRE(parsed[0].data.size() == 5);
+  CHECK(parsed[0].data[0] == 0.5);
+  CHECK(std::isnan(parsed[0].data[1]));
+  CHECK(parsed[0].data[2] == inf);
+  CHECK(parsed[0].data[3] == -inf);
+  CHECK(parsed[0].data[4] == 1.0);
+  REQUIRE(parsed[1].data.size() == 4);
+  CHECK(parsed[1].data[0] == 3.0);
+  CHECK(std::isnan(parsed[1].data[1]));
+  CHECK(parsed[1].data[2] == inf);
+  CHECK(parsed[1].data[3] == -inf);
+  CHECK(parsed[2].text == std::vector<std::string>{"OK", "nan", "PARTIAL", "NO-ENERGY"});
 }
 
 // Lane L1 (decision 1634 (3)): a text column (the coverage / regime status columns) prints

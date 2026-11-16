@@ -1957,7 +1957,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
           worst = cell.uncovered_share;
         }
       }
-      return std::isnan(worst) ? std::string("nan") : fmt::format("{:+.12e}", worst);
+      return CsvNumber(worst);
     };
     std::ofstream output(post_dir / "terminal-C-corrected-coverage.csv");
     MFEM_VERIFY(output, "Unable to open terminal-C-corrected-coverage.csv for writing!");
@@ -2972,13 +2972,12 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                         const PortionTypeRow &portions, const PortionEnergies &energies_map,
                         const EnergyData &energies, bool available, bool extra_is_length)
       {
-        output << fmt::format("{},{},{},{},{:+.12e},", source, evaluation, type,
-                              portions.portions,
-                              iodata.units.Dimensionalize<VT::LENGTH>(portions.length));
+        output << fmt::format(
+            "{},{},{},{},{},", source, evaluation, type, portions.portions,
+            CsvNumber(iodata.units.Dimensionalize<VT::LENGTH>(portions.length)));
         if (extra_is_length)
         {
-          output << fmt::format("{:+.12e}",
-                                iodata.units.Dimensionalize<VT::LENGTH>(portions.extra));
+          output << CsvNumber(iodata.units.Dimensionalize<VT::LENGTH>(portions.extra));
         }
         else
         {
@@ -3006,7 +3005,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                         : nan;
             energy = iodata.units.Dimensionalize<VT::ENERGY>(energy);
           }
-          output << fmt::format(",{:+.12e},{:+.12e}", energy, share);
+          output << fmt::format(",{},{}", CsvNumber(energy), CsvNumber(share));
         }
         output << '\n';
       };
@@ -3099,8 +3098,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
               const auto entry = partition->second.find(label);
               value = entry != partition->second.end() ? entry->second : 0.0;
             }
-            energy << fmt::format(",{:+.12e}",
-                                  iodata.units.Dimensionalize<VT::ENERGY>(value));
+            energy << "," << CsvNumber(iodata.units.Dimensionalize<VT::ENERGY>(value));
           }
           energy << '\n';
         }
@@ -3111,8 +3109,8 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       for (const auto &member : response_correction->GetModelRawClaimPortions().members)
       {
         groups << fmt::format(
-            "{},{},{},{:+.12e}\n", member.label, member.model, member.patches,
-            iodata.units.Dimensionalize<VT::LENGTH>(member.weight_length));
+            "{},{},{},{}\n", member.label, member.model, member.patches,
+            CsvNumber(iodata.units.Dimensionalize<VT::LENGTH>(member.weight_length)));
       }
     }
     if (!uncovered_portions.empty())
@@ -3227,9 +3225,9 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       const double nan = std::numeric_limits<double>::quiet_NaN();
       for (const auto &row : clipped_correction_rows)
       {
-        output << fmt::format("{},{},{},{},{},{:+.12e}", row.source, row.evaluation,
+        output << fmt::format("{},{},{},{},{},{}", row.source, row.evaluation,
                               row.diagnostic.patch + 1, row.diagnostic.model,
-                              row.diagnostic.feature, row.diagnostic.weight);
+                              row.diagnostic.feature, CsvNumber(row.diagnostic.weight));
         for (const auto &[interface, data] : interfaces)
         {
           (void)data;
@@ -3246,11 +3244,11 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
           const double ratio = whole > 0.0 && std::isfinite(fab) ? fab / whole : nan;
           const double clipped =
               std::isfinite(ratio) ? (ratio - row.diagnostic.weight) * outside : nan;
-          output << fmt::format(",{:+.12e},{:+.12e},{:+.12e},{:+.12e},{:+.12e}",
-                                iodata.units.Dimensionalize<VT::ENERGY>(fab),
-                                iodata.units.Dimensionalize<VT::ENERGY>(whole),
-                                iodata.units.Dimensionalize<VT::ENERGY>(outside), ratio,
-                                iodata.units.Dimensionalize<VT::ENERGY>(clipped));
+          output << fmt::format(
+              ",{},{},{},{},{}", CsvNumber(iodata.units.Dimensionalize<VT::ENERGY>(fab)),
+              CsvNumber(iodata.units.Dimensionalize<VT::ENERGY>(whole)),
+              CsvNumber(iodata.units.Dimensionalize<VT::ENERGY>(outside)), CsvNumber(ratio),
+              CsvNumber(iodata.units.Dimensionalize<VT::ENERGY>(clipped)));
         }
         output << '\n';
       }

@@ -3123,11 +3123,11 @@ void PostOperator<solver_t>::PrintSurfaceResponseExclusionEnergies(double output
         output << fmt::format("{},{}", static_cast<int>(std::lround(output_index)),
                               excitation);
       }
-      output << fmt::format(",{},{},{},{:+.12e},{:+.12e},{:+.12e},{:+.12e}\n", cls, name,
-                            count, units.Dimensionalize<VT::LENGTH>(length),
-                            units.Dimensionalize<VT::ENERGY>(energy),
-                            units.Dimensionalize<VT::ENERGY>(interface_raw),
-                            interface_raw > 0.0 ? energy / interface_raw : 0.0);
+      output << fmt::format(",{},{},{},{},{},{},{}\n", cls, name, count,
+                            CsvNumber(units.Dimensionalize<VT::LENGTH>(length)),
+                            CsvNumber(units.Dimensionalize<VT::ENERGY>(energy)),
+                            CsvNumber(units.Dimensionalize<VT::ENERGY>(interface_raw)),
+                            CsvNumber(interface_raw > 0.0 ? energy / interface_raw : 0.0));
     }
   }
 }
@@ -3249,13 +3249,14 @@ void PostOperator<solver_t>::PrintSurfaceResponseUncoveredFeatureEnergies(
       output << fmt::format("{},{}", static_cast<int>(std::lround(output_index)),
                             excitation);
     }
-    output << fmt::format(",{},{},{},{:+.12e}", type, label, label_summary.portions,
-                          units.Dimensionalize<VT::LENGTH>(label_summary.length));
+    output << fmt::format(
+        ",{},{},{},{}", type, label, label_summary.portions,
+        CsvNumber(units.Dimensionalize<VT::LENGTH>(label_summary.length)));
     for (const auto &bound : {label_summary.min, label_summary.max})
     {
       for (int d = 0; d < 3; d++)
       {
-        output << fmt::format(",{:+.12e}", units.Dimensionalize<VT::LENGTH>(bound[d]));
+        output << "," << CsvNumber(units.Dimensionalize<VT::LENGTH>(bound[d]));
       }
     }
     for (const int interface : target_interfaces)
@@ -3267,7 +3268,7 @@ void PostOperator<solver_t>::PrintSurfaceResponseUncoveredFeatureEnergies(
         const auto entry = energies->second.find(key);
         energy = entry != energies->second.end() ? entry->second : 0.0;
       }
-      output << fmt::format(",{:+.12e}", units.Dimensionalize<VT::ENERGY>(energy));
+      output << "," << CsvNumber(units.Dimensionalize<VT::ENERGY>(energy));
     }
     output << '\n';
   }
@@ -3317,9 +3318,9 @@ void PostOperator<solver_t>::PrintSurfaceResponseModelRawEnergies(double output_
     groups << "label,model,patches,weight length (m)\n";
     for (const auto &member : surface_response_op->GetModelRawClaimPortions().members)
     {
-      groups << fmt::format("{},{},{},{:+.12e}\n", member.label, member.model,
-                            member.patches,
-                            units.Dimensionalize<VT::LENGTH>(member.weight_length));
+      groups << fmt::format(
+          "{},{},{},{}\n", member.label, member.model, member.patches,
+          CsvNumber(units.Dimensionalize<VT::LENGTH>(member.weight_length)));
     }
   }
   std::set<std::string> labels;
@@ -3347,7 +3348,7 @@ void PostOperator<solver_t>::PrintSurfaceResponseModelRawEnergies(double output_
         const auto entry = partition->second.find(label);
         value = entry != partition->second.end() ? entry->second : 0.0;
       }
-      energy << fmt::format(",{:+.12e}", units.Dimensionalize<VT::ENERGY>(value));
+      energy << "," << CsvNumber(units.Dimensionalize<VT::ENERGY>(value));
     }
     if constexpr (solver_t == ProblemType::DRIVEN)
     {
@@ -3398,7 +3399,7 @@ void PostOperator<solver_t>::PrintSurfaceResponseLoopFit(double output_index,
   {
     if constexpr (solver_t == ProblemType::DRIVEN)
     {
-      return fmt::format("{:+.12e},{}", output_index, excitation);
+      return fmt::format("{},{}", CsvNumber(output_index), excitation);
     }
     else
     {
@@ -3443,19 +3444,20 @@ void PostOperator<solver_t>::PrintSurfaceResponseLoopFit(double output_index,
       total.weighted_length += row.weighted_length;
     }
     fit << fmt::format(
-        "{},{},{},{:+.12e},{:+.12e},{},{},{:+.12e},{:+.12e}\n", source, evaluation, Keys(),
-        response.maximum_loop_fit_share, response.response_weighted_loop_fit_share,
+        "{},{},{},{},{},{},{},{},{}\n", source, evaluation, Keys(),
+        CsvNumber(response.maximum_loop_fit_share),
+        CsvNumber(response.response_weighted_loop_fit_share),
         response.loop_remainder_patch_count, response.loop_fallback_patch_count,
-        units.Dimensionalize<VT::LENGTH>(total.weighted_length),
-        units.Dimensionalize<VT::ENERGY>(
+        CsvNumber(units.Dimensionalize<VT::LENGTH>(total.weighted_length)),
+        CsvNumber(units.Dimensionalize<VT::ENERGY>(
             evaluation == 1 ? response.loop_fallback_domain_correction_fixed_flux
-                            : response.loop_fallback_domain_correction));
+                            : response.loop_fallback_domain_correction)));
     auto Line = [&](const std::string &label,
                     const SurfaceResponseOperator::LoopRemainderPortions::Row &row)
     {
-      remainder << fmt::format("{},{},{},{},{:+.12e}", source, evaluation, label,
-                               row.patches,
-                               units.Dimensionalize<VT::LENGTH>(row.weighted_length));
+      remainder << fmt::format(
+          "{},{},{},{},{}", source, evaluation, label, row.patches,
+          CsvNumber(units.Dimensionalize<VT::LENGTH>(row.weighted_length)));
       for (const int interface : target_interfaces)
       {
         double energy = 0.0;
@@ -3476,7 +3478,7 @@ void PostOperator<solver_t>::PrintSurfaceResponseLoopFit(double output_index,
             energy = entry != it->second.end() ? entry->second : 0.0;
           }
         }
-        remainder << fmt::format(",{:+.12e}", units.Dimensionalize<VT::ENERGY>(energy));
+        remainder << "," << CsvNumber(units.Dimensionalize<VT::ENERGY>(energy));
       }
       remainder << "," << Keys() << "\n";
     };
@@ -3520,7 +3522,8 @@ void PostOperator<solver_t>::PrintSurfaceResponseCoverage(double output_index,
   const auto &coverage = surface_response_measurement->coverage_measurement;
   const std::string keys =
       solver_t == ProblemType::DRIVEN
-          ? fmt::format("{:+.12e},{}", output_index, excitation)  // the other tables' form
+          ? fmt::format("{},{}", CsvNumber(output_index),
+                        excitation)  // the other tables' form
           : fmt::format("{},{}", static_cast<int>(std::lround(output_index)), excitation);
   const std::string key_header = solver_t == ProblemType::DRIVEN ? "f (GHz),exc" : "m,exc";
   // Ruling 1738: the coverage cells' interfaces (the served and the configured not served).
@@ -4021,18 +4024,18 @@ void PostOperator<solver_t>::PrintSurfaceResponsePortionEnergies(double output_i
     {
       if constexpr (solver_t == ProblemType::DRIVEN)
       {
-        output << fmt::format("{:+.12e}", output_index);
+        output << CsvNumber(output_index);
       }
       else
       {
         output << static_cast<int>(std::lround(output_index));
       }
-      output << fmt::format(",{},{},{},{},{:+.12e},", excitation, evaluation, type,
+      output << fmt::format(",{},{},{},{},{},", excitation, evaluation, type,
                             portions.portions,
-                            units.Dimensionalize<VT::LENGTH>(portions.length));
+                            CsvNumber(units.Dimensionalize<VT::LENGTH>(portions.length)));
       if (extra_is_length)
       {
-        output << fmt::format("{:+.12e}", units.Dimensionalize<VT::LENGTH>(portions.extra));
+        output << CsvNumber(units.Dimensionalize<VT::LENGTH>(portions.extra));
       }
       else
       {
@@ -4057,7 +4060,7 @@ void PostOperator<solver_t>::PrintSurfaceResponsePortionEnergies(double output_i
           share = corrected > 0.0 ? energy / corrected : nan;
           energy = units.Dimensionalize<VT::ENERGY>(energy);
         }
-        output << fmt::format(",{:+.12e},{:+.12e}", energy, share);
+        output << fmt::format(",{},{}", CsvNumber(energy), CsvNumber(share));
       }
       output << '\n';
     };

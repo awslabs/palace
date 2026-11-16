@@ -202,7 +202,8 @@ struct ResolutionRunRecord
 // plane and the all-planes cell): a Type whose energy on one plane is not RESOLVED never
 // reads RESOLVED. With one plane in the run a plane cell that repeats its all-planes cell
 // is counted once (RepeatedPlaneCells). Flagged lists at most kResolutionFlaggedListCap
-// cells; FlaggedCount counts every one (the table holds the full list).
+// cells; FlaggedCount counts every distinct flagged reading (the table keeps every row, so
+// with one plane its flagged rows can exceed FlaggedCount).
 inline constexpr int kResolutionFlaggedListCap = 200;
 nlohmann::json ResolutionRunMetadata(const ResolutionRunRecord &record, int level,
                                      int levels);

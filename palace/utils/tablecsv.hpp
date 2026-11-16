@@ -15,6 +15,12 @@
 namespace palace
 {
 
+// A number of a CSV output table written directly (not through Table): "{:+.12e}" for a
+// finite value and for +inf / -inf ("+inf" / "-inf"), the BARE token "nan" for any NaN
+// (fmt prints a NaN under the "+" flag as "+nan", which pandas' default read_csv, paladin's
+// upload, keeps as text: OI-CSV-SIGNED-NAN-DIRECT-WRITERS, decisions 1829 / 1835).
+std::string CsvNumber(double value);
+
 struct ColumnOptions
 {
   // Options that individual cols can overwrite.

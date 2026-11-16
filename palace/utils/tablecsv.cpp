@@ -17,6 +17,11 @@
 namespace palace
 {
 
+std::string CsvNumber(double value)
+{
+  return std::isnan(value) ? std::string("nan") : fmt::format("{:+.12e}", value);
+}
+
 [[nodiscard]] std::size_t Column::col_width(const ColumnOptions &defaults) const
 {
   // Quickfix to specify full column width in integer case to match current formatting.
@@ -54,13 +59,18 @@ namespace palace
   if ((i >= 0) && (i < data.size()))
   {
     auto val = data[i];
+    // A non-finite cell is written as a BARE token ("nan", "+inf" / "-inf"; "inf" / "-inf"
+    // in an integer column), never padded to the column width: a reader that takes only a
+    // bare token as missing (pandas' default read_csv, which paladin's upload uses) would
+    // keep a padded "nan" as text and a column mixing text and numbers fails its upload
+    // (lane L4, decision 1829 C1). The trimmed token is the one printed before.
     if (std::isnan(val))
     {
-      return fmt::format("{:>{}}", "nan", width_);
+      return std::string("nan");
     }
     if (print_as_int && std::isinf(val))
     {
-      return fmt::format("{:>{}}", std::signbit(val) ? "-inf" : "inf", width_);
+      return std::string(std::signbit(val) ? "-inf" : "inf");
     }
     if (print_as_int)
     {  // Quick-fix to force int printing
@@ -73,7 +83,12 @@ namespace palace
       auto prec = float_precision.value_or(defaults.float_precision);
       auto fmt_str = fmt::format("{{:>{sign:s}{width}.{prec}e}}", fmt::arg("sign", sign),
                                  fmt::arg("width", width_), fmt::arg("prec", prec));
-      return fmt::format(fmt::runtime(fmt_str), val);
+      auto cell = fmt::format(fmt::runtime(fmt_str), val);
+      if (std::isinf(val))
+      {
+        cell.erase(0, cell.find_first_not_of(' '));
+      }
+      return cell;
     }
   }
   return fmt::format("{0:>{1}s}", defaults.empty_cell_val, width_);

@@ -25,8 +25,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     patch's contour knots per AMR level (the construction's own locator, no fallback
     search); per patch the lower median of the owning elements' longest edge over the
     matching radius (a knot on a face shared by several elements: the largest of their
-    longest edges, independent of the rank count); `surface-response-resolution.csv` (per cell, interface `Type` and
-    plane: the energy-weighted shares of RESOLVED / MARGINAL / UNDER-RESOLVED /
+    longest edges; on a given mesh independent of the rank count);
+    `surface-response-resolution.csv` (per cell, interface `Type` and plane: the
+    energy-weighted shares of RESOLVED / MARGINAL / UNDER-RESOLVED /
     NOT-EVALUATED patches, the `m10` / `m50` / `m90` quantiles, a status on INTERIM bars
     valid at `R` = 1.9 µm only, NO-BARS otherwise), the `palace.json` block
     `SurfaceResponse.Resolution`, a PREFLIGHT line before each solve, a banner line per
@@ -360,6 +361,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     [PR 811](https://github.com/awslabs/palace/pull/811).
 
 #### Interface Changes
+
+  - A non-finite numeric cell of a CSV output table is written as a bare token (`nan`,
+    `+inf` / `-inf`, and `inf` / `-inf` in an integer column) instead of being padded to
+    the column width, so that a reader that takes only a bare token as missing (pandas'
+    default `read_csv`) reads the column as numbers; the trimmed token and every finite,
+    text and header cell are unchanged (the padded `NULL` of a missing cell stays).
 
   - The Maxwell `surface-Q-corrected.csv` and `surface-response-confidence.csv` column
     `matched edge fraction` is renamed `matched edge length fraction` (a length figure, not
