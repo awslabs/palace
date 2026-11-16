@@ -24,6 +24,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Interface Changes
 
+  - Rebalancing a nonconforming mesh during adaptive refinement now keeps each root of its
+    refinement tree on one process, when the load stays within half of
+    `Model.Refinement.MaximumImbalance`, so that saving the adapted mesh needs no
+    redistribution; the partition, and so round-off, can differ from before.
   - When `Solver.Linear.Type` is `"Default"` (or omitted) for frequency domain problems,
     and for the wave port and boundary mode eigenvalue solves, *Palace* now prefers
     STRUMPACK over SuperLU_DIST, then MUMPS, as the sparse direct solver when built with

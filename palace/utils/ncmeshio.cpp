@@ -98,13 +98,16 @@ ExscanCounts(MPI_Comm comm, std::vector<long long> counts)
 }
 
 // For each root of the refinement tree: the own leaves under it, which come consecutively
-// in the mesh, in the order of the roots; whether all its leaves are own; and the process
-// with most of its leaves, which the home process of a root on several processes picks.
+// in the mesh, in the order of the roots; whether all its leaves are own; the process with
+// most of its leaves; the index of its first leaf in the order of the processes and their
+// leaves; and its number of leaves. The home process of a root on several processes finds
+// the last three.
 struct RootLeaves
 {
   int leaves = 0;
   bool whole = true;
   int target = -1;
+  long long first = 0, total = 0;
 };
 
 std::vector<RootLeaves> GetRootLeaves(const mfem::ParMesh &mesh, bool &split)
@@ -124,11 +127,14 @@ std::vector<RootLeaves> GetRootLeaves(const mfem::ParMesh &mesh, bool &split)
     r.whole = r.whole && (el.ref_type || el.rank == rank);
   };
   std::vector<RootLeaves> roots(NCMeshData::RootState(*mesh.pncmesh).Size());
+  long long first = ExscanCounts(comm, {mesh.GetNE()}).first[0];
   split = false;
-  for (std::size_t i = 0; i < roots.size(); i++)
+  for (std::size_t i = 0; i < roots.size(); first += roots[i++].leaves)
   {
     Count(static_cast<int>(i), roots[i]);
     roots[i].target = rank;
+    roots[i].first = first;
+    roots[i].total = roots[i].leaves;
     split = split || (roots[i].leaves && !roots[i].whole);
   }
   Mpi::GlobalOr(1, &split, comm);
@@ -136,42 +142,86 @@ std::vector<RootLeaves> GetRootLeaves(const mfem::ParMesh &mesh, bool &split)
   {
     return roots;
   }
-  std::vector<std::vector<std::array<int, 3>>> share(P);  // root, process, leaves
-  for (std::size_t i = 0; i < roots.size(); i++)
+  std::vector<std::vector<std::array<long long, 4>>> share(P);  // root, process, leaves,
+  for (std::size_t i = 0; i < roots.size(); i++)                // first leaf
   {
     if (roots[i].leaves && !roots[i].whole)
     {
-      share[i % P].push_back({static_cast<int>(i), rank, roots[i].leaves});
+      share[i % P].push_back({(long long)i, rank, roots[i].leaves, roots[i].first});
     }
   }
   std::vector<int> displs;
   const auto in = ExchangeRecords(comm, share, displs);
-  std::unordered_map<int, std::array<int, 3>> best;  // most leaves, then lowest process
+  struct Best
+  {
+    long long rank = -1, leaves = 0, first = std::numeric_limits<long long>::max(),
+              total = 0;
+  };
+  std::unordered_map<long long, Best> best;  // the most leaves, then the lowest process
   for (const auto &s : in)
   {
-    auto &b = best.emplace(s[0], s).first->second;
-    b = std::tie(s[2], b[1]) > std::tie(b[2], s[1]) ? s : b;
+    auto &b = best[s[0]];
+    if (std::tie(s[2], b.rank) > std::tie(b.leaves, s[1]))
+    {
+      std::tie(b.rank, b.leaves) = std::tie(s[1], s[2]);
+    }
+    b.first = std::min(b.first, s[3]);
+    b.total += s[2];
   }
-  std::vector<std::vector<int>> reply(P);
+  std::vector<std::vector<std::array<long long, 3>>> reply(P);
   for (int p = 0; p < P; p++)
   {
     for (int i = displs[p]; i < displs[p + 1]; i++)
     {
-      reply[p].push_back(best[in[i][0]][1]);
+      const auto &b = best[in[i][0]];
+      reply[p].push_back({b.rank, b.first, b.total});
     }
   }
-  const auto targets = ExchangeRecords(comm, reply, displs);
+  const auto replies = ExchangeRecords(comm, reply, displs);
   for (std::size_t i = 0; i < roots.size(); i++)
   {
     if (roots[i].leaves && !roots[i].whole)
     {
-      roots[i].target = targets[displs[i % P]++];
+      const auto &r = replies[displs[i % P]++];
+      roots[i].target = static_cast<int>(r[0]);
+      std::tie(roots[i].first, roots[i].total) = std::tie(r[1], r[2]);
     }
   }
   return roots;
 }
 
 }  // namespace
+
+void RebalanceRootAligned(mfem::ParMesh &mesh, double tol)
+{
+  MPI_Comm comm = mesh.GetComm();
+  const int P = Mpi::Size(comm);
+  bool split;
+  const auto roots = GetRootLeaves(mesh, split);
+  const long long total = mesh.GetGlobalNE();
+  mfem::Array<int> part(mesh.GetNE());
+  std::vector<long long> load(P, 0);
+  for (std::size_t i = 0, e = 0; i < roots.size(); e += roots[i++].leaves)
+  {
+    if (roots[i].leaves)
+    {
+      const int r = static_cast<int>((roots[i].first + roots[i].total / 2) * P / total);
+      std::fill_n(part.begin() + e, roots[i].leaves, r);
+      load[r] += roots[i].leaves;
+    }
+  }
+  long long max_load = 0;
+  MPI_Reduce_scatter_block(load.data(), &max_load, 1, MPI_LONG_LONG, MPI_SUM, comm);
+  Mpi::GlobalMax(1, &max_load, comm);
+  if (max_load <= (1.0 + 0.5 * (tol - 1.0)) * total / P)
+  {
+    mesh.Rebalance(part);
+  }
+  else
+  {
+    mesh.Rebalance();
+  }
+}
 
 void ScaleNCMeshCoordinates(mfem::Mesh &mesh, double length_scale)
 {

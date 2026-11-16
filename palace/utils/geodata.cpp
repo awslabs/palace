@@ -2717,6 +2717,31 @@ double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh,
 {
   BlockTimer bt0(Timer::REBALANCE);
   MPI_Comm comm = mesh->GetComm();
+
+  // If there is more than one processor, may perform rebalancing: a nonconforming mesh
+  // before it is saved, with whole refinement-tree roots, so that the save need not move
+  // them.
+  double ratio = 1.0;
+  const double tol = iodata.model.refinement.maximum_imbalance;
+  if (Mpi::Size(comm) > 1)
+  {
+    int min_elem, max_elem;
+    min_elem = max_elem = mesh->GetNE();
+    Mpi::GlobalMin(1, &min_elem, comm);
+    Mpi::GlobalMax(1, &max_elem, comm);
+    ratio = double(max_elem) / min_elem;
+    if constexpr (false)
+    {
+      Mpi::Print("Rebalancing: max/min elements per processor = {:d}/{:d} (ratio = {:.3e}, "
+                 "tol = {:.3e})\n",
+                 max_elem, min_elem, ratio, tol);
+    }
+  }
+  if (ratio > tol && mesh->Nonconforming())
+  {
+    RebalanceRootAligned(*mesh, tol);
+  }
+
   if (iodata.model.refinement.save_adapt_mesh)
   {
     // Write the mesh to disk as one serial file. When MFEM is built with zlib the mesh
@@ -2781,35 +2806,11 @@ double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh,
     }
   }
 
-  // If there is more than one processor, may perform rebalancing.
-  if (Mpi::Size(comm) == 1)
+  if (ratio > tol && !mesh->Nonconforming())
   {
-    return 1.0;
-  }
-  int min_elem, max_elem;
-  min_elem = max_elem = mesh->GetNE();
-  Mpi::GlobalMin(1, &min_elem, comm);
-  Mpi::GlobalMax(1, &max_elem, comm);
-  const double ratio = double(max_elem) / min_elem;
-  const double tol = iodata.model.refinement.maximum_imbalance;
-  if constexpr (false)
-  {
-    Mpi::Print("Rebalancing: max/min elements per processor = {:d}/{:d} (ratio = {:.3e}, "
-               "tol = {:.3e})\n",
-               max_elem, min_elem, ratio, tol);
-  }
-  if (ratio > tol)
-  {
-    if (mesh->Nonconforming())
-    {
-      mesh->Rebalance();
-    }
-    else
-    {
-      // Without access to a refinement tree, partitioning must be done on the root
-      // processor and then redistributed.
-      RebalanceConformalMesh(mesh);
-    }
+    // Without access to a refinement tree, partitioning must be done on the root processor
+    // and then redistributed.
+    RebalanceConformalMesh(mesh);
   }
   return ratio;
 }
