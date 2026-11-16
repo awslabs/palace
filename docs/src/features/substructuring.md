@@ -69,45 +69,50 @@ interface and, in magnetostatics, at the surface currents and flux loops of the 
 the films of the flux loops whole and, if these elements reach a `"TwoSided"` film where it crosses
 the interface, the environment along every such crossing) and next to the films on the interface. An
 `"Online"` run on it (`"Model"/"Mesh"`, with the configuration otherwise unchanged) reads and
-partitions the region only. The environment is then that of the model, and the mesh must hold the
-environment elements written with it; the interface is found from the saved interface DOFs, and the
-nondimensionalization is that of the model. Every excitation with sources in the environment must be
-in the model, the fields are written in the region and on the interface only, and adaptive
-refinement needs the full mesh.
+partitions the region only. The environment is then that of the model, whatever the configuration
+says of it (on the full mesh, an environment that differs from that of the model is rejected), and
+the mesh must hold the environment elements written with it; the interface is found from the saved
+interface DOFs, and the nondimensionalization is that of the model. Every excitation with sources in
+the environment must be in the model, the fields are written in the region and on the interface
+only, and a priori and adaptive refinement need the full mesh (the mesh of the region is written
+refined).
 A redesign of the region is re-meshed inside the mesh of the region with
 [`examples/substructuring/remesh_region.py`](https://github.com/awslabs/palace/blob/main/examples/substructuring/remesh_region.py)
 and `--region-mesh` (see [Example: qubit lattice](@ref substructuring-lattice-example)).
 
 The remaining settings (terminals, materials, `"Solver"/"Order"`, ...) are those of the regular
-electrostatic or magnetostatic simulation. The capacitance and inductance matrices are written to
-the files of a regular simulation (`terminal-C.csv`, `terminal-M.csv`, and the others). The
-domain and surface postprocessing and the probes of a regular simulation are not computed, and a
-configuration that requests them is rejected: `config["Domains"]["Postprocessing"]`, and
-`"SurfaceFlux"`, `"Dielectric"` (in electrostatics) and `"FarField"` in
-`config["Boundaries"]["Postprocessing"]`. Field output follows `"Solver"/"Electrostatic"/"Save"`
-and `"Solver"/"Magnetostatic"/"Save"`, in the ParaView format only; the environment part of a saved
-field is recovered only when fields are written.
+electrostatic or magnetostatic simulation, except `"KSPType"`, `"Tol"` and `"MaxIts"` of
+`config["Solver"]["Linear"]`, which are not used; its `"Type"` only selects the sparse direct solver
+(see [Solvers](#Solvers)). The capacitance and inductance matrices are written to the files of a
+regular simulation (`terminal-C.csv`, `terminal-M.csv`, and the others). The domain and surface
+postprocessing and the probes of a regular simulation are not computed, and a configuration that
+requests them is rejected: `config["Domains"]["Postprocessing"]`, and `"SurfaceFlux"`,
+`"Dielectric"` (in electrostatics) and `"FarField"` in `config["Boundaries"]["Postprocessing"]`.
+Field output follows `"Solver"/"Electrostatic"/"Save"` and `"Solver"/"Magnetostatic"/"Save"`, in the
+ParaView format only; the environment part of a saved field is recovered only when fields are
+written.
 
 ### Choosing the region
 
 Most meshes do not come with a region/environment split. Any split into two sets of domain
-attributes works: the interface follows the element faces between them and need not be planar.
-The cost of the condensation grows with the number of interface degrees of freedom, so a region
-boundary in a coarsely meshed part of the domain (substrate or vacuum away from the metal) is
-cheaper than one that cuts through a finely meshed area. Its memory does too: ``\bm{S}_E`` is dense,
-and one process holds it whole (``|\Gamma|^2`` values, 7 GB at ``|\Gamma| = 30{,}000``) while the
-model is saved or read (and, with MUMPS, while the environment is condensed). That process also
-holds the whole mesh while it writes the mesh of the region. The
+attributes works: the interface follows the element faces between them and need not be planar. The
+cost of the condensation grows with the number of interface degrees of freedom, so a region boundary
+in a coarsely meshed part of the domain (substrate or vacuum away from the metal) is cheaper than
+one that cuts through a finely meshed area. Its memory does too: ``\bm{S}_E`` is dense, and one
+process holds it whole (``|\Gamma|^2`` values, 7 GB at ``|\Gamma| = 30{,}000``) while the
+environment is condensed (two copies with the STRUMPACK partial factorization) and while the model
+is saved or read. That process also holds the whole mesh while it writes the mesh of the region. The
 [transmon example](@ref substructuring-transmon-example) retags the elements of an existing mesh by
 the position of their centroids.
 
 ### Optional approximation
 
-`"FactorizationTol"` trades a controlled loss of accuracy for time: it is the relative
-tolerance of a block low-rank (BLR) approximation of the environment factorization, which
-reduces the time to condense the environment. It is used when *Palace* is built with MUMPS.
-The error in the extracted matrices follows the tolerance but is not bounded by it; `1e-12` is
-a conservative choice. The default, `0`, keeps the condensation exact.
+`"FactorizationTol"` trades a controlled loss of accuracy for time: it is the relative tolerance of
+a block low-rank (BLR) approximation of the environment factorization, which reduces the time to
+condense the environment. It is used only by the MUMPS partial factorization of the environment (see
+[Solvers](#Solvers)): not when `"Type"` names another solver, nor when a magnetostatic model is
+saved (*Palace* then warns). The error in the extracted matrices follows the tolerance but is not
+bounded by it; `1e-12` is a conservative choice. The default, `0`, keeps the condensation exact.
 
 ### Adaptive mesh refinement
 
@@ -228,11 +233,13 @@ python3 ../substructuring/remesh_region.py --model mesh/transmon_substructuring.
 palace transmon_substructuring_redesign.json  # reuses the saved model
 ```
 
-The script assumes a region made of two materials separated by a layout plane (substrate and
-vacuum) with planar features (metal and other boundaries) on that plane, and needs the `gmsh`
-and `numpy` Python packages. The online run on the redesigned mesh matches a full simulation
-on the same mesh. It differs from a simulation on the layout tool's own mesh of the new design
-only by the change of mesh, as any two meshes of the same geometry do.
+The script assumes a region made of two materials separated by a layout plane (substrate and vacuum)
+with planar features (metal and other boundaries) on that plane, and needs the `gmsh` and `numpy`
+Python packages. It reads Gmsh 2.2 meshes only, so it does not apply to a model condensed from a
+mesh saved by adaptive refinement (`"SaveAdaptMesh"` writes an MFEM mesh). The online run on the
+redesigned mesh matches a full simulation on the same mesh. It differs from a simulation on the
+layout tool's own mesh of the new design only by the change of mesh, as any two meshes of the same
+geometry do.
 
 ## [Example: qubit lattice](@id substructuring-lattice-example)
 

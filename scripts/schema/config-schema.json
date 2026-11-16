@@ -2948,6 +2948,7 @@
             "Attributes": {
               "type": "array",
               "items": { "type": "integer", "exclusiveMinimum": 0 },
+              "minItems": 1,
               "description": "Domain attributes defining the region of interest (redesigned/solved)."
             }
           }
@@ -2961,6 +2962,7 @@
             "Attributes": {
               "type": "array",
               "items": { "type": "integer", "exclusiveMinimum": 0 },
+              "minItems": 1,
               "description": "Domain attributes defining the environment (condensed to the interface)."
             }
           }
@@ -2972,13 +2974,13 @@
         },
         "SaveModel": {
           "type": "string",
-          "description": "Path of the environment model file written in \"Offline\" mode and read in \"Online\" mode."
+          "description": "Path of the environment model file written in \"Offline\" mode and read in \"Online\" mode. An \"Offline\" run on a conforming mesh also writes, and replaces, the mesh of the region next to it (`<stem>_region.mesh` for `<stem>.model`)."
         },
         "FactorizationTol": {
           "type": "number",
           "minimum": 0,
           "default": 0,
-          "description": "Relative tolerance for a block low-rank (BLR) approximation of the environment factorization, trading a controlled accuracy loss for a faster factorization; 0 is exact. Only used when Palace is built with MUMPS."
+          "description": "Relative tolerance for a block low-rank (BLR) approximation of the environment factorization, trading a controlled accuracy loss for a faster factorization; 0 is exact. Only used by the MUMPS partial factorization of the environment: not when \"Solver\"/\"Linear\"/\"Type\" names another solver, nor when a magnetostatic model is saved."
         }
       }
     },
