@@ -972,6 +972,12 @@ of all configured metal boundary conditions. This removes points introduced only
 change in boundary attribute, such as a ground plane continuing into a bump bond. It
 also removes endpoints on exterior simulation-domain truncations.
 
+A target interface must border metal: an entry (typically `SA`) whose surfaces have no metal
+edge of their own, such as the walls of a cavity or an extruded vacuum region, cannot be
+corrected, and Palace stops with "No physical metal perimeter was found for automatically
+extracted interface <i>!". Leave such an entry out of `TargetInterfaces`; it is still
+postprocessed, uncorrected, like every other `Dielectric` entry.
+
 `PatchConstruction` selects how the three-dimensional patches are built from the automatic
 classification: `Features` (the default) consumes the geometry identification's feature list
 (`Identification.Features` of the preflight manifest): every feature matched by signature
@@ -1283,7 +1289,7 @@ matrices:
   "Fabrication": {
     "InterfaceLayers": {
       "SA": {"Thickness": 0.002, "Permittivity": 4.0},
-      "MS": {"Thickness": 0.002, "Permittivity": 11.47},
+      "MS": {"Thickness": 0.002, "Permittivity": 11.45},
       "MA": {"Thickness": 0.002, "Permittivity": 10.0}
     }
   }
@@ -1297,6 +1303,20 @@ the same type, thickness, and relative permittivity. A mismatch is fatal because
 surface-response matrices already include both layer properties. Version-1 and
 version-2 libraries remain usable, but Palace warns that their interface properties
 cannot be verified when they omit this metadata.
+
+The numbers above are one process's: copy the values from the `Fabrication` block of the
+library you use, never from this page (a device configuration written for silicon at 11.47
+does not match a library whose process uses 11.45 for its `MS` layer and its substrate).
+Before it corrects anything, Palace compares a device configuration with the library as
+follows:
+
+| In the device configuration | In the library | On a mismatch |
+|:--- |:--- |:--- |
+| `Thickness` of every target `Boundaries.Postprocessing.Dielectric` entry (mesh units) | `Fabrication.InterfaceLayers.<Type>.Thickness` | error: the run stops |
+| `Permittivity` of every target `Dielectric` entry | `Fabrication.InterfaceLayers.<Type>.Permittivity` | error: the run stops; the message names the library value and the entry to change |
+| the largest `EdgeDistances` value of every target entry (mesh units) | `MatchingRadius` | error: the run stops |
+| the boundary law of the metal (`PEC`, `Impedance` with its `Rs` / `Ls` / `Cs`, ...) | each model's `BoundaryCondition` | no error: the features have no model (Missing, uncorrected); the warning names the law when the library holds the same geometry under another law |
+| `Domains.Materials` `Permittivity` of the domains next to the corrected metal | `Fabrication.SubstratePermittivity` (and 1 for vacuum) | a warning only: the library's coupons were computed with the library's substrate |
 
 `OpenContourPaths` is required when conductor cuts interrupt the free matching contour.
 Each one-based `Indices` list orders a disjoint subset of `BasisPoints` from
@@ -1918,11 +1938,18 @@ excitation, the bulk of `palace.json` on a full chip) out of `palace.json` into
 `<Output>/<name>/surface-response-conductor-consistency-records.json`, a JSON document with
 the array at the same key path and in the same text; `palace.json` then lacks only that
 member (`TestedPatches`, the record count, and the gate's summary stay). The preflight's
-patch list stays beside its manifest. `Diagnostics.Directory` names a sub-directory of
+patch list stays beside its manifest. How large `palace.json` gets: on a full design the
+conductor-consistency `Records` are nearly all of it (measured on one corrected eigenmode
+run of a full chip at element order 4: 362.7 of 363.4 MB, 99.8 %, were
+`SurfaceResponse.Diagnostics.ConductorConsistency.Records`); a service that stores
+`palace.json` as run metadata may refuse a file that large. `"Diagnostics": {"Directory":
+"records", "ConductorConsistencyRecords": "Directory"}` moves that array into
+`<Output>/records/surface-response-conductor-consistency-records.json` and leaves the rest
+of `palace.json` as it was; both keys are off by default. `Diagnostics.Directory` names a sub-directory of
 `Problem.Output`; it is not `Solver.Electrostatic.ResponseArchive.Directory`, which is the
 path of the field archive (relative to the working directory of the process).
 
-Two placement rules of the corner class (decision 394; `SURFACE-RESPONSE-IDENTIFICATION.md`
+Two placement rules of the corner class (`SURFACE-RESPONSE-IDENTIFICATION.md`
 section (e)): at a matched corner whose arms are not perpendicular, the second arm's
 straight cells begin where that arm exits the corner coupon's matching square, at
 `R / max(|cos t|, |sin t|)` from the vertex (t the corner angle) instead of `R` — that
@@ -2152,6 +2179,13 @@ python3 examples/cpw2d/discover_surface_response_requirements.py config.json \
   --palace build/bin/palace
 ```
 
+The two helper scripts (this one and the coupon planner below) need Python 3.11 or newer and
+the packages of `examples/cpw2d/requirements.txt` (`numpy`, `scipy`, `meshio`); a system
+Python without them fails at the first import. A private environment is enough, for
+example `python3.11 -m venv .venv && .venv/bin/pip install -r examples/cpw2d/requirements.txt`,
+then run the helpers with `.venv/bin/python`. The coupon builds of `--execute` also need
+Julia with Gmsh for the coupon meshes.
+
 The helper adds in-memory/on-disk virtual model descriptors and repeats only the cheap
 geometry preflight until the canonical partition is stable. It performs no coupon mesh or
 field solve. The virtual descriptor of a missing `SpatialEdgeCluster` requirement that
@@ -2177,6 +2211,11 @@ python3 examples/cpw2d/prepare_surface_response_coupons.py \
   --palace build/bin/palace \
   --orders 2 3
 ```
+
+With `--execute` the coupon meshing and the coupon Palace solves run on the machine where
+the command is started (a workstation build, through the `--palace` binary given); no
+cluster form of this build is documented yet. Without `--execute` the planner only writes
+the work plan, including the reason for every coupon it cannot build.
 
 The generated library is written under `library/process-library.json`. Coupon FEM order
 is independent of device FEM order: qualify candidate orders with `--probe-study-only`,
