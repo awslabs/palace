@@ -411,33 +411,11 @@ TEST_CASE("LumpedPort_BasicTests_1ElementPort_Cube321", "[lumped_port][Serial][P
   // Scale factor between element wave impedance and port impedance: (W / L) * n_elems
   CHECK_THAT(port_1.GetToSquare(*el_ptr), WithinRel(1.0));
 
-  // Validate against mesh properties at the attribute level.
-  // TODO: Factor this out as a separate test for geometries of boundaries.
-  // TODO: Need test for non-axis aligned port.
-  {
-    CHECK(el_ptr->GetAttrList().Size() == 1);
-    auto el_attr = el_ptr->GetAttrList()[0];
-    auto bbox = mesh::GetBoundingBox(mesh, el_attr, true);
-
-    CHECK(bbox.planar);
-    CHECK_THAT(bbox.Area(), WithinRel(length_dx_m * length_dx_m));
-    CHECK(bbox.Volume() == 0.0);
-
-    // Can do exact equals below as axis alignment of port means that there should be
-    // strictly no double rounding.
-
-    auto bbox_lengths = bbox.Lengths();
-    CHECK(bbox_lengths.Size() == 3);
-    CHECK(bbox_lengths(0) == length_dx_m);
-    CHECK(bbox_lengths(1) == length_dx_m);
-    CHECK(bbox_lengths(2) == 0.0);
-  }
-
   mfem::Array<int> attr_marker_loc;
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   mesh::AttrToMarker(bdr_attr_max, el_ptr->GetAttrList(), attr_marker_loc);
 
-  // Geometry Tests: not via point-cloud construction as for bbox above
+  // Geometry tests at the attribute level.
   CHECK_THAT(mesh::GetSurfaceArea(mesh, attr_marker_loc),
              WithinRel(length_dx_m * length_dx_m));
 

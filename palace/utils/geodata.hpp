@@ -174,43 +174,13 @@ struct BoundingBox
   // Return the spatial dimension (number of axes).
   int Dim() const { return axes.Width(); }
 
-  // Compute the area of the bounding box spanned by the first two normals.
-  double Area() const;
-
-  // Compute the volume of the 3D bounding box. Returns zero if planar or 2D.
-  double Volume() const;
-
-  // Compute the normalized axes of the bounding box, returned as columns of a dense
-  // matrix.
-  mfem::DenseMatrix Normals() const;
-
   // Compute the lengths along each axis.
   mfem::Vector Lengths() const;
-
-  // Compute the deviations in degrees of a vector from each of the axis directions. Angles
-  // are returned in the interval [0, 180].
-  mfem::Vector Deviations(const mfem::Vector &direction) const;
 };
 
-// Helper functions for computing bounding boxes from a mesh and markers. These do not need
-// to be axis-aligned. The box always contains the sampled point cloud, but its axes come
-// from a few extremal points: it is the minimum oriented bounding box only for points whose
-// convex hull is a rectangle or rectangular prism.
-BoundingBox GetBoundingBox(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
-                           bool bdr);
-
-inline BoundingBox GetBoundingBox(const mfem::ParMesh &mesh, int attr, bool bdr)
-{
-  mfem::Array<int> marker(bdr ? mesh.bdr_attributes.Max() : mesh.attributes.Max());
-  marker = 0;
-  marker[attr - 1] = 1;
-  return GetBoundingBox(mesh, marker, bdr);
-}
-
 // Given a mesh and a marker, compute the bounding circle/sphere of the marked elements. In
-// this case the normals of the bounding box object are arbitrary, and the Area and Volume
-// members should not be used, but the Lengths function returns the ball diameter. This
-// function implements Welzl's algorithm.
+// this case the axes of the bounding box object are arbitrary, but the Lengths function
+// returns the ball diameter. This function implements Welzl's algorithm.
 BoundingBox GetBoundingBall(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
                             bool bdr);
 

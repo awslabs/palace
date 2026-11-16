@@ -8,7 +8,6 @@
 #include <array>
 #include <limits>
 #include <map>
-#include <numbers>
 #include <numeric>
 #include <queue>
 #include <set>
@@ -33,9 +32,6 @@
 
 namespace palace
 {
-
-using Vector3dMap = Eigen::Map<Eigen::Vector3d>;
-using CVector3dMap = Eigen::Map<const Eigen::Vector3d>;
 
 namespace
 {
@@ -1214,45 +1210,6 @@ void GetAxisAlignedBoundingBox(const mfem::ParMesh &mesh, const mfem::Array<int>
   Mpi::GlobalMax(dim, max.HostReadWrite(), mesh.GetComm());
 }
 
-double BoundingBox::Area() const
-{
-  const int dim = Dim();
-  if (dim == 3)
-  {
-    return 4.0 *
-           CVector3dMap(axes.GetColumn(0)).cross(CVector3dMap(axes.GetColumn(1))).norm();
-  }
-  // 2D: area of the parallelogram spanned by the two axis vectors (2D cross product).
-  const double *a0 = axes.GetColumn(0);
-  const double *a1 = axes.GetColumn(1);
-  return 4.0 * std::abs(a0[0] * a1[1] - a0[1] * a1[0]);
-}
-
-double BoundingBox::Volume() const
-{
-  if (Dim() < 3 || planar)
-  {
-    return 0.0;
-  }
-  return 2.0 * CVector3dMap(axes.GetColumn(2)).norm() * Area();
-}
-
-mfem::DenseMatrix BoundingBox::Normals() const
-{
-  const int dim = Dim();
-  mfem::DenseMatrix normals(axes);
-  for (int i = 0; i < dim; i++)
-  {
-    mfem::Vector col(normals.GetColumn(i), normals.Height());
-    double nrm = col.Norml2();
-    if (nrm > 0.0)
-    {
-      col /= nrm;
-    }
-  }
-  return normals;
-}
-
 mfem::Vector BoundingBox::Lengths() const
 {
   const int dim = Dim();
@@ -1269,31 +1226,6 @@ mfem::Vector BoundingBox::Lengths() const
     lengths(i) = 2.0 * std::sqrt(nrm);
   }
   return lengths;
-}
-
-mfem::Vector BoundingBox::Deviations(const mfem::Vector &direction) const
-{
-  const int dim = Dim();
-  const int h = axes.Height();
-  MFEM_VERIFY(direction.Size() == dim,
-              "Direction vector size must match bounding box dimension!");
-  double dir_norm = direction.Norml2();
-  mfem::Vector deviation_deg(dim);
-  for (int i = 0; i < dim; i++)
-  {
-    const double *col = axes.GetColumn(i);
-    double ax_norm = 0.0, dot = 0.0;
-    for (int j = 0; j < h; j++)
-    {
-      ax_norm += col[j] * col[j];
-      dot += direction(j) * col[j];
-    }
-    ax_norm = std::sqrt(ax_norm);
-    double cosine = (dir_norm > 0.0 && ax_norm > 0.0) ? dot / (dir_norm * ax_norm) : 0.0;
-    deviation_deg(i) =
-        std::acos(std::min(1.0, std::abs(cosine))) * (180.0 / std::numbers::pi);
-  }
-  return deviation_deg;
 }
 
 namespace
@@ -1325,16 +1257,6 @@ void TrimBoundingBox(BoundingBox &box, int sdim)
 }
 
 }  // namespace
-
-BoundingBox GetBoundingBox(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
-                           bool bdr)
-{
-  std::vector<Eigen::Vector3d> vertices;
-  int dominant_rank = CollectPointCloudOnRoot(mesh, marker, bdr, vertices);
-  auto box = BoundingBoxFromPointCloud(mesh.GetComm(), vertices, dominant_rank);
-  TrimBoundingBox(box, mesh.SpaceDimension());
-  return box;
-}
 
 BoundingBox GetBoundingBall(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
                             bool bdr)
