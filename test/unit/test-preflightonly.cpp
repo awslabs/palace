@@ -64,11 +64,10 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   CHECK(SurfaceResponsePreflightKey(IoData(maxwell_false, false)).empty());
 
   // The key in the block another problem type reads is ignored like every key of an unused
-  // block.
-  json electrostatic_other = electrostatic;
-  electrostatic_other["Solver"]["SurfaceResponseCorrection"] =
-      maxwell_key["Solver"]["SurfaceResponseCorrection"];
-  CHECK(SurfaceResponsePreflightKey(IoData(electrostatic_other, false)).empty());
+  // block (an electrostatic problem refuses the Maxwell block itself).
+  json maxwell_other = maxwell;
+  maxwell_other["Solver"]["Electrostatic"] = electrostatic_key["Solver"]["Electrostatic"];
+  CHECK(SurfaceResponsePreflightKey(IoData(maxwell_other, false)).empty());
 
   json invalid = electrostatic;
   invalid["Solver"]["Electrostatic"]["ResponseCorrection"]["PreflightOnly"] = "Yes";
@@ -108,12 +107,21 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   const fs::path with = temp.temp_dir / "preflight-with-key";
   Preflight(false, without);
   Preflight(true, with);
-  for (const char *name :
-       {"surface-response-requirements.json", "surface-response-patches.csv"})
+  // The patch dry run byte for byte; the manifest equal but for its one run-metadata leaf
+  // (the containment test's wall time).
+  REQUIRE(fs::is_regular_file(without / "surface-response-patches.csv"));
+  CHECK(ReadBytes(without / "surface-response-patches.csv") ==
+        ReadBytes(with / "surface-response-patches.csv"));
+  auto Manifest = [](const fs::path &dir)
   {
-    INFO(name);
-    REQUIRE(fs::is_regular_file(without / name));
-    CHECK(ReadBytes(without / name) == ReadBytes(with / name));
-  }
+    json manifest = json::parse(ReadBytes(dir / "surface-response-requirements.json"));
+    auto &diagnostics = manifest["Identification"]["Diagnostics"];
+    if (diagnostics.contains("DomainBoundaryExclusions"))
+    {
+      diagnostics["DomainBoundaryExclusions"].erase("WallTime");
+    }
+    return manifest;
+  };
+  CHECK(Manifest(without) == Manifest(with));
 #endif
 }
