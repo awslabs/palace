@@ -83,9 +83,13 @@ private:
   // approximation A = Ar + Ai.
   bool complex_matrix = true;
 
-  // Whether SetOperator assembled the real-valued block form of a complex-valued system
-  // matrix, of twice the size of the vectors, for the solver.
+  // Whether the solver is applied to the real-valued block form of a complex-valued system
+  // matrix, of twice the size of the vectors: assembled by SetOperator, or by the caller.
   bool block_form = false;
+
+  // Whether the real part of the next operator given to SetOperator is the block form,
+  // assembled by the caller.
+  bool caller_block_form = false;
 
   // Whether to drop small entries (< ε) in the sparse system matrix.
   bool drop_small_entries = true;
@@ -121,6 +125,10 @@ public:
   // Configure whether or not to use the exact complex-valued system matrix
   // or the real-valued approximation.
   void SetComplexMatrix(bool use_complex) { complex_matrix = use_complex; }
+
+  // Configure whether the operator given to SetOperator is the real-valued block form
+  // [Ar, Ai; Ai, -Ar] of a complex-valued matrix, assembled by the caller as its real part.
+  void SetCallerBlockForm(bool block) { caller_block_form = block; }
 
   void SetInitialGuess(bool guess) override
   {

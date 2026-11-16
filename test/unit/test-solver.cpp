@@ -80,11 +80,12 @@ TEST_CASE("MfemWrapperSolver applies a complex system alike on all processes",
              A_block = RootIdentity(comm, 2 * N);
 
   // The calls of this process to the solver for one application to a vector.
-  auto Apply = [n_loc](const ComplexOperator &A, bool complex_matrix)
+  auto Apply = [n_loc](const ComplexOperator &A, bool complex_matrix, bool caller = false)
   {
     auto counting = std::make_unique<CountingSolver>();
     const auto *counts = counting.get();
     MfemWrapperSolver<ComplexOperator> solver(std::move(counting), true, complex_matrix);
+    solver.SetCallerBlockForm(caller);
     solver.SetOperator(A);
     ComplexVector x(n_loc), y(n_loc);
     x = 1.0;
@@ -104,14 +105,9 @@ TEST_CASE("MfemWrapperSolver applies a complex system alike on all processes",
   CHECK(OnAllProcesses(Apply(A, true), {1, 0}));
   CHECK(OnAllProcesses(Apply(A, false), {0, 1}));
 
-  // A block form assembled by the caller, as the real part of the operator: a process with
-  // unknowns applies the solver to the stacked vector.
+  // A block form assembled by the caller, as the real part of the operator.
   const ComplexWrapperOperator A_caller(A_block.get(), nullptr);
-  const auto calls = Apply(A_caller, true);
-  if (Mpi::Root(comm))
-  {
-    CHECK(calls == std::array<int, 2>{1, 0});
-  }
+  CHECK(OnAllProcesses(Apply(A_caller, false, true), {1, 0}));
 }
 
 }  // namespace palace
