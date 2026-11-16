@@ -270,6 +270,13 @@ list(APPEND STRUMPACK_OPTIONS
 #   )
 # endif()
 
+# PBLAS block size of the distributed fronts: 128 instead of the STRUMPACK default of 32
+# gives faster factorizations and solves (only without SLATE, whose default is 512). Needs
+# the patch for https://github.com/pghysels/STRUMPACK/pull/169 below
+list(APPEND STRUMPACK_OPTIONS
+  "-DSTRUMPACK_PBLAS_BLOCKSIZE=128"
+)
+
 string(REPLACE ";" "; " STRUMPACK_OPTIONS_PRINT "${STRUMPACK_OPTIONS}")
 message(STATUS "STRUMPACK_OPTIONS: ${STRUMPACK_OPTIONS_PRINT}")
 
@@ -302,6 +309,12 @@ download_patch(STRUMPACK_PATCH_FILES "${CMAKE_BINARY_DIR}/extern/STRUMPACK-patch
   strumpack_pr165.diff
   "https://raw.githubusercontent.com/awslabs/palace/0bbc11478dd7faa1a5f89b4f52d34c1205273e1f/extern/patch/STRUMPACK/strumpack_pr165.diff"
   b5032afa23be7511413e4532c85799e2f89d7ed1a379dde23537f8aa5a116294
+)
+# Allow setting the PBLAS block size with CMake, and use the triangular solves of PR 165
+# only for the block sizes they handle (https://github.com/pghysels/STRUMPACK/pull/169),
+# without its change to a test added after STRUMPACK 8.1.0
+list(APPEND STRUMPACK_PATCH_FILES
+  "${CMAKE_SOURCE_DIR}/extern/patch/STRUMPACK/strumpack_pr169.diff"
 )
 
 include(ExternalProject)

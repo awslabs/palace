@@ -60,6 +60,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Performance Improvements
 
+  - STRUMPACK is now built with a PBLAS block size of 128 instead of 32, which lowers the
+    time of the STRUMPACK coarse solver by 4-17% and its memory. The STRUMPACK patch for
+    [pghysels/STRUMPACK#169](https://github.com/pghysels/STRUMPACK/pull/169), which allows
+    setting the block size, also uses the narrow triangular solves of
+    [pghysels/STRUMPACK#165](https://github.com/pghysels/STRUMPACK/pull/165) only for the
+    block sizes they handle. [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
   - Used two levels of aggressive coarsening in the BoomerAMG coarse solver of the
     multigrid preconditioner of the divergence-free projection, instead of one. Its
     V-cycle is latency bound at high process counts, and the shorter hierarchy makes it
