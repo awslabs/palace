@@ -456,7 +456,8 @@ PMLData::PMLData(const json &pml, bool extruded)
     MFEM_VERIFY(ex.layers > 0, "\"PML.Layers\" must be positive!");
     if (auto it = pml.find("Center"); it != pml.end())
     {
-      // A point [x, y, z], or the segment [[x1, y1, z1], [x2, y2, z2]] between two points.
+      // A point [x, y, z], or the two corners [[x1, y1, z1], [x2, y2, z2]] of an
+      // axis-aligned box, kept as its lower and upper corners.
       auto IsPoint = [](const json &x)
       {
         return x.is_array() && x.size() == 3 &&
@@ -465,20 +466,34 @@ PMLData::PMLData(const json &pml, bool extruded)
       const bool point = IsPoint(*it);
       MFEM_VERIFY(point || (it->is_array() && it->size() == 2 && IsPoint((*it)[0]) &&
                             IsPoint((*it)[1])),
-                  "\"PML.Center\" must be a point [x, y, z] or a segment [[x1, y1, z1], "
-                  "[x2, y2, z2]]!");
+                  "\"PML.Center\" must be a point [x, y, z] or the two corners [[x1, y1, "
+                  "z1], [x2, y2, z2]] of a box!");
       if (point)
       {
         ex.center[0] = ex.center[1] = it->get<std::array<double, 3>>();
       }
       else
       {
-        ex.center = it->get<std::array<std::array<double, 3>, 2>>();
-        MFEM_VERIFY(ex.center[0] != ex.center[1],
-                    "\"PML.Center\" is a segment between two equal points, give the point "
-                    "[x, y, z] instead!");
+        const auto corners = it->get<std::array<std::array<double, 3>, 2>>();
+        MFEM_VERIFY(corners[0] != corners[1],
+                    "\"PML.Center\" is a box with two equal corners, give the point [x, y, "
+                    "z] instead!");
+        for (int c = 0; c < 3; c++)
+        {
+          ex.center[0][c] = std::min(corners[0][c], corners[1][c]);
+          ex.center[1][c] = std::max(corners[0][c], corners[1][c]);
+        }
       }
       ex.has_center = true;
+    }
+    if (auto it = pml.find("Extrusion"); it != pml.end())
+    {
+      MFEM_VERIFY(it->is_string() && (*it == "Normal" || *it == "Radial"),
+                  "\"PML.Extrusion\" must be \"Normal\" or \"Radial\"!");
+      ex.type = (*it == "Normal") ? Extrusion::Type::NORMAL : Extrusion::Type::RADIAL;
+      MFEM_VERIFY(ex.type != Extrusion::Type::NORMAL || !ex.has_center,
+                  "\"PML.Center\" is only used for the radial extrusion, not with "
+                  "\"Extrusion\": \"Normal\"!");
     }
     ex.back_attribute = pml.value("BackAttribute", ex.back_attribute);
     MFEM_VERIFY(!pml.contains("BackAttribute") || ex.back_attribute > 0,
@@ -2225,6 +2240,15 @@ void Nondimensionalize(const Units &units, PMLData &data)
   }
   data.extrusion.thickness /= units.GetMeshLengthRelativeScale();
   for (auto &x : data.extrusion.center)
+  {
+    for (auto &c : x)
+    {
+      c /= units.GetMeshLengthRelativeScale();
+    }
+  }
+  data.extrusion.distance /= units.GetMeshLengthRelativeScale();
+  data.extrusion.plane[3] /= units.GetMeshLengthRelativeScale();
+  for (auto &x : data.extrusion.box)
   {
     for (auto &c : x)
     {

@@ -238,8 +238,13 @@
           "description": "Farfield absorbing (scattering) boundary conditions. These are artificial boundary conditions applied at farfield boundaries to minimize reflections."
         },
         "PML": {
-          "$ref": "#/$defs/BoundaryPML",
-          "title": "Extruded Perfectly Matched Layer"
+          "type": "array",
+          "title": "Extruded Perfectly Matched Layer",
+          "description": "Array of entries of the perfectly matched layer (PML) extruded from farfield boundaries, for 3D frequency domain driven and eigenmode simulations, instead of meshing the PML regions of `config[\"Domains\"][\"PML\"]`. The surface of each entry is split into parts, and each part becomes one PML block.",
+          "additionalItems": false,
+          "items": {
+            "$ref": "#/$defs/BoundaryPML"
+          }
         },
         "Conductivity": {
           "type": "array",
@@ -1157,9 +1162,9 @@
         }
       ]
     },
-    "PointOrSegment": {
-      "title": "Point or Segment",
-      "description": "A point `[x, y, z]`, or the segment `[[x1, y1, z1], [x2, y2, z2]]` between two points.",
+    "PointOrBox": {
+      "title": "Point or Box",
+      "description": "A point `[x, y, z]`, or the two corners `[[x1, y1, z1], [x2, y2, z2]]` of an axis-aligned box.",
       "oneOf": [
         {
           "$ref": "#/$defs/Vector3",
@@ -1401,7 +1406,7 @@
     "BoundaryPML": {
       "type": "object",
       "title": "Extruded Perfectly Matched Layer",
-      "description": "Perfectly matched layer (PML) extruded from farfield boundaries, for 3D frequency domain driven and eigenmode simulations, instead of meshing the PML regions of `config[\"Domains\"][\"PML\"]`. The geometry nodes of each face of the boundaries move along their rays from their closest points on a core, the center of the bounding box of the boundaries or the point or segment `\"Center\"`, so that each triangle becomes a column of `\"Layers\"` prisms and each quadrilateral one of hexahedra, curved on curved meshes. Each extruded element takes the material of the element below it, so that materials which reach the boundaries continue through the layer. The coordinates are stretched along the rays, with the same parameters as `config[\"Domains\"][\"PML\"]` at the depth into the layer. The boundaries become interior boundaries, whose attributes can still be used for postprocessing, the other boundaries through their edges extend through the layer with their attributes, and the outer surface of the layer is PEC by default. Every face of the boundaries must face its closest point on the core, and ports, periodic, and Floquet boundaries must not touch them. Cannot be combined with parallel uniform refinement (`\"UniformLevels\"`) or adaptive mesh refinement (`\"MaxIts\"`) anywhere in the mesh, since they would refine the layer: `\"SerialUniformLevels\"` and the refinement `\"Boxes\"` and `\"Spheres\"` are applied before the extrusion.",
+      "description": "Entry of the perfectly matched layer (PML) extruded from farfield boundaries. The parts of the surface are its connected parts, and two parts, of one entry or of two, must not touch. A flat part is extruded along its outward normal, and any other part radially from a core, the point or box `\"Center\"` or by default the center of the bounding box of the part, so that each triangle becomes a column of `\"Layers\"` prisms and each quadrilateral one of hexahedra, curved on curved meshes, and the layer has the same thickness everywhere. A box (whose faces are all flat, normal to the coordinate axes, and on the sides of its bounding box) is extruded per component into its bounding box grown by the thickness on its sides with a face, as the Cartesian PML of `config[\"Domains\"][\"PML\"]`, and the core must lie on its sides without a face, where the layer ends flush. Any other part extruded radially must be at a constant distance from the core (a sphere around its centre, or the wall of a cylinder around its axis). Each extruded element takes the material of the element below it, so that materials which reach the boundaries continue through the layer. The coordinates are stretched with the same parameters as `config[\"Domains\"][\"PML\"]` at the depth into the layer. The boundaries become interior boundaries, whose attributes can still be used for postprocessing, the other boundaries through their edges extend through the layer with their attributes, and the outer surface of the layer is PEC by default. Every face of the boundaries must face its direction, ports and Floquet boundaries must not touch them, and periodic boundaries may only cross parts extruded along their normal. Adaptive mesh refinement must be nonconformal.",
       "additionalProperties": false,
       "required": [
         "Attributes",
@@ -1414,7 +1419,7 @@
         },
         "Thickness": {
           "type": "number",
-          "description": "Thickness of the layer along the rays, in mesh length units.",
+          "description": "Thickness of the layer along the normal or the rays, in mesh length units.",
           "exclusiveMinimum": 0
         },
         "Layers": {
@@ -1424,14 +1429,23 @@
           "default": 4
         },
         "Center": {
-          "$ref": "#/$defs/PointOrSegment",
+          "$ref": "#/$defs/PointOrBox",
           "title": "Center",
-          "description": "Core of the rays of the extrusion, which start from the closest point of each point of the boundaries on it, in mesh length units: a point `[x, y, z]`, or the segment `[[x1, y1, z1], [x2, y2, z2]]` between two different points. Defaults to the center of the bounding box of the boundaries. For a layered medium which reaches the boundaries, such as a substrate, a segment normal to the layers which spans all of the layers reaching the boundaries keeps each layer in its plane through the PML.",
+          "description": "Core of the radial extrusion, in mesh length units: a point `[x, y, z]`, or the two corners `[[x1, y1, z1], [x2, y2, z2]]` of an axis-aligned box, which is a rectangle or a segment where the corners share coordinates. Each node moves away from its closest point on the core. Defaults to the center of the bounding box of each part, moved onto the open sides of a box. Only shapes the parts which are not flat, and one of them must use it; not used with `\"Extrusion\": \"Normal\"`. A box just inside of a box-shaped boundary gives straight columns over it, with the fans of its edges and corners in the columns next to them, which is less accurate unless the mesh is refined along the edges, and for a layered medium or a boundary which crosses a box-shaped boundary, such as a substrate or a trace, a core which spans it, as a segment through the layers, keeps it flat through the PML.",
+          "x-palace-advanced": true
+        },
+        "Extrusion": {
+          "type": "string",
+          "description": "`\"Normal\"` is for separate flat faces, such as the two ends of a pipe: it extrudes each flat patch of the surface (its connected, coplanar faces) along its own outward normal, as a part, and rejects curved faces and patches which touch. Without it, a flat part is extruded along its normal too, and a connected surface of several flat patches, such as a cube, is one part. `\"Radial\"` extrudes each connected part along rays, as without it, and rejects a flat part, which is extruded along its normal.",
+          "enum": [
+            "Normal",
+            "Radial"
+          ],
           "x-palace-advanced": true
         },
         "BackAttribute": {
           "type": "integer",
-          "description": "Boundary attribute of the outer surface of the layer, which is PEC unless another boundary condition is given for it. Defaults to one more than the largest boundary attribute of the mesh.",
+          "description": "Boundary attribute of the outer surface of the layer, which is PEC unless another boundary condition is given for it. Defaults to one more than the largest boundary attribute of the mesh, of the configuration, and of the other back attributes.",
           "exclusiveMinimum": 0,
           "x-palace-advanced": true
         },

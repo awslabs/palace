@@ -500,12 +500,14 @@ constexpr auto force_default_solver = palace::test::SolverOverridePolicy::ForceD
 // (phase isn't reproducible). NaN entries (evanescent modes) count as matches. By default
 // the dB values are compared and signals below -200 dB (negligible) count as matches; with
 // linear, the magnitudes |S| = 10^(dB/20) are compared within atol + rtol |S|, which gives
-// adaptive sweeps an absolute tolerance near 0 dB. These fixtures are lossless and include
-// all propagating channels; include the sibling lumped/wave CSV in power closure.
-palace::test::CustomCheck TestFloquetSParams(double rtol, double atol, bool linear = false)
+// adaptive sweeps an absolute tolerance near 0 dB. Unless lossless is false (a fixture
+// with an absorbing PML), these fixtures are lossless and include all propagating channels,
+// and their powers sum to one; include the sibling lumped/wave CSV in power closure.
+palace::test::CustomCheck TestFloquetSParams(double rtol, double atol, bool linear = false,
+                                             bool lossless = true)
 {
-  return [rtol, atol, linear](palace::Table &actual, palace::Table &reference,
-                              const std::filesystem::path &path)
+  return [rtol, atol, linear, lossless](palace::Table &actual, palace::Table &reference,
+                                        const std::filesystem::path &path)
   {
     const std::size_t n_cols = std::min(actual.n_cols(), reference.n_cols());
     const std::size_t n_rows = std::min(actual.n_rows(), reference.n_rows());
@@ -539,6 +541,10 @@ palace::test::CustomCheck TestFloquetSParams(double rtol, double atol, bool line
       }
     }
 
+    if (!lossless)
+    {
+      return;
+    }
     std::unique_ptr<palace::TableWithCSVFile> other_ports;
     const auto other_path = path.parent_path() / "port-S.csv";
     if (std::filesystem::is_regular_file(other_path))
@@ -2822,6 +2828,24 @@ TEST_CASE("dielectric_grating_uniform", "[Serial][Parallel][GPU][Regression]")
                                   "uniform", opts);
 }
 
+// The cell of dielectric_grating_uniform with a PML extruded along the normal of its top
+// (1 cm in 4 layers, with the periodic boundaries through the layer) in place of the second
+// Floquet port. The specular reflection is that of the second Floquet port to 0.07 dB, and
+// that of a meshed slab of the same elements to 1e-9 dB.
+TEST_CASE("dielectric_grating_pml", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-3;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum"};
+  opts.skip_rowcount = true;
+  opts.paraview_fields = false;
+  opts.custom_checks["port-floquet-S.csv"] =
+      TestFloquetSParams(opts.rtol, opts.atol, false, /*lossless=*/false);
+  palace::test::RunRegressionCase("dielectric_grating", "dielectric_grating_pml.json",
+                                  "pml", opts);
+}
+
 // Adaptive (PROM) counterpart of dielectric_grating_uniform, which assembles the Floquet
 // DtN correction at every greedy sample. As in the other adaptive cases, the outputs other
 // than the S-parameters are structural smoke checks.
@@ -2899,12 +2923,14 @@ TEST_CASE("pml_waveguide", "[Serial][Parallel][GPU][Regression]")
   RunPMLDrivenCase("pml_waveguide", "waveguide_pml", "port-S.csv", -55.0);
 }
 
-// The same waveguide terminated by a PML extruded from its end (z = 0.4, beyond the meshed
-// layer, which is part of the guide), with the lateral PEC walls extending through the
-// layer. |S11| (-59 dB) is that of the meshed layer to within 5 dB.
-TEST_CASE("pml_waveguide_extruded", "[Serial][Parallel][GPU][Regression]")
+// The guide of waveguide_absorbing terminated by a PML extruded along the normal of its end
+// (10 mm in 4 layers), in place of the absorbing boundary, with the PEC walls extending
+// through the layer. |S11| is -58 to -84 dB from 8 to 14 GHz, against -13 to -43 dB for
+// the second-order absorbing boundary, and the same as for the meshed slab of the same
+// elements.
+TEST_CASE("waveguide_absorbing_pml", "[Serial][Parallel][GPU][Regression]")
 {
-  RunPMLDrivenCase("pml_waveguide", "waveguide_pml_extruded", "port-S.csv", -55.0);
+  RunPMLDrivenCase("waveguide_absorbing", "waveguide_absorbing_pml", "port-S.csv", -55.0);
 }
 
 // E-plane bifurcation with arms of different lengths, each terminated by its own block of

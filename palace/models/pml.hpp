@@ -46,9 +46,9 @@ namespace pml
 // side if f % 2 == 1. All quantities are nondimensional.
 //
 // Alternatively, the PML regions of a block are extruded from a boundary of the mesh (see
-// mesh::ExtrudePML), and the stretch is along the rays of the extrusion from the closest
-// points on a core segment, with the profile of face 0, at the depth of each point into
-// the layer: the Jacobian J̃ of the stretch replaces S in the tensors (see
+// mesh::ExtrudePML), and the stretch is along the direction of the extrusion, with the
+// profile of face 0, at the depth of each point into the layer, a closed form of its
+// position: the Jacobian J̃ of the stretch replaces S in the tensors (see
 // fem/qfunctions/coeff/pml_qf.h).
 //
 
@@ -62,13 +62,16 @@ struct LayerGeometry
 
 // The coordinate stretch of the PML. element_size is the size of the PML elements normal to
 // each face, measured on the mesh. For an extruded PML, the profile is that of face 0,
-// along the rays from the closest points on the core, the segment from center[0] to
-// center[1] (a point if they are equal).
+// along the direction of the extrusion, at the depth of the given form (see
+// config::PMLData::Extrusion), with the core box of the corners center[0] and center[1].
 struct Stretch
 {
   LayerGeometry geometry;
   bool extruded = false;
+  config::PMLData::Extrusion::Depth depth = config::PMLData::Extrusion::Depth::NORMAL;
   std::array<std::array<double, 3>, 2> center{};
+  double distance = 0.0;
+  std::array<double, 4> plane{};
   std::array<double, 6> sigma_max{};
   std::array<double, 3> kappa_max{{1.0, 1.0, 1.0}};
   std::array<double, 3> alpha_max{};
@@ -150,18 +153,31 @@ struct ContextHeader
   std::array<double, 9> wave_vector_cross{};  // [k ×], column-major
 };
 
-// Stretch factors s_a(x, ω) at the point x, with the frequency-dependent stretch evaluated
-// at omega (ignored for a static stretch).
+// Stretch factors at the point x, for every form of the stretch: s_a(x, ω) for each axis of
+// the Cartesian stretch, or for an extruded stretch the factor s along the direction of the
+// extrusion at the depth of x (see EvaluateDepth), followed twice by the tangential factor
+// (|x - p| + ξ̃ - ξ) / |x - p| (r̃ / r on a sphere, and one for normal extrusion). The
+// frequency-dependent stretch is evaluated at omega (ignored for a static stretch).
 std::array<std::complex<double>, 3> EvaluateStretch(const Stretch &stretch,
                                                     const std::array<double, 3> &x,
                                                     std::complex<double> omega);
 
-// Jacobian J̃ of an extruded stretch (3 x 3, column-major) at the point x with the depth xi
-// into the layer and its gradient grad_xi, or with the magnitudes of the stretch factors.
-std::array<std::complex<double>, 9>
-EvaluateJacobian(const Stretch &stretch, const std::array<double, 3> &x, double xi,
-                 const std::array<double, 3> &grad_xi, std::complex<double> omega,
-                 bool magnitude = false);
+// Depth of the point x into the layer of an extruded stretch, its gradient, the direction d
+// of the extrusion at x, and ∇d (3 x 3, column-major).
+struct Depth
+{
+  double xi;
+  std::array<double, 3> grad_xi, d;
+  std::array<double, 9> grad_d;
+};
+Depth EvaluateDepth(const Stretch &stretch, const std::array<double, 3> &x);
+
+// Jacobian J̃ of an extruded stretch (3 x 3, column-major) at the point x, or with the
+// magnitudes of the stretch factors.
+std::array<std::complex<double>, 9> EvaluateJacobian(const Stretch &stretch,
+                                                     const std::array<double, 3> &x,
+                                                     std::complex<double> omega,
+                                                     bool magnitude = false);
 
 // Pack the QFunction context of a PML integrator (layout in fem/qfunctions/coeff/pml_qf.h),
 // with attr_background the background index of each (1-based) libCEED attribute (-1 for

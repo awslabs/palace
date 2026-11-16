@@ -33,18 +33,16 @@ void AssemblePMLOperator(CeedQFunctionUser build_qf, const char *build_qf_loc,
                          bool cross = false)
 {
   // The geometry factor data of the PML attributes has the coordinates of the quadrature
-  // points (see BilinearForm::AddDomainIntegratorOnAttributes), and for an extruded PML the
-  // depth of the mesh nodes into the layer and its gradient (see Mesh::SetGeomFactorField).
+  // points (see BilinearForm::AddDomainIntegratorOnAttributes).
   CeedInt dim, geom_data_size;
   PalaceCeedCall(ceed, CeedBasisGetDimension(trial_basis, &dim));
   PalaceCeedCall(ceed,
                  CeedElemRestrictionGetNumComponents(geom_data_restr, &geom_data_size));
   MFEM_VERIFY(dim == 3, "PML integrators are only available for 3D elements!");
-  const bool extruded = PMLIsExtruded(static_cast<const CeedIntScalar *>(ctx));
   MFEM_VERIFY(
-      geom_data_size == CeedGeometryDataSize(3, 3, true, extruded),
+      geom_data_size == CeedGeometryDataSize(3, 3, true),
       "PML integrators require the geometry factor data of the PML attributes, with "
-      "the depth of the mesh nodes for an extruded PML!");
+      "the coordinates of the quadrature points!");
   CeedQFunctionInfo info;
   info.assemble_q_data = true;
   info.q_data_cross = cross;

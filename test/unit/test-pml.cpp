@@ -151,8 +151,7 @@ bool EvalCoeff(const pml::Stretch &p, const pml::Background &b,
   const auto ctx = pml::PackContext(header, p, {0}, {b});
   REQUIRE(!ctx.empty());
   const CeedScalar xp[3] = {x[0], x[1], x[2]};
-  const CeedScalar grad_xi[3] = {0.0, 0.0, 0.0};
-  return PMLCoeffAt(ctx.data(), 1, xp, 0.0, grad_xi, muinv ? coeff.data() : nullptr,
+  return PMLCoeffAt(ctx.data(), 1, xp, muinv ? coeff.data() : nullptr,
                     muinv ? nullptr : coeff.data());
 }
 
@@ -792,6 +791,37 @@ TEST_CASE("MaterialOperator PML blocks", "[pml][materialoperator][Serial][Parall
     bad = pml;
     bad[1].attributes = {4, 5, 6};
     CHECK_THROWS(MaterialOperator(materials, periodic, ProblemType::DRIVEN, mesh, bad));
+  }
+
+  SECTION("Block of an edge region")
+  {
+    // The layers x > 0.5 and z > 0.5 of the 4 x 4 x 4 mesh, two elements thick, in three
+    // blocks: the +x face (attribute 3), the +z face (4), and the edge region between them
+    // (5), whose elements are all in the layers of both of its faces. Its element size is
+    // then that of all of them, as for the faces, for the same σ_max.
+    auto smesh = mfem::Mesh::MakeCartesian3D(4, 4, 4, mfem::Element::HEXAHEDRON);
+    for (int i = 0; i < smesh.GetNE(); i++)
+    {
+      mfem::Vector c;
+      smesh.GetElementCenter(i, c);
+      smesh.SetAttribute(i, (c(0) > 0.5) ? ((c(2) > 0.5) ? 5 : 3) : ((c(2) > 0.5) ? 4 : 1));
+    }
+    smesh.SetAttributes();
+    Mesh mesh(Mpi::World(), smesh);
+    std::vector<config::MaterialData> materials(1);
+    materials[0].attributes = {1, 3, 4, 5};
+    const std::vector<config::PMLData> pml = {MakePML({3}), MakePML({4}), MakePML({5})};
+    MaterialOperator mat_op(materials, periodic, ProblemType::DRIVEN, mesh, pml);
+    REQUIRE(mat_op.GetPMLLayers().size() == 3);
+    const auto &edge = mat_op.GetPMLLayers()[2].GetStretch();
+    CHECK(edge.geometry.thickness == std::array<double, 6>{0.0, 0.5, 0.0, 0.0, 0.0, 0.5});
+    for (const int f : {1, 5})
+    {
+      const auto &face = mat_op.GetPMLLayers()[(f == 1) ? 0 : 1].GetStretch();
+      CHECK(edge.element_size[f] == Approx(0.25));
+      CHECK(face.element_size[f] == Approx(0.25));
+      CHECK(edge.sigma_max[f] == Approx(face.sigma_max[f]));
+    }
   }
 
   SECTION("Separate blocks with different stretches")

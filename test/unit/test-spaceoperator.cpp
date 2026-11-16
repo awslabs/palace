@@ -1166,7 +1166,7 @@ namespace
 // Unit cube of tetrahedra (or hexahedra) with a lossy dielectric (attribute 1, z < 1/3) and
 // vacuum (attribute 3), under a Cartesian PML layer on +z (attribute 2, z > 2/3) with the
 // lossy dielectric as background, or the cube of the lossy dielectric with a layer of
-// prisms (or hexahedra) extruded from its boundary (attribute 2), static or
+// prisms (or hexahedra) extruded along the normal of its top (attribute 2), static or
 // frequency-dependent with α > 0.
 std::unique_ptr<SpaceOperator>
 MakePMLSpaceOperator(std::vector<std::unique_ptr<Mesh>> &mesh, bool frequency_dependent,
@@ -1180,12 +1180,19 @@ MakePMLSpaceOperator(std::vector<std::unique_ptr<Mesh>> &mesh, bool frequency_de
   {
     for (int i = 0; i < serial_mesh->GetNBE(); i++)
     {
-      serial_mesh->SetBdrAttribute(i, 1);
+      mfem::Vector center(3);
+      mfem::IsoparametricTransformation T;
+      serial_mesh->GetBdrElementTransformation(i, &T);
+      T.Transform(mfem::Geometries.GetCenter(T.GetGeometryType()), center);
+      serial_mesh->SetBdrAttribute(i, (center(2) > 1.0 - 1.0e-12) ? 1 : 2);
     }
     serial_mesh->SetAttributes();
-    pml = config::PMLData(
-        nlohmann::json{{"Attributes", {1}}, {"Thickness", 0.25}, {"Layers", 2}}, true);
-    mesh::ExtrudePML(serial_mesh, pml, {});
+    config::DomainData domains;
+    domains.pml = {config::PMLData(
+        nlohmann::json{{"Attributes", {1}}, {"Thickness", 0.25}, {"Layers", 2}}, true)};
+    mesh::ExtrudePML(serial_mesh, domains, {});
+    REQUIRE(domains.pml.size() == 1);
+    pml = domains.pml[0];
   }
   else
   {
@@ -1208,10 +1215,6 @@ MakePMLSpaceOperator(std::vector<std::unique_ptr<Mesh>> &mesh, bool frequency_de
   pml.reference_frequency = 2.0;
   mesh.clear();
   mesh.push_back(std::make_unique<Mesh>(Mpi::World(), *serial_mesh));
-  if (extruded)
-  {
-    mesh[0]->SetGeomFactorField(mesh::GetExtrudedPMLDepth(mesh[0]->Get(), pml));
-  }
 
   config::SolverData solver;
   solver.order = order;
@@ -1275,15 +1278,13 @@ public:
 private:
   const std::vector<CeedIntScalar> &ctx;
   const int ceed_attr;
-  const mfem::GridFunction *depth;
   const bool muinv;
   const Form form;
 
 public:
-  PMLTensorCoefficient(const std::vector<CeedIntScalar> &ctx, int ceed_attr,
-                       const mfem::GridFunction *depth, bool muinv, Form form)
-    : mfem::MatrixCoefficient(3), ctx(ctx), ceed_attr(ceed_attr), depth(depth),
-      muinv(muinv), form(form)
+  PMLTensorCoefficient(const std::vector<CeedIntScalar> &ctx, int ceed_attr, bool muinv,
+                       Form form)
+    : mfem::MatrixCoefficient(3), ctx(ctx), ceed_attr(ceed_attr), muinv(muinv), form(form)
   {
   }
 
@@ -1291,18 +1292,11 @@ public:
             const mfem::IntegrationPoint &ip) override
   {
     T.SetIntPoint(&ip);
-    mfem::Vector x(3), grad_xi(3);
+    mfem::Vector x(3);
     T.Transform(ip, x);
-    grad_xi = 0.0;
-    double xi = 0.0;
-    if (depth)
-    {
-      xi = depth->GetValue(T, ip);
-      depth->GetGradient(T, grad_xi);
-    }
     double t[9];
-    REQUIRE(PMLCoeffAt(ctx.data(), ceed_attr, x.GetData(), xi, grad_xi.GetData(),
-                       muinv ? t : nullptr, muinv ? nullptr : t));
+    REQUIRE(PMLCoeffAt(ctx.data(), ceed_attr, x.GetData(), muinv ? t : nullptr,
+                       muinv ? nullptr : t));
     mfem::DenseMatrix C(t, 3, 3), Kx(3, 3);
     const CeedIntScalar *kx = PMLWaveVectorCross(ctx.data());
     for (int k = 0; k < 9; k++)
@@ -1346,7 +1340,6 @@ void CheckPMLIntegrator(const FiniteElementSpace &space, const pml::Layer &layer
   const int attr = layer.GetAttributes()[0];
   const auto it = mesh.GetCeedAttributes().find(attr);
   const int ceed_attr = (it == mesh.GetCeedAttributes().end()) ? 0 : it->second;
-  const auto *depth = mesh.GetGeomFactorField();
 
   BilinearForm a(space);
   a.AddDomainIntegratorOnAttributes<T>(layer.GetAttributes(), ctx.data(),
@@ -1366,7 +1359,7 @@ void CheckPMLIntegrator(const FiniteElementSpace &space, const pml::Layer &layer
   auto Coefficient = [&](bool muinv, Form form) -> PMLTensorCoefficient &
   {
     return *coeffs.emplace_back(
-        std::make_unique<PMLTensorCoefficient>(ctx, ceed_attr, depth, muinv, form));
+        std::make_unique<PMLTensorCoefficient>(ctx, ceed_attr, muinv, form));
   };
   auto Add = [&](mfem::BilinearFormIntegrator *integ)
   {
