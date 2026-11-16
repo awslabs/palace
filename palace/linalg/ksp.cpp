@@ -231,6 +231,8 @@ ConfigurePreconditionerSolver(const config::LinearSolverData &linear,
       }
     }();
     gmg->EnableTimer();  // Enable timing for primary geometric multigrid solver
+    gmg->SetOneSided(linear.mg_one_sided && (linear.krylov_solver == KrylovSolver::GMRES ||
+                                             linear.krylov_solver == KrylovSolver::FGMRES));
     return gmg;
   }
   else

@@ -198,6 +198,12 @@ void GeometricMultigridSolver<OperType>::VCycle(int l, bool initial_guess) const
   RealMult(*P[l - 1], Y[l - 1], R[l]);
   Y[l] += R[l];
 
+  // Test only: one-sided V-cycle without post-smoothing (Phillips and Fischer, 2022).
+  if (one_sided)
+  {
+    return;
+  }
+
   // Post-smooth, with nonzero initial guess.
   B[l]->SetInitialGuess(true);
   B[l]->MultTranspose2(X[l], Y[l], R[l]);

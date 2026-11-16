@@ -3033,6 +3033,12 @@
           "default": true,
           "x-palace-advanced": true
         },
+        "MGOneSided": {
+          "type": "boolean",
+          "description": "Test only: one-sided V-cycles without post-smoothing, with GMRES and FGMRES.",
+          "default": false,
+          "x-palace-advanced": true
+        },
         "PCMatReal": {
           "type": "boolean",
           "description": "When `true`, builds the preconditioner for frequency domain problems using a real-valued approximation of the system matrix. Always used on the coarsest multigrid level regardless of this setting.",

@@ -1159,6 +1159,9 @@ public:
   // use standard 1st-kind polynomials.
   bool mg_smooth_cheby_4th = true;
 
+  // Test only: one-sided V-cycles (pre-smoothing only) for GMRES and FGMRES.
+  bool mg_one_sided = false;
+
   // For frequency domain applications, precondition linear systems with a real-valued
   // approximation to the system matrix.
   bool pc_mat_real = false;

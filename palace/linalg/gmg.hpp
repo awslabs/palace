@@ -53,6 +53,9 @@ private:
   // Enable timer contribution for Timer::KSP_COARSE_SOLVE.
   bool use_timer;
 
+  // Test only: one-sided V-cycles.
+  bool one_sided = false;
+
   // Internal function to perform a single V-cycle iteration.
   void VCycle(int l, bool initial_guess) const;
 
@@ -79,6 +82,10 @@ public:
   void Mult(const VecType &x, VecType &y) const override;
 
   void EnableTimer() { use_timer = true; }
+
+  // Test only: skip the post-smoothing (a nonsymmetric preconditioner, for GMRES and
+  // FGMRES).
+  void SetOneSided(bool one_sided_) { one_sided = one_sided_; }
 };
 
 }  // namespace palace
