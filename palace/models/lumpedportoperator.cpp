@@ -22,9 +22,9 @@ using namespace std::complex_literals;
 
 LumpedPortData::LumpedPortData(const config::LumpedPortData &data,
                                const MaterialOperator &mat_op, const mfem::ParMesh &mesh)
-  : mat_op(mat_op), excitation(data.excitation),
-    excitation_weight(ExcitationWeight(data.excitation_amplitude, data.excitation_phase)),
-    active(data.active), include_in_synthesis(data.include_in_synthesis)
+  : mat_op(mat_op), excitation(data.excitation), active(data.active),
+    include_in_synthesis(data.include_in_synthesis),
+    excitation_weight(ExcitationWeight(data.excitation_amplitude, data.excitation_phase))
 {
   // Check inputs. Only one of the circuit or per square properties should be specified
   // for the port boundary.
@@ -971,8 +971,8 @@ void LumpedPortOperator::AddExcitationBdrCoefficients(int excitation_idx,
   // and the imaginary part added to fbi. The coefficients are frequency independent.
   // Note: The RHS returned here does not yet have the factor of (iω) included. The real
   // part (fbr) works for time domain simulations requiring RHS -U_inc(t), while the
-  // imaginary part (fbi) is only nonzero for a nonzero phase, and is for the frequency
-  // domain only.
+  // imaginary part (fbi) is only nonzero for a phase that is not a multiple of 180
+  // degrees, and is for the frequency domain only.
   for (const auto &[idx, data] : ports)
   {
     if (data.excitation != excitation_idx)

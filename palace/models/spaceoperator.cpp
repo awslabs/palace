@@ -1787,7 +1787,7 @@ bool SpaceOperator::GetExcitationVector1(int excitation_idx, ComplexVector &RHS1
 {
   // Assemble the frequency domain excitation term with linear frequency dependence
   // (coefficient iω, see GetExcitationVector above, is accounted for later). RHS1 is
-  // complex when a lumped port has a nonzero excitation phase.
+  // complex when a lumped port has a complex excitation weight.
   RHS1.SetSize(GetNDSpace().GetTrueVSize());
   RHS1.UseDevice(true);
   RHS1 = 0.0;
@@ -1814,7 +1814,7 @@ bool SpaceOperator::AddExcitationVector1Internal(int excitation_idx, Vector &RHS
   // The g'(t) or iω factors are not accounted for here, they are accounted for in the time
   // integration or frequency sweep later. The lumped port incident fields include the
   // complex excitation weight of each port: the real part is added to RHS1r, and the
-  // imaginary part (nonzero only for a nonzero excitation phase) is added to RHS1i. The
+  // imaginary part (nonzero only for a complex excitation weight) is added to RHS1i. The
   // time domain excitation is real, so RHS1i is null in that case. Surface currents and
   // current dipoles are real.
   MFEM_VERIFY(RHS1r.Size() == GetNDSpace().GetTrueVSize(),
@@ -1842,8 +1842,8 @@ bool SpaceOperator::AddExcitationVector1Internal(int excitation_idx, Vector &RHS
   // A complex excitation is not defined for a real (time domain) vector. This is checked
   // for the configuration, so it should not be reached.
   MFEM_VERIFY(empty[2] || RHS1i != nullptr,
-              "A nonzero ExcitationPhase is not supported for real (time domain) "
-              "excitations!");
+              "A complex excitation weight (ExcitationPhase not a multiple of 180 "
+              "degrees) is not supported for real (time domain) excitations!");
 
   if (!empty[0] || !empty[1])
   {

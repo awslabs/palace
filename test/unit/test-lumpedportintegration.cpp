@@ -1072,10 +1072,8 @@ TEST_CASE("LumpedPort weighted excitation vector", "[lumped_port][Serial][Parall
   // the excitation options.
   auto MakePort1 = [](const json &extra)
   {
-    json port = {{"Index", 1},
-                 {"R", 50.0},
-                 {"Attributes", json::array({1})},
-                 {"Direction", "+Y"}};
+    json port = {
+        {"Index", 1}, {"R", 50.0}, {"Attributes", json::array({1})}, {"Direction", "+Y"}};
     port.update(extra);
     return port;
   };
@@ -1084,11 +1082,10 @@ TEST_CASE("LumpedPort weighted excitation vector", "[lumped_port][Serial][Parall
     json port = {
         {"Index", 2},
         {"R", 75.0},
-        {"Elements",
-         json::array({json::object({{"Attributes", json::array({9, 11})},
-                                    {"Direction", "+Y"}}),
-                      json::object({{"Attributes", json::array({2, 6, 10})},
-                                    {"Direction", "+X"}})})}};
+        {"Elements", json::array({json::object({{"Attributes", json::array({9, 11})},
+                                                {"Direction", "+Y"}}),
+                                  json::object({{"Attributes", json::array({2, 6, 10})},
+                                                {"Direction", "+X"}})})}};
     port.update(extra);
     return port;
   };
@@ -1101,8 +1098,8 @@ TEST_CASE("LumpedPort weighted excitation vector", "[lumped_port][Serial][Parall
     std::array<std::complex<double>, 2> weight, v_inc, i_inc;
     std::array<double, 2> v_exc, p_exc;
   };
-  auto Assemble = [&](const json &port1, const json &port2, int excitation_idx,
-                      bool time_domain)
+  auto Assemble =
+      [&](const json &port1, const json &port2, int excitation_idx, bool time_domain)
   {
     IoData iodata{Units(1.0e-6, 7.0)};
     iodata.model.mesh = mesh_file;
@@ -1203,8 +1200,8 @@ TEST_CASE("LumpedPort weighted excitation vector", "[lumped_port][Serial][Parall
 
   SECTION("A phase of 180 degrees is a flipped direction")
   {
-    const auto drive_180 = Assemble(
-        json{{"Excitation", 1}, {"ExcitationPhase", 180.0}}, no_port, 1, false);
+    const auto drive_180 =
+        Assemble(json{{"Excitation", 1}, {"ExcitationPhase", 180.0}}, no_port, 1, false);
     const auto drive_flip =
         Assemble(json{{"Excitation", 1}, {"Direction", "-Y"}}, no_port, 1, false);
 
@@ -1224,8 +1221,8 @@ TEST_CASE("LumpedPort weighted excitation vector", "[lumped_port][Serial][Parall
 
   SECTION("The amplitude scales the real and time domain excitation")
   {
-    const auto drive_3 = Assemble(json{{"Excitation", 1}, {"ExcitationAmplitude", 3.0}},
-                                  no_port, 1, true);
+    const auto drive_3 =
+        Assemble(json{{"Excitation", 1}, {"ExcitationAmplitude", 3.0}}, no_port, 1, true);
     CHECK(drive_3.weight[0] == std::complex<double>(3.0, 0.0));
     CHECK(linalg::Norml2(comm, drive_3.rhs1.Imag()) == 0.0);
     CHECK(drive_3.p_exc[0] == 1.0);

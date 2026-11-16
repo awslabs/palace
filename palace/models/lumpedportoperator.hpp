@@ -47,13 +47,15 @@ public:
   // Lumped port properties.
   double R, L, C;
   int excitation;
-
-  // Complex weight a = A exp(i φ) on the unit-power incident wave of this port, from the
-  // configured "ExcitationAmplitude" and "ExcitationPhase". It is dimensionless and
-  // frequency independent, and only meaningful for an excited port.
-  std::complex<double> excitation_weight = 1.0;
   bool active;
   bool include_in_synthesis;
+
+private:
+  // Complex weight a = A exp(i φ) on the unit-power incident wave of this port, from the
+  // configured "ExcitationAmplitude" and "ExcitationPhase". It is dimensionless and
+  // frequency independent. It is 1 for a port without excitation, so it is private: use
+  // GetExcitationWeight, which is 0 for such a port.
+  std::complex<double> excitation_weight = 1.0;
 
 protected:
   // Linear forms for postprocessing integrated quantities on the port.
@@ -124,9 +126,11 @@ public:
   std::complex<double> GetCharacteristicImpedance(double omega = 0.0,
                                                   Branch branch = Branch::TOTAL) const;
 
-  // Unit-normalized incident quantities of the excited port, which do not include the
-  // excitation weight: the incident power is 1 and the voltage and current are those of
-  // this unit-power wave.
+  // UNIT-POWER incident quantities of the excited port, which do not include the excitation
+  // weight: the incident power is 1 and the voltage is that of this unit-power wave. Use
+  // these for normalization (for example the S-parameters). For the incident voltage and
+  // current actually applied and reported, which include the weight, use
+  // GetIncidentVoltage and GetIncidentCurrent below.
   double GetExcitationPower() const;
   double GetExcitationVoltage() const;
 
@@ -145,8 +149,10 @@ public:
     return HasExcitation() && excitation_weight.imag() != 0.0;
   }
 
-  // Weighted incident voltage a V_inc,0 and current a I_inc,0 = a P_inc,0 / V_inc,0 of an
-  // excited port, in internal units.
+  // WEIGHTED incident voltage a V_inc,0 and current a I_inc,0 = a P_inc,0 / V_inc,0 of an
+  // excited port, in internal units, with V_inc,0 = GetExcitationVoltage() the unit-power
+  // value and a = GetExcitationWeight(). These are the incident values applied to the port
+  // and written to the output files.
   std::complex<double> GetIncidentVoltage() const
   {
     return GetExcitationWeight() * GetExcitationVoltage();

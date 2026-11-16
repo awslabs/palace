@@ -1014,12 +1014,12 @@ TEST_CASE("Schema Validator Smoke Tests", "[schema][Serial]")
     CHECK(err.empty());
 
     // The same keys on a multielement port.
-    json elements = {{"Index", 2},
-                     {"Elements",
-                      json::array({json{{"Attributes", {1}}, {"Direction", "+X"}}})},
-                     {"Excitation", 2},
-                     {"ExcitationAmplitude", 0.5},
-                     {"ExcitationPhase", 720}};
+    json elements = {
+        {"Index", 2},
+        {"Elements", json::array({json{{"Attributes", {1}}, {"Direction", "+X"}}})},
+        {"Excitation", 2},
+        {"ExcitationAmplitude", 0.5},
+        {"ExcitationPhase", 720}};
     err = ValidateConfig(elements, "LumpedPort");
     INFO("Error: " << err);
     CHECK(err.empty());

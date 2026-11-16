@@ -713,7 +713,7 @@ void RomOperator::SetExcitationIndex(int excitation_idx)
   else
   {
     // Project RHS1 to RHS1r with current PROM. RHS1 may be complex (lumped ports with a
-    // nonzero excitation phase), and ProjectVecInternal projects both the real and
+    // complex excitation weight), and ProjectVecInternal projects both the real and
     // imaginary parts onto the real basis.
     auto dim_V = V.size();
     if (dim_V > 0)

@@ -355,8 +355,8 @@ protected:
   // Whether the incident lumped-port voltages and currents are written as real and
   // imaginary parts (columns Re{V_inc[...]} and Im{V_inc[...]}, and likewise for I_inc)
   // instead of as single real values. Decided in InitializePortVI, once for all
-  // excitations: true when any excited lumped port has a complex excitation weight
-  // (nonzero "ExcitationPhase").
+  // excitations: true when any excited lumped port has a weight that is not real
+  // (HasComplexExcitationWeight, "ExcitationPhase" not a multiple of 180 degrees).
   bool complex_incident_port_VI = false;
 
   void InitializePortVI(const SpaceOperator &fem_op)

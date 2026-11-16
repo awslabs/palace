@@ -95,8 +95,8 @@ public:
   }
 
   // The incident voltage and current columns are a single real value each, as without an
-  // excitation weight, unless an excited port has a nonzero phase, in which case they are
-  // real and imaginary parts.
+  // excitation weight, unless an excited port has a phase that is not a multiple of 180
+  // degrees, in which case they are real and imaginary parts.
   void incident_columns(bool expect_complex)
   {
     iodata.problem.output =
@@ -695,7 +695,12 @@ TEST_CASE("PostOperatorCSV_IncidentColumns", "[postoperatorcsv][Serial]")
     PostOperatorCSVFixture fixture{"postoperatorcsv_restart/restart1.json"};
     fixture.incident_columns(false);
   }
-  SECTION("Nonzero excitation phase: real and imaginary incident columns")
+  SECTION("Excitation phase of 180 degrees: single real incident columns")
+  {
+    PostOperatorCSVFixture fixture{"postoperatorcsv_restart/restart1.json", 180.0};
+    fixture.incident_columns(false);
+  }
+  SECTION("Complex excitation weight: real and imaginary incident columns")
   {
     PostOperatorCSVFixture fixture{"postoperatorcsv_restart/restart1.json", 30.0};
     fixture.incident_columns(true);

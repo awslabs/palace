@@ -1199,13 +1199,12 @@ void PostOperatorCSV<solver_t>::PrintPortVI(const LumpedPortOperator &lumped_por
       // Cast to avoid compiler warnings about types.
       if (static_cast<std::size_t>(data.excitation) == m_ex_idx)
       {
-        // Incident voltage a V_inc,0 and current a I_inc,0 of the port, with the weight
-        // a = A exp(iφ) (a = 1 without weight) and the unit-power quantities V_inc,0 and
-        // I_inc,0 = P_inc,0 / V_inc,0.
+        // Weighted incident voltage a V_inc,0 and current a I_inc,0 of the port, with the
+        // weight a = A exp(iφ) (a = 1 without weight) and the unit-power quantities V_inc,0
+        // and I_inc,0 = P_inc,0 / V_inc,0 (GetExcitationVoltage is the unit-power one).
         auto Jcoeff = measurement_cache.Jcoeff_excitation;
         const std::complex<double> V_inc = data.GetIncidentVoltage() * Jcoeff;
-        const std::complex<double> I_inc =
-            (std::abs(V_inc) > 0.0) ? data.GetIncidentCurrent() * Jcoeff : 0.0;
+        const std::complex<double> I_inc = data.GetIncidentCurrent() * Jcoeff;
 
         if (complex_incident_port_VI)
         {

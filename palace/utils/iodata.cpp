@@ -21,6 +21,7 @@
 #include <nlohmann/json.hpp>
 #include "fem/bilinearform.hpp"
 #include "fem/integrator.hpp"
+#include "models/portexcitations.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
 #include "utils/jsonschema.hpp"
@@ -530,14 +531,14 @@ void IoData::CheckConfiguration()
     }
     for (const auto &[idx, data] : boundaries.lumpedport)
     {
-      // The excitation phase is frequency independent, so it can only be represented in the
-      // time domain when the weight is real. A nonzero multiple of 360 degrees is a zero
-      // phase.
+      // The excitation weight is frequency independent, so it can only be represented in
+      // the time domain when it is real, that is, when the phase is a multiple of 180
+      // degrees.
       MFEM_VERIFY(
-          std::fmod(data.excitation_phase, 360.0) == 0.0,
+          ExcitationWeight(data.excitation_amplitude, data.excitation_phase).imag() == 0.0,
           fmt::format("Transient simulations require a real excitation: "
-                      "\"ExcitationPhase\" must be 0 on lumped port index {:d} (use "
-                      "\"ExcitationAmplitude\" or flip \"Direction\")",
+                      "\"ExcitationPhase\" must be a multiple of 180 degrees on lumped "
+                      "port index {:d}",
                       idx));
     }
     if (!boundaries.farfield.empty() && boundaries.farfield.order > 1)

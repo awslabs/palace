@@ -844,15 +844,14 @@ TEST_CASE("LumpedPort excitation weight", "[config][Serial]")
     CHECK(port.excitation_phase == -45.0);
 
     // Integer values and a multielement port with an integer excitation index.
-    json elements = {
-        {"Index", 4},
-        {"R", 75.0},
-        {"Excitation", 2},
-        {"ExcitationAmplitude", 3},
-        {"ExcitationPhase", 90},
-        {"Elements",
-         {{{"Attributes", {2}}, {"Direction", "+X"}},
-          {{"Attributes", {9}}, {"Direction", "+Y"}}}}};
+    json elements = {{"Index", 4},
+                     {"R", 75.0},
+                     {"Excitation", 2},
+                     {"ExcitationAmplitude", 3},
+                     {"ExcitationPhase", 90},
+                     {"Elements",
+                      {{{"Attributes", {2}}, {"Direction", "+X"}},
+                       {{"Attributes", {9}}, {"Direction", "+Y"}}}}};
     config::LumpedPortData multi(elements);
     CHECK(multi.excitation == 2);
     CHECK(multi.excitation_amplitude == 3.0);
@@ -864,8 +863,8 @@ TEST_CASE("LumpedPort excitation weight", "[config][Serial]")
     CHECK_THROWS_WITH(config::LumpedPortData(MakePort({{"ExcitationAmplitude", 0.0}})),
                       ContainsSubstring("ExcitationAmplitude"));
     CHECK_THROWS(config::LumpedPortData(MakePort({{"ExcitationAmplitude", -1.0}})));
-    CHECK_THROWS(config::LumpedPortData(MakePort(
-        {{"ExcitationAmplitude", std::numeric_limits<double>::infinity()}})));
+    CHECK_THROWS(config::LumpedPortData(
+        MakePort({{"ExcitationAmplitude", std::numeric_limits<double>::infinity()}})));
     CHECK_THROWS(config::LumpedPortData(
         MakePort({{"ExcitationAmplitude", std::numeric_limits<double>::quiet_NaN()}})));
   }
@@ -895,7 +894,7 @@ TEST_CASE("LumpedPort excitation weight", "[config][Serial]")
     }
   }
 
-  SECTION("Transient simulations reject a nonzero phase")
+  SECTION("Transient simulations reject a complex weight")
   {
     auto MakeConfig = [&](const json &extra)
     {
@@ -912,10 +911,14 @@ TEST_CASE("LumpedPort excitation weight", "[config][Serial]")
     CHECK_NOTHROW(IoData(MakeConfig(json::object()), false));
     CHECK_THROWS_WITH(IoData(MakeConfig({{"ExcitationPhase", 30.0}}), false),
                       ContainsSubstring("ExcitationPhase"));
-    CHECK_THROWS(IoData(MakeConfig({{"ExcitationPhase", 180.0}}), false));
+    CHECK_THROWS_WITH(IoData(MakeConfig({{"ExcitationPhase", 30.0}}), false),
+                      ContainsSubstring("multiple of 180"));
     CHECK_THROWS(IoData(MakeConfig({{"ExcitationPhase", -90.0}}), false));
+    CHECK_THROWS(IoData(MakeConfig({{"ExcitationPhase", 270.0}}), false));
 
-    // A multiple of 360 degrees is a zero phase, and the amplitude is unrestricted.
+    // A multiple of 180 degrees gives a real weight, and the amplitude is unrestricted.
+    CHECK_NOTHROW(IoData(MakeConfig({{"ExcitationPhase", 180.0}}), false));
+    CHECK_NOTHROW(IoData(MakeConfig({{"ExcitationPhase", -180.0}}), false));
     CHECK_NOTHROW(IoData(MakeConfig({{"ExcitationPhase", 360.0}}), false));
     CHECK_NOTHROW(IoData(MakeConfig({{"ExcitationAmplitude", 2.0}}), false));
 
@@ -935,12 +938,11 @@ TEST_CASE("LumpedPort excitation weight", "[config][Serial]")
         {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
         {"Boundaries",
          {{"LumpedPort",
-           json::array(
-               {MakePort({{"ExcitationAmplitude", 2.0}, {"ExcitationPhase", 30.0}}),
-                json{{"Index", 4},
-                     {"Attributes", {6}},
-                     {"R", 50.0},
-                     {"Direction", "-Y"}}})}}},
+           json::array({MakePort({{"ExcitationAmplitude", 2.0}, {"ExcitationPhase", 30.0}}),
+                        json{{"Index", 4},
+                             {"Attributes", {6}},
+                             {"R", 50.0},
+                             {"Direction", "-Y"}}})}}},
         {"Solver", {{"Driven", {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 0.1}}}}}};
 
     IoData iodata1(config, false);

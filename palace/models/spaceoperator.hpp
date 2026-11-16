@@ -129,7 +129,7 @@ private:
 
   // Helper functions for excitation vector assembly. The first adds the real part of the
   // frequency independent excitation to RHS1r, and its imaginary part (nonzero for a
-  // lumped port with a nonzero excitation phase) to RHS1i, which must be provided unless
+  // lumped port with a complex excitation weight) to RHS1i, which must be provided unless
   // the excitation is real.
   bool AddExcitationVector1Internal(int excitation_idx, Vector &RHS1r, Vector *RHS1i);
   bool AddExcitationVector2Internal(int excitation_idx, double omega, ComplexVector &RHS);
@@ -434,7 +434,7 @@ public:
   bool GetExcitationVector(int excitation_idx, double omega, ComplexVector &RHS);
 
   // Separate out RHS vector as RHS = iω RHS1 + RHS2(ω). RHS1 does not depend on frequency,
-  // and is complex when a lumped port has a nonzero excitation phase. The return value
+  // and is complex when a lumped port has a complex excitation weight. The return value
   // indicates whether or not the excitation is nonzero (and thus is true most of the time).
   bool GetExcitationVector1(int excitation_idx, ComplexVector &RHS1);
   bool GetExcitationVector2(int excitation_idx, double omega, ComplexVector &RHS2);

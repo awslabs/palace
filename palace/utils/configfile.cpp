@@ -566,9 +566,8 @@ LumpedPortData::LumpedPortData(const json &port)
   excitation = ParsePortExcitation(port, index);
   excitation_amplitude = port.value("ExcitationAmplitude", excitation_amplitude);
   excitation_phase = port.value("ExcitationPhase", excitation_phase);
-  MFEM_VERIFY(excitation != 0 ||
-                  (!port.contains("ExcitationAmplitude") &&
-                   !port.contains("ExcitationPhase")),
+  MFEM_VERIFY(excitation != 0 || (!port.contains("ExcitationAmplitude") &&
+                                  !port.contains("ExcitationPhase")),
               fmt::format("\"ExcitationAmplitude\" and \"ExcitationPhase\" on lumped port "
                           "index {:d} require a nonzero \"Excitation\"",
                           index));

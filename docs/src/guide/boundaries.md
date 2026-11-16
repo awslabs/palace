@@ -367,11 +367,12 @@ multiplied by the weight ``a = A e^{i\varphi}``, so that the incident power is s
 ``e^{i\omega t}`` time convention of the frequency domain solver. This allows ports that
 share an excitation index to be driven together with different amplitudes and phases, for
 example to drive a pair of ports differentially. By linearity, the solution is the weighted
-sum of the solutions with each port excited alone. A phase of 180 degrees drives the port
-the same way as reversing its `"Direction"`, with identical fields, voltages, and currents.
-Reversing `"Direction"` also reverses the voltage reference of the port, so unlike the phase
-it changes the sign of the S-parameters between that port and the other ports. Both settings
-require a nonzero `"Excitation"` on the same port, and are an error otherwise. They are only
+sum of the solutions with each port excited alone. A phase of 180 degrees gives the same
+fields as reversing `"Direction"`. With the phase, the voltage, current, incident voltage
+and incident current of the port change sign, and its S-parameters do not. Reversing
+`"Direction"` also reverses the voltage reference of the port, so these keep their sign, and
+the S-parameters between this port and the others change sign. Both settings require a
+nonzero `"Excitation"` on the same port, and are an error otherwise. They are only
 available for lumped ports.
 
   - *Scattering parameters*: When every excitation drives a single port, the S-parameters
@@ -380,14 +381,15 @@ available for lumped ports.
     when an excitation drives more than one port.
   - *Incident voltage and current*: The incident voltage and current of an excited port
     written to `port-V.csv` and `port-I.csv` include the weight. Without a phase, the
-    columns are the same as without a weight and hold the real weighted values. When any
-    excited lumped port has a nonzero phase, the incident columns of the simulation are
-    written as real and imaginary parts instead (`Re{V_inc[...]}`, `Im{V_inc[...]}`,
-    `Re{I_inc[...]}`, `Im{I_inc[...]}`), so the phase must not be changed between a
-    simulation and its restart.
+    columns are the same as without a weight and hold the real weighted values. When the
+    weight of any excited lumped port is not real, that is, its phase is not a multiple of
+    180 degrees, the incident columns of the simulation are written as real and imaginary
+    parts instead (`Re{V_inc[...]}`, `Im{V_inc[...]}`, `Re{I_inc[...]}`,
+    `Im{I_inc[...]}`), so such a phase must not be changed between a simulation and its
+    restart. At 180 degrees the columns stay real, with a negative value.
   - *Transient simulations*: The amplitude scales the excitation. The time domain
-    excitation is real, so a nonzero phase (other than a multiple of 360 degrees) is an
-    error, including 180 degrees. Reverse `"Direction"` for a sign change.
+    excitation is real, so a phase that is not a multiple of 180 degrees is an error. A
+    phase of 180 degrees is allowed and reverses the sign of the excitation.
 
 !!! warning "Indexing"
 
