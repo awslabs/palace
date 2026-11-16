@@ -1,10 +1,16 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <algorithm>
+#include <cmath>
 #include <fstream>
+#include <limits>
+#include <map>
 #include <memory>
+#include <vector>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include "drivers/basesolver.hpp"
 #include "fixtures.hpp"
 #include "test-helpers.hpp"
@@ -12,6 +18,7 @@
 #include "utils/filesystem.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
+#include "utils/ncmeshio.hpp"
 
 using namespace palace;
 
@@ -919,4 +926,258 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "SaveIteration is MPI collective",
   CHECK(fs::is_symlink(temp_dir / "gridfunction"));
   CHECK(fs::is_regular_file(temp_dir / "iteration1" / "gridfunction" / "electrostatic" /
                             "V.gf.000000"));
+}
+
+namespace
+{
+
+// Compare, on the root, the meshes read from two files, up to the order of their elements
+// and boundary elements: entity counts, roots, hanging entities, the elements matched by
+// attribute and centroid (vertices and nodes), the boundary, one refinement and one
+// derefinement; and the entity counts of the parallel save.
+void CompareSavedMeshes(const fs::path &file_a, const fs::path &file_b,
+                        const mesh::MeshEntityCounts &counts)
+{
+  mfem::named_ifgzstream fa(file_a.string()), fb(file_b.string());
+  mfem::Mesh a(fa), b(fb);
+  CHECK((a.Nonconforming() && b.Nonconforming()));
+  CHECK(a.GetNV() == b.GetNV());
+  CHECK(a.GetNEdges() == b.GetNEdges());
+  CHECK(a.GetNFaces() == b.GetNFaces());
+  CHECK(a.ncmesh->GetNumRootElements() == b.ncmesh->GetNumRootElements());
+  for (auto list : {&mfem::NCMesh::GetEdgeList, &mfem::NCMesh::GetFaceList})
+  {
+    const auto &la = (a.ncmesh->*list)(), &lb = (b.ncmesh->*list)();
+    CHECK(la.conforming.Size() == lb.conforming.Size());
+    CHECK(la.masters.Size() == lb.masters.Size());
+    CHECK(la.slaves.Size() == lb.slaves.Size());
+  }
+  std::map<mfem::Geometry::Type, long long> cells, true_faces;
+  for (int e = 0; e < a.GetNE(); e++)
+  {
+    cells[a.GetElementBaseGeometry(e)]++;
+  }
+  for (int f = 0; a.Dimension() == 3 && f < a.GetNFaces(); f++)
+  {
+    true_faces[a.GetFaceGeometry(f)] +=
+        a.ncmesh->GetFaceList().GetMeshIdType(f) != mfem::NCMesh::NCList::MeshIdType::SLAVE;
+  }
+  std::erase_if(true_faces, [](const auto &c) { return c.second == 0; });
+  CHECK(counts.dim == a.Dimension());
+  CHECK(counts.cells == cells);
+  CHECK(counts.true_faces == true_faces);
+  CHECK(counts.domain_attributes ==
+        std::vector<int>(a.attributes.begin(), a.attributes.end()));
+  CHECK(counts.boundary_attributes ==
+        std::vector<int>(a.bdr_attributes.begin(), a.bdr_attributes.end()));
+  auto Order = [](mfem::Mesh &m, bool bdr)
+  {
+    std::vector<std::pair<std::vector<long long>, int>> keys;
+    for (int e = 0; e < (bdr ? m.GetNBE() : m.GetNE()); e++)
+    {
+      mfem::Array<int> v;
+      bdr ? m.GetBdrElementVertices(e, v) : m.GetElementVertices(e, v);
+      std::vector<long long> key = {bdr ? m.GetBdrAttribute(e) : m.GetAttribute(e)};
+      for (int d = 0; d < m.SpaceDimension(); d++)
+      {
+        double c = 0.0;
+        for (int i : v)
+        {
+          c += m.GetVertex(i)[d] / v.Size();
+        }
+        key.push_back(std::llround(c * 1e9));
+      }
+      keys.emplace_back(key, e);
+    }
+    std::sort(keys.begin(), keys.end());
+    return keys;
+  };
+  const auto ka = Order(a, false), kb = Order(b, false);
+  const auto ba = Order(a, true), bb = Order(b, true);
+  auto SameKeys = [](const auto &x, const auto &y)
+  {
+    return std::equal(x.begin(), x.end(), y.begin(), y.end(),
+                      [](const auto &p, const auto &q) { return p.first == q.first; });
+  };
+  const bool same = SameKeys(ka, kb);
+  CHECK(same);
+  CHECK(SameKeys(ba, bb));
+  if (!same)
+  {
+    return;  // the elements do not correspond (the other processes go on)
+  }
+  double max_diff = 0.0;
+  mfem::Array<int> refs_a, refs_b;
+  for (std::size_t i = 0; i < ka.size(); i++)
+  {
+    const int ea = ka[i].second, eb = kb[i].second;
+    mfem::Array<int> va, vb;
+    a.GetElementVertices(ea, va);
+    b.GetElementVertices(eb, vb);
+    for (int j = 0; j < va.Size(); j++)
+    {
+      for (int d = 0; d < a.SpaceDimension(); d++)
+      {
+        max_diff =
+            std::max(max_diff, std::abs(a.GetVertex(va[j])[d] - b.GetVertex(vb[j])[d]));
+      }
+    }
+    if (a.GetNodes())
+    {
+      mfem::Array<int> da, db;
+      mfem::Vector xa, xb;
+      a.GetNodes()->FESpace()->GetElementVDofs(ea, da);
+      b.GetNodes()->FESpace()->GetElementVDofs(eb, db);
+      a.GetNodes()->GetSubVector(da, xa);
+      b.GetNodes()->GetSubVector(db, xb);
+      xa -= xb;
+      max_diff = std::max(max_diff, xa.Normlinf());
+    }
+    if (i % 5 == 0)
+    {
+      refs_a.Append(ea);
+      refs_b.Append(eb);
+    }
+  }
+  CHECK(max_diff < 1e-11);
+  mfem::Mesh ra(a), rb(b);
+  ra.GeneralRefinement(refs_a, 1);
+  rb.GeneralRefinement(refs_b, 1);
+  CHECK(ra.GetNE() == rb.GetNE());
+  CHECK(ra.GetNV() == rb.GetNV());
+  mfem::Vector zero(a.GetNE());
+  zero = 0.0;
+  a.DerefineByError(zero, 1.0);
+  b.DerefineByError(zero, 1.0);
+  CHECK(a.GetNE() == b.GetNE());
+  CHECK(a.GetNV() == b.GetNV());
+}
+
+// Refine and scatter nonconforming meshes, and compare their parallel saves (each saved
+// mesh is also read back and saved again) with a gathered save.
+void TestParallelNCSave(MPI_Comm comm, const fs::path &temp_dir, mfem::Element::Type type,
+                        int order)
+{
+  const int P = Mpi::Size(comm), rank = Mpi::Rank(comm);
+  const bool is3d =
+      (type != mfem::Element::TRIANGLE && type != mfem::Element::QUADRILATERAL);
+  auto serial_mesh = is3d ? mfem::Mesh::MakeCartesian3D(3, 3, 2, type)
+                          : mfem::Mesh::MakeCartesian2D(5, 4, type);
+  serial_mesh.EnsureNCMesh(true);
+  if (order > 0)
+  {
+    serial_mesh.SetCurvature(order, false, -1,
+                             order == 2 ? mfem::Ordering::byNODES : mfem::Ordering::byVDIM);
+    serial_mesh.Transform(
+        [](const mfem::Vector &x, mfem::Vector &y)
+        {
+          y = x;
+          y(0) += 0.05 * std::sin(3.0 * x(1) + x(x.Size() - 1));
+          y(1) += 0.04 * std::cos(2.0 * x(0));
+        });
+  }
+  auto mesh = std::make_unique<mfem::ParMesh>(comm, serial_mesh);
+  const double L = 2.5;  // the length scale of the saved mesh
+  auto Check = [&](const std::string &name, bool parallel)
+  {
+    const auto gathered = temp_dir / (name + "-gathered.mesh");
+    auto file = temp_dir / (name + ".meshgz");
+    {
+      mfem::ParMesh smesh(*mesh);
+      mfem::Array<int> part(smesh.GetNE());
+      part = 0;
+      smesh.Rebalance(part);
+      if (Mpi::Root(comm))
+      {
+        mesh::DimensionalizeMesh(smesh, L);
+        std::ofstream fo(gathered);
+        fo << std::scientific;
+        fo.precision(std::numeric_limits<double>::max_digits10);
+        smesh.Mesh::Print(fo);
+      }
+    }
+    mesh::MeshEntityCounts counts;
+    std::string reason;
+    if (parallel)
+    {
+      REQUIRE(mesh::PrintParallelNCMesh(*mesh, L, file.string(), order != 1, &counts,
+                                        &reason));  // also uncompressed
+    }
+    else
+    {
+      // Through RebalanceMesh, which saves then rebalances.
+      Units units(1.0, L);
+      IoData iodata(units);
+      iodata.problem.output = temp_dir.string();
+      iodata.model.mesh = name + ".msh";
+      iodata.model.refinement.save_adapt_mesh = true;
+      mesh::RebalanceMesh(iodata, mesh, &counts);
+      file.replace_extension(fs::exists(file) ? ".meshgz" : ".mesh");
+    }
+    if (Mpi::Root(comm))
+    {
+      CompareSavedMeshes(gathered, file, counts);
+    }
+    Mpi::Barrier(comm);
+    return file;
+  };
+  fs::path file;
+  for (int pass = 0; pass < 3; pass++)
+  {
+    // Refine some elements, then, after the first pass, scatter the leaves over the
+    // processes, so that roots are split between them.
+    mfem::Array<int> refs;
+    for (int e = 0; e < mesh->GetNE(); e++)
+    {
+      if ((e * 7 + rank * 3 + pass) % 4 == 0)
+      {
+        refs.Append(e);
+      }
+    }
+    mesh->GeneralRefinement(refs, 1, pass);
+    if (pass > 0)
+    {
+      mfem::Array<int> part(mesh->GetNE());
+      for (int e = 0; e < mesh->GetNE(); e++)
+      {
+        part[e] = (pass == 1) ? (e / 3 + rank) % P : (e * 13 + rank + pass) % P;
+      }
+      mesh->Rebalance(part);
+    }
+    file = Check("pass" + std::to_string(pass), true);
+  }
+
+  // Read the last file back (as a restart does), scatter it, and save it again through
+  // RebalanceMesh.
+  mfem::named_ifgzstream fi(file.string());
+  mfem::Mesh reread(fi);
+  mesh::NondimensionalizeMesh(reread, L);
+  std::vector<int> part(reread.GetNE());
+  for (int e = 0; e < reread.GetNE(); e++)
+  {
+    part[e] = (e % 3 == 0) ? 0 : (e * 7919) % P;
+  }
+  mesh = std::make_unique<mfem::ParMesh>(comm, reread, part.data());
+  Check("reread", false);
+}
+
+}  // namespace
+
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "RebalanceMesh parallel NC save matches the gathered save",
+                 "[basesolver][Serial][Parallel]")
+{
+  const auto type =
+      GENERATE(mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON, mfem::Element::WEDGE,
+               mfem::Element::TRIANGLE, mfem::Element::QUADRILATERAL);
+  const int order = GENERATE(0, 1, 2, 3);
+  TestParallelNCSave(MPI_COMM_WORLD, temp_dir, type, order);
+}
+
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "RebalanceMesh parallel NC save matches the gathered save, more processes",
+                 "[basesolver][Parallel][Regression]")
+{
+  const auto type = GENERATE(mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON);
+  TestParallelNCSave(MPI_COMM_WORLD, temp_dir, type, 2);
 }

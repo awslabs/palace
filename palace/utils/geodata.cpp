@@ -24,6 +24,7 @@
 #include "utils/diagnostic.hpp"
 #include "utils/filesystem.hpp"
 #include "utils/meshio.hpp"
+#include "utils/ncmeshio.hpp"
 #include "utils/omp.hpp"
 #include "utils/outputdir.hpp"
 #include "utils/prettyprint.hpp"
@@ -923,6 +924,7 @@ void ScaleMesh(mfem::Mesh &mesh, double L)
       std::transform(v, v + mesh.SpaceDimension(), v, [L](double val) { return val * L; });
     }
   }
+  ScaleNCMeshCoordinates(mesh, L);
   if (mesh.GetNodes())
   {
     *mesh.GetNodes() *= L;
@@ -2911,7 +2913,7 @@ double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh,
   MPI_Comm comm = mesh->GetComm();
   if (iodata.model.refinement.save_adapt_mesh)
   {
-    // Create a separate serial mesh to write to disk. When MFEM is built with zlib the mesh
+    // Write the mesh to disk as one serial file. When MFEM is built with zlib the mesh
     // is gzip-compressed and written with a ".meshgz" extension; MFEM detects gzip from the
     // file's magic bytes on read, so a restart reopens it transparently regardless of the
     // name. Without zlib it is written uncompressed as ".mesh".
@@ -2946,15 +2948,27 @@ double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh,
           compress_mesh);
     };
 
-    if (mesh->Nonconforming())
+    std::string reason;
+    if (mesh->Nonconforming() &&
+        !PrintParallelNCMesh(*mesh, iodata.units.GetMeshLengthRelativeScale(),
+                             sfile.string(), compress_mesh, out_counts, &reason))
     {
+      static bool warned = false;
+      if (!warned)
+      {
+        Mpi::Warning(comm,
+                     "The adapted mesh cannot be saved in parallel ({}), so it is gathered "
+                     "on the root, with time and memory proportional to its size!\n",
+                     reason);
+        warned = true;
+      }
       mfem::ParMesh smesh(*mesh);
       mfem::Array<int> serial_partition(mesh->GetNE());
       serial_partition = 0;
       smesh.Rebalance(serial_partition);
       PrintSerial(smesh);
     }
-    else
+    else if (!mesh->Nonconforming())
     {
       mfem::Mesh smesh = mesh->GetSerialMesh(0);
       PrintSerial(smesh);

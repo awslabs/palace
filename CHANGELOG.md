@@ -93,6 +93,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     each a fine-level matrix-vector product and a reduction over all processes, and the
     first relaxation of its auxiliary space solves skips the exchange of their zero initial
     guess. Results are unchanged. [PR 1238](https://github.com/awslabs/palace/pull/1238).
+  - With `Model.Refinement.SaveAdaptMesh`, a nonconforming adapted mesh is saved without
+    gathering it on the root: every process prints its part of the file, and the root only
+    writes the compressed parts. The saved file holds the same mesh and refinement tree as
+    before, numbered differently (the roots are listed process by process). Meshes the
+    parallel save does not support are still gathered, with a warning.
   - Added a STRUMPACK patch for
     [pghysels/STRUMPACK#174](https://github.com/pghysels/STRUMPACK/pull/174), which *Palace*
     always enables: the STRUMPACK solvers store their fill-reducing permutation once per
@@ -296,6 +301,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     sapphire substrate, and AMR spent refinement there. The error indicator decreases for
     models with material interfaces, and their AMR meshes change.
     [PR 1072](https://github.com/awslabs/palace/pull/1072).
+  - Scaling a nonconforming mesh without nodes (for example with
+    `Model.RemoveCurvature`) now also scales the top-level vertex coordinates kept by its
+    refinement tree, so that its saved adapted mesh and restarts from it have the right
+    length unit.
   - Fixed driven frequency sweeps aborting with "... not found in sample frequencies!" when
     overlapping `"Samples"` ranges compute the same frequency with different rounding.
     [PR 1192](https://github.com/awslabs/palace/pull/1192).
