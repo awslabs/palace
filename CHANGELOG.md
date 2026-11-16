@@ -109,6 +109,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     slice of the file, the coarse mesh is rebuilt from the roots of the refinement tree, and
     each process refines its roots and reads their nodes, instead of every process reading
     the whole mesh. Compressed meshes are read as before.
+    [PR 1215](https://github.com/awslabs/palace/pull/1215).
   - Added a STRUMPACK patch for
     [pghysels/STRUMPACK#174](https://github.com/pghysels/STRUMPACK/pull/174), which *Palace*
     always enables: the STRUMPACK solvers store their fill-reducing permutation once per
