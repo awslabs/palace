@@ -63,11 +63,11 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   maxwell_false["Solver"]["SurfaceResponseCorrection"]["PreflightOnly"] = false;
   CHECK(SurfaceResponsePreflightKey(IoData(maxwell_false, false)).empty());
 
-  // The key in the block another problem type reads is ignored like every key of an unused
-  // block (an electrostatic problem refuses the Maxwell block itself).
+  // A block of the other problem type is refused with its keys by the existing
+  // configuration check, so a key there is never silently ignored.
   json maxwell_other = maxwell;
   maxwell_other["Solver"]["Electrostatic"] = electrostatic_key["Solver"]["Electrostatic"];
-  CHECK(SurfaceResponsePreflightKey(IoData(maxwell_other, false)).empty());
+  CHECK_THROWS(IoData(maxwell_other, false));
 
   json invalid = electrostatic;
   invalid["Solver"]["Electrostatic"]["ResponseCorrection"]["PreflightOnly"] = "Yes";
