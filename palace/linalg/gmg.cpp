@@ -198,6 +198,14 @@ void GeometricMultigridSolver<OperType>::VCycle(int l, bool initial_guess) const
   RealMult(*P[l - 1], Y[l - 1], R[l]);
   Y[l] += R[l];
 
+  // EXPERIMENT (PR 1201 review): one-sided V-cycle, without post-smoothing (Phillips and
+  // Fischer, 2022), for the primary solver only (the one with the timer). Only valid with a
+  // Krylov solver that accepts a nonsymmetric preconditioner (GMRES, FGMRES).
+  if (use_timer)
+  {
+    return;
+  }
+
   // Post-smooth, with nonzero initial guess.
   B[l]->SetInitialGuess(true);
   B[l]->MultTranspose2(X[l], Y[l], R[l]);
