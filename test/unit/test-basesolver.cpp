@@ -1158,7 +1158,8 @@ void TestParallelNCSave(MPI_Comm comm, const fs::path &temp_dir, mfem::Element::
     file = Check("pass" + std::to_string(pass), true);
   }
 
-  // Read the last mesh back in parallel from an uncompressed file, as a restart does, then
+  // Read the last mesh back in parallel from an uncompressed file and from the last file
+  // (compressed but for order 1), as a restart does, and check that they are the same. Then
   // refine it and the mesh alike (with a limit on the hanging nodes, which keeps their
   // differences), and compare them.
   {
@@ -1168,12 +1169,23 @@ void TestParallelNCSave(MPI_Comm comm, const fs::path &temp_dir, mfem::Element::
     CHECK((order == 0 ||
            !mesh::ReadNCMeshCoarse(comm, (temp_dir / "pass2-gathered.mesh").string(), true,
                                    text)));  // not in the order of PrintParallelNCMesh
-    REQUIRE(mesh::ReadNCMeshCoarse(comm, plain.string(), true, text));
-    std::istringstream is(text);
-    mfem::Mesh coarse(is);
-    mesh::NondimensionalizeMesh(coarse, L);
+    auto Read = [&](const fs::path &path)
+    {
+      REQUIRE(mesh::ReadNCMeshCoarse(comm, path.string(), true, text));
+      std::istringstream is(text);
+      mfem::Mesh coarse(is);
+      mesh::NondimensionalizeMesh(coarse, L);
+      auto read = mesh::PartitionNCMeshFile(comm, coarse, L, 1.1);
+      REQUIRE(mesh::PrintParallelNCMesh(*read, L, path.string() + ".read", false));
+      return read;
+    };
+    Read(file);
     auto saved = std::move(mesh);
-    mesh = mesh::PartitionNCMeshFile(comm, coarse, L, 1.1);
+    mesh = Read(plain);
+    if (Mpi::Root(comm))
+    {
+      CHECK(ReadFile(file.string() + ".read") == ReadFile(plain.string() + ".read"));
+    }
     for (auto *m : {saved.get(), mesh.get()})
     {
       mfem::Array<int> refs;
