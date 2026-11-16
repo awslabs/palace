@@ -28,6 +28,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     refinement tree on one process, when the load stays within half of
     `Model.Refinement.MaximumImbalance`, so that saving the adapted mesh needs no
     redistribution; the partition, and so round-off, can differ from before.
+    [PR 1214](https://github.com/awslabs/palace/pull/1214).
   - When `Solver.Linear.Type` is `"Default"` (or omitted) for frequency domain problems,
     and for the wave port and boundary mode eigenvalue solves, *Palace* now prefers
     STRUMPACK over SuperLU_DIST, then MUMPS, as the sparse direct solver when built with
@@ -61,6 +62,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     writes the compressed parts. The saved file holds the same mesh and refinement tree as
     before, numbered differently (the roots are listed process by process). Meshes the
     parallel save does not support are still gathered, with a warning.
+    [PR 1214](https://github.com/awslabs/palace/pull/1214).
   - Added a STRUMPACK patch for
     [pghysels/STRUMPACK#165](https://github.com/pghysels/STRUMPACK/pull/165), which lowers
     the latency of the distributed triangular solves of the solve phase for a few
@@ -164,6 +166,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     `Model.RemoveCurvature`) now also scales the top-level vertex coordinates kept by its
     refinement tree, so that its saved adapted mesh and restarts from it have the right
     length unit.
+    [PR 1214](https://github.com/awslabs/palace/pull/1214).
   - Fixed driven frequency sweeps aborting with "... not found in sample frequencies!" when
     overlapping `"Samples"` ranges compute the same frequency with different rounding.
     [PR 1192](https://github.com/awslabs/palace/pull/1192).
