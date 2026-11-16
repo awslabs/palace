@@ -71,9 +71,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     40%. This changes the behavior of an explicit `"ComplexCoarseSolve": true`: the
     factorization differs, so results change at the level of the linear solver tolerance.
     `"DropSmallEntries"` keeps the real-valued system of twice the size, and with
-    `"PCMatReal"` the coarse-level matrix is real-valued and is factored as before. The log
-    says whether the complex-valued matrix is factored in complex arithmetic or as the
-    real-valued system. SchemaVer 4-3-0
+    `"PCMatReal"` the coarse-level matrix is real-valued and is factored as before. When
+    the imaginary part of the complex-valued matrix is exactly zero, as for a model without
+    losses, these solvers factor its real part in real arithmetic, which halves the memory
+    of the factors again. The log says which matrix is factored, and whether in complex
+    arithmetic or as a real-valued system. SchemaVer 4-3-0
     [PR 1193](https://github.com/awslabs/palace/pull/1193).
   - Added a STRUMPACK patch for
     [pghysels/STRUMPACK#171](https://github.com/pghysels/STRUMPACK/pull/171), which lowers

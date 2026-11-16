@@ -14,6 +14,7 @@
 #include <catch2/generators/catch_generators.hpp>
 #include <catch2/generators/catch_generators_range.hpp>
 #include "fem/mesh.hpp"
+#include "linalg/complexcoarse.hpp"
 #include "linalg/ksp.hpp"
 #include "linalg/mumps.hpp"
 #include "linalg/mumpscomplex.hpp"
@@ -334,14 +335,15 @@ public:
 // Driven problem on a cube of lossy dielectric with PEC walls at z = 0 and z = 1 (essential
 // boundary conditions) and a lumped port on x = 0, without multigrid: the preconditioner
 // matrix is a ComplexParOperator with real and imaginary parts and eliminated essential
-// degrees of freedom, built and solved as in a simulation.
+// degrees of freedom, built and solved as in a simulation. Without losses (a lossless
+// dielectric and an inductive port), its imaginary part is assembled as zeros.
 struct DrivenTestProblem
 {
   IoData iodata{Units(1.0e-3, 1.0e-3)};
   std::vector<std::unique_ptr<Mesh>> mesh;
   std::unique_ptr<SpaceOperator> space_op;
 
-  DrivenTestProblem(const json &linear)
+  DrivenTestProblem(const json &linear, bool lossless = false)
   {
     iodata.model.L0 = 1.0e-3;
     iodata.model.Lc = 1.0;
@@ -349,18 +351,19 @@ struct DrivenTestProblem
     iodata.solver.order = 2;
     iodata.solver.driven.sample_f = {1.0};
     iodata.solver.linear = config::LinearSolverData(linear);
-    iodata.domains = config::DomainData(
-        json{{"Materials", json::array({json::object({{"Attributes", json::array({1})},
-                                                      {"Permittivity", 4.0},
-                                                      {"LossTan", 0.3}})})}});
+    iodata.domains = config::DomainData(json{
+        {"Materials", json::array({json::object({{"Attributes", json::array({1})},
+                                                 {"Permittivity", 4.0},
+                                                 {"LossTan", lossless ? 0.0 : 0.3}})})}});
     // MakeCartesian3D boundary attributes: 1 (z = 0), 6 (z = sz), 5 (x = 0).
     iodata.boundaries = config::BoundaryData(
         json{{"PEC", json::object({{"Attributes", json::array({1, 6})}})},
-             {"LumpedPort", json::array({json::object({{"Index", 1},
-                                                       {"R", 50.0},
-                                                       {"Excitation", 1},
-                                                       {"Attributes", json::array({5})},
-                                                       {"Direction", "+Z"}})})}});
+             {"LumpedPort",
+              json::array({json::object({{"Index", 1},
+                                         {lossless ? "L" : "R", lossless ? 1.0e-9 : 50.0},
+                                         {"Excitation", 1},
+                                         {"Attributes", json::array({5})},
+                                         {"Direction", "+Z"}})})}});
     iodata.CheckConfiguration();
     auto smesh = std::make_unique<mfem::Mesh>(
         mfem::Mesh::MakeCartesian3D(4, 4, 4, mfem::Element::HEXAHEDRON, 1.0, 1.0, 1.0));
@@ -449,12 +452,41 @@ TEST_CASE("ComplexKspSolver sparse direct solver with ComplexCoarseSolve",
     DrivenTestProblem problem(LinearOptions(
         type, json{{"ComplexCoarseSolve", true}, {"ColumnOrdering", ordering}}));
     auto ksp = problem.MakeKspSolver();
-    CHECK(IsComplexArithmeticSolver(type, ksp->GetPreconditioner()));
+    auto *pc = dynamic_cast<ComplexCoarseSolver *>(ksp->GetPreconditioner());
+    REQUIRE(pc);
     ComplexVector E;
     CHECK(problem.Solve(*ksp, 1.0, E) <= 2);
+    CHECK(IsComplexArithmeticSolver(type, pc->GetComplexSolver()));
+    CHECK(!pc->GetRealSolver());
     E -= E_ref;
     CHECK(linalg::Norml2(comm, E) / linalg::Norml2(comm, E_ref) < 1.0e-8);
     CHECK(problem.Solve(*ksp, 1.2, E) <= 2);
+  }
+
+  // A model without losses: the imaginary part of the preconditioner matrix is assembled
+  // as zeros, and the real part alone is factored in real arithmetic, for the same
+  // solution as the real-valued system of twice the size.
+  {
+    ComplexVector E_ref0, E;
+    {
+      DrivenTestProblem problem(LinearOptions(type, json{{"ComplexCoarseSolve", true},
+                                                         {"DropSmallEntries", true}}),
+                                true);
+      auto ksp = problem.MakeKspSolver();
+      CHECK(problem.Solve(*ksp, 1.0, E_ref0) <= 2);
+    }
+    DrivenTestProblem problem(LinearOptions(type, json{{"ComplexCoarseSolve", true}}),
+                              true);
+    auto ksp = problem.MakeKspSolver();
+    auto *pc = dynamic_cast<ComplexCoarseSolver *>(ksp->GetPreconditioner());
+    REQUIRE(pc);
+    CHECK(problem.Solve(*ksp, 1.0, E) <= 2);
+    CHECK(!pc->GetComplexSolver());
+    auto *real_pc = dynamic_cast<MfemWrapperSolver<ComplexOperator> *>(pc->GetRealSolver());
+    REQUIRE(real_pc);
+    CHECK(real_pc->GetSolver().Height() == n);
+    E -= E_ref0;
+    CHECK(linalg::Norml2(comm, E) / linalg::Norml2(comm, E_ref0) < 1.0e-8);
   }
 
   // The cases which keep the real-valued solver, for the equivalent real-valued system of
@@ -493,6 +525,86 @@ TEST_CASE("ComplexKspSolver sparse direct solver with ComplexCoarseSolve",
     problem.Solve(*ksp, 1.0, E);
     CHECK(pc->GetSolver().Height() == n);
   }
+}
+
+TEST_CASE("ComplexCoarseSolver zero imaginary part",
+          "[strumpack][superlu][mumps][Serial][Parallel]")
+{
+  // The solver which ConfigurePreconditionerSolver builds for ComplexCoarseSolve factors
+  // the real part alone, in real arithmetic, when the imaginary part is exactly zero, the
+  // complex-valued matrix in complex arithmetic otherwise, and follows the operators it is
+  // given, with one solver at a time.
+  MPI_Comm comm = Mpi::World();
+  const auto type = GENERATE(from_range(SparseDirectSolverTypes()));
+  INFO("type " << type);
+  DrivenTestProblem problem(LinearOptions(type, json{{"ComplexCoarseSolve", true}}));
+  auto ksp = problem.MakeKspSolver();
+  auto *pc = dynamic_cast<ComplexCoarseSolver *>(ksp->GetPreconditioner());
+  REQUIRE(pc);
+  CHECK((!pc->GetRealSolver() && !pc->GetComplexSolver()));
+
+  // Matrices of TestComplexDirectSolver: with a loss, with an imaginary part of explicit
+  // zeros, with an imaginary part which is tiny (its square underflows) and zero on part of
+  // the domain, and without imaginary part.
+  mfem::Mesh serial_mesh =
+      mfem::Mesh::MakeCartesian3D(6, 6, 6, mfem::Element::HEXAHEDRON, 1.0, 1.0, 1.0);
+  mfem::ParMesh mesh(comm, serial_mesh);
+  mfem::H1_FECollection fec(2, 3);
+  mfem::ParFiniteElementSpace fespace(&mesh, &fec);
+  const auto A = AssembleTestMatrix(fespace, 1.0);
+  const auto A_zero = AssembleTestMatrix(fespace, 0.0);
+  const auto A_tiny = AssembleTestMatrix(fespace, 1.0e-300);
+  const ComplexWrapperOperator A_real(A_zero->Real(), nullptr);
+  REQUIRE(A_zero->Imag());
+
+  const int n = A->Height();
+  ComplexVector b(n), x(n), x_real(n), r(n);
+  b.Real().Randomize(1);
+  b.Imag().Randomize(2);
+  const double norm_b = linalg::Norml2(comm, b);
+  constexpr double tol = 1.0e-10;
+
+  // Factors and solves, checks which solver is used (the real-valued one for a matrix of
+  // size n, not for the real-valued system of twice the size), and returns the residual.
+  auto Solve = [&](const ComplexOperator &M, bool real)
+  {
+    pc->SetOperator(M);
+    if (real)
+    {
+      CHECK(!pc->GetComplexSolver());
+      auto *real_pc =
+          dynamic_cast<MfemWrapperSolver<ComplexOperator> *>(pc->GetRealSolver());
+      REQUIRE(real_pc);
+      CHECK(real_pc->GetSolver().Height() == n);
+    }
+    else
+    {
+      CHECK(!pc->GetRealSolver());
+      CHECK(IsComplexArithmeticSolver(type, pc->GetComplexSolver()));
+    }
+    x = 0.0;
+    pc->Mult(b, x);
+    M.Mult(x, r);
+    r -= b;
+    return linalg::Norml2(comm, r) / norm_b;
+  };
+  auto DifferenceFromReal = [&]()
+  {
+    r = x;
+    r -= x_real;
+    return linalg::Norml2(comm, r) / linalg::Norml2(comm, x_real);
+  };
+
+  CHECK(Solve(*A_zero, true) < tol);
+  x_real = x;
+  CHECK(Solve(*A_tiny, false) < tol);
+  CHECK(DifferenceFromReal() < 10.0 * tol);
+  CHECK(Solve(*A, false) < tol);
+  CHECK(Solve(A_real, true) < tol);
+  CHECK(DifferenceFromReal() < 10.0 * tol);
+  CHECK(Solve(*A, false) < tol);
+  CHECK(Solve(*A_zero, true) < tol);
+  CHECK(DifferenceFromReal() < 10.0 * tol);
 }
 
 }  // namespace palace

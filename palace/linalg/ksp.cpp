@@ -7,6 +7,7 @@
 #include "fem/fespace.hpp"
 #include "linalg/amg.hpp"
 #include "linalg/ams.hpp"
+#include "linalg/complexcoarse.hpp"
 #include "linalg/cudss.hpp"
 #include "linalg/gmg.hpp"
 #include "linalg/jacobi.hpp"
@@ -133,7 +134,8 @@ auto MakeWrapperSolver(const config::LinearSolverData &linear, U &&...args)
 // Whether the sparse direct solvers which support it factor the complex-valued matrix of a
 // complex-valued coarse solve in complex arithmetic, instead of the equivalent real-valued
 // system of twice the size (see MfemWrapperSolver). With PCMatReal, the matrix is
-// real-valued, and the complex arithmetic solvers do not drop small entries.
+// real-valued, and the complex arithmetic solvers do not drop small entries. A matrix whose
+// imaginary part is zero is then factored in real arithmetic (see ComplexCoarseSolver).
 [[maybe_unused]] bool UseComplexArithmetic(const config::LinearSolverData &linear)
 {
   return linear.complex_coarse_solve && !linear.pc_mat_real && !linear.drop_small_entries;
@@ -176,8 +178,20 @@ ConfigurePreconditionerSolver(const config::LinearSolverData &linear,
         // process grids (pzgssvx), not the one for 3D process grids (pzgssvx3d).
         if (UseComplexArithmetic(linear) && !linear.superlu_3d)
         {
-          pc = std::make_unique<SuperLUComplexSolver>(comm, linear.sym_factorization,
-                                                      linear.reorder_reuse, print);
+          pc = std::make_unique<ComplexCoarseSolver>(
+              comm,
+              [linear, comm, print]()
+              {
+                return MakeWrapperSolver<OperType, SuperLUSolver>(
+                    linear, comm, linear.sym_factorization, linear.superlu_3d,
+                    linear.reorder_reuse, print);
+              },
+              [linear, comm, print]()
+              {
+                return std::make_unique<SuperLUComplexSolver>(
+                    comm, linear.sym_factorization, linear.reorder_reuse, print);
+              },
+              verbose > 0);
           break;
         }
       }
@@ -195,8 +209,22 @@ ConfigurePreconditionerSolver(const config::LinearSolverData &linear,
         if (UseComplexArithmetic(linear) &&
             linear.strumpack_compression_type == SparseCompression::NONE)
         {
-          pc = std::make_unique<StrumpackComplexSolver>(comm, linear.sym_factorization,
-                                                        linear.reorder_reuse, print);
+          pc = std::make_unique<ComplexCoarseSolver>(
+              comm,
+              [linear, comm, print]()
+              {
+                return MakeWrapperSolver<OperType, StrumpackSolver>(
+                    linear, comm, linear.sym_factorization,
+                    linear.strumpack_compression_type, linear.strumpack_lr_tol,
+                    linear.strumpack_butterfly_l, linear.strumpack_lossy_precision,
+                    linear.reorder_reuse, print);
+              },
+              [linear, comm, print]()
+              {
+                return std::make_unique<StrumpackComplexSolver>(
+                    comm, linear.sym_factorization, linear.reorder_reuse, print);
+              },
+              verbose > 0);
           break;
         }
       }
@@ -222,12 +250,25 @@ ConfigurePreconditionerSolver(const config::LinearSolverData &linear,
         // factorization of MUMPS, with the tolerance of the compression options.
         if (UseComplexArithmetic(linear))
         {
-          pc = std::make_unique<MumpsComplexSolver>(
-              comm, pc_mat_sym, linear.sym_factorization,
+          const double blr_tol =
               (linear.strumpack_compression_type == SparseCompression::BLR)
                   ? linear.strumpack_lr_tol
-                  : 0.0,
-              linear.reorder_reuse, print);
+                  : 0.0;
+          pc = std::make_unique<ComplexCoarseSolver>(
+              comm,
+              [linear, comm, pc_mat_sym, blr_tol, print]()
+              {
+                return MakeWrapperSolver<OperType, MumpsSolver>(
+                    linear, comm, pc_mat_sym, linear.sym_factorization, blr_tol,
+                    linear.reorder_reuse, print);
+              },
+              [linear, comm, pc_mat_sym, blr_tol, print]()
+              {
+                return std::make_unique<MumpsComplexSolver>(
+                    comm, pc_mat_sym, linear.sym_factorization, blr_tol,
+                    linear.reorder_reuse, print);
+              },
+              verbose > 0);
           break;
         }
       }
@@ -254,10 +295,12 @@ ConfigurePreconditionerSolver(const config::LinearSolverData &linear,
   }
 
   // With ComplexCoarseSolve, say how the complex-valued matrix is factored: the real-valued
-  // system of twice the size takes more memory and time.
+  // system of twice the size takes more memory and time. ComplexCoarseSolver says it when
+  // it is given the matrix.
   if constexpr (std::is_same_v<OperType, ComplexOperator>)
   {
-    if (linear.complex_coarse_solve && !linear.pc_mat_real && verbose > 0)
+    if (linear.complex_coarse_solve && !linear.pc_mat_real && verbose > 0 &&
+        !dynamic_cast<ComplexCoarseSolver *>(pc.get()))
     {
       Mpi::Print(comm, " Coarse solve with the complex-valued matrix {}\n",
                  dynamic_cast<MfemWrapperSolver<OperType> *>(pc.get())

@@ -37,6 +37,11 @@ struct ComplexLocalCSR
   bool SamePattern(MPI_Comm comm, std::size_t &hash) const;
 };
 
+// Whether the operator has no imaginary part, or an imaginary part whose parallel assembled
+// matrix has no nonzero entry on any process, as for a model without losses (the imaginary
+// part is assembled, with explicit zeros). Collective.
+bool HasZeroImag(const ComplexOperator &op);
+
 // Release the parallel assembled matrices of the ParOperator real and imaginary parts of
 // the operator, for the solvers which copy the matrix (as MfemWrapperSolver does for the
 // sparse direct solvers). They are assembled again if needed.

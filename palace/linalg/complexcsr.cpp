@@ -153,6 +153,31 @@ bool ComplexLocalCSR::SamePattern(MPI_Comm comm, std::size_t &hash) const
   return same;
 }
 
+bool HasZeroImag(const ComplexOperator &op)
+{
+  const auto *hAi = GetAssembled(op.Imag());
+  if (!hAi)
+  {
+    return true;
+  }
+
+  // The test is exact (not a number counts as nonzero), so that the real part alone is the
+  // same matrix as the operator.
+  hAi->HostRead();
+  auto *A = (hypre_ParCSRMatrix *)const_cast<mfem::HypreParMatrix &>(*hAi);
+  bool nonzero = false;
+  for (const hypre_CSRMatrix *block :
+       {hypre_ParCSRMatrixDiag(A), hypre_ParCSRMatrixOffd(A)})
+  {
+    const auto *data = hypre_CSRMatrixData(block);
+    nonzero = nonzero || std::any_of(data, data + hypre_CSRMatrixNumNonzeros(block),
+                                     [](double v) { return v != 0.0; });
+  }
+  hAi->HypreRead();
+  Mpi::GlobalOr(1, &nonzero, hAi->GetComm());
+  return !nonzero;
+}
+
 void ReleaseParallelAssemble(const ComplexOperator &op)
 {
   for (const auto *part : {op.Real(), op.Imag()})
