@@ -52,6 +52,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Performance Improvements
 
+  - Uniform frequency sweeps of driven simulations release the linear solver and system
+    matrices after the last solve, before the final field output and error estimation.
+    This lowers the peak memory when the final postprocessing sets it.
+    [PR 1087](https://github.com/awslabs/palace/pull/1087).
   - Added a STRUMPACK patch for
     [pghysels/STRUMPACK#165](https://github.com/pghysels/STRUMPACK/pull/165), which lowers
     the latency of the distributed triangular solves of the solve phase for a few
