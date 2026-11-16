@@ -9061,6 +9061,30 @@ public:
     double deviation_over_R = 0.0;
     double band_over_R = 0.0;
   };
+  // Whether a model of the signature's topology key lies within the signature tolerance
+  // (Match's criterion: deviation <= 1), without Match's selection and without its refusal
+  // of an ambiguous cluster: a read-only query (the law-naming line of the Missing
+  // warning).
+  bool HasModelWithin(const nlohmann::json &feature_signature) const
+  {
+    const auto it =
+        by_topology.find(SplitSignatureParameters(feature_signature).topology_key);
+    if (it == by_topology.end())
+    {
+      return false;
+    }
+    for (const std::size_t index : it->second)
+    {
+      const auto deviation =
+          SignatureDeviation(feature_signature, entries[index].signature);
+      if (deviation && *deviation <= 1.0)
+      {
+        return true;
+      }
+    }
+    return false;
+  }
+
   std::optional<NearMatched> NearMatch(const nlohmann::json &feature_signature) const
   {
     const auto it =
@@ -15046,6 +15070,202 @@ FeaturePatchSummary BuildFeaturePatches(
   return summary;
 }
 
+// Every metal-law string ("Law": the describer's dump of a boundary law) of a signature.
+void CollectSignatureLaws(const nlohmann::json &node, std::set<std::string> &laws)
+{
+  if (node.is_object())
+  {
+    for (auto it = node.begin(); it != node.end(); ++it)
+    {
+      if (it.key() == "Law" && it.value().is_string())
+      {
+        laws.insert(it.value().get<std::string>());
+      }
+      else
+      {
+        CollectSignatureLaws(it.value(), laws);
+      }
+    }
+  }
+  else if (node.is_array())
+  {
+    for (const auto &entry : node)
+    {
+      CollectSignatureLaws(entry, laws);
+    }
+  }
+}
+
+// The signature with every metal-law string replaced by `law`.
+void ReplaceSignatureLaws(nlohmann::json &node, const std::string &law)
+{
+  if (node.is_object())
+  {
+    for (auto it = node.begin(); it != node.end(); ++it)
+    {
+      if (it.key() == "Law" && it.value().is_string())
+      {
+        it.value() = law;
+      }
+      else
+      {
+        ReplaceSignatureLaws(it.value(), law);
+      }
+    }
+  }
+  else if (node.is_array())
+  {
+    for (auto &entry : node)
+    {
+      ReplaceSignatureLaws(entry, law);
+    }
+  }
+}
+
+// A metal law key as designer text: "PEC", "Impedance (Cs=0, Ls=4.5e-14, Rs=0)".
+std::string DescribeLawKey(const std::string &key)
+{
+  const auto law = nlohmann::json::parse(key);
+  std::string text = law.value("Type", std::string("PEC"));
+  std::string parameters;
+  for (auto it = law.begin(); it != law.end(); ++it)
+  {
+    if (it.key() != "Type")
+    {
+      parameters += (parameters.empty() ? "" : ", ") + it.key() + "=" +
+                    (it.value().is_number() ? fmt::format("{:g}", it.value().get<double>())
+                                            : it.value().dump());
+    }
+  }
+  return parameters.empty() ? text : text + " (" + parameters + ")";
+}
+
+// The Missing features whose metal law is the cause (visibility only; nothing reads it): an
+// unmatched feature (no model selected by the matching pass; placement rejections and the
+// unmerged mirror configurations excluded, as the warning's count) whose signature, with
+// every metal-law field replaced by one VERIFIED law some library model carries, finds a
+// library model within the matcher's own key tolerance (LibrarySignatureIndex::
+// HasModelWithin). Families (curvature / corner interpolation), near-match bands and
+// aliases are not tried, so the count can be short, never over. Empty (nothing computed)
+// when no library law differs from every feature's own.
+struct LawCausedMissing
+{
+  int features = 0;
+  double length = 0.0;
+  std::map<std::string, std::pair<int, double>> by_type;
+  std::set<std::string> device_laws, library_laws;
+  std::set<int> device_attributes;
+};
+
+LawCausedMissing FindLawCausedMissing(const ProcessLibrary &library,
+                                      const IdentificationResult &identification,
+                                      const AutomaticResponseRequirements &describer,
+                                      const IoData &iodata, const mfem::ParMesh &mesh)
+{
+  LawCausedMissing result;
+  std::set<std::string> library_laws;
+  auto AddLaw = [&](const MetalBoundaryLaw &law)
+  {
+    if (law.parameters_verified)
+    {
+      library_laws.insert(describer.DescribeBoundaryCondition(law).dump());
+    }
+  };
+  for (const auto &model : library.models)
+  {
+    AddLaw(model.boundary_condition);
+    for (const auto &edge : model.spatial_edges)
+    {
+      AddLaw(edge.boundary_condition);
+    }
+  }
+  const std::size_t real_segments = identification.real_segments > 0
+                                        ? identification.real_segments
+                                        : identification.segments.size();
+  std::optional<LibrarySignatureIndex> index;
+  for (const auto &feature : identification.features)
+  {
+    if (feature.matched_model || IsUnmergedMirrorConfiguration(feature))
+    {
+      continue;
+    }
+    std::set<std::string> own;
+    CollectSignatureLaws(feature.signature, own);
+    if (own.empty())
+    {
+      continue;
+    }
+    for (const auto &law : library_laws)
+    {
+      if (own.count(law) > 0)
+      {
+        continue;
+      }
+      if (!index)
+      {
+        index.emplace(LibrarySignatureKeys(library, describer));
+      }
+      nlohmann::json signature = feature.signature;
+      ReplaceSignatureLaws(signature, law);
+      if (!index->HasModelWithin(signature))
+      {
+        continue;
+      }
+      double length = 0.0;
+      for (const auto &portion : feature.portions)
+      {
+        length += portion.segment >= real_segments ? 0.0 : portion.s1 - portion.s0;
+      }
+      result.features++;
+      result.length += length;
+      result.by_type[feature.type].first++;
+      result.by_type[feature.type].second += length;
+      result.device_laws.insert(own.begin(), own.end());
+      result.library_laws.insert(law);
+      break;
+    }
+  }
+  if (result.features > 0)
+  {
+    // The configuration's metal boundary attributes that carry a counted device law.
+    for (int i = 0; i < mesh.bdr_attributes.Size(); i++)
+    {
+      const int attribute = mesh.bdr_attributes[i];
+      const auto law = GetBoundaryConditionLaw(iodata.boundaries, attribute);
+      if (law && law->parameters_verified &&
+          result.device_laws.count(describer.DescribeBoundaryCondition(*law).dump()) > 0)
+      {
+        result.device_attributes.insert(attribute);
+      }
+    }
+  }
+  return result;
+}
+
+std::string LawCausedMissingLine(const LawCausedMissing &missing, double coordinate_scale)
+{
+  std::string types, device, library;
+  for (const auto &[type, entry] : missing.by_type)
+  {
+    types += fmt::format("{}{}: {:d} ({:.6e})", types.empty() ? "" : ", ", type,
+                         entry.first, entry.second * coordinate_scale);
+  }
+  for (const auto &law : missing.device_laws)
+  {
+    device += (device.empty() ? "" : "; ") + DescribeLawKey(law);
+  }
+  for (const auto &law : missing.library_laws)
+  {
+    library += (library.empty() ? "" : "; ") + DescribeLawKey(law);
+  }
+  return fmt::format(
+      "{:d} of them ({:.6e} length units; {{{}}}) have library models of the same geometry "
+      "class under another metal boundary law: device metal {} (boundary attribute(s) {}); "
+      "library models {}.\n",
+      missing.features, missing.length * coordinate_scale, types, device,
+      fmt::join(missing.device_attributes, ", "), library);
+}
+
 ResponseCorrectionData
 BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                              const MaterialOperator &mat_op,
@@ -16517,11 +16737,19 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
     {
       if (summary.unmatched_features > 0)
       {
+        // The metal law named when it is why features are Missing (one extra line, only
+        // then; visibility only).
+        const auto law_caused = FindLawCausedMissing(
+            library, identification, requirements ? *requirements : law_describer, iodata,
+            mesh);
         Mpi::Warning("Fabrication-process response library \"{}\" has no model for {} "
                      "identified feature(s) ({:.6e} length units); correction is disabled "
-                     "for these features only.\n",
+                     "for these features only.\n{}",
                      library.name, summary.unmatched_features,
-                     summary.unmatched_length * coordinate_scale);
+                     summary.unmatched_length * coordinate_scale,
+                     law_caused.features > 0
+                         ? LawCausedMissingLine(law_caused, coordinate_scale)
+                         : std::string());
       }
       if (!requirements &&
           request.unmatched_policy == ResponseCorrectionData::UnmatchedPolicy::ERROR)
