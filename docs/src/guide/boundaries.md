@@ -257,9 +257,15 @@ segment through the substrate on the ground plane.
 ```
 
 In the edge and corner regions of a box, the layer is made of the columns of the boundary
-elements next to the edges, which are as wide as these elements: refine the mesh along the
-edges between the faces with a PML to about the element size of the layer, `"Thickness"` /
-`"Layers"`, as in the [patch antenna example](../examples/patch_antenna.md#Truncation).
+elements next to the edges, which fan out the more, the closer the core comes to the faces:
+from a box just inside, the whole fan is in the last column, as wide as one element. This is
+less accurate unless the mesh is refined along the edges between the faces with a PML to
+about the element size of the layer, `"Thickness"` / `"Layers"`, as in the
+[patch antenna example](../examples/patch_antenna.md#Truncation). On a cube of 8
+hexahedra across with a layer of 4 elements, third-order elements give the field of a dipole
+at its center within 0.07 to 0.33% of that in free space at nine probes with the layer
+extruded from the center, and within 0.5 to 1.0% from a box one element inside or less (0.4
+to 3.7% and 2.3 to 5.1% with second-order elements).
 
 The extruded elements take the material of the elements below them, and the other boundaries
 through the edges of the extruded boundary, such as a ground plane, extend through the
