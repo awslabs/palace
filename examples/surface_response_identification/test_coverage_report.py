@@ -1498,6 +1498,33 @@ class Round3Test(unittest.TestCase):
         self.assertEqual(len(lines), 1, buf.getvalue())
         self.assertIn("a duplicate mark / twin / exposure column name", lines[0])
 
+    def test_refusal_at_the_last_source_is_the_only_output(self):
+        """Ruling 1939 (validate first): a two-source tree, source 1 marked, an UNMARKED nan in the LAST source's ft cell: main exits 5,
+        the ONE refusal line is its only output, no report (the per-source blocks are built before anything is written)."""
+        post, manifest = write_fixture(os.path.join(self.tmp, "late"), sources=(1, 2))
+        for d in cr.iteration_dirs(post):
+            shutil.rmtree(d)
+        path = os.path.join(post, "surface-Q-corrected.csv")
+        with open(path) as f:
+            cols = {h for h in f.readline().rstrip("\n").split(",") if "postprocessed" in h or h.startswith("E_elec corrected")}
+        mark_rows(path, cols, lambda row: float(row["i"]) == 1.0, ES_MARKS)
+
+        def late(lines):
+            j = [h.strip() for h in lines[0]].index("E_surf postprocessed fixed-trace[2] (J)")
+            for r in lines[1:]:
+                if float(r[0]) == 2.0:
+                    r[j] = "nan"
+        self.edit(path, late)
+        out = os.path.join(self.tmp, "late-out")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = cr.main([post, "--manifest", manifest, "--bands", self.bands["_path"], "--output", out])
+        self.assertEqual(rc, cm.REFUSAL_EXIT, buf.getvalue())
+        self.assertFalse(os.path.exists(out))
+        lines = buf.getvalue().splitlines()
+        self.assertEqual(len(lines), 1, buf.getvalue())
+        self.assertIn("source 2", lines[0])
+
     def test_mark_token_read_one_way(self):
         """R-4 (the review's N2): the mark token '1.0' is a REFUSAL here as in every reader (this reader floated it to 1 before)."""
         post, manifest = self.single_solve("tok")

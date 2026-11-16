@@ -930,6 +930,16 @@ class ExplicitMarkWindows(unittest.TestCase):
         self.assertFalse(os.path.exists(out))
         self.assert_one_refusal_line("a duplicate mark / twin / exposure column name")
 
+    def test_refusal_at_the_last_source_is_the_only_output(self):
+        """Ruling 1939 (validate first): source 1 marked, an UNMARKED nan in the LAST source's cell: exit 5, the ONE refusal line
+        printed (no grade of source 1 before it), no output file."""
+        run = mark_es_run(self.run_of("late"), [1])
+        self.edit_cell(run, "p_surf postprocessed fixed-trace[2]", 2, "nan")
+        rc, g, out = self.grade(run, "late")
+        self.assertEqual(rc, cm.REFUSAL_EXIT)
+        self.assertFalse(os.path.exists(out))
+        self.assert_one_refusal_line("source 2")
+
     def test_mark_token_read_one_way(self):
         """Decision 1934 (R-4; the review's N2): a mark token '1.0' is a REFUSAL (as in every reader), not a mark."""
         run = mark_es_run(self.run_of("tok10"), [2])
