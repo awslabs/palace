@@ -184,22 +184,24 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
       Mpi::Print("\n");
       ksp->Mult(RHS, E);
 
-      // Start Post-processing.
-      BlockTimer bt0(Timer::POSTPRO);
       if (omega_i + 1 == omega_sample.size() &&
           excitation_counter == port_excitations.Size())
       {
-        // No more solves: release linear solve state before output and error
-        // estimation allocate additional workspace. Preserve cumulative solver totals.
+        // That was the last solve: save the solver totals and release the linear solver
+        // and system operators, so they do not add to the memory peak of the field output
+        // and error estimation which follow.
         SaveMetadata(*ksp);
         ksp.reset();
-        P.reset();
         A.reset();
         A2.reset();
+        P.reset();
         K.reset();
         C.reset();
         M.reset();
       }
+
+      // Start Post-processing.
+      BlockTimer bt0(Timer::POSTPRO);
       Mpi::Print(" Sol. ||E|| = {:.6e} (||RHS|| = {:.6e})\n",
                  linalg::Norml2(space_op.GetComm(), E),
                  linalg::Norml2(space_op.GetComm(), RHS));
@@ -230,7 +232,8 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
       estimator.AddErrorIndicator(E, B, total_domain_energy, indicator);
     }
 
-    // Final postprocessing & printing.
+    // Final postprocessing & printing. After the last excitation, the solver totals were
+    // already saved when the solver was released.
     BlockTimer bt0(Timer::POSTPRO);
     if (ksp)
     {
