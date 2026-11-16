@@ -574,6 +574,15 @@ public:
   // measurement (see above).
   const auto &GetDomainPostOp() const { return dom_post_op; }
 
+  // The electric and magnetic field energies of the last measurement, nondimensional: the
+  // stored electric energy, empty without it (Measurement::domain_E_field_energy_all), and
+  // the magnetic energy.
+  std::pair<std::optional<double>, double> GetDomainFieldEnergies() const
+  {
+    return {measurement_cache.domain_E_field_energy_all,
+            measurement_cache.domain_H_field_energy_all};
+  }
+
   // The L-vector of a magnetostatic solution, on the space of the domain energy operators
   // (broken across two-sided superconductor films, if any).
   void GetSolutionLVector(const Vector &a, Vector &a_l_out) const

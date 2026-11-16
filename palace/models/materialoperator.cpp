@@ -577,6 +577,23 @@ MaterialOperator::GetFrequencyDependentPermittivityPoles() const
   return poles;
 }
 
+std::vector<double> MaterialOperator::GetPermittivityResonances(std::size_t material_idx,
+                                                                double omega_min,
+                                                                double omega_max,
+                                                                double half_widths) const
+{
+  std::vector<double> resonances;
+  for (const auto &term : GetPermittivityPoleTerms(material_idx))
+  {
+    const double omega = term.pole.imag(), margin = -half_widths * term.pole.real();
+    if (omega > 0.0 && omega >= omega_min - margin && omega <= omega_max + margin)
+    {
+      resonances.push_back(omega);
+    }
+  }
+  return resonances;
+}
+
 bool MaterialOperator::HasFrequencyDependentPermittivityA2() const
 {
   return std::ranges::any_of(frequency_dependent_materials,
