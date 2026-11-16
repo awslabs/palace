@@ -177,11 +177,13 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     # https://github.com/pghysels/STRUMPACK/pull/163 for faster distributed solves, its
     # fix https://github.com/pghysels/STRUMPACK/pull/164, the solver changes of
     # https://github.com/pghysels/STRUMPACK/pull/165 for faster distributed triangular
-    # solves with a few right-hand sides, and the copy in extern/patch/STRUMPACK of the
+    # solves with a few right-hand sides, and the copies in extern/patch/STRUMPACK of the
     # source and CMake changes of https://github.com/pghysels/STRUMPACK/pull/169, which
     # allow setting the PBLAS block size (see the local strumpack package) and use these
-    # solves only for the block sizes they handle. Kept off the `with` blocks so the Palace
-    # variants are not folded into the patch condition.
+    # solves only for the block sizes they handle, and of the source changes of
+    # https://github.com/pghysels/STRUMPACK/pull/171, which lower the memory of the
+    # distributed solver. Kept off the `with` blocks so the Palace variants are not folded
+    # into the patch condition.
     depends_on(
         "strumpack@8.1.0",
         when="@develop+strumpack",
@@ -210,6 +212,13 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 "2c04dcfe57fa535eb5cfa9c6be71bf788ec6f371/extern/patch/STRUMPACK/"
                 "strumpack_pr169.diff",
                 sha256="4bca6102f23e111f4353f9e57dd58f61dbee95b5030d08b80591a9f4e6eb8117",
+                when="@8.1.0",
+            ),
+            patch(
+                "https://raw.githubusercontent.com/awslabs/palace/"
+                "8a1824f67bfe176f74075e9e3938fa8267c0695f/extern/patch/STRUMPACK/"
+                "strumpack_pr171.diff",
+                sha256="781f79e96d4ff55cc914617885d64f869ea001314841c8c30b94d5073685e71a",
                 when="@8.1.0",
             ),
         ],
