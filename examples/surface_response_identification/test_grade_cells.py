@@ -1227,6 +1227,17 @@ class BandWithheldBySource(unittest.TestCase):
         self.assertNotIn("band_not_applied_types", g)
         self.assertEqual(self.withheld_members(g), set())
 
+    def test_default_not_applied_types_without_its_rows_withholds_every_member(self):
+        """The round-5 review's m-4 (decision 1966 item 2b): a report whose headline not_applied_types names MS while its headline
+        block_C MS row carries a band (an EDITED report: the allowed writer never writes it) and whose per-source blocks are clean:
+        every member reads MS NOT-APPLIED (the default source's marks enter every member), never a band reading."""
+        report = self.report({})
+        report["not_applied_types"] = ["MS"]
+        g, _, _ = self.grade(self.run_of("m4"), report, "m4")
+        self.assertEqual(self.withheld_members(g), {(str(s), "MS") for s in self.sources})
+        self.assertEqual(g.get("band_not_applied_types"), ["MS"])
+        self.assertIsNone(g["cells"]["MS"]["in_band"])
+
     def test_member_without_a_source_block_reads_the_default_block(self):
         """A member whose source has no block in the report (here source 4) reads the default block only; source 2's own withheld MS
         is NOT-APPLIED for member 2 only."""

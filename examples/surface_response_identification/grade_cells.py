@@ -809,6 +809,10 @@ class BandWithheld:
         self.default = self.by_source[str(report.get("source"))]
 
     def of_member(self, member):
+        # `| self.default` changes nothing on a report of the allowed writer (the default source's withheld Types are already
+        # not_applied rows of the headline block_C that every member reads); it guards an EDITED report whose headline
+        # not_applied_types disagrees with its own rows (round-5 review m-4; test_grade_cells.BandWithheldBySource.
+        # test_default_not_applied_types_without_its_rows_withholds_every_member).
         return self.by_source.get(str(member), set()) | self.default
 
 
