@@ -626,10 +626,11 @@ struct SubstructuringSolver::Impl
   // do not reach the environment interior skip the solve.
   void ComputeModes(const std::vector<int> &ids, const std::vector<mfem::Vector> &x);
 
-  // Whether the current modes cover the given lifts (same ids + environment fingerprints);
-  // col[j] receives the mode column of request j. Collective.
+  // Whether the current modes cover every lift that reaches the environment (need[j]; same
+  // id and fingerprints, or on the mesh of the region an id of the model), with col[j] its
+  // mode column (-1: none, zero modes). Collective.
   bool ModesMatch(const std::vector<int> &ids, const std::vector<mfem::Vector> &xd,
-                  std::vector<int> &col) const;
+                  std::vector<int> &col, std::vector<char> &need) const;
 
   // Per-rank counts/displacements of an interface-row-distributed array (gamma_nloc * w
   // each).

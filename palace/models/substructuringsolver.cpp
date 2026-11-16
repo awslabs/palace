@@ -5,7 +5,6 @@
 
 #include <cmath>
 #include <limits>
-#include <numeric>
 #include <utility>
 #include "fem/multigrid.hpp"
 #include "linalg/errorestimator.hpp"
@@ -200,12 +199,20 @@ SubstructuringSolver::Impl::Impl(const IoData &iodata,
     // The mesh holds the environment of the model, or its part in the mesh of the region.
     region_only = RegionOnlyMesh(parent, sub.environment_attributes, saved.env_moments,
                                  saved.region_moments, kFingerprintTol);
+    // S_E was condensed with the regularization of the model: the region uses the same.
+    model_eps = saved.regularization;
     if (region_only)
     {
-      model_eps = saved.regularization;
       MFEM_VERIFY(iodata.model.refinement.max_it == 0,
                   "Adaptive refinement with substructuring needs the full mesh, not the "
                   "mesh of the region!");
+      const auto &refinement = iodata.model.refinement;
+      MFEM_VERIFY(refinement.uniform_ref_levels == 0 &&
+                      refinement.ser_uniform_ref_levels == 0 &&
+                      refinement.GetBoxes().empty() && refinement.GetSpheres().empty(),
+                  "The mesh of the region is written refined: an online run on it takes no "
+                  "\"UniformLevels\", \"SerialUniformLevels\", \"Boxes\" or \"Spheres\" "
+                  "refinement!");
       // The versions on the region side only of the DOFs on the boundary, at the points of
       // the saved interface DOFs, are interface DOFs (both sides of a two-sided film
       // crossing Gamma).
@@ -217,6 +224,19 @@ SubstructuringSolver::Impl::Impl(const IoData &iodata,
       cut = RegionMeshInterface(parent_fes, region_side,
                                 broken ? version_parent : std::vector<int>{}, saved.sig,
                                 saved.width);
+    }
+  }
+  // As in the regular solve, the terminal attributes are boundary attributes of the mesh
+  // (but those of the environment terminals are not on the mesh of the region).
+  if (!region_only)
+  {
+    for (const auto &[idx, term] : terminals)
+    {
+      for (int a : term.attributes)
+      {
+        MFEM_VERIFY(parent.bdr_attributes.Find(a) >= 0,
+                    "Unknown terminal boundary attribute " << a << "!");
+      }
     }
   }
 
@@ -1146,25 +1166,27 @@ mfem::DenseMatrix SubstructuringSolver::EnergyMatrixDbc(const std::vector<int> &
   const int n = static_cast<int>(xd.size());
   const int nf = fields ? std::max(0, std::min(n_fields, n)) : 0;
   MPI_Comm comm = impl->parent_fes.GetComm();
-  auto full = [&]()
-  {
-    std::vector<Vector> x;
-    for (const auto &v : xd)
-    {
-      x.push_back(impl->DirichletField(v));
-    }
-    return x;
-  };
 
-  // Modes of these lifts: reuse the saved / current ones if they match (id + environment
-  // fingerprint), else compute them (needs the environment once; appended to the model in
-  // an offline run that saves one).
+  // Modes of the lifts that reach the environment: reuse the saved / current ones if they
+  // match (id + environment fingerprint), else compute them (needs the environment once;
+  // appended to the model in an offline run that saves one). A lift that does not reach the
+  // environment, such as a terminal inside the region, has zero modes.
   std::vector<int> col;
-  if (!impl->ModesMatch(ids, xd, col))
+  std::vector<char> need;
+  if (!impl->ModesMatch(ids, xd, col, need))
   {
-    impl->ComputeModes(ids, full());
-    col.resize(n);
-    std::iota(col.begin(), col.end(), 0);
+    std::vector<int> req_ids;
+    std::vector<Vector> req_lifts;
+    for (int j = 0; j < n; j++)
+    {
+      col[j] = need[j] ? static_cast<int>(req_ids.size()) : -1;
+      if (need[j])
+      {
+        req_ids.push_back(ids[j]);
+        req_lifts.push_back(impl->DirichletField(xd[j]));
+      }
+    }
+    impl->ComputeModes(req_ids, req_lifts);
     const auto &subcfg = *impl->iodata.solver.substructuring;
     if (subcfg.mode != SubstructuringMode::ONLINE && !subcfg.save_model.empty())
     {
@@ -1172,9 +1194,11 @@ mfem::DenseMatrix SubstructuringSolver::EnergyMatrixDbc(const std::vector<int> &
     }
   }
   const int K = static_cast<int>(impl->mode_ids.size());
-  const std::vector<double> &G = impl->G_rows;
   auto row = [&](int i)
   { return static_cast<std::size_t>(impl->gamma_global[i] - impl->gamma_off) * K; };
+  // Modes of lift j (zero without an environment part).
+  auto g_of = [&](int i, int j)
+  { return col[j] < 0 ? 0.0 : impl->G_rows[row(i) + col[j]]; };
 
   // Region-condensed solve per lift (environment interior left at zero): the interface load
   // is the precomputed g_k, so no environment solve is needed.
@@ -1189,7 +1213,7 @@ mfem::DenseMatrix SubstructuringSolver::EnergyMatrixDbc(const std::vector<int> &
       double *trr = tr.HostReadWrite();
       for (int i : gm)
       {
-        trr[i] += G[row(i) + col[j]];
+        trr[i] += g_of(i, j);
       }
       tr.Neg();
       tr.GetSubVector(impl->rf_idx, xr[j]);
@@ -1241,7 +1265,7 @@ mfem::DenseMatrix SubstructuringSolver::EnergyMatrixDbc(const std::vector<int> &
       double a = (uc[i] * Kuc[j]) + (ug[i] * Sug[j]);
       for (int q = 0; q < gm.Size(); q++)
       {
-        a += ug[i](q) * G[row(gm[q]) + col[j]] + G[row(gm[q]) + col[i]] * ug[j](q);
+        a += ug[i](q) * g_of(gm[q], j) + g_of(gm[q], i) * ug[j](q);
       }
       E(i, j) = a;
     }
@@ -1254,7 +1278,10 @@ mfem::DenseMatrix SubstructuringSolver::EnergyMatrixDbc(const std::vector<int> &
   {
     for (int j = 0; j < n; j++)
     {
-      E(i, j) += impl->Cmode[static_cast<std::size_t>(col[i]) * K + col[j]];
+      if (col[i] >= 0 && col[j] >= 0)
+      {
+        E(i, j) += impl->Cmode[static_cast<std::size_t>(col[i]) * K + col[j]];
+      }
     }
   }
 

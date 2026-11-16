@@ -373,30 +373,22 @@ void SubstructuringSolver::Impl::ComputeModes(const std::vector<int> &ids,
 
 bool SubstructuringSolver::Impl::ModesMatch(const std::vector<int> &ids,
                                             const std::vector<mfem::Vector> &xd,
-                                            std::vector<int> &col) const
+                                            std::vector<int> &col,
+                                            std::vector<char> &need) const
 {
-  col.assign(ids.size(), -1);
-  bool ok = modes_ready;
-  if (region_only)
-  {
-    // The environment is that of the model: the modes are matched by id.
-    for (std::size_t j = 0; j < ids.size(); j++)
-    {
-      for (std::size_t k = 0; k < mode_ids.size(); k++)
-      {
-        col[j] = (mode_ids[k] == ids[j]) ? static_cast<int>(k) : col[j];
-      }
-      ok = ok && col[j] >= 0;
-    }
-    return ok;
-  }
+  const std::size_t n = ids.size();
+  col.assign(n, -1);
+  need.assign(n, 0);
+  // Whether each lift reaches the environment (A_env x != 0) and, on the full mesh, its
+  // fingerprint.
   constexpr std::size_t kBlock = 4;  // bounds the memory of the full vectors
-  std::vector<std::array<double, 2>> fps(xd.size());
-  for (std::size_t j0 = 0; j0 < xd.size(); j0 += kBlock)
+  std::vector<std::array<double, 2>> fps(n);
+  std::vector<double> reach(n, 0.0);
+  for (std::size_t j0 = 0; j0 < n; j0 += kBlock)
   {
     std::vector<mfem::Vector> x;
     std::vector<const mfem::Vector *> X;
-    for (std::size_t j = j0; j < std::min(xd.size(), j0 + kBlock); j++)
+    for (std::size_t j = j0; j < std::min(n, j0 + kBlock); j++)
     {
       x.push_back(DirichletField(xd[j]));
     }
@@ -407,20 +399,36 @@ bool SubstructuringSolver::Impl::ModesMatch(const std::vector<int> &ids,
     const std::vector<mfem::Vector> t = EnvApply(X);
     for (std::size_t j = j0; j < j0 + x.size(); j++)
     {
-      fps[j] = LiftFingerprint(x[j - j0], t[j - j0]);
-    }
-  }
-  for (std::size_t j = 0; j < ids.size(); j++)
-  {
-    for (std::size_t k = 0; k < mode_ids.size(); k++)
-    {
-      if (mode_ids[k] == ids[j])
+      reach[j] = t[j - j0].Normlinf();
+      if (!region_only)
       {
-        col[j] = static_cast<int>(k);
+        fps[j] = LiftFingerprint(x[j - j0], t[j - j0]);
       }
     }
-    const auto &fp = fps[j];
-    if (col[j] < 0)
+  }
+  if (n > 0)
+  {
+    MPI_Allreduce(MPI_IN_PLACE, reach.data(), static_cast<int>(n), MPI_DOUBLE, MPI_MAX,
+                  parent_fes.GetComm());
+  }
+  bool ok = true;
+  for (std::size_t j = 0; j < n; j++)
+  {
+    for (std::size_t k = 0; modes_ready && k < mode_ids.size(); k++)
+    {
+      col[j] = (mode_ids[k] == ids[j]) ? static_cast<int>(k) : col[j];
+    }
+    if (region_only && col[j] >= 0)
+    {
+      continue;  // the environment, and so its modes, are those of the model
+    }
+    if (reach[j] == 0.0)
+    {
+      col[j] = -1;  // zero modes
+      continue;
+    }
+    need[j] = 1;
+    if (col[j] < 0 || region_only)
     {
       ok = false;
       continue;
@@ -428,8 +436,8 @@ bool SubstructuringSolver::Impl::ModesMatch(const std::vector<int> &ids,
     for (int q = 0; q < 2; q++)
     {
       const double ref = mode_fp[2 * col[j] + q];
-      if (std::abs(fp[q] - ref) >
-          kFingerprintTol * std::max(std::abs(ref), std::abs(fp[q])) + 1e-300)
+      if (std::abs(fps[j][q] - ref) >
+          kFingerprintTol * std::max(std::abs(ref), std::abs(fps[j][q])) + 1e-300)
       {
         ok = false;
       }
