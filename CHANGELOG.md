@@ -63,6 +63,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     before, numbered differently (the roots are listed process by process). Meshes the
     parallel save does not support are still gathered, with a warning.
     [PR 1214](https://github.com/awslabs/palace/pull/1214).
+  - A restart from an uncompressed nonconforming adapted mesh which *Palace* saved (for
+    example decompressed with `gunzip`) reads the mesh in parallel: every process reads a
+    slice of the file, the coarse mesh is rebuilt from the roots of the refinement tree, and
+    each process refines its roots and reads their nodes, instead of every process reading
+    the whole mesh. Compressed meshes are read as before.
   - Added a STRUMPACK patch for
     [pghysels/STRUMPACK#165](https://github.com/pghysels/STRUMPACK/pull/165), which lowers
     the latency of the distributed triangular solves of the solve phase for a few

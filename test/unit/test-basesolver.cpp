@@ -3,10 +3,12 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <fstream>
 #include <limits>
 #include <map>
 #include <memory>
+#include <sstream>
 #include <vector>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
@@ -1079,6 +1081,7 @@ void TestParallelNCSave(MPI_Comm comm, const fs::path &temp_dir, mfem::Element::
   }
   auto mesh = std::make_unique<mfem::ParMesh>(comm, serial_mesh);
   const double L = 2.5;  // the length scale of the saved mesh
+  mesh::MeshEntityCounts counts;
   auto Check = [&](const std::string &name, bool parallel)
   {
     const auto gathered = temp_dir / (name + "-gathered.mesh");
@@ -1097,7 +1100,6 @@ void TestParallelNCSave(MPI_Comm comm, const fs::path &temp_dir, mfem::Element::
         smesh.Mesh::Print(fo);
       }
     }
-    mesh::MeshEntityCounts counts;
     std::string reason;
     if (parallel)
     {
@@ -1154,6 +1156,46 @@ void TestParallelNCSave(MPI_Comm comm, const fs::path &temp_dir, mfem::Element::
       mesh->Rebalance(part);
     }
     file = Check("pass" + std::to_string(pass), true);
+  }
+
+  // Read the last mesh back in parallel from an uncompressed file, as a restart does, then
+  // refine it and the mesh alike (with a limit on the hanging nodes, which keeps their
+  // differences), and compare them.
+  {
+    const auto plain = temp_dir / "plain.mesh";
+    REQUIRE(mesh::PrintParallelNCMesh(*mesh, L, plain.string(), false));
+    std::string text;
+    CHECK((order == 0 ||
+           !mesh::ReadNCMeshCoarse(comm, (temp_dir / "pass2-gathered.mesh").string(), true,
+                                   text)));  // not in the order of PrintParallelNCMesh
+    REQUIRE(mesh::ReadNCMeshCoarse(comm, plain.string(), true, text));
+    std::istringstream is(text);
+    mfem::Mesh coarse(is);
+    mesh::NondimensionalizeMesh(coarse, L);
+    auto saved = std::move(mesh);
+    mesh = mesh::PartitionNCMeshFile(comm, coarse, L, 1.1);
+    for (auto *m : {saved.get(), mesh.get()})
+    {
+      mfem::Array<int> refs;
+      for (int e = 0; e < m->GetNE(); e++)
+      {
+        mfem::Vector c;
+        m->GetElementCenter(e, c);
+        if (c(0) < 0.4)
+        {
+          refs.Append(e);
+        }
+      }
+      m->GeneralRefinement(refs, 1, 1);
+    }
+    Check("read-refined", true);
+    mesh = std::move(saved);
+    Check("refined", true);
+    if (Mpi::Root(comm))
+    {
+      CompareSavedMeshes(temp_dir / "refined-gathered.mesh",
+                         temp_dir / "read-refined-gathered.mesh", counts);
+    }
   }
 
   // Read the last file back (as a restart does), scatter it, and save it again through
