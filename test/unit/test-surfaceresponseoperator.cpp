@@ -776,7 +776,11 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator automatic 
   CHECK_THROWS_WITH(
       SurfaceResponseOperator(permittivity_mismatch_iodata, automatic_laplace),
       Catch::Matchers::ContainsSubstring("does not match fabrication-process response "
-                                         "library \"unit-test-process\" permittivity"));
+                                         "library \"unit-test-process\" permittivity") &&
+          Catch::Matchers::ContainsSubstring(
+              "(the process value Fabrication.InterfaceLayers.SA.Permittivity of the "
+              "library): set \"Permittivity\" of the Boundaries.Postprocessing.Dielectric "
+              "entry with \"Index\": 4 to 4!"));
 
   auto missing_layer_config = automatic_config;
   missing_layer_config["Solver"]["Electrostatic"]["ResponseCorrection"]["Library"] =

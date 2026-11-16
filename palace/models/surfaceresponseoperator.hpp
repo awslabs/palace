@@ -2099,6 +2099,17 @@ SurfaceResponsePreflightOutcome WriteSurfaceResponseRequirements(const IoData &i
                                                                  const Mesh &mesh,
                                                                  const std::string &path);
 
+// The configured domains next to the boundary elements of `boundary_attributes` (either
+// side) whose relative permittivity (every principal value of Domains.Materials) is neither
+// 1 (vacuum) nor `substrate_permittivity`, within the relative tolerance 1e-10: per
+// material entry (its index in Domains.Materials) the adjacent domain attributes.
+// Collective over the mesh's communicator. The run warns with them; no value depends on
+// them.
+std::map<int, std::vector<int>>
+FindSubstratePermittivityMismatches(const IoData &iodata, const mfem::ParMesh &mesh,
+                                    const std::set<int> &boundary_attributes,
+                                    double substrate_permittivity);
+
 // The magnetic (inductive) leaves of a fabrication-process library as the operator would
 // load them, without a device (mx-sc-magnetic DESIGN-v2 section 3; the Phase-1 gate G-d
 // reader): per model its leaf verdict (Status / Rule / Reason, r1-r4 with the library's

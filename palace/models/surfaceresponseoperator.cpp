@@ -32,6 +32,7 @@
 #include <vector>
 #include <Eigen/Dense>
 #include <nlohmann/json.hpp>
+#include "fem/coefficient.hpp"
 #include "fem/fespace.hpp"
 #include "fem/gridfunction.hpp"
 #include "fem/interpolator.hpp"
@@ -1704,6 +1705,9 @@ struct ProcessLibrary
   // Fabrication.MetalThickness in the library's length unit (the unit of the BasisPoints
   // files): the constrained metal band of the translational coupons (decision 404 D1).
   std::optional<double> metal_thickness;
+  // Fabrication.SubstratePermittivity: the relative permittivity of the substrate the
+  // library's coupons were computed with (nullopt when the library does not record it).
+  std::optional<double> substrate_permittivity;
   std::map<InterfaceDielectric, LibraryInterfaceLayer> interface_layers;
   std::vector<LibraryModel> models;
   std::set<std::pair<std::size_t, std::size_t>> corner_radius_interpolation;
@@ -2822,6 +2826,7 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
        {"TopRoundingRadius", FabricationValue("TopRoundingRadius")},
        {"BottomRoundingRadius", FabricationValue("BottomRoundingRadius")},
        {"SubstratePermittivity", FabricationValue("SubstratePermittivity")}}};
+  library.substrate_permittivity = FabricationValue("SubstratePermittivity");
   if (interface_layers)
   {
     MFEM_VERIFY(interface_layers->is_object(),
@@ -4255,7 +4260,118 @@ void ValidateLibraryInterfaceLayers(
                     << ") permittivity " << dielectric->second.epsilon_r
                     << " does not match fabrication-process response library \""
                     << library.name << "\" permittivity " << layer->second.permittivity
-                    << "!");
+                    << " (the process value Fabrication.InterfaceLayers."
+                    << ToString(dielectric->second.type)
+                    << ".Permittivity of the library): set \"Permittivity\" of the "
+                       "Boundaries.Postprocessing.Dielectric entry with \"Index\": "
+                    << index << " to " << layer->second.permittivity << "!");
+  }
+}
+
+}  // namespace
+
+std::map<int, std::vector<int>>
+FindSubstratePermittivityMismatches(const IoData &iodata, const mfem::ParMesh &mesh,
+                                    const std::set<int> &boundary_attributes,
+                                    double substrate_permittivity)
+{
+  // The domain attributes on either side of the listed boundary elements (shared faces
+  // through the face-neighbour data), OR-reduced over the ranks.
+  const int max_attribute = mesh.attributes.Size() > 0 ? mesh.attributes.Max() : 0;
+  std::vector<int> adjacent(max_attribute, 0);
+  mfem::FaceElementTransformations FET;
+  mfem::IsoparametricTransformation T1, T2;
+  for (int i = 0; i < mesh.GetNBE(); i++)
+  {
+    if (boundary_attributes.count(mesh.GetBdrAttribute(i)) == 0)
+    {
+      continue;
+    }
+    BdrGridFunctionCoefficient::GetBdrElementNeighborTransformations(i, mesh, FET, T1, T2);
+    for (const auto *T : {FET.Elem1, FET.Elem2})
+    {
+      if (T && T->Attribute >= 1 && T->Attribute <= max_attribute)
+      {
+        adjacent[T->Attribute - 1] = 1;
+      }
+    }
+  }
+  Mpi::GlobalMax(max_attribute, adjacent.data(), mesh.GetComm());
+  constexpr double relative_tolerance = 1.0e-10;
+  const auto Equal = [](double a, double b)
+  { return std::abs(a - b) <= relative_tolerance * std::max(std::abs(a), std::abs(b)); };
+  std::map<int, std::vector<int>> mismatches;
+  for (int attribute = 1; attribute <= max_attribute; attribute++)
+  {
+    if (!adjacent[attribute - 1])
+    {
+      continue;
+    }
+    const auto &materials = iodata.domains.materials;
+    for (std::size_t m = 0; m < materials.size(); m++)
+    {
+      const auto &attributes = materials[m].attributes;
+      if (std::find(attributes.begin(), attributes.end(), attribute) == attributes.end())
+      {
+        continue;
+      }
+      const auto &s = materials[m].epsilon_r.s;
+      const bool vacuum =
+          std::all_of(s.begin(), s.end(), [&](double e) { return Equal(e, 1.0); });
+      const bool substrate = std::all_of(s.begin(), s.end(), [&](double e)
+                                         { return Equal(e, substrate_permittivity); });
+      if (!vacuum && !substrate)
+      {
+        mismatches[static_cast<int>(m)].push_back(attribute);
+      }
+    }
+  }
+  return mismatches;
+}
+
+namespace
+{
+
+// A warning only (no value, record or exit changes): the library's coupons were computed
+// with its Fabrication.SubstratePermittivity, and nothing else in a run compares it with
+// the configured domains next to the corrected metal.
+void WarnSubstratePermittivity(const ProcessLibrary &library, const IoData &iodata,
+                               const mfem::ParMesh &mesh,
+                               const std::set<int> &target_interfaces)
+{
+  if (!library.substrate_permittivity)
+  {
+    return;
+  }
+  std::set<int> boundary_attributes;
+  for (const int index : target_interfaces)
+  {
+    const auto dielectric = iodata.boundaries.postpro.dielectric.find(index);
+    if (dielectric != iodata.boundaries.postpro.dielectric.end())
+    {
+      boundary_attributes.insert(dielectric->second.attributes.begin(),
+                                 dielectric->second.attributes.end());
+    }
+  }
+  const auto mismatches = FindSubstratePermittivityMismatches(
+      iodata, mesh, boundary_attributes, *library.substrate_permittivity);
+  for (const auto &[material, attributes] : mismatches)
+  {
+    const auto &s = iodata.domains.materials[material].epsilon_r.s;
+    Mpi::Warning(
+        mesh.GetComm(),
+        "Domain attribute(s) {} next to the corrected metal have relative "
+        "permittivity {} (Domains.Materials[{:d}].Permittivity), but "
+        "fabrication-process response library \"{}\" was computed for a substrate "
+        "of {:.10g} (Fabrication.SubstratePermittivity) and vacuum 1: the correction "
+        "there uses the library's substrate; set the permittivity to {:.10g} to "
+        "match the process, or use a library made for this substrate!\n",
+        fmt::join(attributes, ", "),
+        s[0] == s[1] && s[1] == s[2]
+            ? fmt::format("{:.10g}", s[0])
+            : fmt::format("{:.10g} / {:.10g} / {:.10g}", s[0], s[1], s[2]),
+        material, library.name, *library.substrate_permittivity,
+        *library.substrate_permittivity);
   }
 }
 
@@ -7603,6 +7719,7 @@ ResponseCorrectionData BuildAutomaticResponseData2D(
   }
   ValidateLibraryInterfaceLayers(library, iodata.boundaries.postpro.dielectric, found,
                                  coordinate_scale);
+  WarnSubstratePermittivity(library, iodata, mesh, found);
 
   ResponseCorrectionData result;
   result.unmatched_policy = request.unmatched_policy;
@@ -15126,6 +15243,7 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
   }
   ValidateLibraryInterfaceLayers(library, iodata.boundaries.postpro.dielectric, found,
                                  coordinate_scale);
+  WarnSubstratePermittivity(library, iodata, mesh, found);
 
   // Partition the selected perimeter by the interface types available on each physical
   // segment. Existing SA attributes can legitimately omit a port footprint while the
