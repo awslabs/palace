@@ -53,7 +53,8 @@ MarkNotApplied prints a marked corrected cell as nan, its value in the `... part
 non-finite -- carries the letter NOT-APPLIED (no grade); the cell letter is FAIL if any member FAILs, else NOT-APPLIED if any member is
 NOT-APPLIED: a non-finite corrected cell never reads PASS. The partial twin columns are never graded. A NOT-APPLIED cell quotes
 its unmarked members' worst / range only as unmarked_members_x_pct / _x_range_pct with n_unmarked_members (decision 1875), never
-as the cell's x_pct.
+as the cell's x_pct. A --band report row with not_applied (coverage_report withheld the Type's band: a marked solve) reads as
+no band, with the reason (band NOT-APPLIED (marked solve); decision 1884).
 """
 
 import argparse
@@ -173,6 +174,8 @@ def pct(a, b):
 
 # The letter of a member whose x is not finite (decision 1847 E-1): no grade, never PASS.
 NOT_APPLIED = "NOT-APPLIED"
+# A Type whose band coverage_report withheld (its row carries not_applied: a marked solve; decision 1884).
+BAND_NOT_APPLIED = "NOT-APPLIED (marked solve)"
 
 
 def verdict(value, limit, bracket=None):
@@ -672,6 +675,10 @@ def band_check(x, band):
         if band is None or bt not in band or x.get(T) is None:
             out[T] = {"x_pt": x.get(T), "band": None, "in": None}
             continue
+        if band[bt].get("not_applied"):
+            # decision 1884: coverage_report withheld this Type's band (a marked solve): no band reading, the reason said
+            out[T] = {"x_pt": x.get(T), "band": None, "in": None, "band_note": BAND_NOT_APPLIED}
+            continue
         lo, hi = band[bt]["low_pt"], band[bt]["high_pt"]
         if not math.isfinite(x[T]):
             # NOT-APPLIED (decision 1847 E-1): a non-finite x has no band reading
@@ -754,6 +761,8 @@ def aggregate_cell(members, grades, T, rule_text):
         out.update(quoted)
     if not_applied:
         out.update({"n_not_applied": len(not_applied), "not_applied_members": [str(m) for m in not_applied]})
+    if any(grades[m]["band"][T].get("band_note") for m in xs):
+        out["band_note"] = BAND_NOT_APPLIED
     return out
 
 
@@ -872,7 +881,7 @@ def summary_line(label, out):
             parts.append(f"{T} n/a")
             continue
         rng = f" [{c['x_range_pct'][0]:+.3f}, {c['x_range_pct'][1]:+.3f}]" if c.get("x_range_pct") and c.get("n_members", 1) > 1 else ""
-        band = "in" if c.get("in_band") else ("OUT" if c.get("in_band") is False else "-")
+        band = "in" if c.get("in_band") else ("OUT" if c.get("in_band") is False else c.get("band_note", "-"))
         na = f" ({c['n_not_applied']} of {c['n_members']} members NOT-APPLIED)" if c.get("n_not_applied") else ""
         parts.append(f"{T} {c['x_pct']:+.3f} %{rng} {c['letter']}{na} band {band}")
     return f"{label}: {out['member_kind']} {len(out['members'])}; " + "; ".join(parts)
@@ -938,8 +947,11 @@ def main(argv=None):
                 "scorer": "the 994 / 995 tabulators' letters (verdict; MA_sharp (B) tails by --tail-form; the shells estimator) per source / frequency, fail-closed (1210 / 1213)",
                 "device_run": a.device, "reference": a.reference or a.reference_at or a.reference_values, "shells_dir": a.shells_dir,
                 "library": a.library, "model_catalog_source": cat_src, "models": {str(k): v for k, v in catalog.items()},
-                "band_file": a.band, "band": ({T: [band[T]["low_pt"], band[T]["high_pt"]] for T in ("SA", "MS", "MA", "C") if T in band} if band else None),
+                "band_file": a.band, "band": ({T: [band[T]["low_pt"], band[T]["high_pt"]] for T in ("SA", "MS", "MA", "C")
+                                               if T in band and not band[T].get("not_applied")} if band else None),
                 "c_form": a.c_form if a.form == "maxwell" else "diagonal C fixed-trace[i][i] (ES)"})
+    if band and any(v.get("not_applied") for v in band.values() if isinstance(v, dict)):
+        out["band_not_applied_types"] = sorted(T for T, v in band.items() if isinstance(v, dict) and v.get("not_applied"))
     os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
     with open(a.out, "w") as handle:
         json.dump(out, handle, indent=1, default=str)

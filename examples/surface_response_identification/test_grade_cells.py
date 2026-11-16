@@ -368,6 +368,67 @@ class SyntheticWindows(unittest.TestCase):
         self.assertIn("MS NOT-APPLIED (1 of 2 members: a non-finite corrected value); 1 of 2 members only, the others NOT-APPLIED",
                       gc.summary_line("m", g))
 
+    def test_band_rows_withheld_by_coverage_report(self):
+        """Decision 1884: a --band report whose block_C rows are coverage_report's NOT-APPLIED form (calibrated, not_applied, no
+        low_pt: a marked solve) is read DIRECTLY (no pre-filter): no crash; a marked member reads NOT-APPLIED; an UNMARKED member of
+        a mixed window reads its grade exactly as on the Warn twin, without a band, the reason said ('band NOT-APPLIED (marked
+        solve)'); the pre-filter route (band_calibrated_only_v1's rule: keep the calibrated rows with low_pt) gives the same
+        letters, x and in-band readings as the direct route."""
+        sources = [1, 2]
+        p_ref = {s: {1: 1.0e-4, 2: 2.0e-4, 3: 1.0e-5} for s in sources}
+        p_ft = {s: dict(p_ref[s]) for s in sources}
+        p_ft[1][2] = 2.02e-4  # source 1 MS +1 %: a non-zero x to compare
+        c_ref = {1: 1.0e-14, 2: 2.0e-14}
+        ma_sharp_ref = {s: p_ref[s][3] * (1.0 + 0.5 * 0.0678) for s in sources}
+        values = os.path.join(self.tmp, "ref.json")
+        with open(values, "w") as handle:
+            json.dump(es_values_reference(sources, p_ref, c_ref, ma_sharp_ref), handle)
+        withheld = {T: {"calibrated": True, "predictors": {}, "not_applied": True, "note": f"NOT-APPLIED ES / {T}: no band"}
+                    for T in ("SA", "MS", "MA", "C")}
+        direct = os.path.join(self.tmp, "band-direct.json")
+        with open(direct, "w") as handle:
+            json.dump({"block_C": withheld}, handle)
+        prefiltered = os.path.join(self.tmp, "band-prefiltered.json")
+        with open(prefiltered, "w") as handle:
+            json.dump({"block_C": {T: v for T, v in withheld.items() if v.get("calibrated") is True and "low_pt" in v}}, handle)
+
+        def grade(run, band, name):
+            out = os.path.join(self.tmp, f"{name}.json")
+            args = ["--form", "es", "--device", run, "--reference-values", values, "--out", out, "--tail-form", "422", "--label", name]
+            self.assertEqual(gc.main(args + (["--band", band] if band else [])), 0)
+            with open(out) as handle:
+                return json.load(handle)
+
+        def run_of(name, marked):
+            run = synthetic_es_run(os.path.join(self.tmp, name), sources, p_ft, dict(c_ref), {s: -0.1 * c_ref[s] for s in sources})
+            return mark_es_run(run, marked) if marked else run
+
+        warn = grade(run_of("warn", []), None, "warn")
+        for name, marked in (("all", sources), ("mixed", [2])):
+            run = run_of(name, marked)
+            g = grade(run, direct, name)
+            self.assertEqual(g["band_not_applied_types"], ["C", "MA", "MS", "SA"])
+            self.assertEqual(g["band"], {})
+            for T in gc.TYPES:
+                self.assertEqual(g["cells"][T]["letter"], gc.NOT_APPLIED, (name, T))
+                self.assertEqual(g["cells"][T]["band_note"], gc.BAND_NOT_APPLIED, (name, T))
+                self.assertIsNone(g["cells"][T]["in_band"], (name, T))
+            if name == "mixed":
+                got, ref = g["per_member"]["1"]["grade"], warn["per_member"]["1"]["grade"]
+                self.assertEqual(got["x_pct"], ref["x_pct"])
+                self.assertEqual(got["letters"], ref["letters"])
+                self.assertTrue(all(b["band"] is None and b["band_note"] == gc.BAND_NOT_APPLIED for b in got["band"].values()))
+                self.assertAlmostEqual(g["cells"]["MS"]["unmarked_members_x_pct"], 1.0, places=9)
+            pre = grade(run, prefiltered, name + "-pre")
+            for T in gc.TYPES:
+                for k in ("letter", "x_pct", "in_band", "n_members", "n_pass", "n_fail", "letters_by_member", "unmarked_members_x_pct"):
+                    self.assertEqual(pre["cells"][T].get(k), g["cells"][T].get(k), (name, T, k))
+                self.assertNotIn("band_note", pre["cells"][T])
+        self.assertIn("band NOT-APPLIED (marked solve)", gc.summary_line("m", grade(run_of("mixed2", [2]), direct, "mixed2")) +
+                      gc.summary_line("w", {"member_kind": "source", "members": [1], "cells": {"SA": dict(
+                          gc.aggregate_cell([1], {1: {"x_pct": {"SA": 0.5}, "letters": {"SA": "PASS"},
+                                                      "band": {"SA": {"in": None, "band_note": gc.BAND_NOT_APPLIED}}}}, "SA", "r"))}}))
+
     def test_es_fixed_shell_form(self):
         """--tail-form fixed-shell on the synthetic window: a values reference without the R10 rings is refused (exit 3), graded as
         INFORMATION with --reference-rings-information; with MA_sharp_rings_um = the R10 rings it is INFORMATION (depth not recorded)
