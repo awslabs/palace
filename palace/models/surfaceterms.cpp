@@ -4,6 +4,7 @@
 #include "surfaceterms.hpp"
 
 #include <fmt/format.h>
+#include <fmt/ranges.h>
 #include "utils/configfile.hpp"
 #include "utils/iodata.hpp"
 
@@ -172,6 +173,18 @@ std::string SurfaceTerms::GetExtraSystemBdrMassTermLabel(int i) const
     return fmt::format("surfsigma_{:d}", sigma_terms[i]);
   }
   return fmt::format("rationalz_{:d}", i - num_sigma);
+}
+
+std::string SurfaceTerms::GetExtraSystemBdrMassTermName(int i) const
+{
+  const int num_sigma = static_cast<int>(sigma_terms.size());
+  if (i < num_sigma)
+  {
+    return fmt::format("finite conductivity boundary (attribute {})",
+                       fmt::join(surf_sigma_op.GetAttrList(sigma_terms[i]), ", "));
+  }
+  return fmt::format("rational impedance boundary (attribute {})",
+                     fmt::join(surf_rz_op.GetAttrList(i - num_sigma), ", "));
 }
 
 std::optional<SurfaceTerms::ExactSplit>

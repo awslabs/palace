@@ -76,6 +76,12 @@ public:
   // Returns array of finite conductivity boundary attributes.
   mfem::Array<int> GetAttrList() const;
 
+  // Mesh boundary attributes of attribute group g.
+  const mfem::Array<int> &GetAttrList(std::size_t g) const
+  {
+    return boundaries[g].attr_list;
+  }
+
   // Add contributions to system matrix for a finite conductivity boundary condition.
   void AddExtraSystemBdrCoefficients(double omega, MaterialPropertyCoefficient &fbr,
                                      MaterialPropertyCoefficient &fbi);

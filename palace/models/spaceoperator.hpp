@@ -191,10 +191,6 @@ public:
   const auto &GetWavePortOp() const { return wave_port_op; }
   const auto &GetFloquetPortOp() const { return floquet_port_op; }
   const auto &GetSurfaceCurrentOp() const { return surf_j_op; }
-  const auto &GetRationalImpedanceOp() const
-  {
-    return surface_terms.GetRationalImpedanceOp();
-  }
   const auto &GetSurfaceTerms() const { return surface_terms; }
 
   // Get the full frequency-dependent operator A2(ω) + F(ω), where A2 is the assembled
@@ -315,25 +311,12 @@ public:
   // i·M_i, matching the wave-port boundary-mass convention (i·f(ω)·M with the i baked in,
   // f(ω) = scale(ω)/i) so it can be folded into circuit synthesis uniformly with wave
   // ports. Returns a null pointer if the term contributes no DoFs on any rank (the check
-  // is collective, so the null contract is rank-uniform). Used by the adaptive sweep and
-  // its circuit synthesis.
+  // is collective, so the null contract is rank-uniform). Used by the adaptive sweep, its
+  // circuit synthesis, and the NLEPS HYBRID fit-or-freeze seed strategy.
   template <OperatorType OperType>
   std::unique_ptr<OperType>
   GetExtraSystemBdrMassTermMatrix(int i, Operator::DiagonalPolicy diag_policy,
                                   bool imag_slot = false);
-
-  // Construct the λ-independent boundary mass matrix M_b for rational impedance boundary
-  // idx, with unit coefficient (including crack scaling), stored on the real slot. The
-  // full A2 contribution at λ = iω is `g(λ)·M_b` with the scalar Robin coefficient
-  // `g(λ) = λ·D(λ)/N(λ)` from `GetRationalImpedanceOp().EvalRobinCoefficient(idx, λ)`; a
-  // caller scales this matrix by the appropriate complex coefficient. Returns a null
-  // pointer if the boundary contributes no DoFs on any rank (the check is collective, so
-  // the null contract is rank-uniform). Used by the NLEPS HYBRID fit-or-freeze seed
-  // strategy.
-  template <OperatorType OperType>
-  std::unique_ptr<OperType>
-  GetRationalImpedanceBoundaryMassMatrix(int idx, Operator::DiagonalPolicy diag_policy,
-                                         bool imag_slot = false);
 
   // Construct the ω-independent µ⁻¹ boundary mass for a single Floquet port's Robin BC,
   // placed on the imaginary slot. The full online term is i·γ₀,p(ω)·M_floquet_p with

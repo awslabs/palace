@@ -928,51 +928,6 @@ SpaceOperator::GetExtraSystemBdrMassTermMatrix(int i, Operator::DiagonalPolicy d
 }
 
 template <OperatorType OperType>
-std::unique_ptr<OperType> SpaceOperator::GetRationalImpedanceBoundaryMassMatrix(
-    int idx, Operator::DiagonalPolicy diag_policy, bool imag_slot)
-{
-  // λ-independent boundary mass matrix M_b for rational impedance boundary idx, with unit
-  // coefficient (including crack scaling). By default stored on the REAL slot so that
-  // downstream BuildParSumOperator can scale it by the arbitrary complex Robin coefficient
-  // g(λ) from GetRationalImpedanceOp().EvalRobinCoefficient(idx, λ) (the NLEPS HYBRID
-  // fit-or-freeze seed strategy). With imag_slot=true it is placed on the IMAGINARY slot,
-  // matching the wave-port boundary-mass convention (the i in i·f(ω)·M baked in, with
-  // f(ω) = g(iω)/i) so circuit synthesis can fold it in uniformly. Returns null if the
-  // boundary contributes no DoFs on any rank (the check is collective, so the null contract
-  // is rank-uniform).
-  PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
-  MaterialPropertyCoefficient fb(mat_op.MaxCeedBdrAttribute());
-  surface_terms.GetRationalImpedanceOp().AddUnitBdrCoefficients(idx, fb);
-  int empty = fb.IsExactlyZero();
-  Mpi::GlobalMin(1, &empty, GetComm());
-  if (empty)
-  {
-    return {};
-  }
-  constexpr bool skip_zeros = false;
-  auto m = AssembleOperator(GetNDSpace(), nullptr, nullptr, nullptr, &fb, nullptr, nullptr,
-                            nullptr, skip_zeros);
-  if constexpr (std::is_same_v<OperType, ComplexOperator>)
-  {
-    auto M_op =
-        imag_slot
-            ? std::make_unique<ComplexParOperator>(nullptr, std::move(m), GetNDSpace())
-            : std::make_unique<ComplexParOperator>(std::move(m), nullptr, GetNDSpace());
-    M_op->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
-    return M_op;
-  }
-  else
-  {
-    MFEM_VERIFY(!imag_slot,
-                "imag_slot is only meaningful for the ComplexOperator instantiation of "
-                "GetRationalImpedanceBoundaryMassMatrix!");
-    auto M_op = std::make_unique<ParOperator>(std::move(m), GetNDSpace());
-    M_op->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
-    return M_op;
-  }
-}
-
-template <OperatorType OperType>
 std::unique_ptr<OperType>
 SpaceOperator::GetFloquetRobinBoundaryMassMatrix(int port_idx,
                                                  Operator::DiagonalPolicy diag_policy)
@@ -1980,11 +1935,6 @@ template std::unique_ptr<Operator>
 SpaceOperator::GetExtraSystemBdrMassTermMatrix(int, Operator::DiagonalPolicy, bool);
 template std::unique_ptr<ComplexOperator>
 SpaceOperator::GetExtraSystemBdrMassTermMatrix(int, Operator::DiagonalPolicy, bool);
-
-template std::unique_ptr<Operator>
-SpaceOperator::GetRationalImpedanceBoundaryMassMatrix(int, Operator::DiagonalPolicy, bool);
-template std::unique_ptr<ComplexOperator>
-SpaceOperator::GetRationalImpedanceBoundaryMassMatrix(int, Operator::DiagonalPolicy, bool);
 
 template std::unique_ptr<Operator>
 SpaceOperator::GetFloquetRobinBoundaryMassMatrix(int, Operator::DiagonalPolicy);

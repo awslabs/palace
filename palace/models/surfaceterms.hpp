@@ -143,8 +143,10 @@ public:
                                                       std::complex<double> omega) const;
 
   // The label of term i in output files and log lines (surfsigma_<group> and
-  // rationalz_<boundary>).
+  // rationalz_<boundary>), and the name of its boundary in messages, for example
+  // "rational impedance boundary (attribute 5)".
   std::string GetExtraSystemBdrMassTermLabel(int i) const;
+  std::string GetExtraSystemBdrMassTermName(int i) const;
 
   // An exact split of the scale of a term, as a function c(s) of s = iω (the scale at ω is
   // c(iω)): c(s) = P(s) + R(s), with a polynomial P and a strictly proper rational
