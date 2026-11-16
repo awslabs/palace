@@ -49,6 +49,9 @@ RESCORED_995 = ("sct002-S1", "ctx003-C1", "ctx003-C2", "ctx003-C2p", "ctx003-C3"
 CARRIED_995 = ("ctx003-C4", "osc003-O2", "sct002-S5", "sct002-S6")
 LIBRARY_V3J = os.path.join(V3H, "boxgrow", "campaign", "records", "library", "s2-r1p9-v3-j", "process-library.json")
 REFRESH = os.path.join(RECORDS, "stage2-20261004", "reference-refresh-17", "results", "refresh.json")
+# Ruling 1948 / decision 1966 item (3): the stage-E --band reports RE-CREATED by the allowed writer (coverage_report of this branch, with its
+# provenance) in a view of the record trees (DECLARATION-STAGEE-v1); the records themselves carry no provenance (StageEBandReportsRefused).
+STAGE_E_RECREATED = os.path.join(RECORDS, "readiness-20261029", "stageF", "coverage-prevention", "L4", "policy-merge-1966", "stageE-recreated-v1")
 
 
 def write_csv(path, header, rows):
@@ -630,9 +633,18 @@ def refresh_values(window, path):
     return path
 
 
-@unittest.skipUnless(os.path.isdir(os.path.join(E, "thin", "runs")) and os.path.isfile(LIBRARY_E), "the stage-E records are not present")
+@unittest.skipUnless(os.path.isdir(os.path.join(E, "thin", "runs")) and os.path.isfile(LIBRARY_E) and os.path.isdir(STAGE_E_RECREATED),
+                     "the stage-E records or their re-created band reports are not present")
 class StageERecords(unittest.TestCase):
-    """The 47 cells of decision 1215 reproduced from the stored CSVs: per cell and per source / frequency x_pct, letter, in_band."""
+    """The 47 cells of decision 1215 reproduced from the stored CSVs: per cell and per source / frequency x_pct, letter, in_band. The --band
+    reports are the RE-CREATED ones (STAGE_E_RECREATED; ruling 1948); band_reports = "record" names the reports of record instead."""
+
+    band_reports = "recreated"
+
+    def band_path(self, kind, w):
+        if self.band_reports == "record":
+            return os.path.join(E, kind, "predicted", w, "coverage-report.json")
+        return os.path.join(STAGE_E_RECREATED, kind, w, "coverage-report.json")
 
     @classmethod
     def setUpClass(cls):
@@ -645,7 +657,7 @@ class StageERecords(unittest.TestCase):
     def es_args(self, w, tail_form="422"):
         """The 1215 records were read under the 422 tail form: explicit here (the default is fixed-shell since the P4 re-freeze); tail_form=None = the default."""
         args = ["--form", "es", "--device", os.path.join(E, "thin", "runs", f"{w}-thin-corr"), "--reference", os.path.join(E, "ref", "runs", "ref", f"{w}-ref-r10-p4"),
-                "--shells-dir", SHELLS, "--library", LIBRARY_E, "--band", os.path.join(E, "thin", "predicted", w, "coverage-report.json"), "--label", w,
+                "--shells-dir", SHELLS, "--library", LIBRARY_E, "--band", self.band_path("thin", w), "--label", w,
                 "--out", os.path.join(self.tmp, f"{w}.json")]
         if tail_form is not None:
             args += ["--tail-form", tail_form]
@@ -655,7 +667,7 @@ class StageERecords(unittest.TestCase):
 
     def mx_args(self, w, c_form):
         args = ["--form", "maxwell", "--device", os.path.join(E, "mxthin", "runs", f"{w}-mxthin-corr"), "--shells-dir", SHELLS, "--library", LIBRARY_E,
-                "--band", os.path.join(E, "mxthin", "predicted", w, "coverage-report.json"), "--c-form", c_form, "--label", f"{w}-mx",
+                "--band", self.band_path("mxthin", w), "--c-form", c_form, "--label", f"{w}-mx",
                 "--out", os.path.join(self.tmp, f"{w}-mx-{c_form}.json"), "--tail-form", "422"]
         if not os.path.isfile(os.path.join(E, "mxthin", "runs", f"{w}-mxthin-corr", "postpro", "palace.json")):
             args += ["--model-catalog", os.path.join(E, "grade", "records", f"{w}-mxthin-corr-model-catalog.json")]
@@ -676,6 +688,11 @@ class StageERecords(unittest.TestCase):
         for w in ES_WINDOWS:
             if w == "W10":
                 continue  # the 46-source window is its own test (the longest read)
+            if w == "W31":
+                # RETIRED from this test BY NAME (ruling 1948; decision 1966 item (3)): W31's band of record cannot be re-created: it was
+                # written by coverage_report 1928a4f2 (uncapped F2 owner credit); every later writer caps the credit at the clipped CSV
+                # (fix round 2A (i)), and the re-created band moves the MA_sharp in_band reading of record (False -> True).
+                continue
             self.assertEqual(gc.main(self.es_args(w)), 0)
             self.assert_cells_identical(load(os.path.join(self.tmp, f"{w}.json")), load(os.path.join(E, "grade", "results", f"{w}-grade.json")), "per_source")
 
@@ -733,13 +750,14 @@ class StageERecords(unittest.TestCase):
 
 class StageEBandReportsRefused(unittest.TestCase):
     """Decisions 1942 / 1948 (1): the stage-E band reports of record that StageERecords passes to --band carry no provenance: grade_cells
-    refuses each with EXACTLY the 1942 line (one line on stdout, nothing on stderr), exit 5, no output file. (StageERecords itself is
-    unchanged: its tests that read these reports fail by this refusal until the reports are re-created by the allowed writer.)"""
+    refuses each with EXACTLY the 1942 line (one line on stdout, nothing on stderr), exit 5, no output file. (StageERecords reads the
+    reports re-created by the allowed writer instead: ruling 1948, decision 1966 item (3).)"""
 
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
         self.records = StageERecords()
         self.records.tmp = self.tmp
+        self.records.band_reports = "record"  # the reports of record (no provenance), not the re-created ones
 
     def tearDown(self):
         shutil.rmtree(self.tmp)
