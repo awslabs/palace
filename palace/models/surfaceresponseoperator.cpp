@@ -4264,7 +4264,8 @@ void ValidateLibraryInterfaceLayers(
                     << ToString(dielectric->second.type)
                     << ".Permittivity of the library): set \"Permittivity\" of the "
                        "Boundaries.Postprocessing.Dielectric entry with \"Index\": "
-                    << index << " to " << layer->second.permittivity << "!");
+                    << index << " to " << fmt::format("{:.10g}", layer->second.permittivity)
+                    << "!");
   }
 }
 
