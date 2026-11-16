@@ -233,7 +233,10 @@ is enabled and adaptation was performed, *Palace* saves the adapted mesh to disk
 records a `SavedAdaptedMesh` block in `palace.json` summarizing its topology. When *Palace*
 is built with `zlib`, the saved mesh is gzip-compressed and written with a `.meshgz`
 extension; without `zlib` it is written uncompressed as `.mesh`. MFEM detects the compression
-from the file contents when reading, so either file can be used directly as a restart mesh. The block always
+from the file contents when reading, so either file can be used directly as a restart mesh. A
+nonconforming mesh is written by all processes in parallel: the file keeps the refinement
+tree of the input mesh, with its roots listed process by process, so its numbering depends on
+the partition of the mesh, but not the mesh it describes. The block always
 describes the mesh saved next to it: the top-level `palace.json` describes the final adapted
 mesh, and (when `SaveAdaptIterations` is also enabled) each `iterationX/palace.json` describes
 that iteration's saved mesh, so a saved mesh and its block can always be paired. The block
