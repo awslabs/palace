@@ -23,6 +23,9 @@
 #include <utility>
 #include <vector>
 #include <mfem/mesh/ncmesh_tables.hpp>
+#if defined(MFEM_USE_ZLIB)
+#include <zlib.h>
+#endif
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
 #include "utils/outputdir.hpp"
@@ -779,21 +782,118 @@ struct NCMeshFile
   }
 } nc_file;
 
+#if defined(MFEM_USE_ZLIB)
+// The root decompresses a gzip-compressed nonconforming mesh and sends each process the
+// lines which start in its slice of the compressed bytes (from the compressed offset after
+// each read), in messages of at most 64 MiB. Collective.
+bool DecompressFileLines(MPI_Comm comm, const std::string &path, std::string &text)
+{
+  constexpr int more = 1, last = 2;  // the tags of the messages
+  constexpr int chunk = 1 << 16, message = 1 << 26;
+  const int P = Mpi::Size(comm);
+  bool ok = true;
+  if (!Mpi::Root(comm))
+  {
+    for (MPI_Status s = {}; s.MPI_TAG != last;)
+    {
+      int n;
+      MPI_Probe(0, MPI_ANY_TAG, comm, &s);
+      MPI_Get_count(&s, MPI_CHAR, &n);
+      text.resize(text.size() + n);
+      MPI_Recv(text.data() + text.size() - n, n, MPI_CHAR, 0, s.MPI_TAG, comm,
+               MPI_STATUS_IGNORE);
+    }
+  }
+  else
+  {
+    std::ifstream fi(path, std::ios::binary | std::ios::ate);
+    const long long size = fi ? static_cast<long long>(fi.tellg()) : 0;
+    gzFile f = gzopen(path.c_str(), "rb");
+    std::string buf(17, '\0');  // the bytes of process r not sent yet
+    ok = f && gzbuffer(f, 1 << 20) == 0 && gzread(f, buf.data(), 17) == 17 &&
+         buf == "MFEM NC mesh v1.0";
+    int r = 0;
+    auto Send = [&](std::size_t n, int tag)
+    {
+      if (r == 0)
+      {
+        text.append(buf, 0, n);
+      }
+      else
+      {
+        MPI_Send(buf.data(), static_cast<int>(n), MPI_CHAR, r, tag, comm);
+      }
+      buf.erase(0, n);
+      r += (tag == last);
+    };
+    for (int n = 1; ok && n > 0;)
+    {
+      const auto n0 = buf.size();
+      buf.resize(n0 + chunk);
+      n = gzread(f, buf.data() + n0, chunk);
+      ok = (n >= 0);
+      buf.resize(n0 + std::max(n, 0));
+      // When a read reaches the end of the slice of r, its lines end at the next end of
+      // line.
+      const long long in = gzoffset(f);
+      for (std::size_t from = n0, eol; r + 1 < P && in >= size * (r + 1) / P &&
+                                       (eol = buf.find('\n', from)) != std::string::npos;
+           from = 0)
+      {
+        Send(eol + 1, last);
+      }
+      if (buf.size() >= message && (r + 1 == P || in < size * (r + 1) / P))
+      {
+        Send(buf.size(), more);
+      }
+    }
+    int err = Z_ERRNO;
+    if (f)
+    {
+      gzerror(f, &err);
+      gzclose_r(f);
+    }
+    ok = ok && (err == Z_OK);
+    while (r < P)  // the rest, then nothing
+    {
+      Send(buf.size(), last);
+    }
+  }
+  Mpi::GlobalAnd(1, &ok, comm);
+  return ok;
+}
+#endif
+
 // Read the lines of a file which start in this process's slice of its bytes (with enough of
-// the next bytes to end them), and number them. Collective.
-bool ReadFileLines(MPI_Comm comm, const std::string &path, NCMeshFile &file)
+// the next bytes to end them), and number them. A compressed file is decompressed by the
+// root. Collective.
+bool ReadFileLines(MPI_Comm comm, const std::string &path, bool compressed,
+                   NCMeshFile &file)
 {
   const int rank = Mpi::Rank(comm), P = Mpi::Size(comm);
-  std::ifstream fi(path, std::ios::binary | std::ios::ate);
-  const long long size = fi ? static_cast<long long>(fi.tellg()) : 0;
-  const long long a = size * rank / P, b = size * (rank + 1) / P;
-  const long long lo = std::max(a - 1, 0LL), hi = std::min(b + (1LL << 16), size);
-  file.text.assign(std::max(hi - lo, 0LL), '\0');
-  fi.seekg(lo);
-  fi.read(file.text.data(), file.text.size());
-  bool ok = static_cast<bool>(fi);
-  std::size_t p = (a > 0) ? std::min(file.text.find('\n'), file.text.size() - 1) + 1 : 0;
-  while (ok && lo + static_cast<long long>(p) < b)
+  bool ok = true;
+  std::size_t p = 0, end = 0;  // the own lines start in [p, end)
+  if (compressed)
+  {
+#if defined(MFEM_USE_ZLIB)
+    ok = DecompressFileLines(comm, path, file.text);
+#endif
+    end = file.text.size();
+  }
+  else
+  {
+    std::ifstream fi(path, std::ios::binary | std::ios::ate);
+    const long long size = fi ? static_cast<long long>(fi.tellg()) : 0;
+    const long long a = size * rank / P, b = size * (rank + 1) / P;
+    const long long lo = std::max(a - 1, 0LL), hi = std::min(b + (1LL << 16), size);
+    file.text.assign(std::max(hi - lo, 0LL), '\0');
+    fi.seekg(lo);
+    fi.read(file.text.data(), file.text.size());
+    ok = static_cast<bool>(fi);
+    p = (a > 0) ? std::min(file.text.find('\n'), file.text.size() - 1) + 1 : 0;
+    end = std::max(b - lo, 0LL);
+  }
+  while (ok && p < end)
   {
     const auto eol = file.text.find('\n', p);
     ok = (eol != std::string::npos);
@@ -959,13 +1059,14 @@ bool ReadFileNodes(mfem::ParMesh &mesh, const NCMeshFile &file, double length_sc
 
 }  // namespace
 
-// Every process reads the lines which start in its slice of the file. The roots, whose
-// trees are consecutive in the file (PrintParallelNCMesh lists the elements of each root
-// depth first), are partitioned into consecutive ranges with about the same number of
-// leaves, and each process gets the elements of its roots: their corners come from the
-// leaves through the children which hold them, as MFEM derefines, and so do the attributes
-// of their faces, looked up in the boundary of the file. The root prints the coarse mesh,
-// with the top-level vertex coordinates (the first vertex DOFs of the nodes).
+// Every process reads the lines which start in its slice of the file (the root
+// decompresses a compressed file and sends them). The roots, whose trees are consecutive
+// in the file (PrintParallelNCMesh lists the elements of each root depth first), are
+// partitioned into consecutive ranges with about the same number of leaves, and each
+// process gets the elements of its roots: their corners come from the leaves through the
+// children which hold them, as MFEM derefines, and so do the attributes of their faces,
+// looked up in the boundary of the file. The root prints the coarse mesh, with the
+// top-level vertex coordinates (the first vertex DOFs of the nodes).
 bool ReadNCMeshCoarse(MPI_Comm comm, const std::string &path, bool enabled,
                       std::string &coarse)
 {
@@ -984,19 +1085,23 @@ bool ReadNCMeshCoarse(MPI_Comm comm, const std::string &path, bool enabled,
   {
     return false;
   }
-  bool ok = false;
-  if (Mpi::Root(comm))  // an uncompressed nonconforming mesh
+  int format = 0;  // 1: a nonconforming mesh, 2: compressed (its header is checked later)
+  if (Mpi::Root(comm))
   {
     std::ifstream fi(path, std::ios::binary);
     std::string head(17, '\0');
     fi.read(head.data(), head.size());
-    ok = fi && head == "MFEM NC mesh v1.0";
+    format = (fi && head == "MFEM NC mesh v1.0") ? 1 : 0;
+#if defined(MFEM_USE_ZLIB)
+    format = (head.compare(0, 2, "\x1f\x8b") == 0) ? 2 : format;
+#endif
   }
-  Mpi::Broadcast(1, &ok, 0, comm);
-  if (!ok || !ReadFileLines(comm, path, file))
+  Mpi::Broadcast(1, &format, 0, comm);
+  if (format == 0 || !ReadFileLines(comm, path, format == 2, file))
   {
     return Fail();
   }
+  bool ok = true;
 
   // 1. The sections: the line of each keyword, then the numbers after them.
   constexpr std::string_view keys[] = {"dimension",    "elements",    "boundary",
