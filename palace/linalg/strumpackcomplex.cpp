@@ -71,6 +71,10 @@ void StrumpackComplexSolver::SetOperator(const ComplexOperator &op)
   // StrumpackSolver: hypre's parallel matrix products can store explicit zeros without
   // their transposes on small partitions, and STRUMPACK symmetrizes the pattern itself.
   ComplexLocalCSR csr(op);
+
+  // STRUMPACK copies the matrix: release the parallel assembled parts (as MfemWrapperSolver
+  // does for the sparse direct solvers).
+  ReleaseParallelAssemble(op);
   const HYPRE_BigInt n_loc = csr.n_loc;
   std::vector<HYPRE_BigInt> I(csr.I.begin(), csr.I.end()), J = std::move(csr.J);
   std::vector<std::complex<double>> V = std::move(csr.V);

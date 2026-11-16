@@ -133,9 +133,10 @@ ComplexLocalCSR::ComplexLocalCSR(const ComplexOperator &op)
       part->HypreRead();
     }
   }
+}
 
-  // The solvers copy the matrix: release the parallel assembled parts (as MfemWrapperSolver
-  // does for the sparse direct solvers).
+void ReleaseParallelAssemble(const ComplexOperator &op)
+{
   for (const auto *part : {op.Real(), op.Imag()})
   {
     if (const auto *PtAP = dynamic_cast<const ParOperator *>(part))

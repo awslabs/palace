@@ -162,6 +162,10 @@ void SuperLUComplexSolver::SetOperator(const ComplexOperator &op)
 {
   // Local rows of the complex-valued matrix.
   ComplexLocalCSR csr(op);
+
+  // SuperLU_DIST gets a copy of the matrix: release the parallel assembled parts (as
+  // MfemWrapperSolver does for the sparse direct solvers).
+  ReleaseParallelAssemble(op);
   const int_t n_glob = static_cast<int_t>(csr.n_glob);
   const int_t n_loc = static_cast<int_t>(csr.n_loc);
   std::vector<int_t> I(csr.I.begin(), csr.I.end()), J(csr.J.begin(), csr.J.end());

@@ -159,6 +159,10 @@ void MumpsComplexSolver::SetOperator(const ComplexOperator &op)
   int n_loc, row_start;
   {
     ComplexLocalCSR csr(op);
+
+    // MUMPS gets a copy of the matrix: release the parallel assembled parts (as
+    // MfemWrapperSolver does for the sparse direct solvers).
+    ReleaseParallelAssemble(op);
     MFEM_VERIFY(csr.n_glob <= std::numeric_limits<MUMPS_INT>::max(),
                 "MumpsComplexSolver does not support 64-bit global indices!");
     n_glob = csr.n_glob;

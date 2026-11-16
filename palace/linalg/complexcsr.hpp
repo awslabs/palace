@@ -16,9 +16,7 @@ namespace palace
 // Local rows of a complex-valued operator, whose real and imaginary parts are
 // HypreParMatrix or ParOperator objects with the same row distribution, merged into a
 // complex-valued CSR matrix with global column indices (sorted within each row). Used by
-// the sparse direct solvers which factor complex-valued matrices in complex arithmetic. The
-// parallel assembled matrices of ParOperator parts are released (the solvers copy the
-// matrix).
+// the sparse direct solvers which factor complex-valued matrices in complex arithmetic.
 //
 struct ComplexLocalCSR
 {
@@ -33,6 +31,11 @@ struct ComplexLocalCSR
 
   explicit ComplexLocalCSR(const ComplexOperator &op);
 };
+
+// Release the parallel assembled matrices of the ParOperator real and imaginary parts of
+// the operator, for the solvers which copy the matrix (as MfemWrapperSolver does for the
+// sparse direct solvers). They are assembled again if needed.
+void ReleaseParallelAssemble(const ComplexOperator &op);
 
 }  // namespace palace
 
