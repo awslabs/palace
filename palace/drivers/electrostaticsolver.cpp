@@ -58,31 +58,17 @@ enum class ArchivedField : std::uint32_t
 // Decision 1471 (2) (C10): the PALACE_RESPONSE_* run-mode gates below select code paths
 // with collectives (the solve, the archive streams, the source-timing reduction), so each
 // is read COLLECTIVELY: the root's value on every rank (utils/collectiveenvironment.hpp).
-bool EnvironmentFlag(MPI_Comm comm, const char *name)
+// Their Solver.Electrostatic.ResponseArchive keys are identical on every rank.
+std::filesystem::path ResponseArchivePath(const std::string &value)
 {
-  return CollectiveEnvironmentFlag(comm, name);
+  return std::filesystem::absolute(value).lexically_normal();
 }
 
-std::optional<std::filesystem::path> ResponseArchiveDirectory(MPI_Comm comm)
+void ResponseArchiveConflict(const char *key, const char *variable)
 {
-  const auto value = CollectiveGetenv(comm, "PALACE_RESPONSE_ARCHIVE_DIR");
-  if (!value || value->empty())
-  {
-    return std::nullopt;
-  }
-  return std::filesystem::absolute(*value).lexically_normal();
-}
-
-int ResponseArchiveBlockSize(MPI_Comm comm)
-{
-  const auto value = CollectiveGetenv(comm, "PALACE_RESPONSE_BLOCK_SIZE");
-  if (!value)
-  {
-    return 3;
-  }
-  const int size = std::stoi(*value);
-  MFEM_VERIFY(size > 0, "PALACE_RESPONSE_BLOCK_SIZE must be positive!");
-  return size;
+  MFEM_ABORT("Solver.Electrostatic.ResponseArchive \""
+             << key << "\" and its alias variable " << variable
+             << " are both set and differ!");
 }
 
 std::filesystem::path ArchivePath(const std::filesystem::path &directory, int source,
@@ -230,25 +216,245 @@ CorrectedSolveRecord SolveCorrectedField(KspSolver &ksp, const Operator &K,
   return record;
 }
 
-void ValidateArchiveEstimateOptions(const IoData &iodata, MPI_Comm comm, bool check_output)
+ResponseArchiveSettings
+ResolveResponseArchive(const config::ElectrostaticSolverData &electrostatic, MPI_Comm comm)
 {
-  if (!EnvironmentFlag(comm, "PALACE_RESPONSE_ESTIMATE_ONLY"))
+  using Mode = config::ElectrostaticSolverData::ResponseArchiveData::Mode;
+  const auto keys = electrostatic.response_archive.value_or(
+      config::ElectrostaticSolverData::ResponseArchiveData{});
+  ResponseArchiveSettings settings;
+  auto SourceOf = [](bool from_key, bool from_variable)
+  {
+    return from_key ? (from_variable ? ResponseArchiveSource::KEY_AND_VARIABLE
+                                     : ResponseArchiveSource::KEY)
+                    : (from_variable ? ResponseArchiveSource::VARIABLE
+                                     : ResponseArchiveSource::DEFAULT);
+  };
+
+  // A boolean alias variable is on when it reads "1". An archive estimate refuses
+  // ARCHIVE_ONLY, REDUCE_ONLY, RECYCLE_INITIAL_GUESS and BLOCK_SIZE when they are set at
+  // all (in this order), and the BlockSize / RecycleInitialGuess keys when they are given.
+  auto Resolve = [&](const char *variable, const char *key,
+                     const std::optional<bool> &from_key, bool refused_by_estimate,
+                     bool &variable_set)
+  {
+    const auto value = CollectiveGetenv(comm, variable);
+    variable_set = value.has_value();
+    if (value && refused_by_estimate)
+    {
+      settings.estimate_conflicts.emplace_back(variable);
+    }
+    const bool from_variable = value && *value == "1";
+    if (!from_key)
+    {
+      return from_variable;
+    }
+    if (value && from_variable != *from_key)
+    {
+      ResponseArchiveConflict(key, variable);
+    }
+    return *from_key;
+  };
+  auto ModeIs = [&](Mode mode)
+  { return keys.mode ? std::optional<bool>(*keys.mode == mode) : std::nullopt; };
+  bool archive_variable = false, reduce_variable = false, estimate_variable = false;
+  settings.archive_only = Resolve("PALACE_RESPONSE_ARCHIVE_ONLY", "Mode",
+                                  ModeIs(Mode::ARCHIVE), true, archive_variable);
+  settings.reduce_only = Resolve("PALACE_RESPONSE_REDUCE_ONLY", "Mode",
+                                 ModeIs(Mode::REDUCE), true, reduce_variable);
+  settings.estimate_only = Resolve("PALACE_RESPONSE_ESTIMATE_ONLY", "Mode",
+                                   ModeIs(Mode::ESTIMATE), false, estimate_variable);
+  settings.mode_source = SourceOf(keys.mode.has_value(),
+                                  archive_variable || reduce_variable || estimate_variable);
+  bool recycle_variable = false;
+  settings.recycle_initial_guess =
+      Resolve("PALACE_RESPONSE_RECYCLE_INITIAL_GUESS", "RecycleInitialGuess",
+              keys.recycle_initial_guess, true, recycle_variable);
+  settings.recycle_initial_guess_source =
+      SourceOf(keys.recycle_initial_guess.has_value(), recycle_variable);
+  if (keys.recycle_initial_guess)
+  {
+    settings.estimate_conflicts.emplace_back(
+        "Solver.Electrostatic.ResponseArchive.RecycleInitialGuess");
+  }
+  bool timing_variable = false;
+  settings.source_timing = Resolve("PALACE_RESPONSE_SOURCE_TIMING", "SourceTiming",
+                                   keys.source_timing, false, timing_variable);
+  settings.source_timing_source = SourceOf(keys.source_timing.has_value(), timing_variable);
+
+  // The reduction's block size: the variable is parsed only where it is used (a reduction)
+  // or compared with its key, as before the keys existed.
+  bool block_size_variable = false;
+  if (const auto value = CollectiveGetenv(comm, "PALACE_RESPONSE_BLOCK_SIZE"))
+  {
+    settings.estimate_conflicts.emplace_back("PALACE_RESPONSE_BLOCK_SIZE");
+    if (settings.reduce_only || keys.block_size)
+    {
+      settings.block_size = std::stoi(*value);
+      MFEM_VERIFY(settings.block_size > 0, "PALACE_RESPONSE_BLOCK_SIZE must be positive!");
+      if (keys.block_size && *keys.block_size != settings.block_size)
+      {
+        ResponseArchiveConflict("BlockSize", "PALACE_RESPONSE_BLOCK_SIZE");
+      }
+      block_size_variable = true;
+    }
+  }
+  if (keys.block_size)
+  {
+    settings.estimate_conflicts.emplace_back(
+        "Solver.Electrostatic.ResponseArchive.BlockSize");
+    settings.block_size = *keys.block_size;
+  }
+  settings.block_size_source = SourceOf(keys.block_size.has_value(), block_size_variable);
+
+  // A path given by both the key and the variable must name the same path. The comparison
+  // is made on the root and broadcast (a relative spelling is taken against the root's
+  // working directory), so that every rank refuses or none does.
+  auto PathsDiffer = [&](const std::filesystem::path &a, const std::filesystem::path &b)
+  {
+    bool differ = Mpi::Root(comm) && a != b;
+    Mpi::Broadcast(1, &differ, 0, comm);
+    return differ;
+  };
+
+  // The archive directory: an empty variable is unset.
+  if (const auto value = CollectiveGetenv(comm, "PALACE_RESPONSE_ARCHIVE_DIR");
+      value && !value->empty())
+  {
+    settings.directory = ResponseArchivePath(*value);
+  }
+  settings.directory_source =
+      SourceOf(keys.directory.has_value(), settings.directory.has_value());
+  if (keys.directory)
+  {
+    const auto from_key = ResponseArchivePath(*keys.directory);
+    if (settings.directory && PathsDiffer(*settings.directory, from_key))
+    {
+      ResponseArchiveConflict("Directory", "PALACE_RESPONSE_ARCHIVE_DIR");
+    }
+    settings.directory = from_key;
+  }
+
+  // The estimate request file (used as given; an empty variable is set).
+  settings.estimate_request = CollectiveGetenv(comm, "PALACE_RESPONSE_ESTIMATE_REQUEST");
+  settings.estimate_request_source =
+      SourceOf(keys.estimate_request.has_value(), settings.estimate_request.has_value());
+  if (keys.estimate_request)
+  {
+    if (settings.estimate_request &&
+        PathsDiffer(ResponseArchivePath(*settings.estimate_request),
+                    ResponseArchivePath(*keys.estimate_request)))
+    {
+      ResponseArchiveConflict("EstimateRequest", "PALACE_RESPONSE_ESTIMATE_REQUEST");
+    }
+    settings.estimate_request = *keys.estimate_request;
+  }
+  return settings;
+}
+
+std::string ResponseArchiveSummary(const ResponseArchiveSettings &settings)
+{
+  auto Source = [](ResponseArchiveSource source)
+  {
+    switch (source)
+    {
+      case ResponseArchiveSource::KEY:
+        return "key";
+      case ResponseArchiveSource::VARIABLE:
+        return "variable";
+      case ResponseArchiveSource::KEY_AND_VARIABLE:
+        return "key and variable";
+      case ResponseArchiveSource::DEFAULT:
+        break;
+    }
+    return "default";
+  };
+  std::vector<std::string> modes;
+  if (settings.archive_only)
+  {
+    modes.emplace_back("Archive");
+  }
+  if (settings.reduce_only)
+  {
+    modes.emplace_back("Reduce");
+  }
+  if (settings.estimate_only)
+  {
+    modes.emplace_back("Estimate");
+  }
+  std::string mode = modes.empty() ? "None" : modes.front();
+  for (std::size_t i = 1; i < modes.size(); i++)
+  {
+    mode += "+" + modes[i];
+  }
+  return fmt::format(
+      "Response-archive settings: Mode={} ({}), Directory={} ({}), BlockSize={} ({}), "
+      "SourceTiming={} ({}), RecycleInitialGuess={} ({}), EstimateRequest={} ({})",
+      mode, Source(settings.mode_source),
+      settings.directory ? settings.directory->string() : std::string("-"),
+      Source(settings.directory_source), settings.block_size,
+      Source(settings.block_size_source), settings.source_timing,
+      Source(settings.source_timing_source), settings.recycle_initial_guess,
+      Source(settings.recycle_initial_guess_source),
+      settings.estimate_request ? *settings.estimate_request : std::string("-"),
+      Source(settings.estimate_request_source));
+}
+
+namespace
+{
+
+// The key path only: a Solver.Electrostatic.ResponseArchive key that has no effect in the
+// resolved mode is refused, and so is a key-given Archive / Reduce mode without a
+// Directory. The estimate refuses its own (RecycleInitialGuess, BlockSize). The alias
+// variables keep their silent semantics.
+void ValidateResponseArchiveKeys(const config::ElectrostaticSolverData &electrostatic,
+                                 const ResponseArchiveSettings &settings)
+{
+  using Mode = config::ElectrostaticSolverData::ResponseArchiveData::Mode;
+  if (!electrostatic.response_archive)
   {
     return;
   }
-  for (const char *flag :
-       {"PALACE_RESPONSE_ARCHIVE_ONLY", "PALACE_RESPONSE_REDUCE_ONLY",
-        "PALACE_RESPONSE_RECYCLE_INITIAL_GUESS", "PALACE_RESPONSE_BLOCK_SIZE"})
+  const auto &keys = *electrostatic.response_archive;
+  auto Inert = [](bool given, bool effective, const char *key, const char *mode)
   {
-    MFEM_VERIFY(!CollectiveGetenv(comm, flag),
-                "Archive estimation conflicts with " << flag);
+    MFEM_VERIFY(!given || effective, "Solver.Electrostatic.ResponseArchive \""
+                                         << key << "\" has no effect outside Mode \""
+                                         << mode << "\"!");
+  };
+  Inert(keys.source_timing.has_value(), settings.archive_only, "SourceTiming", "Archive");
+  Inert(keys.recycle_initial_guess.has_value(),
+        settings.archive_only || settings.estimate_only, "RecycleInitialGuess", "Archive");
+  Inert(keys.block_size.has_value(), settings.reduce_only || settings.estimate_only,
+        "BlockSize", "Reduce");
+  Inert(keys.estimate_request.has_value(), settings.estimate_only, "EstimateRequest",
+        "Estimate");
+  MFEM_VERIFY(!keys.mode || (*keys.mode != Mode::ARCHIVE && *keys.mode != Mode::REDUCE) ||
+                  settings.directory,
+              "Solver.Electrostatic.ResponseArchive \"Mode\" \""
+                  << (*keys.mode == Mode::ARCHIVE ? "Archive" : "Reduce")
+                  << "\" requires a \"Directory\" (or PALACE_RESPONSE_ARCHIVE_DIR)!");
+}
+
+}  // namespace
+
+void ValidateArchiveEstimateOptions(const IoData &iodata, MPI_Comm comm, bool check_output)
+{
+  const auto settings = ResolveResponseArchive(iodata.solver.electrostatic, comm);
+  ValidateResponseArchiveKeys(iodata.solver.electrostatic, settings);
+  if (!settings.estimate_only)
+  {
+    return;
   }
-  const auto archive = ResponseArchiveDirectory(comm);
+  MFEM_VERIFY(settings.estimate_conflicts.empty(),
+              "Archive estimation conflicts with " << settings.estimate_conflicts.front());
+  const auto &archive = settings.directory;
   MFEM_VERIFY(archive && std::filesystem::is_directory(*archive),
-              "Archive estimation requires an existing PALACE_RESPONSE_ARCHIVE_DIR!");
-  const auto estimate_request = CollectiveGetenv(comm, "PALACE_RESPONSE_ESTIMATE_REQUEST");
-  MFEM_VERIFY(estimate_request,
-              "Archive estimation requires PALACE_RESPONSE_ESTIMATE_REQUEST!");
+              "Archive estimation requires an existing response-archive Directory "
+              "(PALACE_RESPONSE_ARCHIVE_DIR)!");
+  const auto &estimate_request = settings.estimate_request;
+  MFEM_VERIFY(estimate_request, "Archive estimation requires a response-archive "
+                                "EstimateRequest (PALACE_RESPONSE_ESTIMATE_REQUEST)!");
   MFEM_VERIFY(iodata.problem.type == ProblemType::ELECTROSTATIC &&
                   !iodata.boundaries.prescribed_potential.empty() &&
                   !iodata.solver.electrostatic.response_correction &&
@@ -299,16 +505,14 @@ void ValidateArchiveEstimateOptions(const IoData &iodata, MPI_Comm comm, bool ch
 
 ErrorIndicator
 ElectrostaticSolver::EstimateArchivedFields(LaplaceOperator &laplace_op, const Operator &K,
-                                            const std::filesystem::path &archive) const
+                                            const std::filesystem::path &archive,
+                                            const std::string &estimate_request) const
 {
   using json = nlohmann::json;
   using VT = Units::ValueType;
   const auto comm = laplace_op.GetComm();
   const auto &Grad = laplace_op.GetGradMatrix();
-  const auto estimate_request = CollectiveGetenv(comm, "PALACE_RESPONSE_ESTIMATE_REQUEST");
-  MFEM_VERIFY(estimate_request,
-              "Archive estimation requires PALACE_RESPONSE_ESTIMATE_REQUEST!");
-  std::ifstream request_stream(*estimate_request);
+  std::ifstream request_stream(estimate_request);
   MFEM_VERIFY(request_stream, "Cannot read archive estimate request!");
   const auto request = json::parse(request_stream);
   MFEM_VERIFY(request.at("Version") == 1, "Unsupported archive estimate request version!");
@@ -854,23 +1058,29 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // The archive reduction solves nothing: it needs the gradient, the electric energy mass
   // operator and the grid functions, not the stiffness matrix nor the preconditioner
   // setup (decision 62(4)).
-  const bool archive_reduce_only =
-      EnvironmentFlag(laplace_op.GetComm(), "PALACE_RESPONSE_REDUCE_ONLY");
+  const auto response_archive_settings =
+      ResolveResponseArchive(iodata.solver.electrostatic, laplace_op.GetComm());
+  if (response_archive_settings.Active())
+  {
+    Mpi::Print(laplace_op.GetComm(), "\n{}\n",
+               ResponseArchiveSummary(response_archive_settings));
+  }
+  const bool archive_reduce_only = response_archive_settings.reduce_only;
   decltype(laplace_op.GetStiffnessMatrix()) K;
   if (!archive_reduce_only)
   {
     K = laplace_op.GetStiffnessMatrix();
   }
-  if (EnvironmentFlag(laplace_op.GetComm(), "PALACE_RESPONSE_ESTIMATE_ONLY"))
+  if (response_archive_settings.estimate_only)
   {
-    MFEM_VERIFY(
-        !archive_reduce_only,
-        "PALACE_RESPONSE_ESTIMATE_ONLY and PALACE_RESPONSE_REDUCE_ONLY exclude each "
-        "other!");
+    MFEM_VERIFY(!archive_reduce_only,
+                "The response-archive modes Estimate (PALACE_RESPONSE_ESTIMATE_ONLY) and "
+                "Reduce (PALACE_RESPONSE_REDUCE_ONLY) exclude each other!");
     ValidateArchiveEstimateOptions(iodata, laplace_op.GetComm(), false);
     SaveMetadata(laplace_op.GetH1Spaces());
-    auto indicator = EstimateArchivedFields(
-        laplace_op, *K, *ResponseArchiveDirectory(laplace_op.GetComm()));
+    auto indicator =
+        EstimateArchivedFields(laplace_op, *K, *response_archive_settings.directory,
+                               *response_archive_settings.estimate_request);
     SaveLinearSolverMetadata(laplace_op.GetComm(), 0, 0);
     return {std::move(indicator), laplace_op.GlobalTrueVSize()};
   }
@@ -885,8 +1095,8 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // are evaluated and written only on request; every other output is unchanged.
   bool patch_energy_response = response_config && response_config->patch_energy;
   MFEM_VERIFY(!archive_reduce_only || !response_config,
-              "PALACE_RESPONSE_REDUCE_ONLY reduces archived fields of a configuration "
-              "without ResponseCorrection!");
+              "The response-archive mode Reduce (PALACE_RESPONSE_REDUCE_ONLY) reduces "
+              "archived fields of a configuration without ResponseCorrection!");
   std::unique_ptr<SurfaceResponseOperator> response_correction;
   std::unique_ptr<SumOperator> corrected_K;
   const Operator *system_K = K.get();
@@ -897,7 +1107,8 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   {
     if (root && !response_correction->GetPatchAssignments().empty())
     {
-      TableWithCSVFile patches(post_dir / "surface-response-patches.csv");
+      TableWithCSVFile patches(
+          response_correction->DiagnosticsPath(post_dir, "surface-response-patches.csv"));
       patches.table.insert(Column::Integer("model", "model"));
       for (const char *coordinate : {"x", "y", "z"})
       {
@@ -958,6 +1169,15 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     else
     {
       WritePatchTable();
+      if (patch_energy_response)
+      {
+        // Lane rescensus-product (decision 1817): the census's per-patch readings
+        // (PatchEnergy only; collective).
+        response_correction->WriteResolutionPatchTable(
+            response_correction
+                ->DiagnosticsPath(post_dir, "surface-response-resolution-patches.csv")
+                .string());
+      }
       if (self_consistent_response)
       {
         corrected_K = std::make_unique<SumOperator>(*K, *response_correction);
@@ -985,26 +1205,25 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   MFEM_VERIFY(n_step > 0,
               "No terminal or prescribed potential boundaries specified for electrostatic "
               "simulation!");
-  const auto response_archive = ResponseArchiveDirectory(laplace_op.GetComm());
-  const bool archive_stream_only =
-      EnvironmentFlag(laplace_op.GetComm(), "PALACE_RESPONSE_ARCHIVE_ONLY");
-  const bool response_source_timing =
-      EnvironmentFlag(laplace_op.GetComm(), "PALACE_RESPONSE_SOURCE_TIMING");
+  const auto &response_archive = response_archive_settings.directory;
+  const bool archive_stream_only = response_archive_settings.archive_only;
+  const bool response_source_timing = response_archive_settings.source_timing;
   const bool archive_recycle_initial_guess =
-      archive_stream_only &&
-      EnvironmentFlag(laplace_op.GetComm(), "PALACE_RESPONSE_RECYCLE_INITIAL_GUESS");
+      archive_stream_only && response_archive_settings.recycle_initial_guess;
   MFEM_VERIFY(!archive_stream_only ||
                   (response_archive && !iodata.boundaries.prescribed_potential.empty() &&
                    iodata.solver.electrostatic.response_matrix &&
                    iodata.solver.electrostatic.aggregate_response_matrix),
-              "PALACE_RESPONSE_ARCHIVE_ONLY requires PALACE_RESPONSE_ARCHIVE_DIR and an "
-              "aggregated prescribed-potential response-matrix configuration!");
+              "The response-archive mode Archive (PALACE_RESPONSE_ARCHIVE_ONLY) requires a "
+              "Directory (PALACE_RESPONSE_ARCHIVE_DIR) and an aggregated "
+              "prescribed-potential response-matrix configuration!");
   MFEM_VERIFY(!archive_reduce_only ||
                   (response_archive && !iodata.boundaries.prescribed_potential.empty() &&
                    iodata.solver.electrostatic.response_matrix &&
                    iodata.solver.electrostatic.aggregate_response_matrix),
-              "PALACE_RESPONSE_REDUCE_ONLY requires PALACE_RESPONSE_ARCHIVE_DIR and an "
-              "aggregated prescribed-potential response-matrix configuration!");
+              "The response-archive mode Reduce (PALACE_RESPONSE_REDUCE_ONLY) requires a "
+              "Directory (PALACE_RESPONSE_ARCHIVE_DIR) and an aggregated "
+              "prescribed-potential response-matrix configuration!");
   if (response_archive)
   {
     if (root)
@@ -1289,9 +1508,14 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // PatchEnergy (decision 922 B-1; the 851 (C) export): the applied patches' raw claims by
   // model set (empty without PatchEnergy) and, per source, the raw field's within-R energy
   // partitioned over them.
-  std::vector<SurfacePostOperator::UncoveredPerimeterPortion> model_raw_portions;
+  SurfacePostOperator::CompactPerimeterPortions model_raw_portions;
   std::vector<std::pair<int, std::map<int, std::map<std::string, double>>>>
       raw_model_partitions;
+  // Lane L1 (decision 1634 (1)): per source, the closed coverage partition of its raw
+  // field (SurfacePostOperator::GetInterfaceCoveragePartition), on every corrected run.
+  std::vector<
+      std::pair<int, std::map<int, SurfacePostOperator::InterfaceCoveragePartition>>>
+      coverage_partitions;
   if (response_correction)
   {
     for (const auto &portion : response_correction->GetUncoveredPortions())
@@ -1314,12 +1538,33 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       spatial_cluster_priority_portions.push_back(
           {portion.p0, portion.p1, portion.topology, portion.feature});
     }
-    // Round 2b B1 (decision 1484): converted once and released from the operator (the same
-    // portions in the same order; the operator reads them nowhere after the construction).
-    for (const auto &portion : response_correction->ReleaseModelRawClaimPortionList())
+    // Round 2b B1 (decision 1484): moved out of the operator (the same portions in the
+    // same order; the operator reads them nowhere after the construction), held once, in
+    // the compact exact form (lane L1, ruling 1682).
+    model_raw_portions = response_correction->ReleaseModelRawClaimPortionList();
+    // Ruling 1688 (lane L1): the stage-0 Missing LENGTH line (root; log only).
+    if (!response_correction->IsRawFallback())
     {
-      model_raw_portions.push_back(
-          {portion.p0, portion.p1, portion.topology, portion.feature});
+      const auto [missing, method_gap] = SplitCoverageUncoveredByKeyClass(
+          uncovered_portions, response_correction->GetCoverageKeyRecords());
+      const auto targets = response_correction->GetTargetInterfaces();
+      Mpi::Print("\n{}",
+                 CoverageStageZeroLine(
+                     post_op.GetInterfaceTypes(), targets,
+                     post_op.GetSurfacePostOp().GetInterfacePerimeterLengths(
+                         targets, {missing, method_gap}),
+                     response_correction->GetIdentificationFeatureLengths(), iodata.units));
+      const auto not_served = response_correction->GetConfiguredTargetsNotServed();
+      if (!not_served.empty())
+      {
+        Mpi::Warning(
+            "{}", CoverageTargetsNotServedWarning(post_op.GetInterfaceTypes(&not_served)));
+      }
+      // Lane rescensus-product (decision 1817; ruling 1819 F1): the census Types (the
+      // coverage interfaces') and the PREFLIGHT line (collective; before the first solve).
+      const auto census_interfaces = response_correction->GetCoverageInterfaces();
+      response_correction->ConfigureResolutionTypes(
+          post_op.GetInterfaceTypes(&census_interfaces));
     }
     if (response_correction->ExclusionEnergyRequested())
     {
@@ -1441,8 +1686,8 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     using VT = Units::ValueType;
     if (!traces_output)
     {
-      traces_output =
-          std::make_unique<TableWithCSVFile>(post_dir / "surface-response-traces.csv");
+      traces_output = std::make_unique<TableWithCSVFile>(
+          response_correction->DiagnosticsPath(post_dir, "surface-response-traces.csv"));
       traces_output->table.insert(Column::Integer("source", "i"));
       traces_output->table.insert(Column::Integer("patch", "patch"));
       traces_output->table.insert(Column::Integer("model", "model"));
@@ -1490,8 +1735,9 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       {
         patch_assignments.emplace(assignment.global_index, &assignment);
       }
-      patch_output = std::make_unique<TableWithCSVFile>(
-          post_dir / "surface-response-patch-energy.csv");
+      patch_output =
+          std::make_unique<TableWithCSVFile>(response_correction->DiagnosticsPath(
+              post_dir, "surface-response-patch-energy.csv"));
       patch_output->table.insert(Column::Integer("source", "source"));
       patch_output->table.insert(Column::Integer("evaluation", "evaluation"));
       patch_output->table.insert(Column::Integer("patch", "patch"));
@@ -1597,10 +1843,167 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     Mpi::Print("\nReducing archived electrostatic response fields from {}\n",
                response_archive->string());
     PostprocessArchivedResponseMatrix(post_op, laplace_op, Grad, *response_archive,
-                                      ResponseArchiveBlockSize(laplace_op.GetComm()));
+                                      response_archive_settings.block_size);
     SaveLinearSolverMetadata(laplace_op.GetComm(), 0, 0);
     return {indicator, laplace_op.GlobalTrueVSize()};
   }
+
+  // Lane L1 (decision 1634 (2) / (4); rulings 1641 / 1654 (III)): per source its coverage
+  // (root; the cells per Type of its raw field), in source order, and the number of
+  // conductor-consistency portions it was measured with (the matrix coverage is re-measured
+  // with the FINAL portions: ruling 1654 (III) Q3). The coverage tables are written as each
+  // source completes (a killed run keeps the finished sources).
+  std::vector<std::pair<int, CoverageMeasurement>> coverage_measurements;
+  std::vector<std::size_t> coverage_conductor_consistency_counts;
+  const auto coverage_path = post_dir / "surface-response-coverage.csv";
+  const auto coverage_by_key_path =
+      post_dir / "surface-response-uncovered-energy-by-key.csv";
+  // Lane rescensus-product (decision 1817): the census table (top level: small, one row per
+  // source x Type x (planes + 1)), written as each source completes.
+  const auto resolution_path = post_dir / "surface-response-resolution.csv";
+  if (root && response_correction)
+  {
+    fs::remove(coverage_path);
+    fs::remove(coverage_by_key_path);
+    fs::remove(post_dir / "terminal-C-corrected-coverage.csv");
+    fs::remove(resolution_path);
+  }
+  auto MeasureSourceCoverage =
+      [&](const std::map<int, SurfacePostOperator::InterfaceCoveragePartition> &partition,
+          const EnergyData &raw, const std::map<int, double> *fabricated)
+  {
+    // W per target = the raw interface energy minus its energy outside R (the largest
+    // configured radius, the coupon's: the corrected energies' own split); NOT-MEASURED
+    // without a postprocessed response (ruling 1654 (III) Q2 (b): a raw response evaluation
+    // of a SelfConsistent-only run would move the operator's trace counters).
+    // Ruling 1738: the configured targets no loaded model serves are cells' interfaces too
+    // (W = raw - outside R, nothing fabricated: uncovered).
+    const auto targets = response_correction->GetCoverageInterfaces();
+    const auto not_served = response_correction->GetConfiguredTargetsNotServed();
+    const auto types = post_op.GetInterfaceTypes(&targets);
+    std::map<int, double> within;
+    for (const int target : targets)
+    {
+      const auto interface = raw.interfaces.find(target);
+      if (interface == raw.interfaces.end() || interface->second.edge_energies.empty())
+      {
+        fabricated = nullptr;
+        break;
+      }
+      within[target] =
+          interface->second.energy - interface->second.edge_energies.back().energy_outside;
+    }
+    auto measurement = fabricated
+                           ? ComputeCoverageMeasurement(
+                                 partition, types, within, *fabricated,
+                                 response_correction->GetCoverageKeyRecords(),
+                                 response_correction->GetCoverageModelQualifications(),
+                                 response_correction->GetCoverageThresholds(),
+                                 response_correction->GetCoverageValidatedRegime(),
+                                 CoverageExcitationClass::ELECTROSTATIC_TERMINAL)
+                           : NotMeasuredCoverageMeasurement(
+                                 types, CoverageExcitationClass::ELECTROSTATIC_TERMINAL);
+    MarkCoverageTargetsNotServed(measurement, post_op.GetInterfaceTypes(&not_served));
+    // Ruling 1694 (1): the postprocessing interfaces no model targets carry their raw
+    // energy; their Types' untargeted raw energy and share (NOT-TARGET cells for a Type
+    // with untargeted interfaces only).
+    std::map<int, std::string> untargeted;
+    for (const auto &[interface, type] : post_op.GetInterfaceTypes())
+    {
+      if (targets.count(interface) == 0)
+      {
+        untargeted[interface] = type;
+      }
+    }
+    std::map<int, double> raw_energy;
+    for (const auto &[interface, data] : raw.interfaces)
+    {
+      raw_energy[interface] = data.energy;
+    }
+    AddCoverageUntargetedInterfaces(measurement, untargeted, raw_energy);
+    return measurement;
+  };
+  auto WriteSourceCoverage = [&](int source, const CoverageMeasurement &measurement)
+  {
+    const auto targets = response_correction->GetCoverageInterfaces();
+    const bool first = coverage_measurements.size() == 1;
+    for (const auto &path : {coverage_path, coverage_by_key_path})
+    {
+      std::ofstream output(path, first ? std::ios::out | std::ios::trunc
+                                       : std::ios::out | std::ios::app);
+      MFEM_VERIFY(output, "Unable to open " << path.string() << " for writing!");
+      if (path == coverage_path)
+      {
+        output << (first ? CoverageTableHeader("i") : "");
+        WriteCoverageRows(output, std::to_string(source), measurement, iodata.units);
+      }
+      else
+      {
+        output << (first ? CoverageByKeyTableHeader("i", targets) : "");
+        WriteCoverageByKeyRows(output, std::to_string(source), measurement, targets,
+                               CoveragePortionsByFeature(uncovered_portions), iodata.units);
+      }
+    }
+    response_correction->GetCoverageRunRecord().Add({{"i", static_cast<double>(source)}},
+                                                    measurement);
+  };
+  auto WriteMatrixCoverage = [&](const std::map<int, mfem::Array<int>> &terminal_sources,
+                                 const std::vector<CoverageMeasurement> &final_coverage,
+                                 const std::vector<bool> &remeasured)
+  {
+    // terminal-C-corrected-coverage.csv: the matrix shape of terminal-C-corrected.csv
+    // (rows i, a column per j); entry (i, j) = the worse coverage status over the Types of
+    // sources i and j (CoverageStatusRank) on their FINAL measurement; then, per row,
+    // source i's final measurement (its worst status and largest uncovered share over
+    // Types, and whether a conductor-consistency exclusion after it made it differ from its
+    // own row of surface-response-coverage.csv). A text table, root only.
+    MFEM_VERIFY(final_coverage.size() == terminal_sources.size() &&
+                    remeasured.size() == terminal_sources.size(),
+                "The corrected-matrix coverage needs one measurement per terminal source!");
+    auto Worst = [](const CoverageMeasurement &measurement)
+    {
+      const auto *cell = measurement.WorstCoverageCell();
+      return cell ? cell->status : CoverageStatus::NOT_MEASURED;
+    };
+    auto WorstShare = [](const CoverageMeasurement &measurement)
+    {
+      double worst = std::numeric_limits<double>::quiet_NaN();
+      for (const auto &cell : measurement.cells)
+      {
+        if (std::isfinite(cell.uncovered_share) && !(cell.uncovered_share <= worst))
+        {
+          worst = cell.uncovered_share;
+        }
+      }
+      return CsvNumber(worst);
+    };
+    std::ofstream output(post_dir / "terminal-C-corrected-coverage.csv");
+    MFEM_VERIFY(output, "Unable to open terminal-C-corrected-coverage.csv for writing!");
+    output << "i";
+    for (const auto &[idx2, data2] : terminal_sources)
+    {
+      (void)data2;
+      output << fmt::format(",coverage status[i][{}]", idx2);
+    }
+    output << ",source final worst coverage status,source final worst uncovered raw share "
+              "of W,source re-measured\n";
+    std::size_t i = 0;
+    for (const auto &[idx, data] : terminal_sources)
+    {
+      (void)data;
+      output << idx;
+      for (std::size_t j = 0; j < final_coverage.size(); j++)
+      {
+        const auto a = Worst(final_coverage[i]), b = Worst(final_coverage[j]);
+        output << ','
+               << CoverageStatusName(CoverageStatusRank(a) >= CoverageStatusRank(b) ? a
+                                                                                    : b);
+      }
+      output << ',' << CoverageStatusName(Worst(final_coverage[i])) << ','
+             << WorstShare(final_coverage[i]) << ',' << (remeasured[i] ? 1 : 0) << '\n';
+      i++;
+    }
+  };
 
   // Main loop over terminal boundaries.
   Mpi::Print("\nComputing electrostatic fields for {:d} {}\n", n_step,
@@ -1774,9 +2177,10 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         BlockTimer coupon_timer(Timer::POSTPRO_RESPONSE_COUPON);
         AppendClippedRows(idx, V[step], true, raw_whole, raw_outside);
       }
-      if (!model_raw_portions.empty())
+      if (patch_energy_response && !model_raw_portions.Empty())
       {
-        // PatchEnergy (decision 922 B-1): the raw field's within-R energy per model set.
+        // PatchEnergy (decision 922 B-1): the raw field's within-R energy per model set
+        // (the claims exist on every run since lane L1; the table with PatchEnergy only).
         BlockTimer energy_timer(Timer::POSTPRO_RESPONSE_ENERGY);
         raw_model_partitions.emplace_back(
             idx, post_op.GetElectrostaticPartitionedEdgeEnergies(
@@ -1818,17 +2222,49 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
             response_correction->GetTargetInterfaces(), conductor_consistency_portions);
         PostRawStage("conductor-consistency gate + raw energies");
       }
+      if (response_correction->HasSurfaceResponse())
+      {
+        // Lane L1 (decision 1634 (1); rulings 1641 / 1649 Q3): the closed coverage
+        // partition of this source's RAW field (the grid functions still hold it), every
+        // point in ONE bin by the correction's ownership: the classes the corrected
+        // interface energies keep raw (ApplyResponse below) first, whatever claim lies
+        // under them (a conductor-consistency-excluded patch's claim included), then the
+        // served claims, then the remainder labels. Measured on every corrected run.
+        BlockTimer energy_timer(Timer::POSTPRO_RESPONSE_ENERGY);
+        const auto missing_by_feature =
+            SurfacePostOperator::CoverageMissingByFeature(uncovered_portions);
+        const std::vector<SurfacePostOperator::CoveragePartitionClass> kept_classes = {
+            {"Missing", &missing_by_feature},
+            {"DomainBoundary", &domain_boundary_portions},
+            {"SpatialClusterPriority", &spatial_cluster_priority_portions},
+            {"ConductorConsistency", &conductor_consistency_portions}};
+        std::vector<SurfacePostOperator::CoveragePartitionClass> remainder_classes;
+        if (response_correction->ExclusionEnergyRequested())
+        {
+          remainder_classes.push_back({"Excluded", &exclusion_energy_portions});
+        }
+        auto partition = post_op.GetElectrostaticCoveragePartition(
+            response_correction->GetCoverageInterfaces(), kept_classes, model_raw_portions,
+            remainder_classes);
+        SurfacePostOperator::MoveCoverageServedLabel(partition, "unpatched",
+                                                     "UnpatchedPairs");
+        coverage_partitions.emplace_back(idx, std::move(partition));
+      }
       if (self_consistent_response)
       {
         corrected_rhs = RHS;
         response_correction->EliminateRHS(V_corrected[step], corrected_rhs);
       }
       SurfaceResponseOperator::ElectrostaticResponse response;
+      // Lane rescensus-product: this source's census sums (evaluation 0: the postprocessed
+      // response of the raw field).
+      ResolutionAccumulator resolution_sums =
+          response_correction->NewResolutionAccumulator();
       if (postprocess_response)
       {
         BlockTimer coupon_timer(Timer::POSTPRO_RESPONSE_COUPON);
-        response = response_correction->GetElectrostaticResponse(V[step], true,
-                                                                 patch_energy_response);
+        response = response_correction->GetElectrostaticResponse(
+            V[step], true, patch_energy_response, &resolution_sums);
         WriteSpatialPatchTraces(idx, response_correction->GetSpatialPatchTraces(V[step]));
       }
       auto ApplyResponse =
@@ -2090,6 +2526,38 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         corrected_results.back().raw_patch_contributions.shrink_to_fit();
         corrected_results.back().corrected_patch_contributions.clear();
         corrected_results.back().corrected_patch_contributions.shrink_to_fit();
+        // Lane L1: this source's coverage, measured and written before the next source.
+        coverage_conductor_consistency_counts.push_back(
+            response_correction->GetConductorConsistencyPortions().size());
+        if (root)
+        {
+          coverage_measurements.emplace_back(
+              idx,
+              MeasureSourceCoverage(
+                  coverage_partitions.back().second, corrected_results.back().raw,
+                  postprocess_response ? &response.fabricated_surface_energy : nullptr));
+          WriteSourceCoverage(idx, coverage_measurements.back().second);
+        }
+        // Lane rescensus-product (decision 1817): this source's census cells (collective;
+        // the root writes them; a SelfConsistent-only run has no evaluation-0 energy).
+        const auto resolution_cells = response_correction->MeasureResolution(
+            postprocess_response ? &resolution_sums : nullptr,
+            iodata.units.Dimensionalize<Units::ValueType::ENERGY>(1.0));
+        if (root)
+        {
+          const bool first = coverage_measurements.size() == 1;
+          std::ofstream output(resolution_path, first ? std::ios::out | std::ios::trunc
+                                                      : std::ios::out | std::ios::app);
+          MFEM_VERIFY(output,
+                      "Unable to open " << resolution_path.string() << " for writing!");
+          output << (first ? ResolutionTableHeader("i") : "");
+          WriteResolutionRows(output, std::to_string(idx), resolution_cells);
+          for (const auto &cell : resolution_cells)
+          {
+            response_correction->GetResolutionRunRecord().entries.push_back(
+                {{{"i", static_cast<double>(idx)}}, cell});
+          }
+        }
       }
     }
 
@@ -2126,9 +2594,99 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     if (response_correction)
     {
       BlockTimer response_timer(Timer::POSTPRO_RESPONSE);
-      PostprocessCorrectedTerminals(post_op, laplace_op.GetSources(), V, V_corrected,
-                                    *response_correction, postprocess_response,
-                                    self_consistent_accepted);
+      // Lane L4 (decision 1829; ERRATUM-1829 E-1): the FINAL coverage of every source is
+      // measured BEFORE the corrected matrices are written (two independent computations;
+      // the order changes no value), so that under Coverage.Policy "MarkNotApplied" entry
+      // (i, j) is marked iff ANY cell of source i's or source j's final measurement is.
+      // Lane L1 (ruling 1654 (III) Q3): terminal-C-corrected(i, j) is formed from the
+      // fields of sources i and j with the FINAL patch weights (after the last
+      // conductor-consistency exclusion), so each source's coverage is re-measured with the
+      // FINAL conductor-consistency portions where a later exclusion changed them (else its
+      // own measurement is the final one); entry (i, j) = the worse of sources i and j.
+      // The per-source rows keep their own measurement (what they print).
+      const std::size_t final_count =
+          response_correction->GetConductorConsistencyPortions().size();
+      std::vector<CoverageMeasurement> final_coverage;
+      std::vector<bool> remeasured;
+      std::vector<SurfacePostOperator::UncoveredPerimeterPortion>
+          final_conductor_consistency;
+      for (const auto &portion : response_correction->GetConductorConsistencyPortions())
+      {
+        final_conductor_consistency.push_back(
+            {portion.p0, portion.p1, portion.topology, portion.feature});
+      }
+      for (std::size_t i = 0; i < coverage_partitions.size() && i < V.size(); i++)
+      {
+        if (coverage_conductor_consistency_counts.at(i) == final_count || V[i].Size() == 0)
+        {
+          if (root)
+          {
+            final_coverage.push_back(coverage_measurements.at(i).second);
+            remeasured.push_back(false);
+          }
+          continue;
+        }
+        BlockTimer energy_timer(Timer::POSTPRO_RESPONSE_ENERGY);
+        E = 0.0;
+        Grad.AddMult(V[i], E, -1.0);
+        if (post_op.NeedsRecoveredElectricFlux())
+        {
+          estimator->RecoverFlux(E, D);
+        }
+        const auto raw = post_op.GetElectrostaticEnergies(
+            V[i], E, post_op.NeedsRecoveredElectricFlux() ? &D : nullptr);
+        const auto missing_by_feature =
+            SurfacePostOperator::CoverageMissingByFeature(uncovered_portions);
+        const std::vector<SurfacePostOperator::CoveragePartitionClass> kept_classes = {
+            {"Missing", &missing_by_feature},
+            {"DomainBoundary", &domain_boundary_portions},
+            {"SpatialClusterPriority", &spatial_cluster_priority_portions},
+            {"ConductorConsistency", &final_conductor_consistency}};
+        std::vector<SurfacePostOperator::CoveragePartitionClass> remainder_classes;
+        if (response_correction->ExclusionEnergyRequested())
+        {
+          remainder_classes.push_back({"Excluded", &exclusion_energy_portions});
+        }
+        auto partition = post_op.GetElectrostaticCoveragePartition(
+            response_correction->GetCoverageInterfaces(), kept_classes, model_raw_portions,
+            remainder_classes);
+        SurfacePostOperator::MoveCoverageServedLabel(partition, "unpatched",
+                                                     "UnpatchedPairs");
+        if (root)
+        {
+          // The factor of this re-measurement is not printed (the matrix coverage is a
+          // status); the source's fabricated energy stands in.
+          const auto &own = coverage_measurements.at(i).second;
+          std::map<int, double> fabricated;
+          for (const auto &[interface, summary] : own.interfaces)
+          {
+            fabricated[interface] = summary.fabricated;
+          }
+          final_coverage.push_back(
+              own.measured ? MeasureSourceCoverage(partition, raw, &fabricated) : own);
+          remeasured.push_back(own.measured);
+        }
+      }
+      if (root && final_coverage.size() == laplace_op.GetSources().size())
+      {
+        WriteMatrixCoverage(laplace_op.GetSources(), final_coverage, remeasured);
+      }
+      // E-1: per source, whether its final measurement holds a marked cell (root;
+      // fail-closed: a source without a final measurement, or one without cells, is
+      // marked).
+      std::vector<bool> source_marked;
+      if (root && response_correction->CoverageMarkNotApplied())
+      {
+        for (std::size_t i = 0; i < laplace_op.GetSources().size(); i++)
+        {
+          source_marked.push_back(final_coverage.size() != laplace_op.GetSources().size() ||
+                                  final_coverage[i].MarksWholeMeasurement());
+        }
+      }
+      PostprocessCorrectedTerminals(
+          post_op, laplace_op.GetSources(), V, V_corrected, *response_correction,
+          postprocess_response, self_consistent_accepted,
+          response_correction->CoverageMarkNotApplied() ? &source_marked : nullptr);
     }
   }
   else if (iodata.solver.electrostatic.response_matrix && !archive_stream_only)
@@ -2188,20 +2746,137 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       output.table.insert(fmt::format("trace_closure_spread_{}", interface),
                           fmt::format("trace closure spread[{}]", interface));
     }
+    // Lane L1 (DESIGN-v2 s4.3; decision 1636 (1)): the coverage columns APPENDED at the
+    // end of the row (every column above keeps its position, name and value): per
+    // interface W and its uncovered share, then per Type (first appearance over the
+    // ascending target interfaces) the source's cell.
+    const auto coverage_targets = response_correction->GetCoverageInterfaces();
+    std::vector<std::string> coverage_types;
+    for (const auto &[interface, type] : post_op.GetInterfaceTypes(&coverage_targets))
+    {
+      (void)interface;
+      if (std::find(coverage_types.begin(), coverage_types.end(), type) ==
+          coverage_types.end())
+      {
+        coverage_types.push_back(type);
+      }
+    }
+    for (const auto &[interface, data] : interfaces)
+    {
+      (void)data;
+      output.table.insert(fmt::format("coverage_within_{}", interface),
+                          fmt::format("W within-R raw[{}] (J)", interface));
+      output.table.insert(fmt::format("coverage_uncovered_share_{}", interface),
+                          fmt::format("uncovered raw share of W[{}]", interface));
+    }
+    for (const auto &type : coverage_types)
+    {
+      output.table.insert(fmt::format("coverage_uncovered_share_{}", type),
+                          fmt::format("uncovered raw share of W {}", type));
+      output.table.insert(fmt::format("coverage_method_gap_share_{}", type),
+                          fmt::format("method-gap raw share of W {}", type));
+      output.table.insert(fmt::format("coverage_pending_share_{}", type),
+                          fmt::format("pending-model share of W {}", type));
+      output.table.insert(fmt::format("coverage_factor_{}", type),
+                          fmt::format("covered correction factor {}", type));
+      output.table.insert(Column::Text(fmt::format("coverage_status_{}", type),
+                                       fmt::format("coverage status {}", type)));
+      output.table.insert(Column::Text(fmt::format("regime_status_{}", type),
+                                       fmt::format("regime status {}", type)));
+    }
+    // Lane L4 (decision 1829; DESIGN-L4-v2 s2.3 E1): under Coverage.Policy
+    // "MarkNotApplied" the corrected columns print nan where their cell is marked (E_elec:
+    // any marked cell of the source; E / p / Q[k]: the Type of interface k), the value in
+    // the appended partial column, and the exposure column (the raw within-R energy the
+    // marked cells leave uncorrected over E_elec raw) follows; under "Warn" none of these
+    // columns exists and every cell prints as before.
+    const bool marking = response_correction->CoverageMarkNotApplied();
+    std::vector<std::string> marked_source_columns = {"domain_postprocessed_fixed_trace",
+                                                      "domain_postprocessed_fixed_flux",
+                                                      "domain_corrected"};
+    std::vector<std::string> marked_interface_columns;
+    for (const auto &[interface, data] : interfaces)
+    {
+      (void)data;
+      for (const char *name :
+           {"energy_postprocessed_fixed_trace_{}",
+            "participation_postprocessed_fixed_trace_{}",
+            "quality_postprocessed_fixed_trace_{}", "energy_postprocessed_fixed_flux_{}",
+            "participation_postprocessed_fixed_flux_{}",
+            "quality_postprocessed_fixed_flux_{}", "energy_corrected_{}",
+            "participation_corrected_{}", "quality_corrected_{}"})
+      {
+        marked_interface_columns.push_back(fmt::format(fmt::runtime(name), interface));
+      }
+    }
+    if (marking)
+    {
+      for (const auto *names : {&marked_source_columns, &marked_interface_columns})
+      {
+        for (const auto &name : *names)
+        {
+          const std::string header = output.table[name].header_text;
+          output.table.insert(name + "_partial", header + kCoveragePartialColumnSuffix);
+        }
+      }
+      output.table.insert("coverage_marked_uncovered_share",
+                          "not-applied uncovered raw share of E_elec");
+      // Lane L4 round 2 (decision 1914): the explicit marks, last: the source's E_elec
+      // cells, then per interface its E / p / Q cells.
+      output.table.insert("coverage_mark_source", kCoverageMarkSourceColumn);
+      output.table["coverage_mark_source"].print_as_int = true;
+      for (const auto &[interface, data] : interfaces)
+      {
+        (void)data;
+        const std::string key = fmt::format("coverage_mark_{}", interface);
+        output.table.insert(
+            key, fmt::format(fmt::runtime(kCoverageMarkIndexedInterfaceColumn), interface));
+        output.table[key].print_as_int = true;
+      }
+    }
+    MFEM_VERIFY(coverage_measurements.size() == corrected_results.size(),
+                "The coverage needs one measurement per corrected source!");
     const double nan = std::numeric_limits<double>::quiet_NaN();
+    std::size_t coverage_index = 0;
     for (const auto &result : corrected_results)
     {
+      // E1: this source's own measurement (the coverage columns' row).
+      const auto &row_coverage = coverage_measurements[coverage_index].second;
+      const bool source_marked = marking && row_coverage.MarksWholeMeasurement();
+      auto InterfaceMarked = [&](int interface)
+      {
+        const auto type = row_coverage.types.find(interface);
+        if (!marking || type == row_coverage.types.end())
+        {
+          return false;  // an untargeted interface: not corrected
+        }
+        return !row_coverage.FindCell(type->second) ||
+               row_coverage.IsTypeMarked(type->second);
+      };
+      auto PrintMarked = [&](const std::string &name, double value, bool marked)
+      {
+        if (!marking)
+        {
+          output.table[name] << value;
+          return;
+        }
+        output.table[name] << (marked ? nan : value);
+        output.table[name + "_partial"] << (marked ? value : nan);
+      };
       output.table["source"] << result.source;
       output.table["domain_raw"]
           << iodata.units.Dimensionalize<VT::ENERGY>(result.raw.domain);
-      output.table["domain_postprocessed_fixed_trace"]
-          << iodata.units.Dimensionalize<VT::ENERGY>(
-                 result.postprocessed_fixed_trace.domain);
-      output.table["domain_postprocessed_fixed_flux"]
-          << iodata.units.Dimensionalize<VT::ENERGY>(
-                 result.postprocessed_fixed_flux.domain);
-      output.table["domain_corrected"]
-          << iodata.units.Dimensionalize<VT::ENERGY>(result.corrected.domain);
+      PrintMarked(
+          "domain_postprocessed_fixed_trace",
+          iodata.units.Dimensionalize<VT::ENERGY>(result.postprocessed_fixed_trace.domain),
+          source_marked);
+      PrintMarked(
+          "domain_postprocessed_fixed_flux",
+          iodata.units.Dimensionalize<VT::ENERGY>(result.postprocessed_fixed_flux.domain),
+          source_marked);
+      PrintMarked("domain_corrected",
+                  iodata.units.Dimensionalize<VT::ENERGY>(result.corrected.domain),
+                  source_marked);
       output.table["maximum_trace_closure_spread"]
           << (result.has_postprocessed ? result.maximum_trace_closure_spread : nan);
       output.table["weighted_trace_closure_spread"]
@@ -2240,29 +2915,80 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         output.table[fmt::format("participation_raw_{}", interface)] << p_raw;
         output.table[fmt::format("quality_raw_{}", interface)]
             << Quality(p_raw, raw.loss_tangent);
-        output.table[fmt::format("energy_postprocessed_fixed_trace_{}", interface)]
-            << iodata.units.Dimensionalize<VT::ENERGY>(fixed_trace.energy);
-        output.table[fmt::format("participation_postprocessed_fixed_trace_{}", interface)]
-            << p_fixed_trace;
-        output.table[fmt::format("quality_postprocessed_fixed_trace_{}", interface)]
-            << Quality(p_fixed_trace, fixed_trace.loss_tangent);
-        output.table[fmt::format("energy_postprocessed_fixed_flux_{}", interface)]
-            << iodata.units.Dimensionalize<VT::ENERGY>(fixed_flux.energy);
-        output.table[fmt::format("participation_postprocessed_fixed_flux_{}", interface)]
-            << p_fixed_flux;
-        output.table[fmt::format("quality_postprocessed_fixed_flux_{}", interface)]
-            << Quality(p_fixed_flux, fixed_flux.loss_tangent);
-        output.table[fmt::format("energy_corrected_{}", interface)]
-            << iodata.units.Dimensionalize<VT::ENERGY>(corrected.energy);
-        output.table[fmt::format("participation_corrected_{}", interface)] << p_corrected;
-        output.table[fmt::format("quality_corrected_{}", interface)]
-            << Quality(p_corrected, corrected.loss_tangent);
+        const bool interface_marked = InterfaceMarked(interface);
+        PrintMarked(fmt::format("energy_postprocessed_fixed_trace_{}", interface),
+                    iodata.units.Dimensionalize<VT::ENERGY>(fixed_trace.energy),
+                    interface_marked);
+        PrintMarked(fmt::format("participation_postprocessed_fixed_trace_{}", interface),
+                    p_fixed_trace, interface_marked);
+        PrintMarked(fmt::format("quality_postprocessed_fixed_trace_{}", interface),
+                    Quality(p_fixed_trace, fixed_trace.loss_tangent), interface_marked);
+        PrintMarked(fmt::format("energy_postprocessed_fixed_flux_{}", interface),
+                    iodata.units.Dimensionalize<VT::ENERGY>(fixed_flux.energy),
+                    interface_marked);
+        PrintMarked(fmt::format("participation_postprocessed_fixed_flux_{}", interface),
+                    p_fixed_flux, interface_marked);
+        PrintMarked(fmt::format("quality_postprocessed_fixed_flux_{}", interface),
+                    Quality(p_fixed_flux, fixed_flux.loss_tangent), interface_marked);
+        PrintMarked(fmt::format("energy_corrected_{}", interface),
+                    iodata.units.Dimensionalize<VT::ENERGY>(corrected.energy),
+                    interface_marked);
+        PrintMarked(fmt::format("participation_corrected_{}", interface), p_corrected,
+                    interface_marked);
+        PrintMarked(fmt::format("quality_corrected_{}", interface),
+                    Quality(p_corrected, corrected.loss_tangent), interface_marked);
         const auto closure_spread = result.trace_closure_spread.find(interface);
         output.table[fmt::format("trace_closure_spread_{}", interface)]
             << (!result.has_postprocessed ||
                         closure_spread == result.trace_closure_spread.end()
                     ? nan
                     : closure_spread->second);
+      }
+      const auto &[coverage_source, coverage] = coverage_measurements[coverage_index++];
+      MFEM_VERIFY(coverage_source == result.source,
+                  "The coverage measurements are out of source order!");
+      for (const auto &[interface, data] : interfaces)
+      {
+        (void)data;
+        const auto summary = coverage.interfaces.find(interface);
+        // Ruling 1694 (A): an untargeted interface's within-R region is empty (W = 0).
+        const double within = summary != coverage.interfaces.end() ? summary->second.within
+                              : coverage_targets.count(interface) == 0 ? 0.0
+                                                                       : nan;
+        output.table[fmt::format("coverage_within_{}", interface)]
+            << iodata.units.Dimensionalize<VT::ENERGY>(within);
+        output.table[fmt::format("coverage_uncovered_share_{}", interface)]
+            << (summary != coverage.interfaces.end() && within > 0.0
+                    ? (within - summary->second.served) / within
+                    : nan);
+      }
+      for (const auto &type : coverage_types)
+      {
+        const auto *cell = coverage.FindCell(type);
+        output.table[fmt::format("coverage_uncovered_share_{}", type)]
+            << (cell ? cell->uncovered_share : nan);
+        output.table[fmt::format("coverage_method_gap_share_{}", type)]
+            << (cell ? cell->method_gap_share : nan);
+        output.table[fmt::format("coverage_pending_share_{}", type)]
+            << (cell ? cell->pending_share : nan);
+        output.table[fmt::format("coverage_factor_{}", type)]
+            << (cell ? cell->factor : nan);
+        output.table[fmt::format("coverage_status_{}", type)] << std::string(
+            CoverageStatusName(cell ? cell->status : CoverageStatus::NOT_MEASURED));
+        output.table[fmt::format("regime_status_{}", type)]
+            << std::string(RegimeStatusName(cell ? cell->regime : RegimeStatus::NO_MODEL));
+      }
+      if (marking)
+      {
+        output.table["coverage_marked_uncovered_share"]
+            << row_coverage.MarkedUncoveredEnergy() / result.raw.domain;
+        output.table["coverage_mark_source"] << (source_marked ? 1.0 : 0.0);
+        for (const auto &[interface, data] : interfaces)
+        {
+          (void)data;
+          output.table[fmt::format("coverage_mark_{}", interface)]
+              << (InterfaceMarked(interface) ? 1.0 : 0.0);
+        }
       }
     }
     output.WriteFullTableTrunc();
@@ -2374,13 +3100,12 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                         const PortionTypeRow &portions, const PortionEnergies &energies_map,
                         const EnergyData &energies, bool available, bool extra_is_length)
       {
-        output << fmt::format("{},{},{},{},{:+.12e},", source, evaluation, type,
-                              portions.portions,
-                              iodata.units.Dimensionalize<VT::LENGTH>(portions.length));
+        output << fmt::format(
+            "{},{},{},{},{},", source, evaluation, type, portions.portions,
+            CsvNumber(iodata.units.Dimensionalize<VT::LENGTH>(portions.length)));
         if (extra_is_length)
         {
-          output << fmt::format("{:+.12e}",
-                                iodata.units.Dimensionalize<VT::LENGTH>(portions.extra));
+          output << CsvNumber(iodata.units.Dimensionalize<VT::LENGTH>(portions.extra));
         }
         else
         {
@@ -2408,7 +3133,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                         : nan;
             energy = iodata.units.Dimensionalize<VT::ENERGY>(energy);
           }
-          output << fmt::format(",{:+.12e},{:+.12e}", energy, share);
+          output << fmt::format(",{},{}", CsvNumber(energy), CsvNumber(share));
         }
         output << '\n';
       };
@@ -2501,8 +3226,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
               const auto entry = partition->second.find(label);
               value = entry != partition->second.end() ? entry->second : 0.0;
             }
-            energy << fmt::format(",{:+.12e}",
-                                  iodata.units.Dimensionalize<VT::ENERGY>(value));
+            energy << "," << CsvNumber(iodata.units.Dimensionalize<VT::ENERGY>(value));
           }
           energy << '\n';
         }
@@ -2513,8 +3237,8 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       for (const auto &member : response_correction->GetModelRawClaimPortions().members)
       {
         groups << fmt::format(
-            "{},{},{},{:+.12e}\n", member.label, member.model, member.patches,
-            iodata.units.Dimensionalize<VT::LENGTH>(member.weight_length));
+            "{},{},{},{}\n", member.label, member.model, member.patches,
+            CsvNumber(iodata.units.Dimensionalize<VT::LENGTH>(member.weight_length)));
       }
     }
     if (!uncovered_portions.empty())
@@ -2629,9 +3353,9 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       const double nan = std::numeric_limits<double>::quiet_NaN();
       for (const auto &row : clipped_correction_rows)
       {
-        output << fmt::format("{},{},{},{},{},{:+.12e}", row.source, row.evaluation,
+        output << fmt::format("{},{},{},{},{},{}", row.source, row.evaluation,
                               row.diagnostic.patch + 1, row.diagnostic.model,
-                              row.diagnostic.feature, row.diagnostic.weight);
+                              row.diagnostic.feature, CsvNumber(row.diagnostic.weight));
         for (const auto &[interface, data] : interfaces)
         {
           (void)data;
@@ -2648,11 +3372,11 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
           const double ratio = whole > 0.0 && std::isfinite(fab) ? fab / whole : nan;
           const double clipped =
               std::isfinite(ratio) ? (ratio - row.diagnostic.weight) * outside : nan;
-          output << fmt::format(",{:+.12e},{:+.12e},{:+.12e},{:+.12e},{:+.12e}",
-                                iodata.units.Dimensionalize<VT::ENERGY>(fab),
-                                iodata.units.Dimensionalize<VT::ENERGY>(whole),
-                                iodata.units.Dimensionalize<VT::ENERGY>(outside), ratio,
-                                iodata.units.Dimensionalize<VT::ENERGY>(clipped));
+          output << fmt::format(
+              ",{},{},{},{},{}", CsvNumber(iodata.units.Dimensionalize<VT::ENERGY>(fab)),
+              CsvNumber(iodata.units.Dimensionalize<VT::ENERGY>(whole)),
+              CsvNumber(iodata.units.Dimensionalize<VT::ENERGY>(outside)), CsvNumber(ratio),
+              CsvNumber(iodata.units.Dimensionalize<VT::ENERGY>(clipped)));
         }
         output << '\n';
       }
@@ -3324,7 +4048,7 @@ void ElectrostaticSolver::PostprocessCorrectedTerminals(
     PostOperator<ProblemType::ELECTROSTATIC> &post_op,
     const std::map<int, mfem::Array<int>> &terminal_sources, const std::vector<Vector> &V,
     const std::vector<Vector> &V_corrected, const SurfaceResponseOperator &response,
-    bool fixed_trace, bool self_consistent) const
+    bool fixed_trace, bool self_consistent, const std::vector<bool> *source_marked) const
 {
   // The capacitance of the response-corrected energy. The raw matrix is the bilinear form
   // of the thin-metal operator (PostprocessTerminals); the fixed-trace domain correction
@@ -3415,11 +4139,24 @@ void ElectrostaticSolver::PostprocessCorrectedTerminals(
     return;
   }
   using VT = Units::ValueType;
-  auto PrintMatrices =
-      [&terminal_sources, this](const std::string &file, const std::string &name,
-                                const std::string &unit,
-                                const mfem::DenseMatrix &fixed_trace_mat,
-                                const mfem::DenseMatrix &self_consistent_mat, double scale)
+  // Lane L4 (decision 1829; ERRATUM-1829 E-1; DESIGN-L4-v2 s2.3 E2): under Coverage.Policy
+  // "MarkNotApplied" (`source_marked` given) C(i, j) is marked iff source i or source j is
+  // (any marked cell in its final measurement); C_m: off-diagonal as C(i, j), diagonal iff
+  // any entry of row i of C is; C⁻¹: every entry iff any C entry is. A marked entry prints
+  // nan, its value in the appended partial column.
+  using MarkMatrix = std::vector<std::vector<bool>>;
+  MFEM_VERIFY(!source_marked || static_cast<int>(source_marked->size()) == n,
+              "The corrected-matrix marks need one entry per terminal source!");
+  const auto marks = ComputeCoverageTerminalMatrixMarks(
+      source_marked ? *source_marked : std::vector<bool>(n, false));
+  const MarkMatrix &marked_C = marks.capacitance, &marked_Cm = marks.mutual,
+                   &marked_Cinv = marks.inverse;
+  auto PrintMatrices = [&terminal_sources, source_marked,
+                        this](const std::string &file, const std::string &name,
+                              const std::string &unit,
+                              const mfem::DenseMatrix &fixed_trace_mat,
+                              const mfem::DenseMatrix &self_consistent_mat, double scale,
+                              const MarkMatrix &marks)
   {
     TableWithCSVFile output(post_dir / file);
     output.table.insert(Column("i", "i", 0, 0, 2, ""));
@@ -3427,29 +4164,61 @@ void ElectrostaticSolver::PostprocessCorrectedTerminals(
     {
       output.table["i"] << idx2;
     }
-    auto AppendColumns = [&](const char *variant, const mfem::DenseMatrix &mat)
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    auto AppendColumns =
+        [&](const char *variant, const mfem::DenseMatrix &mat, bool partial)
     {
       int j = 0;
       for (const auto &[idx2, data2] : terminal_sources)
       {
-        const std::string key = fmt::format("{}_i2{}", variant, idx2);
-        output.table.insert(key, fmt::format("{} {}[i][{}] {}", name, variant, idx2, unit));
+        const std::string key =
+            fmt::format("{}_i2{}{}", variant, idx2, partial ? "_partial" : "");
+        output.table.insert(key, fmt::format("{} {}[i][{}] {}{}", name, variant, idx2, unit,
+                                             partial ? kCoveragePartialColumnSuffix : ""));
         auto &col = output.table[key];
         for (std::size_t i = 0; i < terminal_sources.size(); i++)
         {
-          col << mat(i, j) * scale;
+          if (!source_marked)
+          {
+            col << mat(i, j) * scale;
+          }
+          else
+          {
+            col << (marks[i][j] != partial ? nan : mat(i, j) * scale);
+          }
         }
         j++;
       }
     };
-    AppendColumns("fixed-trace", fixed_trace_mat);
-    AppendColumns("corrected", self_consistent_mat);
+    AppendColumns("fixed-trace", fixed_trace_mat, false);
+    AppendColumns("corrected", self_consistent_mat, false);
+    if (source_marked)
+    {
+      AppendColumns("fixed-trace", fixed_trace_mat, true);
+      AppendColumns("corrected", self_consistent_mat, true);
+      // Lane L4 round 2 (decision 1914): the explicit mark of entry (i, j), last.
+      int j = 0;
+      for (const auto &[idx2, data2] : terminal_sources)
+      {
+        const std::string key = fmt::format("coverage_mark_i2{}", idx2);
+        output.table.insert(
+            key, fmt::format(fmt::runtime(kCoverageMarkMatrixEntryColumn), idx2));
+        auto &col = output.table[key];
+        col.print_as_int = true;
+        for (std::size_t i = 0; i < terminal_sources.size(); i++)
+        {
+          col << (marks[i][j] ? 1.0 : 0.0);
+        }
+        j++;
+      }
+    }
     output.WriteFullTableTrunc();
   };
   const double F = iodata.units.Dimensionalize<VT::CAPACITANCE>(1.0);
-  PrintMatrices("terminal-C-corrected.csv", "C", "(F)", C_ft, C_sc, F);
-  PrintMatrices("terminal-Cinv-corrected.csv", "C⁻¹", "(1/F)", Cinv_ft, Cinv_sc, 1.0 / F);
-  PrintMatrices("terminal-Cm-corrected.csv", "C_m", "(F)", Cm_ft, Cm_sc, F);
+  PrintMatrices("terminal-C-corrected.csv", "C", "(F)", C_ft, C_sc, F, marked_C);
+  PrintMatrices("terminal-Cinv-corrected.csv", "C⁻¹", "(1/F)", Cinv_ft, Cinv_sc, 1.0 / F,
+                marked_Cinv);
+  PrintMatrices("terminal-Cm-corrected.csv", "C_m", "(F)", Cm_ft, Cm_sc, F, marked_Cm);
 
   // The same matrices in palace.json (SurfaceResponse.TerminalCapacitance; an unavailable
   // variant is null).
@@ -3480,6 +4249,30 @@ void ElectrostaticSolver::PostprocessCorrectedTerminals(
   }
   record["FixedTrace"] = MatrixRecord(C_ft, fixed_trace);
   record["SelfConsistent"] = MatrixRecord(C_sc, self_consistent);
+  if (source_marked)
+  {
+    // Lane L4 (E2): a marked entry is null; its value in the Partial matrix (null where
+    // not marked).
+    auto Split = [&](const char *key, const char *partial_key)
+    {
+      nlohmann::json partial = record[key];
+      if (!record[key].is_array())
+      {
+        record[partial_key] = nullptr;
+        return;
+      }
+      for (int i = 0; i < n; i++)
+      {
+        for (int j = 0; j < n; j++)
+        {
+          (marked_C[i][j] ? record[key][i][j] : partial[i][j]) = nullptr;
+        }
+      }
+      record[partial_key] = std::move(partial);
+    };
+    Split("FixedTrace", "FixedTracePartial");
+    Split("SelfConsistent", "SelfConsistentPartial");
+  }
   SaveSurfaceResponseMetadata("TerminalCapacitance", record);
 }
 

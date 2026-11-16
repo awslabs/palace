@@ -761,6 +761,43 @@ TEST_CASE_METHOD(
   REQUIRE(share.contains("SA"));
   CHECK_THAT(share.at("SA").at("FallbackLength").get<double>(), WithinAbs(0.8, 1.0e-9));
   CHECK_THAT(share.at("SA").at("TypeLength").get<double>(), WithinAbs(2.0, 1.0e-9));
+  // The preflight's own default (FailClosed, no GeometryFailurePolicy leaf): the same
+  // complete manifest is written and the preflight ENDS by its outcome (the driver's exit
+  // status 3), not by an abort; the RecordRaw preflight above completes (empty summary).
+  {
+    json config = Config(true);
+    const fs::path dir = temp.temp_dir / "r2a-split-failclosed";
+    config["Problem"]["Output"] = dir.string();
+    IoData iodata = MakeIoData(config);
+    MakeOutputFolder(iodata, comm);
+    Mesh mesh(MakeDiagonalIslandMesh());
+    const fs::path manifest_path = dir / "surface-response-requirements.json";
+    const auto outcome =
+        WriteSurfaceResponseRequirements(iodata, mesh, manifest_path.string());
+    Mpi::Barrier(comm);
+    CHECK(outcome.fail_closed_summary ==
+          "2 geometry fallback(s) recorded (InterfaceMappingConflict 2)");
+    REQUIRE(outcome.written.size() == 2);
+    CHECK(outcome.written[0] == manifest_path.string());
+    CHECK(outcome.written[1] == (dir / "surface-response-patches.csv").string());
+    const json closed = ReadJson(manifest_path);
+    const auto &closed_record =
+        closed.at("Identification").at("Diagnostics").at("GeometryFallbacks");
+    CHECK(closed_record.at("Policy") == "FailClosed");
+    CHECK(closed_record.at("Entries") == record.at("Entries"));
+    CHECK(closed.at("Identification").at("Features") ==
+          manifest.at("Identification").at("Features"));
+    CHECK(fs::is_regular_file(dir / "surface-response-patches.csv"));
+    IoData completed = MakeIoData(Config(false));
+    completed.problem.output = (temp.temp_dir / "r2a-reference-outcome").string();
+    MakeOutputFolder(completed, comm);
+    Mesh reference_mesh(MakeDiagonalIslandMesh());
+    CHECK(WriteSurfaceResponseRequirements(completed, reference_mesh,
+                                           (temp.temp_dir / "r2a-reference-outcome" /
+                                            "surface-response-requirements.json")
+                                               .string())
+              .fail_closed_summary.empty());
+  }
   // The operator (the solve default RecordRaw): the same two entries (U-INV), not raw as a
   // whole; the explicit FailClosed leaf aborts naming the class.
   {

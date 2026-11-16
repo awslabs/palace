@@ -170,6 +170,42 @@ def poll(host, pbs_bin, job_id, remote_status_path):
             "Status": status, "Reachable": reachable, "SSHReturnCode": result.returncode}
 
 
+EXIT_EVIDENCE_MARKER = "---EXIT-EVIDENCE-OK---"
+END_RECORD_BEGIN, END_RECORD_END = "---END-RECORD-BEGIN---", "---END-RECORD-END---"
+ABSENT_ANSWERS, ABSENT_SECONDS = 5, 600.0
+EMPTY_STATE_RULE = ("decision 1820 (3), OI-CHAIN-DRIVER-EMPTY-QSTAT-READ-AS-JOB-EXIT: a reachable poll whose qstat part is "
+                    "empty (no job_state) is NOT 'left the queue' by itself; the job has left only when its end record "
+                    "(pbs-status.json) names the submitted job id, or the finished-job query (qstat -xf) reads job_state F or an "
+                    f"Exit_status, or after {ABSENT_ANSWERS} consecutive empty answers spanning >= {ABSENT_SECONDS:.0f} s; an "
+                    "answer with a job state, of qstat or of qstat -xf (an in-queue state: the job is in the queue), resets the "
+                    "count (decision 1836 m-5)")
+
+
+def exit_evidence(host, pbs_bin, job_id, remote_job_directory):
+    """One read-only round trip after an empty job state (EMPTY_STATE_RULE): {Reachable, EndRecord,
+    FinishedState, ExitStatus, QStatX}."""
+    record_path = f"{remote_job_directory}/{JOB_EXIT_RECORD}"
+    command = (f"test -s {record_path} && {{ echo {END_RECORD_BEGIN}; head -c 4000 {record_path}; echo; echo {END_RECORD_END}; }}; "
+               f"{pbs_bin}/qstat -xf {job_id} 2>/dev/null | grep -E 'job_state|Exit_status' | tr -s ' '; "
+               f"echo {EXIT_EVIDENCE_MARKER}")
+    result = ssh(host, command, check=False, retries=READ_ONLY_RETRIES)
+    text = result.stdout
+    record_job = None
+    if END_RECORD_BEGIN in text and END_RECORD_END in text:
+        body = text.split(END_RECORD_BEGIN, 1)[1].split(END_RECORD_END, 1)[0]
+        text = text.replace(f"{END_RECORD_BEGIN}{body}{END_RECORD_END}", "")
+        try:
+            record_job = (json.loads(body.strip()) or {}).get("JobID")
+        except (ValueError, AttributeError):
+            record_job = "(not JSON)"
+    state = re.search(r"job_state = (\w)", text)
+    exit_status = re.search(r"Exit_status = (-?\d+)", text)
+    return {"UTC": utc(), "Reachable": EXIT_EVIDENCE_MARKER in text, "EndRecord": record_job is not None and record_job == job_id,
+            "EndRecordJobID": record_job, "FinishedState": state.group(1) if state else None,
+            "ExitStatus": int(exit_status.group(1)) if exit_status else None,
+            "QStatX": text.replace(EXIT_EVIDENCE_MARKER, "").strip()[:400], "SSHReturnCode": result.returncode}
+
+
 def monitor(host, pbs_bin, job_id, remote_status_path, *, interval_seconds, max_polls, sink=print):
     """Poll until the job leaves the queue (IN_QUEUE_STATES) or the poll budget is spent; returns the polls."""
     polls = []
@@ -207,6 +243,16 @@ def remote_sha256(host, remote_paths):
         digest, _, path = line.partition("  ")
         digests[path.strip()] = digest.strip()
     return digests
+
+
+def remote_image_sha256(host, apptainer, image, inner_path):
+    """Form X: the sha256 of the file `inner_path` INSIDE the apptainer image `image` on the host
+    (`apptainer exec IMAGE sha256sum PATH`, read-only); the digest, or RuntimeError without one."""
+    result = ssh(host, f"'{apptainer}' exec '{image}' sha256sum '{inner_path}'", retries=READ_ONLY_RETRIES)
+    digest, _, path = result.stdout.strip().partition("  ")
+    if path.strip() != inner_path or not re.fullmatch(r"[0-9a-f]{64}", digest.strip()):
+        raise RuntimeError(f"no sha256 of {inner_path} inside {image} on {host}: {result.stdout.strip()[:200]!r}")
+    return digest.strip()
 
 
 READ_MARKER = "---READ-OK---"

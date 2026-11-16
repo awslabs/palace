@@ -17,6 +17,7 @@
 #include <fstream>
 #include <functional>
 #include <iomanip>
+#include <iterator>
 #include <limits>
 #include <map>
 #include <numeric>
@@ -31,6 +32,7 @@
 #include <vector>
 #include <Eigen/Dense>
 #include <nlohmann/json.hpp>
+#include "fem/coefficient.hpp"
 #include "fem/fespace.hpp"
 #include "fem/gridfunction.hpp"
 #include "fem/interpolator.hpp"
@@ -405,6 +407,44 @@ private:
                                       reference, kLinearSimplexReferenceTolerance);
   }
 
+  // Whether the candidate element contains the point (Find's test: the barycentric test on
+  // a linear simplex, else the inverse transformation, retried from the closest reference
+  // node on a curved element); `reference` = the point's reference coordinates.
+  bool CandidateContains(int candidate, const std::array<double, 3> &point,
+                         const mfem::Vector &physical,
+                         mfem::InverseElementTransformation &inverse,
+                         mfem::IntegrationPoint &reference)
+  {
+    const auto geometry = mesh.GetElement(candidate)->GetGeometryType();
+    const bool linear_simplex =
+        linear_mesh && ((dimension == 2 && geometry == mfem::Geometry::TRIANGLE) ||
+                        (dimension == 3 && geometry == mfem::Geometry::TETRAHEDRON));
+    if (linear_simplex)
+    {
+      return FindInLinearSimplex(candidate, point, reference);
+    }
+    auto &transformation = *mesh.GetElementTransformation(candidate);
+    inverse.SetTransformation(transformation);
+    inverse.SetInitialGuessType(transformation.Order() > 1
+                                    ? mfem::InverseElementTransformation::ClosestPhysNode
+                                    : mfem::InverseElementTransformation::Center);
+    if (inverse.Transform(physical, reference) ==
+        mfem::InverseElementTransformation::Inside)
+    {
+      return true;
+    }
+    if (transformation.Order() > 1)
+    {
+      inverse.SetInitialGuessType(mfem::InverseElementTransformation::ClosestRefNode);
+      if (inverse.Transform(physical, reference) ==
+          mfem::InverseElementTransformation::Inside)
+      {
+        return true;
+      }
+    }
+    return false;
+  }
+
 public:
   // A point is inside a linear simplex when every barycentric coordinate is >= minus this
   // (Find); a segment is coplanar with a face when both its ends are within it of that
@@ -537,42 +577,51 @@ public:
     inverse.SetPhysicalRelTol(1.0e-12);
     for (const int candidate : candidates)
     {
-      const auto geometry = mesh.GetElement(candidate)->GetGeometryType();
-      const bool linear_simplex =
-          linear_mesh && ((dimension == 2 && geometry == mfem::Geometry::TRIANGLE) ||
-                          (dimension == 3 && geometry == mfem::Geometry::TETRAHEDRON));
-      if (linear_simplex)
-      {
-        if (FindInLinearSimplex(candidate, point, reference))
-        {
-          element = candidate;
-          return true;
-        }
-        continue;
-      }
-      auto &transformation = *mesh.GetElementTransformation(candidate);
-      inverse.SetTransformation(transformation);
-      inverse.SetInitialGuessType(transformation.Order() > 1
-                                      ? mfem::InverseElementTransformation::ClosestPhysNode
-                                      : mfem::InverseElementTransformation::Center);
-      if (inverse.Transform(physical, reference) ==
-          mfem::InverseElementTransformation::Inside)
+      if (CandidateContains(candidate, point, physical, inverse, reference))
       {
         element = candidate;
         return true;
       }
-      if (transformation.Order() > 1)
-      {
-        inverse.SetInitialGuessType(mfem::InverseElementTransformation::ClosestRefNode);
-        if (inverse.Transform(physical, reference) ==
-            mfem::InverseElementTransformation::Inside)
-        {
-          element = candidate;
-          return true;
-        }
-      }
     }
     return false;
+  }
+
+  // The resolution census's owner rule (decision 1863; OI-RESCENSUS-TIE-RULE): of EVERY
+  // local element containing the point (the same candidates and containment test as Find),
+  // the one of the LARGEST `element_value` (equal values: the lowest element); its value in
+  // `value`. False when no local element contains the point.
+  bool FindLargest(const std::array<double, 3> &point, double tolerance,
+                   const std::function<double(int element)> &element_value, int &element,
+                   double &value, mfem::IntegrationPoint &reference,
+                   std::vector<int> &candidates)
+  {
+    candidates.clear();
+    FindCandidates(0, point, tolerance, candidates);
+    std::sort(candidates.begin(), candidates.end());
+
+    mfem::Vector physical(dimension);
+    std::copy_n(point.data(), dimension, physical.HostWrite());
+    mfem::InverseElementTransformation inverse;
+    inverse.SetReferenceTol(1.0e-12);
+    inverse.SetPhysicalRelTol(1.0e-12);
+    mfem::IntegrationPoint candidate_reference;
+    bool found = false;
+    for (const int candidate : candidates)
+    {
+      if (!CandidateContains(candidate, point, physical, inverse, candidate_reference))
+      {
+        continue;
+      }
+      const double candidate_value = element_value(candidate);
+      if (!found || candidate_value > value)
+      {
+        found = true;
+        element = candidate;
+        value = candidate_value;
+        reference = candidate_reference;
+      }
+    }
+    return found;
   }
 
   // The exact intersections of the segment p0-p1 with the local linear simplices, as
@@ -1119,11 +1168,22 @@ public:
   }
 
   // Locates the local list of points (byNODES: every x, then every y, then every z). With
-  // `element_value`, the owner evaluates it on the owning element.
+  // `element_value`, the owner evaluates it on the owning element. `fallback` false (the
+  // resolution census, ruling 1819 F2): a point no candidate rank finds stays unresolved
+  // (no rank-local gslib search); every rank passes the same value. `largest_value` true
+  // (the resolution census's owner rule, decision 1863; requires `element_value` and no
+  // fallback): every candidate rank answers with the LARGEST value over ALL its local
+  // elements containing the point, and the point keeps the largest answer over the ranks
+  // (equal values: the lowest rank, then the lowest element): the value is that of the
+  // largest container in the whole mesh, whatever the partition. The exchange is the same
+  // (the same queries to the same candidate ranks, the same answer size).
   Result Locate(const mfem::Vector &xyz,
-                const std::function<double(int element)> *element_value = nullptr)
+                const std::function<double(int element)> *element_value = nullptr,
+                bool fallback = true, bool largest_value = false)
   {
     MFEM_VERIFY(xyz.Size() % dimension == 0, "Invalid point-coordinate array!");
+    MFEM_VERIFY(!largest_value || (element_value && !fallback),
+                "The largest-value owner rule requires an element value and no fallback!");
     const int point_count = xyz.Size() / dimension;
     std::vector<std::array<double, 3>> points(point_count);
     for (int point = 0; point < point_count; point++)
@@ -1159,7 +1219,17 @@ public:
         int element = -1;
         mfem::IntegrationPoint reference;
         double *answer = answers.data() + answer_size * i;
-        if (local.Find(coordinate, box_tolerance, element, reference, candidates))
+        if (largest_value)
+        {
+          double value = 0.0;
+          if (local.FindLargest(coordinate, box_tolerance, *element_value, element, value,
+                                reference, candidates))
+          {
+            reference.Get(answer + 1, dimension);
+            answer[1 + dimension] = value;
+          }
+        }
+        else if (local.Find(coordinate, box_tolerance, element, reference, candidates))
         {
           reference.Get(answer + 1, dimension);
           if (element_value)
@@ -1199,8 +1269,18 @@ public:
             continue;
           }
           const int point = static_cast<int>(round_begin) + exchange.query_indices[packed];
-          if (candidate_rank > result.owners[point] ||
-              (candidate_rank == result.owners[point] && element >= result.elements[point]))
+          // The lowest rank, then the lowest element; with `largest_value` the largest
+          // answer first (equal answers: that same order).
+          const bool earlier =
+              candidate_rank < result.owners[point] ||
+              (candidate_rank == result.owners[point] && element < result.elements[point]);
+          const bool replace =
+              largest_value
+                  ? (result.owners[point] == size ||
+                     answer[1 + dimension] > result.owner_values[point] ||
+                     (answer[1 + dimension] == result.owner_values[point] && earlier))
+                  : earlier;
+          if (!replace)
           {
             continue;
           }
@@ -1220,6 +1300,10 @@ public:
                                     static_cast<long long int>(points.size()));
     }
 
+    if (!fallback)
+    {
+      return result;
+    }
     std::vector<int> fallback_indices;
     for (int point = 0; point < point_count; point++)
     {
@@ -1369,6 +1453,96 @@ LocateDistributedPoints(mfem::ParMesh &mesh, int dimension, const mfem::Vector &
   location.candidate_queries = located.candidate_queries;
   location.fallback_queries = located.fallback_queries;
   return location;
+}
+
+namespace
+{
+
+// Lane rescensus-product (ruling 1819 F2): the knots of at most this many local points per
+// rank and collective Locate call (~0.1 GB of per-point buffers per rank).
+constexpr std::size_t kResolutionKnotChunk = std::size_t(1) << 20;
+
+// The census readings of `patch_count` local patches whose knots (mesh coordinates)
+// `knots_of` lists, located through `locator` without the fallback search; a knot's size =
+// the LARGEST longest edge (ResolutionElementLongestEdge) over every element containing it
+// (a knot on a face shared by elements of different size: decision 1863; rank-count
+// independent: every candidate rank answers for its own containers); per patch the
+// lower median over its located knots. Collective: every rank loops until all are done.
+std::vector<ResolutionPatchReading> LocateResolutionKnotsWith(
+    DistributedPointLocator &locator, mfem::ParMesh &mesh, int dimension,
+    std::size_t patch_count,
+    const std::function<void(std::size_t, std::vector<std::array<double, 3>> &)> &knots_of)
+{
+  std::vector<ResolutionPatchReading> readings(patch_count);
+  const std::function<double(int)> longest_edge = [&mesh](int element)
+  { return ResolutionElementLongestEdge(mesh, element); };
+  const int size = Mpi::Size(mesh.GetComm());
+  std::vector<std::array<double, 3>> patch_knots;
+  std::vector<std::array<double, 3>> chunk;
+  std::vector<std::size_t> chunk_patches, chunk_offsets;
+  std::vector<double> owner_edges;
+  std::size_t next = 0;
+  while (true)
+  {
+    chunk.clear();
+    chunk_patches.clear();
+    chunk_offsets.clear();
+    while (next < patch_count && (chunk.empty() || chunk.size() < kResolutionKnotChunk))
+    {
+      knots_of(next, patch_knots);
+      chunk_patches.push_back(next);
+      chunk_offsets.push_back(chunk.size());
+      chunk.insert(chunk.end(), patch_knots.begin(), patch_knots.end());
+      next++;
+    }
+    int pending = chunk_patches.empty() ? 0 : 1;
+    Mpi::GlobalMax(1, &pending, mesh.GetComm());
+    if (pending == 0)
+    {
+      break;
+    }
+    mfem::Vector xyz(dimension * static_cast<int>(chunk.size()));
+    for (std::size_t point = 0; point < chunk.size(); point++)
+    {
+      for (int d = 0; d < dimension; d++)
+      {
+        xyz(d * static_cast<int>(chunk.size()) + static_cast<int>(point)) = chunk[point][d];
+      }
+    }
+    const auto located = locator.Locate(xyz, &longest_edge, false, true);
+    for (std::size_t k = 0; k < chunk_patches.size(); k++)
+    {
+      const std::size_t begin = chunk_offsets[k];
+      const std::size_t end =
+          k + 1 < chunk_patches.size() ? chunk_offsets[k + 1] : chunk.size();
+      auto &reading = readings[chunk_patches[k]];
+      reading.knots = static_cast<int>(end - begin);
+      owner_edges.clear();
+      for (std::size_t point = begin; point < end; point++)
+      {
+        if (located.owners[point] < size)
+        {
+          owner_edges.push_back(located.owner_values[point]);
+        }
+      }
+      reading.located = static_cast<int>(owner_edges.size());
+      reading.h = ResolutionLowerMedian(owner_edges);
+    }
+  }
+  return readings;
+}
+
+}  // namespace
+
+std::vector<ResolutionPatchReading>
+LocateResolutionPatchKnots(mfem::ParMesh &mesh, int dimension,
+                           const std::vector<std::vector<std::array<double, 3>>> &knots)
+{
+  DistributedPointLocator locator(mesh, dimension);
+  return LocateResolutionKnotsWith(
+      locator, mesh, dimension, knots.size(),
+      [&knots](std::size_t patch, std::vector<std::array<double, 3>> &points)
+      { points = knots[patch]; });
 }
 
 namespace
@@ -1531,6 +1705,9 @@ struct ProcessLibrary
   // Fabrication.MetalThickness in the library's length unit (the unit of the BasisPoints
   // files): the constrained metal band of the translational coupons (decision 404 D1).
   std::optional<double> metal_thickness;
+  // Fabrication.SubstratePermittivity: the relative permittivity of the substrate the
+  // library's coupons were computed with (nullopt when the library does not record it).
+  std::optional<double> substrate_permittivity;
   std::map<InterfaceDielectric, LibraryInterfaceLayer> interface_layers;
   std::vector<LibraryModel> models;
   std::set<std::pair<std::size_t, std::size_t>> corner_radius_interpolation;
@@ -2649,6 +2826,7 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
        {"TopRoundingRadius", FabricationValue("TopRoundingRadius")},
        {"BottomRoundingRadius", FabricationValue("BottomRoundingRadius")},
        {"SubstratePermittivity", FabricationValue("SubstratePermittivity")}}};
+  library.substrate_permittivity = FabricationValue("SubstratePermittivity");
   if (interface_layers)
   {
     MFEM_VERIFY(interface_layers->is_object(),
@@ -2736,8 +2914,7 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
                       << model.name << "\" has QualificationStatus \""
                       << status->get<std::string>()
                       << "\" (not \"Qualified\") and the library's AllowPendingModels does "
-                         "not list it by Name with a Decision: refused at load (R-5, USER "
-                         "decision 1230 Q8; OI-LIBRARY-INHERITED-PENDING-MODEL)!");
+                         "not list it by Name with a Decision: refused at load!");
       model.qualification_status = status->get<std::string>();
       model.allow_decision = allowed->second;
       allowed_pending_used.insert(model.name);
@@ -2800,7 +2977,7 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
                   "Fabrication-process response model \""
                       << model.name
                       << "\" lists LegacyContractAliases but is not a SpatialEdgeCluster "
-                         "model with a Signature (USER decision 283)!");
+                         "model with a Signature!");
       const std::string own_hash =
           SignatureKeyAndHash(*model.identification_signature, "SpatialEdgeCluster").second;
       auto Hex64 = [](const std::string &text)
@@ -3758,7 +3935,7 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
                   "Fabrication-process response model \""
                       << model.name
                       << "\" lists basis points that disagree with its constrained metal "
-                         "band (decision 404 D1, the consistent mortar): "
+                         "band (the consistent mortar): "
                       << bands.failure << "!");
       model.response.consistent_mortar_vertices = bands.vertices;
       model.response.consistent_mortar_rule = bands.rule;
@@ -4032,7 +4209,7 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
             << rules.state_anchor_edge_tolerance_over_r
             << " must be below half the narrowest magnetic model gap / width "
             << rules.state_anchor_min_gap_over_r
-            << " R (decision 1323 CONDITION 1: an anchor must not snap across a gap)!");
+            << " R (an anchor must not snap across a gap)!");
   }
   return library;
 }
@@ -4083,7 +4260,119 @@ void ValidateLibraryInterfaceLayers(
                     << ") permittivity " << dielectric->second.epsilon_r
                     << " does not match fabrication-process response library \""
                     << library.name << "\" permittivity " << layer->second.permittivity
+                    << " (the process value Fabrication.InterfaceLayers."
+                    << ToString(dielectric->second.type)
+                    << ".Permittivity of the library): set \"Permittivity\" of the "
+                       "Boundaries.Postprocessing.Dielectric entry with \"Index\": "
+                    << index << " to " << fmt::format("{:.10g}", layer->second.permittivity)
                     << "!");
+  }
+}
+
+}  // namespace
+
+std::map<int, std::vector<int>>
+FindSubstratePermittivityMismatches(const IoData &iodata, const mfem::ParMesh &mesh,
+                                    const std::set<int> &boundary_attributes,
+                                    double substrate_permittivity)
+{
+  // The domain attributes on either side of the listed boundary elements (shared faces
+  // through the face-neighbour data), OR-reduced over the ranks.
+  const int max_attribute = mesh.attributes.Size() > 0 ? mesh.attributes.Max() : 0;
+  std::vector<int> adjacent(max_attribute, 0);
+  mfem::FaceElementTransformations FET;
+  mfem::IsoparametricTransformation T1, T2;
+  for (int i = 0; i < mesh.GetNBE(); i++)
+  {
+    if (boundary_attributes.count(mesh.GetBdrAttribute(i)) == 0)
+    {
+      continue;
+    }
+    BdrGridFunctionCoefficient::GetBdrElementNeighborTransformations(i, mesh, FET, T1, T2);
+    for (const auto *T : {FET.Elem1, FET.Elem2})
+    {
+      if (T && T->Attribute >= 1 && T->Attribute <= max_attribute)
+      {
+        adjacent[T->Attribute - 1] = 1;
+      }
+    }
+  }
+  Mpi::GlobalMax(max_attribute, adjacent.data(), mesh.GetComm());
+  constexpr double relative_tolerance = 1.0e-10;
+  const auto Equal = [](double a, double b)
+  { return std::abs(a - b) <= relative_tolerance * std::max(std::abs(a), std::abs(b)); };
+  std::map<int, std::vector<int>> mismatches;
+  for (int attribute = 1; attribute <= max_attribute; attribute++)
+  {
+    if (!adjacent[attribute - 1])
+    {
+      continue;
+    }
+    const auto &materials = iodata.domains.materials;
+    for (std::size_t m = 0; m < materials.size(); m++)
+    {
+      const auto &attributes = materials[m].attributes;
+      if (std::find(attributes.begin(), attributes.end(), attribute) == attributes.end())
+      {
+        continue;
+      }
+      const auto &s = materials[m].epsilon_r.s;
+      const bool vacuum =
+          std::all_of(s.begin(), s.end(), [&](double e) { return Equal(e, 1.0); });
+      const bool substrate = std::all_of(s.begin(), s.end(), [&](double e)
+                                         { return Equal(e, substrate_permittivity); });
+      if (!vacuum && !substrate)
+      {
+        mismatches[static_cast<int>(m)].push_back(attribute);
+      }
+    }
+  }
+  return mismatches;
+}
+
+namespace
+{
+
+// A warning only (no value, record or exit changes): the library's coupons were computed
+// with its Fabrication.SubstratePermittivity, and nothing else in a run compares it with
+// the configured domains next to the corrected metal.
+void WarnSubstratePermittivity(const ProcessLibrary &library, const IoData &iodata,
+                               const mfem::ParMesh &mesh,
+                               const std::set<int> &target_interfaces)
+{
+  if (!library.substrate_permittivity)
+  {
+    return;
+  }
+  std::set<int> boundary_attributes;
+  for (const int index : target_interfaces)
+  {
+    const auto dielectric = iodata.boundaries.postpro.dielectric.find(index);
+    if (dielectric != iodata.boundaries.postpro.dielectric.end())
+    {
+      boundary_attributes.insert(dielectric->second.attributes.begin(),
+                                 dielectric->second.attributes.end());
+    }
+  }
+  const auto mismatches = FindSubstratePermittivityMismatches(
+      iodata, mesh, boundary_attributes, *library.substrate_permittivity);
+  for (const auto &[material, attributes] : mismatches)
+  {
+    const auto &s = iodata.domains.materials[material].epsilon_r.s;
+    Mpi::Warning(
+        mesh.GetComm(),
+        "Domain attribute(s) {} next to the corrected metal have relative "
+        "permittivity {} (Domains.Materials[{:d}].Permittivity), but "
+        "fabrication-process response library \"{}\" was computed for a substrate "
+        "of {:.10g} (Fabrication.SubstratePermittivity) and vacuum 1: the correction "
+        "there uses the library's substrate; set the permittivity to {:.10g} to "
+        "match the process, or use a library made for this substrate!\n",
+        fmt::join(attributes, ", "),
+        s[0] == s[1] && s[1] == s[2]
+            ? fmt::format("{:.10g}", s[0])
+            : fmt::format("{:.10g} / {:.10g} / {:.10g}", s[0], s[1], s[2]),
+        material, library.name, *library.substrate_permittivity,
+        *library.substrate_permittivity);
   }
 }
 
@@ -7431,6 +7720,7 @@ ResponseCorrectionData BuildAutomaticResponseData2D(
   }
   ValidateLibraryInterfaceLayers(library, iodata.boundaries.postpro.dielectric, found,
                                  coordinate_scale);
+  WarnSubstratePermittivity(library, iodata, mesh, found);
 
   ResponseCorrectionData result;
   result.unmatched_policy = request.unmatched_policy;
@@ -8750,7 +9040,7 @@ public:
                         .second.substr(0, 12)
                  << " lies within the quantum near-match of " << cluster_candidates.size()
                  << " library models (quanta): " << names
-                 << " - one geometry, several models (decision 904 (b): fail closed)!");
+                 << " - one geometry, several models: fail closed!");
     }
     if (!best)
     {
@@ -8772,6 +9062,30 @@ public:
     double deviation_over_R = 0.0;
     double band_over_R = 0.0;
   };
+  // Whether a model of the signature's topology key lies within the signature tolerance
+  // (Match's criterion: deviation <= 1), without Match's selection and without its refusal
+  // of an ambiguous cluster: a read-only query (the law-naming line of the Missing
+  // warning).
+  bool HasModelWithin(const nlohmann::json &feature_signature) const
+  {
+    const auto it =
+        by_topology.find(SplitSignatureParameters(feature_signature).topology_key);
+    if (it == by_topology.end())
+    {
+      return false;
+    }
+    for (const std::size_t index : it->second)
+    {
+      const auto deviation =
+          SignatureDeviation(feature_signature, entries[index].signature);
+      if (deviation && *deviation <= 1.0)
+      {
+        return true;
+      }
+    }
+    return false;
+  }
+
   std::optional<NearMatched> NearMatch(const nlohmann::json &feature_signature) const
   {
     const auto it =
@@ -9053,8 +9367,7 @@ public:
       {
         Mpi::Warning(
             "Legacy-contract alias {} of model \"{}\": the stored Context does not "
-            "re-hash to its ContextDigest; the role-insensitive lookup (decision "
-            "899 B2) skips it!\n",
+            "re-hash to its ContextDigest; the role-insensitive lookup skips it!\n",
             key.substr(0, 12), entry.model);
         continue;
       }
@@ -9136,7 +9449,7 @@ nlohmann::json ResolveLegacyContractAlias(const std::string &model_name,
                   << "\": the feature's context digest "
                   << (digest.empty() ? std::string("(no Box)") : digest)
                   << " does not match the alias's ContextDigest " << alias.context_digest
-                  << " (USER decision 283: fail closed)!");
+                  << " (fail closed)!");
   // The feature's claims-only key (the claims canonicalised alone, recorded by the
   // identification: the Portions of a contract-3 signature are serialised in the frame
   // that minimises Box + Context, so they cannot be re-keyed by removing those members).
@@ -9342,8 +9655,7 @@ LibrarySignatureKeys(const ProcessLibrary &library,
           Mpi::Warning(
               "Fabrication-process response model \"{}\" carries legacy-contract aliases "
               "but no PlanViewBoundary: its twins' metal cannot be read from the record, "
-              "so the role-insensitive alias lookup (decision 899 B2) does not apply to "
-              "it!\n",
+              "so the role-insensitive alias lookup does not apply to it!\n",
               model.name);
         }
         if (claims_only && model.plan_view_boundary)
@@ -10020,11 +10332,10 @@ IdentificationResult RunGeometryIdentification(
                            feature.hash.substr(0, 12) + " resolved through the alias " +
                            role_alias->alias.key.substr(0, 12) + " of \"" +
                            role_alias->model + "\" (the Chain: false pieces relabelled)";
-      Mpi::Print(
-          "  Identification role-insensitive legacy alias (decision 899 B2): cluster "
-          "key {} -> model \"{}\" through alias {}\n",
-          feature.hash.substr(0, 12), role_alias->model,
-          role_alias->alias.key.substr(0, 12));
+      Mpi::Print("  Identification role-insensitive legacy alias: cluster "
+                 "key {} -> model \"{}\" through alias {}\n",
+                 feature.hash.substr(0, 12), role_alias->model,
+                 role_alias->alias.key.substr(0, 12));
     }
     else if (const auto geometric = library_keys.GeometricNearMatch(feature.signature))
     {
@@ -10263,7 +10574,7 @@ IdentificationResult RunGeometryIdentification(
         "T5 fallback (decision 960 R4): the grown key " + grown_hash.substr(0, 12) +
         " has no library entry; the ungrown key " + feature.hash.substr(0, 12) +
         " placed (model \"" + *feature.matched_model + "\")";
-    Mpi::Print("  Identification T5 fallback (decision 960 R4): cluster key {} (grown) has "
+    Mpi::Print("  Identification T5 fallback: cluster key {} (grown) has "
                "no library entry; the ungrown key {} is placed (model \"{}\"); the grown "
                "key is {}\n",
                grown_hash.substr(0, 12), feature.hash.substr(0, 12), *feature.matched_model,
@@ -12376,6 +12687,9 @@ FeaturePatchSummary BuildFeaturePatches(
   // disagreement / the A10 context test) under a ledger: NOT placed, read as Missing by
   // the uncovered-portion pass below (their perimeter stays raw).
   std::set<int> placement_rejected;
+  // Lane L1 (ruling 1649 Q2): the class of each refusal (the ledger record's), printed as
+  // the key's rejection reason by the coverage outputs.
+  std::map<int, std::string> placement_rejection_class;
   // The spatial cluster models' trace meshes, read once per library model (the probe snap).
   std::map<std::size_t, TraceMeshData> trace_meshes;
   std::map<std::size_t, const EdgeSegment3D *> framed;
@@ -12524,7 +12838,9 @@ FeaturePatchSummary BuildFeaturePatches(
           }
           Mpi::Print(" {} fallback {}: the {} blend on {} is not PSD beyond roundoff "
                      "(fabricated / thin domain min eigenvalue relative {:.3e} / {:.3e}); "
-                     "linear on the bracketing nodes (decision 374 (B))\n",
+                     "linear on the bracketing nodes (a blend that is not positive "
+                     "semidefinite is "
+                     "never applied)\n",
                      blend->label, blend->name, fallback["StencilRule"].get<std::string>(),
                      stencil.str(),
                      fallback["MinEigenvalueRelative"]["FabricatedMatrix"].get<double>(),
@@ -13589,6 +13905,7 @@ FeaturePatchSummary BuildFeaturePatches(
         }
       }
       placement_rejected.insert(feature.id);
+      placement_rejection_class.emplace(feature.id, cls);
       GeometryFallbackData record;
       record.cls = cls;
       record.site = site;
@@ -14679,6 +14996,7 @@ FeaturePatchSummary BuildFeaturePatches(
   // Uncovered requirements (decision 394, F2): the portions of every unmatched feature as
   // global sub-segments of the perimeter, in the order of the feature list.
   result.uncovered_portions.clear();
+  result.uncovered_keys.clear();
   for (const auto &feature : identification.features)
   {
     if ((feature.matched_model && !placement_rejected.count(feature.id)) ||
@@ -14688,6 +15006,7 @@ FeaturePatchSummary BuildFeaturePatches(
       // features' (decision 481 / 512 (c)): never listed twice.
       continue;
     }
+    const std::size_t listed_portions = result.uncovered_portions.size();
     for (const auto &portion : feature.portions)
     {
       if (IsImage(portion))
@@ -14713,6 +15032,16 @@ FeaturePatchSummary BuildFeaturePatches(
           {feature.id, mirror_formed ? feature.type + ":MirrorFormed" : feature.type,
            static_cast<int>(portion.segment), SegmentPoint(portion.s0),
            SegmentPoint(portion.s1)});
+    }
+    if (result.uncovered_portions.size() > listed_portions)
+    {
+      // Lane L1 (ruling 1649 Q1): the listed feature's key record, as the identification
+      // gives it.
+      const auto rejection = placement_rejection_class.find(feature.id);
+      result.uncovered_keys.push_back(
+          {feature.id, feature.type, feature.hash, feature.matched_model.has_value(),
+           rejection != placement_rejection_class.end() ? rejection->second : "",
+           feature.signature.is_object() && feature.signature.value("Unboxable", false)});
     }
   }
 
@@ -14740,6 +15069,202 @@ FeaturePatchSummary BuildFeaturePatches(
                       result.corner_arm_extensions, result.mirror_arm_trims, R);
   PatchBuildCensus("inside the patch build (at its end)");
   return summary;
+}
+
+// Every metal-law string ("Law": the describer's dump of a boundary law) of a signature.
+void CollectSignatureLaws(const nlohmann::json &node, std::set<std::string> &laws)
+{
+  if (node.is_object())
+  {
+    for (auto it = node.begin(); it != node.end(); ++it)
+    {
+      if (it.key() == "Law" && it.value().is_string())
+      {
+        laws.insert(it.value().get<std::string>());
+      }
+      else
+      {
+        CollectSignatureLaws(it.value(), laws);
+      }
+    }
+  }
+  else if (node.is_array())
+  {
+    for (const auto &entry : node)
+    {
+      CollectSignatureLaws(entry, laws);
+    }
+  }
+}
+
+// The signature with every metal-law string replaced by `law`.
+void ReplaceSignatureLaws(nlohmann::json &node, const std::string &law)
+{
+  if (node.is_object())
+  {
+    for (auto it = node.begin(); it != node.end(); ++it)
+    {
+      if (it.key() == "Law" && it.value().is_string())
+      {
+        it.value() = law;
+      }
+      else
+      {
+        ReplaceSignatureLaws(it.value(), law);
+      }
+    }
+  }
+  else if (node.is_array())
+  {
+    for (auto &entry : node)
+    {
+      ReplaceSignatureLaws(entry, law);
+    }
+  }
+}
+
+// A metal law key as designer text: "PEC", "Impedance (Cs=0, Ls=4.5e-14, Rs=0)".
+std::string DescribeLawKey(const std::string &key)
+{
+  const auto law = nlohmann::json::parse(key);
+  std::string text = law.value("Type", std::string("PEC"));
+  std::string parameters;
+  for (auto it = law.begin(); it != law.end(); ++it)
+  {
+    if (it.key() != "Type")
+    {
+      parameters += (parameters.empty() ? "" : ", ") + it.key() + "=" +
+                    (it.value().is_number() ? fmt::format("{:g}", it.value().get<double>())
+                                            : it.value().dump());
+    }
+  }
+  return parameters.empty() ? text : text + " (" + parameters + ")";
+}
+
+// The Missing features whose metal law is the cause (visibility only; nothing reads it): an
+// unmatched feature (no model selected by the matching pass; placement rejections and the
+// unmerged mirror configurations excluded, as the warning's count) whose signature, with
+// every metal-law field replaced by one VERIFIED law some library model carries, finds a
+// library model within the matcher's own key tolerance (LibrarySignatureIndex::
+// HasModelWithin). Families (curvature / corner interpolation), near-match bands and
+// aliases are not tried, so the count can be short, never over. Empty (nothing computed)
+// when no library law differs from every feature's own.
+struct LawCausedMissing
+{
+  int features = 0;
+  double length = 0.0;
+  std::map<std::string, std::pair<int, double>> by_type;
+  std::set<std::string> device_laws, library_laws;
+  std::set<int> device_attributes;
+};
+
+LawCausedMissing FindLawCausedMissing(const ProcessLibrary &library,
+                                      const IdentificationResult &identification,
+                                      const AutomaticResponseRequirements &describer,
+                                      const IoData &iodata, const mfem::ParMesh &mesh)
+{
+  LawCausedMissing result;
+  std::set<std::string> library_laws;
+  auto AddLaw = [&](const MetalBoundaryLaw &law)
+  {
+    if (law.parameters_verified)
+    {
+      library_laws.insert(describer.DescribeBoundaryCondition(law).dump());
+    }
+  };
+  for (const auto &model : library.models)
+  {
+    AddLaw(model.boundary_condition);
+    for (const auto &edge : model.spatial_edges)
+    {
+      AddLaw(edge.boundary_condition);
+    }
+  }
+  const std::size_t real_segments = identification.real_segments > 0
+                                        ? identification.real_segments
+                                        : identification.segments.size();
+  std::optional<LibrarySignatureIndex> index;
+  for (const auto &feature : identification.features)
+  {
+    if (feature.matched_model || IsUnmergedMirrorConfiguration(feature))
+    {
+      continue;
+    }
+    std::set<std::string> own;
+    CollectSignatureLaws(feature.signature, own);
+    if (own.empty())
+    {
+      continue;
+    }
+    for (const auto &law : library_laws)
+    {
+      if (own.count(law) > 0)
+      {
+        continue;
+      }
+      if (!index)
+      {
+        index.emplace(LibrarySignatureKeys(library, describer));
+      }
+      nlohmann::json signature = feature.signature;
+      ReplaceSignatureLaws(signature, law);
+      if (!index->HasModelWithin(signature))
+      {
+        continue;
+      }
+      double length = 0.0;
+      for (const auto &portion : feature.portions)
+      {
+        length += portion.segment >= real_segments ? 0.0 : portion.s1 - portion.s0;
+      }
+      result.features++;
+      result.length += length;
+      result.by_type[feature.type].first++;
+      result.by_type[feature.type].second += length;
+      result.device_laws.insert(own.begin(), own.end());
+      result.library_laws.insert(law);
+      break;
+    }
+  }
+  if (result.features > 0)
+  {
+    // The configuration's metal boundary attributes that carry a counted device law.
+    for (int i = 0; i < mesh.bdr_attributes.Size(); i++)
+    {
+      const int attribute = mesh.bdr_attributes[i];
+      const auto law = GetBoundaryConditionLaw(iodata.boundaries, attribute);
+      if (law && law->parameters_verified &&
+          result.device_laws.count(describer.DescribeBoundaryCondition(*law).dump()) > 0)
+      {
+        result.device_attributes.insert(attribute);
+      }
+    }
+  }
+  return result;
+}
+
+std::string LawCausedMissingLine(const LawCausedMissing &missing, double coordinate_scale)
+{
+  std::string types, device, library;
+  for (const auto &[type, entry] : missing.by_type)
+  {
+    types += fmt::format("{}{}: {:d} ({:.6e})", types.empty() ? "" : ", ", type,
+                         entry.first, entry.second * coordinate_scale);
+  }
+  for (const auto &law : missing.device_laws)
+  {
+    device += (device.empty() ? "" : "; ") + DescribeLawKey(law);
+  }
+  for (const auto &law : missing.library_laws)
+  {
+    library += (library.empty() ? "" : "; ") + DescribeLawKey(law);
+  }
+  return fmt::format(
+      "{:d} of them ({:.6e} length units; {{{}}}) have library models of the same geometry "
+      "class under another metal boundary law: device metal {} (boundary attribute(s) {}); "
+      "library models {}.\n",
+      missing.features, missing.length * coordinate_scale, types, device,
+      fmt::join(missing.device_attributes, ", "), library);
 }
 
 ResponseCorrectionData
@@ -14861,15 +15386,14 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
           "The identification runs on the ROOT level of a nonconforming mesh refined at "
           "load (UniformLevels / EdgeRefinement / Boxes / Spheres): its features and "
           "keys are those of the root perimeter, its patch cells coarser than a run that "
-          "identified after the load-time refinement (decision 899)!\n");
+          "identified after the load-time refinement!\n");
     }
     if (geometry.refinement_vertices_kept > 0)
     {
       Mpi::Warning(mesh.GetComm(),
                    "{:d} refinement-generated perimeter vertices are not collinear with "
                    "their neighbours (curved edges) and stay vertices of the root-level "
-                   "perimeter: the identification may differ from the producing run's "
-                   "(decision 899)!\n",
+                   "perimeter: the identification may differ from the producing run's!\n",
                    geometry.refinement_vertices_kept);
     }
   }
@@ -14940,6 +15464,7 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
   }
   ValidateLibraryInterfaceLayers(library, iodata.boundaries.postpro.dielectric, found,
                                  coordinate_scale);
+  WarnSubstratePermittivity(library, iodata, mesh, found);
 
   // Partition the selected perimeter by the interface types available on each physical
   // segment. Existing SA attributes can legitimately omit a port footprint while the
@@ -15949,6 +16474,8 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
         curved_matches, corner_matches, mirror_band.image_frames, mirror_band.planes,
         &geometry_ledger, mesh.GetComm());
     GeometryStageLine("patches built: " + std::to_string(result.patches.size()));
+    result.identification_matched_length = summary.matched_length;
+    result.identification_unmatched_length = summary.unmatched_length;
     if (requirements && !summary.unpatched_pairs.empty())
     {
       nlohmann::json records = nlohmann::json::array();
@@ -16116,8 +16643,7 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                             entry.model, entry.key.substr(0, 12), entry.features.size(),
                             entry.features.size() == 1 ? "" : "s");
       }
-      Mpi::Print(mesh.GetComm(), " Legacy-contract aliases (USER decision 283): {}\n",
-                 text);
+      Mpi::Print(mesh.GetComm(), " Legacy-contract aliases: {}\n", text);
     }
     std::string unmatched;
     for (const auto &[type, entry] : summary.unmatched_by_type)
@@ -16150,17 +16676,16 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                static_cast<int>(summary.context_points_checked));
     if (summary.context_near_match_verifications > 0)
     {
-      Mpi::Print(
-          " Context (decision 904): {:d} contract-3 placement(s) verified within the "
-          "cluster quantum near-match, not exactly (largest difference {:.3g} "
-          "quanta)\n",
-          static_cast<int>(summary.context_near_match_verifications),
-          summary.context_near_match_max_quanta);
+      Mpi::Print(" Context: {:d} contract-3 placement(s) verified within the "
+                 "cluster quantum near-match, not exactly (largest difference {:.3g} "
+                 "quanta)\n",
+                 static_cast<int>(summary.context_near_match_verifications),
+                 summary.context_near_match_max_quanta);
     }
     if (summary.geometric_near_match_placements > 0)
     {
       Mpi::Print(
-          " Context (decisions 1088 / 1089): {:d} contract-3 placement(s) of a "
+          " Context: {:d} contract-3 placement(s) of a "
           "geometrically near-matched model verified within the geometric near-match "
           "band (context {:g} R), not the quantum one\n",
           static_cast<int>(summary.geometric_near_match_placements),
@@ -16169,7 +16694,7 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
     if (summary.probe_snaps > 0)
     {
       Mpi::Print(
-          " Conductor probes (decision 611): {:d} knot(s) of the spatial cluster "
+          " Conductor probes: {:d} knot(s) of the spatial cluster "
           "patches snapped onto the device arc chords, largest displacement {:.6e}\n",
           static_cast<int>(summary.probe_snaps), summary.max_probe_snap * coordinate_scale);
     }
@@ -16180,7 +16705,7 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
       {
         names += (names.empty() ? "" : ", ") + name;
       }
-      Mpi::Print(" Conductor probes (decision 632): {:d} spatial cluster patch(es) placed "
+      Mpi::Print(" Conductor probes: {:d} spatial cluster patch(es) placed "
                  "without probe snaps - the trace data of model(s) {} is not readable "
                  "(a discovery placeholder); a solve refuses them\n",
                  static_cast<int>(summary.probe_snaps_not_computed), names);
@@ -16213,11 +16738,19 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
     {
       if (summary.unmatched_features > 0)
       {
+        // The metal law named when it is why features are Missing (one extra line, only
+        // then; visibility only).
+        const auto law_caused = FindLawCausedMissing(
+            library, identification, requirements ? *requirements : law_describer, iodata,
+            mesh);
         Mpi::Warning("Fabrication-process response library \"{}\" has no model for {} "
                      "identified feature(s) ({:.6e} length units); correction is disabled "
-                     "for these features only.\n",
+                     "for these features only.\n{}",
                      library.name, summary.unmatched_features,
-                     summary.unmatched_length * coordinate_scale);
+                     summary.unmatched_length * coordinate_scale,
+                     law_caused.features > 0
+                         ? LawCausedMissingLine(law_caused, coordinate_scale)
+                         : std::string());
       }
       if (!requirements &&
           request.unmatched_policy == ResponseCorrectionData::UnmatchedPolicy::ERROR)
@@ -21013,6 +21546,32 @@ double TargetInterfaceMatchingRadius(const IoData &iodata,
   return radius;
 }
 
+// Ruling 1738 (lane L1, OI-CONFIGURED-TARGET-NOT-SERVED): the interfaces the configuration
+// targets. An automatic (library) configuration: its TargetInterfaces, or without that list
+// every typed dielectric interface with EdgeDistances (the identification's selection, as
+// above); an explicit-model configuration targets its models' surfaces only (none here).
+std::set<int> ConfiguredTargetInterfaces(const IoData &iodata, bool automatic,
+                                         const std::vector<int> &target_interfaces)
+{
+  std::set<int> configured;
+  if (!automatic)
+  {
+    return configured;
+  }
+  const std::set<int> target_filter(target_interfaces.begin(), target_interfaces.end());
+  for (const auto &[index, dielectric] : iodata.boundaries.postpro.dielectric)
+  {
+    if ((!target_filter.empty() && target_filter.find(index) == target_filter.end()) ||
+        dielectric.type == InterfaceDielectric::DEFAULT ||
+        dielectric.edge_distances.empty())
+    {
+      continue;
+    }
+    configured.insert(index);
+  }
+  return configured;
+}
+
 SurfaceResponseMatrices ComputeSurfaceResponseMatrices(
     const config::ElectrostaticSolverData::ResponseCorrectionModelData &config,
     int expected_size, const Units &units, double matching_radius)
@@ -21477,7 +22036,7 @@ void WriteResponseGeometryCache(const std::filesystem::path &path,
   std::ofstream output(path);
   MFEM_VERIFY(output,
               "Unable to write response-geometry cache \"" << path.string() << "\"!");
-  nlohmann::json cache = {{"Version", 24},
+  nlohmann::json cache = {{"Version", 25},
                           {"MatchingRadius", config.matching_radius},
                           {"Models", std::move(models)},
                           {"Patches", std::move(patches)}};
@@ -21543,6 +22102,19 @@ void WriteResponseGeometryCache(const std::filesystem::path &path,
                            {"P1", portion.p1}});
     }
     cache["UncoveredPortions"] = std::move(uncovered);
+    // Lane L1 (ruling 1649 Q1): the uncovered features' key records, a required leaf of
+    // version 25.
+    nlohmann::json uncovered_keys = nlohmann::json::array();
+    for (const auto &key : config.uncovered_keys)
+    {
+      uncovered_keys.push_back({{"Feature", key.feature},
+                                {"Type", key.type},
+                                {"Hash", key.hash},
+                                {"Matched", key.matched},
+                                {"PlacementRejection", key.placement_rejection},
+                                {"Unboxable", key.unboxable}});
+    }
+    cache["UncoveredKeys"] = std::move(uncovered_keys);
     // The exclusion-energy export's portions (idfix DESIGN section 8; decision 1072 Q3: a
     // required leaf of version 22).
     nlohmann::json exclusions = nlohmann::json::array();
@@ -21655,68 +22227,58 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
   nlohmann::json data;
   input >> data;
   MFEM_VERIFY(
-      data.value("Version", 0) == 24,
+      data.value("Version", 0) == 25,
       "Unsupported response-geometry cache version "
           << data.value("Version", 0)
-          << " (version 24 = version 23 + the fix round P3's placement rule R-9b (every "
-             "KeyedAtTheMean feature placed cell-wise at its local cross-section from its "
-             "family; decisions 1286 / 1291); version 23 = version 22 + the fix round P2's "
-             "placement rule R-9 (the "
-             "refused pairs' cells placed at their local separation) and the "
-             "UnpatchedPairPortions leaf (2B); version 22 carries the feature, mesh "
-             "segment, chain stretch, own-edge "
-             "offset and own-cell pre-image (decision 537) of every patch, the claims, "
-             "support box, chain and foreign (Chain: false, decision 553) context pieces "
-             "of every spatial cluster patch, the raw claims of every vertex coupon "
-             "(F-DB-a, decisions 442 "
-             "/ 454), the matching radius for the continuation and vertex ownership, the "
-             "quantum near-match records of the matching pass, the corner-arm trim records "
-             "and the uncovered portions of decision 394, the corner-arm extension records "
-             "of decision 511 (rounded corners' arm cells from the square exit), the "
-             "consistent-mortar band vertices and rule of every model (decision 404 D1), "
-             "and the mirror planes, mirror band record, mirror arm trims and "
-             "unmerged-configuration portions (each real one flagged Identical, decision "
-             "512) of the boundary-cut rule; version 16 = all three lanes' additions over "
-             "version 13 (the 527 rule): the stacks lane's own-cell pre-image (decision "
-             "537), the fillet lane's corner-arm extension records (decisions 511 / 512, "
-             "527) and the foreign-context lane's Chain: false context pieces (decision "
-             "553) - either version-15 schema (stacks + fillet, decision 552 (3); stacks + "
-             "foreign) lacks one of them, decision 559 (3); version 17 adds the "
-             "mirror-formed contract placement of every spatial patch "
-             "(MirrorFormedTopology, "
-             "MirrorReach, MirrorEdgeWeights; decision 557 (4)); version 18 adds the "
-             "conductor-consistency probe snaps of every spatial patch (ProbeSnaps: the "
-             "conductor knots read on the device arc chords, decision 611 (2); "
-             "ProbeSnapsComputed: false for a placed model without readable trace data, "
-             "which a solve refuses, decision 632); version 19 reads a mirror-formed "
+          << " (version 25 = version 24 + the UncoveredKeys leaf (the uncovered features' "
+             "key records of the coverage outputs); version 24 = version 23 + the fix "
+             "round P3's placement rule R-9b (every KeyedAtTheMean feature placed "
+             "cell-wise at its local cross-section from its family); version 23 = "
+             "version 22 + the fix round P2's placement rule R-9 (the refused pairs' "
+             "cells placed at their local separation) and the UnpatchedPairPortions leaf "
+             "(2B); version 22 carries the feature, mesh segment, chain stretch, "
+             "own-edge offset and own-cell pre-image of every patch, the claims, support "
+             "box, chain and foreign (Chain: false) context pieces of every spatial "
+             "cluster patch, the raw claims of every vertex coupon, the matching radius "
+             "for the continuation and vertex ownership, the quantum near-match records "
+             "of the matching pass, the corner-arm trim records and the uncovered "
+             "portions, the corner-arm extension records (rounded corners' arm cells "
+             "from the square exit), the consistent-mortar band vertices and rule of "
+             "every model, and the mirror planes, mirror band record, mirror arm trims "
+             "and unmerged-configuration portions (each real one flagged Identical) of "
+             "the boundary-cut rule; version 16 = all three lanes' additions over "
+             "version 13: the stacks lane's own-cell pre-image, the fillet lane's "
+             "corner-arm extension records and the foreign-context lane's Chain: false "
+             "context pieces - either version-15 schema (stacks + fillet; stacks + "
+             "foreign) lacks one of them; version 17 adds the mirror-formed contract "
+             "placement of every spatial patch (MirrorFormedTopology, MirrorReach, "
+             "MirrorEdgeWeights); version 18 adds the conductor-consistency probe snaps "
+             "of every spatial patch (ProbeSnaps: the conductor knots read on the device "
+             "arc chords; ProbeSnapsComputed: false for a placed model without readable "
+             "trace data, which a solve refuses); version 19 reads a mirror-formed "
              "coupon's image-side probes at their reflection into the domain before the "
-             "chord snap (decision 774): a version-18 cache carries that coupon's image "
-             "probes un-snapped (decision 781); version 20 is written by the binary that "
-             "grows a spatial cluster's box over an excluded corner window (the "
-             "contract-v3 rule T5, OI-SCP-BOXGROW, decisions 958 / 960 / 972): a "
+             "chord snap: a version-18 cache carries that coupon's image probes "
+             "un-snapped; version 20 is written by the binary that grows a spatial "
+             "cluster's box over an excluded corner window (the contract-v3 rule T5): a "
              "version-19 cache written by a pre-T5 binary with a library carrying a "
-             "T5-grown model places the UNGROWN model where the T5 binary places the grown "
-             "one, a divergence the cache's patch content cannot show (the 527 / 781 "
-             "merge-order rule); version 21 was written by BOTH idfix lanes with different "
-             "content (lane A: the binary that clusters two vertex sites whose +-R coupon "
-             "cubes overlap under the oriented separating-axis test (the identification's "
-             "vertex-vertex rule, idfix DESIGN A.5 (a) / B.1) and places a Missing cluster "
-             "or pair key near-matched to a library model (GeometricNearMatched / "
-             "NearMatched, idfix sections 4 / 5; decisions 1062 / 1087): a version-20 "
-             "cache "
-             "written by a pre-idfix binary carries that binary's two corner patches where "
-             "this binary forms one RAW cluster, and no patch where this binary places the "
-             "near-matched model; lane B: the conductor-consistency probes of every "
-             "translational patch (ConductorProbeEdges / ConductorProbes: the device metal "
-             "point of every model Edge at both end faces of the cell with its local "
-             "piece, "
-             "idfix R0-a, decisions 1062 / 1064) and the REQUIRED ExclusionPortions leaf "
-             "(decision 1072 Q3): a version-20 cache carries none, so its translational "
-             "patches could not be gated); version 22 = both lanes' additions over version "
-             "20 (the 527 / 1064 (3) / 1087 merge-order rule) - either version-21 schema "
-             "lacks the other lane's content, a divergence the cache's patch content "
-             "cannot "
-             "show; delete a stale cache)!");
+             "T5-grown model places the UNGROWN model where the T5 binary places the "
+             "grown one, a divergence the cache's patch content cannot show; version 21 "
+             "was written by BOTH idfix lanes with different content (lane A: the binary "
+             "that clusters two vertex sites whose +-R coupon cubes overlap under the "
+             "oriented separating-axis test (the identification's vertex-vertex rule, "
+             "idfix DESIGN A.5 (a) / B.1) and places a Missing cluster or pair key "
+             "near-matched to a library model (GeometricNearMatched / NearMatched, idfix "
+             "sections 4 / 5): a version-20 cache written by a pre-idfix binary carries "
+             "that binary's two corner patches where this binary forms one RAW cluster, "
+             "and no patch where this binary places the near-matched model; lane B: the "
+             "conductor-consistency probes of every translational patch "
+             "(ConductorProbeEdges / ConductorProbes: the device metal point of every "
+             "model Edge at both end faces of the cell with its local piece) and the "
+             "REQUIRED ExclusionPortions leaf: a version-20 cache carries none, so its "
+             "translational patches could not be gated); version 22 = both lanes' "
+             "additions over version 20 - either version-21 schema lacks the other "
+             "lane's content, a divergence the cache's patch content cannot show; delete "
+             "a stale cache)!");
   ResponseCorrectionData result = request;
   result.library.clear();
   result.models.clear();
@@ -21782,14 +22344,30 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
     portion.p1 = entry.at("P1");
     result.uncovered_portions.push_back(std::move(portion));
   }
+  // Lane L1 (ruling 1649 Q1): the uncovered features' key records, a REQUIRED leaf of
+  // version 25 (a cache without it was written by another binary: refused by name).
+  MFEM_VERIFY(data.contains("UncoveredKeys"),
+              "Response-geometry cache version 25 without UncoveredKeys (lane L1, ruling "
+              "1649 Q1): delete the stale cache!");
+  result.uncovered_keys.clear();
+  for (const auto &entry : data.at("UncoveredKeys"))
+  {
+    ResponseCorrectionData::UncoveredKeyData key;
+    key.feature = entry.at("Feature");
+    key.type = entry.at("Type");
+    key.hash = entry.at("Hash");
+    key.matched = entry.at("Matched");
+    key.placement_rejection = entry.at("PlacementRejection");
+    key.unboxable = entry.at("Unboxable");
+    result.uncovered_keys.push_back(std::move(key));
+  }
   // Decision 1072 Q3: the exclusion-energy portions are a REQUIRED leaf of version 22 (lane
   // B's version 21); a cache of the right version written before the export existed (the
   // identification fix round's interim binaries) is refused by name, never read as an
   // empty set.
   MFEM_VERIFY(data.contains("ExclusionPortions"),
               "Response-geometry cache version 22 without ExclusionPortions: written by an "
-              "interim binary before the exclusion-energy export (idfix DESIGN section 8; "
-              "decision 1072 Q3); delete the stale cache!");
+              "interim binary before the exclusion-energy export; delete the stale cache!");
   result.exclusion_portions.clear();
   for (const auto &entry : data.at("ExclusionPortions"))
   {
@@ -21959,11 +22537,12 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
            snap.at("Arc").get<int>(), snap.at("Displacement").get<std::array<double, 3>>(),
            snap.at("Distance").get<double>()});
     }
-    MFEM_VERIFY(entry.contains("ProbeSnapsComputed"),
-                "Response-geometry cache version 23 patch of model "
-                    << patch.model
-                    << " carries no ProbeSnapsComputed (a cache written before decision "
-                       "632); delete the stale cache!");
+    MFEM_VERIFY(
+        entry.contains("ProbeSnapsComputed"),
+        "Response-geometry cache version 23 patch of model "
+            << patch.model
+            << " carries no ProbeSnapsComputed (a cache written by an older binary); "
+               "delete the stale cache!");
     patch.provenance.probe_snaps_computed = entry.at("ProbeSnapsComputed").get<bool>();
     // R0-a (version 22): the translational patch's conductor-consistency probes (both
     // arrays present, empty for a spatial / vertex patch).
@@ -22048,11 +22627,11 @@ void GeometryFallbackLedger::Record(GeometryFallbackData entry)
   entries.push_back(std::move(entry));
 }
 
-void GeometryFallbackLedger::Enforce(const std::string &where) const
+std::string GeometryFallbackLedger::FailClosedSummary() const
 {
   if (policy != GeometryFailurePolicy::FAIL_CLOSED || entries.empty())
   {
-    return;
+    return {};
   }
   std::map<std::string, int> classes;
   for (const auto &entry : entries)
@@ -22064,8 +22643,19 @@ void GeometryFallbackLedger::Enforce(const std::string &where) const
   {
     summary += (summary.empty() ? "" : ", ") + cls + " " + std::to_string(count);
   }
+  return std::to_string(entries.size()) + " geometry fallback(s) recorded (" + summary +
+         ")";
+}
+
+void GeometryFallbackLedger::Enforce(const std::string &where) const
+{
+  const std::string summary = FailClosedSummary();
+  if (summary.empty())
+  {
+    return;
+  }
   MFEM_ABORT("Surface-response GeometryFailurePolicy FailClosed: "
-             << entries.size() << " geometry fallback(s) recorded (" << summary << "); see "
+             << summary << "; see "
              << (preflight ? "Identification.Diagnostics.GeometryFallbacks of the manifest"
                            : "SurfaceResponse.Diagnostics.GeometryFallbacks")
              << " (" << where << ")!");
@@ -22396,9 +22986,7 @@ void VerifyStateAnchorEdgeToleranceBelowDeviceGaps(const std::vector<double> &of
                 "StateAnchorEdgeToleranceOverR "
                     << edge_tolerance_over_r << " R reaches half the device gap "
                     << (offsets[k + 1] - offsets[k]) / R << " R of patch "
-                    << patch_global_index
-                    << " (decision 1323 CONDITION 1: an anchor must not snap across "
-                       "a gap)!");
+                    << patch_global_index << " (an anchor must not snap across a gap)!");
   }
 }
 
@@ -22649,8 +23237,9 @@ nlohmann::json DescribeMagneticLeaves(const std::string &library_path, const Uni
   return result;
 }
 
-void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
-                                      const std::string &path)
+SurfaceResponsePreflightOutcome WriteSurfaceResponseRequirements(const IoData &iodata,
+                                                                 const Mesh &mesh,
+                                                                 const std::string &path)
 {
   const auto &configured_request = iodata.problem.type == ProblemType::ELECTROSTATIC
                                        ? iodata.solver.electrostatic.response_correction
@@ -22848,7 +23437,7 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
       manifest["Summary"]["MirrorFormedPlacement"] = {{"Count", placements["Count"]}};
       for (const auto &entry : placements["Patches"])
       {
-        Mpi::Print("Mirror-formed contract placement (decision 557 (4)): patch {:d} "
+        Mpi::Print("Mirror-formed contract placement: patch {:d} "
                    "(feature {:d}, model {}) on its REAL half, weight {:.6f}, {:d} real / "
                    "{:d} image edge(s), reach {:.6e}\n",
                    entry["Patch"].get<std::size_t>(), entry["Feature"].get<int>(),
@@ -22889,17 +23478,16 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
          diagnostics["Uncovered"]["ClippedBySpatialSupport"]["Length"]}};
     if (uncovered_clipping.clipped_portions > 0)
     {
-      Mpi::Warning(
-          "Uncovered requirements inside matched clusters' support boxes (decision "
-          "399): {:d} portion(s), {:.6e} mesh units removed from the uncovered "
-          "portions ({:d} wholly inside, {:d} split)\n",
-          uncovered_clipping.clipped_portions,
-          uncovered_clipping.removed_length * coordinate_scale,
-          uncovered_clipping.removed_portions, uncovered_clipping.split_portions);
+      Mpi::Warning("Uncovered requirements inside matched clusters' support boxes: {:d} "
+                   "portion(s), {:.6e} mesh units removed from the uncovered "
+                   "portions ({:d} wholly inside, {:d} split)\n",
+                   uncovered_clipping.clipped_portions,
+                   uncovered_clipping.removed_length * coordinate_scale,
+                   uncovered_clipping.removed_portions, uncovered_clipping.split_portions);
     }
     if (diagnostics["CornerArmTrim"]["Count"].get<int>() > 0)
     {
-      Mpi::Print("Corner-arm trim (decision 394 F1): {:d} corner(s), {:.6e} mesh units of "
+      Mpi::Print("Corner-arm trim: {:d} corner(s), {:.6e} mesh units of "
                  "second-arm cells removed ({:.6e} geometric)\n",
                  diagnostics["CornerArmTrim"]["Count"].get<int>(),
                  diagnostics["CornerArmTrim"]["RemovedCellLength"].get<double>(),
@@ -22985,7 +23573,7 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
           {"WindowLength", diagnostics["SpatialClusterPriority"]["WindowLength"]},
           {"OutsideLength", diagnostics["SpatialClusterPriority"]["OutsideLength"]}};
       Mpi::Warning(
-          "SpatialClusterPriority (decision 922): {:d} corner / vertex coupon(s) dropped "
+          "SpatialClusterPriority: {:d} corner / vertex coupon(s) dropped "
           "by an overlapping spatial cluster; {:.6e} of their {:.6e} mesh units of "
           "window lie outside every cluster box and keep their raw within-R surface "
           "energy in the corrected interface energies; the corners' own correction there "
@@ -23023,11 +23611,9 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
         diagnostics["CornerArmTrim"]["ExcludedCoupons"]["Count"];
     if (diagnostics["CornerArmTrim"]["ExcludedCoupons"]["Count"].get<int>() > 0)
     {
-      Mpi::Warning(
-          "Corner-arm trim: {:d} trimmed corner(s) whose vertex coupon is not "
-          "applied (decision 399 MINOR-7): their second arm's [R, s) is modelled by "
-          "nothing\n",
-          diagnostics["CornerArmTrim"]["ExcludedCoupons"]["Count"].get<int>());
+      Mpi::Warning("Corner-arm trim: {:d} trimmed corner(s) whose vertex coupon is not "
+                   "applied: their second arm's [R, s) is modelled by nothing\n",
+                   diagnostics["CornerArmTrim"]["ExcludedCoupons"]["Count"].get<int>());
     }
     const auto &exclusion_diagnostics = diagnostics["DomainBoundaryExclusions"];
     manifest["Summary"]["Counts"]["DomainBoundary"] = exclusion_diagnostics["Count"];
@@ -23089,8 +23675,8 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
                    "never a fallback for any other key"}};
       if (legacy_features > 0)
       {
-        Mpi::Warning("{:d} feature(s) matched through legacy-contract aliases (USER "
-                     "decision 283); see Summary.LegacyContract!\n",
+        Mpi::Warning("{:d} feature(s) matched through legacy-contract aliases; see "
+                     "Summary.LegacyContract!\n",
                      legacy_features);
       }
     }
@@ -23167,12 +23753,14 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
       }
       if (!knife_edge_features.empty())
       {
-        Mpi::Warning("{:d} spatial cluster key(s) rest on face-rule / box-rule readings "
-                     "within the knife-edge band (decision 287; see Features[]."
-                     "SpatialSupport.FaceRules.ThresholdBandHits and Growth.Passes):\n  "
-                     "{}\n",
-                     static_cast<int>(knife_edge_features.size()),
-                     fmt::join(knife_edge_features, "\n  "));
+        Mpi::Warning(
+            "{:d} spatial cluster key(s) rest on face-rule / box-rule readings "
+            "within the knife-edge band (a tiny change of the geometry could change the "
+            "key; see Features[].SpatialSupport.FaceRules.ThresholdBandHits and "
+            "Growth.Passes):\n  "
+            "{}\n",
+            static_cast<int>(knife_edge_features.size()),
+            fmt::join(knife_edge_features, "\n  "));
       }
     }
     // The conductor-consistency gate (decision 277) needs the device trace: it is evaluated
@@ -23238,15 +23826,25 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
     Mpi::Print(parallel_mesh.GetComm(), " Patch dry run: {} ({:d} patches)\n", patches_path,
                static_cast<int>(patches.patches.size()));
   }
+  SurfaceResponsePreflightOutcome outcome;
+  outcome.written.push_back(path);
+  if (parallel_mesh.Dimension() == 3)
+  {
+    outcome.written.push_back(patches_path);
+  }
   if (!geometry_fallbacks.is_null())
   {
     Mpi::Print(
         parallel_mesh.GetComm(), "{}",
         GeometryFallbackBanner(geometry_fallbacks,
                                "Identification.Diagnostics.GeometryFallbacks of " + path));
-    GeometryFallbackLedger(geometry_policy, true, patches.geometry_fallbacks)
-        .Enforce("surface-response preflight");
+    // FailClosed ends the preflight here, after the write; the ledger is replicated on
+    // every rank, so every rank returns the same outcome (the driver's exit status).
+    outcome.fail_closed_summary =
+        GeometryFallbackLedger(geometry_policy, true, patches.geometry_fallbacks)
+            .FailClosedSummary();
   }
+  return outcome;
 }
 
 // The first construction's domain-boundary containment result, kept with the automatic
@@ -23628,6 +24226,10 @@ struct ResponseMemoryCensus
     return Heap(d.entries) + Heap(d.portions);
   }
   static double Heap(const ModelRawClaimPortions::GroupMember &d) { return Heap(d.label); }
+  static double Heap(const SurfacePostOperator::CompactPerimeterPortions &d)
+  {
+    return double(d.HeapBytes());
+  }
   static double Heap(const ModelRawClaimPortions &d)
   {
     return Heap(d.portions) + Heap(d.members);
@@ -23738,6 +24340,13 @@ struct ResponseMemoryCensus
     add("op.conductor_consistency_claims (I-11)", Heap(op.conductor_consistency_claims));
     add("op.conductor_consistency_portions", Heap(op.conductor_consistency_portions));
     add("op.model_raw_claim_portions (I-11b)", Heap(op.model_raw_claim_portions));
+    // Lane L1 (ruling 1682): the compact claim list's portion and distinct end-point counts
+    // (bytes per portion = the line above over the first; end-point sharing = 2 x portions
+    // over points).
+    add("op.model_raw_claim_portions count",
+        double(op.model_raw_claim_portions.portions.Size()));
+    add("op.model_raw_claim_portions distinct end points",
+        double(op.model_raw_claim_portions.portions.PointCount()));
     add("op.mirror_planes", Heap(op.mirror_planes));
   }
 
@@ -25268,7 +25877,7 @@ std::string DescribeTranslationalOwnershipWarning(const nlohmann::json &diagnost
       "{:d} translational response-correction stretch(es) ({:.6e} mesh units; Continuation "
       "{:d} / Foreign {:d} / ForeignExcludedEdge {:d} / ForeignContextEdge {:d} / "
       "ForeignMixedEdges {:d}) lie wholly inside a spatial patch's matching volume "
-      "(decisions 236 / 553 / 559, recorded under "
+      "(recorded under "
       "Diagnostics.TranslationalStretchesInsideSpatialSupport):\n{}",
       diagnostics["Count"].get<int>(), diagnostics["Length"].get<double>(),
       diagnostics["Continuation"]["Count"].get<int>(),
@@ -25428,7 +26037,7 @@ std::string DescribeTranslationalPartialStretchWarning(const nlohmann::json &dia
   }
   return fmt::format(
       "{:d} translational response-correction stretch(es) lie PARTIALLY inside a spatial "
-      "patch's box on its context pieces (decision 984, OI-T5-PARTIAL-STRETCH-CONTEXT; "
+      "patch's box on its context pieces ("
       "{:d} OwnedInsidePart / {:d} RecordedOnly; {} inside + {} straddling cell(s), {} "
       "subcell(s) and {} cell(s) on excluded pieces recorded only; {:.6e} mesh units "
       "owned; recorded under "
@@ -26689,8 +27298,8 @@ std::string DescribeSpatialSupportMarginOverlapWarning(const nlohmann::json &dia
         entry["ClaimInHull"].get<bool>() ? " (a claim inside the other's claims)" : "");
   }
   return fmt::format(
-      "{:d} pair(s) of spatial cluster supports overlap in their margins (decision 244, "
-      "recorded under Diagnostics.SpatialSupportMarginOverlaps): {:.6e} mesh units of edge "
+      "{:d} pair(s) of spatial cluster supports overlap in their margins (recorded "
+      "under Diagnostics.SpatialSupportMarginOverlaps): {:.6e} mesh units of edge "
       "corrected by both coupons\n{}",
       diagnostics["Count"].get<int>(), diagnostics["DoubleCountedLength"].get<double>(),
       lines);
@@ -26716,7 +27325,7 @@ std::string DescribeContinuationOwnershipSummary(const nlohmann::json &diagnosti
        diagnostics["ForeignContext"]["ExcludedEdgeCells"].get<int>() > 0))
   {
     foreign_context = fmt::format(
-        "  foreign-context ownership (decision 553): {:d} ForeignContextEdge cell(s) owned "
+        "  foreign-context ownership: {:d} ForeignContextEdge cell(s) owned "
         "({:.6e} mesh units, weight 0), {:d} ForeignExcludedEdge cell(s) keep their "
         "surface "
         "matrices and drop their domain correction ({:.6e} mesh units)\n",
@@ -26730,7 +27339,7 @@ std::string DescribeContinuationOwnershipSummary(const nlohmann::json &diagnosti
   {
     const auto &partial = diagnostics["PartialStretch"];
     partial_stretch = fmt::format(
-        "  partial-stretch ownership (decision 984, OI-T5-PARTIAL-STRETCH-CONTEXT): {:d} "
+        "  partial-stretch ownership: {:d} "
         "context-edge cell(s) some partially inside stretch pair contains, owned or "
         "re-attributed ({:d} re-cut at a box face; {:.6e} mesh units; the newly owned "
         "length is the patches CSV's changed rows); recorded untouched: {:d} "
@@ -26743,7 +27352,7 @@ std::string DescribeContinuationOwnershipSummary(const nlohmann::json &diagnosti
         partial["ForeignEdgeLength"].get<double>());
   }
   return fmt::format(
-      "Continuation ownership (decisions 236 (2) / 553 / 559): {:d} translational cell(s) "
+      "Continuation ownership: {:d} translational cell(s) "
       "owned by the spatial coupons whose claims they continue or whose context edges they "
       "lie on ({:d} wholly, {:d} clipped at a box face; {:d} shared by several coupons), "
       "{:.6e} mesh units removed\n{}{}{}",
@@ -26959,8 +27568,9 @@ MirrorFormedEdgeWeights MirrorFormedEdgeWeightsOf(
                     << " but the identification's contract reads the portion as "
                     << (weight > 0.0 ? "REAL" : "an IMAGE") << " (RealPortions "
                     << contract.at("RealPortions").dump()
-                    << "): an inconsistent MirrorFormed record (fail closed, decision 557 "
-                       "(4))!");
+                    << "): an inconsistent MirrorFormed record (fail closed: an edge on a "
+                       "real portion of the contract must have Weight 1, an edge on an "
+                       "image portion Weight 0)!");
     real_edges += weight > 0.0 ? 1 : 0;
     result.weights.push_back(weight);
   }
@@ -27229,7 +27839,7 @@ nlohmann::json DescribeCornerArmExtensions(
 std::string DescribeCornerArmExtensionSummary(const nlohmann::json &diagnostics)
 {
   return fmt::format(
-      "Corner-arm extension (decision 511): {:d} corner(s), {:d} arm(s) extended to the "
+      "Corner-arm extension: {:d} corner(s), {:d} arm(s) extended to the "
       "square exit, {:.6e} mesh units of cells added ({:.6e} geometric stretch, {:.6e} on "
       "uncovered portions)\n",
       diagnostics["Count"].get<int>(), diagnostics["ArmsExtended"].get<int>(),
@@ -27258,10 +27868,10 @@ std::string DescribeCornerArmExtensionUnhostedWarning(const nlohmann::json &diag
     }
   }
   return fmt::format(
-      "Corner-arm extension (decision 511): {:d} arm(s) of matched rounded corners end in "
+      "Corner-arm extension: {:d} arm(s) of matched rounded corners end in "
       "a neighbouring claim before the square exit's stretch finds a host; {:.6e} mesh "
       "units of claimed perimeter are modelled by nothing (recorded under "
-      "Diagnostics.CornerArmExtension; the short-arm generality item of decision 310)\n{}",
+      "Diagnostics.CornerArmExtension; a known limit of the corner coupons)\n{}",
       diagnostics["ArmsUnhosted"].get<int>(), diagnostics["UnhostedLength"].get<double>(),
       lines);
 }
@@ -28395,7 +29005,7 @@ std::string DescribeDomainBoundaryExclusionSummary(const nlohmann::json &diagnos
         entry["NearestDistance"].get<double>());
   }
   return fmt::format(
-      "DomainBoundary exclusion (decision 258): {:d} patch(es) on {:d} feature(s) with "
+      "DomainBoundary exclusion: {:d} patch(es) on {:d} feature(s) with "
       "placed coupon points outside the device mesh not applied, {:.6e} mesh units of "
       "cells left uncorrected (portions {:.6e}); {:d} patches / {:d} points tested in "
       "{:.3f} s (patch indices 1-based like the ownership summaries, 0-based in the "
@@ -28838,7 +29448,7 @@ ModelRawClaimPortions CollectModelRawClaimPortions(
   std::map<std::pair<std::string, int>, ModelRawClaimPortions::GroupMember> members;
   for (std::size_t i = 0; i < claims.portions.size(); i++)
   {
-    auto portion = claims.portions[i];
+    const auto &portion = claims.portions[i];
     std::map<int, std::pair<int, double>> by_model;  // model -> (patches, weight sum)
     for (const std::size_t patch_idx : claims.patches[i])
     {
@@ -28861,8 +29471,7 @@ ModelRawClaimPortions CollectModelRawClaimPortions(
       member.patches += entry.first;
       member.weight_length += entry.second * length;
     }
-    portion.topology = label;
-    result.portions.push_back(std::move(portion));
+    result.portions.Append(portion.p0, portion.p1, label, portion.feature);
   }
   for (auto &[key, member] : members)
   {
@@ -29060,7 +29669,7 @@ void SurfaceResponseOperator::ConfigureConductorConsistencyProbes(ResponseModel 
       // coupon property, not device geometry. The model is recorded untestable
       // (UnprobedModels, decision 279 MINOR-2) and the gate skips it; never a silent zero.
       Mpi::Warning(fespace.GetComm(),
-                   "Conductor-consistency gate (decision 277) not evaluated for response "
+                   "Conductor-consistency gate not evaluated for response "
                    "model \"{}\": conductor {:d} of its trace mesh has no vertex on the "
                    "process plane (w = 0), so its metal cross-section on the box faces "
                    "cannot be probed\n",
@@ -29407,6 +30016,23 @@ void SurfaceResponseOperator::CheckReferencedModelMatricesAgainstRoot() const
              checked);
 }
 #endif
+
+std::filesystem::path
+SurfaceResponseOperator::DiagnosticsPath(const std::filesystem::path &post_dir,
+                                         const std::string &name) const
+{
+  if (diagnostics_directory.empty())
+  {
+    return post_dir / name;
+  }
+  const auto directory = post_dir / diagnostics_directory;
+  if (std::filesystem::is_symlink(std::filesystem::symlink_status(directory)))
+  {
+    std::filesystem::remove(directory);
+  }
+  std::filesystem::create_directories(directory);
+  return directory / name;
+}
 
 void SurfaceResponseOperator::SpillConductorConsistencyRecords(const std::string &directory)
 {
@@ -30563,7 +31189,7 @@ SurfaceResponseOperator::FinishConductorConsistencyGate(
   if (!records.empty())
   {
     const bool maxwell_records = records.front().maxwell;
-    Mpi::Print(" Conductor-consistency gate (decision 277; idfix R0-a), {} {:d}{}: {:d} "
+    Mpi::Print(" Conductor-consistency gate, {} {:d}{}: {:d} "
                "patch(es) probed ({:d} spatial, {:d} translational), max ratio {:.3e} "
                "(patch {:d}, 0-based), {:d} excluded{}, {:d} FloorApplied (tolerance "
                "{:.3e}; amplitude floor "
@@ -30597,8 +31223,8 @@ SurfaceResponseOperator::FinishConductorConsistencyGate(
     }
     if (snapped_knots > 0)
     {
-      Mpi::Print("  {:d} knot(s) of {:d} patch(es) read on the device arc chords (decision "
-                 "611; largest displacement {:.6e} mesh-file units)\n",
+      Mpi::Print("  {:d} knot(s) of {:d} patch(es) read on the device arc chords (largest "
+                 "displacement {:.6e} mesh-file units)\n",
                  snapped_knots, snapped_patches, max_snap * mesh_coordinate_scale);
     }
     for (const auto &record : records)
@@ -30621,8 +31247,8 @@ SurfaceResponseOperator::FinishConductorConsistencyGate(
     }
     if (excluded_count > 0)
     {
-      Mpi::Print("  the excluded patches' raw claims are served RAW (S7diag R1, decision "
-                 "758): {:d} portion(s), {:.6e} mesh-file units so far, kept in the "
+      Mpi::Print("  the excluded patches' raw claims are served RAW: {:d} portion(s), "
+                 "{:.6e} mesh-file units so far, kept in the "
                  "corrected interface energies as the ConductorConsistency share\n",
                  static_cast<int>(conductor_consistency_portions.portions.size()),
                  conductor_consistency_portions.length * mesh_coordinate_scale);
@@ -31050,6 +31676,9 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
       ownership_diagnostics["MirrorFormedPlacement"] = placements;
     }
     uncovered_portions = config.uncovered_portions;
+    uncovered_keys = config.uncovered_keys;
+    identification_matched_length = config.identification_matched_length;
+    identification_unmatched_length = config.identification_unmatched_length;
     exclusion_portions = config.exclusion_portions;  // section 8's export set, by class
     mirror_planes = config.mirror_planes;
     mirror_band = config.mirror_band_over_radius * config.matching_radius;
@@ -31061,7 +31690,7 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
     if (!config.corner_arm_trims.empty())
     {
       Mpi::Print(fespace.GetComm(),
-                 "Corner-arm trim (decision 394 F1): {:d} corner(s), {:.6e} mesh units of "
+                 "Corner-arm trim: {:d} corner(s), {:.6e} mesh units of "
                  "second-arm cells removed ({:.6e} geometric)\n",
                  ownership_diagnostics["CornerArmTrim"]["Count"].get<int>(),
                  ownership_diagnostics["CornerArmTrim"]["RemovedCellLength"].get<double>(),
@@ -31082,7 +31711,7 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
     if (!uncovered_portions.empty())
     {
       Mpi::Warning(fespace.GetComm(),
-                   "Uncovered requirements (decision 394 F2): {:d} portion(s) of {:d} "
+                   "Uncovered requirements: {:d} portion(s) of {:d} "
                    "unmatched feature(s), {:.6e} mesh units, keep their raw within-R "
                    "surface energy in the corrected interface energies (reported per type "
                    "in surface-response-uncovered-energy.csv)!\n",
@@ -31092,15 +31721,14 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
     }
     if (uncovered_spatial_support_clipping.clipped_portions > 0)
     {
-      Mpi::Warning(
-          fespace.GetComm(),
-          "Uncovered requirements inside matched clusters' support boxes (decision "
-          "399): {:d} portion(s), {:.6e} mesh units removed from the uncovered "
-          "portions ({:d} wholly inside, {:d} split)\n",
-          uncovered_spatial_support_clipping.clipped_portions,
-          uncovered_spatial_support_clipping.removed_length * coordinate_scale,
-          uncovered_spatial_support_clipping.removed_portions,
-          uncovered_spatial_support_clipping.split_portions);
+      Mpi::Warning(fespace.GetComm(),
+                   "Uncovered requirements inside matched clusters' support boxes: {:d} "
+                   "portion(s), {:.6e} mesh units removed from the uncovered "
+                   "portions ({:d} wholly inside, {:d} split)\n",
+                   uncovered_spatial_support_clipping.clipped_portions,
+                   uncovered_spatial_support_clipping.removed_length * coordinate_scale,
+                   uncovered_spatial_support_clipping.removed_portions,
+                   uncovered_spatial_support_clipping.split_portions);
     }
     if (!config.quantum_near_match.empty())
     {
@@ -31145,7 +31773,7 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
                    "coupon) applied for a contract-3 key through the library's explicit "
                    "LegacyContractAliases entry (key + verified context digest); never a "
                    "fallback for any other key"}};
-      Mpi::Warning("Legacy-contract aliases applied (USER decision 283): {:d} model(s) "
+      Mpi::Warning("Legacy-contract aliases applied: {:d} model(s) "
                    "serve contract-3 keys through explicit library aliases!\n",
                    static_cast<int>(config.legacy_contract.size()));
     }
@@ -31482,8 +32110,9 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
       }
       // PatchEnergy (decision 922 B-1; the 851 (C) export formalised): every applied
       // patch's raw claim by model set, for the per-model raw energy partition of
-      // surface-response-model-raw-energy.csv; off by default (the list stays empty).
-      if (config.patch_energy)
+      // surface-response-model-raw-energy.csv (written with PatchEnergy only). Lane L1
+      // (decision 1634 (1)): ALWAYS collected, the SERVED claims of the closed coverage
+      // partition (ruling 1641: a correction's coverage never depends on a switch).
       {
         model_raw_claim_portions = CollectModelRawClaimPortions(
             spatially_owned_patches, placed_patches, config, ownership,
@@ -31494,9 +32123,12 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
         // existing label and the groups table unchanged).
         for (const auto &portion : config.unpatched_pair_portions)
         {
-          model_raw_claim_portions.portions.push_back(portion);
+          model_raw_claim_portions.portions.Append(portion.p0, portion.p1, portion.topology,
+                                                   portion.feature);
           model_raw_claim_portions.length += Norm(Subtract(portion.p1, portion.p0));
         }
+        // Ruling 1682: the append lookups released, the buffers trimmed.
+        model_raw_claim_portions.portions.FinishAppending();
         PlacementStamp("model raw claim portions (PatchEnergy)");
       }
       // Decision 1475 (2): the memory census INSIDE the placement, at the end of its claims
@@ -31565,8 +32197,7 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
       {
         Mpi::Print(fespace.GetComm(),
                    " Domain-boundary containment result reused from the first construction "
-                   "(decision 734 F2; PALACE_RESPONSE_CONTAINMENT_RECHECK=1 recomputes and "
-                   "verifies)\n");
+                   "(PALACE_RESPONSE_CONTAINMENT_RECHECK=1 recomputes and verifies)\n");
       }
       if (setup_timing)
       {
@@ -31582,7 +32213,7 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
                    DescribeDomainBoundaryExclusionSummary(
                        ownership_diagnostics["DomainBoundaryExclusions"]));
         Mpi::Warning(fespace.GetComm(),
-                     "DomainBoundary raw claims kept (F-DB-a, decisions 442 / 454): {:d} "
+                     "DomainBoundary raw claims kept: {:d} "
                      "portion(s) ({:d} geometric cells, {:d} split patches folded), {:.6e} "
                      "mesh units keep their raw within-R surface energy in the corrected "
                      "interface energies (reported per type in "
@@ -31607,7 +32238,7 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
                                                    config, boxes, coordinate_scale);
       Mpi::Warning(
           fespace.GetComm(),
-          "SpatialClusterPriority (decision 922): {:d} corner / vertex coupon(s) dropped "
+          "SpatialClusterPriority: {:d} corner / vertex coupon(s) dropped "
           "by an overlapping spatial cluster; {:.6e} of their {:.6e} mesh units of "
           "window lie outside every cluster box and keep their raw within-R surface "
           "energy in the corrected interface energies (reported per type in "
@@ -31639,7 +32270,7 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
       Mpi::Warning(
           fespace.GetComm(),
           "Corner-arm trim: {:d} trimmed corner(s) whose vertex coupon is not applied "
-          "(decision 399 MINOR-7): their second arm's [R, s) is modelled by nothing\n",
+          "(a dropped coupon): their second arm's [R, s) is modelled by nothing\n",
           ownership_diagnostics["CornerArmTrim"]["ExcludedCoupons"]["Count"].get<int>());
     }
   }
@@ -31671,6 +32302,348 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
                                        unplaced_patch_count);
   }
   return placement;
+}
+
+void SurfaceResponseOperator::ConfigureResolutionCensus(
+    const ResponseCorrectionData &request, const IoData &iodata, double matching_radius)
+{
+  // Lane rescensus-product (decision 1817; ruling 1819): the census settings; a bars file
+  // for another radius than the run's is a config error (every rank reads the small file).
+  resolution_enabled = request.resolution.enabled;
+  resolution_order = iodata.solver.order;
+  resolution_radius = matching_radius;
+  resolution_length_scale = iodata.units.Dimensionalize<Units::ValueType::LENGTH>(1.0);
+  const double radius = matching_radius * resolution_length_scale;
+  if (request.resolution.bars_file.empty())
+  {
+    resolution_bars = BuiltInResolutionBars();
+    resolution_bars_hold = ResolutionBarsHold(resolution_bars, radius);
+  }
+  else
+  {
+    resolution_bars = ReadResolutionBars(request.resolution.bars_file);
+    resolution_bars_hold = ResolutionBarsHold(resolution_bars, radius);
+    MFEM_VERIFY(resolution_bars_hold,
+                "Response-correction \"Resolution.BarsFile\" \""
+                    << request.resolution.bars_file
+                    << "\" holds bars for R = " << resolution_bars.radius * 1.0e6
+                    << " um, not for this run's matching radius R = " << radius * 1.0e6
+                    << " um!");
+  }
+  resolution_readings.clear();
+  resolution_plane_slots.clear();
+  resolution_planes.clear();
+  resolution_run_record = ResolutionRunRecord{};
+  resolution_run_record.enabled = resolution_enabled;
+  resolution_run_record.order = resolution_order;
+  resolution_run_record.radius = radius;
+  resolution_run_record.bars = resolution_bars;
+  resolution_run_record.bars_hold = resolution_bars_hold;
+}
+
+void SurfaceResponseOperator::LocateResolutionKnots(
+    DistributedPointLocator &locator, mfem::ParMesh &mesh, int dimension,
+    const std::function<void(std::size_t, std::vector<std::array<double, 3>> &)> &knots_of,
+    const std::function<double(std::size_t)> &origin_z_of)
+{
+  const MPI_Comm comm = fespace.GetComm();
+  const std::size_t patch_count = patches.size();
+  resolution_readings =
+      resolution_enabled
+          ? LocateResolutionKnotsWith(locator, mesh, dimension, patch_count, knots_of)
+          : std::vector<ResolutionPatchReading>(patch_count);
+  // The planes: the patch origin's z in um rounded to 0.1 um (the offline census's key).
+  std::vector<double> local_planes(patch_count);
+  for (std::size_t i = 0; i < patch_count; i++)
+  {
+    local_planes[i] = std::round(origin_z_of(i) * resolution_length_scale * 1.0e7) / 10.0;
+  }
+  std::vector<double> unique_planes(local_planes);
+  std::sort(unique_planes.begin(), unique_planes.end());
+  unique_planes.erase(std::unique(unique_planes.begin(), unique_planes.end()),
+                      unique_planes.end());
+  resolution_planes = AllgatherRecords(unique_planes);
+  std::sort(resolution_planes.begin(), resolution_planes.end());
+  resolution_planes.erase(std::unique(resolution_planes.begin(), resolution_planes.end()),
+                          resolution_planes.end());
+  resolution_plane_slots.resize(patch_count);
+  for (std::size_t i = 0; i < patch_count; i++)
+  {
+    resolution_plane_slots[i] =
+        1 + static_cast<int>(std::lower_bound(resolution_planes.begin(),
+                                              resolution_planes.end(), local_planes[i]) -
+                             resolution_planes.begin());
+  }
+  std::array<long long int, 4> totals{};
+  for (const auto &reading : resolution_readings)
+  {
+    totals[0] += 1;
+    totals[1] += reading.knots;
+    totals[2] += reading.located;
+    totals[3] += reading.Evaluated() ? 0 : 1;
+  }
+  Mpi::GlobalSum(static_cast<int>(totals.size()), totals.data(), comm);
+  resolution_run_record.patches = totals[0];
+  resolution_run_record.knots = totals[1];
+  resolution_run_record.located = totals[2];
+  resolution_run_record.patches_not_evaluated = totals[3];
+  resolution_run_record.mesh_elements = mesh.GetGlobalNE();
+  if (resolution_enabled)
+  {
+    Mpi::Print(comm,
+               " Resolution census: {:d} knot(s) of {:d} patch(es) located "
+               "{:d}; {:d} patch(es) NOT-EVALUATED (no knot or fewer than half located); "
+               "matching radius {:.6e} m, Order {:d}, {} bars{}\n",
+               totals[1], totals[0], totals[2], totals[3], resolution_run_record.radius,
+               resolution_order, resolution_bars.built_in ? "built-in INTERIM" : "file",
+               resolution_bars_hold ? "" : " NOT valid for this radius (NO-BARS)");
+  }
+}
+
+ResolutionStatus SurfaceResponseOperator::ResolutionPatchStatusOf(std::size_t patch_index,
+                                                                  double *m) const
+{
+  *m = std::numeric_limits<double>::quiet_NaN();
+  if (patch_index < resolution_readings.size() &&
+      resolution_readings[patch_index].Evaluated() && resolution_radius > 0.0)
+  {
+    *m = resolution_readings[patch_index].h / resolution_radius;
+  }
+  return ResolutionPatchStatus(*m, resolution_order, resolution_bars, resolution_bars_hold);
+}
+
+void SurfaceResponseOperator::ConfigureResolutionTypes(
+    const std::map<int, std::string> &types)
+{
+  resolution_types.clear();
+  resolution_interface_types.clear();
+  for (const auto &[interface, type] : types)
+  {
+    const auto it = std::find(resolution_types.begin(), resolution_types.end(), type);
+    resolution_interface_types[interface] = static_cast<int>(it - resolution_types.begin());
+    if (it == resolution_types.end())
+    {
+      resolution_types.push_back(type);
+    }
+  }
+  // The PREFLIGHT (ruling 1819 F1): per Type and plane slot the edge patches' cell lengths
+  // and the spatial patches' counts by patch status; every patch into every Type.
+  const int type_count = static_cast<int>(resolution_types.size());
+  const int slots = static_cast<int>(resolution_planes.size()) + 1;
+  std::vector<double> sums(
+      static_cast<std::size_t>(type_count) * slots * kResolutionPreflightStride, 0.0);
+  for (std::size_t i = 0; i < patches.size(); i++)
+  {
+    double m = 0.0;
+    const auto status = ResolutionPatchStatusOf(i, &m);
+    const int bin = status == ResolutionStatus::RESOLVED         ? 0
+                    : status == ResolutionStatus::MARGINAL       ? 1
+                    : status == ResolutionStatus::UNDER_RESOLVED ? 2
+                    : status == ResolutionStatus::NO_BARS        ? 3
+                                                                 : 4;
+    const double length =
+        patches[i].mortar_longitudinal_strip[1] - patches[i].mortar_longitudinal_strip[0];
+    const int plane_slot =
+        i < resolution_plane_slots.size() ? resolution_plane_slots[i] : 0;
+    for (int t = 0; t < type_count; t++)
+    {
+      for (const int slot : {0, plane_slot > 0 ? plane_slot : -1})
+      {
+        if (slot < 0)
+        {
+          continue;
+        }
+        double *values = sums.data() + (t * slots + slot) * kResolutionPreflightStride;
+        if (length > 0.0)
+        {
+          values[bin] += length;
+          values[10] += 1.0;
+        }
+        else
+        {
+          values[5 + bin] += 1.0;
+          values[11] += 1.0;
+        }
+      }
+    }
+  }
+  Mpi::GlobalSum(static_cast<int>(sums.size()), sums.data(), fespace.GetComm());
+  resolution_run_record.preflight.clear();
+  for (int t = 0; t < type_count; t++)
+  {
+    for (int slot = 0; slot < slots; slot++)
+    {
+      resolution_run_record.preflight.push_back(ComputeResolutionPreflightRow(
+          sums.data() + (t * slots + slot) * kResolutionPreflightStride,
+          resolution_types[t], slot == 0, slot == 0 ? 0.0 : resolution_planes[slot - 1],
+          resolution_bars_hold, resolution_length_scale));
+    }
+  }
+  Mpi::Print(fespace.GetComm(), "\n{}",
+             ResolutionPreflightLine(resolution_run_record.preflight, resolution_enabled));
+}
+
+ResolutionAccumulator SurfaceResponseOperator::NewResolutionAccumulator() const
+{
+  ResolutionAccumulator accumulator;
+  accumulator.Reset(static_cast<int>(resolution_types.size()),
+                    static_cast<int>(resolution_planes.size()) + 1);
+  return accumulator;
+}
+
+std::vector<ResolutionCell>
+SurfaceResponseOperator::MeasureResolution(ResolutionAccumulator *accumulator,
+                                           double energy_scale) const
+{
+  // No evaluation-0 energy (a SelfConsistent-only run): the counts only, every cell
+  // NOT-EVALUATED.
+  ResolutionAccumulator counts;
+  if (!accumulator)
+  {
+    counts = NewResolutionAccumulator();
+    for (std::size_t i = 0; i < patches.size(); i++)
+    {
+      for (int t = 0; t < counts.types; t++)
+      {
+        counts.Add(t, i < resolution_plane_slots.size() ? resolution_plane_slots[i] : 0,
+                   ResolutionStatus::NOT_EVALUATED,
+                   std::numeric_limits<double>::quiet_NaN(), 0.0);
+      }
+    }
+  }
+  ResolutionAccumulator &sums = accumulator ? *accumulator : counts;
+  Mpi::GlobalSum(static_cast<int>(sums.values.size()), sums.values.data(),
+                 fespace.GetComm());
+  std::vector<ResolutionCell> cells;
+  if (!Mpi::Root(fespace.GetComm()))
+  {
+    return cells;
+  }
+  const std::string reason = !accumulator          ? "no evaluation-0 energy"
+                             : !resolution_enabled ? "disabled"
+                                                   : "";
+  for (int t = 0; t < sums.types; t++)
+  {
+    for (int slot = 0; slot < sums.slots; slot++)
+    {
+      cells.push_back(ComputeResolutionCell(sums.Slot(t, slot), resolution_types[t],
+                                            slot == 0,
+                                            slot == 0 ? 0.0 : resolution_planes[slot - 1],
+                                            resolution_bars_hold, energy_scale, reason));
+    }
+  }
+  return cells;
+}
+
+void SurfaceResponseOperator::WriteResolutionPatchTable(const std::string &path) const
+{
+  // PatchEnergy only (the caller): per applied patch its census reading, gathered on the
+  // root and joined with the root's patch assignments (origin, axes, model).
+  std::vector<double> local;
+  local.reserve(8 * patches.size());
+  for (std::size_t i = 0; i < patches.size(); i++)
+  {
+    const auto &reading =
+        i < resolution_readings.size() ? resolution_readings[i] : ResolutionPatchReading{};
+    local.insert(
+        local.end(),
+        {static_cast<double>(patches[i].global_index),
+         models[patches[i].model].spatial_basis ? 1.0 : 0.0,
+         patches[i].mortar_longitudinal_strip[1] - patches[i].mortar_longitudinal_strip[0],
+         static_cast<double>(reading.knots), static_cast<double>(reading.located),
+         reading.Evaluated() ? reading.h : std::numeric_limits<double>::quiet_NaN(),
+         i < resolution_plane_slots.size() && resolution_plane_slots[i] > 0
+             ? resolution_planes[resolution_plane_slots[i] - 1]
+             : std::numeric_limits<double>::quiet_NaN()});
+  }
+  const auto records = Mpi::GatherLarge(local, 0, fespace.GetComm());
+  if (!Mpi::Root(fespace.GetComm()))
+  {
+    return;
+  }
+  std::map<int, const PatchAssignment *> assignments;
+  for (const auto &assignment : patch_assignments)
+  {
+    assignments.emplace(assignment.global_index, &assignment);
+  }
+  constexpr std::size_t stride = 7;
+  std::vector<std::size_t> order(records.size() / stride);
+  std::iota(order.begin(), order.end(), 0);
+  std::sort(order.begin(), order.end(), [&](std::size_t a, std::size_t b)
+            { return records[stride * a] < records[stride * b]; });
+  // The adaptive archive (SaveIteration) leaves a link at the top level to the previous
+  // level's file: removed first, so that this level never writes into the archive
+  // (decision 1831; the pre-existing writers' form).
+  std::filesystem::remove(path);
+  std::ofstream output(path);
+  MFEM_VERIFY(output, "Unable to open " << path << " for writing!");
+  output << "patch,model,origin x (m),origin y (m),origin z (m),axis u x,axis u y,axis u "
+            "z,axis v x,axis v y,axis v z,axis w x,axis w y,axis w z,spatial,cell length "
+            "(m),plane z (um),knots,located,h median (m),h/R,status\n";
+  const double nan = std::numeric_limits<double>::quiet_NaN();
+  auto Number = [](double value)
+  { return std::isnan(value) ? std::string("nan") : fmt::format("{:+.16e}", value); };
+  for (const std::size_t k : order)
+  {
+    const double *r = records.data() + stride * k;
+    const int global_index = static_cast<int>(std::llround(r[0]));
+    const auto assignment = assignments.find(global_index);
+    const PatchAssignment *a =
+        assignment != assignments.end() ? assignment->second : nullptr;
+    output << global_index + 1 << ',' << (a ? a->model : 0);
+    for (int d = 0; d < 3; d++)
+    {
+      output << ',' << Number(a ? a->origin[d] * resolution_length_scale : nan);
+    }
+    for (const auto *axis :
+         {a ? &a->axis_u : nullptr, a ? &a->axis_v : nullptr, a ? &a->axis_w : nullptr})
+    {
+      for (int d = 0; d < 3; d++)
+      {
+        output << ',' << Number(axis ? (*axis)[d] : nan);
+      }
+    }
+    const ResolutionPatchReading reading{static_cast<int>(std::llround(r[3])),
+                                         static_cast<int>(std::llround(r[4])), r[5]};
+    const double m = reading.Evaluated() && resolution_radius > 0.0
+                         ? reading.h / resolution_radius
+                         : nan;
+    output << ',' << static_cast<int>(r[1]) << ',' << Number(r[2] * resolution_length_scale)
+           << ',' << (std::isnan(r[6]) ? std::string("nan") : fmt::format("{:.1f}", r[6]))
+           << ',' << reading.knots << ',' << reading.located << ','
+           << Number(reading.Evaluated() ? reading.h * resolution_length_scale : nan) << ','
+           << Number(m) << ','
+           << ResolutionStatusName(ResolutionPatchStatus(
+                  m, resolution_order, resolution_bars, resolution_bars_hold))
+           << '\n';
+  }
+  MFEM_VERIFY(output.good(), "Failed writing " << path << "!");
+}
+
+void SurfaceResponseOperator::ConfigureCoverage(const ResponseCorrectionData &request,
+                                                MPI_Comm comm)
+{
+  // Lane L1 (decision 1634 (4)): the interim bars; the validated-regime sidecar, checked
+  // against the library file at setup on every rank (a mismatch is a config error before
+  // the solve); the models' qualification read on the root only (the coverage writers'
+  // rank; the library's load is unchanged).
+  coverage_thresholds.build_target = request.coverage.build_target;
+  coverage_thresholds.max_uncovered_share = request.coverage.max_uncovered_share;
+  coverage_mark_not_applied = request.coverage.policy ==
+                              config::ElectrostaticSolverData::ResponseCorrectionData::
+                                  CoverageData::Policy::MARK_NOT_APPLIED;
+  if (!request.coverage.validated_regime.empty())
+  {
+    MFEM_VERIFY(request.IsAutomatic(),
+                "Response-correction \"Coverage.ValidatedRegime\" requires a Library!");
+    coverage_validated_regime =
+        ReadCoverageValidatedRegime(request.coverage.validated_regime, request.library);
+  }
+  coverage_model_qualifications.clear();
+  if (request.IsAutomatic() && Mpi::Root(comm))
+  {
+    coverage_model_qualifications = ReadCoverageModelQualifications(request.library);
+  }
 }
 
 SurfaceResponseOperator::SurfaceResponseOperator(
@@ -31763,12 +32736,12 @@ SurfaceResponseOperator::SurfaceResponseOperator(
           // Decision 1001 Q5: a configuration with geometry fallbacks is never cached (the
           // cache (version 22) carries none; a cache read is a configuration without
           // fallbacks).
-          MFEM_VERIFY(
-              automatic_config->geometry_fallbacks.empty(),
-              "A surface-response configuration with "
-                  << automatic_config->geometry_fallbacks.size()
-                  << " geometry fallback(s) is not cached (GeometryFailurePolicy; "
-                     "decision 1001 Q5): run without PALACE_RESPONSE_GEOMETRY_CACHE!");
+          MFEM_VERIFY(automatic_config->geometry_fallbacks.empty(),
+                      "A surface-response configuration with "
+                          << automatic_config->geometry_fallbacks.size()
+                          << " geometry fallback(s) is not cached (a cached configuration "
+                             "would hide "
+                             "its fallbacks): run without PALACE_RESPONSE_GEOMETRY_CACHE!");
           if (Mpi::Root(fespace.GetComm()))
           {
             WriteResponseGeometryCache(*geometry_cache, *automatic_config);
@@ -31810,6 +32783,12 @@ SurfaceResponseOperator::SurfaceResponseOperator(
   // the Diagnostics whenever set, so that a run of record carrying it is refused by name.
   conductor_consistency_record_only = request->conductor_consistency_record_only;
   exclusion_energy = request->exclusion_energy;
+  ConfigureCoverage(*request, fespace.GetComm());
+  diagnostics_directory = request->diagnostics_directory;
+  conductor_consistency_records_in_directory =
+      request->conductor_consistency_records ==
+      config::ElectrostaticSolverData::ResponseCorrectionData::
+          ConductorConsistencyRecordsOutput::DIRECTORY;
   if (conductor_consistency_record_only)
   {
     ConductorConsistencyDiagnostics()["RecordOnly"] = true;
@@ -31849,6 +32828,11 @@ SurfaceResponseOperator::SurfaceResponseOperator(
   };
   const double target_matching_radius =
       TargetInterfaceMatchingRadius(iodata, config->target_interfaces);
+  configured_target_interfaces = ConfiguredTargetInterfaces(iodata, request->IsAutomatic(),
+                                                            request->target_interfaces);
+  // Lane rescensus-product (decision 1817): the census settings (a bars file of another
+  // radius is a config error here, before any solve).
+  ConfigureResolutionCensus(*request, iodata, target_matching_radius);
   const auto derived_cache_before = GetDerivedResponseMatrixCacheCounters();
   // setupmem S1 (decision 1546): the root builds every model's matrices here (the
   // all-model records and log lines); another rank builds the metadata only and, after the
@@ -32340,7 +33324,7 @@ SurfaceResponseOperator::SurfaceResponseOperator(
         HasExplicitTraceMesh(model_config))
     {
       Mpi::Warning(fespace.GetComm(),
-                   "Conductor-consistency gate (decision 277) not evaluated for response "
+                   "Conductor-consistency gate not evaluated for response "
                    "model \"{}\": its metal cross-sections are probed through the surface "
                    "mortar only (TraceCoupling \"SurfaceMortar\"), not collocated\n",
                    model.name);
@@ -32355,7 +33339,7 @@ SurfaceResponseOperator::SurfaceResponseOperator(
     {
       Mpi::Warning(
           fespace.GetComm(),
-          "Conductor-consistency gate (decision 277) not evaluated for response "
+          "Conductor-consistency gate not evaluated for response "
           "model \"{}\": its trace mesh has no conductor vertex, so it has no metal "
           "cross-section at a fixed potential to probe\n",
           model.name);
@@ -32396,7 +33380,7 @@ SurfaceResponseOperator::SurfaceResponseOperator(
   {
     Mpi::Print(
         fespace.GetComm(),
-        "Consistent translational mortar (decision 404 D1): {:d} of {:d} "
+        "Consistent translational mortar: {:d} of {:d} "
         "translational model(s) project onto the coupon hats with inserted "
         "metal-band vertices ({:d} list them as ZeroTraceIndices, {:d} have no "
         "band)\n",
@@ -33124,7 +34108,7 @@ SurfaceResponseOperator::SurfaceResponseOperator(
                     "conductor-consistency gate cannot read its probes on the device "
                     "chords ("
                  << probe_snap_fault_patches
-                 << " such patch(es); decision 632: such a patch is never solved)!");
+                 << " such patch(es); such a patch is never solved)!");
     }
     MFEM_ABORT("The placed patch of response model \""
                << model_name << "\" records " << probe_snap_fault[2]
@@ -33180,18 +34164,49 @@ SurfaceResponseOperator::SurfaceResponseOperator(
       global_point_count - global_probe_count, global_basis_size);
   if (global_probe_count > 0)
   {
-    Mpi::Print(" Conductor-consistency probe points (decision 277): {:d}\n",
-               global_probe_count);
+    Mpi::Print(" Conductor-consistency probe points: {:d}\n", global_probe_count);
   }
   if (global_diagnostic_patch_count > 0)
   {
-    Mpi::Print(" SpatialClusterPriority clipped-correction diagnostic (decisions 958 (b) / "
-               "969): {:d} dropped coupon(s) sampled on {:d} diagnostic-only trace points "
+    Mpi::Print(" SpatialClusterPriority clipped-correction diagnostic: {:d} dropped "
+               "coupon(s) sampled on {:d} diagnostic-only trace points "
                "(never applied; surface-response-spatial-cluster-priority-clipped-"
                "correction.csv)\n",
                global_diagnostic_patch_count, global_diagnostic_point_count);
   }
   geometry_ledger.Enforce("electrostatic surface-response configuration");
+  {
+    // Lane rescensus-product (decision 1817; ruling 1819 F2): the ONE added locate of the
+    // census knots, through this construction's locator, after its existing locates. The
+    // knots of a local applied patch = its model's basis points placed as the correction
+    // places them (the w component for a spatial model).
+    BlockTimer resolution_timer(Timer::CONSTRUCT_RESPONSE_POINTS);
+    LocateResolutionKnots(
+        point_locator, response_mesh, dimension,
+        [&](std::size_t i, std::vector<std::array<double, 3>> &points)
+        {
+          const auto &patch_config = placed_patches[local_patch_indices[i]];
+          const auto &model = models[patches[i].model];
+          const auto &local_points = basis_points[patches[i].model];
+          points.assign(local_points.size(), {0.0, 0.0, 0.0});
+          for (std::size_t k = 0; k < local_points.size(); k++)
+          {
+            const auto &local = local_points[k];
+            for (int d = 0; d < dimension; d++)
+            {
+              points[k][d] =
+                  patch_config.origin[d] +
+                  (local[0] * patch_config.axis_u[d] + local[1] * patch_config.axis_v[d] +
+                   (model.spatial_basis ? local[2] * patch_config.axis_w[d] : 0.0)) /
+                      coordinate_scale;
+            }
+          }
+        },
+        [&](std::size_t i)
+        {
+          return dimension == 3 ? placed_patches[local_patch_indices[i]].origin[2] : 0.0;
+        });
+  }
   if (cached_geometry)
   {
     // C6 (decision 1446): the shared geometry keeps this rank's local patches only until
@@ -33338,7 +34353,13 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
   geometry_fallback_coordinate_scale = iodata.units.GetMeshLengthRelativeScale();
   conductor_consistency_record_only = request->conductor_consistency_record_only;
   exclusion_energy = request->exclusion_energy;
+  diagnostics_directory = request->diagnostics_directory;
+  conductor_consistency_records_in_directory =
+      request->conductor_consistency_records ==
+      config::ElectrostaticSolverData::ResponseCorrectionData::
+          ConductorConsistencyRecordsOutput::DIRECTORY;
   within_r_volume_energy = request->within_r_volume_energy;
+  ConfigureCoverage(*request, fespace.GetComm());
   if (conductor_consistency_record_only)
   {
     ConductorConsistencyDiagnostics()["RecordOnly"] = true;
@@ -33393,6 +34414,11 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
   basis_points.reserve(config.models.size());
   const double target_matching_radius =
       TargetInterfaceMatchingRadius(iodata, config.target_interfaces);
+  configured_target_interfaces = ConfiguredTargetInterfaces(iodata, request->IsAutomatic(),
+                                                            request->target_interfaces);
+  // Lane rescensus-product (decision 1817): the census settings (a bars file of another
+  // radius is a config error here, before any solve).
+  ConfigureResolutionCensus(*request, iodata, target_matching_radius);
   // setupmem S1 (decision 1546): as the electrostatic constructor (the root builds every
   // model's matrices here; another rank the metadata, then BuildReferencedModelMatrices).
   const bool build_every_model_matrix = Mpi::Root(fespace.GetComm());
@@ -33915,6 +34941,7 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
                             basis_size, 0, patch_config.longitudinal_cell, 1, 0.0,
                             patch_config.weight, patch_config.domain_weight});
     local_patch_configs.push_back(&patch_config);
+    resolution_patch_origin_z.push_back(patch_config.origin[2]);
     // The provenance of the conductor-consistency record (R0-a on the Maxwell path): the
     // feature, the claimed portions, the cell and the translational edge probes.
     auto &placed = patches.back();
@@ -34056,8 +35083,7 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
                         << patch.global_index << " lies in a gap, " << snap.distance / R
                         << " R from the nearest edge (beyond "
                            "MagneticRules.StateAnchorEdgeToleranceOverR "
-                        << magnetic_probe_rules.state_anchor_edge_tolerance_over_r
-                        << "; decision 1323)!");
+                        << magnetic_probe_rules.state_anchor_edge_tolerance_over_r << ")!");
         if (snap.snapped)
         {
           state_anchor_on_edge_count++;
@@ -34513,8 +35539,7 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
                         << " R from the nearest edge (beyond "
                            "MagneticRules.StateAnchorEdgeToleranceOverR "
                         << rules.state_anchor_edge_tolerance_over_r
-                        << "; decisions 1323 / 1334): the LIFTED probe legs cannot be set "
-                           "back!");
+                        << "): the LIFTED probe legs cannot be set back!");
         anchor_move = set_back.move;
       }
       for (const auto &probe_data : patch.conductor_probes)
@@ -34779,13 +35804,13 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
     for (std::size_t i = 0; i < flip_counts.size(); i++)
     {
       const auto &entry = request->control_flip_probe_pieces[i];
-      MFEM_VERIFY(flip_counts[i] > 0,
-                  "ConductorConsistency.ControlFlipProbePiece {Model \""
-                      << entry.model << "\", Edge " << entry.edge << ", Piece "
-                      << entry.piece
-                      << "} flipped no probe: the model is not loaded with local-piece "
-                         "references, has no such edge, or placed no patch (decision 1292: "
-                         "a control that applies nowhere is refused)!");
+      MFEM_VERIFY(
+          flip_counts[i] > 0,
+          "ConductorConsistency.ControlFlipProbePiece {Model \""
+              << entry.model << "\", Edge " << entry.edge << ", Piece " << entry.piece
+              << "} flipped no probe: the model is not loaded with local-piece "
+                 "references, has no such edge, or placed no patch (a control that applies "
+                 "nowhere is refused)!");
     }
     for (const int count : flip_counts)
     {
@@ -34847,10 +35872,10 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
       {
         MFEM_VERIFY(patches_reanchored > 0,
                     "ConductorConsistency.ControlStateAnchorSetbackOverR re-anchored no "
-                    "patch (no translational magnetic patch placed; decision 1302: a "
-                    "control that applies nowhere is refused)!");
+                    "patch (no translational magnetic patch placed; a control that applies "
+                    "nowhere is refused)!");
         Mpi::Print(
-            " DIAGNOSTIC CONTROL ControlStateAnchorSetbackOverR {:.3e} (decision 1302): "
+            " DIAGNOSTIC CONTROL ControlStateAnchorSetbackOverR {:.3e}: "
             "the magnetic chain's anchor lines of {:d} patch(es) start from set-back "
             "anchors; the magnetic term is NOT of record\n",
             control_state_anchor_setback_over_r, patches_reanchored);
@@ -34875,13 +35900,13 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
       state_anchor_max_snap_distance_global = max_snap;
       Mpi::Print(" Magnetic state anchors on an edge: {:d} anchor(s), {:d} snapped onto it "
                  "from a nonzero distance, the farthest {:.3e} R (MagneticRules."
-                 "StateAnchorEdgeToleranceOverR {:.3e}; decision 1323)\n",
+                 "StateAnchorEdgeToleranceOverR {:.3e})\n",
                  anchors_on_edge, anchors_snapped, max_snap / matching_radius,
                  magnetic_probe_rules.state_anchor_edge_tolerance_over_r);
     }
     if (total_control_flips > 0)
     {
-      Mpi::Print(" DIAGNOSTIC CONTROL ControlFlipProbePiece (decision 1292): {:d} probe "
+      Mpi::Print(" DIAGNOSTIC CONTROL ControlFlipProbePiece: {:d} probe "
                  "label(s) flipped on {:d} entr{}; the gates record only\n",
                  total_control_flips,
                  static_cast<int>(request->control_flip_probe_pieces.size()),
@@ -35808,6 +36833,27 @@ void SurfaceResponseOperator::ConfigureMaxwellLines(
                                         dimension);
   ConfigurePointCommunication(point_locator, xyz, dimension, &weighted_tangents, nullptr,
                               has_magnetic_models ? &weighted_normals : nullptr);
+  // Lane rescensus-product (decision 1817; ruling 1819 F2): the ONE added locate of the
+  // census knots (the local patches' contour knots as placed in maxwell_contours), through
+  // this locator, after the point exchange above.
+  LocateResolutionKnots(
+      point_locator, const_cast<mfem::ParMesh &>(fespace.GetParMesh()), dimension,
+      [&](std::size_t i, std::vector<std::array<double, 3>> &points)
+      {
+        const auto &contour = maxwell_contours[i];
+        points.assign(contour.size(), {0.0, 0.0, 0.0});
+        for (std::size_t k = 0; k < contour.size(); k++)
+        {
+          for (int d = 0; d < dimension; d++)
+          {
+            points[k][d] = contour[k](d);
+          }
+        }
+      },
+      [&](std::size_t i)
+      {
+        return i < resolution_patch_origin_z.size() ? resolution_patch_origin_z[i] : 0.0;
+      });
 }
 
 void SurfaceResponseOperator::ConfigurePointCommunication(
@@ -35848,7 +36894,7 @@ void SurfaceResponseOperator::ConfigurePointCommunication(
                          "(even-extension) evaluation is defined for the electrostatic "
                          "trace only (a reflected tangent flips its normal component); set "
                          "ResponseCorrection.DomainBoundary.Mirror = \"Off\" for Maxwell "
-                         "runs (boundary-cut DESIGN 2.2.3, decision 451 MINOR-2)!");
+                         "runs!");
     }
     else
     {
@@ -37607,10 +38653,13 @@ SurfaceResponseOperator::GetFabricatedSurfaceEnergy(const Vector &x) const
 
 SurfaceResponseOperator::ElectrostaticResponse
 SurfaceResponseOperator::GetElectrostaticResponse(const Vector &x, bool include_fixed_flux,
-                                                  bool include_patches) const
+                                                  bool include_patches,
+                                                  ResolutionAccumulator *resolution) const
 {
   ApplyTrace(x, trace);
   ElectrostaticResponse result;
+  // Lane rescensus-product: the patch's fixed-trace fabricated energy per census Type.
+  std::vector<double> resolution_energy(resolution ? resolution->types : 0);
   double weighted_trace_closure_spread_squared = 0.0;
   double trace_closure_response_weight = 0.0;
   double failed_trace_closure_response_weight = 0.0;
@@ -37699,12 +38748,21 @@ SurfaceResponseOperator::GetElectrostaticResponse(const Vector &x, bool include_
            patch_domain_correction, include_fixed_flux ? domain_correction_fixed_flux : 0.0,
            static_cast<double>(model.fabricated_surfaces.size())});
     }
+    std::fill(resolution_energy.begin(), resolution_energy.end(), 0.0);
     for (const auto &[interface, matrix] : model.fabricated_surfaces)
     {
       const double fixed_trace_energy =
           patch.weight * QuadraticForm(matrix, patch_trace, response);
       result.fabricated_surface_energy[interface] += fixed_trace_energy;
       contribution.fabricated_surface_energy[interface] += fixed_trace_energy;
+      if (resolution)
+      {
+        const auto type = resolution_interface_types.find(interface);
+        if (type != resolution_interface_types.end())
+        {
+          resolution_energy[type->second] += fixed_trace_energy;
+        }
+      }
       double fixed_flux_energy = 0.0;
       if (include_fixed_flux)
       {
@@ -37733,6 +38791,19 @@ SurfaceResponseOperator::GetElectrostaticResponse(const Vector &x, bool include_
                     local_patch_records.size() ==
                         patch_record_offset + 9 + 3 * model.fabricated_surfaces.size(),
                 "Incorrect per-patch response record!");
+    if (resolution)
+    {
+      const std::size_t patch_index = static_cast<std::size_t>(&patch - patches.data());
+      double m = 0.0;
+      const auto status = ResolutionPatchStatusOf(patch_index, &m);
+      const int plane_slot = patch_index < resolution_plane_slots.size()
+                                 ? resolution_plane_slots[patch_index]
+                                 : 0;
+      for (int t = 0; t < resolution->types; t++)
+      {
+        resolution->Add(t, plane_slot, status, m, resolution_energy[t]);
+      }
+    }
   }
   const std::size_t values_per_interface = include_fixed_flux ? 2 : 1;
   std::vector<double> reduction;
@@ -38075,8 +39146,11 @@ SurfaceResponseOperator::GatherPatchTraces(const Vector &x, bool spatial_only,
 }
 
 SurfaceResponseOperator::MaxwellResponse SurfaceResponseOperator::GetMaxwellResponse(
-    const GridFunction &E, std::complex<double> omega, bool include_patches) const
+    const GridFunction &E, std::complex<double> omega, bool include_patches,
+    ResolutionAccumulator *resolution) const
 {
+  // Lane rescensus-product: the patch's fixed-trace fabricated energy per census Type.
+  std::vector<double> resolution_energy(resolution ? resolution->types : 0);
   MFEM_VERIFY(maxwell && maxwell_contours.size() == patches.size(),
               "Maxwell surface response was not configured!");
   MFEM_ASSERT(maxwell_conductor_anchors.size() == patches.size(),
@@ -38348,12 +39422,21 @@ SurfaceResponseOperator::MaxwellResponse SurfaceResponseOperator::GetMaxwellResp
            static_cast<double>(model.fabricated_surfaces.size())});
     }
     const double surface_weight = fallback ? 0.0 : patch.weight;
+    std::fill(resolution_energy.begin(), resolution_energy.end(), 0.0);
     for (const auto &[interface, matrix] : model.fabricated_surfaces)
     {
       const double fixed_trace_energy =
           surface_weight * HermitianForm(matrix, patch_trace_real, patch_trace_imag);
       const double fixed_flux_energy =
           surface_weight * HermitianForm(matrix, fixed_flux_real, fixed_flux_imag);
+      if (resolution)
+      {
+        const auto type = resolution_interface_types.find(interface);
+        if (type != resolution_interface_types.end())
+        {
+          resolution_energy[type->second] += fixed_trace_energy;
+        }
+      }
       result.fabricated_surface_energy[interface] += fixed_trace_energy;
       result.fabricated_surface_energy_fixed_flux[interface] += fixed_flux_energy;
       contribution.fabricated_surface_energy[interface] += fixed_trace_energy;
@@ -38375,6 +39458,18 @@ SurfaceResponseOperator::MaxwellResponse SurfaceResponseOperator::GetMaxwellResp
         {
           failed_trace_closure_response_weight += weight;
         }
+      }
+    }
+    if (resolution)
+    {
+      double m = 0.0;
+      const auto status = ResolutionPatchStatusOf(patch_index, &m);
+      const int plane_slot = patch_index < resolution_plane_slots.size()
+                                 ? resolution_plane_slots[patch_index]
+                                 : 0;
+      for (int t = 0; t < resolution->types; t++)
+      {
+        resolution->Add(t, plane_slot, status, m, resolution_energy[t]);
       }
     }
     double path_scale_squared = 0.0;
@@ -39148,6 +40243,24 @@ std::set<int> SurfaceResponseOperator::GetTargetInterfaces() const
       interfaces.insert(interface);
     }
   }
+  return interfaces;
+}
+
+std::set<int> SurfaceResponseOperator::GetConfiguredTargetsNotServed() const
+{
+  const auto served = GetTargetInterfaces();
+  std::set<int> not_served;
+  std::set_difference(configured_target_interfaces.begin(),
+                      configured_target_interfaces.end(), served.begin(), served.end(),
+                      std::inserter(not_served, not_served.end()));
+  return not_served;
+}
+
+std::set<int> SurfaceResponseOperator::GetCoverageInterfaces() const
+{
+  auto interfaces = GetTargetInterfaces();
+  interfaces.insert(configured_target_interfaces.begin(),
+                    configured_target_interfaces.end());
   return interfaces;
 }
 

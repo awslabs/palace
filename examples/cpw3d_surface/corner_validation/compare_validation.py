@@ -10,10 +10,18 @@ from pathlib import Path
 INTERFACES = {1: "SA", 2: "MS", 3: "MA"}
 
 
+def _cell(value):
+    """A number, or the text of a text column (the coverage Type / status columns)."""
+    try:
+        return float(value)
+    except ValueError:
+        return value.strip()
+
+
 def read_row(path):
     with path.open(newline="") as stream:
         row = next(csv.DictReader(stream, skipinitialspace=True))
-    return {key.strip(): float(value) for key, value in row.items()}
+    return {key.strip(): _cell(value) for key, value in row.items()}
 
 
 def main():

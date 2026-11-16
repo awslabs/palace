@@ -62,6 +62,21 @@ class CorrectedEigenmodeBenchmarkTest(unittest.TestCase):
         self.assertTrue(
             BENCHMARK.compare_snapshots(expected, observed, 1.0e-3, 1.0e-20)
         )
+        # An appended coverage column is not compared; any other new column is a change.
+        observed["x.csv"][0]["m"] = 1.0
+        observed["x.csv"][0]["coverage status"] = "OK"
+        self.assertEqual(
+            BENCHMARK.compare_snapshots(expected, observed, 1.0e-3, 1.0e-20), []
+        )
+        observed["x.csv"][0]["another column"] = 1.0
+        self.assertTrue(
+            BENCHMARK.compare_snapshots(expected, observed, 1.0e-3, 1.0e-20)
+        )
+        del observed["x.csv"][0]["another column"]
+        del observed["x.csv"][0]["value"]
+        self.assertTrue(
+            BENCHMARK.compare_snapshots(expected, observed, 1.0e-3, 1.0e-20)
+        )
 
     def test_prepare_config_is_p1_and_fixed_mesh(self):
         with tempfile.TemporaryDirectory() as temporary:

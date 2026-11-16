@@ -380,7 +380,7 @@ def taper_family_requirements(manifest, feature_ids=None):
         offsets = [float(edge["OffsetOverR"]) for edge in signature["Edges"]]
         if not taper_links_uniform(entry["Links"], offsets):
             report.append({"Id": feature_id, "Type": entry["Type"], "Rows": 0,
-                           "Reason": "NON-UNIFORM taper (the position family is not implemented; decision 1291)"})
+                           "Reason": "NON-UNIFORM taper (the position family is not implemented)"})
             continue
         if requirement["Hash"] in seen:
             report.append({"Id": feature_id, "Type": entry["Type"], "Rows": 0, "Reason": "family already emitted (shared key)"})
@@ -1401,7 +1401,8 @@ def plan_local_pieces_form(coupon, matching_radius, parameters=None, one_referen
             # is raised again by the one-reference builder (confirmation d1140 MINOR-B).
             coupon["Preparation"] = preparation = {
                 "Method": "Unsupported",
-                "Reason": (f"the piece form is the default (decision 1136 (4)) and its pieces are not derivable from "
+                "Reason": (f"the piece form (one conductor reference per local metal piece) is the default for a coupon "
+                           f"whose conductor label holds two or more metal pieces, and its pieces are not derivable from "
                            f"this coupon: {error}; --one-reference opts out of the piece form"),
                 **{key: value for key, value in preparation.items()
                    if key in ("BoundaryLawQualification", "LocalPieces", "LocalPiecesReason")}}
@@ -1442,6 +1443,9 @@ HELDOUT_ESCALATION_FACTOR = 1.5
 HELDOUT_ESCALATION_FAMILIES = ("StraightEdgeBuilder", "ParallelClusterCoupon")
 HELDOUT_ESCALATION_NOT_APPLICABLE = ("CornerCoupon", "SpatialCoupon")
 HELDOUT_ESCALATION_RULE = ("decision 1116: on a held-out-only qualification failure ONE retry at 1.5x --basis-size / --samples; a "
+                           "second failure = Unqualified (fail closed); the two attempts' records point at each other")
+# The same rule for the printed text (the log and --help); HELDOUT_ESCALATION_RULE is the text of the records.
+HELDOUT_ESCALATION_TEXT = ("on a held-out-only qualification failure ONE retry at 1.5x --basis-size / --samples; a "
                            "second failure = Unqualified (fail closed); the two attempts' records point at each other")
 
 
@@ -1492,7 +1496,7 @@ def with_heldout_escalation(builder, args, label):
         settings = {"BasisSize": args.basis_size, "Samples": args.samples}
         escalated_settings = {"BasisSize": escalated.basis_size, "Samples": escalated.samples}
         print(f"Held-out qualification failed for {label} at basis {args.basis_size} / samples {args.samples}: ONE escalation "
-              f"at {HELDOUT_ESCALATION_FACTOR}x (basis {escalated.basis_size} / samples {escalated.samples}; {HELDOUT_ESCALATION_RULE})",
+              f"at {HELDOUT_ESCALATION_FACTOR}x (basis {escalated.basis_size} / samples {escalated.samples}; {HELDOUT_ESCALATION_TEXT})",
               flush=True)
         record_heldout_escalation(first.qualification_path, {"Rule": HELDOUT_ESCALATION_RULE, "Attempt": 1, "Factor": HELDOUT_ESCALATION_FACTOR,
                                                               "Settings": settings, "Outcome": "HeldOutFailure", "Escalation": escalated_settings})
@@ -3067,7 +3071,7 @@ def refuse_piece_form_spatial_coupons(coupons):
         raise ValueError(
             f"--execute refuses the SpatialCoupon(s) planned in the piece form (Preparation.LocalPieces): {offending}. "
             f"build_spatial builds the ONE-REFERENCE form only; the piece form is built by {PIECE_FORM_SPATIAL_PATH_OF_RECORD}, "
-            "or pass --skip-methods SpatialCoupon to leave the family to it (fix round R-3; decision 1157 Q1)")
+            "or pass --skip-methods SpatialCoupon to leave the family to it")
 
 
 def execute(plan, library_path, args):
@@ -3337,7 +3341,7 @@ def parse_args():
         default=None,
         help=(
             "localized-energy radii (um) of the StraightEdgeBuilder interfaces, ending at 0.2 "
-            "(default 0.2 alone); the 3D thin ring radii give the 2D MA per shell (decision 66 part C)"
+            "(default 0.2 alone); the 3D thin ring radii give the 2D MA per shell"
         ),
     )
     parser.add_argument("--corner-lc-fine", type=float, default=0.02)
@@ -3437,16 +3441,16 @@ def parse_args():
     parser.add_argument("--coupon-depth", type=float, default=1055.0)
     parser.add_argument("--edge-offset-tolerance", type=float, default=1.0e-3)
     parser.add_argument("--local-pieces", action="store_true",
-                        help="R0-b (identification fix round DESIGN A.3 (b); decisions 1064 (4) / 1096 (8) / 1136 (4)): the piece form - a "
+                        help="the piece form - a "
                              "coupon's conductor labels are its LOCAL metal pieces (one reference per piece; the parallel-cluster "
                              "signature CSV and the same-conductor-gap mesher carry Conductor := piece; Edges[].LocalPiece / LocalPieces "
                              "on the library entries; the straight / parallel-cluster cache keys carry the form and the model Name "
-                             "the -pieces<P> suffix). THE DEFAULT since decision 1136 (4) for every coupon whose cross-section / plan "
+                             "the -pieces<P> suffix). THE DEFAULT for every coupon whose cross-section / plan "
                              "view holds a label with >= 2 pieces (Preparation.LocalPieces in the plan): this flag is the explicit NAME "
                              "of that default and has NO effect beyond refusing --one-reference (kept for command-line compatibility "
-                             "with the records; decision 1145 Q2)")
+                             "with the records)")
     parser.add_argument("--taper-families", action="store_true",
-                        help="R-9b (fix round P3; decisions 1286 Q-5 / 1291): plan the SCALE-FAMILY rows of every served, uniformly "
+                        help="plan the SCALE-FAMILY rows of every served, uniformly "
                              "scaled KeyedAtTheMean feature of the manifest (TAPER_FAMILY_RULE) and ONLY those rows (the "
                              "manifest's own Missing requirements stay Missing: the family build is a library ADDITION); the plan "
                              "records TaperFamilies {Rule, Report, Rows}")
@@ -3454,11 +3458,11 @@ def parse_args():
                         help="with --taper-families: the feature Ids (comma-separated) whose families are planned = the staged "
                              "build order (default: every eligible feature)")
     parser.add_argument("--one-reference", action="store_true",
-                        help="opt out of the piece-form default (decision 1136 (4)): every coupon in the one-reference form (the ES "
-                             "record form of v3-j; every output byte-identical to the pre-1136 planner)")
+                        help="opt out of the piece-form default: every coupon in the one-reference form (the electrostatic "
+                             "record form; every output byte-identical to the planner before the piece-form default)")
     parser.add_argument("--max-heldout-error", type=float, default=10.0)
     parser.add_argument("--no-heldout-escalation", action="store_true",
-                        help=f"switch the held-out escalation rule OFF ({HELDOUT_ESCALATION_RULE}; default ON for "
+                        help=f"switch the held-out escalation rule OFF ({HELDOUT_ESCALATION_TEXT}; default ON for "
                              f"{' / '.join(HELDOUT_ESCALATION_FAMILIES)})")
     parser.add_argument("--max-fabricated-matrix-change", type=float, default=5.0)
     parser.add_argument("--max-fabricated-energy-change", type=float, default=10.0)

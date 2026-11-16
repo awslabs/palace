@@ -47,11 +47,60 @@ single-frequency window is the same rule with one member.
 The letters, tails, class rule and verdict are the 994 / 995 tabulators' (tabulate_rerun2.py: model_class / tail_of / TAILS /
 verdict; collect17.py: ma_sharp) ported verbatim so that the 47 stage-E cells and the 995 Maxwell card are reproduced from the
 stored CSVs (test_grade_cells.py). Pure Python; exit 0 when the grade was written.
+
+NOT-APPLIED (decision 1847 E-1): a member whose x is not finite -- the corrected device value is a marked cell's nan (Coverage.Policy
+MarkNotApplied prints a marked corrected cell as nan, its value in the `... partial (uncovered part raw)` column) or the reference is
+non-finite -- carries the letter NOT-APPLIED (no grade); the cell letter is FAIL if any member FAILs, else NOT-APPLIED if any member is
+NOT-APPLIED: a non-finite corrected cell never reads PASS. The partial twin columns are never graded. A NOT-APPLIED cell quotes
+its unmarked members' worst / range only as unmarked_members_x_pct / _x_range_pct with n_unmarked_members (decision 1875), never
+as the cell's x_pct. A --band report row with not_applied (coverage_report withheld the Type's band: a marked solve) reads as
+no band, with the reason (band NOT-APPLIED (marked solve); decision 1884).
+
+EXPLICIT MARKS (decisions 1908 / 1914; coverage_marks.py): on a MarkNotApplied tree (any signal of coverage_marks.tree_signals) a
+corrected / normalization cell is NOT-APPLIED only when its mark column (`coverage mark E_elec` / `coverage mark[k]` /
+`coverage mark[i][j]`; Maxwell `coverage mark E_norm` / `coverage mark E_surf`) is 1; an unmarked cell that is not a finite number,
+or a missing mark column, is a REFUSAL (one line, exit 5, no output file). USER 1867 Q3 (keep + flag): the kept p of an unmarked Type
+under a marked normalization is graded WITH the flag (`... [FLAG Q3: normalization marked]` beside a PASS / INCONCLUSIVE letter; a
+FAIL stays `FAIL` with its `flag`); a flagged grade never counts in n_pass; anything this reader BUILDS from the marked
+normalization (MA_sharp_p, C_eff, E_norm minus E_cap) is NOT-APPLIED. A Warn / pre-policy tree reads as before, except that a text
+token in a read corrected cell is a REFUSAL.
+
+ROUND 3 (decision 1934): a --band report is read ONLY when coverage_marks.accept_report accepts it: its provenance names a writer of
+ALLOWED_REPORT_WRITERS (coverage_report.py of this commit, by sha256), or it has no provenance and its tree is on this host and reads
+unmarked by the guard's rule; else a REFUSAL (one line, exit 5, no output file). The grade JSON carries this writer's provenance. A
+table naming a mark / twin / exposure column twice is a REFUSAL; a mark token is read one way ('1' / '0' exactly).
+
+ROUND 4 (decision 1942): the no-provenance branch is REMOVED: a --band report is read ONLY with the provenance of the writer of
+ALLOWED_REPORT_WRITERS (coverage_report.py of the round-4 commit, by sha256, with its coverage_marks sha256 and explicit_marks true);
+any other report, an old report of an unmarked tree included, is a REFUSAL ('report without an allowed provenance: re-create it with
+the allowed reader'; one line, exit 5, no output file). No tree is read for the decision.
+
+ROUND 5 (decisions 1954 / 1955): an ES member reads the --band marks of ITS OWN source: a Type the report withholds for the member's
+source (its per-source not_applied_types or block_C row with not_applied) or for the default source (the band values are the default
+source's block_C, the window band form of decision 1455 (b): where that row is withheld no value exists) reads 'band NOT-APPLIED
+(marked solve)' for that member, never a band pass or fail, and the Type is listed in band_not_applied_types. The marks are read by
+the rule of the banner's marks_by_source (f_report_banner_v8), so the two consumers withhold the same (member, Type). A member whose
+source has no block in the report reads the default block only: its graded value comes from the tree with the explicit marks (a
+marked final value is NOT-APPLIED from the tree itself); a source's own marks add only the marks of earlier solves of its ladder,
+which enter nothing this reader computes for the member. A report without a withheld row reads as in round 4.
+
+THE ALLOWED WRITER (decisions 1966 / 1967 (A)): coverage_report.py of the merge preparation (it refuses a --ladder-run directory
+without the ladder's tables), by sha256, ONLY; a report of the round-4 writer 6dec7256 (which gave a silently empty ladder for a
+run-directory --ladder-run) is a REFUSAL like any report without an allowed provenance: re-create it with the allowed writer.
+
+THE UNCALIBRATED ROW (decision 1966; FLIP-LIST-v5 s0, OI-GRADE-CELLS-BAND-KEYERROR-ON-UNCALIBRATED-ROW): a --band report row that
+is not withheld and has no band ends (no low_pt / high_pt: an UNCALIBRATED Type of the bands file, or a Type the file does not
+calibrate) is NO BAND OF RECORD: a member that has an x for that Type reads band null, in null and the band_note
+'band n/a (uncalibrated)' (never a band pass or fail; the cell's in_band null), and the output's top-level 'band' lists such a
+Type in band_uncalibrated_types WITHOUT ends (never [low, high]). Before this rule the reader ended with a KeyError (exit 1,
+nothing written) on every report holding such a row (every Maxwell-family report of the bands v6). A report without such a row
+reads as before, byte for byte.
 """
 
 import argparse
 import csv
 import json
+import math
 import os
 import re
 import sys
@@ -61,6 +110,29 @@ QUALIFY_DIR = os.path.normpath(os.path.join(HERE, "..", "cpw3d_surface", "spatia
 if QUALIFY_DIR not in sys.path:
     sys.path.insert(0, QUALIFY_DIR)
 import radial_ma_profile as profile  # noqa: E402
+
+if HERE not in sys.path:
+    sys.path.insert(0, HERE)
+import coverage_marks as cm  # noqa: E402
+
+# The explicit-mark rule's module (decision 1914): this reader is of record only with this file (sha256-16 asserted).
+COVERAGE_MARKS_SHA256_16 = "3feaa623f05d4598"
+
+
+def _assert_coverage_marks():
+    import hashlib
+    with open(cm.__file__, "rb") as handle:
+        got = hashlib.sha256(handle.read()).hexdigest()[:16]
+    if got != COVERAGE_MARKS_SHA256_16:
+        raise SystemExit(f"{cm.__file__} sha256-16 {got} != {COVERAGE_MARKS_SHA256_16} (grade_cells.py reads marks with that file only)")
+
+
+_assert_coverage_marks()
+
+# Decisions 1934 / 1942: the report writers whose --band reports this reader accepts, by provenance ONLY: {writer sha256: the
+# coverage_marks.py sha256 it requires} (ONE writer: coverage_report.py of the policy branch's merge preparation, decisions 1966 /
+# 1967 (A); the round-4 writer 6dec7256 is no longer allowed: it gave a silently EMPTY ladder for a run-directory --ladder-run).
+ALLOWED_REPORT_WRITERS = {"0aae7cce91666be3bc3175aca448d92de811efc50e539e20797b0d47cbd3eed2": "3feaa623f05d459820000df67f706d393cad8053bf7ead1b96127c4eff8c0d53"}
 
 TYPES = ("SA", "MS", "MA_sharp", "C")
 D4 = {"SA": 5.0, "MS": 5.0, "MA_sharp": 5.0, "C": 0.5}
@@ -152,6 +224,7 @@ def read_csv(path):
     with open(path, newline="") as handle:
         rows = [r for r in csv.reader(handle) if r and not r[0].lstrip().startswith("#")]
     header = [h.strip() for h in rows[0]]
+    cm.refuse_duplicate_columns(header, path)
     return [dict(zip(header, [v.strip() for v in r])) for r in rows[1:]]
 
 
@@ -163,10 +236,41 @@ def pct(a, b):
     return 100.0 * (a / b - 1.0)
 
 
+# The letter of a member whose x is not finite (decision 1847 E-1): no grade, never PASS.
+NOT_APPLIED = "NOT-APPLIED"
+# A Type whose band coverage_report withheld (its row carries not_applied: a marked solve; decision 1884).
+BAND_NOT_APPLIED = "NOT-APPLIED (marked solve)"
+# A --band row without band ends that is not withheld: no band of record (decision 1966; FLIP-LIST-v5 s0): never a band pass / fail.
+BAND_UNCALIBRATED = "band n/a (uncalibrated)"
+# USER 1867 Q3 / decision 1914: the flag printed beside the letter of a kept value under a marked normalization.
+FLAG_SUFFIX = f" [{cm.FLAG_Q3}]"
+
+
+def base_letter(letter):
+    """A letter without its Q3 flag suffix."""
+    return letter[: -len(FLAG_SUFFIX)] if isinstance(letter, str) and letter.endswith(FLAG_SUFFIX) else letter
+
+
+class Marks:
+    """The tree's explicit-mark context (decision 1914): marked_tree = any MarkNotApplied signal of the device tree."""
+
+    def __init__(self, marked_tree):
+        self.marked_tree = bool(marked_tree)
+
+    def value(self, row, column, mark_column, where):
+        """A corrected / normalization cell: its float, nan for a NOT-APPLIED (explicitly marked) cell; cm.Refusal."""
+        v = cm.read_cell(row, column, mark_column, self.marked_tree, where)
+        return math.nan if v is None else v
+
+    def marked(self, row, mark_column, where):
+        return self.marked_tree and cm.mark_is_set(row, mark_column, where)
+
+
 def verdict(value, limit, bracket=None):
-    """tabulate_rerun2.verdict: |x| > bar FAIL; ft inside with the bracket outside INCONCLUSIVE; else PASS."""
-    if value != value:
-        return "n/a"
+    """tabulate_rerun2.verdict: |x| > bar FAIL; ft inside with the bracket outside INCONCLUSIVE; else PASS. A non-finite x (a
+    marked corrected cell's nan) is NOT_APPLIED (decision 1847 E-1; it was 'n/a', which the cell rule read as PASS)."""
+    if not math.isfinite(value):
+        return NOT_APPLIED
     if abs(value) > limit:
         return "FAIL"
     if bracket and (abs(bracket[0]) > limit or abs(bracket[1]) > limit):
@@ -233,18 +337,20 @@ def spatial_tails(library_path):
 
 
 def model_catalog(postpro, catalog_path=None):
-    """{model index: Name} from postpro/palace.json's SurfaceResponse.ModelCatalog, else from --model-catalog (a JSON list
-    of {Index, Name}: the extracted catalog of a run whose palace.json was not kept)."""
+    """({model index: Name}, its source, palace.json's SurfaceResponse.Coverage.Policy or None) from postpro/palace.json's
+    SurfaceResponse.ModelCatalog, else from --model-catalog (a JSON list of {Index, Name}: the extracted catalog of a run whose
+    palace.json was not kept; no Policy then)."""
     pj = os.path.join(postpro, "palace.json")
     if os.path.isfile(pj):
         with open(pj) as handle:
-            cat = json.load(handle)["SurfaceResponse"]["ModelCatalog"]
-        return {int(m["Index"]): m["Name"] for m in cat}, pj
+            palace = json.load(handle)
+        cat = palace["SurfaceResponse"]["ModelCatalog"]
+        return {int(m["Index"]): m["Name"] for m in cat}, pj, cm.palace_policy(palace)
     if catalog_path is None:
         raise MissingInput(pj)
     with open(catalog_path) as handle:
         cat = json.load(handle)
-    return {int(m["Index"]): m["Name"] for m in cat}, catalog_path
+    return {int(m["Index"]): m["Name"] for m in cat}, catalog_path, None
 
 
 def interfaces_by_type(config_path):
@@ -440,32 +546,52 @@ def row_of_source(rows, src):
     return out[0]
 
 
-def offdiag(row, prefix, src):
-    """{j: value} of the `<prefix>[i][j]` columns with j != src."""
+# The suffix of the MarkNotApplied twin columns (kCoveragePartialColumnSuffix, surfaceresponsecoverage.hpp): a twin is never
+# read as the column it twins (decision 1847 E-1).
+PARTIAL_COLUMN_SUFFIX = " partial (uncovered part raw)"
+
+
+def offdiag(row, prefix, src, marks=None, where=None):
+    """{j: value} of the `<prefix>[i][j]` columns with j != src (never a MarkNotApplied twin column); with `marks` (a device
+    table) each entry read through its explicit mark `coverage mark[i][j]` (nan = NOT-APPLIED)."""
     out = {}
     for k, v in row.items():
         m = re.match(re.escape(prefix) + r"\[i\]\[(\d+)\]", k)
-        if m and int(m.group(1)) != src:
-            out[int(m.group(1))] = fnum(v)
+        if m and int(m.group(1)) != src and not k.endswith(PARTIAL_COLUMN_SUFFIX):
+            j = int(m.group(1))
+            out[j] = fnum(v) if marks is None else marks.value(row, k, cm.MARK_MATRIX_ENTRY.format(j), where)
     return out
 
 
-def es_device_source(final, src, iface, catalog, sp_tails, tail_form=DEFAULT_TAIL_FORM):
-    """The ES device's per-Type values for source `src` (row i == src of every CSV of the final cycle)."""
-    q = read_csv(os.path.join(final, "surface-Q-corrected.csv"))
+def es_device_source(final, src, iface, catalog, sp_tails, tail_form=DEFAULT_TAIL_FORM, marks=None):
+    """The ES device's per-Type values for source `src` (row i == src of every CSV of the final cycle). `marks` (Marks): the
+    corrected cells through their explicit marks (nan = NOT-APPLIED); a Type kept under a marked E_elec is listed in
+    q3_flagged_types (decision 1914)."""
+    marks = marks or Marks(False)
+    q_path = os.path.join(final, "surface-Q-corrected.csv")
+    q = read_csv(q_path)
     row = row_of_source(q, src)
-    out = {"source": src, "E_elec_ft_J": fnum(row["E_elec postprocessed fixed-trace (J)"]), "E_elec_raw_J": fnum(row["E_elec raw (J)"])}
+    where = f"{q_path} source {src}"
+    out = {"source": src, "E_elec_ft_J": marks.value(row, "E_elec postprocessed fixed-trace (J)", cm.MARK_E_ELEC, where),
+           "E_elec_raw_J": fnum(row["E_elec raw (J)"])}
     for T, ks in iface.items():
-        out[f"{T}_p_ft"] = sum(fnum(row[f"p_surf postprocessed fixed-trace[{k}]"]) for k in ks)
+        out[f"{T}_p_ft"] = sum(marks.value(row, f"p_surf postprocessed fixed-trace[{k}]", cm.MARK_INTERFACE.format(k), where) for k in ks)
         out[f"{T}_p_raw"] = sum(fnum(row[f"p_surf raw[{k}]"]) for k in ks)
-        out[f"{T}_E_ft_J"] = sum(fnum(row[f"E_surf postprocessed fixed-trace[{k}] (J)"]) for k in ks)
+        out[f"{T}_E_ft_J"] = sum(marks.value(row, f"E_surf postprocessed fixed-trace[{k}] (J)", cm.MARK_INTERFACE.format(k), where)
+                                 for k in ks)
         out[f"{T}_E_raw_J"] = sum(fnum(row[f"E_surf raw[{k}] (J)"]) for k in ks)
+    if marks.marked(row, cm.MARK_E_ELEC, where):
+        # USER 1867 Q3: the kept p of an unmarked Type under the marked E_elec is graded WITH the flag
+        flagged = [T for T, ks in iface.items() if ks and not any(marks.marked(row, cm.MARK_INTERFACE.format(k), where) for k in ks)]
+        out["q3_flagged_types"] = [T for T in ("SA", "MS") if T in flagged]
+        out["q3_exposure_share"] = row.get(cm.EXPOSURE_HEADERS[1])
     edge = read_csv(os.path.join(final, "surface-Q-edge.csv"))
     for T, ks in iface.items():
         out[f"{T}_E_out_J"] = sum(fnum(r["E_out (J)"]) for r in edge if int(fnum(r["i"])) == src and int(fnum(r["interface"])) in ks)
-    cc = row_of_source(read_csv(os.path.join(final, "terminal-C-corrected.csv")), src)
-    out["C_ft_F"] = fnum(cc[f"C fixed-trace[i][{src}] (F)"])
-    out["C_ft_offdiag_F"] = offdiag(cc, "C fixed-trace", src)
+    cc_path = os.path.join(final, "terminal-C-corrected.csv")
+    cc = row_of_source(read_csv(cc_path), src)
+    out["C_ft_F"] = marks.value(cc, f"C fixed-trace[i][{src}] (F)", cm.MARK_MATRIX_ENTRY.format(src), f"{cc_path} row {src}")
+    out["C_ft_offdiag_F"] = offdiag(cc, "C fixed-trace", src, marks, f"{cc_path} row {src}")
     cr = row_of_source(read_csv(os.path.join(final, "terminal-C.csv")), src)
     out["C_raw_F"] = fnum(cr[f"C[i][{src}] (F)"])
     me = read_csv(os.path.join(final, "surface-response-model-energy.csv"))
@@ -515,11 +641,16 @@ def port_v2(rows, F, port=1):
     return fnum(v[0][f"Re{{V[{port}]}} (V)"]) ** 2 + fnum(v[0][f"Im{{V[{port}]}} (V)"]) ** 2
 
 
-def mx_device_f(post, F, iface, catalog, sp_tails, p_denominator, with_port=True, excitation=None, tail_form=DEFAULT_TAIL_FORM):
+def mx_device_f(post, F, iface, catalog, sp_tails, p_denominator, with_port=True, excitation=None, tail_form=DEFAULT_TAIL_FORM,
+                marks=None):
     """The Maxwell device's per-Type values at frequency F (the top-level postpro = the final solve). The per-interface
     rows of surface-Q-corrected.csv at F (and excitation `excitation` when the CSV carries an `exc` column and several
-    excitations); p = E_surf corrected / denominator (E_norm corrected, or E_norm corrected - E_cap: A1.1.1)."""
-    q = read_csv(os.path.join(post, "surface-Q-corrected.csv"))
+    excitations); p = E_surf corrected / denominator (E_norm corrected, or E_norm corrected - E_cap: A1.1.1). `marks` (Marks): the
+    corrected cells through their explicit marks (nan = NOT-APPLIED; decision 1914)."""
+    marks = marks or Marks(False)
+    q_path = os.path.join(post, "surface-Q-corrected.csv")
+    where = f"{q_path} at {F} GHz"
+    q = read_csv(q_path)
     rows = rows_at_f(q, F)
     if excitation is not None and rows and "exc" in rows[0]:
         rows = [r for r in rows if int(fnum(r["exc"])) == excitation]
@@ -533,7 +664,7 @@ def mx_device_f(post, F, iface, catalog, sp_tails, p_denominator, with_port=True
     if not needed <= set(by_iface):
         raise ValueError(f"surface-Q-corrected.csv at {F} GHz: interfaces {sorted(needed - set(by_iface))} absent")
     any_row = next(iter(by_iface.values()))
-    e_norm_ft = fnum(any_row["E_norm corrected (J)"])
+    e_norm_ft = marks.value(any_row, "E_norm corrected (J)", cm.MARK_E_NORM, where)
     e_norm_raw = fnum(any_row["E_norm raw (J)"])
     de = rows_at_f(read_csv(os.path.join(post, "domain-E.csv")), F)
     if len(de) != 1:
@@ -546,14 +677,16 @@ def mx_device_f(post, F, iface, catalog, sp_tails, p_denominator, with_port=True
            "E_mag_J": fnum(d["E_mag (J)"]), "E_cap_J": e_cap, "p_denominator": p_denominator, "p_denominator_ft_J": denom_ft}
     out["E_mag_over_E_elec"] = out["E_mag_J"] / out["E_elec_J"] if out["E_elec_J"] else None
     for T, ks in iface.items():
-        out[f"{T}_E_ft_J"] = sum(fnum(by_iface[k]["E_surf corrected (J)"]) for k in ks)
+        out[f"{T}_E_ft_J"] = sum(marks.value(by_iface[k], "E_surf corrected (J)", cm.MARK_E_SURF, f"{where} interface {k}") for k in ks)
         out[f"{T}_E_raw_J"] = sum(fnum(by_iface[k]["E_surf raw (J)"]) for k in ks)
-        out[f"{T}_E_ff_J"] = sum(fnum(by_iface[k]["E_surf corrected fixed-flux (J)"]) for k in ks)
+        out[f"{T}_E_ff_J"] = sum(marks.value(by_iface[k], "E_surf corrected fixed-flux (J)", cm.MARK_E_SURF, f"{where} interface {k}")
+                                 for k in ks)
         if p_denominator == "E_norm":
             # the binary's own p_surf columns (the printed values: the record form of the stage-E Maxwell grades)
-            out[f"{T}_p_ft"] = sum(fnum(by_iface[k]["p_surf corrected"]) for k in ks)
+            out[f"{T}_p_ft"] = sum(marks.value(by_iface[k], "p_surf corrected", cm.MARK_E_SURF, f"{where} interface {k}") for k in ks)
             out[f"{T}_p_raw"] = sum(fnum(by_iface[k]["p_surf raw"]) for k in ks)
-            out[f"{T}_p_ff"] = sum(fnum(by_iface[k]["p_surf corrected fixed-flux"]) for k in ks)
+            out[f"{T}_p_ff"] = sum(marks.value(by_iface[k], "p_surf corrected fixed-flux", cm.MARK_E_SURF, f"{where} interface {k}")
+                                   for k in ks)
         else:
             out[f"{T}_p_ft"] = out[f"{T}_E_ft_J"] / denom_ft
             out[f"{T}_p_raw"] = out[f"{T}_E_raw_J"] / denom_raw
@@ -561,6 +694,14 @@ def mx_device_f(post, F, iface, catalog, sp_tails, p_denominator, with_port=True
     edge = read_csv(os.path.join(post, "surface-Q-edge.csv"))
     for T, ks in iface.items():
         out[f"{T}_E_out_J"] = sum(fnum(r["E_out (J)"]) for r in rows_at_f(edge, F) if int(fnum(r["interface"])) in ks)
+    if marks.marked(any_row, cm.MARK_E_NORM, where) and p_denominator == "E_norm":
+        # USER 1867 Q3: the kept p of an unmarked Type under the marked E_norm is graded WITH the flag (E_norm - E_cap is built
+        # from the marked normalization: NOT-APPLIED, nan above)
+        out["q3_flagged_types"] = [T for T in ("SA", "MS") if iface.get(T) and not any(
+            marks.marked(by_iface[k], cm.MARK_E_SURF, f"{where} interface {k}") for k in iface[T])]
+        conf = [r for r in rows_at_f(read_csv(os.path.join(post, "surface-response-confidence.csv")), F)
+                if excitation is None or "exc" not in r or int(fnum(r["exc"])) == excitation]
+        out["q3_exposure_share"] = conf[0].get(cm.EXPOSURE_HEADERS[0]) if len(conf) == 1 else None
     if with_port:
         out["V2"] = port_v2(read_csv(os.path.join(post, "port-V.csv")), F)
         out["C_eff_ft_F"] = 2.0 * e_norm_ft / out["V2"]
@@ -648,13 +789,77 @@ def static_limit_fit(freqs_ghz, c_eff):
             "rule": "unweighted least squares of C_eff on f^2: C_eff(f) = C_s (1 + a f^2); C_s = the static limit"}
 
 
+def band_withheld_by_source(report):
+    """{source (str): the block_C Types the --band report withholds for it} (decisions 1954 / 1955): the default source's from the
+    report's own not_applied_types and block_C rows, every other source's from its per-source block -- the rule of
+    f_report_banner_v8.marks_by_source, so that the two consumers read the same marks."""
+    def of(block):
+        rows = block.get("block_C")
+        m = set(block.get("not_applied_types") or [])
+        m.update(t for t, row in (rows.items() if isinstance(rows, dict) else []) if isinstance(row, dict) and row.get("not_applied"))
+        return m
+    out = {str(report.get("source")): of(report)}
+    per = report.get("sources") or {}
+    for s, block in (per.items() if isinstance(per, dict) else []):
+        out.setdefault(str(s), set()).update(of(block) if isinstance(block, dict) else set())
+    return out
+
+
+class BandWithheld:
+    """The Types a --band report withholds for each ES member (decisions 1954 / 1955): the member's own source block OR the default
+    source's block (a member whose source has no block: the default block only)."""
+
+    def __init__(self, report):
+        self.by_source = band_withheld_by_source(report)
+        self.default = self.by_source[str(report.get("source"))]
+
+    def of_member(self, member):
+        # `| self.default` changes nothing on a report of the allowed writer (the default source's withheld Types are already
+        # not_applied rows of the headline block_C that every member reads); it guards an EDITED report whose headline
+        # not_applied_types disagrees with its own rows (round-5 review m-4; test_grade_cells.BandWithheldBySource.
+        # test_default_not_applied_types_without_its_rows_withholds_every_member).
+        return self.by_source.get(str(member), set()) | self.default
+
+
+def member_band(band, withheld):
+    """The band rows one member reads: the default source's rows, every Type of `withheld` read as a withheld row (decision 1884:
+    no band reading). The same object when nothing changes (a report without a withheld row reads as in round 4)."""
+    extra = sorted(T for T in withheld if not (isinstance(band.get(T), dict) and band[T].get("not_applied")))
+    if not extra:
+        return band
+    return dict(band, **{T: dict(band[T] if isinstance(band.get(T), dict) else {}, not_applied=True) for T in extra})
+
+
+def has_band_ends(row):
+    """A --band block_C row that carries its band ends (low_pt and high_pt)."""
+    return "low_pt" in row and "high_pt" in row
+
+
+def uncalibrated_band_types(band):
+    """The Types of the output's top-level 'band' whose row is not withheld and has no band ends (decision 1966)."""
+    return sorted(T for T in ("SA", "MS", "MA", "C")
+                  if isinstance(band.get(T), dict) and not band[T].get("not_applied") and not has_band_ends(band[T]))
+
+
 def band_check(x, band):
     out = {}
     for T, bt in (("SA", "SA"), ("MS", "MS"), ("MA_sharp", "MA"), ("C", "C")):
         if band is None or bt not in band or x.get(T) is None:
             out[T] = {"x_pt": x.get(T), "band": None, "in": None}
             continue
+        if band[bt].get("not_applied"):
+            # decision 1884: coverage_report withheld this Type's band (a marked solve): no band reading, the reason said
+            out[T] = {"x_pt": x.get(T), "band": None, "in": None, "band_note": BAND_NOT_APPLIED}
+            continue
+        if not has_band_ends(band[bt]):
+            # decision 1966 (FLIP-LIST-v5 s0 (a)): an uncalibrated row is no band of record: no band reading, never a pass or a fail
+            out[T] = {"x_pt": x.get(T), "band": None, "in": None, "band_note": BAND_UNCALIBRATED}
+            continue
         lo, hi = band[bt]["low_pt"], band[bt]["high_pt"]
+        if not math.isfinite(x[T]):
+            # NOT-APPLIED (decision 1847 E-1): a non-finite x has no band reading
+            out[T] = {"x_pt": x[T], "band": [lo, hi], "in": None}
+            continue
         out[T] = {"x_pt": x[T], "band": [lo, hi], "in": bool(lo - BAND_TOL_PT <= x[T] <= hi + BAND_TOL_PT)}
     return out
 
@@ -668,6 +873,13 @@ def grade_member(dev, ref, band, c_dev_key, c_ref_key):
     br = sorted([pct(dev["MA_sharp"]["bracket_p"][0], ref["MA_sharp_p"]), pct(dev["MA_sharp"]["bracket_p"][1], ref["MA_sharp_p"])])
     letters = {"SA": verdict(x["SA"], D4["SA"]), "MS": verdict(x["MS"], D4["MS"]), "MA_sharp": verdict(x["MA_sharp"], D4["MA_sharp"], br),
                "C": verdict(x["C"], D4["C"]) if x["C"] is not None else "n/a"}
+    flags = {}
+    for T in dev.get("q3_flagged_types") or ():
+        if letters[T] == NOT_APPLIED:
+            continue
+        flags[T] = f"{cm.FLAG_Q3} (not-applied uncovered raw share of the normalization {dev.get('q3_exposure_share')})"
+        if letters[T] != "FAIL":
+            letters[T] += FLAG_SUFFIX
     info = {"SA_raw_pct": pct(dev["SA_p_raw"], ref["SA_p"]), "MS_raw_pct": pct(dev["MS_p_raw"], ref["MS_p"])}
     if ref.get("MA_p"):
         info["MA_raw_pct"] = pct(dev["MA_p_raw"], ref["MA_p"])
@@ -697,24 +909,58 @@ def grade_member(dev, ref, band, c_dev_key, c_ref_key):
         if cd is None or not ref.get("C_F"):
             continue
         off[j] = {"ref_F": cr, "dev_ft_F": cd, "rel_pct": (pct(cd, cr) if cr else None), "abs_over_Cii_pct": 100.0 * abs(cd - cr) / ref["C_F"]}
-    return {"x_pct": x, "MA_sharp_bracket_pct": br, "letters": letters, "information": info, "C_offdiag": off, "band": band_check(x, band)}
+    out = {"x_pct": x, "MA_sharp_bracket_pct": br, "letters": letters, "information": info, "C_offdiag": off, "band": band_check(x, band)}
+    if flags:
+        out["flags"] = flags
+    return out
 
 
 def aggregate_cell(members, grades, T, rule_text):
-    """The fail-closed cell letter over the members (1210 (a) / 1213 (a)): F if any F, else I if any I, else P; the
-    worst-|x| member quoted with the range and the counts; in band only if every member is."""
+    """The fail-closed cell letter over the members (1210 (a) / 1213 (a)): F if any F, else NOT-APPLIED if any member's x is not
+    finite (decision 1847 E-1: a marked corrected cell), else I if any I, else P; the worst-|x| member (over the finite ones) quoted
+    with the range and the counts; in band only if every member is."""
     xs = {m: grades[m]["x_pct"][T] for m in members if grades[m]["x_pct"].get(T) is not None}
     if not xs:
         return {"letter": "n/a", "x_pct": None, "rule": rule_text, "n_members": 0}
     letters = {m: grades[m]["letters"][T] for m in xs}
-    ls = list(letters.values())
-    letter = "FAIL" if "FAIL" in ls else ("INCONCLUSIVE (ft inside, bracket outside)" if any(l.startswith("INCONCLUSIVE") for l in ls) else "PASS")
-    worst = max(xs, key=lambda m: abs(xs[m]))
+    flagged = [m for m in xs if T in (grades[m].get("flags") or {})]
+    ls = [base_letter(l) for l in letters.values()]
+    not_applied = [m for m in xs if not math.isfinite(xs[m])]
+    if "FAIL" in ls:
+        letter = "FAIL"
+    elif not_applied:
+        letter = NOT_APPLIED
+    else:
+        letter = "INCONCLUSIVE (ft inside, bracket outside)" if any(l.startswith("INCONCLUSIVE") for l in ls) else "PASS"
+        if flagged:
+            # decision 1914: a flagged grade is never an unflagged PASS: the cell letter carries the flag
+            letter += FLAG_SUFFIX
+    graded = {m: x for m, x in xs.items() if m not in not_applied}
     bands = [grades[m]["band"][T]["in"] for m in xs]
-    return {"letter": letter, "x_pct": xs[worst], "worst_member": worst, "x_range_pct": [min(xs.values()), max(xs.values())],
-            "letters_by_member": {str(m): letters[m] for m in xs}, "n_members": len(xs), "n_pass": sum(l == "PASS" for l in ls),
-            "n_fail": sum(l == "FAIL" for l in ls), "in_band": (all(bands) if None not in bands else None),
-            "n_in_band": sum(bool(b) for b in bands), "rule": rule_text}
+    out = {"letter": letter, "x_pct": None, "worst_member": None, "x_range_pct": None,
+           "letters_by_member": {str(m): letters[m] for m in xs}, "n_members": len(xs),
+           "n_pass": sum(base_letter(letters[m]) == "PASS" and m not in flagged for m in xs),
+           "n_fail": sum(l == "FAIL" for l in ls), "in_band": (all(bands) if None not in bands else None),
+           "n_in_band": sum(bool(b) for b in bands), "rule": rule_text}
+    if graded:
+        worst = max(graded, key=lambda m: abs(graded[m]))
+        quoted = {"x_pct": graded[worst], "worst_member": worst, "x_range_pct": [min(graded.values()), max(graded.values())]}
+        if not_applied and letter != "FAIL":
+            # decision 1875: a NOT-APPLIED cell quotes its unmarked members under their own names, never as the Type's value
+            quoted = {"unmarked_members_" + k: v for k, v in quoted.items()}
+            quoted["n_unmarked_members"] = len(graded)
+        out.update(quoted)
+    if not_applied:
+        out.update({"n_not_applied": len(not_applied), "not_applied_members": [str(m) for m in not_applied]})
+    if flagged:
+        out.update({"n_flagged": len(flagged), "flagged_members": [str(m) for m in flagged],
+                    "flag": f"{cm.FLAG_Q3}: {len(flagged)} of {len(xs)} members graded on a kept value under a marked normalization"})
+    notes = {grades[m]["band"][T].get("band_note") for m in xs} - {None}
+    if BAND_NOT_APPLIED in notes:
+        out["band_note"] = BAND_NOT_APPLIED
+    elif notes:
+        out["band_note"] = BAND_UNCALIBRATED
+    return out
 
 
 def static_limit_cell(freqs, per, band):
@@ -742,9 +988,16 @@ def information_cell(cells, per):
                                  reference_depth=sorted({json.dumps(m["reference"]["MA_sharp"].get("reference_depth")) for m in per.values()}))
 
 
-def grade_es(a, catalog, cat_src, sp_tails, band, values):
+def tree_marks(post, config, palace_policy):
+    """The device tree's explicit-mark context (decision 1914): MarkNotApplied when any signal says so (coverage_marks)."""
+    signals = cm.tree_signals(post, config, {"SurfaceResponse": {"Coverage": {"Policy": palace_policy}}})
+    return Marks(bool(signals)), signals
+
+
+def grade_es(a, catalog, cat_src, sp_tails, band, values, palace_policy=None, band_withheld=None):
     final, ncyc = final_cycle_dir(a.device)
-    iface, _ = interfaces_by_type(os.path.join(a.device, "postpro", "config_resolved.json"))
+    iface, cfg = interfaces_by_type(os.path.join(a.device, "postpro", "config_resolved.json"))
+    marks, signals = tree_marks(os.path.join(a.device, "postpro"), cfg, palace_policy)
     q = read_csv(os.path.join(final, "surface-Q-corrected.csv"))
     sources = sorted(int(fnum(r["i"])) for r in q)
     if a.sources:
@@ -756,17 +1009,22 @@ def grade_es(a, catalog, cat_src, sp_tails, band, values):
             raise ValueError(f"source sets differ: device {sources} vs reference {ref_sources}")
     per = {}
     for s in sources:
-        d = es_device_source(final, s, iface, catalog, sp_tails, a.tail_form)
+        d = es_device_source(final, s, iface, catalog, sp_tails, a.tail_form, marks)
         r = (reference_from_values(values, s, a.tail_form, a.reference_rings_information) if values is not None
              else es_reference_source(a.reference, s, iface, a.shells_dir, a.tail_form, a.reference_rings_information))
-        per[s] = {"device": d, "reference": r, "grade": grade_member(d, r, band, "C_ft_F", "C_F")}
+        # decisions 1954 / 1955: the member reads the marks of its own source block (and the default source's)
+        mb = member_band(band, band_withheld.of_member(s)) if (band and band_withheld is not None) else band
+        per[s] = {"device": d, "reference": r, "grade": grade_member(d, r, mb, "C_ft_F", "C_F")}
     rule = "every source must PASS (fail-closed; decision 1210 (a)); the worst-|x| source quoted" if len(sources) > 1 else "single source"
     cells = {T: aggregate_cell(sources, {s: per[s]["grade"] for s in sources}, T, rule) for T in TYPES}
     for T in TYPES:
         cells[T]["counted"] = True
     information_cell(cells, per)
-    return {"interfaces": iface, "device_final_dir": final, "device_cycles": ncyc, "members": sources, "member_kind": "source",
-            "per_member": {str(s): v for s, v in per.items()}, "cells": cells}
+    out = {"interfaces": iface, "device_final_dir": final, "device_cycles": ncyc, "members": sources, "member_kind": "source",
+           "per_member": {str(s): v for s, v in per.items()}, "cells": cells}
+    if marks.marked_tree:
+        out["mark_not_applied_signals"] = signals
+    return out
 
 
 def parse_reference_at(items):
@@ -777,9 +1035,10 @@ def parse_reference_at(items):
     return out
 
 
-def grade_mx(a, catalog, cat_src, sp_tails, band, values):
+def grade_mx(a, catalog, cat_src, sp_tails, band, values, palace_policy=None):
     post = os.path.join(a.device, "postpro")
-    iface, _ = interfaces_by_type(os.path.join(post, "config_resolved.json"))
+    iface, cfg = interfaces_by_type(os.path.join(post, "config_resolved.json"))
+    marks, signals = tree_marks(post, cfg, palace_policy)
     freqs = list(a.frequencies)
     refs_at = parse_reference_at(a.reference_at)
     # the port voltage is read whenever a C_eff reference exists (a reference run always; a values file carrying C_eff_F)
@@ -790,7 +1049,8 @@ def grade_mx(a, catalog, cat_src, sp_tails, band, values):
         with_port = any("C_eff_F" in m for m in members.values())
     per = {}
     for F in freqs:
-        d = mx_device_f(post, F, iface, catalog, sp_tails, a.p_denominator, with_port=with_port, excitation=a.excitation, tail_form=a.tail_form)
+        d = mx_device_f(post, F, iface, catalog, sp_tails, a.p_denominator, with_port=with_port, excitation=a.excitation, tail_form=a.tail_form,
+                        marks=marks)
         if values is not None:
             r = reference_from_values(values, F, a.tail_form, a.reference_rings_information)
         else:
@@ -813,19 +1073,34 @@ def grade_mx(a, catalog, cat_src, sp_tails, band, values):
         cells["C"] = dict(static_limit_cell(freqs, per, band), counted=True, c_form="static-limit", direct_form_beside=direct)
     else:
         cells["C"] = dict(direct, counted=False, c_form="information", letter=f"INFORMATION (F-40): {direct['letter']}")
-    return {"interfaces": iface, "device_final_dir": post, "members": freqs, "member_kind": "f_GHz", "p_denominator": a.p_denominator,
-            "per_member": {str(F): v for F, v in per.items()}, "cells": cells}
+    out = {"interfaces": iface, "device_final_dir": post, "members": freqs, "member_kind": "f_GHz", "p_denominator": a.p_denominator,
+           "per_member": {str(F): v for F, v in per.items()}, "cells": cells}
+    if marks.marked_tree:
+        out["mark_not_applied_signals"] = signals
+    return out
 
 
 def summary_line(label, out):
     parts = []
     for T, c in out["cells"].items():
+        if c.get("n_not_applied") and c.get("x_pct") is None:
+            part = f"{T} {c['letter']} ({c['n_not_applied']} of {c['n_members']} members: a non-finite corrected value)"
+            if c.get("n_unmarked_members"):
+                lo, hi = c["unmarked_members_x_range_pct"]
+                part += (f"; {c['n_unmarked_members']} of {c['n_members']} members only, the others NOT-APPLIED: worst "
+                         f"{c['unmarked_members_x_pct']:+.3f} % [{lo:+.3f}, {hi:+.3f}] (not the Type's value)")
+            parts.append(part)
+            continue
         if c.get("x_pct") is None:
             parts.append(f"{T} n/a")
             continue
         rng = f" [{c['x_range_pct'][0]:+.3f}, {c['x_range_pct'][1]:+.3f}]" if c.get("x_range_pct") and c.get("n_members", 1) > 1 else ""
-        band = "in" if c.get("in_band") else ("OUT" if c.get("in_band") is False else "-")
-        parts.append(f"{T} {c['x_pct']:+.3f} %{rng} {c['letter']} band {band}")
+        band = "in" if c.get("in_band") else ("OUT" if c.get("in_band") is False else c.get("band_note", "-"))
+        if band == BAND_UNCALIBRATED:
+            band = band[len("band "):]  # the line reads 'band n/a (uncalibrated)'
+        na = f" ({c['n_not_applied']} of {c['n_members']} members NOT-APPLIED)" if c.get("n_not_applied") else ""
+        fl = f" [{c['flag']}]" if c.get("flag") and c["letter"] == "FAIL" else ""
+        parts.append(f"{T} {c['x_pct']:+.3f} %{rng} {c['letter']}{fl}{na} band {band}")
     return f"{label}: {out['member_kind']} {len(out['members'])}; " + "; ".join(parts)
 
 
@@ -869,19 +1144,29 @@ def main(argv=None):
             with open(a.reference_values) as handle:
                 values = json.load(handle)
         post = os.path.join(a.device, "postpro")
-        catalog, cat_src = model_catalog(post, a.model_catalog)
+        catalog, cat_src, palace_policy = model_catalog(post, a.model_catalog)
         tails = spatial_tails(a.library)
         band = None
+        band_withheld = None
         if a.band:
             with open(a.band) as handle:
-                band = json.load(handle)["block_C"]
-        out = grade_es(a, catalog, cat_src, tails, band, values) if a.form == "es" else grade_mx(a, catalog, cat_src, tails, band, values)
+                report = json.load(handle)
+            cm.accept_report(report, a.band, ALLOWED_REPORT_WRITERS)  # decision 1942: provenance only; ReportRefusal, exit 5
+            band = report["block_C"]
+            band_withheld = BandWithheld(report) if band else None
+        if a.form == "es":
+            out = grade_es(a, catalog, cat_src, tails, band, values, palace_policy, band_withheld=band_withheld)
+        else:
+            out = grade_mx(a, catalog, cat_src, tails, band, values, palace_policy)
     except MissingInput as e:
         print(f"grade_cells.py: missing input {e}", file=sys.stderr)
         return 2
     except ReferenceRingsNotOfRecord as e:
         print(f"grade_cells.py: {e}", file=sys.stderr)
         return 3
+    except cm.Refusal as e:
+        print(f"grade_cells.py: {e}")
+        return cm.REFUSAL_EXIT
     label = a.label or os.path.basename(os.path.normpath(a.device))
     out.update({"tool": "grade_cells.py", "window": label, "form": a.form, "D4": D4, "tail_form": a.tail_form,
                 "fixed_shell": ({"rings_um": list(FIXED_SHELL_RINGS_UM), "tails": {k: list(v) for k, v in FIXED_SHELL_TAILS.items()},
@@ -889,8 +1174,21 @@ def main(argv=None):
                 "scorer": "the 994 / 995 tabulators' letters (verdict; MA_sharp (B) tails by --tail-form; the shells estimator) per source / frequency, fail-closed (1210 / 1213)",
                 "device_run": a.device, "reference": a.reference or a.reference_at or a.reference_values, "shells_dir": a.shells_dir,
                 "library": a.library, "model_catalog_source": cat_src, "models": {str(k): v for k, v in catalog.items()},
-                "band_file": a.band, "band": ({T: [band[T]["low_pt"], band[T]["high_pt"]] for T in ("SA", "MS", "MA", "C") if T in band} if band else None),
+                "band_file": a.band, "band": ({T: [band[T]["low_pt"], band[T]["high_pt"]] for T in ("SA", "MS", "MA", "C")
+                                               if T in band and not band[T].get("not_applied") and has_band_ends(band[T])} if band else None),
                 "c_form": a.c_form if a.form == "maxwell" else "diagonal C fixed-trace[i][i] (ES)"})
+    withheld_types = {T for T, v in band.items() if isinstance(v, dict) and v.get("not_applied")} if band else set()
+    if band and a.form == "es":
+        # decisions 1954 / 1955: the Types withheld for any graded member's own source are listed too
+        for m in out["members"]:
+            withheld_types |= band_withheld.of_member(m)
+    if withheld_types:
+        out["band_not_applied_types"] = sorted(withheld_types)
+    uncalibrated_types = uncalibrated_band_types(band) if band else []
+    if uncalibrated_types:
+        # decision 1966 (FLIP-LIST-v5 s0 (b)): listed without ends; a report without such a row writes no such key
+        out["band_uncalibrated_types"] = uncalibrated_types
+    out[cm.PROVENANCE_KEY] = cm.provenance(os.path.abspath(__file__))  # decision 1934 (R-1)
     os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
     with open(a.out, "w") as handle:
         json.dump(out, handle, indent=1, default=str)

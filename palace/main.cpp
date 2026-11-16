@@ -293,6 +293,15 @@ int main(int argc, char *argv[])
   PrintPalaceBanner(world_comm);
   auto config = IoData::ParseAndValidate(argv[argc - 1]);
   IoData iodata(config, false);
+  // The configuration's PreflightOnly key selects the same mode as the option (for front
+  // ends that pass no command-line option) under the same exit rules.
+  const std::string preflight_key = palace::SurfaceResponsePreflightKey(iodata);
+  if (!preflight_key.empty() && mesh_statistics)
+  {
+    Mpi::Print(world_comm, "Error: Select only one mesh inspection mode!\n\n");
+    return 1;
+  }
+  surface_response_preflight = surface_response_preflight || !preflight_key.empty();
   ValidateArchiveEstimateOptions(iodata, world_comm);
   MakeOutputFolder(iodata, world_comm);
 
@@ -337,13 +346,23 @@ int main(int argc, char *argv[])
   // reuse the exact same code path on an in-process IoData. See palace/driver.hpp
   // for the preconditions it expects.
   PrintPalaceInfo(world_comm, world_size, omp_threads, ngpu, *device);
+  int exit_status = 0;
   if (mesh_statistics)
   {
     palace::RunMeshStatistics(iodata, world_comm, omp_threads, GetPalaceGitTag());
   }
   else if (surface_response_preflight)
   {
-    palace::RunSurfaceResponsePreflight(iodata, world_comm, omp_threads, GetPalaceGitTag());
+    if (!preflight_key.empty())
+    {
+      Mpi::Print(world_comm,
+                 "\nSurface-response preflight only ({} = true): this run identifies the "
+                 "geometry and writes the manifest; no field solve is run (remove the key "
+                 "to solve)\n",
+                 preflight_key);
+    }
+    exit_status = palace::RunSurfaceResponsePreflight(iodata, world_comm, omp_threads,
+                                                      GetPalaceGitTag());
   }
   else
   {
@@ -358,5 +377,5 @@ int main(int argc, char *argv[])
   slepc::Finalize();
 #endif
 
-  return 0;
+  return exit_status;
 }

@@ -5,12 +5,15 @@
 #define PALACE_MODELS_SURFACE_POST_OPERATOR_HPP
 
 #include <array>
+#include <cstdint>
 #include <map>
 #include <memory>
 #include <optional>
 #include <set>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 #include <mfem.hpp>
 #include "fem/coefficient.hpp"
@@ -63,6 +66,12 @@ private:
 //
 // A class handling boundary surface postprocessing.
 //
+// Ruling 1715 (lane L1): a served claim's end is snapped to a tree-segment end only when
+// the two POINTS differ by arithmetic noise alone (16 units in the last place of the larger
+// of the coordinate and R, per coordinate: the round-off of a point formed as key0 + s / L
+// (key1 - key0)); never a geometric tolerance.
+inline constexpr double kClaimEndRoundoffUlps = 16.0;
+
 class SurfacePostOperator
 {
 public:
@@ -329,6 +338,86 @@ public:
     std::string type;
     int feature = -1;
   };
+  // Lane L1 (ruling 1682; decisions 1675 / 1439 / 1541 on replicated memory): a
+  // perimeter-portion list in a compact EXACT form, for the applied patches' raw claims
+  // (the served bins of the coverage partition, replicated on every rank): each distinct
+  // end point once, found by equality of the BIT PATTERNS of its three coordinates (never a
+  // tolerance: the stored doubles are the appended ones, so -0.0 and +0.0 are two points,
+  // each kept as given; a NaN end is refused), each distinct label once, and per portion
+  // the two end-point indices, the label index and the feature. Reading portion i
+  // (P0 / P1 / Label / Feature) gives back the appended values bit for bit, in the
+  // appended order.
+  class CompactPerimeterPortions
+  {
+  public:
+    void Append(const std::array<double, 3> &p0, const std::array<double, 3> &p1,
+                const std::string &label, int feature);
+    // Releases the append lookups and trims every buffer to its size (a later Append
+    // rebuilds the lookups).
+    void FinishAppending();
+    std::size_t Size() const { return portions.size(); }
+    bool Empty() const { return portions.empty(); }
+    const std::array<double, 3> &P0(std::size_t i) const { return points[portions[i].p0]; }
+    const std::array<double, 3> &P1(std::size_t i) const { return points[portions[i].p1]; }
+    const std::string &Label(std::size_t i) const { return labels[portions[i].label]; }
+    int Feature(std::size_t i) const { return portions[i].feature; }
+    std::size_t PointCount() const { return points.size(); }
+    std::size_t LabelCount() const { return labels.size(); }
+    // The heap bytes held: every buffer's capacity, the label strings' own storage and,
+    // while appending, the lookups.
+    std::size_t HeapBytes() const;
+    // The portions in the plain form (the appended values, in order).
+    std::vector<UncoveredPerimeterPortion> Expand() const;
+
+  private:
+    struct Portion
+    {
+      std::uint32_t p0 = 0, p1 = 0;
+      std::int32_t label = -1;
+      std::int32_t feature = -1;
+    };
+    std::vector<std::array<double, 3>> points;
+    std::vector<std::string> labels;
+    std::vector<Portion> portions;
+    // Open addressing over `points` by bit pattern (kEmptySlot = free) and the label index.
+    static constexpr std::uint32_t kEmptySlot = 0xFFFFFFFFu;
+    std::vector<std::uint32_t> point_slots;
+    std::unordered_map<std::string, std::int32_t> label_lookup;
+    std::uint32_t FindOrAddPoint(const std::array<double, 3> &point);
+  };
+  // A read-only view of a portion list in either form; the portion readers below take it,
+  // so a plain list and the compact claim list pass alike.
+  class PerimeterPortionView
+  {
+  public:
+    PerimeterPortionView(const std::vector<UncoveredPerimeterPortion> &portions)
+      : plain(&portions)
+    {
+    }
+    PerimeterPortionView(const CompactPerimeterPortions &portions) : compact(&portions) {}
+    std::size_t Size() const { return plain ? plain->size() : compact->Size(); }
+    bool Empty() const { return Size() == 0; }
+    const std::array<double, 3> &P0(std::size_t i) const
+    {
+      return plain ? (*plain)[i].p0 : compact->P0(i);
+    }
+    const std::array<double, 3> &P1(std::size_t i) const
+    {
+      return plain ? (*plain)[i].p1 : compact->P1(i);
+    }
+    const std::string &Label(std::size_t i) const
+    {
+      return plain ? (*plain)[i].type : compact->Label(i);
+    }
+    int Feature(std::size_t i) const
+    {
+      return plain ? (*plain)[i].feature : compact->Feature(i);
+    }
+
+  private:
+    const std::vector<UncoveredPerimeterPortion> *plain = nullptr;
+    const CompactPerimeterPortions *compact = nullptr;
+  };
   // The interface energy within the largest configured edge distance R whose nearest
   // perimeter point lies on an uncovered portion (the same edge-distance window weight as
   // the outside energy, so that outside + uncovered + the modelled within-R partition the
@@ -366,9 +455,123 @@ public:
   std::map<int, std::map<std::string, double>> GetInterfaceClassifiedEdgeEnergies(
       const std::set<int> &indices, const GridFunction &E, const GridFunction *D,
       const std::vector<UncoveredPerimeterPortion> &portions) const;
-  std::map<int, std::map<std::string, double>> GetInterfacePartitionedEdgeEnergies(
+  std::map<int, std::map<std::string, double>>
+  GetInterfacePartitionedEdgeEnergies(const std::set<int> &indices, const GridFunction &E,
+                                      const GridFunction *D,
+                                      PerimeterPortionView portions) const;
+  // Diagnostics.UncoveredFeatureEnergy (lane ctx002-miss, decision 1567 (b); diagnostic
+  // only): the uncovered within-R energy of GetInterfaceUncoveredEdgeEnergies split per
+  // TYPE by FEATURE, keyed (type, label). Per type, the exact piece partition of that
+  // type's portions (PartitionedEdgePieces, the PatchEnergy pieces) labels every piece by
+  // the ascending '+'-joined ids of the features whose portions cover it; a quadrature
+  // point counts for the label of the piece holding its nearest perimeter foot. ONE
+  // quadrature pass per interface with GetLocalSurfaceIntegral's rule and weight. Per
+  // (interface, type) the labels sum to that type's by_type entry of
+  // GetInterfaceUncoveredEdgeEnergies up to the quadrature round-off (and the points whose
+  // foot lies exactly on an interior piece end: a set of measure zero).
+  std::map<int, std::map<std::pair<std::string, std::string>, double>>
+  GetInterfaceUncoveredFeatureEdgeEnergies(
       const std::set<int> &indices, const GridFunction &E, const GridFunction *D,
       const std::vector<UncoveredPerimeterPortion> &portions) const;
+  // Lane L1 (decision 1634 (1), ruling 1641): THE CLOSED COVERAGE PARTITION of one field.
+  // ONE quadrature pass per interface (the rule and weight of
+  // GetInterfaceUncoveredFeatureEdgeEnergies); every within-R point counts in exactly ONE
+  // bin, by the correction's own ownership: first the KEPT-RAW classes in the given order
+  // (the corrected total keeps their raw energy whatever claim lies under them; within a
+  // class the exact piece partition of PartitionedEdgePieces labels a piece by the
+  // ascending '+'-joined labels of the class portions covering it: "m<feature>" tokens for
+  // feature labels), then the SERVED claims (the applied patches' claims by model-set
+  // label), then the `remainder_classes` (labels that only subdivide the points no kept
+  // class and no served claim holds: ruling 1649 Q3), else the unclaimed remainder.
+  // `within` is the total of the same pass: per interface the bins sum to it up to the
+  // summation round-off.
+  struct CoveragePartitionClass
+  {
+    std::string name;
+    const std::vector<UncoveredPerimeterPortion> *portions = nullptr;
+  };
+  struct InterfaceCoveragePartition
+  {
+    double within = 0.0;
+    std::map<std::pair<std::string, std::string>, double> classes;  // (class, label)
+    std::map<std::string, double> served;                           // model-set label
+    double unclaimed = 0.0;
+    // The loop remainder's energy no served label held (MoveCoverageLoopRemainder): counted
+    // in the class "LoopRemainder" and in another bin both (the bins then sum to `within`
+    // plus this amount).
+    double loop_remainder_unserved = 0.0;
+    // Rulings 1714 / 1715 / 1731 (lane L1): the census of portion ends at a tree-segment
+    // end, for the SERVED claims and for the KEPT classes, by DIRECTION. "Round-off short":
+    // the end POINT agrees with the segment's end point within kClaimEndRoundoffUlps ulps
+    // per coordinate but not exactly AND its clamped foot falls short of the segment end
+    // (inside the segment; a served end is snapped to the segment end; a kept end is
+    // counted and never changed: OI-FOOT-TEST-VERTEX-ROUNDOFF); its energy is EXACT: the
+    // within-R raw energy whose clamped foot lies at those segment ends that the snap gives
+    // back to the served claims (no unsnapped served claim reaches the end) or that no kept
+    // class holds. "Round-off beyond": within that rule but its clamped foot reaches the
+    // segment end exactly (beyond the end, or short by less than the foot's own round-off):
+    // the foot test already holds the vertex, nothing is snapped, nothing is at stake
+    // (count and largest distance only). "Near": beyond the round-off rule but within
+    // kSupportEndCoincidenceOverRadius R (never snapped; its energy, the within-R raw
+    // energy at those segment ends, is an upper bound). Distances in mesh units.
+    struct EndCensus
+    {
+      int roundoff_count = 0, near_count = 0;
+      double roundoff_distance = 0.0, near_distance = 0.0;
+      double roundoff_energy = 0.0, near_energy = 0.0;
+      int roundoff_beyond_count = 0;
+      double roundoff_beyond_distance = 0.0;
+    };
+    EndCensus served_ends, kept_ends;
+  };
+  // Rulings 1714 / 1715: a portion end against a tree-segment end point. EXACT: every
+  // coordinate equal; ROUNDOFF: |p_d - v_d| <= kClaimEndRoundoffUlps eps max(|v_d|, R) for
+  // every d; NEAR: otherwise within kSupportEndCoincidenceOverRadius R; BEYOND: beyond
+  // (not FAR: zlib's zconf.h defines FAR as an empty macro).
+  enum class ClaimEndMatch : char
+  {
+    EXACT,
+    ROUNDOFF,
+    NEAR,
+    BEYOND
+  };
+  static std::pair<ClaimEndMatch, double> ClassifyClaimEnd(const std::array<double, 3> &p,
+                                                           const std::array<double, 3> &v,
+                                                           double radius);
+  std::map<int, InterfaceCoveragePartition> GetInterfaceCoveragePartition(
+      const std::set<int> &indices, const GridFunction &E, const GridFunction *D,
+      const std::vector<CoveragePartitionClass> &kept_classes, PerimeterPortionView served,
+      const std::vector<CoveragePartitionClass> &remainder_classes = {}) const;
+  // Ruling 1688 (lane L1, the stage-0 Missing LENGTH line): per interface the length of its
+  // edge-distance tree and, per portion list, the length of the union of the list's
+  // intervals on that tree (the energies' foot assignment: a portion on its midpoint's
+  // segment; each segment once, overlapping intervals counted once). Mesh units; local
+  // (the trees and the lists are replicated): no reduction.
+  struct InterfacePerimeterLengths
+  {
+    double total = 0.0;
+    std::vector<double> lists;
+  };
+  std::map<int, InterfacePerimeterLengths>
+  GetInterfacePerimeterLengths(const std::set<int> &indices,
+                               const std::vector<PerimeterPortionView> &lists) const;
+  // The uncovered portions relabelled by feature ("m<feature>"): the Missing class's bins
+  // of the coverage partition, one per feature (joined by '+' where portions overlap).
+  static std::vector<UncoveredPerimeterPortion>
+  CoverageMissingByFeature(const std::vector<UncoveredPerimeterPortion> &uncovered);
+  // Moves a served label that holds no model claim (the PatchEnergy list's `unpatched`
+  // label alone, fix round P2 2B) to the class `name` of the same partitions.
+  static void MoveCoverageServedLabel(std::map<int, InterfaceCoveragePartition> &partitions,
+                                      const std::string &label, const std::string &name);
+  // Maxwell (OI-MX-LOOPGATE, decision 955): the loop remainders' raw energy (per interface,
+  // by model row "m<idx>") is kept raw by the corrected total although it lies under the
+  // served claims; it moves from the served bins to the class "LoopRemainder" by label.
+  // A remainder row's energy is taken from the served labels holding the row's model token,
+  // in proportion to their energy, at most their total; the rest no served label held
+  // (`loop_remainder_unserved`) lies on kept-raw or remainder points already binned.
+  static void
+  MoveCoverageLoopRemainder(std::map<int, InterfaceCoveragePartition> &partitions,
+                            const std::map<int, std::map<std::string, double>> &remainder);
   // OI-MX-LOOPGATE (decision 955): the within-R energy of each requested interface on the
   // portions, WEIGHTED per portion (`weights`, parallel to `portions`: the patch's rho_p)
   // and grouped by the portions' `type` label (the model row "m<idx>"): per label the
@@ -431,8 +634,7 @@ private:
   // GetInterfaceClassifiedEdgeEnergies.
   std::map<int, std::map<std::string, double>>
   PartitionInterfaceEdgeEnergies(const std::set<int> &indices, const GridFunction &E,
-                                 const GridFunction *D,
-                                 const std::vector<UncoveredPerimeterPortion> &portions,
+                                 const GridFunction *D, PerimeterPortionView portions,
                                  bool classified, const std::string &remainder_label) const;
 
 public:

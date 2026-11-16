@@ -2934,7 +2934,7 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
             ):
                 with self.assertRaisesRegex(ValueError, "refuses the SpatialCoupon.*piece form.*\\['pieces'\\].*device_coupons.py") as context:
                     PREPARE.execute(plan, source, args)
-                self.assertIn("fix round R-3", str(context.exception))
+                self.assertIn("--skip-methods SpatialCoupon to leave the family to it", str(context.exception))
                 self.assertEqual(calls, [])
                 # --skip-methods SpatialCoupon: the family is left to the device builder, nothing refused
                 skipping = SimpleNamespace(cache=root / "cache", output=root / "output", name="test-library", skip_methods=["SpatialCoupon"])

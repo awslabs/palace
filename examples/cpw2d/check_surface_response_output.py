@@ -1,11 +1,31 @@
 #!/usr/bin/env python3
 
-"""Check that response correction preserves raw output and adds valid corrected data."""
+"""Check that response correction preserves raw output and adds valid corrected data.
+
+Explicit marks (decisions 1908 / 1914; ../surface_response_identification/coverage_marks.py): on a MarkNotApplied tree (any
+signal: a twin / exposure / mark column of a postpro table, or config_resolved.json's Coverage.Policy) the E / p cells this
+check reads are read through their mark columns ('coverage mark E_norm', 'coverage mark E_surf'): an unmarked E / p cell that is
+not a finite number, or a missing mark column, is a REFUSAL (exit 5); a row with a mark 1 is NOT-APPLIED (exit 3: the corrected
+output is not checked, never 'valid'). Q_surf keeps this check's own rule (+inf only where p is 0). A Warn / pre-policy tree is
+checked as before, except that a text token in a read corrected cell is a REFUSAL. Decision 1934: a mark token is read one
+way ('1' / '0' exactly, kept as its text); a table naming a mark / twin / exposure column twice is a REFUSAL.
+"""
 
 import argparse
 import csv
+import hashlib
+import json
 import math
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "surface_response_identification"))
+import coverage_marks as cm  # noqa: E402
+
+# The explicit-mark rule's module (decision 1914): this check is of record only with this file (sha256-16 asserted).
+COVERAGE_MARKS_SHA256_16 = "3feaa623f05d4598"
+if hashlib.sha256(Path(cm.__file__).read_bytes()).hexdigest()[:16] != COVERAGE_MARKS_SHA256_16:
+    raise SystemExit(f"{cm.__file__}: sha256-16 != {COVERAGE_MARKS_SHA256_16} (this check reads marks with that file only)")
 
 
 RAW_FILES = (
@@ -18,11 +38,76 @@ RAW_FILES = (
 )
 
 
+# The suffix of the MarkNotApplied twin columns (kCoveragePartialColumnSuffix, surfaceresponsecoverage.hpp).
+PARTIAL_COLUMN_SUFFIX = " partial (uncovered part raw)"
+NOT_APPLIED_EXIT = 3
+
+
+class CorrectionNotApplied(RuntimeError):
+    """NOT-APPLIED (decisions 1847 E-1 / 1914): a corrected row is explicitly marked by Coverage.Policy MarkNotApplied (its
+    'coverage mark E_norm' or 'coverage mark E_surf' is 1): the corrected output is not checked and never reads as valid."""
+
+
+# The corrected E / p cells this check reads, with the mark column that states each one's mark (decision 1914).
+CHECKED_CORRECTED_CELLS = (
+    ("E_norm corrected (J)", cm.MARK_E_NORM),
+    ("E_norm corrected fixed-flux (J)", cm.MARK_E_NORM),
+    ("E_surf corrected (J)", cm.MARK_E_SURF),
+    ("p_surf corrected", cm.MARK_E_SURF),
+    ("E_surf corrected fixed-flux (J)", cm.MARK_E_SURF),
+    ("p_surf corrected fixed-flux", cm.MARK_E_SURF),
+)
+
+
+def check_marks(rows, marked_tree, path):
+    """The explicit-mark reading of the corrected rows (decision 1914): every checked E / p cell through coverage_marks.read_cell
+    (a Refusal first, on any row); then CorrectionNotApplied at the first row whose mark is 1. A Warn / pre-policy tree: a text
+    token in a checked cell is refused; nothing else changes."""
+    for row_index, row in enumerate(rows, start=1):
+        where = f"{path} row {row_index} interface {row.get('interface')}"
+        for column, mark in CHECKED_CORRECTED_CELLS:
+            if column in row:
+                cm.read_cell(row, column, mark, marked_tree, where)
+    if not marked_tree:
+        return
+    for row_index, row in enumerate(rows, start=1):
+        where = f"{path} row {row_index} interface {row.get('interface')}"
+        for mark in (cm.MARK_E_NORM, cm.MARK_E_SURF):
+            if cm.mark_is_set(row, mark, where):
+                raise CorrectionNotApplied(
+                    f"NOT-APPLIED: corrected row {row_index}, interface {row.get('interface')} is marked not applied by the "
+                    f"coverage policy ('{mark}' = 1; the values are in the '...{PARTIAL_COLUMN_SUFFIX}' columns): the corrected "
+                    "output is not checked"
+                )
+
+
+def marked_tree_signals(output):
+    """The MarkNotApplied signals of a postpro directory (coverage_marks.tree_signals with its config_resolved.json)."""
+    config_path = output / "config_resolved.json"
+    config = json.loads(config_path.read_text()) if config_path.is_file() else None
+    return cm.tree_signals(str(output), config)
+
+
+def _cell(value):
+    """A number, or the text of a text column (the coverage Type / status columns)."""
+    try:
+        return float(value)
+    except ValueError:
+        return value.strip()
+
+
 def read_rows(path):
+    """The rows of a CSV (values parsed by _cell; a MARK column's token kept as its text: the one reading of
+    coverage_marks.mark_token). A header naming a mark / twin / exposure column twice is a Refusal (decision 1934)."""
     with path.open(newline="") as stream:
+        reader = csv.DictReader(stream, skipinitialspace=True)
+        cm.refuse_duplicate_columns([name.strip() for name in reader.fieldnames or []], str(path))
         return [
-            {key.strip(): float(value) for key, value in row.items()}
-            for row in csv.DictReader(stream, skipinitialspace=True)
+            {
+                key.strip(): (value if cm.is_mark_header(key.strip()) else _cell(value))
+                for key, value in row.items()
+            }
+            for row in reader
         ]
 
 
@@ -65,6 +150,7 @@ def check(corrected_output, baseline_output, tolerance):
 
     raw_rows = read_rows(corrected_output / "surface-Q.csv")
     corrected_rows = read_rows(corrected_output / "surface-Q-corrected.csv")
+    check_marks(corrected_rows, bool(marked_tree_signals(corrected_output)), corrected_output / "surface-Q-corrected.csv")
     groups = corrected_groups(corrected_rows)
     if len(raw_rows) != len(groups):
         raise RuntimeError(
@@ -272,15 +358,23 @@ def check(corrected_output, baseline_output, tolerance):
                     )
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument("corrected_output", type=Path)
     parser.add_argument("baseline_output", type=Path)
     parser.add_argument("--tolerance", type=float, default=1.0e-10)
-    args = parser.parse_args()
-    check(args.corrected_output, args.baseline_output, args.tolerance)
+    args = parser.parse_args(argv)
+    try:
+        check(args.corrected_output, args.baseline_output, args.tolerance)
+    except CorrectionNotApplied as error:
+        print(error)
+        return NOT_APPLIED_EXIT
+    except cm.Refusal as error:
+        print(error)
+        return cm.REFUSAL_EXIT
     print("Raw outputs are unchanged and corrected surface output is valid.")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

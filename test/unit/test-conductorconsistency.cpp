@@ -14,6 +14,7 @@
 #include <iterator>
 #include <map>
 #include <memory>
+#include <set>
 #include <string>
 #include <tuple>
 #include <utility>
@@ -69,7 +70,12 @@ namespace
 // to the edge (fail-before: excluded). The CHORD-OFFSET-SNAPPED variant is the same coupon
 // whose placed patch carries the probe snaps of those two knots (displacement -0.02 along
 // AxisV = -x, as BuildFeaturePatches records them for an arc chord): the probes are read
-// on the device edge, the reading is the Dirichlet value, the snaps are recorded.
+// on the device edge, the reading is the Dirichlet value, the snaps are recorded. The
+// SWAPPED-CONDUCTOR variant (lane L1, the corrected-matrix coverage case) declares the
+// island-2 metal corner (u, v) = (-0.2, 0.25) a conductor-1 vertex: the gate reads island
+// 2's potential against island 1's reference, so the coupon is consistent (deviation 0) in
+// an excitation holding both islands at the same potential and excluded in one that does
+// not.
 enum class CouponVariant
 {
   CONSISTENT,
@@ -77,7 +83,8 @@ enum class CouponVariant
   CONDUCTOR_OFF_PLANE,
   NO_CONDUCTOR,
   CHORD_OFFSET,
-  CHORD_OFFSET_SNAPPED
+  CHORD_OFFSET_SNAPPED,
+  SWAPPED_CONDUCTOR
 };
 
 struct CouponFiles
@@ -159,6 +166,7 @@ CouponFiles WriteCoupon(const fs::path &dir, CouponVariant variant)
                           : variant == CouponVariant::CONDUCTOR_OFF_PLANE ? "off-plane"
                           : variant == CouponVariant::NO_CONDUCTOR        ? "no-conductor"
                           : variant == CouponVariant::CHORD_OFFSET        ? "chord-offset"
+                          : variant == CouponVariant::SWAPPED_CONDUCTOR   ? "swapped"
                                                                           : "chord-snapped";
   const bool chord_offset = variant == CouponVariant::CHORD_OFFSET ||
                             variant == CouponVariant::CHORD_OFFSET_SNAPPED;
@@ -228,8 +236,11 @@ CouponFiles WriteCoupon(const fs::path &dir, CouponVariant variant)
     }
     else if (v >= kMetalEdgeV - 1.0e-12)
     {
-      plane[i] = AddConductor(
-          {u, v, variant == CouponVariant::CONDUCTOR_OFF_PLANE ? 0.1 : 0.0}, 2);
+      const bool swapped = variant == CouponVariant::SWAPPED_CONDUCTOR && u < 0.0 &&
+                           v > kMetalEdgeV + 1.0e-12;
+      plane[i] =
+          AddConductor({u, v, variant == CouponVariant::CONDUCTOR_OFF_PLANE ? 0.1 : 0.0},
+                       swapped ? 1 : 2);
     }
     else if (variant == CouponVariant::INCONSISTENT && u < 0.0)
     {
@@ -862,7 +873,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     CHECK_THROWS_WITH(SurfaceResponseOperator(iodata, laplace),
                       ContainsSubstring("carries no conductor probe snaps") &&
                           ContainsSubstring("gap-junction-chord-snapped") &&
-                          ContainsSubstring("decision 632"));
+                          ContainsSubstring("such a patch is never solved"));
   }
 
   SECTION("a spatial coupon without any conductor vertex is recorded untestable")
@@ -1377,6 +1388,128 @@ TEST_CASE_METHOD(
 #endif
 }
 
+// Lane L1 (ruling 1654 (III) Q3): terminal-C-corrected(i, j) is formed with the FINAL patch
+// weights, so the matrix coverage re-measures a source whose own measurement came BEFORE a
+// later conductor-consistency exclusion. The islands fixture with the box walls as terminal
+// 1 and the islands as terminals 2 and 3, and the SWAPPED-CONDUCTOR coupon (an island-2
+// metal vertex held at island 1's potential): consistent in source 1 (both islands at 0 V:
+// deviation 0), excluded at source 2 (island 1 at 1 V, island 2 at 0 V). (An INCONSISTENT
+// coupon is excluded at source 1 already: its fictitious gap vertex reads the gap
+// potential the walls raise.)
+// Source 1's own coverage row keeps its measurement (the coupon served); its matrix row is
+// re-measured with the final portions (the coupon kept raw: a larger uncovered share);
+// sources 2 and 3 were measured with the final portions already.
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "Electrostatic corrected-matrix coverage is re-measured after a later "
+                 "conductor-consistency exclusion",
+                 "[electrostaticsolver][surfaceresponseoperator][conductorconsistency][3d]"
+                 "[coverage][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  const fs::path mesh_path = temp.temp_dir / "coverage-matrix-islands.mesh";
+  if (Mpi::Root(Mpi::World()))
+  {
+    mfem::Mesh serial = MakeSerialIslandMesh(false, false, false, true);
+    std::ofstream output(mesh_path);
+    serial.Print(output);
+  }
+  Mpi::Barrier(Mpi::World());
+  const auto swapped = WriteCoupon(temp.temp_dir, CouponVariant::SWAPPED_CONDUCTOR);
+  json config = HighOrderSpatialConfig();
+  config["Model"]["Mesh"] = mesh_path.string();
+  config["Model"]["L0"] = 1.0;
+  config["Model"]["Lc"] = 1.0;
+  config["Boundaries"].erase("Ground");
+  config["Boundaries"]["Terminal"] = {{{"Index", 1}, {"Attributes", {1, 2, 3, 4, 5, 6}}},
+                                      {{"Index", 2}, {"Attributes", {9}}},
+                                      {{"Index", 3}, {"Attributes", {10}}}};
+  auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
+  correction.erase("PatchConstruction");
+  correction["TraceCoupling"] = "SurfaceMortar";
+  correction["MortarOversampling"] = 2;
+  correction["CorrectionMode"] = "Both";
+  config["Solver"]["Linear"] = {{"Tol", 1.0e-12}, {"MaxIts", 400}};
+  const fs::path output_dir = temp.temp_dir / "coverage-matrix";
+  {
+    test::GeometryCacheEnvGuard cache_env(swapped.cache.string(), false);
+    config["Problem"]["Output"] = output_dir.string();
+    test::RunElectrostatic(config);
+  }
+  Mpi::Barrier(Mpi::World());
+  if (!Mpi::Root(Mpi::World()))
+  {
+    return;
+  }
+  // The premise: nothing kept as ConductorConsistency at source 1, the exclusion at 2.
+  auto ReadTrimmedTextCsv = [](const fs::path &path) { return test::ReadTextCsv(path); };
+  const test::TextCsv cc =
+      ReadTrimmedTextCsv(output_dir / "surface-response-conductor-consistency-energy.csv");
+  std::map<int, double> cc_energy;
+  for (const auto &row : cc.rows)
+  {
+    if (std::stoi(row[cc.Column("evaluation")]) == 0 && row[cc.Column("type")] == "Total")
+    {
+      cc_energy[std::stoi(row[cc.Column("source")])] =
+          std::stod(row[cc.Column("conductorconsistency raw energy[4] (J)")]);
+    }
+  }
+  REQUIRE(cc_energy.size() == 3);
+  REQUIRE(cc_energy.at(1) == 0.0);
+  REQUIRE(cc_energy.at(2) > 0.0);
+  // The per-source rows (their own measurement) and the matrix rows (the final one).
+  const test::TextCsv coverage =
+      ReadTrimmedTextCsv(output_dir / "surface-response-coverage.csv");
+  std::map<int, double> own_share;
+  for (const auto &row : coverage.rows)
+  {
+    const int source = std::stoi(row[coverage.Column("i")]);
+    const double share = std::stod(row[coverage.Column("uncovered raw share of W")]);
+    own_share[source] =
+        own_share.count(source) ? std::max(own_share[source], share) : share;
+  }
+  REQUIRE(own_share.size() == 3);
+  const test::TextCsv matrix =
+      ReadTrimmedTextCsv(output_dir / "terminal-C-corrected-coverage.csv");
+  REQUIRE(matrix.rows.size() == 3);
+  std::map<int, std::string> final_status;
+  for (const auto &row : matrix.rows)
+  {
+    const int source = std::stoi(row[matrix.Column("i")]);
+    INFO("source " << source);
+    const double final_share =
+        std::stod(row[matrix.Column("source final worst uncovered raw share of W")]);
+    final_status[source] = row[matrix.Column("source final worst coverage status")];
+    if (source == 1)
+    {
+      CHECK(std::stoi(row[matrix.Column("source re-measured")]) == 1);
+      CHECK(final_share > own_share.at(1));
+    }
+    else
+    {
+      CHECK(std::stoi(row[matrix.Column("source re-measured")]) == 0);
+      CHECK_THAT(final_share, WithinRel(own_share.at(source), 1.0e-12));
+    }
+  }
+  // Entry (i, j) = the worse of the two sources' final statuses.
+  const std::vector<std::string> order = {
+      "OK", "LOW", "PARTIAL", "NOT-ACHIEVABLE", "NO-ENERGY", "NOT-MEASURED"};
+  auto Rank = [&](const std::string &status)
+  { return std::find(order.begin(), order.end(), status) - order.begin(); };
+  for (const auto &row : matrix.rows)
+  {
+    const int i = std::stoi(row[matrix.Column("i")]);
+    for (int j = 1; j <= 3; j++)
+    {
+      const std::string &entry =
+          row[matrix.Column(fmt::format("coverage status[i][{}]", j))];
+      CHECK(Rank(entry) == std::max(Rank(final_status.at(i)), Rank(final_status.at(j))));
+    }
+  }
+#endif
+}
+
 TEST_CASE_METHOD(test::SurfaceResponseFiles,
                  "SurfaceResponseOperator conductor-consistency placement without readable "
                  "trace data",
@@ -1475,6 +1608,192 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   REQUIRE_NOTHROW(placeholder = Preflight(placeholder_library, "placeholder"));
   CHECK(Placed(placeholder.first));
   CHECK(placeholder.second == control_csv);
+#endif
+}
+
+// Decision 1685 (lane diagdir): Diagnostics.Directory writes the per-patch tables
+// (surface-response-patches.csv, -patch-energy.csv, -traces.csv) into that sub-directory
+// of Problem.Output with the bytes of the default run, leaves every other file at the top
+// level byte-equal and palace.json's SurfaceResponse unchanged; with
+// ConductorConsistencyRecords "Directory" the Records array leaves palace.json (nothing
+// else does) for surface-response-conductor-consistency-records.json there, in the text
+// palace.json holds by default. The S7diag islands with the INCONSISTENT spatial coupon:
+// one tested patch per source, excluded at source 1 (the patch table is rewritten).
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "Electrostatic Diagnostics.Directory moves the per-patch tables and the "
+                 "conductor-consistency records byte for byte",
+                 "[electrostaticsolver][surfaceresponseoperator][conductorconsistency]"
+                 "[diagnosticsdirectory][3d][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  const fs::path mesh_path = temp.temp_dir / "diagnostics-directory-islands.mesh";
+  if (Mpi::Root(Mpi::World()))
+  {
+    mfem::Mesh serial = MakeSerialIslandMesh(false, false, false, true);
+    std::ofstream output(mesh_path);
+    serial.Print(output);
+  }
+  Mpi::Barrier(Mpi::World());
+  const auto inconsistent = WriteCoupon(temp.temp_dir, CouponVariant::INCONSISTENT);
+  json config = HighOrderSpatialConfig();
+  config["Model"]["Mesh"] = mesh_path.string();
+  config["Model"]["L0"] = 1.0;
+  config["Model"]["Lc"] = 1.0;
+  auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
+  correction.erase("PatchConstruction");
+  correction["TraceCoupling"] = "SurfaceMortar";
+  correction["MortarOversampling"] = 2;
+  correction["CorrectionMode"] = "Both";
+  correction["PatchEnergy"] = true;
+  config["Solver"]["Linear"] = {{"Tol", 1.0e-12}, {"MaxIts", 400}};
+  auto Run = [&](const char *stem, const json &diagnostics)
+  {
+    json run = config;
+    if (!diagnostics.is_null())
+    {
+      run["Solver"]["Electrostatic"]["ResponseCorrection"]["Diagnostics"] = diagnostics;
+    }
+    const fs::path dir = temp.temp_dir / stem;
+    run["Problem"]["Output"] = dir.string();
+    test::GeometryCacheEnvGuard cache_env(inconsistent.cache.string(), false);
+    test::RunElectrostatic(run);
+    return dir;
+  };
+  const fs::path off_dir = Run("diagdir-off", json());
+  const fs::path dir_dir = Run("diagdir-dir", {{"Directory", "diagnostics"}});
+  const fs::path records_dir =
+      Run("diagdir-records",
+          {{"Directory", "diagnostics"}, {"ConductorConsistencyRecords", "Directory"}});
+  Mpi::Barrier(Mpi::World());
+  if (!Mpi::Root(Mpi::World()))
+  {
+    return;
+  }
+
+  // Decision 1817: the census's per-patch readings are a per-patch table too.
+  const std::set<std::string> moved = {
+      "surface-response-patches.csv", "surface-response-patch-energy.csv",
+      "surface-response-traces.csv", "surface-response-patch-loops.csv",
+      "surface-response-resolution-patches.csv"};
+  auto Entries = [](const fs::path &dir)
+  {
+    std::set<std::string> names;
+    for (const auto &entry : fs::directory_iterator(dir))
+    {
+      names.insert(entry.path().filename().string());
+    }
+    return names;
+  };
+  auto Metadata = [](const fs::path &dir)
+  {
+    std::ifstream input(dir / "palace.json");
+    REQUIRE(input);
+    return json::parse(input);
+  };
+  std::function<void(json &)> EraseVolatile = [&](json &node)
+  {
+    if (node.is_object())
+    {
+      node.erase("WallTime");
+      node.erase("GeometryCache");
+      for (auto &[key, value] : node.items())
+      {
+        EraseVolatile(value);
+      }
+    }
+    else if (node.is_array())
+    {
+      for (auto &value : node)
+      {
+        EraseVolatile(value);
+      }
+    }
+  };
+  auto SurfaceResponse = [&](const fs::path &dir)
+  {
+    json record = Metadata(dir).at("SurfaceResponse");
+    EraseVolatile(record);
+    return record;
+  };
+
+  // The default: every table at the top level, no sub-directory.
+  const auto off = Entries(off_dir);
+  CHECK_FALSE(off.count("diagnostics"));
+  for (const char *name :
+       {"surface-response-patches.csv", "surface-response-patch-energy.csv",
+        "surface-response-traces.csv"})
+  {
+    INFO(name);
+    REQUIRE(fs::is_regular_file(off_dir / name));
+  }
+  const json off_record = SurfaceResponse(off_dir);
+  const auto &off_gate = off_record.at("Diagnostics").at("ConductorConsistency");
+  REQUIRE(off_gate.at("TestedPatches").get<int>() >= 1);
+  REQUIRE(off_gate.at("Count").get<int>() == 1);
+  REQUIRE(off_gate.at("Records").size() == off_gate.at("TestedPatches").get<std::size_t>());
+
+  for (const fs::path &dir : {dir_dir, records_dir})
+  {
+    INFO(dir.filename().string());
+    const bool records_moved = dir == records_dir;
+    // The top level = the default's minus the moved tables plus the directory; every file
+    // at the top level but palace.json is byte-equal to the default's.
+    std::set<std::string> expected_top, expected_moved;
+    for (const auto &name : off)
+    {
+      (moved.count(name) ? expected_moved : expected_top).insert(name);
+    }
+    expected_top.insert("diagnostics");
+    if (records_moved)
+    {
+      expected_moved.insert(SurfaceResponseOperator::kConductorConsistencyRecordsFile);
+    }
+    CHECK(Entries(dir) == expected_top);
+    REQUIRE(fs::is_directory(dir / "diagnostics"));
+    CHECK(Entries(dir / "diagnostics") == expected_moved);
+    for (const auto &name : off)
+    {
+      INFO(name);
+      if (name == "palace.json")
+      {
+        continue;
+      }
+      const fs::path path = moved.count(name) ? dir / "diagnostics" / name : dir / name;
+      REQUIRE(fs::is_regular_file(path));
+      CHECK(test::ReadFile(path) == test::ReadFile(off_dir / name));
+    }
+    // palace.json: SurfaceResponse as the default's, without Records when they moved.
+    json expected = off_record;
+    if (records_moved)
+    {
+      expected["Diagnostics"]["ConductorConsistency"].erase("Records");
+    }
+    CHECK(SurfaceResponse(dir) == expected);
+    CHECK(Metadata(dir).size() == Metadata(off_dir).size());
+  }
+
+  // The records file: the array at the same key path, in palace.json's own text.
+  const std::string text =
+      test::ReadFile(records_dir / "diagnostics" /
+                     SurfaceResponseOperator::kConductorConsistencyRecordsFile);
+  const std::string head = "{\n  \"SurfaceResponse\": {\n    \"Diagnostics\": {\n      "
+                           "\"ConductorConsistency\": {\n        \"Records\": ";
+  const std::string tail = "\n      }\n    }\n  }\n}\n";
+  REQUIRE(text.size() > head.size() + tail.size());
+  CHECK(text.compare(0, head.size(), head) == 0);
+  CHECK(text.compare(text.size() - tail.size(), tail.size(), tail) == 0);
+  const std::string array =
+      text.substr(head.size(), text.size() - head.size() - tail.size());
+  CHECK(array.front() == '[');
+  CHECK(test::ReadFile(off_dir / "palace.json").find("\"Records\": " + array + ",\n") !=
+        std::string::npos);
+  const json records = json::parse(text);
+  CHECK(records.at("SurfaceResponse")
+            .at("Diagnostics")
+            .at("ConductorConsistency")
+            .at("Records") == off_gate.at("Records"));
 #endif
 }
 

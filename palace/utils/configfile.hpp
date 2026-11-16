@@ -1761,6 +1761,83 @@ public:
     // off (one pass over the mesh per measurement when on).
     bool within_r_volume_energy = false;
 
+    // Diagnostics.UncoveredFeatureEnergy (diagnostic-only lane ctx002-miss, decision 1567
+    // (b); the Maxwell drivers only): the raw field's within-R energy of the uncovered
+    // requirements (the rows of surface-response-uncovered-energy.csv) split per type by
+    // the FEATURE whose portion holds the nearest perimeter foot, written to
+    // surface-response-uncovered-feature-energy.csv; per (type, interface) the rows sum to
+    // the uncovered-energy row of the raw field. OFF by default: bitwise off (one
+    // quadrature pass per interface and measurement when on).
+    bool uncovered_feature_energy = false;
+
+    // Coverage (lane L1, decision 1634 (4); DESIGN-v2 s4.5): the coverage outputs' config
+    // block. The two bars are INTERIM placeholders (the coverage gate in force's
+    // BuildTarget and MaxUncoveredShare; validation track, PREREG-L1B). Policy (lane L4,
+    // decision 1829; USER 1636 (2)): WARN prints every corrected value with the banner;
+    // MARK_NOT_APPLIED prints a corrected value built from a cell whose coverage status is
+    // marked (IsCoverageStatusMarked) as nan and moves the value to an appended "partial
+    // (uncovered part raw)" column; the writers read the per-cell status, the accumulators
+    // never read the policy, and no computed number changes. ValidatedRegime = the optional
+    // sidecar file of the validated correction-factor ranges per Type and excitation class
+    // (absent: every cell reads regime NO-RANGE).
+    struct CoverageData
+    {
+      enum class Policy : char
+      {
+        WARN,
+        MARK_NOT_APPLIED
+      };
+      // THE default policy (one constant: the member initializer and the absent-key parse
+      // read it). WARN until the USER closes stage F (decision 1637 (b)); the flip to
+      // MARK_NOT_APPLIED is this line, the schema default, the docs sentence and the
+      // baselines whose corrected columns change by design.
+      static constexpr Policy kDefaultCoveragePolicy = Policy::WARN;
+      Policy policy = kDefaultCoveragePolicy;
+      double max_uncovered_share = 0.05;
+      double build_target = 0.02;
+      std::string validated_regime;
+    };
+    CoverageData coverage;
+
+    // Resolution (lane rescensus-product, decision 1817; ruling 1819): the edge-resolution
+    // census of the correction's trace contour (surface-response-resolution.csv, the
+    // palace.json block SurfaceResponse.Resolution, the PREFLIGHT line and the banner). ON
+    // by default whenever the correction is on (a check that is off prevents nothing);
+    // outputs only. BarsFile = an optional bars file for the run's matching radius (absent:
+    // the built-in INTERIM bars, valid at R = 1.9 um only; any other radius reads NO-BARS);
+    // a file of another radius than the run's is a config error.
+    struct ResolutionData
+    {
+      bool enabled = true;
+      std::string bars_file;
+    };
+    ResolutionData resolution;
+
+    // Diagnostics.Directory (decision 1685; lane diagdir DESIGN section 2): the directory,
+    // relative to Problem.Output, of the heavy per-patch tables whose rows scale with the
+    // applied patch count (surface-response-patches.csv, surface-response-patch-energy.csv,
+    // surface-response-traces.csv, surface-response-patch-loops.csv): written there with
+    // the same names and bytes, so that a tool which collects the top-level CSV / JSON
+    // files of the output directory leaves them out. Empty (the key absent, the default) =
+    // every file at the top level, as before. A single directory name; under AMR each
+    // iterationNN/ folder gets its own copy of the directory (SaveIteration moves it like a
+    // file).
+    std::string diagnostics_directory = "";
+
+    // Diagnostics.ConductorConsistencyRecords (decision 1685): where the Records array of
+    // SurfaceResponse.Diagnostics.ConductorConsistency (one entry per tested patch and
+    // excitation) goes. METADATA (default): palace.json, as before. DIRECTORY: the file
+    // surface-response-conductor-consistency-records.json in Diagnostics.Directory, with
+    // the array at the same key path and in the same text; palace.json then lacks only that
+    // member (TestedPatches, the record count, and the gate's summary stay).
+    enum class ConductorConsistencyRecordsOutput
+    {
+      METADATA,
+      DIRECTORY
+    };
+    ConductorConsistencyRecordsOutput conductor_consistency_records =
+        ConductorConsistencyRecordsOutput::METADATA;
+
     // GeometryFailurePolicy (readiness hardening, USER decision 1000 (b), supervisor 1001):
     // what a run does when the DEVICE GEOMETRY reaches a converted former-abort site of the
     // identification / placement (a valid config and library). RecordRaw: the affected
@@ -1781,6 +1858,11 @@ public:
     // off for a solve run (the solve reads the preflight's); set = as given (DESIGN section
     // 9 (i) of the identification fix round). Diagnostic only.
     std::optional<bool> knife_edge_census = std::nullopt;
+    // PreflightOnly: the run is the surface-response preflight, exactly what the
+    // command-line option --surface-response-preflight selects, for front ends that start
+    // Palace without options. Read from the block of the configured problem type; default
+    // false.
+    bool preflight_only = false;
 
     // DomainBoundary rule (decisions 442 / 454 / 455; boundary-cut DESIGN 2.2): the
     // mirror-extended identification across the planar NATURAL vertical truncation planes
@@ -2006,6 +2088,28 @@ public:
       std::array<double, 3> p0{}, p1{};
     };
     std::vector<UncoveredPortionData> uncovered_portions;
+    // Lane L1 (decision 1634 (1), ruling 1649 Q1 / Q2): one record per feature listed in
+    // `uncovered_portions`, read from the identification's result (nothing recomputed):
+    // the feature's id and type, its key Hash, whether the identification matched it (a
+    // matched feature in the uncovered list is one whose placement was rejected, with the
+    // rejection's class as text), and its signature's Unboxable flag. The coverage
+    // partition bins the uncovered energy per key with it. Carried by the geometry cache
+    // (version 25, a required leaf).
+    struct UncoveredKeyData
+    {
+      int feature = -1;
+      std::string type;
+      std::string hash;
+      bool matched = false;
+      std::string placement_rejection;
+      bool unboxable = false;
+    };
+    std::vector<UncoveredKeyData> uncovered_keys;
+    // Lane L1 (ruling 1688; the stage-0 Missing LENGTH line, a log line only): the
+    // identification's matched and unmatched feature lengths (mesh units) of THIS process's
+    // feature pass; negative when no feature pass ran here (a response-geometry cache load,
+    // explicit models). Not carried by the geometry cache.
+    double identification_matched_length = -1.0, identification_unmatched_length = -1.0;
     // The excluded / unclaimed perimeter portions of the identification (idfix DESIGN
     // section 8; the exclusion-energy export): `topology` = the exclusion Class by name (a
     // whole-segment exclusion's class, an analytic CrossLayer zone's, CornerArmTrim for the
@@ -2060,6 +2164,27 @@ public:
 
   // Whether to sum response-matrix entries over physical edges before writing them.
   bool aggregate_response_matrix = false;
+
+  // The response-archive run mode of coupon generation (Solver.Electrostatic.
+  // ResponseArchive). Every field is optional: an absent key leaves its PALACE_RESPONSE_*
+  // alias variable in charge (ResolveResponseArchive, drivers/electrostaticsolver.hpp).
+  struct ResponseArchiveData
+  {
+    enum class Mode
+    {
+      NONE,
+      ARCHIVE,
+      REDUCE,
+      ESTIMATE
+    };
+    std::optional<Mode> mode = std::nullopt;
+    std::optional<std::string> directory = std::nullopt;
+    std::optional<int> block_size = std::nullopt;
+    std::optional<bool> source_timing = std::nullopt;
+    std::optional<bool> recycle_initial_guess = std::nullopt;
+    std::optional<std::string> estimate_request = std::nullopt;
+  };
+  std::optional<ResponseArchiveData> response_archive = std::nullopt;
 
   // Optional global Schur-complement correction assembled from a matched pair of local
   // fabricated- and thin-metal coupon response matrices.

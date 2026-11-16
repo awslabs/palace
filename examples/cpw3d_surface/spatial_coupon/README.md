@@ -17,14 +17,14 @@ archive hygiene, the frozen class gates of `qualify/qualification-gates.json`,
 plans without contacting the cluster). See "Two commands" in
 `geometry-independence-suite.md`.
 
-### Near-key reuse (USER decision 428 = Option A; decision 431; DESIGN v2 of the nearkey-reuse-design lane)
+### Near-key reuse
 
 |W| <= 11.3 % (the junction gap scaling with it, claim-length change S <= 0.75 %, shifts <= 0.05 R;
 `nearkey_detection.py`) has its response transplanted onto the feature's own basis (`nearkey_transplant.py`:
 the interpolation map P, Q_reused = P^T Q_D P for the fabricated / thin domain + surface and the
 fabricated SHELLED surface matrix, gates T1-T5 / T2e / knots); the predictor (`nearkey_predictor.py`,
 two regimes, r_T = -a_T W, bound (1 + rho) a |W| + b S + phi + 2 T2e, MA on MA_sharp) and the policy
-decide: DEFAULT (bound <= 0.5 % SA / MS, <= 1.0 % MA_sharp; ACTIVE since decision 459: the rule file carries the
+decide: DEFAULT (bound <= 0.5 % SA / MS, <= 1.0 % MA_sharp; active: the rule file carries the
 validation-pair-5 DefaultActivation record, shipped beside it as `nearkey-default-activation-pair5.json` and
 sha-pinned; an unreadable / mismatching record fails closed) or FALLBACK (the exact coupon unbuildable: STOP record +
 approval, bound <= 3.5 %); otherwise the feature stays Missing. A reused model (status
@@ -34,14 +34,14 @@ under `ROOT/device/reused/`, never registered or built, and added to a library b
 reused share per Type and the reuse error budget (MA on MA_sharp) beside the D4 figures. Every other
 structure key is refused `StructureKeyNotCalibrated` (`test_nearkey_reuse.py`).
 
-### The (F) device gate solves (fix round R-4, OI-QUALIFY-DEVICE-GATE-ES-ONLY; decisions 1174 / 1239)
+### The (F) device gate solves
 
 `coupon_library.py spatial-qualify evaluate --gate palace.json ...` reads the resolution-aware conductor-consistency gate
 (Count 0, MaxRatio <= 1e-4; `qualify/spatial_qualification.py`) from the device's cheap thin solves at Orders 3 / 4 / 5 on
 the registration mesh (the c0 solves) with the interim library. `qualify/device_gate_configs.py` writes their configs (the
 geometry-only `preflight.json` + `c0-p<N>.json`) from the window's device run config: `--form es` (the default) is the
 electrostatic form of record, byte-identical to the (F) chains' `write_c0_configs` v2 recipe (`test_device_gate_configs.py`);
-`--form driven --frequency F` is the Maxwell form for a window without an electrostatic terminal (FE6, decision 1174): the
+`--form driven --frequency F` is the Maxwell form for a window without an electrostatic terminal: the
 F-39 LumpedPort device config at ONE frequency, `Solver.SurfaceResponseCorrection` with `Collocated` trace coupling (the
 Maxwell path refuses `SurfaceMortar`), `Refinement.MaxIts` 0. The gate record is the same on both paths
 (`SurfaceResponse.Diagnostics.ConductorConsistency`, `Maxwell` / `Frequency` per record), so the gate reader is unchanged
@@ -142,10 +142,10 @@ serialized geometry/connectivity, quality, grouped physical-family areas,
 expected attributes, and SHA-bound partition certificates. MSH 2.2 is
 intentional: it is the format consumed by the Palace/MFEM reader used by these
 campaigns. `relabel_radial_ma_shells.py` is the label-only counterpart on a
-published mesh (supervisor decisions 56 / 61a): it splits the MA surfaces into
+published mesh: it splits the MA surfaces into
 per-tube-ring radial shells at the byte level of the MSH 2.2 file (nodes and every
 other element byte identical, shell areas summing to the parent areas) and writes the
-shell census. Since decision 61a every production coupon carries the shells:
+shell census. Every production coupon carries the shells:
 `publish_rigid_coupon_mesh.py` applies them at the placement stage (ring radii from
 the gmsh-build census bound through the canonical build record, classification in
 source-local coordinates through the inverse rigid map, census
@@ -172,8 +172,8 @@ The producer-default etch collar (3 x Radius around every Physical side of a
 plan-view loop) is the miter offset of the loop while that polygon is simple
 (`MiterOffset`), else the outer boundary of the union of the loop, its per-side
 collar rectangles and convex-corner kites clipped to the coupon box
-(`CollarUnion`, decision 54a). Circular arcs of a loop (`circular_arc_runs`) are
-offset exactly (decision 246): a convex-metal arc grows to r + collar, a
+(`CollarUnion`). Circular arcs of a loop (`circular_arc_runs`) are
+offset exactly: a convex-metal arc grows to r + collar, a
 concave one shrinks to r - collar, an arc smaller than the collar collapses onto
 its neighbours' junction, tangent joints stay continuous and the union takes an
 annular sector per arc; the hole-shrink path erodes a convex hole by the chords
@@ -199,7 +199,7 @@ constructed collar boundary, convex-corner miter kites included; the maximum
 excess found measures the exact metal distance; both must stay within the cap,
 so an island bounded by a kite edge (beyond the round offset) fails closed when
 the two disagree. A larger island, or an un-etched region touching the box
-face, fails closed as before (`ScopeGuard[FootprintTopology]`, decision 229's
+face, fails closed as before (`ScopeGuard[FootprintTopology]`, with its
 per-case override path). The S1p loop end 5ed91f8890c0 is the reference case:
 one island of 0.013 um^2 whose excess beyond its 5.7 um collar is at least
 0.0348 um (0.018 R, found) and at most 0.0417 um (0.022 R, bound).

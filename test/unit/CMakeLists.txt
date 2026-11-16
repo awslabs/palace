@@ -41,6 +41,7 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-correctedcapacitance.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-correctedsolve.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-correcteddrivenpath.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-coveragepolicy.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-constants.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-cornerbasisrefinement.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-cornerarmtrim.cpp
@@ -54,6 +55,9 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-domainboundary-blocked.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-excludedpatchportions-index.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-geometryfallback.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-preflightonly.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-substratepermittivity.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-lawcausedmissing.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-domainpostoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-domainsubmesh.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-eigensolver.cpp
@@ -88,6 +92,7 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-pointlocatorblocked.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-prescribedpotentialsheet.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-rap.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-responsearchive.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-responsegeometry-residency.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-responsesetupcache.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-romoperator.cpp
@@ -104,6 +109,8 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-postoperator-boundary-viz.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-superconductorsheetoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-surfaceimpedanceoperator.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-surfaceresponsecoverage.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-surfaceresponseresolution.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-surfaceresponseidentification.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-surfaceresponse-rootgather.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-surfaceresponseoperator.cpp

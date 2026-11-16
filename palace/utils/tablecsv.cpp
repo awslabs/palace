@@ -17,6 +17,11 @@
 namespace palace
 {
 
+std::string CsvNumber(double value)
+{
+  return std::isnan(value) ? std::string("nan") : fmt::format("{:+.12e}", value);
+}
+
 [[nodiscard]] std::size_t Column::col_width(const ColumnOptions &defaults) const
 {
   // Quickfix to specify full column width in integer case to match current formatting.
@@ -47,16 +52,25 @@ namespace palace
 {
   auto width_ = width.value_or(col_width(defaults));
   // If data available format double.
+  if (print_as_text && i < text.size())
+  {
+    return fmt::format("{:>{}}", text[i], width_);
+  }
   if ((i >= 0) && (i < data.size()))
   {
     auto val = data[i];
+    // A non-finite cell is written as a BARE token ("nan", "+inf" / "-inf"; "inf" / "-inf"
+    // in an integer column), never padded to the column width: a reader that takes only a
+    // bare token as missing (pandas' default read_csv, which paladin's upload uses) would
+    // keep a padded "nan" as text and a column mixing text and numbers fails its upload
+    // (lane L4, decision 1829 C1). The trimmed token is the one printed before.
     if (std::isnan(val))
     {
-      return fmt::format("{:>{}}", "nan", width_);
+      return std::string("nan");
     }
     if (print_as_int && std::isinf(val))
     {
-      return fmt::format("{:>{}}", std::signbit(val) ? "-inf" : "inf", width_);
+      return std::string(std::signbit(val) ? "-inf" : "inf");
     }
     if (print_as_int)
     {  // Quick-fix to force int printing
@@ -69,7 +83,12 @@ namespace palace
       auto prec = float_precision.value_or(defaults.float_precision);
       auto fmt_str = fmt::format("{{:>{sign:s}{width}.{prec}e}}", fmt::arg("sign", sign),
                                  fmt::arg("width", width_), fmt::arg("prec", prec));
-      return fmt::format(fmt::runtime(fmt_str), val);
+      auto cell = fmt::format(fmt::runtime(fmt_str), val);
+      if (std::isinf(val))
+      {
+        cell.erase(0, cell.find_first_not_of(' '));
+      }
+      return cell;
     }
   }
   return fmt::format("{0:>{1}s}", defaults.empty_cell_val, width_);
@@ -243,7 +262,7 @@ std::string_view trim_space(std::string_view str_v)
 
 Table::Table(std::string_view table_str,
              std::optional<std::string_view> print_col_separator_,
-             std::optional<std::string_view> print_row_separator_)
+             std::optional<std::string_view> print_row_separator_, bool text_columns)
 {
   using namespace std::literals;
   if (table_str.empty())
@@ -282,9 +301,22 @@ Table::Table(std::string_view table_str,
         else
         {
           auto result = scn::scan<double>(entry_trim, "{}");
-          MFEM_VERIFY(result, fmt::format("Could not parse CSV entry \"{}\" as double",
-                                          entry_trim));
-          (*this)[col_i] << result->value();
+          auto &column = (*this)[col_i];
+          // With text_columns, a column whose FIRST cell is not a number is a text column
+          // (Column::Text: lane L1's Type and status columns); a text cell below a number
+          // is refused. Without it every cell must be a number.
+          MFEM_VERIFY(
+              result || (text_columns && (column.print_as_text || column.data.empty())),
+              fmt::format("Could not parse CSV entry \"{}\" as double", entry_trim));
+          if (!result || column.print_as_text)
+          {
+            column.print_as_text = true;
+            column << std::string(entry_trim);
+          }
+          else
+          {
+            column << result->value();
+          }
         }
         col_i++;
       }
@@ -300,7 +332,8 @@ Table::Table(std::string_view table_str,
 template void Table::append_header(fmt::memory_buffer &) const;
 template void Table::append_row(fmt::memory_buffer &, std::size_t) const;
 
-TableWithCSVFile::TableWithCSVFile(std::string csv_file_fullpath, bool load_existing_file)
+TableWithCSVFile::TableWithCSVFile(std::string csv_file_fullpath, bool load_existing_file,
+                                   bool text_columns)
   : csv_file_fullpath_{std::move(csv_file_fullpath)}
 {
   if (!load_existing_file)
@@ -321,7 +354,7 @@ TableWithCSVFile::TableWithCSVFile(std::string csv_file_fullpath, bool load_exis
   file_buffer_str << file_buffer.rdbuf();
   file_buffer.close();
   const std::string contents = file_buffer_str.str();
-  table = Table(contents);
+  table = Table(contents, std::nullopt, std::nullopt, text_columns);
   // A file cut off after its last value but before the row separator still parses as a
   // complete row, but appending to it would join two rows on one line. Rewrite it whole
   // on the next write instead.
@@ -427,6 +460,7 @@ void TableWithCSVFile::AppendRowsAndClear()
   for (auto &col : table)
   {
     col.data.clear();
+    col.text.clear();
   }
 }
 

@@ -1140,7 +1140,7 @@
         "Length": {
           "type": "number",
           "exclusiveMinimum": 0,
-          "description": "Optional geometry override for a ragged planar element (decision 929): the element length in mesh units measured along `\"Direction\"`. When present, the lumped element uses this length and width = area / length (the area exact from the port faces), the discovered bounding-box length is reported beside it and the projected-length consistency check is skipped for this element only; when absent, the bounding-box length and the check apply. Cartesian (uniform) elements only; the circuit totals R / L / C are unchanged. No automatic fallback."
+          "description": "Optional geometry override for a ragged planar element: the element length in mesh units measured along `\"Direction\"`. When present, the lumped element uses this length and width = area / length (the area exact from the port faces), the discovered bounding-box length is reported beside it and the projected-length consistency check is skipped for this element only; when absent, the bounding-box length and the check apply. Cartesian (uniform) elements only; the circuit totals R / L / C are unchanged. No automatic fallback."
         },
         "R": {
           "type": "number",
@@ -1320,7 +1320,7 @@
         "Length": {
           "type": "number",
           "exclusiveMinimum": 0,
-          "description": "Optional geometry override for a ragged planar element (decision 929): this element's length in mesh units along its `\"Direction\"`; see `/LumpedPort/Length`."
+          "description": "Optional geometry override for a ragged planar element: this element's length in mesh units along its `\"Direction\"`; see `/LumpedPort/Length`."
         }
       }
     },
@@ -3348,6 +3348,45 @@
           "description": "Sum `surface-response-matrix.csv` entries over physical edges before writing. The output retains one synthetic edge per interface and matching radius, reducing coupon output size while preserving the interface-aggregated core- and full-patch response operators.",
           "default": false
         },
+        "ResponseArchive": {
+          "type": "object",
+          "description": "Run mode of coupon response generation by archived fields. `\"Archive\"` solves every prescribed-potential source and writes its fields to `Directory` without postprocessing; `\"Reduce\"` assembles the response matrices from such an archive without solving; `\"Estimate\"` evaluates the error indicator of archived fields for the excitations of `EstimateRequest`; `\"None\"` runs the ordinary solve and still writes the fields when `Directory` is set. Each key has an alias environment variable (`PALACE_RESPONSE_ARCHIVE_ONLY`, `PALACE_RESPONSE_REDUCE_ONLY`, `PALACE_RESPONSE_ESTIMATE_ONLY`, `PALACE_RESPONSE_ARCHIVE_DIR`, `PALACE_RESPONSE_BLOCK_SIZE`, `PALACE_RESPONSE_SOURCE_TIMING`, `PALACE_RESPONSE_RECYCLE_INITIAL_GUESS`, `PALACE_RESPONSE_ESTIMATE_REQUEST`); a key and its variable that are both set must agree. A key's `default` applies only when neither the key nor its variable is set: an absent key is left to its variable and is not filled into the resolved configuration.",
+          "additionalProperties": false,
+          "properties": {
+            "Mode": {
+              "type": "string",
+              "enum": ["None", "Archive", "Reduce", "Estimate"],
+              "description": "Response-archive run mode.",
+              "default": "None"
+            },
+            "Directory": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Archive directory, relative to the working directory of the process. The archive holds one file per source, rank and field, so a reduction runs at the rank count of the archiving run; a reduction in another run or on more than one node needs an absolute path on a shared file system."
+            },
+            "BlockSize": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Number of archived sources streamed together by a reduction.",
+              "default": 3
+            },
+            "SourceTiming": {
+              "type": "boolean",
+              "description": "Print the iterations and wall times of every archived source.",
+              "default": false
+            },
+            "RecycleInitialGuess": {
+              "type": "boolean",
+              "description": "Start each archived source's solve from the previous source's field.",
+              "default": false
+            },
+            "EstimateRequest": {
+              "type": "string",
+              "minLength": 1,
+              "description": "JSON request file listing the excitations of an archive estimate."
+            }
+          }
+        },
         "ResponseCorrection": {
           "type": "object",
           "description": "Apply a global thin-metal Schur-complement correction using matched fabricated- and thin-coupon response matrices. The legacy one-model syntax remains supported for explicit 2D placement. A fabrication-process `Library` automatically selects one-edge or coupled multi-edge coupons in 2D and integrates them along extracted physical metal edges in 3D. Standard output remains the raw thin-metal result, while surface response matrices enable `surface-Q-corrected.csv`.",
@@ -3482,7 +3521,12 @@
             },
             "KnifeEdgeCensus": {
               "type": "boolean",
-              "description": "The identification's knife-edge census (`Identification.Diagnostics.KnifeEdgeCensus`: three extra identification passes at the band radii; a preflight diagnostic the solve reads from the preflight). Absent: on for `--surface-response-preflight`, off for a solve run (DESIGN section 9 (i) of the identification fix round, decision 1062). Diagnostic only: no feature, key or patch depends on it."
+              "description": "The identification's knife-edge census (`Identification.Diagnostics.KnifeEdgeCensus`: three extra identification passes at the band radii; a preflight diagnostic the solve reads from the preflight). Absent: on for `--surface-response-preflight`, off for a solve run. Diagnostic only: no feature, key or patch depends on it."
+            },
+            "PreflightOnly": {
+              "type": "boolean",
+              "description": "Run the surface-response preflight instead of a solve: exactly what the command-line option `--surface-response-preflight` does (the same code path and exit status; the same outputs except that the resolved configuration records the key), for front ends that start Palace without command-line options. The block of the configured `Problem.Type` is read (`Solver.Electrostatic.ResponseCorrection` for an electrostatic problem, `Solver.SurfaceResponseCorrection` otherwise); the log says in one line that no field solve is run. Requires `Library`; cannot be combined with `--mesh-statistics`. Remove the key to solve.",
+              "default": false
             },
             "GeometryFailurePolicy": {
               "type": "string",
@@ -3490,7 +3534,7 @@
                 "RecordRaw",
                 "FailClosed"
               ],
-              "description": "What a run does when the device geometry reaches a converted former-abort site of the identification / placement with a valid configuration and library (readiness hardening, USER decision 1000 (b)). `RecordRaw`: the affected feature / patch / segment is excluded, its raw within-R energy stays in the raw term and the run continues with a named `SurfaceResponse.Diagnostics.GeometryFallbacks` record, `surface-response-geometry-fallbacks.csv` and a LOW-confidence banner with the raw share per interface type (never silent). `FailClosed`: the same records are collected and the run aborts at the end of the configuration with their summary (the preflight writes `surface-response-requirements.json` with `Identification.Diagnostics.GeometryFallbacks` first). Absent: `RecordRaw` on a solve run, `FailClosed` on `--surface-response-preflight` (the library build)."
+              "description": "What a run does when the device geometry reaches a converted former-abort site of the identification / placement with a valid configuration and library (conditions of the device geometry, not of the configuration or the library). `RecordRaw`: the affected feature / patch / segment is excluded, its raw within-R energy stays in the raw term and the run continues with a named `SurfaceResponse.Diagnostics.GeometryFallbacks` record, `surface-response-geometry-fallbacks.csv` and a LOW-confidence banner with the raw share per interface type (never silent). `FailClosed`: the same records are collected and the run aborts at the end of the configuration with their summary (the preflight instead writes `surface-response-requirements.json` with `Identification.Diagnostics.GeometryFallbacks` and then exits with status 3, its last log line naming the fallbacks and the files written). Absent: `RecordRaw` on a solve run, `FailClosed` on `--surface-response-preflight` (the library build)."
             },
             "PatchConstruction": {
               "type": "string",
@@ -3543,7 +3587,7 @@
                       }
                     }
                   },
-                  "description": "Per-case span-cap allowances (block (b) DESIGN section 3 (a) / A4, decision 303): the plan span cap of one approved closed feature that cannot be split, keyed by its embedded claims-only signature; one entry serves every window instance of the feature. Two allowances within 8 signature quanta of each other are refused; an allowance matching no cluster is recorded under UnusedSpanCapAllowances."
+                  "description": "Per-case span-cap allowances: the plan span cap of one approved closed feature that cannot be split, keyed by its embedded claims-only signature; one entry serves every window instance of the feature. Two allowances within 8 signature quanta of each other are refused; an allowance matching no cluster is recorded under UnusedSpanCapAllowances."
                 }
               },
               "description": "Spatial-support contract options of the automatic matching."
@@ -3597,12 +3641,12 @@
             },
             "Magnetic": {
               "type": "boolean",
-              "description": "Read the library's OPTIONAL magnetic (inductive) leaves (`MagneticFabricatedMatrix` / `MagneticThinMatrix` / `MagneticSource` of a Version-3 model; mx-sc-magnetic DESIGN-v2, decision 1229). Default true: a model carrying them adds the K-side defect dK = P_m^T W dS_m P_m to every CORRECTED operator (the uniform and adaptive driven sweeps, the self-consistent eigenproblem, its shift-invert and nonlinear refine), the `fixed-trace frequency shift` column (the corrected frequency of record, USER 1221 D6) and `surface-response-magnetic.csv`. False: the leaves are not read, the run is the electric-only run of the same library (byte-identical to the library without leaves), so the electric-only self-consistent result can be reproduced beside the magnetic one. A library without leaves is unaffected either way.",
+              "description": "Read the library's OPTIONAL magnetic (inductive) leaves (`MagneticFabricatedMatrix` / `MagneticThinMatrix` / `MagneticSource` of a Version-3 model). Default true: a model carrying them adds the K-side defect dK = P_m^T W dS_m P_m to every CORRECTED operator (the uniform and adaptive driven sweeps, the self-consistent eigenproblem, its shift-invert and nonlinear refine), the `fixed-trace frequency shift` column (the corrected frequency of record) and `surface-response-magnetic.csv`. False: the leaves are not read, the run is the electric-only run of the same library (byte-identical to the library without leaves), so the electric-only self-consistent result can be reproduced beside the magnetic one. A library without leaves is unaffected either way.",
               "default": true
             },
             "AllowElectricOnlyFallback": {
               "type": "boolean",
-              "description": "The magnetic (inductive) defect of finite-thickness metal (mx-sc-magnetic DESIGN-v2; USER 1221 D3): a Version-3 library model may carry the OPTIONAL leaves `MagneticFabricatedMatrix` / `MagneticThinMatrix` / `MagneticSource` (the vacuum twin of its 2D electrostatic coupon pair; 2D translational models only). A leaf refused by rule r1 (basis / piece counts), r2 (the twin's Fabrication differs from the library's) or r3 (the same-mesh proof exceeds the library's `MagneticRules.SameMeshTolerance`) ABORTS the run by name unless this key is true, in which case that model continues ELECTRIC-ONLY and is named in `surface-response-magnetic.csv` and the preflight manifest (`Summary.MagneticElectricOnly`). An r4 refusal (the leaf's -lambda_min / ||dS_m|| above `MagneticRules.PsdRefusalRatio`) always continues electric-only by name. Ignored by a library without magnetic leaves (its outputs are byte-identical to a run without this key).",
+              "description": "The magnetic (inductive) defect of finite-thickness metal: a Version-3 library model may carry the OPTIONAL leaves `MagneticFabricatedMatrix` / `MagneticThinMatrix` / `MagneticSource` (the vacuum twin of its 2D electrostatic coupon pair; 2D translational models only). A leaf refused by rule r1 (basis / piece counts), r2 (the twin's Fabrication differs from the library's) or r3 (the same-mesh proof exceeds the library's `MagneticRules.SameMeshTolerance`) ABORTS the run by name unless this key is true, in which case that model continues ELECTRIC-ONLY and is named in `surface-response-magnetic.csv` and the preflight manifest (`Summary.MagneticElectricOnly`). An r4 refusal (the leaf's -lambda_min / ||dS_m|| above `MagneticRules.PsdRefusalRatio`) always continues electric-only by name. Ignored by a library without magnetic leaves (its outputs are byte-identical to a run without this key).",
               "default": false
             },
             "Diagnostics": {
@@ -3612,20 +3656,81 @@
               "properties": {
                 "ExclusionEnergy": {
                   "type": "boolean",
-                  "description": "Write `surface-response-exclusion-energy.csv`: the raw field's within-R energy per exclusion class by name (the identification's Port / SimulationBoundary / NonPlanar / NonManifold / TruncationCut / Untargeted / UndeterminedProcessSide / Unchained / CrossLayer, CornerArmTrim, Unclaimed-other, UnprobedModels, MaxwellPatchExcluded; plus `Claimed` = the feature-claimed perimeter's and `Total` = the within-R energy by one integral, which the classes and Claimed sum to) x interface type x source (electrostatic) / frequency or mode (Maxwell). The partition reads the CLASSIFIED edge tree: every metal edge segment of the interface, physical or not, so the field near a fold / non-manifold / truncation / port edge is attributed to that edge. Every OTHER energy table (uncovered, domain-boundary, spatial-cluster-priority, conductor-consistency, model-raw, the surface-Q edge columns) reads the PHYSICAL edge tree and attributes the field near such an edge to the nearest PHYSICAL edge: a named limitation of those tables. Off by default (the partition costs one surface integral per class and interface, +45 % of the postprocess categories on the S1 stage-1 window: above the 10 % bar of decision 1076); the stage E / F configurations set it true (OI-COVERAGE-EXCLUSION-ENERGY; decisions 1064 (2) / 1074 / 1076).",
+                  "description": "Write `surface-response-exclusion-energy.csv`: the raw field's within-R energy per exclusion class by name (the identification's Port / SimulationBoundary / NonPlanar / NonManifold / TruncationCut / Untargeted / UndeterminedProcessSide / Unchained / CrossLayer, CornerArmTrim, Unclaimed-other, UnprobedModels, MaxwellPatchExcluded; plus `Claimed` = the feature-claimed perimeter's and `Total` = the within-R energy by one integral, which the classes and Claimed sum to) x interface type x source (electrostatic) / frequency or mode (Maxwell). The partition reads the CLASSIFIED edge tree: every metal edge segment of the interface, physical or not, so the field near a fold / non-manifold / truncation / port edge is attributed to that edge. Every OTHER energy table (uncovered, domain-boundary, spatial-cluster-priority, conductor-consistency, model-raw, the surface-Q edge columns) reads the PHYSICAL edge tree and attributes the field near such an edge to the nearest PHYSICAL edge: a named limitation of those tables. Off by default (the partition costs one surface integral per class and interface, +45 % of the postprocess categories on one measured window: above a 10 % cost bar).",
                   "default": false
                 },
                 "WithinRVolumeEnergy": {
                   "type": "boolean",
                   "description": "Write per placed patch the DEVICE FIELD's energies by a VOLUME integral over the patch's own box into `surface-response-patch-energy.csv` (`within-R magnetic energy (J)` = 1/2 int mu^-1 |B|^2, `within-R electric energy (J)` = 1/2 int eps |E|^2, `within-R volume (m^3)` = the box volume the quadrature resolves): a translational patch's box = its model's edge span +- R laterally, +- R normally, its longitudinal cell; a spatial patch's = its support box x [-R, R]. Summed over the element quadrature points inside the box (a point is in or out: the box faces are resolved to ~h, an ESTIMATE for a share census, not a trace form; a patch without a box prints NaN). Requires `PatchEnergy: true`. Off by default: bitwise off (mx-sc-magnetic Phase 3 (b) COL-3, R-MAG-15: the census of the spatial families' magnetic energy that decides the (A)-3D scope).",
                   "default": false
+                },
+                "UncoveredFeatureEnergy": {
+                  "type": "boolean",
+                  "description": "DIAGNOSTIC (the Maxwell drivers only, refused by the electrostatic driver): write `surface-response-uncovered-feature-energy.csv`: the raw field's within-R energy of the uncovered requirements (the rows of `surface-response-uncovered-energy.csv`) split per type by the FEATURE (identification feature id; a perimeter piece several features' portions cover carries their union label) whose portion holds the nearest perimeter foot, per target interface, with each label's portion count, length and bounding box; per (type, interface) the rows sum to the uncovered-energy row of the raw field. One quadrature pass per interface and measurement when on.",
+                  "default": false
+                },
+                "Directory": {
+                  "type": "string",
+                  "pattern": "^(?!iteration)[A-Za-z0-9_][A-Za-z0-9._-]*$",
+                  "description": "One directory name inside `Problem.Output` for the heavy per-patch tables (`surface-response-patches.csv`, `surface-response-patch-energy.csv`, `surface-response-traces.csv`, `surface-response-patch-loops.csv`): written there with the same names and bytes; every other output stays at the top level. Absent (the default): every table at the top level. Under AMR each `iterationNN/` folder holds its own copy of the directory. A name may not start with `iteration` (refused at load: SaveIteration leaves such entries in place)."
+                },
+                "ConductorConsistencyRecords": {
+                  "type": "string",
+                  "enum": ["Metadata", "Directory"],
+                  "description": "Where the `Records` array of `SurfaceResponse.Diagnostics.ConductorConsistency` (one entry per tested patch and excitation) is written. `Metadata` (default): `palace.json`. `Directory` (requires `Directory`): `surface-response-conductor-consistency-records.json` in that directory, the array at the same key path and in the same text; `palace.json` lacks only that member (`TestedPatches` = the record count and the gate summary stay).",
+                  "default": "Metadata"
+                }
+              }
+            },
+            "Coverage": {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "The coverage outputs of the correction (lane L1; written on every corrected run: `surface-response-coverage.csv`, `surface-response-uncovered-energy-by-key.csv`, the appended coverage columns, the end-of-run coverage banner and the palace.json block). A coverage status is about coverage only; the regime status says whether the covered part's correction factor lies in the range validated for this library and excitation class; neither says that the mesh of the solve resolves the field at the correction radius.",
+              "properties": {
+                "Policy": {
+                  "type": "string",
+                  "enum": ["Warn", "MarkNotApplied"],
+                  "description": "What a cell with poor coverage does. \"Warn\" (the default): the banner; every corrected value printed. \"MarkNotApplied\": a corrected value built from a cell whose coverage status is PARTIAL, NOT-ACHIEVABLE, INCONSISTENT, TARGET-NOT-SERVED or NOT-MEASURED prints nan, and the value (the covered part corrected plus the uncovered part raw) moves to an appended column '<column> partial (uncovered part raw)'; the corrected totals, frequency shifts, self-consistent frequencies and terminal matrices built from such a cell are marked the same way. No computed number changes. \"Abort\" is not in this version.",
+                  "default": "Warn"
+                },
+                "MaxUncoveredShare": {
+                  "type": "number",
+                  "enum": [0.05],
+                  "description": "INTERIM bar (fixed at 0.05 until the status validation rules otherwise): a cell whose uncovered + pending-model share of W is above it is PARTIAL (LOW at or below it, above BuildTarget); a method-gap share above it alone makes the cell NOT-ACHIEVABLE.",
+                  "default": 0.05
+                },
+                "BuildTarget": {
+                  "type": "number",
+                  "enum": [0.02],
+                  "description": "INTERIM bar (fixed at 0.02 until the status validation rules otherwise): a cell whose uncovered + pending-model share of W is at or below it is OK.",
+                  "default": 0.02
+                },
+                "ValidatedRegime": {
+                  "type": "string",
+                  "description": "Optional sidecar file of the validated ranges of the covered correction factor per interface Type and excitation class (ElectrostaticTerminal / Eigenmode / Driven), with the SHA-256 of the library it was validated for (a mismatch is a config error). Absent: every cell reads regime NO-RANGE."
+                }
+              }
+            },
+            "Resolution": {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "The edge-resolution census of the correction (lane rescensus-product; written on every corrected run: `surface-response-resolution.csv`, the palace.json block `SurfaceResponse.Resolution`, a PREFLIGHT line before the first solve and the end-of-run banner; with `PatchEnergy` also `surface-response-resolution-patches.csv`). Per patch: the lower median over its model's basis-point knots of the longest edge of the mesh element owning each knot, over the matching radius; per cell the energy-weighted shares of RESOLVED / MARGINAL / UNDER-RESOLVED / NOT-EVALUATED patches on INTERIM bars (valid at R = 1.9 um only; another radius reads NO-BARS). Outputs only: no value and no coverage status changes. RESOLVED is necessary, not sufficient.",
+              "properties": {
+                "Enabled": {
+                  "type": "boolean",
+                  "description": "Whether the census locates the knots (one added point location per AMR level). `false`: nothing is located and every cell reads NOT-EVALUATED (reason `disabled`); the table is still written.",
+                  "default": true
+                },
+                "BarsFile": {
+                  "type": "string",
+                  "description": "Optional bars file for the run's matching radius: {\"RadiusMicrons\": R, \"Bars\": {\"1\": {\"b5\": null or a number, \"b10\": a number}, ..., \"4\": ...}}. Its radius must equal the run's matching radius (else a config error). Absent: the built-in INTERIM bars (R = 1.9 um only)."
                 }
               }
             },
             "ConductorConsistency": {
               "type": "object",
               "additionalProperties": false,
-              "description": "The conductor-consistency gate (decision 277; the identification fix round R0-a, decisions 1062 / 1064): on BOTH the electrostatic and the Maxwell path every placed patch of every model class is probed at its metal cross-sections on the coupon's box faces (a translational patch: the device metal point of every model Edge at both end faces of its cell, grouped into local metal pieces by the Edges' GapDirections; a spatial patch: its trace mesh's conductor vertices on the process plane) and a patch whose device reading departs from the potential its basis assigns to that metal by more than the tolerance (0.02 of the trace amplitude, floored) is EXCLUDED (weight 0, its raw claim kept RAW, recorded, the LOW-CONFIDENCE banner).",
+              "description": "The conductor-consistency gate: on BOTH the electrostatic and the Maxwell path every placed patch of every model class is probed at its metal cross-sections on the coupon's box faces (a translational patch: the device metal point of every model Edge at both end faces of its cell, grouped into local metal pieces by the Edges' GapDirections; a spatial patch: its trace mesh's conductor vertices on the process plane) and a patch whose device reading departs from the potential its basis assigns to that metal by more than the tolerance (0.02 of the trace amplitude, floored) is EXCLUDED (weight 0, its raw claim kept RAW, recorded, the LOW-CONFIDENCE banner).",
               "properties": {
                 "RecordOnly": {
                   "type": "boolean",
@@ -3636,12 +3741,12 @@
                   "type": "number",
                   "exclusiveMinimum": 0,
                   "maximum": 1,
-                  "description": "DIAGNOSTIC CONTROL, not a modelling option (mx-sc-magnetic Phase 3 (a), decision 1302): the MAGNETIC chain trace's conductor-path anchor lines (the flux STATE operand of the dual conductor-consistency gate) start from the patch's conductor anchors SET BACK into their metal piece by this fraction of the matching radius (the probe form's generic setback and sheet nudge) instead of the edge anchors; the electric lines, the electric gate and the operator are untouched. Admitted ONLY with `RecordOnly: true` and `CorrectionMode: PostprocessOnly` (the magnetic term read under it is NOT of record); printed and recorded as a CONTROL; REFUSED by name on a library whose `MagneticRules.StateAnchorSetbackOverR` (R-MAG-17, the term's form of record) already sets the state anchors back. A run of record never carries it."
+                  "description": "DIAGNOSTIC CONTROL, not a modelling option: the MAGNETIC chain trace's conductor-path anchor lines (the flux STATE operand of the dual conductor-consistency gate) start from the patch's conductor anchors SET BACK into their metal piece by this fraction of the matching radius (the probe form's generic setback and sheet nudge) instead of the edge anchors; the electric lines, the electric gate and the operator are untouched. Admitted ONLY with `RecordOnly: true` and `CorrectionMode: PostprocessOnly` (the magnetic term read under it is NOT of record); printed and recorded as a CONTROL; REFUSED by name on a library whose `MagneticRules.StateAnchorSetbackOverR` (R-MAG-17, the term's form of record) already sets the state anchors back. A run of record never carries it."
                 },
                 "ControlFlipProbePiece": {
                   "type": "array",
                   "minItems": 1,
-                  "description": "DIAGNOSTIC CONTROL, not a modelling option (mx-sc-magnetic Phase 3 (a), decisions 1256 / 1292): every entry flips the LOCAL PIECE label of one model edge's conductor-consistency probes at the probe construction (the level both gates read) on every patch of that model, so that the gates' discrimination of a one-label mis-mapping is MEASURED on a device (the flipped probe is compared with the wrong piece's state). Admitted ONLY with `RecordOnly: true` (refused by name otherwise); a `Model` / `Edge` that does not exist in the loaded library is refused (no silent no-op); printed on the gate lines and recorded as a CONTROL in the manifest / records. A run of record never carries it.",
+                  "description": "DIAGNOSTIC CONTROL, not a modelling option: every entry flips the LOCAL PIECE label of one model edge's conductor-consistency probes at the probe construction (the level both gates read) on every patch of that model, so that the gates' discrimination of a one-label mis-mapping is MEASURED on a device (the flipped probe is compared with the wrong piece's state). Admitted ONLY with `RecordOnly: true` (refused by name otherwise); a `Model` / `Edge` that does not exist in the loaded library is refused (no silent no-op); printed on the gate lines and recorded as a CONTROL in the manifest / records. A run of record never carries it.",
                   "items": {
                     "type": "object",
                     "additionalProperties": false,
@@ -3658,7 +3763,7 @@
             "DomainBoundary": {
               "type": "object",
               "additionalProperties": false,
-              "description": "The rule for coupons whose placed points leave the device mesh through a domain cut (decisions 442 / 454): the raw within-R energy of an excluded (DomainBoundary) patch is always kept in the corrected interface energies (F-DB-a, no switch); `Mirror` selects the mirror-extended identification across the planar natural vertical truncation planes (F-DB-c).",
+              "description": "The rule for coupons whose placed points leave the device mesh through a domain cut: the raw within-R energy of an excluded (DomainBoundary) patch is always kept in the corrected interface energies (F-DB-a, no switch); `Mirror` selects the mirror-extended identification across the planar natural vertical truncation planes (F-DB-c).",
               "properties": {
                 "Mirror": {
                   "type": "string",
@@ -3881,6 +3986,9 @@
               "Library"
             ],
             "KnifeEdgeCensus": [
+              "Library"
+            ],
+            "PreflightOnly": [
               "Library"
             ],
             "PatchConstruction": [

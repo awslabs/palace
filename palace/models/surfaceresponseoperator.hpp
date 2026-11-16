@@ -21,8 +21,10 @@
 #include <nlohmann/json.hpp>
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
+#include "models/surfaceresponsecoverage.hpp"
 #include "models/surfaceresponsemirror.hpp"
 #include "models/surfaceresponseorientedbox.hpp"
+#include "models/surfaceresponseresolution.hpp"
 #include "utils/configfile.hpp"
 #include "utils/metadatafile.hpp"
 
@@ -159,9 +161,9 @@ struct SpatialClusterPriorityExclusions
 // own patches".
 struct ModelRawClaimPortions
 {
-  // The claims; `topology` carries the model-set label.
-  std::vector<config::ElectrostaticSolverData::ResponseCorrectionData::UncoveredPortionData>
-      portions;
+  // The claims (label = the model-set label), in the compact exact form (lane L1, ruling
+  // 1682: the list is replicated on every rank and always built).
+  SurfacePostOperator::CompactPerimeterPortions portions;
   // Per label and model of that label: the patches of the model on the label's claims and
   // the sum over those claims of (patch weight x claim length, mesh units), the share the
   // diagnosis attributes a shared label's raw energy with.
@@ -947,6 +949,9 @@ private:
   std::map<int, InterfaceDielectric> geometry_fallback_interface_types;
   double geometry_fallback_coordinate_scale = 1.0;
   bool raw_fallback = false;
+  // Ruling 1738 (lane L1): the configuration's target interfaces
+  // (GetConfiguredTargetsNotServed).
+  std::set<int> configured_target_interfaces;
   // RawShareByEnergy per interface type (SA / MS / MA -> share), set by the driver from the
   // fallback portions' raw within-R energy of the last evaluation; empty until then.
   std::map<std::string, double> geometry_fallback_energy_shares;
@@ -956,6 +961,13 @@ private:
   // electrostatic driver keeps in the corrected interface energies.
   std::vector<config::ElectrostaticSolverData::ResponseCorrectionData::UncoveredPortionData>
       uncovered_portions;
+  // Lane L1 (ruling 1649 Q1): the key record of every feature listed in
+  // uncovered_portions (the identification's Hash, matched / rejected, Unboxable).
+  std::vector<config::ElectrostaticSolverData::ResponseCorrectionData::UncoveredKeyData>
+      uncovered_keys;
+  // Lane L1 (ruling 1688): the identification's matched / unmatched feature lengths (mesh
+  // units; negative when no feature pass ran in this process).
+  double identification_matched_length = -1.0, identification_unmatched_length = -1.0;
   // The placement's clip of those portions by the matched clusters' support boxes
   // (decision 399 MAJOR-1); uncovered_portions holds the clipped portions.
   UncoveredSpatialSupportClipping uncovered_spatial_support_clipping;
@@ -974,6 +986,55 @@ private:
   ExcludedPatchPortions unprobed_model_portions;
   bool within_r_volume_energy = false;  // COL-3 (R-MAG-15), from the request
   bool exclusion_energy = false;
+  // Lane L1 (decision 1634 (4); decision 1636 (1)): the coverage outputs' interim bars, the
+  // validated-regime sidecar (empty: every cell NO-RANGE) and, on the root (the coverage
+  // writers' rank), the library models' qualification by Name (item (5)).
+  CoverageThresholds coverage_thresholds;
+  CoverageValidatedRegime coverage_validated_regime;
+  std::map<std::string, CoverageModelQualification> coverage_model_qualifications;
+  CoverageRunRecord coverage_run_record;  // root only: the writers' cells of the run
+  // Lane L4 (decision 1829): Coverage.Policy "MarkNotApplied" (false = "Warn").
+  bool coverage_mark_not_applied = false;
+  void
+  ConfigureCoverage(const config::ElectrostaticSolverData::ResponseCorrectionData &request,
+                    MPI_Comm comm);
+  // Diagnostics.Directory / Diagnostics.ConductorConsistencyRecords (decision 1685), from
+  // the request: empty = every table at the top level of the output directory.
+  std::string diagnostics_directory;
+  // Lane rescensus-product (decision 1817; ruling 1819): the edge-resolution census. Per
+  // LOCAL patch (aligned with `patches`) its knot reading and plane slot (>= 1; slot k + 1
+  // = resolution_planes[k], um); the census Types (the coverage interfaces' Types in order
+  // of first appearance) and each target interface's Type index; the root's run record.
+  bool resolution_enabled = true;
+  bool resolution_bars_hold = false;
+  int resolution_order = 0;
+  double resolution_radius = 0.0;        // mesh units (the library matching radius)
+  double resolution_length_scale = 1.0;  // m per mesh unit
+  ResolutionBars resolution_bars;
+  std::vector<ResolutionPatchReading> resolution_readings;
+  std::vector<int> resolution_plane_slots;
+  std::vector<double> resolution_planes;
+  std::vector<std::string> resolution_types;
+  std::map<int, int> resolution_interface_types;
+  std::vector<double> resolution_patch_origin_z;  // Maxwell: per local patch (mesh units)
+  ResolutionRunRecord resolution_run_record;
+  void ConfigureResolutionCensus(
+      const config::ElectrostaticSolverData::ResponseCorrectionData &request,
+      const IoData &iodata, double matching_radius);
+  // The ONE added point location of the census (ruling 1819 F2): every local patch's knots
+  // (`knots_of`, mesh coordinates) through the construction's own locator, after its
+  // existing locates, in chunks of at most kResolutionKnotChunk knots per rank and
+  // collective call, without the fallback search; a knot's size = the largest longest edge
+  // over every element containing it (decision 1863: rank-count independent), evaluated on
+  // the ranks holding them. `origin_z_of` = the local patch's origin z (mesh units).
+  // Collective.
+  void LocateResolutionKnots(
+      DistributedPointLocator &locator, mfem::ParMesh &mesh, int dimension,
+      const std::function<void(std::size_t, std::vector<std::array<double, 3>> &)>
+          &knots_of,
+      const std::function<double(std::size_t)> &origin_z_of);
+  ResolutionStatus ResolutionPatchStatusOf(std::size_t patch_index, double *m) const;
+  bool conductor_consistency_records_in_directory = false;
   // OI-SCP-HOLE (decisions 915 / 918 / 922): the corner / vertex coupons dropped whole by
   // the SpatialClusterPriority rule, with the parts of their raw claims OUTSIDE every
   // matched cluster's box as the drivers' fourth raw class (counted, uncorrected).
@@ -1532,9 +1593,12 @@ public:
   // fabricated fixed-trace surface evaluation. With include_patches, also return every
   // applied patch's own increments (PatchContribution; their sums per model are the
   // ModelContribution values to roundoff), gathered on all ranks.
-  ElectrostaticResponse GetElectrostaticResponse(const Vector &x,
-                                                 bool include_fixed_flux = true,
-                                                 bool include_patches = false) const;
+  // With `resolution`, the census adds every local patch's fixed-trace fabricated energy
+  // per Type to it (nothing else in the evaluation changes).
+  ElectrostaticResponse
+  GetElectrostaticResponse(const Vector &x, bool include_fixed_flux = true,
+                           bool include_patches = false,
+                           ResolutionAccumulator *resolution = nullptr) const;
 
   // The (ii-a) clipped-correction diagnostic of the SpatialClusterPriority-dropped coupons
   // (OI-SCP-BOXGROW, decisions 958 (b) / 960 / 969 Q1): per dropped patch (the order of
@@ -1715,16 +1779,94 @@ public:
   // voltages are reconstructed from transverse contour integrals and applied through
   // Hermitian response-matrix quadratic forms.
   MaxwellResponse GetMaxwellResponse(const GridFunction &E, std::complex<double> omega,
-                                     bool include_patches = false) const;
+                                     bool include_patches = false,
+                                     ResolutionAccumulator *resolution = nullptr) const;
 
   bool HasSurfaceResponse() const;
   std::set<int> GetTargetInterfaces() const;
+  // Ruling 1738 (lane L1, OI-CONFIGURED-TARGET-NOT-SERVED): the configured targets (an
+  // automatic configuration's TargetInterfaces, or every typed interface with EdgeDistances
+  // without that list) no loaded model has a fabricated surface on: not corrected at all.
+  std::set<int> GetConfiguredTargetsNotServed() const;
+  // The coverage cells' interfaces: the served targets and the configured ones not served
+  // (every corrected value and every pre-existing table stays on GetTargetInterfaces()).
+  std::set<int> GetCoverageInterfaces() const;
   // The uncovered requirements (decision 394 F2; empty when every feature is matched).
   const std::vector<
       config::ElectrostaticSolverData::ResponseCorrectionData::UncoveredPortionData> &
   GetUncoveredPortions() const
   {
     return uncovered_portions;
+  }
+  // Lane L1 (decision 1634 (4)): the coverage outputs' inputs (ConfigureCoverage).
+  const CoverageThresholds &GetCoverageThresholds() const { return coverage_thresholds; }
+  // Lane L4 (decision 1829): whether the writers mark the corrected values of marked cells
+  // (Coverage.Policy "MarkNotApplied"); false = "Warn" (every value printed).
+  bool CoverageMarkNotApplied() const { return coverage_mark_not_applied; }
+  // The run's coverage cells as the writers printed them (root only), for the end-of-run
+  // banner and palace.json SurfaceResponse.Coverage (BaseSolver::SaveMetadata).
+  CoverageRunRecord &GetCoverageRunRecord() { return coverage_run_record; }
+  const CoverageRunRecord &GetCoverageRunRecord() const { return coverage_run_record; }
+  // Lane rescensus-product (decision 1817; ruling 1819): the edge-resolution census.
+  // ConfigureResolutionTypes (collective; after the construction, before the first solve):
+  // the census Types from `types` (coverage interface -> Type) and the PREFLIGHT rows, the
+  // line printed by the root. NewResolutionAccumulator: an empty accumulator of this
+  // level's Types and planes. MeasureResolution (collective): the cells of one measurement
+  // from the summed accumulator (`accumulator` null = no evaluation-0 energy: every cell
+  // NOT-EVALUATED); the root's cells, empty elsewhere. WriteResolutionPatchTable
+  // (collective; PatchEnergy): the per-patch readings on the root.
+  void ConfigureResolutionTypes(const std::map<int, std::string> &types);
+  ResolutionAccumulator NewResolutionAccumulator() const;
+  std::vector<ResolutionCell> MeasureResolution(ResolutionAccumulator *accumulator,
+                                                double energy_scale) const;
+  void WriteResolutionPatchTable(const std::string &path) const;
+  bool ResolutionEnabled() const { return resolution_enabled; }
+  ResolutionRunRecord &GetResolutionRunRecord() { return resolution_run_record; }
+  const ResolutionRunRecord &GetResolutionRunRecord() const
+  {
+    return resolution_run_record;
+  }
+  const CoverageValidatedRegime &GetCoverageValidatedRegime() const
+  {
+    return coverage_validated_regime;
+  }
+  // Runtime model index -> qualification (root only: empty elsewhere); a model the library
+  // read does not name counts NO_STATUS.
+  std::map<int, CoverageModelQualification> GetCoverageModelQualifications() const
+  {
+    std::map<int, CoverageModelQualification> qualifications;
+    for (const auto &model : models)
+    {
+      const auto found = coverage_model_qualifications.find(model.name);
+      qualifications[model.idx] = found != coverage_model_qualifications.end()
+                                      ? found->second
+                                      : CoverageModelQualification::NO_STATUS;
+    }
+    return coverage_model_qualifications.empty()
+               ? std::map<int, CoverageModelQualification>{}
+               : qualifications;
+  }
+  // The uncovered features' key records by feature id, classified (ruling 1649 Q2).
+  std::map<int, CoverageKeyRecord> GetCoverageKeyRecords() const
+  {
+    std::map<int, CoverageKeyRecord> records;
+    for (const auto &key : uncovered_keys)
+    {
+      records[key.feature] = ClassifyCoverageKey(key.hash, key.matched,
+                                                 key.placement_rejection, key.unboxable);
+    }
+    return records;
+  }
+  // Lane L1 (ruling 1649 Q1): the key records of the uncovered features.
+  const std::vector<
+      config::ElectrostaticSolverData::ResponseCorrectionData::UncoveredKeyData> &
+  GetUncoveredKeys() const
+  {
+    return uncovered_keys;
+  }
+  std::pair<double, double> GetIdentificationFeatureLengths() const
+  {
+    return {identification_matched_length, identification_unmatched_length};
   }
   // The parts of the uncovered requirements removed inside the matched clusters' support
   // boxes at placement (decision 399 MAJOR-1; GetUncoveredPortions holds the remainder).
@@ -1771,6 +1913,23 @@ public:
   // identification's portions by class, the unprobed patches' raw claims, and the whole
   // export set (every portion's `topology` = its Class).
   bool ExclusionEnergyRequested() const { return exclusion_energy; }
+  // Lane diagdir (decision 1685): the path of the heavy per-patch table `name` (patches,
+  // patch energy, traces, patch loops). Diagnostics.Directory unset: post_dir / name, with
+  // no filesystem access. Set: post_dir / Directory / name, the directory created first; a
+  // symlink at that path (SaveIteration's link into the previous adaptive iteration's
+  // archive) is removed before, so that an iteration never writes into an archived folder.
+  // Called by the root writers when they create the file.
+  std::filesystem::path DiagnosticsPath(const std::filesystem::path &post_dir,
+                                        const std::string &name) const;
+  const std::string &GetDiagnosticsDirectory() const { return diagnostics_directory; }
+  // Diagnostics.ConductorConsistencyRecords "Directory": the Records array leaves
+  // palace.json for DiagnosticsPath(post_dir, kConductorConsistencyRecordsFile).
+  bool ConductorConsistencyRecordsInDirectory() const
+  {
+    return conductor_consistency_records_in_directory;
+  }
+  static constexpr const char *kConductorConsistencyRecordsFile =
+      "surface-response-conductor-consistency-records.json";
   const std::vector<
       config::ElectrostaticSolverData::ResponseCorrectionData::UncoveredPortionData> &
   GetIdentificationExclusionPortions() const
@@ -1818,17 +1977,15 @@ public:
     return conductor_consistency_portions;
   }
   // PatchEnergy (decision 922 B-1): the applied patches' raw claims labelled by model set
-  // (empty without PatchEnergy).
+  // (lane L1: always built, the coverage partition's served claims).
   const ModelRawClaimPortions &GetModelRawClaimPortions() const
   {
     return model_raw_claim_portions;
   }
   // Round 2b B1 (decision 1484): the claims' only reader after the construction is the
-  // driver's (or PostOperator's) conversion into the partition's portion list, made once;
-  // it takes the list out of the operator (the members and the length stay) so that the
-  // claims are held once per rank, not twice.
-  std::vector<config::ElectrostaticSolverData::ResponseCorrectionData::UncoveredPortionData>
-  ReleaseModelRawClaimPortionList()
+  // driver's (or PostOperator's) partition, so the list is MOVED out of the operator (the
+  // members and the length stay): held once per rank, in its compact form (ruling 1682).
+  SurfacePostOperator::CompactPerimeterPortions ReleaseModelRawClaimPortionList()
   {
     return std::exchange(model_raw_claim_portions.portions, {});
   }
@@ -1928,11 +2085,35 @@ public:
   void MultTranspose(const Vector &x, Vector &y) const override { Mult(x, y); }
 };
 
+// How a surface-response preflight ended. The manifest (and, in 3D, the patch dry run) is
+// written in full either way.
+struct SurfaceResponsePreflightOutcome
+{
+  // Empty when the preflight completed; otherwise GeometryFailurePolicy FailClosed ended
+  // it: the summary of the recorded geometry fallbacks ("N geometry fallback(s) recorded
+  // (<class> <count>, ...)").
+  std::string fail_closed_summary;
+  // The files written (the manifest, then the patch dry run in 3D).
+  std::vector<std::string> written;
+};
+
 // Classify the configured automatic surface-response neighborhoods without assembling a
 // finite-element operator or solving a field problem. The deterministic JSON manifest
 // reports exact, interpolated, and missing process-library requirements.
-void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
-                                      const std::string &path);
+SurfaceResponsePreflightOutcome WriteSurfaceResponseRequirements(const IoData &iodata,
+                                                                 const Mesh &mesh,
+                                                                 const std::string &path);
+
+// The configured domains next to the boundary elements of `boundary_attributes` (either
+// side) whose relative permittivity (every principal value of Domains.Materials) is neither
+// 1 (vacuum) nor `substrate_permittivity`, within the relative tolerance 1e-10: per
+// material entry (its index in Domains.Materials) the adjacent domain attributes.
+// Collective over the mesh's communicator. The run warns with them; no value depends on
+// them.
+std::map<int, std::vector<int>>
+FindSubstratePermittivityMismatches(const IoData &iodata, const mfem::ParMesh &mesh,
+                                    const std::set<int> &boundary_attributes,
+                                    double substrate_permittivity);
 
 // The magnetic (inductive) leaves of a fabrication-process library as the operator would
 // load them, without a device (mx-sc-magnetic DESIGN-v2 section 3; the Phase-1 gate G-d
@@ -1948,7 +2129,8 @@ nlohmann::json DescribeMagneticLeaves(const std::string &library_path, const Uni
 // converted former-abort site records into when its condition holds. Under RecordRaw the
 // site takes its raw branch and the run continues; under FailClosed the same record is
 // taken and the abort is DEFERRED to Enforce() at the end of the configuration (the
-// preflight writes its manifest first), so every fallback is reported at once and the
+// preflight writes its manifest first and then ends with its FailClosed exit status instead
+// of the abort: FailClosedSummary()), so every fallback is reported at once and the
 // preflight predicts the solve. Absent leaf: RecordRaw on a solve, FailClosed on the
 // preflight. Every conversion decision is taken on replicated data (the root's
 // identification broadcast, the replicated patch table), so the ledger is rank-consistent.
@@ -1982,6 +2164,9 @@ public:
   void Record(GeometryFallbackData entry);
   // The deferred FailClosed abort: a no-op under RecordRaw or without a record.
   void Enforce(const std::string &where) const;
+  // The summary Enforce reports ("N geometry fallback(s) recorded (<class> <count>, ...)");
+  // empty when Enforce is a no-op.
+  std::string FailClosedSummary() const;
 };
 
 // H13-I2 / R-1 (fix round P2, OI-IDENT-CHAIN-VERTEX-DEGREE): the BranchingPerimeter
@@ -2788,6 +2973,13 @@ DistributedPointLocation
 LocateDistributedPoints(mfem::ParMesh &mesh, int dimension, const mfem::Vector &xyz,
                         int block_queries,
                         const std::function<double(int element)> *element_value = nullptr);
+// Lane rescensus-product (ruling 1819 F2): the census readings of patches whose knots (mesh
+// coordinates) are `knots` (this rank's patches), through a locator of `mesh` as the
+// operator's construction uses it (no fallback search; the owner's longest edge; the lower
+// median); exposed for the unit tests of the census. Collective.
+std::vector<ResolutionPatchReading>
+LocateResolutionPatchKnots(mfem::ParMesh &mesh, int dimension,
+                           const std::vector<std::vector<std::array<double, 3>>> &knots);
 
 // The containment test's block size in tested points (lane fix-response-memory, decision
 // 1446 C3 / DESIGN s2.5): PALACE_RESPONSE_CONTAINMENT_BLOCK_POINTS, default 2^20 (~0.04 GB

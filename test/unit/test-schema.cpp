@@ -1256,6 +1256,28 @@ TEST_CASE("Schema Validator Smoke Tests", "[schema][Serial]")
     auto invalid_trace_coupling = automatic;
     invalid_trace_coupling["ResponseCorrection"]["TraceCoupling"] = "Mortar";
     CHECK(!ValidateConfig(invalid_trace_coupling, "Electrostatic").empty());
+
+    // Decision 1685: Diagnostics.Directory (one directory name) and
+    // Diagnostics.ConductorConsistencyRecords ("Metadata" | "Directory").
+    auto diagnostics_directory = automatic;
+    diagnostics_directory["ResponseCorrection"]["Diagnostics"] = {
+        {"Directory", "diagnostics"}, {"ConductorConsistencyRecords", "Directory"}};
+    CHECK(ValidateConfig(diagnostics_directory, "Electrostatic").empty());
+    diagnostics_directory["ResponseCorrection"]["Diagnostics"]
+                         ["ConductorConsistencyRecords"] = "Metadata";
+    CHECK(ValidateConfig(diagnostics_directory, "Electrostatic").empty());
+    for (const auto *name :
+         {"", "a/b", "../up", ".hidden", "-dash", "with space", "iteration1"})
+    {
+      CAPTURE(name);
+      auto invalid_directory = automatic;
+      invalid_directory["ResponseCorrection"]["Diagnostics"] = {{"Directory", name}};
+      CHECK(!ValidateConfig(invalid_directory, "Electrostatic").empty());
+    }
+    auto invalid_records = automatic;
+    invalid_records["ResponseCorrection"]["Diagnostics"] = {
+        {"ConductorConsistencyRecords", "directory"}};
+    CHECK(!ValidateConfig(invalid_records, "Electrostatic").empty());
     auto mortar_oversampling = automatic;
     mortar_oversampling["ResponseCorrection"]["MortarOversampling"] = 2;
     CHECK(ValidateConfig(mortar_oversampling, "Electrostatic").empty());
@@ -1310,6 +1332,36 @@ TEST_CASE("Schema Validator Smoke Tests", "[schema][Serial]")
 
     maxwell_config["Solver"]["SurfaceResponseCorrection"]["Models"] = json::array();
     CHECK(!ValidateConfig(maxwell_config).empty());
+  }
+
+  SECTION("Response correction Coverage block (lane L1)")
+  {
+    // The interim bars, the validated-regime sidecar and Policy "Warn" | "MarkNotApplied"
+    // (lane L4, decision 1829; "Abort" is not in this version); the same leaf on both
+    // solve families.
+    json electrostatic = {{"ResponseCorrection",
+                           {{"Library", "library.json"},
+                            {"Coverage",
+                             {{"Policy", "Warn"},
+                              {"MaxUncoveredShare", 0.05},
+                              {"BuildTarget", 0.02},
+                              {"ValidatedRegime", "validated-regime.json"}}}}}};
+    CHECK(ValidateConfig(electrostatic, "Electrostatic").empty());
+    auto policy = electrostatic;
+    policy["ResponseCorrection"]["Coverage"]["Policy"] = "MarkNotApplied";
+    CHECK(ValidateConfig(policy, "Electrostatic").empty());
+    policy["ResponseCorrection"]["Coverage"]["Policy"] = "Abort";
+    CHECK(!ValidateConfig(policy, "Electrostatic").empty());
+    auto bar = electrostatic;
+    bar["ResponseCorrection"]["Coverage"]["MaxUncoveredShare"] = 1.5;
+    CHECK(!ValidateConfig(bar, "Electrostatic").empty());
+    // The bars are fixed (ruling 1689 M-5): a value inside [0, 1] is refused too.
+    auto settable = electrostatic;
+    settable["ResponseCorrection"]["Coverage"]["BuildTarget"] = 1.0;
+    CHECK(!ValidateConfig(settable, "Electrostatic").empty());
+    auto unknown = electrostatic;
+    unknown["ResponseCorrection"]["Coverage"]["Of"] = "E";
+    CHECK(!ValidateConfig(unknown, "Electrostatic").empty());
   }
 
   SECTION("Numeric bounds - Linear.MaxIts")

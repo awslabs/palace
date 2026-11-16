@@ -337,7 +337,7 @@ public:
     MFEM_VERIFY(expected < 0 || static_cast<long long int>(node_ids.size()) == expected,
                 "The nonconforming mesh's vertex_parents section lists "
                     << expected << " refinement vertices but " << node_ids.size()
-                    << " were read (root-level perimeter census, decision 899)!");
+                    << " were read (root-level perimeter census)!");
   }
 
 protected:
@@ -404,7 +404,7 @@ private:
           std::istringstream in(line);
           MFEM_VERIFY(in >> expected && expected >= 0,
                       "Unreadable vertex_parents count \""
-                          << line << "\" (root-level perimeter census, decision 899)!");
+                          << line << "\" (root-level perimeter census)!");
           state = expected == 0 ? State::DONE : State::ENTRIES;
         }
         break;
@@ -415,7 +415,7 @@ private:
           long long int id, p1, p2;
           MFEM_VERIFY(in >> id >> p1 >> p2 && id >= 0 && p1 >= 0 && p2 >= 0,
                       "Unreadable vertex_parents entry \""
-                          << line << "\" (root-level perimeter census, decision 899)!");
+                          << line << "\" (root-level perimeter census)!");
           node_ids.push_back(id);
           if (static_cast<long long int>(node_ids.size()) == expected)
           {
@@ -1865,7 +1865,7 @@ MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
           }
         }
         MFEM_VERIFY(live.size() == 2,
-                    "Root-level perimeter (decision 899): the refinement-generated vertex "
+                    "Root-level perimeter: the refinement-generated vertex "
                         << Describe(v) << " has " << live.size()
                         << " perimeter segments instead of two (an inconsistent "
                            "refinement census; fail closed)!");
@@ -1883,7 +1883,7 @@ MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
           out_norm += out[d] * out[d];
         }
         MFEM_VERIFY(in_norm > 0.0 && out_norm > 0.0 && far_a != far_b,
-                    "Root-level perimeter (decision 899): degenerate segments at the "
+                    "Root-level perimeter: degenerate segments at the "
                     "refinement-generated vertex "
                         << Describe(v) << "!");
         double dot = 0.0;
@@ -1897,13 +1897,12 @@ MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
           kept++;  // a curved edge's midpoint: a vertex of the root-level perimeter too
           continue;
         }
-        MFEM_VERIFY(
-            SameRootEdge(a, b),
-            "Root-level perimeter (decision 899): the two perimeter segments at the "
-            "refinement-generated vertex "
-                << Describe(v)
-                << " differ in type or attributes (an inconsistent refinement "
-                   "census; fail closed)!");
+        MFEM_VERIFY(SameRootEdge(a, b),
+                    "Root-level perimeter: the two perimeter segments at the "
+                    "refinement-generated vertex "
+                        << Describe(v)
+                        << " differ in type or attributes (an inconsistent refinement "
+                           "census; fail closed)!");
         MetalEdgeSegment merged = a;
         // The root edge's orientation: the smaller canonical point first, as step (6).
         merged.vertices = vertex_point[far_a] < vertex_point[far_b]
@@ -1984,7 +1983,7 @@ MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
       for (const auto &[point, segment] : merged_points)
       {
         const std::size_t live_index = new_segment[Resolve(segment)];
-        MFEM_VERIFY(live_index != npos, "Root-level perimeter (decision 899): a merged "
+        MFEM_VERIFY(live_index != npos, "Root-level perimeter: a merged "
                                         "refinement point lost its segment!");
         result.refinement_points.push_back({canonical_points[point], live_index});
       }

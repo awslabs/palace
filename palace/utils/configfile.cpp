@@ -4,6 +4,7 @@
 #include "configfile.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <iterator>
 #include <limits>
@@ -1835,6 +1836,65 @@ ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
   response_matrix = electrostatic.value("ResponseMatrix", response_matrix);
   aggregate_response_matrix =
       electrostatic.value("AggregateResponseMatrix", aggregate_response_matrix);
+  if (auto it = electrostatic.find("ResponseArchive"); it != electrostatic.end())
+  {
+    const auto &archive = *it;
+    MFEM_VERIFY(archive.is_object(),
+                "Electrostatic \"ResponseArchive\" must be an object!");
+    ResponseArchiveData data;
+    if (auto mode = archive.find("Mode"); mode != archive.end())
+    {
+      const auto name = mode->get<std::string>();
+      if (name == "None")
+      {
+        data.mode = ResponseArchiveData::Mode::NONE;
+      }
+      else if (name == "Archive")
+      {
+        data.mode = ResponseArchiveData::Mode::ARCHIVE;
+      }
+      else if (name == "Reduce")
+      {
+        data.mode = ResponseArchiveData::Mode::REDUCE;
+      }
+      else if (name == "Estimate")
+      {
+        data.mode = ResponseArchiveData::Mode::ESTIMATE;
+      }
+      else
+      {
+        MFEM_ABORT("Electrostatic response-archive \"Mode\" must be \"None\", "
+                   "\"Archive\", \"Reduce\", or \"Estimate\"!");
+      }
+    }
+    if (auto directory = archive.find("Directory"); directory != archive.end())
+    {
+      data.directory = directory->get<std::string>();
+      MFEM_VERIFY(!data.directory->empty(),
+                  "Electrostatic response-archive \"Directory\" must not be empty!");
+    }
+    if (auto block_size = archive.find("BlockSize"); block_size != archive.end())
+    {
+      data.block_size = block_size->get<int>();
+      MFEM_VERIFY(*data.block_size > 0,
+                  "Electrostatic response-archive \"BlockSize\" must be positive!");
+    }
+    if (auto timing = archive.find("SourceTiming"); timing != archive.end())
+    {
+      data.source_timing = timing->get<bool>();
+    }
+    if (auto recycle = archive.find("RecycleInitialGuess"); recycle != archive.end())
+    {
+      data.recycle_initial_guess = recycle->get<bool>();
+    }
+    if (auto request = archive.find("EstimateRequest"); request != archive.end())
+    {
+      data.estimate_request = request->get<std::string>();
+      MFEM_VERIFY(!data.estimate_request->empty(),
+                  "Electrostatic response-archive \"EstimateRequest\" must not be empty!");
+    }
+    response_archive = std::move(data);
+  }
   if (auto it = electrostatic.find("ResponseCorrection"); it != electrostatic.end())
   {
     const auto &correction = *it;
@@ -1920,8 +1980,7 @@ ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
         MFEM_VERIFY(
             data.conductor_consistency_record_only,
             "Response-correction \"ConductorConsistency.ControlFlipProbePiece\" is a "
-            "diagnostic CONTROL admitted only with \"RecordOnly\": true (decision "
-            "1292)!");
+            "diagnostic CONTROL admitted only with \"RecordOnly\": true!");
         for (const auto &flip : *flips)
         {
           MFEM_VERIFY(flip.is_object() && flip.contains("Model") && flip.contains("Edge") &&
@@ -1961,14 +2020,13 @@ ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
         MFEM_VERIFY(
             data.conductor_consistency_record_only,
             "Response-correction \"ConductorConsistency.ControlStateAnchorSetbackOverR\" "
-            "is a diagnostic CONTROL admitted only with \"RecordOnly\": true "
-            "(decision 1302)!");
+            "is a diagnostic CONTROL admitted only with \"RecordOnly\": true!");
         MFEM_VERIFY(
             data.correction_mode ==
                 ResponseCorrectionData::CorrectionMode::POSTPROCESS_ONLY,
             "Response-correction \"ConductorConsistency.ControlStateAnchorSetbackOverR\" "
             "is admitted only with \"CorrectionMode\": \"PostprocessOnly\" (the term "
-            "is not of record under the control; decision 1302)!");
+            "is not of record under the control)!");
       }
       for (const auto &[key, value] : gate->items())
       {
@@ -1993,14 +2051,122 @@ ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
           "Response-correction \"Diagnostics.WithinRVolumeEnergy\" writes per-patch "
           "columns of surface-response-patch-energy.csv and requires "
           "\"PatchEnergy\": true!");
+      data.uncovered_feature_energy =
+          diagnostics->value("UncoveredFeatureEnergy", data.uncovered_feature_energy);
+      if (auto directory = diagnostics->find("Directory"); directory != diagnostics->end())
+      {
+        // Decision 1685: one directory name inside Problem.Output. A name starting with
+        // "iteration" is refused: SaveIteration leaves such entries in place.
+        MFEM_VERIFY(directory->is_string(),
+                    "Response-correction \"Diagnostics.Directory\" must be a string!");
+        const std::string name = directory->get<std::string>();
+        const bool valid_characters =
+            !name.empty() &&
+            std::all_of(name.begin(), name.end(),
+                        [](char c)
+                        {
+                          return std::isalnum(static_cast<unsigned char>(c)) || c == '_' ||
+                                 c == '-' || c == '.';
+                        });
+        MFEM_VERIFY(valid_characters && name.front() != '.' && name.front() != '-' &&
+                        name.rfind("iteration", 0) != 0,
+                    "Response-correction \"Diagnostics.Directory\" must be one directory "
+                    "name of letters, digits, '_', '-' and '.' that does not start with "
+                    "'.', '-' or \"iteration\" (got \""
+                        << name << "\")!");
+        data.diagnostics_directory = name;
+      }
+      if (auto records = diagnostics->find("ConductorConsistencyRecords");
+          records != diagnostics->end())
+      {
+        MFEM_VERIFY(
+            records->is_string() && (*records == "Metadata" || *records == "Directory"),
+            "Response-correction \"Diagnostics.ConductorConsistencyRecords\" must be "
+            "\"Metadata\" or \"Directory\"!");
+        data.conductor_consistency_records =
+            *records == "Directory"
+                ? ResponseCorrectionData::ConductorConsistencyRecordsOutput::DIRECTORY
+                : ResponseCorrectionData::ConductorConsistencyRecordsOutput::METADATA;
+        MFEM_VERIFY(
+            data.conductor_consistency_records !=
+                    ResponseCorrectionData::ConductorConsistencyRecordsOutput::DIRECTORY ||
+                !data.diagnostics_directory.empty(),
+            "Response-correction \"Diagnostics.ConductorConsistencyRecords\": "
+            "\"Directory\" requires \"Diagnostics.Directory\"!");
+      }
       for (const auto &[key, value] : diagnostics->items())
       {
         (void)value;
-        MFEM_VERIFY(
-            key == "ExclusionEnergy" || key == "WithinRVolumeEnergy",
-            "Response-correction \"Diagnostics\" has an unknown key \""
-                << key
-                << "\" (ExclusionEnergy and WithinRVolumeEnergy are the only keys)!");
+        MFEM_VERIFY(key == "ExclusionEnergy" || key == "WithinRVolumeEnergy" ||
+                        key == "UncoveredFeatureEnergy" || key == "Directory" ||
+                        key == "ConductorConsistencyRecords",
+                    "Response-correction \"Diagnostics\" has an unknown key \""
+                        << key
+                        << "\" (ExclusionEnergy, WithinRVolumeEnergy, "
+                           "UncoveredFeatureEnergy, Directory and "
+                           "ConductorConsistencyRecords are the only keys)!");
+      }
+    }
+    if (auto coverage = correction.find("Coverage"); coverage != correction.end())
+    {
+      // Lane L1 (decision 1634 (4)): the coverage outputs' block (interim bars).
+      MFEM_VERIFY(coverage->is_object(),
+                  "Response-correction \"Coverage\" must be an object!");
+      // Lane L4 (decision 1829): "Warn" | "MarkNotApplied"; "Abort" is refused by name (not
+      // in this version); the key absent = CoverageData::kDefaultCoveragePolicy.
+      if (auto policy = coverage->find("Policy"); policy != coverage->end())
+      {
+        MFEM_VERIFY(policy->is_string(),
+                    "Response-correction \"Coverage\": \"Policy\" must be a string!");
+        const std::string value = policy->get<std::string>();
+        MFEM_VERIFY(value != "Abort",
+                    "Response-correction \"Coverage\": \"Policy\" \"Abort\" is not in this "
+                    "version (\"Warn\" or \"MarkNotApplied\")!");
+        MFEM_VERIFY(value == "Warn" || value == "MarkNotApplied",
+                    "Response-correction \"Coverage\": \"Policy\" must be \"Warn\" or "
+                    "\"MarkNotApplied\" (got \""
+                        << value << "\")!");
+        data.coverage.policy =
+            value == "Warn"
+                ? ResponseCorrectionData::CoverageData::Policy::WARN
+                : ResponseCorrectionData::CoverageData::Policy::MARK_NOT_APPLIED;
+      }
+      data.coverage.max_uncovered_share =
+          coverage->value("MaxUncoveredShare", data.coverage.max_uncovered_share);
+      data.coverage.build_target =
+          coverage->value("BuildTarget", data.coverage.build_target);
+      // Ruling 1689 M-5: the interim bars are FIXED until the status validation rules
+      // otherwise (an OK must not be printable at any coverage by a config value).
+      MFEM_VERIFY(data.coverage.max_uncovered_share == 0.05 &&
+                      data.coverage.build_target == 0.02,
+                  "Response-correction \"Coverage\": the interim bars are fixed "
+                  "(\"MaxUncoveredShare\" 0.05, \"BuildTarget\" 0.02) until the status "
+                  "validation rules otherwise!");
+      data.coverage.validated_regime = coverage->value("ValidatedRegime", std::string{});
+      for (const auto &[key, value] : coverage->items())
+      {
+        (void)value;
+        MFEM_VERIFY(key == "Policy" || key == "MaxUncoveredShare" || key == "BuildTarget" ||
+                        key == "ValidatedRegime",
+                    "Response-correction \"Coverage\" has an unknown key \""
+                        << key
+                        << "\" (Policy, MaxUncoveredShare, BuildTarget and ValidatedRegime "
+                           "are the only keys)!");
+      }
+    }
+    if (auto resolution = correction.find("Resolution"); resolution != correction.end())
+    {
+      // Lane rescensus-product (decision 1817; ruling 1819): the edge-resolution census.
+      MFEM_VERIFY(resolution->is_object(),
+                  "Response-correction \"Resolution\" must be an object!");
+      data.resolution.enabled = resolution->value("Enabled", data.resolution.enabled);
+      data.resolution.bars_file = resolution->value("BarsFile", std::string{});
+      for (const auto &[key, value] : resolution->items())
+      {
+        (void)value;
+        MFEM_VERIFY(key == "Enabled" || key == "BarsFile",
+                    "Response-correction \"Resolution\" has an unknown key \""
+                        << key << "\" (Enabled and BarsFile are the only keys)!");
       }
     }
     if (auto domain_boundary = correction.find("DomainBoundary");
@@ -2057,6 +2223,12 @@ ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
         MFEM_VERIFY(census->is_boolean(),
                     "Response-correction \"KnifeEdgeCensus\" must be a boolean!");
         data.knife_edge_census = census->get<bool>();
+      }
+      if (auto preflight = correction.find("PreflightOnly"); preflight != correction.end())
+      {
+        MFEM_VERIFY(preflight->is_boolean(),
+                    "Response-correction \"PreflightOnly\" must be a boolean!");
+        data.preflight_only = preflight->get<bool>();
       }
       if (auto geometry_policy = correction.find("GeometryFailurePolicy");
           geometry_policy != correction.end())
@@ -2315,6 +2487,13 @@ SolverData::SolverData(const json &solver)
   driven = ParseOptional<DrivenSolverData>(solver, "Driven");
   eigenmode = ParseOptional<EigenSolverData>(solver, "Eigenmode");
   electrostatic = ParseOptional<ElectrostaticSolverData>(solver, "Electrostatic");
+  // Diagnostics.UncoveredFeatureEnergy (decision 1567 (b)) is written by the Maxwell
+  // PostOperator only: refused on the electrostatic path rather than silently ignored.
+  MFEM_VERIFY(!electrostatic.response_correction ||
+                  !electrostatic.response_correction->uncovered_feature_energy,
+              "Response-correction \"Diagnostics.UncoveredFeatureEnergy\" is a Maxwell "
+              "diagnostic (surface-response-uncovered-feature-energy.csv); the "
+              "electrostatic driver does not write it!");
   magnetostatic = ParseOptional<MagnetostaticSolverData>(solver, "Magnetostatic");
   transient = ParseOptional<TransientSolverData>(solver, "Transient");
   boundary_mode = ParseOptional<BoundaryModeSolverData>(solver, "BoundaryMode");

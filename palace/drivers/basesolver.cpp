@@ -180,6 +180,52 @@ const char *GeometryKey(mfem::Geometry::Type geom)
   }
 }
 
+// Lane diagdir (decision 1685): the ConductorConsistency Records written to `path` as the
+// JSON document {"SurfaceResponse": {"Diagnostics": {"ConductorConsistency": {"Records":
+// [...]}}}} (dump(2) + '\n'; the spilled entries spliced in as in palace.json, so the
+// array's text is the one palace.json holds by default), checked like palace.json.
+void WriteConductorConsistencyRecords(const fs::path &path, const json &records,
+                                      const JsonArraySpill *spill)
+{
+  std::ofstream fo(path);
+  if (!fo.is_open())
+  {
+    MFEM_ABORT("Unable to open conductor-consistency records file \"" << path.string()
+                                                                      << "\"!");
+  }
+  const bool written = StreamJsonMetadata(fo, records, spill);
+  fo.close();
+  if (!written || fo.fail())
+  {
+    MFEM_ABORT("Writing the conductor-consistency records file \""
+               << path.string()
+               << "\" failed (a short write: the disk is full "
+                  "or an I/O error); the file is incomplete!");
+  }
+}
+
+// The ConductorConsistency object of palace.json's SurfaceResponse.Diagnostics when it
+// holds a Records member, else null (nothing is created in `meta`).
+json *FindConductorConsistencyWithRecords(json &meta)
+{
+  const auto response = meta.find("SurfaceResponse");
+  if (response == meta.end() || !response->is_object())
+  {
+    return nullptr;
+  }
+  const auto diagnostics = response->find("Diagnostics");
+  if (diagnostics == response->end() || !diagnostics->is_object())
+  {
+    return nullptr;
+  }
+  const auto gate = diagnostics->find("ConductorConsistency");
+  if (gate == diagnostics->end() || !gate->is_object() || !gate->contains("Records"))
+  {
+    return nullptr;
+  }
+  return &*gate;
+}
+
 // Returns an array of indices corresponding to marked elements.
 mfem::Array<int> MarkedElements(const Vector &e, double threshold)
 {
@@ -332,6 +378,8 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
   RefineEdgeTubes(iodata, *mesh.back());
 
   // Perform initial solve and estimation.
+  solve_level = 1;
+  solve_levels = use_amr ? refinement.max_it + 1 : 1;
   auto [indicators, ntdof] = Solve(mesh);
   MFEM_VERIFY(solve_converged_,
               "Initial solve did not converge; no converged result to fall back on!");
@@ -524,6 +572,7 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
     // Solve + estimate.
     Mpi::Print("\nProceeding with solve/estimate iteration {}...\n", it + 1);
     const auto prev_ntdof = ntdof;
+    solve_level = it + 1;
     std::tie(indicators, ntdof) = Solve(mesh);
     if (!solve_converged_)
     {
@@ -555,6 +604,10 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
              (refinement.max_size > 0
                   ? ", max. size = " + std::to_string(refinement.max_size)
                   : ""));
+  // Erratum 1784 E-3: the AMR loop has ended (or no AMR ran): the root's coverage block is
+  // the final level's. Its Final flag is written by the end-of-run timer write
+  // (SaveMetadata(const Timer &), driver.cpp), not by a load of its own (review mn-3).
+  coverage_final = coverage_block_written;
 }
 
 void BaseSolver::SaveMetadata(const FiniteElementSpaceHierarchy &fespaces) const
@@ -676,6 +729,18 @@ void BaseSolver::SaveMetadata(const Timer &timer) const
       meta["PeakNodeMemoryGrowthMegabytes"]["Max"][key] = red.node_mem.max[i] * to_mb;
       meta["PeakNodeMemoryGrowthMegabytes"]["Sum"][key] = red.node_mem.sum[i] * to_mb;
     }
+    // Erratum 1784 E-3 / review mn-3: after the AMR loop the root's coverage block gets
+    // "Final": true in this load (the first end-of-run write; the in-loop timer writes
+    // come before the flag is set).
+    if (coverage_final)
+    {
+      meta["SurfaceResponse"]["Coverage"]["Final"] = true;
+      // Lane rescensus-product (decision 1817): the census block of the same last level.
+      if (meta["SurfaceResponse"].contains("Resolution"))
+      {
+        meta["SurfaceResponse"]["Resolution"]["Final"] = true;
+      }
+    }
     WriteMetadata(post_dir, meta);
   }
 }
@@ -716,6 +781,7 @@ void BaseSolver::SaveMetadata(SurfaceResponseOperator &response) const
   // The final write (round 2a R1, decision 1475 (1)): the operator's diagnostics record is
   // moved, not copied (ReleaseStatistics; the record is the same).
   auto statistics = response.ReleaseStatistics();
+  std::string coverage_banner, resolution_banner;
   if (root)
   {
     nlohmann::json meta = LoadMetadata(post_dir);
@@ -733,6 +799,44 @@ void BaseSolver::SaveMetadata(SurfaceResponseOperator &response) const
       }
       meta["SurfaceResponse"][key] = std::move(value);
     }
+    // Lane L1 (decision 1634 (4); DESIGN-v2 s4.5): the coverage of the run's cells (the
+    // writers' record, root only); an empty record (no cell measured, e.g. a raw
+    // fallback) writes its block too, with Cells 0 (review m-6: never silent).
+    // Ruling 1738: a raw fallback measures no cell: its reason (the run-level geometry
+    // fallback classes) is named, so that zero cells are never read as complete coverage.
+    if (response.IsRawFallback() && response.GetCoverageRunRecord().entries.empty())
+    {
+      std::string classes;
+      for (const auto &fallback : response.GetGeometryFallbacks())
+      {
+        if (fallback.what == "run" && classes.find(fallback.cls) == std::string::npos)
+        {
+          classes += (classes.empty() ? "" : "+") + fallback.cls;
+        }
+      }
+      response.GetCoverageRunRecord().no_cells_reason =
+          "RawFallback" + (classes.empty() ? std::string() : ": " + classes) +
+          ": no correction applied";
+    }
+    // Lane rescensus-product (review r1817 mn-1): the census block of a run without a cell
+    // names the same reason as the coverage block.
+    if (response.GetResolutionRunRecord().entries.empty())
+    {
+      response.GetResolutionRunRecord().no_cells_reason =
+          response.GetCoverageRunRecord().no_cells_reason;
+    }
+    meta["SurfaceResponse"]["Coverage"] = CoverageRunMetadata(
+        response.GetCoverageRunRecord(), response.GetCoverageThresholds(),
+        response.GetCoverageValidatedRegime(),
+        iodata.units.Dimensionalize<Units::ValueType::ENERGY>(1.0), solve_level,
+        solve_levels, response.CoverageMarkNotApplied());
+    coverage_block_written = true;
+    coverage_banner = CoverageRunBanner(meta["SurfaceResponse"]["Coverage"]);
+    // Lane rescensus-product (decision 1817; ruling 1819): the edge-resolution census of
+    // the level (written beside the coverage block; "Final" set with the coverage block's).
+    meta["SurfaceResponse"]["Resolution"] =
+        ResolutionRunMetadata(response.GetResolutionRunRecord(), solve_level, solve_levels);
+    resolution_banner = ResolutionRunBanner(meta["SurfaceResponse"]["Resolution"]);
     // Round 2a R2 (decision 1475 (1)): the Records spilled by the root are spliced in place
     // of the empty in-memory array (the same bytes), then the scratch file is removed.
     auto *spill = response.GetConductorConsistencyRecordsSpill();
@@ -747,7 +851,28 @@ void BaseSolver::SaveMetadata(SurfaceResponseOperator &response) const
                   "ConductorConsistency.Records array for the "
                       << spill->Size() << " spilled conductor-consistency record(s)!");
     }
-    WriteMetadata(post_dir, meta, spill);
+    json *gate = response.ConductorConsistencyRecordsInDirectory()
+                     ? FindConductorConsistencyWithRecords(meta)
+                     : nullptr;
+    if (gate)
+    {
+      // Decision 1685 (Diagnostics.ConductorConsistencyRecords "Directory"): palace.json
+      // without the Records member (everything else as above); the array (the spilled
+      // entries or the in-memory ones) at the same key path in the records file.
+      json records;
+      records["SurfaceResponse"]["Diagnostics"]["ConductorConsistency"]["Records"] =
+          std::move((*gate)["Records"]);
+      gate->erase("Records");
+      WriteMetadata(post_dir, meta);
+      WriteConductorConsistencyRecords(
+          response.DiagnosticsPath(
+              post_dir, SurfaceResponseOperator::kConductorConsistencyRecordsFile),
+          records, spill);
+    }
+    else
+    {
+      WriteMetadata(post_dir, meta, spill);
+    }
     if (spill)
     {
       MFEM_VERIFY(spill->Remove(), "Removing the conductor-consistency records scratch "
@@ -770,8 +895,9 @@ void BaseSolver::SaveMetadata(SurfaceResponseOperator &response) const
     if (excluded > 0)
     {
       Mpi::Print(
-          "\n*** LOW CONFIDENCE: the conductor-consistency gate (decision 277; idfix "
-          "R0-a) EXCLUDED {:d} patch(es) of {:d} tested (claims {:.6e}, cells {:.6e} "
+          "\n*** LOW CONFIDENCE: the conductor-consistency gate (the device potential on "
+          "each coupon's metal must match its conductor) EXCLUDED {:d} patch(es) of {:d} "
+          "tested (claims {:.6e}, cells {:.6e} "
           "mesh-file units served RAW as the ConductorConsistency share): see "
           "SurfaceResponse.Diagnostics.ConductorConsistency of palace.json and the "
           "raw share per Type in surface-response-conductor-consistency-energy.csv "
@@ -784,7 +910,7 @@ void BaseSolver::SaveMetadata(SurfaceResponseOperator &response) const
       Mpi::Print(
           "\n*** DIAGNOSTIC: SurfaceResponseCorrection.ConductorConsistency.RecordOnly "
           "was set: the gate recorded {:d} verdict(s) and EXCLUDED NOTHING; this is "
-          "NOT a run of record (idfix DESIGN B.4 (F)) ***\n",
+          "NOT a run of record ***\n",
           static_cast<int>(
               gate.value("RecordOnlyVerdicts", nlohmann::json::array()).size()));
     }
@@ -800,6 +926,16 @@ void BaseSolver::SaveMetadata(SurfaceResponseOperator &response) const
                         std::string(response.IsRawFallback()
                                         ? " (no correction applied: the thin solve)"
                                         : " and surface-response-geometry-fallbacks.csv")));
+  }
+  // Lane L1 (DESIGN-v2 s4.5): the coverage banner closes the run summary (a line per
+  // cell whose coverage status is not OK or whose regime is not IN; never silent).
+  if (!coverage_banner.empty())
+  {
+    Mpi::Print("{}", coverage_banner);
+  }
+  if (!resolution_banner.empty())
+  {
+    Mpi::Print("{}", resolution_banner);
   }
 }
 

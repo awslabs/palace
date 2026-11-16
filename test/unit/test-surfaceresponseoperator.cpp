@@ -34,6 +34,7 @@
 #include "models/boundarymodeoperator.hpp"
 #include "models/cornertracebasis.hpp"
 #include "models/laplaceoperator.hpp"
+#include "models/postoperator.hpp"
 #include "models/spaceoperator.hpp"
 #include "models/surfaceresponseidentification.hpp"
 #include "models/surfaceresponseoperator.hpp"
@@ -776,7 +777,11 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator automatic 
   CHECK_THROWS_WITH(
       SurfaceResponseOperator(permittivity_mismatch_iodata, automatic_laplace),
       Catch::Matchers::ContainsSubstring("does not match fabrication-process response "
-                                         "library \"unit-test-process\" permittivity"));
+                                         "library \"unit-test-process\" permittivity") &&
+          Catch::Matchers::ContainsSubstring(
+              "(the process value Fabrication.InterfaceLayers.SA.Permittivity of the "
+              "library): set \"Permittivity\" of the Boundaries.Postprocessing.Dielectric "
+              "entry with \"Index\": 4 to 4!"));
 
   auto missing_layer_config = automatic_config;
   missing_layer_config["Solver"]["Electrostatic"]["ResponseCorrection"]["Library"] =
@@ -1879,7 +1884,7 @@ TEST_CASE_METHOD(
       std::ifstream cache_input(cache_path);
       REQUIRE(cache_input);
       json cache = json::parse(cache_input);
-      CHECK(cache["Version"] == 24);
+      CHECK(cache["Version"] == 25);
       REQUIRE(cache["Models"].size() == 2);
       for (auto &model : cache["Models"])
       {
@@ -3257,7 +3262,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator cap-interi
       REQUIRE(cache_input);
       json cache = json::parse(cache_input);
       cache_input.close();
-      CHECK(cache["Version"] == 24);
+      CHECK(cache["Version"] == 25);
       int cap_hat_models = 0;
       for (auto &model : cache["Models"])
       {
@@ -8195,7 +8200,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 
   // 2B on the operator: the unplaced cells are `unpatched` raw-partition portions (pass A:
   // the run is a recorded NoMatchedFeature raw fallback, which writes no cache), none when
-  // every cell is placed (pass B, whose cache carries the required empty leaf; version 24).
+  // every cell is placed (pass B, whose cache carries the required empty leaf; version 25).
   auto Operator = [&](const fs::path &library_path, const fs::path &cache_path)
   {
     IoData iodata(Config(library_path), false);
@@ -8212,9 +8217,9 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     double unpatched_length = 0.0;
     int unpatched_portions = 0;
     std::set<int> unpatched_features;
-    for (const auto &portion : response.GetModelRawClaimPortions().portions)
+    for (const auto &portion : response.GetModelRawClaimPortions().portions.Expand())
     {
-      if (portion.topology == "unpatched")
+      if (portion.type == "unpatched")
       {
         unpatched_portions++;
         unpatched_features.insert(portion.feature);
@@ -8252,18 +8257,27 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
         {7, "unpatched", 3, {0.1, 0.2, 0.3}, {0.4, 0.5, 0.6}});
     const fs::path copy_path = temp.temp_dir / "r9-nodes-geometry-cache-copy.json";
     const fs::path stale_path = temp.temp_dir / "r9-nodes-geometry-cache-stale.json";
+    // The root writes and reads the copy; its observations are broadcast and asserted on
+    // every rank AFTER the barrier (a root-only REQUIRE before a barrier leaves the other
+    // ranks waiting when it fails: the race class of decision 1616).
+    int cache_observed[2] = {0, 0};  // {Version, UnpatchedPairPortions size}
     if (Mpi::Root(Mpi::World()))
     {
       WriteResponseGeometryCache(copy_path, with_portions);
       std::ifstream input(copy_path);
       json cache = json::parse(input);
-      REQUIRE(cache.at("Version").get<int>() == 24);
-      REQUIRE(cache.at("UnpatchedPairPortions").size() == 1);
+      cache_observed[0] = cache.value("Version", 0);
+      cache_observed[1] = cache.contains("UnpatchedPairPortions")
+                              ? static_cast<int>(cache.at("UnpatchedPairPortions").size())
+                              : -1;
       cache.erase("UnpatchedPairPortions");
       std::ofstream output(stale_path);
       output << cache.dump() << "\n";
     }
     Mpi::Barrier(Mpi::World());
+    Mpi::Broadcast(2, cache_observed, 0, Mpi::World());
+    REQUIRE(cache_observed[0] == 25);
+    REQUIRE(cache_observed[1] == 1);
     const auto copied = ReadResponseGeometryCache(copy_path, request);
     REQUIRE(copied.unpatched_pair_portions.size() == 1);
     CHECK(copied.unpatched_pair_portions[0].feature == 7);
@@ -10903,7 +10917,7 @@ TEST_CASE("SurfaceResponseOperatorContinuationOwnership",
     std::ifstream input(cache_path);
     nlohmann::json stale = nlohmann::json::parse(input);
     input.close();
-    CHECK(stale["Version"] == 24);
+    CHECK(stale["Version"] == 25);
     stale["Version"] = 6;
     const auto stale_path = temp.temp_dir / "response-geometry-ownership-stale.json";
     {
@@ -12668,7 +12682,7 @@ TEST_CASE("SurfaceResponseOperatorPartialStretchContextOwnership",
     const std::string line = DescribeContinuationOwnershipSummary(summary);
     CHECK(line.find("5 translational cell(s)") != std::string::npos);
     CHECK(line.find("4 wholly, 1 clipped at a box face") != std::string::npos);
-    CHECK(line.find("partial-stretch ownership (decision 984") != std::string::npos);
+    CHECK(line.find("partial-stretch ownership: ") != std::string::npos);
     CHECK(line.find("3 context-edge cell(s) some partially inside stretch pair contains") !=
           std::string::npos);
     CHECK(line.find("(1 re-cut at a box face") != std::string::npos);
@@ -13567,9 +13581,46 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
       // residual) is read against that scale. The scale is taken over the FINITE entries
       // only and a non-finite entry (the +inf Q of an interface without LossTan, a NaN of
       // an absent evaluation) must be reproduced as such: an infinite scale would make
-      // every finite comparison vacuous.
-      double table_scale = 0.0;
+      // every finite comparison vacuous. Lane L1: the coverage columns are APPENDED after
+      // main's columns (DESIGN-v2 s4.3) and the scale is taken over main's columns only,
+      // so that main's columns keep main's check: an appended covered correction factor (a
+      // covered corrected energy over a near-zero within-R raw W, of order 1e11 here)
+      // would make every other comparison vacuous. An appended status must be reproduced
+      // exactly; a covered correction factor to 1e-8 beyond the largest relative
+      // difference of the table's W entries (its denominator is a sum of them: at 2 ranks
+      // the follow-on's W of the islands' SA interface, 3e-22 J, moves by 1.1e-8 relative
+      // and the factor with it); every other appended column by main's rule.
+      constexpr std::array<std::string_view, 14> coverage_header_stems = {
+          "coverage Type",
+          "W within-R raw",
+          "uncovered raw share of W",
+          "Type uncovered raw share of W",
+          "Type method-gap raw share of W",
+          "Type pending-model share of W",
+          "Type covered correction factor",
+          "coverage status",
+          "regime status",
+          "loop remainder unserved (J)",
+          "loop remainder of excluded patches kept raw twice (J)",
+          "method-gap raw share of W ",
+          "pending-model share of W ",
+          "covered correction factor "};
+      auto HeaderStartsWith = [](const std::string &header, std::string_view stem)
+      { return header.compare(0, stem.size(), stem) == 0; };
+      std::size_t n_main_cols = producer_table.n_cols();
       for (std::size_t c = 0; c < producer_table.n_cols(); c++)
+      {
+        const std::string &header = producer_table[c].header_text;
+        if (std::any_of(coverage_header_stems.begin(), coverage_header_stems.end(),
+                        [&](std::string_view stem)
+                        { return HeaderStartsWith(header, stem); }))
+        {
+          n_main_cols = c;
+          break;
+        }
+      }
+      double table_scale = 0.0;
+      for (std::size_t c = 0; c < n_main_cols; c++)
       {
         for (const double value : producer_table[c].data)
         {
@@ -13580,11 +13631,35 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
         }
       }
       REQUIRE(table_scale > 0.0);
+      double within_relative_difference = 0.0;
+      for (std::size_t c = n_main_cols; c < producer_table.n_cols(); c++)
+      {
+        if (!HeaderStartsWith(producer_table[c].header_text, "W within-R raw"))
+        {
+          continue;
+        }
+        for (std::size_t i = 0;
+             i < producer_table[c].data.size() && i < follow_on_table[c].data.size(); i++)
+        {
+          const double producer_w = producer_table[c].data[i];
+          if (std::isfinite(producer_w) && producer_w != 0.0)
+          {
+            within_relative_difference = std::max(
+                within_relative_difference,
+                std::abs(follow_on_table[c].data[i] - producer_w) / std::abs(producer_w));
+          }
+        }
+      }
       for (std::size_t c = 0; c < producer_table.n_cols(); c++)
       {
         const Column &producer_column = producer_table[c];
         const Column &follow_on_column = follow_on_table[c];
         REQUIRE(producer_column.data.size() == follow_on_column.data.size());
+        REQUIRE(follow_on_column.header_text == producer_column.header_text);
+        CHECK(follow_on_column.text == producer_column.text);
+        const bool covered_factor =
+            c >= n_main_cols && producer_column.header_text.find(
+                                    "covered correction factor") != std::string::npos;
         for (std::size_t i = 0; i < producer_column.data.size(); i++)
         {
           if (!std::isfinite(producer_column.data[i]))
@@ -13592,6 +13667,14 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
             CHECK(((std::isnan(producer_column.data[i]) &&
                     std::isnan(follow_on_column.data[i])) ||
                    follow_on_column.data[i] == producer_column.data[i]));
+            continue;
+          }
+          if (covered_factor)
+          {
+            CHECK_THAT(follow_on_column.data[i],
+                       WithinAbs(producer_column.data[i],
+                                 (1.0e-8 + within_relative_difference) *
+                                     std::max(std::abs(producer_column.data[i]), 1.0e-30)));
             continue;
           }
           const double scale =
@@ -15129,6 +15212,217 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   };
   CompareTable("surface-Q-corrected.csv");
   CompareTable("terminal-C-corrected.csv");
+#endif
+}
+
+// Lane L1 (rulings 1714 / 1715; decision 1723: the snap's energy leg on a unit fixture).
+// One metal bar on the cracked sheet with the SA interface (attribute 10) around it
+// (IslandConfig, R = 0.2; the convex library's isolated edge and 90-degree convex corner on
+// SA): the sheet surrounds the bar's four convex corners, so a sheet point diagonal from a
+// corner has its nearest foot AT the corner vertex, the clamped end of a tree segment (the
+// exterior vertex quadrant). Every served claim end moved 1 ulp per coordinate into its
+// portion (toward the other end): (a) as the SERVED list, the ends at a segment end are
+// round-off short and snapped: the served bins equal the exact claims' (round-off) and the
+// round-off-short population carries energy > 0 (the quadrants the snap gives back); (b) as
+// a KEPT class the same list is counted and never snapped: its energy is LOWER than the
+// exact list's, by more than 0 and by at most the population's energy (the direction of
+// OI-FOOT-TEST-VERTEX- ROUNDOFF: a kept portion one round-off short of a convex vertex
+// drops that quadrant).
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "Coverage snap gives back an exterior vertex quadrant's energy",
+                 "[postoperator][surfaceresponseoperator][3d][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  MPI_Comm comm = Mpi::World();
+  const fs::path mesh_path = temp.temp_dir / "coverage-snap-bar.mesh";
+  const fs::path basis_path = temp.temp_dir / "coverage-snap-basis-points.csv";
+  const fs::path library_path = temp.temp_dir / "fabrication-process-coverage-snap-3d.json";
+  // The root writes the inputs; whether it could read the library source is asserted on
+  // every rank AFTER the barrier (decision 1616: no root-only REQUIRE before a barrier).
+  int input_ok = 1;
+  if (Mpi::Root(comm))
+  {
+    mfem::Mesh serial = MakeSheetPlanMesh(3.0, 3.0, {{1.0, 1.0, 2.0, 2.0}}, 10);
+    std::ofstream output(mesh_path);
+    serial.Print(output);
+    {
+      std::ofstream basis(basis_path);
+      basis << "x,y,z\n"
+            << "-0.2,-0.2,0.0\n"
+            << "0.2,-0.2,0.0\n"
+            << "0.2,0.2,0.0\n"
+            << "-0.2,0.2,0.0\n";
+    }
+    std::ifstream input(convex_library_3d_path);
+    input_ok = input ? 1 : 0;
+    if (input_ok)
+    {
+      json library = json::parse(input);
+      library["Name"] = "unit-test-process-coverage-snap-3d";
+      for (auto &model : library["Models"])
+      {
+        model["Interfaces"] = {{{"Type", "SA"}, {"Coupon", 1}}};
+        if (model["Topology"] == "IsolatedEdge")
+        {
+          model["BasisPoints"] = basis_path.string();
+        }
+      }
+      std::ofstream output_library(library_path);
+      output_library << library.dump(2) << "\n";
+    }
+  }
+  Mpi::Barrier(comm);
+  Mpi::Broadcast(1, &input_ok, 0, comm);
+  REQUIRE(input_ok == 1);
+  json config = IslandConfig();
+  config["Model"]["Mesh"] = mesh_path.string();
+  config["Model"]["L0"] = 1.0;
+  config["Boundaries"]["Postprocessing"]["Dielectric"][0]["Attributes"] = {10};
+  auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
+  correction["Library"] = library_path.string();
+  correction["UnmatchedPolicy"] = "Warn";
+  correction.erase("PatchConstruction");  // Features (the default)
+  IoData iodata(config, false);
+  std::vector<std::unique_ptr<Mesh>> meshes;
+  meshes.push_back(std::make_unique<Mesh>(mesh::ReadMesh(iodata, comm)));
+  LaplaceOperator laplace(iodata, meshes);
+  SurfaceResponseOperator response(iodata, laplace);
+  REQUIRE(response.GetPatchCount() > 0);
+  const auto served = response.GetModelRawClaimPortions().portions.Expand();
+  REQUIRE_FALSE(served.empty());
+
+  PostOperator<ProblemType::ELECTROSTATIC> post_op(iodata, laplace);
+  // A smooth potential with a tangential field on the whole sheet (no solve: the partition
+  // only integrates the given field).
+  mfem::ParGridFunction potential(&laplace.GetH1Space().Get());
+  mfem::FunctionCoefficient potential_coefficient(
+      [](const mfem::Vector &x)
+      { return std::sin(1.3 * x[0] + 0.4) * std::cosh(0.7 * x[2]) + 0.3 * x[1] * x[1]; });
+  potential.ProjectCoefficient(potential_coefficient);
+  mfem::ParDiscreteLinearOperator gradient(&laplace.GetH1Space().Get(),
+                                           &laplace.GetNDSpace().Get());
+  gradient.AddDomainInterpolator(new mfem::GradientInterpolator());
+  gradient.Assemble();
+  GridFunction field(laplace.GetNDSpace());
+  gradient.Mult(potential, field.Real());
+  field.Real() *= -1.0;
+  Vector e(laplace.GetNDSpace().GetTrueVSize());
+  field.Real().GetTrueDofs(e);
+  field.Real().SetFromTrueDofs(e);
+  field.Real().ExchangeFaceNbrData();
+
+  // Every end 1 ulp toward the other end in each coordinate along which the portion runs.
+  auto moved = served;
+  for (auto &portion : moved)
+  {
+    const auto p0 = portion.p0, p1 = portion.p1;
+    for (int d = 0; d < 3; d++)
+    {
+      if (p0[d] != p1[d])
+      {
+        portion.p0[d] = std::nextafter(p0[d], p1[d]);
+        portion.p1[d] = std::nextafter(p1[d], p0[d]);
+      }
+    }
+  }
+  const auto &surf_post_op = post_op.GetSurfacePostOp();
+  const std::vector<SurfacePostOperator::UncoveredPerimeterPortion> no_claims;
+  auto Served = [](const SurfacePostOperator::InterfaceCoveragePartition &partition)
+  {
+    double sum = 0.0;
+    for (const auto &[label, energy] : partition.served)
+    {
+      (void)label;
+      sum += energy;
+    }
+    return sum;
+  };
+  auto Kept = [](const SurfacePostOperator::InterfaceCoveragePartition &partition)
+  {
+    double sum = 0.0;
+    for (const auto &[key, energy] : partition.classes)
+    {
+      (void)key;
+      sum += energy;
+    }
+    return sum;
+  };
+
+  // (a) The served list: snapped.
+  const auto exact =
+      surf_post_op.GetInterfaceCoveragePartition({4}, field, nullptr, {}, served).at(4);
+  const auto snapped =
+      surf_post_op.GetInterfaceCoveragePartition({4}, field, nullptr, {}, moved).at(4);
+  REQUIRE(exact.within > 0.0);
+  REQUIRE(Served(exact) > 0.0);
+  CHECK(snapped.served_ends.roundoff_count > exact.served_ends.roundoff_count);
+  CHECK(snapped.served_ends.roundoff_distance > 0.0);
+  CHECK(snapped.served_ends.roundoff_energy > 0.0);  // THE quadrants given back
+  CHECK(snapped.served_ends.roundoff_energy <= Served(exact));
+  CHECK_THAT(Served(snapped), WithinRel(Served(exact), 1.0e-12));
+  CHECK_THAT(snapped.unclaimed, WithinAbs(exact.unclaimed, 1.0e-12 * exact.within));
+  for (const auto &[label, energy] : exact.served)
+  {
+    REQUIRE(snapped.served.count(label) == 1);
+    CHECK_THAT(snapped.served.at(label), WithinAbs(energy, 1.0e-12 * exact.within));
+  }
+
+  // (b) The same list as a kept class: counted, never snapped.
+  const auto kept_exact = surf_post_op
+                              .GetInterfaceCoveragePartition(
+                                  {4}, field, nullptr, {{"Missing", &served}}, no_claims)
+                              .at(4);
+  const auto kept_moved = surf_post_op
+                              .GetInterfaceCoveragePartition(
+                                  {4}, field, nullptr, {{"Missing", &moved}}, no_claims)
+                              .at(4);
+  CHECK(kept_moved.kept_ends.roundoff_count > kept_exact.kept_ends.roundoff_count);
+  CHECK(kept_moved.kept_ends.roundoff_energy > 0.0);
+  CHECK(kept_moved.served_ends.roundoff_count == 0);
+  const double lost = Kept(kept_exact) - Kept(kept_moved);
+  CHECK(lost > 0.0);
+  // Ruling 1731: the directional census is EXACT: the kept loss IS the round-off-short
+  // energy, and the same vertex quadrants the snap gives back to the served list.
+  CHECK_THAT(lost,
+             WithinAbs(kept_moved.kept_ends.roundoff_energy, 1.0e-12 * kept_exact.within));
+  CHECK_THAT(kept_moved.kept_ends.roundoff_energy,
+             WithinAbs(snapped.served_ends.roundoff_energy, 1.0e-12 * exact.within));
+  CHECK_THAT(Kept(kept_exact), WithinRel(Served(exact), 1.0e-12));
+
+  // (c) Ruling 1731: every end 1 ulp OUTWARD (beyond its vertex): round-off beyond, the
+  // clamped foot reaches the segment end, nothing snapped and nothing at stake; the bins
+  // are the exact claims' bitwise, served and kept.
+  auto outward = served;
+  for (auto &portion : outward)
+  {
+    const auto p0 = portion.p0, p1 = portion.p1;
+    for (int d = 0; d < 3; d++)
+    {
+      if (p0[d] != p1[d])
+      {
+        portion.p0[d] = std::nextafter(p0[d], p0[d] + (p0[d] - p1[d]));
+        portion.p1[d] = std::nextafter(p1[d], p1[d] + (p1[d] - p0[d]));
+      }
+    }
+  }
+  const auto beyond =
+      surf_post_op.GetInterfaceCoveragePartition({4}, field, nullptr, {}, outward).at(4);
+  CHECK(beyond.served_ends.roundoff_beyond_count > exact.served_ends.roundoff_beyond_count);
+  CHECK(beyond.served_ends.roundoff_beyond_distance > 0.0);
+  CHECK(beyond.served_ends.roundoff_count == exact.served_ends.roundoff_count);
+  CHECK(beyond.served_ends.roundoff_energy == 0.0);
+  CHECK(beyond.unclaimed == exact.unclaimed);
+  CHECK(beyond.served == exact.served);
+  const auto kept_beyond = surf_post_op
+                               .GetInterfaceCoveragePartition(
+                                   {4}, field, nullptr, {{"Missing", &outward}}, no_claims)
+                               .at(4);
+  CHECK(kept_beyond.kept_ends.roundoff_beyond_count > 0);
+  CHECK(kept_beyond.kept_ends.roundoff_count == kept_exact.kept_ends.roundoff_count);
+  CHECK(kept_beyond.kept_ends.roundoff_energy == 0.0);
+  CHECK(kept_beyond.classes == kept_exact.classes);
 #endif
 }
 

@@ -16,6 +16,14 @@ CORRECTED_COLUMNS = {
 }
 
 
+def _cell(value):
+    """A number, or the text of a text column (the coverage Type / status columns)."""
+    try:
+        return float(value)
+    except ValueError:
+        return value.strip()
+
+
 def read_row(path):
     with path.open(newline="") as stream:
         rows = csv.DictReader(stream, skipinitialspace=True)
@@ -23,7 +31,7 @@ def read_row(path):
             row = next(rows)
         except StopIteration as exc:
             raise ValueError(f"{path} has no data rows") from exc
-    return {key.strip(): float(value) for key, value in row.items()}
+    return {key.strip(): _cell(value) for key, value in row.items()}
 
 
 def output_path(path, filename):
