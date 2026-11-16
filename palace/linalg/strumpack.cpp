@@ -3,6 +3,8 @@
 
 #include "strumpack.hpp"
 
+#include <type_traits>
+
 #if defined(MFEM_USE_STRUMPACK)
 
 namespace palace
@@ -33,6 +35,39 @@ strumpack::CompressionType GetCompressionType(SparseCompression type)
       return strumpack::CompressionType::NONE;
   }
   return strumpack::CompressionType::NONE;  // For compiler warning
+}
+
+// Detect if STRUMPACK has the METIS nested dissection which is parallel over the separator
+// tree (ReorderingStrategy::METIS_TREE), a patch in the STRUMPACK 8.1.0 builds of Palace
+// (superbuild and Spack package). STRUMPACK defines no macro for it, so this keeps Palace
+// building with a STRUMPACK that lacks the ordering.
+template <typename Strategy, typename = void>
+struct HasMetisTreeReordering : std::false_type
+{
+};
+
+template <typename Strategy>
+struct HasMetisTreeReordering<Strategy, std::void_t<decltype(Strategy::METIS_TREE)>>
+  : std::true_type
+{
+};
+
+// The ordering for SymbolicFactorization::DEFAULT. With METIS (the default of STRUMPACK),
+// the graph of the matrix is ordered by one process while all other processes wait.
+// METIS_TREE gives the same kind of ordering, but only the top separator is computed by
+// one process: the processes then order different subtrees of the separator tree. For one
+// process or a small matrix, it is METIS.
+template <typename Strategy = strumpack::ReorderingStrategy>
+constexpr Strategy GetDefaultReorderingStrategy()
+{
+  if constexpr (HasMetisTreeReordering<Strategy>::value)
+  {
+    return Strategy::METIS_TREE;
+  }
+  else
+  {
+    return Strategy::METIS;
+  }
 }
 
 }  // namespace
@@ -70,9 +105,21 @@ StrumpackSolverBase<StrumpackSolverType>::StrumpackSolverBase(
       break;
     case SymbolicFactorization::RCM:
       this->SetReorderingStrategy(strumpack::ReorderingStrategy::RCM);
+      break;
     case SymbolicFactorization::PORD:
     case SymbolicFactorization::DEFAULT:
-      // Should have good default.
+      // The mixed precision solver computes the ordering in its single precision solver,
+      // which has its own options.
+      if constexpr (std::is_same_v<StrumpackSolverType,
+                                   mfem::STRUMPACKMixedPrecisionSolver>)
+      {
+        this->solver_->solver().options().set_reordering_method(
+            GetDefaultReorderingStrategy());
+      }
+      else
+      {
+        this->SetReorderingStrategy(GetDefaultReorderingStrategy());
+      }
       break;
   }
   this->SetReorderingReuse(

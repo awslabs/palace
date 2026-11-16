@@ -327,6 +327,12 @@ download_patch(STRUMPACK_PATCH_FILES "${CMAKE_BINARY_DIR}/extern/STRUMPACK-patch
   "https://raw.githubusercontent.com/awslabs/palace/78947a1b0ab466d3de7d1b79d319fd1659c86ed6/extern/patch/STRUMPACK/strumpack_pr171.diff"
   781f79e96d4ff55cc914617885d64f869ea001314841c8c30b94d5073685e71a
 )
+# METIS nested dissection that is parallel over the separator tree: a new ordering of the
+# distributed solver (ReorderingStrategy::METIS_TREE) which needs only METIS, without its
+# test and documentation. Applied after the patches above
+list(APPEND STRUMPACK_PATCH_FILES
+  "${CMAKE_SOURCE_DIR}/extern/patch/STRUMPACK/strumpack_metis_parallel_nd.diff"
+)
 
 include(ExternalProject)
 ExternalProject_Add(strumpack

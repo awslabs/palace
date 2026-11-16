@@ -29,6 +29,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     STRUMPACK over SuperLU_DIST, then MUMPS, as the sparse direct solver when built with
     several of them. Set `"Type": "SuperLU"` to keep using SuperLU_DIST. SchemaVer 4-2-0
     [PR 1148](https://github.com/awslabs/palace/pull/1148).
+  - When `Solver.Linear.ColumnOrdering` is `"Default"` (or omitted), the STRUMPACK solvers
+    (`"Type"`: `"STRUMPACK"` or `"STRUMPACK-MP"`, or `"Default"` when it selects STRUMPACK)
+    now order the matrix with a METIS nested dissection which is parallel over the
+    separator tree, instead of METIS on one process (see the performance improvements
+    below). Results change within the solver tolerances. Set `"ColumnOrdering": "METIS"` to
+    keep the previous ordering, which the wave port and boundary mode eigenvalue solves
+    still use. SchemaVer 4-3-0 [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
   - The `mode-Z.csv` output of boundary-mode solves now reports the complex characteristic
     impedances, `Re{Z_PV}` and `Im{Z_PV}` with `Z_PV = |V|² / 2P*` as for wave ports, and
     `Re{Z_VI}` and `Im{Z_VI}` with `Z_VI = V / I` (oriented with the mode power) instead of
@@ -52,6 +59,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Performance Improvements
 
+  - Added a STRUMPACK patch with a METIS nested dissection ordering which is parallel over
+    the separator tree, and made it the default column ordering of the STRUMPACK solvers.
+    With METIS, one process orders the graph of the whole coarse matrix while all other
+    processes wait. Now one process computes only the top separator, and the processes
+    then order different parts of the graph at the same time. It needs METIS only, and
+    the factors have the same size.
+    [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
   - Added a STRUMPACK patch for
     [pghysels/STRUMPACK#171](https://github.com/pghysels/STRUMPACK/pull/171), which lowers
     the memory of the distributed STRUMPACK solver by 12 bytes per coarse matrix row on

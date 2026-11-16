@@ -3,8 +3,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <type_traits>
 #include <vector>
 #include <mfem.hpp>
+#include <catch2/catch_template_test_macros.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include "linalg/strumpack.hpp"
 #include "utils/communication.hpp"
@@ -72,6 +74,52 @@ HYPRE_BigInt CountEntriesWithoutTranspose(const mfem::HypreParMatrix &A)
   Mpi::GlobalSum(1, &missing, comm);
   return missing;
 }
+
+// If STRUMPACK has the METIS nested dissection which is parallel over the separator tree.
+template <typename Strategy, typename = void>
+struct HasMetisTreeReordering : std::false_type
+{
+};
+
+template <typename Strategy>
+struct HasMetisTreeReordering<Strategy, std::void_t<decltype(Strategy::METIS_TREE)>>
+  : std::true_type
+{
+};
+
+template <typename Strategy = strumpack::ReorderingStrategy>
+constexpr Strategy ExpectedDefaultReorderingStrategy()
+{
+  if constexpr (HasMetisTreeReordering<Strategy>::value)
+  {
+    return Strategy::METIS_TREE;
+  }
+  else
+  {
+    return Strategy::METIS;
+  }
+}
+
+// Gives access to the ordering which STRUMPACK will use: for the mixed precision solver,
+// that of its single precision solver, which computes the ordering.
+template <typename SolverType>
+class ReorderingStrategyProbe : public SolverType
+{
+public:
+  using SolverType::SolverType;
+
+  strumpack::ReorderingStrategy GetReorderingStrategy() const
+  {
+    if constexpr (std::is_base_of_v<mfem::STRUMPACKMixedPrecisionSolver, SolverType>)
+    {
+      return this->solver_->solver().options().reordering_method();
+    }
+    else
+    {
+      return this->solver_->options().reordering_method();
+    }
+  }
+};
 
 }  // namespace
 
@@ -182,6 +230,94 @@ TEST_CASE("StrumpackSolver unsymmetric sparsity pattern", "[strumpack][Serial][P
   CHECK(err[0] <= 1.0e-12 * nrm);
   CHECK(err[1] <= 1.0e-12 * nrm);
   CHECK(err[2] <= 1.0e-12 * nrm);
+}
+
+// With "ColumnOrdering": "Default", the solver uses the METIS nested dissection which is
+// parallel over the separator tree if STRUMPACK has it, and "METIS" keeps the ordering on
+// one process.
+TEMPLATE_TEST_CASE("StrumpackSolver column ordering", "[strumpack][Serial][Parallel]",
+                   StrumpackSolver, StrumpackMixedPrecisionSolver)
+{
+  MPI_Comm comm = Mpi::World();
+  const int rank = Mpi::Rank(comm);
+  const bool mixed_precision =
+      std::is_base_of_v<mfem::STRUMPACKMixedPrecisionSolver, TestType>;
+  using Strategy = strumpack::ReorderingStrategy;
+
+  // Five-point Laplacian on an m x m grid, rows distributed in contiguous blocks. The size
+  // is such that the parallel ordering does not fall back to METIS on a few processes.
+  const int m = 72;
+  const HYPRE_BigInt N = m * m;
+  const HYPRE_BigInt first = (N * rank) / Mpi::Size(comm);
+  const HYPRE_BigInt last = (N * (rank + 1)) / Mpi::Size(comm);
+  const int n_loc = static_cast<int>(last - first);
+  std::vector<int> I(n_loc + 1, 0);
+  std::vector<HYPRE_BigInt> J;
+  std::vector<double> data;
+  for (HYPRE_BigInt i = first; i < last; i++)
+  {
+    const HYPRE_BigInt ix = i % m, iy = i / m;
+    auto add = [&](bool has, HYPRE_BigInt j, double v)
+    {
+      if (has)
+      {
+        J.push_back(j);
+        data.push_back(v);
+      }
+    };
+    add(iy > 0, i - m, -1.0);
+    add(ix > 0, i - 1, -1.0);
+    add(true, i, 4.0);
+    add(ix < m - 1, i + 1, -1.0);
+    add(iy < m - 1, i + m, -1.0);
+    I[i - first + 1] = static_cast<int>(J.size());
+  }
+  HYPRE_BigInt row_starts[2] = {first, last};
+  mfem::HypreParMatrix A(comm, n_loc, N, N, I.data(), J.data(), data.data(), row_starts,
+                         row_starts);
+
+  // Manufactured solution.
+  mfem::HypreParVector x_ex(A), b(A), x(A);
+  for (int i = 0; i < n_loc; i++)
+  {
+    const double t = static_cast<double>(first + i) / static_cast<double>(N);
+    x_ex(i) = std::sin(7.0 * t) + t;
+  }
+  A.Mult(x_ex, b);
+
+  // The ordering which the solver passes to STRUMPACK.
+  auto GetStrategy = [&](SymbolicFactorization reorder)
+  {
+    ReorderingStrategyProbe<TestType> strumpack(comm, reorder, SparseCompression::NONE, 0.0,
+                                                0, 0, false, 0);
+    return strumpack.GetReorderingStrategy();
+  };
+  CHECK(GetStrategy(SymbolicFactorization::DEFAULT) == ExpectedDefaultReorderingStrategy());
+  CHECK(GetStrategy(SymbolicFactorization::METIS) == Strategy::METIS);
+  if (!mixed_precision)
+  {
+    // The other orderings are not passed to the single precision solver.
+    CHECK(GetStrategy(SymbolicFactorization::AMD) == Strategy::AMD);
+    CHECK(GetStrategy(SymbolicFactorization::RCM) == Strategy::RCM);
+  }
+
+  for (auto reorder : {SymbolicFactorization::DEFAULT, SymbolicFactorization::METIS})
+  {
+    TestType strumpack(comm, reorder, SparseCompression::NONE, 0.0, 0, 0, false, 0);
+    strumpack.SetOperator(A);
+    x = 0.0;
+    strumpack.Mult(b, x);
+    double err = 0.0, nrm = 0.0;
+    for (int i = 0; i < n_loc; i++)
+    {
+      err = std::max(err, std::abs(x(i) - x_ex(i)));
+      nrm = std::max(nrm, std::abs(x_ex(i)));
+    }
+    Mpi::GlobalMax(1, &err, comm);
+    Mpi::GlobalMax(1, &nrm, comm);
+    // The mixed precision solver is used without refinement: single precision accuracy.
+    CHECK(err <= (mixed_precision ? 1.0e-4 : 1.0e-12) * nrm);
+  }
 }
 
 }  // namespace palace

@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:4-2-3",
+  "$id": "urn:palace:schema:4-3-0",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -3064,7 +3064,7 @@
         },
         "ColumnOrdering": {
           "$ref": "#/$defs/SymbolicFactorization",
-          "description": "Column ordering algorithm for sparse direct solvers. If omitted, Palace uses the sparse direct solver's default ordering.",
+          "description": "Column ordering algorithm for sparse direct solvers. If omitted, Palace uses the sparse direct solver's default ordering. For STRUMPACK (`\"Type\"`: `\"STRUMPACK\"` or `\"STRUMPACK-MP\"`), the default is a METIS nested dissection which is parallel over the separator tree: one process computes the top separator, and the processes then order different parts of the matrix graph at the same time. It gives factors of the same size as `\"METIS\"`, where one process orders the whole graph while all others wait, in less time. Results agree with those of `\"METIS\"` to within the solver tolerances, not bitwise. It is used when STRUMPACK is built with it (the superbuild and the Spack package of Palace are); otherwise, and on one process, for small matrices, and for the wave port and boundary mode eigenvalue problems, the default is `\"METIS\"`. It is meant for matrices with one unknown per mesh edge, like those of the first-order coarse space of the multigrid preconditioner: when the sparse direct solver is applied to a space of order 3 or higher (without multigrid), `\"METIS\"` can be faster.",
           "x-palace-advanced": true
         },
         "STRUMPACKCompressionType": {
