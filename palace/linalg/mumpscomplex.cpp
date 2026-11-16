@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <complex>
+#include <cstddef>
 #include <limits>
 #include <vector>
 #include "linalg/complexcsr.hpp"
@@ -32,9 +33,8 @@ struct MumpsComplexSolver::Data
   int n_loc = 0, row_start = 0, n_sol = 0;
   std::vector<int> row_starts;
 
-  // Sparsity pattern of the factored matrix (1-based global row and column indices of the
-  // local entries), for the reuse of the analysis.
-  std::vector<MUMPS_INT> I, J;
+  // Hash of the sparsity pattern of the factored matrix, for the reuse of the analysis.
+  std::size_t pattern = 0;
 
   // Distributed right-hand side (in the row distribution of the matrix) and distributed
   // solution (in the distribution of MUMPS).
@@ -157,6 +157,8 @@ void MumpsComplexSolver::SetOperator(const ComplexOperator &op)
   std::vector<mumps_double_complex> V;
   HYPRE_BigInt n_glob;
   int n_loc, row_start;
+  auto &d = *data;
+  bool same;
   {
     ComplexLocalCSR csr(op);
 
@@ -165,6 +167,7 @@ void MumpsComplexSolver::SetOperator(const ComplexOperator &op)
     ReleaseParallelAssemble(op);
     MFEM_VERIFY(csr.n_glob <= std::numeric_limits<MUMPS_INT>::max(),
                 "MumpsComplexSolver does not support 64-bit global indices!");
+    same = csr.SamePattern(comm, d.pattern) && d.initialized && reorder_reuse;
     n_glob = csr.n_glob;
     n_loc = csr.n_loc;
     row_start = static_cast<int>(csr.first_row);
@@ -175,7 +178,7 @@ void MumpsComplexSolver::SetOperator(const ComplexOperator &op)
     for (int i = 0; i < n_loc; i++)
     {
       const MUMPS_INT gi = row_start + i + 1;
-      for (int k = csr.I[i]; k < csr.I[i + 1]; k++)
+      for (auto k = csr.I[i]; k < csr.I[i + 1]; k++)
       {
         const auto gj = static_cast<MUMPS_INT>(csr.J[k] + 1);
         if (symmetric && gj > gi)
@@ -189,12 +192,8 @@ void MumpsComplexSolver::SetOperator(const ComplexOperator &op)
     }
   }
 
-  // Analysis, unless the analysis of a previous matrix with the same sparsity pattern is
-  // reused.
-  auto &d = *data;
-  int same = d.initialized && reorder_reuse && d.id.n == static_cast<MUMPS_INT>(n_glob) &&
-             I == d.I && J == d.J;
-  Mpi::GlobalMin(1, &same, comm);
+  // Analysis, unless the analysis of a previous matrix with the same sparsity pattern on
+  // all processes is reused.
   if (!same)
   {
     d.Destroy();
@@ -302,12 +301,9 @@ void MumpsComplexSolver::SetOperator(const ComplexOperator &op)
     }
   }
 
-  // The values are not needed after the factorization (no iterative refinement), the
-  // sparsity pattern is kept for the reuse of the analysis.
-  d.I = std::move(I);
-  d.J = std::move(J);
-  d.id.irn_loc = d.I.data();
-  d.id.jcn_loc = d.J.data();
+  // The matrix is not needed after the factorization (no iterative refinement).
+  d.id.irn_loc = nullptr;
+  d.id.jcn_loc = nullptr;
   d.id.a_loc = nullptr;
 
   // Storage for the distributed right-hand side and solution.

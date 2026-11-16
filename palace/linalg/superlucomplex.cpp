@@ -8,7 +8,7 @@
 #include <algorithm>
 #include <cmath>
 #include <complex>
-#include <utility>
+#include <cstddef>
 #include <vector>
 #include "linalg/complexcsr.hpp"
 #include "utils/communication.hpp"
@@ -30,9 +30,9 @@ struct SuperLUComplexSolver::Data
   bool has_A = false, initialized = false;
   int_t n_glob = 0, n_loc = 0;
 
-  // Sparsity pattern of the factored matrix, for the reuse of the row and column
-  // permutations.
-  std::vector<int_t> I, J;
+  // Hash of the sparsity pattern of the factored matrix, for the reuse of the row and
+  // column permutations.
+  std::size_t pattern = 0;
 
   // Right-hand side and solution (overwritten in place).
   std::vector<doublecomplex> B;
@@ -49,19 +49,20 @@ struct SuperLUComplexSolver::Data
 
   // Create the distributed matrix from the local rows (SuperLU_DIST takes ownership of
   // copies of the arrays).
-  void CreateMatrix(int_t first_row, const std::vector<std::complex<double>> &V)
+  void CreateMatrix(const ComplexLocalCSR &csr)
   {
     DestroyMatrix();
-    const int_t nnz_loc = static_cast<int_t>(J.size());
+    const int_t nnz_loc = static_cast<int_t>(csr.J.size());
     auto *nzval = doublecomplexMalloc_dist(nnz_loc);
     auto *colind = intMalloc_dist(nnz_loc);
     auto *rowptr = intMalloc_dist(n_loc + 1);
     MFEM_VERIFY(nzval && colind && rowptr, "SuperLU_DIST matrix allocation failed!");
-    std::copy(J.begin(), J.end(), colind);
-    std::copy(I.begin(), I.end(), rowptr);
-    std::copy(V.begin(), V.end(), reinterpret_cast<std::complex<double> *>(nzval));
-    zCreate_CompRowLoc_Matrix_dist(&A, n_glob, n_glob, nnz_loc, n_loc, first_row, nzval,
-                                   colind, rowptr, SLU_NR_loc, SLU_Z, SLU_GE);
+    std::copy(csr.J.begin(), csr.J.end(), colind);
+    std::copy(csr.I.begin(), csr.I.end(), rowptr);
+    std::copy(csr.V.begin(), csr.V.end(), reinterpret_cast<std::complex<double> *>(nzval));
+    zCreate_CompRowLoc_Matrix_dist(&A, n_glob, n_glob, nnz_loc, n_loc,
+                                   static_cast<int_t>(csr.first_row), nzval, colind, rowptr,
+                                   SLU_NR_loc, SLU_Z, SLU_GE);
     has_A = true;
   }
 
@@ -160,42 +161,39 @@ SuperLUComplexSolver::~SuperLUComplexSolver()
 
 void SuperLUComplexSolver::SetOperator(const ComplexOperator &op)
 {
-  // Local rows of the complex-valued matrix.
-  ComplexLocalCSR csr(op);
-
-  // SuperLU_DIST gets a copy of the matrix: release the parallel assembled parts (as
-  // MfemWrapperSolver does for the sparse direct solvers).
-  ReleaseParallelAssemble(op);
-  const int_t n_glob = static_cast<int_t>(csr.n_glob);
-  const int_t n_loc = static_cast<int_t>(csr.n_loc);
-  std::vector<int_t> I(csr.I.begin(), csr.I.end()), J(csr.J.begin(), csr.J.end());
-
-  // Reuse the row and column permutations for a matrix with the same sparsity pattern.
   auto &d = *data;
-  int same = d.initialized && reorder_reuse && n_glob == d.n_glob && I == d.I && J == d.J;
-  Mpi::GlobalMin(1, &same, comm);
-  if (same)
   {
-    d.options.Fact = SamePattern_SameRowPerm;
-    zZeroLblocks(d.grid.iam, n_glob, &d.grid, &d.LUstruct);
-    zZeroUblocks(d.grid.iam, n_glob, &d.grid, &d.LUstruct);
+    // Local rows of the complex-valued matrix (freed before the factorization).
+    ComplexLocalCSR csr(op);
+
+    // SuperLU_DIST gets a copy of the matrix: release the parallel assembled parts (as
+    // MfemWrapperSolver does for the sparse direct solvers).
+    ReleaseParallelAssemble(op);
+
+    // Reuse the row and column permutations for a matrix with the same sparsity pattern on
+    // all processes.
+    const int_t n_glob = static_cast<int_t>(csr.n_glob);
+    if (csr.SamePattern(comm, d.pattern) && d.initialized && reorder_reuse)
+    {
+      d.options.Fact = SamePattern_SameRowPerm;
+      zZeroLblocks(d.grid.iam, n_glob, &d.grid, &d.LUstruct);
+      zZeroUblocks(d.grid.iam, n_glob, &d.grid, &d.LUstruct);
+    }
+    else
+    {
+      d.DestroyFactorization();
+      zScalePermstructInit(n_glob, n_glob, &d.ScalePermstruct);
+      zLUstructInit(n_glob, &d.LUstruct);
+      d.options.Fact = DOFACT;
+      d.options.SolveInitialized = NO;
+      d.options.RefineInitialized = NO;
+      d.initialized = true;
+    }
+    d.n_glob = n_glob;
+    d.n_loc = static_cast<int_t>(csr.n_loc);
+    d.CreateMatrix(csr);
+    d.B.resize(csr.n_loc);
   }
-  else
-  {
-    d.DestroyFactorization();
-    zScalePermstructInit(n_glob, n_glob, &d.ScalePermstruct);
-    zLUstructInit(n_glob, &d.LUstruct);
-    d.options.Fact = DOFACT;
-    d.options.SolveInitialized = NO;
-    d.options.RefineInitialized = NO;
-    d.initialized = true;
-  }
-  d.n_glob = n_glob;
-  d.n_loc = n_loc;
-  d.I = std::move(I);
-  d.J = std::move(J);
-  d.CreateMatrix(static_cast<int_t>(csr.first_row), csr.V);
-  d.B.resize(n_loc);
   d.Call(0);
   this->height = op.Height();
   this->width = op.Width();

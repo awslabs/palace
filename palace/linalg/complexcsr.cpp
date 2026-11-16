@@ -4,9 +4,12 @@
 #include "complexcsr.hpp"
 
 #include <algorithm>
+#include <functional>
 #include <limits>
+#include <string_view>
 #include <utility>
 #include "linalg/rap.hpp"
+#include "utils/communication.hpp"
 
 namespace palace
 {
@@ -109,11 +112,11 @@ ComplexLocalCSR::ComplexLocalCSR(const ComplexOperator &op)
   for (int i = 0; i < n_loc; i++)
   {
     MergeRow(i);
-    MFEM_VERIFY(row.size() <=
-                    static_cast<std::size_t>(std::numeric_limits<int>::max() - I[i]),
+    MFEM_VERIFY(row.size() <= static_cast<std::size_t>(
+                                  std::numeric_limits<HYPRE_BigInt>::max() - I[i]),
                 "Too many local nonzeros for the row offsets of a complex-valued sparse "
                 "direct solver!");
-    I[i + 1] = I[i] + static_cast<int>(row.size());
+    I[i + 1] = I[i] + static_cast<HYPRE_BigInt>(row.size());
   }
   J.resize(I[n_loc]);
   V.resize(I[n_loc]);
@@ -133,6 +136,21 @@ ComplexLocalCSR::ComplexLocalCSR(const ComplexOperator &op)
       part->HypreRead();
     }
   }
+}
+
+bool ComplexLocalCSR::SamePattern(MPI_Comm comm, std::size_t &hash) const
+{
+  auto Hash = [](const std::vector<HYPRE_BigInt> &v)
+  {
+    return std::hash<std::string_view>{}(
+        {reinterpret_cast<const char *>(v.data()), v.size() * sizeof(HYPRE_BigInt)});
+  };
+  const std::size_t hash_I = Hash(I), hash_J = Hash(J);
+  const std::size_t previous = std::exchange(
+      hash, hash_I ^ (hash_J + 0x9e3779b97f4a7c15ull + (hash_I << 6) + (hash_I >> 2)));
+  int same = (hash == previous);
+  Mpi::GlobalMin(1, &same, comm);
+  return same;
 }
 
 void ReleaseParallelAssemble(const ComplexOperator &op)

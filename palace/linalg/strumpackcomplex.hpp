@@ -9,6 +9,7 @@
 #if defined(MFEM_USE_STRUMPACK)
 
 #include <complex>
+#include <cstddef>
 #include <memory>
 #include <vector>
 #include "linalg/operator.hpp"
@@ -43,8 +44,9 @@ private:
       solver;
   mutable std::vector<std::complex<double>> b, x;
 
-  // Sparsity pattern of the last factored matrix, for the reuse of the reordering.
-  std::vector<HYPRE_BigInt> I_prev, J_prev;
+  // Hash of the sparsity pattern of the last factored matrix, for the reuse of the
+  // reordering.
+  std::size_t pattern = 0;
 
 public:
   StrumpackComplexSolver(MPI_Comm comm, SymbolicFactorization reorder, bool reorder_reuse,

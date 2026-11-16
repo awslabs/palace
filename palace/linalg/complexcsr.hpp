@@ -5,6 +5,7 @@
 #define PALACE_LINALG_COMPLEX_CSR_HPP
 
 #include <complex>
+#include <cstddef>
 #include <vector>
 #include <mfem.hpp>
 #include "linalg/operator.hpp"
@@ -25,11 +26,15 @@ struct ComplexLocalCSR
 
   // Local number of rows, row offsets (size n_loc + 1), global column indices, and values.
   int n_loc = 0;
-  std::vector<int> I;
-  std::vector<HYPRE_BigInt> J;
+  std::vector<HYPRE_BigInt> I, J;
   std::vector<std::complex<double>> V;
 
   explicit ComplexLocalCSR(const ComplexOperator &op);
+
+  // Replaces hash by a hash of the sparsity pattern, and returns whether it has not changed
+  // on any process: the solvers keep it to reuse the reordering for the next matrix with
+  // the same sparsity pattern. Collective.
+  bool SamePattern(MPI_Comm comm, std::size_t &hash) const;
 };
 
 // Release the parallel assembled matrices of the ParOperator real and imaginary parts of
