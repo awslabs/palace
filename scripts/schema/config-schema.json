@@ -2727,7 +2727,7 @@
         },
         "PreconditionerLagTol": {
           "type": "number",
-          "description": "Residual tolerance below which preconditioner updates are skipped.",
+          "description": "Residual above which the quasi-Newton preconditioner is updated every `PreconditionerLag` iterations. Below it, the preconditioner is updated only when, at the rate of the residual since the previous update check, the eigenvalue tolerance would not be reached within the next `PreconditionerLag` iterations.",
           "minimum": 0.0,
           "default": 0.0001,
           "x-palace-advanced": true
