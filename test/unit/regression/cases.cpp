@@ -4,8 +4,8 @@
 // Regression cases: full Palace solves diffed against test data references.
 // Each case carries [Serial][Parallel][GPU][Regression] (the category
 // tag is orthogonal to execution style — every case is valid at any
-// rank count and on either CPU or GPU), except the substructuring cases,
-// which are CPU-only (no [GPU]). [Long] modifies a regression
+// rank count and on either CPU or GPU), except substructuring_magnetostatic_mixed_amr,
+// which is CPU-only (no [GPU]). [Long] modifies a regression
 // case to be skipped from the default sweep and run only under the
 // long-tests CI workflow.
 
@@ -1818,7 +1818,7 @@ TEST_CASE("substructuring_electrostatic", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-6;
-  opts.atol = 1.0e-16;
+  opts.atol = 1.0e-19;
   opts.paraview_fields = true;  // Solver.Electrostatic.Save = 1
   palace::test::RunRegressionCase("substructuring_electrostatic", "electrostatic.json",
                                   "base", opts);
@@ -1830,9 +1830,10 @@ TEST_CASE("substructuring_electrostatic_region", "[Serial][Parallel][GPU][Regres
 {
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-6;
-  opts.atol = 1.0e-16;
+  opts.atol = 1.0e-19;
   opts.paraview_fields = false;
   opts.setup_config = "electrostatic.json";
+  opts.custom_checks["terminal-C.csv"] = TestOfflineRunReproduced("base", opts);
   palace::test::RunRegressionCase("substructuring_electrostatic",
                                   "electrostatic_online_region.json", "online_region",
                                   opts);
@@ -1847,8 +1848,7 @@ TEST_CASE("substructuring_magnetostatic", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-5;
-  opts.atol = 1.0e-16;
-  opts.linear_solver_policy = force_default_solver;
+  opts.atol = 1.0e-19;
   opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
   palace::test::RunRegressionCase("substructuring_magnetostatic", "magnetostatic.json",
                                   "base", opts);
@@ -1861,8 +1861,7 @@ TEST_CASE("substructuring_magnetostatic_grouped", "[Serial][Parallel][GPU][Regre
 {
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-5;
-  opts.atol = 1.0e-16;
-  opts.linear_solver_policy = force_default_solver;
+  opts.atol = 1.0e-19;
   opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
   palace::test::RunRegressionCase("substructuring_magnetostatic",
                                   "magnetostatic_grouped.json", "grouped", opts);
@@ -1874,8 +1873,7 @@ TEST_CASE("substructuring_magnetostatic_held", "[Serial][Parallel][GPU][Regressi
 {
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-5;
-  opts.atol = 1.0e-16;
-  opts.linear_solver_policy = force_default_solver;
+  opts.atol = 1.0e-19;
   opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
   palace::test::RunRegressionCase("substructuring_magnetostatic", "magnetostatic_held.json",
                                   "held", opts);
@@ -1888,8 +1886,7 @@ TEST_CASE("substructuring_magnetostatic_london", "[Serial][Parallel][GPU][Regres
 {
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-5;
-  opts.atol = 1.0e-16;
-  opts.linear_solver_policy = force_default_solver;
+  opts.atol = 1.0e-19;
   opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
   palace::test::RunRegressionCase("substructuring_magnetostatic",
                                   "magnetostatic_london.json", "london", opts);
@@ -1902,8 +1899,7 @@ TEST_CASE("substructuring_magnetostatic_current", "[Serial][Parallel][GPU][Regre
 {
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-5;
-  opts.atol = 1.0e-16;
-  opts.linear_solver_policy = force_default_solver;
+  opts.atol = 1.0e-19;
   opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
   palace::test::RunRegressionCase("substructuring_magnetostatic",
                                   "magnetostatic_current.json", "current", opts);
@@ -1916,8 +1912,7 @@ TEST_CASE("substructuring_magnetostatic_current_london",
 {
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-5;
-  opts.atol = 1.0e-16;
-  opts.linear_solver_policy = force_default_solver;
+  opts.atol = 1.0e-19;
   opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
   palace::test::RunRegressionCase("substructuring_magnetostatic",
                                   "magnetostatic_current_london.json", "current_london",
@@ -1931,8 +1926,7 @@ TEST_CASE("substructuring_magnetostatic_mixed", "[Serial][Parallel][GPU][Regress
 {
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-5;
-  opts.atol = 1.0e-16;
-  opts.linear_solver_policy = force_default_solver;
+  opts.atol = 1.0e-19;
   opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
   palace::test::RunRegressionCase("substructuring_magnetostatic",
                                   "magnetostatic_mixed.json", "mixed", opts);
@@ -1946,10 +1940,10 @@ TEST_CASE("substructuring_magnetostatic_mixed_region",
 {
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-5;
-  opts.atol = 1.0e-16;
-  opts.linear_solver_policy = force_default_solver;
+  opts.atol = 1.0e-19;
   opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
   opts.setup_config = "magnetostatic_mixed.json";
+  opts.custom_checks["terminal-M.csv"] = TestOfflineRunReproduced("mixed", opts);
   palace::test::RunRegressionCase("substructuring_magnetostatic",
                                   "magnetostatic_mixed_online_region.json",
                                   "mixed_online_region", opts);
@@ -1963,8 +1957,7 @@ TEST_CASE("substructuring_magnetostatic_mixed_amr", "[Serial][Parallel][Regressi
 {
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-4;
-  opts.atol = 1.0e-16;
-  opts.linear_solver_policy = force_default_solver;
+  opts.atol = 1.0e-19;
   opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
   opts.setup_config = "magnetostatic_mixed.json";
   opts.unstored_files = {"error-indicators.csv"};
@@ -1981,8 +1974,7 @@ TEST_CASE("substructuring_magnetostatic_mixed_london",
 {
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-5;
-  opts.atol = 1.0e-16;
-  opts.linear_solver_policy = force_default_solver;
+  opts.atol = 1.0e-19;
   opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
   palace::test::RunRegressionCase("substructuring_magnetostatic",
                                   "magnetostatic_mixed_london.json", "mixed_london", opts);
@@ -1995,8 +1987,7 @@ TEST_CASE("substructuring_magnetostatic_two_sided", "[Serial][Parallel][GPU][Reg
 {
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-5;
-  opts.atol = 1.0e-16;
-  opts.linear_solver_policy = force_default_solver;
+  opts.atol = 1.0e-19;
   opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
   palace::test::RunRegressionCase("substructuring_magnetostatic",
                                   "magnetostatic_two_sided.json", "two_sided", opts);
@@ -2009,10 +2000,10 @@ TEST_CASE("substructuring_magnetostatic_two_sided_region",
 {
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-5;
-  opts.atol = 1.0e-16;
-  opts.linear_solver_policy = force_default_solver;
+  opts.atol = 1.0e-19;
   opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
   opts.setup_config = "magnetostatic_two_sided.json";
+  opts.custom_checks["terminal-M.csv"] = TestOfflineRunReproduced("two_sided", opts);
   palace::test::RunRegressionCase("substructuring_magnetostatic",
                                   "magnetostatic_two_sided_online_region.json",
                                   "two_sided_online_region", opts);
@@ -2025,8 +2016,7 @@ TEST_CASE("substructuring_magnetostatic_two_sided_swapped",
 {
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-5;
-  opts.atol = 1.0e-16;
-  opts.linear_solver_policy = force_default_solver;
+  opts.atol = 1.0e-19;
   opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
   palace::test::RunRegressionCase("substructuring_magnetostatic",
                                   "magnetostatic_two_sided_swapped.json",
@@ -2041,10 +2031,10 @@ TEST_CASE("substructuring_magnetostatic_two_sided_port_region",
 {
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-5;
-  opts.atol = 1.0e-16;
-  opts.linear_solver_policy = force_default_solver;
+  opts.atol = 1.0e-19;
   opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
   opts.setup_config = "magnetostatic_two_sided_port.json";
+  opts.custom_checks["terminal-M.csv"] = TestOfflineRunReproduced("two_sided_port", opts);
   palace::test::RunRegressionCase("substructuring_magnetostatic",
                                   "magnetostatic_two_sided_port_online_region.json",
                                   "two_sided_port_online_region", opts);
@@ -2065,7 +2055,6 @@ TEST_CASE("substructuring_magnetostatic_two_sided_cross",
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-5;
   opts.atol = 1.0e-19;
-  opts.linear_solver_policy = force_default_solver;
   opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
   palace::test::RunRegressionCase("substructuring_magnetostatic",
                                   "magnetostatic_two_sided_cross.json", "two_sided_cross",
@@ -2078,7 +2067,6 @@ TEST_CASE("substructuring_magnetostatic_two_sided_cross_swapped",
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-5;
   opts.atol = 1.0e-19;
-  opts.linear_solver_policy = force_default_solver;
   opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
   palace::test::RunRegressionCase("substructuring_magnetostatic",
                                   "magnetostatic_two_sided_cross_swapped.json",
@@ -2093,7 +2081,6 @@ TEST_CASE("substructuring_magnetostatic_two_sided_cross_unsaved",
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-5;
   opts.atol = 1.0e-19;
-  opts.linear_solver_policy = force_default_solver;
   opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
   palace::test::RunRegressionCase("substructuring_magnetostatic",
                                   "magnetostatic_two_sided_cross_unsaved.json",
@@ -2106,7 +2093,6 @@ TEST_CASE("substructuring_magnetostatic_two_sided_cross_region",
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-5;
   opts.atol = 1.0e-19;
-  opts.linear_solver_policy = force_default_solver;
   opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
   opts.setup_config = "magnetostatic_two_sided_cross.json";
   opts.custom_checks["terminal-M.csv"] = TestOfflineRunReproduced("two_sided_cross", opts);
@@ -2121,7 +2107,6 @@ TEST_CASE("substructuring_magnetostatic_two_sided_ground_region",
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-5;
   opts.atol = 1.0e-19;
-  opts.linear_solver_policy = force_default_solver;
   opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
   opts.setup_config = "magnetostatic_two_sided_ground.json";
   opts.custom_checks["terminal-M.csv"] = TestOfflineRunReproduced("two_sided_ground", opts);
@@ -2136,7 +2121,6 @@ TEST_CASE("substructuring_magnetostatic_two_sided_inner_region",
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-5;
   opts.atol = 1.0e-19;
-  opts.linear_solver_policy = force_default_solver;
   opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
   opts.setup_config = "magnetostatic_two_sided_inner.json";
   opts.custom_checks["terminal-M.csv"] = TestOfflineRunReproduced("two_sided_inner", opts);
@@ -2151,7 +2135,6 @@ TEST_CASE("substructuring_magnetostatic_two_sided_end_region",
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-5;
   opts.atol = 1.0e-19;
-  opts.linear_solver_policy = force_default_solver;
   opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
   opts.setup_config = "magnetostatic_two_sided_end.json";
   opts.custom_checks["terminal-M.csv"] = TestOfflineRunReproduced("two_sided_end", opts);
@@ -2166,7 +2149,6 @@ TEST_CASE("substructuring_magnetostatic_two_sided_end_swapped_region",
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-5;
   opts.atol = 1.0e-19;
-  opts.linear_solver_policy = force_default_solver;
   opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
   opts.setup_config = "magnetostatic_two_sided_end_swapped.json";
   opts.custom_checks["terminal-M.csv"] =
