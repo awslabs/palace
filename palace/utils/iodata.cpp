@@ -694,7 +694,17 @@ void IoData::CheckConfiguration()
   if (solver.linear.mg_smooth_order < 0)
   {
     solver.linear.mg_smooth_order = std::max(2 * solver.order, 4);
+
+    // For second-order eigenmode problems, use a higher smoothing order on multigrid
+    // levels where the shifted operator turns out to be nearly positive semi-definite.
+    if (solver.order == 2 && solver.linear.mg_smooth_cheby_4th &&
+        problem.type == ProblemType::EIGENMODE)
+    {
+      solver.linear.mg_smooth_order_max = 8;
+    }
   }
+  solver.linear.mg_smooth_order_max =
+      std::max(solver.linear.mg_smooth_order_max, solver.linear.mg_smooth_order);
   // A FilmAttributes boundary not declared a Superconductor is the λ→0 London limit:
   // register it as a sheet with small effective L_ksq = λ⊥ = pec_lperp. The sheet
   // inductance is L_ksq = λ·coth(d/λ); take λ = pec_lperp in its thick-film limit d ≫ λ

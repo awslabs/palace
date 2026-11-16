@@ -3,7 +3,11 @@
 
 #include "chebyshev.hpp"
 
+#include <algorithm>
 #include <cmath>
+#include <limits>
+#include <utility>
+#include <vector>
 #include <mfem/general/forall.hpp>
 
 namespace palace
@@ -89,6 +93,122 @@ double GetLambdaMax(MPI_Comm comm, const ComplexOperator &A, const ComplexVector
   ComplexDiagonalOperator Dinv(dinv);
   ComplexProductOperator DinvA(Dinv, A);
   return linalg::SpectralNorm(comm, DinvA, false, &x0);
+}
+
+// Growth of the error at the eigenvalue -ρ λₘₐₓ of D⁻¹ A in one 4th-kind Chebyshev
+// smoothing step of order k: Wₖ(1 + 2ρ) / (2k + 1) = sinh((k + ½) φ) / ((2k + 1) sinh(φ /
+// 2)), with cosh(φ) = 1 + 2ρ.
+double NegativeGrowth(int k, double rho)
+{
+  const double phi = std::acosh(1.0 + 2.0 * rho);
+  return (phi > 0.0) ? std::sinh((k + 0.5) * phi) / ((2.0 * k + 1.0) * std::sinh(0.5 * phi))
+                     : 1.0;
+}
+
+// Smallest and largest eigenvalues of the symmetric tridiagonal matrix with diagonal a and
+// off-diagonal b, by bisection on Sturm sequence counts.
+std::pair<double, double> TridiagonalExtremeEigenvalues(const std::vector<double> &a,
+                                                        const std::vector<double> &b)
+{
+  const int n = static_cast<int>(a.size());
+  double lo = a[0], hi = a[0], bmax = 0.0;
+  for (int i = 0; i < n; i++)
+  {
+    const double bl = (i > 0) ? std::abs(b[i - 1]) : 0.0;
+    const double br = (i < n - 1) ? std::abs(b[i]) : 0.0;
+    lo = std::min(lo, a[i] - bl - br);
+    hi = std::max(hi, a[i] + bl + br);
+    bmax = std::max(bmax, br);
+  }
+  const double pivmin = std::numeric_limits<double>::min() * std::max(1.0, bmax * bmax);
+  const double tol = 1.0e-8 * std::max(std::abs(lo), std::abs(hi));
+  auto Bisect = [&](int k)
+  {
+    // Smallest x with at least k eigenvalues less than x (the k-th smallest eigenvalue).
+    double l = lo, h = hi;
+    for (int it = 0; it < 200 && h - l > tol; it++)
+    {
+      const double x = 0.5 * (l + h);
+      int count = 0;
+      double q = 1.0;
+      for (int i = 0; i < n; i++)
+      {
+        q = a[i] - x - ((i > 0) ? b[i - 1] * b[i - 1] / q : 0.0);
+        if (std::abs(q) < pivmin)
+        {
+          q = -pivmin;
+        }
+        count += (q < 0.0);
+      }
+      (count >= k ? h : l) = x;
+    }
+    return 0.5 * (l + h);
+  };
+  return {Bisect(1), Bisect(n)};
+}
+
+// Estimate the indefiniteness ratio ρ = -λₘᵢₙ(S) / λₘₐₓ(S) of S = |D|⁻¹ᐟ² A |D|⁻¹ᐟ² for a
+// symmetric operator A, given |D|⁻¹, with at most max_it Lanczos iterations. The Ritz
+// values lie inside the spectrum of S, so the estimate grows with the iterations, which
+// stop once it excludes every order above min_order (see GetChebyshevOrder).
+double EstimateIndefiniteness(MPI_Comm comm, const Operator &A, const Vector &dinv_abs,
+                              int min_order, int max_order, int max_it)
+{
+  Vector dinv_sqrt(dinv_abs);
+  linalg::Sqrt(dinv_sqrt);
+  DiagonalOperator DinvSqrt(dinv_sqrt);
+  ProductOperator ADinvSqrt(A, DinvSqrt);
+  ProductOperator S(DinvSqrt, ADinvSqrt);
+  Vector v(A.Height()), v0(A.Height()), w(A.Height());
+  v.UseDevice(true);
+  v0.UseDevice(true);
+  w.UseDevice(true);
+  linalg::SetRandom(comm, v);
+  linalg::Normalize(comm, v);
+  std::vector<double> alpha, beta;
+  double rho = 0.0;
+  for (int it = 0; it < max_it; it++)
+  {
+    S.Mult(v, w);
+    alpha.push_back(linalg::Dot(comm, w, v));
+    linalg::AXPBYPCZ(-alpha.back(), v, (it > 0) ? -beta.back() : 0.0, v0, 1.0, w);
+    const auto [lambda_min, lambda_max] = TridiagonalExtremeEigenvalues(alpha, beta);
+    rho = (lambda_max > 0.0) ? -lambda_min / lambda_max
+                             : std::numeric_limits<double>::infinity();
+    const double norm = linalg::Norml2(comm, w);
+    if (GetChebyshevOrder(min_order, max_order, rho) == min_order ||
+        norm <= 1.0e-12 * std::abs(lambda_max))
+    {
+      break;
+    }
+    beta.push_back(norm);
+    v0 = v;
+    v.Set(1.0 / norm, w);
+  }
+  return rho;
+}
+
+double GetIndefiniteness(MPI_Comm comm, const Operator &A, const Vector &dinv,
+                         int min_order, int max_order, int max_it)
+{
+  Vector dinv_abs(dinv);
+  dinv_abs.Abs();
+  return EstimateIndefiniteness(comm, A, dinv_abs, min_order, max_order, max_it);
+}
+
+double GetIndefiniteness(MPI_Comm comm, const ComplexOperator &A, const ComplexVector &dinv,
+                         int min_order, int max_order, int max_it)
+{
+  // Use the Hermitian part of A (the real part for complex symmetric A), scaled with the
+  // magnitude of the complex diagonal.
+  if (!A.Real())
+  {
+    return std::numeric_limits<double>::infinity();
+  }
+  ComplexVector dinv_abs(dinv);
+  dinv_abs.Abs();
+  return EstimateIndefiniteness(comm, *A.Real(), dinv_abs.Real(), min_order, max_order,
+                                max_it);
 }
 
 template <bool Transpose = false>
@@ -221,10 +341,26 @@ inline void ApplyOrderK(const double sd, const double sr, const ComplexVector &d
 
 }  // namespace
 
+int GetChebyshevOrder(int min_order, int max_order, double rho)
+{
+  int order = min_order;
+  for (int k = min_order + 1; k <= max_order; k++)
+  {
+    const double growth = NegativeGrowth(k, rho) / NegativeGrowth(min_order, rho);
+    if (!(growth * growth <= k * (k + 1.0) / (min_order * (min_order + 1.0))))
+    {
+      break;  // Also for ρ = ∞ (NaN growth)
+    }
+    order = k;
+  }
+  return order;
+}
+
 template <OperatorType OperType>
 ChebyshevSmoother<OperType>::ChebyshevSmoother(MPI_Comm comm, int smooth_it, int poly_order,
-                                               double sf_max)
-  : Solver<OperType>(), comm(comm), pc_it(smooth_it), order(poly_order), A(nullptr),
+                                               double sf_max, int max_poly_order)
+  : Solver<OperType>(), comm(comm), pc_it(smooth_it), min_order(poly_order),
+    max_order(std::max(poly_order, max_poly_order)), order(poly_order), A(nullptr),
     lambda_max(0.0), sf_max(sf_max)
 {
   MFEM_VERIFY(order > 0, "Polynomial order for Chebyshev smoothing must be positive!");
@@ -249,8 +385,24 @@ void ChebyshevSmoother<OperType>::SetOperator(const OperType &op)
   MFEM_VERIFY(std::isfinite(lambda_max) && lambda_max > 0.0,
               "Encountered invalid maximum eigenvalue in Chebyshev smoother!");
 
+  // Raise the order as far as the estimated indefiniteness of the operator allows.
+  if (max_order > min_order)
+  {
+    constexpr int max_it = 30;
+    order =
+        GetChebyshevOrder(min_order, max_order,
+                          GetIndefiniteness(comm, op, dinv, min_order, max_order, max_it));
+  }
+
   this->height = op.Height();
   this->width = op.Width();
+}
+
+template <OperatorType OperType>
+void ChebyshevSmoother<OperType>::SetOrder(int poly_order)
+{
+  MFEM_VERIFY(poly_order > 0, "Polynomial order for Chebyshev smoothing must be positive!");
+  order = poly_order;
 }
 
 template <OperatorType OperType>

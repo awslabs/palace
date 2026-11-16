@@ -52,6 +52,14 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Performance Improvements
 
+  - Without `config["Solver"]["Linear"]["MGSmoothOrder"]`, eigenmode simulations of solution
+    order 2 use Chebyshev smoothers of order up to 8 instead of 4, as high as the
+    indefiniteness of each multigrid level's shifted operator, estimated at setup by a few
+    Lanczos iterations, allows. A short GMRES probe with the whole multigrid cycle at setup
+    keeps order 4 if order 8 is predicted to need more than 25% more linear solver
+    iterations, as with Floquet periodic and absorbing boundaries, or if order 4 already
+    reduces the residual by more than a factor 5 per iteration, as for small problems.
+    SchemaVer 4-2-4. [PR 1201](https://github.com/awslabs/palace/pull/1201).
   - Added a STRUMPACK patch for
     [pghysels/STRUMPACK#165](https://github.com/pghysels/STRUMPACK/pull/165), which lowers
     the latency of the distributed triangular solves of the solve phase for a few

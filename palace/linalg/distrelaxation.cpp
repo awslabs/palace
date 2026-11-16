@@ -13,15 +13,16 @@ namespace palace
 template <OperatorType OperType>
 DistRelaxationSmoother<OperType>::DistRelaxationSmoother(
     MPI_Comm comm, const Operator &G, int smooth_it, int cheby_smooth_it, int cheby_order,
-    double cheby_sf_max, double cheby_sf_min, bool cheby_4th_kind)
+    double cheby_sf_max, double cheby_sf_min, bool cheby_4th_kind, int cheby_max_order)
   : Solver<OperType>(), pc_it(smooth_it), G(&G), A(nullptr), A_G(nullptr),
     dbc_tdof_list_G(nullptr)
 {
-  // Initialize smoothers.
+  // Initialize smoothers (the auxiliary space one uses the order chosen for the primary
+  // space).
   if (cheby_4th_kind)
   {
     B = std::make_unique<ChebyshevSmoother<OperType>>(comm, cheby_smooth_it, cheby_order,
-                                                      cheby_sf_max);
+                                                      cheby_sf_max, cheby_max_order);
     B_G = std::make_unique<ChebyshevSmoother<OperType>>(comm, cheby_smooth_it, cheby_order,
                                                         cheby_sf_max);
   }
@@ -61,10 +62,23 @@ void DistRelaxationSmoother<OperType>::SetOperators(const OperType &op,
 
   // Set up smoothers for A and A_G.
   B->SetOperator(op);
+  if (const auto *cheby = dynamic_cast<const ChebyshevSmoother<OperType> *>(B.get()))
+  {
+    static_cast<ChebyshevSmoother<OperType> &>(*B_G).SetOrder(cheby->GetOrder());
+  }
   B_G->SetOperator(op_G);
 
   this->height = op.Height();
   this->width = op.Width();
+}
+
+template <OperatorType OperType>
+void DistRelaxationSmoother<OperType>::SetSmootherOrder(int order)
+{
+  auto *cheby = dynamic_cast<ChebyshevSmoother<OperType> *>(B.get());
+  MFEM_VERIFY(cheby, "SetSmootherOrder requires a 4th-kind Chebyshev smoother!");
+  cheby->SetOrder(order);
+  static_cast<ChebyshevSmoother<OperType> &>(*B_G).SetOrder(order);
 }
 
 namespace
