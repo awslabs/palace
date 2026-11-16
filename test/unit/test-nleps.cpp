@@ -6,6 +6,8 @@
 #include <complex>
 #include <iterator>
 #include <memory>
+#include <regex>
+#include <string>
 #include <utility>
 #include <vector>
 #include <Eigen/Dense>
@@ -20,11 +22,13 @@
 #endif
 #include "linalg/iterative.hpp"
 #include "linalg/ksp.hpp"
+#include "linalg/nleps.hpp"
 #include "linalg/rap.hpp"
 #if defined(PALACE_WITH_SLEPC)
 #include "linalg/slepc.hpp"
 #endif
 #include "linalg/vector.hpp"
+#include "test-helpers.hpp"
 #include "utils/communication.hpp"
 
 using namespace palace;
@@ -173,6 +177,32 @@ struct DiagonalLorentzProblem
 
   int LocalSize() const { return static_cast<int>(gid.size()); }
 
+  // A2(λ) = λ² χ(λ) I.
+  std::unique_ptr<ComplexOperator> A2(std::complex<double> l) const
+  {
+    const auto a = l * l * Chi(l);
+    Vector ar(LocalSize()), ai(LocalSize());
+    ar = a.real();
+    ai = a.imag();
+    return std::make_unique<ComplexParOperator>(
+        std::make_unique<DiagonalOperator>(std::move(ar)),
+        std::make_unique<DiagonalOperator>(std::move(ai)), *fespace);
+  }
+
+  // The preconditioner matrix a0 K + a2 M + A2(λ) at λ = i ω.
+  std::unique_ptr<ComplexOperator> Preconditioner(std::complex<double> a0,
+                                                  std::complex<double> a2,
+                                                  std::complex<double> omega) const
+  {
+    const auto l = std::complex<double>(0.0, 1.0) * omega;
+    std::vector<std::complex<double>> d(LocalSize());
+    for (int i = 0; i < LocalSize(); i++)
+    {
+      d[i] = a0 * k.at(gid[i]) + a2 + l * l * Chi(l);
+    }
+    return std::make_unique<DiagonalComplexOperator>(std::move(d));
+  }
+
   // The exact roots of dof j, with Re λ ≤ 0 and Im λ > 0 (ω = λ / i with Re ω > 0).
   std::vector<std::complex<double>> Roots(double kj) const
   {
@@ -264,6 +294,36 @@ struct RationalDiagonalProblem
     Mpi::GlobalSum(1, &xx, Mpi::World());
     return std::sqrt(rr / xx);
   }
+};
+
+// The seed eigenpairs of the linear eigensolver which precedes Quasi-Newton (the
+// eigenmode driver passes the solved seed eigensolver; only its results are used).
+class SeedEigenpairs : public EigenvalueSolver
+{
+  std::vector<std::complex<double>> lambda;
+  std::vector<ComplexVector> x;
+
+public:
+  SeedEigenpairs(std::vector<std::complex<double>> &&lambda, std::vector<ComplexVector> &&x)
+    : lambda(std::move(lambda)), x(std::move(x))
+  {
+  }
+  void SetLinearSolver(ComplexKspSolver &) override {}
+  void SetDivFreeProjector(const DivFreeSolver<ComplexVector> &) override {}
+  void SetBMat(const Operator &) override {}
+  double GetScalingGamma() const override { return 1.0; }
+  double GetScalingDelta() const override { return 1.0; }
+  void SetNumModes(int, int) override {}
+  void SetTol(double) override {}
+  void SetMaxIter(int) override {}
+  void SetWhichEigenpairs(WhichType) override {}
+  void SetShiftInvert(std::complex<double>, bool) override {}
+  void SetInitialSpace(const ComplexVector &) override {}
+  int Solve() override { return static_cast<int>(lambda.size()); }
+  std::complex<double> GetEigenvalue(int i) const override { return lambda.at(i); }
+  void GetEigenvector(int i, ComplexVector &y) const override { y = x.at(i); }
+  double GetError(int, ErrorType) const override { return 0.0; }
+  void RescaleEigenvectors(int) override {}
 };
 
 }  // namespace
@@ -494,4 +554,72 @@ TEST_CASE("ARPACK rescales the eigenpairs kept at any raw index",
           1.0e-8);
   }
 #endif
+}
+
+// Quasi-Newton corrects its iterate with the inverse of T(σ) at σ = λ₀, its eigenvalue
+// estimate at the last preconditioner update. Below PreconditionerLagTol the update was
+// skipped, and the iteration then converges linearly with the stale operator. Here the
+// seed is the eigenvector of dof 0 plus 1e-5 of the others, and its eigenvalue estimate λ₀
+// is off the root λ* of dof 0 by Δ / t₀′(λ*), Δ = 0.4. The eigenvalue converges within the
+// first lag window, where the residual falls below 1e-4. The component of dof 1, whose
+// t₁(λ*) = δk = Δ / 19 is small, then contracts by Δ / (δk + Δ) = 0.95 per step: with the
+// operator of λ₀ it needs about 150 iterations to the tolerance 1e-10, more than the 100
+// of one attempt. The update at the check where that rate is too slow converges the
+// eigenpair in about 22.
+TEST_CASE("Quasi-Newton updates a stale preconditioner below PreconditionerLagTol",
+          "[nleps][Serial][Parallel]")
+{
+  constexpr double k0 = 4.0, Delta = 0.4, rho = 0.95, tol = 1.0e-10;
+  const DiagonalLorentzProblem p({k0, k0 + Delta * (1.0 - rho) / rho, 9.0});
+  const auto roots = p.Roots(k0);
+  const auto ls =
+      *std::ranges::max_element(roots, [](auto a, auto b) { return a.imag() < b.imag(); });
+  // t₀′(λ) = 2λ (1 + χ(λ)) + λ² χ′(λ).
+  const auto den = ls * ls + gamma_l * ls + w0 * w0;
+  const auto dt = 2.0 * ls * (1.0 + Chi(ls)) -
+                  ls * ls * delta_eps * w0 * w0 * (2.0 * ls + gamma_l) / (den * den);
+  const auto l0 = ls + Delta / dt;
+  ComplexVector x0(p.LocalSize());
+  x0 = 0.0;
+  for (int i = 0; i < p.LocalSize(); i++)
+  {
+    x0.Real()(i) = (p.gid[i] == 0) ? 1.0 : 1.0e-5;
+  }
+  std::vector<std::complex<double>> theta = {l0};
+  std::vector<ComplexVector> vecs = {x0};
+  QuasiNewtonSolver qn(Mpi::World(),
+                       std::make_unique<SeedEigenpairs>(std::move(theta), std::move(vecs)),
+                       1, 1, true);
+  qn.SetTol(tol);
+  qn.SetMaxIter(100);
+  qn.SetOperators(*p.K, *p.M, EigenvalueSolver::ScaleType::NONE);
+  qn.SetExtraSystemMatrix([&p](std::complex<double> l) { return p.A2(l); });
+  qn.SetPreconditionerUpdate([&p](std::complex<double> a0, std::complex<double>,
+                                  std::complex<double> a2, std::complex<double> a3)
+                             { return p.Preconditioner(a0, a2, a3); });
+  qn.SetNumModes(1, 1);
+  qn.SetPreconditionerLag(10, 1.0e-4);
+  qn.SetMaxRestart(0);
+  auto gmres = std::make_unique<GmresSolver<ComplexOperator>>(Mpi::World(), 0);
+  gmres->SetRelTol(1.0e-12);
+  gmres->SetMaxIter(100);
+  ComplexKspSolver ksp(std::move(gmres), std::make_unique<ScaledDiagonalInverse>(1.0));
+  qn.SetLinearSolver(ksp);
+  qn.SetShiftInvert(std::complex<double>(0.0, 1.5));
+  int nconv = 0;
+  const auto out = test::CaptureStdout([&] { nconv = qn.Solve(); });
+  REQUIRE(nconv == 1);
+  CAPTURE(ls, l0, qn.GetEigenvalue(0));
+  CHECK(std::abs(qn.GetEigenvalue(0) - ls) <= 1.0e-8 * std::abs(ls));
+  CHECK(qn.GetError(0, EigenvalueSolver::ErrorType::BACKWARD) <= tol);
+  if (Mpi::Root(Mpi::World()))
+  {
+    // The first attempt, from the seed, converges.
+    std::smatch m;
+    REQUIRE(std::regex_search(
+        out, m, std::regex(R"(Eigenvalue 0, Quasi-Newton (converged in (\d+)|did not))")));
+    CAPTURE(m[0].str());
+    REQUIRE(m[2].matched);
+    CHECK(std::stoi(m[2].str()) < 40);
+  }
 }

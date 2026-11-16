@@ -6,6 +6,7 @@
 
 #include <array>
 #include <cstdlib>
+#include <functional>
 #include <optional>
 #include <string>
 #include <vector>
@@ -58,6 +59,10 @@ public:
 
 namespace palace::test
 {
+
+// The standard output of this process while f runs (on the root process, the output of
+// Mpi::Print and Mpi::Warning). The standard output is restored also when f throws.
+std::string CaptureStdout(const std::function<void()> &f);
 
 // Deterministic pseudo-random orthonormal frames (e1, e2, normal) of planes oblique to
 // every coordinate axis.
