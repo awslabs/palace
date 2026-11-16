@@ -2838,14 +2838,18 @@ whenever the correction is on; `"BarsFile"`, optional). The census changes outpu
 corrected value, coverage status or policy reads it.
 
 The measure was tested offline, in-sample, on 64 graded electrostatic window cases of two
-windows (selected from three measures on those same cases; a thin margin): for each applied patch, the knots are the basis points of its runtime model
-(a curvature blend uses its anchor's), placed as the correction places them; the owner of a
-knot is the mesh element containing it (the correction's own point locator, no fallback
-search; a knot on a face shared by several elements takes the one of the LARGEST longest
-edge, so a patch never reads finer than an element holding one of its knots and the
-reading does not depend on the rank count); its size is the owner's LONGEST EDGE (its own vertices: a nonconforming leaf's hanging nodes do
-not enter); the patch's size ``h`` is the LOWER median over its located knots, and the
-patch is NOT-EVALUATED when it has no knot or fewer than half of them are located. With
+windows (selected from three measures on those same cases; a thin margin): for each applied
+patch, the knots are the basis points of its runtime model (a curvature blend uses its
+anchor's), placed as the correction places them; the owner of a knot is the mesh element
+containing it (the correction's own point locator, no fallback search; a knot on a face
+shared by several elements takes the one of the LARGEST longest edge, so a knot never reads
+finer than any element containing it (a patch's size, the lower median over its knots, can
+still read finer than the coarsest element holding one of its knots), and on a given mesh
+the reading does not depend on the rank count (an AMR run's refined mesh itself may differ
+by rank count)); its size is the owner's LONGEST EDGE (its own vertices: a nonconforming
+leaf's hanging nodes do not enter); the patch's size ``h`` is the LOWER median over its
+located knots, and the patch is NOT-EVALUATED when it has no knot or fewer than half of them
+are located. With
 ``m = h / R`` the patch is RESOLVED when ``m \le b_5(p)``, MARGINAL when ``m \le b_{10}(p)``
 and UNDER-RESOLVED otherwise, at the solve's order ``p`` (order 5 and above use the order 4
 bars). The built-in bars are INTERIM placeholders from a two-dimensional map at
@@ -2876,10 +2880,11 @@ They count DISTINCT readings: in a run with a single plane each plane cell repea
 all-planes cell of its measurement and `Type` (the same patches), and such a plane cell is
 counted once (`"RepeatedPlaneCells"` gives how many; the table keeps both rows; `"Cells"`
 counts the table's rows). `"Flagged"` lists at most the first 200 flagged cells;
-`"FlaggedCount"` counts every one, and `surface-response-resolution.csv` holds the full
-list (a layout with many planes reaches the cap sooner). A run that measures no cell (a raw fallback that applies no patch) names its reason in
-`"NoCellsReason"`, as the coverage block does; without a reason it does not read
-`"Complete"`. With `PatchEnergy`,
+`"FlaggedCount"` counts every DISTINCT flagged reading; `surface-response-resolution.csv`
+keeps every row, so in a run with a single plane its flagged rows can exceed
+`"FlaggedCount"` (a layout with many planes reaches the cap sooner). A run that measures no
+cell (a raw fallback that applies no patch) names its reason in `"NoCellsReason"`, as the
+coverage block does; without a reason it does not read `"Complete"`. With `PatchEnergy`,
 `surface-response-resolution-patches.csv` gives every patch's reading. A SelfConsistent-only
 run has no postprocessed energy: its cells are NOT-EVALUATED; with `"Enabled": false`
 nothing is located and every cell reads NOT-EVALUATED (reason `disabled`).
