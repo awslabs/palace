@@ -4,6 +4,7 @@
 #ifndef PALACE_UTILS_NCMESHIO_HPP
 #define PALACE_UTILS_NCMESHIO_HPP
 
+#include <memory>
 #include <string>
 #include <mfem.hpp>
 
@@ -31,6 +32,25 @@ void RebalanceRootAligned(mfem::ParMesh &mesh, double tol);
 // Scale the top-level vertex coordinates which a nonconforming mesh without nodes keeps in
 // its NCMesh: MFEM's mesh transformations only move the vertices.
 void ScaleNCMeshCoordinates(mfem::Mesh &mesh, double length_scale);
+
+// Read in parallel an uncompressed nonconforming mesh which PrintParallelNCMesh wrote, if
+// `enabled`: every process reads a slice of the file. Returns, on every process, the text
+// of its coarse mesh: the roots of the refinement tree, as a nonconforming mesh without
+// refinements, with straight sides. Keeps the refinement trees of the roots which go to
+// this process, and its slice of the nodes, for PartitionNCMeshFile. Returns false on every
+// process, keeping nothing, if the file cannot be read this way. Collective.
+bool ReadNCMeshCoarse(MPI_Comm comm, const std::string &path, bool enabled,
+                      std::string &coarse);
+
+// Whether ReadNCMeshCoarse keeps a file.
+bool HasNCMeshFile();
+
+// Distribute that coarse mesh (on every process) along the trees of its roots, and refine
+// it into the mesh of the file, with the nodes of the file divided by the length scale;
+// then rebalance it if the largest number of elements on a process is more than `tol` times
+// the smallest. Collective.
+std::unique_ptr<mfem::ParMesh> PartitionNCMeshFile(MPI_Comm comm, mfem::Mesh &coarse,
+                                                   double length_scale, double tol);
 
 }  // namespace palace::mesh
 
