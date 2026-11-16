@@ -409,6 +409,12 @@ PostOperator<solver_t>::PostOperator(
           Mpi::Warning("{}",
                        CoverageTargetsNotServedWarning(GetInterfaceTypes(&not_served)));
         }
+        // Lane rescensus-product (decision 1817; ruling 1819 F1): the census Types (the
+        // coverage interfaces') and the PREFLIGHT line (collective; before the first
+        // solve).
+        const auto census_interfaces = surface_response_op->GetCoverageInterfaces();
+        surface_response_op->ConfigureResolutionTypes(
+            GetInterfaceTypes(&census_interfaces));
       }
       surface_response_exclusion_energy_enabled =
           surface_response_op->ExclusionEnergyRequested();
@@ -459,6 +465,15 @@ PostOperator<solver_t>::PostOperator(
           patches.table["weight"] << patch.weight;
         }
         patches.WriteFullTableTrunc();
+      }
+      if (surface_response_patch_energy_enabled)
+      {
+        // Lane rescensus-product (decision 1817): the census's per-patch readings
+        // (PatchEnergy only; collective).
+        surface_response_op->WriteResolutionPatchTable(
+            surface_response_op
+                ->DiagnosticsPath(post_dir, "surface-response-resolution-patches.csv")
+                .string());
       }
     }
   }
@@ -1902,10 +1917,14 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
     result.self_consistent_normalization_energy = nan;
     result.self_consistent_frequency = {nan, nan};
     result.self_consistent_mode_overlap = nan;
+    // Lane rescensus-product (decision 1817): this measurement's census sums (the
+    // postprocessed response of the raw field = evaluation 0).
+    ResolutionAccumulator resolution_sums = surface_response_op->NewResolutionAccumulator();
     if (surface_response_postprocess_enabled)
     {
       result.confidence = surface_response_op->GetMaxwellResponse(
-          *E, measurement_cache.freq, surface_response_patch_energy_enabled);
+          *E, measurement_cache.freq, surface_response_patch_energy_enabled,
+          &resolution_sums);
       result.corrected_normalization_energy =
           result.raw_normalization_energy + result.confidence.domain_correction;
       result.corrected_normalization_energy_fixed_flux =
@@ -2283,6 +2302,11 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
         AddUntargeted(result.coverage_measurement);
       }
     }
+    // Lane rescensus-product (decision 1817): this measurement's census cells (collective;
+    // the root's; a SelfConsistent-only solve has no evaluation-0 energy).
+    result.resolution_cells = surface_response_op->MeasureResolution(
+        surface_response_postprocess_enabled ? &resolution_sums : nullptr,
+        units.Dimensionalize<Units::ValueType::ENERGY>(1.0));
 
     if constexpr (solver_t == ProblemType::DRIVEN || solver_t == ProblemType::EIGENMODE)
     {
@@ -3486,10 +3510,13 @@ void PostOperator<solver_t>::PrintSurfaceResponseCoverage(double output_index,
   // reads as this run's); each writes its header with its first rows.
   const auto coverage_path = post_dir / "surface-response-coverage.csv";
   const auto by_key_path = post_dir / "surface-response-uncovered-energy-by-key.csv";
+  // Lane rescensus-product (decision 1817): the census table beside them (top level).
+  const auto resolution_path = post_dir / "surface-response-resolution.csv";
   if (!surface_response_coverage_started)
   {
     fs::remove(coverage_path);
     fs::remove(by_key_path);
+    fs::remove(resolution_path);
     surface_response_coverage_started = true;
   }
   const auto &coverage = surface_response_measurement->coverage_measurement;
@@ -3531,6 +3558,20 @@ void PostOperator<solver_t>::PrintSurfaceResponseCoverage(double output_index,
     cell_keys = {{"m", std::round(output_index)}};
   }
   surface_response_op->GetCoverageRunRecord().Add(cell_keys, coverage);
+  {
+    const auto &cells = surface_response_measurement->resolution_cells;
+    const bool write_header =
+        surface_response_tables_with_header.insert(resolution_path.string()).second;
+    std::ofstream output(resolution_path, write_header ? std::ios::out | std::ios::trunc
+                                                       : std::ios::out | std::ios::app);
+    MFEM_VERIFY(output, "Unable to open " << resolution_path.string() << " for writing!");
+    output << (write_header ? ResolutionTableHeader(key_header) : "");
+    WriteResolutionRows(output, keys, cells);
+    for (const auto &cell : cells)
+    {
+      surface_response_op->GetResolutionRunRecord().entries.push_back({cell_keys, cell});
+    }
+  }
 }
 
 template <ProblemType solver_t>

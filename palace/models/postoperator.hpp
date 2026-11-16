@@ -386,6 +386,8 @@ protected:
     // surface-Q-corrected.csv, surface-response-confidence.csv and the coverage tables read
     // the per-cell status from here (a coverage policy's hook, lane L4).
     CoverageMeasurement coverage_measurement;
+    // Lane rescensus-product (decision 1817): the census cells of this measurement (root).
+    std::vector<ResolutionCell> resolution_cells;
     // COL-3 (mx-sc-magnetic Phase 3 (b), R-MAG-15; Diagnostics.WithinRVolumeEnergy): per
     // placed patch the raw field's within-box volume energies (empty when off).
     std::vector<SurfaceResponseOperator::PatchVolumeEnergy> within_r_volume_energies;

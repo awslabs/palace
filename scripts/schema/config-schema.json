@@ -3213,7 +3213,7 @@
         },
         "ResponseArchive": {
           "type": "object",
-          "description": "Run mode of coupon response generation by archived fields. `\"Archive\"` solves every prescribed-potential source and writes its fields to `Directory` without postprocessing; `\"Reduce\"` assembles the response matrices from such an archive without solving; `\"Estimate\"` evaluates the error indicator of archived fields for the excitations of `EstimateRequest`; `\"None\"` runs the ordinary solve and still writes the fields when `Directory` is set. Each key has an alias environment variable (`PALACE_RESPONSE_ARCHIVE_ONLY`, `PALACE_RESPONSE_REDUCE_ONLY`, `PALACE_RESPONSE_ESTIMATE_ONLY`, `PALACE_RESPONSE_ARCHIVE_DIR`, `PALACE_RESPONSE_BLOCK_SIZE`, `PALACE_RESPONSE_SOURCE_TIMING`, `PALACE_RESPONSE_RECYCLE_INITIAL_GUESS`, `PALACE_RESPONSE_ESTIMATE_REQUEST`); a key and its variable that are both set must agree.",
+          "description": "Run mode of coupon response generation by archived fields. `\"Archive\"` solves every prescribed-potential source and writes its fields to `Directory` without postprocessing; `\"Reduce\"` assembles the response matrices from such an archive without solving; `\"Estimate\"` evaluates the error indicator of archived fields for the excitations of `EstimateRequest`; `\"None\"` runs the ordinary solve and still writes the fields when `Directory` is set. Each key has an alias environment variable (`PALACE_RESPONSE_ARCHIVE_ONLY`, `PALACE_RESPONSE_REDUCE_ONLY`, `PALACE_RESPONSE_ESTIMATE_ONLY`, `PALACE_RESPONSE_ARCHIVE_DIR`, `PALACE_RESPONSE_BLOCK_SIZE`, `PALACE_RESPONSE_SOURCE_TIMING`, `PALACE_RESPONSE_RECYCLE_INITIAL_GUESS`, `PALACE_RESPONSE_ESTIMATE_REQUEST`); a key and its variable that are both set must agree. A key's `default` applies only when neither the key nor its variable is set: an absent key is left to its variable and is not filled into the resolved configuration.",
           "additionalProperties": false,
           "properties": {
             "Mode": {
@@ -3566,6 +3566,22 @@
                 "ValidatedRegime": {
                   "type": "string",
                   "description": "Optional sidecar file of the validated ranges of the covered correction factor per interface Type and excitation class (ElectrostaticTerminal / Eigenmode / Driven), with the SHA-256 of the library it was validated for (a mismatch is a config error). Absent: every cell reads regime NO-RANGE."
+                }
+              }
+            },
+            "Resolution": {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "The edge-resolution census of the correction (lane rescensus-product; written on every corrected run: `surface-response-resolution.csv`, the palace.json block `SurfaceResponse.Resolution`, a PREFLIGHT line before the first solve and the end-of-run banner; with `PatchEnergy` also `surface-response-resolution-patches.csv`). Per patch: the lower median over its model's basis-point knots of the longest edge of the mesh element owning each knot, over the matching radius; per cell the energy-weighted shares of RESOLVED / MARGINAL / UNDER-RESOLVED / NOT-EVALUATED patches on INTERIM bars (valid at R = 1.9 um only; another radius reads NO-BARS). Outputs only: no value and no coverage status changes. RESOLVED is necessary, not sufficient.",
+              "properties": {
+                "Enabled": {
+                  "type": "boolean",
+                  "description": "Whether the census locates the knots (one added point location per AMR level). `false`: nothing is located and every cell reads NOT-EVALUATED (reason `disabled`); the table is still written.",
+                  "default": true
+                },
+                "BarsFile": {
+                  "type": "string",
+                  "description": "Optional bars file for the run's matching radius: {\"RadiusMicrons\": R, \"Bars\": {\"1\": {\"b5\": null or a number, \"b10\": a number}, ..., \"4\": ...}}. Its radius must equal the run's matching radius (else a config error). Absent: the built-in INTERIM bars (R = 1.9 um only)."
                 }
               }
             },

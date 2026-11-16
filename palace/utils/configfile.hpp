@@ -1679,6 +1679,20 @@ public:
     };
     CoverageData coverage;
 
+    // Resolution (lane rescensus-product, decision 1817; ruling 1819): the edge-resolution
+    // census of the correction's trace contour (surface-response-resolution.csv, the
+    // palace.json block SurfaceResponse.Resolution, the PREFLIGHT line and the banner). ON
+    // by default whenever the correction is on (a check that is off prevents nothing);
+    // outputs only. BarsFile = an optional bars file for the run's matching radius (absent:
+    // the built-in INTERIM bars, valid at R = 1.9 um only; any other radius reads NO-BARS);
+    // a file of another radius than the run's is a config error.
+    struct ResolutionData
+    {
+      bool enabled = true;
+      std::string bars_file;
+    };
+    ResolutionData resolution;
+
     // Diagnostics.Directory (decision 1685; lane diagdir DESIGN section 2): the directory,
     // relative to Problem.Output, of the heavy per-patch tables whose rows scale with the
     // applied patch count (surface-response-patches.csv, surface-response-patch-energy.csv,

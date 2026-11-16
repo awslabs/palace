@@ -580,6 +580,51 @@ class RunStagesLauncherTest(unittest.TestCase):
         self.assertIn("not alive", status["SamplerFailed"]["Reason"])
         self.assertFalse(self.record.exists())
 
+    # Decision 1771 m-1 (the 1762 confirmation review's probe P2): a sampler alive but STALLED fails closed.
+    def test_a_stalled_sampler_kills_the_running_stage_and_ends_the_job(self):
+        flag = self.root / "stage-started"
+        os.environ["FAKE_FLAG"] = str(flag)
+        plan_path = self.plan()
+        total, real_sleep = 100 << 30, time.sleep
+
+        def stalling_meminfo():
+            if flag.exists():
+                real_sleep(40)  # a blocked read: the thread stays alive, no sample is taken
+            return {"MemTotal": total, "MemAvailable": total - (1 << 30)}
+
+        with mock.patch.object(run_stages, "meminfo", side_effect=stalling_meminfo), \
+                mock.patch.object(run_stages, "SAMPLER_STALL_SECONDS", 3):
+            self.assertEqual(self.run_plan(plan_path), 5)
+        status = self.status_of(plan_path)
+        self.assertLess(status["Stages"][0]["WallSeconds"], 15)  # killed: the fake stage alone runs 30 s
+        self.assertEqual(status["State"], "sampler-failed")
+        self.assertIn("stalled", status["SamplerFailed"]["Reason"])
+        self.assertEqual([stage["State"] for stage in status["Stages"]], ["sampler-failed"])  # the reducer never starts
+        self.assertNotEqual(status["Stages"][0]["ReturnCode"], 0)
+        self.assertFalse(self.record.exists())
+
+    def test_a_stalled_sampler_blocks_a_launch(self):
+        plan_path = self.plan()
+        with mock.patch.object(run_stages, "SAMPLER_STALL_SECONDS", -1):
+            self.assertEqual(self.run_plan(plan_path), 5)
+        status = self.status_of(plan_path)
+        self.assertEqual([(stage["State"], stage.get("NotLaunched")) for stage in status["Stages"]], [("sampler-failed", True)])
+        self.assertIn("stalled", status["SamplerFailed"]["Reason"])
+        self.assertFalse(self.record.exists())
+
+    def test_a_kill_error_still_kills_the_leader(self):
+        flag = self.root / "stage-started"
+        os.environ["FAKE_FLAG"] = str(flag)
+        plan_path = self.plan()
+        with mock.patch.object(run_stages, "meminfo", side_effect=self.fake_meminfo(flag)), \
+                mock.patch.object(run_stages.os, "killpg", side_effect=PermissionError("killpg refused")):
+            started = time.monotonic()
+            self.assertEqual(self.run_plan(plan_path), 3)
+            self.assertLess(time.monotonic() - started, 25)
+        status = self.status_of(plan_path)
+        self.assertEqual([stage["State"] for stage in status["Stages"]], ["memory-stop"])
+        self.assertIn("killpg refused", status["KillErrors"][0]["Error"])
+
     def test_a_stop_file_write_failure_still_kills_the_stage(self):
         flag = self.root / "stage-started"
         os.environ["FAKE_FLAG"] = str(flag)

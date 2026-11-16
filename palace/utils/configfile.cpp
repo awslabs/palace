@@ -1895,6 +1895,21 @@ ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
                            "are the only keys)!");
       }
     }
+    if (auto resolution = correction.find("Resolution"); resolution != correction.end())
+    {
+      // Lane rescensus-product (decision 1817; ruling 1819): the edge-resolution census.
+      MFEM_VERIFY(resolution->is_object(),
+                  "Response-correction \"Resolution\" must be an object!");
+      data.resolution.enabled = resolution->value("Enabled", data.resolution.enabled);
+      data.resolution.bars_file = resolution->value("BarsFile", std::string{});
+      for (const auto &[key, value] : resolution->items())
+      {
+        (void)value;
+        MFEM_VERIFY(key == "Enabled" || key == "BarsFile",
+                    "Response-correction \"Resolution\" has an unknown key \""
+                        << key << "\" (Enabled and BarsFile are the only keys)!");
+      }
+    }
     if (auto domain_boundary = correction.find("DomainBoundary");
         domain_boundary != correction.end())
     {
