@@ -151,10 +151,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Bug Fixes
 
-  - Fixed sparse direct coarse solves with
-    `config["Solver"]["Linear"]["ComplexCoarseSolve"]` which could crash, hang, or return
-    NaN when a process owns no unknowns of the coarsest multigrid level, for example a small
-    mesh at a high MPI rank count. [PR 1206](https://github.com/awslabs/palace/pull/1206).
+  - Fixed sparse direct solves with `config["Solver"]["Linear"]["ComplexCoarseSolve"]`
+    which could crash, hang, or return NaN when a process owns no unknowns of the solve: on
+    the coarsest multigrid level of a small mesh at a high MPI rank count, and in
+    `BoundaryMode` and wave port mode solves.
+    [PR 1206](https://github.com/awslabs/palace/pull/1206).
   - Fixed driven frequency sweeps aborting with "... not found in sample frequencies!" when
     overlapping `"Samples"` ranges compute the same frequency with different rounding.
     [PR 1192](https://github.com/awslabs/palace/pull/1192).
