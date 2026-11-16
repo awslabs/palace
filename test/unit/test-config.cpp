@@ -166,6 +166,25 @@ TEST_CASE("Config Substructuring", "[config][Serial]")
     CHECK(!data.substructuring.has_value());
   }
 
+  SECTION("Substructuring rejects periodic boundaries")
+  {
+    json config = {
+        {"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains", {{"Materials", {{{"Attributes", {1, 2}}}}}}},
+        {"Boundaries", json::object()},
+        {"Solver",
+         {{"Substructuring",
+           {{"Region", {{"Attributes", {1}}}}, {"Environment", {{"Attributes", {2}}}}}}}}};
+    CHECK_NOTHROW(IoData(config, false));
+    config["Boundaries"]["Periodic"] = {{"BoundaryPairs",
+                                         {{{"DonorAttributes", {3}},
+                                           {"ReceiverAttributes", {4}},
+                                           {"Translation", {1.0, 0.0, 0.0}}}}}};
+    CHECK_THROWS_WITH(IoData(config, false),
+                      Catch::Matchers::ContainsSubstring("\"Periodic\" boundaries"));
+  }
+
   SECTION("Overlapping region/environment attributes are rejected")
   {
     json config = {{"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},

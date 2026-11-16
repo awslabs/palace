@@ -573,6 +573,12 @@ void IoData::CheckConfiguration()
   // names, not the default resolved below.
   if (solver.substructuring)
   {
+    if (solver.linear.type == LinearSolver::STRUMPACK_MP ||
+        solver.linear.type == LinearSolver::CUDSS)
+    {
+      Mpi::Warning("Substructuring factors with STRUMPACK, MUMPS or SuperLU_DIST only: "
+                   "\"Solver.Linear.Type\" STRUMPACK-MP or cuDSS is not used!\n");
+    }
     solver.substructuring->direct_solver = solver.linear.type;
   }
 
@@ -604,7 +610,7 @@ void IoData::CheckConfiguration()
   }
   if ((solver.linear.type == LinearSolver::STRUMPACK ||
        solver.linear.type == LinearSolver::STRUMPACK_MP) &&
-      problem.type == ProblemType::MAGNETOSTATIC)
+      problem.type == ProblemType::MAGNETOSTATIC && !solver.substructuring)
   {
     Mpi::Warning("STRUMPACK does not support the singular curl-curl operator in "
                  "magnetostatic problems, use AMS or another iterative solver instead!\n");
@@ -841,6 +847,10 @@ void IoData::CheckConfiguration()
                 "Substructuring requires nonempty Region and Environment attribute sets!");
     MFEM_VERIFY(sub.mode != SubstructuringMode::ONLINE || !sub.save_model.empty(),
                 "\"Online\" substructuring requires the saved model path \"SaveModel\"!");
+    // The interface DOFs of a model are matched by their coordinates, which on a periodic
+    // seam depend on the partition.
+    MFEM_VERIFY(boundaries.periodic.boundary_pairs.empty(),
+                "Substructuring does not support \"Periodic\" boundaries!");
     // Adaptive refinement refines the region of an online run only: the environment was
     // condensed on its final mesh, and nonconforming refinement without a level constraint
     // does not spread into it.
