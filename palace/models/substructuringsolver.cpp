@@ -306,7 +306,7 @@ void SubstructuringSolver::Impl::EnsureRegionFactor(int n)
        static_cast<long long>(std::max(n, 1)) * kDenseInterfacePerExcitation >= nG_global);
   long long nrf = rf_idx.Size();
   MPI_Allreduce(MPI_IN_PLACE, &nrf, 1, MPI_LONG_LONG, MPI_SUM, parent_fes.GetComm());
-  const bool serial = (nrf <= kSerialRegionFactorDofs);
+  const bool serial = !region_exact && nrf <= kSerialRegionFactorDofs;
   reg_lu = std::make_unique<substructuring::BlockedDirectSolver>(
       substructuring::MakeDirectSolver(iodata, parent_fes.GetComm(), serial),
       region_exact
@@ -339,10 +339,11 @@ void SubstructuringSolver::Impl::ApplyRegionFactor(const mfem::Vector &r,
   z.SetSubVector(rf_idx, reg_z);
 }
 
-void SubstructuringSolver::Impl::SolveRegion(std::vector<mfem::Vector> &x) const
+void SubstructuringSolver::Impl::SolveRegion(std::vector<mfem::Vector> &x)
 {
-  BlockTimer bt(Timer::KSP);
   const int n = static_cast<int>(x.size());
+  EnsureRegionFactor(n);
+  BlockTimer bt(Timer::KSP);
   if (region_exact)
   {
     std::vector<const mfem::Vector *> X(n);
@@ -598,7 +599,6 @@ SubstructuringSolver::SolveDirichletBatch(const std::vector<Vector> &dbcs)
   impl->EnsureEnv();  // general Dirichlet data needs environment solves
   const int nt = impl->nt;
   const int n = static_cast<int>(dbcs.size());
-  impl->EnsureRegionFactor(n);
   MPI_Comm comm = impl->parent_fes.GetComm();
 
   // g_E per excitation: the interface response to the Dirichlet data,
@@ -695,7 +695,6 @@ std::vector<Vector> SubstructuringSolver::SolveSourceBatch(const std::vector<Vec
   MFEM_VERIFY(impl->mat_dtn, "CondenseEnvironment must be called before solving!");
   impl->EnsureEnv();
   const int nt = impl->nt, n = static_cast<int>(f.size());
-  impl->EnsureRegionFactor(n);
 
   // Environment interior source responses w = A_EE^-1 f_E, in one batch.
   std::vector<Vector> fE(n, Vector(nt)), w(n, Vector(nt));
@@ -968,7 +967,6 @@ mfem::DenseMatrix SubstructuringSolver::SourceEnergyMatrix(
 
   // Region-condensed solve per source (environment interior left at zero): the region
   // source plus the environment's interface load g_k.
-  impl->EnsureRegionFactor(n);
   const auto &rc = impl->rc_idx, &gm = impl->gamma_idx;
   std::vector<Vector> x(n, Vector(impl->rf_idx.Size()));
   for (int j = 0; j < n; j++)
@@ -1202,7 +1200,6 @@ mfem::DenseMatrix SubstructuringSolver::EnergyMatrixDbc(const std::vector<int> &
 
   // Region-condensed solve per lift (environment interior left at zero): the interface load
   // is the precomputed g_k, so no environment solve is needed.
-  impl->EnsureRegionFactor(n);
   const auto &rc = impl->rc_idx, &gm = impl->gamma_idx;
   std::vector<Vector> xr(n, Vector(impl->rf_idx.Size()));
   {

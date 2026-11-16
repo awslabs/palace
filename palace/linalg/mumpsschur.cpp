@@ -207,20 +207,35 @@ MumpsSchurSolver::MumpsSchurSolver(const mfem::HypreParMatrix &A,
                  0.0);
     id.schur = schur.data();
   }
-  // Factorization (+ Schur). The workspace estimate from the analysis can be too small
-  // (the dense Schur root sits on one rank): on a workspace failure (INFOG(1) = -8, -9,
-  // -20) double the relaxation and retry, as the MUMPS user guide recommends.
+  // Factorization (+ Schur). The workspace estimates of the analysis can be too small in
+  // parallel (the dense Schur root sits on one rank). If the integer workspace or the
+  // buffers are (INFOG(1) = -8, -20), double their relaxation ICNTL(14) and retry. If the
+  // real workspace S is (-9), whose shortfall can be the Schur root that the relaxation of
+  // a small estimate does not cover, give each process the memory it allocated (ICNTL(23),
+  // in MB, which MUMPS reads on each process when it is set on more than the host) and the
+  // processes that ran short twice their shortfall (INFO(2) entries) more, and retry.
   for (int attempt = 0; active; attempt++)
   {
     id.job = 2;
     dmumps_c(&id);
     const MUMPS_INT err = id.infog[0];
-    if ((err == -8 || err == -9 || err == -20) && attempt < 5)
+    if (attempt >= 5 || (err != -8 && err != -9 && err != -20))
+    {
+      break;
+    }
+    if (err != -9)
     {
       icntl(14) *= 2;
       continue;
     }
-    break;
+    double short_mb = 0.0;
+    if (id.info[0] == -9)
+    {
+      const double entries = (id.info[1] > 0) ? id.info[1] : -1.0e6 * id.info[1];
+      short_mb = entries * sizeof(double) / 1.0e6;
+    }
+    icntl(23) = std::max<MUMPS_INT>(icntl(23), id.info[15]) +
+                static_cast<MUMPS_INT>(std::ceil(2.0 * short_mb)) + 1;
   }
   Check("factorization");
 #if MFEM_MUMPS_VERSION >= 530

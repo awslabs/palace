@@ -2066,6 +2066,21 @@ TEST_CASE("substructuring_magnetostatic_two_sided_cross_swapped",
                                   "two_sided_cross_swapped", opts);
 }
 
+// Without a saved model, a partial factorization condenses the environment, whose dense
+// Schur root can exceed the workspace estimates of the analysis in parallel.
+TEST_CASE("substructuring_magnetostatic_two_sided_cross_unsaved",
+          "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-5;
+  opts.atol = 1.0e-19;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
+  palace::test::RunRegressionCase("substructuring_magnetostatic",
+                                  "magnetostatic_two_sided_cross_unsaved.json",
+                                  "two_sided_cross", opts);
+}
+
 TEST_CASE("substructuring_magnetostatic_two_sided_cross_region",
           "[Serial][Parallel][GPU][Regression]")
 {

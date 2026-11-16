@@ -554,6 +554,52 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   }
 }
 
+#if defined(MFEM_USE_STRUMPACK)
+TEST_CASE("SubstructuringSolver factors without STRUMPACK compression",
+          "[substructure][Serial][Parallel]")
+{
+  // The factorizations of substructuring are exact, as no Krylov iteration corrects the
+  // error of a compressed factor: the block low-rank compression of Solver.Linear leaves
+  // the capacitance unchanged (on a mesh with fronts large enough to compress).
+  auto capacitance = [](const std::string &compression)
+  {
+    json config = {
+        {"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains",
+         {{"Materials",
+           {{{"Attributes", {1}}, {"Permittivity", 1.0}},
+            {{"Attributes", {2}}, {"Permittivity", 10.0}}}}}},
+        {"Boundaries",
+         {{"Terminal",
+           {{{"Index", 1}, {"Attributes", {1}}}, {{"Index", 2}, {"Attributes", {2}}}}}}},
+        {"Solver",
+         {{"Order", 2},
+          {"Linear",
+           {{"Type", "STRUMPACK"},
+            {"STRUMPACKCompressionType", compression},
+            {"STRUMPACKCompressionTol", 1.0e-2}}},
+          {"Substructuring",
+           {{"Region", {{"Attributes", {1}}}}, {"Environment", {{"Attributes", {2}}}}}}}}};
+    IoData iodata(config, false);
+    std::vector<std::unique_ptr<Mesh>> mesh;
+    mesh.push_back(std::make_unique<Mesh>(MakeSplitCube(16)));
+    SubstructuringSolver ss(iodata, mesh);
+    ss.CondenseEnvironment();
+    return ss.CapacitanceMatrix({1, 2});
+  };
+  const mfem::DenseMatrix C0 = capacitance("None"), C1 = capacitance("BLR");
+  for (int i = 0; i < 2; i++)
+  {
+    for (int j = 0; j < 2; j++)
+    {
+      CAPTURE(i, j, C0(i, j), C1(i, j));
+      CHECK(std::abs(C1(i, j) - C0(i, j)) <= 1.0e-12 * std::abs(C0(i, i)));
+    }
+  }
+}
+#endif
+
 TEST_CASE("SubstructuringSolver rejects unknown terminal attributes",
           "[substructure][Serial][Parallel]")
 {

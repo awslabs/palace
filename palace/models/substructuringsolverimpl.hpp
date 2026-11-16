@@ -125,7 +125,10 @@ inline std::unique_ptr<mfem::Solver> MakeDirectSolver(const IoData &iodata,
   {
 #if defined(MFEM_USE_STRUMPACK)
     case LinearSolver::STRUMPACK:
-      return std::make_unique<StrumpackSolver>(iodata, comm, 0);
+      // Uncompressed: no Krylov iteration corrects the error of a compressed factor here.
+      return std::make_unique<StrumpackSolver>(comm, iodata.solver.linear.sym_factorization,
+                                               SparseCompression::NONE, 0.0, 0, 0, false,
+                                               0);
 #endif
 #if defined(MFEM_USE_MUMPS)
     case LinearSolver::MUMPS:
@@ -390,7 +393,8 @@ struct SubstructuringSolver::Impl
   // kDenseInterfacePerExcitation excitations in a batch.
   static constexpr int kDenseInterfacePerExcitation = 1000;
   // Region-free size up to which the region is factored on one rank (MUMPS's per-rank
-  // workspace dominates a small factorization spread over many ranks).
+  // workspace dominates a small factorization spread over many ranks), unless the factor
+  // holds the dense Gamma block (~|Gamma|^3 / 3 flops).
   static constexpr long long kSerialRegionFactorDofs = 100000;
   // Conjugate gradients on the region when its exact factor does not pay off (see
   // EnsureRegionFactor), preconditioned by the factor of A_region_free: the energies are
@@ -753,9 +757,9 @@ struct SubstructuringSolver::Impl
   std::unique_ptr<mfem::HypreParMatrix>
   AssembleSelection(const std::vector<char> &mark) const;
 
-  // Create the direct region preconditioner on the first solve batch (n excitations): the
-  // exact dense-Gamma factor A_region_free + S_E when the batch amortizes it, else
-  // A_region_free, restricted to the region-free DOFs. Created once (destroying a
+  // Create the direct region preconditioner on the first solve batch (n excitations, by
+  // SolveRegion): the exact dense-Gamma factor A_region_free + S_E when the batch amortizes
+  // it, else A_region_free, restricted to the region-free DOFs. Created once (destroying a
   // never-factored SuperLU object crashes in SuperLU_DIST). Collective.
   void EnsureRegionFactor(int n);
 
@@ -766,7 +770,7 @@ struct SubstructuringSolver::Impl
   // Region-condensed solves on the region-free DOFs (rf_idx), in place: right-hand sides
   // in, solutions out. One multi-RHS solve with the exact factor, else CG per excitation.
   // Collective.
-  void SolveRegion(std::vector<mfem::Vector> &x) const;
+  void SolveRegion(std::vector<mfem::Vector> &x);
 
   // Full parent vectors from Dirichlet values xd (on dbc_tdofs) and from region-free values
   // x_rf (and optional Dirichlet values), zero elsewhere.
