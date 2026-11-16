@@ -866,6 +866,95 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
 }
 
 TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "SubstructuringSolver saved model rejects mirrored environment changes",
+                 "[substructure][Serial][Parallel]")
+{
+  // An environment of two halves mirrored about y = 0: swapping their materials, or moving
+  // a grounded boundary to its mirror image (with as many Dirichlet DOFs), changes the
+  // environment, which its fingerprint must see although its counts are unchanged.
+  const auto [type, order] = GENERATE(table<std::string, int>({{"Electrostatic", 1},
+                                                               {"Electrostatic", 2},
+                                                               {"Magnetostatic", 1},
+                                                               {"Magnetostatic", 2}}));
+  CAPTURE(type, order);
+  const bool electrostatic = (type == "Electrostatic");
+  const std::string model_path = (temp_dir / "substruct_mirror.bin").string();
+  auto make_config = [&](const std::string &mode, double m2, double m3, int grounded)
+  {
+    const char *property = electrostatic ? "Permittivity" : "Permeability";
+    json boundaries = {{electrostatic ? "Ground" : "PEC", {{"Attributes", {grounded}}}}};
+    if (electrostatic)
+    {
+      boundaries["Terminal"] = {{{"Index", 1}, {"Attributes", {1}}},
+                                {{"Index", 2}, {"Attributes", {2}}}};
+    }
+    json config = {{"Problem", {{"Type", type}, {"Output", "test_output"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains",
+                    {{"Materials",
+                      {{{"Attributes", {1}}, {property, 1.0}},
+                       {{"Attributes", {2}}, {property, m2}},
+                       {{"Attributes", {3}}, {property, m3}}}}}},
+                   {"Boundaries", boundaries},
+                   {"Solver",
+                    {{"Order", order},
+                     {"Substructuring",
+                      {{"Region", {{"Attributes", {1}}}},
+                       {"Environment", {{"Attributes", {2, 3}}}},
+                       {"Mode", mode},
+                       {"SaveModel", model_path}}}}}};
+    return IoData(config, false);
+  };
+  // The unit cube moved to -0.5 < y < 0.5: the region x < 0.5 (attribute 1), the
+  // environment halves y < 0 and y > 0 (2 and 3), the boundaries x = 0 and x = 1 (1 and 2),
+  // the faces y = -0.5 and y = 0.5 with x > 0.75 (4 and 5, away from the interface), and
+  // the others (3).
+  auto condense = [](const IoData &iodata)
+  {
+    mfem::Mesh serial = mfem::Mesh::MakeCartesian3D(4, 4, 4, mfem::Element::HEXAHEDRON);
+    for (int v = 0; v < serial.GetNV(); v++)
+    {
+      serial.GetVertex(v)[1] -= 0.5;
+    }
+    mfem::Vector c;
+    for (int e = 0; e < serial.GetNE(); e++)
+    {
+      serial.GetElementCenter(e, c);
+      serial.SetAttribute(e, (c(0) < 0.5) ? 1 : (c(1) < 0.0) ? 2 : 3);
+    }
+    for (int b = 0; b < serial.GetNBE(); b++)
+    {
+      mfem::Array<int> vtx;
+      serial.GetBdrElementVertices(b, vtx);
+      double xc[2] = {0.0, 0.0};
+      for (int j = 0; j < vtx.Size(); j++)
+      {
+        xc[0] += serial.GetVertex(vtx[j])[0] / vtx.Size();
+        xc[1] += serial.GetVertex(vtx[j])[1] / vtx.Size();
+      }
+      const int attr = (xc[0] < 1e-9)                          ? 1
+                       : (xc[0] > 1.0 - 1e-9)                  ? 2
+                       : (xc[0] > 0.75 && xc[1] < -0.5 + 1e-9) ? 4
+                       : (xc[0] > 0.75 && xc[1] > 0.5 - 1e-9)  ? 5
+                                                               : 3;
+      serial.SetBdrAttribute(b, attr);
+    }
+    serial.SetAttributes();
+    std::vector<std::unique_ptr<Mesh>> mesh;
+    mesh.push_back(
+        std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(Mpi::World(), serial)));
+    SubstructuringSolver ss(iodata, mesh);
+    ss.CondenseEnvironment();
+  };
+  condense(make_config("Offline", 2.0, 5.0, 4));
+  CHECK_NOTHROW(condense(make_config("Online", 2.0, 5.0, 4)));
+  CHECK_THROWS_WITH(condense(make_config("Online", 5.0, 2.0, 4)),
+                    Catch::Matchers::ContainsSubstring("The environment differs"));
+  CHECK_THROWS_WITH(condense(make_config("Online", 2.0, 5.0, 5)),
+                    Catch::Matchers::ContainsSubstring("The environment differs"));
+}
+
+TEST_CASE_METHOD(palace::test::SharedTempDir,
                  "SubstructuringSolver saved model of another problem or order",
                  "[substructure][Serial][Parallel]")
 {
@@ -1426,7 +1515,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
 
   // Strip the terminal-mode section: keep the head (5 ints, nG the fourth), signatures (nG
   // x 3), S_E (nG x nG), reference length (1 int + 1 double), environment fingerprint (1
-  // int + 5 doubles) and element moments (1 int + 12 doubles).
+  // int + 11 doubles) and element moments (1 int + 12 doubles).
   if (Mpi::Root(Mpi::World()))
   {
     int head[5] = {0, 0, 0, 0, 0};
@@ -1436,7 +1525,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
     }
     const int nG = head[3];
     const auto kept = static_cast<std::uintmax_t>(8 * sizeof(int)) +
-                      static_cast<std::uintmax_t>(sizeof(double)) * (nG * 3 + nG * nG + 18);
+                      static_cast<std::uintmax_t>(sizeof(double)) * (nG * 3 + nG * nG + 24);
     REQUIRE(std::filesystem::file_size(model_path) > kept);
     std::filesystem::resize_file(model_path, kept);
   }

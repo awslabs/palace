@@ -205,10 +205,21 @@ std::vector<char> RegionMeshInterface(mfem::ParFiniteElementSpace &parent_fespac
                                       const std::vector<double> &saved_signatures,
                                       int saved_width);
 
-// The k-th (0, 1 or 2) of three fixed polynomial fields, vector fields for H(curl) and
-// scalar ones for H1, as true DOFs of the space: to fingerprint operators and sources
-// independently of the partition and of the DOF numbering.
-mfem::Vector FingerprintField(const mfem::ParFiniteElementSpace &fespace, int k);
+// The k-th (0, 1 or 2) of three fixed polynomial fields of x - center, vector fields for
+// H(curl) and scalar ones for H1, as true DOFs of the space: to fingerprint operators and
+// sources independently of the partition and of the DOF numbering. A center of its own for
+// each field keeps their energies from being even about one common point.
+mfem::Vector FingerprintField(const mfem::ParFiniteElementSpace &fespace, int k,
+                              const std::array<double, 3> &center);
+
+// For the marked true DOFs, with p their points (those of TrueDofSignatures; one point for
+// the DOFs of a group at a common point), the sums of g_k(p - centers[k]) and of their
+// absolute values (k = 0, 1, 2), with g_k the scalar polynomials of FingerprintField:
+// a description of a set of DOFs independent of the partition, the DOF numbering and the
+// H(curl) orientations. Collective.
+std::array<double, 6> TrueDofPointSums(const mfem::ParFiniteElementSpace &fespace,
+                                       const std::vector<char> &mark,
+                                       const std::array<std::array<double, 3>, 3> &centers);
 
 }  // namespace palace
 

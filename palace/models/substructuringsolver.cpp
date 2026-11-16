@@ -243,11 +243,12 @@ SubstructuringSolver::Impl::Impl(const IoData &iodata,
   is_gamma.assign(nt, 0);
   is_env_int.assign(nt, 0);
   is_region_free.assign(nt, 0);
+  env_dbc.assign(nt, 0);
   for (int i = 0; i < nt; i++)
   {
     if (dir_mark[i])
     {
-      env_dbc_local += em[i] ? 1 : 0;
+      env_dbc[i] = em[i];
       continue;
     }
     const bool r = rm[i], e = em[i];

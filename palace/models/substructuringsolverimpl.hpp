@@ -412,7 +412,7 @@ struct SubstructuringSolver::Impl
   mfem::HypreParMatrix *K_region_e = nullptr;
   std::vector<char> is_gamma, is_env_int, is_region_free;
   mfem::Array<int> dbc_tdofs;
-  int env_dbc_local = 0;                           // owned Dirichlet DOFs of env elements
+  std::vector<char> env_dbc;  // the Dirichlet true DOFs of environment elements
   std::map<int, std::vector<int>> terminal_tdofs;  // terminal index -> its true DOFs
   std::vector<char> region_dbc;                    // Dirichlet DOFs of region elements
   // Online on a mesh of the region (written offline next to the model, whose environment
@@ -648,14 +648,14 @@ struct SubstructuringSolver::Impl
 
   // A model file: [kModelMagic][kModelVersion][Solver.Order][nG][signature type]
   // [signatures nG x width][S_E nG x nG], then the sections [kLengthMagic][Model.Lc of the
-  // offline run], [kEnvFpMagic][environment fingerprint, 5 doubles], [kEpsMagic][the
+  // offline run], [kEnvFpMagic][environment fingerprint, 11 doubles], [kEpsMagic][the
   // magnetostatic regularization eps] (magnetostatics), [kEnvMeshMagic][ElementMoments of
   // the environment and of its elements in the mesh of the region, 12 doubles],
   // [kSKenMagic][S^K nG x nG] (magnetostatics), [kModesMagic][K][ids][fingerprints
   // 2K][G nG x K][Cmode KxK] (electrostatics), and
   // [kSourceModesMagic][K][ids][fingerprints 2K][g nG x K][h nG x K][c KxK][B KxK].
   static constexpr int kModelMagic = 0x4c444d53;  // "SMDL"
-  static constexpr int kModelVersion = 2;
+  static constexpr int kModelVersion = 3;
   static constexpr int kHeadInts = 5;
   static constexpr int kSKenMagic = 0x4e454b53;     // "SKEN"
   static constexpr int kModesMagic = 0x33444f4d;    // "MOD3"
@@ -687,24 +687,29 @@ struct SubstructuringSolver::Impl
   SavedHead saved;
 
   // Fixed projected polynomial field k of the fingerprints (the same on both sides of the
-  // two-sided films).
+  // two-sided films), about its center: fixed fractions of the bounding box of the centers
+  // of the environment elements, which does not depend on the region. Collective.
   mfem::Vector FingerprintField(int k) const;
+  const std::array<std::array<double, 3>, 3> &FingerprintCenters() const;
+  mutable std::optional<std::array<std::array<double, 3>, 3>> fp_centers;
 
   // Fingerprint of the environment: global counts of the environment-closure DOFs and of
-  // the Dirichlet DOFs of environment elements, and the energies r^T A_env r of three fixed
-  // fields (projected polynomials). Independent of the region (A_env has no region
-  // contribution), of the partition, the DOF numbering and the H(curl) orientations, but it
-  // changes with the environment mesh, materials, order, physics or Dirichlet boundaries.
-  // With A_env applied by EnvApply (an online run assembles no A_env). Collective.
-  std::array<double, 5> EnvironmentFingerprint() const;
-  mutable std::optional<std::array<double, 5>> env_fp;
+  // the Dirichlet DOFs of environment elements, the energies r^T A_env r of the three fixed
+  // fields, and the TrueDofPointSums of these Dirichlet DOFs (the sums, then the sums of
+  // the absolute values). Independent of the region (A_env has no region contribution), of
+  // the partition, the DOF numbering and the H(curl) orientations, but it changes with the
+  // environment mesh, materials, order, physics or Dirichlet boundaries. With A_env applied
+  // by EnvApply (an online run assembles no A_env). Collective.
+  static constexpr int kEnvFpSize = 11;
+  std::array<double, kEnvFpSize> EnvironmentFingerprint() const;
+  mutable std::optional<std::array<double, kEnvFpSize>> env_fp;
 
   // The fixed fields 0 and 1 of the fingerprints, cached.
   const mfem::Vector &CachedFingerprintField(int k) const;
   mutable std::array<mfem::Vector, 2> fp_fields;
 
   // Environment fingerprint of a loaded model.
-  std::array<double, 5> saved_env_fp = {0.0, 0.0, 0.0, 0.0, 0.0};
+  std::array<double, kEnvFpSize> saved_env_fp = {};
   bool have_env_fp = false;
 
   void AppendEnvMoments(const std::string &path, const std::vector<char> &written);

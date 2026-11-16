@@ -162,12 +162,16 @@ int SignatureWidth(const mfem::ParFiniteElementSpace &fespace)
   return IsNedelec(fespace) ? 12 : 3;
 }
 
-std::vector<double> TrueDofSignatures(const mfem::ParFiniteElementSpace &fespace,
-                                      const std::vector<int> &index, int n)
+namespace
+{
+
+// The signatures of the local true DOFs i with index[i] >= 0, at rows index[i] of an
+// n x width array (zero elsewhere).
+std::vector<double> LocalTrueDofSignatures(const mfem::ParFiniteElementSpace &fespace,
+                                           const std::vector<int> &index, int n)
 {
   const int w = SignatureWidth(fespace), nt = fespace.GetTrueVSize();
-  std::vector<double> loc(static_cast<std::size_t>(n) * w, 0.0),
-      glob(static_cast<std::size_t>(n) * w, 0.0);
+  std::vector<double> loc(static_cast<std::size_t>(n) * w, 0.0);
   auto &fes = const_cast<mfem::ParFiniteElementSpace &>(fespace);
   mfem::ParGridFunction gf(&fes);
   mfem::Vector td(nt);
@@ -218,7 +222,18 @@ std::vector<double> TrueDofSignatures(const mfem::ParFiniteElementSpace &fespace
       }
     }
   }
-  MPI_Allreduce(loc.data(), glob.data(), n * w, MPI_DOUBLE, MPI_SUM, fespace.GetComm());
+  return loc;
+}
+
+}  // namespace
+
+std::vector<double> TrueDofSignatures(const mfem::ParFiniteElementSpace &fespace,
+                                      const std::vector<int> &index, int n)
+{
+  const std::vector<double> loc = LocalTrueDofSignatures(fespace, index, n);
+  std::vector<double> glob(loc.size(), 0.0);
+  MPI_Allreduce(loc.data(), glob.data(), static_cast<int>(loc.size()), MPI_DOUBLE, MPI_SUM,
+                fespace.GetComm());
   return glob;
 }
 
@@ -797,7 +812,19 @@ std::vector<char> RegionMeshInterface(mfem::ParFiniteElementSpace &parent_fespac
   return cut;
 }
 
-mfem::Vector FingerprintField(const mfem::ParFiniteElementSpace &fespace, int k)
+namespace
+{
+
+// The scalar polynomial k of FingerprintField at the point (X, Y, Z).
+double FingerprintPolynomial(int k, double X, double Y, double Z)
+{
+  return (k == 0) ? X : (k == 1) ? Y + Z * Z : X * Y * Z;
+}
+
+}  // namespace
+
+mfem::Vector FingerprintField(const mfem::ParFiniteElementSpace &fespace, int k,
+                              const std::array<double, 3> &center)
 {
   auto &fes = const_cast<mfem::ParFiniteElementSpace &>(fespace);
   mfem::ParGridFunction gf(&fes);
@@ -805,9 +832,9 @@ mfem::Vector FingerprintField(const mfem::ParFiniteElementSpace &fespace, int k)
   {
     mfem::VectorFunctionCoefficient c(
         3,
-        [k](const mfem::Vector &x, mfem::Vector &v)
+        [k, &center](const mfem::Vector &x, mfem::Vector &v)
         {
-          const double X = x(0), Y = x(1), Z = x(2);
+          const double X = x(0) - center[0], Y = x(1) - center[1], Z = x(2) - center[2];
           const double f[3][3] = {{Z, X, Y}, {Y * Y, Z * Z, X * X}, {X * Y, Y * Z, Z * X}};
           v.SetSize(3);
           for (int d = 0; d < 3; d++)
@@ -820,16 +847,44 @@ mfem::Vector FingerprintField(const mfem::ParFiniteElementSpace &fespace, int k)
   else
   {
     mfem::FunctionCoefficient c(
-        [k](const mfem::Vector &x)
+        [k, &center](const mfem::Vector &x)
         {
-          const double X = x(0), Y = x(1), Z = x.Size() > 2 ? x(2) : 0.0;
-          return (k == 0) ? X : (k == 1) ? Y + Z * Z : X * Y * Z;
+          return FingerprintPolynomial(k, x(0) - center[0], x(1) - center[1],
+                                       (x.Size() > 2 ? x(2) : 0.0) - center[2]);
         });
     gf.ProjectCoefficient(c);
   }
   mfem::Vector r(fes.GetTrueVSize());
   gf.GetTrueDofs(r);
   return r;
+}
+
+std::array<double, 6> TrueDofPointSums(const mfem::ParFiniteElementSpace &fespace,
+                                       const std::vector<char> &mark,
+                                       const std::array<std::array<double, 3>, 3> &centers)
+{
+  const int nt = fespace.GetTrueVSize(), w = SignatureWidth(fespace);
+  std::vector<int> index(nt, -1);
+  int n = 0;
+  for (int i = 0; i < nt; i++)
+  {
+    index[i] = mark[i] ? n++ : -1;
+  }
+  const std::vector<std::array<double, 3>> p =
+      SignaturePoints(LocalTrueDofSignatures(fespace, index, n), w);
+  std::array<double, 6> sums = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+  for (const auto &q : p)
+  {
+    for (int k = 0; k < 3; k++)
+    {
+      const auto &c = centers[k];
+      const double g = FingerprintPolynomial(k, q[0] - c[0], q[1] - c[1], q[2] - c[2]);
+      sums[k] += g;
+      sums[3 + k] += std::abs(g);
+    }
+  }
+  Mpi::GlobalSum(6, sums.data(), fespace.GetComm());
+  return sums;
 }
 
 }  // namespace palace

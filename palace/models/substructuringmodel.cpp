@@ -3,7 +3,9 @@
 
 #include "substructuringsolverimpl.hpp"
 
+#include <algorithm>
 #include <cmath>
+#include <limits>
 #include "utils/timer.hpp"
 
 namespace palace
@@ -113,8 +115,8 @@ SubstructuringSolver::Impl::ReadSavedHead(const std::string &path, MPI_Comm comm
         }
         else if (magic == kEnvFpMagic)
         {
-          h.env_fp.resize(5);
-          head[5] = read(h.env_fp.data(), 5);
+          h.env_fp.resize(kEnvFpSize);
+          head[5] = read(h.env_fp.data(), kEnvFpSize);
         }
         else if (magic == kEnvMeshMagic)
         {
@@ -142,16 +144,53 @@ SubstructuringSolver::Impl::ReadSavedHead(const std::string &path, MPI_Comm comm
   offsets(h.nG, h.width);
   h.sig.resize(static_cast<std::size_t>(h.nG) * h.width);
   Mpi::Broadcast(static_cast<int>(h.sig.size()), h.sig.data(), 0, comm);
-  h.env_fp.resize(5);
-  Mpi::Broadcast(5, h.env_fp.data(), 0, comm);
+  h.env_fp.resize(kEnvFpSize);
+  Mpi::Broadcast(kEnvFpSize, h.env_fp.data(), 0, comm);
   Mpi::Broadcast(6, h.env_moments.data(), 0, comm);
   Mpi::Broadcast(6, h.region_moments.data(), 0, comm);
   return h;
 }
 
+const std::array<std::array<double, 3>, 3> &
+SubstructuringSolver::Impl::FingerprintCenters() const
+{
+  if (!fp_centers)
+  {
+    double box[6] = {
+        std::numeric_limits<double>::max(), std::numeric_limits<double>::max(),
+        std::numeric_limits<double>::max(), std::numeric_limits<double>::max(),
+        std::numeric_limits<double>::max(), std::numeric_limits<double>::max()};
+    mfem::Vector c;
+    for (int e = 0; e < parent.GetNE(); e++)
+    {
+      if (ea_arr.Find(parent.GetAttribute(e)) >= 0)
+      {
+        parent.GetElementCenter(e, c);
+        for (int d = 0; d < c.Size(); d++)
+        {
+          box[d] = std::min(box[d], c(d));
+          box[3 + d] = std::min(box[3 + d], -c(d));
+        }
+      }
+    }
+    MPI_Allreduce(MPI_IN_PLACE, box, 6, MPI_DOUBLE, MPI_MIN, parent_fes.GetComm());
+    constexpr double f[3][3] = {{0.21, 0.37, 0.16}, {0.62, 0.28, 0.41}, {0.35, 0.73, 0.57}};
+    fp_centers.emplace();
+    for (int k = 0; k < 3; k++)
+    {
+      for (int d = 0; d < 3; d++)
+      {
+        const double lo = box[d], hi = -box[3 + d];
+        (*fp_centers)[k][d] = (lo <= hi) ? lo + f[k][d] * (hi - lo) : 0.0;
+      }
+    }
+  }
+  return *fp_centers;
+}
+
 mfem::Vector SubstructuringSolver::Impl::FingerprintField(int k) const
 {
-  mfem::Vector r = palace::FingerprintField(parent_fes, k);
+  mfem::Vector r = palace::FingerprintField(parent_fes, k, FingerprintCenters()[k]);
   if (!broken)
   {
     return r;
@@ -161,29 +200,40 @@ mfem::Vector SubstructuringSolver::Impl::FingerprintField(int k) const
   return rb;
 }
 
-std::array<double, 5> SubstructuringSolver::Impl::EnvironmentFingerprint() const
+std::array<double, SubstructuringSolver::Impl::kEnvFpSize>
+SubstructuringSolver::Impl::EnvironmentFingerprint() const
 {
   // The environment does not change within a run: computed once.
   if (env_fp)
   {
     return *env_fp;
   }
-  double loc[2] = {0.0, static_cast<double>(env_dbc_local)};
+  double loc[2] = {0.0, 0.0};
   for (int i = 0; i < nt; i++)
   {
     loc[0] += (is_env_int[i] || is_gamma[i]) ? 1.0 : 0.0;
+    loc[1] += env_dbc[i] ? 1.0 : 0.0;
   }
   const mfem::Vector r2 = FingerprintField(2);
   const std::vector<const mfem::Vector *> r = {&CachedFingerprintField(0),
                                                &CachedFingerprintField(1), &r2};
   const std::vector<mfem::Vector> Ar = EnvApply(r);
-  double glob[5] = {0.0, 0.0, 0.0, 0.0, 0.0};
-  MPI_Allreduce(loc, glob, 2, MPI_DOUBLE, MPI_SUM, parent_fes.GetComm());
+  std::array<double, kEnvFpSize> fp = {};
+  MPI_Allreduce(loc, fp.data(), 2, MPI_DOUBLE, MPI_SUM, parent_fes.GetComm());
   for (int k = 0; k < 3; k++)
   {
-    glob[2 + k] = mfem::InnerProduct(parent_fes.GetComm(), *r[k], Ar[k]);
+    fp[2 + k] = mfem::InnerProduct(parent_fes.GetComm(), *r[k], Ar[k]);
   }
-  env_fp = {glob[0], glob[1], glob[2], glob[3], glob[4]};
+  // The Dirichlet DOFs of the parent space (the same on both sides of the two-sided films).
+  std::vector<char> dbc(parent_fes.GetTrueVSize(), 0);
+  for (int i = 0; i < nt; i++)
+  {
+    dbc[ParentTrueDof(i)] |= env_dbc[i];
+  }
+  const std::array<double, 6> sums =
+      TrueDofPointSums(parent_fes, dbc, FingerprintCenters());
+  std::copy(sums.begin(), sums.end(), fp.begin() + 5);
+  env_fp = fp;
   return *env_fp;
 }
 
@@ -215,7 +265,7 @@ void SubstructuringSolver::Impl::AppendEnvMoments(const std::string &path,
 void SubstructuringSolver::Impl::AppendEnvFingerprint(const std::string &path)
 {
   BlockTimer bt(Timer::IO);
-  const std::array<double, 5> fp = EnvironmentFingerprint();  // collective
+  const std::array<double, kEnvFpSize> fp = EnvironmentFingerprint();  // collective
   WriteModel(path, true,
              [&](std::ofstream &f)
              {
@@ -442,14 +492,18 @@ std::vector<char> SubstructuringSolver::Impl::WriteRegionMesh(const std::string 
 
 void SubstructuringSolver::Impl::CheckEnvFingerprint()
 {
-  const std::array<double, 5> fp = EnvironmentFingerprint();  // collective
+  const std::array<double, kEnvFpSize> fp = EnvironmentFingerprint();  // collective
   MFEM_VERIFY(have_env_fp, "The saved substructuring model has no environment "
                            "fingerprint: rerun in \"Offline\" mode to condense it again!");
+  // The counts exactly, the energies and the absolute sums relative to themselves, and the
+  // sums relative to the absolute sums (they may cancel).
   bool ok = (fp[0] == saved_env_fp[0] && fp[1] == saved_env_fp[1]);
-  for (int q = 2; q < 5; q++)
+  for (int q = 2; q < kEnvFpSize; q++)
   {
-    ok = ok && std::abs(fp[q] - saved_env_fp[q]) <=
-                   kFingerprintTol * std::max(std::abs(fp[q]), std::abs(saved_env_fp[q]));
+    const int scale = (q >= 5 && q < 8) ? q + 3 : q;
+    ok = ok &&
+         std::abs(fp[q] - saved_env_fp[q]) <=
+             kFingerprintTol * std::max(std::abs(fp[scale]), std::abs(saved_env_fp[scale]));
   }
   MFEM_VERIFY(ok, kEnvironmentDiffers);
 }
@@ -546,13 +600,13 @@ void SubstructuringSolver::Impl::LoadSections(const std::string &path, std::stre
     }
     else if (magic == kEnvFpMagic)
     {
-      holds(D * 5);
+      holds(D * kEnvFpSize);
       if (root)
       {
         f.read(reinterpret_cast<char *>(saved_env_fp.data()),
                sizeof(double) * saved_env_fp.size());
       }
-      MPI_Bcast(saved_env_fp.data(), 5, MPI_DOUBLE, 0, comm);
+      MPI_Bcast(saved_env_fp.data(), kEnvFpSize, MPI_DOUBLE, 0, comm);
       have_env_fp = true;
     }
     else if (magic == kSKenMagic)
