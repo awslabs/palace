@@ -1,0 +1,196 @@
+diff --git a/src/sparse/ordering/MatrixReorderingMPI.cpp b/src/sparse/ordering/MatrixReorderingMPI.cpp
+index 3e8a0564..c98123a0 100644
+--- a/src/sparse/ordering/MatrixReorderingMPI.cpp
++++ b/src/sparse/ordering/MatrixReorderingMPI.cpp
+@@ -78,10 +78,15 @@ namespace strumpack {
+       return nested_dissection
+         (metis_opts, A, nx, ny, nz, components, width);
+     }
++    // LAB: print the times of the steps with the verbose statistics
++    const double lab_t0 = lab_seconds();
++    double* lab = lab_ordering_steps();
+     if (!is_parallel(opts.reordering_method())) {
+       auto rank = comm_->rank();
+       auto P = comm_->size();
++      std::fill(lab, lab+8, 0.);
+       auto Aseq = A.gather_graph();
++      const double lab_t1 = lab_seconds();
+       SeparatorTree<integer_t> global_sep_tree;
+       if (Aseq) { // only root
+         switch (opts.reordering_method()) {
+@@ -139,6 +144,7 @@ namespace strumpack {
+         Aseq.reset();
+         global_sep_tree.check();
+       }
++      const double lab_t2 = lab_seconds();
+       comm_->broadcast(perm_);
+       comm_->broadcast(iperm_);
+       integer_t nbsep;
+@@ -153,7 +159,15 @@ namespace strumpack {
+       tree_.check();
+       for (std::size_t i=0; i<perm_.size(); i++)
+         iperm_[perm_[i]] = i;
++      const double lab_t3 = lab_seconds();
+       get_local_graphs(A);
++      if (opts.verbose() && comm_->is_root())
++        std::cout << "# ORDSTEPS seq: gather of the graph = " << lab_t1-lab_t0
++                  << " , ordering on process 0 = " << lab_t2-lab_t1
++                  << " ( METIS_NodeND = " << lab[0]
++                  << " , tree from the permutation = " << lab[1] << " )"
++                  << " , broadcast and split of the tree = " << lab_t3-lab_t2
++                  << " , local graphs = " << lab_seconds()-lab_t3 << std::endl;
+     } else {
+       switch (opts.reordering_method()) {
+       case ReorderingStrategy::GEOMETRIC: {
+@@ -217,12 +231,28 @@ namespace strumpack {
+       default: assert(true);
+       }
+       tree_.check();
++      const double lab_t1 = lab_seconds();
+       get_local_graphs(A);
++      const double lab_t2 = lab_seconds();
+       if (opts.reordering_method() == ReorderingStrategy::PARMETIS ||
+           opts.reordering_method() == ReorderingStrategy::PTSCOTCH ||
+           opts.reordering_method() == ReorderingStrategy::METIS_TREE)
+         build_local_tree(A);
+       ltree_.check();
++      if (opts.verbose() && comm_->is_root()) {
++        std::cout << "# ORDSTEPS par: ordering = " << lab_t1-lab_t0;
++        if (opts.reordering_method() == ReorderingStrategy::METIS_TREE)
++          std::cout << " ( " << leaves << " leaves ; on process 0:"
++                    << " gather and copy of the graph = " << lab[0]
++                    << " , " << lab[7] << " separators and splits = " << lab[1]
++                    << " , sends = " << lab[2]
++                    << " , its leaf = " << lab[3]
++                    << " , wait for the last process = " << lab[4]
++                    << " , reduction of the permutation = " << lab[5]
++                    << " , tree = " << lab[6] << " )";
++        std::cout << " , local graphs = " << lab_t2-lab_t1
++                  << " , local trees = " << lab_seconds()-lab_t2 << std::endl;
++      }
+     }
+     nested_dissection_print(opts, A.nnz());
+     return 0;
+diff --git a/src/sparse/ordering/MetisReordering.hpp b/src/sparse/ordering/MetisReordering.hpp
+index 39deafe7..61decebb 100644
+--- a/src/sparse/ordering/MetisReordering.hpp
++++ b/src/sparse/ordering/MetisReordering.hpp
+@@ -29,6 +29,7 @@
+ #ifndef METIS_REORDERING_HPP
+ #define METIS_REORDERING_HPP
+ 
++#include <chrono>
+ #include <functional>
+ #include <typeinfo>
+ #include <memory>
+@@ -43,6 +44,14 @@
+ 
+ namespace strumpack {
+ 
++  // LAB: times of the steps of the last ordering, in seconds, on the
++  // process that measured them (printed with the verbose statistics)
++  inline double* lab_ordering_steps() { static double t[8]; return t; }
++  inline double lab_seconds() {
++    return std::chrono::duration<double>
++      (std::chrono::steady_clock::now().time_since_epoch()).count();
++  }
++
+   template<typename integer_t> inline int WRAPPER_METIS_NodeNDP
+   (std::vector<idx_t>& xadj, std::vector<idx_t>& adjncy,
+    idx_t* vwgt, idx_t seps, idx_t* options, std::vector<integer_t>& perm,
+@@ -245,14 +254,18 @@ namespace strumpack {
+ #endif
+         sep_tree = sep_tree_from_metis_sizes(nodes, separators, sizes);
+     } else {
++      const double lab_t0 = lab_seconds();
+       ierr = WRAPPER_METIS_NodeND
+         (xadj, adjncy, nullptr, options /*nullptr*/, iperm, perm);
++      const double lab_t1 = lab_seconds();
+ #if defined(STRUMPACK_USE_MPI)
+       if (opts.use_MUMPS_SYMQAMD())
+         sep_tree = aggressive_amalgamation(n, ptr, ind, perm, iperm, opts);
+       else
+ #endif
+         sep_tree = build_sep_tree_from_perm(ptr, ind, perm, iperm);
++      lab_ordering_steps()[0] = lab_t1 - lab_t0;
++      lab_ordering_steps()[1] = lab_seconds() - lab_t1;
+     }
+     if (ierr != METIS_OK) {
+       std::cerr << "# ERROR: Metis nested dissection reordering failed"
+diff --git a/src/sparse/ordering/MetisTreeReordering.hpp b/src/sparse/ordering/MetisTreeReordering.hpp
+index 5ba2d587..6e5b33f4 100644
+--- a/src/sparse/ordering/MetisTreeReordering.hpp
++++ b/src/sparse/ordering/MetisTreeReordering.hpp
+@@ -39,6 +39,7 @@
+ 
+ #include "sparse/CSRMatrixMPI.hpp"
+ #include "sparse/SeparatorTree.hpp"
++#include "MetisReordering.hpp" // LAB: lab_ordering_steps
+ 
+ /*
+  * Nested dissection with METIS (not ParMETIS) that is parallel over
+@@ -195,6 +196,18 @@ namespace strumpack {
+                                SeparatorTree<integer_t>& tree) {
+     const int rank = comm.rank();
+     const integer_t n = A.size();
++    // LAB: steps on process 0: 0 gather and copy of the graph, 1 its
++    // separators and splits, 2 its sends, 3 its leaf, 4 wait for the
++    // last process, 5 reduction of the permutation, 6 tree, 7 number
++    // of separators of process 0
++    double* lab = lab_ordering_steps();
++    std::fill(lab, lab+8, 0.);
++    double lab_t = lab_seconds();
++    auto lab_step = [&](int i) {
++      const double now = lab_seconds();
++      lab[i] += now - lab_t;
++      lab_t = now;
++    };
+     MetisTreeGraph<integer_t> g;
+     if (auto Aseq = A.gather_graph()) { // only root
+       g.xadj.reserve(n+1);
+@@ -213,6 +226,7 @@ namespace strumpack {
+     // root, and its first k/2 leaves are the first subtree of the root.
+     std::vector<integer_t> sizes(2*leaves-1);
+     std::fill(perm.begin(), perm.end(), 0);
++    lab_step(0);
+     int ierr = METIS_OK;
+     if (rank < leaves) {
+       idx_t options[METIS_NOPTIONS];
+@@ -226,7 +240,10 @@ namespace strumpack {
+           MetisTreeGraph<integer_t> other;
+           int e = g.split(options, perm, other, sizes[node+2*(p1-p0)-2]);
+           if (e != METIS_OK) ierr = e;
++          lab_step(1);
++          lab[7] += 1;
+           other.send(pm, comm);
++          lab_step(2);
+         } else if (rank == pm) g.recv(p0, comm);
+         if (rank < pm) p1 = pm;
+         else {
+@@ -239,8 +256,10 @@ namespace strumpack {
+       sizes[node] = g.rows.size();
+       g = MetisTreeGraph<integer_t>();
+     }
++    lab_step(3);
+     // METIS_OK is 1 and the METIS error codes are negative
+     ierr = comm.all_reduce(ierr, MPI_MIN);
++    lab_step(4);
+     if (ierr != METIS_OK) {
+       if (comm.is_root())
+         std::cerr << "# ERROR: Metis nested dissection reordering failed"
+@@ -250,6 +269,7 @@ namespace strumpack {
+     // every row was given its position by exactly one process
+     comm.all_reduce(perm, MPI_SUM);
+     comm.all_reduce(sizes, MPI_SUM);
++    lab_step(5);
+     tree = SeparatorTree<integer_t>(sizes.size());
+     tree.sizes[0] = 0;
+     for (std::size_t i=0; i<sizes.size(); i++)
+@@ -268,6 +288,7 @@ namespace strumpack {
+         return root;
+       };
+     tree.parent[subtree(leaves, 0)] = -1;
++    lab_step(6);
+     return 0;
+   }
+ 

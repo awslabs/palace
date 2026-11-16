@@ -333,6 +333,10 @@ download_patch(STRUMPACK_PATCH_FILES "${CMAKE_BINARY_DIR}/extern/STRUMPACK-patch
 list(APPEND STRUMPACK_PATCH_FILES
   "${CMAKE_SOURCE_DIR}/extern/patch/STRUMPACK/strumpack_metis_parallel_nd.diff"
 )
+# LAB ONLY: print the times of the steps of the ordering with the verbose statistics
+list(APPEND STRUMPACK_PATCH_FILES
+  "${CMAKE_SOURCE_DIR}/extern/patch/STRUMPACK/lab_ordering_steps.diff"
+)
 
 include(ExternalProject)
 ExternalProject_Add(strumpack

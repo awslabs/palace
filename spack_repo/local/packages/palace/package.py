@@ -224,6 +224,8 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 when="@8.1.0",
             ),
             patch("strumpack_metis_parallel_nd.diff", when="@8.1.0"),
+            # LAB ONLY: print the times of the steps of the ordering
+            patch("lab_ordering_steps.diff", when="@8.1.0"),
         ],
     )
 
