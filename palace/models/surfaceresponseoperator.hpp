@@ -8,6 +8,7 @@
 #include <complex>
 #include <filesystem>
 #include <functional>
+#include <limits>
 #include <map>
 #include <memory>
 #include <optional>
@@ -38,6 +39,7 @@ class Mesh;
 class BoundaryModeOperator;
 class DistributedPointLocator;
 class GeometryFallbackLedger;
+struct FilmRuleResolution;
 class LaplaceOperator;
 class MaterialOperator;
 class SpaceOperator;
@@ -1207,7 +1209,8 @@ private:
   void ConfigureMaxwellResponse(
       const IoData &iodata, const MaterialOperator &mat_op,
       const mfem::Array<int> &dbc_tdof_list,
-      std::shared_ptr<const SurfaceResponseGeometry> *automatic_geometry);
+      std::shared_ptr<const SurfaceResponseGeometry> *automatic_geometry,
+      const FilmRuleResolution *candidate_film_rule = nullptr, bool law_reading = false);
   // The placement-ownership stage shared by the electrostatic and Maxwell constructors
   // (decision 818 R5): the configured patches with the continuation ownership applied
   // (placed_patches) and the set of patch indices that are not applied (owned by a
@@ -1473,9 +1476,16 @@ public:
   SurfaceResponseOperator(
       const IoData &iodata, const LaplaceOperator &laplace_op,
       std::shared_ptr<const SurfaceResponseGeometry> *automatic_geometry = nullptr);
+  // The impedance-metal rule (decisions 2006 / 2012; ImpedanceMetalRule Record; STAGEA-NOTE
+  // s3): `candidate_film_rule` set = a CANDIDATE operator, built beside the operator of
+  // record with the film rule at its seam (its outputs are never of record); `law_reading`
+  // = the on-metal law reading is taken by every Maxwell gate call (on separate lines
+  // appended after every line of the operator, in no path and no fit: no value of the
+  // operator changes). Both off (the defaults) = today.
   SurfaceResponseOperator(
       const IoData &iodata, const SpaceOperator &space_op,
-      std::shared_ptr<const SurfaceResponseGeometry> *automatic_geometry = nullptr);
+      std::shared_ptr<const SurfaceResponseGeometry> *automatic_geometry = nullptr,
+      const FilmRuleResolution *candidate_film_rule = nullptr, bool law_reading = false);
   SurfaceResponseOperator(
       const IoData &iodata, const BoundaryModeOperator &mode_op,
       std::shared_ptr<const SurfaceResponseGeometry> *automatic_geometry = nullptr);
@@ -1761,6 +1771,75 @@ public:
   // with conductor vertices on the process plane, or a translational patch with its edge
   // probes).
   bool HasConductorConsistencyProbes() const;
+
+  // The impedance-metal rule's on-metal LAW READING (ruling 2012 Q4; RECORD only; refuses
+  // nothing): per applied patch and gate call, L = max over the patch's ON-METAL probe legs
+  // (translational chains: anchor -> foot and foot -> foot across metal by the edges' gap
+  // directions, the ends set back into their piece by LateralSetbackMove) of |the leg's
+  // line integral of E| over the gate's normalisation. Leg classes: LEG, NO-LEG (probes,
+  // but no on-metal leg: a two-piece cluster), UNPROBED, CONDITIONAL-UNTESTED (concave
+  // corners, spatial clusters, endpoints, junctions: L over their existing legs; the
+  // on-metal vertex test, which needs each conductor's outline in the patch frame, is
+  // owed), LEG-DERIVED (convex corners: legs inside a convex wedge).
+  enum class LawLegClass : signed char
+  {
+    LEG,
+    NO_LEG,
+    UNPROBED,
+    CONDITIONAL_UNTESTED,
+    LEG_DERIVED
+  };
+  static const char *LawLegClassName(LawLegClass leg_class);
+  struct LawReadingRecord
+  {
+    int patch = -1;    // global 0-based index
+    int model = 0;     // runtime model index
+    int feature = -1;  // the identification feature
+    int source = 0;
+    double frequency = 0.0;
+    LawLegClass leg_class = LawLegClass::UNPROBED;
+    int legs = 0;                // the on-metal (or CONDITIONAL) legs read
+    int dropped_legs = 0;        // law lines that left the mesh (not read)
+    double normalization = 0.0;  // the gate's max(A_p, F)
+    double max_leg = 0.0;        // max |leg integral| (V)
+    double ratio = std::numeric_limits<double>::quiet_NaN();  // L (nan: no leg read)
+  };
+  bool LawReadingEnabled() const { return law_reading_enabled; }
+  bool IsImpedanceRuleCandidate() const { return impedance_rule_candidate; }
+  // The readings of the last Maxwell gate call (root; sorted by patch; empty elsewhere).
+  const std::vector<LawReadingRecord> &GetLawReadings() const { return law_readings; }
+  // The candidate's per-feature law service (root's table rows; every rank's statuses).
+  const std::vector<
+      config::ElectrostaticSolverData::ResponseCorrectionData::ImpedanceLawFeatureData> &
+  GetImpedanceLawFeatures() const
+  {
+    return impedance_law_features;
+  }
+  // The law status (ImpedanceLawStatus code) of a feature; -1 on an operator of record.
+  int ImpedanceLawStatusOfFeature(int feature) const;
+  // The runtime model's topology name and the law status of a global patch's feature
+  // (the root's view: the record carries the feature).
+  const std::string &ModelTopology(int model_index) const;
+
+private:
+  bool impedance_rule_candidate = false;
+  bool law_reading_enabled = false;
+  std::vector<signed char> impedance_law_feature_status;
+  std::vector<
+      config::ElectrostaticSolverData::ResponseCorrectionData::ImpedanceLawFeatureData>
+      impedance_law_features;
+  // Per local patch: the law legs of each probe (lines of maxwell_lines at or after
+  // law_line_begin) and its leg class.
+  std::vector<std::vector<std::vector<int>>> law_patch_legs;
+  std::vector<LawLegClass> law_patch_class;
+  std::vector<int> law_patch_dropped;
+  int law_line_begin = -1;
+  long long int law_line_count = 0;
+  std::vector<LawReadingRecord> law_readings;
+  // The reading of one Maxwell gate call (collective; the line integrals of the call).
+  void ReadImpedanceLaw(const Vector &line_real, const Vector &line_imag,
+                        const std::vector<double> &amplitudes, double amplitude_floor,
+                        int source, double frequency);
 
 private:
   // The shared tail of both gates: the per-patch records of this rank gathered
