@@ -1854,20 +1854,26 @@ namespace
 // The tensors of the extruded stretch at a quadrature point, evaluated independently of the
 // device helpers, for a layer at the distance r₀ from a point core at the origin (the depth
 // ξ = r - r₀, ∇ξ = x / r) and an isotropic background, with the frequency-dependent stretch
-// evaluated at omega (ignored for a static stretch).
+// evaluated at omega (ignored for a static stretch). The profile of each depth is computed
+// once, in profile, which the coefficients of the four assemblies of one stretch share.
 class ReferenceExtrudedTensor : public mfem::MatrixCoefficient
 {
+public:
+  using Profile = std::map<double, std::pair<std::complex<double>, std::complex<double>>>;
+
 private:
   const pml::Stretch &p;
+  Profile &profile;
   double mu_inv;
   std::complex<double> eps, omega;
   bool muinv, imag;
 
 public:
-  ReferenceExtrudedTensor(const pml::Stretch &p, double mu_inv, std::complex<double> eps,
-                          std::complex<double> omega, bool muinv, bool imag)
-    : mfem::MatrixCoefficient(3), p(p), mu_inv(mu_inv), eps(eps), omega(omega),
-      muinv(muinv), imag(imag)
+  ReferenceExtrudedTensor(const pml::Stretch &p, Profile &profile, double mu_inv,
+                          std::complex<double> eps, std::complex<double> omega, bool muinv,
+                          bool imag)
+    : mfem::MatrixCoefficient(3), p(p), profile(profile), mu_inv(mu_inv), eps(eps),
+      omega(omega), muinv(muinv), imag(imag)
   {
   }
 
@@ -1880,7 +1886,12 @@ public:
     const double r = x.Norml2(), xi = std::max(r - p.distance, 0.0);
     grad_xi = x;
     grad_xi /= r;
-    const auto [s, xi_t] = ReferenceProfile(p, xi, omega);
+    auto it = profile.find(xi);
+    if (it == profile.end())
+    {
+      it = profile.emplace(xi, ReferenceProfile(p, xi, omega)).first;
+    }
+    const auto [s, xi_t] = it->second;
     std::array<std::complex<double>, 9> J, adj;
     for (int j = 0; j < 3; j++)
     {
@@ -1972,11 +1983,12 @@ TEST_CASE("SpaceOperator extruded PML matches an MFEM coefficient reference",
       mfem::Geometry::CUBE,
       fem::DefaultIntegrationOrder::Get(mesh[0]->Get(), mfem::Geometry::CUBE));
   const std::complex<double> eps = 2.5;
+  ReferenceExtrudedTensor::Profile profile;
   auto AssembleReference = [&](bool muinv, bool imag)
   {
     mfem::ParBilinearForm a(const_cast<mfem::ParFiniteElementSpace *>(&pfes));
     mfem::Array<int> pml_marker({0, 1}), bulk_marker({1, 0});
-    ReferenceExtrudedTensor pml_coef(p, 1.0 / 1.5, eps, omega, muinv, imag);
+    ReferenceExtrudedTensor pml_coef(p, profile, 1.0 / 1.5, eps, omega, muinv, imag);
     mfem::ConstantCoefficient bulk_coef(muinv ? 1.0 / 1.5 : 2.5);
     auto *integ_pml = muinv ? static_cast<mfem::BilinearFormIntegrator *>(
                                   new mfem::CurlCurlIntegrator(pml_coef))
