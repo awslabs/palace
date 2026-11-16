@@ -780,6 +780,48 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
     sweep_omega_min = *std::ranges::min_element(sample_f);
     sweep_omega_max = *std::ranges::max_element(sample_f);
   }
+  if (iodata.solver.driven.adaptive_circuit_synthesis)
+  {
+    // The response of a wave port or absorbing boundary next to a frequency-dependent
+    // material is fit (FitWavePortDispersion, FitScalarDispersion). Near a resonance of the
+    // material it is not rational and the fit can miss AdaptiveTol: warn before the sweep.
+    const double unit_GHz = iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(1.0) /
+                            (2.0 * std::numbers::pi);
+    auto WarnResonances = [&](const std::string &boundary, const mfem::Array<int> &attrs)
+    {
+      std::vector<std::string> resonances;
+      const auto split =
+          mat_op.SplitCeedBdrAttributesByFrequencyDependentPermittivity(attrs);
+      for (const auto &[m, ceed_attrs] : split.materials)
+      {
+        for (double w :
+             mat_op.GetPermittivityResonances(m, sweep_omega_min, sweep_omega_max, 0.0))
+        {
+          resonances.push_back(
+              fmt::format("{:.6g} GHz (material {:d})", w * unit_GHz, m + 1));
+        }
+      }
+      if (!resonances.empty())
+      {
+        Mpi::Warning("{} is next to a frequency-dependent material with a resonance inside "
+                     "the band of the sweep, at {}!\nCircuit synthesis fits the response "
+                     "of the boundary, which is not rational near a resonance, and can "
+                     "miss AdaptiveTol there.\n",
+                     boundary, fmt::join(resonances, ", "));
+      }
+    };
+    for (const auto &[port_idx, port_data] : space_op.GetWavePortOp())
+    {
+      if (port_data.active || port_data.include_in_synthesis)
+      {
+        WarnResonances(fmt::format("Wave port {:d}", port_idx), port_data.GetAttrList());
+      }
+    }
+    const auto &farfield_attrs = space_op.GetFarfieldOp().GetAttrList();
+    WarnResonances(fmt::format("The absorbing boundary (attributes {})",
+                               fmt::join(farfield_attrs, ", ")),
+                   farfield_attrs);
+  }
   // Floor the fit/rank tolerances at the synthesis EVP accuracy floor: resolving finer than
   // the port modes are solved just chases eigensolver noise (see
   // WAVEPORT_SYNTHESIS_EIG_TOL).
