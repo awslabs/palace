@@ -294,29 +294,31 @@ ModeOperatorModel::ModeOperatorModel(
   *shift *= -1.0;
   add_component(CoefficientType::SHIFT, -1, std::move(shift), nullptr, nullptr, nullptr);
 
-  auto add_boundary_component =
-      [&](CoefficientType type, int index, MaterialPropertyCoefficient &unit)
+  auto add_boundary_component = [&](CoefficientType type, int index,
+                                    MaterialPropertyCoefficient &unit_t,
+                                    MaterialPropertyCoefficient &unit_n)
   {
     // Processes without elements on the boundary have an empty coefficient and assemble
     // their (zero) part of the component without the integrators.
     BilinearForm att(nd_fespace), ann(h1_fespace);
-    if (!unit.empty())
+    if (!unit_t.empty())
     {
-      att.AddBoundaryIntegrator<VectorFEMassIntegrator>(unit);
+      att.AddBoundaryIntegrator<VectorFEMassIntegrator>(unit_t);
     }
     auto Attr = assemble_nd(att);
-    unit *= -1.0;
-    if (!unit.empty())
+    unit_n *= -1.0;
+    if (!unit_n.empty())
     {
-      ann.AddBoundaryIntegrator<MassIntegrator>(unit);
+      ann.AddBoundaryIntegrator<MassIntegrator>(unit_n);
     }
     add_component(type, index, std::move(Attr), nullptr, assemble_h1(ann), nullptr);
   };
   for (int i = 0; i < surface_terms.GetNumExtraSystemBdrMassTerms(); i++)
   {
-    MaterialPropertyCoefficient unit(max_bdr_attr);
-    surface_terms.AddExtraSystemBdrMassTermCoefficients(i, unit);
-    add_boundary_component(CoefficientType::SURFACE_TERM, i, unit);
+    MaterialPropertyCoefficient unit_t(max_bdr_attr), unit_n(max_bdr_attr);
+    surface_terms.AddExtraSystemBdrMassTermCoefficients(i, unit_t);
+    surface_terms.AddScalarExtraSystemBdrMassTermCoefficients(i, unit_n);
+    add_boundary_component(CoefficientType::SURFACE_TERM, i, unit_t, unit_n);
   }
 }
 

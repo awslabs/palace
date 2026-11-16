@@ -127,9 +127,15 @@ public:
   // 0 <= i < GetNumExtraSystemBdrMassTerms(): each a boundary mass with a unit coefficient
   // which is scaled by a function of the (possibly complex) frequency ω. The terms are one
   // for each surface conductivity group with nonzero conductivity, scaled by i ω / Z(ω),
-  // then one for each rational impedance boundary, scaled by i ω / Zs(iω).
+  // then one for each rational impedance boundary, scaled by i ω / Zs(iω). A term gives
+  // the unit coefficient of a vector field (the tangential trace, as
+  // AddDampingBdrCoefficients) and that of a scalar field (the out-of-plane field
+  // component of a 2D mode solve, as AddScalarDampingBdrCoefficients); for these types the
+  // two are the same.
   int GetNumExtraSystemBdrMassTerms() const;
   void AddExtraSystemBdrMassTermCoefficients(int i, MaterialPropertyCoefficient &fb) const;
+  void AddScalarExtraSystemBdrMassTermCoefficients(int i,
+                                                   MaterialPropertyCoefficient &fb) const;
   std::complex<double> GetExtraSystemBdrMassTermScale(int i,
                                                       std::complex<double> omega) const;
 

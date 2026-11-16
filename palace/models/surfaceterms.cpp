@@ -144,6 +144,13 @@ void SurfaceTerms::AddExtraSystemBdrMassTermCoefficients(
   }
 }
 
+void SurfaceTerms::AddScalarExtraSystemBdrMassTermCoefficients(
+    int i, MaterialPropertyCoefficient &fb) const
+{
+  // The coefficients of both types are scalar, the same for both fields.
+  AddExtraSystemBdrMassTermCoefficients(i, fb);
+}
+
 std::complex<double>
 SurfaceTerms::GetExtraSystemBdrMassTermScale(int i, std::complex<double> omega) const
 {
