@@ -283,6 +283,40 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   const bool hybrid_seed =
       has_A2 && nonlinear_type == NonlinearEigenSolver::HYBRID && !exact_poles;
   const bool seed_poles = hybrid_seed && !pole_ops.empty();
+  if (hybrid_seed || nonlinear_type == NonlinearEigenSolver::SLP)
+  {
+    // The nonlinear eigensolver can miss modes or stop near a material resonance, where
+    // A2(λ) changes on the scale of its half-width (see the guide). The search window is
+    // not changed: that would change the results.
+    const auto &mat_op = space_op.GetMaterialOp();
+    const double target_max = iodata.solver.eigenmode.target_upper;
+    const double unit_GHz = iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(1.0) /
+                            (2.0 * std::numbers::pi);
+    // A wave port keeps the problem on this route whatever the materials. Its mode is
+    // interpolated in the seed, and changes on the scale of a resonance where the port is
+    // in a frequency-dependent material: warn with any such material on the mesh, also
+    // without a resonance near the window (a Drude, Debye, or Djordjevic-Sarkar material).
+    if (space_op.GetWavePortOp().Size() > 0 && mat_op.HasFrequencyDependentPermittivity())
+    {
+      Mpi::Warning("The eigenmode problem has a wave port and a frequency-dependent "
+                   "Permittivity, and is solved with the nonlinear eigensolver!\nIt can "
+                   "miss modes nearest the target or stop with fewer modes than requested, "
+                   "most of all near a resonance of a material at a wave port.\n");
+    }
+    for (std::size_t m = 0; m < mat_op.NumFrequencyDependentPermittivityMaterials(); m++)
+    {
+      auto f = mat_op.GetPermittivityResonances(m, target, target_max, 3.0);
+      std::ranges::for_each(f, [unit_GHz](double &f_m) { f_m *= unit_GHz; });
+      if (mat_op.HasFrequencyDependentPermittivitySupport(m) && !f.empty())
+      {
+        Mpi::Warning("The frequency-dependent Permittivity of material {:d} has a "
+                     "resonance at {:.6g} GHz, within 3 half-widths of the search window "
+                     "from Target to TargetUpper, {:.6g} to {:.6g} GHz!\nThe nonlinear "
+                     "eigensolver can miss modes or stop near it.\n",
+                     m + 1, fmt::join(f, ", "), target * unit_GHz, target_max * unit_GHz);
+      }
+    }
+  }
   if (hybrid_seed)
   {
     const double target_max = iodata.solver.eigenmode.target_upper;
@@ -873,6 +907,17 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   }
   Mpi::Print("\n");
 
+  // A mode whose magnetic energy is negligible against its electric energy is a
+  // longitudinal field, such as the gradient fields which solve the equations at a zero of
+  // a frequency-dependent permittivity (see the guide). Their curl, and so their magnetic
+  // energy, is the error of the solve: 3e-16 to 1.2e-15 of the electric energy for
+  // cavity_lorentz.json at Tol 1e-8 from a Target of 2.905 GHz. The modes of that example
+  // which accumulate at its resonance have 1.4e-2. The modes are kept and listed. The
+  // electric energy is the field energy with ε∞ (PostOperator::GetDomainFieldEnergies):
+  // the stored energy is not specified for a PoleResidue term, and the material energy,
+  // with Re ε(ω), vanishes at the zero of ε.
+  constexpr double longitudinal_tol = 1.0e-8;
+  std::vector<int> longitudinal;
   for (int i = 0; i < num_report; i++)
   {
     // Get the eigenvalue and relative error.
@@ -919,11 +964,26 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
     auto total_domain_energy =
         post_op.MeasureAndPrintAll(i, E, B, omega, error_abs, error_bkwd, num_report);
+    if (const auto [energy_elec, energy_mag] = post_op.GetDomainFieldEnergies();
+        energy_mag < longitudinal_tol * energy_elec)
+    {
+      longitudinal.push_back(i + 1);
+    }
     if (i < num_requested)
     {
       // Frequency-dependent materials use Re{ω} of the eigenvalue, as in postprocessing.
       estimator.AddErrorIndicator(E, B, total_domain_energy, omega.real(), indicator);
     }
+  }
+  if (!longitudinal.empty())
+  {
+    Mpi::Warning(
+        "Eigenmode{} {} {} a magnetic energy below {:.0e} of the electric energy!\n"
+        "These are longitudinal fields, which solve the equations without a "
+        "magnetic field, such as the gradient fields at a zero of a "
+        "frequency-dependent permittivity.\n",
+        (longitudinal.size() > 1) ? "s" : "", fmt::join(longitudinal, ", "),
+        (longitudinal.size() > 1) ? "have" : "has", longitudinal_tol);
   }
   post_op.MeasureFinalize(indicator);
   if (num_combined > 0 && ContinueAdaptation(adapt_it, space_op.GlobalTrueVSize(),

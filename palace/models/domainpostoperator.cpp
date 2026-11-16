@@ -401,6 +401,13 @@ DomainPostOperator::GetElectricFieldEnergies(const GridFunction &E, double omega
   return {stored ? std::optional<double>(0.5 * energy[0]) : std::nullopt, 0.5 * energy[1]};
 }
 
+double DomainPostOperator::GetHighFrequencyElectricFieldEnergy(const GridFunction &E) const
+{
+  MFEM_VERIFY(M_elec, "Domain postprocessing is not configured for electric field energy "
+                      "calculation!");
+  return ElectricFieldEnergy(*M_elec, {}, E, 0.0, ElectricEnergy::STORED);
+}
+
 double DomainPostOperator::GetMagneticFieldEnergy(const GridFunction &B) const
 {
   if (M_mag)

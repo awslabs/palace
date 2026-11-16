@@ -591,6 +591,19 @@ public:
   // measurement (see above).
   const auto &GetDomainPostOp() const { return dom_post_op; }
 
+  // The electric and magnetic field energies of the last measurement, nondimensional: the
+  // electric field energy with the high-frequency permittivity ε∞ of the
+  // frequency-dependent materials
+  // (DomainPostOperator::GetHighFrequencyElectricFieldEnergy), which, unlike the stored and
+  // the material electric energies, is available for every material and does not vanish at
+  // a zero of the permittivity, and the magnetic energy.
+  std::pair<double, double> GetDomainFieldEnergies() const
+    requires(HasEGridFunction<solver_t>())
+  {
+    return {dom_post_op.GetHighFrequencyElectricFieldEnergy(*E),
+            measurement_cache.domain_H_field_energy_all};
+  }
+
   // The L-vector of a magnetostatic solution, on the space of the domain energy operators
   // (broken across two-sided superconductor films, if any).
   void GetSolutionLVector(const Vector &a, Vector &a_l_out) const

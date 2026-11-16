@@ -1154,6 +1154,122 @@ TEST_CASE_METHOD(palace::test::PerRankTempDir,
   }
 }
 
+// Circuit synthesis fits the response of a wave port or absorbing boundary next to a
+// frequency-dependent material, which is not rational near a resonance of the material.
+// Before the sweep, one warning names each such boundary next to a material with a
+// resonance inside the band of the sweep. None is printed for a resonance outside the band,
+// or without circuit synthesis.
+TEST_CASE_METHOD(palace::test::PerRankTempDir,
+                 "RomOperator warns of a resonance inside the band of circuit synthesis",
+                 "[romoperator][Serial][Parallel]")
+{
+  const std::string warning = " is next to a frequency-dependent material with a resonance "
+                              "inside the band of the sweep, at ";
+  auto Lorentz = [](double f0, double gamma)
+  {
+    return json{{"HighFrequencyLimit", 2.0},
+                {"Terms",
+                 {{{"Type", "Lorentz"},
+                   {"DeltaPermittivity", 0.5},
+                   {"ResonanceFrequency", f0},
+                   {"DampingFrequency", gamma}}}}};
+  };
+  // The output of the construction of the reduced-order model, on the root.
+  auto Construct = [](json &config)
+  {
+    IoData iodata(config, false);
+    auto mesh_io = LoadScaleParMesh2(iodata, Mpi::World());
+    SpaceOperator space_op(iodata, mesh_io);
+    return test::CaptureStdout([&] { RomOperatorTest prom_op(iodata, space_op, 10); });
+  };
+  auto Count = [&warning](const std::string &out)
+  {
+    std::size_t count = 0;
+    for (auto pos = out.find(warning); pos != std::string::npos;
+         pos = out.find(warning, pos + 1))
+    {
+      count++;
+    }
+    return count;
+  };
+
+  SECTION("Absorbing boundary")
+  {
+    // The pole of the Lorentz term at 20 GHz with a damping of 2 GHz is at √(20² − 1) GHz.
+    for (const auto &[max_freq, synthesis, warned] :
+         std::vector<std::tuple<double, bool, bool>>{
+             {32.0, true, true}, {15.0, true, false}, {32.0, false, false}})
+    {
+      CAPTURE(max_freq, synthesis);
+      json config;
+      config["Problem"] = {{"Type", "Driven"}, {"Verbose", 0}, {"Output", temp_dir}};
+      config["Model"] = {{"Mesh", fs::path(PALACE_TEST_DATA_DIR) /
+                                      "lumpedport_mesh/cube_mesh_1_1_1_tet.msh"},
+                         {"L0", 1.0e-6},
+                         {"Lc", 7.0},
+                         {"Refinement", json::object({})},
+                         {"CrackInternalBoundaryElements", false}};
+      config["Domains"] = {
+          {"Materials", {{{"Attributes", {1}}, {"Permittivity", Lorentz(20.0, 2.0)}}}}};
+      config["Boundaries"] = {{"LumpedPort",
+                               {{{"Index", 1},
+                                 {"R", 50.0},
+                                 {"Excitation", 1},
+                                 {"Attributes", {100}},
+                                 {"Direction", "+X"}}}},
+                              {"Absorbing", {{"Attributes", {101}}, {"Order", 2}}}};
+      config["Solver"] = {{"Order", 1},
+                          {"Device", "CPU"},
+                          {"Driven",
+                           {{"AdaptiveTol", 1.0e-6},
+                            {"AdaptiveCircuitSynthesis", synthesis},
+                            {"MinFreq", 2.0},
+                            {"MaxFreq", max_freq},
+                            {"FreqStep", 1.0}}}};
+      const auto out = Construct(config);
+      if (Mpi::Root(Mpi::World()))
+      {
+        CAPTURE(out);
+        CHECK(Count(out) == (warned ? 1 : 0));
+        CHECK((out.find("The absorbing boundary (attributes 101)" + warning +
+                        "19.975 GHz (material 1)!") != std::string::npos) == warned);
+      }
+    }
+  }
+
+  SECTION("Wave ports")
+  {
+    // The coaxial line of coaxial_wave_losstan, filled with a Lorentz medium whose pole
+    // is at √(10² − 0.25²) GHz, inside the band from 5 to 15 GHz, or at 20 GHz, above it.
+    const auto dir = fs::path(PALACE_TEST_DATA_DIR) / "regression" / "input" / "coaxial";
+    for (const auto &[f0, warned] :
+         std::vector<std::pair<double, bool>>{{10.0, true}, {20.0, false}})
+    {
+      CAPTURE(f0);
+      auto config = IoData::ParseAndValidate((dir / "wave_losstan.json").string().c_str());
+      config["Model"]["Mesh"] = (dir / config["Model"]["Mesh"].get<std::string>()).string();
+      config["Problem"]["Output"] = temp_dir;
+      config["Problem"]["Verbose"] = 0;
+      config["Domains"]["Materials"][0].erase("LossTan");
+      config["Domains"]["Materials"][0]["Permittivity"] = Lorentz(f0, 0.5);
+      config["Solver"]["Order"] = 1;
+      config["Solver"]["Driven"]["AdaptiveTol"] = 1.0e-3;
+      config["Solver"]["Driven"]["AdaptiveCircuitSynthesis"] = true;
+      const auto out = Construct(config);
+      if (Mpi::Root(Mpi::World()))
+      {
+        CAPTURE(out);
+        CHECK(Count(out) == (warned ? 2 : 0));
+        for (const std::string port : {"1", "2"})
+        {
+          CHECK((out.find("Wave port " + port + warning + "9.99687 GHz (material 1)!") !=
+                 std::string::npos) == warned);
+        }
+      }
+    }
+  }
+}
+
 // Basic checks of ROM construction for synthesis. Checks hybrid domain-boundary
 // inner-product weight and port overlap. Works with a simple 1x1x1 Cube. This is a serial
 // test as hex mesh only has a single element.

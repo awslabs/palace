@@ -260,6 +260,11 @@ public:
   }
   std::complex<double> EvaluateDjordjevicSarkarPermittivityA2(std::size_t material_idx,
                                                               std::complex<double> s) const;
+  // The resonances of a frequency-dependent material within the given number of half-widths
+  // of [omega_min, omega_max]: Im p of each pole p of its pole terms in the upper
+  // half-plane (of Lorentz terms and complex PoleResidue poles), whose half-width is −Re p.
+  std::vector<double> GetPermittivityResonances(std::size_t material_idx, double omega_min,
+                                                double omega_max, double half_widths) const;
   // The complete relative permittivity ε∞ + χ(s) of a frequency-dependent material, at
   // s ≠ 0, from its configured terms, including exact zero poles. Errors at a singularity.
   std::complex<double> EvaluateFrequencyDependentPermittivity(std::size_t material_idx,

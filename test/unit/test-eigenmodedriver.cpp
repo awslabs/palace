@@ -29,6 +29,7 @@
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
 #include "models/spaceoperator.hpp"
+#include "test-helpers.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
@@ -429,6 +430,178 @@ TEST_CASE_METHOD(test::SharedTempDir, "Eigenmode driver: Debye terms with a comm
     {
       CAPTURE(k, modes[0][k], modes[1][k]);
       CHECK(std::abs(modes[1][k] - modes[0][k]) <= 1.0e-8 * std::abs(modes[0][k]));
+    }
+  }
+}
+
+TEST_CASE_METHOD(test::SharedTempDir,
+                 "Eigenmode driver: warning of the longitudinal modes at a zero of the "
+                 "permittivity",
+                 "[eigenmodedriver][Serial][Parallel]")
+{
+  // At the zero of ε(f) of the Lorentz medium which fills the PEC box, the root of
+  // f² − iγf − f₀² (1 + Δε/ε∞), every gradient field which vanishes on the walls solves the
+  // equations without a magnetic field. From a target just below the zero, the solve
+  // returns some of these fields first (the eigenvalue solver finds only some vectors of a
+  // degenerate eigenvalue), and the warning lists exactly the modes at the zero. From 8
+  // GHz, below the resonance, it returns electromagnetic modes and does not warn. The same
+  // with the Lorentz term written as a PoleResidue term, whose material has no stored
+  // electric energy: the warning compares the magnetic energy with the field energy at ε∞.
+  const std::complex<double> i(0.0, 1.0);
+  const std::complex<double> f_zero =
+      0.5 * (i * damping +
+             std::sqrt(4.0 * f0 * f0 * (1.0 + delta_eps / eps_inf) - damping * damping));
+  const auto mesh = WriteBoxMesh(temp_dir);
+  const json pec = {{"PEC", {{"Attributes", {1, 2, 3, 4, 5, 6}}}}};
+  // The pole p = -γ/2 + i ω_d, ω_d = √(ω₀² - γ²/4), of the Lorentz term and its residue
+  // Δε ω₀² / (2 i ω_d), in rad/s.
+  const double w0 = 2.0e9 * std::numbers::pi * f0,
+               gamma = 2.0e9 * std::numbers::pi * damping,
+               wd = std::sqrt(w0 * w0 - 0.25 * gamma * gamma);
+  const json pole_residue = {{"HighFrequencyLimit", eps_inf},
+                             {"Terms",
+                              {{{"Type", "PoleResidue"},
+                                {"Pole", {-0.5 * gamma, wd}},
+                                {"Residue", {0.0, -0.5 * delta_eps * w0 * w0 / wd}}}}}};
+  for (const auto &solve :
+       std::vector<std::pair<double, json>>{{8.0, LorentzPermittivityConfig()},
+                                            {14.3, LorentzPermittivityConfig()},
+                                            {14.3, pole_residue}})
+  {
+    // Names, not structured bindings, in the lambda (as in the slab cavity test).
+    const double target = solve.first;
+    const json &permittivity = solve.second;
+    CAPTURE(target, permittivity, f_zero);
+    REQUIRE(target < f_zero.real());
+    Eigenvalues modes;
+    const auto out = test::CaptureStdout(
+        [&]
+        {
+          modes = RunEigenmode(BoxConfig(mesh, permittivity, pec, 4, target, "", "Default"),
+                               temp_dir,
+                               "target_" + std::to_string(static_cast<int>(target)) +
+                                   (permittivity == pole_residue ? "_pole_residue" : ""));
+        });
+    const bool longitudinal = (target > f0);
+    REQUIRE(modes.f.size() >= 4);
+    std::vector<std::size_t> listed;
+    for (std::size_t k = 0; k < modes.f.size(); k++)
+    {
+      CAPTURE(k, modes.f[k]);
+      const bool at_zero = std::abs(modes.f[k] - f_zero) <= 1.0e-6 * std::abs(f_zero);
+      if (k == 0 || !longitudinal)  // The first mode, or any from 8 GHz
+      {
+        CHECK(at_zero == longitudinal);
+      }
+      if (at_zero)
+      {
+        listed.push_back(k + 1);
+      }
+    }
+    if (Mpi::Root(Mpi::World()))
+    {
+      std::string warning = (listed.size() > 1) ? "Eigenmodes " : "Eigenmode ";
+      for (std::size_t k = 0; k < listed.size(); k++)
+      {
+        warning += (k > 0 ? ", " : "") + std::to_string(listed[k]);
+      }
+      warning += (listed.size() > 1) ? " have" : " has";
+      warning += " a magnetic energy below 1e-08 of the electric energy!";
+      CAPTURE(out, warning);
+      CHECK((out.find("magnetic energy below") != std::string::npos) == longitudinal);
+      CHECK((out.find(warning) != std::string::npos) == longitudinal);
+    }
+  }
+}
+
+TEST_CASE_METHOD(test::SharedTempDir,
+                 "Eigenmode driver: warning of a resonance near the search window of the "
+                 "nonlinear eigensolver",
+                 "[eigenmodedriver][Serial][Parallel]")
+{
+  // A weak Lorentz term in the PEC box, from 8 to 20 GHz (Target to TargetUpper). With a
+  // Djordjevic-Sarkar term in the same material, the problem goes to the nonlinear
+  // eigensolver, which warns of a resonance within 3 half-widths of the window: at 21 GHz,
+  // 2 half-widths above it, and not at 22 GHz, 4 half-widths above it. Without the
+  // Djordjevic-Sarkar term the pole terms are linearized exactly, and a resonance inside
+  // the window is not warned of.
+  constexpr double gamma = 1.0;  // GHz, the half-width is 0.5 GHz
+  const auto mesh = WriteBoxMesh(temp_dir);
+  const json pec = {{"PEC", {{"Attributes", {1, 2, 3, 4, 5, 6}}}}};
+  const json ds = {{"Type", "DjordjevicSarkar"},
+                   {"Strength", 0.05},
+                   {"LowerFrequency", 0.1},
+                   {"UpperFrequency", 100.0}};
+  for (const auto &[f_res, with_ds, warned] : std::vector<std::tuple<double, bool, bool>>{
+           {21.0, true, true}, {22.0, true, false}, {14.0, false, false}})
+  {
+    CAPTURE(f_res, with_ds);
+    // The pole is at Im p = √(f₀² − γ²/4).
+    json terms = {{{"Type", "Lorentz"},
+                   {"DeltaPermittivity", 1.0e-3},
+                   {"ResonanceFrequency", std::sqrt(f_res * f_res + 0.25 * gamma * gamma)},
+                   {"DampingFrequency", gamma}}};
+    if (with_ds)
+    {
+      terms.push_back(ds);
+    }
+    auto config = BoxConfig(mesh, {{"HighFrequencyLimit", eps_inf}, {"Terms", terms}}, pec,
+                            2, 8.0, "", "Default");
+    config["Solver"]["Eigenmode"]["TargetUpper"] = 20.0;
+    // A name, not the structured binding, in the lambda (as in the slab cavity test).
+    const auto name = "resonance_" + std::to_string(static_cast<int>(f_res));
+    Eigenvalues modes;
+    const auto out =
+        test::CaptureStdout([&] { modes = RunEigenmode(config, temp_dir, name); });
+    CHECK(modes.f.size() >= 2);
+    if (Mpi::Root(Mpi::World()))
+    {
+      CAPTURE(out);
+      CHECK((out.find("linearized exactly") == std::string::npos) == with_ds);
+      CHECK((out.find("has a resonance at") != std::string::npos) == warned);
+      CHECK((out.find("The frequency-dependent Permittivity of material 1 has a resonance "
+                      "at 21 GHz, within 3 half-widths of the search window from Target "
+                      "to TargetUpper, 8 to 20 GHz!") != std::string::npos) == warned);
+    }
+  }
+}
+
+TEST_CASE_METHOD(test::SharedTempDir,
+                 "Eigenmode driver: warning of a wave port with a frequency-dependent "
+                 "material",
+                 "[eigenmodedriver][Serial][Parallel]")
+{
+  // The partially filled cavity of the next test with a wave port on its top face, in the
+  // vacuum, from 9 GHz: the problem is solved by the nonlinear eigensolver, which warns of
+  // the wave port with the Lorentz slab, which has no resonance within 3 half-widths of the
+  // search window. With a constant slab it does not warn.
+  const auto mesh = WriteSlabMesh(temp_dir);
+  const std::string warning = "The eigenmode problem has a wave port and a "
+                              "frequency-dependent Permittivity, and is "
+                              "solved with the nonlinear eigensolver!";
+  for (const bool dispersive : {true, false})
+  {
+    CAPTURE(dispersive);
+    auto config = SlabConfig(mesh, 1, 9.0, "Default");
+    config["Solver"]["Eigenmode"]["Tol"] = 1.0e-8;
+    config["Solver"]["Eigenmode"]["TargetUpper"] = 9.5;
+    config["Boundaries"] = {
+        {"PEC", {{"Attributes", {1, 2, 3, 4, 5}}}},
+        {"WavePort", {{{"Index", 1}, {"Attributes", {6}}, {"Mode", 1}}}}};
+    if (!dispersive)
+    {
+      config["Domains"]["Materials"][1]["Permittivity"] = slab_eps_inf;
+    }
+    const auto name = std::string(dispersive ? "lorentz" : "constant");
+    Eigenvalues modes;
+    const auto out =
+        test::CaptureStdout([&] { modes = RunEigenmode(config, temp_dir, name); });
+    CHECK(modes.f.size() >= 1);
+    if (Mpi::Root(Mpi::World()))
+    {
+      CAPTURE(out);
+      CHECK((out.find(warning) != std::string::npos) == dispersive);
+      CHECK(out.find("has a resonance at") == std::string::npos);
     }
   }
 }

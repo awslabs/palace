@@ -114,6 +114,12 @@ public:
   };
   ElectricFieldEnergies GetElectricFieldEnergies(const GridFunction &E, double omega) const;
 
+  // The electric field energy in the entire domain with the high-frequency permittivity ε∞
+  // of each frequency-dependent material, and the permittivity of the constant materials,
+  // without the energy of the polarization. Available for every material, and positive for
+  // a nonzero field also at a zero of a permittivity.
+  double GetHighFrequencyElectricFieldEnergy(const GridFunction &E) const;
+
   // Get volume integrals for the electric or magnetic field energy in a portion of the
   // domain.
   double GetDomainElectricFieldEnergy(int idx, const GridFunction &E, double omega,
