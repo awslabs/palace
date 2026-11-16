@@ -6,10 +6,13 @@
 #include <cmath>
 #include <limits>
 #include <utility>
+#include "fem/gridfunction.hpp"
 #include "fem/multigrid.hpp"
 #include "linalg/errorestimator.hpp"
 #include "linalg/iterative.hpp"
 #include "models/materialoperator.hpp"
+#include "models/postoperator.hpp"
+#include "utils/geodata.hpp"
 #include "utils/timer.hpp"
 
 namespace palace
@@ -1333,7 +1336,7 @@ SubstructuringSolver::RegionErrorIndicator(const std::vector<Vector> &region_fie
 
   // Palace's flux estimators on the region submesh: their flux recovery sees only the
   // region, so the unknown environment field does not pollute the indicators near the
-  // interface.
+  // interface, and is discontinuous across the sheets, as in the regular solves.
   std::vector<std::unique_ptr<Mesh>> mesh;
   mesh.push_back(std::make_unique<Mesh>(std::make_unique<mfem::ParSubMesh>(
       mfem::ParSubMesh::CreateFromDomain(impl->parent, impl->ra_arr))));
@@ -1375,7 +1378,8 @@ SubstructuringSolver::RegionErrorIndicator(const std::vector<Vector> &region_fie
     mfem::RT_FECollection rt_fec(order - 1, dim);
     FiniteElementSpace rt_fespace(*mesh[0], &rt_fec);
     CurlFluxErrorEstimator<Vector> estimator(mat_op, rt_fespace, nd_fespaces, tol, max_it,
-                                             0, false);
+                                             0, false,
+                                             iodata.boundaries.GetSheetAttributes());
     estimate(estimator, rt_fespace.GetDiscreteInterpolator(nd_fespace), 1.0, nd_fespace,
              rt_fespace);
   }
@@ -1390,7 +1394,8 @@ SubstructuringSolver::RegionErrorIndicator(const std::vector<Vector> &region_fie
     auto rt_fespaces =
         fem::ConstructFiniteElementSpaceHierarchy<mfem::RT_FECollection>(1, mesh, rt_fecs);
     GradFluxErrorEstimator<Vector> estimator(mat_op, nd_fespace, rt_fespaces, tol, max_it,
-                                             0, false);
+                                             0, false,
+                                             iodata.boundaries.GetSheetAttributes());
     estimate(estimator, nd_fespace.GetDiscreteInterpolator(h1_fespace), -1.0, h1_fespace,
              nd_fespace);
   }
@@ -1455,6 +1460,12 @@ long long int SubstructuringSolver::GlobalTrueVSize() const
   return impl->SolutionSpace().GlobalTrueVSize();
 }
 
+const FiniteElementSpaceHierarchy &SubstructuringSolver::GetFESpaces() const
+{
+  return impl->magnetostatic ? impl->curlcurl_op->GetNDSpaces()
+                             : impl->laplace_op->GetH1Spaces();
+}
+
 void SubstructuringSolver::WriteParaView(const std::string &dir,
                                          const std::vector<int> &ids,
                                          const std::vector<Vector> &fields) const
@@ -1462,22 +1473,36 @@ void SubstructuringSolver::WriteParaView(const std::string &dir,
   BlockTimer bt(Timer::POSTPRO_PARAVIEW);
   MFEM_VERIFY(ids.size() == fields.size(), "WriteParaView requires one field per id!");
   const int order = impl->iodata.solver.order;
-  mfem::ParGridFunction phi(&impl->parent_fes);
+  const auto &units = impl->iodata.units;
+  GridFunction phi(impl->parent_fes);
   mfem::ParaViewDataCollection pv("paraview", &impl->parent);
   pv.SetPrefixPath(dir);
   pv.SetLevelsOfDetail(order);
   pv.SetHighOrderOutput(order > 1);
   pv.SetDataFormat(mfem::VTKFormat::BINARY);
-  pv.RegisterField(impl->magnetostatic ? "A" : "V", &phi);
+  pv.RegisterField(impl->magnetostatic ? "A" : "V", &phi.Real());
+  // The mesh and the fields in the units of the input, as PostOperator writes them.
+  const double mesh_Lc0 = units.GetMeshLengthRelativeScale();
+  mesh::DimensionalizeMesh(impl->parent, mesh_Lc0);
   mfem::Vector u0;
   for (std::size_t j = 0; j < fields.size(); j++)
   {
-    phi.SetFromTrueDofs(impl->FirstVersion(fields[j], u0));
-    phi.HostRead();  // the writer reads the host copy
+    phi.Real().SetFromTrueDofs(impl->FirstVersion(fields[j], u0));
+    ScaleGridFunction(mesh_Lc0, phi);
+    if (impl->magnetostatic)
+    {
+      units.DimensionalizeInPlace<Units::ValueType::CURRENT>(phi.Real());
+    }
+    else
+    {
+      units.DimensionalizeInPlace<Units::ValueType::VOLTAGE>(phi.Real());
+    }
+    phi.Real().HostRead();  // the writer reads the host copy
     pv.SetCycle(static_cast<int>(j));
     pv.SetTime(static_cast<double>(ids[j]));
     pv.Save();
   }
+  mesh::NondimensionalizeMesh(impl->parent, mesh_Lc0);
 }
 
 }  // namespace palace

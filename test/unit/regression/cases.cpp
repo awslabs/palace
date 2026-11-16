@@ -1412,6 +1412,22 @@ palace::test::CustomCheck TestOfflineRunReproduced(const std::string &offline,
   };
 }
 
+// The default comparison, and the error indicators next to the file: substructured adaptive
+// refinement writes them as a regular one does, but they are those of the region only, so
+// no regular simulation gives their reference.
+palace::test::CustomCheck TestRegionErrorIndicators(palace::test::RegressionOptions opts)
+{
+  return [opts](palace::Table &actual, palace::Table &reference,
+                const std::filesystem::path &actual_path)
+  {
+    palace::test::CompareCSVFiles(actual, reference, opts);
+    const auto path = actual_path.parent_path() / "error-indicators.csv";
+    REQUIRE(std::filesystem::is_regular_file(path));
+    palace::TableWithCSVFile indicators(path.string(), /*load_existing_file=*/true);
+    CHECK(indicators.table[0].data.at(0) > 0.0);  // the norm
+  };
+}
+
 // Reference-free check of the absorbing boundary reflection in the floquet_absorbing case:
 // a doubly periodic vacuum cell with a Floquet port and a second-order absorbing boundary
 // on opposite faces, so that the port excites a TE plane wave incident on the absorbing
@@ -1803,7 +1819,7 @@ TEST_CASE("substructuring_electrostatic", "[Serial][Parallel][GPU][Regression]")
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-6;
   opts.atol = 1.0e-16;
-  opts.paraview_fields = false;  // Solver.Electrostatic.Save defaults to 0
+  opts.paraview_fields = true;  // Solver.Electrostatic.Save = 1
   palace::test::RunRegressionCase("substructuring_electrostatic", "electrostatic.json",
                                   "base", opts);
 }
@@ -1951,6 +1967,9 @@ TEST_CASE("substructuring_magnetostatic_mixed_amr", "[Serial][Parallel][Regressi
   opts.linear_solver_policy = force_default_solver;
   opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
   opts.setup_config = "magnetostatic_mixed.json";
+  opts.unstored_files = {"error-indicators.csv"};
+  opts.custom_checks["terminal-M.csv"] = TestRegionErrorIndicators(opts);
+  opts.custom_checks["iteration1/terminal-M.csv"] = TestRegionErrorIndicators(opts);
   palace::test::RunRegressionCase("substructuring_magnetostatic",
                                   "magnetostatic_mixed_online_amr.json", "mixed_online_amr",
                                   opts);

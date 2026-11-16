@@ -1709,15 +1709,9 @@ void PostOperatorCSV<solver_t>::PrintModeV()
   WriteTable(*mode_V);
 }
 
-template <ProblemType solver_t>
-void PostOperatorCSV<solver_t>::PrintErrorIndicator(
-    bool is_root, const ErrorIndicator::SummaryStatistics &indicator_stats)
+void WriteErrorIndicatorCSV(const fs::path &post_dir,
+                            const ErrorIndicator::SummaryStatistics &indicator_stats)
 {
-  if (!is_root)
-  {
-    return;
-  }
-
   TableWithCSVFile error_indicator(post_dir / "error-indicators.csv");
   error_indicator.table.reserve(1, 4);
 
@@ -1727,6 +1721,16 @@ void PostOperatorCSV<solver_t>::PrintErrorIndicator(
   error_indicator.table.insert(Column("mean", "Mean") << indicator_stats.mean);
 
   error_indicator.WriteFullTableTrunc();
+}
+
+template <ProblemType solver_t>
+void PostOperatorCSV<solver_t>::PrintErrorIndicator(
+    bool is_root, const ErrorIndicator::SummaryStatistics &indicator_stats)
+{
+  if (is_root)
+  {
+    WriteErrorIndicatorCSV(post_dir, indicator_stats);
+  }
 }
 
 template <ProblemType solver_t>

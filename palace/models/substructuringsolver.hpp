@@ -13,6 +13,7 @@
 namespace palace
 {
 
+class FiniteElementSpaceHierarchy;
 class IoData;
 class Mesh;
 
@@ -76,6 +77,9 @@ public:
 
   // Global parent true-DOF size.
   long long int GlobalTrueVSize() const;
+
+  // The finite element spaces of the regular operator (for the problem size).
+  const FiniteElementSpaceHierarchy &GetFESpaces() const;
 
   // Write full parent-space fields (V or A) to a ParaView collection under dir, one time
   // step per excitation (time = excitation index).

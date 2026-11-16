@@ -156,9 +156,7 @@ struct RegionDesign
 // x=0.5 has identical nodes regardless of a. Re-meshing the region (varying a, fixing b and
 // n) keeps Gamma and the environment fixed -- exactly the offline/online region-redesign
 // workflow. `design` adds features inside the region (see RegionDesign).
-std::unique_ptr<mfem::ParMesh> MakeGradedSplit(int a, int b, int n,
-                                               const RegionDesign &design = {},
-                                               bool nonconforming = false)
+mfem::Mesh MakeGradedSplitSerial(int a, int b, int n, const RegionDesign &design = {})
 {
   std::vector<double> xs;
   for (int i = 0; i <= a; i++)
@@ -250,6 +248,15 @@ std::unique_ptr<mfem::ParMesh> MakeGradedSplit(int a, int b, int n,
   }
   serial.FinalizeHexMesh(1, 0, true);
   serial.SetAttributes();
+  return serial;
+}
+
+// With nonconforming, ready for nonconforming refinement.
+std::unique_ptr<mfem::ParMesh> MakeGradedSplit(int a, int b, int n,
+                                               const RegionDesign &design = {},
+                                               bool nonconforming = false)
+{
+  mfem::Mesh serial = MakeGradedSplitSerial(a, b, n, design);
   if (nonconforming)
   {
     serial.EnsureNCMesh();  // a ParMesh cannot be made nonconforming afterwards
@@ -3137,6 +3144,109 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   CHECK(std::abs(e1 - e0) >= 1.0e3 * std::abs(e1 - e_mono));  // the refinement matters
   CAPTURE(ind0.Norml2(pm0.GetComm()), ind1.Norml2(pm.GetComm()));
   CHECK(ind1.Norml2(pm.GetComm()) < ind0.Norml2(pm0.GetComm()));
+}
+
+TEST_CASE("SubstructuringSolver region error indicators across sheets",
+          "[substructure][Serial][Parallel]")
+{
+  // As in the regular solve, the flux recovery of the region indicators is discontinuous
+  // across the superconductor sheets: those of a London sheet on y = 0.5 equal the
+  // indicators of Palace's estimator, cracked at the sheet, on a serial mesh of the region.
+  json config = {
+      {"Problem", {{"Type", "Magnetostatic"}, {"Output", "test_output"}}},
+      {"Model", {{"Mesh", "test.msh"}}},
+      {"Domains",
+       {{"Materials",
+         {{{"Attributes", {1}}, {"Permeability", 3.0}},
+          {{"Attributes", {2}}, {"Permeability", 7.0}}}}}},
+      {"Boundaries",
+       {{"Superconductor",
+         {{{"Attributes", {4}}, {"PenetrationDepth", 0.2}, {"Thickness", 0.05}}}}}},
+      {"Solver",
+       {{"Order", 1},
+        {"Linear", {{"EstimatorTol", 1.0e-13}, {"EstimatorMaxIts", 1000}}},
+        {"Substructuring",
+         {{"Region", {{"Attributes", {1}}}}, {"Environment", {{"Attributes", {2}}}}}}}}};
+  IoData iodata(config, false);
+  RegionDesign design;
+  design.sheet = true;
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  mesh.push_back(std::make_unique<Mesh>(MakeGradedSplit(4, 4, 4, design)));
+  SubstructuringSolver sub(iodata, mesh);
+  mfem::VectorFunctionCoefficient ac(3,
+                                     [](const mfem::Vector &x, mfem::Vector &v)
+                                     {
+                                       v(0) = std::sin(x(1) + 2.0 * x(2));
+                                       v(1) = std::cos(3.0 * x(0)) * x(2);
+                                       v(2) = std::exp(x(0)) * x(1);
+                                     });
+  auto project = [&](mfem::ParFiniteElementSpace &fes)
+  {
+    mfem::ParGridFunction gf(&fes);
+    gf.ProjectCoefficient(ac);
+    Vector u(fes.GetTrueVSize());
+    gf.GetTrueDofs(u);
+    return u;
+  };
+  mfem::ND_FECollection fec(1, 3);
+  mfem::ParFiniteElementSpace pfes(&mesh.back()->Get(), &fec);
+  mfem::DenseMatrix E(1);
+  E(0, 0) = 2.0;  // unit energy
+  const ErrorIndicator ind = sub.RegionErrorIndicator({project(pfes)}, E);
+
+  // The reference, on every rank.
+  mfem::Mesh serial = MakeGradedSplitSerial(4, 4, 4, design);
+  mfem::Array<int> attrs({1});
+  mfem::Mesh region_serial = mfem::SubMesh::CreateFromDomain(serial, attrs);
+  std::vector<std::unique_ptr<Mesh>> rmesh;
+  rmesh.push_back(std::make_unique<Mesh>(MPI_COMM_SELF, region_serial));
+  MaterialOperator mat_op(iodata, *rmesh[0]);
+  FiniteElementSpace rfes(*rmesh[0], &fec);
+  auto nd_fecs = fem::ConstructFECollections<mfem::ND_FECollection>(
+      1, 3, 1, MultigridCoarsening::LINEAR, false);
+  auto nd_fespaces =
+      fem::ConstructFiniteElementSpaceHierarchy<mfem::ND_FECollection>(1, rmesh, nd_fecs);
+  mfem::RT_FECollection rt_fec(0, 3);
+  FiniteElementSpace rt_fespace(*rmesh[0], &rt_fec);
+  CurlFluxErrorEstimator<Vector> estimator(mat_op, rt_fespace, nd_fespaces, 1.0e-13, 1000,
+                                           0, false, {4});
+  Vector b(rt_fespace.GetTrueVSize());
+  rt_fespace.GetDiscreteInterpolator(rfes).Mult(project(rfes.Get()), b);
+  ErrorIndicator ref;
+  estimator.AddErrorIndicator(b, 1.0, ref);
+
+  // Element by element, matched by their centers.
+  auto &rm = rmesh[0]->Get();
+  auto &pm = mesh.back()->Get();
+  double err = 0.0, scale = 0.0;
+  int matched = 0;
+  mfem::Vector c, rc;
+  for (int e = 0; e < pm.GetNE(); e++)
+  {
+    if (pm.GetAttribute(e) != 1)
+    {
+      continue;
+    }
+    pm.GetElementCenter(e, c);
+    for (int r = 0; r < rm.GetNE(); r++)
+    {
+      rm.GetElementCenter(r, rc);
+      rc -= c;
+      if (rc.Normlinf() < 1.0e-12)
+      {
+        err = std::max(err, std::abs(ind.Local()(e) - ref.Local()(r)));
+        scale = std::max(scale, std::abs(ref.Local()(r)));
+        matched++;
+        break;
+      }
+    }
+  }
+  Mpi::GlobalMax(1, &err, Mpi::World());
+  Mpi::GlobalMax(1, &scale, Mpi::World());
+  Mpi::GlobalSum(1, &matched, Mpi::World());
+  CHECK(matched == rm.GetNE());
+  CHECK(scale > 0.0);
+  CHECK(err <= 1.0e-10 * scale);
 }
 
 TEST_CASE("SubstructuringSolver region error indicators",
