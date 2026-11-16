@@ -2161,6 +2161,21 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
   }
 }
 
+TEST_CASE("Linear solver ColumnOrdering ParMETIS", "[config][Serial]")
+{
+  json config = {{"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+                 {"Model", {{"Mesh", "test.msh"}}},
+                 {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                 {"Boundaries", json::object()},
+                 {"Solver", {{"Linear", {{"ColumnOrdering", "ParMETIS"}}}}}};
+  IoData iodata(config, false);
+#if defined(PALACE_WITH_PARMETIS)
+  CHECK(iodata.solver.linear.sym_factorization == SymbolicFactorization::PARMETIS);
+#else
+  CHECK(iodata.solver.linear.sym_factorization == SymbolicFactorization::METIS);
+#endif
+}
+
 #if defined(MFEM_USE_CUDSS)
 TEST_CASE("Linear solver Type cuDSS parses when built with cuDSS", "[config][Serial]")
 {
