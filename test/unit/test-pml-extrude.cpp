@@ -440,6 +440,46 @@ TEST_CASE("ExtrudePML keeps a boundary across a box flat", "[pml][geodata][Seria
   pml = MakePML({{"Center", {{0.0, 0.0, 0.0}, {0.0, 0.0, 0.5}}}});
   CHECK_NOTHROW(ExtrudeEntry(mesh, pml, pec));
 
+  // A boundary on an open side continues through the ends of the layer. With the PML on the
+  // other five faces of the box, a strip |y| < 0.5 on the ground plane z = -1, of attribute
+  // 3 elsewhere, would widen in the layer with the default core: the error gives the core
+  // which spans it, with which the strip stays flat, with one quadrilateral per layer on
+  // each of its four edges with the box. A whole ground plane, whose trace on the box does
+  // not end, extrudes with the default core.
+  auto MakeGround = [&](bool strip)
+  {
+    auto box = std::make_unique<mfem::Mesh>(MakeBox(type, 4, 1));
+    for (int be = 0; be < box->GetNBE(); be++)
+    {
+      mfem::Vector c(3);
+      mfem::IsoparametricTransformation T;
+      box->GetBdrElementTransformation(be, &T);
+      T.Transform(mfem::Geometries.GetCenter(T.GetGeometryType()), c);
+      box->SetBdrAttribute(be, (c(2) > -1.0 + 1.0e-12)           ? 1
+                               : (strip && std::abs(c(1)) < 0.5) ? 2
+                                                                 : 3);
+    }
+    box->SetAttributes();
+    return box;
+  };
+  config::BoundaryData ground;
+  ground.attributes = {2, 3};
+  mesh = MakeGround(true);
+  pml = MakePML();
+  CHECK_THROWS_WITH(
+      ExtrudeEntry(mesh, pml, ground),
+      Matchers::ContainsSubstring("Boundary attribute 2 crosses") &&
+          Matchers::ContainsSubstring("\"Center\": [[0, -0.5, -1], [0, 0.5, 0]]"));
+  mesh = MakeGround(true);
+  const int n_ground = CountStrip(*mesh);
+  pml = MakePML({{"Center", {{0.0, -0.5, -1.0}, {0.0, 0.5, 0.0}}}});
+  ExtrudeEntry(mesh, pml, ground);
+  CHECK(CountStrip(*mesh) == n_ground + 4 * 2);
+  CHECK_THAT(Extent(*mesh)[1], Matchers::WithinAbs(0.5, 1.0e-12));
+  mesh = MakeGround(false);
+  pml = MakePML();
+  CHECK_NOTHROW(ExtrudeEntry(mesh, pml, ground));
+
   // A boundary along an edge of the box continues there. On the plane x = y, which has
   // faces on the tetrahedral mesh only, the sheet stays in its plane with the default core,
   // out to the back of the layer, with its 16 edges on the box (4 on the top and the bottom

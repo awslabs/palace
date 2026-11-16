@@ -198,7 +198,10 @@ position. This limits the shapes of the parts extruded radially:
     interface between two materials or a boundary with a boundary condition which crosses a
     face of the box, such as a substrate or a trace, stays flat in the layer only if the
     core spans it, as a segment through the substrate: otherwise, the extrusion stops with
-    the `"Center"` which would.
+    the `"Center"` which would. A boundary which runs into an edge between two faces of the
+    box stays flat only if it leaves the edge at 45° to both faces, along which the edge
+    moves whatever the core, as the plane x = y does from the edges of a cube: otherwise it
+    bends there, and the extrusion does not check this.
   - Any other part moves each node along its ray from its closest point on the core, and
     must be at a constant distance from the core, within 5% of the thickness: a sphere
     around its center, or the wall of a cylinder around its axis. On a sphere, the stretch

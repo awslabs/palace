@@ -3887,15 +3887,13 @@ void ExtrudePML(std::unique_ptr<mfem::Mesh> &orig_mesh, config::DomainData &doma
     for (const auto &[e, f] : edge_faces)
     {
       int e1, e2, e3, e4;
-      if (f.size() != 2)
-      {
-        continue;
-      }
-      // Along an edge of the box, there is no face to cross, but a boundary along it
-      // continues there: its edges count for the ends of its trace.
-      const bool across = SamePlane(face_plane.at(f[0]), face_plane.at(f[1]), tol);
+      // Along an edge of the box, between two of its faces or a face and an open side,
+      // there is no face to cross, but a boundary along it continues there: its edges count
+      // for the ends of its trace.
+      const bool across =
+          f.size() == 2 && SamePlane(face_plane.at(f[0]), face_plane.at(f[1]), tol);
       mesh.GetFaceElements(f[0], &e1, &e2);
-      mesh.GetFaceElements(f[1], &e3, &e4);
+      mesh.GetFaceElements(f.back(), &e3, &e4);
       const int a1 = mesh.GetAttribute(e1), a2 = mesh.GetAttribute(e3);
       const auto it = bdr_edges.find(e);
       if ((a1 == a2 || !across) && it == bdr_edges.end())
