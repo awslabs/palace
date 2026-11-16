@@ -92,6 +92,10 @@ public:
   // diagnostics record is moved into palace.json (SurfaceResponseOperator::
   // ReleaseStatistics), so the operator is not read after it.
   void SaveMetadata(SurfaceResponseOperator &response) const;
+  // The impedance-metal rule's candidate block (ImpedanceMetalRule "Record"; root):
+  // palace.json SurfaceResponse.ImpedanceRuleCandidate = `block` (marked "CANDIDATE: NOT OF
+  // RECORD"); called only in RECORD mode, after the operator's metadata.
+  void SaveImpedanceRuleCandidateMetadata(const nlohmann::json &block) const;
   // Root only: palace.json SurfaceResponse.Diagnostics.EdgeExclusion.<interface index> =
   // the EdgeExcludeSegments coverage record of every interface dielectric carrying the
   // list (decision 657 (b): ExcludeSegmentsLength, ExcludedPerimeterLength and their ratio

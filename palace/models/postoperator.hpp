@@ -23,6 +23,7 @@
 #include "models/lumpedportoperator.hpp"
 #include "models/postoperatorcsv.hpp"
 #include "models/surfacepostoperator.hpp"
+#include "models/surfaceresponsefilmrule.hpp"
 #include "models/surfaceresponseoperator.hpp"
 #include "utils/configfile.hpp"
 #include "utils/filesystem.hpp"
@@ -281,6 +282,27 @@ protected:
   // Optional Maxwell surface response correction. The ordinary measurement cache,
   // surface-Q.csv, and primary E/D fields remain the raw thin-metal result.
   std::unique_ptr<SurfaceResponseOperator> surface_response_op;
+  // The impedance-metal rule (Solver.SurfaceResponseCorrection.ImpedanceMetalRule "Record";
+  // decisions 2006 / 2012; EXPERIMENTAL): the film resolution; the CANDIDATE operator built
+  // beside the operator of record (null when nothing is substituted: the law reading then
+  // runs on the operator of record); its kept-raw portion lists; the candidate tables and
+  // the palace.json block. NEVER OF RECORD: no value or file of record reads them. All
+  // empty / null under "Off".
+  std::unique_ptr<FilmRuleResolution> impedance_film_rule;
+  std::unique_ptr<SurfaceResponseOperator> impedance_candidate_op;
+  std::vector<SurfacePostOperator::UncoveredPerimeterPortion> impedance_candidate_uncovered,
+      impedance_candidate_domain_boundary, impedance_candidate_spatial_cluster_priority;
+  mutable std::unique_ptr<TableWithCSVFile> impedance_candidate_table, impedance_law_table;
+  mutable nlohmann::json impedance_candidate_record;
+  mutable double impedance_candidate_measure_seconds = 0.0;
+  // RECORD: the film rule, the printed lines and (when it substitutes) the candidate
+  // operator, with the setup cost of both operators measured.
+  void SetUpImpedanceRuleCandidate(const IoData &iodata, const SpaceOperator &space_op,
+                                   double record_setup_seconds, long record_setup_bytes);
+  // RECORD, after the measurement of record is printed: the candidate's gate (when it is
+  // its own operator), response and kept-raw energies, the law reading, the candidate rows.
+  void MeasureAndPrintImpedanceRuleCandidate(double output_index, int excitation,
+                                             int source, const ComplexVector &e) const;
   // The uncovered requirements (decision 394 F2) and the DomainBoundary raw claims (F-DB-a)
   // of the response operator as the surface postoperator's perimeter portions: their raw
   // within-R interface energy is kept in the corrected interface energies as the
@@ -707,6 +729,12 @@ public:
   SurfaceResponseOperator *GetSurfaceResponseOperator()
   {
     return surface_response_op.get();
+  }
+  // The impedance-metal rule's palace.json block (SurfaceResponse.ImpedanceRuleCandidate;
+  // RECORD only, root's; null under "Off").
+  const nlohmann::json *GetImpedanceRuleCandidateRecord() const
+  {
+    return impedance_film_rule ? &impedance_candidate_record : nullptr;
   }
 
   const SurfacePostOperator &GetSurfacePostOp() const { return surf_post_op; }

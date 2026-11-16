@@ -367,6 +367,11 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
   {
     SaveMetadata(*response_correction);
   }
+  if (const auto *candidate = post_op.GetImpedanceRuleCandidateRecord())
+  {
+    // The impedance-metal rule (RECORD): the candidate block, never of record.
+    SaveImpedanceRuleCandidateMetadata(*candidate);
+  }
   return indicator;
 }
 
@@ -769,6 +774,11 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
   if (response_correction)
   {
     SaveMetadata(*response_correction);
+  }
+  if (const auto *candidate = post_op.GetImpedanceRuleCandidateRecord())
+  {
+    // The impedance-metal rule (RECORD): the candidate block, never of record.
+    SaveImpedanceRuleCandidateMetadata(*candidate);
   }
   return indicator;
 }

@@ -639,6 +639,16 @@ void BaseSolver::SaveMetadata(const PortExcitations &excitation_helper) const
   }
 }
 
+void BaseSolver::SaveImpedanceRuleCandidateMetadata(const nlohmann::json &block) const
+{
+  if (root)
+  {
+    nlohmann::json meta = LoadMetadata(post_dir);
+    meta["SurfaceResponse"]["ImpedanceRuleCandidate"] = block;
+    WriteMetadata(post_dir, meta);
+  }
+}
+
 void BaseSolver::SaveMetadata(SurfaceResponseOperator &response) const
 {
   // Statistics reduction is collective and must occur before the root-only file update.

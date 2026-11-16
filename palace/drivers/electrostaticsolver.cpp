@@ -1135,6 +1135,14 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // run without ResponseCorrection); nothing else below sees a response_correction.
   if (response_config)
   {
+    if (response_config->impedance_metal_rule ==
+        config::ElectrostaticSolverData::ResponseCorrectionData::ImpedanceMetalRule::RECORD)
+    {
+      // The impedance-metal rule (decisions 2006 / 2012): out of stage A here.
+      Mpi::Print("\nImpedance-metal rule (RECORD): electrostatic runs are out of stage A: "
+                 "every metal is a perfect conductor there (nothing to substitute; no "
+                 "candidate, no law reading)\n");
+    }
     response_correction =
         std::make_unique<SurfaceResponseOperator>(iodata, laplace_op, &response_geometry);
     // Lane fix-response-memory (decisions 1446 / 1447): the gathered per-patch records live

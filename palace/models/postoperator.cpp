@@ -4,6 +4,7 @@
 #include "postoperator.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <complex>
 #include <fstream>
@@ -27,6 +28,7 @@
 #include "utils/enum_string.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
+#include "utils/memoryreporting.hpp"
 #include "utils/outputdir.hpp"
 #include "utils/tablecsv.hpp"
 #include "utils/timer.hpp"
@@ -347,8 +349,47 @@ PostOperator<solver_t>::PostOperator(
           solver_t != ProblemType::BOUNDARYMODE && response.IncludesSelfConsistent();
       surface_response_patch_energy_enabled = response.patch_energy;
       surface_response_uncovered_feature_energy_enabled = response.uncovered_feature_energy;
-      surface_response_op =
-          std::make_unique<SurfaceResponseOperator>(iodata, fem_op_, response_geometry);
+      // The impedance-metal rule (ImpedanceMetalRule "Record"; decisions 2006 / 2012): the
+      // film rule is resolved BEFORE the operator of record so that, when the rule
+      // substitutes nothing, the operator of record takes the law reading (on lines after
+      // every line of record) and no second operator is built. "Off": nothing here.
+      const bool impedance_record = response.impedance_metal_rule ==
+                                    config::ElectrostaticSolverData::
+                                        ResponseCorrectionData::ImpedanceMetalRule::RECORD;
+      bool record_law_reading = false;
+      double record_setup_seconds = 0.0;
+      long record_setup_bytes = 0;
+      std::chrono::steady_clock::time_point record_setup_start;
+      if constexpr (solver_t == ProblemType::DRIVEN || solver_t == ProblemType::EIGENMODE)
+      {
+        if (impedance_record &&
+            response.patch_construction ==
+                config::ElectrostaticSolverData::ResponseCorrectionData::PatchConstruction::
+                    FEATURES &&
+            fem_op_.GetNDSpace().GetParMesh().Dimension() == 3)
+        {
+          impedance_film_rule = std::make_unique<FilmRuleResolution>(
+              ResolveImpedanceMetalFilm(iodata.boundaries, response, iodata.units,
+                                        iodata.InputsNondimensionalized()));
+          record_law_reading = !impedance_film_rule->candidate_differs;
+          record_setup_start = std::chrono::steady_clock::now();
+          record_setup_bytes = memory_reporting::GetCurrentMemory();
+        }
+        surface_response_op = std::make_unique<SurfaceResponseOperator>(
+            iodata, fem_op_, response_geometry, nullptr, record_law_reading);
+        if (impedance_film_rule)
+        {
+          record_setup_seconds = std::chrono::duration<double>(
+                                     std::chrono::steady_clock::now() - record_setup_start)
+                                     .count();
+          record_setup_bytes = memory_reporting::GetCurrentMemory() - record_setup_bytes;
+        }
+      }
+      else
+      {
+        surface_response_op =
+            std::make_unique<SurfaceResponseOperator>(iodata, fem_op_, response_geometry);
+      }
       // Lane fix-response-memory (decisions 1446 / 1447): the gathered per-patch records of
       // every measurement live on the root only (their consumers are the root's prints).
       surface_response_op->SetPatchRecordResidency(
@@ -474,6 +515,21 @@ PostOperator<solver_t>::PostOperator(
             surface_response_op
                 ->DiagnosticsPath(post_dir, "surface-response-resolution-patches.csv")
                 .string());
+      }
+      if constexpr (solver_t == ProblemType::DRIVEN || solver_t == ProblemType::EIGENMODE)
+      {
+        if (impedance_record)
+        {
+          // The impedance-metal rule (RECORD): after every object of record is built.
+          SetUpImpedanceRuleCandidate(iodata, fem_op_, record_setup_seconds,
+                                      record_setup_bytes);
+        }
+      }
+      else if (impedance_record)
+      {
+        Mpi::Print(
+            "\nImpedance-metal rule (RECORD): two-dimensional boundary-mode runs are "
+            "out of stage A: no candidate, no law reading\n");
       }
     }
   }
@@ -4203,6 +4259,11 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int ex_idx, int step,
       units.Dimensionalize<Units::ValueType::FREQUENCY>(omega) / (2 * M_PI);
   post_op_csv.PrintAllCSVData(*this, measurement_cache, freq.real(), step, ex_idx);
   PrintSurfaceResponseCorrection(freq.real(), ex_idx);
+  if (impedance_film_rule)
+  {
+    // The impedance-metal rule (RECORD): the candidate, after everything of record.
+    MeasureAndPrintImpedanceRuleCandidate(freq.real(), ex_idx, ex_idx, e);
+  }
   if (ShouldWriteParaviewFields(step))
   {
     Mpi::Print("\n");
@@ -4271,6 +4332,11 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
   int print_idx = step + 1;
   post_op_csv.PrintAllCSVData(*this, measurement_cache, print_idx, step);
   PrintSurfaceResponseCorrection(print_idx, 0);
+  if (impedance_film_rule)
+  {
+    // The impedance-metal rule (RECORD): the candidate, after everything of record.
+    MeasureAndPrintImpedanceRuleCandidate(print_idx, 0, step, e);
+  }
   if (ShouldWriteParaviewFields(step))
   {
     WriteParaviewFields(step, print_idx);
@@ -4648,6 +4714,503 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
 }
 
 // Explicit template instantiation.
+
+// The impedance-metal rule (ImpedanceMetalRule "Record"; decisions 2006 / 2012;
+// EXPERIMENTAL; STAGEA-NOTE): everything below is a CANDIDATE, NEVER OF RECORD: it reads
+// the operator of record only through its const accessors and writes only the files named
+// surface-response-impedance-*.csv and the palace.json block
+// SurfaceResponse.ImpedanceRuleCandidate.
+template <ProblemType solver_t>
+void PostOperator<solver_t>::SetUpImpedanceRuleCandidate(const IoData &iodata,
+                                                         const SpaceOperator &space_op,
+                                                         double record_setup_seconds,
+                                                         long record_setup_bytes)
+{
+  if constexpr (solver_t == ProblemType::DRIVEN || solver_t == ProblemType::EIGENMODE)
+  {
+    using ResponseCorrectionData = config::ElectrostaticSolverData::ResponseCorrectionData;
+    const auto &response = *iodata.solver.surface_response_correction;
+    const MPI_Comm comm = space_op.GetComm();
+    auto &record = impedance_candidate_record;
+    record = nlohmann::json::object();
+    record["Record"] = "CANDIDATE: NOT OF RECORD";
+    record["Mode"] = "Record";
+    record["Rule"] = "decisions 2006 / 2012: the library's film = a perfect conductor or a "
+                     "purely inductive Impedance sheet (Rs = 0, Cs = 0, any Ls): an "
+                     "ASSUMPTION; ImpedanceMetalFilmOverrides printed";
+    nlohmann::json out_of_stage = nlohmann::json::array();
+    auto OutOfStage = [&](const std::string &line)
+    {
+      Mpi::Print("Impedance-metal rule (RECORD): {}\n", line);
+      out_of_stage.push_back(line);
+    };
+    Mpi::Print("\n");
+    if (response.patch_construction == ResponseCorrectionData::PatchConstruction::LEGACY)
+    {
+      OutOfStage("PatchConstruction Legacy: no law service (no candidate, no law reading)");
+      record["OutOfStage"] = out_of_stage;
+      return;
+    }
+    if (!impedance_film_rule)
+    {
+      OutOfStage("a two-dimensional mesh is out of stage A (no candidate, no law reading)");
+      record["OutOfStage"] = out_of_stage;
+      return;
+    }
+    for (const auto &line : impedance_film_rule->lines)
+    {
+      Mpi::Print("{}\n", line);
+    }
+    record["Lines"] = impedance_film_rule->lines;
+    nlohmann::json attributes = nlohmann::json::array();
+    for (const auto &[attribute, entry] : impedance_film_rule->attributes)
+    {
+      attributes.push_back({{"Attribute", attribute},
+                            {"Law", entry.law},
+                            {"Service", FilmServiceName(entry.service)},
+                            {"Overridden", entry.overridden}});
+    }
+    record["Attributes"] = std::move(attributes);
+    if (response.IncludesSelfConsistent())
+    {
+      OutOfStage("the self-consistent candidate is out of stage A: the candidate is "
+                 "postprocessing-only (fixed-trace energies)");
+    }
+    if (surface_response_op->HasMagneticLeaves())
+    {
+      OutOfStage("the magnetic term on substituted patches is out of stage A: the "
+                 "candidate tables carry electric energies only");
+    }
+    Mpi::Print("impedance-metal rule: RECORD: corrected values of record are unchanged; "
+               "candidate values in surface-response-impedance-candidate.csv\n");
+    double candidate_setup_seconds = 0.0;
+    long candidate_setup_bytes = 0;
+    if (!impedance_film_rule->candidate_differs)
+    {
+      record["Candidate"] = "the operator of record (nothing substituted)";
+      Mpi::Print("Impedance-metal rule (RECORD): nothing substituted: the candidate is the "
+                 "operator of record; the law reading runs on its patches (separate "
+                 "lines)\n");
+    }
+    else
+    {
+      record["Candidate"] = "a candidate operator beside the operator of record";
+      Mpi::Print("Impedance-metal rule (RECORD): building the CANDIDATE operator (NOT OF "
+                 "RECORD; the film rule at its seam)\n");
+      const auto start = std::chrono::steady_clock::now();
+      const long bytes = memory_reporting::GetCurrentMemory();
+      impedance_candidate_op = std::make_unique<SurfaceResponseOperator>(
+          iodata, space_op, nullptr, impedance_film_rule.get(), true);
+      impedance_candidate_op->SetPatchRecordResidency(
+          SurfaceResponseOperator::PatchRecordResidency::ROOT_ONLY);
+      candidate_setup_seconds =
+          std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+      candidate_setup_bytes = memory_reporting::GetCurrentMemory() - bytes;
+      Mpi::Print("Impedance-metal rule (RECORD): the CANDIDATE operator is built (NOT OF "
+                 "RECORD)\n");
+      if (!impedance_candidate_op->IsRawFallback())
+      {
+        for (const auto &portion : impedance_candidate_op->GetUncoveredPortions())
+        {
+          impedance_candidate_uncovered.push_back(
+              {portion.p0, portion.p1, portion.topology, portion.feature});
+        }
+        for (const auto &portion : impedance_candidate_op->GetDomainBoundaryPortions())
+        {
+          impedance_candidate_domain_boundary.push_back(
+              {portion.p0, portion.p1, portion.topology, portion.feature});
+        }
+        for (const auto &portion :
+             impedance_candidate_op->GetSpatialClusterPriorityPortions())
+        {
+          impedance_candidate_spatial_cluster_priority.push_back(
+              {portion.p0, portion.p1, portion.topology, portion.feature});
+        }
+      }
+      // The candidate's per-feature law service (the design's s5 columns; root).
+      std::map<std::string, int> counts;
+      const auto &features = impedance_candidate_op->GetImpedanceLawFeatures();
+      if (Mpi::Root(comm))
+      {
+        TableWithCSVFile table(surface_response_op->DiagnosticsPath(
+            post_dir, "surface-response-impedance-features.csv"));
+        table.table.insert(Column::Text("candidate", "CANDIDATE: NOT OF RECORD"));
+        table.table.insert(Column::Integer("feature", "feature"));
+        table.table.insert(Column::Text("type", "Type"));
+        table.table.insert(Column::Text("device_law", "DeviceLaw"));
+        table.table.insert(Column::Text("served_film", "ServedFilm"));
+        table.table.insert(Column::Text("law_status", "LawStatus"));
+        table.table.insert(Column::Text("override", "Override"));
+        table.table.insert(Column::Text("device_key_hash", "DeviceKeyHash"));
+        table.table.insert(Column::Text("served_key_hash", "ServedKeyHash"));
+        table.table.insert(Column::Text("model", "Matched model"));
+        table.table.insert("length", "length (m)");
+        for (const auto &feature : features)
+        {
+          counts[feature.status]++;
+          table.table["candidate"] << std::string("CANDIDATE");
+          table.table["feature"] << feature.feature;
+          table.table["type"] << feature.type;
+          // A text cell holds no comma (tablecsv.hpp): the law JSON's commas as ';'.
+          std::string device_law = feature.device_law;
+          std::replace(device_law.begin(), device_law.end(), ',', ';');
+          table.table["device_law"] << device_law;
+          table.table["served_film"]
+              << std::string(feature.status == "NOT-DECLARED" ||
+                                     feature.status == "NOT-SERVED-BY-OVERRIDE" ||
+                                     feature.status == "LAW-JOINT"
+                                 ? "none"
+                                 : (feature.status == "EXACT" ? "device law (exact model)"
+                                                              : "base film as PEC"));
+          table.table["law_status"] << feature.status;
+          table.table["override"] << feature.override_status;
+          table.table["device_key_hash"] << feature.device_hash;
+          table.table["served_key_hash"] << feature.served_hash;
+          table.table["model"] << (feature.model.empty() ? std::string("-")
+                                                         : feature.model);
+          table.table["length"]
+              << units.Dimensionalize<Units::ValueType::LENGTH>(feature.length);
+        }
+        table.WriteFullTableTrunc();
+        nlohmann::json by_status = nlohmann::json::object();
+        for (const auto &[status, count] : counts)
+        {
+          by_status[status] = count;
+        }
+        record["Features"] = std::move(by_status);
+      }
+    }
+    // The cost (ruling 2012 Q1 (ii)): setup seconds (max over ranks) and the resident
+    // memory added by each construction (per node, max over nodes).
+    double seconds[2] = {record_setup_seconds, candidate_setup_seconds};
+    Mpi::GlobalMax(2, seconds, comm);
+    const auto record_memory =
+        memory_reporting::ComputeNodeMemoryStats("record", record_setup_bytes, comm);
+    const auto candidate_memory =
+        memory_reporting::ComputeNodeMemoryStats("candidate", candidate_setup_bytes, comm);
+    record["Cost"] = {{"RecordSetupSeconds", seconds[0]},
+                      {"RecordSetupMemoryNodeMaxBytes", record_memory.max},
+                      {"CandidateSetupSeconds", seconds[1]},
+                      {"CandidateSetupMemoryNodeMaxBytes", candidate_memory.max},
+                      {"LawReadingOn", impedance_candidate_op ? "candidate" : "record"}};
+    Mpi::Print("Impedance-metal rule (RECORD): cost: operator of record {:.2f} s, +{} "
+               "(node max); candidate {:.2f} s, +{} (node max){}\n",
+               seconds[0], memory_reporting::FormatBytes(record_memory.max), seconds[1],
+               memory_reporting::FormatBytes(candidate_memory.max),
+               impedance_candidate_op ? "" : " (none built: nothing substituted)");
+    record["OutOfStage"] = out_of_stage;
+    record["Measurements"] = nlohmann::json::array();
+  }
+}
+
+template <ProblemType solver_t>
+void PostOperator<solver_t>::MeasureAndPrintImpedanceRuleCandidate(
+    double output_index, int excitation, int source, const ComplexVector &e) const
+{
+  if constexpr (solver_t == ProblemType::DRIVEN || solver_t == ProblemType::EIGENMODE)
+  {
+    BlockTimer response_timer(Timer::POSTPRO_RESPONSE);
+    const auto start = std::chrono::steady_clock::now();
+    const MPI_Comm comm = fem_op->GetComm();
+    const bool root = Mpi::Root(comm);
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    using VT = Units::ValueType;
+    const double frequency =
+        units.Dimensionalize<VT::FREQUENCY>(measurement_cache.freq.real()) / (2 * M_PI);
+    const SurfaceResponseOperator *candidate = impedance_candidate_op.get();
+    const double raw_normalization = measurement_cache.domain_E_field_energy_all +
+                                     measurement_cache.lumped_port_capacitor_energy;
+
+    // The values of record of this measurement (read only): the record's corrected energy
+    // where it applied a correction, else the raw energy (no correction applied today).
+    std::map<int, double> record_corrected;
+    double record_normalization = raw_normalization;
+    bool record_applied = false;
+    if (surface_response_measurement && surface_response_measurement->has_postprocessed)
+    {
+      record_applied = true;
+      record_normalization = surface_response_measurement->corrected_normalization_energy;
+      for (const auto &[index, interface] : surface_response_measurement->interfaces)
+      {
+        record_corrected[index] = interface.corrected_energy;
+      }
+    }
+
+    // The candidate's values: its own operator (gate, response, kept-raw energies), or the
+    // record's when nothing is substituted.
+    std::map<int, double> candidate_corrected, candidate_fabricated, candidate_kept;
+    double candidate_normalization = record_normalization;
+    bool candidate_applied = false;
+    if (!candidate)
+    {
+      candidate_corrected = record_corrected;
+      candidate_applied = record_applied;
+    }
+    else if (!candidate->IsRawFallback())
+    {
+      auto &op = *impedance_candidate_op;
+      if (op.HasConductorConsistencyProbes())
+      {
+        Mpi::Print("Impedance-metal rule (CANDIDATE: NOT OF RECORD): the candidate's "
+                   "conductor-consistency gate:\n");
+        op.ApplyConductorConsistencyGate(e, source, frequency, false);
+      }
+      const auto confidence = op.GetMaxwellResponse(*E, measurement_cache.freq, false);
+      std::vector<SurfacePostOperator::UncoveredPerimeterPortion> conductor_consistency;
+      for (const auto &portion : op.GetConductorConsistencyPortions())
+      {
+        conductor_consistency.push_back(
+            {portion.p0, portion.p1, portion.topology, portion.feature});
+      }
+      const auto targets = op.GetTargetInterfaces();
+      auto Energy =
+          [&](const std::vector<SurfacePostOperator::UncoveredPerimeterPortion> &portions)
+      {
+        std::map<int, double> energy;
+        if (!portions.empty())
+        {
+          for (const auto &[index, value] : surf_post_op.GetInterfaceUncoveredEdgeEnergies(
+                   targets, *E, D_recovered.get(), portions))
+          {
+            energy[index] = value.energy;
+          }
+        }
+        return energy;
+      };
+      const auto uncovered = Energy(impedance_candidate_uncovered);
+      const auto domain_boundary = Energy(impedance_candidate_domain_boundary);
+      const auto priority = Energy(impedance_candidate_spatial_cluster_priority);
+      const auto excluded = Energy(conductor_consistency);
+      std::map<int, double> remainder;
+      if (!confidence.loop_remainders.empty())
+      {
+        const auto portions = op.GetLoopRemainderPortions(confidence.loop_remainders);
+        std::vector<SurfacePostOperator::UncoveredPerimeterPortion> perimeter;
+        for (const auto &portion : portions.portions)
+        {
+          perimeter.push_back({portion.p0, portion.p1, portion.topology, portion.feature});
+        }
+        for (const auto &[index, rows] :
+             surf_post_op.GetInterfaceWeightedPortionEdgeEnergies(
+                 targets, *E, D_recovered.get(), perimeter, portions.weights))
+        {
+          for (const auto &[label, value] : rows)
+          {
+            (void)label;
+            remainder[index] += value;
+          }
+        }
+      }
+      auto At = [](const std::map<int, double> &map, int index)
+      {
+        const auto it = map.find(index);
+        return it == map.end() ? 0.0 : it->second;
+      };
+      const double radius = op.GetMatchingRadius();
+      for (const auto &raw : measurement_cache.interface_eps_i)
+      {
+        candidate_corrected[raw.idx] = raw.energy;
+        if (!targets.count(raw.idx))
+        {
+          continue;
+        }
+        const auto outside = std::find_if(
+            measurement_cache.interface_edge_i.begin(),
+            measurement_cache.interface_edge_i.end(),
+            [&](const auto &edge)
+            {
+              return edge.idx == raw.idx && std::abs(edge.distance - radius) <=
+                                                1.0e-10 * std::max(edge.distance, radius);
+            });
+        const auto fabricated = confidence.fabricated_surface_energy.find(raw.idx);
+        if (outside == measurement_cache.interface_edge_i.end() ||
+            fabricated == confidence.fabricated_surface_energy.end())
+        {
+          candidate_corrected[raw.idx] = nan;
+          continue;
+        }
+        const double kept = At(uncovered, raw.idx) + At(domain_boundary, raw.idx) +
+                            At(priority, raw.idx) + At(excluded, raw.idx) +
+                            At(remainder, raw.idx);
+        candidate_fabricated[raw.idx] = fabricated->second;
+        candidate_kept[raw.idx] = kept;
+        candidate_corrected[raw.idx] = outside->energy_outside + fabricated->second + kept;
+      }
+      candidate_normalization = raw_normalization + confidence.domain_correction;
+      candidate_applied = true;
+    }
+    const SurfaceResponseOperator &reader = candidate ? *candidate : *surface_response_op;
+    impedance_candidate_measure_seconds +=
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+    if (!root)
+    {
+      return;
+    }
+
+    // The candidate table (top level; small: one row per interface and measurement).
+    if (!impedance_candidate_table)
+    {
+      impedance_candidate_table = std::make_unique<TableWithCSVFile>(
+          post_dir / "surface-response-impedance-candidate.csv");
+      auto &table = impedance_candidate_table->table;
+      table.insert(Column::Text("candidate", "CANDIDATE: NOT OF RECORD"));
+      table.insert("idx", solver_t == ProblemType::DRIVEN ? "f (GHz)" : "m");
+      table.insert(Column::Integer("excitation", "exc"));
+      table.insert(Column::Integer("interface", "interface"));
+      table.insert("energy_raw", "raw energy (J)");
+      table.insert(Column::Integer("record_applied", "record corrected"));
+      table.insert("energy_record", "energy of record (J)");
+      table.insert("participation_record", "participation of record");
+      table.insert(Column::Integer("candidate_applied", "candidate corrected"));
+      table.insert("energy_candidate", "candidate energy (J)");
+      table.insert("participation_candidate", "candidate participation");
+      table.insert("relative_difference", "candidate / record - 1");
+      table.insert("fabricated_candidate", "candidate fabricated energy (J)");
+      table.insert("kept_raw_candidate", "candidate kept-raw energy (J)");
+      table.insert("domain_candidate", "candidate corrected domain energy (J)");
+      if constexpr (solver_t == ProblemType::EIGENMODE)
+      {
+        table["idx"].print_as_int = true;
+      }
+    }
+    nlohmann::json interfaces = nlohmann::json::array();
+    auto &table = impedance_candidate_table->table;
+    for (const auto &raw : measurement_cache.interface_eps_i)
+    {
+      const double record_energy =
+          record_corrected.count(raw.idx) ? record_corrected.at(raw.idx) : raw.energy;
+      const double candidate_energy =
+          candidate_corrected.count(raw.idx) ? candidate_corrected.at(raw.idx) : raw.energy;
+      const double p_record = record_energy / record_normalization;
+      const double p_candidate = candidate_energy / candidate_normalization;
+      const double difference = p_candidate / p_record - 1.0;
+      table["candidate"] << std::string("CANDIDATE");
+      table["idx"] << output_index;
+      table["excitation"] << excitation;
+      table["interface"] << raw.idx;
+      table["energy_raw"] << units.Dimensionalize<VT::ENERGY>(raw.energy);
+      table["record_applied"] << (record_applied ? 1 : 0);
+      table["energy_record"] << units.Dimensionalize<VT::ENERGY>(record_energy);
+      table["participation_record"] << p_record;
+      table["candidate_applied"] << (candidate_applied ? 1 : 0);
+      table["energy_candidate"] << units.Dimensionalize<VT::ENERGY>(candidate_energy);
+      table["participation_candidate"] << p_candidate;
+      table["relative_difference"] << difference;
+      table["fabricated_candidate"]
+          << (candidate_fabricated.count(raw.idx)
+                  ? units.Dimensionalize<VT::ENERGY>(candidate_fabricated.at(raw.idx))
+                  : nan);
+      table["kept_raw_candidate"]
+          << (candidate_kept.count(raw.idx)
+                  ? units.Dimensionalize<VT::ENERGY>(candidate_kept.at(raw.idx))
+                  : nan);
+      table["domain_candidate"]
+          << units.Dimensionalize<VT::ENERGY>(candidate_normalization);
+      interfaces.push_back({{"Interface", raw.idx},
+                            {"ParticipationOfRecord", p_record},
+                            {"CandidateParticipation", p_candidate},
+                            {"RelativeDifference", difference}});
+    }
+    impedance_candidate_table->WriteFullTableTrunc();
+
+    // The law reading of this measurement (the gate call of this source; diagnostics
+    // directory: one row per read patch).
+    const auto &readings = reader.GetLawReadings();
+    if (!impedance_law_table)
+    {
+      impedance_law_table =
+          std::make_unique<TableWithCSVFile>(surface_response_op->DiagnosticsPath(
+              post_dir, "surface-response-impedance-law.csv"));
+      auto &law = impedance_law_table->table;
+      law.insert(Column::Text("candidate", "CANDIDATE: NOT OF RECORD"));
+      law.insert("idx", solver_t == ProblemType::DRIVEN ? "f (GHz)" : "m");
+      law.insert(Column::Integer("source", "source"));
+      law.insert(Column::Integer("patch", "patch"));
+      law.insert(Column::Integer("model", "model"));
+      law.insert(Column::Text("topology", "Topology"));
+      law.insert(Column::Integer("feature", "feature"));
+      law.insert(Column::Text("law_status", "LawStatus"));
+      law.insert(Column::Text("leg_class", "LawLegClass"));
+      law.insert(Column::Integer("legs", "legs read"));
+      law.insert(Column::Integer("dropped_legs", "law lines off the mesh"));
+      law.insert("normalization", "gate normalization (V)");
+      law.insert("max_leg", "max |on-metal leg| (V)");
+      law.insert("law_reading", "L");
+      if constexpr (solver_t == ProblemType::EIGENMODE)
+      {
+        law["idx"].print_as_int = true;
+      }
+    }
+    // Per (topology, leg class, law status): patches, read patches, max L, L above 1e-3 /
+    // 2e-3 (the palace.json block; no tolerance exists: information).
+    struct Family
+    {
+      int patches = 0, read = 0, above_1e3 = 0, above_2e3 = 0;
+      double max_ratio = 0.0;
+    };
+    std::map<std::tuple<std::string, std::string, std::string>, Family> families;
+    auto &law = impedance_law_table->table;
+    for (const auto &reading : readings)
+    {
+      const int status = reader.ImpedanceLawStatusOfFeature(reading.feature);
+      const std::string status_name =
+          status < 0 ? std::string("RECORD (nothing substituted)")
+                     : std::string(
+                           ImpedanceLawStatusName(static_cast<ImpedanceLawStatus>(status)));
+      const std::string &topology = reader.ModelTopology(reading.model);
+      law["candidate"] << std::string("CANDIDATE");
+      law["idx"] << output_index;
+      law["source"] << reading.source;
+      law["patch"] << reading.patch;
+      law["model"] << reading.model;
+      law["topology"] << topology;
+      law["feature"] << reading.feature;
+      law["law_status"] << status_name;
+      law["leg_class"] << std::string(
+          SurfaceResponseOperator::LawLegClassName(reading.leg_class));
+      law["legs"] << reading.legs;
+      law["dropped_legs"] << reading.dropped_legs;
+      law["normalization"] << units.Dimensionalize<VT::VOLTAGE>(reading.normalization);
+      law["max_leg"] << units.Dimensionalize<VT::VOLTAGE>(reading.max_leg);
+      law["law_reading"] << reading.ratio;
+      auto &family =
+          families[{topology, SurfaceResponseOperator::LawLegClassName(reading.leg_class),
+                    status_name}];
+      family.patches++;
+      if (std::isfinite(reading.ratio))
+      {
+        family.read++;
+        family.max_ratio = std::max(family.max_ratio, reading.ratio);
+        family.above_1e3 += reading.ratio > 1.0e-3 ? 1 : 0;
+        family.above_2e3 += reading.ratio > 2.0e-3 ? 1 : 0;
+      }
+    }
+    impedance_law_table->AppendRowsAndClear();
+    nlohmann::json family_rows = nlohmann::json::array();
+    for (const auto &[key, family] : families)
+    {
+      family_rows.push_back({{"Topology", std::get<0>(key)},
+                             {"LawLegClass", std::get<1>(key)},
+                             {"LawStatus", std::get<2>(key)},
+                             {"Patches", family.patches},
+                             {"Read", family.read},
+                             {"MaxL", family.read > 0 ? family.max_ratio : nan},
+                             {"Above1e-3", family.above_1e3},
+                             {"Above2e-3", family.above_2e3}});
+    }
+    impedance_candidate_record["Measurements"].push_back(
+        {{"Index", output_index},
+         {"Excitation", excitation},
+         {"Source", source},
+         {"FrequencyGHz", frequency},
+         {"LawReadingFrom", candidate ? "candidate" : "record"},
+         {"Readings", static_cast<int>(readings.size())},
+         {"Families", std::move(family_rows)},
+         {"Interfaces", std::move(interfaces)}});
+    impedance_candidate_record["Cost"]["CandidateMeasureSeconds"] =
+        impedance_candidate_measure_seconds;
+  }
+}
 
 template class PostOperator<ProblemType::DRIVEN>;
 template class PostOperator<ProblemType::EIGENMODE>;
