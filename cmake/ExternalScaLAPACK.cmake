@@ -36,12 +36,16 @@ endif()
 string(REPLACE ";" "; " SCALAPACK_OPTIONS_PRINT "${SCALAPACK_OPTIONS}")
 message(STATUS "SCALAPACK_OPTIONS: ${SCALAPACK_OPTIONS_PRINT}")
 
-# Receive derived datatypes in BLACS packed and unpack them locally: MPICH (ch4) fails to
-# unpack packed messages received in several shared memory segments into derived datatypes
-# with complex-valued elements, which corrupts complex-valued ScaLAPACK factorizations
-# (STRUMPACK and MUMPS). Only the point-to-point receives (BI_Srecv) are patched: the
-# asynchronous receives (BI_Arecv) and the broadcasts of the default topology, which call
-# MPI_Bcast with the derived datatype on all processes, are unchanged.
+# With MPICH and the MPI implementations derived from it (MPICH_VERSION is defined), receive
+# the point-to-point messages of BLACS with derived datatypes packed and unpack them
+# locally. BLACS sends these messages packed and receives them with the datatype of the
+# message, and MPICH (ch4) fails to unpack a packed message received in several shared
+# memory cells into a noncontiguous derived datatype when a cell boundary splits one of
+# its basic elements, as it does for double precision complex elements on macOS arm64.
+# This corrupts or aborts complex-valued ScaLAPACK factorizations (STRUMPACK and MUMPS).
+# The patch changes nothing with other MPI implementations. Only the point-to-point
+# receives need it: broadcasts and combine operations never receive a packed message with
+# a derived datatype.
 set(SCALAPACK_PATCH_FILES
   "${CMAKE_SOURCE_DIR}/extern/patch/scalapack/patch_blacs_recv.diff"
 )
