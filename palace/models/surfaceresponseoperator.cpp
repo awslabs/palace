@@ -27568,8 +27568,9 @@ MirrorFormedEdgeWeights MirrorFormedEdgeWeightsOf(
                     << " but the identification's contract reads the portion as "
                     << (weight > 0.0 ? "REAL" : "an IMAGE") << " (RealPortions "
                     << contract.at("RealPortions").dump()
-                    << "): an inconsistent MirrorFormed record (fail closed, decision 557 "
-                       "(4))!");
+                    << "): an inconsistent MirrorFormed record (fail closed: an edge on a "
+                       "real portion of the contract must have Weight 1, an edge on an "
+                       "image portion Weight 0)!");
     real_edges += weight > 0.0 ? 1 : 0;
     result.weights.push_back(weight);
   }

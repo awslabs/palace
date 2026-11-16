@@ -3388,7 +3388,7 @@
             },
             "PreflightOnly": {
               "type": "boolean",
-              "description": "Run the surface-response preflight instead of a solve: exactly what the command-line option `--surface-response-preflight` does (the same code path, outputs and exit status), for front ends that start Palace without command-line options. The block of the configured `Problem.Type` is read (`Solver.Electrostatic.ResponseCorrection` for an electrostatic problem, `Solver.SurfaceResponseCorrection` otherwise); the log says in one line that no field solve is run. Requires `Library`; cannot be combined with `--mesh-statistics`. Remove the key to solve.",
+              "description": "Run the surface-response preflight instead of a solve: exactly what the command-line option `--surface-response-preflight` does (the same code path and exit status; the same outputs except that the resolved configuration records the key), for front ends that start Palace without command-line options. The block of the configured `Problem.Type` is read (`Solver.Electrostatic.ResponseCorrection` for an electrostatic problem, `Solver.SurfaceResponseCorrection` otherwise); the log says in one line that no field solve is run. Requires `Library`; cannot be combined with `--mesh-statistics`. Remove the key to solve.",
               "default": false
             },
             "GeometryFailurePolicy": {

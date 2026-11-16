@@ -2156,12 +2156,13 @@ Palace without command-line options (a cluster run service runs `palace config.j
 `"PreflightOnly": true` in `Solver.SurfaceResponseCorrection` (Maxwell) or in
 `Solver.Electrostatic.ResponseCorrection` (electrostatic; the block of the configured
 `Problem.Type` is read) runs exactly the code path of `--surface-response-preflight`, with
-the same outputs and the same exit status; the log says in one line that no field solve is
-run. Remove the key (default `false`) to solve. The key requires `Library`, and like the
-option it cannot be combined with `--mesh-statistics`.
+the same exit status and the same outputs except that the resolved configuration records
+the key; the log says in one line that no field solve is run. Remove the key (default
+`false`) to solve. The key requires `Library`, and like the option it cannot be combined
+with `--mesh-statistics`.
 
-Exit status of a preflight: `0` when it completed; `3` when it wrote its complete manifest
-and patch dry run and then ended because `GeometryFailurePolicy` is `FailClosed` (the
+Exit status of a preflight: `0` when it completed; `3` when it wrote its manifest and patch
+dry run (3D) in full and then ended because `GeometryFailurePolicy` is `FailClosed` (the
 preflight's default) and geometry fallbacks were recorded: the last log line names their
 count and classes and the files written (see `Identification.Diagnostics.GeometryFallbacks`
 of the manifest). A run service shows a nonzero status as a failed run with that exit
