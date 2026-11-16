@@ -4,6 +4,7 @@
 #include "postoperatorcsv.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <iterator>
 #include <numbers>
 #include <ranges>
@@ -152,7 +153,6 @@ Measurement Measurement::Dimensionalize(const Units &units,
 
     for (auto &[idx, result] : measurement_cache.mode_data.impedance)
     {
-      const double n_eff_re = measurement_cache.mode_data.n_eff.real();
       if (result.has_impedance)
       {
         result.Z0 *= electromagnetics::Z0_;  // nondim → Ohm
@@ -369,8 +369,13 @@ void CheckAppendIndex(Column &idx_col, double idx_value, std::size_t m_idx_row)
   }
   else
   {
+    // The index of a table reloaded for a restart holds the printed values, rounded to the
+    // column's precision.
     auto current_idx = idx_col.data.at(m_idx_row);
-    MFEM_VERIFY(idx_value == current_idx,
+    const auto prec = idx_col.float_precision.value_or(ColumnOptions().float_precision);
+    const double tol = std::pow(10.0, -static_cast<double>(prec));
+    MFEM_VERIFY(std::abs(idx_value - current_idx) <=
+                    tol * std::max(std::abs(idx_value), std::abs(current_idx)),
                 fmt::format("Writing data table at incorrect index. Data has index {} "
                             "while table is at {}",
                             idx_value, current_idx));
@@ -396,8 +401,9 @@ std::vector<std::size_t> _impl::table_expected_filling(std::size_t m_idx_row,
 }
 
 template <ProblemType solver_t>
-void PostOperatorCSV<solver_t>::MoveTableValidateReload(TableWithCSVFile &t_csv_base,
-                                                        Table &&t_ref)
+void PostOperatorCSV<solver_t>::MoveTableValidateReload(
+    TableWithCSVFile &t_csv_base, Table &&t_ref,
+    std::optional<std::size_t> rows_per_measurement)
 {
   // For non-driven solvers or driven with default restart, no table was loaded.
   if (!reload_table)
@@ -466,17 +472,36 @@ void PostOperatorCSV<solver_t>::MoveTableValidateReload(TableWithCSVFile &t_csv_
   // name-based lookups use.
   t_csv_base.table.RebuildNameIndex();
 
-  // Match expected column group pattern.
-  auto expected_ex_idx_nrows = _impl::table_expected_filling(
-      row_i, ex_idx_i, nr_expected_measurement_rows, ex_idx_v_all.size());
+  // Match expected column group pattern. Most tables append one row per measurement to
+  // the current excitation's column group. A table with a block of rows per measurement
+  // (the far-field table, which writes one row per far-field direction and records the
+  // excitation in a column of its own instead) appends the same block to every column,
+  // so every column group is filled to rows_per_measurement rows per measurement.
+  std::vector<std::size_t> expected_ex_idx_nrows;
+  const char *filling_desc = "by excitation";
+  if (rows_per_measurement)
+  {
+    // The group structure scanned above was restored from the reference table, so
+    // base_ex_idx_nrows holds one entry per reference table column group; only its
+    // values, the row counts read back from disk, are validated here.
+    expected_ex_idx_nrows.assign(base_ex_idx_nrows.size(),
+                                 *rows_per_measurement *
+                                     (ex_idx_i * nr_expected_measurement_rows + row_i));
+    filling_desc = "per measurement";
+  }
+  else
+  {
+    expected_ex_idx_nrows = _impl::table_expected_filling(
+        row_i, ex_idx_i, nr_expected_measurement_rows, ex_idx_v_all.size());
+  }
 
   // Copy over other options from reference table, since we don't recover them on load.
   t_csv_base.table.col_options = t_ref.col_options;
 
   MFEM_VERIFY(base_ex_idx_nrows == expected_ex_idx_nrows,
               fmt::format("{} [Specified restart position is incompatible with reloaded "
-                          "file. Row filling by excitation expected {}, got {}]",
-                          err_msg, expected_ex_idx_nrows, base_ex_idx_nrows))
+                          "file. Row filling {} expected {}, got {}]",
+                          err_msg, filling_desc, expected_ex_idx_nrows, base_ex_idx_nrows))
 
   // Don't check index column (frequency) values or size. Size should match with sizing from
   // cursor from printer below. Values will be checked as new frequencies are written.
@@ -750,7 +775,7 @@ void PostOperatorCSV<solver_t>::InitializeFarFieldE(const SurfacePostOperator &s
     return;
   }
 
-  farfield_E = TableWithCSVFile(post_dir / "farfield-rE.csv");
+  farfield_E = TableWithCSVFile(post_dir / "farfield-rE.csv", reload_table);
 
   Table t;  // Define table locally first due to potential reload.
 
@@ -785,7 +810,11 @@ void PostOperatorCSV<solver_t>::InitializeFarFieldE(const SurfacePostOperator &s
              fmt::format("r*Im{{E_{}}} (V)", DimLabel(i_dim)));
   }
 
-  MoveTableValidateReload(*farfield_E, std::move(t));
+  // Unlike the other driven tables, each measurement (frequency, excitation) appends a
+  // block of far-field.size() rows, one per direction, to every column, so the reload
+  // validation must expect that block size instead of one row per excitation column
+  // group.
+  MoveTableValidateReload(*farfield_E, std::move(t), surf_post_op.farfield.size());
 }
 
 template <ProblemType solver_t>
@@ -1374,16 +1403,15 @@ void PostOperatorCSV<solver_t>::PrintPortZ()
       port_Z->table[format("im_z_pv_{}", idx)] << data.Z_PV.imag();
     }
 
-    // Per-excitation total-field impedance Z[i][j] = (V · conj(V)) / (2 P_avg).
-    // GetPower returns the full Poynting integral ∫(E × H*)·n dS (without the
-    // 1/2 time-averaging factor), so Z = (V · conj(V)) / P. This is direction-
-    // specific (sign of P depends on whether the field at port i is incoming or
-    // outgoing): Re{Z[i][i]} > 0 at the driven port, but Re{Z[i][j]} for i ≠ j
-    // can be negative when port i is a passive receiver of power leaving the
-    // domain.
+    // Per-excitation total-field impedance Z[i][j] = V / I. GetPower returns the full
+    // Poynting integral P = ∫(E × H*)·n dS = V I* (without the 1/2 time-averaging
+    // factor), so Z = (V · conj(V)) / conj(P). This is direction-specific (sign of P
+    // depends on whether the field at port i is incoming or outgoing): Re{Z[i][i]} > 0
+    // at the driven port, but Re{Z[i][j]} for i ≠ j can be negative when port i is a
+    // passive receiver of power leaving the domain.
     if (std::abs(data.P) > 0.0)
     {
-      auto Z = (data.V * std::conj(data.V)) / data.P;
+      auto Z = (data.V * std::conj(data.V)) / std::conj(data.P);
       port_Z->table[format("re_z_{}_{}", idx, m_ex_idx)] << Z.real();
       port_Z->table[format("im_z_{}_{}", idx, m_ex_idx)] << Z.imag();
     }
@@ -1597,12 +1625,16 @@ void PostOperatorCSV<solver_t>::InitializeModeZ(const std::vector<int> &indices,
     auto key = [&](auto &&name) { return fmt::format("{}[{}]", name, idx); };
     auto hdr = [&](auto &&name, auto &&unit)
     { return fmt::format("{}[{}] ({})", name, idx, unit); };
-    mode_Z->table.insert(key("Z_PV"), hdr("Z_PV", "Ohm"));
+    auto re_hdr = [&](auto &&name) { return fmt::format("Re{{{}[{}]}} (Ohm)", name, idx); };
+    auto im_hdr = [&](auto &&name) { return fmt::format("Im{{{}[{}]}} (Ohm)", name, idx); };
+    mode_Z->table.insert(key("re_Z_PV"), re_hdr("Z_PV"));
+    mode_Z->table.insert(key("im_Z_PV"), im_hdr("Z_PV"));
     mode_Z->table.insert(key("L_PV"), hdr("L_PV", "H/m"));
     mode_Z->table.insert(key("C_PV"), hdr("C_PV", "F/m"));
     if (has_current)
     {
-      mode_Z->table.insert(key("Z_VI"), hdr("Z_VI", "Ohm"));
+      mode_Z->table.insert(key("re_Z_VI"), re_hdr("Z_VI"));
+      mode_Z->table.insert(key("im_Z_VI"), im_hdr("Z_VI"));
       mode_Z->table.insert(key("L_VI"), hdr("L_VI", "H/m"));
       mode_Z->table.insert(key("C_VI"), hdr("C_VI", "F/m"));
     }
@@ -1619,22 +1651,28 @@ void PostOperatorCSV<solver_t>::PrintModeZ()
     return;
   }
   mode_Z->table["idx"] << row_idx_v;
-  const double n_eff_re = measurement_cache.mode_data.n_eff.real();
+  // Per-unit-length inductance and capacitance of the line with characteristic impedance Z
+  // and propagation constant kₙ = n_eff ω / c₀, from its series impedance i kₙ Z = R + iωL
+  // and shunt admittance i kₙ / Z = G + iωC per unit length: L = Re{n_eff Z} / c₀ and C =
+  // Re{n_eff / Z} / c₀, which are n_eff Z / c₀ and n_eff / (Z c₀) for a lossless mode.
+  const std::complex<double> n_eff = measurement_cache.mode_data.n_eff;
   for (const auto &[idx, result] : measurement_cache.mode_data.impedance)
   {
     const auto port_idx = idx;
     auto s = [&](auto &&name) { return fmt::format("{}[{}]", name, port_idx); };
     if (result.has_impedance)
     {
-      mode_Z->table[s("Z_PV")] << result.Z0;
-      mode_Z->table[s("L_PV")] << result.Z0 * n_eff_re / electromagnetics::c0_;
-      mode_Z->table[s("C_PV")] << n_eff_re / (result.Z0 * electromagnetics::c0_);
+      mode_Z->table[s("re_Z_PV")] << result.Z0.real();
+      mode_Z->table[s("im_Z_PV")] << result.Z0.imag();
+      mode_Z->table[s("L_PV")] << (n_eff * result.Z0).real() / electromagnetics::c0_;
+      mode_Z->table[s("C_PV")] << (n_eff / result.Z0).real() / electromagnetics::c0_;
     }
     if (result.has_vi_impedance)
     {
-      mode_Z->table[s("Z_VI")] << result.Z_VI;
-      mode_Z->table[s("L_VI")] << result.Z_VI * n_eff_re / electromagnetics::c0_;
-      mode_Z->table[s("C_VI")] << n_eff_re / (result.Z_VI * electromagnetics::c0_);
+      mode_Z->table[s("re_Z_VI")] << result.Z_VI.real();
+      mode_Z->table[s("im_Z_VI")] << result.Z_VI.imag();
+      mode_Z->table[s("L_VI")] << (n_eff * result.Z_VI).real() / electromagnetics::c0_;
+      mode_Z->table[s("C_VI")] << (n_eff / result.Z_VI).real() / electromagnetics::c0_;
     }
   }
   WriteTable(*mode_Z);

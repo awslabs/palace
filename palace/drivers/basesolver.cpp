@@ -470,7 +470,7 @@ void BaseSolver::SaveMetadata(const Timer &timer) const
     json meta = LoadMetadata(post_dir);
     for (int i = Timer::INIT; i < Timer::NUM_TIMINGS; i++)
     {
-      auto key = Timer::descriptions[i];
+      std::string key(Timer::descriptions[i]);
       std::erase_if(key, isspace);
       meta["ElapsedTime"]["Durations"][key] = timer.Data(static_cast<Timer::Index>(i));
       meta["ElapsedTime"]["Counts"][key] = timer.Counts(static_cast<Timer::Index>(i));

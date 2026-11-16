@@ -10,6 +10,7 @@
 #include <Eigen/Dense>
 #include <fmt/core.h>
 #include <mfem.hpp>
+#include "drivers/fluxerrorestimator.hpp"
 #include "fem/errorindicator.hpp"
 #include "fem/mesh.hpp"
 #include "linalg/errorestimator.hpp"
@@ -85,14 +86,12 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
   // Initialize write directory with default path; will be changed for multi-excitations.
   PostOperator<ProblemType::DRIVEN> post_op(iodata, space_op);
 
-  // Construct the system matrices defining the linear operator. PEC boundaries are handled
-  // simply by setting diagonal entries of the system matrix for the corresponding dofs.
-  // Because the Dirichlet BC is always homogeneous, no special elimination is required on
-  // the RHS. Assemble the linear system for the initial frequency (so we can call
-  // KspSolver::SetOperators). Compute everything at the first frequency step.
-  auto K = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
-  auto C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
-  auto M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+  // The fixed system matrices are only needed when the system cannot be applied through
+  // the preconditioner (see SpaceOperator::GetSystemOperator), so assemble them on first
+  // use. PEC boundaries are handled simply by setting diagonal entries of the system matrix
+  // for the corresponding dofs. Because the Dirichlet BC is always homogeneous, no special
+  // elimination is required on the RHS.
+  std::unique_ptr<ComplexOperator> K, C, M;
   const auto &Curl = space_op.GetCurlMatrix();
 
   // Set up the linear solver.
@@ -109,31 +108,7 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
   B = 0.0;
 
   // Initialize structures for storing and reducing the results of error estimation.
-  const bool is_2d = (space_op.GetNDSpace().Dimension() < 3);
-  std::unique_ptr<TimeDependentFluxErrorEstimator<ComplexVector>> estimator_3d;
-  std::unique_ptr<BoundaryModeFluxErrorEstimator<ComplexVector>> estimator_2d;
-  if (is_2d)
-  {
-    estimator_2d = std::make_unique<BoundaryModeFluxErrorEstimator<ComplexVector>>(
-        space_op.GetMaterialOp(), space_op.GetNDSpaces(), space_op.GetRTSpaces(),
-        space_op.GetCurlSpace(), space_op.GetH1Spaces(), iodata.solver.linear.estimator_tol,
-        iodata.solver.linear.estimator_max_it, 0, iodata.solver.linear.estimator_mg);
-  }
-  else
-  {
-    estimator_3d = std::make_unique<TimeDependentFluxErrorEstimator<ComplexVector>>(
-        space_op.GetMaterialOp(), space_op.GetNDSpaces(), space_op.GetRTSpaces(),
-        iodata.solver.linear.estimator_tol, iodata.solver.linear.estimator_max_it, 0,
-        iodata.solver.linear.estimator_mg);
-  }
-  auto AddEstimate =
-      [&](const ComplexVector &E, const ComplexVector &B, double Et, ErrorIndicator &ind)
-  {
-    if (is_2d)
-      estimator_2d->AddErrorIndicator(E, B, Et, ind);
-    else
-      estimator_3d->AddErrorIndicator(E, B, Et, ind);
-  };
+  const FluxErrorEstimator<ComplexVector> estimator(space_op, iodata);
   ErrorIndicator indicator;
 
   // If using Floquet BCs, a correction term (kp x E) needs to be added to the B field.
@@ -171,12 +146,23 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
     {
       auto omega = omega_sample[omega_i];
       // Assemble frequency dependent matrices and initialize operators in linear
-      // solver.
-      auto A2 = space_op.GetExtraSystemOperator(omega, Operator::DIAG_ZERO);
-      auto A = space_op.GetSystemMatrix(1.0 + 0.0i, 1i * omega, -omega * omega + 0.0i,
-                                        K.get(), C.get(), M.get(), A2.get());
+      // solver. A refers to P and A2, so both must outlive it.
       auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(
           1.0 + 0.0i, 1i * omega, -omega * omega + 0.0i, omega);
+      std::unique_ptr<ComplexOperator> A2;
+      auto A = space_op.GetSystemOperator(omega, *P);
+      if (!A)
+      {
+        if (!K)
+        {
+          K = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
+          C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+          M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+        }
+        A2 = space_op.GetExtraSystemOperator(omega, Operator::DIAG_ZERO);
+        A = space_op.GetSystemMatrix(1.0 + 0.0i, 1i * omega, -omega * omega + 0.0i, K.get(),
+                                     C.get(), M.get(), A2.get());
+      }
       ksp.SetOperators(*A, *P);
 
       Mpi::Print(
@@ -226,7 +212,7 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
 
       // Calculate and record the error indicators.
       Mpi::Print(" Updating solution error estimates\n");
-      AddEstimate(E, B, total_domain_energy, indicator);
+      estimator.AddErrorIndicator(E, B, total_domain_energy, indicator);
     }
 
     // Final postprocessing & printing.
@@ -266,31 +252,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
   B = 0.0;
 
   // Initialize structures for storing and reducing the results of error estimation.
-  const bool is_2d = (space_op.GetNDSpace().Dimension() < 3);
-  std::unique_ptr<TimeDependentFluxErrorEstimator<ComplexVector>> estimator_3d;
-  std::unique_ptr<BoundaryModeFluxErrorEstimator<ComplexVector>> estimator_2d;
-  if (is_2d)
-  {
-    estimator_2d = std::make_unique<BoundaryModeFluxErrorEstimator<ComplexVector>>(
-        space_op.GetMaterialOp(), space_op.GetNDSpaces(), space_op.GetRTSpaces(),
-        space_op.GetCurlSpace(), space_op.GetH1Spaces(), iodata.solver.linear.estimator_tol,
-        iodata.solver.linear.estimator_max_it, 0, iodata.solver.linear.estimator_mg);
-  }
-  else
-  {
-    estimator_3d = std::make_unique<TimeDependentFluxErrorEstimator<ComplexVector>>(
-        space_op.GetMaterialOp(), space_op.GetNDSpaces(), space_op.GetRTSpaces(),
-        iodata.solver.linear.estimator_tol, iodata.solver.linear.estimator_max_it, 0,
-        iodata.solver.linear.estimator_mg);
-  }
-  auto AddEstimate =
-      [&](const ComplexVector &E, const ComplexVector &B, double Et, ErrorIndicator &ind)
-  {
-    if (is_2d)
-      estimator_2d->AddErrorIndicator(E, B, Et, ind);
-    else
-      estimator_3d->AddErrorIndicator(E, B, Et, ind);
-  };
+  const FluxErrorEstimator<ComplexVector> estimator(space_op, iodata);
   ErrorIndicator indicator;
 
   // If using Floquet BCs, a correction term (kp x E) needs to be added to the B field.
@@ -358,7 +320,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
     // Measure domain energies for the error indicator only. Don't exchange face_nbr_data,
     // unless printing paraview fields.
     auto total_domain_energy = post_op.MeasureDomainFieldEnergyOnly(E, B);
-    AddEstimate(E, B, total_domain_energy, indicator);
+    estimator.AddErrorIndicator(E, B, total_domain_energy, indicator);
   };
 
   // Loop excitations to add to PROM.

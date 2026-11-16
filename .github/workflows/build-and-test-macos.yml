@@ -20,12 +20,12 @@ concurrency:
 jobs:
   # Filter to allow skipping the test if no relevant changes occurred.
   filter:
-    runs-on: macos-15
+    runs-on: ubuntu-latest
     outputs:
       test: ${{ steps.filter.outputs.test }}
     steps:
-      - uses: actions/checkout@v6
-      - uses: dorny/paths-filter@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         id: filter
         with:
           filters: |
@@ -128,7 +128,7 @@ jobs:
 
     runs-on: macos-15-xlarge
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: needs.filter.outputs.test == 'true'
         with:
           submodules: 'recursive'
@@ -154,6 +154,9 @@ jobs:
           brew install libomp
           echo "CPATH=/opt/homebrew/opt/libomp/include:$CPATH" >> $GITHUB_ENV
           echo "LIBRARY_PATH=/opt/homebrew/opt/libomp/lib:$LIBRARY_PATH" >> $GITHUB_ENV
+          # Idle libomp workers otherwise sleep between parallel regions here, and
+          # the wake-ups make small regression cases 3-4x slower.
+          echo "OMP_WAIT_POLICY=active" >> $GITHUB_ENV
 
       - name: Install math libraries (ARMPL)
         if: needs.filter.outputs.test == 'true' && matrix.math-libs == 'armpl'
@@ -172,7 +175,7 @@ jobs:
         # compilers.
       - name: Setup cmake
         if: needs.filter.outputs.test == 'true'
-        uses: jwlawson/actions-setup-cmake@v2
+        uses: jwlawson/actions-setup-cmake@0d6a7d60b009d01c9e7523be22153ff8f19460d3 # v2.2.0
         with:
           cmake-version: '3.31.8'
 

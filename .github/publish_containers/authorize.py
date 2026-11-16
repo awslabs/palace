@@ -12,7 +12,8 @@ build passes no authorization data of its own.
 
 Two entry points, one decision function:
 
-- default: emit ``authorized=`` / ``selector=`` to ``$GITHUB_OUTPUT``.
+- default: emit ``authorized=`` / ``selector=`` to ``$GITHUB_OUTPUT``, and
+  exit non-zero if a release tag is rejected.
 - ``--reverify EXPECTED``: recompute the decision immediately before the writes
   (TOCTOU guard) and fail unless it still authorizes the same selector.
 
@@ -22,8 +23,8 @@ API:
 - the triggering event is one of:
   - push to `main`, and `main` still points at the built commit
     -> publishes the `main` channel;
-  - push of a `vX.Y.Z` release tag that still points at the built commit
-    -> publishes the `X.Y.Z` channel;
+  - push of a `vX.Y.Z` release tag that still points at the built commit,
+    and that commit is on `main` -> publishes the `X.Y.Z` channel;
   - manual `workflow_dispatch` on a branch that still points at the built
     commit -> publishes `dev-<branch>`;
   - a same-repo `pull_request` whose head (matched by sha AND ref) is an OPEN
@@ -158,6 +159,19 @@ class GitHubApi:
             sha = (tag.get("object") or {}).get("sha")
         return sha
 
+    def is_on_main(self, sha: str) -> bool:
+        """Whether ``sha`` is ``main`` or one of its ancestors.
+
+        Comparing ``sha...refs/heads/main`` reports ``main`` as ``ahead`` of
+        (or ``identical`` to) ``sha`` exactly when ``main`` contains it. The
+        full ref keeps a tag named ``main`` from being compared instead. An
+        unknown sha is a 404, which reads as not on main.
+        """
+        comparison = self._get(f"repos/{self.repo}/compare/{sha}...refs/heads/main")
+        if not isinstance(comparison, dict):
+            return False
+        return comparison.get("status") in ("ahead", "identical")
+
     def pr_for_head(self, sha: str, ref: str) -> tuple[int, str, str] | None:
         """(PR number, head repo full_name, state) for the PR whose head is
         ``sha`` AND whose head branch is ``ref``.
@@ -196,9 +210,9 @@ class GitHubApi:
 def decide(facts, api) -> Decision:
     """Decide whether ``facts`` authorizes a publish, and to which selector.
 
-    ``api`` is anything providing ref_sha(kind, name), pr_for_head(sha, ref),
-    and pr_has_label(number, label) — the live GitHubApi in production, a fake
-    in tests. Every branch re-derives from trusted facts / live API state, so
+    ``api`` is anything providing ref_sha(kind, name), is_on_main(sha),
+    pr_for_head(sha, ref), and pr_has_label(number, label) — the live GitHubApi
+    in production, a fake in tests. Every branch re-derives from trusted facts / live API state, so
     calling ``decide`` again just before the writes is a valid TOCTOU re-check.
     """
     # Forks never publish, regardless of event. A maintainer approving a fork
@@ -215,10 +229,14 @@ def decide(facts, api) -> Decision:
                 return Decision(True, "main", f"push to main at {facts.head_sha}")
             return _reject("main does not currently point at the built sha")
         if RELEASE_TAG_RE.match(facts.head_branch):
-            if api.ref_sha("tags", facts.head_branch) == facts.head_sha:
-                selector = facts.head_branch[1:]  # drop leading "v"
-                return Decision(True, selector, f"release tag {facts.head_branch} at {facts.head_sha}")
-            return _reject(f"release tag {facts.head_branch} does not point at the built sha")
+            if api.ref_sha("tags", facts.head_branch) != facts.head_sha:
+                return _reject(f"release tag {facts.head_branch} does not point at the built sha")
+            # Anyone who can push can create a tag, so the tag alone does not
+            # mean the code was reviewed. Require the commit to be on main.
+            if not api.is_on_main(facts.head_sha):
+                return _reject(f"release tag {facts.head_branch} points at {facts.head_sha}, which is not on main")
+            selector = facts.head_branch[1:]  # drop leading "v"
+            return Decision(True, selector, f"release tag {facts.head_branch} at {facts.head_sha}")
         return _reject(f"push ref '{facts.head_branch}' is neither main nor a vX.Y.Z release tag")
 
     if facts.event == "workflow_dispatch":
@@ -293,6 +311,12 @@ def main(argv: list[str] | None = None) -> int:
         with open(out_path, "a", encoding="utf-8") as fh:
             fh.write(f"authorized={authorized}\n")
             fh.write(f"selector={decision.selector}\n")
+    # A rejected push to main is routine (main moved on, and the newer build
+    # publishes), but a rejected release tag is a release that never publishes:
+    # fail the job instead of finishing green.
+    if not decision.authorized and facts.event == "push" and RELEASE_TAG_RE.match(facts.head_branch):
+        print(f"::error::Release {facts.head_branch} not published: {decision.reason}", file=sys.stderr)
+        return 1
     return 0
 
 

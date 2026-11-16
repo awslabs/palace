@@ -92,10 +92,13 @@ impedance of free space. Similarly, the non-dimensional electric field `E` is
 !!! warning "Finite element considerations"
 
     Changing mesh units requires additional rescaling for fields defined on
-    H(curl) and H(div) spaces to convert them to proper physical units. This is a
-    function of the length scales inherent to the reference element transformations
-    for Nédélec and Raviart Thomas spaces, used for H(curl) and H(div) respectively.
-    See the `ScaleGridFunctions` function in `PostOperator` for details.
+    H(curl), H(div), and L2 spaces with `INTEGRAL` map type (such as the out-of-plane
+    magnetic flux density in 2D) to convert them to proper physical units. Scaling the
+    mesh by ``L`` scales the values of these fields mapped from the reference element by
+    ``L^{-p}``, with ``p = 1`` for H(curl) (Nédélec), ``p = d - 1`` for H(div)
+    (Raviart-Thomas), and ``p = d`` for L2 with `INTEGRAL` map type, for a mesh of
+    dimension ``d``. See `ScaleGridFunction` in `palace/models/postoperator.cpp` for
+    details.
 
 ## Style guide
 
@@ -203,13 +206,13 @@ tooling can identify the schema without custom extensions.
 SchemaVer uses the format `MODEL-REVISION-ADDITION`:
 
   - MODEL: a breaking change to the schema's model — e.g. removing or renaming a field,
-    tightening validation so a previously-valid config is rejected, or changing the
+    tightening validation so a previously-working config is rejected, or changing the
     meaning or the default of a value.
   - REVISION: a backward-compatible change that extends the model — e.g. a new optional
     field, a new allowed enum value, or relaxing a constraint so previously-invalid
     configs are now accepted.
-  - ADDITION: a change that does not affect which configurations are accepted — e.g.
-    updating a `description`, `title`, or other annotation.
+  - ADDITION: a change that does not affect which configurations are accepted and working
+    — e.g. updating a `description`, `title`, or other annotation.
 
 #### Relationship to the *Palace* version
 
@@ -233,11 +236,12 @@ documentation build generates this table from that file.
 <!-- BEGIN GENERATED SCHEMA COMPATIBILITY TABLE -->
 ```
 
-| Schema version | First *Palace* release | Notes                              |
-|:--------------:|:----------------------:|:---------------------------------- |
-| `1-0-0`        | `0.17.0`               | First explicitly-versioned schema. |
-| `1-6-0`        | `0.18.0`               |                                    |
-| `1-7-0`        | `0.18.1`               |                                    |
+| Schema version | First *Palace* release | Notes                                                                                                                                                                                                                                                                                                                                                                                      |
+|:--------------:|:----------------------:|:------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `1-0-0`        | `0.17.0`               | First explicitly-versioned schema.                                                                                                                                                                                                                                                                                                                                                         |
+| `1-6-0`        | `0.18.0`               |                                                                                                                                                                                                                                                                                                                                                                                            |
+| `1-7-0`        | `0.18.1`               |                                                                                                                                                                                                                                                                                                                                                                                            |
+| `4-1-0`        | `0.19.0`               | Breaking: `FluxLoop` keys renamed ([PR 929](https://github.com/awslabs/palace/pull/929)), `NSamples` removed ([PR 1049](https://github.com/awslabs/palace/pull/1049)), interior boundaries not cracked by default ([PR 994](https://github.com/awslabs/palace/pull/994)); see the [0.19.0 CHANGELOG](https://github.com/awslabs/palace/blob/main/CHANGELOG.md#0190---2026-11-02) for more. |
 
 ```@raw html
 <!-- END GENERATED SCHEMA COMPATIBILITY TABLE -->
@@ -251,12 +255,16 @@ schema version bump in that same PR. This means the repository will accumulate m
 
  1. Determine the bump size. Classify your schema change using the table above:
 
-      + MODEL: removing/renaming a field, tightening validation, changing defaults or
-        semantics (breaking).
+      + MODEL: removing/renaming a field, tightening validation so a previously-working
+        config is rejected, changing defaults or semantics (breaking).
       + REVISION: new optional field, new enum value, relaxing a constraint
         (backward-compatible extension).
       + ADDITION: updating a `description`, `title`, or other annotation (no effect on
-        accepted configurations).
+        accepted configurations). Tightening validation is also an ADDITION, not a MODEL
+        bump, when the newly rejected configurations never produced valid solver output:
+        ones the parser already rejected, or ones that only ran through a silent error
+        (turning a silent error into a loud one is a bug fix, and the accepted set of
+        *working* configurations is unchanged).
 
  2. Bump the `"$id"` version in `scripts/schema/config-schema.json`.
     For example, going from `1-0-0` to `1-1-0`:
@@ -544,7 +552,7 @@ Release tags (`vX.Y.Z`) build the full microarchitecture matrix instead, so
 a release publishes a tuned image for each target:
 
   - `x86_64_v3`, `x86_64_v4`, `sapphirerapids` (x64)
-  - `aarch64`, `neoverse_v1`, `neoverse_v2` (arm64)
+  - `aarch64`, `neoverse_v1`, `neoverse_v2`, `neoverse_v3` (arm64)
 
 ### Publishing a `dev-<branch>` prototype from a branch
 

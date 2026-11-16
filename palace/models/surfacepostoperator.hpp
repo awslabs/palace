@@ -63,6 +63,10 @@ private:
     InterfaceDielectric type;
     double t, epsilon, tandelta;
 
+    // Marker of boundary attributes of interior boundaries separating the fields on their
+    // two sides (thin metal sheets), for which the energies of both sides are summed.
+    mfem::Array<int> sum_sides_marker;
+
     InterfaceDielectricData(const config::InterfaceDielectricData &data,
                             const mfem::ParMesh &mesh,
                             const mfem::Array<int> &bdr_attr_marker);
@@ -73,6 +77,9 @@ private:
   struct FarFieldData : public SurfaceData
   {
     std::vector<std::pair<double, double>> thetaphis;
+
+    // Interior surface (not only external boundaries), which requires the libCEED path.
+    bool interior = false;
 
     FarFieldData() = default;
     FarFieldData(const config::FarFieldPostData &data, const mfem::ParMesh &mesh,
@@ -110,10 +117,14 @@ public:
   std::map<int, InterfaceDielectricData> eps_surfs;
   FarFieldData farfield;
 
+  // Interface dielectric energies on interior boundaries with attributes in
+  // sheet_attributes, which separate the fields on their two sides, sum the energies of
+  // both sides.
   SurfacePostOperator(const config::BoundaryPostData &postpro, ProblemType problem_type,
                       const MaterialOperator &mat_op,
                       mfem::ParFiniteElementSpace &h1_fespace,
-                      mfem::ParFiniteElementSpace &nd_fespace);
+                      mfem::ParFiniteElementSpace &nd_fespace,
+                      const std::vector<int> &sheet_attributes = {});
   SurfacePostOperator(const IoData &iodata, const MaterialOperator &mat_op,
                       mfem::ParFiniteElementSpace &h1_fespace,
                       mfem::ParFiniteElementSpace &nd_fespace);

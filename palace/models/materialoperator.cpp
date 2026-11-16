@@ -178,6 +178,7 @@ void MaterialOperator::SetUpMaterialProperties(
     mat_muinv_scalar.SetSize(1, 1, nmats);
     mat_epsilon_scalar.SetSize(1, 1, nmats);
     mat_epsilon_imag_scalar.SetSize(1, 1, nmats);
+    mat_epsilon_abs_scalar.SetSize(1, 1, nmats);
     mat_sigma_scalar.SetSize(1, 1, nmats);
     mat_invLondon_scalar.SetSize(1, 1, nmats);
   }
@@ -305,6 +306,16 @@ void MaterialOperator::SetUpMaterialProperties(
       mfem::DenseMatrix epstd_3d(3, 3);
       Mult(mat_eps_3d, mat_td_3d, epstd_3d);
       mat_epsilon_imag_scalar(count)(0, 0) = -ProjectNormal(epstd_3d);
+
+      // ε * √(I + tan(δ) * tan(δ)ᵀ), as for the in-plane components below.
+      mfem::DenseMatrix tdtdt_3d(3, 3), epsabs_3d(3, 3);
+      MultAAt(mat_td_3d, tdtdt_3d);
+      for (int d = 0; d < 3; d++)
+      {
+        tdtdt_3d(d, d) += 1.0;
+      }
+      Mult(mat_eps_3d, linalg::MatrixSqrt(tdtdt_3d), epsabs_3d);
+      mat_epsilon_abs_scalar(count)(0, 0) = ProjectNormal(epsabs_3d);
 
       mfem::DenseMatrix mat_sigma_3d = internal::mat::ToDenseMatrix(data.sigma);
       mat_sigma_scalar(count)(0, 0) = ProjectNormal(mat_sigma_3d);
@@ -608,6 +619,32 @@ bool MaterialPropertyCoefficient::IsExactlyZero() const
     }
   }
   return true;
+}
+
+void MaterialPropertyCoefficient::AddNonzeroAttributes(std::vector<int> &attr_list) const
+{
+  const int mat_size = mat_coeff.SizeI() * mat_coeff.SizeJ();
+  const auto *data = mat_coeff.Data();
+  for (int i = 0; i < attr_mat.Size(); i++)
+  {
+    const int k = attr_mat[i];
+    if (k < 0)
+    {
+      // Attributes with no assigned material use a zero coefficient.
+      continue;
+    }
+    MFEM_ASSERT(k < mat_coeff.SizeK(),
+                "Invalid attribute material property for MaterialPropertyCoefficient ("
+                    << k << " vs. " << mat_coeff.SizeK() << ")!");
+    for (int j = 0; j < mat_size; j++)
+    {
+      if (data[mat_size * k + j] != 0.0)
+      {
+        attr_list.push_back(i + 1);
+        break;
+      }
+    }
+  }
 }
 
 namespace

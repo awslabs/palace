@@ -11,6 +11,19 @@
 namespace palace
 {
 
+namespace
+{
+
+// A += B for an assembled square operator, keeping the diagonal entry first in each row.
+void AddToAssembled(std::unique_ptr<mfem::HypreParMatrix> &A, const mfem::HypreParMatrix &B)
+{
+  A.reset(mfem::ParAdd(A.get(), &B));
+  hypre_ParCSRMatrixSetNumNonzeros(*A);
+  hypre_CSRMatrixReorder(hypre_ParCSRMatrixDiag((hypre_ParCSRMatrix *)*A));
+}
+
+}  // namespace
+
 ParOperator::ParOperator(std::unique_ptr<Operator> &&dA, const Operator *pA,
                          const FiniteElementSpace &trial_fespace,
                          const FiniteElementSpace &test_fespace, bool test_restrict)
@@ -43,9 +56,24 @@ void ParOperator::SetEssentialTrueDofs(const mfem::Array<int> &tdof_list,
               "only DiagonalPolicy::DIAG_ONE or DiagonalPolicy::DIAG_ZERO!");
   MFEM_VERIFY(height == width, "Set essential true dofs for both test and trial spaces "
                                "for rectangular ParOperator!");
+  MFEM_VERIFY(!B,
+              "Set essential true dofs before adding a parallel matrix to ParOperator!");
   tdof_list.Read();
   dbc_tdof_list.MakeRef(tdof_list);
   diag_policy = policy;
+}
+
+void ParOperator::AddParallelMatrix(const mfem::HypreParMatrix &B_)
+{
+  MFEM_VERIFY(!B && height == width && B_.Height() == height && B_.Width() == width,
+              "Invalid parallel matrix for square ParOperator!");
+  // The diagonal policy at the essential true dofs is kept by RAP, so B contributes zero.
+  B = std::make_unique<mfem::HypreParMatrix>(B_);
+  B->EliminateBC(dbc_tdof_list, DiagonalPolicy::DIAG_ZERO);
+  if (RAP)
+  {
+    AddToAssembled(RAP, *B);
+  }
 }
 
 Operator::DiagonalPolicy ParOperator::GetDiagonalPolicy() const
@@ -58,6 +86,7 @@ Operator::DiagonalPolicy ParOperator::GetDiagonalPolicy() const
 void ParOperator::EliminateRHS(const Vector &x, Vector &b) const
 {
   MFEM_VERIFY(A, "No local matrix available for ParOperator::EliminateRHS!");
+  MFEM_VERIFY(!B, "ParOperator::EliminateRHS does not support an added parallel matrix!");
   auto &lx = trial_fespace.GetLVector<Vector>();
   auto &ly = GetTestLVector();
   {
@@ -105,29 +134,40 @@ mfem::HypreParMatrix &ParOperator::ParallelAssemble(bool skip_zeros) const
 
   hypre_ParCSRMatrix *hA = hypre_ParCSRMatrixCreate(
       trial_fespace.GetComm(), test_fespace.GlobalVSize(), trial_fespace.GlobalVSize(),
-      test_fespace.Get().GetDofOffsets(), trial_fespace.Get().GetDofOffsets(), 0, sA->NNZ(),
-      0);
+      test_fespace.GetDofOffsets(), trial_fespace.GetDofOffsets(), 0, sA->NNZ(), 0);
   hypre_CSRMatrix *hA_diag = hypre_ParCSRMatrixDiag(hA);
   hypre_ParCSRMatrixDiag(hA) = *const_cast<hypre::HypreCSRMatrix *>(sA);
   hypre_ParCSRMatrixInitialize(hA);
 
-  const mfem::HypreParMatrix *P = trial_fespace.Get().Dof_TrueDof_Matrix();
+  const mfem::HypreParMatrix *P = trial_fespace.Dof_TrueDof_Matrix();
   if (!use_R)
   {
-    const mfem::HypreParMatrix *Rt = test_fespace.Get().Dof_TrueDof_Matrix();
-    RAP = std::make_unique<mfem::HypreParMatrix>(hypre_ParCSRMatrixRAPKT(*Rt, hA, *P, 1, 1),
-                                                 true);
+    const mfem::HypreParMatrix *Rt = test_fespace.Dof_TrueDof_Matrix();
+    if (trial_fespace.IsBroken() || test_fespace.IsBroken())
+    {
+      // hypre_ParCSRMatrixRAPKT reads out of bounds when a process has more columns of Rt
+      // (true DOFs) than rows of A (L-DOFs) and no off-diagonal columns of A P, which can
+      // happen for broken spaces, where a process owns the copies of split true DOFs which
+      // are read only by other processes. Compute Rtᵀ (A P) instead.
+      hypre_ParCSRMatrix *AP = hypre_ParCSRMatMat(hA, *P);
+      RAP = std::make_unique<mfem::HypreParMatrix>(hypre_ParCSRTMatMatKT(*Rt, AP, 1), true);
+      hypre_ParCSRMatrixDestroy(AP);
+    }
+    else
+    {
+      RAP = std::make_unique<mfem::HypreParMatrix>(
+          hypre_ParCSRMatrixRAPKT(*Rt, hA, *P, 1, 1), true);
+    }
   }
   else
   {
-    mfem::HypreParMatrix *hR = new mfem::HypreParMatrix(
+    mfem::HypreParMatrix hR(
         test_fespace.GetComm(), test_fespace.GlobalTrueVSize(), test_fespace.GlobalVSize(),
-        test_fespace.Get().GetTrueDofOffsets(), test_fespace.Get().GetDofOffsets(),
+        test_fespace.GetTrueDofOffsets(), test_fespace.GetDofOffsets(),
         const_cast<mfem::SparseMatrix *>(test_fespace.GetRestrictionMatrix()));
     hypre_ParCSRMatrix *AP = hypre_ParCSRMatMat(hA, *P);
-    RAP = std::make_unique<mfem::HypreParMatrix>(hypre_ParCSRMatMat(*hR, AP), true);
+    RAP = std::make_unique<mfem::HypreParMatrix>(hypre_ParCSRMatMat(hR, AP), true);
     hypre_ParCSRMatrixDestroy(AP);
-    delete hR;
   }
 
   hypre_ParCSRMatrixDiag(hA) = hA_diag;
@@ -148,6 +188,10 @@ mfem::HypreParMatrix &ParOperator::ParallelAssemble(bool skip_zeros) const
   {
     MFEM_VERIFY(dbc_tdof_list.Size() == 0,
                 "Essential BC elimination is only available for square ParOperator!");
+  }
+  if (B)
+  {
+    AddToAssembled(RAP, *B);
   }
 
   return *RAP;
@@ -192,6 +236,13 @@ void ParOperator::AssembleDiagonal(Vector &diag) const
       linalg::SetSubVector(diag, dbc_tdof_list, 0.0);
     }
   }
+  if (B)
+  {
+    // Search each row for its diagonal entry: B need not store one, let alone first.
+    B->HypreRead();
+    hypre_CSRMatrixExtractDiagonal(hypre_ParCSRMatrixDiag((hypre_ParCSRMatrix *)*B),
+                                   diag.ReadWrite(), 10);
+  }
 }
 
 void ParOperator::Mult(const Vector &x, Vector &y) const
@@ -233,6 +284,10 @@ void ParOperator::Mult(const Vector &x, Vector &y) const
       linalg::SetSubVector(y, dbc_tdof_list, 0.0);
     }
   }
+  if (B)
+  {
+    B->Mult(1.0, x, 1.0, y);
+  }
 }
 
 void ParOperator::MultTranspose(const Vector &x, Vector &y) const
@@ -273,6 +328,10 @@ void ParOperator::MultTranspose(const Vector &x, Vector &y) const
     {
       linalg::SetSubVector(y, dbc_tdof_list, 0.0);
     }
+  }
+  if (B)
+  {
+    B->MultTranspose(1.0, x, 1.0, y);
   }
 }
 
@@ -317,6 +376,10 @@ void ParOperator::AddMult(const Vector &x, Vector &y, const double a) const
     }
   }
   y.Add(a, ty);
+  if (B)
+  {
+    B->Mult(a, x, 1.0, y);
+  }
 }
 
 void ParOperator::AddMultTranspose(const Vector &x, Vector &y, const double a) const
@@ -360,6 +423,10 @@ void ParOperator::AddMultTranspose(const Vector &x, Vector &y, const double a) c
     }
   }
   y.Add(a, tx);
+  if (B)
+  {
+    B->MultTranspose(a, x, 1.0, y);
+  }
 }
 
 void ParOperator::RestrictionMatrixMult(const Vector &ly, Vector &ty) const
@@ -400,7 +467,7 @@ ComplexParOperator::ComplexParOperator(std::unique_ptr<Operator> &&dAr,
                                        bool test_restrict)
   : ComplexOperator(test_fespace.GetTrueVSize(), trial_fespace.GetTrueVSize()),
     data_A((dAr != nullptr || dAi != nullptr)
-               ? ceed::CreateComplexOperator(std::move(dAr), std::move(dAi))
+               ? ceed::CreateComplexOperator(std::move(dAr), std::move(dAi), trial_fespace)
                : std::make_unique<ComplexWrapperOperator>(pAr, pAi)),
     A(data_A.get()), trial_fespace(trial_fespace), test_fespace(test_fespace),
     use_R(test_restrict), diag_policy(Operator::DiagonalPolicy::DIAG_ONE),
@@ -975,5 +1042,35 @@ template std::unique_ptr<ComplexParOperator>
     BuildParSumOperator(std::complex<double> (&&)[3], const ComplexOperator *(&&)[3], bool);
 template std::unique_ptr<ComplexParOperator>
     BuildParSumOperator(std::complex<double> (&&)[4], const ComplexOperator *(&&)[4], bool);
+
+namespace linalg
+{
+
+std::unique_ptr<mfem::HypreParMatrix>
+BlockDiagonalParMatrix(MPI_Comm comm, HYPRE_BigInt global_rows, HYPRE_BigInt global_cols,
+                       HYPRE_BigInt *row_starts, HYPRE_BigInt *col_starts,
+                       std::unique_ptr<mfem::SparseMatrix> &&diag)
+{
+  diag->Finalize();
+  auto *offd = new mfem::SparseMatrix(diag->Height(), 0, 0);
+  offd->Finalize();
+  return std::make_unique<mfem::HypreParMatrix>(comm, global_rows, global_cols, row_starts,
+                                                col_starts, diag.release(), offd, nullptr,
+                                                true);
+}
+
+std::unique_ptr<mfem::HypreParMatrix> RAP(const mfem::HypreParMatrix &A,
+                                          const mfem::HypreParMatrix &P)
+{
+  hypre_ParCSRMatrix *AP = hypre_ParCSRMatMat(const_cast<mfem::HypreParMatrix &>(A),
+                                              const_cast<mfem::HypreParMatrix &>(P));
+  auto PtAP = std::make_unique<mfem::HypreParMatrix>(
+      hypre_ParCSRTMatMatKT(const_cast<mfem::HypreParMatrix &>(P), AP, 1), true);
+  hypre_ParCSRMatrixDestroy(AP);
+  hypre_ParCSRMatrixSetNumNonzeros(*PtAP);
+  return PtAP;
+}
+
+}  // namespace linalg
 
 }  // namespace palace

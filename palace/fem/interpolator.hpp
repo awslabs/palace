@@ -10,17 +10,6 @@
 #include <mfem.hpp>
 #include "utils/configfile.hpp"
 
-namespace mfem
-{
-
-// Forward declaration so the GSLIB point-locator interpolation helpers below can be
-// declared unconditionally (matching the other functions in this header, which gate only
-// their definitions on MFEM_USE_GSLIB). The type is fully defined by <mfem.hpp> when GSLIB
-// is enabled; without it, only this declaration exists and the functions abort at runtime.
-class FindPointsGSLIB;
-
-}  // namespace mfem
-
 namespace palace
 {
 
@@ -67,29 +56,6 @@ void InterpolateFunction(const mfem::GridFunction &U, mfem::GridFunction &V);
 void InterpolateFunction(const mfem::Vector &xyz, const mfem::GridFunction &U,
                          mfem::Vector &V,
                          mfem::Ordering::Type ordering = mfem::Ordering::byNODES);
-
-// Compute the line integral V = ∫ F · dl along a straight line from p1 to p2 using GSLIB
-// interpolation. The field F is a real-valued vector ParGridFunction. Uses Gauss-Legendre
-// quadrature of the specified order on [0,1]. Returns the scalar integral value.
-double ComputeLineIntegral(const mfem::Vector &p1, const mfem::Vector &p2,
-                           const mfem::ParGridFunction &field, int quad_order);
-
-// Setup a reusable GSLIB point locator on a fixed mesh. The geometric Setup is the
-// expensive step (builds a spatial hash over all elements) and depends only on the mesh,
-// so callers that interpolate repeatedly on it (e.g. wave-port voltage-path line integrals
-// over a frequency sweep) should Setup once and reuse the operator via the overloads below.
-// Requires MFEM_USE_GSLIB.
-void SetupInterpolator(mfem::FindPointsGSLIB &op, mfem::Mesh &mesh);
-
-// As above, but using a pre-Setup point locator (op.Setup already called on U's mesh).
-void InterpolateFunction(mfem::FindPointsGSLIB &op, const mfem::Vector &xyz,
-                         const mfem::GridFunction &U, mfem::Vector &V,
-                         mfem::Ordering::Type ordering = mfem::Ordering::byNODES);
-
-// As ComputeLineIntegral, but reusing a pre-Setup point locator.
-double ComputeLineIntegral(mfem::FindPointsGSLIB &op, const mfem::Vector &p1,
-                           const mfem::Vector &p2, const mfem::ParGridFunction &field,
-                           int quad_order);
 
 }  // namespace fem
 

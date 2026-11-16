@@ -48,10 +48,16 @@ TEST_CASE("SurfaceRationalImpedanceOperator",
 {
   auto serial_mesh = std::make_unique<mfem::Mesh>(
       mfem::Mesh::MakeCartesian3D(1, 1, 1, mfem::Element::TETRAHEDRON));
+  if (Mpi::Size(Mpi::World()) > serial_mesh->GetNE())
+  {
+    SKIP("Mesh has fewer elements than processes");
+  }
   auto par_mesh = std::make_unique<mfem::ParMesh>(Mpi::World(), *serial_mesh);
   Mesh palace_mesh(std::move(par_mesh));
 
-  REQUIRE(palace_mesh.GetNE() > 0);
+  int min_ne = palace_mesh.GetNE();
+  Mpi::GlobalMin(1, &min_ne, Mpi::World());
+  REQUIRE(min_ne > 0);
 
   config::MaterialData material;
   material.attributes = {1};

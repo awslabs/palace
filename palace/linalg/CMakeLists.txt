@@ -24,12 +24,14 @@ target_sources(${LIB_TARGET_NAME}
   ${CMAKE_CURRENT_SOURCE_DIR}/jacobi.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/ksp.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/iterative.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/lowrank.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/mumps.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/nleps.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/operator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/rap.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/slepc.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/solver.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/spectralnorm.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/strumpack.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/superlu.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/vector.cpp
@@ -43,6 +45,7 @@ set(TARGET_SOURCES_DEVICE
   ${CMAKE_CURRENT_SOURCE_DIR}/cudss.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/densematrix.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/jacobi.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/lowrank.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/operator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/vector.cpp
   PARENT_SCOPE

@@ -186,6 +186,15 @@ void DivFreeSolver<VecType>::Mult(VecType &y) const
   }
 }
 
+template <typename VecType>
+void DivFreeSolver<VecType>::Mult(VecType &y, double tol) const
+{
+  const double tol0 = ksp->GetRelTol();
+  ksp->SetRelTol(tol);
+  Mult(y);
+  ksp->SetRelTol(tol0);
+}
+
 template class DivFreeSolver<Vector>;
 template class DivFreeSolver<ComplexVector>;
 

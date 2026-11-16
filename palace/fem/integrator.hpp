@@ -4,6 +4,8 @@
 #ifndef PALACE_FEM_INTEGRATOR_HPP
 #define PALACE_FEM_INTEGRATOR_HPP
 
+#include <optional>
+#include <vector>
 #include <mfem.hpp>
 #include "fem/libceed/ceed.hpp"
 
@@ -62,22 +64,64 @@ public:
 
   virtual void SetMapTypes(int trial_type, int test_type) {}
 
+  // Sorted list of the (libCEED, 1-based) attributes on which the integrator's coefficients
+  // are not identically zero, or no value if the integrator may contribute on every
+  // attribute. Element contributions from the other attributes are exactly zero, so
+  // assembly can skip those elements.
+  virtual std::optional<std::vector<int>> GetNonzeroCoefficientAttributes() const;
+
   void AssembleQuadratureData() { assemble_q_data = true; }
 };
 
-// Integrator for a(u, v) = (Q u, v) for H1 elements (also for vector (H1)ᵈ spaces).
+// Integrator for a(u, v) = (Q u, v) for H1 and L2 elements (also for vector (H1)ᵈ
+// spaces).
 class MassIntegrator : public BilinearFormIntegrator
 {
+protected:
+  int trial_map_type = mfem::FiniteElement::UNKNOWN_MAP_TYPE;
+  int test_map_type = mfem::FiniteElement::UNKNOWN_MAP_TYPE;
+
 public:
   using BilinearFormIntegrator::BilinearFormIntegrator;
 
   void Assemble(Ceed ceed, CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
                 CeedBasis trial_basis, CeedBasis test_basis, CeedVector geom_data,
                 CeedElemRestriction geom_data_restr, CeedOperator *op) const override;
+
+  void SetMapTypes(int trial_type, int test_type) override
+  {
+    trial_map_type = trial_type;
+    test_map_type = test_type;
+  }
 };
 
 // Integrator for a(u, v) = (Q u, v) for vector finite elements.
 class VectorFEMassIntegrator : public BilinearFormIntegrator
+{
+protected:
+  int trial_map_type = mfem::FiniteElement::UNKNOWN_MAP_TYPE;
+  int test_map_type = mfem::FiniteElement::UNKNOWN_MAP_TYPE;
+
+public:
+  using BilinearFormIntegrator::BilinearFormIntegrator;
+
+  void Assemble(Ceed ceed, CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
+                CeedBasis trial_basis, CeedBasis test_basis, CeedVector geom_data,
+                CeedElemRestriction geom_data_restr, CeedOperator *op) const override;
+
+  void SetMapTypes(int trial_type, int test_type) override
+  {
+    trial_map_type = trial_type;
+    test_map_type = test_type;
+  }
+};
+
+// Integrator for a(u, v) = (Q n x u, n x v) for Nedelec elements on the boundary of a 3D
+// domain, where n x u is the tangential trace of u rotated by 90° about the boundary normal
+// n. For H1 elements, it integrates a(u, v) = (Q n x grad u, n x grad v) instead, the
+// corresponding term of the auxiliary space operator (like DiffusionIntegrator for
+// VectorFEMassIntegrator).
+class RotatedVectorFEMassIntegrator : public BilinearFormIntegrator
 {
 protected:
   int trial_map_type = mfem::FiniteElement::UNKNOWN_MAP_TYPE;
@@ -134,8 +178,8 @@ public:
 class DiffusionMassIntegrator : public BilinearFormIntegrator
 {
 protected:
-  const MaterialPropertyCoefficient *Q_mass;
-  bool transpose_mass;
+  const MaterialPropertyCoefficient *Q_mass = nullptr;
+  bool transpose_mass = false;
 
 public:
   using BilinearFormIntegrator::BilinearFormIntegrator;
@@ -149,14 +193,16 @@ public:
   void Assemble(Ceed ceed, CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
                 CeedBasis trial_basis, CeedBasis test_basis, CeedVector geom_data,
                 CeedElemRestriction geom_data_restr, CeedOperator *op) const override;
+
+  std::optional<std::vector<int>> GetNonzeroCoefficientAttributes() const override;
 };
 
 // Integrator for a(u, v) = (Qc curl u, curl v) + (Qm u, v) for Nedelec elements.
 class CurlCurlMassIntegrator : public BilinearFormIntegrator
 {
 protected:
-  const MaterialPropertyCoefficient *Q_mass;
-  bool transpose_mass;
+  const MaterialPropertyCoefficient *Q_mass = nullptr;
+  bool transpose_mass = false;
 
 public:
   using BilinearFormIntegrator::BilinearFormIntegrator;
@@ -170,14 +216,16 @@ public:
   void Assemble(Ceed ceed, CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
                 CeedBasis trial_basis, CeedBasis test_basis, CeedVector geom_data,
                 CeedElemRestriction geom_data_restr, CeedOperator *op) const override;
+
+  std::optional<std::vector<int>> GetNonzeroCoefficientAttributes() const override;
 };
 
 // Integrator for a(u, v) = (Qd div u, div v) + (Qm u, v) for Raviart-Thomas elements.
 class DivDivMassIntegrator : public BilinearFormIntegrator
 {
 protected:
-  const MaterialPropertyCoefficient *Q_mass;
-  bool transpose_mass;
+  const MaterialPropertyCoefficient *Q_mass = nullptr;
+  bool transpose_mass = false;
 
 public:
   using BilinearFormIntegrator::BilinearFormIntegrator;
@@ -191,6 +239,8 @@ public:
   void Assemble(Ceed ceed, CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
                 CeedBasis trial_basis, CeedBasis test_basis, CeedVector geom_data,
                 CeedElemRestriction geom_data_restr, CeedOperator *op) const override;
+
+  std::optional<std::vector<int>> GetNonzeroCoefficientAttributes() const override;
 };
 
 // Integrator for a(u, v) = (Q grad u, v) for u in H1 and v in H(curl) or H(div).
@@ -225,7 +275,9 @@ public:
                 CeedElemRestriction geom_data_restr, CeedOperator *op) const override;
 };
 
-// Integrator for a(u, v) = (Q curl u, v) for u in H(curl) and v in H(div) or H(curl).
+// Integrator for a(u, v) = (Q curl u, v) for u in H(curl) and v in H(div) or H(curl). On
+// the boundary of a 3D domain (u and v in H(curl)), curl u is the curl of the tangential
+// trace of u, (n · curl u) n with the boundary normal n.
 class MixedVectorCurlIntegrator : public BilinearFormIntegrator
 {
 protected:
@@ -246,7 +298,9 @@ public:
   }
 };
 
-// Integrator for a(u, v) = -(Q u, curl v) for u in H(div) or H(curl) and v in H(curl).
+// Integrator for a(u, v) = -(Q u, curl v) for u in H(div) or H(curl) and v in H(curl). On
+// the boundary of a 3D domain (u and v in H(curl)), curl v is the curl of the tangential
+// trace of v, as for MixedVectorCurlIntegrator.
 class MixedVectorWeakCurlIntegrator : public BilinearFormIntegrator
 {
 protected:

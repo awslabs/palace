@@ -29,8 +29,8 @@ jobs:
     outputs:
       test: ${{ steps.filter.outputs.test }}
     steps:
-      - uses: actions/checkout@v6
-      - uses: dorny/paths-filter@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         id: filter
         with:
           filters: |
@@ -51,7 +51,7 @@ jobs:
     if: needs.filter.outputs.test == 'true'
     runs-on: [self-hosted, x64]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/palace-ci
         with:
           toolchain: gcc
@@ -62,7 +62,7 @@ jobs:
     if: needs.filter.outputs.test == 'true'
     runs-on: [self-hosted, gpu]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/palace-ci
         with:
           toolchain: gcc
@@ -74,7 +74,7 @@ jobs:
     if: needs.filter.outputs.test == 'true'
     runs-on: [self-hosted, x64]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/palace-ci
         with:
           toolchain: gcc
@@ -86,10 +86,11 @@ jobs:
     if: needs.filter.outputs.test == 'true'
     runs-on: [self-hosted, x64]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/palace-ci
         with:
           toolchain: llvm
+          variant: +enzyme
           additional-test-cases: transmon_coarse
 
   build-test-x64-intel:
@@ -97,7 +98,7 @@ jobs:
     if: needs.filter.outputs.test == 'true'
     runs-on: [self-hosted, x64]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/palace-ci
         with:
           toolchain: intel-oneapi
@@ -108,7 +109,7 @@ jobs:
     if: needs.filter.outputs.test == 'true'
     runs-on: [self-hosted, arm64]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/palace-ci
         with:
           toolchain: gcc
@@ -119,7 +120,7 @@ jobs:
     if: needs.filter.outputs.test == 'true'
     runs-on: [self-hosted, arm64]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/palace-ci
         with:
           toolchain: llvm
@@ -130,7 +131,7 @@ jobs:
     if: needs.filter.outputs.test == 'true'
     runs-on: [self-hosted, arm64]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/palace-ci
         with:
           toolchain: gcc
@@ -176,7 +177,7 @@ jobs:
       cancel-in-progress: false
       queue: max
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/refresh-buildcache-index
         with:
           spack-version: releases/v1.2
@@ -196,7 +197,7 @@ jobs:
           - solver: Default
     runs-on: [self-hosted, x64-4xlarge]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/run-regression-tests
         with:
           toolchain: gcc
@@ -216,7 +217,7 @@ jobs:
           - solver: cuDSS
     runs-on: [self-hosted, gpu-4xlarge]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/run-regression-tests
         with:
           toolchain: gcc
@@ -236,7 +237,7 @@ jobs:
           - solver: Default
     runs-on: [self-hosted, x64-4xlarge]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/run-regression-tests
         with:
           toolchain: gcc

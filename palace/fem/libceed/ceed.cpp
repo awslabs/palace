@@ -85,8 +85,7 @@ std::string Print()
   return std::string(ceed_resource);
 }
 
-void InitCeedVector(const mfem::Vector &v, Ceed ceed, CeedVector *cv, bool init,
-                    bool take_array)
+CeedMemType GetUsableMemType(Ceed ceed)
 {
   CeedMemType mem;
   PalaceCeedCall(ceed, CeedGetPreferredMemType(ceed, &mem));
@@ -94,6 +93,26 @@ void InitCeedVector(const mfem::Vector &v, Ceed ceed, CeedVector *cv, bool init,
   {
     mem = CEED_MEM_HOST;
   }
+  return mem;
+}
+
+void InitConstantLineBasis(Ceed ceed, CeedInt num_comp, CeedInt num_qpts, CeedBasis *basis)
+{
+  // Note: ceed::GetCeedTopology(CEED_TOPOLOGY_LINE) == 1.
+  mfem::Vector Bt(num_qpts), Gt(num_qpts), qX(num_qpts), qW(num_qpts);
+  Bt = 1.0;
+  Gt = 0.0;
+  qX = 0.0;
+  qW = 0.0;
+  PalaceCeedCall(ceed, CeedBasisCreateH1(ceed, CEED_TOPOLOGY_LINE, num_comp, 1, num_qpts,
+                                         Bt.GetData(), Gt.GetData(), qX.GetData(),
+                                         qW.GetData(), basis));
+}
+
+void InitCeedVector(const mfem::Vector &v, Ceed ceed, CeedVector *cv, bool init,
+                    bool take_array)
+{
+  const CeedMemType mem = GetUsableMemType(ceed);
   const auto *data = v.Read(mem == CEED_MEM_DEVICE);
   if (init)
   {
@@ -161,6 +180,24 @@ mfem::Geometry::Type GetMfemTopology(CeedElemTopology geom)
     default:
       MFEM_ABORT("This type of element is not supported!");
       return mfem::Geometry::SEGMENT;  // Silence compiler warning
+  }
+}
+
+CeedAssemblyScratch::CeedAssemblyScratch(Ceed ceed_) : ceed(ceed_) {}
+
+CeedAssemblyScratch::~CeedAssemblyScratch()
+{
+  for (auto &v : vectors)
+  {
+    PalaceCeedCall(ceed, CeedVectorDestroy(&v));
+  }
+  for (auto &r : restrictions)
+  {
+    PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&r));
+  }
+  for (auto &b : bases)
+  {
+    PalaceCeedCall(ceed, CeedBasisDestroy(&b));
   }
 }
 

@@ -1,0 +1,270 @@
+diff --git a/SRC/complex16/znrformat_loc3d.c b/SRC/complex16/znrformat_loc3d.c
+index 75a4ff536178e3efbfd68e9acb49f41cbb7f65c0..5bccfb692a904b7d65eaaa18296b6df454298d89 100755
+--- a/SRC/complex16/znrformat_loc3d.c
++++ b/SRC/complex16/znrformat_loc3d.c
+@@ -834,8 +834,9 @@ int zScatter_B3d(superlu_dist_options_t *options,
+     }
+     }
+ 
+-    // B1 <- BlockByBlock(B2d)
+-    if (grid3d->zscp.Iam == 0)
++    // B1 <- BlockByBlock(B2d) along Z: XY-major only. For Z-major, B1 is
++    // packed below following the X(2d) -> X(3d) send schedule.
++    if (grid3d->zscp.Iam == 0 && rankorder == 1)
+     {
+         for (i = 0; i < grid3d->npdep; ++i)
+         {
+@@ -915,7 +916,7 @@ int zScatter_B3d(superlu_dist_options_t *options,
+ 	int pxy = grid2d->nprow * grid2d->npcol;
+ 	int npdep = grid3d->npdep, dest, src, tag;
+ 	int nprocs = pxy * npdep; // all procs in 3D grid
+-	MPI_Request *recv_reqs = (MPI_Request*) SUPERLU_MALLOC(npdep * sizeof(MPI_Request));
++	MPI_Request *recv_reqs;
+ 	int num_procs_to_send;
+ 	int *procs_to_send_list;
+ 	int *send_count_list;
+@@ -1039,9 +1040,33 @@ int zScatter_B3d(superlu_dist_options_t *options,
+ 	    recv_count_list = A3d->recv_count_list;
+ 	}
+ 
++	/* B1 <- BlockByBlock(B2d) following the send schedule: one column-major
++	   (send_count_list[p] x nrhs) block per destination, in row order.
++	   (The Z-dimension blocks row_counts_int[] used for XY-major do not
++	   match these blocks when the row partition is not uniform.) */
++	if (grid3d->zscp.Iam == 0) {
++	    for (i = 0, p = 0; p < num_procs_to_send; ++p) {
++		k = send_count_list[p];
++		if (gpures) {
++#ifdef GPU_ACC
++		    zdevice_matcopy_wrap(k, nrhs, B1 + nrhs * i, k, B2d + i,
++					 A2d->m_loc);
++#else
++		    ABORT("GPURES requires GPU_ACC in zScatter_B3d().");
++#endif
++		} else {
++		    matCopy(k, nrhs, B1 + nrhs * i, k, B2d + i, A2d->m_loc);
++		}
++		i += k;
++	    }
++	}
++
+ 	/* 3. Perform the acutal communication */
+ 
+-	/* Post irecv first */
++	/* Post irecv first. A process receives from more than npdep processes
++	   of layer 0 when the row partition is not uniform. */
++	recv_reqs = (MPI_Request *)
++	    SUPERLU_MALLOC(SUPERLU_MAX(num_procs_to_recv, 1) * sizeof(MPI_Request));
+ 	i = 0; // tracking offset in the recv buffer Btmp[]
+ 	for (j = 0; j < num_procs_to_recv; ++j) {
+ 	    src = procs_recv_from_list[j];
+@@ -1102,15 +1127,23 @@ int zScatter_B3d(superlu_dist_options_t *options,
+ 
+     } /* else Z-major */
+ 
+-    // B <- colMajor(Btmp)
+-    if (gpures) {
++    /* B <- colMajor(Btmp). Btmp holds one column-major (count x nrhs) block
++       per message received: one (m_loc x nrhs) block for XY-major, one block
++       per source process for Z-major. */
++    int nblocks = (rankorder == 1) ? 1 : A3d->num_procs_to_recv;
++    int *counts = (rankorder == 1) ? &m_loc : A3d->recv_count_list;
++    for (i = 0, j = 0; j < nblocks; ++j) {
++	if (gpures) {
+ #ifdef GPU_ACC
+-	zdevice_matcopy_wrap(A3d->m_loc, nrhs, B, ldb, Btmp, A3d->m_loc);
++	    zdevice_matcopy_wrap(counts[j], nrhs, B + i, ldb, Btmp + nrhs * i,
++				 counts[j]);
+ #else
+-	ABORT("GPURES requires GPU_ACC in zScatter_B3d().");
++	    ABORT("GPURES requires GPU_ACC in zScatter_B3d().");
+ #endif
+-    } else {
+-    matCopy(A3d->m_loc, nrhs, B, ldb, Btmp, A3d->m_loc);
++	} else {
++	    matCopy(counts[j], nrhs, B + i, ldb, Btmp + nrhs * i, counts[j]);
++	}
++	i += counts[j];
+     }
+ 
+     /* free storage */
+diff --git a/SRC/double/dnrformat_loc3d.c b/SRC/double/dnrformat_loc3d.c
+index 3730e728416d19c29b7f6a150b1bb16122354bec..a4134eccef0f72ac1e1de0d68e623b539cdafd2e 100755
+--- a/SRC/double/dnrformat_loc3d.c
++++ b/SRC/double/dnrformat_loc3d.c
+@@ -835,8 +835,9 @@ int dScatter_B3d(superlu_dist_options_t *options,
+     }
+     }
+ 
+-    // B1 <- BlockByBlock(B2d)
+-    if (grid3d->zscp.Iam == 0)
++    // B1 <- BlockByBlock(B2d) along Z: XY-major only. For Z-major, B1 is
++    // packed below following the X(2d) -> X(3d) send schedule.
++    if (grid3d->zscp.Iam == 0 && rankorder == 1)
+     {
+         for (i = 0; i < grid3d->npdep; ++i)
+         {
+@@ -916,7 +917,7 @@ int dScatter_B3d(superlu_dist_options_t *options,
+ 	int pxy = grid2d->nprow * grid2d->npcol;
+ 	int npdep = grid3d->npdep, dest, src, tag;
+ 	int nprocs = pxy * npdep; // all procs in 3D grid
+-	MPI_Request *recv_reqs = (MPI_Request*) SUPERLU_MALLOC(npdep * sizeof(MPI_Request));
++	MPI_Request *recv_reqs;
+ 	int num_procs_to_send;
+ 	int *procs_to_send_list;
+ 	int *send_count_list;
+@@ -1040,9 +1041,33 @@ int dScatter_B3d(superlu_dist_options_t *options,
+ 	    recv_count_list = A3d->recv_count_list;
+ 	}
+ 
++	/* B1 <- BlockByBlock(B2d) following the send schedule: one column-major
++	   (send_count_list[p] x nrhs) block per destination, in row order.
++	   (The Z-dimension blocks row_counts_int[] used for XY-major do not
++	   match these blocks when the row partition is not uniform.) */
++	if (grid3d->zscp.Iam == 0) {
++	    for (i = 0, p = 0; p < num_procs_to_send; ++p) {
++		k = send_count_list[p];
++		if (gpures) {
++#ifdef GPU_ACC
++		    ddevice_matcopy_wrap(k, nrhs, B1 + nrhs * i, k, B2d + i,
++					 A2d->m_loc);
++#else
++		    ABORT("GPURES requires GPU_ACC in dScatter_B3d().");
++#endif
++		} else {
++		    matCopy(k, nrhs, B1 + nrhs * i, k, B2d + i, A2d->m_loc);
++		}
++		i += k;
++	    }
++	}
++
+ 	/* 3. Perform the acutal communication */
+ 
+-	/* Post irecv first */
++	/* Post irecv first. A process receives from more than npdep processes
++	   of layer 0 when the row partition is not uniform. */
++	recv_reqs = (MPI_Request *)
++	    SUPERLU_MALLOC(SUPERLU_MAX(num_procs_to_recv, 1) * sizeof(MPI_Request));
+ 	i = 0; // tracking offset in the recv buffer Btmp[]
+ 	for (j = 0; j < num_procs_to_recv; ++j) {
+ 	    src = procs_recv_from_list[j];
+@@ -1103,15 +1128,23 @@ int dScatter_B3d(superlu_dist_options_t *options,
+ 
+     } /* else Z-major */
+ 
+-    // B <- colMajor(Btmp)
+-    if (gpures) {
++    /* B <- colMajor(Btmp). Btmp holds one column-major (count x nrhs) block
++       per message received: one (m_loc x nrhs) block for XY-major, one block
++       per source process for Z-major. */
++    int nblocks = (rankorder == 1) ? 1 : A3d->num_procs_to_recv;
++    int *counts = (rankorder == 1) ? &m_loc : A3d->recv_count_list;
++    for (i = 0, j = 0; j < nblocks; ++j) {
++	if (gpures) {
+ #ifdef GPU_ACC
+-	ddevice_matcopy_wrap(A3d->m_loc, nrhs, B, ldb, Btmp, A3d->m_loc);
++	    ddevice_matcopy_wrap(counts[j], nrhs, B + i, ldb, Btmp + nrhs * i,
++				 counts[j]);
+ #else
+-	ABORT("GPURES requires GPU_ACC in dScatter_B3d().");
++	    ABORT("GPURES requires GPU_ACC in dScatter_B3d().");
+ #endif
+-    } else {
+-    matCopy(A3d->m_loc, nrhs, B, ldb, Btmp, A3d->m_loc);
++	} else {
++	    matCopy(counts[j], nrhs, B + i, ldb, Btmp + nrhs * i, counts[j]);
++	}
++	i += counts[j];
+     }
+ 
+     /* free storage */
+diff --git a/SRC/single/snrformat_loc3d.c b/SRC/single/snrformat_loc3d.c
+index ebb14cb2ed68d8873d7d5aa45fc6f28303d05297..9786505c9972b563d8b8df36cc322a02a1187307 100755
+--- a/SRC/single/snrformat_loc3d.c
++++ b/SRC/single/snrformat_loc3d.c
+@@ -835,8 +835,9 @@ int sScatter_B3d(superlu_dist_options_t *options,
+     }
+     }
+ 
+-    // B1 <- BlockByBlock(B2d)
+-    if (grid3d->zscp.Iam == 0)
++    // B1 <- BlockByBlock(B2d) along Z: XY-major only. For Z-major, B1 is
++    // packed below following the X(2d) -> X(3d) send schedule.
++    if (grid3d->zscp.Iam == 0 && rankorder == 1)
+     {
+         for (i = 0; i < grid3d->npdep; ++i)
+         {
+@@ -916,7 +917,7 @@ int sScatter_B3d(superlu_dist_options_t *options,
+ 	int pxy = grid2d->nprow * grid2d->npcol;
+ 	int npdep = grid3d->npdep, dest, src, tag;
+ 	int nprocs = pxy * npdep; // all procs in 3D grid
+-	MPI_Request *recv_reqs = (MPI_Request*) SUPERLU_MALLOC(npdep * sizeof(MPI_Request));
++	MPI_Request *recv_reqs;
+ 	int num_procs_to_send;
+ 	int *procs_to_send_list;
+ 	int *send_count_list;
+@@ -1040,9 +1041,33 @@ int sScatter_B3d(superlu_dist_options_t *options,
+ 	    recv_count_list = A3d->recv_count_list;
+ 	}
+ 
++	/* B1 <- BlockByBlock(B2d) following the send schedule: one column-major
++	   (send_count_list[p] x nrhs) block per destination, in row order.
++	   (The Z-dimension blocks row_counts_int[] used for XY-major do not
++	   match these blocks when the row partition is not uniform.) */
++	if (grid3d->zscp.Iam == 0) {
++	    for (i = 0, p = 0; p < num_procs_to_send; ++p) {
++		k = send_count_list[p];
++		if (gpures) {
++#ifdef GPU_ACC
++		    sdevice_matcopy_wrap(k, nrhs, B1 + nrhs * i, k, B2d + i,
++					 A2d->m_loc);
++#else
++		    ABORT("GPURES requires GPU_ACC in sScatter_B3d().");
++#endif
++		} else {
++		    matCopy(k, nrhs, B1 + nrhs * i, k, B2d + i, A2d->m_loc);
++		}
++		i += k;
++	    }
++	}
++
+ 	/* 3. Perform the acutal communication */
+ 
+-	/* Post irecv first */
++	/* Post irecv first. A process receives from more than npdep processes
++	   of layer 0 when the row partition is not uniform. */
++	recv_reqs = (MPI_Request *)
++	    SUPERLU_MALLOC(SUPERLU_MAX(num_procs_to_recv, 1) * sizeof(MPI_Request));
+ 	i = 0; // tracking offset in the recv buffer Btmp[]
+ 	for (j = 0; j < num_procs_to_recv; ++j) {
+ 	    src = procs_recv_from_list[j];
+@@ -1103,15 +1128,23 @@ int sScatter_B3d(superlu_dist_options_t *options,
+ 
+     } /* else Z-major */
+ 
+-    // B <- colMajor(Btmp)
+-    if (gpures) {
++    /* B <- colMajor(Btmp). Btmp holds one column-major (count x nrhs) block
++       per message received: one (m_loc x nrhs) block for XY-major, one block
++       per source process for Z-major. */
++    int nblocks = (rankorder == 1) ? 1 : A3d->num_procs_to_recv;
++    int *counts = (rankorder == 1) ? &m_loc : A3d->recv_count_list;
++    for (i = 0, j = 0; j < nblocks; ++j) {
++	if (gpures) {
+ #ifdef GPU_ACC
+-	sdevice_matcopy_wrap(A3d->m_loc, nrhs, B, ldb, Btmp, A3d->m_loc);
++	    sdevice_matcopy_wrap(counts[j], nrhs, B + i, ldb, Btmp + nrhs * i,
++				 counts[j]);
+ #else
+-	ABORT("GPURES requires GPU_ACC in sScatter_B3d().");
++	    ABORT("GPURES requires GPU_ACC in sScatter_B3d().");
+ #endif
+-    } else {
+-    matCopy(A3d->m_loc, nrhs, B, ldb, Btmp, A3d->m_loc);
++	} else {
++	    matCopy(counts[j], nrhs, B + i, ldb, Btmp + nrhs * i, counts[j]);
++	}
++	i += counts[j];
+     }
+ 
+     /* free storage */

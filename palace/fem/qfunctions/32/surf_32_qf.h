@@ -478,7 +478,7 @@ CEED_QFUNCTION(f_integ_surf_flux_p_2_32)(void *__restrict__ ctx_, CeedInt Q,
 // supplied B space. Output: 6N components per element (Re I, Im I per direction, 3
 // each).
 // Inputs: qw, grad_x_f, attr_1, grad_x_1, x, u_1..u_4 = E_re, E_im, B_re, B_im
-// (external boundaries only).
+// (one side, see SurfaceFunctional::AssembleLocal).
 CEED_QFUNCTION(f_integ_surf_farfield_32)(void *__restrict__ ctx_, CeedInt Q,
                                          const CeedScalar *const *in,
                                          CeedScalar *const *out)

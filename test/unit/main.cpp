@@ -97,9 +97,10 @@ int main(int argc, char *argv[])
     device_str += ",omp";
 
   // Initialize the device and assign GPUs to MPI ranks.
-  mfem::Device device(
-      device_str.c_str(),
-      palace::utils::GetDeviceId(Mpi::World(), palace::utils::GetDeviceCount()));
+  const int device_id =
+      palace::utils::GetDeviceId(Mpi::World(), palace::utils::GetDeviceCount());
+  palace::utils::ConfigureMemory(device_str, device_id);
+  mfem::Device device(device_str.c_str(), device_id);
 
   // Initialize HYPRE with correct memory location based on device.
   // TODO: Create a palace::Device class that takes care of all of this.

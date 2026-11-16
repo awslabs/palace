@@ -35,7 +35,7 @@ public:
     ENERGY_E,  // 1/2 (ε E)ᴴ E, scalar output
     ENERGY_M,  // 1/2 (μ⁻¹ B)ᴴ B, scalar output
     POYNTING,  // Re{E x (μ⁻¹ B)⥁}, vector output
-    MODE_SN    // Boundary-mode Re{Eₜ x (μ⁻¹Bₜ)⋆} ⋅ z, scalar output
+    MODE_SN    // Boundary-mode -Re{Eₜ x (μ⁻¹Bₜ)⋆} ⋅ z, scalar output
   };
 
 private:
