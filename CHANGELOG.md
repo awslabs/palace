@@ -21,6 +21,14 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
   - `validate-config` accepts several configuration files and validates them in one Julia
     session. [PR 1180](https://github.com/awslabs/palace/pull/1180).
+  - Added `Boundaries.LumpedPort[].ExcitationAmplitude` and `ExcitationPhase` (degrees),
+    a complex weight a = A e^{iφ} on the unit-power incident wave of each lumped port, so
+    ports sharing an `Excitation` index can be driven with different amplitudes and phases.
+    S-parameters of single-port excitations are normalized by the weight; with a phase that
+    is not a multiple of 180 degrees `port-V.csv` and `port-I.csv` report the real and
+    imaginary parts of the incident voltage and current. A phase that is not a multiple of
+    180 degrees is an error for transient simulations. SchemaVer 4-3-0
+    [PR 1169](https://github.com/awslabs/palace/pull/1169).
   - Added the edge-resolution census of the surface-response correction (lane
     rescensus-product; outputs only, ON by default whenever the correction is on:
     `"Resolution": {"Enabled", "BarsFile"}`): one added point location of every applied
@@ -391,8 +399,24 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     check used only the last solved size, so the final solve could exceed `"MaxSize"` by
     the growth of one Dörfler step (observed 2-3x); that remains the default rule (off by default, as upstream).
 
+#### New Features
+
+  - Far-field extraction (`Boundaries.Postprocessing.FarField`) on interior surfaces, so
+    that far fields can be computed when the outer boundary is not a valid integration
+    surface, or away from the truncation. The fields of each face are taken from the side
+    facing the center of the bounding box of the surface. SchemaVer 4-2-3.
+    [PR 1110](https://github.com/awslabs/palace/pull/1110).
+
 #### Performance Improvements
 
+  - Used two levels of aggressive coarsening in the BoomerAMG coarse solver of the
+    multigrid preconditioner of the divergence-free projection, instead of one. Its
+    V-cycle is latency bound at high process counts, and the shorter hierarchy makes it
+    faster. [PR 1149](https://github.com/awslabs/palace/pull/1149).
+  - Uniform frequency sweeps of driven simulations release the linear solver and system
+    matrices after the last solve, before the final field output and error estimation.
+    This lowers the peak memory when the final postprocessing sets it.
+    [PR 1087](https://github.com/awslabs/palace/pull/1087).
   - Added a STRUMPACK patch for
     [pghysels/STRUMPACK#165](https://github.com/pghysels/STRUMPACK/pull/165), which lowers
     the latency of the distributed triangular solves of the solve phase for a few
@@ -466,6 +490,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     same pass as the next search direction, with any preconditioner and on CPUs and GPUs.
     This speeds up the error estimator's flux recovery and the GMRES orthogonalization of
     driven and eigenmode simulations. [PR 1146](https://github.com/awslabs/palace/pull/1146).
+  - Expanded the reduced-order solution at each frequency of an adaptive sweep into the
+    full space in one pass over memory on CPUs, reading each basis vector once.
+    [PR 1165](https://github.com/awslabs/palace/pull/1165).
   - The Floquet port DtN correction and the wave-port modal correction now use a single MPI
     reduction per operator application instead of four per rank-one term, and only touch
     the port degrees of freedom instead of full-length vectors.
@@ -543,6 +570,16 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Bug Fixes
 
+  - Fixed the flux recovery in the error estimators to use the projection which minimizes the
+    error it is measured in (ε⁻¹-weighted for the electric flux, μ-weighted for the magnetic
+    field). The unweighted projection overestimated the error in the low-permittivity
+    elements next to a dielectric interface, by up to an order of magnitude next to a
+    sapphire substrate, and AMR spent refinement there. The error indicator decreases for
+    models with material interfaces, and their AMR meshes change.
+    [PR 1072](https://github.com/awslabs/palace/pull/1072).
+  - Fixed driven frequency sweeps aborting with "... not found in sample frequencies!" when
+    overlapping `"Samples"` ranges compute the same frequency with different rounding.
+    [PR 1192](https://github.com/awslabs/palace/pull/1192).
   - Added a STRUMPACK patch for
     [pghysels/STRUMPACK#164](https://github.com/pghysels/STRUMPACK/pull/164), which fixes
     the solves after the matrix values change when STRUMPACK compression is enabled
@@ -551,6 +588,18 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     [PR 1143](https://github.com/awslabs/palace/pull/1143), these solves could abort with
     an MPI error at high process counts, or give a poor preconditioner which needs more
     linear solver iterations. [PR 1164](https://github.com/awslabs/palace/pull/1164).
+  - Fixed SuperLU_DIST solves with `config["Solver"]["Linear"]["SuperLU3DCommunicator"]`,
+    which gave wrong solutions and crashed at exit. SuperLU_DIST patches for
+    [xiaoyeli/superlu_dist#254](https://github.com/xiaoyeli/superlu_dist/pull/254) and
+    [xiaoyeli/superlu_dist#255](https://github.com/xiaoyeli/superlu_dist/pull/255) fix the
+    solutions with several right-hand sides and uneven rows, and the refactorizations with
+    the same sparsity pattern, on a 3D process grid. An MFEM patch for
+    [mfem/mfem#5732](https://github.com/mfem/mfem/pull/5732) frees the factors on all the
+    process layers. ParMETIS ordering, which SuperLU_DIST does not support with a 3D process
+    grid and with which it hung, now falls back to METIS with a warning, and a patch for
+    [xiaoyeli/superlu_dist#256](https://github.com/xiaoyeli/superlu_dist/pull/256) makes
+    SuperLU_DIST return an error for it instead of hanging.
+    [PR 1167](https://github.com/awslabs/palace/pull/1167).
   - Fixed STRUMPACK sparse direct solves which could crash, fail with `ZERO_PIVOT`, or hang
     when a process holds very few rows of the matrix, for example a coarse multigrid level
     at a high MPI rank count. The sparsity pattern of the matrix passed to STRUMPACK is no

@@ -571,6 +571,21 @@ LumpedPortData::LumpedPortData(const json &port)
   Cs = port.value("Cs", Cs);
 
   excitation = ParsePortExcitation(port, index);
+  excitation_amplitude = port.value("ExcitationAmplitude", excitation_amplitude);
+  excitation_phase = port.value("ExcitationPhase", excitation_phase);
+  MFEM_VERIFY(excitation != 0 || (!port.contains("ExcitationAmplitude") &&
+                                  !port.contains("ExcitationPhase")),
+              fmt::format("\"ExcitationAmplitude\" and \"ExcitationPhase\" on lumped port "
+                          "index {:d} require a nonzero \"Excitation\"",
+                          index));
+  MFEM_VERIFY(excitation_amplitude > 0.0 && std::isfinite(excitation_amplitude),
+              fmt::format("\"ExcitationAmplitude\" on lumped port index {:d} must be "
+                          "positive and finite; got {:.6e}",
+                          index, excitation_amplitude));
+  MFEM_VERIFY(std::isfinite(excitation_phase),
+              fmt::format("\"ExcitationPhase\" on lumped port index {:d} must be finite; "
+                          "got {:.6e}",
+                          index, excitation_phase));
   active = port.value("Active", active);
   include_in_synthesis = port.value("IncludeInSynthesis", include_in_synthesis);
   MFEM_VERIFY(!(excitation != 0 && !include_in_synthesis),
@@ -1743,6 +1758,20 @@ DrivenSolverData::DrivenSolverData(const json &driven)
     f = *it;
   }
   save_f.insert(save_f.end(), explicit_save_f.begin(), explicit_save_f.end());
+
+  // Snap save and PROM frequencies to the sample frequencies, which they can differ from by
+  // rounding: the index scans below compare exactly.
+  auto match_samples = [&](std::vector<double> &f)
+  {
+    for (auto &x : f)
+    {
+      auto it = FindNearestValue(sample_f, x, delta_eps);
+      MFEM_VERIFY(it != sample_f.end(), "Frequency " << x << " is not a sample frequency!");
+      x = *it;
+    }
+  };
+  match_samples(save_f);
+  match_samples(prom_f);
   deduplicate(save_f);
   deduplicate(prom_f);
 
@@ -2735,6 +2764,7 @@ void Nondimensionalize(const Units &units, SuperconductorData &data)
 
 void Nondimensionalize(const Units &units, LumpedPortData &data)
 {
+  // The excitation amplitude and phase are dimensionless and need no scaling.
   data.R /= units.GetScaleFactor<Units::ValueType::IMPEDANCE>();
   data.L /= units.GetScaleFactor<Units::ValueType::INDUCTANCE>();
   data.C /= units.GetScaleFactor<Units::ValueType::CAPACITANCE>();

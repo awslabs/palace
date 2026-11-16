@@ -290,7 +290,7 @@ The source term ``\bm{U}^{inc}`` in a driven frequency-response problem is relat
 tangential component of the incident field at an excited port boundary by
 
 ```math
-\bm{U}^{inc} = -2\gamma_{exc}(\bm{n}\times\bm{E}^{inc})\times\bm{n} \,, \qquad
+\bm{U}^{inc} = -2a\gamma_{exc}(\bm{n}\times\bm{E}^{inc})\times\bm{n} \,, \qquad
 \gamma_{exc} = \frac{i\omega}{R_{ref}}
 ```
 
@@ -300,15 +300,24 @@ excited port: the port resistance ``R`` when ``R > 0``, or the impedance of free
 ``Z_0`` for a purely reactive port with ``R = 0`` (see the discussion of reactive port
 excitation below). The excitation coefficient ``\gamma_{exc}`` is in general distinct from
 the termination coefficient ``\gamma = i\omega/Z_s`` appearing in the Robin boundary
-condition, and the two coincide for a purely resistive port. The excitation amplitude is
-fixed at the unit-power mode normalization described above, ``1~\mathrm{W}``.
+condition, and the two coincide for a purely resistive port. The field ``\bm{E}^{inc}`` is
+the unit-power mode normalized as described above, ``1~\mathrm{W}``, and ``a = A e^{i\varphi}``
+is the complex excitation weight of the port, set by the port's
+[`"ExcitationAmplitude"`](config/reference.md#config-boundaries-lumpedport) ``A`` and
+`"ExcitationPhase"` ``\varphi`` (``a = 1`` by default). The weight scales the source term
+``\bm{U}^{inc}`` by ``a``, so the incident power of the excited port is ``A^2`` times that of
+the unit-power excitation.
 
 In the time-domain formulation, the source term ``\bm{U}^{inc}`` appears as
 
 ```math
-\bm{U}^{inc} = -2 R_{ref}^{-1}\left(\bm{n}\times\frac{\partial\bm{E}^{inc}}{\partial t}\right)
+\bm{U}^{inc} = -2 A R_{ref}^{-1}\left(\bm{n}\times\frac{\partial\bm{E}^{inc}}{\partial t}\right)
     \times\bm{n} \,.
 ```
+
+where the source is scaled by the amplitude ``A``. The time-domain excitation is real, so the
+weight must be real in that case (``\varphi`` a multiple of 180 degrees); for ``\varphi = 180``
+degrees, ``A`` is replaced by ``-A``.
 
 The incident field ``\bm{E}^{inc}(\bm{x},t)`` is
 
@@ -3401,8 +3410,10 @@ density. On element ``K``, we have
 ```
 
 where ``\bm{R}_{ND}`` and ``\bm{R}_{RT}`` are the smooth-space recovery operators which
-orthogonally project their argument onto ``H(\text{curl})`` and ``H(\text{div})``,
-discretized by Nédélec and Raviart-Thomas elements, respectively.
+project their argument onto ``H(\text{curl})`` and ``H(\text{div})``, discretized by Nédélec
+and Raviart-Thomas elements, respectively. Each projection is orthogonal in the weighted
+``L^2`` inner product of the norm it is measured in (``\mu_r`` for ``\bm{R}_{ND}``,
+``\varepsilon_r^{-1}`` for ``\bm{R}_{RT}``), so the recovered field minimizes the estimate.
 
 ## Far-field extraction
 

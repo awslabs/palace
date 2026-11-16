@@ -7,6 +7,9 @@
 
 #include <cmath>
 #include <complex>
+#include <limits>
+#include <span>
+#include <vector>
 
 #include "linalg/vector.hpp"
 #include "utils/communication.hpp"
@@ -144,6 +147,56 @@ TEST_CASE("Vector Dot", "[vector][Serial][Parallel]")
   CHECK(nrm2.imag() == 0.0);
   CHECK_THAT(nrm2_copy.real(), WithinAbs(ref[3], tol));
   CHECK_THAT(nrm2_copy.imag(), WithinAbs(0.0, tol));
+}
+
+TEST_CASE("Vector LinearCombination", "[vector][Serial][Parallel][GPU]")
+{
+  const int N = GENERATE(1, 7, 64, 1024, 1025, 3001);
+  const int n = GENERATE(0, 1, 2, 5, 6);
+  const bool real_c = GENERATE(false, true);
+  const int rank = Mpi::Rank(Mpi::World());
+  std::vector<Vector> X(n + 1, Vector(N));
+  std::vector<std::complex<double>> c(n + 1);
+  for (int j = 0; j <= n; j++)
+  {
+    X[j].UseDevice(true);
+    auto *Xj = X[j].HostWrite();
+    for (int i = 0; i < N; i++)
+    {
+      Xj[i] = std::sin(0.3 * i + 1.7 * j + 0.1 * rank);
+    }
+    c[j] = {std::cos(0.9 * j + 0.2), real_c ? 0.0 : std::sin(1.3 * j - 0.4)};
+  }
+  if (n > 2)
+  {
+    // A zero coefficient skips its term, which may hold anything.
+    c[1] = 0.0;
+    X[1].HostReadWrite()[0] = std::numeric_limits<double>::quiet_NaN();
+  }
+  // The last vector is not part of the combination.
+  X[n].HostReadWrite()[0] = std::numeric_limits<double>::quiet_NaN();
+
+  ComplexVector y(N);
+  y.UseDevice(true);
+  y = 1.0;  // Overwritten
+  linalg::LinearCombination(std::span(X).first(n), std::span(c).first(n), y);
+
+  const auto *YR = y.Real().HostRead(), *YI = y.Imag().HostRead();
+  int mismatch = 0;
+  for (int i = 0; i < N; i++)
+  {
+    double ref_r = 0.0, ref_i = 0.0;
+    for (int j = 0; j < n; j++)
+    {
+      if (c[j] != 0.0)
+      {
+        ref_r += c[j].real() * X[j].HostRead()[i];
+        ref_i += c[j].imag() * X[j].HostRead()[i];
+      }
+    }
+    mismatch += !(std::abs(YR[i] - ref_r) <= 1.0e-14 && std::abs(YI[i] - ref_i) <= 1.0e-14);
+  }
+  CHECK(mismatch == 0);
 }
 
 TEST_CASE("ComplexVector Set", "[vector][Serial][Parallel][GPU]")

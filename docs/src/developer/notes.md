@@ -552,7 +552,7 @@ Release tags (`vX.Y.Z`) build the full microarchitecture matrix instead, so
 a release publishes a tuned image for each target:
 
   - `x86_64_v3`, `x86_64_v4`, `sapphirerapids` (x64)
-  - `aarch64`, `neoverse_v1`, `neoverse_v2` (arm64)
+  - `aarch64`, `neoverse_v1`, `neoverse_v2`, `neoverse_v3` (arm64)
 
 ### Publishing a `dev-<branch>` prototype from a branch
 

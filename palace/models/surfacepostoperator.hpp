@@ -166,6 +166,9 @@ private:
   {
     std::vector<std::pair<double, double>> thetaphis;
 
+    // Interior surface (not only external boundaries), which requires the libCEED path.
+    bool interior = false;
+
     FarFieldData() = default;
     FarFieldData(const config::FarFieldPostData &data, const mfem::ParMesh &mesh,
                  const mfem::Array<int> &bdr_attr_marker);

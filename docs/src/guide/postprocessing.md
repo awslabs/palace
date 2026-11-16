@@ -56,7 +56,13 @@ written to disk when requested using the relevant parameters under
 When lumped ports are present in a model, the lumped port voltages and currents computed for
 each step of the simulation (eigenmode, frequency, or time step) are written to ASCII files
 named `port-V.csv` and `port-I.csv`, respectively. These files also include the excitation
-voltage and current corresponding to the incident wave on excited port boundaries.
+voltage and current corresponding to the incident wave on excited port boundaries. When the
+weight of an excited lumped port is not real, that is, its
+[`"ExcitationPhase"`](../config/reference.md#config-boundaries-lumpedport) is not a multiple
+of 180 degrees, the incident voltage and current are complex and written as real and
+imaginary parts, columns `Re{V_inc[...]}` and `Im{V_inc[...]}` in `port-V.csv`, and
+likewise for `port-I.csv`; see
+[Lumped and wave port excitation](boundaries.md#Lumped-and-wave-port-excitation).
 
 Additionally, when surface current excitations are present, the excitations are written to
 `surface-I.csv`.

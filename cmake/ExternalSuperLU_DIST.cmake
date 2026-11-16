@@ -124,6 +124,17 @@ list(APPEND SUPERLU_PATCH_FILES
   "${CMAKE_SOURCE_DIR}/extern/patch/superlu_dist/superlu_dist_pr253.diff"
 )
 
+# Fix the solves with a 3D process grid, and return an error instead of hanging for options
+# it does not support: copies of https://github.com/xiaoyeli/superlu_dist/pull/254,
+# https://github.com/xiaoyeli/superlu_dist/pull/255 and
+# https://github.com/xiaoyeli/superlu_dist/pull/256, made for v9.3.1. They are applied after
+# the patches above, and to any version as well.
+list(APPEND SUPERLU_PATCH_FILES
+  "${CMAKE_SOURCE_DIR}/extern/patch/superlu_dist/superlu_dist_pr254.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/superlu_dist/superlu_dist_pr255.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/superlu_dist/superlu_dist_pr256.diff"
+)
+
 include(ExternalProject)
 ExternalProject_Add(superlu_dist
   DEPENDS           ${SUPERLU_DEPENDENCIES}

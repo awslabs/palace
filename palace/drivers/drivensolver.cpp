@@ -163,7 +163,8 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
 
   // Set up the linear solver.
   // The operators are constructed for each frequency step and used to initialize the ksp.
-  ComplexKspSolver ksp(iodata, space_op.GetNDSpaces(), &space_op.GetH1Spaces());
+  auto ksp = std::make_unique<ComplexKspSolver>(iodata, space_op.GetNDSpaces(),
+                                                &space_op.GetH1Spaces());
   std::unique_ptr<ComplexKspSolver> corrected_ksp;
   if (self_consistent_response)
   {
@@ -245,7 +246,7 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
           1.0 + 0.0i, 1i * omega, -omega * omega + 0.0i, omega);
       auto system_op = internal::BuildDrivenSystemOperator(
           space_op, omega, *P, K, C, M, response_mass.get(), response_stiffness.get());
-      ksp.SetOperators(*system_op.A, *P);
+      ksp->SetOperators(*system_op.A, *P);
       if (corrected_ksp)
       {
         corrected_ksp->SetOperators(*system_op.corrected, *P);
@@ -273,7 +274,7 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
       space_op.GetExcitationVector(excitation_idx, omega, RHS);
 
       Mpi::Print("\n");
-      ksp.Mult(RHS, E);
+      ksp->Mult(RHS, E);
       if (response_correction && !response_correction->IsRawFallback() &&
           response_correction->HasConductorConsistencyProbes())
       {
@@ -301,6 +302,30 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
         Mpi::Print(" Solving self-consistent fabrication-response corrected field\n");
         E_corrected = E;
         corrected_ksp->Mult(RHS, E_corrected);
+      }
+
+      if (omega_i + 1 == omega_sample.size() &&
+          excitation_counter == port_excitations.Size())
+      {
+        // That was the last solve (raw and, when self-consistent, corrected): save the
+        // solver totals and release the linear solvers and system operators, so they do not
+        // add to the memory peak of the field output and error estimation which follow.
+        SaveMetadata(*ksp);
+        ksp.reset();
+        if (corrected_ksp)
+        {
+          SaveSurfaceResponseSolverMetadata(space_op.GetComm(), "Driven",
+                                            corrected_ksp->NumTotalMult(),
+                                            corrected_ksp->NumTotalMultIterations());
+          corrected_ksp.reset();
+        }
+        system_op.corrected.reset();
+        system_op.A.reset();
+        system_op.A2.reset();
+        P.reset();
+        K.reset();
+        C.reset();
+        M.reset();
       }
 
       // Start Post-processing.
@@ -335,8 +360,9 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
         post_op.SetRecoveredElectricFlux(D);
         recovered_flux = &D;
       }
-      if (corrected_ksp)
+      if (self_consistent_response)
       {
+        // Not corrected_ksp: it is released after the last solve, before this output.
         const ComplexVector *corrected_flux = nullptr;
         if (post_op.NeedsRecoveredElectricFlux())
         {
@@ -361,14 +387,18 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
       }
     }
 
-    // Final postprocessing & printing.
+    // Final postprocessing & printing. After the last excitation, the solver totals were
+    // already saved when the solver was released.
     BlockTimer bt0(Timer::POSTPRO);
-    SaveMetadata(ksp);
+    if (ksp)
+    {
+      SaveMetadata(*ksp);
+    }
   }
   post_op.MeasureFinalize(indicator);
-  if (self_consistent_response)
+  if (corrected_ksp)
   {
-    MFEM_ASSERT(corrected_ksp, "Missing corrected driven linear solver!");
+    // Not released (no last solve ran); otherwise its totals were saved at its release.
     SaveSurfaceResponseSolverMetadata(space_op.GetComm(), "Driven",
                                       corrected_ksp->NumTotalMult(),
                                       corrected_ksp->NumTotalMultIterations());
