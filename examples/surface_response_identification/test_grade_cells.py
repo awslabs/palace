@@ -12,6 +12,8 @@ override) and the reference-depth rule (converged / coarser / not recorded, deci
 reference (the depth label INFORMATION); the DEFAULT tail form = fixed-shell since the P4 re-freeze (decision 1360), the 422
 records reproduced with an explicit --tail-form 422."""
 
+import contextlib
+import io
 import json
 import os
 import shutil
@@ -795,12 +797,22 @@ class ExplicitMarkWindows(unittest.TestCase):
 
     def grade(self, run, name):
         out = os.path.join(self.tmp, f"{name}.json")
-        rc = gc.main(["--form", "es", "--device", run, "--reference-values", self.values, "--out", out, "--tail-form", "422"])
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = gc.main(["--form", "es", "--device", run, "--reference-values", self.values, "--out", out, "--tail-form", "422"])
+        self.stdout = buf.getvalue()
         g = None
         if os.path.isfile(out):
             with open(out) as handle:
                 g = json.load(handle)
         return rc, g, out
+
+    def assert_one_refusal_line(self, needle):
+        """Decision 1938: a refusal prints ONE line (the refusal) and nothing else: no grade, no number before it."""
+        lines = self.stdout.splitlines()
+        self.assertEqual(len(lines), 1, self.stdout)
+        self.assertTrue(lines[0].startswith("grade_cells.py: REFUSED (decision 19"), self.stdout)
+        self.assertIn(needle, lines[0])
 
     def edit_cell(self, run, column, source, token):
         path = os.path.join(run, "postpro", "surface-Q-corrected.csv")
@@ -843,6 +855,7 @@ class ExplicitMarkWindows(unittest.TestCase):
             self.assertEqual(rc, cm.REFUSAL_EXIT, name)
             self.assertIsNone(g, name)
             self.assertFalse(os.path.exists(out), name)
+            self.assert_one_refusal_line("")
 
     def test_warn_nan_keeps_the_frozen_reading(self):
         """A Warn tree (no signal) with a nan in a corrected cell: the reading of 4cadc9516f (NOT-APPLIED letter, exit 0), not a
@@ -915,6 +928,7 @@ class ExplicitMarkWindows(unittest.TestCase):
         self.assertEqual(rc, cm.REFUSAL_EXIT)
         self.assertIsNone(g)
         self.assertFalse(os.path.exists(out))
+        self.assert_one_refusal_line("a duplicate mark / twin / exposure column name")
 
     def test_mark_token_read_one_way(self):
         """Decision 1934 (R-4; the review's N2): a mark token '1.0' is a REFUSAL (as in every reader), not a mark."""
@@ -931,6 +945,7 @@ class ExplicitMarkWindows(unittest.TestCase):
         rc, g, out = self.grade(run, "tok10")
         self.assertEqual(rc, cm.REFUSAL_EXIT)
         self.assertFalse(os.path.exists(out))
+        self.assert_one_refusal_line("neither the token 0 nor the token 1")
 
 
 class ReportProvenanceWindows(unittest.TestCase):
@@ -962,8 +977,11 @@ class ReportProvenanceWindows(unittest.TestCase):
         with open(band, "w") as handle:
             json.dump(report, handle)
         out = os.path.join(self.tmp, f"{name}.json")
-        rc = gc.main(["--form", "es", "--device", run, "--reference-values", self.values, "--out", out, "--tail-form", "422",
-                      "--band", band])
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = gc.main(["--form", "es", "--device", run, "--reference-values", self.values, "--out", out, "--tail-form", "422",
+                          "--band", band])
+        self.stdout = buf.getvalue()
         g = None
         if os.path.isfile(out):
             with open(out) as handle:
@@ -991,6 +1009,9 @@ class ReportProvenanceWindows(unittest.TestCase):
             self.assertEqual(rc, cm.REFUSAL_EXIT, name)
             self.assertIsNone(g, name)
             self.assertFalse(os.path.exists(out), name)
+            lines = self.stdout.splitlines()
+            self.assertEqual(len(lines), 1, (name, self.stdout))
+            self.assertIn(cm.REPORT_REFUSAL_TEXT, lines[0], name)
 
     def test_old_report_of_an_unmarked_tree_on_host_read(self):
         warn = self.run_of("warn")

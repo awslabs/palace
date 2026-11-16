@@ -6,6 +6,8 @@ with KNOWN numbers (the ENERGY partition, the shared-label split, the RAW rows, 
 ladder / DEPTH rule, the label rules, the PROXY path, the preflight form, the missing-input exit code), plus a
 record test on the sct002-S1 stretchfix-regrade run (skipped when the records are not present)."""
 
+import contextlib
+import io
 import json
 import os
 import shutil
@@ -443,9 +445,14 @@ class ExplicitMarkTest(unittest.TestCase):
             with self.assertRaises(cm.Refusal, msg=name):
                 cr.build_report(post, manifest, self.bands, ma_reading="sharp")
             out = os.path.join(self.tmp, "out-" + str(abs(hash(name))))
-            rc = cr.main([post, "--manifest", manifest, "--bands", self.bands["_path"], "--ma-reading", "sharp", "--output", out])
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                rc = cr.main([post, "--manifest", manifest, "--bands", self.bands["_path"], "--ma-reading", "sharp", "--output", out])
             self.assertEqual(rc, cm.REFUSAL_EXIT, name)
             self.assertFalse(os.path.exists(out), name)
+            lines = buf.getvalue().splitlines()  # decision 1938: one refusal line, nothing else
+            self.assertEqual(len(lines), 1, (name, buf.getvalue()))
+            self.assertTrue(lines[0].startswith("coverage_report: REFUSED (decision 1908)"), name)
 
     def test_warn_nan_frozen_and_the_ladder_entry_keyed_on_marks(self):
         """Decision 1897: a Warn ladder whose ft cells are nan BY DESIGN (the self-consistent-only form) carries NO not_applied entry
@@ -1483,8 +1490,13 @@ class Round3Test(unittest.TestCase):
             cr.build_report(post, manifest, self.bands, ma_reading="sharp")
         self.assertIn("a duplicate mark / twin / exposure column name", str(caught.exception))
         out = os.path.join(self.tmp, "dup-out")
-        self.assertEqual(cr.main([post, "--manifest", manifest, "--bands", self.bands["_path"], "--output", out]), cm.REFUSAL_EXIT)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            self.assertEqual(cr.main([post, "--manifest", manifest, "--bands", self.bands["_path"], "--output", out]), cm.REFUSAL_EXIT)
         self.assertFalse(os.path.exists(out))
+        lines = buf.getvalue().splitlines()  # decision 1938: one refusal line, nothing else
+        self.assertEqual(len(lines), 1, buf.getvalue())
+        self.assertIn("a duplicate mark / twin / exposure column name", lines[0])
 
     def test_mark_token_read_one_way(self):
         """R-4 (the review's N2): the mark token '1.0' is a REFUSAL here as in every reader (this reader floated it to 1 before)."""

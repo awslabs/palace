@@ -128,10 +128,12 @@ class NotAppliedTest(unittest.TestCase):
         rc, text = self.run_main(post)
         self.assertEqual(rc, cm.REFUSAL_EXIT, text)
         self.assertIn("a duplicate mark / twin / exposure column name", text)
+        self.assertEqual(len(text.splitlines()), 1, text)
         post = write_tree(self.tmp / "tok", marked=True, marks={1: (0, 1), 2: (0, 0)}, edits={(1, cm.MARK_E_SURF): "1.0"})
         rc, text = self.run_main(post)
         self.assertEqual(rc, cm.REFUSAL_EXIT, text)
         self.assertIn("neither the token 0 nor the token 1", text)
+        self.assertEqual(len(text.splitlines()), 1, text)
 
     def test_refusals(self):
         cases = {
@@ -144,6 +146,7 @@ class NotAppliedTest(unittest.TestCase):
             rc, text = self.run_main(post)
             self.assertEqual(rc, cm.REFUSAL_EXIT, (name, text))
             self.assertTrue(text.startswith("REFUSED (decision 1908)"), (name, text))
+            self.assertEqual(len(text.splitlines()), 1, (name, text))  # decision 1938: one refusal line
         # a refusal outranks a NOT-APPLIED row on the same tree (never dropped)
         rc, text = self.run_main(write_tree(self.tmp / "r5", marked=True, marks={1: (1, 1), 2: (1, 0)},
                                             edits={(2, "p_surf corrected"): ""}))
