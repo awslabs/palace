@@ -251,8 +251,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     sapphire substrate, and AMR spent refinement there. The error indicator decreases for
     models with material interfaces, and their AMR meshes change.
     [PR 1072](https://github.com/awslabs/palace/pull/1072).
-  - Fixed lumped ports aborting at setup with "Bounding box discovered length ... should
-    match projected length" when the port is not exactly rectangular.
+  - Fixed uniform lumped ports and surface current sources aborting at setup for valid
+    geometry, such as a rectangle with a bulging edge, a port folded over a step or a
+    cylindrical port. The port length is now its extent along `"Direction"`, and a planar
+    port must be a rectangle with a side along `"Direction"`.
     [PR 1194](https://github.com/awslabs/palace/pull/1194).
   - Fixed driven frequency sweeps aborting with "... not found in sample frequencies!" when
     overlapping `"Samples"` ranges compute the same frequency with different rounding.

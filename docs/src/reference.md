@@ -241,7 +241,8 @@ Lumped ports in *Palace* can be composed of two types of elements:
  1. *Rectangular*: The incident field is ``\bm{E}^{inc} = E_0 \, \hat{\bm{l}}``. Here ``E_0`` is a
     normalization constant and ``\hat{\bm{l}}`` is the user-defined polarization direction, which
     should point between two conductors. We denote the length of the port along the polarization as
-    ``l`` and the perpendicular width as ``w``.
+    ``l`` and the perpendicular width as ``w``. A planar port must be a rectangle with a side along
+    ``\hat{\bm{l}}``.
 
  2. *Coaxial*: ``\bm{E}^{inc} = {E_0 r_0} \hat{\bm{r}} / {r}``, where ``E_0 r_0`` is a
     normalization constant, ``r`` is the distance from the port center, and ``\hat{\bm{r}}`` is the
