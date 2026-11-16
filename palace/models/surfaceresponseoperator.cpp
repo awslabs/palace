@@ -24411,6 +24411,8 @@ struct SurfaceResponseGeometry::Impl
   nlohmann::json statistics;
   bool maxwell = false;
   int dimension = 0;
+  // Built by an impedance-metal-rule candidate (its cache is never the record's).
+  bool impedance_rule_candidate = false;
   // Written by the electrostatic constructor through the shared const geometry: the cache
   // is a derived record of this configuration, not a change to it.
   mutable std::optional<DomainBoundaryContainmentCache> containment;
@@ -34982,8 +34984,7 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
   // with its own construction.
   impedance_rule_candidate = candidate_film_rule != nullptr;
   law_reading_enabled = law_reading;
-  MFEM_VERIFY(!impedance_rule_candidate || !automatic_geometry,
-              "An impedance-metal-rule candidate operator cannot share a cached geometry!");
+  // A candidate's cache is its own (built by a candidate): checked at the reuse below.
   // A candidate never ends the run: it records its geometry fallbacks (RecordRaw) and its
   // Missing features (UnmatchedPolicy Warn) whatever the request says for the record.
   std::optional<ResponseCorrectionData> candidate_request;
@@ -35035,6 +35036,9 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
                     cached_geometry->impl->diagnostics.has_value() &&
                     cached_geometry->impl->dimension == dimension,
                 "Cannot reuse incompatible surface-response geometry for Maxwell!");
+    MFEM_VERIFY(cached_geometry->impl->impedance_rule_candidate == impedance_rule_candidate,
+                "A cached surface-response geometry is reused across the impedance-metal "
+                "rule's candidate and the operator of record!");
     // C6: the full placed-patch list again (released after the previous construction).
     cached_geometry->RestoreReplicatedPatches(fespace.GetComm());
     config_ptr = movable_config = &cached_geometry->impl->config;
@@ -35056,13 +35060,9 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
           iodata, fespace.GetParMesh(), mat_op, *request, true, &local_diagnostics, nullptr,
           &local_statistics, candidate_film_rule);
     }
-    if (impedance_rule_candidate)
-    {
-      MFEM_VERIFY(dimension == 3, "The impedance-metal rule's candidate is built on "
-                                  "three-dimensional meshes only!");
-      impedance_law_feature_status = std::move(local_config->impedance_law_feature_status);
-      impedance_law_features = std::move(local_config->impedance_law_features);
-    }
+    MFEM_VERIFY(!impedance_rule_candidate || dimension == 3,
+                "The impedance-metal rule's candidate is built on three-dimensional meshes "
+                "only!");
 #if defined(__GLIBC__)
     // Round 2a F-D (decision 1475 (1); glibc only; a memory hint, no result path): the
     // identification's freed transients go back to the system.
@@ -35077,6 +35077,7 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
       impl->statistics = automatic_statistics;
       impl->maxwell = true;
       impl->dimension = dimension;
+      impl->impedance_rule_candidate = impedance_rule_candidate;
       cached_geometry = std::shared_ptr<const SurfaceResponseGeometry>(
           new SurfaceResponseGeometry(std::move(impl)));
       *automatic_geometry = cached_geometry;
@@ -35090,6 +35091,13 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
     }
   }
   const auto &config = *config_ptr;
+  if (impedance_rule_candidate)
+  {
+    // The candidate's law statuses (copied: a cached candidate geometry keeps them for the
+    // next AMR iteration's construction).
+    impedance_law_feature_status = config.impedance_law_feature_status;
+    impedance_law_features = config.impedance_law_features;
+  }
   // Geometry fallbacks (USER decision 1000 (b) / 1001), the Maxwell path: as the
   // electrostatic constructor (a whole-run raw fallback leaves HasSurfaceResponse() false
   // with the record; the deferred FailClosed abort at the end of the configuration).

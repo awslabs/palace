@@ -84,7 +84,8 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
   // Initialize postprocessing for measurement and printers.
   // Initialize write directory with default path; will be changed for multi-excitations.
   PostOperator<ProblemType::DRIVEN> post_op(iodata, space_op, &response_geometry,
-                                            &surface_post_geometry);
+                                            &surface_post_geometry,
+                                            &impedance_candidate_geometry);
 
   // Construct the system matrices defining the linear operator. PEC boundaries are handled
   // simply by setting diagonal entries of the system matrix for the corresponding dofs.
@@ -383,7 +384,8 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
   // Initialize postprocessing for measurement and printers.
   // Initialize write directory with default path; will be changed for multi-excitations.
   PostOperator<ProblemType::DRIVEN> post_op(iodata, space_op, &response_geometry,
-                                            &surface_post_geometry);
+                                            &surface_post_geometry,
+                                            &impedance_candidate_geometry);
   SurfaceResponseOperator *response_correction = post_op.GetSurfaceResponseOperator();
   if (response_correction && iodata.model.refinement.max_it == 0)
   {

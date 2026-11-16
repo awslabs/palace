@@ -333,11 +333,13 @@ template <ProblemType solver_t>
 PostOperator<solver_t>::PostOperator(
     const IoData &iodata, fem_op_t<solver_t> &fem_op_,
     std::shared_ptr<const SurfaceResponseGeometry> *response_geometry,
-    std::shared_ptr<const SurfacePostGeometry> *surface_post_geometry)
+    std::shared_ptr<const SurfacePostGeometry> *surface_post_geometry,
+    std::shared_ptr<const SurfaceResponseGeometry> *impedance_candidate_geometry_)
   : PostOperator(iodata.problem, iodata.solver, iodata.domains, iodata.boundaries,
                  iodata.units, fem_op_, &iodata.boundaries.cracked_attributes,
                  surface_post_geometry)
 {
+  impedance_candidate_geometry = impedance_candidate_geometry_;
   if constexpr (solver_t == ProblemType::DRIVEN || solver_t == ProblemType::EIGENMODE ||
                 solver_t == ProblemType::BOUNDARYMODE)
   {
@@ -4794,8 +4796,10 @@ void PostOperator<solver_t>::SetUpImpedanceRuleCandidate(const IoData &iodata,
                      : "; it substitutes nothing: a twin of the operator of record");
       const auto start = std::chrono::steady_clock::now();
       const long bytes = memory_reporting::GetCurrentMemory();
+      // Its OWN geometry cache (never the record's): across AMR iterations the candidate
+      // keeps the initial mesh's patch layout, as the operator of record does.
       impedance_candidate_op = std::make_unique<SurfaceResponseOperator>(
-          iodata, space_op, nullptr, impedance_film_rule.get(), true);
+          iodata, space_op, impedance_candidate_geometry, impedance_film_rule.get(), true);
       impedance_candidate_op->SetPatchRecordResidency(
           SurfaceResponseOperator::PatchRecordResidency::ROOT_ONLY);
       candidate_setup_seconds =

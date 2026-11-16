@@ -297,6 +297,7 @@ protected:
   mutable double impedance_candidate_measure_seconds = 0.0;
   // Whether the rule acts on any candidate feature (false = a twin: the self-check).
   bool impedance_candidate_acts = false;
+  std::shared_ptr<const SurfaceResponseGeometry> *impedance_candidate_geometry = nullptr;
   // RECORD: the film rule, the printed lines and (when it substitutes) the candidate
   // operator, with the setup cost of both operators measured.
   void SetUpImpedanceRuleCandidate(const IoData &iodata, const SpaceOperator &space_op,
@@ -709,10 +710,15 @@ public:
                const Units &units, fem_op_t<solver_t> &fem_op,
                const std::unordered_set<int> *cracked_attributes = nullptr,
                std::shared_ptr<const SurfacePostGeometry> *surface_post_geometry = nullptr);
+  // `impedance_candidate_geometry`: the impedance-metal rule candidate's OWN geometry cache
+  // (RECORD; held by the driver across AMR iterations like `response_geometry`, so that
+  // the candidate keeps the initial mesh's patch layout as the operator of record does).
   explicit PostOperator(
       const IoData &iodata, fem_op_t<solver_t> &fem_op,
       std::shared_ptr<const SurfaceResponseGeometry> *response_geometry = nullptr,
-      std::shared_ptr<const SurfacePostGeometry> *surface_post_geometry = nullptr);
+      std::shared_ptr<const SurfacePostGeometry> *surface_post_geometry = nullptr,
+      std::shared_ptr<const SurfaceResponseGeometry> *impedance_candidate_geometry =
+          nullptr);
 
   bool NeedsRecoveredElectricFlux() const { return D_recovered != nullptr; }
 
