@@ -10124,7 +10124,9 @@ void ClassifyCandidateFeatureLaws(IdentificationResult &result,
       ResponseCorrectionData::ImpedanceLawFeatureData record;
       record.feature = feature.id;
       record.type = feature.type;
-      for (const int law : own_laws)
+      // A LAW-JOINT feature names the laws that make it one (its own and vertex-sharing
+      // segments' on one conductor); every other feature its own segments' laws.
+      for (const int law : status == ImpedanceLawStatus::LAW_JOINT ? joint_laws : own_laws)
       {
         record.device_law += (record.device_law.empty() ? "" : " | ") + law_texts[law];
       }

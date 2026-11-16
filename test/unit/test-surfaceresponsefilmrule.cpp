@@ -294,9 +294,23 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
           Catch::Approx(a.domain_correction).epsilon(1.0e-12).margin(1.0e-300));
   };
   const json film_law = {{"Ls", 1.0e-13}};
+  // The convex library with every model on the SA interface only (the island's one target
+  // interface; the r0a translational-probe cases' form).
+  const fs::path sa_library_path = temp.temp_dir / "impedance-rule-convex-sa-3d.json";
+  if (Mpi::Root(Mpi::World()))
+  {
+    json library = json::parse(std::ifstream(convex_library_3d_path));
+    library["Name"] = "unit-test-process-impedance-rule-convex-sa-3d";
+    for (auto &model : library["Models"])
+    {
+      model["Interfaces"] = {{{"Type", "SA"}, {"Coupon", 1}}};
+    }
+    std::ofstream(sa_library_path) << library.dump(2) << "\n";
+  }
+  Mpi::Barrier(Mpi::World());
 
   // The perfect-conductor twin of record (the island PEC).
-  auto twin = Build(Config({{9, "PEC"}}, convex_library_3d_path), MakeIslandMesh());
+  auto twin = Build(Config({{9, "PEC"}}, sa_library_path), MakeIslandMesh());
   SurfaceResponseOperator twin_op(*twin->iodata, *twin->space);
   REQUIRE(twin_op.GetPatchCount() > 0);
   const auto twin_field = Field(*twin->space, 0.3, 1.0, 0.7);
@@ -369,7 +383,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   SECTION("a purely inductive island: the record is raw, the candidate is the PEC twin "
           "(SUBSTITUTED)")
   {
-    auto run = Build(Config({{9, film_law}}, convex_library_3d_path), MakeIslandMesh());
+    auto run = Build(Config({{9, film_law}}, sa_library_path), MakeIslandMesh());
     SurfaceResponseOperator record_op(*run->iodata, *run->space);
     CHECK(record_op.IsRawFallback());  // no model of the Impedance law: raw, as today
     const auto film = Film(*run);
@@ -399,13 +413,13 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     for (const json &law :
          {json{{"Rs", 1.0}}, json{{"Cs", 4.0e-17}}, json{{"Rs", 2.0}, {"Ls", 1.0e-13}}})
     {
-      auto run = Build(Config({{9, law}}, convex_library_3d_path), MakeIslandMesh());
+      auto run = Build(Config({{9, law}}, sa_library_path), MakeIslandMesh());
       const auto film = Film(*run);
       CHECK_FALSE(film.candidate_differs);
       CHECK(film.attributes.at(9).service == FilmService::NOT_DECLARED);
     }
     {
-      json config = Config({{9, "PEC"}}, convex_library_3d_path);
+      json config = Config({{9, "PEC"}}, sa_library_path);
       config["Boundaries"]["Ground"]["Attributes"] = {1, 2, 3, 4, 5, 6};
       config["Boundaries"]["Conductivity"] = {
           {{"Attributes", {9}}, {"Conductivity", 5.8e7}, {"Thickness", 1.0e-7}}};
@@ -415,7 +429,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
       CHECK(film.attributes.at(9).service == FilmService::NOT_DECLARED);
       CHECK(HasLine(film, "not served (Conductivity): attributes [9]"));
     }
-    json config = Config({{9, json{{"Rs", 1.0}}}}, convex_library_3d_path);
+    json config = Config({{9, json{{"Rs", 1.0}}}}, sa_library_path);
     config["Solver"]["SurfaceResponseCorrection"]["ImpedanceMetalFilmOverrides"] = {
         {{"Attributes", {9}}, {"Serve", true}}};
     auto run = Build(config, MakeIslandMesh());
@@ -433,7 +447,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 
   SECTION("an override that un-serves a perfect conductor: Missing in the candidate")
   {
-    json config = Config({{9, "PEC"}}, convex_library_3d_path);
+    json config = Config({{9, "PEC"}}, sa_library_path);
     config["Solver"]["SurfaceResponseCorrection"]["ImpedanceMetalFilmOverrides"] = {
         {{"Attributes", {9}}, {"Serve", false}}};
     auto run = Build(config, MakeIslandMesh());
@@ -453,7 +467,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   {
     // The diagonal island: attribute 9 below x + z = 1 (PEC), 10 above (the film sheet):
     // one conductor whose law changes at the corners (0.25, 0.75) and (0.75, 0.25).
-    auto run = Build(Config({{9, "PEC"}, {10, film_law}}, convex_library_3d_path),
+    auto run = Build(Config({{9, "PEC"}, {10, film_law}}, sa_library_path),
                      MakeDiagonalIslandMesh());
     const auto film = Film(*run);
     REQUIRE(film.candidate_differs);
@@ -481,7 +495,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   SECTION("a mixed library (t3; a TEST-ONLY copy of the isolated model relabelled with "
           "the film law): exactly that key's features EXACT")
   {
-    json library = json::parse(std::ifstream(convex_library_3d_path));
+    json library = json::parse(std::ifstream(sa_library_path));
     json copy;
     for (const auto &model : library["Models"])
     {
@@ -494,7 +508,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     copy["Name"] = "isolated-film-copy";
     copy["BoundaryCondition"] = {{"Type", "Impedance"}, {"Ls", 1.0e-13}};
     copy["BoundaryLawQualification"] = {{"Version", 1}, {"Status", "Qualified"}};
-    library["Name"] = "unit-test-process-convex-3d-mixed";
+    library["Name"] = "unit-test-process-impedance-rule-convex-sa-3d-mixed";
     library["Models"].push_back(copy);
     const fs::path mixed_path = temp.temp_dir / "impedance-rule-mixed-library.json";
     if (Mpi::Root(Mpi::World()))
