@@ -23,7 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "surface_respons
 import coverage_marks as cm  # noqa: E402
 
 # The explicit-mark rule's module (decision 1914): this check is of record only with this file (sha256-16 asserted).
-COVERAGE_MARKS_SHA256_16 = "b5ae7f33385046c1"
+COVERAGE_MARKS_SHA256_16 = "3feaa623f05d4598"
 if hashlib.sha256(Path(cm.__file__).read_bytes()).hexdigest()[:16] != COVERAGE_MARKS_SHA256_16:
     raise SystemExit(f"{cm.__file__}: sha256-16 != {COVERAGE_MARKS_SHA256_16} (this check reads marks with that file only)")
 

@@ -130,7 +130,7 @@ class DuplicateColumnTest(unittest.TestCase):
 
 
 class ProvenanceTest(unittest.TestCase):
-    """Decision 1934 (R-1 / R-2): the provenance object, and accept_report's two arms and every refusal."""
+    """Decisions 1934 (R-1) / 1942: the provenance object; accept_report accepts an allowed provenance only; every refusal."""
 
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="cm-prov-")
@@ -174,62 +174,54 @@ class ProvenanceTest(unittest.TestCase):
             with self.assertRaises(cm.ReportRefusal, msg=name) as caught:
                 cm.accept_report({"postpro": unmarked, cm.PROVENANCE_KEY: prov}, "r.json", self.allowed)
             self.assertIn(cm.REPORT_REFUSAL_TEXT, str(caught.exception))
-            self.assertTrue(str(caught.exception).startswith("REFUSED (decision 1934): r.json: "))
+            self.assertTrue(str(caught.exception).startswith("REFUSED (decision 1942): r.json: "))
 
-    def test_no_provenance_unmarked_tree_on_host_accepted(self):
-        for name, kw in (("plain", {}), ("warn config", {"config": {"Solver": {"Electrostatic": {"ResponseCorrection": {"Coverage": {"Policy": "Warn"}}}}}}),
-                         ("warn palace", {"palace": '{"SurfaceResponse": {"Coverage": {"Policy": "Warn"}}}'})):
-            post = self.tree(name.replace(" ", "-"), **kw)
-            self.assertIn("reads unmarked", cm.accept_report({"postpro": post}, "r.json", self.allowed), name)
-            self.assertIn("reads unmarked", cm.accept_report({"postpro": os.path.dirname(post)}, "r.json", self.allowed), name)
-
-    def test_no_provenance_tree_absent_refused(self):
-        for rep in ({"postpro": os.path.join(self.tmp, "gone", "postpro")}, {}, {"postpro": None}, []):
-            with self.assertRaises(cm.ReportRefusal) as caught:
+    def test_no_provenance_report_refused_whatever_its_tree(self):
+        """Decision 1942 (R-2 (b) removed): a report WITHOUT provenance is refused whatever its tree: absent, on this host and
+        unmarked (a postpro or a run directory; a Warn config / palace.json), marked (a mark / twin column, the config, palace.json),
+        unreadable, or a report that borrowed a MARKED ladder (block_D.ladder.source) beside an unmarked 'postpro'."""
+        unmarked = self.tree("warn", config={"Solver": {"Electrostatic": {"ResponseCorrection": {"Coverage": {"Policy": "Warn"}}}}},
+                             palace='{"SurfaceResponse": {"Coverage": {"Policy": "Warn"}}}')
+        marked = self.tree("mark", header="i,E_elec postprocessed fixed-trace (J),coverage mark E_elec\n")
+        twin = self.tree("twin", header="i,E_elec postprocessed fixed-trace (J)" + cm.PARTIAL_COLUMN_SUFFIX + "\n")
+        config = self.tree("config", config={"Solver": {"SurfaceResponseCorrection": {"Coverage": {"Policy": "MarkNotApplied"}}}})
+        truncated = self.tree("truncated", palace='{"SurfaceResponse": {"Cov')
+        forms = {"tree absent": {"postpro": os.path.join(self.tmp, "gone", "postpro")}, "no postpro key": {}, "postpro null": {"postpro": None},
+                 "unmarked postpro on host": {"postpro": unmarked}, "unmarked run directory on host": {"postpro": os.path.dirname(unmarked)},
+                 "mark column": {"postpro": marked}, "twin column": {"postpro": twin}, "config MarkNotApplied": {"postpro": config},
+                 "palace.json truncated": {"postpro": truncated},
+                 "borrowed marked ladder": {"postpro": unmarked, "block_D": {"ladder": {"source": marked, "borrowed": True}}}}
+        for name, rep in forms.items():
+            with self.assertRaises(cm.ReportRefusal, msg=name) as caught:
                 cm.accept_report(rep, "r.json", self.allowed)
-            self.assertIn(cm.REPORT_REFUSAL_TEXT, str(caught.exception))
+            self.assertEqual(str(caught.exception), f"REFUSED (decision 1942): r.json: {cm.REPORT_REFUSAL_TEXT} (no provenance)", name)
+        with self.assertRaises(cm.ReportRefusal) as caught:
+            cm.accept_report([], "r.json", self.allowed)
+        self.assertEqual(str(caught.exception), f"REFUSED (decision 1942): r.json: {cm.REPORT_REFUSAL_TEXT} (the report is not a JSON object)")
 
-    def test_no_provenance_marked_tree_refused(self):
-        forms = {
-            "mark column": {"header": "i,E_elec postprocessed fixed-trace (J),coverage mark E_elec\n"},
-            "twin column": {"header": "i,E_elec postprocessed fixed-trace (J)" + cm.PARTIAL_COLUMN_SUFFIX + "\n"},
-            "comment then mark": {"header": "# a comment line\ni,coverage mark[1]\n"},
-            "config": {"config": {"Solver": {"SurfaceResponseCorrection": {"Coverage": {"Policy": "MarkNotApplied"}}}}},
-            "palace key": {"palace": '{"Problem": {}, "X": {"MarkedCells": 3}}'},
-            "palace policy": {"palace": '{"SurfaceResponse": {"Coverage": {"Policy": "MarkNotApplied"}}}'},
-        }
-        for name, kw in forms.items():
-            post = self.tree(name.replace(" ", "-"), **kw)
-            with self.assertRaises(cm.ReportRefusal, msg=name) as caught:
-                cm.accept_report({"postpro": post}, "r.json", self.allowed)
-            self.assertIn("is MARKED", str(caught.exception), name)
+    def test_accept_report_reads_no_file(self):
+        """Decision 1944 (3c): accept_report decides from the report object alone: every file / directory access raises here, and
+        the accepted and the refused forms give the same answers as without the patch."""
+        import builtins
+        from unittest import mock
 
-    def test_no_provenance_tree_fail_closed_refused(self):
-        forms = {"palace truncated": {"palace": '{"SurfaceResponse": {"Cov'},
-                 "palace unknown policy": {"palace": '{"SurfaceResponse": {"Coverage": {"Policy": "Abort"}}}'},
-                 "config unknown policy": {"config": {"Solver": {"SurfaceResponseCorrection": {"Coverage": {"Policy": "Abort"}}}}}}
-        for name, kw in forms.items():
-            post = self.tree(name.replace(" ", "-"), **kw)
-            with self.assertRaises(cm.ReportRefusal, msg=name) as caught:
-                cm.accept_report({"postpro": post}, "r.json", self.allowed)
-            self.assertIn("cannot be read", str(caught.exception), name)
+        def forbidden(*args, **kwargs):
+            raise AssertionError(f"accept_report touched the file system: {args[:1]}")
 
-    def test_large_palace_scan_and_its_tail_check(self):
-        """The guard's large-file path (GUARD_PARSE_LIMIT lowered for the test): a scanned file that decodes but is truncated after
-        its Coverage object is refused by the tail check alone (the round-2 g6 mutation's discriminating form)."""
-        saved = cm.GUARD_PARSE_LIMIT
-        cm.GUARD_PARSE_LIMIT = 16
-        try:
-            whole = '{\n "SurfaceResponse": {\n  "Coverage": {"Policy": "Warn"}\n },\n "Pad": "' + "x" * 64 + '"\n}\n'
-            post = self.tree("large-ok", palace=whole)
-            self.assertIn("reads unmarked", cm.accept_report({"postpro": post}, "r.json", self.allowed))
-            post = self.tree("large-truncated", palace=whole[: whole.index('"Pad"')])
-            with self.assertRaises(cm.ReportRefusal) as caught:
-                cm.accept_report({"postpro": post}, "r.json", self.allowed)
-            self.assertIn("does not end with a column-0", str(caught.exception))
-        finally:
-            cm.GUARD_PARSE_LIMIT = saved
+        good = {"postpro": self.tree("w"), cm.PROVENANCE_KEY: cm.provenance(self.writer)}
+        bad = {"postpro": good["postpro"]}
+        with mock.patch.object(builtins, "open", forbidden), mock.patch.object(os, "listdir", forbidden), \
+                mock.patch.object(os, "stat", forbidden), mock.patch.object(os, "scandir", forbidden), \
+                mock.patch.object(os.path, "isdir", forbidden), mock.patch.object(os.path, "isfile", forbidden), \
+                mock.patch.object(os.path, "exists", forbidden):
+            self.assertIn("(allowed)", cm.accept_report(good, "r.json", self.allowed))
+            with self.assertRaises(cm.ReportRefusal):
+                cm.accept_report(bad, "r.json", self.allowed)
 
+    def test_the_tree_rule_of_round_3_is_gone(self):
+        """Decision 1944 (3): the guard's tree rule (R-2 (b)'s only use) is no longer in this module."""
+        for name in ("guard_rule_signals", "palace_signals", "GuardRuleRefuse", "GUARD_PARSE_LIMIT", "GUARD_MARK_KEYS"):
+            self.assertFalse(hasattr(cm, name), name)
 
 if __name__ == "__main__":
     unittest.main()

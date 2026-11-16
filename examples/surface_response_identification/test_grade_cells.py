@@ -25,7 +25,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import grade_cells as gc  # noqa: E402
 import coverage_marks as cm  # noqa: E402
 
-# Decision 1934 (R-2): a --band report is read only with the provenance of an allowed writer (coverage_report.py beside this file).
+# Decisions 1934 / 1942: a --band report is read ONLY with the provenance of the allowed writer (coverage_report.py beside this file).
 CR_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "coverage_report.py")
 
 
@@ -731,6 +731,32 @@ class StageERecords(unittest.TestCase):
             self.assertEqual(sorted(cell["C_eff_by_f_pct"]), ["5.2", "5.7", "6.2"])
 
 
+class StageEBandReportsRefused(unittest.TestCase):
+    """Decisions 1942 / 1948 (1): the stage-E band reports of record that StageERecords passes to --band carry no provenance: grade_cells
+    refuses each with EXACTLY the 1942 line (one line on stdout, nothing on stderr), exit 5, no output file. (StageERecords itself is
+    unchanged: its tests that read these reports fail by this refusal until the reports are re-created by the allowed writer.)"""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.records = StageERecords()
+        self.records.tmp = self.tmp
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp)
+
+    def test_stage_e_band_reports_of_record_refused(self):
+        cases = [(w, self.records.es_args(w)) for w in ES_WINDOWS] + [(f"{w}-mx", self.records.mx_args(w, "direct")) for w in MX_REFERENCES]
+        for name, args in cases:
+            band, out = args[args.index("--band") + 1], args[args.index("--out") + 1]
+            buf, err = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(err):
+                rc = gc.main(args)
+            self.assertEqual(rc, cm.REFUSAL_EXIT, (name, buf.getvalue(), err.getvalue()))
+            self.assertEqual(buf.getvalue(), f"grade_cells.py: REFUSED (decision 1942): {band}: {cm.REPORT_REFUSAL_TEXT} (no provenance)\n", name)
+            self.assertEqual(err.getvalue(), "", name)
+            self.assertFalse(os.path.exists(out), name)
+
+
 @unittest.skipUnless(os.path.isfile(CARD_995) and os.path.isfile(LIBRARY_V3J) and os.path.isfile(REFRESH), "the 995 card records are not present")
 class MaxwellCard995(unittest.TestCase):
     """The 995 Maxwell card (43 P / 1 I / 0 F; G2): the 7 RE-SCORED windows re-scored by grade_cells.py from the stored junction-driven
@@ -959,9 +985,10 @@ class ExplicitMarkWindows(unittest.TestCase):
 
 
 class ReportProvenanceWindows(unittest.TestCase):
-    """Decision 1934 (R-1 / R-2): grade_cells reads a --band report only with an allowed provenance, or without one only when the
-    report's tree is on this host and reads unmarked (the guard's rule); else a REFUSAL (exit 5, one line, no output file). Its own
-    grade JSON carries its provenance."""
+    """Decisions 1934 (R-1) / 1942: grade_cells reads a --band report ONLY with the provenance of the allowed writer (its sha256, its
+    coverage_marks sha256, explicit_marks true); any other report, whatever its tree, is a REFUSAL: exactly ONE line
+    'grade_cells.py: REFUSED (decision 1942): <report>: report without an allowed provenance: re-create it with the allowed reader
+    (<why>)' on stdout, nothing on stderr, exit 5, no output file. Its own grade JSON carries its provenance."""
 
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
@@ -987,11 +1014,11 @@ class ReportProvenanceWindows(unittest.TestCase):
         with open(band, "w") as handle:
             json.dump(report, handle)
         out = os.path.join(self.tmp, f"{name}.json")
-        buf = io.StringIO()
-        with contextlib.redirect_stdout(buf):
+        buf, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(err):
             rc = gc.main(["--form", "es", "--device", run, "--reference-values", self.values, "--out", out, "--tail-form", "422",
                           "--band", band])
-        self.stdout = buf.getvalue()
+        self.stdout, self.stderr, self.band_path = buf.getvalue(), err.getvalue(), band
         g = None
         if os.path.isfile(out):
             with open(out) as handle:
@@ -1006,8 +1033,8 @@ class ReportProvenanceWindows(unittest.TestCase):
         self.assertEqual(g["band"]["SA"], [-9.0, 9.0])
 
     def test_old_reader_report_refused(self):
-        """The review's B-1 report attack: a report WITHOUT provenance (an old reader's) of a MARKED tree: refused with the tree on
-        this host and with the tree absent; a forged writer sha refused."""
+        """The round-2 review's B-1 report attack: a report WITHOUT provenance (an old reader's) of a MARKED tree: refused with the
+        tree on this host and with the tree absent; a forged writer sha refused."""
         marked = self.run_of("marked", [2])
         forms = {"tree on host, marked": {"block_C": self.band, "postpro": os.path.join(marked, "postpro")},
                  "tree absent": {"block_C": self.band, "postpro": "/data/home/simlap/elsewhere/postpro"},
@@ -1023,12 +1050,62 @@ class ReportProvenanceWindows(unittest.TestCase):
             self.assertEqual(len(lines), 1, (name, self.stdout))
             self.assertIn(cm.REPORT_REFUSAL_TEXT, lines[0], name)
 
-    def test_old_report_of_an_unmarked_tree_on_host_read(self):
-        warn = self.run_of("warn")
-        rc, g, _ = self.grade(warn, {"block_C": self.band, "postpro": os.path.join(warn, "postpro")}, "old-unmarked")
-        self.assertEqual(rc, 0)
-        self.assertEqual(g["cells"]["SA"]["letter"], "PASS")
-        self.assertTrue(g["cells"]["SA"]["in_band"])
+    def assert_refused(self, forms, run, why):
+        """Every (name, report) form: exit 5, no grade JSON, stdout = exactly the 1942 line with `why` (a str, or a dict by name),
+        stderr empty."""
+        for name, report in forms.items():
+            rc, g, out = self.grade(run, report, name.replace(" ", "-").replace(",", "").replace("'", ""))
+            self.assertEqual(rc, cm.REFUSAL_EXIT, (name, self.stdout))
+            self.assertIsNone(g, name)
+            self.assertFalse(os.path.exists(out), name)
+            reason = why if isinstance(why, str) else why[name]
+            self.assertEqual(self.stdout, f"grade_cells.py: REFUSED (decision 1942): {self.band_path}: {cm.REPORT_REFUSAL_TEXT} ({reason})\n", name)
+            self.assertEqual(self.stderr, "", name)
+
+    def test_no_provenance_report_refused(self):
+        """Decision 1942 (R-2 (b) removed): a report WITHOUT provenance is refused whatever its tree: the device tree unmarked on this
+        host (a postpro or a run directory), marked, absent, no 'postpro', and an unmarked follower whose ladder was borrowed from a
+        MARKED run (the review's N5 form)."""
+        warn, marked = self.run_of("warn"), self.run_of("marked", [2])
+        forms = {"unmarked postpro on host": {"block_C": self.band, "postpro": os.path.join(warn, "postpro")},
+                 "unmarked run directory on host": {"block_C": self.band, "postpro": warn},
+                 "marked tree on host": {"block_C": self.band, "postpro": os.path.join(marked, "postpro")},
+                 "tree absent": {"block_C": self.band, "postpro": "/data/home/simlap/elsewhere/postpro"},
+                 "no postpro key": {"block_C": self.band},
+                 "borrowed marked ladder": {"block_C": self.band, "postpro": os.path.join(warn, "postpro"),
+                                            "block_D": {"ladder": {"source": os.path.join(marked, "postpro"), "borrowed": True}}}}
+        self.assert_refused(forms, warn, "no provenance")
+
+    def test_wrong_writer_sha_refused(self):
+        """A provenance whose writer sha256 is not the allowed writer's (another file; the ROUND-3 coverage_report 7e120dd6 with its
+        module b5ae7f33: a report of round 3 is re-created, decision 1944 (2); upper case; 16 digits only; absent), or whose module
+        sha256 is not the allowed writer's: refused."""
+        good = cm.provenance(CR_PATH)
+        r3 = {"writer": "coverage_report.py", "writer_sha256": "7e120dd655eec0babc9cf5fdb275c5d9adaaed6f0a2e3e38d334b767de2ab588",
+              "coverage_marks_sha256": "b5ae7f33385046c157e80282c310ef8f0e9dbb841e301663692efdbdd6401239", "explicit_marks": True}
+        provs = {"another writer": dict(good, writer_sha256="f" * 64), "the round-3 writer": r3,
+                 "upper case": dict(good, writer_sha256=good["writer_sha256"].upper()),
+                 "16 digits": dict(good, writer_sha256=good["writer_sha256"][:16]),
+                 "no writer sha": {k: v for k, v in good.items() if k != "writer_sha256"},
+                 "module differs": dict(good, coverage_marks_sha256="1" * 64)}
+        forms = {name: dict(allowed_band_report(self.band), **{cm.PROVENANCE_KEY: p}) for name, p in provs.items()}
+        why = {name: (f"its provenance names coverage_marks sha256 {'1' * 16}: not the module of the allowed writer {good['writer_sha256'][:16]}"
+                      if name == "module differs" else
+                      f"its provenance names 'coverage_report.py' sha256 {str(p.get('writer_sha256'))[:16]}: not an allowed writer")
+               for name, p in provs.items()}
+        self.assert_refused(forms, self.run_of("warn"), why)
+
+    def test_explicit_marks_false_refused(self):
+        """A provenance of the allowed writer that does not state explicit_marks true (false, the string 'true', absent; the
+        provenance not an object): refused."""
+        good = cm.provenance(CR_PATH)
+        provs = {"explicit_marks false": dict(good, explicit_marks=False), "explicit_marks string": dict(good, explicit_marks="true"),
+                 "explicit_marks absent": {k: v for k, v in good.items() if k != "explicit_marks"}}
+        forms = {name: dict(allowed_band_report(self.band), **{cm.PROVENANCE_KEY: p}) for name, p in provs.items()}
+        self.assert_refused(forms, self.run_of("warn"),
+                            f"its provenance does not state explicit_marks true (the allowed writer {good['writer_sha256'][:16]})")
+        self.assert_refused({"provenance a string": dict(allowed_band_report(self.band), **{cm.PROVENANCE_KEY: "coverage_report.py"})},
+                            self.run_of("warn2"), "its provenance is not an object")
 
     def test_grade_json_carries_the_provenance(self):
         rc, g, _ = self.grade(self.run_of("warn"), allowed_band_report(self.band), "prov")

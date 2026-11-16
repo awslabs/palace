@@ -73,7 +73,7 @@ if HERE not in sys.path:
 import coverage_marks as cm  # noqa: E402
 
 # The explicit-mark rule's module (decision 1914): this reader is of record only with this file (sha256-16 asserted).
-COVERAGE_MARKS_SHA256_16 = "b5ae7f33385046c1"
+COVERAGE_MARKS_SHA256_16 = "3feaa623f05d4598"
 
 
 def _assert_coverage_marks():

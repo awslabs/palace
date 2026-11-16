@@ -69,6 +69,11 @@ ROUND 3 (decision 1934): a --band report is read ONLY when coverage_marks.accept
 ALLOWED_REPORT_WRITERS (coverage_report.py of this commit, by sha256), or it has no provenance and its tree is on this host and reads
 unmarked by the guard's rule; else a REFUSAL (one line, exit 5, no output file). The grade JSON carries this writer's provenance. A
 table naming a mark / twin / exposure column twice is a REFUSAL; a mark token is read one way ('1' / '0' exactly).
+
+ROUND 4 (decision 1942): the no-provenance branch is REMOVED: a --band report is read ONLY with the provenance of the writer of
+ALLOWED_REPORT_WRITERS (coverage_report.py of the round-4 commit, by sha256, with its coverage_marks sha256 and explicit_marks true);
+any other report, an old report of an unmarked tree included, is a REFUSAL ('report without an allowed provenance: re-create it with
+the allowed reader'; one line, exit 5, no output file). No tree is read for the decision.
 """
 
 import argparse
@@ -90,7 +95,7 @@ if HERE not in sys.path:
 import coverage_marks as cm  # noqa: E402
 
 # The explicit-mark rule's module (decision 1914): this reader is of record only with this file (sha256-16 asserted).
-COVERAGE_MARKS_SHA256_16 = "b5ae7f33385046c1"
+COVERAGE_MARKS_SHA256_16 = "3feaa623f05d4598"
 
 
 def _assert_coverage_marks():
@@ -103,9 +108,9 @@ def _assert_coverage_marks():
 
 _assert_coverage_marks()
 
-# Decision 1934 (R-2): the report writers whose --band reports this reader accepts by provenance: {writer sha256: the
-# coverage_marks.py sha256 it requires} (coverage_report.py of this commit).
-ALLOWED_REPORT_WRITERS = {"7e120dd655eec0babc9cf5fdb275c5d9adaaed6f0a2e3e38d334b767de2ab588": "b5ae7f33385046c157e80282c310ef8f0e9dbb841e301663692efdbdd6401239"}
+# Decisions 1934 / 1942: the report writers whose --band reports this reader accepts, by provenance ONLY: {writer sha256: the
+# coverage_marks.py sha256 it requires} (coverage_report.py of the round-4 commit ONLY, decision 1944 (2)).
+ALLOWED_REPORT_WRITERS = {"6dec72560bf54b9d8f42abed5e03599bac68b584edc87a75e1c225bbaf2a5580": "3feaa623f05d459820000df67f706d393cad8053bf7ead1b96127c4eff8c0d53"}
 
 TYPES = ("SA", "MS", "MA_sharp", "C")
 D4 = {"SA": 5.0, "MS": 5.0, "MA_sharp": 5.0, "C": 0.5}
@@ -1058,7 +1063,7 @@ def main(argv=None):
         if a.band:
             with open(a.band) as handle:
                 report = json.load(handle)
-            cm.accept_report(report, a.band, ALLOWED_REPORT_WRITERS)  # decision 1934 (R-2): ReportRefusal, exit 5
+            cm.accept_report(report, a.band, ALLOWED_REPORT_WRITERS)  # decision 1942: provenance only; ReportRefusal, exit 5
             band = report["block_C"]
         grade = grade_es if a.form == "es" else grade_mx
         out = grade(a, catalog, cat_src, tails, band, values, palace_policy)
