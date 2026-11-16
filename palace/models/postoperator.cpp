@@ -1916,6 +1916,13 @@ void PostOperator<solver_t>::MeasureSParameter() const
     //             lossy port mode, and is the power overlap ∫(E×H_mode⋆)·n dS for a
     //             lossless one
     // Both are directly the Kurokawa b/a ratio, so no impedance scaling is needed.
+    //
+    // Both measure the response to a unit-power incident wave. When the drive port carries
+    // an excitation weight a = A exp(iφ) (lumped ports only in this version), the measured
+    // fields respond to a times the unit-power wave, so the projections on every
+    // observation port (lumped, wave, and Floquet) are divided by a. Then
+    // S = proj / a - δ on the driven port and S = proj / a on the others, which is
+    // independent of A and φ.
 
     // Get information about excited port.
     auto [drive_is_simple, drive_port_type, drive_port_idx] =
@@ -1926,6 +1933,13 @@ void PostOperator<solver_t>::MeasureSParameter() const
     {
       return;
     }
+
+    // Drive weight a = A exp(iφ) of the excited port (1 for wave and Floquet ports, which
+    // do not carry a weight in this version).
+    const std::complex<double> drive_weight =
+        (drive_port_type == PortType::LumpedPort)
+            ? fem_op->GetLumpedPortOp().GetPort(drive_port_idx).GetExcitationWeight()
+            : std::complex<double>{1.0, 0.0};
 
     // Per-side wave-port de-embedding factor: exp(i·kₙ·d_offset) when the port is a
     // wave port with a non-zero offset; 1 otherwise (lumped ports have no offset).
@@ -1952,6 +1966,7 @@ void PostOperator<solver_t>::MeasureSParameter() const
     for (const auto &[idx, data] : fem_op->GetLumpedPortOp())
     {
       auto &vi = measurement_cache.lumped_port_vi.at(idx);
+      vi.S /= drive_weight;
       if (drive_port_type == PortType::LumpedPort && idx == drive_port_idx)
       {
         vi.S.real(vi.S.real() - 1.0);
@@ -1972,6 +1987,7 @@ void PostOperator<solver_t>::MeasureSParameter() const
     for (const auto &[idx, data] : fem_op->GetWavePortOp())
     {
       auto &vi = measurement_cache.wave_port_vi.at(idx);
+      vi.S /= drive_weight;
       if (drive_port_type == PortType::WavePort && idx == drive_port_idx)
       {
         vi.S.real(vi.S.real() - 1.0);
@@ -1995,6 +2011,7 @@ void PostOperator<solver_t>::MeasureSParameter() const
     {
       for (auto &[key, S] : S_map)
       {
+        S /= drive_weight;
         if (lumped_or_wave_drives)
         {
           S *= std::numbers::sqrt2;

@@ -21,6 +21,14 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
   - `validate-config` accepts several configuration files and validates them in one Julia
     session. [PR 1180](https://github.com/awslabs/palace/pull/1180).
+  - Added `Boundaries.LumpedPort[].ExcitationAmplitude` and `ExcitationPhase` (degrees),
+    a complex weight a = A e^{iφ} on the unit-power incident wave of each lumped port, so
+    ports sharing an `Excitation` index can be driven with different amplitudes and phases.
+    S-parameters of single-port excitations are normalized by the weight; with a phase that
+    is not a multiple of 180 degrees `port-V.csv` and `port-I.csv` report the real and
+    imaginary parts of the incident voltage and current. A phase that is not a multiple of
+    180 degrees is an error for transient simulations. SchemaVer 4-3-0
+    [PR 1169](https://github.com/awslabs/palace/pull/1169).
 
 #### Interface Changes
 
