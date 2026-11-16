@@ -172,7 +172,8 @@ ConfigurePreconditionerSolver(const config::LinearSolverData &linear,
 #if defined(MFEM_USE_SUPERLU)
       if constexpr (std::is_same_v<OperType, ComplexOperator>)
       {
-        // Only with a 2D process grid.
+        // Only with a 2D process grid: SuperLUComplexSolver implements the driver for 2D
+        // process grids (pzgssvx), not the one for 3D process grids (pzgssvx3d).
         if (UseComplexArithmetic(linear) && !linear.superlu_3d)
         {
           pc = std::make_unique<SuperLUComplexSolver>(comm, linear.sym_factorization,
@@ -189,7 +190,8 @@ ConfigurePreconditionerSolver(const config::LinearSolverData &linear,
 #if defined(MFEM_USE_STRUMPACK)
       if constexpr (std::is_same_v<OperType, ComplexOperator>)
       {
-        // Only without compression.
+        // Only without compression: StrumpackComplexSolver does not implement the
+        // compression options (STRUMPACK supports them for complex-valued matrices).
         if (UseComplexArithmetic(linear) &&
             linear.strumpack_compression_type == SparseCompression::NONE)
         {
