@@ -1071,20 +1071,26 @@ TEST_CASE("Extruded PML depth", "[pml][geodata][Serial]")
   }
 
   // The same face of the box tilted by a rotation, along its tilted normal n, with the
-  // depth n · x - 1.
+  // depth n · x - 1, also translated by L (1, 0.7, 0.3) far from the origin, where n · x is
+  // up to 10⁵ times the size of the mesh, with the depth n · x - 1 - L n · (1, 0.7, 0.3),
+  // within the rounding of the coordinates.
+  for (const double L : {0.0, 1.0e3, 1.0e5})
   {
+    INFO("L = " << L);
+    const double tol = 1.0e-12 + 1.0e-15 * L;
     smesh = std::make_unique<mfem::Mesh>(MakeBoxTop(type, 2, order));
     const double c = std::cos(0.4), s = std::sin(0.4);  // About the axis (1, 1, 1) / √3
     const double k = (1.0 - c) / 3.0, r = s / std::sqrt(3.0);
     const double R[3][3] = {
         {c + k, k - r, k + r}, {k + r, c + k, k - r}, {k - r, k + r, c + k}};
+    const double shift[3] = {L, 0.7 * L, 0.3 * L};
     smesh->Transform(
         [&](const mfem::Vector &x, mfem::Vector &y)
         {
           y.SetSize(3);
           for (int i = 0; i < 3; i++)
           {
-            y(i) = R[i][0] * x(0) + R[i][1] * x(1) + R[i][2] * x(2);
+            y(i) = R[i][0] * x(0) + R[i][1] * x(1) + R[i][2] * x(2) + shift[i];
           }
         });
     const int ne = smesh->GetNE();
@@ -1093,11 +1099,12 @@ TEST_CASE("Extruded PML depth", "[pml][geodata][Serial]")
     REQUIRE(pml.extrusion.depth == Depth::NORMAL);
     for (int i = 0; i < 3; i++)
     {
-      CHECK_THAT(pml.extrusion.plane[i], Matchers::WithinAbs(R[i][2], 1.0e-12));
+      CHECK_THAT(pml.extrusion.plane[i], Matchers::WithinAbs(R[i][2], tol));
     }
+    const double h = 1.0 + R[0][2] * shift[0] + R[1][2] * shift[1] + R[2][2] * shift[2];
     CHECK(DepthError(*smesh, pml, [&](const mfem::Vector &x)
-                     { return R[0][2] * x(0) + R[1][2] * x(1) + R[2][2] * x(2) - 1.0; }) <
-          1.0e-12);
+                     { return R[0][2] * x(0) + R[1][2] * x(1) + R[2][2] * x(2) - h; }) <
+          tol);
     CHECK(MinExtrudedJacobian(*smesh, ne, order) > 0.0);
   }
 

@@ -3388,21 +3388,31 @@ void ExtrudePML(std::unique_ptr<mfem::Mesh> &orig_mesh, config::DomainData &doma
     MFEM_VERIFY(e2 < 0, "Boundary attribute " << attr << " of " << Surface(k)
                                               << " is not on the exterior boundary of "
                                                  "the mesh!");
+    // The offsets of the planes are relative to the corner bbmin of the bounding box of the
+    // mesh, so that comparing them does not depend on its distance from the origin (n · x
+    // multiplies the rounding of n by |x|).
     std::array<double, 4> plane{};
     bool flat = true;
+    mfem::Vector xs(3);
     ForEachSample(f,
                   [&](const mfem::Vector &x, const mfem::Vector &normal)
                   {
+                    subtract(x, bbmin, xs);
                     if (plane == std::array<double, 4>{})
                     {
-                      plane = {normal(0), normal(1), normal(2), normal * x};
+                      plane = {normal(0), normal(1), normal(2), normal * xs};
                     }
-                    flat = flat && SamePlane(plane, normal, x, tol);
+                    flat = flat && SamePlane(plane, normal, xs, tol);
                   });
     face_plane[f] = flat ? plane : std::array<double, 4>{};
     entry_faces[k].push_back(f);
   }
   auto IsFlat = [&](int f) { return face_plane.at(f) != std::array<double, 4>{}; };
+  auto Absolute = [&](std::array<double, 4> plane)
+  {
+    plane[3] += plane[0] * bbmin(0) + plane[1] * bbmin(1) + plane[2] * bbmin(2);
+    return plane;
+  };
 
   // Parts: the faces of an entry connected through their edges, and only the coplanar ones
   // for normal extrusion.
@@ -3632,7 +3642,7 @@ void ExtrudePML(std::unique_ptr<mfem::Mesh> &orig_mesh, config::DomainData &doma
     if (p.normal)
     {
       ex.depth = Extrusion::Depth::NORMAL;
-      ex.plane = plane0;
+      ex.plane = Absolute(plane0);
       depth_text.push_back(fmt::format("along its normal ({:.6g}, {:.6g}, {:.6g})",
                                        plane0[0], plane0[1], plane0[2]));
       continue;
@@ -3668,7 +3678,7 @@ void ExtrudePML(std::unique_ptr<mfem::Mesh> &orig_mesh, config::DomainData &doma
       ex.box_sides.fill(false);
       for (const int f : p.faces)
       {
-        const auto &plane = face_plane.at(f);
+        const auto plane = Absolute(face_plane.at(f));
         const int a = Axis(plane);
         const bool upper = plane[a] > 0.0;
         if (std::abs(plane[3] - (upper ? p.hi[a] : -p.lo[a])) > tol)
