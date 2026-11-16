@@ -11,9 +11,10 @@ class Strumpack(BuiltinStrumpack):
 
     def cmake_args(self):
         args = super().cmake_args()
-        # The PBLAS block size of the superbuild, which the patch of Palace for
-        # https://github.com/pghysels/STRUMPACK/pull/169 makes configurable in STRUMPACK
-        # 8.1.0 (STRUMPACK uses 32, or 512 with SLATE, and ignores the value without it)
-        if self.spec.satisfies("@8.1.0 ~slate"):
+        # The PBLAS block size of the superbuild, for builds without SLATE, which keep
+        # the block size of 512 that STRUMPACK uses with it. The block size can be set
+        # since https://github.com/pghysels/STRUMPACK/pull/169, which Palace applies to
+        # STRUMPACK 8.1.0 as a patch (without it, 8.1.0 ignores the value and uses 32)
+        if self.spec.satisfies("@8.1.0: ~slate"):
             args.append(self.define("STRUMPACK_PBLAS_BLOCKSIZE", "128"))
         return args
