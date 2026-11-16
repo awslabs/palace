@@ -1963,6 +1963,12 @@ ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
                     "Response-correction \"KnifeEdgeCensus\" must be a boolean!");
         data.knife_edge_census = census->get<bool>();
       }
+      if (auto preflight = correction.find("PreflightOnly"); preflight != correction.end())
+      {
+        MFEM_VERIFY(preflight->is_boolean(),
+                    "Response-correction \"PreflightOnly\" must be a boolean!");
+        data.preflight_only = preflight->get<bool>();
+      }
       if (auto geometry_policy = correction.find("GeometryFailurePolicy");
           geometry_policy != correction.end())
       {

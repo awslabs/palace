@@ -3386,6 +3386,11 @@
               "type": "boolean",
               "description": "The identification's knife-edge census (`Identification.Diagnostics.KnifeEdgeCensus`: three extra identification passes at the band radii; a preflight diagnostic the solve reads from the preflight). Absent: on for `--surface-response-preflight`, off for a solve run. Diagnostic only: no feature, key or patch depends on it."
             },
+            "PreflightOnly": {
+              "type": "boolean",
+              "description": "Run the surface-response preflight instead of a solve: exactly what the command-line option `--surface-response-preflight` does (the same code path, outputs and exit status), for front ends that start Palace without command-line options. The block of the configured `Problem.Type` is read (`Solver.Electrostatic.ResponseCorrection` for an electrostatic problem, `Solver.SurfaceResponseCorrection` otherwise); the log says in one line that no field solve is run. Requires `Library`; cannot be combined with `--mesh-statistics`. Remove the key to solve.",
+              "default": false
+            },
             "GeometryFailurePolicy": {
               "type": "string",
               "enum": [
@@ -3844,6 +3849,9 @@
               "Library"
             ],
             "KnifeEdgeCensus": [
+              "Library"
+            ],
+            "PreflightOnly": [
               "Library"
             ],
             "PatchConstruction": [

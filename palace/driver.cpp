@@ -148,6 +148,19 @@ void Run(IoData &iodata, MPI_Comm comm, int omp_threads, const char *git_tag)
   Mpi::Print(comm, "\n");
 }
 
+std::string SurfaceResponsePreflightKey(const IoData &iodata)
+{
+  const bool electrostatic = iodata.problem.type == ProblemType::ELECTROSTATIC;
+  const auto &request = electrostatic ? iodata.solver.electrostatic.response_correction
+                                      : iodata.solver.surface_response_correction;
+  if (!request || !request->preflight_only)
+  {
+    return {};
+  }
+  return electrostatic ? "Solver.Electrostatic.ResponseCorrection.PreflightOnly"
+                       : "Solver.SurfaceResponseCorrection.PreflightOnly";
+}
+
 int RunSurfaceResponsePreflight(IoData &iodata, MPI_Comm comm, int omp_threads,
                                 const char *git_tag)
 {
