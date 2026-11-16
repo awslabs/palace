@@ -150,8 +150,10 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     conflicts("^mumps+int64", msg="Palace requires MUMPS without 64 bit integers")
     with when("+mumps"):
         depends_on("fortran", type="build")
-        # Real and complex double precision (dmumps and zmumps).
-        depends_on("mumps@5.3:+metis+parmetis+double+complex")
+        depends_on("mumps+metis+parmetis")
+        # Real and complex double precision (dmumps and zmumps), with distributed
+        # right-hand sides.
+        depends_on("mumps@5.3:+double+complex", when="@0.20:")
         depends_on("mumps+shared", when="+shared")
         depends_on("mumps~shared", when="~shared")
         depends_on("mumps+openmp", when="+openmp")
