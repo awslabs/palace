@@ -19,6 +19,20 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### New Features
 
+  - Added the edge-resolution census of the surface-response correction (lane
+    rescensus-product; outputs only, ON by default whenever the correction is on:
+    `"Resolution": {"Enabled", "BarsFile"}`): one added point location of every applied
+    patch's contour knots per AMR level (the construction's own locator, no fallback
+    search); per patch the lower median of the owning elements' longest edge over the
+    matching radius (a knot on a face shared by several elements: the largest of their
+    longest edges; on a given mesh independent of the rank count);
+    `surface-response-resolution.csv` (per cell, interface `Type` and plane: the
+    energy-weighted shares of RESOLVED / MARGINAL / UNDER-RESOLVED /
+    NOT-EVALUATED patches, the `m10` / `m50` / `m90` quantiles, a status on INTERIM bars
+    valid at `R` = 1.9 µm only, NO-BARS otherwise), the `palace.json` block
+    `SurfaceResponse.Resolution`, a PREFLIGHT line before each solve, a banner line per
+    `Type`, and with `PatchEnergy` `surface-response-resolution-patches.csv`. No corrected
+    value or coverage status changes. RESOLVED is necessary, not sufficient.
   - Added the coverage outputs of the surface-response correction, on every corrected run of
     both solve families: the
     closed partition of the raw within-`R` energy `W` by the correction's ownership, one

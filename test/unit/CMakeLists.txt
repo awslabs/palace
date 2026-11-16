@@ -85,6 +85,7 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-strattonchu.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-surfaceimpedanceoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-surfaceresponsecoverage.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-surfaceresponseresolution.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-surfaceresponseidentification.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-surfaceresponse-rootgather.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-surfaceresponseoperator.cpp

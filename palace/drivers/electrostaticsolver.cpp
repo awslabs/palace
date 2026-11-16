@@ -1158,6 +1158,15 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     else
     {
       WritePatchTable();
+      if (patch_energy_response)
+      {
+        // Lane rescensus-product (decision 1817): the census's per-patch readings
+        // (PatchEnergy only; collective).
+        response_correction->WriteResolutionPatchTable(
+            response_correction
+                ->DiagnosticsPath(post_dir, "surface-response-resolution-patches.csv")
+                .string());
+      }
       if (self_consistent_response)
       {
         corrected_K = std::make_unique<SumOperator>(*K, *response_correction);
@@ -1540,6 +1549,11 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         Mpi::Warning(
             "{}", CoverageTargetsNotServedWarning(post_op.GetInterfaceTypes(&not_served)));
       }
+      // Lane rescensus-product (decision 1817; ruling 1819 F1): the census Types (the
+      // coverage interfaces') and the PREFLIGHT line (collective; before the first solve).
+      const auto census_interfaces = response_correction->GetCoverageInterfaces();
+      response_correction->ConfigureResolutionTypes(
+          post_op.GetInterfaceTypes(&census_interfaces));
     }
     if (response_correction->ExclusionEnergyRequested())
     {
@@ -1826,11 +1840,15 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   const auto coverage_path = post_dir / "surface-response-coverage.csv";
   const auto coverage_by_key_path =
       post_dir / "surface-response-uncovered-energy-by-key.csv";
+  // Lane rescensus-product (decision 1817): the census table (top level: small, one row per
+  // source x Type x (planes + 1)), written as each source completes.
+  const auto resolution_path = post_dir / "surface-response-resolution.csv";
   if (root && response_correction)
   {
     fs::remove(coverage_path);
     fs::remove(coverage_by_key_path);
     fs::remove(post_dir / "terminal-C-corrected-coverage.csv");
+    fs::remove(resolution_path);
   }
   auto MeasureSourceCoverage =
       [&](const std::map<int, SurfacePostOperator::InterfaceCoveragePartition> &partition,
@@ -2220,11 +2238,15 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         response_correction->EliminateRHS(V_corrected[step], corrected_rhs);
       }
       SurfaceResponseOperator::ElectrostaticResponse response;
+      // Lane rescensus-product: this source's census sums (evaluation 0: the postprocessed
+      // response of the raw field).
+      ResolutionAccumulator resolution_sums =
+          response_correction->NewResolutionAccumulator();
       if (postprocess_response)
       {
         BlockTimer coupon_timer(Timer::POSTPRO_RESPONSE_COUPON);
-        response = response_correction->GetElectrostaticResponse(V[step], true,
-                                                                 patch_energy_response);
+        response = response_correction->GetElectrostaticResponse(
+            V[step], true, patch_energy_response, &resolution_sums);
         WriteSpatialPatchTraces(idx, response_correction->GetSpatialPatchTraces(V[step]));
       }
       auto ApplyResponse =
@@ -2497,6 +2519,26 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                   coverage_partitions.back().second, corrected_results.back().raw,
                   postprocess_response ? &response.fabricated_surface_energy : nullptr));
           WriteSourceCoverage(idx, coverage_measurements.back().second);
+        }
+        // Lane rescensus-product (decision 1817): this source's census cells (collective;
+        // the root writes them; a SelfConsistent-only run has no evaluation-0 energy).
+        const auto resolution_cells = response_correction->MeasureResolution(
+            postprocess_response ? &resolution_sums : nullptr,
+            iodata.units.Dimensionalize<Units::ValueType::ENERGY>(1.0));
+        if (root)
+        {
+          const bool first = coverage_measurements.size() == 1;
+          std::ofstream output(resolution_path, first ? std::ios::out | std::ios::trunc
+                                                      : std::ios::out | std::ios::app);
+          MFEM_VERIFY(output,
+                      "Unable to open " << resolution_path.string() << " for writing!");
+          output << (first ? ResolutionTableHeader("i") : "");
+          WriteResolutionRows(output, std::to_string(idx), resolution_cells);
+          for (const auto &cell : resolution_cells)
+          {
+            response_correction->GetResolutionRunRecord().entries.push_back(
+                {{{"i", static_cast<double>(idx)}}, cell});
+          }
         }
       }
     }

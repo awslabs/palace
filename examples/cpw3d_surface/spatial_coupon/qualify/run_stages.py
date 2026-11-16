@@ -210,6 +210,9 @@ LAUNCHER_PASSED_PATTERN = re.compile(r"^(OMP_[A-Z_]+|[A-Z0-9_]+_NUM_THREADS|TMPD
 # job STOPS), then AFTER_KILL_PAUSE_SECONDS before anything else starts; ONE retry of a stage that failed that way.
 AFTER_KILL_EXIT_SECONDS = 300
 AFTER_KILL_PAUSE_SECONDS = 90
+# Form X only (decision 1771 m-1): a sampler that took no sample for this long (three 5-s
+# periods) is STALLED: the running stage is killed and no further stage starts (SamplerFailed).
+SAMPLER_STALL_SECONDS = 15
 FI_DOMAIN_PATTERN = re.compile(r"failed an OFI Libfabric library call \(fi_domain\)")
 ALLOCATION_PATTERN = re.compile(r"Cannot allocate memory")
 PALACE_STARTED_PATTERN = re.compile(r"^Running with \d+ MPI process", re.M)  # Palace's first line after MPI_Init
@@ -569,6 +572,7 @@ def main(argv):
     # preceded by launch_blocked() (a stop already raised, or a sampler failed / not alive).
     current_process, memory_stop, stage_samples, sampler_failure = [None], {}, [], {}
     memory_bar = preflight.get("MemoryStopBarBytes")
+    last_sample, kill_errors = [time.monotonic()], []
 
     def kill_stage():
         """SIGTERM to the running stage's process group, SIGKILL after 10 s (no stage: nothing)."""
@@ -580,6 +584,13 @@ def main(argv):
                     os.killpg(process.pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass  # the group is gone: nothing left to kill
+            except Exception as error:  # noqa: BLE001 - decision 1771 m-1: the session is killed process by process
+                kill_errors.append({"Error": f"{type(error).__name__}: {error}"[:300], "UTC": time.strftime("%FT%TZ", time.gmtime())})
+                for pid in [process.pid] + [pid for pid in session_processes(process.pid) if pid != process.pid]:
+                    try:
+                        os.kill(pid, signal.SIGKILL)
+                    except OSError:
+                        pass
 
     def sampler():
         try:
@@ -591,6 +602,7 @@ def main(argv):
                     stage_peaks[current_stage[0]] = max(stage_peaks.get(current_stage[0], 0), used)
                     stream.write(f"{time.time():.0f},{current_stage[0]},{used}\n")
                     stream.flush()
+                    last_sample[0] = time.monotonic()
                     if memory_bar is not None:
                         stage_samples.append((round(time.time()), current_stage[0], used))
                         if not memory_stop and memory_stop_index([used], memory_bar) is not None:
@@ -613,6 +625,25 @@ def main(argv):
     sampler_thread = threading.Thread(target=sampler, daemon=True)
     sampler_thread.start()
 
+    def sampler_stalled():
+        """Form X (decision 1771 m-1): True (and SamplerFailed recorded) when the live sampler took no
+        sample for SAMPLER_STALL_SECONDS: an alive but blocked sampler fails closed like a dead one."""
+        age = time.monotonic() - last_sample[0]
+        if not sampler_failure and not memory_stop and age > SAMPLER_STALL_SECONDS:
+            sampler_failure.update(Reason=f"the memory sampler took no sample for {age:.0f} s (stalled; the bar is "
+                                          f"{SAMPLER_STALL_SECONDS} s)", Stage=current_stage[0],
+                                   UTC=time.strftime("%FT%TZ", time.gmtime()))
+        return bool(sampler_failure)
+
+    def wait_watched(process):
+        """Form X (decision 1771 m-1): the stage's wait in 1-s slices; a stalled sampler kills the stage."""
+        while True:
+            try:
+                return process.wait(timeout=1.0)
+            except subprocess.TimeoutExpired:
+                if sampler_stalled():
+                    kill_stage()
+
     def launch_blocked():
         """Form X (decision 1721 F-2 / F-5), right before EVERY launch (the retry included): the
         reason the stage may not start, or None.  A memory stop raised (also during an after-kill
@@ -624,6 +655,7 @@ def main(argv):
         if not sampler_failure and not sampler_thread.is_alive():
             sampler_failure.update(Reason="the memory sampler thread is not alive", Stage=current_stage[0],
                                    UTC=time.strftime("%FT%TZ", time.gmtime()))
+        sampler_stalled()
         return "sampler-failed" if sampler_failure else None
     # The other nodes' samplers (this script in --node-sampler mode through the node shell),
     # stopped by the stop file at the end; their CSVs give every stage's per-node peaks.
@@ -696,7 +728,7 @@ def main(argv):
                     # Decision 1721 F-2: a stop raised between the guard and this start.
                     kill_stage()
                 try:
-                    code = process.wait()
+                    code = process.wait() if launcher is None else wait_watched(process)
                 except KeyboardInterrupt:
                     os.killpg(process.pid, signal.SIGTERM)
                     code = process.wait()
@@ -806,6 +838,8 @@ def main(argv):
     if sampler_failure:
         state = "sampler-failed"
         status["SamplerFailed"] = dict(sampler_failure)
+    if kill_errors:
+        status["KillErrors"] = kill_errors
     if memory_stop:
         status["MemoryStop"] = {key: value for key, value in memory_stop.items() if key != "Samples"}
     status.update(State="memory-stop" if memory_stop else state,
