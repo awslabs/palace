@@ -2909,8 +2909,7 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
                       << model.name << "\" has QualificationStatus \""
                       << status->get<std::string>()
                       << "\" (not \"Qualified\") and the library's AllowPendingModels does "
-                         "not list it by Name with a Decision: refused at load (R-5, USER "
-                         "decision 1230 Q8; OI-LIBRARY-INHERITED-PENDING-MODEL)!");
+                         "not list it by Name with a Decision: refused at load!");
       model.qualification_status = status->get<std::string>();
       model.allow_decision = allowed->second;
       allowed_pending_used.insert(model.name);
@@ -2973,7 +2972,7 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
                   "Fabrication-process response model \""
                       << model.name
                       << "\" lists LegacyContractAliases but is not a SpatialEdgeCluster "
-                         "model with a Signature (USER decision 283)!");
+                         "model with a Signature!");
       const std::string own_hash =
           SignatureKeyAndHash(*model.identification_signature, "SpatialEdgeCluster").second;
       auto Hex64 = [](const std::string &text)
@@ -3931,7 +3930,7 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
                   "Fabrication-process response model \""
                       << model.name
                       << "\" lists basis points that disagree with its constrained metal "
-                         "band (decision 404 D1, the consistent mortar): "
+                         "band (the consistent mortar): "
                       << bands.failure << "!");
       model.response.consistent_mortar_vertices = bands.vertices;
       model.response.consistent_mortar_rule = bands.rule;
@@ -4205,7 +4204,7 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
             << rules.state_anchor_edge_tolerance_over_r
             << " must be below half the narrowest magnetic model gap / width "
             << rules.state_anchor_min_gap_over_r
-            << " R (decision 1323 CONDITION 1: an anchor must not snap across a gap)!");
+            << " R (an anchor must not snap across a gap)!");
   }
   return library;
 }
@@ -8923,7 +8922,7 @@ public:
                         .second.substr(0, 12)
                  << " lies within the quantum near-match of " << cluster_candidates.size()
                  << " library models (quanta): " << names
-                 << " - one geometry, several models (decision 904 (b): fail closed)!");
+                 << " - one geometry, several models: fail closed!");
     }
     if (!best)
     {
@@ -9226,8 +9225,7 @@ public:
       {
         Mpi::Warning(
             "Legacy-contract alias {} of model \"{}\": the stored Context does not "
-            "re-hash to its ContextDigest; the role-insensitive lookup (decision "
-            "899 B2) skips it!\n",
+            "re-hash to its ContextDigest; the role-insensitive lookup skips it!\n",
             key.substr(0, 12), entry.model);
         continue;
       }
@@ -9309,7 +9307,7 @@ nlohmann::json ResolveLegacyContractAlias(const std::string &model_name,
                   << "\": the feature's context digest "
                   << (digest.empty() ? std::string("(no Box)") : digest)
                   << " does not match the alias's ContextDigest " << alias.context_digest
-                  << " (USER decision 283: fail closed)!");
+                  << " (fail closed)!");
   // The feature's claims-only key (the claims canonicalised alone, recorded by the
   // identification: the Portions of a contract-3 signature are serialised in the frame
   // that minimises Box + Context, so they cannot be re-keyed by removing those members).
@@ -9515,8 +9513,7 @@ LibrarySignatureKeys(const ProcessLibrary &library,
           Mpi::Warning(
               "Fabrication-process response model \"{}\" carries legacy-contract aliases "
               "but no PlanViewBoundary: its twins' metal cannot be read from the record, "
-              "so the role-insensitive alias lookup (decision 899 B2) does not apply to "
-              "it!\n",
+              "so the role-insensitive alias lookup does not apply to it!\n",
               model.name);
         }
         if (claims_only && model.plan_view_boundary)
@@ -10193,11 +10190,10 @@ IdentificationResult RunGeometryIdentification(
                            feature.hash.substr(0, 12) + " resolved through the alias " +
                            role_alias->alias.key.substr(0, 12) + " of \"" +
                            role_alias->model + "\" (the Chain: false pieces relabelled)";
-      Mpi::Print(
-          "  Identification role-insensitive legacy alias (decision 899 B2): cluster "
-          "key {} -> model \"{}\" through alias {}\n",
-          feature.hash.substr(0, 12), role_alias->model,
-          role_alias->alias.key.substr(0, 12));
+      Mpi::Print("  Identification role-insensitive legacy alias: cluster "
+                 "key {} -> model \"{}\" through alias {}\n",
+                 feature.hash.substr(0, 12), role_alias->model,
+                 role_alias->alias.key.substr(0, 12));
     }
     else if (const auto geometric = library_keys.GeometricNearMatch(feature.signature))
     {
@@ -10436,7 +10432,7 @@ IdentificationResult RunGeometryIdentification(
         "T5 fallback (decision 960 R4): the grown key " + grown_hash.substr(0, 12) +
         " has no library entry; the ungrown key " + feature.hash.substr(0, 12) +
         " placed (model \"" + *feature.matched_model + "\")";
-    Mpi::Print("  Identification T5 fallback (decision 960 R4): cluster key {} (grown) has "
+    Mpi::Print("  Identification T5 fallback: cluster key {} (grown) has "
                "no library entry; the ungrown key {} is placed (model \"{}\"); the grown "
                "key is {}\n",
                grown_hash.substr(0, 12), feature.hash.substr(0, 12), *feature.matched_model,
@@ -12700,7 +12696,9 @@ FeaturePatchSummary BuildFeaturePatches(
           }
           Mpi::Print(" {} fallback {}: the {} blend on {} is not PSD beyond roundoff "
                      "(fabricated / thin domain min eigenvalue relative {:.3e} / {:.3e}); "
-                     "linear on the bracketing nodes (decision 374 (B))\n",
+                     "linear on the bracketing nodes (a blend that is not positive "
+                     "semidefinite is "
+                     "never applied)\n",
                      blend->label, blend->name, fallback["StencilRule"].get<std::string>(),
                      stencil.str(),
                      fallback["MinEigenvalueRelative"]["FabricatedMatrix"].get<double>(),
@@ -15050,15 +15048,14 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
           "The identification runs on the ROOT level of a nonconforming mesh refined at "
           "load (UniformLevels / EdgeRefinement / Boxes / Spheres): its features and "
           "keys are those of the root perimeter, its patch cells coarser than a run that "
-          "identified after the load-time refinement (decision 899)!\n");
+          "identified after the load-time refinement!\n");
     }
     if (geometry.refinement_vertices_kept > 0)
     {
       Mpi::Warning(mesh.GetComm(),
                    "{:d} refinement-generated perimeter vertices are not collinear with "
                    "their neighbours (curved edges) and stay vertices of the root-level "
-                   "perimeter: the identification may differ from the producing run's "
-                   "(decision 899)!\n",
+                   "perimeter: the identification may differ from the producing run's!\n",
                    geometry.refinement_vertices_kept);
     }
   }
@@ -16307,8 +16304,7 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                             entry.model, entry.key.substr(0, 12), entry.features.size(),
                             entry.features.size() == 1 ? "" : "s");
       }
-      Mpi::Print(mesh.GetComm(), " Legacy-contract aliases (USER decision 283): {}\n",
-                 text);
+      Mpi::Print(mesh.GetComm(), " Legacy-contract aliases: {}\n", text);
     }
     std::string unmatched;
     for (const auto &[type, entry] : summary.unmatched_by_type)
@@ -16341,17 +16337,16 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                static_cast<int>(summary.context_points_checked));
     if (summary.context_near_match_verifications > 0)
     {
-      Mpi::Print(
-          " Context (decision 904): {:d} contract-3 placement(s) verified within the "
-          "cluster quantum near-match, not exactly (largest difference {:.3g} "
-          "quanta)\n",
-          static_cast<int>(summary.context_near_match_verifications),
-          summary.context_near_match_max_quanta);
+      Mpi::Print(" Context: {:d} contract-3 placement(s) verified within the "
+                 "cluster quantum near-match, not exactly (largest difference {:.3g} "
+                 "quanta)\n",
+                 static_cast<int>(summary.context_near_match_verifications),
+                 summary.context_near_match_max_quanta);
     }
     if (summary.geometric_near_match_placements > 0)
     {
       Mpi::Print(
-          " Context (decisions 1088 / 1089): {:d} contract-3 placement(s) of a "
+          " Context: {:d} contract-3 placement(s) of a "
           "geometrically near-matched model verified within the geometric near-match "
           "band (context {:g} R), not the quantum one\n",
           static_cast<int>(summary.geometric_near_match_placements),
@@ -16360,7 +16355,7 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
     if (summary.probe_snaps > 0)
     {
       Mpi::Print(
-          " Conductor probes (decision 611): {:d} knot(s) of the spatial cluster "
+          " Conductor probes: {:d} knot(s) of the spatial cluster "
           "patches snapped onto the device arc chords, largest displacement {:.6e}\n",
           static_cast<int>(summary.probe_snaps), summary.max_probe_snap * coordinate_scale);
     }
@@ -16371,7 +16366,7 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
       {
         names += (names.empty() ? "" : ", ") + name;
       }
-      Mpi::Print(" Conductor probes (decision 632): {:d} spatial cluster patch(es) placed "
+      Mpi::Print(" Conductor probes: {:d} spatial cluster patch(es) placed "
                  "without probe snaps - the trace data of model(s) {} is not readable "
                  "(a discovery placeholder); a solve refuses them\n",
                  static_cast<int>(summary.probe_snaps_not_computed), names);
@@ -21888,67 +21883,55 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
       data.value("Version", 0) == 25,
       "Unsupported response-geometry cache version "
           << data.value("Version", 0)
-          << " (version 25 = version 24 + the UncoveredKeys leaf (lane L1, ruling 1649 Q1: "
-             "the uncovered features' key records of the coverage outputs); version 24 = "
-             "version 23 + the fix round P3's placement rule R-9b (every "
-             "KeyedAtTheMean feature placed cell-wise at its local cross-section from its "
-             "family; decisions 1286 / 1291); version 23 = version 22 + the fix round P2's "
-             "placement rule R-9 (the "
-             "refused pairs' cells placed at their local separation) and the "
-             "UnpatchedPairPortions leaf (2B); version 22 carries the feature, mesh "
-             "segment, chain stretch, own-edge "
-             "offset and own-cell pre-image (decision 537) of every patch, the claims, "
-             "support box, chain and foreign (Chain: false, decision 553) context pieces "
-             "of every spatial cluster patch, the raw claims of every vertex coupon "
-             "(F-DB-a, decisions 442 "
-             "/ 454), the matching radius for the continuation and vertex ownership, the "
-             "quantum near-match records of the matching pass, the corner-arm trim records "
-             "and the uncovered portions of decision 394, the corner-arm extension records "
-             "of decision 511 (rounded corners' arm cells from the square exit), the "
-             "consistent-mortar band vertices and rule of every model (decision 404 D1), "
-             "and the mirror planes, mirror band record, mirror arm trims and "
-             "unmerged-configuration portions (each real one flagged Identical, decision "
-             "512) of the boundary-cut rule; version 16 = all three lanes' additions over "
-             "version 13 (the 527 rule): the stacks lane's own-cell pre-image (decision "
-             "537), the fillet lane's corner-arm extension records (decisions 511 / 512, "
-             "527) and the foreign-context lane's Chain: false context pieces (decision "
-             "553) - either version-15 schema (stacks + fillet, decision 552 (3); stacks + "
-             "foreign) lacks one of them, decision 559 (3); version 17 adds the "
-             "mirror-formed contract placement of every spatial patch "
-             "(MirrorFormedTopology, "
-             "MirrorReach, MirrorEdgeWeights; decision 557 (4)); version 18 adds the "
-             "conductor-consistency probe snaps of every spatial patch (ProbeSnaps: the "
-             "conductor knots read on the device arc chords, decision 611 (2); "
-             "ProbeSnapsComputed: false for a placed model without readable trace data, "
-             "which a solve refuses, decision 632); version 19 reads a mirror-formed "
+          << " (version 25 = version 24 + the UncoveredKeys leaf (the uncovered features' "
+             "key records of the coverage outputs); version 24 = version 23 + the fix "
+             "round P3's placement rule R-9b (every KeyedAtTheMean feature placed "
+             "cell-wise at its local cross-section from its family); version 23 = "
+             "version 22 + the fix round P2's placement rule R-9 (the refused pairs' "
+             "cells placed at their local separation) and the UnpatchedPairPortions leaf "
+             "(2B); version 22 carries the feature, mesh segment, chain stretch, "
+             "own-edge offset and own-cell pre-image of every patch, the claims, support "
+             "box, chain and foreign (Chain: false) context pieces of every spatial "
+             "cluster patch, the raw claims of every vertex coupon, the matching radius "
+             "for the continuation and vertex ownership, the quantum near-match records "
+             "of the matching pass, the corner-arm trim records and the uncovered "
+             "portions, the corner-arm extension records (rounded corners' arm cells "
+             "from the square exit), the consistent-mortar band vertices and rule of "
+             "every model, and the mirror planes, mirror band record, mirror arm trims "
+             "and unmerged-configuration portions (each real one flagged Identical) of "
+             "the boundary-cut rule; version 16 = all three lanes' additions over "
+             "version 13: the stacks lane's own-cell pre-image, the fillet lane's "
+             "corner-arm extension records and the foreign-context lane's Chain: false "
+             "context pieces - either version-15 schema (stacks + fillet; stacks + "
+             "foreign) lacks one of them; version 17 adds the mirror-formed contract "
+             "placement of every spatial patch (MirrorFormedTopology, MirrorReach, "
+             "MirrorEdgeWeights); version 18 adds the conductor-consistency probe snaps "
+             "of every spatial patch (ProbeSnaps: the conductor knots read on the device "
+             "arc chords; ProbeSnapsComputed: false for a placed model without readable "
+             "trace data, which a solve refuses); version 19 reads a mirror-formed "
              "coupon's image-side probes at their reflection into the domain before the "
-             "chord snap (decision 774): a version-18 cache carries that coupon's image "
-             "probes un-snapped (decision 781); version 20 is written by the binary that "
-             "grows a spatial cluster's box over an excluded corner window (the "
-             "contract-v3 rule T5, OI-SCP-BOXGROW, decisions 958 / 960 / 972): a "
+             "chord snap: a version-18 cache carries that coupon's image probes "
+             "un-snapped; version 20 is written by the binary that grows a spatial "
+             "cluster's box over an excluded corner window (the contract-v3 rule T5): a "
              "version-19 cache written by a pre-T5 binary with a library carrying a "
-             "T5-grown model places the UNGROWN model where the T5 binary places the grown "
-             "one, a divergence the cache's patch content cannot show (the 527 / 781 "
-             "merge-order rule); version 21 was written by BOTH idfix lanes with different "
-             "content (lane A: the binary that clusters two vertex sites whose +-R coupon "
-             "cubes overlap under the oriented separating-axis test (the identification's "
-             "vertex-vertex rule, idfix DESIGN A.5 (a) / B.1) and places a Missing cluster "
-             "or pair key near-matched to a library model (GeometricNearMatched / "
-             "NearMatched, idfix sections 4 / 5; decisions 1062 / 1087): a version-20 "
-             "cache "
-             "written by a pre-idfix binary carries that binary's two corner patches where "
-             "this binary forms one RAW cluster, and no patch where this binary places the "
-             "near-matched model; lane B: the conductor-consistency probes of every "
-             "translational patch (ConductorProbeEdges / ConductorProbes: the device metal "
-             "point of every model Edge at both end faces of the cell with its local "
-             "piece, "
-             "idfix R0-a, decisions 1062 / 1064) and the REQUIRED ExclusionPortions leaf "
-             "(decision 1072 Q3): a version-20 cache carries none, so its translational "
-             "patches could not be gated); version 22 = both lanes' additions over version "
-             "20 (the 527 / 1064 (3) / 1087 merge-order rule) - either version-21 schema "
-             "lacks the other lane's content, a divergence the cache's patch content "
-             "cannot "
-             "show; delete a stale cache)!");
+             "T5-grown model places the UNGROWN model where the T5 binary places the "
+             "grown one, a divergence the cache's patch content cannot show; version 21 "
+             "was written by BOTH idfix lanes with different content (lane A: the binary "
+             "that clusters two vertex sites whose +-R coupon cubes overlap under the "
+             "oriented separating-axis test (the identification's vertex-vertex rule, "
+             "idfix DESIGN A.5 (a) / B.1) and places a Missing cluster or pair key "
+             "near-matched to a library model (GeometricNearMatched / NearMatched, idfix "
+             "sections 4 / 5): a version-20 cache written by a pre-idfix binary carries "
+             "that binary's two corner patches where this binary forms one RAW cluster, "
+             "and no patch where this binary places the near-matched model; lane B: the "
+             "conductor-consistency probes of every translational patch "
+             "(ConductorProbeEdges / ConductorProbes: the device metal point of every "
+             "model Edge at both end faces of the cell with its local piece) and the "
+             "REQUIRED ExclusionPortions leaf: a version-20 cache carries none, so its "
+             "translational patches could not be gated); version 22 = both lanes' "
+             "additions over version 20 - either version-21 schema lacks the other "
+             "lane's content, a divergence the cache's patch content cannot show; delete "
+             "a stale cache)!");
   ResponseCorrectionData result = request;
   result.library.clear();
   result.models.clear();
@@ -22037,8 +22020,7 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
   // empty set.
   MFEM_VERIFY(data.contains("ExclusionPortions"),
               "Response-geometry cache version 22 without ExclusionPortions: written by an "
-              "interim binary before the exclusion-energy export (idfix DESIGN section 8; "
-              "decision 1072 Q3); delete the stale cache!");
+              "interim binary before the exclusion-energy export; delete the stale cache!");
   result.exclusion_portions.clear();
   for (const auto &entry : data.at("ExclusionPortions"))
   {
@@ -22208,11 +22190,12 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
            snap.at("Arc").get<int>(), snap.at("Displacement").get<std::array<double, 3>>(),
            snap.at("Distance").get<double>()});
     }
-    MFEM_VERIFY(entry.contains("ProbeSnapsComputed"),
-                "Response-geometry cache version 23 patch of model "
-                    << patch.model
-                    << " carries no ProbeSnapsComputed (a cache written before decision "
-                       "632); delete the stale cache!");
+    MFEM_VERIFY(
+        entry.contains("ProbeSnapsComputed"),
+        "Response-geometry cache version 23 patch of model "
+            << patch.model
+            << " carries no ProbeSnapsComputed (a cache written by an older binary); "
+               "delete the stale cache!");
     patch.provenance.probe_snaps_computed = entry.at("ProbeSnapsComputed").get<bool>();
     // R0-a (version 22): the translational patch's conductor-consistency probes (both
     // arrays present, empty for a spatial / vertex patch).
@@ -22645,9 +22628,7 @@ void VerifyStateAnchorEdgeToleranceBelowDeviceGaps(const std::vector<double> &of
                 "StateAnchorEdgeToleranceOverR "
                     << edge_tolerance_over_r << " R reaches half the device gap "
                     << (offsets[k + 1] - offsets[k]) / R << " R of patch "
-                    << patch_global_index
-                    << " (decision 1323 CONDITION 1: an anchor must not snap across "
-                       "a gap)!");
+                    << patch_global_index << " (an anchor must not snap across a gap)!");
   }
 }
 
@@ -23097,7 +23078,7 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
       manifest["Summary"]["MirrorFormedPlacement"] = {{"Count", placements["Count"]}};
       for (const auto &entry : placements["Patches"])
       {
-        Mpi::Print("Mirror-formed contract placement (decision 557 (4)): patch {:d} "
+        Mpi::Print("Mirror-formed contract placement: patch {:d} "
                    "(feature {:d}, model {}) on its REAL half, weight {:.6f}, {:d} real / "
                    "{:d} image edge(s), reach {:.6e}\n",
                    entry["Patch"].get<std::size_t>(), entry["Feature"].get<int>(),
@@ -23138,17 +23119,16 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
          diagnostics["Uncovered"]["ClippedBySpatialSupport"]["Length"]}};
     if (uncovered_clipping.clipped_portions > 0)
     {
-      Mpi::Warning(
-          "Uncovered requirements inside matched clusters' support boxes (decision "
-          "399): {:d} portion(s), {:.6e} mesh units removed from the uncovered "
-          "portions ({:d} wholly inside, {:d} split)\n",
-          uncovered_clipping.clipped_portions,
-          uncovered_clipping.removed_length * coordinate_scale,
-          uncovered_clipping.removed_portions, uncovered_clipping.split_portions);
+      Mpi::Warning("Uncovered requirements inside matched clusters' support boxes: {:d} "
+                   "portion(s), {:.6e} mesh units removed from the uncovered "
+                   "portions ({:d} wholly inside, {:d} split)\n",
+                   uncovered_clipping.clipped_portions,
+                   uncovered_clipping.removed_length * coordinate_scale,
+                   uncovered_clipping.removed_portions, uncovered_clipping.split_portions);
     }
     if (diagnostics["CornerArmTrim"]["Count"].get<int>() > 0)
     {
-      Mpi::Print("Corner-arm trim (decision 394 F1): {:d} corner(s), {:.6e} mesh units of "
+      Mpi::Print("Corner-arm trim: {:d} corner(s), {:.6e} mesh units of "
                  "second-arm cells removed ({:.6e} geometric)\n",
                  diagnostics["CornerArmTrim"]["Count"].get<int>(),
                  diagnostics["CornerArmTrim"]["RemovedCellLength"].get<double>(),
@@ -23234,7 +23214,7 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
           {"WindowLength", diagnostics["SpatialClusterPriority"]["WindowLength"]},
           {"OutsideLength", diagnostics["SpatialClusterPriority"]["OutsideLength"]}};
       Mpi::Warning(
-          "SpatialClusterPriority (decision 922): {:d} corner / vertex coupon(s) dropped "
+          "SpatialClusterPriority: {:d} corner / vertex coupon(s) dropped "
           "by an overlapping spatial cluster; {:.6e} of their {:.6e} mesh units of "
           "window lie outside every cluster box and keep their raw within-R surface "
           "energy in the corrected interface energies; the corners' own correction there "
@@ -23272,11 +23252,9 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
         diagnostics["CornerArmTrim"]["ExcludedCoupons"]["Count"];
     if (diagnostics["CornerArmTrim"]["ExcludedCoupons"]["Count"].get<int>() > 0)
     {
-      Mpi::Warning(
-          "Corner-arm trim: {:d} trimmed corner(s) whose vertex coupon is not "
-          "applied (decision 399 MINOR-7): their second arm's [R, s) is modelled by "
-          "nothing\n",
-          diagnostics["CornerArmTrim"]["ExcludedCoupons"]["Count"].get<int>());
+      Mpi::Warning("Corner-arm trim: {:d} trimmed corner(s) whose vertex coupon is not "
+                   "applied: their second arm's [R, s) is modelled by nothing\n",
+                   diagnostics["CornerArmTrim"]["ExcludedCoupons"]["Count"].get<int>());
     }
     const auto &exclusion_diagnostics = diagnostics["DomainBoundaryExclusions"];
     manifest["Summary"]["Counts"]["DomainBoundary"] = exclusion_diagnostics["Count"];
@@ -23338,8 +23316,8 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
                    "never a fallback for any other key"}};
       if (legacy_features > 0)
       {
-        Mpi::Warning("{:d} feature(s) matched through legacy-contract aliases (USER "
-                     "decision 283); see Summary.LegacyContract!\n",
+        Mpi::Warning("{:d} feature(s) matched through legacy-contract aliases; see "
+                     "Summary.LegacyContract!\n",
                      legacy_features);
       }
     }
@@ -23416,12 +23394,14 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
       }
       if (!knife_edge_features.empty())
       {
-        Mpi::Warning("{:d} spatial cluster key(s) rest on face-rule / box-rule readings "
-                     "within the knife-edge band (decision 287; see Features[]."
-                     "SpatialSupport.FaceRules.ThresholdBandHits and Growth.Passes):\n  "
-                     "{}\n",
-                     static_cast<int>(knife_edge_features.size()),
-                     fmt::join(knife_edge_features, "\n  "));
+        Mpi::Warning(
+            "{:d} spatial cluster key(s) rest on face-rule / box-rule readings "
+            "within the knife-edge band (a tiny change of the geometry could change the "
+            "key; see Features[].SpatialSupport.FaceRules.ThresholdBandHits and "
+            "Growth.Passes):\n  "
+            "{}\n",
+            static_cast<int>(knife_edge_features.size()),
+            fmt::join(knife_edge_features, "\n  "));
       }
     }
     // The conductor-consistency gate (decision 277) needs the device trace: it is evaluated
@@ -25528,7 +25508,7 @@ std::string DescribeTranslationalOwnershipWarning(const nlohmann::json &diagnost
       "{:d} translational response-correction stretch(es) ({:.6e} mesh units; Continuation "
       "{:d} / Foreign {:d} / ForeignExcludedEdge {:d} / ForeignContextEdge {:d} / "
       "ForeignMixedEdges {:d}) lie wholly inside a spatial patch's matching volume "
-      "(decisions 236 / 553 / 559, recorded under "
+      "(recorded under "
       "Diagnostics.TranslationalStretchesInsideSpatialSupport):\n{}",
       diagnostics["Count"].get<int>(), diagnostics["Length"].get<double>(),
       diagnostics["Continuation"]["Count"].get<int>(),
@@ -25688,7 +25668,7 @@ std::string DescribeTranslationalPartialStretchWarning(const nlohmann::json &dia
   }
   return fmt::format(
       "{:d} translational response-correction stretch(es) lie PARTIALLY inside a spatial "
-      "patch's box on its context pieces (decision 984, OI-T5-PARTIAL-STRETCH-CONTEXT; "
+      "patch's box on its context pieces ("
       "{:d} OwnedInsidePart / {:d} RecordedOnly; {} inside + {} straddling cell(s), {} "
       "subcell(s) and {} cell(s) on excluded pieces recorded only; {:.6e} mesh units "
       "owned; recorded under "
@@ -26949,8 +26929,8 @@ std::string DescribeSpatialSupportMarginOverlapWarning(const nlohmann::json &dia
         entry["ClaimInHull"].get<bool>() ? " (a claim inside the other's claims)" : "");
   }
   return fmt::format(
-      "{:d} pair(s) of spatial cluster supports overlap in their margins (decision 244, "
-      "recorded under Diagnostics.SpatialSupportMarginOverlaps): {:.6e} mesh units of edge "
+      "{:d} pair(s) of spatial cluster supports overlap in their margins (recorded "
+      "under Diagnostics.SpatialSupportMarginOverlaps): {:.6e} mesh units of edge "
       "corrected by both coupons\n{}",
       diagnostics["Count"].get<int>(), diagnostics["DoubleCountedLength"].get<double>(),
       lines);
@@ -26976,7 +26956,7 @@ std::string DescribeContinuationOwnershipSummary(const nlohmann::json &diagnosti
        diagnostics["ForeignContext"]["ExcludedEdgeCells"].get<int>() > 0))
   {
     foreign_context = fmt::format(
-        "  foreign-context ownership (decision 553): {:d} ForeignContextEdge cell(s) owned "
+        "  foreign-context ownership: {:d} ForeignContextEdge cell(s) owned "
         "({:.6e} mesh units, weight 0), {:d} ForeignExcludedEdge cell(s) keep their "
         "surface "
         "matrices and drop their domain correction ({:.6e} mesh units)\n",
@@ -26990,7 +26970,7 @@ std::string DescribeContinuationOwnershipSummary(const nlohmann::json &diagnosti
   {
     const auto &partial = diagnostics["PartialStretch"];
     partial_stretch = fmt::format(
-        "  partial-stretch ownership (decision 984, OI-T5-PARTIAL-STRETCH-CONTEXT): {:d} "
+        "  partial-stretch ownership: {:d} "
         "context-edge cell(s) some partially inside stretch pair contains, owned or "
         "re-attributed ({:d} re-cut at a box face; {:.6e} mesh units; the newly owned "
         "length is the patches CSV's changed rows); recorded untouched: {:d} "
@@ -27003,7 +26983,7 @@ std::string DescribeContinuationOwnershipSummary(const nlohmann::json &diagnosti
         partial["ForeignEdgeLength"].get<double>());
   }
   return fmt::format(
-      "Continuation ownership (decisions 236 (2) / 553 / 559): {:d} translational cell(s) "
+      "Continuation ownership: {:d} translational cell(s) "
       "owned by the spatial coupons whose claims they continue or whose context edges they "
       "lie on ({:d} wholly, {:d} clipped at a box face; {:d} shared by several coupons), "
       "{:.6e} mesh units removed\n{}{}{}",
@@ -27489,7 +27469,7 @@ nlohmann::json DescribeCornerArmExtensions(
 std::string DescribeCornerArmExtensionSummary(const nlohmann::json &diagnostics)
 {
   return fmt::format(
-      "Corner-arm extension (decision 511): {:d} corner(s), {:d} arm(s) extended to the "
+      "Corner-arm extension: {:d} corner(s), {:d} arm(s) extended to the "
       "square exit, {:.6e} mesh units of cells added ({:.6e} geometric stretch, {:.6e} on "
       "uncovered portions)\n",
       diagnostics["Count"].get<int>(), diagnostics["ArmsExtended"].get<int>(),
@@ -27518,10 +27498,10 @@ std::string DescribeCornerArmExtensionUnhostedWarning(const nlohmann::json &diag
     }
   }
   return fmt::format(
-      "Corner-arm extension (decision 511): {:d} arm(s) of matched rounded corners end in "
+      "Corner-arm extension: {:d} arm(s) of matched rounded corners end in "
       "a neighbouring claim before the square exit's stretch finds a host; {:.6e} mesh "
       "units of claimed perimeter are modelled by nothing (recorded under "
-      "Diagnostics.CornerArmExtension; the short-arm generality item of decision 310)\n{}",
+      "Diagnostics.CornerArmExtension; a known limit of the corner coupons)\n{}",
       diagnostics["ArmsUnhosted"].get<int>(), diagnostics["UnhostedLength"].get<double>(),
       lines);
 }
@@ -28655,7 +28635,7 @@ std::string DescribeDomainBoundaryExclusionSummary(const nlohmann::json &diagnos
         entry["NearestDistance"].get<double>());
   }
   return fmt::format(
-      "DomainBoundary exclusion (decision 258): {:d} patch(es) on {:d} feature(s) with "
+      "DomainBoundary exclusion: {:d} patch(es) on {:d} feature(s) with "
       "placed coupon points outside the device mesh not applied, {:.6e} mesh units of "
       "cells left uncorrected (portions {:.6e}); {:d} patches / {:d} points tested in "
       "{:.3f} s (patch indices 1-based like the ownership summaries, 0-based in the "
@@ -29319,7 +29299,7 @@ void SurfaceResponseOperator::ConfigureConductorConsistencyProbes(ResponseModel 
       // coupon property, not device geometry. The model is recorded untestable
       // (UnprobedModels, decision 279 MINOR-2) and the gate skips it; never a silent zero.
       Mpi::Warning(fespace.GetComm(),
-                   "Conductor-consistency gate (decision 277) not evaluated for response "
+                   "Conductor-consistency gate not evaluated for response "
                    "model \"{}\": conductor {:d} of its trace mesh has no vertex on the "
                    "process plane (w = 0), so its metal cross-section on the box faces "
                    "cannot be probed\n",
@@ -30839,7 +30819,7 @@ SurfaceResponseOperator::FinishConductorConsistencyGate(
   if (!records.empty())
   {
     const bool maxwell_records = records.front().maxwell;
-    Mpi::Print(" Conductor-consistency gate (decision 277; idfix R0-a), {} {:d}{}: {:d} "
+    Mpi::Print(" Conductor-consistency gate, {} {:d}{}: {:d} "
                "patch(es) probed ({:d} spatial, {:d} translational), max ratio {:.3e} "
                "(patch {:d}, 0-based), {:d} excluded{}, {:d} FloorApplied (tolerance "
                "{:.3e}; amplitude floor "
@@ -30873,8 +30853,8 @@ SurfaceResponseOperator::FinishConductorConsistencyGate(
     }
     if (snapped_knots > 0)
     {
-      Mpi::Print("  {:d} knot(s) of {:d} patch(es) read on the device arc chords (decision "
-                 "611; largest displacement {:.6e} mesh-file units)\n",
+      Mpi::Print("  {:d} knot(s) of {:d} patch(es) read on the device arc chords (largest "
+                 "displacement {:.6e} mesh-file units)\n",
                  snapped_knots, snapped_patches, max_snap * mesh_coordinate_scale);
     }
     for (const auto &record : records)
@@ -30897,8 +30877,8 @@ SurfaceResponseOperator::FinishConductorConsistencyGate(
     }
     if (excluded_count > 0)
     {
-      Mpi::Print("  the excluded patches' raw claims are served RAW (S7diag R1, decision "
-                 "758): {:d} portion(s), {:.6e} mesh-file units so far, kept in the "
+      Mpi::Print("  the excluded patches' raw claims are served RAW: {:d} portion(s), "
+                 "{:.6e} mesh-file units so far, kept in the "
                  "corrected interface energies as the ConductorConsistency share\n",
                  static_cast<int>(conductor_consistency_portions.portions.size()),
                  conductor_consistency_portions.length * mesh_coordinate_scale);
@@ -31340,7 +31320,7 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
     if (!config.corner_arm_trims.empty())
     {
       Mpi::Print(fespace.GetComm(),
-                 "Corner-arm trim (decision 394 F1): {:d} corner(s), {:.6e} mesh units of "
+                 "Corner-arm trim: {:d} corner(s), {:.6e} mesh units of "
                  "second-arm cells removed ({:.6e} geometric)\n",
                  ownership_diagnostics["CornerArmTrim"]["Count"].get<int>(),
                  ownership_diagnostics["CornerArmTrim"]["RemovedCellLength"].get<double>(),
@@ -31361,7 +31341,7 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
     if (!uncovered_portions.empty())
     {
       Mpi::Warning(fespace.GetComm(),
-                   "Uncovered requirements (decision 394 F2): {:d} portion(s) of {:d} "
+                   "Uncovered requirements: {:d} portion(s) of {:d} "
                    "unmatched feature(s), {:.6e} mesh units, keep their raw within-R "
                    "surface energy in the corrected interface energies (reported per type "
                    "in surface-response-uncovered-energy.csv)!\n",
@@ -31371,15 +31351,14 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
     }
     if (uncovered_spatial_support_clipping.clipped_portions > 0)
     {
-      Mpi::Warning(
-          fespace.GetComm(),
-          "Uncovered requirements inside matched clusters' support boxes (decision "
-          "399): {:d} portion(s), {:.6e} mesh units removed from the uncovered "
-          "portions ({:d} wholly inside, {:d} split)\n",
-          uncovered_spatial_support_clipping.clipped_portions,
-          uncovered_spatial_support_clipping.removed_length * coordinate_scale,
-          uncovered_spatial_support_clipping.removed_portions,
-          uncovered_spatial_support_clipping.split_portions);
+      Mpi::Warning(fespace.GetComm(),
+                   "Uncovered requirements inside matched clusters' support boxes: {:d} "
+                   "portion(s), {:.6e} mesh units removed from the uncovered "
+                   "portions ({:d} wholly inside, {:d} split)\n",
+                   uncovered_spatial_support_clipping.clipped_portions,
+                   uncovered_spatial_support_clipping.removed_length * coordinate_scale,
+                   uncovered_spatial_support_clipping.removed_portions,
+                   uncovered_spatial_support_clipping.split_portions);
     }
     if (!config.quantum_near_match.empty())
     {
@@ -31424,7 +31403,7 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
                    "coupon) applied for a contract-3 key through the library's explicit "
                    "LegacyContractAliases entry (key + verified context digest); never a "
                    "fallback for any other key"}};
-      Mpi::Warning("Legacy-contract aliases applied (USER decision 283): {:d} model(s) "
+      Mpi::Warning("Legacy-contract aliases applied: {:d} model(s) "
                    "serve contract-3 keys through explicit library aliases!\n",
                    static_cast<int>(config.legacy_contract.size()));
     }
@@ -31848,8 +31827,7 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
       {
         Mpi::Print(fespace.GetComm(),
                    " Domain-boundary containment result reused from the first construction "
-                   "(decision 734 F2; PALACE_RESPONSE_CONTAINMENT_RECHECK=1 recomputes and "
-                   "verifies)\n");
+                   "(PALACE_RESPONSE_CONTAINMENT_RECHECK=1 recomputes and verifies)\n");
       }
       if (setup_timing)
       {
@@ -31865,7 +31843,7 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
                    DescribeDomainBoundaryExclusionSummary(
                        ownership_diagnostics["DomainBoundaryExclusions"]));
         Mpi::Warning(fespace.GetComm(),
-                     "DomainBoundary raw claims kept (F-DB-a, decisions 442 / 454): {:d} "
+                     "DomainBoundary raw claims kept: {:d} "
                      "portion(s) ({:d} geometric cells, {:d} split patches folded), {:.6e} "
                      "mesh units keep their raw within-R surface energy in the corrected "
                      "interface energies (reported per type in "
@@ -31890,7 +31868,7 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
                                                    config, boxes, coordinate_scale);
       Mpi::Warning(
           fespace.GetComm(),
-          "SpatialClusterPriority (decision 922): {:d} corner / vertex coupon(s) dropped "
+          "SpatialClusterPriority: {:d} corner / vertex coupon(s) dropped "
           "by an overlapping spatial cluster; {:.6e} of their {:.6e} mesh units of "
           "window lie outside every cluster box and keep their raw within-R surface "
           "energy in the corrected interface energies (reported per type in "
@@ -31922,7 +31900,7 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
       Mpi::Warning(
           fespace.GetComm(),
           "Corner-arm trim: {:d} trimmed corner(s) whose vertex coupon is not applied "
-          "(decision 399 MINOR-7): their second arm's [R, s) is modelled by nothing\n",
+          "(a dropped coupon): their second arm's [R, s) is modelled by nothing\n",
           ownership_diagnostics["CornerArmTrim"]["ExcludedCoupons"]["Count"].get<int>());
     }
   }
@@ -32043,7 +32021,7 @@ void SurfaceResponseOperator::LocateResolutionKnots(
   if (resolution_enabled)
   {
     Mpi::Print(comm,
-               " Resolution census (decision 1817): {:d} knot(s) of {:d} patch(es) located "
+               " Resolution census: {:d} knot(s) of {:d} patch(es) located "
                "{:d}; {:d} patch(es) NOT-EVALUATED (no knot or fewer than half located); "
                "matching radius {:.6e} m, Order {:d}, {} bars{}\n",
                totals[1], totals[0], totals[2], totals[3], resolution_run_record.radius,
@@ -32385,12 +32363,12 @@ SurfaceResponseOperator::SurfaceResponseOperator(
           // Decision 1001 Q5: a configuration with geometry fallbacks is never cached (the
           // cache (version 22) carries none; a cache read is a configuration without
           // fallbacks).
-          MFEM_VERIFY(
-              automatic_config->geometry_fallbacks.empty(),
-              "A surface-response configuration with "
-                  << automatic_config->geometry_fallbacks.size()
-                  << " geometry fallback(s) is not cached (GeometryFailurePolicy; "
-                     "decision 1001 Q5): run without PALACE_RESPONSE_GEOMETRY_CACHE!");
+          MFEM_VERIFY(automatic_config->geometry_fallbacks.empty(),
+                      "A surface-response configuration with "
+                          << automatic_config->geometry_fallbacks.size()
+                          << " geometry fallback(s) is not cached (a cached configuration "
+                             "would hide "
+                             "its fallbacks): run without PALACE_RESPONSE_GEOMETRY_CACHE!");
           if (Mpi::Root(fespace.GetComm()))
           {
             WriteResponseGeometryCache(*geometry_cache, *automatic_config);
@@ -32973,7 +32951,7 @@ SurfaceResponseOperator::SurfaceResponseOperator(
         HasExplicitTraceMesh(model_config))
     {
       Mpi::Warning(fespace.GetComm(),
-                   "Conductor-consistency gate (decision 277) not evaluated for response "
+                   "Conductor-consistency gate not evaluated for response "
                    "model \"{}\": its metal cross-sections are probed through the surface "
                    "mortar only (TraceCoupling \"SurfaceMortar\"), not collocated\n",
                    model.name);
@@ -32988,7 +32966,7 @@ SurfaceResponseOperator::SurfaceResponseOperator(
     {
       Mpi::Warning(
           fespace.GetComm(),
-          "Conductor-consistency gate (decision 277) not evaluated for response "
+          "Conductor-consistency gate not evaluated for response "
           "model \"{}\": its trace mesh has no conductor vertex, so it has no metal "
           "cross-section at a fixed potential to probe\n",
           model.name);
@@ -33029,7 +33007,7 @@ SurfaceResponseOperator::SurfaceResponseOperator(
   {
     Mpi::Print(
         fespace.GetComm(),
-        "Consistent translational mortar (decision 404 D1): {:d} of {:d} "
+        "Consistent translational mortar: {:d} of {:d} "
         "translational model(s) project onto the coupon hats with inserted "
         "metal-band vertices ({:d} list them as ZeroTraceIndices, {:d} have no "
         "band)\n",
@@ -33757,7 +33735,7 @@ SurfaceResponseOperator::SurfaceResponseOperator(
                     "conductor-consistency gate cannot read its probes on the device "
                     "chords ("
                  << probe_snap_fault_patches
-                 << " such patch(es); decision 632: such a patch is never solved)!");
+                 << " such patch(es); such a patch is never solved)!");
     }
     MFEM_ABORT("The placed patch of response model \""
                << model_name << "\" records " << probe_snap_fault[2]
@@ -33813,13 +33791,12 @@ SurfaceResponseOperator::SurfaceResponseOperator(
       global_point_count - global_probe_count, global_basis_size);
   if (global_probe_count > 0)
   {
-    Mpi::Print(" Conductor-consistency probe points (decision 277): {:d}\n",
-               global_probe_count);
+    Mpi::Print(" Conductor-consistency probe points: {:d}\n", global_probe_count);
   }
   if (global_diagnostic_patch_count > 0)
   {
-    Mpi::Print(" SpatialClusterPriority clipped-correction diagnostic (decisions 958 (b) / "
-               "969): {:d} dropped coupon(s) sampled on {:d} diagnostic-only trace points "
+    Mpi::Print(" SpatialClusterPriority clipped-correction diagnostic: {:d} dropped "
+               "coupon(s) sampled on {:d} diagnostic-only trace points "
                "(never applied; surface-response-spatial-cluster-priority-clipped-"
                "correction.csv)\n",
                global_diagnostic_patch_count, global_diagnostic_point_count);
@@ -34733,8 +34710,7 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
                         << patch.global_index << " lies in a gap, " << snap.distance / R
                         << " R from the nearest edge (beyond "
                            "MagneticRules.StateAnchorEdgeToleranceOverR "
-                        << magnetic_probe_rules.state_anchor_edge_tolerance_over_r
-                        << "; decision 1323)!");
+                        << magnetic_probe_rules.state_anchor_edge_tolerance_over_r << ")!");
         if (snap.snapped)
         {
           state_anchor_on_edge_count++;
@@ -35190,8 +35166,7 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
                         << " R from the nearest edge (beyond "
                            "MagneticRules.StateAnchorEdgeToleranceOverR "
                         << rules.state_anchor_edge_tolerance_over_r
-                        << "; decisions 1323 / 1334): the LIFTED probe legs cannot be set "
-                           "back!");
+                        << "): the LIFTED probe legs cannot be set back!");
         anchor_move = set_back.move;
       }
       for (const auto &probe_data : patch.conductor_probes)
@@ -35456,13 +35431,13 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
     for (std::size_t i = 0; i < flip_counts.size(); i++)
     {
       const auto &entry = request->control_flip_probe_pieces[i];
-      MFEM_VERIFY(flip_counts[i] > 0,
-                  "ConductorConsistency.ControlFlipProbePiece {Model \""
-                      << entry.model << "\", Edge " << entry.edge << ", Piece "
-                      << entry.piece
-                      << "} flipped no probe: the model is not loaded with local-piece "
-                         "references, has no such edge, or placed no patch (decision 1292: "
-                         "a control that applies nowhere is refused)!");
+      MFEM_VERIFY(
+          flip_counts[i] > 0,
+          "ConductorConsistency.ControlFlipProbePiece {Model \""
+              << entry.model << "\", Edge " << entry.edge << ", Piece " << entry.piece
+              << "} flipped no probe: the model is not loaded with local-piece "
+                 "references, has no such edge, or placed no patch (a control that applies "
+                 "nowhere is refused)!");
     }
     for (const int count : flip_counts)
     {
@@ -35524,10 +35499,10 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
       {
         MFEM_VERIFY(patches_reanchored > 0,
                     "ConductorConsistency.ControlStateAnchorSetbackOverR re-anchored no "
-                    "patch (no translational magnetic patch placed; decision 1302: a "
-                    "control that applies nowhere is refused)!");
+                    "patch (no translational magnetic patch placed; a control that applies "
+                    "nowhere is refused)!");
         Mpi::Print(
-            " DIAGNOSTIC CONTROL ControlStateAnchorSetbackOverR {:.3e} (decision 1302): "
+            " DIAGNOSTIC CONTROL ControlStateAnchorSetbackOverR {:.3e}: "
             "the magnetic chain's anchor lines of {:d} patch(es) start from set-back "
             "anchors; the magnetic term is NOT of record\n",
             control_state_anchor_setback_over_r, patches_reanchored);
@@ -35552,13 +35527,13 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
       state_anchor_max_snap_distance_global = max_snap;
       Mpi::Print(" Magnetic state anchors on an edge: {:d} anchor(s), {:d} snapped onto it "
                  "from a nonzero distance, the farthest {:.3e} R (MagneticRules."
-                 "StateAnchorEdgeToleranceOverR {:.3e}; decision 1323)\n",
+                 "StateAnchorEdgeToleranceOverR {:.3e})\n",
                  anchors_on_edge, anchors_snapped, max_snap / matching_radius,
                  magnetic_probe_rules.state_anchor_edge_tolerance_over_r);
     }
     if (total_control_flips > 0)
     {
-      Mpi::Print(" DIAGNOSTIC CONTROL ControlFlipProbePiece (decision 1292): {:d} probe "
+      Mpi::Print(" DIAGNOSTIC CONTROL ControlFlipProbePiece: {:d} probe "
                  "label(s) flipped on {:d} entr{}; the gates record only\n",
                  total_control_flips,
                  static_cast<int>(request->control_flip_probe_pieces.size()),
@@ -36546,7 +36521,7 @@ void SurfaceResponseOperator::ConfigurePointCommunication(
                          "(even-extension) evaluation is defined for the electrostatic "
                          "trace only (a reflected tangent flips its normal component); set "
                          "ResponseCorrection.DomainBoundary.Mirror = \"Off\" for Maxwell "
-                         "runs (boundary-cut DESIGN 2.2.3, decision 451 MINOR-2)!");
+                         "runs!");
     }
     else
     {

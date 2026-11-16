@@ -1733,8 +1733,7 @@ ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
         MFEM_VERIFY(
             data.conductor_consistency_record_only,
             "Response-correction \"ConductorConsistency.ControlFlipProbePiece\" is a "
-            "diagnostic CONTROL admitted only with \"RecordOnly\": true (decision "
-            "1292)!");
+            "diagnostic CONTROL admitted only with \"RecordOnly\": true!");
         for (const auto &flip : *flips)
         {
           MFEM_VERIFY(flip.is_object() && flip.contains("Model") && flip.contains("Edge") &&
@@ -1774,14 +1773,13 @@ ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
         MFEM_VERIFY(
             data.conductor_consistency_record_only,
             "Response-correction \"ConductorConsistency.ControlStateAnchorSetbackOverR\" "
-            "is a diagnostic CONTROL admitted only with \"RecordOnly\": true "
-            "(decision 1302)!");
+            "is a diagnostic CONTROL admitted only with \"RecordOnly\": true!");
         MFEM_VERIFY(
             data.correction_mode ==
                 ResponseCorrectionData::CorrectionMode::POSTPROCESS_ONLY,
             "Response-correction \"ConductorConsistency.ControlStateAnchorSetbackOverR\" "
             "is admitted only with \"CorrectionMode\": \"PostprocessOnly\" (the term "
-            "is not of record under the control; decision 1302)!");
+            "is not of record under the control)!");
       }
       for (const auto &[key, value] : gate->items())
       {

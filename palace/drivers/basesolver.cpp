@@ -759,8 +759,9 @@ void BaseSolver::SaveMetadata(SurfaceResponseOperator &response) const
     if (excluded > 0)
     {
       Mpi::Print(
-          "\n*** LOW CONFIDENCE: the conductor-consistency gate (decision 277; idfix "
-          "R0-a) EXCLUDED {:d} patch(es) of {:d} tested (claims {:.6e}, cells {:.6e} "
+          "\n*** LOW CONFIDENCE: the conductor-consistency gate (the device potential on "
+          "each coupon's metal must match its conductor) EXCLUDED {:d} patch(es) of {:d} "
+          "tested (claims {:.6e}, cells {:.6e} "
           "mesh-file units served RAW as the ConductorConsistency share): see "
           "SurfaceResponse.Diagnostics.ConductorConsistency of palace.json and the "
           "raw share per Type in surface-response-conductor-consistency-energy.csv "
@@ -773,7 +774,7 @@ void BaseSolver::SaveMetadata(SurfaceResponseOperator &response) const
       Mpi::Print(
           "\n*** DIAGNOSTIC: SurfaceResponseCorrection.ConductorConsistency.RecordOnly "
           "was set: the gate recorded {:d} verdict(s) and EXCLUDED NOTHING; this is "
-          "NOT a run of record (idfix DESIGN B.4 (F)) ***\n",
+          "NOT a run of record ***\n",
           static_cast<int>(
               gate.value("RecordOnlyVerdicts", nlohmann::json::array()).size()));
     }

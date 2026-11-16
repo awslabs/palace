@@ -872,7 +872,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     CHECK_THROWS_WITH(SurfaceResponseOperator(iodata, laplace),
                       ContainsSubstring("carries no conductor probe snaps") &&
                           ContainsSubstring("gap-junction-chord-snapped") &&
-                          ContainsSubstring("decision 632"));
+                          ContainsSubstring("such a patch is never solved"));
   }
 
   SECTION("a spatial coupon without any conductor vertex is recorded untestable")

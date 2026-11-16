@@ -14423,7 +14423,8 @@ void Identifier::EmitClusters()
       {
         text << "  WARNING: cluster " << c << "'s key rests on " << support.band_hits
              << " face-rule reading(s) within " << kKnifeEdgeBandRelative
-             << " of a threshold (decision 287); see "
+             << " of a threshold (the key could change under a tiny change of the "
+                "geometry); see "
                 "Features[].SpatialSupport.FaceRules.ThresholdBandHits and "
                 "Growth.Passes\n";
       }

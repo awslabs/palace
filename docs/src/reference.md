@@ -1194,7 +1194,7 @@ characteristic lengths. `CouponDepth` is required for 3D; a model-level value ov
 the library default. Omitting it preserves the legacy 2D assumption that coupon and
 application use the same `Lc`.
 
-Curved coupons (a curvature family, decision 92) are built on axisymmetric $(r, z)$ meshes
+Curved coupons (a curvature family) are built on axisymmetric $(r, z)$ meshes
 (`Model.Axisymmetric`: the cross-section placed at $r = \rho$ with the metal inside the
 circle, `"Convexity": "Convex"`, or outside, `"Concave"`). Their records carry
 `"Topology": "CurvedEdge"`, `"Kappa"` $= R / \rho$ and `"Convexity"`, and their response
@@ -1479,7 +1479,7 @@ uncovered portions; older caches are refused. The placed cells
 are reported under `Diagnostics.ContinuationOwnership` (per cell, per coupon) and the
 stretch record `Diagnostics.TranslationalStretchesInsideSpatialSupport` carries the owned
 length per record. A stretch that enters a coupon's box on one of its `Chain: true` context
-edges without lying wholly inside it (decision 984, OI-T5-PARTIAL-STRETCH-CONTEXT) is judged
+edges without lying wholly inside it is judged
 per cell on the cell's inside interval: its cells inside the box are owned, a cell straddling
 a box face is re-cut at the face like a continuing cell (the inside part owned, the outside
 part kept), a cell outside stays; such stretches are recorded under
@@ -1899,8 +1899,8 @@ within-`R` energy partitioned exactly over the applied patches' claims, the labe
 `unclaimed` summing to the within-`R` energy) and `surface-response-model-raw-groups.csv`
 (`label`, `model`, `patches`, `weight length (m)`).
 
-The per-patch tables can be kept out of the top level of `Problem.Output` (decision 1685;
-a tool that collects the top-level CSV / JSON files of the output directory, such as a run
+The per-patch tables can be kept out of the top level of `Problem.Output` (a
+tool that collects the top-level CSV / JSON files of the output directory, such as a run
 service that uploads them, then leaves them out). `"Diagnostics": {"Directory": "<name>"}`
 in `ResponseCorrection` / `SurfaceResponseCorrection` (one directory name of letters,
 digits, `_`, `-` and `.`, not starting with `.`, `-` or `iteration`; absent by default)
@@ -1941,7 +1941,7 @@ cluster is recorded under `Diagnostics.Uncovered.ClippedBySpatialSupport` and in
 column above; without a matched cluster nothing changes. Trimmed corners whose coupon is
 then not applied (domain boundary, vertex ownership) are counted under
 `Diagnostics.CornerArmTrim.ExcludedCoupons` (their trimmed stretch is modelled by nothing).
-The same rule in the other direction (decision 511): a matched ROUNDED corner's claim runs
+The same rule in the other direction: a matched ROUNDED corner's claim runs
 `R` along each arm from the fillet's tangent point, `t_d = r / tan(t / 2)` beyond the
 square exit, so its arm cells (or an unmatched neighbour's uncovered portion) beginning at
 the claim end are extended back to the exit — the stretch was modelled by nothing — and
@@ -2053,7 +2053,7 @@ manifest (`--surface-response-preflight`) of the same configuration, so a featur
 to its key (`Hash`). The partition costs one quadrature pass per target interface and
 measurement and keeps only the uncovered portions (already held for the uncovered table)
 and one reduced vector per measurement; every other output is unchanged. The
-Maxwell correction also writes `surface-response-model-energy.csv` (decisions 845 / 846):
+Maxwell correction also writes `surface-response-model-energy.csv`:
 the electrostatic driver's column set exactly and in order as a strict prefix — `source`,
 `evaluation`, `model`, `patch count`, `patch weight`, `domain correction (J)` and
 `fabricated surface energy[k] (J)` for every postprocessing interface (0 for an interface
@@ -2347,16 +2347,16 @@ containing the thin sheet, so the frequency goes UP, consistent with ``dL' < 0``
 first-order fixed-trace frequency shift of the RAW mode,
 ``\delta\omega / \omega = (U_{m,defect} - U_{e,defect}) / (2 U_{raw})`` with
 ``U_{m,defect} = \tfrac{1}{2} \sum_p w_p a_m^H dS_m a_m`` and ``U_{e,defect}`` the
-electric domain correction, is THE CORRECTED FREQUENCY OF RECORD (USER decision 1221 D6):
+electric domain correction, is THE CORRECTED FREQUENCY OF RECORD:
 `fixed-trace frequency shift` and `f fixed-trace corrected (GHz)` in
 `surface-response-confidence.csv`, gated by the magnetic term's own loop gate (`magnetic
 confidence pass`: the response-weighted dual loop residual, the in-plane circulation of
 ``\bm{B} \cdot \hat{n}`` around every closed contour, at most 0.05, and the
 response-weight fraction of paths above 0.05 at most 0.01, the electric gate's two
 components) and NOT by the closure-independent confidence gates nor the trace-closure
-spread, which are printed beside it (decision 1250: the shift follows the SAME coverage
+spread, which are printed beside it (the shift follows the SAME coverage
 rule as the electric fixed-trace correction it extends, which is printed on partial
-coverage with the uncovered requirements kept raw, decision 394 F2; the closure-independent
+coverage with the uncovered requirements kept raw; the closure-independent
 gate's coverage criterion ``\geq 1 - 10^{-10}`` had withheld the shift on every device with
 ends). `fixed-trace shift coverage` is the matched energy share the shift rests on: one
 minus the raw within-R energy of the target interfaces that the electric correction keeps
@@ -2374,7 +2374,7 @@ OI-MAGNETIC-DETECTOR-WEIGHT, so the unweighted `magnetic loop residual` is print
 the gated weighted one. The MAGNETIC conductor-consistency gate (the dual R0-a gate: the
 probes' H-line integrals at the conductor cross-sections against the conductor's flux
 state) reads the optional library rule `MagneticRules.ConductorConsistencyTolerance`
-(decision 1251, INTERIM; absent = the electric gate's 0.02, bitwise as before): on a device
+(an interim value; absent = the electric gate's 0.02, bitwise as before): on a device
 its probe line integrals read the discretisation error of the singular edge field (the
 (ii) stub: ratio medians 7.1e-2 / 3.7e-2 / 2.3e-2 at ``p = 2 / 3 / 4``, excluding 96 / 84 /
 57 % of a line whose unwithheld term sits inside the Phase-0 band), so a library sets the
@@ -2391,8 +2391,7 @@ LIFTED mode-1 maximum measured at that order, the discrimination control holding
 4\times`` at each value); the run's order selects its entry, an order ABSENT from the object
 is refused at configuration by name (the gate is not calibrated there), a scalar keeps its
 one-value meaning; the value in effect is printed on the gate line and recorded
-(`palace.json` `Correction.MagneticGateTolerance`). THE PROBE FORM (Phase 3 (a), OI-MAGNETIC-DUAL-GATE-PROBE-DISCRETISATION resolved;
-decisions 1256 / 1284 Q-1 / 1292): the magnetic probes read their flux along LIFTED legs
+(`palace.json` `Correction.MagneticGateTolerance`). THE PROBE FORM: the magnetic probes read their flux along LIFTED legs
 instead of the electric gate's flat chain. On a PEC piece ``A_z`` is constant, so the flux
 ``\int (\hat{w} \times \bm{B}) \cdot d\bm{l}`` from a point of the anchor's piece to a point
 of the probe's piece has the same continuum value along ANY path in the current-free region
@@ -2415,7 +2414,7 @@ are untouched; the term ``dK`` is untouched; with no magnetic leaf nothing is bu
 form and its leaves are printed at configuration and recorded (`palace.json`
 `Correction.MagneticProbeForm` / `MagneticProbeLines`; the manifest's
 `Library.Magnetic.Rules`). The DIAGNOSTIC CONTROL `SurfaceResponseCorrection.
-ConductorConsistency.ControlFlipProbePiece: [{Model, Edge, Piece}]` (decision 1292; NOT a
+ConductorConsistency.ControlFlipProbePiece: [{Model, Edge, Piece}]` (NOT a
 modelling option) relabels the local piece of one model edge's probes at the probe
 construction so that the gate's discrimination of a one-label mis-mapping is MEASURED on a
 device; it is admitted only with `RecordOnly: true`, refused when it applies to no probe,
@@ -2436,11 +2435,11 @@ effect and the patches re-anchored are printed and recorded (`palace.json`
 `Correction.MagneticStateAnchorSetbackOverR` / `MagneticStateAnchorPatches`). A conductor
 anchor is the DEVICE's edge point while the patch's probe edges carry the device sides' feet
 at the origin cross-section, which differ by roundoff or by the local geometry (a tapered or
-curved pair): the library leaf `MagneticRules.StateAnchorEdgeToleranceOverR` (decision 1323;
-in ``[0, 1]``, absent = 0.1) makes an anchor within that fraction of ``R`` of an edge offset
+curved pair): the library leaf `MagneticRules.StateAnchorEdgeToleranceOverR`
+(in ``[0, 1]``, absent = 0.1) makes an anchor within that fraction of ``R`` of an edge offset
 lie ON that edge (its piece; the setback measured from the edge offset); an anchor farther
 from every edge must lie in a metal piece (refused by name otherwise). ONE set-back rule
-(decision 1334) serves the term's state anchors (with `StateAnchorSetbackOverR` > 0) and the
+serves the term's state anchors (with `StateAnchorSetbackOverR` > 0) and the
 LIFTED probe form's anchor end (with `ProbeSetbackOverR` > 0: the device anchor a hair into
 the gap by roundoff would otherwise be read at the edge point with no record); a library with
 both setbacks 0 is bitwise. The tolerance must stay below half the narrowest magnetic model
@@ -2449,8 +2448,8 @@ setback is in effect (the minimum is recorded as `StateAnchorMinGapOverR`), and 
 every device gap of a patch; the anchors on an edge, those snapped from a nonzero distance
 and the farthest snap (``/ R``) are printed and recorded
 (`Correction.MagneticStateAnchorSnapped`). The
-DIAGNOSTIC CONTROL `ConductorConsistency.ControlStateAnchorSetbackOverR` (decision 1302;
-`RecordOnly: true` and `CorrectionMode: "PostprocessOnly"` only) applies the same setback
+DIAGNOSTIC CONTROL `ConductorConsistency.ControlStateAnchorSetbackOverR`
+(`RecordOnly: true` and `CorrectionMode: "PostprocessOnly"` only) applies the same setback
 to a library in the legacy form and is refused by name on a library whose leaf already sets
 the anchors back. The per-model
 `magnetic domain correction (J)` / `magnetic thin energy (J)` (COL-1: the "energy" rows and
@@ -2516,7 +2515,7 @@ endpoints, SpatialEdgeCluster) have no scalar duality and stay ELECTRIC-ONLY; th
 are NAMED in the coverage report's `MagneticElectricOnly` row (count, length, energy share).
 The kinetic (London) inductance of a real superconductor is a MATERIAL term, not the
 thin-to-fabricated geometric defect, and is OUT OF SCOPE of this term (both coupon sides
-are PEC): OI-MAGNETIC-KINETIC-LONDON-TERM (USER decision 1221 D5). A two-dimensional
+are PEC); it is not modelled. A two-dimensional
 device mesh has no in-plane ``\bm{B}`` (the trace is identically zero): a magnetic leaf
 is refused there by name.
 
