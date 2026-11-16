@@ -181,7 +181,7 @@ int RunSurfaceResponsePreflight(IoData &iodata, MPI_Comm comm, int omp_threads,
     Mpi::Print(
         comm,
         "\nSurface-response preflight ended: GeometryFailurePolicy FailClosed with {}; "
-        "written: {} (complete); exit status {:d}\n",
+        "written: {} (written in full); exit status {:d}\n",
         outcome.fail_closed_summary, written,
         kSurfaceResponsePreflightFailClosedExitStatus);
     return kSurfaceResponsePreflightFailClosedExitStatus;

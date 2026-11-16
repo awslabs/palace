@@ -2576,9 +2576,10 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     if (response_correction)
     {
       BlockTimer response_timer(Timer::POSTPRO_RESPONSE);
-      PostprocessCorrectedTerminals(post_op, laplace_op.GetSources(), V, V_corrected,
-                                    *response_correction, postprocess_response,
-                                    self_consistent_accepted);
+      // Lane L4 (decision 1829; ERRATUM-1829 E-1): the FINAL coverage of every source is
+      // measured BEFORE the corrected matrices are written (two independent computations;
+      // the order changes no value), so that under Coverage.Policy "MarkNotApplied" entry
+      // (i, j) is marked iff ANY cell of source i's or source j's final measurement is.
       // Lane L1 (ruling 1654 (III) Q3): terminal-C-corrected(i, j) is formed from the
       // fields of sources i and j with the FINAL patch weights (after the last
       // conductor-consistency exclusion), so each source's coverage is re-measured with the
@@ -2652,6 +2653,22 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       {
         WriteMatrixCoverage(laplace_op.GetSources(), final_coverage, remeasured);
       }
+      // E-1: per source, whether its final measurement holds a marked cell (root;
+      // fail-closed: a source without a final measurement, or one without cells, is
+      // marked).
+      std::vector<bool> source_marked;
+      if (root && response_correction->CoverageMarkNotApplied())
+      {
+        for (std::size_t i = 0; i < laplace_op.GetSources().size(); i++)
+        {
+          source_marked.push_back(final_coverage.size() != laplace_op.GetSources().size() ||
+                                  final_coverage[i].MarksWholeMeasurement());
+        }
+      }
+      PostprocessCorrectedTerminals(
+          post_op, laplace_op.GetSources(), V, V_corrected, *response_correction,
+          postprocess_response, self_consistent_accepted,
+          response_correction->CoverageMarkNotApplied() ? &source_marked : nullptr);
     }
   }
   else if (iodata.solver.electrostatic.response_matrix && !archive_stream_only)
@@ -2749,23 +2766,99 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       output.table.insert(Column::Text(fmt::format("regime_status_{}", type),
                                        fmt::format("regime status {}", type)));
     }
+    // Lane L4 (decision 1829; DESIGN-L4-v2 s2.3 E1): under Coverage.Policy
+    // "MarkNotApplied" the corrected columns print nan where their cell is marked (E_elec:
+    // any marked cell of the source; E / p / Q[k]: the Type of interface k), the value in
+    // the appended partial column, and the exposure column (the raw within-R energy the
+    // marked cells leave uncorrected over E_elec raw) follows; under "Warn" none of these
+    // columns exists and every cell prints as before.
+    const bool marking = response_correction->CoverageMarkNotApplied();
+    std::vector<std::string> marked_source_columns = {"domain_postprocessed_fixed_trace",
+                                                      "domain_postprocessed_fixed_flux",
+                                                      "domain_corrected"};
+    std::vector<std::string> marked_interface_columns;
+    for (const auto &[interface, data] : interfaces)
+    {
+      (void)data;
+      for (const char *name :
+           {"energy_postprocessed_fixed_trace_{}",
+            "participation_postprocessed_fixed_trace_{}",
+            "quality_postprocessed_fixed_trace_{}", "energy_postprocessed_fixed_flux_{}",
+            "participation_postprocessed_fixed_flux_{}",
+            "quality_postprocessed_fixed_flux_{}", "energy_corrected_{}",
+            "participation_corrected_{}", "quality_corrected_{}"})
+      {
+        marked_interface_columns.push_back(fmt::format(fmt::runtime(name), interface));
+      }
+    }
+    if (marking)
+    {
+      for (const auto *names : {&marked_source_columns, &marked_interface_columns})
+      {
+        for (const auto &name : *names)
+        {
+          const std::string header = output.table[name].header_text;
+          output.table.insert(name + "_partial", header + kCoveragePartialColumnSuffix);
+        }
+      }
+      output.table.insert("coverage_marked_uncovered_share",
+                          "not-applied uncovered raw share of E_elec");
+      // Lane L4 round 2 (decision 1914): the explicit marks, last: the source's E_elec
+      // cells, then per interface its E / p / Q cells.
+      output.table.insert("coverage_mark_source", kCoverageMarkSourceColumn);
+      output.table["coverage_mark_source"].print_as_int = true;
+      for (const auto &[interface, data] : interfaces)
+      {
+        (void)data;
+        const std::string key = fmt::format("coverage_mark_{}", interface);
+        output.table.insert(
+            key, fmt::format(fmt::runtime(kCoverageMarkIndexedInterfaceColumn), interface));
+        output.table[key].print_as_int = true;
+      }
+    }
     MFEM_VERIFY(coverage_measurements.size() == corrected_results.size(),
                 "The coverage needs one measurement per corrected source!");
     const double nan = std::numeric_limits<double>::quiet_NaN();
     std::size_t coverage_index = 0;
     for (const auto &result : corrected_results)
     {
+      // E1: this source's own measurement (the coverage columns' row).
+      const auto &row_coverage = coverage_measurements[coverage_index].second;
+      const bool source_marked = marking && row_coverage.MarksWholeMeasurement();
+      auto InterfaceMarked = [&](int interface)
+      {
+        const auto type = row_coverage.types.find(interface);
+        if (!marking || type == row_coverage.types.end())
+        {
+          return false;  // an untargeted interface: not corrected
+        }
+        return !row_coverage.FindCell(type->second) ||
+               row_coverage.IsTypeMarked(type->second);
+      };
+      auto PrintMarked = [&](const std::string &name, double value, bool marked)
+      {
+        if (!marking)
+        {
+          output.table[name] << value;
+          return;
+        }
+        output.table[name] << (marked ? nan : value);
+        output.table[name + "_partial"] << (marked ? value : nan);
+      };
       output.table["source"] << result.source;
       output.table["domain_raw"]
           << iodata.units.Dimensionalize<VT::ENERGY>(result.raw.domain);
-      output.table["domain_postprocessed_fixed_trace"]
-          << iodata.units.Dimensionalize<VT::ENERGY>(
-                 result.postprocessed_fixed_trace.domain);
-      output.table["domain_postprocessed_fixed_flux"]
-          << iodata.units.Dimensionalize<VT::ENERGY>(
-                 result.postprocessed_fixed_flux.domain);
-      output.table["domain_corrected"]
-          << iodata.units.Dimensionalize<VT::ENERGY>(result.corrected.domain);
+      PrintMarked(
+          "domain_postprocessed_fixed_trace",
+          iodata.units.Dimensionalize<VT::ENERGY>(result.postprocessed_fixed_trace.domain),
+          source_marked);
+      PrintMarked(
+          "domain_postprocessed_fixed_flux",
+          iodata.units.Dimensionalize<VT::ENERGY>(result.postprocessed_fixed_flux.domain),
+          source_marked);
+      PrintMarked("domain_corrected",
+                  iodata.units.Dimensionalize<VT::ENERGY>(result.corrected.domain),
+                  source_marked);
       output.table["maximum_trace_closure_spread"]
           << (result.has_postprocessed ? result.maximum_trace_closure_spread : nan);
       output.table["weighted_trace_closure_spread"]
@@ -2804,23 +2897,28 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         output.table[fmt::format("participation_raw_{}", interface)] << p_raw;
         output.table[fmt::format("quality_raw_{}", interface)]
             << Quality(p_raw, raw.loss_tangent);
-        output.table[fmt::format("energy_postprocessed_fixed_trace_{}", interface)]
-            << iodata.units.Dimensionalize<VT::ENERGY>(fixed_trace.energy);
-        output.table[fmt::format("participation_postprocessed_fixed_trace_{}", interface)]
-            << p_fixed_trace;
-        output.table[fmt::format("quality_postprocessed_fixed_trace_{}", interface)]
-            << Quality(p_fixed_trace, fixed_trace.loss_tangent);
-        output.table[fmt::format("energy_postprocessed_fixed_flux_{}", interface)]
-            << iodata.units.Dimensionalize<VT::ENERGY>(fixed_flux.energy);
-        output.table[fmt::format("participation_postprocessed_fixed_flux_{}", interface)]
-            << p_fixed_flux;
-        output.table[fmt::format("quality_postprocessed_fixed_flux_{}", interface)]
-            << Quality(p_fixed_flux, fixed_flux.loss_tangent);
-        output.table[fmt::format("energy_corrected_{}", interface)]
-            << iodata.units.Dimensionalize<VT::ENERGY>(corrected.energy);
-        output.table[fmt::format("participation_corrected_{}", interface)] << p_corrected;
-        output.table[fmt::format("quality_corrected_{}", interface)]
-            << Quality(p_corrected, corrected.loss_tangent);
+        const bool interface_marked = InterfaceMarked(interface);
+        PrintMarked(fmt::format("energy_postprocessed_fixed_trace_{}", interface),
+                    iodata.units.Dimensionalize<VT::ENERGY>(fixed_trace.energy),
+                    interface_marked);
+        PrintMarked(fmt::format("participation_postprocessed_fixed_trace_{}", interface),
+                    p_fixed_trace, interface_marked);
+        PrintMarked(fmt::format("quality_postprocessed_fixed_trace_{}", interface),
+                    Quality(p_fixed_trace, fixed_trace.loss_tangent), interface_marked);
+        PrintMarked(fmt::format("energy_postprocessed_fixed_flux_{}", interface),
+                    iodata.units.Dimensionalize<VT::ENERGY>(fixed_flux.energy),
+                    interface_marked);
+        PrintMarked(fmt::format("participation_postprocessed_fixed_flux_{}", interface),
+                    p_fixed_flux, interface_marked);
+        PrintMarked(fmt::format("quality_postprocessed_fixed_flux_{}", interface),
+                    Quality(p_fixed_flux, fixed_flux.loss_tangent), interface_marked);
+        PrintMarked(fmt::format("energy_corrected_{}", interface),
+                    iodata.units.Dimensionalize<VT::ENERGY>(corrected.energy),
+                    interface_marked);
+        PrintMarked(fmt::format("participation_corrected_{}", interface), p_corrected,
+                    interface_marked);
+        PrintMarked(fmt::format("quality_corrected_{}", interface),
+                    Quality(p_corrected, corrected.loss_tangent), interface_marked);
         const auto closure_spread = result.trace_closure_spread.find(interface);
         output.table[fmt::format("trace_closure_spread_{}", interface)]
             << (!result.has_postprocessed ||
@@ -2861,6 +2959,18 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
             CoverageStatusName(cell ? cell->status : CoverageStatus::NOT_MEASURED));
         output.table[fmt::format("regime_status_{}", type)]
             << std::string(RegimeStatusName(cell ? cell->regime : RegimeStatus::NO_MODEL));
+      }
+      if (marking)
+      {
+        output.table["coverage_marked_uncovered_share"]
+            << row_coverage.MarkedUncoveredEnergy() / result.raw.domain;
+        output.table["coverage_mark_source"] << (source_marked ? 1.0 : 0.0);
+        for (const auto &[interface, data] : interfaces)
+        {
+          (void)data;
+          output.table[fmt::format("coverage_mark_{}", interface)]
+              << (InterfaceMarked(interface) ? 1.0 : 0.0);
+        }
       }
     }
     output.WriteFullTableTrunc();
@@ -3914,7 +4024,7 @@ void ElectrostaticSolver::PostprocessCorrectedTerminals(
     PostOperator<ProblemType::ELECTROSTATIC> &post_op,
     const std::map<int, mfem::Array<int>> &terminal_sources, const std::vector<Vector> &V,
     const std::vector<Vector> &V_corrected, const SurfaceResponseOperator &response,
-    bool fixed_trace, bool self_consistent) const
+    bool fixed_trace, bool self_consistent, const std::vector<bool> *source_marked) const
 {
   // The capacitance of the response-corrected energy. The raw matrix is the bilinear form
   // of the thin-metal operator (PostprocessTerminals); the fixed-trace domain correction
@@ -4005,11 +4115,24 @@ void ElectrostaticSolver::PostprocessCorrectedTerminals(
     return;
   }
   using VT = Units::ValueType;
-  auto PrintMatrices =
-      [&terminal_sources, this](const std::string &file, const std::string &name,
-                                const std::string &unit,
-                                const mfem::DenseMatrix &fixed_trace_mat,
-                                const mfem::DenseMatrix &self_consistent_mat, double scale)
+  // Lane L4 (decision 1829; ERRATUM-1829 E-1; DESIGN-L4-v2 s2.3 E2): under Coverage.Policy
+  // "MarkNotApplied" (`source_marked` given) C(i, j) is marked iff source i or source j is
+  // (any marked cell in its final measurement); C_m: off-diagonal as C(i, j), diagonal iff
+  // any entry of row i of C is; C⁻¹: every entry iff any C entry is. A marked entry prints
+  // nan, its value in the appended partial column.
+  using MarkMatrix = std::vector<std::vector<bool>>;
+  MFEM_VERIFY(!source_marked || static_cast<int>(source_marked->size()) == n,
+              "The corrected-matrix marks need one entry per terminal source!");
+  const auto marks = ComputeCoverageTerminalMatrixMarks(
+      source_marked ? *source_marked : std::vector<bool>(n, false));
+  const MarkMatrix &marked_C = marks.capacitance, &marked_Cm = marks.mutual,
+                   &marked_Cinv = marks.inverse;
+  auto PrintMatrices = [&terminal_sources, source_marked,
+                        this](const std::string &file, const std::string &name,
+                              const std::string &unit,
+                              const mfem::DenseMatrix &fixed_trace_mat,
+                              const mfem::DenseMatrix &self_consistent_mat, double scale,
+                              const MarkMatrix &marks)
   {
     TableWithCSVFile output(post_dir / file);
     output.table.insert(Column("i", "i", 0, 0, 2, ""));
@@ -4017,29 +4140,61 @@ void ElectrostaticSolver::PostprocessCorrectedTerminals(
     {
       output.table["i"] << idx2;
     }
-    auto AppendColumns = [&](const char *variant, const mfem::DenseMatrix &mat)
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    auto AppendColumns =
+        [&](const char *variant, const mfem::DenseMatrix &mat, bool partial)
     {
       int j = 0;
       for (const auto &[idx2, data2] : terminal_sources)
       {
-        const std::string key = fmt::format("{}_i2{}", variant, idx2);
-        output.table.insert(key, fmt::format("{} {}[i][{}] {}", name, variant, idx2, unit));
+        const std::string key =
+            fmt::format("{}_i2{}{}", variant, idx2, partial ? "_partial" : "");
+        output.table.insert(key, fmt::format("{} {}[i][{}] {}{}", name, variant, idx2, unit,
+                                             partial ? kCoveragePartialColumnSuffix : ""));
         auto &col = output.table[key];
         for (std::size_t i = 0; i < terminal_sources.size(); i++)
         {
-          col << mat(i, j) * scale;
+          if (!source_marked)
+          {
+            col << mat(i, j) * scale;
+          }
+          else
+          {
+            col << (marks[i][j] != partial ? nan : mat(i, j) * scale);
+          }
         }
         j++;
       }
     };
-    AppendColumns("fixed-trace", fixed_trace_mat);
-    AppendColumns("corrected", self_consistent_mat);
+    AppendColumns("fixed-trace", fixed_trace_mat, false);
+    AppendColumns("corrected", self_consistent_mat, false);
+    if (source_marked)
+    {
+      AppendColumns("fixed-trace", fixed_trace_mat, true);
+      AppendColumns("corrected", self_consistent_mat, true);
+      // Lane L4 round 2 (decision 1914): the explicit mark of entry (i, j), last.
+      int j = 0;
+      for (const auto &[idx2, data2] : terminal_sources)
+      {
+        const std::string key = fmt::format("coverage_mark_i2{}", idx2);
+        output.table.insert(
+            key, fmt::format(fmt::runtime(kCoverageMarkMatrixEntryColumn), idx2));
+        auto &col = output.table[key];
+        col.print_as_int = true;
+        for (std::size_t i = 0; i < terminal_sources.size(); i++)
+        {
+          col << (marks[i][j] ? 1.0 : 0.0);
+        }
+        j++;
+      }
+    }
     output.WriteFullTableTrunc();
   };
   const double F = iodata.units.Dimensionalize<VT::CAPACITANCE>(1.0);
-  PrintMatrices("terminal-C-corrected.csv", "C", "(F)", C_ft, C_sc, F);
-  PrintMatrices("terminal-Cinv-corrected.csv", "C⁻¹", "(1/F)", Cinv_ft, Cinv_sc, 1.0 / F);
-  PrintMatrices("terminal-Cm-corrected.csv", "C_m", "(F)", Cm_ft, Cm_sc, F);
+  PrintMatrices("terminal-C-corrected.csv", "C", "(F)", C_ft, C_sc, F, marked_C);
+  PrintMatrices("terminal-Cinv-corrected.csv", "C⁻¹", "(1/F)", Cinv_ft, Cinv_sc, 1.0 / F,
+                marked_Cinv);
+  PrintMatrices("terminal-Cm-corrected.csv", "C_m", "(F)", Cm_ft, Cm_sc, F, marked_Cm);
 
   // The same matrices in palace.json (SurfaceResponse.TerminalCapacitance; an unavailable
   // variant is null).
@@ -4070,6 +4225,30 @@ void ElectrostaticSolver::PostprocessCorrectedTerminals(
   }
   record["FixedTrace"] = MatrixRecord(C_ft, fixed_trace);
   record["SelfConsistent"] = MatrixRecord(C_sc, self_consistent);
+  if (source_marked)
+  {
+    // Lane L4 (E2): a marked entry is null; its value in the Partial matrix (null where
+    // not marked).
+    auto Split = [&](const char *key, const char *partial_key)
+    {
+      nlohmann::json partial = record[key];
+      if (!record[key].is_array())
+      {
+        record[partial_key] = nullptr;
+        return;
+      }
+      for (int i = 0; i < n; i++)
+      {
+        for (int j = 0; j < n; j++)
+        {
+          (marked_C[i][j] ? record[key][i][j] : partial[i][j]) = nullptr;
+        }
+      }
+      record[partial_key] = std::move(partial);
+    };
+    Split("FixedTrace", "FixedTracePartial");
+    Split("SelfConsistent", "SelfConsistentPartial");
+  }
   SaveSurfaceResponseMetadata("TerminalCapacitance", record);
 }
 

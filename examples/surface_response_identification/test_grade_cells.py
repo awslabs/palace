@@ -12,6 +12,8 @@ override) and the reference-depth rule (converged / coarser / not recorded, deci
 reference (the depth label INFORMATION); the DEFAULT tail form = fixed-shell since the P4 re-freeze (decision 1360), the 422
 records reproduced with an explicit --tail-form 422."""
 
+import contextlib
+import io
 import json
 import os
 import shutil
@@ -21,6 +23,15 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import grade_cells as gc  # noqa: E402
+import coverage_marks as cm  # noqa: E402
+
+# Decisions 1934 / 1942: a --band report is read ONLY with the provenance of the allowed writer (coverage_report.py beside this file).
+CR_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "coverage_report.py")
+
+
+def allowed_band_report(block_c, **extra):
+    """A band report in the form coverage_report.write_report writes it: block_C + the writer's provenance object."""
+    return dict({"block_C": block_c, cm.PROVENANCE_KEY: cm.provenance(CR_PATH)}, **extra)
 
 RECORDS = "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913"
 E = os.path.join(RECORDS, "readiness-20261029", "stageE")
@@ -38,6 +49,9 @@ RESCORED_995 = ("sct002-S1", "ctx003-C1", "ctx003-C2", "ctx003-C2p", "ctx003-C3"
 CARRIED_995 = ("ctx003-C4", "osc003-O2", "sct002-S5", "sct002-S6")
 LIBRARY_V3J = os.path.join(V3H, "boxgrow", "campaign", "records", "library", "s2-r1p9-v3-j", "process-library.json")
 REFRESH = os.path.join(RECORDS, "stage2-20261004", "reference-refresh-17", "results", "refresh.json")
+# Ruling 1948 / decision 1966 item (3): the stage-E --band reports RE-CREATED by the allowed writer (coverage_report of this branch, with its
+# provenance) in a view of the record trees (DECLARATION-STAGEE-v1); the records themselves carry no provenance (StageEBandReportsRefused).
+STAGE_E_RECREATED = os.path.join(RECORDS, "readiness-20261029", "stageF", "coverage-prevention", "L4", "policy-merge-1966", "stageE-recreated-v1")
 
 
 def write_csv(path, header, rows):
@@ -79,6 +93,51 @@ def synthetic_es_run(root, sources, p_ft, c_ft, c_off, e_elec=1.0e-12):
     return root
 
 
+PARTIAL_SUFFIX = " partial (uncovered part raw)"  # kCoveragePartialColumnSuffix (surfaceresponsecoverage.hpp)
+
+
+def mark_es_run(root, marked_sources, interfaces=None, explicit=True, token="nan", exposure=0.0123):
+    """The MarkNotApplied form of a synthetic ES run (decisions 1829 / 1914; DESIGN-L4-v2 s2.3 E1 / E2): every corrected column of
+    surface-Q-corrected.csv and terminal-C-corrected.csv gets an appended partial twin. A marked source's E_elec and its interfaces
+    `interfaces` (None: every interface) print `token` (Palace: nan), their values moved to the twins (the twin is nan where
+    unmarked); terminal-C-corrected entry (i, j) is marked iff source i or j is (E-1). `explicit` (the product since decision 1914)
+    appends the exposure column and the explicit mark columns (`coverage mark E_elec`, `coverage mark[k]`, `coverage mark[i][j]`:
+    1 where marked); False = the form of a policy binary before decision 1914 (twins only)."""
+    post = os.path.join(root, "postpro")
+    for name in ("surface-Q-corrected.csv", "terminal-C-corrected.csv"):
+        path = os.path.join(post, name)
+        with open(path) as handle:
+            lines = [ln.rstrip("\n").split(",") for ln in handle]
+        header, rows = lines[0], lines[1:]
+        matrix = name.startswith("terminal")
+        if matrix:
+            index = {j: int(h.split("[i][")[1].split("]")[0]) for j, h in enumerate(header) if "fixed-trace[i][" in h}
+            marks = [cm.MARK_MATRIX_ENTRY.format(c) for c in sorted(set(index.values()))] if explicit else []
+        else:
+            index = {j: (int(h.split("[")[1].split("]")[0]) if "[" in h else None) for j, h in enumerate(header)
+                     if "postprocessed fixed-trace" in h}
+            ks = sorted({k for k in index.values() if k is not None})
+            marks = ([cm.EXPOSURE_HEADERS[1], cm.MARK_E_ELEC] + [cm.MARK_INTERFACE.format(k) for k in ks]) if explicit else []
+        cols = sorted(index)
+        out = [header + [header[j] + PARTIAL_SUFFIX for j in cols] + marks]
+        for r in rows:
+            src = int(float(r[0]))
+            whole = src in marked_sources
+            if matrix:
+                cell_marked = {j: whole or index[j] in marked_sources for j in cols}
+                flags = ["1" if (whole or c in marked_sources) else "0" for c in sorted(set(index.values()))]
+            else:
+                def iface_marked(k):
+                    return whole and (interfaces is None or k in interfaces)
+                cell_marked = {j: (whole if index[j] is None else iface_marked(index[j])) for j in cols}
+                flags = [f"{exposure if whole else 0.0:+.12e}", "1" if whole else "0"] + ["1" if iface_marked(k) else "0" for k in ks]
+            twins = [r[j] if cell_marked[j] else "nan" for j in cols]
+            out.append([(token if cell_marked.get(j) else v) for j, v in enumerate(r)] + twins + (flags if explicit else []))
+        with open(path, "w") as handle:
+            handle.write("".join(",".join(r) + "\n" for r in out))
+    return root
+
+
 def es_values_reference(sources, p_ref, c_ref, ma_sharp_ref):
     return {"members": {str(s): {"SA_p": p_ref[s][1], "MS_p": p_ref[s][2], "MA_p": p_ref[s][3], "MA_sharp_p": ma_sharp_ref[s],
                                  "C_F": c_ref[s], "E_elec_J": 1.0e-12, "C_offdiag_F": {str(j): -0.1 * c_ref[s] for j in sources if j != s}}
@@ -91,7 +150,11 @@ class LetterRules(unittest.TestCase):
         self.assertEqual(gc.verdict(-5.1, 5.0), "FAIL")
         self.assertEqual(gc.verdict(1.0, 5.0, [-6.0, 2.0]), "INCONCLUSIVE (ft inside, bracket outside)")
         self.assertEqual(gc.verdict(1.0, 5.0, [-4.0, 2.0]), "PASS")
-        self.assertEqual(gc.verdict(float("nan"), 5.0), "n/a")
+        # a non-finite x (a MarkNotApplied corrected cell prints nan; decision 1847 E-1) is NOT-APPLIED, never PASS (it was "n/a",
+        # which the cell rule read as PASS)
+        self.assertEqual(gc.verdict(float("nan"), 5.0), gc.NOT_APPLIED)
+        self.assertEqual(gc.verdict(float("inf"), 5.0), gc.NOT_APPLIED)
+        self.assertEqual(gc.verdict(float("nan"), 5.0, [-1.0, 1.0]), gc.NOT_APPLIED)
 
     def test_model_class_and_tails(self):
         self.assertEqual(gc.model_class("convex-corner-90deg"), "corner")
@@ -191,6 +254,40 @@ class CellRules(unittest.TestCase):
         self.assertEqual(cell["letter"], "PASS")
         self.assertTrue(cell["in_band"])
 
+    def test_not_applied_members(self):
+        """Decision 1847 E-1: a member whose x is not finite (a marked corrected cell) is NOT-APPLIED: the cell is FAIL if any member
+        FAILs, else NOT-APPLIED (never PASS); the worst / range are over the finite members; no band reading."""
+        nan = float("nan")
+        g = {1: {"x_pct": {"SA": nan}, "letters": {"SA": gc.NOT_APPLIED}, "band": {"SA": {"in": None}}},
+             2: {"x_pct": {"SA": nan}, "letters": {"SA": gc.NOT_APPLIED}, "band": {"SA": {"in": None}}}}
+        cell = gc.aggregate_cell([1, 2], g, "SA", "rule")
+        self.assertEqual(cell["letter"], gc.NOT_APPLIED)
+        self.assertIsNone(cell["x_pct"])
+        self.assertIsNone(cell["x_range_pct"])
+        self.assertEqual((cell["n_not_applied"], cell["n_members"], cell["n_pass"]), (2, 2, 0))
+        self.assertIsNone(cell["in_band"])
+        # one PASS member beside a marked one: NOT-APPLIED, not PASS; the unmarked member's x is quoted under its own names only
+        # (decision 1875: never as the Type's x_pct / worst_member / x_range_pct)
+        g[1] = {"x_pct": {"SA": 0.5}, "letters": {"SA": "PASS"}, "band": {"SA": {"in": True}}}
+        cell = gc.aggregate_cell([1, 2], g, "SA", "rule")
+        self.assertEqual(cell["letter"], gc.NOT_APPLIED)
+        self.assertEqual((cell["x_pct"], cell["worst_member"], cell["x_range_pct"]), (None, None, None))
+        self.assertEqual((cell["unmarked_members_x_pct"], cell["unmarked_members_worst_member"], cell["unmarked_members_x_range_pct"],
+                          cell["n_unmarked_members"]), (0.5, 1, [0.5, 0.5], 1))
+        self.assertEqual(cell["not_applied_members"], ["2"])
+        line = gc.summary_line("m", {"member_kind": "source", "members": [1, 2], "cells": {"SA": cell}})
+        self.assertIn("SA NOT-APPLIED (1 of 2 members: a non-finite corrected value); 1 of 2 members only, the others NOT-APPLIED: "
+                      "worst +0.500 % [+0.500, +0.500] (not the Type's value)", line)
+        # one FAIL member beside a marked one: FAIL
+        g[1] = {"x_pct": {"SA": -5.5}, "letters": {"SA": "FAIL"}, "band": {"SA": {"in": False}}}
+        cell = gc.aggregate_cell([1, 2], g, "SA", "rule")
+        self.assertEqual(cell["letter"], "FAIL")
+        self.assertEqual(cell["x_pct"], -5.5)
+        # a finite cell set carries no NOT-APPLIED key (a Warn tree's grade is unchanged)
+        g[2] = {"x_pct": {"SA": 0.1}, "letters": {"SA": "PASS"}, "band": {"SA": {"in": True}}}
+        self.assertNotIn("n_not_applied", gc.aggregate_cell([1, 2], g, "SA", "rule"))
+        self.assertEqual(gc.band_check({"SA": nan}, {"SA": {"low_pt": -1.0, "high_pt": 1.0}})["SA"]["in"], None)
+
     def test_static_limit_fit(self):
         freqs = [5.2, 5.7, 6.2]
         c_s, a = 2.0e-13, 0.004
@@ -248,6 +345,124 @@ class SyntheticWindows(unittest.TestCase):
             g1 = json.load(handle)
         self.assertEqual(g1["cells"]["SA"]["rule"], "single source")
         self.assertEqual(g1["cells"]["SA"]["letter"], "PASS")
+
+    def test_es_marked_window_not_applied(self):
+        """Decision 1847 E-1: a MarkNotApplied tree (a marked source's corrected cells print nan, the value in the appended
+        `... partial (uncovered part raw)` twin) grades NOT-APPLIED in every Type, never PASS; the twins are never graded; a FAIL
+        source beside a marked one keeps the cell FAIL. On the same window without marks (the Warn form) every cell PASSES."""
+        sources = [1, 2]
+        p_ref = {s: {1: 1.0e-4, 2: 2.0e-4, 3: 1.0e-5} for s in sources}
+        p_ft = {s: dict(p_ref[s]) for s in sources}
+        c_ref = {1: 1.0e-14, 2: 2.0e-14}
+        c_ft = dict(c_ref)
+        ma_sharp_ref = {s: p_ref[s][3] * (1.0 + 0.5 * 0.0678) for s in sources}
+        values = os.path.join(self.tmp, "ref.json")
+        with open(values, "w") as handle:
+            json.dump(es_values_reference(sources, p_ref, c_ref, ma_sharp_ref), handle)
+        out = os.path.join(self.tmp, "grade.json")
+
+        def grade(run):
+            self.assertEqual(gc.main(["--form", "es", "--device", run, "--reference-values", values, "--out", out, "--tail-form", "422"]), 0)
+            with open(out) as handle:
+                return json.load(handle)
+
+        warn = synthetic_es_run(os.path.join(self.tmp, "warn"), sources, p_ft, c_ft, {s: -0.1 * c_ref[s] for s in sources})
+        g = grade(warn)
+        for T in gc.TYPES:
+            self.assertEqual(g["cells"][T]["letter"], "PASS")
+            self.assertNotIn("n_not_applied", g["cells"][T])
+        # every source marked: the product's MarkNotApplied form of the same window
+        mark = synthetic_es_run(os.path.join(self.tmp, "mark"), sources, p_ft, c_ft, {s: -0.1 * c_ref[s] for s in sources})
+        mark_es_run(mark, sources)
+        g = grade(mark)
+        for T in gc.TYPES:
+            self.assertEqual(g["cells"][T]["letter"], gc.NOT_APPLIED, T)
+            self.assertIsNone(g["cells"][T]["x_pct"])
+            self.assertEqual(g["cells"][T]["n_not_applied"], 2)
+            self.assertEqual(g["cells"][T]["n_pass"], 0)
+        self.assertNotIn("PASS", gc.summary_line("m", g))
+        self.assertIn("SA NOT-APPLIED (2 of 2 members", gc.summary_line("m", g))
+        # the off-diagonal C rows (information) read the corrected column (nan), never its twin (the partial value)
+        off = g["per_member"]["1"]["grade"]["C_offdiag"]["2"]
+        self.assertNotEqual(off["dev_ft_F"], off["dev_ft_F"])
+        self.assertEqual(gc.PARTIAL_COLUMN_SUFFIX, PARTIAL_SUFFIX)
+        # source 1 FAILS SA (6 % high), source 2 marked: SA FAIL; MS / MA_sharp / C NOT-APPLIED (source 1 PASSES them)
+        p_ft[1][1] = 1.06e-4
+        mixed = synthetic_es_run(os.path.join(self.tmp, "mixed"), sources, p_ft, c_ft, {s: -0.1 * c_ref[s] for s in sources})
+        mark_es_run(mixed, [2])
+        g = grade(mixed)
+        self.assertEqual(g["cells"]["SA"]["letter"], "FAIL")
+        self.assertAlmostEqual(g["cells"]["SA"]["x_pct"], 6.0, places=9)
+        self.assertEqual(g["cells"]["SA"]["not_applied_members"], ["2"])
+        for T in ("MS", "MA_sharp", "C"):
+            self.assertEqual(g["cells"][T]["letter"], gc.NOT_APPLIED, T)
+            self.assertEqual(g["cells"][T]["letters_by_member"], {"1": "PASS", "2": gc.NOT_APPLIED})
+            self.assertIsNone(g["cells"][T]["x_pct"], T)
+            self.assertEqual(g["cells"][T]["n_unmarked_members"], 1, T)
+        self.assertIn("(1 of 2 members NOT-APPLIED)", gc.summary_line("m", g))
+        self.assertIn("MS NOT-APPLIED (1 of 2 members: a non-finite corrected value); 1 of 2 members only, the others NOT-APPLIED",
+                      gc.summary_line("m", g))
+
+    def test_band_rows_withheld_by_coverage_report(self):
+        """Decision 1884: a --band report whose block_C rows are coverage_report's NOT-APPLIED form (calibrated, not_applied, no
+        low_pt: a marked solve) is read DIRECTLY (no pre-filter): no crash; a marked member reads NOT-APPLIED; an UNMARKED member of
+        a mixed window reads its grade exactly as on the Warn twin, without a band, the reason said ('band NOT-APPLIED (marked
+        solve)'); the pre-filter route (band_calibrated_only_v1's rule: keep the calibrated rows with low_pt) gives the same
+        letters, x and in-band readings as the direct route."""
+        sources = [1, 2]
+        p_ref = {s: {1: 1.0e-4, 2: 2.0e-4, 3: 1.0e-5} for s in sources}
+        p_ft = {s: dict(p_ref[s]) for s in sources}
+        p_ft[1][2] = 2.02e-4  # source 1 MS +1 %: a non-zero x to compare
+        c_ref = {1: 1.0e-14, 2: 2.0e-14}
+        ma_sharp_ref = {s: p_ref[s][3] * (1.0 + 0.5 * 0.0678) for s in sources}
+        values = os.path.join(self.tmp, "ref.json")
+        with open(values, "w") as handle:
+            json.dump(es_values_reference(sources, p_ref, c_ref, ma_sharp_ref), handle)
+        withheld = {T: {"calibrated": True, "predictors": {}, "not_applied": True, "note": f"NOT-APPLIED ES / {T}: no band"}
+                    for T in ("SA", "MS", "MA", "C")}
+        direct = os.path.join(self.tmp, "band-direct.json")
+        with open(direct, "w") as handle:
+            json.dump(allowed_band_report(withheld), handle)
+        prefiltered = os.path.join(self.tmp, "band-prefiltered.json")
+        with open(prefiltered, "w") as handle:
+            json.dump(allowed_band_report({T: v for T, v in withheld.items() if v.get("calibrated") is True and "low_pt" in v}), handle)
+
+        def grade(run, band, name):
+            out = os.path.join(self.tmp, f"{name}.json")
+            args = ["--form", "es", "--device", run, "--reference-values", values, "--out", out, "--tail-form", "422", "--label", name]
+            self.assertEqual(gc.main(args + (["--band", band] if band else [])), 0)
+            with open(out) as handle:
+                return json.load(handle)
+
+        def run_of(name, marked):
+            run = synthetic_es_run(os.path.join(self.tmp, name), sources, p_ft, dict(c_ref), {s: -0.1 * c_ref[s] for s in sources})
+            return mark_es_run(run, marked) if marked else run
+
+        warn = grade(run_of("warn", []), None, "warn")
+        for name, marked in (("all", sources), ("mixed", [2])):
+            run = run_of(name, marked)
+            g = grade(run, direct, name)
+            self.assertEqual(g["band_not_applied_types"], ["C", "MA", "MS", "SA"])
+            self.assertEqual(g["band"], {})
+            for T in gc.TYPES:
+                self.assertEqual(g["cells"][T]["letter"], gc.NOT_APPLIED, (name, T))
+                self.assertEqual(g["cells"][T]["band_note"], gc.BAND_NOT_APPLIED, (name, T))
+                self.assertIsNone(g["cells"][T]["in_band"], (name, T))
+            if name == "mixed":
+                got, ref = g["per_member"]["1"]["grade"], warn["per_member"]["1"]["grade"]
+                self.assertEqual(got["x_pct"], ref["x_pct"])
+                self.assertEqual(got["letters"], ref["letters"])
+                self.assertTrue(all(b["band"] is None and b["band_note"] == gc.BAND_NOT_APPLIED for b in got["band"].values()))
+                self.assertAlmostEqual(g["cells"]["MS"]["unmarked_members_x_pct"], 1.0, places=9)
+            pre = grade(run, prefiltered, name + "-pre")
+            for T in gc.TYPES:
+                for k in ("letter", "x_pct", "in_band", "n_members", "n_pass", "n_fail", "letters_by_member", "unmarked_members_x_pct"):
+                    self.assertEqual(pre["cells"][T].get(k), g["cells"][T].get(k), (name, T, k))
+                self.assertNotIn("band_note", pre["cells"][T])
+        self.assertIn("band NOT-APPLIED (marked solve)", gc.summary_line("m", grade(run_of("mixed2", [2]), direct, "mixed2")) +
+                      gc.summary_line("w", {"member_kind": "source", "members": [1], "cells": {"SA": dict(
+                          gc.aggregate_cell([1], {1: {"x_pct": {"SA": 0.5}, "letters": {"SA": "PASS"},
+                                                      "band": {"SA": {"in": None, "band_note": gc.BAND_NOT_APPLIED}}}}, "SA", "r"))}}))
 
     def test_es_fixed_shell_form(self):
         """--tail-form fixed-shell on the synthetic window: a values reference without the R10 rings is refused (exit 3), graded as
@@ -418,9 +633,18 @@ def refresh_values(window, path):
     return path
 
 
-@unittest.skipUnless(os.path.isdir(os.path.join(E, "thin", "runs")) and os.path.isfile(LIBRARY_E), "the stage-E records are not present")
+@unittest.skipUnless(os.path.isdir(os.path.join(E, "thin", "runs")) and os.path.isfile(LIBRARY_E) and os.path.isdir(STAGE_E_RECREATED),
+                     "the stage-E records or their re-created band reports are not present")
 class StageERecords(unittest.TestCase):
-    """The 47 cells of decision 1215 reproduced from the stored CSVs: per cell and per source / frequency x_pct, letter, in_band."""
+    """The 47 cells of decision 1215 reproduced from the stored CSVs: per cell and per source / frequency x_pct, letter, in_band. The --band
+    reports are the RE-CREATED ones (STAGE_E_RECREATED; ruling 1948); band_reports = "record" names the reports of record instead."""
+
+    band_reports = "recreated"
+
+    def band_path(self, kind, w):
+        if self.band_reports == "record":
+            return os.path.join(E, kind, "predicted", w, "coverage-report.json")
+        return os.path.join(STAGE_E_RECREATED, kind, w, "coverage-report.json")
 
     @classmethod
     def setUpClass(cls):
@@ -433,7 +657,7 @@ class StageERecords(unittest.TestCase):
     def es_args(self, w, tail_form="422"):
         """The 1215 records were read under the 422 tail form: explicit here (the default is fixed-shell since the P4 re-freeze); tail_form=None = the default."""
         args = ["--form", "es", "--device", os.path.join(E, "thin", "runs", f"{w}-thin-corr"), "--reference", os.path.join(E, "ref", "runs", "ref", f"{w}-ref-r10-p4"),
-                "--shells-dir", SHELLS, "--library", LIBRARY_E, "--band", os.path.join(E, "thin", "predicted", w, "coverage-report.json"), "--label", w,
+                "--shells-dir", SHELLS, "--library", LIBRARY_E, "--band", self.band_path("thin", w), "--label", w,
                 "--out", os.path.join(self.tmp, f"{w}.json")]
         if tail_form is not None:
             args += ["--tail-form", tail_form]
@@ -443,7 +667,7 @@ class StageERecords(unittest.TestCase):
 
     def mx_args(self, w, c_form):
         args = ["--form", "maxwell", "--device", os.path.join(E, "mxthin", "runs", f"{w}-mxthin-corr"), "--shells-dir", SHELLS, "--library", LIBRARY_E,
-                "--band", os.path.join(E, "mxthin", "predicted", w, "coverage-report.json"), "--c-form", c_form, "--label", f"{w}-mx",
+                "--band", self.band_path("mxthin", w), "--c-form", c_form, "--label", f"{w}-mx",
                 "--out", os.path.join(self.tmp, f"{w}-mx-{c_form}.json"), "--tail-form", "422"]
         if not os.path.isfile(os.path.join(E, "mxthin", "runs", f"{w}-mxthin-corr", "postpro", "palace.json")):
             args += ["--model-catalog", os.path.join(E, "grade", "records", f"{w}-mxthin-corr-model-catalog.json")]
@@ -464,6 +688,11 @@ class StageERecords(unittest.TestCase):
         for w in ES_WINDOWS:
             if w == "W10":
                 continue  # the 46-source window is its own test (the longest read)
+            if w == "W31":
+                # RETIRED from this test BY NAME (ruling 1948; decision 1966 item (3)): W31's band of record cannot be re-created: it was
+                # written by coverage_report 1928a4f2 (uncapped F2 owner credit); every later writer caps the credit at the clipped CSV
+                # (fix round 2A (i)), and the re-created band moves the MA_sharp in_band reading of record (False -> True).
+                continue
             self.assertEqual(gc.main(self.es_args(w)), 0)
             self.assert_cells_identical(load(os.path.join(self.tmp, f"{w}.json")), load(os.path.join(E, "grade", "results", f"{w}-grade.json")), "per_source")
 
@@ -519,6 +748,33 @@ class StageERecords(unittest.TestCase):
             self.assertEqual(sorted(cell["C_eff_by_f_pct"]), ["5.2", "5.7", "6.2"])
 
 
+class StageEBandReportsRefused(unittest.TestCase):
+    """Decisions 1942 / 1948 (1): the stage-E band reports of record that StageERecords passes to --band carry no provenance: grade_cells
+    refuses each with EXACTLY the 1942 line (one line on stdout, nothing on stderr), exit 5, no output file. (StageERecords reads the
+    reports re-created by the allowed writer instead: ruling 1948, decision 1966 item (3).)"""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.records = StageERecords()
+        self.records.tmp = self.tmp
+        self.records.band_reports = "record"  # the reports of record (no provenance), not the re-created ones
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp)
+
+    def test_stage_e_band_reports_of_record_refused(self):
+        cases = [(w, self.records.es_args(w)) for w in ES_WINDOWS] + [(f"{w}-mx", self.records.mx_args(w, "direct")) for w in MX_REFERENCES]
+        for name, args in cases:
+            band, out = args[args.index("--band") + 1], args[args.index("--out") + 1]
+            buf, err = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(err):
+                rc = gc.main(args)
+            self.assertEqual(rc, cm.REFUSAL_EXIT, (name, buf.getvalue(), err.getvalue()))
+            self.assertEqual(buf.getvalue(), f"grade_cells.py: REFUSED (decision 1942): {band}: {cm.REPORT_REFUSAL_TEXT} (no provenance)\n", name)
+            self.assertEqual(err.getvalue(), "", name)
+            self.assertFalse(os.path.exists(out), name)
+
+
 @unittest.skipUnless(os.path.isfile(CARD_995) and os.path.isfile(LIBRARY_V3J) and os.path.isfile(REFRESH), "the 995 card records are not present")
 class MaxwellCard995(unittest.TestCase):
     """The 995 Maxwell card (43 P / 1 I / 0 F; G2): the 7 RE-SCORED windows re-scored by grade_cells.py from the stored junction-driven
@@ -557,6 +813,600 @@ class MaxwellCard995(unittest.TestCase):
             self.assertTrue(row["status"].startswith("CARRIED"), w)
             for T in ("SA", "MS", "MA_sharp"):
                 self.assertEqual(row["cells"][T]["letter"], "P", f"{w} {T}")
+
+
+class ExplicitMarkWindows(unittest.TestCase):
+    """Decisions 1908 / 1914: grade_cells keys on the product's EXPLICIT marks (coverage_marks.py), never on a token: a marked cell
+    whatever its token reads NOT-APPLIED; an unmarked cell that is not a finite number, or a MarkNotApplied table without its mark
+    columns, is a REFUSAL (exit 5, no output file); the USER's Q3 (keep + flag): the kept p of an unmarked Type under a marked E_elec
+    is graded WITH the flag, and what this reader builds from the marked E_elec (MA_sharp, C) is NOT-APPLIED."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.sources = [1, 2]
+        self.p_ref = {s: {1: 1.0e-4, 2: 2.0e-4, 3: 1.0e-5} for s in self.sources}
+        self.c_ref = {1: 1.0e-14, 2: 2.0e-14}
+        ma_sharp_ref = {s: self.p_ref[s][3] * (1.0 + 0.5 * 0.0678) for s in self.sources}
+        self.values = os.path.join(self.tmp, "ref.json")
+        with open(self.values, "w") as handle:
+            json.dump(es_values_reference(self.sources, self.p_ref, self.c_ref, ma_sharp_ref), handle)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp)
+
+    def run_of(self, name, p_ft=None):
+        p_ft = p_ft or {s: dict(self.p_ref[s]) for s in self.sources}
+        return synthetic_es_run(os.path.join(self.tmp, name), self.sources, p_ft, dict(self.c_ref),
+                                {s: -0.1 * self.c_ref[s] for s in self.sources})
+
+    def grade(self, run, name):
+        out = os.path.join(self.tmp, f"{name}.json")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = gc.main(["--form", "es", "--device", run, "--reference-values", self.values, "--out", out, "--tail-form", "422"])
+        self.stdout = buf.getvalue()
+        g = None
+        if os.path.isfile(out):
+            with open(out) as handle:
+                g = json.load(handle)
+        return rc, g, out
+
+    def assert_one_refusal_line(self, needle):
+        """Decision 1938: a refusal prints ONE line (the refusal) and nothing else: no grade, no number before it."""
+        lines = self.stdout.splitlines()
+        self.assertEqual(len(lines), 1, self.stdout)
+        self.assertTrue(lines[0].startswith("grade_cells.py: REFUSED (decision 19"), self.stdout)
+        self.assertIn(needle, lines[0])
+
+    def edit_cell(self, run, column, source, token):
+        path = os.path.join(run, "postpro", "surface-Q-corrected.csv")
+        with open(path) as handle:
+            lines = [ln.rstrip("\n").split(",") for ln in handle]
+        j = [h.strip() for h in lines[0]].index(column)
+        for r in lines[1:]:
+            if int(float(r[0])) == source:
+                r[j] = token
+        with open(path, "w") as handle:
+            handle.write("".join(",".join(r) + "\n" for r in lines))
+
+    def test_marked_cell_is_not_applied_whatever_its_token(self):
+        """The review's HT5 / HT5b form: a marked cell whose token is '' or 'NA' (a re-writer) reads NOT-APPLIED (no grade), never a
+        traceback and never a number."""
+        for token in ("nan", "", "NA"):
+            run = mark_es_run(self.run_of(f"tok-{token or 'empty'}"), [2], token=token)
+            rc, g, _ = self.grade(run, f"tok-{token or 'empty'}")
+            self.assertEqual(rc, 0, token)
+            for T in gc.TYPES:
+                self.assertEqual(g["cells"][T]["letters_by_member"]["2"], gc.NOT_APPLIED, (token, T))
+                self.assertEqual(g["cells"][T]["letters_by_member"]["1"], "PASS", (token, T))
+                self.assertEqual(g["cells"][T]["letter"], gc.NOT_APPLIED, (token, T))
+            self.assertEqual(g["mark_not_applied_signals"][:1], ["twin column in surface-Q-corrected.csv"])
+
+    def test_refusal_unmarked_non_number_and_no_explicit_mark(self):
+        """REFUSAL (exit 5, one line, no output file): an unmarked cell holding nan / '' / NA on a marked tree; a marked tree whose
+        tables carry the twins but no mark column (a policy binary before decision 1914); a TEXT token on a Warn tree."""
+        cases = {}
+        for token in ("nan", "", "NA", "+inf"):
+            run = mark_es_run(self.run_of(f"un-{token or 'empty'}"), [2])
+            self.edit_cell(run, "p_surf postprocessed fixed-trace[1]", 1, token)
+            cases[f"unmarked {token!r}"] = run
+        cases["no mark column"] = mark_es_run(self.run_of("old-form"), [2], explicit=False)
+        warn = self.run_of("warn-text")
+        self.edit_cell(warn, "p_surf postprocessed fixed-trace[2]", 1, "NA")
+        cases["Warn text token"] = warn
+        for name, run in cases.items():
+            rc, g, out = self.grade(run, name.replace(" ", "-").replace("'", ""))
+            self.assertEqual(rc, cm.REFUSAL_EXIT, name)
+            self.assertIsNone(g, name)
+            self.assertFalse(os.path.exists(out), name)
+            self.assert_one_refusal_line("")
+
+    def test_warn_nan_keeps_the_frozen_reading(self):
+        """A Warn tree (no signal) with a nan in a corrected cell: the reading of 4cadc9516f (NOT-APPLIED letter, exit 0), not a
+        refusal: the Warn readings are frozen (decision 1914 (2): only a text token is refused there)."""
+        run = self.run_of("warn-nan")
+        self.edit_cell(run, "p_surf postprocessed fixed-trace[1]", 1, "nan")
+        rc, g, _ = self.grade(run, "warn-nan")
+        self.assertEqual(rc, 0)
+        self.assertEqual(g["cells"]["SA"]["letters_by_member"]["1"], gc.NOT_APPLIED)
+        self.assertNotIn("mark_not_applied_signals", g)
+
+    def test_q3_kept_value_graded_with_the_flag(self):
+        """USER 1867 Q3: source 2's E_elec and its MA interface marked, SA / MS unmarked: SA / MS of source 2 are graded on the kept
+        p WITH the flag beside the letter (never counted in n_pass; the cell letter carries the flag), MA_sharp (built from the
+        marked E_elec) and C (entry (2, 2) marked) are NOT-APPLIED; source 1 reads as on the Warn twin."""
+        warn_rc, warn, _ = self.grade(self.run_of("q3-warn"), "q3-warn")
+        self.assertEqual(warn_rc, 0)
+        run = mark_es_run(self.run_of("q3"), [2], interfaces=(3,))
+        rc, g, _ = self.grade(run, "q3")
+        self.assertEqual(rc, 0)
+        flagged = "PASS" + gc.FLAG_SUFFIX
+        for T in ("SA", "MS"):
+            self.assertEqual(g["cells"][T]["letters_by_member"], {"1": "PASS", "2": flagged}, T)
+            self.assertEqual(g["cells"][T]["letter"], flagged, T)
+            self.assertEqual(g["cells"][T]["n_pass"], 1, T)
+            self.assertEqual(g["cells"][T]["n_flagged"], 1, T)
+            self.assertEqual(g["cells"][T]["x_pct"], warn["cells"][T]["x_pct"], T)
+            self.assertIn(cm.FLAG_Q3, g["per_member"]["2"]["grade"]["flags"][T])
+        for T in ("MA_sharp", "C"):
+            self.assertEqual(g["cells"][T]["letters_by_member"]["2"], gc.NOT_APPLIED, T)
+            self.assertEqual(g["cells"][T]["letter"], gc.NOT_APPLIED, T)
+        self.assertEqual(g["per_member"]["1"]["grade"]["letters"], warn["per_member"]["1"]["grade"]["letters"])
+        line = gc.summary_line("q3", g)
+        self.assertIn(f"SA +0.000 % [+0.000, +0.000] PASS [{cm.FLAG_Q3}]", line)
+        self.assertNotIn("SA +0.000 % [+0.000, +0.000] PASS band", line)
+        # a flagged FAIL stays FAIL (counted as a fail) with the flag beside it in the summary
+        p_ft = {s: dict(self.p_ref[s]) for s in self.sources}
+        p_ft[2][1] = 1.06e-4
+        rc, g, _ = self.grade(mark_es_run(self.run_of("q3-fail", p_ft), [2], interfaces=(3,)), "q3-fail")
+        self.assertEqual(g["cells"]["SA"]["letter"], "FAIL")
+        self.assertEqual(g["cells"]["SA"]["n_fail"], 1)
+        self.assertIn(f"FAIL [{cm.FLAG_Q3}: 1 of 2 members", gc.summary_line("q3-fail", g))
+
+    def test_q3_ma_sharp_not_applied_with_its_interface_unmarked(self):
+        """Decision 1934 (the round-2 gc7 mutation's discriminating form): source 2's E_elec marked and NO interface marked: MA_sharp
+        (built from the marked E_elec) is NOT-APPLIED although its MA interface is kept; SA / MS are graded flagged."""
+        rc, g, _ = self.grade(mark_es_run(self.run_of("q3-noiface"), [2], interfaces=()), "q3-noiface")
+        self.assertEqual(rc, 0)
+        self.assertEqual(g["cells"]["MA_sharp"]["letters_by_member"]["2"], gc.NOT_APPLIED)
+        self.assertEqual(g["cells"]["MA_sharp"]["letter"], gc.NOT_APPLIED)
+        for T in ("SA", "MS"):
+            self.assertEqual(g["cells"][T]["letters_by_member"]["2"], "PASS" + gc.FLAG_SUFFIX, T)
+
+    def test_duplicate_mark_column_refused(self):
+        """Decision 1934 (R-3; the review's N3): the product's 'coverage mark[1]' = 1 AND an appended second 'coverage mark[1]' = 0,
+        with a FINITE token in the marked cell: a REFUSAL (exit 5, no output file), never the last statement's reading."""
+        run = mark_es_run(self.run_of("dup"), [2])
+        path = os.path.join(run, "postpro", "surface-Q-corrected.csv")
+        with open(path) as handle:
+            lines = [ln.rstrip("\n").split(",") for ln in handle]
+        j = lines[0].index("p_surf postprocessed fixed-trace[1]")
+        lines[0].append(cm.MARK_INTERFACE.format(1))
+        for r in lines[1:]:
+            if int(float(r[0])) == 2:
+                r[j] = "1.0e-4"
+            r.append("0")
+        with open(path, "w") as handle:
+            handle.write("".join(",".join(r) + "\n" for r in lines))
+        rc, g, out = self.grade(run, "dup")
+        self.assertEqual(rc, cm.REFUSAL_EXIT)
+        self.assertIsNone(g)
+        self.assertFalse(os.path.exists(out))
+        self.assert_one_refusal_line("a duplicate mark / twin / exposure column name")
+
+    def test_refusal_at_the_last_source_is_the_only_output(self):
+        """Ruling 1939 (validate first): source 1 marked, an UNMARKED nan in the LAST source's cell: exit 5, the ONE refusal line
+        printed (no grade of source 1 before it), no output file."""
+        run = mark_es_run(self.run_of("late"), [1])
+        self.edit_cell(run, "p_surf postprocessed fixed-trace[2]", 2, "nan")
+        rc, g, out = self.grade(run, "late")
+        self.assertEqual(rc, cm.REFUSAL_EXIT)
+        self.assertFalse(os.path.exists(out))
+        self.assert_one_refusal_line("source 2")
+
+    def test_mark_token_read_one_way(self):
+        """Decision 1934 (R-4; the review's N2): a mark token '1.0' is a REFUSAL (as in every reader), not a mark."""
+        run = mark_es_run(self.run_of("tok10"), [2])
+        path = os.path.join(run, "postpro", "surface-Q-corrected.csv")
+        with open(path) as handle:
+            lines = [ln.rstrip("\n").split(",") for ln in handle]
+        j = lines[0].index(cm.MARK_INTERFACE.format(1))
+        for r in lines[1:]:
+            if int(float(r[0])) == 2:
+                r[j] = "1.0"
+        with open(path, "w") as handle:
+            handle.write("".join(",".join(r) + "\n" for r in lines))
+        rc, g, out = self.grade(run, "tok10")
+        self.assertEqual(rc, cm.REFUSAL_EXIT)
+        self.assertFalse(os.path.exists(out))
+        self.assert_one_refusal_line("neither the token 0 nor the token 1")
+
+
+class ReportProvenanceWindows(unittest.TestCase):
+    """Decisions 1934 (R-1) / 1942: grade_cells reads a --band report ONLY with the provenance of the allowed writer (its sha256, its
+    coverage_marks sha256, explicit_marks true); any other report, whatever its tree, is a REFUSAL: exactly ONE line
+    'grade_cells.py: REFUSED (decision 1942): <report>: report without an allowed provenance: re-create it with the allowed reader
+    (<why>)' on stdout, nothing on stderr, exit 5, no output file. Its own grade JSON carries its provenance."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.sources = [1, 2]
+        self.p_ref = {s: {1: 1.0e-4, 2: 2.0e-4, 3: 1.0e-5} for s in self.sources}
+        self.c_ref = {1: 1.0e-14, 2: 2.0e-14}
+        ma_sharp_ref = {s: self.p_ref[s][3] * (1.0 + 0.5 * 0.0678) for s in self.sources}
+        self.values = os.path.join(self.tmp, "ref.json")
+        with open(self.values, "w") as handle:
+            json.dump(es_values_reference(self.sources, self.p_ref, self.c_ref, ma_sharp_ref), handle)
+        self.band = {T: {"calibrated": True, "low_pt": -9.0, "high_pt": 9.0} for T in ("SA", "MS", "MA", "C")}
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp)
+
+    def run_of(self, name, marked=()):
+        run = synthetic_es_run(os.path.join(self.tmp, name), self.sources, {s: dict(self.p_ref[s]) for s in self.sources},
+                               dict(self.c_ref), {s: -0.1 * self.c_ref[s] for s in self.sources})
+        return mark_es_run(run, list(marked)) if marked else run
+
+    def grade(self, run, report, name):
+        band = os.path.join(self.tmp, f"{name}-band.json")
+        with open(band, "w") as handle:
+            json.dump(report, handle)
+        out = os.path.join(self.tmp, f"{name}.json")
+        buf, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(err):
+            rc = gc.main(["--form", "es", "--device", run, "--reference-values", self.values, "--out", out, "--tail-form", "422",
+                          "--band", band])
+        self.stdout, self.stderr, self.band_path = buf.getvalue(), err.getvalue(), band
+        g = None
+        if os.path.isfile(out):
+            with open(out) as handle:
+                g = json.load(handle)
+        return rc, g, out
+
+    def test_allowed_provenance_read(self):
+        run = self.run_of("marked", [2])
+        rc, g, _ = self.grade(run, allowed_band_report(self.band, postpro="/elsewhere/postpro"), "allowed")
+        self.assertEqual(rc, 0)
+        self.assertEqual(g["cells"]["SA"]["letters_by_member"], {"1": "PASS", "2": gc.NOT_APPLIED})
+        self.assertEqual(g["band"]["SA"], [-9.0, 9.0])
+
+    def test_old_reader_report_refused(self):
+        """The round-2 review's B-1 report attack: a report WITHOUT provenance (an old reader's) of a MARKED tree: refused with the
+        tree on this host and with the tree absent; a forged writer sha refused."""
+        marked = self.run_of("marked", [2])
+        forms = {"tree on host, marked": {"block_C": self.band, "postpro": os.path.join(marked, "postpro")},
+                 "tree absent": {"block_C": self.band, "postpro": "/data/home/simlap/elsewhere/postpro"},
+                 "no postpro key": {"block_C": self.band},
+                 "a writer not on the list": dict(allowed_band_report(self.band),
+                                                  **{cm.PROVENANCE_KEY: dict(cm.provenance(CR_PATH), writer_sha256="f" * 64)})}
+        for name, report in forms.items():
+            rc, g, out = self.grade(marked, report, name.replace(" ", "-").replace(",", ""))
+            self.assertEqual(rc, cm.REFUSAL_EXIT, name)
+            self.assertIsNone(g, name)
+            self.assertFalse(os.path.exists(out), name)
+            lines = self.stdout.splitlines()
+            self.assertEqual(len(lines), 1, (name, self.stdout))
+            self.assertIn(cm.REPORT_REFUSAL_TEXT, lines[0], name)
+
+    def assert_refused(self, forms, run, why):
+        """Every (name, report) form: exit 5, no grade JSON, stdout = exactly the 1942 line with `why` (a str, or a dict by name),
+        stderr empty."""
+        for name, report in forms.items():
+            rc, g, out = self.grade(run, report, name.replace(" ", "-").replace(",", "").replace("'", ""))
+            self.assertEqual(rc, cm.REFUSAL_EXIT, (name, self.stdout))
+            self.assertIsNone(g, name)
+            self.assertFalse(os.path.exists(out), name)
+            reason = why if isinstance(why, str) else why[name]
+            self.assertEqual(self.stdout, f"grade_cells.py: REFUSED (decision 1942): {self.band_path}: {cm.REPORT_REFUSAL_TEXT} ({reason})\n", name)
+            self.assertEqual(self.stderr, "", name)
+
+    def test_no_provenance_report_refused(self):
+        """Decision 1942 (R-2 (b) removed): a report WITHOUT provenance is refused whatever its tree: the device tree unmarked on this
+        host (a postpro or a run directory), marked, absent, no 'postpro', and an unmarked follower whose ladder was borrowed from a
+        MARKED run (the review's N5 form)."""
+        warn, marked = self.run_of("warn"), self.run_of("marked", [2])
+        forms = {"unmarked postpro on host": {"block_C": self.band, "postpro": os.path.join(warn, "postpro")},
+                 "unmarked run directory on host": {"block_C": self.band, "postpro": warn},
+                 "marked tree on host": {"block_C": self.band, "postpro": os.path.join(marked, "postpro")},
+                 "tree absent": {"block_C": self.band, "postpro": "/data/home/simlap/elsewhere/postpro"},
+                 "no postpro key": {"block_C": self.band},
+                 "borrowed marked ladder": {"block_C": self.band, "postpro": os.path.join(warn, "postpro"),
+                                            "block_D": {"ladder": {"source": os.path.join(marked, "postpro"), "borrowed": True}}}}
+        self.assert_refused(forms, warn, "no provenance")
+
+    def test_wrong_writer_sha_refused(self):
+        """A provenance whose writer sha256 is not the allowed writer's (another file; the ROUND-3 coverage_report 7e120dd6 with its
+        module b5ae7f33: a report of round 3 is re-created, decision 1944 (2); the ROUND-4 coverage_report 6dec7256: decisions 1966 /
+        1967 (A), it gave a silently empty ladder for a run-directory --ladder-run; upper case; 16 digits only; absent), or whose
+        module sha256 is not the allowed writer's: refused."""
+        good = cm.provenance(CR_PATH)
+        r3 = {"writer": "coverage_report.py", "writer_sha256": "7e120dd655eec0babc9cf5fdb275c5d9adaaed6f0a2e3e38d334b767de2ab588",
+              "coverage_marks_sha256": "b5ae7f33385046c157e80282c310ef8f0e9dbb841e301663692efdbdd6401239", "explicit_marks": True}
+        r4 = dict(good, writer_sha256="6dec72560bf54b9d8f42abed5e03599bac68b584edc87a75e1c225bbaf2a5580")
+        self.assertNotEqual(good["writer_sha256"], r4["writer_sha256"])
+        provs = {"another writer": dict(good, writer_sha256="f" * 64), "the round-3 writer": r3, "the round-4 writer": r4,
+                 "upper case": dict(good, writer_sha256=good["writer_sha256"].upper()),
+                 "16 digits": dict(good, writer_sha256=good["writer_sha256"][:16]),
+                 "no writer sha": {k: v for k, v in good.items() if k != "writer_sha256"},
+                 "module differs": dict(good, coverage_marks_sha256="1" * 64)}
+        forms = {name: dict(allowed_band_report(self.band), **{cm.PROVENANCE_KEY: p}) for name, p in provs.items()}
+        why = {name: (f"its provenance names coverage_marks sha256 {'1' * 16}: not the module of the allowed writer {good['writer_sha256'][:16]}"
+                      if name == "module differs" else
+                      f"its provenance names 'coverage_report.py' sha256 {str(p.get('writer_sha256'))[:16]}: not an allowed writer")
+               for name, p in provs.items()}
+        self.assert_refused(forms, self.run_of("warn"), why)
+
+    def test_explicit_marks_false_refused(self):
+        """A provenance of the allowed writer that does not state explicit_marks true (false, the string 'true', absent; the
+        provenance not an object): refused."""
+        good = cm.provenance(CR_PATH)
+        provs = {"explicit_marks false": dict(good, explicit_marks=False), "explicit_marks string": dict(good, explicit_marks="true"),
+                 "explicit_marks absent": {k: v for k, v in good.items() if k != "explicit_marks"}}
+        forms = {name: dict(allowed_band_report(self.band), **{cm.PROVENANCE_KEY: p}) for name, p in provs.items()}
+        self.assert_refused(forms, self.run_of("warn"),
+                            f"its provenance does not state explicit_marks true (the allowed writer {good['writer_sha256'][:16]})")
+        self.assert_refused({"provenance a string": dict(allowed_band_report(self.band), **{cm.PROVENANCE_KEY: "coverage_report.py"})},
+                            self.run_of("warn2"), "its provenance is not an object")
+
+    def test_grade_json_carries_the_provenance(self):
+        rc, g, _ = self.grade(self.run_of("warn"), allowed_band_report(self.band), "prov")
+        self.assertEqual(rc, 0)
+        self.assertEqual(g[cm.PROVENANCE_KEY], cm.provenance(gc.__file__))
+
+
+class BandWithheldBySource(unittest.TestCase):
+    """Decisions 1954 / 1955 (the round-4 review's M-1): an ES member reads the --band marks of ITS OWN source block (and the
+    default source's: the band values are the default source's block_C): a Type the report withholds for the member's source reads
+    'band NOT-APPLIED (marked solve)' for that member (no band interval, `in` null), never a band pass or fail, and is listed in
+    band_not_applied_types; the band values of the unmarked members stay the default source's; a report without a withheld row
+    reads exactly as before; a member whose source has no block reads the default block only."""
+
+    WIDE = {T: {"calibrated": True, "low_pt": -9.0, "high_pt": 9.0} for T in ("SA", "MS", "MA", "C")}
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.sources = [1, 2, 3, 4]
+        self.p_ref = {s: {1: 1.0e-4, 2: 2.0e-4, 3: 1.0e-5} for s in self.sources}
+        self.c_ref = {s: 1.0e-14 * s for s in self.sources}
+        ma_sharp_ref = {s: self.p_ref[s][3] * (1.0 + 0.5 * 0.0678) for s in self.sources}
+        self.values = os.path.join(self.tmp, "ref.json")
+        with open(self.values, "w") as handle:
+            json.dump(es_values_reference(self.sources, self.p_ref, self.c_ref, ma_sharp_ref), handle)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp)
+
+    def run_of(self, name, sources=None):
+        sources = sources or self.sources
+        return synthetic_es_run(os.path.join(self.tmp, name), sources, {s: dict(self.p_ref[s]) for s in sources},
+                                {s: self.c_ref[s] for s in sources}, {s: -0.1 * self.c_ref[s] for s in sources})
+
+    @staticmethod
+    def block(withheld=()):
+        """A per-source block_C in coverage_report's form: the wide band, the `withheld` Types in the NOT-APPLIED form."""
+        out = {T: dict(v) for T, v in BandWithheldBySource.WIDE.items()}
+        for T in withheld:
+            out[T] = {"calibrated": True, "predictors": {}, "not_applied": True, "note": f"NOT-APPLIED ES / {T}: no band"}
+        return out
+
+    def report(self, withheld_by_source, with_sources=True):
+        """A multi-source report of the allowed writer: source 1 the default (headline) block, `withheld_by_source` {s: Types}."""
+        head = withheld_by_source.get(1, ())
+        extra = {"source": 1, "sources_in_run": list(self.sources)}
+        if head:
+            extra["not_applied_types"] = sorted(T for T in head if T != "C")
+        if with_sources:
+            extra["sources"] = {}
+            for s in self.sources:
+                blk = {"block_C": self.block(withheld_by_source.get(s, ()))}
+                if withheld_by_source.get(s):
+                    blk["not_applied_types"] = sorted(T for T in withheld_by_source[s] if T != "C")
+                extra["sources"][str(s)] = blk
+        return allowed_band_report(self.block(head), **extra)
+
+    def grade(self, run, report, name, band_name="band.json"):
+        band = os.path.join(self.tmp, band_name)
+        with open(band, "w") as handle:
+            json.dump(report, handle)
+        out = os.path.join(self.tmp, "grade.json")
+        buf, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(err):
+            rc = gc.main(["--form", "es", "--device", run, "--reference-values", self.values, "--out", out, "--tail-form", "422",
+                          "--label", "w", "--band", band])
+        self.assertEqual((rc, err.getvalue()), (0, ""), (name, buf.getvalue()))
+        with open(out) as handle:
+            text = handle.read()
+        return json.loads(text), text, buf.getvalue()
+
+    def withheld_members(self, g):
+        """{(member, Type)} read 'band NOT-APPLIED (marked solve)', each checked to carry no band interval and `in` null."""
+        out = set()
+        for m, v in g["per_member"].items():
+            for T, b in v["grade"]["band"].items():
+                if b.get("band_note") == gc.BAND_NOT_APPLIED:
+                    self.assertEqual((b["band"], b["in"]), (None, None), (m, T))
+                    out.add((m, T))
+        return out
+
+    def test_ht2b_form_member_reads_its_own_source(self):
+        """The review's HT2b: source 2's MS withheld (a marked FIRST solve of its ladder), every final value unmarked: member 2 MS
+        reads NOT-APPLIED; members 1 / 3 / 4 MS keep the default source's band reading; the MS cell is no band pass or fail; MS in
+        band_not_applied_types; the top-level band (the default source's values) unchanged."""
+        g, _, stdout = self.grade(self.run_of("ht2b"), self.report({2: ("MS",)}), "ht2b")
+        self.assertEqual(self.withheld_members(g), {("2", "MS")})
+        for m in ("1", "3", "4"):
+            self.assertEqual(g["per_member"][m]["grade"]["band"]["MS"]["band"], [-9.0, 9.0], m)
+            self.assertIs(g["per_member"][m]["grade"]["band"]["MS"]["in"], True, m)
+        self.assertIsNone(g["cells"]["MS"]["in_band"])
+        self.assertEqual(g["cells"]["MS"]["n_in_band"], 3)
+        self.assertEqual(g["cells"]["MS"]["band_note"], gc.BAND_NOT_APPLIED)
+        self.assertIs(g["cells"]["SA"]["in_band"], True)
+        self.assertEqual(g.get("band_not_applied_types"), ["MS"])
+        self.assertEqual(g["band"], {T: [-9.0, 9.0] for T in ("SA", "MS", "MA", "C")})
+        self.assertIn("MS +0.000 % [+0.000, +0.000] PASS band NOT-APPLIED (marked solve)", stdout)
+
+    def test_ht4_form_own_and_default_marks(self):
+        """The review's HT4: the default source 1 withholds SA (and C), source 2 MS (and C): every member reads SA and C NOT-APPLIED
+        (no value exists: the default row is withheld), member 2 MS too; members 1 / 3 / 4 MS keep the band reading."""
+        g, _, _ = self.grade(self.run_of("ht4"), self.report({1: ("SA", "C"), 2: ("MS", "C")}), "ht4")
+        want = {(str(s), T) for s in self.sources for T in ("SA", "C")} | {("2", "MS")}
+        self.assertEqual(self.withheld_members(g), want)
+        self.assertEqual(g["band_not_applied_types"], ["C", "MS", "SA"])
+        self.assertIs(g["per_member"]["3"]["grade"]["band"]["MS"]["in"], True)
+
+    def test_report_without_withheld_rows_reads_as_before(self):
+        """Keyed on withheld rows only: a report whose per-source blocks withhold nothing, and a headline-only withheld form whose
+        other sources are clean, give byte-identical stdout and grade JSON to the same report without its per-source blocks (the
+        reading of round 4, which never opened them)."""
+        run = self.run_of("same")
+        for name, withheld in (("unmarked", {}), ("headline", {1: ("SA", "C")})):
+            _, text_with, out_with = self.grade(run, self.report(withheld), name)
+            _, text_without, out_without = self.grade(run, self.report(withheld, with_sources=False), name)
+            self.assertEqual(text_with, text_without, name)
+            self.assertEqual(out_with, out_without, name)
+        g, _, _ = self.grade(run, self.report({}), "unmarked")
+        self.assertNotIn("band_not_applied_types", g)
+        self.assertEqual(self.withheld_members(g), set())
+
+    def test_default_not_applied_types_without_its_rows_withholds_every_member(self):
+        """The round-5 review's m-4 (decision 1966 item 2b): a report whose headline not_applied_types names MS while its headline
+        block_C MS row carries a band (an EDITED report: the allowed writer never writes it) and whose per-source blocks are clean:
+        every member reads MS NOT-APPLIED (the default source's marks enter every member), never a band reading."""
+        report = self.report({})
+        report["not_applied_types"] = ["MS"]
+        g, _, _ = self.grade(self.run_of("m4"), report, "m4")
+        self.assertEqual(self.withheld_members(g), {(str(s), "MS") for s in self.sources})
+        self.assertEqual(g.get("band_not_applied_types"), ["MS"])
+        self.assertIsNone(g["cells"]["MS"]["in_band"])
+
+    def test_member_without_a_source_block_reads_the_default_block(self):
+        """A member whose source has no block in the report (here source 4) reads the default block only; source 2's own withheld MS
+        is NOT-APPLIED for member 2 only."""
+        report = self.report({2: ("MS",)})
+        del report["sources"]["4"]
+        g, _, _ = self.grade(self.run_of("noblock"), report, "noblock")
+        self.assertEqual(self.withheld_members(g), {("2", "MS")})
+        self.assertIs(g["per_member"]["4"]["grade"]["band"]["MS"]["in"], True)
+        self.assertEqual(g["band_not_applied_types"], ["MS"])
+
+
+
+class UncalibratedBandRow(unittest.TestCase):
+    """Decision 1966 (FLIP-LIST-v5 s0; OI-GRADE-CELLS-BAND-KEYERROR-ON-UNCALIBRATED-ROW): a --band row that is not withheld and has
+    no band ends (coverage_report's UNCALIBRATED row, or its 'no calibration' row) is no band of record: a member with an x for that
+    Type reads band null, in null, band_note 'band n/a (uncalibrated)', never a band pass or fail; the cell's in_band is null; the
+    top-level 'band' lists the Type in band_uncalibrated_types without ends. Before, main() ended with KeyError 'low_pt' (exit 1,
+    nothing written). A report without such a row writes no such key and no such note."""
+
+    WIDE = {"calibrated": True, "low_pt": -9.0, "high_pt": 9.0}
+    UNCAL = {"calibrated": False, "uncalibrated": True, "predictors": {}, "note": "UNCALIBRATED ES / MA (bands v6 rule (5)): r"}
+    NO_CAL = {"calibrated": False, "predictors": {}, "note": "no calibration for ES / C"}
+    WITHHELD = {"calibrated": True, "predictors": {}, "not_applied": True, "note": "NOT-APPLIED ES / MA: no band"}
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp)
+
+    def main(self, args, report):
+        band = os.path.join(self.tmp, "band.json")
+        with open(band, "w") as handle:
+            json.dump(report, handle)
+        out = os.path.join(self.tmp, "grade.json")
+        if os.path.exists(out):
+            os.remove(out)
+        buf, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(err):
+            rc = gc.main(args + ["--band", band, "--out", out, "--tail-form", "422", "--label", "w"])
+        self.assertEqual((rc, err.getvalue()), (0, ""), buf.getvalue())
+        with open(out) as handle:
+            return json.load(handle), buf.getvalue()
+
+    def es(self, block_c, with_c=True, **extra):
+        sources = [1, 2]
+        p_ref = {s: {1: 1.0e-4, 2: 2.0e-4, 3: 1.0e-5} for s in sources}
+        c_ref = {1: 1.0e-14, 2: 2.0e-14}
+        run = synthetic_es_run(os.path.join(self.tmp, "es"), sources, {s: dict(p_ref[s]) for s in sources}, dict(c_ref),
+                               {s: -0.1 * c_ref[s] for s in sources})
+        ref = es_values_reference(sources, p_ref, c_ref, {s: p_ref[s][3] * (1.0 + 0.5 * 0.0678) for s in sources})
+        if not with_c:
+            for m in ref["members"].values():
+                m.pop("C_F")
+        values = os.path.join(self.tmp, "ref.json")
+        with open(values, "w") as handle:
+            json.dump(ref, handle)
+        try:
+            return self.main(["--form", "es", "--device", run, "--reference-values", values], allowed_band_report(block_c, **extra))
+        finally:
+            shutil.rmtree(os.path.join(self.tmp, "es"))
+
+    def assert_no_band_of_record(self, g, T, members):
+        for m in members:
+            b = g["per_member"][m]["grade"]["band"][T]
+            self.assertEqual((b["band"], b["in"], b.get("band_note")), (None, None, gc.BAND_UNCALIBRATED), (m, T))
+        self.assertIsNone(g["cells"][T]["in_band"], T)
+        self.assertEqual(g["cells"][T]["n_in_band"], 0, T)
+        self.assertEqual(g["cells"][T].get("band_note"), gc.BAND_UNCALIBRATED, T)
+
+    def test_es_uncalibrated_rows_x_present(self):
+        """ES, x present for every Type: MA uncalibrated, C 'no calibration' (both without ends) -> no band of record for MA_sharp
+        and C; SA / MS keep their band readings; the letters are unchanged; the top-level band holds only the rows with ends."""
+        g, stdout = self.es({"SA": dict(self.WIDE), "MS": dict(self.WIDE), "MA": dict(self.UNCAL), "C": dict(self.NO_CAL)})
+        self.assert_no_band_of_record(g, "MA_sharp", ("1", "2"))
+        self.assert_no_band_of_record(g, "C", ("1", "2"))
+        self.assertIs(g["cells"]["SA"]["in_band"], True)
+        self.assertNotIn("band_note", g["cells"]["SA"])
+        self.assertEqual(g["cells"]["C"]["letter"], "PASS")
+        self.assertEqual(g["band"], {"SA": [-9.0, 9.0], "MS": [-9.0, 9.0]})
+        self.assertEqual(g.get("band_uncalibrated_types"), ["C", "MA"])
+        self.assertNotIn("band_not_applied_types", g)
+        self.assertIn("C +0.000 % [+0.000, +0.000] PASS band n/a (uncalibrated)", stdout)
+        self.assertNotIn("band band", stdout)
+
+    def test_es_uncalibrated_row_x_absent(self):
+        """ES, no C reference (no member has an x for C): the C row uncalibrated -> the members' C band reading is the no-x form,
+        the cell n/a; the top-level band still lists C without ends (it describes the report, not the members)."""
+        g, _ = self.es({"SA": dict(self.WIDE), "MS": dict(self.WIDE), "MA": dict(self.WIDE), "C": dict(self.UNCAL)}, with_c=False)
+        for m in ("1", "2"):
+            self.assertEqual(g["per_member"][m]["grade"]["band"]["C"], {"x_pt": None, "band": None, "in": None})
+        self.assertEqual(g["cells"]["C"]["letter"], "n/a")
+        self.assertIs(g["cells"]["MA_sharp"]["in_band"], True)
+        self.assertEqual(g["band"], {"SA": [-9.0, 9.0], "MS": [-9.0, 9.0], "MA": [-9.0, 9.0]})
+        self.assertEqual(g.get("band_uncalibrated_types"), ["C"])
+
+    def test_es_withheld_row_beside_an_uncalibrated_row(self):
+        """The row withheld and not: the default withholds MA (not_applied) and leaves C uncalibrated; source 2's own block withholds
+        C. MA reads NOT-APPLIED for both members; C reads NOT-APPLIED for member 2 (its own block) and no band of record for member 1;
+        the C cell carries the NOT-APPLIED note (the withheld reading outranks); the withheld MA is never listed as uncalibrated."""
+        g, _ = self.es({"SA": dict(self.WIDE), "MS": dict(self.WIDE), "MA": dict(self.WITHHELD), "C": dict(self.UNCAL)},
+                       source=1, not_applied_types=["MA"],
+                       sources={"1": {"block_C": {"MA": dict(self.WITHHELD), "C": dict(self.UNCAL)}, "not_applied_types": ["MA"]},
+                                "2": {"block_C": {"C": dict(self.WITHHELD)}}})
+        for m in ("1", "2"):
+            self.assertEqual(g["per_member"][m]["grade"]["band"]["MA_sharp"].get("band_note"), gc.BAND_NOT_APPLIED, m)
+        self.assertEqual(g["per_member"]["2"]["grade"]["band"]["C"].get("band_note"), gc.BAND_NOT_APPLIED)
+        b1 = g["per_member"]["1"]["grade"]["band"]["C"]
+        self.assertEqual((b1["band"], b1["in"], b1.get("band_note")), (None, None, gc.BAND_UNCALIBRATED))
+        self.assertEqual(g["cells"]["C"].get("band_note"), gc.BAND_NOT_APPLIED)
+        self.assertIsNone(g["cells"]["C"]["in_band"])
+        self.assertEqual(g.get("band_not_applied_types"), ["C", "MA"])
+        self.assertEqual(g.get("band_uncalibrated_types"), ["C"])
+        self.assertEqual(g["band"], {"SA": [-9.0, 9.0], "MS": [-9.0, 9.0]})
+
+    def test_maxwell_uncalibrated_rows(self):
+        """Maxwell (the bands v6 form of every Maxwell-family report: MA and C uncalibrated), x present for MA_sharp and C: rc 0;
+        MA_sharp and the direct C cell read no band of record; the static-limit C cell reads band null, in null."""
+        freqs = [5.2, 5.7, 6.2]
+        p = {1: 1.0e-4, 2: 2.0e-4, 3: 1.0e-5}
+        e_norm, c_s = 1.0e-12, 2.0e-13
+        v2 = {F: 2.0 * e_norm / (c_s * (1.0 + 0.006 * F * F)) for F in freqs}
+        run = SyntheticWindows.synthetic_mx_run(self, os.path.join(self.tmp, "mx"), freqs, {F: dict(p) for F in freqs}, v2)
+        values = os.path.join(self.tmp, "ref.json")
+        with open(values, "w") as handle:
+            json.dump({"members": {str(F): {"SA_p": p[1], "MS_p": p[2], "MA_p": p[3], "MA_sharp_p": p[3] * (1.0 + 0.5 * 0.0678),
+                                            "E_elec_J": e_norm, "C_eff_F": c_s * (1.0 + 0.006 * F * F)} for F in freqs}}, handle)
+        block_c = {"SA": dict(self.WIDE), "MS": dict(self.WIDE), "MA": dict(self.UNCAL), "C": dict(self.UNCAL)}
+        base = ["--form", "maxwell", "--device", run, "--reference-values", values]
+        g, stdout = self.main(base + ["--c-form", "direct"], allowed_band_report(block_c))
+        members = [str(F) for F in freqs]
+        self.assert_no_band_of_record(g, "MA_sharp", members)
+        self.assert_no_band_of_record(g, "C", members)
+        self.assertIs(g["cells"]["SA"]["in_band"], True)
+        self.assertEqual(g["band"], {"SA": [-9.0, 9.0], "MS": [-9.0, 9.0]})
+        self.assertEqual(g.get("band_uncalibrated_types"), ["C", "MA"])
+        self.assertIn("MA_sharp", stdout)
+        sl, _ = self.main(base + ["--c-form", "static-limit"], allowed_band_report(block_c))
+        self.assertEqual((sl["cells"]["C"]["band"], sl["cells"]["C"]["in_band"]), (None, None))
+        self.assertEqual(sl.get("band_uncalibrated_types"), ["C", "MA"])
+
+    def test_report_without_an_uncalibrated_row_writes_no_new_key(self):
+        """Every row with ends (or withheld): no band_uncalibrated_types key and no uncalibrated note anywhere in the grade JSON."""
+        g, _ = self.es({"SA": dict(self.WIDE), "MS": dict(self.WIDE), "MA": dict(self.WITHHELD), "C": dict(self.WIDE)},
+                       not_applied_types=["MA"])
+        self.assertNotIn("band_uncalibrated_types", g)
+        self.assertNotIn(gc.BAND_UNCALIBRATED, json.dumps(g))
+        self.assertEqual(g["band"], {"SA": [-9.0, 9.0], "MS": [-9.0, 9.0], "C": [-9.0, 9.0]})
 
 
 if __name__ == "__main__":

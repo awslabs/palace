@@ -71,6 +71,17 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     words "computed, NOT VALIDATED in this regime". A `ValidatedRegime` file with a
     `Driven` range is refused by name (the class lumps every driven excitation).
 
+  - Added `Coverage.Policy` `"MarkNotApplied"` to the surface-response correction (both solve
+    families; `"Warn"` stays the default and prints every value as before): a corrected value
+    built from a cell whose coverage status is `PARTIAL`, `NOT-ACHIEVABLE`, `INCONSISTENT`,
+    `TARGET-NOT-SERVED` or `NOT-MEASURED` prints `nan` and its value moves to an appended
+    `<column> partial (uncovered part raw)` column; the corrected normalizations, frequency
+    shifts, self-consistent frequencies and terminal matrices built from such a cell are
+    marked the same way (palace.json nulls + `FixedTracePartial` / `SelfConsistentPartial`;
+    `MarkedCells` / `MarkedMeasurements` / `Flagged[].Marked`; banner lines); every corrected
+    table states each cell's mark explicitly in integer `coverage mark ...` columns appended
+    last (`1` = marked; the headers are listed in the reference). No computed value changes.
+
   - Added `Diagnostics.UncoveredFeatureEnergy` to the Maxwell `SurfaceResponseCorrection`
     (off by default; refused by the electrostatic driver): the raw within-`R` energy of the
     uncovered requirements (`surface-response-uncovered-energy.csv`) split per type by
@@ -362,11 +373,14 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Interface Changes
 
-  - A non-finite numeric cell of a CSV output table is written as a bare token (`nan`,
-    `+inf` / `-inf`, and `inf` / `-inf` in an integer column) instead of being padded to
-    the column width, so that a reader that takes only a bare token as missing (pandas'
-    default `read_csv`) reads the column as numbers; the trimmed token and every finite,
-    text and header cell are unchanged (the padded `NULL` of a missing cell stays).
+  - A non-finite numeric cell of a CSV table written through the table formatter or the
+    CsvNumber helper is a bare token (`nan` for any NaN, where the directly written tables
+    printed `+nan`; `+inf` / `-inf`, and `inf` / `-inf` in an integer column) instead of
+    being padded to the column width, so that a reader that takes only a bare token as
+    missing (pandas' default `read_csv`) reads the column as numbers; every finite, text and
+    header cell is unchanged (the padded `NULL` of a missing cell stays), and the writers
+    that print unsigned, unpadded numbers are as before (they can print `inf` or `-nan`,
+    also bare).
 
   - The Maxwell `surface-Q-corrected.csv` and `surface-response-confidence.csv` column
     `matched edge fraction` is renamed `matched edge length fraction` (a length figure, not

@@ -1078,8 +1078,9 @@ TEST_CASE("Schema Validator Smoke Tests", "[schema][Serial]")
 
   SECTION("Response correction Coverage block (lane L1)")
   {
-    // The interim bars, the validated-regime sidecar and Policy "Warn" only (any other
-    // policy waits for the USER's ruling D4); the same leaf on both solve families.
+    // The interim bars, the validated-regime sidecar and Policy "Warn" | "MarkNotApplied"
+    // (lane L4, decision 1829; "Abort" is not in this version); the same leaf on both
+    // solve families.
     json electrostatic = {{"ResponseCorrection",
                            {{"Library", "library.json"},
                             {"Coverage",
@@ -1090,6 +1091,8 @@ TEST_CASE("Schema Validator Smoke Tests", "[schema][Serial]")
     CHECK(ValidateConfig(electrostatic, "Electrostatic").empty());
     auto policy = electrostatic;
     policy["ResponseCorrection"]["Coverage"]["Policy"] = "MarkNotApplied";
+    CHECK(ValidateConfig(policy, "Electrostatic").empty());
+    policy["ResponseCorrection"]["Coverage"]["Policy"] = "Abort";
     CHECK(!ValidateConfig(policy, "Electrostatic").empty());
     auto bar = electrostatic;
     bar["ResponseCorrection"]["Coverage"]["MaxUncoveredShare"] = 1.5;

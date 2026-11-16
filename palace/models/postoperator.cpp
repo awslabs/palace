@@ -4,6 +4,7 @@
 #include "postoperator.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <complex>
 #include <fstream>
@@ -2502,6 +2503,64 @@ void PostOperator<solver_t>::PrintSurfaceResponseCorrection(double output_index,
   {
     return;
   }
+  // Lane L4 (decision 1829; DESIGN-L4-v2 s2.3 M1-M4): under Coverage.Policy
+  // "MarkNotApplied" the corrected columns below print nan where their cell is marked and
+  // the value moves to the appended partial column (the column exists only under that
+  // policy); under "Warn" every cell and column is printed as before.
+  const bool marking = surface_response_op->CoverageMarkNotApplied();
+  // M1 (per interface: its Type's cell) and M2 (per measurement: any marked cell).
+  static constexpr std::array<const char *, 3> marked_measurement_columns = {
+      "domain_corrected", "domain_corrected_fixed_flux", "domain_self_consistent"};
+  static constexpr std::array<const char *, 9> marked_interface_columns = {
+      "energy_corrected",
+      "participation_corrected",
+      "quality_corrected",
+      "energy_corrected_fixed_flux",
+      "participation_corrected_fixed_flux",
+      "quality_corrected_fixed_flux",
+      "energy_self_consistent",
+      "participation_self_consistent",
+      "quality_self_consistent"};
+  // M3 (surface-response-confidence.csv; per measurement), the columns this run has.
+  auto MarkedConfidenceColumns = [this]()
+  {
+    std::vector<std::string> names;
+    if constexpr (solver_t == ProblemType::EIGENMODE)
+    {
+      names = {"self_consistent_frequency_re", "self_consistent_frequency_im"};
+    }
+    if (surface_response_op->HasMagneticLeaves())
+    {
+      for (const char *name :
+           {"fixed_trace_frequency_shift", "fixed_trace_corrected_frequency",
+            "magnetic_domain_correction", "self_consistent_frequency_magnetic_re"})
+      {
+        names.push_back(name);
+      }
+    }
+    return names;
+  };
+  auto AppendPartialColumns = [](Table &table, const auto &names)
+  {
+    for (const auto &name : names)
+    {
+      const std::string header = table[name].header_text;
+      table.insert(fmt::format("{}_partial", name), header + kCoveragePartialColumnSuffix);
+    }
+  };
+  // A marked cell prints nan, its value in the partial column (nan when not marked).
+  auto PrintMarked =
+      [marking](Table &table, const std::string &name, double value, bool marked)
+  {
+    if (!marking)
+    {
+      table[name] << value;
+      return;
+    }
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    table[name] << (marked ? nan : value);
+    table[name + "_partial"] << (marked ? value : nan);
+  };
   if (!surface_Q_corrected)
   {
     surface_Q_corrected =
@@ -2557,6 +2616,16 @@ void PostOperator<solver_t>::PrintSurfaceResponseCorrection(double output_index,
     table.insert("coverage_loop_remainder_unserved", "loop remainder unserved (J)");
     table.insert("coverage_loop_remainder_excluded",
                  "loop remainder of excluded patches kept raw twice (J)");
+    if (marking)
+    {
+      AppendPartialColumns(table, marked_measurement_columns);
+      AppendPartialColumns(table, marked_interface_columns);
+      // Lane L4 round 2 (decision 1914): the explicit marks, last.
+      table.insert("coverage_mark_normalization", kCoverageMarkNormalizationColumn);
+      table.insert("coverage_mark_interface", kCoverageMarkInterfaceColumn);
+      table["coverage_mark_normalization"].print_as_int = true;
+      table["coverage_mark_interface"].print_as_int = true;
+    }
     table["excitation"].print_as_int = true;
     table["interface"].print_as_int = true;
     if constexpr (solver_t == ProblemType::EIGENMODE ||
@@ -2649,6 +2718,18 @@ void PostOperator<solver_t>::PrintSurfaceResponseCorrection(double output_index,
     table.insert("coverage_worst_uncovered_share", "worst uncovered raw share of W");
     table.insert(Column::Text("coverage_worst_status", "worst coverage status"));
     table.insert(Column::Text("coverage_worst_regime", "worst regime status"));
+    if (marking)
+    {
+      // Lane L4 (M3 / M4): the partial columns, then the raw within-R energy the marked
+      // cells leave uncorrected over E_norm raw (the exposure of the corrected
+      // normalization: every unmarked Type's p / Q in this measurement is built on it).
+      AppendPartialColumns(table, MarkedConfidenceColumns());
+      table.insert("coverage_marked_uncovered_share",
+                   "not-applied uncovered raw share of E_norm");
+      // Lane L4 round 2 (decision 1914): the explicit mark of the row's measurement cells.
+      table.insert("coverage_mark_measurement", kCoverageMarkMeasurementColumn);
+      table["coverage_mark_measurement"].print_as_int = true;
+    }
   }
 
   using VT = Units::ValueType;
@@ -2656,6 +2737,10 @@ void PostOperator<solver_t>::PrintSurfaceResponseCorrection(double output_index,
   const auto &coverage = result.coverage_measurement;
   const auto coverage_types = GetInterfaceTypes();
   const auto &confidence = result.confidence;
+  // M2 / M3: the measurement's whole values are marked when any cell is (fail-closed: a
+  // measurement without cells is NOT-MEASURED).
+  const bool measurement_marked = marking && coverage.MarksWholeMeasurement();
+  surface_response_measurement_marked = measurement_marked;
   for (const auto &[interface_index, interface] : result.interfaces)
   {
     const double p_raw = interface.raw_energy / result.raw_normalization_energy;
@@ -2689,36 +2774,57 @@ void PostOperator<solver_t>::PrintSurfaceResponseCorrection(double output_index,
     const auto corner_fraction =
         confidence.corner_neighborhood_fraction_by_interface.find(interface_index);
     auto &table = surface_Q_corrected->table;
+    // M1: a coverage interface (a target, or a configured target no model serves) of a
+    // marked Type (its Type's cell; a target without a cell reads NOT-MEASURED: marked).
+    const auto marked_type = coverage_types.find(interface_index);
+    const CoverageCell *marked_cell = marked_type != coverage_types.end()
+                                          ? coverage.FindCell(marked_type->second)
+                                          : nullptr;
+    const bool interface_marked =
+        marking &&
+        (interface.response_target || coverage.not_served.count(interface_index) > 0) &&
+        (!marked_cell || coverage.IsTypeMarked(marked_type->second));
     table["idx"] << output_index;
     table["excitation"] << excitation;
     table["interface"] << interface_index;
     table["domain_raw"] << units.Dimensionalize<VT::ENERGY>(
         result.raw_normalization_energy);
-    table["domain_corrected"] << units.Dimensionalize<VT::ENERGY>(
-        result.corrected_normalization_energy);
-    table["domain_corrected_fixed_flux"] << units.Dimensionalize<VT::ENERGY>(
-        result.corrected_normalization_energy_fixed_flux);
-    table["domain_self_consistent"]
-        << (result.has_self_consistent ? units.Dimensionalize<VT::ENERGY>(
-                                             result.self_consistent_normalization_energy)
-                                       : nan);
+    PrintMarked(table, "domain_corrected",
+                units.Dimensionalize<VT::ENERGY>(result.corrected_normalization_energy),
+                measurement_marked);
+    PrintMarked(
+        table, "domain_corrected_fixed_flux",
+        units.Dimensionalize<VT::ENERGY>(result.corrected_normalization_energy_fixed_flux),
+        measurement_marked);
+    PrintMarked(
+        table, "domain_self_consistent",
+        result.has_self_consistent
+            ? units.Dimensionalize<VT::ENERGY>(result.self_consistent_normalization_energy)
+            : nan,
+        measurement_marked);
     table["energy_raw"] << units.Dimensionalize<VT::ENERGY>(interface.raw_energy);
     table["participation_raw"] << p_raw;
     table["quality_raw"] << q_raw;
-    table["energy_corrected"] << units.Dimensionalize<VT::ENERGY>(
-        interface.corrected_energy);
-    table["participation_corrected"] << p_corrected;
-    table["quality_corrected"] << q_corrected;
-    table["energy_corrected_fixed_flux"]
-        << units.Dimensionalize<VT::ENERGY>(interface.corrected_energy_fixed_flux);
-    table["participation_corrected_fixed_flux"] << p_corrected_fixed_flux;
-    table["quality_corrected_fixed_flux"] << q_corrected_fixed_flux;
-    table["energy_self_consistent"]
-        << (result.has_self_consistent
-                ? units.Dimensionalize<VT::ENERGY>(interface.self_consistent_energy)
-                : nan);
-    table["participation_self_consistent"] << p_self_consistent;
-    table["quality_self_consistent"] << q_self_consistent;
+    PrintMarked(table, "energy_corrected",
+                units.Dimensionalize<VT::ENERGY>(interface.corrected_energy),
+                interface_marked);
+    PrintMarked(table, "participation_corrected", p_corrected, interface_marked);
+    PrintMarked(table, "quality_corrected", q_corrected, interface_marked);
+    PrintMarked(table, "energy_corrected_fixed_flux",
+                units.Dimensionalize<VT::ENERGY>(interface.corrected_energy_fixed_flux),
+                interface_marked);
+    PrintMarked(table, "participation_corrected_fixed_flux", p_corrected_fixed_flux,
+                interface_marked);
+    PrintMarked(table, "quality_corrected_fixed_flux", q_corrected_fixed_flux,
+                interface_marked);
+    PrintMarked(table, "energy_self_consistent",
+                result.has_self_consistent
+                    ? units.Dimensionalize<VT::ENERGY>(interface.self_consistent_energy)
+                    : nan,
+                interface_marked);
+    PrintMarked(table, "participation_self_consistent", p_self_consistent,
+                interface_marked);
+    PrintMarked(table, "quality_self_consistent", q_self_consistent, interface_marked);
     table["trace_closure_spread"] << interface.trace_closure_spread;
     // An untargeted interface (922 C-2): nothing is matched or modelled there, 0 / 0.
     const bool untargeted = result.has_postprocessed && !interface.response_target;
@@ -2798,6 +2904,11 @@ void PostOperator<solver_t>::PrintSurfaceResponseCorrection(double output_index,
                          : nan);
       }
     }
+    if (marking)
+    {
+      table["coverage_mark_normalization"] << (measurement_marked ? 1.0 : 0.0);
+      table["coverage_mark_interface"] << (interface_marked ? 1.0 : 0.0);
+    }
   }
   surface_Q_corrected->WriteFullTableTrunc();
 
@@ -2850,16 +2961,18 @@ void PostOperator<solver_t>::PrintSurfaceResponseCorrection(double output_index,
     self_consistent_confident =
         self_consistent_confident &&
         result.self_consistent_mode_overlap >= minimum_eigenmode_response_overlap;
-    table["self_consistent_frequency_re"]
-        << (result.has_self_consistent ? units.Dimensionalize<VT::FREQUENCY>(
-                                             result.self_consistent_frequency.real()) /
-                                             (2 * M_PI)
-                                       : nan);
-    table["self_consistent_frequency_im"]
-        << (result.has_self_consistent ? units.Dimensionalize<VT::FREQUENCY>(
-                                             result.self_consistent_frequency.imag()) /
-                                             (2 * M_PI)
-                                       : nan);
+    PrintMarked(table, "self_consistent_frequency_re",
+                result.has_self_consistent ? units.Dimensionalize<VT::FREQUENCY>(
+                                                 result.self_consistent_frequency.real()) /
+                                                 (2 * M_PI)
+                                           : nan,
+                measurement_marked);
+    PrintMarked(table, "self_consistent_frequency_im",
+                result.has_self_consistent ? units.Dimensionalize<VT::FREQUENCY>(
+                                                 result.self_consistent_frequency.imag()) /
+                                                 (2 * M_PI)
+                                           : nan,
+                measurement_marked);
     table["self_consistent_mode_overlap"]
         << (result.has_self_consistent ? result.self_consistent_mode_overlap : nan);
   }
@@ -2875,16 +2988,19 @@ void PostOperator<solver_t>::PrintSurfaceResponseCorrection(double output_index,
     // The raw frequency of this row in GHz (the driven sweep's frequency, the mode's).
     const double frequency_GHz =
         units.Dimensionalize<VT::FREQUENCY>(measurement_cache.freq.real()) / (2 * M_PI);
-    table["fixed_trace_frequency_shift"] << (magnetic ? shift : nan);
-    table["fixed_trace_corrected_frequency"]
-        << (magnetic && std::isfinite(shift) ? frequency_GHz * (1.0 + shift) : nan);
+    PrintMarked(table, "fixed_trace_frequency_shift", magnetic ? shift : nan,
+                measurement_marked);
+    PrintMarked(table, "fixed_trace_corrected_frequency",
+                magnetic && std::isfinite(shift) ? frequency_GHz * (1.0 + shift) : nan,
+                measurement_marked);
     // Decision 1250: the matched energy share the shift rests on (1 at full coverage).
     table["fixed_trace_shift_coverage"]
         << (magnetic ? result.fixed_trace_shift_coverage : nan);
-    table["magnetic_domain_correction"]
-        << (magnetic
-                ? units.Dimensionalize<VT::ENERGY>(confidence.magnetic_domain_correction)
-                : nan);
+    PrintMarked(
+        table, "magnetic_domain_correction",
+        magnetic ? units.Dimensionalize<VT::ENERGY>(confidence.magnetic_domain_correction)
+                 : nan,
+        measurement_marked);
     table["magnetic_loop_residual"] << (magnetic ? confidence.magnetic_loop_residual : nan);
     table["magnetic_weighted_loop_residual"]
         << (magnetic ? confidence.magnetic_weighted_loop_residual : nan);
@@ -2911,12 +3027,13 @@ void PostOperator<solver_t>::PrintSurfaceResponseCorrection(double output_index,
         << (result.has_self_consistent
                 ? (magnetic && confidence.magnetic_patch_count > 0 ? 1.0 : 0.0)
                 : nan);
-    table["self_consistent_frequency_magnetic_re"]
-        << (result.has_self_consistent && magnetic && confidence.magnetic_patch_count > 0
-                ? units.Dimensionalize<VT::FREQUENCY>(
-                      result.self_consistent_frequency.real()) /
-                      (2 * M_PI)
-                : nan);
+    PrintMarked(
+        table, "self_consistent_frequency_magnetic_re",
+        result.has_self_consistent && magnetic && confidence.magnetic_patch_count > 0
+            ? units.Dimensionalize<VT::FREQUENCY>(result.self_consistent_frequency.real()) /
+                  (2 * M_PI)
+            : nan,
+        measurement_marked);
   }
   {
     // Lane L1: the worst cell over Types (the largest finite uncovered share; the worst
@@ -2938,6 +3055,12 @@ void PostOperator<solver_t>::PrintSurfaceResponseCorrection(double output_index,
     table["coverage_worst_regime"]
         << std::string(worst_regime ? RegimeStatusName(worst_regime->regime)
                                     : RegimeStatusName(RegimeStatus::NO_MODEL));
+    if (marking)
+    {
+      table["coverage_marked_uncovered_share"]
+          << coverage.MarkedUncoveredEnergy() / result.raw_normalization_energy;
+      table["coverage_mark_measurement"] << (measurement_marked ? 1.0 : 0.0);
+    }
   }
   surface_response_confidence->WriteFullTableTrunc();
   if (surface_response_op->HasMagneticLeaves())

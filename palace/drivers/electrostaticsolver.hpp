@@ -149,12 +149,16 @@ private:
   // the self-consistent matrix, the same fixed-trace bilinear form on the corrected fields
   // (the capacitance of the corrected operator when the corrected solve couples the
   // domain in its fixed-trace form; NaN unless self_consistent: every source's corrected
-  // solve was accepted; fail closed). W are the final patch weights of the run.
+  // solve was accepted; fail closed). W are the final patch weights of the run. Lane L4
+  // (decision 1829): `source_marked` (Coverage.Policy "MarkNotApplied"; root) marks the
+  // entries built from a source whose final coverage holds a marked cell (nan + the
+  // appended partial columns; palace.json nulls + the Partial matrices); nullptr = "Warn".
   void PostprocessCorrectedTerminals(
       PostOperator<ProblemType::ELECTROSTATIC> &post_op,
       const std::map<int, mfem::Array<int>> &terminal_sources, const std::vector<Vector> &V,
       const std::vector<Vector> &V_corrected, const SurfaceResponseOperator &response,
-      bool fixed_trace, bool self_consistent) const;
+      bool fixed_trace, bool self_consistent,
+      const std::vector<bool> *source_marked = nullptr) const;
   void PostprocessResponseMatrix(PostOperator<ProblemType::ELECTROSTATIC> &post_op,
                                  const LaplaceOperator &laplace_op, const Operator &Grad,
                                  const std::vector<Vector> &V,
