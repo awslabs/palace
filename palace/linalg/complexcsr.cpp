@@ -30,28 +30,6 @@ const mfem::HypreParMatrix *GetAssembled(const Operator *op)
   return &PtAP->ParallelAssemble();
 }
 
-// Local rows of a HypreParMatrix with global column indices, on the host.
-struct LocalRows
-{
-  hypre_CSRMatrix *csr = nullptr;
-  explicit LocalRows(const mfem::HypreParMatrix *A)
-  {
-    if (A)
-    {
-      csr = hypre_MergeDiagAndOffd(
-          (hypre_ParCSRMatrix *)const_cast<mfem::HypreParMatrix &>(*A));
-      hypre_CSRMatrixMigrate(csr, HYPRE_MEMORY_HOST);
-    }
-  }
-  ~LocalRows()
-  {
-    if (csr)
-    {
-      hypre_CSRMatrixDestroy(csr);
-    }
-  }
-};
-
 }  // namespace
 
 ComplexLocalCSR::ComplexLocalCSR(const ComplexOperator &op)
@@ -71,46 +49,88 @@ ComplexLocalCSR::ComplexLocalCSR(const ComplexOperator &op)
                    hAr->GetRowStarts()[0] == hAi->GetRowStarts()[0]),
               "Real and imaginary parts with different row distributions!");
 
+  // The diagonal and off-diagonal blocks of the parts are read in place, and the rows are
+  // counted before they are stored, so that the matrix is the only allocation of its size.
+  const std::pair<const mfem::HypreParMatrix *, std::complex<double>> parts[] = {
+      {hAr, {1.0, 0.0}}, {hAi, {0.0, 1.0}}};
+  for (const auto &[part, s] : parts)
   {
-    LocalRows re(hAr), im(hAi);
-    I.assign(n_loc + 1, 0);
-    std::vector<std::pair<HYPRE_BigInt, std::complex<double>>> row;
-    for (int i = 0; i < n_loc; i++)
+    if (part)
     {
-      row.clear();
-      for (auto [part, s] : {std::pair{&re, std::complex<double>(1.0, 0.0)},
-                             std::pair{&im, std::complex<double>(0.0, 1.0)}})
+      part->HostRead();
+    }
+  }
+
+  // Entries of a local row sorted by global column index, with the entries of the two parts
+  // in the same column added.
+  std::vector<std::pair<HYPRE_BigInt, std::complex<double>>> row;
+  auto MergeRow = [&](int i)
+  {
+    row.clear();
+    for (const auto &[part, s] : parts)
+    {
+      if (!part)
       {
-        if (!part->csr)
-        {
-          continue;
-        }
-        const HYPRE_Int *Ip = hypre_CSRMatrixI(part->csr);
-        const HYPRE_BigInt *Jp = hypre_CSRMatrixBigJ(part->csr);
-        const double *Dp = hypre_CSRMatrixData(part->csr);
-        for (HYPRE_Int k = Ip[i]; k < Ip[i + 1]; k++)
-        {
-          row.emplace_back(Jp[k], s * Dp[k]);
-        }
+        continue;
       }
-      std::sort(row.begin(), row.end(),
-                [](const auto &a, const auto &b) { return a.first < b.first; });
-      for (const auto &[j, v] : row)
+      auto *A = (hypre_ParCSRMatrix *)const_cast<mfem::HypreParMatrix &>(*part);
+      const hypre_CSRMatrix *diag = hypre_ParCSRMatrixDiag(A);
+      const hypre_CSRMatrix *offd = hypre_ParCSRMatrixOffd(A);
+      const HYPRE_BigInt first_col = hypre_ParCSRMatrixFirstColDiag(A);
+      const HYPRE_BigInt *col_map = hypre_ParCSRMatrixColMapOffd(A);
+      for (HYPRE_Int k = hypre_CSRMatrixI(diag)[i]; k < hypre_CSRMatrixI(diag)[i + 1]; k++)
       {
-        if (J.size() > static_cast<std::size_t>(I[i]) && J.back() == j)
-        {
-          V.back() += v;
-        }
-        else
-        {
-          J.push_back(j);
-          V.push_back(v);
-        }
+        row.emplace_back(first_col + hypre_CSRMatrixJ(diag)[k],
+                         s * hypre_CSRMatrixData(diag)[k]);
       }
-      MFEM_VERIFY(J.size() <= static_cast<std::size_t>(std::numeric_limits<int>::max()),
-                  "Too many local nonzeros for the row offsets of a complex-valued sparse "
-                  "direct solver!");
-      I[i + 1] = static_cast<int>(J.size());
+      for (HYPRE_Int k = hypre_CSRMatrixI(offd)[i]; k < hypre_CSRMatrixI(offd)[i + 1]; k++)
+      {
+        row.emplace_back(col_map[hypre_CSRMatrixJ(offd)[k]],
+                         s * hypre_CSRMatrixData(offd)[k]);
+      }
+    }
+    std::sort(row.begin(), row.end(),
+              [](const auto &a, const auto &b) { return a.first < b.first; });
+    std::size_t n = 0;
+    for (const auto &entry : row)
+    {
+      if (n > 0 && row[n - 1].first == entry.first)
+      {
+        row[n - 1].second += entry.second;
+      }
+      else
+      {
+        row[n++] = entry;
+      }
+    }
+    row.resize(n);
+  };
+  I.assign(n_loc + 1, 0);
+  for (int i = 0; i < n_loc; i++)
+  {
+    MergeRow(i);
+    MFEM_VERIFY(row.size() <=
+                    static_cast<std::size_t>(std::numeric_limits<int>::max() - I[i]),
+                "Too many local nonzeros for the row offsets of a complex-valued sparse "
+                "direct solver!");
+    I[i + 1] = I[i] + static_cast<int>(row.size());
+  }
+  J.resize(I[n_loc]);
+  V.resize(I[n_loc]);
+  for (int i = 0; i < n_loc; i++)
+  {
+    MergeRow(i);
+    for (std::size_t k = 0; k < row.size(); k++)
+    {
+      J[I[i] + k] = row[k].first;
+      V[I[i] + k] = row[k].second;
+    }
+  }
+  for (const auto &[part, s] : parts)
+  {
+    if (part)
+    {
+      part->HypreRead();
     }
   }
 
