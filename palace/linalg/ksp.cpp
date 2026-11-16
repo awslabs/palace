@@ -216,6 +216,8 @@ ConfigurePreconditionerSolver(const config::LinearSolverData &linear,
 #if defined(MFEM_USE_MUMPS)
       if constexpr (std::is_same_v<OperType, ComplexOperator>)
       {
+        // As for MumpsSolver below, the BLR compression type enables the block low-rank
+        // factorization of MUMPS, with the tolerance of the compression options.
         if (UseComplexArithmetic(linear))
         {
           pc = std::make_unique<MumpsComplexSolver>(

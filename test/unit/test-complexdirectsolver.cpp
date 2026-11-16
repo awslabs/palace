@@ -262,10 +262,13 @@ TEST_CASE("SuperLU complex arithmetic solver", "[superlu][Serial][Parallel]")
 #if defined(MFEM_USE_MUMPS)
 TEST_CASE("MUMPS complex arithmetic solver", "[mumps][Serial][Parallel]")
 {
-  // Complex symmetric and unsymmetric matrices.
+  // Complex symmetric and unsymmetric matrices, without and with block low-rank
+  // compression (which the fronts of this matrix are too small for: the solution is the
+  // same).
   MPI_Comm comm = Mpi::World();
   const auto sym = GENERATE(MatrixSymmetry::SYMMETRIC, MatrixSymmetry::UNSYMMETRIC);
-  MumpsComplexSolver solver(comm, sym, SymbolicFactorization::DEFAULT, 0.0, true, 0);
+  const double blr_tol = GENERATE(0.0, 1.0e-8);
+  MumpsComplexSolver solver(comm, sym, SymbolicFactorization::DEFAULT, blr_tol, true, 0);
   MfemWrapperSolver<ComplexOperator> ref(
       std::make_unique<MumpsSolver>(comm, sym, SymbolicFactorization::DEFAULT, 0.0, true,
                                     0),
