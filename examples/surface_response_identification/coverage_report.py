@@ -55,6 +55,11 @@ true; coverage_marks.provenance), so that a consumer can tell a report of this w
 list; the markdown and stdout are unchanged. A mark column's token is kept as its text and read one way (coverage_marks.mark_token:
 '1' / '0' exactly); a table naming a mark / twin / exposure column twice is a REFUSAL.
 
+THE BORROWED LADDER (decision 1966; FLIP-LIST-v5 s4 item 3): --ladder-run takes the ladder run's POSTPRO directory. A directory
+that holds no ladder table (no surface-Q-corrected.csv at its root nor in an iterationNN/ of it: e.g. the run directory above the
+postpro), or whose tables give no readable solve, is a REFUSAL (one line, exit 5, nothing written; LadderRunRefusal). Before, it
+gave an EMPTY ladder without a word.
+
 Pure Python (no numpy); exit 0 when the report was written, 2 when a required input is missing.
 """
 
@@ -1163,6 +1168,23 @@ def iteration_dirs(base):
     return [d for _, d in sorted(found)]
 
 
+class LadderRunRefusal(cm.Refusal):
+    """A --ladder-run directory without the ladder's tables (decision 1966): printed as one line, exit REFUSAL_EXIT, no output file."""
+
+    def __init__(self, ladder_dir, why):
+        self.where, self.column, self.token, self.why = ladder_dir, "--ladder-run", "", why
+        hint = " (its postpro/ holds one)" if os.path.isfile(os.path.join(ladder_dir, "postpro", "surface-Q-corrected.csv")) else ""
+        Exception.__init__(self, f"REFUSED (decision 1966): --ladder-run {ladder_dir}: {why}: pass the ladder run's postpro "
+                                 f"directory{hint}")
+
+
+def check_ladder_dir(ladder_dir):
+    """Validate a --ladder-run directory before anything is read (decision 1966): it must hold surface-Q-corrected.csv at its root
+    or in an iterationNN/ of it; else LadderRunRefusal (never an empty ladder without a word)."""
+    if not any(os.path.isfile(os.path.join(d, "surface-Q-corrected.csv")) for d in iteration_dirs(ladder_dir) + [ladder_dir]):
+        raise LadderRunRefusal(ladder_dir, "no ladder table (no surface-Q-corrected.csv in it or in an iterationNN/ of it)")
+
+
 def ladder(postpro, interfaces, targets, kind, ladder_dir=None, source=None, marked_tree=None):
     """Every iterationNN/ + the root (the FINAL solve) -> per Type the ft fraction ft / E_elec_ft and its
     step in pt relative to the final; the DOF ladder from palace.json where present. `marked_tree` (decision 1914): the ladder
@@ -1190,6 +1212,8 @@ def ladder(postpro, interfaces, targets, kind, ladder_dir=None, source=None, mar
         if marked:
             entry["not_applied"] = marked
         solves.append(entry)
+    if ladder_dir is not None and not solves:
+        raise LadderRunRefusal(ladder_dir, "its ladder tables give no readable solve")
     dofs = None
     pj = os.path.join(base, "palace.json")
     if os.path.isfile(pj):
@@ -1736,6 +1760,8 @@ def build_report(postpro, manifest_path, bands=None, discovery_path=None, ladder
     `source` (v2; decision 1209): the ES source whose rows the report's blocks read (default the FIRST source = the single-
     source form of record). With `all_sources` an ES run of several sources also carries `sources` (every source's block
     A ENERGY / block C / label) and `source_union` (the per-Type ranges and the FAIL-CLOSED band: every source in band)."""
+    if ladder_dir is not None:
+        check_ladder_dir(ladder_dir)  # decision 1966: validate first (a refusal is the only output)
     config = read_json(os.path.join(postpro, "config_resolved.json"))
     palace = read_json(palace_json or os.path.join(postpro, "palace.json"))
     kind = solver_kind(config)
@@ -2122,7 +2148,8 @@ def main(argv=None):
     parser.add_argument("--bands", default=DEFAULT_BANDS, help="the calibration band file (default: data/coverage_bands_v6.json)")
     parser.add_argument("--no-bands", action="store_true", help="coverage only (blocks A / B / D; no band, no label)")
     parser.add_argument("--discovery", help="the discovery closure manifest (UnbuildableRequirements keys)")
-    parser.add_argument("--ladder-run", help="a follower borrows the AMR ladder of this run directory")
+    parser.add_argument("--ladder-run", help="a follower borrows the AMR ladder of this run's POSTPRO directory (refused when it holds "
+                                             "no surface-Q-corrected.csv at its root or in an iterationNN/: decision 1966)")
     parser.add_argument("--reference-order", type=int,
                         help="3 = the MA_sharp reading is graded against a p3 reference (p3-REFERENCE: u_p added to the MA band; DESIGN 5.1)")
     parser.add_argument("--port-form", choices=PORT_FORMS,

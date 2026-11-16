@@ -1078,12 +1078,15 @@ class ReportProvenanceWindows(unittest.TestCase):
 
     def test_wrong_writer_sha_refused(self):
         """A provenance whose writer sha256 is not the allowed writer's (another file; the ROUND-3 coverage_report 7e120dd6 with its
-        module b5ae7f33: a report of round 3 is re-created, decision 1944 (2); upper case; 16 digits only; absent), or whose module
-        sha256 is not the allowed writer's: refused."""
+        module b5ae7f33: a report of round 3 is re-created, decision 1944 (2); the ROUND-4 coverage_report 6dec7256: decisions 1966 /
+        1967 (A), it gave a silently empty ladder for a run-directory --ladder-run; upper case; 16 digits only; absent), or whose
+        module sha256 is not the allowed writer's: refused."""
         good = cm.provenance(CR_PATH)
         r3 = {"writer": "coverage_report.py", "writer_sha256": "7e120dd655eec0babc9cf5fdb275c5d9adaaed6f0a2e3e38d334b767de2ab588",
               "coverage_marks_sha256": "b5ae7f33385046c157e80282c310ef8f0e9dbb841e301663692efdbdd6401239", "explicit_marks": True}
-        provs = {"another writer": dict(good, writer_sha256="f" * 64), "the round-3 writer": r3,
+        r4 = dict(good, writer_sha256="6dec72560bf54b9d8f42abed5e03599bac68b584edc87a75e1c225bbaf2a5580")
+        self.assertNotEqual(good["writer_sha256"], r4["writer_sha256"])
+        provs = {"another writer": dict(good, writer_sha256="f" * 64), "the round-3 writer": r3, "the round-4 writer": r4,
                  "upper case": dict(good, writer_sha256=good["writer_sha256"].upper()),
                  "16 digits": dict(good, writer_sha256=good["writer_sha256"][:16]),
                  "no writer sha": {k: v for k, v in good.items() if k != "writer_sha256"},

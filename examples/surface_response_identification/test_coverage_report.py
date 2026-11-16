@@ -952,6 +952,46 @@ class MaxwellFixtureTest(unittest.TestCase):
         self.assertTrue(report["block_D"]["flags"]["indicator_falls"])
         self.assertIn("ladder borrowed from", cr.render_markdown(report))
 
+    def test_ladder_run_without_the_ladder_tables_refused(self):
+        """Decision 1966 (FLIP-LIST-v5 s4 item 3): a --ladder-run directory that holds no surface-Q-corrected.csv at its root or in an
+        iterationNN/ (the RUN directory above the ladder's postpro; an empty or absent directory) is REFUSED: one line on stdout,
+        exit 5, nothing written (before: an EMPTY ladder without a word). The ladder's postpro directory is read as before."""
+        amr, _ = write_maxwell_fixture(os.path.join(self.tmp, "amr"), ladder=True)
+        empty = os.path.join(self.tmp, "empty")
+        os.makedirs(empty)
+        for name, ladder_dir, hint in (("run-dir", os.path.dirname(amr), True), ("empty", empty, False),
+                                       ("absent", os.path.join(self.tmp, "absent"), False)):
+            out = os.path.join(self.tmp, "out-" + name)
+            buf, err = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(err):
+                rc = cr.main([self.post, "--manifest", self.manifest, "--bands", self.bands["_path"], "--output", out,
+                              "--ma-reading", "sharp", "--ladder-run", ladder_dir])
+            self.assertEqual((rc, err.getvalue()), (cm.REFUSAL_EXIT, ""), name)
+            lines = buf.getvalue().splitlines()
+            self.assertEqual(len(lines), 1, (name, lines))
+            self.assertTrue(lines[0].startswith(f"coverage_report: REFUSED (decision 1966): --ladder-run {ladder_dir}: no ladder table"),
+                            (name, lines))
+            self.assertEqual(lines[0].endswith("(its postpro/ holds one)"), hint, (name, lines))
+            self.assertFalse(os.path.exists(out), name)
+            with self.assertRaises(cr.LadderRunRefusal):
+                cr.build_report(self.post, self.manifest, self.bands, ladder_dir=ladder_dir, ma_reading="sharp")
+        rc = cr.main([self.post, "--manifest", self.manifest, "--bands", self.bands["_path"], "--output", os.path.join(self.tmp, "out-pp"),
+                      "--ma-reading", "sharp", "--ladder-run", amr])
+        self.assertEqual(rc, 0)
+        with open(os.path.join(self.tmp, "out-pp", "coverage-report.json")) as handle:
+            self.assertEqual(json.load(handle)["block_D"]["ladder"]["types"]["SA"]["solves"], 4)
+
+    def test_ladder_run_without_a_readable_solve_refused(self):
+        """Decision 1966: a --ladder-run directory whose tables give no readable solve (here its only surface-Q-corrected.csv holds
+        a header and no row: the reader skips such a solve) is REFUSED as well: a borrowed ladder is never empty without a word."""
+        bad = os.path.join(self.tmp, "bad", "postpro")
+        os.makedirs(bad)
+        with open(os.path.join(bad, "surface-Q-corrected.csv"), "w") as f:
+            f.write("f (GHz),exc,interface,E_surf raw (J),E_surf corrected (J)\n")
+        with self.assertRaises(cr.LadderRunRefusal) as caught:
+            cr.build_report(self.post, self.manifest, self.bands, ladder_dir=bad, ma_reading="sharp")
+        self.assertIn("its ladder tables give no readable solve", str(caught.exception))
+
     def test_non_inductive_when_e_mag_small(self):
         post, manifest = write_maxwell_fixture(os.path.join(self.tmp, "quiet"), e_mag_over_e_elec=0.01)
         report = cr.build_report(post, manifest, self.bands, ma_reading="sharp")

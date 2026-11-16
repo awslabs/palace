@@ -84,6 +84,10 @@ source has no block in the report reads the default block only: its graded value
 marked final value is NOT-APPLIED from the tree itself); a source's own marks add only the marks of earlier solves of its ladder,
 which enter nothing this reader computes for the member. A report without a withheld row reads as in round 4.
 
+THE ALLOWED WRITER (decisions 1966 / 1967 (A)): coverage_report.py of the merge preparation (it refuses a --ladder-run directory
+without the ladder's tables), by sha256, ONLY; a report of the round-4 writer 6dec7256 (which gave a silently empty ladder for a
+run-directory --ladder-run) is a REFUSAL like any report without an allowed provenance: re-create it with the allowed writer.
+
 THE UNCALIBRATED ROW (decision 1966; FLIP-LIST-v5 s0, OI-GRADE-CELLS-BAND-KEYERROR-ON-UNCALIBRATED-ROW): a --band report row that
 is not withheld and has no band ends (no low_pt / high_pt: an UNCALIBRATED Type of the bands file, or a Type the file does not
 calibrate) is NO BAND OF RECORD: a member that has an x for that Type reads band null, in null and the band_note
@@ -126,8 +130,9 @@ def _assert_coverage_marks():
 _assert_coverage_marks()
 
 # Decisions 1934 / 1942: the report writers whose --band reports this reader accepts, by provenance ONLY: {writer sha256: the
-# coverage_marks.py sha256 it requires} (coverage_report.py of the round-4 commit ONLY, decision 1944 (2)).
-ALLOWED_REPORT_WRITERS = {"6dec72560bf54b9d8f42abed5e03599bac68b584edc87a75e1c225bbaf2a5580": "3feaa623f05d459820000df67f706d393cad8053bf7ead1b96127c4eff8c0d53"}
+# coverage_marks.py sha256 it requires} (ONE writer: coverage_report.py of the policy branch's merge preparation, decisions 1966 /
+# 1967 (A); the round-4 writer 6dec7256 is no longer allowed: it gave a silently EMPTY ladder for a run-directory --ladder-run).
+ALLOWED_REPORT_WRITERS = {"0aae7cce91666be3bc3175aca448d92de811efc50e539e20797b0d47cbd3eed2": "3feaa623f05d459820000df67f706d393cad8053bf7ead1b96127c4eff8c0d53"}
 
 TYPES = ("SA", "MS", "MA_sharp", "C")
 D4 = {"SA": 5.0, "MS": 5.0, "MA_sharp": 5.0, "C": 0.5}
