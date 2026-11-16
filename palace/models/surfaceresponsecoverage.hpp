@@ -118,6 +118,24 @@ inline constexpr const char *kCoveragePartialColumnSuffix = " partial (uncovered
 // only of its own Type (false: a covered Type keeps its p / Q, flagged by the nan corrected
 // normalization of its row and the exposure column). One constant.
 inline constexpr bool kCoverageMarkWholeMeasurement = false;
+// Lane L4 round 2 (decision 1914): the EXPLICIT per-cell marks. Under Policy
+// "MarkNotApplied" every corrected table appends, LAST, integer 0 / 1 columns = the
+// writer's own mark of the cells it covers (1 = the cells print nan, their values in the
+// partial columns), so that a reader keys on a stated mark, never on a token; under "Warn"
+// none exists. The readers and the guard match these headers EXACTLY (docs/src/reference.md
+// lists them). Maxwell surface-Q-corrected.csv: the E_norm corrected / corrected fixed-flux
+// / self-consistent cells of the row's measurement, and the row interface's E / p / Q
+// corrected, corrected fixed-flux and self-consistent cells; electrostatic
+// surface-Q-corrected.csv: the source's E_elec postprocessed fixed-trace / fixed-flux /
+// corrected cells, and per interface k its E / p / Q postprocessed fixed-trace / fixed-flux
+// / corrected cells; surface-response-confidence.csv: the row's measurement cells; the
+// corrected terminal matrices: entry (i, j), fixed-trace and corrected.
+inline constexpr const char *kCoverageMarkNormalizationColumn = "coverage mark E_norm";
+inline constexpr const char *kCoverageMarkInterfaceColumn = "coverage mark E_surf";
+inline constexpr const char *kCoverageMarkSourceColumn = "coverage mark E_elec";
+inline constexpr const char *kCoverageMarkIndexedInterfaceColumn = "coverage mark[{}]";
+inline constexpr const char *kCoverageMarkMeasurementColumn = "coverage mark measurement";
+inline constexpr const char *kCoverageMarkMatrixEntryColumn = "coverage mark[i][{}]";
 
 // The interim bars (SurfaceResponseCorrection.Coverage; the gate in force's
 // BuildTarget 0.02 and MaxUncoveredShare 0.05 as placeholders).

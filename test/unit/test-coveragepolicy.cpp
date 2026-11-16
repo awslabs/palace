@@ -79,6 +79,15 @@ TEST_CASE("Coverage policy marked set", "[CoveragePolicy][Serial]")
   }
   CHECK(std::string(kCoveragePartialColumnSuffix) == " partial (uncovered part raw)");
   CHECK_FALSE(kCoverageMarkWholeMeasurement);
+  // Lane L4 round 2 (decision 1914): the explicit mark columns' headers, matched EXACTLY by
+  // the readers and the guard (docs/src/reference.md); their values on the writers' tables:
+  // test-correctedcapacitance.cpp "Coverage policy mark columns".
+  CHECK(std::string(kCoverageMarkNormalizationColumn) == "coverage mark E_norm");
+  CHECK(std::string(kCoverageMarkInterfaceColumn) == "coverage mark E_surf");
+  CHECK(std::string(kCoverageMarkSourceColumn) == "coverage mark E_elec");
+  CHECK(std::string(kCoverageMarkIndexedInterfaceColumn) == "coverage mark[{}]");
+  CHECK(std::string(kCoverageMarkMeasurementColumn) == "coverage mark measurement");
+  CHECK(std::string(kCoverageMarkMatrixEntryColumn) == "coverage mark[i][{}]");
 }
 
 TEST_CASE("Coverage policy measurement marks", "[CoveragePolicy][Serial]")

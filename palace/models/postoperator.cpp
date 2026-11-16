@@ -2596,6 +2596,11 @@ void PostOperator<solver_t>::PrintSurfaceResponseCorrection(double output_index,
     {
       AppendPartialColumns(table, marked_measurement_columns);
       AppendPartialColumns(table, marked_interface_columns);
+      // Lane L4 round 2 (decision 1914): the explicit marks, last.
+      table.insert("coverage_mark_normalization", kCoverageMarkNormalizationColumn);
+      table.insert("coverage_mark_interface", kCoverageMarkInterfaceColumn);
+      table["coverage_mark_normalization"].print_as_int = true;
+      table["coverage_mark_interface"].print_as_int = true;
     }
     table["excitation"].print_as_int = true;
     table["interface"].print_as_int = true;
@@ -2697,6 +2702,9 @@ void PostOperator<solver_t>::PrintSurfaceResponseCorrection(double output_index,
       AppendPartialColumns(table, MarkedConfidenceColumns());
       table.insert("coverage_marked_uncovered_share",
                    "not-applied uncovered raw share of E_norm");
+      // Lane L4 round 2 (decision 1914): the explicit mark of the row's measurement cells.
+      table.insert("coverage_mark_measurement", kCoverageMarkMeasurementColumn);
+      table["coverage_mark_measurement"].print_as_int = true;
     }
   }
 
@@ -2872,6 +2880,11 @@ void PostOperator<solver_t>::PrintSurfaceResponseCorrection(double output_index,
                          : nan);
       }
     }
+    if (marking)
+    {
+      table["coverage_mark_normalization"] << (measurement_marked ? 1.0 : 0.0);
+      table["coverage_mark_interface"] << (interface_marked ? 1.0 : 0.0);
+    }
   }
   surface_Q_corrected->WriteFullTableTrunc();
 
@@ -3022,6 +3035,7 @@ void PostOperator<solver_t>::PrintSurfaceResponseCorrection(double output_index,
     {
       table["coverage_marked_uncovered_share"]
           << coverage.MarkedUncoveredEnergy() / result.raw_normalization_energy;
+      table["coverage_mark_measurement"] << (measurement_marked ? 1.0 : 0.0);
     }
   }
   surface_response_confidence->WriteFullTableTrunc();

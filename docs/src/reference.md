@@ -2833,7 +2833,20 @@ entry of `terminal-Cinv-corrected.csv` when any entry of `C` is; `palace.json`
 `FixedTracePartial` / `SelfConsistentPartial`. On the eigenmode path the log's corrected
 eigenvalue line names no value and the self-consistent mode-matching table is printed after
 the modes are measured. The `palace.json` block gains `MarkedStatuses`, `MarkedCells`, `MarkedMeasurements`,
-`MarkedWithoutCell` (when any) and `Flagged[].Marked`; the banner names the marked cells. No computed number changes and every
+`MarkedWithoutCell` (when any) and `Flagged[].Marked`; the banner names the marked cells.
+Every corrected table states each cell's mark EXPLICITLY in integer columns appended last
+(`1` = the cells print `nan`, their values in the partial columns; `0` = printed as
+computed): `surface-Q-corrected.csv` of a Maxwell run `coverage mark E_norm` (the row's
+`E_norm` corrected, corrected fixed-flux and self-consistent cells) and `coverage mark
+E_surf` (the row interface's `E` / `p` / `Q` corrected, corrected fixed-flux and
+self-consistent cells); `surface-Q-corrected.csv` of an electrostatic run `coverage mark
+E_elec` (the source's `E_elec` postprocessed fixed-trace, fixed-flux and corrected cells) and
+`coverage mark[k]` per interface `k` (its `E` / `p` / `Q` postprocessed fixed-trace,
+fixed-flux and corrected cells); `surface-response-confidence.csv` `coverage mark
+measurement` (the row's frequency and magnetic cells above); `terminal-C-corrected.csv`,
+`terminal-Cm-corrected.csv` and `terminal-Cinv-corrected.csv` `coverage mark[i][j]` (entry
+`(i, j)`, fixed-trace and corrected). A reader keys on these headers exactly, never on a
+`nan` token. No computed number changes and every
 raw column is unchanged. For a marked cell, the shares of the uncovered-energy and portion
 tables (`surface-response-uncovered-energy.csv` and the conductor-consistency, domain-boundary,
 spatial-cluster-priority and exclusion portion tables) are taken on its PARTIAL corrected

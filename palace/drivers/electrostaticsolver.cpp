@@ -2761,6 +2761,18 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       }
       output.table.insert("coverage_marked_uncovered_share",
                           "not-applied uncovered raw share of E_elec");
+      // Lane L4 round 2 (decision 1914): the explicit marks, last: the source's E_elec
+      // cells, then per interface its E / p / Q cells.
+      output.table.insert("coverage_mark_source", kCoverageMarkSourceColumn);
+      output.table["coverage_mark_source"].print_as_int = true;
+      for (const auto &[interface, data] : interfaces)
+      {
+        (void)data;
+        const std::string key = fmt::format("coverage_mark_{}", interface);
+        output.table.insert(
+            key, fmt::format(fmt::runtime(kCoverageMarkIndexedInterfaceColumn), interface));
+        output.table[key].print_as_int = true;
+      }
     }
     MFEM_VERIFY(coverage_measurements.size() == corrected_results.size(),
                 "The coverage needs one measurement per corrected source!");
@@ -2910,6 +2922,13 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       {
         output.table["coverage_marked_uncovered_share"]
             << row_coverage.MarkedUncoveredEnergy() / result.raw.domain;
+        output.table["coverage_mark_source"] << (source_marked ? 1.0 : 0.0);
+        for (const auto &[interface, data] : interfaces)
+        {
+          (void)data;
+          output.table[fmt::format("coverage_mark_{}", interface)]
+              << (InterfaceMarked(interface) ? 1.0 : 0.0);
+        }
       }
     }
     output.WriteFullTableTrunc();
@@ -4111,6 +4130,21 @@ void ElectrostaticSolver::PostprocessCorrectedTerminals(
     {
       AppendColumns("fixed-trace", fixed_trace_mat, true);
       AppendColumns("corrected", self_consistent_mat, true);
+      // Lane L4 round 2 (decision 1914): the explicit mark of entry (i, j), last.
+      int j = 0;
+      for (const auto &[idx2, data2] : terminal_sources)
+      {
+        const std::string key = fmt::format("coverage_mark_i2{}", idx2);
+        output.table.insert(
+            key, fmt::format(fmt::runtime(kCoverageMarkMatrixEntryColumn), idx2));
+        auto &col = output.table[key];
+        col.print_as_int = true;
+        for (std::size_t i = 0; i < terminal_sources.size(); i++)
+        {
+          col << (marks[i][j] ? 1.0 : 0.0);
+        }
+        j++;
+      }
     }
     output.WriteFullTableTrunc();
   };
