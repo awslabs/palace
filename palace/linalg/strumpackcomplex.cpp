@@ -118,21 +118,11 @@ void StrumpackComplexSolver::SetOperator(const ComplexOperator &op)
 
 void StrumpackComplexSolver::Mult(const ComplexVector &xv, ComplexVector &yv) const
 {
-  const int n = static_cast<int>(b.size());
-  const auto *xr = xv.Real().HostRead(), *xi = xv.Imag().HostRead();
-  for (int i = 0; i < n; i++)
-  {
-    b[i] = {xr[i], xi[i]};
-  }
+  xv.Get(b.data(), static_cast<int>(b.size()), false);
   const auto ret = solver->solve(b.data(), x.data(), false);
   MFEM_VERIFY(ret == strumpack::ReturnCode::SUCCESS,
               "STRUMPACK solve failed with return code " << static_cast<int>(ret) << "!");
-  auto *yr = yv.Real().HostWrite(), *yi = yv.Imag().HostWrite();
-  for (int i = 0; i < n; i++)
-  {
-    yr[i] = x[i].real();
-    yi[i] = x[i].imag();
-  }
+  yv.Set(x.data(), static_cast<int>(x.size()), false);
 }
 
 }  // namespace palace

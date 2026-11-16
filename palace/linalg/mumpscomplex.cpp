@@ -39,7 +39,8 @@ struct MumpsComplexSolver::Data
   // Distributed right-hand side (in the row distribution of the matrix) and distributed
   // solution (in the distribution of MUMPS).
   std::vector<MUMPS_INT> irhs_loc, isol_loc;
-  std::vector<mumps_double_complex> rhs_loc, sol_loc;
+  std::vector<std::complex<double>> rhs_loc;
+  std::vector<mumps_double_complex> sol_loc;
 
   // Redistribution of the solution to the row distribution of the matrix, set up on the
   // first solve after a factorization: for each local solution entry, its position in the
@@ -324,7 +325,7 @@ void MumpsComplexSolver::SetOperator(const ComplexOperator &op)
   d.id.nloc_rhs = n_loc;
   d.id.lrhs_loc = std::max(n_loc, 1);
   d.id.irhs_loc = d.irhs_loc.data();
-  d.id.rhs_loc = d.rhs_loc.data();
+  d.id.rhs_loc = reinterpret_cast<mumps_double_complex *>(d.rhs_loc.data());
   d.id.lsol_loc = d.n_sol;
   d.id.isol_loc = d.isol_loc.data();
   d.id.sol_loc = d.sol_loc.data();
@@ -336,11 +337,7 @@ void MumpsComplexSolver::SetOperator(const ComplexOperator &op)
 void MumpsComplexSolver::Mult(const ComplexVector &x, ComplexVector &y) const
 {
   auto &d = *data;
-  const auto *xr = x.Real().HostRead(), *xi = x.Imag().HostRead();
-  for (int i = 0; i < d.n_loc; i++)
-  {
-    d.rhs_loc[i] = {xr[i], xi[i]};
-  }
+  x.Get(d.rhs_loc.data(), d.n_loc, false);
   d.Call(3);
   MFEM_VERIFY(d.infog(1) >= 0, "MUMPS solve failed (INFOG(1) = " << d.infog(1) << ")!");
 

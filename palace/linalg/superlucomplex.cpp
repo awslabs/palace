@@ -35,7 +35,7 @@ struct SuperLUComplexSolver::Data
   std::size_t pattern = 0;
 
   // Right-hand side and solution (overwritten in place).
-  std::vector<doublecomplex> B;
+  std::vector<std::complex<double>> B;
   double berr = 0.0;
 
   void DestroyMatrix()
@@ -88,8 +88,9 @@ struct SuperLUComplexSolver::Data
     SuperLUStat_t stat;
     PStatInit(&stat);
     int info = -1;
-    pzgssvx(&options, &A, &ScalePermstruct, B.data(), static_cast<int>(n_loc), nrhs, &grid,
-            &LUstruct, &SOLVEstruct, &berr, &stat, &info);
+    pzgssvx(&options, &A, &ScalePermstruct, reinterpret_cast<doublecomplex *>(B.data()),
+            static_cast<int>(n_loc), nrhs, &grid, &LUstruct, &SOLVEstruct, &berr, &stat,
+            &info);
     PStatFree(&stat);
     MFEM_VERIFY(info == 0, "SuperLU_DIST complex-valued "
                                << ((nrhs > 0) ? "solve" : "factorization")
@@ -202,19 +203,9 @@ void SuperLUComplexSolver::SetOperator(const ComplexOperator &op)
 void SuperLUComplexSolver::Mult(const ComplexVector &x, ComplexVector &y) const
 {
   auto &d = *data;
-  const int n = static_cast<int>(d.n_loc);
-  const auto *xr = x.Real().HostRead(), *xi = x.Imag().HostRead();
-  for (int i = 0; i < n; i++)
-  {
-    d.B[i] = {xr[i], xi[i]};
-  }
+  x.Get(d.B.data(), static_cast<int>(d.B.size()), false);
   d.Call(1);
-  auto *yr = y.Real().HostWrite(), *yi = y.Imag().HostWrite();
-  for (int i = 0; i < n; i++)
-  {
-    yr[i] = d.B[i].r;
-    yi[i] = d.B[i].i;
-  }
+  y.Set(d.B.data(), static_cast<int>(d.B.size()), false);
 }
 
 }  // namespace palace
