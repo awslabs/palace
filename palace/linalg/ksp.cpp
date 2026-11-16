@@ -132,8 +132,8 @@ auto MakeWrapperSolver(const config::LinearSolverData &linear, U &&...args)
 
 // Whether the sparse direct solvers which support it factor the complex-valued matrix of a
 // complex-valued coarse solve in complex arithmetic, instead of the equivalent real-valued
-// system of twice the size (see MfemWrapperSolver). The complex arithmetic solvers do not
-// drop small entries.
+// system of twice the size (see MfemWrapperSolver). With PCMatReal, the matrix is
+// real-valued, and the complex arithmetic solvers do not drop small entries.
 [[maybe_unused]] bool UseComplexArithmetic(const config::LinearSolverData &linear)
 {
   return linear.complex_coarse_solve && !linear.pc_mat_real && !linear.drop_small_entries;

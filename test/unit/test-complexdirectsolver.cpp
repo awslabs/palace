@@ -454,9 +454,9 @@ TEST_CASE("ComplexKspSolver sparse direct solver with ComplexCoarseSolve",
     CHECK(problem.Solve(*ksp, 1.2, E) <= 2);
   }
 
-  // The cases which keep the equivalent real-valued system of twice the size.
+  // The cases which keep the real-valued solver, for the equivalent real-valued system of
+  // twice the size.
   std::vector<json> block_options = {
-      json{{"ComplexCoarseSolve", true}, {"PCMatReal", true}},
       json{{"ComplexCoarseSolve", true}, {"DropSmallEntries", true}}};
   if (type == "SuperLU")
   {
@@ -476,9 +476,13 @@ TEST_CASE("ComplexKspSolver sparse direct solver with ComplexCoarseSolve",
     CHECK(dynamic_cast<MfemWrapperSolver<ComplexOperator> *>(ksp->GetPreconditioner()));
   }
 
-  // The real-valued approximation.
+  // The real-valued approximation, and the real-valued preconditioner matrix of PCMatReal
+  // (also with ComplexCoarseSolve): the real-valued solver, for a matrix of the same size.
+  for (const auto &options : {json{{"ComplexCoarseSolve", false}},
+                              json{{"ComplexCoarseSolve", true}, {"PCMatReal", true}}})
   {
-    DrivenTestProblem problem(LinearOptions(type, json{{"ComplexCoarseSolve", false}}));
+    INFO("options " << options.dump());
+    DrivenTestProblem problem(LinearOptions(type, options));
     auto ksp = problem.MakeKspSolver();
     auto *pc = dynamic_cast<MfemWrapperSolver<ComplexOperator> *>(ksp->GetPreconditioner());
     REQUIRE(pc);

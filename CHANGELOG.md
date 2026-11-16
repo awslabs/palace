@@ -70,7 +70,8 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     real-valued system of twice the size, which reduces the memory of the factors by about
     40%. This changes the behavior of an explicit `"ComplexCoarseSolve": true`: the
     factorization differs, so results change at the level of the linear solver tolerance.
-    `"PCMatReal"` or `"DropSmallEntries"` keep the real-valued system of twice the size.
+    `"DropSmallEntries"` keeps the real-valued system of twice the size, and with
+    `"PCMatReal"` the coarse-level matrix is real-valued and is factored as before.
     SchemaVer 4-3-0 [PR 1193](https://github.com/awslabs/palace/pull/1193).
   - Added a STRUMPACK patch for
     [pghysels/STRUMPACK#171](https://github.com/pghysels/STRUMPACK/pull/171), which lowers
