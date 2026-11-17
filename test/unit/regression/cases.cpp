@@ -306,6 +306,37 @@ palace::test::CustomCheck ComparePortSParameters(double rtol, double atol)
   };
 }
 
+// Check that two ports have the same Y_ref in rom-port-reference.csv, to a relative
+// tolerance at every frequency, for ports which are the same by symmetry. It compares the
+// output with itself, not with the reference.
+palace::test::CustomCheck CompareWavePortReferences(std::string port_1, std::string port_2,
+                                                    double rtol)
+{
+  return [port_1, port_2, rtol](palace::Table &actual, palace::Table &,
+                                const std::filesystem::path &)
+  {
+    auto column = [&actual](const std::string &needle) -> const palace::Column &
+    {
+      const auto it = std::ranges::find_if(actual, [&needle](const palace::Column &c)
+                                           { return c.header_text.starts_with(needle); });
+      REQUIRE(it != actual.end());
+      return *it;
+    };
+    const auto &re_1 = column("Re{Y_ref[" + port_1 + "]}");
+    const auto &im_1 = column("Im{Y_ref[" + port_1 + "]}");
+    const auto &re_2 = column("Re{Y_ref[" + port_2 + "]}");
+    const auto &im_2 = column("Im{Y_ref[" + port_2 + "]}");
+    REQUIRE(actual.n_rows() > 0);
+    for (std::size_t row = 0; row < actual.n_rows(); row++)
+    {
+      const std::complex<double> y_1(re_1.data[row], im_1.data[row]);
+      const std::complex<double> y_2(re_2.data[row], im_2.data[row]);
+      INFO("row " << row + 1 << ": Y_ref " << y_1 << " and " << y_2);
+      CHECK(std::abs(y_1 - y_2) <= rtol * std::abs(y_1));
+    }
+  };
+}
+
 // Standard "drop per-element extrema + eigenmode error columns" list.
 const std::vector<std::string> eigen_excluded = {"Maximum", "Minimum", "Mean",
                                                  "Error (Bkwd.)", "Error (Abs.)"};
@@ -2366,7 +2397,8 @@ TEST_CASE("coaxial_wave_losstan", "[Serial][Parallel][GPU][Regression]")
 // reconstructs the 2x2 S from the synthesized pencil to ~1e-5 of the live field-derived
 // port-S, which a fit of Re{k_n} only (a lossless port line) misses by up to 5e-2. The
 // synthesized eigenvalues are the far, nonphysical poles of the matched line (Q < 1), so
-// they are presence-checked only.
+// they are presence-checked only. The two ports are the same port of the symmetric line, so
+// they must have the same Y_ref.
 TEST_CASE("coaxial_wave_conductivity_synth", "[Serial][Parallel][Regression]")
 {
   palace::test::RegressionOptions opts;
@@ -2383,8 +2415,9 @@ TEST_CASE("coaxial_wave_conductivity_synth", "[Serial][Parallel][Regression]")
                          "rom-coupled-S",
                          "rom-coupled-G",
                          "rom-coupled-H"};
-  opts.excluded_files = {"rom-eigenvalues", "rom-eigenvectors", "rom-port-reference",
-                         "error-indicators.csv"};
+  opts.excluded_files = {"rom-eigenvalues", "rom-eigenvectors", "error-indicators.csv"};
+  opts.custom_checks["rom-port-reference.csv"] =
+      CompareWavePortReferences("waveport_1_re", "waveport_2_re", 1.0e-8);
   opts.custom_checks["port-S.csv"] = [round_trip = TestWavePortCoupledRoundTrip(1.0e-4),
                                       compare_s = ComparePortSParameters(1.0e-4, 1.0e-5)](
                                          palace::Table &actual, palace::Table &reference,

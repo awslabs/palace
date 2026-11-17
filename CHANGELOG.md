@@ -321,6 +321,15 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     matrix was inaccurate whatever the tolerance, so the linear solves needed more
     iterations and could return wrong solutions with `"ComplexCoarseSolve"`.
     [PR 1222](https://github.com/awslabs/palace/pull/1222).
+  - Fixed the reference admittance `Y_ref` of wave ports in `rom-port-reference.csv` with
+    `"AdaptiveCircuitSynthesis"`. The port's load in `rom-portload-<label>-*` held roundoff in
+    the rows of the modes of the other ports, and `Y_ref` took these rows as internal nodes,
+    each of which constrained it in a direction set by roundoff: for a symmetric two-port
+    coaxial line, `Y_ref` of the two ports differed by up to about 120%, depending on the
+    number of processes. These entries of the synthesized matrices are now exactly zero, so
+    the Schur complement of the exported load gives `Y_ref` too. The response of the
+    synthesized circuit is unchanged.
+    [PR 1217](https://github.com/awslabs/palace/pull/1217).
   - Fixed the flux recovery in the error estimators to use the projection which minimizes the
     error it is measured in (ε⁻¹-weighted for the electric flux, μ-weighted for the magnetic
     field). The unweighted projection overestimated the error in the low-permittivity
