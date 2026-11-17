@@ -93,7 +93,10 @@ public:
                               double coeff = 1.0) const;
 
   // Evaluate the scalar Robin coefficient g(s) = s·D(s)/N(s) of boundary idx at complex
-  // s = iω = λ (nondimensional).
+  // s = iω = λ (nondimensional): the term iω / Zs(iω) per square which the Robin BC adds
+  // to the frequency-dependent system matrix A2(ω), exactly as the parallel admittance Ys =
+  // 1/Rs + 1/(iωLs) + iωCs contributes iω·Ys to K + iωC - ω²M. Errors when the admittance
+  // is singular (Zs = 0) at s.
   std::complex<double> EvalRobinCoefficient(int idx, std::complex<double> s) const;
 
   // Warn (once for each boundary) when the impedance of boundary idx is not passive at the
@@ -115,21 +118,6 @@ public:
   {
     return boundaries[idx].robin_quotient;
   }
-
-  // Add contributions to the frequency-dependent system matrix A2(ω). The Robin BC term has
-  // coefficient iω / Zs(iω) per square, exactly as the parallel-RLC admittance contributes
-  // iω·Ys to K + iωC - ω²M.
-  void AddExtraSystemBdrCoefficients(double omega, MaterialPropertyCoefficient &fbr,
-                                     MaterialPropertyCoefficient &fbi);
-
-  // Complex-ω overload: evaluates the Robin coefficient s·D(s)/N(s) at genuinely complex
-  // s = iω (analytic continuation; rational functions continue trivially off the real-ω
-  // axis). Used by the 2D mode assembly when the wave-port cross-section EVP is solved at
-  // a complex frequency. For real ω this reduces bit-for-bit to the double overload. The
-  // passivity warning applies only on the real-ω axis and is skipped for Im(ω) != 0.
-  void AddExtraSystemBdrCoefficients(std::complex<double> omega,
-                                     MaterialPropertyCoefficient &fbr,
-                                     MaterialPropertyCoefficient &fbi);
 };
 
 }  // namespace palace

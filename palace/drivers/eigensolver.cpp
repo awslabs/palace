@@ -174,12 +174,11 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   }
   if (nonlinear_type == NonlinearEigenSolver::SLP && !has_A2)
   {
-    // The SLP nonlinear eigensolver requires a frequency-dependent term A2(λ) (wave ports
-    // or absorbing boundaries). Without one the NEP function/Jacobian shells dereference a
-    // null A2; fall back to the standard linear/quadratic eigensolver instead.
-    Mpi::Warning(
-        "SLP nonlinear eigensolver requires a nonlinear system term (wave ports or "
-        "absorbing boundaries), none found; using a linear eigensolver!\n");
+    // The SLP nonlinear eigensolver requires a frequency-dependent term A2(λ). Without one
+    // the NEP function/Jacobian shells dereference a null A2; fall back to the standard
+    // linear/quadratic eigensolver instead.
+    Mpi::Warning("SLP nonlinear eigensolver requires a frequency-dependent system term, "
+                 "none found; using a linear eigensolver!\n");
     nonlinear_type = NonlinearEigenSolver::HYBRID;
   }
   if (has_A2 && nonlinear_type == NonlinearEigenSolver::HYBRID)

@@ -178,8 +178,6 @@ public:
 
   // Access to the operators of each type, for operations which only one solve has.
   auto &GetFarfieldOp() { return farfield_op; }
-  auto &GetSurfaceConductivityOp() { return surf_sigma_op; }
-  auto &GetSurfaceImpedanceOp() { return surf_z_op; }
   auto &GetRationalImpedanceOp() { return surf_rz_op; }
   const auto &GetFarfieldOp() const { return farfield_op; }
   const auto &GetSurfaceConductivityOp() const { return surf_sigma_op; }

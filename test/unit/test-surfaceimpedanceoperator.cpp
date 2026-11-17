@@ -3,6 +3,7 @@
 
 #include <array>
 #include <cmath>
+#include <complex>
 #include <optional>
 #include <unordered_set>
 #include <vector>
@@ -14,6 +15,7 @@
 #include "models/materialoperator.hpp"
 #include "models/surfaceconductivityoperator.hpp"
 #include "models/surfaceimpedanceoperator.hpp"
+#include "models/surfaceterms.hpp"
 #include "utils/communication.hpp"
 #include "utils/configfile.hpp"
 #include "utils/units.hpp"
@@ -118,19 +120,50 @@ TEST_CASE("SurfaceConductivityOperator interior sheets",
   Units units(1.0, 1.0);
   const bool external = GENERATE(false, true);
   const double h = GENERATE(0.0, 0.1);
+  const std::complex<double> omega =
+      GENERATE(std::complex<double>(2.0, 0.0), std::complex<double>(2.0, 0.3));
 
-  // Coefficients of the extra system matrix (real and imaginary parts) and of the boundary
-  // mass summed over the groups, for the exterior attribute 1 and the interior attribute 7.
+  // Coefficients of the extra system matrix at the real or complex frequency ω (real and
+  // imaginary parts, as SurfaceTerms adds them) and of the boundary mass summed over the
+  // groups (the unit coefficients of their terms), for the exterior attribute 1 and the
+  // interior attribute 7.
   auto Values = [&](const config::ConductivityData &cond)
   {
-    SurfaceConductivityOperator op({cond}, ProblemType::DRIVEN, units, mat_op,
-                                   palace_mesh.Get());
+    config::BoundaryData boundaries;
+    boundaries.conductivity = {cond};
+    SurfaceTerms terms(boundaries, ProblemType::DRIVEN, units, mat_op, palace_mesh.Get());
+    const auto &op = terms.GetSurfaceConductivityOp();
     MaterialPropertyCoefficient fbr(mat_op.MaxCeedBdrAttribute()),
         fbi(mat_op.MaxCeedBdrAttribute()), fb(mat_op.MaxCeedBdrAttribute());
-    op.AddExtraSystemBdrCoefficients(2.0, fbr, fbi);
-    for (std::size_t g = 0; g < op.Size(); g++)
+    if (omega.imag() == 0.0)
     {
-      op.AddBoundaryMassBdrCoefficients(g, fb);
+      terms.AddExtraSystemBdrMassCoefficients(omega.real(), fbr, fbi);
+
+      // The coefficients of the scalar (out-of-plane) field are the same.
+      MaterialPropertyCoefficient fbr_n(mat_op.MaxCeedBdrAttribute()),
+          fbi_n(mat_op.MaxCeedBdrAttribute());
+      terms.AddScalarExtraSystemBdrMassCoefficients(omega.real(), fbr_n, fbi_n);
+      for (int attr : {1, 7})
+      {
+        CHECK(GetBdrCoeffValue(fbr_n, palace_mesh, attr) ==
+              GetBdrCoeffValue(fbr, palace_mesh, attr));
+        CHECK(GetBdrCoeffValue(fbi_n, palace_mesh, attr) ==
+              GetBdrCoeffValue(fbi, palace_mesh, attr));
+      }
+    }
+    else
+    {
+      // The frequency-dependent terms at a complex frequency, of the eigenmode solve.
+      MaterialPropertyCoefficient dfbr(mat_op.MaxCeedBdrAttribute()),
+          dfbi(mat_op.MaxCeedBdrAttribute()), frbr(mat_op.MaxCeedBdrAttribute()),
+          frbi(mat_op.MaxCeedBdrAttribute());
+      terms.AddExtraSystemBdrCoefficients(omega, dfbr, dfbi, fbr, fbi, frbr, frbi, nullptr,
+                                          nullptr);
+    }
+    REQUIRE(static_cast<std::size_t>(terms.GetNumExtraSystemBdrMassTerms()) == op.Size());
+    for (int i = 0; i < terms.GetNumExtraSystemBdrMassTerms(); i++)
+    {
+      terms.AddExtraSystemBdrMassTermCoefficients(i, fb);
     }
     std::array<double, 6> vals = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
     for (int k = 0; k < 3; k++)
@@ -163,7 +196,7 @@ TEST_CASE("SurfaceConductivityOperator interior sheets",
   const auto ref_2h = Values(ref).first;
   const auto &ref_ext = external ? ref_2h : ref_h;
 
-  CAPTURE(external, h);
+  CAPTURE(external, h, omega);
   REQUIRE(ref_h[0] > 0.0);
   REQUIRE(ref_h[2] > 0.0);
   CHECK(num_groups == ((external && h > 0.0) ? 2 : 1));

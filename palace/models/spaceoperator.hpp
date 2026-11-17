@@ -105,9 +105,9 @@ private:
       MaterialPropertyCoefficient &frbr, MaterialPropertyCoefficient &frbi,
       MaterialPropertyCoefficient *fpbr, MaterialPropertyCoefficient *fpbi,
       bool include_wave_ports = true);
-  // Complex-ω overload: dispatches to the farfield / surf-σ / wave-port complex
-  // AddExtraSystemBdrCoefficients overloads for the eigenmode nonlinear solve and its
-  // matching preconditioner. Reduces to the double overload for real ω.
+  // Complex-ω overload: dispatches to the complex AddExtraSystemBdrCoefficients overloads
+  // of SurfaceTerms and the wave ports for the eigenmode nonlinear solve and its matching
+  // preconditioner. Reduces to the double overload for real ω.
   void AddExtraSystemBdrCoefficients(
       std::complex<double> omega, MaterialPropertyCoefficient &dfbr,
       MaterialPropertyCoefficient &dfbi, MaterialPropertyCoefficient &fbr,

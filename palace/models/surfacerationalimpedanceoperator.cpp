@@ -131,8 +131,9 @@ void SurfaceRationalImpedanceOperator::SetUpBoundaryProperties(
     bdr.den = data.den;
     // Long division of the Robin coefficient g(s) = s·D(s)/N(s) = P(s) + R(s)/N(s): the
     // polynomial part P is exactly representable in a polynomial eigenvalue pencil, while
-    // the strictly proper remainder R/N carries the poles of g (the zeros of Zs). Used by
-    // the nonlinear eigensolver seed to fit or freeze the pole part.
+    // the strictly proper remainder R/N carries the poles of g (the zeros of Zs). This is
+    // the exact split of the term of SurfaceTerms, for circuit synthesis and the seed of
+    // the nonlinear eigensolver.
     std::vector<double> sD = bdr.den;
     sD.push_back(0.0);  // s·D(s)
     PolyDivMod(std::move(sD), bdr.num, bdr.robin_quotient, bdr.robin_remainder);
@@ -207,21 +208,6 @@ SurfaceRationalImpedanceOperator::EvalRobinCoefficient(int idx,
                                                        std::complex<double> s) const
 {
   const auto &bdr = boundaries[idx];
-  if (s == std::complex<double>(0.0, 0.0))
-  {
-    // Preserve the finite DC limit used by AddExtraSystemBdrCoefficients: if N has a
-    // simple zero at s = 0, lim s·D/N = D(0)/N'(0). A higher-order zero is singular.
-    const double n0 = bdr.num.back();
-    if (n0 == 0.0)
-    {
-      const double n1 = (bdr.num.size() >= 2) ? bdr.num[bdr.num.size() - 2] : 0.0;
-      MFEM_VERIFY(n1 != 0.0,
-                  "Rational impedance boundary has a transmission zero of order >= 2 at "
-                  "s = 0; the DC admittance iω/Zs is singular!");
-      return bdr.den.back() / n1;
-    }
-    return 0.0;
-  }
   const std::complex<double> N = EvalPoly(bdr.num, s);
   MFEM_VERIFY(std::abs(N) > 0.0,
               "Rational impedance boundary has a transmission zero (Zs = 0) at the "
@@ -270,114 +256,6 @@ SurfaceRationalImpedanceOperator::EvalRobinRemainder(int idx, std::complex<doubl
 int SurfaceRationalImpedanceOperator::GetRobinQuotientDegree(int idx) const
 {
   return EffectiveDegree(boundaries[idx].robin_quotient);
-}
-
-void SurfaceRationalImpedanceOperator::AddExtraSystemBdrCoefficients(
-    std::complex<double> omega, MaterialPropertyCoefficient &fbr,
-    MaterialPropertyCoefficient &fbi)
-{
-  // Complex-ω overload: the rational Robin coefficient s·D(s)/N(s) with s = iω continues
-  // analytically to complex ω with no change to the evaluation (rational in s). The
-  // passivity check is a real-ω-axis criterion and is skipped off-axis; the DC-limit
-  // branch is likewise only reachable through the real-ω overload.
-  if (omega.imag() == 0.0)
-  {
-    AddExtraSystemBdrCoefficients(omega.real(), fbr, fbi);
-    return;
-  }
-  const std::complex<double> s = std::complex<double>(0.0, 1.0) * omega;  // s = iω
-  for (auto &bdr : boundaries)
-  {
-    const std::complex<double> N = EvalPoly(bdr.num, s);
-    const std::complex<double> D = EvalPoly(bdr.den, s);
-    MFEM_VERIFY(std::abs(N) > 0.0,
-                "Rational impedance boundary has a transmission zero (Zs = 0) at the "
-                "evaluation frequency; the admittance iω/Zs is singular!");
-    // Surface admittance Ys = 1/Zs = D/N (see the real-ω overload for the rationale).
-    const std::complex<double> Y = D / N;
-    for (auto attr : bdr.attr_list)
-    {
-      const double sc = bdr.attr_scaling.at(attr);
-      const std::complex<double> coef = s * Y / sc;  // iω·Ys per square
-      fbr.AddMaterialProperty(mat_op.GetCeedBdrAttributes(attr), coef.real());
-      fbi.AddMaterialProperty(mat_op.GetCeedBdrAttributes(attr), coef.imag());
-    }
-  }
-}
-
-void SurfaceRationalImpedanceOperator::AddExtraSystemBdrCoefficients(
-    double omega, MaterialPropertyCoefficient &fbr, MaterialPropertyCoefficient &fbi)
-{
-  // Rational surface impedance boundaries Zs(s) = N(s)/D(s) with s = iω. The Robin BC adds
-  // the term iω / Zs(iω) per square to the frequency-dependent system matrix A2(ω), exactly
-  // as the parallel admittance Ys = 1/Rs + 1/(iωLs) + iωCs contributes iω·Ys to
-  // K + iωC - ω²M. Coefficients are stored nondimensionalized and highest-degree-first.
-  if (omega == 0.0)
-  {
-    // DC limit of the Robin coefficient iω/Zs = s·D(s)/N(s) as s → 0. This is 0 when
-    // N(0) != 0 (finite Zs at DC), but a rational Zs may have a transmission zero at
-    // s = 0 (N(0) = 0, i.e. Zs → 0), in which case s·D/N → D(0)/N'(0), finite and nonzero,
-    // and must still be assembled. A double (or higher) zero of N at s = 0 makes the limit
-    // diverge, which is non-physical at DC. Driven sweeps may sample MinFreq = 0.0, so this
-    // branch is reachable.
-    for (auto &bdr : boundaries)
-    {
-      const double n0 = bdr.num.back();  // N(0), constant term (highest-degree-first)
-      std::complex<double> coef0(0.0, 0.0);
-      if (n0 == 0.0)
-      {
-        const double n1 =
-            (bdr.num.size() >= 2) ? bdr.num[bdr.num.size() - 2] : 0.0;  // N'(0)
-        MFEM_VERIFY(n1 != 0.0,
-                    "Rational impedance boundary has a transmission zero of order >= 2 at "
-                    "s = 0; the DC admittance iω/Zs is singular!");
-        coef0 = bdr.den.back() / n1;  // lim_{s→0} s·D/N = D(0)/N'(0)
-      }
-      if (coef0 != 0.0)
-      {
-        for (auto attr : bdr.attr_list)
-        {
-          const double sc = bdr.attr_scaling.at(attr);
-          const std::complex<double> coef = coef0 / sc;
-          fbr.AddMaterialProperty(mat_op.GetCeedBdrAttributes(attr), coef.real());
-          fbi.AddMaterialProperty(mat_op.GetCeedBdrAttributes(attr), coef.imag());
-        }
-      }
-    }
-    return;
-  }
-  const std::complex<double> s(0.0, omega);  // s = iω (nondimensional)
-  for (auto &bdr : boundaries)
-  {
-    const std::complex<double> N = EvalPoly(bdr.num, s);
-    const std::complex<double> D = EvalPoly(bdr.den, s);
-    MFEM_VERIFY(std::abs(N) > 0.0,
-                "Rational impedance boundary has a transmission zero (Zs = 0) at the "
-                "evaluation frequency; the admittance iω/Zs is singular!");
-    // Surface admittance Ys = 1/Zs = D/N (finite since N != 0). Working with the admittance
-    // directly avoids forming Zs = N/D, which is infinite at an impedance pole (D = 0) even
-    // though the Robin contribution iω/Zs = iω·Ys is well-defined (and zero) there.
-    const std::complex<double> Y = D / N;
-
-    // Passivity necessary condition on the imaginary axis: Re{Zs} >= 0 <=> Re{Ys} >= 0.
-    // Warn once per boundary (relative tolerance avoids false alarms on lossless reactive
-    // terminations).
-    if (!bdr.warned_passivity && Y.real() < -1.0e-9 * std::abs(Y))
-    {
-      const double f_ghz = omega * freq_scale / (2.0 * std::numbers::pi);
-      Mpi::Warning("Rational impedance boundary (attribute {:d}) is not passive at "
-                   "f = {:.4f} GHz: Re(Zs) = {:.3e} < 0!\n",
-                   bdr.attr_list.Size() ? bdr.attr_list[0] : -1, f_ghz, (1.0 / Y).real());
-      bdr.warned_passivity = true;
-    }
-    for (auto attr : bdr.attr_list)
-    {
-      const double sc = bdr.attr_scaling.at(attr);
-      const std::complex<double> coef = s * Y / sc;  // iω·Ys per square
-      fbr.AddMaterialProperty(mat_op.GetCeedBdrAttributes(attr), coef.real());
-      fbi.AddMaterialProperty(mat_op.GetCeedBdrAttributes(attr), coef.imag());
-    }
-  }
 }
 
 }  // namespace palace

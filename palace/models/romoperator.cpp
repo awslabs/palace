@@ -3335,8 +3335,8 @@ void RomOperator::ComputeEigenvalueEstimateErrors(
   //   error_abs  = ‖(K + iωC − ω²M + A2(ω)) u‖₂ / ‖u‖₂,
   //   error_bkwd = error_abs / (‖K‖₂ + |ω|‖C‖₂ + |ω|²‖M‖₂),
   // with ω the complex eigenfrequency in nondimensional angular units and u = V·y the
-  // prolongation of the eigenvector's basis block. The frequency-dependent A2(ω) —
-  // wave ports, second-order farfield ABC, surface conductivity — is evaluated exactly
+  // prolongation of the eigenvector's basis block. The frequency-dependent A2(ω) — wave
+  // ports, second-order farfield ABC, the terms of SurfaceTerms — is evaluated exactly
   // at complex ω via SpaceOperator::GetExtraSystemMatrix, so this also validates the
   // rational dispersion fit content that the aux rows encode. The aux entries of the
   // eigenvector have no HDM image and are dropped from the prolongation; for a converged
