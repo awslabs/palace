@@ -339,6 +339,36 @@ private:
   mutable std::vector<double> xo, xg;
 };
 
+// Rows of width w through rank 0 in chunks of at most chunk doubles, so that it holds one
+// chunk of another rank's rows at a time.
+//
+// To rank 0: the rows of every rank (cnt[q] of rank q) in rank order, which write(x, n)
+// takes n at a time at x on rank 0; it receives them all even if writing fails, and the
+// other ranks only send theirs.
+void RowsToRoot(MPI_Comm comm, const std::vector<double> &rows, int w,
+                const std::vector<int> &cnt, std::size_t chunk,
+                const std::function<void(const double *, int)> &write);
+
+// From rank 0: Serve on rank 0 sends the ranks q > 0 in turn the rows need(q) in order,
+// read(a, x) filling row a, and Next on the other ranks fills x with the next row sent to
+// it.
+class RowsFromRoot
+{
+public:
+  RowsFromRoot(MPI_Comm comm, int w, std::size_t chunk);
+
+  void Serve(const std::function<std::vector<int>(int)> &need,
+             const std::function<void(int, double *)> &read);
+
+  void Next(double *x);
+
+private:
+  MPI_Comm comm;
+  int w, per, n = 0, i = 0;
+  RowType row;
+  std::vector<double> buf;
+};
+
 }  // namespace substructuring
 
 // Region/environment operators are those of Palace's regular solve, restricted to the
@@ -653,6 +683,17 @@ struct SubstructuringSolver::Impl
 
   // Scatter a full (rank 0) interface-row array of width w onto the owned rows.
   void ScatterRows(const std::vector<double> &full, int w, std::vector<double> &rows) const;
+
+  // Append an interface operator (nG x nG, row-major, each rank its rows like S_rows) to
+  // the model: rank 0 writes the rows of the ranks in turn, which the others send it in
+  // chunks, so that it holds one chunk of theirs at a time. Collective.
+  void AppendRows(const std::string &path, const std::vector<double> &rows) const;
+
+  // The rows of this rank of an interface operator of the model at byte offset pos, mapped
+  // onto the current interface (SignatureMap::DualMatrix): rank 0 reads the saved rows that
+  // the rows of each rank combine, and sends them in chunks. Collective.
+  std::vector<double> ReadRows(const std::string &path, std::streamoff pos,
+                               const SignatureMap &map) const;
 
   // A model file: [kModelMagic][kModelVersion][Solver.Order][nG][signature type]
   // [signatures nG x width][S_E nG x nG], then the sections [kLengthMagic][Model.Lc of the

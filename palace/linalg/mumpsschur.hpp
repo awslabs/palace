@@ -23,9 +23,10 @@ namespace palace
 
 // MUMPS partial factorization with a Schur complement: factors the symmetric parent-space
 // operator A (rows/cols outside the eliminated subsystem set to identity), or the
-// subsystem alone, with the given Schur variables left unfactored, returning the dense
-// Schur complement on rank 0 -- for the environment, S_E = A_GG - A_GE A_EE^-1 A_EG from
-// one partial factorization instead of |Gamma| back-solves. The same factorization then
+// subsystem alone, with the given Schur variables left unfactored, giving the dense Schur
+// complement 2D block cyclic over the ranks factoring, whose rows then go to the ranks
+// holding them -- for the environment, S_E = A_GG - A_GE A_EE^-1 A_EG from one partial
+// factorization instead of |Gamma| back-solves. The same factorization then
 // solves the internal problem (A_EE, the Schur variables fixed at 0), which serves every
 // other environment solve. T = double (DMUMPS) for a real symmetric A, std::complex<double>
 // (ZMUMPS) for a complex symmetric A = Ar + i Ai. The right-hand sides and solutions of the
@@ -50,11 +51,13 @@ public:
   // pattern, reusing the analysis. spd: A is positive definite, so it is factored without
   // numerical pivoting. ordering is the fill-reducing ordering ("Default": METIS); MUMPS
   // computes a Schur complement only after a sequential analysis, so with Schur variables a
-  // parallel ordering is replaced by its sequential counterpart.
+  // parallel ordering is replaced by its sequential counterpart. block: the block size of
+  // the distribution of the Schur complement.
   MumpsSchurSolverT(const mfem::HypreParMatrix &A,
                     const std::vector<HYPRE_BigInt> &schur_vars, double blr_tol = 0.0,
                     int procs = 0, bool refactor = false, bool spd = true,
-                    SymbolicFactorization ordering = SymbolicFactorization::DEFAULT);
+                    SymbolicFactorization ordering = SymbolicFactorization::DEFAULT,
+                    int block = 64);
 
   // From the local lower-triangle entries of A (n_loc local rows, in rank order). With
   // rows, the vectors of the solves are of a larger (parent) space: rows[i] is the local
@@ -64,7 +67,8 @@ public:
                     const std::vector<HYPRE_BigInt> &schur_vars, double blr_tol = 0.0,
                     int procs = 0, bool refactor = false, bool spd = true,
                     std::vector<int> rows = {},
-                    SymbolicFactorization ordering = SymbolicFactorization::DEFAULT);
+                    SymbolicFactorization ordering = SymbolicFactorization::DEFAULT,
+                    int block = 64);
 
   ~MumpsSchurSolverT() override;
 
@@ -74,7 +78,9 @@ public:
   // With the sparsity pattern and the ordering of the analysis.
   void Refactor() override;
 
-  std::vector<T> ReleaseSchur() override;
+  std::vector<T> ReleaseSchurRows() override;
+
+  std::vector<T> ReleaseSchur() override { return gather.GatherSchur(ReleaseSchurRows()); }
 
   void SolveInternal(const std::vector<const VecType *> &X,
                      const std::vector<VecType *> &Y) override;
@@ -88,6 +94,9 @@ public:
 private:
   void Init(const std::vector<HYPRE_BigInt> &schur_vars);
   void Factor();
+  // This rank holds a part of the Schur complement: the factoring ranks are every
+  // stride-th, the processes of the grid the first of them.
+  bool InGrid() const { return active && rank / stride < nprow * npcol; }
   void Check(const char *phase) const;
   void GatherEntries();
   // The largest diagonal entry of the local values (diag_pos), over the ranks: the scale of
@@ -114,7 +123,7 @@ private:
   }
 
   MPI_Comm comm;
-  int rank = 0, procs = 0;
+  int rank = 0, procs = 0, stride = 1;
   bool refactor = false, spd = true, factored = false;
   SymbolicFactorization ordering = SymbolicFactorization::DEFAULT;
   bool active = true;  // this rank takes part in the factorization
@@ -125,6 +134,10 @@ private:
   std::vector<int> grp_cnt, grp_disp, grp_row_cnt, grp_row_disp;
   HYPRE_BigInt n_glob;
   int n_loc, n_schur;
+  // The grid of the Schur complement (nprow x npcol, of the first ranks factoring, in
+  // blocks of mb).
+  int nprow = 1, npcol = 1, mb;
+  SchurRowGather gather;
   std::vector<int> row_cnt, row_disp, rows;
   int parent = 0;  // the vectors of the solves are of the parent space of rows
   std::vector<MUMPS_INT> irn, jcn, listvar, irhs_loc, isol_loc;

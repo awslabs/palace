@@ -3490,6 +3490,39 @@ TEST_CASE("DirectSchurSolver condenses exactly", "[substructure][Serial][Paralle
       CHECK(dist(zm, z.head(n_dof) / s) <= 1.0e-10);
     }
   }
+
+  // The rows of S (of the values scaled by 2) on the ranks holding its variables, from
+  // another factorization.
+  solver.Refactor();
+  const int nS = static_cast<int>(schur_vars.size()), m_loc = static_cast<int>(rows.size());
+  if (rank != 0)
+  {
+    S_ref.resize(nS, nS);
+  }
+  MPI_Bcast(S_ref.data(), nS * nS, MPI_C_DOUBLE_COMPLEX, 0, comm);
+  HYPRE_BigInt n = m_loc, first = 0;
+  MPI_Exscan(&n, &first, 1, HYPRE_MPI_BIG_INT, MPI_SUM, comm);
+  first = (rank == 0) ? 0 : first;
+  std::vector<int> held;
+  for (int p = 0; p < nS; p++)
+  {
+    if (schur_vars[p] >= first && schur_vars[p] < first + m_loc)
+    {
+      held.push_back(p);
+    }
+  }
+  const auto R = solver.ReleaseSchurRows();
+  CHECK(R.size() == held.size() * nS);
+  double err = 0.0;
+  for (std::size_t r = 0; r < held.size() && R.size() == held.size() * nS; r++)
+  {
+    for (int col = 0; col < nS; col++)
+    {
+      err = std::max(err, std::abs(R[r * nS + col] - 2.0 * S_ref(held[r], col)));
+    }
+  }
+  MPI_Allreduce(MPI_IN_PLACE, &err, 1, MPI_DOUBLE, MPI_MAX, comm);
+  CHECK(err <= 1.0e-10 * 2.0 * S_ref.cwiseAbs().maxCoeff());
 }
 #endif
 
@@ -5211,6 +5244,97 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   Vector d(u_on);
   d -= u_ref;
   CHECK(d.Norml2() <= 1.0e-9 * u_ref.Norml2());
+}
+
+TEST_CASE("Rows of an interface operator pass through rank 0 in chunks",
+          "[substructure][Serial][Parallel]")
+{
+  // Rank q holds q + 2 rows of width 3; a chunk of 1 or 6 doubles holds 1 or 2 rows, the
+  // largest one all of them.
+  MPI_Comm comm = Mpi::World();
+  const int rank = Mpi::Rank(comm), nranks = Mpi::Size(comm), w = 3;
+  const std::size_t chunk = GENERATE(1, 6, 1000);
+  auto value = [](int q, int r, int c) { return 100.0 * q + 10.0 * r + c; };
+  std::vector<int> cnt(nranks);
+  for (int q = 0; q < nranks; q++)
+  {
+    cnt[q] = q + 2;
+  }
+  std::vector<double> rows(static_cast<std::size_t>(cnt[rank]) * w), expected;
+  for (int r = 0; r < cnt[rank]; r++)
+  {
+    for (int c = 0; c < w; c++)
+    {
+      rows[r * w + c] = value(rank, r, c);
+    }
+  }
+
+  // To rank 0: every row once, in rank order, in chunks of at most the chunk.
+  std::vector<double> got;
+  int most = 0;
+  substructuring::RowsToRoot(comm, rows, w, cnt, chunk,
+                             [&](const double *x, int n)
+                             {
+                               got.insert(got.end(), x, x + n * w);
+                               most = std::max(most, n);
+                             });
+  for (int q = 0; Mpi::Root(comm) && q < nranks; q++)
+  {
+    for (int r = 0; r < cnt[q]; r++)
+    {
+      for (int c = 0; c < w; c++)
+      {
+        expected.push_back(value(q, r, c));
+      }
+    }
+  }
+  CHECK(got == expected);
+  CHECK(most <= std::max<int>(1, static_cast<int>(chunk) / w));
+
+  // From rank 0: rank q takes the rows 3 i + q (i < 2 q + 3) of a source, in that order.
+  auto need = [](int q)
+  {
+    std::vector<int> a;
+    for (int i = 0; i < 2 * q + 3; i++)
+    {
+      a.push_back(3 * i + q);
+    }
+    return a;
+  };
+  auto read = [](int a, double *x)
+  {
+    for (int c = 0; c < 3; c++)
+    {
+      x[c] = a + 0.25 * c;
+    }
+  };
+  substructuring::RowsFromRoot from(comm, w, chunk);
+  if (Mpi::Root(comm))
+  {
+    from.Serve(need, read);
+  }
+  else
+  {
+    // Each chunk holds the next rows of the chunk, or the rest (probed before Next takes
+    // it).
+    const std::vector<int> a = need(rank);
+    const std::size_t per = std::max<std::size_t>(1, chunk / w);
+    for (std::size_t k = 0; k < a.size(); k++)
+    {
+      if (k % per == 0)
+      {
+        MPI_Status status;
+        int n = 0;
+        MPI_Probe(0, 0, comm, &status);
+        MPI_Get_count(&status, MPI_DOUBLE, &n);
+        CHECK(n == static_cast<int>(std::min(per, a.size() - k)) * w);
+      }
+      std::vector<double> x(w), ref(w);
+      from.Next(x.data());
+      read(a[k], ref.data());
+      CHECK(x == ref);
+    }
+  }
 }
 
 }  // namespace palace

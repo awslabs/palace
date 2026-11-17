@@ -332,9 +332,25 @@ TEST_CASE("Saved Nédélec DOFs are mapped across meshes and partitions",
     CHECK(blocks > 0);  // face DOFs whose basis is not a signed permutation of the other's
   }
   const auto b = map.DualRows(b_s, 1);
-  const std::size_t n = b_s.size();
-  const auto M = map.DualMatrix<double>([&](std::size_t a, double *x)
-                                        { std::copy_n(&M_s[a * n], n, x); });
+  // M in thirds of its rows (as ranks hold them), each from the saved rows it combines.
+  const int n = static_cast<int>(b_s.size()), third = (n + 2) / 3;
+  std::vector<double> M;
+  for (int g0 = 0; g0 < n; g0 += third)
+  {
+    const int m = std::min(third, n - g0);
+    std::vector<int> read;
+    const auto Mg =
+        map.DualMatrix<double>(g0, m,
+                               [&](int a, double *x)
+                               {
+                                 read.push_back(a);
+                                 std::copy_n(&M_s[static_cast<std::size_t>(a) * n], n, x);
+                               });
+    CHECK(read == map.SavedRows(g0, m));
+    CHECK(read.size() < static_cast<std::size_t>(n));
+    M.insert(M.end(), Mg.begin(), Mg.end());
+  }
+  REQUIRE(M.size() == M_c.size());
   double db = 0.0, mb = 0.0, dM = 0.0, mM = 0.0;
   for (std::size_t i = 0; i < b.size(); i++)
   {

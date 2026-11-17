@@ -250,7 +250,8 @@ DrivenSubstructure::ModalTerms(const Side &side, double omega)
   {
     return terms;
   }
-  for (auto &term : space_op.GetModalCorrectionTerms(omega))
+  for (auto &term : space_op.GetWavePortOp().GetModalCorrectionTerms(
+           omega, space_op.GetNDSpace(), space_op.GetNDDbcTDofLists().back()))
   {
     const double *sr = term.s->Real().HostRead(), *si = term.s->Imag().HostRead();
     std::vector<double> count;  // per port: support inside, outside
@@ -1575,7 +1576,7 @@ bool DrivenSubstructureModel::Passive(const std::complex<double> *lower, int n, 
 
 double BarycentricInterpolant::FindMaxError() const
 {
-  return MinimizeBarycentricDenominator(z, w.data(), 1)[0];
+  return MinimizeBarycentricDenominator(z, w.data());
 }
 
 std::array<std::size_t, 4> DrivenSubstructureModel::PartSizes() const

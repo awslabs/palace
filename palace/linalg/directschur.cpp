@@ -390,8 +390,8 @@ DirectSchurSolver::DirectSchurSolver(MPI_Comm comm, HYPRE_BigInt n_glob, int n_l
                                      const std::vector<HYPRE_BigInt> &schur_vars,
                                      std::vector<int> local_rows, LinearSolver type)
   : comm(comm), rank(Mpi::Rank(comm)), n_loc(n_loc),
-    n_schur(static_cast<int>(schur_vars.size())), rows(std::move(local_rows)),
-    val(std::move(A.val))
+    n_schur(static_cast<int>(schur_vars.size())), gather(comm, n_loc, schur_vars),
+    rows(std::move(local_rows)), val(std::move(A.val))
 {
   switch (type)
   {

@@ -30,6 +30,20 @@ MPI_Datatype MpiType()
   return std::is_same_v<T, double> ? MPI_DOUBLE : MPI_C_DOUBLE_COMPLEX;
 }
 
+// The number of the n indices of a block-cyclic dimension (blocks of b over np processes,
+// from process 0) held by process me (ScaLAPACK's NUMROC).
+int LocalCount(int n, int b, int me, int np)
+{
+  const int blocks = n / b, extra = blocks % np;
+  return (blocks / np) * b + ((me < extra) ? b : (me == extra) ? n % b : 0);
+}
+
+// The global index of the local index l of process me in that dimension.
+int GlobalIndex(int l, int b, int me, int np)
+{
+  return ((l / b) * np + me) * b + l % b;
+}
+
 }  // namespace
 
 namespace
@@ -59,9 +73,9 @@ template <typename T>
 MumpsSchurSolverT<T>::MumpsSchurSolverT(const mfem::HypreParMatrix &A,
                                         const std::vector<HYPRE_BigInt> &schur_vars,
                                         double blr_tol, int procs, bool refactor, bool spd,
-                                        SymbolicFactorization ordering)
+                                        SymbolicFactorization ordering, int block)
   : MumpsSchurSolverT(A.GetComm(), A.GetGlobalNumRows(), A.Height(), LowerTriangle<T>(A),
-                      schur_vars, blr_tol, procs, refactor, spd, {}, ordering)
+                      schur_vars, blr_tol, procs, refactor, spd, {}, ordering, block)
 {
 }
 
@@ -71,11 +85,11 @@ MumpsSchurSolverT<T>::MumpsSchurSolverT(MPI_Comm comm, HYPRE_BigInt n_glob, int 
                                         const std::vector<HYPRE_BigInt> &schur_vars,
                                         double blr_tol, int procs, bool refactor, bool spd,
                                         std::vector<int> rows,
-                                        SymbolicFactorization ordering)
+                                        SymbolicFactorization ordering, int block)
   : comm(comm), procs(procs), refactor(refactor), spd(spd), ordering(ordering),
-    n_glob(n_glob), n_loc(n_loc), n_schur(static_cast<int>(schur_vars.size())),
-    rows(std::move(rows)), irn(std::move(A.irn)), jcn(std::move(A.jcn)),
-    val(std::move(A.val)), blr_tol(blr_tol)
+    n_glob(n_glob), n_loc(n_loc), n_schur(static_cast<int>(schur_vars.size())), mb(block),
+    gather(comm, n_loc, schur_vars), rows(std::move(rows)), irn(std::move(A.irn)),
+    jcn(std::move(A.jcn)), val(std::move(A.val)), blr_tol(blr_tol)
 {
   // Parent vectors if any rank gives rows (a rank with no local rows gives none).
   int mine = !this->rows.empty();
@@ -91,8 +105,10 @@ void MumpsSchurSolverT<T>::Init(const std::vector<HYPRE_BigInt> &schur_vars)
   MPI_Comm_rank(comm, &rank);
   int nranks;
   MPI_Comm_size(comm, &nranks);
-  const int stride = (procs > 0 && procs < nranks) ? (nranks + procs - 1) / procs : 1;
+  stride = (procs > 0 && procs < nranks) ? (nranks + procs - 1) / procs : 1;
   procs = (nranks + stride - 1) / stride;
+  nprow = static_cast<int>(std::sqrt(static_cast<double>(procs)));
+  npcol = procs / nprow;
   active = (rank % stride == 0);
   row_cnt.assign(nranks, 0);
   row_disp.assign(nranks, 0);
@@ -184,8 +200,8 @@ void MumpsSchurSolverT<T>::Init(const std::vector<HYPRE_BigInt> &schur_vars)
     icntl(4) = 0;
     icntl(5) = 0;   // assembled input
     icntl(18) = 3;  // distributed matrix entries
-    // Complete Schur (if any Schur variables), 2D block cyclic on a 1 x 1 grid: centralized
-    // on rank 0.
+    // Complete Schur (if any Schur variables), 2D block cyclic on a near-square grid of the
+    // ranks factoring (MUMPS symmetrizes it with blocks of the same rows and columns).
     icntl(19) = (n_schur > 0) ? 3 : 0;
     // Fill-reducing ordering: sequential (ICNTL(7)), or parallel (ICNTL(29)) for ParMETIS
     // and PT-SCOTCH if there are no Schur variables.
@@ -235,15 +251,15 @@ void MumpsSchurSolverT<T>::Init(const std::vector<HYPRE_BigInt> &schur_vars)
     id.a_loc = Entries(grp != MPI_COMM_NULL ? grp_val.data() : val.data());
     id.size_schur = n_schur;
     id.listvar_schur = listvar.data();
-    id.nprow = 1;
-    id.npcol = 1;
-    id.mblock = 64;
-    id.nblock = 64;
+    id.nprow = nprow;
+    id.npcol = npcol;
+    id.mblock = mb;
+    id.nblock = mb;
     id.job = 1;  // analysis
     Call();
   }
   Check("analysis");
-  if (rank == 0 && n_schur > 0)
+  if (InGrid() && n_schur > 0)
   {
     id.schur_lld = std::max<MUMPS_INT>(1, id.schur_mloc);
   }
@@ -251,14 +267,104 @@ void MumpsSchurSolverT<T>::Init(const std::vector<HYPRE_BigInt> &schur_vars)
 }
 
 template <typename T>
-std::vector<T> MumpsSchurSolverT<T>::ReleaseSchur()
+std::vector<T> MumpsSchurSolverT<T>::ReleaseSchurRows()
 {
-  std::vector<T> S;
-  S.swap(schur);
-  if (rank == 0)
+  // S is 2D block cyclic (local parts column-major) on the grid of the first ranks
+  // factoring, process p (the rank p stride) at (p / npcol, p % npcol). Each round sends
+  // one local block column of every process to the owners of its rows, column by column and
+  // in a column the rows of each owner in turn, which place them by the same traversal.
+  const int nranks = static_cast<int>(row_cnt.size()), ns = n_schur,
+            m = static_cast<int>(gather.Rows().size());
+  std::vector<T> S(static_cast<std::size_t>(m) * ns);
+  if (ns == 0)
   {
-    S.resize(static_cast<std::size_t>(n_schur) * n_schur);
+    return S;
   }
+  // The owner of each Schur row and its place among the rows of its owner, and the places
+  // of the rows of each process row owned here.
+  std::vector<int> owner(ns), slot(ns), count(nranks, 0);
+  for (int p = 0; p < ns; p++)
+  {
+    owner[p] = static_cast<int>(
+                   std::upper_bound(row_disp.begin(), row_disp.end(), listvar[p] - 1) -
+                   row_disp.begin()) -
+               1;
+    slot[p] = count[owner[p]]++;
+  }
+  std::vector<std::vector<int>> mine(nprow);
+  for (int pr = 0; pr < nprow; pr++)
+  {
+    for (int l = 0; l < LocalCount(ns, mb, pr, nprow); l++)
+    {
+      const int g = GlobalIndex(l, mb, pr, nprow);
+      if (owner[g] == rank)
+      {
+        mine[pr].push_back(slot[g]);
+      }
+    }
+  }
+  const int ngrid = nprow * npcol;
+  const bool grid = InGrid();
+  const int me = rank / stride, myrow = grid ? me / npcol : 0,
+            mycol = grid ? me % npcol : 0,
+            mloc = grid ? LocalCount(ns, mb, myrow, nprow) : 0;
+  const std::size_t lld = std::max(1, mloc);
+  std::vector<int> dest(mloc);
+  for (int l = 0; l < mloc; l++)
+  {
+    dest[l] = owner[GlobalIndex(l, mb, myrow, nprow)];
+  }
+  std::vector<int> scnt(nranks), sdsp(nranks, 0), rcnt(nranks, 0), rdsp(nranks, 0), at;
+  std::vector<T> sbuf, rbuf;
+  const int rounds = (LocalCount(ns, mb, 0, npcol) + mb - 1) / mb;
+  for (int k = 0; k < rounds; k++)
+  {
+    // The local columns [k mb, k mb + width) of the processes of a grid column.
+    auto width = [&](int pc)
+    { return std::clamp(LocalCount(ns, mb, pc, npcol) - k * mb, 0, mb); };
+    const int w = grid ? width(mycol) : 0;
+    std::fill(scnt.begin(), scnt.end(), 0);
+    for (int l = 0; l < mloc; l++)
+    {
+      scnt[dest[l]] += w;
+    }
+    for (int p = 0; p < ngrid; p++)
+    {
+      rcnt[p * stride] = static_cast<int>(mine[p / npcol].size()) * width(p % npcol);
+    }
+    for (int r = 1; r < nranks; r++)
+    {
+      sdsp[r] = sdsp[r - 1] + scnt[r - 1];
+      rdsp[r] = rdsp[r - 1] + rcnt[r - 1];
+    }
+    sbuf.resize(sdsp[nranks - 1] + scnt[nranks - 1]);
+    rbuf.resize(rdsp[nranks - 1] + rcnt[nranks - 1]);
+    at = sdsp;
+    for (int j = 0; j < w; j++)
+    {
+      const T *col = schur.data() + lld * (k * mb + j);
+      for (int l = 0; l < mloc; l++)
+      {
+        sbuf[at[dest[l]]++] = col[l];
+      }
+    }
+    MPI_Alltoallv(sbuf.data(), scnt.data(), sdsp.data(), MpiType<T>(), rbuf.data(),
+                  rcnt.data(), rdsp.data(), MpiType<T>(), comm);
+    for (int p = 0; p < ngrid; p++)
+    {
+      const int pr = p / npcol, pc = p % npcol;
+      std::size_t q = rdsp[p * stride];
+      for (int j = 0; j < width(pc); j++)
+      {
+        const int c = GlobalIndex(k * mb + j, mb, pc, npcol);
+        for (int r : mine[pr])
+        {
+          S[static_cast<std::size_t>(r) * ns + c] = rbuf[q++];
+        }
+      }
+    }
+  }
+  std::vector<T>().swap(schur);
   return S;
 }
 
@@ -288,9 +394,9 @@ void MumpsSchurSolverT<T>::Factor()
   // relaxation and the memory allowed, from what each process allocated (INFO(16)) with
   // twice their shortfall (INFO(2) entries) more on the processes that ran short, and
   // retry.
-  if (rank == 0 && n_schur > 0 && schur.empty())
+  if (InGrid() && n_schur > 0 && schur.empty())
   {
-    // (Again after ReleaseSchur.)
+    // (Again after ReleaseSchurRows.)
     schur.assign(static_cast<std::size_t>(id.schur_lld) *
                      std::max<MUMPS_INT>(1, id.schur_nloc),
                  T(0.0));

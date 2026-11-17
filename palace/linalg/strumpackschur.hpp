@@ -18,7 +18,8 @@ namespace palace
 //
 // STRUMPACK's partial factorization with a Schur complement: the reordering places the
 // Schur variables last and the factorization leaves them unfactored, so that it gives
-// S = A_SS - A_SI A_II^-1 A_IS on rank 0, and its factors of A_II the internal solves.
+// S = A_SS - A_SI A_II^-1 A_IS on rank 0 (which sends their rows to the ranks holding
+// them), and its factors of A_II the internal solves.
 //
 class StrumpackSchurSolver : public SchurSolver<double>
 {
@@ -28,7 +29,7 @@ public:
   StrumpackSchurSolver(const mfem::HypreParMatrix &A,
                        const std::vector<HYPRE_BigInt> &schur_vars);
 
-  std::vector<double> ReleaseSchur() override;
+  std::vector<double> ReleaseSchurRows() override;
 
   void SolveInternal(const std::vector<const mfem::Vector *> &X,
                      const std::vector<mfem::Vector *> &Y) override;

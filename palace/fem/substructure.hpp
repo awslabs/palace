@@ -4,6 +4,7 @@
 #ifndef PALACE_FEM_SUBSTRUCTURE_HPP
 #define PALACE_FEM_SUBSTRUCTURE_HPP
 
+#include <algorithm>
 #include <array>
 #include <memory>
 #include <string>
@@ -60,13 +61,15 @@ struct SignatureMap
 {
   std::vector<std::vector<std::pair<int, double>>> rows;
 
-  // X_cur = M^-T X_saved for dual vectors X (n x k, row-major), and
-  // S_cur = M^-T S_saved M^-1 for a symmetric dual matrix S (n x n) from its saved rows in
-  // order, read_row(a, x) filling row a: one saved row is held at a time.
+  // X_cur = M^-T X_saved for dual vectors X (n x k, row-major), and the rows [g0, g0 + m)
+  // of S_cur = M^-T S_saved M^-1 for a symmetric dual matrix S (n x n, m x n row-major)
+  // from the saved rows they combine, SavedRows(g0, m), read_row(a, x) filling each saved
+  // row a in their order: one saved row is held at a time.
   template <typename T>
   std::vector<T> DualRows(const std::vector<T> &X, int k) const;
+  std::vector<int> SavedRows(int g0, int m) const;
   template <typename T, typename ReadRow>
-  std::vector<T> DualMatrix(ReadRow &&read_row) const;
+  std::vector<T> DualMatrix(int g0, int m, ReadRow &&read_row) const;
 };
 
 // Which of a set of DOFs (H1 or H(curl) signatures of the given width) lie at the point of
@@ -101,23 +104,25 @@ std::vector<T> SignatureMap::DualRows(const std::vector<T> &X, int k) const
 }
 
 template <typename T, typename ReadRow>
-std::vector<T> SignatureMap::DualMatrix(ReadRow &&read_row) const
+std::vector<T> SignatureMap::DualMatrix(int g0, int m, ReadRow &&read_row) const
 {
   // (M^-T S M^-1)_gh = sum_a (M^-T)_ga z_h, z_h = sum_b (M^-T)_hb S_ab: each saved row a,
-  // mapped on its columns (z), adds to the current rows g with (M^-T)_ga != 0.
+  // mapped on its columns (z), adds to the rows g with (M^-T)_ga != 0.
   const std::size_t n = rows.size();
-  std::vector<std::vector<std::pair<std::size_t, double>>> to(n);
-  for (std::size_t g = 0; g < n; g++)
+  const std::vector<int> saved = SavedRows(g0, m);
+  std::vector<std::vector<std::pair<std::size_t, double>>> to(saved.size());
+  for (int g = g0; g < g0 + m; g++)
   {
     for (const auto &[a, c] : rows[g])
     {
-      to[a].emplace_back(g, c);
+      const auto i = std::lower_bound(saved.begin(), saved.end(), a) - saved.begin();
+      to[i].emplace_back(g - g0, c);
     }
   }
-  std::vector<T> Y(n * n, T(0.0)), x(n), z(n);
-  for (std::size_t a = 0; a < n; a++)
+  std::vector<T> Y(static_cast<std::size_t>(m) * n, T(0.0)), x(n), z(n);
+  for (std::size_t a = 0; a < saved.size(); a++)
   {
-    read_row(a, x.data());
+    read_row(saved[a], x.data());
     for (std::size_t h = 0; h < n; h++)
     {
       T v(0.0);

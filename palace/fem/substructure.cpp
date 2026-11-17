@@ -304,6 +304,21 @@ std::vector<char> MatchSignaturePoints(const std::vector<double> &candidates, in
   return match;
 }
 
+std::vector<int> SignatureMap::SavedRows(int g0, int m) const
+{
+  std::vector<int> saved;
+  for (int g = g0; g < g0 + m; g++)
+  {
+    for (const auto &[a, c] : rows[g])
+    {
+      saved.push_back(a);
+    }
+  }
+  std::sort(saved.begin(), saved.end());
+  saved.erase(std::unique(saved.begin(), saved.end()), saved.end());
+  return saved;
+}
+
 SignatureMap MatchSignatureBasis(const std::vector<double> &current,
                                  const std::vector<double> &saved, int width)
 {

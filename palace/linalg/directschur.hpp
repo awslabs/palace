@@ -45,6 +45,8 @@ public:
 
   void Refactor() override;
 
+  std::vector<T> ReleaseSchurRows() override { return gather.ScatterSchur(ReleaseSchur()); }
+
   std::vector<T> ReleaseSchur() override;
 
   void SolveInternal(const std::vector<const ComplexVector *> &X,
@@ -59,6 +61,7 @@ public:
 private:
   MPI_Comm comm;
   int rank = 0, n_loc = 0, n_schur = 0;
+  SchurRowGather gather;
   std::vector<int> rows;
   std::vector<T> val;
 

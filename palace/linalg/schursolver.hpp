@@ -9,6 +9,7 @@
 #include <vector>
 #include <mfem.hpp>
 #include "linalg/vector.hpp"
+#include "utils/communication.hpp"
 
 namespace palace
 {
@@ -29,9 +30,10 @@ public:
 
   virtual ~SchurSolver() = default;
 
-  // The dense Schur complement on rank 0 (n_schur x n_schur, column-major, symmetric up to
-  // rounding), handed over (collective).
-  virtual std::vector<T> ReleaseSchur() = 0;
+  // The rows of the dense Schur complement (symmetric up to rounding) of the Schur
+  // variables this rank holds, in the order of their positions among them
+  // (|SchurRowGather::Rows()| x n_schur, row-major), handed over (collective).
+  virtual std::vector<T> ReleaseSchurRows() = 0;
 
   // Internal solves for a batch of vectors (collective): y_k solves A_II on the internal
   // variables, with 0 on the Schur variables. On rows of A in neither block, y_k is
@@ -47,8 +49,30 @@ public:
 };
 
 //
+// A row of w entries (double or std::complex<double>), so that the counts of a row exchange
+// are rows (n w entries can overflow an int).
+//
+template <typename T>
+class RowTypeT
+{
+public:
+  explicit RowTypeT(int w)
+  {
+    MPI_Type_contiguous(w, mpi::DataType<T>(), &type);
+    MPI_Type_commit(&type);
+  }
+  ~RowTypeT() { MPI_Type_free(&type); }
+  RowTypeT(const RowTypeT &) = delete;
+  RowTypeT &operator=(const RowTypeT &) = delete;
+  MPI_Datatype type;
+};
+
+using RowType = RowTypeT<double>;
+
+//
 // The rows of the Schur variables that each rank holds, to gather their entries of a batch
-// of vectors on rank 0 in the order of the Schur variables.
+// of vectors on rank 0 in the order of the Schur variables, and to move the rows of a Schur
+// complement between rank 0 and the ranks holding them.
 //
 class SchurRowGather
 {
@@ -58,6 +82,9 @@ public:
   SchurRowGather(MPI_Comm comm, HYPRE_BigInt row0, int n_loc,
                  const std::vector<HYPRE_BigInt> &schur_vars);
 
+  // With the rows numbered by rank, n_loc on this one. Collective.
+  SchurRowGather(MPI_Comm comm, int n_loc, const std::vector<HYPRE_BigInt> &schur_vars);
+
   // The local rows of the Schur variables on this rank, and their positions among them.
   const std::vector<int> &Rows() const { return row; }
   const std::vector<int> &Positions() const { return pos; }
@@ -65,6 +92,17 @@ public:
   // Gather loc (the entries in Rows() of nb vectors, |Rows()| x nb, column-major) on rank 0
   // into g (n_schur x nb, column-major; not used on the other ranks). Collective.
   void Gather(const std::vector<double> &loc, int nb, double *g) const;
+
+  // The matrix on rank 0 (n_schur x n_schur, column-major; empty on the other ranks) from
+  // its rows on the ranks holding them (|Rows()| x n_schur, row-major), which it receives
+  // one rank at a time. Collective.
+  template <typename T>
+  std::vector<T> GatherSchur(const std::vector<T> &rows) const;
+
+  // The rows on each rank (|Rows()| x n_schur, row-major) of a matrix on rank 0 (n_schur x
+  // n_schur, column-major), which it sends one rank at a time. Collective.
+  template <typename T>
+  std::vector<T> ScatterSchur(const std::vector<T> &full) const;
 
 private:
   MPI_Comm comm;
@@ -94,6 +132,10 @@ public:
 
   // The entries of the next Refactor, in the order of the input (to be overwritten).
   virtual std::vector<T> &Values() = 0;
+
+  // The dense Schur complement on rank 0 (n_schur x n_schur, column-major, symmetric up to
+  // rounding), handed over instead of its rows (collective).
+  virtual std::vector<T> ReleaseSchur() = 0;
 
   // Factor the entries in Values() (collective).
   virtual void Refactor() = 0;
@@ -129,7 +171,7 @@ public:
                        const std::vector<HYPRE_BigInt> &schur_vars, InternalSolver solve,
                        int block);
 
-  std::vector<double> ReleaseSchur() override;
+  std::vector<double> ReleaseSchurRows() override;
 
   void SolveInternal(const std::vector<const mfem::Vector *> &X,
                      const std::vector<mfem::Vector *> &Y) override;
@@ -138,10 +180,11 @@ public:
                 std::vector<double> &g) override;
 
 private:
-  // The condensations of a batch (at most block vectors) on rank 0 into g, by the internal
-  // solves Y (which may alias X) and a product with A. Collective.
-  void CondenseBatch(const std::vector<const mfem::Vector *> &X,
-                     const std::vector<mfem::Vector *> &Y, double *g) const;
+  // The condensations of a batch (at most block vectors) in the rows of the Schur variables
+  // of this rank (|Rows()| x |X|, column-major), by the internal solves Y (which may alias
+  // X) and a product with A. Collective.
+  std::vector<double> CondenseBatch(const std::vector<const mfem::Vector *> &X,
+                                    const std::vector<mfem::Vector *> &Y) const;
 
   const mfem::HypreParMatrix &A;
   InternalSolver solve;

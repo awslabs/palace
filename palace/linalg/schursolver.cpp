@@ -4,11 +4,24 @@
 #include "schursolver.hpp"
 
 #include <algorithm>
+#include <complex>
 #include <utility>
 #include "utils/communication.hpp"
 
 namespace palace
 {
+
+namespace
+{
+
+HYPRE_BigInt FirstRow(MPI_Comm comm, int n_loc)
+{
+  HYPRE_BigInt n = n_loc, first = 0;
+  MPI_Exscan(&n, &first, 1, HYPRE_MPI_BIG_INT, MPI_SUM, comm);
+  return Mpi::Root(comm) ? 0 : first;
+}
+
+}  // namespace
 
 SchurRowGather::SchurRowGather(MPI_Comm comm, HYPRE_BigInt row0, int n_loc,
                                const std::vector<HYPRE_BigInt> &schur_vars)
@@ -62,6 +75,100 @@ void SchurRowGather::Gather(const std::vector<double> &loc, int nb, double *g) c
   }
 }
 
+SchurRowGather::SchurRowGather(MPI_Comm comm, int n_loc,
+                               const std::vector<HYPRE_BigInt> &schur_vars)
+  : SchurRowGather(comm, FirstRow(comm, n_loc), n_loc, schur_vars)
+{
+}
+
+template <typename T>
+std::vector<T> SchurRowGather::GatherSchur(const std::vector<T> &rows) const
+{
+  const int m = static_cast<int>(row.size());
+  std::vector<T> full;
+  if (n_schur == 0)
+  {
+    return full;
+  }
+  const RowTypeT<T> type(n_schur);
+  if (!Mpi::Root(comm))
+  {
+    MPI_Send(rows.data(), m, type.type, 0, 0, comm);
+    return full;
+  }
+  full.resize(static_cast<std::size_t>(n_schur) * n_schur);
+  std::vector<T> buf;
+  for (std::size_t q = 0; q < pos_cnt.size(); q++)
+  {
+    const T *x = rows.data();
+    if (q > 0)
+    {
+      buf.resize(static_cast<std::size_t>(pos_cnt[q]) * n_schur);
+      MPI_Recv(buf.data(), pos_cnt[q], type.type, static_cast<int>(q), 0, comm,
+               MPI_STATUS_IGNORE);
+      x = buf.data();
+    }
+    for (int r = 0; r < pos_cnt[q]; r++)
+    {
+      const std::size_t p = all_pos[pos_dsp[q] + r];
+      for (int c = 0; c < n_schur; c++)
+      {
+        full[p + static_cast<std::size_t>(n_schur) * c] =
+            x[static_cast<std::size_t>(r) * n_schur + c];
+      }
+    }
+  }
+  return full;
+}
+
+template <typename T>
+std::vector<T> SchurRowGather::ScatterSchur(const std::vector<T> &full) const
+{
+  const int m = static_cast<int>(row.size());
+  std::vector<T> rows(static_cast<std::size_t>(m) * n_schur);
+  if (n_schur == 0)
+  {
+    return rows;
+  }
+  const RowTypeT<T> type(n_schur);
+  if (!Mpi::Root(comm))
+  {
+    MPI_Recv(rows.data(), m, type.type, 0, 0, comm, MPI_STATUS_IGNORE);
+    return rows;
+  }
+  std::vector<T> buf;
+  for (std::size_t q = 0; q < pos_cnt.size(); q++)
+  {
+    if (q > 0)
+    {
+      buf.resize(static_cast<std::size_t>(pos_cnt[q]) * n_schur);
+    }
+    T *x = (q > 0) ? buf.data() : rows.data();
+    for (int r = 0; r < pos_cnt[q]; r++)
+    {
+      const std::size_t p = all_pos[pos_dsp[q] + r];
+      for (int c = 0; c < n_schur; c++)
+      {
+        x[static_cast<std::size_t>(r) * n_schur + c] =
+            full[p + static_cast<std::size_t>(n_schur) * c];
+      }
+    }
+    if (q > 0)
+    {
+      MPI_Send(x, pos_cnt[q], type.type, static_cast<int>(q), 0, comm);
+    }
+  }
+  return rows;
+}
+
+template std::vector<double> SchurRowGather::GatherSchur(const std::vector<double> &) const;
+template std::vector<std::complex<double>>
+SchurRowGather::GatherSchur(const std::vector<std::complex<double>> &) const;
+template std::vector<double>
+SchurRowGather::ScatterSchur(const std::vector<double> &) const;
+template std::vector<std::complex<double>>
+SchurRowGather::ScatterSchur(const std::vector<std::complex<double>> &) const;
+
 BackSolveSchurSolver::BackSolveSchurSolver(const mfem::HypreParMatrix &A,
                                            const std::vector<HYPRE_BigInt> &schur_vars,
                                            InternalSolver solve, int block)
@@ -70,9 +177,9 @@ BackSolveSchurSolver::BackSolveSchurSolver(const mfem::HypreParMatrix &A,
 {
 }
 
-void BackSolveSchurSolver::CondenseBatch(const std::vector<const mfem::Vector *> &X,
-                                         const std::vector<mfem::Vector *> &Y,
-                                         double *g) const
+std::vector<double>
+BackSolveSchurSolver::CondenseBatch(const std::vector<const mfem::Vector *> &X,
+                                    const std::vector<mfem::Vector *> &Y) const
 {
   const int nb = static_cast<int>(X.size());
   const std::vector<int> &row = rows.Rows();
@@ -97,21 +204,20 @@ void BackSolveSchurSolver::CondenseBatch(const std::vector<const mfem::Vector *>
       loc[static_cast<std::size_t>(k) * m + r] -= zz[row[r]];
     }
   }
-  rows.Gather(loc, nb, g);
+  return loc;
 }
 
-std::vector<double> BackSolveSchurSolver::ReleaseSchur()
+std::vector<double> BackSolveSchurSolver::ReleaseSchurRows()
 {
   // Column c of S is the condensation of column c of A: A_IS e_c on the internal
-  // variables, A_SS e_c on the Schur ones.
-  const bool root = Mpi::Root(A.GetComm());
-  const int n_loc = A.Height();
+  // variables, A_SS e_c on the Schur ones. Each rank keeps it in its rows.
+  const int n_loc = A.Height(), m = static_cast<int>(rows.Rows().size());
   std::vector<int> local(n_schur, -1);  // the local row of each Schur variable, or -1
-  for (std::size_t r = 0; r < rows.Rows().size(); r++)
+  for (int r = 0; r < m; r++)
   {
     local[rows.Positions()[r]] = rows.Rows()[r];
   }
-  std::vector<double> S(root ? static_cast<std::size_t>(n_schur) * n_schur : 0);
+  std::vector<double> S(static_cast<std::size_t>(m) * n_schur);
   std::vector<mfem::Vector> t(std::min(block, n_schur), mfem::Vector(n_loc));
   mfem::Vector e(n_loc);
   for (int c0 = 0; c0 < n_schur; c0 += block)
@@ -130,7 +236,15 @@ std::vector<double> BackSolveSchurSolver::ReleaseSchur()
       X[k] = &t[k];
       Y[k] = &t[k];
     }
-    CondenseBatch(X, Y, root ? S.data() + static_cast<std::size_t>(n_schur) * c0 : nullptr);
+    const std::vector<double> loc = CondenseBatch(X, Y);
+    for (int k = 0; k < nb; k++)
+    {
+      for (int r = 0; r < m; r++)
+      {
+        S[static_cast<std::size_t>(r) * n_schur + c0 + k] =
+            loc[static_cast<std::size_t>(k) * m + r];
+      }
+    }
   }
   return S;
 }
@@ -156,8 +270,8 @@ void BackSolveSchurSolver::Condense(const std::vector<const mfem::Vector *> &X,
     {
       Y[k] = &t[k];
     }
-    CondenseBatch({X.begin() + c0, X.begin() + c0 + nb}, Y,
-                  root ? g.data() + static_cast<std::size_t>(n_schur) * c0 : nullptr);
+    rows.Gather(CondenseBatch({X.begin() + c0, X.begin() + c0 + nb}, Y), nb,
+                root ? g.data() + static_cast<std::size_t>(n_schur) * c0 : nullptr);
   }
 }
 

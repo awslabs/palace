@@ -7,7 +7,6 @@
 
 #include <algorithm>
 #include <climits>
-#include <utility>
 #include "utils/communication.hpp"
 
 namespace palace
@@ -71,9 +70,11 @@ StrumpackSchurSolver::StrumpackSchurSolver(const mfem::HypreParMatrix &A,
   }
 }
 
-std::vector<double> StrumpackSchurSolver::ReleaseSchur()
+std::vector<double> StrumpackSchurSolver::ReleaseSchurRows()
 {
-  return std::move(schur);
+  std::vector<double> S = rows.ScatterSchur(schur);
+  std::vector<double>().swap(schur);
+  return S;
 }
 
 void StrumpackSchurSolver::SolveInternal(const std::vector<const mfem::Vector *> &X,

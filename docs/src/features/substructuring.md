@@ -100,10 +100,10 @@ Most meshes do not come with a region/environment split. Any split into two sets
 attributes works: the interface follows the element faces between them and need not be planar. The
 cost of the condensation grows with the number of interface degrees of freedom, so a region boundary
 in a coarsely meshed part of the domain (substrate or vacuum away from the metal) is cheaper than
-one that cuts through a finely meshed area. Its memory does too: ``\bm{S}_E`` is dense, and one
-process holds it whole (``|\Gamma|^2`` values, 7 GB at ``|\Gamma| = 30{,}000``) while the
-environment is condensed (two copies with the STRUMPACK partial factorization) and while the model
-is saved or read. That process also holds the whole mesh while it writes the mesh of the region. The
+one that cuts through a finely meshed area. Its memory does too: ``\bm{S}_E`` is dense
+(``|\Gamma|^2`` values, 7 GB at ``|\Gamma| = 30{,}000``), and each process holds its rows, except
+with the STRUMPACK partial factorization, which gives it whole to one process (two copies while the
+environment is condensed). One process holds the whole mesh to write the mesh of the region. The
 [transmon example](@ref substructuring-transmon-example) retags the elements of an existing mesh by
 the position of their centroids.
 
@@ -270,7 +270,7 @@ voltage of a lumped port, would depend on both sides.
     `"AdaptiveCircuitSynthesis"` and the adaptive refinement of the region in online sweeps are not
     supported yet, nor, from a model, interface dielectric and far-field postprocessing. The model
     holds one dense ``|\Gamma| \times |\Gamma|`` matrix per frequency or sample (16 bytes per entry
-    of its lower triangle).
+    of its lower triangle), which one process holds whole at each frequency.
 
 ## [Example: transmon capacitance](@id substructuring-transmon-example)
 

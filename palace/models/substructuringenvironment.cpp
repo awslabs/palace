@@ -478,27 +478,6 @@ void SubstructuringSolver::Impl::RowLayout(std::vector<int> &cnt,
   }
 }
 
-namespace
-{
-
-// A row of w doubles, so that the counts of a row exchange are rows (|Gamma| w doubles can
-// overflow an int).
-class RowType
-{
-public:
-  explicit RowType(int w)
-  {
-    MPI_Type_contiguous(w, MPI_DOUBLE, &type);
-    MPI_Type_commit(&type);
-  }
-  ~RowType() { MPI_Type_free(&type); }
-  RowType(const RowType &) = delete;
-  RowType &operator=(const RowType &) = delete;
-  MPI_Datatype type;
-};
-
-}  // namespace
-
 std::vector<double> SubstructuringSolver::Impl::GatherRows(const std::vector<double> &rows,
                                                            int w) const
 {
@@ -624,7 +603,11 @@ void SubstructuringSolver::Impl::MaterializeWithEnergy()
   const bool partial = !env_partial.empty();
   if (partial)
   {
-    ScatterRows(env_schur->ReleaseSchur(), nG, S_rows);
+    S_rows = env_schur->ReleaseSchurRows();
+  }
+  else
+  {
+    S_rows.assign(static_cast<std::size_t>(nloc) * nG, 0.0);
   }
   std::unique_ptr<mfem::HypreParMatrix> E = AssembleSelection(is_gamma);
   std::unique_ptr<mfem::HypreParMatrix> G(mfem::ParMult(&Aenv(), E.get())), R;
