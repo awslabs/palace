@@ -5,17 +5,14 @@
 
 #include <cmath>
 #include <limits>
-#include <numeric>
 #include <utility>
-#include "fem/bilinearform.hpp"
-#include "fem/coefficient.hpp"
-#include "fem/integrator.hpp"
+#include "fem/gridfunction.hpp"
 #include "fem/multigrid.hpp"
-#include "linalg/amg.hpp"
 #include "linalg/errorestimator.hpp"
 #include "linalg/iterative.hpp"
-#include "linalg/rap.hpp"
 #include "models/materialoperator.hpp"
+#include "models/postoperator.hpp"
+#include "utils/geodata.hpp"
 #include "utils/timer.hpp"
 
 namespace palace
@@ -24,8 +21,8 @@ namespace palace
 namespace
 {
 
-// Preconditioner forwarding to a callable (the region factor or region-submesh multigrid,
-// both built up front, so SetOperator is a no-op).
+// Preconditioner forwarding to a callable (the region factor, built on the first solve
+// batch, so SetOperator is a no-op).
 class CallableSolver : public Solver<Operator>
 {
 public:
@@ -41,26 +38,54 @@ private:
   std::function<void(const mfem::Vector &, mfem::Vector &)> apply;
 };
 
+// The solver configuration of the native operator of the substructuring: the finest mesh
+// and space only (the factorizations need no multigrid hierarchy).
+config::SolverData SingleLevel(const config::SolverData &solver)
+{
+  config::SolverData single(solver);
+  single.linear.mg_max_levels = 1;
+  return single;
+}
+
+std::unique_ptr<LaplaceOperator>
+MakeLaplaceOperator(const IoData &iodata, const std::vector<std::unique_ptr<Mesh>> &mesh)
+{
+  // The terminals of the environment are not on the mesh of the region (their modes are in
+  // the model), which the operator would reject.
+  config::BoundaryData boundaries(iodata.boundaries);
+  const auto &bdr_attributes = mesh.back()->Get().bdr_attributes;
+  for (auto it = boundaries.terminal.begin(); it != boundaries.terminal.end();)
+  {
+    std::erase_if(it->second.attributes, [&](int a) { return bdr_attributes.Find(a) < 0; });
+    it = it->second.attributes.empty() ? boundaries.terminal.erase(it) : std::next(it);
+  }
+  return std::make_unique<LaplaceOperator>(boundaries, SingleLevel(iodata.solver),
+                                           iodata.domains.materials, iodata.problem.type,
+                                           mesh);
+}
+
 }  // namespace
 
-SubstructuringSolver::Impl::Impl(const IoData &iodata, Mesh &mesh)
-  : iodata(iodata), mesh(mesh), parent(mesh.Get()),
+SubstructuringSolver::Impl::Impl(const IoData &iodata,
+                                 const std::vector<std::unique_ptr<Mesh>> &mesh_)
+  : iodata(iodata), mesh(*mesh_.back()), parent(mesh.Get()),
     magnetostatic(iodata.problem.type == ProblemType::MAGNETOSTATIC),
-    fec(magnetostatic
-            ? std::unique_ptr<mfem::FiniteElementCollection>(
-                  new mfem::ND_FECollection(iodata.solver.order, parent.Dimension()))
-            : std::unique_ptr<mfem::FiniteElementCollection>(
-                  new mfem::H1_FECollection(iodata.solver.order, parent.Dimension()))),
-    parent_space(mesh, fec.get()), parent_fes(parent_space.Get())
+    laplace_op(magnetostatic ? nullptr : MakeLaplaceOperator(iodata, mesh_)),
+    curlcurl_op(magnetostatic ? std::make_unique<CurlCurlOperator>(
+                                    iodata.boundaries, SingleLevel(iodata.solver),
+                                    iodata.domains.materials, iodata.problem.type,
+                                    iodata.units, mesh_)
+                              : nullptr),
+    parent_space(magnetostatic ? curlcurl_op->GetNDSpace() : laplace_op->GetH1Space()),
+    parent_fes(parent_space.Get())
 {
   MFEM_VERIFY(iodata.solver.substructuring,
               "SubstructuringSolver requires a Solver.Substructuring configuration!");
   const auto &sub = *iodata.solver.substructuring;
   CheckSubstructuringAttributes(parent, sub.region_attributes, sub.environment_attributes);
-  std::array<std::unique_ptr<mfem::HypreParMatrix>, 2> two_sided;
   if (magnetostatic)
   {
-    two_sided = SetUpBrokenSpace();
+    SetUpBrokenSpace();
   }
   nt = SolutionSpace().GetTrueVSize();
   for (int a : sub.region_attributes)
@@ -73,12 +98,15 @@ SubstructuringSolver::Impl::Impl(const IoData &iodata, Mesh &mesh)
   }
 
   // Interface / region / environment true-DOF markers.
-  mfem::Array<int> rm, em, im;
-  MarkInterfaceTrueDofs(SolutionSpace(), ra_arr, ea_arr, rm, em, im);
+  mfem::Array<int> rm, em;
+  MarkInterfaceTrueDofs(SolutionSpace(), ra_arr, ea_arr, rm, em);
 
   // Dirichlet true DOFs: the terminals (per terminal) and the grounded boundaries. The
   // set is fixed across excitations, so the interface/interior partition is too.
-  const auto &terminals = iodata.boundaries.terminal;
+  // Terminals are Dirichlet boundaries in electrostatics only: the regular curl-curl
+  // operator ignores them (CurlCurlOperator::SetUpBoundaryProperties).
+  const std::map<int, config::TerminalData> no_terminals;
+  const auto &terminals = magnetostatic ? no_terminals : iodata.boundaries.terminal;
   mfem::Array<int> dir_mark(nt);
   dir_mark = 0;
   {
@@ -174,12 +202,20 @@ SubstructuringSolver::Impl::Impl(const IoData &iodata, Mesh &mesh)
     // The mesh holds the environment of the model, or its part in the mesh of the region.
     region_only = RegionOnlyMesh(parent, sub.environment_attributes, saved.env_moments,
                                  saved.region_moments, kFingerprintTol);
+    // S_E was condensed with the regularization of the model: the region uses the same.
+    model_eps = saved.regularization;
     if (region_only)
     {
-      model_eps = saved.regularization;
       MFEM_VERIFY(iodata.model.refinement.max_it == 0,
                   "Adaptive refinement with substructuring needs the full mesh, not the "
                   "mesh of the region!");
+      const auto &refinement = iodata.model.refinement;
+      MFEM_VERIFY(refinement.uniform_ref_levels == 0 &&
+                      refinement.ser_uniform_ref_levels == 0 &&
+                      refinement.GetBoxes().empty() && refinement.GetSpheres().empty(),
+                  "The mesh of the region is written refined: an online run on it takes no "
+                  "\"UniformLevels\", \"SerialUniformLevels\", \"Boxes\" or \"Spheres\" "
+                  "refinement!");
       // The versions on the region side only of the DOFs on the boundary, at the points of
       // the saved interface DOFs, are interface DOFs (both sides of a two-sided film
       // crossing Gamma).
@@ -193,15 +229,29 @@ SubstructuringSolver::Impl::Impl(const IoData &iodata, Mesh &mesh)
                                 saved.width);
     }
   }
+  // As in the regular solve, the terminal attributes are boundary attributes of the mesh
+  // (but those of the environment terminals are not on the mesh of the region).
+  if (!region_only)
+  {
+    for (const auto &[idx, term] : terminals)
+    {
+      for (int a : term.attributes)
+      {
+        MFEM_VERIFY(parent.bdr_attributes.Find(a) >= 0,
+                    "Unknown terminal boundary attribute " << a << "!");
+      }
+    }
+  }
 
   is_gamma.assign(nt, 0);
   is_env_int.assign(nt, 0);
   is_region_free.assign(nt, 0);
+  env_dbc.assign(nt, 0);
   for (int i = 0; i < nt; i++)
   {
     if (dir_mark[i])
     {
-      env_dbc_local += em[i] ? 1 : 0;
+      env_dbc[i] = em[i];
       continue;
     }
     const bool r = rm[i], e = em[i];
@@ -234,81 +284,19 @@ SubstructuringSolver::Impl::Impl(const IoData &iodata, Mesh &mesh)
     }
   }
 
-  // Domain-restricted material coefficients (zero outside the subdomain).
-  const int max_attr = parent.attributes.Size() ? parent.attributes.Max() : 1;
-  const int dim = parent.Dimension();
-  // Material tensor from its eigendecomposition, M_ij = sum_k s[k] v[k]_i v[k]_j
-  // (inverted for the curl-curl inverse permeability).
-  auto tensor = [dim](const config::SymmetricMatrixData<3> &prop, bool invert)
-  {
-    mfem::DenseMatrix e(dim);
-    e = 0.0;
-    for (int k = 0; k < 3; k++)
-    {
-      for (int i = 0; i < dim; i++)
-      {
-        for (int j = 0; j < dim; j++)
-        {
-          e(i, j) += prop.s[k] * prop.v[k][i] * prop.v[k][j];
-        }
-      }
-    }
-    if (invert)
-    {
-      e.Invert();
-    }
-    return e;
-  };
-  for (const auto &mat : iodata.domains.materials)
-  {
-    for (int a : mat.attributes)
-    {
-      if (a < 1 || a > max_attr)
-      {
-        continue;
-      }
-      if (ra_arr.Find(a) >= 0)
-      {
-        region_eps[a] = tensor(magnetostatic ? mat.mu_r : mat.epsilon_r, magnetostatic);
-      }
-      else if (ea_arr.Find(a) >= 0)
-      {
-        env_eps[a] = tensor(magnetostatic ? mat.mu_r : mat.epsilon_r, magnetostatic);
-      }
-    }
-  }
   if (magnetostatic)
   {
-    SetUpSheets(ra_arr, std::move(two_sided));
-    // The region solve factors A_region_free + S_E with the dense S_E (see
-    // EnsureRegionFactor), which the compression discards.
-    MFEM_VERIFY(!has_sheets || sub.interface_offdiag_tol == 0.0,
-                "Substructuring with London superconductor sheets needs the dense "
-                "interface operator (\"InterfaceOffdiagTol\": 0)!");
+    CheckSheets();
     mag_eps = (model_eps > 0.0) ? model_eps
               : has_sheets      ? kMagRegularizationSheets
                                 : kMagRegularization;
   }
-  A_region = AssembleParent(region_eps, magnetostatic, true, &sheet_region);
-  if (magnetostatic)
-  {
-    // Energy operator: the pure curl-curl (see SourceEnergyMatrix for the London sheets).
-    A_region_energy = AssembleParent(region_eps, false);
-    K_region_e = A_region_energy.get();
-    if (has_sheets)
-    {
-      M_sheet_region = AssembleParent({}, false, false, &sheet_region);
-    }
-  }
-  else
-  {
-    K_region_e = A_region.get();
-  }
+  AssembleRegion();
 }
 
 void SubstructuringSolver::Impl::EnsureRegionFactor(int n)
 {
-  if (!region_direct || reg_lu)
+  if (reg_lu)
   {
     return;
   }
@@ -322,7 +310,7 @@ void SubstructuringSolver::Impl::EnsureRegionFactor(int n)
        static_cast<long long>(std::max(n, 1)) * kDenseInterfacePerExcitation >= nG_global);
   long long nrf = rf_idx.Size();
   MPI_Allreduce(MPI_IN_PLACE, &nrf, 1, MPI_LONG_LONG, MPI_SUM, parent_fes.GetComm());
-  const bool serial = (nrf <= kSerialRegionFactorDofs);
+  const bool serial = !region_exact && nrf <= kSerialRegionFactorDofs;
   reg_lu = std::make_unique<substructuring::BlockedDirectSolver>(
       substructuring::MakeDirectSolver(iodata, parent_fes.GetComm(), serial),
       region_exact
@@ -355,10 +343,11 @@ void SubstructuringSolver::Impl::ApplyRegionFactor(const mfem::Vector &r,
   z.SetSubVector(rf_idx, reg_z);
 }
 
-void SubstructuringSolver::Impl::SolveRegion(std::vector<mfem::Vector> &x) const
+void SubstructuringSolver::Impl::SolveRegion(std::vector<mfem::Vector> &x)
 {
-  BlockTimer bt(Timer::KSP);
   const int n = static_cast<int>(x.size());
+  EnsureRegionFactor(n);
+  BlockTimer bt(Timer::KSP);
   if (region_exact)
   {
     std::vector<const mfem::Vector *> X(n);
@@ -407,178 +396,16 @@ mfem::Vector SubstructuringSolver::Impl::RegionField(const mfem::Vector &x_rf,
   return u;
 }
 
-bool SubstructuringSolver::Impl::BuildRegionGmg()
-{
-  const int order = iodata.solver.order;
-  const int dim = parent.Dimension();
-  const int mg_levels = iodata.solver.linear.mg_max_levels;
-  if (magnetostatic || order <= 1 || mg_levels <= 1)
-  {
-    return false;
-  }
-
-  reg_mesh_vec.clear();
-  reg_mesh_vec.push_back(std::make_unique<Mesh>(std::make_unique<mfem::ParSubMesh>(
-      mfem::ParSubMesh::CreateFromDomain(parent, ra_arr))));
-  reg_submesh = dynamic_cast<mfem::ParSubMesh *>(&reg_mesh_vec[0]->Get());
-  reg_mesh_vec[0]->RebuildCeedAttributes();
-  reg_pgf.SetSpace(&parent_fes);
-
-  // Essential submesh boundary attributes: the region Dirichlet ones (Gamma free).
-  mfem::Vector marker(nt);
-  marker = 0.0;
-  for (int i = 0; i < dbc_tdofs.Size(); i++)
-  {
-    marker(dbc_tdofs[i]) = 1.0;
-  }
-  mfem::Array<int> ess_attr = EssentialSubmeshAttributes(*reg_submesh, marker);
-  if (ess_attr.Size() == 0)
-  {
-    return false;  // pure-Neumann region block: keep the single-level preconditioner
-  }
-
-  reg_fecs = fem::ConstructFECollections<mfem::H1_FECollection>(
-      order, dim, mg_levels, iodata.solver.linear.mg_coarsening, false);
-  reg_dbc_lists.clear();
-  reg_hierarchy = std::make_unique<FiniteElementSpaceHierarchy>(
-      fem::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
-          mg_levels, reg_mesh_vec, reg_fecs, &ess_attr, &reg_dbc_lists));
-  if (reg_hierarchy->GetNumLevels() < 2)
-  {
-    reg_hierarchy.reset();
-    reg_fecs.clear();
-    return false;
-  }
-  reg_solve_fes = &reg_hierarchy->GetFinestFESpace().Get();
-
-  MaterialOperator reg_mat_op(iodata, *reg_mesh_vec[0]);
-  MaterialPropertyCoefficient coef(reg_mat_op.GetAttributeToMaterial(),
-                                   reg_mat_op.GetPermittivityReal());
-  BilinearForm a(reg_hierarchy->GetFinestFESpace());
-  a.AddDomainIntegrator<DiffusionIntegrator>(coef);
-  auto a_vec = a.Assemble(*reg_hierarchy, false);
-
-  const std::size_t nl = reg_hierarchy->GetNumLevels();
-  reg_mg_op = std::make_unique<MultigridOperator>(nl);
-  for (std::size_t l = 0; l < nl; l++)
-  {
-    auto &fes_l = reg_hierarchy->GetFESpaceAtLevel(l);
-    auto A_l = std::make_unique<ParOperator>(std::move(a_vec[l]), fes_l);
-    A_l->SetEssentialTrueDofs(reg_dbc_lists[l], Operator::DiagonalPolicy::DIAG_ONE);
-    reg_mg_op->AddOperator(std::move(A_l));
-  }
-  reg_ess = reg_dbc_lists.back();
-
-  auto amg = std::make_unique<MfemWrapperSolver<Operator>>(
-      std::make_unique<BoomerAmgSolver>(1, 1, true, 0));
-  amg->SetDropSmallEntries(false);
-  reg_gmg = std::make_unique<GeometricMultigridSolver<Operator>>(
-      iodata, reg_submesh->GetComm(), std::move(amg),
-      reg_hierarchy->GetProlongationOperators());
-  reg_gmg->SetOperator(*reg_mg_op);
-
-  reg_sgf.SetSpace(reg_solve_fes);
-  reg_srhs.SetSize(reg_solve_fes->GetTrueVSize());
-  reg_ssol.SetSize(reg_solve_fes->GetTrueVSize());
-  reg_srhs.UseDevice(true);
-  reg_ssol.UseDevice(true);
-  return true;
-}
-
-void SubstructuringSolver::Impl::ApplyRegionGmgPc(const mfem::Vector &r,
-                                                  mfem::Vector &z) const
-{
-  z.SetSize(nt);
-  {
-    const double *rr = r.HostRead();
-    double *zz = z.HostWrite();
-    for (int i = 0; i < nt; i++)
-    {
-      zz[i] = is_region_free[i] ? 0.0 : rr[i];
-    }
-  }
-  reg_pgf.SetFromTrueDofs(r);
-  reg_sgf = 0.0;
-  reg_submesh->Transfer(reg_pgf, reg_sgf);
-  reg_sgf.GetTrueDofs(reg_srhs);
-  linalg::SetSubVector(reg_srhs, reg_ess, 0.0);
-  reg_ssol = 0.0;
-  reg_gmg->Mult(reg_srhs, reg_ssol);
-  reg_sgf.SetFromTrueDofs(reg_ssol);
-  reg_pgf = 0.0;
-  reg_submesh->Transfer(reg_sgf, reg_pgf);
-  mfem::Vector zr(nt);
-  reg_pgf.GetTrueDofs(zr);
-  const double *zrr = zr.HostRead();
-  double *zz = z.HostReadWrite();
-  for (int i = 0; i < nt; i++)
-  {
-    if (is_region_free[i])
-    {
-      zz[i] = zrr[i];
-    }
-  }
-}
-
 std::string SubstructuringSolver::Impl::SetUpRegionSolver()
 {
-  const int nG = nG_global;
   MPI_Comm comm = parent_fes.GetComm();
-  const auto &subcfg = *iodata.solver.substructuring;
-  std::string region_solver;
-  std::unique_ptr<Solver<Operator>> pc;
-  // Direct factorization when the region fits.
-  long long reg_glob = 0;
-  if (substructuring::kHasDirectSolver)
-  {
-    long long reg_loc = 0;
-    for (int i = 0; i < nt; i++)
-    {
-      reg_loc += is_region_free[i];
-    }
-    MPI_Allreduce(&reg_loc, &reg_glob, 1, MPI_LONG_LONG, MPI_SUM, comm);
-  }
-  MFEM_VERIFY(!broken ||
-                  (substructuring::kHasDirectSolver && reg_glob <= subcfg.direct_max_size),
-              "\"TwoSided\" superconductor films in substructuring need a direct region "
-              "factorization: a sparse direct solver and a region within "
-              "\"Solver.Substructuring.DirectMaxSize\"!");
-  if (substructuring::kHasDirectSolver && reg_glob <= subcfg.direct_max_size)
-  {
-    // The exact condensed operator A_region_free + S_E (dense Gamma block; a sparsified
-    // S_E is a worse preconditioner than none) or A_region_free, chosen at the first
-    // solve batch (EnsureRegionFactor).
-    region_direct = true;
-    region_dense_eligible = !hodlr && nG > 0 && nG <= kDirectCondensedMaxInterface;
-    pc = std::make_unique<CallableSolver>(A_region_free->Height(),
-                                          [this](const mfem::Vector &r, mfem::Vector &z)
-                                          { ApplyRegionFactor(r, z); });
-    region_solver =
-        fmt::format("{} factorization", substructuring::DirectSolverName(iodata));
-  }
-  else if (BuildRegionGmg())
-  {
-    pc = std::make_unique<CallableSolver>(A_region_free->Height(),
-                                          [this](const mfem::Vector &r, mfem::Vector &z)
-                                          { ApplyRegionGmgPc(r, z); });
-    region_solver = "conjugate gradients with geometric multigrid";
-  }
-  else if (magnetostatic)
-  {
-    region_solver = "conjugate gradients with AMS";
-    auto ams = std::make_unique<mfem::HypreAMS>(&parent_fes);
-    ams->SetPrintLevel(0);
-    pc = std::make_unique<MfemWrapperSolver<Operator>>(
-        std::move(ams), /*save_assembled=*/true, /*complex_matrix=*/false,
-        /*drop_small_entries=*/false);
-  }
-  else
-  {
-    region_solver = "conjugate gradients with BoomerAMG";
-    pc = std::make_unique<MfemWrapperSolver<Operator>>(
-        std::make_unique<BoomerAmgSolver>(1, 1, true, 0), /*save_assembled=*/true,
-        /*complex_matrix=*/false, /*drop_small_entries=*/false);
-  }
+  // The exact condensed operator A_region_free + S_E (dense Gamma block; a sparsified S_E
+  // is a worse preconditioner than none) or A_region_free, chosen at the first solve batch
+  // (EnsureRegionFactor).
+  region_dense_eligible = nG_global > 0 && nG_global <= kDirectCondensedMaxInterface;
+  auto pc = std::make_unique<CallableSolver>(A_region_free->Height(),
+                                             [this](const mfem::Vector &r, mfem::Vector &z)
+                                             { ApplyRegionFactor(r, z); });
   auto pcg = std::make_unique<CgSolver<Operator>>(comm, 0);
   pcg->SetInitialGuess(false);
   pcg->SetRelTol(kRegionCgTol);
@@ -588,12 +415,12 @@ std::string SubstructuringSolver::Impl::SetUpRegionSolver()
       *A_region_free, *mat_dtn, is_region_free);
   region_ksp = std::make_unique<KspSolver>(std::move(pcg), std::move(pc));
   region_ksp->SetOperators(*region_op, *A_region_free);
-  return region_solver;
+  return fmt::format("{} factorization", substructuring::DirectSolverName(iodata));
 }
 
 SubstructuringSolver::SubstructuringSolver(const IoData &iodata,
                                            const std::vector<std::unique_ptr<Mesh>> &mesh)
-  : impl(std::make_unique<Impl>(iodata, *mesh.back()))
+  : impl(std::make_unique<Impl>(iodata, mesh))
 {
 }
 
@@ -619,8 +446,6 @@ void SubstructuringSolver::CondenseEnvironment()
   // Interface true-DOF geometric signature (replicated), to re-order a saved S_E onto the
   // current interface after re-meshing or re-partitioning the region (with the side moments
   // of the versions of the DOFs split by two-sided films, see InterfaceSignatures).
-  MFEM_VERIFY(SignatureWidth(impl->parent_fes) == (impl->magnetostatic ? 12 : 3),
-              "Unexpected finite element space for the interface signatures!");
   const int sig_w = impl->magnetostatic ? (impl->InterfaceSplit() ? 13 : 12) : 3;
 
   // Online with a saved model: load S_E (and the model's sections); otherwise materialize
@@ -628,17 +453,30 @@ void SubstructuringSolver::CondenseEnvironment()
   const auto &subcfg = *impl->iodata.solver.substructuring;
   const bool online = (subcfg.mode == SubstructuringMode::ONLINE);
   const std::string &model_path = subcfg.save_model;
+  if (!online && !model_path.empty())
+  {
+    // Fail before the condensation if the model cannot be written (an existing one is
+    // kept until it is replaced).
+    impl->WriteModel(model_path, true, [](std::ofstream &) {});
+  }
+  // The versions of the interface DOFs on a two-sided film crossing Gamma are told apart
+  // by the faces of their sides (InterfaceSignatures), of which a coarse face of a
+  // nonconforming mesh has several on one side.
+  MFEM_VERIFY(
+      model_path.empty() || !impl->InterfaceSplit() || !impl->parent.Nonconforming(),
+      "A saved substructuring model with \"TwoSided\" superconductor films crossing "
+      "the interface needs a conforming mesh!");
   bool loaded = false;
   if (online && !model_path.empty())
   {
     impl->LoadModel(model_path, sig_w);
     loaded = true;
   }
-  // S_E from a partial factorization when one is built and the environment fits a direct
-  // factorization, else from solves with A_EE: always when S^K is also materialized (its
-  // correction needs the lifted columns, which the solves give).
+  // S_E from a partial factorization when one is built, else from solves with A_EE: always
+  // when S^K is also materialized (its correction needs the lifted columns, which the
+  // solves give).
   const bool with_sk = impl->EnergyDiffers() && !model_path.empty();
-  if (!loaded && nG > 0 && !with_sk && impl->EnvDirectSize() <= subcfg.direct_max_size)
+  if (!loaded && nG > 0 && !with_sk)
   {
     impl->MaterializePartial();
   }
@@ -676,20 +514,12 @@ void SubstructuringSolver::CondenseEnvironment()
       impl->SaveModel(model_path, sig_w);
     }
   }
-  // Optional HODLR compression of the interface operators.
-  if (subcfg.interface_offdiag_tol > 0.0 && nG > 0)
-  {
-    impl->CompressInterface(subcfg.interface_offdiag_tol);
-  }
-
   impl->mat_dtn = std::make_unique<substructuring::MaterializedDtN>(
-      impl->S_rows, impl->gamma_off, impl->gamma_global, impl->nG_global, comm,
-      impl->hodlr.get());
+      impl->S_rows, impl->gamma_off, impl->gamma_global, impl->nG_global, comm);
   if (impl->have_sk)
   {
     impl->mat_dtn_K = std::make_unique<substructuring::MaterializedDtN>(
-        impl->SK_rows, impl->gamma_off, impl->gamma_global, impl->nG_global, comm,
-        impl->hodlr_K.get());
+        impl->SK_rows, impl->gamma_off, impl->gamma_global, impl->nG_global, comm);
   }
 
   const std::string region_solver = impl->SetUpRegionSolver();
@@ -711,17 +541,10 @@ void SubstructuringSolver::CondenseEnvironment()
             fmt::format(" (block low-rank, tolerance {:.1e})", subcfg.factorization_tol);
       }
     }
-    else if (impl->env_parent_direct)
+    else
     {
       env_solver =
           fmt::format("{} factorization", substructuring::DirectSolverName(impl->iodata));
-    }
-    else
-    {
-      env_solver = fmt::format("conjugate gradients with {}",
-                               impl->env_hierarchy   ? "geometric multigrid"
-                               : impl->magnetostatic ? "AMS"
-                                                     : "BoomerAMG");
     }
     if (!model_path.empty())
     {
@@ -791,7 +614,6 @@ SubstructuringSolver::SolveDirichletBatch(const std::vector<Vector> &dbcs)
   impl->EnsureEnv();  // general Dirichlet data needs environment solves
   const int nt = impl->nt;
   const int n = static_cast<int>(dbcs.size());
-  impl->EnsureRegionFactor(n);
   MPI_Comm comm = impl->parent_fes.GetComm();
 
   // g_E per excitation: the interface response to the Dirichlet data,
@@ -888,7 +710,6 @@ std::vector<Vector> SubstructuringSolver::SolveSourceBatch(const std::vector<Vec
   MFEM_VERIFY(impl->mat_dtn, "CondenseEnvironment must be called before solving!");
   impl->EnsureEnv();
   const int nt = impl->nt, n = static_cast<int>(f.size());
-  impl->EnsureRegionFactor(n);
 
   // Environment interior source responses w = A_EE^-1 f_E, in one batch.
   std::vector<Vector> fE(n, Vector(nt)), w(n, Vector(nt));
@@ -1161,7 +982,6 @@ mfem::DenseMatrix SubstructuringSolver::SourceEnergyMatrix(
 
   // Region-condensed solve per source (environment interior left at zero): the region
   // source plus the environment's interface load g_k.
-  impl->EnsureRegionFactor(n);
   const auto &rc = impl->rc_idx, &gm = impl->gamma_idx;
   std::vector<Vector> x(n, Vector(impl->rf_idx.Size()));
   for (int j = 0; j < n; j++)
@@ -1353,42 +1173,33 @@ mfem::DenseMatrix SubstructuringSolver::EnergyMatrixDbc(const std::vector<int> &
                                                         std::vector<Vector> *region_fields)
 {
   MFEM_VERIFY(impl->mat_dtn, "CondenseEnvironment must be called before solving!");
+  MFEM_VERIFY(!impl->magnetostatic,
+              "Dirichlet-lift energies are for electrostatic substructuring problems!");
   const int nt = impl->nt;
   const int n = static_cast<int>(xd.size());
   const int nf = fields ? std::max(0, std::min(n_fields, n)) : 0;
   MPI_Comm comm = impl->parent_fes.GetComm();
-  auto full = [&]()
-  {
-    std::vector<Vector> x;
-    for (const auto &v : xd)
-    {
-      x.push_back(impl->DirichletField(v));
-    }
-    return x;
-  };
 
-  // Magnetostatics without the energy interface operator S^K: environment path (full
-  // fields, then the energy u_i^T K u_j).
-  if (impl->EnergyDiffers() && !impl->mat_dtn_K)
-  {
-    std::vector<Vector> u = SolveDirichletBatch(full());
-    mfem::DenseMatrix E = impl->EnergyGram(u);
-    if (fields)
-    {
-      fields->assign(u.begin(), u.begin() + nf);
-    }
-    return E;
-  }
-
-  // Modes of these lifts: reuse the saved / current ones if they match (id + environment
-  // fingerprint), else compute them (needs the environment once; appended to the model in
-  // an offline run that saves one).
+  // Modes of the lifts that reach the environment: reuse the saved / current ones if they
+  // match (id + environment fingerprint), else compute them (needs the environment once;
+  // appended to the model in an offline run that saves one). A lift that does not reach the
+  // environment, such as a terminal inside the region, has zero modes.
   std::vector<int> col;
-  if (!impl->ModesMatch(ids, xd, col))
+  std::vector<char> need;
+  if (!impl->ModesMatch(ids, xd, col, need))
   {
-    impl->ComputeModes(ids, full());
-    col.resize(n);
-    std::iota(col.begin(), col.end(), 0);
+    std::vector<int> req_ids;
+    std::vector<Vector> req_lifts;
+    for (int j = 0; j < n; j++)
+    {
+      col[j] = need[j] ? static_cast<int>(req_ids.size()) : -1;
+      if (need[j])
+      {
+        req_ids.push_back(ids[j]);
+        req_lifts.push_back(impl->DirichletField(xd[j]));
+      }
+    }
+    impl->ComputeModes(req_ids, req_lifts);
     const auto &subcfg = *impl->iodata.solver.substructuring;
     if (subcfg.mode != SubstructuringMode::ONLINE && !subcfg.save_model.empty())
     {
@@ -1396,15 +1207,14 @@ mfem::DenseMatrix SubstructuringSolver::EnergyMatrixDbc(const std::vector<int> &
     }
   }
   const int K = static_cast<int>(impl->mode_ids.size());
-  const std::vector<double> &GE = impl->have_gk ? impl->GK_rows : impl->G_rows;
-  const substructuring::MaterializedDtN &SK =
-      impl->mat_dtn_K ? *impl->mat_dtn_K : *impl->mat_dtn;
   auto row = [&](int i)
   { return static_cast<std::size_t>(impl->gamma_global[i] - impl->gamma_off) * K; };
+  // Modes of lift j (zero without an environment part).
+  auto g_of = [&](int i, int j)
+  { return col[j] < 0 ? 0.0 : impl->G_rows[row(i) + col[j]]; };
 
   // Region-condensed solve per lift (environment interior left at zero): the interface load
   // is the precomputed g_k, so no environment solve is needed.
-  impl->EnsureRegionFactor(n);
   const auto &rc = impl->rc_idx, &gm = impl->gamma_idx;
   std::vector<Vector> xr(n, Vector(impl->rf_idx.Size()));
   {
@@ -1415,7 +1225,7 @@ mfem::DenseMatrix SubstructuringSolver::EnergyMatrixDbc(const std::vector<int> &
       double *trr = tr.HostReadWrite();
       for (int i : gm)
       {
-        trr[i] += impl->G_rows[row(i) + col[j]];
+        trr[i] += g_of(i, j);
       }
       tr.Neg();
       tr.GetSubVector(impl->rf_idx, xr[j]);
@@ -1423,7 +1233,7 @@ mfem::DenseMatrix SubstructuringSolver::EnergyMatrixDbc(const std::vector<int> &
   }
   impl->SolveRegion(xr);
 
-  // Per lift, on the region elements' DOFs: u_j and K_R u_j; on Gamma: u_j and S^K u_j.
+  // Per lift, on the region elements' DOFs: u_j and K_R u_j; on Gamma: u_j and S_E u_j.
   // Full fields only for the saved ones (and all of them for region_fields).
   std::vector<Vector> uc(n), Kuc(n), ug(n), Sug(n);
   if (fields)
@@ -1441,7 +1251,7 @@ mfem::DenseMatrix SubstructuringSolver::EnergyMatrixDbc(const std::vector<int> &
       Vector u = impl->RegionField(xr[j], &xd[j]);
       xr[j].Destroy();
       impl->K_region_e->Mult(u, Ku);
-      SK.Mult(u, Su);
+      impl->mat_dtn->Mult(u, Su);
       u.GetSubVector(rc, uc[j]);
       Ku.GetSubVector(rc, Kuc[j]);
       u.GetSubVector(gm, ug[j]);
@@ -1457,7 +1267,7 @@ mfem::DenseMatrix SubstructuringSolver::EnergyMatrixDbc(const std::vector<int> &
     }
   }
 
-  // E_ij = u_i^T K_R u_j + [u_G,i; e_i]^T [S^K, G^K; G^K^T, Cmode] [u_G,j; e_j]: the region
+  // E_ij = u_i^T K_R u_j + [u_G,i; e_i]^T [S_E, G; G^T, Cmode] [u_G,j; e_j]: the region
   // energy plus the environment's exact condensed energy.
   mfem::DenseMatrix E(n);
   for (int i = 0; i < n; i++)
@@ -1467,7 +1277,7 @@ mfem::DenseMatrix SubstructuringSolver::EnergyMatrixDbc(const std::vector<int> &
       double a = (uc[i] * Kuc[j]) + (ug[i] * Sug[j]);
       for (int q = 0; q < gm.Size(); q++)
       {
-        a += ug[i](q) * GE[row(gm[q]) + col[j]] + GE[row(gm[q]) + col[i]] * ug[j](q);
+        a += ug[i](q) * g_of(gm[q], j) + g_of(gm[q], i) * ug[j](q);
       }
       E(i, j) = a;
     }
@@ -1480,7 +1290,10 @@ mfem::DenseMatrix SubstructuringSolver::EnergyMatrixDbc(const std::vector<int> &
   {
     for (int j = 0; j < n; j++)
     {
-      E(i, j) += impl->Cmode[static_cast<std::size_t>(col[i]) * K + col[j]];
+      if (col[i] >= 0 && col[j] >= 0)
+      {
+        E(i, j) += impl->Cmode[static_cast<std::size_t>(col[i]) * K + col[j]];
+      }
     }
   }
 
@@ -1523,7 +1336,7 @@ SubstructuringSolver::RegionErrorIndicator(const std::vector<Vector> &region_fie
 
   // Palace's flux estimators on the region submesh: their flux recovery sees only the
   // region, so the unknown environment field does not pollute the indicators near the
-  // interface.
+  // interface, and is discontinuous across the sheets, as in the regular solves.
   std::vector<std::unique_ptr<Mesh>> mesh;
   mesh.push_back(std::make_unique<Mesh>(std::make_unique<mfem::ParSubMesh>(
       mfem::ParSubMesh::CreateFromDomain(impl->parent, impl->ra_arr))));
@@ -1565,7 +1378,8 @@ SubstructuringSolver::RegionErrorIndicator(const std::vector<Vector> &region_fie
     mfem::RT_FECollection rt_fec(order - 1, dim);
     FiniteElementSpace rt_fespace(*mesh[0], &rt_fec);
     CurlFluxErrorEstimator<Vector> estimator(mat_op, rt_fespace, nd_fespaces, tol, max_it,
-                                             0, false);
+                                             0, false,
+                                             iodata.boundaries.GetSheetAttributes());
     estimate(estimator, rt_fespace.GetDiscreteInterpolator(nd_fespace), 1.0, nd_fespace,
              rt_fespace);
   }
@@ -1580,7 +1394,8 @@ SubstructuringSolver::RegionErrorIndicator(const std::vector<Vector> &region_fie
     auto rt_fespaces =
         fem::ConstructFiniteElementSpaceHierarchy<mfem::RT_FECollection>(1, mesh, rt_fecs);
     GradFluxErrorEstimator<Vector> estimator(mat_op, nd_fespace, rt_fespaces, tol, max_it,
-                                             0, false);
+                                             0, false,
+                                             iodata.boundaries.GetSheetAttributes());
     estimate(estimator, nd_fespace.GetDiscreteInterpolator(h1_fespace), -1.0, h1_fespace,
              nd_fespace);
   }
@@ -1631,9 +1446,24 @@ double SubstructuringSolver::MutualEnergy(const Vector &ui, const Vector &uj) co
   return mfem::InnerProduct(impl->parent_fes.GetComm(), ui, t);
 }
 
+double SubstructuringSolver::MutualSystemEnergy(const Vector &ui, const Vector &uj) const
+{
+  Vector t(impl->nt), t2(impl->nt);
+  impl->A_region->Mult(uj, t);
+  impl->Aenv().Mult(uj, t2);
+  t += t2;
+  return mfem::InnerProduct(impl->parent_fes.GetComm(), ui, t);
+}
+
 long long int SubstructuringSolver::GlobalTrueVSize() const
 {
   return impl->SolutionSpace().GlobalTrueVSize();
+}
+
+const FiniteElementSpaceHierarchy &SubstructuringSolver::GetFESpaces() const
+{
+  return impl->magnetostatic ? impl->curlcurl_op->GetNDSpaces()
+                             : impl->laplace_op->GetH1Spaces();
 }
 
 void SubstructuringSolver::WriteParaView(const std::string &dir,
@@ -1643,22 +1473,36 @@ void SubstructuringSolver::WriteParaView(const std::string &dir,
   BlockTimer bt(Timer::POSTPRO_PARAVIEW);
   MFEM_VERIFY(ids.size() == fields.size(), "WriteParaView requires one field per id!");
   const int order = impl->iodata.solver.order;
-  mfem::ParGridFunction phi(&impl->parent_fes);
+  const auto &units = impl->iodata.units;
+  GridFunction phi(impl->parent_fes);
   mfem::ParaViewDataCollection pv("paraview", &impl->parent);
   pv.SetPrefixPath(dir);
   pv.SetLevelsOfDetail(order);
   pv.SetHighOrderOutput(order > 1);
   pv.SetDataFormat(mfem::VTKFormat::BINARY);
-  pv.RegisterField(impl->magnetostatic ? "A" : "V", &phi);
+  pv.RegisterField(impl->magnetostatic ? "A" : "V", &phi.Real());
+  // The mesh and the fields in the units of the input, as PostOperator writes them.
+  const double mesh_Lc0 = units.GetMeshLengthRelativeScale();
+  mesh::DimensionalizeMesh(impl->parent, mesh_Lc0);
   mfem::Vector u0;
   for (std::size_t j = 0; j < fields.size(); j++)
   {
-    phi.SetFromTrueDofs(impl->FirstVersion(fields[j], u0));
-    phi.HostRead();  // the writer reads the host copy
+    phi.Real().SetFromTrueDofs(impl->FirstVersion(fields[j], u0));
+    ScaleGridFunction(mesh_Lc0, phi);
+    if (impl->magnetostatic)
+    {
+      units.DimensionalizeInPlace<Units::ValueType::CURRENT>(phi.Real());
+    }
+    else
+    {
+      units.DimensionalizeInPlace<Units::ValueType::VOLTAGE>(phi.Real());
+    }
+    phi.Real().HostRead();  // the writer reads the host copy
     pv.SetCycle(static_cast<int>(j));
     pv.SetTime(static_cast<double>(ids[j]));
     pv.Save();
   }
+  mesh::NondimensionalizeMesh(impl->parent, mesh_Lc0);
 }
 
 }  // namespace palace

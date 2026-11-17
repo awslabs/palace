@@ -1096,6 +1096,189 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   CHECK(close(reduced.lumped_port_capacitor_energy, full.lumped_port_capacitor_energy));
 }
 
+// Driven setup on cube_mesh_3_2_1_tet.msh for the excitation weight tests: an excited RLC
+// lumped port 1, with the excitation weight a = amplitude exp(i phase) when it is not the
+// default, and a passive resistive lumped port 2.
+json WeightedExcitationSetup(const fs::path &output_dir, double amplitude, double phase)
+{
+  const auto mesh_path =
+      fs::path(PALACE_TEST_DATA_DIR) / "lumpedport_mesh/cube_mesh_3_2_1_tet.msh";
+
+  json port_1 = json::object(
+      {{"Index", 1},
+       {"R", 50.0},
+       {"L", 1.0e-9},
+       {"C", 1.0e-12},
+       {"Excitation", uint(1)},
+       {"Elements", json::array({json::object(
+                        {{"Attributes", json::array({14})}, {"Direction", "+Z"}})})}});
+  if (amplitude != 1.0 || phase != 0.0)
+  {
+    port_1["ExcitationAmplitude"] = amplitude;
+    port_1["ExcitationPhase"] = phase;
+  }
+  json port_2 = json::object(
+      {{"Index", 2},
+       {"R", 75.0},
+       {"Elements", json::array({json::object(
+                        {{"Attributes", json::array({1})}, {"Direction", "+Y"}})})}});
+
+  json setup_json;
+  setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 0}, {"Output", output_dir}};
+  setup_json["Model"] = {{"Mesh", mesh_path},
+                         {"Refinement", json::object({})},
+                         {"CrackInternalBoundaryElements", false}};
+  setup_json["Domains"] = {
+      {"Materials",
+       json::array({json::object({{"Attributes", json::array({1, 2, 3, 4, 5, 6})},
+                                  {"Permeability", 1.0},
+                                  {"Permittivity", 1.0},
+                                  {"LossTan", 0.0}})})}};
+  setup_json["Boundaries"] = {{"LumpedPort", json::array({port_1, port_2})}};
+  setup_json["Solver"] = {
+      {"Order", 1UL},
+      {"Device", "CPU"},
+      {"Driven",
+       {{"AdaptiveTol", 1.0e-3}, {"MinFreq", 2.0}, {"MaxFreq", 32.0}, {"FreqStep", 30.0}}},
+      {"Linear",
+       {{"Type", "Default"}, {"KSPType", "GMRES"}, {"MaxIts", 200}, {"Tol", 1.0e-10}}}};
+  return setup_json;
+}
+
+// The S-parameters are normalized by the weight of the driven port: for the same field E,
+// the configuration with the weight a, measured on the field aE, must give the same S on
+// every port as the configuration without a weight measured on E, and the port voltages
+// scaled by a. A division by the weight that is dropped or applied twice fails this test.
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "PostOperator S-parameters are normalized by the excitation weight",
+                 "[postoperator][romoperator][Serial][Parallel]")
+{
+  MPI_Comm comm = Mpi::World();
+  const double amplitude = 2.0;
+  const double phase = 30.0;
+  const std::complex<double> a = std::polar(amplitude, phase * std::numbers::pi / 180.0);
+
+  // Measure the field scale * E, with B from the curl of that field, on the configuration
+  // with the given excitation weight. The random field E is the same for all weights.
+  auto measure = [&](double amp, double ph, std::complex<double> scale)
+  {
+    IoData iodata(WeightedExcitationSetup(temp_dir, amp, ph), false);
+    auto mesh = LoadScaleParMesh2(iodata, comm);
+    SpaceOperator space_op(iodata, mesh);
+    DrivenPostOperatorTest post_op(iodata, space_op);
+
+    REQUIRE(iodata.solver.driven.sample_f.size() == 2);
+    const double omega = iodata.solver.driven.sample_f.back();
+    ComplexVector E(space_op.GetNDSpace().GetTrueVSize());
+    E.UseDevice(true);
+    linalg::SetRandom(comm, E.Real(), 42);
+    linalg::SetRandom(comm, E.Imag(), 43);
+    linalg::SetSubVector(E.Real(), space_op.GetNDDbcTDofLists().back(), 0.0);
+    linalg::SetSubVector(E.Imag(), space_op.GetNDDbcTDofLists().back(), 0.0);
+    E *= scale;
+    ComplexVector B(space_op.GetCurlMatrix().Height());
+    B.UseDevice(true);
+    space_op.GetCurlMatrix().Mult(E.Real(), B.Real());
+    space_op.GetCurlMatrix().Mult(E.Imag(), B.Imag());
+    B *= -1.0 / (std::complex<double>(0.0, 1.0) * omega);
+    post_op.MeasureAndPrintAll(1, 0, E, B, omega);
+    return std::make_pair(post_op.GetMeasurement(),
+                          space_op.GetLumpedPortOp().GetPort(1).GetExcitationWeight());
+  };
+
+  const auto unweighted = measure(1.0, 0.0, 1.0);
+  const auto weighted = measure(amplitude, phase, a);
+  CHECK(unweighted.second == std::complex<double>(1.0, 0.0));
+  CHECK(std::abs(weighted.second - a) <= 1.0e-14);
+
+  const auto &ports = unweighted.first.lumped_port_vi;
+  REQUIRE(ports.size() == 2);
+  REQUIRE(weighted.first.lumped_port_vi.size() == ports.size());
+  for (const auto &[idx, port] : ports)
+  {
+    const int port_idx = idx;
+    CAPTURE(port_idx);
+    const auto &port_w = weighted.first.lumped_port_vi.at(port_idx);
+    REQUIRE(std::abs(port.V) > 0.0);
+    REQUIRE(std::abs(port.S) > 0.0);
+
+    // V is linear in the field, so it scales by a.
+    CHECK(std::abs(port_w.V - a * port.V) <= 1.0e-10 * std::abs(a * port.V));
+
+    // S does not change with the weight.
+    CHECK(std::abs(port_w.S - port.S) <=
+          1.0e-10 * std::max(1.0, std::max(std::abs(port_w.S), std::abs(port.S))));
+  }
+}
+
+// The adaptive sweep with a complex RHS1: for the same random basis, the PROM solution of
+// the configuration with the excitation weight a is a times the solution without a weight,
+// both for the excitation vector projected on the fly and for the one cached by
+// PrepareOnlineExcitations.
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "RomOperator PROM solution scales with the excitation weight",
+                 "[romoperator][Serial][Parallel]")
+{
+  MPI_Comm comm = Mpi::World();
+  const double amplitude = 2.0;
+  const double phase = 30.0;
+  const std::complex<double> a = std::polar(amplitude, phase * std::numbers::pi / 180.0);
+
+  struct PROMSolutions
+  {
+    ComplexVector before, after;
+  };
+  auto solve = [&](double amp, double ph)
+  {
+    IoData iodata(WeightedExcitationSetup(temp_dir, amp, ph), false);
+    auto mesh = LoadScaleParMesh2(iodata, comm);
+    SpaceOperator space_op(iodata, mesh);
+    RomOperator rom_op(iodata, space_op, 4);
+
+    REQUIRE(iodata.solver.driven.sample_f.size() == 2);
+    const double omega = iodata.solver.driven.sample_f.back();
+    ComplexVector sample(space_op.GetNDSpace().GetTrueVSize());
+    sample.UseDevice(true);
+    for (int seed : {42, 44})
+    {
+      linalg::SetRandom(comm, sample.Real(), seed);
+      linalg::SetRandom(comm, sample.Imag(), seed + 1);
+      linalg::SetSubVector(sample.Real(), space_op.GetNDDbcTDofLists().back(), 0.0);
+      linalg::SetSubVector(sample.Imag(), space_op.GetNDDbcTDofLists().back(), 0.0);
+      rom_op.UpdatePROM(sample, fmt::format("weight_sample_{:d}", seed));
+    }
+    REQUIRE(rom_op.GetReducedDimension() > 0);
+
+    PROMSolutions solutions;
+    solutions.before.SetSize(space_op.GetNDSpace().GetTrueVSize());
+    solutions.before.UseDevice(true);
+    solutions.after.SetSize(space_op.GetNDSpace().GetTrueVSize());
+    solutions.after.UseDevice(true);
+    rom_op.SolvePROM(1, omega, solutions.before);
+    rom_op.PrepareOnlineExcitations();
+    rom_op.SolvePROM(1, omega, solutions.after);
+    return solutions;
+  };
+
+  const auto unweighted = solve(1.0, 0.0);
+  const auto weighted = solve(amplitude, phase);
+
+  auto check_scaled = [&](const ComplexVector &u_weighted, const ComplexVector &u)
+  {
+    ComplexVector diff(u_weighted);
+    ComplexVector scaled(u);
+    scaled *= a;
+    diff.Add(std::complex<double>(-1.0, 0.0), scaled);
+    const double norm_ref = linalg::Norml2(comm, scaled);
+    const double norm_diff = linalg::Norml2(comm, diff);
+    CAPTURE(norm_ref, norm_diff);
+    REQUIRE(norm_ref > 0.0);
+    CHECK(norm_diff <= 1.0e-8 * norm_ref);
+  };
+  check_scaled(weighted.before, unweighted.before);
+  check_scaled(weighted.after, unweighted.after);
+}
+
 TEST_CASE_METHOD(palace::test::SharedTempDir,
                  "RomOperator reduced postprocessing rejects Floquet wave vector",
                  "[postoperator][romoperator][Serial][Parallel]")

@@ -198,11 +198,12 @@ TEST_CASE("Schur solvers give the Schur complement and the internal solves",
   }
 #endif
 
-  // The Schur complement, on rank 0.
+  // The Schur complement, on rank 0 (CHECK, not REQUIRE: the other ranks wait in the
+  // collectives below).
   const std::vector<double> S = solver->ReleaseSchur();
-  if (Mpi::Root(comm))
+  CHECK(S.size() == (Mpi::Root(comm) ? static_cast<std::size_t>(ns) * ns : 0));
+  if (Mpi::Root(comm) && S.size() == static_cast<std::size_t>(ns) * ns)
   {
-    REQUIRE(S.size() == static_cast<std::size_t>(ns) * ns);
     double err = 0.0;
     for (int j = 0; j < ns; j++)
     {
@@ -213,10 +214,6 @@ TEST_CASE("Schur solvers give the Schur complement and the internal solves",
       }
     }
     CHECK(err <= 1.0e-12 * S_ref.MaxMaxNorm());
-  }
-  else
-  {
-    CHECK(S.empty());
   }
 
   // Two internal solves in place: A_II^-1 b on the internal variables, 0 on the Schur ones

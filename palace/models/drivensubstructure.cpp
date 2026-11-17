@@ -136,12 +136,11 @@ DrivenSubstructure::DrivenSubstructure(SpaceOperator &space_op,
 
   // Interface DOFs: on region and environment elements; environment (region) interior: on
   // environment (region) elements only; all without the Dirichlet DOFs.
-  mfem::Array<int> rm, em, im;
+  mfem::Array<int> rm, em;
   {
     mfem::Array<int> ra(region.attrs.data(), static_cast<int>(region.attrs.size())),
         ea(env.attrs.data(), static_cast<int>(env.attrs.size()));
-    MarkInterfaceTrueDofs(const_cast<mfem::ParFiniteElementSpace &>(fes), ra, ea, rm, em,
-                          im);
+    MarkInterfaceTrueDofs(const_cast<mfem::ParFiniteElementSpace &>(fes), ra, ea, rm, em);
   }
   const int nt = fes.GetTrueVSize();
   std::vector<char> dbc(nt, 0);
@@ -1209,8 +1208,18 @@ DrivenSubstructure::WriteRegionMesh(const std::string &path,
   // The region, and the environment elements touching the DOFs of the environment's ports
   // or the region's Dirichlet DOFs (on Γ, set by boundary conditions of the environment).
   auto &fes = const_cast<mfem::ParFiniteElementSpace &>(space_op.GetNDSpace().Get());
+  if (fes.GetParMesh()->Nonconforming())
+  {
+    // As for the static substructuring: the submesh of a nonconforming mesh also selects by
+    // the attributes of the parents of refined elements, which the written environment
+    // elements do not shift.
+    Mpi::Warning(fes.GetComm(),
+                 "No mesh of the region is written for a nonconforming mesh: online runs "
+                 "need the full mesh!\n");
+    return std::vector<char>(fes.GetParMesh()->GetNE(), 0);
+  }
   std::vector<char> keep = BoundaryTrueDofs(port_attributes);
-  mfem::Array<int> rm, em, im, ra, ea;
+  mfem::Array<int> rm, em, ra, ea;
   for (int a : region.attrs)
   {
     ra.Append(a);
@@ -1219,14 +1228,17 @@ DrivenSubstructure::WriteRegionMesh(const std::string &path,
   {
     ea.Append(a);
   }
-  MarkInterfaceTrueDofs(fes, ra, ea, rm, em, im);
+  MarkInterfaceTrueDofs(fes, ra, ea, rm, em);
   const auto &dbc_list = space_op.GetNDDbcTDofLists().back();
   const int *dl = dbc_list.HostRead();
   for (int q = 0; q < dbc_list.Size(); q++)
   {
     keep[dl[q]] = keep[dl[q]] || rm[dl[q]];
   }
-  return palace::WriteRegionMesh(path, fes, region.attrs, env.attrs, keep, length_scale);
+  std::vector<char> written =
+      palace::WriteRegionMesh(path, fes, region.attrs, env.attrs, keep, length_scale);
+  Mpi::Print(" Writing the mesh of the region for online runs to {}\n", path);
+  return written;
 }
 
 std::array<double, 6>
@@ -1241,7 +1253,8 @@ const Vector &DrivenSubstructure::FingerprintField(int k) const
 {
   if (fp_fields[k].Size() == 0)
   {
-    fp_fields[k] = palace::FingerprintField(space_op.GetNDSpace().Get(), k);
+    fp_fields[k] =
+        palace::FingerprintField(space_op.GetNDSpace().Get(), k, {0.0, 0.0, 0.0});
   }
   return fp_fields[k];
 }

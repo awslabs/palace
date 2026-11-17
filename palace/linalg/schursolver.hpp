@@ -34,7 +34,9 @@ public:
   virtual std::vector<T> ReleaseSchur() = 0;
 
   // Internal solves for a batch of vectors (collective): y_k solves A_II on the internal
-  // variables, with 0 on the Schur variables. y_k may alias x_k.
+  // variables, with 0 on the Schur variables. On rows of A in neither block, y_k is
+  // unspecified (0 for BackSolveSchurSolver, x_k on the identity rows of the partial
+  // factorizations). y_k may alias x_k.
   virtual void SolveInternal(const std::vector<const VecType *> &X,
                              const std::vector<VecType *> &Y) = 0;
 };

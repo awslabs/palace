@@ -110,6 +110,170 @@ void MagnetostaticSolver::Preprocess(IoData &iodata, std::unique_ptr<mfem::Mesh>
   BaseSolver::Preprocess(iodata, smesh, comm);
 }
 
+std::pair<ErrorIndicator, long long int> MagnetostaticSolver::SolveSubstructured(
+    const std::vector<std::unique_ptr<Mesh>> &mesh) const
+{
+  BlockTimer bt(Timer::CONSTRUCT);
+  // Excitations of the surface currents (and their aperture flux functionals, for mixed
+  // extraction) and fluxoid generators of the flux loops, from the native operator,
+  // freed before the condensation.
+  std::vector<int> current_idx, flux_idx, loop_idx;
+  std::vector<Vector> J, apertures, a;
+  std::vector<double> I_inc, Phi_inc;
+  bool single_loops = true;
+  mfem::DenseMatrix fluxoid;
+  {
+    CurlCurlOperator curlcurl_op(iodata, mesh);
+    const bool mixed = curlcurl_op.GetSurfaceCurrentOp().Size() > 0 &&
+                       curlcurl_op.GetSurfaceFluxOp().Size() > 0;
+    Vector RHS, boundary_values;
+    // The apertures read the first version of B on the two-sided films, as the regular
+    // solve.
+    const auto first_version = (mixed && curlcurl_op.IsBroken())
+                                   ? curlcurl_op.GetSolutionCurlSpace().BuildVersionMap(
+                                         FiniteElementSpace::VersionMap::FIRST)
+                                   : nullptr;
+    for (const auto &[idx, data] : curlcurl_op.GetSurfaceCurrentOp())
+    {
+      curlcurl_op.GetCurrentExcitationVector(idx, RHS);
+      J.push_back(RHS);
+      current_idx.push_back(idx);
+      I_inc.push_back(data.GetExcitationCurrent());
+      if (mixed)
+      {
+        // l^T A = sum of the element aperture fluxes of B = Curl A, as the regular solve.
+        Vector f(curlcurl_op.GetRTSpace().GetTrueVSize()), l(RHS.Size());
+        f = 0.0;
+        for (const auto &elem : data.elements)
+        {
+          f.Add(elem.current_fraction,
+                FluxThroughSurfaceFunctional(curlcurl_op.GetRTSpace(),
+                                             elem.aperture->attributes,
+                                             elem.aperture->direction));
+        }
+        if (first_version)
+        {
+          Vector fb(first_version->Width());
+          first_version->MultTranspose(f, fb);
+          f = std::move(fb);
+        }
+        curlcurl_op.GetCurlMatrix().MultTranspose(f, l);
+        apertures.push_back(std::move(l));
+      }
+    }
+    // A flux loop excitation drives its loops together, with the sum of their fluxoid
+    // generators (each normalized to its own loop's fluxoid); a loop held at zero fluxoid
+    // is a London sheet without a drive.
+    const auto &surf_flux_op = curlcurl_op.GetSurfaceFluxOp();
+    single_loops = surf_flux_op.HasSingleLoopExcitations();
+    if (surf_flux_op.Size() > 0)
+    {
+      PostOperator<ProblemType::MAGNETOSTATIC> post_op(iodata, curlcurl_op);
+      for (const auto &[idx, loops] : surf_flux_op.GetExcitations())
+      {
+        Vector a_ex;
+        for (int loop : loops)
+        {
+          curlcurl_op.GetFluxExcitationVector(loop, RHS, post_op, &boundary_values);
+          if (a_ex.Size() == 0)
+          {
+            a_ex.SetSize(boundary_values.Size());
+            a_ex.UseDevice(true);
+            a_ex = 0.0;
+          }
+          a_ex += boundary_values;
+        }
+        a.push_back(std::move(a_ex));
+        flux_idx.push_back(idx);
+        Phi_inc.push_back((loops.size() == 1)
+                              ? surf_flux_op.GetSource(loops.front()).GetExcitationFlux()
+                              : std::numeric_limits<double>::quiet_NaN());
+      }
+      if (!single_loops)
+      {
+        // The fluxoids cᵀa_h that each excitation imposes on the loops, for the report of
+        // the excitation energies (zero for the surface currents).
+        const int nc = static_cast<int>(J.size());
+        fluxoid.SetSize(nc + static_cast<int>(a.size()),
+                        static_cast<int>(surf_flux_op.Size()));
+        fluxoid = 0.0;
+        for (const auto &[loop, data] : surf_flux_op)
+        {
+          loop_idx.push_back(loop);
+        }
+        for (std::size_t k = 0; k < a.size(); k++)
+        {
+          for (std::size_t j = 0; j < loop_idx.size(); j++)
+          {
+            fluxoid(nc + static_cast<int>(k), static_cast<int>(j)) =
+                curlcurl_op.MeasureLondonHoleFlux(loop_idx[j], a[k]);
+          }
+        }
+      }
+    }
+  }
+  const int nc = static_cast<int>(J.size()), nf = static_cast<int>(a.size());
+  MFEM_VERIFY(nc + nf > 0, "Magnetostatic substructuring requires flux-loop or "
+                           "surface-current excitations!");
+  SubstructuringSolver sub(iodata, mesh);
+  SaveMetadata(sub.GetFESpaces());
+  sub.CondenseEnvironment();
+  BlockTimer bt1(Timer::POSTPRO);
+  Mpi::Print("\nSubstructuring inductance sweep: {:d} surface current{} and {:d} flux "
+             "loop excitation{}\n",
+             nc, (nc != 1) ? "s" : "", nf, (nf != 1) ? "s" : "");
+  // Every flux-loop film is a London sheet (PecPenetrationDepth when not declared a
+  // Superconductor), as is every "Superconductor" boundary. Only the fields to be saved
+  // need the environment interior.
+  const int n_save = std::min(iodata.solver.magnetostatic.n_post, nc + nf);
+  const bool adapt = (iodata.model.refinement.max_it > 0);
+  std::vector<Vector> A, region_fields;
+  mfem::DenseMatrix linked_flux(nc, nf);
+  linked_flux = 0.0;
+  const mfem::DenseMatrix E = sub.MagnetostaticEnergyMatrix(
+      current_idx, J, flux_idx, a, apertures, apertures.empty() ? nullptr : &linked_flux,
+      &A, n_save, adapt ? &region_fields : nullptr);
+  if (single_loops)
+  {
+    // Excitations in the layout of the regular solve (currents first, zero elsewhere).
+    I_inc.resize(nc + nf, 0.0);
+    Phi_inc.insert(Phi_inc.begin(), nc, 0.0);
+    PostprocessInductance(current_idx, flux_idx, E, I_inc, Phi_inc, linked_flux);
+  }
+  else
+  {
+    // The stored energy of each state is half its energy-matrix diagonal.
+    std::vector<int> excitation_idx(current_idx);
+    excitation_idx.insert(excitation_idx.end(), flux_idx.begin(), flux_idx.end());
+    std::vector<double> energy(nc + nf);
+    for (int i = 0; i < nc + nf; i++)
+    {
+      energy[i] = 0.5 * E(i, i);
+    }
+    PrintExcitations(excitation_idx, loop_idx, energy, fluxoid);
+  }
+  if (n_save > 0)
+  {
+    std::vector<int> ids(current_idx);
+    ids.insert(ids.end(), flux_idx.begin(), flux_idx.end());
+    ids.resize(n_save);
+    sub.WriteParaView(post_dir.string(), ids, A);
+  }
+  Mpi::Print("\nSubstructuring inductance sweep complete\n");
+  // Adaptive refinement of the region only (the indicators are zero on the environment).
+  ErrorIndicator indicator;
+  if (adapt)
+  {
+    indicator = sub.RegionErrorIndicator(region_fields, E);
+    const auto indicator_stats = indicator.GetSummaryStatistics(mesh.back()->GetComm());
+    if (root)
+    {
+      WriteErrorIndicatorCSV(post_dir, indicator_stats);
+    }
+  }
+  return {indicator, sub.GlobalTrueVSize()};
+}
+
 std::pair<ErrorIndicator, long long int>
 MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 {
@@ -117,156 +281,7 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // it, and form the inductance matrix from the energies as the regular solve.
   if (iodata.solver.substructuring)
   {
-    BlockTimer bt(Timer::CONSTRUCT);
-    // Excitations of the surface currents (and their aperture flux functionals, for mixed
-    // extraction) and fluxoid generators of the flux loops, from the native operator,
-    // freed before the condensation.
-    std::vector<int> current_idx, flux_idx, loop_idx;
-    std::vector<Vector> J, apertures, a;
-    std::vector<double> I_inc, Phi_inc;
-    bool single_loops = true;
-    mfem::DenseMatrix fluxoid;
-    {
-      CurlCurlOperator curlcurl_op(iodata, mesh);
-      const bool mixed = curlcurl_op.GetSurfaceCurrentOp().Size() > 0 &&
-                         curlcurl_op.GetSurfaceFluxOp().Size() > 0;
-      Vector RHS, boundary_values;
-      // The apertures read the first version of B on the two-sided films, as the regular
-      // solve.
-      const auto first_version = (mixed && curlcurl_op.IsBroken())
-                                     ? curlcurl_op.GetSolutionCurlSpace().BuildVersionMap(
-                                           FiniteElementSpace::VersionMap::FIRST)
-                                     : nullptr;
-      for (const auto &[idx, data] : curlcurl_op.GetSurfaceCurrentOp())
-      {
-        curlcurl_op.GetCurrentExcitationVector(idx, RHS);
-        J.push_back(RHS);
-        current_idx.push_back(idx);
-        I_inc.push_back(data.GetExcitationCurrent());
-        if (mixed)
-        {
-          // l^T A = sum of the element aperture fluxes of B = Curl A, as the regular solve.
-          Vector f(curlcurl_op.GetRTSpace().GetTrueVSize()), l(RHS.Size());
-          f = 0.0;
-          for (const auto &elem : data.elements)
-          {
-            f.Add(elem.current_fraction,
-                  FluxThroughSurfaceFunctional(curlcurl_op.GetRTSpace(),
-                                               elem.aperture->attributes,
-                                               elem.aperture->direction));
-          }
-          if (first_version)
-          {
-            Vector fb(first_version->Width());
-            first_version->MultTranspose(f, fb);
-            f = std::move(fb);
-          }
-          curlcurl_op.GetCurlMatrix().MultTranspose(f, l);
-          apertures.push_back(std::move(l));
-        }
-      }
-      // A flux loop excitation drives its loops together, with the sum of their fluxoid
-      // generators (each normalized to its own loop's fluxoid); a loop held at zero fluxoid
-      // is a London sheet without a drive.
-      const auto &surf_flux_op = curlcurl_op.GetSurfaceFluxOp();
-      single_loops = surf_flux_op.HasSingleLoopExcitations();
-      if (surf_flux_op.Size() > 0)
-      {
-        PostOperator<ProblemType::MAGNETOSTATIC> post_op(iodata, curlcurl_op);
-        for (const auto &[idx, loops] : surf_flux_op.GetExcitations())
-        {
-          Vector a_ex;
-          for (int loop : loops)
-          {
-            curlcurl_op.GetFluxExcitationVector(loop, RHS, post_op, &boundary_values);
-            if (a_ex.Size() == 0)
-            {
-              a_ex.SetSize(boundary_values.Size());
-              a_ex.UseDevice(true);
-              a_ex = 0.0;
-            }
-            a_ex += boundary_values;
-          }
-          a.push_back(std::move(a_ex));
-          flux_idx.push_back(idx);
-          Phi_inc.push_back((loops.size() == 1)
-                                ? surf_flux_op.GetSource(loops.front()).GetExcitationFlux()
-                                : std::numeric_limits<double>::quiet_NaN());
-        }
-        if (!single_loops)
-        {
-          // The fluxoids cᵀa_h that each excitation imposes on the loops, for the report of
-          // the excitation energies (zero for the surface currents).
-          const int nc = static_cast<int>(J.size());
-          fluxoid.SetSize(nc + static_cast<int>(a.size()),
-                          static_cast<int>(surf_flux_op.Size()));
-          fluxoid = 0.0;
-          for (const auto &[loop, data] : surf_flux_op)
-          {
-            loop_idx.push_back(loop);
-          }
-          for (std::size_t k = 0; k < a.size(); k++)
-          {
-            for (std::size_t j = 0; j < loop_idx.size(); j++)
-            {
-              fluxoid(nc + static_cast<int>(k), static_cast<int>(j)) =
-                  curlcurl_op.MeasureLondonHoleFlux(loop_idx[j], a[k]);
-            }
-          }
-        }
-      }
-    }
-    const int nc = static_cast<int>(J.size()), nf = static_cast<int>(a.size());
-    MFEM_VERIFY(nc + nf > 0, "Magnetostatic substructuring requires flux-loop or "
-                             "surface-current excitations!");
-    SubstructuringSolver sub(iodata, mesh);
-    sub.CondenseEnvironment();
-    BlockTimer bt1(Timer::POSTPRO);
-    Mpi::Print("\nSubstructuring inductance sweep: {:d} surface current{} and {:d} flux "
-               "loop excitation{}\n",
-               nc, (nc != 1) ? "s" : "", nf, (nf != 1) ? "s" : "");
-    // Every flux-loop film is a London sheet (PecPenetrationDepth when not declared a
-    // Superconductor), as is every "Superconductor" boundary. Only the fields to be saved
-    // need the environment interior.
-    const int n_save = std::min(iodata.solver.magnetostatic.n_post, nc + nf);
-    const bool adapt = (iodata.model.refinement.max_it > 0);
-    std::vector<Vector> A, region_fields;
-    mfem::DenseMatrix linked_flux(nc, nf);
-    linked_flux = 0.0;
-    const mfem::DenseMatrix E = sub.MagnetostaticEnergyMatrix(
-        current_idx, J, flux_idx, a, apertures, apertures.empty() ? nullptr : &linked_flux,
-        &A, n_save, adapt ? &region_fields : nullptr);
-    if (single_loops)
-    {
-      // Excitations in the layout of the regular solve (currents first, zero elsewhere).
-      I_inc.resize(nc + nf, 0.0);
-      Phi_inc.insert(Phi_inc.begin(), nc, 0.0);
-      PostprocessInductance(current_idx, flux_idx, E, I_inc, Phi_inc, linked_flux);
-    }
-    else
-    {
-      // The stored energy of each state is half its energy-matrix diagonal.
-      std::vector<int> excitation_idx(current_idx);
-      excitation_idx.insert(excitation_idx.end(), flux_idx.begin(), flux_idx.end());
-      std::vector<double> energy(nc + nf);
-      for (int i = 0; i < nc + nf; i++)
-      {
-        energy[i] = 0.5 * E(i, i);
-      }
-      PrintExcitations(excitation_idx, loop_idx, energy, fluxoid);
-    }
-    if (n_save > 0)
-    {
-      std::vector<int> ids(current_idx);
-      ids.insert(ids.end(), flux_idx.begin(), flux_idx.end());
-      ids.resize(n_save);
-      sub.WriteParaView(post_dir.string(), ids, A);
-    }
-    Mpi::Print("\nSubstructuring inductance sweep complete\n");
-    // Adaptive refinement of the region only (the indicators are zero on the environment).
-    ErrorIndicator indicator =
-        adapt ? sub.RegionErrorIndicator(region_fields, E) : ErrorIndicator();
-    return {indicator, sub.GlobalTrueVSize()};
+    return SolveSubstructured(mesh);
   }
 
   // Construct the system matrix defining the linear operator. Dirichlet boundaries are

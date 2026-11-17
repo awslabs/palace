@@ -28,93 +28,12 @@ and the substructuring documentation).
 import argparse
 import collections
 import os
-import struct
+import sys
 
-# Nodes per Gmsh element type (the types that can appear in this mesh).
-NODES_PER_ELEMENT = {1: 2, 2: 3, 4: 4, 8: 3, 9: 6, 11: 10, 15: 1}
-TRIANGLE_TYPES = (2, 9)
-TETRAHEDRON_TYPES = (4, 11)
-
-
-def read_msh2(path):
-    """Read a Gmsh 2.2 mesh (ASCII or binary) into (physical names, nodes, elements)."""
-    data = open(path, "rb").read()
-    pos = 0
-
-    def line():
-        nonlocal pos
-        end = data.index(b"\n", pos)
-        text = data[pos:end].decode()
-        pos = end + 1
-        return text
-
-    names, nodes, elements, binary = [], {}, [], False
-    while pos < len(data):
-        section = line().strip()
-        if section == "$MeshFormat":
-            binary = int(line().split()[1]) == 1
-            if binary:
-                pos += 4  # endianness check integer
-                line()
-            line()
-        elif section == "$PhysicalNames":
-            names = [line() for _ in range(int(line()))]
-            line()
-        elif section == "$Nodes":
-            count = int(line())
-            for _ in range(count):
-                if binary:
-                    i, x, y, z = struct.unpack_from("<iddd", data, pos)
-                    pos += 28
-                else:
-                    tok = line().split()
-                    i, x, y, z = int(tok[0]), *map(float, tok[1:4])
-                nodes[i] = (x, y, z)
-            if binary:
-                line()
-            line()
-        elif section == "$Elements":
-            count, read = int(line()), 0
-            while read < count:
-                if binary:
-                    etype, n, ntags = struct.unpack_from("<iii", data, pos)
-                    pos += 12
-                    k = NODES_PER_ELEMENT[etype]
-                    for _ in range(n):
-                        rec = struct.unpack_from("<%di" % (1 + ntags + k), data, pos)
-                        pos += 4 * (1 + ntags + k)
-                        elements.append([etype, list(rec[1 : 1 + ntags]), list(rec[1 + ntags :])])
-                    read += n
-                else:
-                    tok = list(map(int, line().split()))
-                    etype, ntags = tok[1], tok[2]
-                    elements.append([etype, tok[3 : 3 + ntags], tok[3 + ntags :]])
-                    read += 1
-            if binary:
-                line()
-            line()
-        elif section:
-            while line().strip() != "$End" + section[1:]:
-                pass
-    return names, nodes, elements
-
-
-def write_msh2(path, names, nodes, elements):
-    """Write a binary Gmsh 2.2 mesh."""
-    with open(path, "wb") as f:
-        f.write(b"$MeshFormat\n2.2 1 8\n")
-        f.write(struct.pack("<i", 1))
-        f.write(b"\n$EndMeshFormat\n$PhysicalNames\n%d\n" % len(names))
-        for name in names:
-            f.write(name.encode() + b"\n")
-        f.write(b"$EndPhysicalNames\n$Nodes\n%d\n" % len(nodes))
-        for i, (x, y, z) in nodes.items():
-            f.write(struct.pack("<iddd", i, x, y, z))
-        f.write(b"\n$EndNodes\n$Elements\n%d\n" % len(elements))
-        for num, (etype, tags, nd) in enumerate(elements, 1):
-            f.write(struct.pack("<iii", etype, 1, len(tags)))
-            f.write(struct.pack("<%di" % (1 + len(tags) + len(nd)), num, *tags, *nd))
-        f.write(b"\n$EndElements\n")
+sys.path.insert(
+    0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "substructuring")
+)
+from remesh_region import TETRAHEDRA, TRIANGLES, face_components, read_msh2, write_msh2
 
 
 def split_conductors(elements, metal_attribute):
@@ -131,7 +50,7 @@ def split_conductors(elements, metal_attribute):
     metal = [
         e
         for e, (t, tags, _) in enumerate(elements)
-        if t in TRIANGLE_TYPES and tags[0] == metal_attribute
+        if t in TRIANGLES and tags[0] == metal_attribute
     ]
     for e in metal:
         corners = elements[e][2][:3]
@@ -172,11 +91,13 @@ def main():
     env_attribute = {1: 10, 2: 11}  # substrate, vacuum
     count = collections.Counter()
     for etype, tags, nd in elements:
-        if etype in TETRAHEDRON_TYPES:
+        if etype in TETRAHEDRA:
             centroid = [sum(nodes[v][d] for v in nd[:4]) / 4.0 for d in range(3)]
             if not all(lo <= c <= hi for c, (lo, hi) in zip(centroid, box)):
                 tags[0] = env_attribute[tags[0]]
             count[tags[0]] += 1
+    if face_components(elements, env_attribute.keys()) > 1:
+        sys.exit("the region of the box is not face-connected: change --box")
 
     names = [name for name in names if not name.startswith("2 5 ")] + [
         '2 5 "ground"',

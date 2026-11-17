@@ -511,6 +511,12 @@ public:
   // - 1-based index if excited; 0 if not excited.
   int excitation = 0;
 
+  // Complex weight a = A exp(i phi) on the unit-power incident wave of this port,
+  // A = "ExcitationAmplitude" (> 0), phi = "ExcitationPhase" in degrees. Dimensionless,
+  // frequency independent. Only valid for excited ports.
+  double excitation_amplitude = 1.0;
+  double excitation_phase = 0.0;  // [deg]
+
   // Flag for boundary damping term in driven and transient simulations.
   bool active = true;
 
@@ -1262,17 +1268,9 @@ public:
   // Optional path for the serialized environment DtN model (offline/online reuse).
   std::string save_model = "";
 
-  // Relative tolerance of the hierarchical (HODLR) compression of the interface operator
-  // S_E (0: dense S_E).
-  double interface_offdiag_tol = 0.0;
-
   // Relative block low-rank (BLR) tolerance of the MUMPS environment factorization (0:
   // exact factorization).
   double factorization_tol = 0.0;
-
-  // Global number of true DOFs up to which the environment and the region are factored with
-  // a sparse direct solver; larger ones are solved iteratively.
-  int direct_max_size = 2000000;
 
   // The sparse direct solver of the factorizations: config["Solver"]["Linear"]["Type"] as
   // given (set by IoData before it resolves the default), DEFAULT for Palace's preference.

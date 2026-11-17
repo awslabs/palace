@@ -3,10 +3,15 @@
 
 #include "substructuringsolverimpl.hpp"
 
+#include <optional>
+#include <set>
 #include <utility>
+#include "fem/bilinearform.hpp"
 #include "fem/coefficient.hpp"
 #include "fem/integrator.hpp"
 #include "linalg/rap.hpp"
+#include "models/curlcurloperator.hpp"
+#include "models/laplaceoperator.hpp"
 #include "models/materialoperator.hpp"
 
 namespace palace
@@ -15,70 +20,114 @@ namespace palace
 namespace
 {
 
-// Coefficient given per (domain or boundary) element.
-class ElementCoefficient : public mfem::Coefficient
+// The sum of the given matrices (the null ones left out).
+std::unique_ptr<mfem::HypreParMatrix>
+Sum(std::initializer_list<const mfem::HypreParMatrix *> terms)
 {
-  const std::vector<double> &value;
-
-public:
-  explicit ElementCoefficient(const std::vector<double> &value) : value(value) {}
-  double Eval(mfem::ElementTransformation &T, const mfem::IntegrationPoint &) override
+  std::unique_ptr<mfem::HypreParMatrix> A;
+  for (const auto *B : terms)
   {
-    return value[T.ElementNo];
-  }
-};
-
-// MFEM integrator with the quadrature order of Palace's own operators, so the condensed
-// discretization matches the native one also on curved meshes.
-template <typename Integrator>
-class NativeQuadrature : public Integrator
-{
-public:
-  using Integrator::Integrator;
-  void AssembleElementMatrix(const mfem::FiniteElement &el, mfem::ElementTransformation &T,
-                             mfem::DenseMatrix &M) override
-  {
-    this->IntRule =
-        &mfem::IntRules.Get(el.GetGeomType(), fem::DefaultIntegrationOrder::Get(T));
-    Integrator::AssembleElementMatrix(el, T, M);
-  }
-};
-
-// Piecewise-constant (per element attribute) matrix coefficient for anisotropic materials.
-// Attributes absent from the map contribute a zero tensor (e.g. environment attributes when
-// assembling the region operator).
-class PWMatrixCoefficient : public mfem::MatrixCoefficient
-{
-  const std::map<int, mfem::DenseMatrix> &mats;
-
-public:
-  PWMatrixCoefficient(int dim, const std::map<int, mfem::DenseMatrix> &m)
-    : mfem::MatrixCoefficient(dim), mats(m)
-  {
-  }
-  void Eval(mfem::DenseMatrix &K, mfem::ElementTransformation &T,
-            const mfem::IntegrationPoint &) override
-  {
-    auto it = mats.find(T.Attribute);
-    if (it != mats.end())
+    if (B)
     {
-      K = it->second;
-    }
-    else
-    {
-      K.SetSize(width);
-      K = 0.0;
+      A.reset(A ? mfem::Add(1.0, *A, 1.0, *B) : new mfem::HypreParMatrix(*B));
     }
   }
-};
+  return A;
+}
 
 }  // namespace
+
+std::unique_ptr<ParOperator>
+SubstructuringSolver::Impl::GetTerm(const std::vector<int> *attrs, Term term,
+                                    bool assemble) const
+{
+  if (!magnetostatic)
+  {
+    MFEM_ASSERT(term == Term::VOLUME, "Electrostatic operators have the volume term only!");
+    std::optional<LaplaceOperator::AssemblyRestriction> restriction;
+    if (attrs)
+    {
+      restriction.emplace(*laplace_op, *attrs);
+    }
+    return laplace_op->GetUnconstrainedStiffnessMatrix(assemble);
+  }
+  if (term == Term::MASS)
+  {
+    // The regularization eps M on the domains (the exactly zero entries of the other
+    // elements are not stored).
+    MFEM_ASSERT(attrs, "The regularization is assembled on the region or the environment!");
+    // The coefficient is built for every attribute and then restricted, so that it is a
+    // scalar one also on a process without an element of the domains.
+    const auto &mat_op = curlcurl_op->GetMaterialOp();
+    const auto &attr_mat = mat_op.GetAttributeToMaterial();
+    mfem::DenseTensor value(1, 1, attr_mat.Max() + 1);
+    value = mag_eps;
+    MaterialPropertyCoefficient eps(attr_mat, value);
+    eps.RestrictCoefficient(mat_op.GetCeedAttributes(*attrs));
+    BilinearForm m(SolutionSpace());
+    m.AddDomainIntegrator<VectorFEMassIntegrator>(eps);
+    return std::make_unique<ParOperator>(
+        assemble ? std::unique_ptr<Operator>(m.FullAssemble(true)) : m.PartialAssemble(),
+        SolutionSpace());
+  }
+  if (term == Term::SHEETS && !has_sheets)
+  {
+    return nullptr;
+  }
+  std::optional<CurlCurlOperator::AssemblyRestriction> restriction;
+  if (attrs)
+  {
+    restriction.emplace(*curlcurl_op, *attrs);
+  }
+  return curlcurl_op->GetUnconstrainedStiffnessMatrix(term == Term::VOLUME,
+                                                      term == Term::SHEETS, assemble);
+}
+
+std::unique_ptr<mfem::HypreParMatrix>
+SubstructuringSolver::Impl::AssembleTerm(const std::vector<int> *attrs, Term term) const
+{
+  auto op = GetTerm(attrs, term, true);
+  if (!op)
+  {
+    return nullptr;
+  }
+  auto A = op->StealParallelAssemble();
+  if (broken)
+  {
+    // The transpose product Pᵀ (A P) can store zeros on one side only of the pattern of a
+    // broken space. The sparse direct solvers are given a symmetric pattern (STRUMPACK
+    // orders the graph of the pattern as it is): symmetrize.
+    std::unique_ptr<mfem::HypreParMatrix> At(A->Transpose());
+    A.reset(mfem::Add(0.5, *A, 0.5, *At));
+  }
+  return A;
+}
+
+void SubstructuringSolver::Impl::AssembleRegion()
+{
+  const auto *region = &iodata.solver.substructuring->region_attributes;
+  if (!magnetostatic)
+  {
+    A_region = AssembleTerm(region, Term::VOLUME);
+    K_region_e = A_region.get();
+    return;
+  }
+  // The energy operator is the volume term (see SourceEnergyMatrix for the London sheets).
+  A_region_energy = AssembleTerm(region, Term::VOLUME);
+  K_region_e = A_region_energy.get();
+  M_sheet_region = AssembleTerm(region, Term::SHEETS);
+  A_region = Sum({A_region_energy.get(), M_sheet_region.get(),
+                  AssembleTerm(region, Term::MASS).get()});
+}
 
 const mfem::HypreParMatrix &SubstructuringSolver::Impl::Aenv()
 {
   if (!A_env)
   {
-    A_env = AssembleParent(env_eps, magnetostatic, true, &sheet_env);
+    A_env = magnetostatic
+                ? Sum({&Kenv(), has_sheets ? &MsheetEnv() : nullptr, &Denv()})
+                : AssembleTerm(&iodata.solver.substructuring->environment_attributes,
+                               Term::VOLUME);
   }
   return *A_env;
 }
@@ -91,7 +140,8 @@ const mfem::HypreParMatrix &SubstructuringSolver::Impl::Kenv()
   }
   if (!K_env)
   {
-    K_env = AssembleParent(env_eps, false);
+    K_env =
+        AssembleTerm(&iodata.solver.substructuring->environment_attributes, Term::VOLUME);
   }
   return *K_env;
 }
@@ -100,7 +150,7 @@ const mfem::HypreParMatrix &SubstructuringSolver::Impl::Denv()
 {
   if (!D_env)
   {
-    D_env = AssembleParent(env_eps, true, false);
+    D_env = AssembleTerm(&iodata.solver.substructuring->environment_attributes, Term::MASS);
   }
   return *D_env;
 }
@@ -109,7 +159,7 @@ const mfem::HypreParMatrix &SubstructuringSolver::Impl::Msheet()
 {
   if (!M_sheet)
   {
-    M_sheet = AssembleParent({}, false, false, &sheet_all);
+    M_sheet = AssembleTerm(nullptr, Term::SHEETS);
   }
   return *M_sheet;
 }
@@ -118,143 +168,53 @@ const mfem::HypreParMatrix &SubstructuringSolver::Impl::MsheetEnv()
 {
   if (!M_sheet_env)
   {
-    M_sheet_env = AssembleParent({}, false, false, &sheet_env);
+    M_sheet_env =
+        AssembleTerm(&iodata.solver.substructuring->environment_attributes, Term::SHEETS);
   }
   return *M_sheet_env;
 }
 
-void SubstructuringSolver::Impl::ForEachElement(
-    const std::map<int, mfem::DenseMatrix> &coef_by_attr, bool with_mass, bool with_curl,
-    const std::vector<double> *sheet,
-    const std::function<bool(const mfem::Array<int> &)> &use,
-    const std::function<void(const mfem::Array<int> &, const mfem::DenseMatrix &)> &f) const
+std::vector<mfem::Vector>
+SubstructuringSolver::Impl::EnvApply(const std::vector<const mfem::Vector *> &X,
+                                     bool volume) const
 {
-  PWMatrixCoefficient coef(parent.Dimension(), coef_by_attr);
-  mfem::Vector mass(parent.attributes.Size() ? parent.attributes.Max() : 1);
-  mass = mag_eps;
-  mfem::PWConstCoefficient mcoef(mass);
-  NativeQuadrature<mfem::CurlCurlIntegrator> curlcurl(coef);
-  NativeQuadrature<mfem::VectorFEMassIntegrator> regularization(mcoef);
-  NativeQuadrature<mfem::DiffusionIntegrator> diffusion(coef);
-  mfem::Array<int> vdofs;
-  mfem::DofTransformation doftrans;
-  mfem::DenseMatrix Ae, Me;
-  const bool volume = with_curl || (magnetostatic && with_mass);
-  for (int e = 0; volume && e < parent.GetNE(); e++)
+  // The assembled operator if there is one (offline), else the operator applied
+  // matrix-free, set up on first use.
+  const mfem::HypreParMatrix *M = volume ? A_env.get() : M_sheet_env.get();
+  auto &op = volume ? env_op : env_sheet_op;
+  if (!M && !op)
   {
-    if (!coef_by_attr.contains(parent.GetAttribute(e)))
+    const auto *env = &iodata.solver.substructuring->environment_attributes;
+    auto sum = std::make_unique<SumOperator>(nt, nt);
+    for (auto term : volume ? std::vector<Term>{Term::VOLUME, Term::SHEETS, Term::MASS}
+                            : std::vector<Term>{Term::SHEETS})
     {
-      continue;
-    }
-    SolutionSpace().GetElementDofs(e, vdofs, doftrans);
-    if (!use(vdofs))
-    {
-      continue;
-    }
-    const mfem::FiniteElement &fe = *parent_fes.GetFE(e);
-    mfem::ElementTransformation &T = *parent_fes.GetElementTransformation(e);
-    if (!magnetostatic)
-    {
-      diffusion.AssembleElementMatrix(fe, T, Ae);
-    }
-    else if (with_curl)
-    {
-      curlcurl.AssembleElementMatrix(fe, T, Ae);
-      if (with_mass)
+      if (!magnetostatic && term != Term::VOLUME)
       {
-        regularization.AssembleElementMatrix(fe, T, Me);
-        Ae += Me;
+        continue;
       }
+      if (auto t = GetTerm(env, term, false))
+      {
+        sum->AddOperator(std::move(t));
+      }
+    }
+    op = std::move(sum);
+  }
+  std::vector<mfem::Vector> Y(X.size());
+  Vector x(nt);
+  x.UseDevice(true);
+  for (std::size_t k = 0; k < X.size(); k++)
+  {
+    x = *X[k];
+    Y[k].SetSize(nt);
+    Y[k].UseDevice(true);
+    if (M)
+    {
+      M->Mult(x, Y[k]);
     }
     else
     {
-      regularization.AssembleElementMatrix(fe, T, Ae);
-    }
-    doftrans.TransformDual(Ae);
-    f(vdofs, Ae);
-  }
-  if (sheet && magnetostatic && has_sheets)
-  {
-    ElementCoefficient sheet_coef(*sheet);
-    NativeQuadrature<mfem::VectorFEMassIntegrator> integ(sheet_coef);
-    for (int be = 0; be < parent.GetNBE(); be++)
-    {
-      if ((*sheet)[be] == 0.0)
-      {
-        continue;
-      }
-      SolutionSpace().GetBdrElementDofs(be, vdofs, doftrans);
-      if (!use(vdofs))
-      {
-        continue;
-      }
-      integ.AssembleElementMatrix(*parent_fes.GetBE(be),
-                                  *parent_fes.GetBdrElementTransformation(be), Ae);
-      doftrans.TransformDual(Ae);
-      f(vdofs, Ae);
-    }
-  }
-}
-
-std::vector<mfem::Vector>
-SubstructuringSolver::Impl::EnvApply(const std::vector<const mfem::Vector *> &X,
-                                     bool volume, bool sheets) const
-{
-  const int n = static_cast<int>(X.size());
-  const mfem::Operator &P = *SolutionSpace().GetProlongationMatrix();
-  std::vector<mfem::Vector> XL(n, mfem::Vector(SolutionSpace().GetVSize())),
-      YL(n, mfem::Vector(SolutionSpace().GetVSize()));
-  for (int k = 0; k < n; k++)
-  {
-    P.Mult(*X[k], XL[k]);
-    YL[k] = 0.0;
-  }
-  std::vector<char> touched(n, 0);
-  std::vector<const double *> xl(n);
-  for (int k = 0; k < n; k++)
-  {
-    xl[k] = XL[k].HostRead();
-  }
-  auto use = [&](const mfem::Array<int> &vdofs)
-  {
-    bool any = false;
-    for (int k = 0; k < n; k++)
-    {
-      touched[k] = 0;
-      for (int d : vdofs)
-      {
-        if (xl[k][d >= 0 ? d : -1 - d] != 0.0)
-        {
-          touched[k] = 1;
-          break;
-        }
-      }
-      any = any || touched[k];
-    }
-    return any;
-  };
-  mfem::Vector xe, ye;
-  ForEachElement(env_eps, volume, volume, sheets ? &sheet_env.coef : nullptr, use,
-                 [&](const mfem::Array<int> &vdofs, const mfem::DenseMatrix &Ae)
-                 {
-                   for (int k = 0; k < n; k++)
-                   {
-                     if (touched[k])
-                     {
-                       XL[k].GetSubVector(vdofs, xe);
-                       ye.SetSize(xe.Size());
-                       Ae.Mult(xe, ye);
-                       YL[k].AddElementVector(vdofs, ye);
-                     }
-                   }
-                 });
-  std::vector<mfem::Vector> Y(n, mfem::Vector(nt));
-  for (int k = 0; k < n; k++)
-  {
-    P.MultTranspose(YL[k], Y[k]);
-    if (sheets && sheet_env.two_sided)
-    {
-      sheet_env.two_sided->Mult(1.0, *X[k], 1.0, Y[k]);
+      op->Mult(x, Y[k]);
     }
   }
   return Y;
@@ -277,33 +237,13 @@ const mfem::Vector &SubstructuringSolver::Impl::FirstVersion(const mfem::Vector 
   return y;
 }
 
-std::array<std::unique_ptr<mfem::HypreParMatrix>, 2>
-SubstructuringSolver::Impl::SetUpBrokenSpace()
+void SubstructuringSolver::Impl::SetUpBrokenSpace()
 {
-  std::vector<config::SuperconductorData> films;
-  for (const auto &sc : iodata.boundaries.superconductor)
+  if (!curlcurl_op->IsBroken())
   {
-    if (sc.two_sided)
-    {
-      auto &film = films.emplace_back(sc);
-      std::erase_if(film.attributes,
-                    [this](int a) { return parent.bdr_attributes.Find(a) < 0; });
-    }
+    return;
   }
-  if (films.empty())
-  {
-    return {};
-  }
-  MaterialOperator mat_op(iodata, mesh);
-  SuperconductorSheetOperator sheet_op(films, iodata.boundaries.cracked_attributes,
-                                       iodata.units, mat_op, parent, false);
-  const auto attrs = sheet_op.GetTwoSidedAttributes();
-  if (attrs.empty())
-  {
-    return {};
-  }
-  const auto &sides = mesh.GetCrackSides(attrs);
-  broken = std::make_unique<FiniteElementSpace>(parent_space, sides);
+  broken = &curlcurl_op->GetSolutionNDSpace();
   first_version = broken->BuildVersionMap(FiniteElementSpace::VersionMap::FIRST);
   all_versions = broken->BuildVersionMap(FiniteElementSpace::VersionMap::ALL);
   version_parent.resize(broken->GetTrueVSize());
@@ -314,81 +254,55 @@ SubstructuringSolver::Impl::SetUpBrokenSpace()
       version_parent[broken->GetVersionTrueDof(t, v)] = t;
     }
   }
-  const auto &sub = *iodata.solver.substructuring;
-  return {sheet_op.AssembleBrokenSheetMatrix(parent_space, *broken, sides,
-                                             &sub.region_attributes),
-          sheet_op.AssembleBrokenSheetMatrix(parent_space, *broken, sides,
-                                             &sub.environment_attributes)};
 }
 
-void SubstructuringSolver::Impl::SetUpSheets(
-    const mfem::Array<int> &ra,
-    std::array<std::unique_ptr<mfem::HypreParMatrix>, 2> two_sided)
+void SubstructuringSolver::Impl::CheckSheets()
 {
-  const int nbe = parent.GetNBE();
-  sheet_region.coef.assign(nbe, 0.0);
-  sheet_env.coef.assign(nbe, 0.0);
-  sheet_all.coef.assign(nbe, 0.0);
-  std::map<int, double> coef;
-  std::set<int> films;
+  // The faces of the one-sided sheets, of the film faces between the region and the
+  // environment, and of the film faces in the region. The native operators assign a sheet
+  // face to the side of its neighbor with the lower attribute (see
+  // Mesh::GetCeedBdrAttributesByNeighbor), which for a face on Gamma may be either side.
+  std::set<int> sheets, films;
   for (const auto &sc : iodata.boundaries.superconductor)
   {
-    if (sc.two_sided)
-    {
-      films.insert(sc.attributes.begin(), sc.attributes.end());
-      continue;
-    }
-    const double Ls = (sc.Ls > 0.0) ? sc.Ls
-                                    : SuperconductorSheetOperator::KineticSheetInductance(
-                                          sc.lambda_L, sc.thickness);
-    for (int a : sc.attributes)
-    {
-      coef[a] = 1.0 / (Ls * (iodata.boundaries.cracked_attributes.contains(a) ? 2.0 : 1.0));
-    }
+    (sc.two_sided ? films : sheets).insert(sc.attributes.begin(), sc.attributes.end());
   }
-  // Counts of the sheet faces, of the film faces between the region and the environment,
-  // and of the film faces in the region.
   std::array<int, 3> count = {0, 0, 0};
   parent.ExchangeFaceNbrData();
   mfem::FaceElementTransformations FET;
   mfem::IsoparametricTransformation T1, T2;
-  for (int be = 0; be < nbe; be++)
+  gamma_sheet_faces.clear();
+  for (int be = 0; be < parent.GetNBE(); be++)
   {
     const int attr = parent.GetBdrAttribute(be);
-    auto it = coef.find(attr);
-    const bool film = films.contains(attr);
-    if (it == coef.end() && !film)
+    const bool sheet = sheets.contains(attr), film = films.contains(attr);
+    if (!sheet && !film)
     {
       continue;
     }
     BdrGridFunctionCoefficient::GetBdrElementNeighborTransformations(be, parent, FET, T1,
                                                                      T2);
-    const bool region1 = ra.Find(FET.Elem1->Attribute) >= 0,
-               region2 = FET.Elem2 && ra.Find(FET.Elem2->Attribute) >= 0;
+    const bool region1 = ra_arr.Find(FET.Elem1->Attribute) >= 0,
+               region2 = FET.Elem2 && ra_arr.Find(FET.Elem2->Attribute) >= 0;
     if (film)
     {
       count[1] += (region1 != region2);
       count[2] += region1;
       continue;
     }
-    (region1 || region2 ? sheet_region : sheet_env).coef[be] = it->second;
-    sheet_all.coef[be] = it->second;  // all sheet faces, for Msheet()
+    if (FET.Elem2 && region1 != region2)
+    {
+      gamma_sheet_faces.push_back(be);
+    }
     count[0]++;
   }
   Mpi::GlobalSum(3, count.data(), parent.GetComm());
-  has_sheets = (count[0] > 0) || two_sided[0];
+  has_sheets = (count[0] > 0) || broken;
   MFEM_VERIFY(count[1] == 0, "Substructuring does not support a \"TwoSided\" "
                              "superconductor film between the region and the environment!");
   MFEM_VERIFY(count[2] == 0 || iodata.model.refinement.max_it == 0,
               "Adaptive refinement with substructuring does not support \"TwoSided\" "
               "superconductor films in the region!");
-  if (!two_sided[0])
-  {
-    return;
-  }
-  sheet_all.two_sided.reset(mfem::Add(1.0, *two_sided[0], 1.0, *two_sided[1]));
-  sheet_region.two_sided = std::move(two_sided[0]);
-  sheet_env.two_sided = std::move(two_sided[1]);
 }
 
 mfem::Vector SubstructuringSolver::Impl::EnvSource(const Source &src,
@@ -398,7 +312,7 @@ mfem::Vector SubstructuringSolver::Impl::EnvSource(const Source &src,
   b = 0.0;
   if (src.HasA())
   {
-    b = std::move(EnvApply({src.a}, false, true)[0]);
+    b = std::move(EnvApply({src.a}, false)[0]);
   }
   double *bb = b.HostReadWrite();
   if (src.HasJ())
@@ -448,78 +362,6 @@ mfem::Vector SubstructuringSolver::Impl::RegionSource(const Source &src) const
   return b;
 }
 
-std::unique_ptr<mfem::HypreParMatrix> SubstructuringSolver::Impl::AssembleParent(
-    const std::map<int, mfem::DenseMatrix> &coef_by_attr, bool with_mass, bool with_curl,
-    const Sheets *sheet)
-{
-  if (broken)
-  {
-    // On the broken space: the terms element by element, in the DOFs of the side of each
-    // element, and the two-port terms of the films.
-    auto A_l = std::make_unique<mfem::SparseMatrix>(broken->GetVSize());
-    ForEachElement(
-        coef_by_attr, with_mass, with_curl, sheet ? &sheet->coef : nullptr,
-        [](const mfem::Array<int> &) { return true; },
-        [&](const mfem::Array<int> &vdofs, const mfem::DenseMatrix &Ae)
-        { A_l->AddSubMatrix(vdofs, vdofs, Ae, 0); });
-    A_l->Finalize();
-    auto A =
-        linalg::RAP(*linalg::BlockDiagonalParMatrix(
-                        parent_fes.GetComm(), broken->GlobalVSize(), broken->GlobalVSize(),
-                        broken->GetDofOffsets(), broken->GetDofOffsets(), std::move(A_l)),
-                    *broken->Dof_TrueDof_Matrix());
-    if (sheet && sheet->two_sided)
-    {
-      A.reset(mfem::Add(1.0, *A, 1.0, *sheet->two_sided));
-    }
-    // The transpose product Pᵀ (A P) can store zeros on one side only of the pattern of a
-    // broken space. The sparse direct solvers are given a symmetric pattern (STRUMPACK
-    // orders the graph of the pattern as it is): symmetrize.
-    std::unique_ptr<mfem::HypreParMatrix> At(A->Transpose());
-    return std::unique_ptr<mfem::HypreParMatrix>(mfem::Add(0.5, *A, 0.5, *At));
-  }
-  PWMatrixCoefficient coef(parent.Dimension(), coef_by_attr);
-  mfem::ParBilinearForm a(&parent_fes);
-  std::unique_ptr<ElementCoefficient> sheet_coef;
-  if (magnetostatic && sheet && has_sheets)
-  {
-    // London kinetic sheet term (1/L_ksq) A_t . v_t on the given boundary elements.
-    sheet_coef = std::make_unique<ElementCoefficient>(sheet->coef);
-    a.AddBoundaryIntegrator(
-        new NativeQuadrature<mfem::VectorFEMassIntegrator>(*sheet_coef));
-  }
-  // Domain integrators only on the attributes of coef_by_attr (zero elsewhere).
-  const int max_attr = parent.attributes.Size() ? parent.attributes.Max() : 1;
-  mfem::Array<int> marker(max_attr);
-  marker = 0;
-  for (const auto &[attr, m] : coef_by_attr)
-  {
-    marker[attr - 1] = 1;
-  }
-  mfem::Vector mass(max_attr);
-  mass = mag_eps;
-  mfem::PWConstCoefficient mcoef(mass);
-  if (magnetostatic)
-  {
-    if (with_curl)
-    {
-      a.AddDomainIntegrator(new NativeQuadrature<mfem::CurlCurlIntegrator>(coef), marker);
-    }
-    if (with_mass)
-    {
-      a.AddDomainIntegrator(new NativeQuadrature<mfem::VectorFEMassIntegrator>(mcoef),
-                            marker);
-    }
-  }
-  else
-  {
-    a.AddDomainIntegrator(new NativeQuadrature<mfem::DiffusionIntegrator>(coef), marker);
-  }
-  a.Assemble();
-  a.Finalize();
-  return std::unique_ptr<mfem::HypreParMatrix>(a.ParallelAssemble());
-}
-
 std::vector<HYPRE_BigInt> SubstructuringSolver::Impl::InterfaceTrueDofs() const
 {
   const HYPRE_BigInt tstart = SolutionSpace().GetTrueDofOffsets()[0];
@@ -532,7 +374,7 @@ std::vector<HYPRE_BigInt> SubstructuringSolver::Impl::InterfaceTrueDofs() const
     }
   }
   std::vector<int> cnt, disp;
-  RowLayout(1, cnt, disp);
+  RowLayout(cnt, disp);
   MPI_Allgatherv(mine.data(), gamma_nloc, HYPRE_MPI_BIG_INT, g2t.data(), cnt.data(),
                  disp.data(), HYPRE_MPI_BIG_INT, parent_fes.GetComm());
   return g2t;
@@ -570,7 +412,7 @@ std::vector<double> SubstructuringSolver::Impl::InterfaceSignatures(int width) c
     }
   }
   std::vector<int> cnt, disp;
-  RowLayout(1, cnt, disp);
+  RowLayout(cnt, disp);
   MPI_Allgatherv(mine.data(), gamma_nloc, MPI_INT, row.data(), cnt.data(), disp.data(),
                  MPI_INT, comm);
   const std::vector<double> sig0 = TrueDofSignatures(parent_fes, index, nG_global);
@@ -706,34 +548,6 @@ mfem::Vector SubstructuringSolver::Impl::TerminalMode(int idx) const
     x(d) = 1.0;
   }
   return x;
-}
-
-std::unique_ptr<mfem::HypreParMatrix> SubstructuringSolver::Impl::AssembleEnvSubmesh()
-{
-  MFEM_VERIFY(!has_sheets, "Superconductor sheets in substructuring need a direct "
-                           "environment factorization: a sparse direct solver and an "
-                           "environment within \"Solver.Substructuring.DirectMaxSize\"!");
-  PWMatrixCoefficient coef(parent.Dimension(), env_eps);
-  mfem::Vector mass(env_submesh->attributes.Size() ? env_submesh->attributes.Max() : 1);
-  mass = 0.0;
-  for (const auto &[attr, t] : env_eps)
-  {
-    mass(attr - 1) = mag_eps;
-  }
-  mfem::PWConstCoefficient mcoef(mass);
-  mfem::ParBilinearForm a(env_sfes.get());
-  if (magnetostatic)
-  {
-    a.AddDomainIntegrator(new NativeQuadrature<mfem::CurlCurlIntegrator>(coef));
-    a.AddDomainIntegrator(new NativeQuadrature<mfem::VectorFEMassIntegrator>(mcoef));
-  }
-  else
-  {
-    a.AddDomainIntegrator(new NativeQuadrature<mfem::DiffusionIntegrator>(coef));
-  }
-  a.Assemble();
-  a.Finalize();
-  return std::unique_ptr<mfem::HypreParMatrix>(a.ParallelAssemble());
 }
 
 std::unique_ptr<mfem::HypreParMatrix>

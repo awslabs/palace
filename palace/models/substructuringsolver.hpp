@@ -13,6 +13,7 @@
 namespace palace
 {
 
+class FiniteElementSpaceHierarchy;
 class IoData;
 class Mesh;
 
@@ -77,6 +78,9 @@ public:
   // Global parent true-DOF size.
   long long int GlobalTrueVSize() const;
 
+  // The finite element spaces of the regular operator (for the problem size).
+  const FiniteElementSpaceHierarchy &GetFESpaces() const;
+
   // Write full parent-space fields (V or A) to a ParaView collection under dir, one time
   // step per excitation (time = excitation index).
   void WriteParaView(const std::string &dir, const std::vector<int> &ids,
@@ -108,6 +112,10 @@ public:
 
   // Mutual energy u_i^T K u_j with the full (region + environment) energy operator.
   double MutualEnergy(const Vector &ui, const Vector &uj) const;
+
+  // Mutual energy u_i^T A u_j with the full (region + environment) operator of the solves:
+  // the energy operator and, in magnetostatics, the sheet terms and the regularization.
+  double MutualSystemEnergy(const Vector &ui, const Vector &uj) const;
 
   // Unit Dirichlet lift of a terminal (1 on its true DOFs, 0 elsewhere).
   Vector TerminalLift(int terminal_index) const;

@@ -332,6 +332,14 @@ void ConcretizeBoundaries(const config::BoundaryData &boundaries, json &j_bounda
                             {"Excitation", lp.excitation},
                             {"Active", lp.active},
                             {"IncludeInSynthesis", lp.include_in_synthesis}});
+
+      // The excitation weight is only valid, and so only emitted, for excited ports; the
+      // parser rejects these keys on a port without an excitation.
+      if (lp.excitation != 0)
+      {
+        ApplyEntries(j_port, {{"ExcitationAmplitude", lp.excitation_amplitude},
+                              {"ExcitationPhase", lp.excitation_phase}});
+      }
     }
   }
 
@@ -564,9 +572,7 @@ json IoData::ConcretizeDefaults(const IoData &iodata, json config)
     {
       Concretize(j_sub, "SaveModel", sub.save_model);
     }
-    Concretize(j_sub, "InterfaceOffdiagTol", sub.interface_offdiag_tol);
     Concretize(j_sub, "FactorizationTol", sub.factorization_tol);
-    Concretize(j_sub, "DirectMaxSize", sub.direct_max_size);
   }
 
   if (config.contains("Domains"))

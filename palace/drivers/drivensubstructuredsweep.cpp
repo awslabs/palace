@@ -562,7 +562,6 @@ void DrivenSubstructuredSweep::SetUpModel()
     const auto region_mesh = RegionMeshPath(model_path);
     const std::vector<char> written = ds->WriteRegionMesh(
         region_mesh, port_attrs, iodata.units.GetMeshLengthRelativeScale());
-    Mpi::Print(" Writing the mesh of the region for online runs to {}\n", region_mesh);
     model.env_moments = ds->EnvironmentMoments();
     model.region_moments = ds->EnvironmentMoments(written);
   }

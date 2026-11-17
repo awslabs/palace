@@ -21,6 +21,7 @@
 #include <nlohmann/json.hpp>
 #include "fem/bilinearform.hpp"
 #include "fem/integrator.hpp"
+#include "models/portexcitations.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
 #include "utils/jsonschema.hpp"
@@ -528,6 +529,18 @@ void IoData::CheckConfiguration()
       Mpi::Warning(
           "Transient problem type does not support wave port boundary conditions!\n");
     }
+    for (const auto &[idx, data] : boundaries.lumpedport)
+    {
+      // The excitation weight is frequency independent, so it can only be represented in
+      // the time domain when it is real, that is, when the phase is a multiple of 180
+      // degrees.
+      MFEM_VERIFY(
+          ExcitationWeight(data.excitation_amplitude, data.excitation_phase).imag() == 0.0,
+          fmt::format("Transient simulations require a real excitation: "
+                      "\"ExcitationPhase\" must be a multiple of 180 degrees on lumped "
+                      "port index {:d}",
+                      idx));
+    }
     if (!boundaries.farfield.empty() && boundaries.farfield.order > 1)
     {
       Mpi::Warning("Transient problem type does not support absorbing boundary conditions "
@@ -573,6 +586,12 @@ void IoData::CheckConfiguration()
   // names, not the default resolved below.
   if (solver.substructuring)
   {
+    if (solver.linear.type == LinearSolver::STRUMPACK_MP ||
+        solver.linear.type == LinearSolver::CUDSS)
+    {
+      Mpi::Warning("Substructuring factors with STRUMPACK, MUMPS or SuperLU_DIST only: "
+                   "\"Solver.Linear.Type\" STRUMPACK-MP or cuDSS is not used!\n");
+    }
     solver.substructuring->direct_solver = solver.linear.type;
   }
 
@@ -604,7 +623,7 @@ void IoData::CheckConfiguration()
   }
   if ((solver.linear.type == LinearSolver::STRUMPACK ||
        solver.linear.type == LinearSolver::STRUMPACK_MP) &&
-      problem.type == ProblemType::MAGNETOSTATIC)
+      problem.type == ProblemType::MAGNETOSTATIC && !solver.substructuring)
   {
     Mpi::Warning("STRUMPACK does not support the singular curl-curl operator in "
                  "magnetostatic problems, use AMS or another iterative solver instead!\n");
@@ -834,10 +853,18 @@ void IoData::CheckConfiguration()
                     problem.type == ProblemType::DRIVEN,
                 "Substructuring is only supported for electrostatic, magnetostatic and "
                 "driven problem types!");
+#if !defined(MFEM_USE_STRUMPACK) && !defined(MFEM_USE_MUMPS) && !defined(MFEM_USE_SUPERLU)
+    MFEM_ABORT("Substructuring factors the environment and the region with a sparse direct "
+               "solver: build Palace with STRUMPACK, MUMPS or SuperLU_DIST!");
+#endif
     MFEM_VERIFY(!sub.region_attributes.empty() && !sub.environment_attributes.empty(),
                 "Substructuring requires nonempty Region and Environment attribute sets!");
     MFEM_VERIFY(sub.mode != SubstructuringMode::ONLINE || !sub.save_model.empty(),
                 "\"Online\" substructuring requires the saved model path \"SaveModel\"!");
+    // The interface DOFs of a model are matched by their coordinates, which on a periodic
+    // seam depend on the partition.
+    MFEM_VERIFY(boundaries.periodic.boundary_pairs.empty(),
+                "Substructuring does not support \"Periodic\" boundaries!");
     // Adaptive refinement refines the region of an online run only: the environment was
     // condensed on its final mesh, and nonconforming refinement without a level constraint
     // does not spread into it.
@@ -855,17 +882,15 @@ void IoData::CheckConfiguration()
     }
     if (problem.type == ProblemType::DRIVEN)
     {
-      // Floquet ports and periodic boundaries make the system non-symmetric.
       MFEM_VERIFY(!solver.driven.adaptive_circuit_synthesis,
                   "Driven substructuring does not support \"AdaptiveCircuitSynthesis\"!");
       MFEM_VERIFY(model.refinement.max_it == 0,
                   "Adaptive mesh refinement with driven substructuring refines the full "
                   "model: run the adaptation without \"Solver.Substructuring\" (with "
                   "\"SaveAdaptMesh\") and condense the saved mesh offline!");
-      MFEM_VERIFY(boundaries.floquetport.empty() &&
-                      boundaries.periodic.boundary_pairs.empty(),
-                  "Driven substructuring does not support Floquet ports or periodic "
-                  "boundaries!");
+      // Floquet ports make the system non-symmetric.
+      MFEM_VERIFY(boundaries.floquetport.empty(),
+                  "Driven substructuring does not support Floquet ports!");
       // From a model (online, or after an adaptive sweep's samples), the field is known in
       // the region and on Γ only.
       MFEM_VERIFY(
@@ -874,11 +899,36 @@ void IoData::CheckConfiguration()
                boundaries.postpro.farfield.attributes.empty()),
           "Online or adaptive driven substructuring does not compute interface dielectric "
           "or far-field postprocessing yet!");
-#if !defined(MFEM_USE_MUMPS) && !defined(MFEM_USE_SUPERLU) && !defined(MFEM_USE_STRUMPACK)
-      MFEM_ABORT(
-          "Driven substructuring requires a sparse direct solver (MUMPS, SuperLU_DIST "
-          "or STRUMPACK)!");
-#endif
+    }
+    else
+    {
+      // The substructured static solves give the terminal matrices and the saved fields,
+      // not the domain and surface postprocessing of a regular simulation (in
+      // magnetostatics, the regular solve ignores "Dielectric" too).
+      auto not_computed = [](bool given, const char *key)
+      {
+        MFEM_VERIFY(!given,
+                    "Substructuring does not compute \""
+                        << key
+                        << "\": remove it, or run without \"Solver.Substructuring\"!");
+      };
+      not_computed(!domains.postpro.energy.empty(), "Domains.Postprocessing.Energy");
+      not_computed(!domains.postpro.probe.empty(), "Domains.Postprocessing.Probe");
+      not_computed(!boundaries.postpro.flux.empty(),
+                   "Boundaries.Postprocessing.SurfaceFlux");
+      not_computed(problem.type == ProblemType::ELECTROSTATIC &&
+                       !boundaries.postpro.dielectric.empty(),
+                   "Boundaries.Postprocessing.Dielectric");
+      not_computed(!boundaries.postpro.farfield.empty(),
+                   "Boundaries.Postprocessing.FarField");
+      const int n_post = (problem.type == ProblemType::ELECTROSTATIC)
+                             ? solver.electrostatic.n_post
+                             : solver.magnetostatic.n_post;
+      MFEM_VERIFY(n_post == 0 || (problem.output_formats.paraview &&
+                                  !problem.output_formats.gridfunction),
+                  "Substructuring saves the fields in the ParaView format only: set "
+                  "\"Problem.OutputFormats\" to \"Paraview\": true and \"GridFunction\": "
+                  "false!");
     }
     if (problem.type == ProblemType::MAGNETOSTATIC)
     {

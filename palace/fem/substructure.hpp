@@ -25,22 +25,20 @@ void CheckSubstructuringAttributes(const mfem::ParMesh &mesh,
 
 // Parallel-capable interface identification in true-DOF space. Given the parent finite
 // element space and the region/environment domain attribute sets, mark each parent true DOF
-// touched by region element support, by environment support, and by both (the shared
+// touched by region element support and by environment support (both on the shared
 // interface). Works on any MPI partition: L-vector attribute marks are reduced to true DOFs
 // across ranks via the parallel prolongation. Returns the global interface true-DOF count.
 int MarkInterfaceTrueDofs(mfem::ParFiniteElementSpace &parent_fespace,
                           const mfem::Array<int> &region_attrs,
                           const mfem::Array<int> &environment_attrs,
-                          mfem::Array<int> &region_marker, mfem::Array<int> &env_marker,
-                          mfem::Array<int> &interface_marker);
+                          mfem::Array<int> &region_marker, mfem::Array<int> &env_marker);
 
 // The same on a Palace space, which may be broken across interior boundaries: a version of
 // a DOF is marked by the elements reading it.
 int MarkInterfaceTrueDofs(const FiniteElementSpace &parent_fespace,
                           const mfem::Array<int> &region_attrs,
                           const mfem::Array<int> &environment_attrs,
-                          mfem::Array<int> &region_marker, mfem::Array<int> &env_marker,
-                          mfem::Array<int> &interface_marker);
+                          mfem::Array<int> &region_marker, mfem::Array<int> &env_marker);
 
 // Geometric signatures of a set of true DOFs, replicated on all ranks (n x width,
 // row-major, width = SignatureWidth(fespace)), identifying them independently of the DOF
@@ -164,8 +162,9 @@ bool PointInRegion(const mfem::ParMesh &mesh, const std::array<double, 3> &x,
 // The mesh of the region written next to a saved substructuring model: <model>_region.mesh.
 std::string RegionMeshPath(const std::string &model_path);
 
-// Write a mesh of the region for online substructuring runs, from rank 0 in mesh length
-// units (coordinates times length_scale): the region, and the environment elements touching
+// Write a mesh of the region for online substructuring runs from a conforming mesh, from
+// rank 0 in mesh length units (coordinates times length_scale): the region, and the
+// environment elements touching
 // the marked local true DOFs, with their boundary elements. The local boundary elements
 // marked in plain_bdr (if not empty) are written with the attribute of the boundary faces
 // the submesh generates. Returns the local environment elements written. Collective.
@@ -214,10 +213,21 @@ std::vector<char> RegionMeshInterface(mfem::ParFiniteElementSpace &parent_fespac
                                       const std::vector<double> &saved_signatures,
                                       int saved_width);
 
-// The k-th (0, 1 or 2) of three fixed polynomial fields, vector fields for H(curl) and
-// scalar ones for H1, as true DOFs of the space: to fingerprint operators and sources
-// independently of the partition and of the DOF numbering.
-mfem::Vector FingerprintField(const mfem::ParFiniteElementSpace &fespace, int k);
+// The k-th (0, 1 or 2) of three fixed polynomial fields of x - center, vector fields for
+// H(curl) and scalar ones for H1, as true DOFs of the space: to fingerprint operators and
+// sources independently of the partition and of the DOF numbering. A center of its own for
+// each field keeps their energies from being even about one common point.
+mfem::Vector FingerprintField(const mfem::ParFiniteElementSpace &fespace, int k,
+                              const std::array<double, 3> &center);
+
+// For the marked true DOFs, with p their points (those of TrueDofSignatures; one point for
+// the DOFs of a group at a common point), the sums of g_k(p - centers[k]) and of their
+// absolute values (k = 0, 1, 2), with g_k the scalar polynomials of FingerprintField:
+// a description of a set of DOFs independent of the partition, the DOF numbering and the
+// H(curl) orientations. Collective.
+std::array<double, 6> TrueDofPointSums(const mfem::ParFiniteElementSpace &fespace,
+                                       const std::vector<char> &mark,
+                                       const std::array<std::array<double, 3>, 3> &centers);
 
 }  // namespace palace
 

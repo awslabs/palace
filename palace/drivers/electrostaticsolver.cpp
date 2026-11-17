@@ -27,6 +27,51 @@ void ElectrostaticSolver::Preprocess(IoData &iodata, std::unique_ptr<mfem::Mesh>
   BaseSolver::Preprocess(iodata, smesh, comm);
 }
 
+std::pair<ErrorIndicator, long long int> ElectrostaticSolver::SolveSubstructured(
+    const std::vector<std::unique_ptr<Mesh>> &mesh) const
+{
+  BlockTimer bt(Timer::CONSTRUCT);
+  MFEM_VERIFY(!iodata.boundaries.terminal.empty(),
+              "Substructuring electrostatic solve requires \"Terminal\" boundaries!");
+  SubstructuringSolver sub(iodata, mesh);
+  SaveMetadata(sub.GetFESpaces());
+  sub.CondenseEnvironment();
+  const std::vector<int> terminals = sub.TerminalIndices();
+  const int n = static_cast<int>(terminals.size());
+
+  // Maxwell capacitance matrix C_ij = phi_i^T K phi_j from region solves against the
+  // condensed environment; only the fields to be saved need the environment interior.
+  BlockTimer bt1(Timer::POSTPRO);
+  Mpi::Print("\nSubstructuring capacitance sweep: {:d} terminal excitation{}\n", n,
+             (n > 1) ? "s" : "");
+  const int n_save = std::min(iodata.solver.electrostatic.n_post, n);
+  const bool adapt = (iodata.model.refinement.max_it > 0);
+  std::vector<Vector> fields, region_fields;
+  const mfem::DenseMatrix C =
+      sub.CapacitanceMatrix(terminals, &fields, n_save, adapt ? &region_fields : nullptr);
+  PostprocessCapacitance(terminals, C);
+  if (n_save > 0)
+  {
+    sub.WriteParaView(post_dir.string(),
+                      std::vector<int>(terminals.begin(), terminals.begin() + n_save),
+                      fields);
+  }
+  Mpi::Print("\nSubstructuring capacitance sweep complete ({:d} terminal{})\n", n,
+             (n > 1) ? "s" : "");
+  // Adaptive refinement of the region only (the indicators are zero on the environment).
+  ErrorIndicator indicator;
+  if (adapt)
+  {
+    indicator = sub.RegionErrorIndicator(region_fields, C);
+    const auto indicator_stats = indicator.GetSummaryStatistics(mesh.back()->GetComm());
+    if (root)
+    {
+      WriteErrorIndicatorCSV(post_dir, indicator_stats);
+    }
+  }
+  return {indicator, sub.GlobalTrueVSize()};
+}
+
 std::pair<ErrorIndicator, long long int>
 ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 {
@@ -34,36 +79,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // interface and solve the region against it.
   if (iodata.solver.substructuring)
   {
-    BlockTimer bt(Timer::CONSTRUCT);
-    SubstructuringSolver sub(iodata, mesh);
-    sub.CondenseEnvironment();
-    const std::vector<int> terminals = sub.TerminalIndices();
-    const int n = static_cast<int>(terminals.size());
-    MFEM_VERIFY(n > 0, "Substructuring electrostatic solve requires terminals!");
-
-    // Maxwell capacitance matrix C_ij = phi_i^T K phi_j from region solves against the
-    // condensed environment; only the fields to be saved need the environment interior.
-    BlockTimer bt1(Timer::POSTPRO);
-    Mpi::Print("\nSubstructuring capacitance sweep: {:d} terminal excitation{}\n", n,
-               (n > 1) ? "s" : "");
-    const int n_save = std::min(iodata.solver.electrostatic.n_post, n);
-    const bool adapt = (iodata.model.refinement.max_it > 0);
-    std::vector<Vector> fields, region_fields;
-    const mfem::DenseMatrix C =
-        sub.CapacitanceMatrix(terminals, &fields, n_save, adapt ? &region_fields : nullptr);
-    PostprocessCapacitance(terminals, C);
-    if (n_save > 0)
-    {
-      sub.WriteParaView(post_dir.string(),
-                        std::vector<int>(terminals.begin(), terminals.begin() + n_save),
-                        fields);
-    }
-    Mpi::Print("\nSubstructuring capacitance sweep complete ({:d} terminal{})\n", n,
-               (n > 1) ? "s" : "");
-    // Adaptive refinement of the region only (the indicators are zero on the environment).
-    ErrorIndicator indicator =
-        adapt ? sub.RegionErrorIndicator(region_fields, C) : ErrorIndicator();
-    return {indicator, sub.GlobalTrueVSize()};
+    return SolveSubstructured(mesh);
   }
 
   // Construct the system matrix defining the linear operator. Dirichlet boundaries are

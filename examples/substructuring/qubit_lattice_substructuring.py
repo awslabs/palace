@@ -24,8 +24,9 @@ Usage (from this directory):
 import argparse
 import collections
 import os
+import sys
 
-from remesh_region import TETRAHEDRA, TRIANGLES, read_msh2, write_msh2
+from remesh_region import TETRAHEDRA, TRIANGLES, face_components, read_msh2, write_msh2
 
 EXTERIOR, GROUND, PAD = 3, 4, 4  # pad k: PAD + k
 REGION = {"substrate": 1, "vacuum": 2}
@@ -66,7 +67,7 @@ def main():
         "--box",
         type=float,
         nargs=6,
-        default=[-500.0, 500.0, -500.0, 500.0, -400.0, 400.0],
+        default=[-500.0, 500.0, -500.0, 500.0, -400.0, 380.0],
         metavar=("XMIN", "XMAX", "YMIN", "YMAX", "ZMIN", "ZMAX"),
         help="region box, in mesh units (um); for re-meshing with remesh_region.py it must "
         "not reach the bottom of the substrate",
@@ -102,6 +103,8 @@ def main():
             inside = all(lo <= c <= hi for c, (lo, hi) in zip(centroid, box))
             tags[0] = (REGION if inside else ENVIRONMENT)[material[tags[0]]]
             count[tags[0]] += 1
+    if face_components(elements, REGION.values()) > 1:
+        sys.exit("the region of the box is not face-connected: change --box")
 
     names = ['2 %d "exterior_boundary"' % EXTERIOR, '2 %d "ground"' % GROUND]
     names += ['2 %d "pad_%d"' % (PAD + k, k) for k in range(1, len(pads) + 1)]

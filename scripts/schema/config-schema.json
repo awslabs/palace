@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:4-3-1",
+  "$id": "urn:palace:schema:4-4-1",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -1147,6 +1147,12 @@
             }
           ]
         },
+        "ExcitationAmplitude": {
+          "$ref": "#/$defs/ExcitationAmplitude"
+        },
+        "ExcitationPhase": {
+          "$ref": "#/$defs/ExcitationPhase"
+        },
         "Active": {
           "type": "boolean",
           "description": "Turns on or off the damping boundary condition for this port for driven or transient simulations.",
@@ -1238,6 +1244,12 @@
               "$ref": "#/$defs/ExcitationIndex"
             }
           ]
+        },
+        "ExcitationAmplitude": {
+          "$ref": "#/$defs/ExcitationAmplitude"
+        },
+        "ExcitationPhase": {
+          "$ref": "#/$defs/ExcitationPhase"
         },
         "Active": {
           "type": "boolean",
@@ -1948,6 +1960,17 @@
     "ExcitationIndex": {
       "type": "integer",
       "minimum": 0
+    },
+    "ExcitationAmplitude": {
+      "type": "number",
+      "exclusiveMinimum": 0.0,
+      "default": 1.0,
+      "description": "Amplitude ``A`` of the complex weight ``a = A e^{i\u03c6}`` applied to the unit-power incident wave of this port, so the incident power is scaled by ``A^2``. Dimensionless and frequency independent. Requires `\"Excitation\"` to be nonzero. S-parameters are normalized by the weight and do not depend on it. See the [boundary conditions guide](../guide/boundaries.md#Lumped-and-wave-port-excitation) for details."
+    },
+    "ExcitationPhase": {
+      "type": "number",
+      "default": 0.0,
+      "description": "Phase ``\u03c6`` in degrees of the complex weight ``a = A e^{i\u03c6}`` applied to the unit-power incident wave of this port, using the ``e^{i\u03c9t}`` time convention. A phase of 180 gives the same fields as reversing `\"Direction\"`. With the phase, the voltage, current, incident voltage and incident current of the port change sign, and its S-parameters do not. Reversing `\"Direction\"` also reverses the voltage reference of the port, so these keep their sign, and the S-parameters between this port and the others change sign. Requires `\"Excitation\"` to be nonzero. S-parameters are normalized by the weight and do not depend on it. Must be a multiple of 180 for transient simulations. See the [boundary conditions guide](../guide/boundaries.md#Lumped-and-wave-port-excitation) for details."
     },
     "CoordinateSystem": {
       "type": "string",
@@ -2948,6 +2971,7 @@
             "Attributes": {
               "type": "array",
               "items": { "type": "integer", "exclusiveMinimum": 0 },
+              "minItems": 1,
               "description": "Domain attributes defining the region of interest (redesigned/solved)."
             }
           }
@@ -2961,6 +2985,7 @@
             "Attributes": {
               "type": "array",
               "items": { "type": "integer", "exclusiveMinimum": 0 },
+              "minItems": 1,
               "description": "Domain attributes defining the environment (condensed to the interface)."
             }
           }
@@ -2972,25 +2997,13 @@
         },
         "SaveModel": {
           "type": "string",
-          "description": "Path of the environment model file written in \"Offline\" mode and read in \"Online\" mode."
-        },
-        "InterfaceOffdiagTol": {
-          "type": "number",
-          "minimum": 0,
-          "default": 0,
-          "description": "Relative tolerance for a hierarchical (HODLR) compression of the condensed interface operator, reducing its memory; 0 keeps it dense (exact). Not available with London superconductor sheets (flux loops and \"Superconductor\" boundaries), whose region solve factors the dense operator."
+          "description": "Path of the environment model file written in \"Offline\" mode and read in \"Online\" mode. An \"Offline\" run on a conforming mesh also writes, and replaces, the mesh of the region next to it (`<stem>_region.mesh` for `<stem>.model`)."
         },
         "FactorizationTol": {
           "type": "number",
           "minimum": 0,
           "default": 0,
-          "description": "Relative tolerance for a block low-rank (BLR) approximation of the environment factorization, trading a controlled accuracy loss for a faster factorization; 0 is exact. Only used when Palace is built with MUMPS."
-        },
-        "DirectMaxSize": {
-          "type": "integer",
-          "minimum": 0,
-          "default": 2000000,
-          "description": "Number of unknowns up to which the environment and the region of electrostatic and magnetostatic substructuring are factored with a sparse direct solver; larger ones are solved by preconditioned conjugate gradients (geometric multigrid, BoomerAMG or AMS). Magnetostatic environments at order 2 and higher are always factored, and an environment with superconductor sheets must be."
+          "description": "Relative tolerance for a block low-rank (BLR) approximation of the environment factorization, trading a controlled accuracy loss for a faster factorization; 0 is exact. Only used by the MUMPS partial factorization of the environment: not when \"Solver\"/\"Linear\"/\"Type\" names another solver, nor when a magnetostatic model is saved."
         }
       }
     },

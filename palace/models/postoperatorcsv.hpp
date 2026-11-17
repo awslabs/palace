@@ -244,6 +244,10 @@ std::vector<std::size_t> table_expected_filling_by_row(std::size_t m_idx_row,
 
 }  // namespace _impl
 
+// Write the summary statistics of the error indicators to post_dir/error-indicators.csv.
+void WriteErrorIndicatorCSV(const fs::path &post_dir,
+                            const ErrorIndicator::SummaryStatistics &indicator_stats);
+
 // Helper class to PostOperator to collect csv tables and printers for measurement that will
 // be saved to file. This class contains a pointer to the corresponding PostOperator class
 // and is a friend to a PostOperator class; this is equivalent to having these members
@@ -360,6 +364,13 @@ protected:
   // Eigenmode + Driven + Transient.
   std::optional<TableWithCSVFile> port_V;
   std::optional<TableWithCSVFile> port_I;
+
+  // Whether the incident lumped-port voltages and currents are written as real and
+  // imaginary parts (columns Re{V_inc[...]} and Im{V_inc[...]}, and likewise for I_inc)
+  // instead of as single real values. Decided in InitializePortVI, once for all
+  // excitations: true when any excited lumped port has a weight that is not real
+  // (HasComplexExcitationWeight, "ExcitationPhase" not a multiple of 180 degrees).
+  bool complex_incident_port_VI = false;
 
   void InitializePortVI(const SpaceOperator &fem_op)
     requires(solver_t == ProblemType::EIGENMODE || solver_t == ProblemType::DRIVEN ||

@@ -64,6 +64,9 @@ private:
                         const mfem::DenseMatrix &fluxoid) const;
 
   std::pair<ErrorIndicator, long long int>
+  SolveSubstructured(const std::vector<std::unique_ptr<Mesh>> &mesh) const;
+
+  std::pair<ErrorIndicator, long long int>
   Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const override;
 
 public:

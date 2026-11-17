@@ -27,8 +27,7 @@ int MarkInterfaceTrueDofs(const mfem::ParMesh &mesh, int vsize,
                           const mfem::HypreParMatrix &P, const ElementDofs &element_dofs,
                           const mfem::Array<int> &region_attrs,
                           const mfem::Array<int> &environment_attrs,
-                          mfem::Array<int> &region_marker, mfem::Array<int> &env_marker,
-                          mfem::Array<int> &interface_marker)
+                          mfem::Array<int> &region_marker, mfem::Array<int> &env_marker)
 {
   auto in = [](const mfem::Array<int> &s, int a)
   {
@@ -78,15 +77,13 @@ int MarkInterfaceTrueDofs(const mfem::ParMesh &mesh, int vsize,
 
   region_marker.SetSize(nt);
   env_marker.SetSize(nt);
-  interface_marker.SetSize(nt);
   const double *rt = reg_t.HostRead(), *et = env_t.HostRead();
   int local_iface = 0;
   for (int i = 0; i < nt; i++)
   {
     region_marker[i] = (rt[i] > 0.5) ? 1 : 0;
     env_marker[i] = (et[i] > 0.5) ? 1 : 0;
-    interface_marker[i] = (region_marker[i] && env_marker[i]) ? 1 : 0;
-    local_iface += interface_marker[i];
+    local_iface += region_marker[i] && env_marker[i];
   }
   int global_iface = 0;
   MPI_Allreduce(&local_iface, &global_iface, 1, MPI_INT, MPI_SUM, mesh.GetComm());
@@ -121,30 +118,26 @@ void CheckSubstructuringAttributes(const mfem::ParMesh &mesh,
 int MarkInterfaceTrueDofs(mfem::ParFiniteElementSpace &parent_fespace,
                           const mfem::Array<int> &region_attrs,
                           const mfem::Array<int> &environment_attrs,
-                          mfem::Array<int> &region_marker, mfem::Array<int> &env_marker,
-                          mfem::Array<int> &interface_marker)
+                          mfem::Array<int> &region_marker, mfem::Array<int> &env_marker)
 {
   auto element_dofs = [&](int e, mfem::Array<int> &dofs)
   { parent_fespace.GetElementDofs(e, dofs); };
   return MarkInterfaceTrueDofs(*parent_fespace.GetParMesh(), parent_fespace.GetVSize(),
                                *parent_fespace.Dof_TrueDof_Matrix(), element_dofs,
-                               region_attrs, environment_attrs, region_marker, env_marker,
-                               interface_marker);
+                               region_attrs, environment_attrs, region_marker, env_marker);
 }
 
 int MarkInterfaceTrueDofs(const FiniteElementSpace &parent_fespace,
                           const mfem::Array<int> &region_attrs,
                           const mfem::Array<int> &environment_attrs,
-                          mfem::Array<int> &region_marker, mfem::Array<int> &env_marker,
-                          mfem::Array<int> &interface_marker)
+                          mfem::Array<int> &region_marker, mfem::Array<int> &env_marker)
 {
   mfem::DofTransformation dof_trans;
   auto element_dofs = [&](int e, mfem::Array<int> &dofs)
   { parent_fespace.GetElementDofs(e, dofs, dof_trans); };
   return MarkInterfaceTrueDofs(parent_fespace.GetParMesh(), parent_fespace.GetVSize(),
                                *parent_fespace.Dof_TrueDof_Matrix(), element_dofs,
-                               region_attrs, environment_attrs, region_marker, env_marker,
-                               interface_marker);
+                               region_attrs, environment_attrs, region_marker, env_marker);
 }
 
 namespace
@@ -162,12 +155,16 @@ int SignatureWidth(const mfem::ParFiniteElementSpace &fespace)
   return IsNedelec(fespace) ? 12 : 3;
 }
 
-std::vector<double> TrueDofSignatures(const mfem::ParFiniteElementSpace &fespace,
-                                      const std::vector<int> &index, int n)
+namespace
+{
+
+// The signatures of the local true DOFs i with index[i] >= 0, at rows index[i] of an
+// n x width array (zero elsewhere).
+std::vector<double> LocalTrueDofSignatures(const mfem::ParFiniteElementSpace &fespace,
+                                           const std::vector<int> &index, int n)
 {
   const int w = SignatureWidth(fespace), nt = fespace.GetTrueVSize();
-  std::vector<double> loc(static_cast<std::size_t>(n) * w, 0.0),
-      glob(static_cast<std::size_t>(n) * w, 0.0);
+  std::vector<double> loc(static_cast<std::size_t>(n) * w, 0.0);
   auto &fes = const_cast<mfem::ParFiniteElementSpace &>(fespace);
   mfem::ParGridFunction gf(&fes);
   mfem::Vector td(nt);
@@ -218,7 +215,18 @@ std::vector<double> TrueDofSignatures(const mfem::ParFiniteElementSpace &fespace
       }
     }
   }
-  MPI_Allreduce(loc.data(), glob.data(), n * w, MPI_DOUBLE, MPI_SUM, fespace.GetComm());
+  return loc;
+}
+
+}  // namespace
+
+std::vector<double> TrueDofSignatures(const mfem::ParFiniteElementSpace &fespace,
+                                      const std::vector<int> &index, int n)
+{
+  const std::vector<double> loc = LocalTrueDofSignatures(fespace, index, n);
+  std::vector<double> glob(loc.size(), 0.0);
+  MPI_Allreduce(loc.data(), glob.data(), static_cast<int>(loc.size()), MPI_DOUBLE, MPI_SUM,
+                fespace.GetComm());
   return glob;
 }
 
@@ -447,7 +455,11 @@ SignatureMap MatchSignatureBasis(const std::vector<double> &current,
       mfem::Mult(Mg, Sm, R);
       R -= Cm;
       worst = std::max(worst, R.MaxMaxNorm());
-      ok = (R.MaxMaxNorm() <= tol);  // also false for a singular block (NaN)
+      ok = (R.MaxMaxNorm() <= tol);  // also false for a NaN residual
+      if (!ok)
+      {
+        break;  // M_g can be singular: do not invert it
+      }
       // Row i of M_g^-T: column i of M_g^-1.
       mfem::DenseMatrix Mi(Mg);
       Mi.Invert();
@@ -473,8 +485,11 @@ SignatureMap MatchSignatureBasis(const std::vector<double> &current,
     }
   }
   ok = ok && std::find(used.begin(), used.end(), 0) == used.end();
-  MFEM_VERIFY(ok, "Online interface DOFs do not match the saved model (max mismatch "
-                      << worst << "); the interface Gamma must be identical.");
+  const auto unmatched = std::count(matched.begin(), matched.end(), 0);
+  MFEM_VERIFY(ok, "Online interface DOFs do not match the saved model ("
+                      << unmatched << " of " << n
+                      << " not matched one to one, largest block residual " << worst
+                      << "): the interface (Gamma) must be identical!");
   return map;
 }
 
@@ -654,6 +669,8 @@ std::vector<char> WriteRegionMesh(const std::string &path,
   // On a copy of the mesh, the environment elements touching the kept DOFs take shifted
   // attributes for the domain submesh, and get theirs back in the written mesh.
   const auto &parent = *fespace.GetParMesh();
+  MFEM_VERIFY(!parent.Nonconforming(),
+              "The mesh of the region is written from a conforming mesh only!");
   mfem::Vector tmark(fespace.GetTrueVSize()), lmark(fespace.GetVSize());
   for (int i = 0; i < fespace.GetTrueVSize(); i++)
   {
@@ -721,42 +738,15 @@ std::vector<char> WriteRegionMesh(const std::string &path,
                           smesh.Mesh::Print(out);
                         });
   };
-  if (mesh.Nonconforming())
+  mfem::Mesh smesh = mesh.GetSerialMesh(0);
+  SerialRegionMesh sub(Mpi::Root(comm)
+                           ? mfem::Mesh(mfem::SubMesh::CreateFromDomain(smesh, attrs))
+                           : mfem::Mesh());
+  if (Mpi::Root(comm))
   {
-    // Written as cracked: the online run does not preprocess a nonconforming mesh.
-    mfem::Array<int> rank0(mesh.GetNE());
-    rank0 = 0;
-    mesh.Rebalance(rank0);
-    auto sub = mfem::ParSubMesh::CreateFromDomain(mesh, attrs);
-    for (int e = 0; e < sub.GetNE(); e++)
-    {
-      if (sub.GetAttribute(e) > shift)
-      {
-        sub.SetAttribute(e, sub.GetAttribute(e) - shift);
-      }
-    }
-    for (int be = 0; plain && be < sub.GetNBE(); be++)
-    {
-      if (sub.GetBdrAttribute(be) == plain + 1)
-      {
-        sub.SetBdrAttribute(be, plain);
-      }
-    }
-    sub.SetAttributes();
-    write(sub);
+    sub.PrepareForPrint(shift, plain);
   }
-  else
-  {
-    mfem::Mesh smesh = mesh.GetSerialMesh(0);
-    SerialRegionMesh sub(Mpi::Root(comm)
-                             ? mfem::Mesh(mfem::SubMesh::CreateFromDomain(smesh, attrs))
-                             : mfem::Mesh());
-    if (Mpi::Root(comm))
-    {
-      sub.PrepareForPrint(shift, plain);
-    }
-    write(sub);
-  }
+  write(sub);
   return written;
 }
 
@@ -855,7 +845,19 @@ std::vector<char> RegionMeshInterface(mfem::ParFiniteElementSpace &parent_fespac
   return cut;
 }
 
-mfem::Vector FingerprintField(const mfem::ParFiniteElementSpace &fespace, int k)
+namespace
+{
+
+// The scalar polynomial k of FingerprintField at the point (X, Y, Z).
+double FingerprintPolynomial(int k, double X, double Y, double Z)
+{
+  return (k == 0) ? X : (k == 1) ? Y + Z * Z : X * Y * Z;
+}
+
+}  // namespace
+
+mfem::Vector FingerprintField(const mfem::ParFiniteElementSpace &fespace, int k,
+                              const std::array<double, 3> &center)
 {
   auto &fes = const_cast<mfem::ParFiniteElementSpace &>(fespace);
   mfem::ParGridFunction gf(&fes);
@@ -863,9 +865,9 @@ mfem::Vector FingerprintField(const mfem::ParFiniteElementSpace &fespace, int k)
   {
     mfem::VectorFunctionCoefficient c(
         3,
-        [k](const mfem::Vector &x, mfem::Vector &v)
+        [k, &center](const mfem::Vector &x, mfem::Vector &v)
         {
-          const double X = x(0), Y = x(1), Z = x(2);
+          const double X = x(0) - center[0], Y = x(1) - center[1], Z = x(2) - center[2];
           const double f[3][3] = {{Z, X, Y}, {Y * Y, Z * Z, X * X}, {X * Y, Y * Z, Z * X}};
           v.SetSize(3);
           for (int d = 0; d < 3; d++)
@@ -878,16 +880,44 @@ mfem::Vector FingerprintField(const mfem::ParFiniteElementSpace &fespace, int k)
   else
   {
     mfem::FunctionCoefficient c(
-        [k](const mfem::Vector &x)
+        [k, &center](const mfem::Vector &x)
         {
-          const double X = x(0), Y = x(1), Z = x.Size() > 2 ? x(2) : 0.0;
-          return (k == 0) ? X : (k == 1) ? Y + Z * Z : X * Y * Z;
+          return FingerprintPolynomial(k, x(0) - center[0], x(1) - center[1],
+                                       (x.Size() > 2 ? x(2) : 0.0) - center[2]);
         });
     gf.ProjectCoefficient(c);
   }
   mfem::Vector r(fes.GetTrueVSize());
   gf.GetTrueDofs(r);
   return r;
+}
+
+std::array<double, 6> TrueDofPointSums(const mfem::ParFiniteElementSpace &fespace,
+                                       const std::vector<char> &mark,
+                                       const std::array<std::array<double, 3>, 3> &centers)
+{
+  const int nt = fespace.GetTrueVSize(), w = SignatureWidth(fespace);
+  std::vector<int> index(nt, -1);
+  int n = 0;
+  for (int i = 0; i < nt; i++)
+  {
+    index[i] = mark[i] ? n++ : -1;
+  }
+  const std::vector<std::array<double, 3>> p =
+      SignaturePoints(LocalTrueDofSignatures(fespace, index, n), w);
+  std::array<double, 6> sums = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+  for (const auto &q : p)
+  {
+    for (int k = 0; k < 3; k++)
+    {
+      const auto &c = centers[k];
+      const double g = FingerprintPolynomial(k, q[0] - c[0], q[1] - c[1], q[2] - c[2]);
+      sums[k] += g;
+      sums[3 + k] += std::abs(g);
+    }
+  }
+  Mpi::GlobalSum(6, sums.data(), fespace.GetComm());
+  return sums;
 }
 
 }  // namespace palace

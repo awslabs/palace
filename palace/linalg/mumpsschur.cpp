@@ -278,10 +278,13 @@ void MumpsSchurSolverT<T>::Call()
 template <typename T>
 void MumpsSchurSolverT<T>::Factor()
 {
-  // Factorization (+ Schur). The workspace estimate from the analysis can be too small
-  // (the dense Schur root sits on one rank): on a workspace failure (INFOG(1) = -8, -9,
-  // -20) raise the relaxation ICNTL(14) and retry. The missing workspace (INFOG(2)) shrinks
-  // linearly with the relaxation, so it is extrapolated from two attempts.
+  // Factorization (+ Schur). The workspace estimates of the analysis can be too small in
+  // parallel (the dense Schur root sits on one rank). If the integer workspace or the
+  // buffers are (INFOG(1) = -8, -20), double their relaxation ICNTL(14) and retry. If the
+  // real workspace S is (-9), whose shortfall can be the Schur root that the relaxation of
+  // a small estimate does not cover, give each process the memory it allocated (ICNTL(23),
+  // in MB, which MUMPS reads on each process when it is set on more than the host) and the
+  // processes that ran short twice their shortfall (INFO(2) entries) more, and retry.
   if (rank == 0 && n_schur > 0 && schur.empty())
   {
     // (Again after ReleaseSchur.)
@@ -290,27 +293,29 @@ void MumpsSchurSolverT<T>::Factor()
                  T(0.0));
     id.schur = Entries(schur.data());
   }
-  int r_prev = -1, m_prev = 0;
   for (int attempt = 0; active; attempt++)
   {
     id.job = 2;
     Call();
     const MUMPS_INT err = id.infog[0];
-    if ((err == -8 || err == -9 || err == -20) && attempt < 8)
+    if (attempt >= 5 || (err != -8 && err != -9 && err != -20))
     {
-      const int r = id.icntl[13], m = id.infog[1];  // ICNTL(14), INFOG(2)
-      int r_next = 2 * r;
-      if (r_prev >= 0 && m > 0 && m_prev > m)
-      {
-        const double slope = static_cast<double>(m_prev - m) / (r - r_prev);
-        r_next = std::max(r_next, r + static_cast<int>(std::ceil(1.25 * m / slope)) + 10);
-      }
-      r_prev = r;
-      m_prev = m;
-      id.icntl[13] = r_next;
+      break;
+    }
+    if (err != -9)
+    {
+      id.icntl[13] *= 2;  // ICNTL(14)
       continue;
     }
-    break;
+    double short_mb = 0.0;
+    if (id.info[0] == -9)
+    {
+      const double entries = (id.info[1] > 0) ? id.info[1] : -1.0e6 * id.info[1];
+      short_mb = entries * sizeof(T) / 1.0e6;
+    }
+    // ICNTL(23) from INFO(16), the memory allocated in the failed attempt.
+    id.icntl[22] = std::max<MUMPS_INT>(id.icntl[22], id.info[15]) +
+                   static_cast<MUMPS_INT>(std::ceil(2.0 * short_mb)) + 1;
   }
   Check("factorization");
   // The factors do not need the input entries (no iterative refinement), unless they are

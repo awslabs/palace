@@ -4,12 +4,16 @@
 #ifndef PALACE_MODELS_LAPLACE_OPERATOR_HPP
 #define PALACE_MODELS_LAPLACE_OPERATOR_HPP
 
+#include <initializer_list>
 #include <map>
 #include <memory>
+#include <optional>
 #include <vector>
 #include <mfem.hpp>
+#include "fem/bilinearform.hpp"
 #include "fem/fespace.hpp"
 #include "linalg/operator.hpp"
+#include "linalg/rap.hpp"
 #include "linalg/vector.hpp"
 #include "models/materialoperator.hpp"
 
@@ -61,6 +65,22 @@ private:
   // Boundary attributes for each terminal index.
   std::map<int, mfem::Array<int>> source_attr_lists;
 
+  // Optional restriction of the assembled operators to a set of domain attributes:
+  // libCEED domain attributes and boundary attributes (by neighboring domain) kept.
+  std::optional<std::pair<mfem::Array<int>, mfem::Array<int>>> assembly_domains;
+  void
+  RestrictToAssemblyDomains(std::initializer_list<MaterialPropertyCoefficient *> f,
+                            std::initializer_list<MaterialPropertyCoefficient *> fb) const;
+
+  // The stiffness form (permittivity) on the finest space, with the coefficient its
+  // integrator points to, restricted to the assembly domains if set.
+  struct StiffnessForm
+  {
+    MaterialPropertyCoefficient epsilon;
+    BilinearForm k;
+  };
+  std::unique_ptr<StiffnessForm> GetStiffnessForm() const;
+
   mfem::Array<int>
   SetUpBoundaryProperties(const config::PecBoundaryData &pec,
                           const std::map<int, config::TerminalData> &terminal,
@@ -73,6 +93,23 @@ public:
                   const std::vector<config::MaterialData> &materials,
                   ProblemType problem_type, const std::vector<std::unique_ptr<Mesh>> &mesh);
   LaplaceOperator(const IoData &iodata, const std::vector<std::unique_ptr<Mesh>> &mesh);
+
+  // Restricts the stiffness form (GetUnconstrainedStiffnessMatrix) to the elements with the
+  // given domain
+  // attributes and the boundary elements bounding them while in scope (the previous
+  // restriction is restored).
+  class AssemblyRestriction
+  {
+  public:
+    AssemblyRestriction(LaplaceOperator &op, const std::vector<int> &domain_attrs);
+    ~AssemblyRestriction() { op.assembly_domains = std::move(previous); }
+    AssemblyRestriction(const AssemblyRestriction &) = delete;
+    AssemblyRestriction &operator=(const AssemblyRestriction &) = delete;
+
+  private:
+    LaplaceOperator &op;
+    std::optional<std::pair<mfem::Array<int>, mfem::Array<int>>> previous;
+  };
 
   // Return material operator for postprocessing.
   const MaterialOperator &GetMaterialOp() const { return mat_op; }
@@ -101,6 +138,12 @@ public:
   // Construct and return system matrix representing discretized Laplace operator for
   // Gauss's law.
   std::unique_ptr<Operator> GetStiffnessMatrix();
+
+  // The stiffness matrix on the finest space without the essential boundary conditions,
+  // for substructuring, which eliminates its own sets of true DOFs and applies the matrix
+  // to Dirichlet data: assembled, or applied matrix-free (partially assembled) if not
+  // assemble.
+  std::unique_ptr<ParOperator> GetUnconstrainedStiffnessMatrix(bool assemble = true);
 
   // Construct and return the discrete gradient matrix.
   const Operator &GetGradMatrix() const
