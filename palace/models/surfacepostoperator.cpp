@@ -1503,10 +1503,15 @@ double SurfacePostOperator::GetInterfaceElectricFieldEnergy(int idx, const GridF
   // (sum_sides_marker) as the coefficient; an entry with recovered flux, an ownership
   // slot, a region, its own ownership quadrature order, or on an axisymmetric mesh (the
   // revolution measure) keeps the coefficient path, which the edge / partitioned /
-  // response energies of the entry share.
+  // response energies of the entry share. So does an entry with edge distances (the
+  // entries the response correction and its coverage accounting act on): its within-R
+  // energy W (this energy minus the edge energy outside R) and the coverage partition's
+  // within-R total must come from the same quadrature, else their closure residual is
+  // quadrature error instead of round-off (P4 FM3 merge interaction; ruling 2036 (2)).
   const bool coefficient_path = it->second.flux_recovery || it->second.ownership ||
                                 it->second.region ||
-                                it->second.ownership_quadrature_order > 0 || axisymmetric;
+                                it->second.ownership_quadrature_order > 0 ||
+                                !it->second.edge_distances.empty() || axisymmetric;
   if (!coefficient_path)
   {
     auto &func = eps_funcs[idx];

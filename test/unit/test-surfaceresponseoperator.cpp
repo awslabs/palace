@@ -14092,6 +14092,71 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 #endif
 }
 
+// Ruling 2036 (2) (P4 FM3 merge interaction): for an interface with edge distances the
+// within-R raw energy W of a coverage cell (the interface energy minus its edge energy
+// outside R) and the coverage partition's own within-R total integrate the same field at
+// the same points, so they agree to round-off at every rank count and in both crack forms.
+// On the merged head before the fix W came from upstream's libCEED surface functional and
+// the partition from the coefficient quadrature: a residual of ~1e-4 of W and coverage
+// cells read INCONSISTENT. The two rounded islands of the saved-mesh case (a), one solve.
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "SurfaceResponseOperator coverage W equals the partition within-R total",
+                 "[surfaceresponseoperator][3d][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  const auto crack_policy = GENERATE(test::CrackPolicy::Legacy, test::CrackPolicy::Default);
+  INFO("crack policy: " << test::CrackPolicyName(crack_policy));
+  MPI_Comm comm = Mpi::World();
+  const fs::path mesh_path = temp.temp_dir / "closure-islands.mesh";
+  const fs::path output_dir =
+      temp.temp_dir / (std::string("closure-") + test::CrackPolicyName(crack_policy));
+  if (Mpi::Root(comm))
+  {
+    mfem::Mesh serial = MakeSerialIslandMesh(true, false, false, true);
+    std::ofstream output(mesh_path);
+    serial.Print(output);
+  }
+  Mpi::Barrier(comm);
+  json config = HighOrderSpatialConfig(crack_policy);
+  config["Model"]["Mesh"] = mesh_path.string();
+  config["Model"]["L0"] = 1.0;  // the fixture matrices' within-R rows are at R = 0.2 m
+  config["Model"]["Refinement"] = {{"MaxIts", 0}};
+  config["Problem"]["Output"] = output_dir.string();
+  test::RunElectrostatic(config);
+  Mpi::Barrier(comm);
+  if (!Mpi::Root(comm))
+  {
+    return;
+  }
+  const Table coverage = test::LoadCsv(output_dir / "surface-response-coverage.csv");
+  const Column &within = test::ColumnByHeader(coverage, "W within-R raw (J)");
+  const Column &partition = test::ColumnByHeader(coverage, "partition within-R raw (J)");
+  const Column &status = test::ColumnByHeader(coverage, "coverage status");
+  REQUIRE(within.data.size() == partition.data.size());
+  REQUIRE(status.text.size() == within.data.size());
+  std::size_t compared = 0;
+  double largest = 0.0;
+  for (std::size_t i = 0; i < within.data.size(); i++)
+  {
+    CHECK(status.text[i] != "INCONSISTENT");
+    if (!(within.data[i] > 0.0))
+    {
+      continue;
+    }
+    largest =
+        std::max(largest, std::abs(within.data[i] - partition.data[i]) / within.data[i]);
+    compared++;
+  }
+  INFO("cells compared " << compared << ", largest |W - partition| / W "
+                         << std::setprecision(17) << largest);
+  CHECK(compared > 0);
+  // The table's numbers carry 13 significant digits (5e-13 relative).
+  CHECK(largest < 1.0e-11);
+#endif
+}
+
 }  // namespace palace
 
 namespace palace
