@@ -410,7 +410,9 @@ bool SolveReducedSystem(MPI_Comm comm, const Eigen::MatrixXcd &A, Eigen::MatrixX
   // The tolerance has headroom over the round-off of the residual itself at small n.
   const double tol =
       std::max<Eigen::Index>(A.rows(), 16) * std::numeric_limits<double>::epsilon();
-  const double norm_A = A.cwiseAbs().rowwise().sum().maxCoeff();
+  // ‖A‖∞ within √2 from the real and imaginary parts, cheaper than every |aᵢⱼ|.
+  const double norm_A =
+      (A.real().cwiseAbs() + A.imag().cwiseAbs()).rowwise().sum().maxCoeff();
   const Eigen::MatrixXd error = (B - A * X).cwiseAbs();
   const Eigen::RowVectorXd bound =
       norm_A * X.cwiseAbs().colwise().maxCoeff() + B.cwiseAbs().colwise().maxCoeff();
