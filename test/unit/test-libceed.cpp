@@ -2797,6 +2797,20 @@ TEST_CASE("Ordinary driven fine preconditioner activates packed complex QData",
       dynamic_cast<const ComplexParOperator &>(ref_mg.GetFinestOperator()).LocalOperator();
   ComplexWrapperOperator local_reference(ref_local.Real(), ref_local.Imag());
   CheckPackedActions(local, local_reference);
+  REQUIRE(mg->GetNumAuxiliaryLevels() == ref_mg.GetNumAuxiliaryLevels());
+  for (std::size_t l = 0; l < mg->GetNumAuxiliaryLevels(); l++)
+  {
+    // The H1 diffusion and mass leaves of the auxiliary operators, including the subset
+    // pairs with their complement on partially lossy levels.
+    const auto &aux_level =
+        dynamic_cast<const ComplexParOperator &>(mg->GetAuxiliaryOperatorAtLevel(l))
+            .LocalOperator();
+    const auto &aux_level_ref =
+        dynamic_cast<const ComplexParOperator &>(ref_mg.GetAuxiliaryOperatorAtLevel(l))
+            .LocalOperator();
+    ComplexWrapperOperator aux_reference(aux_level_ref.Real(), aux_level_ref.Imag());
+    CheckPackedActions(aux_level, aux_reference);
+  }
   if (partial_lossy)
   {
     long long num_subsets = 0;
