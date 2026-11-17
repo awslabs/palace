@@ -2174,9 +2174,12 @@ participation of record, the coverage status the record printed for it, and the
 candidate's), `surface-response-impedance-features.csv` (per
 candidate feature: device law, law status, both key hashes) and
 `surface-response-impedance-law.csv` (per corrected patch and source: the on-metal law reading
-L of the conductor-consistency probes) in the diagnostics directory, and the `palace.json`
-block `SurfaceResponse.ImpedanceRuleCandidate` (including the measured setup cost); a
-preflight writes `surface-response-impedance-candidate-requirements.json`. The candidate
+L of the conductor-consistency probes) and the candidate's conductor-consistency records
+`surface-response-impedance-conductor-consistency-records.json`, always in the diagnostics
+directory (`Diagnostics.Directory`, or `impedance-rule-candidate` when it is unset), and the
+`palace.json` block `SurfaceResponse.ImpedanceRuleCandidate` (including the measured setup
+cost); a preflight writes `surface-response-impedance-candidate-requirements.json` when the
+rule acts on a feature (a substitution or a refusal). The candidate
 treats a metal as the library's film iff it is a perfect conductor or a purely inductive
 `Impedance` sheet (`Rs` = 0 and `Cs` = 0, any `Ls`), an assumption printed on every run; other
 laws are not served (one line names each). `"ImpedanceMetalFilmOverrides": [{"Attributes":
