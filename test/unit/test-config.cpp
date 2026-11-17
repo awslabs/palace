@@ -283,13 +283,23 @@ TEST_CASE("Config Substructuring", "[config][Serial]")
                       {"Environment", {{"Attributes", {2}}}}}}}}};
     };
     const json uniform = {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 1.0}};
-#if defined(MFEM_USE_MUMPS)
+#if defined(MFEM_USE_MUMPS) || defined(MFEM_USE_STRUMPACK)
     CHECK_NOTHROW(IoData(make_config(uniform, json::object()), false));
 #endif
     json adaptive = uniform;
     adaptive["AdaptiveTol"] = 1.0e-3;
-#if defined(MFEM_USE_MUMPS)
+#if defined(MFEM_USE_MUMPS) || defined(MFEM_USE_STRUMPACK)
     CHECK_NOTHROW(IoData(make_config(adaptive, json::object()), false));
+#endif
+#if defined(MFEM_USE_SUPERLU)
+    // SuperLU_DIST condenses no driven environment, but factors the region online.
+    json superlu = make_config(uniform, json::object());
+    superlu["Solver"]["Linear"] = {{"Type", "SuperLU"}};
+    CHECK_THROWS_WITH(IoData(superlu, false),
+                      Catch::Matchers::ContainsSubstring("not SuperLU_DIST"));
+    superlu["Solver"]["Substructuring"]["SaveModel"] = "environment.model";
+    superlu["Solver"]["Substructuring"]["Mode"] = "Online";
+    CHECK_NOTHROW(IoData(superlu, false));
 #endif
     adaptive["AdaptiveCircuitSynthesis"] = true;
     CHECK_THROWS_WITH(IoData(make_config(adaptive, json::object()), false),
@@ -298,12 +308,12 @@ TEST_CASE("Config Substructuring", "[config][Serial]")
     tol["Solver"]["Substructuring"]["FactorizationTol"] = 1.0e-8;
     CHECK_THROWS_WITH(IoData(tol, false),
                       Catch::Matchers::ContainsSubstring("\"FactorizationTol\""));
-#if defined(MFEM_USE_MUMPS)
+#if defined(MFEM_USE_MUMPS) || defined(MFEM_USE_STRUMPACK)
     json gpu = make_config(uniform, json::object());
     gpu["Solver"]["Device"] = "GPU";
     CHECK_NOTHROW(IoData(gpu, false));
 #endif
-#if defined(MFEM_USE_MUMPS)
+#if defined(MFEM_USE_MUMPS) || defined(MFEM_USE_STRUMPACK)
     const json wave = {{"WavePort", {{{"Index", 2}, {"Attributes", {5}}}}}};
     CHECK_NOTHROW(IoData(make_config(uniform, wave), false));
 #endif
@@ -318,7 +328,7 @@ TEST_CASE("Config Substructuring", "[config][Serial]")
          {{"BoundaryPairs", {{{"DonorAttributes", {5}}, {"ReceiverAttributes", {6}}}}}}}};
     CHECK_THROWS_WITH(IoData(make_config(uniform, periodic), false),
                       Catch::Matchers::ContainsSubstring("\"Periodic\" boundaries"));
-#if defined(MFEM_USE_MUMPS)
+#if defined(MFEM_USE_MUMPS) || defined(MFEM_USE_STRUMPACK)
     json saved = make_config(uniform, json::object());
     saved["Solver"]["Substructuring"]["SaveModel"] = "environment.model";
     CHECK_NOTHROW(IoData(saved, false));
@@ -339,7 +349,7 @@ TEST_CASE("Config Substructuring", "[config][Serial]")
     CHECK_THROWS_WITH(IoData(saved, false), Catch::Matchers::ContainsSubstring(
                                                 "does not compute interface dielectric"));
 #endif
-#if defined(MFEM_USE_MUMPS)
+#if defined(MFEM_USE_MUMPS) || defined(MFEM_USE_STRUMPACK)
     json fields = uniform;
     fields["Save"] = {1.0};
     CHECK_NOTHROW(IoData(make_config(fields, json::object()), false));

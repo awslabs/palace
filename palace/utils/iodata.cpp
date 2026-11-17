@@ -886,6 +886,21 @@ void IoData::CheckConfiguration()
                   "Driven substructuring does not support \"AdaptiveCircuitSynthesis\"!");
       MFEM_VERIFY(sub.factorization_tol == 0.0,
                   "Driven substructuring does not use \"FactorizationTol\"!");
+      // SuperLU_DIST would condense by solves in the real equivalent form, which go wrong
+      // through a resonance without a message: the condensation is by MUMPS or STRUMPACK
+      // (preferred in this order), SuperLU_DIST factors the region online only.
+#if defined(MFEM_USE_MUMPS) || defined(MFEM_USE_STRUMPACK)
+      constexpr bool condenser = true;
+#else
+      constexpr bool condenser = false;
+#endif
+      MFEM_VERIFY(
+          sub.mode == SubstructuringMode::ONLINE ||
+              (condenser && sub.direct_solver != LinearSolver::SUPERLU),
+          "Driven substructuring condenses the environment with MUMPS or STRUMPACK, "
+          "not SuperLU_DIST, whose condensation goes wrong through a resonance: "
+          "build Palace with one of them, and do not name SuperLU in "
+          "\"Solver\"/\"Linear\"/\"Type\" offline!");
       MFEM_VERIFY(model.refinement.max_it == 0,
                   "Adaptive mesh refinement with driven substructuring refines the full "
                   "model: run the adaptation without \"Solver.Substructuring\" (with "
