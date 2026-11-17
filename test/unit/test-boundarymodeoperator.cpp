@@ -1039,7 +1039,8 @@ TEST_CASE("ModeEigenSolver multigrid preconditioners of impedance sheets",
   // the boundary terms of the system matrix. A preconditioner without them stagnates the
   // Krylov solver (in-plane block) or doubles its number of iterations (out-of-plane block;
   // here about 17 per solve with the complex and 24 with the real-valued preconditioner).
-  // The solutions are compared to the solution with the exact complex sparse direct
+  // The same holds for finite conductivity boundaries of the same surface resistance. The
+  // solutions are compared to the solution with the exact complex sparse direct
   // preconditioner.
   constexpr double t = 2.0, d = 3.0, freq_ghz = 10.0, eps_d = 3.9, Rs = 1.0e-3,
                    Ls = 1.0e-14;
@@ -1090,6 +1091,19 @@ TEST_CASE("ModeEigenSolver multigrid preconditioners of impedance sheets",
           sheets.attributes = {1, 3};
           sheets.num = {Ls * Rs, 0.0};
           sheets.den = {Ls, Rs};
+        });
+  }
+
+  SECTION("Surface conductivity")
+  {
+    // Finite conductivity boundaries of the same surface resistance, 1 mOhm per square at
+    // 10 GHz (sqrt(mu0 omega / (2 sigma)) for sigma = 4e10 S/m).
+    check(
+        [&](IoData &iodata)
+        {
+          auto &sheets = iodata.boundaries.conductivity.emplace_back();
+          sheets.attributes = {1, 3};
+          sheets.sigma = 4.0e10;
         });
   }
 }
