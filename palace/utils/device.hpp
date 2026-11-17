@@ -30,6 +30,10 @@ bool IsSerialHost();
 // unless MFEM is built with Umpire.
 void ConfigureMemory(const std::string &device_str, int device_id);
 
+// Return whether MPI can communicate CUDA or HIP device buffers, as reported by the MPI
+// library (false for CPU builds).
+bool QueryGPUAwareMPI();
+
 }  // namespace palace::utils
 
 #endif  // DEVICE_HPP

@@ -67,12 +67,12 @@ endif()
 
 # Configure GPU support
 if(PALACE_WITH_CUDA OR PALACE_WITH_HIP)
-  list(APPEND HYPRE_OPTIONS -DHYPRE_ENABLE_UNIFIED_MEMORY=OFF)
-  if(PALACE_WITH_GPU_AWARE_MPI)
-    list(APPEND HYPRE_OPTIONS -DHYPRE_ENABLE_GPU_AWARE_MPI=ON)
-  else()
-    list(APPEND HYPRE_OPTIONS -DHYPRE_ENABLE_GPU_AWARE_MPI=OFF)
-  endif()
+  # Palace enables GPU-aware MPI at runtime when MPI supports it, this only sets hypre's
+  # default (and lets MFEM compile its GPU-aware hypre communication)
+  list(APPEND HYPRE_OPTIONS
+    -DHYPRE_ENABLE_UNIFIED_MEMORY=OFF
+    -DHYPRE_ENABLE_GPU_AWARE_MPI=ON
+  )
 endif()
 if(PALACE_WITH_CUDA)
   list(APPEND HYPRE_OPTIONS
