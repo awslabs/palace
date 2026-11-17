@@ -270,6 +270,14 @@ list(APPEND STRUMPACK_OPTIONS
 #   )
 # endif()
 
+# PBLAS block size of the distributed fronts: 128 instead of the STRUMPACK default of 32
+# gives faster factorizations and solves. The value set here would also replace the block
+# size of 512 that STRUMPACK uses with SLATE, which is not built here. Needs the patch for
+# https://github.com/pghysels/STRUMPACK/pull/169 below
+list(APPEND STRUMPACK_OPTIONS
+  "-DSTRUMPACK_PBLAS_BLOCKSIZE=128"
+)
+
 string(REPLACE ";" "; " STRUMPACK_OPTIONS_PRINT "${STRUMPACK_OPTIONS}")
 message(STATUS "STRUMPACK_OPTIONS: ${STRUMPACK_OPTIONS_PRINT}")
 
@@ -297,11 +305,26 @@ download_patch(STRUMPACK_PATCH_FILES "${CMAKE_BINARY_DIR}/extern/STRUMPACK-patch
 )
 # Lower-latency distributed triangular solves for a few right-hand sides
 # (https://github.com/pghysels/STRUMPACK/pull/165), without its test and CI changes, which
-# need test infrastructure added after STRUMPACK 8.1.0
+# need test infrastructure added after STRUMPACK 8.1.0. These solves handle block sizes up
+# to 32, so they are not used with the block size set above. The patch is kept because the
+# patch for PR 169 below changes its sources
 download_patch(STRUMPACK_PATCH_FILES "${CMAKE_BINARY_DIR}/extern/STRUMPACK-patches"
   strumpack_pr165.diff
   "https://raw.githubusercontent.com/awslabs/palace/0bbc11478dd7faa1a5f89b4f52d34c1205273e1f/extern/patch/STRUMPACK/strumpack_pr165.diff"
   b5032afa23be7511413e4532c85799e2f89d7ed1a379dde23537f8aa5a116294
+)
+# Allow setting the PBLAS block size with CMake, and use the triangular solves of PR 165
+# only for the block sizes they handle (https://github.com/pghysels/STRUMPACK/pull/169),
+# without its change to a test added after STRUMPACK 8.1.0
+list(APPEND STRUMPACK_PATCH_FILES
+  "${CMAKE_SOURCE_DIR}/extern/patch/STRUMPACK/strumpack_pr169.diff"
+)
+# Lower the memory of the distributed solver, whose row to front map and column scaling
+# were stored for the whole matrix on every process
+# (https://github.com/pghysels/STRUMPACK/pull/171), without its test, which needs test
+# infrastructure added after STRUMPACK 8.1.0
+list(APPEND STRUMPACK_PATCH_FILES
+  "${CMAKE_SOURCE_DIR}/extern/patch/STRUMPACK/strumpack_pr171.diff"
 )
 
 include(ExternalProject)

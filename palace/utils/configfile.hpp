@@ -506,6 +506,12 @@ public:
   // - 1-based index if excited; 0 if not excited.
   int excitation = 0;
 
+  // Complex weight a = A exp(i phi) on the unit-power incident wave of this port,
+  // A = "ExcitationAmplitude" (> 0), phi = "ExcitationPhase" in degrees. Dimensionless,
+  // frequency independent. Only valid for excited ports.
+  double excitation_amplitude = 1.0;
+  double excitation_phase = 0.0;  // [deg]
+
   // Flag for boundary damping term in driven and transient simulations.
   bool active = true;
 
