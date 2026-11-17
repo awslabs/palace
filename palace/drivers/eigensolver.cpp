@@ -473,12 +473,12 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         // A warm-started solve converges after few linear solves, whose error stays in the
         // vectors kept at the restarts and is not seen by the error estimate of the
         // eigenvalue solver: solve those of the first Krylov cycle with a 100 times smaller
-        // tolerance, but not below 1e-3 times the eigenvalue tolerance or 1e-12, so that
-        // there is nothing to tighten when the linear solver tolerance is already that
-        // small.
+        // tolerance, but not below 1e-3 times the tolerance of the eigenvalue solve (that
+        // of the initial guess for the hybrid nonlinear solver) or 1e-12, so that there is
+        // nothing to tighten when the linear solver tolerance is already that small.
         const double lin_tol = iodata.solver.linear.tol;
-        const double first_tol = std::min(
-            lin_tol, std::max({1.0e-2 * lin_tol, 1.0e-3 * eigenmode.tol, 1.0e-12}));
+        const double first_tol =
+            std::min(lin_tol, std::max({1.0e-2 * lin_tol, 1.0e-3 * tol, 1.0e-12}));
         if (first_tol < lin_tol)
         {
           eigen->SetFirstCycleLinearSolverTol(first_tol);
