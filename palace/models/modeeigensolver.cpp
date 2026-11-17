@@ -606,6 +606,10 @@ void ModeEigenSolver::SetUpLinearSolver(MPI_Comm comm)
         return {};
       }(),
       false, false, false, reorder_reuse);
+  if (bmo)
+  {
+    pc->EnableSetupTimer();
+  }
   ksp = std::make_unique<ComplexKspSolver>(std::move(gmres), std::move(pc));
 }
 

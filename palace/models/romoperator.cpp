@@ -1489,7 +1489,7 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
     // the per-port cross-section EVP at this ω and refreshes the modal post-processing
     // state used by MeasureWavePorts for S-parameters and power.
     {
-      BlockTimer bt(Timer::WAVE_PORT, !Mwp_p_r.empty());
+      BlockTimer bt(Timer::WAVE_PORT, space_op.GetWavePortOp().Size() > 0);
       for (const auto &[port_idx, Mp_r] : Mwp_p_r)
       {
         const auto &port_data = space_op.GetWavePortOp().GetPort(port_idx);

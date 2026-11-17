@@ -314,5 +314,11 @@ TEST_CASE("PerfReport Lazy Coarse Setup", "[perfreport][Serial]")
   pc.SetOperator(A);
   pc.Mult(b, x);
   CHECK(BlockTimer::GlobalTimer().Counts(Timer::KSP_COARSE_SETUP) == 2);
+
+  // Not enabled: untimed.
+  MfemWrapperSolver<Operator> untimed(std::make_unique<mfem::HypreBoomerAMG>());
+  untimed.SetOperator(A);
+  untimed.Mult(b, x);
+  CHECK(BlockTimer::GlobalTimer().Counts(Timer::KSP_COARSE_SETUP) == 2);
   BlockTimer::Reset();
 }
