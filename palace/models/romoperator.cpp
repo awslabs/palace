@@ -1348,10 +1348,7 @@ void RomOperator::AddSamplePROM(int excitation_idx, double omega, const ComplexV
     return;
   }
 
-  // Relative PROM errors at ω with the first n0 + j basis vectors, j = 0, ..., m. The real
-  // part of u is added before its imaginary part, so the bases without the new directions
-  // and (if u has both parts) with only the real one are leading blocks of the updated
-  // PROM: their reduced systems are leading blocks of the one just assembled.
+  // Relative PROM error at ω of the updated basis.
   const double norm_u = linalg::Norml2(comm, u);
   ComplexVector x(u.Size());
   x.UseDevice(true);
@@ -1360,37 +1357,63 @@ void RomOperator::AddSamplePROM(int excitation_idx, double omega, const ComplexV
     linalg::AXPY(-1.0, u, x);
     return linalg::Norml2(comm, x) / norm_u;
   };
-  std::vector<double> err(m + 1);
   SolvePROM(excitation_idx, omega, x);
-  err[m] = RelativeError();
-  if (err[m] <= tol)
+  const double err_full = RelativeError();
+  if (err_full <= tol)
   {
     return;  // The PROM reproduces the sample
   }
-  for (std::size_t j = 0; j < m; j++)
+
+  // The PROM does not reproduce the sample: compare the relative PROM errors at ω of the
+  // candidate bases, the old basis, the old basis with the real part only and with the
+  // imaginary part only (if u has both parts), and the updated basis, in this order of
+  // preference for equal errors. Every candidate spans a subspace V T of the updated basis,
+  // and every term of the reduced system is a Galerkin projection onto the basis, so the
+  // reduced system of the candidate is Tᵀ Aᵣ T y = Tᵀ RHSᵣ, with Aᵣ and RHSᵣ just
+  // assembled for the updated basis. The real part of u is added before its imaginary
+  // part, so the old basis and the one with the real part only are leading blocks.
+  auto LeadingBlockError = [&](std::size_t k)
   {
-    const std::size_t k = n0 + j;
     if (k == 0)
     {
-      err[j] = 1.0;  // Empty basis: the PROM solution is zero
-      continue;
+      return 1.0;  // Empty basis: the PROM solution is zero
     }
     const auto ke = static_cast<Eigen::Index>(k);
     const Eigen::VectorXcd y =
         Ar.topLeftCorner(ke, ke).fullPivHouseholderQr().solve(RHSr_last.head(ke));
     linalg::LinearCombination(std::span<const Vector>(V.data(), k), {y.data(), k}, x);
-    err[j] = RelativeError();
+    return RelativeError();
+  };
+  std::vector<double> err = {LeadingBlockError(n0)};
+  if (m == 2)
+  {
+    err.push_back(LeadingBlockError(n0 + 1));
+
+    // The old basis with the imaginary part only: Im u = V orth_R(:, n0 + 1), so its new
+    // direction is the combination of the two new basis vectors with the coefficients
+    // orth_R(n0, n0 + 1) and orth_R(n0 + 1, n0 + 1).
+    const auto ne = static_cast<Eigen::Index>(n0);
+    const double a = orth_R(ne, ne + 1), b = orth_R(ne + 1, ne + 1), s = std::hypot(a, b);
+    Eigen::MatrixXcd T = Eigen::MatrixXcd::Zero(ne + 2, ne + 1);
+    T.topLeftCorner(ne, ne).setIdentity();
+    T(ne, ne) = a / s;
+    T(ne + 1, ne) = b / s;
+    const Eigen::VectorXcd y =
+        (T.transpose() * Ar * T).fullPivHouseholderQr().solve(T.transpose() * RHSr_last);
+    const Eigen::VectorXcd z = T * y;
+    linalg::LinearCombination(V, {z.data(), n0 + 2}, x);
+    err.push_back(RelativeError());
   }
+  err.push_back(err_full);
   const auto best = static_cast<std::size_t>(
       std::distance(err.begin(), std::min_element(err.begin(), err.end())));
-  if (best == m)
+  if (best == err.size() - 1)
   {
-    return;  // The full update is still the best
+    return;  // The updated basis is still the best
   }
 
-  // A basis with fewer new directions reproduces the sample better: keep the best of the
-  // old basis, and the old basis with the real or (if u has both parts) the imaginary new
-  // direction.
+  // Keep the best candidate: restore the old basis, and add the real or imaginary part
+  // alone if it is the best.
   RestoreReducedState(state);
   if (m == 1)
   {
@@ -1401,30 +1424,27 @@ void RomOperator::AddSamplePROM(int excitation_idx, double omega, const ComplexV
                err[0], err[1]);
     return;
   }
-  ComplexVector u_part(u);
-  u_part.UseDevice(true);
-  u_part.Real() = 0.0;
-  UpdatePROM(u_part, node_label);
-  SolvePROM(excitation_idx, omega, x);
-  const double err_im = RelativeError();
-  const bool keep_im = (err_im < err[best]);
-  if (!keep_im)
+  if (best > 0)
   {
-    RestoreReducedState(state);
+    ComplexVector u_part(u);
+    u_part.UseDevice(true);
     if (best == 1)
     {
-      u_part = u;
       u_part.Imag() = 0.0;
-      UpdatePROM(u_part, node_label);
     }
+    else
+    {
+      u_part.Real() = 0.0;
+    }
+    UpdatePROM(u_part, node_label);
   }
   Mpi::Print(comm,
              " PROM basis update: kept {} of the sample, the PROM with both parts does not "
              "reproduce it to the tolerance\n (relative PROM error at the sample with no "
              "part {:.3e}, real part {:.3e}, imaginary part {:.3e}, both {:.3e})\n",
-             keep_im ? "only the imaginary part"
-                     : ((best == 1) ? "only the real part" : "neither part"),
-             err[0], err[1], err_im, err[2]);
+             (best == 0) ? "neither part"
+                         : ((best == 1) ? "only the real part" : "only the imaginary part"),
+             err[0], err[1], err[2], err[3]);
 }
 
 void RomOperator::UpdateMRI(int excitation_idx, double omega, const ComplexVector &u)

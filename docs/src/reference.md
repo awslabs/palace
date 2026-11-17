@@ -572,12 +572,11 @@ greedy sampling described below, *Palace* evaluates the error ``\varepsilon`` de
 at the new sample, with the sample in the basis. (The samples which initialize the basis,
 at the frequency-domain endpoints and with `"AddToPROM"`, are always added in full.) If it
 exceeds
-[`config["Solver"]["Driven"]["AdaptiveTol"]`](config/reference.md#config-solver-driven) and
-the PROM without the new directions, or with only the real one, is closer to the HDM
-solution, *Palace* keeps, of the bases with neither, only the real or only the imaginary new
-direction, the one whose PROM solution at the sample frequency is closest to the HDM
-solution (ties go to the smaller basis), and logs which directions it kept. Otherwise the
-basis is the same as without this check. If the last
+[`config["Solver"]["Driven"]["AdaptiveTol"]`](config/reference.md#config-solver-driven),
+*Palace* keeps, of the bases with neither, only the real, only the imaginary or both new
+directions, the one whose PROM solution at the sample frequency is closest to the HDM
+solution (ties go to the smaller basis, and to the real direction), and logs which
+directions it kept if it drops any. Otherwise the basis is the same as without this check. If the last
 [`config["Solver"]["Driven"]["AdaptiveConvergenceMemory"]`](config/reference.md#config-solver-driven)
 samples all have an error ``\varepsilon`` above `"AdaptiveTol"` before they are added, and
 add no direction, the PROM reproduces the HDM solutions as well as their accuracy allows:

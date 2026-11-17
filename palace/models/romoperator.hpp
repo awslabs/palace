@@ -573,10 +573,10 @@ public:
   // Add an HDM solution u at the sampled frequency ω (excitation excitation_idx) to the
   // reduced-order basis like UpdatePROM, and check that the PROM then reproduces u at ω to
   // the relative tolerance tol. If it does not, the real or imaginary part of u can add a
-  // basis direction which carries more linear solver error than information. If the PROM
-  // without the new directions, or with only the real one, is then closer to u at ω, the
-  // basis with neither, only the real or only the imaginary new direction whose PROM
-  // solution at ω is closest to u is kept instead (ties go to the smaller basis).
+  // basis direction which carries more linear solver error than information: of the bases
+  // with neither, only the real, only the imaginary or both new directions, the one whose
+  // PROM solution at ω is closest to u is kept (ties go to the smaller basis, and to the
+  // real direction).
   void AddSamplePROM(int excitation_idx, double omega, const ComplexVector &u, double tol,
                      std::string_view node_label);
 
