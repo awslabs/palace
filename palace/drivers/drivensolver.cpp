@@ -353,9 +353,10 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
   };
 
   // Solve the HDM at a sample frequency from zero, and return the relative error of the
-  // PROM there. Every basis vector is such a solution. No other solve at this frequency
-  // follows, so the HDM operators are released right away instead of being kept during the
-  // PROM update and the error estimation.
+  // PROM there. Every basis vector is such a solution, except the certified last sample of
+  // an excitation (see CertifyPROM). No other solve at this frequency follows, so the HDM
+  // operators are released right away instead of being kept during the PROM update and
+  // the error estimation.
   auto SolveHDMSample = [&](int excitation_idx, double omega)
   {
     prom_op.SolvePROM(excitation_idx, omega, Eh);
@@ -457,12 +458,12 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
       // tighter of the linear solver tolerance and the tolerance of the sweep, with a
       // correction below the tolerance, the PROM solution is within the tolerance of an
       // acceptable HDM solution and the sweep has converged. The certified solution is
-      // still added to the basis, as the last sample is without initial guesses: the PROM
-      // is then already accurate to the tolerance there, so that the solution only differs
-      // from it by a correction below the tolerance. Otherwise, the solve is stopped as
-      // soon as the correction exceeds the tolerance, and the sample is solved again from
-      // zero (reusing the assembled operators and preconditioner) and added to the basis,
-      // as without initial guesses.
+      // still added to the basis (unless it is in its span to round-off), as the last
+      // sample is without initial guesses: the PROM is then already accurate to the
+      // tolerance there, so that the solution only differs from it by a correction below
+      // the tolerance. Otherwise, the solve is stopped as soon as the correction exceeds
+      // the tolerance, and the sample is solved again from zero (reusing the assembled
+      // operators and preconditioner) and added to the basis, as without initial guesses.
       double error = (initial_guess && memory + 1 == convergence_memory)
                          ? CertifyPROM(excitation_idx, omega_star)
                          : -1.0;

@@ -52,17 +52,17 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - `config["Solver"]["Linear"]["InitialGuess"]` now defaults to `true` for adaptive
     frequency sweeps too. There, the HDM solve of the sample which would complete the
     convergence memory starts from the PROM solution, to certify the PROM: if the linear
-    solver, converging to the tighter of `"Tol"` and `"AdaptiveTol"`, changes it by less
+    solver converges, to the tighter of `"Tol"` and `"AdaptiveTol"`, and changes it by less
     than `"AdaptiveTol"`, the sweep stops, and this solution is added to the basis as the
     last sample (unless it is already in the span of the basis, for example when the PROM
-    solution already meets this tolerance); otherwise, the solve stops as soon as the change
-    exceeds `"AdaptiveTol"`, and the sample is solved again from zero (reusing the operators
-    and the preconditioner), as are all other samples. With an explicit
-    `"InitialGuess": true`, adaptive sweeps used to start each HDM solve from the solution at
-    the previous sample. When the PROM is certified, the last HDM solve of the excitation
-    needs fewer linear solver iterations; the results of adaptive sweeps change only by the
-    accuracy of this solve. Set `"InitialGuess": false` to restore the previous behavior.
-    SchemaVer 5-0-0
+    solution already meets this tolerance); otherwise, the sample is solved again from zero
+    (reusing the operators and the preconditioner), as are all other samples. With GMRES and
+    left preconditioning (the defaults), a certification which fails stops as soon as the
+    change exceeds `"AdaptiveTol"`. With an explicit `"InitialGuess": true`, adaptive sweeps
+    used to start each HDM solve from the solution at the previous sample. When the PROM is
+    certified, the last HDM solve of the excitation needs fewer linear solver iterations,
+    and the results of adaptive sweeps change by about the accuracy of the PROM. Set
+    `"InitialGuess": false` to restore the previous default behavior. SchemaVer 5-0-0
     [PR 1126](https://github.com/awslabs/palace/pull/1126).
 
 #### New Features

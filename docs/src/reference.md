@@ -587,22 +587,21 @@ evaluated without another HDM solve. The selected HDM solution is then added to 
 PROM basis.
 
 HDM solutions are solved from zero. When
-[`config["Solver"]["Linear"]["InitialGuess"]`](config/reference.md#config-solver-linear)
-is enabled (the default), the sample which would complete the convergence memory (see
-below) is solved from the PROM solution there instead, to certify the PROM: if the linear
-solver converges, to the tighter of its tolerance and the tolerance of the sweep, and
-changes the PROM solution by less than the tolerance of the sweep, the sweep has converged,
-and this solution is added to the basis as the last sample, unless it is already in the
-span of the basis to round-off (for example when the PROM solution already meets this
-tolerance, so that the solve takes no iteration).
-Otherwise,
-the solve is stopped as soon as the change exceeds the tolerance (with GMRES and left
-preconditioning, the defaults; FGMRES or right preconditioning solve to convergence), and
-the sample is solved again from zero, reusing the assembled operators and preconditioner.
-The other samples are not started from the PROM solution: the linear solver controls the
-residual of the preconditioned system, and while the PROM is still inaccurate, a solution
-started from it can keep errors of the PROM which barely affect this residual, for example
-in weakly excited, high-Q modes, and which would then degrade the PROM.
+[`config["Solver"]["Linear"]["InitialGuess"]`](config/reference.md#config-solver-linear) is
+enabled (the default), the sample which would complete the convergence memory (see below) is
+solved from the PROM solution there instead, to certify the PROM: if the linear solver
+converges, to the tighter of its tolerance and `"AdaptiveTol"`, and changes the PROM
+solution by less than `"AdaptiveTol"`, the sweep of this excitation has converged, and this
+solution is added to the basis as the last sample, unless it is already in the span of the
+basis to round-off (for example when the PROM solution already meets this tolerance, so
+that the solve takes no iteration). Otherwise, the solve is stopped as soon as the change
+exceeds `"AdaptiveTol"` (with GMRES and left preconditioning, the defaults; FGMRES or right
+preconditioning solve to convergence), and the sample is solved again from zero, reusing
+the assembled operators and preconditioner. The other samples are not started from the
+PROM solution: the linear solver controls the residual of the preconditioned system, and
+while the PROM is still inaccurate, a solution started from it can keep errors of the PROM
+which barely affect this residual, for example in weakly excited, high-Q modes, and which
+would then degrade the PROM.
 
 ### Convergence criterion
 
@@ -626,9 +625,10 @@ energies.
 
 The tolerance of the linear solver
 ([`config["Solver"]["Linear"]["Tol"]`](config/reference.md#config-solver-linear)) bounds the
-relative residual of the HDM solution, not its error, which can be much larger. Near the
-accuracy of the HDM solves, ``\varepsilon`` no longer measures the PROM error alone, and an
-`"AdaptiveTol"` tighter than this accuracy may not be reached before `"AdaptiveMaxSamples"`.
+relative residual of the preconditioned system (with the default left preconditioning), not
+the error of the HDM solution, which can be much larger. Near the accuracy of the HDM
+solves, ``\varepsilon`` no longer measures the PROM error alone, and an `"AdaptiveTol"`
+tighter than this accuracy may not be reached before `"AdaptiveMaxSamples"`.
 
 The indicator is also not a mathematical certificate of the maximum error over the entire
 frequency interval. The convergence memory mitigates accidental early termination when one
