@@ -1106,14 +1106,22 @@ void TestParallelNCSave(MPI_Comm comm, const fs::path &temp_dir, mfem::Element::
     }
     else
     {
-      // Through RebalanceMesh, which saves then rebalances.
+      // Through RebalanceMesh, which rebalances a nonconforming mesh, then saves it in
+      // parallel (not gathered: as PrintParallelNCMesh saves the rebalanced mesh).
       Units units(1.0, L);
       IoData iodata(units);
       iodata.problem.output = temp_dir.string();
       iodata.model.mesh = name + ".msh";
       iodata.model.refinement.save_adapt_mesh = true;
       mesh::RebalanceMesh(iodata, mesh, &counts);
-      file.replace_extension(fs::exists(file) ? ".meshgz" : ".mesh");
+      const bool compressed = fs::exists(file);
+      file.replace_extension(compressed ? ".meshgz" : ".mesh");
+      const auto direct = temp_dir / (name + "-direct.mesh");
+      REQUIRE(mesh::PrintParallelNCMesh(*mesh, L, direct.string(), compressed));
+      if (Mpi::Root(comm))
+      {
+        CHECK(ReadFile(file) == ReadFile(direct));
+      }
     }
     if (Mpi::Root(comm))
     {

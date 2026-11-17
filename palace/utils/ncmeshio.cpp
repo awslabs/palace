@@ -210,10 +210,14 @@ void RebalanceRootAligned(mfem::ParMesh &mesh, double tol)
       load[r] += roots[i].leaves;
     }
   }
-  long long max_load = 0;
+  // Accept the snapped partition when its largest load over its smallest (as for
+  // MaximumImbalance, so no process is empty) is within half of the tolerance.
+  long long max_load = 0, min_load;
   MPI_Reduce_scatter_block(load.data(), &max_load, 1, MPI_LONG_LONG, MPI_SUM, comm);
+  min_load = max_load;
   Mpi::GlobalMax(1, &max_load, comm);
-  if (max_load <= (1.0 + 0.5 * (tol - 1.0)) * total / P)
+  Mpi::GlobalMin(1, &min_load, comm);
+  if (max_load <= (1.0 + 0.5 * (tol - 1.0)) * min_load)
   {
     mesh.Rebalance(part);
   }
@@ -240,7 +244,7 @@ void ScaleNCMeshCoordinates(mfem::Mesh &mesh, double length_scale)
 // faces and nodes in the order in which the elements first reach them (see NCMeshData). So
 // each entity belongs to the lowest process with a leaf on it, which the ghost layer tells,
 // and each process numbers its own entities; the numbers of the vertices of other processes
-// come from their owner, the master of the vertex's group in the ParMesh.
+// come from their owner, the leader of the vertex's group in the ParMesh.
 bool PrintParallelNCMesh(const mfem::ParMesh &orig, double length_scale,
                          const std::string &path, bool compress, MeshEntityCounts *counts,
                          std::string *reason)
@@ -372,7 +376,7 @@ bool PrintParallelNCMesh(const mfem::ParMesh &orig, double length_scale,
     }
   }
 
-  // 3. The numbers of the vertices of other processes, from their owner, the master of
+  // 3. The numbers of the vertices of other processes, from their owner, the leader of
   //    their group. Every vertex printed here is a vertex of the mesh: the corners of the
   //    own leaves, and the parents of the own vertices, which are corners of an own
   //    element since the roots are whole.

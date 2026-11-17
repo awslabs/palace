@@ -24,7 +24,8 @@ bool PrintParallelNCMesh(const mfem::ParMesh &mesh, double length_scale,
 // Rebalance a nonconforming mesh as MFEM's default partition does (consecutive ranges of
 // the leaves, in the order of the processes), but with each root of the refinement tree on
 // the process its middle leaf goes to, so that saving the mesh moves no root; unless that
-// is less balanced than half the tolerance on the largest load over the mean.
+// is less balanced than half the tolerance on the largest load over the mean, or than the
+// tolerance on the largest load over the smallest.
 void RebalanceRootAligned(mfem::ParMesh &mesh, double tol);
 
 // Scale the top-level vertex coordinates which a nonconforming mesh without nodes keeps in

@@ -2718,9 +2718,9 @@ double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh,
   BlockTimer bt0(Timer::REBALANCE);
   MPI_Comm comm = mesh->GetComm();
 
-  // If there is more than one processor, may perform rebalancing: a nonconforming mesh
-  // before it is saved, with whole refinement-tree roots, so that the save need not move
-  // them.
+  // If there is more than one processor, may perform rebalancing: a nonconforming mesh to
+  // be saved is rebalanced first, with whole refinement-tree roots, so that the save need
+  // not move them.
   double ratio = 1.0;
   const double tol = iodata.model.refinement.maximum_imbalance;
   if (Mpi::Size(comm) > 1)
@@ -2737,7 +2737,9 @@ double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh,
                  max_elem, min_elem, ratio, tol);
     }
   }
-  if (ratio > tol && mesh->Nonconforming())
+  const bool rebalanced =
+      ratio > tol && iodata.model.refinement.save_adapt_mesh && mesh->Nonconforming();
+  if (rebalanced)
   {
     RebalanceRootAligned(*mesh, tol);
   }
@@ -2806,11 +2808,18 @@ double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh,
     }
   }
 
-  if (ratio > tol && !mesh->Nonconforming())
+  if (ratio > tol && !rebalanced)
   {
-    // Without access to a refinement tree, partitioning must be done on the root processor
-    // and then redistributed.
-    RebalanceConformalMesh(mesh);
+    if (mesh->Nonconforming())
+    {
+      mesh->Rebalance();
+    }
+    else
+    {
+      // Without access to a refinement tree, partitioning must be done on the root
+      // processor and then redistributed.
+      RebalanceConformalMesh(mesh);
+    }
   }
   return ratio;
 }
