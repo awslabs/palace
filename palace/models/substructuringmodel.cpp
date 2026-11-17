@@ -14,6 +14,14 @@
 namespace palace
 {
 
+namespace
+{
+
+// The doubles of a chunk of rows passed through rank 0 (8 MB).
+constexpr std::size_t kIoChunk = std::size_t(1) << 20;
+
+}  // namespace
+
 void SubstructuringSolver::Impl::WriteModel(
     const std::string &path, bool append,
     const std::function<void(std::ofstream &)> &write) const
@@ -37,6 +45,159 @@ void SubstructuringSolver::Impl::WriteModel(
                                      std::make_error_code(std::errc::io_error));
         }
       });
+}
+
+namespace substructuring
+{
+
+void RowsToRoot(MPI_Comm comm, const std::vector<double> &rows, int w,
+                const std::vector<int> &cnt, std::size_t chunk,
+                const std::function<void(const double *, int)> &write)
+{
+  const int per = static_cast<int>(std::max<std::size_t>(1, chunk / w));
+  const RowType row(w);
+  if (!Mpi::Root(comm))
+  {
+    const int m = static_cast<int>(rows.size() / w);
+    for (int r0 = 0; r0 < m; r0 += per)
+    {
+      MPI_Send(rows.data() + static_cast<std::size_t>(r0) * w, std::min(per, m - r0),
+               row.type, 0, 0, comm);
+    }
+    return;
+  }
+  // The chunks of another rank as it sends them, until it has sent its rows.
+  std::vector<double> buf;
+  for (std::size_t q = 0; q < cnt.size(); q++)
+  {
+    for (int r0 = 0; r0 < cnt[q];)
+    {
+      int n = std::min(per, cnt[q] - r0);
+      const double *x = rows.data() + static_cast<std::size_t>(r0) * w;
+      if (q > 0)
+      {
+        MPI_Status status;
+        MPI_Probe(static_cast<int>(q), 0, comm, &status);
+        MPI_Get_count(&status, row.type, &n);
+        buf.resize(static_cast<std::size_t>(n) * w);
+        MPI_Recv(buf.data(), n, row.type, static_cast<int>(q), 0, comm, MPI_STATUS_IGNORE);
+        x = buf.data();
+      }
+      write(x, n);
+      r0 += n;
+    }
+  }
+}
+
+RowsFromRoot::RowsFromRoot(MPI_Comm comm, int w, std::size_t chunk)
+  : comm(comm), w(w), per(static_cast<int>(std::max<std::size_t>(1, chunk / w))), row(w)
+{
+}
+
+void RowsFromRoot::Serve(const std::function<std::vector<int>(int)> &need,
+                         const std::function<void(int, double *)> &read)
+{
+  for (int q = 1; q < Mpi::Size(comm); q++)
+  {
+    const std::vector<int> a = need(q);
+    for (std::size_t i0 = 0; i0 < a.size(); i0 += per)
+    {
+      const int m = static_cast<int>(std::min<std::size_t>(per, a.size() - i0));
+      buf.resize(static_cast<std::size_t>(m) * w);
+      for (int k = 0; k < m; k++)
+      {
+        read(a[i0 + k], buf.data() + static_cast<std::size_t>(k) * w);
+      }
+      MPI_Send(buf.data(), m, row.type, q, 0, comm);
+    }
+  }
+}
+
+void RowsFromRoot::Next(double *x)
+{
+  if (i == n)
+  {
+    MPI_Status status;
+    MPI_Probe(0, 0, comm, &status);
+    MPI_Get_count(&status, row.type, &n);
+    buf.resize(static_cast<std::size_t>(n) * w);
+    MPI_Recv(buf.data(), n, row.type, 0, 0, comm, MPI_STATUS_IGNORE);
+    i = 0;
+  }
+  std::copy_n(buf.data() + static_cast<std::size_t>(i++) * w, w, x);
+}
+
+}  // namespace substructuring
+
+void SubstructuringSolver::Impl::AppendRows(const std::string &path,
+                                            const std::vector<double> &rows) const
+{
+  MPI_Comm comm = parent_fes.GetComm();
+  const int nG = nG_global;
+  if (nG == 0)
+  {
+    return;
+  }
+  std::vector<int> cnt, disp;
+  RowLayout(cnt, disp);
+  if (!Mpi::Root(comm))
+  {
+    substructuring::RowsToRoot(comm, rows, nG, cnt, kIoChunk, {});
+  }
+  ApplyOnRootFilesystem(
+      comm, fmt::format("Writing the substructuring model \"{}\"", path),
+      [&]()
+      {
+        // A failed stream writes nothing.
+        std::ofstream f(path, std::ios::binary | std::ios::app);
+        substructuring::RowsToRoot(
+            comm, rows, nG, cnt, kIoChunk, [&](const double *x, int n)
+            { f.write(reinterpret_cast<const char *>(x), sizeof(double) * n * nG); });
+        f.close();
+        if (f.fail())
+        {
+          throw fs::filesystem_error("Could not write the model file", path,
+                                     std::make_error_code(std::errc::io_error));
+        }
+      });
+}
+
+std::vector<double> SubstructuringSolver::Impl::ReadRows(const std::string &path,
+                                                         std::streamoff pos,
+                                                         const SignatureMap &map) const
+{
+  // Rank 0 sends every row even if the file fails, then tells whether it did.
+  MPI_Comm comm = parent_fes.GetComm();
+  const int nG = nG_global;
+  std::vector<double> rows;
+  if (nG == 0)
+  {
+    return rows;
+  }
+  std::vector<int> cnt, disp;
+  RowLayout(cnt, disp);
+  substructuring::RowsFromRoot from(comm, nG, kIoChunk);
+  int ok = 1;
+  if (Mpi::Root(comm))
+  {
+    std::ifstream f(path, std::ios::binary);
+    auto read = [&](int a, double *x)
+    {
+      f.seekg(pos + static_cast<std::streamoff>(sizeof(double)) * a * nG);
+      f.read(reinterpret_cast<char *>(x), sizeof(double) * nG);
+    };
+    from.Serve([&](int q) { return map.SavedRows(disp[q], cnt[q]); }, read);
+    rows = map.DualMatrix<double>(gamma_off, gamma_nloc, read);
+    ok = static_cast<bool>(f);
+  }
+  else
+  {
+    rows = map.DualMatrix<double>(gamma_off, gamma_nloc,
+                                  [&](int, double *x) { from.Next(x); });
+  }
+  Mpi::Broadcast(1, &ok, 0, comm);
+  MFEM_VERIFY(ok, "Reading the substructuring model \"" << path << "\" failed!");
+  return rows;
 }
 
 void SubstructuringSolver::Impl::AppendSourceModes(const std::string &path)
@@ -542,14 +703,9 @@ void SubstructuringSolver::Impl::AppendOperator(const std::string &path, int mag
                                                 const std::vector<double> &rows) const
 {
   BlockTimer bt(Timer::IO);
-  const std::vector<double> full = GatherRows(rows, nG_global);
-  WriteModel(path, true,
-             [&](std::ofstream &f)
-             {
-               f.write(reinterpret_cast<const char *>(&magic), sizeof(int));
-               f.write(reinterpret_cast<const char *>(full.data()),
-                       sizeof(double) * full.size());
-             });
+  WriteModel(path, true, [&](std::ofstream &f)
+             { f.write(reinterpret_cast<const char *>(&magic), sizeof(int)); });
+  AppendRows(path, rows);
 }
 
 void SubstructuringSolver::Impl::AppendModes(const std::string &path)
@@ -642,21 +798,21 @@ void SubstructuringSolver::Impl::LoadSections(const std::string &path, std::stre
     else if (magic == kSKenMagic || magic == kSKinMagic)
     {
       holds(D * nG * static_cast<double>(nG));
-      std::vector<double> full;
+      std::streamoff at = 0;
       if (root)
       {
-        full = map.DualMatrix<double>(
-            [&](std::size_t, double *x)
-            { f.read(reinterpret_cast<char *>(x), sizeof(double) * nG); });
+        at = f.tellg();
+        f.seekg(static_cast<std::streamoff>(sizeof(double)) * nG * nG, std::ios::cur);
       }
+      Mpi::Broadcast(1, &at, 0, comm);
       if (magic == kSKenMagic)
       {
-        ScatterRows(full, nG, SK_rows);
+        SK_rows = ReadRows(path, at, map);
         have_sk = true;
       }
       else
       {
-        ScatterRows(full, nG, SKin_rows);
+        SKin_rows = ReadRows(path, at, map);
         have_skin = true;
       }
     }
@@ -756,7 +912,6 @@ void SubstructuringSolver::Impl::LoadSections(const std::string &path, std::stre
 void SubstructuringSolver::Impl::LoadModel(const std::string &model_path, int sig_w)
 {
   const int nG = nG_global;
-  const int rank = Mpi::Rank(parent_fes.GetComm());
   MFEM_VERIFY(saved.nG == nG,
               "Saved substructuring model interface size ("
                   << saved.nG << ") does not match this run (" << nG
@@ -775,18 +930,8 @@ void SubstructuringSolver::Impl::LoadModel(const std::string &model_path, int si
   const SignatureMap map =
       MatchSignatureBasis(InterfaceSignatures(sig_w), saved.sig, saved.width);
   {
-    // Rank 0 reads the saved S_E onto the current numbering and scatters its rows.
     BlockTimer bt_io(Timer::IO);
-    std::vector<double> S_full;
-    if (rank == 0)
-    {
-      std::ifstream f(model_path, std::ios::binary);
-      f.seekg(saved.S_pos);
-      S_full = map.DualMatrix<double>(
-          [&](std::size_t, double *x)
-          { f.read(reinterpret_cast<char *>(x), sizeof(double) * nG); });
-    }
-    ScatterRows(S_full, nG, S_rows);
+    S_rows = ReadRows(model_path, saved.S_pos, map);
   }
   {
     // Sections after S_E (fingerprint, S^K, modes).
@@ -810,21 +955,23 @@ void SubstructuringSolver::Impl::SaveModel(const std::string &model_path, int si
   const std::vector<double> sig =
       InterfaceSignatures(sig_w);  // collective: all ranks participate
   {
-    // Freed before the sections, so that rank 0 holds one |Gamma|^2 array at a time.
     BlockTimer bt_io(Timer::IO);
-    const std::vector<double> S_full = GatherRows(S_rows, nG);
-    WriteModel(
-        model_path, false,
-        [&](std::ofstream &f)
-        {
-          const int head[kHeadInts] = {kModelMagic, kModelVersion, iodata.solver.order, nG,
-                                       sig_type};
-          f.write(reinterpret_cast<const char *>(head), sizeof(head));
-          f.write(reinterpret_cast<const char *>(sig.data()), sizeof(double) * nG * sig_w);
-          f.write(reinterpret_cast<const char *>(S_full.data()), sizeof(double) * nG * nG);
-          f.write(reinterpret_cast<const char *>(&kLengthMagic), sizeof(int));
-          f.write(reinterpret_cast<const char *>(&iodata.model.Lc), sizeof(double));
-        });
+    WriteModel(model_path, false,
+               [&](std::ofstream &f)
+               {
+                 const int head[kHeadInts] = {kModelMagic, kModelVersion,
+                                              iodata.solver.order, nG, sig_type};
+                 f.write(reinterpret_cast<const char *>(head), sizeof(head));
+                 f.write(reinterpret_cast<const char *>(sig.data()),
+                         sizeof(double) * nG * sig_w);
+               });
+    AppendRows(model_path, S_rows);  // collective
+    WriteModel(model_path, true,
+               [&](std::ofstream &f)
+               {
+                 f.write(reinterpret_cast<const char *>(&kLengthMagic), sizeof(int));
+                 f.write(reinterpret_cast<const char *>(&iodata.model.Lc), sizeof(double));
+               });
   }
   AppendEnvFingerprint(model_path);  // collective
   AppendEnvMoments(model_path, WriteRegionMesh(RegionMeshPath(model_path)));

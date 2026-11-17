@@ -101,8 +101,7 @@ in a coarsely meshed part of the domain (substrate or vacuum away from the metal
 one that cuts through a finely meshed area. Its memory does too: ``\bm{S}_E`` is dense
 (``|\Gamma|^2`` values, 7 GB at ``|\Gamma| = 30{,}000``), and each process holds its rows, except
 with the STRUMPACK partial factorization, which gives it whole to one process (two copies while the
-environment is condensed), and one process holds it whole while the model is saved or read. One
-process holds the whole mesh to write the mesh of the region. The
+environment is condensed). One process holds the whole mesh to write the mesh of the region. The
 [transmon example](@ref substructuring-transmon-example) retags the elements of an existing mesh by
 the position of their centroids.
 
