@@ -443,10 +443,8 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
   // Allocate negative curl matrix for postprocessing the B-field and vectors for the
   // high-dimensional field solution.
   const auto &Curl = space_op.GetCurlMatrix();
-  ComplexVector E(Curl.Width()), Eh(Curl.Width()), E_corrected, Eh_corrected,
-      B(Curl.Height()), D, D_corrected;
+  ComplexVector E(Curl.Width()), E_corrected, B(Curl.Height()), D, D_corrected;
   E.UseDevice(true);
-  Eh.UseDevice(true);
   B.UseDevice(true);
   if (post_op.NeedsRecoveredElectricFlux())
   {
@@ -455,16 +453,12 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
     D.UseDevice(true);
   }
   E = 0.0;
-  Eh = 0.0;
   B = 0.0;
   if (self_consistent_response)
   {
     E_corrected.SetSize(Curl.Width());
-    Eh_corrected.SetSize(Curl.Width());
     E_corrected.UseDevice(true);
-    Eh_corrected.UseDevice(true);
     E_corrected = 0.0;
-    Eh_corrected = 0.0;
     if (post_op.NeedsRecoveredElectricFlux())
     {
       D_corrected.SetSize(estimator.GetElectricFluxSpace().GetTrueVSize());
@@ -540,17 +534,26 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
   // Initialize the basis with samples from the top and bottom of the frequency
   // range of interest. Each call for an HDM solution adds the frequency sample to P_S and
   // removes it from P \ P_S. Timing for the HDM construction and solve is handled inside
-  // of the RomOperator.
+  // of the RomOperator. Returns the relative error of the PROM solution at the sample
+  // before the update, from the coefficients of the HDM solution in the updated basis.
   auto UpdatePROM = [&](RomOperator &op, ComplexVector &field, int excitation_idx,
                         double omega, std::size_t sample_idx, bool update_indicator)
   {
     // Add the HDM solution to the PROM reduced basis.
-    op.UpdatePROM(field, fmt::format("sample_e{:d}_s{:d}", excitation_idx, sample_idx));
-    op.UpdateMRI(excitation_idx, omega, field);
+    op.SolvePROM(omega);
+    Eigen::VectorXcd d = -op.GetReducedSolution(excitation_idx);
+    const auto c =
+        op.UpdatePROM(field, fmt::format("sample_e{:d}_s{:d}", excitation_idx, sample_idx));
+    op.UpdateMRI(excitation_idx, omega, c);
+    d.conservativeResizeLike(Eigen::VectorXcd::Zero(c.size()));
+    // The error decides whether to sample again, so it must be the same on every process,
+    // while the replicated dense computations can differ in round-off between them.
+    double error = op.BasisNorm(c + d) / op.BasisNorm(c);
+    Mpi::GlobalMax(1, &error, space_op.GetComm());
 
     if (!update_indicator)
     {
-      return;
+      return error;
     }
 
     // Compute B = -1/(iω) ∇ x E on the true dofs, and set the internal GridFunctions in
@@ -572,10 +575,11 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
     // unless printing paraview fields.
     auto total_domain_energy = post_op.MeasureDomainFieldEnergyOnly(field, B);
     estimator.AddErrorIndicator(field, B, total_domain_energy, indicator);
+    return error;
   };
 
-  auto BuildPROM = [&](RomOperator &op, ComplexVector &field, ComplexVector &residual,
-                       std::string_view description, bool update_indicator)
+  auto BuildPROM = [&](RomOperator &op, ComplexVector &field, std::string_view description,
+                       bool update_indicator)
   {
     // Restart should not really be used for adaptive sweeps, but must work. Construct each
     // PROM in the same way regardless of restart for consistency.
@@ -587,8 +591,6 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
         Mpi::Print("\nAdding {}excitation index {:d} ({:d}/{:d}):\n", description,
                    excitation_idx, ++excitation_counter, port_excitations.Size());
       }
-      op.SetExcitationIndex(excitation_idx);  // Pre-compute RHS1
-
       // Initialize PROM with explicit HDM samples, record the estimate but do not act on
       // it.
       std::vector<double> max_errors;
@@ -597,12 +599,8 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
       {
         auto omega = omega_sample[i];
         op.SolveHDM(excitation_idx, omega, field);
-        op.SolvePROM(excitation_idx, omega, residual);
-        linalg::AXPY(-1.0, field, residual);
-        max_errors.push_back(linalg::Norml2(space_op.GetComm(), residual) /
-                             linalg::Norml2(space_op.GetComm(), field));
-        UpdatePROM(op, field, excitation_idx, omega, counter_rom_sample, update_indicator);
-        counter_rom_sample++;
+        max_errors.push_back(UpdatePROM(op, field, excitation_idx, omega,
+                                        counter_rom_sample++, update_indicator));
       }
       // The estimates associated to the end points are assumed inaccurate.
       max_errors[0] = std::numeric_limits<double>::infinity();
@@ -620,25 +618,20 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
       {
         // Compute the location of the maximum error in parameter domain (bounded by the
         // previous samples).
-        double omega_star = op.FindMaxError(excitation_idx)[0];
+        double omega_star = op.FindMaxError(excitation_idx);
 
         // Sample HDM and add solution to basis.
         op.SolveHDM(excitation_idx, omega_star, field);
-        op.SolvePROM(excitation_idx, omega_star, residual);
-        linalg::AXPY(-1.0, field, residual);
-
-        max_errors.push_back(linalg::Norml2(space_op.GetComm(), residual) /
-                             linalg::Norml2(space_op.GetComm(), field));
+        const auto n = op.GetReducedDimension();
+        max_errors.push_back(UpdatePROM(op, field, excitation_idx, omega_star,
+                                        counter_rom_sample++, update_indicator));
         memory = max_errors.back() < offline_tol ? memory + 1 : 0;
 
         Mpi::Print(
             "\n{}Greedy iteration {:d} (n = {:d}): ω* = {:.3e} GHz ({:.3e}), error = "
             "{:.3e}, memory = {:d}/{:d}\n",
-            description, it - it0 + 1, op.GetReducedDimension(), omega_star * unit_GHz,
-            omega_star, max_errors.back(), memory, convergence_memory);
-        UpdatePROM(op, field, excitation_idx, omega_star, counter_rom_sample,
-                   update_indicator);
-        counter_rom_sample++;
+            description, it - it0 + 1, n, omega_star * unit_GHz, omega_star,
+            max_errors.back(), memory, convergence_memory);
       }
       Mpi::Print("\nAdaptive {}sampling{} {:d} frequency samples:\n"
                  " n = {:d}, error = {:.3e}, tol = {:.3e}, memory = {:d}/{:d}\n",
@@ -652,12 +645,11 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
     }
   };
 
-  BuildPROM(prom_op, E, Eh, "", true);
+  BuildPROM(prom_op, E, "", true);
   if (corrected_prom_op)
   {
     Mpi::Print("\nConstructing independent fabrication-response corrected PROM\n");
-    BuildPROM(*corrected_prom_op, E_corrected, Eh_corrected,
-              "fabrication-response corrected ", false);
+    BuildPROM(*corrected_prom_op, E_corrected, "fabrication-response corrected ", false);
   }
 
   Mpi::Print(" Total offline phase elapsed time: {:.2e} s\n",
@@ -676,22 +668,14 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
   // for the online output sweep; failed residual checks transparently fall back to the
   // exact port eigensolver and enrich the basis.
   space_op.GetWavePortOp().EnableReducedModel(iodata.solver.driven.adaptive_tol);
-  prom_op.PrepareOnlineExcitations();
-  if (corrected_prom_op)
-  {
-    corrected_prom_op->PrepareOnlineExcitations();
-  }
-  post_op.ConfigureReducedPostprocessing(prom_op);
+  post_op.ConfigureReducedPostprocessing(prom_op, iodata.solver.driven.adaptive_tol);
 
   // Main fast frequency sweep loop (online phase).
   Mpi::Print("\nBeginning fast frequency sweep online phase\n");
   space_op.GetWavePortOp().SetSuppressOutput(false);  // Disable output suppression
-  auto solve_online_point = [&](int excitation_idx, std::size_t omega_i)
+  auto postprocess_online_point = [&](int excitation_idx, std::size_t omega_i)
   {
     const auto omega = omega_sample[omega_i];
-    // Refresh every port, including inactive observation-only ports, before either PROM
-    // assembly or postprocessing. Repeated calls at the same frequency are cached.
-    space_op.GetWavePortOp().PrepareFrequency(omega);
     Mpi::Print("\nIt {:d}/{:d}, excitation {:d}: ω/2π = {:.3e} GHz "
                "(total elapsed time = {:.2e} s)\n",
                omega_i + 1, omega_sample.size(), excitation_idx,
@@ -699,8 +683,17 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
                    (2 * std::numbers::pi),
                Timer::Duration(Timer::Now() - t0).count());
 
-    // Assemble and solve the PROM linear system.
-    prom_op.SolvePROM(excitation_idx, omega, E);
+    // Reduced postprocessing evaluates the outputs from the reduced solution, mostly
+    // without expanding it. Never with a surface response correction: its gate and
+    // corrected energies need the full field postprocessing below.
+    const Eigen::VectorXcd y = prom_op.GetReducedSolution(excitation_idx);
+    const bool reduced = !response_correction && post_op.HasReducedPostprocessing() &&
+                         !post_op.WillWriteFields(static_cast<int>(omega_i));
+    const bool expand = !reduced || post_op.ReducedPostprocessingNeedsField(excitation_idx);
+    if (expand)
+    {
+      prom_op.ExpandPROMSolution(excitation_idx, E);
+    }
     if (response_correction && !response_correction->IsRawFallback() &&
         response_correction->HasConductorConsistencyProbes())
     {
@@ -722,7 +715,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
     }
     if (corrected_prom_op)
     {
-      corrected_prom_op->SolvePROM(excitation_idx, omega, E_corrected);
+      corrected_prom_op->ExpandPROMSolution(excitation_idx, E_corrected);
     }
     Mpi::Print("\n");
     if (omega_i == 0 && post_op.WillWriteFields())
@@ -732,13 +725,10 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
       post_op.InitializeParaviewDataCollection(excitation_idx);
     }
 
-    if (!response_correction && post_op.HasReducedPostprocessing() &&
-        !post_op.WillWriteFields(static_cast<int>(omega_i)))
+    if (reduced)
     {
-      // Never with a surface response correction: its gate and corrected energies need the
-      // full field postprocessing below.
-      post_op.MeasureAndPrintReduced(excitation_idx, int(omega_i), E, omega,
-                                     prom_op.GetReducedSolution());
+      post_op.MeasureAndPrintReduced(excitation_idx, int(omega_i), expand ? &E : nullptr,
+                                     omega, y, prom_op);
       return;
     }
 
@@ -782,23 +772,26 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
     post_op.MeasureAndPrintAll(excitation_idx, int(omega_i), E, B, omega);
   };
 
+  // The PROM (and the port modes) depend on frequency, not excitation: assemble, factor,
+  // and solve it for all excitations once per frequency.
   if (!post_op.WillWriteFields() && !response_correction)
   {
-    // Port modes depend on frequency, not excitation. Frequency-major traversal keeps the
-    // one-frequency modal cache hot for every excitation. Not with a surface response
-    // correction: its conductor-consistency gate exclusions are sticky (a later solve sees
-    // every earlier exclusion), so its sweep stays excitation-major as below.
+    // Not with a surface response correction: its conductor-consistency gate exclusions
+    // are sticky (a later solve sees every earlier exclusion), so its sweep stays
+    // excitation-major as below.
     for (std::size_t omega_i = 0; omega_i < omega_sample.size(); omega_i++)
     {
+      prom_op.SolvePROM(omega_sample[omega_i]);
       for (const auto &[excitation_idx, excitation_spec] : port_excitations)
       {
-        solve_online_point(excitation_idx, omega_i);
+        postprocess_online_point(excitation_idx, omega_i);
       }
     }
   }
   else
   {
-    // Preserve excitation-major ordering for excitation-specific field collections.
+    // Excitation-major ordering for the excitation-specific field collections and for a
+    // surface response correction.
     for (const auto &[excitation_idx, excitation_spec] : port_excitations)
     {
       if (port_excitations.Size() > 1)
@@ -807,7 +800,12 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
       }
       for (std::size_t omega_i = 0; omega_i < omega_sample.size(); omega_i++)
       {
-        solve_online_point(excitation_idx, omega_i);
+        prom_op.SolvePROM(omega_sample[omega_i]);
+        if (corrected_prom_op)
+        {
+          corrected_prom_op->SolvePROM(omega_sample[omega_i]);
+        }
+        postprocess_online_point(excitation_idx, omega_i);
       }
     }
   }
