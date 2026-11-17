@@ -187,10 +187,9 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
       if (omega_i + 1 == omega_sample.size() &&
           excitation_counter == port_excitations.Size())
       {
-        // That was the last solve: save the solver totals and release the linear solver
-        // and system operators, so they do not add to the memory peak of the field output
-        // and error estimation which follow.
-        SaveMetadata(*ksp);
+        // That was the last solve: release the linear solver and system operators, so they
+        // do not add to the memory peak of the field output and error estimation which
+        // follow.
         ksp.reset();
         A.reset();
         A2.reset();
@@ -232,13 +231,8 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
       estimator.AddErrorIndicator(E, B, total_domain_energy, indicator);
     }
 
-    // Final postprocessing & printing. After the last excitation, the solver totals were
-    // already saved when the solver was released.
+    // Final postprocessing & printing.
     BlockTimer bt0(Timer::POSTPRO);
-    if (ksp)
-    {
-      SaveMetadata(*ksp);
-    }
   }
   post_op.MeasureFinalize(indicator);
   return indicator;
@@ -518,7 +512,6 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
   // Final postprocessing & printing: no change to indicator since these are in PROM.
   {
     BlockTimer bt0(Timer::POSTPRO);
-    SaveMetadata(prom_op.GetLinearSolver());
   }
   space_op.GetWavePortOp().PrintReducedModelStats();
   post_op.MeasureFinalize(indicator);

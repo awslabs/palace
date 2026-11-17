@@ -74,12 +74,11 @@ public:
   // "Problem"/"Iteration". The index matches the "iterationXX" archive subdirectory (the
   // initial solve is iteration 1).
   void SaveAdaptationIteration(int iteration) const;
-  template <typename SolverType>
-  void SaveMetadata(const SolverType &ksp) const;
-  void SaveMetadata(const Timer &timer) const;
-  void SaveMetadata(const memory_reporting::MemoryStats &peak_memory) const;
   void SaveMetadata(const PortExcitations &excitation_helper) const;
   void SaveMetadata(const mesh::MeshEntityCounts &counts) const;
+
+  // Reduce, print and write the performance report of the current iteration (collective).
+  void ReportPerformance(MPI_Comm comm) const;
 };
 
 // Archive the current postprocessing output for an AMR iteration. Creates a subfolder

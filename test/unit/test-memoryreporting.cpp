@@ -90,17 +90,10 @@ TEST_CASE("Timer Memory Data Invariants", "[memoryreporting][Serial]")
   auto delta = timer.MemoryLap();
   CHECK(delta >= 0);
 
-  // MarkMemory accumulates into the correct index and leaves others at zero.
-  timer.MarkMemory(Timer::CONSTRUCT, 100);
-  timer.MarkMemory(Timer::CONSTRUCT, 200);
-  CHECK(timer.MemoryData(Timer::CONSTRUCT) == 300);
+  // MarkMemory accumulates non-negative growth into the given row only.
+  timer.MarkMemory(Timer::CONSTRUCT);
+  timer.MarkMemory(Timer::CONSTRUCT);
+  CHECK(timer.MemoryData(Timer::CONSTRUCT) >= 0);
   CHECK(timer.MemoryData(Timer::KSP) == 0);
-
-  // TOTAL index assigns rather than accumulates.
-  timer.MarkMemory(Timer::TOTAL, 500);
-  timer.MarkMemory(Timer::TOTAL, 700);
-  CHECK(timer.MemoryData(Timer::TOTAL) == 700);
-
-  // MemoryFromStart is non-negative (peak can only grow).
-  CHECK(timer.MemoryFromStart() >= 0);
+  CHECK(timer.RunMemoryData(Timer::CONSTRUCT) == timer.MemoryData(Timer::CONSTRUCT));
 }

@@ -468,7 +468,6 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   }
 
   BlockTimer bt2(Timer::POSTPRO);
-  SaveMetadata(*ksp);
 
   // Calculate and record the error indicators, and postprocess the results.
   Mpi::Print("\nComputing solution error estimates and performing postprocessing\n");

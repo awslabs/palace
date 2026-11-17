@@ -80,16 +80,7 @@ void Run(IoData &iodata, MPI_Comm comm, int omp_threads, const char *git_tag)
 
   solver->SolveEstimateMarkRefine(mesh);
 
-  auto peak_mem = memory_reporting::GetPeakMemoryStats(comm);
-  auto peak_node_mem = memory_reporting::GetPeakNodeMemoryStats(comm);
-  Mpi::Print(comm, "\n");
-  memory_reporting::PrintMemoryUsage(comm, peak_mem);
-  memory_reporting::PrintMemoryUsage(comm, peak_node_mem);
-  BlockTimer::Finalize(comm);
-  BlockTimer::Print(comm);
-  solver->SaveMetadata(BlockTimer::GlobalTimer());
-  solver->SaveMetadata(peak_mem);
-  solver->SaveMetadata(peak_node_mem);
+  solver->ReportPerformance(comm);
   Mpi::Print(comm, "\n");
 }
 
