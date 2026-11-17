@@ -3049,6 +3049,21 @@ TEST_CASE("Passivity of a condensed environment", "[substructure][Serial]")
     CHECK_FALSE(DrivenSubstructureModel::Passive(active.data(), 2, 0.5 * violation));
     CHECK(DrivenSubstructureModel::Passive(active.data(), 2, 2.0 * violation));
   }
+
+  // A least eigenvalue repeated four times, whose whole cluster the bisection of LAPACK
+  // returns: S = I + i diag(-0.5, -0.5, -0.5, -0.5, 1, 1).
+  const int n = 6;
+  std::vector<std::complex<double>> S;
+  for (int j = 0; j < n; j++)
+  {
+    for (int i = j; i < n; i++)
+    {
+      S.emplace_back((i == j) ? 1.0 : 0.0, (i == j) ? ((j < 4) ? -0.5 : 1.0) : 0.0);
+    }
+  }
+  const double fro = std::sqrt(4.0 * 1.25 + 2.0 * 2.0);
+  CHECK(DrivenSubstructureModel::Passivity(S.data(), n) ==
+        Catch::Approx(-0.5 / fro).epsilon(1.0e-12));
 }
 
 TEST_CASE("Saved driven excitations match across partitions", "[substructure][Serial]")

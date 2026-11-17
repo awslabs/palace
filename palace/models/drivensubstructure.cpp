@@ -1535,22 +1535,26 @@ double DrivenSubstructureModel::Passivity(const std::complex<double> *lower, int
       f += ((i == j) ? 1.0 : 2.0) * std::norm(lower[q]);
     }
   }
-  // The least eigenvalue only (LAPACK dsyevr).
+  // The least eigenvalue only (LAPACK dsyevr). W needs n entries even for one eigenvalue
+  // (dstebz stores the whole bracket first).
   const int one = 1;
   const double zero = 0.0;
   int found = 0, info = 0, lwork = -1, liwork = -1, iwq = 0;
-  double w = 0.0, wq = 0.0, z = 0.0;
+  double wq = 0.0, z = 0.0;
+  std::vector<double> w(n);
   std::vector<int> isuppz(2);
-  dsyevr_("N", "I", "L", &n, A.data(), &n, &zero, &zero, &one, &one, &zero, &found, &w, &z,
-          &one, isuppz.data(), &wq, &lwork, &iwq, &liwork, &info);
+  dsyevr_("N", "I", "L", &n, A.data(), &n, &zero, &zero, &one, &one, &zero, &found,
+          w.data(), &z, &one, isuppz.data(), &wq, &lwork, &iwq, &liwork, &info);
   lwork = static_cast<int>(wq);
   liwork = iwq;
   std::vector<double> work(lwork);
   std::vector<int> iwork(liwork);
-  dsyevr_("N", "I", "L", &n, A.data(), &n, &zero, &zero, &one, &one, &zero, &found, &w, &z,
-          &one, isuppz.data(), work.data(), &lwork, iwork.data(), &liwork, &info);
-  MFEM_VERIFY(info == 0 && found == 1, "Eigenvalue of Im S_E failed: info = " << info);
-  return (f > 0.0) ? w / std::sqrt(f) : 0.0;
+  dsyevr_("N", "I", "L", &n, A.data(), &n, &zero, &zero, &one, &one, &zero, &found,
+          w.data(), &z, &one, isuppz.data(), work.data(), &lwork, iwork.data(), &liwork,
+          &info);
+  MFEM_VERIFY(info == 0 && found == 1,
+              "Eigenvalue of Im S_E failed: info = " << info << "!");
+  return (f > 0.0) ? w[0] / std::sqrt(f) : 0.0;
 }
 
 bool DrivenSubstructureModel::Passive(const std::complex<double> *lower, int n, double tol)
