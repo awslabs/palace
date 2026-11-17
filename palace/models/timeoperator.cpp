@@ -13,6 +13,7 @@
 #include "models/spaceoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
+#include "utils/perfmetrics.hpp"
 
 namespace palace
 {
@@ -78,6 +79,7 @@ public:
 
     // Set up linear solvers.
     {
+      perf::ScopedRole role("Mass");
       auto pcg = std::make_unique<CgSolver<Operator>>(comm, 0);
       pcg->SetInitialGuess(0);
       pcg->SetRelTol(linear.tol);
@@ -93,6 +95,7 @@ public:
       // vector products, and is only assembled for preconditioning.
       ConfigureLinearSolver = [this, &linear, verbose, &space_op](double dt)
       {
+        perf::ScopedRole role("Main");
         // Configure the system matrix and also the matrix (matrices) from which the
         // preconditioner will be constructed.
         A = space_op.GetSystemMatrix(dt * dt, dt, 1.0, K.get(), C.get(), M.get());

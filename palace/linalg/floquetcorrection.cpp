@@ -12,6 +12,7 @@
 #include "linalg/jacobi.hpp"
 #include "linalg/rap.hpp"
 #include "models/materialoperator.hpp"
+#include "utils/perfmetrics.hpp"
 
 namespace palace
 {
@@ -22,6 +23,7 @@ FloquetCorrSolver<VecType>::FloquetCorrSolver(const MaterialOperator &mat_op,
                                               FiniteElementSpace &rt_fespace, double tol,
                                               int max_it, int print)
 {
+  perf::ScopedRole role("FloquetCorrection");
   // Create the mass and cross product operators for Floquet correction.
   {
     constexpr bool skip_zeros = false;

@@ -25,6 +25,7 @@
 #include "models/spaceoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
+#include "utils/perfmetrics.hpp"
 #include "utils/timer.hpp"
 
 namespace palace
@@ -413,6 +414,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   }
   auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(
       1.0 + 0.0i, 1i * target, -target * target + 0.0i, target + 0.0i);
+  perf::ScopedRole role("Main");
   auto ksp = std::make_unique<ComplexKspSolver>(iodata, space_op.GetNDSpaces(),
                                                 &space_op.GetH1Spaces());
   ksp->SetOperators(*A, *P);

@@ -20,6 +20,7 @@
 #include "utils/communication.hpp"
 #include "utils/diagnostic.hpp"
 #include "utils/omp.hpp"
+#include "utils/perfmetrics.hpp"
 #include "utils/timer.hpp"
 
 PalacePragmaDiagnosticPush
@@ -196,6 +197,7 @@ FluxProjector<VecType>::FluxProjector(const MaterialPropertyCoefficient &coeff,
     Flux = BuildLevelParOperator<OperType>(flux.PartialAssemble(), rhs_fespace,
                                            smooth_fespace);
   }
+  perf::ScopedRole role("Estimator");
   ksp = ConfigureLinearSolver<OperType>(smooth_fespaces, tol, max_it, print, use_mg);
   ksp->SetOperators(*M, *M);
   rhs.SetSize(smooth_fespace.GetTrueVSize());

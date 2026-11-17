@@ -19,6 +19,7 @@
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
+#include "utils/perfmetrics.hpp"
 #include "utils/timer.hpp"
 
 namespace palace
@@ -441,6 +442,7 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   }
   const auto which_eig = (bm.target > 0.0) ? EigenvalueSolver::WhichType::LARGEST_MAGNITUDE
                                            : EigenvalueSolver::WhichType::LARGEST_REAL;
+  perf::ScopedRole role("Main");
   ModeEigenSolver eig(mode_op, dbc_tdof_list, num_modes, bm.max_size, bm.tol, which_eig,
                       iodata.solver.linear, bm.type, iodata.problem.verbose);
 

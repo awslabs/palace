@@ -13,6 +13,7 @@
 #include "models/postoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
+#include "utils/perfmetrics.hpp"
 #include "utils/timer.hpp"
 
 namespace palace
@@ -32,6 +33,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   SaveMetadata(laplace_op.GetH1Spaces());
 
   // Set up the linear solver.
+  perf::ScopedRole role("Main");
   KspSolver ksp(iodata, laplace_op.GetH1Spaces());
   ksp.SetOperators(*K, *K);
 

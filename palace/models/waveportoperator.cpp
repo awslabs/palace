@@ -32,6 +32,7 @@
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
+#include "utils/perfmetrics.hpp"
 #include "utils/timer.hpp"
 
 namespace palace
@@ -839,6 +840,7 @@ WavePortData::WavePortData(const config::WavePortData &data,
   // communicator (all processes), so the config + construction must happen on all
   // processes. The solver_comm (port_comm) restricts solver setup to port processes only.
   {
+    perf::ScopedRole role("WavePort", port_comm);
     mode_solver = std::make_unique<ModeEigenSolver>(
         *port_mat_op, &port_normal, *port_surf_z_op, *port_farfield_op, *port_surf_sigma_op,
         *port_surf_rz_op, *port_nd_fespace, *port_h1_fespace, port_dbc_tdof_list, mode_idx,
