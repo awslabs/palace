@@ -39,12 +39,14 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Performance Improvements
 
-  - Complex operators on CPUs now also pack the libCEED terms without a partner in the
-    other part, such as the real terms of lossless materials, and the H1 diffusion terms,
-    so that each of them acts on the real and imaginary parts in one application, as the
-    matching pairs of terms already did. This speeds up the fine and H1 auxiliary operators
-    of the multigrid preconditioner of driven and eigenmode simulations. Results change at
-    most at the level of round-off. [PR 1173](https://github.com/awslabs/palace/pull/1173).
+  - Complex operators on CPUs which pack matching pairs of real and imaginary libCEED terms
+    now also pair the H1 diffusion terms and pack the real terms without a partner, such as
+    those of the lossless materials of partially lossy models, so that each of them acts on
+    the real and imaginary parts in one application. This speeds up every multigrid level
+    above the coarsest, and its H1 auxiliary operator, in driven and eigenmode simulations
+    with losses. Operators without any pair, as in lossless problems, keep their original
+    action, which needs less memory. Results change at most at the level of round-off.
+    [PR 1173](https://github.com/awslabs/palace/pull/1173).
   - Added a hypre patch, based on
     [hypre-space/hypre#1652](https://github.com/hypre-space/hypre/pull/1652), for
     multicomponent vectors in hybrid Gauss-Seidel relaxation and Gaussian elimination, and

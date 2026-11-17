@@ -4,7 +4,8 @@
 #ifndef PALACE_LIBCEED_COMPLEX_APPLY_QF_H
 #define PALACE_LIBCEED_COMPLEX_APPLY_QF_H
 
-// H(curl)/H(div) fields have layout [physical component][real/imag component][Q].
+// H(curl)/H(div) fields and H1 gradients have layout [physical component][real/imag
+// component][Q].
 // Retain separate passive QData fields, including their original restrictions, so
 // coefficient updates and backend-specific QData layouts remain valid.
 CEED_QFUNCTION(f_apply_complex_3)(void *, CeedInt Q, const CeedScalar *const *in,
@@ -80,27 +81,14 @@ CEED_QFUNCTION(f_apply_real_3)(void *, CeedInt Q, const CeedScalar *const *in,
   return 0;
 }
 
-CEED_QFUNCTION(f_apply_real_33)(void *, CeedInt Q, const CeedScalar *const *in,
+// Interpolation tensor first, curl tensor second.
+CEED_QFUNCTION(f_apply_real_33)(void *ctx, CeedInt Q, const CeedScalar *const *in,
                                 CeedScalar *const *out)
 {
-  const CeedScalar *__restrict__ qd1 = in[0], *__restrict__ qd2 = in[0] + 9 * Q,
-                                 *__restrict__ u1 = in[1], *__restrict__ u2 = in[2];
-  CeedScalar *__restrict__ v1 = out[0], *__restrict__ v2 = out[1];
-  CeedPragmaSIMD for (CeedInt q = 0; q < Q; q++)
-  {
-    for (CeedInt r = 0; r < 3; r++)
-    {
-      for (CeedInt c = 0; c < 2; c++)
-      {
-        v1[q + (2 * r + c) * Q] = qd1[q + (r + 0) * Q] * u1[q + (0 + c) * Q] +
-                                  qd1[q + (r + 3) * Q] * u1[q + (2 + c) * Q] +
-                                  qd1[q + (r + 6) * Q] * u1[q + (4 + c) * Q];
-        v2[q + (2 * r + c) * Q] = qd2[q + (r + 0) * Q] * u2[q + (0 + c) * Q] +
-                                  qd2[q + (r + 3) * Q] * u2[q + (2 + c) * Q] +
-                                  qd2[q + (r + 6) * Q] * u2[q + (4 + c) * Q];
-      }
-    }
-  }
+  f_apply_real_3(ctx, Q, in, out);
+  const CeedScalar *in_curl[2] = {in[0] + 9 * Q, in[2]};
+  CeedScalar *out_curl[1] = {out[1]};
+  f_apply_real_3(ctx, Q, in_curl, out_curl);
   return 0;
 }
 

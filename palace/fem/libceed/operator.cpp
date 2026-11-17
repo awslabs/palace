@@ -473,9 +473,10 @@ void ClonePackedRestriction(Ceed ceed, CeedElemRestriction original, CeedInt ele
   PalaceCeedCall(ceed, CeedElemRestrictionRestoreOffsets(original, &offsets));
 }
 
-// Two copies of the vector basis interpolate the real/imaginary coefficient blocks
-// into [physical component][Re/Im][Q] order. This gives six Q-length blocks:
-// Re(u_x), Im(u_x), Re(u_y), Im(u_y), Re(u_z), Im(u_z).
+// Two copies of the basis interpolate the real/imaginary coefficient blocks of a vector
+// field, or take the gradients of those of an H1 field, into [physical component][Re/Im][Q]
+// order. This gives six Q-length blocks: Re(u_x), Im(u_x), Re(u_y), Im(u_y), Re(u_z),
+// Im(u_z).
 void ClonePackedBasis(Ceed ceed, const PackedLeaf &leaf, CeedBasis *packed)
 {
   auto original = leaf.active.basis.value;
@@ -612,9 +613,10 @@ void AddPackedPair(Ceed ceed, const PackedLeaf &real, const PackedLeaf &imag, in
     CreateSubsetQDataRestriction(ceed, real.qdata.restriction.value,
                                  subset.data->active_indices, &qdata.value);
   }
-  // Both kernels implement complex mass. Only f_apply_complex_33 adds curl-curl,
-  // with a real tensor acting independently on Re(x) and Im(x). The pairing loop
-  // must therefore leave imaginary curl leaves in the remainder.
+  // Both kernels apply a complex 3x3 tensor to the interpolated vector field (mass) or to
+  // the gradient of an H1 field (diffusion). Only f_apply_complex_33 adds curl-curl, with a
+  // real tensor acting independently on Re(x) and Im(x). The pairing loop must therefore
+  // leave imaginary curl leaves in the remainder.
   PalaceCeedCall(ceed, CeedQFunctionCreateInterior(
                            ceed, 1, real.curl ? f_apply_complex_33 : f_apply_complex_3,
                            real.curl ? PalaceQFunctionRelativePath(f_apply_complex_33_loc)
