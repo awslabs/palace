@@ -77,7 +77,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     the imaginary part of the complex-valued matrix is exactly zero, as for a model without
     losses, these solvers factor its real part in real arithmetic, which halves the memory
     of the factors again. The log says which matrix is factored, and whether in complex
-    arithmetic or as a real-valued system. SchemaVer 4-3-0
+    arithmetic or as a real-valued system. SchemaVer 4-4-0
     [PR 1193](https://github.com/awslabs/palace/pull/1193).
   - Added a STRUMPACK patch for
     [pghysels/STRUMPACK#171](https://github.com/pghysels/STRUMPACK/pull/171), which lowers
