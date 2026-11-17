@@ -884,6 +884,8 @@ void IoData::CheckConfiguration()
     {
       MFEM_VERIFY(!solver.driven.adaptive_circuit_synthesis,
                   "Driven substructuring does not support \"AdaptiveCircuitSynthesis\"!");
+      MFEM_VERIFY(sub.factorization_tol == 0.0,
+                  "Driven substructuring does not use \"FactorizationTol\"!");
       MFEM_VERIFY(model.refinement.max_it == 0,
                   "Adaptive mesh refinement with driven substructuring refines the full "
                   "model: run the adaptation without \"Solver.Substructuring\" (with "

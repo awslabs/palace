@@ -294,6 +294,10 @@ TEST_CASE("Config Substructuring", "[config][Serial]")
     adaptive["AdaptiveCircuitSynthesis"] = true;
     CHECK_THROWS_WITH(IoData(make_config(adaptive, json::object()), false),
                       Catch::Matchers::ContainsSubstring("AdaptiveCircuitSynthesis"));
+    json tol = make_config(uniform, json::object());
+    tol["Solver"]["Substructuring"]["FactorizationTol"] = 1.0e-8;
+    CHECK_THROWS_WITH(IoData(tol, false),
+                      Catch::Matchers::ContainsSubstring("\"FactorizationTol\""));
 #if defined(MFEM_USE_MUMPS)
     json gpu = make_config(uniform, json::object());
     gpu["Solver"]["Device"] = "GPU";

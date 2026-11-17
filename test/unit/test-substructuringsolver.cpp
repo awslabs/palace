@@ -3459,7 +3459,7 @@ TEST_CASE("DirectSchurSolver condenses exactly", "[substructure][Serial][Paralle
     rows[i] = i;
   }
   DirectSchurSolver solver(comm, n_glob, static_cast<int>(rows.size()), std::move(coo),
-                           schur_vars, rows, type);
+                           schur_vars, rows, type, SymbolicFactorization::AMD);
   auto dist = [](const auto &a, const auto &b)
   { return (a - b).cwiseAbs().maxCoeff() / b.cwiseAbs().maxCoeff(); };
   for (int k = 0; k < 2; k++)

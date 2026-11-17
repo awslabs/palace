@@ -35,10 +35,13 @@ public:
   // local rows), each rank passing some of them, in any rows, the Schur variables (global
   // 0-based indices, replicated, in their order in S; none for a plain factorization), and
   // rows: the local index of each local row in the vectors of the solves (-1 for a row of
-  // none). Factors the matrix with type (STRUMPACK or SUPERLU), collective.
+  // none). Factors the matrix with type (STRUMPACK or SUPERLU) and the fill-reducing
+  // ordering (not STRUMPACK's partial factorization, which orders the Schur variables
+  // last), collective.
   DirectSchurSolver(MPI_Comm comm, HYPRE_BigInt n_glob, int n_loc, Coo &&A,
                     const std::vector<HYPRE_BigInt> &schur_vars, std::vector<int> rows,
-                    LinearSolver type);
+                    LinearSolver type,
+                    SymbolicFactorization ordering = SymbolicFactorization::DEFAULT);
   ~DirectSchurSolver() override;
 
   std::vector<T> &Values() override { return val; }

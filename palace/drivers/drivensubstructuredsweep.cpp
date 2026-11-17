@@ -367,9 +367,9 @@ DrivenSubstructuredSweep::DrivenSubstructuredSweep(const IoData &iodata,
   {
     model.ReadHeader(model_path, comm);
   }
-  ds = std::make_unique<DrivenSubstructure>(space_op, sub.region_attributes,
-                                            sub.environment_attributes, online,
-                                            online ? &model : nullptr, sub.direct_solver);
+  ds = std::make_unique<DrivenSubstructure>(
+      space_op, sub.region_attributes, sub.environment_attributes, online,
+      online ? &model : nullptr, sub.direct_solver, iodata.solver.linear.sym_factorization);
   if (ds->RegionOnly())
   {
     const auto &refinement = iodata.model.refinement;
@@ -988,9 +988,9 @@ void DrivenSubstructuredSweep::SampleEnvironment()
 
   // The frequencies of the sweep from the model, on the region only.
   ds.reset();
-  ds = std::make_unique<DrivenSubstructure>(space_op, sub.region_attributes,
-                                            sub.environment_attributes, true, nullptr,
-                                            sub.direct_solver);
+  ds = std::make_unique<DrivenSubstructure>(
+      space_op, sub.region_attributes, sub.environment_attributes, true, nullptr,
+      sub.direct_solver, iodata.solver.linear.sym_factorization);
 }
 
 // The model's record at a frequency of the sweep, on the current interface (on rank 0;

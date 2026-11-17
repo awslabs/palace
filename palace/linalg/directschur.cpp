@@ -58,17 +58,39 @@ constexpr int kII = 0, kIS = 1, kSS = 2;
 constexpr int kBatch = 32;
 
 #if defined(MFEM_USE_STRUMPACK)
+// STRUMPACK's fill-reducing ordering for config["Solver"]["Linear"]["ColumnOrdering"], as
+// StrumpackSolverBase sets it (METIS by default).
+strumpack::ReorderingStrategy Reordering(SymbolicFactorization ordering)
+{
+  switch (ordering)
+  {
+    case SymbolicFactorization::PARMETIS:
+      return strumpack::ReorderingStrategy::PARMETIS;
+    case SymbolicFactorization::SCOTCH:
+      return strumpack::ReorderingStrategy::SCOTCH;
+    case SymbolicFactorization::PTSCOTCH:
+      return strumpack::ReorderingStrategy::PTSCOTCH;
+    case SymbolicFactorization::AMD:
+      return strumpack::ReorderingStrategy::AMD;
+    case SymbolicFactorization::RCM:
+      return strumpack::ReorderingStrategy::RCM;
+    default:
+      return strumpack::ReorderingStrategy::METIS;
+  }
+}
+
 // STRUMPACK, in complex arithmetic, with the options of Palace's STRUMPACK solver and its
 // ordering reused when refactored.
 class StrumpackFactorization : public DirectSchurFactorization
 {
 public:
-  explicit StrumpackFactorization(MPI_Comm comm) : comm(comm), sp(comm, false)
+  StrumpackFactorization(MPI_Comm comm, SymbolicFactorization ordering)
+    : comm(comm), sp(comm, false)
   {
     auto &opt = sp.options();
     opt.set_Krylov_solver(strumpack::KrylovSolver::DIRECT);
     opt.set_matching(strumpack::MatchingJob::NONE);
-    opt.set_reordering_method(strumpack::ReorderingStrategy::METIS);
+    opt.set_reordering_method(Reordering(ordering));
     opt.set_compression(strumpack::CompressionType::NONE);
     opt.set_verbose(false);
     opt.disable_gpu();  // as StrumpackSolverBase
@@ -309,9 +331,8 @@ private:
 class RealFormFactorization : public DirectSchurFactorization
 {
 public:
-  explicit RealFormFactorization(MPI_Comm comm)
-    : comm(comm), solver(std::make_unique<SuperLUSolver>(
-                      comm, SymbolicFactorization::DEFAULT, false, true, 0))
+  RealFormFactorization(MPI_Comm comm, SymbolicFactorization ordering)
+    : comm(comm), solver(std::make_unique<SuperLUSolver>(comm, ordering, false, true, 0))
   {
   }
 
@@ -390,7 +411,8 @@ private:
 
 DirectSchurSolver::DirectSchurSolver(MPI_Comm comm, HYPRE_BigInt n_glob, int n_loc, Coo &&A,
                                      const std::vector<HYPRE_BigInt> &schur_vars,
-                                     std::vector<int> local_rows, LinearSolver type)
+                                     std::vector<int> local_rows, LinearSolver type,
+                                     SymbolicFactorization ordering)
   : comm(comm), rank(Mpi::Rank(comm)), n_loc(n_loc),
     n_schur(static_cast<int>(schur_vars.size())), gather(comm, n_loc, schur_vars),
     rows(std::move(local_rows)), val(std::move(A.val))
@@ -406,12 +428,12 @@ DirectSchurSolver::DirectSchurSolver(MPI_Comm comm, HYPRE_BigInt n_glob, int n_l
         break;
       }
 #endif
-      fact = std::make_unique<StrumpackFactorization>(comm);
+      fact = std::make_unique<StrumpackFactorization>(comm, ordering);
       break;
 #endif
 #if defined(MFEM_USE_SUPERLU)
     case LinearSolver::SUPERLU:
-      fact = std::make_unique<RealFormFactorization>(comm);
+      fact = std::make_unique<RealFormFactorization>(comm, ordering);
       break;
 #endif
     default:

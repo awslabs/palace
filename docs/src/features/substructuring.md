@@ -112,9 +112,9 @@ the position of their centroids.
 `"FactorizationTol"` trades a controlled loss of accuracy for time: it is the relative tolerance of
 a block low-rank (BLR) approximation of the environment factorization, which reduces the time to
 condense the environment. It is used only by the MUMPS partial factorization of the environment (see
-[Solvers](#Solvers)), not when `"Type"` names another solver (*Palace* then warns). The error in the
-extracted matrices follows the tolerance but is not bounded by it; `1e-12` is a conservative choice.
-The default, `0`, keeps the condensation exact.
+[Solvers](#Solvers)), not when `"Type"` names another solver (*Palace* then warns), and a driven
+problem rejects it. The error in the extracted matrices follows the tolerance but is not bounded by
+it; `1e-12` is a conservative choice. The default, `0`, keeps the condensation exact.
 
 ### Adaptive mesh refinement
 

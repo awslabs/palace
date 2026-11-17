@@ -173,11 +173,12 @@ public:
   // else: of a side with its Schur complement onto Γ, by MUMPS (its partial factorization),
   // STRUMPACK or SuperLU_DIST (one solve per interface DOF), of the region with S_E online
   // (one system) by STRUMPACK, SuperLU_DIST or MUMPS, in these orders among those Palace is
-  // built with.
+  // built with, with the fill-reducing ordering given.
   DrivenSubstructure(SpaceOperator &space_op, const std::vector<int> &region_attributes,
                      const std::vector<int> &environment_attributes, bool online = false,
                      const DrivenSubstructureModel *saved = nullptr,
-                     LinearSolver solver = LinearSolver::DEFAULT);
+                     LinearSolver solver = LinearSolver::DEFAULT,
+                     SymbolicFactorization ordering = SymbolicFactorization::DEFAULT);
   ~DrivenSubstructure();
 
   // Condense the environment and factor the region against it at the angular frequency ω
@@ -293,6 +294,7 @@ public:
 private:
   SpaceOperator &space_op;
   LinearSolver solver;
+  SymbolicFactorization ordering;
   bool online, region_only = false;
   std::vector<char> is_env_int, is_gamma, is_region_int;
   std::vector<HYPRE_BigInt> gamma_tdofs;

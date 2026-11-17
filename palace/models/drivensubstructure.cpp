@@ -86,22 +86,24 @@ LinearSolver CoupledSolver(LinearSolver type)
 #endif
 }
 
-// The factorization of a system by type, with its Schur complement onto schur_vars.
+// The factorization of a system by type and fill-reducing ordering, with its Schur
+// complement onto schur_vars.
 std::unique_ptr<Factorization>
-MakeFactorization(LinearSolver type, MPI_Comm comm, HYPRE_BigInt n_glob,
-                  Factorization::Coo &&coo, const std::vector<HYPRE_BigInt> &schur_vars,
-                  const std::vector<int> &rows)
+MakeFactorization(LinearSolver type, SymbolicFactorization ordering, MPI_Comm comm,
+                  HYPRE_BigInt n_glob, Factorization::Coo &&coo,
+                  const std::vector<HYPRE_BigInt> &schur_vars, const std::vector<int> &rows)
 {
   const int n_loc = static_cast<int>(rows.size());
 #if defined(MFEM_USE_MUMPS)
   if (type == LinearSolver::MUMPS)
   {
     return std::make_unique<MumpsSchurSolverT<std::complex<double>>>(
-        comm, n_glob, n_loc, std::move(coo), schur_vars, kBlrTol, 0, true, false, rows);
+        comm, n_glob, n_loc, std::move(coo), schur_vars, kBlrTol, 0, true, false, rows,
+        ordering);
   }
 #endif
   return std::make_unique<DirectSchurSolver>(comm, n_glob, n_loc, std::move(coo),
-                                             schur_vars, rows, type);
+                                             schur_vars, rows, type, ordering);
 }
 
 // Free a vector's storage (v = {} empties it but keeps its capacity).
@@ -125,8 +127,8 @@ DrivenSubstructure::DrivenSubstructure(SpaceOperator &space_op,
                                        const std::vector<int> &region_attributes,
                                        const std::vector<int> &environment_attributes,
                                        bool online, const DrivenSubstructureModel *saved,
-                                       LinearSolver solver)
-  : space_op(space_op), solver(solver), online(online)
+                                       LinearSolver solver, SymbolicFactorization ordering)
+  : space_op(space_op), solver(solver), ordering(ordering), online(online)
 {
   env.attrs = environment_attributes;
   region.attrs = region_attributes;
@@ -595,7 +597,7 @@ void DrivenSubstructure::Factor(Side &side, double omega)
   if (!side.schur)
   {
     side.schur = MakeFactorization(
-        SideSolver(solver), space_op.GetComm(), side.n_sys,
+        SideSolver(solver), ordering, space_op.GetComm(), side.n_sys,
         {std::move(side.irn_sys), std::move(side.jcn_sys), std::move(side.val)},
         side.gamma_sys, side.rows);
     return;
@@ -694,8 +696,8 @@ void DrivenSubstructure::Condense(double omega, std::vector<std::complex<double>
           coo.jcn.push_back(static_cast<int>(b + 1));
           coo.val.push_back(v);
         });
-    coupled = MakeFactorization(CoupledSolver(solver), comm, region.n_sys, std::move(coo),
-                                {}, region.rows);
+    coupled = MakeFactorization(CoupledSolver(solver), ordering, comm, region.n_sys,
+                                std::move(coo), {}, region.rows);
   }
   else
   {
