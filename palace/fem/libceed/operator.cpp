@@ -821,25 +821,18 @@ PackComplexOperator(std::unique_ptr<palace::Operator> &Ar,
   // lost by packing.
   const auto *real = dynamic_cast<const Operator *>(Ar.get());
   const auto *imag = dynamic_cast<const Operator *>(Ai.get());
-  if ((!real && !imag) || (Ar && !real) || (Ai && !imag) || internal::NumCeeds() != 1 ||
-      utils::GetMaxThreads() > 1 || utils::InParallel() ||
-      mfem::Device::Allows(mfem::Backend::DEVICE_MASK))
+  if (!real || !imag || internal::NumCeeds() != 1 || utils::GetMaxThreads() > 1 ||
+      utils::InParallel() || mfem::Device::Allows(mfem::Backend::DEVICE_MASK) ||
+      real->Size() != 1 || imag->Size() != 1 || real->HasDofMultiplicity() ||
+      imag->HasDofMultiplicity() || real->Width() != real->Height() ||
+      real->Width() != imag->Width() || real->Height() != imag->Height() ||
+      real->Width() <= 0 || real->Width() > std::numeric_limits<int>::max() / 2)
   {
     return {};
   }
-  const auto *first = real ? real : imag;
-  for (const auto *part : {real, imag})
-  {
-    // Do not bypass an unknown subclass's application semantics.
-    if (part &&
-        (part->Size() != 1 || part->HasDofMultiplicity() ||
-         part->Width() != part->Height() || part->Width() != first->Width() ||
-         (typeid(*part) != typeid(Operator) && typeid(*part) != typeid(SymmetricOperator))))
-    {
-      return {};
-    }
-  }
-  if (first->Width() <= 0 || first->Width() > std::numeric_limits<int>::max() / 2)
+  // Do not bypass an unknown subclass's application semantics.
+  if ((typeid(*real) != typeid(Operator) && typeid(*real) != typeid(SymmetricOperator)) ||
+      (typeid(*imag) != typeid(Operator) && typeid(*imag) != typeid(SymmetricOperator)))
   {
     return {};
   }
@@ -849,27 +842,23 @@ PackComplexOperator(std::unique_ptr<palace::Operator> &Ar,
   PalaceCeedCall(ceed, CeedGetPreferredMemType(ceed, &mem));
   PalaceCeedCall(ceed, CeedGetResource(ceed, &resource));
   if (mem != CEED_MEM_HOST || std::strncmp(resource, "/cpu/", 5) != 0 ||
-      (real && !SameContext(ceed, CeedOperatorReturnCeed((*real)[0]))) ||
-      (imag && !SameContext(ceed, CeedOperatorReturnCeed((*imag)[0]))))
+      !SameContext(ceed, CeedOperatorReturnCeed((*real)[0])) ||
+      !SameContext(ceed, CeedOperatorReturnCeed((*imag)[0])))
   {
     return {};
   }
-  const int size = first->Width();
+  const int size = real->Width();
   // Pair only direct children of Palace's composites. Keep unmatched nested
   // composites intact in the remainder rather than flattening them, preserving
   // their action and the composite sizes of the remainder (see the limit below for the
   // packed composite).
-  CeedInt count[2] = {0, 0};
-  CeedOperator *children[2] = {nullptr, nullptr};
+  CeedInt count[2];
+  CeedOperator *children[2];
   for (int part = 0; part < 2; part++)
   {
-    const auto *part_op = part == 0 ? real : imag;
-    if (part_op)
-    {
-      auto op = (*part_op)[0];
-      PalaceCeedCall(ceed, CeedOperatorCompositeGetNumSub(op, &count[part]));
-      PalaceCeedCall(ceed, CeedOperatorCompositeGetSubList(op, &children[part]));
-    }
+    auto op = part == 0 ? (*real)[0] : (*imag)[0];
+    PalaceCeedCall(ceed, CeedOperatorCompositeGetNumSub(op, &count[part]));
+    PalaceCeedCall(ceed, CeedOperatorCompositeGetSubList(op, &children[part]));
   }
   std::vector<std::unique_ptr<PackedLeaf>> fields[2];
   std::vector<bool> matched[2];
