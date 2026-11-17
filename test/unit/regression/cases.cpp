@@ -1810,6 +1810,21 @@ TEST_CASE("cylinder_cavity_impedance", "[Serial][Parallel][GPU][Regression]")
                                   opts);
 }
 
+// One adaptation iteration of cylinder_cavity_impedance at order 3: the initial solve takes
+// nine Krylov cycles, so the solve of the adaptation iteration starts from its eigenvectors
+// (warm start), with the tighter linear solver tolerance in its first cycle.
+TEST_CASE("cylinder_cavity_impedance_amr", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = eigen_excluded;
+  opts.skip_rowcount = true;
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("cylinder", "cavity_impedance_amr.json",
+                                  "cavity_impedance_amr", opts);
+}
+
 // The SLEPc NEP (SLP) shell receives device arrays on a GPU. The impedance boundary adds
 // damping, so this covers the full (K, C, M) path of the NEP solver. Without SLEPc,
 // Palace replaces SLP with Hybrid, which the SLP references do not check.
