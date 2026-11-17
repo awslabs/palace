@@ -2834,11 +2834,11 @@ TEST_CASE("cpw_lumped_eigen", "[Serial][Parallel][GPU][Regression]")
   palace::test::RegressionOptions opts;
   opts.rtol = 2.0e-2;
   opts.atol = 1.0e-11;
-  // Drop phase-sensitive port columns and Q_ext / κ_ext normalisations;
-  // keep the farfield magnitude check.
-  opts.excluded_columns = {"Maximum",      "Minimum", "Mean",      "Error (Bkwd.)",
-                           "Error (Abs.)", "Re{V[",   "Im{V[",     "Re{I[",
-                           "Im{I[",        "Q_ext",   "\u03ba_ext"};
+  // Drop phase-sensitive port columns and compare κ_ext by magnitude, since its sign is the
+  // sign of Re{I}; keep the farfield magnitude check.
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean",  "Error (Bkwd.)", "Error (Abs.)",
+                           "Re{V[",   "Im{V[",   "Re{I[", "Im{I["};
+  opts.abs_columns = {"\u03ba_ext"};
   opts.skip_rowcount = true;
   opts.custom_checks["farfield-rE.csv"] = TestFarfield(opts.rtol);
   palace::test::RunRegressionCase("cpw", "cpw_lumped_eigen.json", "lumped_eigen", opts);

@@ -559,7 +559,9 @@ orthogonalized real and imaginary components, ``\mathrm{Re}(\bm{x}^*)`` and
 ``\mathrm{Im}(\bm{x}^*)``, as separate real basis vectors. The Gram-Schmidt
 orthogonalization variant is controlled by
 [`config["Solver"]["Driven"]["AdaptiveGSOrthogonalization"]`](config/reference.md#config-solver-driven),
-though most users should not need to change it.
+though most users should not need to change it. `"MGS"` is applied as `"CGS2"`, classical
+Gram-Schmidt with reorthogonalization, which is as stable with three reductions per vector
+(one per pass and one for the norm) instead of one per basis vector.
 
 ### Internal sample selection
 
@@ -776,14 +778,25 @@ The EPR can also be used to estimate mode quality factors due to input-output (I
 coupling. The mode coupling quality factor due to the ``j``-th I-O port is given by
 
 ```math
-Q_{mj} = \frac{\omega_m}{\kappa_{mj}}
+Q_{mj} = \frac{\text{Re}\{\omega_m\}}{|\kappa_{mj}|}
 ```
 
-where the port coupling rate ``\kappa_{mj}`` is calculated as
+The magnitude of the port coupling rate ``\kappa_{mj}`` is the power dissipated in the
+resistive boundary of port ``j`` divided by the electric energy of mode ``m``, and its sign
+is the sign of the real part of the port current ``I_{mj} = \overline{V}_{mj}/R_j``:
 
 ```math
-\kappa_{mj} = \frac{1}{\mathcal{E}^{elec}_m} \, \frac{1}{2}\,R_j I_{mj}^2 \,.
+\kappa_{mj} = \text{sign}(\text{Re}\{I_{mj}\}) \, \frac{1}{\mathcal{E}^{elec}_m} \,
+    \frac{1}{2} \sum_e \int_{\Gamma_e} \frac{|\bm{E}_{m,t}|^2}{R_{s,e}} \, dS \,,
 ```
+
+where ``\bm{E}_{m,t}`` is the tangential electric field of mode ``m`` on element ``e`` of
+the port and ``R_{s,e}`` is the sheet resistance of that element.
+
+When the active resistive ports are the only loss,
+``\sum_j |\kappa_{mj}| = 2\,\text{Im}\{\omega_m\}``, so ``\sum_j 1/Q_{mj}`` is
+``|\omega_m|/\text{Re}\{\omega_m\}`` times the ``1/Q`` of the eigenvalue above, and close
+to it only when ``Q \gg 1``.
 
 ## Bulk and interface dielectric loss
 
