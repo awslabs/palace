@@ -324,6 +324,11 @@ protected:
   void InitializeParaviewDataCollection(const fs::path &sub_folder_name = "");
   void EnsureParaviewDataCollection();
 
+  // Subfolder for the field output of a driven excitation, the same for ParaView and grid
+  // function output: none for a single excitation.
+  fs::path ExcitationSubFolder(int ex_idx) const
+    requires(solver_t == ProblemType::DRIVEN);
+
 public:
   // Public overload for the driven solver only, that takes in an excitation index and
   // sets the correct sub_folder_name path for the primary function above.
@@ -343,7 +348,7 @@ protected:
   // <= E * (Z₀ H₀), V <= V * (Z₀ H₀ L₀), etc.
   void WriteParaviewFields(double time, int step);
   void WriteParaviewFieldsFinal(const ErrorIndicator *indicator = nullptr);
-  void WriteMFEMGridFunctions(double time, int step);
+  void WriteMFEMGridFunctions(double time, int step, const fs::path &sub_folder_name = "");
   void WriteMFEMGridFunctionsFinal(const ErrorIndicator *indicator = nullptr);
 
   // CSV Measure & Print.

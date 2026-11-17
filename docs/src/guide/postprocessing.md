@@ -201,6 +201,8 @@ surface currents, and charge density. These files are found in the `paraview/` o
 directories located in the output directory specified under
 [`config["Problem"]["Output"]`](../config/reference.md#config-problem). The output
 formats are specified in [`config["Problem"]["OutputFormats"]`](../config/reference.md#config-problem).
+Driven simulations with several excitations write the fields of each excitation to a separate
+subfolder, see [Lumped and wave port excitation](boundaries.md#Lumped-and-wave-port-excitation).
 
 *Palace* writes ParaView data using raw-appended binary VTK XML. Use
 [ParaView 5.12.1](https://www.kitware.com/paraview-5-12-1-release-notes/) or newer to

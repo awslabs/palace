@@ -710,6 +710,14 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     the port mode, causing too-small coupling-rate magnitudes and too-large external quality
     factors.
     [PR 1086](https://github.com/awslabs/palace/pull/1086).
+  - Fixed the grid function output (`Problem.OutputFormats.GridFunction`) of driven
+    simulations with several excitations, where each excitation overwrote the saved fields
+    of the previous one, so that only the fields of the last excitation were kept. As for
+    the ParaView output, the fields of excitation `i` are now written to the subfolder
+    `gridfunction/driven/excitation_i/`. The mesh, rank, and error indicator files are
+    shared by all excitations and stay in `gridfunction/driven/`. The output of driven
+    simulations with a single excitation is unchanged.
+    [PR 1220](https://github.com/awslabs/palace/pull/1220).
   - The per-type portion tables and the loop-fit tables of the Maxwell correction write
     their header with their first rows whatever print that is (a table first written at a
     later mode or frequency, such as the conductor-consistency table, was appended without
