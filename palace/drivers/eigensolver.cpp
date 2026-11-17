@@ -484,11 +484,18 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         }
         eigen->SetWarmStart(true);
 
-        // The Ritz values of the first Krylov cycle are set by its first linear solves:
-        // solve these with a 100 times smaller tolerance, not below 1e-12.
+        // The error of the first linear solves stays in the vectors kept at the restarts,
+        // and the eigenvalue errors scale with their tolerance: solve them with a 100
+        // times smaller tolerance, but not below 1e-3 times the eigenvalue tolerance or
+        // 1e-12, so that there is nothing to tighten when the linear solver tolerance is
+        // already that small.
         const double lin_tol = iodata.solver.linear.tol;
-        eigen->SetFirstCycleLinearSolverTol(
-            std::max(1.0e-2 * lin_tol, std::min(lin_tol, 1.0e-12)));
+        const double first_tol = std::min(
+            lin_tol, std::max({1.0e-2 * lin_tol, 1.0e-3 * eigenmode.tol, 1.0e-12}));
+        if (first_tol < lin_tol)
+        {
+          eigen->SetFirstCycleLinearSolverTol(first_tol);
+        }
       }
     }
     if (num_warm == 0)
