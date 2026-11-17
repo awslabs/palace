@@ -179,6 +179,20 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Bug Fixes
 
+  - Fixed adaptive frequency sweeps which kept sampling up to `"AdaptiveMaxSamples"` when
+    `"AdaptiveTol"` is close to the accuracy of the linear solves: late in the sampling, the
+    real or imaginary part of a sample can add a basis direction which is mostly linear
+    solver error, and with it the PROM no longer reproduces the sample (one sweep reached
+    200 samples, with spurious resonances in the band, where 7 suffice). After each sample
+    of the greedy sampling, *Palace* now checks that the PROM reproduces it to
+    `"AdaptiveTol"`; if it does not, of its real and imaginary parts only those with which
+    the PROM is closest to the sample are kept. Sweeps whose PROM reproduces every sample
+    are unchanged. When `"AdaptiveTol"` is below the accuracy of the HDM solutions, so that
+    the last `"AdaptiveConvergenceMemory"` samples from converged linear solves, all above
+    the tolerance, add no basis direction (samples from linear solves which did not converge
+    are skipped if they add none), the sampling of that excitation stops with a warning
+    instead of continuing up to `"AdaptiveMaxSamples"`. SchemaVer 4-3-1
+    [PR 1218](https://github.com/awslabs/palace/pull/1218).
   - Fixed the flux recovery in the error estimators to use the projection which minimizes the
     error it is measured in (ε⁻¹-weighted for the electric flux, μ-weighted for the magnetic
     field). The unweighted projection overestimated the error in the low-permittivity

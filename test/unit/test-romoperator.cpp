@@ -1,8 +1,10 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <algorithm>
 #include <array>
 #include <numbers>
+#include <string>
 #include <vector>
 #include <Eigen/Dense>
 #include <catch2/catch_test_macros.hpp>
@@ -73,6 +75,9 @@ public:
   auto &GetKr() const { return Kr; }
   auto &GetCr() const { return Cr; }
   auto &GetMr() const { return Mr; }
+  using RomOperator::ReducedState;
+  using RomOperator::RestoreReducedState;
+  using RomOperator::SaveReducedState;
   bool WavePortPairingChecked() const { return wp_pairing_checked; }
   bool WavePortPairingOk() const { return wp_pairing_ok; }
   void UseAssembledWavePortPath(bool assembled)
@@ -81,6 +86,79 @@ public:
     Ar_omega = std::numeric_limits<double>::quiet_NaN();
   }
 };
+
+namespace
+{
+
+// Bitwise equality of saved PROM states (copies of one another, or of a RomOperator before
+// an update and after the update was undone).
+template <typename MatType>
+bool SameMatrix(const MatType &x, const MatType &y)
+{
+  return x.rows() == y.rows() && x.cols() == y.cols() && x == y;
+}
+
+template <typename MapType>
+bool SameMatrixMap(const MapType &x, const MapType &y)
+{
+  if (x.size() != y.size())
+  {
+    return false;
+  }
+  for (const auto &[key, value] : x)
+  {
+    const auto it = y.find(key);
+    if (it == y.end() || !SameMatrix(value, it->second))
+    {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool SameMatrixList(const std::vector<Eigen::MatrixXcd> &x,
+                    const std::vector<Eigen::MatrixXcd> &y)
+{
+  if (x.size() != y.size())
+  {
+    return false;
+  }
+  for (std::size_t i = 0; i < x.size(); i++)
+  {
+    if (!SameMatrix(x[i], y[i]))
+    {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool SameReducedState(const RomOperatorTest::ReducedState &a,
+                      const RomOperatorTest::ReducedState &b)
+{
+  if (a.floquet_reduced.size() != b.floquet_reduced.size())
+  {
+    return false;
+  }
+  for (std::size_t k = 0; k < a.floquet_reduced.size(); k++)
+  {
+    const auto &p = a.floquet_reduced[k], &q = b.floquet_reduced[k];
+    if (p.port_idx != q.port_idx || p.order != q.order || p.is_te != q.is_te ||
+        !SameMatrix(p.vk_V, q.vk_V) || !SameMatrix(p.Vh_cvk, q.Vh_cvk))
+    {
+      return false;
+    }
+  }
+  return a.dim_V == b.dim_V && a.v_node_label == b.v_node_label &&
+         SameMatrix(a.orth_R, b.orth_R) && SameMatrix(a.Kr, b.Kr) &&
+         SameMatrix(a.Mr, b.Mr) && SameMatrix(a.Cr, b.Cr) &&
+         SameMatrixMap(a.Mwp_p_r, b.Mwp_p_r) && SameMatrix(a.M_ff_r, b.M_ff_r) &&
+         SameMatrixList(a.Asig_g_r, b.Asig_g_r) && SameMatrixList(a.Arz_b_r, b.Arz_b_r) &&
+         SameMatrixMap(a.M_floquet_p_r, b.M_floquet_p_r) && SameMatrix(a.RHS1r, b.RHS1r) &&
+         SameMatrixMap(a.RHS1r_online, b.RHS1r_online) && a.V_wp_dim == b.V_wp_dim;
+}
+
+}  // namespace
 
 auto LoadScaleParMesh2(IoData &iodata, MPI_Comm world_comm)
 {
@@ -840,6 +918,629 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-UpdatePROM-LinearDepe
   CHECK_THROWS(prom_op.UpdatePROM(u, "vec_0_duplicate"));
 }
 
+// AddSamplePROM keeps the whole update of UpdatePROM for accurate samples, restoring a
+// saved state undoes an update exactly, and for an inaccurate sample AddSamplePROM is never
+// worse at the sample than UpdatePROM or than not adding the sample.
+TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-AddSamplePROM",
+                 "[romoperator][Serial][Parallel]")
+{
+  MPI_Comm world_comm = Mpi::World();
+  auto mesh_path =
+      fs::path(PALACE_TEST_DATA_DIR) / "lumpedport_mesh/cube_mesh_3_2_1_tet.msh";
+  json setup_json;
+  setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 2}, {"Output", temp_dir}};
+  setup_json["Model"] = {{"Mesh", mesh_path},
+                         {"Refinement", json::object({})},
+                         {"CrackInternalBoundaryElements", false}};
+  setup_json["Domains"] = {
+      {"Materials",
+       json::array({json::object({{"Attributes", json::array({1, 2, 3, 4, 5, 6})},
+                                  {"Permeability", 1.0},
+                                  {"Permittivity", 1.0},
+                                  {"LossTan", 0.0}})})}};
+  setup_json["Boundaries"] = {
+      {"LumpedPort",
+       json::array({json::object(
+           {{"Index", 1},
+            {"R", 50.0},
+            {"Excitation", uint(1)},
+            {"Elements", json::array({json::object({{"Attributes", json::array({14})},
+                                                    {"Direction", "+Z"}})})}})})}};
+  setup_json["Solver"] = json::object();
+  setup_json["Solver"]["Device"] = "CPU";
+  setup_json["Solver"]["Driven"] = {
+      {"AdaptiveTol", 1e-3}, {"MinFreq", 2.0}, {"MaxFreq", 32.0}, {"FreqStep", 1.0}};
+  setup_json["Solver"]["Linear"] = {
+      {"Type", "Default"}, {"KSPType", "GMRES"}, {"MaxIts", 1000}, {"Tol", 1.0e-12}};
+
+  IoData iodata(setup_json, false);
+  auto mesh_io = LoadScaleParMesh2(iodata, world_comm);
+  SpaceOperator space_op(iodata, mesh_io);
+  RomOperatorTest prom_op(iodata, space_op, 4);
+  RomOperatorTest prom_ref(iodata, space_op, 4);
+
+  const auto n = space_op.GetNDSpace().GetTrueVSize();
+  auto make_vector = [n]()
+  {
+    ComplexVector v(n);
+    v.UseDevice(true);
+    v = 0.0;
+    return v;
+  };
+  auto rel_diff = [&](const ComplexVector &x, const ComplexVector &y)
+  {
+    ComplexVector d(x);
+    d.UseDevice(true);
+    linalg::AXPY(-1.0, y, d);
+    return linalg::Norml2(world_comm, d) / linalg::Norml2(world_comm, y);
+  };
+  // Two RomOperators projecting the same vectors agree to round-off, not bit for bit: the
+  // distributed (and, with OpenMP, threaded) reductions need not sum in the same order. The
+  // projected stiffness matrix is compared through the PROM solutions: the curl-curl form
+  // of the nearly curl-free solutions at the lowest frequency is a sum which cancels to a
+  // few digits, and threaded reductions change it by more than round-off of its norm
+  // (3e-9 was observed), while it enters the reduced system next to the much larger mass
+  // term.
+  auto same_matrix = [](const auto &A, const auto &B)
+  {
+    return A.rows() == B.rows() && A.cols() == B.cols() &&
+           (A - B).norm() <= 1.0e-12 * B.norm();
+  };
+  const auto &omega = iodata.solver.driven.sample_f;
+  ComplexVector u = make_vector(), x = make_vector(), x_ref = make_vector();
+  for (std::size_t i : {std::size_t{0}, omega.size() - 1})
+  {
+    CHECK(prom_op.SolveHDM(1, omega[i], u));
+    prom_op.SolvePROM(1, omega[i], x);
+    const double error = prom_op.GetReducedDimension() ? rel_diff(x, u) : 1.0;
+    const auto dim = prom_op.GetReducedDimension();
+    const auto update =
+        prom_op.AddSamplePROM(1, omega[i], u, error, 1.0e-6, "sample_" + std::to_string(i));
+    prom_ref.UpdatePROM(u, "sample_" + std::to_string(i));
+
+    // An accurate sample adds both of its directions, as UpdatePROM does, and is reproduced
+    // by the PROM.
+    CHECK(update.num_directions == 2);
+    CHECK(update.num_kept == 2);
+    CHECK(update.errors.empty());
+    CHECK(prom_op.GetReducedDimension() == dim + 2);
+    CHECK(prom_op.GetReducedDimension() == prom_ref.GetReducedDimension());
+    CHECK(same_matrix(prom_op.GetMr(), prom_ref.GetMr()));
+    CHECK(same_matrix(prom_op.GetCr(), prom_ref.GetCr()));
+    CHECK(same_matrix(prom_op.GetOrthR(), prom_ref.GetOrthR()));
+    prom_op.SolvePROM(1, omega[i], x);
+    prom_ref.SolvePROM(1, omega[i], x_ref);
+    CHECK(rel_diff(x, x_ref) <= 1.0e-12);
+    const double error_after = rel_diff(x, u);
+    CHECK(error_after < 1.0e-6);
+    CHECK(error_after < error);
+  }
+
+  // Restoring a saved state undoes an update exactly.
+  const double omega_test = omega[omega.size() / 2];
+  prom_op.SolvePROM(1, omega_test, x_ref);
+  const auto state = prom_op.SaveReducedState();
+  const auto dim = prom_op.GetReducedDimension();
+  u.Real().Randomize(42);
+  u.Imag().Randomize(43);
+  prom_op.UpdatePROM(u, "random");
+  REQUIRE(prom_op.GetReducedDimension() == dim + 2);
+  prom_op.SolvePROM(1, omega_test, x);
+  prom_op.RestoreReducedState(state);
+  CHECK(prom_op.GetReducedDimension() == dim);
+  CHECK(SameReducedState(prom_op.SaveReducedState(), state));
+  prom_op.SolvePROM(1, omega_test, x);
+  CHECK(rel_diff(x, x_ref) == 0.0);
+
+  // An inaccurate sample, checked with a zero tolerance: whichever directions are kept,
+  // the PROM error at the sample is at most that of the full update and that without it.
+  prom_op.SolveHDM(1, omega_test, u);
+  ComplexVector noise = make_vector();
+  linalg::SetRandom(world_comm, noise.Real(), 44);
+  linalg::SetRandom(world_comm, noise.Imag(), 45);
+  linalg::AXPY(1.0e-3 * linalg::Norml2(world_comm, u) / linalg::Norml2(world_comm, noise),
+               noise, u);
+  prom_op.SolvePROM(1, omega_test, x);
+  const double error_none = rel_diff(x, u);
+  prom_ref.UpdatePROM(u, "noisy");
+  prom_ref.SolvePROM(1, omega_test, x_ref);
+  const double error_full = rel_diff(x_ref, u);
+  const auto update = prom_op.AddSamplePROM(1, omega_test, u, error_none, 0.0, "noisy");
+  const auto dim_noisy = prom_op.GetReducedDimension();
+  CHECK(update.num_directions == 2);
+  CHECK(dim_noisy == dim + update.num_kept);
+  REQUIRE(update.errors.size() == 4);
+  CHECK(update.errors[0] == error_none);
+  CHECK(std::abs(update.errors[3] - error_full) <= 1.0e-6 * error_full);
+  prom_op.SolvePROM(1, omega_test, x);
+  const double error_kept = rel_diff(x, u);
+  CAPTURE(error_none, error_full, error_kept, dim, dim_noisy);
+  CHECK(dim_noisy <= dim + 2);
+  CHECK(error_kept <= (1.0 + 1.0e-8) * std::min(error_none, error_full));
+  if (dim_noisy == dim + 2)
+  {
+    CHECK(same_matrix(prom_op.GetMr(), prom_ref.GetMr()));
+  }
+
+  // UpdatePROM with abort_if_dependent = false, as AddSamplePROM adds the imaginary part
+  // alone, returns false for a sample with a part in the span of the basis and leaves the
+  // PROM unchanged.
+  prom_op.RestoreReducedState(state);
+  prom_op.UpdatePROM(u, "noisy");
+  const auto state_full = prom_op.SaveReducedState();
+  ComplexVector u_im(u);
+  u_im.UseDevice(true);
+  u_im.Real() = 0.0;
+  CHECK_FALSE(prom_op.UpdatePROM(u_im, "noisy_im", false));
+  CHECK(SameReducedState(prom_op.SaveReducedState(), state_full));
+  prom_op.RestoreReducedState(state);
+
+  // SolveHDM reports a linear solve which does not converge (here, after a single
+  // iteration), which the adaptive sampling stop does not count (see
+  // AdaptiveSamplingStall).
+  setup_json["Solver"]["Linear"]["MaxIts"] = 1;
+  IoData iodata_1(setup_json, false);
+  auto mesh_1 = LoadScaleParMesh2(iodata_1, world_comm);
+  SpaceOperator space_op_1(iodata_1, mesh_1);
+  RomOperatorTest prom_1(iodata_1, space_op_1, 4);
+  CHECK_FALSE(prom_1.SolveHDM(1, iodata_1.solver.driven.sample_f[omega.size() / 2], u));
+}
+
+// Samples constructed so that the PROM with both of their parts is far from them at their
+// frequency, while a smaller basis reproduces them: AddSamplePROM keeps the closest
+// candidate basis without touching the old part of the PROM, and when it keeps no new
+// direction the PROM is restored bit for bit. UpdatePROM, which the sweep uses for the
+// samples which initialize the basis, adds every direction of the same samples.
+//
+// The model is lossless, with a purely inductive excited port, so the system matrix is real
+// at real ω, and with the excitation phase 0° (90°) the HDM and PROM solutions at ω are
+// imaginary (real): their "solution part". The basis starts from random directions V0, so
+// that the PROM solutions are far from the HDM solution u*. With x(V) the PROM solution at
+// ω with the basis V, p a random direction, q the part of u* outside span(V0, p) and q0 the
+// part of u* outside span(V0):
+//   - u = x(V0 + p) + δ q, with q in the other part: the candidate with the solution part
+//     of u alone has the basis V0 + p and is δ from u; with q in the basis the PROM
+//     solution is u* (the Galerkin PROM reproduces u* in the span), and without p it lacks
+//     the component of x(V0 + p) along p.
+//   - u = x(V0) + δ (p + q0), with p in the solution part and q0 in the other part: the old
+//     basis is √2 δ from u; with q0 the PROM solution is u*, with p alone it is x(V0 + p).
+TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-AddSamplePROM-Candidates",
+                 "[romoperator][Serial][Parallel]")
+{
+  const double phase = GENERATE(0.0, 90.0);
+  CAPTURE(phase);
+  MPI_Comm world_comm = Mpi::World();
+  auto mesh_path =
+      fs::path(PALACE_TEST_DATA_DIR) / "lumpedport_mesh/cube_mesh_3_2_1_tet.msh";
+  json setup_json;
+  setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 2}, {"Output", temp_dir}};
+  setup_json["Model"] = {{"Mesh", mesh_path},
+                         {"Refinement", json::object({})},
+                         {"CrackInternalBoundaryElements", false}};
+  setup_json["Domains"] = {
+      {"Materials",
+       json::array({json::object({{"Attributes", json::array({1, 2, 3, 4, 5, 6})},
+                                  {"Permeability", 1.0},
+                                  {"Permittivity", 1.0},
+                                  {"LossTan", 0.0}})})}};
+  setup_json["Boundaries"] = {
+      {"LumpedPort",
+       json::array({json::object(
+           {{"Index", 1},
+            {"L", 1.0e-9},
+            {"Excitation", uint(1)},
+            {"ExcitationPhase", phase},
+            {"Elements", json::array({json::object({{"Attributes", json::array({14})},
+                                                    {"Direction", "+Z"}})})}})})}};
+  setup_json["Solver"] = json::object();
+  setup_json["Solver"]["Device"] = "CPU";
+  setup_json["Solver"]["Driven"] = {
+      {"AdaptiveTol", 1e-3}, {"MinFreq", 2.0}, {"MaxFreq", 32.0}, {"FreqStep", 1.0}};
+  setup_json["Solver"]["Linear"] = {
+      {"Type", "Default"}, {"KSPType", "GMRES"}, {"MaxIts", 1000}, {"Tol", 1.0e-12}};
+
+  IoData iodata(setup_json, false);
+  auto mesh_io = LoadScaleParMesh2(iodata, world_comm);
+  SpaceOperator space_op(iodata, mesh_io);
+  RomOperatorTest prom_op(iodata, space_op, 8);
+  const auto &omega_sample = iodata.solver.driven.sample_f;
+  const double omega = omega_sample[omega_sample.size() / 2];
+  const double tol = iodata.solver.driven.adaptive_tol;
+
+  const auto n = space_op.GetNDSpace().GetTrueVSize();
+  const auto &dbc_tdof_list = space_op.GetNDDbcTDofLists().back();
+  auto make_vector = [n]()
+  {
+    ComplexVector v(n);
+    v.UseDevice(true);
+    v = 0.0;
+    return v;
+  };
+  auto solution_part = [phase](ComplexVector &v) -> Vector &
+  { return (phase == 0.0) ? v.Imag() : v.Real(); };
+  auto other_part = [phase](ComplexVector &v) -> Vector &
+  { return (phase == 0.0) ? v.Real() : v.Imag(); };
+  auto norm = [&](const ComplexVector &v) { return linalg::Norml2(world_comm, v); };
+  auto rel_diff = [&](const ComplexVector &x, const ComplexVector &y)
+  {
+    ComplexVector d(x);
+    d.UseDevice(true);
+    linalg::AXPY(-1.0, y, d);
+    return linalg::Norml2(world_comm, d) / linalg::Norml2(world_comm, y);
+  };
+  auto rel_close = [](double a, double b, double rtol)
+  { return std::abs(a - b) <= rtol * std::abs(b); };
+  // Separately computed projections agree to round-off, not bit for bit (with OpenMP, the
+  // threaded operator applications and reductions need not sum in the same order).
+  auto same_projection =
+      [](const RomOperatorTest::ReducedState &a, const RomOperatorTest::ReducedState &b)
+  {
+    auto close = [](const auto &A, const auto &B)
+    {
+      return A.rows() == B.rows() && A.cols() == B.cols() &&
+             (A - B).norm() <= 1.0e-10 * B.norm();
+    };
+    return a.dim_V == b.dim_V && a.v_node_label == b.v_node_label &&
+           close(a.orth_R, b.orth_R) && close(a.Kr, b.Kr) && close(a.Mr, b.Mr) &&
+           close(a.RHS1r, b.RHS1r);
+  };
+
+  // Initial basis V0 of two random directions; the excitation is set (by SolveHDM) before
+  // the PROM state is saved.
+  ComplexVector v = make_vector(), u_star = make_vector(), x0 = make_vector(),
+                x1 = make_vector(), x = make_vector();
+  linalg::SetRandom(world_comm, v.Real(), 51);
+  linalg::SetRandom(world_comm, v.Imag(), 52);
+  linalg::SetSubVector(v, dbc_tdof_list, 0.0);
+  prom_op.UpdatePROM(v, "random");
+  const std::size_t n0 = prom_op.GetReducedDimension();
+  REQUIRE(n0 == 2);
+  REQUIRE(prom_op.SolveHDM(1, omega, u_star));
+  other_part(u_star) = 0.0;  // Zero in exact arithmetic
+  prom_op.SolvePROM(1, omega, x0);
+  const auto state0 = prom_op.SaveReducedState();
+
+  // Add w as the solution part of a sample and return its new (normalized) basis direction.
+  auto add_direction = [&](const Vector &w, std::string_view label) -> Vector
+  {
+    ComplexVector t = make_vector();
+    solution_part(t) = w;
+    prom_op.UpdatePROM(t, label);
+    return prom_op.GetVectors().back();
+  };
+  const Vector q0 = add_direction(solution_part(u_star), "q0");
+  prom_op.RestoreReducedState(state0);
+  Vector p_raw(n);
+  p_raw.UseDevice(true);
+  linalg::SetRandom(world_comm, p_raw, 53);
+  linalg::SetSubVector(p_raw, dbc_tdof_list, 0.0);
+  const Vector p = add_direction(p_raw, "p");
+  prom_op.SolvePROM(1, omega, x1);
+  const Vector q = add_direction(solution_part(u_star), "q");
+  prom_op.RestoreReducedState(state0);
+  REQUIRE(SameReducedState(prom_op.SaveReducedState(), state0));
+
+  // Relative PROM errors at ω, projected separately, with the old basis, with only the
+  // real part, only the imaginary part and both parts of u.
+  auto candidate_errors = [&](const ComplexVector &u)
+  {
+    std::array<double, 4> err;
+    prom_op.SolvePROM(1, omega, x);
+    err[0] = rel_diff(x, u);
+    for (std::size_t k = 1; k < 4; k++)
+    {
+      ComplexVector part(u);
+      part.UseDevice(true);
+      if (k == 1)
+      {
+        part.Imag() = 0.0;
+      }
+      else if (k == 2)
+      {
+        part.Real() = 0.0;
+      }
+      prom_op.UpdatePROM(part, "candidate");
+      // UpdatePROM, used for the samples which initialize the basis, adds every direction.
+      REQUIRE(prom_op.GetReducedDimension() == n0 + ((k == 3) ? 2 : 1));
+      prom_op.SolvePROM(1, omega, x);
+      err[k] = rel_diff(x, u);
+      prom_op.RestoreReducedState(state0);
+    }
+    return err;
+  };
+
+  {
+    // u = x(V0 + p) + δ q: only its solution part is kept.
+    ComplexVector u(x1);
+    u.UseDevice(true);
+    const double delta = 1.0e-6 * norm(x1);
+    other_part(u).Add(delta, q);
+    const auto err = candidate_errors(u);
+    const std::size_t best = (phase == 0.0) ? 2 : 1;
+    CAPTURE(err[0], err[1], err[2], err[3]);
+    CHECK(rel_close(err[best], delta / norm(u), 1.0e-4));
+    for (std::size_t k = 0; k < 4; k++)
+    {
+      REQUIRE((k == best || err[k] > 100.0 * err[best]));
+    }
+    REQUIRE(err[3] > tol);
+
+    const auto update = prom_op.AddSamplePROM(1, omega, u, err[0], tol, "sample");
+    CHECK(update.num_directions == 2);
+    CHECK(update.num_kept == 1);
+    REQUIRE(update.errors.size() == 4);
+    for (std::size_t k = 0; k < 4; k++)
+    {
+      // The candidates are evaluated from the reduced system of the updated basis.
+      CHECK(rel_close(update.errors[k], err[k], 1.0e-4));
+    }
+    const auto state = prom_op.SaveReducedState();
+    CHECK(state.dim_V == n0 + 1);
+    CHECK(state.v_node_label.back() == ((best == 1) ? "sample_re" : "sample_im"));
+    CHECK(SameReducedState(prom_op.SaveReducedState(n0), state0));
+    prom_op.SolvePROM(1, omega, x);
+    CHECK(rel_close(rel_diff(x, u), err[best], 1.0e-4));
+
+    // The same state as projecting the kept part alone: for the real part, the leading
+    // block of the updated state is that projection.
+    prom_op.RestoreReducedState(state0);
+    ComplexVector part(u);
+    part.UseDevice(true);
+    ((best == 1) ? part.Imag() : part.Real()) = 0.0;
+    prom_op.UpdatePROM(part, "sample");
+    CHECK(same_projection(state, prom_op.SaveReducedState()));
+    prom_op.RestoreReducedState(state0);
+    prom_op.UpdatePROM(u, "sample");
+    const auto state_leading = prom_op.SaveReducedState(n0 + 1);
+    prom_op.RestoreReducedState(state_leading);
+    CHECK(SameReducedState(prom_op.SaveReducedState(), state_leading));
+    if (best == 1)
+    {
+      CHECK(same_projection(state, state_leading));
+    }
+    prom_op.RestoreReducedState(state0);
+  }
+
+  {
+    // u = x(V0) + δ (p + q0): no direction is kept, and the PROM is restored bit for bit.
+    ComplexVector u(x0);
+    u.UseDevice(true);
+    const double delta = 1.0e-6 * norm(x0);
+    solution_part(u).Add(delta, p);
+    other_part(u).Add(delta, q0);
+    const auto err = candidate_errors(u);
+    CAPTURE(err[0], err[1], err[2], err[3]);
+    CHECK(rel_close(err[0], std::sqrt(2.0) * delta / norm(u), 1.0e-4));
+    for (std::size_t k = 1; k < 4; k++)
+    {
+      REQUIRE(err[k] > 100.0 * err[0]);
+    }
+    REQUIRE(err[3] > tol);
+
+    const auto update = prom_op.AddSamplePROM(1, omega, u, err[0], tol, "sample");
+    CHECK(update.num_directions == 2);
+    CHECK(update.num_kept == 0);
+    REQUIRE(update.errors.size() == 4);
+    for (std::size_t k = 0; k < 4; k++)
+    {
+      CHECK(rel_close(update.errors[k], err[k], 1.0e-4));
+    }
+    CHECK(SameReducedState(prom_op.SaveReducedState(), state0));
+    prom_op.SolvePROM(1, omega, x);
+    CHECK(rel_diff(x, x0) == 0.0);
+  }
+
+  {
+    // Samples with a single nonzero part (the solution part), which add one direction. The
+    // HDM solution u* is reproduced once in the basis: its direction is kept. u = x(V0) + δ
+    // p is δ from the old basis, while the PROM with p is x(V0 + p): its direction is not
+    // kept, and the PROM is restored bit for bit.
+    const auto update_star =
+        prom_op.AddSamplePROM(1, omega, u_star, rel_diff(x0, u_star), tol, "u_star");
+    CHECK(update_star.num_directions == 1);
+    CHECK(update_star.num_kept == 1);
+    CHECK(update_star.errors.empty());
+    CHECK(prom_op.GetReducedDimension() == n0 + 1);
+    prom_op.RestoreReducedState(state0);
+
+    ComplexVector u(x0);
+    u.UseDevice(true);
+    const double delta = 1.0e-6 * norm(x0);
+    solution_part(u).Add(delta, p);
+    other_part(u) = 0.0;
+    prom_op.SolvePROM(1, omega, x);
+    const double err_none = rel_diff(x, u);
+    prom_op.UpdatePROM(u, "candidate");
+    REQUIRE(prom_op.GetReducedDimension() == n0 + 1);
+    prom_op.SolvePROM(1, omega, x);
+    const double err_full = rel_diff(x, u);
+    prom_op.RestoreReducedState(state0);
+    CAPTURE(err_none, err_full);
+    CHECK(rel_close(err_none, delta / norm(u), 1.0e-4));
+    REQUIRE(err_full > 100.0 * err_none);
+    REQUIRE(err_full > tol);
+
+    const auto update = prom_op.AddSamplePROM(1, omega, u, err_none, tol, "sample");
+    CHECK(update.num_directions == 1);
+    CHECK(update.num_kept == 0);
+    REQUIRE(update.errors.size() == 2);
+    CHECK(update.errors[0] == err_none);
+    CHECK(rel_close(update.errors[1], err_full, 1.0e-4));
+    CHECK(SameReducedState(prom_op.SaveReducedState(), state0));
+    prom_op.SolvePROM(1, omega, x);
+    CHECK(rel_diff(x, x0) == 0.0);
+  }
+}
+
+// The leading block of a saved state, which AddSamplePROM keeps when it drops the imaginary
+// part of a sample, is the state of the basis with the real part only for every projected
+// term, here also the boundary masses of a second-order farfield ABC and of a surface
+// conductivity (which the lumped-port models of the other tests do not have).
+TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-SaveReducedState-LeadingBlock",
+                 "[romoperator][Serial][Parallel]")
+{
+  MPI_Comm world_comm = Mpi::World();
+  auto mesh_path =
+      fs::path(PALACE_TEST_DATA_DIR) / "lumpedport_mesh/cube_mesh_3_2_1_tet.msh";
+  json setup_json;
+  setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 2}, {"Output", temp_dir}};
+  setup_json["Model"] = {{"Mesh", mesh_path},
+                         {"Refinement", json::object({})},
+                         {"CrackInternalBoundaryElements", false}};
+  setup_json["Domains"] = {
+      {"Materials",
+       json::array({json::object({{"Attributes", json::array({1, 2, 3, 4, 5, 6})},
+                                  {"Permeability", 1.0},
+                                  {"Permittivity", 1.0},
+                                  {"LossTan", 0.0}})})}};
+  setup_json["Boundaries"] = {
+      {"LumpedPort",
+       json::array({json::object(
+           {{"Index", 1},
+            {"R", 50.0},
+            {"Excitation", uint(1)},
+            {"Elements", json::array({json::object({{"Attributes", json::array({14})},
+                                                    {"Direction", "+Z"}})})}})})},
+      {"Absorbing", {{"Attributes", json::array({3, 4})}, {"Order", 2}}},
+      {"Conductivity", json::array({json::object({{"Attributes", json::array({7, 8})},
+                                                  {"Conductivity", 5.8e7}})})}};
+  setup_json["Solver"] = json::object();
+  setup_json["Solver"]["Device"] = "CPU";
+  setup_json["Solver"]["Driven"] = {
+      {"AdaptiveTol", 1e-3}, {"MinFreq", 2.0}, {"MaxFreq", 32.0}, {"FreqStep", 1.0}};
+  setup_json["Solver"]["Linear"] = {
+      {"Type", "Default"}, {"KSPType", "GMRES"}, {"MaxIts", 1000}, {"Tol", 1.0e-12}};
+
+  IoData iodata(setup_json, false);
+  auto mesh_io = LoadScaleParMesh2(iodata, world_comm);
+  SpaceOperator space_op(iodata, mesh_io);
+  RomOperatorTest prom_op(iodata, space_op, 4), prom_ref(iodata, space_op, 4);
+  const auto &omega_sample = iodata.solver.driven.sample_f;
+  const double omega = omega_sample[omega_sample.size() / 2];
+
+  const auto n = space_op.GetNDSpace().GetTrueVSize();
+  const auto &dbc_tdof_list = space_op.GetNDDbcTDofLists().back();
+  auto make_random = [&](int seed)
+  {
+    ComplexVector v(n);
+    v.UseDevice(true);
+    linalg::SetRandom(world_comm, v.Real(), seed);
+    linalg::SetRandom(world_comm, v.Imag(), seed + 1);
+    linalg::SetSubVector(v, dbc_tdof_list, 0.0);
+    return v;
+  };
+  ComplexVector w = make_random(61), u = make_random(63), x(n);
+  x.UseDevice(true);
+  for (auto *op : {&prom_op, &prom_ref})
+  {
+    op->SolvePROM(1, omega, x);  // Sets the excitation, whose RHS1r the state includes
+    op->UpdatePROM(w, "w");
+  }
+  prom_op.UpdatePROM(u, "u");
+  ComplexVector u_re(u);
+  u_re.UseDevice(true);
+  u_re.Imag() = 0.0;
+  prom_ref.UpdatePROM(u_re, "u");
+  REQUIRE(prom_op.GetReducedDimension() == 4);
+  REQUIRE(prom_ref.GetReducedDimension() == 3);
+
+  const auto lead = prom_op.SaveReducedState(3);
+  const auto ref = prom_ref.SaveReducedState();
+  // The terms are present and projected onto the basis.
+  REQUIRE(ref.M_ff_r.rows() == 3);
+  REQUIRE(ref.Asig_g_r.size() == 1);
+  REQUIRE(ref.Asig_g_r[0].rows() == 3);
+  auto close = [](const auto &A, const auto &B)
+  {
+    return A.rows() == B.rows() && A.cols() == B.cols() &&
+           (A - B).norm() <= 1.0e-10 * B.norm();
+  };
+  CHECK(lead.dim_V == ref.dim_V);
+  CHECK(lead.v_node_label == ref.v_node_label);
+  CHECK(close(lead.orth_R, ref.orth_R));
+  CHECK(close(lead.Kr, ref.Kr));
+  CHECK(close(lead.Mr, ref.Mr));
+  CHECK(close(lead.Cr, ref.Cr));
+  CHECK(close(lead.M_ff_r, ref.M_ff_r));
+  CHECK(close(lead.Asig_g_r[0], ref.Asig_g_r[0]));
+  CHECK(close(lead.RHS1r, ref.RHS1r));
+  CHECK(lead.V_wp_dim == ref.V_wp_dim);
+
+  // Restoring the leading block, and saving it again, gives it back bit for bit.
+  prom_op.RestoreReducedState(lead);
+  CHECK(prom_op.GetReducedDimension() == 3);
+  CHECK(SameReducedState(prom_op.SaveReducedState(), lead));
+}
+
+// The stop of the adaptive sampling at the accuracy of the HDM solutions counts the samples
+// above the tolerance, from converged linear solves, which add no basis direction; a sample
+// which adds no direction from an unconverged linear solve leaves the PROM unchanged and is
+// skipped, and any other sample restarts the count.
+TEST_CASE("AdaptiveSamplingStall", "[romoperator][Serial]")
+{
+  constexpr double tol = 1.0e-6;
+  AdaptiveSamplingStall stall(2);
+  stall.AddSample(2.0e-6, tol, true, 0);
+  CHECK_FALSE(stall.Stalled());
+  CHECK(stall.NumSamples() == 1);
+
+  // A sample above the tolerance which adds no direction, from a linear solve which did not
+  // converge, is not counted, and does not restart the count: the next such sample from a
+  // converged solve completes it.
+  stall.AddSample(3.0e-6, tol, false, 0);
+  CHECK_FALSE(stall.Stalled());
+  CHECK(stall.NumSamples() == 1);
+  CHECK(stall.MaxError() == 2.0e-6);
+  stall.AddSample(2.5e-6, tol, true, 0);
+  CHECK(stall.Stalled());
+  CHECK(stall.NumSamples() == 2);
+  CHECK(stall.MaxError() == 2.5e-6);
+
+  // A sample from a linear solve which did not converge restarts the count if it adds a
+  // direction, or if its error is below the tolerance.
+  AdaptiveSamplingStall stall_unconverged(2);
+  stall_unconverged.AddSample(2.0e-6, tol, true, 0);
+  stall_unconverged.AddSample(3.0e-6, tol, false, 1);
+  CHECK(stall_unconverged.NumSamples() == 0);
+  stall_unconverged.AddSample(2.0e-6, tol, true, 0);
+  stall_unconverged.AddSample(0.5e-6, tol, false, 0);
+  CHECK(stall_unconverged.NumSamples() == 0);
+
+  // If no linear solve converges, the sampling does not stop early.
+  AdaptiveSamplingStall stall_none(1);
+  for (int i = 0; i < 10; i++)
+  {
+    stall_none.AddSample(2.0e-6, tol, false, 0);
+  }
+  CHECK_FALSE(stall_none.Stalled());
+  CHECK(stall_none.NumSamples() == 0);
+
+  // A sample which adds a basis direction restarts the count, and so does one below the
+  // tolerance.
+  stall = AdaptiveSamplingStall(2);
+  stall.AddSample(2.0e-6, tol, true, 0);
+  stall.AddSample(2.0e-6, tol, true, 1);
+  CHECK(stall.NumSamples() == 0);
+  stall.AddSample(2.0e-6, tol, true, 0);
+  stall.AddSample(0.5e-6, tol, true, 0);
+  CHECK(stall.NumSamples() == 0);
+
+  // Two consecutive rejected samples above the tolerance from converged solves stop it.
+  stall.AddSample(4.0e-6, tol, true, 0);
+  stall.AddSample(3.0e-6, tol, true, 0);
+  CHECK(stall.Stalled());
+  CHECK(stall.NumSamples() == 2);
+  CHECK(stall.MaxError() == 4.0e-6);
+
+  // With a memory of 1, a single such sample stops the sampling, as a single sample below
+  // the tolerance completes its convergence; not one from an unconverged solve.
+  AdaptiveSamplingStall stall_1(1);
+  stall_1.AddSample(2.0e-6, tol, false, 0);
+  CHECK_FALSE(stall_1.Stalled());
+  stall_1.AddSample(2.0e-6, tol, true, 0);
+  CHECK(stall_1.Stalled());
+}
+
 // Tests that the per-port "IncludeInSynthesis" flag suppresses basis vector injection
 // without changing the boundary condition. We reuse the cube_3_2_1 two-port setup, but
 // flip port 1 (non-excited, RLC) to "IncludeInSynthesis": false, leaving port 2 (excited,
@@ -1465,6 +2166,27 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   check_excitations(omega_front);
   rom_op.PrepareOnlineExcitations();
   REQUIRE_FALSE(rom_op.WavePortPairingChecked());
+  check_excitations(omega_back);
+
+  // Basis vectors removed by restoring a saved state (AddSamplePROM dropping a part of a
+  // sample) leave no stale port-restricted basis vector behind, also when as many vectors
+  // are added again.
+  linalg::SetRandom(comm, sample.Real(), 46);
+  linalg::SetRandom(comm, sample.Imag(), 47);
+  linalg::SetSubVector(sample.Real(), space_op.GetNDDbcTDofLists().back(), 0.0);
+  linalg::SetSubVector(sample.Imag(), space_op.GetNDDbcTDofLists().back(), 0.0);
+  ComplexVector part(sample);
+  part.UseDevice(true);
+  part.Real() = 0.0;
+  const auto state = rom_op.SaveReducedState();
+  rom_op.UpdatePROM(part, "pairing_sample_im");
+  check_excitations(omega_back);
+  rom_op.RestoreReducedState(state);
+  CHECK(SameReducedState(rom_op.SaveReducedState(), state));
+  part = sample;
+  part.Imag() = 0.0;
+  rom_op.UpdatePROM(part, "pairing_sample_re");
+  REQUIRE(rom_op.GetReducedDimension() == n + 1);
   check_excitations(omega_back);
 }
 

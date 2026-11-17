@@ -922,7 +922,9 @@ public:
   // Maximum number of frequency samples for adaptive frequency sweep.
   std::size_t adaptive_max_size = 20;
 
-  // Memory required for adaptive sampling convergence.
+  // Number of consecutive samples below the tolerance required for adaptive sampling
+  // convergence, and of samples above it, from converged linear solves, which add no basis
+  // direction, after which the sampling stops early (see AdaptiveSamplingStall).
   std::size_t adaptive_memory = 2;
 
   // Gram-Schmidt orthogonalization used in PROM construction, separate from linear solver

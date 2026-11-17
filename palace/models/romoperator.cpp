@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdlib>
+#include <iterator>
 #include <limits>
 #include <map>
 #include <memory>
@@ -907,7 +908,7 @@ void RomOperator::AddWavePortModalCorrection(double omega)
   Ar += Wr;
 }
 
-void RomOperator::SolveHDM(int excitation_idx, double omega, ComplexVector &u)
+bool RomOperator::SolveHDM(int excitation_idx, double omega, ComplexVector &u)
 {
   SetExcitationIndex(excitation_idx);
 
@@ -948,6 +949,7 @@ void RomOperator::SolveHDM(int excitation_idx, double omega, ComplexVector &u)
 
   // Solve the linear system.
   ksp->Mult(r, u);
+  return ksp->GetConverged();
 }
 
 std::size_t RomOperator::NumSynthesisPortModes() const
@@ -1068,7 +1070,8 @@ void RomOperator::AddWavePortModesForSynthesis(double omega_ref)
   }
 }
 
-void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label)
+bool RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label,
+                             bool abort_if_dependent)
 {
   RHS1r_online.clear();
   Ar_omega = std::numeric_limits<double>::quiet_NaN();
@@ -1141,22 +1144,25 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
     return true;
   };
 
-  if (has_real && !add_real_vector_to_basis(u.Real(), fmt::format("{}_re", node_label)))
+  const bool added =
+      (!has_real || add_real_vector_to_basis(u.Real(), fmt::format("{}_re", node_label))) &&
+      (!has_imag || add_real_vector_to_basis(u.Imag(), fmt::format("{}_im", node_label)));
+  if (!added)
   {
-    MFEM_ABORT("Linearly dependent vector added to PROM basis. This indicates a "
-               "convergence issue or a code error (the same vector was added multiple "
-               "times accidentally).");
-  }
-  if (has_imag && !add_real_vector_to_basis(u.Imag(), fmt::format("{}_im", node_label)))
-  {
-    MFEM_ABORT("Linearly dependent vector added to PROM basis. This indicates a "
-               "convergence issue or a code error (the same vector was added multiple "
-               "times accidentally).");
+    MFEM_VERIFY(!abort_if_dependent,
+                "Linearly dependent vector added to PROM basis. This indicates a "
+                "convergence issue or a code error (the same vector was added multiple "
+                "times accidentally).");
+    // Leave the basis unchanged.
+    V.resize(dim_V_old);
+    v_node_label.resize(dim_V_old);
+    orth_R.conservativeResize(dim_V_old, dim_V_old);
+    return false;
   }
 
   if (dim_V_new == dim_V_old)
   {
-    return;
+    return true;
   }
 
   // Update reduced-order operators. Resize preserves the upper dim0 x dim0 block of each
@@ -1278,6 +1284,228 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
       rm.Vh_cvk(i) = std::conj(vt_vi);  // V[i]^H conj(v_k) = conj(V[i]^T v_k)
     }
   }
+  return true;
+}
+
+RomOperator::ReducedState RomOperator::SaveReducedState(std::size_t n) const
+{
+  // The leading blocks of the projections onto the basis. A projected quantity which is not
+  // maintained for the current basis (an empty block of a term the model does not have,
+  // RHS1r for an excitation without a frequency-linear source) is saved as it is.
+  MFEM_VERIFY(n <= V.size(),
+              "Cannot save a PROM state with more basis vectors than present!");
+  const auto ne = static_cast<Eigen::Index>(n);
+  auto lead = [ne](const Eigen::MatrixXcd &A) -> Eigen::MatrixXcd
+  { return A.topLeftCorner(std::min(ne, A.rows()), std::min(ne, A.cols())); };
+  auto head = [ne](const Eigen::VectorXcd &v) -> Eigen::VectorXcd
+  { return v.head(std::min(ne, v.size())); };
+  auto lead_list = [&](std::vector<Eigen::MatrixXcd> list)
+  {
+    for (auto &A : list)
+    {
+      A = lead(A);
+    }
+    return list;
+  };
+  auto lead_map = [&](std::map<int, Eigen::MatrixXcd> map)
+  {
+    for (auto &[key, A] : map)
+    {
+      A = lead(A);
+    }
+    return map;
+  };
+  auto head_map = [&](std::map<int, Eigen::VectorXcd> map)
+  {
+    for (auto &[key, v] : map)
+    {
+      v = head(v);
+    }
+    return map;
+  };
+  ReducedState state{.dim_V = n,
+                     .v_node_label = std::vector<std::string>(v_node_label.begin(),
+                                                              v_node_label.begin() + ne),
+                     .orth_R = orth_R.topLeftCorner(ne, ne),
+                     .Kr = lead(Kr),
+                     .Mr = lead(Mr),
+                     .Cr = lead(Cr),
+                     .Mwp_p_r = lead_map(Mwp_p_r),
+                     .M_ff_r = lead(M_ff_r),
+                     .Asig_g_r = lead_list(Asig_g_r),
+                     .Arz_b_r = lead_list(Arz_b_r),
+                     .M_floquet_p_r = lead_map(M_floquet_p_r),
+                     .RHS1r = head(RHS1r),
+                     .RHS1r_online = head_map(RHS1r_online),
+                     .floquet_reduced = floquet_reduced,
+                     .V_wp_dim = std::min(V_wp_dim, n)};
+  for (auto &rm : state.floquet_reduced)
+  {
+    rm.vk_V = head(rm.vk_V);
+    rm.Vh_cvk = head(rm.Vh_cvk);
+  }
+  return state;
+}
+
+void RomOperator::RestoreReducedState(const ReducedState &state)
+{
+  MFEM_VERIFY(state.dim_V <= V.size(),
+              "Cannot restore a PROM state with more basis vectors than the current one!");
+  V.resize(state.dim_V);
+  v_node_label = state.v_node_label;
+  orth_R = state.orth_R;
+  Kr = state.Kr;
+  Mr = state.Mr;
+  Cr = state.Cr;
+  Mwp_p_r = state.Mwp_p_r;
+  M_ff_r = state.M_ff_r;
+  Asig_g_r = state.Asig_g_r;
+  Arz_b_r = state.Arz_b_r;
+  M_floquet_p_r = state.M_floquet_p_r;
+  RHS1r = state.RHS1r;
+  RHS1r_online = state.RHS1r_online;
+  floquet_reduced = state.floquet_reduced;
+  if (V_wp_dim > state.V_wp_dim)
+  {
+    for (auto &[port_idx, vp] : V_wp)
+    {
+      vp.resize(state.V_wp_dim);
+    }
+    V_wp_dim = state.V_wp_dim;
+  }
+
+  // The reduced system assembled at Ar_omega, and the port-space pairings cached with it,
+  // are those of the larger basis.
+  sV_wp_full.clear();
+  Ar_omega = std::numeric_limits<double>::quiet_NaN();
+}
+
+RomOperator::SampleUpdate RomOperator::AddSamplePROM(int excitation_idx, double omega,
+                                                     const ComplexVector &u, double error,
+                                                     double tol,
+                                                     std::string_view node_label)
+{
+  BlockTimer bt(Timer::CONSTRUCT_PROM);
+  MPI_Comm comm = space_op.GetComm();
+  SetExcitationIndex(excitation_idx);
+  const std::size_t n0 = V.size();
+  const ReducedState state = SaveReducedState();
+  UpdatePROM(u, node_label);
+  SampleUpdate update;
+  update.num_directions = update.num_kept = V.size() - n0;
+  const std::size_t m = update.num_directions;
+  if (m == 0)
+  {
+    return update;
+  }
+
+  // Relative PROM error at ω of the updated basis.
+  const double norm_u = linalg::Norml2(comm, u);
+  ComplexVector x(u.Size());
+  x.UseDevice(true);
+  auto RelativeError = [&]()
+  {
+    linalg::AXPY(-1.0, u, x);
+    return linalg::Norml2(comm, x) / norm_u;
+  };
+  Eigen::VectorXcd rhs_r;
+  SolvePROM(excitation_idx, omega, x, &rhs_r);
+  const double error_full = RelativeError();
+  if (error_full < tol)
+  {
+    return update;  // The PROM reproduces the sample, as a converged greedy sample
+  }
+
+  // The PROM does not reproduce the sample: compare the relative PROM errors at ω of the
+  // candidate bases, the old basis (its error is given), the old basis with the real part
+  // only and with the imaginary part only (if u has both parts), and the updated basis, in
+  // this order of preference for equal errors. Every candidate spans a subspace V T of the
+  // updated basis, and every term of the reduced system is a Galerkin projection onto the
+  // basis, so the reduced system of the candidate is Tᵀ Aᵣ T y = Tᵀ RHSᵣ, with Aᵣ and RHSᵣ
+  // just assembled for the updated basis. The errors are evaluated in the finite element
+  // coefficient space, as the greedy sampling does: the basis is orthonormal in the
+  // weighted inner product of circuit synthesis, not in this one, so the norm of V z is not
+  // that of z.
+  auto &err = update.errors;
+  err.push_back(error);
+  if (m == 2)
+  {
+    // The real part of u is added before its imaginary part, so the basis with the real
+    // part only is a leading block of the updated one.
+    const auto ne = static_cast<Eigen::Index>(n0);
+    const Eigen::VectorXcd y_re =
+        Ar.topLeftCorner(ne + 1, ne + 1).fullPivHouseholderQr().solve(rhs_r.head(ne + 1));
+    linalg::LinearCombination(std::span<const Vector>(V.data(), n0 + 1),
+                              {y_re.data(), n0 + 1}, x);
+    err.push_back(RelativeError());
+
+    // The old basis with the imaginary part only: Im u = V orth_R(:, n0 + 1), so its new
+    // direction is the combination of the two new basis vectors with the coefficients
+    // orth_R(n0, n0 + 1) and orth_R(n0 + 1, n0 + 1).
+    const double a = orth_R(ne, ne + 1), b = orth_R(ne + 1, ne + 1), s = std::hypot(a, b);
+    Eigen::MatrixXcd T = Eigen::MatrixXcd::Zero(ne + 2, ne + 1);
+    T.topLeftCorner(ne, ne).setIdentity();
+    T(ne, ne) = a / s;
+    T(ne + 1, ne) = b / s;
+    const Eigen::VectorXcd y_im =
+        (T.transpose() * Ar * T).fullPivHouseholderQr().solve(T.transpose() * rhs_r);
+    const Eigen::VectorXcd z = T * y_im;
+    linalg::LinearCombination(V, {z.data(), n0 + 2}, x);
+    err.push_back(RelativeError());
+  }
+  err.push_back(error_full);
+  auto best = static_cast<std::size_t>(
+      std::distance(err.begin(), std::min_element(err.begin(), err.end())));
+  if (best == err.size() - 1)
+  {
+    return update;  // The updated basis is still the best
+  }
+
+  // Keep the best candidate. The basis with the real part only is a leading block of the
+  // updated one, so its state is the leading block of the updated state. The imaginary part
+  // alone is added to the old basis: it is independent of the old basis, as it is of the
+  // old basis and the real part, but for round-off at the dependence tolerance, with which
+  // neither part is kept.
+  if (best == 1)
+  {
+    RestoreReducedState(SaveReducedState(n0 + 1));
+  }
+  else
+  {
+    RestoreReducedState(state);
+    if (best == 2)
+    {
+      ComplexVector u_im(u);
+      u_im.UseDevice(true);
+      u_im.Real() = 0.0;
+      if (!UpdatePROM(u_im, node_label, false))
+      {
+        RestoreReducedState(state);
+        best = 0;
+      }
+    }
+  }
+  update.num_kept = (best == 0) ? 0 : 1;
+  if (m == 1)
+  {
+    Mpi::Print(comm,
+               " PROM basis update: sample not added, the PROM with it does not reproduce "
+               "it to the tolerance\n (relative PROM error at the sample {:.3e} without, "
+               "{:.3e} with it)\n",
+               err[0], err[1]);
+  }
+  else
+  {
+    Mpi::Print(
+        comm,
+        " PROM basis update: kept {} of the sample, the PROM with both parts does "
+        "not reproduce it to the tolerance\n (relative PROM error at the sample with "
+        "no part {:.3e}, real part {:.3e}, imaginary part {:.3e}, both {:.3e})\n",
+        (best == 0) ? "neither part"
+                    : ((best == 1) ? "only the real part" : "only the imaginary part"),
+        err[0], err[1], err[2], err[3]);
+  }
+  return update;
 }
 
 void RomOperator::UpdateMRI(int excitation_idx, double omega, const ComplexVector &u)
@@ -1287,6 +1515,12 @@ void RomOperator::UpdateMRI(int excitation_idx, double omega, const ComplexVecto
 }
 
 void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
+{
+  SolvePROM(excitation_idx, omega, u, nullptr);
+}
+
+void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u,
+                            Eigen::VectorXcd *rhs_r)
 {
   BlockTimer bt(Timer::SOLVE_PROM);
   SetExcitationIndex(excitation_idx);
@@ -1300,6 +1534,10 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
   if (V.empty())
   {
     u = 0.0;
+    if (rhs_r)
+    {
+      rhs_r->resize(0);
+    }
     return;
   }
 
@@ -1591,6 +1829,10 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
   // QR solve, for maximal stability. The small system is cheap to compute but can be
   // numerically poorly conditioned to due the splitting of HDM solutions into Re and Im
   // into separate columns.
+  if (rhs_r)
+  {
+    *rhs_r = RHSr;
+  }
   RHSr = Ar_solver.solve(RHSr);
   linalg::LinearCombination(V, {RHSr.data(), static_cast<std::size_t>(RHSr.size())}, u);
 }

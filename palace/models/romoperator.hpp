@@ -4,7 +4,9 @@
 #ifndef PALACE_MODELS_ROM_OPERATOR_HPP
 #define PALACE_MODELS_ROM_OPERATOR_HPP
 
+#include <algorithm>
 #include <complex>
+#include <cstddef>
 #include <limits>
 #include <map>
 #include <memory>
@@ -488,6 +490,38 @@ protected:
                        const std::vector<WavePortAuxBlock> &aux_blocks,
                        std::vector<std::string> &aux_labels);
 
+  // Snapshot of the reduced-order state which UpdatePROM extends: the number of basis
+  // vectors (UpdatePROM only appends to the basis V and to the port-restricted basis V_wp)
+  // and everything projected onto the basis. SaveReducedState(n) saves the state of the
+  // first n basis vectors: the projections onto a leading part of the basis are the
+  // leading blocks of those onto the basis. RestoreReducedState returns the PROM to a
+  // saved state, removing the basis vectors added since; the reduced system is reassembled
+  // at the next SolvePROM. The projected frequency-linear source RHS1r is that of the
+  // excitation set when the state is saved, which must still be set when it is restored.
+  struct ReducedState
+  {
+    std::size_t dim_V = 0;
+    std::vector<std::string> v_node_label;
+    Eigen::MatrixXd orth_R;
+    Eigen::MatrixXcd Kr, Mr, Cr;
+    std::map<int, Eigen::MatrixXcd> Mwp_p_r;
+    Eigen::MatrixXcd M_ff_r;
+    std::vector<Eigen::MatrixXcd> Asig_g_r, Arz_b_r;
+    std::map<int, Eigen::MatrixXcd> M_floquet_p_r;
+    Eigen::VectorXcd RHS1r;
+    std::map<int, Eigen::VectorXcd> RHS1r_online;
+    std::vector<ReducedFloquetMode> floquet_reduced;
+    std::size_t V_wp_dim = 0;
+  };
+  ReducedState SaveReducedState(std::size_t n) const;
+  ReducedState SaveReducedState() const { return SaveReducedState(V.size()); }
+  void RestoreReducedState(const ReducedState &state);
+
+  // SolvePROM, also returning the right-hand side of the reduced system at ω, if rhs_r is
+  // not null (empty for an empty basis).
+  void SolvePROM(int excitation_idx, double omega, ComplexVector &u,
+                 Eigen::VectorXcd *rhs_r);
+
 public:
   RomOperator(const config::LinearSolverData &linear, int verbose, SpaceOperator &space_op,
               std::size_t max_size_per_excitation);
@@ -524,8 +558,9 @@ public:
   // repeating HDM-scale projections.
   void PrepareOnlineExcitations();
 
-  // Assemble and solve the HDM at the specified frequency.
-  void SolveHDM(int excitation_idx, double omega, ComplexVector &u);
+  // Assemble and solve the HDM at the specified frequency. Returns whether the linear solve
+  // converged to the requested tolerance.
+  bool SolveHDM(int excitation_idx, double omega, ComplexVector &u);
 
   // Add port fields to PROM for circuit synthesis to connect to the outside world. Requires
   // fields that are orthogonal to boundary overlap and primary fields, which requires
@@ -543,8 +578,36 @@ public:
   // Add field configuration to the reduced-order basis and update the PROM. Requires a name
   // "node_label". This will be printed in the header of the csv files when printing PROM
   // matrices. It is needed to distinguish port and solution field configuration as well as
-  // to reconstruct if field configuration are pure real, imaginary or complex.
-  void UpdatePROM(const ComplexVector &u, std::string_view node_label);
+  // to reconstruct if field configuration are pure real, imaginary or complex. If the real
+  // or imaginary part of u is in the span of the basis (to the orthogonalization
+  // tolerance), aborts, or, with abort_if_dependent = false, leaves the PROM unchanged and
+  // returns false.
+  bool UpdatePROM(const ComplexVector &u, std::string_view node_label,
+                  bool abort_if_dependent = true);
+
+  // Add an HDM solution u at the sampled frequency ω (excitation excitation_idx) to the
+  // reduced-order basis like UpdatePROM, and check that the PROM then reproduces u at ω to
+  // the relative tolerance tol: with a relative error below tol, as the greedy sampling
+  // requires for convergence. If it does not, the real or imaginary part of u can add a
+  // basis direction which carries more linear solver error than information: of the bases
+  // with neither, only the real, only the imaginary or both new directions, the one whose
+  // PROM solution at ω is closest to u is kept (ties go to the smaller basis, and to the
+  // real direction). The relative PROM error at ω before the update, ‖PROM(ω) - u‖ / ‖u‖
+  // (1 for an empty basis), is given as error, as the greedy sampling has computed it.
+  struct SampleUpdate
+  {
+    // Number of basis directions the sample adds with UpdatePROM (one for each nonzero
+    // part), and the number of them kept.
+    std::size_t num_directions = 0, num_kept = 0;
+
+    // If the PROM with all of them does not reproduce the sample to the tolerance, the
+    // relative PROM errors at the sample with neither, only the real, only the imaginary
+    // and both new directions (with neither and with the new direction, for a sample with
+    // one nonzero part).
+    std::vector<double> errors;
+  };
+  SampleUpdate AddSamplePROM(int excitation_idx, double omega, const ComplexVector &u,
+                             double error, double tol, std::string_view node_label);
 
   // Add solution u to the minimal-rational interpolation for error estimation. MRI are
   // separated by excitation index.
@@ -592,6 +655,49 @@ public:
   // basis block to the HDM space.
   void ComputeEigenvalueEstimateErrors(const Units &units,
                                        std::vector<EigenvalueEstimate> &estimates) const;
+};
+
+// Accuracy floor of the greedy adaptive sampling of an excitation: the sampling stops once
+// the last memory greedy samples, all with a PROM error above the tolerance and from linear
+// solves which converged, added no basis direction (see RomOperator::AddSamplePROM): the
+// HDM solutions are then likely not accurate enough to reach the tolerance. A sample which
+// adds no direction, with an error above the tolerance, from a linear solve which did not
+// converge leaves the PROM unchanged: it is not counted, and does not restart the count
+// either. Any other sample restarts it, so that if no linear solve converges, the sampling
+// does not stop early.
+class AdaptiveSamplingStall
+{
+private:
+  std::size_t memory, count = 0;
+  double max_error = 0.0;
+
+public:
+  explicit AdaptiveSamplingStall(std::size_t memory) : memory(memory) {}
+
+  // Record a greedy sample: its PROM error before it was added, the tolerance, whether its
+  // HDM solve converged, and the number of basis directions it added.
+  void AddSample(double error, double tol, bool converged, std::size_t num_kept)
+  {
+    if (error >= tol && num_kept == 0)
+    {
+      if (converged)
+      {
+        count++;
+        max_error = std::max(max_error, error);
+      }
+    }
+    else
+    {
+      count = 0;
+      max_error = 0.0;
+    }
+  }
+
+  // Whether the sampling has reached the accuracy floor, the number of samples counted and
+  // their largest PROM error.
+  bool Stalled() const { return count >= memory; }
+  std::size_t NumSamples() const { return count; }
+  double MaxError() const { return max_error; }
 };
 
 }  // namespace palace

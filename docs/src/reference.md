@@ -561,6 +561,37 @@ orthogonalization variant is controlled by
 [`config["Solver"]["Driven"]["AdaptiveGSOrthogonalization"]`](config/reference.md#config-solver-driven),
 though most users should not need to change it.
 
+An HDM solution is only as accurate as its linear solve, whose tolerance
+[`config["Solver"]["Linear"]["Tol"]`](config/reference.md#config-solver-linear) bounds a
+residual rather than the error, and late in the sampling the new information a sample
+brings, the part of ``\mathrm{Re}(\bm{x}^*)`` or ``\mathrm{Im}(\bm{x}^*)`` outside the
+current basis, can be as small as this error. Such a direction carries solver error rather
+than information, and it can make the PROM *less* accurate at the very frequency it was
+computed for. With an accurate sample in the basis the PROM reproduces it, so after adding a
+sample chosen by the greedy sampling (see below), *Palace* evaluates the error
+``\varepsilon`` defined below at this sample, with the sample in the basis. If it exceeds
+[`config["Solver"]["Driven"]["AdaptiveTol"]`](config/reference.md#config-solver-driven),
+*Palace* compares the PROM solutions at the sample frequency with neither, only the real,
+only the imaginary, or both new directions, keeps the basis whose solution is closest to the
+HDM solution (ties go to the smaller basis, then to the real direction), and logs which
+directions it kept if it drops any. Otherwise the basis is the same as without this check.
+The samples which initialize the basis, at the frequency-domain endpoints and with
+`"AddToPROM"`, are always added in full.
+
+If the last
+[`config["Solver"]["Driven"]["AdaptiveConvergenceMemory"]`](config/reference.md#config-solver-driven)
+greedy samples from converged linear solves all have an error ``\varepsilon`` above
+`"AdaptiveTol"` before they are added, and none of them adds a direction, the HDM solutions
+are likely not accurate enough to reach `"AdaptiveTol"`: *Palace* then stops sampling that
+excitation with a warning, which reports the largest error at these samples, instead of
+sampling up to `"AdaptiveMaxSamples"`. A sample in between from a linear solve which did
+not converge is skipped if it adds no direction, as it leaves the PROM unchanged; any other
+sample restarts the count, so that a sweep whose linear solves do not converge samples up
+to `"AdaptiveMaxSamples"`. With `"AdaptiveConvergenceMemory"` 1, a single such sample
+stops it, as a single sample below the tolerance completes the convergence. Tighten
+[`config["Solver"]["Linear"]["Tol"]`](config/reference.md#config-solver-linear) or loosen
+`"AdaptiveTol"` in that case.
+
 ### Internal sample selection
 
 The remaining question is how to choose the internal sample frequencies. *Palace* uses a
@@ -600,8 +631,10 @@ solution using
 Convergence is declared when this quantity is below
 [`config["Solver"]["Driven"]["AdaptiveTol"]`](config/reference.md#config-solver-driven) for
 [`config["Solver"]["Driven"]["AdaptiveConvergenceMemory"]`](config/reference.md#config-solver-driven)
-consecutive samples. The norm here is the finite-element coefficient-space L2 norm. It is
-related to, but not the same as, a physical energy norm such as
+consecutive samples. The same number of samples above the tolerance which add no basis
+direction, from converged linear solves, stops the sampling early (see above).
+The norm here is the finite-element coefficient-space L2 norm. It is related to, but not
+the same as, a physical energy norm such as
 ``\int \bm{E}^*(\bm{r})\cdot\bm{E}(\bm{r})\,d^3r``. Consequently, the adaptive tolerance is
 not a strict relative-error bound for every derived quantity, such as S-parameters or domain
 energies.
