@@ -4930,9 +4930,14 @@ void PostOperator<solver_t>::SetUpImpedanceRuleCandidate(const IoData &iodata,
       const auto start = std::chrono::steady_clock::now();
       const long bytes = memory_reporting::GetCurrentMemory();
       // Its OWN geometry cache (never the record's): across AMR iterations the candidate
-      // keeps the initial mesh's patch layout, as the operator of record does.
-      impedance_candidate_op = std::make_unique<SurfaceResponseOperator>(
-          iodata, space_op, impedance_candidate_geometry, impedance_film_rule.get(), true);
+      // keeps the initial mesh's patch layout, as the operator of record does. Its phases
+      // book into its own timer category (decision 2063 MINOR-4).
+      {
+        RedirectingBlockTimer candidate_timer(Timer::CONSTRUCT_IMPEDANCE_RULE);
+        impedance_candidate_op = std::make_unique<SurfaceResponseOperator>(
+            iodata, space_op, impedance_candidate_geometry, impedance_film_rule.get(),
+            true);
+      }
       impedance_candidate_op->SetPatchRecordResidency(
           SurfaceResponseOperator::PatchRecordResidency::ROOT_ONLY);
       candidate_setup_seconds =
@@ -5051,7 +5056,9 @@ void PostOperator<solver_t>::MeasureAndPrintImpedanceRuleCandidate(
 {
   if constexpr (solver_t == ProblemType::DRIVEN || solver_t == ProblemType::EIGENMODE)
   {
-    BlockTimer response_timer(Timer::POSTPRO_RESPONSE);
+    // Every phase of the candidate's measurement books into its own timer category
+    // (decision 2063 MINOR-4): the record's categories are unchanged by Record.
+    RedirectingBlockTimer candidate_timer(Timer::POSTPRO_IMPEDANCE_RULE);
     const auto start = std::chrono::steady_clock::now();
     const MPI_Comm comm = fem_op->GetComm();
     const bool root = Mpi::Root(comm);

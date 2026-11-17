@@ -579,6 +579,13 @@ void BaseSolver::SaveMetadata(const Timer &timer) const
     json meta = LoadMetadata(post_dir);
     for (int i = Timer::INIT; i < Timer::NUM_TIMINGS; i++)
     {
+      // The impedance-metal rule's categories (Record only) are written when counted: a
+      // run without the rule keeps today's key set.
+      if ((i == Timer::CONSTRUCT_IMPEDANCE_RULE || i == Timer::POSTPRO_IMPEDANCE_RULE) &&
+          timer.Counts((Timer::Index)i) == 0)
+      {
+        continue;
+      }
       auto key = Timer::descriptions[i];
       key.erase(std::remove_if(key.begin(), key.end(), isspace), key.end());
       meta["ElapsedTime"]["Durations"][key] = timer.Data((Timer::Index)i);

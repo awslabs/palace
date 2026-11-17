@@ -836,3 +836,41 @@ TEST_CASE("Impedance-metal rule law reading leg class of every runtime topology 
     CHECK_FALSE(known);
   }
 }
+
+// MINOR-4 (decision 2063): the candidate's phases book into its own timer categories; the
+// record's categories (the nested phases' own) are not counted while a redirect lives.
+TEST_CASE("Impedance-metal rule candidate timers book into their own categories",
+          "[surfaceresponsefilmrule][impedancemetalrule][Serial]")
+{
+  CHECK(Timer::descriptions.size() == static_cast<std::size_t>(Timer::NUM_TIMINGS));
+  CHECK(Timer::descriptions[Timer::CONSTRUCT_IMPEDANCE_RULE] ==
+        "  Impedance Candidate Setup");
+  CHECK(Timer::descriptions[Timer::POSTPRO_IMPEDANCE_RULE] == "  Impedance Candidate");
+  const auto &timer = BlockTimer::GlobalTimer();
+  const int response = timer.Counts(Timer::POSTPRO_RESPONSE);
+  const int energy = timer.Counts(Timer::POSTPRO_RESPONSE_ENERGY);
+  const int setup = timer.Counts(Timer::CONSTRUCT_RESPONSE);
+  const int candidate = timer.Counts(Timer::POSTPRO_IMPEDANCE_RULE);
+  const int candidate_setup = timer.Counts(Timer::CONSTRUCT_IMPEDANCE_RULE);
+  {
+    RedirectingBlockTimer redirect(Timer::POSTPRO_IMPEDANCE_RULE);
+    BlockTimer outer(Timer::POSTPRO_RESPONSE);
+    {
+      BlockTimer inner(Timer::POSTPRO_RESPONSE_ENERGY);
+    }
+  }
+  {
+    RedirectingBlockTimer redirect(Timer::CONSTRUCT_IMPEDANCE_RULE);
+    BlockTimer inner(Timer::CONSTRUCT_RESPONSE);
+  }
+  CHECK(timer.Counts(Timer::POSTPRO_RESPONSE) == response);
+  CHECK(timer.Counts(Timer::POSTPRO_RESPONSE_ENERGY) == energy);
+  CHECK(timer.Counts(Timer::CONSTRUCT_RESPONSE) == setup);
+  CHECK(timer.Counts(Timer::POSTPRO_IMPEDANCE_RULE) == candidate + 3);
+  CHECK(timer.Counts(Timer::CONSTRUCT_IMPEDANCE_RULE) == candidate_setup + 2);
+  {
+    // The redirect ends with its scope: a phase books into its own category again.
+    BlockTimer after(Timer::POSTPRO_RESPONSE);
+  }
+  CHECK(timer.Counts(Timer::POSTPRO_RESPONSE) == response + 1);
+}

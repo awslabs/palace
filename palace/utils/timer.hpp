@@ -5,6 +5,7 @@
 #define PALACE_UTILS_TIMER_HPP
 
 #include <chrono>
+#include <optional>
 #include <stack>
 #include <string>
 #include <tuple>
@@ -35,6 +36,7 @@ public:
     CONSTRUCT_RESPONSE,           // Surface response setup
     CONSTRUCT_RESPONSE_GEOMETRY,  // Surface response geometry and library matching
     CONSTRUCT_RESPONSE_POINTS,    // Surface response point interpolation stencils
+    CONSTRUCT_IMPEDANCE_RULE,     // Impedance-metal rule candidate setup (Record)
     WAVE_PORT,                    // Wave port solver
     KSP,                          // Linear solver
     KSP_SETUP,                    // Linear solver setup
@@ -58,6 +60,7 @@ public:
     POSTPRO_RESPONSE,             // Surface response postprocessing
     POSTPRO_RESPONSE_COUPON,      // Surface response coupon evaluation
     POSTPRO_RESPONSE_ENERGY,      // Surface response corrected-field energies
+    POSTPRO_IMPEDANCE_RULE,       // Impedance-metal rule candidate measurements (Record)
     POSTPRO_REDUCTION,            // Archived response reduction (streaming Gram)
     POSTPRO_REDUCTION_READ,       // Archived field reads
     POSTPRO_REDUCTION_EVAL,       // Interface sample evaluation of the archived fields
@@ -77,6 +80,7 @@ public:
       "  Response Setup",
       "    Geometry Matching",
       "    Point Stencils",
+      "  Impedance Candidate Setup",
       "  Wave Ports",
       "Linear Solve",
       "  Setup",
@@ -100,6 +104,7 @@ public:
       "  Surface Response",
       "    Coupon Evaluation",
       "    Corrected Energies",
+      "  Impedance Candidate",
       "  Archive Reduction",
       "    Archive Read",
       "    Sample Evaluation",
@@ -207,7 +212,11 @@ class BlockTimer
 private:
   inline static Timer timer;
   inline static std::stack<Index> stack;
+  // Set by a RedirectingBlockTimer: every BlockTimer opened while it lives books into this
+  // category instead of its own.
+  inline static std::optional<Index> redirect;
   bool count;
+  friend class RedirectingBlockTimer;
 
   // Stored reduction results (populated by Finalize).
   struct ReducedData
@@ -274,7 +283,7 @@ public:
         timer.MarkTime(stack.top(), false);
         timer.MarkMemory(stack.top(), timer.MemoryLap());
       }
-      stack.push(i);
+      stack.push(redirect ? *redirect : i);
     }
   }
 
@@ -385,6 +394,7 @@ public:
     {
       stack.pop();
     }
+    redirect.reset();
     reduced_time = ReducedData();
     reduced_rank_mem = ReducedData();
     reduced_node_mem = ReducedData();
@@ -421,6 +431,27 @@ public:
                                              : memory_reporting::FormatBytes(hwm)};
                });
   }
+};
+
+// A BlockTimer of category `i` under which every BlockTimer opened (nested phases of the
+// code it times) books into `i` as well, so that none of that time or memory growth enters
+// the nested phases' own categories: the impedance-metal rule's candidate operator runs the
+// record's code (response setup, geometry matching, point stencils, surface response) and
+// books it into its own categories, the record's counts and durations unchanged.
+class RedirectingBlockTimer
+{
+private:
+  BlockTimer block;
+  std::optional<Timer::Index> previous;
+
+public:
+  explicit RedirectingBlockTimer(Timer::Index i) : block(i), previous(BlockTimer::redirect)
+  {
+    BlockTimer::redirect = i;
+  }
+  ~RedirectingBlockTimer() { BlockTimer::redirect = previous; }
+  RedirectingBlockTimer(const RedirectingBlockTimer &) = delete;
+  RedirectingBlockTimer &operator=(const RedirectingBlockTimer &) = delete;
 };
 
 }  // namespace palace
