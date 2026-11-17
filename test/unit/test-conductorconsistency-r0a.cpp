@@ -846,6 +846,10 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 #if !defined(MFEM_USE_GSLIB)
   SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
 #else
+  // P4 S3-0 (review r2084 F-1): both crack forms (the legacy key; upstream's default = the
+  // key unset), as P3-23.
+  const auto crack_policy = GENERATE(test::CrackPolicy::Legacy, test::CrackPolicy::Default);
+  INFO("crack policy: " << test::CrackPolicyName(crack_policy));
   const auto library_path = temp.temp_dir / "fabrication-process-r0a-coverage-3d.json";
   // The root writes the library copy; whether it could read the source is asserted on every
   // rank AFTER the barrier (decision 1616: no root-only REQUIRE before a barrier).
@@ -869,7 +873,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   Mpi::Barrier(Mpi::World());
   Mpi::Broadcast(1, &input_ok, 0, Mpi::World());
   REQUIRE(input_ok == 1);
-  json config = IslandConfig();
+  json config = IslandConfig(crack_policy);
   auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
   correction.erase("PatchConstruction");
   correction["Library"] = library_path.string();
@@ -2632,6 +2636,10 @@ TEST_CASE_METHOD(
 #if !defined(MFEM_USE_GSLIB)
   SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
 #else
+  // P4 S3-0 (review r2084 F-1): both crack forms (the legacy key; upstream's default = the
+  // key unset), as P3-23.
+  const auto crack_policy = GENERATE(test::CrackPolicy::Legacy, test::CrackPolicy::Default);
+  INFO("crack policy: " << test::CrackPolicyName(crack_policy));
   const fs::path mesh_path = temp.temp_dir / "shorted-cpw-stub-final.mesh";
   if (Mpi::Root(Mpi::World()))
   {
@@ -2642,7 +2650,7 @@ TEST_CASE_METHOD(
   Mpi::Barrier(Mpi::World());
   const auto library_path =
       WriteStubLibrary(temp.temp_dir, convex_library_3d_path, 0.1, "esfinal");
-  json config = ConvexIslandConfig();
+  json config = ConvexIslandConfig(crack_policy);
   config["Model"]["Mesh"] = mesh_path.string();
   config["Model"]["L0"] = 1.0;
   config["Model"]["Lc"] = 1.0;

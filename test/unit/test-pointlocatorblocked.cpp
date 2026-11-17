@@ -86,16 +86,21 @@ mfem::Vector MakeQueryPoints(int count, int seed)
   return xyz;
 }
 
+// Byte equality of two equally long double arrays; std::memcmp is not called on the null
+// data() of an empty vector (UBSan: 'null pointer passed as argument 1').
+bool BytesEqual(const std::vector<double> &a, const std::vector<double> &b)
+{
+  return a.empty() || std::memcmp(a.data(), b.data(), a.size() * sizeof(double)) == 0;
+}
+
 void CheckBitwiseEqual(const DistributedPointLocation &a, const DistributedPointLocation &b)
 {
   CHECK(a.owners == b.owners);
   CHECK(a.elements == b.elements);
   REQUIRE(a.references.size() == b.references.size());
-  CHECK(std::memcmp(a.references.data(), b.references.data(),
-                    a.references.size() * sizeof(double)) == 0);
+  CHECK(BytesEqual(a.references, b.references));
   REQUIRE(a.owner_values.size() == b.owner_values.size());
-  CHECK(std::memcmp(a.owner_values.data(), b.owner_values.data(),
-                    a.owner_values.size() * sizeof(double)) == 0);
+  CHECK(BytesEqual(a.owner_values, b.owner_values));
   CHECK(a.candidate_queries == b.candidate_queries);
   CHECK(a.fallback_queries == b.fallback_queries);
 }

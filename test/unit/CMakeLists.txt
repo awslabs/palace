@@ -41,6 +41,7 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-correctedcapacitance.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-correctedsolve.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-correcteddrivenpath.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-selfconsistentdriven.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-coveragepolicy.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-constants.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-cornerbasisrefinement.cpp

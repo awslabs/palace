@@ -15492,6 +15492,10 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 #if !defined(MFEM_USE_GSLIB)
   SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
 #else
+  // P4 S3-0 (review r2084 F-1): both crack forms (the legacy key; upstream's default = the
+  // key unset), as P3-23.
+  const auto crack_policy = GENERATE(test::CrackPolicy::Legacy, test::CrackPolicy::Default);
+  INFO("crack policy: " << test::CrackPolicyName(crack_policy));
   MPI_Comm comm = Mpi::World();
   const fs::path mesh_path = temp.temp_dir / "coverage-snap-bar.mesh";
   const fs::path basis_path = temp.temp_dir / "coverage-snap-basis-points.csv";
@@ -15533,7 +15537,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   Mpi::Barrier(comm);
   Mpi::Broadcast(1, &input_ok, 0, comm);
   REQUIRE(input_ok == 1);
-  json config = IslandConfig();
+  json config = IslandConfig(crack_policy);
   config["Model"]["Mesh"] = mesh_path.string();
   config["Model"]["L0"] = 1.0;
   config["Boundaries"]["Postprocessing"]["Dielectric"][0]["Attributes"] = {10};

@@ -1408,6 +1408,10 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 #if !defined(MFEM_USE_GSLIB)
   SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
 #else
+  // P4 S3-0 (review r2084 F-1): both crack forms (the legacy key; upstream's default = the
+  // key unset), as P3-23.
+  const auto crack_policy = GENERATE(test::CrackPolicy::Legacy, test::CrackPolicy::Default);
+  INFO("crack policy: " << test::CrackPolicyName(crack_policy));
   const fs::path mesh_path = temp.temp_dir / "coverage-matrix-islands.mesh";
   if (Mpi::Root(Mpi::World()))
   {
@@ -1417,7 +1421,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   }
   Mpi::Barrier(Mpi::World());
   const auto swapped = WriteCoupon(temp.temp_dir, CouponVariant::SWAPPED_CONDUCTOR);
-  json config = HighOrderSpatialConfig();
+  json config = HighOrderSpatialConfig(crack_policy);
   config["Model"]["Mesh"] = mesh_path.string();
   config["Model"]["L0"] = 1.0;
   config["Model"]["Lc"] = 1.0;
@@ -1628,6 +1632,10 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 #if !defined(MFEM_USE_GSLIB)
   SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
 #else
+  // P4 S3-0 (review r2084 F-1): both crack forms (the legacy key; upstream's default = the
+  // key unset), as P3-23.
+  const auto crack_policy = GENERATE(test::CrackPolicy::Legacy, test::CrackPolicy::Default);
+  INFO("crack policy: " << test::CrackPolicyName(crack_policy));
   const fs::path mesh_path = temp.temp_dir / "diagnostics-directory-islands.mesh";
   if (Mpi::Root(Mpi::World()))
   {
@@ -1637,7 +1645,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   }
   Mpi::Barrier(Mpi::World());
   const auto inconsistent = WriteCoupon(temp.temp_dir, CouponVariant::INCONSISTENT);
-  json config = HighOrderSpatialConfig();
+  json config = HighOrderSpatialConfig(crack_policy);
   config["Model"]["Mesh"] = mesh_path.string();
   config["Model"]["L0"] = 1.0;
   config["Model"]["Lc"] = 1.0;
