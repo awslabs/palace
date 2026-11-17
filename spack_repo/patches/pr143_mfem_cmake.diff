@@ -1,5 +1,5 @@
 diff --git a/repos/spack_repo/builtin/packages/mfem/package.py b/repos/spack_repo/builtin/packages/mfem/package.py
-index 10dd69af..0d1f4cd7 100644
+index 10dd69af..25716010 100644
 --- a/repos/spack_repo/builtin/packages/mfem/package.py
 +++ b/repos/spack_repo/builtin/packages/mfem/package.py
 @@ -6,14 +6,15 @@ import os
@@ -641,7 +641,7 @@ index 10dd69af..0d1f4cd7 100644
      def all_headers(self, root_spec):
          all_hdrs = HeaderList([])
          for dep in root_spec.traverse(deptype="link"):
-@@ -1607,3 +1650,162 @@ class Mfem(Package, CudaPackage, ROCmPackage):
+@@ -1607,3 +1650,159 @@ class Mfem(Package, CudaPackage, ROCmPackage):
              except NoHeadersError:
                  pass
          return all_hdrs
@@ -696,10 +696,7 @@ index 10dd69af..0d1f4cd7 100644
 +            self.define_from_variant("MFEM_PRECISION", "precision"),
 +            self.define("MFEM_ENABLE_TESTING", True),
 +        ]
-+        if "+shared" in self.spec:
-+            args.append(self.define("BUILD_SHARED_LIBS", True))
-+        else:
-+            args.append(self.define("BUILD_SHARED_LIBS", False))
++        args.append(self.define_from_variant("BUILD_SHARED_LIBS", "shared"))
 +
 +        # CMakeBuilder.std_args() does not forward cuda_arch or amdgpu_target
 +        if "+cuda" in self.spec:
