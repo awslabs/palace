@@ -225,9 +225,9 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             ),
             patch(
                 "https://raw.githubusercontent.com/awslabs/palace/"
-                "ceae7bf924d9ef505791937db58ac1ae609d2f10/extern/patch/STRUMPACK/"
+                "d464e96806255d35a836c9a66c0350d07982ff96/extern/patch/STRUMPACK/"
                 "strumpack_pr167.diff",
-                sha256="c05abf224416247af48f2f29b7ae785a87304920aaa1ea7f373e6c49fb286f86",
+                sha256="bd761e7fbe71dc1f52fd780170aa9b5a7676a733f5a2ebbd8cfd570c29e4d099",
                 when="@8.1.0",
             ),
         ],
