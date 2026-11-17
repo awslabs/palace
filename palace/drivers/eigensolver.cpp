@@ -406,12 +406,10 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   }
 
   // With adaptive mesh refinement, the SLEPc Krylov-Schur solver can start from the
-  // eigenvectors of the previous solve (warm start). A warm-started solve takes at least
-  // two Krylov cycles, since an eigenpair converges only once its Ritz value was present
-  // at the previous restart, and its first cycle can use more accurate linear solves. It
-  // thus only pays off for solves which take three cycles or more without it: the
-  // eigenpairs are kept only if the last solve without a warm start did, and only if the
-  // adaptation goes on.
+  // eigenvectors of the previous solve (warm start). The more accurate linear solves of its
+  // first Krylov cycle can cost more than the cycle a warm start saves on a solve which
+  // takes two cycles without it: the eigenpairs are kept only if the last solve without a
+  // warm start took three cycles or more, and only if the adaptation goes on.
   constexpr int min_cold_its = 3;
   const auto &eigenmode = iodata.solver.eigenmode;
   const auto &refinement = iodata.model.refinement;
@@ -474,13 +472,13 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         {
           eigen->SetInitialSpace(v);  // Copies the vector
         }
-        eigen->SetWarmStart(true);
 
-        // The error of the first linear solves stays in the vectors kept at the restarts,
-        // and the eigenvalue errors scale with their tolerance: solve them with a 100
-        // times smaller tolerance, but not below 1e-3 times the eigenvalue tolerance or
-        // 1e-12, so that there is nothing to tighten when the linear solver tolerance is
-        // already that small.
+        // A warm-started solve converges after few linear solves, whose error stays in the
+        // vectors kept at the restarts and is not seen by the error estimate of the
+        // eigenvalue solver: solve those of the first Krylov cycle with a 100 times smaller
+        // tolerance, but not below 1e-3 times the eigenvalue tolerance or 1e-12, so that
+        // there is nothing to tighten when the linear solver tolerance is already that
+        // small.
         const double lin_tol = iodata.solver.linear.tol;
         const double first_tol = std::min(
             lin_tol, std::max({1.0e-2 * lin_tol, 1.0e-3 * eigenmode.tol, 1.0e-12}));

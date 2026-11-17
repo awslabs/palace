@@ -136,12 +136,6 @@ public:
   // first linear solves. Not all solvers support it.
   virtual void SetFirstCycleLinearSolverTol(double tol) {}
 
-  // Whether the initial vector of the next solve approximates the wanted eigenvectors (warm
-  // start): an eigenpair then converges only once its Ritz value was present at the
-  // previous restart.
-  // Not all solvers support it.
-  virtual void SetWarmStart(bool warm) {}
-
   // Number of iterations (restarts) of the last solve, or -1 if not available.
   virtual int GetNumIterations() const { return -1; }
 
