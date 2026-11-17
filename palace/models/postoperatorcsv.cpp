@@ -11,6 +11,7 @@
 
 #include <mfem.hpp>
 
+#include "models/condensedenvironment.hpp"
 #include "models/curlcurloperator.hpp"
 #include "models/floquetportoperator.hpp"
 #include "models/laplaceoperator.hpp"
@@ -1999,8 +2000,9 @@ PostOperatorCSV<solver_t>::PostOperatorCSV(const config::ProblemData &problem,
     last_deferred_flush = std::chrono::steady_clock::now();
 
     // A restart follows the order of the measurements, the excitations at each frequency
-    // for substructuring (whose frequency loop is the outer one).
-    row_major = solver.substructuring.has_value();
+    // for substructuring (whose frequency loop is the outer one), except for online driven
+    // substructuring by the driven solver, which restarts as a regular sweep.
+    row_major = solver.substructuring.has_value() && !CondensedEnvironment::Enabled(solver);
     const std::size_t done = solver.driven.restart - 1, nr_ex = ex_idx_v_all.size();
     row_i = row_major ? done / nr_ex : done % nr_expected_measurement_rows;
     ex_idx_i = row_major ? done % nr_ex : done / nr_expected_measurement_rows;
