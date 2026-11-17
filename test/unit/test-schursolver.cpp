@@ -172,47 +172,65 @@ TEST_CASE("Schur solvers give the Schur complement and the internal solves",
   std::vector<std::string> backends = {"back-solves"};
 #if defined(MFEM_USE_MUMPS)
   backends.push_back("MUMPS");
+  backends.push_back("MUMPS, blocks of 4");
 #endif
 #if defined(PALACE_WITH_STRUMPACK_SCHUR)
   backends.push_back("STRUMPACK");
 #endif
   const std::string backend = GENERATE_COPY(from_range(backends));
   CAPTURE(backend, ns);
-  std::unique_ptr<SchurSolver<double>> solver;
-  if (backend == "back-solves")
+  auto make = [&]() -> std::unique_ptr<SchurSolver<double>>
   {
-    // Batches of 4: the last one is partial.
-    REQUIRE(ns % 4 != 0);
-    solver = std::make_unique<BackSolveSchurSolver>(*A, schur_vars, internal_solve, 4);
-  }
+    if (backend == "back-solves")
+    {
+      // Batches of 4: the last one is partial.
+      REQUIRE(ns % 4 != 0);
+      return std::make_unique<BackSolveSchurSolver>(*A, schur_vars, internal_solve, 4);
+    }
 #if defined(MFEM_USE_MUMPS)
-  if (backend == "MUMPS")
-  {
-    solver = std::make_unique<MumpsSchurSolver>(A_elim, schur_vars);
-  }
+    if (backend == "MUMPS")
+    {
+      return std::make_unique<MumpsSchurSolver>(A_elim, schur_vars);
+    }
+    if (backend == "MUMPS, blocks of 4")
+    {
+      // Several blocks of S on each process of the grid.
+      return std::make_unique<MumpsSchurSolver>(A_elim, schur_vars, 0.0, false,
+                                                SymbolicFactorization::DEFAULT, 4);
+    }
 #endif
 #if defined(PALACE_WITH_STRUMPACK_SCHUR)
-  if (backend == "STRUMPACK")
-  {
-    solver = std::make_unique<StrumpackSchurSolver>(A_elim, schur_vars);
-  }
-#endif
-
-  // The Schur complement, on rank 0 (CHECK, not REQUIRE: the other ranks wait in the
-  // collectives below).
-  const std::vector<double> S = solver->ReleaseSchur();
-  CHECK(S.size() == (Mpi::Root(comm) ? static_cast<std::size_t>(ns) * ns : 0));
-  if (Mpi::Root(comm) && S.size() == static_cast<std::size_t>(ns) * ns)
-  {
-    double err = 0.0;
-    for (int j = 0; j < ns; j++)
+    if (backend == "STRUMPACK")
     {
-      for (int i = 0; i < ns; i++)
+      return std::make_unique<StrumpackSchurSolver>(A_elim, schur_vars);
+    }
+#endif
+    return nullptr;
+  };
+
+  // The rows of the Schur complement of the Schur variables of each rank, in the order of
+  // their positions.
+  const std::unique_ptr<SchurSolver<double>> solver = make();
+  {
+    std::vector<int> mine;
+    for (int p = 0; p < ns; p++)
+    {
+      if (schur_vars[p] >= row0 && schur_vars[p] < row0 + n_loc)
       {
-        err =
-            std::max(err, std::abs(S[i + static_cast<std::size_t>(ns) * j] - S_ref(i, j)));
+        mine.push_back(p);
       }
     }
+    const std::vector<double> R = solver->ReleaseSchurRows();
+    CHECK(R.size() == mine.size() * ns);
+    double err = 0.0;
+    for (std::size_t r = 0; r < mine.size() && R.size() == mine.size() * ns; r++)
+    {
+      for (int j = 0; j < ns; j++)
+      {
+        err = std::max(err, std::abs(R[r * ns + j] - S_ref(mine[r], j)));
+      }
+    }
+    MPI_Allreduce(MPI_IN_PLACE, &err, 1, MPI_DOUBLE, MPI_MAX, comm);
     CHECK(err <= 1.0e-12 * S_ref.MaxMaxNorm());
   }
 

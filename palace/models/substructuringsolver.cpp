@@ -491,8 +491,7 @@ void SubstructuringSolver::CondenseEnvironment()
     }
     else
     {
-      // S_E is symmetric (column-major == row-major): scatter its rows to their owners.
-      impl->ScatterRows(impl->env_schur->ReleaseSchur(), nG, impl->S_rows);
+      impl->S_rows = impl->env_schur->ReleaseSchurRows();
     }
     if (!impl->magnetostatic)
     {
