@@ -1312,9 +1312,10 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-AddSamplePROM-Candida
   }
 }
 
-// The stop of the adaptive sampling at the accuracy of the HDM solutions counts the
-// consecutive samples above the tolerance, from converged linear solves, which add no basis
-// direction; any other sample restarts the count.
+// The stop of the adaptive sampling at the accuracy of the HDM solutions counts the samples
+// above the tolerance, from converged linear solves, which add no basis direction; a sample
+// which adds no direction from an unconverged linear solve leaves the PROM unchanged and is
+// skipped, and any other sample restarts the count.
 TEST_CASE("AdaptiveSamplingStall", "[romoperator][Serial]")
 {
   constexpr double tol = 1.0e-6;
@@ -1323,12 +1324,40 @@ TEST_CASE("AdaptiveSamplingStall", "[romoperator][Serial]")
   CHECK_FALSE(stall.Stalled());
   CHECK(stall.NumSamples() == 1);
 
-  // A sample whose linear solve did not converge is not counted, and restarts the count.
+  // A sample above the tolerance which adds no direction, from a linear solve which did not
+  // converge, is not counted, and does not restart the count: the next such sample from a
+  // converged solve completes it.
   stall.AddSample(3.0e-6, tol, false, 0);
   CHECK_FALSE(stall.Stalled());
-  CHECK(stall.NumSamples() == 0);
+  CHECK(stall.NumSamples() == 1);
+  CHECK(stall.MaxError() == 2.0e-6);
+  stall.AddSample(2.5e-6, tol, true, 0);
+  CHECK(stall.Stalled());
+  CHECK(stall.NumSamples() == 2);
+  CHECK(stall.MaxError() == 2.5e-6);
 
-  // So does a sample which adds a basis direction, or one below the tolerance.
+  // A sample from a linear solve which did not converge restarts the count if it adds a
+  // direction, or if its error is below the tolerance.
+  AdaptiveSamplingStall stall_unconverged(2);
+  stall_unconverged.AddSample(2.0e-6, tol, true, 0);
+  stall_unconverged.AddSample(3.0e-6, tol, false, 1);
+  CHECK(stall_unconverged.NumSamples() == 0);
+  stall_unconverged.AddSample(2.0e-6, tol, true, 0);
+  stall_unconverged.AddSample(0.5e-6, tol, false, 0);
+  CHECK(stall_unconverged.NumSamples() == 0);
+
+  // If no linear solve converges, the sampling does not stop early.
+  AdaptiveSamplingStall stall_none(1);
+  for (int i = 0; i < 10; i++)
+  {
+    stall_none.AddSample(2.0e-6, tol, false, 0);
+  }
+  CHECK_FALSE(stall_none.Stalled());
+  CHECK(stall_none.NumSamples() == 0);
+
+  // A sample which adds a basis direction restarts the count, and so does one below the
+  // tolerance.
+  stall = AdaptiveSamplingStall(2);
   stall.AddSample(2.0e-6, tol, true, 0);
   stall.AddSample(2.0e-6, tol, true, 1);
   CHECK(stall.NumSamples() == 0);

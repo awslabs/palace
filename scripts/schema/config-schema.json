@@ -2633,7 +2633,7 @@
         },
         "AdaptiveConvergenceMemory": {
           "type": "integer",
-          "description": "Number of consecutive samples satisfying the error tolerance required to declare convergence of the adaptive sampling algorithm. It is also the number of consecutive samples above the error tolerance, from converged linear solves, which add no direction to the reduced-order model basis, after which the sampling of an excitation stops early with a warning: the high-dimensional model solutions are then likely not accurate enough for the tolerance (see [the adaptive driven solver](../reference.md#Adaptive-driven-solver-and-reduced-order-modeling)). With a value of 1, a single such sample stops it.",
+          "description": "Number of consecutive samples satisfying the error tolerance required to declare convergence of the adaptive sampling algorithm. It is also the number of consecutive samples above the error tolerance, from converged linear solves, which add no direction to the reduced-order model basis, after which the sampling of an excitation stops early with a warning: the high-dimensional model solutions are then likely not accurate enough for the tolerance (see [the adaptive driven solver](../reference.md#Adaptive-driven-solver-and-reduced-order-modeling)). Samples from linear solves which did not converge are skipped if they add no direction. With a value of 1, a single such sample stops it.",
           "exclusiveMinimum": 0,
           "default": 2
         },

@@ -580,12 +580,15 @@ The samples which initialize the basis, at the frequency-domain endpoints and wi
 
 If the last
 [`config["Solver"]["Driven"]["AdaptiveConvergenceMemory"]`](config/reference.md#config-solver-driven)
-greedy samples all have an error ``\varepsilon`` above `"AdaptiveTol"` before they are
-added, their linear solves converged, and none of them adds a direction, the HDM solutions
+greedy samples from converged linear solves all have an error ``\varepsilon`` above
+`"AdaptiveTol"` before they are added, and none of them adds a direction, the HDM solutions
 are likely not accurate enough to reach `"AdaptiveTol"`: *Palace* then stops sampling that
 excitation with a warning, which reports the largest error at these samples, instead of
-sampling up to `"AdaptiveMaxSamples"`. With `"AdaptiveConvergenceMemory"` 1, a single such
-sample stops it, as a single sample below the tolerance completes the convergence. Tighten
+sampling up to `"AdaptiveMaxSamples"`. A sample in between from a linear solve which did
+not converge is skipped if it adds no direction, as it leaves the PROM unchanged; any other
+sample restarts the count, so that a sweep whose linear solves do not converge samples up
+to `"AdaptiveMaxSamples"`. With `"AdaptiveConvergenceMemory"` 1, a single such sample
+stops it, as a single sample below the tolerance completes the convergence. Tighten
 [`config["Solver"]["Linear"]["Tol"]`](config/reference.md#config-solver-linear) or loosen
 `"AdaptiveTol"` in that case.
 
@@ -628,8 +631,8 @@ solution using
 Convergence is declared when this quantity is below
 [`config["Solver"]["Driven"]["AdaptiveTol"]`](config/reference.md#config-solver-driven) for
 [`config["Solver"]["Driven"]["AdaptiveConvergenceMemory"]`](config/reference.md#config-solver-driven)
-consecutive samples. The same number of consecutive samples above the tolerance, from
-converged linear solves, which add no basis direction stops the sampling early (see above).
+consecutive samples. The same number of samples above the tolerance which add no basis
+direction, from converged linear solves, stops the sampling early (see above).
 The norm here is the finite-element coefficient-space L2 norm. It is related to, but not
 the same as, a physical energy norm such as
 ``\int \bm{E}^*(\bm{r})\cdot\bm{E}(\bm{r})\,d^3r``. Consequently, the adaptive tolerance is

@@ -399,10 +399,10 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
 
     // Greedy procedure for basis construction (offline phase). Basis is initialized with
     // solutions at frequency sweep endpoints and explicit sample frequencies. The sampling
-    // also stops when the last convergence_memory samples, all with errors above the
-    // tolerance and from converged linear solves, added no basis direction: the HDM
-    // solutions are then likely not accurate enough to reach the tolerance (see
-    // AdaptiveSamplingStall).
+    // also stops when the last convergence_memory samples from converged linear solves, all
+    // with errors above the tolerance, added no basis direction, with only samples which
+    // left the PROM unchanged in between: the HDM solutions are then likely not accurate
+    // enough to reach the tolerance (see AdaptiveSamplingStall).
     std::size_t it = max_errors.size();
     std::size_t num_rejected = 0, num_partial = 0;
     AdaptiveSamplingStall stall(convergence_memory);

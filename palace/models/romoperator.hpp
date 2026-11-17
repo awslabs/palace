@@ -655,8 +655,11 @@ public:
 // Accuracy floor of the greedy adaptive sampling of an excitation: the sampling stops once
 // the last memory greedy samples, all with a PROM error above the tolerance and from linear
 // solves which converged, added no basis direction (see RomOperator::AddSamplePROM): the
-// HDM solutions are then likely not accurate enough to reach the tolerance. Any other
-// sample restarts the count.
+// HDM solutions are then likely not accurate enough to reach the tolerance. A sample which
+// adds no direction, with an error above the tolerance, from a linear solve which did not
+// converge leaves the PROM unchanged: it is not counted, and does not restart the count
+// either. Any other sample restarts it, so that if no linear solve converges, the sampling
+// does not stop early.
 class AdaptiveSamplingStall
 {
 private:
@@ -670,10 +673,13 @@ public:
   // HDM solve converged, and the number of basis directions it added.
   void AddSample(double error, double tol, bool converged, std::size_t num_kept)
   {
-    if (error >= tol && converged && num_kept == 0)
+    if (error >= tol && num_kept == 0)
     {
-      count++;
-      max_error = std::max(max_error, error);
+      if (converged)
+      {
+        count++;
+        max_error = std::max(max_error, error);
+      }
     }
     else
     {
