@@ -294,6 +294,9 @@ protected:
       impedance_candidate_domain_boundary, impedance_candidate_spatial_cluster_priority;
   mutable std::unique_ptr<TableWithCSVFile> impedance_candidate_table, impedance_law_table;
   mutable nlohmann::json impedance_candidate_record;
+  // The coverage status of record per interface of the last printed measurement (root;
+  // Record only; read by the candidate rows, ruling 2065 (2)).
+  mutable std::map<int, std::string> impedance_record_coverage_status;
   mutable double impedance_candidate_measure_seconds = 0.0;
   // Whether the rule acts on any candidate feature (false = a twin: the self-check).
   bool impedance_candidate_acts = false;

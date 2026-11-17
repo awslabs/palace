@@ -2555,6 +2555,12 @@ template <ProblemType solver_t>
 void PostOperator<solver_t>::PrintSurfaceResponseCorrection(double output_index,
                                                             int excitation) const
 {
+  // The impedance-metal rule (Record; ruling 2065 (2)): the coverage status this writer
+  // prints per interface, for the candidate rows of the same measurement.
+  if (impedance_film_rule)
+  {
+    impedance_record_coverage_status.clear();
+  }
   if (!surface_response_measurement || !Mpi::Root(fem_op->GetComm()))
   {
     return;
@@ -2904,6 +2910,7 @@ void PostOperator<solver_t>::PrintSurfaceResponseCorrection(double output_index,
       const auto summary = coverage.interfaces.find(interface_index);
       const CoverageCell *cell =
           type != coverage_types.end() ? coverage.FindCell(type->second) : nullptr;
+      std::string coverage_status;
       // Ruling 1738: a configured target no loaded model serves is a coverage interface
       // (its W, its uncovered share, its Type's TARGET-NOT-SERVED cell), not NOT-TARGET.
       if (!interface.response_target && coverage.not_served.count(interface_index) == 0)
@@ -2916,8 +2923,8 @@ void PostOperator<solver_t>::PrintSurfaceResponseCorrection(double output_index,
         table["coverage_type_method_gap_share"] << nan;
         table["coverage_type_pending_share"] << nan;
         table["coverage_type_factor"] << nan;
-        table["coverage_status"]
-            << std::string(CoverageStatusName(CoverageStatus::NOT_TARGET));
+        coverage_status = CoverageStatusName(CoverageStatus::NOT_TARGET);
+        table["coverage_status"] << coverage_status;
         table["regime_status"] << std::string(RegimeStatusName(RegimeStatus::NO_MODEL));
         table["coverage_loop_remainder_unserved"] << 0.0;
         table["coverage_loop_remainder_excluded"] << 0.0;
@@ -2930,8 +2937,8 @@ void PostOperator<solver_t>::PrintSurfaceResponseCorrection(double output_index,
         table["coverage_type_method_gap_share"] << nan;
         table["coverage_type_pending_share"] << nan;
         table["coverage_type_factor"] << nan;
-        table["coverage_status"]
-            << std::string(CoverageStatusName(CoverageStatus::NOT_MEASURED));
+        coverage_status = CoverageStatusName(CoverageStatus::NOT_MEASURED);
+        table["coverage_status"] << coverage_status;
         table["regime_status"] << std::string(RegimeStatusName(RegimeStatus::NO_MODEL));
         table["coverage_loop_remainder_unserved"] << nan;
         table["coverage_loop_remainder_excluded"] << nan;
@@ -2948,7 +2955,8 @@ void PostOperator<solver_t>::PrintSurfaceResponseCorrection(double output_index,
         table["coverage_type_method_gap_share"] << cell->method_gap_share;
         table["coverage_type_pending_share"] << cell->pending_share;
         table["coverage_type_factor"] << cell->factor;
-        table["coverage_status"] << std::string(CoverageStatusName(cell->status));
+        coverage_status = CoverageStatusName(cell->status);
+        table["coverage_status"] << coverage_status;
         table["regime_status"] << std::string(RegimeStatusName(cell->regime));
         table["coverage_loop_remainder_unserved"]
             << (measured ? units.Dimensionalize<VT::ENERGY>(
@@ -2958,6 +2966,10 @@ void PostOperator<solver_t>::PrintSurfaceResponseCorrection(double output_index,
             << (measured ? units.Dimensionalize<VT::ENERGY>(
                                summary->second.loop_remainder_excluded)
                          : nan);
+      }
+      if (impedance_film_rule)
+      {
+        impedance_record_coverage_status[interface_index] = coverage_status;
       }
     }
     if (marking)
@@ -5234,6 +5246,9 @@ void PostOperator<solver_t>::MeasureAndPrintImpedanceRuleCandidate(
       table.insert(Column::Integer("record_applied", "record corrected"));
       table.insert("energy_record", "energy of record (J)");
       table.insert("participation_record", "participation of record");
+      // Ruling 2065 (2): the coverage status the record printed for this interface and
+      // measurement (surface-Q-corrected.csv; empty where the record printed no row).
+      table.insert(Column::Text("coverage_status_record", "coverage status of record"));
       table.insert(Column::Integer("candidate_applied", "candidate corrected"));
       table.insert("energy_candidate", "candidate energy (J)");
       table.insert("participation_candidate", "candidate participation");
@@ -5265,6 +5280,10 @@ void PostOperator<solver_t>::MeasureAndPrintImpedanceRuleCandidate(
       table["record_applied"] << (record_applied ? 1 : 0);
       table["energy_record"] << units.Dimensionalize<VT::ENERGY>(record_energy);
       table["participation_record"] << p_record;
+      const auto status = impedance_record_coverage_status.find(raw.idx);
+      const std::string coverage_status =
+          status != impedance_record_coverage_status.end() ? status->second : std::string();
+      table["coverage_status_record"] << coverage_status;
       table["candidate_applied"] << (candidate_applied ? 1 : 0);
       table["energy_candidate"] << units.Dimensionalize<VT::ENERGY>(candidate_energy);
       table["participation_candidate"] << p_candidate;
@@ -5281,10 +5300,12 @@ void PostOperator<solver_t>::MeasureAndPrintImpedanceRuleCandidate(
           << units.Dimensionalize<VT::ENERGY>(candidate_normalization);
       interfaces.push_back({{"Interface", raw.idx},
                             {"ParticipationOfRecord", p_record},
+                            {"CoverageStatusOfRecord", coverage_status},
                             {"CandidateParticipation", p_candidate},
                             {"RelativeDifference", difference}});
     }
     impedance_candidate_table->WriteFullTableTrunc();
+    impedance_record_coverage_status.clear();
 
     // The law reading of this measurement (the gate call of this source; diagnostics
     // directory: one row per read patch).

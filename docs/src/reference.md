@@ -2170,7 +2170,8 @@ serving such metals would give, without changing any value of record: every corr
 table and `palace.json` block of record is computed and written exactly as with `"Off"` (the
 default). Beside them a CANDIDATE is written, marked `CANDIDATE: NOT OF RECORD`:
 `surface-response-impedance-candidate.csv` (per mode or frequency and interface: the
-participation of record and the candidate's), `surface-response-impedance-features.csv` (per
+participation of record, the coverage status the record printed for it, and the
+candidate's), `surface-response-impedance-features.csv` (per
 candidate feature: device law, law status, both key hashes) and
 `surface-response-impedance-law.csv` (per corrected patch and source: the on-metal law reading
 L of the conductor-consistency probes) in the diagnostics directory, and the `palace.json`
