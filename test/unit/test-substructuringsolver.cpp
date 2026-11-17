@@ -529,7 +529,8 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   // priori refinement would refine the region again, its interface included, so it is
   // rejected (on the full mesh, both runs refine alike).
   const std::string model_path = (temp_dir / "substruct_region_refined.bin").string();
-  auto make_config = [&](const std::string &mode, const json &refinement)
+  auto make_config =
+      [&](const std::string &mode, const json &refinement, bool ground = false)
   {
     json config = {
         {"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
@@ -548,6 +549,10 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
             {"Environment", {{"Attributes", {2}}}},
             {"Mode", mode},
             {"SaveModel", model_path}}}}}};
+    if (ground)
+    {
+      config["Boundaries"]["Ground"] = {{"Attributes", {3}}};
+    }
     return IoData(config, false);
   };
   auto condense = [](const IoData &iodata, std::unique_ptr<mfem::ParMesh> &&pmesh)
@@ -575,6 +580,21 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
     CHECK_THROWS_WITH(condense(make_config("Online", refinement), region_mesh()),
                       Catch::Matchers::ContainsSubstring("is written refined"));
   }
+
+  // With the ground reaching the interface, environment elements are written with the
+  // region: once refined, they are told from a changed environment by the moments that
+  // refinement keeps.
+  auto refined = [](std::unique_ptr<mfem::ParMesh> &&pmesh)
+  {
+    pmesh->UniformRefinement();
+    return std::move(pmesh);
+  };
+  condense(make_config("Offline", none, true), MakeSplitCube(4));
+  CHECK_THROWS_WITH(condense(make_config("Online", uniform, true), refined(region_mesh())),
+                    Catch::Matchers::ContainsSubstring("is written refined"));
+  CHECK_THROWS_WITH(
+      condense(make_config("Online", uniform, true), refined(MakeSplitCube(4))),
+      Catch::Matchers::ContainsSubstring("The environment differs"));
 }
 
 #if defined(MFEM_USE_STRUMPACK)

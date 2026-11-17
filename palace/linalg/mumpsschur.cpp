@@ -677,7 +677,7 @@ void MumpsSchurSolverT<T>::Check(const char *phase) const
     MPI_Bcast(info, 2, MPI_INT, 0, comm);
   }
   MFEM_VERIFY(info[0] >= 0, "MUMPS " << phase << " failed: INFOG(1) = " << info[0]
-                                     << ", INFOG(2) = " << info[1]);
+                                     << ", INFOG(2) = " << info[1] << "!");
 }
 
 template class MumpsSchurSolverT<double>;
