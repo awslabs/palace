@@ -228,11 +228,12 @@ std::pair<ErrorIndicator, long long int> MagnetostaticSolver::SolveSubstructured
   const int n_save = std::min(iodata.solver.magnetostatic.n_post, nc + nf);
   const bool adapt = (iodata.model.refinement.max_it > 0);
   std::vector<Vector> A, region_fields;
+  std::vector<double> volume_energy;
   mfem::DenseMatrix linked_flux(nc, nf);
   linked_flux = 0.0;
   const mfem::DenseMatrix E = sub.MagnetostaticEnergyMatrix(
       current_idx, J, flux_idx, a, apertures, apertures.empty() ? nullptr : &linked_flux,
-      &A, n_save, adapt ? &region_fields : nullptr);
+      &A, n_save, adapt ? &region_fields : nullptr, adapt ? &volume_energy : nullptr);
   if (single_loops)
   {
     // Excitations in the layout of the regular solve (currents first, zero elsewhere).
@@ -264,7 +265,7 @@ std::pair<ErrorIndicator, long long int> MagnetostaticSolver::SolveSubstructured
   ErrorIndicator indicator;
   if (adapt)
   {
-    indicator = sub.RegionErrorIndicator(region_fields, E);
+    indicator = sub.RegionErrorIndicator(region_fields, volume_energy);
     const auto indicator_stats = indicator.GetSummaryStatistics(mesh.back()->GetComm());
     if (root)
     {

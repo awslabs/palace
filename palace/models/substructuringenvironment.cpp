@@ -17,8 +17,7 @@ void SubstructuringSolver::Impl::ComputeSourceModes(const std::vector<int> &ids,
   const int K = static_cast<int>(ids.size());
   src_ids = ids;
   src_fp.assign(2 * K, 0.0);
-  std::vector<mfem::Vector> b(K), W(K, mfem::Vector(nt)), q(K, mfem::Vector(nt)),
-      z(K, mfem::Vector(nt));
+  std::vector<mfem::Vector> b(K), W(K, mfem::Vector(nt)), q(K, mfem::Vector(nt));
   std::vector<const mfem::Vector *> X(K);
   std::vector<mfem::Vector *> Y(K);
   for (int k = 0; k < K; k++)
@@ -48,40 +47,23 @@ void SubstructuringSolver::Impl::ComputeSourceModes(const std::vector<int> &ids,
     }
   };
   SG_rows.assign(static_cast<std::size_t>(gamma_nloc) * K, 0.0);
+  std::vector<mfem::Vector> KW(K, mfem::Vector(nt)), MD(K, mfem::Vector(nt)),
+      D(K, mfem::Vector(nt));
+  // By condensations: h_k = Z^T q_k for q_k = (A_env - D_env) W_k - b^E_k, and with S^Kin
+  // h^kin_k = Z^T M_sheet^E D_k for D_k = W_k - a_k.
+  const bool kin = have_skin;
+  std::vector<const mfem::Vector *> V(kin ? 2 * K : K);
   for (int k = 0; k < K; k++)
   {
     Aenv().Mult(W[k], t);
     t.Neg();
     t += b[k];  // g_k = b^E_k|_Gamma - (A_env W_k)|_Gamma
     rows(SG_rows, k, t);
-    // q_k = (A_env - D_env) W_k - b^E_k, then z_k = A_EE^-1 q_k|_E.
     Aenv().Mult(W[k], q[k]);
     Denv().Mult(W[k], t);
     q[k] -= t;
     q[k] -= b[k];
-    z[k] = 0.0;
-    X[k] = &q[k];
-    Y[k] = &z[k];
-  }
-  if (K > 0)
-  {
-    ApplyAeeInvMulti(X, Y);
-  }
-  SH_rows.assign(static_cast<std::size_t>(gamma_nloc) * K, 0.0);
-  for (int k = 0; k < K; k++)
-  {
-    Aenv().Mult(z[k], t);
-    t.Neg();
-    t += q[k];  // h_k = q_k|_Gamma - (A_env z_k)|_Gamma
-    rows(SH_rows, k, t);
-  }
-  SC.assign(static_cast<std::size_t>(K) * K, 0.0);
-  std::vector<mfem::Vector> KW(K, mfem::Vector(nt)), MD(K, mfem::Vector(nt)),
-      D(K, mfem::Vector(nt));
-  std::vector<mfem::Vector> JE(K, mfem::Vector(nt));
-  for (int k = 0; k < K; k++)
-  {
-    Kenv().Mult(W[k], KW[k]);
+    V[k] = &q[k];
     D[k] = W[k];
     if (src[k].HasA())
     {
@@ -92,6 +74,35 @@ void SubstructuringSolver::Impl::ComputeSourceModes(const std::vector<int> &ids,
     {
       MsheetEnv().Mult(D[k], MD[k]);
     }
+    if (kin)
+    {
+      V[K + k] = &MD[k];
+    }
+  }
+  std::vector<double> hrows;
+  CondenseRows(V, hrows);
+  const int nv = static_cast<int>(V.size());
+  SH_rows.assign(static_cast<std::size_t>(gamma_nloc) * K, 0.0);
+  SHkin_rows.assign(kin ? static_cast<std::size_t>(gamma_nloc) * K : 0, 0.0);
+  for (int r = 0; r < gamma_nloc; r++)
+  {
+    for (int k = 0; k < K; k++)
+    {
+      const std::size_t q0 = static_cast<std::size_t>(r) * nv,
+                        rk = static_cast<std::size_t>(r) * K + k;
+      SH_rows[rk] = hrows[q0 + k];
+      if (kin)
+      {
+        SHkin_rows[rk] = hrows[q0 + K + k];
+      }
+    }
+  }
+  SC.assign(static_cast<std::size_t>(K) * K, 0.0);
+  SCkin.assign(kin ? static_cast<std::size_t>(K) * K : 0, 0.0);
+  std::vector<mfem::Vector> JE(K, mfem::Vector(nt));
+  for (int k = 0; k < K; k++)
+  {
+    Kenv().Mult(W[k], KW[k]);
     JE[k] = 0.0;
     if (src[k].HasJ())
     {
@@ -109,14 +120,23 @@ void SubstructuringSolver::Impl::ComputeSourceModes(const std::vector<int> &ids,
     for (int j = 0; j < K; j++)
     {
       const std::size_t ij = static_cast<std::size_t>(i) * K + j;
-      SC[ij] = (W[i] * KW[j]) + (D[i] * MD[j]) - (JE[i] * W[j]) - (JE[j] * W[i]);
+      const double kinetic = D[i] * MD[j];
+      SC[ij] = (W[i] * KW[j]) + kinetic - (JE[i] * W[j]) - (JE[j] * W[i]);
       SB[ij] = b[i] * W[j];
+      if (kin)
+      {
+        SCkin[ij] = kinetic;
+      }
     }
   }
   if (K > 0)
   {
     MPI_Allreduce(MPI_IN_PLACE, SC.data(), K * K, MPI_DOUBLE, MPI_SUM, comm);
     MPI_Allreduce(MPI_IN_PLACE, SB.data(), K * K, MPI_DOUBLE, MPI_SUM, comm);
+    if (kin)
+    {
+      MPI_Allreduce(MPI_IN_PLACE, SCkin.data(), K * K, MPI_DOUBLE, MPI_SUM, comm);
+    }
   }
   src_ready = true;
 }
@@ -544,6 +564,28 @@ void SubstructuringSolver::Impl::ApplyAeeInvMulti(
   MaskToEnvInterior(Y);
 }
 
+void SubstructuringSolver::Impl::CondenseRows(const std::vector<const mfem::Vector *> &V,
+                                              std::vector<double> &rows) const
+{
+  // The condensations (rank 0, nG x |V|, column-major), to the owners of their rows.
+  const int nG = nG_global, nv = static_cast<int>(V.size());
+  std::vector<double> g, full;
+  env_schur->Condense(V, g);
+  if (Mpi::Root(parent_fes.GetComm()))
+  {
+    full.resize(static_cast<std::size_t>(nG) * nv);
+    for (int k = 0; k < nv; k++)
+    {
+      for (int q = 0; q < nG; q++)
+      {
+        full[static_cast<std::size_t>(q) * nv + k] =
+            g[q + static_cast<std::size_t>(nG) * k];
+      }
+    }
+  }
+  ScatterRows(full, nv, rows);
+}
+
 void SubstructuringSolver::Impl::MaskToEnvInterior(
     const std::vector<mfem::Vector *> &Y) const
 {
@@ -563,7 +605,6 @@ void SubstructuringSolver::Impl::MaskToEnvInterior(
 void SubstructuringSolver::Impl::MaterializeWithEnergy()
 {
   const int nG = nG_global, nloc = gamma_nloc, off = gamma_off;
-  const bool root = Mpi::Root(parent_fes.GetComm());
   // Owned interface column -> local true DOF.
   std::vector<int> col_to_dof(nloc, -1);
   for (int i = 0; i < nt; i++)
@@ -576,9 +617,10 @@ void SubstructuringSolver::Impl::MaterializeWithEnergy()
   // S_E from the partial factorization when there is one, else from the solves of the
   // lifts y = A_EE^-1 (A_env e_c)|_E: S_E e_c = (A_env e_c)|_Gamma - (A_env y)|_Gamma. The
   // energy operator S^K = S_E - P^T D P, for the lift p = e_c - y, takes the condensation
-  // P^T D p onto Gamma (by the forward elimination of a partial factorization). The first
-  // solve of a direct factor fixes its block size at kMaterializeBlock; the thin couplings
-  // are G = A_env E_Gamma and R = E_Gamma^T A_env. Each rank stores its own rows.
+  // P^T D p onto Gamma (by the forward elimination of a partial factorization), and the
+  // kinetic one S^Kin = P^T M_sheet^E P that of M_sheet^E p. The first solve of a direct
+  // factor fixes its block size at kMaterializeBlock; the thin couplings are G = A_env
+  // E_Gamma and R = E_Gamma^T A_env. Each rank stores its own rows.
   const bool partial = !env_partial.empty();
   if (partial)
   {
@@ -593,22 +635,25 @@ void SubstructuringSolver::Impl::MaterializeWithEnergy()
   }
   E.reset();
   const int B = kMaterializeBlock;
-  std::vector<Vector> t(B, Vector(nt)), v(B, Vector(nt));
-  std::vector<const mfem::Vector *> X(B), V(B);
+  const bool kin = EnvSheets();
+  std::vector<Vector> t(B, Vector(nt)), v(kin ? 2 * B : B, Vector(nt));
+  std::vector<const mfem::Vector *> X(B), V;
   std::vector<mfem::Vector *> Y(B);
   Vector ec(nloc), z(nloc);
   SK_rows.assign(static_cast<std::size_t>(nloc) * nG, 0.0);
   have_sk = true;
+  SKin_rows.assign(kin ? static_cast<std::size_t>(nloc) * nG : 0, 0.0);
+  have_skin = kin;
   const mfem::HypreParMatrix &Dm = Denv();
   // A_GG e_c on the own rows, for S_E from the solves.
   std::vector<double> agg(partial ? 0 : static_cast<std::size_t>(B) * nloc);
-  std::vector<double> g, gt, gr;
+  std::vector<double> gr;
   for (int c0 = 0; c0 < nG; c0 += B)
   {
     const int nb = std::min(B, nG - c0);
     X.resize(nb);
     Y.resize(nb);
-    V.resize(nb);
+    V.resize(kin ? 2 * nb : nb);
     for (int k = 0; k < nb; k++)
     {
       const int c = c0 + k;
@@ -644,7 +689,8 @@ void SubstructuringSolver::Impl::MaterializeWithEnergy()
               agg[static_cast<std::size_t>(k) * nloc + r] - zz[r];
         }
       }
-      // The lift p = e_c - y (t[k] holds y) and its regularization load D p.
+      // The lift p = e_c - y (t[k] holds y), its regularization load D p and its kinetic
+      // load M_sheet^E p.
       t[k].Neg();
       if (c >= off && c < off + nloc)
       {
@@ -652,28 +698,24 @@ void SubstructuringSolver::Impl::MaterializeWithEnergy()
       }
       Dm.Mult(t[k], v[k]);
       V[k] = &v[k];
-    }
-    // The condensations P^T D p (rank 0, nG x nb), to the owners of their rows.
-    env_schur->Condense(V, g);
-    if (root)
-    {
-      gt.resize(static_cast<std::size_t>(nG) * nb);
-      for (int k = 0; k < nb; k++)
+      if (kin)
       {
-        for (int q = 0; q < nG; q++)
-        {
-          gt[static_cast<std::size_t>(q) * nb + k] =
-              g[q + static_cast<std::size_t>(nG) * k];
-        }
+        MsheetEnv().Mult(t[k], v[B + k]);
+        V[nb + k] = &v[B + k];
       }
     }
-    ScatterRows(gt, nb, gr);
+    CondenseRows(V, gr);
+    const std::size_t nv = V.size();
     for (int k = 0; k < nb; k++)
     {
       for (int r = 0; r < nloc; r++)
       {
         const std::size_t q = static_cast<std::size_t>(r) * nG + c0 + k;
-        SK_rows[q] = S_rows[q] - gr[static_cast<std::size_t>(r) * nb + k];
+        SK_rows[q] = S_rows[q] - gr[r * nv + k];
+        if (kin)
+        {
+          SKin_rows[q] = gr[r * nv + nb + k];
+        }
       }
     }
   }

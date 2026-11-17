@@ -174,6 +174,11 @@ const mfem::HypreParMatrix &SubstructuringSolver::Impl::MsheetEnv()
   return *M_sheet_env;
 }
 
+bool SubstructuringSolver::Impl::EnvSheets()
+{
+  return has_sheets && MsheetEnv().FNorm() > 0.0;
+}
+
 std::vector<mfem::Vector>
 SubstructuringSolver::Impl::EnvApply(const std::vector<const mfem::Vector *> &X,
                                      bool volume) const

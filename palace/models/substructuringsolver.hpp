@@ -57,20 +57,25 @@ public:
   // ports, linked_flux(c, f) = l_c^T u_f for the flux states f. If fields is non-null, it
   // receives the full fields of the first n_fields states; if region_fields is non-null
   // (with a saved model), it receives the solutions of all states on the region and
-  // interface (zero on the environment interior).
+  // interface (zero on the environment interior). If volume_energy is non-null, it receives
+  // the energies of the fields in the volume, (E_kk - (u_k - a_k)^T M_sheet (u_k - a_k)) /
+  // 2 (without the kinetic energy of the London sheets), which normalize the error
+  // indicators as in the regular solve.
   mfem::DenseMatrix MagnetostaticEnergyMatrix(
       const std::vector<int> &current_ids, const std::vector<Vector> &J,
       const std::vector<int> &flux_ids, const std::vector<Vector> &a,
       const std::vector<Vector> &apertures, mfem::DenseMatrix *linked_flux,
       std::vector<Vector> *fields = nullptr, int n_fields = 0,
-      std::vector<Vector> *region_fields = nullptr);
+      std::vector<Vector> *region_fields = nullptr,
+      std::vector<double> *volume_energy = nullptr);
 
   // Error indicators for adaptive refinement of the region only: Palace's gradient-flux
   // (electrostatics) or curl-flux (magnetostatics) estimator on the region solutions of
-  // CapacitanceMatrix or MagnetostaticEnergyMatrix, normalized by the energies E_kk / 2,
-  // and zero on the environment.
+  // CapacitanceMatrix or MagnetostaticEnergyMatrix, normalized by the given energies (as in
+  // the regular solve, the energies of the fields in the volume), and zero on the
+  // environment.
   ErrorIndicator RegionErrorIndicator(const std::vector<Vector> &region_fields,
-                                      const mfem::DenseMatrix &E) const;
+                                      const std::vector<double> &energies) const;
 
   // Terminal indices (sorted).
   std::vector<int> TerminalIndices() const;
@@ -154,13 +159,15 @@ private:
   };
 
   // Energy G of magnetostatic sources (see MagnetostaticEnergyMatrix). If work is non-null,
-  // it receives the source works b_k^T u_k; fun->values receives l_k^T u_j.
+  // it receives the source works b_k^T u_k; fun->values receives l_k^T u_j; kinetic
+  // receives the kinetic parts (u_k - a_k)^T M_sheet (u_k - a_k) of the G_kk.
   mfem::DenseMatrix SourceEnergyMatrix(const std::vector<int> &ids,
                                        const std::vector<Source> &src,
                                        std::vector<Vector> *fields, int n_fields,
                                        std::vector<double> *work = nullptr,
                                        Functionals *fun = nullptr,
-                                       std::vector<Vector> *region_fields = nullptr);
+                                       std::vector<Vector> *region_fields = nullptr,
+                                       std::vector<double> *kinetic = nullptr);
 
   struct Impl;
   std::unique_ptr<Impl> impl;

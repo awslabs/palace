@@ -449,6 +449,12 @@ struct SubstructuringSolver::Impl
   // interface DOFs, so their emptiness must not gate collectives).
   bool have_sk = false;
   std::unique_ptr<substructuring::MaterializedDtN> mat_dtn_K;
+  // Kinetic energy interface operator S^Kin = P^T M_sheet^E P of the London sheets of the
+  // environment (distributed like S_rows), materialized with S^K when the environment has
+  // sheets (EnvSheets); the region's kinetic energy is that of its solution.
+  std::vector<double> SKin_rows;
+  bool have_skin = false;
+  std::unique_ptr<substructuring::MaterializedDtN> mat_dtn_Kin;
   bool env_built = false;  // environment interior solver set up
 
   Impl(const IoData &iodata, const std::vector<std::unique_ptr<Mesh>> &mesh);
@@ -486,6 +492,8 @@ struct SubstructuringSolver::Impl
   // Sheet masses on both sides and on the environment side.
   const mfem::HypreParMatrix &Msheet();
   const mfem::HypreParMatrix &MsheetEnv();
+  // Whether the environment has London sheets (collective).
+  bool EnvSheets();
 
   // Y_k = A_env X_k for true-DOF vectors X_k (M_sheet^E X_k without the volume terms), by
   // the assembled operator if there is one, else matrix-free (set up on first use).
@@ -538,11 +546,12 @@ struct SubstructuringSolver::Impl
 
   // Source modes of magnetostatic sources (see ComputeSourceModes): ids, fingerprints of
   // the environment sources, the interface loads g and energy couplings h (Gamma rows), the
-  // constants c and the works B_ij = b^E_i^T W_j. Only sources with an environment part
-  // have modes.
+  // constants c and the works B_ij = b^E_i^T W_j, and with S^Kin their kinetic parts
+  // h^kin_k = Z^T M_sheet^E (W_k - a_k) (Gamma rows) and c^kin_ij = (W_i - a_i)^T
+  // M_sheet^E (W_j - a_j). Only sources with an environment part have modes.
   static constexpr int kSourceModesMagic = 0x33435253;  // "SRC3"
   std::vector<int> src_ids;
-  std::vector<double> src_fp, SG_rows, SH_rows, SC, SB;
+  std::vector<double> src_fp, SG_rows, SH_rows, SC, SB, SHkin_rows, SCkin;
   bool src_ready = false;
 
   // Environment source b^E = M_sheet^E a + J|_E (J on the environment interior; its
@@ -563,8 +572,8 @@ struct SubstructuringSolver::Impl
   //   h_k = Z^T [(A_env - D_env) W_k - b^E_k],
   //   c_ij = W_i^T K_env W_j + (W_i - a_i)^T M_sheet^E (W_j - a_j) - J_i^E^T W_j
   //          - J_j^E^T W_i
-  // (the environment part of the energy of SourceEnergyMatrix). Two batched environment
-  // solves per source.
+  // (the environment part of the energy of SourceEnergyMatrix). A batched environment
+  // solve and a condensation per source (two with S^Kin, for the kinetic parts).
   void ComputeSourceModes(const std::vector<int> &ids, const std::vector<Source> &src);
 
   // Whether the modes cover every source with an environment part (need[j]; same id and
@@ -650,13 +659,16 @@ struct SubstructuringSolver::Impl
   // offline run], [kEnvFpMagic][environment fingerprint, 11 doubles], [kEpsMagic][the
   // magnetostatic regularization eps] (magnetostatics), [kEnvMeshMagic][ElementMoments of
   // the environment and of its elements in the mesh of the region, 12 doubles],
-  // [kSKenMagic][S^K nG x nG] (magnetostatics), [kModesMagic][K][ids][fingerprints
-  // 2K][G nG x K][Cmode KxK] (electrostatics), and
-  // [kSourceModesMagic][K][ids][fingerprints 2K][g nG x K][h nG x K][c KxK][B KxK].
+  // [kSKenMagic][S^K nG x nG] (magnetostatics), [kSKinMagic][S^Kin nG x nG] (with London
+  // sheets in the environment), [kModesMagic][K][ids][fingerprints 2K][G nG x K][Cmode
+  // KxK] (electrostatics), and [kSourceModesMagic][K][ids][fingerprints 2K][g nG x K][h nG
+  // x K][c KxK][B KxK] (then [h^kin nG x K][c^kin KxK] in a model with S^Kin, which
+  // precedes them).
   static constexpr int kModelMagic = 0x4c444d53;  // "SMDL"
-  static constexpr int kModelVersion = 3;
+  static constexpr int kModelVersion = 4;
   static constexpr int kHeadInts = 5;
   static constexpr int kSKenMagic = 0x4e454b53;     // "SKEN"
+  static constexpr int kSKinMagic = 0x4e494b53;     // "SKIN"
   static constexpr int kModesMagic = 0x33444f4d;    // "MOD3"
   static constexpr int kEnvFpMagic = 0x33564e45;    // "ENV3"
   static constexpr int kLengthMagic = 0x434e454c;   // "LENC"
@@ -741,7 +753,9 @@ struct SubstructuringSolver::Impl
   // one.
   void CheckEnvFingerprint();
 
-  void AppendSK(const std::string &path) const;
+  // Append an interface operator (distributed rows, like S_rows) as the section magic.
+  void AppendOperator(const std::string &path, int magic,
+                      const std::vector<double> &rows) const;
   void AppendModes(const std::string &path);
 
   // Load the sections at byte offset `pos` (collective). Interface rows are mapped onto the
@@ -792,6 +806,11 @@ struct SubstructuringSolver::Impl
   void ApplyAeeInvMulti(const std::vector<const mfem::Vector *> &X,
                         const std::vector<mfem::Vector *> &Y) const;
 
+  // The condensations P^T v_k = v_k|_Gamma - A_Gamma,E A_EE^-1 v_k|_E on the owned
+  // interface rows (row-major, width |V|), by the environment solver. Collective.
+  void CondenseRows(const std::vector<const mfem::Vector *> &V,
+                    std::vector<double> &rows) const;
+
   // Zero the entries outside the environment interior.
   void MaskToEnvInterior(const std::vector<mfem::Vector *> &Y) const;
 
@@ -804,9 +823,10 @@ struct SubstructuringSolver::Impl
   void LoadModel(const std::string &model_path, int sig_w);
 
   // Materialize S_E (from the partial factorization, or S_E e_c = (A_env e_c)|_Gamma -
-  // (A_env A_EE^-1 (A_env e_c)|_E)|_Gamma) and S^K = S_E - P^T D P, for a magnetostatic
-  // model to save: by batched multi-RHS environment solves for the lifts P e_c, and the
-  // condensations P^T D P e_c. Collective.
+  // (A_env A_EE^-1 (A_env e_c)|_E)|_Gamma), S^K = S_E - P^T D P and, with London sheets in
+  // the environment, S^Kin = P^T M_sheet^E P, for a magnetostatic model to save: by batched
+  // multi-RHS environment solves for the lifts P e_c, and the condensations P^T D P e_c and
+  // P^T M_sheet^E P e_c. Collective.
   void MaterializeWithEnergy();
 
   // Save S_E, the region mesh and the sections to the model file. Collective.

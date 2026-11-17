@@ -137,7 +137,8 @@ from layout tools are often coarse and meant to be refined by
 Adaptive refinement in an `"Offline"` run is rejected (use step 1). The indicators are those of
 the regular simulation's estimator (the gradient flux in electrostatics, the curl flux in
 magnetostatics), with the flux recovery restricted to the region, so that the unknown
-environment field does not affect them near the interface.
+environment field does not affect them near the interface, and normalized as there by the energy
+of the field in the volume (without the kinetic energy of the London sheets).
 
 ### Solvers
 
@@ -154,7 +155,9 @@ from a single partial factorization, by MUMPS or, without it, by STRUMPACK (with
 complement interface that the superbuild and the Spack package patch in), unless `"Type"` names
 another solver. A saved magnetostatic model also holds the energy operator of the environment, which
 takes an environment solve and a condensation (the forward elimination of the partial factorization,
-half a solve) per interface unknown. The MUMPS factorizations follow the
+half a solve) per interface unknown, and with London sheets in the environment their kinetic energy
+operator, for another condensation per interface unknown and as many values again in the model. The
+MUMPS factorizations follow the
 [`"ColumnOrdering"`](../config/reference.md#config-solver-linear-columnordering) of
 `config["Solver"]["Linear"]`; with `"ParMETIS"` or `"PTScotch"`, those without a Schur complement
 are analyzed in parallel. When running MUMPS with MPI, setting `OPENBLAS_NUM_THREADS=1` (or the

@@ -518,6 +518,11 @@ void SubstructuringSolver::CondenseEnvironment()
     impl->mat_dtn_K = std::make_unique<substructuring::MaterializedDtN>(
         impl->SK_rows, impl->gamma_off, impl->gamma_global, impl->nG_global, comm);
   }
+  if (impl->have_skin)
+  {
+    impl->mat_dtn_Kin = std::make_unique<substructuring::MaterializedDtN>(
+        impl->SKin_rows, impl->gamma_off, impl->gamma_global, impl->nG_global, comm);
+  }
 
   const std::string region_solver = impl->SetUpRegionSolver();
 
@@ -758,7 +763,8 @@ mfem::DenseMatrix SubstructuringSolver::MagnetostaticEnergyMatrix(
     const std::vector<int> &current_ids, const std::vector<Vector> &J,
     const std::vector<int> &flux_ids, const std::vector<Vector> &a,
     const std::vector<Vector> &apertures, mfem::DenseMatrix *linked_flux,
-    std::vector<Vector> *fields, int n_fields, std::vector<Vector> *region_fields)
+    std::vector<Vector> *fields, int n_fields, std::vector<Vector> *region_fields,
+    std::vector<double> *volume_energy)
 {
   MFEM_VERIFY(impl->magnetostatic,
               "MagnetostaticEnergyMatrix needs a magnetostatic model!");
@@ -788,9 +794,10 @@ mfem::DenseMatrix SubstructuringSolver::MagnetostaticEnergyMatrix(
     fun.ids.push_back(-current_ids[k]);
     fun.l.push_back(&apertures[k]);
   }
-  std::vector<double> work;
-  mfem::DenseMatrix G = SourceEnergyMatrix(ids, src, fields, n_fields, &work,
-                                           fun.l.empty() ? nullptr : &fun, region_fields);
+  std::vector<double> work, kinetic;
+  mfem::DenseMatrix G =
+      SourceEnergyMatrix(ids, src, fields, n_fields, &work, fun.l.empty() ? nullptr : &fun,
+                         region_fields, volume_energy ? &kinetic : nullptr);
 
   // Surface currents: G_ij = u_i^T L u_j - J_i^T u_j - J_j^T u_i = -E_ij at the solution,
   // stationary in the regularization. A current that does not close has a null-space part,
@@ -830,13 +837,21 @@ mfem::DenseMatrix SubstructuringSolver::MagnetostaticEnergyMatrix(
       }
     }
   }
+  if (volume_energy)
+  {
+    volume_energy->resize(nc + nf);
+    for (int k = 0; k < nc + nf; k++)
+    {
+      (*volume_energy)[k] = 0.5 * (E(k, k) - kinetic[k]);
+    }
+  }
   return E;
 }
 
 mfem::DenseMatrix SubstructuringSolver::SourceEnergyMatrix(
     const std::vector<int> &ids, const std::vector<Source> &src,
     std::vector<Vector> *fields, int n_fields, std::vector<double> *work, Functionals *fun,
-    std::vector<Vector> *region_fields)
+    std::vector<Vector> *region_fields, std::vector<double> *kinetic)
 {
   MFEM_VERIFY(impl->mat_dtn, "CondenseEnvironment must be called before solving!");
   const int nt = impl->nt;
@@ -891,8 +906,9 @@ mfem::DenseMatrix SubstructuringSolver::SourceEnergyMatrix(
     }
     // The kinetic and current terms, the source works b_k^T u_k and the functionals,
     // reduced together.
-    const std::size_t nn = static_cast<std::size_t>(n) * n;
-    std::vector<double> loc(nn + n + static_cast<std::size_t>(nl) * n, 0.0);
+    const std::size_t nn = static_cast<std::size_t>(n) * n,
+                      nk = nn + n + static_cast<std::size_t>(nl) * n;
+    std::vector<double> loc(nk + n, 0.0);
     for (int i = 0; i < n; i++)
     {
       for (int j = 0; j < n; j++)
@@ -904,6 +920,7 @@ mfem::DenseMatrix SubstructuringSolver::SourceEnergyMatrix(
       {
         loc[nn + n + l * n + i] = *fun->l[l] * u[i];
       }
+      loc[nk + i] = d[i] * Md[i];
     }
     MPI_Allreduce(MPI_IN_PLACE, loc.data(), static_cast<int>(loc.size()), MPI_DOUBLE,
                   MPI_SUM, comm);
@@ -922,6 +939,10 @@ mfem::DenseMatrix SubstructuringSolver::SourceEnergyMatrix(
     if (work)
     {
       work->assign(loc.begin() + nn, loc.begin() + nn + n);
+    }
+    if (kinetic)
+    {
+      kinetic->assign(loc.begin() + nk, loc.end());
     }
     if (fields)
     {
@@ -971,6 +992,8 @@ mfem::DenseMatrix SubstructuringSolver::SourceEnergyMatrix(
   { return col[j] < 0 ? 0.0 : impl->SG_rows[row(i) + col[j]]; };
   auto h_of = [&](int i, int j)
   { return col[j] < 0 ? 0.0 : impl->SH_rows[row(i) + col[j]]; };
+  auto hkin_of = [&](int i, int j)
+  { return col[j] < 0 ? 0.0 : impl->SHkin_rows[row(i) + col[j]]; };
   auto pair_of = [&](const std::vector<double> &C, int i, int j)
   {
     return (col[i] < 0 || col[j] < 0) ? 0.0
@@ -1124,6 +1147,38 @@ mfem::DenseMatrix SubstructuringSolver::SourceEnergyMatrix(
     for (int j = 0; j < n; j++)
     {
       E(i, j) += pair_of(impl->SC, i, j);
+    }
+  }
+  if (kinetic)
+  {
+    // (u_k - a_k)^T M_sheet^R (u_k - a_k) in the region, and in the environment u_k,G^T
+    // S^Kin u_k,G + 2 u_k,G^T h^kin_k + c^kin_kk.
+    kinetic->assign(n, 0.0);
+    Vector u(nt), Qu(nt), Qug;
+    u = 0.0;
+    for (int k = 0; k < n; k++)
+    {
+      double e = dc[k] * Mdc[k];
+      if (impl->mat_dtn_Kin)
+      {
+        u.SetSubVector(gm, ug[k]);  // S^Kin reads the interface entries only
+        impl->mat_dtn_Kin->Mult(u, Qu);
+        Qu.GetSubVector(gm, Qug);
+        e += ug[k] * Qug;
+        for (int q = 0; q < gm.Size(); q++)
+        {
+          e += 2.0 * ug[k](q) * hkin_of(gm[q], k);
+        }
+      }
+      (*kinetic)[k] = e;
+    }
+    MPI_Allreduce(MPI_IN_PLACE, kinetic->data(), n, MPI_DOUBLE, MPI_SUM, comm);
+    if (impl->mat_dtn_Kin)
+    {
+      for (int k = 0; k < n; k++)
+      {
+        (*kinetic)[k] += pair_of(impl->SCkin, k, k);
+      }
     }
   }
   for (int l = 0; l < nl; l++)
@@ -1320,10 +1375,10 @@ SubstructuringSolver::CapacitanceMatrix(const std::vector<int> &terminal_indices
 
 ErrorIndicator
 SubstructuringSolver::RegionErrorIndicator(const std::vector<Vector> &region_fields,
-                                           const mfem::DenseMatrix &E) const
+                                           const std::vector<double> &energies) const
 {
   BlockTimer bt(Timer::ESTIMATION);
-  MFEM_VERIFY(E.Height() == static_cast<int>(region_fields.size()),
+  MFEM_VERIFY(energies.size() == region_fields.size(),
               "RegionErrorIndicator: one energy per field!");
   const auto &iodata = impl->iodata;
   const int order = iodata.solver.order, dim = impl->parent.Dimension();
@@ -1360,8 +1415,7 @@ SubstructuringSolver::RegionErrorIndicator(const std::vector<Vector> &region_fie
       sgf.GetTrueDofs(u);
       f = 0.0;
       D.AddMult(u, f, s);
-      const double energy = 0.5 * E(static_cast<int>(k), static_cast<int>(k));
-      estimator.AddErrorIndicator(f, energy, region);
+      estimator.AddErrorIndicator(f, energies[k], region);
     }
   };
   if (impl->magnetostatic)
