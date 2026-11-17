@@ -19,10 +19,10 @@ this file are the mode quality factors and errors (absolute and backward) comput
 eigenpair.
 
 With adaptive mesh refinement, the eigenvalue solves of later adaptation iterations can
-start from the eigenmodes of the previous one, transferred to the refined mesh, instead of
-the start vector of
-[`config["Solver"]["Eigenmode"]["StartVector"]`](../config/reference.md#config-solver-eigenmode-startvector),
-and then need fewer Krylov restarts.
+start from the eigenmodes of the previous one, transferred to the refined mesh, and then
+need fewer Krylov restarts. Setting
+[`config["Solver"]["Eigenmode"]["StartVector"]`](../config/reference.md#config-solver-eigenmode-startvector)
+to `false` turns this off.
 
 Calculations related to
 [energy-participation ratio (EPR) quantization](https://www.nature.com/articles/s41534-021-00461-8)

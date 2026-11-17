@@ -21,16 +21,15 @@ class VectorFieldTransfer;
 class EigenSolver : public BaseSolver
 {
 private:
-  // Combination of the eigenvectors of the previous adaptation iteration (and the second
-  // block of the linearization of quadratic problems), kept through the refinement and
-  // rebalancing of the finest mesh for the starting vector of the next eigenvalue solve,
-  // the number of eigenvectors in it, and the number of iterations (Krylov cycles) of the
-  // last solve without a warm start.
+  // Combination of the eigenvectors of the previous adaptation iteration (and of λ x for
+  // quadratic problems), kept through the refinement and rebalancing of the finest mesh to
+  // start the next eigenvalue solve, and the number of eigenvectors in it.
   mutable std::unique_ptr<VectorFieldTransfer> prev_eigenvectors;
   mutable int prev_num_eigenvectors = 0;
-  mutable int last_cold_its = -1;
 
-  // Number of solves so far: the initial one, then one per adaptation iteration.
+  // Number of Krylov cycles of the last solve without a warm start, and number of solves so
+  // far (the initial one, then one per adaptation iteration).
+  mutable int last_cold_its = -1;
   mutable int num_solves = 0;
 
   std::pair<ErrorIndicator, long long int>

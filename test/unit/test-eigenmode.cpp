@@ -233,11 +233,11 @@ TridiagonalEigenTestResult SolveTridiagonalEigenTest(int n, double s, int nev, i
 
 TEST_CASE("Eigenmode warm start", "[eigenmode][Serial]")
 {
-  // A start vector which combines the wanted eigenvectors converges within one or two
-  // Krylov cycles, with eigenvalues as accurate as the linear solves of the first cycle
-  // only, since the error estimate of the eigenvalue solver does not see their error. A
-  // smaller linear solver tolerance for the first cycle gives the accuracy of exact solves.
-  // The shift is below the spectrum, so that GMRES converges for any tolerance.
+  // From a start vector combining the wanted eigenvectors, the eigenvalues are only as
+  // accurate as the linear solves of the first Krylov cycle, whose error the error estimate
+  // of the eigenvalue solver does not see: a smaller tolerance for that cycle gives the
+  // accuracy of exact solves. The shift is below the spectrum, so that GMRES converges for
+  // any tolerance.
   constexpr int n = 120, nev = 2, ncv = 8;
   const double s = 0.0, tol = 1.0e-10, exact_tol = 1.0e-12, lin_tol = 1.0e-4;
   ComplexVector v0(n);
@@ -264,9 +264,9 @@ TEST_CASE("Eigenmode warm start", "[eigenmode][Serial]")
   CHECK(err > 100.0 * tol);
   CHECK(err_tight <= tol);
 
-  // The tolerance of the later cycles is restored: a solve from a random vector with the
-  // smaller tolerance for the first cycle takes fewer linear solver iterations than with it
-  // for all cycles.
+  // The tolerance is restored after the first cycle: from a random vector, the solve takes
+  // more linear solver iterations than without the smaller tolerance, and fewer than with
+  // it for all cycles.
   const auto cold = SolveTridiagonalEigenTest(n, s, nev, ncv, tol, lin_tol, v0);
   const auto cold_tight =
       SolveTridiagonalEigenTest(n, s, nev, ncv, tol, lin_tol, v0, exact_tol);

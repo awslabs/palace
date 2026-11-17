@@ -589,8 +589,8 @@ int SlepcEPSSolverBase::Solve()
 {
   MFEM_VERIFY(A0 && A1 && opInv, "Operators are not set for SlepcEPSSolverBase!");
 
-  // A tighter tolerance for the first Krylov cycle is restored by a monitor after the first
-  // restart.
+  // Tighten the linear solver tolerance for the first Krylov cycle: a monitor restores it
+  // after the first restart.
   lin_tol = opInv->GetRelTol();
   first_cycle = (first_cycle_tol > 0.0 && first_cycle_tol < lin_tol);
   if (first_cycle)
@@ -874,9 +874,8 @@ void SlepcPEPLinearSolver::SetInitialSpace(const ComplexVector &v)
 void SlepcPEPLinearSolver::SetInitialSpaceBlocks(const ComplexVector &v,
                                                  const ComplexVector &v_lambda)
 {
-  MFEM_VERIFY(
-      A0 && A1,
-      "Must call SetOperators before using SetInitialSpace for SLEPc eigenvalue solver!");
+  MFEM_VERIFY(A0 && A1, "Must call SetOperators before using SetInitialSpaceBlocks for "
+                        "SLEPc eigenvalue solver!");
   if (!v0)
   {
     PalacePetscCall(MatCreateVecs(A0, nullptr, &v0));

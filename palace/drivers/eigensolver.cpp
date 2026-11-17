@@ -57,10 +57,10 @@ bool AddWarmStartEigenvector(MPI_Comm comm, const ComplexVector &x,
   return true;
 }
 
-// Starting vector v of a warm-started solve, from the combination of the eigenvectors of
-// the previous adaptation iteration (fields 0 and 1 of prev_vectors for its real and
-// imaginary parts), and, if v_lambda is given, the second block v_lambda (fields 2 and 3):
-// v gets eta times the default starting vector r, relative, for modes not found before.
+// Starting vector v of a warm-started solve, and the second block v_lambda if given, from
+// the combinations of the previous adaptation iteration (fields 0, 1 and 2, 3 of
+// prev_vectors, as real and imaginary parts), plus eta ‖v‖ / ‖r‖ times the default
+// starting vector r for modes not found before.
 void GetWarmStartVector(const VectorFieldTransfer &prev_vectors, SpaceOperator &space_op,
                         const ComplexVector &r, double eta, ComplexVector &v,
                         ComplexVector *v_lambda)
@@ -398,17 +398,18 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   }
 
   // With adaptive mesh refinement, the SLEPc Krylov-Schur solver can start from the
-  // eigenvectors of the previous solve (warm start). The more accurate linear solves of its
-  // first Krylov cycle can cost more than the cycle a warm start saves on a solve which
-  // takes two cycles without it: the eigenpairs are kept only if the last solve without a
-  // warm start took three cycles or more, and only if the adaptation goes on.
+  // eigenvectors of the previous solve (warm start). Its more accurate first Krylov cycle
+  // can cost more than a warm start saves on solves of two cycles: the eigenvectors are
+  // kept only if the last solve without a warm start took three cycles or more, and only if
+  // the adaptation goes on.
   constexpr int min_cold_its = 3;
   const auto &eigenmode = iodata.solver.eigenmode;
   const auto &refinement = iodata.model.refinement;
   const int adapt_it = num_solves++;
+  const bool blocks = (C || has_A2);  // The linearization also takes the block λ x
   const bool can_warm_start = eigenmode.init_v0 && type == EigenSolverBackend::SLEPC &&
                               nonlinear_type != NonlinearEigenSolver::SLP &&
-                              (!(C || has_A2) || eigenmode.pep_linear) &&
+                              (!blocks || eigenmode.pep_linear) &&
                               space_op.GetNDSpace().GetParMesh().Nonconforming();
 
   // Set up the initial space for the eigenvalue solve. Satisfies boundary conditions and is
@@ -425,63 +426,49 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     {
       space_op.GetRandomInitialVector(v0);
     }
-    const bool warm_start = prev_eigenvectors && prev_eigenvectors->IsCurrent(
-                                                     space_op.GetNDSpace().GetParMesh());
-    if (!warm_start && adapt_it > 0 && can_warm_start && last_cold_its >= 0 &&
-        last_cold_its < min_cold_its)
+    if (prev_eigenvectors &&
+        prev_eigenvectors->IsCurrent(space_op.GetNDSpace().GetParMesh()))
     {
-      Mpi::Print(" No warm start: the last solve without one took {:d} Krylov cycle{}\n",
-                 last_cold_its, (last_cold_its > 1) ? "s" : "");
-    }
-    if (warm_start)
-    {
-      // The linearization of a quadratic problem also takes the second block λ x.
+      num_warm = prev_num_eigenvectors;
+      Mpi::Print(" Using starting vector from {:d} eigenvectors of the previous adaptation "
+                 "iteration\n",
+                 num_warm);
       constexpr double eta = 1.0e-3;
-      const bool blocks = (C || has_A2);
       ComplexVector v, v_lambda;
       GetWarmStartVector(*prev_eigenvectors, space_op, v0, eta, v,
                          blocks ? &v_lambda : nullptr);
-      num_warm = prev_num_eigenvectors;
-      if (num_warm > 0)
+      if (divfree)
       {
-        Mpi::Print(
-            " Using starting vector from {:d} eigenvectors of the previous adaptation "
-            "iteration\n",
-            num_warm);
-        if (divfree)
-        {
-          divfree->Mult(v);
-          if (blocks)
-          {
-            divfree->Mult(v_lambda);
-          }
-        }
+        divfree->Mult(v);
         if (blocks)
         {
-          eigen->SetInitialSpaceBlocks(v, v_lambda);  // Copies the vectors
-        }
-        else
-        {
-          eigen->SetInitialSpace(v);  // Copies the vector
-        }
-
-        // A warm-started solve converges after few linear solves, whose error stays in the
-        // vectors kept at the restarts and is not seen by the error estimate of the
-        // eigenvalue solver: solve those of the first Krylov cycle with a 100 times smaller
-        // tolerance, but not below 1e-3 times the tolerance of the eigenvalue solve (that
-        // of the initial guess for the hybrid nonlinear solver) or 1e-12, so that there is
-        // nothing to tighten when the linear solver tolerance is already that small.
-        const double lin_tol = iodata.solver.linear.tol;
-        const double first_tol =
-            std::min(lin_tol, std::max({1.0e-2 * lin_tol, 1.0e-3 * tol, 1.0e-12}));
-        if (first_tol < lin_tol)
-        {
-          eigen->SetFirstCycleLinearSolverTol(first_tol);
+          divfree->Mult(v_lambda);
         }
       }
+      if (blocks)
+      {
+        eigen->SetInitialSpaceBlocks(v, v_lambda);  // Copies the vectors
+      }
+      else
+      {
+        eigen->SetInitialSpace(v);  // Copies the vector
+      }
+
+      // A warm-started solve converges after few linear solves, and their error, kept in
+      // the Krylov vectors through the restarts, is not seen by the error estimate of the
+      // eigenvalue solver: tighten the first cycle by 100, but not below 1e-3 times the
+      // tolerance of the eigenvalue solve (of the initial guess for the hybrid nonlinear
+      // solver) or 1e-12.
+      eigen->SetFirstCycleLinearSolverTol(
+          std::max({1.0e-2 * iodata.solver.linear.tol, 1.0e-3 * tol, 1.0e-12}));
     }
-    if (num_warm == 0)
+    else
     {
+      if (adapt_it > 0 && can_warm_start && last_cold_its < min_cold_its)
+      {
+        Mpi::Print(" No warm start: the last solve without one took {:d} Krylov cycle{}\n",
+                   last_cold_its, (last_cold_its > 1) ? "s" : "");
+      }
       Mpi::Print(" Using {} starting vector\n",
                  eigenmode.init_v0_const ? "constant" : "random");
       if (divfree)
@@ -640,19 +627,17 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   std::vector<std::complex<double>> eigenvalues(num_report);
   std::vector<double> errors_bkwd(num_report), errors_abs(num_report);
 
-  // Combine the converged eigenvectors for the starting vector of the next adaptation
-  // iteration: only the combinations are kept through the refinement and rebalancing of the
-  // nonconforming mesh, which is done in place.
+  // Combine the converged eigenvectors to start the next adaptation iteration: only the
+  // combinations follow the refinement and rebalancing of the mesh.
   const bool combine_eigenvectors =
       can_warm_start && last_cold_its >= min_cold_its && adapt_it < refinement.max_it;
-  const bool blocks = (C || has_A2);
   ComplexVector v_comb, v_comb_lambda;
   int num_combined = 0;
   if (combine_eigenvectors)
   {
     for (auto *u : {&v_comb, &v_comb_lambda})
     {
-      if (u != &v_comb_lambda || blocks)
+      if (u == &v_comb || blocks)
       {
         u->SetSize(Curl.Width());
         u->UseDevice(true);
@@ -764,7 +749,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         space_op.GetNDSpace().GetParMesh(), iodata.solver.order);
     for (auto *u : {&v_comb, &v_comb_lambda})
     {
-      if (u != &v_comb_lambda || blocks)
+      if (u == &v_comb || blocks)
       {
         prev_eigenvectors->AddField(space_op.GetNDSpace().Get(), u->Real());
         prev_eigenvectors->AddField(space_op.GetNDSpace().Get(), u->Imag());

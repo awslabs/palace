@@ -131,9 +131,8 @@ public:
     SetInitialSpace(v);
   }
 
-  // Relative tolerance of the linear solves of the first Krylov cycle of the next solve
-  // (none if tol <= 0): with a warm start, the Ritz values of that cycle are set by its
-  // first linear solves. Not all solvers support it.
+  // Relative tolerance of the linear solves of the first Krylov cycle, used if positive and
+  // smaller than that of the linear solver. Not all solvers support it.
   virtual void SetFirstCycleLinearSolverTol(double tol) {}
 
   // Number of iterations (restarts) of the last solve, or -1 if not available.
