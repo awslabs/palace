@@ -1860,9 +1860,40 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
                 .complex_coarse_solve);
     }
     {
+      // A real-valued problem does not use the option: it is left as it is, without a
+      // warning.
       const auto linear = Resolve("Magnetostatic", {{"Linear", Linear("Default")}});
       CHECK(linear.type == LinearSolver::AMS);
-      CHECK_FALSE(linear.complex_coarse_solve);
+      CHECK(linear.complex_coarse_solve);
+    }
+    for (const bool pc_mat_real : {false, true})
+    {
+      // The wave ports of a driven problem keep the inherited value for their mode solver,
+      // which uses a sparse direct solver, unless PCMatReal overrides it. An explicit
+      // per-port value is kept as it is.
+      INFO("PCMatReal " << pc_mat_real);
+      auto linear = Linear("AMS");
+      linear["PCMatReal"] = pc_mat_real;
+      json config = {
+          {"Problem", {{"Type", "Driven"}, {"Output", "test_output"}}},
+          {"Model", {{"Mesh", "test.msh"}}},
+          {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+          {"Boundaries",
+           {{"WavePort",
+             {{{"Index", 1}, {"Attributes", {2}}, {"Excitation", true}},
+              {{"Index", 2}, {"Attributes", {3}}, {"ComplexCoarseSolve", false}}}}}},
+          {"Solver",
+           {{"Driven",
+             {{"Samples", {{{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 0.5}}}}}},
+            {"Linear", linear}}}};
+      IoData iodata(config, false);
+      CHECK_FALSE(iodata.solver.linear.complex_coarse_solve);
+      const auto &port1 = iodata.boundaries.waveport.at(1).complex_coarse_solve;
+      const auto &port2 = iodata.boundaries.waveport.at(2).complex_coarse_solve;
+      CHECK(port1.has_value() == !pc_mat_real);
+      CHECK(port1.value_or(true));
+      CHECK(port2.has_value());
+      CHECK_FALSE(port2.value_or(true));
     }
     {
       // The default of a frequency domain problem is a sparse direct solver if there is

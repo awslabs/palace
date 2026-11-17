@@ -663,6 +663,8 @@ void IoData::CheckConfiguration()
     }
   }
   if (solver.linear.complex_coarse_solve &&
+      (problem.type == ProblemType::DRIVEN || problem.type == ProblemType::EIGENMODE ||
+       problem.type == ProblemType::BOUNDARYMODE) &&
       (solver.linear.type == LinearSolver::AMS ||
        solver.linear.type == LinearSolver::BOOMER_AMG) &&
       !(problem.type == ProblemType::BOUNDARYMODE && solver.linear.mg_max_levels == 1))
@@ -672,7 +674,18 @@ void IoData::CheckConfiguration()
     // matrix, AMS aborts and BoomerAMG is not a preconditioner with which the solves
     // converge, so they keep the real-valued approximation. A boundary mode problem
     // without multigrid replaces them by a sparse direct solver, which supports the
-    // option, as the mode solver of wave ports does.
+    // option, as the mode solver of wave ports does: the wave ports without their own
+    // "ComplexCoarseSolve" keep the inherited value (unless "PCMatReal" overrides it).
+    if (!solver.linear.pc_mat_real)
+    {
+      for (auto &[idx, port] : boundaries.waveport)
+      {
+        if (!port.complex_coarse_solve)
+        {
+          port.complex_coarse_solve = true;
+        }
+      }
+    }
     Mpi::Warning("\"ComplexCoarseSolve\" is not supported with the {} linear solver and "
                  "is disabled!\n",
                  ToString(solver.linear.type));

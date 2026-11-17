@@ -80,7 +80,8 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     arithmetic or as a real-valued system. With the AMS and BoomerAMG linear solvers, which
     cannot be given the real-valued system of twice the size (AMS aborted, and simulations
     with BoomerAMG did not converge), `"ComplexCoarseSolve": true` is now disabled with a
-    warning. SchemaVer 4-4-0 [PR 1193](https://github.com/awslabs/palace/pull/1193).
+    warning. Wave ports keep it for their mode solver, which uses a sparse direct solver.
+    SchemaVer 4-4-0 [PR 1193](https://github.com/awslabs/palace/pull/1193).
   - Added a STRUMPACK patch for
     [pghysels/STRUMPACK#171](https://github.com/pghysels/STRUMPACK/pull/171), which lowers
     the memory of the distributed STRUMPACK solver by 12 bytes per coarse matrix row on
