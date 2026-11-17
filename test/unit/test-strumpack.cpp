@@ -197,14 +197,18 @@ TEST_CASE("StrumpackSolver BLR compression of an indefinite matrix",
   MPI_Comm comm = Mpi::World();
   const int P = Mpi::Size(comm), rank = Mpi::Rank(comm);
 
-  // K - 20 M, where K and M are the stiffness and mass matrices of the Laplacian on the
+  // K - 104 M, where K and M are the stiffness and mass matrices of the Laplacian on the
   // unit cube with natural boundary conditions, for n^3 hexahedral elements of order 2
   // (tensor products of the 1D matrices), with the rows distributed in contiguous blocks.
-  // The matrix is indefinite, so that the factorization interchanges rows, and its largest
-  // separator, a plane of (2 n + 1)^2 = 625 unknowns, is above the 512 unknowns from which
-  // STRUMPACK compresses a front.
+  // Its largest separator, a plane of (2 n + 1)^2 = 625 unknowns, is above the 512 unknowns
+  // from which STRUMPACK compresses a front, and is the only compressed front. The matrix
+  // is indefinite, so that the factorization interchanges rows. The shift is between two
+  // eigenvalues of the discrete problem, 98.7 and 108.6 (10 pi^2 and 11 pi^2 for the
+  // Laplacian), with 35 eigenvalues below it: the factorization of the compressed front
+  // then does 16 to 29 row interchanges on 1 to 8 processes. A small shift is a weaker
+  // test: with 20, just above the eigenvalue 2 pi^2, it does 1 to 3 on most process counts.
   const int n = 12, m = 2 * n + 1;
-  const double h = 1.0 / n, shift = 20.0;
+  const double h = 1.0 / n, shift = 104.0;
   const double K_e[3][3] = {{7.0, -8.0, 1.0}, {-8.0, 16.0, -8.0}, {1.0, -8.0, 7.0}};
   const double M_e[3][3] = {{4.0, 2.0, -1.0}, {2.0, 16.0, 2.0}, {-1.0, 2.0, 4.0}};
   std::vector<double> K1(m * m, 0.0), M1(m * m, 0.0);
@@ -260,8 +264,9 @@ TEST_CASE("StrumpackSolver BLR compression of an indefinite matrix",
     b(i) = std::sin(static_cast<double>((first + i) * (first + i)));
   }
 
-  // The residual of one solve is 5e-10 to 7e-10 on 1 to 4 processes at this compression
-  // tolerance. With the defect it was 1e-2 on 2 processes and 0.25 on 4.
+  // The residual of one solve is 1e-10 to 3e-10 on 1 to 8 processes at this compression
+  // tolerance. With the defect it was 0.23 on 2 processes, 0.44 on 4 and 0.46 on 8, and at
+  // least 0.045 on 2 to 8 processes.
   StrumpackSolver strumpack(comm, SymbolicFactorization::DEFAULT, SparseCompression::BLR,
                             1.0e-9, 0, 0, false, 0);
   strumpack.SetOperator(A);
