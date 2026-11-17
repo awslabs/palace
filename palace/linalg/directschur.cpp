@@ -71,6 +71,7 @@ public:
     opt.set_reordering_method(strumpack::ReorderingStrategy::METIS);
     opt.set_compression(strumpack::CompressionType::NONE);
     opt.set_verbose(false);
+    opt.disable_gpu();  // as StrumpackSolverBase
   }
 
   bool Factor(const DirectSchurBlocks &A, std::vector<T> &) override
