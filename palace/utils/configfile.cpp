@@ -2009,11 +2009,11 @@ ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
         MFEM_VERIFY(
             value != "Apply",
             "Response-correction \"ImpedanceMetalRule\": \"Apply\" is reserved "
-            "and not available in this build: this stage of the impedance-metal "
-            "rule builds the measuring-only mode, and corrected values on impedance "
-            "metals wait for the tolerance of the on-metal check, which the USER "
-            "rules on from the measured readings; use \"Record\" (corrected values "
-            "of record unchanged, candidate values in separate files) or \"Off\"!");
+            "and not available in this build: this version of the impedance-metal "
+            "rule measures only (\"Record\"); corrected values on impedance metals "
+            "need a validated tolerance of the on-metal check, which does not exist "
+            "yet; use \"Record\" (corrected values of record unchanged, candidate "
+            "values in separate files) or \"Off\"!");
         if (value == "Off")
         {
           data.impedance_metal_rule = ResponseCorrectionData::ImpedanceMetalRule::OFF;

@@ -2188,9 +2188,10 @@ along one conductor or a corner at one: `Missing`), `NOT-DECLARED`, `SERVED-BY-O
 `NOT-SERVED-BY-OVERRIDE`. The candidate is postprocessing-only (no self-consistent candidate,
 no magnetic term); two-dimensional boundary-mode runs, `PatchConstruction` `"Legacy"` and
 electrostatic runs are not served. The candidate is always a second operator built beside
-the operator of record (its setup time and memory are printed); when nothing is substituted
-it is a twin of the operator of record, and every measurement checks that the candidate
-equals the record cell for cell (a mismatch ends the run with an error). `"Record"` runs
+the operator of record (its setup time and memory are printed); when the rule acts on no
+feature (nothing substituted, nothing refused) it is a twin of the operator of record, and
+every measurement checks that the candidate equals the record cell for cell (a mismatch
+ends the run with an error). `"Record"` runs
 only with `Coverage.Policy` `"Warn"`: with `"MarkNotApplied"` (set by the key or by
 default) it is refused at load, since the candidate tables would print values for cells
 the tables of record withhold. `"Apply"` is reserved and refused in this build.

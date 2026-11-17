@@ -5049,10 +5049,16 @@ void PostOperator<solver_t>::SetUpImpedanceRuleCandidate(const IoData &iodata,
                       {"CandidateSetupSeconds", seconds[1]},
                       {"CandidateSetupMemoryNodeMaxBytes", candidate_memory.max},
                       {"LawReadingOn", "candidate"}};
-    Mpi::Print("Impedance-metal rule (RECORD): cost: operator of record {:.2f} s, +{} "
-               "(node max); candidate {:.2f} s, +{} (node max)\n",
-               seconds[0], memory_reporting::FormatBytes(record_memory.max), seconds[1],
-               memory_reporting::FormatBytes(candidate_memory.max));
+    // A signed growth (a construction can return memory to the system: "-322.4M").
+    auto SignedBytes = [](long bytes)
+    {
+      return (bytes < 0 ? "-" : "+") +
+             memory_reporting::FormatBytes(std::abs(static_cast<double>(bytes)));
+    };
+    Mpi::Print("Impedance-metal rule (RECORD): cost: operator of record {:.2f} s, {} "
+               "(node max); candidate {:.2f} s, {} (node max)\n",
+               seconds[0], SignedBytes(record_memory.max), seconds[1],
+               SignedBytes(candidate_memory.max));
     record["OutOfStage"] = out_of_stage;
     record["Measurements"] = nlohmann::json::array();
   }
