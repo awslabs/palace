@@ -15,6 +15,7 @@
 #include <catch2/generators/catch_generators_range.hpp>
 #include "fem/mesh.hpp"
 #include "linalg/complexcoarse.hpp"
+#include "linalg/iterative.hpp"
 #include "linalg/ksp.hpp"
 #include "linalg/mumps.hpp"
 #include "linalg/mumpscomplex.hpp"
@@ -152,12 +153,95 @@ TEST_CASE("STRUMPACK complex arithmetic solver", "[strumpack][Serial][Parallel]"
   MPI_Comm comm = Mpi::World();
   const bool unsymmetric = GENERATE(false, true);
   const bool reorder_reuse = GENERATE(true, false);
-  StrumpackComplexSolver solver(comm, SymbolicFactorization::DEFAULT, reorder_reuse, 0);
+  StrumpackComplexSolver solver(comm, SymbolicFactorization::DEFAULT,
+                                SparseCompression::NONE, 0.0, 0, 0, reorder_reuse, 0);
   MfemWrapperSolver<ComplexOperator> ref(
       std::make_unique<StrumpackSolver>(comm, SymbolicFactorization::DEFAULT,
                                         SparseCompression::NONE, 0.0, 0, 0, true, 0),
       true, true, false, true);
   TestComplexDirectSolver(solver, ref, 1.0e-11, unsymmetric);
+}
+
+TEST_CASE("STRUMPACK complex arithmetic solver with compression",
+          "[strumpack][Serial][Parallel]")
+{
+  // Every compression type of StrumpackSolver: the types with a compression tolerance on a
+  // matrix whose largest separators exceed the minimum size for BLR compression, and the
+  // ZFP types, which compress small fronts too, on a smaller one. STRUMPACK factors the
+  // matrix without compression for the types which need larger separators (HSS, HODLR) or
+  // a library it was not built with (ButterflyPACK for the HODLR types, ZFP for the ZFP
+  // types). The compressed factorization is checked as a solver, within the accuracy of
+  // the compression (which STRUMPACK fixes for the lossy ZFP compression), and as the
+  // preconditioner of GMRES, also when it is computed again for a matrix with the same
+  // sparsity pattern and with another one.
+  MPI_Comm comm = Mpi::World();
+
+  // Compression type, lossy precision (0 is lossless), bound for the residual of one solve
+  // (with a compression tolerance of 1e-6), and for the GMRES iterations.
+  struct Case
+  {
+    SparseCompression type;
+    int lossy_prec;
+    double tol;
+    int max_it;
+  };
+  auto Test = [&](int mesh_n, const std::vector<Case> &cases)
+  {
+    mfem::Mesh serial_mesh = mfem::Mesh::MakeCartesian3D(
+        mesh_n, mesh_n, mesh_n, mfem::Element::HEXAHEDRON, 1.0, 1.0, 1.0);
+    mfem::ParMesh mesh(comm, serial_mesh);
+    mfem::H1_FECollection fec(2, 3);
+    mfem::ParFiniteElementSpace fespace(&mesh, &fec);
+    const auto A = AssembleTestMatrix(fespace, 1.0);
+    const auto A2 = AssembleTestMatrix(fespace, 2.0);
+    const auto D = AssembleDiagonalTestMatrix(fespace);
+
+    ComplexVector b(A->Height()), x(A->Height()), x_ref(A->Height()), r(A->Height());
+    b.Real().Randomize(1);
+    b.Imag().Randomize(2);
+    const double norm_b = linalg::Norml2(comm, b);
+    {
+      StrumpackComplexSolver ref(comm, SymbolicFactorization::DEFAULT,
+                                 SparseCompression::NONE, 0.0, 0, 0, true, 0);
+      ref.SetOperator(*A);
+      ref.Mult(b, x_ref);
+    }
+    for (const auto &[type, lossy_prec, tol, max_it] : cases)
+    {
+      INFO("compression " << static_cast<int>(type) << ", lossy precision " << lossy_prec);
+      StrumpackComplexSolver solver(comm, SymbolicFactorization::DEFAULT, type, 1.0e-6, 1,
+                                    lossy_prec, true, 0);
+      GmresSolver<ComplexOperator> gmres(comm, 0);
+      gmres.SetRelTol(1.0e-10);
+      gmres.SetMaxIter(max_it);
+      gmres.SetPreconditioner(solver);
+      for (const auto *M : {A.get(), A2.get(), D.get()})
+      {
+        solver.SetOperator(*M);
+        x = 0.0;
+        solver.Mult(b, x);
+        M->Mult(x, r);
+        r -= b;
+        CHECK(linalg::Norml2(comm, r) / norm_b < tol);
+        gmres.SetOperator(*M);
+        x = 0.0;
+        gmres.Mult(b, x);
+        CHECK(gmres.GetConverged());
+        if (M == A.get())
+        {
+          x -= x_ref;
+          CHECK(linalg::Norml2(comm, x) / linalg::Norml2(comm, x_ref) < 1.0e-8);
+        }
+      }
+    }
+  };
+  Test(12, {{SparseCompression::HSS, 16, 1.0e-4, 5},
+            {SparseCompression::BLR, 16, 1.0e-4, 5},
+            {SparseCompression::HODLR, 16, 1.0e-4, 5},
+            {SparseCompression::BLR_HODLR, 16, 1.0e-4, 5}});
+  Test(6, {{SparseCompression::ZFP, 0, 1.0e-10, 2},
+           {SparseCompression::ZFP, 16, 0.5, 30},
+           {SparseCompression::ZFP_BLR_HODLR, 16, 0.5, 30}});
 }
 
 // As for StrumpackSolver (see test-strumpack.cpp), the parallel matrix products of hypre
@@ -230,7 +314,8 @@ TEST_CASE("STRUMPACK complex arithmetic solver unsymmetric sparsity pattern",
     x_ex.Imag()[i] = std::cos(3.0 * t);
   }
   A.Mult(x_ex, b);
-  StrumpackComplexSolver solver(comm, SymbolicFactorization::DEFAULT, true, 0);
+  StrumpackComplexSolver solver(comm, SymbolicFactorization::DEFAULT,
+                                SparseCompression::NONE, 0.0, 0, 0, true, 0);
   for (int k = 0; k < 2; k++)
   {
     // Factorization, and refactorization reusing the reordering.
@@ -445,12 +530,20 @@ TEST_CASE("ComplexKspSolver sparse direct solver with ComplexCoarseSolve",
     CHECK(pc->GetSolver().Height() == 2 * n);
   }
 
-  // Complex arithmetic, also with the ParMETIS column ordering.
-  for (const std::string ordering : {"Default", "ParMETIS"})
+  // Complex arithmetic, also with the ParMETIS column ordering, and for STRUMPACK with
+  // compression (which the fronts of this matrix are too small for).
+  std::vector<json> complex_options = {
+      json{{"ComplexCoarseSolve", true}},
+      json{{"ComplexCoarseSolve", true}, {"ColumnOrdering", "ParMETIS"}}};
+  if (type == "STRUMPACK")
   {
-    INFO("ordering " << ordering);
-    DrivenTestProblem problem(LinearOptions(
-        type, json{{"ComplexCoarseSolve", true}, {"ColumnOrdering", ordering}}));
+    complex_options.push_back(
+        json{{"ComplexCoarseSolve", true}, {"STRUMPACKCompressionType", "BLR"}});
+  }
+  for (const auto &options : complex_options)
+  {
+    INFO("options " << options.dump());
+    DrivenTestProblem problem(LinearOptions(type, options));
     auto ksp = problem.MakeKspSolver();
     auto *pc = dynamic_cast<ComplexCoarseSolver *>(ksp->GetPreconditioner());
     REQUIRE(pc);
@@ -497,11 +590,6 @@ TEST_CASE("ComplexKspSolver sparse direct solver with ComplexCoarseSolve",
   {
     block_options.push_back(
         json{{"ComplexCoarseSolve", true}, {"SuperLU3DCommunicator", true}});
-  }
-  if (type == "STRUMPACK")
-  {
-    block_options.push_back(
-        json{{"ComplexCoarseSolve", true}, {"STRUMPACKCompressionType", "BLR"}});
   }
   for (const auto &options : block_options)
   {

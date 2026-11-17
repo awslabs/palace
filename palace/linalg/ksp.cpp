@@ -204,10 +204,7 @@ ConfigurePreconditionerSolver(const config::LinearSolverData &linear,
 #if defined(MFEM_USE_STRUMPACK)
       if constexpr (std::is_same_v<OperType, ComplexOperator>)
       {
-        // Only without compression: StrumpackComplexSolver does not implement the
-        // compression options (STRUMPACK supports them for complex-valued matrices).
-        if (UseComplexArithmetic(linear) &&
-            linear.strumpack_compression_type == SparseCompression::NONE)
+        if (UseComplexArithmetic(linear))
         {
           pc = std::make_unique<ComplexCoarseSolver>(
               comm,
@@ -222,7 +219,9 @@ ConfigurePreconditionerSolver(const config::LinearSolverData &linear,
               [linear, comm, print]()
               {
                 return std::make_unique<StrumpackComplexSolver>(
-                    comm, linear.sym_factorization, linear.reorder_reuse, print);
+                    comm, linear.sym_factorization, linear.strumpack_compression_type,
+                    linear.strumpack_lr_tol, linear.strumpack_butterfly_l,
+                    linear.strumpack_lossy_precision, linear.reorder_reuse, print);
               },
               verbose > 0);
           break;

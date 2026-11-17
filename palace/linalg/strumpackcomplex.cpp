@@ -7,6 +7,7 @@
 
 #include <StrumpackSparseSolverMPIDist.hpp>
 #include "linalg/complexcsr.hpp"
+#include "linalg/strumpack.hpp"
 #include "utils/communication.hpp"
 
 namespace palace
@@ -15,8 +16,8 @@ namespace palace
 namespace
 {
 
-// Options as for StrumpackSolver without compression: the factorization is used as a
-// preconditioner or direct solver.
+// Options as for StrumpackSolver: the factorization is used as a preconditioner or direct
+// solver.
 void ConfigureOptions(strumpack::SPOptions<std::complex<double>> &opts,
                       SymbolicFactorization reorder, int print)
 {
@@ -48,16 +49,18 @@ void ConfigureOptions(strumpack::SPOptions<std::complex<double>> &opts,
       // Should have good default.
       break;
   }
-  opts.set_compression(strumpack::CompressionType::NONE);
   opts.disable_gpu();
 }
 
 }  // namespace
 
 StrumpackComplexSolver::StrumpackComplexSolver(MPI_Comm comm, SymbolicFactorization reorder,
+                                               SparseCompression compression, double lr_tol,
+                                               int butterfly_l, int lossy_prec,
                                                bool reorder_reuse, int print)
-  : Solver<ComplexOperator>(), comm(comm), reorder(reorder), reorder_reuse(reorder_reuse),
-    print(print)
+  : Solver<ComplexOperator>(), comm(comm), reorder(reorder), compression(compression),
+    lr_tol(lr_tol), butterfly_l(butterfly_l), lossy_prec(lossy_prec),
+    reorder_reuse(reorder_reuse), print(print)
 {
 }
 
@@ -90,6 +93,8 @@ void StrumpackComplexSolver::SetOperator(const ComplexOperator &op)
           strumpack::SparseSolverMPIDist<std::complex<double>, HYPRE_BigInt>>(comm,
                                                                               print > 1);
       ConfigureOptions(solver->options(), reorder, print);
+      ConfigureStrumpackCompression(solver->options(), compression, lr_tol, butterfly_l,
+                                    lossy_prec);
       solver->set_distributed_csr_matrix(csr.n_loc, csr.I.data(), csr.J.data(),
                                          csr.V.data(), dist.data(), false);
     }

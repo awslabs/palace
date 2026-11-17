@@ -30,14 +30,18 @@ namespace palace
 //
 // STRUMPACK sparse direct solver for complex-valued operators in complex arithmetic. Its
 // factors need about 40% less memory than those of the equivalent real-valued system of
-// twice the size used by MfemWrapperSolver. The factorization is not compressed. The
-// integer type is HYPRE_BigInt, as for StrumpackSolver (mfem::STRUMPACKSolver).
+// twice the size used by MfemWrapperSolver. The compression options are those of
+// StrumpackSolver. The integer type is HYPRE_BigInt, as for StrumpackSolver
+// (mfem::STRUMPACKSolver).
 //
 class StrumpackComplexSolver : public Solver<ComplexOperator>
 {
 private:
   MPI_Comm comm;
   SymbolicFactorization reorder;
+  SparseCompression compression;
+  double lr_tol;
+  int butterfly_l, lossy_prec;
   bool reorder_reuse;
   int print;
   std::unique_ptr<strumpack::SparseSolverMPIDist<std::complex<double>, HYPRE_BigInt>>
@@ -49,8 +53,9 @@ private:
   std::size_t pattern = 0;
 
 public:
-  StrumpackComplexSolver(MPI_Comm comm, SymbolicFactorization reorder, bool reorder_reuse,
-                         int print);
+  StrumpackComplexSolver(MPI_Comm comm, SymbolicFactorization reorder,
+                         SparseCompression compression, double lr_tol, int butterfly_l,
+                         int lossy_prec, bool reorder_reuse, int print);
   ~StrumpackComplexSolver() override;
 
   void SetOperator(const ComplexOperator &op) override;
