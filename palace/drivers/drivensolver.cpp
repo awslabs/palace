@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <iostream>
 #include <numbers>
+#include <optional>
 #include <Eigen/Dense>
 #include <fmt/core.h>
 #include <mfem.hpp>
@@ -19,6 +20,7 @@
 #include "linalg/ksp.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
+#include "models/condensedenvironment.hpp"
 #include "models/drivensubstructure.hpp"
 #include "models/floquetportoperator.hpp"
 #include "models/lumpedportoperator.hpp"
@@ -75,6 +77,16 @@ DrivenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   }
 
   // Main frequency sweep loop.
+  if (iodata.solver.substructuring && CondensedEnvironment::Enabled(iodata.solver))
+  {
+    // Online driven substructuring by the regular sweep, with the environment condensed
+    // onto the interface in SpaceOperator (prototype).
+    CondensedEnvironment env(iodata, space_op);
+    space_op.SetCondensedEnvironment(&env);
+    auto indicator = SweepUniform(space_op);
+    space_op.SetCondensedEnvironment(nullptr);
+    return {indicator, space_op.GlobalTrueVSize()};
+  }
   if (iodata.solver.substructuring)
   {
     return {SweepSubstructured(iodata, space_op, adaptive), space_op.GlobalTrueVSize()};
@@ -109,7 +121,12 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
 
   // Initialize postprocessing for measurement and printers.
   // Initialize write directory with default path; will be changed for multi-excitations.
-  PostOperator<ProblemType::DRIVEN> post_op(iodata, space_op);
+  // With a condensed environment (online driven substructuring), the postprocessing is the
+  // region's, and the environment's port voltages come from it.
+  auto *env = space_op.GetCondensedEnvironment();
+  PostOperator<ProblemType::DRIVEN> post_op(
+      iodata.problem, iodata.solver, env ? env->GetDomains() : iodata.domains,
+      env ? env->GetBoundaries() : iodata.boundaries, iodata.units, space_op);
 
   // The fixed system matrices are only needed when the system cannot be applied through
   // the preconditioner (see SpaceOperator::GetSystemOperator), so assemble them on first
@@ -133,8 +150,13 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
   E = 0.0;
   B = 0.0;
 
-  // Initialize structures for storing and reducing the results of error estimation.
-  const FluxErrorEstimator<ComplexVector> estimator(space_op, iodata);
+  // Initialize structures for storing and reducing the results of error estimation (none
+  // with a condensed environment: the field is zero in the environment).
+  std::optional<FluxErrorEstimator<ComplexVector>> estimator;
+  if (!env)
+  {
+    estimator.emplace(space_op, iodata);
+  }
   ErrorIndicator indicator;
 
   // If using Floquet BCs, a correction term (kp x E) needs to be added to the B field.
@@ -249,12 +271,19 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
         // Switch ParaView subfolders once per excitation, after the first solve.
         post_op.InitializeParaviewDataCollection(excitation_idx);
       }
+      if (env)
+      {
+        post_op.SetLumpedPortVoltages(env->PortVoltages(excitation_idx, omega, E));
+      }
       auto total_domain_energy =
           post_op.MeasureAndPrintAll(excitation_idx, int(omega_i), E, B, omega);
 
       // Calculate and record the error indicators.
-      Mpi::Print(" Updating solution error estimates\n");
-      estimator.AddErrorIndicator(E, B, total_domain_energy, indicator);
+      if (estimator)
+      {
+        Mpi::Print(" Updating solution error estimates\n");
+        estimator->AddErrorIndicator(E, B, total_domain_energy, indicator);
+      }
     }
 
     // Final postprocessing & printing. After the last excitation, the solver totals were
