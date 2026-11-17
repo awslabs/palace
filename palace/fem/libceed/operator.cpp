@@ -855,7 +855,8 @@ PackComplexOperator(std::unique_ptr<palace::Operator> &Ar,
   const int size = first->Width();
   // Pair only direct children of Palace's composites. Keep unmatched nested
   // composites intact in the remainder rather than flattening them, preserving
-  // their action and libCEED's composite size limits.
+  // their action and the composite sizes of the remainder (see the limit below for the
+  // packed composite).
   CeedInt count[2] = {0, 0};
   CeedOperator *children[2] = {nullptr, nullptr};
   for (int part = 0; part < 2; part++)
@@ -883,6 +884,7 @@ PackComplexOperator(std::unique_ptr<palace::Operator> &Ar,
   // and orientation maps. Separately constructed equivalents remain unmatched.
   std::unique_ptr<Operator> packed;
   std::vector<std::pair<std::size_t, PackedSubset>> complements;
+  std::size_t num_pairs = 0;
   for (std::size_t r = 0; r < fields[0].size(); r++)
   {
     if (!fields[0][r])
@@ -914,6 +916,7 @@ PackComplexOperator(std::unique_ptr<palace::Operator> &Ar,
         packed = std::make_unique<Operator>(2 * size, 2 * size);
       }
       AddPackedPair(ceed, *fields[0][r], *fields[1][i], size, subset, *packed);
+      num_pairs++;
       if (subset.data)
       {
         complements.emplace_back(r, subset);
@@ -930,6 +933,22 @@ PackComplexOperator(std::unique_ptr<palace::Operator> &Ar,
   {
     return {};  // This also handles ranks with no local volume terms.
   }
+  std::vector<std::size_t> singles;
+  for (std::size_t j = 0; j < fields[0].size(); j++)
+  {
+    if (!matched[0][j] && fields[0][j])
+    {
+      singles.push_back(j);
+    }
+  }
+  // The packed composite can get more children than either part, up to all of the pairs,
+  // their complements and the real leaves without a partner, while libCEED composites take
+  // at most 16 (CEED_COMPOSITE_MAX).
+  constexpr std::size_t max_sub_operators = 16;
+  if (num_pairs + complements.size() + singles.size() > max_sub_operators)
+  {
+    return {};
+  }
   // A real leaf packed over a subset still owes the elements that subset leaves out, and
   // real leaves without a partner act on both parts of x on their own. Imaginary leaves
   // without a partner stay in the remainder: Palace's imaginary volume terms always pair
@@ -938,13 +957,10 @@ PackComplexOperator(std::unique_ptr<palace::Operator> &Ar,
   {
     AddPackedComplement(ceed, fespace, subset, *fields[0][r], size, *packed);
   }
-  for (std::size_t j = 0; j < fields[0].size(); j++)
+  for (auto j : singles)
   {
-    if (!matched[0][j] && fields[0][j])
-    {
-      AddPackedReal(ceed, *fields[0][j], size, nullptr, 0, nullptr, *packed);
-      matched[0][j] = true;
-    }
+    AddPackedReal(ceed, *fields[0][j], size, nullptr, 0, nullptr, *packed);
+    matched[0][j] = true;
   }
   // Keep every unmatched child exactly once. In particular, differing real/imaginary
   // boundary terms must not disable fusion of compatible domain contributions.
