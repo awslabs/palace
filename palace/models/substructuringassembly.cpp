@@ -176,7 +176,16 @@ const mfem::HypreParMatrix &SubstructuringSolver::Impl::MsheetEnv()
 
 bool SubstructuringSolver::Impl::EnvSheets()
 {
-  return has_sheets && MsheetEnv().FNorm() > 0.0;
+  if (!has_sheets)
+  {
+    return false;
+  }
+  // hypre computes the norm on the host, the entries of a GPU build being on the device.
+  const mfem::HypreParMatrix &M = MsheetEnv();
+  M.HostRead();
+  const double norm = M.FNorm();
+  M.HypreRead();
+  return norm > 0.0;
 }
 
 std::vector<mfem::Vector>
