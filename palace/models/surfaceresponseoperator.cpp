@@ -23678,11 +23678,14 @@ nlohmann::json DescribeMagneticLeaves(const std::string &library_path, const Uni
 }
 
 // The impedance-metal rule's candidate preflight (ImpedanceMetalRule "Record"; decisions
-// 2006 / 2012; STAGEA-NOTE s3): the identification, keys and matching of the CANDIDATE (the
-// film rule at the seam) written as surface-response-impedance-candidate-requirements.json
-// beside the manifest of record, marked "CANDIDATE: NOT OF RECORD", with the law status of
-// every feature; nothing when the rule substitutes nothing (the manifest of record is the
-// candidate's) or under PatchConstruction Legacy (no law service).
+// 2006 / 2012 / 2063; STAGEA-NOTE s3): the identification, keys and matching of the
+// CANDIDATE (the film rule at the seam) are always built; they are written as
+// surface-response-impedance-candidate-requirements.json beside the manifest of record,
+// marked "CANDIDATE: NOT OF RECORD", with the law status of every feature, exactly when the
+// rule acts on a candidate feature (a status other than PEC, NOT-DECLARED or EXACT: a
+// substitution OR a refusal such as LAW-JOINT); when it acts on none, the candidate's
+// identification is the record's and nothing is written. Nothing under PatchConstruction
+// Legacy (no law service).
 static std::optional<std::string> WriteImpedanceRuleCandidateRequirements(
     const IoData &iodata, const mfem::ParMesh &mesh, const MaterialOperator &mat_op,
     const ResponseCorrectionData &request, const std::string &record_path)
@@ -23701,12 +23704,6 @@ static std::optional<std::string> WriteImpedanceRuleCandidateRequirements(
   {
     Mpi::Print(comm, "{}\n", line);
   }
-  if (!film.candidate_differs)
-  {
-    Mpi::Print(comm, "Impedance-metal rule (RECORD): nothing substituted: the candidate's "
-                     "identification is the manifest of record\n");
-    return std::nullopt;
-  }
   Mpi::Print(comm, "Impedance-metal rule (RECORD): the CANDIDATE identification (NOT OF "
                    "RECORD; the film rule at the seam)\n");
   ResponseCorrectionData candidate_request = request;
@@ -23719,6 +23716,41 @@ static std::optional<std::string> WriteImpedanceRuleCandidateRequirements(
   const auto patches =
       BuildAutomaticResponseData3D(iodata, mesh, mat_op, candidate_request, true, nullptr,
                                    &requirements, &statistics, &film);
+  // Decided on the BUILT candidate's statuses (decision 2063, MINOR-1): the film rule alone
+  // cannot tell, since a perfect conductor beside a non-film law on one conductor
+  // substitutes nothing but refuses the features at the law change (LAW-JOINT).
+  int substituted = 0, refused = 0;
+  for (const signed char code : patches.impedance_law_feature_status)
+  {
+    switch (static_cast<ImpedanceLawStatus>(code))
+    {
+      case ImpedanceLawStatus::PEC:
+      case ImpedanceLawStatus::NOT_DECLARED:
+      case ImpedanceLawStatus::EXACT:
+        break;
+      case ImpedanceLawStatus::SUBSTITUTED:
+      case ImpedanceLawStatus::MIXED_LAW:
+      case ImpedanceLawStatus::SERVED_BY_OVERRIDE:
+        substituted++;
+        break;
+      case ImpedanceLawStatus::LAW_JOINT:
+      case ImpedanceLawStatus::NOT_SERVED_BY_OVERRIDE:
+        refused++;
+        break;
+    }
+  }
+  if (substituted + refused == 0)
+  {
+    Mpi::Print(comm, "Impedance-metal rule (RECORD): nothing substituted and nothing "
+                     "refused (every candidate feature PEC, NOT-DECLARED or EXACT): the "
+                     "candidate's identification is the manifest of record\n");
+    return std::nullopt;
+  }
+  Mpi::Print(comm,
+             "Impedance-metal rule (RECORD): the rule acts on {:d} candidate feature(s): "
+             "{:d} served by substitution, {:d} refused (LAW-JOINT or "
+             "NOT-SERVED-BY-OVERRIDE: Missing in the candidate)\n",
+             substituted + refused, substituted, refused);
   requirements.SetStatistics(BuildAutomaticStatistics(comm, statistics));
   auto manifest = requirements.Build();
   manifest["Candidate"] = "CANDIDATE: NOT OF RECORD";
@@ -23742,6 +23774,7 @@ static std::optional<std::string> WriteImpedanceRuleCandidateRequirements(
       {"Record", "CANDIDATE: NOT OF RECORD"},
       {"Lines", film.lines},
       {"LawStatusCounts", counts},
+      {"RuleActs", {{"Substituted", substituted}, {"Refused", refused}}},
       {"Features", std::move(features)},
       {"Patches", static_cast<int>(patches.patches.size())}};
   const auto candidate_path = (std::filesystem::path(record_path).parent_path() /

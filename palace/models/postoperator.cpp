@@ -4924,11 +4924,9 @@ void PostOperator<solver_t>::SetUpImpedanceRuleCandidate(const IoData &iodata,
       // Ruling 2024: the candidate is ALWAYS built (a twin of the operator of record when
       // the film rule substitutes nothing); the law reading runs only on it. Its output is
       // bracketed by the begin / end lines.
+      // Whether it is a twin is decided on its built statuses below (decision 2063).
       Mpi::Print("Impedance-metal rule (CANDIDATE: NOT OF RECORD): begin: building the "
-                 "candidate operator (the film rule at its seam{})\n",
-                 impedance_film_rule->candidate_differs
-                     ? ""
-                     : "; it substitutes nothing: a twin of the operator of record");
+                 "candidate operator (the film rule at its seam)\n");
       const auto start = std::chrono::steady_clock::now();
       const long bytes = memory_reporting::GetCurrentMemory();
       // Its OWN geometry cache (never the record's): across AMR iterations the candidate
@@ -4950,8 +4948,9 @@ void PostOperator<solver_t>::SetUpImpedanceRuleCandidate(const IoData &iodata,
           impedance_candidate_acts
               ? "the rule acts on the candidate's features (substituted or refused): "
                 "the candidate differs from the record where it acts"
-              : "nothing substituted: the candidate is a twin of the operator of "
-                "record; every measurement checks candidate = record cell for cell");
+              : "nothing substituted and nothing refused: the candidate is a twin of the "
+                "operator of record; every measurement checks candidate = record cell for "
+                "cell");
       if (!impedance_candidate_op->IsRawFallback())
       {
         for (const auto &portion : impedance_candidate_op->GetUncoveredPortions())

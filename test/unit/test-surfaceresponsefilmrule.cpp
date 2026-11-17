@@ -5,6 +5,7 @@
 #include "surfaceresponse-fixtures.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -584,6 +585,79 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
       }
     }
     CHECK(exact > 0);
+  }
+
+  // The island split MID-EDGE at x = 0.5 (attribute 9 for x < 0.5, 10 beyond): the two
+  // sides along x (z = 0.25, 0.75) change law in their middle.
+  auto MidEdgeSplitIslandMesh = [&]()
+  {
+    mfem::Mesh serial = MakeSerialIslandMesh();
+    for (int be = 0; be < serial.GetNBE(); be++)
+    {
+      if (serial.GetBdrAttribute(be) != 9)
+      {
+        continue;
+      }
+      mfem::Array<int> vertices;
+      serial.GetBdrElementVertices(be, vertices);
+      double x = 0.0;
+      for (const int vertex : vertices)
+      {
+        x += serial.GetVertex(vertex)[0];
+      }
+      if (x > 0.5 * static_cast<double>(vertices.Size()) * (1.0 + 1.0e-9))
+      {
+        serial.SetBdrAttribute(be, 10);
+      }
+    }
+    serial.SetAttributes();
+    return std::make_unique<mfem::ParMesh>(Mpi::World(), serial);
+  };
+
+  SECTION("the identification-only candidate (MINOR-1): decided on the BUILT statuses; a "
+          "perfect conductor and a non-film law on one conductor write the candidate "
+          "manifest with its LAW-JOINT refusals; a perfect conductor alone writes none")
+  {
+    auto Preflight = [&](const Run &run, const std::string &name)
+    {
+      const fs::path directory = temp.temp_dir / name;
+      if (Mpi::Root(Mpi::World()))
+      {
+        fs::create_directories(directory);
+      }
+      Mpi::Barrier(Mpi::World());
+      const auto path = directory / "surface-response-requirements.json";
+      const auto outcome =
+          WriteSurfaceResponseRequirements(*run.iodata, *run.meshes[0], path.string());
+      Mpi::Barrier(Mpi::World());
+      return std::make_pair(
+          outcome, directory / "surface-response-impedance-candidate-requirements.json");
+    };
+    {
+      // C7c of review r2038: PEC | Rs 1 split mid-edge along one conductor.
+      auto run = Build(Config({{9, "PEC"}, {10, json{{"Rs", 1.0}}}}, sa_library_path),
+                       MidEdgeSplitIslandMesh());
+      const auto film = Film(*run);
+      CHECK_FALSE(film.candidate_differs);  // the film rule alone substitutes nothing
+      SurfaceResponseOperator candidate(*run->iodata, *run->space, nullptr, &film, true);
+      CHECK(candidate.ImpedanceRuleActs());  // ... but the built candidate refuses
+      const auto [outcome, candidate_path] = Preflight(*run, "c7c-preflight");
+      REQUIRE(fs::exists(candidate_path));
+      CHECK(std::find(outcome.written.begin(), outcome.written.end(),
+                      candidate_path.string()) != outcome.written.end());
+      const json manifest = json::parse(std::ifstream(candidate_path));
+      CHECK(manifest["Candidate"] == "CANDIDATE: NOT OF RECORD");
+      const auto &block = manifest["ImpedanceRuleCandidate"];
+      CHECK(block["RuleActs"]["Substituted"].get<int>() == 0);
+      CHECK(block["RuleActs"]["Refused"].get<int>() > 0);
+      CHECK(block["LawStatusCounts"].contains("LAW-JOINT"));
+    }
+    {
+      auto run = Build(Config({{9, "PEC"}}, sa_library_path), MakeIslandMesh());
+      const auto [outcome, candidate_path] = Preflight(*run, "pec-preflight");
+      CHECK_FALSE(fs::exists(candidate_path));
+      CHECK(outcome.written.size() == 2);  // the manifest and the patch dry run
+    }
   }
 #endif
 }
