@@ -100,6 +100,10 @@ void MfemWrapperSolver<ComplexOperator>::SetOperator(const ComplexOperator &op)
       A = std::make_unique<mfem::HypreParMatrix>(*hAr);
       DropSmallEntries();
       pc->SetOperator(*A);
+      if (!save_assembled)
+      {
+        A.reset();
+      }
     }
     else
     {
@@ -117,6 +121,10 @@ void MfemWrapperSolver<ComplexOperator>::SetOperator(const ComplexOperator &op)
       A = std::make_unique<mfem::HypreParMatrix>(*hAi);
       DropSmallEntries();
       pc->SetOperator(*A);
+      if (!save_assembled)
+      {
+        A.reset();
+      }
     }
     else
     {
