@@ -400,13 +400,14 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
     // Greedy procedure for basis construction (offline phase). Basis is initialized with
     // solutions at frequency sweep endpoints and explicit sample frequencies. The sampling
     // also stops when the last convergence_memory samples, all with errors above the
-    // tolerance, added no basis direction: the PROM then reproduces the HDM solutions as
-    // well as their own accuracy allows, and further samples cannot improve it.
+    // tolerance and from converged linear solves, added no basis direction: the HDM
+    // solutions are then likely not accurate enough to reach the tolerance (see
+    // AdaptiveSamplingStall).
     std::size_t it = max_errors.size();
-    std::size_t stalled = 0, num_rejected = 0, num_partial = 0;
-    double stalled_error = 0.0;
-    for (std::size_t it0 = it; it < max_size_per_excitation &&
-                               memory < convergence_memory && stalled < convergence_memory;
+    std::size_t num_rejected = 0, num_partial = 0;
+    AdaptiveSamplingStall stall(convergence_memory);
+    for (std::size_t it0 = it;
+         it < max_size_per_excitation && memory < convergence_memory && !stall.Stalled();
          it++)
     {
       // Compute the location of the maximum error in parameter domain (bounded by the
@@ -414,7 +415,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
       double omega_star = prom_op.FindMaxError(excitation_idx)[0];
 
       // Sample HDM and add solution to basis.
-      prom_op.SolveHDM(excitation_idx, omega_star, E);
+      const bool converged = prom_op.SolveHDM(excitation_idx, omega_star, E);
       prom_op.SolvePROM(excitation_idx, omega_star, Eh);
       linalg::AXPY(-1.0, E, Eh);
 
@@ -437,33 +438,23 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
       {
         num_partial++;
       }
-      if (memory == 0 && update.num_kept == 0)
-      {
-        stalled++;
-        stalled_error = std::max(stalled_error, max_errors.back());
-      }
-      else
-      {
-        stalled = 0;
-        stalled_error = 0.0;
-      }
+      stall.AddSample(max_errors.back(), offline_tol, converged, update.num_kept);
     }
-    if (stalled == convergence_memory)
+    if (stall.Stalled())
     {
-      Mpi::Warning("Adaptive sampling stopped at the accuracy of the HDM solutions: the "
-                   "last {:d} samples add no basis direction which reduces the PROM error "
-                   "at their own frequency, so \"AdaptiveTol\" = {:.3e} cannot be reached "
-                   "with these HDM solutions. The PROM matches them to {:.3e} at these "
-                   "samples. Tighten config[\"Solver\"][\"Linear\"][\"Tol\"] or loosen "
-                   "\"AdaptiveTol\"!\n",
-                   stalled, offline_tol, stalled_error);
+      Mpi::Warning("Adaptive sampling stopped early: the last {:d} samples, at which the "
+                   "PROM error (at most {:.3e}) exceeds \"AdaptiveTol\" = {:.3e}, were not "
+                   "added to the PROM basis, since with any of their parts the PROM would "
+                   "not be closer to them at their own frequency. The HDM solutions are "
+                   "likely not accurate enough for this tolerance: tighten "
+                   "config[\"Solver\"][\"Linear\"][\"Tol\"] or loosen \"AdaptiveTol\"!\n",
+                   stall.NumSamples(), stall.MaxError(), offline_tol);
     }
     Mpi::Print("\nAdaptive sampling{} {:d} frequency samples:\n"
                " n = {:d}, error = {:.3e}, tol = {:.3e}, memory = {:d}/{:d}\n",
                (it == max_size_per_excitation)
                    ? " reached maximum"
-                   : ((stalled == convergence_memory) ? " stopped at the HDM accuracy with"
-                                                      : " converged with"),
+                   : (stall.Stalled() ? " stopped early with" : " converged with"),
                it, prom_op.GetReducedDimension(), max_errors.back(), offline_tol, memory,
                convergence_memory);
     if (num_rejected + num_partial > 0)

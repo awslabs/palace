@@ -985,7 +985,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-AddSamplePROM",
   ComplexVector u = make_vector(), x = make_vector(), x_ref = make_vector();
   for (std::size_t i : {std::size_t{0}, omega.size() - 1})
   {
-    prom_op.SolveHDM(1, omega[i], u);
+    CHECK(prom_op.SolveHDM(1, omega[i], u));
     prom_op.SolvePROM(1, omega[i], x);
     const double error = prom_op.GetReducedDimension() ? rel_diff(x, u) : 1.0;
     const auto dim = prom_op.GetReducedDimension();
@@ -1055,6 +1055,56 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-AddSamplePROM",
   {
     CHECK(same_matrix(prom_op.GetKr(), prom_ref.GetKr()));
   }
+
+  // SolveHDM reports a linear solve which does not converge (here, after a single
+  // iteration), which the adaptive sampling stop does not count (see
+  // AdaptiveSamplingStall).
+  setup_json["Solver"]["Linear"]["MaxIts"] = 1;
+  IoData iodata_1(setup_json, false);
+  auto mesh_1 = LoadScaleParMesh2(iodata_1, world_comm);
+  SpaceOperator space_op_1(iodata_1, mesh_1);
+  RomOperatorTest prom_1(iodata_1, space_op_1, 4);
+  CHECK_FALSE(prom_1.SolveHDM(1, iodata_1.solver.driven.sample_f[omega.size() / 2], u));
+}
+
+// The stop of the adaptive sampling at the accuracy of the HDM solutions counts the
+// consecutive samples above the tolerance, from converged linear solves, which add no basis
+// direction; any other sample restarts the count.
+TEST_CASE("AdaptiveSamplingStall", "[romoperator][Serial]")
+{
+  constexpr double tol = 1.0e-6;
+  AdaptiveSamplingStall stall(2);
+  stall.AddSample(2.0e-6, tol, true, 0);
+  CHECK_FALSE(stall.Stalled());
+  CHECK(stall.NumSamples() == 1);
+
+  // A sample whose linear solve did not converge is not counted, and restarts the count.
+  stall.AddSample(3.0e-6, tol, false, 0);
+  CHECK_FALSE(stall.Stalled());
+  CHECK(stall.NumSamples() == 0);
+
+  // So does a sample which adds a basis direction, or one below the tolerance.
+  stall.AddSample(2.0e-6, tol, true, 0);
+  stall.AddSample(2.0e-6, tol, true, 1);
+  CHECK(stall.NumSamples() == 0);
+  stall.AddSample(2.0e-6, tol, true, 0);
+  stall.AddSample(0.5e-6, tol, true, 0);
+  CHECK(stall.NumSamples() == 0);
+
+  // Two consecutive rejected samples above the tolerance from converged solves stop it.
+  stall.AddSample(4.0e-6, tol, true, 0);
+  stall.AddSample(3.0e-6, tol, true, 0);
+  CHECK(stall.Stalled());
+  CHECK(stall.NumSamples() == 2);
+  CHECK(stall.MaxError() == 4.0e-6);
+
+  // With a memory of 1, a single such sample stops the sampling, as a single sample below
+  // the tolerance completes its convergence; not one from an unconverged solve.
+  AdaptiveSamplingStall stall_1(1);
+  stall_1.AddSample(2.0e-6, tol, false, 0);
+  CHECK_FALSE(stall_1.Stalled());
+  stall_1.AddSample(2.0e-6, tol, true, 0);
+  CHECK(stall_1.Stalled());
 }
 
 // Tests that the per-port "IncludeInSynthesis" flag suppresses basis vector injection

@@ -4,7 +4,9 @@
 #ifndef PALACE_MODELS_ROM_OPERATOR_HPP
 #define PALACE_MODELS_ROM_OPERATOR_HPP
 
+#include <algorithm>
 #include <complex>
+#include <cstddef>
 #include <limits>
 #include <map>
 #include <memory>
@@ -555,8 +557,9 @@ public:
   // repeating HDM-scale projections.
   void PrepareOnlineExcitations();
 
-  // Assemble and solve the HDM at the specified frequency.
-  void SolveHDM(int excitation_idx, double omega, ComplexVector &u);
+  // Assemble and solve the HDM at the specified frequency. Returns whether the linear solve
+  // converged to the requested tolerance.
+  bool SolveHDM(int excitation_idx, double omega, ComplexVector &u);
 
   // Add port fields to PROM for circuit synthesis to connect to the outside world. Requires
   // fields that are orthogonal to boundary overlap and primary fields, which requires
@@ -646,6 +649,43 @@ public:
   // basis block to the HDM space.
   void ComputeEigenvalueEstimateErrors(const Units &units,
                                        std::vector<EigenvalueEstimate> &estimates) const;
+};
+
+// Accuracy floor of the greedy adaptive sampling of an excitation: the sampling stops once
+// the last memory greedy samples, all with a PROM error above the tolerance and from linear
+// solves which converged, added no basis direction (see RomOperator::AddSamplePROM): the
+// HDM solutions are then likely not accurate enough to reach the tolerance. Any other
+// sample restarts the count.
+class AdaptiveSamplingStall
+{
+private:
+  std::size_t memory, count = 0;
+  double max_error = 0.0;
+
+public:
+  explicit AdaptiveSamplingStall(std::size_t memory) : memory(memory) {}
+
+  // Record a greedy sample: its PROM error before it was added, the tolerance, whether its
+  // HDM solve converged, and the number of basis directions it added.
+  void AddSample(double error, double tol, bool converged, std::size_t num_kept)
+  {
+    if (error >= tol && converged && num_kept == 0)
+    {
+      count++;
+      max_error = std::max(max_error, error);
+    }
+    else
+    {
+      count = 0;
+      max_error = 0.0;
+    }
+  }
+
+  // Whether the sampling has reached the accuracy floor, the number of samples counted and
+  // their largest PROM error.
+  bool Stalled() const { return count >= memory; }
+  std::size_t NumSamples() const { return count; }
+  double MaxError() const { return max_error; }
 };
 
 }  // namespace palace

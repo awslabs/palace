@@ -568,20 +568,24 @@ late in the sampling the new information a sample brings, the part of
 small as its error. Such a direction carries solver error rather than information, and it
 can make the PROM *less* accurate at the very frequency it was computed for. With an
 accurate sample in the basis the PROM reproduces it, so after adding a sample chosen by the
-greedy sampling described below, *Palace* evaluates the error ``\varepsilon`` defined below
-at the new sample, with the sample in the basis. (The samples which initialize the basis,
-at the frequency-domain endpoints and with `"AddToPROM"`, are always added in full.) If it
-exceeds
+greedy sampling (see below), *Palace* evaluates the error ``\varepsilon`` defined below at
+this sample, with the sample in the basis. If it exceeds
 [`config["Solver"]["Driven"]["AdaptiveTol"]`](config/reference.md#config-solver-driven),
 *Palace* keeps, of the bases with neither, only the real, only the imaginary or both new
 directions, the one whose PROM solution at the sample frequency is closest to the HDM
 solution (ties go to the smaller basis, and to the real direction), and logs which
-directions it kept if it drops any. Otherwise the basis is the same as without this check. If the last
+directions it kept if it drops any. Otherwise the basis is the same as without this check.
+The samples which initialize the basis, at the frequency-domain endpoints and with
+`"AddToPROM"`, are always added in full.
+
+If the last
 [`config["Solver"]["Driven"]["AdaptiveConvergenceMemory"]`](config/reference.md#config-solver-driven)
-samples all have an error ``\varepsilon`` above `"AdaptiveTol"` before they are added, and
-add no direction, the PROM reproduces the HDM solutions as well as their accuracy allows:
-*Palace* then stops sampling that excitation with a warning, which reports the error
-reached, instead of sampling up to `"AdaptiveMaxSamples"`. Tighten
+greedy samples all have an error ``\varepsilon`` above `"AdaptiveTol"` before they are
+added, their linear solves converged, and none of them adds a direction, the HDM solutions
+are likely not accurate enough to reach `"AdaptiveTol"`: *Palace* then stops sampling that
+excitation with a warning, which reports the largest error at these samples, instead of
+sampling up to `"AdaptiveMaxSamples"`. With `"AdaptiveConvergenceMemory"` 1, a single such
+sample stops it, as a single sample below the tolerance completes the convergence. Tighten
 [`config["Solver"]["Linear"]["Tol"]`](config/reference.md#config-solver-linear) or loosen
 `"AdaptiveTol"` in that case.
 
@@ -624,7 +628,8 @@ solution using
 Convergence is declared when this quantity is below
 [`config["Solver"]["Driven"]["AdaptiveTol"]`](config/reference.md#config-solver-driven) for
 [`config["Solver"]["Driven"]["AdaptiveConvergenceMemory"]`](config/reference.md#config-solver-driven)
-consecutive samples. The norm here is the finite-element coefficient-space L2 norm. It is
+consecutive samples. The same number of consecutive samples above the tolerance which add
+no basis direction stops the sampling early (see above). The norm here is the finite-element coefficient-space L2 norm. It is
 related to, but not the same as, a physical energy norm such as
 ``\int \bm{E}^*(\bm{r})\cdot\bm{E}(\bm{r})\,d^3r``. Consequently, the adaptive tolerance is
 not a strict relative-error bound for every derived quantity, such as S-parameters or domain

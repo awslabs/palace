@@ -908,7 +908,7 @@ void RomOperator::AddWavePortModalCorrection(double omega)
   Ar += Wr;
 }
 
-void RomOperator::SolveHDM(int excitation_idx, double omega, ComplexVector &u)
+bool RomOperator::SolveHDM(int excitation_idx, double omega, ComplexVector &u)
 {
   SetExcitationIndex(excitation_idx);
 
@@ -949,6 +949,7 @@ void RomOperator::SolveHDM(int excitation_idx, double omega, ComplexVector &u)
 
   // Solve the linear system.
   ksp->Mult(r, u);
+  return ksp->GetConverged();
 }
 
 std::size_t RomOperator::NumSynthesisPortModes() const
