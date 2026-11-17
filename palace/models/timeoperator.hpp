@@ -54,9 +54,6 @@ public:
   const Vector &GetE() const { return E; }
   const Vector &GetB() const { return B; }
 
-  // Return the linear solver associated with the implicit or explicit time integrator.
-  const KspSolver &GetLinearSolver() const;
-
   // Initialize time integrators and set 0 initial conditions.
   void Init();
 

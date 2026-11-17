@@ -494,9 +494,6 @@ public:
   RomOperator(const IoData &iodata, SpaceOperator &space_op,
               std::size_t max_size_per_excitation);
 
-  // Return the HDM linear solver.
-  const ComplexKspSolver &GetLinearSolver() const { return *ksp; }
-
   // Return PROM dimension and the current online reduced solution.
   auto GetReducedDimension() const { return V.size(); }
   const auto &GetBasis() const { return V; }

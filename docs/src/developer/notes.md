@@ -362,9 +362,9 @@ Operator Construction           // < Time spent constructing finite element spac
 Linear Solve                    // < Linear solver time
   Setup                         // < Setup time for linear solver and preconditioner
   Preconditioner                // < Preconditioner application time for linear solve
+  Coarse Setup                  // < Setup and factorization of the coarse solver
   Coarse Solve                  // < Coarse solve time for geometric multigrid
                                 //   preconditioners
-  Coarse Setup                  // < Setup and factorization of the coarse solver
 Time Stepping                   // < Time spent in the time integrator for transient
                                 //   simulation types
 Eigenvalue Solve                // < Time spent in the eigenvalue solver (not including
@@ -473,6 +473,8 @@ whole are written as JSON integers.
 of the node's peak. In `PeakMemoryGrowthMegabytes` (and the `Node` variant), per process,
 `Baseline` + rows + `Unattributed` = peak, where `Baseline` is the peak at the start of the
 iteration (of the run in `Cumulative`). This holds for `Sum`, not for `Min` and `Max`.
+Memory values are host RSS only (device memory is not included), and on device builds timer
+rows measure host time, so asynchronous device work may be attributed to a later row.
 
 `Startup` runs from the construction of the static timer to the first timed block.
 `Coarse Setup` is the setup of the coarse solver, not including matrix assembly. For solvers

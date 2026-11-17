@@ -348,7 +348,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     factorization out of `Coarse Solve`, `Preconditioner` and, for MUMPS, `Setup`;
     `PeakMemoryMegabytes` and `PeakNodeMemoryMegabytes` use `Avg`/`Sum` and the growth maps
     have `Baseline` and `Unattributed`; and `LinearSolver/TotalSolves`/`TotalIts` became
-    `LinearSolver/<Role>/{Solves, Its, MaxIts, NotConverged, Setups}` over every solve.
+    `LinearSolver/<Role>/{Solves, Its, MaxIts, NotConverged, Setups}` over every solve. The
+    wave port linear solver is no longer timed under `Linear Solve`/`Preconditioner`; its
+    time stays in the `Wave Ports` rows.
     [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
 
 ## [0.19.0] - 2026-11-02

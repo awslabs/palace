@@ -456,10 +456,17 @@ void BaseSolver::SaveMetadata(const PortExcitations &excitation_helper) const
 
 void BaseSolver::ReportPerformance(MPI_Comm comm) const
 {
-  perf::Report(comm);
+  const auto &results = perf::Report(comm);
+  const auto to_stats = [](const char *label, const perf::Stats &s)
+  {
+    return memory_reporting::MemoryStats{label, static_cast<long>(s.min),
+                                         static_cast<long>(s.max), static_cast<long>(s.sum),
+                                         s.Avg()};
+  };
   Mpi::Print(comm, "\n");
-  memory_reporting::PrintMemoryUsage(comm, memory_reporting::GetPeakMemoryStats(comm));
-  memory_reporting::PrintMemoryUsage(comm, memory_reporting::GetPeakNodeMemoryStats(comm));
+  memory_reporting::PrintMemoryUsage(comm, to_stats("peak per-rank", results.iter.peak));
+  memory_reporting::PrintMemoryUsage(comm,
+                                     to_stats("peak per-node", results.iter.node_peak));
   perf::Print(comm);
   if (root)
   {

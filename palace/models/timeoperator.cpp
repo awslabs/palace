@@ -391,14 +391,6 @@ TimeOperator::TimeOperator(const IoData &iodata, SpaceOperator &space_op,
 {
 }
 
-const KspSolver &TimeOperator::GetLinearSolver() const
-{
-  const auto &first_order = dynamic_cast<const TimeDependentFirstOrderOperator &>(*op);
-  MFEM_VERIFY(first_order.kspA,
-              "No linear solver for time-dependent operator has been constructed!\n");
-  return *first_order.kspA;
-}
-
 void TimeOperator::Init()
 {
   // Always use zero initial conditions.

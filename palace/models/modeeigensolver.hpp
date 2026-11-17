@@ -135,10 +135,6 @@ public:
   int GetNDTrueVSize() const { return nd_size; }
   int GetH1TrueVSize() const { return h1_size; }
 
-  // Access the linear solver (for metadata reporting). Returns nullptr if this process
-  // does not have a solver configured (non-port process in wave port mode).
-  const ComplexKspSolver *GetLinearSolver() const { return ksp.get(); }
-
   // Tighten the eigenvalue-convergence and inner linear-solve tolerances, used to solve the
   // cross-section EVP more accurately when sampling kₙ(ω)/M(ω) for wave-port circuit
   // synthesis (decoupling the fit from the user's port EigenTol/KSPTol). Takes effect on
