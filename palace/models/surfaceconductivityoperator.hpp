@@ -100,7 +100,7 @@ public:
   // Per-group surface-admittance scalar i·ω/Z_g(ω), evaluated at (possibly complex) ω.
   // Public wrapper so the circuit-synthesis path can sample the scalar for its dispersion
   // fit (the ω-independent boundary mass is factored out via
-  // SpaceOperator::GetSurfaceConductivityBoundaryMatrix).
+  // SpaceOperator::GetExtraSystemBdrMassTermMatrix).
   std::complex<double> EvaluateScalar(std::size_t group_idx,
                                       std::complex<double> omega) const
   {

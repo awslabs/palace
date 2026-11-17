@@ -6,6 +6,9 @@
 
 #include <complex>
 #include <cstddef>
+#include <functional>
+#include <optional>
+#include <string>
 #include <vector>
 #include <mfem.hpp>
 #include "models/farfieldboundaryoperator.hpp"
@@ -138,6 +141,28 @@ public:
                                                    MaterialPropertyCoefficient &fb) const;
   std::complex<double> GetExtraSystemBdrMassTermScale(int i,
                                                       std::complex<double> omega) const;
+
+  // The label of term i in output files and log lines (surfsigma_<group> and
+  // rationalz_<boundary>).
+  std::string GetExtraSystemBdrMassTermLabel(int i) const;
+
+  // An exact split of the scale of a term, as a function c(s) of s = iω (the scale at ω is
+  // c(iω)): c(s) = P(s) + R(s), with a polynomial P and a strictly proper rational
+  // remainder R. GetExtraSystemBdrMassTermSplit returns it for the terms which have one:
+  // a rational impedance boundary, for which it is the long division of the Robin
+  // coefficient s D(s) / N(s), and not a surface conductivity group. Its functions refer
+  // to this SurfaceTerms.
+  struct ExactSplit
+  {
+    // Coefficients of P, highest degree first (empty for the zero polynomial), and the
+    // degree of P without leading zero coefficients (-1 for the zero polynomial).
+    std::vector<double> polynomial;
+    int degree;
+
+    // c(s) and R(s).
+    std::function<std::complex<double>(std::complex<double>)> coefficient, remainder;
+  };
+  std::optional<ExactSplit> GetExtraSystemBdrMassTermSplit(int i) const;
 
   // Access to the operators of each type, for operations which only one solve has.
   auto &GetFarfieldOp() { return farfield_op; }

@@ -882,18 +882,22 @@ SpaceOperator::GetFarfieldBoundaryCurlCurlMatrix(Operator::DiagonalPolicy diag_p
 
 template <OperatorType OperType>
 std::unique_ptr<OperType>
-SpaceOperator::GetSurfaceConductivityBoundaryMatrix(int group_idx,
-                                                    Operator::DiagonalPolicy diag_policy)
+SpaceOperator::GetExtraSystemBdrMassTermMatrix(int i, Operator::DiagonalPolicy diag_policy,
+                                               bool imag_slot)
 {
-  // ω-independent unit-coefficient boundary mass A_σ for surface-conductivity group
-  // group_idx, on the IMAGINARY slot (matching the wave-port convention). The full A2
-  // contribution at frequency ω is (i·ω/Z_g(ω))·A_σ; circuit synthesis factors out A_σ here
-  // and applies the scalar via a dispersion fit. Returns null if the group contributes no
-  // DoFs on any rank (the check is collective, so the null contract is rank-uniform).
+  // ω-independent boundary mass M_i of the frequency-dependent boundary mass term i of
+  // SurfaceTerms, with its unit coefficient (including crack scaling and the two surfaces
+  // of interior conducting sheets). By default stored on the REAL slot, so that its
+  // contribution to A2 at ω is GetExtraSystemBdrMassTermScale(i, ω)·M_i, and a caller can
+  // scale it by an arbitrary complex coefficient (the NLEPS HYBRID fit-or-freeze seed
+  // strategy). With imag_slot=true it is placed on the IMAGINARY slot, matching the
+  // wave-port boundary-mass convention (the i in i·f(ω)·M baked in, with f(ω) =
+  // scale(ω)/i), so the adaptive sweep and circuit synthesis treat it uniformly. Returns
+  // null if the term contributes no DoFs on any rank (the check is collective, so the null
+  // contract is rank-uniform).
   PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
   MaterialPropertyCoefficient fb(mat_op.MaxCeedBdrAttribute());
-  surface_terms.GetSurfaceConductivityOp().AddBoundaryMassBdrCoefficients(
-      static_cast<std::size_t>(group_idx), fb);
+  surface_terms.AddExtraSystemBdrMassTermCoefficients(i, fb);
   int empty = fb.IsExactlyZero();
   Mpi::GlobalMin(1, &empty, GetComm());
   if (empty)
@@ -905,12 +909,18 @@ SpaceOperator::GetSurfaceConductivityBoundaryMatrix(int group_idx,
                             nullptr, skip_zeros);
   if constexpr (std::is_same_v<OperType, ComplexOperator>)
   {
-    auto M_op = std::make_unique<ComplexParOperator>(nullptr, std::move(m), GetNDSpace());
+    auto M_op =
+        imag_slot
+            ? std::make_unique<ComplexParOperator>(nullptr, std::move(m), GetNDSpace())
+            : std::make_unique<ComplexParOperator>(std::move(m), nullptr, GetNDSpace());
     M_op->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
     return M_op;
   }
   else
   {
+    MFEM_VERIFY(!imag_slot,
+                "imag_slot is only meaningful for the ComplexOperator instantiation of "
+                "GetExtraSystemBdrMassTermMatrix!");
     auto M_op = std::make_unique<ParOperator>(std::move(m), GetNDSpace());
     M_op->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
     return M_op;
@@ -1967,9 +1977,9 @@ template std::unique_ptr<ComplexOperator>
 SpaceOperator::GetFarfieldBoundaryCurlCurlMatrix(Operator::DiagonalPolicy, bool);
 
 template std::unique_ptr<Operator>
-SpaceOperator::GetSurfaceConductivityBoundaryMatrix(int, Operator::DiagonalPolicy);
+SpaceOperator::GetExtraSystemBdrMassTermMatrix(int, Operator::DiagonalPolicy, bool);
 template std::unique_ptr<ComplexOperator>
-SpaceOperator::GetSurfaceConductivityBoundaryMatrix(int, Operator::DiagonalPolicy);
+SpaceOperator::GetExtraSystemBdrMassTermMatrix(int, Operator::DiagonalPolicy, bool);
 
 template std::unique_ptr<Operator>
 SpaceOperator::GetRationalImpedanceBoundaryMassMatrix(int, Operator::DiagonalPolicy, bool);

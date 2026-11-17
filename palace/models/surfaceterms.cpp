@@ -3,6 +3,7 @@
 
 #include "surfaceterms.hpp"
 
+#include <fmt/format.h>
 #include "utils/configfile.hpp"
 #include "utils/iodata.hpp"
 
@@ -161,6 +162,31 @@ SurfaceTerms::GetExtraSystemBdrMassTermScale(int i, std::complex<double> omega) 
   }
   return surf_rz_op.EvalRobinCoefficient(i - num_sigma,
                                          std::complex<double>(0.0, 1.0) * omega);
+}
+
+std::string SurfaceTerms::GetExtraSystemBdrMassTermLabel(int i) const
+{
+  const int num_sigma = static_cast<int>(sigma_terms.size());
+  if (i < num_sigma)
+  {
+    return fmt::format("surfsigma_{:d}", sigma_terms[i]);
+  }
+  return fmt::format("rationalz_{:d}", i - num_sigma);
+}
+
+std::optional<SurfaceTerms::ExactSplit>
+SurfaceTerms::GetExtraSystemBdrMassTermSplit(int i) const
+{
+  const int num_sigma = static_cast<int>(sigma_terms.size());
+  if (i < num_sigma)
+  {
+    return std::nullopt;
+  }
+  const int b = i - num_sigma;
+  return ExactSplit{
+      surf_rz_op.GetRobinQuotient(b), surf_rz_op.GetRobinQuotientDegree(b),
+      [this, b](std::complex<double> s) { return surf_rz_op.EvalRobinCoefficient(b, s); },
+      [this, b](std::complex<double> s) { return surf_rz_op.EvalRobinRemainder(b, s); }};
 }
 
 }  // namespace palace

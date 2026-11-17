@@ -187,7 +187,6 @@ public:
   auto &GetWavePortOp() { return wave_port_op; }
   auto &GetFloquetPortOp() { return floquet_port_op; }
   auto &GetSurfaceCurrentOp() { return surf_j_op; }
-  auto &GetSurfaceConductivityOp() { return surface_terms.GetSurfaceConductivityOp(); }
   const auto &GetLumpedPortOp() const { return lumped_port_op; }
   const auto &GetWavePortOp() const { return wave_port_op; }
   const auto &GetFloquetPortOp() const { return floquet_port_op; }
@@ -196,10 +195,7 @@ public:
   {
     return surface_terms.GetRationalImpedanceOp();
   }
-  const auto &GetSurfaceConductivityOp() const
-  {
-    return surface_terms.GetSurfaceConductivityOp();
-  }
+  const auto &GetSurfaceTerms() const { return surface_terms; }
 
   // Get the full frequency-dependent operator A2(ω) + F(ω), where A2 is the assembled
   // sparse boundary operator and F is the low-rank Floquet DtN correction. The returned
@@ -310,17 +306,21 @@ public:
   GetFarfieldBoundaryCurlCurlMatrix(Operator::DiagonalPolicy diag_policy,
                                     bool imag_slot = false);
 
-  // Construct the ω-independent boundary mass matrix A_σ for surface-conductivity group
-  // `group_idx`, with unit coefficient, on the IMAGINARY slot (matching the wave-port
-  // convention). The full A2 contribution at frequency ω is `(i·ω/Z_g(ω))·A_σ` =
-  // `f_g(ω)·(i·A_σ)` with f_g(ω) = ω/Z_g(ω) the real-or-complex scalar from
-  // GetSurfaceConductivityOp().EvaluateScalar(group, ω)/i. Returns null if the group
-  // contributes no DoFs on any rank (the check is collective, so the null contract is
-  // rank-uniform). Used to fold surface conductivity into circuit synthesis.
-  // `NumSurfaceConductivityGroups()` gives the group count.
+  // Construct the ω-independent boundary mass matrix M_i of the frequency-dependent
+  // boundary mass term i of SurfaceTerms (finite conductivity groups, then rational
+  // impedance boundaries; see SurfaceTerms::GetNumExtraSystemBdrMassTerms), with unit
+  // coefficient, stored on the real slot: the contribution of the term to A2 at ω is
+  // `GetSurfaceTerms().GetExtraSystemBdrMassTermScale(i, ω)·M_i`, and a caller scales this
+  // matrix by the appropriate complex coefficient. Set `imag_slot=true` to instead store
+  // i·M_i, matching the wave-port boundary-mass convention (i·f(ω)·M with the i baked in,
+  // f(ω) = scale(ω)/i) so it can be folded into circuit synthesis uniformly with wave
+  // ports. Returns a null pointer if the term contributes no DoFs on any rank (the check
+  // is collective, so the null contract is rank-uniform). Used by the adaptive sweep and
+  // its circuit synthesis.
   template <OperatorType OperType>
   std::unique_ptr<OperType>
-  GetSurfaceConductivityBoundaryMatrix(int group_idx, Operator::DiagonalPolicy diag_policy);
+  GetExtraSystemBdrMassTermMatrix(int i, Operator::DiagonalPolicy diag_policy,
+                                  bool imag_slot = false);
 
   // Construct the λ-independent boundary mass matrix M_b for rational impedance boundary
   // idx, with unit coefficient (including crack scaling), stored on the real slot. The

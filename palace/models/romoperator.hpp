@@ -19,6 +19,7 @@
 #include "linalg/operator.hpp"
 #include "linalg/rap.hpp"
 #include "linalg/vector.hpp"
+#include "models/surfaceterms.hpp"
 #include "utils/communication.hpp"
 #include "utils/filesystem.hpp"
 #include "utils/units.hpp"
@@ -196,23 +197,22 @@ protected:
   //     do not contribute to A(ω).
   //   - Second-order farfield ABC: f = 0.5/ω, with the negative sign of β inside M (see
   //     SpaceOperator::GetFarfieldBoundaryCurlCurlMatrix).
-  //   - Surface conductivity, per attribute group: f = ω/Z(ω).
-  //   - Rational surface impedance, per boundary: f = g(iω)/i for the Robin coefficient
-  //     g(s) = s·D(s)/N(s).
+  //   - The frequency-dependent boundary mass terms of SurfaceTerms, per term i (one per
+  //     finite conductivity group, then one per rational impedance boundary):
+  //     f = scale_i(ω)/i (SurfaceTerms::GetExtraSystemBdrMassTermScale).
   //   - Floquet port Robin BC, per port: f = γ₀,ₚ(ω), the specular (0,0) propagation
   //     constant.
   enum class BoundaryTermKind
   {
     WavePort,
     Farfield,
-    SurfaceConductivity,
-    RationalImpedance,
+    SurfaceTerm,
     FloquetPort
   };
   struct BoundaryTerm
   {
     BoundaryTermKind kind;
-    int idx;  // Port, group, or boundary index
+    int idx;  // Port or term index
     std::unique_ptr<ComplexOperator> op;
     bool symmetric;
     Eigen::MatrixXcd Ar;  // Vᵀ op V
@@ -433,9 +433,10 @@ protected:
   static std::complex<double> EvaluateWavePortKnFit(const WavePortDispersionFit &fit,
                                                     std::complex<double> omega);
 
-  // Generalized scalar-dispersion fit for the other frequency-dependent BCs (surface
-  // conductivity). Like FitWavePortDispersion but driven by an arbitrary scalar function
-  // f(ω) (here ω/Z_g(ω), generally COMPLEX) instead of the wave-port kₙ(ω). The projected
+  // Generalized scalar-dispersion fit for the other frequency-dependent BCs (the
+  // frequency-dependent boundary mass terms of SurfaceTerms). Like FitWavePortDispersion
+  // but driven by an arbitrary scalar function f(ω) (for example ω/Z_g(ω) of a surface
+  // conductivity group, generally COMPLEX) instead of the wave-port kₙ(ω). The projected
   // boundary mass `Mp_r` is purely imaginary (= i·M_proj) so the assembled contribution is
   // i·f(ω)·M_proj·v. Produces complex α₀/α₁/α₂ and, when augmenting, an aux block with
   // complex residues. `label` is used in the diagnostic print and aux-state labels.
@@ -444,13 +445,15 @@ protected:
                       const std::function<std::complex<double>(std::complex<double>)> &f,
                       bool allow_augment) const;
 
-  // Exact-split fit for a rational surface impedance boundary: the Robin coefficient
-  // g(s) = s·D(s)/N(s) = P(s) + R(s)/N(s) (long division) has a polynomial part P that is
-  // exactly representable in the pencil (deg(P) <= 2 for any passive input), so only the
-  // strictly proper remainder R/N is AAA-fit — directly.
-  WavePortDispersionFit FitRationalImpedanceDispersion(const std::string &label,
-                                                       const Eigen::MatrixXcd &Mp_r,
-                                                       int idx) const;
+  // Exact-split fit for a frequency-dependent boundary mass term with an exact split of
+  // its scale (SurfaceTerms::ExactSplit), such as a rational surface impedance boundary:
+  // the Robin coefficient g(s) = s·D(s)/N(s) = P(s) + R(s)/N(s) (long division) has a
+  // polynomial part P that is exactly representable in the pencil when deg(P) <= 2 (for
+  // any passive input; the caller checks), so only the strictly proper remainder R/N is
+  // AAA-fit — directly.
+  WavePortDispersionFit
+  FitExactSplitDispersion(const std::string &label, const Eigen::MatrixXcd &Mp_r,
+                          const SurfaceTerms::ExactSplit &split) const;
 
   // Accumulate the polynomial-fit corrections of one frequency-dependent BC (a wave port,
   // or another BC) into the running Kr_corr, Cr_corr, Mr_corr buffers: folds α₀·Mp_r into
