@@ -13436,6 +13436,71 @@ std::string SavedAdaptMeshName(const std::string &stem)
 #endif
 }
 
+// Rulings 2059 / 2060 (P4 S2): a coverage cell's covered correction factor F = fabricated /
+// served is compared between two runs on its two ingredients, not on the ratio. A cell
+// without raw field (a within-R raw W at the field noise, W ~ delta^2 E_elec) has a served
+// energy of order-one relative scatter between partitions and F is then a ratio of noise
+// (MEASURED on the islands fixture: W / E_elec ~ 1e-30 on the merged head's adapted mesh
+// and on the initial mesh of both builds, F ~ 1e29). The served energy is compared with a
+// field-noise tolerance, 2 delta_b sqrt(W E_elec) + delta_b^2 E_elec (W = |E0 + noise|^2,
+// |noise| <= delta_b sqrt(E_elec)), plus the relative tolerance x the first run's W; the
+// fabricated energy (no noise term: it is the library's response to the field) relative.
+struct CoveredFactorIngredients
+{
+  double within;      // W within-R raw (J)
+  double served;      // the served raw energy, W (1 - uncovered share)
+  double fabricated;  // the covered corrected energy, F x served
+};
+
+CoveredFactorIngredients CoveredFactorIngredientsOf(double within, double uncovered_share,
+                                                    double factor)
+{
+  const double served = within * (1.0 - uncovered_share);
+  return {within, served, factor * served};
+}
+
+struct CoveredFactorReproduction
+{
+  bool served = false;
+  bool fabricated = false;
+  bool Pass() const { return served && fabricated; }
+};
+
+CoveredFactorReproduction
+CompareCoveredFactorIngredients(const CoveredFactorIngredients &first,
+                                const CoveredFactorIngredients &second, double e_elec,
+                                double delta_b, double relative_tolerance)
+{
+  // A non-finite ingredient (the NaN of a cell without served energy) must be reproduced as
+  // such.
+  auto Same = [](double a, double b, double tolerance)
+  {
+    if (!std::isfinite(a) || !std::isfinite(b))
+    {
+      return (std::isnan(a) && std::isnan(b)) || a == b;
+    }
+    return std::abs(b - a) <= tolerance;
+  };
+  const double within = std::max(std::abs(first.within), std::abs(second.within));
+  const double served_tolerance = 2.0 * delta_b * std::sqrt(within * std::abs(e_elec)) +
+                                  delta_b * delta_b * std::abs(e_elec) +
+                                  relative_tolerance * std::abs(first.within);
+  CoveredFactorReproduction result;
+  result.served = Same(first.served, second.served, served_tolerance);
+  result.fabricated =
+      Same(first.fabricated, second.fabricated,
+           relative_tolerance * std::max(std::abs(first.fabricated), 1.0e-30));
+  return result;
+}
+
+// delta_b = 1e-13: the islands fixture's solver tolerances (Solver.Linear.Tol and
+// ResponseCorrection.SolveTol = 1e-13) and 100 x the MEASURED field noise (~1e-15 of
+// sqrt(E_elec) on a cell without raw field; P4 REPORT STEP 100). The relative tolerance
+// 1e-10 is tighter than the table's 1e-8 (MEASURED: the fabricated energies reproduce to
+// <= 5.5e-13 at 2 ranks on both builds).
+constexpr double covered_factor_delta_b = 1.0e-13;
+constexpr double covered_factor_relative_tolerance = 1.0e-10;
+
 }  // namespace
 
 // Decision 899 (OI-CTX-ARC-ADAPT): a run whose INPUT mesh is the saved adapted mesh of an
@@ -13586,10 +13651,10 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
       // so that main's columns keep main's check: an appended covered correction factor (a
       // covered corrected energy over a near-zero within-R raw W, of order 1e11 here)
       // would make every other comparison vacuous. An appended status must be reproduced
-      // exactly; a covered correction factor to 1e-8 beyond the largest relative
-      // difference of the table's W entries (its denominator is a sum of them: at 2 ranks
-      // the follow-on's W of the islands' SA interface, 3e-22 J, moves by 1.1e-8 relative
-      // and the factor with it); every other appended column by main's rule.
+      // exactly; a finite covered correction factor is compared on its ingredients below
+      // (rulings 2059 / 2060: on a cell without raw field it is a ratio of noise), a
+      // non-finite one must be reproduced as such; every other appended column by main's
+      // rule.
       constexpr std::array<std::string_view, 14> coverage_header_stems = {
           "coverage Type",
           "W within-R raw",
@@ -13631,25 +13696,6 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
         }
       }
       REQUIRE(table_scale > 0.0);
-      double within_relative_difference = 0.0;
-      for (std::size_t c = n_main_cols; c < producer_table.n_cols(); c++)
-      {
-        if (!HeaderStartsWith(producer_table[c].header_text, "W within-R raw"))
-        {
-          continue;
-        }
-        for (std::size_t i = 0;
-             i < producer_table[c].data.size() && i < follow_on_table[c].data.size(); i++)
-        {
-          const double producer_w = producer_table[c].data[i];
-          if (std::isfinite(producer_w) && producer_w != 0.0)
-          {
-            within_relative_difference = std::max(
-                within_relative_difference,
-                std::abs(follow_on_table[c].data[i] - producer_w) / std::abs(producer_w));
-          }
-        }
-      }
       for (std::size_t c = 0; c < producer_table.n_cols(); c++)
       {
         const Column &producer_column = producer_table[c];
@@ -13671,10 +13717,6 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
           }
           if (covered_factor)
           {
-            CHECK_THAT(follow_on_column.data[i],
-                       WithinAbs(producer_column.data[i],
-                                 (1.0e-8 + within_relative_difference) *
-                                     std::max(std::abs(producer_column.data[i]), 1.0e-30)));
             continue;
           }
           const double scale =
@@ -13687,6 +13729,52 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     CompareTable("surface-Q-corrected.csv");
     CompareTable("terminal-C-corrected.csv");
     CompareTable("surface-response-model-energy.csv");
+
+    // The covered correction factor of each coverage cell on its ingredients (rulings 2059
+    // / 2060): the served and fabricated energies from the coverage table, E_elec from the
+    // producer's surface-Q-corrected.csv row of the same i.
+    const Table producer_coverage =
+        test::LoadCsv(producer_dir / "surface-response-coverage.csv");
+    const Table follow_on_coverage =
+        test::LoadCsv(follow_on_dir / "surface-response-coverage.csv");
+    const Table producer_q = test::LoadCsv(producer_dir / "surface-Q-corrected.csv");
+    const Column &q_index = test::ColumnByHeader(producer_q, "i");
+    const Column &q_e_elec = test::ColumnByHeader(producer_q, "E_elec raw (J)");
+    auto Ingredients = [](const Table &coverage, std::size_t r)
+    {
+      return CoveredFactorIngredientsOf(
+          test::ColumnByHeader(coverage, "W within-R raw (J)").data[r],
+          test::ColumnByHeader(coverage, "uncovered raw share of W").data[r],
+          test::ColumnByHeader(coverage, "covered correction factor").data[r]);
+    };
+    const Column &coverage_index = test::ColumnByHeader(producer_coverage, "i");
+    REQUIRE(coverage_index.data.size() ==
+            test::ColumnByHeader(follow_on_coverage, "i").data.size());
+    REQUIRE(!coverage_index.data.empty());
+    for (std::size_t r = 0; r < coverage_index.data.size(); r++)
+    {
+      CHECK(test::ColumnByHeader(follow_on_coverage, "Type").text[r] ==
+            test::ColumnByHeader(producer_coverage, "Type").text[r]);
+      const auto q_row =
+          std::find(q_index.data.begin(), q_index.data.end(), coverage_index.data[r]);
+      REQUIRE(q_row != q_index.data.end());
+      const double e_elec =
+          q_e_elec.data[static_cast<std::size_t>(q_row - q_index.data.begin())];
+      const auto producer_cell = Ingredients(producer_coverage, r);
+      const auto follow_on_cell = Ingredients(follow_on_coverage, r);
+      INFO("coverage row " << r << " (i = " << coverage_index.data[r] << ", "
+                           << test::ColumnByHeader(producer_coverage, "Type").text[r]
+                           << "): W " << producer_cell.within << " / "
+                           << follow_on_cell.within << ", served " << producer_cell.served
+                           << " / " << follow_on_cell.served << ", fabricated "
+                           << producer_cell.fabricated << " / " << follow_on_cell.fabricated
+                           << ", E_elec " << e_elec);
+      const auto reproduction = CompareCoveredFactorIngredients(
+          producer_cell, follow_on_cell, e_elec, covered_factor_delta_b,
+          covered_factor_relative_tolerance);
+      CHECK(reproduction.served);
+      CHECK(reproduction.fabricated);
+    }
   };
 
   // (a) The rounded islands: the initial mesh (written for the driver), the cluster's
@@ -14090,6 +14178,110 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     }
   }
 #endif
+}
+
+// Rulings 2059 / 2060 (P4 S2): the comparison of a coverage cell's covered correction
+// factor on its ingredients (CompareCoveredFactorIngredients, used by the saved-mesh case
+// above) with REAL producer / follow-on numbers of that case at 2 ranks (the coverage table
+// surface-response-coverage.csv: W, uncovered share, factor; E_elec of
+// surface-Q-corrected.csv), read from the kept outputs of P4 REPORT STEP 100: the merged
+// head (8398ac162b; adapted mesh 7904 elements; both SA cells without raw field, W / E_elec
+// ~1e-30) and our main (81425c2d40; 8968 elements; W / E_elec 8.9e-13 and 6.0e-14). The
+// unmutated pairs reproduce; planted differences fail on the expected ingredient.
+TEST_CASE("SurfaceResponseOperator covered correction factor ingredients reproduce to the "
+          "field noise",
+          "[surfaceresponseoperator][Serial]")
+{
+  struct Pair
+  {
+    const char *source;
+    CoveredFactorIngredients producer, follow_on;
+    double e_elec;
+  };
+  const std::vector<Pair> pairs = {
+      {"merged head np 2, i = 1 SA",
+       CoveredFactorIngredientsOf(9.039145000507e-39, 6.463869845114e-16,
+                                  5.972489304772e+28),
+       CoveredFactorIngredientsOf(1.276565375214e-39, 9.153915330750e-16,
+                                  4.229019358350e+29),
+       5.720718913065e-09},
+      {"merged head np 2, i = 2 SA",
+       CoveredFactorIngredientsOf(6.337247315055e-39, 1.843950658374e-16,
+                                  3.262718756638e+28),
+       CoveredFactorIngredientsOf(3.173458589335e-39, 3.682282604269e-16,
+                                  6.515495664497e+28),
+       5.721263980505e-09},
+      {"our main np 2, i = 1 SA",
+       CoveredFactorIngredientsOf(4.811926797170e-21, -6.999559158501e-16,
+                                  1.143510732571e+11),
+       CoveredFactorIngredientsOf(4.811926795146e-21, -5.599647329156e-16,
+                                  1.143510733052e+11),
+       5.407827515333e-09},
+      {"our main np 2, i = 2 SA",
+       CoveredFactorIngredientsOf(3.237298146085e-22, -1.040415950687e-15,
+                                  6.072253462960e+11),
+       CoveredFactorIngredientsOf(3.237298183124e-22, 1.300519923479e-16,
+                                  6.072253393482e+11),
+       5.408852576167e-09}};
+  auto Compare = [](const CoveredFactorIngredients &producer,
+                    const CoveredFactorIngredients &follow_on, double e_elec)
+  {
+    return CompareCoveredFactorIngredients(producer, follow_on, e_elec,
+                                           covered_factor_delta_b,
+                                           covered_factor_relative_tolerance);
+  };
+  for (const auto &pair : pairs)
+  {
+    INFO(pair.source);
+    const auto unmutated = Compare(pair.producer, pair.follow_on, pair.e_elec);
+    CHECK(unmutated.served);
+    CHECK(unmutated.fabricated);
+  }
+
+  // (1) The served energy of the larger cell with field (our main's i = 1) x (1 + 1e-6).
+  {
+    const auto &pair = pairs[2];
+    auto follow_on = pair.follow_on;
+    follow_on.served *= 1.0 + 1.0e-6;
+    const auto planted = Compare(pair.producer, follow_on, pair.e_elec);
+    CHECK_FALSE(planted.served);
+    CHECK(planted.fabricated);
+  }
+  // (1') A synthetic cell with W / E_elec = 1e-3: it reproduces, and its served energy x
+  // (1 + 1e-6) fails.
+  {
+    const double e_elec = 5.407827515333e-09;
+    const auto cell = CoveredFactorIngredientsOf(1.0e-3 * e_elec, 0.0, 1.5);
+    CHECK(Compare(cell, cell, e_elec).Pass());
+    auto follow_on = cell;
+    follow_on.served *= 1.0 + 1.0e-6;
+    const auto planted = Compare(cell, follow_on, e_elec);
+    CHECK_FALSE(planted.served);
+    CHECK(planted.fabricated);
+  }
+  // (2) A fabricated energy x (1 + 1e-9), on a cell with field and on one without.
+  for (const std::size_t p : {std::size_t(2), std::size_t(0)})
+  {
+    const auto &pair = pairs[p];
+    INFO(pair.source);
+    auto follow_on = pair.follow_on;
+    follow_on.fabricated *= 1.0 + 1.0e-9;
+    const auto planted = Compare(pair.producer, follow_on, pair.e_elec);
+    CHECK(planted.served);
+    CHECK_FALSE(planted.fabricated);
+  }
+  // (3) A zero-field cell (the merged head's i = 1) whose served energy is raised to
+  // 1e-20 E_elec: a real field where there was none; alone, and with W raised with it.
+  {
+    const auto &pair = pairs[0];
+    auto follow_on = pair.follow_on;
+    follow_on.served = 1.0e-20 * pair.e_elec;
+    const auto planted = Compare(pair.producer, follow_on, pair.e_elec);
+    CHECK_FALSE(planted.served);
+    CHECK(planted.fabricated);
+    follow_on.within = follow_on.served;
+    CHECK_FALSE(Compare(pair.producer, follow_on, pair.e_elec).served);
+  }
 }
 
 // Ruling 2036 (2) (P4 FM3 merge interaction): for an interface with edge distances the
