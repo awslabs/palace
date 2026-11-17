@@ -489,9 +489,28 @@ protected:
                        const std::vector<WavePortAuxBlock> &aux_blocks,
                        std::vector<std::string> &aux_labels);
 
-  // Remove the last m basis vectors from the PROM, with their projections, as if the
-  // UpdatePROM calls which added them had not happened.
-  void RemoveLastBasisVectors(std::size_t m);
+  // Snapshot of the reduced-order state which UpdatePROM extends: the number of basis
+  // vectors (UpdatePROM only appends to the basis V and to the port-restricted basis V_wp)
+  // and everything projected onto the basis. RestoreReducedState returns the PROM to a
+  // saved state, removing the basis vectors added since; the reduced system is reassembled
+  // at the next SolvePROM.
+  struct ReducedState
+  {
+    std::size_t dim_V = 0;
+    std::vector<std::string> v_node_label;
+    Eigen::MatrixXd orth_R;
+    Eigen::MatrixXcd Kr, Mr, Cr;
+    std::map<int, Eigen::MatrixXcd> Mwp_p_r;
+    Eigen::MatrixXcd M_ff_r;
+    std::vector<Eigen::MatrixXcd> Asig_g_r, Arz_b_r;
+    std::map<int, Eigen::MatrixXcd> M_floquet_p_r;
+    Eigen::VectorXcd RHS1r;
+    std::map<int, Eigen::VectorXcd> RHS1r_online;
+    std::vector<ReducedFloquetMode> floquet_reduced;
+    std::size_t V_wp_dim = 0;
+  };
+  ReducedState SaveReducedState() const;
+  void RestoreReducedState(const ReducedState &state);
 
 public:
   RomOperator(const config::LinearSolverData &linear, int verbose, SpaceOperator &space_op,

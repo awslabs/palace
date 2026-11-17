@@ -1281,62 +1281,55 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
   }
 }
 
-void RomOperator::RemoveLastBasisVectors(std::size_t m)
+RomOperator::ReducedState RomOperator::SaveReducedState() const
 {
-  MFEM_VERIFY(m <= V.size(), "Cannot remove more PROM basis vectors than present!");
-  const std::size_t n = V.size() - m;
-  const auto ne = static_cast<Eigen::Index>(n);
-  V.resize(n);
-  v_node_label.resize(n);
-  orth_R.conservativeResize(ne, ne);
-  Kr.conservativeResize(ne, ne);
-  Mr.conservativeResize(ne, ne);
-  if (C)
-  {
-    Cr.conservativeResize(ne, ne);
-  }
-  for (auto &[port_idx, Mp_r] : Mwp_p_r)
-  {
-    Mp_r.conservativeResize(ne, ne);
-  }
-  if (M_ff_r.rows() > ne)
-  {
-    M_ff_r.conservativeResize(ne, ne);
-  }
-  for (auto *Ar_list : {&Asig_g_r, &Arz_b_r})
-  {
-    for (auto &A_r : *Ar_list)
-    {
-      if (A_r.rows() > ne)
-      {
-        A_r.conservativeResize(ne, ne);
-      }
-    }
-  }
-  for (auto &[port_idx, Mp_r] : M_floquet_p_r)
-  {
-    Mp_r.conservativeResize(ne, ne);
-  }
-  if (RHS1r.size() > ne)
-  {
-    RHS1r.conservativeResize(ne);
-  }
-  for (auto &rm : floquet_reduced)
-  {
-    rm.vk_V.conservativeResize(ne);
-    rm.Vh_cvk.conservativeResize(ne);
-  }
-  // Truncate the port-restricted basis too, so that UpdateWavePortBasisRestriction
-  // restricts the basis vectors added from here on (as many may be added back).
-  if (V_wp_dim > n)
+  return {.dim_V = V.size(),
+          .v_node_label = v_node_label,
+          .orth_R = orth_R,
+          .Kr = Kr,
+          .Mr = Mr,
+          .Cr = Cr,
+          .Mwp_p_r = Mwp_p_r,
+          .M_ff_r = M_ff_r,
+          .Asig_g_r = Asig_g_r,
+          .Arz_b_r = Arz_b_r,
+          .M_floquet_p_r = M_floquet_p_r,
+          .RHS1r = RHS1r,
+          .RHS1r_online = RHS1r_online,
+          .floquet_reduced = floquet_reduced,
+          .V_wp_dim = V_wp_dim};
+}
+
+void RomOperator::RestoreReducedState(const ReducedState &state)
+{
+  MFEM_VERIFY(state.dim_V <= V.size(),
+              "Cannot restore a PROM state with more basis vectors than the current one!");
+  V.resize(state.dim_V);
+  v_node_label = state.v_node_label;
+  orth_R = state.orth_R;
+  Kr = state.Kr;
+  Mr = state.Mr;
+  Cr = state.Cr;
+  Mwp_p_r = state.Mwp_p_r;
+  M_ff_r = state.M_ff_r;
+  Asig_g_r = state.Asig_g_r;
+  Arz_b_r = state.Arz_b_r;
+  M_floquet_p_r = state.M_floquet_p_r;
+  RHS1r = state.RHS1r;
+  RHS1r_online = state.RHS1r_online;
+  floquet_reduced = state.floquet_reduced;
+  if (V_wp_dim > state.V_wp_dim)
   {
     for (auto &[port_idx, vp] : V_wp)
     {
-      vp.resize(n);
+      vp.resize(state.V_wp_dim);
     }
-    V_wp_dim = n;
+    V_wp_dim = state.V_wp_dim;
   }
-  RHS1r_online.clear();
+
+  // The reduced system assembled at Ar_omega, and the port-space pairings cached with it,
+  // are those of the larger basis.
+  sV_wp_full.clear();
   Ar_omega = std::numeric_limits<double>::quiet_NaN();
 }
 
@@ -1345,7 +1338,9 @@ void RomOperator::AddSamplePROM(int excitation_idx, double omega, const ComplexV
 {
   BlockTimer bt(Timer::CONSTRUCT_PROM);
   MPI_Comm comm = space_op.GetComm();
+  SetExcitationIndex(excitation_idx);
   const std::size_t n0 = V.size();
+  const ReducedState state = SaveReducedState();
   UpdatePROM(u, node_label);
   const std::size_t m = V.size() - n0;
   if (m == 0)
@@ -1396,7 +1391,7 @@ void RomOperator::AddSamplePROM(int excitation_idx, double omega, const ComplexV
   // A basis with fewer new directions reproduces the sample better: keep the best of the
   // old basis, and the old basis with the real or (if u has both parts) the imaginary new
   // direction.
-  RemoveLastBasisVectors(m);
+  RestoreReducedState(state);
   if (m == 1)
   {
     Mpi::Print(comm,
@@ -1415,7 +1410,7 @@ void RomOperator::AddSamplePROM(int excitation_idx, double omega, const ComplexV
   const bool keep_im = (err_im < err[best]);
   if (!keep_im)
   {
-    RemoveLastBasisVectors(1);
+    RestoreReducedState(state);
     if (best == 1)
     {
       u_part = u;

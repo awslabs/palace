@@ -75,7 +75,9 @@ public:
   auto &GetKr() const { return Kr; }
   auto &GetCr() const { return Cr; }
   auto &GetMr() const { return Mr; }
-  using RomOperator::RemoveLastBasisVectors;
+  using RomOperator::ReducedState;
+  using RomOperator::RestoreReducedState;
+  using RomOperator::SaveReducedState;
   bool WavePortPairingChecked() const { return wp_pairing_checked; }
   bool WavePortPairingOk() const { return wp_pairing_ok; }
   void UseAssembledWavePortPath(bool assembled)
@@ -84,6 +86,79 @@ public:
     Ar_omega = std::numeric_limits<double>::quiet_NaN();
   }
 };
+
+namespace
+{
+
+// Bitwise equality of saved PROM states (copies of one another, or of a RomOperator before
+// an update and after the update was undone).
+template <typename MatType>
+bool SameMatrix(const MatType &x, const MatType &y)
+{
+  return x.rows() == y.rows() && x.cols() == y.cols() && x == y;
+}
+
+template <typename MapType>
+bool SameMatrixMap(const MapType &x, const MapType &y)
+{
+  if (x.size() != y.size())
+  {
+    return false;
+  }
+  for (const auto &[key, value] : x)
+  {
+    const auto it = y.find(key);
+    if (it == y.end() || !SameMatrix(value, it->second))
+    {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool SameMatrixList(const std::vector<Eigen::MatrixXcd> &x,
+                    const std::vector<Eigen::MatrixXcd> &y)
+{
+  if (x.size() != y.size())
+  {
+    return false;
+  }
+  for (std::size_t i = 0; i < x.size(); i++)
+  {
+    if (!SameMatrix(x[i], y[i]))
+    {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool SameReducedState(const RomOperatorTest::ReducedState &a,
+                      const RomOperatorTest::ReducedState &b)
+{
+  if (a.floquet_reduced.size() != b.floquet_reduced.size())
+  {
+    return false;
+  }
+  for (std::size_t k = 0; k < a.floquet_reduced.size(); k++)
+  {
+    const auto &p = a.floquet_reduced[k], &q = b.floquet_reduced[k];
+    if (p.port_idx != q.port_idx || p.order != q.order || p.is_te != q.is_te ||
+        !SameMatrix(p.vk_V, q.vk_V) || !SameMatrix(p.Vh_cvk, q.Vh_cvk))
+    {
+      return false;
+    }
+  }
+  return a.dim_V == b.dim_V && a.v_node_label == b.v_node_label &&
+         SameMatrix(a.orth_R, b.orth_R) && SameMatrix(a.Kr, b.Kr) &&
+         SameMatrix(a.Mr, b.Mr) && SameMatrix(a.Cr, b.Cr) &&
+         SameMatrixMap(a.Mwp_p_r, b.Mwp_p_r) && SameMatrix(a.M_ff_r, b.M_ff_r) &&
+         SameMatrixList(a.Asig_g_r, b.Asig_g_r) && SameMatrixList(a.Arz_b_r, b.Arz_b_r) &&
+         SameMatrixMap(a.M_floquet_p_r, b.M_floquet_p_r) && SameMatrix(a.RHS1r, b.RHS1r) &&
+         SameMatrixMap(a.RHS1r_online, b.RHS1r_online) && a.V_wp_dim == b.V_wp_dim;
+}
+
+}  // namespace
 
 auto LoadScaleParMesh2(IoData &iodata, MPI_Comm world_comm)
 {
@@ -843,10 +918,9 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-UpdatePROM-LinearDepe
   CHECK_THROWS(prom_op.UpdatePROM(u, "vec_0_duplicate"));
 }
 
-// AddSamplePROM keeps the whole update of UpdatePROM for accurate samples (bit for bit),
-// RemoveLastBasisVectors restores the PROM of the smaller basis exactly, and for an
-// inaccurate sample AddSamplePROM is never worse at the sample than UpdatePROM or than not
-// adding the sample.
+// AddSamplePROM keeps the whole update of UpdatePROM for accurate samples, restoring a
+// saved state undoes an update exactly, and for an inaccurate sample AddSamplePROM is never
+// worse at the sample than UpdatePROM or than not adding the sample.
 TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-AddSamplePROM",
                  "[romoperator][Serial][Parallel]")
 {
@@ -932,20 +1006,19 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-AddSamplePROM",
     CHECK(error_after < error);
   }
 
-  // Removing the last directions restores the PROM of the smaller basis exactly.
+  // Restoring a saved state undoes an update exactly.
   const double omega_test = omega[omega.size() / 2];
   prom_op.SolvePROM(1, omega_test, x_ref);
-  const Eigen::MatrixXcd Kr = prom_op.GetKr(), Mr = prom_op.GetMr(), Cr = prom_op.GetCr();
+  const auto state = prom_op.SaveReducedState();
   const auto dim = prom_op.GetReducedDimension();
   u.Real().Randomize(42);
   u.Imag().Randomize(43);
   prom_op.UpdatePROM(u, "random");
   REQUIRE(prom_op.GetReducedDimension() == dim + 2);
-  prom_op.RemoveLastBasisVectors(2);
+  prom_op.SolvePROM(1, omega_test, x);
+  prom_op.RestoreReducedState(state);
   CHECK(prom_op.GetReducedDimension() == dim);
-  CHECK(prom_op.GetKr() == Kr);
-  CHECK(prom_op.GetMr() == Mr);
-  CHECK(prom_op.GetCr() == Cr);
+  CHECK(SameReducedState(prom_op.SaveReducedState(), state));
   prom_op.SolvePROM(1, omega_test, x);
   CHECK(rel_diff(x, x_ref) == 0.0);
 
@@ -1602,7 +1675,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   REQUIRE_FALSE(rom_op.WavePortPairingChecked());
   check_excitations(omega_back);
 
-  // Basis vectors removed by RemoveLastBasisVectors (AddSamplePROM dropping a part of a
+  // Basis vectors removed by restoring a saved state (AddSamplePROM dropping a part of a
   // sample) leave no stale port-restricted basis vector behind, also when as many vectors
   // are added again.
   linalg::SetRandom(comm, sample.Real(), 46);
@@ -1612,9 +1685,11 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   ComplexVector part(sample);
   part.UseDevice(true);
   part.Real() = 0.0;
+  const auto state = rom_op.SaveReducedState();
   rom_op.UpdatePROM(part, "pairing_sample_im");
   check_excitations(omega_back);
-  rom_op.RemoveLastBasisVectors(1);
+  rom_op.RestoreReducedState(state);
+  CHECK(SameReducedState(rom_op.SaveReducedState(), state));
   part = sample;
   part.Imag() = 0.0;
   rom_op.UpdatePROM(part, "pairing_sample_re");
