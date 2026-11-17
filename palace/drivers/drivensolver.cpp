@@ -142,8 +142,16 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
 
   // Set up the linear solver.
   // The operators are constructed for each frequency step and used to initialize the ksp.
-  auto ksp = std::make_unique<ComplexKspSolver>(iodata, space_op.GetNDSpaces(),
-                                                &space_op.GetH1Spaces());
+  // With a condensed environment, the preconditioner is its coupled factorization of the
+  // region (refactored at each frequency), which needs no preconditioner matrix.
+  auto env_pc = env ? env->GetPreconditioner() : nullptr;
+  const bool assemble_pc = !env_pc;
+  auto ksp =
+      env_pc
+          ? std::make_unique<ComplexKspSolver>(iodata.solver.linear, iodata.problem.verbose,
+                                               space_op.GetComm(), std::move(env_pc))
+          : std::make_unique<ComplexKspSolver>(iodata, space_op.GetNDSpaces(),
+                                               &space_op.GetH1Spaces());
 
   // Set up RHS vector for the incident field at port boundaries, and the vector for the
   // first frequency step.
@@ -174,18 +182,21 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
 
   // Main excitation and frequency loop: the solves by excitation, then frequency, or by
   // frequency, then excitation, when the preconditioner is a sparse direct solve of the
-  // system (on a single level), which is then factored once per frequency for all
-  // excitations. Not with field output, which is collected per excitation, nor with a
-  // restart, which counts the solves by excitation. PALACE_DRIVEN_EXCITATION_MAJOR=1 in the
-  // environment keeps the order by excitation (prototype, for comparison).
+  // system (on a single level, or the coupled factorization of a condensed environment),
+  // which is then factored once per frequency for all excitations. Not with field output,
+  // which is collected per excitation, nor with a restart, which counts the solves by
+  // excitation. PALACE_DRIVEN_EXCITATION_MAJOR=1 in the environment keeps the order by
+  // excitation (prototype, for comparison).
   const auto &linear = iodata.solver.linear;
   const char *excitation_major = std::getenv("PALACE_DRIVEN_EXCITATION_MAJOR");
   const bool frequency_major =
       port_excitations.Size() > 1 && iodata.solver.driven.restart == 1 &&
-      !post_op.WillWriteFields() && space_op.GetNDSpaces().GetNumLevels() == 1 &&
-      (linear.type == LinearSolver::MUMPS || linear.type == LinearSolver::STRUMPACK ||
-       linear.type == LinearSolver::STRUMPACK_MP || linear.type == LinearSolver::SUPERLU ||
-       linear.type == LinearSolver::CUDSS) &&
+      !post_op.WillWriteFields() &&
+      (!assemble_pc ||
+       (space_op.GetNDSpaces().GetNumLevels() == 1 &&
+        (linear.type == LinearSolver::MUMPS || linear.type == LinearSolver::STRUMPACK ||
+         linear.type == LinearSolver::STRUMPACK_MP ||
+         linear.type == LinearSolver::SUPERLU || linear.type == LinearSolver::CUDSS))) &&
       !(excitation_major && std::string(excitation_major) == "1");
   struct Solve
   {
@@ -236,9 +247,12 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
       // solver.
       A.reset();
       A2.reset();
-      P = space_op.GetPreconditionerMatrix<ComplexOperator>(1.0 + 0.0i, 1i * omega,
-                                                            -omega * omega + 0.0i, omega);
-      A = space_op.GetSystemOperator(omega, *P);
+      if (assemble_pc)
+      {
+        P = space_op.GetPreconditionerMatrix<ComplexOperator>(1.0 + 0.0i, 1i * omega,
+                                                              -omega * omega + 0.0i, omega);
+        A = space_op.GetSystemOperator(omega, *P);
+      }
       if (!A)
       {
         if (!K)
@@ -251,7 +265,7 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
         A = space_op.GetSystemMatrix(1.0 + 0.0i, 1i * omega, -omega * omega + 0.0i, K.get(),
                                      C.get(), M.get(), A2.get());
       }
-      ksp->SetOperators(*A, *P);
+      ksp->SetOperators(*A, P ? *P : *A);
       omega_A = omega_i;
     }
 

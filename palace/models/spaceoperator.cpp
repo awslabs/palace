@@ -1465,6 +1465,9 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(ScalarType a0,
               "Multigrid hierarchy mismatch for auxiliary space preconditioning!");
 
   const auto n_levels = GetNDSpaces().GetNumLevels();
+  MFEM_VERIFY(!cond_env || n_levels == 1,
+              "The preconditioner matrix of a condensed environment needs a single-level "
+              "space!");
   std::vector<std::unique_ptr<Operator>> br_vec(n_levels), bi_vec(n_levels),
       br_aux_vec(n_levels), bi_aux_vec(n_levels);
   if (std::is_same_v<OperType, ComplexOperator> && !pc_mat_real)
@@ -1595,8 +1598,6 @@ void SpaceOperator::SetCondensedEnvironment(CondensedEnvironment *env)
   assembly_domains.reset();
   if (env)
   {
-    MFEM_VERIFY(GetNDSpaces().GetNumLevels() == 1,
-                "A condensed environment needs a single-level space!");
     assembly_domains.emplace(GetMesh().GetCeedAttributes(env->RegionAttributes()),
                              GetMesh().GetCeedBdrAttributesByNeighbor(env->RegionAttributes()));
   }

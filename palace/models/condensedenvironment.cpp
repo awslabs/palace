@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <numbers>
 #include <string>
+#include <utility>
 #include <fmt/core.h>
 #include <fmt/ranges.h>
 #include "fem/substructure.hpp"
@@ -229,8 +230,10 @@ private:
 bool CondensedEnvironment::Enabled(const config::SolverData &solver)
 {
   const char *env = std::getenv("PALACE_SUBSTRUCTURING_DRIVENSOLVER");
-  return solver.substructuring && solver.substructuring->mode == SubstructuringMode::ONLINE &&
-         solver.driven.adaptive_tol <= 0.0 && env && std::string(env) == "1";
+  return solver.substructuring &&
+         solver.substructuring->mode == SubstructuringMode::ONLINE &&
+         solver.driven.adaptive_tol <= 0.0 && env &&
+         (std::string(env) == "1" || std::string(env) == "generic");
 }
 
 CondensedEnvironment::CondensedEnvironment(const IoData &iodata, SpaceOperator &space_op)
@@ -239,18 +242,27 @@ CondensedEnvironment::CondensedEnvironment(const IoData &iodata, SpaceOperator &
     boundaries(iodata.boundaries)
 {
   const auto &linear = iodata.solver.linear;
-  MFEM_VERIFY(space_op.GetNDSpaces().GetNumLevels() == 1 && !space_op.GetNDSpace().IsBroken() &&
-                  (linear.type == LinearSolver::MUMPS ||
-                   linear.type == LinearSolver::STRUMPACK ||
-                   linear.type == LinearSolver::SUPERLU) &&
-                  !linear.pc_mat_real && !linear.pc_mat_shifted,
-              "Online driven substructuring through the driven solver (prototype) needs a "
-              "sparse direct solver on a single level (\"MGMaxLevels\": 1), without "
-              "\"PCMatReal\" or \"PCMatShifted\"!");
-  if (!linear.complex_coarse_solve)
+  const char *mode = std::getenv("PALACE_SUBSTRUCTURING_DRIVENSOLVER");
+  generic = mode && std::string(mode) == "generic";
+  MFEM_VERIFY(!space_op.GetNDSpace().IsBroken(),
+              "Online driven substructuring through the driven solver (prototype) needs an "
+              "unbroken space!");
+  if (generic)
   {
-    Mpi::Warning(comm, "Without \"ComplexCoarseSolve\", the sparse direct solver factors "
-                       "a real approximation of the system: set it for an exact solve!\n");
+    MFEM_VERIFY(space_op.GetNDSpaces().GetNumLevels() == 1 &&
+                    (linear.type == LinearSolver::MUMPS ||
+                     linear.type == LinearSolver::STRUMPACK ||
+                     linear.type == LinearSolver::SUPERLU) &&
+                    !linear.pc_mat_real && !linear.pc_mat_shifted,
+                "Online driven substructuring through the driven solver with the generic "
+                "preconditioner needs a sparse direct solver on a single level "
+                "(\"MGMaxLevels\": 1), without \"PCMatReal\" or \"PCMatShifted\"!");
+    if (!linear.complex_coarse_solve)
+    {
+      Mpi::Warning(comm,
+                   "Without \"ComplexCoarseSolve\", the sparse direct solver factors "
+                   "a real approximation of the system: set it for an exact solve!\n");
+    }
   }
   MFEM_VERIFY(space_op.GetWavePortOp().Size() == 0,
               "Online driven substructuring through the driven solver (prototype) supports "
@@ -516,7 +528,50 @@ void CondensedEnvironment::Load(double omega)
   };
   Sr = build(false);
   Si = build(true);
+  S_root = std::move(S);
+  omega_record = omega;
   record = j;
+}
+
+void CondensedEnvironment::Factor()
+{
+  MFEM_VERIFY(record >= 0, "No S_E to factor the region against!");
+  if (factored != record)
+  {
+    // Condense reads S_E (on rank 0), which is released after.
+    ds->Condense(omega_record, std::exchange(S_root, {}));
+    factored = record;
+  }
+}
+
+class CondensedEnvironment::Preconditioner : public Solver<ComplexOperator>
+{
+public:
+  explicit Preconditioner(CondensedEnvironment &env) : env(env) {}
+
+  void SetOperator(const ComplexOperator &op) override
+  {
+    height = op.Height();
+    width = op.Width();
+    env.Factor();
+  }
+
+  void Mult(const ComplexVector &x, ComplexVector &y) const override
+  {
+    env.ds->SolveRegion({&x}, {&y});
+  }
+
+private:
+  CondensedEnvironment &env;
+};
+
+std::unique_ptr<Solver<ComplexOperator>> CondensedEnvironment::GetPreconditioner()
+{
+  if (generic)
+  {
+    return {};
+  }
+  return std::make_unique<Preconditioner>(*this);
 }
 
 const mfem::HypreParMatrix &CondensedEnvironment::SchurReal(double omega)

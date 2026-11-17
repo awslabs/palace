@@ -293,6 +293,15 @@ BaseKspSolver<OperType>::BaseKspSolver(std::unique_ptr<IterativeSolver<OperType>
 }
 
 template <OperatorType OperType>
+BaseKspSolver<OperType>::BaseKspSolver(const config::LinearSolverData &linear, int verbose,
+                                       MPI_Comm comm,
+                                       std::unique_ptr<Solver<OperType>> &&pc)
+  : BaseKspSolver(ConfigureKrylovSolver<OperType>(linear, verbose, comm), std::move(pc))
+{
+  use_timer = true;
+}
+
+template <OperatorType OperType>
 void BaseKspSolver<OperType>::SetOperators(const OperType &op, const OperType &pc_op)
 {
   BlockTimer bt(Timer::KSP_SETUP, use_timer);

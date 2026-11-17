@@ -200,10 +200,10 @@ public:
   // the interface Γ. While set (before the operators are assembled; nullptr resets), the
   // stiffness, damping, mass and extra system matrices and the preconditioner are those of
   // the region, restricted to it as by an AssemblyRestriction, with the essential true DOFs
-  // of the region; the extra system operator and the finest level of the preconditioner
-  // (a single level) have S_E(ω) added on Γ, with the identity on the true DOFs outside the
-  // region and Γ; and the frequency domain excitation is the region's, with the condensed
-  // sources of the environment on Γ.
+  // of the region; the extra system operator and the preconditioner matrix (which needs a
+  // single level) have S_E(ω) added on Γ, with the identity on the true DOFs outside
+  // the region and Γ; and the frequency domain excitation is the region's, with the
+  // condensed sources of the environment on Γ.
   void SetCondensedEnvironment(CondensedEnvironment *env);
   CondensedEnvironment *GetCondensedEnvironment() const { return cond_env; }
 

@@ -12,6 +12,7 @@
 #include <mfem.hpp>
 #include "fem/substructure.hpp"
 #include "linalg/operator.hpp"
+#include "linalg/solver.hpp"
 #include "linalg/vector.hpp"
 #include "utils/configfile.hpp"
 
@@ -33,11 +34,16 @@ class SpaceOperator;
 // operator (assembled under a restriction to the region) with S_E(ω) added on Γ and the
 // identity on the true DOFs outside the region and Γ (the environment interior and the
 // Dirichlet DOFs of environment elements only), where the solution is zero, and the
-// excitation is the region's with g_k(ω) on Γ.
+// excitation is the region's with g_k(ω) on Γ. The preconditioner of that system
+// (GetPreconditioner) is the coupled factorization of the online sweep: the region interior
+// and Γ with S_E(ω), factored as one complex symmetric system by DrivenSubstructure, its
+// pattern refilled at each frequency.
 //
 // This is a prototype for the review of the online path of DrivenSubstructuredSweep: exact
-// models (the frequencies of the model only), lumped ports, and a single-level space with
-// a sparse direct solver (the preconditioner matrix is the system matrix, S_E included).
+// models (the frequencies of the model only) and lumped ports. With
+// PALACE_SUBSTRUCTURING_DRIVENSOLVER=generic, the preconditioner is instead the configured
+// sparse direct solver of the assembled system matrix, S_E included (on a single-level
+// space), for comparison.
 //
 class CondensedEnvironment
 {
@@ -49,9 +55,16 @@ public:
   ~CondensedEnvironment();
 
   // Whether an online driven substructuring run takes this path: the prototype is chosen
-  // by PALACE_SUBSTRUCTURING_DRIVENSOLVER=1 in the environment (else, or for an adaptive
-  // sweep, DrivenSubstructuredSweep).
+  // by PALACE_SUBSTRUCTURING_DRIVENSOLVER=1 (or generic) in the environment (else, or for
+  // an adaptive sweep, DrivenSubstructuredSweep).
   static bool Enabled(const config::SolverData &solver);
+
+  // The preconditioner of the region's system: solves with the coupled factorization of the
+  // region interior and Γ for the entries of a vector there, zero elsewhere (where the
+  // solution is zero). Its SetOperator factors the region against the S_E(ω) read last,
+  // that of the system operator (GetExtraSystemOperator(ω) reads it), and ignores the
+  // operator otherwise. Null with the generic preconditioner, the assembled system matrix.
+  std::unique_ptr<Solver<ComplexOperator>> GetPreconditioner();
 
   const std::vector<int> &RegionAttributes() const;
 
@@ -110,8 +123,19 @@ private:
   int record = -1;
   std::shared_ptr<mfem::HypreParMatrix> Sr, Si;
   std::vector<std::complex<double>> g, h, c;
+  // For the coupled factorization: the generic preconditioner instead, the frequency of
+  // the record and its full S_E on rank 0 until factored, and the record factored last.
+  bool generic = false;
+  double omega_record = 0.0;
+  std::vector<std::complex<double>> S_root;
+  int factored = -1;
 
   void Load(double omega);
+
+  // Factor the region against the S_E of the record read last (if not yet).
+  void Factor();
+
+  class Preconditioner;
 };
 
 //

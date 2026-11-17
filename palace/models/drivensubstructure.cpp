@@ -824,6 +824,14 @@ void DrivenSubstructure::Solve(const std::vector<const ComplexVector *> &rhs,
   }
 }
 
+void DrivenSubstructure::SolveRegion(const std::vector<const ComplexVector *> &X,
+                                     const std::vector<ComplexVector *> &Y)
+{
+  MFEM_VERIFY(online && solvable, "Condense (with a given S_E) must be called before "
+                                  "SolveRegion!");
+  coupled->SolveInternal(X, Y);
+}
+
 void DrivenSubstructure::SolveCoupled(const std::vector<const ComplexVector *> &rhs,
                                       std::vector<ComplexVector> &u,
                                       const std::vector<std::complex<double>> &g_env)

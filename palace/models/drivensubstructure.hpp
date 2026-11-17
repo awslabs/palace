@@ -196,6 +196,12 @@ public:
   void Solve(const std::vector<const ComplexVector *> &rhs, std::vector<ComplexVector> &u,
              const std::vector<std::complex<double>> *g_env = nullptr);
 
+  // Online, after Condense(ω, S_E): solves of the region with S_E on Γ (the coupled
+  // factorization) for a batch of full true-DOF vectors, by their entries on the region
+  // interior and Γ; y_k is zero elsewhere, and may alias x_k. Collective.
+  void SolveRegion(const std::vector<const ComplexVector *> &X,
+                   const std::vector<ComplexVector *> &Y);
+
   // Condensation onto Γ of vectors supported on the environment interior and Γ with the
   // environment factorization of the last condensation, b_Γ - A_ΓE A_EE^-1 b_E, on rank 0
   // (|Γ| x |b|, column-major), and with x the environment interior solutions A_EE^-1 b_E
