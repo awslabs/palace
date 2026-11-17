@@ -28,7 +28,6 @@
 #include "models/waveportoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
-#include "utils/perfmetrics.hpp"
 #include "utils/prettyprint.hpp"
 #include "utils/timer.hpp"
 
@@ -97,12 +96,8 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
 
   // Set up the linear solver.
   // The operators are constructed for each frequency step and used to initialize the ksp.
-  auto ksp = [&]
-  {
-    perf::ScopedRole role("Main");
-    return std::make_unique<ComplexKspSolver>(iodata, space_op.GetNDSpaces(),
-                                              &space_op.GetH1Spaces());
-  }();
+  auto ksp = std::make_unique<ComplexKspSolver>(iodata, space_op.GetNDSpaces(),
+                                                &space_op.GetH1Spaces(), "Main");
 
   // Set up RHS vector for the incident field at port boundaries, and the vector for the
   // first frequency step.

@@ -210,7 +210,7 @@ ConfigurePreconditionerSolver(const config::LinearSolverData &linear,
     // (ownership of pc is transferred to the GeometricMultigridSolver). When a special
     // auxiliary space smoother for pre-/post-smoothing is not desired, the auxiliary
     // space is a nullptr here.
-    auto gmg = [&]()
+    pc = [&]()
     {
       if (linear.mg_smooth_aux)
       {
@@ -230,17 +230,12 @@ ConfigurePreconditionerSolver(const config::LinearSolverData &linear,
             linear.mg_smooth_sf_max, linear.mg_smooth_sf_min, linear.mg_smooth_cheby_4th);
       }
     }();
-    gmg->EnableTimer();  // Enable timing for primary geometric multigrid solver
-    return gmg;
   }
-  else
+  if (pc)
   {
-    if (auto *wrapper = dynamic_cast<MfemWrapperSolver<OperType> *>(pc.get()))
-    {
-      wrapper->EnableSetupTimer();  // Only the primary solver times itself
-    }
-    return pc;
+    pc->EnableTimer();  // Only the primary solver times itself
   }
+  return pc;
 }
 
 }  // namespace
@@ -266,6 +261,18 @@ template <OperatorType OperType>
 BaseKspSolver<OperType>::BaseKspSolver(const config::LinearSolverData &linear,
                                        MatrixSymmetry pc_mat_sym, int verbose,
                                        FiniteElementSpaceHierarchy &fespaces,
+                                       FiniteElementSpaceHierarchy *aux_fespaces,
+                                       std::string_view role)
+  : BaseKspSolver(perf::ScopedRole(role), linear, pc_mat_sym, verbose, fespaces,
+                  aux_fespaces)
+{
+}
+
+template <OperatorType OperType>
+BaseKspSolver<OperType>::BaseKspSolver(const perf::ScopedRole &,
+                                       const config::LinearSolverData &linear,
+                                       MatrixSymmetry pc_mat_sym, int verbose,
+                                       FiniteElementSpaceHierarchy &fespaces,
                                        FiniteElementSpaceHierarchy *aux_fespaces)
   : BaseKspSolver(ConfigureKrylovSolver<OperType>(linear, verbose,
                                                   fespaces.GetFinestFESpace().GetComm()),
@@ -279,9 +286,10 @@ BaseKspSolver<OperType>::BaseKspSolver(const config::LinearSolverData &linear,
 template <OperatorType OperType>
 BaseKspSolver<OperType>::BaseKspSolver(const IoData &iodata,
                                        FiniteElementSpaceHierarchy &fespaces,
-                                       FiniteElementSpaceHierarchy *aux_fespaces)
+                                       FiniteElementSpaceHierarchy *aux_fespaces,
+                                       std::string_view role)
   : BaseKspSolver(iodata.solver.linear, GetPreconditionerMatrixSymmetry(iodata),
-                  iodata.problem.verbose, fespaces, aux_fespaces)
+                  iodata.problem.verbose, fespaces, aux_fespaces, role)
 {
 }
 

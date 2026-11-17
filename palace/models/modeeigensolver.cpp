@@ -505,12 +505,6 @@ void ModeEigenSolver::SetUpLinearSolver(MPI_Comm comm)
   gmres->SetRelTol(linear.tol);
   gmres->SetMaxIter(linear.max_it);
   gmres->SetRestartDim(linear.max_size);
-  if (bmo)
-  {
-    // Wave ports are untimed: they run on the port's subcommunicator (time stays in Wave
-    // Ports).
-    gmres->EnableTimer();
-  }
 
   // Select sparse direct solver type. Multigrid (AMS, BoomerAMG) is not applicable for
   // the combined ND+H1 block system, so fall back to a sparse direct solver.
@@ -608,7 +602,10 @@ void ModeEigenSolver::SetUpLinearSolver(MPI_Comm comm)
       false, false, false, reorder_reuse);
   if (bmo)
   {
-    pc->EnableSetupTimer();
+    // Wave ports are untimed: they run on the port's subcommunicator (time stays in Wave
+    // Ports).
+    gmres->EnableTimer();
+    pc->EnableTimer();
   }
   ksp = std::make_unique<ComplexKspSolver>(std::move(gmres), std::move(pc));
 }

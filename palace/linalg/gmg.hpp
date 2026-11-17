@@ -78,7 +78,7 @@ public:
 
   void Mult(const VecType &x, VecType &y) const override;
 
-  void EnableTimer();
+  void EnableTimer() override;
 };
 
 }  // namespace palace

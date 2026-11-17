@@ -71,7 +71,7 @@ Vector SolveManufactured(const IoData &iodata, LaplaceOperator &laplace_op,
                          const std::vector<int> &neumann_attributes = {})
 {
   auto K = laplace_op.GetStiffnessMatrix();
-  KspSolver ksp(iodata, laplace_op.GetH1Spaces());
+  KspSolver ksp(iodata, laplace_op.GetH1Spaces(), nullptr, "Unassigned");
   ksp.SetOperators(*K, *K);
 
   auto &h1 = laplace_op.GetH1Space();

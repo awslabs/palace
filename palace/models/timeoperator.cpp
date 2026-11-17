@@ -95,7 +95,6 @@ public:
       // vector products, and is only assembled for preconditioning.
       ConfigureLinearSolver = [this, &linear, verbose, &space_op](double dt)
       {
-        perf::ScopedRole role("Main");
         // Configure the system matrix and also the matrix (matrices) from which the
         // preconditioner will be constructed.
         A = space_op.GetSystemMatrix(dt * dt, dt, 1.0, K.get(), C.get(), M.get());
@@ -104,9 +103,9 @@ public:
         // Configure the solver.
         if (!kspA)
         {
-          kspA =
-              std::make_unique<KspSolver>(linear, MatrixSymmetry::SPD, verbose,
-                                          space_op.GetNDSpaces(), &space_op.GetH1Spaces());
+          kspA = std::make_unique<KspSolver>(linear, MatrixSymmetry::SPD, verbose,
+                                             space_op.GetNDSpaces(),
+                                             &space_op.GetH1Spaces(), "Main");
         }
         kspA->SetOperators(*A, *B);
       };

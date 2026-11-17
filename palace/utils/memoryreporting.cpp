@@ -118,52 +118,51 @@ MemoryStats ComputeStats(std::string label, long local_value, MPI_Comm comm)
 
 }  // namespace
 
+const NodeComms &GetNodeComms(MPI_Comm comm)
+{
+  static const NodeComms nc = [comm]()
+  {
+    NodeComms c;
+    c.comm = comm;
+    MPI_Comm_split_type(comm, MPI_COMM_TYPE_SHARED, 0, MPI_INFO_NULL, &c.node);
+    MPI_Comm_split(comm, (Mpi::Rank(c.node) == 0) ? 0 : MPI_UNDEFINED, 0, &c.leaders);
+    return c;
+  }();
+  int cmp;
+  MPI_Comm_compare(comm, nc.comm, &cmp);
+  MFEM_VERIFY(cmp == MPI_IDENT || cmp == MPI_CONGRUENT,
+              "Node communicators must always be requested for the same communicator!");
+  return nc;
+}
+
 MemoryStats ComputeNodeMemoryStats(std::string label, long local_value, MPI_Comm comm)
 {
-  // Split communicator into shared memory groups (processes on same node).
-  MPI_Comm node_comm;
-  MPI_Comm_split_type(comm, MPI_COMM_TYPE_SHARED, 0, MPI_INFO_NULL, &node_comm);
-
-  // Get rank within the node.
-  int node_rank = Mpi::Rank(node_comm);
+  const auto &nc = GetNodeComms(comm);
 
   // Sum memory usage across all processes on this node.
   // Assumes shared memory is negligible.
   long node_total_memory = local_value;
-  MPI_Reduce(&local_value, &node_total_memory, 1, MPI_LONG, MPI_SUM, 0, node_comm);
-
-  // Create a communicator of node leaders (rank 0 on each node).
-  MPI_Comm leaders_comm;
-  int color = (node_rank == 0) ? 0 : MPI_UNDEFINED;
-  MPI_Comm_split(comm, color, 0, &leaders_comm);
+  MPI_Reduce(&local_value, &node_total_memory, 1, MPI_LONG, MPI_SUM, 0, nc.node);
 
   // Compute statistics across node leaders.
   MemoryStats stats;
   stats.label = label;
-  if (node_rank == 0 && leaders_comm != MPI_COMM_NULL)
+  if (nc.leaders != MPI_COMM_NULL)
   {
     stats.min = node_total_memory;
     stats.max = node_total_memory;
     stats.sum = node_total_memory;
-    Mpi::GlobalMin(1, &stats.min, leaders_comm);
-    Mpi::GlobalMax(1, &stats.max, leaders_comm);
-    Mpi::GlobalSum(1, &stats.sum, leaders_comm);
-    stats.avg = static_cast<double>(stats.sum) / Mpi::Size(leaders_comm);
+    Mpi::GlobalMin(1, &stats.min, nc.leaders);
+    Mpi::GlobalMax(1, &stats.max, nc.leaders);
+    Mpi::GlobalSum(1, &stats.sum, nc.leaders);
+    stats.avg = static_cast<double>(stats.sum) / Mpi::Size(nc.leaders);
   }
 
   // Broadcast results from node leaders to all ranks.
-  Mpi::Broadcast(1, &stats.min, 0, node_comm);
-  Mpi::Broadcast(1, &stats.max, 0, node_comm);
-  Mpi::Broadcast(1, &stats.sum, 0, node_comm);
-  Mpi::Broadcast(1, &stats.avg, 0, node_comm);
-
-  // Clean up communicators.
-  if (leaders_comm != MPI_COMM_NULL)
-  {
-    MPI_Comm_free(&leaders_comm);
-  }
-  MPI_Comm_free(&node_comm);
-
+  Mpi::Broadcast(1, &stats.min, 0, nc.node);
+  Mpi::Broadcast(1, &stats.max, 0, nc.node);
+  Mpi::Broadcast(1, &stats.sum, 0, nc.node);
+  Mpi::Broadcast(1, &stats.avg, 0, nc.node);
   return stats;
 }
 

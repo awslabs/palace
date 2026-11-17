@@ -7,7 +7,6 @@
 #include <algorithm>
 #include <cfloat>
 #include <cmath>
-#include <deque>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -25,10 +24,9 @@ struct Stats
   double Avg() const { return (ranks > 0) ? sum / ranks : 0.0; }
 };
 
-// Reduce each value over the processes of comm; value i contributes on a process if
-// set[i]. Collective: three MPI_Allreduce.
-std::vector<Stats> ReduceStats(const std::vector<double> &value,
-                               const std::vector<char> &set, MPI_Comm comm);
+// Reduce each value over the processes of comm; NaN values do not contribute. Collective:
+// three MPI_Allreduce.
+std::vector<Stats> ReduceStats(const std::vector<double> &value, MPI_Comm comm);
 
 // Reduction across processes. COUNT: a count which all processes running the work perform
 // identically (MAX; SUM over subcommunicator roots for a role on subcommunicators).
@@ -57,23 +55,35 @@ enum class Acc
   LAST
 };
 
-namespace detail
-{
-
-struct Entry
+// A metric: path and rules.
+struct MetricInfo
 {
   std::string path;
   Acc acc;
-  Red red;  // Resolved: never COUNT
+  Red red;
   Run run;
-  double iter = 0.0, run_value = 0.0;
-  bool iter_set = false, run_set = false;
+  bool operator==(const MetricInfo &) const = default;
+};
+
+namespace detail
+{
+
+// Values are NaN when unset.
+struct Entry
+{
+  MetricInfo info;  // Red resolved: never COUNT
+  double iter = std::nan(""), run_value = std::nan("");
 };
 
 inline std::vector<Entry> entries;
 
+// Combine with an unset (NaN) value: the other one.
 inline double Combine(Acc acc, double a, double b)
 {
+  if (std::isnan(a) || std::isnan(b))
+  {
+    return std::isnan(a) ? b : a;
+  }
   switch (acc)
   {
     case Acc::SUM:
@@ -91,14 +101,11 @@ inline double Combine(Acc acc, double a, double b)
 // Hot path: one indexed update. Invalid ids are no-ops; NaN is ignored, inf clamped.
 inline void Update(int id, double v)
 {
-  if (id < 0 || std::isnan(v))
+  if (id >= 0 && !std::isnan(v))
   {
-    return;
+    auto &e = entries[id];
+    e.iter = Combine(e.info.acc, e.iter, std::clamp(v, -DBL_MAX, DBL_MAX));
   }
-  v = std::clamp(v, -DBL_MAX, DBL_MAX);
-  auto &e = entries[id];
-  e.iter = e.iter_set ? Combine(e.acc, e.iter, v) : v;
-  e.iter_set = true;
 }
 
 int Register(std::string_view path, Acc acc, Red red, Run run);
@@ -210,32 +217,26 @@ public:
   void Set(double v) const { detail::Update(id, v); }
 };
 
-// A metric of the global list (identical on all processes after Sync).
-struct MetricInfo
-{
-  std::string path;
-  Acc acc;
-  Red red;
-  Run run;
-};
-
-// Exchange the metrics registered since the previous call and validate the global list;
-// all processes abort together on an error. Collective.
+// Exchange the metrics registered since the previous call and validate the global list
+// (identical on all processes afterwards); all processes abort together on an error.
+// Collective.
 void Sync(MPI_Comm comm);
 
 const std::vector<MetricInfo> &GlobalMetrics();
 
-// Values of the global metrics on this process (unset: set[i] = 0): iteration values, or
-// cumulative values (run combined with iteration; ITERATION_ONLY metrics unset). Appends to
-// value and set.
-void PackMetrics(bool cumulative, std::vector<double> &value, std::vector<char> &set);
+// Index of a path in GlobalMetrics(), or -1.
+int GlobalIndex(std::string_view path);
+
+// Values of the global metrics on this process (NaN: unset), appended to value: iteration
+// values, or cumulative values (run combined with iteration; ITERATION_ONLY metrics unset).
+void PackMetrics(bool cumulative, std::vector<double> &value);
 
 namespace detail
 {
 // Root-side validation of new entries ("path\tARR" lines, A/R/R = '0' + enum values)
 // against the existing global paths: returns the sorted new unique lines, or sets error.
-std::vector<std::string> ValidateNew(const std::vector<MetricInfo> &global,
-                                     const std::string &lines, std::string &error);
+std::string ValidateNew(const std::vector<MetricInfo> &global, std::string_view lines,
+                        std::string &error);
 }  // namespace detail
 
 }  // namespace palace::perf

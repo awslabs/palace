@@ -13,7 +13,6 @@
 #include "models/postoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
-#include "utils/perfmetrics.hpp"
 #include "utils/timer.hpp"
 
 namespace palace
@@ -33,11 +32,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   SaveMetadata(laplace_op.GetH1Spaces());
 
   // Set up the linear solver.
-  auto ksp = [&]
-  {
-    perf::ScopedRole role("Main");
-    return KspSolver(iodata, laplace_op.GetH1Spaces());
-  }();
+  KspSolver ksp(iodata, laplace_op.GetH1Spaces(), nullptr, "Main");
   ksp.SetOperators(*K, *K);
 
   // Terminal indices are the set of boundaries over which to compute the capacitance

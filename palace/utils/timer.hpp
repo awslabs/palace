@@ -103,11 +103,23 @@ public:
   static_assert(descriptions.size() == NUM_TIMINGS);
   static_assert(names.size() == NUM_TIMINGS);
 
+  // Time, count and peak memory growth of a row.
+  struct Row
+  {
+    Duration time{};
+    long count = 0, mem = 0;
+    Row &operator+=(const Row &r)
+    {
+      time += r.time;
+      count += r.count;
+      mem += r.mem;
+      return *this;
+    }
+  };
+
 private:
+  std::array<Row, NUM_TIMINGS> iter{}, run{};  // This iteration; previous iterations
   TimePoint start_time, iteration_start_time, last_lap_time, report_time;
-  std::vector<Duration> data, run_data;  // This iteration; previous iterations
-  std::vector<long> counts, run_counts;
-  std::vector<long> mem_data, run_mem_data;
   long last_memory;
   long report_memory = 0;       // Process peak at the last report
   long iteration_baseline = 0;  // Process peak at the iteration start (0: first)
@@ -117,38 +129,30 @@ private:
 public:
   Timer()
     : start_time(Now()), iteration_start_time(start_time), last_lap_time(start_time),
-      report_time(start_time), data(NUM_TIMINGS), run_data(NUM_TIMINGS),
-      counts(NUM_TIMINGS, 0), run_counts(NUM_TIMINGS, 0), mem_data(NUM_TIMINGS, 0),
-      run_mem_data(NUM_TIMINGS, 0), last_memory(memory_reporting::GetPeakMemory())
+      report_time(start_time), last_memory(memory_reporting::GetPeakMemory())
   {
   }
 
   static TimePoint Now() { return Clock::now(); }
 
-  Duration Lap()
+  // Time and peak memory growth since the last lap.
+  Row Lap()
   {
-    auto temp_time = last_lap_time;
-    last_lap_time = Now();
-    return last_lap_time - temp_time;
+    const auto time = Now();
+    const long memory = memory_reporting::GetPeakMemory();
+    Row r{time - last_lap_time, 0, memory - last_memory};
+    last_lap_time = time;
+    last_memory = memory;
+    return r;
   }
 
-  // Lap and record a timing step of a row (not TOTAL); optionally, count it.
-  void MarkTime(Index idx, bool count_it = true)
+  // Lap and charge the step to a row (not TOTAL); optionally, count it.
+  void Mark(Index idx, bool count_it = true)
   {
-    data[idx] += Lap();
-    counts[idx] += count_it;
+    auto r = Lap();
+    r.count = count_it;
+    iter[idx] += r;
   }
-
-  long MemoryLap()
-  {
-    const long current = memory_reporting::GetPeakMemory();
-    const long delta = current - last_memory;
-    last_memory = current;
-    return delta;
-  }
-
-  // Lap and record the peak memory growth of a row (not TOTAL).
-  void MarkMemory(Index idx) { mem_data[idx] += MemoryLap(); }
 
   // Fix the time of the report: TOTAL ends there, and the next iteration starts there.
   // Call right after a lap: the report time and memory are those of the last lap.
@@ -161,42 +165,37 @@ public:
   // Peak memory at the start of the run (after a reset).
   void SetStartBaseline(long b) { iteration_baseline = run_baseline = b; }
 
-  // This iteration (TOTAL: elapsed up to the report).
-  double Data(Index idx) const
+  // A row of this iteration, or of the run so far including this iteration. TOTAL: elapsed
+  // up to the report, counting iterations, no memory.
+  Row Get(Index idx, bool cumulative = false) const
   {
-    return (idx == TOTAL) ? Duration(report_time - iteration_start_time).count()
-                          : data[idx].count();
+    if (idx == TOTAL)
+    {
+      return {report_time - (cumulative ? start_time : iteration_start_time),
+              cumulative ? iterations : 1, 0};
+    }
+    Row r = iter[idx];
+    if (cumulative)
+    {
+      r += run[idx];
+    }
+    return r;
   }
-  long Counts(Index idx) const { return (idx == TOTAL) ? 1 : counts[idx]; }
-  long MemoryData(Index idx) const { return mem_data[idx]; }
-  long IterationBaseline() const { return iteration_baseline; }
-  long RunBaseline() const { return run_baseline; }
+  long Baseline(bool cumulative) const
+  {
+    return cumulative ? run_baseline : iteration_baseline;
+  }
+  long ReportMemory() const { return report_memory; }
   int Iterations() const { return iterations; }
-
-  // Run so far, including this iteration.
-  double RunData(Index idx) const
-  {
-    return (idx == TOTAL) ? Duration(report_time - start_time).count()
-                          : (run_data[idx] + data[idx]).count();
-  }
-  long RunCounts(Index idx) const
-  {
-    return (idx == TOTAL) ? iterations : run_counts[idx] + counts[idx];
-  }
-  long RunMemoryData(Index idx) const { return run_mem_data[idx] + mem_data[idx]; }
 
   // Fold this iteration into the run and start the next one at the report time.
   void StartIteration()
   {
     for (int i = 0; i < NUM_TIMINGS; i++)
     {
-      run_data[i] += data[i];
-      run_counts[i] += counts[i];
-      run_mem_data[i] += mem_data[i];
-      data[i] = Duration::zero();
-      counts[i] = 0;
-      mem_data[i] = 0;
+      run[i] += iter[i];
     }
+    iter = {};
     iteration_start_time = report_time;
     iteration_baseline = report_memory;
     iterations++;
@@ -213,6 +212,19 @@ private:
   inline static bool started = false;
   bool count;
 
+  // Charge the step since the last lap to the open innermost row, without closing it.
+  static void Interrupt()
+  {
+    if (stack.empty())
+    {
+      timer.Lap();
+    }
+    else
+    {
+      timer.Mark(stack.back(), false);
+    }
+  }
+
 public:
   BlockTimer(Index i, bool count_it = true) : count(count_it)
   {
@@ -223,18 +235,11 @@ public:
       {
         // Everything before the first timer is startup.
         started = true;
-        timer.MarkTime(Timer::STARTUP);
-        timer.MarkMemory(Timer::STARTUP);
-      }
-      else if (stack.empty())
-      {
-        timer.Lap();
-        timer.MemoryLap();
+        timer.Mark(Timer::STARTUP);
       }
       else
       {
-        timer.MarkTime(stack.back(), false);
-        timer.MarkMemory(stack.back());
+        Interrupt();
       }
       stack.push_back(i);
     }
@@ -244,8 +249,7 @@ public:
   {
     if (count && !stack.empty())
     {
-      timer.MarkTime(stack.back());
-      timer.MarkMemory(stack.back());
+      timer.Mark(stack.back());
       stack.pop_back();
     }
   }
@@ -256,16 +260,7 @@ public:
   // the report time.
   static void Snapshot()
   {
-    if (!stack.empty())
-    {
-      timer.MarkTime(stack.back(), false);
-      timer.MarkMemory(stack.back());
-    }
-    else
-    {
-      timer.Lap();
-      timer.MemoryLap();
-    }
+    Interrupt();
     timer.MarkReport();
   }
 

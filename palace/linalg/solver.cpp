@@ -181,12 +181,14 @@ void MfemWrapperSolver<ComplexOperator>::Apply(const ComplexVector &x,
 template <OperatorType OperType>
 void MfemWrapperSolver<OperType>::InitEagerSetup()
 {
+  eager_setup =
 #if defined(MFEM_USE_MUMPS)
-  eager_setup = eager_setup || (dynamic_cast<MumpsSolver *>(pc.get()) != nullptr);
+      dynamic_cast<MumpsSolver *>(pc.get()) ||
 #endif
 #if defined(MFEM_USE_CUDSS)
-  eager_setup = eager_setup || (dynamic_cast<mfem::CuDSSSolver *>(pc.get()) != nullptr);
+      dynamic_cast<mfem::CuDSSSolver *>(pc.get()) ||
 #endif
+      false;
 }
 
 template <OperatorType OperType>

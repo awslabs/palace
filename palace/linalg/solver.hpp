@@ -38,6 +38,9 @@ public:
   // Set the operator associated with the solver, or update it if called repeatedly.
   virtual void SetOperator(const OperType &op) = 0;
 
+  // Enable the timer rows of the primary solver (no-op by default).
+  virtual void EnableTimer() {}
+
   // Apply the solver for the transpose problem.
   void MultTranspose(const VecType &x, VecType &y) const override
   {
@@ -121,7 +124,7 @@ public:
   // Access the underlying solver.
   const mfem::Solver &GetSolver() { return *pc; }
 
-  void EnableSetupTimer() { time_setup = true; }
+  void EnableTimer() override { time_setup = true; }
 
   // Configure whether or not to save the assembled operator.
   void SetSaveAssembled(bool save) { save_assembled = save; }

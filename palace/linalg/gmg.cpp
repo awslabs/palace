@@ -207,9 +207,9 @@ template <OperatorType OperType>
 void GeometricMultigridSolver<OperType>::EnableTimer()
 {
   use_timer = true;
-  if (auto *coarse = dynamic_cast<MfemWrapperSolver<OperType> *>(B[0].get()))
+  if (B[0])
   {
-    coarse->EnableSetupTimer();
+    B[0]->EnableTimer();
   }
 }
 

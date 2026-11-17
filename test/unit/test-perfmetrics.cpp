@@ -15,14 +15,14 @@ TEST_CASE("PerfMetrics ReduceStats", "[perfmetrics][Serial][Parallel]")
   MPI_Comm comm = Mpi::World();
   const int rank = Mpi::Rank(comm), np = Mpi::Size(comm);
   // Value 0: rank + 1 on every process. Value 1: set on even ranks only. Value 2: nowhere.
-  std::vector<double> v = {rank + 1.0, 10.0 * rank, 5.0};
-  std::vector<char> s = {1, static_cast<char>(rank % 2 == 0), 0};
-  const auto r = perf::ReduceStats(v, s, comm);
+  constexpr double unset = std::numeric_limits<double>::quiet_NaN();
+  std::vector<double> v = {rank + 1.0, (rank % 2 == 0) ? 10.0 * rank : unset, unset};
+  const auto r = perf::ReduceStats(v, comm);
   REQUIRE(r.size() == 3);
   CHECK(r[0].min == 1.0);
   CHECK(r[0].max == np);
   CHECK(r[0].max_rank == np - 1);
-  const auto tie = perf::ReduceStats({3.0}, {1}, comm);
+  const auto tie = perf::ReduceStats({3.0}, comm);
   CHECK(tie[0].max_rank == 0);
   CHECK(r[0].sum == np * (np + 1) / 2.0);
   CHECK(r[0].ranks == np);
@@ -31,7 +31,7 @@ TEST_CASE("PerfMetrics ReduceStats", "[perfmetrics][Serial][Parallel]")
   CHECK(r[1].min == 0.0);
   CHECK(r[1].max == 10.0 * 2 * (evens - 1));
   CHECK(r[2].ranks == 0);
-  CHECK(perf::ReduceStats({}, {}, comm).empty());
+  CHECK(perf::ReduceStats({}, comm).empty());
 }
 
 TEST_CASE("PerfMetrics Handles", "[perfmetrics][Serial]")
@@ -57,7 +57,7 @@ TEST_CASE("PerfMetrics Handles", "[perfmetrics][Serial]")
   {
     for (const auto &e : es)
     {
-      if (e.path == p)
+      if (e.info.path == p)
       {
         return e;
       }
@@ -73,11 +73,11 @@ TEST_CASE("PerfMetrics Handles", "[perfmetrics][Serial]")
   l.Set(1.0);
   CHECK(Find("Test/Handles/Sum").iter == 1.0);
   CHECK(Find("Test/Handles/Sum").run_value == 5.0);
-  CHECK(!Find("Test/Handles/Last").run_set);  // ITERATION_ONLY
+  CHECK(std::isnan(Find("Test/Handles/Last").run_value));  // ITERATION_ONLY
   perf::detail::ResetValues();
   a.Add(1.0);  // Handles survive a reset
   CHECK(Find("Test/Handles/Sum").iter == 1.0);
-  CHECK(!Find("Test/Handles/Sum").run_set);
+  CHECK(std::isnan(Find("Test/Handles/Sum").run_value));
 }
 
 TEST_CASE("PerfMetrics Paths", "[perfmetrics][Serial]")
@@ -125,9 +125,7 @@ TEST_CASE("PerfMetrics Validation", "[perfmetrics][Serial]")
       global, Line("B/X") + Line("A/Y") + Line("B/X") + Line("LinearSolver/Main/Its"),
       error);
   CHECK(error.empty());
-  REQUIRE(out.size() == 2);
-  CHECK(out[0].starts_with("A/Y\t"));
-  CHECK(out[1].starts_with("B/X\t"));
+  CHECK(out == Line("A/Y") + Line("B/X"));
   // Component-wise prefixes conflict; string prefixes do not.
   perf::detail::ValidateNew(global, Line("LinearSolver/Main/ItsHistogram/B1"), error);
   CHECK(error.empty());
@@ -188,12 +186,14 @@ TEST_CASE("PerfMetrics Sync", "[perfmetrics][Serial][Parallel]")
   REQUIRE(ib >= 0);
   CHECK(g[ia].red == perf::Red::STATS);
   std::vector<double> v;
-  std::vector<char> s;
-  perf::PackMetrics(false, v, s);
-  const auto r = perf::ReduceStats(v, s, comm);
+  perf::PackMetrics(false, v);
+  const auto r = perf::ReduceStats(v, comm);
   CHECK(r[ia].ranks == np - 1);
   CHECK(r[ia].min == 1.0);
   CHECK(r[ib].sum == np - 1);
+
+  CHECK(perf::GlobalIndex("Test/Sync/A") == ia);
+  CHECK(perf::GlobalIndex("Test/Sync/Missing") == -1);
 
   // Late mapping: root registers A after the first Sync.
   const auto size = g.size();
@@ -205,9 +205,8 @@ TEST_CASE("PerfMetrics Sync", "[perfmetrics][Serial][Parallel]")
   perf::Sync(comm);
   CHECK(perf::GlobalMetrics().size() == size);
   v.clear();
-  s.clear();
-  perf::PackMetrics(false, v, s);
-  const auto r2 = perf::ReduceStats(v, s, comm);
+  perf::PackMetrics(false, v);
+  const auto r2 = perf::ReduceStats(v, comm);
   CHECK(r2[ia].ranks == np);
 }
 
@@ -247,9 +246,8 @@ TEST_CASE("PerfMetrics Partitioned Count", "[perfmetrics][Parallel]")
   CHECK(g[ic].red == perf::Red::SUM);
   CHECK(g[ip].red == perf::Red::MAX);
   std::vector<double> v;
-  std::vector<char> s;
-  perf::PackMetrics(false, v, s);
-  const auto r = perf::ReduceStats(v, s, comm);
+  perf::PackMetrics(false, v);
+  const auto r = perf::ReduceStats(v, comm);
   CHECK(r[ic].sum == 2.0);
   MPI_Comm_free(&sub);
 }
@@ -282,14 +280,12 @@ TEST_CASE("PerfMetrics Cumulative Pack", "[perfmetrics][Serial][Parallel]")
   const auto ia = Idx("Test/Pack/Sum"), il = Idx("Test/Pack/Last"),
              iu = Idx("Test/Pack/Unset");
   std::vector<double> vi, vc;
-  std::vector<char> si, sc;
-  perf::PackMetrics(false, vi, si);
-  perf::PackMetrics(true, vc, sc);
+  perf::PackMetrics(false, vi);
+  perf::PackMetrics(true, vc);
   CHECK(vi[ia] == 3.0);
   CHECK(vc[ia] == 5.0);
-  CHECK(si[il] == 1);
   CHECK(vi[il] == 9.0);
-  CHECK(sc[il] == 0);
-  CHECK(si[iu] == 0);
-  CHECK(sc[iu] == 0);
+  CHECK(std::isnan(vc[il]));
+  CHECK(std::isnan(vi[iu]));
+  CHECK(std::isnan(vc[iu]));
 }

@@ -19,26 +19,20 @@
 namespace palace::perf
 {
 
-std::vector<Stats> ReduceStats(const std::vector<double> &value,
-                               const std::vector<char> &set, MPI_Comm comm)
+std::vector<Stats> ReduceStats(const std::vector<double> &value, MPI_Comm comm)
 {
-  MFEM_VERIFY(value.size() == set.size(), "ReduceStats: size mismatch!");
   const int n = static_cast<int>(value.size());
   const int rank = Mpi::Rank(comm);
   constexpr double inf = std::numeric_limits<double>::infinity();
-  struct DoubleInt
-  {
-    double v;
-    int r;
-  };
   std::vector<double> mn(n), sm(2 * n);
-  std::vector<DoubleInt> mx(n);
+  std::vector<mpi::ValueAndLoc<double, int>> mx(n);
   for (int i = 0; i < n; i++)
   {
-    mn[i] = set[i] ? value[i] : inf;
-    mx[i] = {set[i] ? value[i] : -inf, rank};
-    sm[i] = set[i] ? value[i] : 0.0;
-    sm[n + i] = set[i] ? 1.0 : 0.0;
+    const bool set = !std::isnan(value[i]);
+    mn[i] = set ? value[i] : inf;
+    mx[i] = {set ? value[i] : -inf, rank};
+    sm[i] = set ? value[i] : 0.0;
+    sm[n + i] = set;
   }
   // Raw MPI (not Mpi::Global*), so that future tallies of Palace collectives do not
   // measure the report itself.
@@ -48,11 +42,10 @@ std::vector<Stats> ReduceStats(const std::vector<double> &value,
   std::vector<Stats> out(n);
   for (int i = 0; i < n; i++)
   {
-    sm[i] = std::clamp(sm[i], -DBL_MAX, DBL_MAX);
     const int ranks = static_cast<int>(sm[n + i]);
     if (ranks > 0)
     {
-      out[i] = {mn[i], mx[i].v, sm[i], mx[i].r, ranks};
+      out[i] = {mn[i], mx[i].val, std::clamp(sm[i], -DBL_MAX, DBL_MAX), mx[i].loc, ranks};
     }
   }
   return out;
@@ -152,13 +145,12 @@ int Register(std::string_view path, Acc acc, Red red, Run run)
   std::string key(path);
   if (auto it = local.ids.find(key); it != local.ids.end())
   {
-    const auto &e = entries[it->second];
-    MFEM_VERIFY(e.acc == acc && e.red == red && e.run == run,
+    MFEM_VERIFY((entries[it->second].info == MetricInfo{key, acc, red, run}),
                 "Performance metric \"" << path << "\" registered with different rules!");
     return it->second;
   }
   const int id = static_cast<int>(entries.size());
-  entries.push_back({key, acc, red, run});
+  entries.push_back({{key, acc, red, run}});
   local.ids.emplace(std::move(key), id);
   local.pending.push_back(id);
   return id;
@@ -168,13 +160,11 @@ void FoldIteration()
 {
   for (auto &e : entries)
   {
-    if (e.run == Run::ACCUMULATE && e.iter_set)
+    if (e.info.run == Run::ACCUMULATE)
     {
-      e.run_value = e.run_set ? Combine(e.acc, e.run_value, e.iter) : e.iter;
-      e.run_set = true;
+      e.run_value = Combine(e.info.acc, e.run_value, e.iter);
     }
-    e.iter = 0.0;
-    e.iter_set = false;
+    e.iter = std::nan("");
   }
 }
 
@@ -182,8 +172,7 @@ void ResetValues()
 {
   for (auto &e : entries)
   {
-    e.iter = e.run_value = 0.0;
-    e.iter_set = e.run_set = false;
+    e.iter = e.run_value = std::nan("");
   }
 }
 
@@ -258,11 +247,33 @@ GlobalRegistry &Global()
   return g;
 }
 
-std::string Rules(Acc acc, Red red, Run run)
+// A metric as a "path\tARR\n" line, and back.
+std::string Line(const MetricInfo &m)
 {
-  return {static_cast<char>('0' + static_cast<int>(acc)),
-          static_cast<char>('0' + static_cast<int>(red)),
-          static_cast<char>('0' + static_cast<int>(run))};
+  return m.path + '\t' + static_cast<char>('0' + static_cast<int>(m.acc)) +
+         static_cast<char>('0' + static_cast<int>(m.red)) +
+         static_cast<char>('0' + static_cast<int>(m.run)) + '\n';
+}
+
+MetricInfo ParseLine(std::string_view line)
+{
+  const auto tab = line.find('\t');
+  MFEM_ASSERT(tab != std::string_view::npos && line.size() == tab + 4,
+              "Malformed performance metric line!");
+  return {std::string(line.substr(0, tab)), static_cast<Acc>(line[tab + 1] - '0'),
+          static_cast<Red>(line[tab + 2] - '0'), static_cast<Run>(line[tab + 3] - '0')};
+}
+
+std::vector<MetricInfo> ParseLines(std::string_view lines)
+{
+  std::vector<MetricInfo> out;
+  while (!lines.empty())
+  {
+    const auto end = lines.find('\n');
+    out.push_back(ParseLine(lines.substr(0, end)));
+    lines.remove_prefix(std::min(end + 1, lines.size()));
+  }
+  return out;
 }
 
 // Whether p conflicts with a path of paths: one is a component-wise prefix of the other.
@@ -291,46 +302,32 @@ bool PrefixConflict(const std::set<std::string> &paths, const std::string &p,
 namespace detail
 {
 
-std::vector<std::string> ValidateNew(const std::vector<MetricInfo> &global,
-                                     const std::string &lines, std::string &error)
+std::string ValidateNew(const std::vector<MetricInfo> &global, std::string_view lines,
+                        std::string &error)
 {
-  std::map<std::string, std::string> rules_of;
-  std::set<std::string> paths;
+  std::map<std::string, MetricInfo> seen;
+  std::set<std::string> paths, fresh;
   for (const auto &m : global)
   {
-    rules_of[m.path] = Rules(m.acc, m.red, m.run);
+    seen.emplace(m.path, m);
     paths.insert(m.path);
   }
-  std::map<std::string, std::string> fresh;
-  std::size_t start = 0;
-  while (start < lines.size())
+  for (auto &m : ParseLines(lines))
   {
-    const auto end = lines.find('\n', start);
-    const auto line = lines.substr(start, end - start);
-    start = end + 1;
-    const auto tab = line.find('\t');
-    MFEM_ASSERT(tab != std::string::npos && line.size() == tab + 4,
-                "Malformed performance metric line!");
-    const auto path = line.substr(0, tab), rules = line.substr(tab + 1);
-    auto known = rules_of.find(path);
-    if (known == rules_of.end())
+    const auto [it, inserted] = seen.try_emplace(m.path, m);
+    if (inserted)
     {
-      known = fresh.find(path);
-      if (known == fresh.end())
-      {
-        fresh.emplace(path, rules);
-        continue;
-      }
+      fresh.insert(m.path);
     }
-    if (known->second != rules)
+    else if (!(it->second == m))
     {
-      error = "metric \"" + path +
+      error = "metric \"" + m.path +
               "\" is registered with different rules on different processes";
       return {};
     }
   }
-  std::vector<std::string> out;
-  for (const auto &[path, rules] : fresh)
+  std::string out;
+  for (const auto &path : fresh)
   {
     std::string other;
     if (PrefixConflict(paths, path, other))
@@ -340,7 +337,7 @@ std::vector<std::string> ValidateNew(const std::vector<MetricInfo> &global,
       return {};
     }
     paths.insert(path);
-    out.push_back(path + '\t' + rules + '\n');
+    out += Line(seen.at(path));
   }
   return out;
 }
@@ -355,8 +352,7 @@ void Sync(MPI_Comm comm)
   std::string mine;
   for (int id : pending)
   {
-    const auto &e = detail::entries[id];
-    mine += e.path + '\t' + Rules(e.acc, e.red, e.run) + '\n';
+    mine += Line(detail::entries[id].info);
   }
   const int rank = Mpi::Rank(comm), np = Mpi::Size(comm);
   int len = static_cast<int>(mine.size());
@@ -373,33 +369,21 @@ void Sync(MPI_Comm comm)
   }
   MPI_Gatherv(mine.data(), len, MPI_CHAR, all.data(), lens.data(), displs.data(), MPI_CHAR,
               0, comm);
-  std::string error, fresh;
+  // Root to all: '+' and the new lines, or '!' and the error.
+  std::string msg;
   if (rank == 0)
   {
-    for (const auto &line : detail::ValidateNew(g.list, all, error))
-    {
-      fresh += line;
-    }
+    std::string error;
+    auto fresh = detail::ValidateNew(g.list, all, error);
+    msg = error.empty() ? '+' + fresh : '!' + error;
   }
-  int sizes[2] = {static_cast<int>(error.size()), static_cast<int>(fresh.size())};
-  MPI_Bcast(sizes, 2, MPI_INT, 0, comm);
-  error.resize(sizes[0]);
-  fresh.resize(sizes[1]);
-  MPI_Bcast(error.data(), sizes[0], MPI_CHAR, 0, comm);
-  MPI_Bcast(fresh.data(), sizes[1], MPI_CHAR, 0, comm);
-  MFEM_VERIFY(error.empty(), "Performance report: " << error << "!");
-  std::size_t start = 0;
-  while (start < fresh.size())
+  len = static_cast<int>(msg.size());
+  MPI_Bcast(&len, 1, MPI_INT, 0, comm);
+  msg.resize(len);
+  MPI_Bcast(msg.data(), len, MPI_CHAR, 0, comm);
+  MFEM_VERIFY(msg[0] == '+', "Performance report: " << msg.substr(1) << "!");
+  for (auto &m : ParseLines(std::string_view(msg).substr(1)))
   {
-    const auto end = fresh.find('\n', start);
-    const auto line = fresh.substr(start, end - start);
-    start = end + 1;
-    const auto tab = line.find('\t');
-    MFEM_ASSERT(tab != std::string::npos && line.size() == tab + 4,
-                "Malformed performance metric line!");
-    MetricInfo m{line.substr(0, tab), static_cast<Acc>(line[tab + 1] - '0'),
-                 static_cast<Red>(line[tab + 2] - '0'),
-                 static_cast<Run>(line[tab + 3] - '0')};
     g.index.emplace(m.path, static_cast<int>(g.list.size()));
     auto it = local.ids.find(m.path);
     g.local_of_global.push_back((it != local.ids.end()) ? it->second : -1);
@@ -408,7 +392,7 @@ void Sync(MPI_Comm comm)
   // Metrics registered here which other processes had registered before.
   for (int id : pending)
   {
-    g.local_of_global[g.index.at(detail::entries[id].path)] = id;
+    g.local_of_global[g.index.at(detail::entries[id].info.path)] = id;
   }
 }
 
@@ -417,31 +401,32 @@ const std::vector<MetricInfo> &GlobalMetrics()
   return Global().list;
 }
 
-void PackMetrics(bool cumulative, std::vector<double> &value, std::vector<char> &set)
+int GlobalIndex(std::string_view path)
+{
+  const auto &index = Global().index;
+  const auto it = index.find(std::string(path));
+  return (it != index.end()) ? it->second : -1;
+}
+
+void PackMetrics(bool cumulative, std::vector<double> &value)
 {
   const auto &g = Global();
-  for (std::size_t i = 0; i < g.list.size(); i++)
+  for (int id : g.local_of_global)
   {
-    const int id = g.local_of_global[i];
-    double v = 0.0;
-    bool s = false;
+    double v = std::nan("");
     if (id >= 0)
     {
       const auto &e = detail::entries[id];
       if (!cumulative)
       {
         v = e.iter;
-        s = e.iter_set;
       }
-      else if (e.run == Run::ACCUMULATE)
+      else if (e.info.run == Run::ACCUMULATE)
       {
-        s = e.run_set || e.iter_set;
-        v = (e.run_set && e.iter_set) ? detail::Combine(e.acc, e.run_value, e.iter)
-                                      : (e.run_set ? e.run_value : e.iter);
+        v = detail::Combine(e.info.acc, e.run_value, e.iter);
       }
     }
     value.push_back(v);
-    set.push_back(s);
   }
 }
 

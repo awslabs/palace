@@ -29,10 +29,19 @@ MemoryStats GetCurrentMemoryStats(MPI_Comm comm);
 MemoryStats GetPeakMemoryStats(MPI_Comm comm);
 
 // Per-node memory statistics (processes sharing physical memory), in bytes.
-// Uses MPI_Comm_split_type to identify shared memory groups, sums memory per node,
-// and reports statistics across nodes. Assumes shared memory is negligible.
+// Sums memory per node (GetNodeComms) and reports statistics across nodes. Assumes shared
+// memory is negligible.
 MemoryStats GetCurrentNodeMemoryStats(MPI_Comm comm);
 MemoryStats GetPeakNodeMemoryStats(MPI_Comm comm);
+
+// Communicators of the processes sharing a node, and of the node leaders (rank 0 of each
+// node; MPI_COMM_NULL elsewhere). Split on the first call and cached: always call with the
+// same communicator. Collective on the first call.
+struct NodeComms
+{
+  MPI_Comm comm = MPI_COMM_NULL, node = MPI_COMM_NULL, leaders = MPI_COMM_NULL;
+};
+const NodeComms &GetNodeComms(MPI_Comm comm);
 
 // Compute per-node statistics for an arbitrary per-rank value (bytes). Sums across
 // processes sharing a node and reports min/max/avg across nodes.

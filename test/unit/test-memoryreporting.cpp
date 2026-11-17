@@ -86,14 +86,13 @@ TEST_CASE("Timer Memory Data Invariants", "[memoryreporting][Serial]")
 {
   Timer timer;
 
-  // MemoryLap returns a non-negative delta (peak RSS is non-decreasing).
-  auto delta = timer.MemoryLap();
-  CHECK(delta >= 0);
+  // A lap has a non-negative memory delta (peak RSS is non-decreasing).
+  CHECK(timer.Lap().mem >= 0);
 
-  // MarkMemory accumulates non-negative growth into the given row only.
-  timer.MarkMemory(Timer::CONSTRUCT);
-  timer.MarkMemory(Timer::CONSTRUCT);
-  CHECK(timer.MemoryData(Timer::CONSTRUCT) >= 0);
-  CHECK(timer.MemoryData(Timer::KSP) == 0);
-  CHECK(timer.RunMemoryData(Timer::CONSTRUCT) == timer.MemoryData(Timer::CONSTRUCT));
+  // Mark accumulates non-negative growth into the given row only.
+  timer.Mark(Timer::CONSTRUCT, false);
+  timer.Mark(Timer::CONSTRUCT, false);
+  CHECK(timer.Get(Timer::CONSTRUCT).mem >= 0);
+  CHECK(timer.Get(Timer::KSP).mem == 0);
+  CHECK(timer.Get(Timer::CONSTRUCT, true).mem == timer.Get(Timer::CONSTRUCT).mem);
 }

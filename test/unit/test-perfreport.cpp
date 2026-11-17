@@ -12,6 +12,7 @@
 #include "linalg/jacobi.hpp"
 #include "linalg/ksp.hpp"
 #include "linalg/solver.hpp"
+#include "test-helpers.hpp"
 #include "utils/communication.hpp"
 #include "utils/perfreport.hpp"
 #include "utils/timer.hpp"
@@ -26,62 +27,52 @@ void Sleep(int ms)
   std::this_thread::sleep_for(std::chrono::milliseconds(ms));
 }
 
-class SpdTestOperator : public Operator
+// Clear the process-wide timing state at construction and destruction.
+struct TimerReset
 {
-public:
-  SpdTestOperator() : Operator(2) {}
-  void AssembleDiagonal(Vector &diag) const override
-  {
-    diag.SetSize(2);
-    diag[0] = 4.0;
-    diag[1] = 3.0;
-  }
-  void Mult(const Vector &x, Vector &y) const override
-  {
-    y.SetSize(2);
-    y[0] = 4.0 * x[0] + x[1];
-    y[1] = x[0] + 3.0 * x[1];
-  }
+  TimerReset() { BlockTimer::Reset(); }
+  ~TimerReset() { BlockTimer::Reset(); }
 };
 }  // namespace
 
 TEST_CASE("Timer Iterations", "[perfreport][Serial]")
 {
-  BlockTimer::Reset();
+  TimerReset reset;
   Sleep(5);
   {
     BlockTimer bt(Timer::IO);
     Sleep(5);
   }
   const auto &t = BlockTimer::GlobalTimer();
-  CHECK(t.Counts(Timer::STARTUP) == 1);
-  CHECK(t.Data(Timer::STARTUP) >= 0.004);
+  CHECK(t.Get(Timer::STARTUP).count == 1);
+  CHECK(t.Get(Timer::STARTUP).time.count() >= 0.004);
   // A row open at the report is accounted up to the report, and not twice.
   {
     BlockTimer bt(Timer::POSTPRO);
     Sleep(5);
     BlockTimer::Snapshot();
-    const double t1 = t.Data(Timer::POSTPRO), total1 = t.Data(Timer::TOTAL);
+    const double t1 = t.Get(Timer::POSTPRO).time.count(),
+                 total1 = t.Get(Timer::TOTAL).time.count();
     CHECK(t1 >= 0.004);
-    CHECK(t.Counts(Timer::POSTPRO) == 0);
+    CHECK(t.Get(Timer::POSTPRO).count == 0);
     BlockTimer::StartIteration();
     Sleep(5);
   }
   BlockTimer::Snapshot();
   CHECK(t.Iterations() == 2);
-  CHECK(t.Counts(Timer::POSTPRO) == 1);
-  CHECK(t.Data(Timer::POSTPRO) >= 0.004);
-  CHECK(t.Counts(Timer::STARTUP) == 0);
-  CHECK(t.RunCounts(Timer::STARTUP) == 1);
-  CHECK_THAT(t.RunData(Timer::POSTPRO) - t.Data(Timer::POSTPRO), WithinAbs(0.005, 0.004));
-  CHECK(t.RunCounts(Timer::TOTAL) == 2);
-  BlockTimer::Reset();
+  CHECK(t.Get(Timer::POSTPRO).count == 1);
+  CHECK(t.Get(Timer::POSTPRO).time.count() >= 0.004);
+  CHECK(t.Get(Timer::STARTUP).count == 0);
+  CHECK(t.Get(Timer::STARTUP, true).count == 1);
+  CHECK_THAT(t.Get(Timer::POSTPRO, true).time.count() - t.Get(Timer::POSTPRO).time.count(),
+             WithinAbs(0.005, 0.004));
+  CHECK(t.Get(Timer::TOTAL, true).count == 2);
 }
 
 TEST_CASE("PerfReport Iterations And Cumulative", "[perfreport][Serial][Parallel]")
 {
   MPI_Comm comm = Mpi::World();
-  BlockTimer::Reset();
+  TimerReset reset;
   perf::SumMetric its("Test/Report/Its", perf::Red::COUNT);
   perf::LastMetric size("Test/Report/Size", perf::Red::STATS, perf::Run::ITERATION_ONLY);
   perf::SumMetric once("Test/Report/Once", perf::Red::MAX);
@@ -158,7 +149,6 @@ TEST_CASE("PerfReport Iterations And Cumulative", "[perfreport][Serial][Parallel
   {
     WARN("Peak memory did not grow with the allocation, skipping growth checks");
   }
-  BlockTimer::Reset();
 }
 
 TEST_CASE("PerfReport Subcommunicator Role", "[perfreport][Parallel]")
@@ -169,7 +159,7 @@ TEST_CASE("PerfReport Subcommunicator Role", "[perfreport][Parallel]")
   {
     SKIP("Needs at least 2 processes");
   }
-  BlockTimer::Reset();
+  TimerReset reset;
   // Two "ports" on subcommunicators {even ranks}, {odd ranks}: each does 5 solves.
   MPI_Comm sub;
   MPI_Comm_split(comm, rank % 2, rank, &sub);
@@ -184,7 +174,6 @@ TEST_CASE("PerfReport Subcommunicator Role", "[perfreport][Parallel]")
   const auto &r = perf::Report(comm);
   CHECK(r.Metric("Test/Port/Solves", false)->sum == 10);  // Totals over ports
   CHECK(r.Metric("Test/Port/MaxIts", false)->max == 11);
-  BlockTimer::Reset();
 }
 
 TEST_CASE("PerfReport Baseline After Reset", "[perfreport][Serial][Parallel]")
@@ -194,7 +183,7 @@ TEST_CASE("PerfReport Baseline After Reset", "[perfreport][Serial][Parallel]")
     std::vector<char> buf(64 << 20, 1);
     CHECK(buf[buf.size() / 2] == 1);
   }
-  BlockTimer::Reset();
+  TimerReset reset;
   {
     BlockTimer bt(Timer::IO);
   }
@@ -209,7 +198,6 @@ TEST_CASE("PerfReport Baseline After Reset", "[perfreport][Serial][Parallel]")
   {
     CHECK(r.iter.node_peak.sum == r.iter.peak.sum);
   }
-  BlockTimer::Reset();
 }
 
 TEST_CASE("PerfReport Row On One Process", "[perfreport][Parallel]")
@@ -219,7 +207,7 @@ TEST_CASE("PerfReport Row On One Process", "[perfreport][Parallel]")
   {
     SKIP("Needs at least 2 processes");
   }
-  BlockTimer::Reset();
+  TimerReset reset;
   if (Mpi::Root(comm))
   {
     BlockTimer bt(Timer::EPS);
@@ -228,13 +216,12 @@ TEST_CASE("PerfReport Row On One Process", "[perfreport][Parallel]")
   const auto &r = perf::Report(comm);
   CHECK(r.iter.time[Timer::EPS].ranks == 1);
   CHECK(r.iter.time[Timer::TOTAL].ranks == Mpi::Size(comm));
-  BlockTimer::Reset();
 }
 
 TEST_CASE("PerfReport Linear Solver Statistics", "[perfreport][Serial][Parallel]")
 {
   MPI_Comm comm = Mpi::World();
-  BlockTimer::Reset();
+  TimerReset reset;
   SpdTestOperator A;
   auto make = [&](int max_it)
   {
@@ -277,7 +264,6 @@ TEST_CASE("PerfReport Linear Solver Statistics", "[perfreport][Serial][Parallel]
   CHECK(max("MaxIts") >= 1);
   CHECK(max("NotConverged") == 1);
   CHECK(!r.Metric("LinearSolver/TestOther/Solves", false));
-  BlockTimer::Reset();
 }
 
 TEST_CASE("PerfReport Lazy Coarse Setup", "[perfreport][Serial]")
@@ -301,24 +287,23 @@ TEST_CASE("PerfReport Lazy Coarse Setup", "[perfreport][Serial]")
   HYPRE_BigInt row_starts[2] = {0, n};
   mfem::HypreParMatrix A(Mpi::World(), n, row_starts, &S);
 
-  BlockTimer::Reset();
+  TimerReset reset;
   MfemWrapperSolver<Operator> pc(std::make_unique<mfem::HypreBoomerAMG>());
-  pc.EnableSetupTimer();
+  pc.EnableTimer();
   Vector b(n), x(n);
   b = 1.0;
   pc.SetOperator(A);
-  CHECK(BlockTimer::GlobalTimer().Counts(Timer::KSP_COARSE_SETUP) == 0);
+  CHECK(BlockTimer::GlobalTimer().Get(Timer::KSP_COARSE_SETUP).count == 0);
   pc.Mult(b, x);
   pc.Mult(b, x);
-  CHECK(BlockTimer::GlobalTimer().Counts(Timer::KSP_COARSE_SETUP) == 1);
+  CHECK(BlockTimer::GlobalTimer().Get(Timer::KSP_COARSE_SETUP).count == 1);
   pc.SetOperator(A);
   pc.Mult(b, x);
-  CHECK(BlockTimer::GlobalTimer().Counts(Timer::KSP_COARSE_SETUP) == 2);
+  CHECK(BlockTimer::GlobalTimer().Get(Timer::KSP_COARSE_SETUP).count == 2);
 
   // Not enabled: untimed.
   MfemWrapperSolver<Operator> untimed(std::make_unique<mfem::HypreBoomerAMG>());
   untimed.SetOperator(A);
   untimed.Mult(b, x);
-  CHECK(BlockTimer::GlobalTimer().Counts(Timer::KSP_COARSE_SETUP) == 2);
-  BlockTimer::Reset();
+  CHECK(BlockTimer::GlobalTimer().Get(Timer::KSP_COARSE_SETUP).count == 2);
 }

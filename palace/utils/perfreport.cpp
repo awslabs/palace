@@ -5,9 +5,10 @@
 
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <set>
 #include <string>
-#include <tuple>
+#include <utility>
 #include <fmt/format.h>
 #include <nlohmann/json.hpp>
 #include "utils/communication.hpp"
@@ -28,7 +29,7 @@ constexpr double to_mb = 1.0 / (1024.0 * 1024.0);
 struct State
 {
   ReportResults results;
-  std::set<std::string> written;  // Metric paths written at the top level last time
+  std::set<std::string> written;  // Paths written at the top level last time
 };
 
 State &GetState()
@@ -37,102 +38,31 @@ State &GetState()
   return s;
 }
 
-struct NodeComms
+// Per period: time, count and memory growth of each row, then peak, baseline and
+// unattributed; memory values are also appended to node. Rows unused on this process (time
+// and count zero) are unset (NaN), and so is the memory of TOTAL.
+void Pack(const Timer &t, bool cum, std::vector<double> &v, std::vector<double> &node)
 {
-  MPI_Comm comm = MPI_COMM_NULL, node = MPI_COMM_NULL, leaders = MPI_COMM_NULL;
-};
-
-const NodeComms &GetNodeComms(MPI_Comm comm)
-{
-  static NodeComms nc = [comm]()
-  {
-    NodeComms c;
-    c.comm = comm;
-    MPI_Comm_split_type(comm, MPI_COMM_TYPE_SHARED, 0, MPI_INFO_NULL, &c.node);
-    MPI_Comm_split(comm, (Mpi::Rank(c.node) == 0) ? 0 : MPI_UNDEFINED, 0, &c.leaders);
-    return c;
-  }();
-  int cmp;
-  MPI_Comm_compare(comm, nc.comm, &cmp);
-  MFEM_VERIFY(cmp == MPI_IDENT || cmp == MPI_CONGRUENT,
-              "perf::Report must always be called on the same communicator");
-  return nc;
-}
-
-// Rows which contribute on this process: used (time or count positive), and TOTAL.
-std::vector<char> RowsSet(const Timer &t, bool cum)
-{
-  std::vector<char> s(N);
-  for (int i = 0; i < N; i++)
-  {
-    const auto idx = static_cast<Timer::Index>(i);
-    s[i] = (i == Timer::TOTAL) || (cum ? (t.RunData(idx) > 0.0 || t.RunCounts(idx) > 0)
-                                       : (t.Data(idx) > 0.0 || t.Counts(idx) > 0));
-  }
-  return s;
-}
-
-// Fixed per-period values: N times, N counts, N memory growths, peak, baseline,
-// unattributed. Memory values are also appended to node.
-void PackFixed(const Timer &t, bool cum, std::vector<double> &v, std::vector<char> &s,
-               std::vector<double> &node)
-{
-  const auto set = RowsSet(t, cum);
-  for (int i = 0; i < N; i++)
-  {
-    const auto idx = static_cast<Timer::Index>(i);
-    v.push_back(cum ? t.RunData(idx) : t.Data(idx));
-    s.push_back(set[i]);
-  }
-  for (int i = 0; i < N; i++)
-  {
-    const auto idx = static_cast<Timer::Index>(i);
-    v.push_back(static_cast<double>(cum ? t.RunCounts(idx) : t.Counts(idx)));
-    s.push_back(set[i]);
-  }
-  const double peak = static_cast<double>(memory_reporting::GetPeakMemory());
-  const double baseline =
-      static_cast<double>(cum ? t.RunBaseline() : t.IterationBaseline());
+  constexpr double unset = std::numeric_limits<double>::quiet_NaN();
+  const double peak = static_cast<double>(t.ReportMemory());
+  const double baseline = static_cast<double>(t.Baseline(cum));
   double rows = 0.0;
   for (int i = 0; i < N; i++)
   {
-    const auto idx = static_cast<Timer::Index>(i);
-    const double m = (i == Timer::TOTAL) ? 0.0
-                                         : static_cast<double>(cum ? t.RunMemoryData(idx)
-                                                                   : t.MemoryData(idx));
+    const auto r = t.Get(static_cast<Timer::Index>(i), cum);
+    const bool used = (i == Timer::TOTAL) || r.time.count() > 0.0 || r.count > 0;
+    const double m = static_cast<double>(r.mem);
     rows += m;
-    v.push_back(m);
-    s.push_back(set[i] && i != Timer::TOTAL);
+    v.push_back(used ? r.time.count() : unset);
+    v.push_back(used ? static_cast<double>(r.count) : unset);
+    v.push_back((used && i != Timer::TOTAL) ? m : unset);
     node.push_back(m);
   }
   for (double m : {peak, baseline, peak - baseline - rows})
   {
     v.push_back(m);
-    s.push_back(1);
     node.push_back(m);
   }
-}
-
-void UnpackFixed(const std::vector<Stats> &r, std::size_t &k, PeriodResults &p)
-{
-  p.time.assign(r.begin() + k, r.begin() + k + N);
-  k += N;
-  p.count.assign(r.begin() + k, r.begin() + k + N);
-  k += N;
-  p.mem.assign(r.begin() + k, r.begin() + k + N);
-  k += N;
-  p.peak = r[k++];
-  p.baseline = r[k++];
-  p.unattributed = r[k++];
-}
-
-void UnpackNode(const std::vector<Stats> &r, std::size_t &k, PeriodResults &p)
-{
-  p.node_mem.assign(r.begin() + k, r.begin() + k + N);
-  k += N;
-  p.node_peak = r[k++];
-  p.node_baseline = r[k++];
-  p.node_unattributed = r[k++];
 }
 
 json Num(double v)
@@ -144,20 +74,23 @@ json Num(double v)
   return v;
 }
 
-json StatsJson(const Stats &s, double scale = 1.0)
+// Statistics over processes, or over nodes.
+json StatsJson(const Stats &s, double scale = 1.0, bool node = false)
 {
-  return {{"Min", Num(s.min * scale)}, {"Avg", Num(s.Avg() * scale)},
-          {"Max", Num(s.max * scale)}, {"Sum", Num(s.sum * scale)},
-          {"MaxRank", s.max_rank},     {"Ranks", s.ranks}};
-}
-
-json NodeStatsJson(const Stats &s)
-{
-  return {{"Min", Num(s.min * to_mb)},
-          {"Avg", Num(s.Avg() * to_mb)},
-          {"Max", Num(s.max * to_mb)},
-          {"Sum", Num(s.sum * to_mb)},
-          {"Nodes", s.ranks}};
+  json j = {{"Min", Num(s.min * scale)},
+            {"Avg", Num(s.Avg() * scale)},
+            {"Max", Num(s.max * scale)},
+            {"Sum", Num(s.sum * scale)}};
+  if (node)
+  {
+    j["Nodes"] = s.ranks;
+  }
+  else
+  {
+    j["MaxRank"] = s.max_rank;
+    j["Ranks"] = s.ranks;
+  }
+  return j;
 }
 
 json::json_pointer Pointer(const std::string &path)
@@ -181,34 +114,41 @@ void ErasePath(json &meta, const std::string &path)
   }
 }
 
+// Write the values of a period, recording the written paths in written if not null.
 void WritePeriod(json &out, const PeriodResults &p, bool cum,
                  std::set<std::string> *written)
 {
+  auto put = [&](const std::string &path, json v)
+  {
+    out[Pointer(path)] = std::move(v);
+    if (written)
+    {
+      written->insert(path);
+    }
+  };
+  auto put_mem = [&](const std::string &key, const Stats &s, const Stats &node)
+  {
+    put("PeakMemoryGrowthMegabytes/" + key, StatsJson(s, to_mb));
+    put("PeakNodeMemoryGrowthMegabytes/" + key, StatsJson(node, to_mb, true));
+  };
+  put("PeakMemoryMegabytes", StatsJson(p.peak, to_mb));
+  put("PeakNodeMemoryMegabytes", StatsJson(p.node_peak, to_mb, true));
+  put_mem("Baseline", p.baseline, p.node_baseline);
+  put_mem("Unattributed", p.unattributed, p.node_unattributed);
   for (int i = 0; i < N; i++)
   {
     if (p.time[i].ranks > 0)
     {
+      const std::string name(Timer::names[i]);
       auto j = StatsJson(p.time[i]);
       j["Count"] = Num(p.count[i].max);
-      out["ElapsedTime"][std::string(Timer::names[i])] = std::move(j);
+      put("ElapsedTime/" + name, std::move(j));
+      if (i != Timer::TOTAL)
+      {
+        put_mem(name, p.mem[i], p.node_mem[i]);
+      }
     }
   }
-  out["PeakMemoryMegabytes"] = StatsJson(p.peak, to_mb);
-  out["PeakNodeMemoryMegabytes"] = NodeStatsJson(p.node_peak);
-  auto &g = out["PeakMemoryGrowthMegabytes"];
-  auto &ng = out["PeakNodeMemoryGrowthMegabytes"];
-  g["Baseline"] = StatsJson(p.baseline, to_mb);
-  ng["Baseline"] = NodeStatsJson(p.node_baseline);
-  for (int i = 0; i < Timer::TOTAL; i++)
-  {
-    if (p.time[i].ranks > 0)
-    {
-      g[std::string(Timer::names[i])] = StatsJson(p.mem[i], to_mb);
-      ng[std::string(Timer::names[i])] = NodeStatsJson(p.node_mem[i]);
-    }
-  }
-  g["Unattributed"] = StatsJson(p.unattributed, to_mb);
-  ng["Unattributed"] = NodeStatsJson(p.node_unattributed);
   const auto &metrics = GlobalMetrics();
   for (std::size_t i = 0; i < metrics.size(); i++)
   {
@@ -218,28 +158,22 @@ void WritePeriod(json &out, const PeriodResults &p, bool cum,
     {
       continue;
     }
-    json v;
     switch (m.red)
     {
       case Red::STATS:
-        v = StatsJson(s);
+        put(m.path, StatsJson(s));
         break;
       case Red::MAX:
-        v = Num(s.max);
+        put(m.path, Num(s.max));
         break;
       case Red::MIN:
-        v = Num(s.min);
+        put(m.path, Num(s.min));
         break;
       case Red::SUM:
-        v = Num(s.sum);
+        put(m.path, Num(s.sum));
         break;
       case Red::COUNT:
         MFEM_ABORT("Unresolved COUNT metric!");
-    }
-    out[Pointer(m.path)] = std::move(v);
-    if (written)
-    {
-      written->insert(m.path);
     }
   }
 }
@@ -248,16 +182,11 @@ void WritePeriod(json &out, const PeriodResults &p, bool cum,
 
 const Stats *ReportResults::Metric(std::string_view path, bool cumulative) const
 {
-  const auto &metrics = GlobalMetrics();
   const auto &p = cumulative ? cum : iter;
-  for (std::size_t i = 0; i < metrics.size() && i < p.metric.size(); i++)
-  {
-    if (metrics[i].path == path)
-    {
-      return (p.metric[i].ranks > 0) ? &p.metric[i] : nullptr;
-    }
-  }
-  return nullptr;
+  const int i = GlobalIndex(path);
+  return (i >= 0 && i < static_cast<int>(p.metric.size()) && p.metric[i].ranks > 0)
+             ? &p.metric[i]
+             : nullptr;
 }
 
 const ReportResults &Report(MPI_Comm comm)
@@ -266,22 +195,22 @@ const ReportResults &Report(MPI_Comm comm)
   Sync(comm);
   const auto &t = BlockTimer::GlobalTimer();
   std::vector<double> v, node;
-  std::vector<char> s;
-  PackFixed(t, false, v, s, node);
-  PackMetrics(false, v, s);
-  PackFixed(t, true, v, s, node);
-  PackMetrics(true, v, s);
-  const auto r = ReduceStats(v, s, comm);
+  for (bool cum : {false, true})
+  {
+    Pack(t, cum, v, node);
+    PackMetrics(cum, v);
+  }
+  const auto r = ReduceStats(v, comm);
 
   // Node memory: sums over the processes of each node, then statistics over nodes.
-  const auto &nc = GetNodeComms(comm);
+  const auto &nc = memory_reporting::GetNodeComms(comm);
   std::vector<double> node_sum(node.size(), 0.0);
   MPI_Reduce(node.data(), node_sum.data(), static_cast<int>(node.size()), MPI_DOUBLE,
              MPI_SUM, 0, nc.node);
   std::vector<Stats> nr(node.size());
   if (nc.leaders != MPI_COMM_NULL)
   {
-    nr = ReduceStats(node_sum, std::vector<char>(node.size(), 1), nc.leaders);
+    nr = ReduceStats(node_sum, nc.leaders);
   }
   MPI_Bcast(nr.data(), static_cast<int>(nr.size() * sizeof(Stats)), MPI_BYTE, 0, nc.node);
 
@@ -289,25 +218,35 @@ const ReportResults &Report(MPI_Comm comm)
   res.iteration = t.Iterations();
   const std::size_t M = GlobalMetrics().size();
   std::size_t k = 0, kn = 0;
-  UnpackFixed(r, k, res.iter);
-  res.iter.metric.assign(r.begin() + k, r.begin() + k + M);
-  k += M;
-  UnpackFixed(r, k, res.cum);
-  res.cum.metric.assign(r.begin() + k, r.begin() + k + M);
-  UnpackNode(nr, kn, res.iter);
-  UnpackNode(nr, kn, res.cum);
+  for (auto *p : {&res.iter, &res.cum})
+  {
+    p->time.resize(N);
+    p->count.resize(N);
+    p->mem.resize(N);
+    p->node_mem.resize(N);
+    for (int i = 0; i < N; i++)
+    {
+      p->time[i] = r[k++];
+      p->count[i] = r[k++];
+      p->mem[i] = r[k++];
+      p->node_mem[i] = nr[kn++];
+    }
+    for (auto [s, ns] :
+         {std::pair{&p->peak, &p->node_peak}, std::pair{&p->baseline, &p->node_baseline},
+          std::pair{&p->unattributed, &p->node_unattributed}})
+    {
+      *s = r[k++];
+      *ns = nr[kn++];
+    }
+    p->metric.assign(r.begin() + k, r.begin() + k + M);
+    k += M;
+  }
   return res;
 }
 
 void WriteJson(json &meta)
 {
   auto &st = GetState();
-  for (const char *key :
-       {"MetadataVersion", "ElapsedTime", "PeakMemoryMegabytes", "PeakNodeMemoryMegabytes",
-        "PeakMemoryGrowthMegabytes", "PeakNodeMemoryGrowthMegabytes", "Cumulative"})
-  {
-    meta.erase(key);
-  }
   for (const auto &path : st.written)
   {
     ErasePath(meta, path);
@@ -324,70 +263,60 @@ void Print(MPI_Comm comm)
 {
   const auto &res = GetState().results;
   constexpr int w = 12, h = 26;
-  using Row = std::tuple<std::string, std::string, std::string>;
-  auto Table = [&](const std::string &title, const std::string &c1, const std::string &c2,
-                   const std::string &c3, const PeriodResults &p, auto &&row_fn,
-                   const Row *first = nullptr, const char *first_name = nullptr)
+  auto Line =
+      [&](std::string_view name, std::string_view a, std::string_view b, std::string_view c)
+  { Mpi::Print(comm, "{:<{}s}{:>{}s}{:>{}s}{:>{}s}\n", name, h, a, w, b, w, c, w); };
+  auto Header = [&](std::string_view title, std::string_view a, std::string_view b,
+                    std::string_view c)
   {
-    Mpi::Print(comm, "\n{:<{}s}{:>{}s}{:>{}s}{:>{}s}\n", title, h, c1, w, c2, w, c3, w);
+    Mpi::Print(comm, "\n");
+    Line(title, a, b, c);
     Mpi::Print(comm, "{}\n", std::string(h + 3 * w, '='));
-    if (first)
+  };
+  // Row i: TOTAL after a rule.
+  auto Row = [&](int i, std::string_view a, std::string_view b, std::string_view c)
+  {
+    if (i == Timer::TOTAL)
     {
-      const auto &[v1, v2, v3] = *first;
-      Mpi::Print(comm, "{:<{}s}{:>{}s}{:>{}s}{:>{}s}\n", first_name, h, v1, w, v2, w, v3,
-                 w);
+      Mpi::Print(comm, "{}\n", std::string(h + 3 * w, '-'));
     }
+    Line(Timer::descriptions[i], a, b, c);
+  };
+  auto Times = [&](std::string_view title, const PeriodResults &p)
+  {
+    Header(title, "Min.", "Max.", "Avg.");
     for (int i = 0; i < N; i++)
     {
-      if (p.time[i].ranks > 0)
+      const auto &s = p.time[i];
+      if (s.ranks > 0)
       {
-        if (i == Timer::TOTAL)
-        {
-          Mpi::Print(comm, "{}\n", std::string(h + 3 * w, '-'));
-        }
-        const auto [v1, v2, v3] = row_fn(i);
-        Mpi::Print(comm, "{:<{}s}{:>{}s}{:>{}s}{:>{}s}\n", Timer::descriptions[i], h, v1, w,
-                   v2, w, v3, w);
+        Row(i, fmt::format("{:.3f}", s.min), fmt::format("{:.3f}", s.max),
+            fmt::format("{:.3f}", s.Avg()));
       }
     }
   };
-  auto TimeRow = [](const PeriodResults &p)
-  {
-    return [&p](int i) -> Row
-    {
-      return {fmt::format("{:.3f}", p.time[i].min), fmt::format("{:.3f}", p.time[i].max),
-              fmt::format("{:.3f}", p.time[i].Avg())};
-    };
-  };
-  Table("Elapsed Time Report (s)", "Min.", "Max.", "Avg.", res.cum, TimeRow(res.cum));
+  Times("Elapsed Time Report (s)", res.cum);
   if (res.iteration > 1)
   {
-    Table(fmt::format("Iteration {:d} (s)", res.iteration), "Min.", "Max.", "Avg.",
-          res.iter, TimeRow(res.iter));
+    Times(fmt::format("Iteration {:d} (s)", res.iteration), res.iter);
   }
   // Memory of this iteration: per-node max and total growth of each row, and the running
-  // total high-water mark from the peak at the iteration start (Baseline).
+  // total high-water mark from the peak at the iteration start (Baseline). TOTAL: the peak.
+  using memory_reporting::FormatBytes;
   const auto &p = res.iter;
   double hwm = p.node_baseline.sum;
-  const Row baseline = {memory_reporting::FormatBytes(p.node_baseline.max),
-                        memory_reporting::FormatBytes(p.node_baseline.sum),
-                        memory_reporting::FormatBytes(hwm)};
-  Table(
-      "Peak Memory", "Per-Node", "Total", "Total HWM", p,
-      [&](int i) -> Row
-      {
-        if (i == Timer::TOTAL)
-        {
-          return {memory_reporting::FormatBytes(p.node_peak.max),
-                  memory_reporting::FormatBytes(p.node_peak.sum),
-                  memory_reporting::FormatBytes(p.node_peak.sum)};
-        }
-        hwm += p.node_mem[i].sum;
-        return {memory_reporting::FormatBytes(p.node_mem[i].max),
-                memory_reporting::FormatBytes(p.node_mem[i].sum),
-                memory_reporting::FormatBytes(hwm)};
-      },
-      &baseline, "Baseline");
+  Header("Peak Memory", "Per-Node", "Total", "Total HWM");
+  Line("Baseline", FormatBytes(p.node_baseline.max), FormatBytes(p.node_baseline.sum),
+       FormatBytes(hwm));
+  for (int i = 0; i < N; i++)
+  {
+    if (p.time[i].ranks > 0)
+    {
+      const auto &s = (i == Timer::TOTAL) ? p.node_peak : p.node_mem[i];
+      hwm = (i == Timer::TOTAL) ? s.sum : hwm + s.sum;
+      Row(i, FormatBytes(s.max), FormatBytes(s.sum), FormatBytes(hwm));
+    }
+  }
 }
 
 }  // namespace palace::perf
