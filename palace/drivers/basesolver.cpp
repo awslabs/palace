@@ -22,6 +22,7 @@
 #include "utils/iodata.hpp"
 #include "utils/memoryreporting.hpp"
 #include "utils/outputdir.hpp"
+#include "utils/perfreport.hpp"
 #include "utils/timer.hpp"
 
 namespace palace
@@ -453,7 +454,17 @@ void BaseSolver::SaveMetadata(const PortExcitations &excitation_helper) const
 
 void BaseSolver::ReportPerformance(MPI_Comm comm) const
 {
-  BlockTimer::Snapshot();
+  perf::Report(comm);
+  Mpi::Print(comm, "\n");
+  memory_reporting::PrintMemoryUsage(comm, memory_reporting::GetPeakMemoryStats(comm));
+  memory_reporting::PrintMemoryUsage(comm, memory_reporting::GetPeakNodeMemoryStats(comm));
+  perf::Print(comm);
+  if (root)
+  {
+    json meta = LoadMetadata(post_dir);
+    perf::WriteJson(meta);
+    WriteMetadata(post_dir, meta);
+  }
 }
 
 }  // namespace palace
