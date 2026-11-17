@@ -370,8 +370,10 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
   }
   if (const auto *candidate = post_op.GetImpedanceRuleCandidateRecord())
   {
-    // The impedance-metal rule (RECORD): the candidate block, never of record.
+    // The impedance-metal rule (RECORD): the candidate block and the candidate's
+    // conductor-consistency records, never of record.
     SaveImpedanceRuleCandidateMetadata(*candidate);
+    post_op.WriteImpedanceRuleCandidateRecords();
   }
   return indicator;
 }
@@ -779,8 +781,10 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
   }
   if (const auto *candidate = post_op.GetImpedanceRuleCandidateRecord())
   {
-    // The impedance-metal rule (RECORD): the candidate block, never of record.
+    // The impedance-metal rule (RECORD): the candidate block and the candidate's
+    // conductor-consistency records, never of record.
     SaveImpedanceRuleCandidateMetadata(*candidate);
+    post_op.WriteImpedanceRuleCandidateRecords();
   }
   return indicator;
 }

@@ -1680,7 +1680,11 @@ public:
   // the final metadata write (BaseSolver::SaveMetadata) splices the file in place of the
   // empty in-memory array (the same bytes) and removes it. Set by the drivers right after
   // the residency; null (the in-memory form) otherwise and on the other ranks.
-  void SpillConductorConsistencyRecords(const std::string &directory);
+  // `file_name`: the scratch file's name (the impedance-metal rule's candidate spills its
+  // own Records to another file beside the record's, decision 2063 MINOR-3).
+  void SpillConductorConsistencyRecords(
+      const std::string &directory,
+      const std::string &file_name = ".palace-conductor-consistency-records.spill");
   JsonArraySpill *GetConductorConsistencyRecordsSpill() { return records_spill.get(); }
 
   // Decision 1469 (1) (i): under PALACE_RESPONSE_MEMORY_CENSUS=1 print (root) the census
@@ -2014,6 +2018,18 @@ public:
   // Called by the root writers when they create the file.
   std::filesystem::path DiagnosticsPath(const std::filesystem::path &post_dir,
                                         const std::string &name) const;
+  // The same rule with `default_directory` in place of an unset Diagnostics.Directory (the
+  // impedance-metal rule's candidate tables, which are never written at top level).
+  std::filesystem::path DiagnosticsPath(const std::filesystem::path &post_dir,
+                                        const std::string &name,
+                                        const std::string &default_directory) const;
+  // The impedance-metal rule (Record; decision 2063 MINOR-6): the candidate's feature and
+  // law tables and its records file live under Diagnostics.Directory, or this
+  // sub-directory of the output directory when the key is unset.
+  static constexpr const char *kImpedanceCandidateDiagnosticsDirectory =
+      "impedance-rule-candidate";
+  static constexpr const char *kImpedanceCandidateRecordsFile =
+      "surface-response-impedance-conductor-consistency-records.json";
   const std::string &GetDiagnosticsDirectory() const { return diagnostics_directory; }
   // Diagnostics.ConductorConsistencyRecords "Directory": the Records array leaves
   // palace.json for DiagnosticsPath(post_dir, kConductorConsistencyRecordsFile).

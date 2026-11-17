@@ -30586,15 +30586,17 @@ void SurfaceResponseOperator::CheckReferencedModelMatricesAgainstRoot() const
 }
 #endif
 
-std::filesystem::path
-SurfaceResponseOperator::DiagnosticsPath(const std::filesystem::path &post_dir,
-                                         const std::string &name) const
+// DiagnosticsPath's rule for a given directory name (empty: post_dir / name, no filesystem
+// access).
+static std::filesystem::path DiagnosticsPathIn(const std::filesystem::path &post_dir,
+                                               const std::string &directory_name,
+                                               const std::string &name)
 {
-  if (diagnostics_directory.empty())
+  if (directory_name.empty())
   {
     return post_dir / name;
   }
-  const auto directory = post_dir / diagnostics_directory;
+  const auto directory = post_dir / directory_name;
   if (std::filesystem::is_symlink(std::filesystem::symlink_status(directory)))
   {
     std::filesystem::remove(directory);
@@ -30603,15 +30605,32 @@ SurfaceResponseOperator::DiagnosticsPath(const std::filesystem::path &post_dir,
   return directory / name;
 }
 
-void SurfaceResponseOperator::SpillConductorConsistencyRecords(const std::string &directory)
+std::filesystem::path
+SurfaceResponseOperator::DiagnosticsPath(const std::filesystem::path &post_dir,
+                                         const std::string &name) const
+{
+  return DiagnosticsPathIn(post_dir, diagnostics_directory, name);
+}
+
+std::filesystem::path
+SurfaceResponseOperator::DiagnosticsPath(const std::filesystem::path &post_dir,
+                                         const std::string &name,
+                                         const std::string &default_directory) const
+{
+  return DiagnosticsPathIn(
+      post_dir, diagnostics_directory.empty() ? default_directory : diagnostics_directory,
+      name);
+}
+
+void SurfaceResponseOperator::SpillConductorConsistencyRecords(const std::string &directory,
+                                                               const std::string &file_name)
 {
   MFEM_VERIFY(patch_record_residency == PatchRecordResidency::ROOT_ONLY,
               "The conductor-consistency Records spill requires the ROOT_ONLY residency!");
   if (Mpi::Root(fespace.GetComm()))
   {
     records_spill = std::make_unique<JsonArraySpill>(
-        (std::filesystem::path(directory) / ".palace-conductor-consistency-records.spill")
-            .string(),
+        (std::filesystem::path(directory) / file_name).string(),
         std::vector<std::string>{"SurfaceResponse", "Diagnostics", "ConductorConsistency",
                                  "Records"});
   }

@@ -1044,8 +1044,10 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   }
   if (const auto *candidate = post_op.GetImpedanceRuleCandidateRecord())
   {
-    // The impedance-metal rule (RECORD): the candidate block, never of record.
+    // The impedance-metal rule (RECORD): the candidate block and the candidate's
+    // conductor-consistency records, never of record.
     SaveImpedanceRuleCandidateMetadata(*candidate);
+    post_op.WriteImpedanceRuleCandidateRecords();
   }
   MFEM_VERIFY(num_conv >= iodata.solver.eigenmode.n, "Eigenmode solve only found "
                                                          << num_conv << " modes when "

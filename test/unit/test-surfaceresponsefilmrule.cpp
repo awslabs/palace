@@ -26,6 +26,8 @@
 #include "utils/communication.hpp"
 #include "utils/configfile.hpp"
 #include "utils/iodata.hpp"
+#include "utils/metadatafile.hpp"
+#include "utils/timer.hpp"
 #include "utils/units.hpp"
 
 using namespace palace;
@@ -449,6 +451,38 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
       }
       CHECK(tangential_legs > 0);
       CHECK(largest > 1.0e-3);
+    }
+  }
+
+  SECTION("the candidate's conductor-consistency Records spill to its own scratch file, "
+          "never to memory (MINOR-3)")
+  {
+    const auto film = Film(*twin);
+    SurfaceResponseOperator candidate(*twin->iodata, *twin->space, nullptr, &film, true);
+    candidate.SetPatchRecordResidency(
+        SurfaceResponseOperator::PatchRecordResidency::ROOT_ONLY);
+    const fs::path directory = temp.temp_dir / "candidate-records-spill";
+    if (Mpi::Root(Mpi::World()))
+    {
+      fs::create_directories(directory);
+    }
+    Mpi::Barrier(Mpi::World());
+    const std::string name =
+        ".palace-impedance-candidate-conductor-consistency-records.spill";
+    candidate.SpillConductorConsistencyRecords(directory.string(), name);
+    REQUIRE(candidate.HasConductorConsistencyProbes());
+    const auto records =
+        candidate.ApplyConductorConsistencyGate(TrueField(twin_field), 0, 1.0, false);
+    if (Mpi::Root(Mpi::World()))
+    {
+      const auto *spill = candidate.GetConductorConsistencyRecordsSpill();
+      REQUIRE(spill);
+      CHECK(fs::path(spill->Path()) == directory / name);
+      CHECK(fs::exists(spill->Path()));
+      CHECK(spill->Size() == records.size());
+      CHECK(!records.empty());
+      const auto statistics = candidate.GetStatistics();
+      CHECK(statistics["Diagnostics"]["ConductorConsistency"]["Records"].empty());
     }
   }
 

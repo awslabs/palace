@@ -752,6 +752,10 @@ public:
   {
     return impedance_film_rule ? &impedance_candidate_record : nullptr;
   }
+  // RECORD, at the end of the solve (root; after the candidate block): the candidate's
+  // spilled conductor-consistency Records written to <candidate diagnostics directory>/
+  // surface-response-impedance-conductor-consistency-records.json, the scratch removed.
+  void WriteImpedanceRuleCandidateRecords() const;
   // Lane L4 (M5): the mark of the last printed measurement (root; nullopt when none was
   // printed since the last call), then cleared.
   std::optional<bool> TakeSurfaceResponseMeasurementMarked() const

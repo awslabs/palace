@@ -30,6 +30,7 @@
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
 #include "utils/memoryreporting.hpp"
+#include "utils/metadatafile.hpp"
 #include "utils/outputdir.hpp"
 #include "utils/tablecsv.hpp"
 #include "utils/timer.hpp"
@@ -4940,6 +4941,12 @@ void PostOperator<solver_t>::SetUpImpedanceRuleCandidate(const IoData &iodata,
       }
       impedance_candidate_op->SetPatchRecordResidency(
           SurfaceResponseOperator::PatchRecordResidency::ROOT_ONLY);
+      // Its conductor-consistency Records go to its own scratch file (as the record's do),
+      // never to memory; written under the candidate diagnostics directory at the end
+      // (WriteImpedanceRuleCandidateRecords; decision 2063 MINOR-3).
+      impedance_candidate_op->SpillConductorConsistencyRecords(
+          iodata.problem.output,
+          ".palace-impedance-candidate-conductor-consistency-records.spill");
       candidate_setup_seconds =
           std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
       candidate_setup_bytes = memory_reporting::GetCurrentMemory() - bytes;
@@ -4981,7 +4988,8 @@ void PostOperator<solver_t>::SetUpImpedanceRuleCandidate(const IoData &iodata,
       if (Mpi::Root(comm))
       {
         TableWithCSVFile table(surface_response_op->DiagnosticsPath(
-            post_dir, "surface-response-impedance-features.csv"));
+            post_dir, "surface-response-impedance-features.csv",
+            SurfaceResponseOperator::kImpedanceCandidateDiagnosticsDirectory));
         table.table.insert(Column::Text("candidate", "CANDIDATE: NOT OF RECORD"));
         table.table.insert(Column::Integer("feature", "feature"));
         table.table.insert(Column::Text("type", "Type"));
@@ -5320,7 +5328,8 @@ void PostOperator<solver_t>::MeasureAndPrintImpedanceRuleCandidate(
     {
       impedance_law_table =
           std::make_unique<TableWithCSVFile>(surface_response_op->DiagnosticsPath(
-              post_dir, "surface-response-impedance-law.csv"));
+              post_dir, "surface-response-impedance-law.csv",
+              SurfaceResponseOperator::kImpedanceCandidateDiagnosticsDirectory));
       auto &law = impedance_law_table->table;
       law.insert(Column::Text("candidate", "CANDIDATE: NOT OF RECORD"));
       law.insert("idx", solver_t == ProblemType::DRIVEN ? "f (GHz)" : "m");
@@ -5412,6 +5421,47 @@ void PostOperator<solver_t>::MeasureAndPrintImpedanceRuleCandidate(
     impedance_candidate_record["Cost"]["CandidateMeasureSeconds"] =
         impedance_candidate_measure_seconds;
   }
+}
+
+template <ProblemType solver_t>
+void PostOperator<solver_t>::WriteImpedanceRuleCandidateRecords() const
+{
+  if (!impedance_candidate_op)
+  {
+    return;
+  }
+  // Root only (the spill exists there): the candidate's Records in the record's
+  // directory-file form, marked, under the candidate diagnostics directory; then the
+  // scratch file is removed.
+  auto *spill = impedance_candidate_op->GetConductorConsistencyRecordsSpill();
+  if (!spill)
+  {
+    return;
+  }
+  MFEM_VERIFY(spill->Flush(), "Writing the impedance-metal rule candidate's "
+                              "conductor-consistency records to the scratch file \""
+                                  << spill->Path() << "\" failed (a short write)!");
+  nlohmann::json records;
+  records["Candidate"] = "CANDIDATE: NOT OF RECORD";
+  records["SurfaceResponse"]["Diagnostics"]["ConductorConsistency"]["Records"] =
+      nlohmann::json::array();
+  const auto path = surface_response_op->DiagnosticsPath(
+      post_dir, SurfaceResponseOperator::kImpedanceCandidateRecordsFile,
+      SurfaceResponseOperator::kImpedanceCandidateDiagnosticsDirectory);
+  std::ofstream output(path);
+  MFEM_VERIFY(output.is_open(), "Unable to open the impedance-metal rule candidate's "
+                                "conductor-consistency records file \""
+                                    << path.string() << "\"!");
+  const bool written = StreamJsonMetadata(output, records, spill);
+  output.close();
+  MFEM_VERIFY(written && !output.fail(),
+              "Writing the impedance-metal rule candidate's conductor-consistency records "
+              "file \""
+                  << path.string()
+                  << "\" failed (a short write: the disk is full or an I/O error)!");
+  MFEM_VERIFY(spill->Remove(), "Removing the impedance-metal rule candidate's "
+                               "conductor-consistency records scratch file \""
+                                   << spill->Path() << "\" failed!");
 }
 
 template class PostOperator<ProblemType::DRIVEN>;
