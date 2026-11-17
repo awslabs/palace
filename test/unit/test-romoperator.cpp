@@ -72,6 +72,7 @@ public:
   using RomOperator::RomOperator;
   using RomOperator::WavePortAuxBlock;
   using RomOperator::WavePortDispersionFit;
+  using RomOperator::wp_pairing_error;
   auto &GetWeightOp() const { return weight_op_W; }
   auto &GetOrthR() const { return orth_R; }
   auto &GetVectors() const { return V; }
@@ -1916,6 +1917,13 @@ void CheckPROMAgainstHDM(IoData &iodata, const std::vector<int> &excitations)
         CHECK(std::abs(S - S_ref) <= 1.0e-12 * std::max(std::abs(S_ref), 1.0));
       }
     }
+  }
+
+  // The one-time check of the pairings against the assembled mode vectors ran and agrees.
+  if (space_op.GetWavePortOp().Size() > 0)
+  {
+    CHECK(rom_op.wp_pairing_error >= 0.0);
+    CHECK(rom_op.wp_pairing_error <= 1.0e-8);
   }
 }
 

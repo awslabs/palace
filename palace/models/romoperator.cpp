@@ -866,6 +866,7 @@ void RomOperator::AddWavePortModalCorrection(double omega)
     p++;
   }
   Mpi::GlobalSum(static_cast<int>(sV.size()), sV.data(), space_op.GetComm());
+  Eigen::MatrixXcd Wr = Eigen::MatrixXcd::Zero(n, n);
   for (Eigen::Index p = 0; const auto &[port_idx, port_data] : wave_port_op)
   {
     const auto s_full = sV.col(2 * p), s_scalar = sV.col(2 * p + 1);
@@ -889,10 +890,54 @@ void RomOperator::AddWavePortModalCorrection(double omega)
       }
       continue;
     }
-    Ar.noalias() += (std::complex<double>(0.0, -omega) / port_data.modal_reaction) *
+    Wr.noalias() += (std::complex<double>(0.0, -omega) / port_data.modal_reaction) *
                     s_full * s_full.transpose();
-    Ar.noalias() += (std::complex<double>(0.0, omega) / port_data.modal_reaction_scalar) *
+    Wr.noalias() += (std::complex<double>(0.0, omega) / port_data.modal_reaction_scalar) *
                     s_scalar * s_scalar.transpose();
+  }
+  if (wp_pairing_error < 0.0 && n > 0)
+  {
+    CheckWavePortModePairings(omega, Wr);
+  }
+  Ar += Wr;
+}
+
+void RomOperator::CheckWavePortModePairings(double omega, const Eigen::MatrixXcd &Wr)
+{
+  // The same integrals as the port-space pairings, assembled on the full space.
+  MPI_Comm comm = space_op.GetComm();
+  auto &wave_port_op = space_op.GetWavePortOp();
+  Eigen::MatrixXcd Wr_hdm = Eigen::MatrixXcd::Zero(Wr.rows(), Wr.cols());
+  for (const auto &term : wave_port_op.GetModalCorrectionTerms(
+           omega, space_op.GetNDSpace(), space_op.GetNDDbcTDofLists().back()))
+  {
+    const Eigen::VectorXcd sV = ProjectVectors(comm, V, {term.s.get()}).col(0);
+    Wr_hdm.noalias() += term.g * sV * sV.transpose();
+  }
+  double err = (Wr - Wr_hdm).cwiseAbs().maxCoeff();
+  double ref = std::max(Wr.cwiseAbs().maxCoeff(), Wr_hdm.cwiseAbs().maxCoeff());
+  for (const auto &[port_idx, port_data] : wave_port_op)
+  {
+    if (port_data.active)
+    {
+      const auto s = space_op.GetWavePortModeVector(port_idx, omega);
+      const Eigen::VectorXcd sV = ProjectVectors(comm, V, {s.get()}).col(0);
+      const auto &sV_port = sV_wp_full.at(port_idx);
+      err = std::max(err, (sV_port - sV).cwiseAbs().maxCoeff());
+      ref = std::max({ref, sV_port.cwiseAbs().maxCoeff(), sV.cwiseAbs().maxCoeff()});
+    }
+  }
+  if (!(ref > 0.0))
+  {
+    return;
+  }
+  wp_pairing_error = err / ref;
+  if (!(wp_pairing_error <= 1.0e-8))
+  {
+    Mpi::Warning(comm,
+                 "Wave port mode pairings of the PROM disagree with the assembled mode "
+                 "vectors (relative error {:.3e})!\n",
+                 wp_pairing_error);
   }
 }
 

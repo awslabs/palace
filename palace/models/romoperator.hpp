@@ -228,6 +228,12 @@ protected:
   // with the mode of every wave port at ω.
   void AddWavePortModalCorrection(double omega);
 
+  // Compare Wᵣ(ω) and the pairings with the projections of the assembled n×H vectors of
+  // the active ports, which the HDM uses, and warn if they disagree. Run once, at the first
+  // frequency where they are not all zero, setting their relative difference.
+  void CheckWavePortModePairings(double omega, const Eigen::MatrixXcd &Wr);
+  double wp_pairing_error = -1.0;  // Negative until checked
+
   // Sweep band [ω_min, ω_max] (nondimensional, rad) captured from iodata at construction
   // time. Used to (a) sample kₙ,p(ω) for the synthesis polynomial fit, and (b) define the
   // dense grid over which the fit residual is evaluated.
