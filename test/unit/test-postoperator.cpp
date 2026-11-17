@@ -1706,11 +1706,20 @@ TEST_CASE_METHOD(test::SharedTempDir,
   // upsync/P3B/probe-preinteg, built as the dev build p3b-probe-9269317, np 1), within the
   // flux recovery's tolerance (EstimatorTol 1e-14; MEASURED: every value within 2e-15
   // relative, the raw entry 2 included, which takes upstream's surface functional).
+  // EXCEPT the three entries that read the recovered D (1, 3, 4): upstream #1072
+  // (0233a2f299, the energy-norm flux projection in FluxProjector) changed the recovered
+  // flux, so they are re-pinned to the merged head's values (P4 SY1; ruling 2036 (1);
+  // MEASURED: with that projector change reversed the old values return to <= 3e-16):
+  //   1: 8.92520238653244898e-04 -> 5.2421642661993142e-04
+  //   3: 1.59993232981066910e-03 -> 1.5998888424706354e-03
+  //   4: 1.00016919572039689e-04 -> 1.0000662242343952e-04
+  // The accuracy of FluxRecovery readings under the new projector is not re-established
+  // by this test.
   const auto values = FluxRecoveryNoSheetEnergies(Mpi::World(), temp_dir.string());
   REQUIRE(values.size() == 5);
-  const std::vector<double> reference = {1.28333333333333122e+00, 8.92520238653244898e-04,
-                                         3.66666666666666833e-04, 1.59993232981066910e-03,
-                                         1.00016919572039689e-04};
+  const std::vector<double> reference = {1.28333333333333122e+00, 5.2421642661993142e-04,
+                                         3.66666666666666833e-04, 1.5998888424706354e-03,
+                                         1.0000662242343952e-04};
   for (std::size_t i = 0; i < values.size(); i++)
   {
     INFO("value " << i << " = " << std::setprecision(17) << values[i] << ", reference "
