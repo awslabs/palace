@@ -83,7 +83,8 @@ jobs:
         include:
           - {runner: arm64}
           - {runner: x64}
-          - {runner: gpu, target: x86_64_v3}
+          # Review branch only (PR 1218 prototype): no GPU image, which is not needed for the
+          # review runs and whose runner queue blocks publishing.
     runs-on: [self-hosted, '${{ matrix.runner }}']
     steps:
       # Two events bypass the paths-filter:
