@@ -518,7 +518,7 @@ protected:
   void RestoreReducedState(const ReducedState &state);
 
   // SolvePROM, also returning the right-hand side of the reduced system at ω, if rhs_r is
-  // not null.
+  // not null (empty for an empty basis).
   void SolvePROM(int excitation_idx, double omega, ComplexVector &u,
                  Eigen::VectorXcd *rhs_r);
 

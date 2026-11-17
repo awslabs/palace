@@ -1534,6 +1534,10 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u,
   if (V.empty())
   {
     u = 0.0;
+    if (rhs_r)
+    {
+      rhs_r->resize(0);
+    }
     return;
   }
 
