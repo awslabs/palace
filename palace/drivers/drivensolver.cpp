@@ -86,19 +86,18 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
   // Initialize write directory with default path; will be changed for multi-excitations.
   PostOperator<ProblemType::DRIVEN> post_op(iodata, space_op);
 
-  // Construct the system matrices defining the linear operator. PEC boundaries are handled
-  // simply by setting diagonal entries of the system matrix for the corresponding dofs.
-  // Because the Dirichlet BC is always homogeneous, no special elimination is required on
-  // the RHS. Assemble the linear system for the initial frequency (so we can call
-  // KspSolver::SetOperators). Compute everything at the first frequency step.
-  auto K = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
-  auto C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
-  auto M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+  // The fixed system matrices are only needed when the system cannot be applied through
+  // the preconditioner (see SpaceOperator::GetSystemOperator), so assemble them on first
+  // use. PEC boundaries are handled simply by setting diagonal entries of the system matrix
+  // for the corresponding dofs. Because the Dirichlet BC is always homogeneous, no special
+  // elimination is required on the RHS.
+  std::unique_ptr<ComplexOperator> K, C, M;
   const auto &Curl = space_op.GetCurlMatrix();
 
   // Set up the linear solver.
   // The operators are constructed for each frequency step and used to initialize the ksp.
-  ComplexKspSolver ksp(iodata, space_op.GetNDSpaces(), &space_op.GetH1Spaces());
+  auto ksp = std::make_unique<ComplexKspSolver>(iodata, space_op.GetNDSpaces(),
+                                                &space_op.GetH1Spaces());
 
   // Set up RHS vector for the incident field at port boundaries, and the vector for the
   // first frequency step.
@@ -148,13 +147,24 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
     {
       auto omega = omega_sample[omega_i];
       // Assemble frequency dependent matrices and initialize operators in linear
-      // solver.
-      auto A2 = space_op.GetExtraSystemOperator(omega, Operator::DIAG_ZERO);
-      auto A = space_op.GetSystemMatrix(1.0 + 0.0i, 1i * omega, -omega * omega + 0.0i,
-                                        K.get(), C.get(), M.get(), A2.get());
+      // solver. A refers to P and A2, so both must outlive it.
       auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(
           1.0 + 0.0i, 1i * omega, -omega * omega + 0.0i, omega);
-      ksp.SetOperators(*A, *P);
+      std::unique_ptr<ComplexOperator> A2;
+      auto A = space_op.GetSystemOperator(omega, *P);
+      if (!A)
+      {
+        if (!K)
+        {
+          K = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
+          C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+          M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+        }
+        A2 = space_op.GetExtraSystemOperator(omega, Operator::DIAG_ZERO);
+        A = space_op.GetSystemMatrix(1.0 + 0.0i, 1i * omega, -omega * omega + 0.0i, K.get(),
+                                     C.get(), M.get(), A2.get());
+      }
+      ksp->SetOperators(*A, *P);
 
       Mpi::Print(
           "\nIt {:d}/{:d}: ω/2π = {:.3e} GHz (total elapsed time = {:.2e} s{})\n",
@@ -172,7 +182,23 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
       space_op.GetExcitationVector(excitation_idx, omega, RHS);
 
       Mpi::Print("\n");
-      ksp.Mult(RHS, E);
+      ksp->Mult(RHS, E);
+
+      if (omega_i + 1 == omega_sample.size() &&
+          excitation_counter == port_excitations.Size())
+      {
+        // That was the last solve: save the solver totals and release the linear solver
+        // and system operators, so they do not add to the memory peak of the field output
+        // and error estimation which follow.
+        SaveMetadata(*ksp);
+        ksp.reset();
+        A.reset();
+        A2.reset();
+        P.reset();
+        K.reset();
+        C.reset();
+        M.reset();
+      }
 
       // Start Post-processing.
       BlockTimer bt0(Timer::POSTPRO);
@@ -206,9 +232,13 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
       estimator.AddErrorIndicator(E, B, total_domain_energy, indicator);
     }
 
-    // Final postprocessing & printing.
+    // Final postprocessing & printing. After the last excitation, the solver totals were
+    // already saved when the solver was released.
     BlockTimer bt0(Timer::POSTPRO);
-    SaveMetadata(ksp);
+    if (ksp)
+    {
+      SaveMetadata(*ksp);
+    }
   }
   post_op.MeasureFinalize(indicator);
   return indicator;

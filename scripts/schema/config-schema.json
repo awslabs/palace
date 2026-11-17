@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:4-2-1",
+  "$id": "urn:palace:schema:4-3-0",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -1142,6 +1142,12 @@
             }
           ]
         },
+        "ExcitationAmplitude": {
+          "$ref": "#/$defs/ExcitationAmplitude"
+        },
+        "ExcitationPhase": {
+          "$ref": "#/$defs/ExcitationPhase"
+        },
         "Active": {
           "type": "boolean",
           "description": "Turns on or off the damping boundary condition for this port for driven or transient simulations.",
@@ -1233,6 +1239,12 @@
               "$ref": "#/$defs/ExcitationIndex"
             }
           ]
+        },
+        "ExcitationAmplitude": {
+          "$ref": "#/$defs/ExcitationAmplitude"
+        },
+        "ExcitationPhase": {
+          "$ref": "#/$defs/ExcitationPhase"
         },
         "Active": {
           "type": "boolean",
@@ -1427,7 +1439,7 @@
         },
         "ComplexCoarseSolve": {
           "type": "boolean",
-          "description": "Use an exact doubled-real factorization for the wave port boundary mode linear solver. When omitted, inherits [`/Solver/Linear/ComplexCoarseSolve`](@ref config-solver-linear-complexcoarsesolve) and [`/Solver/Linear/PCMatReal`](@ref config-solver-linear-pcmatreal). An explicit value takes precedence over both: `true` uses the exact factorization and `false` includes the complex terms in the real-valued preconditioner. This override affects only this wave port and does not change the full 3D system preconditioner.",
+          "description": "Use an exact doubled-real factorization for the wave port boundary mode linear solver. When omitted, inherits [`/Solver/Linear/ComplexCoarseSolve`](@ref config-solver-linear-complexcoarsesolve) and [`/Solver/Linear/PCMatReal`](@ref config-solver-linear-pcmatreal). An explicit value takes precedence over both: `true` uses the exact factorization and `false` the real-valued approximation of the system matrix. This override affects only this wave port and does not change the full 3D system preconditioner.",
           "x-palace-advanced": true
         },
         "EigenTol": {
@@ -1786,7 +1798,7 @@
         "FarField": {
           "$ref": "#/$defs/FarField",
           "title": "Far Field",
-          "description": "Far-field electric field extraction. The boundary attributes must enclose the system and be on an external boundary."
+          "description": "Far-field electric field extraction. The boundary attributes must form a closed surface enclosing all sources and scatterers, either an external boundary or an interior surface in a homogeneous, isotropic medium."
         }
       }
     },
@@ -1915,7 +1927,7 @@
     "FarField": {
       "type": "object",
       "title": "Far Field",
-      "description": "Far-field electric field extraction. The boundary attributes must enclose the system and be on an external boundary.",
+      "description": "Far-field electric field extraction. The boundary attributes must form a closed surface enclosing all sources and scatterers, either an external boundary or an interior surface in a homogeneous, isotropic medium.",
       "additionalProperties": false,
       "required": [
         "Attributes"
@@ -1943,6 +1955,17 @@
     "ExcitationIndex": {
       "type": "integer",
       "minimum": 0
+    },
+    "ExcitationAmplitude": {
+      "type": "number",
+      "exclusiveMinimum": 0.0,
+      "default": 1.0,
+      "description": "Amplitude ``A`` of the complex weight ``a = A e^{i\u03c6}`` applied to the unit-power incident wave of this port, so the incident power is scaled by ``A^2``. Dimensionless and frequency independent. Requires `\"Excitation\"` to be nonzero. S-parameters are normalized by the weight and do not depend on it. See the [boundary conditions guide](../guide/boundaries.md#Lumped-and-wave-port-excitation) for details."
+    },
+    "ExcitationPhase": {
+      "type": "number",
+      "default": 0.0,
+      "description": "Phase ``\u03c6`` in degrees of the complex weight ``a = A e^{i\u03c6}`` applied to the unit-power incident wave of this port, using the ``e^{i\u03c9t}`` time convention. A phase of 180 gives the same fields as reversing `\"Direction\"`. With the phase, the voltage, current, incident voltage and incident current of the port change sign, and its S-parameters do not. Reversing `\"Direction\"` also reverses the voltage reference of the port, so these keep their sign, and the S-parameters between this port and the others change sign. Requires `\"Excitation\"` to be nonzero. S-parameters are normalized by the weight and do not depend on it. Must be a multiple of 180 for transient simulations. See the [boundary conditions guide](../guide/boundaries.md#Lumped-and-wave-port-excitation) for details."
     },
     "CoordinateSystem": {
       "type": "string",

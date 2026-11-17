@@ -18,6 +18,7 @@ namespace palace
 class FarfieldBoundaryOperator;
 class FiniteElementSpace;
 class MaterialOperator;
+class MaterialPropertyCoefficient;
 class SurfaceConductivityOperator;
 class SurfaceImpedanceOperator;
 class SurfaceRationalImpedanceOperator;
@@ -98,6 +99,14 @@ ComplexHypreParMatrix BuildSystemMatrixA(
 
 void ApplyVDBackTransform(ComplexVector &e0, std::complex<double> kn, int nd_size,
                           int h1_size, ComplexVector &et, ComplexVector &en);
+
+// Add coeff times the scalar inverse impedance of the domain material adjacent to each
+// farfield (first-order absorbing) boundary element to fb, the boundary coefficient of the
+// out-of-plane field component (H1 block) for the damping of the absorbing boundaries.
+// Assumes an isotropic material at the absorbing boundaries.
+void AddFarfieldScalarDampingBdrCoefficients(const MaterialOperator &mat_op,
+                                             const FarfieldBoundaryOperator &farfield_op,
+                                             double coeff, MaterialPropertyCoefficient &fb);
 
 // Propagation constant kₙ of a boundary mode from kₙ² = −σ − 1/λ at the frequency ω. At a
 // real frequency, kₙ is the principal root, with Re{kₙ} ≥ 0, when Re{kₙ²} ≥ 0, and

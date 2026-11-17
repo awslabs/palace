@@ -511,6 +511,10 @@ private:
   // Operator norms for scaling.
   mutable PetscReal normK, normC, normM;
 
+  // Shared by the SetOperators overloads, with C = nullptr when there is no damping.
+  void SetOperatorsImpl(const ComplexOperator &K, const ComplexOperator *C,
+                        const ComplexOperator &M, ScaleType type);
+
 protected:
   PetscReal GetResidualNorm(PetscScalar l, const ComplexVector &x,
                             ComplexVector &r) const override;
