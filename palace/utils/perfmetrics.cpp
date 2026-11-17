@@ -3,7 +3,9 @@
 
 #include "perfmetrics.hpp"
 
+#include <algorithm>
 #include <array>
+#include <cfloat>
 #include <deque>
 #include <limits>
 #include <map>
@@ -46,6 +48,7 @@ std::vector<Stats> ReduceStats(const std::vector<double> &value,
   std::vector<Stats> out(n);
   for (int i = 0; i < n; i++)
   {
+    sm[i] = std::clamp(sm[i], -DBL_MAX, DBL_MAX);
     const int ranks = static_cast<int>(sm[n + i]);
     if (ranks > 0)
     {
@@ -301,6 +304,8 @@ std::vector<std::string> ValidateNew(const std::vector<MetricInfo> &global,
     const auto line = lines.substr(start, end - start);
     start = end + 1;
     const auto tab = line.find('\t');
+    MFEM_ASSERT(tab != std::string::npos && line.size() == tab + 4,
+                "Malformed performance metric line!");
     const auto path = line.substr(0, tab), rules = line.substr(tab + 1);
     auto known = rules_of.find(path);
     if (known == rules_of.end())
@@ -385,6 +390,8 @@ void Sync(MPI_Comm comm)
     const auto line = fresh.substr(start, end - start);
     start = end + 1;
     const auto tab = line.find('\t');
+    MFEM_ASSERT(tab != std::string::npos && line.size() == tab + 4,
+                "Malformed performance metric line!");
     MetricInfo m{line.substr(0, tab), static_cast<Acc>(line[tab + 1] - '0'),
                  static_cast<Red>(line[tab + 2] - '0'),
                  static_cast<Run>(line[tab + 3] - '0')};

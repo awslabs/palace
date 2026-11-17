@@ -145,7 +145,9 @@ inline const std::string &CurrentRole()
 }
 
 //
-// Metric handles. Construction registers the metric (string lookup: at setup, or as a
+// Metric handles. Host thread only, outside OpenMP parallel regions. COUNT resolves
+// against the role active at construction: construct per solver, not as a function-local
+// static. Construction registers the metric (string lookup: at setup, or as a
 // function-local static); a default-constructed handle is invalid and its updates no-ops.
 // Handles stay valid for the lifetime of the process.
 //
@@ -221,7 +223,8 @@ void Sync(MPI_Comm comm);
 const std::vector<MetricInfo> &GlobalMetrics();
 
 // Values of the global metrics on this process (unset: set[i] = 0): iteration values, or
-// cumulative values (run combined with iteration; ITERATION_ONLY metrics unset).
+// cumulative values (run combined with iteration; ITERATION_ONLY metrics unset). Appends to
+// value and set.
 void PackMetrics(bool cumulative, std::vector<double> &value, std::vector<char> &set);
 
 namespace detail

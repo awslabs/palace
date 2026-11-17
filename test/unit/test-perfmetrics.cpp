@@ -22,6 +22,8 @@ TEST_CASE("PerfMetrics ReduceStats", "[perfmetrics][Serial][Parallel]")
   CHECK(r[0].min == 1.0);
   CHECK(r[0].max == np);
   CHECK(r[0].max_rank == np - 1);
+  const auto tie = perf::ReduceStats({3.0}, {1}, comm);
+  CHECK(tie[0].max_rank == 0);
   CHECK(r[0].sum == np * (np + 1) / 2.0);
   CHECK(r[0].ranks == np);
   const int evens = (np + 1) / 2;
@@ -192,4 +194,102 @@ TEST_CASE("PerfMetrics Sync", "[perfmetrics][Serial][Parallel]")
   CHECK(r[ia].ranks == np - 1);
   CHECK(r[ia].min == 1.0);
   CHECK(r[ib].sum == np - 1);
+
+  // Late mapping: root registers A after the first Sync.
+  const auto size = g.size();
+  if (rank == 0)
+  {
+    a = perf::SumMetric("Test/Sync/A", perf::Red::STATS);
+    a.Add(1.0);
+  }
+  perf::Sync(comm);
+  CHECK(perf::GlobalMetrics().size() == size);
+  v.clear();
+  s.clear();
+  perf::PackMetrics(false, v, s);
+  const auto r2 = perf::ReduceStats(v, s, comm);
+  CHECK(r2[ia].ranks == np);
+}
+
+TEST_CASE("PerfMetrics Partitioned Count", "[perfmetrics][Parallel]")
+{
+  MPI_Comm comm = Mpi::World();
+  if (Mpi::Size(comm) < 2)
+  {
+    SKIP("Requires at least 2 processes");
+  }
+  MPI_Comm sub;
+  MPI_Comm_split(comm, Mpi::Rank(comm) % 2, Mpi::Rank(comm), &sub);
+  perf::detail::ResetValues();
+  perf::SumMetric c;
+  {
+    perf::ScopedRole role("TestPartition", sub);
+    c = perf::SumMetric("Test/Partition/Count", perf::Red::COUNT);
+  }
+  CHECK(c.Valid() == (Mpi::Rank(sub) == 0));
+  perf::SumMetric plain;
+  {
+    perf::ScopedRole role("TestPlain");
+    plain = perf::SumMetric("Test/Partition/Plain", perf::Red::COUNT);
+  }
+  c.Add(1.0);
+  plain.Add(1.0);
+  perf::Sync(comm);
+  const auto &g = perf::GlobalMetrics();
+  int ic = -1, ip = -1;
+  for (std::size_t i = 0; i < g.size(); i++)
+  {
+    ic = (g[i].path == "Test/Partition/Count") ? static_cast<int>(i) : ic;
+    ip = (g[i].path == "Test/Partition/Plain") ? static_cast<int>(i) : ip;
+  }
+  REQUIRE(ic >= 0);
+  REQUIRE(ip >= 0);
+  CHECK(g[ic].red == perf::Red::SUM);
+  CHECK(g[ip].red == perf::Red::MAX);
+  std::vector<double> v;
+  std::vector<char> s;
+  perf::PackMetrics(false, v, s);
+  const auto r = perf::ReduceStats(v, s, comm);
+  CHECK(r[ic].sum == 2.0);
+  MPI_Comm_free(&sub);
+}
+
+TEST_CASE("PerfMetrics Cumulative Pack", "[perfmetrics][Serial][Parallel]")
+{
+  MPI_Comm comm = Mpi::World();
+  perf::detail::ResetValues();
+  perf::SumMetric a("Test/Pack/Sum", perf::Red::MAX);
+  perf::LastMetric l("Test/Pack/Last", perf::Red::MAX, perf::Run::ITERATION_ONLY);
+  perf::SumMetric unset("Test/Pack/Unset", perf::Red::MAX);
+  a.Add(2.0);
+  perf::detail::FoldIteration();
+  a.Add(3.0);
+  l.Set(9.0);
+  perf::Sync(comm);
+  const auto &g = perf::GlobalMetrics();
+  auto Idx = [&](const char *p)
+  {
+    for (std::size_t i = 0; i < g.size(); i++)
+    {
+      if (g[i].path == p)
+      {
+        return i;
+      }
+    }
+    FAIL("missing " << p);
+    return std::size_t(0);
+  };
+  const auto ia = Idx("Test/Pack/Sum"), il = Idx("Test/Pack/Last"),
+             iu = Idx("Test/Pack/Unset");
+  std::vector<double> vi, vc;
+  std::vector<char> si, sc;
+  perf::PackMetrics(false, vi, si);
+  perf::PackMetrics(true, vc, sc);
+  CHECK(vi[ia] == 3.0);
+  CHECK(vc[ia] == 5.0);
+  CHECK(si[il] == 1);
+  CHECK(vi[il] == 9.0);
+  CHECK(sc[il] == 0);
+  CHECK(si[iu] == 0);
+  CHECK(sc[iu] == 0);
 }
