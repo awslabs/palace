@@ -1160,13 +1160,15 @@ public:
   DomainOrthogonalizationWeight adaptive_circuit_synthesis_domain_orthog =
       DomainOrthogonalizationWeight::ENERGY;
 
-  // Screening frequency ν for quasistatic anchor solves during circuit synthesis [GHz]
-  // (nondimensionalized on input like the sweep frequencies). The anchor system
-  // (K₀ + ν²M) x = b_p is symmetric positive definite for any ν > 0, so the solve cannot
-  // resonate with band or near-degenerate basis modes; ν should sit well below the sweep
-  // band so the anchor captures the quasistatic (inductive-limit) junction response.
-  // 0 (default) selects ν automatically as 1/10 of the lowest sweep sample frequency.
-  double adaptive_circuit_synthesis_anchor_freq = 0.0;
+  // Screening frequencies ν of the anchor solves during circuit synthesis [GHz]
+  // (nondimensionalized on input like the sweep frequencies), in ascending order. Each
+  // anchor system (K₀ + ν²M) x = b_p is symmetric positive definite for any ν > 0, so the
+  // solve cannot resonate with band or near-degenerate basis modes. The lowest frequency
+  // should sit well below the sweep band, so that its anchor is the quasistatic
+  // (inductive-limit) response of the port; each other frequency adds the screened response
+  // of the port at that imaginary frequency to the basis. 0 (default) selects 1/10 of the
+  // lowest sweep sample frequency.
+  std::vector<double> adaptive_circuit_synthesis_anchor_freq = {0.0};
 
   // Cancel the O(ν²) screening bias of the quasistatic anchor solves by Richardson
   // extrapolation: solve at ν and ν/2 and combine as (4 x(ν/2) − x(ν))/3, which is the

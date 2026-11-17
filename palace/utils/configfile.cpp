@@ -1727,10 +1727,23 @@ DrivenSolverData::DrivenSolverData(const json &driven)
   adaptive_circuit_synthesis_domain_orthog =
       driven.value("AdaptiveCircuitSynthesisDomainOrthogonalization",
                    adaptive_circuit_synthesis_domain_orthog);
-  adaptive_circuit_synthesis_anchor_freq = driven.value(
-      "AdaptiveCircuitSynthesisAnchorFreq", adaptive_circuit_synthesis_anchor_freq);
-  MFEM_VERIFY(adaptive_circuit_synthesis_anchor_freq >= 0.0,
-              "\"AdaptiveCircuitSynthesisAnchorFreq\" must be non-negative!");
+  if (auto it = driven.find("AdaptiveCircuitSynthesisAnchorFreq"); it != driven.end())
+  {
+    // A single screening frequency or a list of them.
+    adaptive_circuit_synthesis_anchor_freq = it->is_array()
+                                                 ? it->get<std::vector<double>>()
+                                                 : std::vector<double>{it->get<double>()};
+  }
+  {
+    auto &anchor_freq = adaptive_circuit_synthesis_anchor_freq;
+    MFEM_VERIFY(!anchor_freq.empty(),
+                "\"AdaptiveCircuitSynthesisAnchorFreq\" must not be an empty list!");
+    MFEM_VERIFY(std::ranges::all_of(anchor_freq, [](double f) { return f >= 0.0; }),
+                "\"AdaptiveCircuitSynthesisAnchorFreq\" must be non-negative!");
+    std::ranges::sort(anchor_freq);
+    MFEM_VERIFY(std::ranges::adjacent_find(anchor_freq) == anchor_freq.end(),
+                "\"AdaptiveCircuitSynthesisAnchorFreq\" must not list a frequency twice!");
+  }
   adaptive_circuit_synthesis_anchor_extrapolate =
       driven.value("AdaptiveCircuitSynthesisAnchorExtrapolate",
                    adaptive_circuit_synthesis_anchor_extrapolate);
@@ -2439,10 +2452,10 @@ void Nondimensionalize(const Units &units, DrivenSolverData &data)
   {
     f = 2 * std::numbers::pi * units.Nondimensionalize<Units::ValueType::FREQUENCY>(f);
   }
-  data.adaptive_circuit_synthesis_anchor_freq =
-      2 * std::numbers::pi *
-      units.Nondimensionalize<Units::ValueType::FREQUENCY>(
-          data.adaptive_circuit_synthesis_anchor_freq);
+  for (auto &f : data.adaptive_circuit_synthesis_anchor_freq)
+  {
+    f = 2 * std::numbers::pi * units.Nondimensionalize<Units::ValueType::FREQUENCY>(f);
+  }
 }
 
 void Nondimensionalize(const Units &units, TransientSolverData &data)

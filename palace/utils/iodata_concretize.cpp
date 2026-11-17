@@ -169,7 +169,9 @@ void ConcretizeDriven(const config::DrivenSolverData &driven, json &j_driven)
                           {"AdaptiveCircuitSynthesisDomainOrthogonalization",
                            ToString(driven.adaptive_circuit_synthesis_domain_orthog)},
                           {"AdaptiveCircuitSynthesisAnchorFreq",
-                           driven.adaptive_circuit_synthesis_anchor_freq},
+                           (driven.adaptive_circuit_synthesis_anchor_freq.size() == 1)
+                               ? json(driven.adaptive_circuit_synthesis_anchor_freq.front())
+                               : json(driven.adaptive_circuit_synthesis_anchor_freq)},
                           {"AdaptiveCircuitSynthesisAnchorExtrapolate",
                            driven.adaptive_circuit_synthesis_anchor_extrapolate}});
 }
