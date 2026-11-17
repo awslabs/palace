@@ -57,9 +57,9 @@ CEED_QFUNCTION(f_apply_complex_33)(void *ctx, CeedInt Q, const CeedScalar *const
   return 0;
 }
 
-// Leaves without a partner in the other part: the real QData acts on both the real and the
-// imaginary coefficient blocks, or i times the imaginary QData maps [Re | Im] to [-Im |
-// Re]. The arithmetic per component matches f_apply_3 and f_apply_33.
+// Real leaves without a partner in the imaginary part: the real QData acts on both the real
+// and the imaginary coefficient blocks. The arithmetic per component matches f_apply_3 and
+// f_apply_33.
 CEED_QFUNCTION(f_apply_real_3)(void *, CeedInt Q, const CeedScalar *const *in,
                                CeedScalar *const *out)
 {
@@ -99,28 +99,6 @@ CEED_QFUNCTION(f_apply_real_33)(void *, CeedInt Q, const CeedScalar *const *in,
                                   qd2[q + (r + 3) * Q] * u2[q + (2 + c) * Q] +
                                   qd2[q + (r + 6) * Q] * u2[q + (4 + c) * Q];
       }
-    }
-  }
-  return 0;
-}
-
-CEED_QFUNCTION(f_apply_imag_3)(void *, CeedInt Q, const CeedScalar *const *in,
-                               CeedScalar *const *out)
-{
-  const CeedScalar *__restrict__ qi = in[0], *__restrict__ u = in[1];
-  CeedScalar *__restrict__ v = out[0];
-  CeedPragmaSIMD for (CeedInt q = 0; q < Q; q++)
-  {
-    for (CeedInt r = 0; r < 3; r++)
-    {
-      const CeedScalar wr = qi[q + (r + 0) * Q] * u[q + 1 * Q] +
-                            qi[q + (r + 3) * Q] * u[q + 3 * Q] +
-                            qi[q + (r + 6) * Q] * u[q + 5 * Q];
-      const CeedScalar wi = qi[q + (r + 0) * Q] * u[q + 0 * Q] +
-                            qi[q + (r + 3) * Q] * u[q + 2 * Q] +
-                            qi[q + (r + 6) * Q] * u[q + 4 * Q];
-      v[q + (2 * r) * Q] = -wr;
-      v[q + (2 * r + 1) * Q] = wi;
     }
   }
   return 0;

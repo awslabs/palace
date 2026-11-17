@@ -650,38 +650,27 @@ void AddPackedPair(Ceed ceed, const PackedLeaf &real, const PackedLeaf &imag, in
   packed.AddSubOperator(std::exchange(op.value, nullptr));
 }
 
-// Pack a leaf that has no partner in the other part: a real leaf acts identically on
-// [Re(x) | Im(x)], an imaginary (mass) leaf maps them to [-Im | Re] parts of i A x. The
-// leaf's QData vector is reused, either over all of its elements or over a subset of them
-// given by an element restriction and the matching QData positions.
-void AddPackedSingle(Ceed ceed, const PackedLeaf &leaf, bool imag, int size,
-                     CeedElemRestriction subset_restriction, CeedInt subset_elements,
-                     CeedElemRestriction subset_qdata, Operator &packed)
+// Pack a real leaf that has no partner in the imaginary part: it acts identically on
+// [Re(x) | Im(x)]. The leaf's QData vector is reused, either over all of its elements or
+// over a subset of them given by an element restriction and the matching QData positions.
+void AddPackedReal(Ceed ceed, const PackedLeaf &leaf, int size,
+                   CeedElemRestriction subset_restriction, CeedInt subset_elements,
+                   CeedElemRestriction subset_qdata, Operator &packed)
 {
   ScopedRestriction restriction;
   ScopedBasis basis;
   ScopedQFunction qf;
   ScopedOperator op;
-  MFEM_ASSERT(!imag || !leaf.curl, "Imaginary curl leaves are not packed!");
   ClonePackedRestriction(
       ceed, subset_restriction ? subset_restriction : leaf.active.restriction.value,
       subset_restriction ? subset_elements : leaf.elements, leaf.nodes, size,
       &restriction.value);
   ClonePackedBasis(ceed, leaf, &basis.value);
-  if (imag)
-  {
-    PalaceCeedCall(ceed, CeedQFunctionCreateInterior(
-                             ceed, 1, f_apply_imag_3,
-                             PalaceQFunctionRelativePath(f_apply_imag_3_loc), &qf.value));
-  }
-  else
-  {
-    PalaceCeedCall(ceed, CeedQFunctionCreateInterior(
-                             ceed, 1, leaf.curl ? f_apply_real_33 : f_apply_real_3,
-                             leaf.curl ? PalaceQFunctionRelativePath(f_apply_real_33_loc)
-                                       : PalaceQFunctionRelativePath(f_apply_real_3_loc),
-                             &qf.value));
-  }
+  PalaceCeedCall(ceed, CeedQFunctionCreateInterior(
+                           ceed, 1, leaf.curl ? f_apply_real_33 : f_apply_real_3,
+                           leaf.curl ? PalaceQFunctionRelativePath(f_apply_real_33_loc)
+                                     : PalaceQFunctionRelativePath(f_apply_real_3_loc),
+                           &qf.value));
   PalaceCeedCall(ceed,
                  CeedQFunctionAddInput(qf.value, "q", leaf.curl ? 18 : 9, CEED_EVAL_NONE));
   PalaceCeedCall(ceed, CeedQFunctionAddInput(qf.value, "u", 6, leaf.mode));
@@ -740,8 +729,8 @@ void AddPackedComplement(Ceed ceed, const FiniteElementSpace &fespace,
   restriction.value =
       FiniteElementSpace::BuildCeedElemRestriction(fespace, ceed, subset.geom, elements);
   CreateSubsetQDataRestriction(ceed, leaf.qdata.restriction.value, positions, &qdata.value);
-  AddPackedSingle(ceed, leaf, false, size, restriction.value,
-                  static_cast<CeedInt>(positions.size()), qdata.value, packed);
+  AddPackedReal(ceed, leaf, size, restriction.value, static_cast<CeedInt>(positions.size()),
+                qdata.value, packed);
 }
 
 // The base owns the finalized originals for diagonal, transpose, full assembly, and
@@ -942,23 +931,19 @@ PackComplexOperator(std::unique_ptr<palace::Operator> &Ar,
     return {};  // This also handles ranks with no local volume terms.
   }
   // A real leaf packed over a subset still owes the elements that subset leaves out, and
-  // recognized leaves without a partner act on both parts of x on their own. Imaginary
-  // curl leaves stay in the remainder, like for pairing.
+  // real leaves without a partner act on both parts of x on their own. Imaginary leaves
+  // without a partner stay in the remainder: Palace's imaginary volume terms always pair
+  // with a real one.
   for (const auto &[r, subset] : complements)
   {
     AddPackedComplement(ceed, fespace, subset, *fields[0][r], size, *packed);
   }
-  for (int part = 0; part < 2; part++)
+  for (std::size_t j = 0; j < fields[0].size(); j++)
   {
-    for (std::size_t j = 0; j < fields[part].size(); j++)
+    if (!matched[0][j] && fields[0][j])
     {
-      if (matched[part][j] || !fields[part][j] || (part == 1 && fields[part][j]->curl))
-      {
-        continue;
-      }
-      AddPackedSingle(ceed, *fields[part][j], part == 1, size, nullptr, 0, nullptr,
-                      *packed);
-      matched[part][j] = true;
+      AddPackedReal(ceed, *fields[0][j], size, nullptr, 0, nullptr, *packed);
+      matched[0][j] = true;
     }
   }
   // Keep every unmatched child exactly once. In particular, differing real/imaginary
