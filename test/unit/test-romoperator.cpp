@@ -73,6 +73,7 @@ public:
   auto &GetKr() const { return Kr; }
   auto &GetCr() const { return Cr; }
   auto &GetMr() const { return Mr; }
+  auto &GetKsp() { return *ksp; }
   bool WavePortPairingChecked() const { return wp_pairing_checked; }
   bool WavePortPairingOk() const { return wp_pairing_ok; }
   void UseAssembledWavePortPath(bool assembled)
@@ -1106,6 +1107,67 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-SolveHDM-InitialGuess
   CHECK_FALSE(prom_op.SolveHDM(1, omega, v, true, 1.0e-6));
   CHECK(ksp.NumTotalMultIterations() == num_it + 1);
   CHECK(ksp.GetCorrectionExceeded());
+}
+
+// A solve started from u with a correction limit tighter than the linear solver tolerance
+// (the certification of the PROM solution when "AdaptiveTol" < "Tol") is solved to this
+// limit: a guess which meets the solver tolerance, but is farther than the limit from the
+// solution, is corrected, and the correction stops the solve, instead of the guess being
+// returned after no iteration as converged. With a looser limit, the solver tolerance is
+// used. The solver tolerance is unchanged after the solves.
+TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-SolveHDM-CertificationTolerance",
+                 "[romoperator][Serial][Parallel]")
+{
+  MPI_Comm world_comm = Mpi::World();
+  constexpr double tol = 1.0e-6;
+  IoData iodata(DependenceTestSetup(temp_dir, tol, 500), false);
+  auto mesh_io = LoadScaleParMesh2(iodata, world_comm);
+  SpaceOperator space_op(iodata, mesh_io);
+  RomOperatorTest prom_op(iodata, space_op, 10);
+  auto &ksp = prom_op.GetKsp();
+  const auto &sample_f = iodata.solver.driven.sample_f;
+  const double omega = sample_f[sample_f.size() / 2];
+
+  const auto n = space_op.GetNDSpace().GetTrueVSize();
+  ComplexVector u(n), v(n);
+  u.UseDevice(true);
+  v.UseDevice(true);
+
+  // Solution to 10⁻¹², far below the error of the guess below.
+  REQUIRE(ksp.GetRelTol() == tol);
+  ksp.SetRelTol(1.0e-12);
+  REQUIRE(prom_op.SolveHDM(1, omega, u));
+  ksp.SetRelTol(tol);
+
+  // The guess (1 + 10⁻⁸) u: its relative error, and its relative preconditioned residual,
+  // are about 10⁻⁸, below the solver tolerance.
+  const auto set_guess = [&]()
+  {
+    v = u;
+    v *= 1.0 + 1.0e-8;
+  };
+
+  // Limit 10⁻⁴, looser than the solver tolerance: no iteration, converged.
+  set_guess();
+  int num_it = ksp.NumTotalMultIterations();
+  CHECK(prom_op.SolveHDM(1, omega, v, true, 1.0e-4));
+  CHECK(ksp.NumTotalMultIterations() == num_it);
+  CHECK(ksp.GetRelTol() == tol);
+
+  // Limit 10⁻¹⁰, tighter than the solver tolerance and than the error of the guess: solved
+  // to 10⁻¹⁰, so corrected by about 10⁻⁸, which exceeds the limit.
+  set_guess();
+  num_it = ksp.NumTotalMultIterations();
+  CHECK_FALSE(prom_op.SolveHDM(1, omega, v, true, 1.0e-10));
+  CHECK(ksp.NumTotalMultIterations() > num_it);
+  CHECK(ksp.GetCorrectionExceeded());
+  CHECK(ksp.GetRelTol() == tol);
+
+  // From zero, the solver tolerance is used.
+  num_it = ksp.NumTotalMultIterations();
+  CHECK(prom_op.SolveHDM(1, omega, v));
+  CHECK(ksp.NumTotalMultIterations() > num_it);
+  CHECK(ksp.GetRelTol() == tol);
 }
 
 // Tests that the per-port "IncludeInSynthesis" flag suppresses basis vector injection

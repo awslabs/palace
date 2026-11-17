@@ -590,10 +590,11 @@ HDM solutions are solved from zero. When
 [`config["Solver"]["Linear"]["InitialGuess"]`](config/reference.md#config-solver-linear)
 is enabled (the default), the sample which would complete the convergence memory (see
 below) is solved from the PROM solution there instead, to certify the PROM: if the linear
-solver converges and changes the PROM solution by less than the tolerance of the sweep, the
-sweep has converged, and this solution is added to the basis as the last sample, unless it
-is already in the span of the basis to round-off (for example when the PROM solution
-already meets the tolerance of the linear solver, so that the solve takes no iteration).
+solver converges, to the tighter of its tolerance and the tolerance of the sweep, and
+changes the PROM solution by less than the tolerance of the sweep, the sweep has converged,
+and this solution is added to the basis as the last sample, unless it is already in the
+span of the basis to round-off (for example when the PROM solution already meets this
+tolerance, so that the solve takes no iteration).
 Otherwise,
 the solve is stopped as soon as the change exceeds the tolerance (with GMRES and left
 preconditioning, the defaults; FGMRES or right preconditioning solve to convergence), and

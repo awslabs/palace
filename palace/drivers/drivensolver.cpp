@@ -323,12 +323,12 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
   {
     // Add the HDM solution to the PROM reduced basis. A certified solution, started from
     // the PROM solution, can be in the span of the basis to round-off (the linear solver
-    // only corrected the PROM solution by about its tolerance): it is then not added.
+    // barely changed the PROM solution, or took no iteration): it is then not added.
     const auto label = fmt::format("sample_e{:d}_s{:d}", excitation_idx, sample_idx);
     if (!prom_op.UpdatePROM(E, label, !certified))
     {
-      Mpi::Print(" Certified sample is in the span of the PROM basis (the PROM is exact "
-                 "there to round-off): not added\n");
+      Mpi::Print(" Certified sample (or its real or imaginary part) is in the span of the "
+                 "PROM basis to round-off: not added\n");
     }
     prom_op.UpdateMRI(excitation_idx, omega, E);
 
@@ -367,10 +367,15 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
 
   // Try to certify the PROM at a sample frequency with an HDM solve started from the PROM
   // solution: the PROM is certified if the solve converges (so E is an acceptable HDM
-  // solution) with a correction below the tolerance. The solve is stopped as soon as the
-  // correction exceeds the tolerance, since the sample then has to be solved again from
-  // zero anyway. Returns the relative correction if certified, and a negative value if not.
+  // solution) with a correction below the tolerance. The solve uses the tighter of the
+  // linear solver tolerance and the tolerance of the sweep, so that a PROM solution which
+  // only meets a looser linear solver tolerance is not accepted without a correction. The
+  // solve is stopped as soon as the correction exceeds the tolerance, since the sample then
+  // has to be solved again from zero anyway. Returns the relative correction if certified,
+  // and a negative value if not.
   const bool initial_guess = iodata.solver.linear.initial_guess;
+  const double certification_tol =
+      std::min(prom_op.GetLinearSolver().GetRelTol(), offline_tol);
   auto CertifyPROM = [&](int excitation_idx, double omega)
   {
     prom_op.SolvePROM(excitation_idx, omega, Eh);
@@ -391,9 +396,9 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
       // Only a sample which is not certified is solved again (from zero) at this frequency.
       prom_op.ReleaseHDMOperators();
     }
-    Mpi::Print("\n Certification from the PROM solution ({:d} iteration{}): correction = "
-               "{:.3e}{}\n",
-               cert_it, (cert_it == 1) ? "" : "s", correction,
+    Mpi::Print("\n Certification from the PROM solution ({:d} iteration{}, tol = {:.3e}): "
+               "correction = {:.3e}{}\n",
+               cert_it, (cert_it == 1) ? "" : "s", certification_tol, correction,
                certified   ? ", PROM certified"
                : converged ? ", not certified"
                            : ", not certified (solve stopped)");
@@ -435,6 +440,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
     // Greedy procedure for basis construction (offline phase). Basis is initialized with
     // solutions at frequency sweep endpoints and explicit sample frequencies.
     std::size_t it = max_errors.size();
+    bool certified_last = false;
     for (std::size_t it0 = it; it < max_size_per_excitation && memory < convergence_memory;
          it++)
     {
@@ -447,7 +453,8 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
       // directions which barely affect the residual of the preconditioned system (weakly
       // excited high-Q modes, for example), and would pollute the basis. With initial
       // guesses, the sample which would complete the convergence memory is first solved
-      // from the PROM solution, to certify the PROM there: if the solve converges with a
+      // from the PROM solution, to certify the PROM there: if the solve converges, to the
+      // tighter of the linear solver tolerance and the tolerance of the sweep, with a
       // correction below the tolerance, the PROM solution is within the tolerance of an
       // acceptable HDM solution and the sweep has converged. The certified solution is
       // still added to the basis, as the last sample is without initial guesses: the PROM
@@ -474,6 +481,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
                  certified ? " (certified)" : "");
       UpdatePROM(excitation_idx, omega_star, counter_rom_sample, certified);
       counter_rom_sample++;
+      certified_last = certified;
     }
     Mpi::Print("\nAdaptive sampling{} {:d} frequency samples:\n"
                " n = {:d}, error = {:.3e}, tol = {:.3e}, memory = {:d}/{:d}\n",
@@ -483,6 +491,13 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
     utils::PrettyPrint(prom_op.GetSamplePoints(excitation_idx), unit_GHz,
                        " Sampled frequencies (GHz):");
     utils::PrettyPrint(max_errors, 1.0, " Sample errors:");
+    if (certified_last)
+    {
+      Mpi::Print(" Last sample certified: its error is the correction of the PROM solution "
+                 "by the linear solver, converged to {:.3e} (zero if no iteration was "
+                 "needed)\n",
+                 certification_tol);
+    }
   }
 
   prom_op.ReleaseHDMOperators();

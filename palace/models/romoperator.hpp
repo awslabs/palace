@@ -533,9 +533,10 @@ public:
   // Assemble and solve the HDM at the specified frequency. The solve starts from zero, or,
   // with initial_guess, from u. A positive max_rel_correction stops a solve started from u
   // as soon as the correction to u exceeds this fraction of the solution norm (see
-  // GmresSolver::SetMaxRelativeCorrection). Returns whether the solve converged to the
-  // tolerance of the linear solver without being stopped. The assembled operators and the
-  // preconditioner are reused by the next solve at the same frequency.
+  // GmresSolver::SetMaxRelativeCorrection), and is solved to the tighter of the linear
+  // solver tolerance and max_rel_correction. Returns whether the solve converged to its
+  // tolerance without being stopped. The assembled operators and the preconditioner are
+  // reused by the next solve at the same frequency.
   bool SolveHDM(int excitation_idx, double omega, ComplexVector &u,
                 bool initial_guess = false, double max_rel_correction = 0.0);
 

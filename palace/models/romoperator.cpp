@@ -953,10 +953,21 @@ bool RomOperator::SolveHDM(int excitation_idx, double omega, ComplexVector &u,
     r.Add(1i * omega, RHS1);
   }
 
-  // Solve the linear system.
+  // Solve the linear system. A solve started from u with a correction limit (to certify u)
+  // uses the tighter of the linear solver tolerance and the limit: with a looser solver
+  // tolerance, a guess which already meets it would be returned after no iteration, with a
+  // zero correction, however far from the solution it is within this tolerance (with an
+  // exact preconditioner, the relative preconditioned residual of u is its relative error).
+  const double rel_tol = ksp->GetRelTol();
+  const bool limit_correction = initial_guess && max_rel_correction > 0.0;
   ksp->SetInitialGuess(initial_guess);
-  ksp->SetMaxRelativeCorrection(initial_guess ? max_rel_correction : 0.0);
+  ksp->SetMaxRelativeCorrection(limit_correction ? max_rel_correction : 0.0);
+  if (limit_correction && max_rel_correction < rel_tol)
+  {
+    ksp->SetRelTol(max_rel_correction);
+  }
   ksp->Mult(r, u);
+  ksp->SetRelTol(rel_tol);
   ksp->SetMaxRelativeCorrection(0.0);
   ksp->SetInitialGuess(false);
   return ksp->GetConverged() && !ksp->GetCorrectionExceeded();
