@@ -416,8 +416,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   const auto &eigenmode = iodata.solver.eigenmode;
   const auto &refinement = iodata.model.refinement;
   const int adapt_it = num_solves++;
-  const bool can_warm_start = eigenmode.warm_start && eigenmode.init_v0 &&
-                              type == EigenSolverBackend::SLEPC &&
+  const bool can_warm_start = eigenmode.init_v0 && type == EigenSolverBackend::SLEPC &&
                               nonlinear_type != NonlinearEigenSolver::SLP &&
                               (!(C || has_A2) || eigenmode.pep_linear) &&
                               space_op.GetNDSpace().GetParMesh().Nonconforming();

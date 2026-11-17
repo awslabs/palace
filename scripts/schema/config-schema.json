@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:4-4-0",
+  "$id": "urn:palace:schema:4-3-1",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -2486,7 +2486,7 @@
         },
         "StartVector": {
           "type": "boolean",
-          "description": "Use a random start vector for the eigensolver.",
+          "description": "Use a random start vector for the eigensolver. With adaptive mesh refinement on nonconforming meshes, the solve of each adaptation iteration after the first can start from the eigenvectors of the previous one instead, for the SLEPc Krylov-Schur solver (linear problems, and quadratic ones with [`\"PEPLinear\"`](@ref config-solver-eigenmode-peplinear)), except with the `\"SLP\"` nonlinear solver.",
           "default": true,
           "x-palace-advanced": true
         },
@@ -2494,12 +2494,6 @@
           "type": "boolean",
           "description": "Use a constant start vector instead of a random one.",
           "default": false,
-          "x-palace-advanced": true
-        },
-        "WarmStart": {
-          "type": "boolean",
-          "description": "For adaptive mesh refinement, start the eigenvalue solver of each adaptation iteration from the eigenvectors of the previous one, transferred to the refined mesh. Only used with [`\"StartVector\"`](@ref config-solver-eigenmode-startvector), nonconformal refinement ([`/Model/Refinement/Nonconformal`](@ref config-model-refinement-nonconformal)), and the SLEPc Krylov-Schur solver (linear problems, and quadratic ones with [`\"PEPLinear\"`](@ref config-solver-eigenmode-peplinear)), except with the `\"SLP\"` nonlinear solver.",
-          "default": true,
           "x-palace-advanced": true
         },
         "MassOrthogonal": {

@@ -969,10 +969,6 @@ public:
   bool init_v0 = true;
   bool init_v0_const = false;
 
-  // For adaptive mesh refinement, compute the starting vector of each adaptation iteration
-  // from the eigenvectors of the previous one, transferred to the refined mesh.
-  bool warm_start = true;
-
   // Orthogonalize basis vectors using a mass matrix inner product, instead of generating
   // using a standard ℓ² (Euclidean) norm.
   bool mass_orthog = false;

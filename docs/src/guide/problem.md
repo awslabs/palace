@@ -18,9 +18,12 @@ the directory specified by
 this file are the mode quality factors and errors (absolute and backward) computed for each
 eigenpair.
 
-With adaptive mesh refinement, the eigenvalue solver of each adaptation iteration starts
-from the eigenmodes of the previous one, transferred to the refined mesh
-([`config["Solver"]["Eigenmode"]["WarmStart"]`](../config/reference.md#config-solver-eigenmode-warmstart)).
+With adaptive mesh refinement, the eigenvalue solver of each adaptation iteration after the
+first can start from the eigenmodes of the previous one, transferred to the refined mesh,
+instead of the start vector of
+[`config["Solver"]["Eigenmode"]["StartVector"]`](../config/reference.md#config-solver-eigenmode-startvector).
+It does so when the last solve without it took at least three Krylov cycles, since a
+warm-started solve takes at least two.
 Such a solve accepts an eigenmode only once its eigenvalue settled between restarts, since
 the error estimate of the eigenvalue solver does not see the error of the linear solves.
 
