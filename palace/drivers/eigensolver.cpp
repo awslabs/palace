@@ -410,21 +410,29 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         iodata.solver.linear.tol, iodata.solver.linear.max_it, 0);
   }
 
-  // With adaptive mesh refinement, the SLEPc Krylov-Schur solver starts from the
-  // eigenvectors of the previous solve (warm start). The last solve, known from
-  // Model.Refinement.MaxIts and MaxSize, keeps none.
+  // With adaptive mesh refinement, the SLEPc Krylov-Schur solver can start from the
+  // eigenvectors of the previous solve (warm start). A warm-started solve takes at least
+  // two Krylov cycles, since an eigenpair converges only once its Ritz value was present
+  // at the previous restart, and its first cycle can use more accurate linear solves. It
+  // thus only pays off for solves which take three cycles or more without it: the
+  // eigenpairs are kept only if the last solve without a warm start did. The last solve,
+  // known from Model.Refinement.MaxIts and MaxSize, keeps none.
+  constexpr int min_cold_its = 3;
   const auto &eigenmode = iodata.solver.eigenmode;
   const auto &refinement = iodata.model.refinement;
   const int adapt_it = num_solves++;
   const bool final_solve =
       refinement.max_it <= 0 || adapt_it >= refinement.max_it ||
       (refinement.max_size > 0 && space_op.GlobalTrueVSize() > refinement.max_size);
-  const bool warm_start_solver = type == EigenSolverBackend::SLEPC &&
-                                 nonlinear_type != NonlinearEigenSolver::SLP &&
-                                 (!(C || has_A2) || eigenmode.pep_linear);
+  const bool can_warm_start = eigenmode.warm_start && eigenmode.init_v0 &&
+                              type == EigenSolverBackend::SLEPC &&
+                              nonlinear_type != NonlinearEigenSolver::SLP &&
+                              (!(C || has_A2) || eigenmode.pep_linear) &&
+                              space_op.GetNDSpace().GetParMesh().Nonconforming();
 
   // Set up the initial space for the eigenvalue solve. Satisfies boundary conditions and is
   // projected appropriately.
+  int num_warm = 0;
   if (eigenmode.init_v0)
   {
     ComplexVector v0;
@@ -436,16 +444,15 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     {
       space_op.GetRandomInitialVector(v0);
     }
-    // A warm start cannot shorten a solve which converges within its first Krylov cycle.
-    int num_warm = 0;
     const bool warm_start = prev_eigenvectors && prev_eigenvectors->IsCurrent(
                                                      space_op.GetNDSpace().GetParMesh());
-    if (warm_start && prev_num_its == 1)
+    if (!warm_start && adapt_it > 0 && can_warm_start && last_cold_its >= 0 &&
+        last_cold_its < min_cold_its)
     {
-      Mpi::Print(" Previous adaptation iteration converged within one Krylov cycle: no "
-                 "warm start\n");
+      Mpi::Print(" No warm start: the last solve without one took {:d} Krylov cycle{}\n",
+                 last_cold_its, (last_cold_its > 1) ? "s" : "");
     }
-    else if (warm_start)
+    if (warm_start)
     {
       // The linearization of a quadratic problem also takes the second block λ x.
       constexpr double eta = 1.0e-3;
@@ -579,7 +586,10 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   BlockTimer bt1(Timer::EPS);
   Mpi::Print("\n");
   int num_conv = eigen->Solve();
-  const int num_its = eigen->GetNumIterations();
+  if (num_warm == 0)
+  {
+    last_cold_its = eigen->GetNumIterations();
+  }
   {
     std::complex<double> lambda = (num_conv > 0) ? eigen->GetEigenvalue(0) : 0.0;
     Mpi::Print(" Found {:d} converged eigenvalue{}{}\n", num_conv,
@@ -644,9 +654,8 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
   // Keep the converged eigenpairs for the starting vector of the next adaptation iteration
   // (nonconforming meshes are refined and rebalanced in place).
-  const bool store_eigenpairs = !final_solve && eigenmode.warm_start && eigenmode.init_v0 &&
-                                warm_start_solver &&
-                                space_op.GetNDSpace().GetParMesh().Nonconforming();
+  const bool store_eigenpairs =
+      !final_solve && can_warm_start && last_cold_its >= min_cold_its;
   const bool stage_eigenvectors = post_op.WillWriteFields() || store_eigenpairs;
   // Field output can construct large libCEED visualization operators, and the kept
   // eigenpairs take memory as well. Only in those cases, stage the converged eigenvectors
@@ -698,7 +707,6 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     prev_eigenvectors = std::make_unique<VectorFieldTransfer>(
         space_op.GetNDSpace().GetParMesh(), iodata.solver.order);
     prev_eigenvalues = eigenvalues;
-    prev_num_its = num_its;
   }
 
   for (int i = 0; i < num_report; i++)

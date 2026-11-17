@@ -24,10 +24,10 @@ class EigenSolver : public BaseSolver
 private:
   // Eigenpairs of the previous adaptation iteration, kept through the refinement and
   // rebalancing of the finest mesh for the starting vector of the next eigenvalue solve,
-  // and the number of iterations (restarts) of that solve.
+  // and the number of iterations (Krylov cycles) of the last solve without a warm start.
   mutable std::unique_ptr<VectorFieldTransfer> prev_eigenvectors;
   mutable std::vector<std::complex<double>> prev_eigenvalues;
-  mutable int prev_num_its = -1;
+  mutable int last_cold_its = -1;
 
   // Number of solves so far: the initial one, then one per adaptation iteration.
   mutable int num_solves = 0;
