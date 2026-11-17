@@ -83,6 +83,9 @@ struct RegressionOptions
   // A configuration of the same case run first in the same staging directory, without
   // comparison (e.g. an offline run writing the model an online run reads).
   std::string setup_config;
+  // The name of the staging directory, postpro_subdir by default: two cases compared with
+  // the same reference outputs need their own, as ctest runs them at once.
+  std::string stage;
 };
 
 // Column-wise diff of one CSV at the case tolerances. Exposed so a custom check can keep

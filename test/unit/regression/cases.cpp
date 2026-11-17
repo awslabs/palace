@@ -2082,6 +2082,7 @@ TEST_CASE("substructuring_magnetostatic_two_sided_cross_unsaved",
   opts.rtol = 1.0e-5;
   opts.atol = 1.0e-19;
   opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
+  opts.stage = "two_sided_cross_unsaved";
   palace::test::RunRegressionCase("substructuring_magnetostatic",
                                   "magnetostatic_two_sided_cross_unsaved.json",
                                   "two_sided_cross", opts);
