@@ -106,7 +106,8 @@ private:
                                            const mfem::ParMesh &mesh);
   void CheckBoundaryProperties();
   void CheckExcitations(ProblemType problem_type) const;
-  void SetUpCeedElementSets(const std::vector<std::unique_ptr<Mesh>> &mesh);
+  void SetUpCeedElementSets(const std::vector<std::unique_ptr<Mesh>> &mesh,
+                            const std::vector<int> *region_attributes);
 
   // Helper functions for building the bilinear forms corresponding to the discretized
   // operators in Maxwell's equations.

@@ -72,8 +72,12 @@ SpaceOperator::SpaceOperator(const config::SolverData &solver,
     port_excitation_helper(lumped_port_op, wave_port_op, floquet_port_op, surf_j_op,
                            current_dipole_op)
 {
-  // Configure the two shared libCEED element sets before any geometry data is built.
-  SetUpCeedElementSets(mesh);
+  // Configure the two shared libCEED element sets before any geometry data is built (with
+  // a condensed environment, the region's, see SetCondensedEnvironment).
+  SetUpCeedElementSets(mesh, (problem_type == ProblemType::DRIVEN &&
+                              CondensedEnvironment::Enabled(solver))
+                                 ? &solver.substructuring->region_attributes
+                                 : nullptr);
 
   // The second-order absorbing boundary condition is not passive for large tangential
   // Floquet wave vectors.
@@ -113,8 +117,25 @@ SpaceOperator::SpaceOperator(const IoData &iodata,
   CheckExcitations(iodata.problem.type);
 }
 
-void SpaceOperator::SetUpCeedElementSets(const std::vector<std::unique_ptr<Mesh>> &mesh)
+void SpaceOperator::SetUpCeedElementSets(const std::vector<std::unique_ptr<Mesh>> &mesh,
+                                         const std::vector<int> *region_attributes)
 {
+  if (region_attributes)
+  {
+    // The operators of the region against a condensed environment are restricted to the
+    // region: with the region elements and the boundary elements bounding them as the
+    // element sets, they are assembled on those only, not with zero coefficients on the
+    // environment, which a sparse direct solver would factor.
+    for (const auto &mesh_l : mesh)
+    {
+      auto attr_l = mesh_l->GetCeedAttributes(*region_attributes);
+      auto bdr_attr_l = mesh_l->GetCeedBdrAttributesByNeighbor(*region_attributes);
+      mesh_l->SetCeedActiveAttributes(std::vector<int>(attr_l.begin(), attr_l.end()),
+                                      std::vector<int>(bdr_attr_l.begin(), bdr_attr_l.end()));
+    }
+    return;
+  }
+
   // The lossy volume set is the union of the exact nonzero supports of the loss-type
   // MaterialOperator coefficients, each extracted on its own (summing the tensors first
   // could cancel entries of opposite sign and drop an attribute). This MaterialOperator has
@@ -481,7 +502,8 @@ auto AssembleOperators(
     const MaterialPropertyCoefficient *f, const MaterialPropertyCoefficient *dfb,
     const MaterialPropertyCoefficient *fb, const MaterialPropertyCoefficient *fp,
     const MaterialPropertyCoefficient *frb, const MaterialPropertyCoefficient *fpb,
-    bool skip_zeros = false, bool assemble_q_data = false)
+    bool skip_zeros = false, bool assemble_q_data = false,
+    bool coarse_skip_zero_elements = false)
 {
   // Keep configured coefficient support on the coarse sparse level. This is required for
   // an exact-complex coarse solve: a nonlinear eigenvalue seed λ = iω has Im(λ²) = 0, but
@@ -489,8 +511,16 @@ auto AssembleOperators(
   // Its off-diagonal block graph must exist before the first symbolic factorization. Use
   // the same rule for real-approximate coarse solves to keep this hierarchy assembly
   // independent of the chosen sparse-solver representation. Fine partial-assembly levels
-  // have no symbolic structure to preserve, so exact-zero terms are omitted there.
+  // have no symbolic structure to preserve, so exact-zero terms are omitted there. With
+  // coarse_skip_zero_elements, the elements where a coefficient is exactly zero are left out
+  // of the coarse level too, for coefficients whose support does not change (those of the
+  // region against a condensed environment, whose environment elements would otherwise be
+  // assembled with zeros, and factored).
   BilinearForm coarse(fespaces.GetFESpaceAtLevel(0));
+  if (coarse_skip_zero_elements)
+  {
+    coarse.SkipZeroCoefficientElements();
+  }
   AddConfiguredIntegrators(coarse, df, f, dfb, fb, fp, frb, fpb);
   std::vector<std::unique_ptr<Operator>> ops;
   ops.reserve(fespaces.GetNumLevels());
@@ -516,10 +546,15 @@ auto AssembleAuxOperators(const FiniteElementSpaceHierarchy &fespaces,
                           const MaterialPropertyCoefficient *f,
                           const MaterialPropertyCoefficient *fb,
                           const MaterialPropertyCoefficient *frb, bool skip_zeros = false,
-                          bool assemble_q_data = false)
+                          bool assemble_q_data = false,
+                          bool coarse_skip_zero_elements = false)
 {
   // Match the configured coarse-support policy of the primary hierarchy above.
   BilinearForm coarse(fespaces.GetFESpaceAtLevel(0));
+  if (coarse_skip_zero_elements)
+  {
+    coarse.SkipZeroCoefficientElements();
+  }
   AddConfiguredAuxIntegrators(coarse, f, fb, frb);
   std::vector<std::unique_ptr<Operator>> ops;
   ops.reserve(fespaces.GetNumLevels());
@@ -1318,16 +1353,16 @@ void SpaceOperator::AssemblePreconditioner(
   if (!empty[0])
   {
     br_vec = AssembleOperators(GetNDSpaces(), &dfr, &fr, &dfbr, &fbr, &fpr, &frbr, &fpbr,
-                               skip_zeros, assemble_q_data);
-    br_aux_vec =
-        AssembleAuxOperators(GetH1Spaces(), &fr, &fbr, &frbr, skip_zeros, assemble_q_data);
+                               skip_zeros, assemble_q_data, cond_env != nullptr);
+    br_aux_vec = AssembleAuxOperators(GetH1Spaces(), &fr, &fbr, &frbr, skip_zeros,
+                                      assemble_q_data, cond_env != nullptr);
   }
   if (!empty[1])
   {
     bi_vec = AssembleOperators(GetNDSpaces(), &dfi, &fi, &dfbi, &fbi, &fpi, &frbi, &fpbi,
-                               skip_zeros, assemble_q_data);
-    bi_aux_vec =
-        AssembleAuxOperators(GetH1Spaces(), &fi, &fbi, &frbi, skip_zeros, assemble_q_data);
+                               skip_zeros, assemble_q_data, cond_env != nullptr);
+    bi_aux_vec = AssembleAuxOperators(GetH1Spaces(), &fi, &fbi, &frbi, skip_zeros,
+                                      assemble_q_data, cond_env != nullptr);
   }
 }
 
@@ -1369,9 +1404,9 @@ void SpaceOperator::AssemblePreconditioner(
   if (!empty)
   {
     br_vec = AssembleOperators(GetNDSpaces(), &dfr, &fr, &dfbr, &fbr, nullptr, &frbr,
-                               nullptr, skip_zeros, assemble_q_data);
-    br_aux_vec =
-        AssembleAuxOperators(GetH1Spaces(), &fr, &fbr, &frbr, skip_zeros, assemble_q_data);
+                               nullptr, skip_zeros, assemble_q_data, cond_env != nullptr);
+    br_aux_vec = AssembleAuxOperators(GetH1Spaces(), &fr, &fbr, &frbr, skip_zeros,
+                                      assemble_q_data, cond_env != nullptr);
   }
 }
 
@@ -1407,9 +1442,9 @@ void SpaceOperator::AssemblePreconditioner(
   if (!empty)
   {
     br_vec = AssembleOperators(GetNDSpaces(), &dfr, &fr, &dfbr, &fbr, nullptr, &frbr,
-                               nullptr, skip_zeros, assemble_q_data);
-    br_aux_vec =
-        AssembleAuxOperators(GetH1Spaces(), &fr, &fbr, &frbr, skip_zeros, assemble_q_data);
+                               nullptr, skip_zeros, assemble_q_data, cond_env != nullptr);
+    br_aux_vec = AssembleAuxOperators(GetH1Spaces(), &fr, &fbr, &frbr, skip_zeros,
+                                      assemble_q_data, cond_env != nullptr);
   }
 }
 
