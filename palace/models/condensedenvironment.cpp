@@ -208,24 +208,62 @@ void RestrictPostprocessingToRegion(const mfem::ParMesh &mesh,
                             "environment's ports");
 }
 
-namespace
-{
-
-// S_E as an operator, which shares the matrices of the record it was made from.
-class SchurOperator : public ComplexWrapperOperator
+// S_E as an operator on the true DOFs, by the dense rows of the local interface DOFs
+// (shared with the record they come from): y_Γ = S_E x_Γ, with x_Γ gathered on every rank
+// in interface order, and y = x on the pinned true DOFs which are not essential.
+class CondensedEnvironment::SchurOperator : public ComplexOperator
 {
 public:
-  SchurOperator(std::shared_ptr<const mfem::HypreParMatrix> r,
-                std::shared_ptr<const mfem::HypreParMatrix> i)
-    : ComplexWrapperOperator(r.get(), i.get()), r(std::move(r)), i(std::move(i))
+  SchurOperator(const CondensedEnvironment &env,
+                std::shared_ptr<const std::vector<std::complex<double>>> rows)
+    : ComplexOperator(env.space_op.GetNDSpace().GetTrueVSize()), env(env),
+      rows(std::move(rows))
   {
   }
 
-private:
-  std::shared_ptr<const mfem::HypreParMatrix> r, i;
-};
+  void Mult(const ComplexVector &x, ComplexVector &y) const override
+  {
+    y = 0.0;
+    AddMult(x, y, 1.0);
+  }
 
-}  // namespace
+  void AddMult(const ComplexVector &x, ComplexVector &y,
+               const std::complex<double> a = 1.0) const override
+  {
+    const int m = static_cast<int>(env.gamma_local.size()), n = env.nG;
+    const double *xr = x.Real().HostRead(), *xi = x.Imag().HostRead();
+    std::vector<std::complex<double>> xl(m), xg(n);
+    for (int l = 0; l < m; l++)
+    {
+      xl[l] = {xr[env.gamma_local[l]], xi[env.gamma_local[l]]};
+    }
+    MPI_Allgatherv(xl.data(), m, MPI_C_DOUBLE_COMPLEX, xg.data(), env.gamma_cnt.data(),
+                   env.gamma_disp.data(), MPI_C_DOUBLE_COMPLEX, env.comm);
+    double *yr = y.Real().HostReadWrite(), *yi = y.Imag().HostReadWrite();
+    for (int l = 0; l < m; l++)
+    {
+      const auto *row = rows->data() + static_cast<std::size_t>(l) * n;
+      std::complex<double> v = 0.0;
+      for (int b = 0; b < n; b++)
+      {
+        v += row[b] * xg[b];
+      }
+      v *= a;
+      yr[env.gamma_local[l]] += v.real();
+      yi[env.gamma_local[l]] += v.imag();
+    }
+    for (int i : env.identity_tdofs)
+    {
+      const auto v = a * std::complex<double>(xr[i], xi[i]);
+      yr[i] += v.real();
+      yi[i] += v.imag();
+    }
+  }
+
+private:
+  const CondensedEnvironment &env;
+  std::shared_ptr<const std::vector<std::complex<double>>> rows;
+};
 
 bool CondensedEnvironment::Enabled(const config::SolverData &solver)
 {
@@ -368,8 +406,13 @@ CondensedEnvironment::CondensedEnvironment(const IoData &iodata, SpaceOperator &
                 "Unexpected interface order!");
   }
   gamma_cnt.resize(Mpi::Size(comm));
+  gamma_disp.assign(Mpi::Size(comm), 0);
   const int m = static_cast<int>(gamma_local.size());
   MPI_Allgather(&m, 1, MPI_INT, gamma_cnt.data(), 1, MPI_INT, comm);
+  for (std::size_t r = 1; r < gamma_cnt.size(); r++)
+  {
+    gamma_disp[r] = gamma_disp[r - 1] + gamma_cnt[r - 1];
+  }
   mfem::Array<int> rm, em;
   {
     mfem::Array<int> ra(const_cast<int *>(sub.region_attributes.data()),
@@ -450,63 +493,20 @@ void CondensedEnvironment::Load(double omega)
   Mpi::Broadcast(static_cast<int>(h.size()), h.data(), 0, comm);
   Mpi::Broadcast(static_cast<int>(c.size()), c.data(), 0, comm);
 
-  // The rows of S_E to the ranks of their interface DOFs.
+  // The rows of S_E to the ranks of their interface DOFs (S_E is symmetric: row a is
+  // column a).
   const int nranks = Mpi::Size(comm), m = static_cast<int>(gamma_local.size());
-  std::vector<int> cnt(nranks), disp(nranks, 0);
+  std::vector<int> cnt(nranks), disp(nranks);
   for (int r = 0; r < nranks; r++)
   {
     cnt[r] = gamma_cnt[r] * nG;
-    disp[r] = (r > 0) ? disp[r - 1] + cnt[r - 1] : 0;
+    disp[r] = gamma_disp[r] * nG;
   }
-  std::vector<std::complex<double>> rows(static_cast<std::size_t>(m) * nG);
-  MPI_Scatterv(S.data(), cnt.data(), disp.data(), MPI_C_DOUBLE_COMPLEX, rows.data(), m * nG,
-               MPI_C_DOUBLE_COMPLEX, 0, comm);
-
-  // The true-DOF matrices, by local rows: the interface rows dense over the interface
-  // columns, and (in the real part) the identity rows.
-  const auto &fes = space_op.GetNDSpace();
-  const int nt = fes.GetTrueVSize();
-  const HYPRE_BigInt tstart = fes.Get().GetMyTDofOffset();
-  const auto &gamma_tdofs = ds->InterfaceTrueDofs();
-  std::vector<int> row_of(nt, -1);
-  for (int l = 0; l < m; l++)
-  {
-    row_of[gamma_local[l]] = l;
-  }
-  std::vector<char> one(nt, 0);
-  for (int i : identity_tdofs)
-  {
-    one[i] = 1;
-  }
-  auto build = [&](bool imag)
-  {
-    std::vector<int> I(nt + 1, 0);
-    std::vector<HYPRE_BigInt> J;
-    std::vector<double> data;
-    for (int i = 0; i < nt; i++)
-    {
-      if (row_of[i] >= 0)
-      {
-        const auto *row = rows.data() + static_cast<std::size_t>(row_of[i]) * nG;
-        for (int b = 0; b < nG; b++)
-        {
-          J.push_back(gamma_tdofs[b]);
-          data.push_back(imag ? row[b].imag() : row[b].real());
-        }
-      }
-      else if (one[i] && !imag)
-      {
-        J.push_back(tstart + i);
-        data.push_back(1.0);
-      }
-      I[i + 1] = static_cast<int>(J.size());
-    }
-    return std::make_shared<mfem::HypreParMatrix>(
-        comm, nt, fes.GlobalTrueVSize(), fes.GlobalTrueVSize(), I.data(), J.data(),
-        data.data(), fes.GetTrueDofOffsets(), fes.GetTrueDofOffsets());
-  };
-  Sr = build(false);
-  Si = build(true);
+  auto rows =
+      std::make_shared<std::vector<std::complex<double>>>(static_cast<std::size_t>(m) * nG);
+  MPI_Scatterv(S.data(), cnt.data(), disp.data(), MPI_C_DOUBLE_COMPLEX, rows->data(),
+               m * nG, MPI_C_DOUBLE_COMPLEX, 0, comm);
+  S_rows = std::move(rows);
   S_root = std::move(S);
   omega_record = omega;
   record = j;
@@ -552,7 +552,7 @@ std::unique_ptr<Solver<ComplexOperator>> CondensedEnvironment::GetPreconditioner
 std::unique_ptr<ComplexOperator> CondensedEnvironment::GetSchurOperator(double omega)
 {
   Load(omega);
-  return std::make_unique<SchurOperator>(Sr, Si);
+  return std::make_unique<SchurOperator>(*this, S_rows);
 }
 
 void CondensedEnvironment::ApplyExcitation(int excitation_idx, double omega,

@@ -105,17 +105,18 @@ private:
   config::DomainData domains;
   config::BoundaryData boundaries;
   // Local true DOFs: the interface ones in interface order (a contiguous range of it from
-  // gamma_off on each rank), and the region interior; the pinned true DOFs which are not
-  // essential (with the identity in GetSchurOperator).
-  std::vector<int> gamma_local, gamma_cnt;
+  // gamma_off on each rank, with the counts and offsets of the ranks), and the region
+  // interior; the pinned true DOFs which are not essential (with the identity in
+  // GetSchurOperator).
+  std::vector<int> gamma_local, gamma_cnt, gamma_disp;
   int gamma_off = 0;
   std::vector<char> region_int;
   mfem::Array<int> ess_tdofs, identity_tdofs;
-  // The record read last (its index in the model, -1 if none): S_E as true-DOF matrices,
-  // and g (nG x excitations of the run), h (nG x ports) on the current interface and c
-  // (ports x excitations of the model), replicated.
+  // The record read last (its index in the model, -1 if none): the rows of S_E of the local
+  // interface DOFs (m x nG, row-major), and g (nG x excitations of the run), h (nG x
+  // ports) on the current interface and c (ports x excitations of the model), replicated.
   int record = -1;
-  std::shared_ptr<mfem::HypreParMatrix> Sr, Si;
+  std::shared_ptr<const std::vector<std::complex<double>>> S_rows;
   std::vector<std::complex<double>> g, h, c;
   // For the coupled factorization: the frequency of the record and its full S_E on rank 0
   // until factored, and the record factored last.
@@ -129,6 +130,7 @@ private:
   void Factor();
 
   class Preconditioner;
+  class SchurOperator;
 };
 
 //
