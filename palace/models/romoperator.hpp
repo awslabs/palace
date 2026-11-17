@@ -293,7 +293,6 @@ protected:
   Eigen::FullPivHouseholderQR<Eigen::MatrixXcd> Ar_solver;
   double Ar_omega = std::numeric_limits<double>::quiet_NaN();
   Eigen::VectorXcd RHSr;
-  Eigen::VectorXcd RHSr_last;  // Reduced RHS of the last PROM solve
 
   // PROM reduced-order basis (real-valued).
   std::vector<Vector> V;
@@ -491,7 +490,9 @@ protected:
 
   // Snapshot of the reduced-order state which UpdatePROM extends: the number of basis
   // vectors (UpdatePROM only appends to the basis V and to the port-restricted basis V_wp)
-  // and everything projected onto the basis. RestoreReducedState returns the PROM to a
+  // and everything projected onto the basis. SaveReducedState(n) saves the state of the
+  // first n basis vectors: the projections onto a leading part of the basis are the
+  // leading blocks of those onto the basis. RestoreReducedState returns the PROM to a
   // saved state, removing the basis vectors added since; the reduced system is reassembled
   // at the next SolvePROM.
   struct ReducedState
@@ -509,8 +510,14 @@ protected:
     std::vector<ReducedFloquetMode> floquet_reduced;
     std::size_t V_wp_dim = 0;
   };
-  ReducedState SaveReducedState() const;
+  ReducedState SaveReducedState(std::size_t n) const;
+  ReducedState SaveReducedState() const { return SaveReducedState(V.size()); }
   void RestoreReducedState(const ReducedState &state);
+
+  // SolvePROM, also returning the right-hand side of the reduced system at ω, if rhs_r is
+  // not null.
+  void SolvePROM(int excitation_idx, double omega, ComplexVector &u,
+                 Eigen::VectorXcd *rhs_r);
 
 public:
   RomOperator(const config::LinearSolverData &linear, int verbose, SpaceOperator &space_op,
@@ -576,9 +583,22 @@ public:
   // basis direction which carries more linear solver error than information: of the bases
   // with neither, only the real, only the imaginary or both new directions, the one whose
   // PROM solution at ω is closest to u is kept (ties go to the smaller basis, and to the
-  // real direction).
-  void AddSamplePROM(int excitation_idx, double omega, const ComplexVector &u, double tol,
-                     std::string_view node_label);
+  // real direction). The relative PROM error at ω before the update, ‖PROM(ω) - u‖ / ‖u‖
+  // (1 for an empty basis), is given as error, as the greedy sampling has computed it.
+  struct SampleUpdate
+  {
+    // Number of basis directions the sample adds with UpdatePROM (one for each nonzero
+    // part), and the number of them kept.
+    std::size_t num_directions = 0, num_kept = 0;
+
+    // If the PROM with all of them does not reproduce the sample to the tolerance, the
+    // relative PROM errors at the sample with neither, only the real, only the imaginary
+    // and both new directions (with neither and with the new direction, for a sample with
+    // one nonzero part).
+    std::vector<double> errors;
+  };
+  SampleUpdate AddSamplePROM(int excitation_idx, double omega, const ComplexVector &u,
+                             double error, double tol, std::string_view node_label);
 
   // Add solution u to the minimal-rational interpolation for error estimation. MRI are
   // separated by excitation index.

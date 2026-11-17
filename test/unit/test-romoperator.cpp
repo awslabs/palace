@@ -989,11 +989,15 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-AddSamplePROM",
     prom_op.SolvePROM(1, omega[i], x);
     const double error = prom_op.GetReducedDimension() ? rel_diff(x, u) : 1.0;
     const auto dim = prom_op.GetReducedDimension();
-    prom_op.AddSamplePROM(1, omega[i], u, 1.0e-6, "sample_" + std::to_string(i));
+    const auto update =
+        prom_op.AddSamplePROM(1, omega[i], u, error, 1.0e-6, "sample_" + std::to_string(i));
     prom_ref.UpdatePROM(u, "sample_" + std::to_string(i));
 
     // An accurate sample adds both of its directions, as UpdatePROM does, and is reproduced
     // by the PROM.
+    CHECK(update.num_directions == 2);
+    CHECK(update.num_kept == 2);
+    CHECK(update.errors.empty());
     CHECK(prom_op.GetReducedDimension() == dim + 2);
     CHECK(prom_op.GetReducedDimension() == prom_ref.GetReducedDimension());
     CHECK(same_matrix(prom_op.GetKr(), prom_ref.GetKr()));
@@ -1035,8 +1039,13 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-AddSamplePROM",
   prom_ref.UpdatePROM(u, "noisy");
   prom_ref.SolvePROM(1, omega_test, x_ref);
   const double error_full = rel_diff(x_ref, u);
-  prom_op.AddSamplePROM(1, omega_test, u, 0.0, "noisy");
+  const auto update = prom_op.AddSamplePROM(1, omega_test, u, error_none, 0.0, "noisy");
   const auto dim_noisy = prom_op.GetReducedDimension();
+  CHECK(update.num_directions == 2);
+  CHECK(dim_noisy == dim + update.num_kept);
+  REQUIRE(update.errors.size() == 4);
+  CHECK(update.errors[0] == error_none);
+  CHECK(std::abs(update.errors[3] - error_full) <= 1.0e-6 * error_full);
   prom_op.SolvePROM(1, omega_test, x);
   const double error_kept = rel_diff(x, u);
   CAPTURE(error_none, error_full, error_kept, dim, dim_noisy);

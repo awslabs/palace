@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <iostream>
 #include <numbers>
+#include <optional>
 #include <Eigen/Dense>
 #include <fmt/core.h>
 #include <mfem.hpp>
@@ -319,18 +320,19 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
   // range of interest. Each call for an HDM solution adds the frequency sample to P_S and
   // removes it from P \ P_S. Timing for the HDM construction and solve is handled inside
   // of the RomOperator.
-  auto UpdatePROM =
-      [&](int excitation_idx, double omega, std::size_t sample_idx, bool greedy)
+  auto UpdatePROM = [&](int excitation_idx, double omega, std::size_t sample_idx,
+                        std::optional<double> error)
   {
     // Add the HDM solution to the PROM reduced basis. The samples which initialize the
     // basis (the sweep endpoints and the "AddToPROM" samples) are always added in full. A
-    // greedy sample is checked: if the PROM with it does not reproduce it to the tolerance,
-    // only the directions which reduce the PROM error at this frequency are kept (see
-    // RomOperator::AddSamplePROM).
+    // greedy sample, with PROM error `error` before it is added, is checked: if the PROM
+    // with it does not reproduce it to the tolerance, only the directions which reduce the
+    // PROM error at this frequency are kept (see RomOperator::AddSamplePROM).
     const auto label = fmt::format("sample_e{:d}_s{:d}", excitation_idx, sample_idx);
-    if (greedy)
+    RomOperator::SampleUpdate update;
+    if (error)
     {
-      prom_op.AddSamplePROM(excitation_idx, omega, E, offline_tol, label);
+      update = prom_op.AddSamplePROM(excitation_idx, omega, E, *error, offline_tol, label);
     }
     else
     {
@@ -356,6 +358,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
     // unless printing paraview fields.
     auto total_domain_energy = post_op.MeasureDomainFieldEnergyOnly(E, B);
     estimator.AddErrorIndicator(E, B, total_domain_energy, indicator);
+    return update;
   };
 
   // Loop excitations to add to PROM.
@@ -383,7 +386,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
       linalg::AXPY(-1.0, E, Eh);
       max_errors.push_back(linalg::Norml2(space_op.GetComm(), Eh) /
                            linalg::Norml2(space_op.GetComm(), E));
-      UpdatePROM(excitation_idx, omega, counter_rom_sample, false);
+      UpdatePROM(excitation_idx, omega, counter_rom_sample, std::nullopt);
       counter_rom_sample++;
     }
     // The estimates associated to the end points are assumed inaccurate.
@@ -400,7 +403,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
     // tolerance, added no basis direction: the PROM then reproduces the HDM solutions as
     // well as their own accuracy allows, and further samples cannot improve it.
     std::size_t it = max_errors.size();
-    std::size_t stalled = 0;
+    std::size_t stalled = 0, num_rejected = 0, num_partial = 0;
     double stalled_error = 0.0;
     for (std::size_t it0 = it; it < max_size_per_excitation &&
                                memory < convergence_memory && stalled < convergence_memory;
@@ -423,10 +426,18 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
                  "{:.3e}, memory = {:d}/{:d}\n",
                  it - it0 + 1, prom_op.GetReducedDimension(), omega_star * unit_GHz,
                  omega_star, max_errors.back(), memory, convergence_memory);
-      const auto dim_V = prom_op.GetReducedDimension();
-      UpdatePROM(excitation_idx, omega_star, counter_rom_sample, true);
+      const auto update =
+          UpdatePROM(excitation_idx, omega_star, counter_rom_sample, max_errors.back());
       counter_rom_sample++;
-      if (memory == 0 && prom_op.GetReducedDimension() == dim_V)
+      if (update.num_kept == 0 && update.num_directions > 0)
+      {
+        num_rejected++;
+      }
+      else if (update.num_kept < update.num_directions)
+      {
+        num_partial++;
+      }
+      if (memory == 0 && update.num_kept == 0)
       {
         stalled++;
         stalled_error = std::max(stalled_error, max_errors.back());
@@ -455,6 +466,13 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
                                                       : " converged with"),
                it, prom_op.GetReducedDimension(), max_errors.back(), offline_tol, memory,
                convergence_memory);
+    if (num_rejected + num_partial > 0)
+    {
+      Mpi::Print(
+          " {:d} of the samples were not added to the PROM basis, and {:d} only with "
+          "one of their parts\n",
+          num_rejected, num_partial);
+    }
     utils::PrettyPrint(prom_op.GetSamplePoints(excitation_idx), unit_GHz,
                        " Sampled frequencies (GHz):");
     utils::PrettyPrint(max_errors, 1.0, " Sample errors:");
