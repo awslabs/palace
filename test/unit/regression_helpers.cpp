@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <exception>
 #include <filesystem>
 #include <optional>
 #include <set>
@@ -519,8 +520,23 @@ void RunRegressionCase(std::string_view case_dir, std::string_view config_json,
     require_mesh(config, stage.path());
     if (effective_opts.after_setup)
     {
-      effective_opts.after_setup(stage.path());
-      Mpi::Barrier(comm);
+      // A step that fails on some ranks (it may run on rank 0 only) fails the case on all.
+      std::exception_ptr error;
+      try
+      {
+        effective_opts.after_setup(stage.path());
+      }
+      catch (...)
+      {
+        error = std::current_exception();
+      }
+      int ok = !error;
+      Mpi::GlobalMin(1, &ok, comm);
+      if (error)
+      {
+        std::rethrow_exception(error);
+      }
+      REQUIRE(ok);
     }
   }
   IoData iodata = LoadCaseIoData(std::move(config), effective_opts);
