@@ -42,8 +42,10 @@ message(STATUS "SCALAPACK_OPTIONS: ${SCALAPACK_OPTIONS_PRINT}")
 # message, and MPICH (ch4) fails to unpack a packed message received in several shared
 # memory cells into a noncontiguous derived datatype when a cell boundary splits one of
 # its basic elements, as it does for double precision complex elements on macOS arm64
-# (https://github.com/pmodels/mpich/issues/8169).
-# This corrupts or aborts complex-valued ScaLAPACK factorizations (STRUMPACK and MUMPS).
+# (https://github.com/pmodels/mpich/issues/8169, fixed on the main branch of MPICH by
+# https://github.com/pmodels/mpich/pull/8172, which no release up to 5.0.2 and 5.1.0b1
+# has). This corrupts or aborts complex-valued ScaLAPACK factorizations (STRUMPACK and
+# MUMPS).
 # The patch changes nothing with other MPI implementations. Only the point-to-point
 # receives need it: broadcasts and combine operations never receive a packed message with
 # a derived datatype.
