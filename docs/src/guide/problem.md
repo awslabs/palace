@@ -18,14 +18,11 @@ the directory specified by
 this file are the mode quality factors and errors (absolute and backward) computed for each
 eigenpair.
 
-With adaptive mesh refinement, the eigenvalue solver of each adaptation iteration after the
-first can start from the eigenmodes of the previous one, transferred to the refined mesh,
-instead of the start vector of
-[`config["Solver"]["Eigenmode"]["StartVector"]`](../config/reference.md#config-solver-eigenmode-startvector).
-It does so when the last solve without it took at least three Krylov cycles, since a
-warm-started solve takes at least two. Such a solve accepts an eigenmode only once its
-eigenvalue was present at the previous restart, since the error estimate of the eigenvalue
-solver does not see the error of the linear solves.
+With adaptive mesh refinement, the eigenvalue solves of later adaptation iterations can
+start from the eigenmodes of the previous one, transferred to the refined mesh, instead of
+the start vector of
+[`config["Solver"]["Eigenmode"]["StartVector"]`](../config/reference.md#config-solver-eigenmode-startvector),
+and then need fewer Krylov restarts.
 
 Calculations related to
 [energy-participation ratio (EPR) quantization](https://www.nature.com/articles/s41534-021-00461-8)
