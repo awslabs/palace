@@ -526,51 +526,6 @@ void ComplexParOperator::SetEssentialTrueDofs(const mfem::Array<int> &tdof_list,
   }
 }
 
-void ComplexParOperator::AddParallelMatrix(const mfem::HypreParMatrix *Br,
-                                           const mfem::HypreParMatrix *Bi)
-{
-  MFEM_VERIFY((!Br || RAPr) && (!Bi || RAPi),
-              "Parallel matrix for a missing part of ComplexParOperator!");
-  if (Br)
-  {
-    RAPr->AddParallelMatrix(*Br);
-  }
-  if (Bi)
-  {
-    RAPi->AddParallelMatrix(*Bi);
-  }
-}
-
-void ComplexParOperator::AddParallelMatrixMult(const ComplexVector &x, ComplexVector &y,
-                                               std::complex<double> a, bool transpose,
-                                               bool conjugate) const
-{
-  const auto *Br = RAPr ? RAPr->GetParallelMatrix() : nullptr;
-  const auto *Bi = RAPi ? RAPi->GetParallelMatrix() : nullptr;
-  if (!Br && !Bi)
-  {
-    return;
-  }
-  // t = B x = (Br xr - s Bi xi) + i (Br xi + s Bi xr), with s = -1 for the conjugate.
-  const double s = conjugate ? -1.0 : 1.0;
-  ComplexVector t(y.Size());
-  t.UseDevice(true);
-  t = 0.0;
-  auto mult = [transpose](const mfem::HypreParMatrix &B, double c, const Vector &u, Vector &v)
-  { transpose ? B.MultTranspose(c, u, 1.0, v) : B.Mult(c, u, 1.0, v); };
-  if (Br)
-  {
-    mult(*Br, 1.0, x.Real(), t.Real());
-    mult(*Br, 1.0, x.Imag(), t.Imag());
-  }
-  if (Bi)
-  {
-    mult(*Bi, -s, x.Imag(), t.Real());
-    mult(*Bi, s, x.Real(), t.Imag());
-  }
-  y.AXPY(a, t);
-}
-
 Operator::DiagonalPolicy ComplexParOperator::GetDiagonalPolicy() const
 {
   MFEM_VERIFY(dbc_tdof_list.Size() > 0,
@@ -628,7 +583,6 @@ void ComplexParOperator::Mult(const ComplexVector &x, ComplexVector &y) const
       linalg::SetSubVector(y, dbc_tdof_list, 0.0);
     }
   }
-  AddParallelMatrixMult(x, y, 1.0, false, false);
 }
 
 void ComplexParOperator::MultTranspose(const ComplexVector &x, ComplexVector &y) const
@@ -666,7 +620,6 @@ void ComplexParOperator::MultTranspose(const ComplexVector &x, ComplexVector &y)
       linalg::SetSubVector(y, dbc_tdof_list, 0.0);
     }
   }
-  AddParallelMatrixMult(x, y, 1.0, true, false);
 }
 
 void ComplexParOperator::MultHermitianTranspose(const ComplexVector &x,
@@ -705,7 +658,6 @@ void ComplexParOperator::MultHermitianTranspose(const ComplexVector &x,
       linalg::SetSubVector(y, dbc_tdof_list, 0.0);
     }
   }
-  AddParallelMatrixMult(x, y, 1.0, true, true);
 }
 
 void ComplexParOperator::AddMult(const ComplexVector &x, ComplexVector &y,
@@ -747,7 +699,6 @@ void ComplexParOperator::AddMult(const ComplexVector &x, ComplexVector &y,
     }
   }
   y.AXPY(a, ty);
-  AddParallelMatrixMult(x, y, a, false, false);
 }
 
 void ComplexParOperator::AddMultTranspose(const ComplexVector &x, ComplexVector &y,
@@ -788,7 +739,6 @@ void ComplexParOperator::AddMultTranspose(const ComplexVector &x, ComplexVector 
     }
   }
   y.AXPY(a, tx);
-  AddParallelMatrixMult(x, y, a, true, false);
 }
 
 void ComplexParOperator::AddMultHermitianTranspose(const ComplexVector &x, ComplexVector &y,
@@ -829,7 +779,6 @@ void ComplexParOperator::AddMultHermitianTranspose(const ComplexVector &x, Compl
     }
   }
   y.AXPY(a, tx);
-  AddParallelMatrixMult(x, y, a, true, true);
 }
 
 void ComplexParOperator::RestrictionMatrixMult(const ComplexVector &ly,

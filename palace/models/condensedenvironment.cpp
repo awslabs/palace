@@ -232,8 +232,7 @@ bool CondensedEnvironment::Enabled(const config::SolverData &solver)
   const char *env = std::getenv("PALACE_SUBSTRUCTURING_DRIVENSOLVER");
   return solver.substructuring &&
          solver.substructuring->mode == SubstructuringMode::ONLINE &&
-         solver.driven.adaptive_tol <= 0.0 && env &&
-         (std::string(env) == "1" || std::string(env) == "generic");
+         solver.driven.adaptive_tol <= 0.0 && env && std::string(env) == "1";
 }
 
 CondensedEnvironment::CondensedEnvironment(const IoData &iodata, SpaceOperator &space_op)
@@ -241,29 +240,9 @@ CondensedEnvironment::CondensedEnvironment(const IoData &iodata, SpaceOperator &
     model(std::make_unique<DrivenSubstructureModel>()), domains(iodata.domains),
     boundaries(iodata.boundaries)
 {
-  const auto &linear = iodata.solver.linear;
-  const char *mode = std::getenv("PALACE_SUBSTRUCTURING_DRIVENSOLVER");
-  generic = mode && std::string(mode) == "generic";
   MFEM_VERIFY(!space_op.GetNDSpace().IsBroken(),
               "Online driven substructuring through the driven solver (prototype) needs an "
               "unbroken space!");
-  if (generic)
-  {
-    MFEM_VERIFY(space_op.GetNDSpaces().GetNumLevels() == 1 &&
-                    (linear.type == LinearSolver::MUMPS ||
-                     linear.type == LinearSolver::STRUMPACK ||
-                     linear.type == LinearSolver::SUPERLU) &&
-                    !linear.pc_mat_real && !linear.pc_mat_shifted,
-                "Online driven substructuring through the driven solver with the generic "
-                "preconditioner needs a sparse direct solver on a single level "
-                "(\"MGMaxLevels\": 1), without \"PCMatReal\" or \"PCMatShifted\"!");
-    if (!linear.complex_coarse_solve)
-    {
-      Mpi::Warning(comm,
-                   "Without \"ComplexCoarseSolve\", the sparse direct solver factors "
-                   "a real approximation of the system: set it for an exact solve!\n");
-    }
-  }
   MFEM_VERIFY(space_op.GetWavePortOp().Size() == 0,
               "Online driven substructuring through the driven solver (prototype) supports "
               "lumped ports only!");
@@ -567,23 +546,7 @@ private:
 
 std::unique_ptr<Solver<ComplexOperator>> CondensedEnvironment::GetPreconditioner()
 {
-  if (generic)
-  {
-    return {};
-  }
   return std::make_unique<Preconditioner>(*this);
-}
-
-const mfem::HypreParMatrix &CondensedEnvironment::SchurReal(double omega)
-{
-  Load(omega);
-  return *Sr;
-}
-
-const mfem::HypreParMatrix &CondensedEnvironment::SchurImag(double omega)
-{
-  Load(omega);
-  return *Si;
 }
 
 std::unique_ptr<ComplexOperator> CondensedEnvironment::GetSchurOperator(double omega)

@@ -124,8 +124,8 @@ void SpaceOperator::SetUpCeedElementSets(const std::vector<std::unique_ptr<Mesh>
   {
     // The operators of the region against a condensed environment are restricted to the
     // region: with the region elements and the boundary elements bounding them as the
-    // element sets, they are assembled on those only, not with zero coefficients on the
-    // environment, which a sparse direct solver would factor.
+    // element sets, they are applied and assembled on those only, not with zero
+    // coefficients on the environment.
     for (const auto &mesh_l : mesh)
     {
       auto attr_l = mesh_l->GetCeedAttributes(*region_attributes);
@@ -502,8 +502,7 @@ auto AssembleOperators(
     const MaterialPropertyCoefficient *f, const MaterialPropertyCoefficient *dfb,
     const MaterialPropertyCoefficient *fb, const MaterialPropertyCoefficient *fp,
     const MaterialPropertyCoefficient *frb, const MaterialPropertyCoefficient *fpb,
-    bool skip_zeros = false, bool assemble_q_data = false,
-    bool coarse_skip_zero_elements = false)
+    bool skip_zeros = false, bool assemble_q_data = false)
 {
   // Keep configured coefficient support on the coarse sparse level. This is required for
   // an exact-complex coarse solve: a nonlinear eigenvalue seed λ = iω has Im(λ²) = 0, but
@@ -511,16 +510,8 @@ auto AssembleOperators(
   // Its off-diagonal block graph must exist before the first symbolic factorization. Use
   // the same rule for real-approximate coarse solves to keep this hierarchy assembly
   // independent of the chosen sparse-solver representation. Fine partial-assembly levels
-  // have no symbolic structure to preserve, so exact-zero terms are omitted there. With
-  // coarse_skip_zero_elements, the elements where a coefficient is exactly zero are left out
-  // of the coarse level too, for coefficients whose support does not change (those of the
-  // region against a condensed environment, whose environment elements would otherwise be
-  // assembled with zeros, and factored).
+  // have no symbolic structure to preserve, so exact-zero terms are omitted there.
   BilinearForm coarse(fespaces.GetFESpaceAtLevel(0));
-  if (coarse_skip_zero_elements)
-  {
-    coarse.SkipZeroCoefficientElements();
-  }
   AddConfiguredIntegrators(coarse, df, f, dfb, fb, fp, frb, fpb);
   std::vector<std::unique_ptr<Operator>> ops;
   ops.reserve(fespaces.GetNumLevels());
@@ -546,15 +537,10 @@ auto AssembleAuxOperators(const FiniteElementSpaceHierarchy &fespaces,
                           const MaterialPropertyCoefficient *f,
                           const MaterialPropertyCoefficient *fb,
                           const MaterialPropertyCoefficient *frb, bool skip_zeros = false,
-                          bool assemble_q_data = false,
-                          bool coarse_skip_zero_elements = false)
+                          bool assemble_q_data = false)
 {
   // Match the configured coarse-support policy of the primary hierarchy above.
   BilinearForm coarse(fespaces.GetFESpaceAtLevel(0));
-  if (coarse_skip_zero_elements)
-  {
-    coarse.SkipZeroCoefficientElements();
-  }
   AddConfiguredAuxIntegrators(coarse, f, fb, frb);
   std::vector<std::unique_ptr<Operator>> ops;
   ops.reserve(fespaces.GetNumLevels());
@@ -1343,8 +1329,6 @@ void SpaceOperator::AssemblePreconditioner(
     AddImagPeriodicCoefficients(a0.real(), fpi);
     AddImagPeriodicCoefficients(-a0.imag(), fpr);
   }
-  RestrictToAssemblyDomains({&dfr, &dfi, &fr, &fi, &fpr, &fpi},
-                            {&dfbr, &dfbi, &fbr, &fbi, &frbr, &frbi, &fpbr, &fpbi});
   int empty[2] = {(dfr.empty() && fr.empty() && dfbr.empty() && fbr.empty() &&
                    fpr.empty() && frbr.empty() && fpbr.empty()),
                   (dfi.empty() && fi.empty() && dfbi.empty() && fbi.empty() &&
@@ -1353,16 +1337,16 @@ void SpaceOperator::AssemblePreconditioner(
   if (!empty[0])
   {
     br_vec = AssembleOperators(GetNDSpaces(), &dfr, &fr, &dfbr, &fbr, &fpr, &frbr, &fpbr,
-                               skip_zeros, assemble_q_data, cond_env != nullptr);
-    br_aux_vec = AssembleAuxOperators(GetH1Spaces(), &fr, &fbr, &frbr, skip_zeros,
-                                      assemble_q_data, cond_env != nullptr);
+                               skip_zeros, assemble_q_data);
+    br_aux_vec =
+        AssembleAuxOperators(GetH1Spaces(), &fr, &fbr, &frbr, skip_zeros, assemble_q_data);
   }
   if (!empty[1])
   {
     bi_vec = AssembleOperators(GetNDSpaces(), &dfi, &fi, &dfbi, &fbi, &fpi, &frbi, &fpbi,
-                               skip_zeros, assemble_q_data, cond_env != nullptr);
-    bi_aux_vec = AssembleAuxOperators(GetH1Spaces(), &fi, &fbi, &frbi, skip_zeros,
-                                      assemble_q_data, cond_env != nullptr);
+                               skip_zeros, assemble_q_data);
+    bi_aux_vec =
+        AssembleAuxOperators(GetH1Spaces(), &fi, &fbi, &frbi, skip_zeros, assemble_q_data);
   }
 }
 
@@ -1398,15 +1382,14 @@ void SpaceOperator::AssemblePreconditioner(
   {
     AddRealPeriodicCoefficients(a0.real(), fr);
   }
-  RestrictToAssemblyDomains({&dfr, &fr}, {&dfbr, &fbr, &frbr});
   int empty = (dfr.empty() && fr.empty() && dfbr.empty() && fbr.empty() && frbr.empty());
   Mpi::GlobalMin(1, &empty, GetComm());
   if (!empty)
   {
     br_vec = AssembleOperators(GetNDSpaces(), &dfr, &fr, &dfbr, &fbr, nullptr, &frbr,
-                               nullptr, skip_zeros, assemble_q_data, cond_env != nullptr);
-    br_aux_vec = AssembleAuxOperators(GetH1Spaces(), &fr, &fbr, &frbr, skip_zeros,
-                                      assemble_q_data, cond_env != nullptr);
+                               nullptr, skip_zeros, assemble_q_data);
+    br_aux_vec =
+        AssembleAuxOperators(GetH1Spaces(), &fr, &fbr, &frbr, skip_zeros, assemble_q_data);
   }
 }
 
@@ -1436,15 +1419,14 @@ void SpaceOperator::AssemblePreconditioner(
   {
     AddRealPeriodicCoefficients(a0, fr);
   }
-  RestrictToAssemblyDomains({&dfr, &fr}, {&dfbr, &fbr, &frbr});
   int empty = (dfr.empty() && fr.empty() && dfbr.empty() && fbr.empty() && frbr.empty());
   Mpi::GlobalMin(1, &empty, GetComm());
   if (!empty)
   {
     br_vec = AssembleOperators(GetNDSpaces(), &dfr, &fr, &dfbr, &fbr, nullptr, &frbr,
-                               nullptr, skip_zeros, assemble_q_data, cond_env != nullptr);
-    br_aux_vec = AssembleAuxOperators(GetH1Spaces(), &fr, &fbr, &frbr, skip_zeros,
-                                      assemble_q_data, cond_env != nullptr);
+                               nullptr, skip_zeros, assemble_q_data);
+    br_aux_vec =
+        AssembleAuxOperators(GetH1Spaces(), &fr, &fbr, &frbr, skip_zeros, assemble_q_data);
   }
 }
 
@@ -1464,10 +1446,11 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(ScalarType a0,
   MFEM_VERIFY(GetH1Spaces().GetNumLevels() == GetNDSpaces().GetNumLevels(),
               "Multigrid hierarchy mismatch for auxiliary space preconditioning!");
 
+  MFEM_VERIFY(!cond_env,
+              "The region against a condensed environment is preconditioned by "
+              "its coupled factorization (CondensedEnvironment::GetPreconditioner), "
+              "not an assembled matrix!");
   const auto n_levels = GetNDSpaces().GetNumLevels();
-  MFEM_VERIFY(!cond_env || n_levels == 1,
-              "The preconditioner matrix of a condensed environment needs a single-level "
-              "space!");
   std::vector<std::unique_ptr<Operator>> br_vec(n_levels), bi_vec(n_levels),
       br_aux_vec(n_levels), bi_aux_vec(n_levels);
   if (std::is_same_v<OperType, ComplexOperator> && !pc_mat_real)
@@ -1492,18 +1475,9 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(ScalarType a0,
     {
       const auto &fespace_l =
           aux ? GetH1Spaces().GetFESpaceAtLevel(l) : GetNDSpaces().GetFESpaceAtLevel(l);
-      // With a condensed environment, the finest (and only) level is the system matrix of
-      // the region, with S_E(ω) and its imaginary part, for which an empty part is made.
-      const bool env_l = cond_env && !aux && l + 1 == n_levels;
-      const auto &dbc_tdof_lists_l =
-          aux ? h1_dbc_tdof_lists[l] : (env_l ? SystemTDofList() : nd_dbc_tdof_lists[l]);
+      const auto &dbc_tdof_lists_l = aux ? h1_dbc_tdof_lists[l] : nd_dbc_tdof_lists[l];
       auto &br_l = aux ? br_aux_vec[l] : br_vec[l];
       auto &bi_l = aux ? bi_aux_vec[l] : bi_vec[l];
-      if (env_l && !bi_l && std::is_same_v<OperType, ComplexOperator>)
-      {
-        const int n_l = fespace_l.GetVSize();
-        bi_l = std::make_unique<hypre::HypreCSRMatrix>(n_l, n_l, 0);
-      }
       if (print_prec_hdr)
       {
         Mpi::Print(" Level {:d}{} (p = {:d}): {:d} unknowns", l, aux ? " (auxiliary)" : "",
@@ -1527,19 +1501,6 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(ScalarType a0,
       auto B_l =
           BuildLevelParOperator<OperType>(std::move(br_l), std::move(bi_l), fespace_l);
       B_l->SetEssentialTrueDofs(dbc_tdof_lists_l, Operator::DiagonalPolicy::DIAG_ONE);
-      if constexpr (std::is_same_v<OperType, ComplexOperator> &&
-                    std::is_same_v<A3Type, double>)
-      {
-        if (env_l)
-        {
-          B_l->AddParallelMatrix(&cond_env->SchurReal(a3), &cond_env->SchurImag(a3));
-        }
-      }
-      else
-      {
-        MFEM_VERIFY(!env_l, "A condensed environment needs a complex-valued "
-                            "preconditioner at a real frequency!");
-      }
       if (aux)
       {
         B->AddAuxiliaryOperator(std::move(B_l));
@@ -1558,10 +1519,7 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(ScalarType a0,
 std::unique_ptr<ComplexOperator> SpaceOperator::GetSystemOperator(double omega,
                                                                   const ComplexOperator &P)
 {
-  // With a condensed environment, the single level holds S_E(ω) only in its assembled
-  // parts (see GetPreconditionerMatrix).
-  if (pc_mat_real || pc_mat_shifted || pc_mat_amg || GetNDSpaces().GetNumLevels() < 2 ||
-      cond_env)
+  if (pc_mat_real || pc_mat_shifted || pc_mat_amg || GetNDSpaces().GetNumLevels() < 2)
   {
     return {};
   }

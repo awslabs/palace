@@ -144,12 +144,9 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
   // The operators are constructed for each frequency step and used to initialize the ksp.
   // With a condensed environment, the preconditioner is its coupled factorization of the
   // region (refactored at each frequency), which needs no preconditioner matrix.
-  auto env_pc = env ? env->GetPreconditioner() : nullptr;
-  const bool assemble_pc = !env_pc;
   auto ksp =
-      env_pc
-          ? std::make_unique<ComplexKspSolver>(iodata.solver.linear, iodata.problem.verbose,
-                                               space_op.GetComm(), std::move(env_pc))
+      env ? std::make_unique<ComplexKspSolver>(iodata.solver.linear, iodata.problem.verbose,
+                                               space_op.GetComm(), env->GetPreconditioner())
           : std::make_unique<ComplexKspSolver>(iodata, space_op.GetNDSpaces(),
                                                &space_op.GetH1Spaces());
 
@@ -192,7 +189,7 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
   const bool frequency_major =
       port_excitations.Size() > 1 && iodata.solver.driven.restart == 1 &&
       !post_op.WillWriteFields() &&
-      (!assemble_pc ||
+      (env ||
        (space_op.GetNDSpaces().GetNumLevels() == 1 &&
         (linear.type == LinearSolver::MUMPS || linear.type == LinearSolver::STRUMPACK ||
          linear.type == LinearSolver::STRUMPACK_MP ||
@@ -247,7 +244,7 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
       // solver.
       A.reset();
       A2.reset();
-      if (assemble_pc)
+      if (!env)
       {
         P = space_op.GetPreconditionerMatrix<ComplexOperator>(1.0 + 0.0i, 1i * omega,
                                                               -omega * omega + 0.0i, omega);

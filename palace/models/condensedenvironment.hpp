@@ -40,10 +40,7 @@ class SpaceOperator;
 // pattern refilled at each frequency.
 //
 // This is a prototype for the review of the online path of DrivenSubstructuredSweep: exact
-// models (the frequencies of the model only) and lumped ports. With
-// PALACE_SUBSTRUCTURING_DRIVENSOLVER=generic, the preconditioner is instead the configured
-// sparse direct solver of the assembled system matrix, S_E included (on a single-level
-// space), for comparison.
+// models (the frequencies of the model only) and lumped ports.
 //
 class CondensedEnvironment
 {
@@ -55,31 +52,28 @@ public:
   ~CondensedEnvironment();
 
   // Whether an online driven substructuring run takes this path: the prototype is chosen
-  // by PALACE_SUBSTRUCTURING_DRIVENSOLVER=1 (or generic) in the environment (else, or for
-  // an adaptive sweep, DrivenSubstructuredSweep).
+  // by PALACE_SUBSTRUCTURING_DRIVENSOLVER=1 in the environment (else, or for an adaptive
+  // sweep, DrivenSubstructuredSweep).
   static bool Enabled(const config::SolverData &solver);
 
   // The preconditioner of the region's system: solves with the coupled factorization of the
   // region interior and Γ for the entries of a vector there, zero elsewhere (where the
   // solution is zero). Its SetOperator factors the region against the S_E(ω) read last,
   // that of the system operator (GetExtraSystemOperator(ω) reads it), and ignores the
-  // operator otherwise. Null with the generic preconditioner, the assembled system matrix.
+  // operator otherwise.
   std::unique_ptr<Solver<ComplexOperator>> GetPreconditioner();
 
   const std::vector<int> &RegionAttributes() const;
 
   // The essential true DOFs of the region's operators (on the finest space): the Dirichlet
   // DOFs of region elements. The other true DOFs outside the region and Γ have the identity
-  // added with the real part of S_E (SchurReal), since the operators of the region store
-  // no diagonal entry for them.
+  // added with S_E (GetSchurOperator), since the operators of the region store no diagonal
+  // entry for them: the system operator is nonsingular, with a zero solution there.
   const mfem::Array<int> &EssentialTrueDofs() const { return ess_tdofs; }
 
-  // At ω (a frequency of the model; its record is read when ω changes), the true-DOF
-  // matrices of the real (with the identity on the pinned true DOFs which are not
-  // essential) and imaginary parts of S_E(ω), and the operator of both (sharing them).
-  // Collective.
-  const mfem::HypreParMatrix &SchurReal(double omega);
-  const mfem::HypreParMatrix &SchurImag(double omega);
+  // At ω (a frequency of the model; its record is read when ω changes), S_E(ω) as an
+  // operator on the true DOFs, with the identity on the pinned true DOFs which are not
+  // essential. Collective.
   std::unique_ptr<ComplexOperator> GetSchurOperator(double omega);
 
   // The excitation of the region at ω from the full excitation vector: RHS on the region
@@ -112,7 +106,7 @@ private:
   config::BoundaryData boundaries;
   // Local true DOFs: the interface ones in interface order (a contiguous range of it from
   // gamma_off on each rank), and the region interior; the pinned true DOFs which are not
-  // essential (with the identity in SchurReal).
+  // essential (with the identity in GetSchurOperator).
   std::vector<int> gamma_local, gamma_cnt;
   int gamma_off = 0;
   std::vector<char> region_int;
@@ -123,9 +117,8 @@ private:
   int record = -1;
   std::shared_ptr<mfem::HypreParMatrix> Sr, Si;
   std::vector<std::complex<double>> g, h, c;
-  // For the coupled factorization: the generic preconditioner instead, the frequency of
-  // the record and its full S_E on rank 0 until factored, and the record factored last.
-  bool generic = false;
+  // For the coupled factorization: the frequency of the record and its full S_E on rank 0
+  // until factored, and the record factored last.
   double omega_record = 0.0;
   std::vector<std::complex<double>> S_root;
   int factored = -1;
