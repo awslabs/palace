@@ -79,8 +79,10 @@ TEMPLATE_TEST_CASE("LowRankComplexUpdate matches a complex reference",
   // disjoint ports of 1/6, 1/3 and 1/2 of the entries (term k on port k % 3, every other
   // entry for odd k), 4: as 3, with the last term also on the first entry of the next
   // port, which joins two of the ports, 5: term k only on rank k % size, on every third
-  // entry.
-  const int support = GENERATE(0, 1, 2, 3, 4, 5);
+  // entry, 6: three ports interleaved entry by entry, so that the packed entries must be
+  // reordered by port (term k on the entries i with i % 3 == 2 - k % 3, every other triple
+  // for odd k).
+  const int support = GENERATE(0, 1, 2, 3, 4, 5, 6);
   std::mt19937 gen(1234 + 17 * rank + 101 * support + n0 + K);
   std::uniform_real_distribution<double> dist(-1.0, 1.0);
 
@@ -103,7 +105,8 @@ TEMPLATE_TEST_CASE("LowRankComplexUpdate matches a complex reference",
           (support == 1 && rank == 0 && i < 4 + k) ||
           ((support == 3 || support == 4) && port(i) == b && (k % 2 == 0 || i % 2 == 0)) ||
           (support == 4 && k == K - 1 && i == first((b + 1) % 3)) ||
-          (support == 5 && rank == k % size && i % 3 == 0);
+          (support == 5 && rank == k % size && i % 3 == 0) ||
+          (support == 6 && i % 3 == 2 - b && (k % 2 == 0 || (i / 3) % 2 == 0));
       VR[i] = on ? dist(gen) : 0.0;
       VI[i] = on ? dist(gen) : 0.0;
     }
@@ -154,7 +157,10 @@ TEMPLATE_TEST_CASE("LowRankComplexUpdate matches a complex reference",
                   : (support == 5) ? (n + 2) / 3
                                    : n;
   CHECK(update.NumTerms() == K);
-  CHECK(update.NumGroups() == (!local ? 0 : (support == 3) ? 3 : (support == 4) ? 2 : 1));
+  CHECK(update.NumGroups() == (!local                           ? 0
+                               : (support == 3 || support == 6) ? 3
+                               : (support == 4)                 ? 2
+                                                                : 1));
   CHECK(update.NumPackedEntries() == nnz);
 
   // The entries outside every term's support must stay exactly as they were.
