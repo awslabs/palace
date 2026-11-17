@@ -9,6 +9,7 @@
 #include <memory>
 #include <numeric>
 #include <random>
+#include <tuple>
 #include <utility>
 #include <vector>
 #include <mfem.hpp>
@@ -887,10 +888,13 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   // An environment of two halves mirrored about y = 0: swapping their materials, or moving
   // a grounded boundary to its mirror image (with as many Dirichlet DOFs), changes the
   // environment, which its fingerprint must see although its counts are unchanged.
-  const auto [type, order] = GENERATE(table<std::string, int>({{"Electrostatic", 1},
-                                                               {"Electrostatic", 2},
-                                                               {"Magnetostatic", 1},
-                                                               {"Magnetostatic", 2}}));
+  // Not structured bindings, which make_config cannot capture with OpenMP (Clang 18).
+  std::string type;
+  int order;
+  std::tie(type, order) = GENERATE(table<std::string, int>({{"Electrostatic", 1},
+                                                            {"Electrostatic", 2},
+                                                            {"Magnetostatic", 1},
+                                                            {"Magnetostatic", 2}}));
   CAPTURE(type, order);
   const bool electrostatic = (type == "Electrostatic");
   const std::string model_path = (temp_dir / "substruct_mirror.bin").string();

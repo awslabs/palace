@@ -7,6 +7,7 @@
 #include <memory>
 #include <random>
 #include <string>
+#include <tuple>
 #include <vector>
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -536,7 +537,10 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   // surface current (on y = 0, from the PEC face x = 0 to x = 1, which the PEC face y = 1
   // connects) of the offline run must be that of an online run on the full mesh and of one
   // on the mesh of the region, which keeps the environment neighbors of these faces.
-  const auto [region_below, order, by_side] =
+  // Not structured bindings, which the lambdas below cannot capture with OpenMP (Clang 18).
+  bool region_below, by_side;
+  int order;
+  std::tie(region_below, order, by_side) =
       GENERATE(table<bool, int, bool>({{true, 1, false},
                                        {false, 1, false},
                                        {true, 2, false},
