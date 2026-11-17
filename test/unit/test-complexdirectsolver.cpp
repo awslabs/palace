@@ -333,13 +333,17 @@ TEST_CASE("STRUMPACK complex arithmetic solver unsymmetric sparsity pattern",
 TEST_CASE("SuperLU complex arithmetic solver", "[superlu][Serial][Parallel]")
 {
   // Complex symmetric and unsymmetric matrices, with and without the reuse of the row and
-  // column permutations.
+  // column permutations, on a 2D and on a 3D process grid (which has a depth above one
+  // from 8 processes).
   MPI_Comm comm = Mpi::World();
   const bool unsymmetric = GENERATE(false, true);
   const bool reorder_reuse = GENERATE(true, false);
-  SuperLUComplexSolver solver(comm, SymbolicFactorization::DEFAULT, reorder_reuse, 0);
+  const bool use_3d = GENERATE(false, true);
+  SuperLUComplexSolver solver(comm, SymbolicFactorization::DEFAULT, use_3d, reorder_reuse,
+                              0);
   MfemWrapperSolver<ComplexOperator> ref(
-      std::make_unique<SuperLUSolver>(comm, SymbolicFactorization::DEFAULT, false, true, 0),
+      std::make_unique<SuperLUSolver>(comm, SymbolicFactorization::DEFAULT, use_3d, true,
+                                      0),
       true, true, false, true);
   TestComplexDirectSolver(solver, ref, 1.0e-10, unsymmetric);
 }
@@ -530,8 +534,9 @@ TEST_CASE("ComplexKspSolver sparse direct solver with ComplexCoarseSolve",
     CHECK(pc->GetSolver().Height() == 2 * n);
   }
 
-  // Complex arithmetic, also with the ParMETIS column ordering, and for STRUMPACK with
-  // compression (which the fronts of this matrix are too small for).
+  // Complex arithmetic, also with the ParMETIS column ordering, for STRUMPACK with
+  // compression (which the fronts of this matrix are too small for), and for SuperLU_DIST
+  // with a 3D process grid.
   std::vector<json> complex_options = {
       json{{"ComplexCoarseSolve", true}},
       json{{"ComplexCoarseSolve", true}, {"ColumnOrdering", "ParMETIS"}}};
@@ -539,6 +544,11 @@ TEST_CASE("ComplexKspSolver sparse direct solver with ComplexCoarseSolve",
   {
     complex_options.push_back(
         json{{"ComplexCoarseSolve", true}, {"STRUMPACKCompressionType", "BLR"}});
+  }
+  if (type == "SuperLU")
+  {
+    complex_options.push_back(
+        json{{"ComplexCoarseSolve", true}, {"SuperLU3DCommunicator", true}});
   }
   for (const auto &options : complex_options)
   {
@@ -586,11 +596,6 @@ TEST_CASE("ComplexKspSolver sparse direct solver with ComplexCoarseSolve",
   // twice the size.
   std::vector<json> block_options = {
       json{{"ComplexCoarseSolve", true}, {"DropSmallEntries", true}}};
-  if (type == "SuperLU")
-  {
-    block_options.push_back(
-        json{{"ComplexCoarseSolve", true}, {"SuperLU3DCommunicator", true}});
-  }
   for (const auto &options : block_options)
   {
     INFO("options " << options.dump());

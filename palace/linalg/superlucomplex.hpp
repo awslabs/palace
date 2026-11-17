@@ -18,10 +18,10 @@ namespace palace
 
 //
 // SuperLU_DIST sparse direct solver for complex-valued operators in complex arithmetic
-// (pzgssvx). Its L and U factors need up to about 40% less memory than those of the
-// equivalent real-valued system of twice the size used by MfemWrapperSolver (the saving
-// grows with the problem size). Only for 2D process grids (SuperLUSolver is used with a 3D
-// process grid).
+// (pzgssvx, or pzgssvx3d with a 3D process grid). Its L and U factors need up to about 40%
+// less memory than those of the equivalent real-valued system of twice the size used by
+// MfemWrapperSolver (the saving grows with the problem size). The process grid is chosen
+// as for SuperLUSolver.
 //
 class SuperLUComplexSolver : public Solver<ComplexOperator>
 {
@@ -34,8 +34,8 @@ private:
   std::unique_ptr<Data> data;
 
 public:
-  SuperLUComplexSolver(MPI_Comm comm, SymbolicFactorization reorder, bool reorder_reuse,
-                       int print);
+  SuperLUComplexSolver(MPI_Comm comm, SymbolicFactorization reorder, bool use_3d,
+                       bool reorder_reuse, int print);
   ~SuperLUComplexSolver() override;
 
   void SetOperator(const ComplexOperator &op) override;

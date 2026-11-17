@@ -64,7 +64,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Performance Improvements
 
-  - With `config["Solver"]["Linear"]["ComplexCoarseSolve"]`, SuperLU_DIST (without
+  - With `config["Solver"]["Linear"]["ComplexCoarseSolve"]`, SuperLU_DIST (with or without
     `"SuperLU3DCommunicator"`), STRUMPACK (with or without compression), and MUMPS now
     factor the complex-valued coarse-level matrix in complex arithmetic instead of the
     equivalent real-valued system of twice the size, which reduces the memory of the

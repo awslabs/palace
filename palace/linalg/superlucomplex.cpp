@@ -11,6 +11,7 @@
 #include <cstddef>
 #include <vector>
 #include "linalg/complexcsr.hpp"
+#include "linalg/superlu.hpp"
 #include "utils/communication.hpp"
 
 // SuperLU_DIST complex double precision header.
@@ -21,7 +22,10 @@ namespace palace
 
 struct SuperLUComplexSolver::Data
 {
+  // Process grid: 2D, or 3D with a depth above one.
   gridinfo_t grid;
+  gridinfo3d_t grid3d;
+  int npdep = 1;
   superlu_dist_options_t options;
   zScalePermstruct_t ScalePermstruct;
   zLUstruct_t LUstruct;
@@ -66,14 +70,34 @@ struct SuperLUComplexSolver::Data
     has_A = true;
   }
 
+  // The 2D process grid, or the one of the process layer with a 3D process grid.
+  gridinfo_t &Grid2D() { return (npdep > 1) ? grid3d.grid2d : grid; }
+
+  // With a 3D process grid, all the process layers hold L and U factors (those of their
+  // part of the elimination tree) and the solve structures, and the matrix gathered on the
+  // process layers is kept between the calls of the driver (freed in the order of
+  // mfem::SuperLUSolver).
   void DestroyFactorization()
   {
     if (initialized)
     {
-      zDestroy_LU(n_glob, &grid, &LUstruct);
-      if (options.SolveInitialized == YES)
+      if (npdep > 1)
       {
-        zSolveFinalize(&options, &SOLVEstruct);
+        if (options.SolveInitialized == YES)
+        {
+          zSolveFinalize(&options, &SOLVEstruct);
+        }
+        zDestroy_LU(n_glob, &grid3d.grid2d, &LUstruct);
+        zDestroy_A3d_gathered_on_2d(&SOLVEstruct, &grid3d);
+        SOLVEstruct.A3d = nullptr;
+      }
+      else
+      {
+        zDestroy_LU(n_glob, &grid, &LUstruct);
+        if (options.SolveInitialized == YES)
+        {
+          zSolveFinalize(&options, &SOLVEstruct);
+        }
       }
       zScalePermstructFree(&ScalePermstruct);
       zLUstructFree(&LUstruct);
@@ -81,46 +105,82 @@ struct SuperLUComplexSolver::Data
     }
   }
 
-  // Factor the matrix (nrhs = 0) or solve in place for the right-hand side B with the
-  // factorization (nrhs = 1).
+  // Factor the matrix (nrhs = 0, or nrhs = 1 to also solve) or solve with the
+  // factorization (nrhs = 1), in place for the right-hand side B.
   void Call(int nrhs)
   {
+    const bool factor = (options.Fact != FACTORED);
     SuperLUStat_t stat;
     PStatInit(&stat);
     int info = -1;
-    pzgssvx(&options, &A, &ScalePermstruct, reinterpret_cast<doublecomplex *>(B.data()),
-            static_cast<int>(n_loc), nrhs, &grid, &LUstruct, &SOLVEstruct, &berr, &stat,
-            &info);
+    auto *b = reinterpret_cast<doublecomplex *>(B.data());
+    if (npdep > 1)
+    {
+      pzgssvx3d(&options, &A, &ScalePermstruct, b, static_cast<int>(n_loc), nrhs, &grid3d,
+                &LUstruct, &SOLVEstruct, &berr, &stat, &info);
+    }
+    else
+    {
+      pzgssvx(&options, &A, &ScalePermstruct, b, static_cast<int>(n_loc), nrhs, &grid,
+              &LUstruct, &SOLVEstruct, &berr, &stat, &info);
+    }
     PStatFree(&stat);
     MFEM_VERIFY(info == 0, "SuperLU_DIST complex-valued "
-                               << ((nrhs > 0) ? "solve" : "factorization")
+                               << (factor ? "factorization" : "solve")
                                << " failed (info = " << info << ")!");
     options.Fact = FACTORED;
   }
 };
 
 SuperLUComplexSolver::SuperLUComplexSolver(MPI_Comm comm, SymbolicFactorization reorder,
-                                           bool reorder_reuse, int print)
+                                           bool use_3d, bool reorder_reuse, int print)
   : Solver<ComplexOperator>(), comm(comm), reorder_reuse(reorder_reuse),
     data(std::make_unique<Data>())
 {
-  // 2D process grid as close to square as possible, as for SuperLUSolver.
+  // Process grid as for SuperLUSolver: the depth of a 3D process grid, and process layers
+  // as close to square as possible.
   const int np = Mpi::Size(comm);
-  int nprow = static_cast<int>(std::sqrt(static_cast<double>(np)));
-  while (nprow > 1 && np % nprow != 0)
+  const int npdep = data->npdep = GetSuperLUGridDepth(np, use_3d);
+#if SUPERLU_DIST_MAJOR_VERSION < 9
+  MFEM_VERIFY(npdep == 1, "SuperLUComplexSolver requires SuperLU_DIST 9 or later for a "
+                          "3D process grid!");
+#endif
+  int nprow = static_cast<int>(std::sqrt(static_cast<double>(np / npdep)));
+  while (nprow > 1 && (np / npdep) % nprow != 0)
   {
     nprow--;
   }
-  superlu_gridinit(comm, nprow, np / nprow, &data->grid);
+  const int npcol = np / (npdep * nprow);
+  if (npdep > 1)
+  {
+    superlu_gridinit3d(comm, nprow, npcol, npdep, &data->grid3d);
+  }
+  else
+  {
+    superlu_gridinit(comm, nprow, npcol, &data->grid);
+  }
   if (print > 1)
   {
-    Mpi::Print(comm, " SuperLUComplexSolver: Using 2D processor grid {:d} x {:d}\n", nprow,
-               np / nprow);
+    if (npdep > 1)
+    {
+      Mpi::Print(comm,
+                 " SuperLUComplexSolver: Using 3D processor grid {:d} x {:d} x {:d}\n",
+                 nprow, npcol, npdep);
+    }
+    else
+    {
+      Mpi::Print(comm, " SuperLUComplexSolver: Using 2D processor grid {:d} x {:d}\n",
+                 nprow, npcol);
+    }
   }
 
   // Options as for SuperLUSolver.
   auto &options = data->options;
   set_default_options_dist(&options);
+  if (npdep > 1)
+  {
+    options.Algo3d = YES;
+  }
   options.PrintStat = (print > 1) ? YES : NO;
   options.Equil = NO;
   options.ReplaceTinyPivot = NO;
@@ -132,8 +192,19 @@ SuperLUComplexSolver::SuperLUComplexSolver(MPI_Comm comm, SymbolicFactorization 
       options.ColPerm = METIS_AT_PLUS_A;
       break;
     case SymbolicFactorization::PARMETIS:
-      options.ColPerm = PARMETIS;
-      options.ParSymbFact = YES;
+      // SuperLU_DIST does not support ParMETIS (parallel symbolic factorization) with a 3D
+      // process grid and returns an error for it.
+      if (npdep > 1)
+      {
+        Mpi::Warning(comm, "SuperLU_DIST does not support ParMETIS ordering with a 3D "
+                           "process grid, using METIS instead!\n");
+        options.ColPerm = METIS_AT_PLUS_A;
+      }
+      else
+      {
+        options.ColPerm = PARMETIS;
+        options.ParSymbFact = YES;
+      }
       break;
     case SymbolicFactorization::AMD:
     case SymbolicFactorization::RCM:
@@ -157,7 +228,14 @@ SuperLUComplexSolver::~SuperLUComplexSolver()
 {
   data->DestroyFactorization();
   data->DestroyMatrix();
-  superlu_gridexit(&data->grid);
+  if (data->npdep > 1)
+  {
+    superlu_gridexit3d(&data->grid3d);
+  }
+  else
+  {
+    superlu_gridexit(&data->grid);
+  }
 }
 
 void SuperLUComplexSolver::SetOperator(const ComplexOperator &op)
@@ -172,13 +250,18 @@ void SuperLUComplexSolver::SetOperator(const ComplexOperator &op)
     ReleaseParallelAssemble(op);
 
     // Reuse the row and column permutations for a matrix with the same sparsity pattern on
-    // all processes.
+    // all processes. With a 3D process grid, the factors are zeroed on process layer 0 (the
+    // driver fills and zeroes those of the other layers), as in mfem::SuperLUSolver.
     const int_t n_glob = static_cast<int_t>(csr.n_glob);
     if (csr.SamePattern(comm, d.pattern) && d.initialized && reorder_reuse)
     {
       d.options.Fact = SamePattern_SameRowPerm;
-      zZeroLblocks(d.grid.iam, n_glob, &d.grid, &d.LUstruct);
-      zZeroUblocks(d.grid.iam, n_glob, &d.grid, &d.LUstruct);
+      if (d.npdep == 1 || d.grid3d.zscp.Iam == 0)
+      {
+        auto &grid = d.Grid2D();
+        zZeroLblocks(grid.iam, n_glob, &grid, &d.LUstruct);
+        zZeroUblocks(grid.iam, n_glob, &grid, &d.LUstruct);
+      }
     }
     else
     {
@@ -193,9 +276,16 @@ void SuperLUComplexSolver::SetOperator(const ComplexOperator &op)
     d.n_glob = n_glob;
     d.n_loc = static_cast<int_t>(csr.n_loc);
     d.CreateMatrix(csr);
-    d.B.resize(csr.n_loc);
+    d.B.assign(csr.n_loc, 0.0);
   }
-  d.Call(0);
+
+  // With a 3D process grid, the factorization is followed by a solve (of a zero right-hand
+  // side) in the same call, as in mfem::SuperLUSolver, whose first solve factors the
+  // matrix. This works around a defect of SuperLU_DIST (9.3.1): the driver for 3D process
+  // grids allocates part of its solve structures in the first solve, and
+  // zDestroy_A3d_gathered_on_2d frees them whether or not they were allocated, which is an
+  // invalid free when a factorization is destroyed or replaced before any solve.
+  d.Call((d.npdep > 1) ? 1 : 0);
   this->height = op.Height();
   this->width = op.Width();
 }
