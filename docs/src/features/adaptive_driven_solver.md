@@ -92,7 +92,10 @@ The most important configuration options are:
     looser `"AdaptiveTol"`.
   - [`config["Solver"]["Driven"]["AdaptiveMaxSamples"]`](../config/reference.md#config-solver-driven):
     maximum number of full samples per excitation. If this cap is reached before
-    convergence, increase it or revisit the tolerances.
+    convergence, increase it or revisit the tolerances. If *Palace* instead stops sampling
+    an excitation early with a warning that the last samples were not added to the PROM
+    basis, `"AdaptiveTol"` is likely below the accuracy of the full solves: tighten
+    `config["Solver"]["Linear"]["Tol"]` or loosen `"AdaptiveTol"`.
   - [`config["Solver"]["Driven"]["AdaptiveConvergenceMemory"]`](../config/reference.md#config-solver-driven):
     number of consecutive successful sample checks required before convergence. Increasing
     this can make early termination less likely, at the cost of more full solves.

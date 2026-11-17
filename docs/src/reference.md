@@ -561,19 +561,19 @@ orthogonalization variant is controlled by
 [`config["Solver"]["Driven"]["AdaptiveGSOrthogonalization"]`](config/reference.md#config-solver-driven),
 though most users should not need to change it.
 
-An HDM solution is only as accurate as the linear solver tolerance
-[`config["Solver"]["Linear"]["Tol"]`](config/reference.md#config-solver-linear) allows, and
-late in the sampling the new information a sample brings, the part of
-``\mathrm{Re}(\bm{x}^*)`` or ``\mathrm{Im}(\bm{x}^*)`` outside the current basis, can be as
-small as its error. Such a direction carries solver error rather than information, and it
-can make the PROM *less* accurate at the very frequency it was computed for. With an
-accurate sample in the basis the PROM reproduces it, so after adding a sample chosen by the
-greedy sampling (see below), *Palace* evaluates the error ``\varepsilon`` defined below at
-this sample, with the sample in the basis. If it exceeds
+An HDM solution is only as accurate as its linear solve, whose tolerance
+[`config["Solver"]["Linear"]["Tol"]`](config/reference.md#config-solver-linear) bounds a
+residual rather than the error, and late in the sampling the new information a sample
+brings, the part of ``\mathrm{Re}(\bm{x}^*)`` or ``\mathrm{Im}(\bm{x}^*)`` outside the
+current basis, can be as small as this error. Such a direction carries solver error rather
+than information, and it can make the PROM *less* accurate at the very frequency it was
+computed for. With an accurate sample in the basis the PROM reproduces it, so after adding a
+sample chosen by the greedy sampling (see below), *Palace* evaluates the error
+``\varepsilon`` defined below at this sample, with the sample in the basis. If it exceeds
 [`config["Solver"]["Driven"]["AdaptiveTol"]`](config/reference.md#config-solver-driven),
-*Palace* keeps, of the bases with neither, only the real, only the imaginary or both new
-directions, the one whose PROM solution at the sample frequency is closest to the HDM
-solution (ties go to the smaller basis, and to the real direction), and logs which
+*Palace* compares the PROM solutions at the sample frequency with neither, only the real,
+only the imaginary, or both new directions, keeps the basis whose solution is closest to the
+HDM solution (ties go to the smaller basis, then to the real direction), and logs which
 directions it kept if it drops any. Otherwise the basis is the same as without this check.
 The samples which initialize the basis, at the frequency-domain endpoints and with
 `"AddToPROM"`, are always added in full.
@@ -628,9 +628,10 @@ solution using
 Convergence is declared when this quantity is below
 [`config["Solver"]["Driven"]["AdaptiveTol"]`](config/reference.md#config-solver-driven) for
 [`config["Solver"]["Driven"]["AdaptiveConvergenceMemory"]`](config/reference.md#config-solver-driven)
-consecutive samples. The same number of consecutive samples above the tolerance which add
-no basis direction stops the sampling early (see above). The norm here is the finite-element coefficient-space L2 norm. It is
-related to, but not the same as, a physical energy norm such as
+consecutive samples. The same number of consecutive samples above the tolerance, from
+converged linear solves, which add no basis direction stops the sampling early (see above).
+The norm here is the finite-element coefficient-space L2 norm. It is related to, but not
+the same as, a physical energy norm such as
 ``\int \bm{E}^*(\bm{r})\cdot\bm{E}(\bm{r})\,d^3r``. Consequently, the adaptive tolerance is
 not a strict relative-error bound for every derived quantity, such as S-parameters or domain
 energies.

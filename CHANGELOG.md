@@ -182,9 +182,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Fixed adaptive frequency sweeps which kept sampling up to `"AdaptiveMaxSamples"` when
     `"AdaptiveTol"` is close to the accuracy of the linear solves: late in the sampling, the
     real or imaginary part of a sample can add a basis direction which is mostly linear
-    solver error, and with it the PROM no longer reproduced the sample (one sweep reached 200
-    samples, with spurious resonances in the band, where 7 suffice). After each sample of
-    the greedy sampling, *Palace* now checks that the PROM reproduces it to
+    solver error, and with it the PROM no longer reproduces the sample (one sweep reached
+    200 samples, with spurious resonances in the band, where 7 suffice). After each sample
+    of the greedy sampling, *Palace* now checks that the PROM reproduces it to
     `"AdaptiveTol"`; if it does not, of its real and imaginary parts only those with which
     the PROM is closest to the sample are kept. Sweeps whose PROM reproduces every sample
     are unchanged. When `"AdaptiveTol"` is below the accuracy of the HDM solutions, so that

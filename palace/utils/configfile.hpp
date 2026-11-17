@@ -923,8 +923,8 @@ public:
   std::size_t adaptive_max_size = 20;
 
   // Number of consecutive samples below the tolerance required for adaptive sampling
-  // convergence, and of consecutive samples above it which add no basis direction after
-  // which the sampling stops early.
+  // convergence, and of consecutive samples above it, from converged linear solves, which
+  // add no basis direction, after which the sampling stops early.
   std::size_t adaptive_memory = 2;
 
   // Gram-Schmidt orthogonalization used in PROM construction, separate from linear solver
