@@ -107,6 +107,7 @@ jobs:
 
           # CI-specific settings stay out of the developer environment.
           spack -e . repo add --scope="env:$(pwd)" "$(pwd)/spack_repo/local"
+          spack -e . config add 'packages:all:prefer:["~examples"]'
           spack -e . mirror add --type binary --unsigned \
             --oci-username-variable GITHUB_USER \
             --oci-password-variable GITHUB_TOKEN \

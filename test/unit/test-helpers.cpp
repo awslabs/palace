@@ -29,13 +29,13 @@ mfem::Mesh SingleTetMesh()
 
 std::string TestMeshPath(const std::string &name)
 {
-  const std::string stored_dir = PALACE_TEST_DATA_DIR "/mesh/";
+  const std::string mfem_dir = PALACE_MFEM_DATA_DIR "/";
   static const std::map<std::string, std::string> simplicial_parent = {
-      {"star-tri.mesh", "star-quad.mesh"}, {"fichera-tet.mesh", "fichera-hex.mesh"}};
+      {"star-tri.mesh", "star.mesh"}, {"fichera-tet.mesh", "fichera.mesh"}};
   const auto it = simplicial_parent.find(name);
   if (it == simplicial_parent.end())
   {
-    return stored_dir + name;
+    return mfem_dir + name;
   }
 
   // Each process (CTest job or MPI rank) writes its own copy, so no two processes share a
@@ -44,7 +44,7 @@ std::string TestMeshPath(const std::string &name)
   const auto path = dir.temp_dir / name;
   if (!std::filesystem::exists(path))
   {
-    mfem::Mesh parent(stored_dir + it->second);
+    mfem::Mesh parent(mfem_dir + it->second);
     auto mesh = mfem::Mesh::MakeSimplicial(parent);
     std::ofstream out(path);
     // Full precision, so the file holds exactly the parent's vertex coordinates.

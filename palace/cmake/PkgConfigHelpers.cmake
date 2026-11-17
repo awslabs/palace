@@ -122,7 +122,7 @@ int main()
   return 0;
 }
 ")
-  if(PALACE_WITH_CUDA OR PALACE_WITH_HIP)
+  if(MFEM_USE_CUDA OR MFEM_USE_HIP)
     # GPU-enabled dependencies must be configurable on build hosts without a
     # GPU or driver. The GPU device and driver are supplied on the execution host.
     try_compile(
@@ -244,7 +244,7 @@ int main()
   return 0;
 }
 ")
-  if(PALACE_WITH_CUDA OR PALACE_WITH_HIP)
+  if(MFEM_USE_CUDA OR MFEM_USE_HIP)
     try_compile(
       SLEPC_TEST_COMPILED
       ${SLEPC_LIB_TEST_DIR}
