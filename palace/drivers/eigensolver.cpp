@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <complex>
 #include <numbers>
 #include <vector>
@@ -37,6 +38,13 @@ using namespace std::complex_literals;
 
 namespace
 {
+
+// [experiment] Environment knobs for the review of the warm start.
+double ExpEnv(const char *name, double def)
+{
+  const char *s = std::getenv(name);
+  return s ? std::atof(s) : def;
+}
 
 // Starting vector v = Σᵢ wᵢ xᵢ from the eigenpairs (λᵢ, xᵢ) of the previous adaptation
 // iteration (the fields 2i and 2i + 1 hold the real and imaginary parts of xᵢ), and, if
@@ -440,7 +448,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     int num_warm = 0;
     const bool warm_start = prev_eigenvectors && prev_eigenvectors->IsCurrent(
                                                      space_op.GetNDSpace().GetParMesh());
-    if (warm_start && prev_num_its == 1)
+    if (warm_start && prev_num_its <= static_cast<int>(ExpEnv("PALACE_WS_SKIP", 1)))
     {
       Mpi::Print(" Previous adaptation iteration converged within one Krylov cycle: no "
                  "warm start\n");
@@ -448,7 +456,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     else if (warm_start)
     {
       // The linearization of a quadratic problem also takes the second block λ x.
-      constexpr double eta = 1.0e-3;
+      const double eta = ExpEnv("PALACE_WS_ETA", 1.0e-3);
       const bool blocks = (C || has_A2);
       ComplexVector v, v_lambda;
       num_warm = GetWarmStartVector(*prev_eigenvectors, prev_eigenvalues, space_op, v0, eta,
@@ -475,13 +483,25 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         {
           eigen->SetInitialSpace(v);  // Copies the vector
         }
-        eigen->SetWarmStart(true);
+        if (ExpEnv("PALACE_WS_SETTLED", 1) > 0)
+        {
+          eigen->SetWarmStart(true);
+        }
 
         // The Ritz values of the first Krylov cycle are set by its first linear solves:
         // solve these with a 100 times smaller tolerance, not below 1e-12.
         const double lin_tol = iodata.solver.linear.tol;
-        eigen->SetFirstCycleLinearSolverTol(
-            std::max(1.0e-2 * lin_tol, std::min(lin_tol, 1.0e-12)));
+        const int tight = static_cast<int>(ExpEnv("PALACE_WS_TIGHT", 1));
+        if (tight == 1)
+        {
+          eigen->SetFirstCycleLinearSolverTol(
+              std::max(1.0e-2 * lin_tol, std::min(lin_tol, 1.0e-12)));
+        }
+        else if (tight == 2)
+        {
+          // Relative to the eigenvalue solver tolerance.
+          eigen->SetFirstCycleLinearSolverTol(std::min(lin_tol, 1.0e-2 * tol));
+        }
       }
     }
     if (num_warm == 0)
