@@ -3,11 +3,15 @@
 
 #include "drivensolver.hpp"
 
+#include <algorithm>
 #include <complex>
 #include <cstddef>
+#include <cstdlib>
 #include <iostream>
 #include <numbers>
 #include <optional>
+#include <string>
+#include <vector>
 #include <Eigen/Dense>
 #include <fmt/core.h>
 #include <mfem.hpp>
@@ -168,37 +172,73 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
         iodata.solver.linear.tol, iodata.solver.linear.max_it, 0);
   }
 
-  // Main excitation and frequency loop.
-  auto t0 = Timer::Now();
-  std::size_t excitation_counter = 0;
-  const std::size_t excitation_restart_counter =
-      ((iodata.solver.driven.restart - 1) / omega_sample.size()) + 1;
-  const std::size_t freq_restart_idx =
-      (iodata.solver.driven.restart - 1) % omega_sample.size();
-  for (const auto &[excitation_idx, excitation_spec] : port_excitations)
+  // Main excitation and frequency loop: the solves by excitation, then frequency, or by
+  // frequency, then excitation, when the preconditioner is a sparse direct solve of the
+  // system (on a single level), which is then factored once per frequency for all
+  // excitations. Not with field output, which is collected per excitation, nor with a
+  // restart, which counts the solves by excitation. PALACE_DRIVEN_EXCITATION_MAJOR=1 in the
+  // environment keeps the order by excitation (prototype, for comparison).
+  const auto &linear = iodata.solver.linear;
+  const char *excitation_major = std::getenv("PALACE_DRIVEN_EXCITATION_MAJOR");
+  const bool frequency_major =
+      port_excitations.Size() > 1 && iodata.solver.driven.restart == 1 &&
+      !post_op.WillWriteFields() && space_op.GetNDSpaces().GetNumLevels() == 1 &&
+      (linear.type == LinearSolver::MUMPS || linear.type == LinearSolver::STRUMPACK ||
+       linear.type == LinearSolver::STRUMPACK_MP || linear.type == LinearSolver::SUPERLU ||
+       linear.type == LinearSolver::CUDSS) &&
+      !(excitation_major && std::string(excitation_major) == "1");
+  struct Solve
   {
-    if (++excitation_counter < excitation_restart_counter)
+    std::size_t excitation_counter;  // 1-based, in the order of the excitations
+    int excitation_idx;
+    std::size_t omega_i;
+  };
+  std::vector<Solve> solves;
+  {
+    std::size_t excitation_counter = 0;
+    for (const auto &[excitation_idx, excitation_spec] : port_excitations)
     {
-      continue;
+      excitation_counter++;
+      for (std::size_t omega_i = 0; omega_i < omega_sample.size(); omega_i++)
+      {
+        if ((excitation_counter - 1) * omega_sample.size() + omega_i + 1 >=
+            iodata.solver.driven.restart)
+        {
+          solves.push_back({excitation_counter, excitation_idx, omega_i});
+        }
+      }
     }
-    if (port_excitations.Size() > 1)
+    if (frequency_major)
+    {
+      std::ranges::stable_sort(solves, {}, &Solve::omega_i);
+      Mpi::Print("\nSweeping all excitations at each frequency\n");
+    }
+  }
+  auto t0 = Timer::Now();
+  // The operators at the frequency of the last solve. A refers to P and A2, so both must
+  // outlive it.
+  std::unique_ptr<ComplexOperator> P, A2, A;
+  std::size_t omega_A = omega_sample.size();
+  std::vector<int> paraview_excitations;
+  for (std::size_t s = 0; s < solves.size(); s++)
+  {
+    const auto [excitation_counter, excitation_idx, omega_i] = solves[s];
+    const bool new_excitation = (s == 0 || solves[s - 1].excitation_idx != excitation_idx);
+    if (!frequency_major && new_excitation && port_excitations.Size() > 1)
     {
       Mpi::Print("\nSweeping excitation index {:d} ({:d}/{:d}):\n", excitation_idx,
                  excitation_counter, port_excitations.Size());
     }
-    // Frequency loop. Delay the potentially large visualization operators until the
-    // first solution is ready, so they do not increase the solve/preconditioner peak.
-    const std::size_t omega_start =
-        (excitation_counter == excitation_restart_counter) ? freq_restart_idx : 0;
-    for (std::size_t omega_i = omega_start; omega_i < omega_sample.size(); omega_i++)
+    auto omega = omega_sample[omega_i];
+    if (omega_i != omega_A)
     {
-      auto omega = omega_sample[omega_i];
       // Assemble frequency dependent matrices and initialize operators in linear
-      // solver. A refers to P and A2, so both must outlive it.
-      auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(
-          1.0 + 0.0i, 1i * omega, -omega * omega + 0.0i, omega);
-      std::unique_ptr<ComplexOperator> A2;
-      auto A = space_op.GetSystemOperator(omega, *P);
+      // solver.
+      A.reset();
+      A2.reset();
+      P = space_op.GetPreconditionerMatrix<ComplexOperator>(1.0 + 0.0i, 1i * omega,
+                                                            -omega * omega + 0.0i, omega);
+      A = space_op.GetSystemOperator(omega, *P);
       if (!A)
       {
         if (!K)
@@ -212,84 +252,91 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
                                      C.get(), M.get(), A2.get());
       }
       ksp->SetOperators(*A, *P);
-
-      Mpi::Print(
-          "\nIt {:d}/{:d}: ω/2π = {:.3e} GHz (total elapsed time = {:.2e} s{})\n",
-          omega_i + 1, omega_sample.size(),
-          iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(omega) /
-              (2 * std::numbers::pi),
-          Timer::Duration(Timer::Now() - t0).count(),
-          (port_excitations.Size() > 1)
-              ? fmt::format(", solve {:d}/{:d}",
-                            1 + omega_i + (excitation_counter - 1) * omega_sample.size(),
-                            omega_sample.size() * port_excitations.Size())
-              : "");
-
-      // Solve linear system.
-      space_op.GetExcitationVector(excitation_idx, omega, RHS);
-
-      Mpi::Print("\n");
-      ksp->Mult(RHS, E);
-
-      if (omega_i + 1 == omega_sample.size() &&
-          excitation_counter == port_excitations.Size())
-      {
-        // That was the last solve: save the solver totals and release the linear solver
-        // and system operators, so they do not add to the memory peak of the field output
-        // and error estimation which follow.
-        SaveMetadata(*ksp);
-        ksp.reset();
-        A.reset();
-        A2.reset();
-        P.reset();
-        K.reset();
-        C.reset();
-        M.reset();
-      }
-
-      // Start Post-processing.
-      BlockTimer bt0(Timer::POSTPRO);
-      Mpi::Print(" Sol. ||E|| = {:.6e} (||RHS|| = {:.6e})\n",
-                 linalg::Norml2(space_op.GetComm(), E),
-                 linalg::Norml2(space_op.GetComm(), RHS));
-
-      // Compute B = -1/(iω) ∇ x E on the true dofs.
-      Curl.Mult(E.Real(), B.Real());
-      Curl.Mult(E.Imag(), B.Imag());
-      B *= -1.0 / (1i * omega);
-      if (space_op.GetMaterialOp().HasWaveVector())
-      {
-        // Calculate B field correction for Floquet BCs: B += k_F(ω)/ω × E.
-        // With k₀ = k_F_ref/ω_ref stored, k_F(ω)/ω = k_F_ref/ω_ref = k₀, so scale = 1.
-        floquet_corr->AddMult(
-            E, B,
-            space_op.GetMaterialOp().HasFloquetFrequencyScaling() ? 1.0 : 1.0 / omega);
-      }
-
-      if (omega_i == omega_start)
-      {
-        // Switch ParaView subfolders once per excitation, after the first solve.
-        post_op.InitializeParaviewDataCollection(excitation_idx);
-      }
-      if (env)
-      {
-        post_op.SetLumpedPortVoltages(env->PortVoltages(excitation_idx, omega, E));
-      }
-      auto total_domain_energy =
-          post_op.MeasureAndPrintAll(excitation_idx, int(omega_i), E, B, omega);
-
-      // Calculate and record the error indicators.
-      if (estimator)
-      {
-        Mpi::Print(" Updating solution error estimates\n");
-        estimator->AddErrorIndicator(E, B, total_domain_energy, indicator);
-      }
+      omega_A = omega_i;
     }
 
-    // Final postprocessing & printing. After the last excitation, the solver totals were
-    // already saved when the solver was released.
+    Mpi::Print(
+        "\nIt {:d}/{:d}: ω/2π = {:.3e} GHz (total elapsed time = {:.2e} s{})\n",
+        omega_i + 1, omega_sample.size(),
+        iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(omega) /
+            (2 * std::numbers::pi),
+        Timer::Duration(Timer::Now() - t0).count(),
+        (port_excitations.Size() > 1)
+            ? fmt::format(", solve {:d}/{:d}{}",
+                          1 + (frequency_major
+                                   ? omega_i * port_excitations.Size() +
+                                         (excitation_counter - 1)
+                                   : omega_i + (excitation_counter - 1) * omega_sample.size()),
+                          omega_sample.size() * port_excitations.Size(),
+                          frequency_major ? fmt::format(", excitation {:d}", excitation_idx)
+                                          : "")
+            : "");
+
+    // Solve linear system.
+    space_op.GetExcitationVector(excitation_idx, omega, RHS);
+
+    Mpi::Print("\n");
+    ksp->Mult(RHS, E);
+
+    if (s + 1 == solves.size())
+    {
+      // That was the last solve: save the solver totals and release the linear solver
+      // and system operators, so they do not add to the memory peak of the field output
+      // and error estimation which follow.
+      SaveMetadata(*ksp);
+      ksp.reset();
+      A.reset();
+      A2.reset();
+      P.reset();
+      K.reset();
+      C.reset();
+      M.reset();
+    }
+
+    // Start Post-processing.
     BlockTimer bt0(Timer::POSTPRO);
-    if (ksp)
+    Mpi::Print(" Sol. ||E|| = {:.6e} (||RHS|| = {:.6e})\n",
+               linalg::Norml2(space_op.GetComm(), E),
+               linalg::Norml2(space_op.GetComm(), RHS));
+
+    // Compute B = -1/(iω) ∇ x E on the true dofs.
+    Curl.Mult(E.Real(), B.Real());
+    Curl.Mult(E.Imag(), B.Imag());
+    B *= -1.0 / (1i * omega);
+    if (space_op.GetMaterialOp().HasWaveVector())
+    {
+      // Calculate B field correction for Floquet BCs: B += k_F(ω)/ω × E.
+      // With k₀ = k_F_ref/ω_ref stored, k_F(ω)/ω = k_F_ref/ω_ref = k₀, so scale = 1.
+      floquet_corr->AddMult(
+          E, B, space_op.GetMaterialOp().HasFloquetFrequencyScaling() ? 1.0 : 1.0 / omega);
+    }
+
+    if (std::ranges::find(paraview_excitations, excitation_idx) ==
+        paraview_excitations.end())
+    {
+      // Switch ParaView subfolders once per excitation, after the first solve. Delay the
+      // potentially large visualization operators until the first solution is ready, so
+      // they do not increase the solve/preconditioner peak.
+      post_op.InitializeParaviewDataCollection(excitation_idx);
+      paraview_excitations.push_back(excitation_idx);
+    }
+    if (env)
+    {
+      post_op.SetLumpedPortVoltages(env->PortVoltages(excitation_idx, omega, E));
+    }
+    auto total_domain_energy =
+        post_op.MeasureAndPrintAll(excitation_idx, int(omega_i), E, B, omega);
+
+    // Calculate and record the error indicators.
+    if (estimator)
+    {
+      Mpi::Print(" Updating solution error estimates\n");
+      estimator->AddErrorIndicator(E, B, total_domain_energy, indicator);
+    }
+
+    // Final postprocessing & printing of an excitation. After the last solve, the solver
+    // totals were already saved when the solver was released.
+    if (ksp && !frequency_major && solves[s + 1].excitation_idx != excitation_idx)
     {
       SaveMetadata(*ksp);
     }
