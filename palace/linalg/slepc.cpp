@@ -224,9 +224,9 @@ void ConfigureQualityFactorRegion(RG rg, PetscReal s, double q_min)
   // region is a trapezoid from Im{λ} = s up to far above any eigenvalue near the target.
   MFEM_VERIFY(s > 0.0 && q_min > 0.5,
               "Invalid target or minimum quality factor for the eigenvalue region!");
-  constexpr double q_grow = 10.0;
+  // Experiment: the same bound |Q| >= q_min for growing modes as for damped ones.
   const PetscReal a = 0.5 / std::sqrt(q_min * q_min - 0.25);
-  const PetscReal b = 0.5 / std::sqrt(q_grow * q_grow - 0.25);
+  const PetscReal b = a;
   const PetscReal h = 1.0e3 * std::max(PetscReal(1.0), s);
   PetscScalar v[4] = {PetscScalar(-a * s, s), PetscScalar(b * s, s), PetscScalar(b * h, h),
                       PetscScalar(-a * h, h)};

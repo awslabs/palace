@@ -497,7 +497,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         const double lin_tol = iodata.solver.linear.tol;
         eigen->SetFirstCycleLinearSolverTol(
             std::max(1.0e-2 * lin_tol, std::min(lin_tol, 1.0e-12)),
-            q_region ? num_warm + 1 : -1);
+            (q_region || !(C || has_A2)) ? num_warm + 1 : -1);
       }
     }
     if (num_warm == 0)
