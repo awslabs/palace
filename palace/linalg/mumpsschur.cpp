@@ -281,10 +281,13 @@ void MumpsSchurSolverT<T>::Factor()
   // Factorization (+ Schur). The workspace estimates of the analysis can be too small in
   // parallel (the dense Schur root sits on one rank). If the integer workspace or the
   // buffers are (INFOG(1) = -8, -20), double their relaxation ICNTL(14) and retry. If the
-  // real workspace S is (-9), whose shortfall can be the Schur root that the relaxation of
-  // a small estimate does not cover, give each process the memory it allocated (ICNTL(23),
-  // in MB, which MUMPS reads on each process when it is set on more than the host) and the
-  // processes that ran short twice their shortfall (INFO(2) entries) more, and retry.
+  // real workspace is (-9), its shortfall can be in the main workspace, which MUMPS sizes
+  // from the estimate relaxed by ICNTL(14), or in the allocations it makes within the
+  // memory allowed per process (ICNTL(23), in MB, which MUMPS reads on each process when it
+  // is set on more than the host), such as that of the dense Schur root: double the
+  // relaxation and the memory allowed, from what each process allocated (INFO(16)) with
+  // twice their shortfall (INFO(2) entries) more on the processes that ran short, and
+  // retry.
   if (rank == 0 && n_schur > 0 && schur.empty())
   {
     // (Again after ReleaseSchur.)
@@ -302,9 +305,13 @@ void MumpsSchurSolverT<T>::Factor()
     {
       break;
     }
+    Mpi::Print(comm,
+               " MUMPS factorization short of workspace (INFOG(1) = {:d}, INFOG(2) = "
+               "{:d}): retrying\n",
+               err, id.infog[1]);
+    id.icntl[13] *= 2;  // ICNTL(14)
     if (err != -9)
     {
-      id.icntl[13] *= 2;  // ICNTL(14)
       continue;
     }
     double short_mb = 0.0;
@@ -313,8 +320,7 @@ void MumpsSchurSolverT<T>::Factor()
       const double entries = (id.info[1] > 0) ? id.info[1] : -1.0e6 * id.info[1];
       short_mb = entries * sizeof(T) / 1.0e6;
     }
-    // ICNTL(23) from INFO(16), the memory allocated in the failed attempt.
-    id.icntl[22] = std::max<MUMPS_INT>(id.icntl[22], id.info[15]) +
+    id.icntl[22] = 2 * std::max<MUMPS_INT>(id.icntl[22], id.info[15]) +  // ICNTL(23)
                    static_cast<MUMPS_INT>(std::ceil(2.0 * short_mb)) + 1;
   }
   Check("factorization");
