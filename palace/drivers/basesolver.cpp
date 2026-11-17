@@ -703,7 +703,7 @@ void BaseSolver::SaveMetadata(SurfaceResponseOperator &response) const
         response.GetCoverageRunRecord(), response.GetCoverageThresholds(),
         response.GetCoverageValidatedRegime(),
         iodata.units.Dimensionalize<Units::ValueType::ENERGY>(1.0), solve_level,
-        solve_levels);
+        solve_levels, response.CoverageMarkNotApplied());
     coverage_block_written = true;
     coverage_banner = CoverageRunBanner(meta["SurfaceResponse"]["Coverage"]);
     // Lane rescensus-product (decision 1817; ruling 1819): the edge-resolution census of

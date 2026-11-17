@@ -28104,8 +28104,9 @@ MirrorFormedEdgeWeights MirrorFormedEdgeWeightsOf(
                     << " but the identification's contract reads the portion as "
                     << (weight > 0.0 ? "REAL" : "an IMAGE") << " (RealPortions "
                     << contract.at("RealPortions").dump()
-                    << "): an inconsistent MirrorFormed record (fail closed, decision 557 "
-                       "(4))!");
+                    << "): an inconsistent MirrorFormed record (fail closed: an edge on a "
+                       "real portion of the contract must have Weight 1, an edge on an "
+                       "image portion Weight 0)!");
     real_edges += weight > 0.0 ? 1 : 0;
     result.weights.push_back(weight);
   }
@@ -33353,6 +33354,9 @@ void SurfaceResponseOperator::ConfigureCoverage(const ResponseCorrectionData &re
   // rank; the library's load is unchanged).
   coverage_thresholds.build_target = request.coverage.build_target;
   coverage_thresholds.max_uncovered_share = request.coverage.max_uncovered_share;
+  coverage_mark_not_applied = request.coverage.policy ==
+                              config::ElectrostaticSolverData::ResponseCorrectionData::
+                                  CoverageData::Policy::MARK_NOT_APPLIED;
   if (!request.coverage.validated_regime.empty())
   {
     MFEM_VERIFY(request.IsAutomatic(),

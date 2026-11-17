@@ -3388,7 +3388,7 @@
             },
             "PreflightOnly": {
               "type": "boolean",
-              "description": "Run the surface-response preflight instead of a solve: exactly what the command-line option `--surface-response-preflight` does (the same code path, outputs and exit status), for front ends that start Palace without command-line options. The block of the configured `Problem.Type` is read (`Solver.Electrostatic.ResponseCorrection` for an electrostatic problem, `Solver.SurfaceResponseCorrection` otherwise); the log says in one line that no field solve is run. Requires `Library`; cannot be combined with `--mesh-statistics`. Remove the key to solve.",
+              "description": "Run the surface-response preflight instead of a solve: exactly what the command-line option `--surface-response-preflight` does (the same code path and exit status; the same outputs except that the resolved configuration records the key), for front ends that start Palace without command-line options. The block of the configured `Problem.Type` is read (`Solver.Electrostatic.ResponseCorrection` for an electrostatic problem, `Solver.SurfaceResponseCorrection` otherwise); the log says in one line that no field solve is run. Requires `Library`; cannot be combined with `--mesh-statistics`. Remove the key to solve.",
               "default": false
             },
             "ImpedanceMetalRule": {
@@ -3585,8 +3585,8 @@
               "properties": {
                 "Policy": {
                   "type": "string",
-                  "enum": ["Warn"],
-                  "description": "What a cell with poor coverage does: \"Warn\" (the banner; every corrected value unchanged) is the only value accepted today.",
+                  "enum": ["Warn", "MarkNotApplied"],
+                  "description": "What a cell with poor coverage does. \"Warn\" (the default): the banner; every corrected value printed. \"MarkNotApplied\": a corrected value built from a cell whose coverage status is PARTIAL, NOT-ACHIEVABLE, INCONSISTENT, TARGET-NOT-SERVED or NOT-MEASURED prints nan, and the value (the covered part corrected plus the uncovered part raw) moves to an appended column '<column> partial (uncovered part raw)'; the corrected totals, frequency shifts, self-consistent frequencies and terminal matrices built from such a cell are marked the same way. No computed number changes. \"Abort\" is not in this version.",
                   "default": "Warn"
                 },
                 "MaxUncoveredShare": {

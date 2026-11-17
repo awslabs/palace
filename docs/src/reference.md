@@ -2156,9 +2156,10 @@ Palace without command-line options (a cluster run service runs `palace config.j
 `"PreflightOnly": true` in `Solver.SurfaceResponseCorrection` (Maxwell) or in
 `Solver.Electrostatic.ResponseCorrection` (electrostatic; the block of the configured
 `Problem.Type` is read) runs exactly the code path of `--surface-response-preflight`, with
-the same outputs and the same exit status; the log says in one line that no field solve is
-run. Remove the key (default `false`) to solve. The key requires `Library`, and like the
-option it cannot be combined with `--mesh-statistics`.
+the same exit status and the same outputs except that the resolved configuration records
+the key; the log says in one line that no field solve is run. Remove the key (default
+`false`) to solve. The key requires `Library`, and like the option it cannot be combined
+with `--mesh-statistics`.
 
 **Impedance metals: the measuring-only mode (EXPERIMENTAL).** Library models are perfect
 conductor coupons of one fabricated film, so a device metal with an `Impedance`,
@@ -2191,8 +2192,8 @@ it is a twin of the operator of record, and every measurement checks that the ca
 equals the record cell for cell (a mismatch ends the run with an error). `"Apply"` is
 reserved and refused in this build.
 
-Exit status of a preflight: `0` when it completed; `3` when it wrote its complete manifest
-and patch dry run and then ended because `GeometryFailurePolicy` is `FailClosed` (the
+Exit status of a preflight: `0` when it completed; `3` when it wrote its manifest and patch
+dry run (3D) in full and then ended because `GeometryFailurePolicy` is `FailClosed` (the
 preflight's default) and geometry fallbacks were recorded: the last log line names their
 count and classes and the files written (see `Identification.Diagnostics.GeometryFallbacks`
 of the manifest). A run service shows a nonzero status as a failed run with that exit
@@ -2888,10 +2889,62 @@ conductor-consistency-excluded claims not served), and the range's `Provenance` 
 that basis in its rule text.
 
 The configuration block, on both paths (`Solver.SurfaceResponseCorrection.Coverage` and
-`Solver.Electrostatic.ResponseCorrection.Coverage`): `"Policy"` accepts `"Warn"` only (any
-other value is an error until a policy is ruled), `"MaxUncoveredShare"` 0.05 and
-`"BuildTarget"` 0.02 (interim bars, FIXED: any other value is an error until the status
+`Solver.Electrostatic.ResponseCorrection.Coverage`): `"Policy"` (`"Warn"`, the default, or
+`"MarkNotApplied"`; any other value is an error; `"Abort"` is not in this version: the schema's
+enum refuses it in a run with its generic message, like any other value), `"MaxUncoveredShare"` 0.05
+and `"BuildTarget"` 0.02 (interim bars, FIXED: any other value is an error until the status
 validation rules otherwise), and `"ValidatedRegime"`.
+
+`"Policy": "MarkNotApplied"` (not the default) prints no corrected value that a cell with a
+marked coverage status was built from. The marked statuses are `PARTIAL`, `NOT-ACHIEVABLE`,
+`INCONSISTENT`, `TARGET-NOT-SERVED` and `NOT-MEASURED` (`palace.json`
+`SurfaceResponse.Coverage.MarkedStatuses`); `OK`, `LOW`, `NO-ENERGY` and `NOT-TARGET` cells
+and every regime status never mark. Two fail-closed marks need no marked status: a
+measurement without any coverage cell marks its whole values, and a coverage interface whose
+`Type` has no cell marks that interface's values (both counted in `MarkedMeasurements` and
+listed in `MarkedWithoutCell` with the reason). A marked cell prints the bare token `nan` and its value
+moves to an appended column with the same header and the suffix ` partial (uncovered part
+raw)` (nan where the cell is not marked): the value is the covered part corrected plus the
+uncovered within-`R` part raw. Per interface of `surface-Q-corrected.csv` the `E` / `p` /
+`Q` corrected, corrected fixed-flux and self-consistent columns follow the interface's `Type`
+cell (the electrostatic `E` / `p` / `Q` postprocessed fixed-trace, fixed-flux and corrected
+columns the same); the corrected normalizations (`E_norm` / `E_elec` corrected, fixed-flux,
+self-consistent), the self-consistent frequency, the fixed-trace frequency shift and
+corrected frequency, the magnetic domain correction and the self-consistent magnetic
+frequency follow ANY marked cell of their measurement. An unmarked `Type` beside a marked one
+keeps its `p` / `Q` (its normalization is the partial one: the appended column `not-applied
+uncovered raw share of E_norm` / `E_elec` prints the raw within-`R` energy the marked cells
+leave uncorrected over the raw normalization). Entry `(i, j)` of
+`terminal-C-corrected.csv` is marked when ANY cell of the final measurement of source `i`
+or `j` is (not by the worse-of-two status of `terminal-C-corrected-coverage.csv`); a
+diagonal entry of `terminal-Cm-corrected.csv` when any entry of its row of `C` is; every
+entry of `terminal-Cinv-corrected.csv` when any entry of `C` is; `palace.json`
+`SurfaceResponse.TerminalCapacitance` prints null for a marked entry and the value in
+`FixedTracePartial` / `SelfConsistentPartial`. On the eigenmode path the log's corrected
+eigenvalue line names no value and the self-consistent mode-matching table is printed after
+the modes are measured. The `palace.json` block gains `MarkedStatuses`, `MarkedCells`, `MarkedMeasurements`,
+`MarkedWithoutCell` (when any) and `Flagged[].Marked`; the banner names the marked cells.
+Every corrected table states each cell's mark EXPLICITLY in integer columns appended last
+(`1` = the cells print `nan`, their values in the partial columns; `0` = printed as
+computed): `surface-Q-corrected.csv` of a Maxwell run `coverage mark E_norm` (the row's
+`E_norm` corrected, corrected fixed-flux and self-consistent cells) and `coverage mark
+E_surf` (the row interface's `E` / `p` / `Q` corrected, corrected fixed-flux and
+self-consistent cells); `surface-Q-corrected.csv` of an electrostatic run `coverage mark
+E_elec` (the source's `E_elec` postprocessed fixed-trace, fixed-flux and corrected cells) and
+`coverage mark[k]` per interface `k` (its `E` / `p` / `Q` postprocessed fixed-trace,
+fixed-flux and corrected cells); `surface-response-confidence.csv` `coverage mark
+measurement` (the row's frequency and magnetic cells above); `terminal-C-corrected.csv`,
+`terminal-Cm-corrected.csv` and `terminal-Cinv-corrected.csv` `coverage mark[i][j]` (entry
+`(i, j)`, fixed-trace and corrected). A reader keys on these headers exactly, never on a
+`nan` token. No computed number changes and every
+raw column is unchanged. For a marked cell, the shares of the uncovered-energy and portion
+tables (`surface-response-uncovered-energy.csv` and the conductor-consistency, domain-boundary,
+spatial-cluster-priority and exclusion portion tables) are taken on its PARTIAL corrected
+energy, the value of its ` partial (uncovered part raw)` column: a share is a diagnostic, not
+a corrected value, and the marked number is printed on purpose in that column (the banner
+says so in one line). The product prints no uncertainty band: a reader of its tables
+alone has the coverage and regime columns but no uncertainty statement. `"Warn"` prints
+every value as before.
 
 The corrected surface energy of a Maxwell run keeps raw the energy of the
 conductor-consistency-excluded patches' claims and, separately, the circulating loop

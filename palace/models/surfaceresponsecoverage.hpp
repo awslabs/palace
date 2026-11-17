@@ -100,6 +100,43 @@ std::string_view CoverageExcitationClassName(CoverageExcitationClass excitation)
 int CoverageStatusRank(CoverageStatus status);
 int RegimeStatusRank(RegimeStatus status);
 
+// Lane L4 (decision 1829; USER 1636 (2); DESIGN-L4-v2 s2.1): THE MARKED SET of the
+// mark-not-applied policy, one table (IsCoverageStatusMarked): a corrected value built from
+// a cell whose coverage status is marked prints nan under Policy "MarkNotApplied" and its
+// value moves to the appended partial column. PARTIAL and NOT-ACHIEVABLE (USER 1636 (2)),
+// INCONSISTENT, TARGET-NOT-SERVED and NOT-MEASURED (question Q2 to the USER, the
+// recommended answer "yes": this table is the switch) are marked; OK, LOW, NO-ENERGY (W =
+// 0: no within-R raw energy near identified edges to correct) and NOT-TARGET are not. A
+// regime status never marks.
+bool IsCoverageStatusMarked(CoverageStatus status);
+// Lane L4 (question Q4, the recommended name): the header suffix of the appended column
+// that holds a marked corrected value (the covered part corrected PLUS the uncovered
+// within-R part raw: today's number). One constant.
+inline constexpr const char *kCoveragePartialColumnSuffix = " partial (uncovered part raw)";
+// Lane L4 (question Q3, the recommended answer "keep + flag" = false): whether a marked
+// cell marks the per-interface corrected values of EVERY Type of its measurement (true) or
+// only of its own Type (false: a covered Type keeps its p / Q, flagged by the nan corrected
+// normalization of its row and the exposure column). One constant.
+inline constexpr bool kCoverageMarkWholeMeasurement = false;
+// Lane L4 round 2 (decision 1914): the EXPLICIT per-cell marks. Under Policy
+// "MarkNotApplied" every corrected table appends, LAST, integer 0 / 1 columns = the
+// writer's own mark of the cells it covers (1 = the cells print nan, their values in the
+// partial columns), so that a reader keys on a stated mark, never on a token; under "Warn"
+// none exists. The readers and the guard match these headers EXACTLY (docs/src/reference.md
+// lists them). Maxwell surface-Q-corrected.csv: the E_norm corrected / corrected fixed-flux
+// / self-consistent cells of the row's measurement, and the row interface's E / p / Q
+// corrected, corrected fixed-flux and self-consistent cells; electrostatic
+// surface-Q-corrected.csv: the source's E_elec postprocessed fixed-trace / fixed-flux /
+// corrected cells, and per interface k its E / p / Q postprocessed fixed-trace / fixed-flux
+// / corrected cells; surface-response-confidence.csv: the row's measurement cells; the
+// corrected terminal matrices: entry (i, j), fixed-trace and corrected.
+inline constexpr const char *kCoverageMarkNormalizationColumn = "coverage mark E_norm";
+inline constexpr const char *kCoverageMarkInterfaceColumn = "coverage mark E_surf";
+inline constexpr const char *kCoverageMarkSourceColumn = "coverage mark E_elec";
+inline constexpr const char *kCoverageMarkIndexedInterfaceColumn = "coverage mark[{}]";
+inline constexpr const char *kCoverageMarkMeasurementColumn = "coverage mark measurement";
+inline constexpr const char *kCoverageMarkMatrixEntryColumn = "coverage mark[i][{}]";
+
 // The interim bars (SurfaceResponseCorrection.Coverage; the gate in force's
 // BuildTarget 0.02 and MaxUncoveredShare 0.05 as placeholders).
 struct CoverageThresholds
@@ -265,7 +302,36 @@ struct CoverageMeasurement
   // never enter; nullptr when no other cell exists.
   const CoverageCell *WorstCoverageCell() const;
   const CoverageCell *WorstRegimeCell() const;
+  // Lane L4 (DESIGN-L4-v2 s2.3): whether any cell of the measurement is marked
+  // (IsCoverageStatusMarked; the whole-measurement values: the corrected normalizations and
+  // totals, the frequency shift, the self-consistent frequency, the terminal-matrix entries
+  // of a source); whether the per-interface corrected values of a Type are marked (its own
+  // cell, or AnyMarked under kCoverageMarkWholeMeasurement); and the raw within-R energy
+  // the marked cells leave uncorrected (the sum of their U W; nan when a marked cell has no
+  // measured U, e.g. NOT-MEASURED; 0 when no cell is marked).
+  bool AnyMarked() const;
+  bool IsTypeMarked(const std::string &type) const;
+  double MarkedUncoveredEnergy() const;
+  // The mark of the measurement's whole values: AnyMarked, or no cell at all (fail-closed:
+  // a corrected measurement without cells says nothing about its coverage).
+  bool MarksWholeMeasurement() const { return AnyMarked() || cells.empty(); }
+  // Lane L4 (ERRATUM-1847 m-2): the Types of the coverage interfaces (`types`) that hold no
+  // cell; the writers mark such an interface's corrected values (fail-closed, like a
+  // measurement without cells).
+  std::vector<std::string> TypesWithoutCell() const;
 };
+// Lane L4 (ERRATUM-1829 E-1; DESIGN-L4-v2 s2.3 E2): the marks of the corrected terminal
+// matrices from the per-source marks (MarksWholeMeasurement of each source's FINAL
+// measurement): C(i, j) iff source i or source j is marked (never the coverage table's
+// worse-of-two status: NO-ENERGY / TARGET-NOT-SERVED / NOT-MEASURED outrank PARTIAL there);
+// C_m off-diagonal as C(i, j), diagonal iff any entry of row i of C is; C⁻¹ every entry iff
+// any C entry is.
+struct CoverageTerminalMatrixMarks
+{
+  std::vector<std::vector<bool>> capacitance, mutual, inverse;
+};
+CoverageTerminalMatrixMarks
+ComputeCoverageTerminalMatrixMarks(const std::vector<bool> &source_marked);
 // `within` (W) and `fabricated` per target interface (the corrected bookkeeping's raw -
 // outside at R and the correction's fabricated energy, evaluation 0); `types` the target
 // interfaces' Types; `loop_remainder_excluded` per target interface (J; Maxwell; absent =
@@ -349,6 +415,15 @@ struct CoverageRunRecord
   // Ruling 1738: why no cell was measured (a raw fallback: its geometry fallback class);
   // with no cell, palace.json writes "Complete": true only when this is set.
   std::string no_cells_reason;
+  // Lane L4 (ERRATUM-1847 m-2): the measurements marked without a marked-status cell (no
+  // cell at all, or a coverage interface Type without a cell) and why; counted in
+  // MarkedMeasurements and listed as MarkedWithoutCell under MarkNotApplied.
+  struct MarkWithoutCell
+  {
+    std::vector<std::pair<std::string, double>> keys;
+    std::string reason;
+  };
+  std::vector<MarkWithoutCell> marked_without_cell;
   void Add(const std::vector<std::pair<std::string, double>> &keys,
            const CoverageMeasurement &measurement);
 };
@@ -359,14 +434,24 @@ struct CoverageRunRecord
 // `levels` = the solve of the AMR sequence that wrote the block (1 = the initial mesh) of
 // Refinement.MaxIts + 1 (1 without AMR), written as Level / Levels; the block never holds
 // "Final" (BaseSolver adds it once the AMR loop has ended).
+// Lane L4 (DESIGN-L4-v2 s2.4): `mark_not_applied` (Policy "MarkNotApplied") writes "Policy"
+// "MarkNotApplied", "MarkedStatuses", "MarkedCells", "MarkedMeasurements" (a measurement
+// with a marked cell or marked without one: ERRATUM-1847 m-2), "MarkedWithoutCell" (when
+// any) and each Flagged entry's "Marked"; false (Policy "Warn") writes the block exactly as
+// before.
 nlohmann::json CoverageRunMetadata(const CoverageRunRecord &record,
                                    const CoverageThresholds &thresholds,
                                    const CoverageValidatedRegime &regime,
-                                   double energy_scale, int level, int levels);
+                                   double energy_scale, int level, int levels,
+                                   bool mark_not_applied = false);
 // The end-of-run banner of palace.json's block (a line per flagged cell: coverage not OK or
 // regime not IN, a NO-RANGE cell's line saying "computed, NOT VALIDATED in this regime";
 // at most 40 such lines, then one line counting the rest, which palace.json's Flagged
-// lists; one NO-RANGE summary line; one line naming the status-less served models).
+// lists; one NO-RANGE summary line; one line naming the status-less served models). Lane
+// L4: a block with "Policy" "MarkNotApplied" adds the MARK-NOT-APPLIED header and label
+// lines after the first line, ends each flagged line of a marked cell with " [NOT
+// APPLIED]" and adds the share-denominator line; a "Warn" block prints the banner exactly
+// as before.
 std::string CoverageRunBanner(const nlohmann::json &metadata);
 
 // Ruling 1688 (the stage-0 Missing LENGTH line; a log line only): the uncovered portions

@@ -1866,11 +1866,25 @@ ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
       // Lane L1 (decision 1634 (4)): the coverage outputs' block (interim bars).
       MFEM_VERIFY(coverage->is_object(),
                   "Response-correction \"Coverage\" must be an object!");
-      const std::string policy = coverage->value("Policy", "Warn");
-      MFEM_VERIFY(
-          policy == "Warn",
-          "Response-correction \"Coverage\": \"Policy\" accepts \"Warn\" only (another "
-          "policy awaits the USER's ruling D4)!");
+      // Lane L4 (decision 1829): "Warn" | "MarkNotApplied"; "Abort" is refused by name (not
+      // in this version); the key absent = CoverageData::kDefaultCoveragePolicy.
+      if (auto policy = coverage->find("Policy"); policy != coverage->end())
+      {
+        MFEM_VERIFY(policy->is_string(),
+                    "Response-correction \"Coverage\": \"Policy\" must be a string!");
+        const std::string value = policy->get<std::string>();
+        MFEM_VERIFY(value != "Abort",
+                    "Response-correction \"Coverage\": \"Policy\" \"Abort\" is not in this "
+                    "version (\"Warn\" or \"MarkNotApplied\")!");
+        MFEM_VERIFY(value == "Warn" || value == "MarkNotApplied",
+                    "Response-correction \"Coverage\": \"Policy\" must be \"Warn\" or "
+                    "\"MarkNotApplied\" (got \""
+                        << value << "\")!");
+        data.coverage.policy =
+            value == "Warn"
+                ? ResponseCorrectionData::CoverageData::Policy::WARN
+                : ResponseCorrectionData::CoverageData::Policy::MARK_NOT_APPLIED;
+      }
       data.coverage.max_uncovered_share =
           coverage->value("MaxUncoveredShare", data.coverage.max_uncovered_share);
       data.coverage.build_target =

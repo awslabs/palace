@@ -995,6 +995,8 @@ private:
   CoverageValidatedRegime coverage_validated_regime;
   std::map<std::string, CoverageModelQualification> coverage_model_qualifications;
   CoverageRunRecord coverage_run_record;  // root only: the writers' cells of the run
+  // Lane L4 (decision 1829): Coverage.Policy "MarkNotApplied" (false = "Warn").
+  bool coverage_mark_not_applied = false;
   void
   ConfigureCoverage(const config::ElectrostaticSolverData::ResponseCorrectionData &request,
                     MPI_Comm comm);
@@ -1891,6 +1893,9 @@ public:
   }
   // Lane L1 (decision 1634 (4)): the coverage outputs' inputs (ConfigureCoverage).
   const CoverageThresholds &GetCoverageThresholds() const { return coverage_thresholds; }
+  // Lane L4 (decision 1829): whether the writers mark the corrected values of marked cells
+  // (Coverage.Policy "MarkNotApplied"); false = "Warn" (every value printed).
+  bool CoverageMarkNotApplied() const { return coverage_mark_not_applied; }
   // The run's coverage cells as the writers printed them (root only), for the end-of-run
   // banner and palace.json SurfaceResponse.Coverage (BaseSolver::SaveMetadata).
   CoverageRunRecord &GetCoverageRunRecord() { return coverage_run_record; }

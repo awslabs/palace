@@ -17,6 +17,7 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 #include "driver.hpp"
+#include "models/surfaceresponsecoverage.hpp"
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
 #include "utils/omp.hpp"
@@ -139,6 +140,57 @@ mfem::DenseMatrix CorrectedMatrix(const Table &table, const std::string &name,
   return mat;
 }
 
+// The device of the corrected-capacitance cases: the 2D automatic library problem with
+// the line as a second terminal, its mesh and the library whose response matrices are
+// scaled by 1e-6 (WriteScaledMatrix) written by the root.
+json CorrectedCapacitanceConfig(const test::SurfaceResponseFiles &files)
+{
+  const fs::path mesh_path = files.temp.temp_dir / "corrected-capacitance-2d.mesh";
+  const fs::path scaled_library_path =
+      files.temp.temp_dir / "fabrication-process-corrected-capacitance.json";
+  {
+    mfem::Mesh serial = test::SurfaceResponseFiles::MakeAutomatic2DMesh();
+    if (Mpi::Root(Mpi::World()))
+    {
+      std::ofstream output(mesh_path);
+      serial.Print(output);
+      constexpr double scale = 1.0e-6;
+      std::ifstream library_input(files.library_path);
+      REQUIRE(library_input);
+      json library = json::parse(library_input);
+      REQUIRE(library["Models"].size() == 1);
+      auto &model = library["Models"][0];
+      for (const auto &[key, first_energy] :
+           {std::pair<const char *, std::size_t>{"FabricatedMatrix", 2},
+            std::pair<const char *, std::size_t>{"ThinMatrix", 2},
+            std::pair<const char *, std::size_t>{"FabricatedSurfaceMatrix", 5},
+            std::pair<const char *, std::size_t>{"ThinSurfaceMatrix", 5}})
+      {
+        const fs::path source = model[key].get<std::string>();
+        const fs::path target =
+            files.temp.temp_dir / ("corrected-capacitance-" + source.filename().string());
+        WriteScaledMatrix(source, target, first_energy, scale);
+        model[key] = target.string();
+      }
+      std::ofstream library_output(scaled_library_path);
+      library_output << library.dump(2) << "\n";
+    }
+  }
+  Mpi::Barrier(Mpi::World());
+
+  json config = files.AutomaticConfig2D();
+  config["Model"]["Mesh"] = mesh_path.string();
+  config["Solver"]["Electrostatic"]["ResponseCorrection"]["Library"] =
+      scaled_library_path.string();
+  config["Boundaries"]["Ground"] = {{"Attributes", {1, 3, 4}}};
+  config["Boundaries"]["Terminal"] = {{{"Index", 1}, {"Attributes", {2}}},
+                                      {{"Index", 2}, {"Attributes", {9, 10}}}};
+  // The raw solve converges in 6 PCG iterations (Tol 1e-12); MaxIts bounds the corrected
+  // solve of the unconverged run below.
+  config["Solver"]["Linear"] = {{"Tol", 1.0e-12}, {"MaxIts", 12}};
+  return config;
+}
+
 }  // namespace
 
 // Decision 334: the response-corrected capacitance of the fixed-trace DOMAIN defect,
@@ -156,49 +208,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "Electrostatic corrected terminal c
 #if !defined(MFEM_USE_GSLIB)
   SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
 #else
-  const fs::path mesh_path = temp.temp_dir / "corrected-capacitance-2d.mesh";
-  const fs::path scaled_library_path =
-      temp.temp_dir / "fabrication-process-corrected-capacitance.json";
-  {
-    mfem::Mesh serial = MakeAutomatic2DMesh();
-    if (Mpi::Root(Mpi::World()))
-    {
-      std::ofstream output(mesh_path);
-      serial.Print(output);
-      constexpr double scale = 1.0e-6;
-      std::ifstream library_input(library_path);
-      REQUIRE(library_input);
-      json library = json::parse(library_input);
-      REQUIRE(library["Models"].size() == 1);
-      auto &model = library["Models"][0];
-      for (const auto &[key, first_energy] :
-           {std::pair<const char *, std::size_t>{"FabricatedMatrix", 2},
-            std::pair<const char *, std::size_t>{"ThinMatrix", 2},
-            std::pair<const char *, std::size_t>{"FabricatedSurfaceMatrix", 5},
-            std::pair<const char *, std::size_t>{"ThinSurfaceMatrix", 5}})
-      {
-        const fs::path source = model[key].get<std::string>();
-        const fs::path target =
-            temp.temp_dir / ("corrected-capacitance-" + source.filename().string());
-        WriteScaledMatrix(source, target, first_energy, scale);
-        model[key] = target.string();
-      }
-      std::ofstream library_output(scaled_library_path);
-      library_output << library.dump(2) << "\n";
-    }
-  }
-  Mpi::Barrier(Mpi::World());
-
-  json config = AutomaticConfig2D();
-  config["Model"]["Mesh"] = mesh_path.string();
-  config["Solver"]["Electrostatic"]["ResponseCorrection"]["Library"] =
-      scaled_library_path.string();
-  config["Boundaries"]["Ground"] = {{"Attributes", {1, 3, 4}}};
-  config["Boundaries"]["Terminal"] = {{{"Index", 1}, {"Attributes", {2}}},
-                                      {{"Index", 2}, {"Attributes", {9, 10}}}};
-  // The raw solve converges in 6 PCG iterations (Tol 1e-12); MaxIts bounds the corrected
-  // solve of the unconverged run below.
-  config["Solver"]["Linear"] = {{"Tol", 1.0e-12}, {"MaxIts", 12}};
+  json config = CorrectedCapacitanceConfig(*this);
   auto correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
   const fs::path raw_dir = temp.temp_dir / "corrected-capacitance-raw";
   const fs::path both_dir = temp.temp_dir / "corrected-capacitance-both";
@@ -381,6 +391,111 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "Electrostatic corrected terminal c
       unconverged_metadata.at("SurfaceResponse").at("TerminalCapacitance");
   CHECK(unconverged_record.at("FixedTrace") == record.at("FixedTrace"));
   CHECK(unconverged_record.at("SelfConsistent").is_null());
+#endif
+}
+
+// Lane L4 round 2 (decision 1914): the explicit per-cell marks of Coverage.Policy
+// "MarkNotApplied". The device above run under "Warn" and under "MarkNotApplied": no Warn
+// table carries a mark column; every MarkNotApplied corrected table appends the integer
+// columns of surfaceresponsecoverage.hpp, and every corrected cell with a partial twin
+// agrees with its mark (1: the cell nan, the twin the Warn value; 0: the cell the Warn
+// value, the twin nan).
+TEST_CASE_METHOD(
+    test::SurfaceResponseFiles, "Coverage policy mark columns",
+    "[CoveragePolicy][electrostaticsolver][surfaceresponseoperator][2d][Serial]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  json config = CorrectedCapacitanceConfig(*this);
+  config["Solver"]["Electrostatic"]["ResponseCorrection"]["CorrectionMode"] = "Both";
+  const fs::path warn_dir = temp.temp_dir / "coverage-mark-warn";
+  const fs::path marked_dir = temp.temp_dir / "coverage-mark-marknotapplied";
+  config["Problem"]["Output"] = warn_dir.string();
+  config["Solver"]["Electrostatic"]["ResponseCorrection"]["Coverage"]["Policy"] = "Warn";
+  RunElectrostatic(config);
+  config["Problem"]["Output"] = marked_dir.string();
+  config["Solver"]["Electrostatic"]["ResponseCorrection"]["Coverage"]["Policy"] =
+      "MarkNotApplied";
+  RunElectrostatic(config);
+  Mpi::Barrier(Mpi::World());
+  if (!Mpi::Root(Mpi::World()))
+  {
+    return;
+  }
+  CHECK(std::string(kCoverageMarkSourceColumn) == "coverage mark E_elec");
+  const std::string suffix = kCoveragePartialColumnSuffix;
+  int marked = 0, unmarked = 0;
+  for (const char *file : {"surface-Q-corrected.csv", "terminal-C-corrected.csv",
+                           "terminal-Cm-corrected.csv", "terminal-Cinv-corrected.csv"})
+  {
+    INFO(file);
+    const bool matrix = std::string(file) != "surface-Q-corrected.csv";
+    const Table warn = LoadCsv(warn_dir / file);
+    const Table mark = LoadCsv(marked_dir / file);
+    // The mark column of a twinned header: a matrix entry's "[i][j]", an interface's "[k]",
+    // else the source's E_elec columns.
+    auto MarkHeader = [&](const std::string &header)
+    {
+      const auto open = header.rfind('[');
+      const auto close = header.find(']', open);
+      const std::string index =
+          open == std::string::npos ? "" : header.substr(open + 1, close - open - 1);
+      if (matrix)
+      {
+        return fmt::format(fmt::runtime(kCoverageMarkMatrixEntryColumn), index);
+      }
+      return index.empty()
+                 ? std::string(kCoverageMarkSourceColumn)
+                 : fmt::format(fmt::runtime(kCoverageMarkIndexedInterfaceColumn), index);
+    };
+    int mark_columns = 0, interfaces = 0;
+    for (auto it = mark.cbegin(); it != mark.cend(); ++it)
+    {
+      mark_columns += it->header_text.rfind("coverage mark", 0) == 0;
+      interfaces += it->header_text.rfind("E_surf raw[", 0) == 0;
+    }
+    for (auto it = warn.cbegin(); it != warn.cend(); ++it)
+    {
+      INFO(it->header_text);
+      CHECK(it->header_text.rfind("coverage mark", 0) != 0);
+      bool twinned = false;
+      for (auto jt = mark.cbegin(); jt != mark.cend(); ++jt)
+      {
+        twinned = twinned || jt->header_text == it->header_text + suffix;
+      }
+      if (!twinned)
+      {
+        continue;
+      }
+      const Column &value = ColumnByHeader(mark, it->header_text);
+      const Column &twin = ColumnByHeader(mark, it->header_text + suffix);
+      const Column &flag = ColumnByHeader(mark, MarkHeader(it->header_text));
+      REQUIRE(flag.data.size() == it->data.size());
+      for (std::size_t r = 0; r < it->data.size(); r++)
+      {
+        auto Same = [](double a, double b)
+        { return a == b || (std::isnan(a) && std::isnan(b)); };
+        CHECK((flag.data[r] == 0.0 || flag.data[r] == 1.0));
+        if (flag.data[r] == 1.0)
+        {
+          CHECK(std::isnan(value.data[r]));
+          CHECK(Same(twin.data[r], it->data[r]));
+          marked++;
+        }
+        else
+        {
+          CHECK(Same(value.data[r], it->data[r]));
+          CHECK(std::isnan(twin.data[r]));
+          unmarked++;
+        }
+      }
+    }
+    // One per matrix column (two terminals); E_elec + one per interface.
+    CHECK(mark_columns == (matrix ? 2 : 1 + interfaces));
+  }
+  INFO("marked cells " << marked << ", unmarked " << unmarked);
+  CHECK(marked + unmarked > 0);
 #endif
 }
 

@@ -145,6 +145,26 @@ int CoverageStatusRank(CoverageStatus status)
   return 6;
 }
 
+bool IsCoverageStatusMarked(CoverageStatus status)
+{
+  switch (status)
+  {
+    case CoverageStatus::PARTIAL:
+    case CoverageStatus::NOT_ACHIEVABLE:
+      return true;  // USER 1636 (2)
+    case CoverageStatus::INCONSISTENT:
+    case CoverageStatus::TARGET_NOT_SERVED:
+    case CoverageStatus::NOT_MEASURED:
+      return true;  // question Q2 (the recommended answer)
+    case CoverageStatus::OK:
+    case CoverageStatus::LOW:
+    case CoverageStatus::NO_ENERGY:
+    case CoverageStatus::NOT_TARGET:
+      return false;
+  }
+  return true;
+}
+
 int RegimeStatusRank(RegimeStatus status)
 {
   switch (status)
@@ -606,6 +626,75 @@ const CoverageCell *CoverageMeasurement::WorstCoverageCell() const
   return worst;
 }
 
+bool CoverageMeasurement::AnyMarked() const
+{
+  return std::any_of(cells.begin(), cells.end(),
+                     [](const auto &cell) { return IsCoverageStatusMarked(cell.status); });
+}
+
+bool CoverageMeasurement::IsTypeMarked(const std::string &type) const
+{
+  if (kCoverageMarkWholeMeasurement)
+  {
+    return AnyMarked();
+  }
+  const auto *cell = FindCell(type);
+  return cell && IsCoverageStatusMarked(cell->status);
+}
+
+std::vector<std::string> CoverageMeasurement::TypesWithoutCell() const
+{
+  std::vector<std::string> out;
+  for (const auto &[interface, type] : types)
+  {
+    (void)interface;
+    if (!FindCell(type) && std::find(out.begin(), out.end(), type) == out.end())
+    {
+      out.push_back(type);
+    }
+  }
+  return out;
+}
+
+double CoverageMeasurement::MarkedUncoveredEnergy() const
+{
+  double energy = 0.0;
+  for (const auto &cell : cells)
+  {
+    if (IsCoverageStatusMarked(cell.status))
+    {
+      energy += cell.uncovered;
+    }
+  }
+  return energy;
+}
+
+CoverageTerminalMatrixMarks
+ComputeCoverageTerminalMatrixMarks(const std::vector<bool> &source_marked)
+{
+  const std::size_t n = source_marked.size();
+  CoverageTerminalMatrixMarks marks;
+  marks.capacitance.assign(n, std::vector<bool>(n, false));
+  bool any = false;
+  for (std::size_t i = 0; i < n; i++)
+  {
+    for (std::size_t j = 0; j < n; j++)
+    {
+      marks.capacitance[i][j] = source_marked[i] || source_marked[j];
+      any = any || marks.capacitance[i][j];
+    }
+  }
+  marks.mutual = marks.capacitance;
+  marks.inverse.assign(n, std::vector<bool>(n, any));
+  for (std::size_t i = 0; i < n; i++)
+  {
+    marks.mutual[i][i] =
+        std::any_of(marks.capacitance[i].begin(), marks.capacitance[i].end(),
+                    [](bool marked) { return marked; });
+  }
+  return marks;
+}
+
 const CoverageCell *CoverageMeasurement::WorstRegimeCell() const
 {
   const CoverageCell *worst = nullptr;
@@ -941,17 +1030,86 @@ void CoverageRunRecord::Add(const std::vector<std::pair<std::string, double>> &k
                                measurement.served_pending_models.end());
   untargeted.insert(measurement.untargeted.begin(), measurement.untargeted.end());
   not_served.insert(measurement.not_served.begin(), measurement.not_served.end());
+  if (measurement.cells.empty())
+  {
+    marked_without_cell.push_back({keys, "no cell"});
+  }
+  else if (const auto types_without_cell = measurement.TypesWithoutCell();
+           !types_without_cell.empty())
+  {
+    std::string reason = "a coverage interface Type without a cell:";
+    for (const auto &type : types_without_cell)
+    {
+      reason += " " + type;
+    }
+    marked_without_cell.push_back({keys, reason});
+  }
 }
 
 nlohmann::json CoverageRunMetadata(const CoverageRunRecord &record,
                                    const CoverageThresholds &thresholds,
                                    const CoverageValidatedRegime &regime,
-                                   double energy_scale, int level, int levels)
+                                   double energy_scale, int level, int levels,
+                                   bool mark_not_applied)
 {
   auto Number = [](double value)
   { return std::isfinite(value) ? nlohmann::json(value) : nlohmann::json(nullptr); };
   nlohmann::json metadata = nlohmann::json::object();
-  metadata["Policy"] = "Warn";
+  metadata["Policy"] = mark_not_applied ? "MarkNotApplied" : "Warn";
+  if (mark_not_applied)
+  {
+    // Lane L4 (DESIGN-L4-v2 s2.4): the marked set, the marked cells and the measurements
+    // (cell keys) holding one.
+    nlohmann::json statuses = nlohmann::json::array();
+    for (const auto status :
+         {CoverageStatus::OK, CoverageStatus::LOW, CoverageStatus::PARTIAL,
+          CoverageStatus::NOT_ACHIEVABLE, CoverageStatus::TARGET_NOT_SERVED,
+          CoverageStatus::NO_ENERGY, CoverageStatus::NOT_MEASURED,
+          CoverageStatus::NOT_TARGET, CoverageStatus::INCONSISTENT})
+    {
+      if (IsCoverageStatusMarked(status))
+      {
+        statuses.push_back(std::string(CoverageStatusName(status)));
+      }
+    }
+    int marked_cells = 0;
+    std::set<std::vector<double>> marked_measurements;
+    for (const auto &entry : record.entries)
+    {
+      if (IsCoverageStatusMarked(entry.cell.status))
+      {
+        marked_cells++;
+        std::vector<double> key;
+        for (const auto &[name, value] : entry.keys)
+        {
+          (void)name;
+          key.push_back(value);
+        }
+        marked_measurements.insert(key);
+      }
+    }
+    // ERRATUM-1847 m-2: the measurements the writers mark without a marked-status cell.
+    nlohmann::json without_cell = nlohmann::json::array();
+    for (const auto &mark : record.marked_without_cell)
+    {
+      std::vector<double> key;
+      nlohmann::json keys = nlohmann::json::object();
+      for (const auto &[name, value] : mark.keys)
+      {
+        key.push_back(value);
+        keys[name] = value;
+      }
+      marked_measurements.insert(key);
+      without_cell.push_back({{"Cell", std::move(keys)}, {"Reason", mark.reason}});
+    }
+    metadata["MarkedStatuses"] = std::move(statuses);
+    metadata["MarkedCells"] = marked_cells;
+    metadata["MarkedMeasurements"] = static_cast<int>(marked_measurements.size());
+    if (!without_cell.empty())
+    {
+      metadata["MarkedWithoutCell"] = std::move(without_cell);
+    }
+  }
   metadata["Thresholds"] = {{"BuildTarget", thresholds.build_target},
                             {"MaxUncoveredShare", thresholds.max_uncovered_share},
                             {"Interim", true}};
@@ -1097,6 +1255,10 @@ nlohmann::json CoverageRunMetadata(const CoverageRunRecord &record,
                         Number(cell.untargeted_share)},
                        {"loop remainder of excluded patches kept raw twice (J)",
                         Number(cell.loop_remainder_excluded * energy_scale)}});
+    if (mark_not_applied)
+    {
+      flagged.back()["Marked"] = IsCoverageStatusMarked(cell.status);
+    }
   }
   nlohmann::json end_census = {
       {"Rule",
@@ -1171,6 +1333,45 @@ std::string CoverageRunBanner(const nlohmann::json &metadata)
     banner += fmt::format(" {} {:d}", status, count.get<int>());
   }
   banner += "\n";
+  // Lane L4 (DESIGN-L4-v2 s2.4 / s3): the mark-not-applied header and the label lines (a
+  // Warn block prints none of them).
+  const bool mark_not_applied = metadata.value("Policy", "Warn") == "MarkNotApplied";
+  if (mark_not_applied)
+  {
+    std::string statuses;
+    for (const auto &status : metadata.at("MarkedStatuses"))
+    {
+      statuses += (statuses.empty() ? "" : ", ") + status.get<std::string>();
+    }
+    banner += fmt::format(
+        "*** MARK-NOT-APPLIED: {:d} cell(s) print nan in their corrected columns (statuses "
+        "{}); the values are in the '...{}' columns; {:d} measurement(s)' corrected "
+        "totals, "
+        "frequency shifts, self-consistent frequencies and terminal-matrix entries are "
+        "marked ***\n",
+        metadata.at("MarkedCells").get<int>(), statuses, kCoveragePartialColumnSuffix,
+        metadata.at("MarkedMeasurements").get<int>());
+    if (const auto without_cell = metadata.find("MarkedWithoutCell");
+        without_cell != metadata.end())
+    {
+      banner += fmt::format(
+          "*** MARK-NOT-APPLIED: {:d} of these measurement(s) are marked without a "
+          "marked-status cell (no cell, or a coverage interface Type without a cell: "
+          "palace.json MarkedWithoutCell) ***\n",
+          without_cell->size());
+    }
+    banner +=
+        "Coverage labels: COVERAGE = a cell's coverage status (MEASURED on this run); "
+        "REGIME (validated-range status) = whether its covered correction factor lies "
+        "in the range validated for this library and excitation class; the product "
+        "prints no uncertainty band\n";
+    // ERRATUM-1847 E-4: a share of these diagnostic tables is taken on the marked cell's
+    // partial corrected energy (printed on purpose in its twin column).
+    banner += fmt::format(
+        "Coverage: for a marked cell the shares of the uncovered-energy and portion "
+        "tables are taken on its PARTIAL corrected energy (the '...{}' value)\n",
+        kCoveragePartialColumnSuffix);
+  }
   if (metadata.at("Cells").get<int>() == 0)
   {
     const auto reason = metadata.find("NoCellsReason");
@@ -1200,6 +1401,7 @@ std::string CoverageRunBanner(const nlohmann::json &metadata)
     }
     const std::string status = entry.at("coverage status").get<std::string>();
     const std::string regime_status = entry.at("regime status").get<std::string>();
+    const auto line_start = banner.size();
     std::string factor;
     if (regime_status == "NO-MODEL")
     {
@@ -1237,6 +1439,10 @@ std::string CoverageRunBanner(const nlohmann::json &metadata)
           Percent(entry.at("missing raw share of W")),
           Percent(entry.at("method-gap raw share of W")),
           Percent(entry.at("pending-model share of W")), factor);
+    }
+    if (mark_not_applied && entry.value("Marked", false) && banner.size() > line_start)
+    {
+      banner.insert(banner.size() - 1, " [NOT APPLIED]");
     }
     lines++;
   }
