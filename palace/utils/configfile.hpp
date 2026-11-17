@@ -967,6 +967,12 @@ public:
   // from the eigenvectors of the previous one, transferred to the refined mesh.
   bool warm_start = true;
 
+  // [experiment] Warm-start knobs: settled-Ritz test, first-cycle linear tolerance (0: off,
+  // 1: PR rule, 2: min(lin tol, 1e-2 eig tol)), skip after solves of at most this many
+  // restarts, relative weight of the default start vector.
+  int ws_settled = 1, ws_first_cycle = 1, ws_skip = 1;
+  double ws_eta = 1.0e-3;
+
   // Orthogonalize basis vectors using a mass matrix inner product, instead of generating
   // using a standard ℓ² (Euclidean) norm.
   bool mass_orthog = false;

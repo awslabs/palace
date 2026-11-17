@@ -2479,6 +2479,10 @@
           "default": true,
           "x-palace-advanced": true
         },
+        "ExpWarmStartSettled": {"type": "integer", "description": "[experiment]", "default": 1, "x-palace-advanced": true},
+        "ExpWarmStartFirstCycle": {"type": "integer", "description": "[experiment]", "default": 1, "x-palace-advanced": true},
+        "ExpWarmStartSkip": {"type": "integer", "description": "[experiment]", "default": 1, "x-palace-advanced": true},
+        "ExpWarmStartEta": {"type": "number", "description": "[experiment]", "default": 0.001, "x-palace-advanced": true},
         "MassOrthogonal": {
           "type": "boolean",
           "description": "Orthogonalize eigenvectors with respect to the mass matrix.",

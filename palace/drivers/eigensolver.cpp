@@ -448,7 +448,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     int num_warm = 0;
     const bool warm_start = prev_eigenvectors && prev_eigenvectors->IsCurrent(
                                                      space_op.GetNDSpace().GetParMesh());
-    if (warm_start && prev_num_its <= static_cast<int>(ExpEnv("PALACE_WS_SKIP", 1)))
+    if (warm_start && prev_num_its <= static_cast<int>(ExpEnv("PALACE_WS_SKIP", eigenmode.ws_skip)))
     {
       Mpi::Print(" Previous adaptation iteration converged within one Krylov cycle: no "
                  "warm start\n");
@@ -456,7 +456,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     else if (warm_start)
     {
       // The linearization of a quadratic problem also takes the second block λ x.
-      const double eta = ExpEnv("PALACE_WS_ETA", 1.0e-3);
+      const double eta = ExpEnv("PALACE_WS_ETA", eigenmode.ws_eta);
       const bool blocks = (C || has_A2);
       ComplexVector v, v_lambda;
       num_warm = GetWarmStartVector(*prev_eigenvectors, prev_eigenvalues, space_op, v0, eta,
@@ -483,7 +483,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         {
           eigen->SetInitialSpace(v);  // Copies the vector
         }
-        if (ExpEnv("PALACE_WS_SETTLED", 1) > 0)
+        if (ExpEnv("PALACE_WS_SETTLED", eigenmode.ws_settled) > 0)
         {
           eigen->SetWarmStart(true);
         }
@@ -491,7 +491,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         // The Ritz values of the first Krylov cycle are set by its first linear solves:
         // solve these with a 100 times smaller tolerance, not below 1e-12.
         const double lin_tol = iodata.solver.linear.tol;
-        const int tight = static_cast<int>(ExpEnv("PALACE_WS_TIGHT", 1));
+        const int tight = static_cast<int>(ExpEnv("PALACE_WS_TIGHT", eigenmode.ws_first_cycle));
         if (tight == 1)
         {
           eigen->SetFirstCycleLinearSolverTol(
