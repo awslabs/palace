@@ -481,7 +481,7 @@ void SubstructuringSolver::CondenseEnvironment()
   if (!loaded && impl->env_partial != "MUMPS" && subcfg.factorization_tol > 0.0)
   {
     Mpi::Warning(comm, "Solver.Substructuring.FactorizationTol is only used with the MUMPS "
-                       "environment factorization; the environment is factored exactly.\n");
+                       "environment factorization; the environment is factored exactly!\n");
   }
   if (!loaded)
   {
