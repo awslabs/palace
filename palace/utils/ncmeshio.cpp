@@ -1473,17 +1473,18 @@ std::shared_ptr<NCMeshFile> ReadNCMeshCoarse(MPI_Comm comm, const std::string &p
 }
 
 std::unique_ptr<mfem::ParMesh> PartitionNCMeshFile(MPI_Comm comm, NCMeshFile &file,
-                                                   mfem::Mesh &coarse, double length_scale,
-                                                   double tol)
+                                                   std::unique_ptr<mfem::Mesh> coarse,
+                                                   double length_scale, double tol)
 {
   using NC = NCMeshData;
-  bool ok = coarse.ncmesh && file.part.size() == static_cast<std::size_t>(coarse.GetNE());
+  bool ok = coarse->ncmesh && file.part.size() == static_cast<std::size_t>(coarse->GetNE());
   Mpi::GlobalAnd(1, &ok, comm);
   if (!ok)  // for example, if the preprocessing removed elements
   {
     return nullptr;
   }
-  auto mesh = std::make_unique<mfem::ParMesh>(comm, coarse, file.part.data());
+  auto mesh = std::make_unique<mfem::ParMesh>(comm, *coarse, file.part.data());
+  coarse.reset();  // the ParNCMesh keeps the roots
 
   // The refinements of the own roots, level by level.
   const int k0 = static_cast<int>(
