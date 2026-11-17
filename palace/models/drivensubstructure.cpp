@@ -1770,7 +1770,7 @@ void DrivenSubstructureModel::ReadHeader(const std::string &path, MPI_Comm comm)
   capacity = head[7];
   read(omega, capacity);
   read(weights, capacity);
-  incomplete(head[8] >= 0 && head[8] <= capacity);
+  incomplete(head[8] > 0 && head[8] <= capacity);
   omega.resize(head[8]);
   weights.resize(head[9] ? head[8] : 0);
 }

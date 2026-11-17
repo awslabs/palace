@@ -3147,8 +3147,9 @@ TEST_CASE("A cut or corrupted driven model header is rejected", "[substructure][
   CHECK_THROWS_WITH(saved.ReadHeader(path, Mpi::World()),
                     ContainsSubstring("is incomplete"));
   // The interface size (head entry 2) beyond the file or negative, and more frequencies
-  // (entry 8) than the header has room for.
-  for (const auto [entry, value] : {std::pair{2, 1000}, {2, -5}, {8, 7}})
+  // (entry 8) than the header has room for, or none (an adaptive offline run stopped before
+  // its first sample).
+  for (const auto [entry, value] : {std::pair{2, 1000}, {2, -5}, {8, 7}, {8, 0}})
   {
     m.WriteHeader(path);
     {
