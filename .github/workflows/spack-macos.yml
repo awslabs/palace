@@ -165,7 +165,8 @@ jobs:
 
       - name: Run Unit Tests
         run: |
-          eval "$(spack -e . load --sh palace)"
+          # Also load CMake for ctest: Palace only needs it to build
+          eval "$(spack -e . load --sh palace cmake)"
 
           # Apple Silicon has no SMT, so physical == logical cores.
           NUM_PROC_TEST=$(sysctl -n hw.physicalcpu)
