@@ -3511,6 +3511,34 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
                     ContainsSubstring("The parameters of the environment's ports"));
 }
 
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "Driven substructuring mesh of the region takes no a priori refinement",
+                 "[substructure][Serial][Parallel]")
+{
+  // As in the static substructuring, the mesh of the region is written refined: an online
+  // run on it takes no a priori refinement, also of the region only (which leaves the
+  // written environment elements as they were).
+  RunDrivenSheetSquare(temp_dir, "Offline");
+  const std::string region_mesh = RegionMeshPath((temp_dir / "driven_model.bin").string());
+  const json uniform = {{"UniformLevels", 1}},
+             boxes = {{"Nonconformal", true},
+                      {"MaxNCLevels", 0},
+                      {"Boxes",
+                       {{{"Levels", 1},
+                         {"BoundingBoxMin", {-8.4, -7.8, -7.1}},
+                         {"BoundingBoxMax", {-7.5, -6.9, -6.2}}}}}};
+  for (const json &refinement : {uniform, boxes})
+  {
+    CHECK_THROWS_WITH(RunDrivenSheetSquare(temp_dir, "Online",
+                                           [&](json &config)
+                                           {
+                                             config["Model"]["Mesh"] = region_mesh;
+                                             config["Model"]["Refinement"] = refinement;
+                                           }),
+                      Catch::Matchers::ContainsSubstring("is written refined"));
+  }
+}
+
 #if defined(MFEM_USE_MUMPS)
 TEST_CASE("MumpsSchurSolver factors on a subset of the ranks",
           "[substructure][Serial][Parallel]")

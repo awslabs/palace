@@ -370,6 +370,14 @@ DrivenSubstructuredSweep::DrivenSubstructuredSweep(const IoData &iodata,
   ds = std::make_unique<DrivenSubstructure>(space_op, sub.region_attributes,
                                             sub.environment_attributes, online,
                                             online ? &model : nullptr, sub.direct_solver);
+  if (ds->RegionOnly())
+  {
+    const auto &refinement = iodata.model.refinement;
+    MFEM_VERIFY(refinement.uniform_ref_levels == 0 &&
+                    refinement.ser_uniform_ref_levels == 0 &&
+                    refinement.GetBoxes().empty() && refinement.GetSpheres().empty(),
+                kRegionMeshRefined);
+  }
   nG = ds->InterfaceSize();
   Mpi::Print("\nSubstructuring: |Γ| = {:d} interface unknowns\n", nG);
   for (const auto &[idx, spec] : port_excitations)
