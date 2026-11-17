@@ -74,6 +74,8 @@ public:
   auto &GetCr() const { return Cr; }
   auto &GetMr() const { return Mr; }
   auto &GetKsp() { return *ksp; }
+  const ComplexOperator *GetHDMOperator() const { return hdm_A.get(); }
+  double GetHDMOmega() const { return hdm_omega; }
   bool WavePortPairingChecked() const { return wp_pairing_checked; }
   bool WavePortPairingOk() const { return wp_pairing_ok; }
   void UseAssembledWavePortPath(bool assembled)
@@ -1009,12 +1011,21 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-UpdatePROM-CertifiedS
   // sweep tolerance, and the sample is (to round-off) in the span of the basis.
   prom_op.SolvePROM(1, omega, x0);
   u = x0;
+  const auto &ksp = prom_op.GetLinearSolver();
+  const int num_it = ksp.NumTotalMultIterations();
   CHECK(prom_op.SolveHDM(1, omega, u, true, adaptive_tol));
+  const int cert_it = ksp.NumTotalMultIterations() - num_it;
   REQUIRE(linalg::Norml2(world_comm, u) > 0.0);
   linalg::AXPY(-1.0, u, x0);
   CHECK(linalg::Norml2(world_comm, x0) < adaptive_tol * linalg::Norml2(world_comm, u));
   bool added = true;
   CHECK_NOTHROW(added = prom_op.UpdatePROM(u, "sample_1", false));
+  CAPTURE(cert_it, added);
+  if (cert_it == 0)
+  {
+    // Not corrected: u is the PROM solution, in the span of the basis to round-off.
+    CHECK_FALSE(added);
+  }
   if (!added)
   {
     CHECK(prom_op.GetReducedDimension() == dim);
@@ -1168,6 +1179,79 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-SolveHDM-Certificatio
   CHECK(prom_op.SolveHDM(1, omega, v));
   CHECK(ksp.NumTotalMultIterations() > num_it);
   CHECK(ksp.GetRelTol() == tol);
+}
+
+// SolveHDM keeps the operators and the preconditioner of its last solve for the next solve
+// at the same frequency only, and ReleaseHDMOperators releases them: the sample solved
+// again from zero after its certification was stopped (as SweepAdaptive does), the solve at
+// another frequency, and the solve after the release all give the solution of a RomOperator
+// which solved nothing before.
+TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-SolveHDM-OperatorReuse",
+                 "[romoperator][Serial][Parallel]")
+{
+  // Solved to 10⁻¹², so that solutions with separately set up preconditioners agree to well
+  // below the 10⁻⁸ checked.
+  MPI_Comm world_comm = Mpi::World();
+  IoData iodata(DependenceTestSetup(temp_dir, 1.0e-12, 500), false);
+  auto mesh_io = LoadScaleParMesh2(iodata, world_comm);
+  SpaceOperator space_op(iodata, mesh_io);
+  const auto &sample_f = iodata.solver.driven.sample_f;
+  const double omega_a = sample_f[sample_f.size() / 3];
+  const double omega_b = sample_f[(2 * sample_f.size()) / 3];
+
+  const auto n = space_op.GetNDSpace().GetTrueVSize();
+  auto make_vector = [n]()
+  {
+    ComplexVector v(n);
+    v.UseDevice(true);
+    v = 0.0;
+    return v;
+  };
+  auto rel_diff = [&](const ComplexVector &x, const ComplexVector &y)
+  {
+    ComplexVector d(x);
+    d.UseDevice(true);
+    linalg::AXPY(-1.0, y, d);
+    return linalg::Norml2(world_comm, d) / linalg::Norml2(world_comm, y);
+  };
+
+  // Reference solutions, each from a RomOperator which solved nothing before.
+  ComplexVector u_a = make_vector(), u_b = make_vector(), v = make_vector();
+  {
+    RomOperatorTest ref(iodata, space_op, 10);
+    REQUIRE(ref.SolveHDM(1, omega_a, u_a));
+  }
+  {
+    RomOperatorTest ref(iodata, space_op, 10);
+    REQUIRE(ref.SolveHDM(1, omega_b, u_b));
+  }
+
+  RomOperatorTest prom_op(iodata, space_op, 10);
+  CHECK(prom_op.GetHDMOperator() == nullptr);
+
+  // Stopped by the correction limit, then solved again from zero: the operators are reused.
+  v = u_a;
+  v *= 0.5;
+  CHECK_FALSE(prom_op.SolveHDM(1, omega_a, v, true, 1.0e-6));
+  const auto *A_a = prom_op.GetHDMOperator();
+  REQUIRE(A_a != nullptr);
+  CHECK(prom_op.GetHDMOmega() == omega_a);
+  CHECK(prom_op.SolveHDM(1, omega_a, v));
+  CHECK(prom_op.GetHDMOperator() == A_a);
+  CHECK(rel_diff(v, u_a) <= 1.0e-8);
+
+  // Another frequency: the operators are those of this frequency.
+  CHECK(prom_op.SolveHDM(1, omega_b, v));
+  CHECK(prom_op.GetHDMOmega() == omega_b);
+  CHECK(rel_diff(v, u_b) <= 1.0e-8);
+
+  // Released, and rebuilt by the next solve at the same frequency.
+  prom_op.ReleaseHDMOperators();
+  CHECK(prom_op.GetHDMOperator() == nullptr);
+  CHECK(prom_op.SolveHDM(1, omega_b, v));
+  CHECK(prom_op.GetHDMOperator() != nullptr);
+  CHECK(prom_op.GetHDMOmega() == omega_b);
+  CHECK(rel_diff(v, u_b) <= 1.0e-8);
 }
 
 // Tests that the per-port "IncludeInSynthesis" flag suppresses basis vector injection

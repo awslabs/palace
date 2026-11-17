@@ -486,6 +486,65 @@ TEST_CASE("GmresSolver zero residual", "[iterative][Serial][Parallel]")
   }
 }
 
+namespace
+{
+
+// The relative correction ‖x - x₀‖ / (‖x₀‖ + ‖x - x₀‖) which GmresSolver compares to the
+// correction limit.
+double RelativeCorrection(MPI_Comm comm, const Vector &x, const Vector &x0)
+{
+  Vector c(x);
+  c -= x0;
+  const double norm_c = linalg::Norml2(comm, c);
+  return norm_c / (linalg::Norml2(comm, x0) + norm_c);
+}
+
+// Solve from x₀ = x + e, ‖e‖ = 10⁻³ ‖x‖. Without a limit, the relative correction after
+// k = 1, 2, ... iterations is computed from the iterates, up to the first one above all
+// previous ones. With a limit between this one and the largest previous one, the solve must
+// stop after exactly k iterations, at the same iterate: the stop is decided on the exact
+// correction, not on an estimate of it (such as the residual norm, or the rotated
+// right-hand side before the back substitution), to the margin between the two (0.5% with
+// Jacobi left preconditioning, 8% without a preconditioner).
+void CheckCorrectionLimitStop(GmresSolver<Operator> &ksp, MPI_Comm comm, const Vector &b,
+                              const Vector &x, const Vector &d)
+{
+  Vector x0(x), y(x.Size());
+  x0.Add(1.0e-3 * linalg::Norml2(comm, x) / linalg::Norml2(comm, d), d);
+  ksp.SetInitialGuess(true);
+  ksp.SetMaxRelativeCorrection(0.0);
+  double c_max = 0.0, c_k = 0.0;
+  int k = 0;
+  while (k < 10)
+  {
+    k++;
+    ksp.SetMaxIter(k);
+    y = x0;
+    ksp.Mult(b, y);
+    REQUIRE(ksp.GetNumIterations() == k);
+    c_k = RelativeCorrection(comm, y, x0);
+    if (k > 1 && c_k > (1.0 + 1.0e-6) * c_max)
+    {
+      break;
+    }
+    c_max = std::max(c_max, c_k);
+  }
+  CAPTURE(k, c_max, c_k);
+  REQUIRE(c_k > (1.0 + 1.0e-6) * c_max);
+
+  const double limit = std::sqrt(c_max * c_k);
+  ksp.SetMaxIter(200);
+  ksp.SetMaxRelativeCorrection(limit);
+  Vector z(x0);
+  ksp.Mult(b, z);
+  CHECK(ksp.GetCorrectionExceeded());
+  CHECK(ksp.GetNumIterations() == k);
+  z -= y;
+  CHECK(linalg::Norml2(comm, z) <= 1.0e-12 * linalg::Norml2(comm, x0));
+}
+
+}  // namespace
+
 // With a correction limit, GMRES started from a nonzero initial guess stops as soon as the
 // correction to the guess exceeds the limit relative to the solution, and otherwise
 // converges as without the limit.
@@ -532,8 +591,25 @@ TEST_CASE("GmresSolver correction limit", "[iterative][Serial][Parallel]")
     ksp.Mult(b, y);
     CHECK_FALSE(ksp.GetCorrectionExceeded());
     CHECK(ksp.GetConverged());
+
+    // As without the limit: the monitor only reads the least-squares problem.
+    const int num_it = ksp.GetNumIterations();
+    Vector z(n);
+    z = x;
+    z += d;
+    ksp.SetMaxRelativeCorrection(0.0);
+    ksp.Mult(b, z);
+    CHECK(ksp.GetNumIterations() == num_it);
+    z -= y;
+    CHECK(linalg::Norml2(comm, z) <= 1.0e-14 * norm_x);
+
     y -= x;
     CHECK(linalg::Norml2(comm, y) <= 1.0e-8 * norm_x);
+  }
+
+  SECTION("The stop is decided on the exact correction")
+  {
+    CheckCorrectionLimitStop(ksp, comm, b, x, d);
   }
 
   SECTION("Without a limit, or from zero, the solve is not stopped")
@@ -552,6 +628,71 @@ TEST_CASE("GmresSolver correction limit", "[iterative][Serial][Parallel]")
       CHECK(linalg::Norml2(comm, y) <= 1.0e-8 * norm_x);
     }
   }
+}
+
+// The correction limit with a preconditioner: with left preconditioning (the default, as
+// used for the HDM solves of adaptive sweeps), x - x₀ = V y with orthonormal V, and the
+// stop is decided on the exact correction as without a preconditioner. With right
+// preconditioning, and with FGMRES, the correction is not monitored: the solve converges.
+TEST_CASE("GmresSolver correction limit with preconditioning",
+          "[iterative][Serial][Parallel]")
+{
+  constexpr int n = 101;
+  MPI_Comm comm = Mpi::World();
+  TridiagonalTestOperator A(n);
+  JacobiSmoother<Operator> jacobi(comm);
+  jacobi.SetOperator(A);
+  Vector b(n), d(n), x(n), y(n);
+  for (int i = 0; i < n; i++)
+  {
+    b[i] = std::sin(1.0 + i + Mpi::Rank(comm));
+    d[i] = std::cos(2.0 + i + Mpi::Rank(comm));
+  }
+
+  for (auto side : {PreconditionerSide::LEFT, PreconditionerSide::RIGHT})
+  {
+    const bool left = (side == PreconditionerSide::LEFT);
+    INFO("left preconditioning = " << left);
+    GmresSolver<Operator> ksp(comm, 0);
+    ksp.SetOperator(A);
+    ksp.SetPreconditioner(jacobi);
+    ksp.SetPreconditionerSide(side);
+    ksp.SetRelTol(1.0e-12);
+    ksp.SetMaxIter(200);
+    x = 0.0;
+    ksp.Mult(b, x);
+    REQUIRE(ksp.GetConverged());
+    if (left)
+    {
+      CheckCorrectionLimitStop(ksp, comm, b, x, d);
+    }
+    else
+    {
+      ksp.SetInitialGuess(true);
+      ksp.SetMaxRelativeCorrection(1.0e-6);
+      y = x;
+      y *= 0.5;
+      ksp.Mult(b, y);
+      CHECK_FALSE(ksp.GetCorrectionExceeded());
+      CHECK(ksp.GetConverged());
+    }
+  }
+
+  FgmresSolver<Operator> fksp(comm, 0);
+  fksp.SetOperator(A);
+  fksp.SetPreconditioner(jacobi);
+  fksp.SetRelTol(1.0e-12);
+  fksp.SetMaxIter(200);
+  x = 0.0;
+  fksp.Mult(b, x);
+  REQUIRE(fksp.GetConverged());
+  fksp.SetInitialGuess(true);
+  fksp.SetMaxRelativeCorrection(1.0e-6);
+  y = x;
+  y *= 0.5;
+  fksp.Mult(b, y);
+  CHECK_FALSE(fksp.GetCorrectionExceeded());
+  CHECK(fksp.GetConverged());
 }
 
 TEST_CASE("FgmresSolver zero residual", "[iterative][Serial][Parallel]")
