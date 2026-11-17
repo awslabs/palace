@@ -42,7 +42,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     `"EdgeFrameNormal"`, `"EdgeRefinement"`, `"FluxRecovery"`, `"Region"`);
     `Model.Axisymmetric`; `Model.Refinement.MaxSizePredicted` and `"MinElementSize"`;
     `Boundaries.PrescribedPotential`; and `"Length"` of a lumped port and of its
-    `"Elements"`. SchemaVer 4-4-0
+    `"Elements"`. SchemaVer 4-4-1
   - Added the edge-resolution census of the surface-response correction (lane
     rescensus-product; outputs only, ON by default whenever the correction is on:
     `"Resolution": {"Enabled", "BarsFile"}`): one added point location of every applied
