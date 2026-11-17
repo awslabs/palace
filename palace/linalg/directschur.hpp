@@ -54,6 +54,8 @@ public:
 
   void Expand(const std::vector<T> &u, const std::vector<ComplexVector *> &X) override;
 
+  void Condense(const std::vector<const ComplexVector *> &X, std::vector<T> &g) override;
+
 private:
   MPI_Comm comm;
   int rank = 0, n_loc = 0, n_schur = 0;

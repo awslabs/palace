@@ -760,6 +760,14 @@ void DirectSchurSolver::Reduce(const std::vector<const ComplexVector *> &B,
   reduced = nb;
 }
 
+void DirectSchurSolver::Condense(const std::vector<const ComplexVector *> &X,
+                                 std::vector<T> &g)
+{
+  // A Reduce that no Expand follows.
+  Reduce(X, g);
+  reduced = 0;
+}
+
 void DirectSchurSolver::Expand(const std::vector<T> &u,
                                const std::vector<ComplexVector *> &X)
 {

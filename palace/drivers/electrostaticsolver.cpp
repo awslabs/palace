@@ -62,7 +62,12 @@ std::pair<ErrorIndicator, long long int> ElectrostaticSolver::SolveSubstructured
   ErrorIndicator indicator;
   if (adapt)
   {
-    indicator = sub.RegionErrorIndicator(region_fields, C);
+    std::vector<double> energy(n);
+    for (int i = 0; i < n; i++)
+    {
+      energy[i] = 0.5 * C(i, i);
+    }
+    indicator = sub.RegionErrorIndicator(region_fields, energy);
     const auto indicator_stats = indicator.GetSummaryStatistics(mesh.back()->GetComm());
     if (root)
     {

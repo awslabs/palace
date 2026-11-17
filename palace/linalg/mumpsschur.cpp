@@ -668,6 +668,15 @@ void MumpsSchurSolverT<T>::Expand(const std::vector<T> &u, const std::vector<Vec
 }
 
 template <typename T>
+void MumpsSchurSolverT<T>::Condense(const std::vector<const VecType *> &X,
+                                    std::vector<T> &g)
+{
+  // A Reduce that no Expand follows (the next solve replaces MUMPS's RHSINTR).
+  Reduce(X, g);
+  reduced = 0;
+}
+
+template <typename T>
 void MumpsSchurSolverT<T>::Check(const char *phase) const
 {
   // INFOG is global (identical on the ranks taking part, rank 0 among them).

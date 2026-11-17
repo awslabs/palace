@@ -10,23 +10,19 @@
 namespace palace
 {
 
-BackSolveSchurSolver::BackSolveSchurSolver(const mfem::HypreParMatrix &A,
-                                           const std::vector<HYPRE_BigInt> &schur_vars,
-                                           InternalSolver solve, int block)
-  : A(A), solve(std::move(solve)), n_schur(static_cast<int>(schur_vars.size())),
-    block(block)
+SchurRowGather::SchurRowGather(MPI_Comm comm, HYPRE_BigInt row0, int n_loc,
+                               const std::vector<HYPRE_BigInt> &schur_vars)
+  : comm(comm), n_schur(static_cast<int>(schur_vars.size()))
 {
-  MPI_Comm comm = A.GetComm();
-  const HYPRE_BigInt row0 = A.GetRowStarts()[0];
   for (int p = 0; p < n_schur; p++)
   {
-    if (schur_vars[p] >= row0 && schur_vars[p] < row0 + A.Height())
+    if (schur_vars[p] >= row0 && schur_vars[p] < row0 + n_loc)
     {
-      schur_row.push_back(static_cast<int>(schur_vars[p] - row0));
-      schur_pos.push_back(p);
+      row.push_back(static_cast<int>(schur_vars[p] - row0));
+      pos.push_back(p);
     }
   }
-  const int m = static_cast<int>(schur_row.size()), nranks = Mpi::Size(comm);
+  const int m = static_cast<int>(row.size()), nranks = Mpi::Size(comm);
   const bool root = Mpi::Root(comm);
   pos_cnt.assign(root ? nranks : 0, 0);
   pos_dsp.assign(root ? nranks : 0, 0);
@@ -36,28 +32,88 @@ BackSolveSchurSolver::BackSolveSchurSolver(const mfem::HypreParMatrix &A,
     pos_dsp[r] = pos_dsp[r - 1] + pos_cnt[r - 1];
   }
   all_pos.resize(root ? n_schur : 0);
-  MPI_Gatherv(schur_pos.data(), m, MPI_INT, all_pos.data(), pos_cnt.data(), pos_dsp.data(),
+  MPI_Gatherv(pos.data(), m, MPI_INT, all_pos.data(), pos_cnt.data(), pos_dsp.data(),
               MPI_INT, 0, comm);
+}
+
+void SchurRowGather::Gather(const std::vector<double> &loc, int nb, double *g) const
+{
+  const bool root = Mpi::Root(comm);
+  const int m = static_cast<int>(row.size());
+  std::vector<int> cnt(pos_cnt.size()), dsp(pos_dsp.size());
+  for (std::size_t q = 0; q < cnt.size(); q++)
+  {
+    cnt[q] = nb * pos_cnt[q];
+    dsp[q] = nb * pos_dsp[q];
+  }
+  std::vector<double> all(root ? static_cast<std::size_t>(n_schur) * nb : 0);
+  MPI_Gatherv(loc.data(), nb * m, MPI_DOUBLE, all.data(), cnt.data(), dsp.data(),
+              MPI_DOUBLE, 0, comm);
+  for (std::size_t q = 0; q < cnt.size(); q++)
+  {
+    for (int k = 0; k < nb; k++)
+    {
+      for (int r = 0; r < pos_cnt[q]; r++)
+      {
+        g[all_pos[pos_dsp[q] + r] + static_cast<std::size_t>(n_schur) * k] =
+            all[dsp[q] + static_cast<std::size_t>(k) * pos_cnt[q] + r];
+      }
+    }
+  }
+}
+
+BackSolveSchurSolver::BackSolveSchurSolver(const mfem::HypreParMatrix &A,
+                                           const std::vector<HYPRE_BigInt> &schur_vars,
+                                           InternalSolver solve, int block)
+  : A(A), solve(std::move(solve)), n_schur(static_cast<int>(schur_vars.size())),
+    block(block), rows(A.GetComm(), A.GetRowStarts()[0], A.Height(), schur_vars)
+{
+}
+
+void BackSolveSchurSolver::CondenseBatch(const std::vector<const mfem::Vector *> &X,
+                                         const std::vector<mfem::Vector *> &Y,
+                                         double *g) const
+{
+  const int nb = static_cast<int>(X.size());
+  const std::vector<int> &row = rows.Rows();
+  const int m = static_cast<int>(row.size());
+  std::vector<double> loc(static_cast<std::size_t>(m) * nb);
+  for (int k = 0; k < nb; k++)
+  {
+    const double *x = X[k]->HostRead();
+    for (int r = 0; r < m; r++)
+    {
+      loc[static_cast<std::size_t>(k) * m + r] = x[row[r]];
+    }
+  }
+  solve(X, Y);
+  mfem::Vector z(A.Height());
+  for (int k = 0; k < nb; k++)
+  {
+    A.Mult(*Y[k], z);  // A_SI A_II^-1 x_I on the Schur variables
+    const double *zz = z.HostRead();
+    for (int r = 0; r < m; r++)
+    {
+      loc[static_cast<std::size_t>(k) * m + r] -= zz[row[r]];
+    }
+  }
+  rows.Gather(loc, nb, g);
 }
 
 std::vector<double> BackSolveSchurSolver::ReleaseSchur()
 {
-  MPI_Comm comm = A.GetComm();
-  const bool root = Mpi::Root(comm);
-  const int n_loc = A.Height(), m = static_cast<int>(schur_row.size());
-  // The local row of each Schur variable on this rank, or -1.
-  std::vector<int> local(n_schur, -1);
-  for (int r = 0; r < m; r++)
+  // Column c of S is the condensation of column c of A: A_IS e_c on the internal
+  // variables, A_SS e_c on the Schur ones.
+  const bool root = Mpi::Root(A.GetComm());
+  const int n_loc = A.Height();
+  std::vector<int> local(n_schur, -1);  // the local row of each Schur variable, or -1
+  for (std::size_t r = 0; r < rows.Rows().size(); r++)
   {
-    local[schur_pos[r]] = schur_row[r];
+    local[rows.Positions()[r]] = rows.Rows()[r];
   }
   std::vector<double> S(root ? static_cast<std::size_t>(n_schur) * n_schur : 0);
   std::vector<mfem::Vector> t(std::min(block, n_schur), mfem::Vector(n_loc));
-  mfem::Vector z(n_loc);
-  // The entries of the local Schur rows of the columns of a batch, gathered on rank 0.
-  std::vector<double> loc(static_cast<std::size_t>(m) * block),
-      all(root ? static_cast<std::size_t>(n_schur) * block : 0);
-  std::vector<int> cnt(pos_cnt.size()), dsp(pos_dsp.size());
+  mfem::Vector e(n_loc);
   for (int c0 = 0; c0 < n_schur; c0 += block)
   {
     const int nb = std::min(block, n_schur - c0);
@@ -65,49 +121,16 @@ std::vector<double> BackSolveSchurSolver::ReleaseSchur()
     std::vector<mfem::Vector *> Y(nb);
     for (int k = 0; k < nb; k++)
     {
-      // Column c of A: A_IS e_c on the internal variables, A_SS e_c on the Schur ones.
-      z = 0.0;
+      e = 0.0;
       if (local[c0 + k] >= 0)
       {
-        z.HostReadWrite()[local[c0 + k]] = 1.0;
+        e.HostReadWrite()[local[c0 + k]] = 1.0;
       }
-      A.Mult(z, t[k]);
-      const double *tk = t[k].HostRead();
-      for (int r = 0; r < m; r++)
-      {
-        loc[static_cast<std::size_t>(k) * m + r] = tk[schur_row[r]];
-      }
+      A.Mult(e, t[k]);
       X[k] = &t[k];
       Y[k] = &t[k];
     }
-    solve(X, Y);
-    for (int k = 0; k < nb; k++)
-    {
-      A.Mult(t[k], z);  // A_SI A_II^-1 A_IS e_c on the Schur variables
-      const double *zz = z.HostRead();
-      for (int r = 0; r < m; r++)
-      {
-        loc[static_cast<std::size_t>(k) * m + r] -= zz[schur_row[r]];
-      }
-    }
-    for (std::size_t q = 0; q < cnt.size(); q++)
-    {
-      cnt[q] = nb * pos_cnt[q];
-      dsp[q] = nb * pos_dsp[q];
-    }
-    MPI_Gatherv(loc.data(), nb * m, MPI_DOUBLE, all.data(), cnt.data(), dsp.data(),
-                MPI_DOUBLE, 0, comm);
-    for (std::size_t q = 0; q < cnt.size(); q++)
-    {
-      for (int k = 0; k < nb; k++)
-      {
-        for (int r = 0; r < pos_cnt[q]; r++)
-        {
-          S[all_pos[pos_dsp[q] + r] + static_cast<std::size_t>(n_schur) * (c0 + k)] =
-              all[dsp[q] + static_cast<std::size_t>(k) * pos_cnt[q] + r];
-        }
-      }
-    }
+    CondenseBatch(X, Y, root ? S.data() + static_cast<std::size_t>(n_schur) * c0 : nullptr);
   }
   return S;
 }
@@ -116,6 +139,26 @@ void BackSolveSchurSolver::SolveInternal(const std::vector<const mfem::Vector *>
                                          const std::vector<mfem::Vector *> &Y)
 {
   solve(X, Y);
+}
+
+void BackSolveSchurSolver::Condense(const std::vector<const mfem::Vector *> &X,
+                                    std::vector<double> &g)
+{
+  const bool root = Mpi::Root(A.GetComm());
+  const int n = static_cast<int>(X.size());
+  g.assign(root ? static_cast<std::size_t>(n_schur) * n : 0, 0.0);
+  std::vector<mfem::Vector> t(std::min(block, n), mfem::Vector(A.Height()));
+  for (int c0 = 0; c0 < n; c0 += block)
+  {
+    const int nb = std::min(block, n - c0);
+    std::vector<mfem::Vector *> Y(nb);
+    for (int k = 0; k < nb; k++)
+    {
+      Y[k] = &t[k];
+    }
+    CondenseBatch({X.begin() + c0, X.begin() + c0 + nb}, Y,
+                  root ? g.data() + static_cast<std::size_t>(n_schur) * c0 : nullptr);
+  }
 }
 
 }  // namespace palace

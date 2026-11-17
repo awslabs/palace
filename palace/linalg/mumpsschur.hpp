@@ -83,6 +83,8 @@ public:
 
   void Expand(const std::vector<T> &u, const std::vector<VecType *> &X) override;
 
+  void Condense(const std::vector<const VecType *> &X, std::vector<T> &g) override;
+
 private:
   void Init(const std::vector<HYPRE_BigInt> &schur_vars);
   void Factor();

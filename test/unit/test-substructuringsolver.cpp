@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <iterator>
 #include <memory>
 #include <numeric>
 #include <optional>
@@ -286,9 +287,11 @@ double Energy(const SubstructuringSolver &ss, const Vector &u)
 // The energy matrices of London flux states and of surface currents alone.
 mfem::DenseMatrix SheetEnergies(SubstructuringSolver &ss, const std::vector<int> &ids,
                                 const std::vector<Vector> &a,
-                                std::vector<Vector> *fields = nullptr, int n_fields = 0)
+                                std::vector<Vector> *fields = nullptr, int n_fields = 0,
+                                std::vector<double> *volume_energy = nullptr)
 {
-  return ss.MagnetostaticEnergyMatrix({}, {}, ids, a, {}, nullptr, fields, n_fields);
+  return ss.MagnetostaticEnergyMatrix({}, {}, ids, a, {}, nullptr, fields, n_fields,
+                                      nullptr, volume_energy);
 }
 mfem::DenseMatrix CurrentEnergies(SubstructuringSolver &ss, const std::vector<int> &ids,
                                   const std::vector<Vector> &J,
@@ -1402,6 +1405,13 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
     return CurrentEnergies(ss, {1}, {J})(0, 0);
   };
   (void)energy(make_config("Offline", offline_sheet), MakeSplitCube(4));
+  {
+    // With sheets in the region only, the model holds no kinetic operator S^Kin.
+    std::ifstream in(model_path, std::ios::binary);
+    const std::string bytes((std::istreambuf_iterator<char>(in)),
+                            std::istreambuf_iterator<char>());
+    CHECK(bytes.find("SKIN") == std::string::npos);
+  }
   mfem::Mesh serial(RegionMeshPath(model_path).c_str());
   const double E_full = energy(make_config("Online", !offline_sheet), MakeSplitCube(4));
   const double E_region = energy(make_config("Online", !offline_sheet),
@@ -2154,12 +2164,14 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "SubstructuringSolver London sheet
   // Gamma along their edges. Two sheet generators a_k drive the sources M_sheet a_k with
   // the sheet DOFs free; the energy matrix E_ij = u_i^T K_cc u_j + (u_i - a_i)^T M_sheet
   // (u_j - a_j) must match a monolith (curl-curl + sheet, with a refined regularization),
-  // offline and after reloading the model.
+  // offline and after reloading the model, and so must the energies in the volume, without
+  // the kinetic energy (which normalize the error indicators), also without a model.
   const int order = GENERATE(1, 2);
   CAPTURE(order);
   const double mu_r = 1.0, mu_e = 4.0, lambda = 0.2, thickness = 0.05;
   const std::string model_path = (temp_dir / "substruct_london_model.bin").string();
-  auto make_config = [&](const std::string &mode)
+  auto make_config =
+      [&](const std::string &mode, bool save = true, const std::string &path = "")
   {
     json config = {{"Problem", {{"Type", "Magnetostatic"}, {"Output", "test_output"}}},
                    {"Model", {{"Mesh", "test.msh"}}},
@@ -2179,7 +2191,11 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "SubstructuringSolver London sheet
                       {{"Region", {{"Attributes", {1}}}},
                        {"Environment", {{"Attributes", {2}}}},
                        {"Mode", mode},
-                       {"SaveModel", model_path}}}}}};
+                       {"SaveModel", path.empty() ? model_path : path}}}}}};
+    if (!save)
+    {
+      config["Solver"]["Substructuring"].erase("SaveModel");
+    }
     return IoData(config, false);
   };
   RegionDesign design;
@@ -2230,7 +2246,8 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "SubstructuringSolver London sheet
 
   SubstructuringSolver ss(iodata, mesh);
   ss.CondenseEnvironment();
-  const mfem::DenseMatrix E = SheetEnergies(ss, {1, 2}, a);
+  std::vector<double> V;
+  const mfem::DenseMatrix E = SheetEnergies(ss, {1, 2}, a, nullptr, 0, &V);
   // The full-field path (fields requested) gives the same energies.
   std::vector<Vector> fields;
   const mfem::DenseMatrix E_full = SheetEnergies(ss, {1, 2}, a, &fields, 2);
@@ -2339,14 +2356,52 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "SubstructuringSolver London sheet
   CHECK(dfull <= 1.0e-9 * m);
   CHECK(diff <= 1.0e-9 * m);
 
+  // The energies in the volume, (u_k^T K_cc u_k) / 2, with a kinetic share of the E_kk
+  // large enough to tell them apart. Without a model (full solves with the environment),
+  // those of the monolith up to the regularization of their fields (to first order, unlike
+  // the stationary E_kk); with the model, those without.
+  std::vector<double> V_mono(2), V_none;
+  for (int k = 0; k < 2; k++)
+  {
+    Kcc->Mult(u[k], t);
+    V_mono[k] = 0.5 * mfem::InnerProduct(pmesh.GetComm(), u[k], t);
+    CHECK(E_mono(k, k) - 2.0 * V_mono[k] >= 0.1 * E_mono(k, k));
+  }
+  {
+    IoData iodata_none = make_config("Offline", false);
+    std::vector<std::unique_ptr<Mesh>> mesh_none;
+    mesh_none.push_back(std::make_unique<Mesh>(MakeGradedSplit(4, 5, 6, design)));
+    SubstructuringSolver none(iodata_none, mesh_none);
+    none.CondenseEnvironment();
+    SheetEnergies(none, {1, 2}, a, nullptr, 0, &V_none);
+  }
+  REQUIRE(V_none.size() == 2);
+  for (int k = 0; k < 2; k++)
+  {
+    CAPTURE(k, V_none[k], V_mono[k]);
+    CHECK(std::abs(V_none[k] - V_mono[k]) <= 1.0e-7 * V_mono[k]);
+  }
+  auto check_volume = [&](const std::vector<double> &Vk)
+  {
+    REQUIRE(Vk.size() == 2);
+    for (int k = 0; k < 2; k++)
+    {
+      CAPTURE(k, Vk[k], V_none[k]);
+      CHECK(std::abs(Vk[k] - V_none[k]) <= 1.0e-9 * m);
+    }
+  };
+  check_volume(V);
+
   // Online reuse of the saved model.
   IoData iodata_on = make_config("Online");
   std::vector<std::unique_ptr<Mesh>> mesh_on;
   mesh_on.push_back(std::make_unique<Mesh>(MakeGradedSplit(4, 5, 6, design)));
   SubstructuringSolver on(iodata_on, mesh_on);
   on.CondenseEnvironment();
-  const mfem::DenseMatrix E_on = SheetEnergies(on, {1, 2}, a);
+  std::vector<double> V_on;
+  const mfem::DenseMatrix E_on = SheetEnergies(on, {1, 2}, a, nullptr, 0, &V_on);
   CHECK_FALSE(on.EnvironmentFactored());
+  check_volume(V_on);
   double don = 0.0;
   for (int i = 0; i < 2; i++)
   {
@@ -2379,6 +2434,25 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "SubstructuringSolver London sheet
     CAPTURE(k, nd, nf);
     CHECK(nd <= 1.0e-10 * nf);
   }
+
+  // A model cut in the kinetic parts of its source modes (its last section) is incomplete.
+  const std::string cut_path = (temp_dir / "substruct_london_cut.bin").string();
+  if (Mpi::Root(Mpi::World()))
+  {
+    std::ifstream in(model_path, std::ios::binary);
+    const std::string bytes((std::istreambuf_iterator<char>(in)),
+                            std::istreambuf_iterator<char>());
+    CHECK(bytes.find("SKIN") != std::string::npos);  // the kinetic operator S^Kin
+    std::ofstream(cut_path, std::ios::binary)
+        .write(bytes.data(), static_cast<std::streamsize>(bytes.size() - sizeof(double)));
+  }
+  Mpi::Barrier(Mpi::World());
+  IoData iodata_cut = make_config("Online", true, cut_path);
+  std::vector<std::unique_ptr<Mesh>> mesh_cut;
+  mesh_cut.push_back(std::make_unique<Mesh>(MakeGradedSplit(4, 5, 6, design)));
+  SubstructuringSolver cut(iodata_cut, mesh_cut);
+  CHECK_THROWS_WITH(cut.CondenseEnvironment(),
+                    Catch::Matchers::ContainsSubstring("is incomplete"));
 }
 
 namespace
@@ -4464,7 +4538,16 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   on0.CondenseEnvironment();
   std::vector<Vector> region_fields;
   const mfem::DenseMatrix C0 = on0.CapacitanceMatrix(terms, nullptr, 0, &region_fields);
-  const ErrorIndicator ind0 = on0.RegionErrorIndicator(region_fields, C0);
+  auto half_diagonal = [](const mfem::DenseMatrix &C)
+  {
+    std::vector<double> e(C.Height());
+    for (int i = 0; i < C.Height(); i++)
+    {
+      e[i] = 0.5 * C(i, i);
+    }
+    return e;
+  };
+  const ErrorIndicator ind0 = on0.RegionErrorIndicator(region_fields, half_diagonal(C0));
   CHECK_FALSE(on0.EnvironmentFactored());
   REQUIRE(ind0.Local().Size() == pm0.GetNE());
   double env_max = 0.0, reg_max = 0.0;
@@ -4498,7 +4581,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   SubstructuringSolver on1(iodata_on, mesh1);
   on1.CondenseEnvironment();
   const mfem::DenseMatrix C1 = on1.CapacitanceMatrix(terms, nullptr, 0, &region_fields);
-  const ErrorIndicator ind1 = on1.RegionErrorIndicator(region_fields, C1);
+  const ErrorIndicator ind1 = on1.RegionErrorIndicator(region_fields, half_diagonal(C1));
   CHECK_FALSE(on1.EnvironmentFactored());
   mfem::Vector eps_by_attr(3);
   eps_by_attr(0) = 1.0;
@@ -4609,7 +4692,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
                                      nullptr, nullptr, 0, &region_fields);
     CHECK_FALSE(on.EnvironmentFactored());
     energy = E(0, 0);
-    return on.RegionErrorIndicator(region_fields, E);
+    return on.RegionErrorIndicator(region_fields, {0.5 * E(0, 0)});
   };
 
   // Online solve and region indicators on the initial mesh.
@@ -4733,9 +4816,7 @@ TEST_CASE("SubstructuringSolver region error indicators across sheets",
   };
   mfem::ND_FECollection fec(1, 3);
   mfem::ParFiniteElementSpace pfes(&mesh.back()->Get(), &fec);
-  mfem::DenseMatrix E(1);
-  E(0, 0) = 2.0;  // unit energy
-  const ErrorIndicator ind = sub.RegionErrorIndicator({project(pfes)}, E);
+  const ErrorIndicator ind = sub.RegionErrorIndicator({project(pfes)}, {1.0});
 
   // The reference, on every rank.
   mfem::Mesh serial = MakeGradedSplitSerial(4, 4, 4, design);
@@ -4859,9 +4940,7 @@ TEST_CASE("SubstructuringSolver region error indicators",
   };
   const auto fec = make_fec();
   mfem::ParFiniteElementSpace pfes(&mesh.back()->Get(), fec.get());
-  mfem::DenseMatrix E(1);
-  E(0, 0) = 2.0;  // unit energy
-  const ErrorIndicator ind = sub.RegionErrorIndicator({project(pfes)}, E);
+  const ErrorIndicator ind = sub.RegionErrorIndicator({project(pfes)}, {1.0});
 
   // The reference, on every rank.
   mfem::Mesh serial = MakeWavyTetSerial(nx);

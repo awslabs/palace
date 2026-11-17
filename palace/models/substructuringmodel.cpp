@@ -7,6 +7,7 @@
 #include <cmath>
 #include <limits>
 #include <system_error>
+#include <utility>
 #include "utils/outputdir.hpp"
 #include "utils/timer.hpp"
 
@@ -44,6 +45,8 @@ void SubstructuringSolver::Impl::AppendSourceModes(const std::string &path)
   const int K = static_cast<int>(src_ids.size());
   const std::vector<double> G_full = GatherRows(SG_rows, K);
   const std::vector<double> H_full = GatherRows(SH_rows, K);
+  const std::vector<double> Hkin_full =
+      have_skin ? GatherRows(SHkin_rows, K) : std::vector<double>();
   WriteModel(
       path, true,
       [&](std::ofstream &f)
@@ -58,6 +61,13 @@ void SubstructuringSolver::Impl::AppendSourceModes(const std::string &path)
                 sizeof(double) * H_full.size());
         f.write(reinterpret_cast<const char *>(SC.data()), sizeof(double) * SC.size());
         f.write(reinterpret_cast<const char *>(SB.data()), sizeof(double) * SB.size());
+        if (have_skin)
+        {
+          f.write(reinterpret_cast<const char *>(Hkin_full.data()),
+                  sizeof(double) * Hkin_full.size());
+          f.write(reinterpret_cast<const char *>(SCkin.data()),
+                  sizeof(double) * SCkin.size());
+        }
       });
 }
 
@@ -528,14 +538,15 @@ void SubstructuringSolver::Impl::CheckEnvFingerprint()
   MFEM_VERIFY(ok, kEnvironmentDiffers);
 }
 
-void SubstructuringSolver::Impl::AppendSK(const std::string &path) const
+void SubstructuringSolver::Impl::AppendOperator(const std::string &path, int magic,
+                                                const std::vector<double> &rows) const
 {
   BlockTimer bt(Timer::IO);
-  const std::vector<double> full = GatherRows(SK_rows, nG_global);
+  const std::vector<double> full = GatherRows(rows, nG_global);
   WriteModel(path, true,
              [&](std::ofstream &f)
              {
-               f.write(reinterpret_cast<const char *>(&kSKenMagic), sizeof(int));
+               f.write(reinterpret_cast<const char *>(&magic), sizeof(int));
                f.write(reinterpret_cast<const char *>(full.data()),
                        sizeof(double) * full.size());
              });
@@ -628,7 +639,7 @@ void SubstructuringSolver::Impl::LoadSections(const std::string &path, std::stre
       MPI_Bcast(saved_env_fp.data(), kEnvFpSize, MPI_DOUBLE, 0, comm);
       have_env_fp = true;
     }
-    else if (magic == kSKenMagic)
+    else if (magic == kSKenMagic || magic == kSKinMagic)
     {
       holds(D * nG * static_cast<double>(nG));
       std::vector<double> full;
@@ -638,8 +649,16 @@ void SubstructuringSolver::Impl::LoadSections(const std::string &path, std::stre
             [&](std::size_t, double *x)
             { f.read(reinterpret_cast<char *>(x), sizeof(double) * nG); });
       }
-      ScatterRows(full, nG, SK_rows);
-      have_sk = true;
+      if (magic == kSKenMagic)
+      {
+        ScatterRows(full, nG, SK_rows);
+        have_sk = true;
+      }
+      else
+      {
+        ScatterRows(full, nG, SKin_rows);
+        have_skin = true;
+      }
     }
     else if (magic == kSourceModesMagic)
     {
@@ -649,9 +668,11 @@ void SubstructuringSolver::Impl::LoadSections(const std::string &path, std::stre
       {
         f.read(reinterpret_cast<char *>(&K), sizeof(int));
       }
-      // ids, fingerprints, g and h rows, c and B.
+      // ids, fingerprints, g and h rows, c and B, and with S^Kin the h^kin rows and c^kin.
       const double k = K;
-      holds((k < 0.0) ? -1.0 : I * k + D * (2.0 * k + 2.0 * k * nG + 2.0 * k * k));
+      holds((k < 0.0) ? -1.0
+                      : I * k + D * (2.0 * k + 2.0 * k * nG + 2.0 * k * k +
+                                     (have_skin ? k * nG + k * k : 0.0)));
       MPI_Bcast(&K, 1, MPI_INT, 0, comm);
       std::vector<int> ids(K);
       std::vector<double> fp(2 * K), C(static_cast<std::size_t>(K) * K), B(C.size()),
@@ -667,6 +688,18 @@ void SubstructuringSolver::Impl::LoadSections(const std::string &path, std::stre
       {
         f.read(reinterpret_cast<char *>(C.data()), sizeof(double) * C.size());
         f.read(reinterpret_cast<char *>(B.data()), sizeof(double) * B.size());
+      }
+      if (have_skin)
+      {
+        std::vector<double> Hkin_full, Ckin(C.size());
+        read_rows(K, Hkin_full);
+        if (root)
+        {
+          f.read(reinterpret_cast<char *>(Ckin.data()), sizeof(double) * Ckin.size());
+        }
+        MPI_Bcast(Ckin.data(), K * K, MPI_DOUBLE, 0, comm);
+        ScatterRows(Hkin_full, K, SHkin_rows);
+        SCkin = std::move(Ckin);
       }
       MPI_Bcast(ids.data(), K, MPI_INT, 0, comm);
       MPI_Bcast(fp.data(), 2 * K, MPI_DOUBLE, 0, comm);
@@ -797,7 +830,11 @@ void SubstructuringSolver::Impl::SaveModel(const std::string &model_path, int si
   AppendEnvMoments(model_path, WriteRegionMesh(RegionMeshPath(model_path)));
   if (have_sk)
   {
-    AppendSK(model_path);  // collective
+    AppendOperator(model_path, kSKenMagic, SK_rows);  // collective
+    if (have_skin)
+    {
+      AppendOperator(model_path, kSKinMagic, SKin_rows);
+    }
   }
   if (modes_ready)
   {

@@ -33,9 +33,14 @@ public:
   void SolveInternal(const std::vector<const mfem::Vector *> &X,
                      const std::vector<mfem::Vector *> &Y) override;
 
+  void Condense(const std::vector<const mfem::Vector *> &X,
+                std::vector<double> &g) override;
+
 private:
-  int n_loc;
+  MPI_Comm comm;
+  int n_loc, n_schur;
   strumpack::SparseSolverMPIDist<double, int> solver;
+  SchurRowGather rows;
   std::vector<double> schur;
 };
 

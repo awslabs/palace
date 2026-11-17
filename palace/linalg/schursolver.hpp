@@ -39,6 +39,39 @@ public:
   // factorizations). y_k may alias x_k.
   virtual void SolveInternal(const std::vector<const VecType *> &X,
                              const std::vector<VecType *> &Y) = 0;
+
+  // Condensations of a batch of vectors onto the Schur variables (collective): g = x_S -
+  // A_SI A_II^-1 x_I on rank 0 (n_schur x |X|, column-major). A partial factorization
+  // condenses by its forward elimination only, half of an internal solve.
+  virtual void Condense(const std::vector<const VecType *> &X, std::vector<T> &g) = 0;
+};
+
+//
+// The rows of the Schur variables that each rank holds, to gather their entries of a batch
+// of vectors on rank 0 in the order of the Schur variables.
+//
+class SchurRowGather
+{
+public:
+  // schur_vars: the global (0-based) rows of the Schur variables (replicated); row0 and
+  // n_loc: the rows of this rank. Collective.
+  SchurRowGather(MPI_Comm comm, HYPRE_BigInt row0, int n_loc,
+                 const std::vector<HYPRE_BigInt> &schur_vars);
+
+  // The local rows of the Schur variables on this rank, and their positions among them.
+  const std::vector<int> &Rows() const { return row; }
+  const std::vector<int> &Positions() const { return pos; }
+
+  // Gather loc (the entries in Rows() of nb vectors, |Rows()| x nb, column-major) on rank 0
+  // into g (n_schur x nb, column-major; not used on the other ranks). Collective.
+  void Gather(const std::vector<double> &loc, int nb, double *g) const;
+
+private:
+  MPI_Comm comm;
+  int n_schur;
+  // On rank 0, the positions of the Schur rows of every rank (in rank order), with their
+  // counts and offsets.
+  std::vector<int> row, pos, all_pos, pos_cnt, pos_dsp;
 };
 
 //
@@ -101,13 +134,19 @@ public:
   void SolveInternal(const std::vector<const mfem::Vector *> &X,
                      const std::vector<mfem::Vector *> &Y) override;
 
+  void Condense(const std::vector<const mfem::Vector *> &X,
+                std::vector<double> &g) override;
+
 private:
+  // The condensations of a batch (at most block vectors) on rank 0 into g, by the internal
+  // solves Y (which may alias X) and a product with A. Collective.
+  void CondenseBatch(const std::vector<const mfem::Vector *> &X,
+                     const std::vector<mfem::Vector *> &Y, double *g) const;
+
   const mfem::HypreParMatrix &A;
   InternalSolver solve;
   int n_schur, block;
-  // The local rows of the Schur variables and their positions among them, and on rank 0,
-  // the positions of those of every rank (in rank order) with their counts and offsets.
-  std::vector<int> schur_row, schur_pos, all_pos, pos_cnt, pos_dsp;
+  SchurRowGather rows;
 };
 
 }  // namespace palace
