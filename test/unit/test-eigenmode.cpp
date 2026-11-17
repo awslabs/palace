@@ -23,7 +23,7 @@ namespace palace
 {
 
 TEST_CASE("Vector field transfer through refinement and rebalancing",
-          "[eigenmode][Serial][Parallel]")
+          "[eigenmode][Serial][Parallel][GPU]")
 {
   // H(curl) fields of a space of order p, linear in the coordinates, are kept exactly
   // through nonconforming refinement and rebalancing of their mesh.
@@ -55,6 +55,7 @@ TEST_CASE("Vector field transfer through refinement and rebalancing",
     mfem::ParGridFunction gf(&fespace);
     gf.ProjectCoefficient(coeff);
     Vector tv(fespace.GetTrueVSize());
+    tv.UseDevice(true);
     gf.GetTrueDofs(tv);
     return tv;
   };
@@ -97,6 +98,7 @@ TEST_CASE("Vector field transfer through refinement and rebalancing",
   {
     const auto ref = TrueDofs(nd_fespace, k);
     Vector tv;
+    tv.UseDevice(true);
     transfer.GetField(k, nd_fespace, tv);
     REQUIRE(tv.Size() == ref.Size());
     tv -= ref;
