@@ -1056,6 +1056,19 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-AddSamplePROM",
     CHECK(same_matrix(prom_op.GetKr(), prom_ref.GetKr()));
   }
 
+  // UpdatePROM with abort_if_dependent = false, as AddSamplePROM adds the imaginary part
+  // alone, returns false for a sample with a part in the span of the basis and leaves the
+  // PROM unchanged.
+  prom_op.RestoreReducedState(state);
+  prom_op.UpdatePROM(u, "noisy");
+  const auto state_full = prom_op.SaveReducedState();
+  ComplexVector u_im(u);
+  u_im.UseDevice(true);
+  u_im.Real() = 0.0;
+  CHECK_FALSE(prom_op.UpdatePROM(u_im, "noisy_im", false));
+  CHECK(SameReducedState(prom_op.SaveReducedState(), state_full));
+  prom_op.RestoreReducedState(state);
+
   // SolveHDM reports a linear solve which does not converge (here, after a single
   // iteration), which the adaptive sampling stop does not count (see
   // AdaptiveSamplingStall).

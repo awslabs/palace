@@ -1070,7 +1070,8 @@ void RomOperator::AddWavePortModesForSynthesis(double omega_ref)
   }
 }
 
-void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label)
+bool RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label,
+                             bool abort_if_dependent)
 {
   RHS1r_online.clear();
   Ar_omega = std::numeric_limits<double>::quiet_NaN();
@@ -1143,22 +1144,25 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
     return true;
   };
 
-  if (has_real && !add_real_vector_to_basis(u.Real(), fmt::format("{}_re", node_label)))
+  const bool added =
+      (!has_real || add_real_vector_to_basis(u.Real(), fmt::format("{}_re", node_label))) &&
+      (!has_imag || add_real_vector_to_basis(u.Imag(), fmt::format("{}_im", node_label)));
+  if (!added)
   {
-    MFEM_ABORT("Linearly dependent vector added to PROM basis. This indicates a "
-               "convergence issue or a code error (the same vector was added multiple "
-               "times accidentally).");
-  }
-  if (has_imag && !add_real_vector_to_basis(u.Imag(), fmt::format("{}_im", node_label)))
-  {
-    MFEM_ABORT("Linearly dependent vector added to PROM basis. This indicates a "
-               "convergence issue or a code error (the same vector was added multiple "
-               "times accidentally).");
+    MFEM_VERIFY(!abort_if_dependent,
+                "Linearly dependent vector added to PROM basis. This indicates a "
+                "convergence issue or a code error (the same vector was added multiple "
+                "times accidentally).");
+    // Leave the basis unchanged.
+    V.resize(dim_V_old);
+    v_node_label.resize(dim_V_old);
+    orth_R.conservativeResize(dim_V_old, dim_V_old);
+    return false;
   }
 
   if (dim_V_new == dim_V_old)
   {
-    return;
+    return true;
   }
 
   // Update reduced-order operators. Resize preserves the upper dim0 x dim0 block of each
@@ -1280,6 +1284,7 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
       rm.Vh_cvk(i) = std::conj(vt_vi);  // V[i]^H conj(v_k) = conj(V[i]^T v_k)
     }
   }
+  return true;
 }
 
 RomOperator::ReducedState RomOperator::SaveReducedState(std::size_t n) const
@@ -1449,7 +1454,7 @@ RomOperator::SampleUpdate RomOperator::AddSamplePROM(int excitation_idx, double 
     err.push_back(RelativeError());
   }
   err.push_back(error_full);
-  const auto best = static_cast<std::size_t>(
+  auto best = static_cast<std::size_t>(
       std::distance(err.begin(), std::min_element(err.begin(), err.end())));
   if (best == err.size() - 1)
   {
@@ -1458,8 +1463,9 @@ RomOperator::SampleUpdate RomOperator::AddSamplePROM(int excitation_idx, double 
 
   // Keep the best candidate. The basis with the real part only is a leading block of the
   // updated one, so its state is the leading block of the updated state. The imaginary part
-  // alone is added to the old basis.
-  update.num_kept = (best == 0) ? 0 : 1;
+  // alone is added to the old basis: it is independent of the old basis, as it is of the
+  // old basis and the real part, but for round-off at the dependence tolerance, with which
+  // neither part is kept.
   if (best == 1)
   {
     RestoreReducedState(SaveReducedState(n0 + 1));
@@ -1472,9 +1478,14 @@ RomOperator::SampleUpdate RomOperator::AddSamplePROM(int excitation_idx, double 
       ComplexVector u_im(u);
       u_im.UseDevice(true);
       u_im.Real() = 0.0;
-      UpdatePROM(u_im, node_label);
+      if (!UpdatePROM(u_im, node_label, false))
+      {
+        RestoreReducedState(state);
+        best = 0;
+      }
     }
   }
+  update.num_kept = (best == 0) ? 0 : 1;
   if (m == 1)
   {
     Mpi::Print(comm,

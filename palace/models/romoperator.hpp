@@ -578,8 +578,12 @@ public:
   // Add field configuration to the reduced-order basis and update the PROM. Requires a name
   // "node_label". This will be printed in the header of the csv files when printing PROM
   // matrices. It is needed to distinguish port and solution field configuration as well as
-  // to reconstruct if field configuration are pure real, imaginary or complex.
-  void UpdatePROM(const ComplexVector &u, std::string_view node_label);
+  // to reconstruct if field configuration are pure real, imaginary or complex. If the real
+  // or imaginary part of u is in the span of the basis (to the orthogonalization
+  // tolerance), aborts, or, with abort_if_dependent = false, leaves the PROM unchanged and
+  // returns false.
+  bool UpdatePROM(const ComplexVector &u, std::string_view node_label,
+                  bool abort_if_dependent = true);
 
   // Add an HDM solution u at the sampled frequency ω (excitation excitation_idx) to the
   // reduced-order basis like UpdatePROM, and check that the PROM then reproduces u at ω to
