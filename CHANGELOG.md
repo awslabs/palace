@@ -220,19 +220,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Bug Fixes
 
-  - Added a STRUMPACK patch with the upstream fix for the pivoting of distributed BLR
-    fronts (STRUMPACK commits
-    [3f30760d](https://github.com/pghysels/STRUMPACK/commit/3f30760de7fdff5d7dd5cf31333ba004460db249)
-    and
-    [668cd1b8](https://github.com/pghysels/STRUMPACK/commit/668cd1b80e741b9ebff486905024e46853164afd),
-    which came after STRUMPACK 8.1.0). With `Solver.Linear.STRUMPACKCompressionType`
-    `"BLR"`, `"BLR-HODLR"` or `"ZFP-BLR-HODLR"` on two or more MPI processes, the
-    factorization of an indefinite matrix was inaccurate whatever
-    `Solver.Linear.STRUMPACKCompressionTol`. The linear solves needed more iterations, and
-    with `Solver.Linear.ComplexCoarseSolve` they returned wrong solutions while reporting
-    convergence even with a compression tolerance of 1e-6. With the default tolerance of
-    1e-3, `Solver.Linear.ComplexCoarseSolve` with BLR compression still does, for a
-    different reason. [PR 1222](https://github.com/awslabs/palace/pull/1222).
+  - Fixed the pivoting of distributed BLR fronts in STRUMPACK with a patch from upstream.
+    With BLR compression (`"STRUMPACKCompressionType"` `"BLR"`, `"BLR-HODLR"` or
+    `"ZFP-BLR-HODLR"`) on two or more MPI processes, the factorization of an indefinite
+    matrix was inaccurate whatever the tolerance, so the linear solves needed more
+    iterations and could return wrong solutions with `"ComplexCoarseSolve"`.
+    [PR 1222](https://github.com/awslabs/palace/pull/1222).
   - Fixed the flux recovery in the error estimators to use the projection which minimizes the
     error it is measured in (ε⁻¹-weighted for the electric flux, μ-weighted for the magnetic
     field). The unweighted projection overestimated the error in the low-permittivity
