@@ -933,6 +933,14 @@ PackComplexOperator(std::unique_ptr<palace::Operator> &Ar,
       break;
     }
   }
+  // Real leaves without a partner gain little when packed on their own (about 1.05 times
+  // faster, against about 2 times for a pair), while every packed leaf has its own backend
+  // buffers, including a copy of its QData. Pack them only along with at least one pair, so
+  // that operators without any, as those of lossless problems, keep their original action.
+  if (!packed)
+  {
+    return {};  // This also handles ranks with no local volume terms.
+  }
   // A real leaf packed over a subset still owes the elements that subset leaves out, and
   // recognized leaves without a partner act on both parts of x on their own. Imaginary
   // curl leaves stay in the remainder, like for pairing.
@@ -948,18 +956,10 @@ PackComplexOperator(std::unique_ptr<palace::Operator> &Ar,
       {
         continue;
       }
-      if (!packed)
-      {
-        packed = std::make_unique<Operator>(2 * size, 2 * size);
-      }
       AddPackedSingle(ceed, *fields[part][j], part == 1, size, nullptr, 0, nullptr,
                       *packed);
       matched[part][j] = true;
     }
-  }
-  if (!packed)
-  {
-    return {};  // This also handles ranks with no local volume terms.
   }
   // Keep every unmatched child exactly once. In particular, differing real/imaginary
   // boundary terms must not disable fusion of compatible domain contributions.

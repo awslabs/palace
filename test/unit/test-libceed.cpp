@@ -2779,13 +2779,16 @@ TEST_CASE("Ordinary driven fine preconditioner activates packed complex QData",
   REQUIRE(coarse);
   REQUIRE(dynamic_cast<const hypre::HypreCSRMatrix *>(coarse->LocalOperator().Real()));
   REQUIRE(IsOriginalComplexWrapper(coarse->LocalOperator()));
-  // Volume and boundary leaves without an imaginary partner are packed as well, so the
-  // fine and H1 auxiliary operators all use the fast path.
+  // The fine and H1 auxiliary operators are packed when they have a pair of real and
+  // imaginary volume leaves, together with their real volume leaves without a partner.
+  // Without any pair (lossless volume or real-valued preconditioner), they keep the
+  // original action.
+  const bool pairs = lossy && !real_pc;
   const auto &aux =
       dynamic_cast<const ComplexParOperator &>(mg->GetFinestAuxiliaryOperator());
-  REQUIRE(!IsOriginalComplexWrapper(aux.LocalOperator()));
+  REQUIRE(!IsOriginalComplexWrapper(aux.LocalOperator()) == pairs);
   const auto &local = fine->LocalOperator();
-  REQUIRE(!IsOriginalComplexWrapper(local));
+  REQUIRE(!IsOriginalComplexWrapper(local) == pairs);
   // Assemble independent reference operators and exercise the unchanged borrowed RAP
   // constructor. Numerical agreement is checked against separate real ParOperators below.
   auto ref_pc = AssembleComplexPreconditioner(*space);
@@ -2923,9 +2926,10 @@ TEST_CASE("libCEED packed complex input fallbacks",
     ref_imag.reset();
   }
   auto actual = ceed::CreateComplexOperator(std::move(real), std::move(imag), fespace);
-  // Non-tensor H1 bases and real-only inputs are packed; tensor-product bases, dof
-  // multiplicity, and unassembled vector quadrature data keep the original action.
-  REQUIRE(IsOriginalComplexWrapper(*actual) == (tensor || scaled || !qdata));
+  // Non-tensor H1 bases are packed; tensor-product bases, dof multiplicity, unassembled
+  // vector quadrature data, and real-only inputs (no pair to pack) keep the original
+  // action.
+  REQUIRE(IsOriginalComplexWrapper(*actual) == (tensor || scaled || !qdata || real_only));
   ComplexWrapperOperator reference(ref_real.get(), ref_imag.get());
   CheckPackedActions(*actual, reference);
 }
