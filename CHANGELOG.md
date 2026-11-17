@@ -351,7 +351,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     `LinearSolver/<Role>/{Solves, Its, MaxIts, NotConverged, Setups}` over every solve. The
     wave port linear solver is no longer timed under `Linear Solve`/`Preconditioner`; its
     time stays in the `Wave Ports` rows.
-    [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
+    [PR 1152](https://github.com/awslabs/palace/pull/1152).
 
 ## [0.19.0] - 2026-11-02
 

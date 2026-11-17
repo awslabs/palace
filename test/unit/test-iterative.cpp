@@ -394,10 +394,10 @@ int SolveJacobiPcg(const std::type_identity_t<OperType> &op,
   ksp.SetMaxIter(max_it);
   ksp.EnableTimer();
   x = 0.0;
-  const int count = BlockTimer::GlobalTimer().Counts(Timer::KSP_PRECONDITIONER);
+  const int count = BlockTimer::GlobalTimer().Get(Timer::KSP_PRECONDITIONER).count;
   ksp.Mult(b, x);
   CHECK(ksp.GetNumIterations() == max_it);
-  return BlockTimer::GlobalTimer().Counts(Timer::KSP_PRECONDITIONER) - count;
+  return BlockTimer::GlobalTimer().Get(Timer::KSP_PRECONDITIONER).count - count;
 }
 
 }  // namespace
