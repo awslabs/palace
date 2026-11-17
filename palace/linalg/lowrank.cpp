@@ -285,7 +285,11 @@ void LowRankComplexUpdate<Conj>::AddMult(const ComplexVector &x, ComplexVector &
   }
   else
   {
-    // On the host, each term accumulates the entries of its group in order.
+    // On the host, each term sums the entries of its group in four interleaved lanes (entry
+    // j in lane j % 4), each with separate sums of the four real products, combined in a
+    // fixed order at the end. The loop then carries no dependency from one entry to the
+    // next and needs no reduction across vector lanes, which GCC compiles into strictly
+    // ordered (slow) instructions for SVE.
     const auto *TG = term_group.HostRead();
     const auto *GT = group_terms.HostRead(), *GE = group_ents.HostRead();
     const auto *GV = group_vals.HostRead();
@@ -295,16 +299,41 @@ void LowRankComplexUpdate<Conj>::AddMult(const ComplexVector &x, ComplexVector &
     mfem::forall_switch(use_dev, num_local,
                         [=] MFEM_HOST_DEVICE(int t)
                         {
+                          constexpr int L = 4;
                           const int gi = TG[t], e0 = GE[gi], nnz = GE[gi + 1] - e0;
                           const int v0 = GV[gi] + (t - GT[gi]) * nnz;
-                          double re = 0.0, im = 0.0;
-                          for (int j = 0; j < nnz; j++)
+                          double rr[L] = {}, ii[L] = {}, ri[L] = {}, ir[L] = {};
+                          int j = 0;
+                          for (; j + L <= nnz; j += L)
+                          {
+                            for (int l = 0; l < L; l++)
+                            {
+                              const int i = I[e0 + j + l];
+                              const double vr_j = VR[v0 + j + l], vi_j = VI[v0 + j + l];
+                              rr[l] += vr_j * XR[i];
+                              ii[l] += vi_j * XI[i];
+                              ri[l] += vr_j * XI[i];
+                              ir[l] += vi_j * XR[i];
+                            }
+                          }
+                          for (int l = 0; j < nnz; j++, l++)
                           {
                             const int i = I[e0 + j];
-                            DotAdd<Conj>(VR[v0 + j], VI[v0 + j], XR[i], XI[i], re, im);
+                            const double vr_j = VR[v0 + j], vi_j = VI[v0 + j];
+                            rr[l] += vr_j * XR[i];
+                            ii[l] += vi_j * XI[i];
+                            ri[l] += vr_j * XI[i];
+                            ir[l] += vi_j * XR[i];
                           }
-                          D[2 * PM[t] + 0] = re;
-                          D[2 * PM[t] + 1] = im;
+                          for (int l = 1; l < L; l++)
+                          {
+                            rr[0] += rr[l];
+                            ii[0] += ii[l];
+                            ri[0] += ri[l];
+                            ir[0] += ir[l];
+                          }
+                          D[2 * PM[t] + 0] = Conj ? rr[0] + ii[0] : rr[0] - ii[0];
+                          D[2 * PM[t] + 1] = Conj ? ri[0] - ir[0] : ri[0] + ir[0];
                         });
   }
 
@@ -320,29 +349,59 @@ void LowRankComplexUpdate<Conj>::AddMult(const ComplexVector &x, ComplexVector &
     C[2 * t + 1] = s.imag();
   }
 
-  // y += Σ_k s_k v_k, with each entry accumulating the terms of its group in order.
-  const auto *EG = ent_group.Read(use_dev);
-  const auto *GT = group_terms.Read(use_dev), *GE = group_ents.Read(use_dev);
-  const auto *GV = group_vals.Read(use_dev);
-  const auto *I = idx.Read(use_dev);
-  const auto *VR = vr.Read(use_dev), *VI = vi.Read(use_dev);
-  const auto *DC = coeff.Read(use_dev);
-  auto *YR = y.Real().ReadWrite(use_dev), *YI = y.Imag().ReadWrite(use_dev);
-  mfem::forall_switch(use_dev, num_entries,
-                      [=] MFEM_HOST_DEVICE(int e)
-                      {
-                        const int gi = EG[e], e0 = GE[gi], nnz = GE[gi + 1] - e0;
-                        const int t0 = GT[gi], t1 = GT[gi + 1], v0 = GV[gi] + e - e0;
-                        const int i = I[e];
-                        double yr = YR[i], yi = YI[i];
-                        for (int t = t0; t < t1; t++)
+  // y += Σ_k s_k v_k, with each entry accumulating the terms of its group in order. A
+  // device or OpenMP backend runs one loop over all the packed entries; the serial host
+  // loops over the groups, with their offsets hoisted out of the loop over the entries.
+  if (use_dev && mfem::Device::Allows(mfem::Backend::DEVICE_MASK | mfem::Backend::OMP_MASK))
+  {
+    const auto *EG = ent_group.Read(use_dev);
+    const auto *GT = group_terms.Read(use_dev), *GE = group_ents.Read(use_dev);
+    const auto *GV = group_vals.Read(use_dev);
+    const auto *I = idx.Read(use_dev);
+    const auto *VR = vr.Read(use_dev), *VI = vi.Read(use_dev);
+    const auto *DC = coeff.Read(use_dev);
+    auto *YR = y.Real().ReadWrite(use_dev), *YI = y.Imag().ReadWrite(use_dev);
+    mfem::forall_switch(use_dev, num_entries,
+                        [=] MFEM_HOST_DEVICE(int e)
                         {
-                          const int v = v0 + (t - t0) * nnz;
-                          UpdateAdd(DC[2 * t], DC[2 * t + 1], VR[v], VI[v], yr, yi);
-                        }
-                        YR[i] = yr;
-                        YI[i] = yi;
-                      });
+                          const int gi = EG[e], e0 = GE[gi], nnz = GE[gi + 1] - e0;
+                          const int t0 = GT[gi], t1 = GT[gi + 1], v0 = GV[gi] + e - e0;
+                          const int i = I[e];
+                          double yr = YR[i], yi = YI[i];
+                          for (int t = t0; t < t1; t++)
+                          {
+                            const int v = v0 + (t - t0) * nnz;
+                            UpdateAdd(DC[2 * t], DC[2 * t + 1], VR[v], VI[v], yr, yi);
+                          }
+                          YR[i] = yr;
+                          YI[i] = yi;
+                        });
+  }
+  else
+  {
+    const auto *GT = group_terms.HostRead(), *GE = group_ents.HostRead();
+    const auto *GV = group_vals.HostRead();
+    const auto *I = idx.HostRead();
+    const auto *VR = vr.HostRead(), *VI = vi.HostRead();
+    const auto *DC = coeff.HostRead();
+    auto *YR = y.Real().HostReadWrite(), *YI = y.Imag().HostReadWrite();
+    for (int gi = 0; gi < NumGroups(); gi++)
+    {
+      const int e0 = GE[gi], nnz = GE[gi + 1] - e0, t0 = GT[gi], nt = GT[gi + 1] - t0;
+      const double *GR = VR + GV[gi], *GI = VI + GV[gi], *C = DC + 2 * t0;
+      for (int j = 0; j < nnz; j++)
+      {
+        const int i = I[e0 + j];
+        double yr = YR[i], yi = YI[i];
+        for (int t = 0; t < nt; t++)
+        {
+          UpdateAdd(C[2 * t], C[2 * t + 1], GR[t * nnz + j], GI[t * nnz + j], yr, yi);
+        }
+        YR[i] = yr;
+        YI[i] = yi;
+      }
+    }
+  }
 }
 
 template class LowRankComplexUpdate<true>;
