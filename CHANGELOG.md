@@ -371,6 +371,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     [PR 1180](https://github.com/awslabs/palace/pull/1180).
   - Removed the `PALACE_WITH_GPU_AWARE_MPI` option: *Palace* now asks MPI at runtime whether
     it is GPU aware.
+    [PR 1226](https://github.com/awslabs/palace/pull/1226).
 
 ## [0.19.0] - 2026-11-02
 
