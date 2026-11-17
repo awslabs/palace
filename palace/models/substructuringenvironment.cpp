@@ -397,11 +397,12 @@ bool SubstructuringSolver::Impl::ModesMatch(const std::vector<int> &ids,
   const std::size_t n = ids.size();
   col.assign(n, -1);
   need.assign(n, 0);
-  // Whether each lift reaches the environment (A_env x != 0) and, on the full mesh, its
-  // fingerprint.
+  // Whether each excitation has DOFs in the mesh (on the mesh of the region, one without
+  // them is of the environment) and its lift reaches the environment (A_env x != 0), and,
+  // on the full mesh, the fingerprint of its lift.
   constexpr std::size_t kBlock = 4;  // bounds the memory of the full vectors
   std::vector<std::array<double, 2>> fps(n);
-  std::vector<double> reach(n, 0.0);
+  std::vector<double> reach(2 * n, 0.0);
   for (std::size_t j0 = 0; j0 < n; j0 += kBlock)
   {
     std::vector<mfem::Vector> x;
@@ -418,6 +419,7 @@ bool SubstructuringSolver::Impl::ModesMatch(const std::vector<int> &ids,
     for (std::size_t j = j0; j < j0 + x.size(); j++)
     {
       reach[j] = t[j - j0].Normlinf();
+      reach[n + j] = xd[j].Normlinf();
       if (!region_only)
       {
         fps[j] = LiftFingerprint(x[j - j0], t[j - j0]);
@@ -426,7 +428,7 @@ bool SubstructuringSolver::Impl::ModesMatch(const std::vector<int> &ids,
   }
   if (n > 0)
   {
-    MPI_Allreduce(MPI_IN_PLACE, reach.data(), static_cast<int>(n), MPI_DOUBLE, MPI_MAX,
+    MPI_Allreduce(MPI_IN_PLACE, reach.data(), static_cast<int>(2 * n), MPI_DOUBLE, MPI_MAX,
                   parent_fes.GetComm());
   }
   bool ok = true;
@@ -440,6 +442,10 @@ bool SubstructuringSolver::Impl::ModesMatch(const std::vector<int> &ids,
     {
       continue;  // the environment, and so its modes, are those of the model
     }
+    MFEM_VERIFY(!region_only || reach[n + j] > 0.0,
+                "Excitation " << ids[j]
+                              << " has no DOFs in the mesh of the region and is not in the "
+                                 "saved substructuring model: run on the full mesh!");
     if (reach[j] == 0.0)
     {
       col[j] = -1;  // zero modes

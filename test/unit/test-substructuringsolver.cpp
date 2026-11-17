@@ -1409,6 +1409,51 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   CHECK(std::abs(E_region - E_full) <= 1.0e-9 * E_full);
 }
 
+TEST_CASE_METHOD(
+    palace::test::SharedTempDir,
+    "SubstructuringSolver on the mesh of the region needs the model's terminals",
+    "[substructure][Serial][Parallel]")
+{
+  // On the mesh of the region, a terminal on the environment's boundary (attribute 2, at
+  // x = 1) has no DOFs: the model must hold it, so a renamed one needs the full mesh (and
+  // would otherwise give a zero row of C).
+  const std::string model_path = (temp_dir / "substruct_terminals.bin").string();
+  auto make_config = [&](const std::string &mode, int env_index)
+  {
+    json config = {
+        {"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains", {{"Materials", {{{"Attributes", {1, 2}}, {"Permittivity", 1.0}}}}}},
+        {"Boundaries",
+         {{"Ground", {{"Attributes", {3}}}},
+          {"Terminal",
+           {{{"Index", 1}, {"Attributes", {1}}},
+            {{"Index", env_index}, {"Attributes", {2}}}}}}},
+        {"Solver",
+         {{"Order", 1},
+          {"Substructuring",
+           {{"Region", {{"Attributes", {1}}}},
+            {"Environment", {{"Attributes", {2}}}},
+            {"Mode", mode},
+            {"SaveModel", model_path}}}}}};
+    return IoData(config, false);
+  };
+  auto capacitance = [](const IoData &iodata, std::unique_ptr<mfem::ParMesh> &&pmesh, int k)
+  {
+    std::vector<std::unique_ptr<Mesh>> mesh;
+    mesh.push_back(std::make_unique<Mesh>(std::move(pmesh)));
+    SubstructuringSolver ss(iodata, mesh);
+    ss.CondenseEnvironment();
+    return ss.CapacitanceMatrix({1, k});
+  };
+  (void)capacitance(make_config("Offline", 2), MakeSplitCube(4), 2);
+  mfem::Mesh serial(RegionMeshPath(model_path).c_str());
+  auto region = [&]() { return std::make_unique<mfem::ParMesh>(Mpi::World(), serial); };
+  CHECK(capacitance(make_config("Online", 2), region(), 2)(1, 1) > 0.0);
+  CHECK_THROWS_WITH(capacitance(make_config("Online", 5), region(), 5),
+                    Catch::Matchers::ContainsSubstring("Excitation 5 has no DOFs"));
+}
+
 TEST_CASE("SubstructuringSolver magnetostatics ignores terminals",
           "[substructure][Serial][Parallel]")
 {

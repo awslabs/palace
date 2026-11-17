@@ -670,7 +670,8 @@ struct SubstructuringSolver::Impl
 
   // Whether the current modes cover every lift that reaches the environment (need[j]; same
   // id and fingerprints, or on the mesh of the region an id of the model), with col[j] its
-  // mode column (-1: none, zero modes). Collective.
+  // mode column (-1: none, zero modes). On the mesh of the region, an excitation the model
+  // lacks must have DOFs in it (one without is of the environment). Collective.
   bool ModesMatch(const std::vector<int> &ids, const std::vector<mfem::Vector> &xd,
                   std::vector<int> &col, std::vector<char> &need) const;
 
