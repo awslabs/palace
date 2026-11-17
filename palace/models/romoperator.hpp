@@ -496,7 +496,8 @@ protected:
   // first n basis vectors: the projections onto a leading part of the basis are the
   // leading blocks of those onto the basis. RestoreReducedState returns the PROM to a
   // saved state, removing the basis vectors added since; the reduced system is reassembled
-  // at the next SolvePROM.
+  // at the next SolvePROM. The projected frequency-linear source RHS1r is that of the
+  // excitation set when the state is saved, which must still be set when it is restored.
   struct ReducedState
   {
     std::size_t dim_V = 0;

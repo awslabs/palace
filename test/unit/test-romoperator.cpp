@@ -1067,6 +1067,251 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-AddSamplePROM",
   CHECK_FALSE(prom_1.SolveHDM(1, iodata_1.solver.driven.sample_f[omega.size() / 2], u));
 }
 
+// Samples constructed so that the PROM with both of their parts is far from them at their
+// frequency, while a smaller basis reproduces them: AddSamplePROM keeps the closest
+// candidate basis without touching the old part of the PROM, and when it keeps no new
+// direction the PROM is restored bit for bit. UpdatePROM, which the sweep uses for the
+// samples which initialize the basis, adds every direction of the same samples.
+//
+// The model is lossless, with a purely inductive excited port, so the system matrix is real
+// at real ω, and with the excitation phase 0° (90°) the HDM and PROM solutions at ω are
+// imaginary (real): their "solution part". The basis starts from random directions V0, so
+// that the PROM solutions are far from the HDM solution u*. With x(V) the PROM solution at
+// ω with the basis V, p a random direction, q the part of u* outside span(V0, p) and q0 the
+// part of u* outside span(V0):
+//   - u = x(V0 + p) + δ q, with q in the other part: the candidate with the solution part
+//     of u alone has the basis V0 + p and is δ from u; with q in the basis the PROM
+//     solution is u* (the Galerkin PROM reproduces u* in the span), and without p it lacks
+//     the component of x(V0 + p) along p.
+//   - u = x(V0) + δ (p + q0), with p in the solution part and q0 in the other part: the old
+//     basis is √2 δ from u; with q0 the PROM solution is u*, with p alone it is x(V0 + p).
+TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-AddSamplePROM-Candidates",
+                 "[romoperator][Serial][Parallel]")
+{
+  const double phase = GENERATE(0.0, 90.0);
+  CAPTURE(phase);
+  MPI_Comm world_comm = Mpi::World();
+  auto mesh_path =
+      fs::path(PALACE_TEST_DATA_DIR) / "lumpedport_mesh/cube_mesh_3_2_1_tet.msh";
+  json setup_json;
+  setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 2}, {"Output", temp_dir}};
+  setup_json["Model"] = {{"Mesh", mesh_path},
+                         {"Refinement", json::object({})},
+                         {"CrackInternalBoundaryElements", false}};
+  setup_json["Domains"] = {
+      {"Materials",
+       json::array({json::object({{"Attributes", json::array({1, 2, 3, 4, 5, 6})},
+                                  {"Permeability", 1.0},
+                                  {"Permittivity", 1.0},
+                                  {"LossTan", 0.0}})})}};
+  setup_json["Boundaries"] = {
+      {"LumpedPort",
+       json::array({json::object(
+           {{"Index", 1},
+            {"L", 1.0e-9},
+            {"Excitation", uint(1)},
+            {"ExcitationPhase", phase},
+            {"Elements", json::array({json::object({{"Attributes", json::array({14})},
+                                                    {"Direction", "+Z"}})})}})})}};
+  setup_json["Solver"] = json::object();
+  setup_json["Solver"]["Device"] = "CPU";
+  setup_json["Solver"]["Driven"] = {
+      {"AdaptiveTol", 1e-3}, {"MinFreq", 2.0}, {"MaxFreq", 32.0}, {"FreqStep", 1.0}};
+  setup_json["Solver"]["Linear"] = {
+      {"Type", "Default"}, {"KSPType", "GMRES"}, {"MaxIts", 1000}, {"Tol", 1.0e-12}};
+
+  IoData iodata(setup_json, false);
+  auto mesh_io = LoadScaleParMesh2(iodata, world_comm);
+  SpaceOperator space_op(iodata, mesh_io);
+  RomOperatorTest prom_op(iodata, space_op, 8);
+  const auto &omega_sample = iodata.solver.driven.sample_f;
+  const double omega = omega_sample[omega_sample.size() / 2];
+  const double tol = iodata.solver.driven.adaptive_tol;
+
+  const auto n = space_op.GetNDSpace().GetTrueVSize();
+  const auto &dbc_tdof_list = space_op.GetNDDbcTDofLists().back();
+  auto make_vector = [n]()
+  {
+    ComplexVector v(n);
+    v.UseDevice(true);
+    v = 0.0;
+    return v;
+  };
+  auto solution_part = [phase](ComplexVector &v) -> Vector &
+  { return (phase == 0.0) ? v.Imag() : v.Real(); };
+  auto other_part = [phase](ComplexVector &v) -> Vector &
+  { return (phase == 0.0) ? v.Real() : v.Imag(); };
+  auto norm = [&](const ComplexVector &v) { return linalg::Norml2(world_comm, v); };
+  auto rel_diff = [&](const ComplexVector &x, const ComplexVector &y)
+  {
+    ComplexVector d(x);
+    d.UseDevice(true);
+    linalg::AXPY(-1.0, y, d);
+    return linalg::Norml2(world_comm, d) / linalg::Norml2(world_comm, y);
+  };
+  auto rel_close = [](double a, double b, double rtol)
+  { return std::abs(a - b) <= rtol * std::abs(b); };
+  // Separately computed projections agree to round-off, not bit for bit (with OpenMP, the
+  // threaded operator applications and reductions need not sum in the same order).
+  auto same_projection =
+      [](const RomOperatorTest::ReducedState &a, const RomOperatorTest::ReducedState &b)
+  {
+    auto close = [](const auto &A, const auto &B)
+    {
+      return A.rows() == B.rows() && A.cols() == B.cols() &&
+             (A - B).norm() <= 1.0e-10 * B.norm();
+    };
+    return a.dim_V == b.dim_V && a.v_node_label == b.v_node_label &&
+           close(a.orth_R, b.orth_R) && close(a.Kr, b.Kr) && close(a.Mr, b.Mr) &&
+           close(a.RHS1r, b.RHS1r);
+  };
+
+  // Initial basis V0 of two random directions; the excitation is set (by SolveHDM) before
+  // the PROM state is saved.
+  ComplexVector v = make_vector(), u_star = make_vector(), x0 = make_vector(),
+                x1 = make_vector(), x = make_vector();
+  linalg::SetRandom(world_comm, v.Real(), 51);
+  linalg::SetRandom(world_comm, v.Imag(), 52);
+  linalg::SetSubVector(v, dbc_tdof_list, 0.0);
+  prom_op.UpdatePROM(v, "random");
+  const std::size_t n0 = prom_op.GetReducedDimension();
+  REQUIRE(n0 == 2);
+  REQUIRE(prom_op.SolveHDM(1, omega, u_star));
+  other_part(u_star) = 0.0;  // Zero in exact arithmetic
+  prom_op.SolvePROM(1, omega, x0);
+  const auto state0 = prom_op.SaveReducedState();
+
+  // Add w as the solution part of a sample and return its new (normalized) basis direction.
+  auto add_direction = [&](const Vector &w, std::string_view label) -> Vector
+  {
+    ComplexVector t = make_vector();
+    solution_part(t) = w;
+    prom_op.UpdatePROM(t, label);
+    return prom_op.GetVectors().back();
+  };
+  const Vector q0 = add_direction(solution_part(u_star), "q0");
+  prom_op.RestoreReducedState(state0);
+  Vector p_raw(n);
+  p_raw.UseDevice(true);
+  linalg::SetRandom(world_comm, p_raw, 53);
+  linalg::SetSubVector(p_raw, dbc_tdof_list, 0.0);
+  const Vector p = add_direction(p_raw, "p");
+  prom_op.SolvePROM(1, omega, x1);
+  const Vector q = add_direction(solution_part(u_star), "q");
+  prom_op.RestoreReducedState(state0);
+  REQUIRE(SameReducedState(prom_op.SaveReducedState(), state0));
+
+  // Relative PROM errors at ω, projected separately, with the old basis, with only the
+  // real part, only the imaginary part and both parts of u.
+  auto candidate_errors = [&](const ComplexVector &u)
+  {
+    std::array<double, 4> err;
+    prom_op.SolvePROM(1, omega, x);
+    err[0] = rel_diff(x, u);
+    for (std::size_t k = 1; k < 4; k++)
+    {
+      ComplexVector part(u);
+      part.UseDevice(true);
+      if (k == 1)
+      {
+        part.Imag() = 0.0;
+      }
+      else if (k == 2)
+      {
+        part.Real() = 0.0;
+      }
+      prom_op.UpdatePROM(part, "candidate");
+      // UpdatePROM, used for the samples which initialize the basis, adds every direction.
+      REQUIRE(prom_op.GetReducedDimension() == n0 + ((k == 3) ? 2 : 1));
+      prom_op.SolvePROM(1, omega, x);
+      err[k] = rel_diff(x, u);
+      prom_op.RestoreReducedState(state0);
+    }
+    return err;
+  };
+
+  {
+    // u = x(V0 + p) + δ q: only its solution part is kept.
+    ComplexVector u(x1);
+    u.UseDevice(true);
+    const double delta = 1.0e-6 * norm(x1);
+    other_part(u).Add(delta, q);
+    const auto err = candidate_errors(u);
+    const std::size_t best = (phase == 0.0) ? 2 : 1;
+    CAPTURE(err[0], err[1], err[2], err[3]);
+    CHECK(rel_close(err[best], delta / norm(u), 1.0e-4));
+    for (std::size_t k = 0; k < 4; k++)
+    {
+      REQUIRE((k == best || err[k] > 100.0 * err[best]));
+    }
+    REQUIRE(err[3] > tol);
+
+    const auto update = prom_op.AddSamplePROM(1, omega, u, err[0], tol, "sample");
+    CHECK(update.num_directions == 2);
+    CHECK(update.num_kept == 1);
+    REQUIRE(update.errors.size() == 4);
+    for (std::size_t k = 0; k < 4; k++)
+    {
+      // The candidates are evaluated from the reduced system of the updated basis.
+      CHECK(rel_close(update.errors[k], err[k], 1.0e-4));
+    }
+    const auto state = prom_op.SaveReducedState();
+    CHECK(state.dim_V == n0 + 1);
+    CHECK(state.v_node_label.back() == ((best == 1) ? "sample_re" : "sample_im"));
+    CHECK(SameReducedState(prom_op.SaveReducedState(n0), state0));
+    prom_op.SolvePROM(1, omega, x);
+    CHECK(rel_close(rel_diff(x, u), err[best], 1.0e-4));
+
+    // The same state as projecting the kept part alone: for the real part, the leading
+    // block of the updated state is that projection.
+    prom_op.RestoreReducedState(state0);
+    ComplexVector part(u);
+    part.UseDevice(true);
+    ((best == 1) ? part.Imag() : part.Real()) = 0.0;
+    prom_op.UpdatePROM(part, "sample");
+    CHECK(same_projection(state, prom_op.SaveReducedState()));
+    prom_op.RestoreReducedState(state0);
+    prom_op.UpdatePROM(u, "sample");
+    const auto state_leading = prom_op.SaveReducedState(n0 + 1);
+    prom_op.RestoreReducedState(state_leading);
+    CHECK(SameReducedState(prom_op.SaveReducedState(), state_leading));
+    if (best == 1)
+    {
+      CHECK(same_projection(state, state_leading));
+    }
+    prom_op.RestoreReducedState(state0);
+  }
+
+  {
+    // u = x(V0) + δ (p + q0): no direction is kept, and the PROM is restored bit for bit.
+    ComplexVector u(x0);
+    u.UseDevice(true);
+    const double delta = 1.0e-6 * norm(x0);
+    solution_part(u).Add(delta, p);
+    other_part(u).Add(delta, q0);
+    const auto err = candidate_errors(u);
+    CAPTURE(err[0], err[1], err[2], err[3]);
+    CHECK(rel_close(err[0], std::sqrt(2.0) * delta / norm(u), 1.0e-4));
+    for (std::size_t k = 1; k < 4; k++)
+    {
+      REQUIRE(err[k] > 100.0 * err[0]);
+    }
+    REQUIRE(err[3] > tol);
+
+    const auto update = prom_op.AddSamplePROM(1, omega, u, err[0], tol, "sample");
+    CHECK(update.num_directions == 2);
+    CHECK(update.num_kept == 0);
+    REQUIRE(update.errors.size() == 4);
+    for (std::size_t k = 0; k < 4; k++)
+    {
+      CHECK(rel_close(update.errors[k], err[k], 1.0e-4));
+    }
+    CHECK(SameReducedState(prom_op.SaveReducedState(), state0));
+    prom_op.SolvePROM(1, omega, x);
+    CHECK(rel_diff(x, x0) == 0.0);
+  }
+}
+
 // The stop of the adaptive sampling at the accuracy of the HDM solutions counts the
 // consecutive samples above the tolerance, from converged linear solves, which add no basis
 // direction; any other sample restarts the count.
