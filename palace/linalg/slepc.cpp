@@ -309,7 +309,12 @@ void SlepcEigenvalueSolver::SetOrthogonalization(bool mgs, bool cgs2)
       type = BV_ORTHOG_CGS;
       refine = BV_ORTHOG_REFINE_ALWAYS;
     }
-    PalacePetscCall(BVSetOrthogonalization(bv, type, refine, 1.0, BV_ORTHOG_BLOCK_GS));
+    // With refinement, a vector counts as linearly dependent (breakdown) when the second
+    // pass reduces its norm below eta times that after the first one. With eta = 1, this
+    // would flag almost every vector of a nearly invariant Krylov space, as after a warm
+    // start: use SLEPc's default eta = 1/√2.
+    PalacePetscCall(
+        BVSetOrthogonalization(bv, type, refine, PETSC_DETERMINE, BV_ORTHOG_BLOCK_GS));
   }
 }
 
