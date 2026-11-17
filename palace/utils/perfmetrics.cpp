@@ -221,6 +221,11 @@ const std::string &RoleName(RoleId id)
   return Roles().roles[id.index].name;
 }
 
+std::string LinearSolverPath(RoleId role, std::string_view field)
+{
+  return "LinearSolver/" + RoleName(role) + "/" + std::string(field);
+}
+
 Metric::Metric(std::string_view path, Acc acc, Red red, Run run)
 {
   bool drop = false;

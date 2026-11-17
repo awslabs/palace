@@ -284,8 +284,21 @@ BaseKspSolver<OperType>::BaseKspSolver(const IoData &iodata,
 template <OperatorType OperType>
 BaseKspSolver<OperType>::BaseKspSolver(std::unique_ptr<IterativeSolver<OperType>> &&ksp,
                                        std::unique_ptr<Solver<OperType>> &&pc)
-  : ksp(std::move(ksp)), pc(std::move(pc)), ksp_mult(0), ksp_mult_it(0), use_timer(false)
+  : ksp(std::move(ksp)), pc(std::move(pc)), ksp_mult(0), ksp_mult_it(0), use_timer(false),
+    role(perf::CurrentRoleId()),
+    perf_solves(perf::LinearSolverPath(role, "Solves"), perf::Red::COUNT),
+    perf_its(perf::LinearSolverPath(role, "Its"), perf::Red::COUNT),
+    perf_not_converged(perf::LinearSolverPath(role, "NotConverged"), perf::Red::COUNT),
+    perf_setups(perf::LinearSolverPath(role, "Setups"), perf::Red::COUNT),
+    perf_max_its(perf::LinearSolverPath(role, "MaxIts"), perf::Red::MAX)
 {
+#if defined(MFEM_DEBUG)
+  if (role.index == 0)
+  {
+    Mpi::Warning(this->ksp->GetComm(),
+                 "Linear solver constructed without a performance report role!\n");
+  }
+#endif
   if (this->pc)
   {
     this->ksp->SetPreconditioner(*this->pc);
@@ -295,7 +308,9 @@ BaseKspSolver<OperType>::BaseKspSolver(std::unique_ptr<IterativeSolver<OperType>
 template <OperatorType OperType>
 void BaseKspSolver<OperType>::SetOperators(const OperType &op, const OperType &pc_op)
 {
+  perf::ScopedRole scoped_role(role);
   BlockTimer bt(Timer::KSP_SETUP, use_timer);
+  perf_setups.Add(1);
   ksp->SetOperator(op);
   if (pc)
   {
@@ -315,6 +330,7 @@ void BaseKspSolver<OperType>::SetOperators(const OperType &op, const OperType &p
 template <OperatorType OperType>
 void BaseKspSolver<OperType>::Mult(const VecType &x, VecType &y) const
 {
+  perf::ScopedRole scoped_role(role);
   BlockTimer bt(Timer::KSP, use_timer);
   ksp->Mult(x, y);
   if (!ksp->GetConverged())
@@ -326,6 +342,14 @@ void BaseKspSolver<OperType>::Mult(const VecType &x, VecType &y) const
   }
   ksp_mult++;
   ksp_mult_it += ksp->GetNumIterations();
+  const int its = ksp->GetNumIterations();
+  perf_solves.Add(1);
+  perf_its.Add(its);
+  perf_max_its.Update(its);
+  if (!ksp->GetConverged())
+  {
+    perf_not_converged.Add(1);
+  }
 }
 
 template class BaseKspSolver<Operator>;

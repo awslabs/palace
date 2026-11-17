@@ -207,3 +207,20 @@ TEST_CASE("PerfReport Row On One Process", "[perfreport][Parallel]")
   CHECK(r.iter.time[Timer::TOTAL].ranks == Mpi::Size(comm));
   BlockTimer::Reset();
 }
+
+TEST_CASE("PerfReport Shared Linear Solver Role", "[perfreport][Serial]")
+{
+  BlockTimer::Reset();
+  {
+    // Two solvers with the same role add up.
+    perf::ScopedRole role("TestShared");
+    const auto path = perf::LinearSolverPath(perf::CurrentRoleId(), "Solves");
+    CHECK(path == "LinearSolver/TestShared/Solves");
+    perf::SumMetric a(path, perf::Red::COUNT), b(path, perf::Red::COUNT);
+    a.Add(2);
+    b.Add(3);
+  }
+  const auto &r = perf::Report(Mpi::World());
+  CHECK(r.Metric("LinearSolver/TestShared/Solves", false)->sum == 5);
+  BlockTimer::Reset();
+}

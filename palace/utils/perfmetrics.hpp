@@ -144,6 +144,9 @@ inline const std::string &CurrentRole()
   return RoleName(CurrentRoleId());
 }
 
+// Path of a linear solver statistic: LinearSolver/<role>/<field>.
+std::string LinearSolverPath(RoleId role, std::string_view field);
+
 //
 // Metric handles. Host thread only, outside OpenMP parallel regions. COUNT resolves
 // against the role active at construction: construct per solver, not as a function-local

@@ -10,6 +10,7 @@
 #include "linalg/operator.hpp"
 #include "linalg/solver.hpp"
 #include "utils/labels.hpp"
+#include "utils/perfmetrics.hpp"
 
 namespace palace
 {
@@ -50,6 +51,11 @@ protected:
 
   // Enable timer contribution for Timer::KSP_PRECONDITIONER.
   bool use_timer;
+
+  // Role for the performance report, captured at construction, and its statistics.
+  perf::RoleId role;
+  perf::SumMetric perf_solves, perf_its, perf_not_converged, perf_setups;
+  perf::MaxMetric perf_max_its;
 
 public:
   BaseKspSolver(const config::LinearSolverData &linear, MatrixSymmetry pc_mat_sym,
