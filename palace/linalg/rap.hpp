@@ -103,6 +103,7 @@ public:
   // SetEssentialTrueDofs. The term is applied with the operator, added to its diagonal, and
   // added to the assembled matrix.
   void AddParallelMatrix(const mfem::HypreParMatrix &B_);
+  const mfem::HypreParMatrix *GetParallelMatrix() const { return B.get(); }
 
   // Eliminate essential true dofs from the RHS vector b, using the essential boundary
   // condition values in x.
@@ -155,6 +156,11 @@ private:
   void RestrictionMatrixMult(const ComplexVector &ly, ComplexVector &ty) const;
   void RestrictionMatrixMultTranspose(const ComplexVector &ty, ComplexVector &ly) const;
   ComplexVector &GetTestLVector() const;
+
+  // y += a B x for the parallel matrices added to the parts, B = Br + i Bi (or its
+  // transpose, or its Hermitian transpose).
+  void AddParallelMatrixMult(const ComplexVector &x, ComplexVector &y,
+                             std::complex<double> a, bool transpose, bool conjugate) const;
 
   ComplexParOperator(std::unique_ptr<Operator> &&dAr, std::unique_ptr<Operator> &&dAi,
                      const Operator *pAr, const Operator *pAi,
@@ -214,6 +220,11 @@ public:
   // Get the diagonal policy that was most recently used. If there are no essential dofs,
   // and thus no valid policy, will error.
   Operator::DiagonalPolicy GetDiagonalPolicy() const;
+
+  // Add assembled true-dof matrices to the real and imaginary parts (see
+  // ParOperator::AddParallelMatrix, a part must exist for its matrix): applied with the
+  // operator and added to the assembled parts.
+  void AddParallelMatrix(const mfem::HypreParMatrix *Br, const mfem::HypreParMatrix *Bi);
 
   void AssembleDiagonal(ComplexVector &diag) const override;
 

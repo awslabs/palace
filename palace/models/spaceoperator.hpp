@@ -29,6 +29,7 @@
 namespace palace
 {
 
+class CondensedEnvironment;
 class IoData;
 class Mesh;
 
@@ -92,6 +93,14 @@ private:
   std::optional<std::pair<mfem::Array<int>, mfem::Array<int>>> assembly_domains;
   void RestrictToAssemblyDomains(std::initializer_list<MaterialPropertyCoefficient *> f,
                                  std::initializer_list<MaterialPropertyCoefficient *> fb);
+
+  // The environment condensed onto the interface of online driven substructuring (see
+  // SetCondensedEnvironment), not owned.
+  CondensedEnvironment *cond_env = nullptr;
+
+  // The essential true DOFs of the system on the finest space: the PEC ones, or with a
+  // condensed environment those of the region.
+  const mfem::Array<int> &SystemTDofList() const;
 
   mfem::Array<int> SetUpBoundaryProperties(const config::PecBoundaryData &pec,
                                            const mfem::ParMesh &mesh);
@@ -185,6 +194,17 @@ public:
     SpaceOperator &op;
     std::optional<std::pair<mfem::Array<int>, mfem::Array<int>>> previous;
   };
+
+  // Online driven substructuring: solve the region against an environment condensed onto
+  // the interface Γ. While set (before the operators are assembled; nullptr resets), the
+  // stiffness, damping, mass and extra system matrices and the preconditioner are those of
+  // the region, restricted to it as by an AssemblyRestriction, with the essential true DOFs
+  // of the region; the extra system operator and the finest level of the preconditioner
+  // (a single level) have S_E(ω) added on Γ, with the identity on the true DOFs outside the
+  // region and Γ; and the frequency domain excitation is the region's, with the condensed
+  // sources of the environment on Γ.
+  void SetCondensedEnvironment(CondensedEnvironment *env);
+  CondensedEnvironment *GetCondensedEnvironment() const { return cond_env; }
 
   // Return list of all PEC boundary true dofs for all finite element space levels.
   const std::vector<mfem::Array<int>> &GetNDDbcTDofLists() const

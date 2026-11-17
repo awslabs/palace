@@ -17,6 +17,7 @@
 #include "linalg/jacobi.hpp"
 #include "linalg/ksp.hpp"
 #include "linalg/rap.hpp"
+#include "models/condensedenvironment.hpp"
 #include "models/floquetportoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
@@ -591,14 +592,14 @@ SpaceOperator::GetStiffnessMatrix(Operator::DiagonalPolicy diag_policy)
   {
     auto K =
         std::make_unique<ComplexParOperator>(std::move(kr), std::move(ki), GetNDSpace());
-    K->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+    K->SetEssentialTrueDofs(SystemTDofList(), diag_policy);
     return K;
   }
   else
   {
     MFEM_VERIFY(!ki, "Unexpected imaginary part in GetStiffnessMatrix<Operator>!");
     auto K = std::make_unique<ParOperator>(std::move(kr), GetNDSpace());
-    K->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+    K->SetEssentialTrueDofs(SystemTDofList(), diag_policy);
     return K;
   }
 }
@@ -632,13 +633,13 @@ SpaceOperator::GetDampingMatrix(Operator::DiagonalPolicy diag_policy)
   if constexpr (std::is_same_v<OperType, ComplexOperator>)
   {
     auto C = std::make_unique<ComplexParOperator>(std::move(c), nullptr, GetNDSpace());
-    C->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+    C->SetEssentialTrueDofs(SystemTDofList(), diag_policy);
     return C;
   }
   else
   {
     auto C = std::make_unique<ParOperator>(std::move(c), GetNDSpace());
-    C->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+    C->SetEssentialTrueDofs(SystemTDofList(), diag_policy);
     return C;
   }
 }
@@ -682,13 +683,13 @@ std::unique_ptr<OperType> SpaceOperator::GetMassMatrix(Operator::DiagonalPolicy 
   {
     auto M =
         std::make_unique<ComplexParOperator>(std::move(mr), std::move(mi), GetNDSpace());
-    M->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+    M->SetEssentialTrueDofs(SystemTDofList(), diag_policy);
     return M;
   }
   else
   {
     auto M = std::make_unique<ParOperator>(std::move(mr), GetNDSpace());
-    M->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+    M->SetEssentialTrueDofs(SystemTDofList(), diag_policy);
     return M;
   }
 }
@@ -737,14 +738,14 @@ SpaceOperator::GetExtraSystemMatrix(double omega, Operator::DiagonalPolicy diag_
   {
     auto A =
         std::make_unique<ComplexParOperator>(std::move(ar), std::move(ai), GetNDSpace());
-    A->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+    A->SetEssentialTrueDofs(SystemTDofList(), diag_policy);
     return A;
   }
   else
   {
     MFEM_VERIFY(!ai, "Unexpected imaginary part in GetExtraSystemMatrix<Operator>!");
     auto A = std::make_unique<ParOperator>(std::move(ar), GetNDSpace());
-    A->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+    A->SetEssentialTrueDofs(SystemTDofList(), diag_policy);
     return A;
   }
 }
@@ -1057,6 +1058,11 @@ SpaceOperator::GetExtraSystemOperator(double omega, Operator::DiagonalPolicy dia
   add(std::move(A2));
   add(std::move(W));
   add(std::move(F));
+  if (cond_env)
+  {
+    // S_E(ω) of the condensed environment (with the identity outside the region and Γ).
+    add(cond_env->GetSchurOperator(omega));
+  }
   return op;
 }
 
@@ -1302,6 +1308,8 @@ void SpaceOperator::AssemblePreconditioner(
     AddImagPeriodicCoefficients(a0.real(), fpi);
     AddImagPeriodicCoefficients(-a0.imag(), fpr);
   }
+  RestrictToAssemblyDomains({&dfr, &dfi, &fr, &fi, &fpr, &fpi},
+                            {&dfbr, &dfbi, &fbr, &fbi, &frbr, &frbi, &fpbr, &fpbi});
   int empty[2] = {(dfr.empty() && fr.empty() && dfbr.empty() && fbr.empty() &&
                    fpr.empty() && frbr.empty() && fpbr.empty()),
                   (dfi.empty() && fi.empty() && dfbi.empty() && fbi.empty() &&
@@ -1355,6 +1363,7 @@ void SpaceOperator::AssemblePreconditioner(
   {
     AddRealPeriodicCoefficients(a0.real(), fr);
   }
+  RestrictToAssemblyDomains({&dfr, &fr}, {&dfbr, &fbr, &frbr});
   int empty = (dfr.empty() && fr.empty() && dfbr.empty() && fbr.empty() && frbr.empty());
   Mpi::GlobalMin(1, &empty, GetComm());
   if (!empty)
@@ -1392,6 +1401,7 @@ void SpaceOperator::AssemblePreconditioner(
   {
     AddRealPeriodicCoefficients(a0, fr);
   }
+  RestrictToAssemblyDomains({&dfr, &fr}, {&dfbr, &fbr, &frbr});
   int empty = (dfr.empty() && fr.empty() && dfbr.empty() && fbr.empty() && frbr.empty());
   Mpi::GlobalMin(1, &empty, GetComm());
   if (!empty)
@@ -1444,9 +1454,18 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(ScalarType a0,
     {
       const auto &fespace_l =
           aux ? GetH1Spaces().GetFESpaceAtLevel(l) : GetNDSpaces().GetFESpaceAtLevel(l);
-      const auto &dbc_tdof_lists_l = aux ? h1_dbc_tdof_lists[l] : nd_dbc_tdof_lists[l];
+      // With a condensed environment, the finest (and only) level is the system matrix of
+      // the region, with S_E(ω) and its imaginary part, for which an empty part is made.
+      const bool env_l = cond_env && !aux && l + 1 == n_levels;
+      const auto &dbc_tdof_lists_l =
+          aux ? h1_dbc_tdof_lists[l] : (env_l ? SystemTDofList() : nd_dbc_tdof_lists[l]);
       auto &br_l = aux ? br_aux_vec[l] : br_vec[l];
       auto &bi_l = aux ? bi_aux_vec[l] : bi_vec[l];
+      if (env_l && !bi_l && std::is_same_v<OperType, ComplexOperator>)
+      {
+        const int n_l = fespace_l.GetVSize();
+        bi_l = std::make_unique<hypre::HypreCSRMatrix>(n_l, n_l, 0);
+      }
       if (print_prec_hdr)
       {
         Mpi::Print(" Level {:d}{} (p = {:d}): {:d} unknowns", l, aux ? " (auxiliary)" : "",
@@ -1470,6 +1489,19 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(ScalarType a0,
       auto B_l =
           BuildLevelParOperator<OperType>(std::move(br_l), std::move(bi_l), fespace_l);
       B_l->SetEssentialTrueDofs(dbc_tdof_lists_l, Operator::DiagonalPolicy::DIAG_ONE);
+      if constexpr (std::is_same_v<OperType, ComplexOperator> &&
+                    std::is_same_v<A3Type, double>)
+      {
+        if (env_l)
+        {
+          B_l->AddParallelMatrix(&cond_env->SchurReal(a3), &cond_env->SchurImag(a3));
+        }
+      }
+      else
+      {
+        MFEM_VERIFY(!env_l, "A condensed environment needs a complex-valued "
+                            "preconditioner at a real frequency!");
+      }
       if (aux)
       {
         B->AddAuxiliaryOperator(std::move(B_l));
@@ -1488,7 +1520,10 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(ScalarType a0,
 std::unique_ptr<ComplexOperator> SpaceOperator::GetSystemOperator(double omega,
                                                                   const ComplexOperator &P)
 {
-  if (pc_mat_real || pc_mat_shifted || pc_mat_amg || GetNDSpaces().GetNumLevels() < 2)
+  // With a condensed environment, the single level holds S_E(ω) only in its assembled
+  // parts (see GetPreconditionerMatrix).
+  if (pc_mat_real || pc_mat_shifted || pc_mat_amg || GetNDSpaces().GetNumLevels() < 2 ||
+      cond_env)
   {
     return {};
   }
@@ -1517,6 +1552,24 @@ SpaceOperator::AssemblyRestriction::AssemblyRestriction(
 {
   op.assembly_domains.emplace(op.GetMesh().GetCeedAttributes(domain_attrs),
                               op.GetMesh().GetCeedBdrAttributesByNeighbor(domain_attrs));
+}
+
+void SpaceOperator::SetCondensedEnvironment(CondensedEnvironment *env)
+{
+  cond_env = env;
+  assembly_domains.reset();
+  if (env)
+  {
+    MFEM_VERIFY(GetNDSpaces().GetNumLevels() == 1,
+                "A condensed environment needs a single-level space!");
+    assembly_domains.emplace(GetMesh().GetCeedAttributes(env->RegionAttributes()),
+                             GetMesh().GetCeedBdrAttributesByNeighbor(env->RegionAttributes()));
+  }
+}
+
+const mfem::Array<int> &SpaceOperator::SystemTDofList() const
+{
+  return cond_env ? cond_env->EssentialTrueDofs() : nd_dbc_tdof_lists.back();
 }
 
 void SpaceOperator::RestrictToAssemblyDomains(
@@ -1704,6 +1757,12 @@ bool SpaceOperator::GetExcitationVector(int excitation_idx, double omega,
   RHS *= 1i * omega;
   bool nnz2 = AddExcitationVector2Internal(excitation_idx, omega, RHS);
   linalg::SetSubVector(RHS, nd_dbc_tdof_lists.back(), 0.0);
+  if (cond_env)
+  {
+    // The region's sources, and the environment's condensed onto Γ.
+    cond_env->ApplyExcitation(excitation_idx, omega, RHS);
+    return true;
+  }
   return nnz1 || nnz2;
 }
 

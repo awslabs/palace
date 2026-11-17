@@ -6,8 +6,14 @@
 
 #include <complex>
 #include <map>
+#include <memory>
+#include <string>
 #include <vector>
 #include <mfem.hpp>
+#include "fem/substructure.hpp"
+#include "linalg/operator.hpp"
+#include "linalg/vector.hpp"
+#include "utils/configfile.hpp"
 
 namespace palace
 {
@@ -15,16 +21,98 @@ namespace palace
 class DrivenSubstructure;
 struct DrivenSubstructureModel;
 class IoData;
-struct SignatureMap;
+class SpaceOperator;
 
-namespace config
+//
+// The environment of an online driven substructuring run, condensed onto the interface Γ
+// by an offline run (DrivenSubstructureModel), for the regular driven solver to solve the
+// region against it: at a frequency of the model, the environment operator S_E(ω), the
+// condensation g_k(ω) of the environment's sources of each excitation and the terms of the
+// environment's port voltages V_jk = c_jk + h_j^T u_Γ,k, on the current interface
+// (SignatureMap). With SpaceOperator::SetCondensedEnvironment, the system is the region's
+// operator (assembled under a restriction to the region) with S_E(ω) added on Γ and the
+// identity on the true DOFs outside the region and Γ (the environment interior and the
+// Dirichlet DOFs of environment elements only), where the solution is zero, and the
+// excitation is the region's with g_k(ω) on Γ.
+//
+// This is a prototype for the review of the online path of DrivenSubstructuredSweep: exact
+// models (the frequencies of the model only), lumped ports, and a single-level space with
+// a sparse direct solver (the preconditioner matrix is the system matrix, S_E included).
+//
+class CondensedEnvironment
 {
+public:
+  // Read the model and check it against this run, as the online sweep does. Construct
+  // before SpaceOperator::SetCondensedEnvironment, which changes the operators and
+  // excitations the checks use. Collective.
+  CondensedEnvironment(const IoData &iodata, SpaceOperator &space_op);
+  ~CondensedEnvironment();
 
-struct BoundaryData;
-struct DomainData;
-struct SubstructuringData;
+  // Whether an online driven substructuring run takes this path: the prototype is chosen
+  // by PALACE_SUBSTRUCTURING_DRIVENSOLVER=1 in the environment (else, or for an adaptive
+  // sweep, DrivenSubstructuredSweep).
+  static bool Enabled(const config::SolverData &solver);
 
-}  // namespace config
+  const std::vector<int> &RegionAttributes() const;
+
+  // The essential true DOFs of the region's operators (on the finest space): the Dirichlet
+  // DOFs of region elements. The other true DOFs outside the region and Γ have the identity
+  // added with the real part of S_E (SchurReal), since the operators of the region store
+  // no diagonal entry for them.
+  const mfem::Array<int> &EssentialTrueDofs() const { return ess_tdofs; }
+
+  // At ω (a frequency of the model; its record is read when ω changes), the true-DOF
+  // matrices of the real (with the identity on the pinned true DOFs which are not
+  // essential) and imaginary parts of S_E(ω), and the operator of both (sharing them).
+  // Collective.
+  const mfem::HypreParMatrix &SchurReal(double omega);
+  const mfem::HypreParMatrix &SchurImag(double omega);
+  std::unique_ptr<ComplexOperator> GetSchurOperator(double omega);
+
+  // The excitation of the region at ω from the full excitation vector: RHS on the region
+  // interior, g_k(ω) on Γ and zero elsewhere. Collective.
+  void ApplyExcitation(int excitation_idx, double omega, ComplexVector &RHS);
+
+  // The voltages of the environment's lumped ports at ω, for the solution E of an
+  // excitation (given to PostOperator, which cannot measure them on the field, zero in the
+  // environment). Collective.
+  std::map<int, std::complex<double>> PortVoltages(int excitation_idx, double omega,
+                                                   const ComplexVector &E);
+
+  // The postprocessing of the domains and boundaries restricted to the region (see
+  // RestrictPostprocessingToRegion).
+  const config::DomainData &GetDomains() const { return domains; }
+  const config::BoundaryData &GetBoundaries() const { return boundaries; }
+
+private:
+  SpaceOperator &space_op;
+  const config::SubstructuringData &sub;
+  MPI_Comm comm;
+  std::unique_ptr<DrivenSubstructureModel> model;
+  std::unique_ptr<DrivenSubstructure> ds;
+  SignatureMap gamma_map;
+  int nG = 0;
+  // The excitations of the run, and their columns in the model (-1: no environment
+  // sources); the environment's lumped ports.
+  std::vector<int> ex_idx, ex_col, env_ports;
+  config::DomainData domains;
+  config::BoundaryData boundaries;
+  // Local true DOFs: the interface ones in interface order (a contiguous range of it from
+  // gamma_off on each rank), and the region interior; the pinned true DOFs which are not
+  // essential (with the identity in SchurReal).
+  std::vector<int> gamma_local, gamma_cnt;
+  int gamma_off = 0;
+  std::vector<char> region_int;
+  mfem::Array<int> ess_tdofs, identity_tdofs;
+  // The record read last (its index in the model, -1 if none): S_E as true-DOF matrices,
+  // and g (nG x excitations of the run), h (nG x ports) on the current interface and c
+  // (ports x excitations of the model), replicated.
+  int record = -1;
+  std::shared_ptr<mfem::HypreParMatrix> Sr, Si;
+  std::vector<std::complex<double>> g, h, c;
+
+  void Load(double omega);
+};
 
 //
 // Helpers of the model of driven substructuring, for its offline and online sweeps.
