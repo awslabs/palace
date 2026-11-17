@@ -124,9 +124,9 @@ bool UseAmr(const config::RefinementData &refinement)
   return false;
 }
 
-// True if an uncompressed nonconforming mesh which Palace wrote in parallel is read in
-// parallel (see ReadNCMeshCoarse), as its coarse mesh which Partition refines: unless the
-// preprocessing, or the partition, would change the mesh otherwise than its coarse mesh.
+// True if a nonconforming mesh which Palace wrote in parallel is read in parallel (see
+// ReadNCMeshCoarse), as its coarse mesh which Partition refines: unless the preprocessing,
+// or the partition, would change the mesh otherwise than its coarse mesh.
 bool UseNCMeshFile(const IoData &iodata)
 {
   const auto &model = iodata.model;
@@ -139,7 +139,7 @@ bool UseNCMeshFile(const IoData &iodata)
 
 }  // namespace
 
-std::unique_ptr<mfem::Mesh> Load(IoData &iodata, MPI_Comm comm)
+std::unique_ptr<mfem::Mesh> Load(IoData &iodata, MPI_Comm comm, bool parallel_nc)
 {
   BlockTimer bt0(Timer::MESH_PREPROCESS);
 
@@ -152,21 +152,22 @@ std::unique_ptr<mfem::Mesh> Load(IoData &iodata, MPI_Comm comm)
   // nonconforming meshes.
   std::unique_ptr<mfem::Mesh> smesh;
   bool use_mesh_partitioner = !use_amr || !refinement.nonconformal;
-  bool nc_file;
   {
-    // The coarse mesh of a mesh read in parallel, on every process.
+    // The coarse mesh of a mesh read in parallel, on every process, without nodes until
+    // Partition refines it.
     BlockTimer bt(Timer::IO);
     std::string coarse;
-    nc_file = ReadNCMeshCoarse(comm, iodata.model.mesh, UseNCMeshFile(iodata), coarse);
-    if (nc_file)
+    iodata.nc_mesh_file = ReadNCMeshCoarse(comm, iodata.model.mesh,
+                                           parallel_nc && UseNCMeshFile(iodata), coarse);
+    if (iodata.nc_mesh_file)
     {
       constexpr bool generate_edges = false, refine = false, fix_orientation = true;
       std::istringstream fi(coarse);
       smesh = ReadMeshStream(fi, generate_edges, refine, fix_orientation);
-      smesh->EnsureNodes();
       use_mesh_partitioner = false;
     }
   }
+  const bool nc_file = static_cast<bool>(iodata.nc_mesh_file);
   {
     BlockTimer bt(Timer::IO);
     if (Mpi::Root(comm) && !nc_file)
@@ -398,25 +399,46 @@ std::unique_ptr<mfem::ParMesh> Partition(IoData &iodata, std::unique_ptr<mfem::M
     iodata.boundaries.split_impedance_attributes = iodata.boundaries.cracked_attributes;
   }
 
+  // A mesh read in parallel, from its coarse mesh on every process, with nodes as for a
+  // mesh read whole (see LoadMesh); or, if the file does not match, the whole mesh, read as
+  // without the parallel read and nondimensionalized as the coarse mesh was.
+  std::unique_ptr<mfem::ParMesh> pmesh;
+  if (auto nc_file = std::move(iodata.nc_mesh_file))
+  {
+    pmesh = PartitionNCMeshFile(comm, *nc_file, *smesh,
+                                iodata.units.GetMeshLengthRelativeScale(),
+                                refinement.maximum_imbalance);
+    smesh.reset();
+    nc_file.reset();
+    if (pmesh)
+    {
+      pmesh->EnsureNodes();
+    }
+    else
+    {
+      Mpi::Warning(comm,
+                   "The mesh \"{}\" cannot be read in parallel, so it is read whole!\n",
+                   iodata.model.mesh);
+      smesh = Load(iodata, comm, false);
+      if (smesh)
+      {
+        NondimensionalizeMesh(*smesh, iodata.units.GetMeshLengthRelativeScale());
+      }
+    }
+  }
+
   // Generate partitioning from the serial mesh on loading ranks.
   std::unique_ptr<int[]> partitioning;
-  if (smesh && !HasNCMeshFile())
+  if (smesh)
   {
     partitioning = GetMeshPartitioning(*smesh, Mpi::Size(comm), iodata.model.partitioning);
   }
 
-  std::unique_ptr<mfem::ParMesh> pmesh;
-  if (HasNCMeshFile())  // the coarse mesh of a mesh read in parallel is on every process
-  {
-    pmesh = PartitionNCMeshFile(comm, *smesh, iodata.units.GetMeshLengthRelativeScale(),
-                                refinement.maximum_imbalance);
-    smesh.reset();
-  }
-  else if (use_mesh_partitioner)
+  if (!pmesh && use_mesh_partitioner)
   {
     pmesh = DistributeMesh(comm, smesh, partitioning.get(), iodata.problem.output);
   }
-  else
+  else if (!pmesh)
   {
     // Send the preprocessed serial mesh and partitioning as a byte string. The
     // serialized mesh can exceed INT_MAX bytes for large meshes, so use a 64-bit

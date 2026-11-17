@@ -1163,19 +1163,21 @@ void TestParallelNCSave(MPI_Comm comm, const fs::path &temp_dir, mfem::Element::
   // refine it and the mesh alike (with a limit on the hanging nodes, which keeps their
   // differences), and compare them.
   {
-    const auto plain = temp_dir / "plain.mesh";
+    const auto plain = temp_dir / "plain.mesh", gathered = temp_dir / "pass2-gathered.mesh";
     REQUIRE(mesh::PrintParallelNCMesh(*mesh, L, plain.string(), false));
     std::string text;
     CHECK((order == 0 ||
-           !mesh::ReadNCMeshCoarse(comm, (temp_dir / "pass2-gathered.mesh").string(), true,
+           !mesh::ReadNCMeshCoarse(comm, gathered.string(), true,
                                    text)));  // not in the order of PrintParallelNCMesh
     auto Read = [&](const fs::path &path)
     {
-      REQUIRE(mesh::ReadNCMeshCoarse(comm, path.string(), true, text));
+      auto kept = mesh::ReadNCMeshCoarse(comm, path.string(), true, text);
+      REQUIRE(kept);
       std::istringstream is(text);
       mfem::Mesh coarse(is);
       mesh::NondimensionalizeMesh(coarse, L);
-      auto read = mesh::PartitionNCMeshFile(comm, coarse, L, 1.1);
+      auto read = mesh::PartitionNCMeshFile(comm, *kept, coarse, L, 1.1);
+      REQUIRE(read);
       REQUIRE(mesh::PrintParallelNCMesh(*read, L, path.string() + ".read", false));
       return read;
     };
@@ -1186,6 +1188,41 @@ void TestParallelNCSave(MPI_Comm comm, const fs::path &temp_dir, mfem::Element::
     {
       CHECK(ReadFile(file.string() + ".read") == ReadFile(plain.string() + ".read"));
     }
+
+    // A file which does not match its coarse mesh is not read, rather than aborting.
+    {
+      auto kept = mesh::ReadNCMeshCoarse(comm, plain.string(), true, text);
+      REQUIRE(kept);
+      std::istringstream is(text);
+      mfem::Mesh coarse(is);
+      coarse.UniformRefinement();
+      CHECK_FALSE(mesh::PartitionNCMeshFile(comm, *kept, coarse, L, 1.1));
+    }
+
+    // Through mesh::Load and mesh::Partition, as a restart reads its mesh: in parallel from
+    // the files of PrintParallelNCMesh, and from the gathered file in parallel or whole.
+    auto Restart = [&](const fs::path &path)
+    {
+      IoData iodata(Units(1.0, L));
+      iodata.model.mesh = path.string();
+      iodata.model.clean_unused_elements = false;
+      auto smesh = mesh::Load(iodata, comm);
+      const bool parallel = static_cast<bool>(iodata.nc_mesh_file);
+      if (smesh)
+      {
+        mesh::NondimensionalizeMesh(*smesh, L);
+      }
+      auto read = mesh::Partition(iodata, std::move(smesh), comm);
+      REQUIRE(mesh::PrintParallelNCMesh(*read, L, path.string() + ".restart", false));
+      if (Mpi::Root(comm))
+      {
+        CompareSavedMeshes(gathered, path.string() + ".restart", counts);
+      }
+      return parallel;
+    };
+    CHECK(Restart(plain));
+    CHECK(Restart(file));
+    Restart(gathered);
     for (auto *m : {saved.get(), mesh.get()})
     {
       mfem::Array<int> refs;

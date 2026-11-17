@@ -30,8 +30,10 @@ namespace mesh
 // region-based (box/sphere) refinement, boundary cracking, and finalization. Returns a
 // null pointer on ranks that do not hold a copy of the serial mesh. Called by main.cpp
 // before Preprocess hooks on the solver mutate the serial mesh (e.g. BoundaryMode
-// submesh extraction).
-std::unique_ptr<mfem::Mesh> Load(IoData &iodata, MPI_Comm comm);
+// submesh extraction). With `parallel_nc`, a nonconforming mesh which Palace saved is read
+// in parallel instead (see ReadNCMeshCoarse): every process gets its coarse mesh, which
+// Partition refines, and iodata keeps the rest of the file for Partition.
+std::unique_ptr<mfem::Mesh> Load(IoData &iodata, MPI_Comm comm, bool parallel_nc = true);
 
 // Partition and distribute a serial mesh prepared by Load, producing a parallel mesh.
 // `smesh` is non-null only on loading ranks (see Load's contract).
