@@ -393,6 +393,29 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
       const auto &readings = candidate.GetLawReadings();
       CHECK(static_cast<int>(readings.size()) <= candidate.GetPatchCount());
       CHECK(!readings.empty());
+      // MINOR-8 (decision 2063): LAW-UNPROBED on real geometry: the island's four corner
+      // coupons carry no probe (no conductor vertex on their trace mesh): their rows are
+      // written with no leg read and no L; every isolated-edge cell reads an on-metal LEG.
+      int unprobed = 0, isolated_legs = 0;
+      for (const auto &reading : readings)
+      {
+        const std::string &topology = candidate.ModelTopology(reading.model);
+        INFO(topology);
+        if (reading.leg_class == SurfaceResponseOperator::LawLegClass::UNPROBED)
+        {
+          unprobed++;
+          CHECK(topology == "convex corner");
+          CHECK(reading.legs == 0);
+          CHECK(std::isnan(reading.ratio));
+        }
+        else if (topology == "isolated edge")
+        {
+          CHECK(reading.leg_class == SurfaceResponseOperator::LawLegClass::LEG);
+          isolated_legs++;
+        }
+      }
+      CHECK(unprobed == 4);
+      CHECK(isolated_legs > 0);
       // t5: a field normal to the sheet reads zero on every on-metal leg; a tangential
       // field reads its drop. A FRESH twin per field: the gate's exclusion is sticky, so a
       // patch the first field excluded would not be read by a later one.
@@ -585,6 +608,33 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
       }
     }
     CHECK(exact > 0);
+    if (candidate.HasConductorConsistencyProbes())
+    {
+      // MINOR-8 (decision 2063): LAW-NO-LEG on real geometry. An EXACT feature's placement
+      // reads its device law (not a perfect conductor): its Maxwell anchor is the edge's
+      // own foot, so the probe chain holds no on-metal leg and the row reads LAW-NO-LEG
+      // (legs 0, no L); the SUBSTITUTED cells (served as PEC) keep their LEG.
+      SurfaceResponseOperator fresh(*run->iodata, *run->space, nullptr, &film, true);
+      fresh.ApplyConductorConsistencyGate(TrueField(Field(*run->space, 0.0, 1.0, 0.0)), 0,
+                                          1.0, false);
+      int no_leg = 0;
+      for (const auto &reading : fresh.GetLawReadings())
+      {
+        const int status = fresh.ImpedanceLawStatusOfFeature(reading.feature);
+        if (status == static_cast<int>(ImpedanceLawStatus::EXACT))
+        {
+          CHECK(reading.leg_class == SurfaceResponseOperator::LawLegClass::NO_LEG);
+          CHECK(reading.legs == 0);
+          CHECK(std::isnan(reading.ratio));
+          no_leg++;
+        }
+        else if (fresh.ModelTopology(reading.model) == "isolated edge")
+        {
+          CHECK(reading.leg_class == SurfaceResponseOperator::LawLegClass::LEG);
+        }
+      }
+      CHECK(no_leg > 0);
+    }
   }
 
   // The island split MID-EDGE at x = 0.5 (attribute 9 for x < 0.5, 10 beyond): the two
@@ -613,6 +663,72 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     serial.SetAttributes();
     return std::make_unique<mfem::ParMesh>(Mpi::World(), serial);
   };
+
+  SECTION("a MID-EDGE law change (MINOR-8; MINOR-2 named): the spanning sides LAW-JOINT, "
+          "the corners too (the check reaches one neighbouring segment: fail-closed)")
+  {
+    auto run = Build(Config({{9, "PEC"}, {10, film_law}}, sa_library_path),
+                     MidEdgeSplitIslandMesh());
+    const auto film = Film(*run);
+    REQUIRE(film.candidate_differs);
+    SurfaceResponseOperator candidate(*run->iodata, *run->space, nullptr, &film, true);
+    CHECK(candidate.ImpedanceRuleActs());
+    const auto statuses = Statuses(candidate);
+    REQUIRE(statuses.count("IsolatedEdge"));
+    const auto &sides = statuses.at("IsolatedEdge");
+    INFO("IsolatedEdge LAW-JOINT "
+         << (sides.count("LAW-JOINT") ? sides.at("LAW-JOINT") : 0) << ", PEC "
+         << (sides.count("PEC") ? sides.at("PEC") : 0) << ", SUBSTITUTED "
+         << (sides.count("SUBSTITUTED") ? sides.at("SUBSTITUTED") : 0));
+    REQUIRE(sides.count("LAW-JOINT"));
+    CHECK(sides.at("LAW-JOINT") >= 2);  // the two sides the law change splits
+    // MINOR-2 (not changed; DESIGN-NOTE): every corner is next to a split side's segment
+    // of the other law and is refused although it lies wholly in one law.
+    REQUIRE(statuses.count("ConvexCorner"));
+    const auto &corners = statuses.at("ConvexCorner");
+    CHECK(corners.size() == 1);
+    CHECK(corners.count("LAW-JOINT") == 1);
+    for (const auto &feature : candidate.GetImpedanceLawFeatures())
+    {
+      if (feature.status == "LAW-JOINT")
+      {
+        CHECK(feature.model.empty());
+        CHECK(feature.device_hash == "MIXED");
+      }
+      else
+      {
+        // A served or plain feature carries one device law.
+        CHECK(feature.device_law.find('|') == std::string::npos);
+      }
+    }
+  }
+
+  SECTION("two different inductances side by side (MINOR-8): MIXED-LAW, served")
+  {
+    const json second_law = {{"Ls", 2.0e-13}};
+    auto run = Build(Config({{9, film_law}, {10, second_law}}, sa_library_path),
+                     MakeIslandMesh(false, false, false, true));
+    const auto film = Film(*run);
+    REQUIRE(film.candidate_differs);
+    CHECK(film.attributes.at(9).service == FilmService::FILM_INDUCTIVE);
+    CHECK(film.attributes.at(10).service == FilmService::FILM_INDUCTIVE);
+    SurfaceResponseOperator candidate(*run->iodata, *run->space, nullptr, &film, true);
+    CHECK(candidate.ImpedanceRuleActs());
+    int mixed = 0, substituted = 0;
+    for (const auto &feature : candidate.GetImpedanceLawFeatures())
+    {
+      INFO(feature.type << " " << feature.status << " " << feature.device_law);
+      CHECK(feature.status != "LAW-JOINT");
+      if (feature.status == "MIXED-LAW")
+      {
+        mixed++;
+        CHECK(feature.device_hash == "MIXED");
+      }
+      substituted += feature.status == "SUBSTITUTED" ? 1 : 0;
+    }
+    CHECK(mixed > 0);
+    CHECK(substituted > 0);
+  }
 
   SECTION("the identification-only candidate (MINOR-1): decided on the BUILT statuses; a "
           "perfect conductor and a non-film law on one conductor write the candidate "
