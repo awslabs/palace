@@ -945,6 +945,7 @@ public:
   std::string adaptive_sample_check = "Candidates";
   double adaptive_sample_check_factor = 1.0;
   double adaptive_sample_phase = 0.0;
+  double adaptive_sample_check_margin = 1.0;
 
   DrivenSolverData() = default;
   DrivenSolverData(const json &driven);

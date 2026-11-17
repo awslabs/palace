@@ -2656,7 +2656,7 @@
         },
         "AdaptiveSampleCheck": {
           "type": "string",
-          "enum": ["None", "Candidates", "Truncate"],
+          "enum": ["None", "Candidates", "Truncate", "Principal"],
           "description": "Review prototype for PR 1218 (not for merging). How a greedy sample is added to the PROM basis: \"None\" adds both parts as main does, \"Candidates\" is PR 1218, \"Truncate\" keeps the principal directions of the part of the sample outside the basis whose norm relative to the sample exceeds AdaptiveSampleCheckFactor * AdaptiveTol.",
           "default": "Candidates",
           "x-palace-advanced": true
@@ -2664,6 +2664,13 @@
         "AdaptiveSampleCheckFactor": {
           "type": "number",
           "description": "Review prototype for PR 1218: factor c of the threshold c * AdaptiveTol of \"AdaptiveSampleCheck\": \"Truncate\".",
+          "exclusiveMinimum": 0.0,
+          "default": 1.0,
+          "x-palace-advanced": true
+        },
+        "AdaptiveSampleCheckMargin": {
+          "type": "number",
+          "description": "Review prototype for PR 1218: with \"AdaptiveSampleCheck\": \"Principal\" (PR 1218's check with the candidates none, the principal new direction and both), a larger candidate is kept only if its PROM error at the sample is below this factor times that of the smaller one.",
           "exclusiveMinimum": 0.0,
           "default": 1.0,
           "x-palace-advanced": true

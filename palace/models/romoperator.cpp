@@ -1519,6 +1519,103 @@ RomOperator::SampleUpdate RomOperator::AddSamplePROM(int excitation_idx, double 
   return update;
 }
 
+RomOperator::SampleUpdate
+RomOperator::AddSamplePrincipalPROM(int excitation_idx, double omega, const ComplexVector &u,
+                                    double error, double tol, std::string_view node_label,
+                                    double margin)
+{
+  BlockTimer bt(Timer::CONSTRUCT_PROM);
+  MPI_Comm comm = space_op.GetComm();
+  SetExcitationIndex(excitation_idx);
+  const std::size_t n0 = V.size();
+  const ReducedState state = SaveReducedState();
+  UpdatePROM(u, node_label);
+  SampleUpdate update;
+  const std::size_t m = V.size() - n0;
+  update.num_directions = update.num_kept = m;
+  if (m == 0)
+  {
+    return update;
+  }
+  update.contents = NewPartContents(n0);
+  const double norm_u = linalg::Norml2(comm, u);
+  ComplexVector x(u.Size());
+  x.UseDevice(true);
+  auto RelativeError = [&]()
+  {
+    linalg::AXPY(-1.0, u, x);
+    return linalg::Norml2(comm, x) / norm_u;
+  };
+  Eigen::VectorXcd rhs_r;
+  SolvePROM(excitation_idx, omega, x, &rhs_r);
+  const double error_full = RelativeError();
+  if (error_full < tol)
+  {
+    return update;
+  }
+
+  // Candidates by increasing basis size: none, the principal new direction (if u has two
+  // parts), both. The principal direction is V(:, n0:n0+1) d with d the leading left
+  // singular vector of B = orth_R(n0:n0+1, n0:n0+1), whose columns are the new coefficients
+  // of Re u and Im u; it is the new part of w = a Re u + b Im u, (a, b) the leading right
+  // singular vector.
+  auto &err = update.errors;
+  err.push_back(error);
+  double a = 0.0, b = 0.0;
+  if (m == 2)
+  {
+    const auto ne = static_cast<Eigen::Index>(n0);
+    const Eigen::MatrixXd B = orth_R.block(ne, ne, 2, 2);
+    Eigen::JacobiSVD<Eigen::MatrixXd> svd(B, Eigen::ComputeFullU | Eigen::ComputeFullV);
+    a = svd.matrixV()(0, 0);
+    b = svd.matrixV()(1, 0);
+    Eigen::MatrixXcd T = Eigen::MatrixXcd::Zero(ne + 2, ne + 1);
+    T.topLeftCorner(ne, ne).setIdentity();
+    T(ne, ne) = svd.matrixU()(0, 0);
+    T(ne + 1, ne) = svd.matrixU()(1, 0);
+    const Eigen::VectorXcd y =
+        (T.transpose() * Ar * T).fullPivHouseholderQr().solve(T.transpose() * rhs_r);
+    const Eigen::VectorXcd z = T * y;
+    linalg::LinearCombination(V, {z.data(), n0 + 2}, x);
+    err.push_back(RelativeError());
+  }
+  err.push_back(error_full);
+  std::size_t best = 0;
+  for (std::size_t k = 1; k < err.size(); k++)
+  {
+    if (err[k] < margin * err[best])
+    {
+      best = k;
+    }
+  }
+  if (best + 1 < err.size())
+  {
+    RestoreReducedState(state);
+    if (best == 1)
+    {
+      ComplexVector w(u);
+      w.UseDevice(true);
+      linalg::AXPBY(b, u.Imag(), a, w.Real());
+      w.Imag() = 0.0;
+      if (!UpdatePROM(w, fmt::format("{}_pc", node_label), false))
+      {
+        RestoreReducedState(state);
+        best = 0;
+      }
+    }
+    update.num_kept = best;
+  }
+  Mpi::Print(comm,
+             " PROM basis update (Principal): kept {:d} of {:d} directions (relative PROM "
+             "error at the sample with none {:.3e}{}, all {:.3e}; relative contents {:.3e}{}; "
+             "margin {:.2f})\n",
+             update.num_kept, m, err[0],
+             (m == 2) ? fmt::format(", principal {:.3e}", err[1]) : std::string(),
+             err.back(), update.contents[0],
+             (m == 2) ? fmt::format(", {:.3e}", update.contents[1]) : std::string(), margin);
+  return update;
+}
+
 std::vector<double> RomOperator::NewPartContents(std::size_t n0) const
 {
   // Columns n0, ..., n - 1 of orth_R hold the coefficients of the parts of the last sample

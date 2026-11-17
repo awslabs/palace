@@ -1370,8 +1370,11 @@ DrivenSolverData::DrivenSolverData(const json &driven)
   adaptive_sample_check_factor =
       driven.value("AdaptiveSampleCheckFactor", adaptive_sample_check_factor);
   adaptive_sample_phase = driven.value("AdaptiveSamplePhase", adaptive_sample_phase);
+  adaptive_sample_check_margin =
+      driven.value("AdaptiveSampleCheckMargin", adaptive_sample_check_margin);
   MFEM_VERIFY(adaptive_sample_check == "None" || adaptive_sample_check == "Candidates" ||
-                  adaptive_sample_check == "Truncate",
+                  adaptive_sample_check == "Truncate" ||
+                  adaptive_sample_check == "Principal",
               "Invalid \"AdaptiveSampleCheck\": " << adaptive_sample_check);
 
   MFEM_VERIFY(!(restart != 1 && adaptive_tol > 0.0),

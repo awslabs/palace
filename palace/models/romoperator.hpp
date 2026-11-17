@@ -620,6 +620,15 @@ public:
   // UpdatePROM, then keep only the principal directions of the part of u outside the old
   // basis whose singular value relative to the norm of u exceeds tau (none, the principal
   // one, or both). No reduced solve; the kept subspace does not depend on the phase of u.
+  // Review prototype for PR 1218: the check of AddSamplePROM with the candidates none, the
+  // principal new direction (the leading left singular vector of the 2 x 2 block of new
+  // coefficients, a real combination of Re u and Im u which does not depend on the phase of
+  // u) and both; a larger candidate is kept only if its error is below margin times that of
+  // the current choice.
+  SampleUpdate AddSamplePrincipalPROM(int excitation_idx, double omega, const ComplexVector &u,
+                                      double error, double tol, std::string_view node_label,
+                                      double margin);
+
   SampleUpdate AddSampleTruncatePROM(int excitation_idx, const ComplexVector &u, double tau,
                                      std::string_view node_label);
 

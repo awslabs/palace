@@ -336,7 +336,13 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
       // Review prototype for PR 1218: "None" adds both parts as main does, "Candidates" is
       // PR 1218, "Truncate" keeps the principal new directions above a content threshold.
       const auto &check = iodata.solver.driven.adaptive_sample_check;
-      if (check == "Truncate")
+      if (check == "Principal")
+      {
+        update = prom_op.AddSamplePrincipalPROM(
+            excitation_idx, omega, E, *error, offline_tol, label,
+            iodata.solver.driven.adaptive_sample_check_margin);
+      }
+      else if (check == "Truncate")
       {
         update = prom_op.AddSampleTruncatePROM(
             excitation_idx, E, iodata.solver.driven.adaptive_sample_check_factor * offline_tol,
