@@ -232,7 +232,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     with `Solver.Linear.ComplexCoarseSolve` they returned wrong solutions while reporting
     convergence even with a compression tolerance of 1e-6. With the default tolerance of
     1e-3, `Solver.Linear.ComplexCoarseSolve` with BLR compression still does, for a
-    different reason. [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
+    different reason. [PR 1222](https://github.com/awslabs/palace/pull/1222).
   - Fixed the flux recovery in the error estimators to use the projection which minimizes the
     error it is measured in (ε⁻¹-weighted for the electric flux, μ-weighted for the magnetic
     field). The unweighted projection overestimated the error in the low-permittivity
