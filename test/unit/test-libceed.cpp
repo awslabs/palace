@@ -2554,30 +2554,35 @@ TEST_CASE("libCEED packed complex QData application",
   {
     SKIP("Packed application requires one CPU CEED context and one thread");
   }
-  const auto [name, mesh_file, order, curl, boundary, nested, nonsymmetric, subset, extra] =
-      GENERATE(table<const char *, const char *, int, bool, bool, bool, bool, bool, bool>(
-          {{"H(div) mass/mass and shared QData", "fichera-tet.mesh", 1, false, false, false,
-            false, false, false},
-           {"Curlmass/mass and p3 face orientations", "fichera-tet.mesh", 3, true, false,
-            false, false, false, false},
-           {"Hexahedron and unmatched boundary terms", "fichera-hex.mesh", 3, true, true,
-            false, false, false, false},
-           {"Direct volume pair and nested remainder", "fichera-tet.mesh", 2, true, false,
-            true, false, false, false},
-           {"Mixed H(curl) pairs and nonsymmetric tensors", "fichera-mixed-p2.mesh", 2,
-            true, false, false, true, false, false},
-           {"Mixed H(div) pairs", "fichera-mixed-p2.mesh", 1, false, false, false, false,
-            false, false},
-           {"Pyramid H(curl) pair", nullptr, 1, true, false, false, false, false, false},
-           {"Pyramid H(div) pair", nullptr, 1, false, false, false, false, false, false},
-           {"H(div) pair over a subset", "fichera-tet.mesh", 1, false, false, false, false,
-            true, false},
-           {"H(curl) hexahedra, subset and boundary remainder", "fichera-hex.mesh", 2, true,
-            true, false, false, true, false},
-           {"Curlmass/mass pair and a real curlmass term without a partner",
-            "fichera-tet.mesh", 2, true, false, false, false, false, true},
-           {"H(div) pair over a subset and a real term without a partner",
-            "fichera-tet.mesh", 1, false, false, false, false, true, true}}));
+  const auto [name, mesh_file, order, curl, boundary, nested, nonsymmetric, subset, extra,
+              extra_imag] = GENERATE(table<const char *, const char *, int, bool, bool,
+                                           bool, bool, bool, bool, bool>(
+      {{"H(div) mass/mass and shared QData", "fichera-tet.mesh", 1, false, false, false,
+        false, false, false, false},
+       {"Curlmass/mass and p3 face orientations", "fichera-tet.mesh", 3, true, false, false,
+        false, false, false, false},
+       {"Hexahedron and unmatched boundary terms", "fichera-hex.mesh", 3, true, true, false,
+        false, false, false, false},
+       {"Direct volume pair and nested remainder", "fichera-tet.mesh", 2, true, false, true,
+        false, false, false, false},
+       {"Mixed H(curl) pairs and nonsymmetric tensors", "fichera-mixed-p2.mesh", 2, true,
+        false, false, true, false, false, false},
+       {"Mixed H(div) pairs", "fichera-mixed-p2.mesh", 1, false, false, false, false, false,
+        false, false},
+       {"Pyramid H(curl) pair", nullptr, 1, true, false, false, false, false, false, false},
+       {"Pyramid H(div) pair", nullptr, 1, false, false, false, false, false, false, false},
+       {"H(div) pair over a subset", "fichera-tet.mesh", 1, false, false, false, false,
+        true, false, false},
+       {"H(curl) hexahedra, subset and boundary remainder", "fichera-hex.mesh", 2, true,
+        true, false, false, true, false, false},
+       {"Curlmass/mass pair and a real curlmass term without a partner", "fichera-tet.mesh",
+        2, true, false, false, false, false, true, false},
+       {"H(div) pair over a subset and a real term without a partner", "fichera-tet.mesh",
+        1, false, false, false, false, true, true, false},
+       {"Curlmass/mass pair and a second imaginary mass term", "fichera-tet.mesh", 2, true,
+        false, false, false, false, false, true},
+       {"H(div) pair over a subset and a second imaginary mass term", "fichera-tet.mesh", 1,
+        false, false, false, false, true, false, true}}));
   CAPTURE(name);
   // BilinearForm labels square operators symmetric; the nonsymmetric coefficient case
   // therefore exercises forward application only.
@@ -2613,6 +2618,7 @@ TEST_CASE("libCEED packed complex QData application",
   auto bdr_curl = BuildCoefficient(mesh, true, CoeffType::Scalar);
   auto extra_mass = BuildCoefficient(mesh, false, CoeffType::Matrix);
   auto extra_curl = BuildCoefficient(mesh, false, CoeffType::Matrix);
+  auto extra_imag_mass = BuildCoefficient(mesh, false, CoeffType::Matrix);
   if (nonsymmetric)
   {
     // Unequal off-diagonal entries expose tensor-index transposition in both the
@@ -2638,6 +2644,7 @@ TEST_CASE("libCEED packed complex QData application",
   bdr_mass *= -0.23;
   extra_mass *= 0.43;
   extra_curl *= -0.61;
+  extra_imag_mass *= 0.29;
   if (subset)
   {
     std::vector<int> lossy_attr;
@@ -2659,6 +2666,13 @@ TEST_CASE("libCEED packed complex QData application",
     ar.AddDomainIntegrator<VectorFEMassIntegrator>(real_mass);
   }
   ai.AddDomainIntegrator<VectorFEMassIntegrator>(imag_mass);
+  if (extra_imag)
+  {
+    // A second imaginary volume term on all elements finds no real partner left, and
+    // stays in the remainder. Over a subset, the first term pairs on the processes that
+    // hold subset elements and the second one on the others.
+    ai.AddDomainIntegrator<VectorFEMassIntegrator>(extra_imag_mass);
+  }
   if (extra)
   {
     // A second real volume term on all elements has no imaginary partner left, and is
@@ -2911,15 +2925,17 @@ TEST_CASE("libCEED packed complex input fallbacks",
   {
     SKIP("Packed application requires one CPU CEED context and one thread");
   }
-  const auto [name, qdata, h1_space, tensor, scaled, real_only, extra] =
-      GENERATE(table<const char *, bool, bool, bool, bool, bool, bool>(
-          {{"Unassembled quadrature data", false, false, false, false, false, false},
-           {"Tensor H1 basis", true, true, true, false, false, false},
-           {"Non-tensor H1 basis", true, true, false, false, false, false},
+  const auto [name, qdata, h1_space, tensor, scaled, real_only, extra, extra_imag] =
+      GENERATE(table<const char *, bool, bool, bool, bool, bool, bool, bool>(
+          {{"Unassembled quadrature data", false, false, false, false, false, false, false},
+           {"Tensor H1 basis", true, true, true, false, false, false, false},
+           {"Non-tensor H1 basis", true, true, false, false, false, false, false},
            {"Non-tensor H1 basis and a real term without a partner", true, true, false,
+            false, false, true, false},
+           {"Non-tensor H1 basis and a second imaginary term", true, true, false, false,
             false, false, true},
-           {"Input with dof multiplicity", true, false, false, true, false, false},
-           {"Real-only input", true, false, false, false, true, false}}));
+           {"Input with dof multiplicity", true, false, false, true, false, false, false},
+           {"Real-only input", true, false, false, false, true, false, false}}));
   CAPTURE(name);
   PackedIntegrationSettings settings(3);
   const char *file = tensor ? "fichera-hex.mesh" : "fichera-tet.mesh";
@@ -2940,6 +2956,11 @@ TEST_CASE("libCEED packed complex input fallbacks",
     if (extra)
     {
       ar.AddDomainIntegrator<DiffusionIntegrator>(extra_coeff);
+    }
+    if (extra_imag)
+    {
+      // The second imaginary term finds no real partner left, and stays in the remainder.
+      ai.AddDomainIntegrator<DiffusionIntegrator>(extra_coeff);
     }
   }
   else
