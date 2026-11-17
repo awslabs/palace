@@ -917,10 +917,10 @@ bool RomOperator::SolveHDM(int excitation_idx, double omega, ComplexVector &u,
   // SpaceOperator::GetSystemOperator), or else built locally with the full
   // frequency-dependent operator (A2 + low-rank Floquet DtN). A refers to P and A2_full,
   // so both must outlive it.
-  A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO);
-  has_A2 = (A2 != nullptr);
   if (omega != hdm_omega || !hdm_A)
   {
+    A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO);
+    has_A2 = (A2 != nullptr);
     hdm_A.reset();
     hdm_A2_full.reset();
     hdm_P.reset();
@@ -1178,14 +1178,15 @@ bool RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
       (!has_imag || add_real_vector_to_basis(u.Imag(), fmt::format("{}_im", node_label)));
   if (!added)
   {
+    // Leave the basis unchanged (also when aborting, so that the PROM is consistent if the
+    // error is caught).
+    V.resize(dim_V_old);
+    v_node_label.resize(dim_V_old);
+    orth_R.conservativeResize(dim_V_old, dim_V_old);
     MFEM_VERIFY(!abort_if_dependent,
                 "Linearly dependent vector added to PROM basis. This indicates a "
                 "convergence issue or a code error (the same vector was added multiple "
                 "times accidentally).");
-    // Leave the basis unchanged.
-    V.resize(dim_V_old);
-    v_node_label.resize(dim_V_old);
-    orth_R.conservativeResize(dim_V_old, dim_V_old);
     return false;
   }
 

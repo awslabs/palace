@@ -270,8 +270,9 @@ protected:
 
   // HDM operators of the most recent SolveHDM, kept so that a second solve at the same
   // frequency (a sample solved again from zero after its certification failed) reuses the
-  // assembled operators and the preconditioner setup.
-  std::unique_ptr<ComplexOperator> hdm_P, hdm_A, hdm_A2_full;
+  // assembled operators and the preconditioner setup. hdm_A refers to hdm_P and
+  // hdm_A2_full, so it is declared last (destroyed first).
+  std::unique_ptr<ComplexOperator> hdm_P, hdm_A2_full, hdm_A;
   double hdm_omega = std::numeric_limits<double>::quiet_NaN();
 
   // PROM matrices and vectors. Projected matrices are Mr = Vᴴ M V where V is the reduced
