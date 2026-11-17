@@ -587,7 +587,8 @@ public:
 
   // Add an HDM solution u at the sampled frequency ω (excitation excitation_idx) to the
   // reduced-order basis like UpdatePROM, and check that the PROM then reproduces u at ω to
-  // the relative tolerance tol. If it does not, the real or imaginary part of u can add a
+  // the relative tolerance tol: with a relative error below tol, as the greedy sampling
+  // requires for convergence. If it does not, the real or imaginary part of u can add a
   // basis direction which carries more linear solver error than information: of the bases
   // with neither, only the real, only the imaginary or both new directions, the one whose
   // PROM solution at ω is closest to u is kept (ties go to the smaller basis, and to the

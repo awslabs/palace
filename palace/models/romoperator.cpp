@@ -1411,9 +1411,9 @@ RomOperator::SampleUpdate RomOperator::AddSamplePROM(int excitation_idx, double 
   Eigen::VectorXcd rhs_r;
   SolvePROM(excitation_idx, omega, x, &rhs_r);
   const double error_full = RelativeError();
-  if (error_full <= tol)
+  if (error_full < tol)
   {
-    return update;  // The PROM reproduces the sample
+    return update;  // The PROM reproduces the sample, as a converged greedy sample
   }
 
   // The PROM does not reproduce the sample: compare the relative PROM errors at ω of the
