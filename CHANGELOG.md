@@ -183,9 +183,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     `"AdaptiveTol"` is close to the accuracy of the linear solves: late in the sampling, the
     real or imaginary part of a sample can add a basis direction which is mostly linear
     solver error, and with it the PROM no longer reproduced the sample (one sweep reached 200
-    samples, with spurious resonances in the band, where 7 suffice). After each sample,
-    *Palace* now checks that the PROM reproduces it to `"AdaptiveTol"`; if it does not, only
-    the directions which reduce the PROM error at the sample are kept. Sweeps whose PROM
+    samples, with spurious resonances in the band, where 7 suffice). After each sample of
+    the greedy sampling, *Palace* now checks that the PROM reproduces it to
+    `"AdaptiveTol"`; if it does not, only the directions which reduce the PROM error at the
+    sample are kept. Sweeps whose PROM
     reproduces every sample are unchanged. When `"AdaptiveTol"` is below the accuracy of
     the HDM solutions, so that the last `"AdaptiveConvergenceMemory"` samples add no basis
     direction, the sampling of that excitation stops with a warning instead of continuing

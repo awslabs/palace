@@ -319,13 +319,23 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
   // range of interest. Each call for an HDM solution adds the frequency sample to P_S and
   // removes it from P \ P_S. Timing for the HDM construction and solve is handled inside
   // of the RomOperator.
-  auto UpdatePROM = [&](int excitation_idx, double omega, std::size_t sample_idx)
+  auto UpdatePROM =
+      [&](int excitation_idx, double omega, std::size_t sample_idx, bool greedy)
   {
-    // Add the HDM solution to the PROM reduced basis. If the PROM does not reproduce it to
-    // the tolerance, only the directions which reduce the PROM error at this frequency are
-    // kept (see RomOperator::AddSamplePROM).
-    prom_op.AddSamplePROM(excitation_idx, omega, E, offline_tol,
-                          fmt::format("sample_e{:d}_s{:d}", excitation_idx, sample_idx));
+    // Add the HDM solution to the PROM reduced basis. The samples which initialize the
+    // basis (the sweep endpoints and the "AddToPROM" samples) are always added in full. A
+    // greedy sample is checked: if the PROM with it does not reproduce it to the tolerance,
+    // only the directions which reduce the PROM error at this frequency are kept (see
+    // RomOperator::AddSamplePROM).
+    const auto label = fmt::format("sample_e{:d}_s{:d}", excitation_idx, sample_idx);
+    if (greedy)
+    {
+      prom_op.AddSamplePROM(excitation_idx, omega, E, offline_tol, label);
+    }
+    else
+    {
+      prom_op.UpdatePROM(E, label);
+    }
     prom_op.UpdateMRI(excitation_idx, omega, E);
 
     // Compute B = -1/(iω) ∇ x E on the true dofs, and set the internal GridFunctions in
@@ -373,7 +383,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
       linalg::AXPY(-1.0, E, Eh);
       max_errors.push_back(linalg::Norml2(space_op.GetComm(), Eh) /
                            linalg::Norml2(space_op.GetComm(), E));
-      UpdatePROM(excitation_idx, omega, counter_rom_sample);
+      UpdatePROM(excitation_idx, omega, counter_rom_sample, false);
       counter_rom_sample++;
     }
     // The estimates associated to the end points are assumed inaccurate.
@@ -414,7 +424,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
                  it - it0 + 1, prom_op.GetReducedDimension(), omega_star * unit_GHz,
                  omega_star, max_errors.back(), memory, convergence_memory);
       const auto dim_V = prom_op.GetReducedDimension();
-      UpdatePROM(excitation_idx, omega_star, counter_rom_sample);
+      UpdatePROM(excitation_idx, omega_star, counter_rom_sample, true);
       counter_rom_sample++;
       if (memory == 0 && prom_op.GetReducedDimension() == dim_V)
       {

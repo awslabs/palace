@@ -567,9 +567,11 @@ late in the sampling the new information a sample brings, the part of
 ``\mathrm{Re}(\bm{x}^*)`` or ``\mathrm{Im}(\bm{x}^*)`` outside the current basis, can be as
 small as its error. Such a direction carries solver error rather than information, and it
 can make the PROM *less* accurate at the very frequency it was computed for. With an
-accurate sample in the basis the PROM reproduces it, so after each update *Palace*
-evaluates the error ``\varepsilon`` defined below at the new sample, with the sample in the
-basis. If it exceeds
+accurate sample in the basis the PROM reproduces it, so after adding a sample chosen by the
+greedy sampling described below, *Palace* evaluates the error ``\varepsilon`` defined below
+at the new sample, with the sample in the basis. (The samples which initialize the basis,
+at the frequency-domain endpoints and with `"AddToPROM"`, are always added in full.) If it
+exceeds
 [`config["Solver"]["Driven"]["AdaptiveTol"]`](config/reference.md#config-solver-driven) and
 the PROM without the new directions, or with only the real one, is closer to the HDM
 solution, *Palace* keeps, of the bases with neither, only the real or only the imaginary new
