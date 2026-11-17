@@ -38,59 +38,55 @@ using namespace std::complex_literals;
 namespace
 {
 
-// Starting vector v = Σᵢ wᵢ xᵢ from the eigenpairs (λᵢ, xᵢ) of the previous adaptation
-// iteration (the fields 2i and 2i + 1 hold the real and imaginary parts of xᵢ), and, if
-// v_lambda is given, v_lambda = Σᵢ wᵢ λᵢ xᵢ: the weights have unit norm and golden-ratio
-// phases, so that no eigenvector cancels, and v gets eta times the default starting vector
-// r, relative, for modes not found before. Returns the number of eigenvectors used.
-int GetWarmStartVector(const VectorFieldTransfer &prev_eigenvectors,
-                       const std::vector<std::complex<double>> &prev_eigenvalues,
-                       SpaceOperator &space_op, const ComplexVector &r, double eta,
-                       ComplexVector &v, ComplexVector *v_lambda)
+// Add the eigenpair (λ, x) of index i to the combinations v = Σᵢ wᵢ xᵢ and, if v_lambda is
+// given, v_lambda = Σᵢ wᵢ λᵢ xᵢ, from which the next adaptation iteration starts (see
+// GetWarmStartVector): the weights have unit norm and golden-ratio phases, so that no
+// eigenvector cancels. Returns whether x was added.
+bool AddWarmStartEigenvector(MPI_Comm comm, const ComplexVector &x,
+                             std::complex<double> lambda, int i, ComplexVector &v,
+                             ComplexVector *v_lambda)
+{
+  const double norm = linalg::Norml2(comm, x);
+  if (!(norm > 0.0))
+  {
+    return false;
+  }
+  const double phase =
+      2.0 * std::numbers::pi * std::fmod(0.5 * (std::sqrt(5.0) - 1.0) * i, 1.0);
+  const std::complex<double> w = std::polar(1.0 / norm, phase);
+  v.AXPY(w, x);
+  if (v_lambda)
+  {
+    v_lambda->AXPY(w * lambda, x);
+  }
+  return true;
+}
+
+// Starting vector v of a warm-started solve, from the combination of the eigenvectors of
+// the previous adaptation iteration (fields 0 and 1 of prev_vectors for its real and
+// imaginary parts), and, if v_lambda is given, the second block v_lambda (fields 2 and 3):
+// v gets eta times the default starting vector r, relative, for modes not found before.
+void GetWarmStartVector(const VectorFieldTransfer &prev_vectors, SpaceOperator &space_op,
+                        const ComplexVector &r, double eta, ComplexVector &v,
+                        ComplexVector *v_lambda)
 {
   auto &nd_fespace = space_op.GetNDSpace().Get();
   const auto &dbc_tdof_list = space_op.GetNDDbcTDofLists().back();
   const int n = nd_fespace.GetTrueVSize();
-  ComplexVector x(n);
-  x.UseDevice(true);
-  v.SetSize(n);
-  v.UseDevice(true);
-  v = 0.0;
-  if (v_lambda)
+  for (int b = 0; b < (v_lambda ? 2 : 1); b++)
   {
-    v_lambda->SetSize(n);
-    v_lambda->UseDevice(true);
-    *v_lambda = 0.0;
+    ComplexVector &u = (b == 0) ? v : *v_lambda;
+    u.SetSize(n);
+    u.UseDevice(true);
+    prev_vectors.GetField(2 * b, nd_fespace, u.Real());
+    prev_vectors.GetField(2 * b + 1, nd_fespace, u.Imag());
+    linalg::SetSubVector(u, dbc_tdof_list, 0.0);
   }
-  int num_used = 0;
-  for (std::size_t i = 0; i < prev_eigenvalues.size(); i++)
+  const double norm_r = linalg::Norml2(space_op.GetComm(), r);
+  if (eta > 0.0 && norm_r > 0.0)
   {
-    prev_eigenvectors.GetField(2 * i, nd_fespace, x.Real());
-    prev_eigenvectors.GetField(2 * i + 1, nd_fespace, x.Imag());
-    linalg::SetSubVector(x, dbc_tdof_list, 0.0);
-    const double norm = linalg::Norml2(space_op.GetComm(), x);
-    if (norm > 0.0)
-    {
-      const double phase =
-          2.0 * std::numbers::pi * std::fmod(0.5 * (std::sqrt(5.0) - 1.0) * i, 1.0);
-      const std::complex<double> w = std::polar(1.0 / norm, phase);
-      v.AXPY(w, x);
-      if (v_lambda)
-      {
-        v_lambda->AXPY(w * prev_eigenvalues[i], x);
-      }
-      num_used++;
-    }
+    v.AXPY(eta * linalg::Norml2(space_op.GetComm(), v) / norm_r, r);
   }
-  if (eta > 0.0 && num_used > 0)
-  {
-    const double norm_r = linalg::Norml2(space_op.GetComm(), r);
-    if (norm_r > 0.0)
-    {
-      v.AXPY(eta * linalg::Norml2(space_op.GetComm(), v) / norm_r, r);
-    }
-  }
-  return num_used;
 }
 
 }  // namespace
@@ -113,7 +109,6 @@ void EigenSolver::UpdateAfterMeshChange(Mesh &mesh) const
   {
     // The mesh object was replaced.
     prev_eigenvectors.reset();
-    prev_eigenvalues.clear();
     return;
   }
   prev_eigenvectors->Update();
@@ -415,15 +410,12 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // two Krylov cycles, since an eigenpair converges only once its Ritz value was present
   // at the previous restart, and its first cycle can use more accurate linear solves. It
   // thus only pays off for solves which take three cycles or more without it: the
-  // eigenpairs are kept only if the last solve without a warm start did. The last solve,
-  // known from Model.Refinement.MaxIts and MaxSize, keeps none.
+  // eigenpairs are kept only if the last solve without a warm start did, and only if the
+  // adaptation goes on.
   constexpr int min_cold_its = 3;
   const auto &eigenmode = iodata.solver.eigenmode;
   const auto &refinement = iodata.model.refinement;
   const int adapt_it = num_solves++;
-  const bool final_solve =
-      refinement.max_it <= 0 || adapt_it >= refinement.max_it ||
-      (refinement.max_size > 0 && space_op.GlobalTrueVSize() > refinement.max_size);
   const bool can_warm_start = eigenmode.warm_start && eigenmode.init_v0 &&
                               type == EigenSolverBackend::SLEPC &&
                               nonlinear_type != NonlinearEigenSolver::SLP &&
@@ -458,8 +450,9 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       constexpr double eta = 1.0e-3;
       const bool blocks = (C || has_A2);
       ComplexVector v, v_lambda;
-      num_warm = GetWarmStartVector(*prev_eigenvectors, prev_eigenvalues, space_op, v0, eta,
-                                    v, blocks ? &v_lambda : nullptr);
+      GetWarmStartVector(*prev_eigenvectors, space_op, v0, eta, v,
+                         blocks ? &v_lambda : nullptr);
+      num_warm = prev_num_eigenvectors;
       if (num_warm > 0)
       {
         Mpi::Print(
@@ -518,7 +511,6 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     // r0.Print();
   }
   prev_eigenvectors.reset();
-  prev_eigenvalues.clear();
 
   // Configure the shift-and-invert strategy is employed to solve for the eigenvalues
   // closest to the specified target, σ.
@@ -659,15 +651,30 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   std::vector<std::complex<double>> eigenvalues(num_report);
   std::vector<double> errors_bkwd(num_report), errors_abs(num_report);
 
-  // Keep the converged eigenpairs for the starting vector of the next adaptation iteration
-  // (nonconforming meshes are refined and rebalanced in place).
-  const bool store_eigenpairs =
-      !final_solve && can_warm_start && last_cold_its >= min_cold_its;
-  const bool stage_eigenvectors = post_op.WillWriteFields() || store_eigenpairs;
-  // Field output can construct large libCEED visualization operators, and the kept
-  // eigenpairs take memory as well. Only in those cases, stage the converged eigenvectors
-  // in host memory so the eigensolver and matrices can release their device allocations
-  // before postprocessing.
+  // Combine the converged eigenvectors for the starting vector of the next adaptation
+  // iteration: only the combinations are kept through the refinement and rebalancing of the
+  // nonconforming mesh, which is done in place.
+  const bool combine_eigenvectors =
+      can_warm_start && last_cold_its >= min_cold_its && adapt_it < refinement.max_it;
+  const bool blocks = (C || has_A2);
+  ComplexVector v_comb, v_comb_lambda, x_comb;
+  int num_combined = 0;
+  if (combine_eigenvectors)
+  {
+    for (auto *u : {&v_comb, &v_comb_lambda, &x_comb})
+    {
+      if (u != &v_comb_lambda || blocks)
+      {
+        u->SetSize(Curl.Width());
+        u->UseDevice(true);
+        *u = 0.0;
+      }
+    }
+  }
+  const bool stage_eigenvectors = post_op.WillWriteFields();
+  // Field output can construct large libCEED visualization operators. Only in that case,
+  // stage the converged eigenvectors in host memory so the eigensolver and matrices can
+  // release their device allocations before postprocessing.
   std::vector<std::vector<std::complex<double>>> eigenvectors;
   if (stage_eigenvectors)
   {
@@ -709,13 +716,6 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   }
   Mpi::Print("\n");
 
-  if (store_eigenpairs)
-  {
-    prev_eigenvectors = std::make_unique<VectorFieldTransfer>(
-        space_op.GetNDSpace().GetParMesh(), iodata.solver.order);
-    prev_eigenvalues = eigenvalues;
-  }
-
   for (int i = 0; i < num_report; i++)
   {
     // Get the eigenvalue and relative error.
@@ -744,10 +744,12 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       eigen->GetEigenvector(i, E);
     }
     linalg::NormalizePhase(space_op.GetComm(), E);
-    if (store_eigenpairs)
+    if (combine_eigenvectors)
     {
-      prev_eigenvectors->AddField(space_op.GetNDSpace().Get(), E.Real());
-      prev_eigenvectors->AddField(space_op.GetNDSpace().Get(), E.Imag());
+      x_comb = E;
+      linalg::SetSubVector(x_comb, space_op.GetNDDbcTDofLists().back(), 0.0);
+      num_combined += AddWarmStartEigenvector(space_op.GetComm(), x_comb, eigenvalues[i], i,
+                                              v_comb, blocks ? &v_comb_lambda : nullptr);
     }
 
     Curl.Mult(E.Real(), B.Real());
@@ -768,6 +770,21 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     }
   }
   post_op.MeasureFinalize(indicator);
+  if (num_combined > 0 && ContinueAdaptation(adapt_it, space_op.GlobalTrueVSize(),
+                                             indicator.Norml2(space_op.GetComm())))
+  {
+    prev_eigenvectors = std::make_unique<VectorFieldTransfer>(
+        space_op.GetNDSpace().GetParMesh(), iodata.solver.order);
+    for (auto *u : {&v_comb, &v_comb_lambda})
+    {
+      if (u != &v_comb_lambda || blocks)
+      {
+        prev_eigenvectors->AddField(space_op.GetNDSpace().Get(), u->Real());
+        prev_eigenvectors->AddField(space_op.GetNDSpace().Get(), u->Imag());
+      }
+    }
+    prev_num_eigenvectors = num_combined;
+  }
   return {indicator, space_op.GlobalTrueVSize()};
 }
 
