@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdlib>
+#include <iterator>
 #include <limits>
 #include <map>
 #include <memory>
@@ -1280,6 +1281,157 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
   }
 }
 
+void RomOperator::RemoveLastBasisVectors(std::size_t m)
+{
+  MFEM_VERIFY(m <= V.size(), "Cannot remove more PROM basis vectors than present!");
+  const std::size_t n = V.size() - m;
+  const auto ne = static_cast<Eigen::Index>(n);
+  V.resize(n);
+  v_node_label.resize(n);
+  orth_R.conservativeResize(ne, ne);
+  Kr.conservativeResize(ne, ne);
+  Mr.conservativeResize(ne, ne);
+  if (C)
+  {
+    Cr.conservativeResize(ne, ne);
+  }
+  for (auto &[port_idx, Mp_r] : Mwp_p_r)
+  {
+    Mp_r.conservativeResize(ne, ne);
+  }
+  if (M_ff_r.rows() > ne)
+  {
+    M_ff_r.conservativeResize(ne, ne);
+  }
+  for (auto *Ar_list : {&Asig_g_r, &Arz_b_r})
+  {
+    for (auto &A_r : *Ar_list)
+    {
+      if (A_r.rows() > ne)
+      {
+        A_r.conservativeResize(ne, ne);
+      }
+    }
+  }
+  for (auto &[port_idx, Mp_r] : M_floquet_p_r)
+  {
+    Mp_r.conservativeResize(ne, ne);
+  }
+  if (RHS1r.size() > ne)
+  {
+    RHS1r.conservativeResize(ne);
+  }
+  for (auto &rm : floquet_reduced)
+  {
+    rm.vk_V.conservativeResize(ne);
+    rm.Vh_cvk.conservativeResize(ne);
+  }
+  // Truncate the port-restricted basis too, so that UpdateWavePortBasisRestriction
+  // restricts the basis vectors added from here on (as many may be added back).
+  if (V_wp_dim > n)
+  {
+    for (auto &[port_idx, vp] : V_wp)
+    {
+      vp.resize(n);
+    }
+    V_wp_dim = n;
+  }
+  RHS1r_online.clear();
+  Ar_omega = std::numeric_limits<double>::quiet_NaN();
+}
+
+void RomOperator::AddSamplePROM(int excitation_idx, double omega, const ComplexVector &u,
+                                double tol, std::string_view node_label)
+{
+  BlockTimer bt(Timer::CONSTRUCT_PROM);
+  MPI_Comm comm = space_op.GetComm();
+  const std::size_t n0 = V.size();
+  UpdatePROM(u, node_label);
+  const std::size_t m = V.size() - n0;
+  if (m == 0)
+  {
+    return;
+  }
+
+  // Relative PROM errors at ω with the first n0 + j basis vectors, j = 0, ..., m. The real
+  // part of u is added before its imaginary part, so the bases without the new directions
+  // and (if u has both parts) with only the real one are leading blocks of the updated
+  // PROM: their reduced systems are leading blocks of the one just assembled.
+  const double norm_u = linalg::Norml2(comm, u);
+  ComplexVector x(u.Size());
+  x.UseDevice(true);
+  auto RelativeError = [&]()
+  {
+    linalg::AXPY(-1.0, u, x);
+    return linalg::Norml2(comm, x) / norm_u;
+  };
+  std::vector<double> err(m + 1);
+  SolvePROM(excitation_idx, omega, x);
+  err[m] = RelativeError();
+  if (err[m] <= tol)
+  {
+    return;  // The PROM reproduces the sample
+  }
+  for (std::size_t j = 0; j < m; j++)
+  {
+    const std::size_t k = n0 + j;
+    if (k == 0)
+    {
+      err[j] = 1.0;  // Empty basis: the PROM solution is zero
+      continue;
+    }
+    const auto ke = static_cast<Eigen::Index>(k);
+    const Eigen::VectorXcd y =
+        Ar.topLeftCorner(ke, ke).fullPivHouseholderQr().solve(RHSr_last.head(ke));
+    linalg::LinearCombination(std::span<const Vector>(V.data(), k), {y.data(), k}, x);
+    err[j] = RelativeError();
+  }
+  const auto best = static_cast<std::size_t>(
+      std::distance(err.begin(), std::min_element(err.begin(), err.end())));
+  if (best == m)
+  {
+    return;  // The full update is still the best
+  }
+
+  // A basis with fewer new directions reproduces the sample better: keep the best of the
+  // old basis, and the old basis with the real or (if u has both parts) the imaginary new
+  // direction.
+  RemoveLastBasisVectors(m);
+  if (m == 1)
+  {
+    Mpi::Print(comm,
+               " PROM basis update: sample not added, the PROM with it does not reproduce "
+               "it to the tolerance\n (relative PROM error at the sample {:.3e} without, "
+               "{:.3e} with it)\n",
+               err[0], err[1]);
+    return;
+  }
+  ComplexVector u_part(u);
+  u_part.UseDevice(true);
+  u_part.Real() = 0.0;
+  UpdatePROM(u_part, node_label);
+  SolvePROM(excitation_idx, omega, x);
+  const double err_im = RelativeError();
+  const bool keep_im = (err_im < err[best]);
+  if (!keep_im)
+  {
+    RemoveLastBasisVectors(1);
+    if (best == 1)
+    {
+      u_part = u;
+      u_part.Imag() = 0.0;
+      UpdatePROM(u_part, node_label);
+    }
+  }
+  Mpi::Print(comm,
+             " PROM basis update: kept {} of the sample, the PROM with both parts does not "
+             "reproduce it to the tolerance\n (relative PROM error at the sample with no "
+             "part {:.3e}, real part {:.3e}, imaginary part {:.3e}, both {:.3e})\n",
+             keep_im ? "only the imaginary part"
+                     : ((best == 1) ? "only the real part" : "neither part"),
+             err[0], err[1], err_im, err[2]);
+}
+
 void RomOperator::UpdateMRI(int excitation_idx, double omega, const ComplexVector &u)
 {
   BlockTimer bt(Timer::CONSTRUCT_PROM);
@@ -1591,6 +1743,7 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
   // QR solve, for maximal stability. The small system is cheap to compute but can be
   // numerically poorly conditioned to due the splitting of HDM solutions into Re and Im
   // into separate columns.
+  RHSr_last = RHSr;
   RHSr = Ar_solver.solve(RHSr);
   linalg::LinearCombination(V, {RHSr.data(), static_cast<std::size_t>(RHSr.size())}, u);
 }

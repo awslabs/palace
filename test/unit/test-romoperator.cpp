@@ -1,8 +1,10 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <algorithm>
 #include <array>
 #include <numbers>
+#include <string>
 #include <vector>
 #include <Eigen/Dense>
 #include <catch2/catch_test_macros.hpp>
@@ -73,6 +75,7 @@ public:
   auto &GetKr() const { return Kr; }
   auto &GetCr() const { return Cr; }
   auto &GetMr() const { return Mr; }
+  using RomOperator::RemoveLastBasisVectors;
   bool WavePortPairingChecked() const { return wp_pairing_checked; }
   bool WavePortPairingOk() const { return wp_pairing_ok; }
   void UseAssembledWavePortPath(bool assembled)
@@ -840,6 +843,131 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-UpdatePROM-LinearDepe
   CHECK_THROWS(prom_op.UpdatePROM(u, "vec_0_duplicate"));
 }
 
+// AddSamplePROM keeps the whole update of UpdatePROM for accurate samples (bit for bit),
+// RemoveLastBasisVectors restores the PROM of the smaller basis exactly, and for an
+// inaccurate sample AddSamplePROM is never worse at the sample than UpdatePROM or than not
+// adding the sample.
+TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-AddSamplePROM",
+                 "[romoperator][Serial][Parallel]")
+{
+  MPI_Comm world_comm = Mpi::World();
+  auto mesh_path =
+      fs::path(PALACE_TEST_DATA_DIR) / "lumpedport_mesh/cube_mesh_3_2_1_tet.msh";
+  json setup_json;
+  setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 2}, {"Output", temp_dir}};
+  setup_json["Model"] = {{"Mesh", mesh_path},
+                         {"Refinement", json::object({})},
+                         {"CrackInternalBoundaryElements", false}};
+  setup_json["Domains"] = {
+      {"Materials",
+       json::array({json::object({{"Attributes", json::array({1, 2, 3, 4, 5, 6})},
+                                  {"Permeability", 1.0},
+                                  {"Permittivity", 1.0},
+                                  {"LossTan", 0.0}})})}};
+  setup_json["Boundaries"] = {
+      {"LumpedPort",
+       json::array({json::object(
+           {{"Index", 1},
+            {"R", 50.0},
+            {"Excitation", uint(1)},
+            {"Elements", json::array({json::object({{"Attributes", json::array({14})},
+                                                    {"Direction", "+Z"}})})}})})}};
+  setup_json["Solver"] = json::object();
+  setup_json["Solver"]["Device"] = "CPU";
+  setup_json["Solver"]["Driven"] = {
+      {"AdaptiveTol", 1e-3}, {"MinFreq", 2.0}, {"MaxFreq", 32.0}, {"FreqStep", 1.0}};
+  setup_json["Solver"]["Linear"] = {
+      {"Type", "Default"}, {"KSPType", "GMRES"}, {"MaxIts", 1000}, {"Tol", 1.0e-12}};
+
+  IoData iodata(setup_json, false);
+  auto mesh_io = LoadScaleParMesh2(iodata, world_comm);
+  SpaceOperator space_op(iodata, mesh_io);
+  RomOperatorTest prom_op(iodata, space_op, 4);
+  RomOperatorTest prom_ref(iodata, space_op, 4);
+
+  const auto n = space_op.GetNDSpace().GetTrueVSize();
+  auto make_vector = [n]()
+  {
+    ComplexVector v(n);
+    v.UseDevice(true);
+    v = 0.0;
+    return v;
+  };
+  auto rel_diff = [&](const ComplexVector &x, const ComplexVector &y)
+  {
+    ComplexVector d(x);
+    d.UseDevice(true);
+    linalg::AXPY(-1.0, y, d);
+    return linalg::Norml2(world_comm, d) / linalg::Norml2(world_comm, y);
+  };
+  const auto &omega = iodata.solver.driven.sample_f;
+  ComplexVector u = make_vector(), x = make_vector(), x_ref = make_vector();
+  for (std::size_t i : {std::size_t{0}, omega.size() - 1})
+  {
+    prom_op.SolveHDM(1, omega[i], u);
+    prom_op.SolvePROM(1, omega[i], x);
+    const double error = prom_op.GetReducedDimension() ? rel_diff(x, u) : 1.0;
+    const auto dim = prom_op.GetReducedDimension();
+    prom_op.AddSamplePROM(1, omega[i], u, 1.0e-6, "sample_" + std::to_string(i));
+    prom_ref.UpdatePROM(u, "sample_" + std::to_string(i));
+
+    // An accurate sample adds both of its directions, exactly as UpdatePROM does, and is
+    // reproduced by the PROM.
+    CHECK(prom_op.GetReducedDimension() == dim + 2);
+    CHECK(prom_op.GetReducedDimension() == prom_ref.GetReducedDimension());
+    CHECK(prom_op.GetKr() == prom_ref.GetKr());
+    CHECK(prom_op.GetMr() == prom_ref.GetMr());
+    CHECK(prom_op.GetCr() == prom_ref.GetCr());
+    CHECK(prom_op.GetOrthR() == prom_ref.GetOrthR());
+    prom_op.SolvePROM(1, omega[i], x);
+    const double error_after = rel_diff(x, u);
+    CHECK(error_after < 1.0e-6);
+    CHECK(error_after < error);
+  }
+
+  // Removing the last directions restores the PROM of the smaller basis exactly.
+  const double omega_test = omega[omega.size() / 2];
+  prom_op.SolvePROM(1, omega_test, x_ref);
+  const Eigen::MatrixXcd Kr = prom_op.GetKr(), Mr = prom_op.GetMr(), Cr = prom_op.GetCr();
+  const auto dim = prom_op.GetReducedDimension();
+  u.Real().Randomize(42);
+  u.Imag().Randomize(43);
+  prom_op.UpdatePROM(u, "random");
+  REQUIRE(prom_op.GetReducedDimension() == dim + 2);
+  prom_op.RemoveLastBasisVectors(2);
+  CHECK(prom_op.GetReducedDimension() == dim);
+  CHECK(prom_op.GetKr() == Kr);
+  CHECK(prom_op.GetMr() == Mr);
+  CHECK(prom_op.GetCr() == Cr);
+  prom_op.SolvePROM(1, omega_test, x);
+  CHECK(rel_diff(x, x_ref) == 0.0);
+
+  // An inaccurate sample, checked with a zero tolerance: whichever directions are kept,
+  // the PROM error at the sample is at most that of the full update and that without it.
+  prom_op.SolveHDM(1, omega_test, u);
+  ComplexVector noise = make_vector();
+  linalg::SetRandom(world_comm, noise.Real(), 44);
+  linalg::SetRandom(world_comm, noise.Imag(), 45);
+  linalg::AXPY(1.0e-3 * linalg::Norml2(world_comm, u) / linalg::Norml2(world_comm, noise),
+               noise, u);
+  prom_op.SolvePROM(1, omega_test, x);
+  const double error_none = rel_diff(x, u);
+  prom_ref.UpdatePROM(u, "noisy");
+  prom_ref.SolvePROM(1, omega_test, x_ref);
+  const double error_full = rel_diff(x_ref, u);
+  prom_op.AddSamplePROM(1, omega_test, u, 0.0, "noisy");
+  const auto dim_noisy = prom_op.GetReducedDimension();
+  prom_op.SolvePROM(1, omega_test, x);
+  const double error_kept = rel_diff(x, u);
+  CAPTURE(error_none, error_full, error_kept, dim, dim_noisy);
+  CHECK(dim_noisy <= dim + 2);
+  CHECK(error_kept <= (1.0 + 1.0e-8) * std::min(error_none, error_full));
+  if (dim_noisy == dim + 2)
+  {
+    CHECK(prom_op.GetKr() == prom_ref.GetKr());
+  }
+}
+
 // Tests that the per-port "IncludeInSynthesis" flag suppresses basis vector injection
 // without changing the boundary condition. We reuse the cube_3_2_1 two-port setup, but
 // flip port 1 (non-excited, RLC) to "IncludeInSynthesis": false, leaving port 2 (excited,
@@ -1465,6 +1593,25 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   check_excitations(omega_front);
   rom_op.PrepareOnlineExcitations();
   REQUIRE_FALSE(rom_op.WavePortPairingChecked());
+  check_excitations(omega_back);
+
+  // Basis vectors removed by RemoveLastBasisVectors (AddSamplePROM dropping a part of a
+  // sample) leave no stale port-restricted basis vector behind, also when as many vectors
+  // are added again.
+  linalg::SetRandom(comm, sample.Real(), 46);
+  linalg::SetRandom(comm, sample.Imag(), 47);
+  linalg::SetSubVector(sample.Real(), space_op.GetNDDbcTDofLists().back(), 0.0);
+  linalg::SetSubVector(sample.Imag(), space_op.GetNDDbcTDofLists().back(), 0.0);
+  ComplexVector part(sample);
+  part.UseDevice(true);
+  part.Real() = 0.0;
+  rom_op.UpdatePROM(part, "pairing_sample_im");
+  check_excitations(omega_back);
+  rom_op.RemoveLastBasisVectors(1);
+  part = sample;
+  part.Imag() = 0.0;
+  rom_op.UpdatePROM(part, "pairing_sample_re");
+  REQUIRE(rom_op.GetReducedDimension() == n + 1);
   check_excitations(omega_back);
 }
 

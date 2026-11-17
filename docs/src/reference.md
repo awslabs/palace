@@ -561,6 +561,29 @@ orthogonalization variant is controlled by
 [`config["Solver"]["Driven"]["AdaptiveGSOrthogonalization"]`](config/reference.md#config-solver-driven),
 though most users should not need to change it.
 
+An HDM solution is only as accurate as the linear solver tolerance
+[`config["Solver"]["Linear"]["Tol"]`](config/reference.md#config-solver-linear) allows, and
+late in the sampling the new information a sample brings, the part of
+``\mathrm{Re}(\bm{x}^*)`` or ``\mathrm{Im}(\bm{x}^*)`` outside the current basis, can be as
+small as its error. Such a direction carries solver error rather than information, and it
+can make the PROM *less* accurate at the very frequency it was computed for. With an
+accurate sample in the basis the PROM reproduces it, so after each update *Palace*
+evaluates the error ``\varepsilon`` defined below at the new sample, with the sample in the
+basis. If it exceeds
+[`config["Solver"]["Driven"]["AdaptiveTol"]`](config/reference.md#config-solver-driven) and
+the PROM without the new directions, or with only the real one, is closer to the HDM
+solution, *Palace* keeps, of the bases with neither, only the real or only the imaginary new
+direction, the one whose PROM solution at the sample frequency is closest to the HDM
+solution (ties go to the smaller basis), and logs which directions it kept. Otherwise the
+basis is the same as without this check. If the last
+[`config["Solver"]["Driven"]["AdaptiveConvergenceMemory"]`](config/reference.md#config-solver-driven)
+samples all have an error ``\varepsilon`` above `"AdaptiveTol"` before they are added, and
+add no direction, the PROM reproduces the HDM solutions as well as their accuracy allows:
+*Palace* then stops sampling that excitation with a warning, which reports the error
+reached, instead of sampling up to `"AdaptiveMaxSamples"`. Tighten
+[`config["Solver"]["Linear"]["Tol"]`](config/reference.md#config-solver-linear) or loosen
+`"AdaptiveTol"` in that case.
+
 ### Internal sample selection
 
 The remaining question is how to choose the internal sample frequencies. *Palace* uses a

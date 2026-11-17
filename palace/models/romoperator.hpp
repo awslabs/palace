@@ -293,6 +293,7 @@ protected:
   Eigen::FullPivHouseholderQR<Eigen::MatrixXcd> Ar_solver;
   double Ar_omega = std::numeric_limits<double>::quiet_NaN();
   Eigen::VectorXcd RHSr;
+  Eigen::VectorXcd RHSr_last;  // Reduced RHS of the last PROM solve
 
   // PROM reduced-order basis (real-valued).
   std::vector<Vector> V;
@@ -488,6 +489,10 @@ protected:
                        const std::vector<WavePortAuxBlock> &aux_blocks,
                        std::vector<std::string> &aux_labels);
 
+  // Remove the last m basis vectors from the PROM, with their projections, as if the
+  // UpdatePROM calls which added them had not happened.
+  void RemoveLastBasisVectors(std::size_t m);
+
 public:
   RomOperator(const config::LinearSolverData &linear, int verbose, SpaceOperator &space_op,
               std::size_t max_size_per_excitation);
@@ -545,6 +550,16 @@ public:
   // matrices. It is needed to distinguish port and solution field configuration as well as
   // to reconstruct if field configuration are pure real, imaginary or complex.
   void UpdatePROM(const ComplexVector &u, std::string_view node_label);
+
+  // Add an HDM solution u at the sampled frequency ω (excitation excitation_idx) to the
+  // reduced-order basis like UpdatePROM, and check that the PROM then reproduces u at ω to
+  // the relative tolerance tol. If it does not, the real or imaginary part of u can add a
+  // basis direction which carries more linear solver error than information. If the PROM
+  // without the new directions, or with only the real one, is then closer to u at ω, the
+  // basis with neither, only the real or only the imaginary new direction whose PROM
+  // solution at ω is closest to u is kept instead (ties go to the smaller basis).
+  void AddSamplePROM(int excitation_idx, double omega, const ComplexVector &u, double tol,
+                     std::string_view node_label);
 
   // Add solution u to the minimal-rational interpolation for error estimation. MRI are
   // separated by excitation index.
