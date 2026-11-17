@@ -377,7 +377,8 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
   - With MPICH and the MPI implementations derived from it, the superbuild patches the
     BLACS of ScaLAPACK to receive point-to-point messages with derived datatypes packed and
-    unpack them locally. This works around an MPICH bug for processes on the same node,
+    unpack them locally. This works around an MPICH bug for processes on the same node
+    ([pmodels/mpich#8169](https://github.com/pmodels/mpich/issues/8169)),
     seen on macOS arm64, which corrupts or aborts the complex-valued distributed
     factorizations of STRUMPACK and MUMPS: a packed message received in several shared
     memory cells cannot be unpacked when a cell boundary splits a complex-valued element.
