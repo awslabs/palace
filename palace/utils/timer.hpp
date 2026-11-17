@@ -109,7 +109,9 @@ private:
   std::vector<long> counts, run_counts;
   std::vector<long> mem_data, run_mem_data;
   long last_memory;
+  long report_memory = 0;       // Process peak at the last report
   long iteration_baseline = 0;  // Process peak at the iteration start (0: first)
+  long run_baseline = 0;        // Process peak at the run start (0: process start)
   int iterations = 1;
 
 public:
@@ -149,7 +151,15 @@ public:
   void MarkMemory(Index idx) { mem_data[idx] += MemoryLap(); }
 
   // Fix the time of the report: TOTAL ends there, and the next iteration starts there.
-  void MarkReport() { report_time = Now(); }
+  // Call right after a lap: the report time and memory are those of the last lap.
+  void MarkReport()
+  {
+    report_time = last_lap_time;
+    report_memory = last_memory;
+  }
+
+  // Peak memory at the start of the run (after a reset).
+  void SetStartBaseline(long b) { iteration_baseline = run_baseline = b; }
 
   // This iteration (TOTAL: elapsed up to the report).
   double Data(Index idx) const
@@ -160,6 +170,7 @@ public:
   long Counts(Index idx) const { return (idx == TOTAL) ? 1 : counts[idx]; }
   long MemoryData(Index idx) const { return mem_data[idx]; }
   long IterationBaseline() const { return iteration_baseline; }
+  long RunBaseline() const { return run_baseline; }
   int Iterations() const { return iterations; }
 
   // Run so far, including this iteration.
@@ -187,7 +198,7 @@ public:
       mem_data[i] = 0;
     }
     iteration_start_time = report_time;
-    iteration_baseline = memory_reporting::GetPeakMemory();
+    iteration_baseline = report_memory;
     iterations++;
   }
 };
@@ -250,7 +261,7 @@ public:
       timer.MarkTime(stack.back(), false);
       timer.MarkMemory(stack.back());
     }
-    else if (started)
+    else
     {
       timer.Lap();
       timer.MemoryLap();
@@ -270,6 +281,7 @@ public:
   static void Reset()
   {
     timer = Timer();
+    timer.SetStartBaseline(memory_reporting::GetPeakMemory());
     stack.clear();
     started = false;
     perf::detail::ResetValues();

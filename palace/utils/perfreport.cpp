@@ -39,7 +39,7 @@ State &GetState()
 
 struct NodeComms
 {
-  MPI_Comm node = MPI_COMM_NULL, leaders = MPI_COMM_NULL;
+  MPI_Comm comm = MPI_COMM_NULL, node = MPI_COMM_NULL, leaders = MPI_COMM_NULL;
 };
 
 const NodeComms &GetNodeComms(MPI_Comm comm)
@@ -47,10 +47,15 @@ const NodeComms &GetNodeComms(MPI_Comm comm)
   static NodeComms nc = [comm]()
   {
     NodeComms c;
+    c.comm = comm;
     MPI_Comm_split_type(comm, MPI_COMM_TYPE_SHARED, 0, MPI_INFO_NULL, &c.node);
     MPI_Comm_split(comm, (Mpi::Rank(c.node) == 0) ? 0 : MPI_UNDEFINED, 0, &c.leaders);
     return c;
   }();
+  int cmp;
+  MPI_Comm_compare(comm, nc.comm, &cmp);
+  MFEM_VERIFY(cmp == MPI_IDENT || cmp == MPI_CONGRUENT,
+              "perf::Report must always be called on the same communicator");
   return nc;
 }
 
@@ -86,7 +91,8 @@ void PackFixed(const Timer &t, bool cum, std::vector<double> &v, std::vector<cha
     s.push_back(set[i]);
   }
   const double peak = static_cast<double>(memory_reporting::GetPeakMemory());
-  const double baseline = cum ? 0.0 : static_cast<double>(t.IterationBaseline());
+  const double baseline =
+      static_cast<double>(cum ? t.RunBaseline() : t.IterationBaseline());
   double rows = 0.0;
   for (int i = 0; i < N; i++)
   {

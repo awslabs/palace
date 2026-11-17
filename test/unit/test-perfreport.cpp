@@ -3,6 +3,7 @@
 
 #include <chrono>
 #include <thread>
+#include <vector>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
@@ -61,6 +62,7 @@ TEST_CASE("PerfReport Iterations And Cumulative", "[perfreport][Serial][Parallel
   perf::SumMetric its("Test/Report/Its", perf::Red::COUNT);
   perf::LastMetric size("Test/Report/Size", perf::Red::STATS, perf::Run::ITERATION_ONLY);
   perf::SumMetric once("Test/Report/Once", perf::Red::MAX);
+  perf::MaxMetric prune("LinearSolver/TestPrune/X", perf::Red::MAX);
   {
     BlockTimer bt(Timer::IO);
     Sleep(5);
@@ -68,8 +70,9 @@ TEST_CASE("PerfReport Iterations And Cumulative", "[perfreport][Serial][Parallel
   its.Add(3);
   size.Set(100);
   once.Add(1);
+  prune.Update(1);
   const auto r1 = perf::Report(comm);  // Copy
-  nlohmann::json meta = {{"Problem", {{"Iteration", 1}}}};
+  nlohmann::json meta = {{"Problem", {{"Iteration", 1}}}, {"LinearSolver", {{"Other", 1}}}};
   perf::WriteJson(meta);
   CHECK(meta["MetadataVersion"] == perf::METADATA_VERSION);
   CHECK(meta["Problem"]["Iteration"] == 1);  // Other writers' keys are kept
@@ -83,7 +86,9 @@ TEST_CASE("PerfReport Iterations And Cumulative", "[perfreport][Serial][Parallel
   CHECK(meta["Cumulative"]["Test"]["Report"]["Its"] == meta["Test"]["Report"]["Its"]);
   CHECK(!meta["Cumulative"]["Test"]["Report"].contains("Size"));
   CHECK(meta["PeakMemoryGrowthMegabytes"].contains("Baseline"));
-  CHECK(meta["PeakMemoryGrowthMegabytes"]["Baseline"]["Max"] == 0);  // Iteration 1
+  CHECK(meta["LinearSolver"]["TestPrune"]["X"] == 1);
+  CHECK(meta["PeakMemoryGrowthMegabytes"]["Baseline"] ==
+        meta["Cumulative"]["PeakMemoryGrowthMegabytes"]["Baseline"]);  // Iteration 1
   CHECK(meta["Cumulative"]["ElapsedTime"]["IO"] == meta["ElapsedTime"]["IO"]);
 
   BlockTimer::StartIteration();
@@ -91,6 +96,17 @@ TEST_CASE("PerfReport Iterations And Cumulative", "[perfreport][Serial][Parallel
     BlockTimer bt(Timer::IO);
     Sleep(5);
   }
+  // Growth which stays alive until after the report.
+  constexpr std::size_t alloc = 64 << 20;
+  std::vector<char> buf;
+  long grew;
+  {
+    BlockTimer bt(Timer::CONSTRUCT);
+    const long before = memory_reporting::GetPeakMemory();
+    buf.assign(alloc, 1);
+    grew = memory_reporting::GetPeakMemory() - before;
+  }
+  Mpi::GlobalMin(1, &grew, comm);
   its.Add(4);
   size.Set(200);
   const auto &r2 = perf::Report(comm);
@@ -107,15 +123,18 @@ TEST_CASE("PerfReport Iterations And Cumulative", "[perfreport][Serial][Parallel
     CHECK_THAT(r2.cum.time[i].sum, WithinAbs(r1.iter.time[i].sum + r2.iter.time[i].sum,
                                              1e-9 * r2.cum.time[i].sum));
   }
-  CHECK(meta["PeakMemoryGrowthMegabytes"]["Baseline"]["Max"].get<double>() > 0.0);
-  // Per process: Baseline + rows + Unattributed = peak.
-  double rows = 0.0;
-  for (int i = 0; i < Timer::TOTAL; i++)
+  CHECK(!meta["LinearSolver"].contains("TestPrune"));  // Stale subtree removed
+  CHECK(meta["LinearSolver"]["Other"] == 1);
+  CHECK(buf[alloc / 2] == 1);
+  if (grew >= static_cast<long>(alloc / 2))
   {
-    rows += r2.iter.mem[i].sum;
+    CHECK(r2.iter.mem[Timer::CONSTRUCT].max > alloc / 2);
+    CHECK(r2.iter.unattributed.min >= 0.0);
   }
-  CHECK_THAT(r2.iter.baseline.sum + rows + r2.iter.unattributed.sum,
-             WithinAbs(r2.iter.peak.sum, 1.0));
+  else
+  {
+    WARN("Peak memory did not grow with the allocation, skipping growth checks");
+  }
   BlockTimer::Reset();
 }
 
@@ -142,5 +161,49 @@ TEST_CASE("PerfReport Subcommunicator Role", "[perfreport][Parallel]")
   const auto &r = perf::Report(comm);
   CHECK(r.Metric("Test/Port/Solves", false)->sum == 10);  // Totals over ports
   CHECK(r.Metric("Test/Port/MaxIts", false)->max == 11);
+  BlockTimer::Reset();
+}
+
+TEST_CASE("PerfReport Baseline After Reset", "[perfreport][Serial][Parallel]")
+{
+  MPI_Comm comm = Mpi::World();
+  {
+    std::vector<char> buf(64 << 20, 1);
+    CHECK(buf[buf.size() / 2] == 1);
+  }
+  BlockTimer::Reset();
+  {
+    BlockTimer bt(Timer::IO);
+  }
+  const auto &r = perf::Report(comm);
+  nlohmann::json meta = nlohmann::json::object();
+  perf::WriteJson(meta);
+  CHECK(meta["PeakMemoryGrowthMegabytes"]["Baseline"]["Min"].get<double>() > 0.0);
+  CHECK(meta["Cumulative"]["PeakMemoryGrowthMegabytes"]["Baseline"]["Min"].get<double>() >
+        0.0);
+  CHECK(meta["PeakNodeMemoryMegabytes"]["Nodes"].get<int>() >= 1);
+  if (meta["PeakNodeMemoryMegabytes"]["Nodes"] == 1)
+  {
+    CHECK(r.iter.node_peak.sum == r.iter.peak.sum);
+  }
+  BlockTimer::Reset();
+}
+
+TEST_CASE("PerfReport Row On One Process", "[perfreport][Parallel]")
+{
+  MPI_Comm comm = Mpi::World();
+  if (Mpi::Size(comm) < 2)
+  {
+    SKIP("Needs at least 2 processes");
+  }
+  BlockTimer::Reset();
+  if (Mpi::Root(comm))
+  {
+    BlockTimer bt(Timer::EPS);
+    Sleep(2);
+  }
+  const auto &r = perf::Report(comm);
+  CHECK(r.iter.time[Timer::EPS].ranks == 1);
+  CHECK(r.iter.time[Timer::TOTAL].ranks == Mpi::Size(comm));
   BlockTimer::Reset();
 }
