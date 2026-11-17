@@ -434,26 +434,24 @@ double MinimalRationalInterpolation::FindMaxError(MPI_Comm comm) const
     i_begin = static_cast<int>((nr_sample + 1L) * rank / np);
     i_end = static_cast<int>((nr_sample + 1L) * (rank + 1) / np);
   }
-  struct
-  {
-    double v;
-    int i;
-  } best = {std::numeric_limits<double>::infinity(), i_begin};
+  double best_v = std::numeric_limits<double>::infinity();
+  int best_i = i_begin;
   for (int i = i_begin; i < i_end; i++)
   {
     // Index the points rather than accumulate delta, which can be below the spacing of
     // doubles near z. A value which is not finite is never smaller.
     const double v = std::abs((q.array() / (z_map.array() - (start + i * delta))).sum());
-    if (v < best.v)
+    if (v < best_v)
     {
-      best = {v, i};
+      best_v = v;
+      best_i = i;
     }
   }
   if (comm != MPI_COMM_NULL)
   {
-    MPI_Allreduce(MPI_IN_PLACE, &best, 1, MPI_DOUBLE_INT, MPI_MINLOC, comm);
+    Mpi::GlobalMinLoc(1, &best_v, &best_i, comm);
   }
-  return start + best.i * delta;
+  return start + best_i * delta;
 }
 
 // Hybrid inner-product matrix. This is made from MassIntegrator of the domain and port
