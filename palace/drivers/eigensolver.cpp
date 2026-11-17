@@ -412,8 +412,8 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // thus only pays off for solves which take three cycles or more without it: the
   // eigenpairs are kept only if the last solve without a warm start did, and only if the
   // adaptation goes on.
-  constexpr int min_cold_its = 3;
   const auto &eigenmode = iodata.solver.eigenmode;
+  const int min_cold_its = eigenmode.test_min_cold_its;
   const auto &refinement = iodata.model.refinement;
   const int adapt_it = num_solves++;
   const bool can_warm_start = eigenmode.init_v0 && eigenmode.test_warm_start &&
@@ -475,7 +475,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         {
           eigen->SetInitialSpace(v);  // Copies the vector
         }
-        eigen->SetWarmStart(true);
+        eigen->SetWarmStart(eigenmode.test_ritz_rule);
 
         // The error of the first linear solves stays in the vectors kept at the restarts,
         // and the eigenvalue errors scale with their tolerance: solve them with a 100

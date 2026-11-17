@@ -2496,6 +2496,18 @@
           "default": false,
           "x-palace-advanced": true
         },
+        "TestRitzRule": {
+          "type": "boolean",
+          "description": "Test only: false disables the settled-Ritz convergence test of warm-started solves.",
+          "default": true,
+          "x-palace-advanced": true
+        },
+        "TestMinColdIts": {
+          "type": "integer",
+          "description": "Test only: minimum number of Krylov cycles of the last cold solve for a warm start.",
+          "default": 3,
+          "x-palace-advanced": true
+        },
         "TestWarmStart": {
           "type": "boolean",
           "description": "Test only: false disables the warm start of adaptive mesh refinement.",

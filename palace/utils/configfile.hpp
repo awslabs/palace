@@ -972,6 +972,11 @@ public:
   // Test only: false disables the warm start of adaptive mesh refinement.
   bool test_warm_start = true;
 
+  // Test only: false disables the settled-Ritz convergence test of warm-started solves, and
+  // the minimum number of Krylov cycles of the last cold solve for a warm start.
+  bool test_ritz_rule = true;
+  int test_min_cold_its = 3;
+
   // Orthogonalize basis vectors using a mass matrix inner product, instead of generating
   // using a standard ℓ² (Euclidean) norm.
   bool mass_orthog = false;
