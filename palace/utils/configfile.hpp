@@ -969,6 +969,9 @@ public:
   bool init_v0 = true;
   bool init_v0_const = false;
 
+  // Test only: false disables the warm start of adaptive mesh refinement.
+  bool test_warm_start = true;
+
   // Orthogonalize basis vectors using a mass matrix inner product, instead of generating
   // using a standard ℓ² (Euclidean) norm.
   bool mass_orthog = false;

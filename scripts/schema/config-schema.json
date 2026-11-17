@@ -2496,6 +2496,12 @@
           "default": false,
           "x-palace-advanced": true
         },
+        "TestWarmStart": {
+          "type": "boolean",
+          "description": "Test only: false disables the warm start of adaptive mesh refinement.",
+          "default": true,
+          "x-palace-advanced": true
+        },
         "MassOrthogonal": {
           "type": "boolean",
           "description": "Orthogonalize eigenvectors with respect to the mass matrix.",

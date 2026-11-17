@@ -1538,6 +1538,7 @@ EigenSolverData::EigenSolverData(const json &eigenmode)
   scale = eigenmode.value("Scaling", scale);
   init_v0 = eigenmode.value("StartVector", init_v0);
   init_v0_const = eigenmode.value("StartVectorConstant", init_v0_const);
+  test_warm_start = eigenmode.value("TestWarmStart", test_warm_start);
   mass_orthog = eigenmode.value("MassOrthogonal", mass_orthog);
   nonlinear_type = eigenmode.value("NonlinearType", nonlinear_type);
   refine_nonlinear = eigenmode.value("RefineNonlinear", refine_nonlinear);
