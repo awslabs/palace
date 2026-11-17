@@ -314,6 +314,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     `gridfunction/driven/excitation_i/`. The mesh, rank, and error indicator files are
     shared by all excitations and stay in `gridfunction/driven/`. The output of driven
     simulations with a single excitation is unchanged.
+    [PR 1220](https://github.com/awslabs/palace/pull/1220).
 
 #### Documentation
 
