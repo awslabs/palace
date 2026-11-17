@@ -748,20 +748,24 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     CHECK(film.attributes.at(10).service == FilmService::FILM_INDUCTIVE);
     SurfaceResponseOperator candidate(*run->iodata, *run->space, nullptr, &film, true);
     CHECK(candidate.ImpedanceRuleActs());
-    int mixed = 0, substituted = 0;
+    // The two islands within reach form ONE feature (the identification's cluster over both
+    // conductors): its two device laws lie on different conductors, so it is MIXED-LAW (a
+    // served status), never LAW-JOINT.
+    int mixed = 0;
     for (const auto &feature : candidate.GetImpedanceLawFeatures())
     {
       INFO(feature.type << " " << feature.status << " " << feature.device_law);
       CHECK(feature.status != "LAW-JOINT");
+      CHECK(feature.status != "NOT-DECLARED");
       if (feature.status == "MIXED-LAW")
       {
         mixed++;
         CHECK(feature.device_hash == "MIXED");
+        // Its device laws, both purely inductive sheets, named.
+        CHECK_THAT(feature.device_law, ContainsSubstring("|"));
       }
-      substituted += feature.status == "SUBSTITUTED" ? 1 : 0;
     }
     CHECK(mixed > 0);
-    CHECK(substituted > 0);
   }
 
   SECTION("the identification-only candidate (MINOR-1): decided on the BUILT statuses; a "
