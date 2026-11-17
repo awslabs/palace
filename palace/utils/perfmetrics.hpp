@@ -205,6 +205,33 @@ public:
   void Set(double v) const { detail::Update(id, v); }
 };
 
+// A metric of the global list (identical on all processes after Sync).
+struct MetricInfo
+{
+  std::string path;
+  Acc acc;
+  Red red;
+  Run run;
+};
+
+// Exchange the metrics registered since the previous call and validate the global list;
+// all processes abort together on an error. Collective.
+void Sync(MPI_Comm comm);
+
+const std::vector<MetricInfo> &GlobalMetrics();
+
+// Values of the global metrics on this process (unset: set[i] = 0): iteration values, or
+// cumulative values (run combined with iteration; ITERATION_ONLY metrics unset).
+void PackMetrics(bool cumulative, std::vector<double> &value, std::vector<char> &set);
+
+namespace detail
+{
+// Root-side validation of new entries ("path\tARR" lines, A/R/R = '0' + enum values)
+// against the existing global paths: returns the sorted new unique lines, or sets error.
+std::vector<std::string> ValidateNew(const std::vector<MetricInfo> &global,
+                                     const std::string &lines, std::string &error);
+}  // namespace detail
+
 }  // namespace palace::perf
 
 #endif  // PALACE_UTILS_PERFMETRICS_HPP

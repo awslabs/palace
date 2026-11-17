@@ -6,8 +6,11 @@
 #include <array>
 #include <deque>
 #include <limits>
+#include <map>
+#include <set>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <mfem.hpp>
 #include "utils/communication.hpp"
 
@@ -228,6 +231,205 @@ Metric::Metric(std::string_view path, Acc acc, Red red, Run run)
   if (drop)
   {
     id = -1;  // Registered (so the rules agree everywhere) but never set here
+  }
+}
+
+namespace
+{
+
+struct GlobalRegistry
+{
+  std::vector<MetricInfo> list;
+  std::unordered_map<std::string, int> index;
+  std::vector<int> local_of_global;  // -1: not registered on this process
+};
+
+GlobalRegistry &Global()
+{
+  static GlobalRegistry g;
+  return g;
+}
+
+std::string Rules(Acc acc, Red red, Run run)
+{
+  return {static_cast<char>('0' + static_cast<int>(acc)),
+          static_cast<char>('0' + static_cast<int>(red)),
+          static_cast<char>('0' + static_cast<int>(run))};
+}
+
+// Whether p conflicts with a path of paths: one is a component-wise prefix of the other.
+bool PrefixConflict(const std::set<std::string> &paths, const std::string &p,
+                    std::string &other)
+{
+  for (auto pos = p.find('/'); pos != std::string::npos; pos = p.find('/', pos + 1))
+  {
+    if (auto it = paths.find(p.substr(0, pos)); it != paths.end())
+    {
+      other = *it;
+      return true;
+    }
+  }
+  const auto child = p + "/";
+  if (auto it = paths.lower_bound(child); it != paths.end() && it->starts_with(child))
+  {
+    other = *it;
+    return true;
+  }
+  return false;
+}
+
+}  // namespace
+
+namespace detail
+{
+
+std::vector<std::string> ValidateNew(const std::vector<MetricInfo> &global,
+                                     const std::string &lines, std::string &error)
+{
+  std::map<std::string, std::string> rules_of;
+  std::set<std::string> paths;
+  for (const auto &m : global)
+  {
+    rules_of[m.path] = Rules(m.acc, m.red, m.run);
+    paths.insert(m.path);
+  }
+  std::map<std::string, std::string> fresh;
+  std::size_t start = 0;
+  while (start < lines.size())
+  {
+    const auto end = lines.find('\n', start);
+    const auto line = lines.substr(start, end - start);
+    start = end + 1;
+    const auto tab = line.find('\t');
+    const auto path = line.substr(0, tab), rules = line.substr(tab + 1);
+    auto known = rules_of.find(path);
+    if (known == rules_of.end())
+    {
+      known = fresh.find(path);
+      if (known == fresh.end())
+      {
+        fresh.emplace(path, rules);
+        continue;
+      }
+    }
+    if (known->second != rules)
+    {
+      error = "metric \"" + path +
+              "\" is registered with different rules on different processes";
+      return {};
+    }
+  }
+  std::vector<std::string> out;
+  for (const auto &[path, rules] : fresh)
+  {
+    std::string other;
+    if (PrefixConflict(paths, path, other))
+    {
+      error = "metric \"" + path + "\" and \"" + other +
+              "\" conflict (a metric path cannot contain another)";
+      return {};
+    }
+    paths.insert(path);
+    out.push_back(path + '\t' + rules + '\n');
+  }
+  return out;
+}
+
+}  // namespace detail
+
+void Sync(MPI_Comm comm)
+{
+  auto &local = Local();
+  auto &g = Global();
+  const auto pending = std::exchange(local.pending, {});
+  std::string mine;
+  for (int id : pending)
+  {
+    const auto &e = detail::entries[id];
+    mine += e.path + '\t' + Rules(e.acc, e.red, e.run) + '\n';
+  }
+  const int rank = Mpi::Rank(comm), np = Mpi::Size(comm);
+  int len = static_cast<int>(mine.size());
+  std::vector<int> lens(np, 0), displs(np, 0);
+  MPI_Gather(&len, 1, MPI_INT, lens.data(), 1, MPI_INT, 0, comm);
+  std::string all;
+  if (rank == 0)
+  {
+    for (int i = 1; i < np; i++)
+    {
+      displs[i] = displs[i - 1] + lens[i - 1];
+    }
+    all.resize(displs[np - 1] + lens[np - 1]);
+  }
+  MPI_Gatherv(mine.data(), len, MPI_CHAR, all.data(), lens.data(), displs.data(), MPI_CHAR,
+              0, comm);
+  std::string error, fresh;
+  if (rank == 0)
+  {
+    for (const auto &line : detail::ValidateNew(g.list, all, error))
+    {
+      fresh += line;
+    }
+  }
+  int sizes[2] = {static_cast<int>(error.size()), static_cast<int>(fresh.size())};
+  MPI_Bcast(sizes, 2, MPI_INT, 0, comm);
+  error.resize(sizes[0]);
+  fresh.resize(sizes[1]);
+  MPI_Bcast(error.data(), sizes[0], MPI_CHAR, 0, comm);
+  MPI_Bcast(fresh.data(), sizes[1], MPI_CHAR, 0, comm);
+  MFEM_VERIFY(error.empty(), "Performance report: " << error << "!");
+  std::size_t start = 0;
+  while (start < fresh.size())
+  {
+    const auto end = fresh.find('\n', start);
+    const auto line = fresh.substr(start, end - start);
+    start = end + 1;
+    const auto tab = line.find('\t');
+    MetricInfo m{line.substr(0, tab), static_cast<Acc>(line[tab + 1] - '0'),
+                 static_cast<Red>(line[tab + 2] - '0'),
+                 static_cast<Run>(line[tab + 3] - '0')};
+    g.index.emplace(m.path, static_cast<int>(g.list.size()));
+    auto it = local.ids.find(m.path);
+    g.local_of_global.push_back((it != local.ids.end()) ? it->second : -1);
+    g.list.push_back(std::move(m));
+  }
+  // Metrics registered here which other processes had registered before.
+  for (int id : pending)
+  {
+    g.local_of_global[g.index.at(detail::entries[id].path)] = id;
+  }
+}
+
+const std::vector<MetricInfo> &GlobalMetrics()
+{
+  return Global().list;
+}
+
+void PackMetrics(bool cumulative, std::vector<double> &value, std::vector<char> &set)
+{
+  const auto &g = Global();
+  for (std::size_t i = 0; i < g.list.size(); i++)
+  {
+    const int id = g.local_of_global[i];
+    double v = 0.0;
+    bool s = false;
+    if (id >= 0)
+    {
+      const auto &e = detail::entries[id];
+      if (!cumulative)
+      {
+        v = e.iter;
+        s = e.iter_set;
+      }
+      else if (e.run == Run::ACCUMULATE)
+      {
+        s = e.run_set || e.iter_set;
+        v = (e.run_set && e.iter_set) ? detail::Combine(e.acc, e.run_value, e.iter)
+                                      : (e.run_set ? e.run_value : e.iter);
+      }
+    }
+    value.push_back(v);
+    set.push_back(s);
   }
 }
 
