@@ -400,6 +400,13 @@ std::array<std::vector<int>, 5> FileDofs(const mfem::ParMesh &mesh, const FileVe
   return dofs;
 }
 
+// The process of a root of the refinement tree in MFEM's default partition of the leaves,
+// when its leaves are [first, first + leaves) of all `total`: that of its middle leaf.
+int RootProcess(long long first, long long leaves, long long total, int P)
+{
+  return static_cast<int>(std::min<long long>(P - 1, (first + leaves / 2) * P / total));
+}
+
 }  // namespace
 
 void RebalanceRootAligned(mfem::ParMesh &mesh, double tol)
@@ -415,7 +422,7 @@ void RebalanceRootAligned(mfem::ParMesh &mesh, double tol)
   {
     if (roots[i].leaves)
     {
-      const int r = static_cast<int>((roots[i].first + roots[i].total / 2) * P / total);
+      const int r = RootProcess(roots[i].first, roots[i].total, total, P);
       std::fill_n(part.begin() + e, roots[i].leaves, r);
       load[r] += roots[i].leaves;
     }
@@ -758,9 +765,6 @@ bool PrintParallelNCMesh(const mfem::ParMesh &orig, double length_scale,
   return true;
 }
 
-namespace
-{
-
 // What ReadNCMeshCoarse keeps for PartitionNCMeshFile: the process of each root (in file
 // order, the order of the coarse elements), the refinement types of the elements of the
 // trees of the own roots (level by level over these roots), and for the nodes, their order
@@ -780,7 +784,10 @@ struct NCMeshFile
     const auto i = g - g0;
     return std::string_view(text).substr(start[i], start[i + 1] - 1 - start[i]);
   }
-} nc_file;
+};
+
+namespace
+{
 
 #if defined(MFEM_USE_ZLIB)
 // The root decompresses a gzip-compressed nonconforming mesh and sends each process the
@@ -918,13 +925,26 @@ bool LineNumbers(std::string_view line, std::vector<T> &v)
   const char *p = line.data(), *end = p + line.size();
   for (T x; p < end; p += (p < end && *p == ' '))
   {
-    const auto r = std::from_chars(p, end, x);
-    if (r.ec != std::errc())
+    const char *q = p;
+    if constexpr (std::is_floating_point_v<T>)
+    {
+      // Not std::from_chars, which libc++ only has for floating point from LLVM 20. The
+      // line ends at an end of line, so strtod ends there at the latest, but for spaces.
+      char *r;
+      x = std::strtod(p, &r);
+      q = r;
+    }
+    else
+    {
+      const auto r = std::from_chars(p, end, x);
+      q = (r.ec == std::errc()) ? r.ptr : p;
+    }
+    if (q == p || q > end)
     {
       return false;
     }
     v.push_back(x);
-    p = r.ptr;
+    p = q;
   }
   return !v.empty();
 }
@@ -1067,24 +1087,20 @@ bool ReadFileNodes(mfem::ParMesh &mesh, const NCMeshFile &file, double length_sc
 // children which hold them, as MFEM derefines, and so do the attributes of their faces,
 // looked up in the boundary of the file. The root prints the coarse mesh, with the
 // top-level vertex coordinates (the first vertex DOFs of the nodes).
-bool ReadNCMeshCoarse(MPI_Comm comm, const std::string &path, bool enabled,
-                      std::string &coarse)
+std::shared_ptr<NCMeshFile> ReadNCMeshCoarse(MPI_Comm comm, const std::string &path,
+                                             bool enabled, std::string &coarse)
 {
   using NC = NCMeshData;
   using Geometry = mfem::Geometry;
   const int rank = Mpi::Rank(comm), P = Mpi::Size(comm);
-  auto &file = nc_file;
-  file = {};
   coarse.clear();
-  auto Fail = [&]()
-  {
-    file = {};
-    return false;
-  };
+  auto Fail = []() { return std::shared_ptr<NCMeshFile>(); };
   if (!enabled)
   {
-    return false;
+    return Fail();
   }
+  auto kept = std::make_shared<NCMeshFile>();
+  auto &file = *kept;
   int format = 0;  // 1: a nonconforming mesh, 2: compressed (its header is checked later)
   if (Mpi::Root(comm))
   {
@@ -1218,8 +1234,7 @@ bool ReadNCMeshCoarse(MPI_Comm comm, const std::string &path, bool enabled,
   file.part.resize(R);
   for (long long k = 0, f = 0; k < R; f += leaves[k++])
   {
-    file.part[k] =
-        static_cast<int>(std::min<long long>(P - 1, (f + leaves[k] / 2) * P / total));
+    file.part[k] = RootProcess(f, leaves[k], total, P);
   }
   std::vector<std::vector<Elem>> send(P);
   for (const auto &el : lines)
@@ -1267,7 +1282,7 @@ bool ReadNCMeshCoarse(MPI_Comm comm, const std::string &path, bool enabled,
            ok && loc[e].ref && j < mfem::NCMesh::MaxElemChildren && loc[e].ids[j] >= 0; j++)
       {
         const int c = Index(loc[e].ids[j]);
-        ok = c >= 0 && !seen[c];
+        ok = c >= 0 && !seen[c] && loc[c].attr == loc[e].attr;  // as MFEM refines
         seen[std::max(c, 0)] = 1;
         next.push_back(c);
       }
@@ -1451,26 +1466,23 @@ bool ReadNCMeshCoarse(MPI_Comm comm, const std::string &path, bool enabled,
   Mpi::BroadcastLarge(size, coarse.data(), 0, comm);
   if (file.order == 0)
   {
-    file.text.clear();
-    file.start.clear();
+    std::string().swap(file.text);
+    std::vector<std::size_t>().swap(file.start);
   }
-  return true;
+  return kept;
 }
 
-bool HasNCMeshFile()
-{
-  return !nc_file.part.empty();
-}
-
-std::unique_ptr<mfem::ParMesh> PartitionNCMeshFile(MPI_Comm comm, mfem::Mesh &coarse,
-                                                   double length_scale, double tol)
+std::unique_ptr<mfem::ParMesh> PartitionNCMeshFile(MPI_Comm comm, NCMeshFile &file,
+                                                   mfem::Mesh &coarse, double length_scale,
+                                                   double tol)
 {
   using NC = NCMeshData;
-  auto &file = nc_file;
-  MFEM_VERIFY(file.part.size() == static_cast<std::size_t>(coarse.GetNE()),
-              "The coarse mesh of the mesh file has " << file.part.size()
-                                                      << " elements, but " << coarse.GetNE()
-                                                      << " after its preprocessing!");
+  bool ok = coarse.ncmesh && file.part.size() == static_cast<std::size_t>(coarse.GetNE());
+  Mpi::GlobalAnd(1, &ok, comm);
+  if (!ok)  // for example, if the preprocessing removed elements
+  {
+    return nullptr;
+  }
   auto mesh = std::make_unique<mfem::ParMesh>(comm, coarse, file.part.data());
 
   // The refinements of the own roots, level by level.
@@ -1478,7 +1490,6 @@ std::unique_ptr<mfem::ParMesh> PartitionNCMeshFile(MPI_Comm comm, mfem::Mesh &co
       std::lower_bound(file.part.begin(), file.part.end(), Mpi::Rank(comm)) -
       file.part.begin());
   std::vector<int> level(mesh->GetNE()), next;
-  bool ok = true;
   for (int i = 0; i < mesh->GetNE(); i++)
   {
     level[i] = NC::Leaves(*mesh->pncmesh)[i];  // the roots, before the refinements
@@ -1526,8 +1537,11 @@ std::unique_ptr<mfem::ParMesh> PartitionNCMeshFile(MPI_Comm comm, mfem::Mesh &co
                        file.byvdim ? mfem::Ordering::byVDIM : mfem::Ordering::byNODES);
     ok = ReadFileNodes(*mesh, file, length_scale);
   }
-  MFEM_VERIFY(ok, "The refinement trees or the nodes of the mesh file could not be read!");
   file = {};
+  if (!ok)
+  {
+    return nullptr;
+  }
   int ne_min = mesh->GetNE(), ne_max = ne_min;
   Mpi::GlobalMin(1, &ne_min, comm);
   Mpi::GlobalMax(1, &ne_max, comm);

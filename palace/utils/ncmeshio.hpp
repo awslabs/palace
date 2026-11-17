@@ -33,24 +33,27 @@ void RebalanceRootAligned(mfem::ParMesh &mesh, double tol);
 // its NCMesh: MFEM's mesh transformations only move the vertices.
 void ScaleNCMeshCoordinates(mfem::Mesh &mesh, double length_scale);
 
-// Read in parallel an uncompressed nonconforming mesh which PrintParallelNCMesh wrote, if
-// `enabled`: every process reads a slice of the file. Returns, on every process, the text
-// of its coarse mesh: the roots of the refinement tree, as a nonconforming mesh without
-// refinements, with straight sides. Keeps the refinement trees of the roots which go to
-// this process, and its slice of the nodes, for PartitionNCMeshFile. Returns false on every
-// process, keeping nothing, if the file cannot be read this way. Collective.
-bool ReadNCMeshCoarse(MPI_Comm comm, const std::string &path, bool enabled,
-                      std::string &coarse);
+// What ReadNCMeshCoarse keeps of a mesh file for PartitionNCMeshFile.
+struct NCMeshFile;
 
-// Whether ReadNCMeshCoarse keeps a file.
-bool HasNCMeshFile();
+// Read in parallel a nonconforming mesh which PrintParallelNCMesh wrote, if `enabled`:
+// every process reads a slice of an uncompressed file, and the root decompresses a
+// compressed file and sends each process its slice. Returns, on every process, the text of
+// its coarse mesh in `coarse` (the roots of the refinement tree, as a nonconforming mesh
+// without refinements, with straight sides), and what PartitionNCMeshFile needs: the
+// refinement trees of the roots which go to this process, and its slice of the nodes.
+// Returns null on every process if the file cannot be read this way. Collective.
+std::shared_ptr<NCMeshFile> ReadNCMeshCoarse(MPI_Comm comm, const std::string &path,
+                                             bool enabled, std::string &coarse);
 
 // Distribute that coarse mesh (on every process) along the trees of its roots, and refine
 // it into the mesh of the file, with the nodes of the file divided by the length scale;
 // then rebalance it if the largest number of elements on a process is more than `tol` times
-// the smallest. Collective.
-std::unique_ptr<mfem::ParMesh> PartitionNCMeshFile(MPI_Comm comm, mfem::Mesh &coarse,
-                                                   double length_scale, double tol);
+// the smallest. Returns null on every process if the file does not match (for example, if
+// its numbering is not that of PrintParallelNCMesh). Collective.
+std::unique_ptr<mfem::ParMesh> PartitionNCMeshFile(MPI_Comm comm, NCMeshFile &file,
+                                                   mfem::Mesh &coarse, double length_scale,
+                                                   double tol);
 
 }  // namespace palace::mesh
 
