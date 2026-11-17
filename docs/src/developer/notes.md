@@ -351,6 +351,8 @@ The (average) rows in the table should add up to the Total line at the bottom.
 The categories for breaking down the total simulation time are:
 
 ```
+Startup                         // < Time from the start of the process (including
+                                //   `MPI_Init`) to the first timed block
 Initialization                  // < Time spent parsing the configuration file,
                                 //   preprocessing and partitioning the mesh
 Operator Construction           // < Time spent constructing finite element spaces and
@@ -362,6 +364,7 @@ Linear Solve                    // < Linear solver time
   Preconditioner                // < Preconditioner application time for linear solve
   Coarse Solve                  // < Coarse solve time for geometric multigrid
                                 //   preconditioners
+  Coarse Setup                  // < Setup and factorization of the coarse solver
 Time Stepping                   // < Time spent in the time integrator for transient
                                 //   simulation types
 Eigenvalue Solve                // < Time spent in the eigenvalue solver (not including
@@ -419,7 +422,9 @@ scope attributes the memory growth so far to the outer scope, then starts tracki
 scope.
 
 The per-phase memory table is printed alongside the timing table at the end of each
-simulation. It has three columns:
+simulation (for each iteration, in AMR simulations). Its first row, `Baseline`, is the peak
+at the start of the iteration, and the rows that follow are growth from there. It has three
+columns:
 
   - Per-Node: maximum growth on any single node for this phase.
   - Total: sum of growth across all nodes for this phase.
@@ -429,8 +434,7 @@ The `BlockTimer` constructor accepts a `count` parameter (default `true`). When 
 `false`, both timing and memory tracking are disabled for that scope. This can be used to
 exclude certain sections of code from a `BlockTimer`.
 
-Per-phase memory data is also saved to `palace.json` under the `PeakMemoryGrowthMegabytes`
-and `PeakNodeMemoryGrowthMegabytes` keys, alongside the existing `ElapsedTime` data.
+See below for the data saved to `palace.json`.
 
 ### Interpreting memory data
 
@@ -440,10 +444,62 @@ show the growth if the allocation pushed the peak. A phase showing zero growth m
 not exceed the previously established peak. Note that this does not mean that no allocations
 were performed.
 
-Per-phase deltas may not sum exactly to the total because memory growth can occur between
-timed phases (e.g., during scope transitions or in code not wrapped by a `BlockTimer`).
+Per-phase deltas do not sum to the peak by themselves: memory growth can occur in code not
+wrapped by a `BlockTimer`, and is reported as `Unattributed` in `palace.json`.
 
 You should read each row as "this phase increases the peak memory by this amount".
+
+### Performance report in `palace.json`
+
+`palace.json` has `"MetadataVersion": 2`. Its top level describes one iteration as if it
+were a standalone simulation (the whole run without AMR); `Cumulative` has the same layout
+for the run so far, and is the whole run in the final file. For AMR, each
+`iterationNN/palace.json` is iteration NN plus the run up to NN. If the solve after a
+refinement does not converge, the final report describes that failed iteration, and
+`Problem/MeshElements` and `DegreesOfFreedom` describe its mesh, while `Problem/Iteration`
+keeps the last converged iteration.
+
+Every quantity measured on each MPI process is an object `{Min, Avg, Max, Sum, MaxRank,
+Ranks}` at its path, reduced over the processes that contributed, with `Avg = Sum / Ranks`
+(`MaxRank` is the lowest rank holding the maximum). Memory over nodes has `Nodes` instead of
+`MaxRank` and `Ranks`. Rows of `ElapsedTime`, keyed by `Timer::names` (for example
+`KSP_COARSE_SETUP`), add `Count`, the maximum over processes of the number of times the row
+was entered. Unused rows are omitted. Only `Sum` adds up across iteration reports (and
+equals `Sum` in `Cumulative`); recompute averages from `Sum` and `Ranks`. Numbers that are
+whole are written as JSON integers.
+
+`PeakMemoryMegabytes` is the peak RSS of each process, which is never reset.
+`PeakNodeMemoryMegabytes` sums the peaks of the processes of a node, so it is an upper bound
+of the node's peak. In `PeakMemoryGrowthMegabytes` (and the `Node` variant), per process,
+`Baseline` + rows + `Unattributed` = peak, where `Baseline` is the peak at the start of the
+iteration (of the run in `Cumulative`). This holds for `Sum`, not for `Min` and `Max`.
+
+`Startup` runs from the construction of the static timer to the first timed block.
+`Coarse Setup` is the setup of the coarse solver, not including matrix assembly. For solvers
+which set up lazily (SuperLU, STRUMPACK, hypre) it includes the first apply. It is timed
+whenever the owner of the solver times itself, so nested solvers with timers off (estimator,
+divergence-free projection) keep it in their own rows.
+
+Linear solver statistics are reported as `LinearSolver/<Role>/{Solves, Its, MaxIts,
+NotConverged, Setups}`, summed over all solves of the role. The role is set with
+`perf::ScopedRole` around the construction of the solver (for example `Main`, `Estimator`,
+`DivFree`); `BaseKspSolver` keeps it for later calls. A solver built without a role is
+reported as `Unassigned`.
+
+To add a metric, register a handle where the work is set up and update it where it happens:
+
+```cpp
+perf::ScopedRole role("MyRole");                              // Around solver construction
+perf::SumMetric calls(perf::LinearSolverPath(perf::CurrentRoleId(), "Calls"),
+                      perf::Red::COUNT);                      // Registers the path
+calls.Add(1);                                                 // At the call site
+```
+
+Handles that use `COUNT` resolve the role at construction, so build them per solver, not as
+function-local statics. Metric paths may not be under keys owned by other writers
+(`ElapsedTime`, the memory keys, `Cumulative`, `MetadataVersion`, `Problem`,
+`SavedAdaptedMesh`, `Excitations`, `GitTag`). Adding an exclusive timer row moves time out
+of existing rows, so it bumps `MetadataVersion`; registering a metric does not.
 
 ## Profiling *Palace* on CPUs
 
