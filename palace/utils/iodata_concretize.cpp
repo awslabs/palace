@@ -101,6 +101,10 @@ void ConcretizeLinear(const config::LinearSolverData &linear, json &j_linear)
                 {"EstimatorMaxIts", linear.estimator_max_it},
                 {"EstimatorMG", linear.estimator_mg},
                 {"GSOrthogonalization", ToString(linear.gs_orthog)}});
+
+  // An explicit "ComplexCoarseSolve": true is disabled for the linear solver types which
+  // do not support it (see IoData::CheckConfiguration): write the value which is used.
+  j_linear["ComplexCoarseSolve"] = linear.complex_coarse_solve;
 }
 
 void ConcretizeEigenmode(const config::EigenSolverData &eigenmode, json &j_eigen)
