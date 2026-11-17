@@ -57,10 +57,11 @@ void ConfigureOptions(strumpack::SPOptions<std::complex<double>> &opts,
 StrumpackComplexSolver::StrumpackComplexSolver(MPI_Comm comm, SymbolicFactorization reorder,
                                                SparseCompression compression, double lr_tol,
                                                int butterfly_l, int lossy_prec,
-                                               bool reorder_reuse, int print)
+                                               bool drop_small_entries, bool reorder_reuse,
+                                               int print)
   : Solver<ComplexOperator>(), comm(comm), reorder(reorder), compression(compression),
     lr_tol(lr_tol), butterfly_l(butterfly_l), lossy_prec(lossy_prec),
-    reorder_reuse(reorder_reuse), print(print)
+    drop_small_entries(drop_small_entries), reorder_reuse(reorder_reuse), print(print)
 {
 }
 
@@ -75,7 +76,7 @@ void StrumpackComplexSolver::SetOperator(const ComplexOperator &op)
     // is not declared symmetric, as for StrumpackSolver: hypre's parallel matrix products
     // can store explicit zeros without their transposes on small partitions, and STRUMPACK
     // symmetrizes the pattern itself.
-    ComplexLocalCSR csr(op);
+    ComplexLocalCSR csr(op, drop_small_entries);
 
     // STRUMPACK copies the matrix: release the parallel assembled parts (as
     // MfemWrapperSolver does for the sparse direct solvers).
@@ -85,7 +86,8 @@ void StrumpackComplexSolver::SetOperator(const ComplexOperator &op)
     Mpi::Allgather(1, &csr.first_row, dist.data(), comm);
     dist[n_proc] = csr.n_glob;
 
-    // Reuse the reordering for a matrix with the same sparsity pattern on all processes.
+    // Reuse the reordering for a matrix with the same sparsity pattern on all processes
+    // (when small entries are dropped, the sparsity pattern can change with the values).
     same = csr.SamePattern(comm, pattern) && solver && reorder_reuse;
     if (!same)
     {

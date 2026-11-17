@@ -15,6 +15,7 @@
 #include <catch2/generators/catch_generators_range.hpp>
 #include "fem/mesh.hpp"
 #include "linalg/complexcoarse.hpp"
+#include "linalg/complexcsr.hpp"
 #include "linalg/iterative.hpp"
 #include "linalg/ksp.hpp"
 #include "linalg/mumps.hpp"
@@ -154,7 +155,8 @@ TEST_CASE("STRUMPACK complex arithmetic solver", "[strumpack][Serial][Parallel]"
   const bool unsymmetric = GENERATE(false, true);
   const bool reorder_reuse = GENERATE(true, false);
   StrumpackComplexSolver solver(comm, SymbolicFactorization::DEFAULT,
-                                SparseCompression::NONE, 0.0, 0, 0, reorder_reuse, 0);
+                                SparseCompression::NONE, 0.0, 0, 0, false, reorder_reuse,
+                                0);
   MfemWrapperSolver<ComplexOperator> ref(
       std::make_unique<StrumpackSolver>(comm, SymbolicFactorization::DEFAULT,
                                         SparseCompression::NONE, 0.0, 0, 0, true, 0),
@@ -202,7 +204,7 @@ TEST_CASE("STRUMPACK complex arithmetic solver with compression",
     const double norm_b = linalg::Norml2(comm, b);
     {
       StrumpackComplexSolver ref(comm, SymbolicFactorization::DEFAULT,
-                                 SparseCompression::NONE, 0.0, 0, 0, true, 0);
+                                 SparseCompression::NONE, 0.0, 0, 0, false, true, 0);
       ref.SetOperator(*A);
       ref.Mult(b, x_ref);
     }
@@ -210,7 +212,7 @@ TEST_CASE("STRUMPACK complex arithmetic solver with compression",
     {
       INFO("compression " << static_cast<int>(type) << ", lossy precision " << lossy_prec);
       StrumpackComplexSolver solver(comm, SymbolicFactorization::DEFAULT, type, 1.0e-6, 1,
-                                    lossy_prec, true, 0);
+                                    lossy_prec, false, true, 0);
       GmresSolver<ComplexOperator> gmres(comm, 0);
       gmres.SetRelTol(1.0e-10);
       gmres.SetMaxIter(max_it);
@@ -315,7 +317,7 @@ TEST_CASE("STRUMPACK complex arithmetic solver unsymmetric sparsity pattern",
   }
   A.Mult(x_ex, b);
   StrumpackComplexSolver solver(comm, SymbolicFactorization::DEFAULT,
-                                SparseCompression::NONE, 0.0, 0, 0, true, 0);
+                                SparseCompression::NONE, 0.0, 0, 0, false, true, 0);
   for (int k = 0; k < 2; k++)
   {
     // Factorization, and refactorization reusing the reordering.
@@ -339,8 +341,8 @@ TEST_CASE("SuperLU complex arithmetic solver", "[superlu][Serial][Parallel]")
   const bool unsymmetric = GENERATE(false, true);
   const bool reorder_reuse = GENERATE(true, false);
   const bool use_3d = GENERATE(false, true);
-  SuperLUComplexSolver solver(comm, SymbolicFactorization::DEFAULT, use_3d, reorder_reuse,
-                              0);
+  SuperLUComplexSolver solver(comm, SymbolicFactorization::DEFAULT, use_3d, false,
+                              reorder_reuse, 0);
   MfemWrapperSolver<ComplexOperator> ref(
       std::make_unique<SuperLUSolver>(comm, SymbolicFactorization::DEFAULT, use_3d, true,
                                       0),
@@ -358,7 +360,8 @@ TEST_CASE("MUMPS complex arithmetic solver", "[mumps][Serial][Parallel]")
   MPI_Comm comm = Mpi::World();
   const auto sym = GENERATE(MatrixSymmetry::SYMMETRIC, MatrixSymmetry::UNSYMMETRIC);
   const double blr_tol = GENERATE(0.0, 1.0e-8);
-  MumpsComplexSolver solver(comm, sym, SymbolicFactorization::DEFAULT, blr_tol, true, 0);
+  MumpsComplexSolver solver(comm, sym, SymbolicFactorization::DEFAULT, blr_tol, false, true,
+                            0);
   MfemWrapperSolver<ComplexOperator> ref(
       std::make_unique<MumpsSolver>(comm, sym, SymbolicFactorization::DEFAULT, 0.0, true,
                                     0),
@@ -519,27 +522,25 @@ TEST_CASE("ComplexKspSolver sparse direct solver with ComplexCoarseSolve",
   const auto type = GENERATE(from_range(SparseDirectSolverTypes()));
   INFO("type " << type);
 
-  // Reference: the equivalent real-valued system of twice the size (DropSmallEntries keeps
-  // it with ComplexCoarseSolve).
+  // Reference: the solution with the real-valued approximation of the preconditioner
+  // matrix.
   ComplexVector E_ref;
   int n = 0;
   {
-    DrivenTestProblem problem(LinearOptions(
-        type, json{{"ComplexCoarseSolve", true}, {"DropSmallEntries", true}}));
+    DrivenTestProblem problem(LinearOptions(type, json{{"ComplexCoarseSolve", false}}));
     auto ksp = problem.MakeKspSolver();
-    auto *pc = dynamic_cast<MfemWrapperSolver<ComplexOperator> *>(ksp->GetPreconditioner());
-    REQUIRE(pc);
-    CHECK(problem.Solve(*ksp, 1.0, E_ref) <= 2);
+    problem.Solve(*ksp, 1.0, E_ref);
     n = E_ref.Size();
-    CHECK(pc->GetSolver().Height() == 2 * n);
   }
 
-  // Complex arithmetic, also with the ParMETIS column ordering, for STRUMPACK with
+  // Complex arithmetic, also with the ParMETIS column ordering, with small entries dropped
+  // (the eliminated entries of the essential boundary conditions), for STRUMPACK with
   // compression (which the fronts of this matrix are too small for), and for SuperLU_DIST
   // with a 3D process grid.
   std::vector<json> complex_options = {
       json{{"ComplexCoarseSolve", true}},
-      json{{"ComplexCoarseSolve", true}, {"ColumnOrdering", "ParMETIS"}}};
+      json{{"ComplexCoarseSolve", true}, {"ColumnOrdering", "ParMETIS"}},
+      json{{"ComplexCoarseSolve", true}, {"DropSmallEntries", true}}};
   if (type == "STRUMPACK")
   {
     complex_options.push_back(
@@ -567,41 +568,50 @@ TEST_CASE("ComplexKspSolver sparse direct solver with ComplexCoarseSolve",
   }
 
   // A model without losses: the imaginary part of the preconditioner matrix is assembled
-  // as zeros, and the real part alone is factored in real arithmetic, for the same
-  // solution as the real-valued system of twice the size.
+  // as zeros, and the real part alone is factored in real arithmetic (by the real-valued
+  // solver, which drops the small entries itself), for the same solution as without
+  // ComplexCoarseSolve.
   {
-    ComplexVector E_ref0, E;
+    ComplexVector E_ref0;
     {
-      DrivenTestProblem problem(LinearOptions(type, json{{"ComplexCoarseSolve", true},
-                                                         {"DropSmallEntries", true}}),
+      DrivenTestProblem problem(LinearOptions(type, json{{"ComplexCoarseSolve", false}}),
                                 true);
       auto ksp = problem.MakeKspSolver();
       CHECK(problem.Solve(*ksp, 1.0, E_ref0) <= 2);
     }
-    DrivenTestProblem problem(LinearOptions(type, json{{"ComplexCoarseSolve", true}}),
-                              true);
-    auto ksp = problem.MakeKspSolver();
-    auto *pc = dynamic_cast<ComplexCoarseSolver *>(ksp->GetPreconditioner());
-    REQUIRE(pc);
-    CHECK(problem.Solve(*ksp, 1.0, E) <= 2);
-    CHECK(!pc->GetComplexSolver());
-    auto *real_pc = dynamic_cast<MfemWrapperSolver<ComplexOperator> *>(pc->GetRealSolver());
-    REQUIRE(real_pc);
-    CHECK(real_pc->GetSolver().Height() == n);
-    E -= E_ref0;
-    CHECK(linalg::Norml2(comm, E) / linalg::Norml2(comm, E_ref0) < 1.0e-8);
+    for (const auto &options :
+         {json{{"ComplexCoarseSolve", true}},
+          json{{"ComplexCoarseSolve", true}, {"DropSmallEntries", true}}})
+    {
+      INFO("options " << options.dump());
+      DrivenTestProblem problem(LinearOptions(type, options), true);
+      auto ksp = problem.MakeKspSolver();
+      auto *pc = dynamic_cast<ComplexCoarseSolver *>(ksp->GetPreconditioner());
+      REQUIRE(pc);
+      ComplexVector E;
+      CHECK(problem.Solve(*ksp, 1.0, E) <= 2);
+      CHECK(!pc->GetComplexSolver());
+      auto *real_pc =
+          dynamic_cast<MfemWrapperSolver<ComplexOperator> *>(pc->GetRealSolver());
+      REQUIRE(real_pc);
+      CHECK(real_pc->GetSolver().Height() == n);
+      E -= E_ref0;
+      CHECK(linalg::Norml2(comm, E) / linalg::Norml2(comm, E_ref0) < 1.0e-8);
+    }
   }
 
-  // The cases which keep the real-valued solver, for the equivalent real-valued system of
-  // twice the size.
-  std::vector<json> block_options = {
-      json{{"ComplexCoarseSolve", true}, {"DropSmallEntries", true}}};
-  for (const auto &options : block_options)
+  // The mixed precision solver of STRUMPACK keeps the real-valued solver, for the
+  // equivalent real-valued system of twice the size.
+  if (type == "STRUMPACK")
   {
-    INFO("options " << options.dump());
-    DrivenTestProblem problem(LinearOptions(type, options));
+    DrivenTestProblem problem(
+        LinearOptions("STRUMPACK-MP", json{{"ComplexCoarseSolve", true}}));
     auto ksp = problem.MakeKspSolver();
-    CHECK(dynamic_cast<MfemWrapperSolver<ComplexOperator> *>(ksp->GetPreconditioner()));
+    auto *pc = dynamic_cast<MfemWrapperSolver<ComplexOperator> *>(ksp->GetPreconditioner());
+    REQUIRE(pc);
+    ComplexVector E;
+    problem.Solve(*ksp, 1.0, E);
+    CHECK(pc->GetSolver().Height() == 2 * n);
   }
 
   // The real-valued approximation, and the real-valued preconditioner matrix of PCMatReal
@@ -698,6 +708,256 @@ TEST_CASE("ComplexCoarseSolver zero imaginary part",
   CHECK(Solve(*A, false) < tol);
   CHECK(Solve(*A_zero, true) < tol);
   CHECK(DifferenceFromReal() < 10.0 * tol);
+}
+
+namespace
+{
+
+// Value far below the tolerance of DropSmallEntries for a row with entries of order one.
+constexpr double tiny_entry = 1.0e-40;
+
+// The matrix of AssembleTestMatrix with the unknowns of the boundary eliminated from the
+// rows and columns of its real and imaginary parts (unit diagonal), as for essential
+// boundary conditions. The eliminated entries stay in the sparsity pattern: as zeros in
+// the imaginary part and, in the real part, as tiny entries, so that the solution of a
+// system with a zero right-hand side for the eliminated unknowns shows whether they were
+// dropped (it is then exactly zero for these unknowns).
+std::pair<std::unique_ptr<mfem::HypreParMatrix>, std::unique_ptr<mfem::HypreParMatrix>>
+AssembleEliminatedTestMatrix(mfem::ParFiniteElementSpace &fespace,
+                             const mfem::Array<int> &ess_tdofs)
+{
+  constexpr double k2 = 20.0;
+  mfem::ConstantCoefficient one(1.0), mk2(-k2);
+  mfem::FunctionCoefficient tau([](const mfem::Vector &x)
+                                { return (x(2) > 0.5) ? 5.0 * (x(2) - 0.5) : 0.0; });
+  mfem::ProductCoefficient k2tau(k2, tau);
+  mfem::ParBilinearForm ar(&fespace), ai(&fespace);
+  ar.AddDomainIntegrator(new mfem::DiffusionIntegrator(one));
+  ar.AddDomainIntegrator(new mfem::MassIntegrator(mk2));
+  ai.AddDomainIntegrator(new mfem::MassIntegrator(k2tau));
+  ar.Assemble();
+  ar.Finalize();
+  ai.Assemble();
+  ai.Finalize();
+  std::unique_ptr<mfem::HypreParMatrix> Ar(ar.ParallelAssemble()),
+      Ai(ai.ParallelAssemble());
+  delete Ar->EliminateRowsCols(ess_tdofs);
+  delete Ai->EliminateRowsCols(ess_tdofs);
+  Ar->HostReadWrite();
+  auto *A = (hypre_ParCSRMatrix *)*Ar;
+  for (hypre_CSRMatrix *block : {hypre_ParCSRMatrixDiag(A), hypre_ParCSRMatrixOffd(A)})
+  {
+    auto *data = hypre_CSRMatrixData(block);
+    std::replace(data, data + hypre_CSRMatrixNumNonzeros(block), 0.0, tiny_entry);
+  }
+  Ar->HypreReadWrite();
+  return {std::move(Ar), std::move(Ai)};
+}
+
+// Unknowns of the whole boundary of the mesh.
+mfem::Array<int> BoundaryTrueDofs(mfem::ParFiniteElementSpace &fespace)
+{
+  mfem::Array<int> ess_bdr(fespace.GetParMesh()->bdr_attributes.Max()), ess_tdofs;
+  ess_bdr = 1;
+  fespace.GetEssentialTrueDofs(ess_bdr, ess_tdofs);
+  return ess_tdofs;
+}
+
+}  // namespace
+
+TEST_CASE("ComplexLocalCSR drops small entries",
+          "[strumpack][superlu][mumps][Serial][Parallel]")
+{
+  // The complex-valued matrix which the solvers in complex arithmetic factor with
+  // DropSmallEntries. For a real-valued matrix, it has the entries which
+  // mfem::HypreParMatrix::DropSmallEntries leaves (what MfemWrapperSolver factors). For a
+  // complex-valued matrix whose imaginary part has the sparsity pattern of the real part,
+  // the same entries are dropped: the eliminated ones, whose imaginary part is zero.
+  MPI_Comm comm = Mpi::World();
+  mfem::Mesh serial_mesh =
+      mfem::Mesh::MakeCartesian3D(6, 6, 6, mfem::Element::HEXAHEDRON, 1.0, 1.0, 1.0);
+  mfem::ParMesh mesh(comm, serial_mesh);
+  mfem::H1_FECollection fec(2, 3);
+  mfem::ParFiniteElementSpace fespace(&mesh, &fec);
+  const auto ess_tdofs = BoundaryTrueDofs(fespace);
+  const auto [Ar, Ai] = AssembleEliminatedTestMatrix(fespace, ess_tdofs);
+  auto GlobalNNZ = [&](const ComplexLocalCSR &csr)
+  {
+    HYPRE_BigInt nnz = csr.J.size();
+    Mpi::GlobalSum(1, &nnz, comm);
+    return nnz;
+  };
+
+  // Real part alone, also with a small diagonal entry, which is kept, in the first row of
+  // every process which is not eliminated.
+  {
+    mfem::HypreParMatrix Ar_diag(*Ar);
+    Ar_diag.HostReadWrite();
+    hypre_CSRMatrix *diag = hypre_ParCSRMatrixDiag((hypre_ParCSRMatrix *)Ar_diag);
+    for (int i = 0; i < Ar_diag.Height(); i++)
+    {
+      if (ess_tdofs.Find(i) < 0)
+      {
+        for (HYPRE_Int k = hypre_CSRMatrixI(diag)[i]; k < hypre_CSRMatrixI(diag)[i + 1];
+             k++)
+        {
+          if (hypre_CSRMatrixJ(diag)[k] == i)
+          {
+            hypre_CSRMatrixData(diag)[k] = tiny_entry;
+          }
+        }
+        break;
+      }
+    }
+    Ar_diag.HypreReadWrite();
+    mfem::HypreParMatrix Ar_dropped(Ar_diag);
+    Ar_dropped.DropSmallEntries(drop_small_entries_tol);
+    REQUIRE(Ar_dropped.NNZ() < Ar_diag.NNZ());
+    const ComplexLocalCSR ref(ComplexWrapperOperator(&Ar_dropped, nullptr));
+    const ComplexLocalCSR all(ComplexWrapperOperator(&Ar_diag, nullptr));
+    const ComplexLocalCSR csr(ComplexWrapperOperator(&Ar_diag, nullptr), true);
+    CHECK(GlobalNNZ(all) == Ar_diag.NNZ());
+    CHECK(GlobalNNZ(csr) == Ar_dropped.NNZ());
+    bool same = (csr.I == ref.I && csr.J == ref.J && csr.V == ref.V);
+    Mpi::GlobalAnd(1, &same, comm);
+    CHECK(same);
+  }
+
+  // Real and imaginary parts: same sparsity pattern as for the real part alone, and every
+  // eliminated row is left with its diagonal entry.
+  const ComplexLocalCSR csr_real(ComplexWrapperOperator(Ar.get(), nullptr), true);
+  const ComplexLocalCSR csr(ComplexWrapperOperator(Ar.get(), Ai.get()), true);
+  bool same = (csr.I == csr_real.I && csr.J == csr_real.J);
+  for (const int i : ess_tdofs)
+  {
+    same = same && (csr.I[i + 1] - csr.I[i] == 1) &&
+           (csr.J[csr.I[i]] == csr.first_row + i) &&
+           (csr.V[csr.I[i]] == std::complex<double>(1.0, 1.0));
+  }
+  Mpi::GlobalAnd(1, &same, comm);
+  CHECK(same);
+}
+
+TEST_CASE("Complex arithmetic solvers drop small entries",
+          "[strumpack][superlu][mumps][Serial][Parallel]")
+{
+  // With DropSmallEntries, each solver in complex arithmetic factors the matrix without
+  // its small entries, for the same solution as without it: the solution is exactly zero
+  // for the eliminated unknowns, which the tiny entries would otherwise couple to the
+  // others. STRUMPACK itself ignores the values of entries below the machine precision,
+  // but not their positions: its factors have fewer entries without them. The sparsity
+  // pattern of the factored matrix then changes with the values of the matrix, also when
+  // the reordering is reused.
+  MPI_Comm comm = Mpi::World();
+  const auto type = GENERATE(from_range(SparseDirectSolverTypes()));
+  INFO("type " << type);
+  auto MakeSolver = [&](bool drop_small_entries) -> std::unique_ptr<Solver<ComplexOperator>>
+  {
+#if defined(MFEM_USE_STRUMPACK)
+    if (type == "STRUMPACK")
+    {
+      return std::make_unique<StrumpackComplexSolver>(comm, SymbolicFactorization::DEFAULT,
+                                                      SparseCompression::NONE, 0.0, 0, 0,
+                                                      drop_small_entries, true, 0);
+    }
+#endif
+#if defined(MFEM_USE_SUPERLU)
+    if (type == "SuperLU")
+    {
+      return std::make_unique<SuperLUComplexSolver>(comm, SymbolicFactorization::DEFAULT,
+                                                    false, drop_small_entries, true, 0);
+    }
+#endif
+#if defined(MFEM_USE_MUMPS)
+    if (type == "MUMPS")
+    {
+      return std::make_unique<MumpsComplexSolver>(comm, MatrixSymmetry::SYMMETRIC,
+                                                  SymbolicFactorization::DEFAULT, 0.0,
+                                                  drop_small_entries, true, 0);
+    }
+#endif
+    return nullptr;
+  };
+
+  mfem::Mesh serial_mesh =
+      mfem::Mesh::MakeCartesian3D(6, 6, 6, mfem::Element::HEXAHEDRON, 1.0, 1.0, 1.0);
+  mfem::ParMesh mesh(comm, serial_mesh);
+  mfem::H1_FECollection fec(2, 3);
+  mfem::ParFiniteElementSpace fespace(&mesh, &fec);
+  const auto ess_tdofs = BoundaryTrueDofs(fespace);
+  const auto [Ar, Ai] = AssembleEliminatedTestMatrix(fespace, ess_tdofs);
+  const ComplexWrapperOperator A(Ar.get(), Ai.get());
+  const auto A_full = AssembleTestMatrix(fespace, 1.0);
+
+  const int n = A.Height();
+  ComplexVector b(n), x(n), x_all(n), r(n);
+  b.Real().Randomize(1);
+  b.Imag().Randomize(2);
+  for (const int i : ess_tdofs)
+  {
+    b.Real()[i] = b.Imag()[i] = 0.0;
+  }
+  const double norm_b = linalg::Norml2(comm, b);
+  constexpr double tol = 1.0e-10;
+  auto Residual = [&](const ComplexOperator &M)
+  {
+    M.Mult(x, r);
+    r -= b;
+    return linalg::Norml2(comm, r) / norm_b;
+  };
+  auto MaxEliminated = [&](const ComplexVector &v)
+  {
+    double max = 0.0;
+    for (const int i : ess_tdofs)
+    {
+      max = std::max(max, std::hypot(v.Real()[i], v.Imag()[i]));
+    }
+    Mpi::GlobalMax(1, &max, comm);
+    return max;
+  };
+
+  // Without DropSmallEntries, the tiny entries are factored.
+  std::size_t factor_nnz_all = 0;
+  {
+    auto solver = MakeSolver(false);
+    solver->SetOperator(A);
+    solver->Mult(b, x_all);
+#if defined(MFEM_USE_STRUMPACK)
+    if (auto *strumpack = dynamic_cast<StrumpackComplexSolver *>(solver.get()))
+    {
+      factor_nnz_all = strumpack->GetSolver().factor_nonzeros();
+    }
+    else
+#endif
+    {
+      CHECK(MaxEliminated(x_all) > 0.0);
+    }
+  }
+
+  // With DropSmallEntries: the matrix, then a matrix with the same stored entries of which
+  // none is small, and the first one again.
+  auto solver = MakeSolver(true);
+  for (const ComplexOperator *M : {static_cast<const ComplexOperator *>(&A),
+                                   static_cast<const ComplexOperator *>(A_full.get()),
+                                   static_cast<const ComplexOperator *>(&A)})
+  {
+    solver->SetOperator(*M);
+    x = 0.0;
+    solver->Mult(b, x);
+    CHECK(Residual(*M) < tol);
+    if (M == &A)
+    {
+      CHECK(MaxEliminated(x) == 0.0);
+#if defined(MFEM_USE_STRUMPACK)
+      if (auto *strumpack = dynamic_cast<StrumpackComplexSolver *>(solver.get()))
+      {
+        CHECK(strumpack->GetSolver().factor_nonzeros() < factor_nnz_all);
+      }
+#endif
+      x -= x_all;
+      CHECK(linalg::Norml2(comm, x) / linalg::Norml2(comm, x_all) < tol);
+    }
+  }
 }
 
 }  // namespace palace

@@ -20,7 +20,8 @@ namespace palace
 // MUMPS sparse direct solver for complex-valued operators in complex arithmetic (ZMUMPS),
 // whose factors need less memory than those of the equivalent real-valued system of twice
 // the size used by MfemWrapperSolver (about 40% less with STRUMPACK and SuperLU_DIST).
-// Symmetric matrices are factored as complex symmetric (not Hermitian) matrices.
+// Symmetric matrices are factored as complex symmetric (not Hermitian) matrices. Small
+// entries are dropped as described for ComplexLocalCSR.
 //
 class MumpsComplexSolver : public Solver<ComplexOperator>
 {
@@ -29,7 +30,7 @@ private:
   MatrixSymmetry sym;
   SymbolicFactorization reorder;
   double blr_tol;
-  bool reorder_reuse;
+  bool drop_small_entries, reorder_reuse;
   int print;
 
   // MUMPS data structures.
@@ -38,7 +39,8 @@ private:
 
 public:
   MumpsComplexSolver(MPI_Comm comm, MatrixSymmetry sym, SymbolicFactorization reorder,
-                     double blr_tol, bool reorder_reuse, int print);
+                     double blr_tol, bool drop_small_entries, bool reorder_reuse,
+                     int print);
   ~MumpsComplexSolver() override;
 
   void SetOperator(const ComplexOperator &op) override;

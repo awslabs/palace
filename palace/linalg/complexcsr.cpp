@@ -4,11 +4,13 @@
 #include "complexcsr.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <functional>
 #include <limits>
 #include <string_view>
 #include <utility>
 #include "linalg/rap.hpp"
+#include "linalg/solver.hpp"
 #include "utils/communication.hpp"
 
 namespace palace
@@ -35,7 +37,7 @@ const mfem::HypreParMatrix *GetAssembled(const Operator *op)
 
 }  // namespace
 
-ComplexLocalCSR::ComplexLocalCSR(const ComplexOperator &op)
+ComplexLocalCSR::ComplexLocalCSR(const ComplexOperator &op, bool drop_small_entries)
 {
   const auto *hAr = GetAssembled(op.Real());
   const auto *hAi = GetAssembled(op.Imag());
@@ -65,7 +67,9 @@ ComplexLocalCSR::ComplexLocalCSR(const ComplexOperator &op)
   }
 
   // Entries of a local row sorted by global column index, with the entries of the two parts
-  // in the same column added.
+  // in the same column added, and without the small entries if they are dropped (the test
+  // is the one of hypre_ParCSRMatrixDropSmallEntries for the 2-norm of the row, which
+  // mfem::HypreParMatrix::DropSmallEntries calls with hypre 2.18 or later).
   std::vector<std::pair<HYPRE_BigInt, std::complex<double>>> row;
   auto MergeRow = [&](int i)
   {
@@ -107,6 +111,24 @@ ComplexLocalCSR::ComplexLocalCSR(const ComplexOperator &op)
       }
     }
     row.resize(n);
+    if (drop_small_entries)
+    {
+      double row_norm = 0.0;
+      for (const auto &entry : row)
+      {
+        row_norm += std::norm(entry.second);
+      }
+      row_norm = std::sqrt(row_norm);
+      const HYPRE_BigInt diag_col = first_row + i;
+      row.erase(std::remove_if(row.begin(), row.end(),
+                               [&](const auto &entry)
+                               {
+                                 return entry.first != diag_col &&
+                                        !(std::abs(entry.second) >=
+                                          drop_small_entries_tol * row_norm);
+                               }),
+                row.end());
+    }
   };
   I.assign(n_loc + 1, 0);
   for (int i = 0; i < n_loc; i++)

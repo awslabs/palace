@@ -134,11 +134,11 @@ auto MakeWrapperSolver(const config::LinearSolverData &linear, U &&...args)
 // Whether the sparse direct solvers which support it factor the complex-valued matrix of a
 // complex-valued coarse solve in complex arithmetic, instead of the equivalent real-valued
 // system of twice the size (see MfemWrapperSolver). With PCMatReal, the matrix is
-// real-valued, and the complex arithmetic solvers do not drop small entries. A matrix whose
-// imaginary part is zero is then factored in real arithmetic (see ComplexCoarseSolver).
+// real-valued. A matrix whose imaginary part is zero is then factored in real arithmetic
+// (see ComplexCoarseSolver).
 [[maybe_unused]] bool UseComplexArithmetic(const config::LinearSolverData &linear)
 {
-  return linear.complex_coarse_solve && !linear.pc_mat_real && !linear.drop_small_entries;
+  return linear.complex_coarse_solve && !linear.pc_mat_real;
 }
 
 template <OperatorType OperType>
@@ -187,8 +187,8 @@ ConfigurePreconditionerSolver(const config::LinearSolverData &linear,
               [linear, comm, print]()
               {
                 return std::make_unique<SuperLUComplexSolver>(
-                    comm, linear.sym_factorization, linear.superlu_3d, linear.reorder_reuse,
-                    print);
+                    comm, linear.sym_factorization, linear.superlu_3d,
+                    linear.drop_small_entries, linear.reorder_reuse, print);
               },
               verbose > 0);
           break;
@@ -220,7 +220,8 @@ ConfigurePreconditionerSolver(const config::LinearSolverData &linear,
                 return std::make_unique<StrumpackComplexSolver>(
                     comm, linear.sym_factorization, linear.strumpack_compression_type,
                     linear.strumpack_lr_tol, linear.strumpack_butterfly_l,
-                    linear.strumpack_lossy_precision, linear.reorder_reuse, print);
+                    linear.strumpack_lossy_precision, linear.drop_small_entries,
+                    linear.reorder_reuse, print);
               },
               verbose > 0);
           break;
@@ -264,7 +265,7 @@ ConfigurePreconditionerSolver(const config::LinearSolverData &linear,
               {
                 return std::make_unique<MumpsComplexSolver>(
                     comm, pc_mat_sym, linear.sym_factorization, blr_tol,
-                    linear.reorder_reuse, print);
+                    linear.drop_small_entries, linear.reorder_reuse, print);
               },
               verbose > 0);
           break;

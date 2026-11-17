@@ -19,6 +19,12 @@ namespace palace
 // complex-valued CSR matrix with global column indices (sorted within each row). Used by
 // the sparse direct solvers which factor complex-valued matrices in complex arithmetic.
 //
+// With drop_small_entries (Solver.Linear.DropSmallEntries), the entries of a row which are
+// smaller in magnitude than drop_small_entries_tol times the 2-norm of the row are not
+// stored, except on the diagonal. It is the rule which MfemWrapperSolver applies to its
+// real-valued matrix, here for the complex-valued entries: when the imaginary part is zero,
+// the entries which are dropped are those which are dropped from the real part.
+//
 struct ComplexLocalCSR
 {
   // Global number of rows and global index of the first local row.
@@ -29,7 +35,7 @@ struct ComplexLocalCSR
   std::vector<HYPRE_BigInt> I, J;
   std::vector<std::complex<double>> V;
 
-  explicit ComplexLocalCSR(const ComplexOperator &op);
+  explicit ComplexLocalCSR(const ComplexOperator &op, bool drop_small_entries = false);
 
   // Replaces hash by a hash of the sparsity pattern, and returns whether it has not changed
   // on any process: the solvers keep it to reuse the reordering for the next matrix with

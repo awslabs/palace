@@ -137,9 +137,11 @@ void MumpsComplexSolver::Data::SetUpSolutionMap(MPI_Comm comm)
 
 MumpsComplexSolver::MumpsComplexSolver(MPI_Comm comm, MatrixSymmetry sym,
                                        SymbolicFactorization reorder, double blr_tol,
-                                       bool reorder_reuse, int print)
+                                       bool drop_small_entries, bool reorder_reuse,
+                                       int print)
   : Solver<ComplexOperator>(), comm(comm), sym(sym), reorder(reorder), blr_tol(blr_tol),
-    reorder_reuse(reorder_reuse), print(print), data(std::make_unique<Data>())
+    drop_small_entries(drop_small_entries), reorder_reuse(reorder_reuse), print(print),
+    data(std::make_unique<Data>())
 {
 }
 
@@ -161,7 +163,7 @@ void MumpsComplexSolver::SetOperator(const ComplexOperator &op)
   auto &d = *data;
   bool same;
   {
-    ComplexLocalCSR csr(op);
+    ComplexLocalCSR csr(op, drop_small_entries);
 
     // MUMPS gets a copy of the matrix: release the parallel assembled parts (as
     // MfemWrapperSolver does for the sparse direct solvers).

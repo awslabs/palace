@@ -67,14 +67,14 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - With `config["Solver"]["Linear"]["ComplexCoarseSolve"]`, SuperLU_DIST (with or without
     `"SuperLU3DCommunicator"`), STRUMPACK (with or without compression), and MUMPS now
     factor the complex-valued coarse-level matrix in complex arithmetic instead of the
-    equivalent real-valued system of twice the size, which reduces the memory of the
-    factors by about 40%. This changes the behavior of an explicit
-    `"ComplexCoarseSolve": true`: the factorization differs, so results change at the level
-    of the linear solver tolerance, and by more with STRUMPACK compression, which now
-    compresses the factors of the complex-valued matrix.
-    `"DropSmallEntries"` keeps the real-valued system of twice the size, and with
-    `"PCMatReal"` the coarse-level matrix is real-valued and is factored as before. When
-    the imaginary part of the complex-valued matrix is exactly zero, as for a model without
+    equivalent real-valued system of twice the size, which reduces the memory of the factors
+    by about 40%. This changes the behavior of an explicit `"ComplexCoarseSolve": true`: the
+    factorization differs, so results change at the level of the linear solver tolerance,
+    and by more with STRUMPACK compression, which now compresses the factors of the
+    complex-valued matrix. With `"DropSmallEntries"`, they drop the small entries of the
+    complex-valued matrix, by the rule which is applied to the real-valued system, and with
+    `"PCMatReal"` the coarse-level matrix is real-valued and is factored as before. When the
+    imaginary part of the complex-valued matrix is exactly zero, as for a model without
     losses, these solvers factor its real part in real arithmetic, which halves the memory
     of the factors again. The log says which matrix is factored, and whether in complex
     arithmetic or as a real-valued system. SchemaVer 4-4-0

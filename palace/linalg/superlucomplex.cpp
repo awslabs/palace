@@ -133,9 +133,10 @@ struct SuperLUComplexSolver::Data
 };
 
 SuperLUComplexSolver::SuperLUComplexSolver(MPI_Comm comm, SymbolicFactorization reorder,
-                                           bool use_3d, bool reorder_reuse, int print)
-  : Solver<ComplexOperator>(), comm(comm), reorder_reuse(reorder_reuse),
-    data(std::make_unique<Data>())
+                                           bool use_3d, bool drop_small_entries,
+                                           bool reorder_reuse, int print)
+  : Solver<ComplexOperator>(), comm(comm), drop_small_entries(drop_small_entries),
+    reorder_reuse(reorder_reuse), data(std::make_unique<Data>())
 {
   // Process grid as for SuperLUSolver: the depth of a 3D process grid, and process layers
   // as close to square as possible.
@@ -243,14 +244,15 @@ void SuperLUComplexSolver::SetOperator(const ComplexOperator &op)
   auto &d = *data;
   {
     // Local rows of the complex-valued matrix (freed before the factorization).
-    ComplexLocalCSR csr(op);
+    ComplexLocalCSR csr(op, drop_small_entries);
 
     // SuperLU_DIST gets a copy of the matrix: release the parallel assembled parts (as
     // MfemWrapperSolver does for the sparse direct solvers).
     ReleaseParallelAssemble(op);
 
     // Reuse the row and column permutations for a matrix with the same sparsity pattern on
-    // all processes. With a 3D process grid, the factors are zeroed on process layer 0 (the
+    // all processes (when small entries are dropped, the sparsity pattern can change with
+    // the values). With a 3D process grid, the factors are zeroed on process layer 0 (the
     // driver fills and zeroes those of the other layers), as in mfem::SuperLUSolver.
     const int_t n_glob = static_cast<int_t>(csr.n_glob);
     if (csr.SamePattern(comm, d.pattern) && d.initialized && reorder_reuse)

@@ -21,13 +21,13 @@ namespace palace
 // (pzgssvx, or pzgssvx3d with a 3D process grid). Its L and U factors need up to about 40%
 // less memory than those of the equivalent real-valued system of twice the size used by
 // MfemWrapperSolver (the saving grows with the problem size). The process grid is chosen
-// as for SuperLUSolver.
+// as for SuperLUSolver, and small entries are dropped as described for ComplexLocalCSR.
 //
 class SuperLUComplexSolver : public Solver<ComplexOperator>
 {
 private:
   MPI_Comm comm;
-  bool reorder_reuse;
+  bool drop_small_entries, reorder_reuse;
 
   // SuperLU_DIST data structures.
   struct Data;
@@ -35,7 +35,7 @@ private:
 
 public:
   SuperLUComplexSolver(MPI_Comm comm, SymbolicFactorization reorder, bool use_3d,
-                       bool reorder_reuse, int print);
+                       bool drop_small_entries, bool reorder_reuse, int print);
   ~SuperLUComplexSolver() override;
 
   void SetOperator(const ComplexOperator &op) override;
