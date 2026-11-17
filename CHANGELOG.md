@@ -49,6 +49,20 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     L⁻¹, R⁻¹, and C matrices which are not symmetric: the Floquet terms make the system
     matrices Hermitian rather than complex symmetric. Such configurations must be updated.
     [PR 1112](https://github.com/awslabs/palace/pull/1112).
+  - `config["Solver"]["Linear"]["InitialGuess"]` now defaults to `true` for adaptive
+    frequency sweeps too. There, the HDM solve of the sample which would complete the
+    convergence memory starts from the PROM solution, to certify the PROM: if the linear
+    solver changes it by less than `"AdaptiveTol"`, the sweep stops, and this solution is
+    added to the basis as the last sample (unless it is already in the span of the basis,
+    for example when the PROM solution already meets the linear solver tolerance); otherwise, the solve stops as soon as the change
+    exceeds `"AdaptiveTol"`, and the sample is solved again from zero (reusing the operators
+    and the preconditioner), as are all other samples. With an explicit
+    `"InitialGuess": true`, adaptive sweeps used to start each HDM solve from the solution at
+    the previous sample. When the PROM is certified, the last HDM solve of the excitation
+    needs fewer linear solver iterations; the results of adaptive sweeps change only by the
+    accuracy of this solve. Set `"InitialGuess": false` to restore the previous behavior.
+    SchemaVer 5-0-0
+    [PR 1126](https://github.com/awslabs/palace/pull/1126).
 
 #### New Features
 

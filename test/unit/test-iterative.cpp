@@ -486,6 +486,74 @@ TEST_CASE("GmresSolver zero residual", "[iterative][Serial][Parallel]")
   }
 }
 
+// With a correction limit, GMRES started from a nonzero initial guess stops as soon as the
+// correction to the guess exceeds the limit relative to the solution, and otherwise
+// converges as without the limit.
+TEST_CASE("GmresSolver correction limit", "[iterative][Serial][Parallel]")
+{
+  constexpr int n = 101;
+  MPI_Comm comm = Mpi::World();
+  TridiagonalTestOperator A(n);
+  GmresSolver<Operator> ksp(comm, 0);
+  ksp.SetOperator(A);
+  ksp.SetRelTol(1.0e-12);
+  ksp.SetMaxIter(200);
+
+  // Reference solution, from zero.
+  Vector b(n), x(n), y(n), d(n);
+  for (int i = 0; i < n; i++)
+  {
+    b[i] = std::sin(1.0 + i + Mpi::Rank(comm));
+    d[i] = std::cos(2.0 + i + Mpi::Rank(comm));
+  }
+  x = 0.0;
+  ksp.Mult(b, x);
+  REQUIRE(ksp.GetConverged());
+  const double norm_x = linalg::Norml2(comm, x);
+  linalg::AXPBY(1.0e-9 * norm_x / linalg::Norml2(comm, d), d, 0.0, d);
+
+  ksp.SetInitialGuess(true);
+  ksp.SetMaxRelativeCorrection(1.0e-6);
+
+  SECTION("A guess far from the solution is stopped")
+  {
+    y = x;
+    y *= 0.5;
+    ksp.Mult(b, y);
+    CHECK(ksp.GetCorrectionExceeded());
+    CHECK_FALSE(ksp.GetConverged());
+    CHECK(ksp.GetNumIterations() == 1);
+  }
+
+  SECTION("A guess within the limit converges")
+  {
+    y = x;
+    y += d;
+    ksp.Mult(b, y);
+    CHECK_FALSE(ksp.GetCorrectionExceeded());
+    CHECK(ksp.GetConverged());
+    y -= x;
+    CHECK(linalg::Norml2(comm, y) <= 1.0e-8 * norm_x);
+  }
+
+  SECTION("Without a limit, or from zero, the solve is not stopped")
+  {
+    for (bool initial_guess : {true, false})
+    {
+      INFO("initial_guess = " << initial_guess);
+      ksp.SetInitialGuess(initial_guess);
+      ksp.SetMaxRelativeCorrection(initial_guess ? 0.0 : 1.0e-6);
+      y = x;
+      y *= 0.5;
+      ksp.Mult(b, y);
+      CHECK_FALSE(ksp.GetCorrectionExceeded());
+      CHECK(ksp.GetConverged());
+      y -= x;
+      CHECK(linalg::Norml2(comm, y) <= 1.0e-8 * norm_x);
+    }
+  }
+}
+
 TEST_CASE("FgmresSolver zero residual", "[iterative][Serial][Parallel]")
 {
   SpdTestOperator A;

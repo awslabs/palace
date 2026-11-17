@@ -840,6 +840,274 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-UpdatePROM-LinearDepe
   CHECK_THROWS(prom_op.UpdatePROM(u, "vec_0_duplicate"));
 }
 
+namespace
+{
+
+// Driven problem on the 3x2x1 cube with one lumped port, for the linear dependence tests.
+json DependenceTestSetup(const std::string &temp_dir, double tol, int max_its)
+{
+  auto mesh_path =
+      fs::path(PALACE_TEST_DATA_DIR) / "lumpedport_mesh/cube_mesh_3_2_1_tet.msh";
+  json setup_json;
+  setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 2}, {"Output", temp_dir}};
+  setup_json["Model"] = {{"Mesh", mesh_path},
+                         {"Refinement", json::object({})},
+                         {"CrackInternalBoundaryElements", false}};
+  setup_json["Domains"] = {
+      {"Materials",
+       json::array({json::object({{"Attributes", json::array({1, 2, 3, 4, 5, 6})},
+                                  {"Permeability", 1.0},
+                                  {"Permittivity", 1.0},
+                                  {"LossTan", 0.0}})})}};
+  setup_json["Boundaries"] = {
+      {"LumpedPort",
+       json::array({json::object(
+           {{"Index", 1},
+            {"R", 50.0},
+            {"Excitation", uint(1)},
+            {"Elements", json::array({json::object({{"Attributes", json::array({14})},
+                                                    {"Direction", "+Z"}})})}})})}};
+  setup_json["Solver"] = json::object();
+  setup_json["Solver"]["Device"] = "CPU";
+  setup_json["Solver"]["Driven"] = {
+      {"AdaptiveTol", 1e-3}, {"MinFreq", 2.0}, {"MaxFreq", 32.0}, {"FreqStep", 1.0}};
+  setup_json["Solver"]["Linear"] = {{"Type", "Default"},
+                                    {"KSPType", "GMRES"},
+                                    {"MaxIts", max_its},
+                                    {"Tol", tol},
+                                    {"InitialGuess", true}};
+  return setup_json;
+}
+
+}  // namespace
+
+// With abort_if_dependent = false, a sample in the span of the PROM basis (the same vector
+// twice, or the same vector up to a perturbation below the linear dependence tolerance)
+// leaves the PROM unchanged and returns false. A perturbation above the tolerance is added.
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "RomOperator-UpdatePROM-LinearDependence-NoAbort",
+                 "[romoperator][Serial][Parallel]")
+{
+  MPI_Comm world_comm = Mpi::World();
+  IoData iodata(DependenceTestSetup(temp_dir, 1.0e-8, 200), false);
+  auto mesh_io = LoadScaleParMesh2(iodata, world_comm);
+  SpaceOperator space_op(iodata, mesh_io);
+  RomOperatorTest prom_op(iodata, space_op, 100);
+
+  ComplexVector u(space_op.GetNDSpace().GetTrueVSize());
+  u.UseDevice(true);
+  u.Real().Randomize(42);
+  u.Imag() = 0.0;
+  REQUIRE(prom_op.UpdatePROM(u, "vec_0"));
+  REQUIRE(prom_op.GetReducedDimension() == 1);
+  const Eigen::MatrixXd R0 = prom_op.GetOrthR();
+
+  CHECK_FALSE(prom_op.UpdatePROM(u, "vec_0_duplicate", false));
+  CHECK(prom_op.GetReducedDimension() == 1);
+  CHECK(prom_op.GetVectors().size() == 1);
+  CHECK(prom_op.GetOrthR().rows() == 1);
+  CHECK(prom_op.GetOrthR().cols() == 1);
+  CHECK(prom_op.GetOrthR()(0, 0) == R0(0, 0));
+
+  // Perturbations of relative size 1e-14 and 1e-6 (the tolerance is 1e-12).
+  ComplexVector w(u.Size()), v(u.Size());
+  w.UseDevice(true);
+  v.UseDevice(true);
+  w.Real().Randomize(43);
+  w.Imag() = 0.0;
+  const double scale = linalg::Norml2(world_comm, u) / linalg::Norml2(world_comm, w);
+  v = u;
+  linalg::AXPY(1.0e-14 * scale, w, v);
+  CHECK_FALSE(prom_op.UpdatePROM(v, "vec_0_near_duplicate", false));
+  CHECK(prom_op.GetReducedDimension() == 1);
+  v = u;
+  linalg::AXPY(1.0e-6 * scale, w, v);
+  CHECK(prom_op.UpdatePROM(v, "vec_1", false));
+  CHECK(prom_op.GetReducedDimension() == 2);
+  CHECK(prom_op.GetOrthR().rows() == 2);
+  CHECK(prom_op.GetOrthR()(0, 0) == R0(0, 0));
+}
+
+// With abort_if_dependent = false, a sample with one part in the span of the basis is
+// rejected as a whole and the PROM is left unchanged: both when the real part is the
+// dependent one, and when the real part was already appended to the basis before the
+// imaginary part was found dependent (the real part is added first).
+TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-UpdatePROM-PartialDependence",
+                 "[romoperator][Serial][Parallel]")
+{
+  MPI_Comm world_comm = Mpi::World();
+  IoData iodata(DependenceTestSetup(temp_dir, 1.0e-8, 200), false);
+  auto mesh_io = LoadScaleParMesh2(iodata, world_comm);
+  SpaceOperator space_op(iodata, mesh_io);
+  RomOperatorTest prom_op(iodata, space_op, 100);
+
+  const auto n = space_op.GetNDSpace().GetTrueVSize();
+  ComplexVector u(n), x(n);
+  u.UseDevice(true);
+  x.UseDevice(true);
+  u.Real().Randomize(42);
+  u.Imag() = 0.0;
+  REQUIRE(prom_op.UpdatePROM(u, "vec_0"));
+  REQUIRE(prom_op.GetReducedDimension() == 1);
+
+  // Real part in the span, new imaginary part.
+  x.Real() = u.Real();
+  x.Imag().Randomize(43);
+  CHECK_FALSE(prom_op.UpdatePROM(x, "vec_1", false));
+  CHECK(prom_op.GetReducedDimension() == 1);
+  CHECK(prom_op.GetOrthR().rows() == 1);
+
+  // New real part (added first), imaginary part in the span: also rolled back.
+  x.Real().Randomize(44);
+  x.Imag() = u.Real();
+  CHECK_FALSE(prom_op.UpdatePROM(x, "vec_2", false));
+  CHECK(prom_op.GetReducedDimension() == 1);
+  CHECK(prom_op.GetVectors().size() == 1);
+  CHECK(prom_op.GetOrthR().rows() == 1);
+
+  // After the rollbacks, a sample with two new parts is added, with consistent R.
+  x.Real().Randomize(45);
+  x.Imag().Randomize(46);
+  CHECK(prom_op.UpdatePROM(x, "vec_3", false));
+  CHECK(prom_op.GetReducedDimension() == 3);
+  CHECK(prom_op.GetOrthR().rows() == 3);
+  CHECK(prom_op.GetOrthR().isUpperTriangular());
+}
+
+// The adaptive sweep adds a certified sample, solved from the PROM solution, with
+// abort_if_dependent = false. Where the PROM is already accurate to about the linear solver
+// tolerance, the solution is in the span of the basis to round-off: UpdatePROM must not
+// abort, and leaves the PROM unchanged if it returns false, with tight and loose linear
+// solver tolerances.
+TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-UpdatePROM-CertifiedSample",
+                 "[romoperator][Serial][Parallel]")
+{
+  MPI_Comm world_comm = Mpi::World();
+  const double tol = GENERATE(1.0e-8, 1.0e-12);
+  IoData iodata(DependenceTestSetup(temp_dir, tol, 500), false);
+  auto mesh_io = LoadScaleParMesh2(iodata, world_comm);
+  SpaceOperator space_op(iodata, mesh_io);
+  RomOperatorTest prom_op(iodata, space_op, 10);
+  const auto &sample_f = iodata.solver.driven.sample_f;
+  const double omega = sample_f[sample_f.size() / 2];
+  const double adaptive_tol = iodata.solver.driven.adaptive_tol;
+
+  const auto n = space_op.GetNDSpace().GetTrueVSize();
+  ComplexVector u(n), x0(n);
+  u.UseDevice(true);
+  x0.UseDevice(true);
+
+  // First sample, from zero.
+  CHECK(prom_op.SolveHDM(1, omega, u));
+  REQUIRE(prom_op.UpdatePROM(u, "sample_0"));
+  const auto dim = prom_op.GetReducedDimension();
+  REQUIRE(dim > 0);
+
+  // Second sample at the same frequency, certified from the PROM solution there: the PROM
+  // is exact to the solver tolerance, so the solve converges with a correction below the
+  // sweep tolerance, and the sample is (to round-off) in the span of the basis.
+  prom_op.SolvePROM(1, omega, x0);
+  u = x0;
+  CHECK(prom_op.SolveHDM(1, omega, u, true, adaptive_tol));
+  REQUIRE(linalg::Norml2(world_comm, u) > 0.0);
+  linalg::AXPY(-1.0, u, x0);
+  CHECK(linalg::Norml2(world_comm, x0) < adaptive_tol * linalg::Norml2(world_comm, u));
+  bool added = true;
+  CHECK_NOTHROW(added = prom_op.UpdatePROM(u, "sample_1", false));
+  if (!added)
+  {
+    CHECK(prom_op.GetReducedDimension() == dim);
+    CHECK(prom_op.GetOrthR().rows() == static_cast<Eigen::Index>(dim));
+  }
+  else
+  {
+    CHECK(prom_op.GetReducedDimension() <= dim + 2);
+  }
+}
+
+// SolveHDM starts from zero unless asked to start from the given vector. Started from the
+// solution, it returns it after zero iterations; started far from it, with a correction
+// limit, it stops early and reports that it did not converge. A second solve at the same
+// frequency reuses the operators.
+TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-SolveHDM-InitialGuess",
+                 "[romoperator][Serial][Parallel]")
+{
+  MPI_Comm world_comm = Mpi::World();
+
+  auto mesh_path =
+      fs::path(PALACE_TEST_DATA_DIR) / "lumpedport_mesh/cube_mesh_3_2_1_tet.msh";
+
+  json setup_json;
+  setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 2}, {"Output", temp_dir}};
+  setup_json["Model"] = {{"Mesh", mesh_path},
+                         {"Refinement", json::object({})},
+                         {"CrackInternalBoundaryElements", false}};
+  setup_json["Domains"] = {
+      {"Materials",
+       json::array({json::object({{"Attributes", json::array({1, 2, 3, 4, 5, 6})},
+                                  {"Permeability", 1.0},
+                                  {"Permittivity", 1.0},
+                                  {"LossTan", 0.0}})})}};
+  setup_json["Boundaries"] = {
+      {"LumpedPort",
+       json::array({json::object(
+           {{"Index", 1},
+            {"R", 50.0},
+            {"Excitation", uint(1)},
+            {"Elements", json::array({json::object({{"Attributes", json::array({14})},
+                                                    {"Direction", "+Z"}})})}})})}};
+  setup_json["Solver"] = json::object();
+  setup_json["Solver"]["Device"] = "CPU";
+  setup_json["Solver"]["Driven"] = {
+      {"AdaptiveTol", 1e-3}, {"MinFreq", 2.0}, {"MaxFreq", 32.0}, {"FreqStep", 1.0}};
+  setup_json["Solver"]["Linear"] = {{"Type", "Default"},
+                                    {"KSPType", "GMRES"},
+                                    {"MaxIts", 200},
+                                    {"Tol", 1.0e-8},
+                                    {"InitialGuess", true}};
+
+  IoData iodata(setup_json, false);
+  auto mesh_io = LoadScaleParMesh2(iodata, world_comm);
+  SpaceOperator space_op(iodata, mesh_io);
+  RomOperatorTest prom_op(iodata, space_op, 10);
+  const auto &ksp = prom_op.GetLinearSolver();
+  const auto &sample_f = iodata.solver.driven.sample_f;
+  const double omega = sample_f[sample_f.size() / 2];
+
+  const auto n = space_op.GetNDSpace().GetTrueVSize();
+  ComplexVector u(n), v(n);
+  u.UseDevice(true);
+  v.UseDevice(true);
+
+  // From zero: the content of u is ignored.
+  u.Real() = 1.0;
+  u.Imag() = 0.0;
+  CHECK(prom_op.SolveHDM(1, omega, u));
+  const double norm_u = linalg::Norml2(world_comm, u);
+  REQUIRE(norm_u > 0.0);
+  v.Real() = -3.0;
+  v.Imag() = 2.0;
+  CHECK(prom_op.SolveHDM(1, omega, v));
+  linalg::AXPY(-1.0, u, v);
+  CHECK(linalg::Norml2(world_comm, v) <= 1.0e-12 * norm_u);
+
+  // From the solution: zero iterations, the solution is returned unchanged.
+  v = u;
+  int num_it = ksp.NumTotalMultIterations();
+  CHECK(prom_op.SolveHDM(1, omega, v, true, 1.0e-6));
+  CHECK(ksp.NumTotalMultIterations() == num_it);
+  linalg::AXPY(-1.0, u, v);
+  CHECK(linalg::Norml2(world_comm, v) <= 1.0e-12 * norm_u);
+
+  // From half the solution, with a correction limit: stopped after one iteration.
+  v = u;
+  v *= 0.5;
+  num_it = ksp.NumTotalMultIterations();
+  CHECK_FALSE(prom_op.SolveHDM(1, omega, v, true, 1.0e-6));
+  CHECK(ksp.NumTotalMultIterations() == num_it + 1);
+  CHECK(ksp.GetCorrectionExceeded());
+}
+
 // Tests that the per-port "IncludeInSynthesis" flag suppresses basis vector injection
 // without changing the boundary condition. We reuse the cube_3_2_1 two-port setup, but
 // flip port 1 (non-excited, RLC) to "IncludeInSynthesis": false, leaving port 2 (excited,

@@ -907,7 +907,8 @@ void RomOperator::AddWavePortModalCorrection(double omega)
   Ar += Wr;
 }
 
-void RomOperator::SolveHDM(int excitation_idx, double omega, ComplexVector &u)
+bool RomOperator::SolveHDM(int excitation_idx, double omega, ComplexVector &u,
+                           bool initial_guess, double max_rel_correction)
 {
   SetExcitationIndex(excitation_idx);
 
@@ -918,18 +919,24 @@ void RomOperator::SolveHDM(int excitation_idx, double omega, ComplexVector &u)
   // so both must outlive it.
   A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO);
   has_A2 = (A2 != nullptr);
-  auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(1.0 + 0.0i, 1i * omega,
-                                                             -omega * omega + 0.0i, omega);
-  std::unique_ptr<ComplexOperator> A2_full;
-  auto A = space_op.GetSystemOperator(omega, *P);
-  if (!A)
+  if (omega != hdm_omega || !hdm_A)
   {
-    A2_full = space_op.GetExtraSystemOperator(omega, Operator::DIAG_ZERO);
-    A = space_op.GetSystemMatrix(std::complex<double>(1.0, 0.0), 1i * omega,
-                                 std::complex<double>(-omega * omega, 0.0), K.get(),
-                                 C.get(), M.get(), A2_full.get());
+    hdm_A.reset();
+    hdm_A2_full.reset();
+    hdm_P.reset();
+    hdm_P = space_op.GetPreconditionerMatrix<ComplexOperator>(1.0 + 0.0i, 1i * omega,
+                                                              -omega * omega + 0.0i, omega);
+    hdm_A = space_op.GetSystemOperator(omega, *hdm_P);
+    if (!hdm_A)
+    {
+      hdm_A2_full = space_op.GetExtraSystemOperator(omega, Operator::DIAG_ZERO);
+      hdm_A = space_op.GetSystemMatrix(std::complex<double>(1.0, 0.0), 1i * omega,
+                                       std::complex<double>(-omega * omega, 0.0), K.get(),
+                                       C.get(), M.get(), hdm_A2_full.get());
+    }
+    ksp->SetOperators(*hdm_A, *hdm_P);
+    hdm_omega = omega;
   }
-  ksp->SetOperators(*A, *P);
 
   // The HDM excitation vector is computed as RHS = iω RHS1 + RHS2(ω).
   Mpi::Print("\n");
@@ -947,7 +954,20 @@ void RomOperator::SolveHDM(int excitation_idx, double omega, ComplexVector &u)
   }
 
   // Solve the linear system.
+  ksp->SetInitialGuess(initial_guess);
+  ksp->SetMaxRelativeCorrection(initial_guess ? max_rel_correction : 0.0);
   ksp->Mult(r, u);
+  ksp->SetMaxRelativeCorrection(0.0);
+  ksp->SetInitialGuess(false);
+  return ksp->GetConverged() && !ksp->GetCorrectionExceeded();
+}
+
+void RomOperator::ReleaseHDMOperators()
+{
+  hdm_A.reset();
+  hdm_A2_full.reset();
+  hdm_P.reset();
+  hdm_omega = std::numeric_limits<double>::quiet_NaN();
 }
 
 std::size_t RomOperator::NumSynthesisPortModes() const
@@ -1068,7 +1088,8 @@ void RomOperator::AddWavePortModesForSynthesis(double omega_ref)
   }
 }
 
-void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label)
+bool RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label,
+                             bool abort_if_dependent)
 {
   RHS1r_online.clear();
   Ar_omega = std::numeric_limits<double>::quiet_NaN();
@@ -1141,22 +1162,25 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
     return true;
   };
 
-  if (has_real && !add_real_vector_to_basis(u.Real(), fmt::format("{}_re", node_label)))
+  const bool added =
+      (!has_real || add_real_vector_to_basis(u.Real(), fmt::format("{}_re", node_label))) &&
+      (!has_imag || add_real_vector_to_basis(u.Imag(), fmt::format("{}_im", node_label)));
+  if (!added)
   {
-    MFEM_ABORT("Linearly dependent vector added to PROM basis. This indicates a "
-               "convergence issue or a code error (the same vector was added multiple "
-               "times accidentally).");
-  }
-  if (has_imag && !add_real_vector_to_basis(u.Imag(), fmt::format("{}_im", node_label)))
-  {
-    MFEM_ABORT("Linearly dependent vector added to PROM basis. This indicates a "
-               "convergence issue or a code error (the same vector was added multiple "
-               "times accidentally).");
+    MFEM_VERIFY(!abort_if_dependent,
+                "Linearly dependent vector added to PROM basis. This indicates a "
+                "convergence issue or a code error (the same vector was added multiple "
+                "times accidentally).");
+    // Leave the basis unchanged.
+    V.resize(dim_V_old);
+    v_node_label.resize(dim_V_old);
+    orth_R.conservativeResize(dim_V_old, dim_V_old);
+    return false;
   }
 
   if (dim_V_new == dim_V_old)
   {
-    return;
+    return true;
   }
 
   // Update reduced-order operators. Resize preserves the upper dim0 x dim0 block of each
@@ -1278,6 +1302,7 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
       rm.Vh_cvk(i) = std::conj(vt_vi);  // V[i]^H conj(v_k) = conj(V[i]^T v_k)
     }
   }
+  return true;
 }
 
 void RomOperator::UpdateMRI(int excitation_idx, double omega, const ComplexVector &u)

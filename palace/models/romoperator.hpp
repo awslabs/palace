@@ -268,6 +268,12 @@ protected:
   // HDM linear system solver and preconditioner.
   std::unique_ptr<ComplexKspSolver> ksp;
 
+  // HDM operators of the most recent SolveHDM, kept so that a second solve at the same
+  // frequency (a sample solved again from zero after its certification failed) reuses the
+  // assembled operators and the preconditioner setup.
+  std::unique_ptr<ComplexOperator> hdm_P, hdm_A, hdm_A2_full;
+  double hdm_omega = std::numeric_limits<double>::quiet_NaN();
+
   // PROM matrices and vectors. Projected matrices are Mr = Vᴴ M V where V is the reduced
   // order basis defined below.
   Eigen::MatrixXcd Kr, Mr, Cr;  // Extend during UpdatePROM as modes are added
@@ -524,8 +530,17 @@ public:
   // repeating HDM-scale projections.
   void PrepareOnlineExcitations();
 
-  // Assemble and solve the HDM at the specified frequency.
-  void SolveHDM(int excitation_idx, double omega, ComplexVector &u);
+  // Assemble and solve the HDM at the specified frequency. The solve starts from zero, or,
+  // with initial_guess, from u. A positive max_rel_correction stops a solve started from u
+  // as soon as the correction to u exceeds this fraction of the solution norm (see
+  // GmresSolver::SetMaxRelativeCorrection). Returns whether the solve converged to the
+  // tolerance of the linear solver without being stopped. The assembled operators and the
+  // preconditioner are reused by the next solve at the same frequency.
+  bool SolveHDM(int excitation_idx, double omega, ComplexVector &u,
+                bool initial_guess = false, double max_rel_correction = 0.0);
+
+  // Release the HDM operators and preconditioner kept for reuse by SolveHDM.
+  void ReleaseHDMOperators();
 
   // Add port fields to PROM for circuit synthesis to connect to the outside world. Requires
   // fields that are orthogonal to boundary overlap and primary fields, which requires
@@ -543,8 +558,12 @@ public:
   // Add field configuration to the reduced-order basis and update the PROM. Requires a name
   // "node_label". This will be printed in the header of the csv files when printing PROM
   // matrices. It is needed to distinguish port and solution field configuration as well as
-  // to reconstruct if field configuration are pure real, imaginary or complex.
-  void UpdatePROM(const ComplexVector &u, std::string_view node_label);
+  // to reconstruct if field configuration are pure real, imaginary or complex. If the real
+  // or imaginary part of u is in the span of the basis (to the orthogonalization
+  // tolerance), aborts, or, with abort_if_dependent = false, leaves the PROM unchanged and
+  // returns false.
+  bool UpdatePROM(const ComplexVector &u, std::string_view node_label,
+                  bool abort_if_dependent = true);
 
   // Add solution u to the minimal-rational interpolation for error estimation. MRI are
   // separated by excitation index.

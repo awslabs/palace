@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:4-3-0",
+  "$id": "urn:palace:schema:5-0-0",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -2997,7 +2997,7 @@
         },
         "InitialGuess": {
           "type": "boolean",
-          "description": "Use the previous solution as an initial guess for the iterative solver. If omitted, Palace enables this for driven simulations without adaptive frequency sweep, transient simulations, electrostatics, and magnetostatics, and disables it otherwise.",
+          "description": "Use the previous solution as an initial guess for the iterative solver. For adaptive frequency sweeps, the reduced-order model solution is used as initial guess only at the sample which would complete the convergence memory, to certify convergence; the other samples are solved from zero. If omitted, Palace enables this for driven simulations, transient simulations, electrostatics, and magnetostatics, and disables it otherwise.",
           "x-palace-advanced": true
         },
         "MGMaxLevels": {
