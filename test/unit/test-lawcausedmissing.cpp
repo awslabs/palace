@@ -12,6 +12,7 @@
 #include <unistd.h>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 #include "fem/mesh.hpp"
 #include "models/surfaceresponseoperator.hpp"
@@ -67,6 +68,10 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 #if !defined(MFEM_USE_GSLIB)
   SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
 #else
+  // P4 S3-0 (review r2084 F-1): both crack forms (the legacy key; upstream's default = the
+  // key unset), as P3-23.
+  const auto crack_policy = GENERATE(test::CrackPolicy::Legacy, test::CrackPolicy::Default);
+  INFO("crack policy: " << test::CrackPolicyName(crack_policy));
   MPI_Comm comm = Mpi::World();
   // The convex library keyed on SA only like the island's features (all models perfect
   // conductors).
@@ -84,7 +89,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   // The Maxwell island: the outer box PEC, the metal sheet (attribute 9) PEC or impedance.
   auto Log = [&](bool impedance, const fs::path &library, const std::string &name)
   {
-    json config = ConvexMaxwellIslandConfig();
+    json config = ConvexMaxwellIslandConfig(crack_policy);
     const fs::path dir = temp.temp_dir / name;
     config["Problem"]["Output"] = dir.string();
     auto &correction = config["Solver"]["SurfaceResponseCorrection"];

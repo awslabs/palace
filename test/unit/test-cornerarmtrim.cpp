@@ -2459,6 +2459,10 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 #if !defined(MFEM_USE_GSLIB)
   SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
 #else
+  // P4 S3-0 (review r2084 F-1): both crack forms (the legacy key; upstream's default = the
+  // key unset), as P3-23.
+  const auto crack_policy = GENERATE(test::CrackPolicy::Legacy, test::CrackPolicy::Default);
+  INFO("crack policy: " << test::CrackPolicyName(crack_policy));
   constexpr double R = 0.2;
   const fs::path mesh_path = temp.temp_dir / "maxwell-uncovered-feature-lead.mesh";
   const auto basis_path = temp.temp_dir / "maxwell-uncovered-feature-basis-points.csv";
@@ -2501,7 +2505,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   Mpi::Barrier(Mpi::World());
 
   const fs::path output_dir = temp.temp_dir / "maxwell-uncovered-feature";
-  json config = IslandConfig();
+  json config = IslandConfig(crack_policy);
   config["Model"]["Mesh"] = mesh_path.string();
   config["Model"]["L0"] = 1.0;
   config["Problem"]["Type"] = "Eigenmode";
@@ -2817,6 +2821,10 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 #if !defined(MFEM_USE_GSLIB)
   SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
 #else
+  // P4 S3-0 (review r2084 F-1): both crack forms (the legacy key; upstream's default = the
+  // key unset), as P3-23.
+  const auto crack_policy = GENERATE(test::CrackPolicy::Legacy, test::CrackPolicy::Default);
+  INFO("crack policy: " << test::CrackPolicyName(crack_policy));
   constexpr double R = 0.2;
   const fs::path mesh_path = temp.temp_dir / "coverage-partition-lead.mesh";
   const auto basis_path = temp.temp_dir / "coverage-partition-basis-points.csv";
@@ -2868,7 +2876,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   REQUIRE(inputs_ok[1] == 1);
 
   const fs::path output_dir = temp.temp_dir / "coverage-partition";
-  json config = IslandConfig();
+  json config = IslandConfig(crack_policy);
   config["Model"]["Mesh"] = mesh_path.string();
   config["Model"]["L0"] = 1.0;
   config["Problem"]["Type"] = "Eigenmode";
@@ -4070,6 +4078,10 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 #if !defined(MFEM_USE_GSLIB)
   SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
 #else
+  // P4 S3-0 (review r2084 F-1): both crack forms (the legacy key; upstream's default = the
+  // key unset), as P3-23.
+  const auto crack_policy = GENERATE(test::CrackPolicy::Legacy, test::CrackPolicy::Default);
+  INFO("crack policy: " << test::CrackPolicyName(crack_policy));
   const fs::path mesh_path = temp.temp_dir / "diagdir-lead.mesh";
   const auto basis_path = temp.temp_dir / "diagdir-basis-points.csv";
   const auto edge_library_path = temp.temp_dir / "fabrication-process-diagdir-edges.json";
@@ -4108,7 +4120,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     output << library.dump(2) << "\n";
   }
   Mpi::Barrier(comm);
-  json config = IslandConfig();
+  json config = IslandConfig(crack_policy);
   config["Model"]["Mesh"] = mesh_path.string();
   config["Model"]["L0"] = 1.0;
   config["Problem"]["Type"] = "Eigenmode";
@@ -4271,7 +4283,8 @@ struct LoopFitLeadFixture
     return x[0] * y[0] + x[1] * y[1] + x[2] * y[2];
   }
   static json Config(const test::SurfaceResponseFiles &files, const fs::path &output_dir,
-                     const std::string &tag)
+                     const std::string &tag,
+                     test::CrackPolicy crack_policy = test::CrackPolicy::Legacy)
   {
     const fs::path mesh_path = files.temp.temp_dir / (tag + "-lead.mesh");
     const auto basis_path = files.temp.temp_dir / (tag + "-basis-points.csv");
@@ -4312,7 +4325,7 @@ struct LoopFitLeadFixture
       output << library.dump(2) << "\n";
     }
     Mpi::Barrier(Mpi::World());
-    json config = files.IslandConfig();
+    json config = files.IslandConfig(crack_policy);
     config["Model"]["Mesh"] = mesh_path.string();
     config["Model"]["L0"] = 1.0;
     config["Boundaries"]["Ground"]["Attributes"] = {4, 9};
@@ -4986,8 +4999,14 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 #if !defined(MFEM_USE_GSLIB)
   SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
 #else
+  // P4 S3-0 (review r2084 F-1; ruling 2093: the 14th case, its fixture reached through
+  // LoopFitLeadFixture::Config): both crack forms (the legacy key; upstream's default = the
+  // key unset), as P3-23.
+  const auto crack_policy = GENERATE(test::CrackPolicy::Legacy, test::CrackPolicy::Default);
+  INFO("crack policy: " << test::CrackPolicyName(crack_policy));
   const fs::path output_dir = temp.temp_dir / "coverage-cc-lr";
-  json config = LoopFitLeadFixture::Config(*this, output_dir, "coverage-cc-lr");
+  json config =
+      LoopFitLeadFixture::Config(*this, output_dir, "coverage-cc-lr", crack_policy);
   // The convex corner model added to the fixture's isolated-edge library (root writes;
   // checked on every rank after the barrier: decision 1616).
   const fs::path library_path =

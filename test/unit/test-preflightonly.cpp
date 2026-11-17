@@ -12,6 +12,7 @@
 #include <vector>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 #include "driver.hpp"
 #include "fem/mesh.hpp"
@@ -45,8 +46,12 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
                  "the configured problem type",
                  "[surfaceresponseoperator][preflightonly][Serial]")
 {
-  json electrostatic = ConvexIslandConfig();
-  json maxwell = ConvexMaxwellIslandConfig();
+  // P4 S3-0 (review r2084 F-1): both crack forms (the legacy key; upstream's default = the
+  // key unset), as P3-23.
+  const auto crack_policy = GENERATE(test::CrackPolicy::Legacy, test::CrackPolicy::Default);
+  INFO("crack policy: " << test::CrackPolicyName(crack_policy));
+  json electrostatic = ConvexIslandConfig(crack_policy);
+  json maxwell = ConvexMaxwellIslandConfig(crack_policy);
   CHECK(SurfaceResponsePreflightKey(IoData(electrostatic, false)).empty());
   CHECK(SurfaceResponsePreflightKey(IoData(maxwell, false)).empty());
 
@@ -85,10 +90,14 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 #if !defined(MFEM_USE_GSLIB)
   SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
 #else
+  // P4 S3-0 (review r2084 F-1): both crack forms (the legacy key; upstream's default = the
+  // key unset), as P3-23.
+  const auto crack_policy = GENERATE(test::CrackPolicy::Legacy, test::CrackPolicy::Default);
+  INFO("crack policy: " << test::CrackPolicyName(crack_policy));
   MPI_Comm comm = Mpi::World();
   auto Preflight = [&](bool key, const fs::path &dir)
   {
-    json config = ConvexIslandConfig();
+    json config = ConvexIslandConfig(crack_policy);
     config["Problem"]["Output"] = dir.string();
     if (key)
     {

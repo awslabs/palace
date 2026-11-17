@@ -9,6 +9,7 @@
 #include <vector>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include "fem/mesh.hpp"
 #include "models/surfaceresponseoperator.hpp"
 #include "utils/iodata.hpp"
@@ -25,9 +26,13 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
                  "target interfaces that are neither vacuum nor the library substrate",
                  "[surfaceresponseoperator][substratepermittivity][3d][Serial][Parallel]")
 {
+  // P4 S3-0 (review r2084 F-1): both crack forms (the legacy key; upstream's default = the
+  // key unset), as P3-23.
+  const auto crack_policy = GENERATE(test::CrackPolicy::Legacy, test::CrackPolicy::Default);
+  INFO("crack policy: " << test::CrackPolicyName(crack_policy));
   auto Mismatches = [&](const json &permittivity, const std::set<int> &attributes)
   {
-    json config = ConvexIslandConfig();
+    json config = ConvexIslandConfig(crack_policy);
     if (!permittivity.is_null())
     {
       config["Domains"]["Materials"][0]["Permittivity"] = permittivity;

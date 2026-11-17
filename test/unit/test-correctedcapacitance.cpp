@@ -413,7 +413,11 @@ TEST_CASE_METHOD(
 #if !defined(MFEM_USE_GSLIB)
   SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
 #else
-  json config = CorrectedCapacitanceConfig(*this);
+  // P4 S3-0 (review r2084 F-1): both crack forms (the legacy key; upstream's default = the
+  // key unset), as P3-23.
+  const auto crack_policy = GENERATE(test::CrackPolicy::Legacy, test::CrackPolicy::Default);
+  INFO("crack policy: " << test::CrackPolicyName(crack_policy));
+  json config = CorrectedCapacitanceConfig(*this, crack_policy);
   config["Solver"]["Electrostatic"]["ResponseCorrection"]["CorrectionMode"] = "Both";
   const fs::path warn_dir = temp.temp_dir / "coverage-mark-warn";
   const fs::path marked_dir = temp.temp_dir / "coverage-mark-marknotapplied";
