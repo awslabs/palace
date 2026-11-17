@@ -19,6 +19,7 @@
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
+#include "utils/perfmetrics.hpp"
 #include "utils/timer.hpp"
 
 namespace palace
@@ -441,8 +442,13 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   }
   const auto which_eig = (bm.target > 0.0) ? EigenvalueSolver::WhichType::LARGEST_MAGNITUDE
                                            : EigenvalueSolver::WhichType::LARGEST_REAL;
-  ModeEigenSolver eig(mode_op, dbc_tdof_list, num_modes, bm.max_size, bm.tol, which_eig,
-                      iodata.solver.linear, bm.type, iodata.problem.verbose);
+  auto eig = [&]
+  {
+    perf::ScopedRole role("Main");
+    return ModeEigenSolver(mode_op, dbc_tdof_list, num_modes, bm.max_size, bm.tol,
+                           which_eig, iodata.solver.linear, bm.type,
+                           iodata.problem.verbose);
+  }();
 
   BoundaryModeFluxErrorEstimator<ComplexVector> estimator(
       mode_op.GetMaterialOp(), mode_op.GetNDSpaceHierarchy(), mode_op.GetRTSpaceHierarchy(),
@@ -487,10 +493,6 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
   // Postprocessing.
   BlockTimer bt2(Timer::POSTPRO);
-  if (const auto *ksp = eig.GetLinearSolver())
-  {
-    SaveMetadata(*ksp);
-  }
   Mpi::Print("\nComputing solution error estimates and performing postprocessing\n\n");
 
   const int h1_size = mode_op.GetH1TrueVSize();

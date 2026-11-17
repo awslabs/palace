@@ -338,6 +338,21 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     which *Palace* does not use, and clones PETSc and SLEPc shallowly.
     [PR 1180](https://github.com/awslabs/palace/pull/1180).
 
+#### Interface Changes
+
+  - The performance report in `palace.json` is now `"MetadataVersion": 2`. Every statistic
+    is an object `{Min, Avg, Max, Sum, MaxRank, Ranks}` over all MPI processes, and
+    `ElapsedTime/Durations` and `Counts` became `ElapsedTime/<ROW>/{..., Count}`, keyed by
+    the timer names. For AMR, the top level describes the last iteration only, and the
+    whole run is in `Cumulative`. New `Startup` and `Coarse Setup` rows take the coarse
+    factorization out of `Coarse Solve`, `Preconditioner` and, for MUMPS, `Setup`;
+    `PeakMemoryMegabytes` and `PeakNodeMemoryMegabytes` use `Avg`/`Sum` and the growth maps
+    have `Baseline` and `Unattributed`; and `LinearSolver/TotalSolves`/`TotalIts` became
+    `LinearSolver/<Role>/{Solves, Its, MaxIts, NotConverged, Setups}` over every solve. The
+    wave port linear solver is no longer timed under `Linear Solve`/`Preconditioner`; its
+    time stays in the `Wave Ports` rows.
+    [PR 1152](https://github.com/awslabs/palace/pull/1152).
+
 ## [0.19.0] - 2026-11-02
 
 #### New Features

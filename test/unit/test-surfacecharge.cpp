@@ -246,7 +246,8 @@ TEST_CASE("Lossy parallel-plate capacitor conserves charge at the driven port",
                                     C.get(), M.get(), A2.get());
   auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(1.0 + 0.0i, 1i * omega,
                                                              -omega * omega + 0.0i, omega);
-  ComplexKspSolver ksp(iodata, space_op.GetNDSpaces(), &space_op.GetH1Spaces());
+  ComplexKspSolver ksp(iodata, space_op.GetNDSpaces(), &space_op.GetH1Spaces(),
+                       "Unassigned");
   ksp.SetOperators(*A, *P);
   ComplexVector RHS, E;
   RHS.UseDevice(true);

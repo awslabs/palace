@@ -110,7 +110,7 @@ public:
   MPI_Comm GetComm() const { return comm; }
 
   // Activate preconditioner timing during solves.
-  void EnableTimer() { use_timer = true; }
+  void EnableTimer() override { use_timer = true; }
 };
 
 // Preconditioned Conjugate Gradient (CG) method for SPD linear systems.

@@ -135,8 +135,8 @@ public:
   int GetNDTrueVSize() const { return nd_size; }
   int GetH1TrueVSize() const { return h1_size; }
 
-  // Access the linear solver (for metadata reporting). Returns nullptr if this process
-  // does not have a solver configured (non-port process in wave port mode).
+  // Access the linear solver. Returns nullptr if this process does not have a solver
+  // configured (non-port process in wave port mode).
   const ComplexKspSolver *GetLinearSolver() const { return ksp.get(); }
 
   // Tighten the eigenvalue-convergence and inner linear-solve tolerances, used to solve the

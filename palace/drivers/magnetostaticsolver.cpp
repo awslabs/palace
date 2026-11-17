@@ -133,7 +133,7 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // with no shorted ports reuses the base operator K). The base operator is bound lazily so
   // that an all-short configuration does not pay for an unused preconditioner setup.
   KspSolver ksp(iodata, curlcurl_op.GetSolutionNDSpaces(),
-                &curlcurl_op.GetSolutionH1Spaces());
+                &curlcurl_op.GetSolutionH1Spaces(), "Main");
   const Operator *bound_op = nullptr;
   auto set_operator = [&](const Operator &op, const Operator &pc)
   {
@@ -498,7 +498,6 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // non-convergence early return leaves palace.json describing the last converged
   // iteration.
   SaveMetadata(curlcurl_op.GetSolutionNDSpaces());
-  SaveMetadata(ksp);
   if (surf_flux_op.HasSingleLoopExcitations())
   {
     PostprocessTerminals(post_op, curlcurl_op.GetSurfaceCurrentOp(), surf_flux_op, A, I_inc,

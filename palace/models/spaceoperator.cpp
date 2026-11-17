@@ -21,6 +21,7 @@
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
+#include "utils/perfmetrics.hpp"
 #include "utils/prettyprint.hpp"
 
 namespace palace
@@ -1208,6 +1209,7 @@ void ProjectBdrCoefficientViaMassSolve(SumVectorCoefficient &fb, const LumpedPor
 
   // CG solve M_bdr * e = f entirely in T-vector space.
   // TODO: Make solver parameters configurable from IoData, or inherit other settings.
+  perf::ScopedRole role("PortProjection");
   auto pcg = std::make_unique<CgSolver<Operator>>(comm, 0);
   pcg->SetInitialGuess(false);
   pcg->SetRelTol(1.0e-14);

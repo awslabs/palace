@@ -13,6 +13,7 @@
 #include "linalg/iterative.hpp"
 #include "linalg/rap.hpp"
 #include "models/materialoperator.hpp"
+#include "utils/perfmetrics.hpp"
 #include "utils/timer.hpp"
 
 namespace palace
@@ -48,6 +49,7 @@ DivFreeSolver<VecType>::DivFreeSolver(
     const std::vector<mfem::Array<int>> &h1_bdr_tdof_lists, double tol, int max_it,
     int print)
 {
+  perf::ScopedRole role("DivFree");
   BlockTimer bt(Timer::DIV_FREE);
 
   // If no boundaries on the mesh have been marked, add a single degree of freedom

@@ -20,6 +20,8 @@ target_sources(${LIB_TARGET_NAME}
   ${CMAKE_CURRENT_SOURCE_DIR}/memoryreporting.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/meshio.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/omp.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/perfmetrics.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/perfreport.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/tablecsv.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/versions.cpp
 )

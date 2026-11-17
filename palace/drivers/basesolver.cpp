@@ -22,6 +22,7 @@
 #include "utils/iodata.hpp"
 #include "utils/memoryreporting.hpp"
 #include "utils/outputdir.hpp"
+#include "utils/perfreport.hpp"
 #include "utils/timer.hpp"
 
 namespace palace
@@ -261,93 +262,88 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
   int it = 0;
   while (use_amr && !ExhaustedResources(it, ntdof) && err >= refinement.tol)
   {
-    // Print timing summary.
-    Mpi::Print(comm, "\nCumulative timing statistics:\n");
-    BlockTimer::Finalize(comm);
-    BlockTimer::Print(comm);
-    auto peak_mem = memory_reporting::GetPeakMemoryStats(comm);
-    auto peak_node_mem = memory_reporting::GetPeakNodeMemoryStats(comm);
-    memory_reporting::PrintMemoryUsage(comm, peak_mem);
-    memory_reporting::PrintMemoryUsage(comm, peak_node_mem);
-    SaveMetadata(BlockTimer::GlobalTimer());
-    SaveMetadata(peak_mem);
-    SaveMetadata(peak_node_mem);
+    // Print the performance report.
+    Mpi::Print(comm, "\nPerformance report:\n");
+    ReportPerformance(comm);
+    BlockTimer::StartIteration();
 
-    BlockTimer bt(Timer::ADAPTATION);
-    Mpi::Print("\nAdaptive mesh refinement (AMR) iteration {:d}:\n"
-               " Indicator norm = {:.3e}, global unknowns = {:d}\n"
-               " Max. iterations = {:d}, tol. = {:.3e}{}\n",
-               ++it, err, ntdof, refinement.max_it, refinement.tol,
-               (refinement.max_size > 0
-                    ? ", max. size = " + std::to_string(refinement.max_size)
-                    : ""));
-
-    // Optionally save off the previous solution.
-    if (refinement.save_adapt_iterations)
     {
-      SaveIteration(comm, post_dir, it,
-                    1 + static_cast<int>(std::log10(refinement.max_it)));
-    }
+      BlockTimer bt(Timer::ADAPTATION);
+      Mpi::Print("\nAdaptive mesh refinement (AMR) iteration {:d}:\n"
+                 " Indicator norm = {:.3e}, global unknowns = {:d}\n"
+                 " Max. iterations = {:d}, tol. = {:.3e}{}\n",
+                 ++it, err, ntdof, refinement.max_it, refinement.tol,
+                 (refinement.max_size > 0
+                      ? ", max. size = " + std::to_string(refinement.max_size)
+                      : ""));
 
-    // Mark.
-    const auto marked_elements = [&comm, &refinement](const auto &indicators)
-    {
-      const auto [threshold, marked_error] = utils::ComputeDorflerThreshold(
-          comm, indicators.Local(), refinement.update_fraction);
-      const auto marked_elements = MarkedElements(indicators.Local(), threshold);
-      const auto [glob_marked_elements, glob_elements] =
-          linalg::GlobalSize2(comm, marked_elements, indicators.Local());
-      Mpi::Print(
-          " Marked {:d}/{:d} elements for refinement ({:.2f}% of the error, θ = {:.2f})\n",
-          glob_marked_elements, glob_elements, 100 * marked_error,
-          refinement.update_fraction);
-      return marked_elements;
-    }(indicators);
-
-    // Refine.
-    {
-      mfem::ParMesh &fine_mesh = *mesh.back();
-      const auto initial_elem_count = fine_mesh.GetGlobalNE();
-      fine_mesh.GeneralRefinement(marked_elements, -1, refinement.max_nc_levels);
-      const auto final_elem_count = fine_mesh.GetGlobalNE();
-      Mpi::Print(" {} mesh refinement added {:d} elements (initial = {:d}, final = {:d})\n",
-                 fine_mesh.Nonconforming() ? "Nonconforming" : "Conforming",
-                 final_elem_count - initial_elem_count, initial_elem_count,
-                 final_elem_count);
-    }
-
-    // Optionally rebalance and write the adapted mesh to file.
-    {
-      const auto ratio_pre = mesh::RebalanceMesh(iodata, *mesh.back(), &mesh_counts);
-      if (ratio_pre > refinement.maximum_imbalance)
+      // Optionally save off the previous solution.
+      if (refinement.save_adapt_iterations)
       {
-        int min_elem, max_elem;
-        min_elem = max_elem = mesh.back()->GetNE();
-        Mpi::GlobalMin(1, &min_elem, comm);
-        Mpi::GlobalMax(1, &max_elem, comm);
-        const auto ratio_post = double(max_elem) / min_elem;
-        Mpi::Print(" Rebalanced mesh: Ratio {:.3f} exceeded max. allowed value {:.3f} "
-                   "(new ratio = {:.3f})\n",
-                   ratio_pre, refinement.maximum_imbalance, ratio_post);
+        SaveIteration(comm, post_dir, it,
+                      1 + static_cast<int>(std::log10(refinement.max_it)));
       }
-      mesh.back()->Update();
-    }
 
-    // Record the adapted mesh's topology now, paired with the mesh file RebalanceMesh
-    // wrote, so it matches even if the following solve does not converge (SavedAdaptedMesh
-    // contract).
-    if (refinement.save_adapt_mesh)
-    {
-      mesh::CompleteMeshEntityCounts(*mesh.back(), mesh_counts);
-      if (mesh_counts.valid)
+      // Mark.
+      const auto marked_elements = [&comm, &refinement](const auto &indicators)
       {
-        SaveMetadata(mesh_counts);
-      }
-    }
+        const auto [threshold, marked_error] = utils::ComputeDorflerThreshold(
+            comm, indicators.Local(), refinement.update_fraction);
+        const auto marked_elements = MarkedElements(indicators.Local(), threshold);
+        const auto [glob_marked_elements, glob_elements] =
+            linalg::GlobalSize2(comm, marked_elements, indicators.Local());
+        Mpi::Print(" Marked {:d}/{:d} elements for refinement ({:.2f}% of the error, θ = "
+                   "{:.2f})\n",
+                   glob_marked_elements, glob_elements, 100 * marked_error,
+                   refinement.update_fraction);
+        return marked_elements;
+      }(indicators);
 
-    // Print statistics (element counts, size h, and shape regularity kappa) for the
-    // newly-refined mesh so the evolution of mesh quality under AMR is visible.
-    mesh::PrintMeshInfo(*mesh.back(), iodata, /*full=*/false);
+      // Refine.
+      {
+        mfem::ParMesh &fine_mesh = *mesh.back();
+        const auto initial_elem_count = fine_mesh.GetGlobalNE();
+        fine_mesh.GeneralRefinement(marked_elements, -1, refinement.max_nc_levels);
+        const auto final_elem_count = fine_mesh.GetGlobalNE();
+        Mpi::Print(
+            " {} mesh refinement added {:d} elements (initial = {:d}, final = {:d})\n",
+            fine_mesh.Nonconforming() ? "Nonconforming" : "Conforming",
+            final_elem_count - initial_elem_count, initial_elem_count, final_elem_count);
+      }
+
+      // Optionally rebalance and write the adapted mesh to file.
+      {
+        const auto ratio_pre = mesh::RebalanceMesh(iodata, *mesh.back(), &mesh_counts);
+        if (ratio_pre > refinement.maximum_imbalance)
+        {
+          int min_elem, max_elem;
+          min_elem = max_elem = mesh.back()->GetNE();
+          Mpi::GlobalMin(1, &min_elem, comm);
+          Mpi::GlobalMax(1, &max_elem, comm);
+          const auto ratio_post = double(max_elem) / min_elem;
+          Mpi::Print(" Rebalanced mesh: Ratio {:.3f} exceeded max. allowed value {:.3f} "
+                     "(new ratio = {:.3f})\n",
+                     ratio_pre, refinement.maximum_imbalance, ratio_post);
+        }
+        mesh.back()->Update();
+      }
+
+      // Record the adapted mesh's topology now, paired with the mesh file RebalanceMesh
+      // wrote, so it matches even if the following solve does not converge
+      // (SavedAdaptedMesh contract).
+      if (refinement.save_adapt_mesh)
+      {
+        mesh::CompleteMeshEntityCounts(*mesh.back(), mesh_counts);
+        if (mesh_counts.valid)
+        {
+          SaveMetadata(mesh_counts);
+        }
+      }
+
+      // Print statistics (element counts, size h, and shape regularity kappa) for the
+      // newly-refined mesh so the evolution of mesh quality under AMR is visible.
+      mesh::PrintMeshInfo(*mesh.back(), iodata, /*full=*/false);
+    }
 
     // Solve + estimate.
     Mpi::Print("\nProceeding with solve/estimate iteration {}...\n", it + 1);
@@ -448,63 +444,6 @@ void BaseSolver::SaveMetadata(const mesh::MeshEntityCounts &counts) const
   }
 }
 
-template <typename SolverType>
-void BaseSolver::SaveMetadata(const SolverType &ksp) const
-{
-  if (root)
-  {
-    json meta = LoadMetadata(post_dir);
-    meta["LinearSolver"]["TotalSolves"] = ksp.NumTotalMult();
-    meta["LinearSolver"]["TotalIts"] = ksp.NumTotalMultIterations();
-    WriteMetadata(post_dir, meta);
-  }
-}
-
-void BaseSolver::SaveMetadata(const Timer &timer) const
-{
-  if (root)
-  {
-    constexpr double to_mb = 1.0 / (1024.0 * 1024.0);
-    auto red = BlockTimer::GetReductions();
-
-    json meta = LoadMetadata(post_dir);
-    for (int i = Timer::INIT; i < Timer::NUM_TIMINGS; i++)
-    {
-      std::string key(Timer::descriptions[i]);
-      std::erase_if(key, isspace);
-      meta["ElapsedTime"]["Durations"][key] = timer.Data(static_cast<Timer::Index>(i));
-      meta["ElapsedTime"]["Counts"][key] = timer.Counts(static_cast<Timer::Index>(i));
-      meta["PeakMemoryGrowthMegabytes"]["Min"][key] = red.rank_mem.min[i] * to_mb;
-      meta["PeakMemoryGrowthMegabytes"]["Max"][key] = red.rank_mem.max[i] * to_mb;
-      meta["PeakMemoryGrowthMegabytes"]["Sum"][key] = red.rank_mem.sum[i] * to_mb;
-      meta["PeakNodeMemoryGrowthMegabytes"]["Min"][key] = red.node_mem.min[i] * to_mb;
-      meta["PeakNodeMemoryGrowthMegabytes"]["Max"][key] = red.node_mem.max[i] * to_mb;
-      meta["PeakNodeMemoryGrowthMegabytes"]["Sum"][key] = red.node_mem.sum[i] * to_mb;
-    }
-    WriteMetadata(post_dir, meta);
-  }
-}
-
-void BaseSolver::SaveMetadata(const memory_reporting::MemoryStats &peak_memory) const
-{
-  if (root)
-  {
-    constexpr double to_mb = 1.0 / (1024.0 * 1024.0);
-    json meta = LoadMetadata(post_dir);
-
-    // Determine key name based on whether this is per-node or per-rank stats
-    std::string key = (peak_memory.label.find("per-node") != std::string::npos)
-                          ? "PeakNodeMemoryMegabytes"
-                          : "PeakMemoryMegabytes";
-
-    meta[key]["Min"] = peak_memory.min * to_mb;
-    meta[key]["Max"] = peak_memory.max * to_mb;
-    meta[key]["Average"] = peak_memory.avg * to_mb;
-    meta[key]["Total"] = peak_memory.sum * to_mb;
-    WriteMetadata(post_dir, meta);
-  }
-}
-
 void BaseSolver::SaveMetadata(const PortExcitations &excitation_helper) const
 {
   if (root)
@@ -515,7 +454,26 @@ void BaseSolver::SaveMetadata(const PortExcitations &excitation_helper) const
   }
 }
 
-template void BaseSolver::SaveMetadata<KspSolver>(const KspSolver &) const;
-template void BaseSolver::SaveMetadata<ComplexKspSolver>(const ComplexKspSolver &) const;
+void BaseSolver::ReportPerformance(MPI_Comm comm) const
+{
+  const auto &results = perf::Report(comm);
+  const auto to_stats = [](const char *label, const perf::Stats &s)
+  {
+    return memory_reporting::MemoryStats{label, static_cast<long>(s.min),
+                                         static_cast<long>(s.max), static_cast<long>(s.sum),
+                                         s.Avg()};
+  };
+  Mpi::Print(comm, "\n");
+  memory_reporting::PrintMemoryUsage(comm, to_stats("peak per-rank", results.iter.peak));
+  memory_reporting::PrintMemoryUsage(comm,
+                                     to_stats("peak per-node", results.iter.node_peak));
+  perf::Print(comm);
+  if (root)
+  {
+    json meta = LoadMetadata(post_dir);
+    perf::WriteJson(meta);
+    WriteMetadata(post_dir, meta);
+  }
+}
 
 }  // namespace palace

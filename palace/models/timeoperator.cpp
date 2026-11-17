@@ -13,6 +13,7 @@
 #include "models/spaceoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
+#include "utils/perfmetrics.hpp"
 
 namespace palace
 {
@@ -78,6 +79,7 @@ public:
 
     // Set up linear solvers.
     {
+      perf::ScopedRole role("Mass");
       auto pcg = std::make_unique<CgSolver<Operator>>(comm, 0);
       pcg->SetInitialGuess(0);
       pcg->SetRelTol(linear.tol);
@@ -101,9 +103,9 @@ public:
         // Configure the solver.
         if (!kspA)
         {
-          kspA =
-              std::make_unique<KspSolver>(linear, MatrixSymmetry::SPD, verbose,
-                                          space_op.GetNDSpaces(), &space_op.GetH1Spaces());
+          kspA = std::make_unique<KspSolver>(linear, MatrixSymmetry::SPD, verbose,
+                                             space_op.GetNDSpaces(),
+                                             &space_op.GetH1Spaces(), "Main");
         }
         kspA->SetOperators(*A, *B);
       };
@@ -386,14 +388,6 @@ TimeOperator::TimeOperator(const IoData &iodata, SpaceOperator &space_op,
                            std::function<double(double)> dJ_coef)
   : TimeOperator(iodata.solver, iodata.problem.verbose, space_op, std::move(dJ_coef))
 {
-}
-
-const KspSolver &TimeOperator::GetLinearSolver() const
-{
-  const auto &first_order = dynamic_cast<const TimeDependentFirstOrderOperator &>(*op);
-  MFEM_VERIFY(first_order.kspA,
-              "No linear solver for time-dependent operator has been constructed!\n");
-  return *first_order.kspA;
 }
 
 void TimeOperator::Init()

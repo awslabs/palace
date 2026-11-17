@@ -646,7 +646,7 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
   // matrix.
   ksp = std::make_unique<ComplexKspSolver>(
       iodata.solver.linear, GetPreconditionerMatrixSymmetry(iodata), iodata.problem.verbose,
-      space_op.GetNDSpaces(), &space_op.GetH1Spaces());
+      space_op.GetNDSpaces(), &space_op.GetH1Spaces(), "Main");
 
   MFEM_VERIFY(max_size_per_excitation > 0, "Reduced order basis must have > 0 size!");
 
@@ -1290,6 +1290,7 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
 {
   BlockTimer bt(Timer::SOLVE_PROM);
   SetExcitationIndex(excitation_idx);
+  const bool has_wave_ports = space_op.GetWavePortOp().Size() > 0;
 
   // Assemble the PROM linear system at the given frequency. The PROM system is defined by
   // the matrix Aᵣ(ω) = Kᵣ + iω Cᵣ - ω² Mᵣ + Vᴴ A2 V(ω) and source vector RHSᵣ(ω) =
@@ -1485,7 +1486,7 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
     // the per-port cross-section EVP at this ω and refreshes the modal post-processing
     // state used by MeasureWavePorts for S-parameters and power.
     {
-      BlockTimer bt(Timer::WAVE_PORT);
+      BlockTimer bt(Timer::WAVE_PORT, has_wave_ports);
       for (const auto &[port_idx, Mp_r] : Mwp_p_r)
       {
         const auto &port_data = space_op.GetWavePortOp().GetPort(port_idx);
@@ -1554,7 +1555,7 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
     // from the cached port-space pairings Vᵀs_full,p at this frequency. Pairings are cached
     // for active ports only, so an excitation that also drives an inactive port uses the
     // assembled excitation vector instead.
-    BlockTimer bt_wp(Timer::WAVE_PORT);
+    BlockTimer bt_wp(Timer::WAVE_PORT, has_wave_ports);
     for (const auto &[port_idx, port_data] : space_op.GetWavePortOp())
     {
       if (port_data.excitation != excitation_idx)

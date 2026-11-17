@@ -210,7 +210,7 @@ ConfigurePreconditionerSolver(const config::LinearSolverData &linear,
     // (ownership of pc is transferred to the GeometricMultigridSolver). When a special
     // auxiliary space smoother for pre-/post-smoothing is not desired, the auxiliary
     // space is a nullptr here.
-    auto gmg = [&]()
+    pc = [&]()
     {
       if (linear.mg_smooth_aux)
       {
@@ -230,13 +230,12 @@ ConfigurePreconditionerSolver(const config::LinearSolverData &linear,
             linear.mg_smooth_sf_max, linear.mg_smooth_sf_min, linear.mg_smooth_cheby_4th);
       }
     }();
-    gmg->EnableTimer();  // Enable timing for primary geometric multigrid solver
-    return gmg;
   }
-  else
+  if (pc)
   {
-    return pc;
+    pc->EnableTimer();  // Only the primary solver times itself
   }
+  return pc;
 }
 
 }  // namespace
@@ -262,6 +261,18 @@ template <OperatorType OperType>
 BaseKspSolver<OperType>::BaseKspSolver(const config::LinearSolverData &linear,
                                        MatrixSymmetry pc_mat_sym, int verbose,
                                        FiniteElementSpaceHierarchy &fespaces,
+                                       FiniteElementSpaceHierarchy *aux_fespaces,
+                                       std::string_view role)
+  : BaseKspSolver(perf::ScopedRole(role), linear, pc_mat_sym, verbose, fespaces,
+                  aux_fespaces)
+{
+}
+
+template <OperatorType OperType>
+BaseKspSolver<OperType>::BaseKspSolver(const perf::ScopedRole &,
+                                       const config::LinearSolverData &linear,
+                                       MatrixSymmetry pc_mat_sym, int verbose,
+                                       FiniteElementSpaceHierarchy &fespaces,
                                        FiniteElementSpaceHierarchy *aux_fespaces)
   : BaseKspSolver(ConfigureKrylovSolver<OperType>(linear, verbose,
                                                   fespaces.GetFinestFESpace().GetComm()),
@@ -275,17 +286,31 @@ BaseKspSolver<OperType>::BaseKspSolver(const config::LinearSolverData &linear,
 template <OperatorType OperType>
 BaseKspSolver<OperType>::BaseKspSolver(const IoData &iodata,
                                        FiniteElementSpaceHierarchy &fespaces,
-                                       FiniteElementSpaceHierarchy *aux_fespaces)
+                                       FiniteElementSpaceHierarchy *aux_fespaces,
+                                       std::string_view role)
   : BaseKspSolver(iodata.solver.linear, GetPreconditionerMatrixSymmetry(iodata),
-                  iodata.problem.verbose, fespaces, aux_fespaces)
+                  iodata.problem.verbose, fespaces, aux_fespaces, role)
 {
 }
 
 template <OperatorType OperType>
 BaseKspSolver<OperType>::BaseKspSolver(std::unique_ptr<IterativeSolver<OperType>> &&ksp,
                                        std::unique_ptr<Solver<OperType>> &&pc)
-  : ksp(std::move(ksp)), pc(std::move(pc)), ksp_mult(0), ksp_mult_it(0), use_timer(false)
+  : ksp(std::move(ksp)), pc(std::move(pc)), ksp_mult(0), ksp_mult_it(0), use_timer(false),
+    role(perf::CurrentRoleId()),
+    perf_solves(perf::LinearSolverPath(role, "Solves"), perf::Red::COUNT),
+    perf_its(perf::LinearSolverPath(role, "Its"), perf::Red::COUNT),
+    perf_not_converged(perf::LinearSolverPath(role, "NotConverged"), perf::Red::COUNT),
+    perf_setups(perf::LinearSolverPath(role, "Setups"), perf::Red::COUNT),
+    perf_max_its(perf::LinearSolverPath(role, "MaxIts"), perf::Red::MAX)
 {
+#if defined(MFEM_DEBUG)
+  if (role.index == 0)
+  {
+    Mpi::Warning(this->ksp->GetComm(),
+                 "Linear solver constructed without a performance report role!\n");
+  }
+#endif
   if (this->pc)
   {
     this->ksp->SetPreconditioner(*this->pc);
@@ -295,7 +320,9 @@ BaseKspSolver<OperType>::BaseKspSolver(std::unique_ptr<IterativeSolver<OperType>
 template <OperatorType OperType>
 void BaseKspSolver<OperType>::SetOperators(const OperType &op, const OperType &pc_op)
 {
+  perf::ScopedRole scoped_role(role);
   BlockTimer bt(Timer::KSP_SETUP, use_timer);
+  perf_setups.Add(1);
   ksp->SetOperator(op);
   if (pc)
   {
@@ -315,17 +342,24 @@ void BaseKspSolver<OperType>::SetOperators(const OperType &op, const OperType &p
 template <OperatorType OperType>
 void BaseKspSolver<OperType>::Mult(const VecType &x, VecType &y) const
 {
+  perf::ScopedRole scoped_role(role);
   BlockTimer bt(Timer::KSP, use_timer);
   ksp->Mult(x, y);
-  if (!ksp->GetConverged())
+  const int its = ksp->GetNumIterations();
+  const bool converged = ksp->GetConverged();
+  if (!converged)
   {
     Mpi::Warning(
         ksp->GetComm(),
         "Linear solver did not converge, norm(Ax-b)/norm(b) = {:.3e} (norm(b) = {:.3e})!\n",
         ksp->GetFinalRes() / ksp->GetInitialRes(), ksp->GetInitialRes());
+    perf_not_converged.Add(1);
   }
   ksp_mult++;
-  ksp_mult_it += ksp->GetNumIterations();
+  ksp_mult_it += its;
+  perf_solves.Add(1);
+  perf_its.Add(its);
+  perf_max_its.Update(its);
 }
 
 template class BaseKspSolver<Operator>;

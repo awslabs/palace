@@ -32,7 +32,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   SaveMetadata(laplace_op.GetH1Spaces());
 
   // Set up the linear solver.
-  KspSolver ksp(iodata, laplace_op.GetH1Spaces());
+  KspSolver ksp(iodata, laplace_op.GetH1Spaces(), nullptr, "Main");
   ksp.SetOperators(*K, *K);
 
   // Terminal indices are the set of boundaries over which to compute the capacitance
@@ -91,7 +91,6 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
   // Postprocess the capacitance matrix from the computed field solutions.
   BlockTimer bt1(Timer::POSTPRO);
-  SaveMetadata(ksp);
   PostprocessTerminals(post_op, laplace_op.GetSources(), V);
   post_op.MeasureFinalize(indicator);
   return {indicator, laplace_op.GlobalTrueVSize()};

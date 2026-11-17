@@ -5,11 +5,13 @@
 #define PALACE_LINALG_KSP_HPP
 
 #include <memory>
+#include <string_view>
 #include <type_traits>
 #include "linalg/iterative.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/solver.hpp"
 #include "utils/labels.hpp"
+#include "utils/perfmetrics.hpp"
 
 namespace palace
 {
@@ -51,12 +53,24 @@ protected:
   // Enable timer contribution for Timer::KSP_PRECONDITIONER.
   bool use_timer;
 
+  // Role for the performance report, captured at construction, and its statistics.
+  perf::RoleId role;
+  perf::SumMetric perf_solves, perf_its, perf_not_converged, perf_setups;
+  perf::MaxMetric perf_max_its;
+
+  // Configured solver, constructed under the role (bound for the whole delegation).
+  BaseKspSolver(const perf::ScopedRole &, const config::LinearSolverData &linear,
+                MatrixSymmetry pc_mat_sym, int verbose,
+                FiniteElementSpaceHierarchy &fespaces,
+                FiniteElementSpaceHierarchy *aux_fespaces);
+
 public:
+  // The primary solver of the configuration, with its performance report role.
   BaseKspSolver(const config::LinearSolverData &linear, MatrixSymmetry pc_mat_sym,
                 int verbose, FiniteElementSpaceHierarchy &fespaces,
-                FiniteElementSpaceHierarchy *aux_fespaces = nullptr);
+                FiniteElementSpaceHierarchy *aux_fespaces, std::string_view role);
   BaseKspSolver(const IoData &iodata, FiniteElementSpaceHierarchy &fespaces,
-                FiniteElementSpaceHierarchy *aux_fespaces = nullptr);
+                FiniteElementSpaceHierarchy *aux_fespaces, std::string_view role);
   BaseKspSolver(std::unique_ptr<IterativeSolver<OperType>> &&ksp,
                 std::unique_ptr<Solver<OperType>> &&pc);
 

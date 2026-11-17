@@ -3,8 +3,10 @@
 
 #include "solver.hpp"
 
+#include "linalg/cudss.hpp"
 #include "linalg/mumps.hpp"
 #include "linalg/rap.hpp"
+#include "utils/timer.hpp"
 
 namespace palace
 {
@@ -15,15 +17,15 @@ void MfemWrapperSolver<Operator>::SetOperator(const Operator &op)
   // Operator is always assembled as a HypreParMatrix.
   if (const auto *hA = dynamic_cast<const mfem::HypreParMatrix *>(&op))
   {
-    pc->SetOperator(*hA);
+    SetInnerOperator(*hA);
   }
   else
   {
     const auto *PtAP = dynamic_cast<const ParOperator *>(&op);
     MFEM_VERIFY(PtAP,
                 "MfemWrapperSolver must be able to construct a HypreParMatrix operator!");
-    pc->SetOperator(!save_assembled ? *PtAP->StealParallelAssemble()
-                                    : PtAP->ParallelAssemble());
+    SetInnerOperator(!save_assembled ? *PtAP->StealParallelAssemble()
+                                     : PtAP->ParallelAssemble());
   }
   this->height = op.Height();
   this->width = op.Width();
@@ -87,7 +89,7 @@ void MfemWrapperSolver<ComplexOperator>::SetOperator(const ComplexOperator &op)
     {
       DropSmallEntries();
     }
-    pc->SetOperator(*A);
+    SetInnerOperator(*A);
     if (!save_assembled)
     {
       A.reset();
@@ -99,11 +101,11 @@ void MfemWrapperSolver<ComplexOperator>::SetOperator(const ComplexOperator &op)
     {
       A = std::make_unique<mfem::HypreParMatrix>(*hAr);
       DropSmallEntries();
-      pc->SetOperator(*A);
+      SetInnerOperator(*A);
     }
     else
     {
-      pc->SetOperator(*hAr);
+      SetInnerOperator(*hAr);
     }
     if (PtAPr && !save_assembled)
     {
@@ -116,11 +118,11 @@ void MfemWrapperSolver<ComplexOperator>::SetOperator(const ComplexOperator &op)
     {
       A = std::make_unique<mfem::HypreParMatrix>(*hAi);
       DropSmallEntries();
-      pc->SetOperator(*A);
+      SetInnerOperator(*A);
     }
     else
     {
-      pc->SetOperator(*hAi);
+      SetInnerOperator(*hAi);
     }
     if (PtAPi && !save_assembled)
     {
@@ -136,14 +138,14 @@ void MfemWrapperSolver<ComplexOperator>::SetOperator(const ComplexOperator &op)
 }
 
 template <>
-void MfemWrapperSolver<Operator>::Mult(const Vector &x, Vector &y) const
+void MfemWrapperSolver<Operator>::Apply(const Vector &x, Vector &y) const
 {
   pc->Mult(x, y);
 }
 
 template <>
-void MfemWrapperSolver<ComplexOperator>::Mult(const ComplexVector &x,
-                                              ComplexVector &y) const
+void MfemWrapperSolver<ComplexOperator>::Apply(const ComplexVector &x,
+                                               ComplexVector &y) const
 {
   if (pc->Height() == x.Size())
   {
@@ -177,6 +179,37 @@ void MfemWrapperSolver<ComplexOperator>::Mult(const ComplexVector &x,
 }
 
 template <OperatorType OperType>
+void MfemWrapperSolver<OperType>::InitEagerSetup()
+{
+  eager_setup =
+#if defined(MFEM_USE_MUMPS)
+      dynamic_cast<MumpsSolver *>(pc.get()) ||
+#endif
+#if defined(MFEM_USE_CUDSS)
+      dynamic_cast<mfem::CuDSSSolver *>(pc.get()) ||
+#endif
+      false;
+}
+
+template <OperatorType OperType>
+void MfemWrapperSolver<OperType>::SetInnerOperator(const mfem::HypreParMatrix &op)
+{
+  BlockTimer bt(Timer::KSP_COARSE_SETUP, time_setup && eager_setup);
+  pc->SetOperator(op);
+  setup_pending = true;
+}
+
+template <OperatorType OperType>
+void MfemWrapperSolver<OperType>::Mult(const VecType &x, VecType &y) const
+{
+  // Solvers which set up lazily (SuperLU, STRUMPACK, hypre) do so at the first apply: that
+  // apply is timed as setup.
+  BlockTimer bt(Timer::KSP_COARSE_SETUP, time_setup && setup_pending && !eager_setup);
+  setup_pending = false;
+  Apply(x, y);
+}
+
+template <OperatorType OperType>
 void MfemWrapperSolver<OperType>::DropSmallEntries()
 {
   const auto nnz_before = A->NNZ();
@@ -205,5 +238,8 @@ void MfemWrapperSolver<OperType>::DropSmallEntries()
              num_dropped_entries, nnz_before,
              static_cast<double>(num_dropped_entries) / nnz_before * 100.0);
 }
+
+template class MfemWrapperSolver<Operator>;
+template class MfemWrapperSolver<ComplexOperator>;
 
 }  // namespace palace
