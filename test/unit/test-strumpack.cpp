@@ -184,6 +184,96 @@ TEST_CASE("StrumpackSolver unsymmetric sparsity pattern", "[strumpack][Serial][P
   CHECK(err[2] <= 1.0e-12 * nrm);
 }
 
+// STRUMPACK 8.1.0 did not apply the row interchanges of a diagonal tile of a distributed
+// BLR front to the tiles of L on its left, while the solve applies all the interchanges to
+// the right-hand side first. With BLR compression on two or more processes, the
+// factorization of an indefinite matrix was then inaccurate whatever the compression
+// tolerance (fixed by extern/patch/STRUMPACK/strumpack_blr_pivoting.diff). On one process
+// no front is distributed and this checks the BLR factorization of the sequential code,
+// which did not have the defect.
+TEST_CASE("StrumpackSolver BLR compression of an indefinite matrix",
+          "[strumpack][Serial][Parallel]")
+{
+  MPI_Comm comm = Mpi::World();
+  const int P = Mpi::Size(comm), rank = Mpi::Rank(comm);
+
+  // K - 20 M, where K and M are the stiffness and mass matrices of the Laplacian on the
+  // unit cube with natural boundary conditions, for n^3 hexahedral elements of order 2
+  // (tensor products of the 1D matrices), with the rows distributed in contiguous blocks.
+  // The matrix is indefinite, so that the factorization interchanges rows, and its largest
+  // separator, a plane of (2 n + 1)^2 = 625 unknowns, is above the 512 unknowns from which
+  // STRUMPACK compresses a front.
+  const int n = 12, m = 2 * n + 1;
+  const double h = 1.0 / n, shift = 20.0;
+  const double K_e[3][3] = {{7.0, -8.0, 1.0}, {-8.0, 16.0, -8.0}, {1.0, -8.0, 7.0}};
+  const double M_e[3][3] = {{4.0, 2.0, -1.0}, {2.0, 16.0, 2.0}, {-1.0, 2.0, 4.0}};
+  std::vector<double> K1(m * m, 0.0), M1(m * m, 0.0);
+  for (int e = 0; e < n; e++)
+  {
+    for (int a = 0; a < 3; a++)
+    {
+      for (int b = 0; b < 3; b++)
+      {
+        K1[(2 * e + a) * m + 2 * e + b] += K_e[a][b] / (3.0 * h);
+        M1[(2 * e + a) * m + 2 * e + b] += M_e[a][b] * h / 30.0;
+      }
+    }
+  }
+  const HYPRE_BigInt N = m * m * m;
+  const HYPRE_BigInt first = (N * rank) / P, last = (N * (rank + 1)) / P;
+  const int n_loc = static_cast<int>(last - first);
+  std::vector<int> I(n_loc + 1, 0);
+  std::vector<HYPRE_BigInt> J;
+  std::vector<double> data;
+  for (HYPRE_BigInt g = first; g < last; g++)
+  {
+    const int i = static_cast<int>(g % m), j = static_cast<int>((g / m) % m),
+              k = static_cast<int>(g / (m * m));
+    for (int k2 = std::max(0, k - 2); k2 <= std::min(m - 1, k + 2); k2++)
+    {
+      for (int j2 = std::max(0, j - 2); j2 <= std::min(m - 1, j + 2); j2++)
+      {
+        for (int i2 = std::max(0, i - 2); i2 <= std::min(m - 1, i + 2); i2++)
+        {
+          // An entry of the 1D mass matrix is nonzero exactly when its two nodes belong to
+          // one element.
+          const double Mx = M1[i * m + i2], My = M1[j * m + j2], Mz = M1[k * m + k2];
+          if (Mx == 0.0 || My == 0.0 || Mz == 0.0)
+          {
+            continue;
+          }
+          const double Kx = K1[i * m + i2], Ky = K1[j * m + j2], Kz = K1[k * m + k2];
+          J.push_back(i2 + m * (j2 + m * k2));
+          data.push_back(Kx * My * Mz + Mx * Ky * Mz + Mx * My * Kz - shift * Mx * My * Mz);
+        }
+      }
+    }
+    I[g - first + 1] = static_cast<int>(J.size());
+  }
+  HYPRE_BigInt row_starts[2] = {first, last};
+  mfem::HypreParMatrix A(comm, n_loc, N, N, I.data(), J.data(), data.data(), row_starts,
+                         row_starts);
+
+  mfem::HypreParVector b(A), x(A), r(A);
+  for (int i = 0; i < n_loc; i++)
+  {
+    b(i) = std::sin(static_cast<double>((first + i) * (first + i)));
+  }
+
+  // The residual of one solve is 5e-10 to 7e-10 on 1 to 4 processes at this compression
+  // tolerance. With the defect it was 1e-2 on 2 processes and 0.25 on 4.
+  StrumpackSolver strumpack(comm, SymbolicFactorization::DEFAULT, SparseCompression::BLR,
+                            1.0e-9, 0, 0, false, 0);
+  strumpack.SetOperator(A);
+  x = 0.0;
+  strumpack.Mult(b, x);
+  A.Mult(x, r);
+  r -= b;
+  const double res =
+      std::sqrt(mfem::InnerProduct(comm, r, r) / mfem::InnerProduct(comm, b, b));
+  CHECK(res <= 1.0e-6);
+}
+
 }  // namespace palace
 
 #endif
