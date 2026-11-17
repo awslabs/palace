@@ -73,9 +73,11 @@ private:
 
 public:
   // The projection vectors are copied, so they need not outlive the operator.
+  // Term k belongs to the block with id block[k], typically its port.
   LowRankComplexOperator(MPI_Comm comm, int n, const std::vector<const ComplexVector *> &v,
-                         const std::vector<std::complex<double>> &g)
-    : ComplexOperator(n), update(comm, n, v, g)
+                         const std::vector<std::complex<double>> &g,
+                         const std::vector<int> &block)
+    : ComplexOperator(n), update(comm, n, v, g, block)
   {
   }
 

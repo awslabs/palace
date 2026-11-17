@@ -5,7 +5,7 @@
 
 #include <algorithm>
 #include <climits>
-#include <numeric>
+#include <map>
 #include <mfem/general/forall.hpp>
 
 namespace palace
@@ -14,20 +14,11 @@ namespace palace
 namespace
 {
 
-// Threads per block of the device dot products, and the cap on the total number of blocks
-// (which bounds the block partials copied to the host) unless there are more local terms.
+// Threads per block of the device dot products, and the cap on the number of blocks of
+// threads of a block of terms (which bounds the partials copied to the host) unless it has
+// more terms.
 constexpr int block_size = 256;
 constexpr int max_blocks = 1024;
-
-int FindRoot(std::vector<int> &parent, int k)
-{
-  while (parent[k] != k)
-  {
-    parent[k] = parent[parent[k]];
-    k = parent[k];
-  }
-  return k;
-}
 
 // re + i im += conj(v) x (Conj = true) or v x (Conj = false).
 template <bool Conj>
@@ -65,149 +56,105 @@ MFEM_HOST_DEVICE inline void UpdateAdd(double sr, double si, double vr, double v
 template <bool Conj>
 LowRankComplexUpdate<Conj>::LowRankComplexUpdate(MPI_Comm comm, int n,
                                                  std::span<const ComplexVector *const> v,
-                                                 std::span<const std::complex<double>> g)
+                                                 std::span<const std::complex<double>> g,
+                                                 std::span<const int> block)
   : comm(comm), n(n), K(static_cast<int>(v.size())), g(g.begin(), g.end())
 {
-  MFEM_VERIFY(v.size() == g.size(), "Mismatched number of low-rank vectors and weights!");
+  MFEM_VERIFY(v.size() == g.size() && v.size() == block.size(),
+              "Mismatched numbers of low-rank vectors, weights and block ids!");
 
-  // Group the terms by connected support: two terms are in the same group if both are
-  // nonzero at some local entry, so the groups have disjoint entries (typically one group
-  // per port). Each group drops the entries where all of its terms are exactly zero, which
-  // is exact. The root of a group is its first term.
-  std::vector<int> owner(n, -1), parent(K);
-  std::iota(parent.begin(), parent.end(), 0);
-  std::vector<bool> supported(K, false);
+  // The terms of each block in order, and the local entries where any of them is nonzero.
+  // Blocks without local entries are dropped: their terms contribute zero here.
+  std::map<int, std::vector<int>> block_terms;
   for (int k = 0; k < K; k++)
   {
     MFEM_VERIFY(v[k]->Size() == n, "Mismatched low-rank vector sizes!");
-    const auto *VR = v[k]->Real().HostRead();
-    const auto *VI = v[k]->Imag().HostRead();
+    block_terms[block[k]].push_back(k);
+  }
+  std::vector<std::vector<int>> terms, ents;
+  std::vector<char> on(n);
+  for (auto &[id, bt] : block_terms)
+  {
+    std::fill(on.begin(), on.end(), 0);
+    for (int k : bt)
+    {
+      const auto *VR = v[k]->Real().HostRead();
+      const auto *VI = v[k]->Imag().HostRead();
+      for (int i = 0; i < n; i++)
+      {
+        on[i] = on[i] || VR[i] != 0.0 || VI[i] != 0.0;
+      }
+    }
+    std::vector<int> e;
     for (int i = 0; i < n; i++)
     {
-      if (VR[i] != 0.0 || VI[i] != 0.0)
+      if (on[i])
       {
-        supported[k] = true;
-        if (owner[i] < 0)
-        {
-          owner[i] = k;
-        }
-        else
-        {
-          const int r1 = FindRoot(parent, owner[i]), r2 = FindRoot(parent, k);
-          parent[std::max(r1, r2)] = std::min(r1, r2);
-        }
+        e.push_back(i);
       }
     }
-  }
-  std::vector<int> group(K, -1), terms, ents;
-  int num_groups = 0;
-  for (int k = 0; k < K; k++)
-  {
-    if (supported[k])
+    if (!e.empty())
     {
-      const int r = FindRoot(parent, k);
-      if (group[r] < 0)
+      MFEM_VERIFY(static_cast<long long>(bt.size()) * static_cast<long long>(e.size()) <=
+                      INT_MAX,
+                  "Too many packed low-rank values in a block!");
+      terms.push_back(std::move(bt));
+      ents.push_back(std::move(e));
+    }
+  }
+
+  // Pack the values of the terms of each block on its entries, term-major. The device dot
+  // products use enough blocks of threads per term for the entries of its block, capped so
+  // that the partials stay small. They depend only on the sizes of the block, so the
+  // summation order is the same on every device.
+  blocks.resize(terms.size());
+  int num_partials = 0, num_local = 0;
+  for (std::size_t b = 0; b < blocks.size(); b++)
+  {
+    auto &blk = blocks[b];
+    const int nt = static_cast<int>(terms[b].size()),
+              nnz = static_cast<int>(ents[b].size());
+    blk.terms = std::move(terms[b]);
+    blk.idx.SetSize(nnz);
+    std::copy(ents[b].begin(), ents[b].end(), blk.idx.HostWrite());
+    blk.vr.SetSize(nt * nnz);
+    blk.vi.SetSize(nt * nnz);
+    blk.vr.UseDevice(true);
+    blk.vi.UseDevice(true);
+    auto *PR = blk.vr.HostWrite();
+    auto *PI = blk.vi.HostWrite();
+    for (int t = 0; t < nt; t++)
+    {
+      const auto *VR = v[blk.terms[t]]->Real().HostRead();
+      const auto *VI = v[blk.terms[t]]->Imag().HostRead();
+      for (int j = 0; j < nnz; j++)
       {
-        group[r] = num_groups++;
+        PR[t * nnz + j] = VR[ents[b][j]];
+        PI[t * nnz + j] = VI[ents[b][j]];
       }
-      group[k] = group[r];
-      terms.push_back(k);
     }
+    blk.nb = std::min((nnz + block_size - 1) / block_size, std::max(1, max_blocks / nt));
+    blk.offset = num_partials;
+    blk.first = num_local;
+    num_partials += nt * blk.nb;
+    num_local += nt;
   }
-  for (int i = 0; i < n; i++)
-  {
-    if (owner[i] >= 0)
-    {
-      ents.push_back(i);
-    }
-  }
-
-  // Order the local terms and the packed entries by group, keeping the order of the terms
-  // and of the local indices within each group.
-  std::stable_sort(terms.begin(), terms.end(),
-                   [&](int k1, int k2) { return group[k1] < group[k2]; });
-  std::stable_sort(ents.begin(), ents.end(),
-                   [&](int i1, int i2) { return group[owner[i1]] < group[owner[i2]]; });
-  const int num_local = static_cast<int>(terms.size());
-  const int num_entries = static_cast<int>(ents.size());
-  perm.SetSize(num_local);
-  term_group.SetSize(num_local);
-  idx.SetSize(num_entries);
-  ent_group.SetSize(num_entries);
-  group_terms.SetSize(num_groups + 1);
-  group_ents.SetSize(num_groups + 1);
-  group_vals.SetSize(num_groups + 1);
-  auto *PM = perm.HostWrite();
-  auto *TG = term_group.HostWrite();
-  auto *I = idx.HostWrite();
-  auto *EG = ent_group.HostWrite();
-  auto *GT = group_terms.HostWrite();
-  auto *GE = group_ents.HostWrite();
-  auto *GV = group_vals.HostWrite();
-  std::fill(GT, GT + num_groups + 1, 0);
-  std::fill(GE, GE + num_groups + 1, 0);
-  for (int t = 0; t < num_local; t++)
-  {
-    PM[t] = terms[t];
-    TG[t] = group[terms[t]];
-    GT[TG[t] + 1]++;
-  }
-  for (int j = 0; j < num_entries; j++)
-  {
-    I[j] = ents[j];
-    EG[j] = group[owner[ents[j]]];
-    GE[EG[j] + 1]++;
-  }
-  int max_nnz = 0;
-  long long num_vals = 0;
-  for (int gi = 0; gi < num_groups; gi++)
-  {
-    num_vals += static_cast<long long>(GT[gi + 1]) * GE[gi + 1];
-  }
-  // Collective, so that every process fails rather than only the ones over the limit.
-  bool too_many = num_vals > INT_MAX;
-  Mpi::GlobalOr(1, &too_many, comm);
-  MFEM_VERIFY(!too_many, "Too many packed low-rank values on a process!");
-  GV[0] = 0;
-  for (int gi = 0; gi < num_groups; gi++)
-  {
-    max_nnz = std::max(max_nnz, GE[gi + 1]);
-    GV[gi + 1] = GV[gi] + GT[gi + 1] * GE[gi + 1];
-    GT[gi + 1] += GT[gi];
-    GE[gi + 1] += GE[gi];
-  }
-
-  // Pack the values of the terms of each group on its entries, term-major.
-  vr.SetSize(GV[num_groups]);
-  vi.SetSize(GV[num_groups]);
-  vr.UseDevice(true);
-  vi.UseDevice(true);
-  auto *PR = vr.HostWrite();
-  auto *PI = vi.HostWrite();
-  for (int t = 0; t < num_local; t++)
-  {
-    const int gi = TG[t], e0 = GE[gi], nnz = GE[gi + 1] - e0;
-    const int v0 = GV[gi] + (t - GT[gi]) * nnz;
-    const auto *VR = v[PM[t]]->Real().HostRead();
-    const auto *VI = v[PM[t]]->Imag().HostRead();
-    for (int j = 0; j < nnz; j++)
-    {
-      PR[v0 + j] = VR[I[e0 + j]];
-      PI[v0 + j] = VI[I[e0 + j]];
-    }
-  }
-
-  // Blocks per term of the device dot products: enough for the largest group, capped so
-  // that the block partials stay small. They depend only on the sizes, so the summation
-  // order is the same on every device.
-  nb = (num_local == 0) ? 0
-                        : std::min((max_nnz + block_size - 1) / block_size,
-                                   std::max(1, max_blocks / num_local));
-  partial.SetSize(2 * num_local * nb);
+  partial.SetSize(2 * num_partials);
   partial.UseDevice(true);
   dots.SetSize(2 * K);
   coeff.SetSize(2 * num_local);
   coeff.UseDevice(true);
+}
+
+template <bool Conj>
+int LowRankComplexUpdate<Conj>::NumPackedEntries() const
+{
+  int nnz = 0;
+  for (const auto &blk : blocks)
+  {
+    nnz += blk.idx.Size();
+  }
+  return nnz;
 }
 
 template <bool Conj>
@@ -222,185 +169,163 @@ void LowRankComplexUpdate<Conj>::AddMult(const ComplexVector &x, ComplexVector &
   MFEM_ASSERT(x.Size() == n && y.Size() == n, "Mismatched low-rank vector sizes!");
   const bool use_dev = x.UseDevice() || y.UseDevice();
   const bool on_dev = use_dev && mfem::Device::Allows(mfem::Backend::DEVICE_MASK);
-  const int num_local = perm.Size(), num_entries = idx.Size();
-  const auto *PM = perm.HostRead();
 
-  // Local dot products v_kᴴ x or v_kᵀ x of the local terms, summed in a fixed order. The
-  // terms without local support contribute zero.
+  // Local dot products v_kᴴ x or v_kᵀ x of the terms of the local blocks, summed in a fixed
+  // order. The other terms contribute zero.
   auto *D = dots.HostWrite();
   std::fill(D, D + 2 * K, 0.0);
   if (on_dev)
   {
-    // Each block reduces a strided slice of the entries of one term in shared memory, and
-    // the block partials of each term are summed on the host in order.
-    const int NB = nb;
-    const auto *TG = term_group.Read();
-    const auto *GT = group_terms.Read(), *GE = group_ents.Read(), *GV = group_vals.Read();
-    const auto *I = idx.Read();
-    const auto *VR = vr.Read(), *VI = vi.Read();
-    const auto *XR = x.Real().Read(true), *XI = x.Imag().Read(true);
+    // Each block of threads reduces a strided slice of the entries of one term in shared
+    // memory, and the partials of each term are summed on the host in order.
+    const auto *XR = x.Real().Read(), *XI = x.Imag().Read();
     auto *P = partial.Write();
-    mfem::forall_2D(num_local * NB, block_size, 1,
-                    [=] MFEM_HOST_DEVICE(int blk)
-                    {
-                      const int t = blk / NB, b = blk % NB, gi = TG[t];
-                      const int e0 = GE[gi], nnz = GE[gi + 1] - e0;
-                      const int v0 = GV[gi] + (t - GT[gi]) * nnz;
-                      MFEM_SHARED double sm[2][block_size];
-                      MFEM_FOREACH_THREAD(tid, x, block_size)
-                      {
-                        double re = 0.0, im = 0.0;
-                        for (int j = b * block_size + tid; j < nnz; j += NB * block_size)
-                        {
-                          const int i = I[e0 + j];
-                          DotAdd<Conj>(VR[v0 + j], VI[v0 + j], XR[i], XI[i], re, im);
-                        }
-                        sm[0][tid] = re;
-                        sm[1][tid] = im;
-                      }
-                      for (int w = block_size / 2; w > 0; w /= 2)
-                      {
-                        MFEM_SYNC_THREAD;
-                        MFEM_FOREACH_THREAD(tid, x, w)
-                        {
-                          sm[0][tid] += sm[0][tid + w];
-                          sm[1][tid] += sm[1][tid + w];
-                        }
-                      }
-                      MFEM_FOREACH_THREAD(tid, x, 1)
-                      {
-                        P[2 * blk + 0] = sm[0][0];
-                        P[2 * blk + 1] = sm[1][0];
-                      }
-                    });
-    const auto *PH = partial.HostRead();
-    for (int t = 0; t < num_local; t++)
+    for (const auto &blk : blocks)
     {
-      for (int b = 0; b < NB; b++)
+      const int nnz = blk.idx.Size(), NB = blk.nb;
+      const auto *I = blk.idx.Read();
+      const auto *VR = blk.vr.Read(), *VI = blk.vi.Read();
+      auto *PB = P + 2 * blk.offset;
+      mfem::forall_2D(static_cast<int>(blk.terms.size()) * NB, block_size, 1,
+                      [=] MFEM_HOST_DEVICE(int b)
+                      {
+                        const int v0 = (b / NB) * nnz;
+                        MFEM_SHARED double sm[2][block_size];
+                        MFEM_FOREACH_THREAD(tid, x, block_size)
+                        {
+                          double re = 0.0, im = 0.0;
+                          for (int j = (b % NB) * block_size + tid; j < nnz;
+                               j += NB * block_size)
+                          {
+                            const int i = I[j];
+                            DotAdd<Conj>(VR[v0 + j], VI[v0 + j], XR[i], XI[i], re, im);
+                          }
+                          sm[0][tid] = re;
+                          sm[1][tid] = im;
+                        }
+                        for (int w = block_size / 2; w > 0; w /= 2)
+                        {
+                          MFEM_SYNC_THREAD;
+                          MFEM_FOREACH_THREAD(tid, x, w)
+                          {
+                            sm[0][tid] += sm[0][tid + w];
+                            sm[1][tid] += sm[1][tid + w];
+                          }
+                        }
+                        MFEM_FOREACH_THREAD(tid, x, 1)
+                        {
+                          PB[2 * b + 0] = sm[0][0];
+                          PB[2 * b + 1] = sm[1][0];
+                        }
+                      });
+    }
+    const auto *PH = partial.HostRead();
+    for (const auto &blk : blocks)
+    {
+      for (std::size_t t = 0; t < blk.terms.size(); t++)
       {
-        D[2 * PM[t] + 0] += PH[2 * (t * NB + b) + 0];
-        D[2 * PM[t] + 1] += PH[2 * (t * NB + b) + 1];
+        for (int b = 0; b < blk.nb; b++)
+        {
+          const int p = blk.offset + static_cast<int>(t) * blk.nb + b;
+          D[2 * blk.terms[t] + 0] += PH[2 * p + 0];
+          D[2 * blk.terms[t] + 1] += PH[2 * p + 1];
+        }
       }
     }
   }
   else
   {
-    // On the host, each term sums the entries of its group in four interleaved lanes (entry
+    // On the host, each term sums the entries of its block in four interleaved lanes (entry
     // j in lane j % 4), each with separate sums of the four real products, combined in a
     // fixed order at the end. The loop then carries no dependency from one entry to the
     // next and needs no reduction across vector lanes, which GCC compiles into strictly
     // ordered (slow) instructions for SVE.
-    const auto *TG = term_group.HostRead();
-    const auto *GT = group_terms.HostRead(), *GE = group_ents.HostRead();
-    const auto *GV = group_vals.HostRead();
-    const auto *I = idx.HostRead();
-    const auto *VR = vr.HostRead(), *VI = vi.HostRead();
     const auto *XR = x.Real().HostRead(), *XI = x.Imag().HostRead();
-    mfem::forall_switch(use_dev, num_local,
-                        [=] MFEM_HOST_DEVICE(int t)
-                        {
-                          constexpr int L = 4;
-                          const int gi = TG[t], e0 = GE[gi], nnz = GE[gi + 1] - e0;
-                          const int v0 = GV[gi] + (t - GT[gi]) * nnz;
-                          double rr[L] = {}, ii[L] = {}, ri[L] = {}, ir[L] = {};
-                          int j = 0;
-                          for (; j + L <= nnz; j += L)
+    for (const auto &blk : blocks)
+    {
+      const int nnz = blk.idx.Size();
+      const int *T = blk.terms.data();
+      const auto *I = blk.idx.HostRead();
+      const auto *VR = blk.vr.HostRead(), *VI = blk.vi.HostRead();
+      mfem::forall_switch(use_dev, static_cast<int>(blk.terms.size()),
+                          [=] MFEM_HOST_DEVICE(int t)
                           {
-                            for (int l = 0; l < L; l++)
+                            constexpr int L = 4;
+                            const int v0 = t * nnz;
+                            double rr[L] = {}, ii[L] = {}, ri[L] = {}, ir[L] = {};
+                            int j = 0;
+                            for (; j + L <= nnz; j += L)
                             {
-                              const int i = I[e0 + j + l];
-                              const double vr_j = VR[v0 + j + l], vi_j = VI[v0 + j + l];
+                              for (int l = 0; l < L; l++)
+                              {
+                                const int i = I[j + l];
+                                const double vr_j = VR[v0 + j + l], vi_j = VI[v0 + j + l];
+                                rr[l] += vr_j * XR[i];
+                                ii[l] += vi_j * XI[i];
+                                ri[l] += vr_j * XI[i];
+                                ir[l] += vi_j * XR[i];
+                              }
+                            }
+                            for (int l = 0; j < nnz; j++, l++)
+                            {
+                              const int i = I[j];
+                              const double vr_j = VR[v0 + j], vi_j = VI[v0 + j];
                               rr[l] += vr_j * XR[i];
                               ii[l] += vi_j * XI[i];
                               ri[l] += vr_j * XI[i];
                               ir[l] += vi_j * XR[i];
                             }
-                          }
-                          for (int l = 0; j < nnz; j++, l++)
-                          {
-                            const int i = I[e0 + j];
-                            const double vr_j = VR[v0 + j], vi_j = VI[v0 + j];
-                            rr[l] += vr_j * XR[i];
-                            ii[l] += vi_j * XI[i];
-                            ri[l] += vr_j * XI[i];
-                            ir[l] += vi_j * XR[i];
-                          }
-                          for (int l = 1; l < L; l++)
-                          {
-                            rr[0] += rr[l];
-                            ii[0] += ii[l];
-                            ri[0] += ri[l];
-                            ir[0] += ir[l];
-                          }
-                          D[2 * PM[t] + 0] = Conj ? rr[0] + ii[0] : rr[0] - ii[0];
-                          D[2 * PM[t] + 1] = Conj ? ri[0] - ir[0] : ri[0] + ir[0];
-                        });
+                            for (int l = 1; l < L; l++)
+                            {
+                              rr[0] += rr[l];
+                              ii[0] += ii[l];
+                              ri[0] += ri[l];
+                              ir[0] += ir[l];
+                            }
+                            D[2 * T[t] + 0] = Conj ? rr[0] + ii[0] : rr[0] - ii[0];
+                            D[2 * T[t] + 1] = Conj ? ri[0] - ir[0] : ri[0] + ir[0];
+                          });
+    }
   }
 
   // One reduction for all terms, then the coefficients s_k = a g_k (v_kᴴ x) or
-  // a g_k (v_kᵀ x) of the local terms.
+  // a g_k (v_kᵀ x) of the terms of the local blocks.
   Mpi::GlobalSum(2 * K, D, comm);
-  auto *C = coeff.HostWrite();
-  for (int t = 0; t < num_local; t++)
+  auto *CH = coeff.HostWrite();
+  for (const auto &blk : blocks)
   {
-    const int k = PM[t];
-    const auto s = a * g[k] * std::complex<double>(D[2 * k], D[2 * k + 1]);
-    C[2 * t + 0] = s.real();
-    C[2 * t + 1] = s.imag();
+    for (std::size_t t = 0; t < blk.terms.size(); t++)
+    {
+      const int k = blk.terms[t];
+      const auto s = a * g[k] * std::complex<double>(D[2 * k], D[2 * k + 1]);
+      CH[2 * (blk.first + t) + 0] = s.real();
+      CH[2 * (blk.first + t) + 1] = s.imag();
+    }
   }
 
-  // y += Σ_k s_k v_k, with each entry accumulating the terms of its group in order. A
-  // device or OpenMP backend runs one loop over all the packed entries; the serial host
-  // loops over the groups, with their offsets hoisted out of the loop over the entries.
-  if (use_dev && mfem::Device::Allows(mfem::Backend::DEVICE_MASK | mfem::Backend::OMP_MASK))
+  // y += Σ_k s_k v_k, one block after the other (so blocks may share entries), with each
+  // entry accumulating the terms of its block in order.
+  const auto *DC = coeff.Read(use_dev);
+  auto *YR = y.Real().ReadWrite(use_dev), *YI = y.Imag().ReadWrite(use_dev);
+  for (const auto &blk : blocks)
   {
-    const auto *EG = ent_group.Read(use_dev);
-    const auto *GT = group_terms.Read(use_dev), *GE = group_ents.Read(use_dev);
-    const auto *GV = group_vals.Read(use_dev);
-    const auto *I = idx.Read(use_dev);
-    const auto *VR = vr.Read(use_dev), *VI = vi.Read(use_dev);
-    const auto *DC = coeff.Read(use_dev);
-    auto *YR = y.Real().ReadWrite(use_dev), *YI = y.Imag().ReadWrite(use_dev);
-    mfem::forall_switch(use_dev, num_entries,
-                        [=] MFEM_HOST_DEVICE(int e)
+    const int nt = static_cast<int>(blk.terms.size()), nnz = blk.idx.Size();
+    const auto *I = blk.idx.Read(use_dev);
+    const auto *VR = blk.vr.Read(use_dev), *VI = blk.vi.Read(use_dev);
+    const auto *C = DC + 2 * blk.first;
+    mfem::forall_switch(use_dev, nnz,
+                        [=] MFEM_HOST_DEVICE(int j)
                         {
-                          const int gi = EG[e], e0 = GE[gi], nnz = GE[gi + 1] - e0;
-                          const int t0 = GT[gi], t1 = GT[gi + 1], v0 = GV[gi] + e - e0;
-                          const int i = I[e];
+                          const int i = I[j];
                           double yr = YR[i], yi = YI[i];
-                          for (int t = t0; t < t1; t++)
+                          for (int t = 0; t < nt; t++)
                           {
-                            const int v = v0 + (t - t0) * nnz;
-                            UpdateAdd(DC[2 * t], DC[2 * t + 1], VR[v], VI[v], yr, yi);
+                            UpdateAdd(C[2 * t], C[2 * t + 1], VR[t * nnz + j],
+                                      VI[t * nnz + j], yr, yi);
                           }
                           YR[i] = yr;
                           YI[i] = yi;
                         });
-  }
-  else
-  {
-    const auto *GT = group_terms.HostRead(), *GE = group_ents.HostRead();
-    const auto *GV = group_vals.HostRead();
-    const auto *I = idx.HostRead();
-    const auto *VR = vr.HostRead(), *VI = vi.HostRead();
-    const auto *DC = coeff.HostRead();
-    auto *YR = y.Real().HostReadWrite(), *YI = y.Imag().HostReadWrite();
-    for (int gi = 0; gi < NumGroups(); gi++)
-    {
-      const int e0 = GE[gi], nnz = GE[gi + 1] - e0, t0 = GT[gi], nt = GT[gi + 1] - t0;
-      const double *GR = VR + GV[gi], *GI = VI + GV[gi], *C = DC + 2 * t0;
-      for (int j = 0; j < nnz; j++)
-      {
-        const int i = I[e0 + j];
-        double yr = YR[i], yi = YI[i];
-        for (int t = 0; t < nt; t++)
-        {
-          UpdateAdd(C[2 * t], C[2 * t + 1], GR[t * nnz + j], GI[t * nnz + j], yr, yi);
-        }
-        YR[i] = yr;
-        YI[i] = yi;
-      }
-    }
   }
 }
 

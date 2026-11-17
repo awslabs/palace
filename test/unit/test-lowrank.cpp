@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <complex>
 #include <memory>
@@ -69,8 +70,8 @@ TEMPLATE_TEST_CASE("LowRankComplexUpdate matches a complex reference",
   constexpr bool conj = TestType::value;
   MPI_Comm comm = Mpi::World();
   const int rank = Mpi::Rank(comm), size = Mpi::Size(comm);
-  // One device block per term, uncapped and capped blocks per term, and the cap of one
-  // block.
+  // One device block per term, uncapped and capped blocks per term (with one block of
+  // terms), and the cap of one block.
   const auto [n0, K] =
       GENERATE(table<int, int>({{23, 7}, {8200, 7}, {8200, 80}, {40, 1100}}));
   const int n = n0 + 3 * rank;
@@ -78,11 +79,15 @@ TEMPLATE_TEST_CASE("LowRankComplexUpdate matches a complex reference",
   // 0: sparse support on every rank, 1: support on rank 0 only, 2: full support, 3: three
   // disjoint ports of 1/6, 1/3 and 1/2 of the entries (term k on port k % 3, every other
   // entry for odd k), 4: as 3, with the last term also on the first entry of the next
-  // port, which joins two of the ports, 5: term k only on rank k % size, on every third
-  // entry, 6: three ports interleaved entry by entry, so that the packed entries must be
-  // reordered by port (term k on the entries i with i % 3 == 2 - k % 3, every other triple
-  // for odd k).
-  const int support = GENERATE(0, 1, 2, 3, 4, 5, 6);
+  // port, which that port then shares, 5: term k only on rank k % size, on every third
+  // entry, 6: three ports interleaved entry by entry (term k on the entries i with i % 3 ==
+  // 2 - k % 3, every other triple for odd k), 7: term k only on rank k % size, on every
+  // other entry. With 2, 3, 4 and 6, term k is in block k % 3, so the blocks share all
+  // their entries in 2 and one entry in 4. With 7, it is in the block with id -7, 3 or 1000
+  // for k % 3 = 0, 1 or 2, so that ranks keep some blocks and drop others. Otherwise all
+  // the terms are in one block.
+  const int support = GENERATE(0, 1, 2, 3, 4, 5, 6, 7);
+  const bool blocked = (support == 2 || support == 3 || support == 4 || support == 6);
   std::mt19937 gen(1234 + 17 * rank + 101 * support + n0 + K);
   std::uniform_real_distribution<double> dist(-1.0, 1.0);
 
@@ -91,8 +96,10 @@ TEMPLATE_TEST_CASE("LowRankComplexUpdate matches a complex reference",
   std::vector<std::unique_ptr<ComplexVector>> v;
   std::vector<const ComplexVector *> v_ptr;
   std::vector<std::complex<double>> g;
+  std::vector<int> block;
   for (int k = 0; k < K; k++)
   {
+    block.push_back((support == 7) ? std::array{-7, 3, 1000}[k % 3] : blocked ? k % 3 : 0);
     auto vk = std::make_unique<ComplexVector>(n);
     vk->UseDevice(true);
     auto *VR = vk->Real().HostWrite();
@@ -106,7 +113,8 @@ TEMPLATE_TEST_CASE("LowRankComplexUpdate matches a complex reference",
           ((support == 3 || support == 4) && port(i) == b && (k % 2 == 0 || i % 2 == 0)) ||
           (support == 4 && k == K - 1 && i == first((b + 1) % 3)) ||
           (support == 5 && rank == k % size && i % 3 == 0) ||
-          (support == 6 && i % 3 == 2 - b && (k % 2 == 0 || (i / 3) % 2 == 0));
+          (support == 6 && i % 3 == 2 - b && (k % 2 == 0 || (i / 3) % 2 == 0)) ||
+          (support == 7 && rank == k % size && i % 2 == 0);
       VR[i] = on ? dist(gen) : 0.0;
       VI[i] = on ? dist(gen) : 0.0;
     }
@@ -149,18 +157,33 @@ TEMPLATE_TEST_CASE("LowRankComplexUpdate matches a complex reference",
     }
   }
 
-  LowRankComplexUpdate<conj> update(comm, n, v_ptr, g);
-  const bool local = (support != 1 || rank == 0) && (support != 5 || rank < K);
+  LowRankComplexUpdate<conj> update(comm, n, v_ptr, g, block);
+  const bool local =
+      (support != 1 || rank == 0) && ((support != 5 && support != 7) || rank < K);
+  // With 7, the blocks of the terms on this rank.
+  int num_blocks_7 = 0;
+  for (int b = 0; b < 3; b++)
+  {
+    bool any = false;
+    for (int k = rank; k < K; k += size)
+    {
+      any = any || k % 3 == b;
+    }
+    num_blocks_7 += any;
+  }
   const int nnz = !local           ? 0
                   : (support == 0) ? (n + 3) / 4 + (n + 2) / 4
                   : (support == 1) ? std::min(n, K + 3)
+                  : (support == 2) ? 3 * n
+                  : (support == 4) ? n + 1
                   : (support == 5) ? (n + 2) / 3
+                  : (support == 7) ? num_blocks_7 * ((n + 1) / 2)
                                    : n;
   CHECK(update.NumTerms() == K);
-  CHECK(update.NumGroups() == (!local                           ? 0
-                               : (support == 3 || support == 6) ? 3
-                               : (support == 4)                 ? 2
-                                                                : 1));
+  CHECK(update.NumBlocks() == (!local           ? 0
+                               : (support == 7) ? num_blocks_7
+                               : blocked        ? 3
+                                                : 1));
   CHECK(update.NumPackedEntries() == nnz);
 
   // The entries outside every term's support must stay exactly as they were.
@@ -196,7 +219,7 @@ TEMPLATE_TEST_CASE("LowRankComplexUpdate matches a complex reference",
 
 TEST_CASE("LowRankComplexUpdate with no terms", "[lowrank][Serial][Parallel][GPU]")
 {
-  LowRankComplexUpdate<true> update(Mpi::World(), 5, {}, {});
+  LowRankComplexUpdate<true> update(Mpi::World(), 5, {}, {}, {});
   ComplexVector x(5), y(5);
   x = 1.0;
   y = 2.0;
@@ -220,7 +243,7 @@ TEST_CASE("Floquet low-rank operator uses the conjugated inner product",
   y.UseDevice(true);
   FillRandom(v, gen);
   const std::complex<double> g(0.3, -0.2);
-  LowRankComplexOperator op(comm, n, {&v}, {g});
+  LowRankComplexOperator op(comm, n, {&v}, {g}, {0});
   op.Mult(v, y);
   const double v_sq = std::pow(linalg::Norml2(comm, v), 2);
   auto ref = Values(v);

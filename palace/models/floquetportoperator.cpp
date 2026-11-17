@@ -934,18 +934,21 @@ std::unique_ptr<ComplexOperator> FloquetPortOperator::GetExtraSystemOperator(dou
 
   Initialize(omega);
 
-  // A single operator over all ports, so each product needs one reduction.
+  // A single operator over all ports, so each product needs one reduction, with the terms
+  // of each port in their own block.
   std::vector<const ComplexVector *> v;
   std::vector<std::complex<double>> g;
+  std::vector<int> block;
   for (const auto &[idx, port] : ports)
   {
     port.AddBoundaryTerms(v, g);
+    block.resize(v.size(), idx);
   }
   if (v.empty())
   {
     return nullptr;
   }
-  return std::make_unique<LowRankComplexOperator>(comm, n, v, g);
+  return std::make_unique<LowRankComplexOperator>(comm, n, v, g, block);
 }
 
 void FloquetPortOperator::AddExtraSystemBdrCoefficients(double omega,
