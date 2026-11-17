@@ -463,10 +463,9 @@ std::unique_ptr<mfem::ParMesh> Partition(IoData &iodata, std::unique_ptr<mfem::M
   std::unique_ptr<mfem::ParMesh> pmesh;
   if (auto nc_file = std::move(iodata.nc_mesh_file))
   {
-    pmesh = PartitionNCMeshFile(comm, *nc_file, *smesh,
+    pmesh = PartitionNCMeshFile(comm, *nc_file, std::move(smesh),
                                 iodata.units.GetMeshLengthRelativeScale(),
                                 refinement.maximum_imbalance);
-    smesh.reset();
     nc_file.reset();
     if (pmesh)
     {

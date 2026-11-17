@@ -46,14 +46,15 @@ struct NCMeshFile;
 std::shared_ptr<NCMeshFile> ReadNCMeshCoarse(MPI_Comm comm, const std::string &path,
                                              bool enabled, std::string &coarse);
 
-// Distribute that coarse mesh (on every process) along the trees of its roots, and refine
-// it into the mesh of the file, with the nodes of the file divided by the length scale;
-// then rebalance it if the largest number of elements on a process is more than `tol` times
-// the smallest. Returns null on every process if the file does not match (for example, if
-// its numbering is not that of PrintParallelNCMesh). Collective.
+// Distribute that coarse mesh (on every process, which frees it once it is distributed)
+// along the trees of its roots, and refine it into the mesh of the file, with the nodes of
+// the file divided by the length scale; then rebalance it if the largest number of elements
+// on a process is more than `tol` times the smallest. Returns null on every process if the
+// file does not match (for example, if its numbering is not that of PrintParallelNCMesh).
+// Collective.
 std::unique_ptr<mfem::ParMesh> PartitionNCMeshFile(MPI_Comm comm, NCMeshFile &file,
-                                                   mfem::Mesh &coarse, double length_scale,
-                                                   double tol);
+                                                   std::unique_ptr<mfem::Mesh> coarse,
+                                                   double length_scale, double tol);
 
 }  // namespace palace::mesh
 

@@ -1173,9 +1173,9 @@ void TestParallelNCSave(MPI_Comm comm, const fs::path &temp_dir, mfem::Element::
       auto kept = mesh::ReadNCMeshCoarse(comm, path.string(), true, text);
       REQUIRE(kept);
       std::istringstream is(text);
-      mfem::Mesh coarse(is);
-      mesh::NondimensionalizeMesh(coarse, L);
-      auto read = mesh::PartitionNCMeshFile(comm, *kept, coarse, L, 1.1);
+      auto coarse = std::make_unique<mfem::Mesh>(is);
+      mesh::NondimensionalizeMesh(*coarse, L);
+      auto read = mesh::PartitionNCMeshFile(comm, *kept, std::move(coarse), L, 1.1);
       REQUIRE(read);
       REQUIRE(mesh::PrintParallelNCMesh(*read, L, path.string() + ".read", false));
       return read;
@@ -1193,9 +1193,9 @@ void TestParallelNCSave(MPI_Comm comm, const fs::path &temp_dir, mfem::Element::
       auto kept = mesh::ReadNCMeshCoarse(comm, plain.string(), true, text);
       REQUIRE(kept);
       std::istringstream is(text);
-      mfem::Mesh coarse(is);
-      coarse.UniformRefinement();
-      CHECK_FALSE(mesh::PartitionNCMeshFile(comm, *kept, coarse, L, 1.1));
+      auto coarse = std::make_unique<mfem::Mesh>(is);
+      coarse->UniformRefinement();
+      CHECK_FALSE(mesh::PartitionNCMeshFile(comm, *kept, std::move(coarse), L, 1.1));
     }
 
     // Through mesh::Load and mesh::Partition, as a restart reads its mesh: in parallel from
