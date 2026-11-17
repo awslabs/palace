@@ -738,8 +738,16 @@ bool RegionOnlyMesh(mfem::ParMesh &mesh, const std::vector<int> &environment_att
 {
   const auto moments = ElementMoments(mesh, environment_attributes);
   const bool region_only = !MomentsMatch(moments, env_moments, tol);
-  MFEM_VERIFY(!region_only || MomentsMatch(moments, region_moments, tol),
-              kEnvironmentDiffers);
+  if (region_only && !MomentsMatch(moments, region_moments, tol))
+  {
+    // Refinement keeps the volume and the first moments of the elements, but not their
+    // number nor the moment of the distances of their centers.
+    auto kept = moments;
+    kept[0] = region_moments[0];
+    kept[2] = region_moments[2];
+    MFEM_VERIFY(!MomentsMatch(kept, region_moments, tol), kRegionMeshRefined);
+    MFEM_ABORT(kEnvironmentDiffers);
+  }
   return region_only;
 }
 

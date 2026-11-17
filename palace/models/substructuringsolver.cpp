@@ -213,9 +213,7 @@ SubstructuringSolver::Impl::Impl(const IoData &iodata,
       MFEM_VERIFY(refinement.uniform_ref_levels == 0 &&
                       refinement.ser_uniform_ref_levels == 0 &&
                       refinement.GetBoxes().empty() && refinement.GetSpheres().empty(),
-                  "The mesh of the region is written refined: an online run on it takes no "
-                  "\"UniformLevels\", \"SerialUniformLevels\", \"Boxes\" or \"Spheres\" "
-                  "refinement!");
+                  kRegionMeshRefined);
       // The versions on the region side only of the DOFs on the boundary, at the points of
       // the saved interface DOFs, are interface DOFs (both sides of a two-sided film
       // crossing Gamma).
