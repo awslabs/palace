@@ -29,6 +29,9 @@ private:
   mutable std::vector<std::complex<double>> prev_eigenvalues;
   mutable int prev_num_its = -1;
 
+  // Number of restarts of the last solve which was not warm-started.
+  mutable int cold_num_its = -1;
+
   // Number of solves so far: the initial one, then one per adaptation iteration.
   mutable int num_solves = 0;
 

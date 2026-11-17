@@ -435,6 +435,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                                  nonlinear_type != NonlinearEigenSolver::SLP &&
                                  (!(C || has_A2) || eigenmode.pep_linear);
 
+  bool warm_started = false;
   // Set up the initial space for the eigenvalue solve. Satisfies boundary conditions and is
   // projected appropriately.
   if (eigenmode.init_v0)
@@ -452,10 +453,13 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     int num_warm = 0;
     const bool warm_start = prev_eigenvectors && prev_eigenvectors->IsCurrent(
                                                      space_op.GetNDSpace().GetParMesh());
-    if (warm_start && prev_num_its == 1)
+    if (warm_start && cold_num_its <= 2)
     {
-      Mpi::Print(" Previous adaptation iteration converged within one Krylov cycle: no "
-                 "warm start\n");
+      // Experiment: a warm-started solve accepts eigenpairs only from its second restart,
+      // so it cannot shorten a solve which converges within two restarts from the default
+      // starting vector.
+      Mpi::Print(" Solve without warm start converged within two Krylov cycles: no warm "
+                 "start\n");
     }
     else if (warm_start)
     {
@@ -500,6 +504,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
             (q_region || !(C || has_A2)) ? num_warm + 1 : -1);
       }
     }
+    warm_started = (num_warm > 0);
     if (num_warm == 0)
     {
       Mpi::Print(" Using {} starting vector\n",
@@ -715,6 +720,10 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         space_op.GetNDSpace().GetParMesh(), iodata.solver.order);
     prev_eigenvalues = eigenvalues;
     prev_num_its = num_its;
+    if (!warm_started)
+    {
+      cold_num_its = num_its;
+    }
   }
 
   for (int i = 0; i < num_report; i++)
