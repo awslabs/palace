@@ -2189,8 +2189,10 @@ no magnetic term); two-dimensional boundary-mode runs, `PatchConstruction` `"Leg
 electrostatic runs are not served. The candidate is always a second operator built beside
 the operator of record (its setup time and memory are printed); when nothing is substituted
 it is a twin of the operator of record, and every measurement checks that the candidate
-equals the record cell for cell (a mismatch ends the run with an error). `"Apply"` is
-reserved and refused in this build.
+equals the record cell for cell (a mismatch ends the run with an error). `"Record"` runs
+only with `Coverage.Policy` `"Warn"`: with `"MarkNotApplied"` (set by the key or by
+default) it is refused at load, since the candidate tables would print values for cells
+the tables of record withhold. `"Apply"` is reserved and refused in this build.
 
 Exit status of a preflight: `0` when it completed; `3` when it wrote its manifest and patch
 dry run (3D) in full and then ended because `GeometryFailurePolicy` is `FailClosed` (the

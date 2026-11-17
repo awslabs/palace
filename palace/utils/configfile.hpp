@@ -2116,6 +2116,13 @@ public:
   ElectrostaticSolverData(const json &electrostatic);
 };
 
+// The impedance-metal rule's measuring mode (ImpedanceMetalRule "Record") prints candidate
+// values beside the values of record, so it runs only where the coverage policy prints
+// every corrected value: "Record" with the RESOLVED Coverage.Policy "MarkNotApplied" (the
+// key, or the default when the key is absent) is refused (ruling 2065). Called at load.
+void VerifyImpedanceMetalRuleCoveragePolicy(
+    const ElectrostaticSolverData::ResponseCorrectionData &data);
+
 struct MagnetostaticSolverData
 {
 public:

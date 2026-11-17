@@ -180,6 +180,41 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   unknown["Solver"]["SurfaceResponseCorrection"]["ImpedanceMetalFilmOverrides"] = {
       {{"Attributes", {9}}, {"Serve", true}, {"Basis", "x"}}};
   CHECK_THROWS_WITH(IoData(unknown, false), ContainsSubstring("unknown key \"Basis\""));
+  // Ruling 2065 (1): "Record" runs only under Coverage.Policy "Warn" (the measuring mode
+  // prints candidate values beside the values of record; MarkNotApplied withholds them).
+  const std::string policy_refusal =
+      "\"Record\" runs only with \"Coverage\": {\"Policy\": \"Warn\"}";
+  json marked = config;
+  marked["Solver"]["SurfaceResponseCorrection"]["Coverage"]["Policy"] = "MarkNotApplied";
+  CHECK_THROWS_WITH(IoData(marked, false), ContainsSubstring(policy_refusal));
+  json warned = config;
+  warned["Solver"]["SurfaceResponseCorrection"]["Coverage"]["Policy"] = "Warn";
+  CHECK_NOTHROW(IoData(warned, false));
+  json marked_off = marked;
+  marked_off["Solver"]["SurfaceResponseCorrection"].erase("ImpedanceMetalFilmOverrides");
+  marked_off["Solver"]["SurfaceResponseCorrection"]["ImpedanceMetalRule"] = "Off";
+  CHECK_NOTHROW(IoData(marked_off, false));
+  {
+    // The refusal reads the RESOLVED policy: with the key absent the parse resolves
+    // CoverageData::kDefaultCoveragePolicy (a constant: not patchable here), so the check
+    // is called with each value the key-absent parse can resolve to, the flipped default
+    // MARK_NOT_APPLIED included.
+    const IoData absent(config, false);
+    const auto &request = *absent.solver.surface_response_correction;
+    CHECK(request.coverage.policy ==
+          ResponseCorrectionData::CoverageData::kDefaultCoveragePolicy);
+    ResponseCorrectionData flipped = request;
+    flipped.coverage.policy =
+        ResponseCorrectionData::CoverageData::Policy::MARK_NOT_APPLIED;
+    CHECK_THROWS_WITH(config::VerifyImpedanceMetalRuleCoveragePolicy(flipped),
+                      ContainsSubstring(policy_refusal));
+    flipped.coverage.policy = ResponseCorrectionData::CoverageData::Policy::WARN;
+    CHECK_NOTHROW(config::VerifyImpedanceMetalRuleCoveragePolicy(flipped));
+    flipped.impedance_metal_rule = ResponseCorrectionData::ImpedanceMetalRule::OFF;
+    flipped.coverage.policy =
+        ResponseCorrectionData::CoverageData::Policy::MARK_NOT_APPLIED;
+    CHECK_NOTHROW(config::VerifyImpedanceMetalRuleCoveragePolicy(flipped));
+  }
 }
 
 // t2 / t3 / t5 and the negative laws (STAGEA-NOTE s6): the candidate operator on the convex

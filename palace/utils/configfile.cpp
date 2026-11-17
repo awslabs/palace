@@ -1584,6 +1584,22 @@ EigenSolverData::EigenSolverData(const json &eigenmode)
                                      "greater than config[\"Eigenmode\"][\"Target\"]!");
 }
 
+void VerifyImpedanceMetalRuleCoveragePolicy(
+    const ElectrostaticSolverData::ResponseCorrectionData &data)
+{
+  using ResponseCorrectionData = ElectrostaticSolverData::ResponseCorrectionData;
+  MFEM_VERIFY(
+      data.impedance_metal_rule != ResponseCorrectionData::ImpedanceMetalRule::RECORD ||
+          data.coverage.policy !=
+              ResponseCorrectionData::CoverageData::Policy::MARK_NOT_APPLIED,
+      "Response-correction \"ImpedanceMetalRule\": \"Record\" runs only with "
+      "\"Coverage\": {\"Policy\": \"Warn\"}: the measuring mode prints candidate "
+      "values beside the values of record, and the coverage policy in force "
+      "(\"MarkNotApplied\", set by the key or by default) withholds corrected values "
+      "of poorly covered cells; set \"Coverage\": {\"Policy\": \"Warn\"} in "
+      "Solver.SurfaceResponseCorrection, or remove \"ImpedanceMetalRule\"!");
+}
+
 ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
 {
   n_post = electrostatic.value("Save", n_post);
@@ -2113,6 +2129,7 @@ ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
           data.span_cap_allowances.push_back(std::move(allowance));
         }
       }
+      VerifyImpedanceMetalRuleCoveragePolicy(data);
       response_correction = std::move(data);
       return;
     }
