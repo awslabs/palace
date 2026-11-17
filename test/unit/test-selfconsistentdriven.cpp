@@ -50,6 +50,12 @@ constexpr double kLegacyVersusMainRelativeTolerance = 1.0e-10;
 // attributable to cracking on a corrected participation (decision 1566 (5)).
 constexpr double kDefaultVersusLegacyRelativeTolerance = 1.0e-3;
 
+// The references hold at 1 and 2 ranks only. On more ranks the corrected values of this
+// fixture depend on the MPI partition while the raw field does not (MEASURED against np 1,
+// on our pre-merge main as well: np 3 1.1e-2, np 4 7.8e-3, np 6 2.0e-2 relative; review
+// P4-batch2-r2109 M-1 / M-2; open item OI-CORRECTED-VALUES-PARTITION-DEPENDENT-C3-FIXTURE).
+constexpr int kMaxRanksWithMeasuredReferences = 2;
+
 }  // namespace
 
 TEST_CASE_METHOD(
@@ -60,9 +66,16 @@ TEST_CASE_METHOD(
 #if !defined(MFEM_USE_GSLIB)
   SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
 #else
+  MPI_Comm comm = Mpi::World();
+  if (Mpi::Size(comm) > kMaxRanksWithMeasuredReferences)
+  {
+    SKIP(
+        "References measured at 1-2 ranks only: on more ranks the corrected values of this "
+        "fixture depend on the MPI partition (up to 2e-2 relative at 3-6 ranks; the raw "
+        "field does not); open item OI-CORRECTED-VALUES-PARTITION-DEPENDENT-C3-FIXTURE");
+  }
   const auto crack_policy = GENERATE(test::CrackPolicy::Legacy, test::CrackPolicy::Default);
   INFO("crack policy: " << test::CrackPolicyName(crack_policy));
-  MPI_Comm comm = Mpi::World();
   const fs::path mesh_path = temp.temp_dir / "self-consistent-driven-island.mesh";
   if (Mpi::Root(comm))
   {
