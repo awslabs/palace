@@ -256,6 +256,11 @@ public:
   // to fbi, for the frequency domain only. Both are frequency independent.
   void AddExcitationBdrCoefficients(int excitation_idx, SumVectorCoefficient &fbr,
                                     SumVectorCoefficient &fbi);
+
+  // Same drive term for a single port selected by port index, with unit weight, independent
+  // of any "Excitation" grouping and excitation weight in the configuration. Used for the
+  // quasistatic anchor solves in circuit synthesis.
+  void AddPortExcitationBdrCoefficient(int port_idx, SumVectorCoefficient &fb);
 };
 
 }  // namespace palace
