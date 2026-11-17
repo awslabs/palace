@@ -175,7 +175,11 @@ ConfigurePreconditionerSolver(const config::LinearSolverData &linear,
       if constexpr (std::is_same_v<OperType, ComplexOperator>)
       {
         // Only with a 2D process grid: SuperLUComplexSolver implements the driver for 2D
-        // process grids (pzgssvx), not the one for 3D process grids (pzgssvx3d).
+        // process grids (pzgssvx). The driver for 3D process grids (pzgssvx3d) gives the
+        // same solutions in complex arithmetic, but the triangular solves of SuperLU_DIST
+        // on a 3D process grid can deadlock when the processes have few rows each (seen
+        // with 150 rows per process on 32 processes, in real and in complex arithmetic),
+        // and the complex-valued matrix has half the rows of the real-valued system.
         if (UseComplexArithmetic(linear) && !linear.superlu_3d)
         {
           pc = std::make_unique<ComplexCoarseSolver>(
