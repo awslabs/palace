@@ -1894,6 +1894,19 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
       CHECK(port1.value_or(true));
       CHECK(port2.has_value());
       CHECK_FALSE(port2.value_or(true));
+
+      // The resolved configuration has the values which are used, so that it gives the
+      // same simulation.
+      config = IoData::ConcretizeDefaults(iodata, config);
+      const auto &j_ports = config["Boundaries"]["WavePort"];
+      CHECK_FALSE(config["Solver"]["Linear"]["ComplexCoarseSolve"].get<bool>());
+      CHECK(j_ports[0].contains("ComplexCoarseSolve") == !pc_mat_real);
+      CHECK(j_ports[0].value("ComplexCoarseSolve", true));
+      CHECK_FALSE(j_ports[1].at("ComplexCoarseSolve").get<bool>());
+      IoData iodata2(config, false);
+      CHECK_FALSE(iodata2.solver.linear.complex_coarse_solve);
+      CHECK(iodata2.boundaries.waveport.at(1).complex_coarse_solve == port1);
+      CHECK(iodata2.boundaries.waveport.at(2).complex_coarse_solve == port2);
     }
     {
       // The default of a frequency domain problem is a sparse direct solver if there is

@@ -394,6 +394,14 @@ void ConcretizeBoundaries(const config::BoundaryData &boundaries, json &j_bounda
                             {"EigenTol", wp.eig_tol},
                             {"MaxSize", wp.max_size},
                             {"Verbose", wp.verbose}});
+
+      // A wave port without its own "ComplexCoarseSolve" keeps the inherited true when
+      // it is disabled for the linear solver (see IoData::CheckConfiguration): write the
+      // value which is used.
+      if (wp.complex_coarse_solve)
+      {
+        j_port["ComplexCoarseSolve"] = *wp.complex_coarse_solve;
+      }
     }
   }
 
