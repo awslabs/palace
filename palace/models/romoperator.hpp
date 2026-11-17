@@ -557,7 +557,24 @@ public:
   // `extrapolate` set, solve at both ν and ν/2 and Richardson-extrapolate,
   // x₀ ≈ [4 x(ν/2) − x(ν)]/3, cancelling that term so the column satisfies the
   // unscreened identity to O(ν⁴) at the cost of one extra solve per anchored port.
-  void AddLumpedPortAnchorModesForSynthesis(double nu, bool extrapolate = false);
+  //
+  // With several screening frequencies, in ascending order, the lowest gives the
+  // quasistatic anchor above ("anchor_<idx>", extrapolated when requested) and each other
+  // frequency ν_k adds the screened response x(ν_k) of every anchored port as its own basis
+  // vector ("anchor_<idx>_nu<k>", k = 1, 2, ...).
+  void AddLumpedPortAnchorModesForSynthesis(const std::vector<double> &nu,
+                                            bool extrapolate = false);
+  void AddLumpedPortAnchorModesForSynthesis(double nu, bool extrapolate = false)
+  {
+    AddLumpedPortAnchorModesForSynthesis(std::vector<double>{nu}, extrapolate);
+  }
+
+  // The screening frequencies of the anchor solves for the configured ones
+  // (config["Solver"]["Driven"]["AdaptiveCircuitSynthesisAnchorFreq"], nondimensional), in
+  // ascending order and distinct, where 0 selects one tenth of the lowest sweep frequency
+  // omega_min.
+  static std::vector<double> GetAnchorScreeningFrequencies(const std::vector<double> &nu,
+                                                           double omega_min);
 
   // Add field configuration to the reduced-order basis and update the PROM. Requires a name
   // "node_label". This will be printed in the header of the csv files when printing PROM

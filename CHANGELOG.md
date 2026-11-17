@@ -50,13 +50,16 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     that the inductive-limit response of the junction is available without a pseudo-inverse
     of `L⁻¹`. The screening frequency `ν/2π` is set by
     `config["Solver"]["Driven"]["AdaptiveCircuitSynthesisAnchorFreq"]` (default: one tenth
-    of the lowest sweep frequency). With
-    `config["Solver"]["Driven"]["AdaptiveCircuitSynthesisAnchorExtrapolate"]`, each anchor is
-    solved at `ν` and `ν/2` and Richardson-extrapolated, so that the column satisfies the
-    unscreened identity `L⁻¹v = s·e_p` up to `O(ν⁴)`. Frequency-dependent boundaries enter
-    the anchor solves at their static (DC) limit: an inductive `RationalImpedance` keeps its
-    DC term, while `WavePort`, `Conductivity`, and second-order `Absorbing` terms drop out.
-    SchemaVer 4-5-0
+    of the lowest sweep frequency). A list of screening frequencies adds, for each frequency
+    above the lowest, the screened response of the port as a further column
+    `anchor_<index>_nu<k>_re`, which makes the response of the port at that imaginary
+    frequency exact in the synthesized circuit, for example above the sweep band. With
+    `config["Solver"]["Driven"]["AdaptiveCircuitSynthesisAnchorExtrapolate"]`, the
+    quasistatic anchor is solved at `ν` and `ν/2` and Richardson-extrapolated, so that its
+    column satisfies the unscreened identity `L⁻¹v = s·e_p` up to `O(ν⁴)`.
+    Frequency-dependent boundaries enter the anchor solves at their static (DC) limit: an
+    inductive `RationalImpedance` keeps its DC term, while `WavePort`, `Conductivity`, and
+    second-order `Absorbing` terms drop out. SchemaVer 4-5-0
 
 #### Interface Changes
 

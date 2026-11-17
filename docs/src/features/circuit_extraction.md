@@ -297,8 +297,9 @@ appends HDM samples and orthogonalizes them against these port modes.
     `waveport_<idx>_re` and, when the wave-port modal field has a non-zero imaginary part, an
     additional `waveport_<idx>_im` column — so a wave port may occupy two columns, unlike a lumped
     port. Next come the anchor solves of any lumped ports with `"SynthesisAnchor"`
-    (`anchor_<idx>_re`, see [Quasistatic Anchor Solves](#Quasistatic-Anchor-Solves) below), then
-    the synthesized interior nodes from the HDM samples (`sample_e*` below). Finally,
+    (`anchor_<idx>_re`, then `anchor_<idx>_nu<k>_re` for further screening frequencies, see
+    [Quasistatic Anchor Solves](#Quasistatic-Anchor-Solves) below), then the synthesized
+    interior nodes from the HDM samples (`sample_e*` below). Finally,
     when a frequency-dependent boundary enters the [Augmented
     regime](#Synthesizing-Frequency-Dependent-Boundary-Conditions), the matrices grow by
     auxiliary-state rows and columns appended at the end, labeled `<prefix>_p<k>d<j>`, where
@@ -359,6 +360,26 @@ quasistatic responses of the two arms differ by the loop mode of the SQUID, in w
 circulates through the two junction capacitances and the inductance of the loop between the
 returns of the junctions: anchoring one arm makes the static inductance across that arm exact, and
 anchoring both also brings the loop mode into the basis.
+
+[`"AdaptiveCircuitSynthesisAnchorFreq"`](../config/reference.md#config-solver-driven) also takes
+a list of screening frequencies. The lowest, which should stay well below the sweep band, gives
+the quasistatic anchor `anchor_<idx>_re` above, extrapolated when requested, and each other
+frequency $\nu_k$, in ascending order, adds the screened response
+$\bm{x}(\nu_k) = (\bm{K} + \nu_k^2\bm{M})^{-1}\bm{b}_p$ of the port as a further column,
+`anchor_<idx>_nu<k>_re` with $k = 1, 2, \ldots$. Since the synthesized matrices are a Galerkin
+projection of these symmetric positive definite systems, the synthesized circuit reproduces the
+screened response of the port,
+
+```math
+G_p(\kappa) = \bm{b}_p^T\left(\bm{K} + \kappa^2\bm{M}\right)^{-1}\bm{b}_p ,
+```
+
+proportional to the inductance across the port at the imaginary frequency $i\kappa$, as a lower
+bound at every $\kappa$, and exactly, with its derivative in $\kappa^2$, at each anchor
+frequency. Anchor frequencies above the sweep band, where the samples do not resolve the response,
+therefore make it exact at those frequencies and tighter in between. This matters for quantities
+set by the modes above the band, such as the zero-point phase fluctuations of a Josephson
+junction port.
 
 ### Orthogonalization
 

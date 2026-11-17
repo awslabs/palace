@@ -29,6 +29,7 @@
 #include "utils/filesystem.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
+#include "utils/jsonschema.hpp"
 #include "utils/tablecsv.hpp"
 
 using namespace palace;
@@ -2969,6 +2970,68 @@ TEST_CASE("RomOperator-Synthesis-AnchorOnExcludedPortRejected", "[romoperator][S
                     Catch::Matchers::ContainsSubstring("SynthesisAnchor"));
 }
 
+// "AdaptiveCircuitSynthesisAnchorFreq" is a screening frequency or a list of them, parsed
+// in ascending order, with 0 for the default frequency. An empty list, a negative frequency
+// and a repeated one are rejected, by the schema and by the parser. The screening
+// frequencies of the anchor solves replace 0 by one tenth of the lowest sweep frequency and
+// drop a repeat of it.
+TEST_CASE("RomOperator-Synthesis-AnchorFreqList", "[romoperator][Serial]")
+{
+  auto MakeConfig = [](const json &anchor_freq)
+  {
+    json setup_json;
+    setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 0}, {"Output", "."}};
+    setup_json["Model"] = {{"Mesh", "placeholder.msh"}};
+    setup_json["Domains"] = {
+        {"Materials", json::array({json::object(
+                          {{"Attributes", json::array({1})}, {"Permittivity", 1.0}})})}};
+    setup_json["Boundaries"] = {
+        {"LumpedPort", json::array({json::object({{"Index", 1},
+                                                  {"L", 25.0e-9},
+                                                  {"SynthesisAnchor", true},
+                                                  {"Attributes", json::array({100})},
+                                                  {"Direction", "+X"}})})}};
+    setup_json["Solver"] = {{"Order", 1UL},
+                            {"Driven",
+                             {{"AdaptiveTol", 1e-3},
+                              {"AdaptiveCircuitSynthesis", true},
+                              {"AdaptiveCircuitSynthesisAnchorFreq", anchor_freq},
+                              {"MinFreq", 2.0},
+                              {"MaxFreq", 32.0},
+                              {"FreqStep", 1.0}}}};
+    return setup_json;
+  };
+
+  {
+    const auto config = MakeConfig(0.5);
+    CHECK(ValidateConfig(config).empty());
+    IoData iodata(config, false);
+    CHECK(iodata.solver.driven.adaptive_circuit_synthesis_anchor_freq ==
+          std::vector<double>{0.5});
+  }
+  {
+    const auto config = MakeConfig(json::array({300.0, 0.0, 30.0}));
+    CHECK(ValidateConfig(config).empty());
+    IoData iodata(config, false);
+    CHECK(iodata.solver.driven.adaptive_circuit_synthesis_anchor_freq ==
+          std::vector<double>{0.0, 30.0, 300.0});
+  }
+  for (const auto &anchor_freq :
+       {json::array(), json::array({-1.0}), json::array({30.0, 0.0, 30.0})})
+  {
+    CAPTURE(anchor_freq.dump());
+    CHECK_FALSE(ValidateConfig(MakeConfig(anchor_freq)).empty());
+    CHECK_THROWS_WITH(
+        (IoData{MakeConfig(anchor_freq), false}),
+        Catch::Matchers::ContainsSubstring("AdaptiveCircuitSynthesisAnchorFreq"));
+  }
+
+  CHECK(RomOperator::GetAnchorScreeningFrequencies({30.0, 0.0, 3.0}, 2.0) ==
+        std::vector<double>{0.2, 3.0, 30.0});
+  CHECK(RomOperator::GetAnchorScreeningFrequencies({0.0, 0.2}, 2.0) ==
+        std::vector<double>{0.2});
+}
+
 TEST_CASE_METHOD(palace::test::PerRankTempDir, "RomOperator-Synthesis-AnchorEntersBasis",
                  "[romoperator][Serial]")
 {
@@ -3093,6 +3156,118 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   CAPTURE(r.transpose());
   REQUIRE(std::abs(r(0)) > 0.0);
   CHECK(r.tail(r.size() - 1).norm() <= 1.0e-8 * std::abs(r(0)));
+}
+
+// With several screening frequencies, the lowest gives the quasistatic anchor anchor_1_re,
+// the same as alone and Richardson-extrapolated when requested, and each other frequency
+// ν_k adds the screened response of the port at that frequency, anchor_1_nu<k>_re, whose
+// coordinates c satisfy (Kr + ν_k²Mr) c = s e_p whatever the other basis vectors are. The
+// screened response of the port at any imaginary frequency iκ, e_pᵀ (Kr + κ²Mr)⁻¹ e_p,
+// which is a lower bound in any basis, can then only increase.
+TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-Synthesis-AnchorFrequencies",
+                 "[romoperator][Serial][Parallel]")
+{
+  const bool extrapolate = GENERATE(false, true);
+  CAPTURE(extrapolate);
+  MPI_Comm world_comm = Mpi::World();
+  json setup_json;
+  setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 0}, {"Output", temp_dir}};
+  setup_json["Model"] = {
+      {"Mesh", fs::path(PALACE_TEST_DATA_DIR) / "lumpedport_mesh/cube_mesh_3_2_1_tet.msh"},
+      {"L0", 1.0e-2},
+      {"Refinement", json::object({})}};
+  setup_json["Domains"] = {
+      {"Materials",
+       json::array({json::object({{"Attributes", json::array({1, 2, 3, 4, 5, 6})},
+                                  {"Permeability", 1.0},
+                                  {"Permittivity", 4.0}})})}};
+  setup_json["Boundaries"] = {
+      {"LumpedPort",
+       json::array({json::object(
+           {{"Index", 1},
+            {"L", 10.0e-9},
+            {"C", 1.0e-12},
+            {"SynthesisAnchor", true},
+            {"Excitation", uint(1)},
+            {"Elements", json::array({json::object({{"Attributes", json::array({14})},
+                                                    {"Direction", "+Z"}})})}})})}};
+  setup_json["Solver"] = {
+      {"Order", 2UL},
+      {"Device", "CPU"},
+      {"Driven",
+       {{"AdaptiveTol", 1.0e-3},
+        {"AdaptiveCircuitSynthesis", true},
+        {"AdaptiveCircuitSynthesisAnchorFreq", json::array({30.0, 0.0, 3.0})},
+        {"AdaptiveCircuitSynthesisAnchorExtrapolate", extrapolate},
+        {"MinFreq", 1.0},
+        {"MaxFreq", 3.0},
+        {"FreqStep", 0.5}}},
+      {"Linear",
+       {{"Type", "Default"}, {"KSPType", "GMRES"}, {"MaxIts", 500}, {"Tol", 1.0e-12}}}};
+
+  IoData iodata(setup_json, false);
+  auto mesh_io = LoadScaleParMesh2(iodata, world_comm);
+  SpaceOperator space_op(iodata, mesh_io);
+  const auto nu = RomOperator::GetAnchorScreeningFrequencies(
+      iodata.solver.driven.adaptive_circuit_synthesis_anchor_freq,
+      iodata.solver.driven.sample_f.front());
+  REQUIRE(nu.size() == 3);
+  auto BuildPROM = [&](const std::vector<double> &nu_s)
+  {
+    auto prom_op = std::make_unique<RomOperatorTest>(iodata, space_op, 10);
+    prom_op->AddLumpedPortModesForSynthesis();
+    prom_op->AddLumpedPortAnchorModesForSynthesis(nu_s, extrapolate);
+    for (int seed : {42, 44})
+    {
+      ComplexVector sample(space_op.GetNDSpace().GetTrueVSize());
+      sample.UseDevice(true);
+      linalg::SetRandom(world_comm, sample.Real(), seed);
+      linalg::SetRandom(world_comm, sample.Imag(), seed + 1);
+      prom_op->UpdatePROM(sample, fmt::format("sample_{:d}", seed));
+    }
+    return prom_op;
+  };
+  const auto prom_all = BuildPROM(nu);
+  const auto prom_one = BuildPROM({nu.front()});
+
+  const auto &labels = prom_all->GetNodeLabels();
+  REQUIRE(labels.size() == 8);
+  CHECK(labels[0] == "port_1_re");
+  CHECK(labels[1] == "anchor_1_re");
+  CHECK(labels[2] == "anchor_1_nu1_re");
+  CHECK(labels[3] == "anchor_1_nu2_re");
+  CHECK(prom_one->GetNodeLabels().size() == 6);
+
+  // The quasistatic anchor does not depend on the other frequencies.
+  const Eigen::VectorXd c0 = prom_all->GetOrthR().col(1).head(2);
+  CHECK((c0 - prom_one->GetOrthR().col(1).head(2)).norm() <= 1.0e-12 * c0.norm());
+
+  // Each anchor solves its screened system: the extrapolated quasistatic anchor the
+  // unscreened one, to O(ν⁴).
+  const Eigen::MatrixXd Kr = prom_all->GetKr().real(), Mr = prom_all->GetMr().real();
+  for (std::size_t k = 0; k < nu.size(); k++)
+  {
+    CAPTURE(k);
+    const double nu_k = (k == 0 && extrapolate) ? 0.0 : nu[k];
+    const Eigen::VectorXd c = prom_all->GetOrthR().col(1 + k);
+    const Eigen::VectorXd r = (Kr + nu_k * nu_k * Mr) * c;
+    REQUIRE(std::abs(r(0)) > 0.0);
+    CHECK(r.tail(r.size() - 1).norm() <= ((nu_k > 0.0) ? 1.0e-8 : 1.0e-5) * std::abs(r(0)));
+  }
+
+  // The screened response of the port between the two upper frequencies is a lower bound
+  // which the added vectors raise.
+  const double kappa = std::sqrt(nu[1] * nu[2]);
+  auto Response = [kappa](const RomOperatorTest &prom_op)
+  {
+    const Eigen::MatrixXd A =
+        prom_op.GetKr().real() + kappa * kappa * prom_op.GetMr().real();
+    return Eigen::VectorXd(A.ldlt().solve(Eigen::VectorXd::Unit(A.rows(), 0)))(0);
+  };
+  const double response_all = Response(*prom_all), response_one = Response(*prom_one);
+  CAPTURE(response_all, response_one);
+  CHECK(response_one > 0.0);
+  CHECK(response_all >= response_one * (1.0 - 1.0e-12));
 }
 
 // Richardson-extrapolated anchors ("AdaptiveCircuitSynthesisAnchorExtrapolate"): solving at
