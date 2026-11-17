@@ -21,6 +21,7 @@
 #include <nlohmann/json.hpp>
 #include "fem/bilinearform.hpp"
 #include "fem/integrator.hpp"
+#include "models/portexcitations.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
 #include "utils/jsonschema.hpp"
@@ -527,6 +528,18 @@ void IoData::CheckConfiguration()
     {
       Mpi::Warning(
           "Transient problem type does not support wave port boundary conditions!\n");
+    }
+    for (const auto &[idx, data] : boundaries.lumpedport)
+    {
+      // The excitation weight is frequency independent, so it can only be represented in
+      // the time domain when it is real, that is, when the phase is a multiple of 180
+      // degrees.
+      MFEM_VERIFY(
+          ExcitationWeight(data.excitation_amplitude, data.excitation_phase).imag() == 0.0,
+          fmt::format("Transient simulations require a real excitation: "
+                      "\"ExcitationPhase\" must be a multiple of 180 degrees on lumped "
+                      "port index {:d}",
+                      idx));
     }
     if (!boundaries.farfield.empty() && boundaries.farfield.order > 1)
     {
