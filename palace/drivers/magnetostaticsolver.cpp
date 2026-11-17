@@ -133,9 +133,12 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // whose essential DOFs match that step's shorted inactive ports (an empty set for a step
   // with no shorted ports reuses the base operator K). The base operator is bound lazily so
   // that an all-short configuration does not pay for an unused preconditioner setup.
-  perf::ScopedRole role("Main");
-  KspSolver ksp(iodata, curlcurl_op.GetSolutionNDSpaces(),
-                &curlcurl_op.GetSolutionH1Spaces());
+  auto ksp = [&]
+  {
+    perf::ScopedRole role("Main");
+    return KspSolver(iodata, curlcurl_op.GetSolutionNDSpaces(),
+                     &curlcurl_op.GetSolutionH1Spaces());
+  }();
   const Operator *bound_op = nullptr;
   auto set_operator = [&](const Operator &op, const Operator &pc)
   {

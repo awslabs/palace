@@ -33,8 +33,11 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   SaveMetadata(laplace_op.GetH1Spaces());
 
   // Set up the linear solver.
-  perf::ScopedRole role("Main");
-  KspSolver ksp(iodata, laplace_op.GetH1Spaces());
+  auto ksp = [&]
+  {
+    perf::ScopedRole role("Main");
+    return KspSolver(iodata, laplace_op.GetH1Spaces());
+  }();
   ksp.SetOperators(*K, *K);
 
   // Terminal indices are the set of boundaries over which to compute the capacitance

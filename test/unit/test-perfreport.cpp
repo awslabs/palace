@@ -2,11 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <chrono>
+#include <memory>
 #include <thread>
 #include <vector>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
+#include "linalg/iterative.hpp"
+#include "linalg/jacobi.hpp"
+#include "linalg/ksp.hpp"
 #include "utils/communication.hpp"
 #include "utils/perfreport.hpp"
 #include "utils/timer.hpp"
@@ -20,6 +24,24 @@ void Sleep(int ms)
 {
   std::this_thread::sleep_for(std::chrono::milliseconds(ms));
 }
+
+class SpdTestOperator : public Operator
+{
+public:
+  SpdTestOperator() : Operator(2) {}
+  void AssembleDiagonal(Vector &diag) const override
+  {
+    diag.SetSize(2);
+    diag[0] = 4.0;
+    diag[1] = 3.0;
+  }
+  void Mult(const Vector &x, Vector &y) const override
+  {
+    y.SetSize(2);
+    y[0] = 4.0 * x[0] + x[1];
+    y[1] = x[0] + 3.0 * x[1];
+  }
+};
 }  // namespace
 
 TEST_CASE("Timer Iterations", "[perfreport][Serial]")
@@ -208,19 +230,51 @@ TEST_CASE("PerfReport Row On One Process", "[perfreport][Parallel]")
   BlockTimer::Reset();
 }
 
-TEST_CASE("PerfReport Shared Linear Solver Role", "[perfreport][Serial]")
+TEST_CASE("PerfReport Linear Solver Statistics", "[perfreport][Serial][Parallel]")
 {
+  MPI_Comm comm = Mpi::World();
   BlockTimer::Reset();
+  SpdTestOperator A;
+  auto make = [&](int max_it)
   {
-    // Two solvers with the same role add up.
-    perf::ScopedRole role("TestShared");
-    const auto path = perf::LinearSolverPath(perf::CurrentRoleId(), "Solves");
-    CHECK(path == "LinearSolver/TestShared/Solves");
-    perf::SumMetric a(path, perf::Red::COUNT), b(path, perf::Red::COUNT);
-    a.Add(2);
-    b.Add(3);
+    auto cg = std::make_unique<CgSolver<Operator>>(comm, 0);
+    cg->SetRelTol(1.0e-12);
+    cg->SetAbsTol(0.0);
+    cg->SetMaxIter(max_it);
+    return std::make_unique<KspSolver>(std::move(cg),
+                                       std::make_unique<JacobiSmoother<Operator>>(comm));
+  };
+  std::unique_ptr<KspSolver> converging, truncated;
+  {
+    perf::ScopedRole role("TestMain");
+    converging = make(10);
+    truncated = make(1);  // One iteration cannot solve the 2x2 system
   }
-  const auto &r = perf::Report(Mpi::World());
-  CHECK(r.Metric("LinearSolver/TestShared/Solves", false)->sum == 5);
+  {
+    // Updates go to the role captured at construction.
+    perf::ScopedRole role("TestOther");
+    Vector b(2), x(2);
+    b = 0.0;
+    b[0] = 1.0;
+    for (auto *ksp : {converging.get(), truncated.get()})
+    {
+      x = 0.0;
+      ksp->SetOperators(A, A);
+      ksp->Mult(b, x);
+    }
+  }
+  const auto &r = perf::Report(comm);
+  auto max = [&](const char *field)
+  {
+    const auto *s = r.Metric(std::string("LinearSolver/TestMain/") + field, false);
+    REQUIRE(s);
+    return s->max;
+  };
+  CHECK(max("Solves") == 2);
+  CHECK(max("Setups") == 2);
+  CHECK(max("Its") >= 2);
+  CHECK(max("MaxIts") >= 1);
+  CHECK(max("NotConverged") == 1);
+  CHECK(!r.Metric("LinearSolver/TestOther/Solves", false));
   BlockTimer::Reset();
 }

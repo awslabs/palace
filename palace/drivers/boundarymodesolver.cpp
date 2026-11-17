@@ -442,9 +442,13 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   }
   const auto which_eig = (bm.target > 0.0) ? EigenvalueSolver::WhichType::LARGEST_MAGNITUDE
                                            : EigenvalueSolver::WhichType::LARGEST_REAL;
-  perf::ScopedRole role("Main");
-  ModeEigenSolver eig(mode_op, dbc_tdof_list, num_modes, bm.max_size, bm.tol, which_eig,
-                      iodata.solver.linear, bm.type, iodata.problem.verbose);
+  auto eig = [&]
+  {
+    perf::ScopedRole role("Main");
+    return ModeEigenSolver(mode_op, dbc_tdof_list, num_modes, bm.max_size, bm.tol,
+                           which_eig, iodata.solver.linear, bm.type,
+                           iodata.problem.verbose);
+  }();
 
   BoundaryModeFluxErrorEstimator<ComplexVector> estimator(
       mode_op.GetMaterialOp(), mode_op.GetNDSpaceHierarchy(), mode_op.GetRTSpaceHierarchy(),

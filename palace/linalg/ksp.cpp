@@ -333,23 +333,21 @@ void BaseKspSolver<OperType>::Mult(const VecType &x, VecType &y) const
   perf::ScopedRole scoped_role(role);
   BlockTimer bt(Timer::KSP, use_timer);
   ksp->Mult(x, y);
-  if (!ksp->GetConverged())
+  const int its = ksp->GetNumIterations();
+  const bool converged = ksp->GetConverged();
+  if (!converged)
   {
     Mpi::Warning(
         ksp->GetComm(),
         "Linear solver did not converge, norm(Ax-b)/norm(b) = {:.3e} (norm(b) = {:.3e})!\n",
         ksp->GetFinalRes() / ksp->GetInitialRes(), ksp->GetInitialRes());
+    perf_not_converged.Add(1);
   }
   ksp_mult++;
-  ksp_mult_it += ksp->GetNumIterations();
-  const int its = ksp->GetNumIterations();
+  ksp_mult_it += its;
   perf_solves.Add(1);
   perf_its.Add(its);
   perf_max_its.Update(its);
-  if (!ksp->GetConverged())
-  {
-    perf_not_converged.Add(1);
-  }
 }
 
 template class BaseKspSolver<Operator>;
