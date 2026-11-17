@@ -934,9 +934,8 @@ PackComplexOperator(std::unique_ptr<palace::Operator> &Ar,
   }
   // The packed composite can get more children than either part, up to all of the pairs,
   // their complements and the real leaves without a partner, while libCEED composites take
-  // at most 16 (CEED_COMPOSITE_MAX).
-  constexpr std::size_t max_sub_operators = 16;
-  if (num_pairs + complements.size() + singles.size() > max_sub_operators)
+  // at most CEED_COMPOSITE_MAX.
+  if (num_pairs + complements.size() + singles.size() > CEED_COMPOSITE_MAX)
   {
     return {};
   }
