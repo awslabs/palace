@@ -9,6 +9,7 @@
 #include <memory>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 #include <mfem.hpp>
 
@@ -192,18 +193,21 @@ inline BoundingBox GetBoundingBall(const mfem::ParMesh &mesh, int attr, bool bdr
   return GetBoundingBall(mesh, marker, bdr);
 }
 
-// Helper function for computing the direction aligned length of a marked group.
-double GetProjectedLength(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
-                          bool bdr, const mfem::Vector &dir);
+// Helper function for computing the interval spanned by a marked group along a direction:
+// the smallest and largest values of x · dir over its points, with dir normalized.
+std::pair<double, double> GetProjectedInterval(const mfem::ParMesh &mesh,
+                                               const mfem::Array<int> &marker, bool bdr,
+                                               const mfem::Vector &dir);
 
-inline double GetProjectedLength(const mfem::ParMesh &mesh, int attr, bool bdr,
-                                 const mfem::Vector &dir)
-{
-  mfem::Array<int> marker(bdr ? mesh.bdr_attributes.Max() : mesh.attributes.Max());
-  marker = 0;
-  marker[attr - 1] = 1;
-  return GetProjectedLength(mesh, marker, bdr, dir);
-}
+// Helper function for computing the cross-section of the marked boundary elements by the
+// plane (a line in 2D) of points x with x · dir = offset, for a unit vector dir. Returns
+// its measure: the length of the cut through the surface in 3D, or the number of points
+// where the boundary crosses the line in 2D. The centroid of the cross-section is returned
+// in centroid, and is zero when the cross-section is empty. Points x with x · dir >= offset
+// are above the plane, so a plane through an edge shared by two elements cuts only one of
+// them there.
+double GetCrossSection(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
+                       const mfem::Vector &dir, double offset, mfem::Vector &centroid);
 
 // Helper function for computing the closest distance of a marked group to a given point,
 // by brute force searching over the entire point set. Optionally compute the furthest
