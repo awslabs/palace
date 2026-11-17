@@ -369,6 +369,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     parallel instead of serially. The superbuild also skips Eigen's BLAS, LAPACK, and demos,
     which *Palace* does not use, and clones PETSc and SLEPc shallowly.
     [PR 1180](https://github.com/awslabs/palace/pull/1180).
+  - The Spack package now builds STRUMPACK without SLATE by default, as the superbuild and
+    the containers do. With SLATE, STRUMPACK factors and solves its distributed dense
+    fronts with SLATE instead of ScaLAPACK with a PBLAS block size of 128, *Palace*
+    initializes MPI with `MPI_THREAD_MULTIPLE`, and STRUMPACK is built with OpenMP even
+    for `~openmp`, as SLATE requires OpenMP. Request `strumpack+slate` to use SLATE.
 
 ## [0.19.0] - 2026-11-02
 
