@@ -78,8 +78,12 @@ runs:
         if [[ "${{ inputs.variant }}" == *"+cuda"* ]]; then
           CUDA_ARCH=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader | head -1 | tr -d '.')
           CUDA_ARGS="cuda_arch=${CUDA_ARCH}"
+          # When some packages are built with OpenMP in a non-OpenMP build,
+          # FindSTRUMPACK in MFEM cannot compile the test program.
+          ALL_REQUIRE="require: ~openmp"
         else
           CUDA_ARGS=""
+          ALL_REQUIRE=""
         fi
 
         # As of version 1.2.0-alpha, the spack concretizer hangs when using flang.
@@ -118,6 +122,11 @@ runs:
             reuse: false
             unify: true
           packages:
+            # CI never needs the examples of a package. ArmPL's would also add libgomp to
+            # its BLAS libraries, which hides static links that miss the OpenMP runtime.
+            all:
+              prefer: ["~examples"]
+              ${ALL_REQUIRE}
             petsc:
               require: ~hdf5
             mpi:
@@ -189,10 +198,6 @@ runs:
               externals:
               - spec: cuda@12.9
                 prefix: /usr/local/cuda-12.9/
-            # When some packages are built with OpenMP in a non-OpenMP build,
-            # FindSTRUMPACK in MFEM cannot compile the test program.
-            all:
-              require: ~openmp
         CUDAEOF
         fi
 

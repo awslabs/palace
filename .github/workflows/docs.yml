@@ -128,6 +128,8 @@ jobs:
               targets:
                 granularity: generic
             packages:
+              all:
+                prefer: ["~examples"]
               petsc:
                 require: ~hdf5
             repos:
