@@ -900,6 +900,13 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-AddSamplePROM",
     linalg::AXPY(-1.0, y, d);
     return linalg::Norml2(world_comm, d) / linalg::Norml2(world_comm, y);
   };
+  // Two RomOperators projecting the same vectors agree to round-off, not bit for bit: the
+  // distributed (and, with OpenMP, threaded) reductions need not sum in the same order.
+  auto same_matrix = [](const auto &A, const auto &B)
+  {
+    return A.rows() == B.rows() && A.cols() == B.cols() &&
+           (A - B).norm() <= 1.0e-12 * B.norm();
+  };
   const auto &omega = iodata.solver.driven.sample_f;
   ComplexVector u = make_vector(), x = make_vector(), x_ref = make_vector();
   for (std::size_t i : {std::size_t{0}, omega.size() - 1})
@@ -911,14 +918,14 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-AddSamplePROM",
     prom_op.AddSamplePROM(1, omega[i], u, 1.0e-6, "sample_" + std::to_string(i));
     prom_ref.UpdatePROM(u, "sample_" + std::to_string(i));
 
-    // An accurate sample adds both of its directions, exactly as UpdatePROM does, and is
-    // reproduced by the PROM.
+    // An accurate sample adds both of its directions, as UpdatePROM does, and is reproduced
+    // by the PROM.
     CHECK(prom_op.GetReducedDimension() == dim + 2);
     CHECK(prom_op.GetReducedDimension() == prom_ref.GetReducedDimension());
-    CHECK(prom_op.GetKr() == prom_ref.GetKr());
-    CHECK(prom_op.GetMr() == prom_ref.GetMr());
-    CHECK(prom_op.GetCr() == prom_ref.GetCr());
-    CHECK(prom_op.GetOrthR() == prom_ref.GetOrthR());
+    CHECK(same_matrix(prom_op.GetKr(), prom_ref.GetKr()));
+    CHECK(same_matrix(prom_op.GetMr(), prom_ref.GetMr()));
+    CHECK(same_matrix(prom_op.GetCr(), prom_ref.GetCr()));
+    CHECK(same_matrix(prom_op.GetOrthR(), prom_ref.GetOrthR()));
     prom_op.SolvePROM(1, omega[i], x);
     const double error_after = rel_diff(x, u);
     CHECK(error_after < 1.0e-6);
@@ -964,7 +971,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-AddSamplePROM",
   CHECK(error_kept <= (1.0 + 1.0e-8) * std::min(error_none, error_full));
   if (dim_noisy == dim + 2)
   {
-    CHECK(prom_op.GetKr() == prom_ref.GetKr());
+    CHECK(same_matrix(prom_op.GetKr(), prom_ref.GetKr()));
   }
 }
 
