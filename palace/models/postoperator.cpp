@@ -611,7 +611,7 @@ PostOperator<solver_t>::PostOperator(
 }
 
 template <ProblemType solver_t>
-void PostOperator<solver_t>::InitializeParaviewDataCollection(int ex_idx)
+fs::path PostOperator<solver_t>::ExcitationSubFolder(int ex_idx) const
   requires(solver_t == ProblemType::DRIVEN)
 {
   fs::path sub_folder_name = "";
@@ -621,7 +621,14 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(int ex_idx)
     int spacing = 1 + int(std::log10(nr_excitations));
     sub_folder_name = fmt::format(FMT_STRING("excitation_{:0>{}}"), ex_idx, spacing);
   }
-  InitializeParaviewDataCollection(sub_folder_name);
+  return sub_folder_name;
+}
+
+template <ProblemType solver_t>
+void PostOperator<solver_t>::InitializeParaviewDataCollection(int ex_idx)
+  requires(solver_t == ProblemType::DRIVEN)
+{
+  InitializeParaviewDataCollection(ExcitationSubFolder(ex_idx));
 }
 
 template <ProblemType solver_t>
@@ -1765,13 +1772,19 @@ void PostOperator<solver_t>::WriteParaviewFieldsFinal(const ErrorIndicator *indi
 }
 
 template <ProblemType solver_t>
-void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
+void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step,
+                                                    const fs::path &sub_folder_name)
 {
   BlockTimer bt(Timer::POSTPRO_GRIDFUNCTION);
   EnsureFieldCoefficientsSetup();
 
   // Create output directory if it doesn't exist (node-local filesystem aware).
-  EnsureDirectory(fs::path(gridfunction_output_dir), fem_op->GetComm());
+  fs::path output_dir = gridfunction_output_dir;
+  if (!sub_folder_name.empty())
+  {
+    output_dir /= sub_folder_name;
+  }
+  EnsureDirectory(output_dir, fem_op->GetComm());
 
   auto mesh_Lc0 = units.GetMeshLengthRelativeScale();
 
@@ -1814,9 +1827,9 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
 
   auto write_grid_function = [&](const auto &gridfunc, const std::string &name)
   {
-    auto path = fs::path(gridfunction_output_dir) /
-                fmt::format("{}_{:0{}d}.gf.{:0{}d}", name, step, pad_digits_default,
-                            local_rank, pad_digits_default);
+    auto path =
+        output_dir / fmt::format("{}_{:0{}d}.gf.{:0{}d}", name, step, pad_digits_default,
+                                 local_rank, pad_digits_default);
     std::ofstream file(path);
     gridfunc.Save(file);
   };
@@ -1989,7 +2002,9 @@ void PostOperator<solver_t>::WriteMFEMGridFunctionsFinal(const ErrorIndicator *i
   auto mesh_Lc0 = units.GetMeshLengthRelativeScale();
 
   // Write the mesh partitioning and (optionally) error indicators at the final step.
-  // Write the mesh coordinates in the same units as originally input.
+  // Write the mesh coordinates in the same units as originally input. These are written
+  // once, outside of any excitation subfolders, since all the excitations of a driven
+  // simulation share the mesh, and the error indicator combines them.
   mfem::ParMesh &mesh = E ? *E->ParFESpace()->GetParMesh() : *B->ParFESpace()->GetParMesh();
   mesh::DimensionalizeMesh(mesh, mesh_Lc0);
 
@@ -5083,7 +5098,7 @@ double PostOperator<solver_t>::MeasureAndPrintAll(int ex_idx, int step,
     Mpi::Print("\n");
     auto ind = 1 + std::distance(output_save_indices.begin(),
                                  std::ranges::lower_bound(output_save_indices, step));
-    WriteMFEMGridFunctions(freq.real(), ind);
+    WriteMFEMGridFunctions(freq.real(), ind, ExcitationSubFolder(ex_idx));
     Mpi::Print(" Wrote fields to disk (grid function) at step {:d}\n", step + 1);
   }
   ClearSurfaceResponseCorrectedField();

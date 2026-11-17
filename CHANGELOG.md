@@ -29,6 +29,20 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     imaginary parts of the incident voltage and current. A phase that is not a multiple of
     180 degrees is an error for transient simulations. SchemaVer 4-3-0
     [PR 1169](https://github.com/awslabs/palace/pull/1169).
+  - Added the configuration keys of the surface-response correction and of the features
+    below to the schema, all optional (a configuration accepted before is accepted with the
+    same meaning): `Solver.SurfaceResponseCorrection`; `Solver.Electrostatic`
+    `"ResponseMatrix"`, `"AggregateResponseMatrix"`, `"ResponseArchive"` and
+    `"ResponseCorrection"`; the edge and ownership keys of
+    `Boundaries.Postprocessing.Dielectric[]` (`"EdgeAttributes"`, `"AutomaticEdges"`,
+    `"EdgeExcludeAttributes"`, `"EdgeExcludeSegments"`, `"EdgeExcludeSegmentTolerance"`,
+    `"EdgeExcludeSegmentSagittas"`, `"EdgeDistances"`, `"EdgeDistanceSmoothing"`,
+    `"LocalizeEdgeEnergy"`, `"SaveLocalEdgeEnergy"`, `"OwnershipDataFile"`,
+    `"OwnershipGroup"`, `"OwnershipSlot"`, `"OwnershipQuadratureOrder"`,
+    `"EdgeFrameNormal"`, `"EdgeRefinement"`, `"FluxRecovery"`, `"Region"`);
+    `Model.Axisymmetric`; `Model.Refinement.MaxSizePredicted` and `"MinElementSize"`;
+    `Boundaries.PrescribedPotential`; and `"Length"` of a lumped port and of its
+    `"Elements"`. SchemaVer 4-4-0
   - Added the edge-resolution census of the surface-response correction (lane
     rescensus-product; outputs only, ON by default whenever the correction is on:
     `"Resolution": {"Enabled", "BarsFile"}`): one added point location of every applied
@@ -223,7 +237,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     conformity closure; AMR stops cleanly when no element is eligible.
   - Added `"CorrectionMode"` for electrostatic and Maxwell surface-response correction,
     with `"PostprocessOnly"`, `"SelfConsistent"`, and backward-compatible `"Both"`
-    execution modes. SchemaVer 1000-0-0.
+    execution modes.
   - Documented the caveat OI-MAXWELL-SC-ELECTRIC-ONLY in the Maxwell response-correction
     reference: the self-consistent driven / eigenmode correction adds only the electric
     (electrostatic-coupon) defect, no magnetic / inductive defect of the thick metal, so its
@@ -710,6 +724,14 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     the port mode, causing too-small coupling-rate magnitudes and too-large external quality
     factors.
     [PR 1086](https://github.com/awslabs/palace/pull/1086).
+  - Fixed the grid function output (`Problem.OutputFormats.GridFunction`) of driven
+    simulations with several excitations, where each excitation overwrote the saved fields
+    of the previous one, so that only the fields of the last excitation were kept. As for
+    the ParaView output, the fields of excitation `i` are now written to the subfolder
+    `gridfunction/driven/excitation_i/`. The mesh, rank, and error indicator files are
+    shared by all excitations and stay in `gridfunction/driven/`. The output of driven
+    simulations with a single excitation is unchanged.
+    [PR 1220](https://github.com/awslabs/palace/pull/1220).
   - The per-type portion tables and the loop-fit tables of the Maxwell correction write
     their header with their first rows whatever print that is (a table first written at a
     later mode or frequency, such as the conductor-consistency table, was appended without

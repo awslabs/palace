@@ -18,6 +18,7 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 #include <catch2/matchers/catch_matchers_vector.hpp>
 #include "drivers/fluxerrorestimator.hpp"
+#include "fem/errorindicator.hpp"
 #include "fem/gridfunction.hpp"
 #include "fem/integrator.hpp"
 #include "fem/mesh.hpp"
@@ -844,14 +845,17 @@ TEST_CASE_METHOD(test::SharedTempDir, "Field export",
     SpaceOperator space_op(iodata, mesh);
     PostOperator<ProblemType::DRIVEN> post_op(iodata, space_op);
 
+    // Use different fields for the two excitations, to tell their output apart.
     ComplexVector E(space_op.GetNDSpace().GetTrueVSize()),
         B(space_op.GetRTSpace().GetTrueVSize());
     E = 0.0;
     B = 0.0;
     post_op.InitializeParaviewDataCollection(1);
     post_op.MeasureAndPrintAll(1, 0, E, B, 1.0);
+    E = 1.0;
     post_op.InitializeParaviewDataCollection(2);
     post_op.MeasureAndPrintAll(2, 0, E, B, 1.0);
+    post_op.MeasureFinalize(ErrorIndicator());
 
     // Switching excitations must preserve both collections.
     auto root = fs::path(iodata.problem.output) / "paraview";
@@ -860,6 +864,31 @@ TEST_CASE_METHOD(test::SharedTempDir, "Field export",
       auto folder = fmt::format("excitation_{}", excitation);
       CHECK(fs::is_regular_file(root / "driven" / folder / (folder + ".pvd")));
       CHECK(fs::is_regular_file(root / "driven_boundary" / folder / (folder + ".pvd")));
+    }
+
+    // Grid functions use the same excitation subfolders, while the mesh and the rank
+    // partitioning are written once for all excitations.
+    const int pad_digits = post_op.GetPadDigitsDefault();
+    const std::vector<std::string> fields = {"E_real", "E_imag", "B_real", "B_imag",
+                                             "S",      "U_e",    "U_m"};
+    check_files("driven/excitation_1", 1, pad_digits, fields);
+    check_files("driven/excitation_2", 1, pad_digits, fields);
+    auto gf_root = fs::path(iodata.problem.output) / "gridfunction" / "driven";
+    auto read_file = [](const fs::path &path)
+    {
+      std::ifstream file(path);
+      return std::string(std::istreambuf_iterator<char>(file), {});
+    };
+    for (int i = 0; i < size; i++)
+    {
+      const auto rank = fmt::format("{:0{}d}", i, pad_digits);
+      const auto E_real = fmt::format("E_real_{:0{}d}.gf.{}", 1, pad_digits, rank);
+      CHECK(read_file(gf_root / "excitation_1" / E_real) !=
+            read_file(gf_root / "excitation_2" / E_real));
+      CHECK_FALSE(fs::exists(gf_root / E_real));
+      CHECK(fs::is_regular_file(gf_root / ("mesh." + rank)));
+      CHECK(fs::is_regular_file(gf_root / ("rank.gf." + rank)));
+      CHECK_FALSE(fs::exists(gf_root / "excitation_1" / ("mesh." + rank)));
     }
   }
 
