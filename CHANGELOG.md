@@ -190,6 +190,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     the HDM solutions, so that the last `"AdaptiveConvergenceMemory"` samples add no basis
     direction, the sampling of that excitation stops with a warning instead of continuing
     up to `"AdaptiveMaxSamples"`.
+    [PR 1218](https://github.com/awslabs/palace/pull/1218).
   - Fixed the flux recovery in the error estimators to use the projection which minimizes the
     error it is measured in (ε⁻¹-weighted for the electric flux, μ-weighted for the magnetic
     field). The unweighted projection overestimated the error in the low-permittivity
