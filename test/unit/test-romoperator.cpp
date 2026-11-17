@@ -7,6 +7,7 @@
 #include <limits>
 #include <numbers>
 #include <random>
+#include <string>
 #include <tuple>
 #include <vector>
 #include <Eigen/Dense>
@@ -2463,6 +2464,105 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   }
   IoData iodata(setup_json, false);
   CheckPROMAgainstHDM(iodata, excitations);
+}
+
+// The frequency-dependent boundary mass terms of finite conductivity and rational impedance
+// boundaries enter the synthesized circuit of an adaptive sweep as fits of the functions of
+// frequency which scale their projected boundary masses: require that synthesis folded in
+// each term, for each type alone and for both, as auxiliary states labeled by the term (the
+// fit of each term here has poles). "RomOperator boundary terms match the HDM system" tests
+// that the reduced model applies these terms as the full operator does.
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "RomOperator synthesis of frequency-dependent boundary terms",
+                 "[romoperator][Serial][Parallel]")
+{
+  MPI_Comm comm = Mpi::World();
+  const auto mesh_path = fs::path(PALACE_TEST_DATA_DIR) /
+                         "regression/input/rational_impedance/mesh/parallel_plate.msh";
+  const auto types = GENERATE(as<std::string>{}, "Conductivity", "RationalImpedance",
+                              "Conductivity+RationalImpedance");
+  CAPTURE(types);
+  const bool conductivity = types.find("Conductivity") != std::string::npos;
+  const bool rational = types.find("RationalImpedance") != std::string::npos;
+
+  // Parallel plates (attribute 2) between PMC side walls (3), a lumped port (4) and a
+  // termination (5): finite conductivity plates or PEC, and a series RLC sheet termination
+  // (notch at 10 GHz, inside the band) or PEC.
+  json pec = json::array();
+  json boundaries = {
+      {"PMC", {{"Attributes", json::array({3})}}},
+      {"LumpedPort", json::array({json::object({{"Index", 1},
+                                                {"Attributes", json::array({4})},
+                                                {"R", 50.0},
+                                                {"Direction", "+Y"},
+                                                {"Excitation", uint(1)}})})}};
+  if (conductivity)
+  {
+    boundaries["Conductivity"] = json::array(
+        {json::object({{"Attributes", json::array({2})}, {"Conductivity", 1.0e5}})});
+  }
+  else
+  {
+    pec.push_back(2);
+  }
+  if (rational)
+  {
+    constexpr double L = 2.0e-9, C = 1.2665e-13, R = 50.0;
+    boundaries["RationalImpedance"] =
+        json::array({json::object({{"Attributes", json::array({5})},
+                                   {"Numerator", json::array({L * C, R * C, 1.0})},
+                                   {"Denominator", json::array({C, 0.0})}})});
+  }
+  else
+  {
+    pec.push_back(5);
+  }
+  boundaries["PEC"] = {{"Attributes", pec}};
+  json setup_json;
+  setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 0}, {"Output", temp_dir}};
+  setup_json["Model"] = {{"Mesh", mesh_path}, {"L0", 1.0e-3}};
+  setup_json["Domains"] = {
+      {"Materials", json::array({json::object({{"Attributes", json::array({1})},
+                                               {"Permeability", 1.0},
+                                               {"Permittivity", 1.0}})})}};
+  setup_json["Boundaries"] = boundaries;
+  setup_json["Solver"] = {
+      {"Order", 1UL},
+      {"Device", "CPU"},
+      {"Driven",
+       {{"AdaptiveTol", 1.0e-6},
+        {"AdaptiveCircuitSynthesis", true},
+        {"MinFreq", 6.0},
+        {"MaxFreq", 14.0},
+        {"FreqStep", 4.0}}},
+      {"Linear",
+       {{"Type", "Default"}, {"KSPType", "GMRES"}, {"MaxIts", 200}, {"Tol", 1.0e-10}}}};
+
+  IoData iodata(setup_json, false);
+  auto mesh = LoadScaleParMesh2(iodata, comm);
+  SpaceOperator space_op(iodata, mesh);
+  RomOperatorTest rom_op(iodata, space_op, 4);
+  rom_op.AddLumpedPortModesForSynthesis();
+  ComplexVector sample(space_op.GetNDSpace().GetTrueVSize());
+  sample.UseDevice(true);
+  for (int seed : {42, 44})
+  {
+    linalg::SetRandom(comm, sample.Real(), seed);
+    linalg::SetRandom(comm, sample.Imag(), seed + 1);
+    linalg::SetSubVector(sample.Real(), space_op.GetNDDbcTDofLists().back(), 0.0);
+    linalg::SetSubVector(sample.Imag(), space_op.GetNDDbcTDofLists().back(), 0.0);
+    rom_op.UpdatePROM(sample, fmt::format("terms_sample_{:d}", seed));
+  }
+  REQUIRE(rom_op.GetReducedDimension() > 1);
+
+  const auto matrices = rom_op.CalculateNormalizedPROMMatrices(iodata.units);
+  auto has_aux = [&](const std::string &label)
+  {
+    return std::ranges::any_of(matrices.aux_labels, [&](const std::string &aux)
+                               { return aux.starts_with(label + "_p"); });
+  };
+  CHECK(has_aux("surfsigma_0") == conductivity);
+  CHECK(has_aux("rationalz_0") == rational);
 }
 
 // Several wave ports can observe different modes of the same boundary, for example

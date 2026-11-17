@@ -2455,6 +2455,24 @@ TEST_CASE("rational_impedance_eigen", "[Serial][Parallel][GPU][Regression]")
                                   "series_rlc18_eigen", opts);
 }
 
+// The seed of the nonlinear eigensolve of rational_impedance_eigen, without the
+// quasi-Newton refinement. Its Robin coefficient has a pole (the 18 GHz notch) inside the
+// interpolation window, which the seed freezes at the target instead of interpolating; the
+// seed mode is then within 1% of the mode at ~9.60 + 0.045i GHz (Q = 131 for 108), and 4%
+// off with Q = 14 when the coefficient is interpolated.
+TEST_CASE("rational_impedance_eigen_seed", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 2.0e-2;
+  opts.atol = 1.0e-11;
+  opts.excluded_columns = eigen_excluded;
+  opts.skip_rowcount = true;
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("rational_impedance",
+                                  "series_rlc18_rational_eigen_seed.json",
+                                  "series_rlc18_eigen_seed", opts);
+}
+
 TEST_CASE("cpw_lumped_uniform", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
