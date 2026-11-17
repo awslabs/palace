@@ -281,63 +281,68 @@ MumpsSchurSolver::~MumpsSchurSolver()
   }
 }
 
+void MumpsSchurSolver::SetRhs(const std::vector<const mfem::Vector *> &X, int c0, int nb)
+{
+#if MFEM_MUMPS_VERSION >= 530
+  if (distributed)
+  {
+    rhs.resize(static_cast<std::size_t>(std::max(1, n_loc)) * nb);
+    for (int k = 0; k < nb; k++)
+    {
+      const double *x = X[c0 + k]->HostRead();
+      std::copy_n(x, n_loc, rhs.data() + static_cast<std::size_t>(k) * n_loc);
+    }
+    sol_loc.resize(isol_loc.size() * nb);
+    id.nrhs = nb;
+    id.nloc_rhs = n_loc;
+    id.lrhs_loc = std::max(1, n_loc);
+    id.irhs_loc = irhs_loc.data();
+    id.rhs_loc = rhs.data();
+    id.lsol_loc = static_cast<MUMPS_INT>(isol_loc.size());
+    id.isol_loc = isol_loc.data();
+    id.sol_loc = sol_loc.data();
+    return;
+  }
+#endif
+  if (rank == 0)
+  {
+    rhs.assign(static_cast<std::size_t>(n_glob) * nb, 0.0);
+  }
+  for (int k = 0; k < nb; k++)
+  {
+    const mfem::Vector &x = *X[c0 + k];
+    x.HostRead();
+    MPI_Gatherv(x.GetData(), n_loc, MPI_DOUBLE,
+                rank == 0 ? rhs.data() + static_cast<std::size_t>(k) * n_glob : nullptr,
+                row_cnt.data(), row_disp.data(), MPI_DOUBLE, 0, comm);
+  }
+  if (rank == 0)
+  {
+    id.rhs = rhs.data();
+    id.nrhs = nb;
+    id.lrhs = static_cast<MUMPS_INT>(n_glob);
+  }
+}
+
 void MumpsSchurSolver::SolveInternal(const std::vector<const mfem::Vector *> &X,
                                      const std::vector<mfem::Vector *> &Y)
 {
   const int n = static_cast<int>(X.size());
-  constexpr int B = 32;
-  for (int c0 = 0; c0 < n; c0 += B)
+  for (int c0 = 0; c0 < n; c0 += kBlock)
   {
-    const int nb = std::min(B, n - c0);
-#if MFEM_MUMPS_VERSION >= 530
-    if (distributed)
-    {
-      rhs.resize(static_cast<std::size_t>(std::max(1, n_loc)) * nb);
-      for (int k = 0; k < nb; k++)
-      {
-        const double *x = X[c0 + k]->HostRead();
-        std::copy_n(x, n_loc, rhs.data() + static_cast<std::size_t>(k) * n_loc);
-      }
-      sol_loc.resize(isol_loc.size() * nb);
-      id.nrhs = nb;
-      id.nloc_rhs = n_loc;
-      id.lrhs_loc = std::max(1, n_loc);
-      id.irhs_loc = irhs_loc.data();
-      id.rhs_loc = rhs.data();
-      id.lsol_loc = static_cast<MUMPS_INT>(isol_loc.size());
-      id.isol_loc = isol_loc.data();
-      id.sol_loc = sol_loc.data();
-      id.job = 3;
-      dmumps_c(&id);
-      Check("solve");
-      Redistribute(nb, Y, c0);
-      continue;
-    }
-#endif
-    if (rank == 0)
-    {
-      rhs.assign(static_cast<std::size_t>(n_glob) * nb, 0.0);
-    }
-    for (int k = 0; k < nb; k++)
-    {
-      const mfem::Vector &x = *X[c0 + k];
-      x.HostRead();
-      MPI_Gatherv(x.GetData(), n_loc, MPI_DOUBLE,
-                  rank == 0 ? rhs.data() + static_cast<std::size_t>(k) * n_glob : nullptr,
-                  row_cnt.data(), row_disp.data(), MPI_DOUBLE, 0, comm);
-    }
-    if (rank == 0)
-    {
-      id.rhs = rhs.data();
-      id.nrhs = nb;
-      id.lrhs = static_cast<MUMPS_INT>(n_glob);
-    }
+    const int nb = std::min(kBlock, n - c0);
+    SetRhs(X, c0, nb);
     if (active)
     {
       id.job = 3;
       dmumps_c(&id);
     }
     Check("solve");
+    if (distributed)
+    {
+      Redistribute(nb, Y, c0);
+      continue;
+    }
     if (rank == 0 && scale != 1.0)
     {
       for (auto &v : rhs)
@@ -353,6 +358,34 @@ void MumpsSchurSolver::SolveInternal(const std::vector<const mfem::Vector *> &X,
                    row_cnt.data(), row_disp.data(), MPI_DOUBLE, y.HostWrite(), n_loc,
                    MPI_DOUBLE, 0, comm);
     }
+  }
+}
+
+void MumpsSchurSolver::Condense(const std::vector<const mfem::Vector *> &X,
+                                std::vector<double> &g)
+{
+  // The forward elimination of the right-hand sides, with their condensations in REDRHS on
+  // rank 0 (independent of the scaling of A).
+  MFEM_VERIFY(n_schur > 0, "MUMPS condensation needs Schur variables!");
+  const int n = static_cast<int>(X.size());
+  g.assign(rank == 0 ? static_cast<std::size_t>(n_schur) * n : 0, 0.0);
+  for (int c0 = 0; c0 < n; c0 += kBlock)
+  {
+    const int nb = std::min(kBlock, n - c0);
+    SetRhs(X, c0, nb);
+    if (rank == 0)
+    {
+      id.redrhs = g.data() + static_cast<std::size_t>(n_schur) * c0;
+      id.lredrhs = n_schur;
+    }
+    if (active)
+    {
+      id.icntl[25] = 1;  // ICNTL(26): condensation onto the Schur variables
+      id.job = 3;
+      dmumps_c(&id);
+      id.icntl[25] = 0;
+    }
+    Check("condensation");
   }
 }
 

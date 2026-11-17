@@ -110,9 +110,9 @@ the position of their centroids.
 `"FactorizationTol"` trades a controlled loss of accuracy for time: it is the relative tolerance of
 a block low-rank (BLR) approximation of the environment factorization, which reduces the time to
 condense the environment. It is used only by the MUMPS partial factorization of the environment (see
-[Solvers](#Solvers)): not when `"Type"` names another solver, nor when a magnetostatic model is
-saved (*Palace* then warns). The error in the extracted matrices follows the tolerance but is not
-bounded by it; `1e-12` is a conservative choice. The default, `0`, keeps the condensation exact.
+[Solvers](#Solvers)), not when `"Type"` names another solver (*Palace* then warns). The error in the
+extracted matrices follows the tolerance but is not bounded by it; `1e-12` is a conservative choice.
+The default, `0`, keeps the condensation exact.
 
 ### Adaptive mesh refinement
 
@@ -152,8 +152,9 @@ amortize it; otherwise the region is solved by conjugate gradients, precondition
 factorization of the region operator alone. The Schur complement of the environment comes instead
 from a single partial factorization, by MUMPS or, without it, by STRUMPACK (with the Schur
 complement interface that the superbuild and the Spack package patch in), unless `"Type"` names
-another solver, and except when a magnetostatic model is saved: its energy operator takes two
-environment solves per interface unknown. The MUMPS factorizations follow the
+another solver. A saved magnetostatic model also holds the energy operator of the environment, which
+takes an environment solve and a condensation (the forward elimination of the partial factorization,
+half a solve) per interface unknown. The MUMPS factorizations follow the
 [`"ColumnOrdering"`](../config/reference.md#config-solver-linear-columnordering) of
 `config["Solver"]["Linear"]`; with `"ParMETIS"` or `"PTScotch"`, those without a Schur complement
 are analyzed in parallel. When running MUMPS with MPI, setting `OPENBLAS_NUM_THREADS=1` (or the

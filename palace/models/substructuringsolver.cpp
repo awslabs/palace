@@ -470,11 +470,10 @@ void SubstructuringSolver::CondenseEnvironment()
     impl->LoadModel(model_path, sig_w);
     loaded = true;
   }
-  // S_E from a partial factorization when one is built, else from solves with A_EE: always
-  // when S^K is also materialized (its correction needs the lifted columns, which the
-  // solves give).
+  // S_E from a partial factorization when one is built, else from solves with A_EE (with
+  // S^K materialized, for a magnetostatic model to save).
   const bool with_sk = impl->EnergyDiffers() && !model_path.empty();
-  if (!loaded && nG > 0 && !with_sk)
+  if (!loaded && nG > 0)
   {
     impl->MaterializePartial();
   }

@@ -255,6 +255,39 @@ TEST_CASE("Schur solvers give the Schur complement and the internal solves",
     MPI_Allreduce(MPI_IN_PLACE, &err, 1, MPI_DOUBLE, MPI_MAX, comm);
     CHECK(err <= 1.0e-12 * ref[k].Normlinf());
   }
+
+  // Two condensations onto the Schur variables, on rank 0: x_S - A_SI A_II^-1 x_I.
+  std::vector<mfem::Vector> xc(2, mfem::Vector(n_loc));
+  for (int i = 0; i < n_loc; i++)
+  {
+    xc[0](i) = std::cos(3.0 + static_cast<double>(row0 + i));
+    xc[1](i) = std::sin(0.5 * static_cast<double>(row0 + i));
+  }
+  std::vector<double> g;
+  solver->Condense({&xc[0], &xc[1]}, g);
+  CHECK(g.size() == (Mpi::Root(comm) ? static_cast<std::size_t>(ns) * 2 : 0));
+  for (int k = 0; k < 2; k++)
+  {
+    const mfem::Vector xg = Gather(xc[k], n, row0, comm);
+    mfem::Vector b(ni), y(ni), g_ref(ns);
+    for (int i = 0; i < ni; i++)
+    {
+      b(i) = xg(internal[i]);
+    }
+    A_II_inv.Mult(b, y);
+    A_IS.MultTranspose(y, g_ref);
+    double err = 0.0, scale = 0.0;
+    for (int i = 0; i < ns; i++)
+    {
+      g_ref(i) = xg(static_cast<int>(schur_vars[i])) - g_ref(i);
+      scale = std::max(scale, std::abs(g_ref(i)));
+      if (g.size() == static_cast<std::size_t>(ns) * 2)
+      {
+        err = std::max(err, std::abs(g[i + static_cast<std::size_t>(ns) * k] - g_ref(i)));
+      }
+    }
+    CHECK(err <= 1.0e-12 * scale);
+  }
 }
 
 }  // namespace palace

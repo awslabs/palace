@@ -563,6 +563,7 @@ void SubstructuringSolver::Impl::MaskToEnvInterior(
 void SubstructuringSolver::Impl::MaterializeWithEnergy()
 {
   const int nG = nG_global, nloc = gamma_nloc, off = gamma_off;
+  const bool root = Mpi::Root(parent_fes.GetComm());
   // Owned interface column -> local true DOF.
   std::vector<int> col_to_dof(nloc, -1);
   for (int i = 0; i < nt; i++)
@@ -572,30 +573,42 @@ void SubstructuringSolver::Impl::MaterializeWithEnergy()
       col_to_dof[gamma_global[i] - off] = i;
     }
   }
-  // The first solve of a direct factor fixes its block size at kMaterializeBlock; the
-  // thin couplings are G = A_env E_Gamma and R = E_Gamma^T A_env. Each rank stores its
-  // own rows.
+  // S_E from the partial factorization when there is one, else from the solves of the
+  // lifts y = A_EE^-1 (A_env e_c)|_E: S_E e_c = (A_env e_c)|_Gamma - (A_env y)|_Gamma. The
+  // energy operator S^K = S_E - P^T D P, for the lift p = e_c - y, takes the condensation
+  // P^T D p onto Gamma (by the forward elimination of a partial factorization). The first
+  // solve of a direct factor fixes its block size at kMaterializeBlock; the thin couplings
+  // are G = A_env E_Gamma and R = E_Gamma^T A_env. Each rank stores its own rows.
+  const bool partial = !env_partial.empty();
+  if (partial)
+  {
+    ScatterRows(env_schur->ReleaseSchur(), nG, S_rows);
+  }
   std::unique_ptr<mfem::HypreParMatrix> E = AssembleSelection(is_gamma);
-  std::unique_ptr<mfem::HypreParMatrix> G(mfem::ParMult(&Aenv(), E.get()));
-  std::unique_ptr<mfem::HypreParMatrix> Et(E->Transpose());
-  std::unique_ptr<mfem::HypreParMatrix> R(mfem::ParMult(Et.get(), &Aenv()));
+  std::unique_ptr<mfem::HypreParMatrix> G(mfem::ParMult(&Aenv(), E.get())), R;
+  if (!partial)
+  {
+    std::unique_ptr<mfem::HypreParMatrix> Et(E->Transpose());
+    R.reset(mfem::ParMult(Et.get(), &Aenv()));
+  }
   E.reset();
-  Et.reset();
   const int B = kMaterializeBlock;
-  std::vector<Vector> t(B, Vector(nt));
-  std::vector<const mfem::Vector *> X(B);
+  std::vector<Vector> t(B, Vector(nt)), v(B, Vector(nt));
+  std::vector<const mfem::Vector *> X(B), V(B);
   std::vector<mfem::Vector *> Y(B);
   Vector ec(nloc), z(nloc);
-  std::vector<Vector> v(B, Vector(nt));
   SK_rows.assign(static_cast<std::size_t>(nloc) * nG, 0.0);
   have_sk = true;
   const mfem::HypreParMatrix &Dm = Denv();
-  std::vector<double> agg(static_cast<std::size_t>(B) * nloc);  // A_GG e_c, own rows
+  // A_GG e_c on the own rows, for S_E from the solves.
+  std::vector<double> agg(partial ? 0 : static_cast<std::size_t>(B) * nloc);
+  std::vector<double> g, gt, gr;
   for (int c0 = 0; c0 < nG; c0 += B)
   {
     const int nb = std::min(B, nG - c0);
     X.resize(nb);
     Y.resize(nb);
+    V.resize(nb);
     for (int k = 0; k < nb; k++)
     {
       const int c = c0 + k;
@@ -606,10 +619,13 @@ void SubstructuringSolver::Impl::MaterializeWithEnergy()
       }
       // A_env e_c: its env-interior part is the solve RHS, its Gamma part is A_GG e_c.
       G->Mult(ec, t[k]);
-      const double *tk = t[k].HostRead();
-      for (int r = 0; r < nloc; r++)
+      if (!partial)
       {
-        agg[static_cast<std::size_t>(k) * nloc + r] = tk[col_to_dof[r]];
+        const double *tk = t[k].HostRead();
+        for (int r = 0; r < nloc; r++)
+        {
+          agg[static_cast<std::size_t>(k) * nloc + r] = tk[col_to_dof[r]];
+        }
       }
       X[k] = &t[k];
       Y[k] = &t[k];  // solve in place
@@ -617,44 +633,47 @@ void SubstructuringSolver::Impl::MaterializeWithEnergy()
     ApplyAeeInvMulti(X, Y);
     for (int k = 0; k < nb; k++)
     {
-      R->Mult(t[k], z);  // (A_env y)|_Gamma = A_GE A_EE^-1 A_EG e_c, this rank's rows
-      const double *zz = z.HostRead();
       const int c = c0 + k;
-      for (int r = 0; r < nloc; r++)
+      if (!partial)
       {
-        S_rows[static_cast<std::size_t>(r) * nG + c] =
-            agg[static_cast<std::size_t>(k) * nloc + r] - zz[r];
+        R->Mult(t[k], z);  // (A_env y)|_Gamma = A_GE A_EE^-1 A_EG e_c, this rank's rows
+        const double *zz = z.HostRead();
+        for (int r = 0; r < nloc; r++)
+        {
+          S_rows[static_cast<std::size_t>(r) * nG + c] =
+              agg[static_cast<std::size_t>(k) * nloc + r] - zz[r];
+        }
       }
-    }
-    // Energy correction P^T D P e_c: p = e_c - y (the A-harmonic lift of e_c; t[k]
-    // holds y), v = D p, then S^K col = S col - (v|_Gamma - R A_EE^-1 v|_E).
-    for (int k = 0; k < nb; k++)
-    {
-      const int c = c0 + k;
+      // The lift p = e_c - y (t[k] holds y) and its regularization load D p.
       t[k].Neg();
       if (c >= off && c < off + nloc)
       {
         t[k].HostReadWrite()[col_to_dof[c - off]] += 1.0;
       }
       Dm.Mult(t[k], v[k]);
-      const double *vk = v[k].HostRead();
-      for (int r = 0; r < nloc; r++)
-      {
-        agg[static_cast<std::size_t>(k) * nloc + r] = vk[col_to_dof[r]];
-      }
-      X[k] = &v[k];
-      Y[k] = &v[k];
+      V[k] = &v[k];
     }
-    ApplyAeeInvMulti(X, Y);
+    // The condensations P^T D p (rank 0, nG x nb), to the owners of their rows.
+    env_schur->Condense(V, g);
+    if (root)
+    {
+      gt.resize(static_cast<std::size_t>(nG) * nb);
+      for (int k = 0; k < nb; k++)
+      {
+        for (int q = 0; q < nG; q++)
+        {
+          gt[static_cast<std::size_t>(q) * nb + k] =
+              g[q + static_cast<std::size_t>(nG) * k];
+        }
+      }
+    }
+    ScatterRows(gt, nb, gr);
     for (int k = 0; k < nb; k++)
     {
-      R->Mult(v[k], z);
-      const double *zz = z.HostRead();
-      const int c = c0 + k;
       for (int r = 0; r < nloc; r++)
       {
-        const std::size_t q = static_cast<std::size_t>(r) * nG + c;
-        SK_rows[q] = S_rows[q] - (agg[static_cast<std::size_t>(k) * nloc + r] - zz[r]);
+        const std::size_t q = static_cast<std::size_t>(r) * nG + c0 + k;
+        SK_rows[q] = S_rows[q] - gr[static_cast<std::size_t>(r) * nb + k];
       }
     }
   }

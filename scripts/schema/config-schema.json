@@ -3003,7 +3003,7 @@
           "type": "number",
           "minimum": 0,
           "default": 0,
-          "description": "Relative tolerance for a block low-rank (BLR) approximation of the environment factorization, trading a controlled accuracy loss for a faster factorization; 0 is exact. Only used by the MUMPS partial factorization of the environment: not when \"Solver\"/\"Linear\"/\"Type\" names another solver, nor when a magnetostatic model is saved."
+          "description": "Relative tolerance for a block low-rank (BLR) approximation of the environment factorization, trading a controlled accuracy loss for a faster factorization; 0 is exact. Only used by the MUMPS partial factorization of the environment, not when \"Solver\"/\"Linear\"/\"Type\" names another solver."
         }
       }
     },

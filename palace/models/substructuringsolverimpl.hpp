@@ -803,9 +803,10 @@ struct SubstructuringSolver::Impl
   // and checked by the constructor). Collective.
   void LoadModel(const std::string &model_path, int sig_w);
 
-  // Materialize S_E e_c = (A_env e_c)|_Gamma - (A_env A_EE^-1 (A_env e_c)|_E)|_Gamma and
-  // S^K = S_E - P^T D P (one more solve per column, on the lifts of the first) by batched
-  // multi-RHS environment solves, for a magnetostatic model to save. Collective.
+  // Materialize S_E (from the partial factorization, or S_E e_c = (A_env e_c)|_Gamma -
+  // (A_env A_EE^-1 (A_env e_c)|_E)|_Gamma) and S^K = S_E - P^T D P, for a magnetostatic
+  // model to save: by batched multi-RHS environment solves for the lifts P e_c, and the
+  // condensations P^T D P e_c. Collective.
   void MaterializeWithEnergy();
 
   // Save S_E, the region mesh and the sections to the model file. Collective.

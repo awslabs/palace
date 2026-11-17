@@ -15,9 +15,9 @@ namespace palace
 
 StrumpackSchurSolver::StrumpackSchurSolver(const mfem::HypreParMatrix &A,
                                            const std::vector<HYPRE_BigInt> &schur_vars)
-  : n_loc(A.Height()), solver(A.GetComm(), false)
+  : comm(A.GetComm()), n_loc(A.Height()), n_schur(static_cast<int>(schur_vars.size())),
+    solver(comm, false), rows(comm, A.GetRowStarts()[0], A.Height(), schur_vars)
 {
-  MPI_Comm comm = A.GetComm();
   MFEM_VERIFY(A.GetGlobalNumRows() <= INT_MAX,
               "STRUMPACK Schur complement needs fewer than 2^31 unknowns!");
   // The Schur complement needs neither matching nor the GPU (and a sequential graph
@@ -50,7 +50,6 @@ StrumpackSchurSolver::StrumpackSchurSolver(const mfem::HypreParMatrix &A,
   hypre_CSRMatrixDestroy(csr);
 
   const std::vector<int> vars(schur_vars.begin(), schur_vars.end());
-  const int n_schur = static_cast<int>(vars.size());
   MFEM_VERIFY(solver.set_schur_variables(n_schur, vars.data()) ==
                   strumpack::ReturnCode::SUCCESS,
               "STRUMPACK rejected the Schur variables!");
@@ -97,6 +96,40 @@ void StrumpackSchurSolver::SolveInternal(const std::vector<const mfem::Vector *>
     std::copy(x.begin() + static_cast<std::size_t>(ld) * k,
               x.begin() + static_cast<std::size_t>(ld) * k + n_loc, Y[k]->HostWrite());
   }
+}
+
+void StrumpackSchurSolver::Condense(const std::vector<const mfem::Vector *> &X,
+                                    std::vector<double> &g)
+{
+  // The condensations in the rows of the Schur variables (by the forward elimination),
+  // gathered on rank 0.
+  const int nb = static_cast<int>(X.size()), ld = std::max(n_loc, 1);
+  g.assign(Mpi::Root(comm) ? static_cast<std::size_t>(n_schur) * nb : 0, 0.0);
+  if (nb == 0)
+  {
+    return;
+  }
+  std::vector<double> b(static_cast<std::size_t>(ld) * nb), c(b.size(), 0.0);
+  for (int k = 0; k < nb; k++)
+  {
+    const double *xk = X[k]->HostRead();
+    std::copy(xk, xk + n_loc, b.begin() + static_cast<std::size_t>(ld) * k);
+  }
+  MFEM_VERIFY(solver.schur_condense(nb, b.data(), ld, c.data(), ld) ==
+                  strumpack::ReturnCode::SUCCESS,
+              "STRUMPACK condensation failed!");
+  const std::vector<int> &row = rows.Rows();
+  const int m = static_cast<int>(row.size());
+  std::vector<double> loc(static_cast<std::size_t>(m) * nb);
+  for (int k = 0; k < nb; k++)
+  {
+    for (int r = 0; r < m; r++)
+    {
+      loc[static_cast<std::size_t>(k) * m + r] =
+          c[static_cast<std::size_t>(ld) * k + row[r]];
+    }
+  }
+  rows.Gather(loc, nb, g.data());
 }
 
 }  // namespace palace

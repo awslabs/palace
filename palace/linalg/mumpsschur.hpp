@@ -46,8 +46,18 @@ public:
   void SolveInternal(const std::vector<const mfem::Vector *> &X,
                      const std::vector<mfem::Vector *> &Y) override;
 
+  void Condense(const std::vector<const mfem::Vector *> &X,
+                std::vector<double> &g) override;
+
 private:
+  // Right-hand sides per solve.
+  static constexpr int kBlock = 32;
+
   void Check(const char *phase) const;
+
+  // The right-hand sides X[c0, c0 + nb) of the next solve, distributed or on rank 0, with
+  // the distributed solution. Collective.
+  void SetRhs(const std::vector<const mfem::Vector *> &X, int c0, int nb);
 
   // The solution rows held by this rank (ISOL_loc), nb columns of SOL_loc, sent to the
   // ranks owning them. Collective.
