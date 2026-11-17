@@ -892,6 +892,75 @@ TEST_CASE_METHOD(test::SharedTempDir, "Field export",
     }
   }
 
+  SECTION("Driven multiple excitations with corrected fields")
+  {
+    // The surface-response corrected grid functions (E_corrected_*, D_corrected_*) of a
+    // driven run with several excitations land in each excitation's folder beside the raw
+    // fields (review r2122 m-4): before upstream's per-excitation folders (#1220) the
+    // second excitation overwrote the first's files.
+    iodata.problem.type = ProblemType::DRIVEN;
+    iodata.solver.driven.save_indices = {0};
+    iodata.solver.driven.sample_f = {1.0};
+    json multi_port_boundaries = {{"LumpedPort",
+                                   {{{"Attributes", {2}},
+                                     {"Index", 1},
+                                     {"R", 50.0},
+                                     {"Direction", "+X"},
+                                     {"Excitation", 1}},
+                                    {{"Attributes", {3}},
+                                     {"Index", 2},
+                                     {"R", 50.0},
+                                     {"Direction", "+Y"},
+                                     {"Excitation", 2}}}}};
+    config::BoundaryData multi_port(multi_port_boundaries);
+    iodata.boundaries.lumpedport = multi_port.lumpedport;
+    SpaceOperator space_op(iodata, mesh);
+    PostOperator<ProblemType::DRIVEN> post_op(iodata, space_op);
+
+    // Different corrected fields for the two excitations, to tell their output apart. The
+    // corrected field is cleared after each print, so it is set again per excitation.
+    ComplexVector E(space_op.GetNDSpace().GetTrueVSize()),
+        B(space_op.GetRTSpace().GetTrueVSize()),
+        E_corrected(space_op.GetNDSpace().GetTrueVSize()),
+        D_corrected(space_op.GetRTSpace().GetTrueVSize());
+    E = 0.0;
+    B = 0.0;
+    for (int excitation : {1, 2})
+    {
+      E_corrected = 1.0 * excitation;
+      D_corrected = 2.0 * excitation;
+      post_op.InitializeParaviewDataCollection(excitation);
+      post_op.SetSurfaceResponseCorrectedField(E_corrected, &D_corrected);
+      post_op.MeasureAndPrintAll(excitation, 0, E, B, 1.0);
+    }
+    post_op.MeasureFinalize(ErrorIndicator());
+
+    const int pad_digits = post_op.GetPadDigitsDefault();
+    const std::vector<std::string> corrected_fields = {
+        "E_corrected_real", "E_corrected_imag", "D_corrected_real", "D_corrected_imag"};
+    check_files("driven/excitation_1", 1, pad_digits, corrected_fields);
+    check_files("driven/excitation_2", 1, pad_digits, corrected_fields);
+    check_paraview_fields("driven/excitation_1", corrected_fields);
+    check_paraview_fields("driven/excitation_2", corrected_fields);
+    auto gf_root = fs::path(iodata.problem.output) / "gridfunction" / "driven";
+    auto read_file = [](const fs::path &path)
+    {
+      std::ifstream file(path);
+      return std::string(std::istreambuf_iterator<char>(file), {});
+    };
+    for (int i = 0; i < size; i++)
+    {
+      const auto rank = fmt::format("{:0{}d}", i, pad_digits);
+      for (const auto &field : {"E_corrected_real", "D_corrected_real"})
+      {
+        const auto name = fmt::format("{}_{:0{}d}.gf.{}", field, 1, pad_digits, rank);
+        CHECK(read_file(gf_root / "excitation_1" / name) !=
+              read_file(gf_root / "excitation_2" / name));
+        CHECK_FALSE(fs::exists(gf_root / name));
+      }
+    }
+  }
+
   SECTION("Driven reactive lumped port measurement")
   {
     // Purely reactive ports use the unit real reference resistance for excitation and
