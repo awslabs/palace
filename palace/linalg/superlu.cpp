@@ -23,7 +23,7 @@ int GetNpDep(int np, bool use_3d)
   }
   else
   {
-    int npdep = (int)std::pow(2, std::floor(std::log2(std::cbrt(np))));
+    int npdep = static_cast<int>(std::pow(2, std::floor(std::log2(std::cbrt(np)))));
     while (npdep > 1 && np % npdep > 0)
     {
       npdep /= 2;
@@ -62,7 +62,18 @@ SuperLUSolver::SuperLUSolver(MPI_Comm comm, SymbolicFactorization reorder, bool 
       solver.SetColumnPermutation(mfem::superlu::METIS_AT_PLUS_A);
       break;
     case SymbolicFactorization::PARMETIS:
-      solver.SetColumnPermutation(mfem::superlu::PARMETIS);
+      // SuperLU_DIST does not support ParMETIS (parallel symbolic factorization) with a 3D
+      // process grid and returns an error for it.
+      if (solver.npdep_ > 1)
+      {
+        Mpi::Warning(comm, "SuperLU_DIST does not support ParMETIS ordering with a 3D "
+                           "process grid, using METIS instead!\n");
+        solver.SetColumnPermutation(mfem::superlu::METIS_AT_PLUS_A);
+      }
+      else
+      {
+        solver.SetColumnPermutation(mfem::superlu::PARMETIS);
+      }
       break;
     case SymbolicFactorization::AMD:
     case SymbolicFactorization::RCM:
@@ -78,6 +89,11 @@ SuperLUSolver::SuperLUSolver(MPI_Comm comm, SymbolicFactorization reorder, bool 
   // solver.SetRowPermutation(mfem::superlu::NOROWPERM);
   solver.SetIterativeRefine(mfem::superlu::NOREFINE);
   solver.SetSymmetricPattern(true);  // Always symmetric sparsity pattern
+
+  // Relaxed supernodes of up to 200 columns instead of the SuperLU_DIST default of 30 give
+  // fewer, larger blocks, and many fewer messages in the distributed triangular solves,
+  // which are latency bound when SuperLU_DIST is the coarse solver.
+  solver.SetRelaxedSupernodeSize(200);
 }
 
 void SuperLUSolver::SetOperator(const Operator &op)

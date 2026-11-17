@@ -15,7 +15,7 @@ namespace palace
 // Simple Jacobi smoother using the diagonal vector from OperType::AssembleDiagonal(),
 // which allows for (approximate) diagonal construction for matrix-free operators.
 //
-template <typename OperType>
+template <OperatorType OperType>
 class JacobiSmoother : public Solver<OperType>
 {
   using VecType = typename Solver<OperType>::VecType;
@@ -30,9 +30,13 @@ private:
   // Damping factor and scaling factor for maximum eigenvalue.
   double omega, sf_max;
 
+  // Whether, on all processes, the scaling is real-valued and callers may apply it in their
+  // own host loops.
+  bool host_real;
+
 public:
   JacobiSmoother(MPI_Comm comm, double omega = 1.0, double sf_max = 1.0)
-    : Solver<OperType>(), comm(comm), omega(omega), sf_max(sf_max)
+    : Solver<OperType>(), comm(comm), omega(omega), sf_max(sf_max), host_real(false)
   {
   }
 
@@ -41,6 +45,10 @@ public:
   void Mult(const VecType &x, VecType &y) const override;
 
   void MultTranspose(const VecType &x, VecType &y) const override { Mult(x, y); }
+
+  // Return the scaling ω D⁻¹ applied by Mult, if it is real-valued and callers may apply it
+  // in their own single-threaded host loops (the same on all processes), or nullptr.
+  const Vector *GetHostRealScaling() const;
 };
 
 }  // namespace palace

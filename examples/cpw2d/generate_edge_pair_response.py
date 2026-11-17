@@ -18,9 +18,15 @@ FEATURES pair measure: the mean of the two sides).
 import argparse
 import json
 import math
+import sys
 from pathlib import Path
 
 import numpy as np
+
+IDENTIFICATION_TOOLS = Path(__file__).resolve().parent.parent / "surface_response_identification"
+if str(IDENTIFICATION_TOOLS) not in sys.path:
+    sys.path.insert(0, str(IDENTIFICATION_TOOLS))
+from crack_policy import CRACK_POLICY_DEFAULT, add_crack_policy_argument, apply_crack_policy  # noqa: E402
 
 
 class PairPlacement:
@@ -415,6 +421,7 @@ def make_config(
     coupon_depth,
     substrate_permittivity,
     interface_layers,
+    crack_policy=CRACK_POLICY_DEFAULT,
 ):
     if fabricated:
         ground = [2, 4, 5, 7, 8, 9] if different_conductors else [2, 4, 5]
@@ -478,6 +485,7 @@ def make_config(
     model = {"Mesh": str(mesh), "L0": 1.0e-6, "Lc": coupon_depth}
     if PLACEMENT.axisymmetric:
         model["Axisymmetric"] = True
+    apply_crack_policy(model, crack_policy)
     return {
         "Problem": {
             "Type": "Electrostatic",
@@ -681,6 +689,7 @@ def main():
                         help="localized-energy radii (um) of every interface (default 0.2 alone; the largest must be 0.2)")
     parser.add_argument("--thin-mesh", type=Path)
     parser.add_argument("--fabricated-mesh", type=Path)
+    add_crack_policy_argument(parser)
     topology = parser.add_mutually_exclusive_group()
     topology.add_argument("--different-conductors", action="store_true")
     topology.add_argument("--strip", action="store_true")
@@ -777,6 +786,7 @@ def main():
             args.coupon_depth,
             args.substrate_permittivity,
             interface_layers,
+            crack_policy=args.crack_policy,
         )
         path = output / f"{name}.json"
         path.write_text(json.dumps(config, indent=2) + "\n")
@@ -794,6 +804,7 @@ def main():
             args.coupon_depth,
             args.substrate_permittivity,
             interface_layers,
+            crack_policy=args.crack_policy,
         )
         potential = {
             "Index": 1,

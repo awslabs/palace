@@ -11,6 +11,7 @@ set(LIBXSMM_DEPENDENCIES)
 set(LIBXSMM_OPTIONS
   # "PREFIX=${CMAKE_INSTALL_PREFIX}"  # Don't use install step, see comment below
   "OUTDIR=${CMAKE_INSTALL_PREFIX}/lib"
+  "PINCDIR=${CMAKE_INSTALL_PREFIX}/include"  # pkg-config includedir (headers installed below)
   "DIRSTATE=."
   "CC=${CMAKE_C_COMPILER}"
   "CXX=${CMAKE_CXX_COMPILER}"
@@ -20,6 +21,36 @@ set(LIBXSMM_OPTIONS
   "SYM=1"   # Always build with symbols
   "VERBOSE=1"
 )
+
+# Homebrew Clang takes its macOS SDK from a per-target config file (e.g.
+# arm64-apple-macosx26.cfg). LIBXSMM adds -target arm64-apple-macos, which
+# matches none, so system headers are not found (seen with Homebrew LLVM 19.1.7
+# and 22.1.8, CMake 4.0.3). Pass the SDK as a compiler flag so system headers
+# remain available without requiring callers to export SDKROOT.
+if(CMAKE_SYSTEM_NAME MATCHES "Darwin")
+  set(LIBXSMM_OSX_SYSROOT "${CMAKE_OSX_SYSROOT}")
+  if(NOT IS_ABSOLUTE "${LIBXSMM_OSX_SYSROOT}")
+    set(LIBXSMM_OSX_SDK "${LIBXSMM_OSX_SYSROOT}")
+    if(NOT LIBXSMM_OSX_SDK)
+      set(LIBXSMM_OSX_SDK macosx)
+    endif()
+    execute_process(
+      COMMAND xcrun --sdk "${LIBXSMM_OSX_SDK}" --show-sdk-path
+      OUTPUT_VARIABLE LIBXSMM_OSX_SYSROOT
+      OUTPUT_STRIP_TRAILING_WHITESPACE
+      RESULT_VARIABLE LIBXSMM_XCRUN_RESULT
+    )
+    if(NOT LIBXSMM_XCRUN_RESULT EQUAL 0 OR NOT IS_ABSOLUTE "${LIBXSMM_OSX_SYSROOT}")
+      message(FATAL_ERROR
+        "Unable to determine the macOS SDK path for LIBXSMM using SDK "
+        "'${LIBXSMM_OSX_SDK}'"
+      )
+    endif()
+  endif()
+  list(APPEND LIBXSMM_OPTIONS
+    "RPM_OPT_FLAGS=-isysroot ${LIBXSMM_OSX_SYSROOT}"
+  )
+endif()
 
 # Always build LIBXSMM as a shared library
 list(APPEND LIBXSMM_OPTIONS
@@ -47,6 +78,8 @@ message(STATUS "LIBXSMM_OPTIONS: ${LIBXSMM_OPTIONS_PRINT}")
 # Don't use LIBXSMM install step, since it just copies shared libraries and doesn't modify
 # the dependency locations directly (doesn't use RPATH). Just build directly into the
 # installation directory instead. See https://github.com/libxsmm/libxsmm/issues/883.
+# The build itself writes pkg-config and CMake config files to lib/pkgconfig and
+# lib/cmake/libxsmm.
 set(LIBXSMM_INSTALL_HEADERS
   libxsmm.h
   libxsmm_config.h
@@ -63,16 +96,6 @@ set(LIBXSMM_INSTALL_HEADERS
   libxsmm_typedefs.h
 )
 list(TRANSFORM LIBXSMM_INSTALL_HEADERS PREPEND <SOURCE_DIR>/include/)
-set(LIBXSMM_INSTALL_PKGCONFIG
-  libxsmm.pc
-  libxsmmext.pc
-  libxsmmnoblas.pc
-  libxsmm-shared.pc
-  libxsmmext-shared.pc
-  libxsmmnoblas-shared.pc
-  libxsmm.env
-)
-list(TRANSFORM LIBXSMM_INSTALL_PKGCONFIG PREPEND ${CMAKE_INSTALL_PREFIX}/lib/)
 
 include(ExternalProject)
 ExternalProject_Add(libxsmm
@@ -85,16 +108,15 @@ ExternalProject_Add(libxsmm
   BUILD_IN_SOURCE   TRUE
   UPDATE_COMMAND    ""
   CONFIGURE_COMMAND ""
-  BUILD_COMMAND     ${CMAKE_MAKE_PROGRAM} ${LIBXSMM_OPTIONS}
+  BUILD_COMMAND     ${PALACE_MAKE_COMMAND} ${LIBXSMM_OPTIONS}
   INSTALL_COMMAND
     ${CMAKE_COMMAND} -E echo "LIBXSMM installing interface..." &&
     ${CMAKE_COMMAND} -E make_directory ${CMAKE_INSTALL_PREFIX}/include &&
     ${CMAKE_COMMAND} -E copy ${LIBXSMM_INSTALL_HEADERS} ${CMAKE_INSTALL_PREFIX}/include &&
-    ${CMAKE_COMMAND} -E echo "LIBXSMM installing pkg-config and module files..." &&
-    ${CMAKE_COMMAND} -E make_directory ${CMAKE_INSTALL_PREFIX}/lib/pkgconfig &&
-    ${CMAKE_COMMAND} -E copy ${LIBXSMM_INSTALL_PKGCONFIG} ${CMAKE_INSTALL_PREFIX}/lib/pkgconfig ||
-    ${CMAKE_COMMAND} -E true &&  # No error if files don't exist
-    ${CMAKE_COMMAND} -E rm -f ${LIBXSMM_INSTALL_PKGCONFIG} &&
-    ${CMAKE_COMMAND} -E rm -f ${CMAKE_INSTALL_PREFIX}/lib/.make
+    ${CMAKE_COMMAND} -E rm -f
+      ${CMAKE_INSTALL_PREFIX}/lib/libxsmm.env
+      ${CMAKE_INSTALL_PREFIX}/lib/.make
+      ${CMAKE_INSTALL_PREFIX}/lib/pkgconfig/.make
+      ${CMAKE_INSTALL_PREFIX}/lib/cmake/libxsmm/.make
   TEST_COMMAND      ""
 )

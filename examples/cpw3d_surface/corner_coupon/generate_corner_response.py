@@ -4,9 +4,15 @@
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
 import numpy as np
+
+IDENTIFICATION_TOOLS = Path(__file__).resolve().parents[2] / "surface_response_identification"
+if str(IDENTIFICATION_TOOLS) not in sys.path:
+    sys.path.insert(0, str(IDENTIFICATION_TOOLS))
+from crack_policy import CRACK_POLICY_DEFAULT, add_crack_policy_argument, apply_crack_policy  # noqa: E402
 
 
 INTERFACES = {
@@ -1465,6 +1471,7 @@ def make_config(
     fabricated,
     substrate_permittivity,
     interface_layers,
+    crack_policy=CRACK_POLICY_DEFAULT,
 ):
     interfaces = (
         [
@@ -1486,11 +1493,11 @@ def make_config(
             "Output": str(output / "postpro" / name),
             "OutputFormats": {"Paraview": False, "GridFunction": False},
         },
-        "Model": {
+        "Model": apply_crack_policy({
             "Mesh": str(mesh),
             "L0": 1.0e-6,
             "Refinement": {"MaxIts": 0},
-        },
+        }, crack_policy),
         "Domains": {
             "Materials": [
                 {"Attributes": [1], "Permittivity": substrate_permittivity},
@@ -1688,6 +1695,7 @@ def main():
     parser.add_argument(
         "--topology", choices=("convex", "concave"), default="convex"
     )
+    add_crack_policy_argument(parser)
     args = parser.parse_args()
     if args.radius <= 0.0:
         parser.error("--radius must be positive")
@@ -1850,6 +1858,7 @@ def main():
             fabricated,
             args.substrate_permittivity,
             interface_layers,
+            crack_policy=args.crack_policy,
         )
         (output / f"{name}.json").write_text(json.dumps(config, indent=2) + "\n")
     library = write_library(
@@ -1959,6 +1968,7 @@ def main():
             fabricated,
             args.substrate_permittivity,
             interface_layers,
+            crack_policy=args.crack_policy,
         )
         config["Solver"]["Electrostatic"]["ResponseMatrix"] = False
         config["Solver"]["Electrostatic"]["AggregateResponseMatrix"] = False
@@ -2005,6 +2015,7 @@ def main():
             fabricated,
             args.substrate_permittivity,
             interface_layers,
+            crack_policy=args.crack_policy,
         )
         (output / f"{name}.json").write_text(json.dumps(config, indent=2) + "\n")
 

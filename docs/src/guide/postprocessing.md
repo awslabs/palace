@@ -56,7 +56,13 @@ written to disk when requested using the relevant parameters under
 When lumped ports are present in a model, the lumped port voltages and currents computed for
 each step of the simulation (eigenmode, frequency, or time step) are written to ASCII files
 named `port-V.csv` and `port-I.csv`, respectively. These files also include the excitation
-voltage and current corresponding to the incident wave on excited port boundaries.
+voltage and current corresponding to the incident wave on excited port boundaries. When the
+weight of an excited lumped port is not real, that is, its
+[`"ExcitationPhase"`](../config/reference.md#config-boundaries-lumpedport) is not a multiple
+of 180 degrees, the incident voltage and current are complex and written as real and
+imaginary parts, columns `Re{V_inc[...]}` and `Im{V_inc[...]}` in `port-V.csv`, and
+likewise for `port-I.csv`; see
+[Lumped and wave port excitation](boundaries.md#Lumped-and-wave-port-excitation).
 
 Additionally, when surface current excitations are present, the excitations are written to
 `surface-I.csv`.
@@ -93,7 +99,8 @@ file. These include:
   - [`config["Boundaries"]["Postprocessing"]["SurfaceFlux"]`](../config/reference.md#config-boundaries-postprocessing-surfaceflux) :
     Postprocess the integrated flux through a surface defined by a list of boundary
     attributes. Electric, magnetic, and power flux are all supported. Surface capacitance
-    can be computed by dividing the computed electric flux by the excitation voltage, while
+    can be computed by dividing the computed electric flux by the excitation voltage (for a
+    lossy dielectric the flux uses the complex permittivity, so take the real part), while
     inductance can be computed by dividing the computed magnetic flux by the excitation
     current. The resulting fluxes are written to `surface-F.csv` in the specified output
     directory.
@@ -134,12 +141,12 @@ file. These include:
     `EdgeRefinement` can enforce a geometry-based element-size target
     throughout the correction tube before the first solve and downweight field-error
     indicators wholly inside the replaced singular core during later AMR. For MA, MS,
-    and SA interfaces on uncracked boundaries,
+    and SA interfaces,
     `FluxRecovery` evaluates the normal displacement field using an H(div)-conforming
     recovered flux; the SA tangential term continues to use the native electric field.
-    This option is rejected on cracked internal boundaries used for zero-thickness metal
-    because a volume L2 projection does not provide a controlled normal trace on the
-    singular PEC surface.
+    This option is rejected on interior boundary sheets, whether or not the mesh is
+    cracked along them, and on cracked internal boundaries, because a volume L2
+    projection does not provide a controlled normal trace on the singular PEC surface.
     Electrostatic fabrication-coupon simulations can combine `LocalizeEdgeEnergy` with
     prescribed-potential basis excitations and
     [`ResponseMatrix`](../config/reference.md#config-solver-electrostatic-responsematrix).
@@ -157,7 +164,7 @@ file. These include:
     `surface-Q.csv` remain the uncorrected thin-metal result. PEC, conductivity,
     impedance, and rational-impedance boundaries require coupons with matching
     boundary-law metadata. See
-    [Postprocessing-only Maxwell response correction](../reference.md#postprocessing-only-maxwell-response-correction)
+    [Maxwell response correction](../reference.md#Maxwell-response-correction)
     for the supported geometry and confidence limits.
     Every corrected run also reports an edge-resolution census of the trace contour
     (`surface-response-resolution.csv`, `SurfaceResponse.Resolution` in `palace.json`, a
@@ -195,6 +202,11 @@ directories located in the output directory specified under
 [`config["Problem"]["Output"]`](../config/reference.md#config-problem). The output
 formats are specified in [`config["Problem"]["OutputFormats"]`](../config/reference.md#config-problem).
 
+*Palace* writes ParaView data using raw-appended binary VTK XML. Use
+[ParaView 5.12.1](https://www.kitware.com/paraview-5-12-1-release-notes/) or newer to
+read these files. Older versions may work with a compatible VTK/Expat combination,
+but are not supported because some distribution builds fail to parse raw-appended data.
+
 ParaView is recommended to visualize large simulations in parallel. The grid function (GLVis)
 format can be useful to embed visualizations in webpages with its
 [Javascript version](https://github.com/GLVis/glvis-js/).
@@ -210,6 +222,60 @@ but the variable names and corresponding units for various possible postprocesse
   - Electric energy density : `U_e` (J/m³)
   - Magnetic energy density : `U_m` (J/m³)
   - Poynting vector: `S` (W/m²)
+
+### Visualization field spaces and interface values
+
+Domain fields available in both the ParaView and grid function formats are represented in
+different ways. ParaView stores values sampled at visualization points, whereas an MFEM grid
+function stores the finite element space and its degrees of freedom. Primary solution fields
+retain their native finite element spaces in grid function output. Derived fields are
+evaluated directly into discontinuous, interpolatory L2 spaces of the solution order:
+
+| Fields                                           | Grid function space | Continuity represented by the space                                                                        |
+|:------------------------------------------------ |:------------------- |:---------------------------------------------------------------------------------------------------------- |
+| `V`, `En`, and other scalar H1 solution fields   | H1                  | The scalar value is continuous across conforming element interfaces.                                       |
+| `E`, `E_real`, `E_imag`, `A`, `A_real`, `A_imag` | ND (H(curl))        | The tangential trace is continuous; the normal component may differ between the two sides of an interface. |
+| `B`, `B_real`, `B_imag` in 3D                    | RT (H(div))         | The normal trace is continuous; the tangential component may differ between the two sides of an interface. |
+| `B`, `B_real`, `B_imag` in 2D                    | Scalar L2           | Element-local scalar values are retained.                                                                  |
+| `U_e`, `U_m`, `S`, `Sn`                          | Scalar or vector L2 | All element-local values are retained, including both traces at an interface.                              |
+
+The L2 representation of the derived fields is important even when a primary solution field
+belongs to a conforming space. H1, H(curl), and H(div) impose different notions of
+continuity; neither H(curl) nor H(div) makes the complete vector field single-valued at an
+interface. In addition, the constitutive parameters can be discontinuous between materials.
+For example,
+
+```math
+U_e = \frac{1}{2} \bm{E}^{*} \bm{\epsilon} \bm{E}, \qquad
+U_m = \frac{1}{2} \bm{B}^{*} \bm{\mu}^{-1} \bm{B}, \qquad
+\bm{S} = \operatorname{Re}\!\left\{\bm{E} \times
+\left(\bm{\mu}^{-1}\bm{B}\right)^{*}\right\}.
+```
+
+A jump in ``\bm{\epsilon}`` or ``\bm{\mu}^{-1}`` can therefore produce a jump in an energy
+density or the Poynting vector, even where the conforming trace of a primary field is
+continuous. Similarly, at a material interface:
+
+  - H(curl) continuity constrains only the tangential electric field; its normal component
+    can jump.
+  - H(div) continuity constrains only the normal magnetic flux density; its tangential
+    component can jump.
+  - ``\bm{D} = \bm{\epsilon}\bm{E}`` and
+    ``\bm{H} = \bm{\mu}^{-1}\bm{B}`` inherit jumps from both the fields and the material
+    tensors. For a lossy dielectric in the frequency domain, ``\bm{\epsilon}`` is the complex
+    permittivity ``\bm{\epsilon}_r(1 - i\tan\delta)``, so the electric flux and surface
+    charge of the complex field include the lagging polarization.
+  - Surface charge ``Q_s = \bm{D} \cdot \bm{n}`` and surface current
+    ``\bm{J}_s = \bm{n} \times \bm{H}`` are side-dependent traces when the corresponding
+    interface charge or current is nonzero.
+
+Forcing these quantities into a continuous H1 space would select, average, or smooth values
+across interfaces and would discard the distinction between the two element-side traces.
+The L2 domain fields instead preserve the element-local result. The separate boundary
+visualization has one tuple per geometric interface point: primary fields are the average of
+the two traces, energy density and Poynting output average the corresponding per-side
+quantities, and surface charge/current use their oriented jump definitions. Exterior
+boundaries use the single adjacent element trace.
 
 Also, at the final step of the simulation the following element-wise quantities are written
 for visualization:
@@ -238,7 +304,7 @@ These names are used by both ParaView and MFEM GridFunction output.
 The boundary data collection includes the 3D field values sampled on the boundary mesh as
 well as:
 
-  - Surface charge density: `Q_s`, `Q_s_real`, `Q_s_imag` (Wb/m²)
+  - Surface charge density: `Q_s`, `Q_s_real`, `Q_s_imag` (C/m²)
   - Surface current density: `J_s`, `J_s_real`, `J_s_imag` (A/m)
   - Wave port boundary mode electric field: `E0_real`, `E0_imag` (V/m)
 
@@ -256,3 +322,33 @@ holds the results of the last solve and `palace.json` records the stop under
 `"AdaptiveMeshRefinement"`/`"MaxSizeStop"` (the AMR iteration, the last solved and the
 predicted numbers of degrees of freedom, the element counts before and after the refinement
 step, and `"MaxSize"`).
+
+When [`config["Model"]["Refinement"]["SaveAdaptMesh"]`](../config/reference.md#config-model-refinement)
+is enabled and adaptation was performed, *Palace* saves the adapted mesh to disk and also
+records a `SavedAdaptedMesh` block in `palace.json` summarizing its topology. When *Palace*
+is built with `zlib`, the saved mesh is gzip-compressed and written with a `.meshgz`
+extension; without `zlib` it is written uncompressed as `.mesh`. MFEM detects the compression
+from the file contents when reading, so either file can be used directly as a restart mesh. The block always
+describes the mesh saved next to it: the top-level `palace.json` describes the final adapted
+mesh, and (when `SaveAdaptIterations` is also enabled) each `iterationX/palace.json` describes
+that iteration's saved mesh, so a saved mesh and its block can always be paired. The block
+contains:
+
+  - `Dimension` : Spatial dimension of the mesh, as an integer (`2` or `3`).
+  - `TrueVertices`, `TrueEdges` : True (order-independent, conforming) counts of the mesh
+    vertices and edges.
+  - `TrueFaces` : True (conforming) counts of the codimension-one faces, broken down by face
+    geometry (`triangle`, `quadrilateral`); only the geometries with a nonzero count are
+    listed. Reported in 3D only. In 2D the codimension-one faces are edges and are already
+    given by `TrueEdges`, so this field is omitted.
+  - `Cells` : Counts of the mesh elements, broken down by element geometry (`tetrahedron`,
+    `hexahedron`, `prism`, `pyramid` in 3D; `triangle`, `quadrilateral` in 2D); only the
+    geometries with a nonzero count are listed. The sum matches `Problem`'s `MeshElements`.
+  - `DomainAttributes`, `BoundaryAttributes` : Sorted lists of the unique domain (material)
+    and boundary attributes present in the mesh.
+
+The face and cell counts are reported per geometry because the number of degrees of freedom
+contributed by each entity depends on its geometry at a given finite-element order. Splitting
+the counts this way makes the exact global degree-of-freedom size recoverable for mixed or
+non-simplicial meshes, where triangle and quadrilateral faces (and tetrahedral,
+hexahedral, prism, and pyramid cells) each contribute a different per-order count.

@@ -14,8 +14,9 @@ endif()
 
 file(MAKE_DIRECTORY ${SCHEMA_OUTPUT_DIR})
 
-# Collect all schema files
-file(GLOB SCHEMA_FILES "${SCHEMA_DIR}/*.json")
+# The directory also contains machine-readable schema release metadata, which is
+# distributed but is not itself a validation schema.
+set(SCHEMA_FILES "${SCHEMA_DIR}/config-schema.json")
 
 # Regenerate the header during build (not configure) when schema files change
 add_custom_command(

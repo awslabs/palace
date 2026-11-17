@@ -3,11 +3,26 @@
 
 #include "rap.hpp"
 
+#include <array>
+
 #include "fem/bilinearform.hpp"
 #include "linalg/hypre.hpp"
 
 namespace palace
 {
+
+namespace
+{
+
+// A += B for an assembled square operator, keeping the diagonal entry first in each row.
+void AddToAssembled(std::unique_ptr<mfem::HypreParMatrix> &A, const mfem::HypreParMatrix &B)
+{
+  A.reset(mfem::ParAdd(A.get(), &B));
+  hypre_ParCSRMatrixSetNumNonzeros(*A);
+  hypre_CSRMatrixReorder(hypre_ParCSRMatrixDiag((hypre_ParCSRMatrix *)*A));
+}
+
+}  // namespace
 
 ParOperator::ParOperator(std::unique_ptr<Operator> &&dA, const Operator *pA,
                          const FiniteElementSpace &trial_fespace,
@@ -41,9 +56,24 @@ void ParOperator::SetEssentialTrueDofs(const mfem::Array<int> &tdof_list,
               "only DiagonalPolicy::DIAG_ONE or DiagonalPolicy::DIAG_ZERO!");
   MFEM_VERIFY(height == width, "Set essential true dofs for both test and trial spaces "
                                "for rectangular ParOperator!");
+  MFEM_VERIFY(!B,
+              "Set essential true dofs before adding a parallel matrix to ParOperator!");
   tdof_list.Read();
   dbc_tdof_list.MakeRef(tdof_list);
   diag_policy = policy;
+}
+
+void ParOperator::AddParallelMatrix(const mfem::HypreParMatrix &B_)
+{
+  MFEM_VERIFY(!B && height == width && B_.Height() == height && B_.Width() == width,
+              "Invalid parallel matrix for square ParOperator!");
+  // The diagonal policy at the essential true dofs is kept by RAP, so B contributes zero.
+  B = std::make_unique<mfem::HypreParMatrix>(B_);
+  B->EliminateBC(dbc_tdof_list, DiagonalPolicy::DIAG_ZERO);
+  if (RAP)
+  {
+    AddToAssembled(RAP, *B);
+  }
 }
 
 Operator::DiagonalPolicy ParOperator::GetDiagonalPolicy() const
@@ -56,6 +86,7 @@ Operator::DiagonalPolicy ParOperator::GetDiagonalPolicy() const
 void ParOperator::EliminateRHS(const Vector &x, Vector &b) const
 {
   MFEM_VERIFY(A, "No local matrix available for ParOperator::EliminateRHS!");
+  MFEM_VERIFY(!B, "ParOperator::EliminateRHS does not support an added parallel matrix!");
   auto &lx = trial_fespace.GetLVector<Vector>();
   auto &ly = GetTestLVector();
   {
@@ -103,29 +134,40 @@ mfem::HypreParMatrix &ParOperator::ParallelAssemble(bool skip_zeros) const
 
   hypre_ParCSRMatrix *hA = hypre_ParCSRMatrixCreate(
       trial_fespace.GetComm(), test_fespace.GlobalVSize(), trial_fespace.GlobalVSize(),
-      test_fespace.Get().GetDofOffsets(), trial_fespace.Get().GetDofOffsets(), 0, sA->NNZ(),
-      0);
+      test_fespace.GetDofOffsets(), trial_fespace.GetDofOffsets(), 0, sA->NNZ(), 0);
   hypre_CSRMatrix *hA_diag = hypre_ParCSRMatrixDiag(hA);
   hypre_ParCSRMatrixDiag(hA) = *const_cast<hypre::HypreCSRMatrix *>(sA);
   hypre_ParCSRMatrixInitialize(hA);
 
-  const mfem::HypreParMatrix *P = trial_fespace.Get().Dof_TrueDof_Matrix();
+  const mfem::HypreParMatrix *P = trial_fespace.Dof_TrueDof_Matrix();
   if (!use_R)
   {
-    const mfem::HypreParMatrix *Rt = test_fespace.Get().Dof_TrueDof_Matrix();
-    RAP = std::make_unique<mfem::HypreParMatrix>(hypre_ParCSRMatrixRAPKT(*Rt, hA, *P, 1, 1),
-                                                 true);
+    const mfem::HypreParMatrix *Rt = test_fespace.Dof_TrueDof_Matrix();
+    if (trial_fespace.IsBroken() || test_fespace.IsBroken())
+    {
+      // hypre_ParCSRMatrixRAPKT reads out of bounds when a process has more columns of Rt
+      // (true DOFs) than rows of A (L-DOFs) and no off-diagonal columns of A P, which can
+      // happen for broken spaces, where a process owns the copies of split true DOFs which
+      // are read only by other processes. Compute Rtᵀ (A P) instead.
+      hypre_ParCSRMatrix *AP = hypre_ParCSRMatMat(hA, *P);
+      RAP = std::make_unique<mfem::HypreParMatrix>(hypre_ParCSRTMatMatKT(*Rt, AP, 1), true);
+      hypre_ParCSRMatrixDestroy(AP);
+    }
+    else
+    {
+      RAP = std::make_unique<mfem::HypreParMatrix>(
+          hypre_ParCSRMatrixRAPKT(*Rt, hA, *P, 1, 1), true);
+    }
   }
   else
   {
-    mfem::HypreParMatrix *hR = new mfem::HypreParMatrix(
+    mfem::HypreParMatrix hR(
         test_fespace.GetComm(), test_fespace.GlobalTrueVSize(), test_fespace.GlobalVSize(),
-        test_fespace.Get().GetTrueDofOffsets(), test_fespace.Get().GetDofOffsets(),
+        test_fespace.GetTrueDofOffsets(), test_fespace.GetDofOffsets(),
         const_cast<mfem::SparseMatrix *>(test_fespace.GetRestrictionMatrix()));
     hypre_ParCSRMatrix *AP = hypre_ParCSRMatMat(hA, *P);
-    RAP = std::make_unique<mfem::HypreParMatrix>(hypre_ParCSRMatMat(*hR, AP), true);
+    RAP = std::make_unique<mfem::HypreParMatrix>(hypre_ParCSRMatMat(hR, AP), true);
     hypre_ParCSRMatrixDestroy(AP);
-    delete hR;
   }
 
   hypre_ParCSRMatrixDiag(hA) = hA_diag;
@@ -146,6 +188,10 @@ mfem::HypreParMatrix &ParOperator::ParallelAssemble(bool skip_zeros) const
   {
     MFEM_VERIFY(dbc_tdof_list.Size() == 0,
                 "Essential BC elimination is only available for square ParOperator!");
+  }
+  if (B)
+  {
+    AddToAssembled(RAP, *B);
   }
 
   return *RAP;
@@ -190,6 +236,13 @@ void ParOperator::AssembleDiagonal(Vector &diag) const
       linalg::SetSubVector(diag, dbc_tdof_list, 0.0);
     }
   }
+  if (B)
+  {
+    // Search each row for its diagonal entry: B need not store one, let alone first.
+    B->HypreRead();
+    hypre_CSRMatrixExtractDiagonal(hypre_ParCSRMatrixDiag((hypre_ParCSRMatrix *)*B),
+                                   diag.ReadWrite(), 10);
+  }
 }
 
 void ParOperator::Mult(const Vector &x, Vector &y) const
@@ -231,6 +284,10 @@ void ParOperator::Mult(const Vector &x, Vector &y) const
       linalg::SetSubVector(y, dbc_tdof_list, 0.0);
     }
   }
+  if (B)
+  {
+    B->Mult(1.0, x, 1.0, y);
+  }
 }
 
 void ParOperator::MultTranspose(const Vector &x, Vector &y) const
@@ -271,6 +328,10 @@ void ParOperator::MultTranspose(const Vector &x, Vector &y) const
     {
       linalg::SetSubVector(y, dbc_tdof_list, 0.0);
     }
+  }
+  if (B)
+  {
+    B->MultTranspose(1.0, x, 1.0, y);
   }
 }
 
@@ -315,6 +376,10 @@ void ParOperator::AddMult(const Vector &x, Vector &y, const double a) const
     }
   }
   y.Add(a, ty);
+  if (B)
+  {
+    B->Mult(a, x, 1.0, y);
+  }
 }
 
 void ParOperator::AddMultTranspose(const Vector &x, Vector &y, const double a) const
@@ -358,6 +423,10 @@ void ParOperator::AddMultTranspose(const Vector &x, Vector &y, const double a) c
     }
   }
   y.Add(a, tx);
+  if (B)
+  {
+    B->MultTranspose(a, x, 1.0, y);
+  }
 }
 
 void ParOperator::RestrictionMatrixMult(const Vector &ly, Vector &ty) const
@@ -398,7 +467,7 @@ ComplexParOperator::ComplexParOperator(std::unique_ptr<Operator> &&dAr,
                                        bool test_restrict)
   : ComplexOperator(test_fespace.GetTrueVSize(), trial_fespace.GetTrueVSize()),
     data_A((dAr != nullptr || dAi != nullptr)
-               ? std::make_unique<ComplexWrapperOperator>(std::move(dAr), std::move(dAi))
+               ? ceed::CreateComplexOperator(std::move(dAr), std::move(dAi), trial_fespace)
                : std::make_unique<ComplexWrapperOperator>(pAr, pAi)),
     A(data_A.get()), trial_fespace(trial_fespace), test_fespace(test_fespace),
     use_R(test_restrict), diag_policy(Operator::DiagonalPolicy::DIAG_ONE),
@@ -962,6 +1031,44 @@ std::unique_ptr<ComplexOperator> BuildComplexSumOperator(
   return ApplyEssentialDiagonal(BuildComplexSumOperator(terms), reference);
 }
 
+// Apply the essential dofs shared by the operators to their sum, with the highest diagonal
+// policy among them in enum order.
+template <typename Ops, typename SumOperType>
+void SetSumEssentialTrueDofs(const Ops &ops, SumOperType &O)
+{
+  // Extract essential dof pointer from first operator with one.
+  auto it_ess = std::ranges::find_if(ops, [](auto p)
+                                     { return p != nullptr && p->GetEssentialTrueDofs(); });
+  if (it_ess == ops.end())
+  {
+    return;
+  }
+  const auto *ess_dofs = (*it_ess)->GetEssentialTrueDofs();
+
+  // Check other existent essential dof arrays are references.
+  MFEM_VERIFY(std::ranges::all_of(ops,
+                                  [&](auto p)
+                                  {
+                                    if (p == nullptr)
+                                    {
+                                      return true;
+                                    }
+                                    auto p_ess_dofs = p->GetEssentialTrueDofs();
+                                    return p_ess_dofs == nullptr ||
+                                           ReferencesSameMemory(*ess_dofs, *p_ess_dofs);
+                                  }),
+              "If essential dofs are set, all suboperators must agree on them!");
+
+  // Use implied ordering of enumeration.
+  Operator::DiagonalPolicy policy = Operator::DiagonalPolicy::DIAG_ZERO;
+  for (auto p : ops)
+  {
+    policy = (p && p->GetEssentialTrueDofs()) ? std::max(policy, p->GetDiagonalPolicy())
+                                              : policy;
+  }
+  O.SetEssentialTrueDofs(*ess_dofs, policy);
+}
+
 // Combine a collection of ParOperator into a weighted summation. If set_essential is true,
 // extract the essential dofs from the operator array, and apply to the summed operator.
 template <std::size_t N>
@@ -969,15 +1076,15 @@ std::unique_ptr<ParOperator>
 BuildParSumOperator(const std::array<double, N> &coeff,
                     const std::array<const ParOperator *, N> &ops, bool set_essential)
 {
-  auto it = std::find_if(ops.begin(), ops.end(), [](auto p) { return p != nullptr; });
+  auto it = std::ranges::find_if(ops, [](auto p) { return p != nullptr; });
   MFEM_VERIFY(it != ops.end(),
               "BuildParSumOperator requires at least one valid ParOperator!");
   const auto first_op = *it;
   const auto &fespace = first_op->TrialFiniteElementSpace();
-  MFEM_VERIFY(
-      std::all_of(ops.begin(), ops.end(), [&fespace](auto p)
+  MFEM_VERIFY(std::ranges::all_of(
+                  ops, [&fespace](auto p)
                   { return p == nullptr || &p->TrialFiniteElementSpace() == &fespace; }),
-      "All ComplexParOperators must have the same FiniteElementSpace!");
+              "All ComplexParOperators must have the same FiniteElementSpace!");
 
   auto sum = std::make_unique<SumOperator>(first_op->LocalOperator().Height(),
                                            first_op->LocalOperator().Width());
@@ -992,39 +1099,8 @@ BuildParSumOperator(const std::array<double, N> &coeff,
   auto O = std::make_unique<ParOperator>(std::move(sum), fespace);
   if (set_essential)
   {
-    // Extract essential dof pointer from first operator with one.
-    auto it_ess = std::find_if(ops.begin(), ops.end(), [](auto p)
-                               { return p != nullptr && p->GetEssentialTrueDofs(); });
-    if (it_ess == ops.end())
-    {
-      return O;
-    }
-    const auto *ess_dofs = (*it_ess)->GetEssentialTrueDofs();
-
-    // Check other existent essential dof arrays are references.
-    MFEM_VERIFY(std::all_of(ops.begin(), ops.end(),
-                            [&](auto p)
-                            {
-                              if (p == nullptr)
-                              {
-                                return true;
-                              }
-                              auto p_ess_dofs = p->GetEssentialTrueDofs();
-                              return p_ess_dofs == nullptr ||
-                                     ReferencesSameMemory(*ess_dofs, *p_ess_dofs);
-                            }),
-                "If essential dofs are set, all suboperators must agree on them!");
-
-    // Use implied ordering of enumeration.
-    Operator::DiagonalPolicy policy = Operator::DiagonalPolicy::DIAG_ZERO;
-    for (auto p : ops)
-    {
-      policy = (p && p->GetEssentialTrueDofs()) ? std::max(policy, p->GetDiagonalPolicy())
-                                                : policy;
-    }
-    O->SetEssentialTrueDofs(*ess_dofs, policy);
+    SetSumEssentialTrueDofs(ops, *O);
   }
-
   return O;
 }
 
@@ -1049,15 +1125,15 @@ BuildParSumOperator(const std::vector<std::complex<double>> &coeff,
 {
   MFEM_VERIFY(coeff.size() == ops.size(),
               "BuildParSumOperator requires matching coefficient and operator counts!");
-  auto it = std::find_if(ops.begin(), ops.end(), [](auto p) { return p != nullptr; });
+  auto it = std::ranges::find_if(ops, [](auto p) { return p != nullptr; });
   MFEM_VERIFY(it != ops.end(),
               "BuildParSumOperator requires at least one valid ComplexParOperator!");
   const auto first_op = *it;
   const auto &fespace = first_op->TrialFiniteElementSpace();
-  MFEM_VERIFY(
-      std::all_of(ops.begin(), ops.end(), [&fespace](auto p)
+  MFEM_VERIFY(std::ranges::all_of(
+                  ops, [&fespace](auto p)
                   { return p == nullptr || &p->TrialFiniteElementSpace() == &fespace; }),
-      "All ComplexParOperators must have the same FiniteElementSpace!");
+              "All ComplexParOperators must have the same FiniteElementSpace!");
 
   auto sumr = std::make_unique<SumOperator>(first_op->LocalOperator().Height(),
                                             first_op->LocalOperator().Width());
@@ -1091,32 +1167,7 @@ BuildParSumOperator(const std::vector<std::complex<double>> &coeff,
   auto O = std::make_unique<ComplexParOperator>(std::move(sumr), std::move(sumi), fespace);
   if (set_essential)
   {
-    auto it_ess = std::find_if(ops.begin(), ops.end(), [](auto p)
-                               { return p != nullptr && p->GetEssentialTrueDofs(); });
-    if (it_ess == ops.end())
-    {
-      return O;
-    }
-    const auto *ess_dofs = (*it_ess)->GetEssentialTrueDofs();
-    MFEM_VERIFY(std::all_of(ops.begin(), ops.end(),
-                            [&](auto p)
-                            {
-                              if (p == nullptr)
-                              {
-                                return true;
-                              }
-                              auto p_ess_dofs = p->GetEssentialTrueDofs();
-                              return p_ess_dofs == nullptr ||
-                                     ReferencesSameMemory(*ess_dofs, *p_ess_dofs);
-                            }),
-                "If essential dofs are set, all suboperators must agree on them!");
-    Operator::DiagonalPolicy policy = Operator::DiagonalPolicy::DIAG_ZERO;
-    for (auto p : ops)
-    {
-      policy = (p && p->GetEssentialTrueDofs()) ? std::max(policy, p->GetDiagonalPolicy())
-                                                : policy;
-    }
-    O->SetEssentialTrueDofs(*ess_dofs, policy);
+    SetSumEssentialTrueDofs(ops, *O);
   }
   return O;
 }
@@ -1126,27 +1177,57 @@ BuildParSumOperator(const std::vector<std::complex<double>> &coeff,
                     const std::vector<const ComplexOperator *> &ops, bool set_essential)
 {
   std::vector<const ComplexParOperator *> par_ops(ops.size());
-  std::transform(ops.begin(), ops.end(), par_ops.begin(), [](const ComplexOperator *op)
-                 { return dynamic_cast<const ComplexParOperator *>(op); });
+  std::ranges::transform(ops, par_ops.begin(), [](const ComplexOperator *op)
+                         { return dynamic_cast<const ComplexParOperator *>(op); });
   return BuildParSumOperator(coeff, par_ops, set_essential);
 }
 
-// TODO: replace with std::to_array in c++20.
-namespace detail
+std::unique_ptr<ComplexOperator>
+BuildOperatorWithA2(const std::vector<std::complex<double>> &coeff,
+                    const std::vector<const ComplexOperator *> &ops,
+                    const ComplexOperator *A2)
 {
-// Helper for conversion to std::array.
-template <class T, std::size_t N, std::size_t... I>
-constexpr std::array<std::remove_cv_t<T>, N> to_array_impl(T (&&a)[N],
-                                                           std::index_sequence<I...>)
-{
-  return {{std::move(a[I])...}};
-}
-}  // namespace detail
-
-template <class T, std::size_t N>
-constexpr std::array<std::remove_cv_t<T>, N> to_array(T (&&a)[N])
-{
-  return detail::to_array_impl(std::move(a), std::make_index_sequence<N>{});
+  // Abstract (not ComplexParOperator) K, C or M terms, such as the response-corrected
+  // stiffness and mass of the corrected eigenproblem, would be dropped by
+  // BuildParSumOperator's dynamic_cast: sum every term as an abstract operator instead,
+  // with the essential-dof diagonal policy of ops[0] (the stiffness K; an abstract K
+  // carries its essential-dof policy itself).
+  if (std::ranges::any_of(ops, [](const ComplexOperator *op)
+                          { return op && !dynamic_cast<const ComplexParOperator *>(op); }))
+  {
+    MFEM_VERIFY(coeff.size() == ops.size() && ops[0],
+                "BuildOperatorWithA2 requires matching coefficient and operator counts and "
+                "a stiffness operator!");
+    auto sum = std::make_unique<SumComplexOperator>(ops[0]->Height(), ops[0]->Width());
+    auto add = [&sum](const ComplexOperator &op, std::complex<double> a)
+    {
+      MFEM_VERIFY(op.Height() == sum->Height() && op.Width() == sum->Width(),
+                  "Mismatched dimensions in complex operator sum!");
+      sum->AddOperator(op, a);
+    };
+    for (std::size_t i = 0; i < ops.size(); i++)
+    {
+      if (ops[i] && coeff[i] != 0.0)
+      {
+        add(*ops[i], coeff[i]);
+      }
+    }
+    if (A2)
+    {
+      add(*A2, 1.0);
+    }
+    return ApplyEssentialDiagonal(std::move(sum), *ops[0]);
+  }
+  if (A2 && !dynamic_cast<const ComplexParOperator *>(A2))
+  {
+    auto sum = BuildParSumOperator(coeff, ops, true);
+    return std::make_unique<SumComplexOperator>(std::move(sum), *A2);
+  }
+  std::vector<std::complex<double>> c(coeff);
+  std::vector<const ComplexOperator *> o(ops);
+  c.emplace_back(1.0, 0.0);
+  o.push_back(A2);
+  return BuildParSumOperator(c, o, true);
 }
 
 template <std::size_t N>
@@ -1154,9 +1235,9 @@ std::unique_ptr<ComplexParOperator>
 BuildParSumOperator(std::complex<double> (&&coeff_in)[N],
                     const ComplexParOperator *(&&ops_in)[N], bool set_essential)
 {
-  return BuildParSumOperator(
-      palace::to_array<std::complex<double>>(std::move(coeff_in)),
-      palace::to_array<const ComplexParOperator *>(std::move(ops_in)), set_essential);
+  return BuildParSumOperator(std::to_array<std::complex<double>>(std::move(coeff_in)),
+                             std::to_array<const ComplexParOperator *>(std::move(ops_in)),
+                             set_essential);
 }
 
 template <std::size_t N, typename ScalarType, typename OperType>
@@ -1177,7 +1258,7 @@ BuildParSumOperator(ScalarType (&&coeff_in)[N], const OperType *(&&ops_in)[N],
                          { return op == nullptr || par_op != nullptr; }),
               "BuildParSumOperator requires parallel operator inputs!");
 
-  return BuildParSumOperator(palace::to_array<ScalarType>(std::move(coeff_in)),
+  return BuildParSumOperator(std::to_array<ScalarType>(std::move(coeff_in)),
                              std::move(par_ops), set_essential);
 }
 
@@ -1199,5 +1280,35 @@ template std::unique_ptr<ComplexParOperator>
     BuildParSumOperator(std::complex<double> (&&)[3], const ComplexOperator *(&&)[3], bool);
 template std::unique_ptr<ComplexParOperator>
     BuildParSumOperator(std::complex<double> (&&)[4], const ComplexOperator *(&&)[4], bool);
+
+namespace linalg
+{
+
+std::unique_ptr<mfem::HypreParMatrix>
+BlockDiagonalParMatrix(MPI_Comm comm, HYPRE_BigInt global_rows, HYPRE_BigInt global_cols,
+                       HYPRE_BigInt *row_starts, HYPRE_BigInt *col_starts,
+                       std::unique_ptr<mfem::SparseMatrix> &&diag)
+{
+  diag->Finalize();
+  auto *offd = new mfem::SparseMatrix(diag->Height(), 0, 0);
+  offd->Finalize();
+  return std::make_unique<mfem::HypreParMatrix>(comm, global_rows, global_cols, row_starts,
+                                                col_starts, diag.release(), offd, nullptr,
+                                                true);
+}
+
+std::unique_ptr<mfem::HypreParMatrix> RAP(const mfem::HypreParMatrix &A,
+                                          const mfem::HypreParMatrix &P)
+{
+  hypre_ParCSRMatrix *AP = hypre_ParCSRMatMat(const_cast<mfem::HypreParMatrix &>(A),
+                                              const_cast<mfem::HypreParMatrix &>(P));
+  auto PtAP = std::make_unique<mfem::HypreParMatrix>(
+      hypre_ParCSRTMatMatKT(const_cast<mfem::HypreParMatrix &>(P), AP, 1), true);
+  hypre_ParCSRMatrixDestroy(AP);
+  hypre_ParCSRMatrixSetNumNonzeros(*PtAP);
+  return PtAP;
+}
+
+}  // namespace linalg
 
 }  // namespace palace

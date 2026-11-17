@@ -300,10 +300,10 @@ public:
 
   // Interpolate the A2 matrix between sigma_min and sigma_max with a Newton polynomial.
   void Interpolate(const std::complex<double> sigma_min,
-                   const std::complex<double> sigma_max);
+                   const std::complex<double> sigma_max) override;
 
   // Get the interpolation operator of specified order.
-  std::unique_ptr<ComplexOperator> GetInterpolationOperator(int order) const;
+  std::unique_ptr<ComplexOperator> GetInterpolationOperator(int order) const override;
 
   // Fold a frozen pole f(λ)·M into the interpolation: by linearity, remove its
   // interpolated contribution (the scalar interpolant of f at the nodes, times the constant
@@ -331,9 +331,9 @@ public:
                   double &freeze_err) const;
 
   // Perform multiplication with interpolation operator of specified order.
-  void Mult(int order, const ComplexVector &x, ComplexVector &y) const;
+  void Mult(int order, const ComplexVector &x, ComplexVector &y) const override;
   void AddMult(int order, const ComplexVector &x, ComplexVector &y,
-               std::complex<double> a = 1.0) const;
+               std::complex<double> a = 1.0) const override;
 };
 
 }  // namespace palace

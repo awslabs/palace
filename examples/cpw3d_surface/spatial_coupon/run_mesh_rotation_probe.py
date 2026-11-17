@@ -15,6 +15,9 @@ import sys
 from compare_coupon_probe import compare
 
 HERE = Path(__file__).resolve().parent
+if str(HERE.parents[1] / "surface_response_identification") not in sys.path:
+    sys.path.insert(0, str(HERE.parents[1] / "surface_response_identification"))
+from crack_policy import add_crack_policy_argument, apply_crack_policy  # noqa: E402
 
 
 def run(args):
@@ -43,7 +46,7 @@ def run(args):
         config = {
             "Problem": {"Type":"Electrostatic","Verbose":1,"Output":str(args.output/tag),
                         "OutputFormats":{"Paraview":False,"GridFunction":False}},
-            "Model": {"Mesh":str(mesh),"L0":1e-6,"Refinement":{"MaxIts":0}},
+            "Model": apply_crack_policy({"Mesh":str(mesh),"L0":1e-6,"Refinement":{"MaxIts":0}}, args.crack_policy),
             "Domains": {"Materials":[{"Attributes":[1],"Permittivity":11.47},
                                       {"Attributes":[2],"Permittivity":1.}]},
             "Boundaries": {"Ground":{"Attributes":[1]},
@@ -58,6 +61,7 @@ def run(args):
         path.write_text(json.dumps(config,indent=2)+"\n")
         bounded(["mpirun","-n",str(args.ranks),str(args.palace),str(path)],tag)
     report=compare(args.output/"original",args.output/"rotated","fabricated",1e-6,1e-6)
+    report["CrackPolicy"]=args.crack_policy
     report["Purpose"]="Rigid-coordinate covariance on identical connectivity, not accuracy qualification"
     report["InputSHA256"]={"Mesh":hashlib.sha256(args.mesh.read_bytes()).hexdigest(),
                           "PalaceBinary":hashlib.sha256(args.palace.read_bytes()).hexdigest()}
@@ -75,4 +79,5 @@ if __name__ == "__main__":
     parser.add_argument("--julia",default="julia")
     parser.add_argument("--julia-project",type=Path,required=True)
     parser.add_argument("--ranks",type=int,default=2,choices=range(1,7))
+    add_crack_policy_argument(parser)
     raise SystemExit(0 if run(parser.parse_args()) else 1)

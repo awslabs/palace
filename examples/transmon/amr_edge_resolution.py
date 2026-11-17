@@ -16,6 +16,7 @@ refined mesh never has to leave the machine that solved it. Coordinates are in m
 """
 
 import argparse
+import gzip
 import json
 import sys
 from pathlib import Path
@@ -29,7 +30,11 @@ TET_EDGES = np.array([[0, 1], [0, 2], [0, 3], [1, 2], [1, 3], [2, 3]])
 
 def read_nc_mesh(path):
     """Leaf tetrahedra (node ids), boundary triangles (attribute, node ids) and node coordinates."""
-    lines = Path(path).read_text().split("\n")
+    data = Path(path).read_bytes()
+    if data[:2] == b"\x1f\x8b":
+        # Upstream PR 923: on a zlib build Palace saves the adapted mesh gzip-compressed (.meshgz).
+        data = gzip.decompress(data)
+    lines = data.decode().split("\n")
     if not lines or not lines[0].startswith("MFEM NC mesh v1."):
         raise ValueError(f"{path}: not an MFEM NC mesh (first line {lines[0][:40]!r})")
     scaled = lines[0].startswith("MFEM NC mesh v1.1")

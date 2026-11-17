@@ -11,6 +11,7 @@
 #include <nlohmann/json_fwd.hpp>
 #include "fem/errorindicator.hpp"
 #include "utils/filesystem.hpp"
+#include "utils/geodata.hpp"
 #include "utils/memoryreporting.hpp"
 
 namespace mfem
@@ -42,7 +43,6 @@ class BaseSolver
 {
 protected:
   // Reference to configuration file data (not owned).
-  // TODO(C++20): Update to reference wrapper of incomplete type.
   const IoData &iodata;
 
   // Parameters for writing postprocessing outputs.
@@ -65,6 +65,16 @@ protected:
   virtual std::pair<ErrorIndicator, long long int>
   Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const = 0;
 
+  // Set false by Solve when a linear solve fails to converge, or when the London kinetic
+  // penalty energy spikes (a stiff λ→0 penalty the solver cannot resolve on a refined
+  // mesh). Lets SolveEstimateMarkRefine halt adaptation gracefully, keeping the last
+  // converged iteration, instead of aborting or reporting a collapsed inductance.
+  mutable bool solve_converged_ = true;
+
+  // Previous adaptation iteration's total London kinetic energy S(A_t − a_h), for detecting
+  // an anomalous spike; negative until the first London solve sets it.
+  mutable double prev_london_kinetic_ = -1.0;
+
 public:
   BaseSolver(const IoData &iodata, bool root, int size = 0, int num_thread = 0,
              const char *git_tag = nullptr);
@@ -81,6 +91,10 @@ public:
 
   // These methods write different simulation metadata to a JSON file in post_dir.
   void SaveMetadata(const FiniteElementSpaceHierarchy &fespaces) const;
+  // Writes the given (1-based) AMR iteration index to post_dir's palace.json as
+  // "Problem"/"Iteration". The index matches the "iterationXX" archive subdirectory (the
+  // initial solve is iteration 1).
+  void SaveAdaptationIteration(int iteration) const;
   template <typename SolverType>
   void SaveMetadata(const SolverType &ksp) const;
   void SaveLinearSolverMetadata(MPI_Comm comm, long long int solves,
@@ -109,6 +123,7 @@ public:
   // which the predicted size of the refined mesh exceeded Refinement.MaxSize and the
   // solve was skipped).
   void SaveMaxSizeStopMetadata(const nlohmann::json &record) const;
+  void SaveMetadata(const mesh::MeshEntityCounts &counts) const;
 };
 
 // Predicted number of global true dofs of a refined mesh: the last solved size scaled by

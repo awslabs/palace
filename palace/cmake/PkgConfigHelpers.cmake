@@ -104,7 +104,7 @@ function(find_libceed_pkgconfig _libceed_deps _libceed_target)
   set(${_libceed_target} "" PARENT_SCOPE)
 endfunction()
 
-function(check_petsc_build _petsc_target _petsc_test_success)
+function(check_petsc_build _petsc_target _petsc_test_success _petsc_test_diagnostic)
   set(PETSC_LIB_TEST_DIR ${CMAKE_BINARY_DIR}/CMakeFiles/try_run)
   set(PETSC_LIB_TEST_CPP ${PETSC_LIB_TEST_DIR}/petsc_test_lib.cpp)
   file(WRITE ${PETSC_LIB_TEST_CPP}
@@ -122,20 +122,57 @@ int main()
   return 0;
 }
 ")
-  try_run(
-    PETSC_TEST_EXITCODE
-    PETSC_TEST_COMPILED
-    ${PETSC_LIB_TEST_DIR}
-    ${PETSC_LIB_TEST_CPP}
-    CMAKE_FLAGS -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER} -DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}
-    LINK_LIBRARIES ${_petsc_target}
-    COMPILE_OUTPUT_VARIABLE PETSC_TEST_COMPILE_OUTPUT
-    RUN_OUTPUT_VARIABLE PETSC_TEST_OUTPUT
-  )
-  if(PETSC_TEST_COMPILED AND PETSC_TEST_EXITCODE EQUAL 0)
-    set(${_petsc_test_success} TRUE PARENT_SCOPE)
+  if(PALACE_WITH_CUDA OR PALACE_WITH_HIP)
+    # GPU-enabled dependencies must be configurable on build hosts without a
+    # GPU or driver. The GPU device and driver are supplied on the execution host.
+    try_compile(
+      PETSC_TEST_COMPILED
+      ${PETSC_LIB_TEST_DIR}
+      ${PETSC_LIB_TEST_CPP}
+      LINK_LIBRARIES ${_petsc_target}
+      OUTPUT_VARIABLE PETSC_TEST_COMPILE_OUTPUT
+    )
+    set(PETSC_TEST_SUCCESS ${PETSC_TEST_COMPILED})
   else()
+    try_run(
+      PETSC_TEST_EXITCODE
+      PETSC_TEST_COMPILED
+      ${PETSC_LIB_TEST_DIR}
+      ${PETSC_LIB_TEST_CPP}
+      CMAKE_FLAGS -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER} -DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}
+      LINK_LIBRARIES ${_petsc_target}
+      COMPILE_OUTPUT_VARIABLE PETSC_TEST_COMPILE_OUTPUT
+      RUN_OUTPUT_VARIABLE PETSC_TEST_OUTPUT
+    )
+    if(PETSC_TEST_COMPILED AND PETSC_TEST_EXITCODE EQUAL 0)
+      set(PETSC_TEST_SUCCESS TRUE)
+    else()
+      set(PETSC_TEST_SUCCESS FALSE)
+    endif()
+  endif()
+  if(PETSC_TEST_SUCCESS)
+    set(${_petsc_test_success} TRUE PARENT_SCOPE)
+    set(${_petsc_test_diagnostic} "" PARENT_SCOPE)
+  else()
+    if(PETSC_TEST_COMPILED)
+      if(PETSC_TEST_EXITCODE MATCHES "^PLEASE_FILL_OUT-")
+        string(CONCAT PETSC_TEST_DIAGNOSTIC
+               "The PETSc test program compiled, but CMake did not run it while "
+               "cross-compiling. Set CMAKE_CROSSCOMPILING_EMULATOR or provide the "
+               "try_run cache results requested above.")
+      elseif(PETSC_TEST_EXITCODE STREQUAL "FAILED_TO_RUN")
+        string(CONCAT PETSC_TEST_DIAGNOSTIC
+               "The PETSc test program compiled, but CMake could not execute it.\n"
+               "${PETSC_TEST_OUTPUT}")
+      else()
+        set(PETSC_TEST_DIAGNOSTIC
+            "Exited with code ${PETSC_TEST_EXITCODE}\n${PETSC_TEST_OUTPUT}")
+      endif()
+    else()
+      set(PETSC_TEST_DIAGNOSTIC "Compile output:\n${PETSC_TEST_COMPILE_OUTPUT}")
+    endif()
     set(${_petsc_test_success} FALSE PARENT_SCOPE)
+    set(${_petsc_test_diagnostic} "${PETSC_TEST_DIAGNOSTIC}" PARENT_SCOPE)
   endif()
 endfunction()
 
@@ -149,7 +186,8 @@ function(find_petsc_pkgconfig _petsc_deps _petsc_target)
     return()
   endif()
   message(STATUS "Found PETSc: ${PETSc_VERSION}")
-  check_petsc_build("PkgConfig::PETSc;${_petsc_deps}" PETSC_TEST_SUCCESS)
+  check_petsc_build("PkgConfig::PETSc;${_petsc_deps}" PETSC_TEST_SUCCESS
+                    PETSC_TEST_DIAGNOSTIC)
   if(PETSC_TEST_SUCCESS)
     message(STATUS "PETSc test program - Successful")
     set(${_petsc_target} PkgConfig::PETSc PARENT_SCOPE)
@@ -158,6 +196,7 @@ function(find_petsc_pkgconfig _petsc_deps _petsc_target)
 
   # Try with --static libraries
   message(STATUS "PETSc test program - Failed")
+  set(PETSC_DEFAULT_TEST_DIAGNOSTIC "${PETSC_TEST_DIAGNOSTIC}")
   set(PKG_CONFIG_EXECUTABLE_BACKUP ${PKG_CONFIG_EXECUTABLE})
   list(APPEND PKG_CONFIG_EXECUTABLE "--static")
   pkg_check_modules(PETSc_STATIC QUIET IMPORTED_TARGET GLOBAL PETSc)
@@ -166,10 +205,12 @@ function(find_petsc_pkgconfig _petsc_deps _petsc_target)
   endif()
   set(PKG_CONFIG_EXECUTABLE ${PKG_CONFIG_EXECUTABLE_BACKUP})
   if(NOT PETSc_STATIC_FOUND)
+    message(STATUS "PETSc test program diagnostics:\n${PETSC_DEFAULT_TEST_DIAGNOSTIC}")
     set(${_petsc_target} "" PARENT_SCOPE)
     return()
   endif()
-  check_petsc_build("PkgConfig::PETSc_STATIC;${_petsc_deps}" PETSC_TEST_SUCCESS)
+  check_petsc_build("PkgConfig::PETSc_STATIC;${_petsc_deps}" PETSC_TEST_SUCCESS
+                    PETSC_TEST_DIAGNOSTIC)
   if(PETSC_TEST_SUCCESS)
     message(STATUS "PETSc test program with static linkage - Success")
     set(${_petsc_target} PkgConfig::PETSc_STATIC PARENT_SCOPE)
@@ -178,10 +219,14 @@ function(find_petsc_pkgconfig _petsc_deps _petsc_target)
 
   # Not able to build a PETSc test program
   message(STATUS "PETSc test program with static linkage - Failed")
+  message(STATUS
+    "PETSc test program diagnostics (default pkg-config):\n${PETSC_DEFAULT_TEST_DIAGNOSTIC}"
+  )
+  message(STATUS "PETSc test program diagnostics (--static pkg-config):\n${PETSC_TEST_DIAGNOSTIC}")
   set(${_petsc_target} "" PARENT_SCOPE)
 endfunction()
 
-function(check_slepc_build _slepc_target _slepc_test_success)
+function(check_slepc_build _slepc_target _slepc_test_success _slepc_test_diagnostic)
   set(SLEPC_LIB_TEST_DIR ${CMAKE_BINARY_DIR}/CMakeFiles/try_run)
   set(SLEPC_LIB_TEST_CPP ${SLEPC_LIB_TEST_DIR}/slepc_test_lib.cpp)
   file(WRITE ${SLEPC_LIB_TEST_CPP}
@@ -199,23 +244,57 @@ int main()
   return 0;
 }
 ")
-  try_run(
-    SLEPC_TEST_EXITCODE
-    SLEPC_TEST_COMPILED
-    ${SLEPC_LIB_TEST_DIR}
-    ${SLEPC_LIB_TEST_CPP}
-    LINK_LIBRARIES ${_slepc_target}
-    COMPILE_OUTPUT_VARIABLE SLEPC_TEST_COMPILE_OUTPUT
-    RUN_OUTPUT_VARIABLE SLEPC_TEST_OUTPUT
-  )
+  if(PALACE_WITH_CUDA OR PALACE_WITH_HIP)
+    try_compile(
+      SLEPC_TEST_COMPILED
+      ${SLEPC_LIB_TEST_DIR}
+      ${SLEPC_LIB_TEST_CPP}
+      LINK_LIBRARIES ${_slepc_target}
+      OUTPUT_VARIABLE SLEPC_TEST_COMPILE_OUTPUT
+    )
+    set(SLEPC_TEST_SUCCESS ${SLEPC_TEST_COMPILED})
+  else()
+    try_run(
+      SLEPC_TEST_EXITCODE
+      SLEPC_TEST_COMPILED
+      ${SLEPC_LIB_TEST_DIR}
+      ${SLEPC_LIB_TEST_CPP}
+      LINK_LIBRARIES ${_slepc_target}
+      COMPILE_OUTPUT_VARIABLE SLEPC_TEST_COMPILE_OUTPUT
+      RUN_OUTPUT_VARIABLE SLEPC_TEST_OUTPUT
+    )
+    if(SLEPC_TEST_COMPILED AND SLEPC_TEST_EXITCODE EQUAL 0)
+      set(SLEPC_TEST_SUCCESS TRUE)
+    else()
+      set(SLEPC_TEST_SUCCESS FALSE)
+    endif()
+  endif()
   # message(STATUS "SLEPC_TEST_COMPILE_OUTPUT: ${SLEPC_TEST_COMPILE_OUTPUT}")
   # message(STATUS "SLEPC_TEST_OUTPUT: ${SLEPC_TEST_OUTPUT}")
-  if(SLEPC_TEST_COMPILED AND SLEPC_TEST_EXITCODE EQUAL 0)
+  if(SLEPC_TEST_SUCCESS)
     # message(STATUS "SLEPc test program - Successful")
     set(${_slepc_test_success} TRUE PARENT_SCOPE)
+    set(${_slepc_test_diagnostic} "" PARENT_SCOPE)
   else()
-    # message(STATUS "SLEPc test program - Failed")
+    if(SLEPC_TEST_COMPILED)
+      if(SLEPC_TEST_EXITCODE MATCHES "^PLEASE_FILL_OUT-")
+        string(CONCAT SLEPC_TEST_DIAGNOSTIC
+               "The SLEPc test program compiled, but CMake did not run it while "
+               "cross-compiling. Set CMAKE_CROSSCOMPILING_EMULATOR or provide the "
+               "try_run cache results requested above.")
+      elseif(SLEPC_TEST_EXITCODE STREQUAL "FAILED_TO_RUN")
+        string(CONCAT SLEPC_TEST_DIAGNOSTIC
+               "The SLEPc test program compiled, but CMake could not execute it.\n"
+               "${SLEPC_TEST_OUTPUT}")
+      else()
+        set(SLEPC_TEST_DIAGNOSTIC
+            "Exited with code ${SLEPC_TEST_EXITCODE}\n${SLEPC_TEST_OUTPUT}")
+      endif()
+    else()
+      set(SLEPC_TEST_DIAGNOSTIC "Compile output:\n${SLEPC_TEST_COMPILE_OUTPUT}")
+    endif()
     set(${_slepc_test_success} FALSE PARENT_SCOPE)
+    set(${_slepc_test_diagnostic} "${SLEPC_TEST_DIAGNOSTIC}" PARENT_SCOPE)
   endif()
 endfunction()
 
@@ -229,7 +308,8 @@ function(find_slepc_pkgconfig _slepc_deps _slepc_target)
     return()
   endif()
   message(STATUS "Found SLEPc: ${SLEPc_VERSION}")
-  check_slepc_build("PkgConfig::SLEPc;${_slepc_deps}" SLEPC_TEST_SUCCESS)
+  check_slepc_build("PkgConfig::SLEPc;${_slepc_deps}" SLEPC_TEST_SUCCESS
+                    SLEPC_TEST_DIAGNOSTIC)
   if(SLEPC_TEST_SUCCESS)
     message(STATUS "SLEPc test program - Success")
     set(${_slepc_target} PkgConfig::SLEPc PARENT_SCOPE)
@@ -238,6 +318,7 @@ function(find_slepc_pkgconfig _slepc_deps _slepc_target)
 
   # Try with --static libraries
   message(STATUS "SLEPc test program - Failed")
+  set(SLEPC_DEFAULT_TEST_DIAGNOSTIC "${SLEPC_TEST_DIAGNOSTIC}")
   set(PKG_CONFIG_EXECUTABLE_BACKUP ${PKG_CONFIG_EXECUTABLE})
   list(APPEND PKG_CONFIG_EXECUTABLE "--static")
   pkg_check_modules(SLEPc_STATIC QUIET IMPORTED_TARGET GLOBAL SLEPc)
@@ -246,10 +327,12 @@ function(find_slepc_pkgconfig _slepc_deps _slepc_target)
   endif()
   set(PKG_CONFIG_EXECUTABLE ${PKG_CONFIG_EXECUTABLE_BACKUP})
   if(NOT SLEPc_STATIC_FOUND)
+    message(STATUS "SLEPc test program diagnostics:\n${SLEPC_DEFAULT_TEST_DIAGNOSTIC}")
     set(${_slepc_target} "" PARENT_SCOPE)
     return()
   endif()
-  check_slepc_build("PkgConfig::SLEPc_STATIC;${_slepc_deps}" SLEPC_TEST_SUCCESS)
+  check_slepc_build("PkgConfig::SLEPc_STATIC;${_slepc_deps}" SLEPC_TEST_SUCCESS
+                    SLEPC_TEST_DIAGNOSTIC)
   if(SLEPC_TEST_SUCCESS)
     message(STATUS "SLEPc test program with static linkage - Successful")
     set(${_slepc_target} PkgConfig::SLEPc_STATIC PARENT_SCOPE)
@@ -258,5 +341,9 @@ function(find_slepc_pkgconfig _slepc_deps _slepc_target)
 
   # Not able to build a SLEPc test program
   message(STATUS "SLEPc test program with static linkage - Failed")
+  message(STATUS
+    "SLEPc test program diagnostics (default pkg-config):\n${SLEPC_DEFAULT_TEST_DIAGNOSTIC}"
+  )
+  message(STATUS "SLEPc test program diagnostics (--static pkg-config):\n${SLEPC_TEST_DIAGNOSTIC}")
   set(${_slepc_target} "" PARENT_SCOPE)
 endfunction()

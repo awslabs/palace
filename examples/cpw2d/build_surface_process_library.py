@@ -15,6 +15,11 @@ import ma_shells_2d
 
 
 ROOT = Path(__file__).resolve().parent
+IDENTIFICATION_TOOLS = ROOT.parent / "surface_response_identification"
+if str(IDENTIFICATION_TOOLS) not in sys.path:
+    sys.path.insert(0, str(IDENTIFICATION_TOOLS))
+from crack_policy import (  # noqa: E402
+    CRACK_POLICY_SOURCE, add_crack_policy_argument, crack_policy_arguments, crack_policy_of)
 EDGE_MESH_GENERATOR = ROOT / "mesh" / "mesh_edge_coupon.jl"
 EDGE_RESPONSE_GENERATOR = ROOT / "generate_edge_response.py"
 PAIR_MESH_GENERATOR = ROOT / "mesh" / "mesh_edge_pair_coupon.jl"
@@ -229,6 +234,7 @@ def pair_response_command(args, width, topology_flag, directory, requirement_has
         directory,
         *material_options(args),
         *edge_distance_options(args),
+        *crack_policy_arguments(crack_policy=crack_policy_of(args)),
     ]
     if topology_flag:
         command.append(topology_flag)
@@ -270,6 +276,7 @@ def edge_response_command(args, directory):
         directory,
         *material_options(args),
         *edge_distance_options(args),
+        *crack_policy_arguments(crack_policy=crack_policy_of(args)),
     ]
 
 
@@ -326,8 +333,10 @@ def coupon_spec(args, topology, width):
             "CouponDepth": args.coupon_depth,
             "SeparationTolerance": args.separation_tolerance,
         },
+        # Decision 1586: a coupon directory solved under one crack policy is never reused under the other.
+        "CrackPolicy": crack_policy_of(args),
         "GeneratorFingerprint": generator_fingerprint(
-            (PAIR_MESH_GENERATOR, PAIR_RESPONSE_GENERATOR, Path(__file__))
+            (PAIR_MESH_GENERATOR, PAIR_RESPONSE_GENERATOR, CRACK_POLICY_SOURCE, Path(__file__))
         ),
     }
     if topology == "same-conductor-gap" and getattr(args, "local_pieces", False):
@@ -342,7 +351,7 @@ def isolated_spec(args):
     del spec["Separation"]
     del spec["Response"]["SeparationTolerance"]
     spec["GeneratorFingerprint"] = generator_fingerprint(
-        (EDGE_MESH_GENERATOR, EDGE_RESPONSE_GENERATOR, Path(__file__))
+        (EDGE_MESH_GENERATOR, EDGE_RESPONSE_GENERATOR, CRACK_POLICY_SOURCE, Path(__file__))
     )
     return spec
 
@@ -542,6 +551,8 @@ def parse_args():
         action="store_true",
         help="Generate meshes and configs without running Palace or packaging matrices",
     )
+    # Decision 1586: the crack policy of the coupon configs (passed to the generators; part of the coupon specs).
+    add_crack_policy_argument(parser)
     args = parser.parse_args()
 
     if args.matching_radius <= 0.0:

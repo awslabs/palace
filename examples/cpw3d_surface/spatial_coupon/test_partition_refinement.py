@@ -1,7 +1,10 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 import importlib.util
+import os
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -40,6 +43,21 @@ class PartitionStudyTest(unittest.TestCase):
             self.assertAlmostEqual(result['SlotRelativePartitionBounds']['3100'],2/3)
             (root/'domain-E.csv').write_text('i,E_elec (J)\n1,0\n')
             with self.assertRaises(ValueError):module.energies(root,mapping)
+
+    def test_tool_snapshot_is_self_contained(self):
+        # SL9 review m-4 (upstream integration P2): the archived run_partition_refinement.py imports
+        # crack_policy; the snapshot carries it, and the archived copy runs from the snapshot alone.
+        with tempfile.TemporaryDirectory() as tmp:
+            tools=Path(tmp)/'archive'/'tools';tools.mkdir(parents=True)
+            names=module.snapshot_tools(tools)
+            self.assertIn('crack_policy.py',names)
+            self.assertEqual(sorted(p.name for p in tools.iterdir()),sorted(names))
+            env={k:v for k,v in os.environ.items() if k!='PYTHONPATH'}
+            env['PYTHONDONTWRITEBYTECODE']='1'
+            result=subprocess.run([sys.executable,str(tools/'run_partition_refinement.py'),'--help'],cwd=tmp,env=env,
+                                  capture_output=True,text=True)
+            self.assertEqual(result.returncode,0,result.stderr)
+            self.assertIn('--crack-policy',result.stdout)
 
 
 if __name__=='__main__':

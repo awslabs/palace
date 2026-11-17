@@ -58,6 +58,14 @@ include(joinpath(@__DIR__, "generate_config_docs.jl"))
 generate_all()
 @info "Configuration documentation generated from JSON schemas."
 
+# Generate the human-readable schema compatibility table from its JSON source.
+include(joinpath(@__DIR__, "generate_schema_compatibility.jl"))
+generate_schema_compatibility_table()
+
+# Draw the superconducting coaxial line schematic used by examples/coaxial.md.
+include(joinpath(@__DIR__, "generate_coaxial_schematic.jl"))
+generate_coaxial_schematic()
+
 git_ref = get_git_ref()
 @info "Building documentation with GitHub links pointing to: $git_ref"
 rewrite_github_links(joinpath(@__DIR__, "src"), git_ref)
@@ -69,7 +77,11 @@ makedocs(
         prettyurls=true,
         sidebar_sitename=false,
         collapselevel=2,
-        assets=["assets/favicon.ico", "assets/config.css"]
+        assets=["assets/favicon.ico", "assets/config.css"],
+        # Auto-generated from the JSON schema, so exempt from the page size limit.
+        # reference.md (written by hand) is exempt as well: it carries the thin-metal
+        # surface-response reference (> 200 KiB).
+        size_threshold_ignore=["config/reference.md", "reference.md"]
     ),
     sitename="Palace",
     authors="The Palace Developers and Maintainers, palace-maint@amazon.com",
@@ -109,6 +121,7 @@ makedocs(
         "For Developers" => Any[
             "developer/notes.md",
             "developer/testing.md",
+            "developer/verification.md",
             "developer/spack.md",
             "developer/tutorial_add_new_unit_test.md",
             "developer/tutorial_gpu_profiling.md",
@@ -118,9 +131,20 @@ makedocs(
     ]
 )
 
-deploydocs(
-    repo="github.com/awslabs/palace.git",
-    devbranch="main",
-    push_preview=true,
-    forcepush=true
-)
+# Concurrent PR previews (docs and coverage) race to push gh-pages, and the loser's
+# --force-with-lease push is rejected. Each deploydocs call clones gh-pages afresh, so retry.
+for attempt = 1:5
+    try
+        deploydocs(
+            repo="github.com/awslabs/palace.git",
+            devbranch="main",
+            push_preview=true,
+            forcepush=true
+        )
+        break
+    catch e
+        (e isa ProcessFailedException && attempt < 5) || rethrow()
+        @warn "Failed to push gh-pages (attempt $attempt), retrying" exception=e
+        sleep(10 * attempt)
+    end
+end

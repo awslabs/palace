@@ -4,9 +4,11 @@
 #ifndef PALACE_UTILS_TIMER_HPP
 #define PALACE_UTILS_TIMER_HPP
 
+#include <array>
 #include <chrono>
 #include <stack>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <vector>
 #include "utils/communication.hpp"
@@ -36,6 +38,9 @@ public:
     CONSTRUCT_RESPONSE_GEOMETRY,  // Surface response geometry and library matching
     CONSTRUCT_RESPONSE_POINTS,    // Surface response point interpolation stencils
     WAVE_PORT,                    // Wave port solver
+    WAVE_PORT_SOLVE,              // Reduced/exact port eigenproblem
+    WAVE_PORT_FIELD,              // Port eigenvector reconstruction and distribution
+    WAVE_PORT_POSTPRO,            // Port mode normalization and projection forms
     KSP,                          // Linear solver
     KSP_SETUP,                    // Linear solver setup
     KSP_PRECONDITIONER,           // Linear solver preconditioner
@@ -69,7 +74,7 @@ public:
   };
 
   // clang-format off
-  inline static const std::vector<std::string> descriptions{
+  static constexpr auto descriptions = std::to_array<std::string_view>({
       "Initialization",
       "  Mesh Preprocessing",
       "Operator Construction",
@@ -78,6 +83,9 @@ public:
       "    Geometry Matching",
       "    Point Stencils",
       "  Wave Ports",
+      "    Eigenproblem",
+      "    Field reconstruction",
+      "    Mode postprocessing",
       "Linear Solve",
       "  Setup",
       "  Preconditioner",
@@ -106,8 +114,9 @@ public:
       "    Gram Assembly",
       "    Domain Gram",
       "Disk IO",
-      "Total"};
+      "Total"});
   // clang-format on
+  static_assert(descriptions.size() == NUM_TIMINGS);
 
 private:
   TimePoint start_time;
@@ -243,7 +252,7 @@ private:
     Mpi::Print(comm, "{}\n", std::string(h + 3 * w, '='));
     for (int i = Timer::INIT; i < Timer::NUM_TIMINGS; i++)
     {
-      if (timer.Counts((Timer::Index)i) > 0)
+      if (timer.Counts(static_cast<Timer::Index>(i)) > 0)
       {
         if (i == Timer::TOTAL)
         {
@@ -328,7 +337,7 @@ public:
     for (int i = Timer::INIT; i < n; i++)
     {
       reduced_time.min[i] = reduced_time.max[i] = reduced_time.avg[i] =
-          timer.Data((Timer::Index)i);
+          timer.Data(static_cast<Timer::Index>(i));
     }
     Mpi::GlobalMin(n, reduced_time.min.data(), comm);
     Mpi::GlobalMax(n, reduced_time.max.data(), comm);
@@ -343,7 +352,7 @@ public:
     for (int i = Timer::INIT; i < n; i++)
     {
       reduced_rank_mem.min[i] = reduced_rank_mem.max[i] = reduced_rank_mem.sum[i] =
-          static_cast<double>(timer.MemoryData((Timer::Index)i));
+          static_cast<double>(timer.MemoryData(static_cast<Timer::Index>(i)));
     }
     Mpi::GlobalMin(n, reduced_rank_mem.min.data(), comm);
     Mpi::GlobalMax(n, reduced_rank_mem.max.data(), comm);
@@ -354,7 +363,7 @@ public:
     for (int i = Timer::INIT; i < n; i++)
     {
       auto stats = memory_reporting::ComputeNodeMemoryStats(
-          "", timer.MemoryData((Timer::Index)i), comm);
+          "", timer.MemoryData(static_cast<Timer::Index>(i)), comm);
       reduced_node_mem.min[i] = static_cast<double>(stats.min);
       reduced_node_mem.max[i] = static_cast<double>(stats.max);
       reduced_node_mem.sum[i] = static_cast<double>(stats.sum);

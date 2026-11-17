@@ -1,0 +1,76 @@
+{
+  "Problem":
+  {
+    "Type": "Eigenmode",
+    "Verbose": 2,
+    "Output": "postpro/wave_eigen"
+  },
+  "Model":
+  {
+    "Mesh": "mesh/iris_filter.msh",
+    "L0": 1.0e-2  // cm
+  },
+  "Domains":
+  {
+    "Materials":
+    [
+      {
+        "Attributes": [1],  // dielectric slab (x in [0, 1] cm)
+        "Permeability": 1.0,
+        "Permittivity": 10.0,
+        "LossTan": 0.0
+      },
+      {
+        "Attributes": [2],  // air fill (x in [1, 2] cm)
+        "Permeability": 1.0,
+        "Permittivity": 1.0,
+        "LossTan": 0.0
+      }
+    ]
+  },
+  "Boundaries":
+  {
+    "WavePort":
+    [
+      {
+        // Both ports carry the hybrid/LSM mode (Mode 3), so W is rank>=2 and enters the
+        // nonlinear eigensolver on the LHS; the diffed eig.csv is the W-sensitivity guard.
+        "Index": 1,
+        "Attributes": [3],
+        "Mode": 3,
+        "KSPTol": 1e-8,
+        "EigenTol": 1e-6
+      },
+      {
+        "Index": 2,
+        "Attributes": [4],
+        "Mode": 3,
+        "KSPTol": 1e-8,
+        "EigenTol": 1e-6
+      }
+    ],
+    "PEC":
+    {
+      "Attributes": [5]  // outer walls + iris post surfaces
+    }
+  },
+  "Solver":
+  {
+    "Order": 3,
+    "Device": "CPU",
+    "Eigenmode":
+    {
+      "N": 1,
+      "Tol": 1.0e-8,
+      "Target": 6.69,  // GHz
+      "Save": 0
+    },
+    "Linear":
+    {
+      "Type": "Default",
+      "KSPType": "GMRES",
+      "Tol": 1.0e-9,
+      "MaxIts": 100
+    }
+  }
+}

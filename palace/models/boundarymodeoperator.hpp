@@ -6,7 +6,6 @@
 
 #include <complex>
 #include <memory>
-#include <tuple>
 #include <vector>
 #include <mfem.hpp>
 #include "fem/fespace.hpp"
@@ -84,24 +83,14 @@ public:
   const mfem::HypreParMatrix *GetBtni() const { return Btni.get(); }
   const mfem::HypreParMatrix *GetBtt() const { return Bttr.get(); }
 
-  using ComplexHypreParMatrix = std::tuple<std::unique_ptr<mfem::HypreParMatrix>,
-                                           std::unique_ptr<mfem::HypreParMatrix>>;
-
-  // Frequency-dependent block assembly on the finest FE spaces, rebuilt each solve.
-  //   Att = mu_cc^{-1}(curl_t u, curl_t v) - omega^2 (eps u, v) - sigma (mu^{-1} u, v)
-  //         + BC-t (impedance, absorbing, conductivity)
-  //   Ann = -(mu^{-1} grad u, grad v) + omega^2 (eps u, v) + BC-n
-  ComplexHypreParMatrix AssembleAtt(std::complex<double> omega, double sigma) const;
-  ComplexHypreParMatrix AssembleAnn(std::complex<double> omega) const;
-
   // Alias the ND and H1 halves of a pre-loaded eigenvector e0 = [e_t_tilde; e_n_tilde]
   // as et / en, then apply the Vardapetyan–Demkowicz back-transform en := ẽn / (i·kn)
   // so en holds the physical En.
   void ApplyVDBackTransform(ComplexVector &e0, std::complex<double> kn, ComplexVector &et,
                             ComplexVector &en) const;
 
-  // Poynting power P = (1/2) conj(kn)/omega · etᴴ Btt et + i/(2·omega) · etᴴ Atn En for
-  // physical (et, En). Used for mode power normalization and impedance postprocessing.
+  // Poynting power P = (1/2) conj(kn)/omega · etᴴ Btt et - i/(2·omega) · conj(etᴴ Atn En)
+  // for physical (et, En). Used for mode power normalization and impedance postprocessing.
   std::complex<double> ComputePoyntingPower(double omega, std::complex<double> kn,
                                             const ComplexVector &et,
                                             const ComplexVector &en) const;
@@ -145,7 +134,7 @@ private:
   std::unique_ptr<SurfaceConductivityOperator> surf_sigma_op;
   std::unique_ptr<SurfaceRationalImpedanceOperator> surf_rz_op;
 
-  // Frequency-independent block matrices (assembled in the constructor).
+  // Frequency-independent block matrices.
   std::unique_ptr<mfem::HypreParMatrix> Atnr, Atni, Btnr, Btni, Bttr;
 
   // DBC attributes.

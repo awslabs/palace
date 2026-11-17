@@ -40,40 +40,61 @@ void SaveIteration(MPI_Comm comm, const fs::path &output_dir, int step, int widt
   Mpi::Barrier(comm);  // Wait for all processes to write postprocessing files
   auto step_output = output_dir / fmt::format("iteration{:0{}d}", step, width);
   auto rel_step = step_output.filename();
+  auto operation =
+      fmt::format("archiving adaptive iteration output in \"{}\"", step_output.string());
   ApplyOnEachNodeFilesystem(
-      comm,
-      fmt::format("Archiving adaptive iteration output in \"{}\"", step_output.string()),
+      comm, fmt::format("Creating adaptive iteration output \"{}\"", step_output.string()),
+      [&]() { fs::create_directories(step_output); });
+  ApplyOnceOnEachNodeFilesystem(
+      comm, step_output / ".palace-archive-claim", operation,
       [&]()
       {
-        // On a shared filesystem, the global root moves the output before the other node
-        // roots inspect it, so they see symlinks and have nothing left to move. On a
-        // node-local filesystem, each node root archives that node's rank files.
-        fs::create_directories(step_output);
-        for (const auto &f : fs::directory_iterator(output_dir))
+        // Snapshot the directory before changing it. Mutating a directory while iterating
+        // it has filesystem-dependent behavior, especially when directory entries are
+        // cached by a network filesystem.
+        std::vector<fs::path> entries;
+        for (const auto &entry : fs::directory_iterator(output_dir))
         {
-          const auto &fname = f.path().filename().string();
-          if (fname.rfind("iteration") == 0)
+          entries.push_back(entry.path());
+        }
+
+        for (const auto &path : entries)
+        {
+          const auto &fname = path.filename().string();
+          if (fname.starts_with("iteration"))
           {
             continue;
           }
-          auto dest = step_output / f.path().filename();
-          if (f.is_symlink())
+
+          // A path can disappear after the snapshot, and existing archive symlinks have
+          // already been moved. Neither case leaves anything to archive.
+          std::error_code ec;
+          auto status = fs::symlink_status(path, ec);
+          if (ec == std::errc::no_such_file_or_directory)
           {
-            // Skip symlinks left from a previous iteration's save. They still point
-            // to valid data and will be overwritten by the next solve.
             continue;
           }
-          else if (fname == "palace.json")
+          if (ec)
+          {
+            throw fs::filesystem_error("Could not inspect adaptive iteration output", path,
+                                       ec);
+          }
+          if (!fs::exists(status) || fs::is_symlink(status))
+          {
+            continue;
+          }
+
+          auto dest = step_output / path.filename();
+          if (fname == "palace.json")
           {
             // Metadata is written only by the global root. Copy it only there to avoid
             // concurrent copies when the output directory is shared.
             if (Mpi::Root(comm))
             {
-              fs::copy(f, dest, fs::copy_options::overwrite_existing);
+              fs::copy(path, dest, fs::copy_options::overwrite_existing);
             }
           }
-          else if (fname.size() >= 14 &&
-                   fname.compare(fname.size() - 14, 14, "_resolved.json") == 0)
+          else if (fname.ends_with("_resolved.json"))
           {
             // The resolved configuration is a global record of the run, not per-iteration
             // output. Leave it in the top-level output folder rather than moving it into an
@@ -86,8 +107,8 @@ void SaveIteration(MPI_Comm comm, const fs::path &output_dir, int step, int widt
             // so that the output directory always has accessible results. Remove
             // any existing destination first (e.g. from a previous run).
             fs::remove_all(dest);
-            fs::rename(f, dest);
-            fs::create_symlink(rel_step / f.path().filename(), f.path());
+            fs::rename(path, dest);
+            fs::create_symlink(rel_step / path.filename(), path);
           }
         }
       });
@@ -110,23 +131,52 @@ json LoadMetadata(const fs::path &post_dir)
 void WriteMetadata(const fs::path &post_dir, const json &meta,
                    const JsonArraySpill *spill = nullptr)
 {
+  // Write to a temporary file and atomically rename it into place so a concurrent reader
+  // (e.g. an external monitor polling palace.json mid-run) never observes a partial file.
   std::string path = post_dir / "palace.json";
-  std::ofstream fo(path);
-  if (!fo.is_open())
+  std::string tmp_path = post_dir / "palace.json.tmp";
   {
-    MFEM_ABORT("Unable to open metadata file \"" << path << "\"!");
+    std::ofstream fo(tmp_path);
+    if (!fo.is_open())
+    {
+      MFEM_ABORT("Unable to open metadata file \"" << tmp_path << "\"!");
+    }
+    // Round 2a R1 (decision 1475 (1); OI-METADATA-WRITE-UNCHECKED-ENOSPC): streamed (the
+    // bytes of dump(2) + '\n' without the whole text as a string) and checked: a short
+    // write (a full disk, an I/O error) aborts instead of leaving an incomplete palace.json
+    // behind.
+    const bool written = StreamJsonMetadata(fo, meta, spill);
+    fo.close();
+    if (!written || fo.fail())
+    {
+      MFEM_ABORT("Writing the metadata file \""
+                 << tmp_path
+                 << "\" failed (a short write: the disk is full "
+                    "or an I/O error); the file is incomplete!");
+    }
   }
-  // Round 2a R1 (decision 1475 (1); OI-METADATA-WRITE-UNCHECKED-ENOSPC): streamed (the
-  // bytes of dump(2) + '\n' without the whole text as a string) and checked: a short write
-  // (a full disk, an I/O error) aborts instead of leaving an incomplete palace.json behind.
-  const bool written = StreamJsonMetadata(fo, meta, spill);
-  fo.close();
-  if (!written || fo.fail())
+  fs::rename(tmp_path, path);
+}
+
+// Map an MFEM geometry type to its lowercase JSON key used in the SavedAdaptedMesh block.
+const char *GeometryKey(mfem::Geometry::Type geom)
+{
+  switch (geom)
   {
-    MFEM_ABORT("Writing the metadata file \""
-               << path
-               << "\" failed (a short write: the disk is full "
-                  "or an I/O error); the file is incomplete!");
+    case mfem::Geometry::TRIANGLE:
+      return "triangle";
+    case mfem::Geometry::SQUARE:
+      return "quadrilateral";
+    case mfem::Geometry::TETRAHEDRON:
+      return "tetrahedron";
+    case mfem::Geometry::CUBE:
+      return "hexahedron";
+    case mfem::Geometry::PRISM:
+      return "prism";
+    case mfem::Geometry::PYRAMID:
+      return "pyramid";
+    default:
+      return "unknown";
   }
 }
 
@@ -331,9 +381,15 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
   solve_level = 1;
   solve_levels = use_amr ? refinement.max_it + 1 : 1;
   auto [indicators, ntdof] = Solve(mesh);
+  MFEM_VERIFY(solve_converged_,
+              "Initial solve did not converge; no converged result to fall back on!");
   auto marking_indicators =
       BuildMarkingIndicators(indicators, mesh.back()->Get(), iodata.boundaries);
   double err = linalg::Norml2(comm, marking_indicators);
+
+  // Record the initial solve as iteration 1 (matching the "iteration01" archive
+  // subdirectory written for adaptive runs).
+  SaveAdaptationIteration(1);
 
   // Collection of all tests that might exhaust resources.
   auto ExhaustedResources = [&refinement](auto it, auto ntdof)
@@ -345,6 +401,9 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
     ret |= (refinement.max_size > 0 && ntdof > refinement.max_size);
     return ret;
   };
+
+  // True topological entity counts of the final adapted mesh.
+  mesh::MeshEntityCounts mesh_counts;
 
   // Main AMR loop.
   int it = 0;
@@ -479,7 +538,7 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
 
     // Optionally rebalance and write the adapted mesh to file.
     {
-      const auto ratio_pre = mesh::RebalanceMesh(iodata, *mesh.back());
+      const auto ratio_pre = mesh::RebalanceMesh(iodata, *mesh.back(), &mesh_counts);
       if (ratio_pre > refinement.maximum_imbalance)
       {
         int min_elem, max_elem;
@@ -494,18 +553,50 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
       mesh.back()->Update();
     }
 
+    // Record the adapted mesh's topology now, paired with the mesh file RebalanceMesh
+    // wrote, so it matches even if the following solve does not converge (SavedAdaptedMesh
+    // contract).
+    if (refinement.save_adapt_mesh)
+    {
+      mesh::CompleteMeshEntityCounts(*mesh.back(), mesh_counts);
+      if (mesh_counts.valid)
+      {
+        SaveMetadata(mesh_counts);
+      }
+    }
+
     // Print statistics (element counts, size h, and shape regularity kappa) for the
     // newly-refined mesh so the evolution of mesh quality under AMR is visible.
     mesh::PrintMeshInfo(*mesh.back(), iodata, /*full=*/false);
 
     // Solve + estimate.
     Mpi::Print("\nProceeding with solve/estimate iteration {}...\n", it + 1);
+    const auto prev_ntdof = ntdof;
     solve_level = it + 1;
     std::tie(indicators, ntdof) = Solve(mesh);
+    if (!solve_converged_)
+    {
+      // Keep the previous converged iteration for the summary/CSVs (restore its DOF count);
+      // the refined mesh file and its topology (recorded above) describe the failed solve.
+      Mpi::Warning(
+          comm,
+          "Solve did not converge after refinement iteration {:d}; halting AMR and "
+          "keeping the last converged iteration!\n",
+          it);
+      ntdof = prev_ntdof;
+      break;
+    }
     marking_indicators =
         BuildMarkingIndicators(indicators, mesh.back()->Get(), iodata.boundaries);
     err = linalg::Norml2(comm, marking_indicators);
+
+    // Record that this AMR iteration has completed; the Solve above has already written all
+    // of its postprocessing output. The 1-based index (it + 1, since the initial solve is
+    // iteration 1) matches the "iterationXX" archive subdirectory and signals completion
+    // via palace.json without parsing the log.
+    SaveAdaptationIteration(it + 1);
   }
+
   Mpi::Print("\nCompleted {:d} iteration{} of adaptive mesh refinement (AMR):\n"
              " Indicator norm = {:.3e}, global unknowns = {:d}\n"
              " Max. iterations = {:d}, tol. = {:.3e}{}\n",
@@ -535,6 +626,51 @@ void BaseSolver::SaveMetadata(const FiniteElementSpaceHierarchy &fespaces) const
     meta["Problem"]["MeshElements"] = ne;
     meta["Problem"]["DegreesOfFreedom"] = ndofs.back();
     meta["Problem"]["MultigridDegreesOfFreedom"] = ndofs;
+    WriteMetadata(post_dir, meta);
+  }
+}
+
+void BaseSolver::SaveAdaptationIteration(int iteration) const
+{
+  if (root)
+  {
+    json meta = LoadMetadata(post_dir);
+    meta["Problem"]["Iteration"] = iteration;
+    WriteMetadata(post_dir, meta);
+  }
+}
+
+void BaseSolver::SaveMetadata(const mesh::MeshEntityCounts &counts) const
+{
+  // Unlike the other SaveMetadata overloads (called on every rank, some running MPI
+  // collectives before writing), this one is invoked on the root rank only, since
+  // MeshEntityCounts::valid is set only on root. It must contain no MPI-collective calls.
+  if (root)
+  {
+    json meta = LoadMetadata(post_dir);
+    json &saved = meta["SavedAdaptedMesh"];
+    saved["Dimension"] = counts.dim;
+    saved["TrueVertices"] = counts.true_vertices;
+    saved["TrueEdges"] = counts.true_edges;
+    // Per-geometry counts emit only the geometries that are present; a missing key means
+    // zero by contract. TrueFaces is omitted entirely in 2D (the map is empty there).
+    if (!counts.true_faces.empty())
+    {
+      json faces = json::object();
+      for (const auto &[geom, count] : counts.true_faces)
+      {
+        faces[GeometryKey(geom)] = count;
+      }
+      saved["TrueFaces"] = faces;
+    }
+    json cells = json::object();
+    for (const auto &[geom, count] : counts.cells)
+    {
+      cells[GeometryKey(geom)] = count;
+    }
+    saved["Cells"] = cells;
+    saved["DomainAttributes"] = counts.domain_attributes;
+    saved["BoundaryAttributes"] = counts.boundary_attributes;
     WriteMetadata(post_dir, meta);
   }
 }
@@ -579,13 +715,13 @@ void BaseSolver::SaveMetadata(const Timer &timer) const
     json meta = LoadMetadata(post_dir);
     for (int i = Timer::INIT; i < Timer::NUM_TIMINGS; i++)
     {
-      auto key = Timer::descriptions[i];
-      key.erase(std::remove_if(key.begin(), key.end(), isspace), key.end());
-      meta["ElapsedTime"]["Durations"][key] = timer.Data((Timer::Index)i);
+      std::string key(Timer::descriptions[i]);
+      std::erase_if(key, isspace);
+      meta["ElapsedTime"]["Durations"][key] = timer.Data(static_cast<Timer::Index>(i));
       meta["ElapsedTime"]["MinimumDurations"][key] = red.time.min[i];
       meta["ElapsedTime"]["MaximumDurations"][key] = red.time.max[i];
       meta["ElapsedTime"]["AverageDurations"][key] = red.time.avg[i];
-      meta["ElapsedTime"]["Counts"][key] = timer.Counts((Timer::Index)i);
+      meta["ElapsedTime"]["Counts"][key] = timer.Counts(static_cast<Timer::Index>(i));
       meta["PeakMemoryGrowthMegabytes"]["Min"][key] = red.rank_mem.min[i] * to_mb;
       meta["PeakMemoryGrowthMegabytes"]["Max"][key] = red.rank_mem.max[i] * to_mb;
       meta["PeakMemoryGrowthMegabytes"]["Sum"][key] = red.rank_mem.sum[i] * to_mb;

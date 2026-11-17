@@ -68,6 +68,8 @@ for path in (str(HERE), str(CPW2D)):
     if path not in sys.path:
         sys.path.insert(0, path)
 import cluster_signature_geometry  # noqa: E402
+from crack_policy import (  # noqa: E402  (surface_response_identification, on sys.path through cluster_signature_geometry)
+    CRACK_POLICY_DEFAULT, add_crack_policy_argument, check_crack_policy, crack_policy_arguments)
 import deterministic_math  # noqa: E402  (surface_response_identification, on sys.path through cluster_signature_geometry)
 import general_mesh_manifest  # noqa: E402
 import local_pieces  # noqa: E402  (surface_response_identification, on sys.path through cluster_signature_geometry)
@@ -246,14 +248,15 @@ def local_pieces_model_name(coupon_id, generated):
 
 def generate_sources(coupon, work, *, radius, parameters, ring_size, cap_triangulation=DEFAULT_CAP_TRIANGULATION,
                      cap_interior_spacing=DEFAULT_CAP_INTERIOR_SPACING, python=sys.executable, support_span_cap=None,
-                     mirror_formed=None, local_pieces_form=False):
+                     mirror_formed=None, local_pieces_form=False, crack_policy=CRACK_POLICY_DEFAULT):
     """generate_spatial_response.py --basis-only into `work`; returns the generator command.
     `support_span_cap` (x R) raises the generator's matching-support span bound for this
     coupon alone (--support-span-cap; None = the generator default). `mirror_formed` (the
     validated MirrorFormedContract) stamps the model's real / image split after the generation;
     the generator itself reads the full signature unchanged. `local_pieces_form` (idfix R0-b):
     the coupon in the piece form (cluster_coupon(local_pieces=True), --local-pieces, the model
-    Name <Id>-pieces<P>)."""
+    Name <Id>-pieces<P>). `crack_policy` is passed to the generator (--crack-policy, decision 1586);
+    --basis-only writes no Palace config, so the source files and the content hash do not depend on it."""
     work = Path(work)
     work.mkdir(parents=True, exist_ok=True)
     coupon_path = work / "coupon.json"
@@ -271,6 +274,7 @@ def generate_sources(coupon, work, *, radius, parameters, ring_size, cap_triangu
     if support_span_cap is not None:
         command += ["--support-span-cap", str(support_span_cap)]
     command += [str(item) for item in planner.material_options(parameters)]
+    command += crack_policy_arguments(crack_policy=crack_policy)
     with open(work / "generate.log", "w") as log:
         result = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT)
     if result.returncode != 0:
@@ -565,7 +569,7 @@ def prepare_device_sources(device_config, *, palace, output, manifest_path=PRODU
                            omit_requirements=(), support_span_caps=(), support_span_cap_reason=None, element_caps=(),
                            element_cap_approval=None, element_cap_reason=None, nearkey_reuse_mode="off",
                            nearkey_fallback_approval=None, nearkey_fallback_stop_records=(), nearkey_rule=None, nearkey_record_roots=(),
-                           mirror_formed="refuse", one_reference=False):
+                           mirror_formed="refuse", one_reference=False, crack_policy=CRACK_POLICY_DEFAULT):
     """Steps 1-3: the source directories of every spatial coupon of the device under
     output/sources/<case id>; returns the device record (written to output/device-coupons.json).
     `omit_requirements`: Hash prefixes of Missing requirements the discovery gives no
@@ -630,6 +634,7 @@ def prepare_device_sources(device_config, *, palace, output, manifest_path=PRODU
                                          "default reuse is not active (DESIGN v2 section 3; decision 428)")
         except nearkey_predictor.NearKeyRuleError as error:
             raise DeviceAdapterError(f"near-key rule: {error}") from error
+    check_crack_policy(crack_policy)
     consumed_stop = []
     consumed_span, consumed_caps = [], []
     device_config = Path(device_config).resolve()
@@ -663,6 +668,11 @@ def prepare_device_sources(device_config, *, palace, output, manifest_path=PRODU
                             "OmittedRequirements": [omitted[key] for key in sorted(omitted)],
                             "UnplaceableRequirements": [unplaceable[key] for key in sorted(unplaceable)]},
               "Plan": {"Path": str(output / "coupon-plan.json"), "Summary": plan["Summary"]},
+              "CrackPolicy": {"Policy": crack_policy,
+                              "Rule": "decision 1586: passed to generate_spatial_response (--crack-policy); its --basis-only "
+                                      "run writes no Palace config, so the sources and the case ids do not depend on it; "
+                                      "the coupon configs take the policy of the qualification (qualify_library "
+                                      "--crack-policy)"},
               "TraceBasis": {"RingSize": ring_size, "CapTriangulation": cap_triangulation,
                              "DefaultCapTriangulation": DEFAULT_CAP_TRIANGULATION,
                              "CapInteriorSpacingOverR": cap_interior_spacing,
@@ -775,7 +785,7 @@ def prepare_device_sources(device_config, *, palace, output, manifest_path=PRODU
         command = generate_sources(coupon, work, radius=radius, parameters=parameters, ring_size=ring_size,
                                    cap_triangulation=cap_triangulation, cap_interior_spacing=cap_interior_spacing,
                                    python=python, support_span_cap=None if span_cap is None else span_cap[1],
-                                   mirror_formed=contract, local_pieces_form=local_pieces_form)
+                                   mirror_formed=contract, local_pieces_form=local_pieces_form, crack_policy=crack_policy)
         write_process_toml(work / "process.toml", parameters, radius)
         digest, digests = content_hash(work)
         edge_count = int(coupon["Geometry"].get("EdgeCount", len(coupon["Geometry"].get("Edges", []))))
@@ -802,7 +812,8 @@ def prepare_device_sources(device_config, *, palace, output, manifest_path=PRODU
             "Requirement": {"Id": coupon["Id"], "Topology": coupon["Topology"], "EdgeCount": edge_count,
                             "Interfaces": coupon["Interfaces"], "BoundaryCondition": coupon["BoundaryCondition"],
                             "DeviceOccurrences": coupon["DeviceOccurrences"], "DeviceEdgeLength": coupon["DeviceEdgeLength"]},
-            "Generator": {"Command": command, "RingSize": ring_size, "CapTriangulation": cap_triangulation,
+            "Generator": {"Command": command, "CrackPolicy": crack_policy, "RingSize": ring_size,
+                          "CapTriangulation": cap_triangulation,
                           "CapInteriorSpacingOverR": cap_interior_spacing,
                           "LocalPieces": {"Form": local_pieces_form,
                                           "Reason": coupon["Preparation"].get("LocalPiecesReason"),
@@ -1113,6 +1124,7 @@ def main(argv=None):
                         help="Missing requirement(s) whose Hash starts with this prefix get no discovery placeholder and "
                              "are not built (repeatable; recorded out of scope with Method OmittedRequirement)")
     add_requirement_option_arguments(parser)
+    add_crack_policy_argument(parser)
     parser.add_argument("--register", action="store_true", help="register the produced directories into --manifest")
     parser.add_argument("--work", type=Path, help="parent of the registration work directories")
     parser.add_argument("--julia", default=shutil.which("julia"))
@@ -1125,7 +1137,8 @@ def main(argv=None):
         record = prepare_device_sources(args.device_config, palace=args.palace, output=args.output, manifest_path=args.manifest,
                                         ring_size=args.ring_size, cap_triangulation=args.cap_triangulation,
                                         cap_interior_spacing=args.cap_interior_spacing, python=args.python,
-                                        omit_requirements=args.omit_requirement, **requirement_option_kwargs(args))
+                                        omit_requirements=args.omit_requirement, crack_policy=args.crack_policy,
+                                        **requirement_option_kwargs(args))
         if args.register:
             register_device_sources(record, manifest_path=args.manifest, mesh_recipe=args.mesh_recipe, work=args.work,
                                     python=args.python, julia=args.julia, jobs=args.register_jobs)

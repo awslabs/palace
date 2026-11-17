@@ -5,6 +5,7 @@
 #define PALACE_LINALG_OPERATOR_HPP
 
 #include <complex>
+#include <concepts>
 #include <initializer_list>
 #include <memory>
 #include <type_traits>
@@ -68,6 +69,10 @@ public:
                                          const std::complex<double> a = 1.0) const;
 };
 
+// Palace's linear algebra templates are defined for real- and complex-valued operators.
+template <typename T>
+concept OperatorType = std::same_as<T, Operator> || std::same_as<T, ComplexOperator>;
+
 // A complex-valued operator represented using a block 2 x 2 equivalent-real formulation:
 //                          [ yr ]  =  [ Ar  -Ai ] [ xr ]
 //                          [ yi ]     [ Ai   Ar ] [ xi ] .
@@ -113,7 +118,7 @@ public:
                                  const std::complex<double> a = 1.0) const override;
 };
 
-template <typename OperType>
+template <OperatorType OperType>
 struct SumOperatorTraits;
 
 template <>
@@ -132,13 +137,9 @@ struct SumOperatorTraits<ComplexOperator>
 
 // Wrap a sequence of operators of the same dimensions and optional coefficients. In
 // non-owning mode, the caller must ensure the referenced operators outlive this object.
-template <typename OperType>
+template <OperatorType OperType>
 class BaseSumOperator : public OperType
 {
-  static_assert(std::is_same_v<OperType, Operator> ||
-                    std::is_same_v<OperType, ComplexOperator>,
-                "BaseSumOperator is only defined for Operator and ComplexOperator!");
-
 public:
   using VecType = typename SumOperatorTraits<OperType>::VecType;
   using ScalarType = typename SumOperatorTraits<OperType>::ScalarType;
@@ -210,10 +211,11 @@ public:
   {
     if (ops.size() == 1)
     {
-      ops.front().first->Mult(x, y);
-      if (ops.front().second != ScalarType{1.0})
+      const auto &[op, c] = ops.front();
+      op->Mult(x, y);
+      if (c != ScalarType{1.0})
       {
-        y *= ops.front().second;
+        y *= c;
       }
       return;
     }
@@ -225,10 +227,11 @@ public:
   {
     if (ops.size() == 1)
     {
-      ops.front().first->MultTranspose(x, y);
-      if (ops.front().second != ScalarType{1.0})
+      const auto &[op, c] = ops.front();
+      op->MultTranspose(x, y);
+      if (c != ScalarType{1.0})
       {
-        y *= ops.front().second;
+        y *= c;
       }
       return;
     }
@@ -307,17 +310,16 @@ public:
   }
 };
 
-template <typename OperType>
+template <OperatorType OperType>
 class BaseProductOperator
   : public ProductOperatorHelper<BaseProductOperator<OperType>, OperType>
 {
   friend class ProductOperatorHelper<BaseProductOperator<OperType>, OperType>;
 
-  using VecType = typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
-                                            ComplexVector, Vector>::type;
-  using ScalarType =
-      typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
-                                std::complex<double>, double>::type;
+  using VecType =
+      std::conditional_t<std::is_same_v<OperType, ComplexOperator>, ComplexVector, Vector>;
+  using ScalarType = std::conditional_t<std::is_same_v<OperType, ComplexOperator>,
+                                        std::complex<double>, double>;
 
 private:
   const OperType &A, &B;
@@ -385,17 +387,16 @@ public:
                                  const std::complex<double> a = 1.0) const override;
 };
 
-template <typename OperType>
+template <OperatorType OperType>
 class BaseDiagonalOperator
   : public DiagonalOperatorHelper<BaseDiagonalOperator<OperType>, OperType>
 {
   friend class DiagonalOperatorHelper<BaseDiagonalOperator<OperType>, OperType>;
 
-  using VecType = typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
-                                            ComplexVector, Vector>::type;
-  using ScalarType =
-      typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
-                                std::complex<double>, double>::type;
+  using VecType =
+      std::conditional_t<std::is_same_v<OperType, ComplexOperator>, ComplexVector, Vector>;
+  using ScalarType = std::conditional_t<std::is_same_v<OperType, ComplexOperator>,
+                                        std::complex<double>, double>;
 
 private:
   const VecType &d;
@@ -426,14 +427,13 @@ using ComplexDiagonalOperator = BaseDiagonalOperator<ComplexOperator>;
 // Optionally includes operators for the auxiliary space at each level as well. The
 // Operators are stored from coarsest to finest level. The height and width of this operator
 // are never set.
-template <typename OperType>
+template <OperatorType OperType>
 class BaseMultigridOperator : public OperType
 {
-  using VecType = typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
-                                            ComplexVector, Vector>::type;
-  using ScalarType =
-      typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
-                                std::complex<double>, double>::type;
+  using VecType =
+      std::conditional_t<std::is_same_v<OperType, ComplexOperator>, ComplexVector, Vector>;
+  using ScalarType = std::conditional_t<std::is_same_v<OperType, ComplexOperator>,
+                                        std::complex<double>, double>;
 
 private:
   std::vector<std::unique_ptr<OperType>> ops, aux_ops;
@@ -525,12 +525,18 @@ std::complex<double> Dot(MPI_Comm comm, const ComplexVector &x, const Operator &
 std::complex<double> Dot(MPI_Comm comm, const ComplexVector &x, const ComplexOperator &A,
                          const ComplexVector &y);
 
-// Estimate operator 2-norm (spectral norm) using power iteration. Assumes the operator is
-// not symmetric or Hermitian unless specified.
-double SpectralNorm(MPI_Comm comm, const Operator &A, bool sym = false, double tol = 1.0e-4,
-                    int max_it = 1000);
+// Estimate the operator 2-norm (spectral norm) with the Lanczos method, applied to A if it
+// is symmetric or Hermitian (as specified, otherwise it is not assumed) and to Aᴴ A
+// otherwise. The iteration stops when the estimate changes by less than tol relative to
+// itself. If x0 is given, the iteration starts from it (with a small random component)
+// when it has the size of the operator, and x0 is set on return to the Ritz vector of the
+// estimate (the dominant eigenvector or right singular vector, summed with the one at the
+// other end of the spectrum of an indefinite operator whose two ends are comparable in
+// magnitude), so that the estimate for a nearby operator can start from it.
+double SpectralNorm(MPI_Comm comm, const Operator &A, bool sym = false,
+                    Vector *x0 = nullptr, double tol = 1.0e-4, int max_it = 1000);
 double SpectralNorm(MPI_Comm comm, const ComplexOperator &A, bool herm = false,
-                    double tol = 1.0e-4, int max_it = 1000);
+                    ComplexVector *x0 = nullptr, double tol = 1.0e-4, int max_it = 1000);
 
 }  // namespace linalg
 

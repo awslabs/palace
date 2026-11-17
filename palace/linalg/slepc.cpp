@@ -147,54 +147,6 @@ inline VecType PetscVecType()
   return VECSTANDARD;
 }
 
-struct MatShellContext
-{
-  const ComplexOperator &A;
-  ComplexVector &x, &y;
-};
-
-PetscErrorCode __mat_apply_shell(Mat A, Vec x, Vec y)
-{
-  PetscFunctionBeginUser;
-  MatShellContext *ctx;
-  PetscCall(MatShellGetContext(A, (void **)&ctx));
-  MFEM_VERIFY(ctx, "Invalid PETSc shell matrix context for SLEPc!");
-
-  PetscCall(FromPetscVec(x, ctx->x));
-  ctx->A.Mult(ctx->x, ctx->y);
-  PetscCall(ToPetscVec(ctx->y, y));
-
-  PetscFunctionReturn(PETSC_SUCCESS);
-}
-
-PetscErrorCode __mat_apply_transpose_shell(Mat A, Vec x, Vec y)
-{
-  PetscFunctionBeginUser;
-  MatShellContext *ctx;
-  PetscCall(MatShellGetContext(A, (void **)&ctx));
-  MFEM_VERIFY(ctx, "Invalid PETSc shell matrix context for SLEPc!");
-
-  PetscCall(FromPetscVec(x, ctx->x));
-  ctx->A.MultTranspose(ctx->x, ctx->y);
-  PetscCall(ToPetscVec(ctx->y, y));
-
-  PetscFunctionReturn(PETSC_SUCCESS);
-}
-
-PetscErrorCode __mat_apply_hermitian_transpose_shell(Mat A, Vec x, Vec y)
-{
-  PetscFunctionBeginUser;
-  MatShellContext *ctx;
-  PetscCall(MatShellGetContext(A, (void **)&ctx));
-  MFEM_VERIFY(ctx, "Invalid PETSc shell matrix context for SLEPc!");
-
-  PetscCall(FromPetscVec(x, ctx->x));
-  ctx->A.MultHermitianTranspose(ctx->x, ctx->y);
-  PetscCall(ToPetscVec(ctx->y, y));
-
-  PetscFunctionReturn(PETSC_SUCCESS);
-};
-
 inline void ConfigurePCShell(ST st, void *ctx, PetscErrorCode (*__pc_apply)(PC, Vec, Vec))
 {
   KSP ksp;
@@ -244,85 +196,6 @@ void Finalize()
   PalacePetscCall(SlepcFinalize());
 }
 
-PetscReal GetMaxSingularValue(MPI_Comm comm, const ComplexOperator &A, bool herm,
-                              PetscReal tol, PetscInt max_it)
-{
-  // This method assumes the provided operator has the required operations for SLEPc's EPS
-  // or SVD solvers, namely MATOP_MULT and MATOP_MULT_HERMITIAN_TRANSPOSE (if the matrix
-  // is not Hermitian).
-  MFEM_VERIFY(A.Height() == A.Width(), "Spectral norm requires a square matrix!");
-  const PetscInt n = A.Height();
-  ComplexVector x(n), y(n);
-  x.UseDevice(true);
-  y.UseDevice(true);
-  MatShellContext ctx = {A, x, y};
-  Mat A0;
-  PalacePetscCall(
-      MatCreateShell(comm, n, n, PETSC_DECIDE, PETSC_DECIDE, (void *)&ctx, &A0));
-  PalacePetscCall(MatShellSetOperation(A0, MATOP_MULT, (void (*)(void))__mat_apply_shell));
-  PalacePetscCall(MatShellSetVecType(A0, PetscVecType()));
-  if (herm)
-  {
-    EPS eps;
-    PetscInt num_conv;
-    PetscScalar eig;
-    PalacePetscCall(EPSCreate(comm, &eps));
-    PalacePetscCall(EPSSetOperators(eps, A0, nullptr));
-    PalacePetscCall(EPSSetProblemType(eps, EPS_HEP));
-    PalacePetscCall(EPSSetWhichEigenpairs(eps, EPS_LARGEST_MAGNITUDE));
-    PalacePetscCall(EPSSetDimensions(eps, 1, PETSC_DEFAULT, PETSC_DEFAULT));
-    PalacePetscCall(EPSSetTolerances(eps, tol, max_it));
-    PalacePetscCall(EPSSolve(eps));
-    PalacePetscCall(EPSGetConverged(eps, &num_conv));
-    if (num_conv < 1)
-    {
-      Mpi::Warning(comm, "SLEPc EPS solve did not converge for maximum singular value!\n");
-      eig = 0.0;
-    }
-    else
-    {
-      PalacePetscCall(EPSGetEigenvalue(eps, 0, &eig, nullptr));
-      MFEM_VERIFY(PetscImaginaryPart(eig) == 0.0,
-                  "Unexpected complex eigenvalue for Hermitian matrix (λ = " << eig
-                                                                             << ")!");
-    }
-    PalacePetscCall(EPSDestroy(&eps));
-    PalacePetscCall(MatDestroy(&A0));
-    return PetscAbsScalar(eig);
-  }
-  else
-  {
-    PalacePetscCall(MatShellSetOperation(A0, MATOP_MULT_TRANSPOSE,
-                                         (void (*)(void))__mat_apply_transpose_shell));
-    PalacePetscCall(
-        MatShellSetOperation(A0, MATOP_MULT_HERMITIAN_TRANSPOSE,
-                             (void (*)(void))__mat_apply_hermitian_transpose_shell));
-    SVD svd;
-    PetscInt num_conv;
-    PetscReal sigma;
-    PalacePetscCall(SVDCreate(comm, &svd));
-    PalacePetscCall(SVDSetOperators(svd, A0, nullptr));
-    PalacePetscCall(SVDSetProblemType(svd, SVD_STANDARD));
-    PalacePetscCall(SVDSetWhichSingularTriplets(svd, SVD_LARGEST));
-    PalacePetscCall(SVDSetDimensions(svd, 1, PETSC_DEFAULT, PETSC_DEFAULT));
-    PalacePetscCall(SVDSetTolerances(svd, tol, max_it));
-    PalacePetscCall(SVDSolve(svd));
-    PalacePetscCall(SVDGetConverged(svd, &num_conv));
-    if (num_conv < 1)
-    {
-      Mpi::Warning(comm, "SLEPc SVD solve did not converge for maximum singular value!\n");
-      sigma = 0.0;
-    }
-    else
-    {
-      PalacePetscCall(SVDGetSingularTriplet(svd, 0, &sigma, nullptr, nullptr));
-    }
-    PalacePetscCall(SVDDestroy(&svd));
-    PalacePetscCall(MatDestroy(&A0));
-    return sigma;
-  }
-}
-
 // Eigensolver base class methods.
 
 SlepcEigenvalueSolver::SlepcEigenvalueSolver(int print) : print(print)
@@ -340,6 +213,11 @@ SlepcEigenvalueSolver::SlepcEigenvalueSolver(int print) : print(print)
   v0 = nullptr;
 
   cl_custom = false;
+
+  // SLEPc passes device arrays to the shell callbacks when the device is in use. SetSize
+  // keeps the device flag, so the derived classes only need to size the workspace.
+  x1.UseDevice(true);
+  y1.UseDevice(true);
 }
 
 SlepcEigenvalueSolver::~SlepcEigenvalueSolver()
@@ -703,7 +581,7 @@ int SlepcEPSSolverBase::Solve()
 
   // Compute and store the eigenpair residuals.
   RescaleEigenvectors(num_conv);
-  return (int)num_conv;
+  return static_cast<int>(num_conv);
 }
 
 std::complex<double> SlepcEPSSolverBase::GetEigenvalue(int i) const
@@ -798,8 +676,6 @@ void SlepcEPSSolver::SetOperators(const ComplexOperator &K, const ComplexOperato
   }
   x1.SetSize(opK->Height());
   y1.SetSize(opK->Height());
-  x1.UseDevice(true);
-  y1.UseDevice(true);
 
   // Configure linear solver for generalized problem or spectral transformation. This also
   // allows use of the divergence-free projector as a linear solve side-effect.
@@ -853,6 +729,8 @@ SlepcPEPLinearSolver::SlepcPEPLinearSolver(MPI_Comm comm, int print,
 {
   opK = opC = opM = nullptr;
   normK = normC = normM = 0.0;
+  x2.UseDevice(true);
+  y2.UseDevice(true);
 }
 
 void SlepcPEPLinearSolver::SetOperators(const ComplexOperator &K, const ComplexOperator &C,
@@ -904,10 +782,6 @@ void SlepcPEPLinearSolver::SetOperators(const ComplexOperator &K, const ComplexO
   x2.SetSize(opK->Height());
   y1.SetSize(opK->Height());
   y2.SetSize(opK->Height());
-  x1.UseDevice(true);
-  x2.UseDevice(true);
-  y1.UseDevice(true);
-  y2.UseDevice(true);
 
   // Configure linear solver.
   if (first)
@@ -1184,7 +1058,7 @@ int SlepcPEPSolverBase::Solve()
 
   // Compute and store the eigenpair residuals.
   RescaleEigenvectors(num_conv);
-  return (int)num_conv;
+  return static_cast<int>(num_conv);
 }
 
 std::complex<double> SlepcPEPSolverBase::GetEigenvalue(int i) const
@@ -1528,7 +1402,7 @@ int SlepcNEPSolverBase::Solve()
   }
 
   // Compute and store the ordered eigenpair residuals.
-  const int nev = (int)num_conv;
+  const int nev = static_cast<int>(num_conv);
   perm = std::make_unique<int[]>(nev);
   std::vector<std::complex<double>> eig(nev);
   for (int i = 0; i < nev; i++)
@@ -1613,74 +1487,26 @@ void SlepcNEPSolver::SetPreconditionerUpdate(
 void SlepcNEPSolver::SetOperators(const ComplexOperator &K, const ComplexOperator &M,
                                   EigenvalueSolver::ScaleType type)
 {
-  // Construct shell matrices for the scaled operators which define the quadratic polynomial
-  // eigenvalue problem.
-  const bool first = (opK == nullptr);
-  opK = &K;
-  opM = &M;
-
-  if (first)
-  {
-    const PetscInt n = opK->Height();
-    PalacePetscCall(
-        MatCreateShell(GetComm(), n, n, PETSC_DECIDE, PETSC_DECIDE, (void *)this, &A));
-    PalacePetscCall(
-        MatCreateShell(GetComm(), n, n, PETSC_DECIDE, PETSC_DECIDE, (void *)this, &J));
-    PalacePetscCall(MatShellSetOperation(A, MATOP_MULT, (void (*)(void))__mat_apply_NEP_A));
-    PalacePetscCall(MatShellSetOperation(J, MATOP_MULT, (void (*)(void))__mat_apply_NEP_J));
-    PalacePetscCall(MatShellSetVecType(A, PetscVecType()));
-    PalacePetscCall(MatShellSetVecType(J, PetscVecType()));
-    PalacePetscCall(NEPSetFunction(nep, A, A, __form_NEP_function, NULL));
-    PalacePetscCall(NEPSetJacobian(nep, J, __form_NEP_jacobian, NULL));
-  }
-
-  if (first && type != ScaleType::NONE)
-  {
-    normK = linalg::SpectralNorm(GetComm(), *opK, opK->IsReal());
-    normM = linalg::SpectralNorm(GetComm(), *opM, opM->IsReal());
-    MFEM_VERIFY(normK >= 0.0 && normM >= 0.0, "Invalid matrix norms for NEP scaling!");
-    if (normK > 0 && normM > 0.0)
-    {
-      gamma = std::sqrt(normK / normM);
-      delta = 2.0 / normK;
-    }
-  }
-
-  // Set up workspace.
-  if (!v0)
-  {
-    PalacePetscCall(MatCreateVecs(A, nullptr, &v0));
-  }
-  x1.SetSize(opK->Height());
-  y1.SetSize(opK->Height());
-
-  // Configure linear solver.
-  if (first)
-  {
-    // SLP.
-    PC pc;
-    KSP ksp;
-    EPS eps;
-    PalacePetscCall(NEPSLPGetKSP(nep, &ksp));
-    PalacePetscCall(KSPSetType(ksp, KSPPREONLY));
-    PalacePetscCall(NEPSLPGetEPS(nep, &eps));
-    PalacePetscCall(EPSSetType(eps, EPSKRYLOVSCHUR));
-    PalacePetscCall(KSPGetPC(ksp, &pc));
-    PalacePetscCall(PCSetType(pc, PCSHELL));
-    PalacePetscCall(PCShellSetContext(pc, (void *)this));
-    PalacePetscCall(PCShellSetApply(pc, __pc_apply_NEP));
-  }
+  SetOperatorsImpl(K, nullptr, M, type);
 }
 
 void SlepcNEPSolver::SetOperators(const ComplexOperator &K, const ComplexOperator &C,
                                   const ComplexOperator &M,
                                   EigenvalueSolver::ScaleType type)
 {
-  // Construct shell matrices for the scaled operators which define the quadratic polynomial
-  // eigenvalue problem.
+  SetOperatorsImpl(K, &C, M, type);
+}
+
+void SlepcNEPSolver::SetOperatorsImpl(const ComplexOperator &K, const ComplexOperator *C,
+                                      const ComplexOperator &M,
+                                      EigenvalueSolver::ScaleType type)
+{
+  // Construct shell matrices for the scaled operators which define the nonlinear
+  // eigenvalue problem. Without C, opC is reset so that the function, Jacobian, and
+  // residual do not use a damping matrix from an earlier call.
   const bool first = (opK == nullptr);
   opK = &K;
-  opC = &C;
+  opC = C;
   opM = &M;
 
   if (first)
@@ -1701,7 +1527,7 @@ void SlepcNEPSolver::SetOperators(const ComplexOperator &K, const ComplexOperato
   if (first && type != ScaleType::NONE)
   {
     normK = linalg::SpectralNorm(GetComm(), *opK, opK->IsReal());
-    normC = linalg::SpectralNorm(GetComm(), *opC, opC->IsReal());
+    normC = opC ? linalg::SpectralNorm(GetComm(), *opC, opC->IsReal()) : 0.0;
     normM = linalg::SpectralNorm(GetComm(), *opM, opM->IsReal());
     MFEM_VERIFY(normK >= 0.0 && normC >= 0.0 && normM >= 0.0,
                 "Invalid matrix norms for NEP scaling!");
@@ -1986,9 +1812,11 @@ PetscErrorCode __pc_apply_PEPLinear(PC pc, Vec x, Vec y)
                      0.0);
     if (ctx->opProj)
     {
-      // Mpi::Print(" Before projection: {:e}\n", linalg::Norml2(ctx->GetComm(), ctx->y1));
-      ctx->opProj->Mult(ctx->y1);
-      // Mpi::Print(" Before projection: {:e}\n", linalg::Norml2(ctx->GetComm(), ctx->y1));
+      // Without this projection, gradients are eigenvectors with λ = 0, which dominate the
+      // targeted eigenvalues when these are farther from σ than σ from 0. The divergence of
+      // y1 is already at round-off for a projected basis, so a loose relative tolerance
+      // suffices to keep it from growing.
+      ctx->opProj->Mult(ctx->y1, 1.0e-3);
     }
   }
   PetscCall(ToPetscVec(ctx->y1, ctx->y2, y));
@@ -1998,6 +1826,8 @@ PetscErrorCode __pc_apply_PEPLinear(PC pc, Vec x, Vec y)
 
 PetscErrorCode __mat_apply_PEP_A0(Mat A, Vec x, Vec y)
 {
+  // Apply the scaled operator A₀ = δ K, for the scaled polynomial δ P(γ μ) = A₀ + μ A₁ +
+  // μ² A₂ with λ = γ μ.
   PetscFunctionBeginUser;
   palace::slepc::SlepcPEPSolver *ctx;
   PetscCall(MatShellGetContext(A, (void **)&ctx));
@@ -2005,6 +1835,7 @@ PetscErrorCode __mat_apply_PEP_A0(Mat A, Vec x, Vec y)
 
   PetscCall(FromPetscVec(x, ctx->x1));
   ctx->opK->Mult(ctx->x1, ctx->y1);
+  ctx->y1 *= ctx->delta;
   PetscCall(ToPetscVec(ctx->y1, y));
 
   PetscFunctionReturn(PETSC_SUCCESS);
@@ -2012,6 +1843,7 @@ PetscErrorCode __mat_apply_PEP_A0(Mat A, Vec x, Vec y)
 
 PetscErrorCode __mat_apply_PEP_A1(Mat A, Vec x, Vec y)
 {
+  // Apply the scaled operator A₁ = δ γ C.
   PetscFunctionBeginUser;
   palace::slepc::SlepcPEPSolver *ctx;
   PetscCall(MatShellGetContext(A, (void **)&ctx));
@@ -2021,6 +1853,7 @@ PetscErrorCode __mat_apply_PEP_A1(Mat A, Vec x, Vec y)
   if (ctx->opC)
   {
     ctx->opC->Mult(ctx->x1, ctx->y1);
+    ctx->y1 *= ctx->delta * ctx->gamma;
   }
   else
   {
@@ -2033,6 +1866,7 @@ PetscErrorCode __mat_apply_PEP_A1(Mat A, Vec x, Vec y)
 
 PetscErrorCode __mat_apply_PEP_A2(Mat A, Vec x, Vec y)
 {
+  // Apply the scaled operator A₂ = δ γ² M.
   PetscFunctionBeginUser;
   palace::slepc::SlepcPEPSolver *ctx;
   PetscCall(MatShellGetContext(A, (void **)&ctx));
@@ -2040,6 +1874,7 @@ PetscErrorCode __mat_apply_PEP_A2(Mat A, Vec x, Vec y)
 
   PetscCall(FromPetscVec(x, ctx->x1));
   ctx->opM->Mult(ctx->x1, ctx->y1);
+  ctx->y1 *= ctx->delta * ctx->gamma * ctx->gamma;
   PetscCall(ToPetscVec(ctx->y1, y));
 
   PetscFunctionReturn(PETSC_SUCCESS);
@@ -2142,11 +1977,9 @@ PetscErrorCode __pc_apply_NEP(PC pc, Vec x, Vec y)
     if (ctx->lambda.imag() == 0.0)
       ctx->lambda = ctx->sigma;
     ctx->opA2_pc = (*ctx->funcA2)(ctx->lambda);
-    ctx->opA_pc = palace::BuildComplexSumOperator({{1.0 + 0.0i, ctx->opK},
-                                                   {ctx->lambda, ctx->opC},
-                                                   {ctx->lambda * ctx->lambda, ctx->opM},
-                                                   {1.0 + 0.0i, ctx->opA2_pc.get()}},
-                                                  *ctx->opK);
+    ctx->opA_pc =
+        palace::BuildOperatorWithA2({1.0 + 0.0i, ctx->lambda, ctx->lambda * ctx->lambda},
+                                    {ctx->opK, ctx->opC, ctx->opM}, ctx->opA2_pc.get());
     ctx->opP_pc = (*ctx->funcP)(std::complex<double>(1.0, 0.0), ctx->lambda,
                                 ctx->lambda * ctx->lambda,
                                 ctx->lambda / std::complex<double>(0.0, 1.0));
@@ -2176,11 +2009,9 @@ PetscErrorCode __form_NEP_function(NEP nep, PetscScalar lambda, Mat fun, Mat B, 
   PetscCall(MatShellGetContext(fun, (void **)&ctxF));
   // A(λ) = K + λ C + λ² M + A2(λ).
   ctxF->opA2 = (*ctxF->funcA2)(lambda);
-  ctxF->opA = palace::BuildComplexSumOperator({{1.0 + 0.0i, ctxF->opK},
-                                               {lambda, ctxF->opC},
-                                               {lambda * lambda, ctxF->opM},
-                                               {1.0 + 0.0i, ctxF->opA2.get()}},
-                                              *ctxF->opK);
+  ctxF->opA =
+      palace::BuildOperatorWithA2({1.0 + 0.0i, lambda, lambda * lambda},
+                                  {ctxF->opK, ctxF->opC, ctxF->opM}, ctxF->opA2.get());
   ctxF->lambda = lambda;
   ctxF->new_lambda = true;  // flag to update the preconditioner in SLP
   PetscFunctionReturn(PETSC_SUCCESS);
@@ -2193,19 +2024,20 @@ PetscErrorCode __form_NEP_jacobian(NEP nep, PetscScalar lambda, Mat fun, void *c
   PetscCall(MatShellGetContext(fun, (void **)&ctxF));
   // A(λ) = K + λ C + λ² M + A2(λ).
   // J(λ) = C + 2 λ M + A2'(λ).
-  ctxF->opA2 = (*ctxF->funcA2)(lambda);
+  // The A2 finite difference is a matrix-free sum (each A2 may itself be a matrix-free
+  // SumComplexOperator carrying the wave-port correction).
+  ctxF->opA2_jac = (*ctxF->funcA2)(lambda);
   const auto eps = std::sqrt(std::numeric_limits<double>::epsilon());
   ctxF->opA2p = (*ctxF->funcA2)(lambda * (1.0 + eps));
-  ctxF->opAJ.reset();
-  if (ctxF->opA2 || ctxF->opA2p)
-  {
-    const std::complex<double> denom = eps * lambda;
-    ctxF->opAJ = palace::BuildComplexSumOperator(
-        {{1.0 / denom, ctxF->opA2p.get()}, {-1.0 / denom, ctxF->opA2.get()}});
-  }
-  ctxF->opJ = palace::BuildComplexSumOperator(
-      {{1.0 + 0.0i, ctxF->opC}, {2.0 * lambda, ctxF->opM}, {1.0 + 0.0i, ctxF->opAJ.get()}},
-      *ctxF->opK);
+  std::complex<double> denom = eps * lambda;
+  auto opAJ = std::make_unique<palace::SumComplexOperator>(ctxF->opA2p->Height(),
+                                                           ctxF->opA2p->Width());
+  opAJ->AddOperator(*ctxF->opA2p, 1.0 / denom);
+  opAJ->AddOperator(*ctxF->opA2_jac, -1.0 / denom);
+  ctxF->opAJ = std::move(opAJ);
+  ctxF->opJ =
+      palace::BuildOperatorWithA2({0.0 + 0.0i, 1.0 + 0.0i, 2.0 * lambda},
+                                  {ctxF->opK, ctxF->opC, ctxF->opM}, ctxF->opAJ.get());
   PetscFunctionReturn(PETSC_SUCCESS);
 }
 

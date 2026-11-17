@@ -94,6 +94,7 @@ void ConcretizeLinear(const config::LinearSolverData &linear, json &j_linear)
                 {"SuperLU3DCommunicator", linear.superlu_3d},
                 {"AMSVectorInterpolation", linear.ams_vector_interp},
                 {"AMSSingularOperator", static_cast<bool>(linear.ams_singular_op)},
+                {"LondonPCShift", linear.london_pc_shift},
                 {"AMGAggressiveCoarsening", static_cast<bool>(linear.amg_agg_coarsen)},
                 {"AMSMaxIts", linear.ams_max_it},
                 {"DivFreeTol", linear.divfree_tol},
@@ -124,7 +125,8 @@ void ConcretizeEigenmode(const config::EigenSolverData &eigenmode, json &j_eigen
                          {"TargetUpper", eigenmode.target_upper},
                          {"PreconditionerLag", eigenmode.preconditioner_lag},
                          {"PreconditionerLagTol", eigenmode.preconditioner_lag_tol},
-                         {"MaxRestart", eigenmode.max_restart}});
+                         {"MaxRestart", eigenmode.max_restart},
+                         {"NonlinearMaxIts", eigenmode.nonlinear_max_it}});
 }
 
 void ConcretizeTransient(const config::TransientSolverData &transient, json &j_transient)
@@ -380,12 +382,16 @@ void ConcretizeModel(const config::ModelData &model, json &j_model)
                          {"MakeHexahedral", model.make_hex},
                          {"ReorderElements", model.reorder_elements},
                          {"CleanUnusedElements", model.clean_unused_elements},
-                         {"CrackInternalBoundaryElements", model.crack_bdr_elements},
                          {"RefineCrackElements", model.refine_crack_elements},
                          {"CrackDisplacementFactor", model.crack_displ_factor},
                          {"AddInterfaceBoundaryElements", model.add_bdr_elements},
                          {"ExportPrerefinedMesh", model.export_prerefined_mesh},
                          {"ReorientTetMesh", model.reorient_tet_mesh}});
+  if (model.crack_bdr_elements.has_value())
+  {
+    // Deprecated: only emitted when specified (unset selects the default cracking).
+    Concretize(j_model, "CrackInternalBoundaryElements", *model.crack_bdr_elements);
+  }
   if (!model.partitioning.empty())
   {
     Concretize(j_model, "Partitioning", model.partitioning);
@@ -435,6 +441,7 @@ void ConcretizeDomains(const config::DomainData &domains, json &j_domains)
 
 void ConcretizeBoundaries(const config::BoundaryData &boundaries, json &j_boundaries)
 {
+
   // Absorbing (farfield) boundary. Only touch it if the user declared it.
   if (j_boundaries.contains("Absorbing"))
   {
@@ -449,9 +456,10 @@ void ConcretizeBoundaries(const config::BoundaryData &boundaries, json &j_bounda
     for (std::size_t i = 0; i < n; ++i)
     {
       const auto &c = boundaries.conductivity[i];
-      ApplyEntries(
-          j_cond[i],
-          {{"Permeability", c.mu_r}, {"Thickness", c.h}, {"External", c.external}});
+      ApplyEntries(j_cond[i], {{"Permeability", c.mu_r},
+                               {"Thickness", c.h},
+                               {"External", c.external},
+                               {"Crack", c.crack}});
     }
   }
 
@@ -463,7 +471,19 @@ void ConcretizeBoundaries(const config::BoundaryData &boundaries, json &j_bounda
     for (std::size_t i = 0; i < n; ++i)
     {
       const auto &imp = boundaries.impedance[i];
-      ApplyEntries(j_imp[i], {{"Rs", imp.Rs}, {"Ls", imp.Ls}, {"Cs", imp.Cs}});
+      ApplyEntries(j_imp[i],
+                   {{"Rs", imp.Rs}, {"Ls", imp.Ls}, {"Cs", imp.Cs}, {"Crack", imp.crack}});
+    }
+  }
+
+  // RationalImpedance: JSON array of objects, C++ vector (positional).
+  if (j_boundaries.contains("RationalImpedance"))
+  {
+    auto &j_rz = j_boundaries["RationalImpedance"];
+    const std::size_t n = std::min(j_rz.size(), boundaries.rational_impedance.size());
+    for (std::size_t i = 0; i < n; ++i)
+    {
+      Concretize(j_rz[i], "Crack", boundaries.rational_impedance[i].crack);
     }
   }
 
@@ -492,6 +512,34 @@ void ConcretizeBoundaries(const config::BoundaryData &boundaries, json &j_bounda
                             {"Excitation", lp.excitation},
                             {"Active", lp.active},
                             {"IncludeInSynthesis", lp.include_in_synthesis}});
+
+      // The excitation weight is only valid, and so only emitted, for excited ports; the
+      // parser rejects these keys on a port without an excitation.
+      if (lp.excitation != 0)
+      {
+        ApplyEntries(j_port, {{"ExcitationAmplitude", lp.excitation_amplitude},
+                              {"ExcitationPhase", lp.excitation_phase}});
+      }
+    }
+  }
+
+  // FluxLoop: JSON array with Index, C++ map keyed by Index.
+  if (j_boundaries.contains("FluxLoop"))
+  {
+    for (auto &j_loop : j_boundaries["FluxLoop"])
+    {
+      auto idx_it = j_loop.find("Index");
+      if (idx_it == j_loop.end())
+      {
+        continue;
+      }
+      auto it = boundaries.fluxloop.find(idx_it->get<int>());
+      if (it == boundaries.fluxloop.end())
+      {
+        continue;
+      }
+      ApplyEntries(j_loop, {{"Excitation", it->second.excitation},
+                            {"PecPenetrationDepth", it->second.pec_lperp}});
     }
   }
 
@@ -521,8 +569,7 @@ void ConcretizeBoundaries(const config::BoundaryData &boundaries, json &j_bounda
                             {"KSPTol", wp.ksp_tol},
                             {"EigenTol", wp.eig_tol},
                             {"MaxSize", wp.max_size},
-                            {"Verbose", wp.verbose},
-                            {"NSamples", wp.n_samples}});
+                            {"Verbose", wp.verbose}});
     }
   }
 
@@ -635,26 +682,6 @@ void ConcretizeBoundaries(const config::BoundaryData &boundaries, json &j_bounda
             }
           }
         });
-
-    ApplyIndexed("Impedance",
-                 [&](int idx, json &j_entry)
-                 {
-                   auto it = pp.impedance.find(idx);
-                   if (it != pp.impedance.end())
-                   {
-                     Concretize(j_entry, "NSamples", it->second.n_samples);
-                   }
-                 });
-
-    ApplyIndexed("Voltage",
-                 [&](int idx, json &j_entry)
-                 {
-                   auto it = pp.voltage.find(idx);
-                   if (it != pp.voltage.end())
-                   {
-                     Concretize(j_entry, "NSamples", it->second.n_samples);
-                   }
-                 });
   }
 }
 

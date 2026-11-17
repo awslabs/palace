@@ -5,7 +5,8 @@
 
 #include <cmath>
 #include <complex>
-#include <set>
+#include <numbers>
+#include "models/boundaryattributes.hpp"
 #include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
@@ -81,65 +82,32 @@ void PolyDivMod(std::vector<double> a, std::vector<double> b, std::vector<double
 
 SurfaceRationalImpedanceOperator::SurfaceRationalImpedanceOperator(
     const std::vector<config::RationalImpedanceData> &impedance,
-    const std::unordered_set<int> &cracked_attributes, ProblemType problem_type,
+    const std::unordered_set<int> &split_attributes, ProblemType problem_type,
     const Units &units, const MaterialOperator &mat_op, const mfem::ParMesh &mesh)
   : mat_op(mat_op), freq_scale(units.GetScaleFactor<Units::ValueType::FREQUENCY>())
 {
-  SetUpBoundaryProperties(impedance, cracked_attributes, problem_type, mesh);
+  SetUpBoundaryProperties(impedance, split_attributes, problem_type, mesh);
   PrintBoundaryInfo(units, mesh);
 }
 
 SurfaceRationalImpedanceOperator::SurfaceRationalImpedanceOperator(
     const IoData &iodata, const MaterialOperator &mat_op, const mfem::ParMesh &mesh)
   : SurfaceRationalImpedanceOperator(iodata.boundaries.rational_impedance,
-                                     iodata.boundaries.cracked_attributes,
+                                     iodata.boundaries.split_impedance_attributes,
                                      iodata.problem.type, iodata.units, mat_op, mesh)
 {
 }
 
 void SurfaceRationalImpedanceOperator::SetUpBoundaryProperties(
     const std::vector<config::RationalImpedanceData> &impedance,
-    const std::unordered_set<int> &cracked_attributes, ProblemType problem_type,
+    const std::unordered_set<int> &split_attributes, ProblemType problem_type,
     const mfem::ParMesh &mesh)
 {
   // Check that rational impedance boundary attributes have been specified correctly.
-  int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
-  mfem::Array<int> bdr_attr_marker;
+  MeshBoundaryAttributes mesh_attrs(mesh);
   if (!impedance.empty())
   {
-    mfem::Array<int> impedance_marker(bdr_attr_max);
-    bdr_attr_marker.SetSize(bdr_attr_max);
-    bdr_attr_marker = 0;
-    impedance_marker = 0;
-    for (auto attr : mesh.bdr_attributes)
-    {
-      bdr_attr_marker[attr - 1] = 1;
-    }
-    std::set<int> bdr_warn_list;
-    for (const auto &data : impedance)
-    {
-      for (auto attr : data.attributes)
-      {
-        if (attr <= 0 || attr > bdr_attr_max || !bdr_attr_marker[attr - 1])
-        {
-          bdr_warn_list.insert(attr);
-          continue;
-        }
-        MFEM_VERIFY(!impedance_marker[attr - 1],
-                    "Multiple definitions of rational impedance boundary properties for "
-                    "boundary attribute "
-                        << attr << "!");
-        impedance_marker[attr - 1] = 1;
-      }
-    }
-    if (!bdr_warn_list.empty())
-    {
-      Mpi::Print("\n");
-      Mpi::Warning("Unknown rational impedance boundary attributes!\nSolver will just "
-                   "ignore them!");
-      utils::PrettyPrint(bdr_warn_list, "Boundary attribute list:");
-      Mpi::Print("\n");
-    }
+    CheckBoundaryAttributes(mesh_attrs, impedance, "rational impedance");
   }
 
   // A rational surface impedance contributes only to the frequency-dependent system matrix
@@ -182,14 +150,14 @@ void SurfaceRationalImpedanceOperator::SetUpBoundaryProperties(
     bdr.attr_list.Reserve(static_cast<int>(data.attributes.size()));
     for (auto attr : data.attributes)
     {
-      if (attr <= 0 || attr > bdr_attr_max || !bdr_attr_marker[attr - 1])
+      if (!mesh_attrs.Contains(attr))
       {
         continue;  // Can just ignore if wrong
       }
       bdr.attr_list.Append(attr);
-      // Per-attribute scaling to account for increased area when using mesh cracking.
-      bdr.attr_scaling[attr] =
-          (cracked_attributes.find(attr) != cracked_attributes.end()) ? 2.0 : 1.0;
+      // Twice the impedance on each face where it is split between the two faces of a
+      // crack (legacy mesh cracking).
+      bdr.attr_scaling[attr] = split_attributes.contains(attr) ? 2.0 : 1.0;
     }
   }
 }
@@ -239,6 +207,21 @@ SurfaceRationalImpedanceOperator::EvalRobinCoefficient(int idx,
                                                        std::complex<double> s) const
 {
   const auto &bdr = boundaries[idx];
+  if (s == std::complex<double>(0.0, 0.0))
+  {
+    // Preserve the finite DC limit used by AddExtraSystemBdrCoefficients: if N has a
+    // simple zero at s = 0, lim s·D/N = D(0)/N'(0). A higher-order zero is singular.
+    const double n0 = bdr.num.back();
+    if (n0 == 0.0)
+    {
+      const double n1 = (bdr.num.size() >= 2) ? bdr.num[bdr.num.size() - 2] : 0.0;
+      MFEM_VERIFY(n1 != 0.0,
+                  "Rational impedance boundary has a transmission zero of order >= 2 at "
+                  "s = 0; the DC admittance iω/Zs is singular!");
+      return bdr.den.back() / n1;
+    }
+    return 0.0;
+  }
   const std::complex<double> N = EvalPoly(bdr.num, s);
   MFEM_VERIFY(std::abs(N) > 0.0,
               "Rational impedance boundary has a transmission zero (Zs = 0) at the "
@@ -354,7 +337,7 @@ void SurfaceRationalImpedanceOperator::AddExtraSystemBdrCoefficients(
     // terminations).
     if (!bdr.warned_passivity && Y.real() < -1.0e-9 * std::abs(Y))
     {
-      const double f_ghz = omega * freq_scale / (2.0 * M_PI);
+      const double f_ghz = omega * freq_scale / (2.0 * std::numbers::pi);
       Mpi::Warning("Rational impedance boundary (attribute {:d}) is not passive at "
                    "f = {:.4f} GHz: Re(Zs) = {:.3e} < 0!\n",
                    bdr.attr_list.Size() ? bdr.attr_list[0] : -1, f_ghz, (1.0 / Y).real());

@@ -44,6 +44,8 @@ def refinement_block(args):
     block["SaveAdaptMesh"] = args.save_adapt_mesh
     if args.amr_max_size > 0:
         block["MaxSize"] = args.amr_max_size
+        # The predictive MaxSize stop, stated: off by default in the integrated Palace (USER 1636 (4)).
+        block["MaxSizePredicted"] = True
     block["UniformLevels"] = 0
     block["SerialUniformLevels"] = 0
     return block
@@ -100,7 +102,7 @@ def main():
     )
     parser.add_argument(
         "--save-adapt-mesh", action="store_true",
-        help="write every adapted mesh (<mesh stem>.mesh in the postprocessing directory)",
+        help="write every adapted mesh (<mesh stem>.mesh in the postprocessing directory; .meshgz on a zlib build)",
     )
     parser.add_argument(
         "--edge-refinement", nargs=2, type=float, metavar=("RADIUS_UM", "ELEMENTS_PER_RADIUS"),

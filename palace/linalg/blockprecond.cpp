@@ -54,7 +54,7 @@ void BlockDiagonalPreconditioner<ComplexOperator>::InsertSubVector(const Complex
   CopySubVector(src.Imag(), dst.Imag(), 0, offset, size);
 }
 
-template <typename OperType>
+template <OperatorType OperType>
 BlockDiagonalPreconditioner<OperType>::BlockDiagonalPreconditioner(
     int block0_size, std::unique_ptr<Solver<OperType>> &&pc0,
     std::unique_ptr<Solver<OperType>> &&pc1)
@@ -62,7 +62,7 @@ BlockDiagonalPreconditioner<OperType>::BlockDiagonalPreconditioner(
 {
 }
 
-template <typename OperType>
+template <OperatorType OperType>
 void BlockDiagonalPreconditioner<OperType>::SetBlockOperators(const OperType &op0,
                                                               const OperType &op1)
 {
@@ -73,7 +73,7 @@ void BlockDiagonalPreconditioner<OperType>::SetBlockOperators(const OperType &op
   this->width = this->height;
 }
 
-template <typename OperType>
+template <OperatorType OperType>
 void BlockDiagonalPreconditioner<OperType>::SetOperator(const OperType &op)
 {
   // No-op: use SetBlockOperators to set each block's operator independently.
@@ -81,7 +81,7 @@ void BlockDiagonalPreconditioner<OperType>::SetOperator(const OperType &op)
   this->width = op.Width();
 }
 
-template <typename OperType>
+template <OperatorType OperType>
 void BlockDiagonalPreconditioner<OperType>::Mult(const VecType &x, VecType &y) const
 {
   const int n0 = block0_size;

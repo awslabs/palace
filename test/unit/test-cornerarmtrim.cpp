@@ -23,6 +23,7 @@
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 #include "driver.hpp"
@@ -1551,6 +1552,9 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 #if !defined(MFEM_USE_GSLIB)
   SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
 #else
+  // P3-23: both crack forms (the legacy key of SD-801; upstream's default = the key unset).
+  const auto crack_policy = GENERATE(test::CrackPolicy::Legacy, test::CrackPolicy::Default);
+  INFO("crack policy: " << test::CrackPolicyName(crack_policy));
   constexpr double R = 0.2, r = 0.125, x_min = 0.125, x_max = 0.875;
   const fs::path mesh_path = temp.temp_dir / "extension-lead.mesh";
   const auto basis_path = temp.temp_dir / "extension-basis-points.csv";
@@ -1604,7 +1608,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   }
   Mpi::Barrier(Mpi::World());
 
-  json config = IslandConfig();
+  json config = IslandConfig(crack_policy);
   config["Model"]["Mesh"] = mesh_path.string();
   config["Model"]["L0"] = 1.0;
   config["Boundaries"]["Ground"]["Attributes"] = {4};
@@ -1861,6 +1865,9 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 #if !defined(MFEM_USE_GSLIB)
   SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
 #else
+  // P3-23: both crack forms (the legacy key of SD-801; upstream's default = the key unset).
+  const auto crack_policy = GENERATE(test::CrackPolicy::Legacy, test::CrackPolicy::Default);
+  INFO("crack policy: " << test::CrackPolicyName(crack_policy));
   constexpr double R = 0.2;
   const fs::path mesh_path = temp.temp_dir / "uncovered-lead.mesh";
   const auto basis_path = temp.temp_dir / "uncovered-basis-points.csv";
@@ -1915,7 +1922,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   }
   Mpi::Barrier(Mpi::World());
 
-  json config = IslandConfig();
+  json config = IslandConfig(crack_policy);
   config["Model"]["Mesh"] = mesh_path.string();
   // The mesh unit is the metre of the fixture libraries' surface-matrix rows (R = 0.2 m).
   config["Model"]["L0"] = 1.0;
@@ -5598,6 +5605,9 @@ TEST_CASE_METHOD(
 #if !defined(MFEM_USE_GSLIB)
   SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
 #else
+  // P3-23: both crack forms (the legacy key of SD-801; upstream's default = the key unset).
+  const auto crack_policy = GENERATE(test::CrackPolicy::Legacy, test::CrackPolicy::Default);
+  INFO("crack policy: " << test::CrackPolicyName(crack_policy));
   constexpr double R = 0.2;
   // The identification of this mesh clusters the two facing corners WITH the two short
   // edges' far corners (six edges), so the free convex corners are the two left corners of
@@ -5635,7 +5645,7 @@ TEST_CASE_METHOD(
   // footprint).
   auto MaxwellConfig = [&](const fs::path &library, const fs::path &output)
   {
-    json config = ConvexMaxwellIslandConfig();
+    json config = ConvexMaxwellIslandConfig(crack_policy);
     config["Model"]["Mesh"] = mesh_path.string();
     config["Model"]["L0"] = 1.0;
     config["Problem"]["Output"] = output.string();
@@ -6137,7 +6147,7 @@ TEST_CASE_METHOD(
   // The electrostatic postoperator's reading of the same pieces (the same surface
   // quadrature on the same mesh) equals the Maxwell one.
   {
-    json config = IslandConfig();
+    json config = IslandConfig(crack_policy);
     config["Model"]["Mesh"] = mesh_path.string();
     config["Model"]["L0"] = 1.0;
     config["Problem"]["Output"] = (temp.temp_dir / "scp-es-postop").string();
@@ -6207,7 +6217,7 @@ TEST_CASE_METHOD(
   const fs::path es_fixture_dir = temp.temp_dir / "scp-es-control";
   const fs::path es_corner_only_dir = temp.temp_dir / "scp-es-corner-only";
   {
-    json config = IslandConfig();
+    json config = IslandConfig(crack_policy);
     config["Model"]["Mesh"] = mesh_path.string();
     config["Model"]["L0"] = 1.0;
     config["Boundaries"]["Terminal"] = {{{"Index", 1}, {"Attributes", {9}}},

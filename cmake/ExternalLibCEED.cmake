@@ -67,6 +67,7 @@ endif()
 if(PALACE_WITH_LIBXSMM)
   list(APPEND LIBCEED_OPTIONS
     "XSMM_DIR=${CMAKE_INSTALL_PREFIX}"
+    "PKGCONF=pkg-config"  # Not every system provides the pkgconf command
   )
   # LIBXSMM can require linkage with BLAS for fallback
   if(NOT "${BLAS_LAPACK_LIBRARIES}" STREQUAL "")
@@ -81,9 +82,9 @@ if(PALACE_WITH_CUDA)
     "CUDA_DIR=${CUDAToolkit_LIBRARY_ROOT}"
   )
   if(NOT "${CMAKE_CUDA_ARCHITECTURES}" STREQUAL "")
-    list(GET CMAKE_CUDA_ARCHITECTURES 0 LIBCEED_CUDA_ARCH)
+    palace_cuda_sm_targets(LIBCEED_CUDA_TARGETS "${CMAKE_CUDA_ARCHITECTURES}")
     list(APPEND LIBCEED_OPTIONS
-      "CUDA_ARCH=sm_${LIBCEED_CUDA_ARCH}"
+      "CUDA_TARGETS=${LIBCEED_CUDA_TARGETS}"
     )
   endif()
 endif()
@@ -119,6 +120,6 @@ ExternalProject_Add(libCEED
   UPDATE_COMMAND    ""
   CONFIGURE_COMMAND ""
   BUILD_COMMAND     ""
-  INSTALL_COMMAND   ${CMAKE_MAKE_PROGRAM} ${LIBCEED_OPTIONS} install
+  INSTALL_COMMAND   ${PALACE_MAKE_COMMAND} ${LIBCEED_OPTIONS} install
   TEST_COMMAND      ""
 )

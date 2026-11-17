@@ -67,6 +67,11 @@ public:
   // domain.
   double GetDomainElectricFieldEnergy(int idx, const GridFunction &E) const;
   double GetDomainMagneticFieldEnergy(int idx, const GridFunction &B) const;
+
+  // The magnetic field energies from a real L-vector of the space of construction, for
+  // spaces without MFEM grid functions (broken spaces).
+  double GetMagneticFieldEnergy(const Vector &a_l, MPI_Comm comm) const;
+  double GetDomainMagneticFieldEnergy(int idx, const Vector &a_l, MPI_Comm comm) const;
 };
 
 }  // namespace palace

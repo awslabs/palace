@@ -223,7 +223,10 @@ void RunMeshStatistics(IoData &iodata, MPI_Comm comm, int omp_threads, const cha
         {"Ranks", Mpi::Size(comm)},
         {"GlobalElements", elements},
         {"H1TrueDOFs", dofs},
-        {"CrackInternalBoundaryElements", iodata.model.crack_bdr_elements},
+        // null when unset (the default crack set of GetMeshCrackAttributes applies).
+        {"CrackInternalBoundaryElements",
+         iodata.model.crack_bdr_elements ? nlohmann::json(*iodata.model.crack_bdr_elements)
+                                         : nlohmann::json(nullptr)},
         {"RefineCrackElements", iodata.model.refine_crack_elements}};
     const auto path = fs::path(iodata.problem.output) / "mesh-statistics.json";
     std::ofstream output(path);

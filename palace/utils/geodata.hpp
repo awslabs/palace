@@ -6,6 +6,7 @@
 
 #include <array>
 #include <cmath>
+#include <map>
 #include <memory>
 #include <optional>
 #include <unordered_map>
@@ -307,6 +308,14 @@ void AddSubMeshInternalBoundaryElements(SubMeshT &submesh,
 mfem::Vector ProjectSubmeshTo2D(mfem::Mesh &submesh, mfem::Vector &centroid,
                                 mfem::Vector &e1, mfem::Vector &e2);
 
+// Copy a serial 2D nonconforming mesh to a new mesh with the same elements, boundary
+// elements and hanging vertices, whose nonconforming structure is rebuilt from them (the
+// leaf elements become the root elements). MFEM keeps the boundary of a nonconforming mesh
+// in its mfem::NCMesh, which is used to print or distribute it, and does not update it for
+// boundary elements added to the mfem::Mesh or for their attributes. The nonconforming
+// mesh of a SubMesh of a nonconforming mesh has no boundary at all.
+std::unique_ptr<mfem::Mesh> RebuildNonconformingMesh(const mfem::Mesh &mesh);
+
 // Project a 3D point to 2D local coordinates using a previously computed tangent frame.
 inline mfem::Vector Project3Dto2D(const mfem::Vector &p3d, const mfem::Vector &centroid,
                                   const mfem::Vector &e1, const mfem::Vector &e2)
@@ -396,9 +405,34 @@ inline double GetVolume(const mfem::ParMesh &mesh, int attr)
 std::unique_ptr<mfem::ParMesh> DistributeSerialMesh(MPI_Comm comm,
                                                     std::unique_ptr<mfem::Mesh> &smesh);
 
+// Order-independent (conforming) topological entity counts for a mesh, broken down per
+// geometry. Populated only on the root rank when an adapted mesh is written (see
+// RebalanceMesh and CompleteMeshEntityCounts).
+struct MeshEntityCounts
+{
+  int dim = 0;
+  long long true_vertices = 0;
+  long long true_edges = 0;
+  // TRUE codim-1 faces by geometry (3D only; empty in 2D). Keys are TRIANGLE, SQUARE.
+  std::map<mfem::Geometry::Type, long long> true_faces;
+  // Raw cells by geometry (2D: TRIANGLE, SQUARE; 3D: TETRAHEDRON, CUBE, PRISM, PYRAMID).
+  std::map<mfem::Geometry::Type, long long> cells;
+  std::vector<int> domain_attributes, boundary_attributes;
+  bool valid = false;  // set true only when populated (root, save happened)
+};
+
 // Helper function responsible for rebalancing the mesh, and optionally writing meshes from
-// the intermediate stages to disk. Returns the imbalance ratio before rebalancing.
-double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh);
+// the intermediate stages to disk. Returns the imbalance ratio before rebalancing. When
+// `out_counts` is non-null and the adapted mesh is written, geometry-resolved counts are
+// filled on the root rank. Nonconforming vertex and edge counts must then be completed
+// collectively with CompleteMeshEntityCounts.
+double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh,
+                     MeshEntityCounts *out_counts = nullptr);
+
+// Complete true vertex and edge counts for a nonconforming mesh using distributed
+// lowest-order H1 and ND spaces. This is collective over the mesh communicator and must be
+// called on every rank after RebalanceMesh has populated out_counts for the final mesh.
+void CompleteMeshEntityCounts(mfem::ParMesh &mesh, MeshEntityCounts &counts);
 
 // OI-ADAPT-SAVEMESH-OVERWRITE (idfix DESIGN section 7; decision 1072 Q1): SaveIteration
 // archives an iteration's output files and leaves relative symlinks behind, so a later
@@ -412,20 +446,6 @@ bool RemoveSymlinkBeforeWrite(const fs::path &path);
 
 // Helper for creating a hexahedral mesh from a tetrahedral mesh.
 mfem::Mesh MeshTetToHex(const mfem::Mesh &orig_mesh);
-
-// Helper function for matching boundary edges between parent mesh and submesh in parallel.
-void MatchBoundaryEdges(
-    const mfem::ParMesh &mesh, const mfem::ParSubMesh &boundary_submesh,
-    const mfem::Array<int> &submesh_boundary_edge_ids,
-    const std::unordered_map<int, int> &submesh_to_parent_bdr_edge_map,
-    const std::vector<std::unordered_map<int, int>> &hole_dof_to_edge_maps,
-    std::vector<mfem::Array<int>> &hole_boundary_edges);
-
-// Helper function for computing edge orientations on submesh boundaries.
-void ComputeSubmeshBoundaryEdgeOrientations(
-    const mfem::ParSubMesh &submesh, const mfem::Array<int> &inner_boundary_edges,
-    const mfem::Vector &loop_normal, std::unordered_map<int, double> &edge_oriented_lengths,
-    int order);
 
 }  // namespace mesh
 

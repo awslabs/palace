@@ -14,6 +14,7 @@
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 #include "driver.hpp"
@@ -142,8 +143,10 @@ mfem::DenseMatrix CorrectedMatrix(const Table &table, const std::string &name,
 
 // The device of the corrected-capacitance cases: the 2D automatic library problem with
 // the line as a second terminal, its mesh and the library whose response matrices are
-// scaled by 1e-6 (WriteScaledMatrix) written by the root.
-json CorrectedCapacitanceConfig(const test::SurfaceResponseFiles &files)
+// scaled by 1e-6 (WriteScaledMatrix) written by the root; `crack_policy` as the fixture's
+// AutomaticConfig2D (the legacy key by default, SD-801).
+json CorrectedCapacitanceConfig(const test::SurfaceResponseFiles &files,
+                                test::CrackPolicy crack_policy = test::CrackPolicy::Legacy)
 {
   const fs::path mesh_path = files.temp.temp_dir / "corrected-capacitance-2d.mesh";
   const fs::path scaled_library_path =
@@ -178,7 +181,7 @@ json CorrectedCapacitanceConfig(const test::SurfaceResponseFiles &files)
   }
   Mpi::Barrier(Mpi::World());
 
-  json config = files.AutomaticConfig2D();
+  json config = files.AutomaticConfig2D(crack_policy);
   config["Model"]["Mesh"] = mesh_path.string();
   config["Solver"]["Electrostatic"]["ResponseCorrection"]["Library"] =
       scaled_library_path.string();
@@ -208,7 +211,10 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "Electrostatic corrected terminal c
 #if !defined(MFEM_USE_GSLIB)
   SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
 #else
-  json config = CorrectedCapacitanceConfig(*this);
+  // P3-23: both crack forms (the legacy key of SD-801; upstream's default = the key unset).
+  const auto crack_policy = GENERATE(test::CrackPolicy::Legacy, test::CrackPolicy::Default);
+  INFO("crack policy: " << test::CrackPolicyName(crack_policy));
+  json config = CorrectedCapacitanceConfig(*this, crack_policy);
   auto correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
   const fs::path raw_dir = temp.temp_dir / "corrected-capacitance-raw";
   const fs::path both_dir = temp.temp_dir / "corrected-capacitance-both";
@@ -514,6 +520,9 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 #if !defined(MFEM_USE_GSLIB)
   SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
 #else
+  // P3-23: both crack forms (the legacy key of SD-801; upstream's default = the key unset).
+  const auto crack_policy = GENERATE(test::CrackPolicy::Legacy, test::CrackPolicy::Default);
+  INFO("crack policy: " << test::CrackPolicyName(crack_policy));
   const fs::path mesh_path = temp.temp_dir / "patch-energy-2d.mesh";
   const fs::path scaled_library_path =
       temp.temp_dir / "fabrication-process-patch-energy.json";
@@ -547,7 +556,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   }
   Mpi::Barrier(Mpi::World());
 
-  json config = AutomaticConfig2D();
+  json config = AutomaticConfig2D(crack_policy);
   config["Model"]["Mesh"] = mesh_path.string();
   config["Solver"]["Electrostatic"]["ResponseCorrection"]["Library"] =
       scaled_library_path.string();

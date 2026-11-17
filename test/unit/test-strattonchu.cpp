@@ -21,6 +21,7 @@
 // where k = 2π/λ = ω/c and p₀ is the dipole moment.
 
 #include <complex>
+#include <numbers>
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
@@ -65,10 +66,10 @@ std::array<std::complex<double>, 3> ComputeDipoleENonDim(const mfem::Vector &x_n
   double phi = std::atan2(x_nondim(1), x_nondim(0));
   double r = units.Dimensionalize<Units::ValueType::LENGTH>(r_nondim);
 
-  double k = 2.0 * M_PI * freq_Hz / c0_;  // Wave number k = ω/c = 2πf/c.
+  double k = 2.0 * std::numbers::pi * freq_Hz / c0_;  // Wave number k = ω/c = 2πf/c.
   double kr = k * r;
 
-  double factor = p0 / (4.0 * M_PI * epsilon0_ * r * r * r);
+  double factor = p0 / (4.0 * std::numbers::pi * epsilon0_ * r * r * r);
   std::complex<double> jkr(0, kr);
   std::complex<double> exp_jkr = std::exp(jkr);
 
@@ -97,12 +98,13 @@ std::array<std::complex<double>, 3> ComputeDipoleBNonDim(const mfem::Vector &x_n
 
   double r = units.Dimensionalize<Units::ValueType::LENGTH>(r_nondim);
 
-  double omega_rad_per_sec = 2 * M_PI * freq_Hz;
+  double omega_rad_per_sec = 2 * std::numbers::pi * freq_Hz;
   double k = omega_rad_per_sec / c0_;
   double kr = k * r;
 
   // The magnetic field has only φ component for z-directed dipole.
-  std::complex<double> factor(0, omega_rad_per_sec * mu0_ * p0 / (4.0 * M_PI * r * r));
+  std::complex<double> factor(0, omega_rad_per_sec * mu0_ * p0 /
+                                     (4.0 * std::numbers::pi * r * r));
   std::complex<double> jkr(0, kr);
   std::complex<double> exp_jkr = std::exp(jkr);
   std::complex<double> Bphi = factor * std::sin(theta) * (1.0 - jkr) * exp_jkr;
@@ -117,8 +119,8 @@ std::array<std::complex<double>, 3> ComputeDipoleBNonDim(const mfem::Vector &x_n
 std::array<std::complex<double>, 3> ComputeAnalyticalFarFieldrE(double theta, double phi,
                                                                 double p0, double freq_Hz)
 {
-  double k = 2.0 * M_PI * freq_Hz / c0_;  // Wave number k = ω/c = 2πf/c
-  double factor = k * k * p0 / (4.0 * M_PI * epsilon0_);
+  double k = 2.0 * std::numbers::pi * freq_Hz / c0_;  // Wave number k = ω/c = 2πf/c
+  double factor = k * k * p0 / (4.0 * std::numbers::pi * epsilon0_);
 
   // The only component that survives is the transverse (as expected for a wave).
   std::complex<double> E_theta(factor * std::sin(theta), 0);
@@ -143,7 +145,7 @@ std::vector<std::pair<double, double>> GenerateSphericalTestPoints()
     double theta = acos(1.0 - 2.0 * i / (num_theta - 1.0));
     for (int j = 0; j < num_phi; ++j)
     {
-      double phi = 2.0 * M_PI * j / num_phi;
+      double phi = 2.0 * std::numbers::pi * j / num_phi;
       thetaphis.emplace_back(theta, phi);
     }
   }
@@ -241,27 +243,35 @@ void runFarFieldTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mesh,
   SurfacePostOperator surf_post_op(postpro, ProblemType::DRIVEN, mat_op, nd_fespace,
                                    nd_fespace);
 
-  auto thetaphis = GenerateSphericalTestPoints();
   double omega_rad_per_time =
-      2 * M_PI * units.Nondimensionalize<Units::ValueType::FREQUENCY>(freq_Hz / 1e9);
+      2 * std::numbers::pi *
+      units.Nondimensionalize<Units::ValueType::FREQUENCY>(freq_Hz / 1e9);
   constexpr double omega_im = 0.0;
-  auto rE_computed =
-      surf_post_op.GetFarFieldrE(thetaphis, E_field, B_field, omega_rad_per_time, omega_im);
-
-  // Validate computed far-field against analytical solution
-  for (std::size_t i = 0; i < thetaphis.size(); i++)
+  auto CheckFarField = [&](const std::vector<std::pair<double, double>> &thetaphis)
   {
-    const auto &E_phys = units.Dimensionalize<Units::ValueType::VOLTAGE>(rE_computed[i]);
-    const auto &[theta, phi] = thetaphis[i];
-    auto rE_far = ComputeAnalyticalFarFieldrE(theta, phi, p0, freq_Hz);
-
-    for (std::size_t j = 0; j < dim; j++)
+    auto rE_computed = surf_post_op.GetFarFieldrE(thetaphis, E_field, B_field,
+                                                  {omega_rad_per_time, omega_im});
+    REQUIRE(rE_computed.size() == thetaphis.size());
+    for (std::size_t i = 0; i < thetaphis.size(); i++)
     {
-      // The agreement has to be up to a phase, so we compare the absolute values.
-      CHECK_THAT(std::abs(E_phys[j]),
-                 WithinRel(std::abs(rE_far[j]), rtol) || WithinAbs(0.0, atol));
+      const auto &E_phys = units.Dimensionalize<Units::ValueType::VOLTAGE>(rE_computed[i]);
+      const auto &[theta, phi] = thetaphis[i];
+      auto rE_far = ComputeAnalyticalFarFieldrE(theta, phi, p0, freq_Hz);
+
+      for (std::size_t j = 0; j < dim; j++)
+      {
+        // The agreement has to be up to a phase, so we compare the absolute values.
+        CHECK_THAT(std::abs(E_phys[j]),
+                   WithinRel(std::abs(rE_far[j]), rtol) || WithinAbs(0.0, atol));
+      }
     }
-  }
+  };
+
+  CheckFarField(GenerateSphericalTestPoints());
+  // Observation directions are part of the assembled libCEED functional. A second call
+  // with a different-sized set must rebuild the cached functional rather than silently
+  // returning values for the first call's directions.
+  CheckFarField({{0.27, 0.41}, {1.03, 2.17}, {2.35, 5.02}});
 }
 
 TEST_CASE("Dipole field implementation", "[strattonchu][Serial]")
@@ -277,14 +287,15 @@ TEST_CASE("Dipole field implementation", "[strattonchu][Serial]")
   double freq_Hz = 50e6;
 
   Units units(1.0, 1.0);
-  double k = 2.0 * M_PI * freq_Hz / c0_;
+  double k = 2.0 * std::numbers::pi * freq_Hz / c0_;
 
   // Test at kr = 1000 (far-field regime) for various angles.
   double r = 1000.0 / k;
-  std::vector<std::pair<double, double>> test_angles = {{M_PI / 6, 0.0},
-                                                        {M_PI / 3, M_PI / 4},
-                                                        {M_PI / 2, M_PI / 2},
-                                                        {2 * M_PI / 3, 3 * M_PI / 4}};
+  std::vector<std::pair<double, double>> test_angles = {
+      {std::numbers::pi / 6, 0.0},
+      {std::numbers::pi / 3, std::numbers::pi / 4},
+      {std::numbers::pi / 2, std::numbers::pi / 2},
+      {2 * std::numbers::pi / 3, 3 * std::numbers::pi / 4}};
 
   for (const auto &[theta, phi] : test_angles)
   {

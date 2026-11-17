@@ -4,7 +4,13 @@
 
 import argparse
 import json
+import sys
 from pathlib import Path
+
+IDENTIFICATION_TOOLS = Path(__file__).resolve().parents[2] / "surface_response_identification"
+if str(IDENTIFICATION_TOOLS) not in sys.path:
+    sys.path.insert(0, str(IDENTIFICATION_TOOLS))
+from crack_policy import CRACK_POLICY_DEFAULT, add_crack_policy_argument, apply_crack_policy  # noqa: E402
 
 
 # Defaults of the prototype process; a library with a Fabrication record (the version-2 coupon
@@ -91,6 +97,7 @@ def config(
     radius,
     edge_elements_per_radius,
     process=(INTERFACES, SUBSTRATE_PERMITTIVITY),
+    crack_policy=CRACK_POLICY_DEFAULT,
 ):
     refinement = 0 if fabricated else edge_elements_per_radius
     layers, substrate_permittivity = process
@@ -150,11 +157,11 @@ def config(
             "Output": str(output),
             "OutputFormats": {"Paraview": False, "GridFunction": False},
         },
-        "Model": {
+        "Model": apply_crack_policy({
             "Mesh": str(mesh),
             "L0": 1.0e-6,
             "Refinement": {"Tol": 1.0e-12, "MaxIts": amr_iterations},
-        },
+        }, crack_policy),
         "Domains": {
             "Materials": [
                 {"Attributes": [1], "Permittivity": substrate_permittivity},
@@ -181,6 +188,7 @@ def main():
     parser.add_argument("--order", type=int, default=2)
     parser.add_argument("--amr-iterations", type=int, default=0)
     parser.add_argument("--edge-elements-per-radius", type=int, default=1)
+    add_crack_policy_argument(parser)
     args = parser.parse_args()
     if args.order < 1:
         parser.error("--order must be positive")
@@ -216,6 +224,7 @@ def main():
             radius,
             args.edge_elements_per_radius,
             process,
+            crack_policy=args.crack_policy,
         )
         path = output / f"{name}.json"
         path.write_text(json.dumps(data, indent=2) + "\n")

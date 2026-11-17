@@ -7,6 +7,7 @@
 
 target_sources(${LIB_TARGET_NAME}
   PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/ceedparaviewdatacollection.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/configfile.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/device.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/dorfler.cpp
@@ -22,4 +23,5 @@ target_sources(${LIB_TARGET_NAME}
   ${CMAKE_CURRENT_SOURCE_DIR}/meshio.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/omp.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/tablecsv.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/versions.cpp
 )

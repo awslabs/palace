@@ -3,6 +3,7 @@
 
 #include "meshio.hpp"
 
+#include <array>
 #include <unordered_map>
 #include <vector>
 #include <mfem.hpp>
@@ -98,27 +99,27 @@ inline int ElemTypeComsol(const std::string &type)
 inline int ElemTypeNastran(const std::string &type)
 {
   // Returns only the low-order type for a given keyword.
-  if (!type.compare(0, 5, "CTRIA"))  // 3-node triangle
+  if (type.starts_with("CTRIA"))  // 3-node triangle
   {
     return 2;
   }
-  if (!type.compare(0, 5, "CQUAD"))  // 4-node quadrangle
+  if (type.starts_with("CQUAD"))  // 4-node quadrangle
   {
     return 3;
   }
-  if (!type.compare(0, 6, "CTETRA"))  // 4-node tetrahedron
+  if (type.starts_with("CTETRA"))  // 4-node tetrahedron
   {
     return 4;
   }
-  if (!type.compare(0, 5, "CHEXA"))  // 8-node hexahedron
+  if (type.starts_with("CHEXA"))  // 8-node hexahedron
   {
     return 5;
   }
-  if (!type.compare(0, 6, "CPENTA"))  // 6-node prism
+  if (type.starts_with("CPENTA"))  // 6-node prism
   {
     return 6;
   }
-  if (!type.compare(0, 6, "CPYRAM"))  // 5-node pyramid
+  if (type.starts_with("CPYRAM"))  // 5-node pyramid
   {
     return 7;
   }
@@ -265,13 +266,71 @@ inline std::string GetLineComsol(std::ifstream &input)
   return str.substr(start, stop - start + 1);
 }
 
-inline std::string GetLineNastran(std::ifstream &input)
+// Get the next Nastran line, returning false at the end of the file. Comment ('$') lines
+// are returned empty. The final line does not need a trailing newline.
+inline bool GetLineNastran(std::ifstream &input, std::string &str)
 {
-  std::string str;
-  std::getline(input, str);
-  MFEM_VERIFY(input.good(), "Unexpected read failure parsing mesh file!");
-  str.erase(std::remove(str.begin(), str.end(), '\r'), str.end());
-  return str[0] == '$' ? "" : str;
+  if (!std::getline(input, str))
+  {
+    MFEM_VERIFY(input.eof(), "Unexpected read failure parsing mesh file!");
+    return false;
+  }
+  std::erase(str, '\r');
+  if (str.empty() || str[0] == '$')
+  {
+    str.clear();
+    return true;
+  }
+  // Nastran fixed-format cards are 80 columns, but some writers trim trailing blanks.
+  // Pad so fixed-width substr slicing never throws std::out_of_range and trailing blank
+  // fields are read as blank (zero) by ConvertDoubleNastran.
+  if (str.size() < 80)
+  {
+    str.resize(80, ' ');
+  }
+  return true;
+}
+
+// A continuation line starts with a '+' marker or, when it directly follows its parent
+// card, a blank first field (Gmsh writes the latter in its large field format).
+inline bool NextIsContinuationNastran(std::ifstream &input)
+{
+  const auto c = input.peek();
+  return c == '+' || c == ' ' || c == ',';
+}
+
+inline bool IsBlankNastran(const std::string &field)
+{
+  return field.find_first_not_of(' ') == std::string::npos;
+}
+
+// Split a small field (8-column) or free field (comma-separated) Nastran line into its ten
+// fields. Fields absent from the line, such as trailing fields a free field card omits, are
+// blank.
+inline std::array<std::string, 10> SplitFieldsNastran(const std::string &line)
+{
+  constexpr std::size_t FIELD_WIDTH = 8;
+  std::array<std::string, 10> fields;
+  if (line.find(',') == std::string::npos)
+  {
+    for (std::size_t i = 0; i < fields.size() && i * FIELD_WIDTH < line.size(); i++)
+    {
+      fields[i] = line.substr(i * FIELD_WIDTH, FIELD_WIDTH);
+    }
+    return fields;
+  }
+  std::size_t start = 0;
+  for (auto &field : fields)
+  {
+    const std::size_t stop = line.find(',', start);
+    field = line.substr(start, stop - start);
+    if (stop == std::string::npos)
+    {
+      break;
+    }
+    start = stop + 1;
+  }
+  return fields;
 }
 
 // COMSOL strings are parsed as an integer length followed by array of integers for the
@@ -289,37 +348,84 @@ inline std::string ReadStringComsolBinary(std::istream &input)
   int n;
   input.read(reinterpret_cast<char *>(&n), sizeof(int));
   std::vector<int> vstr(n);
-  input.read(reinterpret_cast<char *>(vstr.data()), (std::streamsize)(n * sizeof(int)));
+  input.read(reinterpret_cast<char *>(vstr.data()),
+             static_cast<std::streamsize>(n * sizeof(int)));
   return std::string(vstr.begin(), vstr.end());
 }
 
-// Nastran has a special floating point format: "-7.-1" instead of "-7.E-01" or "2.3+2"
-// instead of "2.3E+02".
+// Nastran has special floating point formats: "-7.-1" instead of "-7.E-01", "2.3+2"
+// instead of "2.3E+02", and Fortran-style 'D' exponents ("1.0D+00"). std::stod parses
+// only the longest valid prefix of such strings without signaling an error, so the
+// implicit exponent must be detected by a full-consumption check, not by exception.
 inline double ConvertDoubleNastran(const std::string &str)
 {
-  double d;
+  // Trim fixed-width field padding. A blank field is zero by Nastran convention.
+  const std::size_t first = str.find_first_not_of(' ');
+  if (first == std::string::npos)
+  {
+    return 0.0;
+  }
+  std::string fstr(str, first, str.find_last_not_of(' ') - first + 1);
+  auto Parse = [&str](const std::string &s, std::size_t &pos)
+  {
+    try
+    {
+      return std::stod(s, &pos);
+    }
+    catch (const std::exception &)
+    {
+      MFEM_ABORT("Invalid number \"" << str << "\" parsing Nastran mesh!");
+      return 0.0;  // Unreachable: MFEM_ABORT does not return.
+    }
+  };
+  std::size_t pos = 0;
+  double d = Parse(fstr, pos);
+  if (pos == fstr.size())
+  {
+    return d;
+  }
+  // Unconsumed suffix: an implicit exponent ("+2", "-1") or a 'D' exponent marker.
+  if (fstr[pos] == '+' || fstr[pos] == '-')
+  {
+    fstr.insert(pos, "E");
+  }
+  else if (fstr[pos] == 'D' || fstr[pos] == 'd')
+  {
+    fstr[pos] = 'E';
+  }
+  else
+  {
+    MFEM_ABORT("Invalid number \"" << str << "\" parsing Nastran mesh!");
+  }
+  d = Parse(fstr, pos);
+  MFEM_VERIFY(pos == fstr.size(), "Invalid number \"" << str << "\" parsing Nastran mesh!");
+  return d;
+}
+
+inline int ConvertIntNastran(const std::string &str)
+{
+  std::size_t pos = 0;
+  int i = 0;
   try
   {
-    d = std::stod(str);
+    i = std::stoi(str, &pos);
   }
-  catch (const std::invalid_argument &ia)
+  catch (const std::exception &)
   {
-    const std::size_t start = str.find_first_not_of(' ');
-    MFEM_VERIFY(start != std::string::npos,
-                "Invalid number conversion parsing Nastran mesh!")
-    std::string fstr = str.substr(start);
-    std::size_t pos = fstr.find('+', 1);  // Skip leading +/- sign
-    if (pos != std::string::npos)
-    {
-      fstr.replace(pos, 1, "E+");
-    }
-    else if ((pos = fstr.find('-', 1)) != std::string::npos)
-    {
-      fstr.replace(pos, 1, "E-");
-    }
-    d = std::stod(fstr);
+    MFEM_ABORT("Invalid integer \"" << str << "\" parsing Nastran mesh!");
   }
-  return d;
+  MFEM_VERIFY(IsBlankNastran(str.substr(pos)),
+              "Invalid integer \"" << str << "\" parsing Nastran mesh!");
+  return i;
+}
+
+// Coordinate systems are not applied, so a GRID point must be given in the basic system
+// (blank or zero CP field) to be placed correctly.
+inline void VerifyBasicCoordinatesNastran(const std::string &cp)
+{
+  MFEM_VERIFY(IsBlankNastran(cp) || ConvertIntNastran(cp) == 0,
+              "Nastran GRID points in a coordinate system other than the basic one (CP = "
+                  << ConvertIntNastran(cp) << ") are not supported!");
 }
 
 inline void WriteNode(std::ostream &buffer, const int tag, const double *coord)
@@ -341,7 +447,7 @@ inline void WriteElement(std::ostream &buffer, const int tag, const int type,
   const int data[3] = {tag, geom, geom};
   buffer.write(reinterpret_cast<const char *>(data), 3 * sizeof(int));
   buffer.write(reinterpret_cast<const char *>(nodes),
-               (std::streamsize)(ElemNumNodes[type - 1] * sizeof(int)));
+               static_cast<std::streamsize>(ElemNumNodes[type - 1] * sizeof(int)));
   // No newline for binary data.
 #else
   buffer << tag << ' ' << type << " 2 " << geom << ' ' << geom;
@@ -375,7 +481,7 @@ void WriteGmsh(std::ostream &buffer, const std::vector<double> &node_coords,
   buffer << "$EndMeshFormat\n";
 
   // Write mesh nodes.
-  const int num_nodes = (int)node_coords.size() / 3;
+  const int num_nodes = static_cast<int>(node_coords.size()) / 3;
   MFEM_VERIFY(num_nodes > 0 && node_coords.size() % 3 == 0,
               "Gmsh nodes should always be in 3D space!");
   buffer << "$Nodes\n" << num_nodes << '\n';
@@ -383,7 +489,7 @@ void WriteGmsh(std::ostream &buffer, const std::vector<double> &node_coords,
     if (!node_tags.empty())
     {
       // Use input node tags which should be positive but don't need to be contiguous.
-      MFEM_VERIFY(node_tags.size() == (std::size_t)num_nodes,
+      MFEM_VERIFY(node_tags.size() == static_cast<std::size_t>(num_nodes),
                   "Invalid size for node tags!");
       for (int i = 0; i < num_nodes; i++)
       {
@@ -410,7 +516,7 @@ void WriteGmsh(std::ostream &buffer, const std::vector<double> &node_coords,
   {
     MFEM_VERIFY(elem_type > 0, "Invalid element type writing Gmsh elements!");
     const int &num_elem_nodes = ElemNumNodes[elem_type - 1];
-    tot_num_elem += ((int)nodes.size()) / (num_elem_nodes + 1);
+    tot_num_elem += static_cast<int>(nodes.size()) / (num_elem_nodes + 1);
     MFEM_VERIFY(nodes.size() % (num_elem_nodes + 1) == 0,
                 "Unexpected data size when writing elements!");
   }
@@ -422,7 +528,7 @@ void WriteGmsh(std::ostream &buffer, const std::vector<double> &node_coords,
     {
       const int elem_type_w = use_lo_type ? LOElemTypeGmsh(elem_type) : elem_type;
       const int &num_elem_nodes = ElemNumNodes[elem_type - 1];
-      const int num_elem = (int)nodes.size() / (num_elem_nodes + 1);
+      const int num_elem = static_cast<int>(nodes.size()) / (num_elem_nodes + 1);
 #if defined(GMSH_BIN)
       // For binary output, write the element header for each type. Always have 2 tags
       // (physical + geometry).
@@ -452,10 +558,8 @@ void ConvertMeshComsol(const std::string &filename, std::ostream &buffer,
                        bool remove_curvature)
 {
   // Read a COMSOL format mesh.
-  const int comsol_bin = !filename.compare(filename.length() - 7, 7, ".mphbin") ||
-                         !filename.compare(filename.length() - 7, 7, ".MPHBIN");
-  MFEM_VERIFY(!filename.compare(filename.length() - 7, 7, ".mphtxt") ||
-                  !filename.compare(filename.length() - 7, 7, ".MPHTXT") || comsol_bin,
+  const int comsol_bin = filename.ends_with(".mphbin") || filename.ends_with(".MPHBIN");
+  MFEM_VERIFY(filename.ends_with(".mphtxt") || filename.ends_with(".MPHTXT") || comsol_bin,
               "Invalid file extension for COMSOL mesh format conversion!");
   std::ifstream input(filename);
   if (!input.is_open())
@@ -568,13 +672,13 @@ void ConvertMeshComsol(const std::string &filename, std::ostream &buffer,
                 "Invalid COMSOL object version!");
 
     // If yes, then ready to parse the mesh.
-    if (!object_class.compare(0, 4, "Mesh"))
+    if (object_class.starts_with("Mesh"))
     {
       break;
     }
 
     // Otherwise, parse over the selection to the next object.
-    MFEM_VERIFY(!object_class.compare(0, 9, "Selection"),
+    MFEM_VERIFY(object_class.starts_with("Selection"),
                 "COMSOL mesh file only supports Mesh and Selection objects!");
     int version = -1;
     std::string label_str;
@@ -719,7 +823,7 @@ void ConvertMeshComsol(const std::string &filename, std::ostream &buffer,
       while (i < num_nodes)
       {
         input.read(reinterpret_cast<char *>(node_coords.data() + 3 * i),
-                   (std::streamsize)(sdim * sizeof(double)));
+                   static_cast<std::streamsize>(sdim * sizeof(double)));
         i++;
       }
     }
@@ -771,7 +875,7 @@ void ConvertMeshComsol(const std::string &filename, std::ostream &buffer,
                         "Unexpected empty element type found in COMSOL mesh file!");
             elem_type = ElemTypeComsol(elem_str);
             skip_type = (elem_type == 0);
-            MFEM_VERIFY(skip_type || elem_nodes.find(elem_type) == elem_nodes.end(),
+            MFEM_VERIFY(skip_type || !elem_nodes.contains(elem_type),
                         "Duplicate element types found in COMSOL mesh file!");
           }
           else if (num_elem_nodes < 0)
@@ -824,10 +928,11 @@ void ConvertMeshComsol(const std::string &filename, std::ostream &buffer,
             std::vector<int> *data = nullptr;
             if (!skip_type)
             {
-              MFEM_VERIFY(elem_nodes.find(elem_type) != elem_nodes.end(),
+              MFEM_VERIFY(elem_nodes.contains(elem_type),
                           "Can't find expected element type!");
               data = &elem_nodes[elem_type];
-              MFEM_VERIFY(data->size() == (std::size_t)num_elem * (num_elem_nodes + 1),
+              MFEM_VERIFY(data->size() ==
+                              static_cast<std::size_t>(num_elem) * (num_elem_nodes + 1),
                           "Unexpected element data size!");
             }
 
@@ -871,7 +976,7 @@ void ConvertMeshComsol(const std::string &filename, std::ostream &buffer,
                     "Unexpected empty element type found in COMSOL mesh file!");
         elem_type = ElemTypeComsol(elem_str);
         skip_type = (elem_type == 0);
-        MFEM_VERIFY(skip_type || elem_nodes.find(elem_type) == elem_nodes.end(),
+        MFEM_VERIFY(skip_type || !elem_nodes.contains(elem_type),
                     "Duplicate element types found in COMSOL mesh file!");
         input.read(reinterpret_cast<char *>(&num_elem_nodes), sizeof(int));
         MFEM_VERIFY(num_elem_nodes > 0,
@@ -894,7 +999,7 @@ void ConvertMeshComsol(const std::string &filename, std::ostream &buffer,
         while (i < num_elem)
         {
           input.read(reinterpret_cast<char *>(nodes.data()),
-                     (std::streamsize)(num_elem_nodes * sizeof(int)));
+                     static_cast<std::streamsize>(num_elem_nodes * sizeof(int)));
           if (!skip_type)
           {
             for (int j = 0; j < num_elem_nodes; j++)
@@ -951,10 +1056,8 @@ void ConvertMeshNastran(const std::string &filename, std::ostream &buffer,
                         bool remove_curvature)
 {
   // Read a Nastran/BDF format mesh.
-  MFEM_VERIFY(!filename.compare(filename.length() - 4, 4, ".nas") ||
-                  !filename.compare(filename.length() - 4, 4, ".NAS") ||
-                  !filename.compare(filename.length() - 4, 4, ".bdf") ||
-                  !filename.compare(filename.length() - 4, 4, ".BDF"),
+  MFEM_VERIFY(filename.ends_with(".nas") || filename.ends_with(".NAS") ||
+                  filename.ends_with(".bdf") || filename.ends_with(".BDF"),
               "Invalid file extension for Nastran mesh format conversion!");
   std::ifstream input(filename);
   if (!input.is_open())
@@ -964,17 +1067,18 @@ void ConvertMeshNastran(const std::string &filename, std::ostream &buffer,
   const int NASTRAN_CHUNK = 8;  // NASTRAN divides row into 10 columns of 8 spaces
   const int MAX_CHUNK = 9;      // Never read the 10-th chunk
 
-  // Parse until bulk data starts.
-  while (true)
+  // Skip the executive and case control sections to the bulk data. A file with no BEGIN
+  // BULK line, such as a Gmsh export, is all bulk data.
+  std::string line;
+  bool begin_bulk = false;
+  while (!begin_bulk && GetLineNastran(input, line))
   {
-    auto line = GetLineNastran(input);
-    if (line.length() > 0)
-    {
-      if (!line.compare(0, 10, "BEGIN BULK"))
-      {
-        break;
-      }
-    }
+    begin_bulk = line.starts_with("BEGIN BULK");
+  }
+  if (!begin_bulk)
+  {
+    input.clear();
+    input.seekg(0);
   }
 
   // Parse mesh nodes and elements. It is expected that node tags start at 1 and are
@@ -985,157 +1089,82 @@ void ConvertMeshNastran(const std::string &filename, std::ostream &buffer,
   int elem_type;
   while (true)
   {
-    auto line = GetLineNastran(input);
-    if (line.length() > 0 && !input.eof())
+    MFEM_VERIFY(GetLineNastran(input, line), "Missing ENDDATA at the end of Nastran mesh!");
+    if (line.length() > 0)
     {
-      if (!line.compare(0, 7, "ENDDATA"))
+      if (line.starts_with("ENDDATA"))
       {
         break;  // Done parsing file
       }
-      else if (!line.compare(0, 5, "GRID*"))
+      else if (line.starts_with("GRID*"))
       {
         // Coordinates in long field format (8 + 16 * 4 + 8).
-        auto next = GetLineNastran(input);
-        MFEM_VERIFY(!next.empty(), "Unexpected empty line parsing Nastran!");
+        std::string next;
+        MFEM_VERIFY(GetLineNastran(input, next) && !next.empty(),
+                    "Unexpected empty line parsing Nastran!");
 
-        node_tags.push_back(std::stoi(line.substr(1 * NASTRAN_CHUNK, 2 * NASTRAN_CHUNK)));
+        node_tags.push_back(
+            ConvertIntNastran(line.substr(1 * NASTRAN_CHUNK, 2 * NASTRAN_CHUNK)));
+        VerifyBasicCoordinatesNastran(line.substr(3 * NASTRAN_CHUNK, 2 * NASTRAN_CHUNK));
         node_coords.insert(
             node_coords.end(),
             {ConvertDoubleNastran(line.substr(5 * NASTRAN_CHUNK, 2 * NASTRAN_CHUNK)),
              ConvertDoubleNastran(line.substr(7 * NASTRAN_CHUNK, 2 * NASTRAN_CHUNK)),
              ConvertDoubleNastran(next.substr(1 * NASTRAN_CHUNK, 2 * NASTRAN_CHUNK))});
       }
-      else if (!line.compare(0, 4, "GRID"))
+      else if (line.starts_with("GRID"))
       {
-        if (line.find_first_of(',') != std::string::npos)
-        {
-          // Free field format (comma separated).
-          std::istringstream sline(line);
-
-          std::string word;
-          std::getline(sline, word, ',');  // Discard "GRID"
-
-          std::getline(sline, word, ',');
-          node_tags.push_back(std::stoi(word));
-
-          std::getline(sline, word, ',');  // Discard coordinate system
-
-          std::getline(sline, word, ',');
-          double x = ConvertDoubleNastran(word);
-          std::getline(sline, word, ',');
-          double y = ConvertDoubleNastran(word);
-          std::getline(sline, word, ',');
-          double z = ConvertDoubleNastran(word);
-          node_coords.insert(node_coords.end(), {x, y, z});
-        }
-        else
-        {
-          // Short format (10 * 8).
-          node_tags.push_back(std::stoi(line.substr(1 * NASTRAN_CHUNK, NASTRAN_CHUNK)));
-          node_coords.insert(
-              node_coords.end(),
-              {ConvertDoubleNastran(line.substr(3 * NASTRAN_CHUNK, NASTRAN_CHUNK)),
-               ConvertDoubleNastran(line.substr(4 * NASTRAN_CHUNK, NASTRAN_CHUNK)),
-               ConvertDoubleNastran(line.substr(5 * NASTRAN_CHUNK, NASTRAN_CHUNK))});
-        }
+        // Small or free field format: ID, CP, X1, X2, X3.
+        const auto fields = SplitFieldsNastran(line);
+        node_tags.push_back(ConvertIntNastran(fields[1]));
+        VerifyBasicCoordinatesNastran(fields[2]);
+        node_coords.insert(node_coords.end(), {ConvertDoubleNastran(fields[3]),
+                                               ConvertDoubleNastran(fields[4]),
+                                               ConvertDoubleNastran(fields[5])});
+      }
+      else if (line.starts_with("GRDSET"))
+      {
+        // GRDSET's CP is the default for every GRID point with a blank CP field. Bulk data
+        // cards can come in any order, so check it here rather than when a GRID uses it.
+        // Large field format has CP in columns 25 to 40.
+        VerifyBasicCoordinatesNastran(
+            line.starts_with("GRDSET*") ? line.substr(3 * NASTRAN_CHUNK, 2 * NASTRAN_CHUNK)
+                                        : SplitFieldsNastran(line)[2]);
       }
       else if ((elem_type = ElemTypeNastran(line)))
       {
-        // Prepare to parse the element ID and nodes.
-        const bool free = (line.find_first_of(',') != std::string::npos);
-
-        // Get the element type, tag, and geometry attribute. Then get the element nodes on
-        // this line.
-        std::string elem_str;
-        // int elem_tag;
-        int geom_tag;
+        // fields[1] is the element ID (unused) and fields[2] the property ID, used as the
+        // geometry tag. The nodes follow up to the first blank field, and continue from
+        // fields[1] of each continuation line. fields[9] is the continuation marker.
         std::vector<int> nodes;
-        std::string word;
-        if (!free)
+        auto ReadNodes = [&nodes](const std::array<std::string, 10> &fields, int first)
         {
-          elem_str = line.substr(0 * NASTRAN_CHUNK, NASTRAN_CHUNK);
-          const std::size_t stop = elem_str.find_last_not_of(' ');
-          MFEM_VERIFY(stop != std::string::npos, "Invalid element type string!");
-          elem_str.resize(stop + 1);
-          // elem_tag = std::stoi(line.substr(1*NASTRAN_CHUNK, NASTRAN_CHUNK));
-          geom_tag = std::stoi(line.substr(2 * NASTRAN_CHUNK, NASTRAN_CHUNK));
-
-          int i = 3;
-          while (i < MAX_CHUNK)
+          for (int i = first; i < MAX_CHUNK; i++)
           {
-            word = line.substr((i++) * NASTRAN_CHUNK, NASTRAN_CHUNK);
-            if (word.find_first_not_of(' ') == std::string::npos)
+            if (IsBlankNastran(fields[i]))
             {
               break;
             }
-            nodes.push_back(std::stoi(word));
+            nodes.push_back(ConvertIntNastran(fields[i]));
           }
-        }
-        else
+        };
+        const auto fields = SplitFieldsNastran(line);
+        const int geom_tag = ConvertIntNastran(fields[2]);
+        ReadNodes(fields, 3);
+        while (NextIsContinuationNastran(input))
         {
-          std::istringstream sline(line);
-          std::getline(sline, elem_str, ',');
-          std::getline(sline, word, ',');
-          // elem_tag = std::stoi(word);
-          std::getline(sline, word, ',');
-          geom_tag = std::stoi(word);
-
-          int i = 3;
-          while (i < MAX_CHUNK)
-          {
-            std::getline(sline, word, ',');
-            if (word.find_first_not_of(' ') == std::string::npos)
-            {
-              break;
-            }
-            nodes.push_back(std::stoi(word));
-            i++;
-          }
-        }
-
-        // Handle line continuation.
-        while (input.peek() == '+')
-        {
-          auto next = GetLineNastran(input);
-          MFEM_VERIFY(!next.empty(), "Unexpected empty line parsing Nastran!");
-
-          if (!free)
-          {
-            int i = 1;
-            while (i < MAX_CHUNK)
-            {
-              word = next.substr((i++) * NASTRAN_CHUNK, NASTRAN_CHUNK);
-              if (word.find_first_not_of(' ') == std::string::npos)
-              {
-                break;
-              }
-              nodes.push_back(std::stoi(word));
-            }
-          }
-          else
-          {
-            std::istringstream snext(next);
-            int i = 1;
-            while (i < MAX_CHUNK)
-            {
-              std::getline(snext, word, ',');
-              if (word.find_first_not_of(' ') == std::string::npos)
-              {
-                break;
-              }
-              nodes.push_back(std::stoi(word));
-              i++;
-            }
-          }
+          std::string next;
+          GetLineNastran(input, next);  // Can't be at the end of the file after the peek
+          ReadNodes(SplitFieldsNastran(next), 1);
         }
 
         // Save the element and its geometry tag.
-        elem_type = HOElemTypeNastran(elem_type, (int)nodes.size());
+        elem_type = HOElemTypeNastran(elem_type, static_cast<int>(nodes.size()));
         const int &num_elem_nodes = ElemNumNodes[elem_type - 1];
-        MFEM_VERIFY((std::size_t)num_elem_nodes == nodes.size(),
+        MFEM_VERIFY(static_cast<std::size_t>(num_elem_nodes) == nodes.size(),
                     "Mismatch between Nastran and Gmsh element types!");
         std::vector<int> &data = elem_nodes[elem_type];
-        const int i = (int)data.size();
+        const int i = static_cast<int>(data.size());
         data.resize(i + 1 + num_elem_nodes);
         data[i] = geom_tag;
         for (int j = 0; j < num_elem_nodes; j++)

@@ -13,6 +13,8 @@
 #include "linalg/ksp.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
+#include "models/modeoperatorassembly.hpp"
+#include "models/waveportreducedmodel.hpp"
 #include "utils/labels.hpp"
 
 namespace palace
@@ -27,7 +29,7 @@ class SurfaceConductivityOperator;
 class SurfaceImpedanceOperator;
 class SurfaceRationalImpedanceOperator;
 
-template <typename OperType>
+template <OperatorType OperType>
 class BlockDiagonalPreconditioner;
 
 namespace config
@@ -45,57 +47,10 @@ struct LinearSolverData;
 //
 // solved via shift-and-invert on sigma = -kn_target^2. Frequency-independent matrices
 // (Atn, Btn = -Atn^T, Btt) come either from a BoundaryModeOperator (2D domain path) or
-// from local assembly through mode_assembly:: free functions (3D wave port submesh path,
-// which has no BMO). The solver itself just builds the block system, drives KSP + EPS,
-// and returns eigenpairs; physical-mode reconstruction (VD back-transform, Poynting
-// power) lives on BoundaryModeOperator for the 2D path and inline in WavePortData for
-// the 3D path.
-
-// Frequency-independent and frequency-dependent assembly of the 2D boundary-mode GEP
-// blocks, shared by BoundaryModeOperator (2D domain path) and ModeEigenSolver's bare
-// ctor (3D wave port submesh path).
-namespace mode_assembly
-{
-
-using ComplexHypreParMatrix = std::tuple<std::unique_ptr<mfem::HypreParMatrix>,
-                                         std::unique_ptr<mfem::HypreParMatrix>>;
-
-// Atn = -(mu^{-1} grad_t u, v). ND / H1 gradient coupling, real-only.
-ComplexHypreParMatrix AssembleAtn(const FiniteElementSpace &nd_fespace,
-                                  const FiniteElementSpace &h1_fespace,
-                                  const MaterialOperator &mat_op);
-
-// Btt = (mu^{-1} u, v). ND mass, real-only (positive).
-ComplexHypreParMatrix AssembleBtt(const FiniteElementSpace &nd_fespace,
-                                  const MaterialOperator &mat_op);
-
-// Att = mu_cc^{-1} curl-curl  -  omega^2 eps mass  -  sigma (mu^{-1} mass) + BC-t
-// (impedance / absorbing / conductivity / rational impedance). Frequency- and
-// shift-dependent. omega may be complex (eigenmode nonlinear solve); for real omega
-// (imag = 0) the assembly reduces bit-for-bit to the real-frequency form.
-ComplexHypreParMatrix AssembleAtt(
-    const FiniteElementSpace &nd_fespace, const MaterialOperator &mat_op,
-    const mfem::Vector *normal, SurfaceImpedanceOperator &surf_z_op,
-    FarfieldBoundaryOperator &farfield_op, SurfaceConductivityOperator &surf_sigma_op,
-    SurfaceRationalImpedanceOperator &surf_rz_op, std::complex<double> omega, double sigma);
-
-// Ann = -(mu^{-1} grad u, grad v) + omega^2 (eps u, v) + BC-n. Frequency-dependent.
-// farfield_op and surf_sigma_op contribute impedance / loss terms on the H1 block. omega
-// may be complex; for real omega it reduces bit-for-bit to the real-frequency form.
-ComplexHypreParMatrix
-AssembleAnn(const FiniteElementSpace &h1_fespace, const MaterialOperator &mat_op,
-            const mfem::Vector *normal, SurfaceImpedanceOperator &surf_z_op,
-            FarfieldBoundaryOperator &farfield_op,
-            SurfaceConductivityOperator &surf_sigma_op,
-            SurfaceRationalImpedanceOperator &surf_rz_op, std::complex<double> omega);
-
-// Alias the ND and H1 halves of a pre-loaded eigenvector e0 = [e_t_tilde; e_n_tilde] as
-// et / en, and apply the Vardapetyan–Demkowicz back-transform en := ẽn / (i·kn) so en
-// holds the physical En. Pure scalar op, no MPI.
-void ApplyVDBackTransform(ComplexVector &e0, std::complex<double> kn, int nd_size,
-                          int h1_size, ComplexVector &et, ComplexVector &en);
-
-}  // namespace mode_assembly
+// local assembly (3D wave-port submesh path). Frequency-dependent Att/Ann blocks are
+// evaluated from the shared mode_assembly component bank. The solver builds the block
+// system, drives KSP + EPS, and returns eigenpairs; wave-port projection is delegated to
+// WavePortReducedModel.
 
 class ModeEigenSolver
 {
@@ -106,8 +61,10 @@ public:
     double sigma;
   };
 
-  // Bare FE space constructor (WavePort). No multigrid — Att/Ann are re-assembled at
-  // each Solve via mode_assembly free functions. `solver_comm` restricts solver setup to
+  using ReducedModelStats = WavePortReducedModel::Stats;
+
+  // Bare FE space constructor (WavePort). No multigrid — Att/Ann are evaluated from the
+  // shared parametric component bank. `solver_comm` restricts solver setup to
   // port ranks; pass MPI_COMM_NULL to fall back to the FE space comm. For 3D wave port
   // submeshes `normal` is the outward surface normal.
   ModeEigenSolver(const MaterialOperator &mat_op, const mfem::Vector *normal,
@@ -144,11 +101,32 @@ public:
   SolveResult Solve(std::complex<double> omega, double sigma,
                     const ComplexVector *initial_space = nullptr);
 
+  // Collect exact real-frequency eigenvectors for a per-port reduced model. Reduced
+  // evaluation remains disabled until EnableReducedModel is called, so adaptive offline
+  // HDM samples always use the exact eigensolver while seeding the basis.
+  void ConfigureReducedModelTraining(std::size_t max_basis_size);
+
+  // Enable guarded Rayleigh-Ritz evaluation for subsequent real-frequency solves. The
+  // reduced tolerance is derived conservatively from the adaptive driven tolerance and
+  // the configured eigensolver tolerance. Complex-frequency solves always remain exact.
+  // With basis_limit_factor > 0, the reduced model is only used with a basis of at most
+  // basis_limit_factor·√N vectors for N unknowns, which also caps its online enrichment:
+  // otherwise, all solves are exact.
+  void EnableReducedModel(double adaptive_tol, double basis_limit_factor = 0.0);
+
+  const ReducedModelStats &GetReducedModelStats() const
+  {
+    return reduced_model->GetStats();
+  }
+  std::size_t GetReducedBasisSize() const { return reduced_model->GetBasisSize(); }
+  double GetReducedTolerance() const { return reduced_model->GetTolerance(); }
+
   std::complex<double> GetEigenvalue(int i) const;
   void GetEigenvector(int i, ComplexVector &x) const;
   double GetError(int i, EigenvalueSolver::ErrorType type) const;
 
-  // Propagation constant kn for mode i, recovered from the shift of the most recent Solve.
+  // Propagation constant kn for mode i, recovered from the shift of the most recent Solve,
+  // on the branch of mode_assembly::PropagationConstant (decaying below cutoff).
   std::complex<double> GetPropagationConstant(int i) const;
 
   // Heuristic classifier: |Im kn| < 0.1*|Re kn| and Re kn > 0.
@@ -161,6 +139,12 @@ public:
   // does not have a solver configured (non-port process in wave port mode).
   const ComplexKspSolver *GetLinearSolver() const { return ksp.get(); }
 
+  // Tighten the eigenvalue-convergence and inner linear-solve tolerances, used to solve the
+  // cross-section EVP more accurately when sampling kₙ(ω)/M(ω) for wave-port circuit
+  // synthesis (decoupling the fit from the user's port EigenTol/KSPTol). Takes effect on
+  // the next Solve; a no-op on ranks without a solver configured.
+  void SetSynthesisTol(double eig_tol_new, double ksp_tol_new);
+
 private:
   // Solver parameters.
   int num_modes, num_vec;
@@ -172,6 +156,8 @@ private:
 
   // Material operator and boundary operators (not owned).
   const MaterialOperator &mat_op;
+  // Outward surface normal for the WavePort submesh path (null for BoundaryMode). Only the
+  // operator model uses its value; the solver uses it to distinguish the two paths.
   const mfem::Vector *normal;
   SurfaceImpedanceOperator &surf_z_op;
   FarfieldBoundaryOperator &farfield_op;
@@ -183,9 +169,11 @@ private:
   const FiniteElementSpace &h1_fespace;
 
   // Owning BoundaryModeOperator for the 2D domain path (null for WavePort). Used for
-  // frequency-dependent Att/Ann assembly and for accessing FE hierarchies + per-level
-  // DBC lists during p-multigrid preconditioner assembly.
+  // accessing FE hierarchies + per-level DBC lists during p-multigrid preconditioning.
   BoundaryModeOperator *bmo = nullptr;
+
+  // Complete frequency-parametric components shared by exact and reduced solves.
+  std::unique_ptr<mode_assembly::ModeOperatorModel> mode_op_model;
 
   // Essential boundary condition true DOF list for the combined block system.
   mfem::Array<int> dbc_tdof_list;
@@ -193,8 +181,13 @@ private:
   // Cached FE space sizes.
   int nd_size, h1_size;
 
-  // Shift sigma = -kn_target^2 from the last Solve (used by GetPropagationConstant).
+  // Shift and frequency of the most recent Solve.
   double sigma_cached = 0.0;
+  std::complex<double> omega_cached = 0.0;
+
+  // Parameters from the latest exact assembly (also used for one-time ROM validation).
+  std::complex<double> last_assembled_omega = 0.0;
+  double last_assembled_sigma = 0.0;
 
   // Frequency-independent block matrices. On the BMO path these alias BMO-owned matrices;
   // on the bare ctor path they point at the owned_* members below.
@@ -211,33 +204,36 @@ private:
 
   std::unique_ptr<ComplexOperator> opB;
 
-  // Frequency-dependent block A operator (rebuilt each Solve).
-  std::unique_ptr<ComplexOperator> opA;
+  // Frequency-dependent block A operator and sparse-direct preconditioner operator
+  // (rebuilt each Solve). The latter is assembled collectively on the FE space
+  // communicator before non-port ranks return from Solve.
+  std::unique_ptr<ComplexOperator> opA, direct_pc_op;
 
   // Eigenvalue and linear solvers (null on processes without solver_comm).
   std::unique_ptr<EigenvalueSolver> eigen;
   std::unique_ptr<ComplexKspSolver> ksp;
 
+  // Communicator used by the eigensolver. For wave ports this is the sub-communicator of
+  // ranks owning port unknowns, not the parent FE-space communicator.
+  MPI_Comm solver_comm = MPI_COMM_NULL;
+
+  // Wave-port-only projection/training state is isolated from the exact eigensolver.
+  std::unique_ptr<WavePortReducedModel> reduced_model;
+
+  // Best portable single-vector initial space for subsequent exact solves.
+  ComplexVector warm_start;
+
   // Permutation that maps external mode index to eigensolver index, sorted by ascending
-  // Re{kn}. This ensures consistent mode ordering regardless of eigensolver backend.
+  // |kn - kn_target| (see mode_assembly::TargetDistance). This ensures consistent mode
+  // ordering regardless of eigensolver backend.
   std::vector<int> mode_perm;
 
-  // Assemble frequency-dependent Att and Ann, then build block A (MPI collective on FE
-  // space comm). Uses bmo->AssembleAtt/Ann on the BMO path; falls through to
-  // mode_assembly:: free functions on the bare path. omega may be complex (reduces to the
-  // real-frequency assembly when imag = 0).
+  // Evaluate frequency-dependent Att and Ann from shared components, then build block A
+  // (MPI collective on the FE-space communicator). Omega may be complex.
   void AssembleFrequencyDependent(std::complex<double> omega, double sigma);
 
   using ComplexHypreParMatrix = std::tuple<std::unique_ptr<mfem::HypreParMatrix>,
                                            std::unique_ptr<mfem::HypreParMatrix>>;
-
-  // Build the 2x2 block A matrix. The (1,0) block is -sigma * Btn from the
-  // shift-and-invert transformation (nullptr when sigma = 0).
-  ComplexHypreParMatrix
-  BuildSystemMatrixA(const mfem::HypreParMatrix *Attr, const mfem::HypreParMatrix *Atti,
-                     const mfem::HypreParMatrix *Atnr, const mfem::HypreParMatrix *Atni,
-                     const mfem::HypreParMatrix *Annr, const mfem::HypreParMatrix *Anni,
-                     const mfem::HypreParMatrix *shifted_Btnr = nullptr) const;
 
   // Build the 2x2 block B matrix: [Btt, 0; Btn, 0].
   ComplexHypreParMatrix BuildSystemMatrixB(const mfem::HypreParMatrix *Bttr,

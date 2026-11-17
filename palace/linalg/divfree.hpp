@@ -33,8 +33,8 @@ class MaterialOperator;
 template <typename VecType>
 class DivFreeSolver
 {
-  using OperType = typename std::conditional<std::is_same<VecType, ComplexVector>::value,
-                                             ComplexOperator, Operator>::type;
+  using OperType =
+      std::conditional_t<std::is_same_v<VecType, ComplexVector>, ComplexOperator, Operator>;
 
 private:
   // Operators for the divergence-free projection.
@@ -67,6 +67,9 @@ public:
   // of the irrotational portion of this vector field. The resulting vector will satisfy
   // ∇ x y = 0.
   void Mult(VecType &y) const;
+
+  // Same, with relative tolerance tol for the solve instead of the one set at construction.
+  void Mult(VecType &y, double tol) const;
 
   void Mult(const VecType &x, VecType &y) const
   {

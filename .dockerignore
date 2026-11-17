@@ -30,6 +30,3 @@ singularity
 # Python caches
 __pycache__
 *.pyc
-
-# Broken mfem symlink (recreated inside container by the template)
-spack_repo/local/packages/mfem

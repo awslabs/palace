@@ -132,8 +132,10 @@ public:
   // Check max_size against the predicted size of the refined mesh (the last solved size
   // scaled by the element growth of the refinement step) and stop before the solve, instead
   // of only against the last solved size (which lets the final solve exceed max_size by the
-  // growth of one refinement step).
-  bool max_size_predicted = true;
+  // growth of one refinement step). Off by default: upstream's rule, MaxSize checked only
+  // against the last solved size (USER decision 1636 (4)); the configuration writers of the
+  // fabrication-response workflow set it explicitly.
+  bool max_size_predicted = false;
 
   // Whether or not to perform nonconformal adaptation.
   bool nonconformal = true;
@@ -225,8 +227,12 @@ public:
   bool clean_unused_elements = true;
 
   // Split, or "crack", boundary elements lying on internal boundaries to decouple the
-  // elements on either side.
-  bool crack_bdr_elements = true;
+  // elements on either side. If unset, interior boundaries with boundary conditions which
+  // apply to each side separately (PMC and absorbing) are cracked, as well as impedance,
+  // rational impedance, and conductivity boundaries with "Crack" enabled. If true, all
+  // interior boundaries with boundary conditions except lumped ports are cracked (legacy
+  // behavior, deprecated). If false, no boundaries are cracked.
+  std::optional<bool> crack_bdr_elements = std::nullopt;
 
   // When required, refine elements neighboring a split or crack in order to enable the
   // decoupling.
@@ -436,6 +442,14 @@ public:
   // Optional flag for an external boundary surface, relevant for the thickness correction.
   bool external = false;
 
+  // Crack the mesh along this boundary where it lies in the interior of the domain. If
+  // true, the two faces of the sheet are independent surfaces, each with its own current
+  // and no coupling through the sheet (a conductor much thicker than the skin depth), with
+  // the surface impedance of the conductor on each face. If false, the boundary is a thin
+  // sheet with a single tangential electric field on it and the admittance of both faces
+  // (a film thinner than the skin depth).
+  bool crack = false;
+
   // List of boundary attributes for this surface conductivity boundary condition.
   std::vector<int> attributes = {};
 
@@ -454,6 +468,14 @@ public:
   // List of boundary attributes for this impedance boundary condition.
   std::vector<int> attributes = {};
 
+  // Crack the mesh along this boundary where it lies in the interior of the domain. If
+  // true, the two faces of the sheet are independent surfaces, each with its own current
+  // and no coupling through the sheet (a conductor much thicker than the penetration
+  // depth), each with the given surface impedance. If false, the boundary is a thin sheet
+  // with a single tangential electric field on it (a film much thinner than the
+  // penetration depth).
+  bool crack = false;
+
   ImpedanceData() = default;
   ImpedanceData(const json &boundary);
 };
@@ -470,8 +492,44 @@ public:
   // List of boundary attributes for this rational impedance boundary condition.
   std::vector<int> attributes = {};
 
+  // Crack the mesh along this boundary where it lies in the interior of the domain. If
+  // true, the two faces of the sheet are independent surfaces, each with its own current
+  // and no coupling through the sheet (a conductor much thicker than the penetration
+  // depth), each with the given surface impedance. If false, the boundary is a thin sheet
+  // with a single tangential electric field on it (a film much thinner than the
+  // penetration depth).
+  bool crack = false;
+
   RationalImpedanceData() = default;
   RationalImpedanceData(const json &boundary);
+};
+
+struct SuperconductorData
+{
+public:
+  // London penetration depth λ and film thickness d, in mesh length units. These define the
+  // one-sided finite-thickness kinetic sheet inductance of a superconductor modeled as a 2D
+  // sheet:
+  //     L_ksq = mu0 * lambda * coth(d/lambda)   [H/square]
+  // (reducing to the thin-film limit mu0 * lambda^2 / d for d << lambda).
+  double lambda_L = 0.0;
+  double thickness = 0.0;
+
+  // Kinetic sheet inductance L_ksq [H/sq], specified directly as an alternative to (λ, d).
+  // Exactly one of {(λ, d), Ls} must be provided.
+  double Ls = 0.0;
+
+  // List of boundary attributes for this superconductor sheet.
+  std::vector<int> attributes = {};
+
+  // Two-port (transfer-matrix) sheet: model the film as two coupled coincident faces so the
+  // tangential field can jump across it, capturing two-sided screening for d ≳ λ. When
+  // false the film is a single shared-A_t sheet. Requires (λ, d). The film is not cracked:
+  // the magnetostatic solution space is broken across it.
+  bool two_sided = false;
+
+  SuperconductorData() = default;
+  SuperconductorData(const json &boundary);
 };
 
 struct LumpedPortData
@@ -491,6 +549,12 @@ public:
   // - Wave/Lumped ports with same index are excited together.
   // - 1-based index if excited; 0 if not excited.
   int excitation = 0;
+
+  // Complex weight a = A exp(i phi) on the unit-power incident wave of this port,
+  // A = "ExcitationAmplitude" (> 0), phi = "ExcitationPhase" in degrees. Dimensionless,
+  // frequency independent. Only valid for excited ports.
+  double excitation_amplitude = 1.0;
+  double excitation_phase = 0.0;  // [deg]
 
   // Flag for boundary damping term in driven and transient simulations.
   bool active = true;
@@ -583,6 +647,10 @@ public:
   // Port offset for de-embedding [m].
   double d_offset = 0.0;
 
+  // Target effective index for the boundary mode eigenvalue solver. When zero, the target
+  // lies just above the bulk propagation constants of the port materials.
+  double target = 0.0;
+
   // Eigenvalue solver type for boundary mode calculation.
   EigenSolverBackend eigen_solver = EigenSolverBackend::DEFAULT;
 
@@ -612,6 +680,11 @@ public:
   // Tolerance for linear solver.
   double ksp_tol = 1e-8;
 
+  // Optional override for exact doubled-real factorization in the wave-port mode solve.
+  // When unset, inherit Solver.Linear.ComplexCoarseSolve and Solver.Linear.PCMatReal. An
+  // explicit value takes precedence over both for this port.
+  std::optional<bool> complex_coarse_solve = std::nullopt;
+
   // Tolerance for eigenvalue solver.
   double eig_tol = 1e-6;
 
@@ -624,10 +697,9 @@ public:
   // Optional coordinate path for voltage line integral on the port face.
   // When non-empty, enables GetVoltage(). List of points [x, y, z].
   std::vector<std::vector<double>> voltage_path = {};
-  int n_samples = 100;
 
   // Optional pair of parent-mesh boundary attributes [high, low] (signal terminal first,
-  // ground terminal second) used solely to fix the mode polarity (no GSLIB / no Z_PV).
+  // ground terminal second) used solely to fix the mode polarity (no Z_PV).
   // The mode is flipped if needed so that the modal E-field on the port face points from
   // the high-attribute (signal) terminal toward the low-attribute (ground) terminal,
   // matching the lumped-port `Direction` convention and the VoltagePath ordering. A
@@ -659,12 +731,34 @@ public:
   FloquetPortData(const json &port);
 };
 
+struct SurfaceCurrentApertureData
+{
+public:
+  // List of boundary attributes tiling the surface spanning this current element's loop.
+  std::vector<int> attributes = {};
+
+  // Cartesian reference direction defining the aperture's positive oriented normal.
+  std::array<double, 3> direction{{0.0, 0.0, 0.0}};
+
+  SurfaceCurrentApertureData() = default;
+  SurfaceCurrentApertureData(const json &aperture);
+};
+
+struct SurfaceCurrentElementData : internal::ElementData
+{
+public:
+  // The aperture is omitted for pure surface-current simulations and required for every
+  // element when surface-current and flux-loop excitations are combined.
+  std::optional<SurfaceCurrentApertureData> aperture = std::nullopt;
+};
+
 struct SurfaceCurrentData
 {
 public:
-  // For each surface current source index, each element contains a list of attributes
-  // making up a single element of a potentially multielement current source.
-  std::vector<internal::ElementData> elements = {};
+  // For each surface current source index, each element contains its source geometry and,
+  // when needed, the oriented aperture conjugate to that element's share of the port
+  // current.
+  std::vector<SurfaceCurrentElementData> elements = {};
 
   // Per-port override for how this port is treated when inactive during a magnetostatic
   // inductance sweep. If unset, the global `/Solver/Magnetostatic/InactivePorts` value is
@@ -817,11 +911,6 @@ public:
   std::vector<std::vector<double>> voltage_path = {};
   std::vector<std::vector<double>> current_path = {};
 
-  // Quadrature order for the coordinate-based line integral. Higher values give more
-  // integration points and better accuracy near field singularities at conductor edges.
-  // Default 100 gives ~50 Gauss-Legendre points, sufficient for typical geometries.
-  int n_samples = 100;
-
   ModeImpedanceData() = default;
   ModeImpedanceData(const json &imp);
 };
@@ -836,9 +925,6 @@ public:
   // attributes). A list of points [x, y(, z)]. The voltage is integrated along the open
   // path V = integral of E . dl from first to last point.
   std::vector<std::vector<double>> voltage_path = {};
-
-  // Quadrature order for the coordinate-based line integral.
-  int n_samples = 100;
 
   ModeVoltageData() = default;
   ModeVoltageData(const json &volt);
@@ -881,7 +967,7 @@ struct FluxLoopData
 {
 public:
   // List of boundary attributes for the metal surface.
-  std::vector<int> fluxloop_pec = {};
+  std::vector<int> film_attributes = {};
 
   // List of boundary attributes for holes (one per hole).
   std::vector<int> hole_attributes = {};
@@ -892,8 +978,15 @@ public:
   // Direction vector for flux orientation.
   std::array<double, 3> direction = {0.0, 0.0, 1.0};
 
-  // Regularization parameter for curl-curl system stability.
-  double regularization = 1e-6;
+  // Effective λ⊥ [mesh units] for a film listed in FilmAttributes but not declared a
+  // Superconductor: models it as the λ→0 London limit (auto-registered SC sheet).
+  double pec_lperp = 1.0e-4;
+
+  // Excitation index, as for ports: loops sharing a positive index are driven together
+  // (each at its own flux_amounts) in one magnetostatic solve, 0 holds the loop at zero
+  // fluxoid in every excitation. Defaults to the loop index, so each loop is its own
+  // excitation and the inductance matrix is extracted.
+  int excitation = 0;
 
   FluxLoopData() = default;
   FluxLoopData(const json &fluxloop);
@@ -908,6 +1001,13 @@ public:
   // List of all boundary attributes affected by mesh cracking.
   std::unordered_set<int> cracked_attributes = {};
 
+  // Cracked boundary attributes whose surface impedance is split between the two faces of
+  // the crack (twice the impedance on each face). This is only the case with the deprecated
+  // config["Model"]["CrackInternalBoundaryElements"] = true, to keep the results of
+  // previous versions: otherwise, each face of a cracked boundary has the given surface
+  // impedance.
+  std::unordered_set<int> split_impedance_attributes = {};
+
   // Boundary objects.
   PecBoundaryData pec = {};
   PmcBoundaryData pmc = {};
@@ -916,6 +1016,7 @@ public:
   std::vector<ConductivityData> conductivity = {};
   std::vector<ImpedanceData> impedance = {};
   std::vector<RationalImpedanceData> rational_impedance = {};
+  std::vector<SuperconductorData> superconductor = {};
   std::map<int, LumpedPortData> lumpedport = {};
   std::map<int, TerminalData> terminal = {};
   std::map<int, PrescribedPotentialData> prescribed_potential = {};
@@ -925,6 +1026,18 @@ public:
   PeriodicBoundaryData periodic = {};
   std::map<int, FluxLoopData> fluxloop = {};
   BoundaryPostData postpro = {};
+
+  // Return the boundary attributes of boundary conditions which model sheets carrying a
+  // surface current or charge (conductors, impedance and superconductor sheets, flux loop
+  // films, lumped ports, and surface current sources), across which the fields are
+  // discontinuous when interior. For these, the error estimator allows discontinuous
+  // recovered fluxes, and interface dielectric energies sum the contributions of both faces
+  // (when cracked, the faces are exterior boundaries anyway).
+  std::vector<int> GetSheetAttributes() const;
+
+  // Return the boundary attributes for which the mesh is cracked when interior, given the
+  // value of config::ModelData::crack_bdr_elements.
+  std::vector<int> GetMeshCrackAttributes(std::optional<bool> crack_bdr_elements) const;
 
   BoundaryData() = default;
   BoundaryData(const json &boundaries);
@@ -981,7 +1094,8 @@ public:
   // Eigenvalue solver relative tolerance.
   double tol = 1.0e-6;
 
-  // Maximum iterations for eigenvalue solver.
+  // Maximum iterations for eigenvalue solver (for nonlinear problems, the linear or
+  // quadratic eigenvalue solver of the hybrid approach, or the SLP solver).
   int max_it = -1;
 
   // Eigenvalue solver subspace dimension or maximum dimension before restart.
@@ -1035,6 +1149,10 @@ public:
   // Maximum number of failed attempts with a given initial guess in the quasi-Newton
   // nonlinear eigenvalue solver.
   int max_restart = 2;
+
+  // Maximum number of iterations of each attempt to converge an eigenpair in the
+  // quasi-Newton nonlinear eigenvalue solver.
+  int nonlinear_max_it = 100;
 
   EigenSolverData() = default;
   EigenSolverData(const json &eigenmode);
@@ -2178,6 +2296,9 @@ public:
   // Iterative solver relative tolerance.
   double tol = 1.0e-6;
 
+  // Absolute tolerance (0.0 = disabled).
+  double abs_tol = 0.0;
+
   // Maximum iterations for iterative solver.
   int max_it = 100;
 
@@ -2265,6 +2386,13 @@ public:
   // problems.
   int ams_singular_op = -1;
 
+  // Preconditioner-only gauge shift for the London magnetostatic operator: adds
+  // london_pc_shift · (1/µ) ∫|A|² to the preconditioner matrix only (operator, solution and
+  // extracted inductance unchanged) to lift the shifted-penalty operator's residual
+  // gradient null space so AMS is SPD-solvable in parallel. Ignored when no London sheet is
+  // present.
+  double london_pc_shift = 1.0e-1;
+
   // Option to use aggressive coarsening for Hypre AMG solves (with BoomerAMG or AMS).
   // Typically use this when the operator is positive definite.
   int amg_agg_coarsen = -1;
@@ -2337,8 +2465,8 @@ public:
   SolverData(const json &solver);
 };
 
-// Calculate the number of steps from [start, end) in increments of delta. Will only include
-// end if it is a multiple of delta beyond start.
+// Calculate the number of steps from [start, end) in increments of delta > 0, for end >=
+// start. Will only include end if it is a multiple of delta beyond start.
 int GetNumSteps(double start, double end, double delta);
 
 // Parse a string as a direction vector, returning the direction and coordinate system.
@@ -2368,6 +2496,7 @@ void Nondimensionalize(const Units &units, ProbeData &data);
 void Nondimensionalize(const Units &units, CurrentDipoleData &data);
 void Nondimensionalize(const Units &units, ConductivityData &data);
 void Nondimensionalize(const Units &units, ImpedanceData &data);
+void Nondimensionalize(const Units &units, SuperconductorData &data);
 void Nondimensionalize(const Units &units, LumpedPortData &data);
 void Nondimensionalize(const Units &units, PeriodicBoundaryData &data);
 void Nondimensionalize(const Units &units, WavePortData &data);

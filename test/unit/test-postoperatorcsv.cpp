@@ -1,6 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <cmath>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 #include "fem/mesh.hpp"
@@ -8,6 +9,7 @@
 #include "models/postoperator.hpp"
 #include "models/postoperatorcsv.hpp"
 #include "models/spaceoperator.hpp"
+#include "test-helpers.hpp"
 #include "utils/communication.hpp"
 #include "utils/filesystem.hpp"
 #include "utils/geodata.hpp"
@@ -24,6 +26,7 @@ class PostOperatorCSVManualTest : public PostOperatorCSV<ProblemType::DRIVEN>
 {
 public:
   using PostOperatorCSV<ProblemType::DRIVEN>::PostOperatorCSV;
+  bool DefersTableWrites() const { return defer_table_writes; }
   friend class PostOperatorCSVFixture;
 };
 
@@ -35,9 +38,28 @@ IoData load_iodata(std::string_view relative_path)
   return IoData{io_file.c_str(), false};
 }
 
-std::vector<std::unique_ptr<Mesh>> load_mesh(MPI_Comm &world_comm_, IoData &iodata_)
+// Set the excitation phase [deg] of every excited lumped port.
+void set_excitation_phase(IoData &iodata_, double excitation_phase)
 {
-  iodata_.model.mesh = fs::path(PALACE_TEST_DATA_DIR) / "mesh/fichera-tet.mesh";
+  for (auto &[idx, port] : iodata_.boundaries.lumpedport)
+  {
+    if (port.excitation != 0)
+    {
+      port.excitation_phase = excitation_phase;
+    }
+  }
+}
+
+// A nonzero excitation_phase is applied to the excited lumped ports before the operators
+// are built from iodata_.
+std::vector<std::unique_ptr<Mesh>> load_mesh(MPI_Comm &world_comm_, IoData &iodata_,
+                                             double excitation_phase = 0.0)
+{
+  if (excitation_phase != 0.0)
+  {
+    set_excitation_phase(iodata_, excitation_phase);
+  }
+  iodata_.model.mesh = TestMeshPath("fichera-tet.mesh");
 
   // Load Mesh — copy from main.cpp
   std::vector<std::unique_ptr<Mesh>> mesh_;
@@ -67,10 +89,50 @@ public:
   std::vector<std::unique_ptr<Mesh>> mesh;
   SpaceOperator space_op;
 
-  PostOperatorCSVFixture(std::string_view relative_path)
+  PostOperatorCSVFixture(std::string_view relative_path, double excitation_phase = 0.0)
     : world_comm(Mpi::World()), iodata(load_iodata(relative_path)),
-      mesh(load_mesh(world_comm, iodata)), space_op(iodata, mesh)
+      mesh(load_mesh(world_comm, iodata, excitation_phase)), space_op(iodata, mesh)
   {
+  }
+
+  // The incident voltage and current columns are a single real value each, as without an
+  // excitation weight, unless an excited port has a phase that is not a multiple of 180
+  // degrees, in which case they are real and imaginary parts.
+  void incident_columns(bool expect_complex)
+  {
+    iodata.problem.output =
+        fs::path(PALACE_TEST_DATA_DIR) / "postoperatorcsv_restart/restart1_test_tmp";
+    REQUIRE(iodata.solver.driven.restart == 1);  // Restart is 1 Indexed.
+    PostOperatorCSVManualTest post_op_csv{iodata, space_op};
+    if (Mpi::Root(Mpi::World()))
+    {
+      REQUIRE_NOTHROW(post_op_csv.InitializePortVI(space_op));
+      REQUIRE(post_op_csv.port_V.has_value());
+      REQUIRE(post_op_csv.port_I.has_value());
+      CHECK(post_op_csv.complex_incident_port_VI == expect_complex);
+      if (expect_complex)
+      {
+        // idx, Re/Im incident, and Re/Im of the 3 ports.
+        CHECK(post_op_csv.port_V->table.n_cols() == 9);
+        CHECK(post_op_csv.port_I->table.n_cols() == 9);
+        CHECK(post_op_csv.port_V->table[1].name == "reinc1_1");
+        CHECK(post_op_csv.port_V->table[2].name == "iminc1_1");
+        CHECK(post_op_csv.port_V->table[1].header_text == "Re{V_inc[1]} (V)");
+        CHECK(post_op_csv.port_V->table[2].header_text == "Im{V_inc[1]} (V)");
+        CHECK(post_op_csv.port_I->table[1].header_text == "Re{I_inc[1]} (A)");
+        CHECK(post_op_csv.port_I->table[2].header_text == "Im{I_inc[1]} (A)");
+        CHECK(!post_op_csv.port_V->table.has("inc1_1"));
+      }
+      else
+      {
+        CHECK(post_op_csv.port_V->table.n_cols() == 8);
+        CHECK(post_op_csv.port_I->table.n_cols() == 8);
+        CHECK(post_op_csv.port_V->table[1].name == "inc1_1");
+        CHECK(post_op_csv.port_V->table[1].header_text == "V_inc[1] (V)");
+        CHECK(post_op_csv.port_I->table[1].header_text == "I_inc[1] (A)");
+        CHECK(!post_op_csv.port_V->table.has("reinc1_1"));
+      }
+    }
   }
 
   void restart1_fresh_folder()
@@ -153,6 +215,12 @@ public:
         CHECK(post_op_csv.port_V->table[1].name == "inc1_1");
         CHECK(post_op_csv.port_V->table[2].name == "re1_1");
         CHECK(post_op_csv.port_V->table[3].name == "im1_1");
+
+        // Name lookups go through the index, which must match the restored names.
+        CHECK(post_op_csv.port_V->table.has("inc1_1"));
+        CHECK(!post_op_csv.port_V->table.has("col_1"));
+        CHECK_NOTHROW(post_op_csv.port_V->table["idx"]);
+        CHECK(&post_op_csv.port_V->table["re1_1"] == &post_op_csv.port_V->table[2]);
 
         // Validate properties copied form reference table.
         CHECK(post_op_csv.port_V->table[0].column_group_idx ==
@@ -658,6 +726,142 @@ public:
       CHECK(post_op_csv.surface_Q_edge_local->table[3].print_as_int);
     }
   }
+
+  void restart2_write_reloaded_row()
+  {
+    // The restart writes rows of the reloaded tables, whose frequencies are the printed
+    // ones: a recomputed frequency matches to the printed precision, another does not. The
+    // writes go to a copy of the tables.
+    const auto dir = fs::temp_directory_path() / "palace-postoperatorcsv-restart";
+    if (Mpi::Root(Mpi::World()))
+    {
+      fs::remove_all(dir);
+      fs::copy(fs::path(PALACE_TEST_DATA_DIR) / "postoperatorcsv_restart/restart2_c14",
+               dir);
+    }
+    iodata.problem.output = dir;
+    iodata.solver.driven.restart = 6 + 4 + 1;  // Restart is 1 Indexed.
+    PostOperatorCSVManualTest post_op_csv{iodata, space_op};
+    if (Mpi::Root(Mpi::World()))
+    {
+      REQUIRE_NOTHROW(post_op_csv.InitializePortVI(space_op));
+      REQUIRE(post_op_csv.port_V->table["idx"].data.at(4) == 26.0);
+      post_op_csv.row_idx_v = std::nextafter(26.0, 0.0);
+      CHECK_NOTHROW(post_op_csv.PrintPortVI(space_op.GetLumpedPortOp(), iodata.units));
+      post_op_csv.row_i++;
+      post_op_csv.row_idx_v = 31.0;
+      CHECK_THROWS_WITH(
+          post_op_csv.PrintPortVI(space_op.GetLumpedPortOp(), iodata.units),
+          Catch::Matchers::ContainsSubstring("Writing data table at incorrect index"));
+      fs::remove_all(dir);
+    }
+  }
+
+  void restart3_farfield_reload()
+  {
+    iodata.problem.output =
+        fs::path(PALACE_TEST_DATA_DIR) / "postoperatorcsv_restart/restart3_c63";
+    REQUIRE(fs::exists(fs::path(iodata.problem.output) / "farfield-rE.csv"));
+
+    SurfacePostOperator surf_post_op(iodata, space_op.GetMaterialOp(),
+                                     space_op.GetH1Space(), space_op.GetNDSpace());
+    REQUIRE(surf_post_op.farfield.size() == 2);
+
+    // Restart after the 9th of the 12 measurements (excitation 1 complete, excitation 2
+    // at 3 of 6 frequencies). The far-field table gains one row block per measurement,
+    // so every column group must hold 9 * 2 = 18 rows.
+    {
+      iodata.solver.driven.restart = 6 + 3 + 1;  // Restart is 1 Indexed.
+      PostOperatorCSVManualTest post_op_csv{iodata, space_op};
+
+      if (Mpi::Root(Mpi::World()))
+      {
+        CHECK(post_op_csv.row_i == 3);
+        CHECK(post_op_csv.ex_idx_i == 1);
+        CHECK(post_op_csv.nr_expected_measurement_rows == 6);
+        CHECK(post_op_csv.ex_idx_v_all == std::vector<std::size_t>{1, 2});
+        CHECK(post_op_csv.reload_table);
+
+        REQUIRE_NOTHROW(post_op_csv.InitializeFarFieldE(surf_post_op));
+        REQUIRE(post_op_csv.farfield_E.has_value());
+        CHECK(post_op_csv.farfield_E->table.n_rows() == 18);
+        REQUIRE(post_op_csv.farfield_E->table.n_cols() == 10);
+
+        // Validate column names copied from the reference table.
+        CHECK(post_op_csv.farfield_E->table[0].name == "idx");
+        CHECK(post_op_csv.farfield_E->table[1].name == "exc");
+        CHECK(post_op_csv.farfield_E->table[2].name == "theta");
+        CHECK(post_op_csv.farfield_E->table[3].name == "phi");
+        CHECK(post_op_csv.farfield_E->table[4].name == "rE0_re");
+        CHECK(post_op_csv.farfield_E->table[9].name == "rE2_im");
+
+        // Name lookups go through the index, which must match the restored names.
+        CHECK(post_op_csv.farfield_E->table.has("rE2_im"));
+        CHECK(!post_op_csv.farfield_E->table.has("col_1"));
+        CHECK_NOTHROW(post_op_csv.farfield_E->table["theta"]);
+        CHECK(&post_op_csv.farfield_E->table["exc"] == &post_op_csv.farfield_E->table[1]);
+
+        // Validate properties copied from the reference table: the idx column is its
+        // own group, all other columns share group 0 and the same 18 rows.
+        CHECK(post_op_csv.farfield_E->table[0].column_group_idx == -1);
+        CHECK(post_op_csv.farfield_E->table[1].print_as_int == true);
+        for (std::size_t i = 1; i < post_op_csv.farfield_E->table.n_cols(); i++)
+        {
+          CHECK(post_op_csv.farfield_E->table[i].column_group_idx == 0);
+          CHECK(post_op_csv.farfield_E->table[i].n_rows() == 18);
+        }
+      }
+    }
+    // Default restart overwrites any existing data and should just work.
+    {
+      iodata.solver.driven.restart = 0 + 1;
+      PostOperatorCSVManualTest post_op_csv{iodata, space_op};
+      if (Mpi::Root(Mpi::World()))
+      {
+        CHECK_NOTHROW(post_op_csv.InitializeFarFieldE(surf_post_op));
+      }
+    }
+    // A restart position not matching the reloaded rows must be rejected, whether it
+    // disagrees on the frequency or on the completed excitation.
+    {
+      iodata.solver.driven.restart = 3 + 1;
+      PostOperatorCSVManualTest post_op_csv{iodata, space_op};
+      if (Mpi::Root(Mpi::World()))
+      {
+        CHECK_THROWS_WITH(post_op_csv.InitializeFarFieldE(surf_post_op),
+                          Catch::Matchers::ContainsSubstring(
+                              "Specified restart position is incompatible with reloaded"));
+      }
+    }
+    {
+      iodata.solver.driven.restart = 6 + 4 + 1;
+      PostOperatorCSVManualTest post_op_csv{iodata, space_op};
+      if (Mpi::Root(Mpi::World()))
+      {
+        CHECK_THROWS_WITH(post_op_csv.InitializeFarFieldE(surf_post_op),
+                          Catch::Matchers::ContainsSubstring(
+                              "Specified restart position is incompatible with reloaded"));
+      }
+    }
+  }
+
+  void restart3_farfield_missing_data()
+  {
+    iodata.problem.output =
+        fs::path(PALACE_TEST_DATA_DIR) / "postoperatorcsv_restart/restart3_test_tmp";
+    REQUIRE(!fs::exists(fs::path(iodata.problem.output) / "farfield-rE.csv"));
+
+    iodata.solver.driven.restart = 3 + 1;  // Restart is 1 Indexed.
+    SurfacePostOperator surf_post_op(iodata, space_op.GetMaterialOp(),
+                                     space_op.GetH1Space(), space_op.GetNDSpace());
+    PostOperatorCSVManualTest post_op_csv{iodata, space_op};
+    if (Mpi::Root(Mpi::World()))
+    {
+      CHECK_THROWS_WITH(post_op_csv.InitializeFarFieldE(surf_post_op),
+                        Catch::Matchers::ContainsSubstring(
+                            "simulation expected a restart with existing data"));
+    }
+  }
 };
 
 TEST_CASE("PostOperatorCSV_Restart_Helper_ExpectedFilling", "[postoperatorcsv][Serial]")
@@ -702,6 +906,37 @@ TEST_CASE("PostOperatorCSV_Restart_OneExcitation", "[postoperatorcsv][Serial]")
     reload_fixture.restart1_bad_col_alignment();
   }
 }
+
+TEST_CASE("PostOperatorCSV_IncidentColumns", "[postoperatorcsv][Serial]")
+{
+  SECTION("No excitation phase: single real incident columns")
+  {
+    PostOperatorCSVFixture fixture{"postoperatorcsv_restart/restart1.json"};
+    fixture.incident_columns(false);
+  }
+  SECTION("Excitation phase of 180 degrees: single real incident columns")
+  {
+    PostOperatorCSVFixture fixture{"postoperatorcsv_restart/restart1.json", 180.0};
+    fixture.incident_columns(false);
+  }
+  SECTION("Complex excitation weight: real and imaginary incident columns")
+  {
+    PostOperatorCSVFixture fixture{"postoperatorcsv_restart/restart1.json", 30.0};
+    fixture.incident_columns(true);
+  }
+}
+
+TEST_CASE("PostOperatorCSV_AdaptiveOutputBuffering", "[postoperatorcsv][Serial]")
+{
+  PostOperatorCSVFixture fixture{"postoperatorcsv_restart/restart1.json"};
+  fixture.iodata.solver.driven.adaptive_tol = 1.0e-3;
+  PostOperatorCSVManualTest post_op_csv{fixture.iodata, fixture.space_op};
+  if (Mpi::Root(Mpi::World()))
+  {
+    CHECK(post_op_csv.DefersTableWrites());
+  }
+}
+
 TEST_CASE("PostOperatorCSV_Restart_TwoExcitation", "[postoperatorcsv][Serial]")
 {
   PostOperatorCSVFixture fixture{"postoperatorcsv_restart/restart2.json"};
@@ -714,6 +949,26 @@ TEST_CASE("PostOperatorCSV_Restart_TwoExcitation", "[postoperatorcsv][Serial]")
   SECTION("Driven solver, two excitations: load with restart in ex 2")
   {
     fixture.restart2_restart_in_middle_ex2();
+  }
+
+  SECTION("Driven solver, two excitations: write a reloaded row on restart")
+  {
+    fixture.restart2_write_reloaded_row();
+  }
+}
+
+TEST_CASE("PostOperatorCSV_Restart_FarField", "[postoperatorcsv][Serial]")
+{
+  PostOperatorCSVFixture fixture{"postoperatorcsv_restart/restart3.json"};
+
+  SECTION("Driven solver, far-field table: load with restart")
+  {
+    fixture.restart3_farfield_reload();
+  }
+
+  SECTION("Driven solver, far-field table: no data to restart from")
+  {
+    fixture.restart3_farfield_missing_data();
   }
 }
 

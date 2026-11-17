@@ -1,0 +1,163 @@
+diff --git a/SRC/complex16/pzgssvx3d.c b/SRC/complex16/pzgssvx3d.c
+index 4e5f952313364c9d0642c3f2872c6ed6ca744b5a..9e25a877d90030fe5de49c9aa6b0ba5af1788dd5 100755
+--- a/SRC/complex16/pzgssvx3d.c
++++ b/SRC/complex16/pzgssvx3d.c
+@@ -589,6 +589,7 @@ void pzgssvx3d(superlu_dist_options_t *options, SuperMatrix *A,
+     Fact = options->Fact;
+ 
+     validateInput_pzgssvx3d(options, A, ldb, nrhs, grid3d, info);
++    if (*info) return;
+ 
+     /* Initialization. */
+ 
+@@ -750,10 +751,8 @@ void pzgssvx3d(superlu_dist_options_t *options, SuperMatrix *A,
+ 	    permc_spec = options->ColPerm;
+ 
+ 	    if (parSymbFact == YES || permc_spec == PARMETIS) {
+-		if(grid3d->npdep!=1){
+-    		    fprintf(stderr, "Error: ParMETIS and Parallel Symbolic Factorization are not yet supported with grid3d->npdep>1.\n");
+-			return; // or exit(-1); if you want to terminate the program
+-		}
++		/* Rejected on entry, by validateInput_pzgssvx3d(), if
++		   grid3d->npdep > 1. */
+ 		nprocs_num = grid->nprow * grid->npcol;
+ 		noDomains = (int)(pow(2, ((int)LOG2(nprocs_num))));
+ 
+diff --git a/SRC/complex16/zssvx3dAux.c b/SRC/complex16/zssvx3dAux.c
+index 8258d50e3f055685600ccdc54fa2ead4a76fa06e..f0179dd62eb9face2d4351809b9630ae84ca039a 100644
+--- a/SRC/complex16/zssvx3dAux.c
++++ b/SRC/complex16/zssvx3dAux.c
+@@ -56,6 +56,16 @@ void validateInput_pzgssvx3d(superlu_dist_options_t *options, SuperMatrix *A,
+         fprintf(stderr,
+                 "Extra precise iterative refinement yet to support.");
+     }
++    else if (Fact != FACTORED && grid3d->npdep > 1 &&
++             (options->ParSymbFact == YES || options->ColPerm == PARMETIS))
++    {
++        /* Checked here, on every process, since only layer 0 computes the
++           ordering: returning there alone would leave the other layers
++           waiting for it. */
++        *info = -1;
++        if (!grid3d->iam)
++            fprintf(stderr, "Error: ParMETIS and Parallel Symbolic Factorization are not yet supported with grid3d->npdep>1.\n");
++    }
+     else if (A->nrow != A->ncol || A->nrow < 0 || A->Stype != SLU_NR_loc || A->Dtype != SLU_Z || A->Mtype != SLU_GE)
+         *info = -2;
+     else if (ldb < Astore->m_loc)
+diff --git a/SRC/double/dssvx3dAux.c b/SRC/double/dssvx3dAux.c
+index 59e914ac15a0c7d6e60630c2922443922e22f989..5936e052e181b011dd724933b35c9d8d0b846004 100644
+--- a/SRC/double/dssvx3dAux.c
++++ b/SRC/double/dssvx3dAux.c
+@@ -57,6 +57,16 @@ void validateInput_pdgssvx3d(superlu_dist_options_t *options, SuperMatrix *A,
+         fprintf(stderr,
+                 "Extra precise iterative refinement yet to support.");
+     }
++    else if (Fact != FACTORED && grid3d->npdep > 1 &&
++             (options->ParSymbFact == YES || options->ColPerm == PARMETIS))
++    {
++        /* Checked here, on every process, since only layer 0 computes the
++           ordering: returning there alone would leave the other layers
++           waiting for it. */
++        *info = -1;
++        if (!grid3d->iam)
++            fprintf(stderr, "Error: ParMETIS and Parallel Symbolic Factorization are not yet supported with grid3d->npdep>1.\n");
++    }
+     else if (A->nrow != A->ncol || A->nrow < 0 || A->Stype != SLU_NR_loc || A->Dtype != SLU_D || A->Mtype != SLU_GE)
+         *info = -2;
+     else if (ldb < Astore->m_loc)
+diff --git a/SRC/double/pdgssvx3d.c b/SRC/double/pdgssvx3d.c
+index 10467b9a11b8a157b42b49f0c0c0093e5dfb4c20..2487b8f440129f26d9da9a56e7faabca4c82de94 100755
+--- a/SRC/double/pdgssvx3d.c
++++ b/SRC/double/pdgssvx3d.c
+@@ -590,6 +590,7 @@ void pdgssvx3d(superlu_dist_options_t *options, SuperMatrix *A,
+     Fact = options->Fact;
+ 
+     validateInput_pdgssvx3d(options, A, ldb, nrhs, grid3d, info);
++    if (*info) return;
+ 
+     /* Initialization. */
+ 
+@@ -751,10 +752,8 @@ void pdgssvx3d(superlu_dist_options_t *options, SuperMatrix *A,
+ 	    permc_spec = options->ColPerm;
+ 
+ 	    if (parSymbFact == YES || permc_spec == PARMETIS) {
+-		if(grid3d->npdep!=1){
+-    		    fprintf(stderr, "Error: ParMETIS and Parallel Symbolic Factorization are not yet supported with grid3d->npdep>1.\n");
+-			return; // or exit(-1); if you want to terminate the program
+-		}
++		/* Rejected on entry, by validateInput_pdgssvx3d(), if
++		   grid3d->npdep > 1. */
+ 		nprocs_num = grid->nprow * grid->npcol;
+ 		noDomains = (int)(pow(2, ((int)LOG2(nprocs_num))));
+ 
+diff --git a/SRC/single/psgssvx3d.c b/SRC/single/psgssvx3d.c
+index 0ba697c67ceaf217b50de90a3e3f7dcc3acd2be5..7345d435913b703fbc882652b352cb9cbac6f4ad 100755
+--- a/SRC/single/psgssvx3d.c
++++ b/SRC/single/psgssvx3d.c
+@@ -590,6 +590,7 @@ void psgssvx3d(superlu_dist_options_t *options, SuperMatrix *A,
+     Fact = options->Fact;
+ 
+     validateInput_psgssvx3d(options, A, ldb, nrhs, grid3d, info);
++    if (*info) return;
+ 
+     /* Initialization. */
+ 
+@@ -751,10 +752,8 @@ void psgssvx3d(superlu_dist_options_t *options, SuperMatrix *A,
+ 	    permc_spec = options->ColPerm;
+ 
+ 	    if (parSymbFact == YES || permc_spec == PARMETIS) {
+-		if(grid3d->npdep!=1){
+-    		    fprintf(stderr, "Error: ParMETIS and Parallel Symbolic Factorization are not yet supported with grid3d->npdep>1.\n");
+-			return; // or exit(-1); if you want to terminate the program
+-		}
++		/* Rejected on entry, by validateInput_psgssvx3d(), if
++		   grid3d->npdep > 1. */
+ 		nprocs_num = grid->nprow * grid->npcol;
+ 		noDomains = (int)(pow(2, ((int)LOG2(nprocs_num))));
+ 
+diff --git a/SRC/single/psgssvx3d_d2.c b/SRC/single/psgssvx3d_d2.c
+index f68df7b1d574810a706a436ba15d20d625b6941b..97558084bb39e5784b5b913e1985c65f1054ed6f 100755
+--- a/SRC/single/psgssvx3d_d2.c
++++ b/SRC/single/psgssvx3d_d2.c
+@@ -599,6 +599,7 @@ void psgssvx3d_d2(superlu_dist_options_t *options, SuperMatrix *A,
+     Fact = options->Fact;
+ 
+     validateInput_psgssvx3d(options, A, ldb, nrhs, grid3d, info);
++    if (*info) return;
+ 
+     /* Initialization. */
+ 
+@@ -760,10 +761,8 @@ void psgssvx3d_d2(superlu_dist_options_t *options, SuperMatrix *A,
+ 	    permc_spec = options->ColPerm;
+ 
+ 	    if (parSymbFact == YES || permc_spec == PARMETIS) {
+-		if(grid3d->npdep!=1){
+-    		    fprintf(stderr, "Error: ParMETIS and Parallel Symbolic Factorization are not yet supported with grid3d->npdep>1.\n");
+-			return; // or exit(-1); if you want to terminate the program
+-		}
++		/* Rejected on entry, by validateInput_psgssvx3d(), if
++		   grid3d->npdep > 1. */
+ 		nprocs_num = grid->nprow * grid->npcol;
+ 		noDomains = (int)(pow(2, ((int)LOG2(nprocs_num))));
+ 
+diff --git a/SRC/single/sssvx3dAux.c b/SRC/single/sssvx3dAux.c
+index d52f9c4116b51d4690576b0395564080cee213c7..4fbced6608f5eb5afb9b76fbc0ffcab23c83db1c 100644
+--- a/SRC/single/sssvx3dAux.c
++++ b/SRC/single/sssvx3dAux.c
+@@ -57,6 +57,16 @@ void validateInput_psgssvx3d(superlu_dist_options_t *options, SuperMatrix *A,
+         fprintf(stderr,
+                 "Extra precise iterative refinement yet to support.");
+     }
++    else if (Fact != FACTORED && grid3d->npdep > 1 &&
++             (options->ParSymbFact == YES || options->ColPerm == PARMETIS))
++    {
++        /* Checked here, on every process, since only layer 0 computes the
++           ordering: returning there alone would leave the other layers
++           waiting for it. */
++        *info = -1;
++        if (!grid3d->iam)
++            fprintf(stderr, "Error: ParMETIS and Parallel Symbolic Factorization are not yet supported with grid3d->npdep>1.\n");
++    }
+     else if (A->nrow != A->ncol || A->nrow < 0 || A->Stype != SLU_NR_loc || A->Dtype != SLU_S || A->Mtype != SLU_GE)
+         *info = -2;
+     else if (ldb < Astore->m_loc)

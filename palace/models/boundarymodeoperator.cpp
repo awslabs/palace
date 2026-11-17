@@ -6,7 +6,7 @@
 #include "fem/multigrid.hpp"
 #include "linalg/operator.hpp"
 #include "models/farfieldboundaryoperator.hpp"
-#include "models/modeeigensolver.hpp"
+#include "models/modeoperatorassembly.hpp"
 #include "models/surfaceconductivityoperator.hpp"
 #include "models/surfaceimpedanceoperator.hpp"
 #include "models/surfacerationalimpedanceoperator.hpp"
@@ -54,20 +54,6 @@ BoundaryModeOperator::BoundaryModeOperator(const IoData &iodata_,
              GetNDSpace().GlobalTrueVSize() + GetH1Space().GlobalTrueVSize());
 }
 
-BoundaryModeOperator::ComplexHypreParMatrix
-BoundaryModeOperator::AssembleAtt(std::complex<double> omega, double sigma) const
-{
-  return mode_assembly::AssembleAtt(GetNDSpace(), mat_op, nullptr, *surf_z_op, *farfield_op,
-                                    *surf_sigma_op, *surf_rz_op, omega, sigma);
-}
-
-BoundaryModeOperator::ComplexHypreParMatrix
-BoundaryModeOperator::AssembleAnn(std::complex<double> omega) const
-{
-  return mode_assembly::AssembleAnn(GetH1Space(), mat_op, nullptr, *surf_z_op, *farfield_op,
-                                    *surf_sigma_op, *surf_rz_op, omega);
-}
-
 void BoundaryModeOperator::ApplyVDBackTransform(ComplexVector &e0, std::complex<double> kn,
                                                 ComplexVector &et, ComplexVector &en) const
 {
@@ -84,12 +70,20 @@ BoundaryModeOperator::ComputePoyntingPower(double omega, std::complex<double> kn
     return 0.0;
   }
   auto comm = GetComm();
+  // P = ½ ∫ (Eₜ × Hₜ*)·ẑ for E = (Eₜ + ẑEₙ) e^{-ikₙz}, whose transverse magnetic field is
+  // Hₜ = μ⁻¹ (kₙ ẑ×Eₜ + i ∇ₜEₙ×ẑ) / ω, so that
+  //   P = (1/2ω) ∫ μ⁻¹ (kₙ* |Eₜ|² + i Eₜ·∇ₜEₙ*)  (real μ).
+  // With Atn = -(μ⁻¹∇ₜφₙ, φₜ), etᴴ Atn en = -∫ μ⁻¹ Eₜ*·∇ₜEₙ, the conjugate of minus the
+  // second integral. Without the conjugate, the second term is only right when Eₙ is in
+  // quadrature with Eₜ, as for a lossless mode: for a lossy mode, it adds a spurious
+  // imaginary part to P, which inflates |P| and lowers Z_PV = Re{|V|² / 2P}.
   std::complex<double> P = 0.5 * std::conj(kn) / omega * linalg::Dot(comm, et, *Bttr, et);
   if (Atnr && en.Size() == GetH1TrueVSize())
   {
     ComplexWrapperOperator Atn(const_cast<mfem::HypreParMatrix *>(Atnr.get()),
                                const_cast<mfem::HypreParMatrix *>(Atni.get()));
-    P += std::complex<double>(0.0, 1.0) / (2.0 * omega) * linalg::Dot(comm, en, Atn, et);
+    P -= std::complex<double>(0.0, 1.0) / (2.0 * omega) *
+         std::conj(linalg::Dot(comm, en, Atn, et));
   }
   return P;
 }

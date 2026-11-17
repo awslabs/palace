@@ -7,7 +7,6 @@
 #include <algorithm>
 #include <array>
 #include <vector>
-#include "fem/gridfunction.hpp"
 #include "linalg/vector.hpp"
 #include "utils/constants.hpp"
 
@@ -136,9 +135,8 @@ public:
 
   // Return a copy of value scaled by given unit.
   template <ValueType unit, typename T>
-  auto Dimensionalize(T value) const
-      -> std::enable_if_t<!std::is_same_v<T, Vector> && !std::is_same_v<T, ComplexVector>,
-                          T>
+  T Dimensionalize(T value) const
+    requires(!std::is_same_v<T, Vector> && !std::is_same_v<T, ComplexVector>)
   {
     return value * GetScaleFactor<unit>();
   }
@@ -163,62 +161,19 @@ public:
 
   // Return a copy Vector or ComplexVector scaled by given unit.
   template <ValueType unit, typename T>
-  auto Dimensionalize(T value) const
-      -> std::enable_if_t<std::is_same_v<T, Vector> || std::is_same_v<T, ComplexVector>, T>
+  T Dimensionalize(T value) const
+    requires(std::is_same_v<T, Vector> || std::is_same_v<T, ComplexVector>)
   {
     value *= GetScaleFactor<unit>();
     return value;
   }
 
-  // Return a copy of the gridfunction scaled by given unit.
-  // Neighbor face data is also scaled.
-  template <ValueType unit>
-  auto Dimensionalize(mfem::ParGridFunction value) const
-  {
-    value *= GetScaleFactor<unit>();
-    value.FaceNbrData() *= GetScaleFactor<unit>();
-    return value;
-  }
-
-  // Return a copy of the gridfunction scaled by given unit.
-  // Neighbor face data is also scaled.
-  template <ValueType unit>
-  auto Dimensionalize(GridFunction value) const
-  {
-    value *= GetScaleFactor<unit>();
-    value.Real().FaceNbrData() *= GetScaleFactor<unit>();
-    if (value.HasImag())
-    {
-      value.Imag().FaceNbrData() *= GetScaleFactor<unit>();
-    }
-    return value;
-  }
-
-  // Scale value in-place by given unit.
+  // Scale value in-place by given unit. Scaling a GridFunction also scales its cached
+  // face-neighbor data (see GridFunction::operator*=).
   template <ValueType unit, typename T>
   void DimensionalizeInPlace(T &value) const
   {
     value *= GetScaleFactor<unit>();
-  }
-
-  // Scale gridfunction and its neighbor face data in-place by given unit.
-  template <ValueType unit>
-  void DimensionalizeInPlace(mfem::ParGridFunction &value) const
-  {
-    value *= GetScaleFactor<unit>();
-    value.FaceNbrData() *= GetScaleFactor<unit>();
-  }
-
-  // Scale complex gridfunction and its neighbor face data in-place by given unit.
-  template <ValueType unit>
-  auto Dimensionalize(GridFunction &value) const
-  {
-    value *= GetScaleFactor<unit>();
-    value.Real().FaceNbrData() *= GetScaleFactor<unit>();
-    if (value.HasImag())
-    {
-      value.Imag().FaceNbrData() *= GetScaleFactor<unit>();
-    }
   }
 
   // Return a copy of value scaled by inverse of given unit.
@@ -248,63 +203,19 @@ public:
 
   // Return a copy of Vector of ComplexVector scaled by inverse of given unit.
   template <ValueType unit, typename T>
-  auto Nondimensionalize(T value) const
-      -> std::enable_if_t<std::is_same_v<T, Vector> || std::is_same_v<T, ComplexVector>, T>
+  T Nondimensionalize(T value) const
+    requires(std::is_same_v<T, Vector> || std::is_same_v<T, ComplexVector>)
   {
     value *= (1.0 / GetScaleFactor<unit>());
     return value;
   }
 
-  // Return a copy of the gridfunction scaled by given unit.
-  // Neighbor face data is also scaled.
-  template <ValueType unit>
-  auto Nondimensionalize(mfem::ParGridFunction value) const
-  {
-    value *= (1.0 / GetScaleFactor<unit>());
-    value.FaceNbrData() *= (1.0 / GetScaleFactor<unit>());
-    return value;
-  }
-
-  // Return a copy of the gridfunction scaled by given unit.
-  // Neighbor face data is also scaled.
-  template <ValueType unit>
-  auto Nondimensionalize(GridFunction value) const
-  {
-    value *= (1.0 / GetScaleFactor<unit>());
-    value.Real().FaceNbrData() *= (1.0 / GetScaleFactor<unit>());
-    if (value.HasImag())
-    {
-      value.Imag().FaceNbrData() *= (1.0 / GetScaleFactor<unit>());
-    }
-    return value;
-  }
-
-  // Scale value in-place by inverse of given unit.
+  // Scale value in-place by inverse of given unit. Scaling a GridFunction also scales its
+  // cached face-neighbor data (see GridFunction::operator*=).
   template <ValueType unit, typename T>
   void NondimensionalizeInPlace(T &value) const
   {
     value *= (1.0 / GetScaleFactor<unit>());
-  }
-
-  // Scale gridfunction and its neighbor face data in-place by inverse of given unit.
-  template <ValueType unit>
-  void NondimensionalizeInPlace(mfem::ParGridFunction &value) const
-  {
-    value *= (1.0 / GetScaleFactor<unit>());
-    value.FaceNbrData() *= (1.0 / GetScaleFactor<unit>());
-  }
-
-  // Scale complex gridfunction and its neighbor face data in-place by inverse of given
-  // unit.
-  template <ValueType unit>
-  auto Nondimensionalize(GridFunction &value) const
-  {
-    value *= (1.0 / GetScaleFactor<unit>());
-    value.Real().FaceNbrData() *= (1.0 / GetScaleFactor<unit>());
-    if (value.HasImag())
-    {
-      value.Imag().FaceNbrData() *= (1.0 / GetScaleFactor<unit>());
-    }
   }
 };
 

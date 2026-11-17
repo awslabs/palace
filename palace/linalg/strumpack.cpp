@@ -117,10 +117,14 @@ StrumpackSolverBase<StrumpackSolverType>::StrumpackSolverBase(
 template <typename StrumpackSolverType>
 void StrumpackSolverBase<StrumpackSolverType>::SetOperator(const Operator &op)
 {
-  // Convert the input operator to a distributed STRUMPACK matrix (always assume a symmetric
-  // sparsity pattern). This is very similar to the MFEM's STRUMPACKRowLocMatrix from a
-  // HypreParMatrix but avoids using the communicator from the Hypre matrix in the case that
-  // the solver is constructed on a different communicator.
+  // Convert the input operator to a distributed STRUMPACK matrix. This is very similar to
+  // the MFEM's STRUMPACKRowLocMatrix from a HypreParMatrix but avoids using the
+  // communicator from the Hypre matrix in the case that the solver is constructed on a
+  // different communicator. The sparsity pattern is not declared symmetric: hypre's
+  // parallel matrix products can store explicit zeros without their transposes on small
+  // partitions, and STRUMPACK then orders and builds its elimination tree from an
+  // unsymmetric graph, which fails or hangs. STRUMPACK symmetrizes the pattern instead,
+  // which adds no entries when it is already symmetric.
   const auto *hA = dynamic_cast<const mfem::HypreParMatrix *>(&op);
   MFEM_VERIFY(hA && hA->GetGlobalNumRows() == hA->GetGlobalNumCols(),
               "StrumpackSolver requires a square HypreParMatrix operator!");
@@ -139,7 +143,7 @@ void StrumpackSolverBase<StrumpackSolverType>::SetOperator(const Operator &op)
   // Safe to delete the matrix since STRUMPACK copies it on input. Also clean up the Hypre
   // data structure once we are done with it.
 #if !defined(HYPRE_BIGINT)
-  mfem::STRUMPACKRowLocMatrix A(comm, n_loc, first_row, glob_n, glob_n, I, J, data, true);
+  mfem::STRUMPACKRowLocMatrix A(comm, n_loc, first_row, glob_n, glob_n, I, J, data, false);
 #else
   int n_loc_int = static_cast<int>(n_loc);
   MFEM_ASSERT(n_loc == (HYPRE_Int)n_loc_int,
@@ -151,7 +155,7 @@ void StrumpackSolverBase<StrumpackSolverType>::SetOperator(const Operator &op)
     MFEM_ASSERT(I[i] == (HYPRE_Int)II[i], "Overflow error for local sparse matrix index!");
   }
   mfem::STRUMPACKRowLocMatrix A(comm, n_loc_int, first_row, glob_n, glob_n, II.HostRead(),
-                                J, data, true);
+                                J, data, false);
 #endif
   StrumpackSolverType::SetOperator(A);
   hypre_CSRMatrixDestroy(csr);

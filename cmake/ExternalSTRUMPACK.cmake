@@ -34,6 +34,16 @@ if(PALACE_WITH_STRUMPACK_ZFP)
   string(REPLACE ";" "; " ZFP_OPTIONS_PRINT "${ZFP_OPTIONS}")
   message(STATUS "ZFP_OPTIONS: ${ZFP_OPTIONS_PRINT}")
 
+  # Fix zfp_stream_maximum_size() overflow (https://github.com/LLNL/zfp/issues/270), using
+  # the patch from the Spack build (https://github.com/spack/spack-packages/pull/6879)
+  include(PatchHelpers)
+  set(ZFP_PATCH_FILES)
+  download_patch(ZFP_PATCH_FILES "${CMAKE_BINARY_DIR}/extern/zfp-patches"
+    stream-maximum-size-overflow.patch
+    "https://raw.githubusercontent.com/spack/spack-packages/94ba1d9eb8e89a4e01919a9f41b8c857b5fbe5cc/repos/spack_repo/builtin/packages/zfp/stream-maximum-size-overflow.patch"
+    7ed755650fdcd79208ab165b42c902d64a916187be6dade4643814c09ba6d894
+  )
+
   include(ExternalProject)
   ExternalProject_Add(zfp
     DEPENDS           ${ZFP_DEPENDENCIES}
@@ -44,6 +54,10 @@ if(PALACE_WITH_STRUMPACK_ZFP)
     INSTALL_DIR       ${CMAKE_INSTALL_PREFIX}
     PREFIX            ${CMAKE_BINARY_DIR}/extern/zfp-cmake
     UPDATE_COMMAND    ""
+    PATCH_COMMAND
+      git reset --hard &&
+      git clean -fd &&
+      git apply "${ZFP_PATCH_FILES}"
     CONFIGURE_COMMAND ${CMAKE_COMMAND} <SOURCE_DIR> "${ZFP_OPTIONS}"
     TEST_COMMAND      ""
   )
@@ -265,6 +279,31 @@ set(STRUMPACK_PATCH_FILES
   "${CMAKE_SOURCE_DIR}/extern/patch/STRUMPACK/patch_gpu_init.diff"
 )
 
+# Lower the communication cost of the distributed solve phase
+# (https://github.com/pghysels/STRUMPACK/pull/163)
+include(PatchHelpers)
+download_patch(STRUMPACK_PATCH_FILES "${CMAKE_BINARY_DIR}/extern/STRUMPACK-patches"
+  strumpack_pr163.diff
+  "https://github.com/pghysels/STRUMPACK/commit/4b657da56db958f4e00d2396a8fbb568f5cb3c16.diff?full_index=1"
+  b9a4d57b05a1790c6858f570d7a2c7fb82b7b4b6d6feaa39a364b0d56fefe092
+)
+# Reset the caches of the solve phase when the separators are reordered, which happens
+# again with compression when the matrix values are updated
+# (https://github.com/pghysels/STRUMPACK/pull/164)
+download_patch(STRUMPACK_PATCH_FILES "${CMAKE_BINARY_DIR}/extern/STRUMPACK-patches"
+  strumpack_pr164.diff
+  "https://github.com/pghysels/STRUMPACK/commit/f94faa48ce857905ef68f2826d05d92218a66e26.diff?full_index=1"
+  9e5d099fcb55b2a5630ad2fa2ac961bdccabffe3304282183eb911395da2aa4b
+)
+# Lower-latency distributed triangular solves for a few right-hand sides
+# (https://github.com/pghysels/STRUMPACK/pull/165), without its test and CI changes, which
+# need test infrastructure added after STRUMPACK 8.1.0
+download_patch(STRUMPACK_PATCH_FILES "${CMAKE_BINARY_DIR}/extern/STRUMPACK-patches"
+  strumpack_pr165.diff
+  "https://raw.githubusercontent.com/awslabs/palace/0bbc11478dd7faa1a5f89b4f52d34c1205273e1f/extern/patch/STRUMPACK/strumpack_pr165.diff"
+  b5032afa23be7511413e4532c85799e2f89d7ed1a379dde23537f8aa5a116294
+)
+
 include(ExternalProject)
 ExternalProject_Add(strumpack
   DEPENDS           ${STRUMPACK_DEPENDENCIES}
@@ -275,7 +314,10 @@ ExternalProject_Add(strumpack
   INSTALL_DIR       ${CMAKE_INSTALL_PREFIX}
   PREFIX            ${CMAKE_BINARY_DIR}/extern/STRUMPACK-cmake
   UPDATE_COMMAND    ""
-  PATCH_COMMAND     git apply "${STRUMPACK_PATCH_FILES}"
+  PATCH_COMMAND
+    git reset --hard &&
+    git clean -fd &&
+    git apply "${STRUMPACK_PATCH_FILES}"
   CONFIGURE_COMMAND ${CMAKE_COMMAND} <SOURCE_DIR> "${STRUMPACK_OPTIONS}"
   TEST_COMMAND      ""
 )

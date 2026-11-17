@@ -92,10 +92,13 @@ impedance of free space. Similarly, the non-dimensional electric field `E` is
 !!! warning "Finite element considerations"
 
     Changing mesh units requires additional rescaling for fields defined on
-    H(curl) and H(div) spaces to convert them to proper physical units. This is a
-    function of the length scales inherent to the reference element transformations
-    for Nédélec and Raviart Thomas spaces, used for H(curl) and H(div) respectively.
-    See the `ScaleGridFunctions` function in `PostOperator` for details.
+    H(curl), H(div), and L2 spaces with `INTEGRAL` map type (such as the out-of-plane
+    magnetic flux density in 2D) to convert them to proper physical units. Scaling the
+    mesh by ``L`` scales the values of these fields mapped from the reference element by
+    ``L^{-p}``, with ``p = 1`` for H(curl) (Nédélec), ``p = d - 1`` for H(div)
+    (Raviart-Thomas), and ``p = d`` for L2 with `INTEGRAL` map type, for a mesh of
+    dimension ``d``. See `ScaleGridFunction` in `palace/models/postoperator.cpp` for
+    details.
 
 ## Style guide
 
@@ -103,13 +106,13 @@ Automated source code formatting is performed using
 [`clang-format`](https://clang.llvm.org/docs/ClangFormat.html). Run:
 
 ```bash
-./scripts/format_source
+./scripts/format-source
 ```
 
 in the repository root directory to automatically use `clang-format` to format `C++` source
 as well as [`JuliaFormatter.jl`](https://github.com/domluna/JuliaFormatter.jl) for Julia and
 Markdown files. The script can be viewed
-[in the repository](https://github.com/awslabs/palace/blob/main/scripts/format_source).
+[in the repository](https://github.com/awslabs/palace/blob/main/scripts/format-source).
 
 The following conventions also apply:
 
@@ -145,10 +148,10 @@ A JSON format [configuration file](../config/config.md), for example named
 `config.json`, can be validated against the provided Schema using:
 
 ```bash
-./scripts/validate_config config.json
+./scripts/validate-config config.json
 ```
 
-[This script](https://github.com/awslabs/palace/blob/main/scripts/validate_config) uses
+[This script](https://github.com/awslabs/palace/blob/main/scripts/validate-config) uses
 Julia's [`JSONSchema.jl`](https://github.com/fredo-dedup/JSONSchema.jl) and the Schema
 provided in [`scripts/schema/`](https://github.com/awslabs/palace/blob/main/scripts/schema)
 to parse the configuration file and check that the fields are correctly specified. This
@@ -203,13 +206,13 @@ tooling can identify the schema without custom extensions.
 SchemaVer uses the format `MODEL-REVISION-ADDITION`:
 
   - MODEL: a breaking change to the schema's model — e.g. removing or renaming a field,
-    tightening validation so a previously-valid config is rejected, or changing the
+    tightening validation so a previously-working config is rejected, or changing the
     meaning or the default of a value.
   - REVISION: a backward-compatible change that extends the model — e.g. a new optional
     field, a new allowed enum value, or relaxing a constraint so previously-invalid
     configs are now accepted.
-  - ADDITION: a change that does not affect which configurations are accepted — e.g.
-    updating a `description`, `title`, or other annotation.
+  - ADDITION: a change that does not affect which configurations are accepted and working
+    — e.g. updating a `description`, `title`, or other annotation.
 
 #### Relationship to the *Palace* version
 
@@ -224,11 +227,25 @@ numerically to *Palace*'s release version. The coupling is one-directional:
 Because the schema is versioned independently, a single schema version generally spans
 several *Palace* releases. The table below records the first *Palace* release shipping
 each schema version; a schema version applies to that release and all later ones up to
-(but not including) the next entry. Add a row whenever the schema version is bumped.
+(but not including) the next entry. Its source is the machine-readable
+[`schema-compatibility.json`](https://github.com/awslabs/palace/blob/main/scripts/schema/schema-compatibility.json)
+file. Add an entry there whenever a release introduces a new schema version; the
+documentation build generates this table from that file.
 
-| Schema version | First *Palace* release | Notes                              |
-|:--------------:|:----------------------:|:---------------------------------- |
-| `1-0-0`        | `0.17`                 | First explicitly-versioned schema. |
+```@raw html
+<!-- BEGIN GENERATED SCHEMA COMPATIBILITY TABLE -->
+```
+
+| Schema version | First *Palace* release | Notes                                                                                                                                                                                                                                                                                                                                                                                      |
+|:--------------:|:----------------------:|:------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `1-0-0`        | `0.17.0`               | First explicitly-versioned schema.                                                                                                                                                                                                                                                                                                                                                         |
+| `1-6-0`        | `0.18.0`               |                                                                                                                                                                                                                                                                                                                                                                                            |
+| `1-7-0`        | `0.18.1`               |                                                                                                                                                                                                                                                                                                                                                                                            |
+| `4-1-0`        | `0.19.0`               | Breaking: `FluxLoop` keys renamed ([PR 929](https://github.com/awslabs/palace/pull/929)), `NSamples` removed ([PR 1049](https://github.com/awslabs/palace/pull/1049)), interior boundaries not cracked by default ([PR 994](https://github.com/awslabs/palace/pull/994)); see the [0.19.0 CHANGELOG](https://github.com/awslabs/palace/blob/main/CHANGELOG.md#0190---2026-11-02) for more. |
+
+```@raw html
+<!-- END GENERATED SCHEMA COMPATIBILITY TABLE -->
+```
 
 #### When and how to bump (PR checklist)
 
@@ -238,12 +255,16 @@ schema version bump in that same PR. This means the repository will accumulate m
 
  1. Determine the bump size. Classify your schema change using the table above:
 
-      + MODEL: removing/renaming a field, tightening validation, changing defaults or
-        semantics (breaking).
+      + MODEL: removing/renaming a field, tightening validation so a previously-working
+        config is rejected, changing defaults or semantics (breaking).
       + REVISION: new optional field, new enum value, relaxing a constraint
         (backward-compatible extension).
       + ADDITION: updating a `description`, `title`, or other annotation (no effect on
-        accepted configurations).
+        accepted configurations). Tightening validation is also an ADDITION, not a MODEL
+        bump, when the newly rejected configurations never produced valid solver output:
+        ones the parser already rejected, or ones that only ran through a silent error
+        (turning a silent error into a loud one is a bug fix, and the accepted set of
+        *working* configurations is unchanged).
 
  2. Bump the `"$id"` version in `scripts/schema/config-schema.json`.
     For example, going from `1-0-0` to `1-1-0`:
@@ -263,9 +284,9 @@ schema version bump in that same PR. This means the repository will accumulate m
 
     Place the entry in the section that best describes the *motivation* (typically `New Features` for additions, `Interface Changes` for breaking changes).
 
- 4. Do NOT update the version table in this file (`docs/src/developer/notes.md`).
-    The table maps schema versions to *Palace* releases and is updated only when a release
-    is cut, not per-PR.
+ 4. Do NOT update `scripts/schema/schema-compatibility.json`.
+    The compatibility data maps schema versions to *Palace* releases and is updated only
+    when a release is cut, not per-PR.
 
 ##### Example changelog entry
 
@@ -313,9 +334,21 @@ objects may be created for local timing purposes, but these will not count towar
 reported at the end of a log file or in the metadata JSON.
 
 For each *Palace* simulation, a table of timing statistics is printed out before the program
-terminates. The minimum, maximum, and average times across all MPI processes are included in
-the table. Timer categories are exclusive, they do not overlap. The categories for breaking
-down the total simulation time are:
+terminates. The Min., Max., and Avg. columns are reductions across MPI ranks (useful for
+spotting load imbalance). They are not statistics over repeated calls of a given block.
+
+Timer categories are exclusive: only one is active at a time, and they do not overlap.
+Indentation in the table groups related categories, but it is not a parent/child sum. An
+unindented row is the remainder: time spent in that category that was not captured by any
+of the indented rows beneath it. Adding a remainder to its indented neighbors recovers the
+total time for that group. For example, `Estimation + Construction + Solve` is the full
+error-estimation cost; a large `Estimation` remainder means work outside estimator
+construction and solve. Those remainder rows are meant to be small in a good breakdown,
+since they are the leftover after calling out the informative sub-pieces.
+
+The (average) rows in the table should add up to the Total line at the bottom.
+
+The categories for breaking down the total simulation time are:
 
 ```
 Initialization                  // < Time spent parsing the configuration file,
@@ -519,7 +552,7 @@ Release tags (`vX.Y.Z`) build the full microarchitecture matrix instead, so
 a release publishes a tuned image for each target:
 
   - `x86_64_v3`, `x86_64_v4`, `sapphirerapids` (x64)
-  - `aarch64`, `neoverse_v1`, `neoverse_v2` (arm64)
+  - `aarch64`, `neoverse_v1`, `neoverse_v2`, `neoverse_v3` (arm64)
 
 ### Publishing a `dev-<branch>` prototype from a branch
 

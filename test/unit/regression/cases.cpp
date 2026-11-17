@@ -10,13 +10,21 @@
 
 #include <algorithm>
 #include <cmath>
+#include <complex>
+#include <cstdio>
+#include <filesystem>
 #include <limits>
+#include <map>
+#include <numbers>
 #include <string>
+#include <vector>
 
+#include <Eigen/Dense>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "regression_helpers.hpp"
+#include "utils/constants.hpp"
 #include "utils/tablecsv.hpp"
 
 namespace
@@ -34,7 +42,7 @@ namespace
 // r*Im{E_z} for both driven and eigenmode output (the leading columns differ).
 palace::test::CustomCheck TestFarfield(double rtol)
 {
-  return [rtol](palace::Table &a, palace::Table &r)
+  return [rtol](palace::Table &a, palace::Table &r, const std::filesystem::path &)
   {
     CHECK(a.n_cols() >= 6);
     CHECK(a.n_cols() == r.n_cols());
@@ -62,17 +70,78 @@ palace::test::CustomCheck TestFarfield(double rtol)
   };
 }
 
-// Generalised magnitude comparison for any CSV with paired
-// "Re{X} (unit)" / "Im{X} (unit)" complex columns. For each Re column
-// it pairs the matching Im (looked up by header_text), then compares
-// |X| = sqrt(Re^2 + Im^2) at the case's tolerances. Real-only columns
-// (frequency, V_inc, etc.) fall through to the same WithinRel ||
-// WithinAbs check the default comparator uses. Used for adaptive
-// frequency sweeps where the ROM-interpolated phase wobbles at zero
-// crossings but |X| tracks the converged response.
-palace::test::CustomCheck CompareComplexMagnitudes(double rtol, double atol)
+// Far field of a z-directed Hertzian dipole (I l = 1 A m). Check the result against the
+// closed form r E = i eta k I l sin(theta) / (4 pi) theta_hat, which does not depend on the
+// reference data: the co-polar magnitude |r E . theta_hat| and the residual (cross-polar
+// and radial) components, relative to the maximum eta k I l / (4 pi). The magnitude
+// comparison with the reference data (as in TestFarfield) has an absolute floor relative to
+// the same maximum, since the field vanishes on the dipole axis and the values there are
+// numerical noise, which depends on the partitioning.
+palace::test::CustomCheck TestFarfieldDipole(double rtol, double tol_dipole)
 {
-  return [rtol, atol](palace::Table &actual, palace::Table &reference)
+  return
+      [rtol, tol_dipole](palace::Table &a, palace::Table &r, const std::filesystem::path &)
+  {
+    REQUIRE(a.n_cols() >= 8);
+    REQUIRE(a.n_cols() == r.n_cols());
+    constexpr double c0 = 299792458.0;      // m/s
+    constexpr double eta0 = 376.730313668;  // Ohm
+    const std::size_t e0 = a.n_cols() - 6, it = e0 - 2, ip = e0 - 1;
+    for (std::size_t i = 0; i < a.n_rows(); ++i)
+    {
+      const double k = 2.0 * std::numbers::pi * a[0].data[i] * 1.0e9 / c0;
+      const double amax = eta0 * k / (4.0 * std::numbers::pi);
+      const double theta = a[it].data[i] * std::numbers::pi / 180.0;
+      const double phi = a[ip].data[i] * std::numbers::pi / 180.0;
+      const double st = std::sin(theta), ct = std::cos(theta);
+      const double sp = std::sin(phi), cp = std::cos(phi);
+      const double th[3] = {ct * cp, ct * sp, -st};
+      std::complex<double> E[3], e_th = 0.0;
+      double res = 0.0;
+      for (int d = 0; d < 3; d++)
+      {
+        E[d] = {a[e0 + 2 * d].data[i], a[e0 + 2 * d + 1].data[i]};
+        e_th += E[d] * th[d];
+      }
+      for (int d = 0; d < 3; d++)
+      {
+        res += std::norm(E[d] - e_th * th[d]);
+      }
+      INFO("row " << i + 1 << ": theta = " << a[it].data[i] << ", phi = " << a[ip].data[i]
+                  << ", |r E_theta| = " << std::abs(e_th) << ", closed form = "
+                  << amax * std::abs(st) << ", residual = " << std::sqrt(res));
+      CHECK(std::abs(std::abs(e_th) - amax * std::abs(st)) <= tol_dipole * amax);
+      CHECK(std::sqrt(res) <= tol_dipole * amax);
+      if (i < r.n_rows())
+      {
+        auto mag = [i, e0](palace::Table &t)
+        {
+          double m = 0.0;
+          for (std::size_t j = e0; j < e0 + 6; j++)
+          {
+            m += t[j].data[i] * t[j].data[i];
+          }
+          return std::sqrt(m);
+        };
+        const double m_a = mag(a), m_r = mag(r);
+        INFO("|r E| actual = " << m_a << ", reference = " << m_r);
+        CHECK(std::abs(m_a - m_r) <= rtol * std::max(m_a, m_r) + 1.0e-6 * amax);
+      }
+    }
+  };
+}
+
+// Generalised comparison for any CSV with paired "Re{X} (unit)" / "Im{X} (unit)" complex
+// columns. For each Re column it pairs the matching Im (looked up by header_text), then
+// compares either the magnitudes |X| = sqrt(Re^2 + Im^2), or the complex values with a
+// tolerance relative to |X| (|X_a - X_r| <= rtol * max(|X_a|, |X_r|)), at the case's
+// tolerances. Real-only columns (frequency, V_inc, etc.) fall through to the same
+// WithinRel || WithinAbs check the default comparator uses.
+palace::test::CustomCheck CompareComplexColumns(double rtol, double atol,
+                                                bool magnitude_only)
+{
+  return [rtol, atol, magnitude_only](palace::Table &actual, palace::Table &reference,
+                                      const std::filesystem::path &)
   {
     auto find_by_header = [](palace::Table &t, const std::string &h) -> palace::Column *
     {
@@ -97,12 +166,12 @@ palace::test::CustomCheck CompareComplexMagnitudes(double rtol, double atol)
       // Im{...} columns are checked alongside their Re partner; skip
       // them here so we don't double-count or compare the imaginary
       // half on its own.
-      if (hdr.rfind("Im{", 0) == 0)
+      if (hdr.starts_with("Im{"))
       {
         continue;
       }
 
-      if (hdr.rfind("Re{", 0) == 0)
+      if (hdr.starts_with("Re{"))
       {
         std::string im_hdr = hdr;
         im_hdr.replace(0, 3, "Im{");  // "Re{X} (unit)" -> "Im{X} (unit)"
@@ -123,8 +192,18 @@ palace::test::CustomCheck CompareComplexMagnitudes(double rtol, double atol)
           const double mag_a = std::sqrt(re_av * re_av + im_av * im_av);
           const double mag_r = std::sqrt(re_rv * re_rv + im_rv * im_rv);
           INFO("row " << r + 1 << " |" << hdr.substr(3, hdr.find('}', 3) - 3) << "|");
-          CHECK_THAT(mag_a, Catch::Matchers::WithinRel(mag_r, rtol) ||
-                                Catch::Matchers::WithinAbs(mag_r, atol));
+          if (magnitude_only)
+          {
+            CHECK_THAT(mag_a, Catch::Matchers::WithinRel(mag_r, rtol) ||
+                                  Catch::Matchers::WithinAbs(mag_r, atol));
+          }
+          else
+          {
+            const double diff = std::hypot(re_av - re_rv, im_av - im_rv);
+            INFO("actual = " << re_av << " + " << im_av << "i, reference = " << re_rv
+                             << " + " << im_rv << "i");
+            CHECK(diff <= std::max(atol, rtol * std::max(mag_a, mag_r)));
+          }
         }
         continue;
       }
@@ -141,17 +220,104 @@ palace::test::CustomCheck CompareComplexMagnitudes(double rtol, double atol)
   };
 }
 
+// Compare the magnitudes of complex columns. Used for adaptive frequency sweeps where the
+// ROM-interpolated phase wobbles at zero crossings but |X| tracks the converged response.
+palace::test::CustomCheck CompareComplexMagnitudes(double rtol, double atol)
+{
+  return CompareComplexColumns(rtol, atol, true);
+}
+
+// Compare complex columns as complex values, relative to their magnitude. Used for probed
+// field components, whose real or imaginary part can be much smaller than their magnitude
+// (near a zero crossing), where the relative error of that part alone is not meaningful.
+palace::test::CustomCheck CompareComplexValues(double rtol, double atol)
+{
+  return CompareComplexColumns(rtol, atol, false);
+}
+
+// Compare port-S.csv as complex scattering amplitudes rather than separately comparing
+// logarithmic magnitude and wrapped phase. This gives a stable absolute tolerance near
+// transmission zeros and a relative tolerance for order-one reflection/transmission.
+palace::test::CustomCheck ComparePortSParameters(double rtol, double atol)
+{
+  return [rtol, atol](palace::Table &actual, palace::Table &reference,
+                      const std::filesystem::path &)
+  {
+    CHECK(actual.n_rows() == reference.n_rows());
+    CHECK(actual.n_cols() == reference.n_cols());
+    const std::size_t n_rows = std::min(actual.n_rows(), reference.n_rows());
+
+    auto find_header = [](palace::Table &table,
+                          const std::string &needle) -> palace::Column *
+    {
+      for (auto &column : table)
+      {
+        if (column.header_text.find(needle) != std::string::npos)
+        {
+          return &column;
+        }
+      }
+      return nullptr;
+    };
+
+    palace::Column *freq_a = find_header(actual, "f (GHz)");
+    palace::Column *freq_r = find_header(reference, "f (GHz)");
+    REQUIRE(freq_a != nullptr);
+    REQUIRE(freq_r != nullptr);
+    for (std::size_t row = 0; row < n_rows; row++)
+    {
+      CHECK_THAT(freq_a->data[row], Catch::Matchers::WithinAbs(freq_r->data[row], 1.0e-12));
+    }
+
+    std::size_t num_s_columns = 0;
+    for (auto &mag_r : reference)
+    {
+      const std::string &header = mag_r.header_text;
+      const auto start = header.find("S[");
+      const auto end = header.find("]|", start);
+      if (header.find("|S[") == std::string::npos || end == std::string::npos)
+      {
+        continue;
+      }
+      num_s_columns++;
+      const std::string id = header.substr(start, end - start + 1);
+      palace::Column *mag_a = find_header(actual, "|" + id + "|");
+      palace::Column *phase_a = find_header(actual, "arg(" + id + ")");
+      palace::Column *phase_r = find_header(reference, "arg(" + id + ")");
+      REQUIRE(mag_a != nullptr);
+      REQUIRE(phase_a != nullptr);
+      REQUIRE(phase_r != nullptr);
+      for (std::size_t row = 0; row < n_rows; row++)
+      {
+        const double amp_a = std::pow(10.0, mag_a->data[row] / 20.0);
+        const double amp_r = std::pow(10.0, mag_r.data[row] / 20.0);
+        const double phase_a_rad = phase_a->data[row] * std::numbers::pi / 180.0;
+        const double phase_r_rad = phase_r->data[row] * std::numbers::pi / 180.0;
+        const std::complex<double> s_a = std::polar(amp_a, phase_a_rad);
+        const std::complex<double> s_r = std::polar(amp_r, phase_r_rad);
+        const double error = std::abs(s_a - s_r);
+        const double tolerance = atol + rtol * std::max(std::abs(s_a), std::abs(s_r));
+        INFO("row " << row + 1 << " " << id << ": |ΔS|=" << error
+                    << " tolerance=" << tolerance);
+        CHECK(error <= tolerance);
+      }
+    }
+    CHECK(num_s_columns > 0);
+  };
+}
+
 // Standard "drop per-element extrema + eigenmode error columns" list.
-const std::vector<std::string> kEigenExcluded = {"Maximum", "Minimum", "Mean",
+const std::vector<std::string> eigen_excluded = {"Maximum", "Minimum", "Mean",
                                                  "Error (Bkwd.)", "Error (Abs.)"};
-constexpr auto kForceDefaultSolver = palace::test::SolverOverridePolicy::ForceDefault;
+constexpr auto force_default_solver = palace::test::SolverOverridePolicy::ForceDefault;
 
 // Floquet-port S-parameters: compare only the |S[...]| (dB) magnitude columns
 // (phase isn't reproducible). NaN entries (evanescent modes) and signals below
 // -200 dB (negligible) count as matches. Ports the Julia test_floquet_sparams.
 palace::test::CustomCheck TestFloquetSParams(double rtol, double atol)
 {
-  return [rtol, atol](palace::Table &actual, palace::Table &reference)
+  return [rtol, atol](palace::Table &actual, palace::Table &reference,
+                      const std::filesystem::path &)
   {
     const std::size_t n_cols = std::min(actual.n_cols(), reference.n_cols());
     const std::size_t n_rows = std::min(actual.n_rows(), reference.n_rows());
@@ -178,6 +344,1181 @@ palace::test::CustomCheck TestFloquetSParams(double rtol, double atol)
   };
 }
 
+// S-parameter check for a driven wave-port run on a lossless structure. Two guards:
+//   (1) Reference-free power conservation: for each excitation j, Sum_i |S_ij|^2 == 1
+//       within rtol. Insensitive to MPI partitioning; catches the wave-port n x H fix
+//       (GetModalCorrectionOperator) regressing (without it Sum|S|^2 > 1 for E_n != 0
+//       modes, e.g. cylinder TM01 |S11| ~ 1.07).
+//   (2) Reference diff of the S-parameter PHASE columns "arg(S[i][j]) (deg.)" within
+//       rtol/atol. For a lossless structure power conservation already pins the
+//       magnitudes, so the phase is the discriminating quantity (it encodes the port
+//       reactance/impedance): a wrong-phase result that still conserves power is caught
+//       here. The magnitude column is skipped — |S|=1 is ~0 dB, where a relative diff is
+//       meaningless.
+palace::test::CustomCheck TestWavePortLossless(double rtol, double atol = 1.0e-16)
+{
+  return [rtol, atol](palace::Table &actual, palace::Table &reference,
+                      const std::filesystem::path &)
+  {
+    const std::size_t n_rows = actual.n_rows();
+    for (std::size_t r = 0; r < n_rows; ++r)
+    {
+      std::map<std::string, double> power_by_excitation;
+      for (auto &c : actual)
+      {
+        const std::string &hdr = c.header_text;
+        if (hdr.rfind("|S[", 0) != 0 || hdr.find("(dB)") == std::string::npos)
+        {
+          continue;
+        }
+        // Extract the excitation index j (second [..]) from "|S[i][j]| (dB)".
+        const auto b1 = hdr.find(']');
+        const auto b2 = hdr.find('[', b1);
+        const auto b2e = hdr.find(']', b2);
+        if (b1 == std::string::npos || b2 == std::string::npos || b2e == std::string::npos)
+        {
+          continue;
+        }
+        const std::string j = hdr.substr(b2 + 1, b2e - b2 - 1);
+        const double s_lin = std::pow(10.0, c.data[r] / 20.0);  // dB -> linear |S|
+        power_by_excitation[j] += s_lin * s_lin;
+      }
+      for (const auto &[j, sum_sq] : power_by_excitation)
+      {
+        INFO("row " << r + 1 << ", excitation " << j << ": Sum_i |S[i][" << j
+                    << "]|^2 = " << sum_sq);
+        CHECK_THAT(sum_sq, Catch::Matchers::WithinAbs(1.0, rtol));
+      }
+    }
+    // (2) Reference diff of the phase columns only.
+    const std::size_t n_cols = std::min(actual.n_cols(), reference.n_cols());
+    const std::size_t n_cmp = std::min(actual.n_rows(), reference.n_rows());
+    for (std::size_t c = 0; c < n_cols; ++c)
+    {
+      const palace::Column &ac = actual[c];
+      const palace::Column &rc = reference[c];
+      if (rc.header_text.rfind("arg(S", 0) != 0)
+      {
+        continue;
+      }
+      for (std::size_t r = 0; r < n_cmp; ++r)
+      {
+        INFO("row " << r + 1 << " column '" << rc.header_text << "'");
+        CHECK_THAT(ac.data[r], Catch::Matchers::WithinRel(rc.data[r], rtol) ||
+                                   Catch::Matchers::WithinAbs(rc.data[r], atol));
+      }
+    }
+  };
+}
+
+// S-parameter check for a driven run on a uniform line between two wave ports, whose port
+// modes are lossy (complex k_n). Reference-free guards:
+//   (1) Matched ports, |S_jj| <= atol: the port boundary condition and the modal projection
+//       must use the complex k_n and the unconjugated reaction of the lossy mode. With the
+//       real part of k_n in the boundary condition and the conjugated (power) projection,
+//       a matched lossy line shows a spurious reflection of the order of |Im{k_n}| /
+//       Re{k_n}.
+//   (2) Reciprocity, |S_ij - S_ji| <= atol, and passivity, Sum_i |S_ij|^2 <= 1.
+// The transmission columns are also diffed against the reference data at the case
+// tolerances, while the reflection columns, at the level of the discretization error, are
+// only checked by (1).
+palace::test::CustomCheck TestWavePortMatchedLine(double atol,
+                                                  palace::test::RegressionOptions opts)
+{
+  return [atol, opts](palace::Table &actual, palace::Table &reference,
+                      const std::filesystem::path &)
+  {
+    // Complex S[i][j] by row from the "|S[i][j]| (dB)" and "arg(S[i][j]) (deg.)" columns.
+    std::map<std::pair<int, int>, std::vector<std::complex<double>>> S;
+    for (auto &c : actual)
+    {
+      const std::string &hdr = c.header_text;
+      int i = 0, j = 0;
+      if (std::sscanf(hdr.c_str(), "|S[%d][%d]| (dB)", &i, &j) != 2)
+      {
+        continue;
+      }
+      const std::string arg_hdr =
+          "arg(S[" + std::to_string(i) + "][" + std::to_string(j) + "]) (deg.)";
+      const palace::Column *arg = nullptr;
+      for (auto &c_arg : actual)
+      {
+        if (c_arg.header_text == arg_hdr)
+        {
+          arg = &c_arg;
+        }
+      }
+      REQUIRE(arg != nullptr);
+      auto &v = S[{i, j}];
+      for (std::size_t r = 0; r < c.data.size(); r++)
+      {
+        v.push_back(std::polar(std::pow(10.0, c.data[r] / 20.0),
+                               arg->data[r] * std::numbers::pi / 180.0));
+      }
+    }
+    REQUIRE(!S.empty());
+    std::vector<std::string> reflection_columns;
+    for (const auto &[ij, v] : S)
+    {
+      const auto [i, j] = ij;
+      for (std::size_t r = 0; r < v.size(); r++)
+      {
+        INFO("row " << r + 1 << ": S[" << i << "][" << j << "] = " << v[r]);
+        if (i == j)
+        {
+          CHECK(std::abs(v[r]) <= atol);
+        }
+        else if (S.contains({j, i}))
+        {
+          CHECK(std::abs(v[r] - S.at({j, i})[r]) <= atol);
+        }
+      }
+      if (i == j)
+      {
+        reflection_columns.push_back("S[" + std::to_string(i) + "][" + std::to_string(j) +
+                                     "]");
+      }
+    }
+    std::map<int, std::vector<double>> power;
+    for (const auto &[ij, v] : S)
+    {
+      auto &p = power[ij.second];
+      p.resize(v.size(), 0.0);
+      for (std::size_t r = 0; r < v.size(); r++)
+      {
+        p[r] += std::norm(v[r]);
+      }
+    }
+    for (const auto &[j, p] : power)
+    {
+      for (std::size_t r = 0; r < p.size(); r++)
+      {
+        INFO("row " << r + 1 << ", excitation " << j << ": Sum_i |S[i][" << j
+                    << "]|^2 = " << p[r]);
+        CHECK(p[r] <= 1.0);
+      }
+    }
+    auto opts_tx = opts;
+    opts_tx.excluded_columns.insert(opts_tx.excluded_columns.end(),
+                                    reflection_columns.begin(), reflection_columns.end());
+    palace::test::CompareCSVFiles(actual, reference, opts_tx);
+  };
+}
+
+// Analytic TEM mode of a coaxial line filled with a lossy dielectric, of relative
+// permittivity eps_r and loss tangent tan_delta, between conductors of radii a < b (in m):
+// propagation constant kₙ = (ω / c₀) √(εᵣ (1 - i tanδ)) and characteristic impedance
+// Z₀ = η₀ ln(b/a) / (2π √(εᵣ (1 - i tanδ))).
+struct LossyCoaxialLine
+{
+  double eps_r, tan_delta, a, b;
+
+  std::complex<double> Kn(double f_GHz) const
+  {
+    const double k0 =
+        2.0 * std::numbers::pi * f_GHz * 1.0e9 / palace::electromagnetics::c0_;
+    return k0 * std::sqrt(std::complex<double>(eps_r, -eps_r * tan_delta));
+  }
+
+  std::complex<double> Z0() const
+  {
+    return palace::electromagnetics::Z0_ * std::log(b / a) /
+           (2.0 * std::numbers::pi *
+            std::sqrt(std::complex<double>(eps_r, -eps_r * tan_delta)));
+  }
+};
+
+// Reference-free check of the transmission of a uniform lossy line of length L (in m)
+// between two wave ports against the analytic S_21 = S_12 = exp(-i kₙ L), on top of
+// TestWavePortMatchedLine (matched ports, reciprocity, and passivity).
+palace::test::CustomCheck TestWavePortAnalyticLine(LossyCoaxialLine line, double length,
+                                                   double atol,
+                                                   palace::test::RegressionOptions opts)
+{
+  return [line, length, atol, matched = TestWavePortMatchedLine(atol, opts)](
+             palace::Table &actual, palace::Table &reference,
+             const std::filesystem::path &actual_path)
+  {
+    matched(actual, reference, actual_path);
+    auto find_header = [](palace::Table &table,
+                          const std::string &header) -> palace::Column *
+    {
+      for (auto &column : table)
+      {
+        if (column.header_text == header)
+        {
+          return &column;
+        }
+      }
+      return nullptr;
+    };
+    palace::Column *f = find_header(actual, "f (GHz)");
+    REQUIRE(f != nullptr);
+    for (const std::string ij : {"[2][1]", "[1][2]"})
+    {
+      palace::Column *abs_s = find_header(actual, "|S" + ij + "| (dB)");
+      palace::Column *arg_s = find_header(actual, "arg(S" + ij + ") (deg.)");
+      REQUIRE(abs_s != nullptr);
+      REQUIRE(arg_s != nullptr);
+      for (std::size_t r = 0; r < actual.n_rows(); r++)
+      {
+        const std::complex<double> S =
+            std::polar(std::pow(10.0, abs_s->data[r] / 20.0),
+                       arg_s->data[r] * std::numbers::pi / 180.0);
+        const std::complex<double> S_line =
+            std::exp(std::complex<double>(0.0, -1.0) * line.Kn(f->data[r]) * length);
+        INFO("f = " << f->data[r] << " GHz: S" << ij << " = " << S
+                    << ", exp(-i kn L) = " << S_line);
+        CHECK(std::abs(S - S_line) <= atol);
+      }
+    }
+  };
+}
+
+// Reference-free check of the complex characteristic impedance Z_PV of the wave ports of a
+// lossy coaxial line in port-Z.csv against the analytic Z₀, after the reference diff.
+palace::test::CustomCheck
+TestWavePortAnalyticImpedance(LossyCoaxialLine line, double rtol,
+                              palace::test::RegressionOptions opts)
+{
+  return [line, rtol, opts](palace::Table &actual, palace::Table &reference,
+                            const std::filesystem::path &)
+  {
+    palace::test::CompareCSVFiles(actual, reference, opts);
+    const std::complex<double> Z0 = line.Z0();
+    for (const int port : {1, 2})
+    {
+      const palace::Column *re_z = nullptr, *im_z = nullptr;
+      for (auto &column : actual)
+      {
+        if (column.header_text == "Re{Z_PV[" + std::to_string(port) + "]} (Ohm)")
+        {
+          re_z = &column;
+        }
+        else if (column.header_text == "Im{Z_PV[" + std::to_string(port) + "]} (Ohm)")
+        {
+          im_z = &column;
+        }
+      }
+      REQUIRE(re_z != nullptr);
+      REQUIRE(im_z != nullptr);
+      for (std::size_t r = 0; r < actual.n_rows(); r++)
+      {
+        const std::complex<double> Z_PV(re_z->data[r], im_z->data[r]);
+        INFO("row " << r + 1 << ": Z_PV[" << port << "] = " << Z_PV << ", Z0 = " << Z0);
+        CHECK(std::abs(Z_PV - Z0) <= rtol * std::abs(Z0));
+      }
+    }
+  };
+}
+
+// Analytic TE11 mode of a lossless circular waveguide of radius a (in m), filled with a
+// dielectric of relative permittivity eps_r: kₙ² = (ω / c₀)² εᵣ − (χ'₁₁ / a)², with the
+// first zero χ'₁₁ of J₁', and the root kₙ = −iα with α > 0 below cutoff.
+struct CircularWaveguideTE11
+{
+  double eps_r, a;
+
+  std::complex<double> Kn(double f_GHz) const
+  {
+    constexpr double chi11 = 1.8411837813406593;
+    const double k = 2.0 * std::numbers::pi * f_GHz * 1.0e9 * std::sqrt(eps_r) /
+                     palace::electromagnetics::c0_;
+    const double kn2 = k * k - (chi11 / a) * (chi11 / a);
+    return (kn2 < 0.0) ? std::complex<double>(0.0, -std::sqrt(-kn2))
+                       : std::complex<double>(std::sqrt(kn2), 0.0);
+  }
+};
+
+// Reference-free check of the reflection of a lossless waveguide of length L (in m),
+// shorted at the far end, through its port mode, swept from below cutoff: S_11 =
+// −exp(−2ikₙL), so |S_11| = exp(2 Im{kₙ} L) < 1 for the evanescent mode below cutoff, with
+// kₙ = −iα on the branch which decays away from the port, and |S_11| = 1 above. The port
+// mode on the other branch, growing away from the port, gives |S_11| = exp(2αL) > 1. The
+// attenuation αL is compared to that of the analytic mode within rtol_analytic, for the
+// discretization error of the cutoff near it. The complex S_11 is also compared to the
+// reference data within rtol, rather than its phase, which is ±180° below cutoff.
+palace::test::CustomCheck TestWavePortShortedGuide(CircularWaveguideTE11 guide,
+                                                   double length, double rtol_analytic,
+                                                   double rtol)
+{
+  return [guide, length, rtol_analytic, rtol](
+             palace::Table &actual, palace::Table &reference, const std::filesystem::path &)
+  {
+    auto S11 = [](palace::Table &table, std::size_t r)
+    {
+      const palace::Column *abs_s = nullptr, *arg_s = nullptr;
+      for (auto &column : table)
+      {
+        if (column.header_text == "|S[1][1]| (dB)")
+        {
+          abs_s = &column;
+        }
+        else if (column.header_text == "arg(S[1][1]) (deg.)")
+        {
+          arg_s = &column;
+        }
+      }
+      REQUIRE(abs_s != nullptr);
+      REQUIRE(arg_s != nullptr);
+      return std::polar(std::pow(10.0, abs_s->data[r] / 20.0),
+                        arg_s->data[r] * std::numbers::pi / 180.0);
+    };
+    const palace::Column *f = nullptr;
+    for (auto &column : actual)
+    {
+      if (column.header_text == "f (GHz)")
+      {
+        f = &column;
+      }
+    }
+    REQUIRE(f != nullptr);
+    REQUIRE(actual.n_rows() == reference.n_rows());
+    for (std::size_t r = 0; r < actual.n_rows(); r++)
+    {
+      const std::complex<double> S = S11(actual, r), S_ref = S11(reference, r);
+      const double decay = 2.0 * guide.Kn(f->data[r]).imag() * length;
+      INFO("f = " << f->data[r] << " GHz: S11 = " << S << ", reference " << S_ref
+                  << ", analytic |S11| = " << std::exp(decay));
+      CHECK(std::abs(S) <= 1.0 + 1.0e-6);
+      CHECK(std::abs(std::log(std::abs(S)) - decay) <=
+            rtol_analytic * std::abs(decay) + 1.0e-6);
+      CHECK(std::abs(S - S_ref) <= rtol * std::abs(S_ref) + 1.0e-12);
+    }
+  };
+}
+
+// Reference-free check of the wave-port total-field impedance in port-Z.csv. At the wave
+// port's own excitation, Z[i][i] = |V|^2 / conj(P) must agree with the input impedance
+// implied by the reflection coefficient in the sibling port-S.csv,
+//   Z_PV (1 + S_ii) / (1 - S_ii).
+// V and P are integrals of the total field while S_ii is a modal overlap, so the two
+// agree only with the correct conjugation of P: a flipped Im{Z} is off by O(1) and cannot
+// be hidden by regenerating the reference data. The reference diff of port-Z.csv still
+// runs first at the case tolerances; the same rtol bounds |Z - Z_S| / |Z_S|.
+palace::test::CustomCheck TestWavePortInputImpedance(int port,
+                                                     palace::test::RegressionOptions opts)
+{
+  return [port, opts](palace::Table &actual, palace::Table &reference,
+                      const std::filesystem::path &actual_path)
+  {
+    palace::test::CompareCSVFiles(actual, reference, opts);
+
+    auto find_header = [](palace::Table &table,
+                          const std::string &header) -> palace::Column *
+    {
+      for (auto &column : table)
+      {
+        if (column.header_text == header)
+        {
+          return &column;
+        }
+      }
+      return nullptr;
+    };
+    palace::TableWithCSVFile s_file((actual_path.parent_path() / "port-S.csv").string(),
+                                    /*load_existing_file=*/true);
+    const std::string ii = "[" + std::to_string(port) + "][" + std::to_string(port) + "]";
+    palace::Column *re_z = find_header(actual, "Re{Z" + ii + "} (Ohm)");
+    palace::Column *im_z = find_header(actual, "Im{Z" + ii + "} (Ohm)");
+    palace::Column *re_z_pv =
+        find_header(actual, "Re{Z_PV[" + std::to_string(port) + "]} (Ohm)");
+    palace::Column *im_z_pv =
+        find_header(actual, "Im{Z_PV[" + std::to_string(port) + "]} (Ohm)");
+    palace::Column *abs_s = find_header(s_file.table, "|S" + ii + "| (dB)");
+    palace::Column *arg_s = find_header(s_file.table, "arg(S" + ii + ") (deg.)");
+    REQUIRE(re_z != nullptr);
+    REQUIRE(im_z != nullptr);
+    REQUIRE(re_z_pv != nullptr);
+    REQUIRE(im_z_pv != nullptr);
+    REQUIRE(abs_s != nullptr);
+    REQUIRE(arg_s != nullptr);
+    REQUIRE(s_file.table.n_rows() == actual.n_rows());
+    for (std::size_t r = 0; r < actual.n_rows(); r++)
+    {
+      const std::complex<double> Z(re_z->data[r], im_z->data[r]);
+      const std::complex<double> Z_PV(re_z_pv->data[r], im_z_pv->data[r]);
+      const std::complex<double> S = std::polar(std::pow(10.0, abs_s->data[r] / 20.0),
+                                                arg_s->data[r] * std::numbers::pi / 180.0);
+      const std::complex<double> Z_S = Z_PV * (1.0 + S) / (1.0 - S);
+      INFO("row " << r + 1 << ": Z" << ii << " = " << Z
+                  << ", Z_PV (1 + S) / (1 - S) = " << Z_S);
+      CHECK(std::abs(Z - Z_S) <= opts.rtol * std::abs(Z_S));
+    }
+  };
+}
+
+// Reference-free check of the complex characteristic impedances of a lossy quasi-TEM
+// boundary mode in mode-Z.csv. The power-voltage impedance Z_PV = |V|² / 2P* of the mode
+// must match the voltage-current impedance Z_VI = V / I: P is a modal quantity, while V and
+// I are line integrals of the field. On a line with a lossless dielectric, the shunt
+// admittance per unit length is iωC with C real, so that the characteristic impedance
+// Z0 = kₙ / ωC also has the phase of kₙ (from the sibling mode-kn.csv). The reference diff
+// of mode-Z.csv still runs first at the case tolerances.
+palace::test::CustomCheck
+TestBoundaryModeLossyImpedance(int mode, palace::test::RegressionOptions opts)
+{
+  return [mode, opts](palace::Table &actual, palace::Table &reference,
+                      const std::filesystem::path &actual_path)
+  {
+    palace::test::CompareCSVFiles(actual, reference, opts);
+
+    auto find_header = [](palace::Table &table,
+                          const std::string &header) -> palace::Column *
+    {
+      for (auto &column : table)
+      {
+        if (column.header_text == header)
+        {
+          return &column;
+        }
+      }
+      return nullptr;
+    };
+    palace::TableWithCSVFile kn_file((actual_path.parent_path() / "mode-kn.csv").string(),
+                                     /*load_existing_file=*/true);
+    palace::Column *re_z_pv = find_header(actual, "Re{Z_PV[1]} (Ohm)");
+    palace::Column *im_z_pv = find_header(actual, "Im{Z_PV[1]} (Ohm)");
+    palace::Column *re_z_vi = find_header(actual, "Re{Z_VI[1]} (Ohm)");
+    palace::Column *im_z_vi = find_header(actual, "Im{Z_VI[1]} (Ohm)");
+    palace::Column *re_kn = find_header(kn_file.table, "Re{kn} (1/m)");
+    palace::Column *im_kn = find_header(kn_file.table, "Im{kn} (1/m)");
+    REQUIRE(re_z_pv != nullptr);
+    REQUIRE(im_z_pv != nullptr);
+    REQUIRE(re_z_vi != nullptr);
+    REQUIRE(im_z_vi != nullptr);
+    REQUIRE(re_kn != nullptr);
+    REQUIRE(im_kn != nullptr);
+    const auto r = static_cast<std::size_t>(mode - 1);
+    REQUIRE(r < actual.n_rows());
+    REQUIRE(r < kn_file.table.n_rows());
+    const std::complex<double> Z_PV(re_z_pv->data[r], im_z_pv->data[r]);
+    const std::complex<double> Z_VI(re_z_vi->data[r], im_z_vi->data[r]);
+    const std::complex<double> kn(re_kn->data[r], im_kn->data[r]);
+    INFO("mode " << mode << ": Z_PV = " << Z_PV << ", Z_VI = " << Z_VI << ", kn = " << kn);
+    CHECK(std::abs(std::arg(kn)) > 0.1);  // Lossy enough for the check to be meaningful
+    CHECK(std::abs(Z_PV - Z_VI) <= opts.rtol * std::abs(Z_VI));
+    CHECK(std::abs(std::arg(Z_PV) - std::arg(kn)) <= opts.rtol * std::abs(std::arg(kn)));
+  };
+}
+
+// Compare synthesized rom-eigenvalues.csv against the (regenerated) reference. Spurious
+// low-Q roots (large HDM backward error) interleave with the converged eigenpairs (backward
+// error <= bkwd_max), and their count/order drift with the partition, so pair each
+// converged reference eigenpair with the nearest converged actual root by Re{f} and assert
+// Re{f}, Im{f}, Q. Q is skipped for near-real modes (|Im{f}| <= atol_im), where Q ~ Re/(2
+// Im) is noise-dominated; their Im is checked against an absolute floor instead.
+palace::test::CustomCheck CompareRomEigenvalues(double bkwd_max, double rtol_re,
+                                                double rtol_im, double atol_im,
+                                                double rtol_q)
+{
+  return [=](palace::Table &actual, palace::Table &reference, const std::filesystem::path &)
+  {
+    auto col = [](palace::Table &t, const std::string &key)
+    {
+      for (std::size_t c = 0; c < t.n_cols(); ++c)
+      {
+        if (t[c].header_text.find(key) != std::string::npos)
+        {
+          return static_cast<int>(c);
+        }
+      }
+      return -1;
+    };
+    const int a_re = col(actual, "Re{f}"), a_im = col(actual, "Im{f}"),
+              a_q = col(actual, "Q"), a_bk = col(actual, "Bkwd");
+    const int r_re = col(reference, "Re{f}"), r_im = col(reference, "Im{f}"),
+              r_q = col(reference, "Q"), r_bk = col(reference, "Bkwd");
+    REQUIRE(std::min({a_re, a_im, a_q, a_bk, r_re, r_im, r_q, r_bk}) >= 0);
+
+    // Converged actual roots (candidate matches for each reference eigenpair).
+    std::vector<std::size_t> a_phys;
+    for (std::size_t r = 0; r < actual[a_bk].data.size(); ++r)
+    {
+      if (std::abs(actual[a_bk].data[r]) <= bkwd_max)
+      {
+        a_phys.push_back(r);
+      }
+    }
+    REQUIRE(!a_phys.empty());
+
+    std::size_t n_ref_phys = 0;
+    for (std::size_t r = 0; r < reference[r_bk].data.size(); ++r)
+    {
+      if (std::abs(reference[r_bk].data[r]) > bkwd_max)
+      {
+        continue;
+      }
+      ++n_ref_phys;
+      const double re_ref = reference[r_re].data[r], im_ref = reference[r_im].data[r],
+                   q_ref = reference[r_q].data[r];
+      std::size_t best = a_phys.front();
+      for (std::size_t k : a_phys)
+      {
+        if (std::abs(actual[a_re].data[k] - re_ref) <
+            std::abs(actual[a_re].data[best] - re_ref))
+        {
+          best = k;
+        }
+      }
+      const double re_a = actual[a_re].data[best], im_a = actual[a_im].data[best],
+                   q_a = actual[a_q].data[best];
+      INFO("reference eigenpair Re{f}=" << re_ref << " Im{f}=" << im_ref << " Q=" << q_ref
+                                        << " -> nearest converged actual Re{f}=" << re_a
+                                        << " Im{f}=" << im_a << " Q=" << q_a);
+      CHECK_THAT(re_a, Catch::Matchers::WithinRel(re_ref, rtol_re));
+      CHECK_THAT(im_a, Catch::Matchers::WithinRel(im_ref, rtol_im) ||
+                           Catch::Matchers::WithinAbs(im_ref, atol_im));
+      if (std::abs(im_ref) > atol_im)
+      {
+        CHECK_THAT(q_a, Catch::Matchers::WithinRel(q_ref, rtol_q));
+        // Root reporting uses the eigenmode convention Q = |f| / (2|Im f|) (full complex
+        // magnitude), not |Re f| / (2|Im f|); verify the reported column follows it.
+        const double q_conv = std::sqrt(re_a * re_a + im_a * im_a) / (2.0 * std::abs(im_a));
+        CHECK_THAT(q_a, Catch::Matchers::WithinRel(q_conv, 1.0e-6));
+      }
+    }
+    REQUIRE(n_ref_phys > 0);             // reference must contain a converged eigenpair
+    CHECK(a_phys.size() >= n_ref_phys);  // live output must not drop converged modes
+  };
+}
+
+// Compare the live field-derived S parameters against a reconstruction that solves the
+// synthesized pencil with the frequency-dependent projected wave-port source/observation
+// vectors. Hybrid modes rotate with frequency, so these coupling maps are required in
+// addition to the fixed L/R/C pencil.
+palace::test::CustomCheck TestWavePortCoupledRoundTrip(double atol)
+{
+  return [atol](palace::Table &actual, palace::Table &,
+                const std::filesystem::path &actual_path)
+  {
+    namespace fs = std::filesystem;
+    const fs::path dir = actual_path.parent_path();
+
+    auto find = [](palace::Table &t, const std::string &header) -> int
+    {
+      for (std::size_t c = 0; c < t.n_cols(); c++)
+      {
+        if (t[c].header_text == header)
+        {
+          return static_cast<int>(c);
+        }
+      }
+      return -1;
+    };
+
+    // Read a synthesized matrix CSV (column c header = node label, data[r] = M(r, c)); a
+    // missing file yields an empty matrix, treated as zero.
+    auto read_real = [](const fs::path &p, std::vector<std::string> *lab) -> Eigen::MatrixXd
+    {
+      if (!fs::is_regular_file(p))
+      {
+        return Eigen::MatrixXd(0, 0);
+      }
+      palace::TableWithCSVFile w(p.string(), /*load_existing_file=*/true);
+      palace::Table &t = w.table;
+      const long n = static_cast<long>(t.n_cols()), m = static_cast<long>(t.n_rows());
+      Eigen::MatrixXd M(m, n);
+      for (long c = 0; c < n; ++c)
+      {
+        if (lab)
+        {
+          lab->push_back(t[c].header_text);
+        }
+        for (long r = 0; r < m; ++r)
+        {
+          M(r, c) = t[c].data[r];
+        }
+      }
+      return M;
+    };
+
+    // Rebuild the exported pencil Y_syn(ω) = L⁻¹/s + R⁻¹ + s·C and the coupling maps
+    // G(ω)/H(ω), all from the CSVs, so the check validates the exported files (not the
+    // in-memory objects). Node labels come from L⁻¹'s always-populated real part.
+    std::vector<std::string> labels;
+    const Eigen::MatrixXd linv_re = read_real(dir / "rom-Linv-re.csv", &labels);
+    REQUIRE(linv_re.rows() > 0);
+    const long na = linv_re.rows();
+    std::map<std::string, long> row_of;
+    for (long i = 0; i < na; ++i)
+    {
+      row_of[labels[i]] = i;
+    }
+    auto term = [&](const std::string &stem) -> Eigen::MatrixXcd
+    {
+      const Eigen::MatrixXd re = read_real(dir / (stem + "-re.csv"), nullptr);
+      const Eigen::MatrixXd im = read_real(dir / (stem + "-im.csv"), nullptr);
+      Eigen::MatrixXcd M = Eigen::MatrixXcd::Zero(na, na);
+      if (re.rows() == na && re.cols() == na)
+      {
+        M.real() = re;
+      }
+      if (im.rows() == na && im.cols() == na)
+      {
+        M.imag() = im;
+      }
+      return M;
+    };
+    const Eigen::MatrixXcd linv = term("rom-Linv"), rinv = term("rom-Rinv"),
+                           cap = term("rom-C");
+
+    // Parse a coupling-map CSV. G columns are keyed Re/Im{G[<label>][<port>]} (state row,
+    // port col); H columns Re/Im{H[<port>][<label>]}. Returns one na×n_ports (G) or
+    // n_ports×na (H) matrix per frequency, plus the port order as first seen.
+    auto load_coupling = [&](const std::string &fname, bool is_g,
+                             std::vector<int> &ports) -> std::vector<Eigen::MatrixXcd>
+    {
+      palace::TableWithCSVFile w((dir / fname).string(), /*load_existing_file=*/true);
+      palace::Table &t = w.table;
+      const long nf = static_cast<long>(t.n_rows());
+      struct Entry
+      {
+        long row, pcol, re_c, im_c;
+      };
+      std::vector<Entry> entries;
+      ports.clear();
+      auto port_col = [&](int port) -> long
+      {
+        for (std::size_t k = 0; k < ports.size(); ++k)
+        {
+          if (ports[k] == port)
+          {
+            return static_cast<long>(k);
+          }
+        }
+        ports.push_back(port);
+        return static_cast<long>(ports.size()) - 1;
+      };
+      for (std::size_t c = 0; c < t.n_cols(); ++c)
+      {
+        const std::string &h = t[c].header_text;
+        const bool re = h.starts_with("Re{"), im = h.starts_with("Im{");
+        if ((!re && !im) || h[3] != (is_g ? 'G' : 'H'))
+        {
+          continue;
+        }
+        const auto l = h.find('['), mid = h.find("]["), r = h.find("]}");
+        REQUIRE(l != std::string::npos);
+        REQUIRE(mid != std::string::npos);
+        REQUIRE(r != std::string::npos);
+        const std::string a = h.substr(l + 1, mid - l - 1);
+        const std::string b = h.substr(mid + 2, r - mid - 2);
+        const std::string label = is_g ? a : b;
+        const int port = std::stoi(is_g ? b : a);
+        auto it = row_of.find(label);
+        REQUIRE(it != row_of.end());
+        const long pc = port_col(port);
+        // Find or create the entry for this (row, port).
+        Entry *e = nullptr;
+        for (auto &en : entries)
+        {
+          if (en.row == it->second && en.pcol == pc)
+          {
+            e = &en;
+            break;
+          }
+        }
+        if (!e)
+        {
+          entries.push_back({it->second, pc, -1, -1});
+          e = &entries.back();
+        }
+        (re ? e->re_c : e->im_c) = static_cast<long>(c);
+      }
+      const long np = static_cast<long>(ports.size());
+      std::vector<Eigen::MatrixXcd> out(nf);
+      for (long f = 0; f < nf; ++f)
+      {
+        out[f] = is_g ? Eigen::MatrixXcd::Zero(na, np) : Eigen::MatrixXcd::Zero(np, na);
+        for (const auto &e : entries)
+        {
+          const double vr = e.re_c >= 0 ? t[e.re_c].data[f] : 0.0;
+          const double vi = e.im_c >= 0 ? t[e.im_c].data[f] : 0.0;
+          const std::complex<double> v(vr, vi);
+          if (is_g)
+          {
+            out[f](e.row, e.pcol) = v;
+          }
+          else
+          {
+            out[f](e.pcol, e.row) = v;
+          }
+        }
+      }
+      return out;
+    };
+    std::vector<int> g_ports, h_ports;
+    const std::vector<Eigen::MatrixXcd> G =
+        load_coupling("rom-coupled-G.csv", true, g_ports);
+    const std::vector<Eigen::MatrixXcd> H =
+        load_coupling("rom-coupled-H.csv", false, h_ports);
+    REQUIRE(g_ports == h_ports);
+    const long np = static_cast<long>(g_ports.size());
+
+    palace::TableWithCSVFile sw((dir / "rom-coupled-S.csv").string(),
+                                /*load_existing_file=*/true);
+    palace::Table &circuit = sw.table;
+    REQUIRE(circuit.n_rows() == actual.n_rows());
+    REQUIRE(static_cast<long>(G.size()) == static_cast<long>(circuit.n_rows()));
+    const int f_col = find(circuit, "f (GHz)");
+    REQUIRE(f_col >= 0);
+
+    // Per-port de-embed factor exp(i·kₙ·d_offset): G/H are boundary-plane maps,
+    // rom-coupled-S carries the offset phase, so S[q][p] = (H Y⁻¹ G -
+    // I)[q][p]·deembed[q]·deembed[p].
+    std::vector<int> de_re(np, -1), de_im(np, -1);
+    for (long p = 0; p < np; p++)
+    {
+      const auto key = "deembed[" + std::to_string(g_ports[p]) + "]";
+      de_re[p] = find(circuit, "Re{" + key + "}");
+      de_im[p] = find(circuit, "Im{" + key + "}");
+      REQUIRE(de_re[p] >= 0);
+      REQUIRE(de_im[p] >= 0);
+    }
+    for (std::size_t r = 0; r < circuit.n_rows(); r++)
+    {
+      // Reconstruct the boundary-plane S = H Y_syn⁻¹ G - I from the exported CSVs.
+      const std::complex<double> s(0.0,
+                                   2.0 * std::numbers::pi * circuit[f_col].data[r] * 1.0e9);
+      const Eigen::MatrixXcd Y = linv / s + rinv + s * cap;
+      const Eigen::MatrixXcd S_csv =
+          H[r] * Y.fullPivLu().solve(G[r]) - Eigen::MatrixXcd::Identity(np, np);
+      std::vector<std::complex<double>> deembed(np);
+      for (long p = 0; p < np; p++)
+      {
+        deembed[p] = {circuit[de_re[p]].data[r], circuit[de_im[p]].data[r]};
+      }
+      for (long obs = 0; obs < np; obs++)
+      {
+        for (long drive = 0; drive < np; drive++)
+        {
+          const auto key = "S[" + std::to_string(g_ports[obs]) + "][" +
+                           std::to_string(g_ports[drive]) + "]";
+          const int re = find(circuit, "Re{" + key + "}");
+          const int im = find(circuit, "Im{" + key + "}");
+          REQUIRE(re >= 0);
+          REQUIRE(im >= 0);
+          // The exported G/H/L/R/C plus de-embed factors must rebuild the exported S.
+          const std::complex<double> s_rec =
+              S_csv(obs, drive) * deembed[obs] * deembed[drive];
+          const std::complex<double> s_rom(circuit[re].data[r], circuit[im].data[r]);
+          INFO("row " << r + 1 << " " << key << " CSV-reconstructed " << s_rec
+                      << " vs rom-coupled-S " << s_rom);
+          CHECK(std::abs(s_rec - s_rom) <= 1.0e-9);
+        }
+      }
+    }
+
+    // rom-coupled-S vs the live field-derived port-S (physics; cross-backend tolerance).
+    for (std::size_t c = 0; c < actual.n_cols(); c++)
+    {
+      const std::string &header = actual[c].header_text;
+      if (header.rfind("|S[", 0) != 0)
+      {
+        continue;
+      }
+      const auto close = header.find("| (dB)");
+      REQUIRE(close != std::string::npos);
+      const std::string key = header.substr(1, close - 1);
+      const int phase = find(actual, "arg(" + key + ") (deg.)");
+      const int re = find(circuit, "Re{" + key + "}");
+      const int im = find(circuit, "Im{" + key + "}");
+      REQUIRE(phase >= 0);
+      REQUIRE(re >= 0);
+      REQUIRE(im >= 0);
+      for (std::size_t r = 0; r < actual.n_rows(); r++)
+      {
+        const double mag = std::pow(10.0, actual[c].data[r] / 20.0);
+        const double arg = std::numbers::pi * actual[phase].data[r] / 180.0;
+        const std::complex<double> field = mag * std::exp(std::complex<double>(0.0, arg));
+        const std::complex<double> synth(circuit[re].data[r], circuit[im].data[r]);
+        INFO("row " << r + 1 << " " << key << ": synthesized " << synth << " vs field "
+                    << field);
+        CHECK(std::abs(synth - field) <= atol);
+      }
+    }
+  };
+}
+
+// End-to-end de-embed/reconnect round-trip for a synthesized wave-port network. The swept
+// port-S.csv is field-derived (modal overlap of the ROM-reconstructed field); the
+// rom-{Linv,Rinv,C} pencil is the independently synthesized circuit. This check closes the
+// loop: it reduces the total pencil Y(iω) = L⁻¹/(iω) + R⁻¹ + iω·C to the physical port
+// terminals by a Schur complement onto the internal (basis + aux) states, de-embeds each
+// port's own reference load y_ref (baked into the port's diagonal load block), renormalizes
+// to the real modal reference y_ref via a Kurokawa power-wave transform, and checks the
+// resulting |S| against Palace's field-derived port-S. Agreement validates that the
+// exported circuit reproduces the solver's own S-parameters. Frequencies and per-port
+// y_ref are read from the sibling rom-port-reference.csv (same sweep grid).
+palace::test::CustomCheck TestWavePortSRoundTrip(double atol_lin)
+{
+  return [atol_lin](palace::Table &actual, palace::Table &,
+                    const std::filesystem::path &actual_path)
+  {
+    namespace fs = std::filesystem;
+    const fs::path dir = actual_path.parent_path();
+
+    // Read a synthesized matrix CSV. Table layout (see RomOperator::print_table): column c
+    // has header = node label, data[r] = M(r, c). A zero real/imag part is not written, so
+    // a missing file yields an empty matrix (treated as zero by the caller).
+    auto read_real = [](const fs::path &p, std::vector<std::string> *lab) -> Eigen::MatrixXd
+    {
+      if (!fs::is_regular_file(p))
+      {
+        return Eigen::MatrixXd(0, 0);
+      }
+      palace::TableWithCSVFile w(p.string(), /*load_existing_file=*/true);
+      palace::Table &t = w.table;
+      const long n = static_cast<long>(t.n_cols());
+      const long m = static_cast<long>(t.n_rows());
+      Eigen::MatrixXd M(m, n);
+      for (long c = 0; c < n; ++c)
+      {
+        if (lab)
+        {
+          lab->push_back(t[c].header_text);
+        }
+        for (long r = 0; r < m; ++r)
+        {
+          M(r, c) = t[c].data[r];
+        }
+      }
+      return M;
+    };
+
+    // L⁻¹ real part is always populated (α₀ + HDM K), so it defines the label set and size.
+    std::vector<std::string> labels;
+    const Eigen::MatrixXd linv_re = read_real(dir / "rom-Linv-re.csv", &labels);
+    REQUIRE(linv_re.rows() > 0);
+    const long n_total = linv_re.rows();
+    auto term = [&](const std::string &stem) -> Eigen::MatrixXcd
+    {
+      const Eigen::MatrixXd re = read_real(dir / (stem + "-re.csv"), nullptr);
+      const Eigen::MatrixXd im = read_real(dir / (stem + "-im.csv"), nullptr);
+      Eigen::MatrixXcd M = Eigen::MatrixXcd::Zero(n_total, n_total);
+      if (re.rows() == n_total && re.cols() == n_total)
+      {
+        M.real() = re;
+      }
+      if (im.rows() == n_total && im.cols() == n_total)
+      {
+        M.imag() = im;
+      }
+      return M;
+    };
+    const Eigen::MatrixXcd linv = term("rom-Linv");
+    const Eigen::MatrixXcd rinv = term("rom-Rinv");
+    const Eigen::MatrixXcd cap = term("rom-C");
+
+    // Port terminals and their real modal reference y_ref(ω), read from the sibling
+    // rom-port-reference.csv. Its "Re{Y_ref[<label>]} (S)" columns give the port order and
+    // the de-embed/renormalization reference; its "f (GHz)" column gives the sweep grid.
+    palace::TableWithCSVFile ref_w((dir / "rom-port-reference.csv").string(),
+                                   /*load_existing_file=*/true);
+    palace::Table &ref_t = ref_w.table;
+    std::vector<std::string> port_labels;
+    std::vector<int> re_yref_col;
+    int f_col = -1;
+    for (std::size_t c = 0; c < ref_t.n_cols(); ++c)
+    {
+      const std::string &h = ref_t[c].header_text;
+      if (h.starts_with("f (GHz)"))
+      {
+        f_col = static_cast<int>(c);
+      }
+      else if (h.starts_with("Re{Y_ref["))
+      {
+        const auto lb = h.find('[');
+        const auto rb = h.find(']', lb);
+        port_labels.push_back(h.substr(lb + 1, rb - lb - 1));
+        re_yref_col.push_back(static_cast<int>(c));
+      }
+    }
+    REQUIRE(f_col >= 0);
+    const long n_ports = static_cast<long>(port_labels.size());
+    REQUIRE(n_ports >= 1);
+
+    // Map each port terminal to its pencil row, and everything else to the internal block.
+    std::vector<long> pidx;
+    for (const auto &pl : port_labels)
+    {
+      const auto it = std::ranges::find(labels, pl);
+      REQUIRE(it != labels.end());
+      pidx.push_back(static_cast<long>(it - labels.begin()));
+    }
+    std::vector<long> iidx;
+    for (long i = 0; i < n_total; ++i)
+    {
+      if (std::ranges::find(pidx, i) == pidx.end())
+      {
+        iidx.push_back(i);
+      }
+    }
+    const long n_int = static_cast<long>(iidx.size());
+
+    // Sweep grid + per-port y_ref from the reference table.
+    const std::size_t n_freq = ref_t.n_rows();
+    const std::complex<double> j1(0.0, 1.0);
+    for (std::size_t rr = 0; rr < n_freq; ++rr)
+    {
+      const double f_ghz = ref_t[f_col].data[rr];
+      const std::complex<double> s = j1 * (2.0 * std::numbers::pi * f_ghz * 1.0e9);
+
+      // Full nodal admittance, then Schur-reduce onto the n_ports terminals.
+      const Eigen::MatrixXcd y = linv / s + rinv + s * cap;
+      Eigen::MatrixXcd ypp(n_ports, n_ports), ypi(n_ports, n_int), yip(n_int, n_ports),
+          yii(n_int, n_int);
+      for (long a = 0; a < n_ports; ++a)
+      {
+        for (long b = 0; b < n_ports; ++b)
+        {
+          ypp(a, b) = y(pidx[a], pidx[b]);
+        }
+        for (long b = 0; b < n_int; ++b)
+        {
+          ypi(a, b) = y(pidx[a], iidx[b]);
+          yip(b, a) = y(iidx[b], pidx[a]);
+        }
+      }
+      for (long a = 0; a < n_int; ++a)
+      {
+        for (long b = 0; b < n_int; ++b)
+        {
+          yii(a, b) = y(iidx[a], iidx[b]);
+        }
+      }
+      Eigen::MatrixXcd yports = ypp;
+      if (n_int > 0)
+      {
+        yports -= ypi * yii.fullPivLu().solve(yip);
+      }
+
+      // De-embed each port's own reference load (baked into the diagonal), then renormalize
+      // to y_ref via the Kurokawa power-wave transform S = √Y0 (I − Z0·Yd)(I + Z0·Yd)⁻¹ √Z0
+      // with Z0 = diag(1/y_ref) (real reference).
+      Eigen::VectorXd yref(n_ports);
+      for (long a = 0; a < n_ports; ++a)
+      {
+        yref(a) = ref_t[re_yref_col[a]].data[rr];
+        yports(a, a) -= yref(a);
+      }
+      Eigen::MatrixXcd z0 = Eigen::MatrixXcd::Zero(n_ports, n_ports);
+      Eigen::MatrixXcd rootY = Eigen::MatrixXcd::Zero(n_ports, n_ports);
+      Eigen::MatrixXcd rootZ = Eigen::MatrixXcd::Zero(n_ports, n_ports);
+      for (long a = 0; a < n_ports; ++a)
+      {
+        z0(a, a) = 1.0 / yref(a);
+        rootY(a, a) = std::sqrt(yref(a));
+        rootZ(a, a) = 1.0 / std::sqrt(yref(a));
+      }
+      const Eigen::MatrixXcd id = Eigen::MatrixXcd::Identity(n_ports, n_ports);
+      const Eigen::MatrixXcd smat =
+          rootY * (id - z0 * yports) * (id + z0 * yports).fullPivLu().inverse() * rootZ;
+
+      // Compare |S[i][j]| against the live field-derived port-S (dB → linear).
+      for (long i = 0; i < n_ports; ++i)
+      {
+        for (long jj = 0; jj < n_ports; ++jj)
+        {
+          const std::string hdr =
+              "|S[" + std::to_string(i + 1) + "][" + std::to_string(jj + 1) + "]| (dB)";
+          int sc = -1;
+          for (std::size_t c = 0; c < actual.n_cols(); ++c)
+          {
+            if (actual[c].header_text == hdr)
+            {
+              sc = static_cast<int>(c);
+              break;
+            }
+          }
+          if (sc < 0 || rr >= actual.n_rows())
+          {
+            continue;
+          }
+          const double meas_lin = std::pow(10.0, actual[sc].data[rr] / 20.0);
+          const double pen_lin = std::abs(smat(i, jj));
+          INFO("f = " << f_ghz << " GHz, |S[" << i + 1 << "][" << jj + 1 << "]| pencil "
+                      << pen_lin << " vs field " << meas_lin);
+          CHECK_THAT(pen_lin, Catch::Matchers::WithinAbs(meas_lin, atol_lin));
+        }
+      }
+    }
+  };
+}
+
+// Reference-free check of the absorbing boundary reflection in the waveguide_absorbing
+// case: a rectangular PEC waveguide (width a) driven in TE10 by a wave port and terminated
+// by an absorbing boundary. On a flat boundary the TE10 field E_y = sin(kx x) e^{-i β z}
+// is an eigenfunction of the boundary operator, which imposes n × ∇ × E = i k_eff E_t
+// instead of the exact i β E_t, so |S11| = |β - k_eff| / (β + k_eff), with k_eff = k for
+// first order and k - kx²/(2k) for second order (curl-curl coefficient 1/(2ik)). The
+// opposite sign of the second-order term (k + kx²/(2k)) reflects more than first order.
+palace::test::CustomCheck TestAbsorbingReflection(int order, double atol_lin)
+{
+  return [order, atol_lin](palace::Table &actual, palace::Table &,
+                           const std::filesystem::path &)
+  {
+    constexpr double c0 = 299792458.0;
+    constexpr double a = 20.0e-3;  // Guide width (m), see mesh/mesh.jl
+    const double kx = std::numbers::pi / a;
+    const palace::Column *freq = nullptr, *s11 = nullptr;
+    for (auto &c : actual)
+    {
+      if (c.header_text.find("f (GHz)") != std::string::npos)
+      {
+        freq = &c;
+      }
+      else if (c.header_text.find("|S[1][1]| (dB)") != std::string::npos)
+      {
+        s11 = &c;
+      }
+    }
+    REQUIRE(freq);
+    REQUIRE(s11);
+    for (std::size_t r = 0; r < actual.n_rows(); ++r)
+    {
+      const double k = 2.0 * std::numbers::pi * freq->data[r] * 1.0e9 / c0;
+      const double beta = std::sqrt(k * k - kx * kx);
+      const double k_eff = (order == 1) ? k : k - kx * kx / (2.0 * k);
+      const double r_exact = std::abs(beta - k_eff) / (beta + k_eff);
+      const double s11_lin = std::pow(10.0, s11->data[r] / 20.0);
+      INFO("f = " << freq->data[r] << " GHz: |S11| = " << s11_lin << ", closed form "
+                  << r_exact);
+      CHECK_THAT(s11_lin, Catch::Matchers::WithinAbs(r_exact, atol_lin));
+    }
+  };
+}
+
+// Reference-free check of the absorbing boundary reflection in the floquet_absorbing case:
+// a doubly periodic vacuum cell with a Floquet port and a second-order absorbing boundary
+// on opposite faces, so that the port excites a TE plane wave incident on the absorbing
+// boundary at the angle sin θ = k_y / k, for the Floquet wave vector k_y. The boundary
+// imposes n × ∇ × E = i k_eff E_t instead of the exact i k cos θ E_t, so |S11| =
+// |k cos θ - k_eff| / (k cos θ + k_eff), with k_eff = k (1 - sin²θ / 2) (k_eff = k for the
+// first-order condition). The periodic part of the plane wave is uniform on the boundary,
+// so that without the Floquet wave vector in its surface curl, the second-order condition
+// reduces to the first-order one. With FloquetReferenceFrequency f_ref > 0, the wave vector
+// scales with frequency and θ is fixed.
+palace::test::CustomCheck TestFloquetAbsorbingReflection(double f_ref, double atol_lin)
+{
+  return [f_ref, atol_lin](palace::Table &actual, palace::Table &,
+                           const std::filesystem::path &)
+  {
+    constexpr double c0 = 299792458.0;
+    constexpr double ky = 0.4445958682e2;  // Floquet wave vector (1/m), see JSON configs
+    const palace::Column *freq = nullptr, *s11 = nullptr;
+    for (auto &c : actual)
+    {
+      if (c.header_text.find("f (GHz)") != std::string::npos)
+      {
+        freq = &c;
+      }
+      else if (c.header_text.find("|S[P1(0;0)TE][1]| (dB)") != std::string::npos)
+      {
+        s11 = &c;
+      }
+    }
+    REQUIRE(freq);
+    REQUIRE(s11);
+    REQUIRE(actual.n_rows() > 0);
+    for (std::size_t r = 0; r < actual.n_rows(); ++r)
+    {
+      const double k = 2.0 * std::numbers::pi * freq->data[r] * 1.0e9 / c0;
+      const double sin_theta = (f_ref > 0.0 ? ky * freq->data[r] / f_ref : ky) / k;
+      const double cos_theta = std::sqrt(1.0 - sin_theta * sin_theta);
+      const double k_eff = 1.0 - 0.5 * sin_theta * sin_theta;
+      const double r_exact = std::abs(cos_theta - k_eff) / (cos_theta + k_eff);
+      const double s11_lin = std::pow(10.0, s11->data[r] / 20.0);
+      INFO("f = " << freq->data[r] << " GHz: |S11| = " << s11_lin << ", closed form "
+                  << r_exact);
+      CHECK_THAT(s11_lin, Catch::Matchers::WithinAbs(r_exact, atol_lin));
+    }
+  };
+}
+
+// Reference-free check of the eigenfrequencies in the floquet_absorbing_eigen case: a guide
+// with PEC walls x = 0, a, shorted at z = 0 and terminated by a second-order absorbing
+// boundary at z = L, periodic in y with period b and Floquet wave vector k_y. Its modes are
+// TE or TM to z, with transverse wave number k_t² = (m π / a)² + (k_y + 2 π n / b)² and
+// E_t ∝ sin(β z), β² = k² - k_t². For TE modes the boundary imposes n × ∇ × E = i k_eff E_t
+// with k_eff = k - k_t² / (2 k), so β cos(β L) + i k_eff sin(β L) = 0, and for TM modes the
+// second-order term vanishes and k cos(β L) + i β sin(β L) = 0. Every eigenfrequency
+// must be a root of one of these relations: Newton's method from the computed value
+// converges to the nearest root. The modes with m > 0 or n ≠ 0 have a periodic part
+// which is not uniform on the absorbing boundary, and the TM modes are only unaffected by
+// the second-order term when its Floquet terms are included.
+palace::test::CustomCheck TestFloquetAbsorbingEigen(double rtol)
+{
+  return [rtol](palace::Table &actual, palace::Table &, const std::filesystem::path &)
+  {
+    constexpr double c0 = 299792458.0;
+    constexpr double a = 2.0e-2, b = 2.0e-2, L = 4.0e-2;  // m, see mesh/mesh.jl
+    constexpr double ky = 1.0e2;                          // 1/m, see JSON config
+    const palace::Column *re = nullptr, *im = nullptr;
+    for (auto &c : actual)
+    {
+      if (c.header_text.find("Re{f} (GHz)") != std::string::npos)
+      {
+        re = &c;
+      }
+      else if (c.header_text.find("Im{f} (GHz)") != std::string::npos)
+      {
+        im = &c;
+      }
+    }
+    REQUIRE(re);
+    REQUIRE(im);
+    REQUIRE(actual.n_rows() > 0);
+    const std::complex<double> i(0.0, 1.0);
+    for (std::size_t r = 0; r < actual.n_rows(); ++r)
+    {
+      const std::complex<double> k_h = 2.0 * std::numbers::pi *
+                                       std::complex<double>(re->data[r], im->data[r]) *
+                                       1.0e9 / c0;
+      double min_rel = std::numeric_limits<double>::infinity();
+      std::string match;
+      for (int te = 0; te < 2; te++)
+      {
+        for (int m = (te ? 0 : 1); m <= 2; m++)
+        {
+          for (int n = -1; n <= 1; n++)
+          {
+            const double kyn = ky + 2.0 * std::numbers::pi * n / b;
+            const double kt2 = std::pow(m * std::numbers::pi / a, 2) + kyn * kyn;
+            auto F = [&](std::complex<double> k)
+            {
+              const auto beta = std::sqrt(k * k - kt2);
+              return te ? beta * std::cos(beta * L) +
+                              i * (k - kt2 / (2.0 * k)) * std::sin(beta * L)
+                        : k * std::cos(beta * L) + i * beta * std::sin(beta * L);
+            };
+            std::complex<double> k = k_h;
+            bool converged = false;
+            for (int it = 0; it < 50 && !converged; it++)
+            {
+              const double h = 1.0e-7 * std::abs(k);
+              const auto dk = -F(k) * 2.0 * h / (F(k + h) - F(k - h));
+              k += dk;
+              converged = (std::abs(dk) < 1.0e-13 * std::abs(k));
+            }
+            const double rel = std::abs(k - k_h) / std::abs(k);
+            if (converged && rel < min_rel)
+            {
+              min_rel = rel;
+              match = std::string(te ? "TE" : "TM") + "(m = " + std::to_string(m) +
+                      ", n = " + std::to_string(n) + ")";
+            }
+          }
+        }
+      }
+      INFO("f = " << re->data[r] << " + " << im->data[r] << "i GHz: nearest closed form "
+                  << match << ", relative difference " << min_rel);
+      CHECK(min_rel < rtol);
+    }
+  };
+}
+
 }  // namespace
 
 // ===========================================================================
@@ -200,18 +1541,249 @@ TEST_CASE("rings", "[Serial][Parallel][GPU][Regression]")
   opts.rtol = 1.0e-4;
   opts.atol = 1.0e-16;
   opts.excluded_columns = {"Maximum", "Minimum"};
-  opts.linear_solver_policy = kForceDefaultSolver;
+  opts.linear_solver_policy = force_default_solver;
   palace::test::RunRegressionCase("rings", "rings.json", "", opts);
 }
 
-TEST_CASE("circular_hole_flux_loop", "[Serial][Parallel][GPU][Regression]")
+TEST_CASE("rings_multiring_inactive_ports", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum"};
+  opts.linear_solver_policy = force_default_solver;
+  palace::test::RunRegressionCase("multiring", "multiring_inactive_ports.json",
+                                  "multiring_inactive_ports", opts);
+}
+
+// Square SQUID washer flux loop. The λ→0 loop inductance is checked against the
+// analytic Ketchen-Jaycox washer formula L ≈ 1.25 μ₀ d (d = hole side); here d = 2 μm
+// gives L ≈ 3.14 pH, and the extracted value ≈ 3.01 pH is a Ritz lower bound.
+TEST_CASE("square_hole_flux_loop", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-4;
   opts.atol = 1.0e-16;
   opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
-  opts.linear_solver_policy = kForceDefaultSolver;
-  palace::test::RunRegressionCase("circular_hole", "circular_hole.json", "", opts);
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = force_default_solver;
+  palace::test::RunRegressionCase("square_hole", "square_hole.json", "", opts);
+}
+
+// London flux film (single hole, λ = 0.4 μm, d = 0.1 μm): the interior penetrates, so the
+// extracted self-inductance is the total L = L_geom + L_kin. Locks in the finite-λ London
+// extraction.
+TEST_CASE("circular_hole_london_flux", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = force_default_solver;
+  palace::test::RunRegressionCase("circular_hole_london", "circular_hole.json", "base",
+                                  opts);
+}
+
+// Two-sided (two-port) London film at d > λ, on a solution space broken across the film.
+// Locks the sheet terms of the two sides and their consistent use in the stiffness, flux
+// RHS, and inductance postprocessing.
+TEST_CASE("circular_hole_london_two_sided", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean", "Norm"};
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = force_default_solver;
+  palace::test::RunRegressionCase("circular_hole_london", "circular_hole_two_sided.json",
+                                  "two_sided", opts);
+}
+
+// Two-sided film under nonconformal AMR. Locks the broken space on hanging and shared DOFs
+// (film faces refined on one side only) and the generator projection (the cut meets hanging
+// film edges). Omits [GPU] like the other adaptive cases.
+TEST_CASE("circular_hole_london_two_sided_nc_amr", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean", "Norm"};
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = force_default_solver;
+  palace::test::RunRegressionCase("circular_hole_london",
+                                  "circular_hole_two_sided_nc_amr.json", "two_sided_nc_amr",
+                                  opts);
+}
+
+// Two-sided film meeting the PEC walls on three edges. Locks the elimination of the sheet
+// terms at the essential DOFs of both sides (without it CG nearly stalls and L is off by
+// 1e-3).
+TEST_CASE("two_sided_london_pec", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean", "Norm"};
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = force_default_solver;
+  palace::test::RunRegressionCase("two_sided_london", "two_sided_pec.json", "pec", opts);
+}
+
+// Two-sided square washer with quadrilateral faces, on a mesh mirror-symmetric about the
+// film, where L equals the common-mode sheet ½μ₀λ·coth(d/2λ).
+TEST_CASE("two_sided_london_hex", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean", "Norm"};
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = force_default_solver;
+  palace::test::RunRegressionCase("two_sided_london", "two_sided_hex.json", "hex", opts);
+}
+
+// Two London holes on a shared film, each an independent flux loop. Locks the London-London
+// off-diagonal cross-energy correction: a bare AᵀM_mag A mutual corrupts the inverted
+// selves.
+TEST_CASE("double_hole_london_flux", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = force_default_solver;
+  palace::test::RunRegressionCase("double_hole_london", "double_hole.json", "base", opts);
+}
+
+// The same two holes driven together as one excitation (loop 1 at fluxoid 1, loop 3 at
+// -0.5), so there is no inductance matrix: terminal-Phi.csv reports the excitation's stored
+// energy, E = ½ΦᵀM⁻¹Φ of the swept matrix above, and the fluxoid imposed on each loop. The
+// field is written under the excitation index.
+TEST_CASE("double_hole_london_flux_excitation", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.linear_solver_policy = force_default_solver;
+  palace::test::RunRegressionCase("double_hole_london", "double_hole_excitation.json",
+                                  "excitation", opts);
+}
+
+// Narrow London ring vs the analytic thin-ring L = L_geom + L_ksq*2*pi*r/w: the extracted
+// kinetic (~71 pH) matches to ~1%, locking in the fluxoid fix (the flux-pinned solve gave
+// ~0).
+TEST_CASE("narrow_ring_london_flux", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = force_default_solver;
+  palace::test::RunRegressionCase("narrow_ring", "narrow_ring.json", "", opts);
+}
+
+// Shorted micro-coax driven by a radial SurfaceCurrent, PEC walls: L matches the exact
+// mu0 l/(2 pi) ln(b/a) to 0.09% on the 256-element example mesh.
+TEST_CASE("coaxial_magnetostatic_pec", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = force_default_solver;
+  palace::test::RunRegressionCase("coaxial", "coaxial_magnetostatic_pec.json",
+                                  "magnetostatic_pec", opts);
+}
+
+// The same coax with London walls (lambda = 0.4 um, d = 0.1 um). Current-driven finite
+// lambda: the kinetic energy lives only in the sheet term (domain E_mag stays geometric),
+// and L - L_PEC matches mu0 lambda coth(d/lambda) l/(2 pi) (1/a + 1/b) to 0.002%.
+TEST_CASE("coaxial_magnetostatic_superconductor", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = force_default_solver;
+  palace::test::RunRegressionCase("coaxial", "coaxial_magnetostatic_superconductor.json",
+                                  "magnetostatic_superconductor", opts);
+}
+
+// Current-driven microstrip with PEC conductors (lambda -> 0 limit).
+TEST_CASE("microstrip_pec", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = force_default_solver;
+  palace::test::RunRegressionCase("microstrip", "microstrip_pec.json", "pec", opts);
+}
+
+// The same microstrip with London conductors (lambda = 0.4 um, d = 0.1 um): current-driven
+// finite lambda on an open geometry with edge crowding.
+TEST_CASE("microstrip_superconductor", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = force_default_solver;
+  palace::test::RunRegressionCase("microstrip", "microstrip_superconductor.json",
+                                  "superconductor", opts);
+}
+
+// London flux film under non-conformal AMR. Locks the curl-free projection of the cut
+// generator on the hanging-edge mesh, so L converges upward (15.1643 -> 15.1644 pH after
+// one refinement). Omits [GPU]: adaptive cases skip GPU CI (cf. cpw_wave_adaptive,
+// awslabs/palace#375).
+TEST_CASE("circular_hole_london_nc_amr", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = force_default_solver;
+  palace::test::RunRegressionCase("circular_hole_london", "circular_hole_nc_amr.json",
+                                  "nc_amr", opts);
+}
+
+// As above with two refinements, each followed by a forced rebalance, so the film, the cut
+// and the hole are split differently across ranks at each solve.
+TEST_CASE("circular_hole_london_nc_amr_rebalance", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-5;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = force_default_solver;
+  palace::test::RunRegressionCase("circular_hole_london",
+                                  "circular_hole_nc_amr_rebalance.json", "nc_amr_rebalance",
+                                  opts);
+}
+
+// Mixed current-flux excitation. The current-flux mutual M[1][2] is measured from a surface
+// flux integral over the current port's aperture (not energy-recoverable); that quadrature
+// is reduced over partitioner-split faces, so M[1][2] shifts ~1e-4 across partitions and
+// ~3e-4 across toolchains (self terms stay within 1e-4). Hence rtol 5e-4.
+TEST_CASE("ring_disk_mixed_current_flux", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 5.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.linear_solver_policy = force_default_solver;
+  palace::test::RunRegressionCase("ring_disk", "ring_disk.json", "", opts);
 }
 
 // --- cylinder: reltol=1e-4, abstol=1e-16 for the four eigen-style cases ---
@@ -221,9 +1793,9 @@ TEST_CASE("cylinder_cavity_pec", "[Serial][Parallel][GPU][Regression]")
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-4;
   opts.atol = 1.0e-16;
-  opts.excluded_columns = kEigenExcluded;
+  opts.excluded_columns = eigen_excluded;
   opts.skip_rowcount = true;
-  opts.linear_solver_policy = kForceDefaultSolver;
+  opts.linear_solver_policy = force_default_solver;
   palace::test::RunRegressionCase("cylinder", "cavity_pec.json", "cavity_pec", opts);
 }
 
@@ -232,10 +1804,29 @@ TEST_CASE("cylinder_cavity_impedance", "[Serial][Parallel][GPU][Regression]")
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-4;
   opts.atol = 1.0e-16;
-  opts.excluded_columns = kEigenExcluded;
+  opts.excluded_columns = eigen_excluded;
   opts.skip_rowcount = true;
   palace::test::RunRegressionCase("cylinder", "cavity_impedance.json", "cavity_impedance",
                                   opts);
+}
+
+// The SLEPc NEP (SLP) shell receives device arrays on a GPU. The impedance boundary adds
+// damping, so this covers the full (K, C, M) path of the NEP solver. Without SLEPc,
+// Palace replaces SLP with Hybrid, which the SLP references do not check.
+TEST_CASE("cylinder_cavity_impedance_conductivity_slp",
+          "[Serial][Parallel][GPU][Regression]")
+{
+#if !defined(PALACE_WITH_SLEPC)
+  SKIP("SLP requires SLEPc");
+#endif
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = eigen_excluded;
+  opts.skip_rowcount = true;
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("cylinder", "cavity_impedance_conductivity_slp.json",
+                                  "cavity_impedance_conductivity_slp", opts);
 }
 
 TEST_CASE("cylinder_waveguide", "[Serial][Parallel][GPU][Regression]")
@@ -243,7 +1834,7 @@ TEST_CASE("cylinder_waveguide", "[Serial][Parallel][GPU][Regression]")
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-4;
   opts.atol = 1.0e-16;
-  opts.excluded_columns = kEigenExcluded;
+  opts.excluded_columns = eigen_excluded;
   opts.skip_rowcount = true;
   palace::test::RunRegressionCase("cylinder", "waveguide.json", "waveguide", opts);
 }
@@ -253,7 +1844,7 @@ TEST_CASE("cylinder_floquet", "[Serial][Parallel][GPU][Regression]")
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-4;
   opts.atol = 1.0e-16;
-  opts.excluded_columns = kEigenExcluded;
+  opts.excluded_columns = eigen_excluded;
   opts.skip_rowcount = true;
   palace::test::RunRegressionCase("cylinder", "floquet.json", "floquet", opts);
 }
@@ -266,6 +1857,257 @@ TEST_CASE("cylinder_driven_wave", "[Serial][Parallel][GPU][Regression]")
   opts.atol = 1.0e-16;
   opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
   palace::test::RunRegressionCase("cylinder", "driven_wave.json", "driven_wave", opts);
+}
+
+// Drives the TM01 port mode (Mode 3) of a lossless PEC-shorted circular waveguide.
+// TM01 carries a longitudinal field (E_n != 0 on the port face), so a correct wave
+// port must still reflect all incident power: |S11| = 1. TestWavePortLossless asserts
+// Sum_i |S_i1|^2 = 1 directly. The dominant TE11 mode (Mode 1, E_n = 0) is a separate
+// case (cylinder_driven_wave).
+TEST_CASE("cylinder_driven_wave_tm", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-3;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.custom_checks["port-S.csv"] = TestWavePortLossless(1.0e-3);
+  palace::test::RunRegressionCase("cylinder", "driven_wave_tm.json", "driven_wave_tm",
+                                  opts);
+}
+
+// TM01 (E_n != 0) driven through a uniaxial-anisotropic mu (mu_t != mu_z); mu_x = mu_y
+// keeps TM01 clean so the anisotropic mu^-1 path must still give Sum_i |S_i1|^2 = 1.
+// Rotated mu is covered by the WavePortData reconstruction unit test.
+TEST_CASE("cylinder_driven_wave_tm_aniso", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-3;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.custom_checks["port-S.csv"] = TestWavePortLossless(1.0e-3);
+  palace::test::RunRegressionCase("cylinder", "driven_wave_tm_aniso.json",
+                                  "driven_wave_tm_aniso", opts);
+}
+
+// TM01 (E_n != 0) swept just above cutoff (~2.9 GHz): small k_n stresses the
+// modal-correction conditioning while the port propagates, so Sum_i |S_i1|^2 = 1 must hold
+// across the sweep.
+TEST_CASE("cylinder_driven_wave_tm_cutoff", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-3;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.custom_checks["port-S.csv"] = TestWavePortLossless(1.0e-3);
+  palace::test::RunRegressionCase("cylinder", "driven_wave_tm_cutoff.json",
+                                  "driven_wave_tm_cutoff", opts);
+}
+
+// TE11 mode of the lossless PEC-shorted circular waveguide swept from below its cutoff
+// (about 2.23 GHz) to above it: below cutoff, the propagation constant of the lossless port
+// mode is imaginary, and the wave port must take the root which decays away from the port,
+// independently of the sign of the roundoff in kₙ², for |S11| = exp(2 Im{kₙ} L) < 1.
+TEST_CASE("cylinder_driven_wave_cutoff", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-3;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.custom_checks["port-S.csv"] =
+      TestWavePortShortedGuide({2.08, 2.74e-2}, 5.48e-2, 5.0e-2, 1.0e-3);
+  palace::test::RunRegressionCase("cylinder", "driven_wave_cutoff.json",
+                                  "driven_wave_cutoff", opts);
+}
+
+// Adaptive (PROM) counterpart of cylinder_driven_wave_tm: the same non-TEM TM01 mode swept
+// 3.1-3.6 GHz, exercising the wave-port modal correction W on the reduced operator.
+// TestWavePortLossless asserts Sum_i |S_i1|^2 = 1 (reference-free); partition-dependent
+// error-indicators.csv / domain-E.csv are kept for the file-set check but not diffed.
+TEST_CASE("cylinder_driven_wave_tm_adaptive", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-3;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.excluded_files = {"domain-E.csv", "error-indicators.csv"};
+  opts.skip_rowcount = true;
+  opts.paraview_fields = false;
+  opts.custom_checks["port-S.csv"] = TestWavePortLossless(1.0e-3);
+  palace::test::RunRegressionCase("cylinder", "driven_wave_tm_adaptive.json",
+                                  "driven_wave_tm_adaptive", opts);
+}
+
+// Rectangular waveguide terminated by a first- or second-order absorbing boundary;
+// |S11| is checked against its closed form (TestAbsorbingReflection), the other outputs
+// against the reference.
+TEST_CASE("waveguide_absorbing_order1", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-3;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.paraview_fields = false;
+  opts.custom_checks["port-S.csv"] = TestAbsorbingReflection(1, 1.0e-3);
+  palace::test::RunRegressionCase("waveguide_absorbing", "waveguide_absorbing_order1.json",
+                                  "order1", opts);
+}
+
+TEST_CASE("waveguide_absorbing_order2", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-3;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.paraview_fields = false;
+  opts.custom_checks["port-S.csv"] = TestAbsorbingReflection(2, 1.0e-3);
+  palace::test::RunRegressionCase("waveguide_absorbing", "waveguide_absorbing_order2.json",
+                                  "order2", opts);
+}
+
+// Circuit synthesis of the shorted guide of cylinder_driven_wave_tm_adaptive with a lossy
+// fill. The TM01 port mode (E_n != 0, so the modal correction W is folded into the
+// synthesized circuit) is lossy, and the synthesized port load must carry its attenuation
+// Im{k_n}: the coupled round-trip reconstructs S11 from the synthesized pencil to ~1e-8 of
+// the live field-derived port-S, which a fit of Re{k_n} only misses by up to 8e-3. The
+// synthesized eigenvalue estimates are not converged HDM eigenpairs here, so they are
+// presence-checked only.
+TEST_CASE("cylinder_driven_wave_tm_lossy_synth", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-3;
+  opts.atol = 1.0e-16;
+  opts.skip_rowcount = true;
+  opts.min_rows = 1;
+  opts.excluded_columns = {"Error (Bkwd.)", "Error (Abs.)", "Maximum", "Minimum", "Mean"};
+  opts.unstored_files = {"rom-Linv",
+                         "rom-Rinv",
+                         "rom-C-",
+                         "rom-portload-",
+                         "rom-orthogonalization-matrix-R",
+                         "rom-coupled-S",
+                         "rom-coupled-G",
+                         "rom-coupled-H"};
+  opts.excluded_files = {"rom-eigenvalues", "rom-eigenvectors", "rom-port-reference",
+                         "error-indicators.csv", "domain-E.csv"};
+  opts.custom_checks["port-S.csv"] = [round_trip = TestWavePortCoupledRoundTrip(1.0e-6),
+                                      compare_s = ComparePortSParameters(1.0e-4, 1.0e-7)](
+                                         palace::Table &actual, palace::Table &reference,
+                                         const std::filesystem::path &actual_path)
+  {
+    round_trip(actual, reference, actual_path);
+    compare_s(actual, reference, actual_path);
+  };
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("cylinder", "driven_wave_tm_lossy_synth.json",
+                                  "driven_wave_tm_lossy_synth", opts);
+}
+
+// Floquet periodic cells terminated by a second-order absorbing boundary: |S11| of the
+// Floquet port (TestFloquetAbsorbingReflection) and the eigenfrequencies of a Floquet
+// periodic guide (TestFloquetAbsorbingEigen) are checked against their closed forms, the
+// other outputs against the reference.
+TEST_CASE("floquet_absorbing_adaptive", "[Serial][Parallel][GPU][Regression]")
+{
+  // Frequency dependent Floquet wave vector (fixed angle of incidence) and adaptive
+  // frequency sweep. The error indicators depend on the adaptive samples.
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-3;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.excluded_files = {"error-indicators.csv"};
+  opts.paraview_fields = false;
+  opts.custom_checks["port-floquet-S.csv"] = TestFloquetAbsorbingReflection(3.0, 1.0e-4);
+  palace::test::RunRegressionCase("floquet_absorbing", "floquet_absorbing_adaptive.json",
+                                  "adaptive", opts);
+}
+
+TEST_CASE("floquet_absorbing_scatterer_adaptive", "[Serial][Parallel][GPU][Regression]")
+{
+  // Adaptive frequency sweep with a Floquet wave vector which does not depend on frequency
+  // and a dielectric scatterer. The domain Floquet terms make the stiffness matrix
+  // Hermitian, and the scatterer makes the periodic field vary in the cell, so that the
+  // reduced-order model only converges with the stiffness matrix projected as a
+  // nonsymmetric matrix. The higher Floquet orders decay before they reach the absorbing
+  // boundary, so this case does not test the mixed boundary curl terms of the second-order
+  // condition: floquet_absorbing_eigen does. The noise-level TM response is not compared,
+  // and the error indicators depend on the adaptive samples.
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-3;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean", "TM]"};
+  opts.excluded_files = {"error-indicators.csv"};
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("floquet_absorbing",
+                                  "floquet_absorbing_scatterer_adaptive.json",
+                                  "scatterer_adaptive", opts);
+}
+
+TEST_CASE("floquet_absorbing_eigen", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-3;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean", "Error (Bkwd.)", "Error (Abs.)"};
+  opts.paraview_fields = false;
+  opts.custom_checks["eig.csv"] = TestFloquetAbsorbingEigen(1.0e-4);
+  palace::test::RunRegressionCase("floquet_absorbing", "floquet_absorbing_eigen.json",
+                                  "eigen", opts);
+}
+
+// Eigenmode counterpart of iris_filter_driven_wave_synth. Both wave ports of this two-port
+// iris-coupled slab-loaded guide carry the hybrid/LSM mode (Mode 3), so the modal
+// correction W is rank>=2 and enters the nonlinear eigensolver on the LHS. Dropping or
+// breaking W shifts the cavity resonance Q (Re{f} ~ 6.690 GHz, Q ~ 22), so the diffed
+// eig.csv is the W-sensitivity guard.
+TEST_CASE("iris_filter_wave_eigen", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-3;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = eigen_excluded;
+  opts.skip_rowcount = true;
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("iris_filter", "wave_eigen.json", "wave_eigen", opts);
+}
+
+// Circuit synthesis of the two-port iris-coupled slab-loaded guide (hybrid/LSM port, W
+// rank>=2). The inductive irises make the cavity a strongly-coupled |S21| resonance, so the
+// greedy real-frequency samples capture the pole and the synthesized root reproduces the
+// eigenmode Re{f} (6.690 GHz) AND Q (~22.4) across partitions, asserted by
+// TestRomEigenvalueMatchesEigenmode. The common-pole AAA + signed-residue fit resolves the
+// pole as a converged HDM eigenpair (backward error ~1e-9), so Q is partition-stable
+// (np=1,2,4,8 all give Q=22.40); swept S and the pencil matrices are partition-dependent
+// and presence-checked only.
+TEST_CASE("iris_filter_driven_wave_synth", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-3;
+  opts.atol = 1.0e-11;
+  opts.skip_rowcount = true;
+  opts.min_rows = 1;
+  opts.excluded_columns = {"Error (Bkwd.)", "Error (Abs.)", "Maximum", "Minimum", "Mean"};
+  // Multi-MB partition-dependent pencil matrices consumed by no check here (their export is
+  // exercised by the adapter round-trip); not stored rather than kept as dead weight.
+  opts.unstored_files = {"rom-Linv",
+                         "rom-Rinv",
+                         "rom-C-",
+                         "rom-portload-",
+                         "rom-orthogonalization-matrix-R",
+                         "rom-coupled-S",
+                         "rom-coupled-G",
+                         "rom-coupled-H"};
+  // The error-estimator extrema and synthesized Y_ref drift with the partition/BLAS near
+  // the pole, so these are presence-only here.
+  opts.excluded_files = {"rom-eigenvectors", "error-indicators.csv", "rom-port-reference"};
+  // Near the iris resonance both S paths wobble with partition/backend by up to ~1.3e-4;
+  // 1e-3 clears that while still catching the dB-scale shift a regressed W would produce.
+  opts.custom_checks["port-S.csv"] = TestWavePortCoupledRoundTrip(1.0e-3);
+  opts.custom_checks["rom-eigenvalues.csv"] =
+      CompareRomEigenvalues(/*bkwd_max=*/1.0e-6, /*rtol_re=*/1.0e-3, /*rtol_im=*/5.0e-3,
+                            /*atol_im=*/1.0e-4, /*rtol_q=*/5.0e-3);
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("iris_filter", "driven_wave_synth.json",
+                                  "driven_wave_synth", opts);
 }
 
 // Floquet-port dielectric grating: structure + Floquet S-parameter magnitudes
@@ -343,6 +2185,17 @@ TEST_CASE("antenna_halfwave_dipole_surfacecurrent", "[Serial][Parallel][GPU][Reg
                                   "antenna_halfwave_dipole_surfacecurrent", opts);
 }
 
+TEST_CASE("farfield_interior", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 2.0e-2;
+  opts.atol = 5.0e-9;
+  opts.paraview_fields = false;  // "SaveStep": 0
+  opts.custom_checks["farfield-rE.csv"] = TestFarfieldDipole(opts.rtol, 1.0e-2);
+  palace::test::RunRegressionCase("farfield_interior", "farfield_interior.json",
+                                  "farfield_interior", opts);
+}
+
 // --- coaxial + cpw non-adaptive + cpw eigen: reltol still 2e-2 (from  ---
 // --- antenna block), abstol drops to 1e-11 before the coaxial block.  ---
 
@@ -372,7 +2225,124 @@ TEST_CASE("coaxial_lumped_wave", "[Serial][Parallel][GPU][Regression]")
   opts.rtol = 2.0e-2;
   opts.atol = 1.0e-11;
   opts.excluded_columns = {"Maximum", "Minimum"};
+  // Wave port 2 at its own excitation: Z[2][2] against Z_PV (1 + S22) / (1 - S22).
+  opts.custom_checks["port-Z.csv"] = TestWavePortInputImpedance(2, opts);
   palace::test::RunRegressionCase("coaxial", "coaxial_lumped_wave.json", "lumped_wave",
+                                  opts);
+}
+
+// Uniform coaxial line of finite-conductivity conductors between two wave ports, whose port
+// modes are lossy (|Im{k_n}| / Re{k_n} = 0.04 to 0.065 in the band). The ports are matched
+// to the line, so S_11 = S_22 = 0 up to the discretization error (below 1e-5 here), where
+// the real part of k_n in the port boundary condition and the conjugated projection gave
+// |S_11| = 0.07 to 0.12, and S_21 = S_12 = exp(-i k_n L) (diffed against the reference).
+// The wave port characteristic impedance Z_PV = |V|^2 / P* is complex for the lossy mode
+// (Im{Z_PV} = -3.5 to -2.1 Ohm), and the total-field input impedance of the excited port
+// must match Z_PV (1 + S11) / (1 - S11) up to the discretization error of the total-field
+// power, which reaches 1.3% at 15 GHz (a real Z_PV would be off by 5%).
+TEST_CASE("coaxial_wave_conductivity", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-3;
+  opts.atol = 1.0e-11;
+  opts.excluded_columns = {"Maximum", "Minimum"};
+  opts.paraview_fields = false;
+  opts.custom_checks["port-S.csv"] = TestWavePortMatchedLine(1.0e-4, opts);
+  auto opts_z = opts;
+  opts_z.rtol = 2.0e-2;
+  opts.custom_checks["port-Z.csv"] = TestWavePortInputImpedance(1, opts_z);
+  palace::test::RunRegressionCase("coaxial", "wave_conductivity.json", "wave_conductivity",
+                                  opts);
+}
+
+// Uniform coaxial line filled with a lossy dielectric (loss tangent 0.1) between two wave
+// ports, against the analytic TEM line (issue 960): the ports are matched (|S_11| below
+// 1e-5 here), S_21 = S_12 = exp(-i kₙ L) with the analytic complex kₙ to the discretization
+// error (1e-4), and the complex Z_PV is the analytic Z₀ = 49.87 + 2.49i Ω to 0.1%. With the
+// real part of kₙ in the port boundary condition and the conjugated projection onto the
+// port mode, the line had |S_11| = 0.014 to 0.024, and a real Z_PV = |Z₀|.
+TEST_CASE("coaxial_wave_losstan", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-3;
+  opts.atol = 1.0e-11;
+  opts.excluded_columns = {"Maximum", "Minimum"};
+  opts.paraview_fields = false;
+  const LossyCoaxialLine line{2.08, 0.1, 0.81915e-3, 2.7305e-3};
+  opts.custom_checks["port-S.csv"] = TestWavePortAnalyticLine(line, 40.0e-3, 2.0e-4, opts);
+  opts.custom_checks["port-Z.csv"] = TestWavePortAnalyticImpedance(line, 2.0e-3, opts);
+  palace::test::RunRegressionCase("coaxial", "wave_losstan.json", "wave_losstan", opts);
+}
+
+// Circuit synthesis of the uniform coaxial line of finite-conductivity conductors between
+// two wave ports of coaxial_wave_conductivity. The synthesized port loads must carry the
+// attenuation of the lossy quasi-TEM port modes, Im{k_n}: the coupled round-trip
+// reconstructs the 2x2 S from the synthesized pencil to ~1e-5 of the live field-derived
+// port-S, which a fit of Re{k_n} only (a lossless port line) misses by up to 5e-2. The
+// synthesized eigenvalues are the far, nonphysical poles of the matched line (Q < 1), so
+// they are presence-checked only.
+TEST_CASE("coaxial_wave_conductivity_synth", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-3;
+  opts.atol = 1.0e-11;
+  opts.skip_rowcount = true;
+  opts.min_rows = 1;
+  opts.excluded_columns = {"Error (Bkwd.)", "Error (Abs.)", "Maximum", "Minimum", "Mean"};
+  opts.unstored_files = {"rom-Linv",
+                         "rom-Rinv",
+                         "rom-C-",
+                         "rom-portload-",
+                         "rom-orthogonalization-matrix-R",
+                         "rom-coupled-S",
+                         "rom-coupled-G",
+                         "rom-coupled-H"};
+  opts.excluded_files = {"rom-eigenvalues", "rom-eigenvectors", "rom-port-reference",
+                         "error-indicators.csv"};
+  opts.custom_checks["port-S.csv"] = [round_trip = TestWavePortCoupledRoundTrip(1.0e-4),
+                                      compare_s = ComparePortSParameters(1.0e-4, 1.0e-5)](
+                                         palace::Table &actual, palace::Table &reference,
+                                         const std::filesystem::path &actual_path)
+  {
+    round_trip(actual, reference, actual_path);
+    compare_s(actual, reference, actual_path);
+  };
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("coaxial", "wave_conductivity_synth.json",
+                                  "wave_conductivity_synth", opts);
+}
+
+// Mixed lumped + wave port circuit synthesis. Validates that the exported coupling maps
+// carry lumped-to-wave and wave-to-lumped scattering, not just the wave-port block: the
+// coupled round-trip reconstructs the full 2x2 S (including the cross-type terms) from the
+// synthesized pencil and matches the live field-derived port-S. Coaxial TEM => W = 0.
+TEST_CASE("coaxial_lumped_wave_synth", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 2.0e-2;
+  opts.atol = 1.0e-11;
+  opts.skip_rowcount = true;
+  opts.min_rows = 1;
+  opts.excluded_columns = {"Error (Bkwd.)", "Error (Abs.)", "Maximum", "Minimum", "Mean"};
+  opts.unstored_files = {"rom-Linv",
+                         "rom-Rinv",
+                         "rom-C-",
+                         "rom-portload-",
+                         "rom-orthogonalization-matrix-R",
+                         "rom-coupled-S",
+                         "rom-coupled-G",
+                         "rom-coupled-H"};
+  opts.excluded_files = {"rom-eigenvectors",    "rom-port-reference", "port-I.csv",
+                         "port-V.csv",          "port-Z.csv",         "domain-E.csv",
+                         "error-indicators.csv"};
+  // Full mixed 2x2 round-trip: synthesized-vs-field S to ~6e-4 here, so 2e-3 clears
+  // cross-backend noise while catching a broken cross-type coupling map.
+  opts.custom_checks["port-S.csv"] = TestWavePortCoupledRoundTrip(2.0e-3);
+  opts.custom_checks["rom-eigenvalues.csv"] =
+      CompareRomEigenvalues(/*bkwd_max=*/1.0e-6, /*rtol_re=*/1.0e-3, /*rtol_im=*/5.0e-3,
+                            /*atol_im=*/1.0e-4, /*rtol_q=*/5.0e-3);
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("coaxial", "lumped_wave_synth.json", "lumped_wave_synth",
                                   opts);
 }
 
@@ -392,7 +2362,7 @@ TEST_CASE("rational_impedance_eigen", "[Serial][Parallel][GPU][Regression]")
   palace::test::RegressionOptions opts;
   opts.rtol = 2.0e-2;
   opts.atol = 1.0e-11;
-  opts.excluded_columns = kEigenExcluded;
+  opts.excluded_columns = eigen_excluded;
   opts.skip_rowcount = true;
   opts.paraview_fields = false;
   palace::test::RunRegressionCase("rational_impedance", "series_rlc18_rational_eigen.json",
@@ -406,7 +2376,37 @@ TEST_CASE("cpw_lumped_uniform", "[Serial][Parallel][GPU][Regression]")
   opts.atol = 1.0e-11;
   opts.excluded_columns = {"Maximum", "Minimum"};
   opts.custom_checks["farfield-rE.csv"] = TestFarfield(opts.rtol);
+  opts.custom_checks["probe-E.csv"] = CompareComplexValues(opts.rtol, opts.atol);
+  opts.custom_checks["probe-B.csv"] = CompareComplexValues(opts.rtol, opts.atol);
   palace::test::RunRegressionCase("cpw", "cpw_lumped_uniform.json", "lumped_uniform", opts);
+}
+
+// The cpw_lumped_uniform model with a copper trace instead of a PEC one, at two
+// frequencies: an interior conductivity sheet modeled as a single sheet with the admittance
+// of both faces ("Crack": false), or as two independent faces ("Crack": true), which carry
+// different currents and so give a higher conductor loss.
+TEST_CASE("cpw_lumped_conductivity", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-11;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = force_default_solver;
+  palace::test::RunRegressionCase("cpw", "cpw_lumped_conductivity.json",
+                                  "lumped_conductivity", opts);
+}
+
+TEST_CASE("cpw_lumped_conductivity_crack", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-11;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = force_default_solver;
+  palace::test::RunRegressionCase("cpw", "cpw_lumped_conductivity_crack.json",
+                                  "lumped_conductivity_crack", opts);
 }
 
 TEST_CASE("cpw_wave_uniform", "[Serial][Parallel][GPU][Regression]")
@@ -418,10 +2418,11 @@ TEST_CASE("cpw_wave_uniform", "[Serial][Parallel][GPU][Regression]")
   palace::test::RunRegressionCase("cpw", "cpw_wave_uniform.json", "wave_uniform", opts);
 }
 
-// Adaptive frequency sweeps run as smoke tests: structure (output tree,
-// CSV set, headers, row/column counts) is enforced, numeric comparison
-// is disabled via infinite tolerances.
-TEST_CASE("cpw_lumped_adaptive", "[Serial][Parallel][Regression]")
+// Adaptive frequency sweeps primarily run as structural smoke tests because the greedy
+// sample sequence can vary. The wave-port case additionally applies a targeted complex
+// S-parameter comparison over every output frequency. Both run on GPU now that the online
+// phase reuses reduced wave-port modes and operators (awslabs/palace#375).
+TEST_CASE("cpw_lumped_adaptive", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
   opts.rtol = std::numeric_limits<double>::infinity();
@@ -430,12 +2431,15 @@ TEST_CASE("cpw_lumped_adaptive", "[Serial][Parallel][Regression]")
                                   opts);
 }
 
-// cpw_wave_adaptive omits [GPU] (awslabs/palace#375).
-TEST_CASE("cpw_wave_adaptive", "[Serial][Parallel][Regression]")
+TEST_CASE("cpw_wave_adaptive", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
+  // Keep non-port outputs as structural smoke checks because their adaptive interpolation
+  // can vary with the greedy sample sequence, but require the complete complex S-parameter
+  // response to match the exact-wave-port reference over every output frequency.
   opts.rtol = std::numeric_limits<double>::infinity();
   opts.atol = std::numeric_limits<double>::infinity();
+  opts.custom_checks["port-S.csv"] = ComparePortSParameters(1.0e-3, 1.0e-4);
   palace::test::RunRegressionCase("cpw", "cpw_wave_adaptive.json", "wave_adaptive", opts);
 }
 
@@ -459,7 +2463,7 @@ TEST_CASE("cpw_wave_eigen", "[Serial][Parallel][GPU][Regression]")
   palace::test::RegressionOptions opts;
   opts.rtol = 2.0e-2;
   opts.atol = 1.0e-11;
-  opts.excluded_columns = kEigenExcluded;
+  opts.excluded_columns = eigen_excluded;
   opts.skip_rowcount = true;
   palace::test::RunRegressionCase("cpw", "cpw_wave_eigen.json", "wave_eigen", opts);
 }
@@ -471,7 +2475,7 @@ TEST_CASE("adapter_hybrid", "[Serial][Parallel][GPU][Regression]")
   palace::test::RegressionOptions opts;
   opts.rtol = 2.0e-2;
   opts.atol = 1.0e-11;
-  opts.excluded_columns = kEigenExcluded;
+  opts.excluded_columns = eigen_excluded;
   opts.skip_rowcount = true;
   palace::test::RunRegressionCase("adapter", "hybrid.json", "hybrid", opts);
 }
@@ -484,36 +2488,82 @@ TEST_CASE("adapter_hybrid", "[Serial][Parallel][GPU][Regression]")
 // can differ freely. The physically meaningful regression signal is
 // rom-eigenvalues.csv — the eigenvalues of the synthesized L⁻¹/R⁻¹/C system inside the
 // trained band (the adapter resonance at 10.526 GHz, Q 30.5, matches the eigenmode
-// reference of adapter_hybrid) — together with the S-parameters and the port
-// reference table. Omits [GPU] like cpw_wave_adaptive (wave-port adaptive sweeps are
-// skipped on GPU, awslabs/palace#375).
+// reference of adapter_hybrid) — together with the end-to-end S-parameter round-trip.
 TEST_CASE("adapter_driven_synth", "[Serial][Parallel][Regression]")
 {
   palace::test::RegressionOptions opts;
   opts.rtol = 2.0e-2;
   opts.atol = 1.0e-11;
-  // The synthesized-eigenvalue rows track the adaptive greedy sampling: modes are
-  // only reproducible where the PROM converged, so allow row-count drift and compare
-  // the leading (sorted, in-band) modes. Require at least 5 rows (reference has 7
-  // modes) so a partial loss of trailing modes cannot pass as a leading-subset match.
-  // The HDM eigenpair error columns in rom-eigenvalues.csv are residual diagnostics,
-  // not regression targets (same exclusion as the eigenmode cases).
+  // The synthesized-eigenvalue rows track the adaptive greedy sampling: mode count and
+  // order drift with the partition, so allow row-count drift and let the custom check pair
+  // converged reference eigenpairs with converged actual roots. Require at least 5 rows so
+  // a partial loss cannot pass silently. The HDM eigenpair error columns are residual
+  // diagnostics, not regression targets.
   opts.skip_rowcount = true;
   opts.min_rows = 5;
   opts.excluded_columns = {"Error (Bkwd.)", "Error (Abs.)"};
-  // The raw synthesis matrices and the eigenvectors (which live in the same
-  // basis-dependent node coordinates) vary with the greedy sampling and MPI partition;
-  // only their presence is checked. The eigenvalues are partition-independent and are
-  // compared numerically.
+  // Synthesis matrices, eigenvectors, and the Y_ref table vary with the greedy sampling and
+  // partition, so only their presence is checked; the round-trip below consumes them live.
+  opts.unstored_files = {"rom-coupled-S", "rom-coupled-G", "rom-coupled-H"};
   opts.excluded_files = {"rom-Linv",
                          "rom-Rinv",
                          "rom-C-",
                          "rom-portload-",
                          "rom-orthogonalization-matrix-R",
-                         "rom-eigenvectors"};
+                         "rom-eigenvectors",
+                         "rom-port-reference"};
+  // Compare the synthesized eigenvalues against the reference: pair each converged
+  // reference eigenpair with the nearest converged actual root and check Re{f}, Im{f}, Q.
+  opts.custom_checks["rom-eigenvalues.csv"] =
+      CompareRomEigenvalues(/*bkwd_max=*/1.0e-6, /*rtol_re=*/1.0e-3, /*rtol_im=*/5.0e-3,
+                            /*atol_im=*/1.0e-4, /*rtol_q=*/5.0e-3);
+  // End-to-end de-embed/reconnect: reduce the total synthesized pencil to the port
+  // terminals, de-embed the reference loads, and confirm the resulting S reproduces the
+  // solver's field-derived port-S (a stronger check than the pointwise field-S diff, and
+  // one that also catches the dB-scale shift a regressed W would produce). The physical S
+  // is partition-independent: |S| matches to ~6e-8 at np=1 and np=2, so a 1e-6 linear
+  // tolerance is robust. AdaptiveTol is 1e-6 for this case, so also compare the physical
+  // complex S-parameters over all 61 output frequencies, much more tightly than the generic
+  // 2% synthesis/eigenvalue tolerance while retaining a small absolute allowance near
+  // zeros. custom_checks holds one check per file, so run both from a single entry.
+  opts.custom_checks["port-S.csv"] = [round_trip = TestWavePortSRoundTrip(1.0e-6),
+                                      compare_s = ComparePortSParameters(1.0e-4, 1.0e-7)](
+                                         palace::Table &actual, palace::Table &reference,
+                                         const std::filesystem::path &actual_path)
+  {
+    round_trip(actual, reference, actual_path);
+    compare_s(actual, reference, actual_path);
+  };
   // No field output is requested in the config.
   opts.paraview_fields = false;
   palace::test::RunRegressionCase("adapter", "driven_synth.json", "driven_synth", opts);
+}
+
+// Wave port 2 is Active:false but IncludeInSynthesis:true, i.e. an unloaded matched
+// terminal. A reference-only load pencil is synthesized for it so rom-port-reference.csv
+// resolves its matched admittance instead of aborting on a missing load. This is a
+// crash regression: running to completion with rom-port-reference.csv present is the guard
+// (the single-excitation synthesis is low-rank and backend-sensitive, so the loose
+// AdaptiveTol keeps the greedy well-conditioned and the synthesized values are
+// presence-checked, not value-compared).
+TEST_CASE("adapter_driven_synth_inactive", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 2.0e-2;
+  opts.atol = 1.0e-11;
+  opts.skip_rowcount = true;
+  // Presence-only guard: keep just the small files that prove the run completed (notably
+  // rom-port-reference.csv, whose synthesis is the path that used to abort). The multi-MB
+  // matrices/eigenvectors are dropped rather than stored-but-excluded.
+  opts.unstored_files = {
+      "rom-coupled-S",   "rom-coupled-G", "rom-coupled-H", "rom-Linv",
+      "rom-Rinv",        "rom-C-",        "rom-portload-", "rom-orthogonalization-matrix-R",
+      "rom-eigenvectors"};
+  opts.excluded_files = {"rom-eigenvalues", "rom-port-reference", "port-S",
+                         "error-indicators.csv", "domain-E.csv"};
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("adapter", "driven_synth_inactive.json",
+                                  "driven_synth_inactive", opts);
 }
 
 // --- transmon: heavy eigen cases. Tagged `[Regression][Long]` so the
@@ -533,8 +2583,8 @@ TEST_CASE("transmon_coarse", "[Serial][Parallel][GPU][Regression][Long]")
   opts.abs_columns = {"\u03ba_ext"};
   opts.skip_rowcount = true;
   opts.gridfunction_fields = true;
-  opts.linear_solver_policy = kForceDefaultSolver;
-  opts.eigen_solver_policy = kForceDefaultSolver;
+  opts.linear_solver_policy = force_default_solver;
+  opts.eigen_solver_policy = force_default_solver;
   palace::test::RunRegressionCase("transmon", "transmon_coarse.json", "transmon_coarse",
                                   opts);
 }
@@ -549,8 +2599,8 @@ TEST_CASE("transmon_amr", "[Serial][Parallel][GPU][Regression][Long]")
   opts.abs_columns = {"\u03ba_ext"};
   opts.skip_rowcount = true;
   opts.gridfunction_fields = true;
-  opts.linear_solver_policy = kForceDefaultSolver;
-  opts.eigen_solver_policy = kForceDefaultSolver;
+  opts.linear_solver_policy = force_default_solver;
+  opts.eigen_solver_policy = force_default_solver;
   palace::test::RunRegressionCase("transmon", "transmon_amr.json", "transmon_amr", opts);
 }
 
@@ -569,10 +2619,23 @@ TEST_CASE("cavity2d_eigenmode", "[Serial][Parallel][GPU][Regression]")
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-4;
   opts.atol = 1.0e-16;
-  opts.excluded_columns = kEigenExcluded;
+  opts.excluded_columns = eigen_excluded;
   opts.skip_rowcount = true;
-  opts.linear_solver_policy = kForceDefaultSolver;
+  opts.linear_solver_policy = force_default_solver;
   palace::test::RunRegressionCase("cavity2d", "cavity2d.json", "eigenmode", opts);
+}
+
+// NonlinearType: SLP with no nonlinear term must fall back to the linear eigensolver (not
+// abort on a null A2), giving the same eigenvalues as cavity2d_eigenmode.
+TEST_CASE("cavity2d_eigenmode_slp_fallback", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = eigen_excluded;
+  opts.skip_rowcount = true;
+  opts.linear_solver_policy = force_default_solver;
+  palace::test::RunRegressionCase("cavity2d", "eigenmode_slp.json", "eigenmode_slp", opts);
 }
 
 // Coarse 2D driven tolerances (partition- and platform-sensitive).
@@ -582,7 +2645,7 @@ TEST_CASE("cavity2d_driven", "[Serial][Parallel][GPU][Regression]")
   opts.rtol = 2.0e-2;
   opts.atol = 1.0e-8;
   opts.excluded_columns = {"Maximum", "Minimum"};
-  opts.linear_solver_policy = kForceDefaultSolver;
+  opts.linear_solver_policy = force_default_solver;
   palace::test::RunRegressionCase("cavity2d", "cavity2d_driven.json", "driven", opts);
 }
 
@@ -601,8 +2664,12 @@ TEST_CASE("cavity2d_magnetostatic", "[Serial][Parallel][GPU][Regression]")
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-4;
   opts.atol = 1.0e-10;
-  opts.excluded_columns = {"Maximum", "Minimum"};
-  opts.linear_solver_policy = kForceDefaultSolver;
+  // Without volume currents, the 2D magnetic flux density is uniform, so the error
+  // estimate is set by the linear solver tolerance: bound it rather than compare it.
+  opts.custom_checks["error-indicators.csv"] =
+      [](palace::Table &actual, palace::Table &, const std::filesystem::path &)
+  { CHECK(actual[0].data[0] < 1.0e-7); };
+  opts.linear_solver_policy = force_default_solver;
   palace::test::RunRegressionCase("cavity2d", "cavity2d_magnetostatic.json",
                                   "magnetostatic", opts);
 }
@@ -613,36 +2680,67 @@ TEST_CASE("cavity2d_transient", "[Serial][Parallel][GPU][Regression]")
   opts.rtol = 1.0e-4;
   opts.atol = 1.0e-10;
   opts.excluded_columns = {"Maximum", "Minimum"};
-  opts.linear_solver_policy = kForceDefaultSolver;
+  opts.linear_solver_policy = force_default_solver;
   palace::test::RunRegressionCase("cavity2d", "cavity2d_transient.json", "transient", opts);
 }
 
-// cpw2d boundary-mode cases: reltol=1e-2 because impedance depends on
-// voltage path integration (cross-platform reproducibility).
+// cpw2d boundary-mode cases: the coordinate-path line integrals are exact for the discrete
+// field, so Z_PV only varies with the eigensolver (below 1e-4 across process counts).
 TEST_CASE("cpw2d_thin", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
-  opts.rtol = 1.0e-2;
+  opts.rtol = 1.0e-3;
   opts.atol = 1.0e-10;  // abstol from the preceding cavity2d block
-  opts.excluded_columns = {"Maximum",      "Minimum",      "Mean",     "Error (Bkwd.)",
-                           "Error (Abs.)", "Im{kn} (1/m)", "Im{n_eff}"};
+  opts.excluded_columns = {"Maximum",       "Minimum",          "Mean",
+                           "Error (Bkwd.)", "Error (Abs.)",     "Im{kn} (1/m)",
+                           "Im{n_eff}",     "Im{Z_PV[1]} (Ohm)"};
   opts.skip_rowcount = true;
-  opts.linear_solver_policy = kForceDefaultSolver;
+  opts.linear_solver_policy = force_default_solver;
   opts.custom_checks["mode-V.csv"] = CompareComplexMagnitudes(opts.rtol, opts.atol);
+  // The energies are below atol, so compare them with the relative tolerance only.
+  opts.custom_checks["domain-E.csv"] = CompareComplexMagnitudes(opts.rtol, 0.0);
   palace::test::RunRegressionCase("cpw2d", "cpw2d_thin.json", "thin", opts);
 }
 
 TEST_CASE("cpw2d_thick_impedance", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
-  opts.rtol = 1.0e-2;
+  opts.rtol = 1.0e-3;
   opts.atol = 1.0e-10;
-  opts.excluded_columns = {"Maximum",      "Minimum",      "Mean",     "Error (Bkwd.)",
-                           "Error (Abs.)", "Im{kn} (1/m)", "Im{n_eff}"};
+  opts.excluded_columns = {"Maximum",       "Minimum",          "Mean",
+                           "Error (Bkwd.)", "Error (Abs.)",     "Im{kn} (1/m)",
+                           "Im{n_eff}",     "Im{Z_PV[1]} (Ohm)"};
   opts.skip_rowcount = true;
-  opts.linear_solver_policy = kForceDefaultSolver;
+  opts.linear_solver_policy = force_default_solver;
+  // The energies are below atol, so compare them with the relative tolerance only.
+  opts.custom_checks["domain-E.csv"] = CompareComplexMagnitudes(opts.rtol, 0.0);
   palace::test::RunRegressionCase("cpw2d", "cpw2d_thick_impedance.json", "thick_impedance",
                                   opts);
+}
+
+// The CPW of cpw2d_thick_impedance with finite-conductivity conductors (a 100 nm copper
+// film), whose CPW mode (mode 2) is lossy at 5 GHz (arg kₙ = -24 degrees). Its complex
+// power-voltage impedance must match the voltage-current impedance of a current loop around
+// the center conductor, and have the phase of kₙ: with the longitudinal-field term of the
+// Poynting power conjugated wrongly, Re{Z_PV} was 4.8 times too low (issue 1115).
+TEST_CASE("cpw2d_thick_conductivity", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-3;
+  opts.atol = 1.0e-10;
+  // The current around the center conductor nearly vanishes for the other mode (mode 1), so
+  // its Z_VI is not reproducible: the Z_VI of mode 2 enters the impedance check instead.
+  opts.excluded_columns = {"Maximum",           "Minimum",       "Mean",
+                           "Error (Bkwd.)",     "Error (Abs.)",  "Re{Z_VI[1]} (Ohm)",
+                           "Im{Z_VI[1]} (Ohm)", "L_VI[1] (H/m)", "C_VI[1] (F/m)"};
+  opts.skip_rowcount = true;
+  opts.linear_solver_policy = force_default_solver;
+  // The energies are below atol, so compare them with the relative tolerance only.
+  opts.custom_checks["domain-E.csv"] = CompareComplexMagnitudes(opts.rtol, 0.0);
+  opts.custom_checks["mode-Z.csv"] = TestBoundaryModeLossyImpedance(2, opts);
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("cpw2d", "cpw2d_thick_conductivity.json",
+                                  "thick_conductivity", opts);
 }
 
 // 2D mode analysis from a 3D mesh: back to reltol=1e-4, atol still 1e-10.
@@ -651,8 +2749,10 @@ TEST_CASE("cpw_wave_2dmode", "[Serial][Parallel][GPU][Regression]")
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-4;
   opts.atol = 1.0e-10;
-  opts.excluded_columns = kEigenExcluded;
+  opts.excluded_columns = eigen_excluded;
   opts.skip_rowcount = true;
-  opts.linear_solver_policy = kForceDefaultSolver;
+  opts.linear_solver_policy = force_default_solver;
+  // The energies are below atol, so compare them with the relative tolerance only.
+  opts.custom_checks["domain-E.csv"] = CompareComplexMagnitudes(opts.rtol, 0.0);
   palace::test::RunRegressionCase("cpw", "cpw_wave_2dmode.json", "wave_2dmode", opts);
 }

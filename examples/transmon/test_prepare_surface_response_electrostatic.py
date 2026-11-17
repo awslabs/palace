@@ -44,7 +44,8 @@ class PrepareSurfaceResponseElectrostaticTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(config["Model"]["Refinement"], {
             "MaxIts": 10, "Tol": 0.01, "UpdateFraction": 0.7, "MaximumImbalance": 1.15, "MaxNCLevels": 8, "Nonconformal": True,
-            "SaveAdaptIterations": True, "SaveAdaptMesh": True, "MaxSize": 120000000, "UniformLevels": 0, "SerialUniformLevels": 0})
+            "SaveAdaptIterations": True, "SaveAdaptMesh": True, "MaxSize": 120000000, "MaxSizePredicted": True, "UniformLevels": 0,
+            "SerialUniformLevels": 0})
         correction = config["Solver"]["Electrostatic"]["ResponseCorrection"]
         self.assertEqual((correction["TraceCoupling"], correction["MortarOversampling"]), ("SurfaceMortar", 2))
         for dielectric in config["Boundaries"]["Postprocessing"]["Dielectric"]:

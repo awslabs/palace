@@ -22,6 +22,8 @@ if str(IDENTIFICATION_TOOLS) not in sys.path:
     sys.path.insert(0, str(IDENTIFICATION_TOOLS))
 import local_pieces as local_pieces_module  # noqa: E402
 from signature_library import refuse_duplicate_signatures, signature_key_text  # noqa: E402
+from crack_policy import (  # noqa: E402
+    CRACK_POLICY_SOURCE, add_crack_policy_argument, crack_policy_arguments, crack_policy_of)
 
 STRAIGHT_BUILDER = ROOT / "build_surface_process_library.py"
 STRAIGHT_QUALIFIER = ROOT / "qualify_surface_response.py"
@@ -1281,8 +1283,11 @@ def straight_spec(coupons, args, parameters, local_pieces=None):
             "Samples": args.samples,
             "CouponDepth": args.coupon_depth,
         },
+        # Decision 1586: the crack policy of the coupon configs keys the cache (a coupon solved cracked is never
+        # reused for an uncracked build); crack_policy.py's bytes are part of the tool fingerprint.
+        "CrackPolicy": crack_policy_of(args),
         "ToolFingerprint": tool_fingerprint(
-            (STRAIGHT_BUILDER, STRAIGHT_QUALIFIER, Path(__file__))
+            (STRAIGHT_BUILDER, STRAIGHT_QUALIFIER, CRACK_POLICY_SOURCE, Path(__file__))
         ),
     }
     add_local_pieces_form(spec, local_pieces)
@@ -1641,6 +1646,7 @@ def build_straight(coupons, args, parameters, cache):
             "--coupon-depth",
             args.coupon_depth,
             *material_options(parameters),
+            *crack_policy_arguments(crack_policy=crack_policy_of(args)),
         ]
         if getattr(args, "straight_edge_distances", None):
             command.extend(["--edge-distances", *[str(d) for d in args.straight_edge_distances]])
@@ -1896,11 +1902,13 @@ def parallel_cluster_spec(coupon, edges, args, parameters, local_pieces=None):
             "CouponDepth": args.coupon_depth,
             "EdgeOffsetTolerance": args.edge_offset_tolerance,
         },
+        "CrackPolicy": crack_policy_of(args),   # decision 1586 (as the straight family)
         "ToolFingerprint": tool_fingerprint(
             (
                 CLUSTER_MESH,
                 CLUSTER_GENERATOR,
                 STRAIGHT_QUALIFIER,
+                CRACK_POLICY_SOURCE,
                 Path(__file__),
             )
         ),
@@ -1994,6 +2002,7 @@ def build_parallel_cluster(coupon, args, parameters, cache):
             "--model-name",
             parallel_cluster_model_name(key, edges, local_pieces),
             *material_options(parameters),
+            *crack_policy_arguments(crack_policy=crack_policy_of(args)),
         ]
     )
     if getattr(args, "coverage_only", False):
@@ -2342,6 +2351,7 @@ def build_corner(coupon, args, parameters, cache):
                 "MinimumActiveNodesPerOrderSquared": corner_resolvability_constant(),
             },
         },
+        "CrackPolicy": crack_policy_of(args),   # decision 1586 (as the straight family)
         "ToolFingerprint": tool_fingerprint(
             (
                 CORNER_MESH,
@@ -2349,6 +2359,7 @@ def build_corner(coupon, args, parameters, cache):
                 CORNER_FINALIZER,
                 CORNER_CONVERGENCE,
                 CORNER_RESOLVABILITY,
+                CRACK_POLICY_SOURCE,
                 Path(__file__),
             )
         ),
@@ -2428,6 +2439,7 @@ def build_corner(coupon, args, parameters, cache):
             "--topology",
             topology,
             *material_options(parameters),
+            *crack_policy_arguments(crack_policy=crack_policy_of(args)),
         ]
     )
     try:
@@ -2692,12 +2704,14 @@ def spatial_spec(coupon, args, parameters):
         "ProcessResolution": resolution,
         "Response": {"RingSize": args.spatial_ring_size},
         "RegularizationPolicy": geometry.get("MaskRegularization"),
+        "CrackPolicy": crack_policy_of(args),   # decision 1586 (as the straight family)
         "ToolFingerprint": tool_fingerprint(
             (
                 mesher,
                 SPATIAL_GENERATOR,
                 STRAIGHT_QUALIFIER,
                 CORNER_CONVERGENCE,
+                CRACK_POLICY_SOURCE,
                 Path(__file__),
             )
         ),
@@ -2858,6 +2872,7 @@ def build_spatial(coupon, args, parameters, cache):
         "--model-name",
         f"{coupon['Topology'].lower()}-{key[:12]}",
         *material_options(parameters),
+        *crack_policy_arguments(crack_policy=crack_policy_of(args)),
     ]
     try:
         run([*common_generator, "--signature-only"])
@@ -3453,6 +3468,9 @@ def parse_args():
     parser.add_argument("--max-fabricated-energy-change", type=float, default=10.0)
     parser.add_argument("--max-domain-defect-change", type=float, default=5.0)
     parser.add_argument("--force", action="store_true")
+    # Decision 1586: the crack policy of every coupon config the planner's builders write (passed to them) and
+    # part of every family's cache key.
+    add_crack_policy_argument(parser)
     args = parser.parse_args()
     args.heldout_escalation = not args.no_heldout_escalation
     args.output = args.output.expanduser().resolve()

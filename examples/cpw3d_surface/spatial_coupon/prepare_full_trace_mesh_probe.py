@@ -15,6 +15,7 @@ from generate_spatial_response import (
     build_matching_surface, conductor_at_points, conductor_trace_lifts,
     coupon_bounds, write_basis, write_surface_trace, mesh_boundary_attributes,
 )
+from crack_policy import add_crack_policy_argument, apply_crack_policy  # on sys.path via generate_spatial_response
 
 
 def main():
@@ -26,6 +27,7 @@ def main():
     parser.add_argument('--trace-only',action='store_true',help='Prepare the complete trace before meshing')
     parser.add_argument('--order',type=int,default=5)
     parser.add_argument('--ring-size',type=int,default=8)
+    add_crack_policy_argument(parser)
     args=parser.parse_args()
     if not args.mesh and not args.trace_only:parser.error('Supply mesh cases or --trace-only')
     if args.order<1:parser.error('Order must be positive')
@@ -86,7 +88,7 @@ def main():
                          'EdgeDistances':[radius],'EdgeFrameNormal':[0.,0.,1.],'EdgeExcludeAttributes':[1]})
         config={'Problem':{'Type':'Electrostatic','Verbose':1,'Output':str(output/name),
                            'OutputFormats':{'Paraview':False,'GridFunction':False}},
-                'Model':{'Mesh':str(mesh),'L0':1e-6,'Refinement':{'MaxIts':0}},
+                'Model':apply_crack_policy({'Mesh':str(mesh),'L0':1e-6,'Refinement':{'MaxIts':0}},args.crack_policy),
                 'Domains':{'Materials':[{'Attributes':[1],'Permittivity':11.47},{'Attributes':[2],'Permittivity':1.0}]},
                 'Boundaries':{'Ground':{'Attributes':ground},'PrescribedPotential':prescribed,
                               'Postprocessing':{'Dielectric':post}},
@@ -95,7 +97,8 @@ def main():
         config_path=output/(name+'.json');config_path.write_text(json.dumps(config,indent=2)+'\n')
         cases.append({'Name':name,'Mesh':str(mesh),'Config':str(config_path)})
     (output/'manifest.json').write_text(json.dumps({'Scope':'Complete nodal box trace basis and conductor states, not a production library qualification',
-        'Sources':len(sources),'TraceGeometry':geometry,'Cases':cases,'Order':args.order,'Tolerance':1e-8},indent=2)+'\n')
+        'Sources':len(sources),'TraceGeometry':geometry,'Cases':cases,'Order':args.order,'Tolerance':1e-8,
+        'CrackPolicy':args.crack_policy},indent=2)+'\n')
     print('Full trace sources:',len(sources))
 
 

@@ -167,7 +167,8 @@ class ThinConfigTest(unittest.TestCase):
         self.assertEqual(config["Domains"]["Materials"][0], {"Attributes": [1, 2], "Permittivity": 11.45})
         self.assertEqual(config["Domains"]["Materials"][1], {"Attributes": [3], "Permittivity": 1.0})
         self.assertEqual(config["Model"]["Refinement"], {"MaxIts": 11, "UniformLevels": 0, "SerialUniformLevels": 0, "Tol": 0.01, "UpdateFraction": 0.7, "MaximumImbalance": 1.15,
-                                                         "MaxNCLevels": 8, "Nonconformal": True, "SaveAdaptIterations": True, "SaveAdaptMesh": False, "MaxSize": 400000000})
+                                                         "MaxNCLevels": 8, "Nonconformal": True, "SaveAdaptIterations": True, "SaveAdaptMesh": False, "MaxSize": 400000000,
+                                                         "MaxSizePredicted": True})
         self.assertEqual(config["Solver"]["Order"], 5)
         response = config["Solver"]["Electrostatic"]["ResponseCorrection"]
         self.assertEqual(response["Library"], "/lib/process-library.json")

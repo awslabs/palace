@@ -79,7 +79,7 @@ public:
   }
 };
 
-template <typename OperType>
+template <OperatorType OperType>
 auto BuildLevelParOperator(std::unique_ptr<Operator> &&a,
                            const FiniteElementSpace &fespace);
 
@@ -195,9 +195,11 @@ DivFreeSolver<VecType>::DivFreeSolver(
     CorrectedM->AddOperator(*ResponseMassWrapper);
   }
 
-  // The system matrix for the projection is real and SPD.
+  // The system matrix for the projection is real and SPD. As the coarse solver of
+  // multigrid, the AMG solve is a small problem whose V-cycle is latency bound in parallel:
+  // a second level of aggressive coarsening shortens the hierarchy.
   auto amg = std::make_unique<MfemWrapperSolver<OperType>>(
-      std::make_unique<BoomerAmgSolver>(1, 1, true, 0));
+      std::make_unique<BoomerAmgSolver>(1, 1, (h1_fespaces.GetNumLevels() > 1) ? 2 : 1, 0));
   amg->SetDropSmallEntries(false);
   std::unique_ptr<Solver<OperType>> pc;
   if (h1_fespaces.GetNumLevels() > 1)
@@ -236,7 +238,7 @@ void DivFreeSolver<VecType>::Mult(VecType &y) const
   BlockTimer bt(Timer::DIV_FREE);
 
   // Compute the divergence of y.
-  if constexpr (std::is_same<VecType, ComplexVector>::value)
+  if constexpr (std::is_same_v<VecType, ComplexVector>)
   {
     const Operator &weak_div = CorrectedWeakDiv ? *CorrectedWeakDiv : *WeakDiv;
     weak_div.Mult(y.Real(), rhs.Real());
@@ -255,7 +257,7 @@ void DivFreeSolver<VecType>::Mult(VecType &y) const
   ksp->Mult(rhs, psi);
 
   // Compute the irrotational portion of y and subtract.
-  if constexpr (std::is_same<VecType, ComplexVector>::value)
+  if constexpr (std::is_same_v<VecType, ComplexVector>)
   {
     Grad->AddMult(psi.Real(), y.Real(), 1.0);
     Grad->AddMult(psi.Imag(), y.Imag(), 1.0);
@@ -264,6 +266,15 @@ void DivFreeSolver<VecType>::Mult(VecType &y) const
   {
     Grad->AddMult(psi, y, 1.0);
   }
+}
+
+template <typename VecType>
+void DivFreeSolver<VecType>::Mult(VecType &y, double tol) const
+{
+  const double tol0 = ksp->GetRelTol();
+  ksp->SetRelTol(tol);
+  Mult(y);
+  ksp->SetRelTol(tol0);
 }
 
 template class DivFreeSolver<Vector>;

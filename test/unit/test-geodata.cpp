@@ -4,7 +4,9 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <fstream>
 #include <memory>
+#include <numbers>
 #include <numeric>
 #include <optional>
 #include <sstream>
@@ -15,12 +17,16 @@
 #include <nlohmann/json.hpp>
 #include <catch2/generators/catch_generators_all.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 
+#include "fixtures.hpp"
+#include "surfaceresponse-fixtures.hpp"
 #include "test-helpers.hpp"
 
 #include "fem/fespace.hpp"
 #include "utils/geodata.hpp"
 #include "utils/geodata_impl.hpp"
+#include "utils/iodata.hpp"
 
 #include "fem/interpolator.hpp"
 #include "models/laplaceoperator.hpp"
@@ -31,7 +37,6 @@
 #include "utils/configfile.hpp"
 #include "utils/edgedistance.hpp"
 #include "utils/filesystem.hpp"
-#include "utils/iodata.hpp"
 #include "utils/metaledge.hpp"
 
 namespace palace
@@ -352,7 +357,7 @@ TEST_CASE("TwoDimensionalDiagonalSquarePort", "[geodata][Serial]")
   auto box = mesh::BoundingBoxFromPointCloud(comm, vertices, 0);
 
   // True box at 45 degrees
-  auto invsqrt2 = 1.0 / std::sqrt(2);
+  auto invsqrt2 = 1.0 / std::numbers::sqrt2;
   std::array<double, 3> ax0{invsqrt2, -invsqrt2, 0.0}, ax1{invsqrt2, invsqrt2, 0.0};
 
   // Find the bounding points from knowing its at 45.
@@ -482,7 +487,7 @@ TEST_CASE("TetToHex", "[geodata][Serial]")
     // comparison).
     for (int i = 0; i < single_tet.GetNodes()->Size(); i++)
     {
-      (*single_tet.GetNodes())(i) += 0.05 * (1.0 + (double)rand() / RAND_MAX);
+      (*single_tet.GetNodes())(i) += 0.05 * (1.0 + static_cast<double>(rand()) / RAND_MAX);
     }
 
     auto four_hex = mesh::MeshTetToHex(single_tet);
@@ -1219,10 +1224,14 @@ TEST_CASE("Flux recovery rejects cracked interfaces", "[geodata][Serial]")
   dielectric.flux_recovery = true;
   config::BoundaryPostData postpro;
   postpro.dielectric.try_emplace(1, std::move(dielectric));
-  const std::unordered_set<int> cracked_attributes = {1};
 
-  CHECK_THROWS(SurfacePostOperator(postpro, ProblemType::ELECTROSTATIC, mat_op, h1_fespace,
-                                   nd_fespace, &cracked_attributes));
+  // The legacy key: the interface attribute is in the mesh crack set.
+  config::BoundaryData boundaries;
+  boundaries.cracked_attributes = {1};
+  CHECK_THROWS_WITH(
+      SurfacePostOperator(postpro, ProblemType::ELECTROSTATIC, mat_op, h1_fespace,
+                          nd_fespace, {}, &boundaries),
+      Catch::Matchers::ContainsSubstring("\"FluxRecovery\" is not supported"));
 }
 
 TEST_CASE("Boundary edge extraction on cracked 3D sheet", "[geodata][Serial][Parallel]")
@@ -1601,10 +1610,14 @@ TEST_CASE("Automatic edge distance to nonregular vertex crosses mesh segments",
 TEST_CASE("Automatic metal edge extraction on 3D CPW",
           "[geodata][metaledge][Serial][Parallel]")
 {
+  // P3-23: both crack forms (the legacy key of SD-801; upstream's default = the key unset).
+  const auto crack_policy = GENERATE(test::CrackPolicy::Legacy, test::CrackPolicy::Default);
+  INFO("crack policy: " << test::CrackPolicyName(crack_policy));
   const auto config_path = fs::path(__FILE__).parent_path().parent_path().parent_path() /
                            "examples/cpw3d_surface/cpw3d_surface_validation_thin.json";
   IoData iodata(config_path.c_str(), false);
   iodata.model.mesh = fs::path(PALACE_TEST_DATA_DIR) / "mesh/cpw3d-surface-nc.msh";
+  test::ApplyCrackPolicy(iodata, crack_policy);  // explicit crack policy (P3-23)
   iodata.model.refinement.max_it = 0;
   auto mesh = mesh::ReadMesh(iodata, Mpi::World());
 
@@ -1699,10 +1712,14 @@ TEST_CASE("Automatic metal edge extraction on 3D CPW",
 TEST_CASE("Automatic metal edge chains survive local refinement",
           "[geodata][metaledge][Serial][Parallel]")
 {
+  // P3-23: both crack forms (the legacy key of SD-801; upstream's default = the key unset).
+  const auto crack_policy = GENERATE(test::CrackPolicy::Legacy, test::CrackPolicy::Default);
+  INFO("crack policy: " << test::CrackPolicyName(crack_policy));
   const auto config_path = fs::path(__FILE__).parent_path().parent_path().parent_path() /
                            "examples/cpw3d_surface/cpw3d_surface_validation_thin.json";
   IoData iodata(config_path.c_str(), false);
   iodata.model.mesh = fs::path(PALACE_TEST_DATA_DIR) / "mesh/cpw3d-surface-nc.msh";
+  test::ApplyCrackPolicy(iodata, crack_policy);  // explicit crack policy (P3-23)
   iodata.model.refinement.max_it = 1;
   auto mesh = mesh::ReadMesh(iodata, Mpi::World());
 
@@ -1792,10 +1809,14 @@ TEST_CASE("Automatic metal edge chains survive local refinement",
 TEST_CASE("Root-level metal perimeter on a locally refined NC mesh",
           "[geodata][metaledge][Serial][Parallel]")
 {
+  // P3-23: both crack forms (the legacy key of SD-801; upstream's default = the key unset).
+  const auto crack_policy = GENERATE(test::CrackPolicy::Legacy, test::CrackPolicy::Default);
+  INFO("crack policy: " << test::CrackPolicyName(crack_policy));
   const auto config_path = fs::path(__FILE__).parent_path().parent_path().parent_path() /
                            "examples/cpw3d_surface/cpw3d_surface_validation_thin.json";
   IoData iodata(config_path.c_str(), false);
   iodata.model.mesh = fs::path(PALACE_TEST_DATA_DIR) / "mesh/cpw3d-surface-nc.msh";
+  test::ApplyCrackPolicy(iodata, crack_policy);  // explicit crack policy (P3-23)
   iodata.model.refinement.max_it = 1;
   auto mesh = mesh::ReadMesh(iodata, Mpi::World());
   REQUIRE(mesh->Nonconforming());
@@ -1818,9 +1839,14 @@ TEST_CASE("Root-level metal perimeter on a locally refined NC mesh",
     CHECK(coarse_root.segments[i].type == coarse.segments[i].type);
   }
 
-  // Refine the elements on ONE side of the two PEC sheets (the boundary elements' adjacent
-  // elements): the crack copies of the sheets are then at different depths and the leaf
-  // perimeter is split at the refinement midpoints.
+  // Refine the elements on ONE side of the two PEC sheets (the vacuum-side neighbours of
+  // the sheet faces): the crack copies of the sheets are then at different depths and the
+  // leaf perimeter is split at the refinement midpoints. P3-23: the neighbours are read
+  // through the sheet face (GetFaceElements), not the boundary element's adjacent element:
+  // on the cracked mesh each copy's face has the one element of its side (the same set as
+  // GetBdrElementAdjacentElement); on the uncracked mesh (upstream's default) a sheet face
+  // is interior and its boundary element names one neighbour only, the other side's
+  // element is the face's second (local) neighbour.
   std::set<int> adjacent_elements;
   for (int be = 0; be < mesh->GetNBE(); be++)
   {
@@ -1829,11 +1855,14 @@ TEST_CASE("Root-level metal perimeter on a locally refined NC mesh",
     {
       continue;
     }
-    int element, info;
-    mesh->GetBdrElementAdjacentElement(be, element, info);
-    if (mesh->GetAttribute(element) == 2)  // the vacuum side only
+    int element1, element2;
+    mesh->GetFaceElements(mesh->GetBdrElementFaceIndex(be), &element1, &element2);
+    for (const int element : {element1, element2})
     {
-      adjacent_elements.insert(element);
+      if (element >= 0 && mesh->GetAttribute(element) == 2)  // the vacuum side only
+      {
+        adjacent_elements.insert(element);
+      }
     }
   }
   int marked_count = static_cast<int>(adjacent_elements.size());
@@ -1967,16 +1996,33 @@ TEST_CASE("Root-level metal perimeter on a locally refined NC mesh",
   const auto leaf_physical = PhysicalSegments(refined);
   BuildMetalEdgeProcessNormals(*mesh, refined, leaf_physical, Score, std::nullopt,
                                &leaf_ambiguous);
-  CHECK(std::count(leaf_ambiguous.begin(), leaf_ambiguous.end(), true) > 0);
+  // P3-23 (MEASURED): mechanism (A) needs two crack copies of a sheet refined to different
+  // depths. Uncracked (upstream's default), the sheet is one set of interior faces that the
+  // one-sided refinement splits for both sides at once: no leaf segment is one-sided, the
+  // leaf frame is unambiguous as the root one.
+  const auto leaf_ambiguous_count =
+      std::count(leaf_ambiguous.begin(), leaf_ambiguous.end(), true);
+  if (crack_policy == test::CrackPolicy::Legacy)
+  {
+    CHECK(leaf_ambiguous_count > 0);
+  }
+  else
+  {
+    CHECK(leaf_ambiguous_count == 0);
+  }
 }
 
 TEST_CASE("Automatic metal edge extraction on 3D transmon",
           "[geodata][metaledge][Serial][Parallel]")
 {
+  // P3-23: both crack forms (the legacy key of SD-801; upstream's default = the key unset).
+  const auto crack_policy = GENERATE(test::CrackPolicy::Legacy, test::CrackPolicy::Default);
+  INFO("crack policy: " << test::CrackPolicyName(crack_policy));
   const auto config_path = fs::path(__FILE__).parent_path().parent_path().parent_path() /
                            "examples/transmon/transmon_surface_coarse.json";
   IoData iodata(config_path.c_str(), false);
   iodata.model.mesh = config_path.parent_path() / iodata.model.mesh;
+  test::ApplyCrackPolicy(iodata, crack_policy);  // explicit crack policy (P3-23)
   iodata.model.refinement.max_it = 0;
   auto mesh = mesh::ReadMesh(iodata, Mpi::World());
 
@@ -1998,6 +2044,14 @@ TEST_CASE("Automatic metal edge extraction on 3D transmon",
   int nonmanifold_segments = 0, port_segments = 0;
   int embedded_segments = 0;
   int corners = 0;
+  double fold_length = 0.0, embedded_length = 0.0;  // P3-23: the form-invariant measure
+  auto SegmentLength = [&geometry](const MetalEdgeSegment &segment)
+  {
+    const auto &p0 = geometry.vertices[segment.vertices[0]].coordinate;
+    const auto &p1 = geometry.vertices[segment.vertices[1]].coordinate;
+    return std::sqrt((p1[0] - p0[0]) * (p1[0] - p0[0]) + (p1[1] - p0[1]) * (p1[1] - p0[1]) +
+                     (p1[2] - p0[2]) * (p1[2] - p0[2]));
+  };
   int sa_segments = 0;
   std::set<int> truncation_attributes;
   for (const auto &segment : geometry.segments)
@@ -2013,6 +2067,14 @@ TEST_CASE("Automatic metal edge extraction on 3D transmon",
     nonmanifold_segments += segment.type == MetalEdgeSegmentType::NONMANIFOLD;
     port_segments += segment.type == MetalEdgeSegmentType::PORT;
     embedded_segments += segment.side_attributes.size() == 1;
+    if (segment.type == MetalEdgeSegmentType::FOLD)
+    {
+      fold_length += SegmentLength(segment);
+    }
+    if (segment.side_attributes.size() == 1)
+    {
+      embedded_length += SegmentLength(segment);
+    }
     sa_segments += !segment.sa_interfaces.empty();
     truncation_attributes.insert(segment.truncation_attributes.begin(),
                                  segment.truncation_attributes.end());
@@ -2053,9 +2115,18 @@ TEST_CASE("Automatic metal edge extraction on 3D transmon",
         static_cast<int>(geometry.segments.size()));
   CHECK(physical_segments == 3122);
   CHECK(port_segments == 6);
-  CHECK(fold_segments == 16);
+  // P3-23 (MEASURED, both forms): the 16 deck-leg folds of the legacy form are the 8 fold
+  // mesh edges of the uncracked mesh, each split in two by the legacy crack's bisection
+  // (Load, Model.RefineCrackElements: an element with an edge interior to the crack between
+  // two seam vertices is refined); the fold length, 80, and the one-sided length, 496, are
+  // the same in both forms, and so is everything else checked here.
+  const bool legacy = crack_policy == test::CrackPolicy::Legacy;
+  CHECK(fold_segments == (legacy ? 16 : 8));
   CHECK(nonmanifold_segments == 8);
-  CHECK(embedded_segments == 40 + 16);  // the feet also touch the ground sheet faces
+  // The feet also touch the ground sheet faces.
+  CHECK(embedded_segments == 40 + (legacy ? 16 : 8));
+  CHECK_THAT(fold_length, WithinRel(80.0, 1.0e-12));
+  CHECK_THAT(embedded_length, WithinRel(496.0, 1.0e-12));
   CHECK(geometry.physical_chains == 460);
   CHECK(truncation_segments == 58);
   CHECK(truncation_attributes == std::set<int>{3});
@@ -2387,6 +2458,9 @@ TEST_CASE("Automatic metal edge extraction treats a junction face as the open ga
 TEST_CASE("Automatic metal edge classification is partition independent",
           "[geodata][metaledge][Serial][Parallel]")
 {
+  // P3-23: both crack forms (the legacy key of SD-801; upstream's default = the key unset).
+  const auto crack_policy = GENERATE(test::CrackPolicy::Legacy, test::CrackPolicy::Default);
+  INFO("crack policy: " << test::CrackPolicyName(crack_policy));
   // The metal perimeter and its edge frames must be a function of the global mesh only.
   // Palace's interior-boundary cracking displaces the duplicated crack vertices by
   // CrackDisplacementFactor x h_min, so coincident copies of a perimeter vertex carry
@@ -2398,6 +2472,7 @@ TEST_CASE("Automatic metal edge classification is partition independent",
                            "examples/transmon/transmon_surface_coarse.json";
   IoData iodata(config_path.c_str(), false);
   iodata.model.mesh = config_path.parent_path() / iodata.model.mesh;
+  test::ApplyCrackPolicy(iodata, crack_policy);  // explicit crack policy (P3-23)
   iodata.model.refinement.max_it = 0;
   auto serial_mesh = mesh::Load(iodata, MPI_COMM_SELF);
   REQUIRE(serial_mesh);
@@ -2560,6 +2635,7 @@ TEST_CASE("Boundary edge extraction on cracked CPW mesh", "[geodata][Serial]")
                            "examples/cpw2d/cpw2d_thin_electrostatic.json";
   IoData iodata(config_path.c_str(), false);
   iodata.model.mesh = config_path.parent_path() / iodata.model.mesh;
+  iodata.model.crack_bdr_elements = true;  // explicit crack policy: legacy (cracked)
   auto mesh = mesh::ReadMesh(iodata, Mpi::World());
 
   auto marker = mesh::AttrToMarker(mesh->bdr_attributes.Max(), std::vector<int>{1, 2});
@@ -2582,14 +2658,64 @@ TEST_CASE("Boundary edge extraction on cracked CPW mesh", "[geodata][Serial]")
   }
 }
 
+// P3-23 (the sibling of the case above for upstream's default crack form, SL8-RESOLUTION s4
+// (a)): the same 2D CPW metal line read with Model.CrackInternalBoundaryElements unset (the
+// Ground / Terminal sheets 1 / 2 are then NOT cracked) and, in the same case, with the
+// legacy key: the premise (the cracked mesh carries the duplicated sheet vertices, the
+// uncracked one does not) and the extraction's result, order-free: the same six metal end
+// points on y = 0.
+TEST_CASE("Boundary edge extraction on uncracked CPW mesh", "[geodata][Serial]")
+{
+  const auto config_path = fs::path(__FILE__).parent_path().parent_path().parent_path() /
+                           "examples/cpw2d/cpw2d_thin_electrostatic.json";
+  auto EdgePoints = [&](test::CrackPolicy crack_policy, int &vertices)
+  {
+    IoData iodata(config_path.c_str(), false);
+    iodata.model.mesh = config_path.parent_path() / iodata.model.mesh;
+    test::ApplyCrackPolicy(iodata, crack_policy);
+    auto mesh = mesh::ReadMesh(iodata, Mpi::World());
+    // MEASURED: the legacy key cracks the Ground (PEC) sheet 2 only: Terminal attributes
+    // are not in BoundaryData::attributes, the legacy crack set, so the Terminal sheet 1 is
+    // not cracked in either form.
+    CHECK(std::set<int>(iodata.boundaries.cracked_attributes.begin(),
+                        iodata.boundaries.cracked_attributes.end()) ==
+          (crack_policy == test::CrackPolicy::Legacy ? std::set<int>{2} : std::set<int>{}));
+    vertices = mesh->GetNV();
+    auto marker = mesh::AttrToMarker(mesh->bdr_attributes.Max(), std::vector<int>{1, 2});
+    std::vector<std::array<double, 2>> points;
+    for (const auto &edge : mesh::GetBoundaryEdgeSegments(*mesh, marker))
+    {
+      CHECK(edge.p0 == edge.p1);
+      points.push_back({edge.p0[0], edge.p0[1]});
+    }
+    std::sort(points.begin(), points.end());
+    return points;
+  };
+  int cracked_vertices = 0, uncracked_vertices = 0;
+  const auto cracked = EdgePoints(test::CrackPolicy::Legacy, cracked_vertices);
+  const auto uncracked = EdgePoints(test::CrackPolicy::Default, uncracked_vertices);
+  CHECK(uncracked_vertices < cracked_vertices);
+  REQUIRE(uncracked.size() == cracked.size());
+  REQUIRE(uncracked.size() == 6);
+  for (std::size_t i = 0; i < uncracked.size(); i++)
+  {
+    CHECK_THAT(uncracked[i][0], WithinAbs(cracked[i][0], 1.0e-12));
+    CHECK_THAT(uncracked[i][1], WithinAbs(0.0, 1.0e-12));
+  }
+}
+
 TEST_CASE("Boundary edge extraction on NC 3D CPW mesh", "[geodata][Serial][Parallel]")
 {
+  // P3-23: both crack forms (the legacy key of SD-801; upstream's default = the key unset).
+  const auto crack_policy = GENERATE(test::CrackPolicy::Legacy, test::CrackPolicy::Default);
+  INFO("crack policy: " << test::CrackPolicyName(crack_policy));
   const auto config_path = fs::path(__FILE__).parent_path().parent_path().parent_path() /
                            "examples/cpw3d_surface/cpw3d_surface_validation_thin.json";
   auto ExtractEdges = [&](bool use_amr)
   {
     IoData iodata(config_path.c_str(), false);
     iodata.model.mesh = fs::path(PALACE_TEST_DATA_DIR) / "mesh/cpw3d-surface-nc.msh";
+    test::ApplyCrackPolicy(iodata, crack_policy);  // explicit crack policy (P3-23)
     iodata.model.refinement.max_it = use_amr ? 1 : 0;
     auto mesh = mesh::ReadMesh(iodata, Mpi::World());
     auto marker = mesh::AttrToMarker(mesh->bdr_attributes.Max(), std::vector<int>{1, 2});
@@ -2695,6 +2821,126 @@ TEST_CASE("Boundary edge extraction on NC mesh", "[geodata][Serial]")
   }
 }
 
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "Mesh loader removes boundary elements which are not faces of the mesh",
+                 "[geodata][Serial]")
+{
+  // Gmsh mesh of the unit square, with two triangles split along the diagonal from (0, 0)
+  // to (1, 1), and four boundary elements on its boundary. Three more boundary elements are
+  // not an edge of any triangle: the other diagonal of the square (attribute 2), the edge
+  // from (2, 0) to (2, 1) whose vertices are not vertices of any triangle (attribute 3),
+  // and the edge from (1, 0) to (2, 0) with the attribute 1 of the square boundary. A
+  // second order mesh has a curved edge from (0, 0) to (1, 0) through (0.5, -0.1), which
+  // adds 2/3 * 0.1 to the area of the square.
+  const int order = GENERATE(1, 2);
+  const bool clean_unused_elements = GENERATE(false, true);
+  CAPTURE(order, clean_unused_elements);
+  std::vector<std::array<double, 2>> nodes = {{0.0, 0.0}, {1.0, 0.0}, {1.0, 1.0},
+                                              {0.0, 1.0}, {2.0, 0.0}, {2.0, 1.0}};
+  std::vector<std::array<int, 3>> edge_nodes;  // Vertices and second order node of edges
+  auto EdgeNode = [&](int v0, int v1)
+  {
+    for (const auto &[w0, w1, node] : edge_nodes)
+    {
+      if ((w0 == v0 && w1 == v1) || (w0 == v1 && w1 == v0))
+      {
+        return node;
+      }
+    }
+    edge_nodes.push_back({v0, v1, static_cast<int>(nodes.size())});
+    nodes.push_back({0.5 * (nodes[v0][0] + nodes[v1][0]),
+                     0.5 * (nodes[v0][1] + nodes[v1][1]) - (v0 + v1 == 1 ? 0.1 : 0.0)});
+    return edge_nodes.back()[2];
+  };
+  struct GmshElement
+  {
+    int type, attr;
+    std::vector<int> nodes;
+  };
+  std::vector<GmshElement> elements;
+  for (auto [v0, v1, attr] : std::vector<std::array<int, 3>>{
+           {0, 1, 1}, {1, 2, 1}, {2, 3, 1}, {3, 0, 1}, {1, 3, 2}, {4, 5, 3}, {1, 4, 1}})
+  {
+    elements.push_back({order == 1 ? 1 : 8, attr,
+                        order == 1 ? std::vector<int>{v0, v1}
+                                   : std::vector<int>{v0, v1, EdgeNode(v0, v1)}});
+  }
+  for (auto [v0, v1, v2] : std::vector<std::array<int, 3>>{{0, 1, 2}, {0, 2, 3}})
+  {
+    elements.push_back({order == 1 ? 2 : 9, 1,
+                        order == 1 ? std::vector<int>{v0, v1, v2}
+                                   : std::vector<int>{v0, v1, v2, EdgeNode(v0, v1),
+                                                      EdgeNode(v1, v2), EdgeNode(v2, v0)}});
+  }
+  const auto mesh_file = temp_dir / "mesh.msh";
+  {
+    std::ofstream fo(mesh_file);
+    fo << "$MeshFormat\n2.2 0 8\n$EndMeshFormat\n$Nodes\n" << nodes.size() << "\n";
+    for (std::size_t i = 0; i < nodes.size(); i++)
+    {
+      fo << i + 1 << " " << nodes[i][0] << " " << nodes[i][1] << " 0\n";
+    }
+    fo << "$EndNodes\n$Elements\n" << elements.size() << "\n";
+    for (std::size_t i = 0; i < elements.size(); i++)
+    {
+      fo << i + 1 << " " << elements[i].type << " 2 " << elements[i].attr << " "
+         << elements[i].attr;
+      for (auto v : elements[i].nodes)
+      {
+        fo << " " << v + 1;
+      }
+      fo << "\n";
+    }
+    fo << "$EndElements\n";
+  }
+
+  Units units(1.0, 1.0);
+  IoData iodata(units);
+  iodata.model.mesh = mesh_file.string();
+  iodata.model.clean_unused_elements = clean_unused_elements;
+  iodata.domains.attributes = {1};
+  auto mesh = mesh::Load(iodata, Mpi::World());
+  REQUIRE(mesh);
+
+  // The boundary elements which are not edges of the mesh are removed, together with the
+  // vertices of only these boundary elements.
+  CHECK(mesh->GetNE() == 2);
+  CHECK(mesh->GetNV() == 4);
+  REQUIRE(mesh->GetNBE() == 4);
+  REQUIRE(mesh->bdr_attributes.Size() == 1);
+  CHECK(mesh->bdr_attributes[0] == 1);
+  double length = 0.0;
+  for (int be = 0; be < mesh->GetNBE(); be++)
+  {
+    CAPTURE(be);
+    int e1, e2;
+    REQUIRE(mesh->GetBdrElementFaceIndex(be) >= 0);
+    mesh->GetFaceElements(mesh->GetBdrElementFaceIndex(be), &e1, &e2);
+    CHECK(e1 >= 0);
+    CHECK(e2 < 0);
+    auto *T = mesh->GetBdrElementTransformation(be);
+    const auto &ir = mfem::IntRules.Get(T->GetGeometryType(), 10);
+    for (int q = 0; q < ir.GetNPoints(); q++)
+    {
+      T->SetIntPoint(&ir.IntPoint(q));
+      length += ir.IntPoint(q).weight * T->Weight();
+    }
+  }
+  CHECK(mesh->CheckBdrElementOrientation(false) == 0);
+
+  // The geometry of the mesh is unchanged.
+  REQUIRE(mesh->GetNodes());
+  CHECK(mesh->GetNodes()->FESpace()->GetMaxElementOrder() == order);
+  double area = 0.0;
+  for (int e = 0; e < mesh->GetNE(); e++)
+  {
+    area += mesh->GetElementVolume(e);
+  }
+  CHECK_THAT(area, WithinRel(order == 1 ? 1.0 : 1.0 + 0.2 / 3.0, 1.0e-12));
+  const double curved_length = 0.5 * std::sqrt(1.16) + std::asinh(0.4) / 0.8;
+  CHECK_THAT(length, WithinRel(order == 1 ? 4.0 : 3.0 + curved_length, 1.0e-8));
+}
+
 TEST_CASE("PeriodicGmsh", "[geodata][Serial]")
 {
   auto torus_path = fs::path(PALACE_TEST_DATA_DIR) / "mesh" / "periodic-torus-sector.msh";
@@ -2725,6 +2971,296 @@ TEST_CASE("PeriodicGmsh", "[geodata][Serial]")
   REQUIRE(mesh::DeterminePeriodicVertexMapping(
               mesh, boundary_torus.periodic.boundary_pairs.front())
               .empty());
+}
+
+TEST_CASE("Interior boundary mesh cracking", "[geodata][Serial]")
+{
+  // Unit cube hexahedral mesh with interior boundary elements (attribute 7) on z = 0.5,
+  // spanning the domain (exterior boundary attributes 1-6).
+  auto base = mfem::Mesh::MakeCartesian3D(2, 2, 2, mfem::Element::HEXAHEDRON);
+  std::vector<int> sheet_faces;
+  mfem::Array<int> fv;
+  for (int f = 0; f < base.GetNumFaces(); f++)
+  {
+    int e1, e2;
+    base.GetFaceElements(f, &e1, &e2);
+    base.GetFaceVertices(f, fv);
+    bool on_sheet = (e2 >= 0);
+    for (auto v : fv)
+    {
+      on_sheet = on_sheet && std::abs(base.GetVertex(v)[2] - 0.5) < 1.0e-12;
+    }
+    if (on_sheet)
+    {
+      sheet_faces.push_back(f);
+    }
+  }
+  REQUIRE(sheet_faces.size() == 4);
+  mfem::Mesh mesh(3, base.GetNV(), base.GetNE(),
+                  base.GetNBE() + static_cast<int>(sheet_faces.size()));
+  for (int v = 0; v < base.GetNV(); v++)
+  {
+    mesh.AddVertex(base.GetVertex(v));
+  }
+  for (int e = 0; e < base.GetNE(); e++)
+  {
+    mesh.AddElement(base.GetElement(e)->Duplicate(&mesh));
+  }
+  for (int be = 0; be < base.GetNBE(); be++)
+  {
+    mesh.AddBdrElement(base.GetBdrElement(be)->Duplicate(&mesh));
+  }
+  for (auto f : sheet_faces)
+  {
+    auto *el = base.GetFace(f)->Duplicate(&mesh);
+    el->SetAttribute(7);
+    mesh.AddBdrElement(el);
+  }
+  mesh.FinalizeTopology();
+  mesh.Finalize();
+  mesh.SetAttributes();
+  const auto mesh_path = fs::temp_directory_path() / "palace-test-interior-sheet.mesh";
+  {
+    std::ofstream fo(mesh_path);
+    mesh.Print(fo);
+  }
+  const int nv = mesh.GetNV(), nv_cut = nv + 9;  // 3 x 3 vertices on the sheet
+
+  auto LoadMesh = [&](const json &boundaries, const json &model, const fs::path &path)
+  {
+    json config = {{"Problem", {{"Type", "Eigenmode"}, {"Verbose", 0}}},
+                   {"Model", {{"Mesh", path.string()}}},
+                   {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                   {"Boundaries", boundaries},
+                   {"Solver", {{"Eigenmode", {{"Target", 1.0}}}}}};
+    config["Model"].update(model);
+    IoData iodata(config, false);
+    return mesh::Load(iodata, Mpi::World());
+  };
+  auto NumVertices = [&](const json &boundaries, const json &model)
+  { return LoadMesh(boundaries, model, mesh_path)->GetNV(); };
+  const json none = json::object();
+  const json legacy = {{"CrackInternalBoundaryElements", true}};
+  const json off = {{"CrackInternalBoundaryElements", false}};
+  auto Impedance = [](json crack)
+  {
+    json data = {{"Attributes", {7}}, {"Ls", 1.0e-12}};
+    if (!crack.is_null())
+    {
+      data["Crack"] = crack;
+    }
+    return json{{"Impedance", {data}}};
+  };
+  auto Conductivity = [](json crack)
+  {
+    json data = {{"Attributes", {7}}, {"Conductivity", 1.0e7}};
+    if (!crack.is_null())
+    {
+      data["Crack"] = crack;
+    }
+    return json{{"Conductivity", {data}}};
+  };
+  auto RationalImpedance = [](json crack)
+  {
+    json data = {{"Attributes", {7}}, {"Numerator", {1.0}}, {"Denominator", {1.0}}};
+    if (!crack.is_null())
+    {
+      data["Crack"] = crack;
+    }
+    return json{{"RationalImpedance", {data}}};
+  };
+
+  // Sheets with a surface impedance: thin film (not cracked) or thick conductor (cracked).
+  CHECK(NumVertices(Impedance(nullptr), none) == nv);
+  CHECK(NumVertices(Impedance(false), none) == nv);
+  CHECK(NumVertices(Impedance(true), none) == nv_cut);
+  CHECK(NumVertices(Conductivity(nullptr), none) == nv);
+  CHECK(NumVertices(Conductivity(true), none) == nv_cut);
+  CHECK(NumVertices(RationalImpedance(nullptr), none) == nv);
+  CHECK(NumVertices(RationalImpedance(true), none) == nv_cut);
+
+  // Perfect conductors are never cracked, one-sided boundary conditions always are.
+  CHECK(NumVertices({{"PEC", {{"Attributes", {7}}}}}, none) == nv);
+  CHECK(NumVertices({{"PMC", {{"Attributes", {7}}}}}, none) == nv_cut);
+
+  // Deprecated global option. Disabling mesh cracking contradicts boundaries which request
+  // it.
+  CHECK(NumVertices({{"PEC", {{"Attributes", {7}}}}}, legacy) == nv_cut);
+  CHECK(NumVertices(Impedance(false), legacy) == nv_cut);
+  CHECK(NumVertices(Impedance(true), legacy) == nv_cut);
+  CHECK(NumVertices(Conductivity(nullptr), off) == nv);
+  CHECK(NumVertices(Impedance(false), off) == nv);
+  CHECK(NumVertices({{"PMC", {{"Attributes", {7}}}}}, off) == nv);
+  CHECK_THROWS(NumVertices(Impedance(true), off));
+  CHECK_THROWS(NumVertices(Conductivity(true), off));
+  CHECK_THROWS(NumVertices(RationalImpedance(true), off));
+
+  // Each face of a cracked impedance boundary has the given surface impedance, except with
+  // the deprecated global option, which splits it between the two faces.
+  auto SplitAttributes = [&](const json &boundaries, const json &model)
+  {
+    json config = {{"Problem", {{"Type", "Eigenmode"}, {"Verbose", 0}}},
+                   {"Model", {{"Mesh", mesh_path.string()}}},
+                   {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                   {"Boundaries", boundaries},
+                   {"Solver", {{"Eigenmode", {{"Target", 1.0}}}}}};
+    config["Model"].update(model);
+    IoData iodata(config, false);
+    mesh::ReadMesh(iodata, Mpi::World());
+    REQUIRE(iodata.boundaries.cracked_attributes == std::unordered_set<int>{7});
+    return iodata.boundaries.split_impedance_attributes;
+  };
+  CHECK(SplitAttributes(Impedance(true), none).empty());
+  CHECK(SplitAttributes(RationalImpedance(true), none).empty());
+  CHECK(SplitAttributes(Impedance(false), legacy) == std::unordered_set<int>{7});
+  CHECK(SplitAttributes(Impedance(true), legacy) == std::unordered_set<int>{7});
+
+  // Refinement boxes make the hexahedral mesh nonconformal, which cannot be cracked.
+  const json box = {{"Refinement",
+                     {{"Boxes",
+                       {{{"Levels", 1},
+                         {"BoundingBoxMin", {0.0, 0.0, 0.0}},
+                         {"BoundingBoxMax", {0.5, 0.5, 1.0}}}}}}}};
+  CHECK_THROWS(NumVertices(Impedance(true), box));
+  CHECK_THROWS(NumVertices({{"PMC", {{"Attributes", {7}}}}}, box));
+  CHECK_NOTHROW(NumVertices(Impedance(false), box));
+  CHECK_NOTHROW(NumVertices(
+      {{"PMC", {{"Attributes", {7}}}}},
+      {{"CrackInternalBoundaryElements", false}, {"Refinement", box["Refinement"]}}));
+
+  // A nonconformal input mesh, for example from a previous adaptive simulation, cannot be
+  // cracked: it must already be cracked along the boundaries which are to be cracked.
+  // Refine the element below the sheet next to the origin, such that it has hanging faces.
+  auto WriteNonconformal = [](mfem::Mesh &&m, const fs::path &path)
+  {
+    m.EnsureNCMesh(true);
+    mfem::Array<int> marked;
+    mfem::Vector c;
+    for (int e = 0; e < m.GetNE(); e++)
+    {
+      m.GetElementCenter(e, c);
+      if (c(0) < 0.5 && c(1) < 0.5 && c(2) < 0.5)
+      {
+        marked.Append(e);
+      }
+    }
+    REQUIRE(marked.Size() == 1);
+    m.GeneralRefinement(marked, 1, 0);
+    std::ofstream fo(path);
+    fo.precision(17);
+    m.Print(fo);
+    return m.GetNV();
+  };
+  const auto nc_path = fs::temp_directory_path() / "palace-test-interior-sheet-nc.mesh";
+  const auto nc_cut_path =
+      fs::temp_directory_path() / "palace-test-interior-sheet-nc-cracked.mesh";
+  WriteNonconformal(mfem::Mesh(mesh), nc_path);
+  const int nv_nc_cut = WriteNonconformal(
+      std::move(*LoadMesh(Impedance(true), none, mesh_path)), nc_cut_path);
+  CHECK_THROWS(LoadMesh(Impedance(true), none, nc_path));
+  CHECK_THROWS(LoadMesh(Conductivity(true), none, nc_path));
+  CHECK_THROWS(LoadMesh({{"PMC", {{"Attributes", {7}}}}}, none, nc_path));
+  CHECK_THROWS(LoadMesh({{"PEC", {{"Attributes", {7}}}}}, legacy, nc_path));
+  CHECK_NOTHROW(LoadMesh(Impedance(false), none, nc_path));
+  CHECK_NOTHROW(LoadMesh({{"PEC", {{"Attributes", {7}}}}}, none, nc_path));
+  CHECK_NOTHROW(LoadMesh({{"PMC", {{"Attributes", {7}}}}}, off, nc_path));
+  CHECK(LoadMesh(Impedance(true), none, nc_cut_path)->GetNV() == nv_nc_cut);
+  CHECK(LoadMesh({{"PMC", {{"Attributes", {7}}}}}, none, nc_cut_path)->GetNV() ==
+        nv_nc_cut);
+  fs::remove(nc_path);
+  fs::remove(nc_cut_path);
+  fs::remove(mesh_path);
+}
+
+// MFEM identifies a face by its three smallest vertex numbers. A cracked quadrilateral with
+// three vertices on the crack front (at a corner of the crack) merges with its twin and the
+// crack closes there, unless the front vertices are numbered last.
+TEST_CASE("CrackQuadrilateralCorners", "[geodata][Serial]")
+{
+  // Hexahedral mesh with an interior boundary (attribute 7) made of the four quadrilaterals
+  // of z = 0.5 around the center of the domain: each has three vertices on the crack front
+  // and one (the center) in its interior.
+  auto base = mfem::Mesh::MakeCartesian3D(4, 4, 2, mfem::Element::HEXAHEDRON);
+  std::vector<int> sheet_faces;
+  mfem::Array<int> fv;
+  for (int f = 0; f < base.GetNumFaces(); f++)
+  {
+    int e1, e2;
+    base.GetFaceElements(f, &e1, &e2);
+    base.GetFaceVertices(f, fv);
+    bool on_sheet = (e2 >= 0);
+    for (auto v : fv)
+    {
+      const double *x = base.GetVertex(v);
+      on_sheet = on_sheet && std::abs(x[2] - 0.5) < 1.0e-12 && x[0] > 0.25 - 1.0e-12 &&
+                 x[0] < 0.75 + 1.0e-12 && x[1] > 0.25 - 1.0e-12 && x[1] < 0.75 + 1.0e-12;
+    }
+    if (on_sheet)
+    {
+      sheet_faces.push_back(f);
+    }
+  }
+  REQUIRE(sheet_faces.size() == 4);
+  mfem::Mesh mesh(3, base.GetNV(), base.GetNE(),
+                  base.GetNBE() + static_cast<int>(sheet_faces.size()));
+  for (int v = 0; v < base.GetNV(); v++)
+  {
+    mesh.AddVertex(base.GetVertex(v));
+  }
+  for (int e = 0; e < base.GetNE(); e++)
+  {
+    mesh.AddElement(base.GetElement(e)->Duplicate(&mesh));
+  }
+  for (int be = 0; be < base.GetNBE(); be++)
+  {
+    mesh.AddBdrElement(base.GetBdrElement(be)->Duplicate(&mesh));
+  }
+  for (auto f : sheet_faces)
+  {
+    auto *el = base.GetFace(f)->Duplicate(&mesh);
+    el->SetAttribute(7);
+    mesh.AddBdrElement(el);
+  }
+  mesh.FinalizeTopology();
+  mesh.Finalize();
+  mesh.SetAttributes();
+  const auto mesh_path = fs::temp_directory_path() / "palace-test-crack-quad-corners.mesh";
+  {
+    std::ofstream fo(mesh_path);
+    mesh.Print(fo);
+  }
+
+  // Crack the mesh along the interior boundary. Only the center vertex is duplicated.
+  json config = {
+      {"Problem", {{"Type", "Eigenmode"}, {"Verbose", 0}}},
+      {"Model", {{"Mesh", mesh_path.string()}}},
+      {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+      {"Boundaries",
+       {{"Impedance", {{{"Attributes", {7}}, {"Ls", 1.0e-12}, {"Crack", true}}}}}},
+      {"Solver", {{"Eigenmode", {{"Target", 1.0}}}}}};
+  IoData iodata(config, false);
+  auto cracked = mesh::Load(iodata, Mpi::World());
+  REQUIRE(cracked);
+  CHECK(cracked->GetNV() == mesh.GetNV() + 1);
+
+  // Every boundary element of the crack must border a single element, on its own side.
+  // Without the renumbering, the quadrilateral whose center vertex has the largest number
+  // of its four merges with its twin, and its 2 boundary elements lie on the same face.
+  int n_crack = 0, n_merged = 0;
+  for (int be = 0; be < cracked->GetNBE(); be++)
+  {
+    if (cracked->GetBdrAttribute(be) != 7)
+    {
+      continue;
+    }
+    int e1, e2;
+    cracked->GetFaceElements(cracked->GetBdrElementFaceIndex(be), &e1, &e2);
+    n_crack++;
+    n_merged += (e2 >= 0);
+  }
+  CHECK(n_crack == 8);
+  CHECK(n_merged == 0);
+  fs::remove(mesh_path);
 }
 
 TEST_CASE("Default IOData", "[iodata][Serial]")

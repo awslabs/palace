@@ -25,6 +25,7 @@
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 #include "fem/gridfunction.hpp"
@@ -2094,7 +2095,10 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 #if !defined(MFEM_USE_GSLIB)
   SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
 #else
-  json config_3d = Cpw3dLegacyConfig();
+  // P3-23: both crack forms (the legacy key of SD-801; upstream's default = the key unset).
+  const auto crack_policy = GENERATE(test::CrackPolicy::Legacy, test::CrackPolicy::Default);
+  INFO("crack policy: " << test::CrackPolicyName(crack_policy));
+  json config_3d = Cpw3dLegacyConfig(crack_policy);
   IoData iodata_3d(config_3d, false);
   auto mesh_3d = mesh::ReadMesh(iodata_3d, Mpi::World());
   const auto geometry_3d = ExtractMetalEdgeGeometry(
@@ -2336,9 +2340,12 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator 3D CPW Max
 #if !defined(MFEM_USE_GSLIB)
   SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
 #else
+  // P3-23: both crack forms (the legacy key of SD-801; upstream's default = the key unset).
+  const auto crack_policy = GENERATE(test::CrackPolicy::Legacy, test::CrackPolicy::Default);
+  INFO("crack policy: " << test::CrackPolicyName(crack_policy));
   // The electrostatic (Laplace, order 3) counterparts of the Maxwell operators below, built
   // on one mesh read (their own checks are the legacy electrostatic case's).
-  json config_3d = Cpw3dLegacyConfig();
+  json config_3d = Cpw3dLegacyConfig(crack_policy);
   IoData iodata_3d(config_3d, false);
   auto mesh_3d = mesh::ReadMesh(iodata_3d, Mpi::World());
   const auto geometry_3d = ExtractMetalEdgeGeometry(
@@ -7311,6 +7318,9 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 #if !defined(MFEM_USE_GSLIB)
   SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
 #else
+  // P3-23: both crack forms (the legacy key of SD-801; upstream's default = the key unset).
+  const auto crack_policy = GENERATE(test::CrackPolicy::Legacy, test::CrackPolicy::Default);
+  INFO("crack policy: " << test::CrackPolicyName(crack_policy));
   // The identification fix round DESIGN section 4 (b) (decision 1075 Q1): a translational
   // pair feature with no model within the signature tolerance (1e-3 R) matches the nearest
   // model of its topology within max(SeparationTolerance, 5e-3 R) of its separation, Status
@@ -7363,7 +7373,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   };
   auto Read = [&](const std::string &tag, const fs::path &library_path)
   {
-    json config = IslandConfig();
+    json config = IslandConfig(crack_policy);
     auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
     correction.erase("PatchConstruction");
     correction["Library"] = library_path.string();
@@ -7508,6 +7518,9 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 #if !defined(MFEM_USE_GSLIB)
   SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
 #else
+  // P3-23: both crack forms (the legacy key of SD-801; upstream's default = the key unset).
+  const auto crack_policy = GENERATE(test::CrackPolicy::Legacy, test::CrackPolicy::Default);
+  INFO("crack policy: " << test::CrackPolicyName(crack_policy));
   // U-NEARMATCH-PEC (DESIGN A.10 G-3; A.5 (b) / decision 1079 Q4): a Missing
   // ParallelEdgeCluster key matches a library model with the same EdgeCount / GapSide
   // pattern / Conductor labels / Interfaces / Law whose every OffsetOverR lies within
@@ -7517,7 +7530,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   // the library's in-band pairs. The CPW of cpw3d-surface-nc (edges at 0 / 12 / 32 / 44 um,
   // R = 11) against the parallel-cluster library with the 4-edge model's offsets shifted.
   constexpr double R = 11.0;
-  json config = Cpw3dLegacyConfig();
+  json config = Cpw3dLegacyConfig(crack_policy);
   auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
   correction.erase("PatchConstruction");
   correction["UnmatchedPolicy"] = "Warn";
@@ -7719,6 +7732,9 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 #if !defined(MFEM_USE_GSLIB)
   SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
 #else
+  // P3-23: both crack forms (the legacy key of SD-801; upstream's default = the key unset).
+  const auto crack_policy = GENERATE(test::CrackPolicy::Legacy, test::CrackPolicy::Default);
+  INFO("crack policy: " << test::CrackPolicyName(crack_policy));
   // 9 (i) (DESIGN section 9 (b) (i); decision 1081): the preflight writes the knife-edge
   // census by default (Identification.KnifeEdgeCensus an object); the config's
   // ResponseCorrection.KnifeEdgeCensus overrides it (false: null; true: the object). A
@@ -7726,7 +7742,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   // diagnostic, verified byte-identical on the chain's Maxwell / transmon records.
   auto Census = [&](const std::string &tag, std::optional<bool> flag)
   {
-    json config = Cpw3dLegacyConfig();
+    json config = Cpw3dLegacyConfig(crack_policy);
     auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
     correction.erase("PatchConstruction");
     correction["UnmatchedPolicy"] = "Warn";
@@ -13405,6 +13421,88 @@ TEST_CASE("SurfaceResponseOperatorMirrorFormedEdgeWeights",
 namespace palace
 {
 
+namespace
+{
+
+// The file name RebalanceMesh gives the SaveAdaptMesh mesh (upstream's rule, SD-302):
+// gzip-compressed ".meshgz" when MFEM is built with zlib, ".mesh" otherwise. MFEM's
+// named_ifgzstream reads either form.
+std::string SavedAdaptMeshName(const std::string &stem)
+{
+#if defined(MFEM_USE_ZLIB)
+  return stem + ".meshgz";
+#else
+  return stem + ".mesh";
+#endif
+}
+
+// Rulings 2059 / 2060 (P4 S2): a coverage cell's covered correction factor F = fabricated /
+// served is compared between two runs on its two ingredients, not on the ratio. A cell
+// without raw field (a within-R raw W at the field noise, W ~ delta^2 E_elec) has a served
+// energy of order-one relative scatter between partitions and F is then a ratio of noise
+// (MEASURED on the islands fixture: W / E_elec ~ 1e-30 on the merged head's adapted mesh
+// and on the initial mesh of both builds, F ~ 1e29). The served energy is compared with a
+// field-noise tolerance, 2 delta_b sqrt(W E_elec) + delta_b^2 E_elec (W = |E0 + noise|^2,
+// |noise| <= delta_b sqrt(E_elec)), plus the relative tolerance x the first run's W; the
+// fabricated energy (no noise term: it is the library's response to the field) relative.
+struct CoveredFactorIngredients
+{
+  double within;      // W within-R raw (J)
+  double served;      // the served raw energy, W (1 - uncovered share)
+  double fabricated;  // the covered corrected energy, F x served
+};
+
+CoveredFactorIngredients CoveredFactorIngredientsOf(double within, double uncovered_share,
+                                                    double factor)
+{
+  const double served = within * (1.0 - uncovered_share);
+  return {within, served, factor * served};
+}
+
+struct CoveredFactorReproduction
+{
+  bool served = false;
+  bool fabricated = false;
+  bool Pass() const { return served && fabricated; }
+};
+
+CoveredFactorReproduction
+CompareCoveredFactorIngredients(const CoveredFactorIngredients &first,
+                                const CoveredFactorIngredients &second, double e_elec,
+                                double delta_b, double relative_tolerance)
+{
+  // A non-finite ingredient (the NaN of a cell without served energy) must be reproduced as
+  // such.
+  auto Same = [](double a, double b, double tolerance)
+  {
+    if (!std::isfinite(a) || !std::isfinite(b))
+    {
+      return (std::isnan(a) && std::isnan(b)) || a == b;
+    }
+    return std::abs(b - a) <= tolerance;
+  };
+  const double within = std::max(std::abs(first.within), std::abs(second.within));
+  const double served_tolerance = 2.0 * delta_b * std::sqrt(within * std::abs(e_elec)) +
+                                  delta_b * delta_b * std::abs(e_elec) +
+                                  relative_tolerance * std::abs(first.within);
+  CoveredFactorReproduction result;
+  result.served = Same(first.served, second.served, served_tolerance);
+  result.fabricated =
+      Same(first.fabricated, second.fabricated,
+           relative_tolerance * std::max(std::abs(first.fabricated), 1.0e-30));
+  return result;
+}
+
+// delta_b = 1e-13: the islands fixture's solver tolerances (Solver.Linear.Tol and
+// ResponseCorrection.SolveTol = 1e-13) and 100 x the MEASURED field noise (~1e-15 of
+// sqrt(E_elec) on a cell without raw field; P4 REPORT STEP 100). The relative tolerance
+// 1e-10 is tighter than the table's 1e-8 (MEASURED: the fabricated energies reproduce to
+// <= 5.5e-13 at 2 ranks on both builds).
+constexpr double covered_factor_delta_b = 1.0e-13;
+constexpr double covered_factor_relative_tolerance = 1.0e-10;
+
+}  // namespace
+
 // Decision 899 (OI-CTX-ARC-ADAPT): a run whose INPUT mesh is the saved adapted mesh of an
 // AMR run (SaveAdaptMesh, the MFEM nonconforming format) identifies on the ROOT level of
 // that mesh — the producing run's initial mesh — so it reproduces the producing run's
@@ -13424,6 +13522,9 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 #if !defined(MFEM_USE_GSLIB)
   SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
 #else
+  // P3-23: both crack forms (the legacy key of SD-801; upstream's default = the key unset).
+  const auto crack_policy = GENERATE(test::CrackPolicy::Legacy, test::CrackPolicy::Default);
+  INFO("crack policy: " << test::CrackPolicyName(crack_policy));
   MPI_Comm comm = Mpi::World();
   auto ReadJson = [](const fs::path &path)
   {
@@ -13441,7 +13542,8 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     const fs::path follow_on_dir = temp.temp_dir / (stem + "-follow-on");
     const fs::path saved_mesh_path =
         producer_dir /
-        (fs::path(config["Model"]["Mesh"].get<std::string>()).stem().string() + ".mesh");
+        SavedAdaptMeshName(
+            fs::path(config["Model"]["Mesh"].get<std::string>()).stem().string());
     config["Problem"]["Output"] = producer_dir.string();
     test::RunElectrostatic(config);
     Mpi::Barrier(comm);
@@ -13473,7 +13575,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     }
     CHECK(saved_leaf_segments > initial_leaf_segments);
     {
-      std::ifstream saved(saved_mesh_path);
+      mfem::named_ifgzstream saved(saved_mesh_path.string());
       std::string header;
       std::getline(saved, header);
       CHECK(header == "MFEM NC mesh v1.0");
@@ -13549,10 +13651,10 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
       // so that main's columns keep main's check: an appended covered correction factor (a
       // covered corrected energy over a near-zero within-R raw W, of order 1e11 here)
       // would make every other comparison vacuous. An appended status must be reproduced
-      // exactly; a covered correction factor to 1e-8 beyond the largest relative
-      // difference of the table's W entries (its denominator is a sum of them: at 2 ranks
-      // the follow-on's W of the islands' SA interface, 3e-22 J, moves by 1.1e-8 relative
-      // and the factor with it); every other appended column by main's rule.
+      // exactly; a finite covered correction factor is compared on its ingredients below
+      // (rulings 2059 / 2060: on a cell without raw field it is a ratio of noise), a
+      // non-finite one must be reproduced as such; every other appended column by main's
+      // rule.
       constexpr std::array<std::string_view, 14> coverage_header_stems = {
           "coverage Type",
           "W within-R raw",
@@ -13594,25 +13696,6 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
         }
       }
       REQUIRE(table_scale > 0.0);
-      double within_relative_difference = 0.0;
-      for (std::size_t c = n_main_cols; c < producer_table.n_cols(); c++)
-      {
-        if (!HeaderStartsWith(producer_table[c].header_text, "W within-R raw"))
-        {
-          continue;
-        }
-        for (std::size_t i = 0;
-             i < producer_table[c].data.size() && i < follow_on_table[c].data.size(); i++)
-        {
-          const double producer_w = producer_table[c].data[i];
-          if (std::isfinite(producer_w) && producer_w != 0.0)
-          {
-            within_relative_difference = std::max(
-                within_relative_difference,
-                std::abs(follow_on_table[c].data[i] - producer_w) / std::abs(producer_w));
-          }
-        }
-      }
       for (std::size_t c = 0; c < producer_table.n_cols(); c++)
       {
         const Column &producer_column = producer_table[c];
@@ -13634,10 +13717,6 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
           }
           if (covered_factor)
           {
-            CHECK_THAT(follow_on_column.data[i],
-                       WithinAbs(producer_column.data[i],
-                                 (1.0e-8 + within_relative_difference) *
-                                     std::max(std::abs(producer_column.data[i]), 1.0e-30)));
             continue;
           }
           const double scale =
@@ -13650,6 +13729,52 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     CompareTable("surface-Q-corrected.csv");
     CompareTable("terminal-C-corrected.csv");
     CompareTable("surface-response-model-energy.csv");
+
+    // The covered correction factor of each coverage cell on its ingredients (rulings 2059
+    // / 2060): the served and fabricated energies from the coverage table, E_elec from the
+    // producer's surface-Q-corrected.csv row of the same i.
+    const Table producer_coverage =
+        test::LoadCsv(producer_dir / "surface-response-coverage.csv");
+    const Table follow_on_coverage =
+        test::LoadCsv(follow_on_dir / "surface-response-coverage.csv");
+    const Table producer_q = test::LoadCsv(producer_dir / "surface-Q-corrected.csv");
+    const Column &q_index = test::ColumnByHeader(producer_q, "i");
+    const Column &q_e_elec = test::ColumnByHeader(producer_q, "E_elec raw (J)");
+    auto Ingredients = [](const Table &coverage, std::size_t r)
+    {
+      return CoveredFactorIngredientsOf(
+          test::ColumnByHeader(coverage, "W within-R raw (J)").data[r],
+          test::ColumnByHeader(coverage, "uncovered raw share of W").data[r],
+          test::ColumnByHeader(coverage, "covered correction factor").data[r]);
+    };
+    const Column &coverage_index = test::ColumnByHeader(producer_coverage, "i");
+    REQUIRE(coverage_index.data.size() ==
+            test::ColumnByHeader(follow_on_coverage, "i").data.size());
+    REQUIRE(!coverage_index.data.empty());
+    for (std::size_t r = 0; r < coverage_index.data.size(); r++)
+    {
+      CHECK(test::ColumnByHeader(follow_on_coverage, "Type").text[r] ==
+            test::ColumnByHeader(producer_coverage, "Type").text[r]);
+      const auto q_row =
+          std::find(q_index.data.begin(), q_index.data.end(), coverage_index.data[r]);
+      REQUIRE(q_row != q_index.data.end());
+      const double e_elec =
+          q_e_elec.data[static_cast<std::size_t>(q_row - q_index.data.begin())];
+      const auto producer_cell = Ingredients(producer_coverage, r);
+      const auto follow_on_cell = Ingredients(follow_on_coverage, r);
+      INFO("coverage row " << r << " (i = " << coverage_index.data[r] << ", "
+                           << test::ColumnByHeader(producer_coverage, "Type").text[r]
+                           << "): W " << producer_cell.within << " / "
+                           << follow_on_cell.within << ", served " << producer_cell.served
+                           << " / " << follow_on_cell.served << ", fabricated "
+                           << producer_cell.fabricated << " / " << follow_on_cell.fabricated
+                           << ", E_elec " << e_elec);
+      const auto reproduction = CompareCoveredFactorIngredients(
+          producer_cell, follow_on_cell, e_elec, covered_factor_delta_b,
+          covered_factor_relative_tolerance);
+      CHECK(reproduction.served);
+      CHECK(reproduction.fabricated);
+    }
   };
 
   // (a) The rounded islands: the initial mesh (written for the driver), the cluster's
@@ -13658,7 +13783,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   {
     const fs::path mesh_path = temp.temp_dir / "adaptid-islands.mesh";
     const fs::path library_path = temp.temp_dir / "fabrication-process-adaptid-3d.json";
-    json config = HighOrderSpatialConfig();
+    json config = HighOrderSpatialConfig(crack_policy);
     auto spatial_mesh = MakeIslandMesh(true, false, false, true);
     if (Mpi::Root(comm))
     {
@@ -13719,121 +13844,216 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   // perimeter refined on one crack side or the other) and the identification is compared
   // at the requirements level (the dry run writes the manifest and the patch table without
   // reading response matrices) on the initial mesh and on the saved mesh.
+  // Rulings 1611 / 1615 (P3-26; MEASURED, P3C-REPORT STEP 14): under the legacy form the
+  // crack perturbation (Model.CrackDisplacementFactor, default 1e-12 x h_min) moves the two
+  // copies of a sheet off its plane in opposite directions, so each copy's faces tilt by
+  // +-2.05293e-12 rad here; the frame's process normal is the normalised sum of the
+  // supporting faces' sign-aligned normals (BuildMetalEdgeProcessNormals), so the tilts
+  // cancel with 2 + 2 faces on the initial mesh and do not with 2 + 8 on the saved mesh
+  // (one copy refined): AxisUY = AxisVX = 6 / 10 x 2.05293e-12 = 1.2317579561726798e-12
+  // (OI-UNIT-SAVED-MESH-PATCH-AXIS-CRACK-DISPLACEMENT-LEGACY; the new default has no crack
+  // and no displacement: exact frames). So the legacy comparison runs (b1) with the factor
+  // 0 (coincident copies) at the strict 1e-12 bound, and (b2) with the production default
+  // factor, its Axis columns bounded by the largest tilt between the two copies of a face,
+  // measured on the initial mesh's own face normals, every other column at 1e-12; (b1) and
+  // (b2) have the same identification and patch table outside the Axis columns. That bound
+  // is the angle between the two copies (|n_a + n_b| = 2 x each copy's tilt from the sheet
+  // plane, 4.10586e-12 here), the worst case for two frames tilted to opposite sides;
+  // ruling 1615 names the per-copy tilt (P3-C review m-3: put to the supervisor by the P3
+  // lead).
   {
     const fs::path mesh_path = fs::path(PALACE_TEST_DATA_DIR) / "mesh/cpw3d-surface-nc.msh";
-    const fs::path producer_dir = temp.temp_dir / "adaptid-cpw-producer";
-    const fs::path saved_mesh_path = producer_dir / "cpw3d-surface-nc.mesh";
-    json dielectric = {{"Thickness", 2.0e-3},
-                       {"AutomaticEdges", true},
-                       {"EdgeDistances", {2.0}},
-                       {"LocalizeEdgeEnergy", false}};
-    json sa = dielectric, ms = dielectric, ma = dielectric;
-    sa.update({{"Index", 1},
-               {"Attributes", {3}},
-               {"Type", "SA"},
-               {"Permittivity", 4.0},
-               {"LossTan", 2.0e-3}});
-    ms.update({{"Index", 2},
-               {"Attributes", {1, 2}},
-               {"Type", "MS"},
-               {"Permittivity", 11.47},
-               {"LossTan", 3.0e-4}});
-    ma.update({{"Index", 3},
-               {"Attributes", {1, 2}},
-               {"Type", "MA"},
-               {"Permittivity", 10.0},
-               {"LossTan", 3.0e-2}});
-    json config = {
-        {"Problem", {{"Type", "Electrostatic"}, {"Output", producer_dir.string()}}},
-        {"Model",
-         {{"Mesh", mesh_path.string()},
-          {"L0", 1.0e-6},
-          {"Refinement",
-           {{"MaxIts", 3},
-            {"Tol", 1.0e-12},
-            {"UpdateFraction", 0.7},
-            {"Nonconformal", true},
-            {"SaveAdaptMesh", true},
-            {"MaxNCLevels", 8}}}}},
-        {"Domains",
-         {{"Materials",
-           {{{"Attributes", {1}}, {"Permittivity", 11.47}},
-            {{"Attributes", {2}}, {"Permittivity", 1.0}}}}}},
-        {"Boundaries",
-         {{"Ground", {{"Attributes", {2, 4}}}},
-          {"Terminal", {{{"Index", 1}, {"Attributes", {1}}}}},
-          {"Postprocessing", {{"Dielectric", {sa, ms, ma}}}}}},
-        {"Solver", {{"Order", 1}, {"Linear", {{"Tol", 1.0e-10}, {"MaxIts", 500}}}}}};
-    test::RunElectrostatic(config);
-    Mpi::Barrier(comm);
-    REQUIRE(fs::is_regular_file(saved_mesh_path));
-
-    json identify = config;
-    identify["Model"]["Refinement"] = {{"MaxIts", 0}};
-    identify["Solver"]["Electrostatic"] = {{"ResponseCorrection",
-                                            {{"Library", library_3d_path.string()},
-                                             {"TargetInterfaces", {1, 2, 3}},
-                                             {"UnmatchedPolicy", "Warn"},
-                                             {"TraceCoupling", "Collocated"}}}};
-    // Beside the dry run, the LEAF perimeter of the mesh (the post-processing extraction,
-    // unchanged by decision 899): its segment count on the saved mesh exceeds the initial
-    // mesh's when the AMR refined the perimeter, the premise of the comparison below (the
-    // identification then merges the refinement vertices out; without them the comparison
-    // would hold vacuously).
-    auto Identify = [&](const fs::path &mesh_file, const std::string &stem)
+    struct CpwComparison
     {
-      json run = identify;
-      run["Model"]["Mesh"] = mesh_file.string();
-      const fs::path out_dir = temp.temp_dir / stem;
-      run["Problem"]["Output"] = out_dir.string();
-      if (Mpi::Root(comm))
-      {
-        fs::create_directories(out_dir);
-      }
-      Mpi::Barrier(comm);
-      IoData iodata(run, false);
-      auto mesh = mesh::ReadMesh(iodata, comm);
-      const fs::path requirements_path = out_dir / "surface-response-requirements.json";
-      WriteSurfaceResponseRequirements(iodata, *mesh, requirements_path.string());
-      Mpi::Barrier(comm);
-      const auto leaf_perimeter = ExtractMetalEdgeGeometry(
-          *mesh, iodata.boundaries, JointNoiseExtractionFor(iodata.boundaries));
-      return std::make_tuple(requirements_path, out_dir / "surface-response-patches.csv",
-                             leaf_perimeter.segments.size());
+      json initial_identification, adapted_identification;
+      std::vector<std::string> header;
+      std::vector<std::vector<std::string>> initial_rows, adapted_rows;
+      int copy_pairs = 0;  // the face pairs of the two crack copies (initial mesh)
+      double largest_copy_tilt = 0.0;  // max |n_a + n_b| over those pairs (unit normals)
     };
-    const auto [initial_requirements, initial_patches, initial_leaf_segments] =
-        Identify(mesh_path, "adaptid-cpw-initial");
-    const auto [adapted_requirements, adapted_patches, adapted_leaf_segments] =
-        Identify(saved_mesh_path, "adaptid-cpw-adapted");
-    if (!Mpi::Root(comm))
+    // The faces of the two crack copies of a sheet coincide up to the crack perturbation:
+    // pairs of boundary elements with the same centre (1e-9 x the mesh extent) and opposite
+    // normals; the angle between a pair's sign-aligned normals is |n_a + n_b|.
+    auto CrackCopyTilt = [](mfem::ParMesh &serial)
     {
-      return;
-    }
-    // The saved mesh's perimeter carries refinement-generated vertices.
-    CHECK(adapted_leaf_segments > initial_leaf_segments);
-    const json initial = ReadJson(initial_requirements);
-    const json adapted = ReadJson(adapted_requirements);
-    const auto &initial_identification = initial["Identification"];
-    const auto &adapted_identification = adapted["Identification"];
-    CHECK(adapted_identification["GeometryDigest"] ==
-          initial_identification["GeometryDigest"]);
-    REQUIRE(adapted_identification["Features"].size() ==
-            initial_identification["Features"].size());
-    REQUIRE(initial_identification["Features"].size() >= 4);
-    for (std::size_t f = 0; f < initial_identification["Features"].size(); f++)
+      struct Face
+      {
+        std::array<double, 3> centre, normal;
+      };
+      std::vector<Face> faces;
+      mfem::Vector centre(3), normal(3);
+      for (int be = 0; be < serial.GetNBE(); be++)
+      {
+        auto *T = serial.GetBdrElementTransformation(be);
+        const auto &ip = mfem::Geometries.GetCenter(T->GetGeometryType());
+        T->SetIntPoint(&ip);
+        T->Transform(ip, centre);
+        mfem::CalcOrtho(T->Jacobian(), normal);
+        normal /= normal.Norml2();
+        faces.push_back(
+            {{centre(0), centre(1), centre(2)}, {normal(0), normal(1), normal(2)}});
+      }
+      std::sort(faces.begin(), faces.end(),
+                [](const Face &a, const Face &b) { return a.centre[0] < b.centre[0]; });
+      mfem::Vector bbmin, bbmax;
+      mesh::GetAxisAlignedBoundingBox(serial, bbmin, bbmax);
+      double extent = 0.0;
+      for (int d = 0; d < 3; d++)
+      {
+        extent = std::max(extent, bbmax[d] - bbmin[d]);
+      }
+      const double tolerance = 1.0e-9 * extent;
+      int pairs = 0;
+      double tilt = 0.0;
+      for (std::size_t i = 0; i < faces.size(); i++)
+      {
+        for (std::size_t j = i + 1;
+             j < faces.size() && faces[j].centre[0] - faces[i].centre[0] <= tolerance; j++)
+        {
+          double distance = 0.0, dot = 0.0, sum_squared = 0.0;
+          for (int d = 0; d < 3; d++)
+          {
+            distance =
+                std::max(distance, std::abs(faces[j].centre[d] - faces[i].centre[d]));
+            dot += faces[i].normal[d] * faces[j].normal[d];
+            sum_squared += (faces[i].normal[d] + faces[j].normal[d]) *
+                           (faces[i].normal[d] + faces[j].normal[d]);
+          }
+          if (distance <= tolerance && dot < 0.0)
+          {
+            pairs++;
+            tilt = std::max(tilt, std::sqrt(sum_squared));
+          }
+        }
+      }
+      return std::make_pair(pairs, tilt);
+    };
+    // The producer (plain electrostatic AMR, 3 cycles, the metal perimeter refined on one
+    // crack side or the other), then the identification dry runs on the initial mesh and on
+    // the saved mesh (the requirements and the patch table without response matrices). An
+    // unset factor = the production default. Root only returns the tables.
+    auto RunCpw = [&](std::optional<double> crack_displacement_factor,
+                      const std::string &tag) -> std::optional<CpwComparison>
     {
-      const auto &a = initial_identification["Features"][f];
-      const auto &b = adapted_identification["Features"][f];
-      CHECK(a["Type"] == b["Type"]);
-      CHECK(a["Hash"] == b["Hash"]);
-      CHECK(a["Match"]["Status"] == b["Match"]["Status"]);
-      CHECK_THAT(b["Length"].get<double>(), WithinRel(a["Length"].get<double>(), 1.0e-9));
-    }
-    CHECK(adapted_identification["Exclusions"] == initial_identification["Exclusions"]);
-    const auto initial_rows = ReadPatchRows(initial_patches);
-    const auto adapted_rows = ReadPatchRows(adapted_patches);
-    REQUIRE(initial_rows.size() == adapted_rows.size());
-    REQUIRE(!initial_rows.empty());
+      const fs::path producer_dir = temp.temp_dir / ("adaptid-cpw-producer" + tag);
+      const fs::path saved_mesh_path =
+          producer_dir / SavedAdaptMeshName("cpw3d-surface-nc");
+      json dielectric = {{"Thickness", 2.0e-3},
+                         {"AutomaticEdges", true},
+                         {"EdgeDistances", {2.0}},
+                         {"LocalizeEdgeEnergy", false}};
+      json sa = dielectric, ms = dielectric, ma = dielectric;
+      sa.update({{"Index", 1},
+                 {"Attributes", {3}},
+                 {"Type", "SA"},
+                 {"Permittivity", 4.0},
+                 {"LossTan", 2.0e-3}});
+      ms.update({{"Index", 2},
+                 {"Attributes", {1, 2}},
+                 {"Type", "MS"},
+                 {"Permittivity", 11.47},
+                 {"LossTan", 3.0e-4}});
+      ma.update({{"Index", 3},
+                 {"Attributes", {1, 2}},
+                 {"Type", "MA"},
+                 {"Permittivity", 10.0},
+                 {"LossTan", 3.0e-2}});
+      json config = {
+          {"Problem", {{"Type", "Electrostatic"}, {"Output", producer_dir.string()}}},
+          {"Model",
+           {{"Mesh", mesh_path.string()},
+            {"L0", 1.0e-6},
+            {"Refinement",
+             {{"MaxIts", 3},
+              {"Tol", 1.0e-12},
+              {"UpdateFraction", 0.7},
+              {"Nonconformal", true},
+              {"SaveAdaptMesh", true},
+              {"MaxNCLevels", 8}}}}},
+          {"Domains",
+           {{"Materials",
+             {{{"Attributes", {1}}, {"Permittivity", 11.47}},
+              {{"Attributes", {2}}, {"Permittivity", 1.0}}}}}},
+          {"Boundaries",
+           {{"Ground", {{"Attributes", {2, 4}}}},
+            {"Terminal", {{{"Index", 1}, {"Attributes", {1}}}}},
+            {"Postprocessing", {{"Dielectric", {sa, ms, ma}}}}}},
+          {"Solver", {{"Order", 1}, {"Linear", {{"Tol", 1.0e-10}, {"MaxIts", 500}}}}}};
+      test::ApplyCrackPolicy(config, crack_policy);  // explicit crack policy (P3-23)
+      if (crack_displacement_factor)
+      {
+        config["Model"]["CrackDisplacementFactor"] = *crack_displacement_factor;
+      }
+      test::RunElectrostatic(config);
+      Mpi::Barrier(comm);
+      REQUIRE(fs::is_regular_file(saved_mesh_path));
+
+      json identify = config;
+      identify["Model"]["Refinement"] = {{"MaxIts", 0}};
+      identify["Solver"]["Electrostatic"] = {{"ResponseCorrection",
+                                              {{"Library", library_3d_path.string()},
+                                               {"TargetInterfaces", {1, 2, 3}},
+                                               {"UnmatchedPolicy", "Warn"},
+                                               {"TraceCoupling", "Collocated"}}}};
+      // Beside the dry run, the LEAF perimeter of the mesh (the post-processing extraction,
+      // unchanged by decision 899): its segment count on the saved mesh exceeds the initial
+      // mesh's when the AMR refined the perimeter, the premise of the comparison below (the
+      // identification then merges the refinement vertices out; without them the comparison
+      // would hold vacuously).
+      auto Identify = [&](const fs::path &mesh_file, const std::string &stem)
+      {
+        json run = identify;
+        run["Model"]["Mesh"] = mesh_file.string();
+        const fs::path out_dir = temp.temp_dir / (stem + tag);
+        run["Problem"]["Output"] = out_dir.string();
+        if (Mpi::Root(comm))
+        {
+          fs::create_directories(out_dir);
+        }
+        Mpi::Barrier(comm);
+        IoData iodata(run, false);
+        auto mesh = mesh::ReadMesh(iodata, comm);
+        const fs::path requirements_path = out_dir / "surface-response-requirements.json";
+        WriteSurfaceResponseRequirements(iodata, *mesh, requirements_path.string());
+        Mpi::Barrier(comm);
+        const auto leaf_perimeter = ExtractMetalEdgeGeometry(
+            *mesh, iodata.boundaries, JointNoiseExtractionFor(iodata.boundaries));
+        return std::make_tuple(requirements_path, out_dir / "surface-response-patches.csv",
+                               leaf_perimeter.segments.size());
+      };
+      const auto [initial_requirements, initial_patches, initial_leaf_segments] =
+          Identify(mesh_path, "adaptid-cpw-initial");
+      const auto [adapted_requirements, adapted_patches, adapted_leaf_segments] =
+          Identify(saved_mesh_path, "adaptid-cpw-adapted");
+      if (!Mpi::Root(comm))
+      {
+        return std::nullopt;
+      }
+      // The saved mesh's perimeter carries refinement-generated vertices.
+      CHECK(adapted_leaf_segments > initial_leaf_segments);
+      CpwComparison result;
+      result.initial_identification = ReadJson(initial_requirements)["Identification"];
+      result.adapted_identification = ReadJson(adapted_requirements)["Identification"];
+      result.initial_rows = ReadPatchRows(initial_patches);
+      result.adapted_rows = ReadPatchRows(adapted_patches);
+      {
+        std::ifstream input(initial_patches);
+        std::string line, field;
+        std::getline(input, line);
+        std::stringstream stream(line);
+        while (std::getline(stream, field, ','))
+        {
+          result.header.push_back(field);
+        }
+      }
+      // The initial mesh as the identification loads it, read serially on the root.
+      json initial_run = identify;
+      initial_run["Model"]["Mesh"] = mesh_path.string();
+      IoData iodata(initial_run, false);
+      auto serial_mesh = mesh::ReadMesh(iodata, MPI_COMM_SELF);
+      std::tie(result.copy_pairs, result.largest_copy_tilt) = CrackCopyTilt(*serial_mesh);
+      return result;
+    };
     // The dry-run table carries text columns (Topology, Model) beside the numbers.
     auto Number = [](const std::string &field) -> std::optional<double>
     {
@@ -13848,24 +14068,284 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
         return std::nullopt;
       }
     };
-    for (std::size_t r = 0; r < initial_rows.size(); r++)
+    auto RowText = [](const std::vector<std::string> &row)
     {
-      REQUIRE(initial_rows[r].size() == adapted_rows[r].size());
-      for (std::size_t c = 0; c < initial_rows[r].size(); c++)
+      std::string text;
+      for (const auto &field : row)
       {
-        const auto initial_value = Number(initial_rows[r][c]);
-        const auto adapted_value = Number(adapted_rows[r][c]);
-        if (initial_value && adapted_value)
+        text += (text.empty() ? "" : ",") + field;
+      }
+      return text;
+    };
+    // Two identifications agree: features, exclusions and the patch table (the Axis columns
+    // within axis_bound, every other number within 1e-12, the text columns equal).
+    auto CheckSameIdentification =
+        [&](const json &a_identification, const json &b_identification,
+            const std::vector<std::string> &header,
+            const std::vector<std::vector<std::string>> &a_rows,
+            const std::vector<std::vector<std::string>> &b_rows, double axis_bound)
+    {
+      CHECK(b_identification["GeometryDigest"] == a_identification["GeometryDigest"]);
+      REQUIRE(b_identification["Features"].size() == a_identification["Features"].size());
+      REQUIRE(a_identification["Features"].size() >= 4);
+      for (std::size_t f = 0; f < a_identification["Features"].size(); f++)
+      {
+        const auto &a = a_identification["Features"][f];
+        const auto &b = b_identification["Features"][f];
+        CHECK(a["Type"] == b["Type"]);
+        CHECK(a["Hash"] == b["Hash"]);
+        CHECK(a["Match"]["Status"] == b["Match"]["Status"]);
+        CHECK_THAT(b["Length"].get<double>(), WithinRel(a["Length"].get<double>(), 1.0e-9));
+      }
+      CHECK(b_identification["Exclusions"] == a_identification["Exclusions"]);
+      REQUIRE(a_rows.size() == b_rows.size());
+      REQUIRE(!a_rows.empty());
+      for (std::size_t r = 0; r < a_rows.size(); r++)
+      {
+        REQUIRE(a_rows[r].size() == b_rows[r].size());
+        INFO("first patch row " << r << ": " << RowText(a_rows[r]));
+        INFO("second patch row " << r << ": " << RowText(b_rows[r]));
+        for (std::size_t c = 0; c < a_rows[r].size(); c++)
         {
-          CHECK_THAT(*adapted_value, WithinAbs(*initial_value, 1.0e-12));
-        }
-        else
-        {
-          CHECK(initial_rows[r][c] == adapted_rows[r][c]);
+          const auto a_value = Number(a_rows[r][c]);
+          const auto b_value = Number(b_rows[r][c]);
+          const std::string name = c < header.size() ? header[c] : "?";
+          if (a_value && b_value)
+          {
+            const bool axis = name.rfind("Axis", 0) == 0;
+            INFO("patch row " << r << " column " << c << " " << name << " first "
+                              << a_rows[r][c] << " second " << b_rows[r][c] << " bound "
+                              << (axis ? axis_bound : 1.0e-12));
+            CHECK_THAT(*b_value, WithinAbs(*a_value, axis ? axis_bound : 1.0e-12));
+          }
+          else
+          {
+            CHECK(a_rows[r][c] == b_rows[r][c]);
+          }
         }
       }
+    };
+    if (crack_policy == test::CrackPolicy::Legacy)
+    {
+      const auto coincident = RunCpw(0.0, "");                    // (b1)
+      const auto displaced = RunCpw(std::nullopt, "-displaced");  // (b2)
+      if (!Mpi::Root(comm))
+      {
+        return;
+      }
+      REQUIRE(coincident);
+      REQUIRE(displaced);
+      INFO("crack copy pairs " << coincident->copy_pairs << " / " << displaced->copy_pairs
+                               << ", largest copy tilt " << coincident->largest_copy_tilt
+                               << " / " << displaced->largest_copy_tilt);
+      // The premise of (b2): the production displacement tilts the crack copies.
+      REQUIRE(displaced->copy_pairs > 0);
+      CHECK(displaced->copy_pairs == coincident->copy_pairs);
+      CHECK(displaced->largest_copy_tilt > 1.0e-13);
+      // (b1) the saved mesh reproduces the producing run's identification, strictly.
+      CheckSameIdentification(coincident->initial_identification,
+                              coincident->adapted_identification, coincident->header,
+                              coincident->initial_rows, coincident->adapted_rows, 1.0e-12);
+      // (b2) the production displacement: the frames move within the copies' tilt only.
+      CheckSameIdentification(displaced->initial_identification,
+                              displaced->adapted_identification, displaced->header,
+                              displaced->initial_rows, displaced->adapted_rows,
+                              displaced->largest_copy_tilt);
+      // The factor changes nothing else: (b1) and (b2) on the same mesh.
+      CHECK(displaced->header == coincident->header);
+      CheckSameIdentification(coincident->initial_identification,
+                              displaced->initial_identification, coincident->header,
+                              coincident->initial_rows, displaced->initial_rows,
+                              displaced->largest_copy_tilt);
+      CheckSameIdentification(coincident->adapted_identification,
+                              displaced->adapted_identification, coincident->header,
+                              coincident->adapted_rows, displaced->adapted_rows,
+                              displaced->largest_copy_tilt);
+    }
+    else
+    {
+      // Upstream's default: the sheets are not cracked (no copies, no displacement).
+      const auto uncracked = RunCpw(std::nullopt, "");
+      if (!Mpi::Root(comm))
+      {
+        return;
+      }
+      REQUIRE(uncracked);
+      CHECK(uncracked->copy_pairs == 0);
+      CheckSameIdentification(uncracked->initial_identification,
+                              uncracked->adapted_identification, uncracked->header,
+                              uncracked->initial_rows, uncracked->adapted_rows, 1.0e-12);
     }
   }
+#endif
+}
+
+// Rulings 2059 / 2060 (P4 S2): the comparison of a coverage cell's covered correction
+// factor on its ingredients (CompareCoveredFactorIngredients, used by the saved-mesh case
+// above) with REAL producer / follow-on numbers of that case at 2 ranks (the coverage table
+// surface-response-coverage.csv: W, uncovered share, factor; E_elec of
+// surface-Q-corrected.csv), read from the kept outputs of P4 REPORT STEP 100: the merged
+// head (8398ac162b; adapted mesh 7904 elements; both SA cells without raw field, W / E_elec
+// ~1e-30) and our main (81425c2d40; 8968 elements; W / E_elec 8.9e-13 and 6.0e-14). The
+// unmutated pairs reproduce; planted differences fail on the expected ingredient.
+TEST_CASE("SurfaceResponseOperator covered correction factor ingredients reproduce to the "
+          "field noise",
+          "[surfaceresponseoperator][Serial]")
+{
+  struct Pair
+  {
+    const char *source;
+    CoveredFactorIngredients producer, follow_on;
+    double e_elec;
+  };
+  const std::vector<Pair> pairs = {
+      {"merged head np 2, i = 1 SA",
+       CoveredFactorIngredientsOf(9.039145000507e-39, 6.463869845114e-16,
+                                  5.972489304772e+28),
+       CoveredFactorIngredientsOf(1.276565375214e-39, 9.153915330750e-16,
+                                  4.229019358350e+29),
+       5.720718913065e-09},
+      {"merged head np 2, i = 2 SA",
+       CoveredFactorIngredientsOf(6.337247315055e-39, 1.843950658374e-16,
+                                  3.262718756638e+28),
+       CoveredFactorIngredientsOf(3.173458589335e-39, 3.682282604269e-16,
+                                  6.515495664497e+28),
+       5.721263980505e-09},
+      {"our main np 2, i = 1 SA",
+       CoveredFactorIngredientsOf(4.811926797170e-21, -6.999559158501e-16,
+                                  1.143510732571e+11),
+       CoveredFactorIngredientsOf(4.811926795146e-21, -5.599647329156e-16,
+                                  1.143510733052e+11),
+       5.407827515333e-09},
+      {"our main np 2, i = 2 SA",
+       CoveredFactorIngredientsOf(3.237298146085e-22, -1.040415950687e-15,
+                                  6.072253462960e+11),
+       CoveredFactorIngredientsOf(3.237298183124e-22, 1.300519923479e-16,
+                                  6.072253393482e+11),
+       5.408852576167e-09}};
+  auto Compare = [](const CoveredFactorIngredients &producer,
+                    const CoveredFactorIngredients &follow_on, double e_elec)
+  {
+    return CompareCoveredFactorIngredients(producer, follow_on, e_elec,
+                                           covered_factor_delta_b,
+                                           covered_factor_relative_tolerance);
+  };
+  for (const auto &pair : pairs)
+  {
+    INFO(pair.source);
+    const auto unmutated = Compare(pair.producer, pair.follow_on, pair.e_elec);
+    CHECK(unmutated.served);
+    CHECK(unmutated.fabricated);
+  }
+
+  // (1) The served energy of the larger cell with field (our main's i = 1) x (1 + 1e-6).
+  {
+    const auto &pair = pairs[2];
+    auto follow_on = pair.follow_on;
+    follow_on.served *= 1.0 + 1.0e-6;
+    const auto planted = Compare(pair.producer, follow_on, pair.e_elec);
+    CHECK_FALSE(planted.served);
+    CHECK(planted.fabricated);
+  }
+  // (1') A synthetic cell with W / E_elec = 1e-3: it reproduces, and its served energy x
+  // (1 + 1e-6) fails.
+  {
+    const double e_elec = 5.407827515333e-09;
+    const auto cell = CoveredFactorIngredientsOf(1.0e-3 * e_elec, 0.0, 1.5);
+    CHECK(Compare(cell, cell, e_elec).Pass());
+    auto follow_on = cell;
+    follow_on.served *= 1.0 + 1.0e-6;
+    const auto planted = Compare(cell, follow_on, e_elec);
+    CHECK_FALSE(planted.served);
+    CHECK(planted.fabricated);
+  }
+  // (2) A fabricated energy x (1 + 1e-9), on a cell with field and on one without.
+  for (const std::size_t p : {std::size_t(2), std::size_t(0)})
+  {
+    const auto &pair = pairs[p];
+    INFO(pair.source);
+    auto follow_on = pair.follow_on;
+    follow_on.fabricated *= 1.0 + 1.0e-9;
+    const auto planted = Compare(pair.producer, follow_on, pair.e_elec);
+    CHECK(planted.served);
+    CHECK_FALSE(planted.fabricated);
+  }
+  // (3) A zero-field cell (the merged head's i = 1) whose served energy is raised to
+  // 1e-20 E_elec: a real field where there was none; alone, and with W raised with it.
+  {
+    const auto &pair = pairs[0];
+    auto follow_on = pair.follow_on;
+    follow_on.served = 1.0e-20 * pair.e_elec;
+    const auto planted = Compare(pair.producer, follow_on, pair.e_elec);
+    CHECK_FALSE(planted.served);
+    CHECK(planted.fabricated);
+    follow_on.within = follow_on.served;
+    CHECK_FALSE(Compare(pair.producer, follow_on, pair.e_elec).served);
+  }
+}
+
+// Ruling 2036 (2) (P4 FM3 merge interaction): for an interface with edge distances the
+// within-R raw energy W of a coverage cell (the interface energy minus its edge energy
+// outside R) and the coverage partition's own within-R total integrate the same field at
+// the same points, so they agree to round-off at every rank count and in both crack forms.
+// On the merged head before the fix W came from upstream's libCEED surface functional and
+// the partition from the coefficient quadrature: a residual of ~1e-4 of W and coverage
+// cells read INCONSISTENT. The two rounded islands of the saved-mesh case (a), one solve.
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "SurfaceResponseOperator coverage W equals the partition within-R total",
+                 "[surfaceresponseoperator][3d][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  const auto crack_policy = GENERATE(test::CrackPolicy::Legacy, test::CrackPolicy::Default);
+  INFO("crack policy: " << test::CrackPolicyName(crack_policy));
+  MPI_Comm comm = Mpi::World();
+  const fs::path mesh_path = temp.temp_dir / "closure-islands.mesh";
+  const fs::path output_dir =
+      temp.temp_dir / (std::string("closure-") + test::CrackPolicyName(crack_policy));
+  if (Mpi::Root(comm))
+  {
+    mfem::Mesh serial = MakeSerialIslandMesh(true, false, false, true);
+    std::ofstream output(mesh_path);
+    serial.Print(output);
+  }
+  Mpi::Barrier(comm);
+  json config = HighOrderSpatialConfig(crack_policy);
+  config["Model"]["Mesh"] = mesh_path.string();
+  config["Model"]["L0"] = 1.0;  // the fixture matrices' within-R rows are at R = 0.2 m
+  config["Model"]["Refinement"] = {{"MaxIts", 0}};
+  config["Problem"]["Output"] = output_dir.string();
+  test::RunElectrostatic(config);
+  Mpi::Barrier(comm);
+  if (!Mpi::Root(comm))
+  {
+    return;
+  }
+  const Table coverage = test::LoadCsv(output_dir / "surface-response-coverage.csv");
+  const Column &within = test::ColumnByHeader(coverage, "W within-R raw (J)");
+  const Column &partition = test::ColumnByHeader(coverage, "partition within-R raw (J)");
+  const Column &status = test::ColumnByHeader(coverage, "coverage status");
+  REQUIRE(within.data.size() == partition.data.size());
+  REQUIRE(status.text.size() == within.data.size());
+  std::size_t compared = 0;
+  double largest = 0.0;
+  for (std::size_t i = 0; i < within.data.size(); i++)
+  {
+    CHECK(status.text[i] != "INCONSISTENT");
+    if (!(within.data[i] > 0.0))
+    {
+      continue;
+    }
+    largest =
+        std::max(largest, std::abs(within.data[i] - partition.data[i]) / within.data[i]);
+    compared++;
+  }
+  INFO("cells compared " << compared << ", largest |W - partition| / W "
+                         << std::setprecision(17) << largest);
+  CHECK(compared > 0);
+  // The table's numbers carry 13 significant digits (5e-13 relative).
+  CHECK(largest < 1.0e-11);
 #endif
 }
 
@@ -14729,6 +15209,9 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 #if !defined(MFEM_USE_GSLIB)
   SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
 #else
+  // P3-23: both crack forms (the legacy key of SD-801; upstream's default = the key unset).
+  const auto crack_policy = GENERATE(test::CrackPolicy::Legacy, test::CrackPolicy::Default);
+  INFO("crack policy: " << test::CrackPolicyName(crack_policy));
   MPI_Comm comm = Mpi::World();
   auto ReadJson = [](const fs::path &path)
   {
@@ -14742,7 +15225,8 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
       temp.temp_dir / "fabrication-process-adaptid-uncovered-3d.json";
   const fs::path producer_dir = temp.temp_dir / "adaptid-uncovered-producer";
   const fs::path follow_on_dir = temp.temp_dir / "adaptid-uncovered-follow-on";
-  const fs::path saved_mesh_path = producer_dir / "adaptid-uncovered-claw.mesh";
+  const fs::path saved_mesh_path =
+      producer_dir / SavedAdaptMeshName("adaptid-uncovered-claw");
   // The plan (mesh units; the domain 5 x 1 x 3): the bar x in [0.5, 4.5], z in [1.2, 2.0];
   // the finger x in [2.4, 2.6], z in [2.0, 2.8]; the rest of the sheet y = 0.5 is the SA
   // interface (attribute 10) beside the metal, so that the within-R energy of the
@@ -14778,7 +15262,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     output_library << library.dump(2) << "\n";
   }
   Mpi::Barrier(comm);
-  json config = IslandConfig();
+  json config = IslandConfig(crack_policy);
   config["Model"]["Mesh"] = mesh_path.string();
   config["Model"]["L0"] = 1.0;  // the fixture matrices' within-R rows are at R = 0.2 m
   config["Boundaries"]["Postprocessing"]["Dielectric"][0]["Attributes"] = {10};

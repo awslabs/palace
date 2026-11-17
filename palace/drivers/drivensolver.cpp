@@ -6,9 +6,11 @@
 #include <complex>
 #include <cstddef>
 #include <iostream>
+#include <numbers>
 #include <Eigen/Dense>
 #include <fmt/core.h>
 #include <mfem.hpp>
+#include "drivers/fluxerrorestimator.hpp"
 #include "fem/errorindicator.hpp"
 #include "fem/mesh.hpp"
 #include "linalg/errorestimator.hpp"
@@ -34,6 +36,45 @@ namespace palace
 {
 
 using namespace std::complex_literals;
+
+internal::DrivenSystemOperator internal::BuildDrivenSystemOperator(
+    SpaceOperator &space_op, double omega, const ComplexOperator &P,
+    std::unique_ptr<ComplexOperator> &K, std::unique_ptr<ComplexOperator> &C,
+    std::unique_ptr<ComplexOperator> &M, const ComplexOperator *response_mass,
+    const ComplexOperator *response_stiffness)
+{
+  MFEM_VERIFY(!response_stiffness || response_mass,
+              "A response-corrected driven stiffness requires a response mass!");
+  DrivenSystemOperator system_op;
+  system_op.A = space_op.GetSystemOperator(omega, P);
+  if (!system_op.A)
+  {
+    // The fixed system matrices are only needed when the system cannot be applied through
+    // the preconditioner, so assemble them on first use.
+    system_op.assembled = true;
+    if (!K)
+    {
+      K = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
+      C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+      M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+    }
+    system_op.A2 = space_op.GetExtraSystemOperator(omega, Operator::DIAG_ZERO);
+    system_op.A = space_op.GetSystemMatrix(1.0 + 0.0i, 1i * omega, -omega * omega + 0.0i,
+                                           K.get(), C.get(), M.get(), system_op.A2.get());
+  }
+  // The response terms are added to whichever system operator A is (applied through the
+  // finest level of P, or assembled), so the corrected solve sees the same system.
+  if (response_mass)
+  {
+    system_op.corrected = std::make_unique<SumComplexOperator>(*system_op.A);
+    system_op.corrected->AddOperator(*response_mass, -omega * omega + 0.0i);
+    if (response_stiffness)
+    {
+      system_op.corrected->AddOperator(*response_stiffness, 1.0 + 0.0i);
+    }
+  }
+  return system_op;
+}
 
 std::pair<ErrorIndicator, long long int>
 DrivenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
@@ -86,14 +127,12 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
   PostOperator<ProblemType::DRIVEN> post_op(iodata, space_op, &response_geometry,
                                             &surface_post_geometry);
 
-  // Construct the system matrices defining the linear operator. PEC boundaries are handled
-  // simply by setting diagonal entries of the system matrix for the corresponding dofs.
-  // Because the Dirichlet BC is always homogeneous, no special elimination is required on
-  // the RHS. Assemble the linear system for the initial frequency (so we can call
-  // KspSolver::SetOperators). Compute everything at the first frequency step.
-  auto K = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
-  auto C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
-  auto M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+  // The fixed system matrices are only needed when the system cannot be applied through
+  // the preconditioner (see SpaceOperator::GetSystemOperator), so assemble them on first
+  // use. PEC boundaries are handled simply by setting diagonal entries of the system matrix
+  // for the corresponding dofs. Because the Dirichlet BC is always homogeneous, no special
+  // elimination is required on the RHS.
+  std::unique_ptr<ComplexOperator> K, C, M;
   SurfaceResponseOperator *response_correction = post_op.GetSurfaceResponseOperator();
   if (response_correction && iodata.model.refinement.max_it == 0)
   {
@@ -124,7 +163,8 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
 
   // Set up the linear solver.
   // The operators are constructed for each frequency step and used to initialize the ksp.
-  ComplexKspSolver ksp(iodata, space_op.GetNDSpaces(), &space_op.GetH1Spaces());
+  auto ksp = std::make_unique<ComplexKspSolver>(iodata, space_op.GetNDSpaces(),
+                                                &space_op.GetH1Spaces());
   std::unique_ptr<ComplexKspSolver> corrected_ksp;
   if (self_consistent_response)
   {
@@ -134,14 +174,22 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
     corrected_ksp->SetRelTol(iodata.solver.surface_response_correction->solve_tol);
   }
 
+  // Initialize structures for storing and reducing the results of error estimation.
+  const FluxErrorEstimator<ComplexVector> estimator(space_op, iodata);
+
   // Set up RHS vector for the incident field at port boundaries, and the vector for the
   // first frequency step.
-  ComplexVector RHS(Curl.Width()), E(Curl.Width()), E_corrected, B(Curl.Height()),
-      D(space_op.GetRTSpace().GetTrueVSize()), D_corrected;
+  ComplexVector RHS(Curl.Width()), E(Curl.Width()), E_corrected, B(Curl.Height()), D,
+      D_corrected;
   RHS.UseDevice(true);
   E.UseDevice(true);
   B.UseDevice(true);
-  D.UseDevice(true);
+  if (post_op.NeedsRecoveredElectricFlux())
+  {
+    // The recovered flux is allocated only when interface postprocessing uses it.
+    D.SetSize(estimator.GetElectricFluxSpace().GetTrueVSize());
+    D.UseDevice(true);
+  }
   E = 0.0;
   B = 0.0;
   if (self_consistent_response)
@@ -151,54 +199,11 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
     E_corrected = 0.0;
     if (post_op.NeedsRecoveredElectricFlux())
     {
-      D_corrected.SetSize(space_op.GetRTSpace().GetTrueVSize());
+      D_corrected.SetSize(estimator.GetElectricFluxSpace().GetTrueVSize());
       D_corrected.UseDevice(true);
     }
   }
 
-  // Initialize structures for storing and reducing the results of error estimation.
-  const bool is_2d = (space_op.GetNDSpace().Dimension() < 3);
-  std::unique_ptr<TimeDependentFluxErrorEstimator<ComplexVector>> estimator_3d;
-  std::unique_ptr<BoundaryModeFluxErrorEstimator<ComplexVector>> estimator_2d;
-  if (is_2d)
-  {
-    estimator_2d = std::make_unique<BoundaryModeFluxErrorEstimator<ComplexVector>>(
-        space_op.GetMaterialOp(), space_op.GetNDSpaces(), space_op.GetRTSpaces(),
-        space_op.GetCurlSpace(), space_op.GetH1Spaces(), iodata.solver.linear.estimator_tol,
-        iodata.solver.linear.estimator_max_it, 0, iodata.solver.linear.estimator_mg);
-  }
-  else
-  {
-    estimator_3d = std::make_unique<TimeDependentFluxErrorEstimator<ComplexVector>>(
-        space_op.GetMaterialOp(), space_op.GetNDSpaces(), space_op.GetRTSpaces(),
-        iodata.solver.linear.estimator_tol, iodata.solver.linear.estimator_max_it, 0,
-        iodata.solver.linear.estimator_mg);
-  }
-  auto AddEstimate = [&](const ComplexVector &E, const ComplexVector &B,
-                         const ComplexVector *D, double Et, ErrorIndicator &ind)
-  {
-    if (is_2d)
-    {
-      if (D)
-        estimator_2d->AddErrorIndicator(E, B, *D, Et, ind);
-      else
-        estimator_2d->AddErrorIndicator(E, B, Et, ind);
-    }
-    else
-    {
-      if (D)
-        estimator_3d->AddErrorIndicator(E, B, *D, Et, ind);
-      else
-        estimator_3d->AddErrorIndicator(E, B, Et, ind);
-    }
-  };
-  auto RecoverElectricFlux = [&](const ComplexVector &E, ComplexVector &D)
-  {
-    if (is_2d)
-      estimator_2d->RecoverElectricFlux(E, D);
-    else
-      estimator_3d->RecoverElectricFlux(E, D);
-  };
   ErrorIndicator indicator;
 
   // If using Floquet BCs, a correction term (kp x E) needs to be added to the B field.
@@ -228,54 +233,48 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
       Mpi::Print("\nSweeping excitation index {:d} ({:d}/{:d}):\n", excitation_idx,
                  excitation_counter, port_excitations.Size());
     }
-    // Switch paraview subfolders: one for each excitation, if nr_excitations > 1.
-    post_op.InitializeParaviewDataCollection(excitation_idx);
-
-    // Frequency loop.
-    for (std::size_t omega_i =
-             ((excitation_counter == excitation_restart_counter) ? freq_restart_idx : 0);
-         omega_i < omega_sample.size(); omega_i++)
+    // Frequency loop. Delay the potentially large visualization operators until the
+    // first solution is ready, so they do not increase the solve/preconditioner peak.
+    const std::size_t omega_start =
+        (excitation_counter == excitation_restart_counter) ? freq_restart_idx : 0;
+    for (std::size_t omega_i = omega_start; omega_i < omega_sample.size(); omega_i++)
     {
       auto omega = omega_sample[omega_i];
       // Assemble frequency dependent matrices and initialize operators in linear
-      // solver.
-      auto A2 = space_op.GetExtraSystemOperator(omega, Operator::DIAG_ZERO);
-      auto A = space_op.GetSystemMatrix(1.0 + 0.0i, 1i * omega, -omega * omega + 0.0i,
-                                        K.get(), C.get(), M.get(), A2.get());
-      std::unique_ptr<SumComplexOperator> corrected_A;
-      if (self_consistent_response)
-      {
-        corrected_A = std::make_unique<SumComplexOperator>(*A);
-        corrected_A->AddOperator(*response_mass, -omega * omega + 0.0i);
-        if (response_stiffness)
-        {
-          corrected_A->AddOperator(*response_stiffness, 1.0 + 0.0i);
-        }
-      }
+      // solver. The system operator refers to P, so P must outlive it.
       auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(
           1.0 + 0.0i, 1i * omega, -omega * omega + 0.0i, omega);
-      ksp.SetOperators(*A, *P);
+      auto system_op = internal::BuildDrivenSystemOperator(
+          space_op, omega, *P, K, C, M, response_mass.get(), response_stiffness.get());
+      ksp->SetOperators(*system_op.A, *P);
       if (corrected_ksp)
       {
-        corrected_ksp->SetOperators(*corrected_A, *P);
+        corrected_ksp->SetOperators(*system_op.corrected, *P);
       }
 
       Mpi::Print(
           "\nIt {:d}/{:d}: ω/2π = {:.3e} GHz (total elapsed time = {:.2e} s{})\n",
           omega_i + 1, omega_sample.size(),
-          iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(omega) / (2 * M_PI),
+          iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(omega) /
+              (2 * std::numbers::pi),
           Timer::Duration(Timer::Now() - t0).count(),
           (port_excitations.Size() > 1)
               ? fmt::format(", solve {:d}/{:d}",
                             1 + omega_i + (excitation_counter - 1) * omega_sample.size(),
                             omega_sample.size() * port_excitations.Size())
               : "");
+      if (corrected_ksp)
+      {
+        // The path the response-corrected system operator wraps (log only).
+        Mpi::Print(" Response-corrected system operator: {}\n",
+                   system_op.assembled ? "assembled" : "matrix-free");
+      }
 
       // Solve linear system.
       space_op.GetExcitationVector(excitation_idx, omega, RHS);
 
       Mpi::Print("\n");
-      ksp.Mult(RHS, E);
+      ksp->Mult(RHS, E);
       if (response_correction && !response_correction->IsRawFallback() &&
           response_correction->HasConductorConsistencyProbes())
       {
@@ -305,6 +304,30 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
         corrected_ksp->Mult(RHS, E_corrected);
       }
 
+      if (omega_i + 1 == omega_sample.size() &&
+          excitation_counter == port_excitations.Size())
+      {
+        // That was the last solve (raw and, when self-consistent, corrected): save the
+        // solver totals and release the linear solvers and system operators, so they do not
+        // add to the memory peak of the field output and error estimation which follow.
+        SaveMetadata(*ksp);
+        ksp.reset();
+        if (corrected_ksp)
+        {
+          SaveSurfaceResponseSolverMetadata(space_op.GetComm(), "Driven",
+                                            corrected_ksp->NumTotalMult(),
+                                            corrected_ksp->NumTotalMultIterations());
+          corrected_ksp.reset();
+        }
+        system_op.corrected.reset();
+        system_op.A.reset();
+        system_op.A2.reset();
+        P.reset();
+        K.reset();
+        C.reset();
+        M.reset();
+      }
+
       // Start Post-processing.
       BlockTimer bt0(Timer::POSTPRO);
       Mpi::Print(" Sol. ||E|| = {:.6e} (||RHS|| = {:.6e})\n",
@@ -324,21 +347,27 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
             space_op.GetMaterialOp().HasFloquetFrequencyScaling() ? 1.0 : 1.0 / omega);
       }
 
+      if (omega_i == omega_start)
+      {
+        // Switch ParaView subfolders once per excitation, after the first solve.
+        post_op.InitializeParaviewDataCollection(excitation_idx);
+      }
       const ComplexVector *recovered_flux = nullptr;
       if (post_op.NeedsRecoveredElectricFlux())
       {
         Mpi::Print(" Recovering electric flux for interface postprocessing\n");
-        RecoverElectricFlux(E, D);
+        estimator.RecoverElectricFlux(E, D);
         post_op.SetRecoveredElectricFlux(D);
         recovered_flux = &D;
       }
-      if (corrected_ksp)
+      if (self_consistent_response)
       {
+        // Not corrected_ksp: it is released after the last solve, before this output.
         const ComplexVector *corrected_flux = nullptr;
         if (post_op.NeedsRecoveredElectricFlux())
         {
           Mpi::Print(" Recovering electric flux for corrected interface postprocessing\n");
-          RecoverElectricFlux(E_corrected, D_corrected);
+          estimator.RecoverElectricFlux(E_corrected, D_corrected);
           corrected_flux = &D_corrected;
         }
         post_op.SetSurfaceResponseCorrectedField(E_corrected, corrected_flux);
@@ -348,17 +377,28 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
 
       // Calculate and record the error indicators.
       Mpi::Print(" Updating solution error estimates\n");
-      AddEstimate(E, B, recovered_flux, total_domain_energy, indicator);
+      if (recovered_flux)
+      {
+        estimator.AddErrorIndicator(E, B, *recovered_flux, total_domain_energy, indicator);
+      }
+      else
+      {
+        estimator.AddErrorIndicator(E, B, total_domain_energy, indicator);
+      }
     }
 
-    // Final postprocessing & printing.
+    // Final postprocessing & printing. After the last excitation, the solver totals were
+    // already saved when the solver was released.
     BlockTimer bt0(Timer::POSTPRO);
-    SaveMetadata(ksp);
+    if (ksp)
+    {
+      SaveMetadata(*ksp);
+    }
   }
   post_op.MeasureFinalize(indicator);
-  if (self_consistent_response)
+  if (corrected_ksp)
   {
-    MFEM_ASSERT(corrected_ksp, "Missing corrected driven linear solver!");
+    // Not released (no last solve ran); otherwise its totals were saved at its release.
     SaveSurfaceResponseSolverMetadata(space_op.GetComm(), "Driven",
                                       corrected_ksp->NumTotalMult(),
                                       corrected_ksp->NumTotalMultIterations());
@@ -374,7 +414,6 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
 {
   const auto &port_excitations = space_op.GetPortExcitations();
   const auto &omega_sample = iodata.solver.driven.sample_f;
-
   // Initialize postprocessing for measurement and printers.
   // Initialize write directory with default path; will be changed for multi-excitations.
   PostOperator<ProblemType::DRIVEN> post_op(iodata, space_op, &response_geometry,
@@ -398,15 +437,23 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
               "Adaptive frequency sweep must sample at least " << nprom_indices
                                                                << " frequency points!");
 
+  // Initialize structures for storing and reducing the results of error estimation.
+  const FluxErrorEstimator<ComplexVector> estimator(space_op, iodata);
+
   // Allocate negative curl matrix for postprocessing the B-field and vectors for the
   // high-dimensional field solution.
   const auto &Curl = space_op.GetCurlMatrix();
   ComplexVector E(Curl.Width()), Eh(Curl.Width()), E_corrected, Eh_corrected,
-      B(Curl.Height()), D(space_op.GetRTSpace().GetTrueVSize()), D_corrected;
+      B(Curl.Height()), D, D_corrected;
   E.UseDevice(true);
   Eh.UseDevice(true);
   B.UseDevice(true);
-  D.UseDevice(true);
+  if (post_op.NeedsRecoveredElectricFlux())
+  {
+    // The recovered flux is allocated only when interface postprocessing uses it.
+    D.SetSize(estimator.GetElectricFluxSpace().GetTrueVSize());
+    D.UseDevice(true);
+  }
   E = 0.0;
   Eh = 0.0;
   B = 0.0;
@@ -420,54 +467,11 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
     Eh_corrected = 0.0;
     if (post_op.NeedsRecoveredElectricFlux())
     {
-      D_corrected.SetSize(space_op.GetRTSpace().GetTrueVSize());
+      D_corrected.SetSize(estimator.GetElectricFluxSpace().GetTrueVSize());
       D_corrected.UseDevice(true);
     }
   }
 
-  // Initialize structures for storing and reducing the results of error estimation.
-  const bool is_2d = (space_op.GetNDSpace().Dimension() < 3);
-  std::unique_ptr<TimeDependentFluxErrorEstimator<ComplexVector>> estimator_3d;
-  std::unique_ptr<BoundaryModeFluxErrorEstimator<ComplexVector>> estimator_2d;
-  if (is_2d)
-  {
-    estimator_2d = std::make_unique<BoundaryModeFluxErrorEstimator<ComplexVector>>(
-        space_op.GetMaterialOp(), space_op.GetNDSpaces(), space_op.GetRTSpaces(),
-        space_op.GetCurlSpace(), space_op.GetH1Spaces(), iodata.solver.linear.estimator_tol,
-        iodata.solver.linear.estimator_max_it, 0, iodata.solver.linear.estimator_mg);
-  }
-  else
-  {
-    estimator_3d = std::make_unique<TimeDependentFluxErrorEstimator<ComplexVector>>(
-        space_op.GetMaterialOp(), space_op.GetNDSpaces(), space_op.GetRTSpaces(),
-        iodata.solver.linear.estimator_tol, iodata.solver.linear.estimator_max_it, 0,
-        iodata.solver.linear.estimator_mg);
-  }
-  auto AddEstimate = [&](const ComplexVector &E, const ComplexVector &B,
-                         const ComplexVector *D, double Et, ErrorIndicator &ind)
-  {
-    if (is_2d)
-    {
-      if (D)
-        estimator_2d->AddErrorIndicator(E, B, *D, Et, ind);
-      else
-        estimator_2d->AddErrorIndicator(E, B, Et, ind);
-    }
-    else
-    {
-      if (D)
-        estimator_3d->AddErrorIndicator(E, B, *D, Et, ind);
-      else
-        estimator_3d->AddErrorIndicator(E, B, Et, ind);
-    }
-  };
-  auto RecoverElectricFlux = [&](const ComplexVector &E, ComplexVector &D)
-  {
-    if (is_2d)
-      estimator_2d->RecoverElectricFlux(E, D);
-    else
-      estimator_3d->RecoverElectricFlux(E, D);
-  };
   ErrorIndicator indicator;
 
   // If using Floquet BCs, a correction term (kp x E) needs to be added to the B field.
@@ -483,8 +487,8 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
   // construction during the offline phase as well as the PROM solution during the online
   // phase.
   auto t0 = Timer::Now();
-  const double unit_GHz =
-      iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(1.0) / (2 * M_PI);
+  const double unit_GHz = iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(1.0) /
+                          (2 * std::numbers::pi);
   Mpi::Print("\nBeginning PROM construction offline phase:\n"
              " {:d} points for frequency sweep over [{:.3e}, {:.3e}] GHz\n",
              omega_sample.size(), omega_sample.front() * unit_GHz,
@@ -508,6 +512,9 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
         std::move(prom_stiffness));
   }
   space_op.GetWavePortOp().SetSuppressOutput(true);
+  space_op.GetWavePortOp().ConfigureReducedModelTraining(
+      max_size_per_excitation, port_excitations.Size(),
+      iodata.solver.driven.adaptive_circuit_synthesis);
 
   // Add ports to PROM if we do synthesis.
   if (iodata.solver.driven.adaptive_circuit_synthesis)
@@ -564,7 +571,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
     // Measure domain energies for the error indicator only. Don't exchange face_nbr_data,
     // unless printing paraview fields.
     auto total_domain_energy = post_op.MeasureDomainFieldEnergyOnly(field, B);
-    AddEstimate(field, B, nullptr, total_domain_energy, indicator);
+    estimator.AddErrorIndicator(field, B, total_domain_energy, indicator);
   };
 
   auto BuildPROM = [&](RomOperator &op, ComplexVector &field, ComplexVector &residual,
@@ -656,107 +663,161 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
   Mpi::Print(" Total offline phase elapsed time: {:.2e} s\n",
              Timer::Duration(Timer::Now() - t0).count());  // Timing on root
 
+  // Circuit synthesis samples the exact cross-section EVP at a tightened tolerance so the
+  // fitted pencil does not depend on the port-mode accuracy floor; keep those solves exact
+  // (they also enrich the per-port reduced basis).
   if (iodata.solver.driven.adaptive_circuit_synthesis)
   {
     prom_op.PrintPROMMatrices(iodata.units, iodata.problem.output);
   }
 
+  // Exact wave-port modes computed by the HDM samples (and any synthesis samples) have
+  // trained a separate per-port reduced eigenspace. Enable guarded Rayleigh-Ritz evaluation
+  // for the online output sweep; failed residual checks transparently fall back to the
+  // exact port eigensolver and enrich the basis.
+  space_op.GetWavePortOp().EnableReducedModel(iodata.solver.driven.adaptive_tol);
+  prom_op.PrepareOnlineExcitations();
+  if (corrected_prom_op)
+  {
+    corrected_prom_op->PrepareOnlineExcitations();
+  }
+  post_op.ConfigureReducedPostprocessing(prom_op);
+
   // Main fast frequency sweep loop (online phase).
   Mpi::Print("\nBeginning fast frequency sweep online phase\n");
   space_op.GetWavePortOp().SetSuppressOutput(false);  // Disable output suppression
-  int excitation_counter = 0;
-  for (const auto &[excitation_idx, excitation_spec] : port_excitations)
+  auto solve_online_point = [&](int excitation_idx, std::size_t omega_i)
   {
-    if (port_excitations.Size() > 1)
-    {
-      Mpi::Print("\nSweeping excitation index {:d} ({:d}/{:d}):\n", excitation_idx,
-                 ++excitation_counter, port_excitations.Size());
-    }
-    // Switch paraview subfolders: one for each excitation, if nr_excitations > 1.
-    post_op.InitializeParaviewDataCollection(excitation_idx);
+    const auto omega = omega_sample[omega_i];
+    // Refresh every port, including inactive observation-only ports, before either PROM
+    // assembly or postprocessing. Repeated calls at the same frequency are cached.
+    space_op.GetWavePortOp().PrepareFrequency(omega);
+    Mpi::Print("\nIt {:d}/{:d}, excitation {:d}: ω/2π = {:.3e} GHz "
+               "(total elapsed time = {:.2e} s)\n",
+               omega_i + 1, omega_sample.size(), excitation_idx,
+               iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(omega) /
+                   (2 * std::numbers::pi),
+               Timer::Duration(Timer::Now() - t0).count());
 
-    // Frequency loop.
-    for (std::size_t omega_i = 0; omega_i < omega_sample.size(); omega_i++)
+    // Assemble and solve the PROM linear system.
+    prom_op.SolvePROM(excitation_idx, omega, E);
+    if (response_correction && !response_correction->IsRawFallback() &&
+        response_correction->HasConductorConsistencyProbes())
     {
-      auto omega = omega_sample[omega_i];
-      Mpi::Print("\nIt {:d}/{:d}: ω/2π = {:.3e} GHz (total elapsed time = {:.2e} s)\n",
-                 omega_i + 1, omega_sample.size(),
-                 iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(omega) /
-                     (2 * M_PI),
-                 Timer::Duration(Timer::Now() - t0).count());
-
-      // Assemble and solve the PROM linear system.
-      prom_op.SolvePROM(excitation_idx, omega, E);
-      if (response_correction && !response_correction->IsRawFallback() &&
-          response_correction->HasConductorConsistencyProbes())
+      // The conductor-consistency gate (idfix DESIGN B.3; decision 1064 (1)) on the
+      // reduced-order field of this frequency, before its energies. The corrected PROM
+      // was built on the pre-gate operator, so its field is marked SelfConsistentPreGate
+      // when an exclusion fires here (the fixed-trace letters are exact).
+      BlockTimer gate_timer(Timer::POSTPRO_RESPONSE_COUPON);
+      response_correction->ApplyConductorConsistencyGate(
+          E, excitation_idx,
+          iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(omega) / (2 * M_PI),
+          corrected_prom_op != nullptr);
+      if (response_correction->HasMagneticModels())
       {
-        // The conductor-consistency gate (idfix DESIGN B.3; decision 1064 (1)) on the
-        // reduced-order field of this frequency, before its energies. The corrected PROM
-        // was built on the pre-gate operator, so its field is marked SelfConsistentPreGate
-        // when an exclusion fires here (the fixed-trace letters are exact).
-        BlockTimer gate_timer(Timer::POSTPRO_RESPONSE_COUPON);
-        response_correction->ApplyConductorConsistencyGate(
+        response_correction->ApplyMagneticConductorConsistencyGate(
             E, excitation_idx,
-            iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(omega) / (2 * M_PI),
-            corrected_prom_op != nullptr);
-        if (response_correction->HasMagneticModels())
-        {
-          response_correction->ApplyMagneticConductorConsistencyGate(
-              E, excitation_idx,
-              iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(omega) / (2 * M_PI));
-        }
+            iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(omega) / (2 * M_PI));
       }
-      if (corrected_prom_op)
-      {
-        corrected_prom_op->SolvePROM(excitation_idx, omega, E_corrected);
-      }
-      Mpi::Print("\n");
+    }
+    if (corrected_prom_op)
+    {
+      corrected_prom_op->SolvePROM(excitation_idx, omega, E_corrected);
+    }
+    Mpi::Print("\n");
+    if (omega_i == 0 && post_op.WillWriteFields())
+    {
+      // Switch ParaView subfolders once per excitation. Delay visualization setup until
+      // the first online solution is ready.
+      post_op.InitializeParaviewDataCollection(excitation_idx);
+    }
 
-      // Start Post-processing.
-      BlockTimer bt0(Timer::POSTPRO);
-      Mpi::Print(" Sol. ||E|| = {:.6e}\n", linalg::Norml2(space_op.GetComm(), E));
-      if (corrected_prom_op)
-      {
-        Mpi::Print(" Corrected sol. ||E|| = {:.6e}\n",
-                   linalg::Norml2(space_op.GetComm(), E_corrected));
-      }
+    if (!response_correction && post_op.HasReducedPostprocessing() &&
+        !post_op.WillWriteFields(static_cast<int>(omega_i)))
+    {
+      // Never with a surface response correction: its gate and corrected energies need the
+      // full field postprocessing below.
+      post_op.MeasureAndPrintReduced(excitation_idx, int(omega_i), E, omega,
+                                     prom_op.GetReducedSolution());
+      return;
+    }
 
-      // Compute B = -1/(iω) ∇ x E on the true dofs.
-      Curl.Mult(E.Real(), B.Real());
-      Curl.Mult(E.Imag(), B.Imag());
-      B *= -1.0 / (1i * omega);
-      if (space_op.GetMaterialOp().HasWaveVector())
-      {
-        // Calculate B field correction for Floquet BCs: B += k_F(ω)/ω × E.
-        // With k₀ = k_F_ref/ω_ref stored, k_F(ω)/ω = k_F_ref/ω_ref = k₀, so scale = 1.
-        floquet_corr->AddMult(
-            E, B,
-            space_op.GetMaterialOp().HasFloquetFrequencyScaling() ? 1.0 : 1.0 / omega);
-      }
+    // Start full post-processing.
+    BlockTimer bt0(Timer::POSTPRO);
+    Mpi::Print(" Sol. ||E|| = {:.6e}\n", linalg::Norml2(space_op.GetComm(), E));
+    if (corrected_prom_op)
+    {
+      Mpi::Print(" Corrected sol. ||E|| = {:.6e}\n",
+                 linalg::Norml2(space_op.GetComm(), E_corrected));
+    }
+
+    // Compute B = -1/(iω) ∇ x E on the true dofs.
+    Curl.Mult(E.Real(), B.Real());
+    Curl.Mult(E.Imag(), B.Imag());
+    B *= -1.0 / (1i * omega);
+    if (space_op.GetMaterialOp().HasWaveVector())
+    {
+      // Calculate B field correction for Floquet BCs: B += k_F(ω)/ω × E.
+      // With k₀ = k_F_ref/ω_ref stored, k_F(ω)/ω = k_F_ref/ω_ref = k₀, so scale = 1.
+      floquet_corr->AddMult(
+          E, B, space_op.GetMaterialOp().HasFloquetFrequencyScaling() ? 1.0 : 1.0 / omega);
+    }
+    if (post_op.NeedsRecoveredElectricFlux())
+    {
+      Mpi::Print(" Recovering electric flux for interface postprocessing\n");
+      estimator.RecoverElectricFlux(E, D);
+      post_op.SetRecoveredElectricFlux(D);
+    }
+    if (corrected_prom_op)
+    {
+      const ComplexVector *corrected_flux = nullptr;
       if (post_op.NeedsRecoveredElectricFlux())
       {
-        Mpi::Print(" Recovering electric flux for interface postprocessing\n");
-        RecoverElectricFlux(E, D);
-        post_op.SetRecoveredElectricFlux(D);
+        Mpi::Print(" Recovering electric flux for corrected interface postprocessing\n");
+        estimator.RecoverElectricFlux(E_corrected, D_corrected);
+        corrected_flux = &D_corrected;
       }
-      if (corrected_prom_op)
-      {
-        const ComplexVector *corrected_flux = nullptr;
-        if (post_op.NeedsRecoveredElectricFlux())
-        {
-          Mpi::Print(" Recovering electric flux for corrected interface postprocessing\n");
-          RecoverElectricFlux(E_corrected, D_corrected);
-          corrected_flux = &D_corrected;
-        }
-        post_op.SetSurfaceResponseCorrectedField(E_corrected, corrected_flux);
-      }
-      post_op.MeasureAndPrintAll(excitation_idx, int(omega_i), E, B, omega);
+      post_op.SetSurfaceResponseCorrectedField(E_corrected, corrected_flux);
     }
+    post_op.MeasureAndPrintAll(excitation_idx, int(omega_i), E, B, omega);
+  };
 
-    // Final postprocessing & printing: no change to indicator since these are in PROM.
+  if (!post_op.WillWriteFields() && !response_correction)
+  {
+    // Port modes depend on frequency, not excitation. Frequency-major traversal keeps the
+    // one-frequency modal cache hot for every excitation. Not with a surface response
+    // correction: its conductor-consistency gate exclusions are sticky (a later solve sees
+    // every earlier exclusion), so its sweep stays excitation-major as below.
+    for (std::size_t omega_i = 0; omega_i < omega_sample.size(); omega_i++)
+    {
+      for (const auto &[excitation_idx, excitation_spec] : port_excitations)
+      {
+        solve_online_point(excitation_idx, omega_i);
+      }
+    }
+  }
+  else
+  {
+    // Preserve excitation-major ordering for excitation-specific field collections.
+    for (const auto &[excitation_idx, excitation_spec] : port_excitations)
+    {
+      if (port_excitations.Size() > 1)
+      {
+        Mpi::Print("\nSweeping excitation index {:d}:\n", excitation_idx);
+      }
+      for (std::size_t omega_i = 0; omega_i < omega_sample.size(); omega_i++)
+      {
+        solve_online_point(excitation_idx, omega_i);
+      }
+    }
+  }
+
+  // Final postprocessing & printing: no change to indicator since these are in PROM.
+  {
     BlockTimer bt0(Timer::POSTPRO);
     SaveMetadata(prom_op.GetLinearSolver());
   }
+  space_op.GetWavePortOp().PrintReducedModelStats();
   post_op.MeasureFinalize(indicator);
   if (self_consistent_response)
   {

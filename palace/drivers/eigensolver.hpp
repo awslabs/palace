@@ -44,6 +44,24 @@ ResponseCorrectedMass BuildResponseCorrectedMass(const ComplexOperator &mass,
 ResponseCorrectedMass BuildResponseCorrectedStiffness(const ComplexOperator &stiffness,
                                                       const Operator &response_stiffness);
 
+// The response-corrected twins of the stiffness operators: K + dK and, when the HYBRID
+// polynomial seed exists (Kp = K + A2_0), Kp + dK. Kp is null without that seed (no A2
+// term); then no corrected Kp is built (OI-UPSYNC-NULL-KP: it was built from the null Kp).
+struct ResponseCorrectedStiffnesses
+{
+  ResponseCorrectedMass K, Kp;
+};
+ResponseCorrectedStiffnesses
+BuildResponseCorrectedStiffnesses(const ComplexOperator &stiffness,
+                                  const ComplexOperator *seed_stiffness,
+                                  const Operator &response_stiffness);
+
+// Refuse the self-consistent response-corrected eigenmode solve with the magnetic defect dK
+// under the SLP nonlinear eigensolver (the exact A2 of wave ports or absorbing boundaries
+// beside K + dK): no case exercises that operator (OI-EIGEN-SLP-MAGNETIC-SELF-CONSISTENT).
+void VerifySelfConsistentMagneticNonlinearSolver(bool magnetic_defect,
+                                                 NonlinearEigenSolver nonlinear_type);
+
 // Return the shift and spectrum selector for an eigenproblem represented in either
 // λ = iω or μ = -λ² = ω².
 EigenvalueTarget GetEigenvalueTarget(double target, bool lambda_eigenproblem,

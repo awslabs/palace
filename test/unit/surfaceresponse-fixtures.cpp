@@ -1097,11 +1097,40 @@ SurfaceResponseFiles::SurfaceResponseFiles()
   Mpi::Barrier(Mpi::World());
 }
 
-json SurfaceResponseFiles::AutomaticConfig2D() const
+const char *CrackPolicyName(CrackPolicy crack_policy)
+{
+  return crack_policy == CrackPolicy::Legacy ? "legacy" : "default";
+}
+
+void ApplyCrackPolicy(json &config, CrackPolicy crack_policy)
+{
+  if (crack_policy == CrackPolicy::Legacy)
+  {
+    config["Model"]["CrackInternalBoundaryElements"] = true;
+  }
+  else
+  {
+    config["Model"].erase("CrackInternalBoundaryElements");
+  }
+}
+
+void ApplyCrackPolicy(IoData &iodata, CrackPolicy crack_policy)
+{
+  if (crack_policy == CrackPolicy::Legacy)
+  {
+    iodata.model.crack_bdr_elements = true;
+  }
+  else
+  {
+    iodata.model.crack_bdr_elements.reset();
+  }
+}
+
+json SurfaceResponseFiles::AutomaticConfig2D(CrackPolicy crack_policy) const
 {
   json automatic_config = {
       {"Problem", {{"Type", "Electrostatic"}, {"Output", temp.temp_dir.string()}}},
-      {"Model", {{"Mesh", "unused.msh"}}},
+      {"Model", {{"Mesh", "unused.msh"}, {"CrackInternalBoundaryElements", true}}},
       {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
       {"Boundaries",
        {{"Ground", {{"Attributes", {1, 3, 4, 9, 10}}}},
@@ -1121,12 +1150,13 @@ json SurfaceResponseFiles::AutomaticConfig2D() const
         {"Electrostatic",
          {{"ResponseCorrection",
            {{"Library", library_path.string()}, {"UnmatchedPolicy", "Error"}}}}}}}};
+  ApplyCrackPolicy(automatic_config, crack_policy);
   return automatic_config;
 }
 
-json SurfaceResponseFiles::BoundaryModeConfig2D() const
+json SurfaceResponseFiles::BoundaryModeConfig2D(CrackPolicy crack_policy) const
 {
-  auto boundary_mode_config = AutomaticConfig2D();
+  auto boundary_mode_config = AutomaticConfig2D(crack_policy);
   boundary_mode_config["Problem"]["Type"] = "BoundaryMode";
   boundary_mode_config["Boundaries"].erase("Ground");
   boundary_mode_config["Boundaries"].erase("Terminal");
@@ -1139,9 +1169,9 @@ json SurfaceResponseFiles::BoundaryModeConfig2D() const
   return boundary_mode_config;
 }
 
-json SurfaceResponseFiles::ExactPairConfig2D() const
+json SurfaceResponseFiles::ExactPairConfig2D(CrackPolicy crack_policy) const
 {
-  auto exact_pair_config_2d = AutomaticConfig2D();
+  auto exact_pair_config_2d = AutomaticConfig2D(crack_policy);
   exact_pair_config_2d["Solver"]["Electrostatic"]["ResponseCorrection"]["Library"] =
       exact_pair_library_2d_path.string();
   exact_pair_config_2d["Boundaries"]["Postprocessing"]["Dielectric"][0]["EdgeDistances"] = {
@@ -1149,7 +1179,7 @@ json SurfaceResponseFiles::ExactPairConfig2D() const
   return exact_pair_config_2d;
 }
 
-json SurfaceResponseFiles::Cpw3dLegacyConfig() const
+json SurfaceResponseFiles::Cpw3dLegacyConfig(CrackPolicy crack_policy) const
 {
   const auto config_3d_path = fs::path(__FILE__).parent_path().parent_path().parent_path() /
                               "examples/cpw3d_surface/cpw3d_surface_validation_thin.json";
@@ -1158,6 +1188,7 @@ json SurfaceResponseFiles::Cpw3dLegacyConfig() const
   config_3d["Problem"]["Output"] = temp.temp_dir.string();
   config_3d["Model"]["Mesh"] =
       (fs::path(PALACE_TEST_DATA_DIR) / "mesh/cpw3d-surface-nc.msh").string();
+  ApplyCrackPolicy(config_3d, crack_policy);  // explicit crack policy
   // The three-dimensional sections below exercise the legacy per-interface-group
   // classification (parametric matching with tolerances, interpolation brackets, plan-view
   // masks), kept behind PatchConstruction = "Legacy"; the Features-driven construction
@@ -1170,11 +1201,11 @@ json SurfaceResponseFiles::Cpw3dLegacyConfig() const
   return config_3d;
 }
 
-json SurfaceResponseFiles::IslandConfig() const
+json SurfaceResponseFiles::IslandConfig(CrackPolicy crack_policy) const
 {
   json island_config = {
       {"Problem", {{"Type", "Electrostatic"}, {"Output", temp.temp_dir.string()}}},
-      {"Model", {{"Mesh", "unused.msh"}}},
+      {"Model", {{"Mesh", "unused.msh"}, {"CrackInternalBoundaryElements", true}}},
       {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
       {"Boundaries",
        {{"Ground", {{"Attributes", {1, 2, 3, 4, 5, 6}}}},
@@ -1197,20 +1228,21 @@ json SurfaceResponseFiles::IslandConfig() const
             {"TargetInterfaces", {4}},
             {"UnmatchedPolicy", "Error"},
             {"PatchConstruction", "Legacy"}}}}}}}};
+  ApplyCrackPolicy(island_config, crack_policy);
   return island_config;
 }
 
-json SurfaceResponseFiles::ConvexIslandConfig() const
+json SurfaceResponseFiles::ConvexIslandConfig(CrackPolicy crack_policy) const
 {
-  auto convex_island_config = IslandConfig();
+  auto convex_island_config = IslandConfig(crack_policy);
   convex_island_config["Solver"]["Electrostatic"]["ResponseCorrection"]["Library"] =
       convex_library_3d_path.string();
   return convex_island_config;
 }
 
-json SurfaceResponseFiles::ConvexMaxwellIslandConfig() const
+json SurfaceResponseFiles::ConvexMaxwellIslandConfig(CrackPolicy crack_policy) const
 {
-  auto convex_maxwell_island_config = ConvexIslandConfig();
+  auto convex_maxwell_island_config = ConvexIslandConfig(crack_policy);
   convex_maxwell_island_config["Problem"]["Type"] = "Eigenmode";
   convex_maxwell_island_config["Boundaries"]["Ground"]["Attributes"] = {1, 2, 3, 4,
                                                                         5, 6, 9};
@@ -1225,17 +1257,17 @@ json SurfaceResponseFiles::ConvexMaxwellIslandConfig() const
   return convex_maxwell_island_config;
 }
 
-json SurfaceResponseFiles::RoundedIslandConfig() const
+json SurfaceResponseFiles::RoundedIslandConfig(CrackPolicy crack_policy) const
 {
-  auto rounded_island_config = IslandConfig();
+  auto rounded_island_config = IslandConfig(crack_policy);
   rounded_island_config["Solver"]["Electrostatic"]["ResponseCorrection"]["Library"] =
       rounded_library_3d_path.string();
   return rounded_island_config;
 }
 
-json SurfaceResponseFiles::HighOrderSpatialConfig() const
+json SurfaceResponseFiles::HighOrderSpatialConfig(CrackPolicy crack_policy) const
 {
-  auto high_order_spatial_config = IslandConfig();
+  auto high_order_spatial_config = IslandConfig(crack_policy);
   high_order_spatial_config["Boundaries"]["Terminal"] = {
       {{"Index", 1}, {"Attributes", {9}}}, {{"Index", 2}, {"Attributes", {10}}}};
   high_order_spatial_config["Boundaries"]["Postprocessing"]["Dielectric"][0]["Attributes"] =

@@ -95,7 +95,7 @@ class SurfaceResponseGeometry;
 class SurfaceResponseOperator;
 template <ProblemType>
 class PostOperator;
-template <typename OperType>
+template <OperatorType OperType>
 class BaseKspSolver;
 using KspSolver = BaseKspSolver<Operator>;
 

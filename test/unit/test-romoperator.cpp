@@ -1,6 +1,8 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <array>
+#include <numbers>
 #include <vector>
 #include <Eigen/Dense>
 #include <catch2/catch_test_macros.hpp>
@@ -47,11 +49,18 @@ auto toEigenMatrix(const T &op, int n)
   return mat;
 }
 
+class DrivenPostOperatorTest : public PostOperator<ProblemType::DRIVEN>
+{
+public:
+  using PostOperator<ProblemType::DRIVEN>::PostOperator;
+  const Measurement &GetMeasurement() const { return measurement_cache; }
+};
+
 class RomOperatorTest : public RomOperator
 {
 public:
+  using RomOperator::AddAuxBlockDirections;
   using RomOperator::ApplyComplexPolynomialFitCorrections;
-  using RomOperator::ApplyPolynomialFitCorrections;
   using RomOperator::AugmentedPencil;
   using RomOperator::BuildAugmentedPencil;
   using RomOperator::CalculateNormalizedPROMMatrices;
@@ -65,6 +74,13 @@ public:
   auto &GetKr() const { return Kr; }
   auto &GetCr() const { return Cr; }
   auto &GetMr() const { return Mr; }
+  bool WavePortPairingChecked() const { return wp_pairing_checked; }
+  bool WavePortPairingOk() const { return wp_pairing_ok; }
+  void UseAssembledWavePortPath(bool assembled)
+  {
+    wp_pairing_ok = !assembled;
+    Ar_omega = std::numeric_limits<double>::quiet_NaN();
+  }
 };
 
 auto LoadScaleParMesh2(IoData &iodata, MPI_Comm world_comm)
@@ -74,6 +90,12 @@ auto LoadScaleParMesh2(IoData &iodata, MPI_Comm world_comm)
   {
     std::vector<std::unique_ptr<mfem::ParMesh>> mfem_mesh;
     auto smesh = mesh::Load(iodata, world_comm);
+    int ne = smesh ? smesh->GetNE() : 0;
+    Mpi::GlobalMax(1, &ne, world_comm);
+    if (Mpi::Size(world_comm) > ne)
+    {
+      SKIP("Mesh has fewer elements than processes");
+    }
     if (iodata.model.Lc <= 0.0)
     {
       iodata.model.Lc = mesh::ComputeReferenceLength(smesh, world_comm);
@@ -94,7 +116,7 @@ TEST_CASE("MinimalRationalInterpolation", "[romoperator][Serial][Parallel]")
   MPI_Comm comm = Mpi::World();
 
   auto fn_tan_shift = [](double z)
-  { return std::tan(0.5 * M_PI * (z - std::complex<double>(1., 1.))); };
+  { return std::tan(0.5 * std::numbers::pi * (z - std::complex<double>(1., 1.))); };
 
   // Test scalar case: 2 sample points for 4 x 2 vector
   MinimalRationalInterpolation mri_1(6);
@@ -134,10 +156,29 @@ TEST_CASE("MinimalRationalInterpolation", "[romoperator][Serial][Parallel]")
 
   // Test that elements of max_error are unique.
   // TODO: get better test for multiple N.
-  std::sort(max_err_1.begin(), max_err_1.end());
+  std::ranges::sort(max_err_1);
   CHECK(std::adjacent_find(max_err_1.begin(), max_err_1.end()) == max_err_1.end());
 
   // TODO: Add more stringent tests of MRI, including estimating poles.
+}
+
+TEST_CASE("MinimalRationalInterpolation-NarrowSpan", "[romoperator][Serial]")
+{
+  // Samples 2e-11 apart relative to z: delta = span / 1e6 is below the spacing of doubles
+  // near z, so the scan must not step by accumulating delta.
+  MinimalRationalInterpolation mri(2);
+  const double z0 = 100.0, z1 = 100.0 + 2.0e-9;
+  for (int i = 0; i < 2; i++)
+  {
+    std::vector<std::complex<double>> tmp = {double(i == 0), double(i == 1)};
+    ComplexVector u(tmp.size());
+    u.Set(tmp.data(), tmp.size(), false);
+    mri.AddSolutionSample(i == 0 ? z0 : z1, u, Mpi::World(), Orthogonalization::MGS);
+  }
+  const auto z_max = mri.FindMaxError(1);
+  REQUIRE(z_max.size() == 1);
+  CHECK(z_max[0] >= z0);
+  CHECK(z_max[0] <= z1);
 }
 
 // TODO: Do some more basic RomOperator Ctor Checks
@@ -982,6 +1023,130 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-ResponseStiffness",
   CHECK_THROWS(RomOperator(iodata, space_op, 4, nullptr, std::move(lone_stiffness)));
 }
 
+// The response-corrected HDM on upstream's matrix-free system-operator path (SD-701 (3);
+// P3-07): at Order 2 with MGMaxLevels 2 (PCMatReal / PCMatShifted false, a sparse direct
+// or default coarse solver) SpaceOperator::GetSystemOperator applies the HDM system through
+// the finest preconditioner level; the response mass (and the magnetic stiffness beside
+// it) must wrap that operator as it wraps the assembled one (MGMaxLevels 1). The stand-ins
+// are the (DIAG_ZERO) mass as in the two cases above, on the same cube scaled to 1 cm (L0)
+// so that omega^2 dM is comparable to the stiffness at 4 GHz and the two paths, whose
+// preconditioners differ, agree to the solve tolerance.
+static json ResponseSystemPathConfig(const fs::path &temp_dir, int mg_max_levels)
+{
+  json setup_json;
+  setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 0}, {"Output", temp_dir}};
+  setup_json["Model"] = {
+      {"Mesh", fs::path(PALACE_TEST_DATA_DIR) / "lumpedport_mesh/cube_mesh_1_1_1_tet.msh"},
+      {"L0", 1.0e-2},
+      {"Refinement", json::object()},
+      {"CrackInternalBoundaryElements", false}};
+  setup_json["Domains"] = {
+      {"Materials", json::array({json::object({{"Attributes", json::array({1})},
+                                               {"Permeability", 1.0},
+                                               {"Permittivity", 1.0},
+                                               {"LossTan", 0.0}})})}};
+  setup_json["Boundaries"] = {
+      {"LumpedPort", json::array({json::object({{"Index", 1},
+                                                {"R", 50.0},
+                                                {"Excitation", uint(1)},
+                                                {"Attributes", json::array({100})},
+                                                {"Direction", "+X"}})})}};
+  setup_json["Solver"] = {
+      {"Order", 2},
+      {"Device", "CPU"},
+      {"Driven",
+       {{"Samples", json::array({json::object({{"Type", "Linear"},
+                                               {"MinFreq", 2.0},
+                                               {"MaxFreq", 4.0},
+                                               {"FreqStep", 2.0}})})},
+        {"AdaptiveTol", 1.0e-3},
+        {"AdaptiveMaxSamples", 4}}},
+      {"Linear",
+       {{"Type", "Default"},
+        {"KSPType", "GMRES"},
+        {"MaxIts", 200},
+        {"Tol", 1.0e-10},
+        {"MGMaxLevels", mg_max_levels},
+        {"PCMatReal", false},
+        {"PCMatShifted", false}}},
+      {"SurfaceResponseCorrection",
+       {{"Library", (temp_dir / "unused-process-library.json").string()},
+        {"SolveTol", 1.0e-10}}}};
+  return setup_json;
+}
+
+TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-ResponseMass-SystemOperatorPath",
+                 "[romoperator][Serial][Parallel]")
+{
+  // The response mass alone, and with the stand-in magnetic stiffness beside it.
+  const bool with_stiffness = GENERATE(false, true);
+  IoData iodata_mf(ResponseSystemPathConfig(temp_dir, 2), false);
+  IoData iodata_asm(ResponseSystemPathConfig(temp_dir, 1), false);
+  auto mesh_mf = LoadScaleParMesh2(iodata_mf, Mpi::World());
+  auto mesh_asm = LoadScaleParMesh2(iodata_asm, Mpi::World());
+  SpaceOperator space_op_mf(iodata_mf, mesh_mf);
+  SpaceOperator space_op_asm(iodata_asm, mesh_asm);
+  const int n = space_op_mf.GetNDSpace().GetTrueVSize();
+  REQUIRE(space_op_asm.GetNDSpace().GetTrueVSize() == n);
+  const double omega = iodata_mf.solver.driven.sample_f.back();
+
+  // The HDM operator of the multigrid configuration is really the matrix-free one (and the
+  // single-level configuration's is not).
+  {
+    const std::complex<double> a0(1.0, 0.0), a1(0.0, omega), a2(-omega * omega, 0.0);
+    auto P_mf = space_op_mf.GetPreconditionerMatrix<ComplexOperator>(a0, a1, a2, omega);
+    auto P_asm = space_op_asm.GetPreconditionerMatrix<ComplexOperator>(a0, a1, a2, omega);
+    REQUIRE(space_op_mf.GetSystemOperator(omega, *P_mf));
+    REQUIRE_FALSE(space_op_asm.GetSystemOperator(omega, *P_asm));
+  }
+
+  auto MakeCorrected = [&](IoData &iodata, SpaceOperator &space_op)
+  {
+    auto response_mass = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+    REQUIRE(response_mass);
+    std::unique_ptr<ComplexOperator> response_stiffness;
+    if (with_stiffness)
+    {
+      response_stiffness = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+    }
+    return std::make_unique<RomOperator>(iodata, space_op, 4, std::move(response_mass),
+                                         std::move(response_stiffness));
+  };
+  RomOperator raw_mf(iodata_mf, space_op_mf, 4);
+  auto corrected_mf = MakeCorrected(iodata_mf, space_op_mf);
+  auto corrected_asm = MakeCorrected(iodata_asm, space_op_asm);
+
+  const int excitation = 1;
+  ComplexVector raw_hdm(n), hdm_mf(n), hdm_asm(n), prom_mf(n);
+  raw_hdm.UseDevice(true);
+  hdm_mf.UseDevice(true);
+  hdm_asm.UseDevice(true);
+  prom_mf.UseDevice(true);
+  raw_hdm = 0.0;
+  hdm_mf = 0.0;
+  hdm_asm = 0.0;
+  prom_mf = 0.0;
+  raw_mf.SolveHDM(excitation, omega, raw_hdm);
+  corrected_mf->SolveHDM(excitation, omega, hdm_mf);
+  corrected_asm->SolveHDM(excitation, omega, hdm_asm);
+  const double corrected_norm = linalg::Norml2(space_op_mf.GetComm(), hdm_mf);
+  REQUIRE(corrected_norm > 0.0);
+  auto RelativeToCorrected = [&](const ComplexVector &a, const ComplexVector &b)
+  {
+    ComplexVector difference(a);
+    linalg::AXPY(-1.0, b, difference);
+    return linalg::Norml2(space_op_mf.GetComm(), difference) / corrected_norm;
+  };
+
+  // The correction moves the matrix-free HDM, which equals the assembled corrected HDM
+  // within the solve tolerance; the PROM built on that sample reproduces it.
+  CHECK(RelativeToCorrected(hdm_mf, raw_hdm) > 1.0e-6);
+  CHECK(RelativeToCorrected(hdm_mf, hdm_asm) < 1.0e-8);
+  corrected_mf->UpdatePROM(hdm_mf, "corrected_sample");
+  corrected_mf->SolvePROM(excitation, omega, prom_mf);
+  CHECK(RelativeToCorrected(prom_mf, hdm_mf) < 1.0e-8);
+}
+
 // Tests that the per-port "IncludeInSynthesis" flag suppresses basis vector injection
 // without changing the boundary condition. We reuse the cube_3_2_1 two-port setup, but
 // flip port 1 (non-excited, RLC) to "IncludeInSynthesis": false, leaving port 2 (excited,
@@ -1091,9 +1256,635 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   CHECK_THAT(std::imag((*resistance_R_inv)(0, 0)), WithinAbs(0.0, 1e-15));
 }
 
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "RomOperator reduced postprocessing matches full evaluation",
+                 "[postoperator][romoperator][Serial][Parallel]")
+{
+  MPI_Comm comm = Mpi::World();
+  const auto mesh_path =
+      fs::path(PALACE_TEST_DATA_DIR) / "lumpedport_mesh/cube_mesh_3_2_1_tet.msh";
+
+  json setup_json;
+  setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 0}, {"Output", temp_dir}};
+  setup_json["Model"] = {{"Mesh", mesh_path},
+                         {"Refinement", json::object({})},
+                         {"CrackInternalBoundaryElements", false}};
+  setup_json["Domains"] = {
+      {"Materials",
+       json::array({json::object({{"Attributes", json::array({1, 2, 3, 4, 5, 6})},
+                                  {"Permeability", 1.0},
+                                  {"Permittivity", 1.0},
+                                  {"LossTan", 0.0}})})},
+      {"Postprocessing",
+       {{"Energy",
+         json::array({json::object(
+             {{"Index", 1}, {"Attributes", json::array({1, 2, 3, 4, 5, 6})}})})}}}};
+  setup_json["Boundaries"] = {
+      {"LumpedPort",
+       json::array({json::object(
+           {{"Index", 1},
+            {"R", 50.0},
+            {"L", 1.0e-9},
+            {"C", 1.0e-12},
+            {"Excitation", uint(1)},
+            {"Elements", json::array({json::object({{"Attributes", json::array({14})},
+                                                    {"Direction", "+Z"}})})}})})}};
+  setup_json["Solver"] = {
+      {"Order", 1UL},
+      {"Device", "CPU"},
+      {"Driven",
+       {{"AdaptiveTol", 1.0e-3},
+        {"AdaptiveCircuitSynthesis", true},
+        {"MinFreq", 2.0},
+        {"MaxFreq", 32.0},
+        {"FreqStep", 30.0}}},
+      {"Linear",
+       {{"Type", "Default"}, {"KSPType", "GMRES"}, {"MaxIts", 200}, {"Tol", 1.0e-10}}}};
+
+  IoData iodata(setup_json, false);
+  auto mesh = LoadScaleParMesh2(iodata, comm);
+  SpaceOperator space_op(iodata, mesh);
+  RomOperator rom_op(iodata, space_op, 4);
+  DrivenPostOperatorTest post_op(iodata, space_op);
+
+  REQUIRE(iodata.solver.driven.sample_f.size() == 2);
+  const double omega_front = iodata.solver.driven.sample_f.front();
+  const double omega_back = iodata.solver.driven.sample_f.back();
+  ComplexVector sample(space_op.GetNDSpace().GetTrueVSize());
+  sample.UseDevice(true);
+  linalg::SetRandom(comm, sample.Real(), 42);
+  linalg::SetRandom(comm, sample.Imag(), 43);
+  rom_op.UpdatePROM(sample, "postprocessing_sample");
+  REQUIRE(rom_op.GetReducedDimension() > 0);
+  post_op.ConfigureReducedPostprocessing(rom_op);
+  REQUIRE(post_op.HasReducedPostprocessing());
+
+  // Construct a deterministic complex field directly in the PROM space. This gives both
+  // electric and magnetic forms meaningful magnitude while testing the exact reduced
+  // quadratic forms independently of PROM solution accuracy.
+  Eigen::VectorXcd y(rom_op.GetReducedDimension());
+  for (long i = 0; i < y.size(); i++)
+  {
+    y(i) = std::complex<double>(1.0 / (i + 1.0), -0.25 / (i + 1.0));
+  }
+  ComplexVector E(space_op.GetNDSpace().GetTrueVSize());
+  E.UseDevice(true);
+  E = 0.0;
+  for (std::size_t i = 0; i < rom_op.GetBasis().size(); i++)
+  {
+    linalg::AXPY(y(i).real(), rom_op.GetBasis()[i], E.Real());
+    linalg::AXPY(y(i).imag(), rom_op.GetBasis()[i], E.Imag());
+  }
+  post_op.MeasureAndPrintReduced(1, 0, E, omega_front, y);
+  REQUIRE(post_op.HasReducedPostprocessing());
+
+  ComplexVector B(space_op.GetCurlMatrix().Height());
+  B.UseDevice(true);
+  space_op.GetCurlMatrix().Mult(E.Real(), B.Real());
+  space_op.GetCurlMatrix().Mult(E.Imag(), B.Imag());
+  B *= -1.0 / (std::complex<double>(0.0, 1.0) * omega_back);
+  post_op.MeasureAndPrintAll(1, 1, E, B, omega_back);
+  const Measurement full = post_op.GetMeasurement();
+  post_op.MeasureAndPrintReduced(1, 1, E, omega_back, y);
+  const Measurement reduced = post_op.GetMeasurement();
+  REQUIRE(post_op.HasReducedPostprocessing());
+
+  auto close = [](double x, double y)
+  {
+    const double scale = std::max(std::abs(x), std::abs(y));
+    return scale == 0.0 || std::abs(x - y) <= 1.0e-10 * scale;
+  };
+  auto check_complex = [](std::complex<double> x, std::complex<double> y)
+  {
+    const double scale = std::max(std::abs(x), std::abs(y));
+    CHECK((scale == 0.0 || std::abs(x - y) <= 1.0e-10 * scale));
+  };
+
+  CAPTURE(reduced.domain_E_field_energy_all, full.domain_E_field_energy_all,
+          reduced.domain_H_field_energy_all, full.domain_H_field_energy_all);
+  REQUIRE(full.domain_E_field_energy_all > 0.0);
+  REQUIRE(full.domain_H_field_energy_all > 0.0);
+  CHECK(close(reduced.domain_E_field_energy_all, full.domain_E_field_energy_all));
+  CHECK(close(reduced.domain_H_field_energy_all, full.domain_H_field_energy_all));
+  REQUIRE(full.domain_E_field_energy_i.size() == 1);
+  REQUIRE(full.domain_H_field_energy_i.size() == 1);
+  REQUIRE(reduced.domain_E_field_energy_i.size() == full.domain_E_field_energy_i.size());
+  REQUIRE(reduced.domain_H_field_energy_i.size() == full.domain_H_field_energy_i.size());
+  for (std::size_t i = 0; i < full.domain_E_field_energy_i.size(); i++)
+  {
+    CHECK(reduced.domain_E_field_energy_i[i].idx == full.domain_E_field_energy_i[i].idx);
+    CHECK(close(reduced.domain_E_field_energy_i[i].energy,
+                full.domain_E_field_energy_i[i].energy));
+    CHECK(close(reduced.domain_E_field_energy_i[i].participation_ratio,
+                full.domain_E_field_energy_i[i].participation_ratio));
+    CHECK(reduced.domain_H_field_energy_i[i].idx == full.domain_H_field_energy_i[i].idx);
+    CHECK(close(reduced.domain_H_field_energy_i[i].energy,
+                full.domain_H_field_energy_i[i].energy));
+    CHECK(close(reduced.domain_H_field_energy_i[i].participation_ratio,
+                full.domain_H_field_energy_i[i].participation_ratio));
+  }
+
+  const auto &full_port = full.lumped_port_vi.at(1);
+  const auto &reduced_port = reduced.lumped_port_vi.at(1);
+  REQUIRE(std::abs(full_port.V) > 0.0);
+  REQUIRE(std::abs(full_port.I) > 0.0);
+  REQUIRE(full_port.inductor_energy > 0.0);
+  REQUIRE(full_port.capacitor_energy > 0.0);
+  check_complex(reduced_port.V, full_port.V);
+  check_complex(reduced_port.I, full_port.I);
+  for (std::size_t i = 0; i < full_port.I_RLC.size(); i++)
+  {
+    check_complex(reduced_port.I_RLC[i], full_port.I_RLC[i]);
+  }
+  check_complex(reduced_port.S, full_port.S);
+  CHECK(close(reduced_port.inductor_energy, full_port.inductor_energy));
+  CHECK(close(reduced_port.capacitor_energy, full_port.capacitor_energy));
+  CHECK(close(reduced.lumped_port_inductor_energy, full.lumped_port_inductor_energy));
+  CHECK(close(reduced.lumped_port_capacitor_energy, full.lumped_port_capacitor_energy));
+}
+
+// Driven setup on cube_mesh_3_2_1_tet.msh for the excitation weight tests: an excited RLC
+// lumped port 1, with the excitation weight a = amplitude exp(i phase) when it is not the
+// default, and a passive resistive lumped port 2.
+json WeightedExcitationSetup(const fs::path &output_dir, double amplitude, double phase)
+{
+  const auto mesh_path =
+      fs::path(PALACE_TEST_DATA_DIR) / "lumpedport_mesh/cube_mesh_3_2_1_tet.msh";
+
+  json port_1 = json::object(
+      {{"Index", 1},
+       {"R", 50.0},
+       {"L", 1.0e-9},
+       {"C", 1.0e-12},
+       {"Excitation", uint(1)},
+       {"Elements", json::array({json::object(
+                        {{"Attributes", json::array({14})}, {"Direction", "+Z"}})})}});
+  if (amplitude != 1.0 || phase != 0.0)
+  {
+    port_1["ExcitationAmplitude"] = amplitude;
+    port_1["ExcitationPhase"] = phase;
+  }
+  json port_2 = json::object(
+      {{"Index", 2},
+       {"R", 75.0},
+       {"Elements", json::array({json::object(
+                        {{"Attributes", json::array({1})}, {"Direction", "+Y"}})})}});
+
+  json setup_json;
+  setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 0}, {"Output", output_dir}};
+  setup_json["Model"] = {{"Mesh", mesh_path},
+                         {"Refinement", json::object({})},
+                         {"CrackInternalBoundaryElements", false}};
+  setup_json["Domains"] = {
+      {"Materials",
+       json::array({json::object({{"Attributes", json::array({1, 2, 3, 4, 5, 6})},
+                                  {"Permeability", 1.0},
+                                  {"Permittivity", 1.0},
+                                  {"LossTan", 0.0}})})}};
+  setup_json["Boundaries"] = {{"LumpedPort", json::array({port_1, port_2})}};
+  setup_json["Solver"] = {
+      {"Order", 1UL},
+      {"Device", "CPU"},
+      {"Driven",
+       {{"AdaptiveTol", 1.0e-3}, {"MinFreq", 2.0}, {"MaxFreq", 32.0}, {"FreqStep", 30.0}}},
+      {"Linear",
+       {{"Type", "Default"}, {"KSPType", "GMRES"}, {"MaxIts", 200}, {"Tol", 1.0e-10}}}};
+  return setup_json;
+}
+
+// The S-parameters are normalized by the weight of the driven port: for the same field E,
+// the configuration with the weight a, measured on the field aE, must give the same S on
+// every port as the configuration without a weight measured on E, and the port voltages
+// scaled by a. A division by the weight that is dropped or applied twice fails this test.
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "PostOperator S-parameters are normalized by the excitation weight",
+                 "[postoperator][romoperator][Serial][Parallel]")
+{
+  MPI_Comm comm = Mpi::World();
+  const double amplitude = 2.0;
+  const double phase = 30.0;
+  const std::complex<double> a = std::polar(amplitude, phase * std::numbers::pi / 180.0);
+
+  // Measure the field scale * E, with B from the curl of that field, on the configuration
+  // with the given excitation weight. The random field E is the same for all weights.
+  auto measure = [&](double amp, double ph, std::complex<double> scale)
+  {
+    IoData iodata(WeightedExcitationSetup(temp_dir, amp, ph), false);
+    auto mesh = LoadScaleParMesh2(iodata, comm);
+    SpaceOperator space_op(iodata, mesh);
+    DrivenPostOperatorTest post_op(iodata, space_op);
+
+    REQUIRE(iodata.solver.driven.sample_f.size() == 2);
+    const double omega = iodata.solver.driven.sample_f.back();
+    ComplexVector E(space_op.GetNDSpace().GetTrueVSize());
+    E.UseDevice(true);
+    linalg::SetRandom(comm, E.Real(), 42);
+    linalg::SetRandom(comm, E.Imag(), 43);
+    linalg::SetSubVector(E.Real(), space_op.GetNDDbcTDofLists().back(), 0.0);
+    linalg::SetSubVector(E.Imag(), space_op.GetNDDbcTDofLists().back(), 0.0);
+    E *= scale;
+    ComplexVector B(space_op.GetCurlMatrix().Height());
+    B.UseDevice(true);
+    space_op.GetCurlMatrix().Mult(E.Real(), B.Real());
+    space_op.GetCurlMatrix().Mult(E.Imag(), B.Imag());
+    B *= -1.0 / (std::complex<double>(0.0, 1.0) * omega);
+    post_op.MeasureAndPrintAll(1, 0, E, B, omega);
+    return std::make_pair(post_op.GetMeasurement(),
+                          space_op.GetLumpedPortOp().GetPort(1).GetExcitationWeight());
+  };
+
+  const auto unweighted = measure(1.0, 0.0, 1.0);
+  const auto weighted = measure(amplitude, phase, a);
+  CHECK(unweighted.second == std::complex<double>(1.0, 0.0));
+  CHECK(std::abs(weighted.second - a) <= 1.0e-14);
+
+  const auto &ports = unweighted.first.lumped_port_vi;
+  REQUIRE(ports.size() == 2);
+  REQUIRE(weighted.first.lumped_port_vi.size() == ports.size());
+  for (const auto &[idx, port] : ports)
+  {
+    const int port_idx = idx;
+    CAPTURE(port_idx);
+    const auto &port_w = weighted.first.lumped_port_vi.at(port_idx);
+    REQUIRE(std::abs(port.V) > 0.0);
+    REQUIRE(std::abs(port.S) > 0.0);
+
+    // V is linear in the field, so it scales by a.
+    CHECK(std::abs(port_w.V - a * port.V) <= 1.0e-10 * std::abs(a * port.V));
+
+    // S does not change with the weight.
+    CHECK(std::abs(port_w.S - port.S) <=
+          1.0e-10 * std::max(1.0, std::max(std::abs(port_w.S), std::abs(port.S))));
+  }
+}
+
+// The adaptive sweep with a complex RHS1: for the same random basis, the PROM solution of
+// the configuration with the excitation weight a is a times the solution without a weight,
+// both for the excitation vector projected on the fly and for the one cached by
+// PrepareOnlineExcitations.
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "RomOperator PROM solution scales with the excitation weight",
+                 "[romoperator][Serial][Parallel]")
+{
+  MPI_Comm comm = Mpi::World();
+  const double amplitude = 2.0;
+  const double phase = 30.0;
+  const std::complex<double> a = std::polar(amplitude, phase * std::numbers::pi / 180.0);
+
+  struct PROMSolutions
+  {
+    ComplexVector before, after;
+  };
+  auto solve = [&](double amp, double ph)
+  {
+    IoData iodata(WeightedExcitationSetup(temp_dir, amp, ph), false);
+    auto mesh = LoadScaleParMesh2(iodata, comm);
+    SpaceOperator space_op(iodata, mesh);
+    RomOperator rom_op(iodata, space_op, 4);
+
+    REQUIRE(iodata.solver.driven.sample_f.size() == 2);
+    const double omega = iodata.solver.driven.sample_f.back();
+    ComplexVector sample(space_op.GetNDSpace().GetTrueVSize());
+    sample.UseDevice(true);
+    for (int seed : {42, 44})
+    {
+      linalg::SetRandom(comm, sample.Real(), seed);
+      linalg::SetRandom(comm, sample.Imag(), seed + 1);
+      linalg::SetSubVector(sample.Real(), space_op.GetNDDbcTDofLists().back(), 0.0);
+      linalg::SetSubVector(sample.Imag(), space_op.GetNDDbcTDofLists().back(), 0.0);
+      rom_op.UpdatePROM(sample, fmt::format("weight_sample_{:d}", seed));
+    }
+    REQUIRE(rom_op.GetReducedDimension() > 0);
+
+    PROMSolutions solutions;
+    solutions.before.SetSize(space_op.GetNDSpace().GetTrueVSize());
+    solutions.before.UseDevice(true);
+    solutions.after.SetSize(space_op.GetNDSpace().GetTrueVSize());
+    solutions.after.UseDevice(true);
+    rom_op.SolvePROM(1, omega, solutions.before);
+    rom_op.PrepareOnlineExcitations();
+    rom_op.SolvePROM(1, omega, solutions.after);
+    return solutions;
+  };
+
+  const auto unweighted = solve(1.0, 0.0);
+  const auto weighted = solve(amplitude, phase);
+
+  auto check_scaled = [&](const ComplexVector &u_weighted, const ComplexVector &u)
+  {
+    ComplexVector diff(u_weighted);
+    ComplexVector scaled(u);
+    scaled *= a;
+    diff.Add(std::complex<double>(-1.0, 0.0), scaled);
+    const double norm_ref = linalg::Norml2(comm, scaled);
+    const double norm_diff = linalg::Norml2(comm, diff);
+    CAPTURE(norm_ref, norm_diff);
+    REQUIRE(norm_ref > 0.0);
+    CHECK(norm_diff <= 1.0e-8 * norm_ref);
+  };
+  check_scaled(weighted.before, unweighted.before);
+  check_scaled(weighted.after, unweighted.after);
+}
+
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "RomOperator reduced postprocessing rejects Floquet wave vector",
+                 "[postoperator][romoperator][Serial][Parallel]")
+{
+  MPI_Comm comm = Mpi::World();
+  const auto mesh_path = fs::path(PALACE_TEST_DATA_DIR) /
+                         "regression/input/floquet_lumped/mesh/floquet_lumped.msh";
+
+  json setup_json;
+  setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 0}, {"Output", temp_dir}};
+  setup_json["Model"] = {{"Mesh", mesh_path}, {"L0", 1.0e-2}};
+  setup_json["Domains"] = {
+      {"Materials", json::array({json::object({{"Attributes", json::array({1, 2})},
+                                               {"Permeability", 1.0},
+                                               {"Permittivity", 1.0}})})}};
+  setup_json["Boundaries"] = {
+      {"Periodic",
+       {{"FloquetWaveVector", json::array({0.1, 0.0, 0.0})},
+        {"BoundaryPairs",
+         json::array({json::object({{"DonorAttributes", json::array({1})},
+                                    {"ReceiverAttributes", json::array({2})}}),
+                      json::object({{"DonorAttributes", json::array({3})},
+                                    {"ReceiverAttributes", json::array({4})}})})}}},
+      {"PEC", {{"Attributes", json::array({8})}}},
+      {"LumpedPort", json::array({json::object({{"Index", 1},
+                                                {"Attributes", json::array({7})},
+                                                {"Excitation", uint(1)},
+                                                {"R", 377.0},
+                                                {"Direction", "+X"}})})}};
+  setup_json["Solver"] = {
+      {"Order", 1UL},
+      {"Device", "CPU"},
+      {"Driven",
+       {{"AdaptiveTol", 1.0e-3}, {"MinFreq", 5.0}, {"MaxFreq", 10.0}, {"FreqStep", 5.0}}},
+      {"Linear",
+       {{"Type", "Default"}, {"KSPType", "GMRES"}, {"MaxIts", 200}, {"Tol", 1.0e-8}}}};
+
+  IoData iodata(setup_json, false);
+  auto mesh = LoadScaleParMesh2(iodata, comm);
+  SpaceOperator space_op(iodata, mesh);
+  REQUIRE(space_op.GetMaterialOp().HasWaveVector());
+  RomOperator rom_op(iodata, space_op, 2);
+  ComplexVector sample(space_op.GetNDSpace().GetTrueVSize());
+  sample.UseDevice(true);
+  sample.Real().Randomize(42);
+  sample.Imag() = 0.0;
+  rom_op.UpdatePROM(sample, "wave_vector_sample");
+  REQUIRE(rom_op.GetReducedDimension() > 0);
+
+  DrivenPostOperatorTest post_op(iodata, space_op);
+  post_op.ConfigureReducedPostprocessing(rom_op);
+  CHECK_FALSE(post_op.HasReducedPostprocessing());
+}
+
 // Excited ports must always be included in synthesis. The configuration parser
 // rejects a port carrying both "Excitation" > 0 and "IncludeInSynthesis": false because
 // the excitation vector is unconditionally added to the basis.
+// The PROM evaluates the wave-port modal correction and excitation from pairings of the
+// basis restricted to the port submesh with the port-space mode forms, instead of
+// assembling and projecting HDM-size mode vectors at every frequency. SolvePROM verifies
+// the two paths agree once (and once more with the final basis at the start of the online
+// sweep) and otherwise falls back to the assembled path: require that the check ran and
+// passed, and that the reduced solution matches the assembled one. Pairings are cached for
+// active ports only, so the excitation of an inactive but excited port (sharing the
+// excitation of the active port, or on its own) must fall back to the assembled excitation
+// vector rather than abort.
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "RomOperator port-space wave port pairing matches assembled projection",
+                 "[romoperator][Serial][Parallel][GPU]")
+{
+  MPI_Comm comm = Mpi::World();
+  const auto mesh_path =
+      fs::path(PALACE_TEST_DATA_DIR) / "lumpedport_mesh/cube_mesh_3_2_1_tet.msh";
+  const unsigned int inactive_excitation = GENERATE(1u, 2u);
+  CAPTURE(inactive_excitation);
+
+  // 3 cm x 2 cm x 1 cm box: attributes 14 and 18 are non-adjacent 1 cm x 1 cm faces on the
+  // y = 2 cm side, used as an active and an inactive (excited) wave port with PEC on every
+  // other face (TE10 above cutoff over the 20-30 GHz band).
+  json pec_attributes = json::array();
+  for (int attr = 1; attr <= 22; attr++)
+  {
+    if (attr != 14 && attr != 18)
+    {
+      pec_attributes.push_back(attr);
+    }
+  }
+  json setup_json;
+  setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 0}, {"Output", temp_dir}};
+  setup_json["Model"] = {{"Mesh", mesh_path},
+                         {"L0", 1.0e-2},
+                         {"Refinement", json::object({})},
+                         {"CrackInternalBoundaryElements", false}};
+  setup_json["Domains"] = {
+      {"Materials",
+       json::array({json::object({{"Attributes", json::array({1, 2, 3, 4, 5, 6})},
+                                  {"Permeability", 1.0},
+                                  {"Permittivity", 1.0},
+                                  {"LossTan", 0.0}})})}};
+  setup_json["Boundaries"] = {
+      {"PEC", {{"Attributes", pec_attributes}}},
+      {"WavePort", json::array({json::object({{"Index", 1},
+                                              {"Attributes", json::array({14})},
+                                              {"Mode", 1},
+                                              {"Offset", 0.0},
+                                              {"Excitation", uint(1)}}),
+                                json::object({{"Index", 2},
+                                              {"Attributes", json::array({18})},
+                                              {"Mode", 1},
+                                              {"Offset", 0.0},
+                                              {"Active", false},
+                                              {"Excitation", inactive_excitation}})})}};
+  setup_json["Solver"] = {
+      {"Order", 2UL},
+      {"Device", "CPU"},
+      {"Driven",
+       {{"AdaptiveTol", 1.0e-3}, {"MinFreq", 20.0}, {"MaxFreq", 30.0}, {"FreqStep", 10.0}}},
+      {"Linear",
+       {{"Type", "Default"}, {"KSPType", "GMRES"}, {"MaxIts", 200}, {"Tol", 1.0e-10}}}};
+
+  IoData iodata(setup_json, false);
+  auto mesh = LoadScaleParMesh2(iodata, comm);
+  SpaceOperator space_op(iodata, mesh);
+  RomOperatorTest rom_op(iodata, space_op, 4);
+
+  REQUIRE(iodata.solver.driven.sample_f.size() == 2);
+  const double omega_front = iodata.solver.driven.sample_f.front();
+  const double omega_back = iodata.solver.driven.sample_f.back();
+  ComplexVector sample(space_op.GetNDSpace().GetTrueVSize());
+  sample.UseDevice(true);
+  for (int seed : {42, 44})
+  {
+    linalg::SetRandom(comm, sample.Real(), seed);
+    linalg::SetRandom(comm, sample.Imag(), seed + 1);
+    linalg::SetSubVector(sample.Real(), space_op.GetNDDbcTDofLists().back(), 0.0);
+    linalg::SetSubVector(sample.Imag(), space_op.GetNDDbcTDofLists().back(), 0.0);
+    rom_op.UpdatePROM(sample, fmt::format("pairing_sample_{:d}", seed));
+  }
+  const auto n = rom_op.GetReducedDimension();
+  REQUIRE(n > 0);
+
+  auto solve = [&](int excitation_idx, double omega)
+  {
+    ComplexVector u(space_op.GetNDSpace().GetTrueVSize());
+    u.UseDevice(true);
+    rom_op.SolvePROM(excitation_idx, omega, u);
+    return u;
+  };
+  auto check_close = [&](const ComplexVector &u, const ComplexVector &u_ref)
+  {
+    ComplexVector diff(u);
+    diff.Add(std::complex<double>(-1.0, 0.0), u_ref);
+    const double norm_ref = linalg::Norml2(comm, u_ref);
+    const double norm_diff = linalg::Norml2(comm, diff);
+    CAPTURE(norm_ref, norm_diff);
+    REQUIRE(norm_ref > 0.0);
+    CHECK(norm_diff <= 1.0e-8 * norm_ref);
+  };
+
+  // Port-space pairing path (self-checked against the assembled vectors on first use, and
+  // again with the final basis after PrepareOnlineExcitations), then the same PROM solution
+  // from the assembled mode vectors at the same frequency (the port mode is cached at that
+  // frequency, so the comparison is not affected by the sign ambiguity of a re-solved
+  // eigenvector).
+  std::vector<int> excitations = {1};
+  if (inactive_excitation != 1)
+  {
+    excitations.push_back(static_cast<int>(inactive_excitation));
+  }
+  auto check_excitations = [&](double omega)
+  {
+    for (int excitation_idx : excitations)
+    {
+      CAPTURE(excitation_idx, omega);
+      rom_op.UseAssembledWavePortPath(false);
+      const ComplexVector u = solve(excitation_idx, omega);
+      REQUIRE(rom_op.WavePortPairingChecked());
+      REQUIRE(rom_op.WavePortPairingOk());
+      rom_op.UseAssembledWavePortPath(true);
+      check_close(solve(excitation_idx, omega), u);
+    }
+    rom_op.UseAssembledWavePortPath(false);
+  };
+  check_excitations(omega_front);
+  rom_op.PrepareOnlineExcitations();
+  REQUIRE_FALSE(rom_op.WavePortPairingChecked());
+  check_excitations(omega_back);
+}
+
+// Several wave ports can observe different modes of the same boundary, for example
+// inactive ports extracting the S-parameters of a second mode at the boundaries of the
+// active ports. Circuit synthesis must weight such a shared port boundary once in its inner
+// product, as for a single port, instead of aborting on the repeated boundary attribute.
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "RomOperator-Synthesis-WavePortSharedBoundary",
+                 "[romoperator][Serial][Parallel]")
+{
+  MPI_Comm comm = Mpi::World();
+  const auto mesh_path =
+      fs::path(PALACE_TEST_DATA_DIR) / "lumpedport_mesh/cube_mesh_3_2_1_tet.msh";
+  const auto domain_orthog =
+      GENERATE(as<std::string>{}, "Energy", "SpaceOverlap", "FEBasisIdentity");
+  CAPTURE(domain_orthog);
+
+  // The box and port faces of the wave port pairing test above: wave ports on the
+  // 1 cm x 1 cm faces 14 (active) and 18 (inactive), with PEC on every other face. The
+  // shared configuration adds inactive second-mode ports on both faces.
+  json pec_attributes = json::array();
+  for (int attr = 1; attr <= 22; attr++)
+  {
+    if (attr != 14 && attr != 18)
+    {
+      pec_attributes.push_back(attr);
+    }
+  }
+  auto wave_port = [](int index, int attr, int mode, bool active)
+  {
+    json port = {{"Index", index},
+                 {"Attributes", json::array({attr})},
+                 {"Mode", mode},
+                 {"Offset", 0.0}};
+    if (active)
+    {
+      port["Excitation"] = uint(1);
+    }
+    else
+    {
+      port["Active"] = false;
+    }
+    return port;
+  };
+
+  // Inner products of fixed random vectors under the synthesis weight, and the global
+  // number of port true dofs it removes from the domain part.
+  auto weights = [&](bool shared)
+  {
+    json ports = json::array({wave_port(1, 14, 1, true), wave_port(2, 18, 1, false)});
+    if (shared)
+    {
+      ports.push_back(wave_port(3, 14, 2, false));
+      ports.push_back(wave_port(4, 18, 2, false));
+    }
+    json setup_json;
+    setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 0}, {"Output", temp_dir}};
+    setup_json["Model"] = {{"Mesh", mesh_path},
+                           {"L0", 1.0e-2},
+                           {"Refinement", json::object({})},
+                           {"CrackInternalBoundaryElements", false}};
+    setup_json["Domains"] = {
+        {"Materials",
+         json::array({json::object({{"Attributes", json::array({1, 2, 3, 4, 5, 6})},
+                                    {"Permeability", 1.0},
+                                    {"Permittivity", 1.0},
+                                    {"LossTan", 0.0}})})}};
+    setup_json["Boundaries"] = {{"PEC", {{"Attributes", pec_attributes}}},
+                                {"WavePort", ports}};
+    setup_json["Solver"] = {
+        {"Order", 2UL},
+        {"Device", "CPU"},
+        {"Driven",
+         {{"AdaptiveTol", 1.0e-3},
+          {"AdaptiveCircuitSynthesis", true},
+          {"AdaptiveCircuitSynthesisDomainOrthogonalization", domain_orthog},
+          {"MinFreq", 20.0},
+          {"MaxFreq", 30.0},
+          {"FreqStep", 10.0}}},
+        {"Linear",
+         {{"Type", "Default"}, {"KSPType", "GMRES"}, {"MaxIts", 200}, {"Tol", 1.0e-10}}}};
+
+    IoData iodata(setup_json, false);
+    auto mesh = LoadScaleParMesh2(iodata, comm);
+    SpaceOperator space_op(iodata, mesh);
+    RomOperatorTest rom_op(iodata, space_op, 4);
+    const auto &weight_op = rom_op.GetWeightOp();
+    REQUIRE(weight_op.has_value());
+
+    Vector x(space_op.GetNDSpace().GetTrueVSize()), y(x.Size()), work(x.Size());
+    x.UseDevice(true);
+    y.UseDevice(true);
+    work.UseDevice(true);
+    linalg::SetRandom(comm, x, 42);
+    linalg::SetRandom(comm, y, 43);
+    const std::array<double, 3> dots = {weight_op->InnerProduct(comm, x, x, work),
+                                        weight_op->InnerProduct(comm, x, y, work),
+                                        weight_op->InnerProduct(comm, y, y, work)};
+    int n_port_tdofs = weight_op->port_tdof_list.Size();
+    Mpi::GlobalSum(1, &n_port_tdofs, comm);
+    return std::make_pair(dots, n_port_tdofs);
+  };
+  const auto [dots_ref, n_port_tdofs_ref] = weights(false);
+  const auto [dots, n_port_tdofs] = weights(true);
+  REQUIRE(n_port_tdofs_ref > 0);
+  CHECK(n_port_tdofs == n_port_tdofs_ref);
+  for (std::size_t i = 0; i < dots.size(); i++)
+  {
+    CHECK_THAT(dots[i], WithinRel(dots_ref[i], 1.0e-12));
+  }
+}
+
 TEST_CASE("RomOperator-Synthesis-ExcludedExcitedRejected", "[romoperator][Serial]")
 {
   json setup_json;
@@ -1152,55 +1943,138 @@ TEST_CASE("RomOperator-Synthesis-WavePortExcludedExcitedRejected", "[romoperator
                     Catch::Matchers::ContainsSubstring("IncludeInSynthesis"));
 }
 
-// The polynomial dispersion correction helpers are the sign bridge between a scalar
+// A Floquet wave vector makes the periodic problem non-reciprocal, so that the synthesized
+// circuit matrices would not be symmetric: the configuration parser rejects circuit
+// synthesis with a nonzero wave vector, but not periodic boundaries without a phase shift.
+TEST_CASE("RomOperator-Synthesis-FloquetWaveVectorRejected", "[romoperator][Serial]")
+{
+  json setup_json;
+  setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 0}, {"Output", "."}};
+  setup_json["Model"] = {{"Mesh", "placeholder.msh"}};
+  setup_json["Domains"] = {
+      {"Materials", json::array({json::object({{"Attributes", json::array({1})},
+                                               {"Permeability", 1.0},
+                                               {"Permittivity", 1.0}})})}};
+  const auto wave_vector =
+      GENERATE(json::array({0.0, 0.0, 0.0}), json::array({0.0, 0.1, 0.0}));
+  setup_json["Boundaries"] = {
+      {"Periodic",
+       {{"FloquetWaveVector", wave_vector},
+        {"BoundaryPairs",
+         json::array({json::object({{"DonorAttributes", json::array({1})},
+                                    {"ReceiverAttributes", json::array({2})}})})}}},
+      {"LumpedPort", json::array({json::object({{"Index", 1},
+                                                {"R", 50.0},
+                                                {"Excitation", uint(1)},
+                                                {"Attributes", json::array({100})},
+                                                {"Direction", "+X"}})})}};
+  setup_json["Solver"] = {{"Order", 1UL},
+                          {"Driven",
+                           {{"AdaptiveTol", 1e-3},
+                            {"AdaptiveCircuitSynthesis", true},
+                            {"MinFreq", 2.0},
+                            {"MaxFreq", 32.0},
+                            {"FreqStep", 1.0}}}};
+
+  INFO("FloquetWaveVector: " << wave_vector.dump());
+  if (wave_vector[1] == 0.0)
+  {
+    CHECK_NOTHROW((IoData{setup_json, false}));
+  }
+  else
+  {
+    CHECK_THROWS_WITH((IoData{setup_json, false}),
+                      Catch::Matchers::ContainsSubstring("FloquetWaveVector"));
+  }
+}
+
+// The polynomial dispersion correction helper is the sign bridge between a scalar
 // frequency-dependent boundary multiplier and the quadratic pencil K + iωC - ω²M. Lock
 // this down directly: evaluating the corrected pencil must reproduce
-// (α₀ + α₁ω + α₂ω²) Mp_r for real wave-port fits and complex scalar-dispersion fits.
+// (α₀ + α₁ω + α₂ω²) Mp_r for real coefficients (a lossless wave port) and complex ones (a
+// lossy wave port, or a scalar-dispersion fit of another BC), also at complex ω (the
+// synthesized eigenvalues).
 TEST_CASE("RomOperator-PolynomialFitCorrections", "[romoperator][Serial]")
 {
   Eigen::MatrixXcd Mp_r(2, 2);
   Mp_r << std::complex<double>(0.0, 2.0), std::complex<double>(0.0, -0.3),
       std::complex<double>(0.0, -0.3), std::complex<double>(0.0, 0.7);
 
-  RomOperatorTest::WavePortDispersionFit fit;
-  fit.alpha0 = 1.2;
-  fit.alpha1 = -0.4;
-  fit.alpha2 = 0.05;
-
-  Eigen::MatrixXcd Kr = Eigen::MatrixXcd::Zero(2, 2);
-  Eigen::MatrixXcd Cr = Eigen::MatrixXcd::Zero(2, 2);
-  Eigen::MatrixXcd Mr = Eigen::MatrixXcd::Zero(2, 2);
-  RomOperatorTest::ApplyPolynomialFitCorrections(fit, Mp_r, Kr, Cr, Mr);
-
-  for (double omega : {0.2, 1.5, 3.0})
+  for (const auto &[alpha0, alpha1, alpha2] :
+       {std::array<std::complex<double>, 3>{1.2, -0.4, 0.05},
+        std::array<std::complex<double>, 3>{std::complex<double>(0.4, -0.2),
+                                            std::complex<double>(-0.1, 0.3),
+                                            std::complex<double>(0.02, -0.04)}})
   {
-    const Eigen::MatrixXcd got =
-        Kr + std::complex<double>(0.0, 1.0) * omega * Cr - omega * omega * Mr;
-    const Eigen::MatrixXcd want =
-        (fit.alpha0 + fit.alpha1 * omega + fit.alpha2 * omega * omega) * Mp_r;
-    CHECK(((got - want).cwiseAbs().maxCoeff() < 1.0e-13));
-  }
-
-  const std::complex<double> alpha0(0.4, -0.2);
-  const std::complex<double> alpha1(-0.1, 0.3);
-  const std::complex<double> alpha2(0.02, -0.04);
-  Kr.setZero();
-  Cr.setZero();
-  Mr.setZero();
-  RomOperatorTest::ApplyComplexPolynomialFitCorrections(alpha0, alpha1, alpha2, Mp_r, Kr,
-                                                        Cr, Mr);
-
-  for (double omega : {0.2, 1.5, 3.0})
-  {
-    const Eigen::MatrixXcd got =
-        Kr + std::complex<double>(0.0, 1.0) * omega * Cr - omega * omega * Mr;
-    const Eigen::MatrixXcd want = (alpha0 + alpha1 * omega + alpha2 * omega * omega) * Mp_r;
-    CHECK(((got - want).cwiseAbs().maxCoeff() < 1.0e-13));
+    Eigen::MatrixXcd Kr = Eigen::MatrixXcd::Zero(2, 2);
+    Eigen::MatrixXcd Cr = Eigen::MatrixXcd::Zero(2, 2);
+    Eigen::MatrixXcd Mr = Eigen::MatrixXcd::Zero(2, 2);
+    RomOperatorTest::ApplyComplexPolynomialFitCorrections(alpha0, alpha1, alpha2, Mp_r, Kr,
+                                                          Cr, Mr);
+    for (std::complex<double> omega :
+         {std::complex<double>(0.2, 0.0), std::complex<double>(1.5, 0.0),
+          std::complex<double>(3.0, 0.0), std::complex<double>(1.5, 0.4)})
+    {
+      const Eigen::MatrixXcd got =
+          Kr + std::complex<double>(0.0, 1.0) * omega * Cr - omega * omega * Mr;
+      const Eigen::MatrixXcd want =
+          (alpha0 + alpha1 * omega + alpha2 * omega * omega) * Mp_r;
+      CHECK(((got - want).cwiseAbs().maxCoeff() < 1.0e-13));
+    }
   }
 }
 
+// Modal residue matrices are real symmetric but generally indefinite. Verify the auxiliary
+// direction factorization preserves signed eigenvalues rather than replacing M by |M|.
+TEST_CASE("RomOperator-AugmentedPencil-IndefiniteDirections", "[romoperator][Serial]")
+{
+  Eigen::MatrixXd M(2, 2);
+  M << 0.0, 1.0, 1.0, 0.0;  // eigenvalues +1 and -1
+  const Eigen::MatrixXcd Mp_r =
+      std::complex<double>(0.0, 1.0) * M.cast<std::complex<double>>();
+  RomOperatorTest::WavePortAuxBlock blk;
+  REQUIRE(RomOperatorTest::AddAuxBlockDirections(blk, Mp_r, 1.0e-12));
+  REQUIRE(blk.weights.size() == 2);
+  REQUIRE(blk.u_dirs.size() == 2);
+
+  Eigen::MatrixXd reconstructed = Eigen::MatrixXd::Zero(2, 2);
+  bool has_positive = false, has_negative = false;
+  for (std::size_t j = 0; j < blk.weights.size(); j++)
+  {
+    reconstructed.noalias() += blk.weights[j] * blk.u_dirs[j] * blk.u_dirs[j].transpose();
+    has_positive = has_positive || (blk.weights[j] > 0.0);
+    has_negative = has_negative || (blk.weights[j] < 0.0);
+  }
+  CHECK(has_positive);
+  CHECK(has_negative);
+  CHECK((reconstructed - M).cwiseAbs().maxCoeff() < 1.0e-13);
+}
+
+// Modal-correction residue matrices can contain physical signed directions well below the
+// fixed wave-port boundary-mass noise floor. The caller-provided tolerance must control
+// their factorization; applying the old 3e-3 mass floor here drops the second direction and
+// changes the augmented pencil's Schur complement by O(1e-4).
+TEST_CASE("RomOperator-AugmentedPencil-ModalResidueRank", "[romoperator][Serial]")
+{
+  Eigen::MatrixXd M = Eigen::MatrixXd::Zero(2, 2);
+  M(0, 0) = 1.0;
+  M(1, 1) = -1.0e-4;
+  const Eigen::MatrixXcd Mp_r =
+      std::complex<double>(0.0, 1.0) * M.cast<std::complex<double>>();
+  RomOperatorTest::WavePortAuxBlock blk;
+  REQUIRE(RomOperatorTest::AddAuxBlockDirections(blk, Mp_r, 1.0e-6));
+  REQUIRE(blk.weights.size() == 2);
+
+  Eigen::MatrixXd reconstructed = Eigen::MatrixXd::Zero(2, 2);
+  for (std::size_t j = 0; j < blk.weights.size(); j++)
+  {
+    reconstructed.noalias() += blk.weights[j] * blk.u_dirs[j] * blk.u_dirs[j].transpose();
+  }
+  CHECK((reconstructed - M).cwiseAbs().maxCoeff() < 1.0e-13);
+}
+
 // Schur-complement test for the augmented rational realization. This exercises the real
-// BuildAugmentedPencil helper with multiple poles and multiple SVD directions, then
+// BuildAugmentedPencil helper with multiple poles and signed symmetric directions, then
 // eliminates the aux rows and checks that the effective v-block exactly equals the
 // unaugmented rational pencil contribution i Σ r_k/(ω-p_k) M_proj.
 TEST_CASE("RomOperator-AugmentedPencil-SchurComplement", "[romoperator][Serial]")
@@ -1219,7 +2093,7 @@ TEST_CASE("RomOperator-AugmentedPencil-SchurComplement", "[romoperator][Serial]"
   u1 << -std::sin(theta), std::cos(theta);
   RomOperatorTest::WavePortAuxBlock blk;
   blk.port_idx = 3;
-  blk.sigmas = {2.0, 0.4};
+  blk.weights = {2.0, -0.4};
   blk.u_dirs = {u0, u1};
   blk.poles = {std::complex<double>(1.1, 0.2), std::complex<double>(-0.7, 0.4)};
   blk.residues = {std::complex<double>(0.3, -0.15), std::complex<double>(-0.2, 0.05)};
@@ -1233,8 +2107,8 @@ TEST_CASE("RomOperator-AugmentedPencil-SchurComplement", "[romoperator][Serial]"
   CHECK(aux_labels.back() == "waveport_3_p1d1");
 
   Eigen::MatrixXcd M_proj =
-      blk.sigmas[0] * (u0 * u0.transpose()).cast<std::complex<double>>() +
-      blk.sigmas[1] * (u1 * u1.transpose()).cast<std::complex<double>>();
+      blk.weights[0] * (u0 * u0.transpose()).cast<std::complex<double>>() +
+      blk.weights[1] * (u1 * u1.transpose()).cast<std::complex<double>>();
 
   for (std::complex<double> omega :
        {std::complex<double>(0.5, 0.1), std::complex<double>(1.6, -0.2),
@@ -1280,7 +2154,7 @@ TEST_CASE("RomOperator-AugmentedPencil-Eigenvalues", "[romoperator][Serial]")
 
   RomOperatorTest::WavePortAuxBlock blk;
   blk.port_idx = 1;
-  blk.sigmas = {1.0};
+  blk.weights = {1.0};
   Eigen::VectorXd u_dir(1);
   u_dir(0) = 1.0;
   blk.u_dirs = {u_dir};

@@ -46,7 +46,7 @@ Schema](https://json-schema.org/draft-07/schema) before the solver starts. The s
 used independently to check your configuration before running *Palace* by running:
 
 ```bash
-./scripts/validate_config config.json
+./scripts/validate-config config.json
 ```
 
 Note that there are constraints on the configuration that cannot be expressed in a JSON Schema.

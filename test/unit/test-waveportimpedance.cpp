@@ -5,11 +5,16 @@
 #include <array>
 #include <cmath>
 #include <complex>
+#include <numbers>
+#include <sstream>
+#include <tuple>
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include "fem/coefficient.hpp"
 #include "fem/fespace.hpp"
+#include "fem/integrator.hpp"
 #include "fem/mesh.hpp"
 #include "models/materialoperator.hpp"
 #include "models/waveportoperator.hpp"
@@ -22,6 +27,39 @@
 namespace palace
 {
 using namespace Catch::Matchers;
+
+std::complex<double> RefWavePortPower(const MaterialOperator &mat_op,
+                                      const mfem::Array<int> &attr_list, GridFunction &E,
+                                      GridFunction &B)
+{
+  auto &nd_fespace = *E.ParFESpace();
+  const auto &mesh = *nd_fespace.GetParMesh();
+  BdrSurfaceCurrentVectorCoefficient nxHr_func(B.Real(), mat_op);
+  BdrSurfaceCurrentVectorCoefficient nxHi_func(B.Imag(), mat_op);
+  int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+  mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, attr_list);
+  std::complex<double> dot;
+  {
+    mfem::LinearForm pr(&nd_fespace);
+    pr.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(nxHr_func), attr_marker);
+    pr.UseFastAssembly(false);
+    pr.UseDevice(false);
+    pr.Assemble();
+    pr.UseDevice(true);
+    dot = -(pr * E.Real()) - std::complex<double>(0.0, 1.0) * (pr * E.Imag());
+  }
+  {
+    mfem::LinearForm pi(&nd_fespace);
+    pi.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(nxHi_func), attr_marker);
+    pi.UseFastAssembly(false);
+    pi.UseDevice(false);
+    pi.Assemble();
+    pi.UseDevice(true);
+    dot += -(pi * E.Imag()) + std::complex<double>(0.0, 1.0) * (pi * E.Real());
+  }
+  Mpi::GlobalSum(1, &dot, nd_fespace.GetComm());
+  return dot;
+}
 
 // Expose private WavePortOperator::Initialize so tests can drive a single port without
 // needing the full simulation harness (and without const_cast around GetPort()).
@@ -43,7 +81,7 @@ struct ExposedWavePortOperator : public WavePortOperator
 //
 // Reference: Pozar, "Microwave Engineering" (4th ed.), Sec. 3.3 / Table 3.1
 // (equivalent voltage / current / impedance for waveguide modes).
-TEST_CASE("WavePort TE10 Z_PV", "[waveportimpedance][Serial]")
+TEST_CASE("WavePort TE10 Z_PV", "[waveportimpedance][Serial][Parallel]")
 {
   MPI_Comm comm = Mpi::World();
 
@@ -63,6 +101,26 @@ TEST_CASE("WavePort TE10 Z_PV", "[waveportimpedance][Serial]")
   // Use a moderately fine mesh so the line integral converges within ~1%.
   auto serial_mesh = std::make_unique<mfem::Mesh>(
       mfem::Mesh::MakeCartesian3D(8, 8, 4, mfem::Element::TETRAHEDRON, L_m, a_m, b_m));
+
+  // Refine only part of the port-adjacent layer. This creates hanging edges on the port
+  // surface and makes the impedance check exercise both NC boundary remapping and direct
+  // VoltagePath evaluation on the extracted port field.
+  mfem::Array<int> refinements;
+  mfem::Vector center(3);
+  for (int element = 0; element < serial_mesh->GetNE(); element++)
+  {
+    auto *transformation = serial_mesh->GetElementTransformation(element);
+    const auto &ip = mfem::Geometries.GetCenter(transformation->GetGeometryType());
+    transformation->Transform(ip, center);
+    if (center[0] < L_m / 8.0 && center[1] < a_m / 2.0 && center[2] < b_m / 2.0)
+    {
+      refinements.Append(element);
+    }
+  }
+  REQUIRE(refinements.Size() > 0);
+  serial_mesh->EnsureNCMesh(true);
+  serial_mesh->GeneralRefinement(refinements);
+  REQUIRE(serial_mesh->Nonconforming());
 
   Units units(1.0, 1.0);
   IoData iodata(units);
@@ -88,7 +146,6 @@ TEST_CASE("WavePort TE10 Z_PV", "[waveportimpedance][Serial]")
   wave.excitation = 0;
   wave.active = true;
   wave.voltage_path = {{0.0, a_m / 2.0, 0.0}, {0.0, a_m / 2.0, b_m}};
-  wave.n_samples = 200;
   wave.eig_tol = 1.0e-8;
   wave.ksp_tol = 1.0e-8;
   wave.ksp_max_its = 100;
@@ -121,7 +178,8 @@ TEST_CASE("WavePort TE10 Z_PV", "[waveportimpedance][Serial]")
 
   // Initialize the modes at the test frequency. Internal units: ω·tc.
   const double omega_nondim =
-      2.0 * M_PI * iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(f_GHz);
+      2.0 * std::numbers::pi *
+      iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(f_GHz);
   wave_port_op.Initialize(omega_nondim);
 
   std::complex<double> Z_PV_nondim = wave_port_op.GetPort(1).GetCharacteristicImpedance();
@@ -148,6 +206,103 @@ TEST_CASE("WavePort TE10 Z_PV", "[waveportimpedance][Serial]")
 // is +y-aligned, so naming y=0 as "signal" (high) and y=a as "ground" (low) gives a
 // (high → low) direction of +y, matching the field, sign = +1. Swapping the two
 // attribute roles flips the expected sign to -1.
+TEST_CASE("WavePort port power", "[waveportimpedance][Serial][GPU]")
+{
+  MPI_Comm comm = Mpi::World();
+
+  const double a_m = 22.86e-3, b_m = 10.16e-3, L_m = 10.0e-3;
+
+  auto serial_mesh = std::make_unique<mfem::Mesh>(
+      mfem::Mesh::MakeCartesian3D(6, 6, 4, mfem::Element::TETRAHEDRON, L_m, a_m, b_m));
+
+  Units units(1.0, 1.0);
+  IoData iodata(units);
+  iodata.model.L0 = 1.0;
+  iodata.model.Lc = 1.0;
+
+  auto &material = iodata.domains.materials.emplace_back();
+  material.attributes = {1};
+  material.epsilon_r.s = {2.5, 1.7, 1.3};
+  material.mu_r.s = {1.1, 1.2, 1.4};
+
+  iodata.boundaries.pec.attributes = {1, 2, 3, 4, 6};
+
+  auto &wave = iodata.boundaries.waveport.try_emplace(1).first->second;
+  wave.attributes = {5};
+  wave.mode_idx = 1;
+  wave.excitation = 0;
+  wave.active = true;
+  wave.eig_tol = 1.0e-8;
+  wave.ksp_tol = 1.0e-8;
+  wave.ksp_max_its = 100;
+  wave.max_size = std::max(2 * wave.mode_idx, wave.mode_idx + 15);
+
+  iodata.solver.order = 2;
+  iodata.solver.linear.tol = 1.0e-8;
+  iodata.solver.linear.max_it = 200;
+  iodata.problem.type = ProblemType::DRIVEN;
+
+  iodata.NondimensionalizeInputs(serial_mesh);
+  auto par_mesh = std::make_unique<mfem::ParMesh>(comm, *serial_mesh);
+  iodata.CheckConfiguration();
+  Mesh palace_mesh(std::move(par_mesh));
+
+  auto nd_fec =
+      std::make_unique<mfem::ND_FECollection>(iodata.solver.order, palace_mesh.Dimension());
+  auto rt_fec = std::make_unique<mfem::RT_FECollection>(iodata.solver.order - 1,
+                                                        palace_mesh.Dimension());
+  auto h1_fec =
+      std::make_unique<mfem::H1_FECollection>(iodata.solver.order, palace_mesh.Dimension());
+  FiniteElementSpace nd_fespace_palace(palace_mesh, nd_fec.get());
+  FiniteElementSpace rt_fespace_palace(palace_mesh, rt_fec.get());
+  FiniteElementSpace h1_fespace_palace(palace_mesh, h1_fec.get());
+  MaterialOperator mat_op(iodata, palace_mesh);
+
+  WavePortOperator wave_port_op(iodata, mat_op, nd_fespace_palace.Get(),
+                                h1_fespace_palace.Get());
+  wave_port_op.SetSuppressOutput(true);
+
+  GridFunction E(nd_fespace_palace, true), B(rt_fespace_palace, true);
+  mfem::VectorFunctionCoefficient fer(3,
+                                      [](const mfem::Vector &x, mfem::Vector &v)
+                                      {
+                                        v(0) = std::sin(2.0 * x(1)) + x(2);
+                                        v(1) = std::cos(x(0) + x(2));
+                                        v(2) = x(0) * x(1) + 0.25;
+                                      });
+  mfem::VectorFunctionCoefficient fei(3,
+                                      [](const mfem::Vector &x, mfem::Vector &v)
+                                      {
+                                        v(0) = x(1) * x(2) - 0.1;
+                                        v(1) = std::sin(1.5 * x(0)) - x(2);
+                                        v(2) = std::cos(x(1)) + x(0) * x(0);
+                                      });
+  mfem::VectorFunctionCoefficient fbr(3,
+                                      [](const mfem::Vector &x, mfem::Vector &v)
+                                      {
+                                        v(0) = x(1) - 0.3 * x(2);
+                                        v(1) = std::sin(x(2)) + 0.5;
+                                        v(2) = std::cos(x(0)) - x(1) * x(2);
+                                      });
+  mfem::VectorFunctionCoefficient fbi(3,
+                                      [](const mfem::Vector &x, mfem::Vector &v)
+                                      {
+                                        v(0) = 0.2 + x(0) * x(2);
+                                        v(1) = x(0) - std::cos(x(1));
+                                        v(2) = std::sin(x(0) + x(1));
+                                      });
+  E.Real().ProjectCoefficient(fer);
+  E.Imag().ProjectCoefficient(fei);
+  B.Real().ProjectCoefficient(fbr);
+  B.Imag().ProjectCoefficient(fbi);
+
+  auto ref = RefWavePortPower(mat_op, wave_port_op.GetPort(1).GetAttrList(), E, B);
+  auto val = wave_port_op.GetPort(1).GetPower(E, B);
+  CAPTURE(ref, val);
+  CHECK_THAT(val.real(), WithinRel(ref.real(), 1.0e-10));
+  CHECK_THAT(val.imag(), WithinRel(ref.imag(), 1.0e-10));
+}
+
 TEST_CASE("WavePort TE10 mode polarity sign", "[waveportimpedance][Serial]")
 {
   MPI_Comm comm = Mpi::World();
@@ -208,7 +363,8 @@ TEST_CASE("WavePort TE10 mode polarity sign", "[waveportimpedance][Serial]")
   wave_port_op.SetSuppressOutput(true);
 
   const double omega_nondim =
-      2.0 * M_PI * iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(f_GHz);
+      2.0 * std::numbers::pi *
+      iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(f_GHz);
   wave_port_op.Initialize(omega_nondim);
 
   // MakeCartesian3D face attributes: 2 = y=0 (broadside), 4 = y=a (broadside). TE10
@@ -278,8 +434,8 @@ TEST_CASE("WavePort anisotropic mode ordering", "[waveportimpedance][Serial][Par
     ExposedWavePortOperator wave_port_op(iodata, mat_op, nd_fespace.Get(),
                                          h1_fespace.Get());
     wave_port_op.SetSuppressOutput(true);
-    const double omega =
-        2.0 * M_PI * iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(f_GHz);
+    const double omega = 2.0 * std::numbers::pi *
+                         iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(f_GHz);
     wave_port_op.Initialize(omega);
 
     const double kn_scale =
@@ -287,8 +443,8 @@ TEST_CASE("WavePort anisotropic mode ordering", "[waveportimpedance][Serial][Par
     return wave_port_op.GetPort(1).kn0 * kn_scale;
   };
 
-  const double k0 = 2.0 * M_PI * f_GHz * 1.0e9 / electromagnetics::c0_;
-  const double kc = M_PI / a_m;
+  const double k0 = 2.0 * std::numbers::pi * f_GHz * 1.0e9 / electromagnetics::c0_;
+  const double kc = std::numbers::pi / a_m;
   auto te10_kn =
       [&](const std::array<double, 3> &mu_r, const std::array<double, 3> &epsilon_r)
   { return std::sqrt(mu_r[0] * epsilon_r[1] * k0 * k0 - (mu_r[0] / mu_r[2]) * kc * kc); };
@@ -300,6 +456,139 @@ TEST_CASE("WavePort anisotropic mode ordering", "[waveportimpedance][Serial][Par
   CAPTURE(kn, kn_ref);
   CHECK_THAT(kn.real(), WithinRel(kn_ref, 0.02));
   CHECK_THAT(kn.imag(), WithinAbs(0.0, 0.01 * kn_ref));
+}
+
+// The wave port cross-section problem lives on a boundary ParSubMesh, whose shared
+// entities are collected from those of the parent ParMesh. For a parent constructed from
+// the parts of an mfem::MeshPartitioner, as in mesh::DistributeMesh, the communication
+// groups of the parent are not numbered in the same order on all processes, and MFEM's
+// ParSubMesh used to pair different shared entities on different processes. The port
+// finite element spaces were then inconsistent and gave spurious modes for some
+// partitionings. Check that deliberately fragmented partitionings give the same TE10
+// modes as the default one. This needs at least 3 processes (with 2, the parent has a
+// single communication group), so the test runs at the regression rank count; without the
+// fix, at least one of the partitionings fails on 4, 5, 6 and 8 processes.
+TEST_CASE("WavePort modes with a fragmented mesh partitioning",
+          "[waveportimpedance][Parallel][Regression]")
+{
+  MPI_Comm comm = Mpi::World();
+
+  // Rectangular waveguide along y, broadside a along x and narrow side b along z, with
+  // wave ports on the faces y=0 (attribute 2) and y=L (attribute 4), PEC elsewhere.
+  const double a_m = 22.86e-3, b_m = 10.16e-3, L_m = 10.0e-3;
+  const double f_GHz = 10.0;
+
+  // Partition in blocks of consecutive elements cycling over the processes, or with the
+  // default partitioning for block = 0.
+  auto solve = [&](int block)
+  {
+    auto serial_mesh = std::make_unique<mfem::Mesh>(
+        mfem::Mesh::MakeCartesian3D(6, 6, 6, mfem::Element::TETRAHEDRON, a_m, L_m, b_m));
+
+    Units units(1.0, 1.0);
+    IoData iodata(units);
+    iodata.model.L0 = 1.0;
+    iodata.model.Lc = 1.0;
+    auto &material = iodata.domains.materials.emplace_back();
+    material.attributes = {1};
+    material.epsilon_r.s = {1.0, 1.0, 1.0};
+    material.mu_r.s = {1.0, 1.0, 1.0};
+    iodata.boundaries.pec.attributes = {1, 3, 5, 6};
+    for (const auto &[index, attr, y] : {std::tuple{1, 2, 0.0}, std::tuple{2, 4, L_m}})
+    {
+      auto &wave = iodata.boundaries.waveport.try_emplace(index).first->second;
+      wave.attributes = {attr};
+      wave.mode_idx = 1;
+      wave.excitation = 0;
+      wave.active = true;
+      // Across the narrow side at the broadside center: Z_PV = 2 (b/a) Z_TE.
+      wave.voltage_path = {{a_m / 2.0, y, 0.0}, {a_m / 2.0, y, b_m}};
+      wave.eig_tol = 1.0e-10;
+      wave.ksp_tol = 1.0e-10;
+      wave.ksp_max_its = 200;
+      wave.max_size = std::max(2 * wave.mode_idx, wave.mode_idx + 15);
+    }
+    iodata.solver.order = 2;
+    iodata.solver.linear.tol = 1.0e-10;
+    iodata.solver.linear.max_it = 200;
+    iodata.problem.type = ProblemType::DRIVEN;
+    iodata.NondimensionalizeInputs(serial_mesh);
+    iodata.CheckConfiguration();
+
+    std::unique_ptr<mfem::ParMesh> par_mesh;
+    if (block > 0)
+    {
+      // Distribute the mesh as mesh::DistributeMesh does.
+      const int size = Mpi::Size(comm);
+      mfem::Array<int> partitioning(serial_mesh->GetNE());
+      for (int e = 0; e < serial_mesh->GetNE(); e++)
+      {
+        partitioning[e] = (e / block) % size;
+      }
+      mfem::MeshPartitioner partitioner(*serial_mesh, size, partitioning.GetData());
+      mfem::MeshPart part;
+      partitioner.ExtractPart(Mpi::Rank(comm), part);
+      std::stringstream fo;
+      fo.precision(16);
+      part.Print(fo);
+      par_mesh = std::make_unique<mfem::ParMesh>(comm, fo, true, false, false);
+    }
+    else
+    {
+      par_mesh = std::make_unique<mfem::ParMesh>(comm, *serial_mesh);
+    }
+    Mesh palace_mesh(std::move(par_mesh));
+    auto nd_fec = std::make_unique<mfem::ND_FECollection>(iodata.solver.order,
+                                                          palace_mesh.Dimension());
+    auto h1_fec = std::make_unique<mfem::H1_FECollection>(iodata.solver.order,
+                                                          palace_mesh.Dimension());
+    FiniteElementSpace nd_fespace(palace_mesh, nd_fec.get());
+    FiniteElementSpace h1_fespace(palace_mesh, h1_fec.get());
+    MaterialOperator mat_op(iodata, palace_mesh);
+    ExposedWavePortOperator wave_port_op(iodata, mat_op, nd_fespace.Get(),
+                                         h1_fespace.Get());
+    wave_port_op.SetSuppressOutput(true);
+    const double omega = 2.0 * std::numbers::pi *
+                         iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(f_GHz);
+    wave_port_op.Initialize(omega);
+    const double kn_scale =
+        1.0 / iodata.units.Dimensionalize<Units::ValueType::LENGTH>(1.0);
+    std::array<std::pair<double, double>, 2> modes;
+    for (int index : {1, 2})
+    {
+      const auto &port = wave_port_op.GetPort(index);
+      modes[index - 1] = {port.kn0.real() * kn_scale,
+                          port.GetCharacteristicImpedance().real() * electromagnetics::Z0_};
+    }
+    return modes;
+  };
+
+  // The default partitioning gives the TE10 mode.
+  const auto ref = solve(0);
+  const double k0 = 2.0 * std::numbers::pi * f_GHz * 1.0e9 / electromagnetics::c0_;
+  const double kc = std::numbers::pi / a_m;
+  const double Z_TE = electromagnetics::Z0_ * k0 / std::sqrt(k0 * k0 - kc * kc);
+  for (int i = 0; i < 2; i++)
+  {
+    const auto [kn_ref, Z_ref] = ref[i];
+    CAPTURE(i, kn_ref, Z_ref);
+    CHECK_THAT(kn_ref, WithinRel(std::sqrt(k0 * k0 - kc * kc), 0.01));
+    CHECK_THAT(Z_ref, WithinRel(2.0 * (b_m / a_m) * Z_TE, 0.01));
+  }
+
+  // Fragmented partitionings give the same discrete mode.
+  for (int block : {5, 7, 11, 13})
+  {
+    const auto modes = solve(block);
+    for (int i = 0; i < 2; i++)
+    {
+      const auto [kn_ref, Z_ref] = ref[i];
+      const auto [kn, Z] = modes[i];
+      CAPTURE(block, i, kn_ref, kn, Z_ref, Z);
+      CHECK_THAT(kn, WithinRel(kn_ref, 1.0e-8));
+      CHECK_THAT(Z, WithinRel(Z_ref, 1.0e-6));
+    }
+  }
 }
 
 // Validate the COMPLEX-frequency wave-port cross-section solve
@@ -340,7 +629,6 @@ TEST_CASE("WavePortData TE10 at complex ω", "[waveportimpedance][Serial]")
   wave.mode_idx = 1;
   wave.excitation = 0;
   wave.active = true;
-  wave.n_samples = 200;
   wave.eig_tol = 1.0e-10;
   wave.ksp_tol = 1.0e-10;
   wave.ksp_max_its = 200;
@@ -376,7 +664,7 @@ TEST_CASE("WavePortData TE10 at complex ω", "[waveportimpedance][Serial]")
   // compare against the dimensionalized SolveKnComplex result k_n_phys = k_n_nondim ·
   // (1/Lc).
   const double c0 = electromagnetics::c0_;
-  const double kc = M_PI / a_m;  // TE10 transverse cutoff wavenumber [rad/m]
+  const double kc = std::numbers::pi / a_m;  // TE10 transverse cutoff wavenumber [rad/m]
   auto kn_closed_form = [&](std::complex<double> omega_rad_s) -> std::complex<double>
   {
     // k_n = √((ω/c)² − k_c²); principal branch gives Re(k_n) ≥ 0 (forward sheet).
@@ -387,7 +675,8 @@ TEST_CASE("WavePortData TE10 at complex ω", "[waveportimpedance][Serial]")
   // Helper: nondimensional ω for a physical frequency f [GHz].
   auto omega_nd = [&](double f_GHz)
   {
-    return 2.0 * M_PI * iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(f_GHz);
+    return 2.0 * std::numbers::pi *
+           iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(f_GHz);
   };
   // k_n scale factor (nondim → rad/m): kc_len = 1/Lc(meters).
   const double kn_scale = 1.0 / iodata.units.Dimensionalize<Units::ValueType::LENGTH>(1.0);
@@ -399,7 +688,7 @@ TEST_CASE("WavePortData TE10 at complex ω", "[waveportimpedance][Serial]")
         port.SolveKnComplex(std::complex<double>(omega_nd(f_GHz), 0.0));
     const std::complex<double> kn_phys = kn_nd * kn_scale;
     const std::complex<double> kn_ref =
-        kn_closed_form(2.0 * M_PI * f_GHz * 1.0e9);  // ≈ 158.24 rad/m, ~0 imag
+        kn_closed_form(2.0 * std::numbers::pi * f_GHz * 1.0e9);  // ≈ 158.24 rad/m, ~0 imag
     CAPTURE(kn_phys, kn_ref);
     CHECK_THAT(kn_phys.real(), WithinRel(kn_ref.real(), 1.0e-4));
     CHECK_THAT(kn_phys.imag(), WithinAbs(0.0, 1.0e-4 * kn_ref.real()));
@@ -415,7 +704,8 @@ TEST_CASE("WavePortData TE10 at complex ω", "[waveportimpedance][Serial]")
     const std::complex<double> scale_c(1.0, 0.05);
     std::complex<double> kn_nd = port.SolveKnComplex(omega_nd(f_r_GHz) * scale_c);
     const std::complex<double> kn_phys = kn_nd * kn_scale;
-    const std::complex<double> omega_rad_s = 2.0 * M_PI * f_r_GHz * 1.0e9 * scale_c;
+    const std::complex<double> omega_rad_s =
+        2.0 * std::numbers::pi * f_r_GHz * 1.0e9 * scale_c;
     const std::complex<double> kn_ref = kn_closed_form(omega_rad_s);
     CAPTURE(kn_phys, kn_ref);
     // Both real and imaginary parts must match the closed-form analytic continuation.
@@ -436,7 +726,7 @@ TEST_CASE("WavePortData TE10 at complex ω", "[waveportimpedance][Serial]")
     std::complex<double> kn_nd = port.SolveKnComplex(omega_nd(f_r_GHz) * scale_c);
     const std::complex<double> kn_phys = kn_nd * kn_scale;
     const std::complex<double> kn_ref =
-        kn_closed_form(2.0 * M_PI * f_r_GHz * 1.0e9 * scale_c);
+        kn_closed_form(2.0 * std::numbers::pi * f_r_GHz * 1.0e9 * scale_c);
     CAPTURE(kn_phys, kn_ref);
     CHECK(kn_phys.real() >= 0.0);  // forward / decaying sheet
     CHECK_THAT(kn_phys.real(), WithinRel(kn_ref.real(), 1.0e-4));
@@ -529,7 +819,8 @@ TEST_CASE("WavePortData lossy fill at real and complex ω", "[waveportimpedance]
     auto &port = const_cast<WavePortData &>(wave_port_op.GetPort(1));
 
     const double omega_nd =
-        2.0 * M_PI * iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(f_GHz);
+        2.0 * std::numbers::pi *
+        iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(f_GHz);
     const std::complex<double> kn_nd = port.SolveKnComplex(omega_nd * omega_scale);
     const double kn_scale =
         1.0 / iodata.units.Dimensionalize<Units::ValueType::LENGTH>(1.0);
@@ -537,16 +828,17 @@ TEST_CASE("WavePortData lossy fill at real and complex ω", "[waveportimpedance]
   };
 
   const double c0 = electromagnetics::c0_;
-  const double mu0 = 4.0e-7 * M_PI;
+  const double mu0 = 4.0e-7 * std::numbers::pi;
   auto kn_closed_form = [&](double kc, std::complex<double> omega_rad_s)
   {
     const std::complex<double> k0 = omega_rad_s / c0;
     return std::sqrt(
         k0 * k0 - std::complex<double>(0.0, 1.0) * omega_rad_s * mu0 * sigma_Sm - kc * kc);
   };
-  const double kc_te10 = M_PI / a_m;
-  const double kc_tm11 = M_PI * std::sqrt(1.0 / (a_m * a_m) + 1.0 / (b_m * b_m));
-  const std::complex<double> omega_r(2.0 * M_PI * f_GHz * 1.0e9, 0.0);
+  const double kc_te10 = std::numbers::pi / a_m;
+  const double kc_tm11 =
+      std::numbers::pi * std::sqrt(1.0 / (a_m * a_m) + 1.0 / (b_m * b_m));
+  const std::complex<double> omega_r(2.0 * std::numbers::pi * f_GHz * 1.0e9, 0.0);
 
   SECTION("TE10 (transverse only: validates Att +iωσ)")
   {
@@ -587,6 +879,105 @@ TEST_CASE("WavePortData lossy fill at real and complex ω", "[waveportimpedance]
       CHECK_THAT(kn.imag(), WithinRel(kn_ref.imag(), 5.0e-3));
     }
   }
+}
+
+// A mu tensor with off-diagonal terms coupling the propagation axis to the transverse
+// plane makes the fundamental mode acquire a longitudinal E_n != 0. The full n×H
+// reconstruction applies the dense mu^-1 tensor and keeps the i∇ₜEₙ term, so its modal
+// reaction R = sᵀe differs from the scalar-admittance reaction (∇ₜEₙ dropped); with
+// isotropic mu the TE10 mode has E_n = 0 and the two agree. Pins the tensor mu^-1 path.
+TEST_CASE("WavePort rotated-mu reconstruction", "[waveportimpedance][Serial][Parallel]")
+{
+  MPI_Comm comm = Mpi::World();
+
+  const double a_m = 22.86e-3, b_m = 10.16e-3, L_m = 10.0e-3;
+  const double f_GHz = 20.0;
+
+  auto reactions = [&](const std::array<double, 3> &mu_s,
+                       const std::array<std::array<double, 3>, 3> &mu_v)
+      -> std::pair<std::complex<double>, std::complex<double>>
+  {
+    auto serial_mesh = std::make_unique<mfem::Mesh>(
+        mfem::Mesh::MakeCartesian3D(4, 14, 8, mfem::Element::TETRAHEDRON, L_m, a_m, b_m));
+
+    Units units(1.0, 1.0);
+    IoData iodata(units);
+    iodata.model.L0 = 1.0;
+    iodata.model.Lc = 1.0;
+
+    auto &material = iodata.domains.materials.emplace_back();
+    material.attributes = {1};
+    material.epsilon_r.s = {1.0, 1.0, 1.0};
+    material.mu_r.s = mu_s;
+    material.mu_r.v = mu_v;
+
+    iodata.boundaries.pec.attributes = {1, 2, 3, 4, 6};
+    auto &wave = iodata.boundaries.waveport.try_emplace(1).first->second;
+    wave.attributes = {5};
+    wave.mode_idx = 1;
+    wave.excitation = 0;
+    wave.active = true;
+    wave.eig_tol = 1.0e-9;
+    wave.ksp_tol = 1.0e-9;
+    wave.ksp_max_its = 200;
+    wave.max_size = std::max(2 * wave.mode_idx, wave.mode_idx + 15);
+
+    iodata.solver.order = 2;
+    iodata.solver.linear.tol = 1.0e-9;
+    iodata.solver.linear.max_it = 200;
+    iodata.problem.type = ProblemType::DRIVEN;
+
+    iodata.NondimensionalizeInputs(serial_mesh);
+    auto par_mesh = std::make_unique<mfem::ParMesh>(comm, *serial_mesh);
+    iodata.CheckConfiguration();
+    Mesh palace_mesh(std::move(par_mesh));
+
+    auto nd_fec = std::make_unique<mfem::ND_FECollection>(iodata.solver.order,
+                                                          palace_mesh.Dimension());
+    auto h1_fec = std::make_unique<mfem::H1_FECollection>(iodata.solver.order,
+                                                          palace_mesh.Dimension());
+    FiniteElementSpace nd_fespace(palace_mesh, nd_fec.get());
+    FiniteElementSpace h1_fespace(palace_mesh, h1_fec.get());
+    MaterialOperator mat_op(iodata, palace_mesh);
+
+    ExposedWavePortOperator wave_port_op(iodata, mat_op, nd_fespace.Get(),
+                                         h1_fespace.Get());
+    wave_port_op.SetSuppressOutput(true);
+    const double omega = 2.0 * std::numbers::pi *
+                         iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(f_GHz);
+    wave_port_op.Initialize(omega);
+    const auto &port = wave_port_op.GetPort(1);
+    return {port.modal_reaction, port.modal_reaction_scalar};
+  };
+
+  // Identity principal axes (diagonal mu in the global frame).
+  const std::array<std::array<double, 3>, 3> axes_id = {
+      {{1.0, 0.0, 0.0}, {0.0, 1.0, 0.0}, {0.0, 0.0, 1.0}}};
+  // Generic full-precision orthonormal frame (Euler ZYX 37deg, 24deg, 51deg): all
+  // off-diagonals of the resulting mu tensor are nonzero, coupling the propagation axis to
+  // the transverse plane.
+  const std::array<std::array<double, 3>, 3> axes_rot = {
+      {{0.7295898425157861, 0.5497853807416304, -0.4067366430758002},
+       {-0.1262907808070951, 0.6928275726704907, 0.7099581630143076},
+       {0.6721229801018, -0.4666111761095059, 0.5749127846454443}}};
+
+  // Isotropic baseline: TE10 has E_n = 0, so the gradient term is absent and the full modal
+  // reaction agrees with the scalar one to machine precision.
+  const auto [R_iso, R_iso_scalar] = reactions({1.0, 1.0, 1.0}, axes_id);
+  CAPTURE(R_iso, R_iso_scalar);
+  CHECK(std::abs(R_iso) > 1.0e-8);
+  CHECK_THAT(std::abs(R_iso - R_iso_scalar), WithinAbs(0.0, 1.0e-9 * std::abs(R_iso)));
+
+  // Rotated mu: the induced E_n != 0 makes the reconstruction's i∇ₜEₙ term contribute, so
+  // the full and scalar reactions differ well above the isotropic floor; both stay finite
+  // and nonzero.
+  const auto [R_rot, R_rot_scalar] = reactions({1.0, 3.0, 6.0}, axes_rot);
+  CAPTURE(R_rot, R_rot_scalar);
+  CHECK(std::isfinite(R_rot.real()));
+  CHECK(std::isfinite(R_rot.imag()));
+  CHECK(std::abs(R_rot) > 1.0e-8);
+  CHECK(std::abs(R_rot_scalar) > 1.0e-8);
+  CHECK(std::abs(R_rot - R_rot_scalar) > 1.0e-4 * std::abs(R_rot));
 }
 
 }  // namespace palace

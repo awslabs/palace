@@ -1,6 +1,10 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <array>
+#include <cmath>
+#include <complex>
+#include <numbers>
 #include <Eigen/Dense>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
@@ -14,6 +18,7 @@
 #include "fem/lumpedelement.hpp"
 #include "fem/mesh.hpp"
 #include "models/materialoperator.hpp"
+#include "models/portexcitations.hpp"
 #include "models/postoperator.hpp"
 #include "models/postoperatorcsv.hpp"
 #include "models/spaceoperator.hpp"
@@ -30,6 +35,10 @@ using namespace Catch::Matchers;
 class LumpedPortDataTest : public LumpedPortData
 {
 public:
+  void InitializeLinearFormsForTest(mfem::ParFiniteElementSpace &nd_fespace) const
+  {
+    InitializeLinearForms(nd_fespace);
+  }
   mfem::LinearForm *GetLinearFormS() const { return s.get(); }
   mfem::LinearForm *GetLinearFormV() const { return v.get(); }
 };
@@ -41,6 +50,12 @@ auto LoadScaleParMesh(IoData &iodata, MPI_Comm world_comm)
   {
     std::vector<std::unique_ptr<mfem::ParMesh>> mfem_mesh;
     auto smesh = mesh::Load(iodata, world_comm);
+    int ne = smesh ? smesh->GetNE() : 0;
+    Mpi::GlobalMax(1, &ne, world_comm);
+    if (Mpi::Size(world_comm) > ne)
+    {
+      SKIP("Mesh has fewer elements than processes");
+    }
     if (iodata.model.Lc <= 0.0)
     {
       iodata.model.Lc = mesh::ComputeReferenceLength(smesh, world_comm);
@@ -54,6 +69,92 @@ auto LoadScaleParMesh(IoData &iodata, MPI_Comm world_comm)
     }
   }
   return mesh_;
+}
+
+TEST_CASE("LumpedPort batched voltages", "[lumped_port][Serial][Parallel][GPU]")
+{
+  MPI_Comm comm = Mpi::World();
+  auto [mesh_is_hex, mesh_path] =
+      GENERATE(std::make_tuple(true, fs::path(PALACE_TEST_DATA_DIR) /
+                                         "lumpedport_mesh/cube_mesh_3_2_1_hex.msh"),
+               std::make_tuple(false, fs::path(PALACE_TEST_DATA_DIR) /
+                                          "lumpedport_mesh/cube_mesh_3_2_1_tet.msh"));
+  auto order = GENERATE(1, 2);
+  CAPTURE(mesh_is_hex, order);
+
+  IoData iodata{Units(1.0e-6, 7.0)};
+  iodata.model.mesh = mesh_path;
+  iodata.model.L0 = 1.0e-6;
+  iodata.model.Lc = 7.0;
+  iodata.model.crack_bdr_elements = false;
+  iodata.solver.order = order;
+  json domains_json = {
+      {"Materials",
+       json::array({json::object({{"Attributes", json::array({1, 2, 3, 4, 5, 6})},
+                                  {"Permeability", 1.0},
+                                  {"Permittivity", 1.0},
+                                  {"LossTan", 0.0}})})}};
+  iodata.domains = config::DomainData(domains_json);
+  json boundaries_json = {
+      {"LumpedPort",
+       json::array(
+           {json::object({{"Index", 1},
+                          {"R", 50.0},
+                          {"Excitation", uint(1)},
+                          {"Attributes", json::array({1})},
+                          {"Direction", "+Y"}}),
+            json::object(
+                {{"Index", 2},
+                 {"R", 75.0},
+                 {"Elements",
+                  json::array({json::object({{"Attributes", json::array({9, 11})},
+                                             {"Direction", "+Y"}}),
+                               json::object({{"Attributes", json::array({2, 6, 10})},
+                                             {"Direction", "+X"}})})}})})}};
+  iodata.boundaries = config::BoundaryData(boundaries_json);
+  iodata.CheckConfiguration();
+
+  auto mesh = LoadScaleParMesh(iodata, comm);
+  SpaceOperator space_op(iodata, mesh);
+  GridFunction E(space_op.GetNDSpace(), true);
+  mfem::VectorFunctionCoefficient Er(3,
+                                     [](const mfem::Vector &x, mfem::Vector &v)
+                                     {
+                                       v(0) = 1.0 + x(1);
+                                       v(1) = 0.5 + 2.0 * x(0);
+                                       v(2) = x(0) - x(1);
+                                     });
+  mfem::VectorFunctionCoefficient Ei(3,
+                                     [](const mfem::Vector &x, mfem::Vector &v)
+                                     {
+                                       v(0) = x(0) + x(2);
+                                       v(1) = 1.0 - x(1);
+                                       v(2) = 0.25 + x(0) * x(1);
+                                     });
+  E.Real().ProjectCoefficient(Er);
+  E.Imag().ProjectCoefficient(Ei);
+
+  auto CheckBatched = [&]()
+  {
+    std::map<int, std::complex<double>> expected;
+    for (const auto &[idx, data] : space_op.GetLumpedPortOp())
+    {
+      expected.emplace(idx, data.GetVoltage(E));
+    }
+    const auto values = space_op.GetLumpedPortOp().GetVoltages(E);
+    REQUIRE(values.size() == expected.size());
+    for (const auto &[idx, ref] : expected)
+    {
+      CAPTURE(idx, ref.real(), ref.imag(), values.at(idx).real(), values.at(idx).imag());
+      const double tol = 1.0e-11 * std::max(std::abs(ref), 1.0);
+      CHECK_THAT(values.at(idx).real(), WithinAbs(ref.real(), tol));
+      CHECK_THAT(values.at(idx).imag(), WithinAbs(ref.imag(), tol));
+    }
+  };
+
+  CheckBatched();
+  E *= 1.75;
+  CheckBatched();
 }
 
 TEST_CASE("LumpedPort_BasicTests_1ElementPort_Cube321", "[lumped_port][Serial][Parallel]")
@@ -377,6 +478,7 @@ TEST_CASE("LumpedPort_BasicTests_1ElementPort_Cube321", "[lumped_port][Serial][P
   // layout Test structure from original structure. Done not to populate code with friend
   // functions, but still access private members for testing.
   const auto &port_1_test_cast = reinterpret_cast<const LumpedPortDataTest &>(port_1);
+  port_1_test_cast.InitializeLinearFormsForTest(space_op.GetNDSpace().Get());
   auto *form_s = port_1_test_cast.GetLinearFormS();
   ComplexVector VecFormS;
   VecFormS.SetSize(space_op.GetNDSpace().GetTrueVSize());
@@ -414,7 +516,7 @@ TEST_CASE("LumpedPort_BasicTests_1ElementPort_Cube321", "[lumped_port][Serial][P
     // dofs if PEC is at the end of the port.
     if (boundary_pec_type == PEC::SIDE || (!mesh_is_hex && boundary_pec_type == PEC::ENDS))
     {
-      const auto *find_pec = std::find(nd_dbc_tdof.begin(), nd_dbc_tdof.end(), i);
+      const auto *find_pec = std::ranges::find(nd_dbc_tdof, i);
       if (find_pec != nd_dbc_tdof.end())
       {
         CHECK(RHS.Real()[i] == 0.0);
@@ -730,6 +832,7 @@ TEST_CASE("LumpedPort_BasicTests_3ElementPort_Cube321", "[lumped_port][Serial][P
   // layout Test structure from original structure. Done not to populate code with friend
   // functions, but still access private members for testing.
   const auto &port_1_test_cast = reinterpret_cast<const LumpedPortDataTest &>(port_1);
+  port_1_test_cast.InitializeLinearFormsForTest(space_op.GetNDSpace().Get());
   auto *form_s = port_1_test_cast.GetLinearFormS();
   ComplexVector VecFormS;
   VecFormS.SetSize(space_op.GetNDSpace().GetTrueVSize());
@@ -765,7 +868,7 @@ TEST_CASE("LumpedPort_BasicTests_3ElementPort_Cube321", "[lumped_port][Serial][P
     // dofs if PEC is at the end of the port.
     if (boundary_pec_type == PEC::SIDE || (!mesh_is_hex && boundary_pec_type == PEC::ENDS))
     {
-      const auto *find_pec = std::find(nd_dbc_tdof.begin(), nd_dbc_tdof.end(), i);
+      const auto *find_pec = std::ranges::find(nd_dbc_tdof, i);
       if (find_pec != nd_dbc_tdof.end())
       {
         CHECK(RHS.Real()[i] == 0.0);
@@ -870,7 +973,8 @@ TEST_CASE("LumpedPort_ReactiveExcitation_Cube321", "[lumped_port][Serial][Parall
   // (3) Characteristic impedance Z_ref(w) = 1 / (1/R + 1/(iwL) + iwC). Check against a
   // direct evaluation at a representative (nondimensional) frequency.
   const double f_GHz = 10.0;
-  const double omega = 2.0 * M_PI * iodata.units.Nondimensionalize<VT::FREQUENCY>(f_GHz);
+  const double omega =
+      2.0 * std::numbers::pi * iodata.units.Nondimensionalize<VT::FREQUENCY>(f_GHz);
   const std::complex<double> imag_unit{0.0, 1.0};
   std::complex<double> Y = 0.0;
   if (case_R > 0.0)
@@ -983,5 +1087,227 @@ TEST_CASE("LumpedElement_RaggedTile_LengthOverride", "[lumped_port][Serial][Para
                WithinRel(discovered.GetGeometryLength(), 1.0e-12));
     CHECK_THAT(overridden.GetGeometryWidth(),
                WithinRel(discovered.GetGeometryWidth(), 1.0e-12));
+  }
+}
+
+TEST_CASE("LumpedPort excitation weight from amplitude and phase", "[lumped_port][Serial]")
+{
+  using C = std::complex<double>;
+
+  // Multiples of 90 degrees are exact, so a weight which is real (or imaginary) in exact
+  // arithmetic is also real (or imaginary) in floating point.
+  CHECK(ExcitationWeight(2.0, 0.0) == C(2.0, 0.0));
+  CHECK(ExcitationWeight(2.0, 90.0) == C(0.0, 2.0));
+  CHECK(ExcitationWeight(2.0, 180.0) == C(-2.0, 0.0));
+  CHECK(ExcitationWeight(2.0, 270.0) == C(0.0, -2.0));
+  CHECK(ExcitationWeight(2.0, -90.0) == C(0.0, -2.0));
+  CHECK(ExcitationWeight(2.0, -180.0) == C(-2.0, 0.0));
+  CHECK(ExcitationWeight(2.0, 360.0) == C(2.0, 0.0));
+  CHECK(ExcitationWeight(2.0, -360.0) == C(2.0, 0.0));
+  CHECK(ExcitationWeight(2.0, 810.0) == C(0.0, 2.0));
+  CHECK(ExcitationWeight(2.0, -1.0e-20) == C(2.0, 0.0));
+  CHECK(ExcitationWeight(2.0, 180.0).imag() == 0.0);
+  CHECK(ExcitationWeight(3.0, 90.0).real() == 0.0);
+
+  // Other phases, reduced modulo 360 degrees.
+  for (const double phase : {30.0, -110.0, 75.0, 359.0})
+  {
+    CAPTURE(phase);
+    const C expected = std::polar(0.5, phase * std::numbers::pi / 180.0);
+    CHECK(std::abs(ExcitationWeight(0.5, phase) - expected) <= 1.0e-15);
+    CHECK(std::abs(ExcitationWeight(0.5, phase + 360.0) - expected) <= 1.0e-14);
+    CHECK(std::abs(ExcitationWeight(0.5, phase - 720.0) - expected) <= 1.0e-14);
+  }
+}
+
+TEST_CASE("LumpedPort weighted excitation vector", "[lumped_port][Serial][Parallel]")
+{
+  MPI_Comm comm = Mpi::World();
+  auto [mesh_is_hex, mesh_path] =
+      GENERATE(std::make_tuple(true, fs::path(PALACE_TEST_DATA_DIR) /
+                                         "lumpedport_mesh/cube_mesh_3_2_1_hex.msh"),
+               std::make_tuple(false, fs::path(PALACE_TEST_DATA_DIR) /
+                                          "lumpedport_mesh/cube_mesh_3_2_1_tet.msh"));
+  auto order = GENERATE(1, 2);
+  CAPTURE(mesh_is_hex, order);
+  const fs::path mesh_file = mesh_path;
+  const int solver_order = order;
+
+  // Port 1 is a single element port on attribute 1 and port 2 is a multielement port, as
+  // in the other lumped port tests. The extra JSON entries override the defaults and add
+  // the excitation options.
+  auto MakePort1 = [](const json &extra)
+  {
+    json port = {
+        {"Index", 1}, {"R", 50.0}, {"Attributes", json::array({1})}, {"Direction", "+Y"}};
+    port.update(extra);
+    return port;
+  };
+  auto MakePort2 = [](const json &extra)
+  {
+    json port = {
+        {"Index", 2},
+        {"R", 75.0},
+        {"Elements", json::array({json::object({{"Attributes", json::array({9, 11})},
+                                                {"Direction", "+Y"}}),
+                                  json::object({{"Attributes", json::array({2, 6, 10})},
+                                                {"Direction", "+X"}})})}};
+    port.update(extra);
+    return port;
+  };
+
+  // Excitation vectors and incident quantities of the ports of one configuration.
+  struct Drive
+  {
+    ComplexVector rhs1;
+    Vector rhs_time;
+    std::array<std::complex<double>, 2> weight, v_inc, i_inc;
+    std::array<double, 2> v_exc, p_exc;
+  };
+  auto Assemble =
+      [&](const json &port1, const json &port2, int excitation_idx, bool time_domain)
+  {
+    IoData iodata{Units(1.0e-6, 7.0)};
+    iodata.model.mesh = mesh_file;
+    iodata.model.L0 = 1.0e-6;
+    iodata.model.Lc = 7.0;
+    iodata.model.crack_bdr_elements = false;
+    iodata.solver.order = solver_order;
+    json domains_json = {
+        {"Materials",
+         json::array({json::object({{"Attributes", json::array({1, 2, 3, 4, 5, 6})},
+                                    {"Permeability", 1.0},
+                                    {"Permittivity", 1.0},
+                                    {"LossTan", 0.0}})})}};
+    iodata.domains = config::DomainData(domains_json);
+    json boundaries_json = {
+        {"LumpedPort", json::array({MakePort1(port1), MakePort2(port2)})}};
+    iodata.boundaries = config::BoundaryData(boundaries_json);
+    iodata.CheckConfiguration();
+
+    auto mesh = LoadScaleParMesh(iodata, comm);
+    SpaceOperator space_op(iodata, mesh);
+
+    Drive out;
+    out.rhs1.UseDevice(true);
+    REQUIRE(space_op.GetExcitationVector1(excitation_idx, out.rhs1));
+    if (time_domain)
+    {
+      REQUIRE(space_op.GetExcitationVector(excitation_idx, out.rhs_time));
+    }
+    for (int i = 0; i < 2; i++)
+    {
+      const auto &port = space_op.GetLumpedPortOp().GetPort(i + 1);
+      out.weight[i] = port.GetExcitationWeight();
+      out.v_inc[i] = port.GetIncidentVoltage();
+      out.i_inc[i] = port.GetIncidentCurrent();
+      out.v_exc[i] = port.GetExcitationVoltage();
+      out.p_exc[i] = port.GetExcitationPower();
+    }
+    return out;
+  };
+
+  const std::complex<double> a1 = std::polar(2.0, 30.0 * std::numbers::pi / 180.0);
+  const std::complex<double> a2 = std::polar(0.5, -110.0 * std::numbers::pi / 180.0);
+  const json no_port = json::object();
+
+  // Each port driven alone with the default weight, as references.
+  const auto drive_1 = Assemble(json{{"Excitation", 1}}, no_port, 1, true);
+  const auto drive_2 = Assemble(no_port, json{{"Excitation", 2}}, 2, false);
+  const double norm_1 = linalg::Norml2(comm, drive_1.rhs1);
+  const double norm_2 = linalg::Norml2(comm, drive_2.rhs1);
+  REQUIRE(norm_1 > 0.0);
+  REQUIRE(norm_2 > 0.0);
+  CHECK(linalg::Norml2(comm, drive_1.rhs1.Imag()) == 0.0);
+  CHECK(linalg::Norml2(comm, drive_2.rhs1.Imag()) == 0.0);
+
+  // The weights default to one for the excited port and zero for the other.
+  CHECK(drive_1.weight[0] == std::complex<double>(1.0, 0.0));
+  CHECK(drive_1.weight[1] == std::complex<double>(0.0, 0.0));
+  CHECK(drive_1.v_inc[1] == std::complex<double>(0.0, 0.0));
+  CHECK(drive_1.i_inc[1] == std::complex<double>(0.0, 0.0));
+  CHECK(drive_1.p_exc[1] == 0.0);
+
+  SECTION("Both ports in one excitation add with their complex weights")
+  {
+    const auto drive_w = Assemble(
+        json{{"Excitation", 1}, {"ExcitationAmplitude", 2.0}, {"ExcitationPhase", 30.0}},
+        json{{"Excitation", 1}, {"ExcitationAmplitude", 0.5}, {"ExcitationPhase", -110.0}},
+        1, false);
+    const double norm_w = linalg::Norml2(comm, drive_w.rhs1);
+    REQUIRE(norm_w > 0.0);
+    CHECK(linalg::Norml2(comm, drive_w.rhs1.Imag()) > 0.0);
+
+    // RHS1 = a1 RHS1(port 1 alone) + a2 RHS1(port 2 alone).
+    ComplexVector diff(drive_w.rhs1);
+    diff.AXPY(-a1, drive_1.rhs1);
+    diff.AXPY(-a2, drive_2.rhs1);
+    CHECK(linalg::Norml2(comm, diff) <= 1.0e-12 * norm_w);
+
+    // The weights are applied to the excitation and the incident quantities, but not to
+    // the unit-normalized ones.
+    CHECK(std::abs(drive_w.weight[0] - a1) <= 1.0e-15);
+    CHECK(std::abs(drive_w.weight[1] - a2) <= 1.0e-15);
+    CHECK(drive_w.v_exc[0] == drive_1.v_exc[0]);
+    CHECK(drive_w.v_exc[1] == drive_2.v_exc[1]);
+    CHECK(drive_w.p_exc[0] == 1.0);
+    CHECK(drive_w.p_exc[1] == 1.0);
+    const std::array<std::complex<double>, 2> a = {a1, a2};
+    for (int i = 0; i < 2; i++)
+    {
+      CAPTURE(i);
+      REQUIRE(drive_w.v_exc[i] > 0.0);
+      CHECK(std::abs(drive_w.v_inc[i] - a[i] * drive_w.v_exc[i]) <=
+            1.0e-14 * std::abs(a[i]) * drive_w.v_exc[i]);
+      CHECK(std::abs(drive_w.i_inc[i] - a[i] / drive_w.v_exc[i]) <=
+            1.0e-14 * std::abs(a[i]) / drive_w.v_exc[i]);
+    }
+  }
+
+  SECTION("A phase of 180 degrees is a flipped direction")
+  {
+    const auto drive_180 =
+        Assemble(json{{"Excitation", 1}, {"ExcitationPhase", 180.0}}, no_port, 1, false);
+    const auto drive_flip =
+        Assemble(json{{"Excitation", 1}, {"Direction", "-Y"}}, no_port, 1, false);
+
+    // The weight is exactly real, so the imaginary part is not assembled.
+    CHECK(drive_180.weight[0] == std::complex<double>(-1.0, 0.0));
+    CHECK(linalg::Norml2(comm, drive_180.rhs1.Imag()) == 0.0);
+
+    ComplexVector diff(drive_180.rhs1);
+    diff -= drive_flip.rhs1;
+    CHECK(linalg::Norml2(comm, diff) <= 1.0e-12 * norm_1);
+
+    // Also the negative of the unweighted vector.
+    diff.Set(drive_180.rhs1);
+    diff += drive_1.rhs1;
+    CHECK(linalg::Norml2(comm, diff) <= 1.0e-12 * norm_1);
+  }
+
+  SECTION("The amplitude scales the real and time domain excitation")
+  {
+    const auto drive_3 =
+        Assemble(json{{"Excitation", 1}, {"ExcitationAmplitude", 3.0}}, no_port, 1, true);
+    CHECK(drive_3.weight[0] == std::complex<double>(3.0, 0.0));
+    CHECK(linalg::Norml2(comm, drive_3.rhs1.Imag()) == 0.0);
+    CHECK(drive_3.p_exc[0] == 1.0);
+    CHECK(drive_3.v_exc[0] == drive_1.v_exc[0]);
+    CHECK(std::abs(drive_3.v_inc[0] - 3.0 * drive_1.v_exc[0]) <=
+          1.0e-14 * 3.0 * drive_1.v_exc[0]);
+
+    // Frequency domain RHS1.
+    ComplexVector diff(drive_3.rhs1);
+    diff.AXPY(-3.0, drive_1.rhs1);
+    CHECK(linalg::Norml2(comm, diff) <= 1.0e-12 * norm_1);
+
+    // Time domain vector, which also equals the real part of RHS1.
+    REQUIRE(drive_3.rhs_time.Size() == drive_1.rhs_time.Size());
+    Vector diff_time(drive_3.rhs_time);
+    diff_time.Add(-3.0, drive_1.rhs_time);
+    CHECK(linalg::Norml2(comm, diff_time) <= 1.0e-12 * norm_1);
+    Vector diff_real(drive_3.rhs_time);
+    diff_real -= drive_3.rhs1.Real();
+    CHECK(linalg::Norml2(comm, diff_real) <= 1.0e-12 * norm_1);
   }
 }

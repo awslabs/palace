@@ -3,6 +3,7 @@
 
 #include "chebyshev.hpp"
 
+#include <cmath>
 #include <mfem/general/forall.hpp>
 
 namespace palace
@@ -11,20 +12,83 @@ namespace palace
 namespace
 {
 
-double GetLambdaMax(MPI_Comm comm, const Operator &A, const Vector &dinv)
+bool HasFiniteNonzeroDiagonal(MPI_Comm comm, const Vector &real,
+                              const Vector *imag = nullptr)
 {
-  // Assumes A SPD (diag(A) > 0) to use Hermitian eigenvalue solver.
-  DiagonalOperator Dinv(dinv);
-  ProductOperator DinvA(Dinv, A);
-  return linalg::SpectralNorm(comm, DinvA, true);
+  int valid = 1;
+  if (real.Size() > 0)
+  {
+    const auto *R = real.HostRead();
+    const auto *I = imag ? imag->HostRead() : nullptr;
+    for (int i = 0; i < real.Size(); i++)
+    {
+      if (!(std::isfinite(R[i]) && R[i] != 0.0) ||
+          (I && !(std::isfinite(I[i]) && I[i] == 0.0)))
+      {
+        valid = 0;
+        break;
+      }
+    }
+  }
+  Mpi::GlobalMin(1, &valid, comm);
+  return valid;
 }
 
-double GetLambdaMax(MPI_Comm comm, const ComplexOperator &A, const ComplexVector &dinv)
+double LambdaMax(MPI_Comm comm, const Operator &A, const Vector &dinv, Vector &x0)
 {
-  // Assumes A SPD (diag(A) > 0) to use Hermitian eigenvalue solver.
+  // D⁻¹A is generally not Hermitian. With Σ = sgn(D), it is similar to ΣS for the
+  // Hermitian S = |D|⁻¹ᐟ²A|D|⁻¹ᐟ², so ρ(D⁻¹A) ≤ ‖S‖₂, with equality when Σ commutes with S:
+  // for a diagonal of uniform sign (A definite of either sign), and for a negative definite
+  // A with essential DOFs eliminated using a unit diagonal.
+  Vector dinv_sqrt(dinv);
+  dinv_sqrt.Abs();
+  linalg::Sqrt(dinv_sqrt);
+  DiagonalOperator DinvSqrt(dinv_sqrt);
+  ProductOperator ADinvSqrt(A, DinvSqrt);
+  ProductOperator S(DinvSqrt, ADinvSqrt);
+  return linalg::SpectralNorm(comm, S, true, &x0);
+}
+
+double GetLambdaMax(MPI_Comm comm, const Operator &A, const Vector &dinv, Vector &x0)
+{
+  MFEM_VERIFY(HasFiniteNonzeroDiagonal(comm, dinv),
+              "Chebyshev smoother spectral estimation requires a finite, nonzero operator "
+              "diagonal!");
+  return LambdaMax(comm, A, dinv, x0);
+}
+
+double GetLambdaMax(MPI_Comm comm, const ComplexOperator &A, const ComplexVector &dinv,
+                    ComplexVector &x0)
+{
+  if (A.IsReal())
+  {
+    MFEM_VERIFY(HasFiniteNonzeroDiagonal(comm, dinv.Real(), &dinv.Imag()),
+                "Chebyshev smoother spectral estimation requires a finite, nonzero real "
+                "operator diagonal!");
+
+    // Estimate in real arithmetic, which halves the cost, starting from and returning the
+    // real part of x0.
+    const int n = A.Height();
+    Vector x0r;
+    if (x0.Size() == n)
+    {
+      x0r.SetSize(n);
+      x0r.UseDevice(true);
+      x0r = x0.Real();
+    }
+    const double lambda_max = LambdaMax(comm, *A.Real(), dinv.Real(), x0r);
+    if (x0r.Size() == n)
+    {
+      x0.SetSize(n);
+      x0.UseDevice(true);
+      x0.Real() = x0r;
+      x0.Imag() = 0.0;
+    }
+    return lambda_max;
+  }
   ComplexDiagonalOperator Dinv(dinv);
   ComplexProductOperator DinvA(Dinv, A);
-  return linalg::SpectralNorm(comm, DinvA, A.IsReal());
+  return linalg::SpectralNorm(comm, DinvA, false, &x0);
 }
 
 template <bool Transpose = false>
@@ -157,7 +221,7 @@ inline void ApplyOrderK(const double sd, const double sr, const ComplexVector &d
 
 }  // namespace
 
-template <typename OperType>
+template <OperatorType OperType>
 ChebyshevSmoother<OperType>::ChebyshevSmoother(MPI_Comm comm, int smooth_it, int poly_order,
                                                double sf_max)
   : Solver<OperType>(), comm(comm), pc_it(smooth_it), order(poly_order), A(nullptr),
@@ -166,7 +230,7 @@ ChebyshevSmoother<OperType>::ChebyshevSmoother(MPI_Comm comm, int smooth_it, int
   MFEM_VERIFY(order > 0, "Polynomial order for Chebyshev smoothing must be positive!");
 }
 
-template <typename OperType>
+template <OperatorType OperType>
 void ChebyshevSmoother<OperType>::SetOperator(const OperType &op)
 {
   A = &op;
@@ -178,16 +242,18 @@ void ChebyshevSmoother<OperType>::SetOperator(const OperType &op)
   dinv.Reciprocal();
 
   // Set up Chebyshev coefficients using the computed maximum eigenvalue estimate. See
-  // mfem::OperatorChebyshevSmoother or Adams et al. (2003).
-  lambda_max = sf_max * GetLambdaMax(comm, *A, dinv);
-  MFEM_VERIFY(lambda_max > 0.0,
-              "Encountered zero maximum eigenvalue in Chebyshev smoother!");
+  // mfem::OperatorChebyshevSmoother or Adams et al. (2003). The estimate starts from the
+  // dominant vector of the previous operator, which is usually a nearby one (for example,
+  // the next frequency of a driven sweep).
+  lambda_max = sf_max * GetLambdaMax(comm, *A, dinv, lambda_vec);
+  MFEM_VERIFY(std::isfinite(lambda_max) && lambda_max > 0.0,
+              "Encountered invalid maximum eigenvalue in Chebyshev smoother!");
 
   this->height = op.Height();
   this->width = op.Width();
 }
 
-template <typename OperType>
+template <OperatorType OperType>
 void ChebyshevSmoother<OperType>::Mult2(const VecType &x, VecType &y, VecType &r) const
 {
   // Apply smoother: y = y + p(A) (x - A y) .
@@ -219,7 +285,7 @@ void ChebyshevSmoother<OperType>::Mult2(const VecType &x, VecType &y, VecType &r
   }
 }
 
-template <typename OperType>
+template <OperatorType OperType>
 ChebyshevSmoother1stKind<OperType>::ChebyshevSmoother1stKind(MPI_Comm comm, int smooth_it,
                                                              int poly_order, double sf_max,
                                                              double sf_min)
@@ -229,7 +295,7 @@ ChebyshevSmoother1stKind<OperType>::ChebyshevSmoother1stKind(MPI_Comm comm, int 
   MFEM_VERIFY(order > 0, "Polynomial order for Chebyshev smoothing must be positive!");
 }
 
-template <typename OperType>
+template <OperatorType OperType>
 void ChebyshevSmoother1stKind<OperType>::SetOperator(const OperType &op)
 {
   A = &op;
@@ -241,14 +307,15 @@ void ChebyshevSmoother1stKind<OperType>::SetOperator(const OperType &op)
   dinv.Reciprocal();
 
   // Set up Chebyshev coefficients using the computed maximum eigenvalue estimate. The
-  // optimized estimate of lambda_min comes from (2.24) of Phillips and Fischer (2022).
+  // optimized estimate of lambda_min comes from (2.24) of Phillips and Fischer (2022). See
+  // ChebyshevSmoother::SetOperator for the starting vector.
   if (sf_min <= 0.0)
   {
     sf_min = 1.69 / (std::pow(order, 1.68) + 2.11 * order + 1.98);
   }
-  const double lambda_max = sf_max * GetLambdaMax(comm, *A, dinv);
-  MFEM_VERIFY(lambda_max > 0.0,
-              "Encountered zero maximum eigenvalue in Chebyshev smoother!");
+  const double lambda_max = sf_max * GetLambdaMax(comm, *A, dinv, lambda_vec);
+  MFEM_VERIFY(std::isfinite(lambda_max) && lambda_max > 0.0,
+              "Encountered invalid maximum eigenvalue in Chebyshev smoother!");
   const double lambda_min = sf_min * lambda_max;
   theta = 0.5 * (lambda_max + lambda_min);
   delta = 0.5 * (lambda_max - lambda_min);
@@ -257,7 +324,7 @@ void ChebyshevSmoother1stKind<OperType>::SetOperator(const OperType &op)
   this->width = op.Width();
 }
 
-template <typename OperType>
+template <OperatorType OperType>
 void ChebyshevSmoother1stKind<OperType>::Mult2(const VecType &x, VecType &y,
                                                VecType &r) const
 {
