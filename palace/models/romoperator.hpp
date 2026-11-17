@@ -605,9 +605,28 @@ public:
     // and both new directions (with neither and with the new direction, for a sample with
     // one nonzero part).
     std::vector<double> errors;
+
+    // Review prototype: singular values of the part of the sample outside the old basis
+    // (in the basis inner product), relative to the norm of the sample, in decreasing order.
+    std::vector<double> contents;
   };
+  // Review prototype: phase (radians) rotates the sample before its parts are added to the
+  // basis; errors are measured against the unrotated sample.
   SampleUpdate AddSamplePROM(int excitation_idx, double omega, const ComplexVector &u,
-                             double error, double tol, std::string_view node_label);
+                             double error, double tol, std::string_view node_label,
+                             double phase = 0.0);
+
+  // Review prototype for PR 1218 (alternative to the candidate check): add u like
+  // UpdatePROM, then keep only the principal directions of the part of u outside the old
+  // basis whose singular value relative to the norm of u exceeds tau (none, the principal
+  // one, or both). No reduced solve; the kept subspace does not depend on the phase of u.
+  SampleUpdate AddSampleTruncatePROM(int excitation_idx, const ComplexVector &u, double tau,
+                                     std::string_view node_label);
+
+  // Review prototype: singular values, relative to the norm of the last added sample, of its
+  // part outside the first n0 basis vectors, from orth_R (valid right after UpdatePROM
+  // added the basis vectors n0, ...).
+  std::vector<double> NewPartContents(std::size_t n0) const;
 
   // Add solution u to the minimal-rational interpolation for error estimation. MRI are
   // separated by excitation index.

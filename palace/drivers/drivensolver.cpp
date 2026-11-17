@@ -333,7 +333,46 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
     RomOperator::SampleUpdate update;
     if (error)
     {
-      update = prom_op.AddSamplePROM(excitation_idx, omega, E, *error, offline_tol, label);
+      // Review prototype for PR 1218: "None" adds both parts as main does, "Candidates" is
+      // PR 1218, "Truncate" keeps the principal new directions above a content threshold.
+      const auto &check = iodata.solver.driven.adaptive_sample_check;
+      if (check == "Truncate")
+      {
+        update = prom_op.AddSampleTruncatePROM(
+            excitation_idx, E, iodata.solver.driven.adaptive_sample_check_factor * offline_tol,
+            label);
+      }
+      else if (check == "Candidates")
+      {
+        update = prom_op.AddSamplePROM(
+            excitation_idx, omega, E, *error, offline_tol, label,
+            iodata.solver.driven.adaptive_sample_phase * std::numbers::pi / 180.0);
+        if (!update.contents.empty())
+        {
+          Mpi::Print(" PROM sample (Candidates): kept {:d} of {:d} directions (relative "
+                     "contents {:.3e}{})\n",
+                     update.num_kept, update.num_directions, update.contents[0],
+                     (update.contents.size() == 2)
+                         ? fmt::format(", {:.3e}", update.contents[1])
+                         : std::string());
+        }
+      }
+      else
+      {
+        const auto n0 = prom_op.GetReducedDimension();
+        prom_op.UpdatePROM(E, label);
+        update.num_directions = update.num_kept = prom_op.GetReducedDimension() - n0;
+        update.contents = prom_op.NewPartContents(n0);
+        if (!update.contents.empty())
+        {
+          Mpi::Print(" PROM sample (None): added {:d} directions (relative contents "
+                     "{:.3e}{})\n",
+                     update.num_directions, update.contents[0],
+                     (update.contents.size() == 2)
+                         ? fmt::format(", {:.3e}", update.contents[1])
+                         : std::string());
+        }
+      }
     }
     else
     {

@@ -2653,6 +2653,26 @@
           "description": "Weight matrix type for domain orthogonalization when building synthesized circuit matrices.",
           "default": "Energy",
           "x-palace-advanced": true
+        },
+        "AdaptiveSampleCheck": {
+          "type": "string",
+          "enum": ["None", "Candidates", "Truncate"],
+          "description": "Review prototype for PR 1218 (not for merging). How a greedy sample is added to the PROM basis: \"None\" adds both parts as main does, \"Candidates\" is PR 1218, \"Truncate\" keeps the principal directions of the part of the sample outside the basis whose norm relative to the sample exceeds AdaptiveSampleCheckFactor * AdaptiveTol.",
+          "default": "Candidates",
+          "x-palace-advanced": true
+        },
+        "AdaptiveSampleCheckFactor": {
+          "type": "number",
+          "description": "Review prototype for PR 1218: factor c of the threshold c * AdaptiveTol of \"AdaptiveSampleCheck\": \"Truncate\".",
+          "exclusiveMinimum": 0.0,
+          "default": 1.0,
+          "x-palace-advanced": true
+        },
+        "AdaptiveSamplePhase": {
+          "type": "number",
+          "description": "Review prototype for PR 1218 (diagnostic): phase in degrees by which a greedy sample is rotated before its real and imaginary parts are added to the PROM basis. The span of both parts does not depend on it.",
+          "default": 0.0,
+          "x-palace-advanced": true
         }
       },
       "allOf": [

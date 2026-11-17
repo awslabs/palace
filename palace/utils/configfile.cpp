@@ -1366,6 +1366,13 @@ DrivenSolverData::DrivenSolverData(const json &driven)
   adaptive_circuit_synthesis_domain_orthog =
       driven.value("AdaptiveCircuitSynthesisDomainOrthogonalization",
                    adaptive_circuit_synthesis_domain_orthog);
+  adaptive_sample_check = driven.value("AdaptiveSampleCheck", adaptive_sample_check);
+  adaptive_sample_check_factor =
+      driven.value("AdaptiveSampleCheckFactor", adaptive_sample_check_factor);
+  adaptive_sample_phase = driven.value("AdaptiveSamplePhase", adaptive_sample_phase);
+  MFEM_VERIFY(adaptive_sample_check == "None" || adaptive_sample_check == "Candidates" ||
+                  adaptive_sample_check == "Truncate",
+              "Invalid \"AdaptiveSampleCheck\": " << adaptive_sample_check);
 
   MFEM_VERIFY(!(restart != 1 && adaptive_tol > 0.0),
               "\"Restart\" is incompatible with adaptive frequency sweep!");

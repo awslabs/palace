@@ -1383,16 +1383,27 @@ void RomOperator::RestoreReducedState(const ReducedState &state)
 RomOperator::SampleUpdate RomOperator::AddSamplePROM(int excitation_idx, double omega,
                                                      const ComplexVector &u, double error,
                                                      double tol,
-                                                     std::string_view node_label)
+                                                     std::string_view node_label,
+                                                     double phase)
 {
   BlockTimer bt(Timer::CONSTRUCT_PROM);
   MPI_Comm comm = space_op.GetComm();
   SetExcitationIndex(excitation_idx);
   const std::size_t n0 = V.size();
   const ReducedState state = SaveReducedState();
-  UpdatePROM(u, node_label);
+  // Review prototype: the parts added to the basis are those of exp(i phase) u.
+  std::optional<ComplexVector> u_rot;
+  if (phase != 0.0)
+  {
+    u_rot.emplace(u);
+    u_rot->UseDevice(true);
+    *u_rot *= std::polar(1.0, phase);
+  }
+  const ComplexVector &ub = u_rot ? *u_rot : u;
+  UpdatePROM(ub, node_label);
   SampleUpdate update;
   update.num_directions = update.num_kept = V.size() - n0;
+  update.contents = NewPartContents(n0);
   const std::size_t m = update.num_directions;
   if (m == 0)
   {
@@ -1475,7 +1486,7 @@ RomOperator::SampleUpdate RomOperator::AddSamplePROM(int excitation_idx, double 
     RestoreReducedState(state);
     if (best == 2)
     {
-      ComplexVector u_im(u);
+      ComplexVector u_im(ub);
       u_im.UseDevice(true);
       u_im.Real() = 0.0;
       if (!UpdatePROM(u_im, node_label, false))
@@ -1505,6 +1516,89 @@ RomOperator::SampleUpdate RomOperator::AddSamplePROM(int excitation_idx, double 
                     : ((best == 1) ? "only the real part" : "only the imaginary part"),
         err[0], err[1], err[2], err[3]);
   }
+  return update;
+}
+
+std::vector<double> RomOperator::NewPartContents(std::size_t n0) const
+{
+  // Columns n0, ..., n - 1 of orth_R hold the coefficients of the parts of the last sample
+  // in the (orthonormal) basis: their Frobenius norm is the norm of the sample, and their
+  // last rows, the coefficients in the new basis vectors, its part outside the old basis.
+  const auto n = static_cast<Eigen::Index>(V.size());
+  const auto ne = static_cast<Eigen::Index>(n0);
+  const auto m = n - ne;
+  if (m <= 0)
+  {
+    return {};
+  }
+  const Eigen::MatrixXd R = orth_R.block(0, ne, n, m);
+  const double norm_u = R.norm();
+  Eigen::JacobiSVD<Eigen::MatrixXd> svd(R.bottomRows(m));
+  std::vector<double> contents;
+  for (Eigen::Index k = 0; k < m; k++)
+  {
+    contents.push_back(svd.singularValues()(k) / norm_u);
+  }
+  return contents;
+}
+
+RomOperator::SampleUpdate RomOperator::AddSampleTruncatePROM(int excitation_idx,
+                                                             const ComplexVector &u,
+                                                             double tau,
+                                                             std::string_view node_label)
+{
+  BlockTimer bt(Timer::CONSTRUCT_PROM);
+  MPI_Comm comm = space_op.GetComm();
+  SetExcitationIndex(excitation_idx);
+  const std::size_t n0 = V.size();
+  const ReducedState state = SaveReducedState();
+  UpdatePROM(u, node_label);
+  SampleUpdate update;
+  const std::size_t m = V.size() - n0;
+  update.num_directions = update.num_kept = m;
+  if (m == 0)
+  {
+    return update;
+  }
+  update.contents = NewPartContents(n0);
+  std::size_t keep = 0;
+  for (auto c : update.contents)
+  {
+    keep += (c > tau);
+  }
+  if (keep < m)
+  {
+    update.num_kept = keep;
+    if (keep == 0)
+    {
+      RestoreReducedState(state);
+    }
+    else
+    {
+      // m == 2, keep == 1: keep the principal direction of the new part, the part outside
+      // the old basis of w = a Re u + b Im u, with (a, b) the leading right singular vector
+      // of the 2 x 2 block of new coefficients.
+      const auto ne = static_cast<Eigen::Index>(n0);
+      const Eigen::MatrixXd B = orth_R.block(ne, ne, 2, 2);
+      Eigen::JacobiSVD<Eigen::MatrixXd> svd(B, Eigen::ComputeFullV);
+      const double a = svd.matrixV()(0, 0), b = svd.matrixV()(1, 0);
+      RestoreReducedState(state);
+      ComplexVector w(u);
+      w.UseDevice(true);
+      linalg::AXPBY(b, u.Imag(), a, w.Real());
+      w.Imag() = 0.0;
+      if (!UpdatePROM(w, fmt::format("{}_pc", node_label), false))
+      {
+        RestoreReducedState(state);
+        update.num_kept = 0;
+      }
+    }
+  }
+  Mpi::Print(comm,
+             " PROM basis update (Truncate): kept {:d} of {:d} directions (relative "
+             "contents {:.3e}{}, threshold {:.3e})\n",
+             update.num_kept, m, update.contents[0],
+             (m == 2) ? fmt::format(", {:.3e}", update.contents[1]) : std::string(), tau);
   return update;
 }
 

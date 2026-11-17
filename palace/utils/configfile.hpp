@@ -938,6 +938,14 @@ public:
   DomainOrthogonalizationWeight adaptive_circuit_synthesis_domain_orthog =
       DomainOrthogonalizationWeight::ENERGY;
 
+  // Review prototype for PR 1218 (not for merging): how a greedy sample is added to the
+  // PROM basis ("None": both parts, as main; "Candidates": PR 1218; "Truncate": principal
+  // directions of the new part above adaptive_sample_check_factor * adaptive_tol relative to
+  // the sample), and a diagnostic phase rotation (degrees) of greedy samples.
+  std::string adaptive_sample_check = "Candidates";
+  double adaptive_sample_check_factor = 1.0;
+  double adaptive_sample_phase = 0.0;
+
   DrivenSolverData() = default;
   DrivenSolverData(const json &driven);
 };
