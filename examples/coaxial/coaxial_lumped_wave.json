@@ -3,7 +3,12 @@
   {
     "Type": "Driven",
     "Verbose": 2,
-    "Output": "postpro/lumped_wave"
+    "Output": "postpro/lumped_wave",
+    "OutputFormats":
+    {
+      "Paraview": true,
+      "GridFunction": true
+    }
   },
   "Model":
   {

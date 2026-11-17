@@ -210,7 +210,10 @@ When saving fields in the grid function (GLVis) format, the file names have the 
 `Field_xxxxxx.gf.yyyyyy` where `Field` is the variable name of the postprocessed scalar
 or vector field, `xxxxxx` is the six-digit index of the terminal index (electrostatic
 or magnetostatic), time step index (transient), or frequency index (driven or eigenmode),
-and `yyyyyy` is the six-digit index of the rank of the corresponding MPI process.
+and `yyyyyy` is the six-digit index of the rank of the corresponding MPI process. In a
+driven simulation with several excitations, the fields of each excitation are written to a
+subdirectory `excitation_N`, where `N` is the excitation index, as for ParaView, and all
+excitations share the mesh in the directory above.
 
 In addition to the full 3D fields, a ParaView data collection for the boundary mesh and
 fields is also written to disk. The boundary mesh includes all surfaces with prescribed

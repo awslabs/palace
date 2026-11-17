@@ -13,6 +13,7 @@
 #include <complex>
 #include <cstdio>
 #include <filesystem>
+#include <fstream>
 #include <limits>
 #include <map>
 #include <numbers>
@@ -20,6 +21,8 @@
 #include <vector>
 
 #include <Eigen/Dense>
+#include <fmt/format.h>
+#include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
@@ -744,6 +747,58 @@ palace::test::CustomCheck TestWavePortInputImpedance(int port,
       INFO("row " << r + 1 << ": Z" << ii << " = " << Z
                   << ", Z_PV (1 + S) / (1 - S) = " << Z_S);
       CHECK(std::abs(Z - Z_S) <= opts.rtol * std::abs(Z_S));
+    }
+  };
+}
+
+// Grid function output of a driven solve with several excitations. The electric energy
+// density U_e of each excitation k, saved as step 1 in gridfunction/driven/excitation_k,
+// is integrated over the mesh pieces of all ranks, which all excitations share in
+// gridfunction/driven, and must match E_elec[k] of domain-E.csv at the saved frequency.
+// The reference diff of domain-E.csv still runs first.
+palace::test::CustomCheck TestGridFunctionExcitations(int n_ex, double f_save, double L0,
+                                                      double rtol,
+                                                      palace::test::RegressionOptions opts)
+{
+  return [n_ex, f_save, L0, rtol, opts](palace::Table &actual, palace::Table &reference,
+                                        const std::filesystem::path &actual_path)
+  {
+    palace::test::CompareCSVFiles(actual, reference, opts);
+    const auto &f = actual[0].data;
+    const auto row = std::ranges::find(f, f_save) - f.begin();
+    REQUIRE(row < std::ssize(f));
+    const auto gf_dir = actual_path.parent_path() / "gridfunction" / "driven";
+    for (int k = 1; k <= n_ex; k++)
+    {
+      double energy = 0.0;
+      int n_pieces = 0;
+      for (; std::filesystem::exists(gf_dir / fmt::format("mesh.{:06d}", n_pieces));
+           n_pieces++)
+      {
+        const auto gf_path = gf_dir / fmt::format("excitation_{}", k) /
+                             fmt::format("U_e_000001.gf.{:06d}", n_pieces);
+        INFO("grid function: " << gf_path);
+        REQUIRE(std::filesystem::exists(gf_path));
+        std::ifstream mesh_file(gf_dir / fmt::format("mesh.{:06d}", n_pieces));
+        std::ifstream gf_file(gf_path);
+        mfem::Mesh mesh(mesh_file);
+        mfem::GridFunction U_e(&mesh, gf_file);
+        mfem::ConstantCoefficient one(1.0);
+        mfem::LinearForm volume(U_e.FESpace());
+        volume.AddDomainIntegrator(new mfem::DomainLFIntegrator(one));
+        volume.Assemble();
+        energy += volume(U_e) * L0 * L0 * L0;  // Mesh in units of L0
+      }
+      INFO("mesh pieces in " << gf_dir << ": " << n_pieces);
+      REQUIRE(n_pieces > 0);
+      const auto header = fmt::format("E_elec[{}] (J)", k);
+      const auto col = std::ranges::find_if(actual, [&header](const palace::Column &c)
+                                            { return c.header_text == header; });
+      REQUIRE(col != actual.end());
+      const double E_elec = col->data[row];
+      INFO("excitation " << k << ": integral of U_e = " << energy << " J, " << header
+                         << " = " << E_elec);
+      CHECK(std::abs(energy - E_elec) <= rtol * E_elec);
     }
   };
 }
@@ -2227,6 +2282,9 @@ TEST_CASE("coaxial_lumped_wave", "[Serial][Parallel][GPU][Regression]")
   opts.excluded_columns = {"Maximum", "Minimum"};
   // Wave port 2 at its own excitation: Z[2][2] against Z_PV (1 + S22) / (1 - S22).
   opts.custom_checks["port-Z.csv"] = TestWavePortInputImpedance(2, opts);
+  opts.gridfunction_fields = true;
+  opts.custom_checks["domain-E.csv"] =
+      TestGridFunctionExcitations(2, 10.0, 1.0e-3, 1.0e-4, opts);
   palace::test::RunRegressionCase("coaxial", "coaxial_lumped_wave.json", "lumped_wave",
                                   opts);
 }

@@ -94,6 +94,17 @@ std::string OutputFolderName(const ProblemType solver_t)
   }
 }
 
+// Subfolder of the field output of a driven excitation, empty unless there are several.
+fs::path ExcitationFolderName(int ex_idx, std::size_t nr_excitations)
+{
+  if ((nr_excitations > 1) && (ex_idx > 0))
+  {
+    int spacing = 1 + int(std::log10(nr_excitations));
+    return fmt::format(FMT_STRING("excitation_{:0>{}}"), ex_idx, spacing);
+  }
+  return "";
+}
+
 }  // namespace
 
 template <ProblemType solver_t>
@@ -330,14 +341,8 @@ template <ProblemType solver_t>
 void PostOperator<solver_t>::InitializeParaviewDataCollection(int ex_idx)
   requires(solver_t == ProblemType::DRIVEN)
 {
-  fs::path sub_folder_name = "";
-  auto nr_excitations = fem_op->GetPortExcitations().Size();
-  if ((nr_excitations > 1) && (ex_idx > 0))
-  {
-    int spacing = 1 + int(std::log10(nr_excitations));
-    sub_folder_name = fmt::format(FMT_STRING("excitation_{:0>{}}"), ex_idx, spacing);
-  }
-  InitializeParaviewDataCollection(sub_folder_name);
+  InitializeParaviewDataCollection(
+      ExcitationFolderName(ex_idx, fem_op->GetPortExcitations().Size()));
 }
 
 template <ProblemType solver_t>
@@ -1354,8 +1359,19 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
   BlockTimer bt(Timer::POSTPRO_GRIDFUNCTION);
   EnsureFieldCoefficientsSetup();
 
-  // Create output directory if it doesn't exist (node-local filesystem aware).
-  EnsureDirectory(fs::path(gridfunction_output_dir), fem_op->GetComm());
+  // Create output directory if it doesn't exist (node-local filesystem aware). The fields
+  // of a driven excitation go to the same subfolder as for ParaView.
+  fs::path output_dir = gridfunction_output_dir;
+  if constexpr (solver_t == ProblemType::DRIVEN)
+  {
+    const auto sub_folder_name =
+        ExcitationFolderName(measurement_cache.ex_idx, fem_op->GetPortExcitations().Size());
+    if (!sub_folder_name.empty())
+    {
+      output_dir /= sub_folder_name;
+    }
+  }
+  EnsureDirectory(output_dir, fem_op->GetComm());
 
   auto mesh_Lc0 = units.GetMeshLengthRelativeScale();
 
@@ -1387,9 +1403,9 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
 
   auto write_grid_function = [&](const auto &gridfunc, const std::string &name)
   {
-    auto path = fs::path(gridfunction_output_dir) /
-                fmt::format("{}_{:0{}d}.gf.{:0{}d}", name, step, pad_digits_default,
-                            local_rank, pad_digits_default);
+    auto path =
+        output_dir / fmt::format("{}_{:0{}d}.gf.{:0{}d}", name, step, pad_digits_default,
+                                 local_rank, pad_digits_default);
     std::ofstream file(path);
     gridfunc.Save(file);
   };

@@ -307,6 +307,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     the port mode, causing too-small coupling-rate magnitudes and too-large external quality
     factors.
     [PR 1086](https://github.com/awslabs/palace/pull/1086).
+  - Fixed the grid function output of driven simulations with several excitations, where
+    each excitation overwrote the fields of the one before. As for ParaView, the fields of
+    each excitation are now written to a subdirectory `excitation_N` of
+    `gridfunction/driven/`, while the mesh, rank and error indicator files stay in
+    `gridfunction/driven/`. [PR 1221](https://github.com/awslabs/palace/pull/1221).
 
 #### Documentation
 
