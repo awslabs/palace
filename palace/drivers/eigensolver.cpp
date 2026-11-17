@@ -4,7 +4,6 @@
 #include "eigensolver.hpp"
 
 #include <algorithm>
-#include <cmath>
 #include <complex>
 #include <numbers>
 #include <vector>
@@ -38,12 +37,11 @@ using namespace std::complex_literals;
 namespace
 {
 
-// Add the eigenpair (λ, x) of index i to the combinations v = Σᵢ wᵢ xᵢ and, if v_lambda is
-// given, v_lambda = Σᵢ wᵢ λᵢ xᵢ, from which the next adaptation iteration starts (see
-// GetWarmStartVector): the weights have unit norm and golden-ratio phases, so that no
-// eigenvector cancels. Returns whether x was added.
+// Add the eigenpair (λ, x) to the combinations v = Σᵢ xᵢ / ‖xᵢ‖ and, if v_lambda is given,
+// v_lambda = Σᵢ λᵢ xᵢ / ‖xᵢ‖, from which the next adaptation iteration starts. Returns
+// whether x was added.
 bool AddWarmStartEigenvector(MPI_Comm comm, const ComplexVector &x,
-                             std::complex<double> lambda, int i, ComplexVector &v,
+                             std::complex<double> lambda, ComplexVector &v,
                              ComplexVector *v_lambda)
 {
   const double norm = linalg::Norml2(comm, x);
@@ -51,13 +49,10 @@ bool AddWarmStartEigenvector(MPI_Comm comm, const ComplexVector &x,
   {
     return false;
   }
-  const double phase =
-      2.0 * std::numbers::pi * std::fmod(0.5 * (std::sqrt(5.0) - 1.0) * i, 1.0);
-  const std::complex<double> w = std::polar(1.0 / norm, phase);
-  v.AXPY(w, x);
+  v.AXPY(1.0 / norm, x);
   if (v_lambda)
   {
-    v_lambda->AXPY(w * lambda, x);
+    v_lambda->AXPY(lambda / norm, x);
   }
   return true;
 }
@@ -651,11 +646,11 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   const bool combine_eigenvectors =
       can_warm_start && last_cold_its >= min_cold_its && adapt_it < refinement.max_it;
   const bool blocks = (C || has_A2);
-  ComplexVector v_comb, v_comb_lambda, x_comb;
+  ComplexVector v_comb, v_comb_lambda;
   int num_combined = 0;
   if (combine_eigenvectors)
   {
-    for (auto *u : {&v_comb, &v_comb_lambda, &x_comb})
+    for (auto *u : {&v_comb, &v_comb_lambda})
     {
       if (u != &v_comb_lambda || blocks)
       {
@@ -740,10 +735,8 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     linalg::NormalizePhase(space_op.GetComm(), E);
     if (combine_eigenvectors)
     {
-      x_comb = E;
-      linalg::SetSubVector(x_comb, space_op.GetNDDbcTDofLists().back(), 0.0);
-      num_combined += AddWarmStartEigenvector(space_op.GetComm(), x_comb, eigenvalues[i], i,
-                                              v_comb, blocks ? &v_comb_lambda : nullptr);
+      num_combined += AddWarmStartEigenvector(space_op.GetComm(), E, eigenvalues[i], v_comb,
+                                              blocks ? &v_comb_lambda : nullptr);
     }
 
     Curl.Mult(E.Real(), B.Real());
