@@ -23,9 +23,9 @@ first can start from the eigenmodes of the previous one, transferred to the refi
 instead of the start vector of
 [`config["Solver"]["Eigenmode"]["StartVector"]`](../config/reference.md#config-solver-eigenmode-startvector).
 It does so when the last solve without it took at least three Krylov cycles, since a
-warm-started solve takes at least two.
-Such a solve accepts an eigenmode only once its eigenvalue settled between restarts, since
-the error estimate of the eigenvalue solver does not see the error of the linear solves.
+warm-started solve takes at least two. Such a solve accepts an eigenmode only once its
+eigenvalue was present at the previous restart, since the error estimate of the eigenvalue
+solver does not see the error of the linear solves.
 
 Calculations related to
 [energy-participation ratio (EPR) quantization](https://www.nature.com/articles/s41534-021-00461-8)

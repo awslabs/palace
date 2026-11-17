@@ -172,8 +172,8 @@ inline void ConfigureRG(RG rg, PetscReal lr, PetscReal ur, PetscReal li, PetscRe
 PetscErrorCode __eps_convergence_test(EPS eps, PetscScalar eigr, PetscScalar eigi,
                                       PetscReal res, PetscReal *errest, void *ctx)
 {
-  // The relative error estimate (as EPS_CONV_REL), for a Ritz value which also settled
-  // since the previous restart.
+  // The relative error estimate (as EPS_CONV_REL), for a Ritz value which was also present
+  // at the previous restart.
   PetscFunctionBeginUser;
   PetscCall(EPSConvergedRelative(eps, eigr, eigi, res, errest, nullptr));
   static_cast<SlepcEPSSolverBase *>(ctx)->CheckRitzValue(eigr, errest);
