@@ -1129,7 +1129,8 @@ void DrivenSubstructuredSweep::UpdateEnvTerms()
       // S_i (symmetric, by its lower triangle) times column j of W.
       const auto *wj = W.data() + static_cast<std::size_t>(j) * nG;
       auto *y = SW[i].data() + static_cast<std::size_t>(j) * nG;
-      for (int c = 0, q = 0; c < nG; c++)
+      std::size_t q = 0;
+      for (int c = 0; c < nG; c++)
       {
         for (int a = c; a < nG; a++, q++)
         {

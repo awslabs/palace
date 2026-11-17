@@ -1527,7 +1527,8 @@ double DrivenSubstructureModel::Passivity(const std::complex<double> *lower, int
 {
   std::vector<double> A(static_cast<std::size_t>(n) * n, 0.0);
   double f = 0.0;
-  for (int j = 0, q = 0; j < n; j++)
+  std::size_t q = 0;
+  for (int j = 0; j < n; j++)
   {
     for (int i = j; i < n; i++, q++)
     {
@@ -1561,7 +1562,8 @@ bool DrivenSubstructureModel::Passive(const std::complex<double> *lower, int n, 
 {
   std::vector<double> A(static_cast<std::size_t>(n) * n, 0.0);
   double f = 0.0;
-  for (int j = 0, q = 0; j < n; j++)
+  std::size_t q = 0;
+  for (int j = 0; j < n; j++)
   {
     for (int i = j; i < n; i++, q++)
     {

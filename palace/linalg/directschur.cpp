@@ -4,6 +4,7 @@
 #include "directschur.hpp"
 
 #include <algorithm>
+#include <limits>
 #include <numeric>
 #include <utility>
 #include "linalg/superlu.hpp"
@@ -504,36 +505,42 @@ DirectSchurSolver::DirectSchurSolver(MPI_Comm comm, HYPRE_BigInt n_glob, int n_l
       add(j, i, static_cast<int>(e));
     }
   }
+  // The counts and offsets of the exchanges are of entries (each index triplet one MPI
+  // element), whose total on a rank must fit an int.
   send_cnt.assign(nranks, 0);
   send_dsp.assign(nranks, 0);
   recv_cnt.assign(nranks, 0);
   recv_dsp.assign(nranks, 0);
   std::vector<long long> sidx;
+  long long nsend = 0;
   for (int r = 0; r < nranks; r++)
   {
     send_cnt[r] = static_cast<int>(src[r].size());
-    send_dsp[r] = (r == 0) ? 0 : send_dsp[r - 1] + send_cnt[r - 1];
+    send_dsp[r] = static_cast<int>(nsend);
+    nsend += static_cast<long long>(src[r].size());
     send_src.insert(send_src.end(), src[r].begin(), src[r].end());
     sidx.insert(sidx.end(), out[r].begin(), out[r].end());
   }
   MPI_Alltoall(send_cnt.data(), 1, MPI_INT, recv_cnt.data(), 1, MPI_INT, comm);
-  for (int r = 1; r < nranks; r++)
+  long long nrecv_ll = 0;
+  for (int r = 0; r < nranks; r++)
   {
-    recv_dsp[r] = recv_dsp[r - 1] + recv_cnt[r - 1];
+    recv_dsp[r] = static_cast<int>(nrecv_ll);
+    nrecv_ll += recv_cnt[r];
   }
-  const int nrecv = recv_dsp.back() + recv_cnt.back();
+  int fits = (std::max(nsend, nrecv_ll) <= std::numeric_limits<int>::max());
+  Mpi::GlobalMin(1, &fits, comm);
+  MFEM_VERIFY(fits, "Too many entries of the substructured system on a rank (more than "
+                    "2^31)!");
+  const int nrecv = static_cast<int>(nrecv_ll);
   std::vector<long long> ridx(3 * static_cast<std::size_t>(nrecv));
   {
-    std::vector<int> c3(nranks), d3(nranks), rc3(nranks), rd3(nranks);
-    for (int r = 0; r < nranks; r++)
-    {
-      c3[r] = 3 * send_cnt[r];
-      d3[r] = 3 * send_dsp[r];
-      rc3[r] = 3 * recv_cnt[r];
-      rd3[r] = 3 * recv_dsp[r];
-    }
-    MPI_Alltoallv(sidx.data(), c3.data(), d3.data(), MPI_LONG_LONG, ridx.data(), rc3.data(),
-                  rd3.data(), MPI_LONG_LONG, comm);
+    MPI_Datatype triplet;
+    MPI_Type_contiguous(3, MPI_LONG_LONG, &triplet);
+    MPI_Type_commit(&triplet);
+    MPI_Alltoallv(sidx.data(), send_cnt.data(), send_dsp.data(), triplet, ridx.data(),
+                  recv_cnt.data(), recv_dsp.data(), triplet, comm);
+    MPI_Type_free(&triplet);
   }
 
   // The local patterns of A_II and A_IS (CSR, columns sorted), and the slots of the
