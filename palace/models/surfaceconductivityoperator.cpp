@@ -256,14 +256,13 @@ void SurfaceConductivityOperator::AddExtraSystemBdrCoefficients(
 }
 
 void SurfaceConductivityOperator::AddBoundaryMassBdrCoefficients(
-    std::size_t g, MaterialPropertyCoefficient &fb) const
+    std::size_t g, MaterialPropertyCoefficient &fb, double coeff) const
 {
   // ω-independent unit-coefficient boundary mass for group g (the operator that the scalar
-  // i·ω/Z_g(ω) multiplies). Factored out so circuit synthesis can project it once and apply
-  // the frequency dependence as a fitted scalar. No contribution for an inactive group.
+  // i·ω/Z_g(ω) multiplies), times coeff. No contribution for an inactive group.
   if (g < boundaries.size() && std::abs(boundaries[g].sigma) > 0.0)
   {
-    AddCoefficient(g, 1.0, fb);
+    AddCoefficient(g, coeff, fb);
   }
 }
 

@@ -43,10 +43,10 @@ enum class ProblemType : char;
 // surface boundary type, edit the member and both constructors, GetAttrList, HasDamping if
 // it has a damping term, each Add* method to which it contributes a term, and if a term
 // depends on frequency, the list of frequency-dependent terms (sigma_terms and the
-// ExtraSystemBdrMassTerm methods). Outside this class, SpaceOperator names each type for
-// its 3D boundary checks (CheckBoundaryProperties), and
-// config::BoundaryData::GetCrossSectionEdgeAttributes for the boundary edges of 2D
-// cross-sections.
+// ExtraSystemBdrMassTerm methods, from which the summed ExtraSystemBdrMass methods are
+// built). Outside this class, SpaceOperator names each type for its 3D boundary checks
+// (CheckBoundaryProperties), and config::BoundaryData::GetCrossSectionEdgeAttributes for
+// the boundary edges of 2D cross-sections.
 //
 class SurfaceTerms
 {
@@ -60,10 +60,11 @@ private:
   // frequency-dependent boundary mass terms.
   std::vector<std::size_t> sigma_terms;
 
-  // Add the frequency-dependent boundary mass terms (finite conductivity and rational
-  // impedance boundaries) at the real or complex frequency ω.
-  template <typename OmegaType>
-  void AddExtraSystemBdrMassImpl(OmegaType omega, MaterialPropertyCoefficient &fbr,
+  // Add the frequency-dependent boundary mass terms at the (possibly complex) frequency ω,
+  // split into real and imaginary parts, to the boundary coefficient of a vector field or
+  // of a scalar field (see AddExtraSystemBdrMassCoefficients).
+  void AddExtraSystemBdrMassImpl(std::complex<double> omega, bool scalar,
+                                 MaterialPropertyCoefficient &fbr,
                                  MaterialPropertyCoefficient &fbi);
 
 public:
@@ -103,10 +104,18 @@ public:
   void AddScalarDampingBdrCoefficients(double coeff, MaterialPropertyCoefficient &fb);
 
   // Add the frequency-dependent boundary mass terms (finite conductivity and rational
-  // impedance boundaries) at the frequency ω, split into real and imaginary parts. These
-  // are the frequency-dependent terms of a 2D mode solve.
+  // impedance boundaries) at the frequency ω, split into real and imaginary parts, to the
+  // boundary coefficient of a vector field (the tangential trace) or of a scalar field (the
+  // out-of-plane field component of a 2D mode solve), as the damping methods. These are
+  // the frequency-dependent terms of a 2D mode solve. They are the terms of the list
+  // below, each its unit coefficient times the real part of its scale at ω in fbr, then
+  // times the imaginary part in fbi. At a real frequency, a rational impedance boundary
+  // which is not passive warns once.
   void AddExtraSystemBdrMassCoefficients(double omega, MaterialPropertyCoefficient &fbr,
                                          MaterialPropertyCoefficient &fbi);
+  void AddScalarExtraSystemBdrMassCoefficients(double omega,
+                                               MaterialPropertyCoefficient &fbr,
+                                               MaterialPropertyCoefficient &fbi);
 
   // Add all frequency-dependent terms at the frequency ω: the boundary mass terms of
   // AddExtraSystemBdrMassCoefficients (fb) and the second-order absorbing boundary terms
@@ -133,12 +142,13 @@ public:
   // then one for each rational impedance boundary, scaled by i ω / Zs(iω). A term gives
   // the unit coefficient of a vector field (the tangential trace, as
   // AddDampingBdrCoefficients) and that of a scalar field (the out-of-plane field
-  // component of a 2D mode solve, as AddScalarDampingBdrCoefficients); for these types the
-  // two are the same.
+  // component of a 2D mode solve, as AddScalarDampingBdrCoefficients), times coeff; for
+  // these types the two are the same.
   int GetNumExtraSystemBdrMassTerms() const;
-  void AddExtraSystemBdrMassTermCoefficients(int i, MaterialPropertyCoefficient &fb) const;
-  void AddScalarExtraSystemBdrMassTermCoefficients(int i,
-                                                   MaterialPropertyCoefficient &fb) const;
+  void AddExtraSystemBdrMassTermCoefficients(int i, MaterialPropertyCoefficient &fb,
+                                             double coeff = 1.0) const;
+  void AddScalarExtraSystemBdrMassTermCoefficients(int i, MaterialPropertyCoefficient &fb,
+                                                   double coeff = 1.0) const;
   std::complex<double> GetExtraSystemBdrMassTermScale(int i,
                                                       std::complex<double> omega) const;
 

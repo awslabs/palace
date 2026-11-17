@@ -113,11 +113,12 @@ public:
     return EvaluateScalarImpl(group_idx, omega);
   }
 
-  // Add the ω-independent unit-coefficient boundary mass for group `g` to a material
-  // property coefficient. The full per-group contribution to the system matrix at ω is
-  // `(i·ω/Z_g(ω))·(this)`. Used to factor out the ω-independent operator for circuit
-  // synthesis, mirroring WavePortOperator::AddBoundaryMassBdrCoefficients.
-  void AddBoundaryMassBdrCoefficients(std::size_t g, MaterialPropertyCoefficient &fb) const;
+  // Add the ω-independent unit-coefficient boundary mass for group `g`, times coeff, to a
+  // material property coefficient. The full per-group contribution to the system matrix at
+  // ω is `(i·ω/Z_g(ω))·(this)` for coeff = 1, mirroring
+  // WavePortOperator::AddBoundaryMassBdrCoefficients.
+  void AddBoundaryMassBdrCoefficients(std::size_t g, MaterialPropertyCoefficient &fb,
+                                      double coeff = 1.0) const;
 };
 
 }  // namespace palace

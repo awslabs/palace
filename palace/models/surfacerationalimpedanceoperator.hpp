@@ -85,14 +85,20 @@ public:
   const mfem::Array<int> &GetAttrList(int idx) const { return boundaries[idx].attr_list; }
 
   // Stamp a unit coefficient (including the per-attribute crack scaling) for boundary
-  // index idx, so that the assembled boundary mass matrix M_b satisfies: contribution of
-  // boundary idx to A2(λ) = g(λ)·M_b with g = EvalRobinCoefficient(idx, ·). Used by the
-  // nonlinear eigensolver seed to fit or freeze the boundary's Robin coefficient.
-  void AddUnitBdrCoefficients(int idx, MaterialPropertyCoefficient &fb) const;
+  // index idx, times coeff, so that for coeff = 1 the assembled boundary mass matrix M_b
+  // satisfies: contribution of boundary idx to A2(λ) = g(λ)·M_b with
+  // g = EvalRobinCoefficient(idx, ·). Used for the frequency-dependent boundary mass terms
+  // of SurfaceTerms.
+  void AddUnitBdrCoefficients(int idx, MaterialPropertyCoefficient &fb,
+                              double coeff = 1.0) const;
 
   // Evaluate the scalar Robin coefficient g(s) = s·D(s)/N(s) of boundary idx at complex
   // s = iω = λ (nondimensional).
   std::complex<double> EvalRobinCoefficient(int idx, std::complex<double> s) const;
+
+  // Warn (once for each boundary) when the impedance of boundary idx is not passive at the
+  // real frequency ω: Re{Zs(iω)} < 0. Returns whether it warned.
+  bool CheckPassivity(int idx, double omega);
 
   // Evaluate the strictly proper (pole) part R(s)/N(s) of the Robin coefficient of
   // boundary idx, from the long division g = P + R/N. The polynomial part P = g - R/N is

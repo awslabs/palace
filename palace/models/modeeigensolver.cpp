@@ -931,7 +931,7 @@ ModeEigenSolver::AssembleAnnPreconditioner(double omega) const
   {
     MaterialPropertyCoefficient robin_r(max_bdr_attr), robin_i(max_bdr_attr);
     auto &robin_loss = real_pc ? robin_r : robin_i;
-    surface_terms.AddExtraSystemBdrMassCoefficients(omega, robin_r, robin_loss);
+    surface_terms.AddScalarExtraSystemBdrMassCoefficients(omega, robin_r, robin_loss);
     for (auto [robin, fb] : {std::pair{&robin_r, &fbr}, std::pair{&robin_i, &fbi}})
     {
       if (!robin->empty())

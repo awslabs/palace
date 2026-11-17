@@ -192,13 +192,13 @@ mfem::Array<int> SurfaceRationalImpedanceOperator::GetAttrList() const
 }
 
 void SurfaceRationalImpedanceOperator::AddUnitBdrCoefficients(
-    int idx, MaterialPropertyCoefficient &fb) const
+    int idx, MaterialPropertyCoefficient &fb, double coeff) const
 {
   const auto &bdr = boundaries[idx];
   for (auto attr : bdr.attr_list)
   {
     fb.AddMaterialProperty(mat_op.GetCeedBdrAttributes(attr),
-                           1.0 / bdr.attr_scaling.at(attr));
+                           coeff / bdr.attr_scaling.at(attr));
   }
 }
 
@@ -226,7 +226,34 @@ SurfaceRationalImpedanceOperator::EvalRobinCoefficient(int idx,
   MFEM_VERIFY(std::abs(N) > 0.0,
               "Rational impedance boundary has a transmission zero (Zs = 0) at the "
               "evaluation frequency; the admittance iω/Zs is singular!");
-  return s * EvalPoly(bdr.den, s) / N;
+  // s times the surface admittance Ys = 1/Zs = D/N (finite since N != 0). Working with the
+  // admittance directly avoids forming Zs = N/D, which is infinite at an impedance pole (D
+  // = 0) even though the Robin coefficient s·Ys is well-defined (and zero) there.
+  return s * (EvalPoly(bdr.den, s) / N);
+}
+
+bool SurfaceRationalImpedanceOperator::CheckPassivity(int idx, double omega)
+{
+  // Passivity necessary condition on the imaginary axis: Re{Zs} >= 0 <=> Re{Ys} >= 0, with
+  // the surface admittance Ys = 1/Zs = D/N. Warn once per boundary (relative tolerance
+  // avoids false alarms on lossless reactive terminations).
+  auto &bdr = boundaries[idx];
+  if (bdr.warned_passivity)
+  {
+    return false;
+  }
+  const std::complex<double> s(0.0, omega);  // s = iω (nondimensional)
+  const std::complex<double> Y = EvalPoly(bdr.den, s) / EvalPoly(bdr.num, s);
+  if (Y.real() < -1.0e-9 * std::abs(Y))
+  {
+    const double f_ghz = omega * freq_scale / (2.0 * std::numbers::pi);
+    Mpi::Warning("Rational impedance boundary (attribute {:d}) is not passive at "
+                 "f = {:.4f} GHz: Re(Zs) = {:.3e} < 0!\n",
+                 bdr.attr_list.Size() ? bdr.attr_list[0] : -1, f_ghz, (1.0 / Y).real());
+    bdr.warned_passivity = true;
+    return true;
+  }
+  return false;
 }
 
 std::complex<double>

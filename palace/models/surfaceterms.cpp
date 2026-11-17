@@ -90,20 +90,46 @@ void SurfaceTerms::AddScalarDampingBdrCoefficients(double coeff,
   surf_z_op.AddDampingBdrCoefficients(coeff, fb);
 }
 
-template <typename OmegaType>
-void SurfaceTerms::AddExtraSystemBdrMassImpl(OmegaType omega,
+void SurfaceTerms::AddExtraSystemBdrMassImpl(std::complex<double> omega, bool scalar,
                                              MaterialPropertyCoefficient &fbr,
                                              MaterialPropertyCoefficient &fbi)
 {
-  surf_sigma_op.AddExtraSystemBdrCoefficients(omega, fbr, fbi);
-  surf_rz_op.AddExtraSystemBdrCoefficients(omega, fbr, fbi);
+  // Each term is its unit coefficient times its scale at ω: the real part in fbr, then the
+  // imaginary part in fbi, also when one is zero. At a real frequency, a rational impedance
+  // boundary is checked for passivity.
+  const int num_sigma = static_cast<int>(sigma_terms.size());
+  for (int i = 0; i < GetNumExtraSystemBdrMassTerms(); i++)
+  {
+    const std::complex<double> scale = GetExtraSystemBdrMassTermScale(i, omega);
+    if (i >= num_sigma && omega.imag() == 0.0)
+    {
+      surf_rz_op.CheckPassivity(i - num_sigma, omega.real());
+    }
+    if (scalar)
+    {
+      AddScalarExtraSystemBdrMassTermCoefficients(i, fbr, scale.real());
+      AddScalarExtraSystemBdrMassTermCoefficients(i, fbi, scale.imag());
+    }
+    else
+    {
+      AddExtraSystemBdrMassTermCoefficients(i, fbr, scale.real());
+      AddExtraSystemBdrMassTermCoefficients(i, fbi, scale.imag());
+    }
+  }
 }
 
 void SurfaceTerms::AddExtraSystemBdrMassCoefficients(double omega,
                                                      MaterialPropertyCoefficient &fbr,
                                                      MaterialPropertyCoefficient &fbi)
 {
-  AddExtraSystemBdrMassImpl(omega, fbr, fbi);
+  AddExtraSystemBdrMassImpl(omega, false, fbr, fbi);
+}
+
+void SurfaceTerms::AddScalarExtraSystemBdrMassCoefficients(double omega,
+                                                           MaterialPropertyCoefficient &fbr,
+                                                           MaterialPropertyCoefficient &fbi)
+{
+  AddExtraSystemBdrMassImpl(omega, true, fbr, fbi);
 }
 
 void SurfaceTerms::AddExtraSystemBdrCoefficients(
@@ -113,7 +139,7 @@ void SurfaceTerms::AddExtraSystemBdrCoefficients(
     MaterialPropertyCoefficient *fpbr, MaterialPropertyCoefficient *fpbi)
 {
   farfield_op.AddExtraSystemBdrCoefficients(omega, dfbr, dfbi, frbr, frbi, fpbr, fpbi);
-  AddExtraSystemBdrMassImpl(omega, fbr, fbi);
+  AddExtraSystemBdrMassImpl(omega, false, fbr, fbi);
 }
 
 void SurfaceTerms::AddExtraSystemBdrCoefficients(
@@ -124,7 +150,7 @@ void SurfaceTerms::AddExtraSystemBdrCoefficients(
     MaterialPropertyCoefficient *fpbi)
 {
   farfield_op.AddExtraSystemBdrCoefficients(omega, dfbr, dfbi, frbr, frbi, fpbr, fpbi);
-  AddExtraSystemBdrMassImpl(omega, fbr, fbi);
+  AddExtraSystemBdrMassImpl(omega, false, fbr, fbi);
 }
 
 int SurfaceTerms::GetNumExtraSystemBdrMassTerms() const
@@ -132,25 +158,26 @@ int SurfaceTerms::GetNumExtraSystemBdrMassTerms() const
   return static_cast<int>(sigma_terms.size()) + surf_rz_op.GetNumBoundaries();
 }
 
-void SurfaceTerms::AddExtraSystemBdrMassTermCoefficients(
-    int i, MaterialPropertyCoefficient &fb) const
+void SurfaceTerms::AddExtraSystemBdrMassTermCoefficients(int i,
+                                                         MaterialPropertyCoefficient &fb,
+                                                         double coeff) const
 {
   const int num_sigma = static_cast<int>(sigma_terms.size());
   if (i < num_sigma)
   {
-    surf_sigma_op.AddBoundaryMassBdrCoefficients(sigma_terms[i], fb);
+    surf_sigma_op.AddBoundaryMassBdrCoefficients(sigma_terms[i], fb, coeff);
   }
   else
   {
-    surf_rz_op.AddUnitBdrCoefficients(i - num_sigma, fb);
+    surf_rz_op.AddUnitBdrCoefficients(i - num_sigma, fb, coeff);
   }
 }
 
 void SurfaceTerms::AddScalarExtraSystemBdrMassTermCoefficients(
-    int i, MaterialPropertyCoefficient &fb) const
+    int i, MaterialPropertyCoefficient &fb, double coeff) const
 {
   // The coefficients of both types are scalar, the same for both fields.
-  AddExtraSystemBdrMassTermCoefficients(i, fb);
+  AddExtraSystemBdrMassTermCoefficients(i, fb, coeff);
 }
 
 std::complex<double>
