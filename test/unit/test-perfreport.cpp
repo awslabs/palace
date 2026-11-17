@@ -11,6 +11,7 @@
 #include "linalg/iterative.hpp"
 #include "linalg/jacobi.hpp"
 #include "linalg/ksp.hpp"
+#include "linalg/solver.hpp"
 #include "utils/communication.hpp"
 #include "utils/perfreport.hpp"
 #include "utils/timer.hpp"
@@ -276,5 +277,42 @@ TEST_CASE("PerfReport Linear Solver Statistics", "[perfreport][Serial][Parallel]
   CHECK(max("MaxIts") >= 1);
   CHECK(max("NotConverged") == 1);
   CHECK(!r.Metric("LinearSolver/TestOther/Solves", false));
+  BlockTimer::Reset();
+}
+
+TEST_CASE("PerfReport Lazy Coarse Setup", "[perfreport][Serial]")
+{
+  // 1D Laplacian on one process; BoomerAMG sets up at the first apply.
+  constexpr int n = 10;
+  mfem::SparseMatrix S(n, n);
+  for (int i = 0; i < n; i++)
+  {
+    S.Add(i, i, 2.0);
+    if (i > 0)
+    {
+      S.Add(i, i - 1, -1.0);
+    }
+    if (i < n - 1)
+    {
+      S.Add(i, i + 1, -1.0);
+    }
+  }
+  S.Finalize();
+  HYPRE_BigInt row_starts[2] = {0, n};
+  mfem::HypreParMatrix A(Mpi::World(), n, row_starts, &S);
+
+  BlockTimer::Reset();
+  MfemWrapperSolver<Operator> pc(std::make_unique<mfem::HypreBoomerAMG>());
+  pc.EnableSetupTimer();
+  Vector b(n), x(n);
+  b = 1.0;
+  pc.SetOperator(A);
+  CHECK(BlockTimer::GlobalTimer().Counts(Timer::KSP_COARSE_SETUP) == 0);
+  pc.Mult(b, x);
+  pc.Mult(b, x);
+  CHECK(BlockTimer::GlobalTimer().Counts(Timer::KSP_COARSE_SETUP) == 1);
+  pc.SetOperator(A);
+  pc.Mult(b, x);
+  CHECK(BlockTimer::GlobalTimer().Counts(Timer::KSP_COARSE_SETUP) == 2);
   BlockTimer::Reset();
 }

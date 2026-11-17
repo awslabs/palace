@@ -92,8 +92,20 @@ private:
   // Number of small entries dropped by the most recent DropSmallEntries() call.
   int num_dropped_entries = 0;
 
+  // KSP_COARSE_SETUP timing, enabled by the owner when it times itself: of SetOperator for
+  // solvers which factorize there (eager), else of the first Mult after SetOperator.
+  bool time_setup = false, eager_setup = false;
+  mutable bool setup_pending = false;
+
   // Drop small entries.
   void DropSmallEntries();
+
+  void InitEagerSetup();
+
+  // Pass the assembled matrix to the solver, timing an eager factorization.
+  void SetInnerOperator(const mfem::HypreParMatrix &op);
+
+  void Apply(const VecType &x, VecType &y) const;
 
 public:
   MfemWrapperSolver(std::unique_ptr<mfem::Solver> &&pc, bool save_assembled = true,
@@ -103,10 +115,13 @@ public:
       save_assembled(save_assembled), complex_matrix(complex_matrix),
       drop_small_entries(drop_small_entries), reorder_reuse(reorder_reuse)
   {
+    InitEagerSetup();
   }
 
   // Access the underlying solver.
   const mfem::Solver &GetSolver() { return *pc; }
+
+  void EnableSetupTimer() { time_setup = true; }
 
   // Configure whether or not to save the assembled operator.
   void SetSaveAssembled(bool save) { save_assembled = save; }

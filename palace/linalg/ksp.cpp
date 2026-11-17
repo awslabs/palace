@@ -235,6 +235,10 @@ ConfigurePreconditionerSolver(const config::LinearSolverData &linear,
   }
   else
   {
+    if (auto *wrapper = dynamic_cast<MfemWrapperSolver<OperType> *>(pc.get()))
+    {
+      wrapper->EnableSetupTimer();  // Only the primary solver times itself
+    }
     return pc;
   }
 }

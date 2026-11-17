@@ -203,6 +203,16 @@ void GeometricMultigridSolver<OperType>::VCycle(int l, bool initial_guess) const
   B[l]->MultTranspose2(X[l], Y[l], R[l]);
 }
 
+template <OperatorType OperType>
+void GeometricMultigridSolver<OperType>::EnableTimer()
+{
+  use_timer = true;
+  if (auto *coarse = dynamic_cast<MfemWrapperSolver<OperType> *>(B[0].get()))
+  {
+    coarse->EnableSetupTimer();
+  }
+}
+
 template class GeometricMultigridSolver<Operator>;
 template class GeometricMultigridSolver<ComplexOperator>;
 
