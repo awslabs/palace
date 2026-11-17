@@ -9,6 +9,7 @@
 #include <iostream>
 #include <numbers>
 #include <optional>
+#include <string>
 #include <Eigen/Dense>
 #include <fmt/core.h>
 #include <mfem.hpp>
@@ -442,13 +443,15 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
     }
     if (stall.Stalled())
     {
-      Mpi::Warning("Adaptive sampling stopped early: the last {:d} samples, at which the "
-                   "PROM error (at most {:.3e}) exceeds \"AdaptiveTol\" = {:.3e}, were not "
-                   "added to the PROM basis, since with any of their parts the PROM would "
-                   "not be closer to them at their own frequency. The HDM solutions are "
-                   "likely not accurate enough for this tolerance: tighten "
-                   "config[\"Solver\"][\"Linear\"][\"Tol\"] or loosen \"AdaptiveTol\"!\n",
-                   stall.NumSamples(), stall.MaxError(), offline_tol);
+      Mpi::Warning(
+          "Adaptive sampling stopped early: the last {:d} greedy sample{} from converged "
+          "linear solves, at which the PROM error (at most {:.3e}) exceeds \"AdaptiveTol\" "
+          "= {:.3e}, added no direction to the PROM basis: with none of its parts would "
+          "the PROM be closer to such a sample at its own frequency. The HDM solutions "
+          "are likely not accurate enough for this tolerance: tighten "
+          "config[\"Solver\"][\"Linear\"][\"Tol\"] or loosen \"AdaptiveTol\"!\n",
+          stall.NumSamples(), (stall.NumSamples() == 1) ? "" : "s", stall.MaxError(),
+          offline_tol);
     }
     Mpi::Print("\nAdaptive sampling{} {:d} frequency samples:\n"
                " n = {:d}, error = {:.3e}, tol = {:.3e}, memory = {:d}/{:d}\n",
@@ -459,10 +462,25 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
                convergence_memory);
     if (num_rejected + num_partial > 0)
     {
-      Mpi::Print(
-          " {:d} of the samples were not added to the PROM basis, and {:d} only with "
-          "one of their parts\n",
-          num_rejected, num_partial);
+      // Each count is printed only if nonzero.
+      auto samples = [](std::size_t n)
+      {
+        return fmt::format("{:d} sample{} {}", n, (n == 1) ? "" : "s",
+                           (n == 1) ? "was" : "were");
+      };
+      std::string counts;
+      if (num_rejected > 0)
+      {
+        counts = fmt::format("{} not added to the PROM basis", samples(num_rejected));
+      }
+      if (num_partial > 0)
+      {
+        counts += fmt::format("{}{} added {}with only one of {} parts",
+                              counts.empty() ? "" : ", and ", samples(num_partial),
+                              counts.empty() ? "to the PROM basis " : "",
+                              (num_partial == 1) ? "its" : "their");
+      }
+      Mpi::Print(" {}\n", counts);
     }
     utils::PrettyPrint(prom_op.GetSamplePoints(excitation_idx), unit_GHz,
                        " Sampled frequencies (GHz):");
