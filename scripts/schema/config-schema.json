@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:4-3-1",
+  "$id": "urn:palace:schema:4-4-0",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -3067,7 +3067,7 @@
         },
         "ComplexCoarseSolve": {
           "type": "boolean",
-          "description": "When `true`, uses the true complex-valued system matrix for the coarse-level solver. When `false`, uses the real-valued approximation.",
+          "description": "When `true`, uses the true complex-valued system matrix for the coarse-level solver (not supported with AMS or BoomerAMG). When `false`, uses the real-valued approximation.",
           "default": false
         },
         "DropSmallEntries": {

@@ -5,6 +5,8 @@
 
 #if defined(MFEM_USE_STRUMPACK)
 
+#include <complex>
+
 namespace palace
 {
 
@@ -36,6 +38,43 @@ strumpack::CompressionType GetCompressionType(SparseCompression type)
 }
 
 }  // namespace
+
+template <typename ScalarType>
+void ConfigureStrumpackCompression(strumpack::SPOptions<ScalarType> &opts,
+                                   SparseCompression compression, double lr_tol,
+                                   int butterfly_l, int lossy_prec)
+{
+  opts.set_compression(GetCompressionType(compression));
+  switch (compression)
+  {
+    case SparseCompression::ZFP:
+      if (lossy_prec <= 0)
+      {
+        opts.set_compression(strumpack::CompressionType::LOSSLESS);
+      }
+      else
+      {
+        opts.set_lossy_precision(lossy_prec);
+      }
+      break;
+    case SparseCompression::ZFP_BLR_HODLR:
+      opts.set_lossy_precision(lossy_prec);
+    case SparseCompression::HODLR:
+    case SparseCompression::BLR_HODLR:
+      opts.HODLR_options().set_butterfly_levels(butterfly_l);
+    case SparseCompression::HSS:
+    case SparseCompression::BLR:
+      opts.set_compression_rel_tol(lr_tol);
+      break;
+    case SparseCompression::NONE:
+      break;
+  }
+}
+
+template void ConfigureStrumpackCompression(strumpack::SPOptions<double> &,
+                                            SparseCompression, double, int, int);
+template void ConfigureStrumpackCompression(strumpack::SPOptions<std::complex<double>> &,
+                                            SparseCompression, double, int, int);
 
 template <typename StrumpackSolverType>
 StrumpackSolverBase<StrumpackSolverType>::StrumpackSolverBase(
@@ -79,31 +118,8 @@ StrumpackSolverBase<StrumpackSolverType>::StrumpackSolverBase(
       reorder_reuse);  // If true repeated calls use same sparsity pattern
 
   // Configure compression.
-  this->SetCompression(GetCompressionType(compression));
-  switch (compression)
-  {
-    case SparseCompression::ZFP:
-      if (lossy_prec <= 0)
-      {
-        this->SetCompression(strumpack::CompressionType::LOSSLESS);
-      }
-      else
-      {
-        this->SetCompressionLossyPrecision(lossy_prec);
-      }
-      break;
-    case SparseCompression::ZFP_BLR_HODLR:
-      this->SetCompressionLossyPrecision(lossy_prec);
-    case SparseCompression::HODLR:
-    case SparseCompression::BLR_HODLR:
-      this->SetCompressionButterflyLevels(butterfly_l);
-    case SparseCompression::HSS:
-    case SparseCompression::BLR:
-      this->SetCompressionRelTol(lr_tol);
-      break;
-    case SparseCompression::NONE:
-      break;
-  }
+  ConfigureStrumpackCompression(this->solver_->options(), compression, lr_tol, butterfly_l,
+                                lossy_prec);
   // if (mfem::Device::Allows(mfem::Backend::DEVICE_MASK))
   // {
   //   this->EnableGPU();  // XX TODO: GPU support disabled for now
