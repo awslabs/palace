@@ -2485,8 +2485,8 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(err.empty());
 
     IoData iodata2(config, false);
-    CHECK(iodata2.solver.substructuring->factorization_tol ==
-          iodata1.solver.substructuring->factorization_tol);
+    CHECK(iodata2.solver.substructuring->region_mesh ==
+          iodata1.solver.substructuring->region_mesh);
 
     auto sub_gaps = SchemaCoverageGaps("/properties/Solver/properties/Substructuring",
                                        config["Solver"]["Substructuring"]);

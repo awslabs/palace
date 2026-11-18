@@ -151,7 +151,9 @@ inline std::unique_ptr<mfem::Solver> MakeDirectSolver(const IoData &iodata,
 // The partial factorization of the environment, whose Schur complement then needs no
 // solves: by MUMPS or else by STRUMPACK with its Schur complement interface, or only by the
 // one config["Solver"]["Linear"]["Type"] names (none for SuperLU_DIST). Null without one,
-// else name is set to its solver.
+// else name is set to its solver. MUMPS compresses the fronts at round-off (block
+// low-rank), faster than full rank at no loss of accuracy.
+inline constexpr double kEnvBlrTol = 1.0e-14;
 inline std::unique_ptr<SchurSolver<double>>
 MakePartialFactorization(const IoData &iodata,
                          [[maybe_unused]] const mfem::HypreParMatrix &A,
@@ -166,9 +168,8 @@ MakePartialFactorization(const IoData &iodata,
   if (any || type == LinearSolver::MUMPS)
   {
     name = "MUMPS";
-    return std::make_unique<MumpsSchurSolver>(
-        A, schur_vars, iodata.solver.substructuring->factorization_tol, false,
-        iodata.solver.linear.sym_factorization);
+    return std::make_unique<MumpsSchurSolver>(A, schur_vars, kEnvBlrTol, false,
+                                              iodata.solver.linear.sym_factorization);
   }
 #endif
 #if defined(PALACE_WITH_STRUMPACK_SCHUR)

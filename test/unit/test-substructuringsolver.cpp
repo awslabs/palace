@@ -1293,55 +1293,6 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   CHECK(std::abs(E_on(0, 0) - E_off(0, 0)) <= 1.0e-9 * std::abs(E_off(0, 0)));
 }
 
-#if defined(MFEM_USE_MUMPS)
-TEST_CASE("SubstructuringSolver block low-rank environment factorization",
-          "[substructure][Serial][Parallel]")
-{
-  // Solver.Substructuring.FactorizationTol > 0 selects a block low-rank (BLR) MUMPS
-  // environment factorization (the matrix is scaled so the tolerance is relative; the Schur
-  // and the solves are rescaled). On fronts large enough to compress, it changes the
-  // capacitance matrix by about the tolerance, and not more.
-  auto capacitance = [](double tol)
-  {
-    json config = {
-        {"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
-        {"Model", {{"Mesh", "test.msh"}}},
-        {"Domains",
-         {{"Materials",
-           {{{"Attributes", {1}}, {"Permittivity", 1.0}},
-            {{"Attributes", {2}}, {"Permittivity", 10.0}}}}}},
-        {"Boundaries",
-         {{"Terminal",
-           {{{"Index", 1}, {"Attributes", {1}}}, {{"Index", 2}, {"Attributes", {2}}}}}}},
-        {"Solver",
-         {{"Order", 2},
-          {"Substructuring",
-           {{"Region", {{"Attributes", {1}}}},
-            {"Environment", {{"Attributes", {2}}}},
-            {"FactorizationTol", tol}}}}}};
-    IoData iodata(config, false);
-    std::vector<std::unique_ptr<Mesh>> mesh;
-    mesh.push_back(std::make_unique<Mesh>(MakeSplitCube(16)));
-    SubstructuringSolver ss(iodata, mesh);
-    ss.CondenseEnvironment();
-    return ss.CapacitanceMatrix({1, 2});
-  };
-  const mfem::DenseMatrix C0 = capacitance(0.0), C1 = capacitance(1.0e-10);
-  double d = 0.0, m = 0.0;
-  for (int i = 0; i < 2; i++)
-  {
-    for (int j = 0; j < 2; j++)
-    {
-      d = std::max(d, std::abs(C1(i, j) - C0(i, j)));
-      m = std::max(m, std::abs(C0(i, j)));
-    }
-  }
-  CAPTURE(d / m);
-  CHECK(d > 1.0e-12 * m);  // compressed (rounding changes it by about 1e-14)
-  CHECK(d <= 1.0e-6 * m);
-}
-#endif
-
 TEST_CASE_METHOD(palace::test::SharedTempDir, "SubstructuringSolver column orderings",
                  "[substructure][Serial][Parallel]")
 {

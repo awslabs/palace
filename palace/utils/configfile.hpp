@@ -1267,10 +1267,6 @@ public:
   // re-meshing of its region), rather than the full mesh.
   bool region_mesh = false;
 
-  // Relative block low-rank (BLR) tolerance of the MUMPS environment factorization (0:
-  // exact factorization).
-  double factorization_tol = 0.0;
-
   // The sparse direct solver of the factorizations: config["Solver"]["Linear"]["Type"] as
   // given (set by IoData before it resolves the default), DEFAULT for Palace's preference.
   LinearSolver direct_solver = LinearSolver::DEFAULT;

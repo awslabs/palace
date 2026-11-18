@@ -1694,7 +1694,6 @@ SubstructuringData::SubstructuringData(const json &substructuring)
   mode = substructuring.value("Mode", mode);
   save_model = substructuring.value("SaveModel", save_model);
   region_mesh = substructuring.value("RegionMesh", region_mesh);
-  factorization_tol = substructuring.value("FactorizationTol", factorization_tol);
 }
 
 SolverData::SolverData(const json &solver)

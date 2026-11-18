@@ -784,11 +784,6 @@ void SubstructuringSolver::CondenseEnvironment()
   {
     impl->MaterializePartial();
   }
-  if (!loaded && impl->env_partial != "MUMPS" && subcfg.factorization_tol > 0.0)
-  {
-    Mpi::Warning(comm, "Solver.Substructuring.FactorizationTol is only used with the MUMPS "
-                       "environment factorization; the environment is factored exactly!\n");
-  }
   if (!loaded)
   {
     impl->EnsureEnv();  // no-op after a partial factorization (it is the env solver)
@@ -843,11 +838,6 @@ void SubstructuringSolver::CondenseEnvironment()
     if (!impl->env_partial.empty())
     {
       env_solver = fmt::format("{} partial factorization", impl->env_partial);
-      if (impl->env_partial == "MUMPS" && subcfg.factorization_tol > 0.0)
-      {
-        env_solver +=
-            fmt::format(" (block low-rank, tolerance {:.1e})", subcfg.factorization_tol);
-      }
     }
     else
     {

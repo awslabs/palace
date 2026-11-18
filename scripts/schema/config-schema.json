@@ -3003,12 +3003,6 @@
           "type": "boolean",
           "default": false,
           "description": "For an \"Online\" run: the mesh is the mesh of the region written with the model (or a re-meshing of its region), not the full mesh. Either way, the run checks the environment elements of the mesh against the model."
-        },
-        "FactorizationTol": {
-          "type": "number",
-          "minimum": 0,
-          "default": 0,
-          "description": "Relative tolerance for a block low-rank (BLR) approximation of the environment factorization, trading a controlled accuracy loss for a faster factorization; 0 is exact. Only used by the MUMPS partial factorization of the environment, not when \"Solver\"/\"Linear\"/\"Type\" names another solver."
         }
       }
     },
