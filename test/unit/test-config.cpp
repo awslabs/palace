@@ -1924,7 +1924,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
             .complex_coarse_solve);
   }
 
-  SECTION("One-sided multigrid V-cycles resolve from the Krylov solver")
+  SECTION("One-sided multigrid V-cycles resolve from the problem and the Krylov solver")
   {
     // One-sided V-cycles default to eigenmode problems with GMRES and FGMRES, with twice
     // the default smoothing order, and are an error with CG. An explicit order applies as
@@ -1932,6 +1932,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     auto Resolve = [](const char *problem, json linear, int order = 2)
     {
       json solver = {{"Order", order}, {"Linear", std::move(linear)}};
+      json boundaries = json::object();
       if (std::string(problem) == "Eigenmode")
       {
         solver["Eigenmode"] = {{"Target", 1.0}};
@@ -1944,20 +1945,16 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
       {
         solver["Driven"] = {
             {"Samples", {{{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 0.5}}}}};
-      }
-      else if (std::string(problem) == "Transient")
-      {
-        solver["Transient"] = {
-            {"Excitation", "Sinusoidal"}, {"MaxTime", 1.0}, {"TimeStep", 0.01}};
-      }
-      json boundaries = json::object();
-      if (std::string(problem) == "Driven")
-      {
         boundaries["LumpedPort"] = {{{"Index", 1},
                                      {"Attributes", {2}},
                                      {"R", 50.0},
                                      {"Direction", "+X"},
                                      {"Excitation", true}}};
+      }
+      else if (std::string(problem) == "Transient")
+      {
+        solver["Transient"] = {
+            {"Excitation", "Sinusoidal"}, {"MaxTime", 1.0}, {"TimeStep", 0.01}};
       }
       json config = {{"Problem", {{"Type", problem}, {"Output", "test_output"}}},
                      {"Model", {{"Mesh", "test.msh"}}},
