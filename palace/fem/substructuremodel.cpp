@@ -32,7 +32,7 @@ ModelFile ModelFile::Read(const std::string &path, MPI_Comm comm)
     std::ifstream f(path, std::ios::binary | std::ios::ate);
     if (f)
     {
-      const long long end = f.tellg();
+      const long long end = static_cast<long long>(f.tellg());
       f.seekg(0);
       std::uint32_t mv[2] = {0, 0};
       head[0] = 0;
@@ -157,9 +157,9 @@ void ModelFile::Append(const std::string &path, MPI_Comm comm, std::uint32_t tag
         std::ofstream f(path, std::ios::binary | std::ios::app);
         f.write(reinterpret_cast<const char *>(&tag), sizeof(tag));
         f.write(reinterpret_cast<const char *>(&size), sizeof(size));
-        const long long start = f.tellp();
+        const long long start = static_cast<long long>(f.tellp());
         write(f);
-        const long long written = f.tellp() - start;
+        const long long written = static_cast<long long>(f.tellp()) - start;
         f.close();
         if (f.fail())
         {
