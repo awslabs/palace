@@ -534,6 +534,14 @@ download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
   "https://github.com/mfem/mfem/commit/5e9a26308ef95e6a8337f7b266e9a92914adcca0.diff"
   7226ea4e223b0e2bd1bc4b21de93498f22b2d8c1dcb194415a377848f9200cc0
 )
+# https://github.com/mfem/mfem/pull/5686
+# DeviceGroupCommunicator::Exchange synchronizes the device stream before posting the
+# GPU-aware MPI receives into buffers that a previous exchange may still be reading.
+download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
+  mfem_pr5686.diff
+  "https://github.com/mfem/mfem/commit/5bee0d22ad3a88626bf577778aa7b31b28e87db0.diff"
+  da325c815dc513f0bc9fc32c17757e82144eaeee5ad734d8b537e816e630c856
+)
 
 include(ExternalProject)
 ExternalProject_Add(mfem

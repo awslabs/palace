@@ -372,6 +372,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Removed the `PALACE_WITH_GPU_AWARE_MPI` option: *Palace* now asks MPI at runtime whether
     it is GPU aware.
     [PR 1226](https://github.com/awslabs/palace/pull/1226).
+  - Added an MFEM patch for [mfem/mfem#5686](https://github.com/mfem/mfem/pull/5686), which
+    fixes nondeterministic, non-converging multigrid solves of multi-GPU runs with GPU-aware
+    MPI ([#1061](https://github.com/awslabs/palace/issues/1061)).
+    [PR 1226](https://github.com/awslabs/palace/pull/1226).
 
 ## [0.19.0] - 2026-11-02
 

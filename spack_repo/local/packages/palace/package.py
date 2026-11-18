@@ -549,6 +549,14 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 sha256="7226ea4e223b0e2bd1bc4b21de93498f22b2d8c1dcb194415a377848f9200cc0",
                 when="@4.10:",
             ),
+            # https://github.com/mfem/mfem/pull/5686: DeviceGroupCommunicator::Exchange
+            # synchronizes the device stream before the GPU-aware MPI exchange
+            patch(
+                "https://github.com/mfem/mfem/commit/"
+                "5bee0d22ad3a88626bf577778aa7b31b28e87db0.diff",
+                sha256="da325c815dc513f0bc9fc32c17757e82144eaeee5ad734d8b537e816e630c856",
+                when="@4.10.0",
+            ),
         ],
     )
 
