@@ -459,12 +459,15 @@ void AddAuxIntegrators(BilinearForm &a, const MaterialPropertyCoefficient *f,
                               ActiveCoefficient(frb), assemble_q_data);
 }
 
-auto AssembleOperator(
-    const FiniteElementSpace &fespace, const MaterialPropertyCoefficient *df,
-    const MaterialPropertyCoefficient *f, const MaterialPropertyCoefficient *dfb,
-    const MaterialPropertyCoefficient *fb, const MaterialPropertyCoefficient *fp,
-    const MaterialPropertyCoefficient *frb, const MaterialPropertyCoefficient *fpb,
-    bool skip_zeros = false, bool assemble_q_data = false)
+auto AssembleOperator(const AssemblyDomains &domains, const FiniteElementSpace &fespace,
+                      const MaterialPropertyCoefficient *df,
+                      const MaterialPropertyCoefficient *f,
+                      const MaterialPropertyCoefficient *dfb,
+                      const MaterialPropertyCoefficient *fb,
+                      const MaterialPropertyCoefficient *fp,
+                      const MaterialPropertyCoefficient *frb,
+                      const MaterialPropertyCoefficient *fpb, bool skip_zeros = false,
+                      bool assemble_q_data = false)
 {
   BilinearForm a(fespace);
   // System matrices are only ever applied matrix-free (their sums are assembled into
@@ -472,6 +475,7 @@ auto AssembleOperator(
   // exactly zero can be left out of the partially assembled operator.
   a.SkipZeroCoefficientElements();
   AddIntegrators(a, df, f, dfb, fb, fp, frb, fpb, assemble_q_data);
+  domains.Restrict(a);
   return a.Assemble(skip_zeros);
 }
 
@@ -579,13 +583,13 @@ SpaceOperator::GetStiffnessMatrix(Operator::DiagonalPolicy diag_policy)
   std::unique_ptr<Operator> kr, ki;
   if (!empty[0])
   {
-    kr = AssembleOperator(GetNDSpace(), &df, &f, nullptr, &fb, nullptr, nullptr, &fpb,
-                          skip_zeros);
+    kr = AssembleOperator(assembly_domains, GetNDSpace(), &df, &f, nullptr, &fb, nullptr,
+                          nullptr, &fpb, skip_zeros);
   }
   if (!empty[1])
   {
-    ki = AssembleOperator(GetNDSpace(), nullptr, nullptr, nullptr, nullptr, &fc, nullptr,
-                          nullptr, skip_zeros);
+    ki = AssembleOperator(assembly_domains, GetNDSpace(), nullptr, nullptr, nullptr,
+                          nullptr, &fc, nullptr, nullptr, skip_zeros);
   }
   if constexpr (std::is_same_v<OperType, ComplexOperator>)
   {
@@ -627,8 +631,8 @@ SpaceOperator::GetDampingMatrix(Operator::DiagonalPolicy diag_policy)
     return {};
   }
   constexpr bool skip_zeros = false;
-  auto c = AssembleOperator(GetNDSpace(), nullptr, &f, nullptr, &fb, &fp, &frb, nullptr,
-                            skip_zeros);
+  auto c = AssembleOperator(assembly_domains, GetNDSpace(), nullptr, &f, nullptr, &fb, &fp,
+                            &frb, nullptr, skip_zeros);
   if constexpr (std::is_same_v<OperType, ComplexOperator>)
   {
     auto C = std::make_unique<ComplexParOperator>(std::move(c), nullptr, GetNDSpace());
@@ -670,13 +674,13 @@ std::unique_ptr<OperType> SpaceOperator::GetMassMatrix(Operator::DiagonalPolicy 
   std::unique_ptr<Operator> mr, mi;
   if (!empty[0])
   {
-    mr = AssembleOperator(GetNDSpace(), nullptr, &fr, nullptr, &fbr, nullptr, nullptr,
-                          nullptr, skip_zeros);
+    mr = AssembleOperator(assembly_domains, GetNDSpace(), nullptr, &fr, nullptr, &fbr,
+                          nullptr, nullptr, nullptr, skip_zeros);
   }
   if (!empty[1])
   {
-    mi = AssembleOperator(GetNDSpace(), nullptr, &fi, nullptr, &fbi, nullptr, nullptr,
-                          nullptr, skip_zeros);
+    mi = AssembleOperator(assembly_domains, GetNDSpace(), nullptr, &fi, nullptr, &fbi,
+                          nullptr, nullptr, nullptr, skip_zeros);
   }
   if constexpr (std::is_same_v<OperType, ComplexOperator>)
   {
@@ -725,13 +729,13 @@ SpaceOperator::GetExtraSystemMatrix(double omega, Operator::DiagonalPolicy diag_
   std::unique_ptr<Operator> ar, ai;
   if (!empty[0])
   {
-    ar = AssembleOperator(GetNDSpace(), nullptr, nullptr, &dfbr, &fbr, nullptr, &frbr,
-                          &fpbr, skip_zeros);
+    ar = AssembleOperator(assembly_domains, GetNDSpace(), nullptr, nullptr, &dfbr, &fbr,
+                          nullptr, &frbr, &fpbr, skip_zeros);
   }
   if (!empty[1])
   {
-    ai = AssembleOperator(GetNDSpace(), nullptr, nullptr, &dfbi, &fbi, nullptr, &frbi,
-                          &fpbi, skip_zeros);
+    ai = AssembleOperator(assembly_domains, GetNDSpace(), nullptr, nullptr, &dfbi, &fbi,
+                          nullptr, &frbi, &fpbi, skip_zeros);
   }
   if constexpr (std::is_same_v<OperType, ComplexOperator>)
   {
@@ -777,13 +781,13 @@ SpaceOperator::GetExtraSystemMatrix(std::complex<double> omega,
   std::unique_ptr<Operator> ar, ai;
   if (!empty[0])
   {
-    ar = AssembleOperator(GetNDSpace(), nullptr, nullptr, &dfbr, &fbr, nullptr, &frbr,
-                          &fpbr, skip_zeros);
+    ar = AssembleOperator(assembly_domains, GetNDSpace(), nullptr, nullptr, &dfbr, &fbr,
+                          nullptr, &frbr, &fpbr, skip_zeros);
   }
   if (!empty[1])
   {
-    ai = AssembleOperator(GetNDSpace(), nullptr, nullptr, &dfbi, &fbi, nullptr, &frbi,
-                          &fpbi, skip_zeros);
+    ai = AssembleOperator(assembly_domains, GetNDSpace(), nullptr, nullptr, &dfbi, &fbi,
+                          nullptr, &frbi, &fpbi, skip_zeros);
   }
   auto A = std::make_unique<ComplexParOperator>(std::move(ar), std::move(ai), GetNDSpace());
   A->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
@@ -808,8 +812,8 @@ SpaceOperator::GetWavePortBoundaryMassMatrix(int port_idx,
     return {};
   }
   constexpr bool skip_zeros = false;
-  auto m = AssembleOperator(GetNDSpace(), nullptr, nullptr, nullptr, &fb, nullptr, nullptr,
-                            nullptr, skip_zeros);
+  auto m = AssembleOperator(assembly_domains, GetNDSpace(), nullptr, nullptr, nullptr, &fb,
+                            nullptr, nullptr, nullptr, skip_zeros);
   if constexpr (std::is_same_v<OperType, ComplexOperator>)
   {
     auto M_op = std::make_unique<ComplexParOperator>(nullptr, std::move(m), GetNDSpace());
@@ -859,13 +863,13 @@ SpaceOperator::GetFarfieldBoundaryCurlCurlMatrix(Operator::DiagonalPolicy diag_p
   std::unique_ptr<Operator> mr, mi;
   if (!empty[0])
   {
-    mr = AssembleOperator(GetNDSpace(), nullptr, nullptr, &dfr, nullptr, nullptr, &frr,
-                          &fpr, skip_zeros);
+    mr = AssembleOperator(assembly_domains, GetNDSpace(), nullptr, nullptr, &dfr, nullptr,
+                          nullptr, &frr, &fpr, skip_zeros);
   }
   if (!empty[1])
   {
-    mi = AssembleOperator(GetNDSpace(), nullptr, nullptr, &dfi, nullptr, nullptr, &fri,
-                          &fpi, skip_zeros);
+    mi = AssembleOperator(assembly_domains, GetNDSpace(), nullptr, nullptr, &dfi, nullptr,
+                          nullptr, &fri, &fpi, skip_zeros);
   }
   if constexpr (std::is_same_v<OperType, ComplexOperator>)
   {
@@ -907,8 +911,8 @@ SpaceOperator::GetSurfaceConductivityBoundaryMatrix(int group_idx,
     return {};
   }
   constexpr bool skip_zeros = false;
-  auto m = AssembleOperator(GetNDSpace(), nullptr, nullptr, nullptr, &fb, nullptr, nullptr,
-                            nullptr, skip_zeros);
+  auto m = AssembleOperator(assembly_domains, GetNDSpace(), nullptr, nullptr, nullptr, &fb,
+                            nullptr, nullptr, nullptr, skip_zeros);
   if constexpr (std::is_same_v<OperType, ComplexOperator>)
   {
     auto M_op = std::make_unique<ComplexParOperator>(nullptr, std::move(m), GetNDSpace());
@@ -946,8 +950,8 @@ std::unique_ptr<OperType> SpaceOperator::GetRationalImpedanceBoundaryMassMatrix(
     return {};
   }
   constexpr bool skip_zeros = false;
-  auto m = AssembleOperator(GetNDSpace(), nullptr, nullptr, nullptr, &fb, nullptr, nullptr,
-                            nullptr, skip_zeros);
+  auto m = AssembleOperator(assembly_domains, GetNDSpace(), nullptr, nullptr, nullptr, &fb,
+                            nullptr, nullptr, nullptr, skip_zeros);
   if constexpr (std::is_same_v<OperType, ComplexOperator>)
   {
     auto M_op =
@@ -993,8 +997,8 @@ SpaceOperator::GetFloquetRobinBoundaryMassMatrix(int port_idx,
     return {};
   }
   constexpr bool skip_zeros = false;
-  auto m = AssembleOperator(GetNDSpace(), nullptr, nullptr, nullptr, &fb, nullptr, nullptr,
-                            nullptr, skip_zeros);
+  auto m = AssembleOperator(assembly_domains, GetNDSpace(), nullptr, nullptr, nullptr, &fb,
+                            nullptr, nullptr, nullptr, skip_zeros);
   if constexpr (std::is_same_v<OperType, ComplexOperator>)
   {
     auto M_op = std::make_unique<ComplexParOperator>(nullptr, std::move(m), GetNDSpace());
@@ -1504,29 +1508,24 @@ std::unique_ptr<ComplexOperator> SpaceOperator::GetSystemOperator(double omega,
   return A;
 }
 
-SpaceOperator::AssemblyRestriction::AssemblyRestriction(
-    SpaceOperator &op, const std::vector<int> &domain_attrs)
-  : op(op), previous(std::move(op.assembly_domains))
-{
-  op.assembly_domains.emplace(op.GetMesh().GetCeedAttributes(domain_attrs),
-                              op.GetMesh().GetCeedBdrAttributesByNeighbor(domain_attrs));
-}
-
 void SpaceOperator::RestrictToAssemblyDomains(
     std::initializer_list<MaterialPropertyCoefficient *> f,
     std::initializer_list<MaterialPropertyCoefficient *> fb)
 {
-  if (!assembly_domains)
+  const auto *attrs = assembly_domains.Get();
+  if (!attrs)
   {
     return;
   }
+  const auto loc_attr = GetMesh().GetCeedAttributes(*attrs);
+  const auto loc_bdr_attr = GetMesh().GetCeedBdrAttributesByNeighbor(*attrs);
   for (auto *c : f)
   {
-    c->RestrictCoefficient(assembly_domains->first);
+    c->RestrictCoefficient(loc_attr);
   }
   for (auto *c : fb)
   {
-    c->RestrictCoefficient(assembly_domains->second);
+    c->RestrictCoefficient(loc_bdr_attr);
   }
 }
 

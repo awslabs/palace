@@ -310,7 +310,7 @@ DrivenSubstructure::ExtraParts(const Side &side, double omega)
 {
   std::unique_ptr<ComplexOperator> A2;
   {
-    SpaceOperator::AssemblyRestriction restriction(space_op, side.attrs);
+    AssemblyDomains::Restriction restriction(space_op.GetAssemblyDomains(), side.attrs);
     A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO);
   }
   std::vector<std::unique_ptr<mfem::HypreParMatrix>> X(2);
@@ -459,7 +459,7 @@ void DrivenSubstructure::Setup(Side &side, double omega)
   {
     std::unique_ptr<ComplexOperator> A;
     {
-      SpaceOperator::AssemblyRestriction restriction(space_op, side.attrs);
+      AssemblyDomains::Restriction restriction(space_op.GetAssemblyDomains(), side.attrs);
       A = (op == 0)   ? space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ZERO)
           : (op == 1) ? space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO)
                       : space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
@@ -955,7 +955,8 @@ void DrivenSubstructure::AddReducedBasis(const std::vector<ComplexVector> &u)
     {
       std::unique_ptr<ComplexOperator> A;
       {
-        SpaceOperator::AssemblyRestriction restriction(space_op, region.attrs);
+        AssemblyDomains::Restriction restriction(space_op.GetAssemblyDomains(),
+                                                 region.attrs);
         A = (op == 0)   ? space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ZERO)
             : (op == 1) ? space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO)
                         : space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
@@ -1306,7 +1307,7 @@ std::vector<double> DrivenSubstructure::EnvironmentFingerprint(double omega) con
   // A_E(ω) r = (K + iω C - ω² M + A2(ω)) r, partially assembled on the environment.
   std::unique_ptr<ComplexOperator> K, C, M, A2;
   {
-    SpaceOperator::AssemblyRestriction restriction(space_op, env.attrs);
+    AssemblyDomains::Restriction restriction(space_op.GetAssemblyDomains(), env.attrs);
     K = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ZERO);
     C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
     M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);

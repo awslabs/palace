@@ -3086,10 +3086,10 @@ TEST_CASE("SpaceOperator assembly restricted to region and environment",
   const double omega = 1.3;  // nondimensional (the configuration is not nondimensionalized)
   auto assemble = [&](const std::vector<int> *domains)
   {
-    std::optional<SpaceOperator::AssemblyRestriction> restriction;
+    std::optional<AssemblyDomains::Restriction> restriction;
     if (domains)
     {
-      restriction.emplace(space_op, *domains);
+      restriction.emplace(space_op.GetAssemblyDomains(), *domains);
     }
     std::vector<std::unique_ptr<ComplexOperator>> ops;
     ops.push_back(space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ZERO));
@@ -4252,7 +4252,7 @@ TEST_CASE("DrivenSubstructure condenses the environment exactly",
   const std::vector<int> environment = {2};
   std::unique_ptr<ComplexOperator> K, C, M;
   {
-    SpaceOperator::AssemblyRestriction restriction(space_op, environment);
+    AssemblyDomains::Restriction restriction(space_op.GetAssemblyDomains(), environment);
     K = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ZERO);
     C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
     M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
@@ -4269,7 +4269,7 @@ TEST_CASE("DrivenSubstructure condenses the environment exactly",
   {
     std::unique_ptr<ComplexOperator> A2;
     {
-      SpaceOperator::AssemblyRestriction restriction(space_op, environment);
+      AssemblyDomains::Restriction restriction(space_op.GetAssemblyDomains(), environment);
       A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO);
     }
     std::vector<std::complex<double>> A(root ? static_cast<std::size_t>(n) * n : 0);
