@@ -32,6 +32,17 @@ config::SolverData SingleLevel(const config::SolverData &solver)
   return single;
 }
 
+// The native curl-curl operator, with the flux loops on the mesh, whose excitations it
+// forms (see SubstructuringSolver::GetCurlCurlOperator).
+std::unique_ptr<CurlCurlOperator>
+MakeCurlCurlOperator(const IoData &iodata, const std::vector<std::unique_ptr<Mesh>> &mesh)
+{
+  IoData op_iodata(iodata);
+  op_iodata.boundaries = SubstructuringSolver::MeshBoundaries(iodata, mesh.back()->Get());
+  op_iodata.solver = SingleLevel(iodata.solver);
+  return std::make_unique<CurlCurlOperator>(op_iodata, mesh);
+}
+
 std::unique_ptr<LaplaceOperator>
 MakeLaplaceOperator(const IoData &iodata, const std::vector<std::unique_ptr<Mesh>> &mesh)
 {
@@ -173,12 +184,7 @@ SubstructuringSolver::Impl::Impl(const IoData &iodata,
   : iodata(iodata), mesh(*mesh_.back()), parent(mesh.Get()),
     magnetostatic(iodata.problem.type == ProblemType::MAGNETOSTATIC),
     laplace_op(magnetostatic ? nullptr : MakeLaplaceOperator(iodata, mesh_)),
-    curlcurl_op(magnetostatic
-                    ? std::make_unique<CurlCurlOperator>(
-                          SubstructuringSolver::MeshBoundaries(iodata, mesh.Get()),
-                          SingleLevel(iodata.solver), iodata.domains.materials,
-                          iodata.problem.type, iodata.units, mesh_)
-                    : nullptr),
+    curlcurl_op(magnetostatic ? MakeCurlCurlOperator(iodata, mesh_) : nullptr),
     parent_space(magnetostatic ? curlcurl_op->GetNDSpace() : laplace_op->GetH1Space()),
     parent_fes(parent_space.Get())
 {
@@ -649,6 +655,12 @@ SubstructuringSolver::SubstructuringSolver(const IoData &iodata,
                                            const std::vector<std::unique_ptr<Mesh>> &mesh)
   : impl(std::make_unique<Impl>(iodata, mesh))
 {
+}
+
+CurlCurlOperator &SubstructuringSolver::GetCurlCurlOperator()
+{
+  MFEM_VERIFY(impl->curlcurl_op, "GetCurlCurlOperator needs a magnetostatic problem!");
+  return *impl->curlcurl_op;
 }
 
 config::BoundaryData SubstructuringSolver::MeshBoundaries(const IoData &iodata,

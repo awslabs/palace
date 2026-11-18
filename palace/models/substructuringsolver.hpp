@@ -13,6 +13,7 @@
 namespace palace
 {
 
+class CurlCurlOperator;
 class FiniteElementSpaceHierarchy;
 class IoData;
 class Mesh;
@@ -102,6 +103,10 @@ public:
 
   // Global parent true-DOF size.
   long long int GlobalTrueVSize() const;
+
+  // The native curl-curl operator of a magnetostatic problem (on the finest mesh and space
+  // only), which forms its excitations.
+  CurlCurlOperator &GetCurlCurlOperator();
 
   // The finite element spaces of the regular operator (for the problem size).
   const FiniteElementSpaceHierarchy &GetFESpaces() const;

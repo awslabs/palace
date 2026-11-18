@@ -27,9 +27,6 @@ namespace palace
 class IoData;
 class Mesh;
 class Units;
-template <ProblemType T>
-class PostOperator;
-
 namespace config
 {
 
@@ -330,13 +327,9 @@ public:
   // specified excited boundaries.
   void GetCurrentExcitationVector(int idx, Vector &RHS);
 
-  // Assemble flux loop excitation vector for specified flux loop index
-  template <ProblemType T>
-  void GetFluxExcitationVector(int idx, Vector &RHS, PostOperator<T> &post_op);
-
-  template <ProblemType T>
-  void GetFluxExcitationVector(int idx, Vector &RHS, PostOperator<T> &post_op,
-                               Vector *boundary_values);
+  // Assemble flux loop excitation vector for specified flux loop index (and, if
+  // boundary_values is non-null, its fluxoid generator a_h).
+  void GetFluxExcitationVector(int idx, Vector &RHS, Vector *boundary_values = nullptr);
 
   // True if flux loop idx has a London (finite-λ) film. Its flux excitation uses the
   // shifted London sheet penalty ½∫(1/L_ksq)|A_t − a_h|² (RHS = M_sheet·a_h), and the
@@ -351,12 +344,7 @@ public:
   }
 
   // Build the London cut cohomology generator a_h for the given flux loop.
-  template <ProblemType T>
-  Vector SolveSurfaceCurlProblem(int flux_loop_idx, PostOperator<T> &post_op) const;
-
-  template <ProblemType T>
-  void SolveSurfaceCurlProblem(int flux_loop_idx, PostOperator<T> &post_op,
-                               Vector &result) const;
+  Vector SolveSurfaceCurlProblem(int flux_loop_idx) const;
 
   // Get the associated MPI communicator.
   MPI_Comm GetComm() const { return GetNDSpace().GetComm(); }
