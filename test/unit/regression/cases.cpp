@@ -1715,8 +1715,10 @@ TEST_CASE("coaxial_magnetostatic_superconductor", "[Serial][Parallel][GPU][Regre
                                   "magnetostatic_superconductor", opts);
 }
 
-// Parallel-plate line of two London slabs (lambda = t = 0.2 um, gap d = 0.5 um): L matches
-// the exact mu0 l/W (d + 2 lambda coth(t/lambda)) to 1e-9.
+// Two-port line of three London slabs (λ = t = 0.2 μm, gaps d = 0.5 μm, W = 1 μm,
+// ℓ = 4 μm), a port across each gap and the far end shorted: the exact
+// L11 = L22 = μ0 ℓ/W (d + 2λ coth(t/λ)) and M12 = −μ0 ℓ/W λ csch(t/λ), which comes from the
+// middle slab, match to 3e-10.
 TEST_CASE("parallel_plate_london", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
@@ -1729,8 +1731,23 @@ TEST_CASE("parallel_plate_london", "[Serial][Parallel][GPU][Regression]")
                                   "london", opts);
 }
 
+// The same line with Short inactive ports: each self-inductance is the screened L11 −
+// M12²/L22.
+TEST_CASE("parallel_plate_london_short", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = force_default_solver;
+  palace::test::RunRegressionCase("parallel_plate_london",
+                                  "parallel_plate_london_short.json", "london_short", opts);
+}
+
 // The same line with the upper slab replaced by the equivalent one-sided Superconductor
-// sheet: L is unchanged, checking the sum of the sheet and domain kinetic energies.
+// sheet: the inductance matrix is unchanged, checking the sum of the sheet and domain
+// kinetic energies.
 TEST_CASE("parallel_plate_london_sheet", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;

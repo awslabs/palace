@@ -8,20 +8,20 @@
   "Model":
   {
     "Mesh": "mesh/parallel_plate.msh",
-    "L0": 1.0e-6  // μm: slabs t = 0.2, gap d = 0.5, width W = 1, length ℓ = 4
+    "L0": 1.0e-6  // μm: slabs t = 0.2, gaps d = 0.5, width W = 1, length ℓ = 4
   },
   "Domains":
   {
     "Materials":
     [
       {
-        "Attributes": [1, 3],  // The upper slab is replaced by the sheet below it
+        "Attributes": [1, 4],  // The upper slab is replaced by the sheet below it
         "Permeability": 1.0
       },
       {
-        "Attributes": [2],  // Lower slab superconducting
+        "Attributes": [2, 3],  // Lower and middle slabs superconducting
         "Permeability": 1.0,
-        "LondonDepth": 0.2  // λ (μm)
+        "LondonDepth": 0.2     // λ (μm)
       }
     ],
     "Postprocessing":
@@ -34,7 +34,7 @@
         },
         {
           "Index": 2,
-          "Attributes": [2]
+          "Attributes": [2, 3]
         }
       ]
     }
@@ -43,7 +43,7 @@
   {
     "PEC":
     {
-      "Attributes": [2, 4]  // Slab ends at the source, and the shorted far end
+      "Attributes": [2, 4]  // Slab ends at the ports, and the shorted far end
     },
     "Superconductor":
     [
@@ -58,7 +58,12 @@
       {
         "Index": 1,
         "Attributes": [3],
-        "Direction": "+Z"  // Across the gap at the near end
+        "Direction": "+Z"  // Across the lower gap at the near end
+      },
+      {
+        "Index": 2,
+        "Attributes": [7],
+        "Direction": "+Z"  // Across the upper gap at the near end
       }
     ]
   },
