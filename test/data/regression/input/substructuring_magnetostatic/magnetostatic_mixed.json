@@ -15,5 +15,5 @@
     "Magnetostatic": { "Save": 0 },
     "Linear": { "KSPType": "CG", "Tol": 1e-10, "MaxIts": 1000 },
     "Substructuring": { "Region": { "Attributes": [8] }, "Environment": { "Attributes": [1] },
-      "SaveModel": "environment_mixed.model" } }
+      "ModelFile": "environment_mixed.model" } }
 }

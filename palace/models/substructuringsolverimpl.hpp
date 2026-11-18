@@ -452,6 +452,10 @@ struct SubstructuringSolver::Impl
   // DOFs, and the environment is that of the model.
   bool region_only = false;
 
+  // The domain attributes of the environment: those of the configuration, or by default the
+  // attributes of the mesh not in the region.
+  std::vector<int> env_attributes;
+
   std::unique_ptr<substructuring::RegionCondensedOperator> region_op;
   std::unique_ptr<KspSolver> region_ksp;  // CG on the region-condensed operator
 

@@ -14,5 +14,5 @@
     "Magnetostatic": { "Save": 0 },
     "Linear": { "KSPType": "CG", "Tol": 1e-10, "MaxIts": 500 },
     "Substructuring": { "Region": { "Attributes": [1] }, "Environment": { "Attributes": [2] },
-      "SaveModel": "environment_current_london.model" } }
+      "ModelFile": "environment_current_london.model" } }
 }

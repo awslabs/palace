@@ -46,7 +46,8 @@ out in the [reference](../reference.md#Substructuring).
 
 Substructuring is enabled with a
 [`config["Solver"]["Substructuring"]`](../config/reference.md#config-solver-substructuring) block. The
-region and the environment are given by domain attributes, which together must cover the mesh:
+region and the environment are given by domain attributes, which together must cover the mesh
+(`"Environment"` defaults to the domain attributes not in `"Region"`):
 
 ```json
 "Substructuring":
@@ -54,19 +55,19 @@ region and the environment are given by domain attributes, which together must c
   "Region": { "Attributes": [1, 2] },
   "Environment": { "Attributes": [10, 11] },
   "Mode": "Offline",
-  "SaveModel": "postpro/environment.model"
+  "ModelFile": "postpro/environment.model"
 }
 ```
 
-  - `"Mode": "Offline"` condenses the environment and, if `"SaveModel"` is set, writes the
+  - `"Mode": "Offline"` condenses the environment and, if `"ModelFile"` is set, writes the
     environment model to that file.
-  - `"Mode": "Online"` loads the model from `"SaveModel"` and solves only the region. The region
+  - `"Mode": "Online"` loads the model from `"ModelFile"` and solves only the region. The region
     may be re-meshed between runs, as long as the environment and the interface are unchanged.
   - `"RegionMesh": true` tells an `"Online"` run that its mesh is the mesh of the region written
     with the model (see below), not the full mesh.
 
 An `"Offline"` run that saves a model on a conforming mesh (not one from adaptive refinement) also
-writes a mesh of the region next to it (`<model>_region.mesh` for `"SaveModel": "<model>.model"`),
+writes a mesh of the region next to it (`<model>_region.mesh` for `"ModelFile": "<model>.model"`),
 with the few environment elements along the boundary conditions of the environment that reach the
 interface and, in magnetostatics, at the surface currents and flux loops of the environment (with
 the films of the flux loops whole and, if these elements reach a `"TwoSided"` film where it crosses

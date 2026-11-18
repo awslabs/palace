@@ -406,7 +406,7 @@ void SubstructuringSolver::Impl::AppendEnvMoments(const std::string &path,
                                                   const std::vector<char> &written)
 {
   BlockTimer bt(Timer::IO);
-  const auto &env = iodata.solver.substructuring->environment_attributes;
+  const auto &env = env_attributes;
   const std::array<double, 6> m[2] = {ElementMoments(parent, env),
                                       ElementMoments(parent, env, written)};  // collective
   AppendRecord(path, kEnvMeshTag, sizeof(double) * 12,
@@ -649,9 +649,9 @@ std::vector<char> SubstructuringSolver::Impl::WriteRegionMesh(const std::string 
   const std::vector<char> plain =
       broken ? RegionFilmClosure(keep, loop_films) : std::vector<char>();
   const auto &sub = *iodata.solver.substructuring;
-  std::vector<char> written = palace::WriteRegionMesh(
-      path, parent_fes, sub.region_attributes, sub.environment_attributes, keep,
-      iodata.units.GetMeshLengthRelativeScale(), plain);
+  std::vector<char> written =
+      palace::WriteRegionMesh(path, parent_fes, sub.region_attributes, env_attributes, keep,
+                              iodata.units.GetMeshLengthRelativeScale(), plain);
   Mpi::Print(" Writing the mesh of the region for online runs to {}\n", path);
   return written;
 }
@@ -856,11 +856,11 @@ void SubstructuringSolver::Impl::SaveModel(const std::string &model_path, int si
 void SubstructuringSolver::UseModelLength(IoData &iodata, MPI_Comm comm)
 {
   const auto &sub = iodata.solver.substructuring;
-  if (!sub || sub->mode != SubstructuringMode::ONLINE || sub->save_model.empty())
+  if (!sub || sub->mode != SubstructuringMode::ONLINE || sub->model_file.empty())
   {
     return;
   }
-  const double L = Impl::ReadSavedHead(sub->save_model, comm).length;
+  const double L = Impl::ReadSavedHead(sub->model_file, comm).length;
   if (L > 0.0)
   {
     MFEM_VERIFY(!(iodata.model.Lc > 0.0) || std::abs(iodata.model.Lc - L) <= 1.0e-12 * L,

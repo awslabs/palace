@@ -889,10 +889,10 @@ void IoData::CheckConfiguration()
     MFEM_ABORT("Substructuring factors the environment and the region with a sparse direct "
                "solver: build Palace with STRUMPACK, MUMPS or SuperLU_DIST!");
 #endif
-    MFEM_VERIFY(!sub.region_attributes.empty() && !sub.environment_attributes.empty(),
-                "Substructuring requires nonempty Region and Environment attribute sets!");
-    MFEM_VERIFY(sub.mode != SubstructuringMode::ONLINE || !sub.save_model.empty(),
-                "\"Online\" substructuring requires the saved model path \"SaveModel\"!");
+    MFEM_VERIFY(!sub.region_attributes.empty(),
+                "Substructuring requires a nonempty Region attribute set!");
+    MFEM_VERIFY(sub.mode != SubstructuringMode::ONLINE || !sub.model_file.empty(),
+                "\"Online\" substructuring requires the saved model path \"ModelFile\"!");
     MFEM_VERIFY(!sub.region_mesh || sub.mode == SubstructuringMode::ONLINE,
                 "\"RegionMesh\" is for an \"Online\" substructuring run on the mesh of the "
                 "region written with the model!");

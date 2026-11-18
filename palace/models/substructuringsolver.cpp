@@ -211,7 +211,21 @@ SubstructuringSolver::Impl::Impl(const IoData &iodata,
   MFEM_VERIFY(iodata.solver.substructuring,
               "SubstructuringSolver requires a Solver.Substructuring configuration!");
   const auto &sub = *iodata.solver.substructuring;
-  CheckSubstructuringAttributes(parent, sub.region_attributes, sub.environment_attributes);
+  env_attributes = sub.environment_attributes;
+  if (env_attributes.empty())
+  {
+    for (int a : parent.attributes)
+    {
+      if (std::ranges::find(sub.region_attributes, a) == sub.region_attributes.end())
+      {
+        env_attributes.push_back(a);
+      }
+    }
+  }
+  MFEM_VERIFY(!env_attributes.empty() || sub.region_mesh,
+              "The substructuring \"Region\" holds every domain attribute of the mesh: the "
+              "environment is empty!");
+  CheckSubstructuringAttributes(parent, sub.region_attributes, env_attributes);
   if (magnetostatic)
   {
     SetUpBrokenSpace();
@@ -221,7 +235,7 @@ SubstructuringSolver::Impl::Impl(const IoData &iodata,
   {
     ra_arr.Append(a);
   }
-  for (int a : sub.environment_attributes)
+  for (int a : env_attributes)
   {
     ea_arr.Append(a);
   }
@@ -299,13 +313,13 @@ SubstructuringSolver::Impl::Impl(const IoData &iodata,
   // Online, the head of the model and whether the mesh is that of the region.
   std::vector<char> cut(nt, 0);
   double model_eps = 0.0;
-  if (sub.mode == SubstructuringMode::ONLINE && !sub.save_model.empty())
+  if (sub.mode == SubstructuringMode::ONLINE && !sub.model_file.empty())
   {
     {
       BlockTimer bt(Timer::IO);
-      saved = ReadSavedHead(sub.save_model, parent_fes.GetComm());
+      saved = ReadSavedHead(sub.model_file, parent_fes.GetComm());
     }
-    const std::string &model = sub.save_model;
+    const std::string &model = sub.model_file;
     MFEM_VERIFY(saved.version >= 0, "Cannot read the saved substructuring model \""
                                         << model << "\" (run in \"Offline\" mode first)!");
     MFEM_VERIFY(saved.version > 0, "\"" << model
@@ -342,8 +356,8 @@ SubstructuringSolver::Impl::Impl(const IoData &iodata,
                       refinement.GetBoxes().empty() && refinement.GetSpheres().empty(),
                   kRegionMeshRefined);
     }
-    CheckModelMesh(parent, sub.environment_attributes, saved.env_moments,
-                   saved.region_moments, kFingerprintTol, region_only);
+    CheckModelMesh(parent, env_attributes, saved.env_moments, saved.region_moments,
+                   kFingerprintTol, region_only);
     // S_E was condensed with the regularization of the model: the region uses the same.
     model_eps = saved.regularization;
     if (region_only)
@@ -757,7 +771,7 @@ void SubstructuringSolver::CondenseEnvironment()
   // S_E, and save it when a path is set.
   const auto &subcfg = *impl->iodata.solver.substructuring;
   const bool online = (subcfg.mode == SubstructuringMode::ONLINE);
-  const std::string &model_path = subcfg.save_model;
+  const std::string &model_path = subcfg.model_file;
   if (!online && !model_path.empty())
   {
     // Fail before the condensation if the model cannot be written (an existing one is
@@ -1268,9 +1282,9 @@ mfem::DenseMatrix SubstructuringSolver::SourceEnergyMatrix(
     }
     impl->ComputeSourceModes(req_ids, req_src);
     const auto &subcfg = *impl->iodata.solver.substructuring;
-    if (subcfg.mode != SubstructuringMode::ONLINE && !subcfg.save_model.empty())
+    if (subcfg.mode != SubstructuringMode::ONLINE && !subcfg.model_file.empty())
     {
-      impl->AppendSourceModes(subcfg.save_model);
+      impl->AppendSourceModes(subcfg.model_file);
     }
   }
   const int K = static_cast<int>(impl->src_ids.size());
@@ -1527,9 +1541,9 @@ mfem::DenseMatrix SubstructuringSolver::EnergyMatrixDbc(const std::vector<int> &
     }
     impl->ComputeModes(req_ids, req_lifts);
     const auto &subcfg = *impl->iodata.solver.substructuring;
-    if (subcfg.mode != SubstructuringMode::ONLINE && !subcfg.save_model.empty())
+    if (subcfg.mode != SubstructuringMode::ONLINE && !subcfg.model_file.empty())
     {
-      impl->AppendModes(subcfg.save_model);
+      impl->AppendModes(subcfg.model_file);
     }
   }
   const int K = static_cast<int>(impl->mode_ids.size());

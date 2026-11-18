@@ -1688,11 +1688,13 @@ SubstructuringData::SubstructuringData(const json &substructuring)
 {
   region_attributes =
       substructuring.at("Region").at("Attributes").get<std::vector<int>>();  // Required
-  environment_attributes = substructuring.at("Environment")
-                               .at("Attributes")
-                               .get<std::vector<int>>();  // Required
+  if (substructuring.contains("Environment"))
+  {
+    environment_attributes =
+        substructuring.at("Environment").at("Attributes").get<std::vector<int>>();
+  }
   mode = substructuring.value("Mode", mode);
-  save_model = substructuring.value("SaveModel", save_model);
+  model_file = substructuring.value("ModelFile", model_file);
   region_mesh = substructuring.value("RegionMesh", region_mesh);
 }
 

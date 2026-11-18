@@ -152,16 +152,18 @@ TEST_CASE("Config Substructuring", "[config][Serial]")
                     {{"Region", {{"Attributes", {1}}}},
                      {"Environment", {{"Attributes", {2, 3}}}},
                      {"Mode", "Offline"},
-                     {"SaveModel", "env_dtn.dat"}}}};
+                     {"ModelFile", "env_dtn.dat"}}}};
     config::SolverData data(solver);
     REQUIRE(data.substructuring.has_value());
     CHECK(data.substructuring->region_attributes == std::vector<int>{1});
     CHECK(data.substructuring->environment_attributes == std::vector<int>{2, 3});
     CHECK(data.substructuring->mode == SubstructuringMode::OFFLINE);
-    CHECK(data.substructuring->save_model == "env_dtn.dat");
+    CHECK(data.substructuring->model_file == "env_dtn.dat");
     CHECK_FALSE(data.substructuring->region_mesh);
     solver["Substructuring"]["RegionMesh"] = true;
     CHECK(config::SolverData(solver).substructuring->region_mesh);
+    solver["Substructuring"].erase("Environment");
+    CHECK(config::SolverData(solver).substructuring->environment_attributes.empty());
   }
 
   SECTION("Absent block leaves substructuring unset")
@@ -214,7 +216,7 @@ TEST_CASE("Config Substructuring", "[config][Serial]")
                       {{"Region", {{"Attributes", {1}}}},
                        {"Environment", {{"Attributes", {2}}}},
                        {"Mode", "Offline"},
-                       {"SaveModel", "environment.model"}}}}}};
+                       {"ModelFile", "environment.model"}}}}}};
     CHECK_THROWS_WITH(IoData(config, false),
                       Catch::Matchers::ContainsSubstring("\"SaveAdaptMesh\""));
     config["Solver"]["Substructuring"]["Mode"] = "Online";
@@ -259,8 +261,8 @@ TEST_CASE("Config Substructuring", "[config][Serial]")
                        {"Environment", {{"Attributes", {2}}}},
                        {"Mode", "Online"}}}}}};
     CHECK_THROWS_WITH(IoData(config, false),
-                      Catch::Matchers::ContainsSubstring("\"SaveModel\""));
-    config["Solver"]["Substructuring"]["SaveModel"] = "environment.model";
+                      Catch::Matchers::ContainsSubstring("\"ModelFile\""));
+    config["Solver"]["Substructuring"]["ModelFile"] = "environment.model";
     CHECK_NOTHROW(IoData(config, false));
   }
 
@@ -2475,7 +2477,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
                     {{"Substructuring",
                       {{"Region", {{"Attributes", {1}}}},
                        {"Environment", {{"Attributes", {2}}}},
-                       {"SaveModel", "environment.model"}}}}}};
+                       {"ModelFile", "environment.model"}}}}}};
 
     IoData iodata1(config, false);
     config = IoData::ConcretizeDefaults(iodata1, config);

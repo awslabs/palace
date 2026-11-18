@@ -93,7 +93,7 @@
         ]
       },
       "Mode": "Offline",
-      "SaveModel": "postpro/transmon_substructuring_environment.model"
+      "ModelFile": "postpro/transmon_substructuring_environment.model"
     }
   }
 }

@@ -572,7 +572,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
     sub["Region"]["Attributes"] = region_below ? kRegion : kEnvironment;
     sub["Environment"]["Attributes"] = region_below ? kEnvironment : kRegion;
     sub["Mode"] = mode;
-    sub["SaveModel"] = model_path;
+    sub["ModelFile"] = model_path;
     return IoData(config, false);
   };
   // The energy of the surface current, and whether the environment was solved.
@@ -617,7 +617,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
     json config = MagnetostaticConfig(1, true, false);
     auto &sub = config["Solver"]["Substructuring"];
     sub["Mode"] = mode;
-    sub["SaveModel"] = model_path;
+    sub["ModelFile"] = model_path;
     sub["RegionMesh"] = (mode == "Online");
     if (renumbered)
     {
@@ -677,7 +677,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   // A model with a two-sided film crossing the interface on a nonconforming mesh, whose
   // coarse faces have several neighbors, is rejected before the condensation.
   json config = MagnetostaticConfig(1, false, true);
-  config["Solver"]["Substructuring"]["SaveModel"] = (temp_dir / "film_nc.model").string();
+  config["Solver"]["Substructuring"]["ModelFile"] = (temp_dir / "film_nc.model").string();
   IoData iodata(config, false);
   auto mesh = MakeMesh(MakeParitySerial(8, {false, 0, false, true}));
   SubstructuringSolver ss(iodata, mesh);

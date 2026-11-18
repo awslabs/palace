@@ -578,11 +578,14 @@ json IoData::ConcretizeDefaults(const IoData &iodata, json config)
     const auto &sub = *iodata.solver.substructuring;
     auto &j_sub = j_solver["Substructuring"];
     j_sub["Region"]["Attributes"] = sub.region_attributes;
-    j_sub["Environment"]["Attributes"] = sub.environment_attributes;
-    Concretize(j_sub, "Mode", ToString(sub.mode));
-    if (!sub.save_model.empty())
+    if (!sub.environment_attributes.empty())
     {
-      Concretize(j_sub, "SaveModel", sub.save_model);
+      j_sub["Environment"]["Attributes"] = sub.environment_attributes;
+    }
+    Concretize(j_sub, "Mode", ToString(sub.mode));
+    if (!sub.model_file.empty())
+    {
+      Concretize(j_sub, "ModelFile", sub.model_file);
     }
     Concretize(j_sub, "RegionMesh", sub.region_mesh);
   }

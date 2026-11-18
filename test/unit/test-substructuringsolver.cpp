@@ -344,6 +344,51 @@ Vector ClosedCurrent(Mesh &mesh, int order, double x1 = 1.0)
 
 }  // namespace
 
+TEST_CASE("SubstructuringSolver environment defaults to the attributes not in the region",
+          "[substructure][Serial][Parallel]")
+{
+  // Without "Environment", the environment is the domain attributes of the mesh not in the
+  // region: the capacitance matrix is that with the environment given, and a region with
+  // every attribute leaves no environment.
+  auto capacitance = [](const std::vector<int> &region, bool environment)
+  {
+    json config = {
+        {"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains",
+         {{"Materials",
+           {{{"Attributes", {1}}, {"Permittivity", 1.0}},
+            {{"Attributes", {2}}, {"Permittivity", 4.0}}}}}},
+        {"Boundaries",
+         {{"Terminal",
+           {{{"Index", 1}, {"Attributes", {1}}}, {{"Index", 2}, {"Attributes", {2}}}}}}},
+        {"Solver",
+         {{"Order", 1}, {"Substructuring", {{"Region", {{"Attributes", region}}}}}}}};
+    if (environment)
+    {
+      config["Solver"]["Substructuring"]["Environment"] = {{"Attributes", {2}}};
+    }
+    IoData iodata(config, false);
+    std::vector<std::unique_ptr<Mesh>> mesh;
+    mesh.push_back(std::make_unique<Mesh>(MakeSplitCube(4)));
+    SubstructuringSolver ss(iodata, mesh);
+    ss.CondenseEnvironment();
+    return ss.CapacitanceMatrix({1, 2});
+  };
+  const mfem::DenseMatrix C = capacitance({1}, true), C_default = capacitance({1}, false);
+  for (int i = 0; i < 2; i++)
+  {
+    for (int j = 0; j < 2; j++)
+    {
+      CHECK(std::abs(C_default(i, j) - C(i, j)) <= 1.0e-12 * std::abs(C(i, i)));
+    }
+  }
+#if defined(MFEM_USE_EXCEPTIONS)
+  CHECK_THROWS_WITH(capacitance({1, 2}, false),
+                    Catch::Matchers::ContainsSubstring("the environment is empty"));
+#endif
+}
+
 TEST_CASE("SubstructuringSolver reproduces full-domain electrostatics",
           "[substructure][Serial][Parallel]")
 {
@@ -562,7 +607,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
            {{"Region", {{"Attributes", {1}}}},
             {"Environment", {{"Attributes", {2}}}},
             {"Mode", mode},
-            {"SaveModel", model_path},
+            {"ModelFile", model_path},
             {"RegionMesh", region}}}}}};
     if (ground)
     {
@@ -837,7 +882,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
            {{"Region", {{"Attributes", {1}}}},
             {"Environment", {{"Attributes", {2}}}},
             {"Mode", mode},
-            {"SaveModel", path}}}}}};
+            {"ModelFile", path}}}}}};
     return IoData(config, false);
   };
 
@@ -890,7 +935,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
            {{"Region", {{"Attributes", {1}}}},
             {"Environment", {{"Attributes", {2}}}},
             {"Mode", mode},
-            {"SaveModel", model_path}}}}}};
+            {"ModelFile", model_path}}}}}};
     return IoData(config, false);
   };
   auto condense = [](const IoData &iodata, int a, int b)
@@ -958,7 +1003,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
                       {{"Region", {{"Attributes", {1}}}},
                        {"Environment", {{"Attributes", {2, 3}}}},
                        {"Mode", mode},
-                       {"SaveModel", model_path}}}}}};
+                       {"ModelFile", model_path}}}}}};
     return IoData(config, false);
   };
   // The unit cube moved to -0.5 < y < 0.5: the region x < 0.5 (attribute 1), the
@@ -1034,7 +1079,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
                       {{"Region", {{"Attributes", {1}}}},
                        {"Environment", {{"Attributes", {2}}}},
                        {"Mode", mode},
-                       {"SaveModel", model_path}}}}}};
+                       {"ModelFile", model_path}}}}}};
     return IoData(config, false);
   };
   auto condense = [](const IoData &iodata)
@@ -1093,7 +1138,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
                     Catch::Matchers::ContainsSubstring("Cannot read the saved"));
   // A model that cannot be written, found before the condensation.
   IoData unwritable = make_config("Electrostatic", "Offline", 1);
-  unwritable.solver.substructuring->save_model =
+  unwritable.solver.substructuring->model_file =
       (temp_dir / "missing" / "model.bin").string();
   std::vector<std::unique_ptr<Mesh>> mesh;
   mesh.push_back(std::make_unique<Mesh>(MakeGradedSplit(3, 4, 4)));
@@ -1136,7 +1181,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
            {{"Region", {{"Attributes", {1}}}},
             {"Environment", {{"Attributes", {2}}}},
             {"Mode", mode},
-            {"SaveModel", path}}}}}};
+            {"ModelFile", path}}}}}};
     return IoData(config, false);
   };
   const std::vector<int> terms = {1, 2};
@@ -1241,7 +1286,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
            {{"Region", {{"Attributes", {1}}}},
             {"Environment", {{"Attributes", {2}}}},
             {"Mode", mode},
-            {"SaveModel", model_path}}}}}};
+            {"ModelFile", model_path}}}}}};
     return IoData(config, false);
   };
   auto current = [order](Mesh &mesh)
@@ -1316,7 +1361,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "SubstructuringSolver column order
                       {{"Region", {{"Attributes", {1}}}},
                        {"Environment", {{"Attributes", {2}}}},
                        {"Mode", "Offline"},
-                       {"SaveModel", model_path}}}}}};
+                       {"ModelFile", model_path}}}}}};
     IoData iodata(config, false);
     std::vector<std::unique_ptr<Mesh>> mesh;
     mesh.push_back(std::make_unique<Mesh>(MakeWavyTetSplit(4)));
@@ -1365,7 +1410,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
                       {{"Region", {{"Attributes", {1}}}},
                        {"Environment", {{"Attributes", {2}}}},
                        {"Mode", mode},
-                       {"SaveModel", model_path}}}}}};
+                       {"ModelFile", model_path}}}}}};
     return IoData(config, false);
   };
   auto energy = [](const IoData &iodata, std::unique_ptr<mfem::ParMesh> &&pmesh)
@@ -1420,7 +1465,7 @@ TEST_CASE_METHOD(
            {{"Region", {{"Attributes", {1}}}},
             {"Environment", {{"Attributes", {2}}}},
             {"Mode", mode},
-            {"SaveModel", model_path}}}}}};
+            {"ModelFile", model_path}}}}}};
     return IoData(config, false);
   };
   auto capacitance = [](const IoData &iodata, std::unique_ptr<mfem::ParMesh> &&pmesh, int k)
@@ -1501,7 +1546,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
                       {{"Region", {{"Attributes", {1}}}},
                        {"Environment", {{"Attributes", {2}}}},
                        {"Mode", mode},
-                       {"SaveModel", path}}}}}};
+                       {"ModelFile", path}}}}}};
     return IoData(config, false);
   };
   auto capacitance =
@@ -1567,7 +1612,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
            {{"Region", {{"Attributes", {1}}}},
             {"Environment", {{"Attributes", {2}}}},
             {"Mode", mode},
-            {"SaveModel", model_path}}}}}};
+            {"ModelFile", model_path}}}}}};
     if (Lc > 0.0)
     {
       config["Model"]["Lc"] = Lc;
@@ -1630,7 +1675,7 @@ TEST_CASE_METHOD(
            {{"Region", {{"Attributes", {1}}}},
             {"Environment", {{"Attributes", {2}}}},
             {"Mode", mode},
-            {"SaveModel", model_path}}}}}};
+            {"ModelFile", model_path}}}}}};
     return IoData(config, false);
   };
   auto capacitance = [](const IoData &iodata)
@@ -1691,7 +1736,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
            {{"Region", {{"Attributes", {1}}}},
             {"Environment", {{"Attributes", {2}}}},
             {"Mode", mode},
-            {"SaveModel", model_path}}}}}};
+            {"ModelFile", model_path}}}}}};
     return IoData(config, false);
   };
   const std::vector<int> terms = {1, 2};
@@ -1764,7 +1809,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
            {{"Region", {{"Attributes", {1}}}},
             {"Environment", {{"Attributes", {2}}}},
             {"Mode", mode},
-            {"SaveModel", path}}}}}};
+            {"ModelFile", path}}}}}};
     return IoData(config, false);
   };
 
@@ -2194,10 +2239,10 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "SubstructuringSolver London sheet
                       {{"Region", {{"Attributes", {1}}}},
                        {"Environment", {{"Attributes", {2}}}},
                        {"Mode", mode},
-                       {"SaveModel", path.empty() ? model_path : path}}}}}};
+                       {"ModelFile", path.empty() ? model_path : path}}}}}};
     if (!save)
     {
-      config["Solver"]["Substructuring"].erase("SaveModel");
+      config["Solver"]["Substructuring"].erase("ModelFile");
     }
     return IoData(config, false);
   };
@@ -2490,7 +2535,7 @@ void CheckSurfaceCurrentEnergies(const std::filesystem::path &temp_dir, int orde
            {{"Region", {{"Attributes", {1}}}},
             {"Environment", {{"Attributes", {2}}}},
             {"Mode", mode},
-            {"SaveModel", model_path}}}}}};
+            {"ModelFile", model_path}}}}}};
     if (london)
     {
       config["Boundaries"].erase("SurfaceCurrent");  // a port may not be a Superconductor
@@ -2843,7 +2888,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
            {{"Region", {{"Attributes", {1, 3}}}},
             {"Environment", {{"Attributes", {2}}}},
             {"Mode", mode},
-            {"SaveModel", model_path}}}}}};
+            {"ModelFile", model_path}}}}}};
     return IoData(config, false);
   };
   const RegionDesign design{0.5, {0.25, 0.5, 0.5}};
@@ -2924,7 +2969,7 @@ void CheckNonconformingMagnetostaticEnergy(const std::filesystem::path &temp_dir
            {{"Region", {{"Attributes", {1}}}},
             {"Environment", {{"Attributes", {2}}}},
             {"Mode", mode},
-            {"SaveModel", model_path}}}}}};
+            {"ModelFile", model_path}}}}}};
     return IoData(config, false);
   };
   IoData iodata = make_config("Offline");
@@ -3067,7 +3112,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
            {{"Region", {{"Attributes", {1, 3}}}},
             {"Environment", {{"Attributes", {2}}}},
             {"Mode", mode},
-            {"SaveModel", model_path}}}}}};
+            {"ModelFile", model_path}}}}}};
     return IoData(config, false);
   };
   const RegionDesign design{0.5, {0.25, 0.5, 0.5}};
@@ -3196,7 +3241,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
                       {{"Region", {{"Attributes", {1}}}},
                        {"Environment", {{"Attributes", {2}}}},
                        {"Mode", mode},
-                       {"SaveModel", model_path}}}}}};
+                       {"ModelFile", model_path}}}}}};
     return IoData(config, false);
   };
   // J = curl (0, 0, phi) with phi = (x (1 - x) y (1 - y) z (1 - z))^2: divergence-free with
@@ -3621,7 +3666,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
            {{"Region", {{"Attributes", {1, 3}}}},
             {"Environment", {{"Attributes", {2}}}},
             {"Mode", mode},
-            {"SaveModel", model_path}}}}}};
+            {"ModelFile", model_path}}}}}};
     return IoData(config, false);
   };
   const std::vector<int> terms = {1, 2};
@@ -3754,7 +3799,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
     if (!mode.empty())
     {
       config["Solver"]["Substructuring"]["Mode"] = mode;
-      config["Solver"]["Substructuring"]["SaveModel"] = model_path;
+      config["Solver"]["Substructuring"]["ModelFile"] = model_path;
       config["Solver"]["Substructuring"]["RegionMesh"] = (serial != nullptr);
     }
     IoData iodata(config, false);
@@ -3882,7 +3927,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
                       {{"Region", {{"Attributes", {1}}}},
                        {"Environment", {{"Attributes", {2}}}},
                        {"Mode", mode},
-                       {"SaveModel", path}}}}}};
+                       {"ModelFile", path}}}}}};
     return IoData(config, false);
   };
   auto solve = [&](const std::string &mode, const std::string &path, int a, Vector *u)

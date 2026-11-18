@@ -123,10 +123,8 @@ const mfem::HypreParMatrix &SubstructuringSolver::Impl::Aenv()
 {
   if (!A_env)
   {
-    A_env = magnetostatic
-                ? Sum({&Kenv(), has_sheets ? &MsheetEnv() : nullptr, &Denv()})
-                : AssembleTerm(&iodata.solver.substructuring->environment_attributes,
-                               Term::VOLUME);
+    A_env = magnetostatic ? Sum({&Kenv(), has_sheets ? &MsheetEnv() : nullptr, &Denv()})
+                          : AssembleTerm(&env_attributes, Term::VOLUME);
   }
   return *A_env;
 }
@@ -139,8 +137,7 @@ const mfem::HypreParMatrix &SubstructuringSolver::Impl::Kenv()
   }
   if (!K_env)
   {
-    K_env =
-        AssembleTerm(&iodata.solver.substructuring->environment_attributes, Term::VOLUME);
+    K_env = AssembleTerm(&env_attributes, Term::VOLUME);
   }
   return *K_env;
 }
@@ -149,7 +146,7 @@ const mfem::HypreParMatrix &SubstructuringSolver::Impl::Denv()
 {
   if (!D_env)
   {
-    D_env = AssembleTerm(&iodata.solver.substructuring->environment_attributes, Term::MASS);
+    D_env = AssembleTerm(&env_attributes, Term::MASS);
   }
   return *D_env;
 }
@@ -167,8 +164,7 @@ const mfem::HypreParMatrix &SubstructuringSolver::Impl::MsheetEnv()
 {
   if (!M_sheet_env)
   {
-    M_sheet_env =
-        AssembleTerm(&iodata.solver.substructuring->environment_attributes, Term::SHEETS);
+    M_sheet_env = AssembleTerm(&env_attributes, Term::SHEETS);
   }
   return *M_sheet_env;
 }
@@ -197,7 +193,7 @@ SubstructuringSolver::Impl::EnvApply(const std::vector<const mfem::Vector *> &X,
   auto &op = volume ? env_op : env_sheet_op;
   if (!M && !op)
   {
-    const auto *env = &iodata.solver.substructuring->environment_attributes;
+    const auto *env = &env_attributes;
     auto sum = std::make_unique<SumOperator>(nt, nt);
     for (auto term : volume ? std::vector<Term>{Term::VOLUME, Term::SHEETS, Term::MASS}
                             : std::vector<Term>{Term::SHEETS})
