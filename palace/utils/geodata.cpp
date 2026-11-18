@@ -286,18 +286,19 @@ std::unique_ptr<mfem::Mesh> Load(IoData &iodata, MPI_Comm comm)
   if (Mpi::Root(comm) && conforming && !iodata.boundaries.conductivity.empty() &&
       !iodata.model.crack_bdr_elements.has_value() &&
       (iodata.problem.type == ProblemType::DRIVEN ||
-       iodata.problem.type == ProblemType::EIGENMODE))
+       iodata.problem.type == ProblemType::EIGENMODE ||
+       iodata.problem.type == ProblemType::BOUNDARYMODE))
   {
-    const auto attrs = GetDefaultConductivitySheetAttributes(
-        *smesh, iodata.boundaries.conductivity, iodata.domains.materials);
+    const auto attrs =
+        GetDefaultConductivitySheetAttributes(*smesh, iodata.boundaries.conductivity);
     if (!attrs.empty())
     {
       Mpi::Print(comm, "\n");
       Mpi::Warning(
           comm,
-          "Interior \"Conductivity\" boundaries without \"Crack\" or \"Thickness\" "
-          "between non-conducting domains are a single sheet with the admittance of "
-          "both conductor faces (\"Crack\": false, the default since Palace 0.19.0)!\n"
+          "Interior \"Conductivity\" boundaries without \"Crack\" are a single sheet "
+          "with the admittance of both conductor faces (\"Crack\": false, the default "
+          "since Palace 0.19.0)!\n"
           "A conductor meshed as a dielectric volume enclosed by these boundaries, or "
           "much thicker than the skin depth with current on one face, has a lower "
           "loss than with the cracked mesh of previous versions. Set \"Crack\": true "
@@ -348,76 +349,35 @@ std::unique_ptr<mfem::Mesh> Load(IoData &iodata, MPI_Comm comm)
 }
 
 std::vector<int> GetDefaultConductivitySheetAttributes(
-    const mfem::Mesh &mesh, const std::vector<config::ConductivityData> &conductivity,
-    const std::vector<config::MaterialData> &materials)
+    const mfem::Mesh &mesh, const std::vector<config::ConductivityData> &conductivity)
 {
-  // Boundary attributes of conductivity boundaries which are uncracked sheets by default.
-  std::unordered_set<int> candidate_attrs;
-  for (const auto &data : conductivity)
-  {
-    if (!data.crack && !data.crack_given && data.h == 0.0)
-    {
-      candidate_attrs.insert(data.attributes.begin(), data.attributes.end());
-    }
-  }
-  if (candidate_attrs.empty())
+  const int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+  if (bdr_attr_max == 0)
   {
     return {};
   }
 
-  // Domain attributes with a material, and those of the materials which are conducting
-  // (conductivity or London depth).
-  std::unordered_set<int> known_domains, conducting_domains;
-  const auto is_nonzero = [](double s) { return s != 0.0; };
-  for (const auto &data : materials)
+  // Unmark the attributes of which all boundary elements are interior, as for the interior
+  // sheets of SurfaceConductivityOperator.
+  mfem::Array<int> marker(bdr_attr_max);
+  marker = 1;
+  mesh.UnmarkInternalBoundaries(marker, true);
+  std::set<int> attrs;
+  for (const auto &data : conductivity)
   {
-    known_domains.insert(data.attributes.begin(), data.attributes.end());
-    const bool conducting =
-        data.lambda_L != 0.0 || std::ranges::any_of(data.sigma.s, is_nonzero);
-    if (conducting)
-    {
-      conducting_domains.insert(data.attributes.begin(), data.attributes.end());
-    }
-  }
-
-  // An attribute is reported if all of its boundary elements are interior, and have a
-  // domain without a material or with a conducting material on neither side.
-  std::set<int> seen_attrs, exterior_attrs, conductor_attrs;
-  for (int be = 0; be < mesh.GetNBE(); be++)
-  {
-    const int attr = mesh.GetBdrAttribute(be);
-    if (candidate_attrs.find(attr) == candidate_attrs.end())
+    if (data.crack_given)
     {
       continue;
     }
-    seen_attrs.insert(attr);
-    int e1, e2;
-    mesh.GetFaceElements(mesh.GetBdrElementFaceIndex(be), &e1, &e2);
-    if (e1 < 0 || e2 < 0)
+    for (const int attr : data.attributes)
     {
-      exterior_attrs.insert(attr);
-      continue;
-    }
-    for (const int e : {e1, e2})
-    {
-      const int domain_attr = mesh.GetAttribute(e);
-      if (conducting_domains.find(domain_attr) != conducting_domains.end() ||
-          known_domains.find(domain_attr) == known_domains.end())
+      if (attr > 0 && attr <= bdr_attr_max && !marker[attr - 1])
       {
-        conductor_attrs.insert(attr);
+        attrs.insert(attr);
       }
     }
   }
-  std::vector<int> attrs;
-  for (const int attr : seen_attrs)
-  {
-    if (exterior_attrs.find(attr) == exterior_attrs.end() &&
-        conductor_attrs.find(attr) == conductor_attrs.end())
-    {
-      attrs.push_back(attr);
-    }
-  }
-  return attrs;
+  return {attrs.begin(), attrs.end()};
 }
 
 std::unique_ptr<mfem::ParMesh> Partition(IoData &iodata, std::unique_ptr<mfem::Mesh> smesh,

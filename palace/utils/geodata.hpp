@@ -22,7 +22,6 @@ namespace config
 {
 
 struct ConductivityData;
-struct MaterialData;
 
 }  // namespace config
 
@@ -41,13 +40,10 @@ namespace mesh
 // submesh extraction).
 std::unique_ptr<mfem::Mesh> Load(IoData &iodata, MPI_Comm comm);
 
-// Interior conductivity boundary attributes modeled as uncracked sheets by default (no
-// "Crack" and no "Thickness"), with non-conducting domains on both sides on all of their
-// elements: a conductor meshed as a dielectric volume enclosed by its surface changed
-// results with the default "Crack": false. Serial mesh, no communication.
+// Interior conductivity boundary attributes without "Crack" (all of their elements are
+// interior), which are uncracked sheets by default. Serial mesh, no communication.
 std::vector<int> GetDefaultConductivitySheetAttributes(
-    const mfem::Mesh &mesh, const std::vector<config::ConductivityData> &conductivity,
-    const std::vector<config::MaterialData> &materials);
+    const mfem::Mesh &mesh, const std::vector<config::ConductivityData> &conductivity);
 
 // Partition and distribute a serial mesh prepared by Load, producing a parallel mesh.
 // `smesh` is non-null only on loading ranks (see Load's contract).

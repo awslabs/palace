@@ -166,11 +166,9 @@ charge:
     Since *Palace* 0.19.0, the default `"Crack": false` also applies to conductivity
     boundaries which enclose a conductor meshed as a dielectric volume (a shell), where the
     mesh was previously cracked. The conductor loss is then lower than with previous
-    versions. A warning lists the interior conductivity boundaries without `"Crack"` and
-    `"Thickness"` between non-conducting domains: set `"Crack": true` to restore the previous
-    model, or `"Crack": false` to keep the sheet model and silence the warning. Boundaries
-    with a `"Thickness"` model a film and are not reported, although their results also
-    changed with the default.
+    versions. A warning lists the interior conductivity boundaries without `"Crack"`: set
+    `"Crack": true` to restore the previous model, or `"Crack": false` to keep the sheet
+    model and silence the warning.
 
 The mesh can only be cracked where it is conformal. Interior boundaries which are to be
 cracked are an error on a mesh with hexahedra, prisms, or pyramids with

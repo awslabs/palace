@@ -792,8 +792,8 @@ TEST_CASE("Interior boundary mesh cracking", "[geodata][Serial]")
 TEST_CASE("Default conductivity sheet warning", "[geodata][Serial]")
 {
   // Unit cube hexahedral mesh with interior boundary elements (attribute 7) on z = 0.5,
-  // spanning the domain (exterior boundary attributes 1-6), and domain attribute 2 above
-  // the sheet (z > 0.5) and 1 below it.
+  // spanning the domain (exterior boundary attributes 1-6). One exterior element and one
+  // element on z = 0.5 have attribute 8, which is both exterior and interior.
   auto base = mfem::Mesh::MakeCartesian3D(2, 2, 2, mfem::Element::HEXAHEDRON);
   std::vector<int> sheet_faces;
   mfem::Array<int> fv;
@@ -819,84 +819,65 @@ TEST_CASE("Default conductivity sheet warning", "[geodata][Serial]")
   {
     mesh.AddVertex(base.GetVertex(v));
   }
-  mfem::Vector center(3);
   for (int e = 0; e < base.GetNE(); e++)
   {
-    base.GetElementCenter(e, center);
-    auto *el = base.GetElement(e)->Duplicate(&mesh);
-    el->SetAttribute(center[2] > 0.5 ? 2 : 1);
-    mesh.AddElement(el);
+    mesh.AddElement(base.GetElement(e)->Duplicate(&mesh));
   }
   for (int be = 0; be < base.GetNBE(); be++)
   {
-    mesh.AddBdrElement(base.GetBdrElement(be)->Duplicate(&mesh));
+    auto *el = base.GetBdrElement(be)->Duplicate(&mesh);
+    if (be == 0)
+    {
+      el->SetAttribute(8);
+    }
+    mesh.AddBdrElement(el);
   }
   for (auto f : sheet_faces)
   {
     auto *el = base.GetFace(f)->Duplicate(&mesh);
-    el->SetAttribute(7);
+    el->SetAttribute(f == sheet_faces.back() ? 8 : 7);
     mesh.AddBdrElement(el);
   }
   mesh.FinalizeTopology();
   mesh.Finalize();
   mesh.SetAttributes();
-  REQUIRE(mesh.attributes.Size() == 2);
 
-  config::MaterialData lower, upper;
-  lower.attributes = {1};
-  upper.attributes = {2};
-  const std::vector<config::MaterialData> dielectrics = {lower, upper};
   config::ConductivityData cond;
   cond.sigma = 5.8e7;
   cond.attributes = {7};
-  auto Sheets = [&](const config::ConductivityData &data,
-                    const std::vector<config::MaterialData> &materials)
+  auto Sheets = [&](const config::ConductivityData &data)
   {
     return mesh::GetDefaultConductivitySheetAttributes(
-        mesh, std::vector<config::ConductivityData>{data}, materials);
+        mesh, std::vector<config::ConductivityData>{data});
   };
 
-  // Interior boundary between non-conducting domains, without "Crack" and "Thickness".
-  CHECK(Sheets(cond, dielectrics) == std::vector<int>{7});
-
-  // Exterior boundaries, or attributes with any exterior element, are not reported.
-  cond.attributes = {1};
-  CHECK(Sheets(cond, dielectrics).empty());
-  cond.attributes = {1, 7};
-  CHECK(Sheets(cond, dielectrics) == std::vector<int>{7});
-  cond.attributes = {7, 12};  // No boundary elements with attribute 12.
-  CHECK(Sheets(cond, dielectrics) == std::vector<int>{7});
-  cond.attributes = {7};
-
-  // An explicit "Crack", either way, or a "Thickness" is an informed choice.
-  config::ConductivityData given = cond;
-  given.crack_given = true;
-  CHECK(Sheets(given, dielectrics).empty());
-  given.crack = true;
-  CHECK(Sheets(given, dielectrics).empty());
+  // Interior boundary without "Crack", also with a "Thickness".
+  CHECK(Sheets(cond) == std::vector<int>{7});
   config::ConductivityData film = cond;
   film.h = 1.0e-3;
-  CHECK(Sheets(film, dielectrics).empty());
+  CHECK(Sheets(film) == std::vector<int>{7});
 
-  // A conducting domain on either side, from its conductivity or London depth, is not a
-  // dielectric.
-  config::MaterialData lossy = upper;
-  lossy.sigma = 1.0e3;
-  CHECK(Sheets(cond, {lower, lossy}).empty());
-  config::MaterialData superconducting = upper;
-  superconducting.lambda_L = 0.1;
-  CHECK(Sheets(cond, {lower, superconducting}).empty());
-  lossy = lower;
-  lossy.sigma = 1.0e3;
-  CHECK(Sheets(cond, {lossy, upper}).empty());
+  // Exterior boundaries, and attributes with an exterior element, are not reported.
+  cond.attributes = {1};
+  CHECK(Sheets(cond).empty());
+  cond.attributes = {8};
+  CHECK(Sheets(cond).empty());
+  cond.attributes = {1, 7, 8};
+  CHECK(Sheets(cond) == std::vector<int>{7});
+  cond.attributes = {7, 12};  // No boundary elements with attribute 12.
+  CHECK(Sheets(cond) == std::vector<int>{7});
+  cond.attributes = {7};
 
-  // A domain without a material is not assumed to be a dielectric.
-  CHECK(Sheets(cond, {lower}).empty());
-  CHECK(Sheets(cond, {}).empty());
+  // An explicit "Crack", either way, is an informed choice.
+  config::ConductivityData given = cond;
+  given.crack_given = true;
+  CHECK(Sheets(given).empty());
+  given.crack = true;
+  CHECK(Sheets(given).empty());
 
   // Nothing is reported without conductivity boundaries.
-  CHECK(mesh::GetDefaultConductivitySheetAttributes(
-            mesh, std::vector<config::ConductivityData>{}, dielectrics)
+  CHECK(mesh::GetDefaultConductivitySheetAttributes(mesh,
+                                                    std::vector<config::ConductivityData>{})
             .empty());
 }
 

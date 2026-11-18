@@ -53,13 +53,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     adaptive driven sweeps with `"CGS2"`, which is as stable with fewer reductions. The
     minimal rational interpolation of the error estimate always uses `"CGS2"`. SchemaVer
     4-3-1 [PR 1187](https://github.com/awslabs/palace/pull/1187).
-  - Added a warning for interior `"Conductivity"` boundaries without `"Crack"` or
-    `"Thickness"` between non-conducting domains, such as the surface of a conductor meshed
-    as a dielectric volume. Since [PR 994](https://github.com/awslabs/palace/pull/994) these
-    are uncracked sheets with the admittance of both faces, which lowers the conductor loss
-    compared to previous versions: set `"Crack": true` to restore the previous results, or
-    `"Crack": false` to silence the warning.
-    [PR 1168](https://github.com/awslabs/palace/pull/1168).
+  - Added a warning for interior `"Conductivity"` boundaries without `"Crack"`, such as the
+    surface of a conductor meshed as a dielectric volume. Since
+    [PR 994](https://github.com/awslabs/palace/pull/994) these are uncracked sheets with the
+    admittance of both faces, which lowers the conductor loss compared to previous versions:
+    set `"Crack": true` to restore the previous results, or `"Crack": false` to silence the
+    warning. [PR 1168](https://github.com/awslabs/palace/pull/1168).
 
 #### New Features
 
