@@ -149,7 +149,8 @@ public:
 };
 
 // Preconditioned Generalized Minimum Residual Method (GMRES) for general nonsymmetric
-// linear systems.
+// linear systems. A nonzero initial guess is scaled to minimize the initial residual in the
+// norm of the stopping test, which is then never larger than that of a zero initial guess.
 template <OperatorType OperType>
 class GmresSolver : public IterativeSolver<OperType>
 {
