@@ -2496,6 +2496,12 @@
           "default": false,
           "x-palace-advanced": true
         },
+        "TestMinColdIts": {
+          "type": "integer",
+          "description": "Test only: minimum number of Krylov cycles of the last cold solve for a warm start.",
+          "default": 3,
+          "x-palace-advanced": true
+        },
         "MinQ": {
           "type": "number",
           "description": "Minimum quality factor `|Q| = |\u03c9| / (2 |Im{\u03c9}|)` of the eigenmodes searched for in problems with damping: strongly damped or growing modes with lower `|Q|` are excluded from the search, so that their slowly converging Ritz values cannot stall the others. Values \u2264 0.5 disable the restriction (every damped mode has `Q` \u2265 0.5). Only used by the SLEPc solver, except with the `\"SLP\"` nonlinear solver, and with `\"Hybrid\"` only for its initial guess. Structures whose wanted modes have lower `Q` need a lower value.",

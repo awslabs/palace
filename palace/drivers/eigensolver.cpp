@@ -414,8 +414,8 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // can cost more than a warm start saves on solves of two cycles: the eigenvectors are
   // kept only if the last solve without a warm start took three cycles or more, and only if
   // the adaptation goes on.
-  constexpr int min_cold_its = 3;
   const auto &eigenmode = iodata.solver.eigenmode;
+  const int min_cold_its = eigenmode.test_min_cold_its;
   const auto &refinement = iodata.model.refinement;
   const int adapt_it = num_solves++;
   const bool blocks = (C || has_A2);  // The linearization also takes the block λ x
