@@ -60,6 +60,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     iteration's output is in its final location. With `SaveAdaptIterations`, it used to be
     written before the output was moved into `iterationXX`, so a reader polling it could
     find a partially filled `iterationXX` directory.
+    [PR 1235](https://github.com/awslabs/palace/pull/1235).
 
 #### New Features
 
