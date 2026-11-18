@@ -410,11 +410,11 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   }
 
   // With adaptive mesh refinement, the SLEPc Krylov-Schur solver can start from the
-  // eigenvectors of the previous solve (warm start). Its more accurate first linear solves
-  // can cost more than a warm start saves on solves of two cycles: the eigenvectors are
-  // kept only if the last solve without a warm start took three cycles or more, and only if
-  // the adaptation goes on.
-  constexpr int min_cold_its = 3;
+  // eigenvectors of the previous solve (warm start). It saves nothing on solves of a single
+  // Krylov cycle but costs its more accurate first linear solves: the eigenvectors are kept
+  // only if the last solve without a warm start took two cycles or more, and only if the
+  // adaptation goes on.
+  constexpr int min_cold_its = 2;
   const auto &eigenmode = iodata.solver.eigenmode;
   const auto &refinement = iodata.model.refinement;
   const int adapt_it = num_solves++;
