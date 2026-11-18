@@ -734,9 +734,25 @@ void IoData::CheckConfiguration()
       solver.linear.mg_smooth_aux = 1;
     }
   }
+  // One-sided V-cycles make a nonsymmetric preconditioner, for GMRES and FGMRES only. They
+  // speed up the mildly indefinite systems of eigenmode problems, but can slow down the
+  // strongly indefinite ones of driven problems and boundary mode solves, so they are the
+  // default only for eigenmode problems. They smooth once per level and cycle, so their
+  // default order is twice that of symmetric V-cycles, for the same smoothing work.
+  const bool gmres = (solver.linear.krylov_solver == KrylovSolver::GMRES ||
+                      solver.linear.krylov_solver == KrylovSolver::FGMRES);
+  if (solver.linear.mg_one_sided < 0)
+  {
+    solver.linear.mg_one_sided = gmres && problem.type == ProblemType::EIGENMODE;
+  }
+  MFEM_VERIFY(!solver.linear.mg_one_sided || gmres,
+              "One-sided multigrid V-cycles (\"MGOneSided\") require the GMRES or FGMRES "
+              "Krylov solver (\"KSPType\")!");
   if (solver.linear.mg_smooth_order < 0)
   {
-    solver.linear.mg_smooth_order = std::max(2 * solver.order, 4);
+    solver.linear.mg_smooth_order = solver.linear.mg_one_sided
+                                        ? std::max(4 * solver.order, 8)
+                                        : std::max(2 * solver.order, 4);
   }
   // A FilmAttributes boundary not declared a Superconductor is the λ→0 London limit:
   // register it as a sheet with small effective L_ksq = λ⊥ = pec_lperp. The sheet

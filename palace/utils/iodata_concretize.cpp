@@ -77,6 +77,7 @@ void ConcretizeLinear(const config::LinearSolverData &linear, json &j_linear)
                 {"MGSmoothEigScaleMax", linear.mg_smooth_sf_max},
                 {"MGSmoothEigScaleMin", linear.mg_smooth_sf_min},
                 {"MGSmoothChebyshev4th", linear.mg_smooth_cheby_4th},
+                {"MGOneSided", static_cast<bool>(linear.mg_one_sided)},
                 {"MGAuxiliarySmoother", static_cast<bool>(linear.mg_smooth_aux)},
                 {"PCMatReal", linear.pc_mat_real},
                 {"PCMatShifted", static_cast<bool>(linear.pc_mat_shifted)},

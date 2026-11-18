@@ -32,6 +32,20 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Interface Changes
 
+  - The geometric multigrid preconditioners of eigenmode simulations now use one-sided
+    V-cycles, which pre-smooth but do not post-smooth, with twice the default smoothing
+    order (`max(4p, 8)` for solution order `p`) for the same smoothing work per V-cycle. On
+    production eigenmode models of 0.4M to 14.5M unknowns, simulations take 1% to 44% less
+    time, and the first eigenvalue solves of three models of 90M to 127M unknowns need 13%
+    to 15% fewer GMRES iterations and are 1.15x to 1.19x faster. The new
+    `config["Solver"]["Linear"]["MGOneSided"]` defaults to `true` for eigenmode simulations
+    with GMRES or FGMRES and to `false` otherwise, and is an error with CG, which needs
+    symmetric V-cycles. Driven simulations can enable it, which speeds up some of them but
+    slows down strongly indefinite ones. Results change at the level of the linear solver
+    tolerance. With an explicit `"MGSmoothOrder"`, as in every resolved eigenmode
+    configuration, the V-cycles now smooth once at that order, half as much as before: set
+    `"MGOneSided": false` to keep the previous V-cycles. SchemaVer 4-5-0
+    [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
   - When `Solver.Linear.Type` is `"Default"` (or omitted) for frequency domain problems,
     and for the wave port and boundary mode eigenvalue solves, *Palace* now prefers
     STRUMPACK over SuperLU_DIST, then MUMPS, as the sparse direct solver when built with

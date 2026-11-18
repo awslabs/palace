@@ -1564,6 +1564,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(iodata.solver.linear.initial_guess == 1);
     CHECK(iodata.solver.linear.pc_mat_shifted == 0);
     CHECK(iodata.solver.linear.mg_smooth_aux == 0);
+    CHECK(iodata.solver.linear.mg_one_sided == 0);
     CHECK(iodata.solver.linear.ams_singular_op == 0);
     CHECK(iodata.solver.linear.amg_agg_coarsen == 1);
     CHECK(iodata.solver.linear.ams_max_it == 1);
@@ -1579,6 +1580,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(j_linear["InitialGuess"].get<int>() == 1);
     CHECK(j_linear["PCMatShifted"].get<int>() == 0);
     CHECK(j_linear["MGAuxiliarySmoother"].get<int>() == 0);
+    CHECK_FALSE(j_linear["MGOneSided"].get<bool>());
     CHECK(j_linear["AMSSingularOperator"].get<int>() == 0);
     CHECK(j_linear["AMGAggressiveCoarsening"].get<int>() == 1);
     CHECK(j_linear["AMSMaxIts"].get<int>() == 1);
@@ -1922,6 +1924,96 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
             .complex_coarse_solve);
   }
 
+  SECTION("One-sided multigrid V-cycles resolve from the Krylov solver")
+  {
+    // One-sided V-cycles default to eigenmode problems with GMRES and FGMRES, with twice
+    // the default smoothing order, and are an error with CG. An explicit order applies as
+    // given.
+    auto Resolve = [](const char *problem, json linear, int order = 2)
+    {
+      json solver = {{"Order", order}, {"Linear", std::move(linear)}};
+      if (std::string(problem) == "Eigenmode")
+      {
+        solver["Eigenmode"] = {{"Target", 1.0}};
+      }
+      else if (std::string(problem) == "BoundaryMode")
+      {
+        solver["BoundaryMode"] = {{"Freq", 10.0}};
+      }
+      else if (std::string(problem) == "Driven")
+      {
+        solver["Driven"] = {
+            {"Samples", {{{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 0.5}}}}};
+      }
+      else if (std::string(problem) == "Transient")
+      {
+        solver["Transient"] = {
+            {"Excitation", "Sinusoidal"}, {"MaxTime", 1.0}, {"TimeStep", 0.01}};
+      }
+      json boundaries = json::object();
+      if (std::string(problem) == "Driven")
+      {
+        boundaries["LumpedPort"] = {{{"Index", 1},
+                                     {"Attributes", {2}},
+                                     {"R", 50.0},
+                                     {"Direction", "+X"},
+                                     {"Excitation", true}}};
+      }
+      json config = {{"Problem", {{"Type", problem}, {"Output", "test_output"}}},
+                     {"Model", {{"Mesh", "test.msh"}}},
+                     {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                     {"Boundaries", std::move(boundaries)},
+                     {"Solver", std::move(solver)}};
+      IoData iodata(config, false);
+      config = IoData::ConcretizeDefaults(iodata, config);
+      CHECK(config["Solver"]["Linear"]["MGOneSided"].get<bool>() ==
+            static_cast<bool>(iodata.solver.linear.mg_one_sided));
+      CHECK(config["Solver"]["Linear"]["MGSmoothOrder"].get<int>() ==
+            iodata.solver.linear.mg_smooth_order);
+      return iodata.solver.linear;
+    };
+    const auto eigenmode = Resolve("Eigenmode", json::object());
+    CHECK(eigenmode.krylov_solver == KrylovSolver::GMRES);
+    CHECK(eigenmode.mg_one_sided == 1);
+    CHECK(eigenmode.mg_smooth_order == 8);
+    CHECK(Resolve("Eigenmode", json::object(), 3).mg_smooth_order == 12);
+    const auto fgmres = Resolve("Eigenmode", {{"KSPType", "FGMRES"}});
+    CHECK(fgmres.mg_one_sided == 1);
+    CHECK(fgmres.mg_smooth_order == 8);
+    const auto driven = Resolve("Driven", json::object());
+    CHECK(driven.krylov_solver == KrylovSolver::GMRES);
+    CHECK(driven.mg_one_sided == 0);
+    CHECK(driven.mg_smooth_order == 4);
+    CHECK(Resolve("Driven", {{"MGOneSided", true}}).mg_smooth_order == 8);
+    const auto boundary_mode = Resolve("BoundaryMode", {{"MGMaxLevels", 2}});
+    CHECK(boundary_mode.krylov_solver == KrylovSolver::GMRES);
+    CHECK(boundary_mode.mg_one_sided == 0);
+    CHECK(boundary_mode.mg_smooth_order == 4);
+    const auto boundary_mode_one_sided =
+        Resolve("BoundaryMode", {{"MGMaxLevels", 2}, {"MGOneSided", true}});
+    CHECK(boundary_mode_one_sided.mg_one_sided == 1);
+    CHECK(boundary_mode_one_sided.mg_smooth_order == 8);
+    for (const char *problem : {"Electrostatic", "Magnetostatic", "Transient"})
+    {
+      INFO("problem " << problem);
+      const auto linear = Resolve(problem, json::object());
+      CHECK(linear.krylov_solver == KrylovSolver::CG);
+      CHECK(linear.mg_one_sided == 0);
+      CHECK(linear.mg_smooth_order == 4);
+    }
+    const auto cg = Resolve("Eigenmode", {{"KSPType", "CG"}});
+    CHECK(cg.mg_one_sided == 0);
+    CHECK(cg.mg_smooth_order == 4);
+    const auto symmetric = Resolve("Eigenmode", {{"MGOneSided", false}});
+    CHECK(symmetric.mg_one_sided == 0);
+    CHECK(symmetric.mg_smooth_order == 4);
+    const auto explicit_order = Resolve("Eigenmode", {{"MGSmoothOrder", 4}});
+    CHECK(explicit_order.mg_one_sided == 1);
+    CHECK(explicit_order.mg_smooth_order == 4);
+    CHECK_THROWS(Resolve("Eigenmode", {{"KSPType", "CG"}, {"MGOneSided", true}}));
+    CHECK_THROWS(Resolve("Electrostatic", {{"MGOneSided", true}}));
+  }
+
   SECTION("Round-trip: resolved config validates and re-parses identically")
   {
     // Start from a sparse Electrostatic config with one non-default (Order=3) and one
@@ -1955,6 +2047,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(l2.pc_mat_shifted == l1.pc_mat_shifted);
     CHECK(l2.mg_smooth_aux == l1.mg_smooth_aux);
     CHECK(l2.mg_smooth_order == l1.mg_smooth_order);
+    CHECK(l2.mg_one_sided == l1.mg_one_sided);
     CHECK(l2.mg_cycle_it == l1.mg_cycle_it);
     CHECK(l2.ams_singular_op == l1.ams_singular_op);
     CHECK(l2.ams_max_it == l1.ams_max_it);
