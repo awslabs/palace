@@ -355,14 +355,22 @@ CurlCurlOperator::AssembleStiffness(double shift, MaterialPropertyCoefficient &f
                                  mat_op.GetCurlCurlInvPermeability());
 
   // Contribution for London superconductors (supercurrent J = −A/(μλ²)), and the gauge
-  // shift.
+  // shift outside them, where the London mass does not lift the gradients.
   if (mat_op.HasLondonDepth())
   {
     f.AddCoefficient(mat_op.GetAttributeToMaterial(), mat_op.GetInvLondonDepth());
   }
   if (shift > 0.0)
   {
-    f.AddCoefficient(mat_op.GetAttributeToMaterial(), mat_op.GetInvPermeability(), shift);
+    mfem::DenseTensor muinv(mat_op.GetInvPermeability());
+    for (int i = 0; i < muinv.SizeK(); i++)
+    {
+      if (mat_op.GetInvLondonDepth()(i).MaxMaxNorm() > 0.0)
+      {
+        muinv(i) = 0.0;
+      }
+    }
+    f.AddCoefficient(mat_op.GetAttributeToMaterial(), muinv, shift);
   }
 
   // Kinetic sheet term (1/L_ksq) A_t·v_t; on broken spaces, see AddBrokenSheetMatrix.
@@ -441,8 +449,9 @@ std::unique_ptr<Operator> CurlCurlOperator::AssembleShiftedPreconditioner(
     const std::vector<mfem::Array<int>> &pc_dbc_tdof_lists,
     const mfem::Array<int> &pc_dbc_attr, std::vector<mfem::Array<int>> &h1_dbc_tdof_lists)
 {
-  // Assemble K̃_pc = K + london_pc_shift_ · (1/µ) ∫|A|². The volume mass lifts the gradient
-  // modes K leaves in its kernel outside the superconductors, so GᵀK̃_pcG is SPD for AMS.
+  // Assemble K̃_pc = K + london_pc_shift_ · (1/µ) ∫|A|² outside the London domains. The
+  // volume mass lifts the gradient modes K leaves in its kernel outside the
+  // superconductors, so GᵀK̃_pcG is SPD for AMS.
   MaterialPropertyCoefficient f(mat_op.MaxCeedAttribute()),
       fb(mat_op.MaxCeedBdrAttribute());
   auto k_vec = AssembleStiffness(london_pc_shift_, f, fb);

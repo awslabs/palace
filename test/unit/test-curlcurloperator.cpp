@@ -94,12 +94,11 @@ TEST_CASE("CurlCurlOperator London domains", "[curlcurloperator][Serial][Paralle
   CHECK_THAT(dom_post_op.GetLondonKineticEnergy(A_gf.Real(), comm),
              WithinRel(0.5 * london, 1.0e-10));
 
-  // The preconditioner adds the gauge shift · (1/μ) ∫|A|² over the whole domain.
+  // The preconditioner adds the gauge shift · (1/μ) ∫|A|² outside the London domain.
   auto P = curlcurl_op.GetPreconditionerMatrix();
   REQUIRE(P);
   P->Mult(A, y);
-  const double shift =
-      iodata.solver.linear.london_pc_shift * (a * a) * (volume[0] + volume[1] / mu2);
+  const double shift = iodata.solver.linear.london_pc_shift * (a * a) * volume[0];
   CHECK_THAT(linalg::Dot(comm, A, y), WithinRel(london + shift, 1.0e-10));
 }
 

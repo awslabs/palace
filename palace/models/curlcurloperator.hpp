@@ -152,8 +152,8 @@ private:
 
   // Assemble the stiffness matrix on every level of the solution space: curl-curl (μ⁻¹),
   // London domains ((μλ²)⁻¹), the kinetic sheet term (1/L_ksq, unbroken spaces only), and
-  // the gauge shift · (1/µ) ∫|A|². The domain and boundary mass coefficients are added to f
-  // and fb, for the auxiliary operators.
+  // the gauge shift · (1/µ) ∫|A|² outside the London domains. The domain and boundary mass
+  // coefficients are added to f and fb, for the auxiliary operators.
   std::vector<std::unique_ptr<Operator>>
   AssembleStiffness(double shift, MaterialPropertyCoefficient &f,
                     MaterialPropertyCoefficient &fb) const;
@@ -261,10 +261,11 @@ public:
   bool HasLondonDomains() const { return mat_op.HasLondonDepth(); }
 
   // Construct the preconditioner matrix with superconductors: the stiffness matrix plus the
-  // gauge shift london_pc_shift_ · (1/µ) ∫|A|², which lifts the residual gradient null
-  // space so AMS is SPD-solvable in parallel. Only the preconditioner is shifted, so the
-  // solution is unchanged. Returns nullptr without a superconductor or a positive shift,
-  // in which case the stiffness matrix preconditions itself.
+  // gauge shift london_pc_shift_ · (1/µ) ∫|A|² outside the London domains, which lifts the
+  // residual gradient null space so AMS is SPD-solvable in parallel. Only the
+  // preconditioner is shifted, so the solution is unchanged. Returns nullptr without a
+  // superconductor or a positive shift, in which case the stiffness matrix preconditions
+  // itself.
   std::unique_ptr<Operator> GetPreconditionerMatrix();
 
   // Return the stiffness matrix with extra essential (PEC) attributes beyond those set at
