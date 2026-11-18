@@ -64,6 +64,14 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Performance Improvements
 
+  - Complex operators on CPUs which pack matching pairs of real and imaginary libCEED terms
+    now also pair the H1 diffusion terms and pack the real terms without a partner, such as
+    those of the lossless materials of partially lossy models, so that each of them acts on
+    the real and imaginary parts in one application. This speeds up every multigrid level
+    above the coarsest, and its H1 auxiliary operator, in driven and eigenmode simulations
+    with losses. Operators without any pair, as in lossless problems, keep their original
+    action, which needs less memory. Results change at most at the level of round-off.
+    [PR 1173](https://github.com/awslabs/palace/pull/1173).
   - With `config["Solver"]["Linear"]["ComplexCoarseSolve"]`, SuperLU_DIST (with or without
     `"SuperLU3DCommunicator"`), STRUMPACK (with or without compression), and MUMPS now
     factor the complex-valued coarse-level matrix in complex arithmetic instead of the
