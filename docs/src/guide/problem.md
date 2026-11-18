@@ -24,10 +24,14 @@ need fewer Krylov restarts. Setting
 [`config["Solver"]["Eigenmode"]["StartVector"]`](../config/reference.md#config-solver-eigenmode-startvector)
 to `false` turns this off.
 
-For problems with damping, the eigenvalue solver does not search for strongly damped modes,
-with quality factors below
+For problems with damping, the SLEPc eigenvalue solver does not search for strongly damped
+or growing modes with a quality factor `|Q|` below
 [`config["Solver"]["Eigenmode"]["MinQ"]`](../config/reference.md#config-solver-eigenmode-minq),
-whose slow convergence would delay the other modes.
+whose slow convergence would delay the other modes. ARPACK and the `"SLP"` nonlinear solver
+search for all modes, and the `"Hybrid"` nonlinear solver restricts only its initial guess,
+so its refinement can still return a mode below `MinQ`. Structures whose wanted modes have
+quality factors close to 0.5 need a lower `MinQ`: otherwise these modes are not found, and
+the solve can end with fewer modes than requested.
 
 Calculations related to
 [energy-participation ratio (EPR) quantization](https://www.nature.com/articles/s41534-021-00461-8)
