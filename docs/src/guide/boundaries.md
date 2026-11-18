@@ -168,7 +168,10 @@ charge:
     mesh was previously cracked. The conductor loss is then lower than with previous
     versions. A warning lists the interior conductivity boundaries without `"Crack"`: set
     `"Crack": true` to restore the previous model, or `"Crack": false` to keep the sheet
-    model and silence the warning.
+    model and silence the warning. Leaving the conductor volume of a shell out of
+    [`config["Domains"]["Materials"]`](../config/reference.md#config-domains-materials)
+    removes it from the mesh, which gives the same result as `"Crack": true` with fewer
+    unknowns.
 
 The mesh can only be cracked where it is conformal. Interior boundaries which are to be
 cracked are an error on a mesh with hexahedra, prisms, or pyramids with
