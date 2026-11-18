@@ -123,6 +123,16 @@ target_link_libraries(unit-tests
           $<IF:$<BOOL:${PALACE_BUILD_WITH_COVERAGE}>,$<LINK_LIBRARY:WHOLE_ARCHIVE,${LIB_TARGET_NAME}>,${LIB_TARGET_NAME}>
           )
 
+# ARPACK and ScaLAPACK both define zzdotc_, with different interfaces. The tests which use
+# STRUMPACK or MUMPS directly make it, and with it ScaLAPACK, a direct dependency of this
+# executable, while the linker drops libarpack, which the executable does not call. PARPACK
+# then finds the routine of ScaLAPACK first and crashes when it extracts eigenvectors. Keep
+# every linked library a direct dependency, so that libarpack stays ahead of them as on the
+# link line. Not needed on macOS, where a symbol is bound to the library it was linked from.
+if(PALACE_WITH_ARPACK AND NOT APPLE)
+  target_link_options(unit-tests PRIVATE "LINKER:--no-as-needed")
+endif()
+
 # The PostOperator boundary-viz regression decodes MFEM's compressed binary VTU output
 # when MFEM is built with zlib support.
 find_package(ZLIB QUIET)
