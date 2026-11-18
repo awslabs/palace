@@ -896,22 +896,6 @@ Vector SubstructuringSolver::SolveExcitation(int drive_idx)
 }
 
 std::vector<Vector>
-SubstructuringSolver::SolveDirichlets(const std::vector<Vector> &dbc_values)
-{
-  MFEM_VERIFY(impl->mat_dtn, "CondenseEnvironment must be called before solving!");
-  // Prescribe an arbitrary field on the Dirichlet DOFs.
-  std::vector<Vector> dbcs(dbc_values.size(), Vector(impl->nt));
-  Vector xd;
-  for (std::size_t k = 0; k < dbc_values.size(); k++)
-  {
-    dbcs[k] = 0.0;
-    dbc_values[k].GetSubVector(impl->dbc_tdofs, xd);
-    dbcs[k].SetSubVector(impl->dbc_tdofs, xd);
-  }
-  return SolveDirichletBatch(dbcs);
-}
-
-std::vector<Vector>
 SubstructuringSolver::SolveDirichletBatch(const std::vector<Vector> &dbcs)
 {
   impl->EnsureEnv();  // general Dirichlet data needs environment solves
@@ -1511,21 +1495,6 @@ mfem::DenseMatrix SubstructuringSolver::SourceEnergyMatrix(
     impl->RecoverEnvInterior(*fields, &bE);
   }
   return E;
-}
-
-mfem::DenseMatrix SubstructuringSolver::EnergyMatrix(const std::vector<int> &ids,
-                                                     const std::vector<Vector> &lifts,
-                                                     std::vector<Vector> *fields,
-                                                     int n_fields)
-{
-  MFEM_VERIFY(ids.size() == lifts.size(), "EnergyMatrix: one id per lift!");
-  // Dirichlet data restricted to the Dirichlet DOF set (as SolveDirichlets does).
-  std::vector<Vector> xd(lifts.size(), Vector(impl->dbc_tdofs.Size()));
-  for (std::size_t k = 0; k < lifts.size(); k++)
-  {
-    lifts[k].GetSubVector(impl->dbc_tdofs, xd[k]);
-  }
-  return EnergyMatrixDbc(ids, xd, fields, n_fields, nullptr);
 }
 
 mfem::DenseMatrix SubstructuringSolver::EnergyMatrixDbc(const std::vector<int> &ids,

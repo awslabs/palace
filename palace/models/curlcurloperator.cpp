@@ -371,17 +371,9 @@ void PrintHeader(const mfem::ParFiniteElementSpace &h1_fespace,
 }
 
 void AddStiffnessIntegrators(BilinearForm &k, const MaterialPropertyCoefficient &df,
-                             const MaterialPropertyCoefficient &f,
                              const MaterialPropertyCoefficient &fb)
 {
-  if (f.empty())
-  {
-    k.AddDomainIntegrator<CurlCurlIntegrator>(df);
-  }
-  else
-  {
-    k.AddDomainIntegrator<CurlCurlMassIntegrator>(df, f);
-  }
+  k.AddDomainIntegrator<CurlCurlIntegrator>(df);
   if (!fb.empty())
   {
     k.AddBoundaryIntegrator<VectorFEMassIntegrator>(fb);
@@ -391,7 +383,6 @@ void AddStiffnessIntegrators(BilinearForm &k, const MaterialPropertyCoefficient 
 }  // namespace
 
 void CurlCurlOperator::AddStiffnessCoefficients(MaterialPropertyCoefficient &df,
-                                                MaterialPropertyCoefficient &f,
                                                 MaterialPropertyCoefficient &fb) const
 {
   // Contribution from material permeability. In 2D, curl is scalar so the curl-curl
@@ -455,22 +446,20 @@ CurlCurlOperator::GetStiffnessForm(bool volume, bool sheets) const
   // The integrators keep pointers to the coefficients, which the form owns.
   std::unique_ptr<StiffnessForm> form(
       new StiffnessForm{MaterialPropertyCoefficient(mat_op.MaxCeedAttribute()),
-                        MaterialPropertyCoefficient(mat_op.MaxCeedAttribute()),
                         MaterialPropertyCoefficient(mat_op.MaxCeedBdrAttribute()),
                         BilinearForm(GetSolutionNDSpace())});
-  AddStiffnessCoefficients(form->df, form->f, form->fb);
-  RestrictToAssemblyDomains({&form->df, &form->f}, {&form->fb});
+  AddStiffnessCoefficients(form->df, form->fb);
+  RestrictToAssemblyDomains({&form->df}, {&form->fb});
   if (!volume)
   {
     // Zero coefficients on every element.
     form->df.RestrictCoefficient(mfem::Array<int>());
-    form->f.RestrictCoefficient(mfem::Array<int>());
   }
   if (!sheets)
   {
     form->fb = MaterialPropertyCoefficient(mat_op.MaxCeedBdrAttribute());
   }
-  AddStiffnessIntegrators(form->k, form->df, form->f, form->fb);
+  AddStiffnessIntegrators(form->k, form->df, form->fb);
   return form;
 }
 

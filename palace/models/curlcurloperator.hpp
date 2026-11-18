@@ -153,10 +153,9 @@ private:
   // Assemble the London sheet mass M_sheet = ∫_Σ (1/L_ksq) A_t·v_t on first use.
   void EnsureSheetMass();
 
-  // Add the stiffness coefficients: curl-curl (μ⁻¹), volume mass (none from these
-  // materials), and the kinetic sheet term (1/L_ksq, unbroken spaces only).
+  // Add the stiffness coefficients: curl-curl (μ⁻¹), and the kinetic sheet term (1/L_ksq,
+  // unbroken spaces only).
   void AddStiffnessCoefficients(MaterialPropertyCoefficient &df,
-                                MaterialPropertyCoefficient &f,
                                 MaterialPropertyCoefficient &fb) const;
 
   // True if a superconductor film is present and the shift is positive.
@@ -190,7 +189,7 @@ private:
   // sheet matrix is added to the assembled operators, see AddBrokenSheetMatrix).
   struct StiffnessForm
   {
-    MaterialPropertyCoefficient df, f, fb;
+    MaterialPropertyCoefficient df, fb;
     BilinearForm k;
   };
   std::unique_ptr<StiffnessForm> GetStiffnessForm(bool volume = true,
