@@ -2821,9 +2821,26 @@ TEST_CASE("Ordinary driven fine preconditioner activates packed complex QData",
   const bool pairs = lossy && !real_pc;
   const auto &aux =
       dynamic_cast<const ComplexParOperator &>(mg->GetFinestAuxiliaryOperator());
-  REQUIRE(!IsOriginalComplexWrapper(aux.LocalOperator()) == pairs);
   const auto &local = fine->LocalOperator();
-  REQUIRE(!IsOriginalComplexWrapper(local) == pairs);
+  for (const ComplexOperator *op : {&aux.LocalOperator(), &local})
+  {
+    // A rank with no lossy element has no pair: count the packed operators over all ranks,
+    // so that every rank checks the same.
+    long long num_packed = !IsOriginalComplexWrapper(*op);
+    Mpi::GlobalSum(1, &num_packed, Mpi::World());
+    if (!pairs)
+    {
+      REQUIRE(num_packed == 0);
+    }
+    else if (partial_lossy)
+    {
+      REQUIRE(num_packed > 0);
+    }
+    else
+    {
+      REQUIRE(num_packed == Mpi::Size(Mpi::World()));
+    }
+  }
   // Assemble independent reference operators and exercise the unchanged borrowed RAP
   // constructor. Numerical agreement is checked against separate real ParOperators below.
   auto ref_pc = AssembleComplexPreconditioner(*space);
