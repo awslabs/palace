@@ -162,6 +162,10 @@ public:
   // consistent with lumped and wave port conventions.
   bool AddExcitationVector(double omega, ComplexVector &RHS) const;
 
+  // Coefficients s_p of the excitation vector Σ_p s_p conj(v_p) of the (0,0) TE (p = 0)
+  // and TM (p = 1) modes.
+  std::array<std::complex<double>, 2> GetExcitationCoefficients(double omega) const;
+
 private:
   const MaterialOperator &mat_op;
   mfem::Array<int> attr_list;

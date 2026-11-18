@@ -21,7 +21,9 @@
 #include <nlohmann/json.hpp>
 #include "fem/bilinearform.hpp"
 #include "fem/integrator.hpp"
+#include "models/portexcitations.hpp"
 #include "utils/communication.hpp"
+#include "utils/enum_string.hpp"
 #include "utils/geodata.hpp"
 #include "utils/jsonschema.hpp"
 
@@ -528,6 +530,18 @@ void IoData::CheckConfiguration()
       Mpi::Warning(
           "Transient problem type does not support wave port boundary conditions!\n");
     }
+    for (const auto &[idx, data] : boundaries.lumpedport)
+    {
+      // The excitation weight is frequency independent, so it can only be represented in
+      // the time domain when it is real, that is, when the phase is a multiple of 180
+      // degrees.
+      MFEM_VERIFY(
+          ExcitationWeight(data.excitation_amplitude, data.excitation_phase).imag() == 0.0,
+          fmt::format("Transient simulations require a real excitation: "
+                      "\"ExcitationPhase\" must be a multiple of 180 degrees on lumped "
+                      "port index {:d}",
+                      idx));
+    }
     if (!boundaries.farfield.empty() && boundaries.farfield.order > 1)
     {
       Mpi::Warning("Transient problem type does not support absorbing boundary conditions "
@@ -647,6 +661,35 @@ void IoData::CheckConfiguration()
     {
       solver.linear.mg_max_levels = 100;
     }
+  }
+  if (solver.linear.complex_coarse_solve &&
+      (problem.type == ProblemType::DRIVEN || problem.type == ProblemType::EIGENMODE ||
+       problem.type == ProblemType::BOUNDARYMODE) &&
+      (solver.linear.type == LinearSolver::AMS ||
+       solver.linear.type == LinearSolver::BOOMER_AMG) &&
+      !(problem.type == ProblemType::BOUNDARYMODE && solver.linear.mg_max_levels == 1))
+  {
+    // AMS and BoomerAMG are built for the real-valued matrix of the finite element space.
+    // With the equivalent real-valued system of twice the size of the complex-valued
+    // matrix, AMS aborts and BoomerAMG is not a preconditioner with which the solves
+    // converge, so they keep the real-valued approximation. A boundary mode problem
+    // without multigrid replaces them by a sparse direct solver, which supports the
+    // option, as the mode solver of wave ports does: the wave ports without their own
+    // "ComplexCoarseSolve" keep the inherited value (unless "PCMatReal" overrides it).
+    if (!solver.linear.pc_mat_real)
+    {
+      for (auto &[idx, port] : boundaries.waveport)
+      {
+        if (!port.complex_coarse_solve)
+        {
+          port.complex_coarse_solve = true;
+        }
+      }
+    }
+    Mpi::Warning("\"ComplexCoarseSolve\" is not supported with the {} linear solver and "
+                 "is disabled!\n",
+                 ToString(solver.linear.type));
+    solver.linear.complex_coarse_solve = false;
   }
   if (solver.linear.pc_mat_shifted < 0)
   {
