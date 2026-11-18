@@ -37,6 +37,7 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-coefficient.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-collectiveenvironment.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-communication.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-complexdirectsolver.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-config.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-correctedcapacitance.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-correctedsolve.cpp

@@ -4124,7 +4124,7 @@
         },
         "ComplexCoarseSolve": {
           "type": "boolean",
-          "description": "When `true`, uses the true complex-valued system matrix for the coarse-level solver. When `false`, uses the real-valued approximation.",
+          "description": "When `true`, uses the true complex-valued system matrix for the coarse-level solver (not supported with AMS or BoomerAMG). When `false`, uses the real-valued approximation.",
           "default": false
         },
         "DropSmallEntries": {
