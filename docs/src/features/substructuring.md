@@ -143,9 +143,8 @@ Substructuring also runs with a GPU device (`config["Solver"]["Device"]` `"GPU"`
 interface operator and the sparse direct factorizations on the CPU. The environment and the region
 are factored with a sparse direct solver (the one
 [`config["Solver"]["Linear"]["Type"]`](../config/reference.md#config-solver-linear-type) names, or
-else MUMPS, STRUMPACK or SuperLU_DIST, preferred in this order among those Palace is built with:
-the systems are symmetric, and MUMPS alone factors them as such), so *Palace* must be built with one
-of them. The region operator is factored together with the dense ``\bm{S}_E``, as one sparse system
+else STRUMPACK, MUMPS or SuperLU_DIST, preferred in this order among those Palace is built with), so
+*Palace* must be built with one of them. The region operator is factored together with the dense ``\bm{S}_E``, as one sparse system
 whose dense block on the interface is a front of the factorization: its cost grows as the cube of
 the number of interface unknowns. The Schur complement of the environment comes instead
 from a single partial factorization, by MUMPS or, without it, by STRUMPACK (with the Schur
