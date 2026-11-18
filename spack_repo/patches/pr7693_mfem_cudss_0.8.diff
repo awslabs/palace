@@ -1,5 +1,5 @@
 diff --git a/repos/spack_repo/builtin/packages/mfem/package.py b/repos/spack_repo/builtin/packages/mfem/package.py
-index 10dd69afae..9f031a5a6f 100644
+index 10dd69af..72eac4ff 100644
 --- a/repos/spack_repo/builtin/packages/mfem/package.py
 +++ b/repos/spack_repo/builtin/packages/mfem/package.py
 @@ -553,8 +553,8 @@ class Mfem(Package, CudaPackage, ROCmPackage):
@@ -13,3 +13,17 @@ index 10dd69afae..9f031a5a6f 100644
  
      depends_on("enzyme@0.0.176:", when="+enzyme")
      requires("%cxx=llvm", when="+enzyme~rocm")
+@@ -611,6 +611,13 @@ class Mfem(Package, CudaPackage, ROCmPackage):
+     # patch is applied on top of it to fix that.
+     # PR: https://github.com/mfem/mfem/pull/5224
+     patch("mfem-4.9.patch", when="@4.9.0")
++    # The parallel CuDSSSolver of 4.10.0 does not set the device communicator that cuDSS 0.8
++    # needs in the MGMN mode, so cuDSS crashes or hangs: mfem/mfem#5758
++    patch(
++        "https://github.com/mfem/mfem/pull/5758.patch?full_index=1",
++        sha256="40dc11b96e7c396a1eda82830ee44a0a74b3966418249b4345bd312c389d0af6",
++        when="@4.10.0+cudss+mpi ^cudss@0.8:",
++    )
+ 
+     phases = ["configure", "build", "install"]
+ 
