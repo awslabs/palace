@@ -170,17 +170,6 @@ inline void ConfigureRG(RG rg, PetscReal lr, PetscReal ur, PetscReal li, PetscRe
   }
 }
 
-PetscErrorCode __eps_convergence_test(EPS eps, PetscScalar eigr, PetscScalar eigi,
-                                      PetscReal res, PetscReal *errest, void *ctx)
-{
-  // The relative error estimate (as EPS_CONV_REL), for a Ritz value which also settled
-  // since the previous restart.
-  PetscFunctionBeginUser;
-  PetscCall(EPSConvergedRelative(eps, eigr, eigi, res, errest, nullptr));
-  static_cast<SlepcEPSSolverBase *>(ctx)->CheckRitzValue(eigr, errest);
-  PetscFunctionReturn(PETSC_SUCCESS);
-}
-
 PetscErrorCode __eps_region_monitor(EPS eps, PetscInt its, PetscInt nconv,
                                     PetscScalar *eigr, PetscScalar *eigi, PetscReal *errest,
                                     PetscInt nest, void *ctx)
@@ -355,7 +344,12 @@ void SlepcEigenvalueSolver::SetOrthogonalization(bool mgs, bool cgs2)
       type = BV_ORTHOG_CGS;
       refine = BV_ORTHOG_REFINE_ALWAYS;
     }
-    PalacePetscCall(BVSetOrthogonalization(bv, type, refine, 1.0, BV_ORTHOG_BLOCK_GS));
+    // With refinement, a vector counts as linearly dependent (breakdown) when the second
+    // pass reduces its norm below eta times that after the first one. With eta = 1, this
+    // would flag almost every vector of a nearly invariant Krylov space, as after a warm
+    // start: use SLEPc's default eta = 1/√2.
+    PalacePetscCall(
+        BVSetOrthogonalization(bv, type, refine, PETSC_DETERMINE, BV_ORTHOG_BLOCK_GS));
   }
 }
 
@@ -517,14 +511,10 @@ SlepcEPSSolverBase::SlepcEPSSolverBase(MPI_Comm comm, int print, const std::stri
     }
   }
   A0 = A1 = nullptr;
-  warm_start = ritz_test = false;
   first_cycle_tol = lin_tol = 0.0;
   first_cycle_solves = -1;
   first_cycle_count = 0;
   first_cycle_monitor = first_cycle = false;
-  ritz_its = -1;
-  ritz_blocked = false;
-  ritz_num_delayed = ritz_num_unsettled = 0;
 }
 
 SlepcEPSSolverBase::~SlepcEPSSolverBase()
@@ -674,69 +664,6 @@ void SlepcEPSSolverBase::Customize()
   }
 }
 
-void SlepcEPSSolverBase::CheckRitzValue(PetscScalar theta, PetscReal *errest)
-{
-  // SLEPc's error estimate of a Ritz pair assumes exact linear solves, so a Ritz value
-  // which just appeared, as in the first Krylov cycle of a warm-started solve, can converge
-  // several times the tolerance off. A Ritz value with an error estimate below the
-  // tolerance converges only if the nearest Ritz value of the previous restart is within a
-  // relative distance max(Tol, min(1e-3, 0.1 d₂)), with d₂ that of the second nearest.
-  // Otherwise its error estimate becomes that distance, unless it was held back at the two
-  // previous restarts already. With EPSSetTrackAll, the test sees every Ritz value of each
-  // restart in order, and only those before the first unconverged one converge.
-  constexpr double max_distance = 1.0e-3, max_fraction = 0.1;
-  constexpr int max_unsettled = 2;
-  PetscInt its;
-  PalacePetscCall(EPSGetIterationNumber(eps, &its));
-  if (its != ritz_its)
-  {
-    ritz_its = its;
-    ritz_prev.swap(ritz_curr);
-    ritz_curr.clear();
-    ritz_blocked = false;
-  }
-  PetscReal tol;
-  PalacePetscCall(EPSGetTolerances(eps, &tol, nullptr));
-  int unsettled = 0;
-  if (*errest < tol)
-  {
-    PetscReal d1 = mfem::infinity(), d2 = mfem::infinity();
-    int count = 0;
-    for (const auto &[theta_prev, count_prev] : ritz_prev)
-    {
-      const PetscReal d = PetscAbsScalar(theta - theta_prev);
-      if (d < d1)
-      {
-        d2 = d1;
-        d1 = d;
-        count = count_prev;
-      }
-      else if (d < d2)
-      {
-        d2 = d;
-      }
-    }
-    const PetscReal a = PetscAbsScalar(theta);
-    d1 /= a;
-    d2 /= a;
-    if (d1 > std::max(static_cast<double>(tol), std::min(max_distance, max_fraction * d2)))
-    {
-      if (count < max_unsettled)
-      {
-        *errest = std::min(d1, PetscReal(1.0));
-        unsettled = count + 1;
-        ritz_num_delayed += !ritz_blocked;
-      }
-      else
-      {
-        ritz_num_unsettled += !ritz_blocked;
-      }
-    }
-  }
-  ritz_blocked = ritz_blocked || !(*errest < tol);
-  ritz_curr.emplace_back(theta, unsettled);
-}
-
 void SlepcEPSSolverBase::EndFirstCycle()
 {
   if (first_cycle)
@@ -758,25 +685,8 @@ int SlepcEPSSolverBase::Solve()
 {
   MFEM_VERIFY(A0 && A1 && opInv, "Operators are not set for SlepcEPSSolverBase!");
 
-  // A warm-started solve accepts an eigenpair only once its Ritz value settled.
-  if (warm_start)
-  {
-    PalacePetscCall(
-        EPSSetConvergenceTestFunction(eps, __eps_convergence_test, (void *)this, nullptr));
-  }
-  else if (ritz_test)
-  {
-    PalacePetscCall(EPSSetConvergenceTest(eps, EPS_CONV_REL));
-  }
-  ritz_test = warm_start;
-  ritz_prev.clear();
-  ritz_curr.clear();
-  ritz_its = -1;
-  ritz_blocked = false;
-  ritz_num_delayed = ritz_num_unsettled = 0;
-
-  // A tighter tolerance for the first linear solves is restored after them, or at the
-  // latest by a monitor after the first restart.
+  // Tighten the linear solver tolerance for the first linear solves: it is restored after
+  // them, or at the latest by a monitor after the first restart.
   lin_tol = opInv->GetRelTol();
   first_cycle_count = 0;
   first_cycle =
@@ -798,8 +708,8 @@ int SlepcEPSSolverBase::Solve()
     }
   }
 
-  // Solve the eigenvalue problem. The convergence test of warm-started solves and the count
-  // of Ritz values outside of the quality factor region see every Ritz value.
+  // Solve the eigenvalue problem. The count of Ritz values outside of the quality factor
+  // region sees every Ritz value.
   PetscInt num_conv;
   Customize();
   if (q_region && print > 0 && !q_region_monitor)
@@ -807,8 +717,8 @@ int SlepcEPSSolverBase::Solve()
     PalacePetscCall(EPSMonitorSet(eps, __eps_region_monitor, (void *)this, nullptr));
     q_region_monitor = true;
   }
-  const bool track_all = warm_start || (q_region && q_region_monitor);
-  PalacePetscCall(EPSSetTrackAll(eps, track_all ? PETSC_TRUE : PETSC_FALSE));
+  PalacePetscCall(
+      EPSSetTrackAll(eps, (q_region && q_region_monitor) ? PETSC_TRUE : PETSC_FALSE));
   q_region_count[0] = q_region_count[1] = q_region_count[2] = 0;
   PalacePetscCall(EPSSolve(eps));
   EndFirstCycle();
@@ -824,16 +734,6 @@ int SlepcEPSSolverBase::Solve()
     if (q_region && q_region_monitor)
     {
       PrintRegionExcluded();
-    }
-    if (ritz_num_delayed > 0 || ritz_num_unsettled > 0)
-    {
-      Mpi::Print(GetComm(),
-                 " Convergence delayed {:d} time{} for Ritz values not settled since the "
-                 "previous restart{}\n",
-                 ritz_num_delayed, (ritz_num_delayed == 1) ? "" : "s",
-                 (ritz_num_unsettled > 0)
-                     ? fmt::format(" ({:d} accepted unsettled)", ritz_num_unsettled)
-                     : "");
     }
   }
 
@@ -1087,9 +987,8 @@ void SlepcPEPLinearSolver::SetInitialSpace(const ComplexVector &v)
 void SlepcPEPLinearSolver::SetInitialSpaceBlocks(const ComplexVector &v,
                                                  const ComplexVector &v_lambda)
 {
-  MFEM_VERIFY(
-      A0 && A1,
-      "Must call SetOperators before using SetInitialSpace for SLEPc eigenvalue solver!");
+  MFEM_VERIFY(A0 && A1, "Must call SetOperators before using SetInitialSpaceBlocks for "
+                        "SLEPc eigenvalue solver!");
   if (!v0)
   {
     PalacePetscCall(MatCreateVecs(A0, nullptr, &v0));

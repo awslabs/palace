@@ -213,6 +213,15 @@ void BaseSolver::Preprocess(IoData &iodata, std::unique_ptr<mfem::Mesh> &smesh,
   iodata.NondimensionalizeInputs(smesh);
 }
 
+bool BaseSolver::ContinueAdaptation(int it, long long int ntdof, double err) const
+{
+  // Stop when out of iterations, out of unknowns if a limit was set, or below the
+  // tolerance.
+  const auto &refinement = iodata.model.refinement;
+  return it < refinement.max_it &&
+         !(refinement.max_size > 0 && ntdof > refinement.max_size) && err >= refinement.tol;
+}
+
 void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mesh) const
 {
   const auto &refinement = iodata.model.refinement;
@@ -243,23 +252,12 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
   // subdirectory written for adaptive runs).
   SaveAdaptationIteration(1);
 
-  // Collection of all tests that might exhaust resources.
-  auto ExhaustedResources = [&refinement](auto it, auto ntdof)
-  {
-    bool ret = false;
-    // Run out of iterations.
-    ret |= (it >= refinement.max_it);
-    // Run out of DOFs if a limit was set.
-    ret |= (refinement.max_size > 0 && ntdof > refinement.max_size);
-    return ret;
-  };
-
   // True topological entity counts of the final adapted mesh.
   mesh::MeshEntityCounts mesh_counts;
 
   // Main AMR loop.
   int it = 0;
-  while (use_amr && !ExhaustedResources(it, ntdof) && err >= refinement.tol)
+  while (use_amr && ContinueAdaptation(it, ntdof, err))
   {
     // Print timing summary.
     Mpi::Print(comm, "\nCumulative timing statistics:\n");

@@ -4,7 +4,6 @@
 #ifndef PALACE_DRIVERS_EIGEN_SOLVER_HPP
 #define PALACE_DRIVERS_EIGEN_SOLVER_HPP
 
-#include <complex>
 #include <memory>
 #include <vector>
 #include "drivers/basesolver.hpp"
@@ -22,14 +21,15 @@ class VectorFieldTransfer;
 class EigenSolver : public BaseSolver
 {
 private:
-  // Eigenpairs of the previous adaptation iteration, kept through the refinement and
-  // rebalancing of the finest mesh for the starting vector of the next eigenvalue solve,
-  // and the number of iterations (restarts) of that solve.
+  // Combination of the eigenvectors of the previous adaptation iteration (and of λ x for
+  // quadratic problems), kept through the refinement and rebalancing of the finest mesh to
+  // start the next eigenvalue solve, and the number of eigenvectors in it.
   mutable std::unique_ptr<VectorFieldTransfer> prev_eigenvectors;
-  mutable std::vector<std::complex<double>> prev_eigenvalues;
-  mutable int prev_num_its = -1;
+  mutable int prev_num_eigenvectors = 0;
 
-  // Number of solves so far: the initial one, then one per adaptation iteration.
+  // Number of Krylov cycles of the last solve without a warm start, and number of solves so
+  // far (the initial one, then one per adaptation iteration).
+  mutable int last_cold_its = -1;
   mutable int num_solves = 0;
 
   std::pair<ErrorIndicator, long long int>

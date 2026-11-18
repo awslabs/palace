@@ -16,8 +16,6 @@
 #include <memory>
 #include <optional>
 #include <string>
-#include <utility>
-#include <vector>
 #include <mpi.h>
 #include "linalg/eps.hpp"
 #include "linalg/ksp.hpp"
@@ -228,9 +226,6 @@ protected:
   // Shell matrices for the generalized eigenvalue problem.
   Mat A0, A1;
 
-  // Whether the next solve is warm-started, and whether its convergence test is installed.
-  bool warm_start, ritz_test;
-
   // Linear solver tolerance of the first linear solves and the one restored after them,
   // their number (see SetFirstCycleLinearSolverTol) and the count of solves in the current
   // solve, and whether the monitor restoring the tolerance at the first restart is
@@ -238,15 +233,6 @@ protected:
   double first_cycle_tol, lin_tol;
   int first_cycle_solves, first_cycle_count;
   bool first_cycle_monitor, first_cycle;
-
-  // State of the convergence test of warm-started solves (see CheckRitzValue): the Ritz
-  // values of the previous and current restarts, each with the number of restarts it was
-  // held back, the current restart, whether an unconverged Ritz value was seen at it, and
-  // the numbers of delayed convergences and of eigenpairs accepted unsettled.
-  std::vector<std::pair<PetscScalar, int>> ritz_prev, ritz_curr;
-  PetscInt ritz_its;
-  bool ritz_blocked;
-  int ritz_num_delayed, ritz_num_unsettled;
 
   void Customize() override;
 
@@ -274,8 +260,6 @@ public:
 
   void SetInitialSpace(const ComplexVector &v) override;
 
-  void SetWarmStart(bool warm) override { warm_start = warm; }
-
   void SetFirstCycleLinearSolverTol(double tol, int num_solves) override
   {
     first_cycle_tol = tol;
@@ -287,10 +271,6 @@ public:
   // each restart).
   void EndFirstCycle();
   void CountFirstCycleSolve();
-
-  // Update the relative error estimate of the Ritz value theta of the transformed problem
-  // in a warm-started solve (called by its convergence test).
-  void CheckRitzValue(PetscScalar theta, PetscReal *errest);
 
   int Solve() override;
 

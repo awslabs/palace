@@ -18,11 +18,11 @@ the directory specified by
 this file are the mode quality factors and errors (absolute and backward) computed for each
 eigenpair.
 
-With adaptive mesh refinement, the eigenvalue solver of each adaptation iteration starts
-from the eigenmodes of the previous one, transferred to the refined mesh
-([`config["Solver"]["Eigenmode"]["WarmStart"]`](../config/reference.md#config-solver-eigenmode-warmstart)).
-Such a solve accepts an eigenmode only once its eigenvalue settled between restarts, since
-the error estimate of the eigenvalue solver does not see the error of the linear solves.
+With adaptive mesh refinement, the eigenvalue solves of later adaptation iterations can
+start from the eigenmodes of the previous one, transferred to the refined mesh, and then
+need fewer Krylov restarts. Setting
+[`config["Solver"]["Eigenmode"]["StartVector"]`](../config/reference.md#config-solver-eigenmode-startvector)
+to `false` turns this off.
 
 For problems with damping, the eigenvalue solver does not search for strongly damped modes,
 with quality factors below
@@ -41,7 +41,12 @@ The EPR framework can be used to characterize the dissipative elements in the mo
 In particular, lumped ports with nonzero resistance in the model will trigger coupling rate
 and quality factor calculations based on input-output (I-O) line coupling loss: By
 specifying resistive lumped ports in the model, the mode coupling quality factors will be
-computed as ``Q_{ml} = \omega_m/\kappa_{ml}``. The output file `port-Q.csv` will be created
+computed as ``Q_{ml} = \mathrm{Re}\{\omega_m\}/|\kappa_{ml}|``. The magnitude of the coupling
+rate ``\kappa_{ml}`` is the power dissipated in the resistive boundary of port ``l`` divided
+by the electric energy of mode ``m``, and its sign is the sign of the real part of the port
+current. This power includes field that does not match the voltage mode of the port, so
+when the port does not match the field it can be much larger than the I-O line coupling
+loss ``|V_{ml}|^2/(2R_l)``. The output file `port-Q.csv` will be created
 in the output directory containing these mode quality factor contributions. For bulk and
 interface dielectric loss calculations, which are not unique to the eigenmode simulation
 type, see the sections [Domain postprocessing](postprocessing.md#Domain-postprocessing) and

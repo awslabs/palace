@@ -151,6 +151,9 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     with when("+mumps"):
         depends_on("fortran", type="build")
         depends_on("mumps+metis+parmetis")
+        # Real and complex double precision (dmumps and zmumps), with distributed
+        # right-hand sides.
+        depends_on("mumps@5.3:+double+complex", when="@0.20:")
         depends_on("mumps+shared", when="+shared")
         depends_on("mumps~shared", when="~shared")
         depends_on("mumps+openmp", when="+openmp")
@@ -175,10 +178,17 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
 
     # The STRUMPACK version of the superbuild, with
     # https://github.com/pghysels/STRUMPACK/pull/163 for faster distributed solves, its
-    # fix https://github.com/pghysels/STRUMPACK/pull/164, and the solver changes of
+    # fix https://github.com/pghysels/STRUMPACK/pull/164, the solver changes of
     # https://github.com/pghysels/STRUMPACK/pull/165 for faster distributed triangular
-    # solves with a few right-hand sides. Kept off the `with` blocks so the Palace variants
-    # are not folded into the patch condition.
+    # solves with a few right-hand sides, and the copies in extern/patch/STRUMPACK of the
+    # source and CMake changes of https://github.com/pghysels/STRUMPACK/pull/169, which
+    # allow setting the PBLAS block size (see the local strumpack package) and use these
+    # solves only for the block sizes they handle, of the source changes of
+    # https://github.com/pghysels/STRUMPACK/pull/171, which lower the memory of the
+    # distributed solver, and of the source changes of the STRUMPACK commits 3f30760d and
+    # 668cd1b8 by the STRUMPACK maintainer, which fix the pivoting of the distributed BLR
+    # fronts (to be removed with the next STRUMPACK release). Kept off the `with` blocks
+    # so the Palace variants are not folded into the patch condition.
     depends_on(
         "strumpack@8.1.0",
         when="@develop+strumpack",
@@ -200,6 +210,27 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 "0bbc11478dd7faa1a5f89b4f52d34c1205273e1f/extern/patch/STRUMPACK/"
                 "strumpack_pr165.diff",
                 sha256="b5032afa23be7511413e4532c85799e2f89d7ed1a379dde23537f8aa5a116294",
+                when="@8.1.0",
+            ),
+            patch(
+                "https://raw.githubusercontent.com/awslabs/palace/"
+                "2c04dcfe57fa535eb5cfa9c6be71bf788ec6f371/extern/patch/STRUMPACK/"
+                "strumpack_pr169.diff",
+                sha256="4bca6102f23e111f4353f9e57dd58f61dbee95b5030d08b80591a9f4e6eb8117",
+                when="@8.1.0",
+            ),
+            patch(
+                "https://raw.githubusercontent.com/awslabs/palace/"
+                "8a1824f67bfe176f74075e9e3938fa8267c0695f/extern/patch/STRUMPACK/"
+                "strumpack_pr171.diff",
+                sha256="781f79e96d4ff55cc914617885d64f869ea001314841c8c30b94d5073685e71a",
+                when="@8.1.0",
+            ),
+            patch(
+                "https://raw.githubusercontent.com/awslabs/palace/"
+                "b87fe1cbf98a5dcd4850c5c967ada69e1c15dea7/extern/patch/STRUMPACK/"
+                "strumpack_blr_pivoting.diff",
+                sha256="2d5da6e907d735c1588c3aa2a0cfe6554cf0b950c1a3bab3db5e71c7296168c8",
                 when="@8.1.0",
             ),
         ],
@@ -482,13 +513,12 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 sha256="eed51f3d84468daa250f1ba71f0bd6072e9c98ab96f244b62820bf0a1c32bc7f",
                 when="@4.10:",
             ),
-            # https://github.com/mfem/mfem/pull/5610 (narrow to @4.10.0 once
-            # merged upstream and Lookahead flags it)
+            # https://github.com/mfem/mfem/pull/5610
             patch(
                 "https://github.com/mfem/mfem/commit/"
                 "e9247694fb4e8e433df3ce24c4aaa3c5d5487c91.diff",
                 sha256="917b2c01f2032ececb8f7ae3b7a23c82d2ccd3b7c8ebcdffdea80d64c10ab964",
-                when="@4.10:",
+                when="@4.10.0",
             ),
             # https://github.com/mfem/mfem/pull/5714 (narrow to @4.10.0 once
             # merged upstream and Lookahead flags it)

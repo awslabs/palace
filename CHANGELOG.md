@@ -21,6 +21,14 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
   - `validate-config` accepts several configuration files and validates them in one Julia
     session. [PR 1180](https://github.com/awslabs/palace/pull/1180).
+  - Added `Boundaries.LumpedPort[].ExcitationAmplitude` and `ExcitationPhase` (degrees),
+    a complex weight a = A e^{iφ} on the unit-power incident wave of each lumped port, so
+    ports sharing an `Excitation` index can be driven with different amplitudes and phases.
+    S-parameters of single-port excitations are normalized by the weight; with a phase that
+    is not a multiple of 180 degrees `port-V.csv` and `port-I.csv` report the real and
+    imaginary parts of the incident voltage and current. A phase that is not a multiple of
+    180 degrees is an error for transient simulations. SchemaVer 4-3-0
+    [PR 1169](https://github.com/awslabs/palace/pull/1169).
 
 #### Interface Changes
 
@@ -31,8 +39,15 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     positive, the log reports how many Ritz values of the last iteration lie outside of the
     search region. With the region, a warm-started solve with a starting vector from K
     eigenvectors uses the tighter linear solver tolerance of its first Krylov cycle only for
-    its first K + 1 linear solves. SchemaVer 4-4-0.
+    its first K + 1 linear solves. SchemaVer 4-5-0.
     [PR 1205](https://github.com/awslabs/palace/pull/1205).
+  - With adaptive mesh refinement on nonconforming meshes, the SLEPc Krylov-Schur eigenvalue
+    solves of later adaptation iterations can start from the eigenvectors of the previous
+    one, transferred to the refined mesh, instead of the start vector of
+    `config["Solver"]["Eigenmode"]["StartVector"]`, and then need fewer Krylov restarts. The
+    eigenvalues of adaptive simulations change at the level of the solver tolerances, and
+    fewer converged eigenpairs beyond the requested ones can be reported. SchemaVer 4-4-1.
+    [PR 1203](https://github.com/awslabs/palace/pull/1203).
   - When `Solver.Linear.Type` is `"Default"` (or omitted) for frequency domain problems,
     and for the wave port and boundary mode eigenvalue solves, *Palace* now prefers
     STRUMPACK over SuperLU_DIST, then MUMPS, as the sparse direct solver when built with
@@ -50,6 +65,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     L⁻¹, R⁻¹, and C matrices which are not symmetric: the Floquet terms make the system
     matrices Hermitian rather than complex symmetric. Such configurations must be updated.
     [PR 1112](https://github.com/awslabs/palace/pull/1112).
+  - `"AdaptiveGSOrthogonalization": "MGS"` now orthogonalizes the reduced-order basis of
+    adaptive driven sweeps with `"CGS2"`, which is as stable with fewer reductions. The
+    minimal rational interpolation of the error estimate always uses `"CGS2"`. SchemaVer
+    4-3-1 [PR 1187](https://github.com/awslabs/palace/pull/1187).
 
 #### New Features
 
@@ -61,19 +80,50 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Performance Improvements
 
-  - With adaptive mesh refinement, the eigenvalue solve of each adaptation iteration starts
-    from the eigenvectors of the previous one, transferred to the refined mesh (new
-    `config["Solver"]["Eigenmode"]["WarmStart"]`, default `true`), for the SLEPc
-    Krylov-Schur solver with nonconformal refinement. The first Krylov cycle of a
-    warm-started solve uses 1e-2 times the linear solver tolerance, and the solve accepts an
-    eigenpair only once its eigenvalue settled between restarts. SchemaVer 4-3-0.
-    [PR 1203](https://github.com/awslabs/palace/pull/1203).
+  - With `config["Solver"]["Linear"]["ComplexCoarseSolve"]`, SuperLU_DIST (with or without
+    `"SuperLU3DCommunicator"`), STRUMPACK (with or without compression), and MUMPS now
+    factor the complex-valued coarse-level matrix in complex arithmetic instead of the
+    equivalent real-valued system of twice the size, which reduces the memory of the factors
+    by about 40%. This changes the behavior of an explicit `"ComplexCoarseSolve": true`: the
+    factorization differs, so results change at the level of the linear solver tolerance,
+    and by more with STRUMPACK compression, which now compresses the factors of the
+    complex-valued matrix. With `"DropSmallEntries"`, they drop the small entries of the
+    complex-valued matrix, by the rule which is applied to the real-valued system, and with
+    `"PCMatReal"` the coarse-level matrix is real-valued and is factored as before. When the
+    imaginary part of the complex-valued matrix is exactly zero, as for a model without
+    losses, these solvers factor its real part in real arithmetic, which halves the memory
+    of the factors again. The log says which matrix is factored, and whether in complex
+    arithmetic or as a real-valued system. With the AMS and BoomerAMG linear solvers, which
+    cannot be given the real-valued system of twice the size (AMS aborted, and simulations
+    with BoomerAMG did not converge), `"ComplexCoarseSolve": true` is now disabled with a
+    warning. Wave ports keep it for their mode solver, which uses a sparse direct solver.
+    SchemaVer 4-4-0 [PR 1193](https://github.com/awslabs/palace/pull/1193).
   - Added a STRUMPACK patch for
-    [pghysels/STRUMPACK#165](https://github.com/pghysels/STRUMPACK/pull/165), which lowers
-    the latency of the distributed triangular solves of the solve phase for a few
-    right-hand sides, such as the real and imaginary parts of a complex vector. This
-    speeds up STRUMPACK as the coarse solver at high process counts. Results are
-    unchanged. [PR 1170](https://github.com/awslabs/palace/pull/1170).
+    [pghysels/STRUMPACK#171](https://github.com/pghysels/STRUMPACK/pull/171), which lowers
+    the memory of the distributed STRUMPACK solver by 12 bytes per coarse matrix row on
+    each process: the row-to-front map and the column scaling were stored for the whole
+    matrix on every process. Results are unchanged.
+    [PR 1198](https://github.com/awslabs/palace/pull/1198).
+  - STRUMPACK is now built with a PBLAS block size of 128 instead of 32 in the superbuild
+    and in Spack builds of STRUMPACK without SLATE, such as the containers. Spack builds
+    of STRUMPACK with SLATE, the default of its Spack package, keep the block size of 512
+    of SLATE. The block size is set with a STRUMPACK patch for
+    [pghysels/STRUMPACK#169](https://github.com/pghysels/STRUMPACK/pull/169). The patch
+    for [pghysels/STRUMPACK#165](https://github.com/pghysels/STRUMPACK/pull/165)
+    ([PR 1170](https://github.com/awslabs/palace/pull/1170)) is still applied, but its
+    lower-latency distributed triangular solves for a few right-hand sides only handle
+    block sizes up to 32 and are thus no longer used. With a block size of 128, the time
+    of the STRUMPACK coarse solver is 4-17% lower than with these solves and a block size
+    of 32, and its memory is lower.
+    [PR 1197](https://github.com/awslabs/palace/pull/1197).
+  - Used two levels of aggressive coarsening in the BoomerAMG coarse solver of the
+    multigrid preconditioner of the divergence-free projection, instead of one. Its
+    V-cycle is latency bound at high process counts, and the shorter hierarchy makes it
+    faster. [PR 1149](https://github.com/awslabs/palace/pull/1149).
+  - Uniform frequency sweeps of driven simulations release the linear solver and system
+    matrices after the last solve, before the final field output and error estimation.
+    This lowers the peak memory when the final postprocessing sets it.
+    [PR 1087](https://github.com/awslabs/palace/pull/1087).
   - Added a hypre patch, based on
     [hypre-space/hypre#1652](https://github.com/hypre-space/hypre/pull/1652), for
     multicomponent vectors in hybrid Gauss-Seidel relaxation and Gaussian elimination, and
@@ -144,6 +194,25 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Expanded the reduced-order solution at each frequency of an adaptive sweep into the
     full space in one pass over memory on CPUs, reading each basis vector once.
     [PR 1165](https://github.com/awslabs/palace/pull/1165).
+  - Sped up the offline phase of adaptive driven sweeps and lowered its memory use. Each
+    Gram-Schmidt pass of a new basis vector, and of GMRES with `"CGS"` or `"CGS2"`
+    orthogonalization, computes all inner products in one pass over the basis with one
+    reduction, the projections onto the basis are summed in one reduction per update, and
+    the error estimate no longer stores the full-size solutions.
+    [PR 1187](https://github.com/awslabs/palace/pull/1187).
+  - The lumped and wave port outputs of adaptive driven sweeps are evaluated without
+    expanding the reduced-order solution at each frequency.
+    [PR 1188](https://github.com/awslabs/palace/pull/1188).
+  - The wave and Floquet port terms of the reduced-order model of adaptive driven sweeps
+    are evaluated from the projections of the port modes, without assembling and projecting
+    full-size vectors at each frequency, and the reduced system is assembled and solved once
+    per frequency for all excitations (once per frequency and excitation with field output).
+    A frequency-dependent boundary condition without a reduced-order term now stops the
+    simulation instead of falling back to assembling it at each frequency.
+    [PR 1189](https://github.com/awslabs/palace/pull/1189).
+  - The reduced system of adaptive driven sweeps is solved with partial-pivoting LU instead
+    of full-pivoting QR, falling back to the QR when the LU solution is not finite or
+    inaccurate. [PR 1190](https://github.com/awslabs/palace/pull/1190).
   - The Floquet port DtN correction and the wave-port modal correction now use a single MPI
     reduction per operator application instead of four per rank-one term, and only touch
     the port degrees of freedom instead of full-length vectors.
@@ -167,9 +236,31 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Bug Fixes
 
+  - Fixed the pivoting of distributed BLR fronts in STRUMPACK with a patch from upstream.
+    With BLR compression (`"STRUMPACKCompressionType"` `"BLR"`, `"BLR-HODLR"` or
+    `"ZFP-BLR-HODLR"`) on two or more MPI processes, the factorization of an indefinite
+    matrix was inaccurate whatever the tolerance, so the linear solves needed more
+    iterations and could return wrong solutions with `"ComplexCoarseSolve"`.
+    [PR 1222](https://github.com/awslabs/palace/pull/1222).
+  - Fixed the flux recovery in the error estimators to use the projection which minimizes the
+    error it is measured in (ε⁻¹-weighted for the electric flux, μ-weighted for the magnetic
+    field). The unweighted projection overestimated the error in the low-permittivity
+    elements next to a dielectric interface, by up to an order of magnitude next to a
+    sapphire substrate, and AMR spent refinement there. The error indicator decreases for
+    models with material interfaces, and their AMR meshes change.
+    [PR 1072](https://github.com/awslabs/palace/pull/1072).
   - Fixed driven frequency sweeps aborting with "... not found in sample frequencies!" when
     overlapping `"Samples"` ranges compute the same frequency with different rounding.
     [PR 1192](https://github.com/awslabs/palace/pull/1192).
+  - Fixed the domain magnetic energies of adaptive driven sweeps evaluated from the
+    reduced-order model, which lost up to 10⁻² relative accuracy at low frequency, where
+    the curls of the basis vectors nearly cancel, and were only checked against the full
+    evaluation for the first excitation. All reduced outputs are now checked against the
+    full evaluation at the first frequency of every excitation (the first one without field
+    output), which is the one written to the output files, reverting to the full
+    postprocessing with a warning if they differ by more than a tenth of `"AdaptiveTol"`
+    (or about 10⁻⁹ for tighter tolerances).
+    [PR 1188](https://github.com/awslabs/palace/pull/1188).
   - Added a STRUMPACK patch for
     [pghysels/STRUMPACK#164](https://github.com/pghysels/STRUMPACK/pull/164), which fixes
     the solves after the matrix values change when STRUMPACK compression is enabled
@@ -284,6 +375,18 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     wrong. MUMPS now compresses the factorizations of boundary mode and wave port mode
     solves only with `"STRUMPACKCompressionType": "BLR"`. SchemaVer 4-2-2
     [PR 1178](https://github.com/awslabs/palace/pull/1178).
+  - Fixed underestimated eigenmode resistive lumped-port loss when the field does not match
+    the port mode, causing too-small coupling-rate magnitudes and too-large external quality
+    factors.
+    [PR 1086](https://github.com/awslabs/palace/pull/1086).
+  - Fixed the grid function output (`Problem.OutputFormats.GridFunction`) of driven
+    simulations with several excitations, where each excitation overwrote the saved fields
+    of the previous one, so that only the fields of the last excitation were kept. As for
+    the ParaView output, the fields of excitation `i` are now written to the subfolder
+    `gridfunction/driven/excitation_i/`. The mesh, rank, and error indicator files are
+    shared by all excitations and stay in `gridfunction/driven/`. The output of driven
+    simulations with a single excitation is unchanged.
+    [PR 1220](https://github.com/awslabs/palace/pull/1220).
 
 #### Documentation
 
@@ -297,6 +400,20 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Build system
 
+  - With MPICH and the MPI implementations derived from it, the superbuild patches the BLACS
+    of ScaLAPACK to receive point-to-point messages with derived datatypes packed and unpack
+    them locally. This works around an MPICH bug for processes on the same node
+    ([pmodels/mpich#8169](https://github.com/pmodels/mpich/issues/8169), fixed on the main
+    branch of MPICH by [pmodels/mpich#8172](https://github.com/pmodels/mpich/pull/8172),
+    which no release up to 5.0.2 and 5.1.0b1 has), seen on macOS arm64, which corrupts or
+    aborts the complex-valued distributed factorizations of STRUMPACK and MUMPS: a packed
+    message received in several shared memory cells cannot be unpacked when a cell boundary
+    splits a complex-valued element. Builds with other MPI implementations are unchanged.
+    The ScaLAPACK of a Spack build is not patched.
+    [PR 1193](https://github.com/awslabs/palace/pull/1193).
+  - The superbuild now builds MUMPS with complex double precision (`zmumps`), which
+    *Palace* now requires with `PALACE_WITH_MUMPS`, also in the Spack package
+    (`mumps@5.3:+double+complex`). [PR 1193](https://github.com/awslabs/palace/pull/1193).
   - The superbuild now always builds ParMETIS, which *Palace* links directly. Previously
     it was built only with SuperLU_DIST, STRUMPACK, or MUMPS, so configuring with cuDSS as
     the only sparse direct solver failed.
@@ -306,6 +423,8 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     parallel instead of serially. The superbuild also skips Eigen's BLAS, LAPACK, and demos,
     which *Palace* does not use, and clones PETSc and SLEPc shallowly.
     [PR 1180](https://github.com/awslabs/palace/pull/1180).
+  - The Spack package now builds STRUMPACK without SLATE by default, as the superbuild does.
+    [PR 1223](https://github.com/awslabs/palace/pull/1223).
 
 ## [0.19.0] - 2026-11-02
 

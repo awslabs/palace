@@ -506,6 +506,12 @@ public:
   // - 1-based index if excited; 0 if not excited.
   int excitation = 0;
 
+  // Complex weight a = A exp(i phi) on the unit-power incident wave of this port,
+  // A = "ExcitationAmplitude" (> 0), phi = "ExcitationPhase" in degrees. Dimensionless,
+  // frequency independent. Only valid for excited ports.
+  double excitation_amplitude = 1.0;
+  double excitation_phase = 0.0;  // [deg]
+
   // Flag for boundary damping term in driven and transient simulations.
   bool active = true;
 
@@ -962,10 +968,6 @@ public:
   // Compute and set a starting vector for the eigenvalue solver.
   bool init_v0 = true;
   bool init_v0_const = false;
-
-  // For adaptive mesh refinement, compute the starting vector of each adaptation iteration
-  // from the eigenvectors of the previous one, transferred to the refined mesh.
-  bool warm_start = true;
 
   // Minimum quality factor of the eigenmodes searched for in problems with damping (SLEPc
   // only, values <= 0.5 disable the restriction).

@@ -1810,6 +1810,22 @@ TEST_CASE("cylinder_cavity_impedance", "[Serial][Parallel][GPU][Regression]")
                                   opts);
 }
 
+// One adaptation iteration of cylinder_cavity_impedance at order 2, refining every element:
+// the initial solve takes about nine Krylov cycles, so the solve of the adaptation
+// iteration starts from its eigenvectors (warm start), with the tighter linear solver
+// tolerance in its first cycle.
+TEST_CASE("cylinder_cavity_impedance_amr", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = eigen_excluded;
+  opts.skip_rowcount = true;
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("cylinder", "cavity_impedance_amr.json",
+                                  "cavity_impedance_amr", opts);
+}
+
 // The SLEPc NEP (SLP) shell receives device arrays on a GPU. The impedance boundary adds
 // damping, so this covers the full (K, C, M) path of the NEP solver. Without SLEPc,
 // Palace replaces SLP with Hybrid, which the SLP references do not check.
@@ -2448,11 +2464,11 @@ TEST_CASE("cpw_lumped_eigen", "[Serial][Parallel][GPU][Regression]")
   palace::test::RegressionOptions opts;
   opts.rtol = 2.0e-2;
   opts.atol = 1.0e-11;
-  // Drop phase-sensitive port columns and Q_ext / κ_ext normalisations;
-  // keep the farfield magnitude check.
-  opts.excluded_columns = {"Maximum",      "Minimum", "Mean",      "Error (Bkwd.)",
-                           "Error (Abs.)", "Re{V[",   "Im{V[",     "Re{I[",
-                           "Im{I[",        "Q_ext",   "\u03ba_ext"};
+  // Drop phase-sensitive port columns and compare κ_ext by magnitude, since its sign is the
+  // sign of Re{I}; keep the farfield magnitude check.
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean",  "Error (Bkwd.)", "Error (Abs.)",
+                           "Re{V[",   "Im{V[",   "Re{I[", "Im{I["};
+  opts.abs_columns = {"\u03ba_ext"};
   opts.skip_rowcount = true;
   opts.custom_checks["farfield-rE.csv"] = TestFarfield(opts.rtol);
   palace::test::RunRegressionCase("cpw", "cpw_lumped_eigen.json", "lumped_eigen", opts);

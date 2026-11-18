@@ -1,6 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <algorithm>
 #include <cmath>
 #include <complex>
 #include <memory>
@@ -26,7 +27,7 @@ namespace palace
 {
 
 TEST_CASE("Vector field transfer through refinement and rebalancing",
-          "[eigenmode][Serial][Parallel]")
+          "[eigenmode][Serial][Parallel][GPU]")
 {
   // H(curl) fields of a space of order p, linear in the coordinates, are kept exactly
   // through nonconforming refinement and rebalancing of their mesh.
@@ -58,6 +59,7 @@ TEST_CASE("Vector field transfer through refinement and rebalancing",
     mfem::ParGridFunction gf(&fespace);
     gf.ProjectCoefficient(coeff);
     Vector tv(fespace.GetTrueVSize());
+    tv.UseDevice(true);
     gf.GetTrueDofs(tv);
     return tv;
   };
@@ -100,6 +102,7 @@ TEST_CASE("Vector field transfer through refinement and rebalancing",
   {
     const auto ref = TrueDofs(nd_fespace, k);
     Vector tv;
+    tv.UseDevice(true);
     transfer.GetField(k, nd_fespace, tv);
     REQUIRE(tv.Size() == ref.Size());
     tv -= ref;
@@ -198,16 +201,17 @@ struct TridiagonalEigenTestResult
   std::vector<std::complex<double>> lambda;
   std::vector<ComplexVector> x;
   int its;                       // Number of restarts
+  int lin_its;                   // Number of linear solver iterations
   std::vector<double> lin_tols;  // Tolerance of each linear solve
 };
 
 // Shift-and-invert Krylov-Schur solve for the nev eigenvalues of the tridiagonal operator
 // closest to the shift s, with GMRES and Jacobi preconditioning for the linear solves, from
-// the start vector v0 (a warm start if warm), with the tolerance first_tol for the first
-// num_first linear solves if positive.
+// the start vector v0, and with the linear solver tolerance first_tol for the first
+// num_first linear solves (the first Krylov cycle if negative) if positive.
 TridiagonalEigenTestResult SolveTridiagonalEigenTest(int n, double s, int nev, int ncv,
                                                      double tol, double lin_tol,
-                                                     const ComplexVector &v0, bool warm,
+                                                     const ComplexVector &v0,
                                                      double first_tol = 0.0,
                                                      int num_first = -1)
 {
@@ -232,12 +236,12 @@ TridiagonalEigenTestResult SolveTridiagonalEigenTest(int n, double s, int nev, i
   eps.SetLinearSolver(ksp);
   eps.SetShiftInvert(s);
   eps.SetInitialSpace(v0);
-  eps.SetWarmStart(warm);
   eps.SetFirstCycleLinearSolverTol(first_tol, num_first);
   const int num_conv = eps.Solve();
   REQUIRE(num_conv >= nev);
   TridiagonalEigenTestResult result;
   result.its = eps.GetNumIterations();
+  result.lin_its = ksp.NumTotalMultIterations();
   result.lin_tols = recorder->tols;
   for (int i = 0; i < nev; i++)
   {
@@ -260,8 +264,8 @@ TEST_CASE("Eigenmode tight first linear solves", "[eigenmode][Serial]")
   linalg::SetRandom(Mpi::World(), v0);
   for (int num : {num_first, -1})
   {
-    const auto result = SolveTridiagonalEigenTest(n, 0.0, nev, ncv, tol, lin_tol, v0, false,
-                                                  first_tol, num);
+    const auto result =
+        SolveTridiagonalEigenTest(n, 0.0, nev, ncv, tol, lin_tol, v0, first_tol, num);
     const std::size_t num_tight = (num > 0) ? num : ncv;
     REQUIRE(result.its > 1);
     REQUIRE(result.lin_tols.size() > num_tight);
@@ -272,46 +276,47 @@ TEST_CASE("Eigenmode tight first linear solves", "[eigenmode][Serial]")
   }
 }
 
-TEST_CASE("Eigenmode stable Ritz value convergence", "[eigenmode][Serial]")
+TEST_CASE("Eigenmode warm start", "[eigenmode][Serial]")
 {
-  // A warm-started shift-and-invert solve accepts an eigenpair only once its Ritz value is
-  // the same eigenpair as at the previous restart. A start vector which already combines
-  // the wanted eigenvectors then needs one more restart than its first Krylov cycle, which
-  // converges on the error estimates alone without the warm start.
+  // From a start vector combining the wanted eigenvectors, the eigenvalues are only as
+  // accurate as the linear solves of the first Krylov cycle, whose error the error estimate
+  // of the eigenvalue solver does not see: a smaller tolerance for that cycle gives the
+  // accuracy of exact solves. The shift is below the spectrum, so that GMRES converges for
+  // any tolerance.
   constexpr int n = 120, nev = 2, ncv = 8;
-  const double s = 1.5, tol = 1.0e-10, lin_tol = 1.0e-12;
+  const double s = 0.0, tol = 1.0e-10, exact_tol = 1.0e-12, lin_tol = 1.0e-4;
   ComplexVector v0(n);
   linalg::SetRandom(Mpi::World(), v0);
-  const auto cold = SolveTridiagonalEigenTest(n, s, nev, ncv, tol, lin_tol, v0, false);
-  CHECK(cold.its > 1);
+  const auto exact = SolveTridiagonalEigenTest(n, s, nev, ncv, tol, exact_tol, v0);
+  CHECK(exact.its > 1);
 
   ComplexVector v(n), r(n);
   linalg::SetRandom(Mpi::World(), r, 1);
-  v = cold.x[0];
-  v.Add(1.0, cold.x[1]);
+  v = exact.x[0];
+  v.Add(1.0, exact.x[1]);
   v.Add(1.0e-12 / std::sqrt(static_cast<double>(n)), r);
-  const auto first = SolveTridiagonalEigenTest(n, s, nev, ncv, tol, lin_tol, v, false);
-  const auto warm = SolveTridiagonalEigenTest(n, s, nev, ncv, tol, lin_tol, v, true);
-  CHECK(first.its == 1);
-  CHECK(warm.its == 2);
+  const auto warm = SolveTridiagonalEigenTest(n, s, nev, ncv, tol, lin_tol, v);
+  const auto warm_tight =
+      SolveTridiagonalEigenTest(n, s, nev, ncv, tol, lin_tol, v, exact_tol);
+  CHECK(warm_tight.its == 1);
+  double err = 0.0, err_tight = 0.0;
   for (int i = 0; i < nev; i++)
   {
-    CHECK(std::abs(first.lambda[i] - cold.lambda[i]) <= 1.0e-8 * std::abs(cold.lambda[i]));
-    CHECK(std::abs(warm.lambda[i] - cold.lambda[i]) <= 1.0e-8 * std::abs(cold.lambda[i]));
+    const double a = std::abs(exact.lambda[i]);
+    err = std::max(err, std::abs(warm.lambda[i] - exact.lambda[i]) / a);
+    err_tight = std::max(err_tight, std::abs(warm_tight.lambda[i] - exact.lambda[i]) / a);
   }
+  CHECK(err > 100.0 * tol);
+  CHECK(err_tight <= tol);
 
-  // Inexact linear solves, for a shift below the spectrum (GMRES needs the full dimension
-  // for any tolerance at the interior shift): the Ritz values keep moving by about the
-  // error of the linear solves, but the warm-started solve still stops, after at most a few
-  // more restarts.
-  const auto exact = SolveTridiagonalEigenTest(n, 0.0, nev, ncv, tol, lin_tol, v0, false);
-  const auto inexact = SolveTridiagonalEigenTest(n, 0.0, nev, ncv, tol, 1.0e-6, v0, true);
-  CHECK(inexact.its <= exact.its + 3);
-  for (int i = 0; i < nev; i++)
-  {
-    CHECK(std::abs(inexact.lambda[i] - exact.lambda[i]) <=
-          1.0e-4 * std::abs(exact.lambda[i]));
-  }
+  // The tolerance is restored after the first cycle: from a random vector, the solve takes
+  // more linear solver iterations than without the smaller tolerance, and fewer than with
+  // it for all cycles.
+  const auto cold = SolveTridiagonalEigenTest(n, s, nev, ncv, tol, lin_tol, v0);
+  const auto cold_tight =
+      SolveTridiagonalEigenTest(n, s, nev, ncv, tol, lin_tol, v0, exact_tol);
+  CHECK(cold_tight.lin_its > cold.lin_its);
+  CHECK(cold_tight.lin_its < exact.lin_its);
 }
 
 TEST_CASE("Eigenmode quality factor region", "[eigenmode][Serial]")
