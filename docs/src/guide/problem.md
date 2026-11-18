@@ -38,12 +38,16 @@ Other frequency-dependent terms are not solved in this way: wave ports, second-o
 absorbing boundaries, finite conductivity and rational impedance boundaries, absorbing
 boundaries next to a frequency-dependent material, and `DjordjevicSarkar` terms.
 With any of them, for constant and frequency-dependent materials alike, the nonlinear
-eigensolver of `"NonlinearType"` is used. It returns converged modes, but not always the
-ones nearest the target: a small error for a returned mode does not show that no lower mode
-was missed. Changing `Target`, `TargetUpper`, or the number of modes changes its starting
-values. It can also converge fewer modes than were requested, for example with a material
-resonance between `Target` and `TargetUpper`; the solve then stops with an error. A wave
-port mode solve at a complex frequency that does not converge is fatal.
+eigensolver of `"NonlinearType"` is used. With `"Hybrid"`, its starting values come from the
+same linearization of the pole terms of the materials, with only the other
+frequency-dependent terms interpolated between `Target` and `TargetUpper`. It returns
+converged modes, but not always the ones nearest the target: a small error for a returned
+mode does not show that no lower mode was missed. Changing `Target`, `TargetUpper`, or the
+number of modes changes its starting values. It can also converge fewer modes than were
+requested, for example near a material resonance with a wave port or an absorbing boundary
+next to the material, or with `"SLP"` or `"PEPLinear": false`, which do not linearize the
+pole terms; the solve then stops with an error. A wave port mode solve at a complex
+frequency that does not converge is fatal.
 
 The divergence-free projection is disabled for frequency-dependent permittivity: a fixed
 high-frequency projector does not impose the frequency-dependent interface condition, and
