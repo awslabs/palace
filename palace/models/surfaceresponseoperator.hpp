@@ -50,6 +50,26 @@ struct ResponseMemoryCensus;
 // rank.
 bool ResponseMemoryCensusEnabled(MPI_Comm comm);
 
+// Decision 2156 (OI-CONTOUR-POINT-NOT-LOCATED-ABORT): a patch with an electrostatic trace
+// point that no search locates in the device mesh (a sample between the cross-sections or
+// the knots the domain-boundary containment test reads, outside the meshed domain: a jagged
+// window wall bulging into the coupon, an unmeshed cavity) is a LATE DomainBoundary
+// exclusion: not applied, recorded (Reason LateTracePoint), its raw claim kept, and
+// SurfaceResponseOperator::ConstructElectrostatic repeats the construction without it.
+// `patch` is the placed (0-based) index; `point` / `distance` are the unlocated point
+// farthest from the meshed domain and that distance (mesh coordinates); `pass` is the
+// construction pass (1-based) that found it.
+struct LateDomainBoundaryExclusion
+{
+  std::size_t patch = 0;
+  std::string model;
+  int unlocated_points = 0;
+  int trace_points = 0;
+  std::array<double, 3> point{};
+  double distance = 0.0;
+  int pass = 0;
+};
+
 // The placement's clip of the uncovered requirements (decision 394 F2) by the matched
 // spatial clusters' support boxes (decision 399 MAJOR-1): the part of an uncovered portion
 // strictly inside a matched cluster's box (the same bounds and strict-interior test the
@@ -291,6 +311,15 @@ StateAnchorSetback SetBackStateAnchor(const std::vector<double> &offsets,
 class SurfaceResponseOperator : public Operator
 {
 public:
+  // Decision 2156: a construction pass of ConstructElectrostatic: its 1-based number and
+  // the late exclusions of the earlier passes. The plain constructor (no pass) keeps the
+  // fail-closed abort on an unlocated trace point.
+  struct LateExclusionPass
+  {
+    int pass = 1;
+    std::vector<LateDomainBoundaryExclusion> exclusions;
+  };
+  static constexpr int kMaximumConstructionPasses = 3;
   // The load-time verdict on a model's magnetic leaf (DESIGN-v2 section 3 r1-r4; ERRATUM
   // 1227): "Absent", "Applied", "Finding" (applied; r4 in (finding, refusal]) or "Refused"
   // with `rule` one of r1 / r2 / r3 / r4 / blend / spatial / dimension.
@@ -1048,11 +1077,21 @@ private:
   mutable long long int trace_forward_count = 0;
   mutable long long int trace_transpose_count = 0;
 
+  // Decision 2156: the pass of ConstructElectrostatic (null: the plain constructor) and,
+  // after a pass that stopped at the point location, the patches to exclude in the next.
+  const LateExclusionPass *late_exclusion_pass = nullptr;
+  std::vector<LateDomainBoundaryExclusion> late_exclusion_request;
+
+  // `edge_points` (one flag per point: a conductor reference or probe, on the device metal)
+  // and `patch_contour_radii` (per local patch, mesh coordinates) enable the late
+  // exclusion of an electrostatic construction pass (decision 2156).
   void ConfigurePointCommunication(
       DistributedPointLocator &locator, const mfem::Vector &xyz, int dimension,
       const std::vector<std::array<double, 3>> *weighted_tangents = nullptr,
       const std::vector<double> *point_band = nullptr,
-      const std::vector<std::array<double, 3>> *weighted_normals = nullptr);
+      const std::vector<std::array<double, 3>> *weighted_normals = nullptr,
+      const std::vector<unsigned char> *edge_points = nullptr,
+      const std::vector<double> *patch_contour_radii = nullptr);
   void ConfigureMaxwellLines(const std::vector<MaxwellLineGeometry> &line_geometry,
                              const std::vector<int> &line_patches,
                              const std::vector<MaxwellPatchProvenance> &patch_provenance,
@@ -1413,7 +1452,16 @@ public:
 
   SurfaceResponseOperator(
       const IoData &iodata, const LaplaceOperator &laplace_op,
-      std::shared_ptr<const SurfaceResponseGeometry> *automatic_geometry = nullptr);
+      std::shared_ptr<const SurfaceResponseGeometry> *automatic_geometry = nullptr,
+      const LateExclusionPass *late_exclusion_pass = nullptr);
+  // Decision 2156: the electrostatic driver's construction. A pass whose trace points are
+  // all located is the plain construction (a run without an unlocated point makes exactly
+  // one); a pass that finds applied patches with unlocated trace points (and no gross
+  // mismatch) prints one line and is repeated with them excluded late; at most
+  // kMaximumConstructionPasses, the last one failing closed as the plain constructor.
+  static std::unique_ptr<SurfaceResponseOperator> ConstructElectrostatic(
+      const IoData &iodata, const LaplaceOperator &laplace_op,
+      std::shared_ptr<const SurfaceResponseGeometry> *automatic_geometry);
   SurfaceResponseOperator(
       const IoData &iodata, const SpaceOperator &space_op,
       std::shared_ptr<const SurfaceResponseGeometry> *automatic_geometry = nullptr);
@@ -2714,6 +2762,12 @@ struct DomainBoundaryExclusion
   bool unmerged_image = false;
   double unmerged_distance = 0.0;
   bool unmerged_own = false;  // the patch's own footprint overlaps a real portion
+  // Decision 2156: a LATE exclusion (Reason LateTracePoint, ConstructElectrostatic): the
+  // construction pass that found it and its farthest unlocated trace point's exact distance
+  // to the meshed domain (also in nearest_distance).
+  bool late = false;
+  int late_pass = 0;
+  double late_distance = 0.0;
 };
 // Information only (decision 481): a patch whose coupon support reaches
 // a portion, real or image, of an unmerged mirror-formed configuration, with the nearest
@@ -2788,6 +2842,32 @@ DistributedPointLocation
 LocateDistributedPoints(mfem::ParMesh &mesh, int dimension, const mfem::Vector &xyz,
                         int block_queries,
                         const std::function<double(int element)> *element_value = nullptr);
+// Decision 2156: the verdict on an electrostatic trace point that no search locates. A
+// LATE_EXCLUSION excludes its patch late; the clear error stays for an OWN_EDGE_POINT (a
+// conductor reference or conductor-consistency probe: a point of the device metal, in the
+// mesh for every correctly placed coupon) and for a point BEYOND_CONTOUR_RADIUS (farther
+// from the meshed domain than its coupon's contour radius around the edge, which is in the
+// mesh: a misplaced or mis-scaled coupon). `distances`: each point's distance to the meshed
+// domain on a first-order mesh (0 inside a simplex, else the nearest point of the element
+// facets: exact for planar facets; a non-simplex element is taken to exclude the point),
+// the element-box distance (a lower bound) on a curved mesh, infinity beyond the point's
+// radius. Collective: the same points on every rank.
+enum class UnlocatedTracePointVerdict
+{
+  LATE_EXCLUSION,
+  OWN_EDGE_POINT,
+  BEYOND_CONTOUR_RADIUS
+};
+struct UnlocatedTracePointClassification
+{
+  std::vector<double> distances;
+  std::vector<UnlocatedTracePointVerdict> verdicts;
+};
+UnlocatedTracePointClassification
+ClassifyUnlocatedTracePoints(mfem::ParMesh &mesh, int dimension,
+                             const std::vector<std::array<double, 3>> &points,
+                             const std::vector<unsigned char> &edge_points,
+                             const std::vector<double> &contour_radii);
 
 // The containment test's block size in tested points (lane fix-response-memory, decision
 // 1446 C3 / DESIGN s2.5): PALACE_RESPONSE_CONTAINMENT_BLOCK_POINTS, default 2^20 (~0.04 GB

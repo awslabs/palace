@@ -189,6 +189,71 @@ struct ElementBox
   }
 };
 
+// Decision 2156: the nearest point of the segment a-b / of the triangle a-b-c to p (the
+// Voronoi-region form of Ericson, Real-Time Collision Detection 5.1.2 / 5.1.5).
+std::array<double, 3> ClosestPointOnSegment(const std::array<double, 3> &p,
+                                            const std::array<double, 3> &a,
+                                            const std::array<double, 3> &b)
+{
+  double ab2 = 0.0, t = 0.0;
+  for (int d = 0; d < 3; d++)
+  {
+    ab2 += (b[d] - a[d]) * (b[d] - a[d]);
+    t += (p[d] - a[d]) * (b[d] - a[d]);
+  }
+  t = ab2 > 0.0 ? std::clamp(t / ab2, 0.0, 1.0) : 0.0;
+  return {a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1]), a[2] + t * (b[2] - a[2])};
+}
+
+std::array<double, 3> ClosestPointOnTriangle(const std::array<double, 3> &p,
+                                             const std::array<double, 3> &a,
+                                             const std::array<double, 3> &b,
+                                             const std::array<double, 3> &c)
+{
+  auto Sub = [](const std::array<double, 3> &x, const std::array<double, 3> &y)
+  { return std::array<double, 3>{x[0] - y[0], x[1] - y[1], x[2] - y[2]}; };
+  auto Dot = [](const std::array<double, 3> &x, const std::array<double, 3> &y)
+  { return x[0] * y[0] + x[1] * y[1] + x[2] * y[2]; };
+  auto Along = [](const std::array<double, 3> &x, const std::array<double, 3> &e, double s)
+  { return std::array<double, 3>{x[0] + s * e[0], x[1] + s * e[1], x[2] + s * e[2]}; };
+  const auto ab = Sub(b, a), ac = Sub(c, a), ap = Sub(p, a);
+  const double d1 = Dot(ab, ap), d2 = Dot(ac, ap);
+  if (d1 <= 0.0 && d2 <= 0.0)
+  {
+    return a;
+  }
+  const auto bp = Sub(p, b);
+  const double d3 = Dot(ab, bp), d4 = Dot(ac, bp);
+  if (d3 >= 0.0 && d4 <= d3)
+  {
+    return b;
+  }
+  const double vc = d1 * d4 - d3 * d2;
+  if (vc <= 0.0 && d1 >= 0.0 && d3 <= 0.0)
+  {
+    return Along(a, ab, d1 / (d1 - d3));
+  }
+  const auto cp = Sub(p, c);
+  const double d5 = Dot(ab, cp), d6 = Dot(ac, cp);
+  if (d6 >= 0.0 && d5 <= d6)
+  {
+    return c;
+  }
+  const double vb = d5 * d2 - d1 * d6;
+  if (vb <= 0.0 && d2 >= 0.0 && d6 <= 0.0)
+  {
+    return Along(a, ac, d2 / (d2 - d6));
+  }
+  const double va = d3 * d6 - d5 * d4;
+  if (va <= 0.0 && (d4 - d3) >= 0.0 && (d5 - d6) >= 0.0)
+  {
+    return Along(b, Sub(c, b), (d4 - d3) / ((d4 - d3) + (d5 - d6)));
+  }
+  const double denominator = 1.0 / (va + vb + vc);
+  const auto on_ab = Along(a, ab, vb * denominator);
+  return Along(on_ab, ac, vc * denominator);
+}
+
 // Lightweight local point locator for response-contour evaluation. Unlike
 // FindPointsGSLIB, this stores no replicated global volume-search structure.
 class ElementPointLocator
@@ -430,6 +495,91 @@ public:
   }
 
   const ElementBox &GetBounds() const { return nodes.front().box; }
+
+  // Decision 2156: the distance from a point to the nearest local element within
+  // `search_radius` (infinity when none is that near) on a first-order mesh: 0 inside a
+  // simplex, else the nearest point of the element's boundary facets (a quadrilateral facet
+  // split into two triangles: exact for planar facets); the element-box distance (a lower
+  // bound) on a curved mesh. On a non-simplex element the point is taken to lie outside it
+  // (every caller's point is one that no search locates).
+  double DistanceToElements(const std::array<double, 3> &point, double search_radius) const
+  {
+    std::vector<int> candidates;
+    FindCandidates(0, point, search_radius, candidates);
+    double best = mfem::infinity();
+    for (const int element : candidates)
+    {
+      best = std::min(best, ElementDistance(element, point));
+    }
+    return best <= search_radius ? best : mfem::infinity();
+  }
+
+  double ElementDistance(int element, const std::array<double, 3> &point) const
+  {
+    if (!linear_mesh)
+    {
+      const auto &box = element_boxes[element];
+      double distance2 = 0.0;
+      for (int d = 0; d < dimension; d++)
+      {
+        const double excess = std::max({box.min[d] - point[d], point[d] - box.max[d], 0.0});
+        distance2 += excess * excess;
+      }
+      return std::sqrt(distance2);
+    }
+    const auto &mesh_element = *mesh.GetElement(element);
+    const auto geometry = mesh_element.GetGeometryType();
+    mfem::IntegrationPoint reference;
+    if (((dimension == 2 && geometry == mfem::Geometry::TRIANGLE) ||
+         (dimension == 3 && geometry == mfem::Geometry::TETRAHEDRON)) &&
+        GetLinearSimplexReference(element, point, reference))
+    {
+      const double lambda0 =
+          1.0 - reference.x - reference.y - (dimension == 3 ? reference.z : 0.0);
+      if (std::min({lambda0, reference.x, reference.y,
+                    dimension == 3 ? reference.z : 1.0}) >= 0.0)
+      {
+        return 0.0;
+      }
+    }
+    const int *vertex_indices = mesh_element.GetVertices();
+    auto Vertex = [&](int local)
+    {
+      std::array<double, 3> vertex{};
+      const double *coordinate = mesh.GetVertex(vertex_indices[local]);
+      std::copy_n(coordinate, dimension, vertex.data());
+      return vertex;
+    };
+    std::array<double, 3> p{};
+    std::copy_n(point.data(), dimension, p.data());
+    auto Distance = [&](const std::array<double, 3> &q)
+    {
+      return std::sqrt((p[0] - q[0]) * (p[0] - q[0]) + (p[1] - q[1]) * (p[1] - q[1]) +
+                       (p[2] - q[2]) * (p[2] - q[2]));
+    };
+    double best = mfem::infinity();
+    if (dimension == 2)
+    {
+      for (int e = 0; e < mesh_element.GetNEdges(); e++)
+      {
+        const int *edge = mesh_element.GetEdgeVertices(e);
+        best = std::min(
+            best, Distance(ClosestPointOnSegment(p, Vertex(edge[0]), Vertex(edge[1]))));
+      }
+      return best;
+    }
+    for (int f = 0; f < mesh_element.GetNFaces(); f++)
+    {
+      const int *face = mesh_element.GetFaceVertices(f);
+      for (int k = 1; k + 1 < mesh_element.GetNFaceVertices(f); k++)
+      {
+        best =
+            std::min(best, Distance(ClosestPointOnTriangle(
+                               p, Vertex(face[0]), Vertex(face[k]), Vertex(face[k + 1]))));
+      }
+    }
+    return best;
+  }
 
   // Distance from a point to the nearest local element bounding box (0 inside one): a
   // lower bound of the distance to the local mesh, exact for an axis-aligned domain face.
@@ -843,6 +993,10 @@ public:
     std::vector<double> references;
     // The owner's value of the optional per-element evaluation.
     std::vector<double> owner_values;
+    // Per point (decision 2156, OI-TRACE-POINTS-BEYOND-BOUNDARY-CLAMPED): the distance from
+    // the point to the element-boundary point the fallback's border rule placed it at
+    // (gslib code 1: on no element), -1 for every other point.
+    std::vector<double> border_distances;
     long long int candidate_queries = 0;
     long long int fallback_queries = 0;
   };
@@ -1140,6 +1294,7 @@ public:
     result.elements.assign(point_count, -1);
     result.references.assign(dimension * point_count, 0.0);
     result.owner_values.assign(element_value ? point_count : 0, 0.0);
+    result.border_distances.assign(point_count, -1.0);
     const int value_size = element_value ? 1 : 0;
 
     // The answer of a candidate rank: the local element (-1 when not found), the reference
@@ -1350,9 +1505,71 @@ public:
         }
       }
     }
+    // gslib's distance is the squared one (findpts' dist2).
+    for (std::size_t i = 0; i < fallback_indices.size(); i++)
+    {
+      if (best_code[i] == 1.0)
+      {
+        result.border_distances[fallback_indices[i]] = std::sqrt(best_distance[i]);
+      }
+    }
     return result;
   }
+
+  // Decision 2156: the distance from each point (the same list on every rank) to the meshed
+  // domain within its search radius (infinity beyond): the minimum over the ranks of
+  // ElementPointLocator::DistanceToElements. Collective.
+  std::vector<double> DistancesToMesh(const std::vector<std::array<double, 3>> &points,
+                                      const std::vector<double> &search_radii) const
+  {
+    MFEM_VERIFY(points.size() == search_radii.size(),
+                "One search radius per point is required!");
+    std::vector<double> distances(points.size(), mfem::infinity());
+    for (std::size_t i = 0; i < points.size(); i++)
+    {
+      distances[i] = local.DistanceToElements(points[i], search_radii[i]);
+    }
+    if (!distances.empty())
+    {
+      Mpi::GlobalMin(static_cast<int>(distances.size()), distances.data(), comm);
+    }
+    return distances;
+  }
 };
+
+namespace
+{
+
+UnlocatedTracePointClassification
+ClassifyUnlocatedTracePoints(const DistributedPointLocator &locator,
+                             const std::vector<std::array<double, 3>> &points,
+                             const std::vector<unsigned char> &edge_points,
+                             const std::vector<double> &contour_radii)
+{
+  MFEM_VERIFY(edge_points.size() == points.size() && contour_radii.size() == points.size(),
+              "One edge flag and one contour radius per unlocated point are required!");
+  UnlocatedTracePointClassification result;
+  result.distances = locator.DistancesToMesh(points, contour_radii);
+  result.verdicts.resize(points.size());
+  for (std::size_t i = 0; i < points.size(); i++)
+  {
+    result.verdicts[i] = edge_points[i] ? UnlocatedTracePointVerdict::OWN_EDGE_POINT
+                         : result.distances[i] > contour_radii[i]
+                             ? UnlocatedTracePointVerdict::BEYOND_CONTOUR_RADIUS
+                             : UnlocatedTracePointVerdict::LATE_EXCLUSION;
+  }
+  return result;
+}
+
+}  // namespace
+
+UnlocatedTracePointClassification ClassifyUnlocatedTracePoints(
+    mfem::ParMesh &mesh, int dimension, const std::vector<std::array<double, 3>> &points,
+    const std::vector<unsigned char> &edge_points, const std::vector<double> &contour_radii)
+{
+  DistributedPointLocator locator(mesh, dimension);
+  return ClassifyUnlocatedTracePoints(locator, points, edge_points, contour_radii);
+}
 
 DistributedPointLocation
 LocateDistributedPoints(mfem::ParMesh &mesh, int dimension, const mfem::Vector &xyz,
@@ -28254,6 +28471,20 @@ nlohmann::json DescribeDomainBoundaryExclusions(const DomainBoundaryExclusions &
            exclusion.nearest_outside_point[2] * coordinate_scale}},
          {"NearestDistance", exclusion.nearest_distance * coordinate_scale},
          {"Reason", exclusion.reason}});
+    if (exclusion.late)
+    {
+      entries.back()["Late"] = {
+          {"Pass", exclusion.late_pass},
+          {"Distance", exclusion.late_distance * coordinate_scale},
+          {"Rule",
+           "decision 2156: a trace point of the applied patch (a sample between the "
+           "cross-sections or knots the containment test reads) is located by no search in "
+           "the device mesh: the patch is not applied, its raw claim kept, and the "
+           "construction is repeated without it. TestedPoints counts its trace points, "
+           "OutsidePoints the unlocated ones, NearestOutsidePoint is the one farthest from "
+           "the meshed domain and Distance (= NearestDistance here) its exact distance; "
+           "Pass is the construction pass that found it. The dry run cannot know it"}};
+    }
     if (exclusion.unmerged_topology >= 0)
     {
       auto Scaled = [&](const std::array<double, 3> &p)
@@ -28393,6 +28624,13 @@ std::string DescribeDomainBoundaryExclusionSummary(const nlohmann::json &diagnos
         entry["OutsidePoints"].get<int>(), entry["TestedPoints"].get<int>(),
         point[0].get<double>(), point[1].get<double>(), point[2].get<double>(),
         entry["NearestDistance"].get<double>());
+    if (entry.contains("Late"))
+    {
+      // Decision 2156: named LATE (the unlocated trace points of the patch's own pass).
+      lines.insert(lines.size() - 1,
+                   fmt::format(", LATE (trace points no search located in pass {})",
+                               entry["Late"]["Pass"].get<int>()));
+    }
   }
   return fmt::format(
       "DomainBoundary exclusion (decision 258): {:d} patch(es) on {:d} feature(s) with "
@@ -31360,11 +31598,53 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
         }
       }
       PlacementStamp("domain-boundary containment test");
+      // Decision 2156: the LATE exclusions of the earlier construction passes
+      // (ConstructElectrostatic), excluded like the containment test's (weight 0, raw claim
+      // kept) with Reason LateTracePoint; the containment cache above keeps the test's own
+      // result.
+      if (late_exclusion_pass && !late_exclusion_pass->exclusions.empty())
+      {
+        for (const auto &late : late_exclusion_pass->exclusions)
+        {
+          MFEM_VERIFY(late.patch < placed_patches.size() &&
+                          placed_patches[late.patch].weight > 0.0 &&
+                          !spatially_owned_patches.count(late.patch) &&
+                          std::none_of(exclusions.patches.begin(), exclusions.patches.end(),
+                                       [&](const DomainBoundaryExclusion &exclusion)
+                                       { return exclusion.patch == late.patch; }),
+                      "The late domain-boundary exclusion of patch "
+                          << late.patch + 1
+                          << " names a patch that is not applied in the repeated "
+                             "construction!");
+          DomainBoundaryExclusion exclusion;
+          exclusion.patch = late.patch;
+          exclusion.tested_points = late.trace_points;
+          exclusion.outside_points = late.unlocated_points;
+          exclusion.nearest_outside_point = late.point;
+          exclusion.nearest_distance = late.distance;
+          exclusion.reason = "LateTracePoint";
+          exclusion.late = true;
+          exclusion.late_pass = late.pass;
+          exclusion.late_distance = late.distance;
+          placed_patches[late.patch].weight = 0.0;
+          exclusions.patches.push_back(exclusion);
+        }
+        std::stable_sort(
+            exclusions.patches.begin(), exclusions.patches.end(),
+            [](const DomainBoundaryExclusion &a, const DomainBoundaryExclusion &b)
+            { return a.patch < b.patch; });
+      }
       for (const auto &exclusion : exclusions.patches)
       {
         spatially_owned_patches.insert(exclusion.patch);
         vertex_coupon_exclusion_reasons.emplace(exclusion.patch, "DomainBoundary");
       }
+      MFEM_VERIFY(!late_exclusion_pass || late_exclusion_pass->exclusions.empty() ||
+                      std::any_of(placed_patches.begin(), placed_patches.end(),
+                                  [](const ResponsePatchData &patch)
+                                  { return patch.weight > 0.0; }),
+                  "The late domain-boundary exclusion leaves no applied surface-response "
+                  "patch!");
       if (std::any_of(geometry_fallbacks.begin(), geometry_fallbacks.end(),
                       [](const auto &entry) { return entry.cls == "AllPatchesOutside"; }))
       {
@@ -31675,9 +31955,10 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
 
 SurfaceResponseOperator::SurfaceResponseOperator(
     const IoData &iodata, const LaplaceOperator &laplace_op,
-    std::shared_ptr<const SurfaceResponseGeometry> *automatic_geometry)
+    std::shared_ptr<const SurfaceResponseGeometry> *automatic_geometry,
+    const LateExclusionPass *late_exclusion_pass_)
   : Operator(laplace_op.GetH1Space().GetTrueVSize()), fespace(laplace_op.GetH1Space()),
-    basis_size(0)
+    basis_size(0), late_exclusion_pass(late_exclusion_pass_)
 {
   BlockTimer setup_timer(Timer::CONSTRUCT_RESPONSE);
   // Setup phase stamps (decision 538 diagnosis): printed only with
@@ -32789,6 +33070,12 @@ SurfaceResponseOperator::SurfaceResponseOperator(
   // to the coupon's own reach for a mirror-formed configuration's coupon (decision 557
   // (4)).
   std::vector<double> point_band(static_cast<std::size_t>(point_count), 0.0);
+  // Decision 2156: per point whether it lies on the device metal (a conductor reference or
+  // a conductor-consistency probe) and per local patch its coupon's contour radius (mesh
+  // coordinates: the largest distance of a trace knot from the patch's edge), for the late
+  // exclusion's gross-mismatch test.
+  std::vector<unsigned char> edge_points(static_cast<std::size_t>(point_count), 0);
+  std::vector<double> patch_contour_radii(patches.size(), 0.0);
   // Probe-snap faults of the placed spatial patches (rank-local; judged collectively after
   // the loop): the FIRST faulty patch of this rank {kind, model idx, recorded, applied} -
   // kind 1 = snaps recorded on knots that are not conductor vertices (a stale cache or a
@@ -32810,6 +33097,28 @@ SurfaceResponseOperator::SurfaceResponseOperator(
       std::fill(point_band.begin() + patch.point_offset,
                 point_band.begin() + patch.point_offset + patch.point_count,
                 patch_config.provenance.mirror_reach);
+    }
+    {
+      const bool spatial = model.spatial_basis || model.spatial_mortar;
+      double radius = 0.0;
+      auto Reach = [&](const std::array<double, 3> &local)
+      {
+        radius = std::max(radius, std::sqrt(local[0] * local[0] + local[1] * local[1] +
+                                            (spatial ? local[2] * local[2] : 0.0)));
+      };
+      for (const auto &local : local_points)
+      {
+        Reach(local);
+      }
+      for (const auto &vertex : model.mortar_vertices)
+      {
+        Reach(vertex.point);
+      }
+      for (const auto &vertex : model.consistent_mortar_vertices)
+      {
+        Reach(vertex);
+      }
+      patch_contour_radii[patch_idx] = radius / coordinate_scale;
     }
     auto axis_w = patch_config.axis_w;
     if (model.surface_mortar && dimension == 3 &&
@@ -32898,6 +33207,7 @@ SurfaceResponseOperator::SurfaceResponseOperator(
                 patch_config.origin[d] + reference[0] * patch_config.axis_u[d] +
                 reference[1] * patch_config.axis_v[d] + reference[2] * axis_w[d];
           }
+          edge_points[point] = 1;
           point++;
         }
         // The conductor-consistency probes: the conductor vertices of the trace mesh, the
@@ -32955,6 +33265,7 @@ SurfaceResponseOperator::SurfaceResponseOperator(
                   std::max(patches[patch_idx].max_probe_snap, snap->distance);
             }
             probes.push_back(probe);
+            edge_points[point] = 1;
             point++;
           }
         }
@@ -33031,6 +33342,7 @@ SurfaceResponseOperator::SurfaceResponseOperator(
                   reference[1] * patch_config.axis_v[d] +
                   (reference[2] + longitudinal_coordinate) * axis_w[d];
             }
+            edge_points[point] = 1;
             point++;
           }
         }
@@ -33064,6 +33376,7 @@ SurfaceResponseOperator::SurfaceResponseOperator(
               patch_config.origin[d] + reference[0] * patch_config.axis_u[d] +
               reference[1] * patch_config.axis_v[d] + reference[2] * axis_w[d];
         }
+        edge_points[point] = 1;
         point++;
       }
     }
@@ -33081,6 +33394,7 @@ SurfaceResponseOperator::SurfaceResponseOperator(
           xyz(d * point_count + point) = probe.point[d];
         }
         probes.push_back(probe.point);
+        edge_points[point] = 1;
         point++;
       }
     }
@@ -33154,8 +33468,17 @@ SurfaceResponseOperator::SurfaceResponseOperator(
   SetupStamp("trace quadrature and overlap check");
   {
     BlockTimer point_timer(Timer::CONSTRUCT_RESPONSE_POINTS);
-    ConfigurePointCommunication(point_locator, xyz, dimension, nullptr, &point_band);
+    ConfigurePointCommunication(point_locator, xyz, dimension, nullptr, &point_band,
+                                nullptr, &edge_points, &patch_contour_radii);
   }
+  // Decision 2156: a pass of ConstructElectrostatic that found applied patches with
+  // unlocated trace points stops here; the next pass excludes them.
+  if (!late_exclusion_request.empty())
+  {
+    return;
+  }
+  edge_points.clear();
+  edge_points.shrink_to_fit();
   SetupStamp("point communication");
   // The diagnostic-only patches leave `patches` here: every consumer below and every
   // Mult / energy / export loop sees the applied patches alone.
@@ -33212,6 +33535,46 @@ SurfaceResponseOperator::SurfaceResponseOperator(
 #else
   MFEM_ABORT("Surface response correction requires MFEM_USE_GSLIB!");
 #endif
+}
+
+std::unique_ptr<SurfaceResponseOperator> SurfaceResponseOperator::ConstructElectrostatic(
+    const IoData &iodata, const LaplaceOperator &laplace_op,
+    std::shared_ptr<const SurfaceResponseGeometry> *automatic_geometry)
+{
+  LateExclusionPass late;
+  for (late.pass = 1;; late.pass++)
+  {
+    auto op = std::make_unique<SurfaceResponseOperator>(iodata, laplace_op,
+                                                        automatic_geometry, &late);
+    if (op->late_exclusion_request.empty())
+    {
+      return op;
+    }
+    // The pass found applied patches with unlocated trace points: ONE line (decision 2156
+    // (3)), then the next pass without them (the last pass fails closed).
+    const auto &request = op->late_exclusion_request;
+    int points = 0;
+    double distance = 0.0;
+    for (const auto &entry : request)
+    {
+      points += entry.unlocated_points;
+      distance = std::max(distance, entry.distance);
+    }
+    Mpi::Print(
+        laplace_op.GetH1Space().GetComm(),
+        "Late domain-boundary exclusion (decision 2156): {:d} applied patch(es) with "
+        "{:d} trace point(s) that no search locates in the device mesh (the largest "
+        "distance outside {:.6e} mesh units; first patch {:d} (0-based {:d}), model "
+        "{}) are not applied, their raw claims kept; the construction is repeated "
+        "without them (pass {:d} of at most {:d})\n",
+        static_cast<int>(request.size()), points, distance * op->mesh_coordinate_scale,
+        request.front().patch + 1, request.front().patch, request.front().model,
+        late.pass + 1, kMaximumConstructionPasses);
+    late.exclusions.insert(late.exclusions.end(), request.begin(), request.end());
+    std::sort(late.exclusions.begin(), late.exclusions.end(),
+              [](const LateDomainBoundaryExclusion &a, const LateDomainBoundaryExclusion &b)
+              { return a.patch < b.patch; });
+  }
 }
 
 SurfaceResponseOperator::SurfaceResponseOperator(
@@ -35814,7 +36177,9 @@ void SurfaceResponseOperator::ConfigurePointCommunication(
     DistributedPointLocator &locator, const mfem::Vector &xyz_in, int dimension,
     const std::vector<std::array<double, 3>> *weighted_tangents,
     const std::vector<double> *point_band,
-    const std::vector<std::array<double, 3>> *weighted_normals)
+    const std::vector<std::array<double, 3>> *weighted_normals,
+    const std::vector<unsigned char> *edge_points,
+    const std::vector<double> *patch_contour_radii)
 {
   MFEM_VERIFY(dimension == 2 || dimension == 3,
               "Surface response points require dimension two or three!");
@@ -35919,6 +36284,172 @@ void SurfaceResponseOperator::ConfigurePointCommunication(
   const auto &point_owners = located.owners;
   const auto &point_elements = located.elements;
   const auto &point_references = located.references;
+  // The local patch of a point (-1: none), as DescribeUnlocatedPoint finds it (the patches'
+  // point ranges are consecutive in patch order: a binary search).
+  auto PatchOfPoint = [&](int point)
+  {
+    auto it = std::upper_bound(patches.begin(), patches.end(), point,
+                               [](int value, const Patch &patch)
+                               { return value < patch.point_offset; });
+    while (it != patches.begin())
+    {
+      --it;
+      if (it->point_count > 0)
+      {
+        return point < it->point_offset + it->point_count
+                   ? static_cast<int>(it - patches.begin())
+                   : -1;
+      }
+    }
+    return -1;
+  };
+  // Decision 2156: the late exclusion of an electrostatic construction pass of
+  // ConstructElectrostatic (3D; not its last pass). The unlocated points of every rank,
+  // gathered in rank order: a point of the device metal or one farther from the meshed
+  // domain than its coupon's contour radius keeps the clear error (every rank aborts with
+  // the first such record); otherwise their patches are requested for exclusion and the
+  // pass stops here.
+  if (late_exclusion_pass && late_exclusion_pass->pass < kMaximumConstructionPasses &&
+      edge_points && patch_contour_radii && !weighted_tangents && dimension == 3)
+  {
+    constexpr int record_size = 8;
+    std::vector<double> local_records;
+    for (int point = 0; point < point_query_count; point++)
+    {
+      if (point_owners[point] < size)
+      {
+        continue;
+      }
+      const int p = PatchOfPoint(point);
+      MFEM_VERIFY(p >= 0,
+                  "Surface-response contour point " << point << " has no local patch!");
+      local_records.insert(
+          local_records.end(),
+          {xyz(0 * point_query_count + point), xyz(1 * point_query_count + point),
+           xyz(2 * point_query_count + point), static_cast<double>(patches[p].global_index),
+           static_cast<double>(patches[p].model),
+           static_cast<double>((*edge_points)[point]), (*patch_contour_radii)[p],
+           static_cast<double>(point)});
+    }
+    const auto records = Mpi::AllgatherLarge(local_records, fespace.GetComm());
+    const std::size_t record_count = records.size() / record_size;
+    if (record_count > 0)
+    {
+      std::vector<std::array<double, 3>> points(record_count);
+      std::vector<unsigned char> edges(record_count);
+      std::vector<double> radii(record_count);
+      for (std::size_t i = 0; i < record_count; i++)
+      {
+        const double *record = records.data() + record_size * i;
+        points[i] = {record[0], record[1], record[2]};
+        edges[i] = record[5] != 0.0 ? 1 : 0;
+        radii[i] = record[6];
+      }
+      const auto classification =
+          ClassifyUnlocatedTracePoints(locator, points, edges, radii);
+      std::map<std::size_t, LateDomainBoundaryExclusion> requested;
+      for (std::size_t i = 0; i < record_count; i++)
+      {
+        const double *record = records.data() + record_size * i;
+        const auto patch = static_cast<std::size_t>(record[3]);
+        const auto &model_name = models[static_cast<std::size_t>(record[4])].name;
+        const double distance = classification.distances[i];
+        const auto verdict = classification.verdicts[i];
+        if (verdict != UnlocatedTracePointVerdict::LATE_EXCLUSION)
+        {
+          MFEM_ABORT(fmt::format(
+              "Surface-response contour point {:d} at ({:.9e}, {:.9e}, {:.9e}) (mesh "
+              "units) "
+              "could not be located in the device mesh (patch {:d}, model {}): {}!",
+              static_cast<long long int>(record[7]), record[0], record[1], record[2],
+              patch + 1, model_name,
+              verdict == UnlocatedTracePointVerdict::OWN_EDGE_POINT
+                  ? std::string("it is a point of the patch's own metal edge (a conductor "
+                                "reference or probe), which lies in the device mesh for "
+                                "every correctly placed coupon")
+                  : fmt::format("it lies farther from the meshed domain than the "
+                                "coupon's contour radius {:.6e} mesh units around its "
+                                "edge (a misplaced or mis-scaled coupon)",
+                                record[6] * mesh_coordinate_scale)));
+        }
+        auto &late = requested[patch];
+        late.patch = patch;
+        late.model = model_name;
+        late.unlocated_points++;
+        late.pass = late_exclusion_pass->pass;
+        if (late.unlocated_points == 1 || distance > late.distance)
+        {
+          late.point = points[i];
+          late.distance = distance;
+        }
+      }
+      // The patches' trace point counts (each patch's points are on its owning rank).
+      std::vector<int> trace_points(requested.size(), 0);
+      {
+        std::size_t k = 0;
+        for (const auto &[patch, late] : requested)
+        {
+          for (const auto &local : patches)
+          {
+            if (static_cast<std::size_t>(local.global_index) == patch)
+            {
+              trace_points[k] = local.point_count;
+            }
+          }
+          k++;
+        }
+      }
+      Mpi::GlobalSum(static_cast<int>(trace_points.size()), trace_points.data(),
+                     fespace.GetComm());
+      std::size_t k = 0;
+      for (auto &[patch, late] : requested)
+      {
+        late.trace_points = trace_points[k++];
+        late_exclusion_request.push_back(late);
+      }
+      return;
+    }
+  }
+  // Decision 2156 (OI-TRACE-POINTS-BEYOND-BOUNDARY-CLAMPED; log only): the trace points the
+  // fallback's border rule placed outside the device mesh, in every run.
+  {
+    long long int border_points = 0;
+    double border_distance = 0.0;
+    std::set<int> border_groups;
+    for (int point = 0; point < point_query_count; point++)
+    {
+      if (located.border_distances[point] < 0.0)
+      {
+        continue;
+      }
+      border_points++;
+      border_distance = std::max(border_distance, located.border_distances[point]);
+      if (weighted_tangents)
+      {
+        // The Maxwell lines' point ranges are consecutive in line order.
+        const auto it = std::upper_bound(maxwell_lines.begin(), maxwell_lines.end(), point,
+                                         [](int value, const MaxwellLine &line)
+                                         { return value < line.point_offset; });
+        border_groups.insert(static_cast<int>(it - maxwell_lines.begin()) - 1);
+      }
+      else
+      {
+        border_groups.insert(PatchOfPoint(point));
+      }
+    }
+    long long int border_group_count = static_cast<long long int>(border_groups.size());
+    Mpi::GlobalSum(1, &border_points, fespace.GetComm());
+    Mpi::GlobalSum(1, &border_group_count, fespace.GetComm());
+    Mpi::GlobalMax(1, &border_distance, fespace.GetComm());
+    Mpi::Print(fespace.GetComm(),
+               " Point location: {:d} trace point(s) on {:d} {} placed outside the device "
+               "mesh by the rank-local search's border rule, at the nearest point of an "
+               "element's boundary (largest distance {:.6e} mesh units; "
+               "OI-TRACE-POINTS-BEYOND-BOUNDARY-CLAMPED)\n",
+               border_points, border_group_count,
+               weighted_tangents ? "contour line(s)" : "patch(es)",
+               border_distance * mesh_coordinate_scale);
+  }
   for (int point = 0; point < point_query_count; point++)
   {
     MFEM_VERIFY(point_owners[point] < size, DescribeUnlocatedPoint(point));
