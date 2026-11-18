@@ -554,7 +554,7 @@ std::unique_ptr<Operator> CurlCurlOperator::AssembleShiftedPreconditioner(
 
 std::unique_ptr<Operator> CurlCurlOperator::GetPreconditionerMatrix()
 {
-  // Preconditioner-only gauge shift for the London path, null without it.
+  // Preconditioner-only gauge shift, null without it (see HasShiftedPreconditioner).
   if (!HasShiftedPreconditioner())
   {
     return nullptr;

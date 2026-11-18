@@ -142,7 +142,7 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       bound_op = &op;
     }
   };
-  // Base preconditioner: gauge-shifted P_london (SPD) on the London path, else K itself.
+  // Base preconditioner: the gauge-shifted P_london (SPD) if there is one, else K itself.
   const Operator &K_pc = P_london ? *P_london : *K;
 
   // Surface current source indices and flux loop excitations define the sources over which
