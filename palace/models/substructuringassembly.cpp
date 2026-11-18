@@ -3,6 +3,7 @@
 
 #include "substructuringsolverimpl.hpp"
 
+#include <cmath>
 #include <optional>
 #include <set>
 #include <utility>
@@ -284,6 +285,9 @@ void SubstructuringSolver::Impl::CheckSheets()
   mfem::FaceElementTransformations FET;
   mfem::IsoparametricTransformation T1, T2;
   gamma_sheet_faces.clear();
+  gamma_sheet_sides = {};
+  constexpr double k[3][3] = {{1.3, 2.9, 0.7}, {2.3, 0.5, 3.1}, {0.9, 1.7, 2.6}};
+  mfem::Array<int> vertices;
   for (int be = 0; be < parent.GetNBE(); be++)
   {
     const int attr = parent.GetBdrAttribute(be);
@@ -305,10 +309,29 @@ void SubstructuringSolver::Impl::CheckSheets()
     if (FET.Elem2 && region1 != region2)
     {
       gamma_sheet_faces.push_back(be);
+      if ((FET.Elem1->Attribute < FET.Elem2->Attribute) ? region1 : region2)
+      {
+        std::array<double, 3> c = {0.0, 0.0, 0.0};
+        parent.GetBdrElementVertices(be, vertices);
+        for (int v : vertices)
+        {
+          for (int d = 0; d < 3; d++)
+          {
+            c[d] += parent.GetVertex(v)[d] / vertices.Size();
+          }
+        }
+        gamma_sheet_sides[0] += 1.0;
+        for (int j = 0; j < 3; j++)
+        {
+          gamma_sheet_sides[j + 1] +=
+              std::cos(k[j][0] * c[0] + k[j][1] * c[1] + k[j][2] * c[2]);
+        }
+      }
     }
     count[0]++;
   }
   Mpi::GlobalSum(3, count.data(), parent.GetComm());
+  Mpi::GlobalSum(4, gamma_sheet_sides.data(), parent.GetComm());
   has_sheets = (count[0] > 0) || broken;
   MFEM_VERIFY(count[1] == 0, "Substructuring does not support a \"TwoSided\" "
                              "superconductor film between the region and the environment!");

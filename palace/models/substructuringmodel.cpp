@@ -291,6 +291,11 @@ SubstructuringSolver::Impl::ReadSavedHead(const std::string &path, MPI_Comm comm
         {
           read(&h.regularization, 1);
         }
+        else if (magic == kSheetSidesMagic)
+        {
+          h.sheet_sides.resize(4);
+          read(h.sheet_sides.data(), 4);
+        }
         else if (magic == kEnvFpMagic)
         {
           f.seekg(sizeof(double) * kEnvFpSize, std::ios::cur);  // read by LoadSections
@@ -325,6 +330,10 @@ SubstructuringSolver::Impl::ReadSavedHead(const std::string &path, MPI_Comm comm
   }
   Mpi::Broadcast(1, &h.length, 0, comm);
   Mpi::Broadcast(1, &h.regularization, 0, comm);
+  int n_sides = static_cast<int>(h.sheet_sides.size());
+  Mpi::Broadcast(1, &n_sides, 0, comm);
+  h.sheet_sides.resize(n_sides);
+  Mpi::Broadcast(n_sides, h.sheet_sides.data(), 0, comm);
   offsets(h.nG, h.width);
   h.sig.resize(static_cast<std::size_t>(h.nG) * h.width);
   Mpi::Broadcast(static_cast<int>(h.sig.size()), h.sig.data(), 0, comm);
@@ -458,6 +467,9 @@ void SubstructuringSolver::Impl::AppendEnvFingerprint(const std::string &path)
                {
                  f.write(reinterpret_cast<const char *>(&kEpsMagic), sizeof(int));
                  f.write(reinterpret_cast<const char *>(&mag_eps), sizeof(double));
+                 f.write(reinterpret_cast<const char *>(&kSheetSidesMagic), sizeof(int));
+                 f.write(reinterpret_cast<const char *>(gamma_sheet_sides.data()),
+                         sizeof(double) * gamma_sheet_sides.size());
                }
              });
 }
@@ -775,9 +787,10 @@ void SubstructuringSolver::Impl::LoadSections(const std::string &path, std::stre
       magic = 0;
     }
     MPI_Bcast(&magic, 1, MPI_INT, 0, comm);
-    if (magic == kLengthMagic || magic == kEpsMagic || magic == kEnvMeshMagic)
+    if (magic == kLengthMagic || magic == kEpsMagic || magic == kEnvMeshMagic ||
+        magic == kSheetSidesMagic)
     {
-      const int n = (magic == kEnvMeshMagic) ? 12 : 1;
+      const int n = (magic == kEnvMeshMagic) ? 12 : (magic == kSheetSidesMagic) ? 4 : 1;
       holds(D * n);
       if (root)
       {

@@ -586,15 +586,18 @@ struct SubstructuringSolver::Impl
   const Operator &ClosureGradient() const;
   void SetUpClosure();
 
-  // London superconductor sheets (magnetostatics): whether there are any, and the local
-  // boundary elements of the one-sided sheets on Gamma. Like any boundary term of the
-  // native operators, a sheet face belongs to the side of its neighbor with the lower
-  // domain attribute (see Mesh::GetCeedBdrAttributesByNeighbor), so exactly one side; on
-  // Gamma, either side, the same offline and online as long as both neighbors are in the
-  // mesh (the mesh of the region keeps the environment neighbors, see WriteRegionMesh).
-  // Checks the two-sided films against the interface. Collective.
+  // London superconductor sheets (magnetostatics): whether there are any, the local
+  // boundary elements of the one-sided sheets on Gamma, and the sides of these. Like any
+  // boundary term of the native operators, a sheet face belongs to the side of its neighbor
+  // with the lower domain attribute (see Mesh::GetCeedBdrAttributesByNeighbor), so exactly
+  // one side; on Gamma, either side, which the mesh of the region keeps the environment
+  // neighbors to tell (see WriteRegionMesh), and which an online run checks against the
+  // model, since it assembles only the region's: the number of the faces on Gamma that the
+  // region holds, and the sums over them of cos(k_j . c) for three fixed k_j, c the center
+  // of the face. Checks the two-sided films against the interface. Collective.
   bool has_sheets = false;
   std::vector<int> gamma_sheet_faces;
+  std::array<double, 4> gamma_sheet_sides = {};
   void CheckSheets();
 
   // Sheet masses (both sides, and per side), for the flux-loop sources and energies.
@@ -727,6 +730,7 @@ struct SubstructuringSolver::Impl
   // offline run], [kEnvFpMagic][environment fingerprint, 11 doubles], [kEpsMagic][the
   // magnetostatic regularization eps] (magnetostatics), [kEnvMeshMagic][ElementMoments of
   // the environment and of its elements in the mesh of the region, 12 doubles],
+  // [kSheetSidesMagic][the sides of the sheet faces on Gamma, 4 doubles] (magnetostatics),
   // [kSKenMagic][S^K nG x nG] (magnetostatics), [kSKinMagic][S^Kin nG x nG] (with London
   // sheets in the environment), [kModesMagic][K][ids][fingerprints 2K][G nG x K][Cmode
   // KxK] (electrostatics), and [kSourceModesMagic][K][ids][fingerprints 2K][g nG x K][h nG
@@ -735,13 +739,14 @@ struct SubstructuringSolver::Impl
   static constexpr int kModelMagic = 0x4c444d53;  // "SMDL"
   static constexpr int kModelVersion = 5;
   static constexpr int kHeadInts = 5;
-  static constexpr int kSKenMagic = 0x4e454b53;     // "SKEN"
-  static constexpr int kSKinMagic = 0x4e494b53;     // "SKIN"
-  static constexpr int kModesMagic = 0x33444f4d;    // "MOD3"
-  static constexpr int kEnvFpMagic = 0x33564e45;    // "ENV3"
-  static constexpr int kLengthMagic = 0x434e454c;   // "LENC"
-  static constexpr int kEpsMagic = 0x5350454d;      // "MEPS"
-  static constexpr int kEnvMeshMagic = 0x48534d45;  // "EMSH"
+  static constexpr int kSKenMagic = 0x4e454b53;        // "SKEN"
+  static constexpr int kSKinMagic = 0x4e494b53;        // "SKIN"
+  static constexpr int kModesMagic = 0x33444f4d;       // "MOD3"
+  static constexpr int kEnvFpMagic = 0x33564e45;       // "ENV3"
+  static constexpr int kLengthMagic = 0x434e454c;      // "LENC"
+  static constexpr int kEpsMagic = 0x5350454d;         // "MEPS"
+  static constexpr int kEnvMeshMagic = 0x48534d45;     // "EMSH"
+  static constexpr int kSheetSidesMagic = 0x53444953;  // "SIDS"
 
   // The width of the interface signatures of a model by their type: 1 H1 coordinates, 2
   // H(curl) moments, 3 with the side moments of split DOFs (0: not a model).
@@ -751,14 +756,15 @@ struct SubstructuringSolver::Impl
   // not a model), order, interface size, signature type and width (0: another version, or
   // an incomplete model), the interface signatures, the offsets of S_E and of the sections
   // after it, the reference length, environment fingerprint, element moments of the
-  // environment and of the mesh of the region, and magnetostatic regularization (0 or
-  // empty: not saved). Collective.
+  // environment and of the mesh of the region, magnetostatic regularization, and sides of
+  // the sheet faces on Gamma (0 or empty: not saved). Collective.
   struct SavedHead
   {
     int version = -1, order = 0, nG = 0, sig_type = 0, width = 0;
     std::vector<double> sig;
     std::array<double, 6> env_moments = {}, region_moments = {};
     double length = 0.0, regularization = 0.0;
+    std::vector<double> sheet_sides;
     std::streamoff S_pos = 0, sections_pos = 0;
   };
   static SavedHead ReadSavedHead(const std::string &path, MPI_Comm comm);

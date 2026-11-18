@@ -414,6 +414,19 @@ SubstructuringSolver::Impl::Impl(const IoData &iodata,
   if (magnetostatic)
   {
     CheckSheets();
+    if (!saved.sheet_sides.empty())
+    {
+      bool same = std::abs(gamma_sheet_sides[0] - saved.sheet_sides[0]) < 0.5;
+      for (int j = 1; j < 4; j++)
+      {
+        same = same && std::abs(gamma_sheet_sides[j] - saved.sheet_sides[j]) <=
+                           kFingerprintTol * std::max(1.0, saved.sheet_sides[0]);
+      }
+      MFEM_VERIFY(same, "The sheet faces on the interface are not on the same sides as in "
+                        "the saved substructuring model: a face belongs to the side of its "
+                        "neighbor with the lower attribute, and the attributes next to the "
+                        "interface changed. Keep them, or rerun in \"Offline\" mode!");
+    }
     mag_eps = model_eps;
     if (!(mag_eps > 0.0))
     {

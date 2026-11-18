@@ -1,6 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <filesystem>
@@ -598,6 +599,72 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   CHECK(E_off > 0.0);
   CHECK(std::abs(E_on - E_off) <= 1.0e-9 * E_off);
   CHECK(std::abs(E_region - E_off) <= 1.0e-9 * E_off);
+}
+
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "Substructured sheet faces on the interface keep their sides online",
+                 "[substructure][Serial][Parallel]")
+{
+  // Renumbering the region above the environment on the mesh of the region moves the sheet
+  // faces on Gamma, which belong to the side of their neighbor with the lower attribute, to
+  // the environment, which the online run does not assemble: the run is rejected.
+  const std::string model_path = (temp_dir / "sheet_moved.model").string();
+  constexpr int shift = 10;
+  auto make_config = [&](const std::string &mode, bool renumbered)
+  {
+    json config = MagnetostaticConfig(1, true, false);
+    auto &sub = config["Solver"]["Substructuring"];
+    sub["Mode"] = mode;
+    sub["SaveModel"] = model_path;
+    if (renumbered)
+    {
+      std::vector<int> region;
+      for (int a : kRegion)
+      {
+        region.push_back(a + shift);
+      }
+      sub["Region"]["Attributes"] = region;
+      for (auto &m : config["Domains"]["Materials"])
+      {
+        const int a = m["Attributes"][0].get<int>();
+        if (std::find(kRegion.begin(), kRegion.end(), a) != kRegion.end())
+        {
+          m["Attributes"][0] = a + shift;
+        }
+      }
+    }
+    return IoData(config, false);
+  };
+  {
+    IoData iodata = make_config("Offline", false);
+    auto mesh = MakeMesh(MakeParitySerial(8, {}));
+    SubstructuringSolver ss(iodata, mesh);
+    ss.CondenseEnvironment();
+  }
+  auto online = [&](bool renumbered)
+  {
+    mfem::Mesh region_mesh(RegionMeshPath(model_path).c_str());
+    if (renumbered)
+    {
+      for (int e = 0; e < region_mesh.GetNE(); e++)
+      {
+        const int a = region_mesh.GetAttribute(e);
+        if (std::find(kRegion.begin(), kRegion.end(), a) != kRegion.end())
+        {
+          region_mesh.SetAttribute(e, a + shift);
+        }
+      }
+      region_mesh.SetAttributes();
+    }
+    IoData iodata = make_config("Online", renumbered);
+    auto mesh = MakeMesh(std::move(region_mesh));
+    SubstructuringSolver ss(iodata, mesh);
+  };
+  CHECK_NOTHROW(online(false));
+#if defined(MFEM_USE_EXCEPTIONS)
+  CHECK_THROWS_WITH(online(true),
+                    Catch::Matchers::ContainsSubstring("not on the same sides"));
+#endif
 }
 
 TEST_CASE_METHOD(palace::test::SharedTempDir,
