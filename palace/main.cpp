@@ -164,6 +164,12 @@ static void PrintPalaceInfo(MPI_Comm comm, int np, int nt, int ngpu, mfem::Devic
 
 int main(int argc, char *argv[])
 {
+  // The total elapsed time is measured from process start-up (the timer is a static
+  // object), so credit everything before palace::Run to the INIT phase. Otherwise MPI
+  // initialization, which waits for all processes to start, and the configuration parsing
+  // count toward the total but toward no phase of the timing report.
+  std::optional<BlockTimer> init_timer(std::in_place, Timer::INIT);
+
   // Initialize MPI.
 #if defined(MFEM_USE_STRUMPACK) && \
     (defined(STRUMPACK_USE_PTSCOTCH) || defined(STRUMPACK_USE_SLATE_SCALAPACK))
@@ -248,12 +254,10 @@ int main(int argc, char *argv[])
     iodata.WriteResolvedConfig(config, argv[1]);
   }
 
-  // Initialize device + numerics. The BlockTimer is scoped to this block so it
-  // credits the INIT phase before palace::Run starts its own timing.
+  // Initialize device + numerics.
   int omp_threads, ngpu;
   std::optional<mfem::Device> device;
   {
-    BlockTimer bt(Timer::INIT);
     omp_threads = utils::ConfigureOmp();
     ngpu = utils::GetDeviceCount();
     const std::string device_str = ConfigureDevice(iodata.solver.device);
@@ -280,8 +284,10 @@ int main(int argc, char *argv[])
   // Hand off to the driver library entry point. Keeping the lifted block out of
   // main keeps the executable body thin and lets the Catch2 regression harness
   // reuse the exact same code path on an in-process IoData. See palace/driver.hpp
-  // for the preconditions it expects.
+  // for the preconditions it expects. The INIT phase of main ends before palace::Run
+  // starts its own timing.
   PrintPalaceInfo(world_comm, world_size, omp_threads, ngpu, *device);
+  init_timer.reset();
   palace::Run(iodata, world_comm, omp_threads, GetPalaceGitTag());
 
   // Finalize libCEED.

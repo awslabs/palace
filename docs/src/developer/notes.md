@@ -351,8 +351,9 @@ The (average) rows in the table should add up to the Total line at the bottom.
 The categories for breaking down the total simulation time are:
 
 ```
-Initialization                  // < Time spent parsing the configuration file,
-                                //   preprocessing and partitioning the mesh
+Initialization                  // < Time spent initializing MPI and the device, parsing
+                                //   the configuration file, and preprocessing and
+                                //   partitioning the mesh
 Operator Construction           // < Time spent constructing finite element spaces and
                                 //   setting up linear and bilinear forms on those spaces
   Wave Ports                    // < Time spent configuring and computing the modes
