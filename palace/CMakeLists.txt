@@ -41,6 +41,7 @@ set(PALACE_WITH_SLEPC ON CACHE BOOL "Build with SLEPc eigenvalue solver")
 set(PALACE_WITH_ARPACK OFF CACHE BOOL "Build with ARPACK eigenvalue solver")
 set(PALACE_WITH_SUNDIALS ON CACHE BOOL "Build with SUNDIALS time integrators")
 set(PALACE_WITH_GSLIB ON CACHE BOOL "Build with GSLIB for high-order field interpolation")
+set(PALACE_WITH_SCOTCH OFF CACHE BOOL "Build with PT-Scotch for the parallel rebalancing of conformal meshes")
 
 set(ANALYZE_SOURCES_CLANG_TIDY OFF CACHE BOOL "Run static analysis checks using clang-tidy")
 set(ANALYZE_SOURCES_CPPCHECK OFF CACHE BOOL "Run static analysis checks using cppcheck")
@@ -88,6 +89,9 @@ set(SUNDIALS_DIR "" CACHE STRING
 )
 set(GSLIB_DIR "" CACHE STRING
   "Path to GSLIB build or installation directory (not required if already on CMAKE_PREFIX_PATH)"
+)
+set(SCOTCH_DIR "" CACHE STRING
+  "Path to Scotch build or installation directory (not required if already on CMAKE_PREFIX_PATH)"
 )
 set(SCALAPACK_DIR "" CACHE STRING
   "Path to ScaLAPACK build or installation directory (not required if already on CMAKE_PREFIX_PATH)"
@@ -536,6 +540,9 @@ endif()
 if(NOT "${GSLIB_DIR}" STREQUAL "")
   set(GSLIB_ROOT ${GSLIB_DIR})
 endif()
+if(NOT "${SCOTCH_DIR}" STREQUAL "")
+  set(SCOTCH_ROOT ${SCOTCH_DIR})
+endif()
 if(NOT "${SCALAPACK_DIR}" STREQUAL "")
   set(SCALAPACK_ROOT ${SCALAPACK_DIR})
 endif()
@@ -747,6 +754,44 @@ if(PALACE_WITH_GSLIB)
   set_property(
     SOURCE ${CMAKE_SOURCE_DIR}/utils/gslibversion.cpp
     APPEND PROPERTY INCLUDE_DIRECTORIES ${GSLIB_INCLUDE_DIR}
+  )
+endif()
+
+# Link PT-Scotch
+if(PALACE_WITH_SCOTCH)
+  # PT-Scotch needs MPI_C, see SUNDIALS above
+  if(NOT TARGET MPI::MPI_C AND TARGET MPI::MPI_CXX)
+    add_library(MPI::MPI_C ALIAS MPI::MPI_CXX)
+  endif()
+  find_package(SCOTCH QUIET)
+  if(NOT TARGET SCOTCH::ptscotch)
+    find_library(PTSCOTCH_LIBRARY NAMES ptscotch HINTS ${SCOTCH_ROOT}/lib REQUIRED)
+    find_library(PTSCOTCHERR_LIBRARY NAMES ptscotcherr HINTS ${SCOTCH_ROOT}/lib REQUIRED)
+    find_library(SCOTCH_LIBRARY NAMES scotch HINTS ${SCOTCH_ROOT}/lib REQUIRED)
+    find_path(PTSCOTCH_INCLUDE_DIR NAMES ptscotch.h HINTS ${SCOTCH_ROOT}/include
+      PATH_SUFFIXES scotch REQUIRED)
+    add_library(SCOTCH::scotch UNKNOWN IMPORTED)
+    set_target_properties(SCOTCH::scotch PROPERTIES
+      IMPORTED_LOCATION "${SCOTCH_LIBRARY}"
+      INTERFACE_INCLUDE_DIRECTORIES "${PTSCOTCH_INCLUDE_DIR}")
+    add_library(SCOTCH::ptscotcherr UNKNOWN IMPORTED)
+    set_target_properties(SCOTCH::ptscotcherr PROPERTIES
+      IMPORTED_LOCATION "${PTSCOTCHERR_LIBRARY}")
+    add_library(SCOTCH::ptscotch UNKNOWN IMPORTED)
+    set_target_properties(SCOTCH::ptscotch PROPERTIES
+      IMPORTED_LOCATION "${PTSCOTCH_LIBRARY}"
+      INTERFACE_LINK_LIBRARIES "SCOTCH::scotch;MPI::MPI_C")
+    message(STATUS "Found PT-Scotch: ${PTSCOTCH_LIBRARY}")
+  else()
+    message(STATUS "Found PT-Scotch: ${SCOTCH_VERSION}")
+  endif()
+  if(TARGET SCOTCH::ptscotcherr)
+    target_link_libraries(${LIB_TARGET_NAME} PUBLIC SCOTCH::ptscotch SCOTCH::ptscotcherr)
+  else()
+    target_link_libraries(${LIB_TARGET_NAME} PUBLIC SCOTCH::ptscotch)
+  endif()
+  target_compile_definitions(${LIB_TARGET_NAME}
+    PUBLIC PALACE_WITH_SCOTCH
   )
 endif()
 

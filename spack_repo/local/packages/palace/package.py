@@ -89,6 +89,12 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         description="Build Enzyme-backed automatic-differentiation unit tests",
         when="@0.19:",
     )
+    variant(
+        "scotch",
+        default=False,
+        description="Build with PT-Scotch for the parallel rebalancing of conformal meshes",
+        when="@0.20:",
+    )
 
     # Fix API mismatch between libxsmm@main and internal libceed build
     patch(
@@ -602,6 +608,13 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         ],
     )
 
+    with when("+scotch"):
+        depends_on("scotch@7.0.7:+mpi~metis build_system=cmake")
+        depends_on("scotch+shared", when="+shared")
+        depends_on("scotch~shared", when="~shared")
+        depends_on("scotch+int64", when="+int64")
+        depends_on("scotch~int64", when="~int64")
+
     with when("@0.16:"):
         depends_on("mfem+shared", when="+shared")
         depends_on("mfem~shared", when="~shared")
@@ -757,6 +770,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             self.define_from_variant("PALACE_BUILD_WITH_COVERAGE", "coverage"),
             self.define_from_variant("PALACE_BUILD_WITH_SANITIZERS", "asan"),
             self.define_from_variant("PALACE_WITH_ENZYME", "enzyme"),
+            self.define_from_variant("PALACE_WITH_SCOTCH", "scotch"),
             self.define("PALACE_BUILD_EXTERNAL_DEPS", False),
             self.define("PALACE_MFEM_USE_EXCEPTIONS", self.run_tests),
             # Pin the test suite's MPI ranks and OpenMP threads so CTest's
@@ -804,6 +818,8 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 args.append(self.define("SCALAPACK_DIR", self.spec["scalapack"].prefix))
             if self.spec.satisfies("+superlu-dist"):
                 args.append(self.define("SUPERLU_DIST_DIR", self.spec["superlu-dist"].prefix))
+            if self.spec.satisfies("+scotch"):
+                args.append(self.define("SCOTCH_DIR", self.spec["scotch"].prefix))
             args.append(self.define("METIS_DIR", self.spec["metis"].prefix))
             args.append(self.define("PARMETIS_DIR", self.spec["parmetis"].prefix))
             args.append(self.define("HYPRE_DIR", self.spec["hypre"].prefix))

@@ -99,6 +99,12 @@ if(PALACE_WITH_SUNDIALS)
   include(ExternalSUNDIALS)
 endif()
 
+# Add PT-Scotch
+if(PALACE_WITH_SCOTCH)
+  message(STATUS "==================== Configuring Scotch dependency =====================")
+  include(ExternalScotch)
+endif()
+
 # Add GSLIB
 if(PALACE_WITH_GSLIB)
   message(STATUS "===================== Configuring GSLIB dependency =====================")

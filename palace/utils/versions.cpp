@@ -52,6 +52,10 @@
 #if defined(PALACE_WITH_ZFP)
 #include <zfp.h>
 #endif
+#if defined(PALACE_WITH_SCOTCH)
+#include <cstdio>
+#include <ptscotch.h>
+#endif
 
 // SLATE, BLAS++, and LAPACK++ version queries, declared here to avoid pulling in their full
 // headers (which require e.g. OpenMP).
@@ -234,6 +238,14 @@ std::vector<std::pair<std::string, std::string>> GetDependencyVersions()
   versions.emplace_back("ParMETIS",
                         fmt::format("{}.{}.{}", PARMETIS_MAJOR_VERSION,
                                     PARMETIS_MINOR_VERSION, PARMETIS_SUBMINOR_VERSION));
+#if defined(PALACE_WITH_SCOTCH)
+  {
+    int version, release, patch_level;
+    SCOTCH_version(&version, &release, &patch_level);
+    versions.emplace_back("PT-Scotch",
+                          fmt::format("{}.{}.{}", version, release, patch_level));
+  }
+#endif
 
 #if defined(MFEM_USE_CUDA)
   int cuda_version = 0;

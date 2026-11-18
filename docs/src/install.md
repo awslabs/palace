@@ -212,6 +212,9 @@ Additional build options are (with default values in brackets):
   - `PALACE_WITH_MAGMA [ON]` :  Build with MAGMA backend for libCEED
   - `PALACE_WITH_GSLIB [ON]` :  Build with GSLIB library for high-order field interpolation
   - `PALACE_WITH_SUNDIALS [ON]` : Build with SUNDIALS ODE solver library
+  - `PALACE_WITH_SCOTCH [OFF]` :  Build with PT-Scotch for the parallel rebalancing of
+    conformal meshes during adaptive mesh refinement (the installation directory can be
+    specified with `SCOTCH_DIR`)
   - `PALACE_BUILD_WITH_SANITIZERS [OFF]` :  Build with AddressSanitizer and UndefinedBehaviorSanitizer
   - `PALACE_GIT_COMMIT_ID []` :  Version string to embed (reported as `GitTag` in
     `palace.json`), for builds from a source tree without Git metadata. When empty, the
@@ -296,6 +299,8 @@ source code for these dependencies is downloaded during the build process:
   - [LIBXSMM](https://github.com/libxsmm/libxsmm) (optional, when `PALACE_WITH_LIBXSMM=ON`)
   - [MAGMA](https://icl.utk.edu/magma/) (optional, when `PALACE_WITH_MAGMA=ON`)
   - [SUNDIALS](https://github.com/LLNL/sundials) (optional, when `PALACE_WITH_SUNDIALS=ON`)
+  - [Scotch and PT-Scotch](https://gitlab.inria.fr/scotch/scotch) (optional, when
+    `PALACE_WITH_SCOTCH=ON`)
   - [nlohmann/json](https://github.com/nlohmann/json)
   - [pboettch/json-schema-validator](https://github.com/pboettch/json-schema-validator)
   - [fmt](https://fmt.dev/latest)

@@ -192,6 +192,20 @@ set(EXTERN_SCALAPACK_GIT_TAG
   "Git tag for external ScaLAPACK build"
 )
 
+# Scotch (PT-Scotch)
+set(EXTERN_SCOTCH_URL
+  "https://gitlab.inria.fr/scotch/scotch.git" CACHE STRING
+  "URL for external Scotch build"
+)
+set(EXTERN_SCOTCH_GIT_BRANCH
+  "master" CACHE STRING
+  "Git branch for external Scotch build"
+)
+set(EXTERN_SCOTCH_GIT_TAG
+  "v7.0.18" CACHE STRING
+  "Git tag for external Scotch build"
+)
+
 # SLEPc
 set(EXTERN_SLEPC_URL
   "https://gitlab.com/slepc/slepc.git" CACHE STRING
