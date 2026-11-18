@@ -415,11 +415,8 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     [PR 1223](https://github.com/awslabs/palace/pull/1223).
   - ParMETIS is now optional and disabled by default: enable it with
     `-DPALACE_WITH_PARMETIS=ON` (Spack variant `+parmetis`). Otherwise, `"ParMETIS"` for
-    `config["Solver"]["Linear"]["ColumnOrdering"]` falls back to METIS with a warning, and
-    SuperLU_DIST is patched with
-    [xiaoyeli/superlu_dist#258](https://github.com/xiaoyeli/superlu_dist/pull/258) to keep
-    its default METIS ordering. SchemaVer 4-4-1.
-    [PR 1195](https://github.com/awslabs/palace/pull/1195).
+    `config["Solver"]["Linear"]["ColumnOrdering"]` falls back to METIS with a warning.
+    SchemaVer 4-4-1. [PR 1195](https://github.com/awslabs/palace/pull/1195).
 
 ## [0.19.0] - 2026-11-02
 
