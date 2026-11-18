@@ -301,9 +301,9 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       {
         Mpi::Warning(curlcurl_op.GetComm(),
                      "Current source solve did not converge for port {:d}!\n", idx);
-        // Halt only on the London path (unreliable stiff-penalty inductance); otherwise
-        // warn and continue like the other drivers.
-        if (!curlcurl_op.GetSuperconductorOp().empty() || curlcurl_op.HasLondonDomains())
+        // Halt only with superconductor sheets (unreliable stiff-penalty inductance);
+        // otherwise warn and continue like the other drivers.
+        if (!curlcurl_op.GetSuperconductorOp().empty())
         {
           solve_converged_ = false;
           return {indicator, curlcurl_op.GlobalTrueVSize()};
