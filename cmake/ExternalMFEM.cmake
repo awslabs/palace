@@ -538,6 +538,15 @@ download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
   "https://github.com/mfem/mfem/commit/5e9a26308ef95e6a8337f7b266e9a92914adcca0.diff"
   7226ea4e223b0e2bd1bc4b21de93498f22b2d8c1dcb194415a377848f9200cc0
 )
+# https://github.com/mfem/mfem/pull/5754
+# A conforming parallel space that had a prolongation builds it again on all processes when
+# it is updated, so that the cached true vectors of its grid functions stay valid, for MFEM
+# 4.10.
+download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
+  mfem_pr5754.diff
+  "https://raw.githubusercontent.com/awslabs/palace/74cf0f4d2e2520923cc102091208b9fbf08a640f/extern/patch/mfem/mfem_pr5754.diff"
+  8a5cfeaf4fa4d7f9e9fe656413096beb8bad0d6ac46558c3484a368e1695577a
+)
 
 include(ExternalProject)
 ExternalProject_Add(mfem
