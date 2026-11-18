@@ -325,9 +325,9 @@ SubstructuringSolver::Impl::Impl(const IoData &iodata,
     // The mesh holds the environment of the model, or with "RegionMesh" its part in the
     // mesh of the region, which cannot be refined.
     region_only = sub.region_mesh;
+    env_loops = ReadEnvLoops(model, parent.GetComm());
     if (region_only)
     {
-      env_loops = ReadEnvLoops(model, parent.GetComm());
       MFEM_VERIFY(iodata.model.refinement.max_it == 0,
                   "Adaptive refinement with substructuring needs the full mesh, not the "
                   "mesh of the region!");
@@ -337,8 +337,8 @@ SubstructuringSolver::Impl::Impl(const IoData &iodata,
                       refinement.GetBoxes().empty() && refinement.GetSpheres().empty(),
                   kRegionMeshRefined);
     }
-    saved.environment.Check(parent, *iodata.resolved_config, env_attributes,
-                            kFingerprintTol, region_only);
+    env_excitations_unchanged = saved.environment.Check(
+        parent, *iodata.resolved_config, env_attributes, kFingerprintTol, region_only);
     // S_E was condensed with the regularization of the model: the region uses the same.
     model_eps = saved.regularization;
     if (region_only)

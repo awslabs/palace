@@ -4,6 +4,7 @@
 #ifndef PALACE_MODELS_SUBSTRUCTURING_SOLVER_HPP
 #define PALACE_MODELS_SUBSTRUCTURING_SOLVER_HPP
 
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -89,6 +90,13 @@ public:
   // on these loops those of the model. Collective.
   void EnvironmentFluxoids(const std::vector<int> &ids, const std::vector<int> &loop_ids,
                            mfem::DenseMatrix &fluxoid) const;
+
+  // Online, the flux-loop excitations (excitation index -> its loops) of one flux loop of
+  // the environment of the model, which holds their modes, when the excitations of the
+  // environment are those of the model (always on the mesh of the region): they have no
+  // part in the region, and so need no fluxoid generator. None if an excitation drives
+  // several loops (their fluxoids are reported). After CondenseEnvironment.
+  std::vector<int> ModelExcitations(const std::map<int, std::vector<int>> &excitations);
 
   // Error indicators for adaptive refinement of the region only: Palace's gradient-flux
   // (electrostatics) or curl-flux (magnetostatics) estimator on the region solutions of

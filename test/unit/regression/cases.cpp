@@ -2001,6 +2001,39 @@ TEST_CASE("substructuring_magnetostatic_two_films_region",
                                   "two_films_online_region", opts);
 }
 
+// An online run on the full mesh of the two films: the excitation of the flux loop of the
+// environment, unchanged, needs no generator, as the model holds it. The references are
+// regular simulations.
+TEST_CASE("substructuring_magnetostatic_two_films_online",
+          "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-5;
+  opts.atol = 1.0e-19;
+  opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
+  opts.setup_config = "magnetostatic_two_films.json";
+  opts.custom_checks["terminal-M.csv"] = TestOfflineRunReproduced("two_films", opts);
+  palace::test::RunRegressionCase("substructuring_magnetostatic",
+                                  "magnetostatic_two_films_online.json", "two_films_online",
+                                  opts);
+}
+
+// The same with the flux of the loop of the environment changed: its excitation is then
+// that of its generator, whose modes are computed again. The references are regular
+// simulations of this configuration.
+TEST_CASE("substructuring_magnetostatic_two_films_online_changed",
+          "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-5;
+  opts.atol = 1.0e-19;
+  opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
+  opts.setup_config = "magnetostatic_two_films.json";
+  palace::test::RunRegressionCase("substructuring_magnetostatic",
+                                  "magnetostatic_two_films_online_changed.json",
+                                  "two_films_online_changed", opts);
+}
+
 // The same with the two loops in one excitation: the stored energy and the fluxoids of the
 // loops, that on the loop of the environment from the model.
 TEST_CASE("substructuring_magnetostatic_two_films_grouped_region",

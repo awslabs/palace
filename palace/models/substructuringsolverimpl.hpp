@@ -577,7 +577,8 @@ struct SubstructuringSolver::Impl
 
   // Whether the modes cover every source with an environment part (need[j]; same id and
   // fingerprints), with col[j] its mode column (-1: none, zero modes). On the mesh of the
-  // region, a source takes the mode of its id whenever the model has one. Collective.
+  // region, a source takes the mode of its id whenever the model has one, as do the
+  // model_sources. Collective.
   bool SourceModesMatch(const std::vector<int> &ids, const std::vector<Source> &src,
                         std::vector<int> &col, std::vector<char> &need);
 
@@ -697,10 +698,16 @@ struct SubstructuringSolver::Impl
 
   // The flux loops of the environment (with no DOF of their films and holes in the region
   // or on Gamma), which the mesh of the region leaves out: set by WriteRegionMesh, and read
-  // from the model on the mesh of the region (an empty list if the model has none).
-  // ReadEnvLoops is collective.
+  // from the model online (an empty list if the model has none). ReadEnvLoops is
+  // collective.
   std::vector<int> env_loops;
   static std::vector<int> ReadEnvLoops(const std::string &path, MPI_Comm comm);
+
+  // Online, whether the excitations of the environment are those of the model (always on
+  // the mesh of the region), and the sources whose environment parts the model holds, with
+  // no part in the region (see SubstructuringSolver::ModelExcitations).
+  bool env_excitations_unchanged = false;
+  std::set<int> model_sources;
 
   // Append the fluxoids that the flux-loop excitations ids impose on the loops loop_ids
   // (see SubstructuringSolver::EnvironmentFluxoids) to the model file. Collective.

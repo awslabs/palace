@@ -160,10 +160,11 @@ bool SubstructuringSolver::Impl::SourceModesMatch(const std::vector<int> &ids,
         col[j] = static_cast<int>(k);
       }
     }
-    if (region_only && col[j] >= 0)
+    if ((region_only || model_sources.contains(ids[j])) && col[j] >= 0)
     {
       // The environment, and so its sources, are those of the model, also of the sources
-      // that the mesh of the region leaves out (the flux loops of the environment).
+      // that the mesh of the region leaves out (the flux loops of the environment), and of
+      // those of the environment that have no generator here.
       need[j] = 1;
       continue;
     }

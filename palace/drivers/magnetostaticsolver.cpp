@@ -117,16 +117,25 @@ std::pair<ErrorIndicator, long long int> MagnetostaticSolver::SolveSubstructured
   BlockTimer bt(Timer::CONSTRUCT);
   SubstructuringSolver sub(iodata, mesh);
   SaveMetadata(sub.GetFESpaces());
+  const SurfaceFluxOperator surf_flux_op(iodata);  // all the flux loops
+  MFEM_VERIFY(sub.GetCurlCurlOperator().GetSurfaceCurrentOp().Size() +
+                      surf_flux_op.GetExcitations().size() >
+                  0,
+              "Magnetostatic substructuring requires flux-loop or surface-current "
+              "excitations!");
+  sub.CondenseEnvironment();
   // Excitations of the surface currents (and their aperture flux functionals, for mixed
   // extraction) and fluxoid generators of the flux loops, from the operator of the
-  // substructuring. On the mesh of the region, the flux loops of the environment that it
-  // leaves out are not in the operator: their excitations are zero on it, and in the model
-  // on the environment.
+  // substructuring. The excitations of the flux loops of the environment are zero on the
+  // region and in the model on the environment: on the mesh of the region, which leaves
+  // these loops out, and online when the excitations of the environment are those of the
+  // model, they need no generator.
   std::vector<int> current_idx, flux_idx, loop_idx;
   std::vector<Vector> J, apertures, a;
   std::vector<double> I_inc, Phi_inc;
-  const SurfaceFluxOperator surf_flux_op(iodata);  // all the flux loops
   const bool single_loops = surf_flux_op.HasSingleLoopExcitations();
+  const std::vector<int> model_excitations =
+      sub.ModelExcitations(surf_flux_op.GetExcitations());
   mfem::DenseMatrix loop_fluxoid;
   {
     CurlCurlOperator &curlcurl_op = sub.GetCurlCurlOperator();
@@ -180,9 +189,11 @@ std::pair<ErrorIndicator, long long int> MagnetostaticSolver::SolveSubstructured
       Vector a_ex(curlcurl_op.GetSolutionNDSpace().GetTrueVSize());
       a_ex.UseDevice(true);
       a_ex = 0.0;
+      const bool from_model =
+          std::ranges::find(model_excitations, idx) != model_excitations.end();
       for (int loop : loops)
       {
-        if (on_mesh.contains(loop))
+        if (on_mesh.contains(loop) && !from_model)
         {
           curlcurl_op.GetFluxExcitationVector(loop, RHS, &boundary_values);
           a_ex += boundary_values;
@@ -219,9 +230,6 @@ std::pair<ErrorIndicator, long long int> MagnetostaticSolver::SolveSubstructured
     }
   }
   const int nc = static_cast<int>(J.size()), nf = static_cast<int>(a.size());
-  MFEM_VERIFY(nc + nf > 0, "Magnetostatic substructuring requires flux-loop or "
-                           "surface-current excitations!");
-  sub.CondenseEnvironment();
   if (!single_loops)
   {
     sub.EnvironmentFluxoids(flux_idx, loop_idx, loop_fluxoid);

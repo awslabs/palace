@@ -342,6 +342,16 @@ TEST_CASE("Environment records are those of any partition",
   auto longer = bytes;
   longer.push_back(0);
   CHECK_FALSE(EnvironmentRecord::Deserialize(longer));
+  // On the full mesh, the record tells whether the excitations of the environment are its
+  // own (a flux loop added next to it changes them, not its configuration).
+  CHECK(r.Check(mesh, config, {2}, 1.0e-9, false));
+  auto excited = config;
+  excited["Boundaries"]["FluxLoop"] = {{{"Index", 1},
+                                        {"FilmAttributes", {3}},
+                                        {"HoleAttributes", {4}},
+                                        {"FluxAmounts", {1.0}},
+                                        {"Direction", "+Z"}}};
+  CHECK_FALSE(r.Check(mesh, excited, {2}, 1.0e-9, false));
 }
 
 TEST_CASE("Nédélec DOFs at the points of saved ones", "[substructure][Serial]")

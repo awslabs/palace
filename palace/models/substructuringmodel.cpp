@@ -990,6 +990,28 @@ void SubstructuringSolver::EnvironmentFluxoids(const std::vector<int> &ids,
   }
 }
 
+std::vector<int>
+SubstructuringSolver::ModelExcitations(const std::map<int, std::vector<int>> &excitations)
+{
+  MFEM_VERIFY(impl->mat_dtn, "CondenseEnvironment must be called before ModelExcitations!");
+  impl->model_sources.clear();
+  const bool single =
+      std::ranges::all_of(excitations, [](const auto &x) { return x.second.size() == 1; });
+  if (single && (impl->region_only || impl->env_excitations_unchanged))
+  {
+    auto has = [](const std::vector<int> &v, int x)
+    { return std::ranges::find(v, x) != v.end(); };
+    for (const auto &[idx, loops] : excitations)
+    {
+      if (has(impl->env_loops, loops.front()) && impl->src_ready && has(impl->src_ids, idx))
+      {
+        impl->model_sources.insert(idx);
+      }
+    }
+  }
+  return {impl->model_sources.begin(), impl->model_sources.end()};
+}
+
 void SubstructuringSolver::UseModelLength(IoData &iodata, MPI_Comm comm)
 {
   const auto &sub = iodata.solver.substructuring;
