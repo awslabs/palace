@@ -2774,16 +2774,13 @@ double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh,
   if (ratio > tol && mesh->Nonconforming())
   {
     mfem::Array<int> partitioning;
-    if (GetNonconformingRebalancePartitioning(*mesh, partitioning))
-    {
-      mesh->Rebalance(partitioning);
-    }
-    else
+    const bool metis = GetNonconformingRebalancePartitioning(*mesh, partitioning);
+    if (!metis)
     {
       Mpi::Warning(comm, "Could not partition the nonconforming mesh on the root, "
                          "rebalancing it with MFEM's default partition!\n");
-      RebalanceRootAligned(*mesh, tol);
     }
+    RebalanceRootAligned(*mesh, tol, metis ? &partitioning : nullptr);
   }
 
   if (iodata.model.refinement.save_adapt_mesh)
