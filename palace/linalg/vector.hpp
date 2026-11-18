@@ -105,11 +105,6 @@ public:
   // Set all entries to their reciprocal.
   void Reciprocal();
 
-  // Vector dot product (yᴴ x) or indefinite dot product (yᵀ x) for complex vectors.
-  std::complex<double> Dot(const ComplexVector &y) const;
-  std::complex<double> TransposeDot(const ComplexVector &y) const;
-  std::complex<double> operator*(const ComplexVector &y) const { return Dot(y); }
-
   // In-place addition (*this) += alpha * x.
   void AXPY(std::complex<double> alpha, const ComplexVector &x);
   void Add(std::complex<double> alpha, const ComplexVector &x) { AXPY(alpha, x); }

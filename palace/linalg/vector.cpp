@@ -10,7 +10,6 @@
 #include <utility>
 #include <mfem/general/forall.hpp>
 #include <mfem/general/reducers.hpp>
-#include "linalg/hypre.hpp"
 #include "utils/omp.hpp"
 
 namespace palace
@@ -235,19 +234,6 @@ void ComplexVector::Reciprocal()
                         XR[i] *= s;
                         XI[i] *= -s;
                       });
-}
-
-std::complex<double> ComplexVector::Dot(const ComplexVector &y) const
-{
-  return {(Real() * y.Real()) + (Imag() * y.Imag()),
-          (this == &y) ? 0.0 : ((Imag() * y.Real()) - (Real() * y.Imag()))};
-}
-
-std::complex<double> ComplexVector::TransposeDot(const ComplexVector &y) const
-{
-  return {(Real() * y.Real()) - (Imag() * y.Imag()),
-          (this == &y) ? (2.0 * (Imag() * y.Real()))
-                       : ((Imag() * y.Real()) + (Real() * y.Imag()))};
 }
 
 void ComplexVector::AXPY(std::complex<double> alpha, const ComplexVector &x)
@@ -670,124 +656,107 @@ std::array<double, M> ThreadedHostSums(int N, Function &&f)
   return sum;
 }
 
+// The reducer of K sums for mfem::reduce.
+template <int K>
+struct SumsReducer
+{
+  struct value_type
+  {
+    double v[K];
+  };
+  static MFEM_HOST_DEVICE void Join(value_type &a, const value_type &b)
+  {
+    for (int k = 0; k < K; k++)
+    {
+      a.v[k] += b.v[k];
+    }
+  }
+  static MFEM_HOST_DEVICE void SetInitialValue(value_type &a) { a = {}; }
+};
+
+// Whether the sums over vectors with the given UseDevice() run on the device (Read(true)),
+// including MFEM's debug device, so that the data are read where they were last written.
+bool UseDeviceSums(bool use_dev)
+{
+  return use_dev && mfem::Device::Allows(mfem::Backend::DEVICE_MASK);
+}
+
+// The K sums over i in [0, N) of the terms which f(i, s) adds to s[0], ..., s[K - 1]: one
+// reduction kernel and one copy to the host on the device (if dev), ThreadedHostSums on the
+// host.
+template <int K, typename Function>
+std::array<double, K> Sums(int N, bool dev, Function &&f)
+{
+  if (dev)
+  {
+    using Value = typename SumsReducer<K>::value_type;
+    static mfem::Array<Value> workspace;
+    Value sum = {};
+    mfem::reduce(
+        N, sum, [=] MFEM_HOST_DEVICE(int i, Value &r) { f(i, r.v); }, SumsReducer<K>{},
+        true, workspace);
+    return std::to_array(sum.v);
+  }
+  return ThreadedHostSums<K>(N,
+                             [&](int i)
+                             {
+                               std::array<double, K> t = {};
+                               f(i, t.data());
+                               return t;
+                             });
+}
+
 }  // namespace
 
 double LocalDot(const Vector &x, const Vector &y)
 {
   MFEM_ASSERT(x.Size() == y.Size(), "Size mismatch for vector inner product!");
-  if (mfem::Device::Allows(mfem::Backend::DEVICE_MASK))
-  {
-    static hypre::HypreVector X, Y;
-    X.Update(x);
-    Y.Update(y);
-    return hypre_SeqVectorInnerProd(X, Y);
-  }
-  const auto *X = x.HostRead(), *Y = y.HostRead();
-  return ThreadedHostSums<1>(x.Size(), [=](int i) { return std::array{Y[i] * X[i]}; })[0];
+  const bool dev = UseDeviceSums(x.UseDevice() || y.UseDevice());
+  const auto *X = x.Read(dev), *Y = y.Read(dev);
+  return Sums<1>(x.Size(), dev,
+                 [=] MFEM_HOST_DEVICE(int i, double *s) { s[0] += Y[i] * X[i]; })[0];
 }
-
-namespace
-{
-
-// Partial sums yrᵀxr, yiᵀxi, yrᵀxi, yiᵀxr of the complex inner product yᴴx.
-struct ComplexDotSums
-{
-  double rr, ii, ir, ri;
-};
-
-// Carries the four sums through one reduction, so a single kernel produces all of them.
-struct ComplexDotReducer
-{
-  using value_type = ComplexDotSums;
-  static MFEM_HOST_DEVICE void Join(value_type &a, const value_type &b)
-  {
-    a.rr += b.rr;
-    a.ii += b.ii;
-    a.ir += b.ir;
-    a.ri += b.ri;
-  }
-  static MFEM_HOST_DEVICE void SetInitialValue(value_type &a)
-  {
-    a.rr = 0.0;
-    a.ii = 0.0;
-    a.ir = 0.0;
-    a.ri = 0.0;
-  }
-};
-
-}  // namespace
 
 std::complex<double> LocalDot(const ComplexVector &x, const ComplexVector &y)
 {
+  // A single pass over the data instead of one per real inner product.
   MFEM_ASSERT(x.Size() == y.Size(), "Size mismatch for vector inner product!");
-  if (mfem::Device::Allows(mfem::Backend::DEVICE_MASK))
-  {
-    // One pass over both parts of each vector: one kernel launch and one copy back to the
-    // host instead of four of each.
-    const bool herm = (&x == &y);
-    const bool use_dev = x.UseDevice() || y.UseDevice();
-    const int N = x.Size();
-    const auto *XR = x.Real().Read(use_dev);
-    const auto *XI = x.Imag().Read(use_dev);
-    ComplexDotSums s = {0.0, 0.0, 0.0, 0.0};
-    // Reused between calls, since this sits in the Krylov inner loop.
-    static mfem::Array<ComplexDotSums> workspace;
-    // xᴴx is real, so it needs only the two diagonal sums.
-    if (herm)
-    {
-      mfem::reduce(
-          N, s,
-          [=] MFEM_HOST_DEVICE(int i, ComplexDotSums &r)
-          {
-            r.rr += XR[i] * XR[i];
-            r.ii += XI[i] * XI[i];
-          },
-          ComplexDotReducer{}, use_dev, workspace);
-    }
-    else
-    {
-      const auto *YR = y.Real().Read(use_dev);
-      const auto *YI = y.Imag().Read(use_dev);
-      mfem::reduce(
-          N, s,
-          [=] MFEM_HOST_DEVICE(int i, ComplexDotSums &r)
-          {
-            r.rr += XR[i] * YR[i];
-            r.ii += XI[i] * YI[i];
-            r.ir += XI[i] * YR[i];
-            r.ri += XR[i] * YI[i];
-          },
-          ComplexDotReducer{}, use_dev, workspace);
-    }
-    return {s.rr + s.ii, herm ? 0.0 : s.ir - s.ri};
-  }
-
-  // On the host, a single pass over the data instead of one per real inner product.
-  const auto *XR = x.Real().HostRead(), *XI = x.Imag().HostRead();
-  const auto *YR = y.Real().HostRead(), *YI = y.Imag().HostRead();
+  const bool dev = UseDeviceSums(x.UseDevice() || y.UseDevice());
+  const auto *XR = x.Real().Read(dev), *XI = x.Imag().Read(dev);
   if (&x == &y)
   {
-    return ThreadedHostSums<1>(x.Size(), [=](int i)
-                               { return std::array{XR[i] * XR[i] + XI[i] * XI[i]}; })[0];
+    return Sums<1>(x.Size(), dev, [=] MFEM_HOST_DEVICE(int i, double *s)
+                   { s[0] += XR[i] * XR[i] + XI[i] * XI[i]; })[0];
   }
-  const auto sum = ThreadedHostSums<2>(
-      x.Size(), [=](int i)
-      { return std::array{YR[i] * XR[i] + YI[i] * XI[i], YR[i] * XI[i] - YI[i] * XR[i]}; });
+  const auto *YR = y.Real().Read(dev), *YI = y.Imag().Read(dev);
+  const auto sum = Sums<2>(x.Size(), dev,
+                           [=] MFEM_HOST_DEVICE(int i, double *s)
+                           {
+                             s[0] += YR[i] * XR[i] + YI[i] * XI[i];
+                             s[1] += YR[i] * XI[i] - YI[i] * XR[i];
+                           });
   return {sum[0], sum[1]};
 }
 
-// We implement LocalSum using Hypre instead of using MFEM's Sum because it is
-// more efficient on GPUs. TODO: Verify this
 double LocalSum(const Vector &x)
 {
-  static hypre::HypreVector X;
-  X.Update(x);
-  return hypre_SeqVectorSumElts(X);
+  const bool dev = UseDeviceSums(x.UseDevice());
+  const auto *X = x.Read(dev);
+  return Sums<1>(x.Size(), dev,
+                 [=] MFEM_HOST_DEVICE(int i, double *s) { s[0] += X[i]; })[0];
 }
 
 std::complex<double> LocalSum(const ComplexVector &x)
 {
-  return {LocalSum(x.Real()), LocalSum(x.Imag())};
+  const bool dev = UseDeviceSums(x.UseDevice());
+  const auto *XR = x.Real().Read(dev), *XI = x.Imag().Read(dev);
+  const auto sum = Sums<2>(x.Size(), dev,
+                           [=] MFEM_HOST_DEVICE(int i, double *s)
+                           {
+                             s[0] += XR[i];
+                             s[1] += XI[i];
+                           });
+  return {sum[0], sum[1]};
 }
 
 template <>

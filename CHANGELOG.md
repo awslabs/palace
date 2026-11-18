@@ -108,6 +108,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Performance Improvements
 
+  - On GPUs, the inner product of two vectors and the sum of the entries of a vector take
+    one reduction kernel and one host-device synchronization instead of one hypre reduction
+    per real-valued product or sum (four for a complex inner product), which speeds up the
+    `"MGS"` orthogonalization of GMRES and FGMRES.
+    [PR 1246](https://github.com/awslabs/palace/pull/1246).
   - The AMS solver, used with a fixed number of iterations, now has a tolerance of zero and
     flags its zero initial guess. With a hypre patch, it then computes no residual norms,
     each a fine-level matrix-vector product and a reduction over all processes, and the
@@ -125,12 +130,6 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     refinement tree, and each process refines its roots and reads their nodes, instead of
     every process reading the whole mesh.
     [PR 1215](https://github.com/awslabs/palace/pull/1215).
-  - Computed complex inner products on GPUs in a single fused pass instead of four separate
-    real reductions, which is one kernel launch and one copy back to the host instead of
-    four. The host path has computed them in one pass since
-    [PR 1146](https://github.com/awslabs/palace/pull/1146), which left device builds on the
-    separate reductions. This speeds up the GMRES orthogonalization of complex-valued
-    simulations on GPUs.
   - Added a STRUMPACK patch for
     [pghysels/STRUMPACK#174](https://github.com/pghysels/STRUMPACK/pull/174), which *Palace*
     always enables: the STRUMPACK solvers store their fill-reducing permutation once per

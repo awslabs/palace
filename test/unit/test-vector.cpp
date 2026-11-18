@@ -114,28 +114,36 @@ TEST_CASE("Vector Sum - Complex", "[vector][Serial][Parallel][GPU]")
   CHECK_THAT(sum.imag(), WithinRel(expected_imag));
 }
 
-// On the host, inner products are computed with several partial sums (by blocks with
-// several OpenMP threads), and the complex ones in a single pass; compare with plain sums.
-TEST_CASE("Vector Dot", "[vector][Serial][Parallel]")
+// Inner products are computed with several partial sums (by blocks with several OpenMP
+// threads on the host, in one reduction on the device), and the complex ones in a single
+// pass; compare with sums in extended precision. The largest size needs several entries per
+// thread of the device reduction.
+TEST_CASE("Vector Dot", "[vector][Serial][Parallel][GPU]")
 {
-  const int n = GENERATE(1, 7, 8, 9, 1003);
+  const int n = GENERATE(1, 7, 8, 9, 1003, (1 << 20) + 1);
   MPI_Comm comm = Mpi::World();
   ComplexVector x(n), y(n);
-  double ref[4] = {0.0, 0.0, 0.0, 0.0};  // Re(yᴴ x), Im(yᴴ x), yᵣᵀ xᵣ, xᴴ x
+  x.UseDevice(true);
+  y.UseDevice(true);
+  long double ref[4] = {};  // Re(yᴴ x), Im(yᴴ x), yᵣᵀ xᵣ, xᴴ x
+  auto *XR = x.Real().HostWrite(), *XI = x.Imag().HostWrite();
+  auto *YR = y.Real().HostWrite(), *YI = y.Imag().HostWrite();
   for (int i = 0; i < n; i++)
   {
     const int j = i + n * Mpi::Rank(comm);
-    x.Real()[i] = std::sin(0.3 * j);
-    x.Imag()[i] = std::cos(0.7 * j);
-    y.Real()[i] = std::cos(1.1 * j + 0.2);
-    y.Imag()[i] = std::sin(0.5 * j - 0.4);
-    ref[0] += y.Real()[i] * x.Real()[i] + y.Imag()[i] * x.Imag()[i];
-    ref[1] += y.Real()[i] * x.Imag()[i] - y.Imag()[i] * x.Real()[i];
-    ref[2] += y.Real()[i] * x.Real()[i];
-    ref[3] += x.Real()[i] * x.Real()[i] + x.Imag()[i] * x.Imag()[i];
+    XR[i] = std::sin(0.3 * j);
+    XI[i] = std::cos(0.7 * j);
+    YR[i] = std::cos(1.1 * j + 0.2);
+    YI[i] = std::sin(0.5 * j - 0.4);
+    const long double xr = XR[i], xi = XI[i], yr = YR[i], yi = YI[i];
+    ref[0] += yr * xr + yi * xi;
+    ref[1] += yr * xi - yi * xr;
+    ref[2] += yr * xr;
+    ref[3] += xr * xr + xi * xi;
   }
   Mpi::GlobalSum(4, ref, comm);
-  const double tol = 1.0e-14 * n * Mpi::Size(comm);
+  // The sums are about n per process; MFEM's debug device sums serially.
+  const double tol = 1.0e-12 * n * Mpi::Size(comm);
   const auto dot = linalg::Dot(comm, x, y);
   CHECK_THAT(dot.real(), WithinAbs(ref[0], tol));
   CHECK_THAT(dot.imag(), WithinAbs(ref[1], tol));
