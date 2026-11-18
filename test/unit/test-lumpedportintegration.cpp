@@ -78,8 +78,9 @@ auto LoadScaleParMesh(IoData &iodata, MPI_Comm world_comm)
 TEST_CASE("UniformElementData geometry", "[lumped_port][Serial][Parallel]")
 {
   // Make a parallel mesh from a Cartesian mesh. Boundary elements whose center satisfies
-  // in_port make up the lumped element (attribute 2), then the vertices, or the nodes of a
-  // curved mesh of the given order, are mapped.
+  // in_port make up the lumped element (attribute 2), then the vertices and the nodes of
+  // the mesh, of the given order, are mapped. Palace gives every mesh nodes, so the
+  // geometry is computed as in a simulation.
   auto PortMesh = [](mfem::Mesh smesh, auto in_port, auto map, int order = 1)
   {
     mfem::Array<int> verts;
@@ -95,23 +96,17 @@ TEST_CASE("UniformElementData geometry", "[lumped_port][Serial][Parallel]")
       smesh.SetBdrAttribute(i, in_port(center) ? 2 : 1);
     }
     smesh.SetAttributes();
-    if (order > 1)
+    smesh.SetCurvature(order);
+    mfem::VectorFunctionCoefficient f(smesh.SpaceDimension(),
+                                      [&map](const mfem::Vector &x, mfem::Vector &y)
+                                      {
+                                        y = x;
+                                        map(y.GetData());
+                                      });
+    smesh.Transform(f);
+    for (int v = 0; v < smesh.GetNV(); v++)
     {
-      smesh.SetCurvature(order);
-      mfem::VectorFunctionCoefficient f(smesh.SpaceDimension(),
-                                        [&map](const mfem::Vector &x, mfem::Vector &y)
-                                        {
-                                          y = x;
-                                          map(y.GetData());
-                                        });
-      smesh.Transform(f);
-    }
-    else
-    {
-      for (int v = 0; v < smesh.GetNV(); v++)
-      {
-        map(smesh.GetVertex(v));
-      }
+      map(smesh.GetVertex(v));
     }
     return std::make_unique<mfem::ParMesh>(Mpi::World(), smesh);
   };
@@ -135,15 +130,17 @@ TEST_CASE("UniformElementData geometry", "[lumped_port][Serial][Parallel]")
     CHECK_THAT(data.GetGeometryWidth(), WithinRel(2.0, 1.0e-12));
   }
 
-  SECTION("Rectangle with the direction 0.5 degrees off its side")
+  SECTION("Wide rectangle with the direction 0.5 degrees off its side")
   {
-    // The cross-sections are normal to the direction, so l and w are off by O(t^2).
+    // 1 x 10 rectangle, wider across the direction than long along it. The cross-sections
+    // are normal to the direction, so l and w are off by O(t^2), and the extent along the
+    // direction exceeds l by 10 sin(t), 8.7%, but the extent along the axis does not.
     const double t = 0.5 * std::numbers::pi / 180.0;
-    auto mesh = PortMesh(mfem::Mesh::MakeCartesian3D(3, 2, 1, Hex, 3.0, 2.0, 1.0), Bottom,
+    auto mesh = PortMesh(mfem::Mesh::MakeCartesian3D(2, 10, 1, Hex, 1.0, 10.0, 1.0), Bottom,
                          Identity);
     UniformElementData data({std::cos(t), std::sin(t), 0.0}, attr_list, *mesh);
-    CHECK_THAT(data.GetGeometryLength(), WithinRel(3.0 * std::cos(t), 1.0e-12));
-    CHECK_THAT(data.GetGeometryWidth(), WithinRel(2.0 / std::cos(t), 1.0e-12));
+    CHECK_THAT(data.GetGeometryLength(), WithinRel(std::cos(t), 1.0e-12));
+    CHECK_THAT(data.GetGeometryWidth(), WithinRel(10.0 / std::cos(t), 1.0e-12));
   }
 
   SECTION("Bracket folded over a step (#89)")

@@ -155,9 +155,10 @@ inline void GetAxisAlignedBoundingBox(const mfem::ParMesh &mesh, mfem::Vector &m
   GetAxisAlignedBoundingBox(mesh, marker, false, min, max);
 }
 
-// Struct describing a bounding box in terms of the center and face normals. The normals
-// specify the direction from the center of the box. Supports both 2D and 3D: in 2D,
-// center has 2 entries and axes is 2x2; in 3D, center has 3 entries and axes is 3x3.
+// Struct describing a bounding box in terms of its center and the vectors from the center
+// to its faces, as returned by GetBoundingBall for a bounding ball. Supports both 2D and
+// 3D: in 2D, center has 2 entries and axes is 2x2; in 3D, center has 3 entries and axes is
+// 3x3.
 struct BoundingBox
 {
   // The central point of the bounding box (size 2 or 3).
@@ -194,13 +195,14 @@ inline BoundingBox GetBoundingBall(const mfem::ParMesh &mesh, int attr, bool bdr
 }
 
 // Helper function for computing the interval spanned by a marked group along a direction:
-// the smallest and largest values of x · dir over its points, with dir normalized.
+// the smallest and largest values of x · dir over its vertices (or the points of its
+// refined elements on a curved mesh), with dir normalized.
 std::pair<double, double> GetProjectedInterval(const mfem::ParMesh &mesh,
                                                const mfem::Array<int> &marker, bool bdr,
                                                const mfem::Vector &dir);
 
 // Helper function for computing the cross-section of the marked boundary elements by the
-// plane (a line in 2D) of points x with x · dir = offset, for a unit vector dir. Returns
+// plane (a line in 2D) of points x with x · dir = offset, with dir normalized. Returns
 // its measure: the length of the cut through the surface in 3D, or the number of points
 // where the boundary crosses the line in 2D. The centroid of the cross-section is returned
 // in centroid, and is zero when the cross-section is empty. Points x with x · dir >= offset

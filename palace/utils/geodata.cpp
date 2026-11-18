@@ -1272,24 +1272,55 @@ std::pair<double, double> GetProjectedInterval(const mfem::ParMesh &mesh,
                                                const mfem::Array<int> &marker, bool bdr,
                                                const mfem::Vector &dir)
 {
-  std::vector<Eigen::Vector3d> vertices;
-  int dominant_rank = CollectPointCloudOnRoot(mesh, marker, bdr, vertices);
-  std::array<double, 2> interval;
-  if (dominant_rank == Mpi::Rank(mesh.GetComm()))
+  // Project the vertices, or the points of a refined element on a curved mesh as for the
+  // point cloud of the marked elements.
+  mfem::Vector unit_dir(dir);
+  unit_dir /= unit_dir.Norml2();
+  int ref = 1;
+  if (mesh.GetNodes())
   {
-    Eigen::Vector3d direction = Eigen::Vector3d::Zero();
-    for (int i = 0; i < dir.Size(); i++)
-    {
-      direction(i) = dir(i);
-    }
-    direction.normalize();
-    auto Dot = [&](const auto &x, const auto &y)
-    { return direction.dot(x) < direction.dot(y); };
-    const auto [p_min, p_max] = std::ranges::minmax_element(vertices, Dot);
-    interval = {direction.dot(*p_min), direction.dot(*p_max)};
+    mesh.GetNodes()->HostRead();
+    ref = mesh.GetNodes()->FESpace()->GetMaxElementOrder();
   }
-  Mpi::Broadcast(2, interval.data(), dominant_rank, mesh.GetComm());
-  return {interval[0], interval[1]};
+  const int ne = bdr ? mesh.GetNBE() : mesh.GetNE();
+  double x_min = mfem::infinity(), x_max = -mfem::infinity();
+  PalacePragmaOmp(parallel reduction(min : x_min) reduction(max : x_max))
+  {
+    mfem::GeometryRefiner refiner;
+    mfem::IsoparametricTransformation T;
+    mfem::DenseMatrix pointmat;
+    PalacePragmaOmp(for schedule(static))
+    for (int i = 0; i < ne; i++)
+    {
+      if (!marker[(bdr ? mesh.GetBdrAttribute(i) : mesh.GetAttribute(i)) - 1])
+      {
+        continue;
+      }
+      if (bdr)
+      {
+        mesh.GetBdrElementTransformation(i, &T);
+      }
+      else
+      {
+        mesh.GetElementTransformation(i, &T);
+      }
+      T.Transform(refiner.Refine(T.GetGeometryType(), ref)->RefPts, pointmat);
+      for (int j = 0; j < pointmat.Width(); j++)
+      {
+        double x = 0.0;
+        for (int d = 0; d < pointmat.Height(); d++)
+        {
+          x += pointmat(d, j) * unit_dir(d);
+        }
+        x_min = std::min(x_min, x);
+        x_max = std::max(x_max, x);
+      }
+    }
+  }
+  Mpi::GlobalMin(1, &x_min, mesh.GetComm());
+  Mpi::GlobalMax(1, &x_max, mesh.GetComm());
+  MFEM_VERIFY(x_min <= x_max, "No marked elements to project onto a direction!");
+  return {x_min, x_max};
 }
 
 double GetCrossSection(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
@@ -1300,11 +1331,14 @@ double GetCrossSection(const mfem::ParMesh &mesh, const mfem::Array<int> &marker
   // (in 2D, at the point) joining the crossings of its edges. Points within round-off of
   // the plane are moved onto it, so that all elements sharing a point agree on its side.
   const int sdim = mesh.SpaceDimension();
+  mfem::Vector unit_dir(dir);
+  unit_dir /= unit_dir.Norml2();
   int ref = 1;
   if (mesh.GetNodes())
   {
     mesh.GetNodes()->HostRead();
-    ref = 4 * mesh.GetNodes()->FESpace()->GetMaxElementOrder();
+    const int order = mesh.GetNodes()->FESpace()->GetMaxElementOrder();
+    ref = (order > 1) ? 4 * order : 1;
   }
   constexpr double snap_tol = 1.0e-12;
   std::array<double, 4> sum = {};  // Measure, then its first moments
@@ -1373,7 +1407,7 @@ double GetCrossSection(const mfem::ParMesh &mesh, const mfem::Array<int> &marker
         double x_dir = 0.0, scale = std::abs(offset);
         for (int d = 0; d < sdim; d++)
         {
-          x_dir += pointmat(d, j) * dir(d);
+          x_dir += pointmat(d, j) * unit_dir(d);
           scale = std::max(scale, std::abs(pointmat(d, j)));
         }
         s[j] = (std::abs(x_dir - offset) > snap_tol * scale) ? x_dir - offset : 0.0;

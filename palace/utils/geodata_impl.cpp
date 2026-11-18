@@ -25,10 +25,10 @@ bool EigenLE(const Eigen::Vector3d &x, const Eigen::Vector3d &y)
   return std::lexicographical_compare(x.begin(), x.end(), y.begin(), y.end());
 }
 
-// Helper for collecting a point cloud from a mesh, used in calculating bounding boxes and
-// bounding balls. Returns the dominant rank, for which the vertices argument will be
-// filled, while all other ranks will have an empty vector. Vertices are de-duplicated to a
-// certain floating point precision.
+// Helper for collecting a point cloud from a mesh, used in calculating bounding balls and
+// distances from a point. Returns the dominant rank, for which the vertices argument will
+// be filled, while all other ranks will have an empty vector. Vertices are de-duplicated to
+// a certain floating point precision.
 int CollectPointCloudOnRoot(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
                             bool bdr, std::vector<Eigen::Vector3d> &vertices)
 {

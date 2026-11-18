@@ -37,6 +37,8 @@ UniformElementData::UniformElementData(const std::array<double, 3> &input_dir,
   // have ends which are not straight. In 2D, the boundary is a 1D edge with a unit
   // out-of-plane depth: the cross-section counts the edges crossing the line, and the
   // "area" is the edge length.
+  const double area = mesh::GetSurfaceArea(mesh, attr_marker);
+  MFEM_VERIFY(area > 0.0, "Uniform lumped element has zero area!");
   constexpr double rel_tol = 1.0e-6;
   mfem::Vector bbmin, bbmax;
   mesh::GetAxisAlignedBoundingBox(mesh, attr_marker, true, bbmin, bbmax);
@@ -49,8 +51,6 @@ UniformElementData::UniformElementData(const std::array<double, 3> &input_dir,
               fmt::format("Uniform lumped element has no extent along its direction "
                           "(extent {:.3e}, element size {:.3e})!",
                           extent, size));
-  const double area = mesh::GetSurfaceArea(mesh, attr_marker);
-  MFEM_VERIFY(area > 0.0, "Uniform lumped element has zero area!");
   std::array<double, 3> section;
   std::array<mfem::Vector, 3> centroid;
   for (int i = 0; i < 3; i++)
@@ -66,30 +66,36 @@ UniformElementData::UniformElementData(const std::array<double, 3> &input_dir,
   w = section[1];
   l = area / w;
 
-  // Check that the element is a strip along the direction. The line through the centroids
-  // of the cross-sections at 1/4 and 3/4 of the extent must run along the direction, which
-  // catches a direction at an angle to the strip. The mean length must match the extent,
-  // which catches area beyond the ends of the strip, as for an L-shaped element or a square
-  // with the direction along its diagonal.
+  // Check that the element is a strip along the direction. Its axis, the line through the
+  // centroids of the cross-sections at 1/4 and 3/4 of the extent, must run along the
+  // direction, which catches a direction at an angle to the strip. The mean length must
+  // match the extent of the element along its axis, which catches area beyond the ends of
+  // the strip, as for an L-shaped element or a square with the direction along its
+  // diagonal. Measured along the axis, not the direction, the extent of a strip at a small
+  // angle to the direction matches its mean length to second order in the angle, even when
+  // the strip is wider than it is long.
   constexpr double angle_warning_deg = 0.1, angle_error_deg = 1.0;
   constexpr double length_warning = 1.0e-2, length_error = 5.0e-2;
   mfem::Vector axis(centroid[2]);
   axis -= centroid[0];
   const double along = axis * direction;
-  axis.Add(-along, direction);
-  const double angle_deg = std::atan2(axis.Norml2(), along) * 180.0 / std::numbers::pi;
+  mfem::Vector across(axis);
+  across.Add(-along, direction);
+  const double angle_deg = std::atan2(across.Norml2(), along) * 180.0 / std::numbers::pi;
   MFEM_VERIFY(
       angle_deg <= angle_error_deg,
       fmt::format("Uniform lumped element direction is {:.3e} degrees from the axis "
                   "of the element (tolerance {:g} degrees): the element is not a "
                   "strip along its direction!",
                   angle_deg, angle_error_deg));
-  const double length_dev = std::abs(l / extent - 1.0);
+  const auto [a_min, a_max] = mesh::GetProjectedInterval(mesh, attr_marker, true, axis);
+  const double axis_extent = a_max - a_min;
+  const double length_dev = std::abs(l / axis_extent - 1.0);
   MFEM_VERIFY(length_dev <= length_error,
               fmt::format("Uniform lumped element mean length {:.3e} differs from its "
-                          "extent {:.3e} along its direction by {:.2f}% (tolerance {:g}%): "
-                          "the element is not a strip along its direction!",
-                          l, extent, 100.0 * length_dev, 100.0 * length_error));
+                          "extent {:.3e} along its axis by {:.2f}% (tolerance {:g}%): the "
+                          "element is not a strip along its direction!",
+                          l, axis_extent, 100.0 * length_dev, 100.0 * length_error));
   if (angle_deg > angle_warning_deg)
   {
     Mpi::Warning(mesh.GetComm(),
@@ -101,9 +107,9 @@ UniformElementData::UniformElementData(const std::array<double, 3> &input_dir,
   {
     Mpi::Warning(mesh.GetComm(),
                  "Uniform lumped element at attributes {} has a mean length {:.3e} which "
-                 "differs from its extent {:.3e} along its direction by {:.2f}%: its ends "
-                 "are not straight and normal to the direction!\n",
-                 fmt::join(attr_list, ", "), l, extent, 100.0 * length_dev);
+                 "differs from its extent {:.3e} along its axis by {:.2f}%: its ends are "
+                 "not straight and normal to its axis!\n",
+                 fmt::join(attr_list, ", "), l, axis_extent, 100.0 * length_dev);
   }
 }
 

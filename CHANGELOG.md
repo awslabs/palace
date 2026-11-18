@@ -59,6 +59,17 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     admittance of both faces, which lowers the conductor loss compared to previous versions:
     set `"Crack": true` to restore the previous results, or `"Crack": false` to silence the
     warning. [PR 1168](https://github.com/awslabs/palace/pull/1168).
+  - Uniform lumped ports and surface current sources now take their width from the length
+    of their cross-section normal to `"Direction"` half way along them, and their length
+    from their area over their width, the mean distance between their ends. This fixes
+    setup aborting for valid geometry, such as a port whose ends follow curved conductors,
+    a port folded over a step, or a cylindrical port. A port must be a strip along
+    `"Direction"`: setup aborts when `"Direction"` is more than 1 degree from the axis of
+    the port, or when the mean length differs from the extent of the port along its axis
+    by more than 5%. This rejects some setups which were accepted before, such as an
+    L-shaped port or a 2D port with `"Direction"` normal to its edge. Such configurations
+    must be updated.
+    [PR 1194](https://github.com/awslabs/palace/pull/1194).
 
 #### New Features
 
@@ -251,15 +262,6 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     sapphire substrate, and AMR spent refinement there. The error indicator decreases for
     models with material interfaces, and their AMR meshes change.
     [PR 1072](https://github.com/awslabs/palace/pull/1072).
-  - Fixed uniform lumped ports and surface current sources aborting at setup for valid
-    geometry, such as a port whose ends follow curved conductors, a port folded over a step
-    or a cylindrical port. The port width is now the length of its cross-section normal to
-    `"Direction"` half way along it, and its length is its area over its width, the mean
-    distance between its ends. A port must be a strip along `"Direction"`: setup aborts
-    when `"Direction"` is more than 1 degree from the axis of the port, or when the mean
-    length differs from the extent along `"Direction"` by more than 5%. A 2D port with
-    `"Direction"` normal to its edge now aborts.
-    [PR 1194](https://github.com/awslabs/palace/pull/1194).
   - Fixed driven frequency sweeps aborting with "... not found in sample frequencies!" when
     overlapping `"Samples"` ranges compute the same frequency with different rounding.
     [PR 1192](https://github.com/awslabs/palace/pull/1192).
