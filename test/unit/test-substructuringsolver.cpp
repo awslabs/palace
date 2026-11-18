@@ -1,6 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <filesystem>
@@ -2135,6 +2136,87 @@ std::unique_ptr<mfem::ParMesh> MakeRefinedGradedSplit(int a, int b, int n,
 }
 
 }  // namespace
+
+TEST_CASE_METHOD(palace::test::SharedTempDir, "SubstructuringSolver boundaries of the mesh",
+                 "[substructure][Serial]")
+{
+  // The operators on the mesh of a run leave out the terminal attributes it does not hold
+  // and, on the mesh of the region, the flux loops of the environment that the model lists
+  // (whatever attributes the mesh holds) and the superconductor attributes it does not
+  // hold. The mesh holds the boundary attributes 1 to 6.
+  mfem::Mesh serial = mfem::Mesh::MakeCartesian3D(2, 2, 2, mfem::Element::HEXAHEDRON);
+  mfem::ParMesh mesh(Mpi::World(), serial);
+  const std::string model = (temp_dir / "substruct_boundaries.model").string();
+  using substructuring::ModelFile;
+  ModelFile::Create(model, Mpi::World());
+  const int env_loop = 2;
+  ModelFile::Append(model, Mpi::World(), ModelFile::Tag("ELPS"), sizeof(int),
+                    [&](std::ofstream &f)
+                    { f.write(reinterpret_cast<const char *>(&env_loop), sizeof(int)); });
+  auto boundaries = [&](const std::string &type, const json &bdr, bool region_mesh)
+  {
+    json sub = {{"Region", {{"Attributes", {1}}}},
+                {"Environment", {{"Attributes", {2}}}},
+                {"ModelFile", model}};
+    if (region_mesh)
+    {
+      sub["Mode"] = "Online";
+      sub["RegionMesh"] = true;
+    }
+    const json config = {{"Problem", {{"Type", type}, {"Output", "test_output"}}},
+                         {"Model", {{"Mesh", "test.msh"}}},
+                         {"Domains", {{"Materials", {{{"Attributes", {1, 2}}}}}}},
+                         {"Boundaries", bdr},
+                         {"Solver", {{"Substructuring", sub}}}};
+    return SubstructuringSolver::MeshBoundaries(IoData(config, false), mesh);
+  };
+  const json terminals = {
+      {"Terminal",
+       {{{"Index", 1}, {"Attributes", {1, 9}}}, {{"Index", 2}, {"Attributes", {9}}}}},
+      {"Ground", {{"Attributes", {3}}}}};
+  for (const bool region_mesh : {false, true})
+  {
+    CAPTURE(region_mesh);
+    const auto b = boundaries("Electrostatic", terminals, region_mesh);
+    CHECK(b.terminal.size() == 1);
+    CHECK(b.terminal.contains(1));
+    CHECK((b.terminal.contains(1) && b.terminal.at(1).attributes == std::vector<int>{1}));
+  }
+  auto loop = [](int index, int film, int hole)
+  {
+    return json{{"Index", index},
+                {"FilmAttributes", {film}},
+                {"HoleAttributes", {hole}},
+                {"FluxAmounts", {1.0}},
+                {"Direction", "+Z"}};
+  };
+  const json films = {
+      {"PEC", {{"Attributes", {6}}}},
+      {"FluxLoop", {loop(1, 2, 3), loop(2, 4, 5)}},
+      {"Superconductor",
+       {{{"Attributes", {2, 9}}, {"PenetrationDepth", 0.1}, {"Thickness", 0.05}},
+        {{"Attributes", {8}}, {"PenetrationDepth", 0.1}, {"Thickness", 0.05}}}}};
+  auto attributes = [](const config::BoundaryData &b)
+  {
+    std::vector<int> attrs;
+    for (const auto &data : b.superconductor)
+    {
+      attrs.insert(attrs.end(), data.attributes.begin(), data.attributes.end());
+    }
+    std::ranges::sort(attrs);
+    return attrs;
+  };
+  // With the sheet of the film of loop 2, which has no superconductor entry.
+  const auto full = boundaries("Magnetostatic", films, false);
+  CHECK(full.fluxloop.size() == 2);
+  CHECK(full.superconductor.size() == 3);
+  CHECK(attributes(full) == std::vector<int>{2, 4, 8, 9});
+  const auto region = boundaries("Magnetostatic", films, true);
+  CHECK(region.fluxloop.size() == 1);
+  CHECK(region.fluxloop.contains(1));
+  CHECK(region.superconductor.size() == 2);
+  CHECK(attributes(region) == std::vector<int>{2, 4});
+}
 
 TEST_CASE("SubstructuringSolver region factored with the environment operator",
           "[substructure][Serial][Parallel]")

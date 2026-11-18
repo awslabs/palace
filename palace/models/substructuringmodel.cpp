@@ -602,10 +602,38 @@ std::vector<char> SubstructuringSolver::Impl::WriteRegionMesh(const std::string 
         }
       }
     }
+    // A flux loop of the environment has no DOF of its film and hole on a region element
+    // (also none on Gamma), and no surface current or aperture on them: its excitation,
+    // zero on the region, is in the model.
+    const std::set<int> current_attrs(attrs.begin(), attrs.end());
+    std::vector<char> region_dofs(parent_fes.GetTrueVSize(), 0);
+    for (int t : rc_idx)
+    {
+      region_dofs[ParentTrueDof(t)] = 1;
+    }
+    env_loops.clear();
     for (const auto &[idx, data] : iodata.boundaries.fluxloop)
     {
-      attrs.insert(attrs.end(), data.film_attributes.begin(), data.film_attributes.end());
-      attrs.insert(attrs.end(), data.hole_attributes.begin(), data.hole_attributes.end());
+      std::vector<int> loop_attrs(data.film_attributes);
+      loop_attrs.insert(loop_attrs.end(), data.hole_attributes.begin(),
+                        data.hole_attributes.end());
+      int in_region =
+          std::ranges::any_of(loop_attrs, [&](int a) { return current_attrs.contains(a); });
+      if (!in_region)
+      {
+        const auto loop_mark = BoundaryTrueDofs(parent_fes, loop_attrs);
+        for (std::size_t i = 0; i < loop_mark.size() && !in_region; i++)
+        {
+          in_region = loop_mark[i] && region_dofs[i];
+        }
+        Mpi::GlobalMax(1, &in_region, parent.GetComm());
+      }
+      if (!in_region)
+      {
+        env_loops.push_back(idx);
+        continue;
+      }
+      attrs.insert(attrs.end(), loop_attrs.begin(), loop_attrs.end());
       loop_films.insert(data.film_attributes.begin(), data.film_attributes.end());
     }
     const auto mark = BoundaryTrueDofs(parent_fes, attrs);
@@ -642,6 +670,49 @@ std::vector<char> SubstructuringSolver::Impl::WriteRegionMesh(const std::string 
                               iodata.units.GetMeshLengthRelativeScale(), plain);
   Mpi::Print(" Writing the mesh of the region for online runs to {}\n", path);
   return written;
+}
+
+std::vector<int> SubstructuringSolver::Impl::ReadEnvLoops(const std::string &path,
+                                                          MPI_Comm comm)
+{
+  const ModelFile file = ModelFile::Read(path, comm);
+  const auto *r = (file.version == static_cast<int>(ModelFile::kVersion))
+                      ? file.Find(kEnvLoopsTag)
+                      : nullptr;
+  if (!r)
+  {
+    return {};
+  }
+  const std::vector<char> p = ModelFile::ReadPayload(path, *r, comm);
+  std::vector<int> loops(p.size() / sizeof(int));
+  std::memcpy(loops.data(), p.data(), sizeof(int) * loops.size());
+  return loops;
+}
+
+void SubstructuringSolver::Impl::AppendFluxoids(const std::string &path,
+                                                const std::vector<int> &ids,
+                                                const std::vector<int> &loop_ids,
+                                                const mfem::DenseMatrix &fluxoid) const
+{
+  const int KL[2] = {static_cast<int>(ids.size()), static_cast<int>(loop_ids.size())};
+  const long long size = static_cast<long long>(sizeof(int)) * (2 + KL[0] + KL[1]) +
+                         static_cast<long long>(sizeof(double)) * KL[0] * KL[1];
+  AppendRecord(path, kFluxoidsTag, size,
+               [&](std::ofstream &f)
+               {
+                 f.write(reinterpret_cast<const char *>(KL), sizeof(KL));
+                 f.write(reinterpret_cast<const char *>(ids.data()), sizeof(int) * KL[0]);
+                 f.write(reinterpret_cast<const char *>(loop_ids.data()),
+                         sizeof(int) * KL[1]);
+                 for (int k = 0; k < KL[0]; k++)
+                 {
+                   for (int j = 0; j < KL[1]; j++)
+                   {
+                     const double v = fluxoid(k, j);
+                     f.write(reinterpret_cast<const char *>(&v), sizeof(double));
+                   }
+                 }
+               });
 }
 
 void SubstructuringSolver::Impl::CheckEnvFingerprint()
@@ -823,6 +894,13 @@ void SubstructuringSolver::Impl::SaveModel(const std::string &model_path, int si
   }
   AppendEnvFingerprint(model_path);  // collective
   AppendEnvRecord(model_path, WriteRegionMesh(RegionMeshPath(model_path)));
+  AppendRecord(model_path, kEnvLoopsTag,
+               static_cast<long long>(sizeof(int) * env_loops.size()),
+               [&](std::ofstream &f)
+               {
+                 f.write(reinterpret_cast<const char *>(env_loops.data()),
+                         sizeof(int) * env_loops.size());
+               });
   if (have_sk)
   {
     BlockTimer bt_io(Timer::IO);
@@ -835,6 +913,80 @@ void SubstructuringSolver::Impl::SaveModel(const std::string &model_path, int si
   if (modes_ready)
   {
     AppendModes(model_path);  // collective
+  }
+}
+
+void SubstructuringSolver::EnvironmentFluxoids(const std::vector<int> &ids,
+                                               const std::vector<int> &loop_ids,
+                                               mfem::DenseMatrix &fluxoid) const
+{
+  MFEM_VERIFY(fluxoid.Height() == static_cast<int>(ids.size()) &&
+                  fluxoid.Width() == static_cast<int>(loop_ids.size()),
+              "EnvironmentFluxoids: one row per excitation and one column per loop!");
+  const auto &sub = *impl->iodata.solver.substructuring;
+  if (sub.mode != SubstructuringMode::ONLINE)
+  {
+    if (!sub.model_file.empty())
+    {
+      impl->AppendFluxoids(sub.model_file, ids, loop_ids, fluxoid);  // collective
+    }
+    return;
+  }
+  if (!impl->region_only || impl->env_loops.empty())
+  {
+    return;
+  }
+  using ModelFile = substructuring::ModelFile;
+  MPI_Comm comm = impl->parent_fes.GetComm();
+  const ModelFile file = ModelFile::Read(sub.model_file, comm);
+  const auto *r = file.Find(Impl::kFluxoidsTag);
+  const std::vector<char> p =
+      r ? ModelFile::ReadPayload(sub.model_file, *r, comm) : std::vector<char>();
+  // The record [K][L][excitation ids K][loop ids L][fluxoids K x L].
+  std::size_t at = 0;
+  auto read = [&]<typename T>(T *x, std::size_t n)
+  {
+    if (p.size() - at < sizeof(T) * n)
+    {
+      return false;
+    }
+    std::memcpy(x, p.data() + at, sizeof(T) * n);
+    at += sizeof(T) * n;
+    return true;
+  };
+  int KL[2] = {0, 0};
+  std::vector<int> saved_ids, saved_loops;
+  std::vector<double> values;
+  bool ok = read(KL, 2) && KL[0] >= 0 && KL[1] >= 0;
+  if (ok)
+  {
+    saved_ids.resize(KL[0]);
+    saved_loops.resize(KL[1]);
+    values.resize(static_cast<std::size_t>(KL[0]) * KL[1]);
+    ok = read(saved_ids.data(), saved_ids.size()) &&
+         read(saved_loops.data(), saved_loops.size()) &&
+         read(values.data(), values.size()) && at == p.size();
+  }
+  MFEM_VERIFY(ok, "The saved substructuring model \""
+                      << sub.model_file
+                      << "\" holds no fluxoids of the flux loops of its environment: rerun "
+                         "in \"Offline\" mode!");
+  auto index = [](const std::vector<int> &v, int x)
+  { return static_cast<int>(std::find(v.begin(), v.end(), x) - v.begin()); };
+  for (int loop : impl->env_loops)
+  {
+    const int j = index(loop_ids, loop), q = index(saved_loops, loop);
+    MFEM_VERIFY(j < static_cast<int>(loop_ids.size()) && q < KL[1],
+                "Flux loop " << loop << " of the environment of the saved substructuring "
+                             << "model is not in its fluxoids: rerun in \"Offline\" mode!");
+    for (std::size_t k = 0; k < ids.size(); k++)
+    {
+      const int row = index(saved_ids, ids[k]);
+      MFEM_VERIFY(row < KL[0], "Flux loop excitation "
+                                   << ids[k] << " is not in the fluxoids of the saved "
+                                   << "substructuring model: rerun in \"Offline\" mode!");
+      fluxoid(static_cast<int>(k), j) = values[static_cast<std::size_t>(row) * KL[1] + q];
+    }
   }
 }
 

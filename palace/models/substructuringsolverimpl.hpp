@@ -576,7 +576,8 @@ struct SubstructuringSolver::Impl
   void ComputeSourceModes(const std::vector<int> &ids, const std::vector<Source> &src);
 
   // Whether the modes cover every source with an environment part (need[j]; same id and
-  // fingerprints), with col[j] its mode column (-1: none, zero modes). Collective.
+  // fingerprints), with col[j] its mode column (-1: none, zero modes). On the mesh of the
+  // region, a source takes the mode of its id whenever the model has one. Collective.
   bool SourceModesMatch(const std::vector<int> &ids, const std::vector<Source> &src,
                         std::vector<int> &col, std::vector<char> &need);
 
@@ -670,12 +671,14 @@ struct SubstructuringSolver::Impl
   // Solver.Order, nG, signature type], SIGS [signatures nG x width], SENV [S_E nG x nG],
   // LENC [Model.Lc of the offline run], ENVF [environment fingerprint, 5 doubles], in
   // magnetostatics MEPS [the regularization eps] and SIDS [the sides of the sheet faces on
-  // Gamma, 4 doubles], ENVR [the EnvironmentRecord], and as they are computed SKEN [S^K nG
-  // x nG] (magnetostatics), SKIN [S^Kin nG x nG] (with London sheets in the environment),
-  // MODE [K][ids][fingerprints 2K][G nG x K][Cmode KxK] (electrostatics), and SRCM [K][ids]
-  // [fingerprints 2K][g nG x K][h nG x K][c KxK][B KxK] (then [h^kin nG x K][c^kin KxK]
-  // in a model with S^Kin).
-  static constexpr int kModelVersion = 7;
+  // Gamma, 4 doubles], ENVR [the EnvironmentRecord], ELPS [the flux loops of the
+  // environment, which the mesh of the region leaves out], and as they are computed SKEN
+  // [S^K nG x nG] (magnetostatics), SKIN [S^Kin nG x nG] (with London sheets in the
+  // environment), MODE [K][ids][fingerprints 2K][G nG x K][Cmode KxK] (electrostatics),
+  // SRCM [K][ids][fingerprints 2K][g nG x K][h nG x K][c KxK][B KxK] (then [h^kin nG x
+  // K][c^kin KxK] in a model with S^Kin), and FLXD [K][L][excitation ids K][loop ids L]
+  // [fluxoids KxL] (flux loops driven together).
+  static constexpr int kModelVersion = 8;
   using ModelFile = substructuring::ModelFile;
   static constexpr std::uint32_t kHeadTag = ModelFile::Tag("HEAD"),
                                  kSigsTag = ModelFile::Tag("SIGS"),
@@ -688,7 +691,22 @@ struct SubstructuringSolver::Impl
                                  kSKenTag = ModelFile::Tag("SKEN"),
                                  kSKinTag = ModelFile::Tag("SKIN"),
                                  kModesTag = ModelFile::Tag("MODE"),
-                                 kSourceModesTag = ModelFile::Tag("SRCM");
+                                 kSourceModesTag = ModelFile::Tag("SRCM"),
+                                 kEnvLoopsTag = ModelFile::Tag("ELPS"),
+                                 kFluxoidsTag = ModelFile::Tag("FLXD");
+
+  // The flux loops of the environment (with no DOF of their films and holes in the region
+  // or on Gamma), which the mesh of the region leaves out: set by WriteRegionMesh, and read
+  // from the model on the mesh of the region (an empty list if the model has none).
+  // ReadEnvLoops is collective.
+  std::vector<int> env_loops;
+  static std::vector<int> ReadEnvLoops(const std::string &path, MPI_Comm comm);
+
+  // Append the fluxoids that the flux-loop excitations ids impose on the loops loop_ids
+  // (see SubstructuringSolver::EnvironmentFluxoids) to the model file. Collective.
+  void AppendFluxoids(const std::string &path, const std::vector<int> &ids,
+                      const std::vector<int> &loop_ids,
+                      const mfem::DenseMatrix &fluxoid) const;
 
   // The width of the interface signatures of a model by their type: 1 H1 coordinates, 2
   // H(curl) moments, 3 with the side moments of split DOFs (0: not a model).
@@ -762,9 +780,10 @@ struct SubstructuringSolver::Impl
 
   // The mesh of the region for online runs: the region, with the environment elements
   // touching the region's Dirichlet DOFs (set on Γ by boundary conditions of the
-  // environment) and, in magnetostatics, those of the surface currents and flux loops,
-  // whose excitations need their boundaries (the films of the flux loops whole), and the
-  // two-sided films of RegionFilmClosure. Collective.
+  // environment) and, in magnetostatics, those of the surface currents and of the flux
+  // loops other than those of the environment (env_loops, whose excitations come from the
+  // model), whose excitations need their boundaries (the films of these flux loops whole),
+  // and the two-sided films of RegionFilmClosure. Collective.
   std::vector<char> WriteRegionMesh(const std::string &path);
 
   // Abort if a loaded model was condensed from a different environment than the current

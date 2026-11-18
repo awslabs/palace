@@ -70,10 +70,12 @@ region and the environment are given by domain attributes, which together must c
 An `"Offline"` run that saves a model on a conforming mesh (not one from adaptive refinement) also
 writes a mesh of the region next to it (`<model>_region.mesh` for `"ModelFile": "<model>.model"`),
 with the few environment elements along the boundary conditions of the environment that reach the
-interface and, in magnetostatics, at the surface currents and flux loops of the environment (with
-the films of the flux loops whole and, if these elements reach a `"TwoSided"` film where it crosses
-the interface, the environment along every such crossing) and next to the films on the interface. An
-`"Online"` run on it (`"Model"/"Mesh"` and `"RegionMesh": true`, with the configuration otherwise
+interface and, in magnetostatics, at the surface currents of the environment and at the flux loops
+whose film or hole reaches the region or the interface (with these films whole and, if these
+elements reach a `"TwoSided"` film where it crosses the interface, the environment along every such
+crossing) and next to the films on the interface. The flux loops entirely in the environment are
+left out: their excitations and the fluxoids they impose come from the model. An `"Online"` run on
+it (`"Model"/"Mesh"` and `"RegionMesh": true`, with the configuration otherwise
 unchanged) reads and partitions the region only. The environment is then that of the model: a
 configuration that changes it is rejected (an excitation of the environment that changed needs the
 full mesh), and the mesh must hold the environment elements written with it; the interface is found

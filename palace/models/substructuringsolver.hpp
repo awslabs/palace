@@ -17,6 +17,11 @@ class FiniteElementSpaceHierarchy;
 class IoData;
 class Mesh;
 
+namespace config
+{
+struct BoundaryData;
+}  // namespace config
+
 // Substructuring for electrostatics and magnetostatics: condense the environment (the rest
 // of the domain, selected by domain attributes) to a Dirichlet-to-Neumann operator S_E on
 // the interface with the region of interest, and solve the region against it. S_E is
@@ -32,6 +37,14 @@ public:
   // Online, with a saved model: Model.Lc from the model (that of its offline run), which a
   // configured one must equal. Collective.
   static void UseModelLength(IoData &iodata, MPI_Comm comm);
+
+  // The boundaries of the configuration for the operators on the mesh of the run: without
+  // the terminal attributes the mesh does not hold (those of the environment, on the mesh
+  // of the region, whose modes are in the model), and on the mesh of the region, without
+  // the flux loops of the environment that it leaves out (their excitations are in the
+  // model) and the superconductor attributes it does not hold. Collective.
+  static config::BoundaryData MeshBoundaries(const IoData &iodata,
+                                             const mfem::ParMesh &mesh);
 
   // Condense the environment to S_E (or load it from a saved model). Called once, before
   // any solve.
@@ -68,6 +81,13 @@ public:
       std::vector<Vector> *fields = nullptr, int n_fields = 0,
       std::vector<Vector> *region_fields = nullptr,
       std::vector<double> *volume_energy = nullptr);
+
+  // The fluxoids c_j^T a_k that the flux-loop excitations k (ids) impose on the flux loops
+  // j (loop_ids), measured on the mesh: appended to the model of an offline run that saves
+  // one, and on the mesh of the region, which leaves out the flux loops of the environment,
+  // on these loops those of the model. Collective.
+  void EnvironmentFluxoids(const std::vector<int> &ids, const std::vector<int> &loop_ids,
+                           mfem::DenseMatrix &fluxoid) const;
 
   // Error indicators for adaptive refinement of the region only: Palace's gradient-flux
   // (electrostatics) or curl-flux (magnetostatics) estimator on the region solutions of

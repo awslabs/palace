@@ -35,18 +35,9 @@ config::SolverData SingleLevel(const config::SolverData &solver)
 std::unique_ptr<LaplaceOperator>
 MakeLaplaceOperator(const IoData &iodata, const std::vector<std::unique_ptr<Mesh>> &mesh)
 {
-  // The terminals of the environment are not on the mesh of the region (their modes are in
-  // the model), which the operator would reject.
-  config::BoundaryData boundaries(iodata.boundaries);
-  const auto &bdr_attributes = mesh.back()->Get().bdr_attributes;
-  for (auto it = boundaries.terminal.begin(); it != boundaries.terminal.end();)
-  {
-    std::erase_if(it->second.attributes, [&](int a) { return bdr_attributes.Find(a) < 0; });
-    it = it->second.attributes.empty() ? boundaries.terminal.erase(it) : std::next(it);
-  }
-  return std::make_unique<LaplaceOperator>(boundaries, SingleLevel(iodata.solver),
-                                           iodata.domains.materials, iodata.problem.type,
-                                           mesh);
+  return std::make_unique<LaplaceOperator>(
+      SubstructuringSolver::MeshBoundaries(iodata, mesh.back()->Get()),
+      SingleLevel(iodata.solver), iodata.domains.materials, iodata.problem.type, mesh);
 }
 
 // The entrywise absolute value of a matrix, zero on the rows not marked (all rows are
@@ -182,11 +173,12 @@ SubstructuringSolver::Impl::Impl(const IoData &iodata,
   : iodata(iodata), mesh(*mesh_.back()), parent(mesh.Get()),
     magnetostatic(iodata.problem.type == ProblemType::MAGNETOSTATIC),
     laplace_op(magnetostatic ? nullptr : MakeLaplaceOperator(iodata, mesh_)),
-    curlcurl_op(magnetostatic ? std::make_unique<CurlCurlOperator>(
-                                    iodata.boundaries, SingleLevel(iodata.solver),
-                                    iodata.domains.materials, iodata.problem.type,
-                                    iodata.units, mesh_)
-                              : nullptr),
+    curlcurl_op(magnetostatic
+                    ? std::make_unique<CurlCurlOperator>(
+                          SubstructuringSolver::MeshBoundaries(iodata, mesh.Get()),
+                          SingleLevel(iodata.solver), iodata.domains.materials,
+                          iodata.problem.type, iodata.units, mesh_)
+                    : nullptr),
     parent_space(magnetostatic ? curlcurl_op->GetNDSpace() : laplace_op->GetH1Space()),
     parent_fes(parent_space.Get())
 {
@@ -329,6 +321,7 @@ SubstructuringSolver::Impl::Impl(const IoData &iodata,
     region_only = sub.region_mesh;
     if (region_only)
     {
+      env_loops = ReadEnvLoops(model, parent.GetComm());
       MFEM_VERIFY(iodata.model.refinement.max_it == 0,
                   "Adaptive refinement with substructuring needs the full mesh, not the "
                   "mesh of the region!");
@@ -656,6 +649,33 @@ SubstructuringSolver::SubstructuringSolver(const IoData &iodata,
                                            const std::vector<std::unique_ptr<Mesh>> &mesh)
   : impl(std::make_unique<Impl>(iodata, mesh))
 {
+}
+
+config::BoundaryData SubstructuringSolver::MeshBoundaries(const IoData &iodata,
+                                                          const mfem::ParMesh &mesh)
+{
+  config::BoundaryData boundaries(iodata.boundaries);
+  auto absent = [&](int a) { return mesh.bdr_attributes.Find(a) < 0; };
+  for (auto it = boundaries.terminal.begin(); it != boundaries.terminal.end();)
+  {
+    std::erase_if(it->second.attributes, absent);
+    it = it->second.attributes.empty() ? boundaries.terminal.erase(it) : std::next(it);
+  }
+  const auto &sub = *iodata.solver.substructuring;
+  if (sub.mode == SubstructuringMode::ONLINE && sub.region_mesh)
+  {
+    for (int loop : Impl::ReadEnvLoops(sub.model_file, mesh.GetComm()))
+    {
+      boundaries.fluxloop.erase(loop);
+    }
+    for (auto &data : boundaries.superconductor)
+    {
+      std::erase_if(data.attributes, absent);
+    }
+    std::erase_if(boundaries.superconductor,
+                  [](const auto &data) { return data.attributes.empty(); });
+  }
+  return boundaries;
 }
 
 SubstructuringSolver::~SubstructuringSolver() = default;
