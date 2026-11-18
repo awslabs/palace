@@ -946,9 +946,9 @@ solve
 \qquad \bm{g} = -\bm{A}_{\Gamma E}\bm{A}_{EE}^{-1}\bm{b}_E ,
 ```
 
-with ``\bm{u}_E = \bm{Z}\bm{u}_\Gamma + \bm{w}`` on the environment, ``\bm{w} =
-\bm{A}_{EE}^{-1}\bm{b}_E``. The energies ``\bm{u}_i^T\bm{K}\bm{u}_j`` of the energy operator
-``\bm{K}`` then split into the region's part and the environment's,
+with ``\bm{u}_E = \bm{Z}\bm{u}_\Gamma + \bm{w}`` on the environment,
+``\bm{w} = \bm{A}_{EE}^{-1}\bm{b}_E``. The energies ``\bm{u}_i^T\bm{K}\bm{u}_j`` of the energy
+operator ``\bm{K}`` then split into the region's part and the environment's,
 
 ```math
 \bm{u}_{\Gamma,i}^T\bm{S}^K\bm{u}_{\Gamma,j} + \bm{u}_{\Gamma,i}^T\bm{h}_j
@@ -965,9 +965,9 @@ In electrostatics, ``\bm{K} = \bm{A}`` and the terminal excitations are Dirichle
 ``\bm{x}_k`` (unit potentials). With ``\bm{t}_k = \bm{A}^E\bm{x}_k`` and
 ``\bm{w}_k = \bm{A}_{EE}^{-1}\bm{t}_{k,E}``, a terminal loads the region solve with
 ``\bm{g}_k = (\bm{t}_k - \bm{A}^E\bm{w}_k)_\Gamma``, and the environment's energy is
-``[\bm{u}_\Gamma;\,\bm{V}]^T[\bm{S}_E,\,\bm{G};\,\bm{G}^T,\,\bm{C}^{mode}]
-[\bm{u}_\Gamma;\,\bm{V}]`` for the terminal potentials ``\bm{V}``, which gives the Maxwell
-capacitance matrix of [Electrostatic Simulations](#Electrostatic-Simulations) exactly.
+``[\bm{u}_\Gamma;\,\bm{V}]^T[\bm{S}_E,\,\bm{G};\,\bm{G}^T,\,\bm{C}^{mode}][\bm{u}_\Gamma;\,\bm{V}]``
+for the terminal potentials ``\bm{V}``, which gives the Maxwell capacitance matrix of
+[Electrostatic Simulations](#Electrostatic-Simulations) exactly.
 
 In magnetostatics, ``\bm{L} = \bm{K} + \bm{M}_{sheet}``, the curl-curl operator and the London
 terms of the superconducting sheets, is singular: its null space holds the gradients of the
