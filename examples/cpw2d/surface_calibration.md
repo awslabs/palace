@@ -54,7 +54,7 @@ calibration and target simulations should use the same FEM order and comparable
 matching-tube resolution. Never tune the radii against the
 fabrication-resolved result being used as a blind validation target.
 
-Generate and run the study from this directory:
+Generate and run the study from this directory (the four configurations set `"MaxSizePredicted": true` beside `"MaxSize"`, so AMR stops before a solve predicted above `"MaxSize"`; Palace's default is false, under which the last level solves up to ~1.8x more unknowns):
 
 ```text
 cd mesh
