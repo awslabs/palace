@@ -21,5 +21,5 @@
     "Driven": { "MinFreq": 2000.0, "MaxFreq": 3000.0, "FreqStep": 1000.0 },
     "Linear": { "Type": "MUMPS", "KSPType": "GMRES", "Tol": 1e-12, "MaxIts": 100 },
     "Substructuring": { "Region": { "Attributes": [1] }, "Environment": { "Attributes": [2] },
-      "Mode": "Online", "SaveModel": "environment_model.bin" } }
+      "Mode": "Online", "ModelFile": "environment_model.bin" } }
 }

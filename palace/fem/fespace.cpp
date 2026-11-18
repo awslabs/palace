@@ -62,6 +62,14 @@ FiniteElementSpace::GetCeedElemRestriction(Ceed ceed, mfem::Geometry::Type geom,
     }
   }
   const auto &indices = use_active ? active_indices : data.indices;
+  return geom_restr.emplace(geom, BuildCeedElemRestriction(ceed, geom, indices))
+      .first->second;
+}
+
+CeedElemRestriction
+FiniteElementSpace::BuildCeedElemRestriction(Ceed ceed, mfem::Geometry::Type geom,
+                                             const std::vector<int> &indices) const
+{
   if (broken)
   {
     CeedElemRestriction val;
@@ -73,10 +81,9 @@ FiniteElementSpace::GetCeedElemRestriction(Ceed ceed, mfem::Geometry::Type geom,
     remap.ldof = broken->override_ldof.data();
     remap.l_size = broken->vsize;
     ceed::InitRestriction(Get(), indices, false, false, false, ceed, &val, &remap);
-    return geom_restr.emplace(geom, val).first->second;
+    return val;
   }
-  return geom_restr.emplace(geom, BuildCeedElemRestriction(*this, ceed, geom, indices))
-      .first->second;
+  return BuildCeedElemRestriction(*this, ceed, geom, indices);
 }
 
 CeedElemRestriction

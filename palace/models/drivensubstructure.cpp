@@ -127,7 +127,8 @@ DrivenSubstructure::DrivenSubstructure(SpaceOperator &space_op,
                                        const std::vector<int> &region_attributes,
                                        const std::vector<int> &environment_attributes,
                                        bool online, const DrivenSubstructureModel *saved,
-                                       LinearSolver solver, SymbolicFactorization ordering)
+                                       bool region_mesh, LinearSolver solver,
+                                       SymbolicFactorization ordering)
   : space_op(space_op), solver(solver), ordering(ordering), online(online)
 {
   env.attrs = environment_attributes;
@@ -159,9 +160,27 @@ DrivenSubstructure::DrivenSubstructure(SpaceOperator &space_op,
   std::vector<char> cut(nt, 0);
   if (saved)
   {
-    // The mesh holds the environment of the model, or its part in the mesh of the region.
-    region_only = RegionOnlyMesh(*fes.GetParMesh(), env.attrs, saved->env_moments,
-                                 saved->region_moments, kEnvironmentTol);
+    // The mesh holds the environment of the model, or with "RegionMesh" its part in the
+    // mesh of the region.
+    region_only = region_mesh;
+    const auto moments = EnvironmentMoments();
+    const bool full = MomentsMatch(moments, saved->env_moments, kEnvironmentTol),
+               part = MomentsMatch(moments, saved->region_moments, kEnvironmentTol);
+    if (region_only)
+    {
+      MFEM_VERIFY(part, (full ? "\"RegionMesh\" is set, but the mesh holds the whole "
+                                "environment of the saved substructuring model: unset it "
+                                "on the full mesh!"
+                              : "The mesh is not the mesh of the region written with the "
+                                "saved substructuring model, nor a re-meshing of its "
+                                "region!"));
+    }
+    else
+    {
+      MFEM_VERIFY(full, (part ? "The mesh is the mesh of the region written with the saved "
+                                "substructuring model: set \"RegionMesh\": true!"
+                              : kEnvironmentMeshDiffers));
+    }
   }
   if (region_only)
   {
@@ -1247,9 +1266,18 @@ DrivenSubstructure::WriteRegionMesh(const std::string &path,
 std::array<double, 6>
 DrivenSubstructure::EnvironmentMoments(const std::vector<char> &mark) const
 {
-  return ElementMoments(
-      *const_cast<mfem::ParFiniteElementSpace &>(space_op.GetNDSpace().Get()).GetParMesh(),
-      env.attrs, mark);
+  std::array<double, 6> moments = {};
+  for (const auto &m : AttributeMoments(
+           *const_cast<mfem::ParFiniteElementSpace &>(space_op.GetNDSpace().Get())
+                .GetParMesh(),
+           env.attrs, mark))
+  {
+    for (int q = 0; q < 6; q++)
+    {
+      moments[q] += m[q];
+    }
+  }
+  return moments;
 }
 
 const Vector &DrivenSubstructure::FingerprintField(int k) const
@@ -1723,7 +1751,7 @@ void DrivenSubstructureModel::ReadHeader(const std::string &path, MPI_Comm comm)
   Mpi::Broadcast(1, &known, 0, comm);
   MFEM_VERIFY(known, "Cannot read the driven substructuring model \""
                          << path
-                         << "\" (run in \"Offline\" mode with \"SaveModel\" first)!");
+                         << "\" (run in \"Offline\" mode with \"ModelFile\" first)!");
   Mpi::Broadcast(2, head, 0, comm);
   MFEM_VERIFY(head[1] == kVersion, "The saved substructuring model \""
                                        << path

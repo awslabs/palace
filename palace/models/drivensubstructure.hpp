@@ -86,7 +86,8 @@ struct DrivenSubstructureModel
   static constexpr int kPortData = 7;  // parameters per port (see port_data)
   int nG = 0, sig_w = 0;
   double length_scale = 0.0;  // model.Lc of the offline run
-  // ElementMoments of the environment and of its elements in the mesh of the region.
+  // The moments (AttributeMoments summed over the environment attributes) of the
+  // environment and of its elements in the mesh of the region.
   std::array<double, 6> env_moments = {}, region_moments = {};
   std::vector<double> signatures;  // nG x sig_w
   std::vector<double> env_fp;      // environment fingerprint
@@ -166,18 +167,18 @@ private:
 class DrivenSubstructure
 {
 public:
-  // Online, with the saved model: a mesh holding the environment elements written with
-  // the model in the mesh of the region holds the region, and Γ is the set of the region's
-  // boundary DOFs at the points of the saved interface DOFs.
-  // The factorizations are by the sparse direct solver given (STRUMPACK, MUMPS or SUPERLU),
-  // else: of a side with its Schur complement onto Γ, by MUMPS (its partial factorization),
-  // STRUMPACK or SuperLU_DIST (one solve per interface DOF), of the region with S_E online
-  // (one system) by STRUMPACK, SuperLU_DIST or MUMPS, in these orders among those Palace is
-  // built with, with the fill-reducing ordering given.
+  // Online, with the saved model: on the mesh of the region (region_mesh; the moments of
+  // the environment elements check the mesh), Γ is the set of the region's boundary DOFs at
+  // the points of the saved interface DOFs. The factorizations are by the sparse direct
+  // solver given (STRUMPACK, MUMPS or SUPERLU), else: of a side with its Schur complement
+  // onto Γ, by MUMPS (its partial factorization), STRUMPACK or SuperLU_DIST (one solve per
+  // interface DOF), of the region with S_E online (one system) by STRUMPACK, SuperLU_DIST
+  // or MUMPS, in these orders among those Palace is built with, with the fill-reducing
+  // ordering given.
   DrivenSubstructure(SpaceOperator &space_op, const std::vector<int> &region_attributes,
                      const std::vector<int> &environment_attributes, bool online = false,
                      const DrivenSubstructureModel *saved = nullptr,
-                     LinearSolver solver = LinearSolver::DEFAULT,
+                     bool region_mesh = false, LinearSolver solver = LinearSolver::DEFAULT,
                      SymbolicFactorization ordering = SymbolicFactorization::DEFAULT);
   ~DrivenSubstructure();
 
@@ -248,8 +249,8 @@ public:
                                     const std::vector<int> &port_attributes,
                                     double length_scale) const;
 
-  // ElementMoments of the environment elements (those marked, if mark is not empty).
-  // Collective.
+  // The AttributeMoments of the environment elements (those marked, if mark is not empty),
+  // summed over the environment attributes. Collective.
   std::array<double, 6> EnvironmentMoments(const std::vector<char> &mark = {}) const;
 
   // The wave ports in the environment (each wave port lies inside one side).

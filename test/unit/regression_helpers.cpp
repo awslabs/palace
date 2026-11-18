@@ -496,7 +496,9 @@ void RunRegressionCase(std::string_view case_dir, std::string_view config_json,
     require_mesh(config, input_path);
   }
 
-  ScopedExampleStage stage(input_path, run_root, postpro_subdir, comm);
+  ScopedExampleStage stage(
+      input_path, run_root,
+      opts.stage.empty() ? postpro_subdir : std::string_view(opts.stage), comm);
   const std::filesystem::path postpro_path = stage.path() / "postpro" / postpro_subdir;
 
   const int max_refinement_iterations = GetMaxRefinementIterations(config);

@@ -355,7 +355,7 @@ DrivenSubstructuredSweep::DrivenSubstructuredSweep(const IoData &iodata,
   : iodata(iodata), space_op(space_op), port_excitations(space_op.GetPortExcitations()),
     omega_sample(iodata.solver.driven.sample_f), sub(*iodata.solver.substructuring),
     online(sub.mode == SubstructuringMode::ONLINE), adaptive(adaptive_sweep && !online),
-    from_model(online || adaptive), model_path(sub.save_model),
+    from_model(online || adaptive), model_path(sub.model_file),
     save(!online && !model_path.empty()), comm(space_op.GetComm()), root(Mpi::Root(comm)),
     Curl(space_op.GetCurlMatrix()),
     unit_GHz(iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(1.0) /
@@ -367,17 +367,19 @@ DrivenSubstructuredSweep::DrivenSubstructuredSweep(const IoData &iodata,
   {
     model.ReadHeader(model_path, comm);
   }
-  ds = std::make_unique<DrivenSubstructure>(
-      space_op, sub.region_attributes, sub.environment_attributes, online,
-      online ? &model : nullptr, sub.direct_solver, iodata.solver.linear.sym_factorization);
-  if (ds->RegionOnly())
+  if (online && sub.region_mesh)
   {
+    // The mesh of the region is written refined, and checked against the model after.
     const auto &refinement = iodata.model.refinement;
     MFEM_VERIFY(refinement.uniform_ref_levels == 0 &&
                     refinement.ser_uniform_ref_levels == 0 &&
                     refinement.GetBoxes().empty() && refinement.GetSpheres().empty(),
                 kRegionMeshRefined);
   }
+  ds = std::make_unique<DrivenSubstructure>(
+      space_op, sub.region_attributes, sub.environment_attributes, online,
+      online ? &model : nullptr, sub.region_mesh, sub.direct_solver,
+      iodata.solver.linear.sym_factorization);
   nG = ds->InterfaceSize();
   Mpi::Print("\nSubstructuring: |Γ| = {:d} interface unknowns\n", nG);
   for (const auto &[idx, spec] : port_excitations)
@@ -989,7 +991,7 @@ void DrivenSubstructuredSweep::SampleEnvironment()
   // The frequencies of the sweep from the model, on the region only.
   ds.reset();
   ds = std::make_unique<DrivenSubstructure>(
-      space_op, sub.region_attributes, sub.environment_attributes, true, nullptr,
+      space_op, sub.region_attributes, sub.environment_attributes, true, nullptr, false,
       sub.direct_solver, iodata.solver.linear.sym_factorization);
 }
 

@@ -56,32 +56,6 @@ LaplaceOperator::LaplaceOperator(const IoData &iodata,
 {
 }
 
-LaplaceOperator::AssemblyRestriction::AssemblyRestriction(
-    LaplaceOperator &op, const std::vector<int> &domain_attrs)
-  : op(op), previous(std::move(op.assembly_domains))
-{
-  op.assembly_domains.emplace(op.GetMesh().GetCeedAttributes(domain_attrs),
-                              op.GetMesh().GetCeedBdrAttributesByNeighbor(domain_attrs));
-}
-
-void LaplaceOperator::RestrictToAssemblyDomains(
-    std::initializer_list<MaterialPropertyCoefficient *> f,
-    std::initializer_list<MaterialPropertyCoefficient *> fb) const
-{
-  if (!assembly_domains)
-  {
-    return;
-  }
-  for (auto *c : f)
-  {
-    c->RestrictCoefficient(assembly_domains->first);
-  }
-  for (auto *c : fb)
-  {
-    c->RestrictCoefficient(assembly_domains->second);
-  }
-}
-
 mfem::Array<int> LaplaceOperator::SetUpBoundaryProperties(
     const config::PecBoundaryData &pec, const std::map<int, config::TerminalData> &terminal,
     const mfem::ParMesh &mesh)
@@ -253,16 +227,16 @@ std::unique_ptr<LaplaceOperator::StiffnessForm> LaplaceOperator::GetStiffnessFor
       new StiffnessForm{MaterialPropertyCoefficient(mat_op.GetAttributeToMaterial(),
                                                     mat_op.GetPermittivityReal()),
                         BilinearForm(GetH1Space())});
-  RestrictToAssemblyDomains({&form->epsilon}, {});
   form->k.AddDomainIntegrator<DiffusionIntegrator>(form->epsilon);
+  assembly_domains.Restrict(form->k);
   return form;
 }
 
 std::unique_ptr<ParOperator> LaplaceOperator::GetUnconstrainedStiffnessMatrix(bool assemble)
 {
-  // Restricted, the (exactly zero) entries of the elements outside the assembly domains are
-  // not stored.
-  const bool skip_zeros = assembly_domains.has_value();
+  // Restricted, only the elements of the assembly domains are assembled, and the zero
+  // entries are not stored.
+  const bool skip_zeros = (assembly_domains.Get() != nullptr);
   const auto form = GetStiffnessForm();
   return std::make_unique<ParOperator>(
       assemble ? std::unique_ptr<Operator>(form->k.FullAssemble(skip_zeros))

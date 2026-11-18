@@ -129,33 +129,6 @@ CurlCurlOperator::CurlCurlOperator(const IoData &iodata,
   SetUpLondonFluxConstraints();
 }
 
-CurlCurlOperator::AssemblyRestriction::AssemblyRestriction(
-    CurlCurlOperator &op, const std::vector<int> &domain_attrs)
-  : op(op), previous(std::move(op.assembly_domains))
-{
-  op.assembly_domains.emplace(AssemblyDomains{
-      op.GetMesh().GetCeedAttributes(domain_attrs),
-      op.GetMesh().GetCeedBdrAttributesByNeighbor(domain_attrs), domain_attrs});
-}
-
-void CurlCurlOperator::RestrictToAssemblyDomains(
-    std::initializer_list<MaterialPropertyCoefficient *> f,
-    std::initializer_list<MaterialPropertyCoefficient *> fb) const
-{
-  if (!assembly_domains)
-  {
-    return;
-  }
-  for (auto *c : f)
-  {
-    c->RestrictCoefficient(assembly_domains->domain);
-  }
-  for (auto *c : fb)
-  {
-    c->RestrictCoefficient(assembly_domains->boundary);
-  }
-}
-
 mfem::Array<int> CurlCurlOperator::SetUpBoundaryProperties(
     const config::PecBoundaryData &pec, const std::map<int, config::FluxLoopData> &fluxloop,
     const std::vector<config::SuperconductorData> &superconductor,
@@ -371,17 +344,9 @@ void PrintHeader(const mfem::ParFiniteElementSpace &h1_fespace,
 }
 
 void AddStiffnessIntegrators(BilinearForm &k, const MaterialPropertyCoefficient &df,
-                             const MaterialPropertyCoefficient &f,
                              const MaterialPropertyCoefficient &fb)
 {
-  if (f.empty())
-  {
-    k.AddDomainIntegrator<CurlCurlIntegrator>(df);
-  }
-  else
-  {
-    k.AddDomainIntegrator<CurlCurlMassIntegrator>(df, f);
-  }
+  k.AddDomainIntegrator<CurlCurlIntegrator>(df);
   if (!fb.empty())
   {
     k.AddBoundaryIntegrator<VectorFEMassIntegrator>(fb);
@@ -391,7 +356,6 @@ void AddStiffnessIntegrators(BilinearForm &k, const MaterialPropertyCoefficient 
 }  // namespace
 
 void CurlCurlOperator::AddStiffnessCoefficients(MaterialPropertyCoefficient &df,
-                                                MaterialPropertyCoefficient &f,
                                                 MaterialPropertyCoefficient &fb) const
 {
   // Contribution from material permeability. In 2D, curl is scalar so the curl-curl
@@ -455,31 +419,29 @@ CurlCurlOperator::GetStiffnessForm(bool volume, bool sheets) const
   // The integrators keep pointers to the coefficients, which the form owns.
   std::unique_ptr<StiffnessForm> form(
       new StiffnessForm{MaterialPropertyCoefficient(mat_op.MaxCeedAttribute()),
-                        MaterialPropertyCoefficient(mat_op.MaxCeedAttribute()),
                         MaterialPropertyCoefficient(mat_op.MaxCeedBdrAttribute()),
                         BilinearForm(GetSolutionNDSpace())});
-  AddStiffnessCoefficients(form->df, form->f, form->fb);
-  RestrictToAssemblyDomains({&form->df, &form->f}, {&form->fb});
+  AddStiffnessCoefficients(form->df, form->fb);
   if (!volume)
   {
     // Zero coefficients on every element.
     form->df.RestrictCoefficient(mfem::Array<int>());
-    form->f.RestrictCoefficient(mfem::Array<int>());
   }
   if (!sheets)
   {
     form->fb = MaterialPropertyCoefficient(mat_op.MaxCeedBdrAttribute());
   }
-  AddStiffnessIntegrators(form->k, form->df, form->f, form->fb);
+  AddStiffnessIntegrators(form->k, form->df, form->fb);
+  assembly_domains.Restrict(form->k);
   return form;
 }
 
 std::unique_ptr<ParOperator>
 CurlCurlOperator::GetUnconstrainedStiffnessMatrix(bool volume, bool sheets, bool assemble)
 {
-  // Restricted, the (exactly zero) entries of the elements outside the assembly domains are
-  // not stored.
-  const bool skip_zeros = assembly_domains.has_value();
+  // Restricted, only the elements of the assembly domains are assembled, and the zero
+  // entries are not stored.
+  const bool skip_zeros = (assembly_domains.Get() != nullptr);
   const auto form = GetStiffnessForm(volume, sheets);
   auto K = std::make_unique<ParOperator>(
       assemble ? std::unique_ptr<Operator>(form->k.FullAssemble(skip_zeros))
@@ -489,12 +451,11 @@ CurlCurlOperator::GetUnconstrainedStiffnessMatrix(bool volume, bool sheets, bool
   {
     // On a broken space, the sheet terms of the domains, the faces of the one-sided sheets
     // assigned by their lower-attribute neighbor as the boundary coefficients.
-    if (assembly_domains)
+    if (const auto *attrs = assembly_domains.Get())
     {
       const auto &broken = GetSolutionNDSpace();
       K->AddParallelMatrix(*sc_sheet_op.AssembleBrokenSheetMatrix(
-          GetNDSpace(), broken, broken.GetMesh().GetCrackSides(two_sided_attr),
-          &assembly_domains->attrs));
+          GetNDSpace(), broken, broken.GetMesh().GetCrackSides(two_sided_attr), attrs));
     }
     else
     {

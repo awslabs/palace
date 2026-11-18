@@ -3,6 +3,7 @@
 
 #include "substructuringsolverimpl.hpp"
 
+#include <cmath>
 #include <optional>
 #include <set>
 #include <utility>
@@ -44,28 +45,24 @@ SubstructuringSolver::Impl::GetTerm(const std::vector<int> *attrs, Term term,
   if (!magnetostatic)
   {
     MFEM_ASSERT(term == Term::VOLUME, "Electrostatic operators have the volume term only!");
-    std::optional<LaplaceOperator::AssemblyRestriction> restriction;
+    std::optional<AssemblyDomains::Restriction> restriction;
     if (attrs)
     {
-      restriction.emplace(*laplace_op, *attrs);
+      restriction.emplace(laplace_op->GetAssemblyDomains(), *attrs);
     }
     return laplace_op->GetUnconstrainedStiffnessMatrix(assemble);
   }
   if (term == Term::MASS)
   {
-    // The regularization eps M on the domains (the exactly zero entries of the other
-    // elements are not stored).
+    // The regularization mag_eps (1/mu) M on the elements of the domains, weighted as the
+    // curl-curl operator.
     MFEM_ASSERT(attrs, "The regularization is assembled on the region or the environment!");
-    // The coefficient is built for every attribute and then restricted, so that it is a
-    // scalar one also on a process without an element of the domains.
     const auto &mat_op = curlcurl_op->GetMaterialOp();
-    const auto &attr_mat = mat_op.GetAttributeToMaterial();
-    mfem::DenseTensor value(1, 1, attr_mat.Max() + 1);
-    value = mag_eps;
-    MaterialPropertyCoefficient eps(attr_mat, value);
-    eps.RestrictCoefficient(mat_op.GetCeedAttributes(*attrs));
+    MaterialPropertyCoefficient eps(mat_op.GetAttributeToMaterial(),
+                                    mat_op.GetInvPermeability(), mag_eps);
     BilinearForm m(SolutionSpace());
     m.AddDomainIntegrator<VectorFEMassIntegrator>(eps);
+    m.SetAssemblyDomains(*attrs);
     return std::make_unique<ParOperator>(
         assemble ? std::unique_ptr<Operator>(m.FullAssemble(true)) : m.PartialAssemble(),
         SolutionSpace());
@@ -74,10 +71,10 @@ SubstructuringSolver::Impl::GetTerm(const std::vector<int> *attrs, Term term,
   {
     return nullptr;
   }
-  std::optional<CurlCurlOperator::AssemblyRestriction> restriction;
+  std::optional<AssemblyDomains::Restriction> restriction;
   if (attrs)
   {
-    restriction.emplace(*curlcurl_op, *attrs);
+    restriction.emplace(curlcurl_op->GetAssemblyDomains(), *attrs);
   }
   return curlcurl_op->GetUnconstrainedStiffnessMatrix(term == Term::VOLUME,
                                                       term == Term::SHEETS, assemble);
@@ -124,10 +121,8 @@ const mfem::HypreParMatrix &SubstructuringSolver::Impl::Aenv()
 {
   if (!A_env)
   {
-    A_env = magnetostatic
-                ? Sum({&Kenv(), has_sheets ? &MsheetEnv() : nullptr, &Denv()})
-                : AssembleTerm(&iodata.solver.substructuring->environment_attributes,
-                               Term::VOLUME);
+    A_env = magnetostatic ? Sum({&Kenv(), has_sheets ? &MsheetEnv() : nullptr, &Denv()})
+                          : AssembleTerm(&env_attributes, Term::VOLUME);
   }
   return *A_env;
 }
@@ -140,8 +135,7 @@ const mfem::HypreParMatrix &SubstructuringSolver::Impl::Kenv()
   }
   if (!K_env)
   {
-    K_env =
-        AssembleTerm(&iodata.solver.substructuring->environment_attributes, Term::VOLUME);
+    K_env = AssembleTerm(&env_attributes, Term::VOLUME);
   }
   return *K_env;
 }
@@ -150,7 +144,7 @@ const mfem::HypreParMatrix &SubstructuringSolver::Impl::Denv()
 {
   if (!D_env)
   {
-    D_env = AssembleTerm(&iodata.solver.substructuring->environment_attributes, Term::MASS);
+    D_env = AssembleTerm(&env_attributes, Term::MASS);
   }
   return *D_env;
 }
@@ -168,15 +162,23 @@ const mfem::HypreParMatrix &SubstructuringSolver::Impl::MsheetEnv()
 {
   if (!M_sheet_env)
   {
-    M_sheet_env =
-        AssembleTerm(&iodata.solver.substructuring->environment_attributes, Term::SHEETS);
+    M_sheet_env = AssembleTerm(&env_attributes, Term::SHEETS);
   }
   return *M_sheet_env;
 }
 
 bool SubstructuringSolver::Impl::EnvSheets()
 {
-  return has_sheets && MsheetEnv().FNorm() > 0.0;
+  if (!has_sheets)
+  {
+    return false;
+  }
+  // hypre computes the norm on the host, the entries of a GPU build being on the device.
+  const mfem::HypreParMatrix &M = MsheetEnv();
+  M.HostRead();
+  const double norm = M.FNorm();
+  M.HypreRead();
+  return norm > 0.0;
 }
 
 std::vector<mfem::Vector>
@@ -189,7 +191,7 @@ SubstructuringSolver::Impl::EnvApply(const std::vector<const mfem::Vector *> &X,
   auto &op = volume ? env_op : env_sheet_op;
   if (!M && !op)
   {
-    const auto *env = &iodata.solver.substructuring->environment_attributes;
+    const auto *env = &env_attributes;
     auto sum = std::make_unique<SumOperator>(nt, nt);
     for (auto term : volume ? std::vector<Term>{Term::VOLUME, Term::SHEETS, Term::MASS}
                             : std::vector<Term>{Term::SHEETS})
@@ -277,6 +279,9 @@ void SubstructuringSolver::Impl::CheckSheets()
   mfem::FaceElementTransformations FET;
   mfem::IsoparametricTransformation T1, T2;
   gamma_sheet_faces.clear();
+  gamma_sheet_sides = {};
+  constexpr double k[3][3] = {{1.3, 2.9, 0.7}, {2.3, 0.5, 3.1}, {0.9, 1.7, 2.6}};
+  mfem::Array<int> vertices;
   for (int be = 0; be < parent.GetNBE(); be++)
   {
     const int attr = parent.GetBdrAttribute(be);
@@ -298,10 +303,29 @@ void SubstructuringSolver::Impl::CheckSheets()
     if (FET.Elem2 && region1 != region2)
     {
       gamma_sheet_faces.push_back(be);
+      if ((FET.Elem1->Attribute < FET.Elem2->Attribute) ? region1 : region2)
+      {
+        std::array<double, 3> c = {0.0, 0.0, 0.0};
+        parent.GetBdrElementVertices(be, vertices);
+        for (int v : vertices)
+        {
+          for (int d = 0; d < 3; d++)
+          {
+            c[d] += parent.GetVertex(v)[d] / vertices.Size();
+          }
+        }
+        gamma_sheet_sides[0] += 1.0;
+        for (int j = 0; j < 3; j++)
+        {
+          gamma_sheet_sides[j + 1] +=
+              std::cos(k[j][0] * c[0] + k[j][1] * c[1] + k[j][2] * c[2]);
+        }
+      }
     }
     count[0]++;
   }
   Mpi::GlobalSum(3, count.data(), parent.GetComm());
+  Mpi::GlobalSum(4, gamma_sheet_sides.data(), parent.GetComm());
   has_sheets = (count[0] > 0) || broken;
   MFEM_VERIFY(count[1] == 0, "Substructuring does not support a \"TwoSided\" "
                              "superconductor film between the region and the environment!");

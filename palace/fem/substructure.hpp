@@ -6,11 +6,14 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 #include <mfem.hpp>
+#include <nlohmann/json_fwd.hpp>
 
 namespace palace
 {
@@ -180,38 +183,107 @@ std::vector<char> WriteRegionMesh(const std::string &path,
                                   const std::vector<char> &keep, double length_scale,
                                   const std::vector<char> &plain_bdr = {});
 
-// The number, volume, and volume times the centroid distance from the origin and the
-// centroid of the elements with the given attributes (and mark[e], if not empty), summed
-// over the processes: a description of a set of elements independent of the partition and
-// of the element numbering. Collective.
-std::array<double, 6> ElementMoments(mfem::ParMesh &mesh,
-                                     const std::vector<int> &attributes,
-                                     const std::vector<char> &mark = {});
-
-// Whether two ElementMoments describe the same elements within the relative tolerance (the
-// centroid moments relative to the distance moment, as they may vanish).
+// Whether two moments of AttributeMoments describe the same elements within the relative
+// tolerance (the centroid moments relative to the distance moment, as they may vanish).
 bool MomentsMatch(const std::array<double, 6> &a, const std::array<double, 6> &b,
                   double tol);
 
-// The message of an environment that differs from that of a saved substructuring model.
+// For the elements with each of the given attributes (and mark[e], if not empty), in the
+// order of the attributes, their number, volume, and volume times the distance of their
+// center from the origin and times their center, summed over the processes: a description
+// of the elements independent of the partition and of their numbering. Collective.
+std::vector<std::array<double, 6>> AttributeMoments(mfem::ParMesh &mesh,
+                                                    const std::vector<int> &attributes,
+                                                    const std::vector<char> &mark = {});
+
+// The boundary attributes of the boundary elements next to an element with one of the given
+// domain attributes (on either side, for an interior boundary), sorted. Collective.
+std::vector<int> BoundaryAttributesNextTo(mfem::ParMesh &mesh,
+                                          const std::vector<int> &attributes);
+
+// The moments of AttributeMoments of the boundary elements with each of the given boundary
+// attributes whose neighboring elements all have one of the given domain attributes (with
+// their areas for volumes; a refinement of the other domains does not change them), in the
+// order of the boundary attributes. Collective.
+std::vector<std::array<double, 6>>
+BoundaryAttributeMoments(mfem::ParMesh &mesh, const std::vector<int> &bdr_attributes,
+                         const std::vector<int> &attributes);
+
+// A hash of the configuration of a substructured problem on its environment: the problem
+// type, the order and quadrature of the solver, the cracking of the mesh, and the entries
+// of the materials on the given domain attributes and of the boundaries (but
+// postprocessing) on the given boundary attributes, which are the entries listing one of
+// them (in a list whose key ends in "Attributes", also in their "Elements", and in groups
+// of entries), with these lists cut to them. Lists and entries are sorted, so that their
+// order in the configuration does not matter. Without the excitations, which are matched to
+// the modes of a model by their own fingerprints, the hash leaves out the indices of the
+// entries and the sources (surface currents and flux loops): it is the configuration the
+// operator of the environment depends on.
+std::uint64_t EnvironmentConfigHash(const nlohmann::json &config,
+                                    const std::vector<int> &attributes,
+                                    const std::vector<int> &bdr_attributes,
+                                    bool excitations);
+
+// The messages of an environment that differs from that of a saved substructuring model:
+// as its operator shows, by its mesh, and by its configuration.
 inline constexpr const char *kEnvironmentDiffers =
     "The environment differs from the one the saved substructuring model was condensed "
     "from (environment mesh, materials, boundary conditions, order or problem type "
     "changed): rerun in \"Offline\" mode to condense it again!";
+inline constexpr const char *kEnvironmentMeshDiffers =
+    "The environment differs from the one the saved substructuring model was condensed "
+    "from: its mesh changed. Rerun in \"Offline\" mode to condense it again!";
+inline constexpr const char *kEnvironmentConfigDiffers =
+    "The environment differs from the one the saved substructuring model was condensed "
+    "from: its attributes, materials, boundary conditions or discretization changed. Rerun "
+    "in \"Offline\" mode to condense it again!";
+
+// The message of excitations of the environment which differ from those of a saved
+// substructuring model, on the mesh of the region (the full mesh computes their modes).
+inline constexpr const char *kEnvironmentExcitationsDiffer =
+    "The excitations of the environment differ from those of the saved substructuring "
+    "model: run on the full mesh!";
+
+// A description of the environment of a substructured problem which does not depend on the
+// partition or on the numbering, for an online run to check that its environment is the one
+// a model was condensed from.
+struct EnvironmentRecord
+{
+  // The environment attributes, and the boundary attributes next to them.
+  std::vector<int> attributes, bdr_attributes;
+
+  // The AttributeMoments of the environment elements and of those written in the mesh of
+  // the region, and the BoundaryAttributeMoments of the boundary attributes.
+  std::vector<std::array<double, 6>> moments, region_moments, bdr_moments;
+
+  // The EnvironmentConfigHash on these attributes, without and with the excitations.
+  std::uint64_t config_hash = 0, excitations_hash = 0;
+
+  // The record of the environment with the given attributes, with the configuration of the
+  // run, and written[e] marking the elements written in the mesh of the region. Collective.
+  static EnvironmentRecord Make(mfem::ParMesh &mesh, const std::vector<int> &attributes,
+                                const nlohmann::json &config,
+                                const std::vector<char> &written);
+
+  // The record as bytes, and back (nullopt if the bytes are not a record).
+  std::vector<char> Serialize() const;
+  static std::optional<EnvironmentRecord> Deserialize(const std::vector<char> &bytes);
+
+  // Online, check that the environment attributes of the run are those of the record (on
+  // the mesh of the region, some of them), that the mesh holds the environment within the
+  // relative tolerance of the moments (on the mesh of the region, the elements written in
+  // it, else all of them and their boundaries), and that the configuration on it is
+  // unchanged (its excitations too, on the mesh of the region). A mesh which does not match
+  // is named if it is the other one. Collective.
+  void Check(mfem::ParMesh &mesh, const nlohmann::json &config,
+             const std::vector<int> &environment_attributes, double tol,
+             bool region_mesh) const;
+};
 
 // The message of an a priori refinement of the mesh of the region, written refined.
 inline constexpr const char *kRegionMeshRefined =
     "The mesh of the region is written refined: an online run on it takes no "
     "\"UniformLevels\", \"SerialUniformLevels\", \"Boxes\" or \"Spheres\" refinement!";
-
-// Online, whether the mesh holds the region only (its environment elements those written
-// with the model in the mesh of the region, region_moments) rather than the environment of
-// the model (env_moments), by the ElementMoments of its environment elements within the
-// relative tolerance. Aborts if neither: with kRegionMeshRefined if they are the written
-// elements refined, else with kEnvironmentDiffers. Collective.
-bool RegionOnlyMesh(mfem::ParMesh &mesh, const std::vector<int> &environment_attributes,
-                    const std::array<double, 6> &env_moments,
-                    const std::array<double, 6> &region_moments, double tol);
 
 // On a mesh of the region, the interface: the DOFs t of the region side (candidate[t])
 // whose parent true DOF (parent[t], or t if parent is empty, for a space broken across
@@ -230,15 +302,6 @@ std::vector<char> RegionMeshInterface(mfem::ParFiniteElementSpace &parent_fespac
 // each field keeps their energies from being even about one common point.
 mfem::Vector FingerprintField(const mfem::ParFiniteElementSpace &fespace, int k,
                               const std::array<double, 3> &center);
-
-// For the marked true DOFs, with p their points (those of TrueDofSignatures; one point for
-// the DOFs of a group at a common point), the sums of g_k(p - centers[k]) and of their
-// absolute values (k = 0, 1, 2), with g_k the scalar polynomials of FingerprintField:
-// a description of a set of DOFs independent of the partition, the DOF numbering and the
-// H(curl) orientations. Collective.
-std::array<double, 6> TrueDofPointSums(const mfem::ParFiniteElementSpace &fespace,
-                                       const std::vector<char> &mark,
-                                       const std::array<std::array<double, 3>, 3> &centers);
 
 }  // namespace palace
 

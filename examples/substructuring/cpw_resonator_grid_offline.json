@@ -161,7 +161,7 @@
         ]
       },
       "Mode": "Offline",
-      "SaveModel": "postpro/cpw_resonator_grid_environment.model"
+      "ModelFile": "postpro/cpw_resonator_grid_environment.model"
     }
   }
 }

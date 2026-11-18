@@ -3,8 +3,11 @@
 
 #include "substructuringsolverimpl.hpp"
 
+#include <array>
 #include <cmath>
 #include <limits>
+#include <map>
+#include <set>
 #include <utility>
 #include "fem/gridfunction.hpp"
 #include "fem/multigrid.hpp"
@@ -64,6 +67,132 @@ MakeLaplaceOperator(const IoData &iodata, const std::vector<std::unique_ptr<Mesh
                                            mesh);
 }
 
+// The entrywise absolute value of a matrix, zero on the rows not marked (all rows are
+// marked when the marker is empty).
+std::unique_ptr<mfem::HypreParMatrix> AbsRows(const mfem::HypreParMatrix &A,
+                                              const std::vector<bool> &marker)
+{
+  auto B = std::make_unique<mfem::HypreParMatrix>(A);
+  B->HostReadWrite();
+  hypre_ParCSRMatrix *h = *B;
+  for (hypre_CSRMatrix *M : {hypre_ParCSRMatrixDiag(h), hypre_ParCSRMatrixOffd(h)})
+  {
+    const HYPRE_Int *I = hypre_CSRMatrixI(M);
+    HYPRE_Real *data = hypre_CSRMatrixData(M);
+    for (int i = 0; i < hypre_CSRMatrixNumRows(M); i++)
+    {
+      const bool keep = marker.empty() || marker[i];
+      for (int k = I[i]; k < I[i + 1]; k++)
+      {
+        data[k] = keep ? std::abs(data[k]) : 0.0;
+      }
+    }
+  }
+  B->HypreReadWrite();
+  return B;
+}
+
+// The connected components of the graph of the nonzero entries of a symmetric matrix,
+// among its rows with a nonzero diagonal entry: each such row is labeled by the least
+// global row of its component, the others by -1. Labels propagate along the local rows
+// until none changes, then across processes through the off-diagonal columns, until no
+// label changes on any process. Collective.
+std::vector<HYPRE_BigInt> ConnectedComponents(const mfem::HypreParMatrix &A)
+{
+  A.HostRead();
+  hypre_ParCSRMatrix *h = A;
+  const hypre_CSRMatrix *diag = hypre_ParCSRMatrixDiag(h),
+                        *offd = hypre_ParCSRMatrixOffd(h);
+  const HYPRE_Int *di = hypre_CSRMatrixI(diag), *dj = hypre_CSRMatrixJ(diag),
+                  *oi = hypre_CSRMatrixI(offd), *oj = hypre_CSRMatrixJ(offd);
+  const HYPRE_Real *dv = hypre_CSRMatrixData(diag), *ov = hypre_CSRMatrixData(offd);
+  const HYPRE_BigInt *cmap = hypre_ParCSRMatrixColMapOffd(h);
+  const int n = hypre_CSRMatrixNumRows(diag), n_offd = hypre_CSRMatrixNumCols(offd);
+  const HYPRE_BigInt first = hypre_ParCSRMatrixFirstRowIndex(h);
+  MPI_Comm comm = A.GetComm();
+  const int np = Mpi::Size(comm);
+
+  // The owners of the off-diagonal columns (in increasing order), and the rows each process
+  // reads from this one.
+  std::vector<HYPRE_BigInt> starts(np + 1);
+  MPI_Allgather(&first, 1, HYPRE_MPI_BIG_INT, starts.data(), 1, HYPRE_MPI_BIG_INT, comm);
+  starts[np] = A.GetGlobalNumRows();
+  std::vector<int> recv_count(np, 0), send_count(np), recv_disp(np + 1, 0),
+      send_disp(np + 1, 0);
+  for (int k = 0; k < n_offd; k++)
+  {
+    recv_count[std::upper_bound(starts.begin(), starts.end(), cmap[k]) - starts.begin() -
+               1]++;
+  }
+  MPI_Alltoall(recv_count.data(), 1, MPI_INT, send_count.data(), 1, MPI_INT, comm);
+  for (int p = 0; p < np; p++)
+  {
+    recv_disp[p + 1] = recv_disp[p] + recv_count[p];
+    send_disp[p + 1] = send_disp[p] + send_count[p];
+  }
+  std::vector<HYPRE_BigInt> send_rows(send_disp[np]);
+  MPI_Alltoallv(cmap, recv_count.data(), recv_disp.data(), HYPRE_MPI_BIG_INT,
+                send_rows.data(), send_count.data(), send_disp.data(), HYPRE_MPI_BIG_INT,
+                comm);
+
+  constexpr HYPRE_BigInt none = std::numeric_limits<HYPRE_BigInt>::max();
+  std::vector<HYPRE_BigInt> label(n, none), halo(n_offd), send(send_rows.size());
+  for (int i = 0; i < n; i++)
+  {
+    for (int k = di[i]; k < di[i + 1]; k++)
+    {
+      if (dj[k] == i && dv[k] != 0.0)
+      {
+        label[i] = first + i;
+      }
+    }
+  }
+  bool changed = true;
+  while (changed)
+  {
+    for (std::size_t k = 0; k < send_rows.size(); k++)
+    {
+      send[k] = label[send_rows[k] - first];
+    }
+    MPI_Alltoallv(send.data(), send_count.data(), send_disp.data(), HYPRE_MPI_BIG_INT,
+                  halo.data(), recv_count.data(), recv_disp.data(), HYPRE_MPI_BIG_INT,
+                  comm);
+    changed = false;
+    for (bool sweep = true; sweep;)
+    {
+      sweep = false;
+      for (int i = 0; i < n; i++)
+      {
+        if (label[i] == none)
+        {
+          continue;
+        }
+        HYPRE_BigInt m = label[i];
+        for (int k = di[i]; k < di[i + 1]; k++)
+        {
+          m = (dv[k] != 0.0) ? std::min(m, label[dj[k]]) : m;
+        }
+        for (int k = oi[i]; k < oi[i + 1]; k++)
+        {
+          m = (ov[k] != 0.0) ? std::min(m, halo[oj[k]]) : m;
+        }
+        if (m < label[i])
+        {
+          label[i] = m;
+          sweep = changed = true;
+        }
+      }
+    }
+    Mpi::GlobalOr(1, &changed, comm);
+  }
+  for (auto &l : label)
+  {
+    l = (l == none) ? -1 : l;
+  }
+  A.HypreRead();
+  return label;
+}
+
 }  // namespace
 
 SubstructuringSolver::Impl::Impl(const IoData &iodata,
@@ -82,7 +211,21 @@ SubstructuringSolver::Impl::Impl(const IoData &iodata,
   MFEM_VERIFY(iodata.solver.substructuring,
               "SubstructuringSolver requires a Solver.Substructuring configuration!");
   const auto &sub = *iodata.solver.substructuring;
-  CheckSubstructuringAttributes(parent, sub.region_attributes, sub.environment_attributes);
+  env_attributes = sub.environment_attributes;
+  if (env_attributes.empty())
+  {
+    for (int a : parent.attributes)
+    {
+      if (std::ranges::find(sub.region_attributes, a) == sub.region_attributes.end())
+      {
+        env_attributes.push_back(a);
+      }
+    }
+  }
+  MFEM_VERIFY(!env_attributes.empty() || sub.region_mesh,
+              "The substructuring \"Region\" holds every domain attribute of the mesh: the "
+              "environment is empty!");
+  CheckSubstructuringAttributes(parent, sub.region_attributes, env_attributes);
   if (magnetostatic)
   {
     SetUpBrokenSpace();
@@ -92,7 +235,7 @@ SubstructuringSolver::Impl::Impl(const IoData &iodata,
   {
     ra_arr.Append(a);
   }
-  for (int a : sub.environment_attributes)
+  for (int a : env_attributes)
   {
     ea_arr.Append(a);
   }
@@ -170,13 +313,13 @@ SubstructuringSolver::Impl::Impl(const IoData &iodata,
   // Online, the head of the model and whether the mesh is that of the region.
   std::vector<char> cut(nt, 0);
   double model_eps = 0.0;
-  if (sub.mode == SubstructuringMode::ONLINE && !sub.save_model.empty())
+  if (sub.mode == SubstructuringMode::ONLINE && !sub.model_file.empty())
   {
     {
       BlockTimer bt(Timer::IO);
-      saved = ReadSavedHead(sub.save_model, parent_fes.GetComm());
+      saved = ReadSavedHead(sub.model_file, parent_fes.GetComm());
     }
-    const std::string &model = sub.save_model;
+    const std::string &model = sub.model_file;
     MFEM_VERIFY(saved.version >= 0, "Cannot read the saved substructuring model \""
                                         << model << "\" (run in \"Offline\" mode first)!");
     MFEM_VERIFY(saved.version > 0, "\"" << model
@@ -199,11 +342,9 @@ SubstructuringSolver::Impl::Impl(const IoData &iodata,
                 "The saved substructuring model \""
                     << model << "\" has \"Order\": " << saved.order << ", unlike this run ("
                     << iodata.solver.order << ")!");
-    // The mesh holds the environment of the model, or its part in the mesh of the region.
-    region_only = RegionOnlyMesh(parent, sub.environment_attributes, saved.env_moments,
-                                 saved.region_moments, kFingerprintTol);
-    // S_E was condensed with the regularization of the model: the region uses the same.
-    model_eps = saved.regularization;
+    // The mesh holds the environment of the model, or with "RegionMesh" its part in the
+    // mesh of the region, which cannot be refined.
+    region_only = sub.region_mesh;
     if (region_only)
     {
       MFEM_VERIFY(iodata.model.refinement.max_it == 0,
@@ -214,6 +355,13 @@ SubstructuringSolver::Impl::Impl(const IoData &iodata,
                       refinement.ser_uniform_ref_levels == 0 &&
                       refinement.GetBoxes().empty() && refinement.GetSpheres().empty(),
                   kRegionMeshRefined);
+    }
+    saved.environment.Check(parent, *iodata.resolved_config, env_attributes,
+                            kFingerprintTol, region_only);
+    // S_E was condensed with the regularization of the model: the region uses the same.
+    model_eps = saved.regularization;
+    if (region_only)
+    {
       // The versions on the region side only of the DOFs on the boundary, at the points of
       // the saved interface DOFs, are interface DOFs (both sides of a two-sided film
       // crossing Gamma).
@@ -285,9 +433,28 @@ SubstructuringSolver::Impl::Impl(const IoData &iodata,
   if (magnetostatic)
   {
     CheckSheets();
-    mag_eps = (model_eps > 0.0) ? model_eps
-              : has_sheets      ? kMagRegularizationSheets
-                                : kMagRegularization;
+    if (!saved.sheet_sides.empty())
+    {
+      bool same = std::abs(gamma_sheet_sides[0] - saved.sheet_sides[0]) < 0.5;
+      for (int j = 1; j < 4; j++)
+      {
+        same = same && std::abs(gamma_sheet_sides[j] - saved.sheet_sides[j]) <=
+                           kFingerprintTol * std::max(1.0, saved.sheet_sides[0]);
+      }
+      MFEM_VERIFY(same, "The sheet faces on the interface are not on the same sides as in "
+                        "the saved substructuring model: a face belongs to the side of its "
+                        "neighbor with the lower attribute, and the attributes next to the "
+                        "interface changed. Keep them, or rerun in \"Offline\" mode!");
+    }
+    mag_eps = model_eps;
+    if (!(mag_eps > 0.0))
+    {
+      mfem::Vector bbmin, bbmax;
+      mesh::GetAxisAlignedBoundingBox(parent, bbmin, bbmax);
+      bbmax -= bbmin;
+      const double L = bbmax.Max();
+      mag_eps = (has_sheets ? kMagRegularizationSheets : kMagRegularization) / (L * L);
+    }
   }
   AssembleRegion();
 }
@@ -394,6 +561,160 @@ mfem::Vector SubstructuringSolver::Impl::RegionField(const mfem::Vector &x_rf,
   return u;
 }
 
+const Operator &SubstructuringSolver::Impl::ClosureGradient() const
+{
+  return SolutionSpace().GetDiscreteInterpolator(
+      curlcurl_op->GetSolutionH1Spaces().GetFinestFESpace());
+}
+
+void SubstructuringSolver::Impl::SetUpClosure()
+{
+  // |G| (G is assembled for a broken space).
+  const Operator &G_op = ClosureGradient();
+  const auto *G = dynamic_cast<const mfem::HypreParMatrix *>(&G_op);
+  if (!G)
+  {
+    G = &dynamic_cast<const ParOperator &>(G_op).ParallelAssemble();
+  }
+  closure_G_abs = AbsRows(*G, {});
+
+  // The conductor DOFs of the ND space: those of the PEC boundaries and of the sheets (the
+  // rows of the sheet mass on both sides with a nonzero diagonal), and the connected
+  // conductors: the components of the graph of |G_C|^T |G_C|, G_C the rows of G on them.
+  const int n = SolutionSpace().GetTrueVSize();
+  std::vector<bool> on(n, false);
+  for (int t : dbc_tdofs)
+  {
+    on[t] = true;
+  }
+  if (has_sheets)
+  {
+    Vector d;
+    Msheet().GetDiag(d);
+    const double *h_d = d.HostRead();
+    for (int t = 0; t < n; t++)
+    {
+      on[t] = on[t] || (h_d[t] != 0.0);
+    }
+  }
+  {
+    auto G_C = AbsRows(*G, on);
+    std::unique_ptr<mfem::HypreParMatrix> G_Ct(G_C->Transpose());
+    std::unique_ptr<mfem::HypreParMatrix> H(mfem::ParMult(G_Ct.get(), G_C.get(), true));
+    conductor = ConnectedComponents(*H);
+  }
+  if (!region_only)
+  {
+    return;
+  }
+
+  // On the mesh of the region: the H1 DOFs of the environment elements it holds (those of
+  // their ND DOFs off the region elements and the Dirichlet DOFs), whose currents close in
+  // the environment of the model, and the conductors touching them.
+  Vector g(n), t(closure_G_abs->Width());
+  g.UseDevice(true);
+  t.UseDevice(true);
+  g = 1.0;
+  g.SetSubVector(rc_idx, 0.0);
+  g.SetSubVector(dbc_tdofs, 0.0);
+  closure_G_abs->MultTranspose(g, t);
+  const double *h_t = t.HostRead();
+  std::vector<HYPRE_BigInt> touched;
+  for (std::size_t i = 0; i < conductor.size(); i++)
+  {
+    if (h_t[i] > 0.0)
+    {
+      if (conductor[i] >= 0)
+      {
+        touched.push_back(conductor[i]);
+      }
+      conductor[i] = kUnchecked;
+    }
+  }
+  MPI_Comm comm = parent_fes.GetComm();
+  int count = static_cast<int>(touched.size());
+  std::vector<int> counts(Mpi::Size(comm)), displs(Mpi::Size(comm) + 1, 0);
+  MPI_Allgather(&count, 1, MPI_INT, counts.data(), 1, MPI_INT, comm);
+  for (int p = 0; p < Mpi::Size(comm); p++)
+  {
+    displs[p + 1] = displs[p] + counts[p];
+  }
+  std::vector<HYPRE_BigInt> all(displs.back());
+  MPI_Allgatherv(touched.data(), count, HYPRE_MPI_BIG_INT, all.data(), counts.data(),
+                 displs.data(), HYPRE_MPI_BIG_INT, comm);
+  const std::set<HYPRE_BigInt> unchecked(all.begin(), all.end());
+  for (auto &c : conductor)
+  {
+    c = (c >= 0 && unchecked.contains(c)) ? kUnchecked : c;
+  }
+}
+
+bool SubstructuringSolver::Impl::CurrentCloses(const Vector &J)
+{
+  if (!closure_G_abs)
+  {
+    SetUpClosure();
+  }
+  const int n = static_cast<int>(conductor.size());
+  Vector r(n), c(n), J_abs(J);
+  r.UseDevice(true);
+  c.UseDevice(true);
+  J_abs.Abs();
+  ClosureGradient().MultTranspose(J, r);
+  closure_G_abs->MultTranspose(J_abs, c);
+  const double *h_r = r.HostRead(), *h_c = c.HostRead();
+  MPI_Comm comm = parent_fes.GetComm();
+  double scale = (n > 0) ? *std::max_element(h_c, h_c + n) : 0.0;
+  Mpi::GlobalMax(1, &scale, comm);
+
+  // The DOFs off the conductors, and the sums over each conductor on this process.
+  bool closes = true;
+  std::map<HYPRE_BigInt, std::array<double, 2>> sums;
+  for (int i = 0; i < n; i++)
+  {
+    if (conductor[i] == kOffConductor)
+    {
+      closes = closes && std::abs(h_r[i]) <= kClosureTol * scale;
+    }
+    else if (conductor[i] != kUnchecked)
+    {
+      auto &s = sums[conductor[i]];
+      s[0] += h_r[i];
+      s[1] += h_c[i];
+    }
+  }
+  bool open = !closes;
+  Mpi::GlobalOr(1, &open, comm);
+
+  // The sums over each conductor, from all processes.
+  std::vector<double> loc;
+  for (const auto &[label, s] : sums)
+  {
+    loc.insert(loc.end(), {static_cast<double>(label), s[0], s[1]});
+  }
+  int count = static_cast<int>(loc.size());
+  std::vector<int> counts(Mpi::Size(comm)), displs(Mpi::Size(comm) + 1, 0);
+  MPI_Allgather(&count, 1, MPI_INT, counts.data(), 1, MPI_INT, comm);
+  for (int p = 0; p < Mpi::Size(comm); p++)
+  {
+    displs[p + 1] = displs[p] + counts[p];
+  }
+  std::vector<double> all(displs.back());
+  MPI_Allgatherv(loc.data(), count, MPI_DOUBLE, all.data(), counts.data(), displs.data(),
+                 MPI_DOUBLE, comm);
+  std::map<double, std::array<double, 2>> total;
+  for (std::size_t k = 0; k < all.size(); k += 3)
+  {
+    total[all[k]][0] += all[k + 1];
+    total[all[k]][1] += all[k + 2];
+  }
+  for (const auto &[label, s] : total)
+  {
+    open = open || std::abs(s[0]) > kClosureTol * std::max(scale, s[1]);
+  }
+  return !open;
+}
+
 std::string SubstructuringSolver::Impl::SetUpRegionSolver()
 {
   MPI_Comm comm = parent_fes.GetComm();
@@ -450,12 +771,12 @@ void SubstructuringSolver::CondenseEnvironment()
   // S_E, and save it when a path is set.
   const auto &subcfg = *impl->iodata.solver.substructuring;
   const bool online = (subcfg.mode == SubstructuringMode::ONLINE);
-  const std::string &model_path = subcfg.save_model;
+  const std::string &model_path = subcfg.model_file;
   if (!online && !model_path.empty())
   {
     // Fail before the condensation if the model cannot be written (an existing one is
     // kept until it is replaced).
-    impl->WriteModel(model_path, true, [](std::ofstream &) {});
+    substructuring::ModelFile::CheckWritable(model_path, impl->parent_fes.GetComm());
   }
   // The versions of the interface DOFs on a two-sided film crossing Gamma are told apart
   // by the faces of their sides (InterfaceSignatures), of which a coarse face of a
@@ -476,11 +797,6 @@ void SubstructuringSolver::CondenseEnvironment()
   if (!loaded && nG > 0)
   {
     impl->MaterializePartial();
-  }
-  if (!loaded && impl->env_partial != "MUMPS" && subcfg.factorization_tol > 0.0)
-  {
-    Mpi::Warning(comm, "Solver.Substructuring.FactorizationTol is only used with the MUMPS "
-                       "environment factorization; the environment is factored exactly!\n");
   }
   if (!loaded)
   {
@@ -536,11 +852,6 @@ void SubstructuringSolver::CondenseEnvironment()
     if (!impl->env_partial.empty())
     {
       env_solver = fmt::format("{} partial factorization", impl->env_partial);
-      if (impl->env_partial == "MUMPS" && subcfg.factorization_tol > 0.0)
-      {
-        env_solver +=
-            fmt::format(" (block low-rank, tolerance {:.1e})", subcfg.factorization_tol);
-      }
     }
     else
     {
@@ -591,22 +902,6 @@ Vector SubstructuringSolver::SolveExcitation(int drive_idx)
 {
   MFEM_VERIFY(impl->mat_dtn, "CondenseEnvironment must be called before solving!");
   return SolveDirichletBatch({TerminalDbc(impl->terminal_tdofs, drive_idx, impl->nt)})[0];
-}
-
-std::vector<Vector>
-SubstructuringSolver::SolveDirichlets(const std::vector<Vector> &dbc_values)
-{
-  MFEM_VERIFY(impl->mat_dtn, "CondenseEnvironment must be called before solving!");
-  // Prescribe an arbitrary field on the Dirichlet DOFs.
-  std::vector<Vector> dbcs(dbc_values.size(), Vector(impl->nt));
-  Vector xd;
-  for (std::size_t k = 0; k < dbc_values.size(); k++)
-  {
-    dbcs[k] = 0.0;
-    dbc_values[k].GetSubVector(impl->dbc_tdofs, xd);
-    dbcs[k].SetSubVector(impl->dbc_tdofs, xd);
-  }
-  return SolveDirichletBatch(dbcs);
 }
 
 std::vector<Vector>
@@ -793,22 +1088,31 @@ mfem::DenseMatrix SubstructuringSolver::MagnetostaticEnergyMatrix(
     fun.ids.push_back(-current_ids[k]);
     fun.l.push_back(&apertures[k]);
   }
+  // A current that does not close has no solution.
+  for (int k = 0; k < nc; k++)
+  {
+    MFEM_VERIFY(impl->CurrentCloses(J[k]),
+                "Surface current excitation "
+                    << current_ids[k] << " does not close: its current must start and end "
+                    << "on conductors or superconducting films!");
+  }
   std::vector<double> work, kinetic;
   mfem::DenseMatrix G =
       SourceEnergyMatrix(ids, src, fields, n_fields, &work, fun.l.empty() ? nullptr : &fun,
                          region_fields, volume_energy ? &kinetic : nullptr);
 
   // Surface currents: G_ij = u_i^T L u_j - J_i^T u_j - J_j^T u_i = -E_ij at the solution,
-  // stationary in the regularization. A current that does not close has a null-space part,
-  // amplified by 1/eps: its regularization energy J^T u - u^T L u then dominates.
+  // stationary in the regularization. The part of a current that its quadrature leaves
+  // incompatible with the null space is amplified by 1/eps, and twice its regularization
+  // energy J^T u - u^T L u bounds the error of the energy.
   for (int k = 0; k < nc; k++)
   {
     const double uLu = G(k, k) + 2.0 * work[k], uDu = work[k] - uLu;
     MFEM_VERIFY(uDu <= Impl::kMaxRegularizationFraction * std::abs(uLu),
                 "Surface current excitation "
-                    << current_ids[k] << " does not close: its current must start and end "
-                    << "on conductors or superconducting films (regularization energy "
-                    << uDu / std::abs(uLu) << " of the magnetic energy)!");
+                    << current_ids[k] << " closes too inexactly for the regularization of "
+                    << "the solve (regularization energy " << uDu / std::abs(uLu)
+                    << " of the magnetic energy): refine its mesh!");
   }
   // Flux loops: G is the London energy. The two kinds of states are energy-orthogonal, so
   // their cross block is zero.
@@ -978,9 +1282,9 @@ mfem::DenseMatrix SubstructuringSolver::SourceEnergyMatrix(
     }
     impl->ComputeSourceModes(req_ids, req_src);
     const auto &subcfg = *impl->iodata.solver.substructuring;
-    if (subcfg.mode != SubstructuringMode::ONLINE && !subcfg.save_model.empty())
+    if (subcfg.mode != SubstructuringMode::ONLINE && !subcfg.model_file.empty())
     {
-      impl->AppendSourceModes(subcfg.save_model);
+      impl->AppendSourceModes(subcfg.model_file);
     }
   }
   const int K = static_cast<int>(impl->src_ids.size());
@@ -1202,21 +1506,6 @@ mfem::DenseMatrix SubstructuringSolver::SourceEnergyMatrix(
   return E;
 }
 
-mfem::DenseMatrix SubstructuringSolver::EnergyMatrix(const std::vector<int> &ids,
-                                                     const std::vector<Vector> &lifts,
-                                                     std::vector<Vector> *fields,
-                                                     int n_fields)
-{
-  MFEM_VERIFY(ids.size() == lifts.size(), "EnergyMatrix: one id per lift!");
-  // Dirichlet data restricted to the Dirichlet DOF set (as SolveDirichlets does).
-  std::vector<Vector> xd(lifts.size(), Vector(impl->dbc_tdofs.Size()));
-  for (std::size_t k = 0; k < lifts.size(); k++)
-  {
-    lifts[k].GetSubVector(impl->dbc_tdofs, xd[k]);
-  }
-  return EnergyMatrixDbc(ids, xd, fields, n_fields, nullptr);
-}
-
 mfem::DenseMatrix SubstructuringSolver::EnergyMatrixDbc(const std::vector<int> &ids,
                                                         const std::vector<Vector> &xd,
                                                         std::vector<Vector> *fields,
@@ -1252,9 +1541,9 @@ mfem::DenseMatrix SubstructuringSolver::EnergyMatrixDbc(const std::vector<int> &
     }
     impl->ComputeModes(req_ids, req_lifts);
     const auto &subcfg = *impl->iodata.solver.substructuring;
-    if (subcfg.mode != SubstructuringMode::ONLINE && !subcfg.save_model.empty())
+    if (subcfg.mode != SubstructuringMode::ONLINE && !subcfg.model_file.empty())
     {
-      impl->AppendModes(subcfg.save_model);
+      impl->AppendModes(subcfg.model_file);
     }
   }
   const int K = static_cast<int>(impl->mode_ids.size());

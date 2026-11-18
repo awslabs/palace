@@ -9,6 +9,11 @@ from spack.package import *
 class Strumpack(BuiltinStrumpack):
     """STRUMPACK, in this repository so that Palace can apply its patches to it."""
 
+    # Without SLATE by default, as in the superbuild and the containers: with SLATE,
+    # STRUMPACK factors and solves its distributed dense fronts with SLATE instead of
+    # ScaLAPACK with the PBLAS block size set below, and SLATE requires OpenMP
+    variant("slate", default=False, description="Build with SLATE support")
+
     def cmake_args(self):
         args = super().cmake_args()
         # The PBLAS block size of the superbuild, for builds without SLATE, which keep

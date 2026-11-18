@@ -393,7 +393,6 @@
       "Save": 0
     },
     "Linear": {
-      "Type": "AMS",
       "KSPType": "CG",
       "Tol": 1e-08,
       "MaxIts": 500
@@ -410,7 +409,7 @@
         ]
       },
       "Mode": "Offline",
-      "SaveModel": "postpro/flux_lattice_environment.model"
+      "ModelFile": "postpro/flux_lattice_environment.model"
     }
   }
 }

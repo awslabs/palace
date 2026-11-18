@@ -1688,12 +1688,14 @@ SubstructuringData::SubstructuringData(const json &substructuring)
 {
   region_attributes =
       substructuring.at("Region").at("Attributes").get<std::vector<int>>();  // Required
-  environment_attributes = substructuring.at("Environment")
-                               .at("Attributes")
-                               .get<std::vector<int>>();  // Required
+  if (substructuring.contains("Environment"))
+  {
+    environment_attributes =
+        substructuring.at("Environment").at("Attributes").get<std::vector<int>>();
+  }
   mode = substructuring.value("Mode", mode);
-  save_model = substructuring.value("SaveModel", save_model);
-  factorization_tol = substructuring.value("FactorizationTol", factorization_tol);
+  model_file = substructuring.value("ModelFile", model_file);
+  region_mesh = substructuring.value("RegionMesh", region_mesh);
 }
 
 SolverData::SolverData(const json &solver)

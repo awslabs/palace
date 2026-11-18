@@ -152,13 +152,18 @@ TEST_CASE("Config Substructuring", "[config][Serial]")
                     {{"Region", {{"Attributes", {1}}}},
                      {"Environment", {{"Attributes", {2, 3}}}},
                      {"Mode", "Offline"},
-                     {"SaveModel", "env_dtn.dat"}}}};
+                     {"ModelFile", "env_dtn.dat"}}}};
     config::SolverData data(solver);
     REQUIRE(data.substructuring.has_value());
     CHECK(data.substructuring->region_attributes == std::vector<int>{1});
     CHECK(data.substructuring->environment_attributes == std::vector<int>{2, 3});
     CHECK(data.substructuring->mode == SubstructuringMode::OFFLINE);
-    CHECK(data.substructuring->save_model == "env_dtn.dat");
+    CHECK(data.substructuring->model_file == "env_dtn.dat");
+    CHECK_FALSE(data.substructuring->region_mesh);
+    solver["Substructuring"]["RegionMesh"] = true;
+    CHECK(config::SolverData(solver).substructuring->region_mesh);
+    solver["Substructuring"].erase("Environment");
+    CHECK(config::SolverData(solver).substructuring->environment_attributes.empty());
   }
 
   SECTION("Absent block leaves substructuring unset")
@@ -211,7 +216,7 @@ TEST_CASE("Config Substructuring", "[config][Serial]")
                       {{"Region", {{"Attributes", {1}}}},
                        {"Environment", {{"Attributes", {2}}}},
                        {"Mode", "Offline"},
-                       {"SaveModel", "environment.model"}}}}}};
+                       {"ModelFile", "environment.model"}}}}}};
     CHECK_THROWS_WITH(IoData(config, false),
                       Catch::Matchers::ContainsSubstring("\"SaveAdaptMesh\""));
     config["Solver"]["Substructuring"]["Mode"] = "Online";
@@ -256,8 +261,8 @@ TEST_CASE("Config Substructuring", "[config][Serial]")
                        {"Environment", {{"Attributes", {2}}}},
                        {"Mode", "Online"}}}}}};
     CHECK_THROWS_WITH(IoData(config, false),
-                      Catch::Matchers::ContainsSubstring("\"SaveModel\""));
-    config["Solver"]["Substructuring"]["SaveModel"] = "environment.model";
+                      Catch::Matchers::ContainsSubstring("\"ModelFile\""));
+    config["Solver"]["Substructuring"]["ModelFile"] = "environment.model";
     CHECK_NOTHROW(IoData(config, false));
   }
 
@@ -297,17 +302,13 @@ TEST_CASE("Config Substructuring", "[config][Serial]")
     superlu["Solver"]["Linear"] = {{"Type", "SuperLU"}};
     CHECK_THROWS_WITH(IoData(superlu, false),
                       Catch::Matchers::ContainsSubstring("not SuperLU_DIST"));
-    superlu["Solver"]["Substructuring"]["SaveModel"] = "environment.model";
+    superlu["Solver"]["Substructuring"]["ModelFile"] = "environment.model";
     superlu["Solver"]["Substructuring"]["Mode"] = "Online";
     CHECK_NOTHROW(IoData(superlu, false));
 #endif
     adaptive["AdaptiveCircuitSynthesis"] = true;
     CHECK_THROWS_WITH(IoData(make_config(adaptive, json::object()), false),
                       Catch::Matchers::ContainsSubstring("AdaptiveCircuitSynthesis"));
-    json tol = make_config(uniform, json::object());
-    tol["Solver"]["Substructuring"]["FactorizationTol"] = 1.0e-8;
-    CHECK_THROWS_WITH(IoData(tol, false),
-                      Catch::Matchers::ContainsSubstring("\"FactorizationTol\""));
 #if defined(MFEM_USE_MUMPS) || defined(MFEM_USE_STRUMPACK)
     json gpu = make_config(uniform, json::object());
     gpu["Solver"]["Device"] = "GPU";
@@ -319,7 +320,7 @@ TEST_CASE("Config Substructuring", "[config][Serial]")
 #endif
     json amr = make_config(uniform, json::object());
     amr["Model"]["Refinement"] = {{"MaxIts", 1}, {"MaxNCLevels", 0}};
-    amr["Solver"]["Substructuring"]["SaveModel"] = "environment.model";
+    amr["Solver"]["Substructuring"]["ModelFile"] = "environment.model";
     amr["Solver"]["Substructuring"]["Mode"] = "Online";
     CHECK_THROWS_WITH(IoData(amr, false),
                       Catch::Matchers::ContainsSubstring("driven substructuring refines"));
@@ -330,7 +331,7 @@ TEST_CASE("Config Substructuring", "[config][Serial]")
                       Catch::Matchers::ContainsSubstring("\"Periodic\" boundaries"));
 #if defined(MFEM_USE_MUMPS) || defined(MFEM_USE_STRUMPACK)
     json saved = make_config(uniform, json::object());
-    saved["Solver"]["Substructuring"]["SaveModel"] = "environment.model";
+    saved["Solver"]["Substructuring"]["ModelFile"] = "environment.model";
     CHECK_NOTHROW(IoData(saved, false));
     saved["Solver"]["Substructuring"]["Mode"] = "Online";
     CHECK_NOTHROW(IoData(saved, false));
@@ -2153,6 +2154,114 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(j_eigen["MassOrthogonal"].get<bool>() == false);
   }
 
+  SECTION("ComplexCoarseSolve is disabled with AMS and BoomerAMG")
+  {
+    // AMS and BoomerAMG cannot be given the complex-valued coarse matrix as a real-valued
+    // system of twice the size: an explicit true falls back to false, also when the type
+    // is the resolved default, and the resolved configuration says so. Other types keep
+    // it, and so does a boundary mode problem without multigrid, which replaces AMS and
+    // BoomerAMG by a sparse direct solver.
+    auto Resolve = [](const char *problem, json solver)
+    {
+      json config = {{"Problem", {{"Type", problem}, {"Output", "test_output"}}},
+                     {"Model", {{"Mesh", "test.msh"}}},
+                     {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                     {"Boundaries", json::object()},
+                     {"Solver", std::move(solver)}};
+      IoData iodata(config, false);
+      config = IoData::ConcretizeDefaults(iodata, config);
+      CHECK(config["Solver"]["Linear"]["ComplexCoarseSolve"].get<bool>() ==
+            iodata.solver.linear.complex_coarse_solve);
+      return iodata.solver.linear;
+    };
+    auto Linear = [](const char *type, int mg_max_levels = -1)
+    {
+      json linear = {{"Type", type}, {"ComplexCoarseSolve", true}};
+      if (mg_max_levels > 0)
+      {
+        linear["MGMaxLevels"] = mg_max_levels;
+      }
+      return linear;
+    };
+    const json eigenmode = {{"Target", 1.0}}, boundary_mode = {{"Freq", 10.0}};
+    for (const char *type : {"AMS", "BoomerAMG"})
+    {
+      INFO("type " << type);
+      CHECK_FALSE(Resolve("Eigenmode", {{"Eigenmode", eigenmode}, {"Linear", Linear(type)}})
+                      .complex_coarse_solve);
+      CHECK_FALSE(
+          Resolve("Eigenmode", {{"Eigenmode", eigenmode}, {"Linear", Linear(type, 1)}})
+              .complex_coarse_solve);
+      CHECK_FALSE(Resolve("BoundaryMode",
+                          {{"BoundaryMode", boundary_mode}, {"Linear", Linear(type, 2)}})
+                      .complex_coarse_solve);
+      CHECK(Resolve("BoundaryMode",
+                    {{"BoundaryMode", boundary_mode}, {"Linear", Linear(type)}})
+                .complex_coarse_solve);
+    }
+    {
+      // A real-valued problem does not use the option: it is left as it is, without a
+      // warning.
+      const auto linear = Resolve("Magnetostatic", {{"Linear", Linear("Default")}});
+      CHECK(linear.type == LinearSolver::AMS);
+      CHECK(linear.complex_coarse_solve);
+    }
+    for (const bool pc_mat_real : {false, true})
+    {
+      // The wave ports of a driven problem keep the inherited value for their mode solver,
+      // which uses a sparse direct solver, unless PCMatReal overrides it. An explicit
+      // per-port value is kept as it is.
+      INFO("PCMatReal " << pc_mat_real);
+      auto linear = Linear("AMS");
+      linear["PCMatReal"] = pc_mat_real;
+      json config = {
+          {"Problem", {{"Type", "Driven"}, {"Output", "test_output"}}},
+          {"Model", {{"Mesh", "test.msh"}}},
+          {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+          {"Boundaries",
+           {{"WavePort",
+             {{{"Index", 1}, {"Attributes", {2}}, {"Excitation", true}},
+              {{"Index", 2}, {"Attributes", {3}}, {"ComplexCoarseSolve", false}}}}}},
+          {"Solver",
+           {{"Driven",
+             {{"Samples", {{{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 0.5}}}}}},
+            {"Linear", linear}}}};
+      IoData iodata(config, false);
+      CHECK_FALSE(iodata.solver.linear.complex_coarse_solve);
+      const auto &port1 = iodata.boundaries.waveport.at(1).complex_coarse_solve;
+      const auto &port2 = iodata.boundaries.waveport.at(2).complex_coarse_solve;
+      CHECK(port1.has_value() == !pc_mat_real);
+      CHECK(port1.value_or(true));
+      CHECK(port2.has_value());
+      CHECK_FALSE(port2.value_or(true));
+
+      // The resolved configuration has the values which are used, so that it gives the
+      // same simulation.
+      config = IoData::ConcretizeDefaults(iodata, config);
+      const auto &j_ports = config["Boundaries"]["WavePort"];
+      CHECK_FALSE(config["Solver"]["Linear"]["ComplexCoarseSolve"].get<bool>());
+      CHECK(j_ports[0].contains("ComplexCoarseSolve") == !pc_mat_real);
+      CHECK(j_ports[0].value("ComplexCoarseSolve", true));
+      CHECK_FALSE(j_ports[1].at("ComplexCoarseSolve").get<bool>());
+      IoData iodata2(config, false);
+      CHECK_FALSE(iodata2.solver.linear.complex_coarse_solve);
+      CHECK(iodata2.boundaries.waveport.at(1).complex_coarse_solve == port1);
+      CHECK(iodata2.boundaries.waveport.at(2).complex_coarse_solve == port2);
+    }
+    {
+      // The default of a frequency domain problem is a sparse direct solver if there is
+      // one in the build, AMS otherwise.
+      const auto linear =
+          Resolve("Eigenmode", {{"Eigenmode", eigenmode}, {"Linear", Linear("Default")}});
+      CHECK(linear.complex_coarse_solve == (linear.type != LinearSolver::AMS));
+    }
+    CHECK(Resolve("Eigenmode", {{"Eigenmode", eigenmode}, {"Linear", Linear("Jacobi")}})
+              .complex_coarse_solve);
+    CHECK_FALSE(
+        Resolve("Eigenmode", {{"Eigenmode", eigenmode}, {"Linear", {{"Type", "AMS"}}}})
+            .complex_coarse_solve);
+  }
+
   SECTION("Round-trip: resolved config validates and re-parses identically")
   {
     // Start from a sparse Electrostatic config with one non-default (Order=3) and one
@@ -2459,7 +2568,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
                     {{"Substructuring",
                       {{"Region", {{"Attributes", {1}}}},
                        {"Environment", {{"Attributes", {2}}}},
-                       {"SaveModel", "environment.model"}}}}}};
+                       {"ModelFile", "environment.model"}}}}}};
 
     IoData iodata1(config, false);
     config = IoData::ConcretizeDefaults(iodata1, config);
@@ -2469,8 +2578,8 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(err.empty());
 
     IoData iodata2(config, false);
-    CHECK(iodata2.solver.substructuring->factorization_tol ==
-          iodata1.solver.substructuring->factorization_tol);
+    CHECK(iodata2.solver.substructuring->region_mesh ==
+          iodata1.solver.substructuring->region_mesh);
 
     auto sub_gaps = SchemaCoverageGaps("/properties/Solver/properties/Substructuring",
                                        config["Solver"]["Substructuring"]);

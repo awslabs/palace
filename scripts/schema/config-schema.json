@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:4-4-1",
+  "$id": "urn:palace:schema:4-5-1",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -2960,7 +2960,7 @@
       "title": "Substructuring",
       "description": "Substructuring for electrostatic, magnetostatic and driven simulations: the environment (the rest of the domain) is condensed onto its interface with the region of interest, and the region is solved against the condensed environment. With a saved model, repeated region redesigns reuse it without solving the environment again. Magnetostatic substructuring supports \"FluxLoop\" and \"SurfaceCurrent\" excitations, alone or together; driven substructuring, uniform and adaptive frequency sweeps.",
       "additionalProperties": false,
-      "required": ["Region", "Environment"],
+      "required": ["Region"],
       "properties": {
         "Region": {
           "type": "object",
@@ -2978,7 +2978,7 @@
         },
         "Environment": {
           "type": "object",
-          "description": "The environment: condensed once onto its interface with the region.",
+          "description": "The environment: condensed once onto its interface with the region. By default, the domain attributes of the mesh not in the region.",
           "additionalProperties": false,
           "required": ["Attributes"],
           "properties": {
@@ -2992,18 +2992,17 @@
         },
         "Mode": {
           "$ref": "#/$defs/SubstructuringMode",
-          "description": "\"Offline\" condenses the environment (and writes \"SaveModel\" if given); \"Online\" loads the model from \"SaveModel\" (required) and solves only the region. The online run may use a re-meshed region, provided the interface is unchanged.",
+          "description": "\"Offline\" condenses the environment (and writes \"ModelFile\" if given); \"Online\" loads the model from \"ModelFile\" (required) and solves only the region. The online run may use a re-meshed region, provided the interface is unchanged.",
           "default": "Offline"
         },
-        "SaveModel": {
+        "ModelFile": {
           "type": "string",
-          "description": "Path of the environment model file written in \"Offline\" mode and read in \"Online\" mode. An \"Offline\" run on a conforming mesh also writes, and replaces, the mesh of the region next to it (`<stem>_region.mesh` for `<stem>.model`)."
+          "description": "Path of the environment model file written in \"Offline\" mode and read in \"Online\" mode. An \"Offline\" run on a conforming mesh also writes, and replaces, the mesh of the region next to it (`<stem>_region.mesh` for `<stem>.model`), for \"Online\" runs with \"RegionMesh\"."
         },
-        "FactorizationTol": {
-          "type": "number",
-          "minimum": 0,
-          "default": 0,
-          "description": "Relative tolerance for a block low-rank (BLR) approximation of the environment factorization, trading a controlled accuracy loss for a faster factorization; 0 is exact. Only used by the MUMPS partial factorization of the environment, not when \"Solver\"/\"Linear\"/\"Type\" names another solver; a driven problem rejects it."
+        "RegionMesh": {
+          "type": "boolean",
+          "default": false,
+          "description": "For an \"Online\" run: the mesh is the mesh of the region written with the model (or a re-meshing of its region), not the full mesh. Either way, the run checks the environment elements of the mesh against the model."
         }
       }
     },
@@ -3137,7 +3136,7 @@
         },
         "ComplexCoarseSolve": {
           "type": "boolean",
-          "description": "When `true`, uses the true complex-valued system matrix for the coarse-level solver. When `false`, uses the real-valued approximation.",
+          "description": "When `true`, uses the true complex-valued system matrix for the coarse-level solver (not supported with AMS or BoomerAMG). When `false`, uses the real-valued approximation.",
           "default": false
         },
         "DropSmallEntries": {

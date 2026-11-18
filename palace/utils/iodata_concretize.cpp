@@ -101,6 +101,10 @@ void ConcretizeLinear(const config::LinearSolverData &linear, json &j_linear)
                 {"EstimatorMaxIts", linear.estimator_max_it},
                 {"EstimatorMG", linear.estimator_mg},
                 {"GSOrthogonalization", ToString(linear.gs_orthog)}});
+
+  // An explicit "ComplexCoarseSolve": true is disabled for the linear solver types which
+  // do not support it (see IoData::CheckConfiguration): write the value which is used.
+  j_linear["ComplexCoarseSolve"] = linear.complex_coarse_solve;
 }
 
 void ConcretizeEigenmode(const config::EigenSolverData &eigenmode, json &j_eigen)
@@ -390,6 +394,14 @@ void ConcretizeBoundaries(const config::BoundaryData &boundaries, json &j_bounda
                             {"EigenTol", wp.eig_tol},
                             {"MaxSize", wp.max_size},
                             {"Verbose", wp.verbose}});
+
+      // A wave port without its own "ComplexCoarseSolve" keeps the inherited true when
+      // it is disabled for the linear solver (see IoData::CheckConfiguration): write the
+      // value which is used.
+      if (wp.complex_coarse_solve)
+      {
+        j_port["ComplexCoarseSolve"] = *wp.complex_coarse_solve;
+      }
     }
   }
 
@@ -566,13 +578,16 @@ json IoData::ConcretizeDefaults(const IoData &iodata, json config)
     const auto &sub = *iodata.solver.substructuring;
     auto &j_sub = j_solver["Substructuring"];
     j_sub["Region"]["Attributes"] = sub.region_attributes;
-    j_sub["Environment"]["Attributes"] = sub.environment_attributes;
-    Concretize(j_sub, "Mode", ToString(sub.mode));
-    if (!sub.save_model.empty())
+    if (!sub.environment_attributes.empty())
     {
-      Concretize(j_sub, "SaveModel", sub.save_model);
+      j_sub["Environment"]["Attributes"] = sub.environment_attributes;
     }
-    Concretize(j_sub, "FactorizationTol", sub.factorization_tol);
+    Concretize(j_sub, "Mode", ToString(sub.mode));
+    if (!sub.model_file.empty())
+    {
+      Concretize(j_sub, "ModelFile", sub.model_file);
+    }
+    Concretize(j_sub, "RegionMesh", sub.region_mesh);
   }
 
   if (config.contains("Domains"))

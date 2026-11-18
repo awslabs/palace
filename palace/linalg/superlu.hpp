@@ -16,6 +16,10 @@
 namespace palace
 {
 
+// Heuristic choice of the depth of the 3D process grid of SuperLU_DIST for the number of
+// processes (1 for a 2D process grid).
+int GetSuperLUGridDepth(int np, bool use_3d);
+
 //
 // A wrapper for the SuperLU_DIST direct solver package.
 //

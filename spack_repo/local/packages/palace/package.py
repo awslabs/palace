@@ -150,7 +150,10 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     conflicts("^mumps+int64", msg="Palace requires MUMPS without 64 bit integers")
     with when("+mumps"):
         depends_on("fortran", type="build")
-        depends_on("mumps+metis+parmetis+double+complex")
+        depends_on("mumps+metis+parmetis")
+        # Real and complex double precision (dmumps and zmumps), with distributed
+        # right-hand sides.
+        depends_on("mumps@5.3:+double+complex", when="@0.20:")
         depends_on("mumps+shared", when="+shared")
         depends_on("mumps~shared", when="~shared")
         depends_on("mumps+openmp", when="+openmp")
@@ -182,7 +185,9 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     # allow setting the PBLAS block size (see the local strumpack package) and use these
     # solves only for the block sizes they handle, of the source changes of
     # https://github.com/pghysels/STRUMPACK/pull/171, which lower the memory of the
-    # distributed solver, and of the source changes of
+    # distributed solver, of the source changes of the STRUMPACK commits 3f30760d and
+    # 668cd1b8 by the STRUMPACK maintainer, which fix the pivoting of the distributed BLR
+    # fronts (to be removed with the next STRUMPACK release), and of the source changes of
     # https://github.com/pghysels/STRUMPACK/pull/167 for the Schur complements of
     # substructuring. Kept off the `with` blocks so the Palace variants are not folded
     # into the patch condition.
@@ -221,6 +226,13 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 "8a1824f67bfe176f74075e9e3938fa8267c0695f/extern/patch/STRUMPACK/"
                 "strumpack_pr171.diff",
                 sha256="781f79e96d4ff55cc914617885d64f869ea001314841c8c30b94d5073685e71a",
+                when="@8.1.0",
+            ),
+            patch(
+                "https://raw.githubusercontent.com/awslabs/palace/"
+                "b87fe1cbf98a5dcd4850c5c967ada69e1c15dea7/extern/patch/STRUMPACK/"
+                "strumpack_blr_pivoting.diff",
+                sha256="2d5da6e907d735c1588c3aa2a0cfe6554cf0b950c1a3bab3db5e71c7296168c8",
                 when="@8.1.0",
             ),
             patch(

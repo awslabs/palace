@@ -381,7 +381,7 @@
         ]
       },
       "Mode": "Offline",
-      "SaveModel": "postpro/qubit_lattice_environment.model"
+      "ModelFile": "postpro/qubit_lattice_environment.model"
     }
   }
 }

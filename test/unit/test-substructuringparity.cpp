@@ -1,9 +1,13 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <filesystem>
+#include <functional>
+#include <iterator>
+#include <limits>
 #include <memory>
 #include <random>
 #include <string>
@@ -49,6 +53,16 @@ namespace
 // The mass regularization of the magnetostatic substructured operator (see
 // SubstructuringSolver::Impl::kMagRegularization and kMagRegularizationSheets).
 constexpr double kMagRegularization = 1.0e-3, kMagRegularizationSheets = 1.0e-7;
+
+// SubstructuringSolver's scale of the magnetostatic regularization eps (1/mu) M: 1/L^2, L
+// the largest side of the bounding box of the mesh.
+double RegularizationScale(const mfem::ParMesh &mesh)
+{
+  mfem::Vector bbmin, bbmax;
+  mesh::GetAxisAlignedBoundingBox(mesh, bbmin, bbmax);
+  bbmax -= bbmin;
+  return 1.0 / (bbmax.Max() * bbmax.Max());
+}
 
 // Domain attributes of the cube: the region is x < 1/2 (attribute 1, and 3 in the block y,
 // z < 1/2), the environment x > 1/2 (attribute 2, and 4 in the block).
@@ -368,9 +382,11 @@ void CheckMagnetostatic(IoData &iodata, const std::vector<std::unique_ptr<Mesh>>
   ParOperator Kcc(kcc.Assemble(false), nd_fespace);
   std::vector<int> domain_attrs(kRegion);
   domain_attrs.insert(domain_attrs.end(), kEnvironment.begin(), kEnvironment.end());
-  MaterialPropertyCoefficient eps_func(mat_op.MaxCeedAttribute());
-  eps_func.AddMaterialProperty(mat_op.GetCeedAttributes(domain_attrs),
-                               with_sheets ? kMagRegularizationSheets : kMagRegularization);
+  MaterialPropertyCoefficient eps_func(
+      mat_op.GetAttributeToMaterial(), mat_op.GetInvPermeability(),
+      (with_sheets ? kMagRegularizationSheets : kMagRegularization) *
+          RegularizationScale(static_cast<const mfem::ParMesh &>(nd_fespace.GetMesh())));
+  eps_func.RestrictCoefficient(mat_op.GetCeedAttributes(domain_attrs));
   BilinearForm m(nd_fespace);
   m.AddDomainIntegrator<VectorFEMassIntegrator>(eps_func);
   ParOperator M(m.Assemble(false), nd_fespace);
@@ -459,6 +475,126 @@ std::vector<std::unique_ptr<Mesh>> MakeMesh(mfem::Mesh &&serial, bool by_side = 
   return mesh;
 }
 
+// The mixed mesh fichera-mixed-p2 (tetrahedra, hexahedra and prisms, so that the elements
+// of a geometry are not numbered contiguously), refined twice, with the domain attributes
+// of the cube: 1 and 3 for x < 0, 2 and 4 otherwise, 3 and 4 for y < 0.
+mfem::Mesh MakeMixedSerial()
+{
+  mfem::Mesh mesh(PALACE_TEST_DATA_DIR "/mesh/fichera-mixed-p2.mesh", 1, 1);
+  mesh.UniformRefinement();
+  mesh.UniformRefinement();
+  mfem::Vector c;
+  for (int e = 0; e < mesh.GetNE(); e++)
+  {
+    mesh.GetElementCenter(e, c);
+    mesh.SetAttribute(e, (c(0) < 0.0) ? ((c(1) < 0.0) ? 3 : 1) : ((c(1) < 0.0) ? 4 : 2));
+  }
+  mesh.SetAttributes();
+  return mesh;
+}
+
+// A coefficient with the value v(attr) on the libCEED attributes of each domain attribute.
+MaterialPropertyCoefficient DomainCoefficient(const Mesh &mesh,
+                                              const std::function<double(int)> &v)
+{
+  const int n = static_cast<int>(mesh.MaxCeedAttribute());
+  mfem::Array<int> attr_mat(n);
+  mfem::DenseTensor mat_coeff(1, 1, n);
+  for (const auto &[attr, ceed_attr] : mesh.GetCeedAttributes())
+  {
+    attr_mat[ceed_attr - 1] = ceed_attr - 1;
+    mat_coeff(0, 0, ceed_attr - 1) = v(attr);
+  }
+  return MaterialPropertyCoefficient(attr_mat, mat_coeff);
+}
+
+// A coefficient with the value v(attr, nbr_attr) on the libCEED boundary attribute of each
+// boundary attribute and neighboring domain attribute.
+MaterialPropertyCoefficient BoundaryCoefficient(const Mesh &mesh,
+                                                const std::function<double(int, int)> &v)
+{
+  const int n = static_cast<int>(mesh.MaxCeedBdrAttribute());
+  mfem::Array<int> attr_mat(n);
+  mfem::DenseTensor mat_coeff(1, 1, n);
+  for (const auto &[attr, bdr_attr_map] : mesh.GetCeedBdrAttributes())
+  {
+    for (const auto &[nbr_attr, ceed_attr] : bdr_attr_map)
+    {
+      attr_mat[ceed_attr - 1] = ceed_attr - 1;
+      mat_coeff(0, 0, ceed_attr - 1) = v(attr, nbr_attr);
+    }
+  }
+  return MaterialPropertyCoefficient(attr_mat, mat_coeff);
+}
+
+// The number of elements of the libCEED sub-operators of an operator, summed over the
+// processes.
+long long NumAssembledElements(const ceed::Operator &op)
+{
+  long long n = 0;
+  for (std::size_t i = 0; i < op.Size(); i++)
+  {
+    Ceed ceed = ceed::internal::GetCeedObjects()[i];
+    CeedInt num_sub_ops;
+    CeedOperator *sub_ops;
+    PalaceCeedCall(ceed, CeedOperatorCompositeGetNumSub(op[i], &num_sub_ops));
+    PalaceCeedCall(ceed, CeedOperatorCompositeGetSubList(op[i], &sub_ops));
+    for (CeedInt j = 0; j < num_sub_ops; j++)
+    {
+      CeedInt num_elem;
+      PalaceCeedCall(ceed, CeedOperatorGetNumElements(sub_ops[j], &num_elem));
+      n += num_elem;
+    }
+  }
+  Mpi::GlobalSum(1, &n, Mpi::World());
+  return n;
+}
+
+// The number of elements with one of the given domain attributes, summed over the
+// processes.
+long long NumElements(const mfem::ParMesh &mesh, const std::vector<int> &attrs)
+{
+  long long n = 0;
+  for (int e = 0; e < mesh.GetNE(); e++)
+  {
+    n += (std::find(attrs.begin(), attrs.end(), mesh.GetAttribute(e)) != attrs.end());
+  }
+  Mpi::GlobalSum(1, &n, Mpi::World());
+  return n;
+}
+
+// The number of entries of the local matrix A which differ from those of B (in the sparsity
+// pattern, or in value by more than tol relative to the largest entry of B, over the
+// processes), checking that the matrices are not zero.
+long long NumDifferentEntries(hypre::HypreCSRMatrix &A, hypre::HypreCSRMatrix &B,
+                              double tol)
+{
+  hypre_CSRMatrixMigrate(A, HYPRE_MEMORY_HOST);
+  hypre_CSRMatrixMigrate(B, HYPRE_MEMORY_HOST);
+  REQUIRE(A.Height() == B.Height());
+  REQUIRE(A.NNZ() == B.NNZ());
+  double scale = 0.0;
+  for (int k = 0; k < B.NNZ(); k++)
+  {
+    scale = std::max(scale, std::abs(B.GetData()[k]));
+  }
+  Mpi::GlobalMax(1, &scale, Mpi::World());
+  REQUIRE(scale > 0.0);
+  long long diff = 0;
+  for (int i = 0; i <= A.Height(); i++)
+  {
+    diff += (A.GetI()[i] != B.GetI()[i]);
+  }
+  for (int k = 0; k < A.NNZ(); k++)
+  {
+    // Written so that a NaN counts as a difference.
+    diff += (A.GetJ()[k] != B.GetJ()[k]) ||
+            !(std::abs(A.GetData()[k] - B.GetData()[k]) <= tol * scale);
+  }
+  Mpi::GlobalSum(1, &diff, Mpi::World());
+  return diff;
+}
+
 }  // namespace
 
 TEST_CASE("Substructured electrostatic operators match LaplaceOperator",
@@ -513,6 +649,120 @@ TEST_CASE("Substructured operators match on processes owning one side only",
   CheckMagnetostatic(magnetostatic, MakeMesh(MakeParitySerial(8, {}), true), true);
 }
 
+TEST_CASE("BilinearForm assembles the elements of its assembly domains only",
+          "[substructure][Serial][Parallel][GPU]")
+{
+  // A form restricted to the region or to the environment assembles the elements of these
+  // domains where its coefficients are nonzero, and the boundary elements whose neighboring
+  // domain (the one with the lower attribute, for the interior boundaries) is one of them,
+  // which is the operator of the form with its coefficients restricted to them. The
+  // coefficient vanishes on attribute 3, a domain of the region. The meshes: the cube in
+  // hexahedra and in tetrahedra, and a mixed mesh.
+  const int mesh_type = GENERATE(0, 1, 2);
+  const bool by_side = GENERATE(false, true);
+  const bool nd = GENERATE(false, true);
+  CAPTURE(mesh_type, by_side, nd);
+  constexpr int order = 2;
+  fem::DefaultIntegrationOrder::p_trial = order;
+  auto mesh = MakeMesh(
+      (mesh_type < 2) ? MakeParitySerial(8, {mesh_type == 1}) : MakeMixedSerial(), by_side);
+  const auto v = [](int attr) { return (attr == 3) ? 0.0 : 1.0 + attr; };
+  const auto vb = [](int attr, int nbr_attr) { return 1.0 + 0.1 * attr + 0.01 * nbr_attr; };
+  mfem::H1_FECollection h1_fec(order, 3);
+  mfem::ND_FECollection nd_fec(order, 3);
+  FiniteElementSpace fespace(*mesh[0],
+                             nd ? static_cast<mfem::FiniteElementCollection *>(&nd_fec)
+                                : static_cast<mfem::FiniteElementCollection *>(&h1_fec));
+
+  // Restricting the elements keeps the order of the sums of the full assembly on the CPU.
+  const double tol = (ceed::Print().find("/gpu/") == std::string::npos)
+                         ? 0.0
+                         : 8.0 * std::numeric_limits<double>::epsilon();
+  for (const auto &attrs : {kRegion, kEnvironment})
+  {
+    CAPTURE(attrs);
+    auto f = DomainCoefficient(*mesh[0], v), fb = BoundaryCoefficient(*mesh[0], vb);
+    auto f_ref = f, fb_ref = fb;
+    f_ref.RestrictCoefficient(mesh[0]->GetCeedAttributes(attrs));
+    fb_ref.RestrictCoefficient(mesh[0]->GetCeedBdrAttributesByNeighbor(attrs));
+    BilinearForm a(fespace), a_ref(fespace), a_dom(fespace);
+    if (nd)
+    {
+      a.AddDomainIntegrator<CurlCurlMassIntegrator>(f, f);
+      a_ref.AddDomainIntegrator<CurlCurlMassIntegrator>(f_ref, f_ref);
+      a.AddBoundaryIntegrator<VectorFEMassIntegrator>(fb);
+      a_ref.AddBoundaryIntegrator<VectorFEMassIntegrator>(fb_ref);
+      a_dom.AddDomainIntegrator<CurlCurlMassIntegrator>(f, f);
+    }
+    else
+    {
+      a.AddDomainIntegrator<DiffusionIntegrator>(f);
+      a_ref.AddDomainIntegrator<DiffusionIntegrator>(f_ref);
+      a.AddBoundaryIntegrator<MassIntegrator>(fb);
+      a_ref.AddBoundaryIntegrator<MassIntegrator>(fb_ref);
+      a_dom.AddDomainIntegrator<DiffusionIntegrator>(f);
+    }
+    a.SetAssemblyDomains(attrs);
+    a_dom.SetAssemblyDomains(attrs);
+    constexpr bool skip_zeros = true;
+    auto A = a.FullAssemble(skip_zeros), A_ref = a_ref.FullAssemble(skip_zeros);
+    CHECK(NumDifferentEntries(*A, *A_ref, tol) == 0);
+
+    // The same operator applied matrix-free (the sums of shared DOFs may be reordered).
+    auto op = a.PartialAssemble(), op_ref = a_ref.PartialAssemble();
+    Vector x(op_ref->Width()), y(op_ref->Height()), y_ref(op_ref->Height());
+    x.UseDevice(true);
+    y.UseDevice(true);
+    y_ref.UseDevice(true);
+    x.Randomize(1);
+    op->Mult(x, y);
+    op_ref->Mult(x, y_ref);
+    const double norm_ref = linalg::Norml2(Mpi::World(), y_ref);
+    REQUIRE(norm_ref > 0.0);
+    y -= y_ref;
+    CHECK(linalg::Norml2(Mpi::World(), y) <= 1.0e-14 * norm_ref);
+
+    // Only the elements of the domains with a nonzero coefficient are assembled.
+    std::vector<int> nonzero_attrs;
+    std::copy_if(attrs.begin(), attrs.end(), std::back_inserter(nonzero_attrs),
+                 [&](int attr) { return v(attr) != 0.0; });
+    CHECK(NumAssembledElements(*a_dom.PartialAssemble()) ==
+          NumElements(mesh[0]->Get(), nonzero_attrs));
+  }
+}
+
+TEST_CASE("AssemblyDomains restricts the assembly while a Restriction is in scope",
+          "[substructure][Serial]")
+{
+  AssemblyDomains domains;
+  REQUIRE(domains.Get() == nullptr);
+  {
+    AssemblyDomains::Restriction region(domains, kRegion);
+    REQUIRE(domains.Get() != nullptr);
+    CHECK(*domains.Get() == kRegion);
+    {
+      AssemblyDomains::Restriction environment(domains, kEnvironment);
+      REQUIRE(domains.Get() != nullptr);
+      CHECK(*domains.Get() == kEnvironment);
+    }
+    REQUIRE(domains.Get() != nullptr);
+    CHECK(*domains.Get() == kRegion);
+  }
+  CHECK(domains.Get() == nullptr);
+
+  // A form restricted after the scopes ended assembles every element.
+  fem::DefaultIntegrationOrder::p_trial = 1;
+  auto mesh = MakeMesh(MakeParitySerial(8, {}));
+  mfem::H1_FECollection fec(1, 3);
+  FiniteElementSpace fespace(*mesh[0], &fec);
+  auto f = DomainCoefficient(*mesh[0], [](int attr) { return 1.0 + attr; });
+  BilinearForm a(fespace);
+  a.AddDomainIntegrator<DiffusionIntegrator>(f);
+  domains.Restrict(a);
+  CHECK(NumAssembledElements(*a.PartialAssemble()) ==
+        NumElements(mesh[0]->Get(), {1, 2, 3, 4}));
+}
+
 TEST_CASE(
     "Substructured magnetostatic operators match CurlCurlOperator with cracked sheets",
     "[substructure][Serial][Parallel][GPU]")
@@ -559,7 +809,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
     sub["Region"]["Attributes"] = region_below ? kRegion : kEnvironment;
     sub["Environment"]["Attributes"] = region_below ? kEnvironment : kRegion;
     sub["Mode"] = mode;
-    sub["SaveModel"] = model_path;
+    sub["ModelFile"] = model_path;
     return IoData(config, false);
   };
   // The energy of the surface current, and whether the environment was solved.
@@ -580,12 +830,81 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   const double E_on = energy(make_config("Online"), MakeParitySerial(8, opt));
   mfem::Mesh region_mesh(RegionMeshPath(model_path).c_str());
   const int region_ne = region_mesh.GetNE();
-  const double E_region = energy(make_config("Online"), std::move(region_mesh));
+  IoData online = make_config("Online");
+  online.solver.substructuring->region_mesh = true;
+  const double E_region = energy(online, std::move(region_mesh));
   CAPTURE(E_off, E_on, E_region, region_ne);
   CHECK(region_ne < 8 * 8 * 8);  // the mesh of the region, not the full mesh
   CHECK(E_off > 0.0);
   CHECK(std::abs(E_on - E_off) <= 1.0e-9 * E_off);
   CHECK(std::abs(E_region - E_off) <= 1.0e-9 * E_off);
+}
+
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "Substructured sheet faces on the interface keep their sides online",
+                 "[substructure][Serial][Parallel]")
+{
+  // Renumbering the region above the environment on the mesh of the region moves the sheet
+  // faces on Gamma, which belong to the side of their neighbor with the lower attribute, to
+  // the environment, which the online run does not assemble: the run is rejected.
+  const std::string model_path = (temp_dir / "sheet_moved.model").string();
+  constexpr int shift = 10;
+  auto make_config = [&](const std::string &mode, bool renumbered)
+  {
+    json config = MagnetostaticConfig(1, true, false);
+    auto &sub = config["Solver"]["Substructuring"];
+    sub["Mode"] = mode;
+    sub["ModelFile"] = model_path;
+    sub["RegionMesh"] = (mode == "Online");
+    if (renumbered)
+    {
+      std::vector<int> region;
+      for (int a : kRegion)
+      {
+        region.push_back(a + shift);
+      }
+      sub["Region"]["Attributes"] = region;
+      for (auto &m : config["Domains"]["Materials"])
+      {
+        const int a = m["Attributes"][0].get<int>();
+        if (std::find(kRegion.begin(), kRegion.end(), a) != kRegion.end())
+        {
+          m["Attributes"][0] = a + shift;
+        }
+      }
+    }
+    return IoData(config, false);
+  };
+  {
+    IoData iodata = make_config("Offline", false);
+    auto mesh = MakeMesh(MakeParitySerial(8, {}));
+    SubstructuringSolver ss(iodata, mesh);
+    ss.CondenseEnvironment();
+  }
+  auto online = [&](bool renumbered)
+  {
+    mfem::Mesh region_mesh(RegionMeshPath(model_path).c_str());
+    if (renumbered)
+    {
+      for (int e = 0; e < region_mesh.GetNE(); e++)
+      {
+        const int a = region_mesh.GetAttribute(e);
+        if (std::find(kRegion.begin(), kRegion.end(), a) != kRegion.end())
+        {
+          region_mesh.SetAttribute(e, a + shift);
+        }
+      }
+      region_mesh.SetAttributes();
+    }
+    IoData iodata = make_config("Online", renumbered);
+    auto mesh = MakeMesh(std::move(region_mesh));
+    SubstructuringSolver ss(iodata, mesh);
+  };
+  CHECK_NOTHROW(online(false));
+#if defined(MFEM_USE_EXCEPTIONS)
+  CHECK_THROWS_WITH(online(true),
+                    Catch::Matchers::ContainsSubstring("not on the same sides"));
+#endif
 }
 
 TEST_CASE_METHOD(palace::test::SharedTempDir,
@@ -595,7 +914,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   // A model with a two-sided film crossing the interface on a nonconforming mesh, whose
   // coarse faces have several neighbors, is rejected before the condensation.
   json config = MagnetostaticConfig(1, false, true);
-  config["Solver"]["Substructuring"]["SaveModel"] = (temp_dir / "film_nc.model").string();
+  config["Solver"]["Substructuring"]["ModelFile"] = (temp_dir / "film_nc.model").string();
   IoData iodata(config, false);
   auto mesh = MakeMesh(MakeParitySerial(8, {false, 0, false, true}));
   SubstructuringSolver ss(iodata, mesh);

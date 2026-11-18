@@ -4,10 +4,8 @@
 #ifndef PALACE_MODELS_LAPLACE_OPERATOR_HPP
 #define PALACE_MODELS_LAPLACE_OPERATOR_HPP
 
-#include <initializer_list>
 #include <map>
 #include <memory>
-#include <optional>
 #include <vector>
 #include <mfem.hpp>
 #include "fem/bilinearform.hpp"
@@ -65,15 +63,11 @@ private:
   // Boundary attributes for each terminal index.
   std::map<int, mfem::Array<int>> source_attr_lists;
 
-  // Optional restriction of the assembled operators to a set of domain attributes:
-  // libCEED domain attributes and boundary attributes (by neighboring domain) kept.
-  std::optional<std::pair<mfem::Array<int>, mfem::Array<int>>> assembly_domains;
-  void
-  RestrictToAssemblyDomains(std::initializer_list<MaterialPropertyCoefficient *> f,
-                            std::initializer_list<MaterialPropertyCoefficient *> fb) const;
+  // Optional restriction of the stiffness form to a set of domains.
+  AssemblyDomains assembly_domains;
 
   // The stiffness form (permittivity) on the finest space, with the coefficient its
-  // integrator points to, restricted to the assembly domains if set.
+  // integrator points to, assembled on the assembly domains if set.
   struct StiffnessForm
   {
     MaterialPropertyCoefficient epsilon;
@@ -94,22 +88,9 @@ public:
                   ProblemType problem_type, const std::vector<std::unique_ptr<Mesh>> &mesh);
   LaplaceOperator(const IoData &iodata, const std::vector<std::unique_ptr<Mesh>> &mesh);
 
-  // Restricts the stiffness form (GetUnconstrainedStiffnessMatrix) to the elements with the
-  // given domain
-  // attributes and the boundary elements bounding them while in scope (the previous
-  // restriction is restored).
-  class AssemblyRestriction
-  {
-  public:
-    AssemblyRestriction(LaplaceOperator &op, const std::vector<int> &domain_attrs);
-    ~AssemblyRestriction() { op.assembly_domains = std::move(previous); }
-    AssemblyRestriction(const AssemblyRestriction &) = delete;
-    AssemblyRestriction &operator=(const AssemblyRestriction &) = delete;
-
-  private:
-    LaplaceOperator &op;
-    std::optional<std::pair<mfem::Array<int>, mfem::Array<int>>> previous;
-  };
+  // The domains to which the stiffness form (GetUnconstrainedStiffnessMatrix) is restricted
+  // while an AssemblyDomains::Restriction is in scope.
+  AssemblyDomains &GetAssemblyDomains() { return assembly_domains; }
 
   // Return material operator for postprocessing.
   const MaterialOperator &GetMaterialOp() const { return mat_op; }

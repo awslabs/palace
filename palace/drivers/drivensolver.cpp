@@ -90,7 +90,7 @@ void DrivenSolver::Preprocess(IoData &iodata, std::unique_ptr<mfem::Mesh> &smesh
       sub && sub->mode == SubstructuringMode::ONLINE)
   {
     DrivenSubstructureModel model;
-    model.ReadHeader(sub->save_model, comm);
+    model.ReadHeader(sub->model_file, comm);
     MFEM_VERIFY(
         !(iodata.model.Lc > 0.0) ||
             std::abs(iodata.model.Lc - model.length_scale) <= 1.0e-12 * model.length_scale,

@@ -6,9 +6,12 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstring>
 #include <filesystem>
 #include <limits>
 #include <set>
+#include <nlohmann/json.hpp>
+#include "fem/coefficient.hpp"
 #include "fem/fespace.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
@@ -765,31 +768,377 @@ std::vector<char> WriteRegionMesh(const std::string &path,
   return written;
 }
 
-std::array<double, 6> ElementMoments(mfem::ParMesh &mesh,
-                                     const std::vector<int> &attributes,
-                                     const std::vector<char> &mark)
+namespace
 {
-  std::array<double, 6> m = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
-  mfem::Vector c;
-  for (int e = 0; e < mesh.GetNE(); e++)
+
+using json = nlohmann::json;
+
+// Add an element of volume (or area) v and center c to the moments of AttributeMoments.
+void AddMoments(std::array<double, 6> &m, double v, const mfem::Vector &c)
+{
+  m[0] += 1.0;
+  m[1] += v;
+  m[2] += v * c.Norml2();
+  for (int d = 0; d < c.Size() && d < 3; d++)
   {
-    if ((!mark.empty() && !mark[e]) ||
-        std::ranges::find(attributes, mesh.GetAttribute(e)) == attributes.end())
+    m[3 + d] += v * c(d);
+  }
+}
+
+// The moments of each of n attributes, summed over the processes.
+void SumMoments(std::vector<std::array<double, 6>> &m, MPI_Comm comm)
+{
+  if (!m.empty())
+  {
+    Mpi::GlobalSum(static_cast<int>(6 * m.size()), m.front().data(), comm);
+  }
+}
+
+// Call f(b) for each boundary element b next to an element with one of the given domain
+// attributes (on either side, for an interior boundary), or with within, whose neighbors
+// all have one of them.
+template <typename F>
+void ForEachBoundaryElementNextTo(mfem::ParMesh &mesh, const std::vector<int> &attributes,
+                                  bool within, F &&f)
+{
+  mesh.ExchangeFaceNbrData();
+  mfem::FaceElementTransformations FET;
+  mfem::IsoparametricTransformation T1, T2;
+  auto in = [&](const mfem::ElementTransformation *T)
+  { return T && std::ranges::find(attributes, T->Attribute) != attributes.end(); };
+  for (int b = 0; b < mesh.GetNBE(); b++)
+  {
+    BdrGridFunctionCoefficient::GetBdrElementNeighborTransformations(b, mesh, FET, T1, T2);
+    if (within ? (in(FET.Elem1) && (!FET.Elem2 || in(FET.Elem2)))
+               : (in(FET.Elem1) || in(FET.Elem2)))
+    {
+      f(b);
+    }
+  }
+}
+
+// An entry of the configuration cut to the given sorted attributes (see
+// EnvironmentConfigHash), or for an array its entries listing one of them, sorted, and for
+// a group of entries those of its values; null if none. Without the excitations, the
+// indices are left out.
+json CutToAttributes(const json &node, const std::vector<int> &attrs, bool excitations)
+{
+  if (node.is_array())
+  {
+    std::vector<json> entries;
+    for (const auto &x : node)
+    {
+      if (json e = CutToAttributes(x, attrs, excitations); !e.is_null())
+      {
+        entries.push_back(std::move(e));
+      }
+    }
+    std::ranges::sort(entries, {}, [](const json &e) { return e.dump(); });
+    return entries.empty() ? json() : json(entries);
+  }
+  if (!node.is_object())
+  {
+    return json();
+  }
+  const bool is_entry = std::ranges::any_of(node.items(),
+                                            [](const auto &item)
+                                            {
+                                              return item.value().is_array() &&
+                                                     (item.key().ends_with("Attributes") ||
+                                                      item.key() == "Elements");
+                                            });
+  if (!is_entry)
+  {
+    json group = json::object();
+    for (const auto &[key, value] : node.items())
+    {
+      if (json cut = CutToAttributes(value, attrs, excitations); !cut.is_null())
+      {
+        group[key] = std::move(cut);
+      }
+    }
+    return group.empty() ? json() : group;
+  }
+  json entry = node;
+  if (!excitations)
+  {
+    entry.erase("Index");
+  }
+  bool listed = false;
+  for (auto &[key, value] : entry.items())
+  {
+    if (key.ends_with("Attributes") && value.is_array())
+    {
+      std::vector<int> cut;
+      for (const auto &a : value)
+      {
+        if (a.is_number_integer() && std::ranges::binary_search(attrs, a.get<int>()))
+        {
+          cut.push_back(a.get<int>());
+        }
+      }
+      std::ranges::sort(cut);
+      cut.erase(std::unique(cut.begin(), cut.end()), cut.end());
+      listed = listed || !cut.empty();
+      value = cut;
+    }
+    else if (key == "Elements" && value.is_array())
+    {
+      json elements = CutToAttributes(value, attrs, excitations);
+      listed = listed || !elements.is_null();
+      value = elements.is_null() ? json::array() : elements;
+    }
+  }
+  return listed ? entry : json();
+}
+
+// The entries of a section of the configuration, but postprocessing (and without the
+// excitations, the sources), cut to the given attributes.
+json SectionOn(const json &config, const char *section, std::vector<int> attrs,
+               bool excitations)
+{
+  std::ranges::sort(attrs);
+  json entries = json::object();
+  const auto it = config.find(section);
+  if (it == config.end() || !it->is_object())
+  {
+    return entries;
+  }
+  for (const auto &[key, value] : it->items())
+  {
+    if (key == "Postprocessing" ||
+        (!excitations && (key == "SurfaceCurrent" || key == "FluxLoop")))
     {
       continue;
     }
-    const double v = mesh.GetElementVolume(e);
-    mesh.GetElementCenter(e, c);
-    m[0] += 1.0;
-    m[1] += v;
-    m[2] += v * c.Norml2();
-    for (int d = 0; d < c.Size() && d < 3; d++)
+    if (json cut = CutToAttributes(value, attrs, excitations); !cut.is_null())
     {
-      m[3 + d] += v * c(d);
+      entries[key] = std::move(cut);
     }
   }
-  Mpi::GlobalSum(6, m.data(), mesh.GetComm());
+  return entries;
+}
+
+}  // namespace
+
+std::vector<std::array<double, 6>> AttributeMoments(mfem::ParMesh &mesh,
+                                                    const std::vector<int> &attributes,
+                                                    const std::vector<char> &mark)
+{
+  std::vector<std::array<double, 6>> m(attributes.size(), {0.0, 0.0, 0.0, 0.0, 0.0, 0.0});
+  mfem::Vector c;
+  for (int e = 0; e < mesh.GetNE(); e++)
+  {
+    const auto it = std::ranges::find(attributes, mesh.GetAttribute(e));
+    if ((!mark.empty() && !mark[e]) || it == attributes.end())
+    {
+      continue;
+    }
+    mesh.GetElementCenter(e, c);
+    AddMoments(m[it - attributes.begin()], mesh.GetElementVolume(e), c);
+  }
+  SumMoments(m, mesh.GetComm());
   return m;
+}
+
+std::vector<int> BoundaryAttributesNextTo(mfem::ParMesh &mesh,
+                                          const std::vector<int> &attributes)
+{
+  const int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+  std::vector<int> next(bdr_attr_max, 0);
+  ForEachBoundaryElementNextTo(mesh, attributes, false,
+                               [&](int b) { next[mesh.GetBdrAttribute(b) - 1] = 1; });
+  Mpi::GlobalMax(bdr_attr_max, next.data(), mesh.GetComm());
+  std::vector<int> bdr_attributes;
+  for (int a = 0; a < bdr_attr_max; a++)
+  {
+    if (next[a])
+    {
+      bdr_attributes.push_back(a + 1);
+    }
+  }
+  return bdr_attributes;
+}
+
+std::vector<std::array<double, 6>>
+BoundaryAttributeMoments(mfem::ParMesh &mesh, const std::vector<int> &bdr_attributes,
+                         const std::vector<int> &attributes)
+{
+  std::vector<std::array<double, 6>> m(bdr_attributes.size(),
+                                       {0.0, 0.0, 0.0, 0.0, 0.0, 0.0});
+  mfem::Vector c;
+  ForEachBoundaryElementNextTo(
+      mesh, attributes, true,
+      [&](int b)
+      {
+        const auto it = std::ranges::find(bdr_attributes, mesh.GetBdrAttribute(b));
+        if (it == bdr_attributes.end())
+        {
+          return;
+        }
+        const auto geom = mesh.GetBdrElementGeometry(b);
+        mfem::ElementTransformation &T = *mesh.GetBdrElementTransformation(b);
+        double area = 0.0;
+        for (const auto &ip : mfem::IntRules.Get(geom, 2 * T.Order() + 2))
+        {
+          T.SetIntPoint(&ip);
+          area += ip.weight * T.Weight();
+        }
+        T.Transform(mfem::Geometries.GetCenter(geom), c);
+        AddMoments(m[it - bdr_attributes.begin()], area, c);
+      });
+  SumMoments(m, mesh.GetComm());
+  return m;
+}
+
+std::uint64_t EnvironmentConfigHash(const nlohmann::json &config,
+                                    const std::vector<int> &attributes,
+                                    const std::vector<int> &bdr_attributes,
+                                    bool excitations)
+{
+  auto setting = [&config](const char *section, const char *key)
+  {
+    const auto it = config.find(section);
+    return (it != config.end() && it->is_object()) ? it->value(key, json()) : json();
+  };
+  const json described = {
+      {"Problem", {{"Type", setting("Problem", "Type")}}},
+      {"Model",
+       {{"CrackInternalBoundaryElements",
+         setting("Model", "CrackInternalBoundaryElements")}}},
+      {"Solver",
+       {{"Order", setting("Solver", "Order")},
+        {"QuadratureOrderJacobian", setting("Solver", "QuadratureOrderJacobian")},
+        {"QuadratureOrderExtra", setting("Solver", "QuadratureOrderExtra")}}},
+      {"Domains", SectionOn(config, "Domains", attributes, excitations)},
+      {"Boundaries", SectionOn(config, "Boundaries", bdr_attributes, excitations)}};
+  // FNV-1a of the description.
+  std::uint64_t hash = 14695981039346656037ULL;
+  for (const unsigned char c : described.dump())
+  {
+    hash = (hash ^ c) * 1099511628211ULL;
+  }
+  return hash;
+}
+
+EnvironmentRecord EnvironmentRecord::Make(mfem::ParMesh &mesh,
+                                          const std::vector<int> &attributes,
+                                          const nlohmann::json &config,
+                                          const std::vector<char> &written)
+{
+  EnvironmentRecord r;
+  r.attributes = attributes;
+  std::ranges::sort(r.attributes);
+  r.attributes.erase(std::unique(r.attributes.begin(), r.attributes.end()),
+                     r.attributes.end());
+  r.bdr_attributes = BoundaryAttributesNextTo(mesh, r.attributes);
+  r.moments = AttributeMoments(mesh, r.attributes);
+  r.region_moments = AttributeMoments(mesh, r.attributes, written);
+  r.bdr_moments = BoundaryAttributeMoments(mesh, r.bdr_attributes, r.attributes);
+  r.config_hash = EnvironmentConfigHash(config, r.attributes, r.bdr_attributes, false);
+  r.excitations_hash = EnvironmentConfigHash(config, r.attributes, r.bdr_attributes, true);
+  return r;
+}
+
+std::vector<char> EnvironmentRecord::Serialize() const
+{
+  std::vector<char> bytes;
+  auto put = [&bytes]<typename T>(const T *x, std::size_t n)
+  {
+    const auto *p = reinterpret_cast<const char *>(x);
+    bytes.insert(bytes.end(), p, p + sizeof(T) * n);
+  };
+  const int n[2] = {static_cast<int>(attributes.size()),
+                    static_cast<int>(bdr_attributes.size())};
+  put(n, 2);
+  put(attributes.data(), attributes.size());
+  put(bdr_attributes.data(), bdr_attributes.size());
+  put(moments.data(), moments.size());
+  put(region_moments.data(), region_moments.size());
+  put(bdr_moments.data(), bdr_moments.size());
+  put(&config_hash, 1);
+  put(&excitations_hash, 1);
+  return bytes;
+}
+
+std::optional<EnvironmentRecord>
+EnvironmentRecord::Deserialize(const std::vector<char> &bytes)
+{
+  std::size_t at = 0;
+  auto get = [&]<typename T>(T *x, std::size_t n)
+  {
+    if (bytes.size() - at < sizeof(T) * n)
+    {
+      return false;
+    }
+    std::memcpy(x, bytes.data() + at, sizeof(T) * n);
+    at += sizeof(T) * n;
+    return true;
+  };
+  int n[2];
+  if (bytes.size() < sizeof(n) || !get(n, 2) || n[0] < 0 || n[1] < 0)
+  {
+    return std::nullopt;
+  }
+  EnvironmentRecord r;
+  r.attributes.resize(n[0]);
+  r.bdr_attributes.resize(n[1]);
+  r.moments.resize(n[0]);
+  r.region_moments.resize(n[0]);
+  r.bdr_moments.resize(n[1]);
+  if (!get(r.attributes.data(), r.attributes.size()) ||
+      !get(r.bdr_attributes.data(), r.bdr_attributes.size()) ||
+      !get(r.moments.data(), r.moments.size()) ||
+      !get(r.region_moments.data(), r.region_moments.size()) ||
+      !get(r.bdr_moments.data(), r.bdr_moments.size()) || !get(&r.config_hash, 1) ||
+      !get(&r.excitations_hash, 1) || at != bytes.size())
+  {
+    return std::nullopt;
+  }
+  return r;
+}
+
+void EnvironmentRecord::Check(mfem::ParMesh &mesh, const nlohmann::json &config,
+                              const std::vector<int> &environment_attributes, double tol,
+                              bool region_mesh) const
+{
+  auto match = [tol](const std::vector<std::array<double, 6>> &a,
+                     const std::vector<std::array<double, 6>> &b)
+  {
+    return std::ranges::equal(a, b, [tol](const auto &x, const auto &y)
+                              { return MomentsMatch(x, y, tol); });
+  };
+  const auto current = AttributeMoments(mesh, attributes);
+  const bool full = match(current, moments), region = match(current, region_moments);
+  if (region_mesh)
+  {
+    MFEM_VERIFY(region,
+                (full ? "\"RegionMesh\" is set, but the mesh holds the whole "
+                        "environment of the saved substructuring model: unset it on "
+                        "the full mesh!"
+                      : "The mesh is not the mesh of the region written with the "
+                        "saved substructuring model, nor a re-meshing of its region!"));
+  }
+  else
+  {
+    MFEM_VERIFY(full, (region ? "The mesh is the mesh of the region written with the saved "
+                                "substructuring model: set \"RegionMesh\": true!"
+                              : kEnvironmentMeshDiffers));
+    MFEM_VERIFY(
+        BoundaryAttributesNextTo(mesh, attributes) == bdr_attributes &&
+            match(BoundaryAttributeMoments(mesh, bdr_attributes, attributes), bdr_moments),
+        kEnvironmentMeshDiffers);
+  }
+  std::vector<int> env = environment_attributes;
+  std::ranges::sort(env);
+  env.erase(std::unique(env.begin(), env.end()), env.end());
+  MFEM_VERIFY((region_mesh ? std::ranges::includes(attributes, env) : env == attributes) &&
+                  EnvironmentConfigHash(config, attributes, bdr_attributes, false) ==
+                      config_hash,
+              kEnvironmentConfigDiffers);
+  MFEM_VERIFY(!region_mesh || EnvironmentConfigHash(config, attributes, bdr_attributes,
+                                                    true) == excitations_hash,
+              kEnvironmentExcitationsDiffer);
 }
 
 bool MomentsMatch(const std::array<double, 6> &a, const std::array<double, 6> &b,
@@ -803,25 +1152,6 @@ bool MomentsMatch(const std::array<double, 6> &a, const std::array<double, 6> &b
         match && std::abs(a[q] - b[q]) <= tol * std::max(std::abs(a[s]), std::abs(b[s]));
   }
   return match;
-}
-
-bool RegionOnlyMesh(mfem::ParMesh &mesh, const std::vector<int> &environment_attributes,
-                    const std::array<double, 6> &env_moments,
-                    const std::array<double, 6> &region_moments, double tol)
-{
-  const auto moments = ElementMoments(mesh, environment_attributes);
-  const bool region_only = !MomentsMatch(moments, env_moments, tol);
-  if (region_only && !MomentsMatch(moments, region_moments, tol))
-  {
-    // Refinement keeps the volume and the first moments of the elements, but not their
-    // number nor the moment of the distances of their centers.
-    auto kept = moments;
-    kept[0] = region_moments[0];
-    kept[2] = region_moments[2];
-    MFEM_VERIFY(!MomentsMatch(kept, region_moments, tol), kRegionMeshRefined);
-    MFEM_ABORT(kEnvironmentDiffers);
-  }
-  return region_only;
 }
 
 std::vector<char> RegionMeshInterface(mfem::ParFiniteElementSpace &parent_fespace,
@@ -913,34 +1243,6 @@ mfem::Vector FingerprintField(const mfem::ParFiniteElementSpace &fespace, int k,
   mfem::Vector r(fes.GetTrueVSize());
   gf.GetTrueDofs(r);
   return r;
-}
-
-std::array<double, 6> TrueDofPointSums(const mfem::ParFiniteElementSpace &fespace,
-                                       const std::vector<char> &mark,
-                                       const std::array<std::array<double, 3>, 3> &centers)
-{
-  const int nt = fespace.GetTrueVSize(), w = SignatureWidth(fespace);
-  std::vector<int> index(nt, -1);
-  int n = 0;
-  for (int i = 0; i < nt; i++)
-  {
-    index[i] = mark[i] ? n++ : -1;
-  }
-  const std::vector<std::array<double, 3>> p =
-      SignaturePoints(LocalTrueDofSignatures(fespace, index, n), w);
-  std::array<double, 6> sums = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
-  for (const auto &q : p)
-  {
-    for (int k = 0; k < 3; k++)
-    {
-      const auto &c = centers[k];
-      const double g = FingerprintPolynomial(k, q[0] - c[0], q[1] - c[1], q[2] - c[2]);
-      sums[k] += g;
-      sums[3 + k] += std::abs(g);
-    }
-  }
-  Mpi::GlobalSum(6, sums.data(), fespace.GetComm());
-  return sums;
 }
 
 }  // namespace palace

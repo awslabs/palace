@@ -37,10 +37,10 @@ public:
   // any solve.
   void CondenseEnvironment();
 
-  // Maxwell capacitance matrix over the given terminals (EnergyMatrix of the terminal unit
-  // potentials). If fields is non-null, it receives the full fields of the first n_fields
-  // terminals; if region_fields is non-null, it receives the solutions of all terminals on
-  // the region and interface (zero on the environment interior).
+  // Maxwell capacitance matrix over the given terminals (EnergyMatrixDbc of the terminal
+  // unit potentials). If fields is non-null, it receives the full fields of the first
+  // n_fields terminals; if region_fields is non-null, it receives the solutions of all
+  // terminals on the region and interface (zero on the environment interior).
   mfem::DenseMatrix CapacitanceMatrix(const std::vector<int> &terminal_indices,
                                       std::vector<Vector> *fields = nullptr,
                                       int n_fields = 0,
@@ -98,22 +98,8 @@ public:
   // full parent field.
   Vector SolveExcitation(int drive_terminal_index);
 
-  // Solve for arbitrary prescribed fields on the Dirichlet DOFs, in one batch. Returns the
-  // full parent fields.
-  std::vector<Vector> SolveDirichlets(const std::vector<Vector> &dbc_values);
-
   // Solve A u = f for a full parent-space source f. Returns the full parent field.
   Vector SolveSource(const Vector &f);
-
-  // Energy matrix E_ij = u_i^T K u_j (K the energy operator) of Dirichlet-lift excitations
-  // (lifts[k] a full parent true-DOF vector with the Dirichlet data, labeled ids[k]). Once
-  // the lift modes are known (from a saved model, matched by id and an environment-side
-  // fingerprint), no environment solve is needed; otherwise they are computed and appended
-  // to the model being saved. If fields is non-null, it receives the full fields of the
-  // first n_fields lifts.
-  mfem::DenseMatrix EnergyMatrix(const std::vector<int> &ids,
-                                 const std::vector<Vector> &lifts,
-                                 std::vector<Vector> *fields = nullptr, int n_fields = 0);
 
   // Mutual energy u_i^T K u_j with the full (region + environment) energy operator.
   double MutualEnergy(const Vector &ui, const Vector &uj) const;
@@ -135,7 +121,13 @@ private:
   // Region-condensed solves of A u = f for a batch of full parent-space sources f.
   std::vector<Vector> SolveSourceBatch(const std::vector<Vector> &f);
 
-  // EnergyMatrix for Dirichlet data given on the Dirichlet true DOFs only.
+  // Energy matrix E_ij = u_i^T K u_j (K the energy operator) of Dirichlet-lift excitations,
+  // with the Dirichlet data xd[k] on the Dirichlet true DOFs, labeled ids[k]. Once the lift
+  // modes are known (from a saved model, matched by id and an environment-side
+  // fingerprint), no environment solve is needed; otherwise they are computed and appended
+  // to the model being saved. If fields is non-null, it receives the full fields of the
+  // first n_fields lifts, and region_fields, if non-null, their solutions on the region and
+  // interface.
   mfem::DenseMatrix EnergyMatrixDbc(const std::vector<int> &ids,
                                     const std::vector<Vector> &xd,
                                     std::vector<Vector> *fields, int n_fields,

@@ -20,6 +20,7 @@
 #include "fem/fespace.hpp"
 #include "fem/mesh.hpp"
 #include "fem/substructure.hpp"
+#include "fem/substructuremodel.hpp"
 #include "linalg/ksp.hpp"
 #include "linalg/mumpsschur.hpp"
 #include "linalg/operator.hpp"
@@ -150,7 +151,9 @@ inline std::unique_ptr<mfem::Solver> MakeDirectSolver(const IoData &iodata,
 // The partial factorization of the environment, whose Schur complement then needs no
 // solves: by MUMPS or else by STRUMPACK with its Schur complement interface, or only by the
 // one config["Solver"]["Linear"]["Type"] names (none for SuperLU_DIST). Null without one,
-// else name is set to its solver.
+// else name is set to its solver. MUMPS compresses the fronts at round-off (block
+// low-rank), faster than full rank at no loss of accuracy.
+inline constexpr double kEnvBlrTol = 1.0e-14;
 inline std::unique_ptr<SchurSolver<double>>
 MakePartialFactorization(const IoData &iodata,
                          [[maybe_unused]] const mfem::HypreParMatrix &A,
@@ -165,9 +168,8 @@ MakePartialFactorization(const IoData &iodata,
   if (any || type == LinearSolver::MUMPS)
   {
     name = "MUMPS";
-    return std::make_unique<MumpsSchurSolver>(
-        A, schur_vars, iodata.solver.substructuring->factorization_tol, 0, false, true,
-        iodata.solver.linear.sym_factorization);
+    return std::make_unique<MumpsSchurSolver>(A, schur_vars, kEnvBlrTol, 0, false, true,
+                                              iodata.solver.linear.sym_factorization);
   }
 #endif
 #if defined(PALACE_WITH_STRUMPACK_SCHUR)
@@ -450,6 +452,10 @@ struct SubstructuringSolver::Impl
   // DOFs, and the environment is that of the model.
   bool region_only = false;
 
+  // The domain attributes of the environment: those of the configuration, or by default the
+  // attributes of the mesh not in the region.
+  std::vector<int> env_attributes;
+
   std::unique_ptr<substructuring::RegionCondensedOperator> region_op;
   std::unique_ptr<KspSolver> region_ksp;  // CG on the region-condensed operator
 
@@ -547,28 +553,57 @@ struct SubstructuringSolver::Impl
   // them, and its version maps. Collective.
   void SetUpBrokenSpace();
 
-  // Mass regularization eps M making the singular magnetostatic curl-curl definite; the
-  // energies use the unregularized operator and are stationary, so their error is O(eps^2).
-  // With London sheets, the flux-loop and surface-current sources are orthogonal to the
-  // null space of the curl-curl + sheet operator, so a much smaller eps is safe. On the
-  // mesh of the region, which may lack the sheets of the environment, eps is that of the
-  // model.
+  // Mass regularization eps (1/mu) M / L^2 making the singular magnetostatic curl-curl
+  // definite, L the extent of the mesh (the largest side of its bounding box, in units of
+  // Lc: 1 for the default Lc), so that it scales as the curl-curl operator whatever the
+  // permeability and Lc; mag_eps is eps / L^2. The surface-current energies use the
+  // unregularized operator in a form stationary in eps, with an error O(eps^2), but the
+  // part of a current that its quadrature leaves incompatible with the null space is
+  // amplified by 1/eps. The flux-loop sources are orthogonal to the null space and their
+  // London energies are linear in eps, so London sheets take a much smaller eps. On the
+  // mesh of the region, which may lack the sheets of the environment and has another
+  // extent, mag_eps is that of the model.
   static constexpr double kMagRegularization = 1.0e-3;
   static constexpr double kMagRegularizationSheets = 1.0e-7;
   // Largest regularization energy of a surface current relative to its magnetic energy
-  // (about eps / lambda_1 for one that closes, lambda_1 the smallest nonzero eigenvalue).
+  // (about eps / lambda_1 for one that closes exactly, lambda_1 the smallest nonzero
+  // eigenvalue), which bounds the error of its energy.
   static constexpr double kMaxRegularizationFraction = 1.0e-2;
   double mag_eps = kMagRegularization;
 
-  // London superconductor sheets (magnetostatics): whether there are any, and the local
-  // boundary elements of the one-sided sheets on Gamma. Like any boundary term of the
-  // native operators, a sheet face belongs to the side of its neighbor with the lower
-  // domain attribute (see Mesh::GetCeedBdrAttributesByNeighbor), so exactly one side; on
-  // Gamma, either side, the same offline and online as long as both neighbors are in the
-  // mesh (the mesh of the region keeps the environment neighbors, see WriteRegionMesh).
-  // Checks the two-sided films against the interface. Collective.
+  // Whether the surface current J (on the true DOFs of SolutionSpace()) closes: r = G^T J,
+  // G the discrete gradient from the H1 solution space, vanishes at the H1 true DOFs off
+  // the conductors (the PEC boundaries and superconductor sheets) and sums to zero over
+  // each connected conductor, relative to the largest entry of |G|^T |J| (or, for a
+  // conductor, the sum of its entries if larger), up to the quadrature of the excitation.
+  // This is the compatibility of J with the null space of the curl-curl and sheet
+  // operators, the gradients of the functions constant on each conductor, so it does not
+  // depend on the regularization. On the mesh of the region, whose currents may close in
+  // the environment, neither the environment elements the mesh holds nor the conductors
+  // touching them are checked. Collective.
+  bool CurrentCloses(const Vector &J);
+  static constexpr double kClosureTol = 1.0e-4;
+  // |G|, and the conductor of each H1 true DOF: the least global H1 true DOF of its
+  // connected conductor, kOffConductor off the conductors, or kUnchecked. Set up on first
+  // use. Collective.
+  std::unique_ptr<mfem::HypreParMatrix> closure_G_abs;
+  std::vector<HYPRE_BigInt> conductor;
+  static constexpr HYPRE_BigInt kOffConductor = -1, kUnchecked = -2;
+  const Operator &ClosureGradient() const;
+  void SetUpClosure();
+
+  // London superconductor sheets (magnetostatics): whether there are any, the local
+  // boundary elements of the one-sided sheets on Gamma, and the sides of these. Like any
+  // boundary term of the native operators, a sheet face belongs to the side of its neighbor
+  // with the lower domain attribute (see Mesh::GetCeedBdrAttributesByNeighbor), so exactly
+  // one side; on Gamma, either side, which the mesh of the region keeps the environment
+  // neighbors to tell (see WriteRegionMesh), and which an online run checks against the
+  // model, since it assembles only the region's: the number of the faces on Gamma that the
+  // region holds, and the sums over them of cos(k_j . c) for three fixed k_j, c the center
+  // of the face. Checks the two-sided films against the interface. Collective.
   bool has_sheets = false;
   std::vector<int> gamma_sheet_faces;
+  std::array<double, 4> gamma_sheet_sides = {};
   void CheckSheets();
 
   // Sheet masses (both sides, and per side), for the flux-loop sources and energies.
@@ -579,7 +614,6 @@ struct SubstructuringSolver::Impl
   // constants c and the works B_ij = b^E_i^T W_j, and with S^Kin their kinetic parts
   // h^kin_k = Z^T M_sheet^E (W_k - a_k) (Gamma rows) and c^kin_ij = (W_i - a_i)^T
   // M_sheet^E (W_j - a_j). Only sources with an environment part have modes.
-  static constexpr int kSourceModesMagic = 0x33435253;  // "SRC3"
   std::vector<int> src_ids;
   std::vector<double> src_fp, SG_rows, SH_rows, SC, SB, SHkin_rows, SCkin;
   bool src_ready = false;
@@ -611,10 +645,10 @@ struct SubstructuringSolver::Impl
   bool SourceModesMatch(const std::vector<int> &ids, const std::vector<Source> &src,
                         std::vector<int> &col, std::vector<char> &need);
 
-  // Write to the model file from rank 0, anew or appended, and abort on every rank if it
-  // cannot be written. Collective.
-  void WriteModel(const std::string &path, bool append,
-                  const std::function<void(std::ofstream &)> &write) const;
+  // Append a record of size bytes to the model file, whose payload rank 0 writes with
+  // write (see substructuring::ModelFile::Append). Collective.
+  void AppendRecord(const std::string &path, std::uint32_t tag, long long size,
+                    const std::function<void(std::ofstream &)> &write) const;
 
   void AppendSourceModes(const std::string &path);
 
@@ -670,7 +704,8 @@ struct SubstructuringSolver::Impl
 
   // Whether the current modes cover every lift that reaches the environment (need[j]; same
   // id and fingerprints, or on the mesh of the region an id of the model), with col[j] its
-  // mode column (-1: none, zero modes). Collective.
+  // mode column (-1: none, zero modes). On the mesh of the region, an excitation the model
+  // lacks must have DOFs in it (one without is of the environment). Collective.
   bool ModesMatch(const std::vector<int> &ids, const std::vector<mfem::Vector> &xd,
                   std::vector<int> &col, std::vector<char> &need) const;
 
@@ -685,9 +720,10 @@ struct SubstructuringSolver::Impl
   void ScatterRows(const std::vector<double> &full, int w, std::vector<double> &rows) const;
 
   // Append an interface operator (nG x nG, row-major, each rank its rows like S_rows) to
-  // the model: rank 0 writes the rows of the ranks in turn, which the others send it in
-  // chunks, so that it holds one chunk of theirs at a time. Collective.
-  void AppendRows(const std::string &path, const std::vector<double> &rows) const;
+  // the model as the record tag: rank 0 writes the rows of the ranks in turn, which the
+  // others send it in chunks, so that it holds one chunk of theirs at a time. Collective.
+  void AppendRows(const std::string &path, std::uint32_t tag,
+                  const std::vector<double> &rows) const;
 
   // The rows of this rank of an interface operator of the model at byte offset pos, mapped
   // onto the current interface (SignatureMap::DualMatrix): rank 0 reads the saved rows that
@@ -695,44 +731,49 @@ struct SubstructuringSolver::Impl
   std::vector<double> ReadRows(const std::string &path, std::streamoff pos,
                                const SignatureMap &map) const;
 
-  // A model file: [kModelMagic][kModelVersion][Solver.Order][nG][signature type]
-  // [signatures nG x width][S_E nG x nG], then the sections [kLengthMagic][Model.Lc of the
-  // offline run], [kEnvFpMagic][environment fingerprint, 11 doubles], [kEpsMagic][the
-  // magnetostatic regularization eps] (magnetostatics), [kEnvMeshMagic][ElementMoments of
-  // the environment and of its elements in the mesh of the region, 12 doubles],
-  // [kSKenMagic][S^K nG x nG] (magnetostatics), [kSKinMagic][S^Kin nG x nG] (with London
-  // sheets in the environment), [kModesMagic][K][ids][fingerprints 2K][G nG x K][Cmode
-  // KxK] (electrostatics), and [kSourceModesMagic][K][ids][fingerprints 2K][g nG x K][h nG
-  // x K][c KxK][B KxK] (then [h^kin nG x K][c^kin KxK] in a model with S^Kin, which
-  // precedes them).
-  static constexpr int kModelMagic = 0x4c444d53;  // "SMDL"
-  static constexpr int kModelVersion = 4;
-  static constexpr int kHeadInts = 5;
-  static constexpr int kSKenMagic = 0x4e454b53;     // "SKEN"
-  static constexpr int kSKinMagic = 0x4e494b53;     // "SKIN"
-  static constexpr int kModesMagic = 0x33444f4d;    // "MOD3"
-  static constexpr int kEnvFpMagic = 0x33564e45;    // "ENV3"
-  static constexpr int kLengthMagic = 0x434e454c;   // "LENC"
-  static constexpr int kEpsMagic = 0x5350454d;      // "MEPS"
-  static constexpr int kEnvMeshMagic = 0x48534d45;  // "EMSH"
+  // The records of a model file (see substructuring::ModelFile): HEAD [kModelVersion,
+  // Solver.Order, nG, signature type], SIGS [signatures nG x width], SENV [S_E nG x nG],
+  // LENC [Model.Lc of the offline run], ENVF [environment fingerprint, 5 doubles], in
+  // magnetostatics MEPS [the regularization eps] and SIDS [the sides of the sheet faces on
+  // Gamma, 4 doubles], ENVR [the EnvironmentRecord], and as they are computed SKEN [S^K nG
+  // x nG] (magnetostatics), SKIN [S^Kin nG x nG] (with London sheets in the environment),
+  // MODE [K][ids][fingerprints 2K][G nG x K][Cmode KxK] (electrostatics), and SRCM [K][ids]
+  // [fingerprints 2K][g nG x K][h nG x K][c KxK][B KxK] (then [h^kin nG x K][c^kin KxK]
+  // in a model with S^Kin).
+  static constexpr int kModelVersion = 7;
+  using ModelFile = substructuring::ModelFile;
+  static constexpr std::uint32_t kHeadTag = ModelFile::Tag("HEAD"),
+                                 kSigsTag = ModelFile::Tag("SIGS"),
+                                 kSETag = ModelFile::Tag("SENV"),
+                                 kLengthTag = ModelFile::Tag("LENC"),
+                                 kEnvFpTag = ModelFile::Tag("ENVF"),
+                                 kEpsTag = ModelFile::Tag("MEPS"),
+                                 kSheetSidesTag = ModelFile::Tag("SIDS"),
+                                 kEnvRecordTag = ModelFile::Tag("ENVR"),
+                                 kSKenTag = ModelFile::Tag("SKEN"),
+                                 kSKinTag = ModelFile::Tag("SKIN"),
+                                 kModesTag = ModelFile::Tag("MODE"),
+                                 kSourceModesTag = ModelFile::Tag("SRCM");
 
   // The width of the interface signatures of a model by their type: 1 H1 coordinates, 2
   // H(curl) moments, 3 with the side moments of split DOFs (0: not a model).
   static int SignatureFileWidth(int sig_type);
 
   // The head of a model, from rank 0: its format version (-1: the file cannot be read, 0:
-  // not a model), order, interface size, signature type and width (0: another version, or
-  // an incomplete model), the interface signatures, the offsets of S_E and of the sections
-  // after it, the reference length, environment fingerprint, element moments of the
-  // environment and of the mesh of the region, and magnetostatic regularization (0 or
-  // empty: not saved). Collective.
+  // not a model; a container of another version reads as another version), order,
+  // interface size, signature type and width (0: another version, or an incomplete model),
+  // its records, the interface signatures, the position of S_E, the reference length, the
+  // record of the environment, magnetostatic regularization, and sides of the sheet faces
+  // on Gamma (0 or empty: not saved). Collective.
   struct SavedHead
   {
     int version = -1, order = 0, nG = 0, sig_type = 0, width = 0;
+    ModelFile file;
     std::vector<double> sig;
-    std::array<double, 6> env_moments = {}, region_moments = {};
+    EnvironmentRecord environment;
     double length = 0.0, regularization = 0.0;
-    std::streamoff S_pos = 0, sections_pos = 0;
+    std::vector<double> sheet_sides;
+    long long S_pos = 0;
   };
   static SavedHead ReadSavedHead(const std::string &path, MPI_Comm comm);
   // The head of the model of an online run (read by the constructor).
@@ -745,14 +786,13 @@ struct SubstructuringSolver::Impl
   const std::array<std::array<double, 3>, 3> &FingerprintCenters() const;
   mutable std::optional<std::array<std::array<double, 3>, 3>> fp_centers;
 
-  // Fingerprint of the environment: global counts of the environment-closure DOFs and of
-  // the Dirichlet DOFs of environment elements, the energies r^T A_env r of the three fixed
-  // fields, and the TrueDofPointSums of these Dirichlet DOFs (the sums, then the sums of
-  // the absolute values). Independent of the region (A_env has no region contribution), of
+  // Fingerprint of the environment operator: global counts of the environment-closure DOFs
+  // and of the Dirichlet DOFs of environment elements, and the energies r^T A_env r of the
+  // three fixed fields. Independent of the region (A_env has no region contribution), of
   // the partition, the DOF numbering and the H(curl) orientations, but it changes with the
   // environment mesh, materials, order, physics or Dirichlet boundaries. With A_env applied
   // by EnvApply (an online run assembles no A_env). Collective.
-  static constexpr int kEnvFpSize = 11;
+  static constexpr int kEnvFpSize = 5;
   std::array<double, kEnvFpSize> EnvironmentFingerprint() const;
   mutable std::optional<std::array<double, kEnvFpSize>> env_fp;
 
@@ -764,7 +804,9 @@ struct SubstructuringSolver::Impl
   std::array<double, kEnvFpSize> saved_env_fp = {};
   bool have_env_fp = false;
 
-  void AppendEnvMoments(const std::string &path, const std::vector<char> &written);
+  // Append the EnvironmentRecord, with written marking the elements written in the mesh of
+  // the region. Collective.
+  void AppendEnvRecord(const std::string &path, const std::vector<char> &written);
 
   void AppendEnvFingerprint(const std::string &path);
 
@@ -794,16 +836,12 @@ struct SubstructuringSolver::Impl
   // one.
   void CheckEnvFingerprint();
 
-  // Append an interface operator (distributed rows, like S_rows) as the section magic.
-  void AppendOperator(const std::string &path, int magic,
-                      const std::vector<double> &rows) const;
   void AppendModes(const std::string &path);
 
-  // Load the sections at byte offset `pos` (collective). Interface rows are mapped onto the
-  // online interface like S_E (dual quantities: x_cur = M^-T x_saved, rows and S^K
-  // columns). Reading stops at the first unknown section; a later mode section supersedes
-  // an earlier one, and modes absent here are recomputed on demand.
-  void LoadSections(const std::string &path, std::streamoff pos, const SignatureMap &map);
+  // Load the records after S_E (collective). Interface rows are mapped onto the online
+  // interface like S_E (dual quantities: x_cur = M^-T x_saved, rows and S^K columns); modes
+  // absent here are recomputed on demand.
+  void LoadSections(const std::string &path, const SignatureMap &map);
 
   // Factor A_EE: A_env with the true DOFs outside the environment interior eliminated, on
   // the parent space. Collective.

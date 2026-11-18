@@ -86,6 +86,9 @@ struct RegressionOptions
   // Called on every process with the staging directory after the setup run, and after the
   // run (e.g. to interrupt the setup run's outputs for a restart, and check the run's).
   std::function<void(const std::filesystem::path &)> after_setup, after_run;
+  // The name of the staging directory, postpro_subdir by default: two cases compared with
+  // the same reference outputs need their own, as ctest runs them at once.
+  std::string stage;
 };
 
 // Column-wise diff of one CSV at the case tolerances. Exposed so a custom check can keep

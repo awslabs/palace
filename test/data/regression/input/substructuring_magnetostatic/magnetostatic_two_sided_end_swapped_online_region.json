@@ -12,7 +12,8 @@
       { "Index": 1, "Attributes": [6], "Direction": "+Z" } ] },
   "Solver": { "Order": 1,
     "Magnetostatic": { "Save": 0 },
-    "Linear": { "Type": "AMS", "KSPType": "CG", "Tol": 1e-10, "MaxIts": 1000 },
+    "Linear": { "KSPType": "CG", "Tol": 1e-10, "MaxIts": 1000 },
     "Substructuring": { "Region": { "Attributes": [2] }, "Environment": { "Attributes": [1] },
-      "Mode": "Online", "SaveModel": "environment_two_sided_end_swapped.model" } }
+      "Mode": "Online", "ModelFile": "environment_two_sided_end_swapped.model",
+      "RegionMesh": true } }
 }
