@@ -119,16 +119,8 @@ protected:
   // Boolean to handle SetFromOptions calls.
   mutable bool cl_custom;
 
-  // Minimum quality factor of the search (see SetMinQualityFactor), whether its region is
-  // configured and its monitor installed, and the Ritz values of the last iteration: their
-  // number, those outside of the region, and those among them with an error estimate below
-  // the tolerance.
+  // Minimum quality factor of the search (see SetMinQualityFactor).
   double q_min;
-  bool q_region, q_region_monitor;
-  int q_region_count[3];
-
-  // Print the Ritz values counted outside of the quality factor region.
-  void PrintRegionExcluded() const;
 
   // Customize object with command line options set.
   virtual void Customize();
@@ -184,12 +176,6 @@ public:
   void SetOrthogonalization(bool mgs, bool cgs2);
 
   void SetMinQualityFactor(double q) override { q_min = q; }
-
-  // Count the nest current Ritz values of the transformed problem outside of the search
-  // region, and those among them with an error estimate below tol (called by the
-  // eigensolver monitor after each iteration).
-  void CountRegionExcluded(PetscReal tol, const PetscScalar *eigr, const PetscScalar *eigi,
-                           const PetscReal *errest, int nest);
 
   // Get the corresponding eigenpair error.
   PetscReal GetError(int i, ErrorType type) const override;
