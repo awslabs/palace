@@ -46,19 +46,13 @@ std::pair<ErrorIndicator, long long int> ElectrostaticSolver::SolveSubstructured
              (n > 1) ? "s" : "");
   const int n_save = std::min(iodata.solver.electrostatic.n_post, n);
   const bool adapt = (iodata.model.refinement.max_it > 0);
+  const bool post = SubstructuringSolver::Postprocesses(iodata);
   std::vector<Vector> fields, region_fields;
-  const mfem::DenseMatrix C =
-      sub.CapacitanceMatrix(terminals, &fields, n_save, adapt ? &region_fields : nullptr);
+  const mfem::DenseMatrix C = sub.CapacitanceMatrix(
+      terminals, &fields, n_save, (adapt || post) ? &region_fields : nullptr);
   PostprocessCapacitance(terminals, C);
-  if (n_save > 0)
-  {
-    sub.WriteParaView(post_dir.string(),
-                      std::vector<int>(terminals.begin(), terminals.begin() + n_save),
-                      fields);
-  }
-  Mpi::Print("\nSubstructuring capacitance sweep complete ({:d} terminal{})\n", n,
-             (n > 1) ? "s" : "");
   // Adaptive refinement of the region only (the indicators are zero on the environment).
+  // The energy of a terminal is that of the condensation.
   ErrorIndicator indicator;
   if (adapt)
   {
@@ -68,12 +62,36 @@ std::pair<ErrorIndicator, long long int> ElectrostaticSolver::SolveSubstructured
       energy[i] = 0.5 * C(i, i);
     }
     indicator = sub.RegionErrorIndicator(region_fields, energy);
+  }
+  // The postprocessing of a regular simulation on the region, with the full fields of the
+  // saved terminals and the fields of the region of the others (zero on the environment
+  // interior).
+  if (post)
+  {
+    PostOperator<ProblemType::ELECTROSTATIC> post_op(sub.RegionPostprocessing(iodata),
+                                                     sub.GetLaplaceOperator());
+    const auto &Grad = sub.GetLaplaceOperator().GetGradMatrix();
+    Vector E(Grad.Height());
+    for (int i = 0; i < n; i++)
+    {
+      const Vector &V = (i < n_save) ? fields[i] : region_fields[i];
+      E = 0.0;
+      Grad.AddMult(V, E, -1.0);
+      post_op.SetTotalFieldEnergy(0.5 * C(i, i));
+      post_op.MeasureAndPrintAll(i, V, E, terminals[i]);
+    }
+    post_op.MeasureFinalize(indicator);
+  }
+  else if (adapt)
+  {
     const auto indicator_stats = indicator.GetSummaryStatistics(mesh.back()->GetComm());
     if (root)
     {
       WriteErrorIndicatorCSV(post_dir, indicator_stats);
     }
   }
+  Mpi::Print("\nSubstructuring capacitance sweep complete ({:d} terminal{})\n", n,
+             (n > 1) ? "s" : "");
   return {indicator, sub.GlobalTrueVSize()};
 }
 

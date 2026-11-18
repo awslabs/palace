@@ -243,13 +243,15 @@ std::pair<ErrorIndicator, long long int> MagnetostaticSolver::SolveSubstructured
   // need the environment interior.
   const int n_save = std::min(iodata.solver.magnetostatic.n_post, nc + nf);
   const bool adapt = (iodata.model.refinement.max_it > 0);
+  const bool post = SubstructuringSolver::Postprocesses(iodata);
   std::vector<Vector> A, region_fields;
   std::vector<double> volume_energy;
   mfem::DenseMatrix linked_flux(nc, nf);
   linked_flux = 0.0;
   const mfem::DenseMatrix E = sub.MagnetostaticEnergyMatrix(
       current_idx, J, flux_idx, a, apertures, apertures.empty() ? nullptr : &linked_flux,
-      &A, n_save, adapt ? &region_fields : nullptr, adapt ? &volume_energy : nullptr);
+      &A, n_save, (adapt || post) ? &region_fields : nullptr,
+      (adapt || post) ? &volume_energy : nullptr);
   if (single_loops)
   {
     // Excitations in the layout of the regular solve (currents first, zero elsewhere).
@@ -273,25 +275,41 @@ std::pair<ErrorIndicator, long long int> MagnetostaticSolver::SolveSubstructured
     fluxoid.SetSubMatrix(nc, 0, loop_fluxoid);
     PrintExcitations(excitation_idx, loop_idx, energy, fluxoid);
   }
-  if (n_save > 0)
-  {
-    std::vector<int> ids(current_idx);
-    ids.insert(ids.end(), flux_idx.begin(), flux_idx.end());
-    ids.resize(n_save);
-    sub.WriteParaView(post_dir.string(), ids, A);
-  }
-  Mpi::Print("\nSubstructuring inductance sweep complete\n");
   // Adaptive refinement of the region only (the indicators are zero on the environment).
   ErrorIndicator indicator;
   if (adapt)
   {
     indicator = sub.RegionErrorIndicator(region_fields, volume_energy);
+  }
+  // The postprocessing of a regular simulation on the region, with the full fields of the
+  // saved excitations and the fields of the region of the others (zero on the environment
+  // interior), and the energies in the volume of the condensation.
+  if (post)
+  {
+    PostOperator<ProblemType::MAGNETOSTATIC> post_op(sub.RegionPostprocessing(iodata),
+                                                     sub.GetCurlCurlOperator());
+    const auto &Curl = sub.GetCurlCurlOperator().GetCurlMatrix();
+    Vector B(Curl.Height());
+    std::vector<int> ids(current_idx);
+    ids.insert(ids.end(), flux_idx.begin(), flux_idx.end());
+    for (int i = 0; i < nc + nf; i++)
+    {
+      const Vector &Ai = (i < n_save) ? A[i] : region_fields[i];
+      Curl.Mult(Ai, B);
+      post_op.SetTotalFieldEnergy(volume_energy[i]);
+      post_op.MeasureAndPrintAll(i, Ai, B, ids[i]);
+    }
+    post_op.MeasureFinalize(indicator);
+  }
+  else if (adapt)
+  {
     const auto indicator_stats = indicator.GetSummaryStatistics(mesh.back()->GetComm());
     if (root)
     {
       WriteErrorIndicatorCSV(post_dir, indicator_stats);
     }
   }
+  Mpi::Print("\nSubstructuring inductance sweep complete\n");
   return {indicator, sub.GlobalTrueVSize()};
 }
 

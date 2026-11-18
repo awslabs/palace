@@ -657,6 +657,90 @@ SubstructuringSolver::SubstructuringSolver(const IoData &iodata,
 {
 }
 
+LaplaceOperator &SubstructuringSolver::GetLaplaceOperator()
+{
+  MFEM_VERIFY(impl->laplace_op, "GetLaplaceOperator needs an electrostatic problem!");
+  return *impl->laplace_op;
+}
+
+bool SubstructuringSolver::Postprocesses(const IoData &iodata)
+{
+  const int n_post = (iodata.problem.type == ProblemType::ELECTROSTATIC)
+                         ? iodata.solver.electrostatic.n_post
+                         : iodata.solver.magnetostatic.n_post;
+  return n_post > 0 || !iodata.domains.postpro.energy.empty() ||
+         !iodata.domains.postpro.probe.empty() || !iodata.boundaries.postpro.flux.empty() ||
+         !iodata.boundaries.postpro.dielectric.empty();
+}
+
+IoData SubstructuringSolver::RegionPostprocessing(const IoData &iodata) const
+{
+  IoData post(iodata);
+  const auto &region = iodata.solver.substructuring->region_attributes;
+  const auto &mesh = impl->parent;
+  auto contains = [](const std::vector<int> &v, int a)
+  { return std::ranges::find(v, a) != v.end(); };
+  // Keep the entries of a postprocessing map that the field of the region gives, and list
+  // the others.
+  auto keep = [](auto &entries, auto &&in_region)
+  {
+    std::vector<int> left_out;
+    for (auto it = entries.begin(); it != entries.end();)
+    {
+      if (in_region(it->second))
+      {
+        ++it;
+      }
+      else
+      {
+        left_out.push_back(it->first);
+        it = entries.erase(it);
+      }
+    }
+    return left_out;
+  };
+  const auto energy = keep(post.domains.postpro.energy,
+                           [&](const auto &data)
+                           {
+                             return std::ranges::all_of(data.attributes, [&](int a)
+                                                        { return contains(region, a); });
+                           });
+  const auto probe = keep(post.domains.postpro.probe, [&](const auto &data)
+                          { return PointInRegion(mesh, data.center, region); });
+  auto surfaces = BoundaryAttributesInRegion(mesh, region);
+  if (impl->region_only)
+  {
+    std::erase_if(surfaces, [&](int a)
+                  { return contains(impl->saved.environment.bdr_attributes, a); });
+  }
+  auto on_surfaces = [&](const auto &data)
+  {
+    return !data.attributes.empty() &&
+           std::ranges::all_of(data.attributes,
+                               [&](int a) { return contains(surfaces, a); });
+  };
+  const auto flux = keep(post.boundaries.postpro.flux, on_surfaces);
+  const auto dielectric = keep(post.boundaries.postpro.dielectric, on_surfaces);
+  std::vector<std::string> left_out;
+  for (const auto &[idx, key] : {std::pair{&energy, "Energy"},
+                                 {&probe, "Probe"},
+                                 {&flux, "SurfaceFlux"},
+                                 {&dielectric, "Dielectric"}})
+  {
+    if (!idx->empty())
+    {
+      left_out.push_back(fmt::format("\"{}\" {}", key, fmt::join(*idx, ", ")));
+    }
+  }
+  if (!left_out.empty())
+  {
+    Mpi::Warning("Substructuring postprocesses the field of the region only, without the "
+                 "postprocessing outside it: {}!\n",
+                 fmt::join(left_out, "; "));
+  }
+  return post;
+}
+
 CurlCurlOperator &SubstructuringSolver::GetCurlCurlOperator()
 {
   MFEM_VERIFY(impl->curlcurl_op, "GetCurlCurlOperator needs a magnetostatic problem!");
@@ -1126,7 +1210,6 @@ mfem::DenseMatrix SubstructuringSolver::SourceEnergyMatrix(
   // the environment, in one batch, and each operator applied once per source.
   if (!impl->mat_dtn_K)
   {
-    MFEM_VERIFY(!region_fields, "Region solutions need a saved substructuring model!");
     std::vector<Vector> b(n, Vector(nt));
     for (int k = 0; k < n; k++)
     {
@@ -1198,6 +1281,10 @@ mfem::DenseMatrix SubstructuringSolver::SourceEnergyMatrix(
     if (fields)
     {
       fields->assign(u.begin(), u.begin() + nf);
+    }
+    if (region_fields)
+    {
+      region_fields->assign(u.begin(), u.end());  // full fields
     }
     return E;
   }
@@ -1751,45 +1838,6 @@ const FiniteElementSpaceHierarchy &SubstructuringSolver::GetFESpaces() const
 {
   return impl->magnetostatic ? impl->curlcurl_op->GetNDSpaces()
                              : impl->laplace_op->GetH1Spaces();
-}
-
-void SubstructuringSolver::WriteParaView(const std::string &dir,
-                                         const std::vector<int> &ids,
-                                         const std::vector<Vector> &fields) const
-{
-  BlockTimer bt(Timer::POSTPRO_PARAVIEW);
-  MFEM_VERIFY(ids.size() == fields.size(), "WriteParaView requires one field per id!");
-  const int order = impl->iodata.solver.order;
-  const auto &units = impl->iodata.units;
-  GridFunction phi(impl->parent_fes);
-  mfem::ParaViewDataCollection pv("paraview", &impl->parent);
-  pv.SetPrefixPath(dir);
-  pv.SetLevelsOfDetail(order);
-  pv.SetHighOrderOutput(order > 1);
-  pv.SetDataFormat(mfem::VTKFormat::BINARY);
-  pv.RegisterField(impl->magnetostatic ? "A" : "V", &phi.Real());
-  // The mesh and the fields in the units of the input, as PostOperator writes them.
-  const double mesh_Lc0 = units.GetMeshLengthRelativeScale();
-  mesh::DimensionalizeMesh(impl->parent, mesh_Lc0);
-  mfem::Vector u0;
-  for (std::size_t j = 0; j < fields.size(); j++)
-  {
-    phi.Real().SetFromTrueDofs(impl->FirstVersion(fields[j], u0));
-    ScaleGridFunction(mesh_Lc0, phi);
-    if (impl->magnetostatic)
-    {
-      units.DimensionalizeInPlace<Units::ValueType::CURRENT>(phi.Real());
-    }
-    else
-    {
-      units.DimensionalizeInPlace<Units::ValueType::VOLTAGE>(phi.Real());
-    }
-    phi.Real().HostRead();  // the writer reads the host copy
-    pv.SetCycle(static_cast<int>(j));
-    pv.SetTime(static_cast<double>(ids[j]));
-    pv.Save();
-  }
-  mesh::NondimensionalizeMesh(impl->parent, mesh_Lc0);
 }
 
 }  // namespace palace

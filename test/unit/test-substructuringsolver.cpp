@@ -2218,6 +2218,95 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "SubstructuringSolver boundaries o
   CHECK(attributes(region) == std::vector<int>{2, 4});
 }
 
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "SubstructuringSolver postprocessing of the region",
+                 "[substructure][Serial][Parallel]")
+{
+  // The postprocessing of the region keeps the energies of its domains, the probes in it,
+  // and the surface fluxes and interface dielectrics on surfaces in it, and leaves out the
+  // others: those of the environment and of surfaces that cross the interface, and a probe
+  // outside the mesh. On the mesh of the region, the sides of the cube (a natural boundary,
+  // along which no environment element is written) border the region only, but on the
+  // full mesh the environment borders them too: they are left out there as well.
+  auto flux = [](int index, int attr)
+  { return json{{"Index", index}, {"Attributes", {attr}}, {"Type", "Electric"}}; };
+  auto dielectric = [](int index, int attr)
+  {
+    return json{{"Index", index},
+                {"Attributes", {attr}},
+                {"Thickness", 1.0e-3},
+                {"Permittivity", 4.0}};
+  };
+  json config = {
+      {"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+      {"Model", {{"Mesh", "test.msh"}}},
+      {"Domains",
+       {{"Materials",
+         {{{"Attributes", {1}}, {"Permittivity", 1.0}},
+          {{"Attributes", {2}}, {"Permittivity", 4.0}}}},
+        {"Postprocessing",
+         {{"Energy",
+           {{{"Index", 1}, {"Attributes", {1}}},
+            {{"Index", 2}, {"Attributes", {2}}},
+            {{"Index", 3}, {"Attributes", {1, 2}}}}},
+          {"Probe",
+           {{{"Index", 1}, {"Center", {0.25, 0.5, 0.5}}},
+            {{"Index", 2}, {"Center", {0.75, 0.5, 0.5}}},
+            {{"Index", 3}, {"Center", {2.0, 0.5, 0.5}}}}}}}}},
+      {"Boundaries",
+       {{"Terminal",
+         {{{"Index", 1}, {"Attributes", {1}}}, {{"Index", 2}, {"Attributes", {2}}}}},
+        {"Postprocessing",
+         {{"SurfaceFlux", {flux(1, 1), flux(2, 2), flux(3, 3)}},
+          {"Dielectric", {dielectric(1, 1), dielectric(2, 3)}}}}}},
+      {"Solver",
+       {{"Order", 1},
+        {"Substructuring",
+         {{"Region", {{"Attributes", {1}}}}, {"Environment", {{"Attributes", {2}}}}}}}}};
+  IoData iodata(config, false);
+  CHECK(SubstructuringSolver::Postprocesses(iodata));
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  mesh.push_back(std::make_unique<Mesh>(MakeSplitCube(4)));
+  SubstructuringSolver ss(iodata, mesh);
+  const IoData post = ss.RegionPostprocessing(iodata);
+  auto indices = [](const auto &entries)
+  {
+    std::vector<int> idx;
+    for (const auto &[i, data] : entries)
+    {
+      idx.push_back(i);
+    }
+    return idx;
+  };
+  CHECK(indices(post.domains.postpro.energy) == std::vector<int>{1});
+  CHECK(indices(post.domains.postpro.probe) == std::vector<int>{1});
+  CHECK(indices(post.boundaries.postpro.flux) == std::vector<int>{1});
+  CHECK(indices(post.boundaries.postpro.dielectric) == std::vector<int>{1});
+  const std::string model_path = (temp_dir / "substruct_postprocessing_model.bin").string();
+  config["Solver"]["Substructuring"]["ModelFile"] = model_path;
+  {
+    std::vector<std::unique_ptr<Mesh>> full;
+    full.push_back(std::make_unique<Mesh>(MakeSplitCube(4)));
+    const IoData saving(config, false);
+    SubstructuringSolver offline(saving, full);
+    offline.CondenseEnvironment();
+  }
+  config["Solver"]["Substructuring"]["Mode"] = "Online";
+  config["Solver"]["Substructuring"]["RegionMesh"] = true;
+  const IoData online(config, false);
+  mfem::Mesh serial(RegionMeshPath(model_path).c_str());
+  std::vector<std::unique_ptr<Mesh>> region;
+  region.push_back(
+      std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(Mpi::World(), serial)));
+  const IoData region_post =
+      SubstructuringSolver(online, region).RegionPostprocessing(online);
+  CHECK(indices(region_post.boundaries.postpro.flux) == std::vector<int>{1});
+  CHECK(indices(region_post.boundaries.postpro.dielectric) == std::vector<int>{1});
+  config["Domains"].erase("Postprocessing");
+  config["Boundaries"].erase("Postprocessing");
+  CHECK_FALSE(SubstructuringSolver::Postprocesses(IoData(config, false)));
+}
+
 TEST_CASE("SubstructuringSolver region factored with the environment operator",
           "[substructure][Serial][Parallel]")
 {

@@ -17,6 +17,7 @@ namespace palace
 class CurlCurlOperator;
 class FiniteElementSpaceHierarchy;
 class IoData;
+class LaplaceOperator;
 class Mesh;
 
 namespace config
@@ -112,17 +113,25 @@ public:
   // Global parent true-DOF size.
   long long int GlobalTrueVSize() const;
 
-  // The native curl-curl operator of a magnetostatic problem (on the finest mesh and space
-  // only), which forms its excitations.
+  // The native operators of an electrostatic or a magnetostatic problem (on the finest mesh
+  // and space only), on which its postprocessing operates, and in magnetostatics which
+  // forms its excitations.
+  LaplaceOperator &GetLaplaceOperator();
   CurlCurlOperator &GetCurlCurlOperator();
+
+  // Whether the configuration asks for the postprocessing of the fields (domain energies,
+  // probes, surface fluxes or interface dielectrics) or saves fields.
+  static bool Postprocesses(const IoData &iodata);
+
+  // The configuration of the postprocessing of the region: the energies of the domains of
+  // the region, the probes in it, and the surface fluxes and interface dielectrics on
+  // surfaces in it (on the mesh of the region, not those next to the environment on the
+  // full mesh, whose part there is cut off). The others, which the field of the region does
+  // not give, are left out with a warning. Collective.
+  IoData RegionPostprocessing(const IoData &iodata) const;
 
   // The finite element spaces of the regular operator (for the problem size).
   const FiniteElementSpaceHierarchy &GetFESpaces() const;
-
-  // Write full parent-space fields (V or A) to a ParaView collection under dir, one time
-  // step per excitation (time = excitation index).
-  void WriteParaView(const std::string &dir, const std::vector<int> &ids,
-                     const std::vector<Vector> &fields) const;
 
   // Verification: the general solves and energies against which the tests check the
   // condensation (the simulations use the above).

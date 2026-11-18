@@ -1856,6 +1856,38 @@ TEST_CASE("substructuring_electrostatic", "[Serial][Parallel][GPU][Regression]")
                                   "base", opts);
 }
 
+// The postprocessing of the region of the substructured solves: the energy of the domain
+// of the region, and the surface flux and the interface dielectric on the terminal of the
+// region, from its field and the energy of the condensation, not those outside it. The
+// references are a regular simulation of the region's postprocessing (to a tight tolerance,
+// as the substructured solves are direct).
+TEST_CASE("substructuring_electrostatic_postprocessing",
+          "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-6;
+  opts.atol = 1.0e-19;
+  opts.paraview_fields = false;  // Solver.Electrostatic.Save = 0
+  palace::test::RunRegressionCase("substructuring_electrostatic",
+                                  "electrostatic_postpro.json", "postpro", opts);
+}
+
+// The same online on the mesh of the region, where the sides of the cube, which the
+// environment also borders, are not in the region either.
+TEST_CASE("substructuring_electrostatic_postprocessing_region",
+          "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-6;
+  opts.atol = 1.0e-19;
+  opts.paraview_fields = false;  // Solver.Electrostatic.Save = 0
+  opts.setup_config = "electrostatic_postpro.json";
+  opts.custom_checks["surface-Q.csv"] = TestOfflineRunReproduced("postpro", opts);
+  palace::test::RunRegressionCase("substructuring_electrostatic",
+                                  "electrostatic_postpro_online_region.json",
+                                  "postpro_online_region", opts);
+}
+
 // An online run on the mesh of the region written by the offline run (the environment's
 // terminal is not in it), against the reference of the full mesh.
 TEST_CASE("substructuring_electrostatic_region", "[Serial][Parallel][GPU][Regression]")
@@ -2032,6 +2064,36 @@ TEST_CASE("substructuring_magnetostatic_two_films_online_changed",
   palace::test::RunRegressionCase("substructuring_magnetostatic",
                                   "magnetostatic_two_films_online_changed.json",
                                   "two_films_online_changed", opts);
+}
+
+// The postprocessing of the region of the two films: the energy of the domain of the region
+// and the flux through the hole of its loop, not those of the environment. The references
+// are a regular simulation of the region's postprocessing (to a tight tolerance).
+TEST_CASE("substructuring_magnetostatic_two_films_postprocessing",
+          "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-5;
+  opts.atol = 1.0e-19;
+  opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
+  palace::test::RunRegressionCase("substructuring_magnetostatic",
+                                  "magnetostatic_two_films_postpro.json",
+                                  "two_films_postpro", opts);
+}
+
+// The same online on the mesh of the region.
+TEST_CASE("substructuring_magnetostatic_two_films_postprocessing_region",
+          "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-5;
+  opts.atol = 1.0e-19;
+  opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
+  opts.setup_config = "magnetostatic_two_films_postpro.json";
+  opts.custom_checks["surface-F.csv"] = TestOfflineRunReproduced("two_films_postpro", opts);
+  palace::test::RunRegressionCase("substructuring_magnetostatic",
+                                  "magnetostatic_two_films_postpro_online_region.json",
+                                  "two_films_postpro_online_region", opts);
 }
 
 // The same with the two loops in one excitation: the stored energy and the fluxoids of the

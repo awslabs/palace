@@ -92,13 +92,15 @@ electrostatic or magnetostatic simulation, except `"KSPType"`, `"Tol"` and `"Max
 `config["Solver"]["Linear"]`, which are not used; its `"Type"` only selects the sparse direct solver
 (see [Solvers](#Solvers)), and another type is not used (*Palace* warns). The capacitance and
 inductance matrices are written to the files of a regular simulation (`terminal-C.csv`,
-`terminal-M.csv`, and the others). The domain and surface
-postprocessing and the probes of a regular simulation are not computed, and a configuration that
-requests them is rejected: `config["Domains"]["Postprocessing"]`, and `"SurfaceFlux"`,
-`"Dielectric"` (in electrostatics) and `"FarField"` in `config["Boundaries"]["Postprocessing"]`.
-Field output follows `"Solver"/"Electrostatic"/"Save"` and `"Solver"/"Magnetostatic"/"Save"`, in the
-ParaView format only; the environment part of a saved field is recovered only when fields are
-written.
+`terminal-M.csv`, and the others). The domain and surface postprocessing of a regular simulation is
+that of the region, from its field and the total energy of the condensation, so that the
+participation ratios are those of the whole model: the energies of the domains of the region and
+the probes in it (`config["Domains"]["Postprocessing"]`), and the `"SurfaceFlux"` and
+`"Dielectric"` entries of `config["Boundaries"]["Postprocessing"]` on surfaces in it. The others are
+left out with a warning, and `"FarField"` is rejected. Field output follows
+`"Solver"/"Electrostatic"/"Save"` and `"Solver"/"Magnetostatic"/"Save"`, in the formats of
+`config["Problem"]["OutputFormats"]`; the environment part of a saved field is recovered only when
+fields are written.
 
 ### Choosing the region
 
