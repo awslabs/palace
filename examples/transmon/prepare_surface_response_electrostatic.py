@@ -11,9 +11,10 @@ device runs (transmon_final_library_device_20260830, 2026-09-06..08: Tol 0.01, U
 0.7, MaximumImbalance 1.15, MaxNCLevels 8, Nonconformal, SaveAdaptIterations); those runs also
 used ``--trace-coupling SurfaceMortar --mortar-oversampling 2``. The geometry-driven
 ``EdgeRefinement`` tube is an explicit opt-in (``--edge-refinement RADIUS ELEMENTS_PER_RADIUS``):
-the checked-in transmon_surface_amr.json blocks (Radius 0.2, ElementsPerRadius 3) grow the
-device mesh by ~3.5x per pass over 35 mm of metal edge (138k -> 18.3M elements after four of
-about nine passes, measured 2026-09-23), so they are never applied implicitly.
+tubes of Radius 0.2 and ElementsPerRadius 3 (the blocks transmon_surface_amr.json carried
+until P4 S4-a) grow the device mesh by ~3.5x per pass over 35 mm of metal edge (138k -> 18.3M
+elements after four of about nine passes, measured 2026-09-23), so they are never applied
+implicitly.
 """
 
 import argparse
