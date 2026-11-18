@@ -306,7 +306,10 @@ runs:
             echo "Dependency installation failed after ${attempts} attempts."
             exit 1
           fi
-          echo "Dependency installation attempt ${attempt} failed; retrying."
+          # Back off, so that a download outage of a few minutes does not fail
+          # every attempt.
+          echo "Dependency installation attempt ${attempt} failed; retrying in $((120 * attempt)) s."
+          sleep $((120 * attempt))
         done
         end_timer "Build Dependencies"
 
