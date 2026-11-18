@@ -11,6 +11,6 @@
       { "Index": 2, "FilmAttributes": [8], "HoleAttributes": [10], "FluxAmounts": [1.0], "Direction": [0.0,0.0,1.0], "Excitation": 1 } ] },
   "Solver": { "Order": 1,
     "Magnetostatic": { "Save": 0 },
-    "Linear": { "Type": "AMS", "KSPType": "CG", "Tol": 1e-10, "MaxIts": 500 },
+    "Linear": { "KSPType": "CG", "Tol": 1e-10, "MaxIts": 500 },
     "Substructuring": { "Region": { "Attributes": [1] }, "Environment": { "Attributes": [2] } } }
 }

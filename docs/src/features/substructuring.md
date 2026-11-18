@@ -86,8 +86,9 @@ and `--region-mesh` (see [Example: qubit lattice](@ref substructuring-lattice-ex
 The remaining settings (terminals, materials, `"Solver"/"Order"`, ...) are those of the regular
 electrostatic or magnetostatic simulation, except `"KSPType"`, `"Tol"` and `"MaxIts"` of
 `config["Solver"]["Linear"]`, which are not used; its `"Type"` only selects the sparse direct solver
-(see [Solvers](#Solvers)). The capacitance and inductance matrices are written to the files of a
-regular simulation (`terminal-C.csv`, `terminal-M.csv`, and the others). The domain and surface
+(see [Solvers](#Solvers)), and another type is not used (*Palace* warns). The capacitance and
+inductance matrices are written to the files of a regular simulation (`terminal-C.csv`,
+`terminal-M.csv`, and the others). The domain and surface
 postprocessing and the probes of a regular simulation are not computed, and a configuration that
 requests them is rejected: `config["Domains"]["Postprocessing"]`, and `"SurfaceFlux"`,
 `"Dielectric"` (in electrostatics) and `"FarField"` in `config["Boundaries"]["Postprocessing"]`.

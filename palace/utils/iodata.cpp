@@ -587,11 +587,14 @@ void IoData::CheckConfiguration()
   // names, not the default resolved below.
   if (solver.substructuring)
   {
-    if (solver.linear.type == LinearSolver::STRUMPACK_MP ||
-        solver.linear.type == LinearSolver::CUDSS)
+    if (solver.linear.type != LinearSolver::DEFAULT &&
+        solver.linear.type != LinearSolver::STRUMPACK &&
+        solver.linear.type != LinearSolver::MUMPS &&
+        solver.linear.type != LinearSolver::SUPERLU)
     {
       Mpi::Warning("Substructuring factors with STRUMPACK, MUMPS or SuperLU_DIST only: "
-                   "\"Solver.Linear.Type\" STRUMPACK-MP or cuDSS is not used!\n");
+                   "\"Solver.Linear.Type\" \"{}\" is not used!\n",
+                   ToString(solver.linear.type));
     }
     solver.substructuring->direct_solver = solver.linear.type;
   }

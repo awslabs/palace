@@ -14,7 +14,7 @@
       { "Index": 2, "FilmAttributes": [5], "HoleAttributes": [6], "FluxAmounts": [1.0], "Direction": "+Z" } ] },
   "Solver": { "Order": 1,
     "Magnetostatic": { "Save": 0 },
-    "Linear": { "Type": "AMS", "KSPType": "CG", "Tol": 1e-10, "MaxIts": 1000 },
+    "Linear": { "KSPType": "CG", "Tol": 1e-10, "MaxIts": 1000 },
     "Substructuring": { "Region": { "Attributes": [8] }, "Environment": { "Attributes": [1] },
       "SaveModel": "environment_mixed_london.model" } }
 }
