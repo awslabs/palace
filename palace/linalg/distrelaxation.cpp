@@ -149,6 +149,29 @@ void DistRelaxationSmoother<OperType>::MultTranspose2(const VecType &x, VecType 
   }
 }
 
+template <OperatorType OperType>
+void DistRelaxationSmoother<OperType>::MultPrimary2(const VecType &x, VecType &y,
+                                                    VecType &r) const
+{
+  B->SetInitialGuess(this->initial_guess);
+  B->Mult2(x, y, r);
+}
+
+template <OperatorType OperType>
+void DistRelaxationSmoother<OperType>::MultAux2(const VecType &x, VecType &y,
+                                                VecType &r) const
+{
+  A->Mult(y, r);
+  linalg::AXPBY(1.0, x, -1.0, r);
+  RealMultTranspose(*G, r, x_G);
+  if (dbc_tdof_list_G)
+  {
+    linalg::SetSubVector(x_G, *dbc_tdof_list_G, 0.0);
+  }
+  B_G->Mult2(x_G, y_G, r_G);
+  RealAddMult(*G, y_G, y);
+}
+
 template class DistRelaxationSmoother<Operator>;
 template class DistRelaxationSmoother<ComplexOperator>;
 

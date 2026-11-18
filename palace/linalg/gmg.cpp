@@ -180,7 +180,20 @@ void GeometricMultigridSolver<OperType>::VCycle(int l, bool initial_guess) const
     B[l]->Mult(X[l], Y[l]);
     return;
   }
-  B[l]->Mult2(X[l], Y[l], R[l]);
+  // EXPERIMENT (PR 1233 review): one-sided V-cycles with distributive relaxation smoothing
+  // pre-smooth with the primary space smoother only, and apply the auxiliary space
+  // correction after the coarse-grid correction.
+  const auto *dist =
+      one_sided ? dynamic_cast<const DistRelaxationSmoother<OperType> *>(B[l].get())
+                : nullptr;
+  if (dist)
+  {
+    dist->MultPrimary2(X[l], Y[l], R[l]);
+  }
+  else
+  {
+    B[l]->Mult2(X[l], Y[l], R[l]);
+  }
 
   // Compute residual.
   A[l]->Mult(Y[l], R[l]);
@@ -199,6 +212,10 @@ void GeometricMultigridSolver<OperType>::VCycle(int l, bool initial_guess) const
   Y[l] += R[l];
   if (one_sided)
   {
+    if (dist)
+    {
+      dist->MultAux2(X[l], Y[l], R[l]);
+    }
     return;
   }
 
