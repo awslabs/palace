@@ -4452,4 +4452,145 @@ TEST_CASE("Truncation planes are deterministic across rank counts",
   }
 }
 
+// Decision 2156 (lane contourfix; OI-CONTOUR-POINT-NOT-LOCATED-ABORT, measured on the
+// W-a43 window at Order 4): a trace sample of an APPLIED patch lies outside the meshed
+// domain where the domain-boundary containment test does not look (the test reads the
+// knots at three cross-sections of a cell; on W-a43 the jagged box-cut wall bulges into a
+// coupon between two tested sections, here the notch is an unmeshed cavity between two
+// knots of the left edge's cross-section that only the mortar's ring samples enter), so
+// no search locates it. The electrostatic run does not abort: the patch is not applied (a
+// LATE DomainBoundary exclusion, Reason LateTracePoint, its raw claim kept with the other
+// DomainBoundary portions) and the construction is repeated without it; every other
+// exclusion is the containment test's, which the dry run lists alone (the dry run cannot
+// know a late exclusion).
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "Electrostatic run excludes a patch whose trace sample leaves the mesh",
+                 "[surfaceresponseoperator][domainboundary][3d][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  constexpr double shear = 0.45;
+  const auto basis_path = temp.temp_dir / "late-domain-boundary-basis-points.csv";
+  const auto library_path = temp.temp_dir / "fabrication-process-late-domain-boundary.json";
+  const auto mesh_path = temp.temp_dir / "late-domain-boundary-notch.mesh";
+  if (Mpi::Root(Mpi::World()))
+  {
+    {
+      std::ofstream output(basis_path);
+      output << "x,y,z\n"
+             << "-0.2,-0.2,0.0\n"
+             << "0.2,-0.2,0.0\n"
+             << "0.2,0.2,0.0\n"
+             << "-0.2,0.2,0.0\n";
+    }
+    std::ifstream input(convex_library_3d_path);
+    REQUIRE(input);
+    json library = json::parse(input);
+    library["Name"] = "unit-test-process-late-domain-boundary";
+    for (auto &model : library["Models"])
+    {
+      model["Interfaces"] = {{{"Type", "SA"}, {"Coupon", 1}}};
+      if (model["Topology"] == "IsolatedEdge")
+      {
+        model["BasisPoints"] = basis_path.string();
+      }
+    }
+    std::ofstream output(library_path);
+    output << library.dump(2) << "\n";
+    mfem::Mesh serial = MakeSerialObliqueCutLeadMesh(shear, true);
+    std::ofstream mesh_output(mesh_path);
+    mesh_output.precision(17);
+    serial.Print(mesh_output);
+  }
+  Mpi::Barrier(Mpi::World());
+  json config = IslandConfig();
+  config["Model"]["Mesh"] = mesh_path.string();
+  config["Model"]["L0"] = 1.0;
+  config["Model"]["Lc"] = 1.0;
+  // The cut faces are artificial domain boundaries (natural); the ground is the face y = 1.
+  config["Boundaries"]["Ground"]["Attributes"] = {4};
+  auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
+  correction.erase("PatchConstruction");
+  correction["Library"] = library_path.string();
+  correction["TraceCoupling"] = "SurfaceMortar";
+  correction["MortarOversampling"] = 2;
+  const fs::path output_dir = temp.temp_dir / "late-domain-boundary-run";
+  config["Problem"]["Output"] = output_dir.string();
+
+  // The dry run's record: the containment test's exclusions only.
+  std::set<std::size_t> dry_run_excluded;
+  {
+    IoData iodata(config, false);
+    iodata.boundaries.cracked_attributes.insert(9);
+    const auto manifest_path = temp.temp_dir / "late-domain-boundary-requirements.json";
+    Mesh dry_run_mesh(MakeObliqueCutLeadMesh(shear, true));
+    WriteSurfaceResponseRequirements(iodata, dry_run_mesh, manifest_path.string());
+    Mpi::Barrier(Mpi::World());
+    std::ifstream input(manifest_path);
+    REQUIRE(input);
+    const json manifest = json::parse(input);
+    for (const auto &entry :
+         manifest["Identification"]["Diagnostics"]["DomainBoundaryExclusions"]["Patches"])
+    {
+      dry_run_excluded.insert(entry["Patch"].get<std::size_t>());
+    }
+  }
+  REQUIRE(dry_run_excluded.size() == 4);
+
+  // The solve: main aborts here ('could not be located in the device mesh').
+  CHECK_NOTHROW(test::RunElectrostatic(config));
+  Mpi::Barrier(Mpi::World());
+  std::ifstream input(output_dir / "palace.json");
+  REQUIRE(input);
+  const json meta = json::parse(input);
+  REQUIRE(meta.contains("SurfaceResponse"));
+  REQUIRE(meta["SurfaceResponse"].contains("Diagnostics"));
+  REQUIRE(meta["SurfaceResponse"]["Diagnostics"].contains("DomainBoundaryExclusions"));
+  const auto &exclusions =
+      meta["SurfaceResponse"]["Diagnostics"]["DomainBoundaryExclusions"];
+  std::set<std::size_t> early, late;
+  for (const auto &entry : exclusions["Patches"])
+  {
+    const auto patch = entry["Patch"].get<std::size_t>();
+    if (entry["Reason"].get<std::string>() == "LateTracePoint")
+    {
+      INFO("late patch " << patch);
+      late.insert(patch);
+      CHECK(entry["Model"].get<std::string>() == "isolated");
+      REQUIRE(entry.contains("Late"));
+      CHECK(entry["Late"]["Pass"].get<int>() == 1);
+      CHECK(entry["OutsidePoints"].get<int>() >= 1);
+      // Inside the notch (x in [0.125, 0.25], y in [0.25, 0.375]): at most half its
+      // width from its faces, never farther than the coupon's contour radius.
+      CHECK(entry["Late"]["Distance"].get<double>() > 0.0);
+      CHECK(entry["Late"]["Distance"].get<double>() <= 0.0625 + 1.0e-12);
+    }
+    else
+    {
+      early.insert(patch);
+    }
+  }
+  CHECK(early == dry_run_excluded);
+  REQUIRE(!late.empty());
+  REQUIRE(exclusions["Reasons"].contains("LateTracePoint"));
+  CHECK(exclusions["Reasons"]["LateTracePoint"].get<int>() ==
+        static_cast<int>(late.size()));
+  CHECK(exclusions["Count"].get<int>() == static_cast<int>(early.size() + late.size()));
+  // The raw claims of every excluded patch, the late ones included (F-DB-a).
+  std::set<std::size_t> raw_patches;
+  for (const auto &portion : exclusions["RawPortions"]["Portions"])
+  {
+    for (const auto &patch : portion["Patches"])
+    {
+      raw_patches.insert(patch.get<std::size_t>());
+    }
+  }
+  for (const auto patch : late)
+  {
+    CHECK(raw_patches.count(patch) == 1);
+  }
+#endif
+}
+
 }  // namespace palace
