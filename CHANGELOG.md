@@ -45,7 +45,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     tolerance. With an explicit `"MGSmoothOrder"`, as in every resolved eigenmode
     configuration, the V-cycles now smooth once at that order, half as much as before: set
     `"MGOneSided": false` to keep the previous V-cycles. SchemaVer 4-5-0
-    [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
+    [PR 1233](https://github.com/awslabs/palace/pull/1233).
   - When `Solver.Linear.Type` is `"Default"` (or omitted) for frequency domain problems,
     and for the wave port and boundary mode eigenvalue solves, *Palace* now prefers
     STRUMPACK over SuperLU_DIST, then MUMPS, as the sparse direct solver when built with
