@@ -144,10 +144,16 @@ json IslandConfig(const fs::path &mesh_path, const fs::path &output, bool legacy
 // A partition of the island mesh in the file format of Model.Partitioning, written once
 // (root): the rank of an element = (x > 0.5) + 2 (y > 0.5) + (z > 0.5) of its center,
 // modulo the process count, so that the process boundaries lie ON the sheet plane and
-// ACROSS the island (the planes y = 0.5 and z = 0.5 cut it).
+// ACROSS the island (the planes y = 0.5 and z = 0.5 cut it). That form has 5 parts: above
+// 5 processes it would leave ranks empty (a partition with an empty part aborts at the
+// mesh distribution), so there the octant (x > 0.5) + 2 (y > 0.5) + 4 (z > 0.5) is used
+// (8 parts, the same cutting planes); the cases skip above kIslandPartitionParts.
+constexpr int kIslandPartitionParts = 8;
+
 fs::path WriteIslandPartition(const fs::path &dir, mfem::Element::Type type)
 {
   const int num_procs = Mpi::Size(Mpi::World());
+  const int z_weight = (num_procs > 5) ? 4 : 1;
   const auto path = dir / ("island-" + std::to_string(int(type)) + "-np" +
                            std::to_string(num_procs) + ".partition");
   if (Mpi::Root(Mpi::World()))
@@ -160,7 +166,8 @@ fs::path WriteIslandPartition(const fs::path &dir, mfem::Element::Type type)
     for (int e = 0; e < mesh.GetNE(); e++)
     {
       mesh.GetElementCenter(e, center);
-      output << ((center(0) > 0.5) + 2 * (center(1) > 0.5) + (center(2) > 0.5)) % num_procs
+      output << ((center(0) > 0.5) + 2 * (center(1) > 0.5) + z_weight * (center(2) > 0.5)) %
+                    num_procs
              << "\n";
     }
   }
@@ -420,6 +427,10 @@ TEST_CASE_METHOD(test::SharedTempDir,
                  "Per-side recovered flux on an uncracked sheet equals the cracked mesh's",
                  "[sheetflux][Serial][Parallel]")
 {
+  if (Mpi::Size(Mpi::World()) > kIslandPartitionParts)
+  {
+    SKIP("The island partition has fewer parts than processes");
+  }
   constexpr auto type = mfem::Element::HEXAHEDRON;
   const auto mesh_path = WriteIslandMesh(temp_dir, type);
   const auto partition = WriteIslandPartition(temp_dir, type);
@@ -468,6 +479,10 @@ TEST_CASE_METHOD(
     "Batched and streamed interface responses read the per-side recovered flux",
     "[sheetflux][Serial][Parallel]")
 {
+  if (Mpi::Size(Mpi::World()) > kIslandPartitionParts)
+  {
+    SKIP("The island partition has fewer parts than processes");
+  }
   constexpr auto type = mfem::Element::HEXAHEDRON;
   const auto mesh_path = WriteIslandMesh(temp_dir, type);
   const auto partition = WriteIslandPartition(temp_dir, type);

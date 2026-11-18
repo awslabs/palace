@@ -1515,15 +1515,32 @@ TEST_CASE("Automatic metal edge extraction samples high-order rounded edges",
   CHECK_THAT(PhysicalLength(fine), WithinAbs(exact_perimeter, 6.0e-3));
   CHECK_THAT(PhysicalLength(coarse), WithinAbs(PhysicalLength(fine), 6.0e-3));
 
-  REQUIRE(!coarse.surface_faces.empty());
-  REQUIRE(!fine.surface_faces.empty());
-  CHECK(std::all_of(coarse.surface_faces.begin(), coarse.surface_faces.end(),
-                    [](const auto &face) { return face.component == 0; }));
-  CHECK(std::all_of(fine.surface_faces.begin(), fine.surface_faces.end(),
-                    [](const auto &face)
-                    { return face.component == 0 && face.vertices.size() == 4; }));
-  CHECK(std::any_of(coarse.surface_faces.begin(), coarse.surface_faces.end(),
-                    [](const auto &face) { return face.vertices.size() > 8; }));
+  // The retained faces are rank-local (metaledge.cpp, "(7) Retained faces"): a rank of a
+  // parallel run may hold no metal face, so the preconditions and checks on them are
+  // collective (a rank-local REQUIRE ends the case on some ranks only and leaves the others
+  // in the next collective).
+  const auto comm = coarse_mesh->GetComm();
+  std::array<long long, 2> surface_face_counts = {
+      static_cast<long long>(coarse.surface_faces.size()),
+      static_cast<long long>(fine.surface_faces.size())};
+  Mpi::GlobalSum(2, surface_face_counts.data(), comm);
+  REQUIRE(surface_face_counts[0] > 0);
+  REQUIRE(surface_face_counts[1] > 0);
+  bool coarse_faces_in_component =
+      std::all_of(coarse.surface_faces.begin(), coarse.surface_faces.end(),
+                  [](const auto &face) { return face.component == 0; });
+  bool fine_faces_are_quadrilaterals =
+      std::all_of(fine.surface_faces.begin(), fine.surface_faces.end(), [](const auto &face)
+                  { return face.component == 0 && face.vertices.size() == 4; });
+  bool coarse_faces_high_order =
+      std::any_of(coarse.surface_faces.begin(), coarse.surface_faces.end(),
+                  [](const auto &face) { return face.vertices.size() > 8; });
+  Mpi::GlobalAnd(1, &coarse_faces_in_component, comm);
+  Mpi::GlobalAnd(1, &fine_faces_are_quadrilaterals, comm);
+  Mpi::GlobalOr(1, &coarse_faces_high_order, comm);
+  CHECK(coarse_faces_in_component);
+  CHECK(fine_faces_are_quadrilaterals);
+  CHECK(coarse_faces_high_order);
 
   CHECK(sharp.physical_components == 1);
   CHECK(sharp.physical_chains == 4);
@@ -1739,7 +1756,11 @@ TEST_CASE("Automatic metal edge chains survive local refinement",
     mesh->GetBdrElementAdjacentElement(be, element, info);
     adjacent_elements.insert(element);
   }
-  REQUIRE_FALSE(adjacent_elements.empty());
+  // The boundary elements are rank-local: the precondition before the collective
+  // GeneralRefinement is a global count (a rank with no metal boundary element marks none).
+  long long adjacent_element_count = static_cast<long long>(adjacent_elements.size());
+  Mpi::GlobalSum(1, &adjacent_element_count, mesh->GetComm());
+  REQUIRE(adjacent_element_count > 0);
   mfem::Array<int> marked_elements(static_cast<int>(adjacent_elements.size()));
   std::copy(adjacent_elements.begin(), adjacent_elements.end(), marked_elements.begin());
   mesh->GeneralRefinement(marked_elements);

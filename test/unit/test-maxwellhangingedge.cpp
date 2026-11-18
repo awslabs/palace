@@ -139,15 +139,25 @@ struct HangingFan
     return mesh;
   }
 
-  // The fan distributed with the plane as the partition: the upper tets on rank 0, the
-  // lower ones on the last rank (one rank: everything on it).
+  // The fan distributed with the plane as a partition boundary: the upper tets on the
+  // first half of the ranks, the lower ones on the others, round robin within each half
+  // (one rank: everything on it; two ranks: the upper tets on rank 0, the lower ones on
+  // rank 1), so that no rank is empty up to one rank per tet (a rank without an element
+  // cannot locate points).
   std::unique_ptr<mfem::ParMesh> Parallel(MPI_Comm comm) const
   {
     auto serial = Serial();
+    const int size = Mpi::Size(comm);
+    const int upper_ranks = std::max(1, size / 2);
+    const int lower_first = (size > 1) ? upper_ranks : 0;
+    const int lower_ranks = std::max(1, size - lower_first);
     mfem::Array<int> partitioning(serial.GetNE());
+    int upper_count = 0, lower_count = 0;
     for (int e = 0; e < serial.GetNE(); e++)
     {
-      partitioning[e] = serial.GetAttribute(e) == 2 ? 0 : Mpi::Size(comm) - 1;
+      partitioning[e] = (serial.GetAttribute(e) == 2)
+                            ? (upper_count++ % upper_ranks)
+                            : lower_first + (lower_count++ % lower_ranks);
     }
     return std::make_unique<mfem::ParMesh>(comm, serial, partitioning.GetData());
   }
@@ -199,6 +209,10 @@ TEST_CASE("SurfaceResponseOperatorMaxwellLineAlongNonconformingEdge",
   // is the clip by its transversal faces: the edge's extent.
   const auto comm = Mpi::World();
   HangingFan fan;
+  if (Mpi::Size(comm) > static_cast<int>(fan.tets.size()))
+  {
+    SKIP("The fan has fewer tetrahedra than processes");
+  }
   auto mesh = fan.Parallel(comm);
   REQUIRE(mesh->GetGlobalNE() == 10);
   const auto local = FindMaxwellSegmentIntersections(*mesh, 3, fan.line_begin, fan.line_end,
