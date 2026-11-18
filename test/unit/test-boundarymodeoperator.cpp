@@ -72,7 +72,8 @@ ModeResult SolveRectangularModes(double width, double height, double freq_ghz,
                                  int reduced_evaluations = 1,
                                  std::size_t reduced_training_capacity = 16,
                                  std::vector<double> reduced_training_factors = {0.9, 1.1},
-                                 double adaptive_tol = 1.0e-3, double eig_tol = 1.0e-8)
+                                 double adaptive_tol = 1.0e-3, double eig_tol = 1.0e-8,
+                                 double reduced_basis_limit_factor = 0.0)
 {
   MPI_Comm comm = Mpi::World();
   Units units(1.0, 1.0);
@@ -159,7 +160,7 @@ ModeResult SolveRectangularModes(double width, double height, double freq_ghz,
     {
       solve_at(factor * omega);
     }
-    mode_solver.EnableReducedModel(adaptive_tol);
+    mode_solver.EnableReducedModel(adaptive_tol, reduced_basis_limit_factor);
   }
 
   auto result = solve_at(omega).first;
@@ -568,6 +569,115 @@ double SolveLondonSlabMode(double w, double h, double d, double lambda, bool pec
   return kn.real() / omega;
 }
 
+// Effective index n_eff = kn / k0 (Im{n_eff} < 0) of the TM0 mode of a parallel plate line
+// with PEC planes at y = 0 and y = t + d, a conductor of conductivity sigma (and relative
+// permittivity 1) in 0 < y < t, and a dielectric of relative permittivity eps_d in t < y <
+// t + d (lengths in um). With H_x = cos(kc y) in the conductor and cos(kd (t + d - y)) in
+// the dielectric, continuity of H_x and of (1/eps) dH_x/dy at y = t gives (kc/eps_c)
+// tan(kc t) + (kd/eps_d) tan(kd d) = 0, where kj^2 = k0^2 (eps_j - n_eff^2) and eps_c = 1 -
+// i sigma / (omega eps0). The left-hand side is even in kc and kd, so the branches of the
+// square roots do not matter.
+std::complex<double> ExactParallelPlateConductorIndex(double t, double d, double sigma,
+                                                      double eps_d, double freq_ghz)
+{
+  const double omega = 2.0 * std::numbers::pi * freq_ghz * 1.0e9;
+  const double k0 = omega / electromagnetics::c0_ * 1.0e-6;
+  const std::complex<double> eps_c(1.0, -sigma / (omega * electromagnetics::epsilon0_));
+  auto F = [&](std::complex<double> n)
+  {
+    const std::complex<double> kc = k0 * std::sqrt(eps_c - n * n);
+    const std::complex<double> kd = k0 * std::sqrt(eps_d - n * n);
+    return kc / eps_c * std::tan(kc * t) + kd / eps_d * std::tan(kd * d);
+  };
+  // Secant iteration from the mode of the line with a perfect conductor.
+  std::complex<double> n0 = std::sqrt(eps_d), n1 = n0 * std::complex<double>(1.0, -0.01);
+  std::complex<double> F0 = F(n0), F1 = F(n1);
+  for (int it = 0; it < 100 && std::abs(n1 - n0) > 1.0e-15 * std::abs(n1); it++)
+  {
+    const std::complex<double> n2 = n1 - F1 * (n1 - n0) / (F1 - F0);
+    n0 = n1;
+    F0 = F1;
+    n1 = n2;
+    F1 = F(n1);
+  }
+  return n1;
+}
+
+struct ParallelPlateModeResult
+{
+  std::complex<double> n_eff;
+  int num_solves, num_iterations;
+};
+
+// Effective index of the TM0 mode of a parallel plate line of width 2 um, with layers of
+// attribute 1 in 0 < y < t and 2 in t < y < t + d (configured by the caller, along with
+// the boundaries: bottom 1, right 2, top 3, left 4), solved through the 2D
+// BoundaryModeOperator path of the BoundaryMode driver, with a sparse direct or p-multigrid
+// (mg_max_levels > 1) preconditioner of the given type, and the numbers of linear solves
+// and iterations. The elements are 0.25 um.
+ParallelPlateModeResult
+SolveParallelPlateMode(double t, double d, double freq_ghz, double n_target,
+                       int mg_max_levels, bool pc_mat_real, bool complex_coarse_solve,
+                       const std::function<void(IoData &)> &configure)
+{
+  constexpr double width = 2.0, h = 0.25, tol = 1.0e-10;
+  constexpr int order = 2;
+  MPI_Comm comm = Mpi::World();
+  Units units(1.0e-6, 1.0e-6);
+  IoData iodata(units);
+  iodata.problem.type = ProblemType::BOUNDARYMODE;
+  iodata.model.Lc = 1.0;
+  configure(iodata);
+  iodata.solver.order = order;
+  iodata.solver.boundary_mode.freq = freq_ghz;
+  iodata.solver.boundary_mode.n = 1;
+  iodata.solver.boundary_mode.tol = tol;
+  iodata.solver.linear.tol = tol;
+  iodata.solver.linear.max_it = 200;
+  iodata.solver.linear.mg_max_levels = mg_max_levels;
+  iodata.solver.linear.pc_mat_real = pc_mat_real;
+  iodata.solver.linear.complex_coarse_solve = complex_coarse_solve;
+
+  auto serial_mesh = std::make_unique<mfem::Mesh>(mfem::Mesh::MakeCartesian2D(
+      static_cast<int>(std::round(width / h)), static_cast<int>(std::round((t + d) / h)),
+      mfem::Element::TRIANGLE, false, width, t + d));
+  for (int i = 0; i < serial_mesh->GetNE(); i++)
+  {
+    mfem::Vector center;
+    serial_mesh->GetElementCenter(i, center);
+    serial_mesh->SetAttribute(i, (center(1) < t) ? 1 : 2);
+  }
+  serial_mesh->SetAttributes();
+  iodata.NondimensionalizeInputs(serial_mesh);
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  mesh.push_back(
+      std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(comm, *serial_mesh)));
+  iodata.CheckConfiguration();
+
+  MaterialOperator mat_op(iodata, *mesh.back());
+  BoundaryModeOperator mode_op(iodata, mesh, mat_op);
+  const int nd_size = mode_op.GetNDTrueVSize();
+  mfem::Array<int> dbc_tdof_list;
+  dbc_tdof_list.Append(mode_op.GetNDDbcTDofLists().back());
+  for (auto tdof : mode_op.GetH1DbcTDofLists().back())
+  {
+    dbc_tdof_list.Append(nd_size + tdof);
+  }
+  ModeEigenSolver mode_solver(mode_op, dbc_tdof_list, 1, 16, tol,
+                              EigenvalueSolver::WhichType::LARGEST_MAGNITUDE,
+                              iodata.solver.linear, iodata.solver.boundary_mode.type, 0);
+  const double omega =
+      2.0 * std::numbers::pi *
+      iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(freq_ghz);
+  const double kn_target = omega * n_target;
+  auto result = mode_solver.Solve(omega, -kn_target * kn_target);
+  REQUIRE(result.num_converged >= 1);
+  const auto *ksp = mode_solver.GetLinearSolver();
+  REQUIRE(ksp);
+  return {mode_solver.GetPropagationConstant(0) / omega, ksp->NumTotalMult(),
+          ksp->NumTotalMultIterations()};
+}
+
 }  // namespace
 
 TEST_CASE("ModeEigenSolver PEC", "[boundarymodeoperator][Serial]")
@@ -638,6 +748,57 @@ TEST_CASE("ModeEigenSolver guarded reduced real-frequency solve",
   {
     CHECK_THAT(reduced.kn[i].real(), WithinRel(exact.kn[i].real(), 1.0e-6));
     CHECK_THAT(reduced.kn[i].imag(), WithinAbs(exact.kn[i].imag(), 1.0e-8));
+  }
+}
+
+// With a basis size limit, the reduced model is only used while its basis is within the
+// limit, which also caps its online enrichment, and otherwise all solves are exact without
+// enriching the basis. The decision only depends on the sizes of the basis and of the
+// problem, so it is the same on all processes and in all runs.
+TEST_CASE("ModeEigenSolver reduced model basis size limit",
+          "[boundarymodeoperator][Serial][Parallel]")
+{
+  constexpr int num_modes = 3, num_evaluations = 4;
+  auto exact =
+      SolveRectangularModes(1000.0, 500.0, 500.0, 4.0, 2, num_modes, [](IoData &) {});
+  REQUIRE(exact.num_converged >= num_modes);
+
+  // The basis of the two training solves is within the limit for wave ports, of 2√N vectors
+  // (55 vectors for the N = 761 unknowns of this cross-section). The eigenproblems are
+  // solved accurately, as for the guarded reduced solve above.
+  auto within = SolveRectangularModes(
+      1000.0, 500.0, 500.0, 4.0, 2, num_modes, [](IoData &) {}, true, num_evaluations, 16,
+      {0.9, 1.1}, 1.0e-3, 1.0e-12, 2.0);
+  REQUIRE(within.num_converged >= num_modes);
+  const auto &within_stats = within.reduced_stats;
+  CHECK_FALSE(within_stats.over_basis_limit);
+  CHECK(within_stats.basis_limit == 55);
+  CHECK(within_stats.basis_limit >= within_stats.offline_basis_rank);
+  CHECK(within_stats.online_basis_cap <= within_stats.basis_limit);
+  CHECK(within_stats.reduced_solves == num_evaluations);
+  CHECK(within_stats.exact_solves == 2);
+
+  // The same basis is above a limit of a single vector.
+  auto over = SolveRectangularModes(
+      1000.0, 500.0, 500.0, 4.0, 2, num_modes, [](IoData &) {}, true, num_evaluations, 16,
+      {0.9, 1.1}, 1.0e-3, 1.0e-12, 1.0e-3);
+  REQUIRE(over.num_converged >= num_modes);
+  const auto &over_stats = over.reduced_stats;
+  CHECK(over_stats.over_basis_limit);
+  CHECK(over_stats.basis_limit == 1);
+  CHECK(over_stats.reduced_solves == 0);
+  CHECK(over_stats.exact_solves == 2 + num_evaluations);
+  CHECK(over.reduced_basis_size == over_stats.offline_basis_rank);
+
+  for (const auto *result : {&within, &over})
+  {
+    REQUIRE(result->kn.size() >= num_modes);
+    REQUIRE(result->final_kn.size() >= num_modes);
+    for (int i = 0; i < num_modes; i++)
+    {
+      CHECK_THAT(result->kn[i].real(), WithinRel(exact.kn[i].real(), 1.0e-6));
+      CHECK_THAT(result->final_kn[i].real(), WithinRel(exact.kn[i].real(), 1.0e-6));
+    }
   }
 }
 
@@ -794,6 +955,92 @@ TEST_CASE("ModeEigenSolver p-multigrid preconditioning", "[boundarymodeoperator]
           imp.attributes = {1, 2, 3, 4};
           imp.Ls = 1.0e-8;
         });
+  }
+}
+
+TEST_CASE("ModeEigenSolver preconditioners of lossy modes",
+          "[boundarymodeoperator][Serial][Parallel]")
+{
+  // The linear solves of the mode eigenproblem with each preconditioner: sparse direct (the
+  // exact complex matrix, or its real-valued approximation) or p-multigrid (complex or
+  // real-valued), for loss terms which dominate the system matrix where they apply. A
+  // preconditioner without them stagnates the Krylov solver, or with left preconditioning,
+  // can meet the tolerance with an inaccurate solution.
+  struct Preconditioner
+  {
+    int mg_max_levels;
+    bool pc_mat_real, complex_coarse_solve;
+  };
+  const Preconditioner preconditioners[] = {{1, false, true},  {1, false, false},
+                                            {1, true, false},  {2, false, true},
+                                            {2, false, false}, {2, true, false}};
+  // The shift target is that of the BoundaryMode driver, above the index of the dielectric:
+  // a target equal to it would cancel the mass term of the shifted system matrix for the
+  // in-plane field in the dielectric, which makes it singular or nearly so.
+  constexpr double t = 2.0, d = 3.0, freq_ghz = 10.0, eps_d = 3.9;
+  const double n_target = std::sqrt(1.1 * eps_d);
+  auto check = [&](const std::function<void(IoData &)> &configure,
+                   std::complex<double> n_ref, double atol)
+  {
+    for (const auto &pc : preconditioners)
+    {
+      const auto result =
+          SolveParallelPlateMode(t, d, freq_ghz, n_target, pc.mg_max_levels, pc.pc_mat_real,
+                                 pc.complex_coarse_solve, configure);
+      CAPTURE(pc.mg_max_levels, pc.pc_mat_real, pc.complex_coarse_solve, result.n_eff,
+              n_ref, result.num_solves, result.num_iterations);
+      REQUIRE(result.num_solves > 0);
+      // All solves converge, in at most a fourth of the maximum number of iterations on
+      // average (here at most 34 for multigrid and 6 for the sparse direct preconditioner).
+      CHECK(result.num_iterations <= 50 * result.num_solves);
+      CHECK(std::abs(result.n_eff - n_ref) <= atol);
+    }
+  };
+
+  SECTION("Volume conductor")
+  {
+    // Aluminum (sigma = 3.77e7 S/m, skin depth 0.82 um at 10 GHz) 2 um thick on a PEC plane
+    // and oxide 3 um thick up to a second PEC plane: the current along the line flows in
+    // the volume of the aluminum, where the conductivity term of the system matrix exceeds
+    // the permittivity term by sigma / (omega eps0) = 7e7, compared to the exact solution
+    // (the discretization error is 3e-5 of the imaginary part of the effective index).
+    constexpr double sigma = 3.77e7;
+    const auto n_exact = ExactParallelPlateConductorIndex(t, d, sigma, eps_d, freq_ghz);
+    check(
+        [&](IoData &iodata)
+        {
+          auto &conductor = iodata.domains.materials.emplace_back();
+          conductor.attributes = {1};
+          conductor.sigma.s = {sigma, sigma, sigma};
+          auto &oxide = iodata.domains.materials.emplace_back();
+          oxide.attributes = {2};
+          oxide.epsilon_r.s = {eps_d, eps_d, eps_d};
+          iodata.boundaries.pec.attributes = {1, 3};
+          iodata.boundaries.pmc.attributes = {2, 4};
+        },
+        n_exact, 2.0e-4 * std::abs(n_exact.imag()));
+  }
+
+  SECTION("Resistive sheet")
+  {
+    // Oxide between a PEC plane and a resistive sheet of 1 mOhm per square, whose damping
+    // term dominates the boundary terms of the system matrix, compared to the solution
+    // with the exact complex preconditioner.
+    auto configure = [&](IoData &iodata)
+    {
+      auto &oxide = iodata.domains.materials.emplace_back();
+      oxide.attributes = {1, 2};
+      oxide.epsilon_r.s = {eps_d, eps_d, eps_d};
+      iodata.boundaries.pec.attributes = {1};
+      iodata.boundaries.pmc.attributes = {2, 4};
+      auto &sheet = iodata.boundaries.impedance.emplace_back();
+      sheet.attributes = {3};
+      sheet.Rs = 1.0e-3;
+    };
+    const auto n_ref =
+        SolveParallelPlateMode(t, d, freq_ghz, n_target, 1, false, true, configure).n_eff;
+    CHECK(n_ref.imag() < -1.0e-4 * n_ref.real());
+    check(configure, n_ref, 1.0e-3 * std::abs(n_ref.imag()));
   }
 }
 
@@ -1376,8 +1623,8 @@ TEST_CASE("Mode target distance", "[boundarymodeoperator][Serial]")
   CHECK(TargetDistance(std::complex<double>(0.0, 1.0e-3 * kt), kt) <
         TargetDistance(std::complex<double>(0.0, 10.0 * kt), kt));
 
-  // Invariant under conjugation: a near-cutoff mode may land on either side of the branch
-  // cut of the principal square root.
+  // Invariant under conjugation, so the same for the two roots ±iα of a lossless mode below
+  // cutoff.
   for (const auto kn : {kn_cpw, kn_evanescent, std::complex<double>(0.3, -0.7)})
   {
     CHECK(TargetDistance(std::conj(kn), kn_target) == TargetDistance(kn, kn_target));
@@ -1391,6 +1638,93 @@ TEST_CASE("Mode target distance", "[boundarymodeoperator][Serial]")
   CHECK(TargetDistance(std::complex<double>(nan, inf), kt) == inf);
   CHECK(TargetDistance(std::complex<double>(inf, 0.0), kt) == inf);
   CHECK(TargetDistance(kn_evanescent, kt) < inf);
+}
+
+TEST_CASE("Mode propagation constant branch", "[boundarymodeoperator][Serial]")
+{
+  using mode_assembly::PropagationConstant;
+
+  // Lossless modes, with the roundoff of the mode solve in Im{kn^2} of either sign: the
+  // root which propagates in the +n direction above cutoff, and kn = -i alpha, which decays
+  // in the +n direction, below cutoff.
+  for (const double roundoff : {-1.0e-14, 0.0, 1.0e-14})
+  {
+    CAPTURE(roundoff);
+    const auto kn_above = PropagationConstant({4.0, roundoff});
+    const auto kn_below = PropagationConstant({-4.0, roundoff});
+    CHECK(std::abs(kn_above - 2.0) <= 1.0e-14);
+    CHECK(std::abs(kn_below - std::complex<double>(0.0, -2.0)) <= 1.0e-14);
+    CHECK(kn_below.imag() < 0.0);
+  }
+
+  // At a complex frequency, the analytic continuation of the root at the real frequency
+  // Re{omega}: kn = n omega for a TEM mode, with kn^2 = n^2 omega^2, also for |Im{omega}| >
+  // Re{omega}, where Re{kn^2} < 0, and, for a mode with kn^2 = n^2 omega^2 - kc^2, the
+  // continuation of the root decaying below cutoff, or of the propagating one above.
+  const double n = 1.5, kc = 3.0;
+  for (const auto omega : {std::complex<double>(1.0, 0.1), std::complex<double>(1.0, 2.0),
+                           std::complex<double>(1.0, 10.0)})
+  {
+    CAPTURE(omega);
+    CHECK(std::abs(PropagationConstant(n * n * omega * omega, omega) - n * omega) <=
+          1.0e-14 * std::abs(n * omega));
+  }
+  for (const double omega_r : {1.0, 1.9, 2.1, 3.0})
+  {
+    CAPTURE(omega_r);
+    auto kn2 = [&](std::complex<double> omega) { return n * n * omega * omega - kc * kc; };
+    const auto kn_real = PropagationConstant(kn2(omega_r), omega_r);
+    CHECK(((omega_r < kc / n) ? kn_real.imag() < 0.0 : kn_real.real() > 0.0));
+    for (const double omega_i : {1.0e-3, 1.0e-1, 1.0})
+    {
+      CAPTURE(omega_i);
+      // Continuous along omega_r + i t, for t from 0 to omega_i.
+      std::complex<double> kn_prev = kn_real;
+      for (int k = 1; k <= 1000; k++)
+      {
+        const std::complex<double> omega(omega_r, omega_i * k / 1000.0);
+        const auto kn = PropagationConstant(kn2(omega), omega);
+        CHECK(std::abs(kn - kn_prev) <= 0.1 * std::abs(kn_prev));
+        kn_prev = kn;
+      }
+    }
+  }
+
+  // Passive lossy modes, with Im{kn^2} < 0, above, at, and below cutoff: the principal
+  // root, with Re{kn} >= 0 and Im{kn} <= 0, continuous through cutoff.
+  for (const auto kn2 :
+       {std::complex<double>(1.0, -0.5), std::complex<double>(1.0e-20, -0.5),
+        std::complex<double>(0.0, -0.5), std::complex<double>(-1.0e-20, -0.5),
+        std::complex<double>(-1.0, -0.5)})
+  {
+    CAPTURE(kn2);
+    const auto kn = PropagationConstant(kn2);
+    CHECK(std::abs(kn - std::sqrt(kn2)) <= 1.0e-14 * std::abs(kn));
+    CHECK(kn.real() >= 0.0);
+    CHECK(kn.imag() <= 0.0);
+    CHECK(std::abs(kn * kn - kn2) <= 1.0e-14 * std::abs(kn2));
+  }
+}
+
+TEST_CASE("ModeEigenSolver takes the decaying root below cutoff",
+          "[boundarymodeoperator][Serial][Parallel]")
+{
+  // Below the TE10 cutoff (75 GHz for this 1000 x 500 um guide with eps = 4) every mode of
+  // the lossless guide is evanescent, with kn^2 < 0 up to the roundoff of the mode solve,
+  // whose sign selected the root returned by the principal square root: kn = -i alpha,
+  // which decays in the +n direction, or the growing kn = +i alpha.
+  for (const double freq_ghz : {20.0, 35.0, 50.0, 65.0})
+  {
+    auto result =
+        SolveRectangularModes(1000.0, 500.0, freq_ghz, 4.0, 2, 3, [](IoData &) {});
+    REQUIRE(result.num_converged >= 3);
+    for (const auto &kn : result.kn)
+    {
+      CAPTURE(freq_ghz, kn);
+      CHECK(kn.imag() < 0.0);
+      CHECK(std::abs(kn.real()) <= 1.0e-6 * std::abs(kn));
+    }
+  }
 }
 
 TEST_CASE("ModeEigenSolver ranks evanescent modes below cutoff by attenuation",
@@ -1411,6 +1745,7 @@ TEST_CASE("ModeEigenSolver ranks evanescent modes below cutoff by attenuation",
   {
     CAPTURE(i, exact.kn[i]);
     REQUIRE(std::abs(exact.kn[i].real()) <= 1.0e-6 * std::abs(exact.kn[i].imag()));
+    CHECK(exact.kn[i].imag() < 0.0);
     if (i > 0)
     {
       CHECK(std::abs(exact.kn[i - 1].imag()) <=
@@ -1424,8 +1759,8 @@ TEST_CASE("ModeEigenSolver ranks evanescent modes below cutoff by attenuation",
                    electromagnetics::c0_ * 1.0e-6;
   CHECK_THAT(std::abs(exact.kn[0].imag()), WithinRel(std::sqrt(kc * kc - k * k), 1.0e-3));
 
-  // Train the reduced model below cutoff as well (0.9 and 1.1 times the frequency). Compare
-  // kn^2, which does not depend on the sign of i|kn| returned for an evanescent mode.
+  // Train the reduced model below cutoff as well (0.9 and 1.1 times the frequency). The
+  // reduced solve takes the same decaying root as the exact one.
   auto reduced = SolveRectangularModes(
       1000.0, 500.0, freq_ghz, epsilon_r, 2, num_modes, [](IoData &) {}, true);
   REQUIRE(reduced.reduced_stats.reduced_solves == 1);
@@ -1433,8 +1768,7 @@ TEST_CASE("ModeEigenSolver ranks evanescent modes below cutoff by attenuation",
   for (int i = 0; i < num_modes; i++)
   {
     CAPTURE(i, reduced.kn[i], exact.kn[i]);
-    CHECK(std::abs(reduced.kn[i] * reduced.kn[i] - exact.kn[i] * exact.kn[i]) <=
-          1.0e-6 * std::norm(exact.kn[i]));
+    CHECK(std::abs(reduced.kn[i] - exact.kn[i]) <= 1.0e-6 * std::abs(exact.kn[i]));
   }
 }
 

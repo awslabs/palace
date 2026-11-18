@@ -113,6 +113,17 @@ download_patch(HYPRE_PATCH_FILES "${CMAKE_BINARY_DIR}/extern/hypre-patches"
   bb064764fda6d2fcf853821cfad54415a5a234bf67420a0b6fd0c6c59dbe902f
 )
 
+# Multicomponent vectors in hybrid Gauss-Seidel relaxation and Gaussian elimination, for
+# BoomerAMG solves of several right-hand sides with one message per neighbor (the
+# implementation of https://github.com/hypre-space/hypre/pull/1652, with fixes, see
+# https://github.com/hypre-space/hypre/issues/1653), hosted in this repository until
+# hypre has a commit for it
+download_patch(HYPRE_PATCH_FILES "${CMAKE_BINARY_DIR}/extern/hypre-patches"
+  hypre_multicomponent_relax.diff
+  "https://raw.githubusercontent.com/awslabs/palace/3cc6475f2c247c8f35588b7bbf4f06e58e9fa499/extern/patch/hypre/hypre_multicomponent_relax.diff"
+  fb6f85c347503c9b1d5de7b10caaa542816c3b33bb2af4f73ba10651a7743e2a
+)
+
 include(ExternalProject)
 ExternalProject_Add(hypre
   DEPENDS           ${HYPRE_DEPENDENCIES}

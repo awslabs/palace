@@ -4,7 +4,9 @@
 #ifndef PALACE_LINALG_VECTOR_HPP
 #define PALACE_LINALG_VECTOR_HPP
 
+#include <array>
 #include <complex>
+#include <span>
 #include <vector>
 #include <mfem.hpp>
 #include "utils/communication.hpp"
@@ -90,10 +92,6 @@ public:
     *this = std::complex<double>(s, 0.0);
     return *this;
   }
-
-  // Set the vector from an array of blocks and coefficients, without resizing.
-  void SetBlocks(const std::vector<const ComplexVector *> &y,
-                 const std::vector<std::complex<double>> &s);
 
   // Scale all entries by s.
   ComplexVector &operator*=(std::complex<double> s);
@@ -243,6 +241,45 @@ void SetRandomSign(MPI_Comm comm, VecType &x, int seed = 0);
 double LocalDot(const Vector &x, const Vector &y);
 std::complex<double> LocalDot(const ComplexVector &x, const ComplexVector &y);
 
+// Return the sums over i in [begin, end) of the M terms f(i), on the host. Each sum is
+// split into several partial sums, which do not wait on each other's additions and are
+// added in a fixed order.
+template <int M, typename Function>
+inline std::array<double, M> HostSums(int begin, int end, Function &&f)
+{
+  constexpr int K = 8;
+  double s[M][K] = {};
+  auto Add = [&](int i, int k)
+  {
+    const std::array<double, M> t = f(i);
+    for (int m = 0; m < M; m++)
+    {
+      s[m][k] += t[m];
+    }
+  };
+  int i = begin;
+  for (; i + K <= end; i += K)
+  {
+    for (int k = 0; k < K; k++)
+    {
+      Add(i + k, k);
+    }
+  }
+  for (int k = 0; i < end; i++, k++)
+  {
+    Add(i, k);
+  }
+  std::array<double, M> sum = {};
+  for (int m = 0; m < M; m++)
+  {
+    for (int k = 0; k < K; k++)
+    {
+      sum[m] += s[m][k];
+    }
+  }
+  return sum;
+}
+
 // Calculate the parallel inner product yᴴ x or yᵀ x.
 template <typename VecType>
 inline auto Dot(MPI_Comm comm, const VecType &x, const VecType &y)
@@ -314,6 +351,23 @@ void AXPBY(ScalarType alpha, const VecType &x, ScalarType beta, VecType &y);
 template <typename VecType, typename ScalarType>
 void AXPBYPCZ(ScalarType alpha, const VecType &x, ScalarType beta, const VecType &y,
               ScalarType gamma, VecType &z);
+
+// Additions y += alpha * x and then x = z + beta * x, in one pass over the vectors (the
+// updates of the solution and the search direction in the conjugate gradient method).
+template <typename VecType, typename ScalarType>
+void AXPYAndAYPX(ScalarType alpha, VecType &x, VecType &y, ScalarType beta,
+                 const VecType &z);
+
+// Linear combination y = Σⱼ c[j] X[j] of the real vectors X with complex or real
+// coefficients c, or y += Σⱼ c[j] X[j] if add. y must not alias any X[j].
+void LinearCombination(std::span<const Vector> X, std::span<const std::complex<double>> c,
+                       ComplexVector &y, bool add = false);
+void LinearCombination(std::span<const Vector> X, std::span<const double> c, Vector &y,
+                       bool add = false);
+
+// Local inner products H[i + j m] = X[i] · Y[j] of the real vectors X (m of them) and
+// Y, without the global reduction. On the host every vector is read once.
+void LocalDots(std::span<const Vector> X, std::span<const Vector *const> Y, double *H);
 
 // Compute element-wise square root, optionally with scaling (multiplied before the square
 // root).

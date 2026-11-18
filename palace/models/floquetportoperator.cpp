@@ -3,6 +3,7 @@
 
 #include "floquetportoperator.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <numbers>
 #include <fmt/core.h>
@@ -33,27 +34,8 @@ void LowRankComplexOperator::Mult(const ComplexVector &x, ComplexVector &y) cons
 void LowRankComplexOperator::AddMult(const ComplexVector &x, ComplexVector &y,
                                      const std::complex<double> a) const
 {
-  // The Floquet DtN operator: F = Σ g_k v_k v_k^H / |Γ| (with 1/|Γ| absorbed into g_k).
-  for (const auto &t : terms)
-  {
-    // Hermitian dot product: dot = v^H x = Σ conj(v_j) x_j
-    // = (v_r · x_r + v_i · x_i) + i(v_r · x_i - v_i · x_r)
-    double dot_r =
-        linalg::Dot(comm, t.v->Real(), x.Real()) + linalg::Dot(comm, t.v->Imag(), x.Imag());
-    double dot_i =
-        linalg::Dot(comm, t.v->Real(), x.Imag()) - linalg::Dot(comm, t.v->Imag(), x.Real());
-
-    // Compute s = a * g * dot (complex scalar)
-    std::complex<double> s = a * t.g * std::complex<double>(dot_r, dot_i);
-
-    // y += s * v = (s_r + i s_i)(v_r + i v_i)
-    //    Real part: s_r v_r - s_i v_i
-    //    Imag part: s_i v_r + s_r v_i
-    y.Real().Add(s.real(), t.v->Real());
-    y.Real().Add(-s.imag(), t.v->Imag());
-    y.Imag().Add(s.imag(), t.v->Real());
-    y.Imag().Add(s.real(), t.v->Imag());
-  }
+  // The Floquet DtN operator: F = Σ g_k v_k v_kᴴ / |Γ| (with 1/|Γ| absorbed into g_k).
+  update.AddMult(x, y, a);
 }
 
 namespace
@@ -738,14 +720,12 @@ std::complex<double> FloquetPortData::ComputeDtNFullCoeff(const FloquetOrder &or
   return 0.0;
 }
 
-std::unique_ptr<ComplexOperator> FloquetPortData::GetBoundaryOperator() const
+void FloquetPortData::AddBoundaryTerms(std::vector<const ComplexVector *> &v,
+                                       std::vector<std::complex<double>> &g) const
 {
-  int n = orders.empty() ? 0 : static_cast<int>(orders[0].v[0].Size());
-
   // Robin+correction: the system matrix includes a Robin BC (iγ₀/μ × M_bdr) for the
   // (0,0) mode. This low-rank operator adds per-mode corrections g_k - g_uniform so
   // that each mode sees its correct DtN eigenvalue.
-  auto op = std::make_unique<LowRankComplexOperator>(comm, n);
   for (const auto &order : orders)
   {
     if (!HasFlag(order.use, FloquetModeUse::Dtn))
@@ -755,14 +735,14 @@ std::unique_ptr<ComplexOperator> FloquetPortData::GetBoundaryOperator() const
     for (bool is_te : {true, false})
     {
       auto p = PolIndex(is_te);
-      auto g = ComputeDtNCorrectionCoeff(order, is_te);
-      if (g != 0.0)
+      auto g_k = ComputeDtNCorrectionCoeff(order, is_te);
+      if (g_k != 0.0)
       {
-        op->AddTerm(&order.v[p], g);
+        v.push_back(&order.v[p]);
+        g.push_back(g_k);
       }
     }
   }
-  return op;
 }
 
 FloquetPortData::IncidentNormalization
@@ -865,48 +845,47 @@ FloquetPortData::GetAllSParameters(const GridFunction &E, bool subtract_incident
   return result;
 }
 
+std::array<std::complex<double>, 2>
+FloquetPortData::GetExcitationCoefficients(double omega) const
+{
+  // s_p = c_inc × 2i × α_p × λ_p / μ_r for the polarizations of the incident field.
+  const auto norm = ComputeIncidentNormalization(omega);
+  auto coeff = [&](std::complex<double> alpha, double lambda) -> std::complex<double>
+  {
+    return (std::abs(alpha) < 1e-14) ? 0.0
+                                     : norm.c_inc * 2.0 * 1i * alpha * lambda / mu_r_port;
+  };
+  std::array<std::complex<double>, 2> s;
+  s[PolIndex(true)] = coeff(inc_alpha_te, norm.lambda_te_00);
+  s[PolIndex(false)] = coeff(inc_alpha_tm, norm.lambda_tm_00);
+  return s;
+}
+
 bool FloquetPortData::AddExcitationVector(double omega, ComplexVector &RHS) const
 {
-  // Collect the (0,0) TE and TM modes for the incident excitation.
-  const ComplexVector *mode_te = nullptr, *mode_tm = nullptr;
-  for (const auto &order : orders)
-  {
-    if (order.m == 0 && order.n == 0)
-    {
-      mode_te = &order.v[PolIndex(true)];
-      mode_tm = &order.v[PolIndex(false)];
-      break;
-    }
-  }
-  if (!mode_te && !mode_tm)
+  // f = Σ_p s_p × conj(v_p) for the (0,0) TE and TM modes: conj(v) appears because the
+  // bilinear form uses v^T (not v^H), and the incident field ê exp(+iB·r) projects to
+  // conj(v).
+  const auto it = std::ranges::find_if(orders, [](const FloquetOrder &order)
+                                       { return order.m == 0 && order.n == 0; });
+  if (it == orders.end())
   {
     return false;
   }
-
-  auto norm = ComputeIncidentNormalization(omega);
-  double lambda_te = norm.lambda_te_00;
-  double lambda_tm = norm.lambda_tm_00;
-  double c_inc = norm.c_inc;
-
-  // f = Σ_p c_inc × 2i × α_p × λ_p / μ_r × conj(v_p)
-  // conj(v) appears because the bilinear form uses v^T (not v^H), and the incident
-  // field ê exp(+iB·r) projects to conj(v).
-  auto add_pol = [&](const ComplexVector *mode, std::complex<double> alpha, double lambda)
+  const auto s = GetExcitationCoefficients(omega);
+  for (int p = 0; p < 2; p++)
   {
-    if (!mode || std::abs(alpha) < 1e-14)
+    if (s[p] == 0.0)
     {
-      return;
+      continue;
     }
-    // s = c_inc × 2i × alpha × lambda / mu_r (complex scalar)
-    std::complex<double> s = c_inc * 2.0 * 1i * alpha * lambda / mu_r_port;
     // RHS += s × conj(v) = (s_r + i s_i)(v_r - i v_i)
-    RHS.Real().Add(s.real(), mode->Real());
-    RHS.Real().Add(s.imag(), mode->Imag());
-    RHS.Imag().Add(s.imag(), mode->Real());
-    RHS.Imag().Add(-s.real(), mode->Imag());
-  };
-  add_pol(mode_te, inc_alpha_te, lambda_te);
-  add_pol(mode_tm, inc_alpha_tm, lambda_tm);
+    const auto &mode = it->v[p];
+    RHS.Real().Add(s[p].real(), mode.Real());
+    RHS.Real().Add(s[p].imag(), mode.Imag());
+    RHS.Imag().Add(s[p].imag(), mode.Real());
+    RHS.Imag().Add(-s[p].real(), mode.Imag());
+  }
   return true;
 }
 
@@ -919,7 +898,7 @@ FloquetPortOperator::FloquetPortOperator(
     const config::PeriodicBoundaryData &periodic, ProblemType problem_type,
     const Units &units, const MaterialOperator &mat_op_ref,
     mfem::ParFiniteElementSpace &nd_fespace)
-  : mat_op(mat_op_ref)
+  : mat_op(mat_op_ref), comm(nd_fespace.GetComm()), n(nd_fespace.GetTrueVSize())
 {
   if (floquetport.empty())
   {
@@ -955,23 +934,14 @@ std::unique_ptr<ComplexOperator> FloquetPortOperator::GetExtraSystemOperator(dou
 
   Initialize(omega);
 
-  // Combine boundary operators from all ports.
-  // For a single port, return it directly. For multiple, chain with SumComplexOperator.
-  std::unique_ptr<ComplexOperator> combined;
-  for (auto &[idx, port] : ports)
+  // A single operator over all ports, so each product needs one reduction.
+  std::vector<const ComplexVector *> v;
+  std::vector<std::complex<double>> g;
+  for (const auto &[idx, port] : ports)
   {
-    auto F = port.GetBoundaryOperator();
-    if (!combined)
-    {
-      combined = std::move(F);
-    }
-    else
-    {
-      combined = std::make_unique<SumComplexOperator>(std::move(combined), std::move(F));
-    }
+    port.AddBoundaryTerms(v, g);
   }
-
-  return combined;
+  return std::make_unique<LowRankComplexOperator>(comm, n, v, g);
 }
 
 void FloquetPortOperator::AddExtraSystemBdrCoefficients(double omega,

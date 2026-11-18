@@ -30,7 +30,12 @@ The EPR framework can be used to characterize the dissipative elements in the mo
 In particular, lumped ports with nonzero resistance in the model will trigger coupling rate
 and quality factor calculations based on input-output (I-O) line coupling loss: By
 specifying resistive lumped ports in the model, the mode coupling quality factors will be
-computed as ``Q_{ml} = \omega_m/\kappa_{ml}``. The output file `port-Q.csv` will be created
+computed as ``Q_{ml} = \mathrm{Re}\{\omega_m\}/|\kappa_{ml}|``. The magnitude of the coupling
+rate ``\kappa_{ml}`` is the power dissipated in the resistive boundary of port ``l`` divided
+by the electric energy of mode ``m``, and its sign is the sign of the real part of the port
+current. This power includes field that does not match the voltage mode of the port, so
+when the port does not match the field it can be much larger than the I-O line coupling
+loss ``|V_{ml}|^2/(2R_l)``. The output file `port-Q.csv` will be created
 in the output directory containing these mode quality factor contributions. For bulk and
 interface dielectric loss calculations, which are not unique to the eigenmode simulation
 type, see the sections [Domain postprocessing](postprocessing.md#Domain-postprocessing) and
@@ -263,14 +268,19 @@ The computed propagation constants ``k_n`` and effective indices
 ``n_\text{eff} = k_n / k_0`` (where ``k_0 = \omega / c_0`` is the free-space wavenumber)
 are written to an ASCII file named `mode-kn.csv`, in the directory specified by
 [`config["Problem"]["Output"]`](../config/reference.md#config-problem-output). Both
-backward and absolute error estimates are included for each eigenvalue.
+backward and absolute error estimates are included for each eigenvalue. For a mode below
+cutoff, ``k_n`` is the root with ``\text{Im}\{k_n\} < 0``, for which the mode decays in the
+direction of propagation.
 
 When impedance postprocessing boundaries are specified under
 [`config["Boundaries"]["Postprocessing"]["Impedance"]`](../config/reference.md#config-boundaries-postprocessing-impedance),
-the characteristic impedance is computed using the power-voltage definition
-``Z_\text{PV} = |V|^2 / P`` and, when a current path is also specified, the voltage-current
-definition ``Z_\text{VI} = V / I``. Per-unit-length inductance and capacitance are derived
-from these quantities. The results are written to `mode-Z.csv`. Similarly, when voltage
+the complex characteristic impedance is computed using the power-voltage definition
+``Z_\text{PV} = |V|^2 / P^*`` and, when a current path is also specified, the voltage-current
+definition ``Z_\text{VI} = V / I`` (see the [reference](../reference.md) for details). The
+per-unit-length inductance ``L = \text{Re}\{n_\text{eff} Z\} / c_0`` and capacitance
+``C = \text{Re}\{n_\text{eff} / Z\} / c_0`` are derived from each impedance ``Z``, from the
+series impedance ``i k_n Z = R + i\omega L`` and shunt admittance ``i k_n / Z = G + i\omega C``
+per unit length of the line. The results are written to `mode-Z.csv`. Similarly, when voltage
 postprocessing boundaries are specified under
 [`config["Boundaries"]["Postprocessing"]["Voltage"]`](../config/reference.md#config-boundaries-postprocessing-voltage),
 the complex mode voltages are written to `mode-V.csv`.

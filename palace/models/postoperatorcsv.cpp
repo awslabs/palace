@@ -153,7 +153,6 @@ Measurement Measurement::Dimensionalize(const Units &units,
 
     for (auto &[idx, result] : measurement_cache.mode_data.impedance)
     {
-      const double n_eff_re = measurement_cache.mode_data.n_eff.real();
       if (result.has_impedance)
       {
         result.Z0 *= electromagnetics::Z0_;  // nondim → Ohm
@@ -511,8 +510,8 @@ void PostOperatorCSV<solver_t>::MoveTableValidateReload(
 template <ProblemType solver_t>
 void PostOperatorCSV<solver_t>::WriteTable(TableWithCSVFile &table)
 {
-  // Deferred tables are written together at a step boundary (the end of PrintAllCSVData
-  // or PrintReducedCSVData), so every file on disk ends on the same row.
+  // Deferred tables are written together at a step boundary (the end of PrintAllCSVData),
+  // so every file on disk ends on the same row.
   if (!defer_table_writes)
   {
     table.WriteTableIncremental();
@@ -1069,6 +1068,20 @@ void PostOperatorCSV<solver_t>::InitializePortVI(const SpaceOperator &fem_op)
   port_V = TableWithCSVFile(post_dir / "port-V.csv", reload_table);
   port_I = TableWithCSVFile(post_dir / "port-I.csv", reload_table);
 
+  // The incident voltages and currents are written as real and imaginary parts when any
+  // excited lumped port has a complex excitation weight, decided once for all excitations
+  // so that the columns of every excitation have the same layout. Otherwise the columns
+  // are unchanged from the unweighted case.
+  complex_incident_port_VI = false;
+  if constexpr (solver_t == ProblemType::DRIVEN || solver_t == ProblemType::TRANSIENT)
+  {
+    for (const auto &[idx, data] : lumped_port_op)
+    {
+      complex_incident_port_VI =
+          complex_incident_port_VI || data.HasComplexExcitationWeight();
+    }
+  }
+
   Table tV;  // Define table locally first due to potential reload.
   Table tI;
 
@@ -1088,10 +1101,24 @@ void PostOperatorCSV<solver_t>::InitializePortVI(const SpaceOperator &fem_op)
       auto ex_spec = fem_op.GetPortExcitations().excitations.at(ex_idx);
       for (const auto &idx : ex_spec.lumped_port)
       {
-        tV.insert(fmt::format("inc{}_{}", idx, ex_idx),
-                  fmt::format("V_inc[{}]{} (V)", idx, ex_label), ex_idx);
-        tI.insert(fmt::format("inc{}_{}", idx, ex_idx),
-                  fmt::format("I_inc[{}]{} (A)", idx, ex_label), ex_idx);
+        if (complex_incident_port_VI)
+        {
+          tV.insert(fmt::format("reinc{}_{}", idx, ex_idx),
+                    fmt::format("Re{{V_inc[{}]{}}} (V)", idx, ex_label), ex_idx);
+          tV.insert(fmt::format("iminc{}_{}", idx, ex_idx),
+                    fmt::format("Im{{V_inc[{}]{}}} (V)", idx, ex_label), ex_idx);
+          tI.insert(fmt::format("reinc{}_{}", idx, ex_idx),
+                    fmt::format("Re{{I_inc[{}]{}}} (A)", idx, ex_label), ex_idx);
+          tI.insert(fmt::format("iminc{}_{}", idx, ex_idx),
+                    fmt::format("Im{{I_inc[{}]{}}} (A)", idx, ex_label), ex_idx);
+        }
+        else
+        {
+          tV.insert(fmt::format("inc{}_{}", idx, ex_idx),
+                    fmt::format("V_inc[{}]{} (V)", idx, ex_label), ex_idx);
+          tI.insert(fmt::format("inc{}_{}", idx, ex_idx),
+                    fmt::format("I_inc[{}]{} (A)", idx, ex_label), ex_idx);
+        }
       }
     }
     for (const auto &[idx, data] : lumped_port_op)
@@ -1172,16 +1199,32 @@ void PostOperatorCSV<solver_t>::PrintPortVI(const LumpedPortOperator &lumped_por
       // Cast to avoid compiler warnings about types.
       if (static_cast<std::size_t>(data.excitation) == m_ex_idx)
       {
+        // Weighted incident voltage a V_inc,0 and current a I_inc,0 of the port, with the
+        // weight a = A exp(iφ) (a = 1 without weight) and the unit-power quantities V_inc,0
+        // and I_inc,0 = P_inc,0 / V_inc,0 (GetExcitationVoltage is the unit-power one).
         auto Jcoeff = measurement_cache.Jcoeff_excitation;
-        double V_inc = data.GetExcitationVoltage() * Jcoeff;
-        double I_inc = (std::abs(V_inc) > 0.0)
-                           ? data.GetExcitationPower() * Jcoeff * Jcoeff / V_inc
-                           : 0.0;
+        const std::complex<double> V_inc = data.GetIncidentVoltage() * Jcoeff;
+        const std::complex<double> I_inc = data.GetIncidentCurrent() * Jcoeff;
 
-        port_V->table[fmt::format("inc{}_{}", idx, m_ex_idx)]
-            << units.Dimensionalize<Units::ValueType::VOLTAGE>(V_inc);
-        port_I->table[fmt::format("inc{}_{}", idx, m_ex_idx)]
-            << units.Dimensionalize<Units::ValueType::CURRENT>(I_inc);
+        if (complex_incident_port_VI)
+        {
+          port_V->table[fmt::format("reinc{}_{}", idx, m_ex_idx)]
+              << units.Dimensionalize<Units::ValueType::VOLTAGE>(V_inc.real());
+          port_V->table[fmt::format("iminc{}_{}", idx, m_ex_idx)]
+              << units.Dimensionalize<Units::ValueType::VOLTAGE>(V_inc.imag());
+          port_I->table[fmt::format("reinc{}_{}", idx, m_ex_idx)]
+              << units.Dimensionalize<Units::ValueType::CURRENT>(I_inc.real());
+          port_I->table[fmt::format("iminc{}_{}", idx, m_ex_idx)]
+              << units.Dimensionalize<Units::ValueType::CURRENT>(I_inc.imag());
+        }
+        else
+        {
+          // Real excitation weight: the imaginary parts vanish.
+          port_V->table[fmt::format("inc{}_{}", idx, m_ex_idx)]
+              << units.Dimensionalize<Units::ValueType::VOLTAGE>(V_inc.real());
+          port_I->table[fmt::format("inc{}_{}", idx, m_ex_idx)]
+              << units.Dimensionalize<Units::ValueType::CURRENT>(I_inc.real());
+        }
       }
     }
   }
@@ -1626,12 +1669,16 @@ void PostOperatorCSV<solver_t>::InitializeModeZ(const std::vector<int> &indices,
     auto key = [&](auto &&name) { return fmt::format("{}[{}]", name, idx); };
     auto hdr = [&](auto &&name, auto &&unit)
     { return fmt::format("{}[{}] ({})", name, idx, unit); };
-    mode_Z->table.insert(key("Z_PV"), hdr("Z_PV", "Ohm"));
+    auto re_hdr = [&](auto &&name) { return fmt::format("Re{{{}[{}]}} (Ohm)", name, idx); };
+    auto im_hdr = [&](auto &&name) { return fmt::format("Im{{{}[{}]}} (Ohm)", name, idx); };
+    mode_Z->table.insert(key("re_Z_PV"), re_hdr("Z_PV"));
+    mode_Z->table.insert(key("im_Z_PV"), im_hdr("Z_PV"));
     mode_Z->table.insert(key("L_PV"), hdr("L_PV", "H/m"));
     mode_Z->table.insert(key("C_PV"), hdr("C_PV", "F/m"));
     if (has_current)
     {
-      mode_Z->table.insert(key("Z_VI"), hdr("Z_VI", "Ohm"));
+      mode_Z->table.insert(key("re_Z_VI"), re_hdr("Z_VI"));
+      mode_Z->table.insert(key("im_Z_VI"), im_hdr("Z_VI"));
       mode_Z->table.insert(key("L_VI"), hdr("L_VI", "H/m"));
       mode_Z->table.insert(key("C_VI"), hdr("C_VI", "F/m"));
     }
@@ -1648,22 +1695,28 @@ void PostOperatorCSV<solver_t>::PrintModeZ()
     return;
   }
   mode_Z->table["idx"] << row_idx_v;
-  const double n_eff_re = measurement_cache.mode_data.n_eff.real();
+  // Per-unit-length inductance and capacitance of the line with characteristic impedance Z
+  // and propagation constant kₙ = n_eff ω / c₀, from its series impedance i kₙ Z = R + iωL
+  // and shunt admittance i kₙ / Z = G + iωC per unit length: L = Re{n_eff Z} / c₀ and C =
+  // Re{n_eff / Z} / c₀, which are n_eff Z / c₀ and n_eff / (Z c₀) for a lossless mode.
+  const std::complex<double> n_eff = measurement_cache.mode_data.n_eff;
   for (const auto &[idx, result] : measurement_cache.mode_data.impedance)
   {
     const auto port_idx = idx;
     auto s = [&](auto &&name) { return fmt::format("{}[{}]", name, port_idx); };
     if (result.has_impedance)
     {
-      mode_Z->table[s("Z_PV")] << result.Z0;
-      mode_Z->table[s("L_PV")] << result.Z0 * n_eff_re / electromagnetics::c0_;
-      mode_Z->table[s("C_PV")] << n_eff_re / (result.Z0 * electromagnetics::c0_);
+      mode_Z->table[s("re_Z_PV")] << result.Z0.real();
+      mode_Z->table[s("im_Z_PV")] << result.Z0.imag();
+      mode_Z->table[s("L_PV")] << (n_eff * result.Z0).real() / electromagnetics::c0_;
+      mode_Z->table[s("C_PV")] << (n_eff / result.Z0).real() / electromagnetics::c0_;
     }
     if (result.has_vi_impedance)
     {
-      mode_Z->table[s("Z_VI")] << result.Z_VI;
-      mode_Z->table[s("L_VI")] << result.Z_VI * n_eff_re / electromagnetics::c0_;
-      mode_Z->table[s("C_VI")] << n_eff_re / (result.Z_VI * electromagnetics::c0_);
+      mode_Z->table[s("re_Z_VI")] << result.Z_VI.real();
+      mode_Z->table[s("im_Z_VI")] << result.Z_VI.imag();
+      mode_Z->table[s("L_VI")] << (n_eff * result.Z_VI).real() / electromagnetics::c0_;
+      mode_Z->table[s("C_VI")] << (n_eff / result.Z_VI).real() / electromagnetics::c0_;
     }
   }
   WriteTable(*mode_Z);

@@ -21,6 +21,7 @@
 #include "fem/gridfunction.hpp"
 #include "fem/integrator.hpp"
 #include "fem/libceed/basis.hpp"
+#include "fem/libceed/ceed.hpp"
 #include "fem/libceed/coefficient.hpp"
 #include "fem/libceed/functional.hpp"
 #include "fem/libceed/integrator.hpp"
@@ -30,6 +31,7 @@
 #include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/diagnostic.hpp"
+#include "utils/geodata.hpp"
 
 PalacePragmaDiagnosticPush
 PalacePragmaDiagnosticDisableUnused
@@ -233,6 +235,7 @@ struct ElemPlan
   std::vector<mfem::IntegrationPoint> pts_a, pts_b;
   bool flip = false;  // Boundary element and face have the same orientation (o % 2 == 0),
                       // legacy coefficients invert the boundary element normal
+  bool trace_b = false;  // Far field on a two-sided boundary: trace elem_b, not elem_a
   // A side whose volume element is a face neighbor (ghost) on another process: its field
   // is not in the local vector, so it is pulled via FaceNbrFieldExchange and fed to the
   // operator at the mapped points (only Elem2 can be a ghost, so at most one side).
@@ -309,36 +312,6 @@ MakeCanonicalTracePointKey(mfem::Geometry::Type vol_geom, mfem::Geometry::Type f
   AppendPointRuleSignature(key, canonical_pts);
   return key;
 }
-
-// Holds libCEED object references created during operator assembly for destruction once
-// the assembled operator owns them.
-struct CeedAssemblyScratch
-{
-  Ceed ceed;
-  std::vector<CeedVector> vecs;
-  std::vector<CeedElemRestriction> restrs;
-  std::vector<CeedBasis> bases;
-
-  CeedAssemblyScratch(Ceed ceed) : ceed(ceed) {}
-  CeedAssemblyScratch(const CeedAssemblyScratch &) = delete;
-  CeedAssemblyScratch &operator=(const CeedAssemblyScratch &) = delete;
-
-  ~CeedAssemblyScratch()
-  {
-    for (auto &v : vecs)
-    {
-      PalaceCeedCall(ceed, CeedVectorDestroy(&v));
-    }
-    for (auto &r : restrs)
-    {
-      PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&r));
-    }
-    for (auto &b : bases)
-    {
-      PalaceCeedCall(ceed, CeedBasisDestroy(&b));
-    }
-  }
-};
 
 }  // namespace
 
@@ -909,6 +882,17 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
   const mfem::FiniteElementSpace &mesh_fespace = *pmesh.GetNodes()->FESpace();
   const bool need_field = (kind != KernelKind::AREA);
   Ceed ceed = ceed::internal::GetCeedObjects()[0];
+  // Far fields trace the interior faces from the side facing the center of the bounding
+  // box of the marked boundary elements (collective).
+  mfem::Vector farfield_x0;
+  if (kind == KernelKind::FARFIELD)
+  {
+    mfem::Vector bbmin, bbmax;
+    mesh::GetAxisAlignedBoundingBox(pmesh, bdr_attr_marker, true, bbmin, bbmax);
+    farfield_x0 = bbmin;
+    farfield_x0 += bbmax;
+    farfield_x0 *= 0.5;
+  }
   // Plan the evaluation for each marked boundary element and group it by its fixed
   // mapped face/subface transformation. The process-lifetime registry key also carries
   // the exact mapped point-rule signature, so equal canonical maps reuse tabulations
@@ -1121,6 +1105,22 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       AddGroup(plan.elem_b, plan.ghost_b, vol_geom_b, plan.pts_b, plan.point_key_b, -1,
                false, mfem::Geometry::INVALID, {}, {}, 1.0, scale_b);
     }
+    else if (kind == KernelKind::FARFIELD && two_sided)
+    {
+      // Far fields trace the one side chosen in the plan, with the normal into it: the
+      // boundary element normal points into elem_a, so side B flips it (as for the
+      // two-sided surface flux).
+      if (plan.trace_b)
+      {
+        AddGroup(plan.elem_b, plan.ghost_b, vol_geom_b, plan.pts_b, plan.point_key_b, -1,
+                 false, mfem::Geometry::INVALID, {}, {}, 1.0, -1.0);
+      }
+      else
+      {
+        AddGroup(plan.elem_a, plan.ghost_a, vol_geom_a, plan.pts_a, plan.point_key_a, -1,
+                 false, mfem::Geometry::INVALID, {}, {}, 1.0, 1.0);
+      }
+    }
     else if (buffer_kind && two_sided)
     {
       // Fixed mapped rules are side-specific. Split separable visualization quantities
@@ -1238,15 +1238,27 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       }
       else if (kind == KernelKind::FARFIELD)
       {
+        plan.elem_a = FET.Elem1No;
         if (has_elem2)
         {
-          // Far-field computations are only supported on external boundaries. Record
-          // local invalidity but keep participating in subsequent collectives; another
-          // rank may own no element of this interior surface.
-          valid = false;
-          continue;
+          // Interior surface: trace the inside, as the only element of an external
+          // boundary, the side facing the center x0: its outward normal at the face center
+          // points away from x0. The choice depends on geometry only, so it does not
+          // depend on the partitioning (each boundary element is held by a single process;
+          // Elem2 can be a face neighbor element). The (flipped) boundary element normal
+          // points into Elem1, as in the kernel.
+          plan.elem_b = FET.Elem2No;
+          mfem::IsoparametricTransformation T;
+          pmesh.GetBdrElementTransformation(i, &T);
+          const auto &ip = mfem::Geometries.GetCenter(T.GetGeometryType());
+          T.SetIntPoint(&ip);
+          double n_data[3], dx_data[3];
+          mfem::Vector n(n_data, sdim), dx(dx_data, sdim);
+          BdrGridFunctionCoefficient::GetNormal(T, n, flip);
+          T.Transform(ip, dx);
+          dx -= farfield_x0;
+          plan.trace_b = (n * dx > 0.0);
         }
-        plan.elem_a = FET.Elem1No;
       }
       else if (kind == KernelKind::SURFACE_FLUX || IsBufferKind(kind) ||
                (kind == KernelKind::INTERFACE_EPR &&
@@ -1457,7 +1469,8 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
     if (any_ghost > 0 && !trace_cache)
     {
       // Source slots match the field inputs: SURFACE_FLUX uses slot 0 = E (nd_fespace)
-      // and slot 1 = B (rt_fespace); all other kinds carry a single field at slot 0.
+      // and slot 1 = B (rt_fespace), FARFIELD the real and imaginary parts of both; all
+      // other kinds carry a single field at slot 0.
       std::array<const mfem::ParFiniteElementSpace *, FaceNbrFieldExchange::MaxSources>
           ex_fes = {nullptr, nullptr, nullptr, nullptr};
       unsigned int source_mask;
@@ -1474,6 +1487,12 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
         ex_fes[0] = nd_fespace;
         ex_fes[1] = rt_fespace;
         source_mask = 0b11u;
+      }
+      else if (kind == KernelKind::FARFIELD)
+      {
+        // Slots 0-1 = Re/Im E (nd_fespace), slots 2-3 = Re/Im B (rt_fespace).
+        ex_fes = {nd_fespace, nd_fespace, rt_fespace, rt_fespace};
+        source_mask = 0b1111u;
       }
       else
       {
@@ -1537,7 +1556,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
                                  fem::DefaultIntegrationOrder::Get(pmesh, group.bdr_geom));
 
     // Objects are owned by the assembled operator; scratch destroys our references.
-    CeedAssemblyScratch scratch(ceed);
+    ceed::CeedAssemblyScratch scratch(ceed);
 
     // Assemble the inputs in the order expected by the QFunctions: quadrature weights
     // and boundary element mesh node gradients (surface measure and normal), per-side
@@ -1583,8 +1602,8 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       CeedVector vec;
       ceed::InitCeedVector(data, ceed, &vec);
       inputs.push_back({name, vec, restr, nullptr, ceed::EvalMode::None});
-      scratch.vecs.push_back(vec);
-      scratch.restrs.push_back(restr);
+      scratch.vectors.push_back(vec);
+      scratch.restrictions.push_back(restr);
     };
     auto OriginalFaceQ = [&](std::size_t e, int canonical_q)
     {
@@ -1617,8 +1636,8 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       inputs.push_back(
           {"x_f", mesh_nodes_vec, face_mesh_restr, face_mesh_basis, ceed::EvalMode::Grad});
       mesh_node_fields.push_back("grad_x_f");
-      scratch.vecs.push_back(mesh_nodes_vec);
-      scratch.restrs.push_back(face_mesh_restr);
+      scratch.vectors.push_back(mesh_nodes_vec);
+      scratch.restrictions.push_back(face_mesh_restr);
       scratch.bases.push_back(face_mesh_basis);
     }
     else if (needs_face_geom)
@@ -1717,12 +1736,12 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       mesh_node_fields.push_back("grad_x_" + suffix);
       if (needs_elem_attr)
       {
-        scratch.vecs.push_back(attr_vec);
-        scratch.restrs.push_back(attr_restr);
+        scratch.vectors.push_back(attr_vec);
+        scratch.restrictions.push_back(attr_restr);
         scratch.bases.push_back(attr_basis);
       }
-      scratch.vecs.push_back(mesh_nodes_vec);
-      scratch.restrs.push_back(mesh_restr);
+      scratch.vectors.push_back(mesh_nodes_vec);
+      scratch.restrictions.push_back(mesh_restr);
       scratch.bases.push_back(mesh_basis);
     };
     // Physical-value variant: face-neighbor inputs and materialized traces already
@@ -1795,12 +1814,12 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
           {"grad_x_" + suffix, ident_vec, ident_restr, nullptr, ceed::EvalMode::None});
       if (needs_elem_attr)
       {
-        scratch.vecs.push_back(attr_vec);
-        scratch.restrs.push_back(attr_restr);
+        scratch.vectors.push_back(attr_vec);
+        scratch.restrictions.push_back(attr_restr);
         scratch.bases.push_back(attr_basis);
       }
-      scratch.vecs.push_back(ident_vec);
-      scratch.restrs.push_back(ident_restr);
+      scratch.vectors.push_back(ident_vec);
+      scratch.restrictions.push_back(ident_restr);
     };
     if (trace_cache)
     {
@@ -1874,8 +1893,8 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       ceed::InitCeedVector(GetFieldStaging(source, fespace), ceed, &vec);
       inputs.push_back({name, vec, restr, basis, ceed::EvalMode::Interp});
       field_sources.emplace_back(name, source);
-      scratch.vecs.push_back(vec);
-      scratch.restrs.push_back(restr);
+      scratch.vectors.push_back(vec);
+      scratch.restrictions.push_back(restr);
       scratch.bases.push_back(basis);
     };
     // Ghost (face neighbor) field input: the neighbor's physical field values at the
@@ -1907,8 +1926,8 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       ceed::InitCeedVector(face_nbr_exchange->Imported(), ceed, &vec);
       inputs.push_back({name, vec, restr, nullptr, ceed::EvalMode::None});
       field_sources.emplace_back(name, 4);  // 4 -> imported (see ApplyAddGroupOperators)
-      scratch.vecs.push_back(vec);
-      scratch.restrs.push_back(restr);
+      scratch.vectors.push_back(vec);
+      scratch.restrictions.push_back(restr);
     };
     // Trace storage is component-major over the complete side lattice.  The input
     // restriction deliberately uses canonical q (not the ParaView original-q route);
@@ -1953,8 +1972,8 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
                                ceed, static_cast<CeedSize>(trace_points) * num_comp, &vec));
       inputs.push_back({name, vec, restr, nullptr, ceed::EvalMode::None});
       field_sources.emplace_back(name, source);
-      scratch.vecs.push_back(vec);
-      scratch.restrs.push_back(restr);
+      scratch.vectors.push_back(vec);
+      scratch.restrictions.push_back(restr);
     };
     if (trace_cache)
     {
@@ -2026,11 +2045,22 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
     }
     else if (kind == KernelKind::FARFIELD)
     {
+      // Far-field groups are one-sided (the traced side of an interior surface): side 1
+      // is either local or a face neighbor element.
       const mfem::IntegrationRule &ir = *group.mapped_ir_a;
-      AddFieldInput("u_1", 0, *nd_fespace, group.vol_indices_a, group.vol_geom_a, ir);
-      AddFieldInput("u_2", 1, *nd_fespace, group.vol_indices_a, group.vol_geom_a, ir);
-      AddFieldInput("u_3", 2, *rt_fespace, group.vol_indices_a, group.vol_geom_a, ir);
-      AddFieldInput("u_4", 3, *rt_fespace, group.vol_indices_a, group.vol_geom_a, ir);
+      for (int source = 0; source < 4; source++)
+      {
+        const std::string name = "u_" + std::to_string(source + 1);
+        if (group.ghost_a)
+        {
+          AddFieldInputGhost(name, source, ir);
+        }
+        else
+        {
+          AddFieldInput(name, source, (source < 2) ? *nd_fespace : *rt_fespace,
+                        group.vol_indices_a, group.vol_geom_a, ir);
+        }
+      }
     }
     else if (kind == KernelKind::SURFACE_FLUX)
     {
@@ -2122,7 +2152,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
                                reduce_farfield ? 1 : num_marked, local_out.Size(),
                                CEED_MEM_HOST, CEED_COPY_VALUES, out_slots, &out_restr));
     }
-    scratch.restrs.push_back(out_restr);
+    scratch.restrictions.push_back(out_restr);
 
     // Select the QFunction and finalize the (group dependent) context.
     int bdr_attr = 0;
@@ -2532,6 +2562,13 @@ SurfaceFunctional::EvalFarField(const GridFunction &E, const GridFunction &B,
   MFEM_VERIFY(farfield_batch_size > 0 && local_out.Size() == 6 * farfield_batch_size,
               "Invalid far-field batch output layout!");
   std::vector<double> integrals(6 * N, 0.0);
+  const std::array<const Vector *, 4> srcs = {&E.Real(), &E.Imag(), &B.Real(), &B.Imag()};
+  if (face_nbr_exchange)
+  {
+    // Collective: import the face neighbor fields once, they do not change across the
+    // direction batches.
+    face_nbr_exchange->Exchange(srcs);
+  }
   for (int first = 0; first < N; first += farfield_batch_size)
   {
     const int batch_count = std::min(farfield_batch_size, N - first);
@@ -2558,8 +2595,9 @@ SurfaceFunctional::EvalFarField(const GridFunction &E, const GridFunction &B,
     }
 
     local_out = 0.0;
-    fem::ApplyAddGroupOperators(groups, {&E.Real(), &E.Imag(), &B.Real(), &B.Imag()},
-                                local_out);
+    fem::ApplyAddGroupOperators(groups, srcs, local_out,
+                                face_nbr_exchange ? &face_nbr_exchange->Imported()
+                                                  : nullptr);
     const double *batch_data = local_out.HostRead();
     std::copy_n(batch_data, 6 * batch_count, integrals.data() + 6 * first);
   }

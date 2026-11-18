@@ -33,6 +33,7 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-brokenspace.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-coefficient.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-communication.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-complexdirectsolver.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-config.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-constants.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-densematrix.cpp
@@ -45,6 +46,7 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-iterative.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-libceed.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-lineintegrator.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-lowrank.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-lumpedportintegration.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-materialoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-memoryreporting.cpp

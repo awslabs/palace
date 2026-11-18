@@ -67,7 +67,16 @@ boundary conditions, can be applied using the `"Absorbing"` boundary keyword und
 first-order absorbing boundary condition is a special case of the above impedance boundary
 and is available for eigenmode or frequency or time domain driven simulation types. The
 second-order absorbing boundary condition is only available for frequency domain
-simulations.
+simulations. It neglects the term depending on the divergence of the tangential field (see
+[Other boundary conditions](../reference.md#Other-boundary-conditions)), so that it only
+improves on the first-order condition for TE fields, with the electric field tangential to
+the boundary: for TM plane waves, the two conditions are the same. It is also not passive for
+fields whose tangential wavenumber on the boundary exceeds ``\sqrt{2}`` times the
+wavenumber in the material, like evanescent fields of guided modes below the light line or
+of Floquet periodic structures. *Palace* warns when the part of the
+[Floquet wave vector](../config/reference.md#config-boundaries-periodic-floquetwavevector)
+tangential to an absorbing boundary exceeds this limit at the lowest frequency of the
+simulation.
 
 [Perfectly matched layer (PML)](https://en.wikipedia.org/wiki/Perfectly_matched_layer)
 boundaries for frequency and time domain electromagnetic formulations are not yet
@@ -345,8 +354,46 @@ simulated consecutively during the Palace run. The results are printed to shared
 there are multiple excitations, the columns of the csv files are post-indexed by the excitation
 index (e.g. `Φ_elec[1][5] (C)` denoting the flux through surface 1 of excitation 5). The far-field
 file (`farfield-rE.csv`) is the exception: it has one row per (frequency, angle) pair so the
-excitation index is encoded as a row column (`exc`) rather than a column suffix. Note that a port
-can only be part of one excitation.
+excitation index is encoded as a row column (`exc`) rather than a column suffix. The saved fields
+of excitation `i` are written to a subfolder `excitation_i` (with leading zeros when there are ten
+or more excitations) of each field output folder, for example `paraview/driven/excitation_1/`
+and `gridfunction/driven/excitation_1/`. The grid function files of the mesh (`mesh`), its
+partitioning (`rank`), and the error indicator (`indicator`) are shared by all excitations and
+written once to `gridfunction/driven/`. Note that a port can only be part of one excitation.
+
+Each excited lumped port can be given a complex weight on its incident wave with the
+optional settings `"ExcitationAmplitude"` ``A`` (greater than 0, default 1) and
+`"ExcitationPhase"` ``\varphi`` (in degrees, default 0) of
+[`config["Boundaries"]["LumpedPort"][]`](../config/reference.md#config-boundaries-lumpedport).
+The incident field, voltage, and current of the port are those of the unit-power excitation
+multiplied by the weight ``a = A e^{i\varphi}``, so that the incident power is scaled by
+``A^2``. The weight is dimensionless and independent of frequency, and the phase follows the
+``e^{i\omega t}`` time convention of the frequency domain solver. This allows ports that
+share an excitation index to be driven together with different amplitudes and phases, for
+example to drive a pair of ports differentially. By linearity, the solution is the weighted
+sum of the solutions with each port excited alone. A phase of 180 degrees gives the same
+fields as reversing `"Direction"`. With the phase, the voltage, current, incident voltage
+and incident current of the port change sign, and its S-parameters do not. Reversing
+`"Direction"` also reverses the voltage reference of the port, so these keep their sign, and
+the S-parameters between this port and the others change sign. Both settings require a
+nonzero `"Excitation"` on the same port, and are an error otherwise. They are only
+available for lumped ports.
+
+  - *Scattering parameters*: When every excitation drives a single port, the S-parameters
+    are normalized by the weight of the driven port, so they do not depend on
+    `"ExcitationAmplitude"` or `"ExcitationPhase"`. As before, no S-parameters are written
+    when an excitation drives more than one port.
+  - *Incident voltage and current*: The incident voltage and current of an excited port
+    written to `port-V.csv` and `port-I.csv` include the weight. Without a phase, the
+    columns are the same as without a weight and hold the real weighted values. When the
+    weight of any excited lumped port is not real, that is, its phase is not a multiple of
+    180 degrees, the incident columns of the simulation are written as real and imaginary
+    parts instead (`Re{V_inc[...]}`, `Im{V_inc[...]}`, `Re{I_inc[...]}`,
+    `Im{I_inc[...]}`), so such a phase must not be changed between a simulation and its
+    restart. At 180 degrees the columns stay real, with a negative value.
+  - *Transient simulations*: The amplitude scales the excitation. The time domain
+    excitation is real, so a phase that is not a multiple of 180 degrees is an error. A
+    phase of 180 degrees is allowed and reverses the sign of the excitation.
 
 !!! warning "Indexing"
 

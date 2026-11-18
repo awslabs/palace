@@ -5,7 +5,12 @@
 #include <catch2/generators/catch_generators_all.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include <algorithm>
+#include <cmath>
 #include <complex>
+#include <limits>
+#include <span>
+#include <vector>
 
 #include "linalg/vector.hpp"
 #include "utils/communication.hpp"
@@ -109,6 +114,164 @@ TEST_CASE("Vector Sum - Complex", "[vector][Serial][Parallel][GPU]")
   CHECK_THAT(sum.imag(), WithinRel(expected_imag));
 }
 
+// On the host, inner products are computed with several partial sums (by blocks with
+// several OpenMP threads), and the complex ones in a single pass; compare with plain sums.
+TEST_CASE("Vector Dot", "[vector][Serial][Parallel]")
+{
+  const int n = GENERATE(1, 7, 8, 9, 1003);
+  MPI_Comm comm = Mpi::World();
+  ComplexVector x(n), y(n);
+  double ref[4] = {0.0, 0.0, 0.0, 0.0};  // Re(yᴴ x), Im(yᴴ x), yᵣᵀ xᵣ, xᴴ x
+  for (int i = 0; i < n; i++)
+  {
+    const int j = i + n * Mpi::Rank(comm);
+    x.Real()[i] = std::sin(0.3 * j);
+    x.Imag()[i] = std::cos(0.7 * j);
+    y.Real()[i] = std::cos(1.1 * j + 0.2);
+    y.Imag()[i] = std::sin(0.5 * j - 0.4);
+    ref[0] += y.Real()[i] * x.Real()[i] + y.Imag()[i] * x.Imag()[i];
+    ref[1] += y.Real()[i] * x.Imag()[i] - y.Imag()[i] * x.Real()[i];
+    ref[2] += y.Real()[i] * x.Real()[i];
+    ref[3] += x.Real()[i] * x.Real()[i] + x.Imag()[i] * x.Imag()[i];
+  }
+  Mpi::GlobalSum(4, ref, comm);
+  const double tol = 1.0e-14 * n * Mpi::Size(comm);
+  const auto dot = linalg::Dot(comm, x, y);
+  CHECK_THAT(dot.real(), WithinAbs(ref[0], tol));
+  CHECK_THAT(dot.imag(), WithinAbs(ref[1], tol));
+  CHECK(linalg::Dot(comm, x, y) == dot);
+  CHECK_THAT(linalg::Dot(comm, x.Real(), y.Real()), WithinAbs(ref[2], tol));
+  // The inner product of x with itself skips the imaginary part, which a copy computes.
+  ComplexVector z(x);
+  const auto nrm2 = linalg::Dot(comm, x, x), nrm2_copy = linalg::Dot(comm, x, z);
+  CHECK_THAT(nrm2.real(), WithinAbs(ref[3], tol));
+  CHECK(nrm2.imag() == 0.0);
+  CHECK_THAT(nrm2_copy.real(), WithinAbs(ref[3], tol));
+  CHECK_THAT(nrm2_copy.imag(), WithinAbs(0.0, tol));
+}
+
+TEST_CASE("Vector LinearCombination", "[vector][Serial][Parallel][GPU]")
+{
+  const int N = GENERATE(1, 7, 64, 1024, 1025, 3001);
+  const int n = GENERATE(0, 1, 2, 5, 6);
+  const bool real_c = GENERATE(false, true);
+  const int rank = Mpi::Rank(Mpi::World());
+  std::vector<Vector> X(n + 1, Vector(N));
+  std::vector<std::complex<double>> c(n + 1);
+  for (int j = 0; j <= n; j++)
+  {
+    X[j].UseDevice(true);
+    auto *Xj = X[j].HostWrite();
+    for (int i = 0; i < N; i++)
+    {
+      Xj[i] = std::sin(0.3 * i + 1.7 * j + 0.1 * rank);
+    }
+    c[j] = {std::cos(0.9 * j + 0.2), real_c ? 0.0 : std::sin(1.3 * j - 0.4)};
+  }
+  if (n > 2)
+  {
+    // A zero coefficient skips its term, which may hold anything.
+    c[1] = 0.0;
+    X[1].HostReadWrite()[0] = std::numeric_limits<double>::quiet_NaN();
+  }
+  // The last vector is not part of the combination.
+  X[n].HostReadWrite()[0] = std::numeric_limits<double>::quiet_NaN();
+
+  // Overwritten, or added to.
+  const bool add = GENERATE(false, true);
+  const double y0 = add ? 0.75 : std::numeric_limits<double>::quiet_NaN();
+  ComplexVector y(N);
+  y.UseDevice(true);
+  y = y0;
+  linalg::LinearCombination(std::span(X).first(n), std::span(c).first(n), y, add);
+  Vector yr(N);
+  yr.UseDevice(true);
+  yr = y0;
+  std::vector<double> cr(n);
+  for (int j = 0; j < n; j++)
+  {
+    cr[j] = c[j].real();
+  }
+  linalg::LinearCombination(std::span(X).first(n), cr, yr, add);
+
+  // The terms are added in this order (up to contractions into fused multiply-adds).
+  const double tol = 1.0e-14;
+  const auto *YR = y.Real().HostRead(), *YI = y.Imag().HostRead(), *Yr = yr.HostRead();
+  int mismatch = 0;
+  for (int i = 0; i < N; i++)
+  {
+    double ref_r = add ? y0 : 0.0, ref_i = 0.0;  // y = y0 sets the real part
+    for (int j = 0; j < n; j++)
+    {
+      if (c[j].real() != 0.0)
+      {
+        ref_r += c[j].real() * X[j].HostRead()[i];
+      }
+      if (c[j].imag() != 0.0)
+      {
+        ref_i += c[j].imag() * X[j].HostRead()[i];
+      }
+    }
+    mismatch += !(std::abs(YR[i] - ref_r) <= tol && std::abs(YI[i] - ref_i) <= tol &&
+                  std::abs(Yr[i] - ref_r) <= tol);
+  }
+  CHECK(mismatch == 0);
+}
+
+TEST_CASE("Vector LocalDots", "[vector][Serial][Parallel][GPU]")
+{
+  // N = 0 stands for a process without entries; with more than one process, the first one
+  // has none for every N. With m k = 576 pairs, the partial sums on the device are capped
+  // at 2^22 doubles, which limits the slices to fewer than 8192 for N >= 10000.
+  const int rank = Mpi::Rank(Mpi::World());
+  const int N0 = GENERATE(0, 1, 7, 64, 513, 1025, 3001, 10000, 70001);
+  const int N = (rank == 0 && Mpi::Size(Mpi::World()) > 1) ? 0 : N0;
+  const int m = GENERATE(0, 1, 3, 8, 64);
+  const int k = GENERATE(1, 2, 7, 9);
+  auto fill = [&](Vector &x, double a)
+  {
+    x.UseDevice(true);
+    auto *X = x.HostWrite();
+    for (int i = 0; i < N; i++)
+    {
+      X[i] = std::sin(0.3 * i + a + 0.1 * rank);
+    }
+  };
+  std::vector<Vector> X(m, Vector(N)), Y(k, Vector(N));
+  for (int i = 0; i < m; i++)
+  {
+    fill(X[i], 1.7 * i);
+  }
+  std::vector<const Vector *> Yc(k);
+  for (int j = 0; j < k; j++)
+  {
+    fill(Y[j], 0.5 - 2.3 * j);
+    Yc[j] = &Y[j];
+  }
+  std::vector<double> H(m * k, std::numeric_limits<double>::quiet_NaN());
+  linalg::LocalDots(X, Yc, H.data());
+  // A reduction afterwards works on every process, with the same number of entries.
+  std::vector<double> H_sum(H);
+  Mpi::GlobalSum(static_cast<int>(H_sum.size()), H_sum.data(), Mpi::World());
+  CHECK(std::all_of(H_sum.begin(), H_sum.end(), [](double h) { return std::isfinite(h); }));
+  int mismatch = 0;
+  for (int j = 0; j < k; j++)
+  {
+    const auto *y = Y[j].HostRead();
+    for (int i = 0; i < m; i++)
+    {
+      const auto *x = X[i].HostRead();
+      double ref = 0.0;
+      for (int l = 0; l < N; l++)
+      {
+        ref += x[l] * y[l];
+      }
+      mismatch += !(std::abs(H[i + j * m] - ref) <= 1.0e-12 * N);
+    }
+  }
+  CHECK(mismatch == 0);
+}
+
 TEST_CASE("ComplexVector Set", "[vector][Serial][Parallel][GPU]")
 {
   ComplexVector cv(2);
@@ -126,6 +289,9 @@ TEST_CASE("ComplexVector Set", "[vector][Serial][Parallel][GPU]")
 
   cv.Set(vals, 2, data_already_on_dev);
 
+  // Set writes on the device when it is enabled; copy back before indexing on the host.
+  cv.Real().HostRead();
+  cv.Imag().HostRead();
   CHECK_THAT(cv.Real()[0], WithinRel(1.0 * rank) || WithinAbs(0.0, 1e-14));
   CHECK_THAT(cv.Real()[1], WithinRel(2.0 * rank) || WithinAbs(0.0, 1e-14));
 

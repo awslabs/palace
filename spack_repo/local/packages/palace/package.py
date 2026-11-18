@@ -151,6 +151,9 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     with when("+mumps"):
         depends_on("fortran", type="build")
         depends_on("mumps+metis+parmetis")
+        # Real and complex double precision (dmumps and zmumps), with distributed
+        # right-hand sides.
+        depends_on("mumps@5.3:+double+complex", when="@0.20:")
         depends_on("mumps+shared", when="+shared")
         depends_on("mumps~shared", when="~shared")
         depends_on("mumps+openmp", when="+openmp")
@@ -174,24 +177,137 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         depends_on("strumpack~openmp", when="~openmp")
 
     # The STRUMPACK version of the superbuild, with
-    # https://github.com/pghysels/STRUMPACK/pull/163 for faster distributed solves. Kept
-    # off the `with` blocks so the Palace variants are not folded into the patch condition.
+    # https://github.com/pghysels/STRUMPACK/pull/163 for faster distributed solves, its
+    # fix https://github.com/pghysels/STRUMPACK/pull/164, the solver changes of
+    # https://github.com/pghysels/STRUMPACK/pull/165 for faster distributed triangular
+    # solves with a few right-hand sides, and the copies in extern/patch/STRUMPACK of the
+    # source and CMake changes of https://github.com/pghysels/STRUMPACK/pull/169, which
+    # allow setting the PBLAS block size (see the local strumpack package) and use these
+    # solves only for the block sizes they handle, of the source changes of
+    # https://github.com/pghysels/STRUMPACK/pull/171, which lower the memory of the
+    # distributed solver, and of the source changes of the STRUMPACK commits 3f30760d and
+    # 668cd1b8 by the STRUMPACK maintainer, which fix the pivoting of the distributed BLR
+    # fronts (to be removed with the next STRUMPACK release). Kept off the `with` blocks
+    # so the Palace variants are not folded into the patch condition.
     depends_on(
         "strumpack@8.1.0",
         when="@develop+strumpack",
         patches=[
             patch(
                 "https://github.com/pghysels/STRUMPACK/commit/"
-                "4b657da56db958f4e00d2396a8fbb568f5cb3c16.diff",
-                sha256="4c62877148ccd76ad96dce2bb69b5ae4ac6a8b7d1b1d2ae0d42b0b52913de0b1",
+                "4b657da56db958f4e00d2396a8fbb568f5cb3c16.diff?full_index=1",
+                sha256="b9a4d57b05a1790c6858f570d7a2c7fb82b7b4b6d6feaa39a364b0d56fefe092",
                 when="@8.1.0",
-            )
+            ),
+            patch(
+                "https://github.com/pghysels/STRUMPACK/commit/"
+                "f94faa48ce857905ef68f2826d05d92218a66e26.diff?full_index=1",
+                sha256="9e5d099fcb55b2a5630ad2fa2ac961bdccabffe3304282183eb911395da2aa4b",
+                when="@8.1.0",
+            ),
+            patch(
+                "https://raw.githubusercontent.com/awslabs/palace/"
+                "0bbc11478dd7faa1a5f89b4f52d34c1205273e1f/extern/patch/STRUMPACK/"
+                "strumpack_pr165.diff",
+                sha256="b5032afa23be7511413e4532c85799e2f89d7ed1a379dde23537f8aa5a116294",
+                when="@8.1.0",
+            ),
+            patch(
+                "https://raw.githubusercontent.com/awslabs/palace/"
+                "2c04dcfe57fa535eb5cfa9c6be71bf788ec6f371/extern/patch/STRUMPACK/"
+                "strumpack_pr169.diff",
+                sha256="4bca6102f23e111f4353f9e57dd58f61dbee95b5030d08b80591a9f4e6eb8117",
+                when="@8.1.0",
+            ),
+            patch(
+                "https://raw.githubusercontent.com/awslabs/palace/"
+                "8a1824f67bfe176f74075e9e3938fa8267c0695f/extern/patch/STRUMPACK/"
+                "strumpack_pr171.diff",
+                sha256="781f79e96d4ff55cc914617885d64f869ea001314841c8c30b94d5073685e71a",
+                when="@8.1.0",
+            ),
+            patch(
+                "https://raw.githubusercontent.com/awslabs/palace/"
+                "b87fe1cbf98a5dcd4850c5c967ada69e1c15dea7/extern/patch/STRUMPACK/"
+                "strumpack_blr_pivoting.diff",
+                sha256="2d5da6e907d735c1588c3aa2a0cfe6554cf0b950c1a3bab3db5e71c7296168c8",
+                when="@8.1.0",
+            ),
         ],
     )
 
-    # https://github.com/hypre-space/hypre/pull/1651: hybrid Gauss-Seidel relaxation
-    # without the halo exchange of a zero initial guess, as in the superbuild. Kept off the
-    # `with` blocks so the Palace variants are not folded into the patch condition.
+    # The SuperLU_DIST version of the superbuild, with the copies in
+    # extern/patch/superlu_dist of https://github.com/xiaoyeli/superlu_dist/pull/250,
+    # https://github.com/xiaoyeli/superlu_dist/pull/251,
+    # https://github.com/xiaoyeli/superlu_dist/pull/252 and
+    # https://github.com/xiaoyeli/superlu_dist/pull/253 for lower communication costs in
+    # the symbolic factorization, refactorizations and solves, and of
+    # https://github.com/xiaoyeli/superlu_dist/pull/254,
+    # https://github.com/xiaoyeli/superlu_dist/pull/255 and
+    # https://github.com/xiaoyeli/superlu_dist/pull/256 for the solves with a 3D process
+    # grid. Kept off the `with` blocks so the Palace variants are not folded into the patch
+    # condition.
+    depends_on(
+        "superlu-dist@9.3.1",
+        when="@0.20:+superlu-dist",
+        patches=[
+            patch(
+                "https://raw.githubusercontent.com/awslabs/palace/"
+                "1fb75437c2a2ed7d75fdb8a055a84b523adfe9a7/extern/patch/superlu_dist/"
+                "superlu_dist_pr250.diff",
+                sha256="d8c22daed9ed89b982f7f12dd62db5509cc5a5a852c6f57bd10b3d7f330273ab",
+                when="@9.3.1",
+            ),
+            patch(
+                "https://raw.githubusercontent.com/awslabs/palace/"
+                "1fb75437c2a2ed7d75fdb8a055a84b523adfe9a7/extern/patch/superlu_dist/"
+                "superlu_dist_pr251.diff",
+                sha256="fbda88f8172a04bc7bbcda7f5fb8e5e697a92d3bd26682e7693703dae03d54f6",
+                when="@9.3.1",
+            ),
+            patch(
+                "https://raw.githubusercontent.com/awslabs/palace/"
+                "1fb75437c2a2ed7d75fdb8a055a84b523adfe9a7/extern/patch/superlu_dist/"
+                "superlu_dist_pr252.diff",
+                sha256="7b84bceb7e45333aaabdf38ce85c19d58aa20febd55bf664c4279669335a47dc",
+                when="@9.3.1",
+            ),
+            patch(
+                "https://raw.githubusercontent.com/awslabs/palace/"
+                "1fb75437c2a2ed7d75fdb8a055a84b523adfe9a7/extern/patch/superlu_dist/"
+                "superlu_dist_pr253.diff",
+                sha256="8de4200968cfc3d8c2d5a5e60ec2c00c624dc6668d510a709dd79eb475ebfa34",
+                when="@9.3.1",
+            ),
+            patch(
+                "https://raw.githubusercontent.com/awslabs/palace/"
+                "9f786de7afad77086a2a3a2bbadfe5eb324bb24b/extern/patch/superlu_dist/"
+                "superlu_dist_pr254.diff",
+                sha256="6e52065a7f276e3db2b1b3a1ca91b3e03131a7a65751ad988a23d3de2b12bd1f",
+                when="@9.3.1",
+            ),
+            patch(
+                "https://raw.githubusercontent.com/awslabs/palace/"
+                "9f786de7afad77086a2a3a2bbadfe5eb324bb24b/extern/patch/superlu_dist/"
+                "superlu_dist_pr255.diff",
+                sha256="686b940b832c560d8fb703f8591cc7f39bedd78646b376142654187973b61bf7",
+                when="@9.3.1",
+            ),
+            patch(
+                "https://raw.githubusercontent.com/awslabs/palace/"
+                "9f786de7afad77086a2a3a2bbadfe5eb324bb24b/extern/patch/superlu_dist/"
+                "superlu_dist_pr256.diff",
+                sha256="f9658bc250bfdb7add6dd7087611f63bc1779eccd60505ea97118fe4f802c17a",
+                when="@9.3.1",
+            ),
+        ],
+    )
+
+    # As in the superbuild, https://github.com/hypre-space/hypre/pull/1651 (hybrid
+    # Gauss-Seidel relaxation without the halo exchange of a zero initial guess) and
+    # the implementation of https://github.com/hypre-space/hypre/pull/1652, with fixes
+    # (multicomponent vectors in hybrid Gauss-Seidel and Gaussian elimination). Kept off the
+    # `with` blocks so the Palace variants are not folded into the patch conditions.
     depends_on(
         "hypre",
         when="@develop",
@@ -201,7 +317,14 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 "2f3d54fe8aa3169e4820eeafad4a672922ea77d6.patch?full_index=1",
                 sha256="bb064764fda6d2fcf853821cfad54415a5a234bf67420a0b6fd0c6c59dbe902f",
                 when="@3.2.0:3.2.1",
-            )
+            ),
+            patch(
+                "https://raw.githubusercontent.com/awslabs/palace/"
+                "3cc6475f2c247c8f35588b7bbf4f06e58e9fa499/extern/patch/hypre/"
+                "hypre_multicomponent_relax.diff",
+                sha256="fb6f85c347503c9b1d5de7b10caaa542816c3b33bb2af4f73ba10651a7743e2a",
+                when="@3.2.0:3.2.1",
+            ),
         ],
     )
 
@@ -390,13 +513,12 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 sha256="eed51f3d84468daa250f1ba71f0bd6072e9c98ab96f244b62820bf0a1c32bc7f",
                 when="@4.10:",
             ),
-            # https://github.com/mfem/mfem/pull/5610 (narrow to @4.10.0 once
-            # merged upstream and Lookahead flags it)
+            # https://github.com/mfem/mfem/pull/5610
             patch(
                 "https://github.com/mfem/mfem/commit/"
                 "e9247694fb4e8e433df3ce24c4aaa3c5d5487c91.diff",
                 sha256="917b2c01f2032ececb8f7ae3b7a23c82d2ccd3b7c8ebcdffdea80d64c10ab964",
-                when="@4.10:",
+                when="@4.10.0",
             ),
             # https://github.com/mfem/mfem/pull/5714 (narrow to @4.10.0 once
             # merged upstream and Lookahead flags it)
@@ -420,6 +542,23 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 "https://github.com/mfem/mfem/commit/"
                 "c79f309399361b2d6aadc207087ca6dc475513b4.diff",
                 sha256="75576858e3dd903b89fb049a5757966153c65406d52456915ff6f2b19c261456",
+                when="@4.10:",
+            ),
+            # https://github.com/mfem/mfem/pull/5731: setters for the supernode sizes of
+            # SuperLUSolver (narrow to @4.10.0 once merged upstream and Lookahead flags it)
+            patch(
+                "https://github.com/mfem/mfem/commit/"
+                "67dd11d697fafba16d8826172343a42e7a0c5df1.diff",
+                sha256="17fd1f5a87e9b5b8b29fda0cc11165257735d0b79e34ee760d2b5305d3d2f392",
+                when="@4.10:",
+            ),
+            # https://github.com/mfem/mfem/pull/5732: SuperLUSolver frees the factors on all
+            # the layers of a 3D process grid (narrow to @4.10.0 once merged upstream and
+            # Lookahead flags it)
+            patch(
+                "https://github.com/mfem/mfem/commit/"
+                "5e9a26308ef95e6a8337f7b266e9a92914adcca0.diff",
+                sha256="7226ea4e223b0e2bd1bc4b21de93498f22b2d8c1dcb194415a377848f9200cc0",
                 when="@4.10:",
             ),
         ],

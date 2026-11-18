@@ -116,6 +116,21 @@ as
 \bm{B}_p = -\frac{1}{i\omega}\nabla\times\bm{E}_p + \frac{1}{\omega} \bm{k}_p \times \bm{E}_p \,.
 ```
 
+Likewise, boundary conditions involving the curl of the electric field on the boundary, like
+the [second-order absorbing boundary condition](#Other-boundary-conditions), apply to the
+full field ``\bm{E}``, whose surface curl is given in terms of the periodic field by
+
+```math
+\bm{n}\cdot\nabla\times\bm{E} = e^{-i \bm{k}_p \cdot \bm{x}} \,
+    \bm{n}\cdot(\nabla\times\bm{E}_p - i\bm{k}_p\times\bm{E}_p) \,.
+```
+
+For example, for a plane wave incident on a boundary of the periodic cell, the periodic
+field is uniform on the boundary and the surface curl is given entirely by the second term.
+The second-order absorbing boundary condition is then not passive for TE fields when the part
+of ``\bm{k}_p`` tangential to the boundary exceeds ``\sqrt{2}`` times the wavenumber in the
+material at the boundary (see [Other boundary conditions](#Other-boundary-conditions)).
+
 ## Time domain formulation
 
 A time-dependent formulation is also available to compute the electric field response
@@ -275,7 +290,7 @@ The source term ``\bm{U}^{inc}`` in a driven frequency-response problem is relat
 tangential component of the incident field at an excited port boundary by
 
 ```math
-\bm{U}^{inc} = -2\gamma_{exc}(\bm{n}\times\bm{E}^{inc})\times\bm{n} \,, \qquad
+\bm{U}^{inc} = -2a\gamma_{exc}(\bm{n}\times\bm{E}^{inc})\times\bm{n} \,, \qquad
 \gamma_{exc} = \frac{i\omega}{R_{ref}}
 ```
 
@@ -285,15 +300,24 @@ excited port: the port resistance ``R`` when ``R > 0``, or the impedance of free
 ``Z_0`` for a purely reactive port with ``R = 0`` (see the discussion of reactive port
 excitation below). The excitation coefficient ``\gamma_{exc}`` is in general distinct from
 the termination coefficient ``\gamma = i\omega/Z_s`` appearing in the Robin boundary
-condition, and the two coincide for a purely resistive port. The excitation amplitude is
-fixed at the unit-power mode normalization described above, ``1~\mathrm{W}``.
+condition, and the two coincide for a purely resistive port. The field ``\bm{E}^{inc}`` is
+the unit-power mode normalized as described above, ``1~\mathrm{W}``, and ``a = A e^{i\varphi}``
+is the complex excitation weight of the port, set by the port's
+[`"ExcitationAmplitude"`](config/reference.md#config-boundaries-lumpedport) ``A`` and
+`"ExcitationPhase"` ``\varphi`` (``a = 1`` by default). The weight scales the source term
+``\bm{U}^{inc}`` by ``a``, so the incident power of the excited port is ``A^2`` times that of
+the unit-power excitation.
 
 In the time-domain formulation, the source term ``\bm{U}^{inc}`` appears as
 
 ```math
-\bm{U}^{inc} = -2 R_{ref}^{-1}\left(\bm{n}\times\frac{\partial\bm{E}^{inc}}{\partial t}\right)
+\bm{U}^{inc} = -2 A R_{ref}^{-1}\left(\bm{n}\times\frac{\partial\bm{E}^{inc}}{\partial t}\right)
     \times\bm{n} \,.
 ```
+
+where the source is scaled by the amplitude ``A``. The time-domain excitation is real, so the
+weight must be real in that case (``\varphi`` a multiple of 180 degrees); for ``\varphi = 180``
+degrees, ``A`` is replaced by ``-A``.
 
 The incident field ``\bm{E}^{inc}(\bm{x},t)`` is
 
@@ -318,12 +342,31 @@ impedance is part of the physical model.
 ### Wave ports
 
 Numeric wave ports assume a field with known normal-direction dependence
-``\bm{E}(\bm{x}) = \bm{e}(\bm{x}_t)e^{ik_n x_n}`` where ``k_n`` is the propagation constant. For each operating
+``\bm{E}(\bm{x}) = \bm{e}(\bm{x}_t)e^{-ik_n x_n}`` where ``k_n`` is the propagation constant. For each operating
 frequency ``\omega``, a two-dimensional eigenvalue problem is solved on the port yielding the mode
 shapes ``\bm{e}_m`` and associated propagation constants ``k_{n,m}``. These are used in the full 3D
-model where the Robin port boundary condition has coefficient
-``\gamma = i\text{Re}\{k_{n,m}\}/\mu_r`` and the computed mode is used to compute the incident field in the
-source term ``\bm{U}^{inc}`` at excited ports.
+model where the Robin port boundary condition has coefficient ``\gamma = i k_{n,m}/\mu_r`` and the
+computed mode is used to compute the incident field in the source term ``\bm{U}^{inc}`` at excited
+ports. When the port cross-section is lossy, for example with
+[`"Conductivity"`](config/reference.md#config-boundaries-conductivity) or
+[`"Impedance"`](config/reference.md#config-boundaries-impedance) boundaries or lossy dielectrics on
+the port boundary, the propagation constant ``k_{n,m}`` is complex, and its imaginary
+part (the attenuation of the port mode) is kept in the boundary condition and in the incident field,
+so that the port is matched to its own mode.
+
+The modes of a lossy cross-section are orthogonal under the unconjugated (reciprocity) pairing
+``\int_\Gamma (\bm{E}_m\times\bm{H}_k)\cdot\bm{n}\,dS``, and not under the power pairing
+``\int_\Gamma (\bm{E}_m\times\bm{H}_k^*)\cdot\bm{n}\,dS`` [[11]](#References). Wave port modes are
+normalized to unit power, ``\vert P^{inc} \vert = 1~\mathrm{W}`` as above, with the phase of the mode
+chosen such that its reaction
+
+```math
+R^{inc} = \int_\Gamma (\bm{E}^{inc}\times\bm{H}^{inc})\cdot\bm{n}\,dS
+```
+
+is real and positive. For a lossless propagating mode, ``R^{inc} = P^{inc} = 1~\mathrm{W}``. For a
+lossy mode, the complex power ``P^{inc}`` has a phase, and ``R^{inc}`` is close to, but not exactly,
+unity.
 
 For more information on the implementation of numeric wave ports, see [[3]](#References).
 
@@ -368,28 +411,37 @@ field component on the port.
 **Impedance.** The *power-voltage* characteristic impedance is defined as
 
 ```math
-Z_{PV} = \frac{|V|^2}{P}
+Z_{PV} = \frac{|V|^2}{P^*}
 ```
 
-where ``P = \int_\Gamma\text{Re}\{(\bm{E}\times\bm{H}^*)\cdot\hat{\bm{n}}\}\,dS`` is the
-peak-phasor power flux through the port cross-section, equal to twice the time-averaged power. For
-TEM modes with a voltage path between the two conductors, ``Z_{PV}`` reduces to the conventional TEM
-characteristic impedance. For wave ports, ``Z_{PV}`` is reported when `"VoltagePath"` is
-specified.
+where ``P = \int_\Gamma(\bm{E}\times\bm{H}^*)\cdot\hat{\bm{n}}\,dS`` is the complex power flux
+of the mode through the cross-section, with peak phasors (twice the time-averaged power). It is
+real for a lossless propagating mode, and complex for a lossy one. For a TEM mode with a voltage
+path between the two conductors, ``P = V I^*`` and ``Z_{PV} = V / I`` is the conventional complex
+characteristic impedance of the line, which has the phase of ``k_n`` for a quasi-TEM mode on a line
+with a lossless dielectric. Wave ports report ``Z_{PV}`` when `"VoltagePath"` is specified,
+consistent with the total-field impedance ``|V|^2 / P^*`` of the port, and boundary-mode solves
+with impedance postprocessing.
 
-As a diagnostic, boundary-mode impedance postprocessing also reports the *voltage-current*
-impedance magnitude when a current path is specified:
+As a diagnostic, boundary-mode impedance postprocessing also reports the complex
+*voltage-current* impedance when a current path is specified:
 
 ```math
-Z_{VI} = |V| / |I|
+Z_{VI} = V / I
 ```
 
-where ``V`` and ``I`` are computed independently from different paths. Note that independently
-specifying both voltage and current does not in general define a valid characteristic impedance [[11]](#References).
+where ``V`` and ``I`` are computed independently from different paths. Its sign is chosen such
+that ``\text{Re}\{V I^* / P\} > 0``, as for a TEM mode, so that it does not depend on the
+directions of the voltage path and of the current loop. Note that independently specifying both
+voltage and current does not in general define a valid characteristic impedance [[11]](#References).
 For TEM modes ``Z_{VI} = Z_{PV}``; for other modes they will generally differ.
 
-The normal convention ``+\hat{\bm{n}}`` is the outward mesh normal. The mode eigenvalue gives
-``\text{Re}\{k_n\}\ge 0``, corresponding to forward propagation in the ``+\hat{\bm{n}}`` direction.
+The normal convention ``+\hat{\bm{n}}`` is the outward mesh normal. For a passive port
+cross-section, the propagation constant has ``\text{Re}\{k_n\}\ge 0``, corresponding to forward
+propagation in the ``+\hat{\bm{n}}`` direction, and ``\text{Im}\{k_n\}\le 0``, for which the mode
+decays in that direction. In particular, below cutoff, where ``k_n = -i\alpha`` is imaginary for a
+lossless cross-section, the port boundary condition is matched to the evanescent mode which decays
+away from the model.
 De-embedding ``\tilde{S}_{ij} = S_{ij}e^{ik_{n,i}d_i}e^{ik_{n,j}d_j}`` uses positive ``d`` to shift
 the reference plane toward the device (removing waveguide), consistent with [[12]](#References).
 
@@ -443,6 +495,25 @@ waves (an ``R = 0`` port supports no incident traveling wave).
 In the time domain, the time histories of the port voltages can be Fourier-transformed to
 get their frequency domain representation for scattering parameter calculation.
 
+For wave ports, the scattering parameters are the modal amplitudes of the computed field at each
+port, obtained from its reaction with the port mode, normalized as described in
+[Wave ports](#Wave-ports):
+
+```math
+S_{ij} = \frac{\displaystyle\int_{\Gamma_i}(\bm{E}\times\bm{H}^{inc}_i)\cdot\bm{n}\,dS}
+    {\displaystyle\int_{\Gamma_i}(\bm{E}^{inc}_i\times\bm{H}^{inc}_i)\cdot\bm{n}\,dS} - \delta_{ij} \,.
+```
+
+For a lossless propagating port mode, this is the projection
+``\int_{\Gamma_i}(\bm{E}\times[\bm{H}^{inc}_i]^*)\cdot\bm{n}\,dS`` onto the unit-power mode, and
+the scattering parameters have the standard power-wave interpretation. For a lossy port mode, the
+unconjugated reaction separates the incident and reflected modal amplitudes, also from those of
+other modes of the port cross-section, and the scattering parameters are those of the pseudo-waves
+of the port modes [[11]](#References). A uniform line between two ports with the same cross-section
+has ``S_{11} = S_{22} = 0`` and ``S_{21} = S_{12} = e^{-ik_n L}``, and the scattering matrix of a
+reciprocal structure is symmetric, up to the small differences in ``R^{inc}`` between lossy ports of
+different cross-sections.
+
 For wave ports, since the propagation constants are known, we allow additional de-embedding by
 specifying an offset distance ``d`` for each wave port:
 
@@ -488,7 +559,9 @@ orthogonalized real and imaginary components, ``\mathrm{Re}(\bm{x}^*)`` and
 ``\mathrm{Im}(\bm{x}^*)``, as separate real basis vectors. The Gram-Schmidt
 orthogonalization variant is controlled by
 [`config["Solver"]["Driven"]["AdaptiveGSOrthogonalization"]`](config/reference.md#config-solver-driven),
-though most users should not need to change it.
+though most users should not need to change it. `"MGS"` is applied as `"CGS2"`, classical
+Gram-Schmidt with reorthogonalization, which is as stable with three reductions per vector
+(one per pass and one for the norm) instead of one per basis vector.
 
 ### Internal sample selection
 
@@ -577,13 +650,20 @@ eigenpair ``(\lambda, \bm{x})`` is accepted only if its full-space backward resi
 is below a tolerance derived from the port eigensolver tolerance and `"AdaptiveTol"`.
 Otherwise, or whenever the reduced problem does not yield the requested number of
 well-separated modes, the exact eigenvalue problem is solved instead and its eigenvector
-enriches the basis, up to a fixed capacity above the offline rank. The port mode
-reconstructed from an accepted reduced eigenvector feeds the excitation, the modal
-correction, and the S-parameter postprocessing exactly as an exact mode would.
+enriches the basis, up to a fixed capacity above the offline rank. The dense reduced problem
+on a basis of ``n`` vectors costs ``\mathcal{O}(n^3)``, and an exact solve of the sparse
+cross-section problem with ``N`` unknowns roughly ``\mathcal{O}(N^{3/2})``: the reduced model
+is only used with a basis of at most ``2\sqrt{N}`` vectors, a limit which also caps its
+enrichment, and otherwise all port modes are solved exactly. A basis above the limit occurs
+for a small port cross-section with a port mode whose shape changes with frequency, as for a
+lossy line, where every exact solve adds a basis vector. The port mode reconstructed from an
+accepted reduced eigenvector feeds the excitation, the modal correction, and the S-parameter
+postprocessing exactly as an exact mode would.
 Complex-frequency queries (from the eigenmode solver) and the cross-section samples taken
 for circuit synthesis always use the exact solver. At the end of the sweep,
 *Palace* prints per-port statistics: the basis size and capacity, the numbers of reduced
-and exact solves, the number of fallbacks, and the worst accepted residual.
+and exact solves, the number of fallbacks, the worst accepted residual, and whether the basis
+is above the size limit.
 
 The sample-selection interpolation is based on the quadratic linearization and does not
 fully represent arbitrary non-quadratic frequency dependence. If the non-quadratic
@@ -622,6 +702,20 @@ second-order absorbing boundary condition is
 
 where assuming an infinite radius of curvature ``\beta = \mu_r^{-1}c_0/(2i\omega)``, and the
 contribution depending on ``(\nabla\cdot\bm{E}_t)`` has been neglected.
+
+The remaining second-order term only acts on fields whose curl has a normal component on the
+boundary. For a plane wave, it improves on the first-order condition for TE polarization,
+with the electric field tangential to the boundary, while for TM polarization the condition
+is the first-order one: the neglected term would have improved it. For a TE plane wave with
+the tangential wavenumber ``k_t``, the condition imposes the normal wavenumber
+``k - k_t^2/(2k)`` instead of ``\sqrt{k^2 - k_t^2}``, where ``k = \omega\sqrt{\mu_r\varepsilon_r}``
+is the wavenumber in the material at the boundary. For ``k_t > \sqrt{2}k``, this normal
+wavenumber is negative: the second-order condition is not passive and injects energy into
+the field. This can happen for evanescent fields at the boundary, like guided modes below the
+light line or evanescent diffraction orders of a periodic structure, and in particular when
+the part of a [Floquet wave vector](#Floquet-periodic-boundary-conditions) tangential to the
+boundary exceeds ``\sqrt{2}k``, for which *Palace* prints a warning. The first-order
+condition is passive.
 
 Additionally, while metals with finite conductivity can be modeled using an impedance
 boundary condition with constant impedance ``Z_s``, a more accurate model taking into
@@ -684,14 +778,25 @@ The EPR can also be used to estimate mode quality factors due to input-output (I
 coupling. The mode coupling quality factor due to the ``j``-th I-O port is given by
 
 ```math
-Q_{mj} = \frac{\omega_m}{\kappa_{mj}}
+Q_{mj} = \frac{\text{Re}\{\omega_m\}}{|\kappa_{mj}|}
 ```
 
-where the port coupling rate ``\kappa_{mj}`` is calculated as
+The magnitude of the port coupling rate ``\kappa_{mj}`` is the power dissipated in the
+resistive boundary of port ``j`` divided by the electric energy of mode ``m``, and its sign
+is the sign of the real part of the port current ``I_{mj} = \overline{V}_{mj}/R_j``:
 
 ```math
-\kappa_{mj} = \frac{1}{\mathcal{E}^{elec}_m} \, \frac{1}{2}\,R_j I_{mj}^2 \,.
+\kappa_{mj} = \text{sign}(\text{Re}\{I_{mj}\}) \, \frac{1}{\mathcal{E}^{elec}_m} \,
+    \frac{1}{2} \sum_e \int_{\Gamma_e} \frac{|\bm{E}_{m,t}|^2}{R_{s,e}} \, dS \,,
 ```
+
+where ``\bm{E}_{m,t}`` is the tangential electric field of mode ``m`` on element ``e`` of
+the port and ``R_{s,e}`` is the sheet resistance of that element.
+
+When the active resistive ports are the only loss,
+``\sum_j |\kappa_{mj}| = 2\,\text{Im}\{\omega_m\}``, so ``\sum_j 1/Q_{mj}`` is
+``|\omega_m|/\text{Re}\{\omega_m\}`` times the ``1/Q`` of the eigenvalue above, and close
+to it only when ``Q \gg 1``.
 
 ## Bulk and interface dielectric loss
 
@@ -839,8 +944,10 @@ density. On element ``K``, we have
 ```
 
 where ``\bm{R}_{ND}`` and ``\bm{R}_{RT}`` are the smooth-space recovery operators which
-orthogonally project their argument onto ``H(\text{curl})`` and ``H(\text{div})``,
-discretized by Nédélec and Raviart-Thomas elements, respectively.
+project their argument onto ``H(\text{curl})`` and ``H(\text{div})``, discretized by Nédélec
+and Raviart-Thomas elements, respectively. Each projection is orthogonal in the weighted
+``L^2`` inner product of the norm it is measured in (``\mu_r`` for ``\bm{R}_{ND}``,
+``\varepsilon_r^{-1}`` for ``\bm{R}_{RT}``), so the recovered field minimizes the estimate.
 
 ## Far-field extraction
 
