@@ -1526,6 +1526,9 @@ TEST_CASE("dielectric_grating_uniform", "[Serial][Parallel][GPU][Regression]")
                                   "uniform", opts);
 }
 
+// A normally incident TE wave crosses a 5 mm slab between vacuum Floquet ports.
+// Compare complex reflection and transmission with the Fresnel solution. The lossless
+// slab conserves outgoing power; the lossy slab absorbs the predicted fraction.
 TEST_CASE("floquet_dielectric_slab_lossless", "[Serial][Parallel][Regression]")
 {
   palace::test::RegressionOptions opts;
