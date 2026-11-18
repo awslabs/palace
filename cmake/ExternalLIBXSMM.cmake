@@ -50,6 +50,12 @@ if(CMAKE_SYSTEM_NAME MATCHES "Darwin")
   list(APPEND LIBXSMM_OPTIONS
     "RPM_OPT_FLAGS=-isysroot ${LIBXSMM_OSX_SYSROOT}"
   )
+
+  # LIBXSMM's Makefile sets SDKROOT to <SDK>/usr for its own use. When SDKROOT is
+  # also in the environment, make exports that value to the Xcode tools it runs
+  # (as, ld), which then fail to find the SDK. LIBXSMM gets the SDK from -isysroot
+  # above, so build it without SDKROOT.
+  set(LIBXSMM_BUILD_ENV env -u SDKROOT)
 endif()
 
 # Always build LIBXSMM as a shared library
@@ -108,7 +114,7 @@ ExternalProject_Add(libxsmm
   BUILD_IN_SOURCE   TRUE
   UPDATE_COMMAND    ""
   CONFIGURE_COMMAND ""
-  BUILD_COMMAND     ${PALACE_MAKE_COMMAND} ${LIBXSMM_OPTIONS}
+  BUILD_COMMAND     ${LIBXSMM_BUILD_ENV} ${PALACE_MAKE_COMMAND} ${LIBXSMM_OPTIONS}
   INSTALL_COMMAND
     ${CMAKE_COMMAND} -E echo "LIBXSMM installing interface..." &&
     ${CMAKE_COMMAND} -E make_directory ${CMAKE_INSTALL_PREFIX}/include &&

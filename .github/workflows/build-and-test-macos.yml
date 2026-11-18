@@ -199,6 +199,9 @@ jobs:
           NUM_PROC_BUILD_MAX: '32'
         run: |
           # Configure environment
+          # CMake 4 no longer passes the macOS SDK to the compiler, and Homebrew
+          # LLVM does not find the SDK's headers on its own.
+          export SDKROOT=$(xcrun --sdk macosx --show-sdk-path)
           if [[ "${{ matrix.compiler }}" == 'clang' ]]; then
             export CC=$(brew --prefix llvm@18)/bin/clang
             export CXX=$(brew --prefix llvm@18)/bin/clang++
