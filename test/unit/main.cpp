@@ -17,6 +17,14 @@
 #include <StrumpackConfig.hpp>
 #endif
 
+// Tests of error handling expect MFEM_VERIFY and MFEM_ABORT to throw. Without exceptions,
+// MFEM calls MPI_Abort instead, which ends the whole test run at the first such check.
+// Build MFEM with exceptions using -DPALACE_MFEM_USE_EXCEPTIONS=ON or the Spack variant
+// mfem+exceptions.
+#if !defined(MFEM_USE_EXCEPTIONS)
+#error "Palace unit tests require MFEM built with MFEM_USE_EXCEPTIONS"
+#endif
+
 using namespace palace;
 
 // Global test options configurable from command line.
