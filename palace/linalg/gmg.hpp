@@ -9,7 +9,6 @@
 #include "linalg/operator.hpp"
 #include "linalg/solver.hpp"
 #include "linalg/vector.hpp"
-#include "utils/iodata.hpp"
 
 namespace mfem
 {
@@ -62,17 +61,6 @@ public:
                            const std::vector<const Operator *> *G, int cycle_it,
                            int smooth_it, int cheby_order, double cheby_sf_max,
                            double cheby_sf_min, bool cheby_4th_kind);
-  GeometricMultigridSolver(const IoData &iodata, MPI_Comm comm,
-                           std::unique_ptr<Solver<OperType>> &&coarse_solver,
-                           const std::vector<const Operator *> &P,
-                           const std::vector<const Operator *> *G = nullptr)
-    : GeometricMultigridSolver(
-          comm, std::move(coarse_solver), P, G, iodata.solver.linear.mg_cycle_it,
-          iodata.solver.linear.mg_smooth_it, iodata.solver.linear.mg_smooth_order,
-          iodata.solver.linear.mg_smooth_sf_max, iodata.solver.linear.mg_smooth_sf_min,
-          iodata.solver.linear.mg_smooth_cheby_4th)
-  {
-  }
 
   void SetOperator(const OperType &op) override;
 
