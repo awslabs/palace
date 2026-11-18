@@ -9,6 +9,7 @@
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include "fem/fespace.hpp"
+#include "fem/integrator.hpp"
 #include "fem/mesh.hpp"
 #include "linalg/amg.hpp"
 #include "linalg/ams.hpp"
@@ -251,8 +252,12 @@ TEST_CASE("AMS zero initial guess", "[amg][Serial][Parallel]")
   MPI_Comm comm = Mpi::World();
   auto smesh = mfem::Mesh::MakeCartesian3D(6, 5, 4, mfem::Element::TETRAHEDRON);
   Mesh mesh(comm, smesh);
-  mfem::ND_FECollection nd_fec(1, mesh.Dimension());
-  mfem::H1_FECollection h1_fec(1, mesh.Dimension());
+  constexpr int order = 1;
+  // The discrete gradient for AMS is assembled with libCEED, which needs the default
+  // quadrature order (set by IoData in a simulation).
+  fem::DefaultIntegrationOrder::p_trial = order;
+  mfem::ND_FECollection nd_fec(order, mesh.Dimension());
+  mfem::H1_FECollection h1_fec(order, mesh.Dimension());
   FiniteElementSpace nd_fespace(mesh, &nd_fec), h1_fespace(mesh, &h1_fec);
   mfem::Array<int> dbc_marker(mesh.Get().bdr_attributes.Max()), dbc_tdof_list;
   dbc_marker = 1;
