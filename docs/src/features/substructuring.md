@@ -39,7 +39,8 @@ The environment model (``\bm{S}_E`` and the terminal couplings) can be saved to 
 run loads it and solves only the region, possibly after re-meshing the region: its solves then
 follow the size of the region rather than of the device. On the full mesh the environment is
 checked against the model with its operator applied matrix-free, without assembling it; on the
-mesh of the region written with the model, only the region is read.
+mesh of the region written with the model, only the region is read. The formulation is written
+out in the [reference](../reference.md#Substructuring).
 
 ## Configuration
 
