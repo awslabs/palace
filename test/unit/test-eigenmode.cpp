@@ -181,6 +181,59 @@ public:
   }
 };
 
+// Diagonal (complex) operator on a single process.
+class DiagonalEigenTestOperator : public ComplexOperator
+{
+private:
+  const std::vector<std::complex<double>> d;
+
+public:
+  DiagonalEigenTestOperator(const std::vector<std::complex<double>> &d)
+    : ComplexOperator(static_cast<int>(d.size())), d(d)
+  {
+  }
+
+  bool IsReal() const override
+  {
+    return std::ranges::all_of(d, [](std::complex<double> x) { return x.imag() == 0.0; });
+  }
+
+  void AssembleDiagonal(ComplexVector &diag) const override
+  {
+    diag.SetSize(height);
+    auto *DR = diag.Real().HostWrite();
+    auto *DI = diag.Imag().HostWrite();
+    for (int i = 0; i < height; i++)
+    {
+      DR[i] = d[i].real();
+      DI[i] = d[i].imag();
+    }
+  }
+
+  void Mult(const ComplexVector &x, ComplexVector &y) const override
+  {
+    y.SetSize(height);
+    const auto *XR = x.Real().HostRead();
+    const auto *XI = x.Imag().HostRead();
+    auto *YR = y.Real().HostWrite();
+    auto *YI = y.Imag().HostWrite();
+    for (int i = 0; i < height; i++)
+    {
+      const std::complex<double> v = d[i] * std::complex<double>(XR[i], XI[i]);
+      YR[i] = v.real();
+      YI[i] = v.imag();
+    }
+  }
+
+  void AddMult(const ComplexVector &x, ComplexVector &y,
+               const std::complex<double> a = 1.0) const override
+  {
+    ComplexVector t;
+    Mult(x, t);
+    y.Add(a, t);
+  }
+};
+
 // GMRES which records the relative tolerance of each solve.
 class TolRecordingGmresSolver : public GmresSolver<ComplexOperator>
 {
@@ -356,6 +409,56 @@ TEST_CASE("Eigenmode quality factor region", "[eigenmode][Serial]")
   CHECK(!Inside(std::conj(Damped(1.0, 0.53))));
   CHECK(!Inside(std::conj(Damped(100.0, 0.53))));
   PalacePetscCall(RGDestroy(&rg));
+}
+
+TEST_CASE("Eigenmode quality factor region in a damped solve", "[eigenmode][Serial]")
+{
+  // Quadratic problem K + λ C + λ² M with diagonal K and C and M = I, scaled, with
+  // eigenvalues λ = iω, Re{ω} = ω_r and Q = |ω| / (2 Im{ω}) for c = ω_r / (Q² - 1/4)^½ and
+  // k = Q² c². The mode closest to the target in Re{ω} has Q = 0.52, the next one Q = 100:
+  // the solve for one mode returns the second with MinQ = 0.54, and the first without.
+  constexpr int n = 20;
+  const std::complex<double> lambda_s(0.0, 1.0);  // λ = iσ
+  std::vector<double> omega_r = {1.05, 1.3}, q = {0.52, 100.0};
+  for (int i = 2; i < n; i++)
+  {
+    omega_r.push_back(1.5 + 0.5 * i);
+    q.push_back(50.0);
+  }
+  std::vector<std::complex<double>> k(n), c(n), m(n, 1.0), a(n);
+  for (int i = 0; i < n; i++)
+  {
+    c[i] = omega_r[i] / std::sqrt(q[i] * q[i] - 0.25);
+    k[i] = q[i] * q[i] * c[i] * c[i];
+    a[i] = k[i] + lambda_s * c[i] + lambda_s * lambda_s * m[i];
+  }
+  DiagonalEigenTestOperator K(k), C(c), M(m), A(a);
+  MPI_Comm comm = Mpi::World();
+  for (double q_min : {0.0, 0.54})
+  {
+    auto gmres = std::make_unique<GmresSolver<ComplexOperator>>(comm, 0);
+    gmres->SetRelTol(1.0e-12);
+    gmres->SetMaxIter(100);
+    ComplexKspSolver ksp(std::move(gmres),
+                         std::make_unique<JacobiSmoother<ComplexOperator>>(comm));
+    ksp.SetOperators(A, A);
+    slepc::SlepcPEPLinearSolver eps(comm, 0);
+    eps.SetType(slepc::SlepcEigenvalueSolver::Type::KRYLOVSCHUR);
+    eps.SetProblemType(slepc::SlepcEigenvalueSolver::ProblemType::GEN_NON_HERMITIAN);
+    eps.SetOperators(K, C, M, EigenvalueSolver::ScaleType::NORM_2);
+    eps.SetNumModes(1, 16);
+    eps.SetTol(1.0e-10);
+    eps.SetLinearSolver(ksp);
+    eps.SetShiftInvert(lambda_s);
+    eps.SetWhichEigenpairs(EigenvalueSolver::WhichType::TARGET_IMAGINARY);
+    eps.SetMinQualityFactor(q_min);
+    REQUIRE(eps.Solve() >= 1);
+    const int i = (q_min > 0.5) ? 1 : 0;
+    const std::complex<double> omega =
+        eps.GetEigenvalue(0) / std::complex<double>(0.0, 1.0);
+    CHECK(std::abs(omega - std::complex<double>(omega_r[i], 0.5 * c[i].real())) <=
+          1.0e-8 * omega_r[i]);
+  }
 }
 
 #endif
