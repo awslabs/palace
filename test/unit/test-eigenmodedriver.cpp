@@ -588,6 +588,67 @@ TEST_CASE_METHOD(test::SharedTempDir,
   }
 }
 
+TEST_CASE_METHOD(
+    test::SharedTempDir,
+    "Eigenmode driver: partially filled Lorentz cavity with a conducting wall, "
+    "the modes nearest above the target",
+    "[eigenmodedriver][Serial][Parallel]")
+{
+  // A finite conductivity boundary is a frequency-dependent term which is not a pole term,
+  // so the problem takes the nonlinear route: the Hybrid seed and the Quasi-Newton
+  // refinement. The seed takes the pole terms of the slab exactly and interpolates only the
+  // boundary term. With the pole terms interpolated over [Target, TargetUpper] too, the
+  // solve stopped with fewer modes than requested, or returned modes away from the target.
+  // The top wall, a poor conductor, moves each mode by less than 2e-4 of its frequency,
+  // much less than the distance between the modes: the modes must be those of the PEC
+  // cavity from the exact linearization. With a conducting wall, the Quasi-Newton residual
+  // stops near 1e-9 (also for a constant permittivity), so the tolerance is 1e-8.
+  const auto mesh = WriteSlabMesh(temp_dir);
+  std::vector<std::string> backends;
+#if defined(PALACE_WITH_SLEPC)
+  backends.push_back("SLEPc");
+#endif
+#if defined(PALACE_WITH_ARPACK)
+  backends.push_back("ARPACK");
+#endif
+  // The first n modes of a solve (those nearest above its target), by frequency.
+  auto Modes = [](const Eigenvalues &e, std::size_t n)
+  {
+    REQUIRE(e.f.size() >= n);
+    for (std::size_t k = 0; k < n; k++)
+    {
+      CAPTURE(e.f[k]);
+      CHECK(e.backward_error[k] <= 1.0e-8);
+    }
+    std::vector<std::complex<double>> f(e.f.begin(), e.f.begin() + n);
+    std::ranges::sort(f, [](auto a, auto b) { return a.real() < b.real(); });
+    return f;
+  };
+  for (const auto &backend : backends)
+  {
+    CAPTURE(backend);
+    for (const auto &[target, n] : std::vector<std::pair<double, int>>{{5.0, 4}, {9.0, 4}})
+    {
+      CAPTURE(target, n);
+      const auto name = backend + "-" + std::to_string(static_cast<int>(target));
+      const auto pec =
+          Modes(RunEigenmode(SlabConfig(mesh, n, target, backend), temp_dir, name), n);
+      auto config = SlabConfig(mesh, n, target, backend);
+      config["Solver"]["Eigenmode"]["Tol"] = 1.0e-8;
+      config["Boundaries"] = {
+          {"PEC", {{"Attributes", {1, 2, 3, 4, 5}}}},
+          {"Conductivity", {{{"Attributes", {6}}, {"Conductivity", 5.8e5}}}}};
+      const auto conducting =
+          Modes(RunEigenmode(config, temp_dir, name + "-conductivity"), n);
+      for (int k = 0; k < n; k++)
+      {
+        CAPTURE(k, conducting[k], pec[k]);
+        CHECK(std::abs(conducting[k] - pec[k]) <= 3.0e-4 * std::abs(pec[k]));
+      }
+    }
+  }
+}
+
 // Frequency-dependent terms which are not rational in the frequency.
 
 TEST_CASE_METHOD(

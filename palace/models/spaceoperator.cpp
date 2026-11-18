@@ -258,7 +258,8 @@ void SpaceOperator::AddFrequencyDependentPermittivityA2Coefficient(
 }
 
 void SpaceOperator::GetFrequencyDependentPermittivityA2Coefficients(
-    std::complex<double> omega, std::vector<double> &real, std::vector<double> &imag) const
+    std::complex<double> omega, std::vector<double> &real, std::vector<double> &imag,
+    bool include_poles) const
 {
   real.resize(mat_op.NumFrequencyDependentPermittivityMaterials());
   imag.resize(mat_op.NumFrequencyDependentPermittivityMaterials());
@@ -266,11 +267,12 @@ void SpaceOperator::GetFrequencyDependentPermittivityA2Coefficients(
   for (std::size_t i = 0; i < real.size(); i++)
   {
     // A material without mesh support contributes nothing and is not evaluated, since it
-    // may be singular at this frequency.
+    // may be singular at this frequency. Without the pole terms, only the
+    // Djordjevic-Sarkar terms remain.
     const std::complex<double> value =
-        mat_op.HasFrequencyDependentPermittivitySupport(i)
-            ? mat_op.EvaluateFrequencyDependentPermittivityA2(i, s)
-            : 0.0;
+        !mat_op.HasFrequencyDependentPermittivitySupport(i) ? 0.0
+        : include_poles ? mat_op.EvaluateFrequencyDependentPermittivityA2(i, s)
+                        : mat_op.EvaluateDjordjevicSarkarPermittivityA2(i, s);
     real[i] = value.real();
     imag[i] = value.imag();
   }
@@ -718,7 +720,7 @@ void SpaceOperator::AssembleFrequencyDependentPermittivityA2Operators(
     const MaterialPropertyCoefficient &fbi, const MaterialPropertyCoefficient &frbr,
     const MaterialPropertyCoefficient &frbi, const MaterialPropertyCoefficient &fpbr,
     const MaterialPropertyCoefficient &fpbi, std::unique_ptr<Operator> &ar,
-    std::unique_ptr<Operator> &ai)
+    std::unique_ptr<Operator> &ai, bool include_poles)
 {
   // Preserve the established boundary-only assembly path when no volume A2 model exists.
   // In particular, exact-zero poles have already been folded into ordinary conductivity.
@@ -745,7 +747,8 @@ void SpaceOperator::AssembleFrequencyDependentPermittivityA2Operators(
   // this frequency: nonlinear interpolation and PROM fallback selection require the same
   // operator structure at every frequency.
   std::vector<double> model_A2_real, model_A2_imag;
-  GetFrequencyDependentPermittivityA2Coefficients(omega, model_A2_real, model_A2_imag);
+  GetFrequencyDependentPermittivityA2Coefficients(omega, model_A2_real, model_A2_imag,
+                                                  include_poles);
   constexpr bool skip_zeros = false;
   std::unique_ptr<Operator> base_r, base_i;
   if (!AreExactlyZero(dfbr, fbr, frbr, fpbr))
@@ -959,7 +962,8 @@ SpaceOperator::GetExtraSystemMatrix(double omega, Operator::DiagonalPolicy diag_
 
 std::unique_ptr<ComplexOperator>
 SpaceOperator::GetExtraSystemMatrix(std::complex<double> omega,
-                                    Operator::DiagonalPolicy diag_policy)
+                                    Operator::DiagonalPolicy diag_policy,
+                                    bool include_permittivity_poles)
 {
   auto ports =
       wave_port_op.EvaluateComplex(omega, false, GetNDSpace(), nd_dbc_tdof_lists.back());
@@ -968,13 +972,13 @@ SpaceOperator::GetExtraSystemMatrix(std::complex<double> omega,
                            << " eigensolver did not converge at complex ω = " << omega
                            << " (" << ports.num_converged << " of " << ports.requested
                            << " modes)!");
-  return BuildExtraSystemMatrix(omega, ports.kn, diag_policy);
+  return BuildExtraSystemMatrix(omega, ports.kn, diag_policy, include_permittivity_poles);
 }
 
 std::unique_ptr<ComplexOperator> SpaceOperator::BuildExtraSystemMatrix(
     std::complex<double> omega,
     const std::vector<std::pair<int, std::complex<double>>> &port_kn,
-    Operator::DiagonalPolicy diag_policy)
+    Operator::DiagonalPolicy diag_policy, bool include_permittivity_poles)
 {
   // Complex-ω A2(λ) for the eigenmode nonlinear solve: nonzero-pole volume and
   // frequency-dependent boundary terms (2nd-order ABC, surface conductivity, rational
@@ -991,7 +995,8 @@ std::unique_ptr<ComplexOperator> SpaceOperator::BuildExtraSystemMatrix(
                                 &fpbi);
   std::unique_ptr<Operator> ar, ai;
   AssembleFrequencyDependentPermittivityA2Operators(omega, dfbr, dfbi, fbr, fbi, frbr, frbi,
-                                                    fpbr, fpbi, ar, ai);
+                                                    fpbr, fpbi, ar, ai,
+                                                    include_permittivity_poles);
   if (!ar && !ai)
   {
     return {};

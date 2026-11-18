@@ -135,7 +135,8 @@ private:
   std::unique_ptr<ComplexOperator>
   BuildExtraSystemMatrix(std::complex<double> omega,
                          const std::vector<std::pair<int, std::complex<double>>> &port_kn,
-                         Operator::DiagonalPolicy diag_policy);
+                         Operator::DiagonalPolicy diag_policy,
+                         bool include_permittivity_poles = true);
   std::unique_ptr<ComplexOperator>
   BuildExtraSystemOperator(std::complex<double> omega,
                            WavePortOperator::ComplexPortContribution &&ports,
@@ -168,14 +169,15 @@ private:
                                                       MaterialPropertyCoefficient &f) const;
   void GetFrequencyDependentPermittivityA2Coefficients(std::complex<double> omega,
                                                        std::vector<double> &real,
-                                                       std::vector<double> &imag) const;
+                                                       std::vector<double> &imag,
+                                                       bool include_poles = true) const;
   void AssembleFrequencyDependentPermittivityA2Operators(
       std::complex<double> omega, const MaterialPropertyCoefficient &dfbr,
       const MaterialPropertyCoefficient &dfbi, const MaterialPropertyCoefficient &fbr,
       const MaterialPropertyCoefficient &fbi, const MaterialPropertyCoefficient &frbr,
       const MaterialPropertyCoefficient &frbi, const MaterialPropertyCoefficient &fpbr,
       const MaterialPropertyCoefficient &fpbi, std::unique_ptr<Operator> &ar,
-      std::unique_ptr<Operator> &ai);
+      std::unique_ptr<Operator> &ai, bool include_poles = true);
   // Preconditioner coefficients for the volume A2 terms. With pc_mat_shifted, the
   // mass-like real part is shifted like the ε∞ mass.
   void
@@ -349,9 +351,13 @@ public:
   // evaluated at the genuinely complex frequency
   // (ω = -i·λ). Always a ComplexOperator (these terms acquire a real-slot contribution
   // at complex ω). For real ω this matches GetExtraSystemMatrix<ComplexOperator>(double)
-  // up to the Floquet port term.
+  // up to the Floquet port term. Without the permittivity poles, the pole terms of the
+  // materials (MaterialOperator::GetPermittivityPoleTerms, which the linearized
+  // eigensolvers take exactly, EigenvalueSolver::AddPoleTerms) are left out; the
+  // Djordjevic-Sarkar and boundary terms are kept.
   std::unique_ptr<ComplexOperator>
-  GetExtraSystemMatrix(std::complex<double> omega, Operator::DiagonalPolicy diag_policy);
+  GetExtraSystemMatrix(std::complex<double> omega, Operator::DiagonalPolicy diag_policy,
+                       bool include_permittivity_poles = true);
 
   // Construct the ω-independent boundary mass matrix M_{μ⁻¹,p} for a single wave port,
   // returned with PEC essential DoF rows handled by `diag_policy`. The full wave-port
