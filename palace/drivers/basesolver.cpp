@@ -1009,21 +1009,27 @@ void BaseSolver::SaveMetadata(const SurfacePostOperator &surf_post_op) const
   WriteMetadata(post_dir, meta);
 }
 
-void BaseSolver::SaveSurfaceResponseSolverMetadata(MPI_Comm comm, const std::string &name,
-                                                   long long int solves,
-                                                   long long int iterations) const
+void BaseSolver::SaveSurfaceResponseSolverMetadata(
+    MPI_Comm comm, const std::string &name, long long int solves, long long int iterations,
+    std::optional<long long int> unconverged) const
 {
-  long long int minimum[2] = {solves, iterations};
-  long long int maximum[2] = {solves, iterations};
-  Mpi::GlobalMin(2, minimum, comm);
-  Mpi::GlobalMax(2, maximum, comm);
-  MFEM_VERIFY(minimum[0] == maximum[0] && minimum[1] == maximum[1],
+  long long int minimum[3] = {solves, iterations, unconverged.value_or(0)};
+  long long int maximum[3] = {solves, iterations, unconverged.value_or(0)};
+  Mpi::GlobalMin(3, minimum, comm);
+  Mpi::GlobalMax(3, maximum, comm);
+  MFEM_VERIFY(minimum[0] == maximum[0] && minimum[1] == maximum[1] &&
+                  minimum[2] == maximum[2],
               "Rank-inconsistent corrected surface-response solver statistics!");
   if (root)
   {
     nlohmann::json meta = LoadMetadata(post_dir);
     meta["SurfaceResponse"]["CorrectedSolver"][name]["LinearSolves"] = minimum[0];
     meta["SurfaceResponse"]["CorrectedSolver"][name]["LinearIterations"] = minimum[1];
+    if (unconverged)
+    {
+      meta["SurfaceResponse"]["CorrectedSolver"][name]["NonConvergedLinearSolves"] =
+          minimum[2];
+    }
     WriteMetadata(post_dir, meta);
   }
 }

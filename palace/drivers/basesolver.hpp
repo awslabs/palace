@@ -5,6 +5,7 @@
 #define PALACE_DRIVERS_BASE_SOLVER_HPP
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 #include <fmt/os.h>
@@ -112,9 +113,14 @@ public:
   // Coverage, mesh length units; the qualification's EXCLUSION-COVERAGE gate reads it).
   // Nothing is written when no interface lists EdgeExcludeSegments.
   void SaveMetadata(const SurfacePostOperator &surf_post_op) const;
-  void SaveSurfaceResponseSolverMetadata(MPI_Comm comm, const std::string &name,
-                                         long long int solves,
-                                         long long int iterations) const;
+  // Root only, after a rank-consistency check (collective): palace.json
+  // SurfaceResponse.CorrectedSolver.<name>.LinearSolves / LinearIterations, and
+  // NonConvergedLinearSolves when `unconverged` is given (the corrected solves whose Krylov
+  // solver did not reach its tolerance; the self-consistent eigenproblem, decision 2159).
+  void SaveSurfaceResponseSolverMetadata(
+      MPI_Comm comm, const std::string &name, long long int solves,
+      long long int iterations,
+      std::optional<long long int> unconverged = std::nullopt) const;
   // Root only: palace.json SurfaceResponse.<key> = value (the record of a response-derived
   // postprocessing result next to the operator statistics).
   void SaveSurfaceResponseMetadata(const std::string &key,
