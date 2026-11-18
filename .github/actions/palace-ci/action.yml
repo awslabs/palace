@@ -263,6 +263,21 @@ runs:
         spack -e . concretize -f --test root
         end_timer "Concretize"
 
+    # Spack looks in its source cache before downloading and checks the sha256,
+    # but every runner starts with an empty one. Keep the URL patches across runs
+    # so building a dependency from source does not need GitHub to serve them.
+    # Files are named by their sha256; patches have no extension, while source
+    # archives always do (.tar.gz, .zip, ...), so they are left out.
+    - name: Restore Spack patches
+      id: spack-patches
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          spack/var/spack/cache/_source-cache/archive/*/*
+          !spack/var/spack/cache/_source-cache/archive/*/*.*
+        key: spack-patches
+        restore-keys: spack-patches-
+
     - name: Build Dependencies
       shell: bash
       run: |
@@ -294,6 +309,26 @@ runs:
           echo "Dependency installation attempt ${attempt} failed; retrying."
         done
         end_timer "Build Dependencies"
+
+    # Name the saved cache after its content, so a new entry is saved only when
+    # this run downloaded patches that the restored one did not have.
+    - name: Hash Spack patches
+      id: spack-patches-hash
+      if: ${{ !cancelled() }}
+      shell: bash
+      run: echo "key=spack-patches-${{ hashFiles('spack/var/spack/cache/_source-cache/archive/*/*', '!spack/var/spack/cache/_source-cache/archive/*/*.*') }}" >> "$GITHUB_OUTPUT"
+
+    - name: Save Spack patches
+      if: >-
+        !cancelled() &&
+        steps.spack-patches-hash.outputs.key != 'spack-patches-' &&
+        steps.spack-patches-hash.outputs.key != steps.spack-patches.outputs.cache-matched-key
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          spack/var/spack/cache/_source-cache/archive/*/*
+          !spack/var/spack/cache/_source-cache/archive/*/*.*
+        key: ${{ steps.spack-patches-hash.outputs.key }}
 
     - name: Print @develop commit hashes
       if: inputs.use-develop-deps == 'true'
