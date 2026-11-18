@@ -275,6 +275,7 @@ runs:
         path: |
           spack/var/spack/cache/_source-cache/archive/*/*
           !spack/var/spack/cache/_source-cache/archive/*/*.*
+        # No entry has this exact key, so this restores the most recent one.
         key: spack-patches
         restore-keys: spack-patches-
 
@@ -313,25 +314,24 @@ runs:
         done
         end_timer "Build Dependencies"
 
-    # Name the saved cache after its content, so a new entry is saved only when
-    # this run downloaded patches that the restored one did not have.
+    # Save a new entry when this run downloaded patches that the restored entry
+    # did not have. The key starts with the hash of the patches to tell.
     - name: Hash Spack patches
       id: spack-patches-hash
       if: ${{ !cancelled() }}
       shell: bash
-      run: echo "key=spack-patches-${{ hashFiles('spack/var/spack/cache/_source-cache/archive/*/*', '!spack/var/spack/cache/_source-cache/archive/*/*.*') }}" >> "$GITHUB_OUTPUT"
+      run: echo "hash=${{ hashFiles('spack/var/spack/cache/_source-cache/archive/*/*', '!spack/var/spack/cache/_source-cache/archive/*/*.*') }}" >> "$GITHUB_OUTPUT"
 
     - name: Save Spack patches
       if: >-
-        !cancelled() &&
-        steps.spack-patches-hash.outputs.key != 'spack-patches-' &&
-        steps.spack-patches-hash.outputs.key != steps.spack-patches.outputs.cache-matched-key
+        !cancelled() && steps.spack-patches-hash.outputs.hash != '' &&
+        !startsWith(steps.spack-patches.outputs.cache-matched-key, format('spack-patches-{0}-', steps.spack-patches-hash.outputs.hash))
       uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: |
           spack/var/spack/cache/_source-cache/archive/*/*
           !spack/var/spack/cache/_source-cache/archive/*/*.*
-        key: ${{ steps.spack-patches-hash.outputs.key }}
+        key: spack-patches-${{ steps.spack-patches-hash.outputs.hash }}-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
 
     - name: Print @develop commit hashes
       if: inputs.use-develop-deps == 'true'
