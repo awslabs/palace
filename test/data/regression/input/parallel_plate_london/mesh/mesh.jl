@@ -34,7 +34,7 @@ function generate_parallel_plate_mesh(;
     d::Real=0.5,
     W::Real=1.0,
     ℓ::Real=4.0,
-    nx::Integer=8,
+    nx::Integer=4,
     nt::Integer=8,
     nd::Integer=4,
     grading::Real=1.3
