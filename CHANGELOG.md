@@ -64,6 +64,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Performance Improvements
 
+  - Added a hypre patch, a prototype for
+    [hypre-space/hypre#1654](https://github.com/hypre-space/hypre/issues/1654), with which
+    AMS gathers the coarse levels of its auxiliary space BoomerAMG hierarchies onto fewer
+    processes during the solve and runs the additive Pi-space corrections concurrently.
+    `config["Solver"]["Linear"]["AMSAgglomerationTarget"]` sets the target number of rows
+    per process (`0` disables it). Results agree up to the summation order. SchemaVer 4-6-0
+    [PR 1154](https://github.com/awslabs/palace/pull/1154).
   - The AMS solver, used with a fixed number of iterations, now has a tolerance of zero and
     flags its zero initial guess. With a hypre patch, it then computes no residual norms,
     each a fine-level matrix-vector product and a reduction over all processes, and the
