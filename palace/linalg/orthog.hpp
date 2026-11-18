@@ -223,6 +223,7 @@ template <typename VecType, typename ScalarType>
 inline double OrthogonalizeColumn(Orthogonalization type, MPI_Comm comm,
                                   std::span<VecType> V, ScalarType *H)
 {
+  MFEM_VERIFY(type != Orthogonalization::DEFAULT, "Unresolved default orthogonalization!");
   return (type == Orthogonalization::MGS)
              ? OrthogonalizeColumnMGS(comm, V, H)
              : OrthogonalizeColumnCGS(comm, V, H, type == Orthogonalization::CGS2)[1];

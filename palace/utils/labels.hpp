@@ -192,6 +192,7 @@ enum class SparseCompression : char
 // eigenvalue solver.
 enum class Orthogonalization : char
 {
+  DEFAULT,
   MGS,
   CGS,
   CGS2

@@ -1244,8 +1244,9 @@ public:
   bool estimator_mg = false;
 
   // Enable different variants of Gram-Schmidt orthogonalization for GMRES/FGMRES iterative
-  // solvers and SLEPc eigenvalue solver.
-  Orthogonalization gs_orthog = Orthogonalization::MGS;
+  // solvers and SLEPc eigenvalue solver. DEFAULT is MGS for SLEPc and device-dependent for
+  // GMRES/FGMRES (see GmresSolver::SetOrthogonalization).
+  Orthogonalization gs_orthog = Orthogonalization::DEFAULT;
 
   LinearSolverData() = default;
   LinearSolverData(const json &linear);

@@ -36,6 +36,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Interface Changes
 
+  - `config["Solver"]["Linear"]["GSOrthogonalization"]` accepts `"Default"`, its new
+    default: GMRES and FGMRES use `"CGS2"` on GPUs (`config["Solver"]["Device"]` `"GPU"`)
+    and `"MGS"` otherwise, as before, and the SLEPc eigenvalue solvers keep `"MGS"`. The
+    GMRES and FGMRES of the wave port and boundary mode solvers, which always used
+    `"MGS"`, now follow it too. Set `"MGS"` to keep the previous behavior on GPUs.
+    SchemaVer 5-1-0 [PR 1246](https://github.com/awslabs/palace/pull/1246).
   - With adaptive mesh refinement on nonconforming meshes, the SLEPc Krylov-Schur eigenvalue
     solves of later adaptation iterations can start from the eigenvectors of the previous
     one, transferred to the refined mesh, instead of the start vector of

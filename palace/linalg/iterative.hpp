@@ -233,8 +233,17 @@ public:
   // Set the dimension for restart.
   void SetRestartDim(int dim) { max_dim = dim; }
 
-  // Set the orthogonalization method.
-  void SetOrthogonalization(Orthogonalization orthog) { gs_orthog = orthog; }
+  // Set the orthogonalization method. DEFAULT means CGS2 on GPUs, applied with one global
+  // reduction and one host-device synchronization per iteration (see Arnoldi), and MGS
+  // otherwise: on CPUs, its reduction per basis vector usually costs less than the second
+  // pass over the basis of CGS2, except at large process counts.
+  void SetOrthogonalization(Orthogonalization orthog)
+  {
+    gs_orthog = (orthog != Orthogonalization::DEFAULT) ? orthog
+                : mfem::Device::Allows(mfem::Backend::CUDA_MASK | mfem::Backend::HIP_MASK)
+                    ? Orthogonalization::CGS2
+                    : Orthogonalization::MGS;
+  }
 
   // Set the side for preconditioning.
   virtual void SetPreconditionerSide(PreconditionerSide side) { pc_side = side; }

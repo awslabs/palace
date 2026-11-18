@@ -562,9 +562,9 @@ orthogonalized real and imaginary components, ``\mathrm{Re}(\bm{x}^*)`` and
 ``\mathrm{Im}(\bm{x}^*)``, as separate real basis vectors. The Gram-Schmidt
 orthogonalization variant is controlled by
 [`config["Solver"]["Driven"]["AdaptiveGSOrthogonalization"]`](config/reference.md#config-solver-driven),
-though most users should not need to change it. `"MGS"` is applied as `"CGS2"`, classical
-Gram-Schmidt with reorthogonalization, which is as stable with two reductions per vector
-(one per pass, the second of which also gives the norm) instead of one per basis vector.
+though most users should not need to change it. `"MGS"` and `"Default"` are applied as
+`"CGS2"`, classical Gram-Schmidt with reorthogonalization, which is as stable with two
+reductions per vector, one per pass, instead of one per basis vector.
 
 ### Internal sample selection
 

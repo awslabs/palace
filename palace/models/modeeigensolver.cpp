@@ -505,6 +505,7 @@ void ModeEigenSolver::SetUpLinearSolver(MPI_Comm comm)
   gmres->SetRelTol(linear.tol);
   gmres->SetMaxIter(linear.max_it);
   gmres->SetRestartDim(linear.max_size);
+  gmres->SetOrthogonalization(linear.gs_orthog);
   gmres->EnableTimer();
 
   // Select sparse direct solver type. Multigrid (AMS, BoomerAMG) is not applicable for
@@ -737,6 +738,7 @@ void ModeEigenSolver::SetUpMultigridLinearSolver(MPI_Comm comm)
       {
         auto fgmres = std::make_unique<FgmresSolver<ComplexOperator>>(comm, verbose);
         fgmres->SetRestartDim(linear.max_size);
+        fgmres->SetOrthogonalization(linear.gs_orthog);
         krylov = std::move(fgmres);
       }
       break;
@@ -746,6 +748,7 @@ void ModeEigenSolver::SetUpMultigridLinearSolver(MPI_Comm comm)
       {
         auto gmres = std::make_unique<GmresSolver<ComplexOperator>>(comm, verbose);
         gmres->SetRestartDim(linear.max_size);
+        gmres->SetOrthogonalization(linear.gs_orthog);
         krylov = std::move(gmres);
       }
       break;

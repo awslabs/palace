@@ -1782,10 +1782,10 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
 
     CHECK(j_linear["Tol"].get<double>() == Catch::Approx(1.0e-6));
     CHECK(j_linear["MaxIts"].get<int>() == 100);
-    CHECK(j_linear["GSOrthogonalization"].get<std::string>() == "MGS");
-    // PCSide and ColumnOrdering default to the DEFAULT enum value (not a compile-time
-    // alias); the concretized name records that the user accepted Palace's internal
-    // default rather than naming a specific backend option.
+    // PCSide, ColumnOrdering, and GSOrthogonalization default to the DEFAULT enum value
+    // (not a compile-time alias); the concretized name records that the user accepted
+    // Palace's internal default rather than naming a specific backend option.
+    CHECK(j_linear["GSOrthogonalization"].get<std::string>() == "Default");
     CHECK(j_linear["PCSide"].get<std::string>() == "Default");
     CHECK(j_linear["ColumnOrdering"].get<std::string>() == "Default");
   }

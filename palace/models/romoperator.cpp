@@ -1179,8 +1179,8 @@ Eigen::VectorXcd RomOperator::UpdatePROM(const ComplexVector &u,
                 "PROM basis storage exceeded. Please increase maximum number of prom "
                 "vector per excitation using AdaptiveMaxSamples.");
     auto &v = V.emplace_back(vector);
-    // MGS is applied as CGS2, which is as stable with two reductions instead of one per
-    // basis vector.
+    // MGS and DEFAULT are applied as CGS2, which is as stable with two reductions instead
+    // of one per basis vector.
     const bool refine = (orthog_type != Orthogonalization::CGS);
     double *H = orth_R.col(dim_V).data();
     MPI_Comm comm = space_op.GetComm();

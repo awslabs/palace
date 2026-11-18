@@ -312,8 +312,11 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       }
       slepc->SetProblemType(slepc::SlepcEigenvalueSolver::ProblemType::GEN_NON_HERMITIAN);
     }
-    slepc->SetOrthogonalization(iodata.solver.linear.gs_orthog == Orthogonalization::MGS,
-                                iodata.solver.linear.gs_orthog == Orthogonalization::CGS2);
+    // DEFAULT is MGS for SLEPc, on every device.
+    const auto orthog = iodata.solver.linear.gs_orthog;
+    slepc->SetOrthogonalization(orthog == Orthogonalization::MGS ||
+                                    orthog == Orthogonalization::DEFAULT,
+                                orthog == Orthogonalization::CGS2);
     eigen = std::move(slepc);
 #endif
   }
