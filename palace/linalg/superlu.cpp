@@ -10,10 +10,7 @@
 namespace palace
 {
 
-namespace
-{
-
-int GetNpDep(int np, bool use_3d)
+int GetSuperLUGridDepth(int np, bool use_3d)
 {
   // Return heuristic choice of 3D processor grid depth based on communicator
   // size. Performance doesn't matter here.
@@ -32,12 +29,10 @@ int GetNpDep(int np, bool use_3d)
   }
 }
 
-}  // namespace
-
 SuperLUSolver::SuperLUSolver(MPI_Comm comm, SymbolicFactorization reorder, bool use_3d,
                              bool reorder_reuse, int print)
-  : mfem::Solver(), comm(comm), A(nullptr), solver(comm, GetNpDep(Mpi::Size(comm), use_3d)),
-    reorder_reuse(reorder_reuse)
+  : mfem::Solver(), comm(comm), A(nullptr),
+    solver(comm, GetSuperLUGridDepth(Mpi::Size(comm), use_3d)), reorder_reuse(reorder_reuse)
 {
   // Configure the solver.
   if (print > 1)

@@ -23,7 +23,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     (`config["Solver"]["Substructuring"]`): the environment of a region is condensed onto
     their interface once and saved, and later runs solve only the region, also after a
     redesign or re-meshing of it, for the capacitance and inductance matrices. SchemaVer
-    4-4-0. [PR 995](https://github.com/awslabs/palace/pull/995).
+    4-5-0. [PR 995](https://github.com/awslabs/palace/pull/995).
   - `validate-config` accepts several configuration files and validates them in one Julia
     session. [PR 1180](https://github.com/awslabs/palace/pull/1180).
   - Added `Boundaries.LumpedPort[].ExcitationAmplitude` and `ExcitationPhase` (degrees),
@@ -69,6 +69,24 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Performance Improvements
 
+  - With `config["Solver"]["Linear"]["ComplexCoarseSolve"]`, SuperLU_DIST (with or without
+    `"SuperLU3DCommunicator"`), STRUMPACK (with or without compression), and MUMPS now
+    factor the complex-valued coarse-level matrix in complex arithmetic instead of the
+    equivalent real-valued system of twice the size, which reduces the memory of the factors
+    by about 40%. This changes the behavior of an explicit `"ComplexCoarseSolve": true`: the
+    factorization differs, so results change at the level of the linear solver tolerance,
+    and by more with STRUMPACK compression, which now compresses the factors of the
+    complex-valued matrix. With `"DropSmallEntries"`, they drop the small entries of the
+    complex-valued matrix, by the rule which is applied to the real-valued system, and with
+    `"PCMatReal"` the coarse-level matrix is real-valued and is factored as before. When the
+    imaginary part of the complex-valued matrix is exactly zero, as for a model without
+    losses, these solvers factor its real part in real arithmetic, which halves the memory
+    of the factors again. The log says which matrix is factored, and whether in complex
+    arithmetic or as a real-valued system. With the AMS and BoomerAMG linear solvers, which
+    cannot be given the real-valued system of twice the size (AMS aborted, and simulations
+    with BoomerAMG did not converge), `"ComplexCoarseSolve": true` is now disabled with a
+    warning. Wave ports keep it for their mode solver, which uses a sparse direct solver.
+    SchemaVer 4-4-0 [PR 1193](https://github.com/awslabs/palace/pull/1193).
   - Added a STRUMPACK patch for
     [pghysels/STRUMPACK#171](https://github.com/pghysels/STRUMPACK/pull/171), which lowers
     the memory of the distributed STRUMPACK solver by 12 bytes per coarse matrix row on
@@ -212,6 +230,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Bug Fixes
 
+  - Fixed the pivoting of distributed BLR fronts in STRUMPACK with a patch from upstream.
+    With BLR compression (`"STRUMPACKCompressionType"` `"BLR"`, `"BLR-HODLR"` or
+    `"ZFP-BLR-HODLR"`) on two or more MPI processes, the factorization of an indefinite
+    matrix was inaccurate whatever the tolerance, so the linear solves needed more
+    iterations and could return wrong solutions with `"ComplexCoarseSolve"`.
+    [PR 1222](https://github.com/awslabs/palace/pull/1222).
   - Fixed the flux recovery in the error estimators to use the projection which minimizes the
     error it is measured in (ε⁻¹-weighted for the electric flux, μ-weighted for the magnetic
     field). The unweighted projection overestimated the error in the low-permittivity
@@ -370,6 +394,20 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Build system
 
+  - With MPICH and the MPI implementations derived from it, the superbuild patches the BLACS
+    of ScaLAPACK to receive point-to-point messages with derived datatypes packed and unpack
+    them locally. This works around an MPICH bug for processes on the same node
+    ([pmodels/mpich#8169](https://github.com/pmodels/mpich/issues/8169), fixed on the main
+    branch of MPICH by [pmodels/mpich#8172](https://github.com/pmodels/mpich/pull/8172),
+    which no release up to 5.0.2 and 5.1.0b1 has), seen on macOS arm64, which corrupts or
+    aborts the complex-valued distributed factorizations of STRUMPACK and MUMPS: a packed
+    message received in several shared memory cells cannot be unpacked when a cell boundary
+    splits a complex-valued element. Builds with other MPI implementations are unchanged.
+    The ScaLAPACK of a Spack build is not patched.
+    [PR 1193](https://github.com/awslabs/palace/pull/1193).
+  - The superbuild now builds MUMPS with complex double precision (`zmumps`), which
+    *Palace* now requires with `PALACE_WITH_MUMPS`, also in the Spack package
+    (`mumps@5.3:+double+complex`). [PR 1193](https://github.com/awslabs/palace/pull/1193).
   - The superbuild now always builds ParMETIS, which *Palace* links directly. Previously
     it was built only with SuperLU_DIST, STRUMPACK, or MUMPS, so configuring with cuDSS as
     the only sparse direct solver failed.
@@ -385,6 +423,8 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     parallel instead of serially. The superbuild also skips Eigen's BLAS, LAPACK, and demos,
     which *Palace* does not use, and clones PETSc and SLEPc shallowly.
     [PR 1180](https://github.com/awslabs/palace/pull/1180).
+  - The Spack package now builds STRUMPACK without SLATE by default, as the superbuild does.
+    [PR 1223](https://github.com/awslabs/palace/pull/1223).
 
 ## [0.19.0] - 2026-11-02
 

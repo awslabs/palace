@@ -14,6 +14,13 @@
 namespace palace
 {
 
+// Set the compression options of STRUMPACK, for the real-valued solvers and for the solver
+// in complex arithmetic (StrumpackComplexSolver).
+template <typename ScalarType>
+void ConfigureStrumpackCompression(strumpack::SPOptions<ScalarType> &opts,
+                                   SparseCompression compression, double lr_tol,
+                                   int butterfly_l, int lossy_prec);
+
 //
 // A wrapper for the STRUMPACK direct solver package.
 //
