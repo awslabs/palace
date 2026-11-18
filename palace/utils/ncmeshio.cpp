@@ -210,14 +210,15 @@ void RebalanceRootAligned(mfem::ParMesh &mesh, double tol)
       load[r] += roots[i].leaves;
     }
   }
-  // Accept the snapped partition when its largest load over its smallest (as for
-  // MaximumImbalance, so no process is empty) is within half of the tolerance.
+  // Accept the snapped partition when its largest load is within half of the tolerance of
+  // the mean, and its largest over its smallest (as for MaximumImbalance) within the
+  // tolerance, so that no process is empty and the next rebalance is not due at once.
   long long max_load = 0, min_load;
   MPI_Reduce_scatter_block(load.data(), &max_load, 1, MPI_LONG_LONG, MPI_SUM, comm);
   min_load = max_load;
   Mpi::GlobalMax(1, &max_load, comm);
   Mpi::GlobalMin(1, &min_load, comm);
-  if (max_load <= (1.0 + 0.5 * (tol - 1.0)) * min_load)
+  if (max_load <= (1.0 + 0.5 * (tol - 1.0)) * total / P && max_load <= tol * min_load)
   {
     mesh.Rebalance(part);
   }
