@@ -60,6 +60,7 @@ PALACE_JSON_SERIALIZE_ENUM(Orthogonalization)
 PALACE_JSON_SERIALIZE_ENUM(DomainOrthogonalizationWeight)
 PALACE_JSON_SERIALIZE_ENUM(Device)
 PALACE_JSON_SERIALIZE_ENUM(InactivePortMode)
+PALACE_JSON_SERIALIZE_ENUM(RebalanceMethod)
 }  // namespace palace
 
 namespace palace::config
@@ -231,6 +232,7 @@ RefinementData::RefinementData(const json &refinement)
   max_nc_levels = refinement.value("MaxNCLevels", max_nc_levels);
   update_fraction = refinement.value("UpdateFraction", update_fraction);
   maximum_imbalance = refinement.value("MaximumImbalance", maximum_imbalance);
+  rebalance_method = refinement.value("RebalanceMethod", rebalance_method);
   save_adapt_iterations = refinement.value("SaveAdaptIterations", save_adapt_iterations);
   save_adapt_mesh = refinement.value("SaveAdaptMesh", save_adapt_mesh);
 

@@ -54,6 +54,26 @@ from driven problems in the time domain. The error estimates account for the
 discontinuity of the fields across [interior boundaries](boundaries.md#Interior-boundaries)
 such as thin metal sheets, without modifying the mesh.
 
+After each refinement, the mesh is repartitioned across the MPI processes when the ratio of
+the largest to the smallest number of elements on a process exceeds
+[`config["Model"]["Refinement"]["MaximumImbalance"]`](../config/reference.md#config-model-refinement).
+Nonconformal meshes are repartitioned in parallel by MFEM. For conformal meshes,
+[`config["Model"]["Refinement"]["RebalanceMethod"]`](../config/reference.md#config-model-refinement)
+selects how:
+
+  - `"Gather"` (the default): the mesh is gathered on the root process, partitioned there
+    with METIS, and distributed again. The root process then holds the whole mesh, and the
+    tetrahedra are marked for refinement anew (longest edge).
+  - `"Parallel"` (requires *Palace* built with PT-Scotch, `PALACE_WITH_SCOTCH`): the
+    element graph of the mesh is partitioned with PT-Scotch and the elements move between
+    the processes, so that no process ever holds the whole mesh. The tetrahedra are then
+    marked for refinement anew (longest edge), as with `"Gather"`. For meshes other than
+    triangle or tetrahedron meshes, or if the partition would leave a process without
+    elements, the mesh is repartitioned as with `"Gather"`, with a warning.
+
+With [`config["Model"]["Refinement"]["SaveAdaptMesh"]`](../config/reference.md#config-model-refinement),
+the adapted mesh is gathered on the root process to be written, with either method.
+
 ## Material models
 
 Material properties are handled by the

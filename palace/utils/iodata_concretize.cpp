@@ -235,6 +235,7 @@ void ConcretizeModel(const config::ModelData &model, json &j_model)
                 {"MaxNCLevels", ref.max_nc_levels},
                 {"UpdateFraction", ref.update_fraction},
                 {"MaximumImbalance", ref.maximum_imbalance},
+                {"RebalanceMethod", ToString(ref.rebalance_method)},
                 {"SaveAdaptIterations", ref.save_adapt_iterations},
                 {"SaveAdaptMesh", ref.save_adapt_mesh},
                 {"UniformLevels", ref.uniform_ref_levels},

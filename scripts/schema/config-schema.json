@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:4-4-0",
+  "$id": "urn:palace:schema:4-5-0",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -513,6 +513,11 @@
           "minimum": 1.0,
           "description": "Maximum ratio of elements between the most- and least-loaded MPI ranks before repartitioning.",
           "default": 1.1,
+          "x-palace-advanced": true
+        },
+        "RebalanceMethod": {
+          "$ref": "#/$defs/RebalanceMethod",
+          "description": "How a conformal mesh is repartitioned when `\"MaximumImbalance\"` is exceeded. If omitted, `\"Gather\"`. Nonconformal meshes are always repartitioned in parallel by MFEM. With `\"SaveAdaptMesh\"`, the adapted mesh is still gathered on the root rank to be written.",
           "x-palace-advanced": true
         },
         "SaveAdaptIterations": {
@@ -1979,6 +1984,20 @@
         {
           "description": "Cylindrical coordinates (enables `+R`/`-R` directions).",
           "const": "Cylindrical"
+        }
+      ]
+    },
+    "RebalanceMethod": {
+      "type": "string",
+      "description": "Method for repartitioning a conformal mesh during adaptive mesh refinement.",
+      "oneOf": [
+        {
+          "const": "Gather",
+          "description": "Gather the mesh on the root rank, partition it there with METIS, and distribute it again. The root rank holds the whole mesh. The refinement flags of the tetrahedra are recomputed (longest edge)."
+        },
+        {
+          "const": "Parallel",
+          "description": "Partition the mesh with PT-Scotch and move the elements between the ranks, without gathering the mesh. The tetrahedra are then marked for refinement anew (longest edge), as with `\"Gather\"`. Requires *Palace* built with PT-Scotch, and a mesh of triangles or tetrahedra: for other meshes, or if the partition would leave a rank without elements, the mesh is repartitioned as with `\"Gather\"`, with a warning."
         }
       ]
     },

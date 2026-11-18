@@ -152,6 +152,9 @@ PALACE_ENUM_STRING_DEFINE(Device, {{Device::CPU, "CPU"},
 PALACE_ENUM_STRING_DEFINE(InactivePortMode, {{InactivePortMode::OPEN, "Open"},
                                              {InactivePortMode::SHORT, "Short"}})
 
+PALACE_ENUM_STRING_DEFINE(RebalanceMethod, {{RebalanceMethod::GATHER, "Gather"},
+                                            {RebalanceMethod::PARALLEL, "Parallel"}})
+
 #undef PALACE_ENUM_STRING_DEFINE
 
 }  // namespace palace

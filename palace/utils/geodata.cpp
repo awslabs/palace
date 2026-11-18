@@ -31,6 +31,13 @@
 #include "utils/timer.hpp"
 #include "utils/units.hpp"
 
+#if defined(PALACE_WITH_SCOTCH)
+#include <cstdint>
+#include <cstdio>
+#include <mpi.h>
+#include <ptscotch.h>
+#endif
+
 namespace palace
 {
 
@@ -84,6 +91,12 @@ std::unique_ptr<mfem::ParMesh> DistributeMesh(MPI_Comm, std::unique_ptr<mfem::Me
 // Rebalance a conformal mesh across processor ranks, using the MeshPartitioner. Gathers the
 // mesh onto the root rank before scattering the partitioned mesh.
 void RebalanceConformalMesh(std::unique_ptr<mfem::ParMesh> &);
+
+// Rebalance a conformal mesh of triangles or tetrahedra in parallel, with a PT-Scotch
+// partition and mfem::ParMesh::Rebalance, without gathering it. Returns false, on all
+// processes and without changing the mesh, if the parallel rebalance was not requested, is
+// not available, or does not apply.
+bool RebalanceConformalMeshParallel(const IoData &, mfem::ParMesh &);
 
 // Apply box/sphere region-based refinement to a serial mesh in-place. For tensor-element
 // meshes the refinement is non-conforming and the mesh must already be nonconforming.
@@ -2679,6 +2692,206 @@ void FillMeshEntityCounts(mfem::Mesh &smesh, MeshEntityCounts &counts)
 
 }  // namespace
 
+long long GetElementGraph(mfem::ParMesh &mesh, std::vector<long long> &xadj,
+                          std::vector<long long> &adjncy)
+{
+  MPI_Comm comm = mesh.GetComm();
+  const int ne = mesh.GetNE();
+  long long offset = 0;
+  {
+    long long ne_loc = ne;
+    MPI_Exscan(&ne_loc, &offset, 1, MPI_LONG_LONG, MPI_SUM, comm);
+    if (Mpi::Root(comm))
+    {
+      offset = 0;
+    }
+  }
+
+  // The elements on the other side of shared faces are numbered through the face-neighbor
+  // data of a piecewise constant field. A face of a periodic mesh can connect an element to
+  // itself, which is no edge of the graph.
+  mfem::L2_FECollection fec(0, mesh.Dimension());
+  mfem::ParFiniteElementSpace fes(&mesh, &fec);
+  mfem::ParGridFunction field(&fes);
+  mfem::Array<int> vdofs;
+  double *h_field = field.HostWrite();
+  for (int e = 0; e < ne; e++)
+  {
+    fes.GetElementVDofs(e, vdofs);
+    h_field[vdofs[0]] = static_cast<double>(offset + e);
+  }
+  field.ExchangeFaceNbrData();
+  const double *nbr = field.FaceNbrData().HostRead();
+  auto ForEachEdge = [&](auto &&f)
+  {
+    for (int i = 0; i < mesh.GetNumFaces(); i++)
+    {
+      const auto info = mesh.GetFaceInformation(i);
+      const int e1 = info.element[0].index, e2 = info.element[1].index;
+      if (info.IsLocal() && info.IsInterior() && e1 != e2)
+      {
+        f(e1, offset + e2);
+        f(e2, offset + e1);
+      }
+      else if (info.IsShared())
+      {
+        fes.GetFaceNbrElementVDofs(e2, vdofs);
+        f(e1, static_cast<long long>(nbr[vdofs[0]]));
+      }
+    }
+  };
+  xadj.assign(ne + 1, 0);
+  ForEachEdge([&](int e, long long) { xadj[e + 1]++; });
+  std::partial_sum(xadj.begin(), xadj.end(), xadj.begin());
+  adjncy.resize(xadj[ne]);
+  std::vector<long long> pos(xadj.begin(), xadj.end() - 1);
+  ForEachEdge([&](int e, long long g) { adjncy[pos[e]++] = g; });
+
+  // Sort the rows and remove repeated neighbors (periodic meshes).
+  long long k = 0;
+  for (int e = 0; e < ne; e++)
+  {
+    auto first = adjncy.begin() + xadj[e], last = adjncy.begin() + xadj[e + 1];
+    std::sort(first, last);
+    last = std::unique(first, last);
+    const long long start = k;
+    for (auto it = first; it != last; ++it)
+    {
+      adjncy[k++] = *it;
+    }
+    xadj[e] = start;
+  }
+  xadj[ne] = k;
+  adjncy.resize(k);
+  return offset;
+}
+
+bool GetRebalancePartitioning(mfem::ParMesh &mesh, mfem::Array<int> &partitioning,
+                              long long elements_per_process, int strategy,
+                              double imbalance)
+{
+#if defined(PALACE_WITH_SCOTCH)
+  static_assert((SCOTCH_STRATSPEED | SCOTCH_STRATSAFETY) == (0x2 | 0x8),
+                "Unexpected values of the PT-Scotch strategy flags!");
+  MFEM_VERIFY(imbalance > 0.0, "The PT-Scotch load imbalance tolerance must be positive!");
+  MPI_Comm comm = mesh.GetComm();
+  const int size = Mpi::Size(comm), rank = Mpi::Rank(comm);
+  const int ne = mesh.GetNE();
+  long long ne_glob = ne;
+  Mpi::GlobalSum(1, &ne_glob, comm);
+  std::vector<long long> xadj, adjncy;
+  GetElementGraph(mesh, xadj, adjncy);
+
+  // Groups of consecutive processes, the first of each partitioning the graph rows of its
+  // group with the others: PT-Scotch's time grows with the number of processes.
+  const int nproc = (elements_per_process <= 0)
+                        ? size
+                        : static_cast<int>(std::clamp<long long>(
+                              (ne_glob + elements_per_process - 1) / elements_per_process,
+                              std::min(size, 8), size));
+  MPI_Comm group_comm, part_comm;
+  MPI_Comm_split(comm, static_cast<int>(static_cast<long long>(rank) * nproc / size), rank,
+                 &group_comm);
+  const int group_size = Mpi::Size(group_comm);
+  const bool leader = Mpi::Root(group_comm);
+  MPI_Comm_split(comm, leader ? 0 : MPI_UNDEFINED, rank, &part_comm);
+  std::vector<int> row_counts(group_size), adj_counts(group_size),
+      row_displs(group_size + 1, 0), adj_displs(group_size + 1, 0);
+  {
+    const long long nadj = xadj[ne];
+    MFEM_VERIFY(nadj <= std::numeric_limits<int>::max(),
+                "Too many graph edges on a process for the rebalance partition!");
+    const int loc[2] = {ne, static_cast<int>(nadj)};
+    std::vector<int> counts(2 * group_size);
+    MPI_Gather(loc, 2, MPI_INT, counts.data(), 2, MPI_INT, 0, group_comm);
+    for (int i = 0; i < group_size; i++)
+    {
+      row_counts[i] = counts[2 * i];
+      adj_counts[i] = counts[2 * i + 1];
+      row_displs[i + 1] = row_displs[i] + row_counts[i];
+      adj_displs[i + 1] = adj_displs[i] + adj_counts[i];
+    }
+  }
+  const SCOTCH_Num group_ne = leader ? row_displs[group_size] : 0,
+                   group_nadj = leader ? adj_displs[group_size] : 0;
+  std::vector<SCOTCH_Num> group_xadj(group_ne + 1, 0), group_adjncy(group_nadj + 1),
+      group_part(group_ne + 1);
+  const MPI_Datatype num_type = mpi::DataType<SCOTCH_Num>();
+  {
+    std::vector<SCOTCH_Num> deg(ne), adj(adjncy.begin(), adjncy.end());
+    for (int e = 0; e < ne; e++)
+    {
+      deg[e] = static_cast<SCOTCH_Num>(xadj[e + 1] - xadj[e]);
+    }
+    std::vector<long long>().swap(xadj);
+    std::vector<long long>().swap(adjncy);
+    MPI_Gatherv(deg.data(), ne, num_type, group_xadj.data() + 1, row_counts.data(),
+                row_displs.data(), num_type, 0, group_comm);
+    MPI_Gatherv(adj.data(), static_cast<int>(adj.size()), num_type, group_adjncy.data(),
+                adj_counts.data(), adj_displs.data(), num_type, 0, group_comm);
+    std::partial_sum(group_xadj.begin(), group_xadj.end(), group_xadj.begin());
+  }
+
+  // Partition into one part per process on the first processes of the groups. Whatever
+  // its build options, the context runs PT-Scotch on one thread per process, with
+  // deterministic communication and a fixed seed.
+  int ok = 1;
+  if (leader)
+  {
+    SCOTCH_Context context;
+    SCOTCH_Dgraph graph, context_graph;
+    SCOTCH_Strat strat;
+    SCOTCH_contextInit(&context);
+    SCOTCH_dgraphInit(&graph, part_comm);
+    SCOTCH_stratInit(&strat);
+    ok = (SCOTCH_contextOptionSetNum(&context, SCOTCH_OPTIONNUMDETERMINISTIC, 1) == 0 &&
+          SCOTCH_contextRandomClone(&context) == 0 &&
+          SCOTCH_contextThreadSpawn(&context, 1, nullptr) == 0);
+    if (ok)
+    {
+      SCOTCH_contextRandomSeed(&context, 1);
+    }
+    Mpi::GlobalMin(1, &ok, part_comm);
+    ok = ok && (SCOTCH_dgraphBuild(&graph, 0, group_ne, group_ne, group_xadj.data(),
+                                   nullptr, nullptr, nullptr, group_nadj, group_nadj,
+                                   group_adjncy.data(), nullptr, nullptr) == 0);
+    ok = ok && (SCOTCH_contextBindDgraph(&context, &graph, &context_graph) == 0);
+    ok = ok && (SCOTCH_stratDgraphMapBuild(&strat, static_cast<SCOTCH_Num>(strategy),
+                                           Mpi::Size(part_comm), size, imbalance) == 0);
+    ok = ok && (SCOTCH_dgraphPart(&context_graph, size, &strat, group_part.data()) == 0);
+    SCOTCH_stratExit(&strat);
+    SCOTCH_dgraphExit(&graph);
+    SCOTCH_contextExit(&context);
+    MPI_Comm_free(&part_comm);
+  }
+  std::vector<SCOTCH_Num> part(ne + 1);
+  MPI_Scatterv(group_part.data(), row_counts.data(), row_displs.data(), num_type,
+               part.data(), ne, num_type, 0, group_comm);
+  MPI_Comm_free(&group_comm);
+  Mpi::GlobalMin(1, &ok, comm);
+  if (!ok)
+  {
+    return false;
+  }
+
+  // Refuse a partition which leaves a process without elements.
+  partitioning.SetSize(ne);
+  std::vector<int> part_counts(size, 0);
+  for (int e = 0; e < ne; e++)
+  {
+    partitioning[e] = static_cast<int>(part[e]);
+    part_counts[partitioning[e]]++;
+  }
+  int count = 0;
+  MPI_Reduce_scatter_block(part_counts.data(), &count, 1, MPI_INT, MPI_SUM, comm);
+  int min_count = count;
+  Mpi::GlobalMin(1, &min_count, comm);
+  return min_count > 0;
+#else
+  return false;
+#endif
+}
+
 void CompleteMeshEntityCounts(mfem::ParMesh &mesh, MeshEntityCounts &counts)
 {
   if (!mesh.Nonconforming())
@@ -2708,6 +2921,41 @@ void CompleteMeshEntityCounts(mfem::ParMesh &mesh, MeshEntityCounts &counts)
     counts.true_edges = static_cast<long long>(true_edges);
     counts.valid = true;
   }
+}
+
+std::vector<long long> GetGlobalEntityCounts(const mfem::ParMesh &mesh)
+{
+  const int dim = mesh.Dimension();
+  int nattr = 0;
+  for (int b = 0; b < mesh.GetNBE(); b++)
+  {
+    nattr = std::max(nattr, mesh.GetBdrAttribute(b));
+  }
+  Mpi::GlobalMax(1, &nattr, mesh.GetComm());
+  std::vector<long long> counts(4 + nattr, 0);
+  counts[0] = mesh.GetNE();
+  counts[1] = mesh.GetNV();
+  counts[2] = mesh.GetNEdges();
+  counts[3] = (dim == 3) ? mesh.GetNFaces() : 0;
+  for (int g = 1; g < mesh.GetNGroups(); g++)
+  {
+    // A shared entity is counted on the master process of its group.
+    if (!mesh.gtopo.IAmMaster(g))
+    {
+      counts[1] -= mesh.GroupNVertices(g);
+      counts[2] -= mesh.GroupNEdges(g);
+      if (dim == 3)
+      {
+        counts[3] -= mesh.GroupNTriangles(g) + mesh.GroupNQuadrilaterals(g);
+      }
+    }
+  }
+  for (int b = 0; b < mesh.GetNBE(); b++)
+  {
+    counts[3 + std::max(mesh.GetBdrAttribute(b), 1)]++;
+  }
+  Mpi::GlobalSum(static_cast<int>(counts.size()), counts.data(), mesh.GetComm());
+  return counts;
 }
 
 double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh,
@@ -2792,9 +3040,37 @@ double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh,
     }
     else
     {
-      // Without access to a refinement tree, partitioning must be done on the root
-      // processor and then redistributed.
-      RebalanceConformalMesh(mesh);
+      // The rebalanced mesh must be the same mesh: a cheap check of its entity counts.
+      const auto counts = GetGlobalEntityCounts(*mesh);
+      if (!RebalanceConformalMeshParallel(iodata, *mesh))
+      {
+        // Without access to a refinement tree or to PT-Scotch, partitioning must be done
+        // on the root processor and then redistributed.
+        RebalanceConformalMesh(mesh);
+      }
+      const auto new_counts = GetGlobalEntityCounts(*mesh);
+      if (new_counts != counts)
+      {
+        constexpr const char *names[] = {"elements", "vertices", "edges", "faces"};
+        std::string changes;
+        for (std::size_t i = 0; i < std::max(counts.size(), new_counts.size()); i++)
+        {
+          const long long a = (i < counts.size()) ? counts[i] : 0,
+                          b = (i < new_counts.size()) ? new_counts[i] : 0;
+          if (a != b)
+          {
+            changes += fmt::format(
+                "{}{} {} -> {}", changes.empty() ? "" : ", ",
+                (i < 4) ? std::string(names[i])
+                        : fmt::format("boundary elements of attribute {}", i - 3),
+                a, b);
+          }
+        }
+        MFEM_ABORT("Rebalancing changed the global numbers of mesh entities ("
+                   << changes
+                   << "): the mesh was not conforming across the processes before the "
+                      "rebalance.");
+      }
     }
   }
   return ratio;
@@ -4616,6 +4892,40 @@ void RebalanceConformalMesh(std::unique_ptr<mfem::ParMesh> &pmesh)
     partitioning = GetMeshPartitioning(*smesh, Mpi::Size(comm), "", false);
   }
   pmesh = DistributeMesh(comm, smesh, partitioning.get());
+}
+
+bool RebalanceConformalMeshParallel(const IoData &iodata, mfem::ParMesh &mesh)
+{
+  if (iodata.model.refinement.rebalance_method != RebalanceMethod::PARALLEL)
+  {
+    return false;
+  }
+  // Conformal meshes of triangles or tetrahedra, except submeshes (their maps to the parent
+  // mesh would not follow); meshgen is the same on all processes.
+  const bool supported = mesh.Conforming() && !mesh.NURBSext && mesh.MeshGenerator() == 1 &&
+                         (mesh.Dimension() == 2 || mesh.Dimension() == 3) &&
+                         dynamic_cast<const mfem::ParSubMesh *>(&mesh) == nullptr;
+  if (!supported)
+  {
+    Mpi::Warning(mesh.GetComm(),
+                 "Parallel rebalancing supports conformal meshes of triangles or "
+                 "tetrahedra only, rebalancing on the root process!\n");
+    return false;
+  }
+  mfem::Array<int> partitioning;
+  if (!mesh::GetRebalancePartitioning(mesh, partitioning))
+  {
+    Mpi::Warning(mesh.GetComm(),
+                 "The PT-Scotch partition failed or would leave a process without "
+                 "elements, rebalancing on the root process!\n");
+    return false;
+  }
+  mesh.Rebalance(partitioning);
+  // Mark the mesh again, as the gather does when it rebuilds the mesh: keeping the
+  // refinement flags gave worse-shaped elements and 18% more solver iterations on a
+  // production case.
+  mesh.Finalize(true);
+  return true;
 }
 
 void RegionRefine(const config::RefinementData &refinement, mfem::Mesh &mesh)

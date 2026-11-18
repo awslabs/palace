@@ -378,6 +378,36 @@ struct MeshEntityCounts
 double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh,
                      MeshEntityCounts *out_counts = nullptr);
 
+// The global numbers of elements, vertices, edges and faces (3D) of a conformal mesh, and
+// of its boundary elements of each attribute (1 to the largest), with each entity shared by
+// processes counted once, from the shared entity groups of the mesh (no finite element
+// space is built). A rebalance does not change them. Collective.
+std::vector<long long> GetGlobalEntityCounts(const mfem::ParMesh &mesh);
+
+// The element graph of a mesh, for partitioning it: one vertex per element, numbered in the
+// order of the processes, and one edge per face between two different elements, found
+// across shared faces through face-neighbor data, so without gathering the mesh. Returns
+// the global number of the first local element and the rows of the local elements in
+// compressed form: `xadj` has GetNE() + 1 entries, `adjncy` the global numbers of the
+// neighbors, sorted.
+long long GetElementGraph(mfem::ParMesh &mesh, std::vector<long long> &xadj,
+                          std::vector<long long> &adjncy);
+
+// Partition the elements of a conformal mesh of triangles or tetrahedra into one part per
+// process for rebalancing it, with PT-Scotch on the element graph of the mesh (one vertex
+// per element, one edge per face between two elements), built without gathering the mesh.
+// The graph rows of each group of consecutive processes are sent to the first process of
+// the group, which partitions with the other first processes: there are enough groups for
+// about `elements_per_process` rows on each, at least 8 (or all the processes if there are
+// fewer), at most all the processes; 0 means all the processes. `strategy` is a combination
+// of the SCOTCH_STRAT* flags of PT-Scotch (the default is SCOTCH_STRATSPEED |
+// SCOTCH_STRATSAFETY) and `imbalance` its load imbalance tolerance, which must be positive.
+// Returns false on all processes if Palace is built without PT-Scotch, if PT-Scotch fails,
+// or if the partition would leave a process without elements.
+bool GetRebalancePartitioning(mfem::ParMesh &mesh, mfem::Array<int> &partitioning,
+                              long long elements_per_process = 100000,
+                              int strategy = 0x2 | 0x8, double imbalance = 0.02);
+
 // Complete true vertex and edge counts for a nonconforming mesh using distributed
 // lowest-order H1 and ND spaces. This is collective over the mesh communicator and must be
 // called on every rank after RebalanceMesh has populated out_counts for the final mesh.

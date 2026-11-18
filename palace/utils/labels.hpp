@@ -213,6 +213,15 @@ enum class Device : char
   DEBUG
 };
 
+// Method for rebalancing a conformal mesh across the processes during adaptive mesh
+// refinement: gather the mesh on the root process, partition it there and distribute it, or
+// partition it with PT-Scotch and migrate the elements in parallel.
+enum class RebalanceMethod : char
+{
+  GATHER,
+  PARALLEL
+};
+
 // Inactive port boundary condition mode for magnetostatic sweeps.
 enum class InactivePortMode : char
 {

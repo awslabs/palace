@@ -859,6 +859,11 @@ void IoData::CheckConfiguration()
   MFEM_VERIFY(solver.linear.type != LinearSolver::CUDSS,
               "Linear solver cuDSS requested but Palace was not built with cuDSS support!");
 #endif
+#if !defined(PALACE_WITH_SCOTCH)
+  MFEM_VERIFY(model.refinement.rebalance_method != RebalanceMethod::PARALLEL,
+              "Parallel rebalancing requested but Palace was not built with PT-Scotch "
+              "support!");
+#endif
 
   // Configure settings for quadrature rules and partial assembly.
   BilinearForm::pa_order_threshold = solver.pa_order_threshold;
