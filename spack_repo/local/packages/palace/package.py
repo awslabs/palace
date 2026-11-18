@@ -183,10 +183,12 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     # solves with a few right-hand sides, and the copies in extern/patch/STRUMPACK of the
     # source and CMake changes of https://github.com/pghysels/STRUMPACK/pull/169, which
     # allow setting the PBLAS block size (see the local strumpack package) and use these
-    # solves only for the block sizes they handle, and of the source changes of
+    # solves only for the block sizes they handle, of the source changes of
     # https://github.com/pghysels/STRUMPACK/pull/171, which lower the memory of the
-    # distributed solver. Kept off the `with` blocks so the Palace variants are not folded
-    # into the patch condition.
+    # distributed solver, and of the source changes of the STRUMPACK commits 3f30760d and
+    # 668cd1b8 by the STRUMPACK maintainer, which fix the pivoting of the distributed BLR
+    # fronts (to be removed with the next STRUMPACK release). Kept off the `with` blocks
+    # so the Palace variants are not folded into the patch condition.
     depends_on(
         "strumpack@8.1.0",
         when="@develop+strumpack",
@@ -222,6 +224,13 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 "8a1824f67bfe176f74075e9e3938fa8267c0695f/extern/patch/STRUMPACK/"
                 "strumpack_pr171.diff",
                 sha256="781f79e96d4ff55cc914617885d64f869ea001314841c8c30b94d5073685e71a",
+                when="@8.1.0",
+            ),
+            patch(
+                "https://raw.githubusercontent.com/awslabs/palace/"
+                "b87fe1cbf98a5dcd4850c5c967ada69e1c15dea7/extern/patch/STRUMPACK/"
+                "strumpack_blr_pivoting.diff",
+                sha256="2d5da6e907d735c1588c3aa2a0cfe6554cf0b950c1a3bab3db5e71c7296168c8",
                 when="@8.1.0",
             ),
         ],

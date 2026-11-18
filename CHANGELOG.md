@@ -220,6 +220,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Bug Fixes
 
+  - Fixed the pivoting of distributed BLR fronts in STRUMPACK with a patch from upstream.
+    With BLR compression (`"STRUMPACKCompressionType"` `"BLR"`, `"BLR-HODLR"` or
+    `"ZFP-BLR-HODLR"`) on two or more MPI processes, the factorization of an indefinite
+    matrix was inaccurate whatever the tolerance, so the linear solves needed more
+    iterations and could return wrong solutions with `"ComplexCoarseSolve"`.
+    [PR 1222](https://github.com/awslabs/palace/pull/1222).
   - Fixed the flux recovery in the error estimators to use the projection which minimizes the
     error it is measured in (ε⁻¹-weighted for the electric flux, μ-weighted for the magnetic
     field). The unweighted projection overestimated the error in the low-permittivity
