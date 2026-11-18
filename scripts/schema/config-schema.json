@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:4-4-0",
+  "$id": "urn:palace:schema:4-4-1",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -1221,7 +1221,7 @@
           "description": "Sub-elements for a multielement lumped port. Use this instead of the top-level `\"Attributes\"`/`\"Direction\"`/`\"CoordinateSystem\"` when the port spans multiple disjoint boundary surfaces. Elements add in parallel.",
           "additionalItems": false,
           "items": {
-            "$ref": "#/$defs/LumpedPortElement"
+            "$ref": "#/$defs/Element"
           }
         },
         "Direction": {
@@ -1301,41 +1301,6 @@
         }
       }
     },
-    "LumpedPortElement": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "Attributes",
-        "Direction"
-      ],
-      "properties": {
-        "Attributes": {
-          "$ref": "#/$defs/Attributes",
-          "description": "Integer array of mesh boundary attributes this element applies to."
-        },
-        "Direction": {
-          "description": "Excitation direction of this element. Axis-aligned Cartesian directions can be specified using keywords: `\"+X\"`, `\"-X\"`, `\"+Y\"`, `\"-Y\"`, `\"+Z\"`, `\"-Z\"`. Coaxial directions use `\"+R\"`, `\"-R\"`. Alternatively, specify a normalized 3-element array, e.g. `[0.0, 1.0, 0.0]`. The coordinate system is determined by `\"CoordinateSystem\"`.",
-          "anyOf": [
-            {
-              "$ref": "#/$defs/PortDirection"
-            },
-            {
-              "$ref": "#/$defs/Vector3"
-            }
-          ]
-        },
-        "CoordinateSystem": {
-          "$ref": "#/$defs/CoordinateSystem",
-          "description": "Coordinate system for this element's `\"Direction\"` vector.",
-          "default": "Cartesian"
-        },
-        "Length": {
-          "type": "number",
-          "exclusiveMinimum": 0,
-          "description": "Optional geometry override for a ragged planar element: this element's length in mesh units along its `\"Direction\"`; see `/LumpedPort/Length`."
-        }
-      }
-    },
     "Element": {
       "type": "object",
       "additionalProperties": false,
@@ -1363,6 +1328,11 @@
           "$ref": "#/$defs/CoordinateSystem",
           "description": "Coordinate system for this element's `\"Direction\"` vector.",
           "default": "Cartesian"
+        },
+        "Length": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Optional geometry override for a ragged planar element: this element's length in mesh units along its `\"Direction\"`; see `/LumpedPort/Length`."
         }
       }
     },
@@ -3065,7 +3035,7 @@
         },
         "AdaptiveGSOrthogonalization": {
           "$ref": "#/$defs/Orthogonalization",
-          "description": "Gram-Schmidt variant for orthogonalizing the adaptive reduced-order model basis. Same options as [`/Linear/GSOrthogonalization`](@ref config-solver-linear-gsorthogonalization).",
+          "description": "Gram-Schmidt variant for orthogonalizing the adaptive reduced-order model basis. Same options as [`/Linear/GSOrthogonalization`](@ref config-solver-linear-gsorthogonalization), with `\"MGS\"` applied as `\"CGS2\"`.",
           "default": "CGS2",
           "x-palace-advanced": true
         },

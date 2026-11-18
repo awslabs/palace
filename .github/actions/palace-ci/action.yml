@@ -320,7 +320,8 @@ runs:
       run: |
         source /tmp/timing_functions.sh
         start_timer
-        eval "$(spack -e . load --sh palace)"
+        # Also load CMake for ctest: Palace only needs it to build
+        eval "$(spack -e . load --sh palace cmake)"
 
         # Use nproc, but halve to account for hyperthreading.
         # NOTE: This CI action only runs on Linux runners (lscpu/nproc are Linux-specific).

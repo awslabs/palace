@@ -634,10 +634,14 @@ protected:
   void PrintSurfaceResponseCoverage(double output_index, int excitation) const;
   mutable bool surface_response_coverage_started = false;
 
-  // Exact reduced-coordinate domain-energy forms for adaptive online postprocessing.
+  // Reduced-coordinate outputs for adaptive online postprocessing: the electric energy
+  // form, the factor R of the curls of the basis vectors (the magnetic energy is
+  // 1/2 |R y|² / ω²), the domain energy forms (electric in the basis, magnetic in the
+  // coordinates R y), and the lumped-port voltages of the basis vectors (one row per port).
   bool reduced_postprocessing_ready = false;
-  bool reduced_postprocessing_checked = false;
-  Eigen::MatrixXd reduced_energy_E, reduced_energy_H;
+  std::set<int> reduced_postprocessing_checked;  // Excitations checked
+  double reduced_postprocessing_tol = 0.0;
+  Eigen::MatrixXd reduced_energy_E, reduced_curl_R, reduced_port_V;
   std::map<int, std::pair<Eigen::MatrixXd, Eigen::MatrixXd>> reduced_domain_energy;
 
   // Per-entry impedance postprocessing configuration (keyed by config index).
@@ -670,6 +674,7 @@ protected:
   // nothing if the measurement is not solver appropriate.
   void MeasureDomainFieldEnergy() const;
   void MeasureLumpedPorts() const;
+  void MeasureLumpedPorts(const std::map<int, std::complex<double>> &port_voltages) const;
   void MeasureWavePorts() const;
   void MeasureFloquetPorts() const;
   void MeasureLumpedPortsEig() const;  // Depends: DomainFieldEnergy, LumpedPorts
@@ -942,11 +947,17 @@ public:
 
   // Configure and evaluate the exact reduced-coordinate default output path (domain
   // energies plus port S-parameters). Unsupported configured measurements leave the path
-  // disabled and use full postprocessing.
-  void ConfigureReducedPostprocessing(const RomOperator &rom_op)
+  // disabled and use full postprocessing. The wave port S-parameters use the mode pairings
+  // of the last RomOperator::SolvePROM, which must be at omega. The expanded solution e is
+  // needed only when ReducedPostprocessingNeedsField is true, otherwise e may be nullptr.
+  // tol is the PROM tolerance.
+  void ConfigureReducedPostprocessing(const RomOperator &rom_op, double tol)
     requires(solver_t == ProblemType::DRIVEN);
-  void MeasureAndPrintReduced(int ex_idx, int step, const ComplexVector &e,
-                              std::complex<double> omega, const Eigen::VectorXcd &y)
+  bool ReducedPostprocessingNeedsField(int ex_idx) const
+    requires(solver_t == ProblemType::DRIVEN);
+  void MeasureAndPrintReduced(int ex_idx, int step, const ComplexVector *e,
+                              std::complex<double> omega, const Eigen::VectorXcd &y,
+                              const RomOperator &rom_op)
     requires(solver_t == ProblemType::DRIVEN);
   bool HasReducedPostprocessing() const { return reduced_postprocessing_ready; }
 

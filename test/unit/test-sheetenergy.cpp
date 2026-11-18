@@ -932,7 +932,7 @@ TEST_CASE_METHOD(
 
   PostOperator<ProblemType::DRIVEN> post_op(iodata, space_op);
   CHECK((post_op.GetSurfaceResponseOperator() != nullptr) == correction);
-  post_op.ConfigureReducedPostprocessing(rom_op);
+  post_op.ConfigureReducedPostprocessing(rom_op, iodata.solver.driven.adaptive_tol);
   CHECK(post_op.HasReducedPostprocessing() == !correction);
 #endif
 }
