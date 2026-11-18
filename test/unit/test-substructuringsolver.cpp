@@ -1475,9 +1475,10 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
 TEST_CASE_METHOD(palace::test::SharedTempDir, "SubstructuringSolver column orderings",
                  "[substructure][Serial][Parallel]")
 {
-  // Solver.Linear.ColumnOrdering orders the MUMPS factorizations: the environment factor of
-  // a saved magnetostatic model has no Schur variables, so ParMETIS analyzes it in
-  // parallel. The energy of a closed current does not depend on the ordering.
+  // Solver.Linear.ColumnOrdering orders the factorizations: with MUMPS, the environment
+  // factor of a saved magnetostatic model has no Schur variables, so ParMETIS analyzes it
+  // in parallel, and the partial factorization of STRUMPACK takes METIS for it. The energy
+  // of a closed current does not depend on the ordering.
   const std::string model_path = (temp_dir / "substruct_ordering_model.bin").string();
   auto energy = [&](const std::string &ordering)
   {

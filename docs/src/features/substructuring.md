@@ -155,10 +155,12 @@ full rank at no loss of accuracy. A saved magnetostatic model also holds the ene
 takes an environment solve and a condensation (the forward elimination of the partial factorization,
 half a solve) per interface unknown, and with London sheets in the environment their kinetic energy
 operator, for another condensation per interface unknown and as many values again in the model. The
-MUMPS factorizations follow the
+factorizations follow the
 [`"ColumnOrdering"`](../config/reference.md#config-solver-linear-columnordering) of
-`config["Solver"]["Linear"]`; with `"ParMETIS"` or `"PTScotch"`, those without a Schur complement
-are analyzed in parallel. When running MUMPS with MPI, setting `OPENBLAS_NUM_THREADS=1` (or the
+`config["Solver"]["Linear"]` (with `"ParMETIS"` or `"PTScotch"`, those without a Schur complement
+are analyzed in parallel, the others with the sequential counterpart), and take no other option of
+it: they are exact, so the compression of STRUMPACK and the 3D algorithm of SuperLU_DIST are not
+used (*Palace* warns). When running MUMPS with MPI, setting `OPENBLAS_NUM_THREADS=1` (or the
 equivalent for the BLAS in use) avoids oversubscribing cores.
 
 ## Magnetostatics

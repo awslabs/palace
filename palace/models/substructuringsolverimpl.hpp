@@ -138,7 +138,8 @@ inline std::unique_ptr<mfem::Solver> MakeDirectSolver(const IoData &iodata,
 #endif
 #if defined(MFEM_USE_SUPERLU)
     case LinearSolver::SUPERLU:
-      return std::make_unique<SuperLUSolver>(iodata, comm, 0);
+      return std::make_unique<SuperLUSolver>(comm, iodata.solver.linear.sym_factorization,
+                                             false, false, 0);
 #endif
     default:
       break;
@@ -176,7 +177,8 @@ MakePartialFactorization(const IoData &iodata,
   if (any || type == LinearSolver::STRUMPACK)
   {
     name = "STRUMPACK";
-    return std::make_unique<StrumpackSchurSolver>(A, schur_vars);
+    return std::make_unique<StrumpackSchurSolver>(A, schur_vars,
+                                                  iodata.solver.linear.sym_factorization);
   }
 #endif
   return nullptr;

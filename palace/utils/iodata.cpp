@@ -597,6 +597,18 @@ void IoData::CheckConfiguration()
                    "\"Solver.Linear.Type\" \"{}\" is not used!\n",
                    ToString(solver.linear.type));
     }
+    // The factorizations are exact, and of the options of the sparse direct solvers take
+    // only the column ordering.
+    if (solver.linear.strumpack_compression_type != SparseCompression::NONE)
+    {
+      Mpi::Warning("Substructuring factors exactly: "
+                   "\"Solver.Linear.STRUMPACKCompressionType\" is not used!\n");
+    }
+    if (solver.linear.superlu_3d)
+    {
+      Mpi::Warning("Substructuring does not use "
+                   "\"Solver.Linear.SuperLU3DCommunicator\"!\n");
+    }
     solver.substructuring->direct_solver = solver.linear.type;
   }
 

@@ -2,12 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <algorithm>
+#include <cstdio>
+#include <functional>
 #include <iterator>
 #include <limits>
 #include <numbers>
 #include <set>
 #include <string>
 #include <vector>
+#include <unistd.h>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
@@ -22,6 +25,45 @@
 
 using json = nlohmann::json;
 using namespace palace;
+
+namespace
+{
+
+// What the process prints to stdout while f runs.
+std::string CaptureStdout(const std::function<void()> &f)
+{
+  std::fflush(stdout);
+  std::FILE *file = std::tmpfile();
+  const int saved = dup(fileno(stdout));
+  dup2(fileno(file), fileno(stdout));
+  auto restore = [&]()
+  {
+    std::fflush(stdout);
+    dup2(saved, fileno(stdout));
+    close(saved);
+  };
+  try
+  {
+    f();
+  }
+  catch (...)
+  {
+    restore();
+    std::fclose(file);
+    throw;
+  }
+  restore();
+  std::rewind(file);
+  std::string out;
+  for (int c = std::fgetc(file); c != EOF; c = std::fgetc(file))
+  {
+    out.push_back(static_cast<char>(c));
+  }
+  std::fclose(file);
+  return out;
+}
+
+}  // namespace
 
 namespace
 {
@@ -170,6 +212,34 @@ TEST_CASE("Config Substructuring", "[config][Serial]")
   {
     config::SolverData data(json::object());
     CHECK(!data.substructuring.has_value());
+  }
+
+  SECTION("Substructuring warns about the linear solver options it does not use")
+  {
+    // The factorizations take the solver type and the column ordering of Solver.Linear
+    // only.
+    auto output = [](const json &linear)
+    {
+      json config = {{"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+                     {"Model", {{"Mesh", "test.msh"}}},
+                     {"Domains", {{"Materials", {{{"Attributes", {1, 2}}}}}}},
+                     {"Boundaries", json::object()},
+                     {"Solver",
+                      {{"Linear", linear},
+                       {"Substructuring",
+                        {{"Region", {{"Attributes", {1}}}},
+                         {"Environment", {{"Attributes", {2}}}}}}}}};
+      return CaptureStdout([&config]() { IoData iodata(config, false); });
+    };
+    using Catch::Matchers::ContainsSubstring;
+    CHECK_THAT(output({{"Type", "AMS"}}),
+               ContainsSubstring("\"Solver.Linear.Type\" \"AMS\" is not used!"));
+    CHECK_THAT(
+        output({{"STRUMPACKCompressionType", "HSS"}}),
+        ContainsSubstring("\"Solver.Linear.STRUMPACKCompressionType\" is not used!"));
+    CHECK_THAT(output({{"SuperLU3DCommunicator", true}}),
+               ContainsSubstring("\"Solver.Linear.SuperLU3DCommunicator\"!"));
+    CHECK_THAT(output({{"ColumnOrdering", "AMD"}}), !ContainsSubstring("Warning"));
   }
 
   SECTION("Substructuring rejects periodic boundaries")

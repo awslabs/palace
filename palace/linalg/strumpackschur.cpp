@@ -13,16 +13,37 @@ namespace palace
 {
 
 StrumpackSchurSolver::StrumpackSchurSolver(const mfem::HypreParMatrix &A,
-                                           const std::vector<HYPRE_BigInt> &schur_vars)
+                                           const std::vector<HYPRE_BigInt> &schur_vars,
+                                           SymbolicFactorization ordering)
   : comm(A.GetComm()), n_loc(A.Height()), n_schur(static_cast<int>(schur_vars.size())),
     solver(comm, false), rows(comm, A.GetRowStarts()[0], A.Height(), schur_vars)
 {
   MFEM_VERIFY(A.GetGlobalNumRows() <= INT_MAX,
               "STRUMPACK Schur complement needs fewer than 2^31 unknowns!");
   // The Schur complement needs neither matching nor the GPU (and a sequential graph
-  // reordering without compression, STRUMPACK's defaults).
+  // reordering without compression).
   solver.options().set_matching(strumpack::MatchingJob::NONE);
   solver.options().disable_gpu();
+  switch (ordering)
+  {
+    case SymbolicFactorization::METIS:
+    case SymbolicFactorization::PARMETIS:
+      solver.options().set_reordering_method(strumpack::ReorderingStrategy::METIS);
+      break;
+    case SymbolicFactorization::SCOTCH:
+    case SymbolicFactorization::PTSCOTCH:
+      solver.options().set_reordering_method(strumpack::ReorderingStrategy::SCOTCH);
+      break;
+    case SymbolicFactorization::AMD:
+      solver.options().set_reordering_method(strumpack::ReorderingStrategy::AMD);
+      break;
+    case SymbolicFactorization::RCM:
+      solver.options().set_reordering_method(strumpack::ReorderingStrategy::RCM);
+      break;
+    case SymbolicFactorization::PORD:
+    case SymbolicFactorization::DEFAULT:
+      break;
+  }
 
   // The local rows with global columns: the block-row distributed CSR STRUMPACK takes (it
   // copies the entries).
