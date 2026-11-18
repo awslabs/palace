@@ -10,6 +10,7 @@
 #include <limits>
 #include <span>
 #include <string>
+#include <type_traits>
 #include <typeinfo>
 #include "linalg/jacobi.hpp"
 #include "linalg/orthog.hpp"
@@ -264,6 +265,23 @@ inline void ApplyPlaneRotation(std::complex<T> &dx, std::complex<T> &dy, const T
   std::complex<T> t = cs * dx + sn * dy;
   dy = -std::conj(sn) * dx + cs * dy;
   dx = t;
+}
+
+// Solve R y = s in place for the upper triangular rows and columns 0, ..., j of R, stored
+// by columns with leading dimension ld.
+template <typename T>
+inline void BackSubstitute(const std::vector<T> &R, std::size_t ld, int j,
+                           std::vector<T> &s)
+{
+  for (int i = j; i >= 0; i--)
+  {
+    const T *Ri = R.data() + i * ld;
+    s[i] /= Ri[i];
+    for (int k = i - 1; k >= 0; k--)
+    {
+      s[k] -= Ri[k] * s[i];
+    }
+  }
 }
 
 template <typename OperType, typename VecType>
@@ -572,24 +590,139 @@ void GmresSolver<OperType>::Update(int j) const
 template <OperatorType OperType>
 typename GmresSolver<OperType>::RealType GmresSolver<OperType>::CorrectionNorm(int j) const
 {
-  // Back substitution with the rotated Hessenberg matrix (upper triangular), on a copy of
-  // the rotated right-hand side: O(j²) scalar operations, no vector operations.
+  // Back substitution on a copy of the rotated right-hand side: O(j²) scalar operations, no
+  // vector operations.
   std::vector<ScalarType> y(s.begin(), s.begin() + j + 1);
-  for (int i = j; i >= 0; i--)
-  {
-    const ScalarType *Hi = H.data() + i * (max_dim + 1);
-    y[i] /= Hi[i];
-    for (int k = i - 1; k >= 0; k--)
-    {
-      y[k] -= Hi[k] * y[i];
-    }
-  }
+  BackSubstitute(H, max_dim + 1, j, y);
   RealType norm2 = 0.0;
   for (const auto &yi : y)
   {
     norm2 += std::norm(yi);
   }
   return std::sqrt(norm2);
+}
+
+template <OperatorType OperType>
+void GmresSolver<OperType>::Arnoldi(int j) const
+{
+  const std::size_t ld = max_dim + 1;
+  auto rotate = [&](int i)
+  {
+    ScalarType *Hi = H.data() + i * ld;
+    for (int k = 0; k < i; k++)
+    {
+      ApplyPlaneRotation(Hi[k], Hi[k + 1], cs[k], sn[k]);
+    }
+    GeneratePlaneRotation(Hi[i], Hi[i + 1], cs[i], sn[i]);
+    ApplyPlaneRotation(Hi[i], Hi[i + 1], cs[i], sn[i]);
+    ApplyPlaneRotation(s[i], s[i + 1], cs[i], sn[i]);
+  };
+  if (gs_orthog != Orthogonalization::CGS2)
+  {
+    ScalarType *Hj = H.data() + j * ld;
+    Hj[j + 1] = linalg::OrthogonalizeColumn(gs_orthog, comm, std::span(V).first(j + 2), Hj);
+    V[j + 1] *= 1.0 / Hj[j + 1];
+    rotate(j);
+    return;
+  }
+
+  // On entry, V[j] = u is the previous vector after one Gram-Schmidt pass, divided by a
+  // power of two τ close to its norm (V[0] is final), and V[j + 1] = y = M u. All inner
+  // products, a = Qᴴ u and b = Qᴴ y for Q = [V[0], ..., V[j - 1]], uᴴ u, uᴴ y and yᴴ y,
+  // take one pass and one reduction.
+  constexpr std::size_t p = std::is_same_v<VecType, ComplexVector> ? 2 : 1;
+  std::vector<Vector> parts;
+  const auto X = linalg::internal::RealParts(std::span(V).first(j + 2), parts);
+  std::array<const Vector *, 2 * p> Y;  // Parts of u and y
+  std::ranges::transform(X.last(2 * p), Y.begin(), [](const Vector &x) { return &x; });
+  const auto G = linalg::internal::InnerProducts<VecType>(comm, X, Y);
+  const ScalarType *b = G.data() + j + 2;
+  VecType &u = V[j], &y = V[j + 1];
+  Hraw.resize(H.size());
+  U.resize(H.size());
+  ScalarType *a = U.data() + j * ld, *Hc = Hraw.data() + j * ld, g = b[j];
+  std::copy_n(G.data(), j, a);
+  RealType nu = 1.0;
+  bool updated = false;
+  if (j > 0)
+  {
+    // Reorthogonalize and normalize u, with ‖u - Q a‖² = uᴴ u - ‖a‖² unless that removes
+    // most of u: then u takes two more Gram-Schmidt passes.
+    RealType nu2 = std::real(G[j]);
+    for (int l = 0; l < j; l++)
+    {
+      nu2 -= std::norm(a[l]);
+    }
+    updated = !(nu2 >= 0.5 * std::real(G[j]));
+    nu = updated
+             ? linalg::OrthogonalizeColumnCGS(comm, std::span(V).first(j + 1), a, true)[1]
+             : std::sqrt(nu2);
+
+    // With V[j] = q = (u - Q a) / ν, M V[j - 1] = Q (h + τ a) + τ ν q completes column
+    // j - 1, and qᴴ y = (uᴴ y - aᴴ b) / ν.
+    ScalarType *Hp = Hraw.data() + (j - 1) * ld;
+    for (int l = 0; l < j; l++)
+    {
+      Hp[l] += tau * a[l];
+      if constexpr (p == 1)
+      {
+        g -= a[l] * b[l];
+      }
+      else
+      {
+        g -= std::conj(a[l]) * b[l];
+      }
+    }
+    Hp[j] = tau * nu;
+    g /= nu;
+  }
+  a[j] = nu;
+
+  // With the completed columns H̄ of Hraw, M q = (y - M Q a) / ν = (y - [Q q] H̄ a) / ν, so
+  // the projections of M q are [Q q]ᴴ M q = (h - H̄ a) / ν for h = [b; g]. Then, in one pass
+  // over Q, V[j + 1] = (y - Q b - g q) / ν = (y - (g / ν) u - Q (b - (g / ν) a)) / ν and
+  // V[j] = q = (u - Q a) / ν (with a = 0 if u is already updated), and ‖V[j + 1]‖² =
+  // (yᴴ y - ‖h‖²) / ν². V[j + 1] is also divided by a new τ, a power of two close to its
+  // norm (or to the bound ‖y‖ / ν when the norm is computed explicitly), which is exact, so
+  // that the inner products of the next iteration scale with M as those of MGS.
+  const RealType d = std::real(b[j + 1]);
+  RealType h2 = 0.0;
+  for (int r = 0; r <= j; r++)
+  {
+    ScalarType t = (r < j) ? b[r] : g;
+    h2 += std::norm(t);
+    for (int l = std::max(r - 1, 0); l < j; l++)
+    {
+      t -= Hraw[l * ld + r] * a[l];
+    }
+    Hc[r] = t / nu;
+  }
+  std::vector<ScalarType> c(2 * (j + 1));  // Coefficients for y, then for u
+  for (int l = 0; l < j; l++)
+  {
+    c[l] = (updated ? 0.0 : g / nu * a[l]) - b[l];
+    c[j + 1 + l] = updated ? 0.0 : -a[l];
+  }
+  c[j] = -g / nu;
+  // An explicit norm when the one from the inner products has lost more than six digits.
+  const bool implicit = (d - h2 > 1.0e-6 * d);
+  const RealType bound = std::sqrt(implicit ? d - h2 : d) / nu;
+  tau = std::isnormal(bound) ? std::ldexp(1.0, std::ilogb(bound)) : 1.0;
+  linalg::internal::AddCombination(X, c, {&y, &u}, {1.0 / (nu * tau), 1.0 / nu});
+  Hc[j + 1] = implicit ? std::sqrt(d - h2) / nu : tau * linalg::Norml2(comm, y);
+
+  // Rotate the completed column j - 1 again, from s before its provisional rotation, and
+  // then the new column.
+  if (j > 0)
+  {
+    std::copy_n(Hraw.data() + (j - 1) * ld, j + 1, H.data() + (j - 1) * ld);
+    s[j - 1] = s_prev;
+    s[j] = 0.0;
+    rotate(j - 1);
+  }
+  std::copy_n(Hc, j + 2, H.data() + j * ld);
+  s_prev = s[j];
+  rotate(j);
 }
 
 template <OperatorType OperType>
@@ -685,19 +818,7 @@ void GmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
         Update(j);
       }
       ApplyBA(pc_side, A, B, V[j], w, r, this->use_timer);
-
-      ScalarType *Hj = H.data() + j * (max_dim + 1);
-      Hj[j + 1] =
-          linalg::OrthogonalizeColumn(gs_orthog, comm, std::span(V).first(j + 2), Hj);
-      w *= 1.0 / Hj[j + 1];
-
-      for (int k = 0; k < j; k++)
-      {
-        ApplyPlaneRotation(Hj[k], Hj[k + 1], cs[k], sn[k]);
-      }
-      GeneratePlaneRotation(Hj[j], Hj[j + 1], cs[j], sn[j]);
-      ApplyPlaneRotation(Hj[j], Hj[j + 1], cs[j], sn[j]);
-      ApplyPlaneRotation(s[j], s[j + 1], cs[j], sn[j]);
+      Arnoldi(j);
 
       beta = std::abs(s[j + 1]);
       CheckDot(beta, "GMRES residual norm is not valid: beta = ");
@@ -715,15 +836,7 @@ void GmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
     }
 
     // Reconstruct the solution (for restart or due to convergence or maximum iterations).
-    for (int i = j; i >= 0; i--)
-    {
-      ScalarType *Hi = H.data() + i * (max_dim + 1);
-      s[i] /= Hi[i];
-      for (int k = i - 1; k >= 0; k--)
-      {
-        s[k] -= Hi[k] * s[i];
-      }
-    }
+    BackSubstitute(H, max_dim + 1, j, s);
     if (!B || pc_side == PreconditionerSide::LEFT)
     {
       for (int k = 0; k <= j; k++)
@@ -880,19 +993,7 @@ void FgmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
         Update(j);
       }
       ApplyBA(PreconditionerSide::RIGHT, A, B, V[j], w, Z[j], this->use_timer);
-
-      ScalarType *Hj = H.data() + j * (max_dim + 1);
-      Hj[j + 1] =
-          linalg::OrthogonalizeColumn(gs_orthog, comm, std::span(V).first(j + 2), Hj);
-      w *= 1.0 / Hj[j + 1];
-
-      for (int k = 0; k < j; k++)
-      {
-        ApplyPlaneRotation(Hj[k], Hj[k + 1], cs[k], sn[k]);
-      }
-      GeneratePlaneRotation(Hj[j], Hj[j + 1], cs[j], sn[j]);
-      ApplyPlaneRotation(Hj[j], Hj[j + 1], cs[j], sn[j]);
-      ApplyPlaneRotation(s[j], s[j + 1], cs[j], sn[j]);
+      this->Arnoldi(j);
 
       beta = std::abs(s[j + 1]);
       CheckDot(beta, "FGMRES residual norm is not valid: beta = ");
@@ -905,14 +1006,12 @@ void FgmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
     }
 
     // Reconstruct the solution (for restart or due to convergence or maximum iterations).
-    for (int i = j; i >= 0; i--)
+    // With CGS2, Z[k] preconditions V[k] before its reorthogonalization, so the
+    // preconditioned final basis is Z U⁻¹.
+    BackSubstitute(H, max_dim + 1, j, s);
+    if (gs_orthog == Orthogonalization::CGS2)
     {
-      ScalarType *Hi = H.data() + i * (max_dim + 1);
-      s[i] /= Hi[i];
-      for (int k = i - 1; k >= 0; k--)
-      {
-        s[k] -= Hi[k] * s[i];
-      }
+      BackSubstitute(U, max_dim + 1, j, s);
     }
     for (int k = 0; k <= j; k++)
     {

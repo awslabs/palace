@@ -197,13 +197,30 @@ protected:
   RealType max_rel_correction;
   mutable bool correction_exceeded;
 
+  // With CGS2 (see Arnoldi), the Hessenberg matrix before the Givens rotations, the upper
+  // triangular U such that each V[j] before its reorthogonalization and normalization is
+  // Σₗ U[l, j] V[l] in the final basis, s[j] before the latest rotation, and the power of
+  // two by which V[j + 1] was divided.
+  mutable std::vector<ScalarType> Hraw, U;
+  mutable ScalarType s_prev = 0.0;
+  mutable RealType tau = 1.0;
+
   // Allocate storage for solve.
   virtual void Initialize() const;
   virtual void Update(int j) const;
 
   // Norm of the correction x_j - x₀ = V_j y_j in the current Krylov cycle, with y_j solving
-  // the rotated least-squares system of iteration j. V_j is orthonormal, so this is ‖y_j‖.
+  // the rotated least-squares system of iteration j. V_j is orthonormal (with CGS2, V[j] is
+  // completed by Arnoldi(j)), so this is ‖y_j‖.
   RealType CorrectionNorm(int j) const;
+
+  // Orthogonalize V[j + 1] = M V[j] against V[0], ..., V[j] and normalize it, with the
+  // coefficients in column j of the Hessenberg matrix, then apply the Givens rotations to
+  // it and to s. With CGS2, classical Gram-Schmidt with delayed reorthogonalization (DCGS2,
+  // Świrydowicz et al., Numer. Linear Algebra Appl. 28 (2021), e2343) takes one global
+  // reduction per iteration instead of two: V[j] and column j - 1 are completed at
+  // iteration j, and V[j + 1] and column j after one pass give the residual norm.
+  void Arnoldi(int j) const;
 
 public:
   GmresSolver(MPI_Comm comm, int print)
@@ -270,6 +287,7 @@ protected:
   using GmresSolver<OperType>::s;
   using GmresSolver<OperType>::sn;
   using GmresSolver<OperType>::cs;
+  using GmresSolver<OperType>::U;
 
   // Temporary workspace for solve.
   mutable std::vector<VecType> Z;

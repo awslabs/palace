@@ -108,15 +108,20 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Performance Improvements
 
-  - Classical Gram-Schmidt with reorthogonalization, used with
-    `config["Solver"]["Linear"]["GSOrthogonalization"]` `"CGS2"` and for the reduced-order
-    models of adaptive driven sweeps, now takes the norm of the orthogonalized vector from
-    the inner products of its second pass, unless that pass removes most of the vector,
-    which saves one global reduction per vector. On GPUs, the inner products and the update
-    of each pass of classical Gram-Schmidt take the vectors and the coefficients as kernel
-    arguments instead of copying them to the device, which made the host wait for the
-    device, and the inner products read each basis vector once instead of once for each
-    vector it is multiplied with.
+  - With `config["Solver"]["Linear"]["GSOrthogonalization"]` `"CGS2"`, GMRES and FGMRES now
+    reorthogonalize each basis vector one iteration late, with the first pass of the next
+    one (classical Gram-Schmidt with delayed reorthogonalization): an iteration takes one
+    global reduction (and one host-device synchronization on GPUs) and one fused update pass
+    over the basis, instead of three reductions and two Gram-Schmidt passes. Iteration
+    counts and residual norms are unchanged up to round-off.
+    [PR 1246](https://github.com/awslabs/palace/pull/1246).
+  - Classical Gram-Schmidt with reorthogonalization, used for the reduced-order models of
+    adaptive driven sweeps, now takes the norm from the inner products of its second pass,
+    unless that pass removes most of the vector: one global reduction fewer per vector. On
+    GPUs, the inner products and updates of classical Gram-Schmidt pass the vectors and
+    coefficients as kernel arguments, instead of copies to the device for which the host
+    waited, and the inner products read each basis vector once instead of once per product.
+    [PR 1246](https://github.com/awslabs/palace/pull/1246).
   - On GPUs, the inner product of two vectors and the sum of the entries of a vector take
     one reduction kernel and one host-device synchronization instead of one hypre reduction
     per real-valued product or sum (four for a complex inner product), which speeds up the
