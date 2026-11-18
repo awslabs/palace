@@ -3759,6 +3759,99 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   CHECK(change >= 1.0e-2 * m);  // the redesign really changed the capacitance
 }
 
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "SubstructuringSolver surface currents close through connected conductors",
+                 "[substructure][Serial][Parallel]")
+{
+  // The sheet current J_s = x on the plane y = 1/2 runs from the PEC wall x = 0 to the PEC
+  // wall x = 1. It closes when the other faces are PEC too, connecting the two walls, or
+  // when the plane is a London sheet, and not when only the two walls are PEC: then it
+  // leaves one conductor for another. On its strip x < 3/8 of the region, it ends in free
+  // space, also on the mesh of the region.
+  const int order = 1;
+  const std::string model_path = (temp_dir / "substruct_closure_model.bin").string();
+  RegionDesign design;
+  design.sheet = true;
+  auto energy = [&](const std::vector<int> &pec, bool london, bool strip = false,
+                    const std::string &mode = "", mfem::Mesh *serial = nullptr)
+  {
+    json config = {
+        {"Problem", {{"Type", "Magnetostatic"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains",
+         {{"Materials",
+           {{{"Attributes", {1}}, {"Permeability", 1.0}},
+            {{"Attributes", {2}}, {"Permeability", 4.0}}}}}},
+        {"Boundaries", {{"PEC", {{"Attributes", pec}}}}},
+        {"Solver",
+         {{"Order", order},
+          {"Substructuring",
+           {{"Region", {{"Attributes", {1}}}}, {"Environment", {{"Attributes", {2}}}}}}}}};
+    if (london)
+    {
+      config["Boundaries"]["Superconductor"] = {
+          {{"Attributes", {4}}, {"PenetrationDepth", 0.2}, {"Thickness", 0.05}}};
+    }
+    else
+    {
+      config["Boundaries"]["SurfaceCurrent"] = {
+          {{"Index", 1}, {"Attributes", {4}}, {"Direction", "+X"}}};
+    }
+    if (!mode.empty())
+    {
+      config["Solver"]["Substructuring"]["Mode"] = mode;
+      config["Solver"]["Substructuring"]["SaveModel"] = model_path;
+    }
+    IoData iodata(config, false);
+    std::vector<std::unique_ptr<Mesh>> mesh;
+    mesh.push_back(serial ? std::make_unique<Mesh>(
+                                std::make_unique<mfem::ParMesh>(Mpi::World(), *serial))
+                          : std::make_unique<Mesh>(MakeGradedSplit(4, 5, 6, design)));
+    auto &pmesh = mesh.back()->Get();
+    mfem::ND_FECollection fec(order, 3);
+    mfem::ParFiniteElementSpace pfes(&pmesh, &fec);
+    const int maxb = pmesh.bdr_attributes.Max();
+    mfem::Array<int> pec_marker(maxb), pec_tdofs, sheet_marker(maxb);
+    pec_marker = 0;
+    for (int a : pec)
+    {
+      pec_marker[a - 1] = 1;
+    }
+    pfes.GetEssentialTrueDofs(pec_marker, pec_tdofs);
+    sheet_marker = 0;
+    sheet_marker[3] = 1;
+    mfem::VectorFunctionCoefficient c(3,
+                                      [strip](const mfem::Vector &x, mfem::Vector &v)
+                                      {
+                                        v.SetSize(3);
+                                        v = 0.0;
+                                        v(0) = (!strip || x(0) < 0.375) ? 1.0 : 0.0;
+                                      });
+    mfem::ParLinearForm f(&pfes);
+    f.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(c), sheet_marker);
+    f.Assemble();
+    Vector J(pfes.GetTrueVSize());
+    f.ParallelAssemble(J);
+    J.SetSubVector(pec_tdofs, 0.0);
+    SubstructuringSolver ss(iodata, mesh);
+    ss.CondenseEnvironment();
+    return CurrentEnergies(ss, {1}, {J})(0, 0);
+  };
+  CHECK(energy({1, 2, 3}, false) > 0.0);
+  CHECK(energy({1, 2}, true) > 0.0);
+  CHECK(energy({1, 2, 3}, false, false, "Offline") > 0.0);
+  mfem::Mesh region_mesh(RegionMeshPath(model_path).c_str());
+  CHECK(energy({1, 2, 3}, false, false, "Online", &region_mesh) > 0.0);
+#if defined(MFEM_USE_EXCEPTIONS)
+  CHECK_THROWS_WITH(energy({1, 2}, false),
+                    Catch::Matchers::ContainsSubstring("does not close"));
+  CHECK_THROWS_WITH(energy({1, 2, 3}, false, true),
+                    Catch::Matchers::ContainsSubstring("does not close"));
+  CHECK_THROWS_WITH(energy({1, 2, 3}, false, true, "Online", &region_mesh),
+                    Catch::Matchers::ContainsSubstring("does not close"));
+#endif
+}
+
 TEST_CASE("SubstructuringSolver magnetostatic energies scale with the permeability and "
           "the mesh",
           "[substructure][Serial][Parallel]")

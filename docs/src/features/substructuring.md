@@ -190,8 +190,8 @@ mesh, so that it scales as the curl-curl operator and the results depend on neit
 permeability nor [`config["Model"]["Lc"]`](../config/reference.md#config-model); the extracted
 energies use the unregularized operator, in a form whose error is quadratic in the regularization.
 Each surface current must close: it has to start and end on `"PEC"`
-boundaries or superconducting films, as in a physical circuit. A current that does not close has no
-magnetostatic solution and is rejected.
+boundaries or superconducting films, as in a physical circuit, with no net current into any
+connected conductor. A current that does not close has no magnetostatic solution and is rejected.
 
 !!! note
 

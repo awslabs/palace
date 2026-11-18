@@ -560,9 +560,31 @@ struct SubstructuringSolver::Impl
   static constexpr double kMagRegularization = 1.0e-3;
   static constexpr double kMagRegularizationSheets = 1.0e-7;
   // Largest regularization energy of a surface current relative to its magnetic energy
-  // (about eps / lambda_1 for one that closes, lambda_1 the smallest nonzero eigenvalue).
+  // (about eps / lambda_1 for one that closes exactly, lambda_1 the smallest nonzero
+  // eigenvalue), which bounds the error of its energy.
   static constexpr double kMaxRegularizationFraction = 1.0e-2;
   double mag_eps = kMagRegularization;
+
+  // Whether the surface current J (on the true DOFs of SolutionSpace()) closes: r = G^T J,
+  // G the discrete gradient from the H1 solution space, vanishes at the H1 true DOFs off
+  // the conductors (the PEC boundaries and superconductor sheets) and sums to zero over
+  // each connected conductor, relative to the largest entry of |G|^T |J| (or, for a
+  // conductor, the sum of its entries if larger), up to the quadrature of the excitation.
+  // This is the compatibility of J with the null space of the curl-curl and sheet
+  // operators, the gradients of the functions constant on each conductor, so it does not
+  // depend on the regularization. On the mesh of the region, whose currents may close in
+  // the environment, neither the environment elements the mesh holds nor the conductors
+  // touching them are checked. Collective.
+  bool CurrentCloses(const Vector &J);
+  static constexpr double kClosureTol = 1.0e-4;
+  // |G|, and the conductor of each H1 true DOF: the least global H1 true DOF of its
+  // connected conductor, kOffConductor off the conductors, or kUnchecked. Set up on first
+  // use. Collective.
+  std::unique_ptr<mfem::HypreParMatrix> closure_G_abs;
+  std::vector<HYPRE_BigInt> conductor;
+  static constexpr HYPRE_BigInt kOffConductor = -1, kUnchecked = -2;
+  const Operator &ClosureGradient() const;
+  void SetUpClosure();
 
   // London superconductor sheets (magnetostatics): whether there are any, and the local
   // boundary elements of the one-sided sheets on Gamma. Like any boundary term of the
