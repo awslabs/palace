@@ -85,6 +85,11 @@ runs:
 
     # The PPA signing keys in apt-keys/ are pinned. Warn, without failing, when
     # Launchpad lists a different key for a PPA, so that the pin gets updated.
+    # Each PPA's page lists its signing key fingerprint (for example
+    # https://launchpad.net/~apptainer/+archive/ubuntu/ppa), and the key itself
+    # can be downloaded from the Ubuntu keyserver:
+    #   curl -fsS "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x<fingerprint>" \
+    #     > .github/actions/build-container/apt-keys/<owner>-<name>.asc
     - name: Check pinned PPA keys
       continue-on-error: true
       shell: bash
@@ -96,7 +101,9 @@ runs:
               python3 -c 'import json, sys; print(json.load(sys.stdin)["signing_key_fingerprint"])'); then
             echo "::notice::Could not get the signing key of ppa:$ppa from Launchpad"
           elif [[ "$current" != "$pinned" ]]; then
-            echo "::warning::ppa:$ppa is signed with key $current, but apt-keys/${ppa/\//-}.asc pins $pinned"
+            echo "::warning::ppa:$ppa is signed with key $current, but apt-keys/${ppa/\//-}.asc pins $pinned." \
+              "Update it with: curl -fsS 'https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x$current'" \
+              "> .github/actions/build-container/apt-keys/${ppa/\//-}.asc"
           else
             echo "ppa:$ppa: pinned key $pinned is current"
           fi
