@@ -123,9 +123,9 @@ public:
   // performed.
   double maximum_imbalance = 1.1;
 
-  // Method for rebalancing a conformal mesh: on the root process (gather, the default) or
-  // in parallel with PT-Scotch.
-  RebalanceMethod rebalance_method = RebalanceMethod::GATHER;
+  // Method for rebalancing a conformal mesh: on the root process (gather) or in parallel
+  // with PT-Scotch (default if Palace is built with it).
+  RebalanceMethod rebalance_method = RebalanceMethod::DEFAULT;
 
   // Whether to save off results of each adaptation iteration as a subfolder within the post
   // processing directory.

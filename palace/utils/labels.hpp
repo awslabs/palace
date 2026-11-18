@@ -219,7 +219,12 @@ enum class Device : char
 enum class RebalanceMethod : char
 {
   GATHER,
-  PARALLEL
+  PARALLEL,
+#if defined(PALACE_WITH_SCOTCH)
+  DEFAULT = PARALLEL
+#else
+  DEFAULT = GATHER
+#endif
 };
 
 // Inactive port boundary condition mode for magnetostatic sweeps.

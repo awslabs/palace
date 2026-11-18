@@ -1270,9 +1270,13 @@ TEST_CASE("Config Eigenmode iteration limits", "[config][Serial]")
 
 TEST_CASE("Config Refinement RebalanceMethod", "[config][Serial]")
 {
-  // Without the key, the gather, whether or not Palace is built with PT-Scotch.
+  // Without the key, the parallel rebalance if Palace is built with PT-Scotch.
   config::RefinementData defaults(json::object());
+#if defined(PALACE_WITH_SCOTCH)
+  CHECK(defaults.rebalance_method == RebalanceMethod::PARALLEL);
+#else
   CHECK(defaults.rebalance_method == RebalanceMethod::GATHER);
+#endif
   config::RefinementData gather(json{{"RebalanceMethod", "Gather"}});
   CHECK(gather.rebalance_method == RebalanceMethod::GATHER);
   config::RefinementData parallel(json{{"RebalanceMethod", "Parallel"}});
