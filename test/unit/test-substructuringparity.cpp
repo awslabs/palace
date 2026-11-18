@@ -5,6 +5,9 @@
 #include <array>
 #include <cmath>
 #include <filesystem>
+#include <functional>
+#include <iterator>
+#include <limits>
 #include <memory>
 #include <random>
 #include <string>
@@ -472,6 +475,126 @@ std::vector<std::unique_ptr<Mesh>> MakeMesh(mfem::Mesh &&serial, bool by_side = 
   return mesh;
 }
 
+// The mixed mesh fichera-mixed-p2 (tetrahedra, hexahedra and prisms, so that the elements
+// of a geometry are not numbered contiguously), refined twice, with the domain attributes
+// of the cube: 1 and 3 for x < 0, 2 and 4 otherwise, 3 and 4 for y < 0.
+mfem::Mesh MakeMixedSerial()
+{
+  mfem::Mesh mesh(PALACE_TEST_DATA_DIR "/mesh/fichera-mixed-p2.mesh", 1, 1);
+  mesh.UniformRefinement();
+  mesh.UniformRefinement();
+  mfem::Vector c;
+  for (int e = 0; e < mesh.GetNE(); e++)
+  {
+    mesh.GetElementCenter(e, c);
+    mesh.SetAttribute(e, (c(0) < 0.0) ? ((c(1) < 0.0) ? 3 : 1) : ((c(1) < 0.0) ? 4 : 2));
+  }
+  mesh.SetAttributes();
+  return mesh;
+}
+
+// A coefficient with the value v(attr) on the libCEED attributes of each domain attribute.
+MaterialPropertyCoefficient DomainCoefficient(const Mesh &mesh,
+                                              const std::function<double(int)> &v)
+{
+  const int n = static_cast<int>(mesh.MaxCeedAttribute());
+  mfem::Array<int> attr_mat(n);
+  mfem::DenseTensor mat_coeff(1, 1, n);
+  for (const auto &[attr, ceed_attr] : mesh.GetCeedAttributes())
+  {
+    attr_mat[ceed_attr - 1] = ceed_attr - 1;
+    mat_coeff(0, 0, ceed_attr - 1) = v(attr);
+  }
+  return MaterialPropertyCoefficient(attr_mat, mat_coeff);
+}
+
+// A coefficient with the value v(attr, nbr_attr) on the libCEED boundary attribute of each
+// boundary attribute and neighboring domain attribute.
+MaterialPropertyCoefficient BoundaryCoefficient(const Mesh &mesh,
+                                                const std::function<double(int, int)> &v)
+{
+  const int n = static_cast<int>(mesh.MaxCeedBdrAttribute());
+  mfem::Array<int> attr_mat(n);
+  mfem::DenseTensor mat_coeff(1, 1, n);
+  for (const auto &[attr, bdr_attr_map] : mesh.GetCeedBdrAttributes())
+  {
+    for (const auto &[nbr_attr, ceed_attr] : bdr_attr_map)
+    {
+      attr_mat[ceed_attr - 1] = ceed_attr - 1;
+      mat_coeff(0, 0, ceed_attr - 1) = v(attr, nbr_attr);
+    }
+  }
+  return MaterialPropertyCoefficient(attr_mat, mat_coeff);
+}
+
+// The number of elements of the libCEED sub-operators of an operator, summed over the
+// processes.
+long long NumAssembledElements(const ceed::Operator &op)
+{
+  long long n = 0;
+  for (std::size_t i = 0; i < op.Size(); i++)
+  {
+    Ceed ceed = ceed::internal::GetCeedObjects()[i];
+    CeedInt num_sub_ops;
+    CeedOperator *sub_ops;
+    PalaceCeedCall(ceed, CeedOperatorCompositeGetNumSub(op[i], &num_sub_ops));
+    PalaceCeedCall(ceed, CeedOperatorCompositeGetSubList(op[i], &sub_ops));
+    for (CeedInt j = 0; j < num_sub_ops; j++)
+    {
+      CeedInt num_elem;
+      PalaceCeedCall(ceed, CeedOperatorGetNumElements(sub_ops[j], &num_elem));
+      n += num_elem;
+    }
+  }
+  Mpi::GlobalSum(1, &n, Mpi::World());
+  return n;
+}
+
+// The number of elements with one of the given domain attributes, summed over the
+// processes.
+long long NumElements(const mfem::ParMesh &mesh, const std::vector<int> &attrs)
+{
+  long long n = 0;
+  for (int e = 0; e < mesh.GetNE(); e++)
+  {
+    n += (std::find(attrs.begin(), attrs.end(), mesh.GetAttribute(e)) != attrs.end());
+  }
+  Mpi::GlobalSum(1, &n, Mpi::World());
+  return n;
+}
+
+// The number of entries of the local matrix A which differ from those of B (in the sparsity
+// pattern, or in value by more than tol relative to the largest entry of B, over the
+// processes), checking that the matrices are not zero.
+long long NumDifferentEntries(hypre::HypreCSRMatrix &A, hypre::HypreCSRMatrix &B,
+                              double tol)
+{
+  hypre_CSRMatrixMigrate(A, HYPRE_MEMORY_HOST);
+  hypre_CSRMatrixMigrate(B, HYPRE_MEMORY_HOST);
+  REQUIRE(A.Height() == B.Height());
+  REQUIRE(A.NNZ() == B.NNZ());
+  double scale = 0.0;
+  for (int k = 0; k < B.NNZ(); k++)
+  {
+    scale = std::max(scale, std::abs(B.GetData()[k]));
+  }
+  Mpi::GlobalMax(1, &scale, Mpi::World());
+  REQUIRE(scale > 0.0);
+  long long diff = 0;
+  for (int i = 0; i <= A.Height(); i++)
+  {
+    diff += (A.GetI()[i] != B.GetI()[i]);
+  }
+  for (int k = 0; k < A.NNZ(); k++)
+  {
+    // Written so that a NaN counts as a difference.
+    diff += (A.GetJ()[k] != B.GetJ()[k]) ||
+            !(std::abs(A.GetData()[k] - B.GetData()[k]) <= tol * scale);
+  }
+  Mpi::GlobalSum(1, &diff, Mpi::World());
+  return diff;
+}
+
 }  // namespace
 
 TEST_CASE("Substructured electrostatic operators match LaplaceOperator",
@@ -524,6 +647,120 @@ TEST_CASE("Substructured operators match on processes owning one side only",
   CheckElectrostatic(electrostatic, MakeMesh(MakeParitySerial(8, {}), true));
   IoData magnetostatic(MagnetostaticConfig(1, true, true), false);
   CheckMagnetostatic(magnetostatic, MakeMesh(MakeParitySerial(8, {}), true), true);
+}
+
+TEST_CASE("BilinearForm assembles the elements of its assembly domains only",
+          "[substructure][Serial][Parallel][GPU]")
+{
+  // A form restricted to the region or to the environment assembles the elements of these
+  // domains where its coefficients are nonzero, and the boundary elements whose neighboring
+  // domain (the one with the lower attribute, for the interior boundaries) is one of them,
+  // which is the operator of the form with its coefficients restricted to them. The
+  // coefficient vanishes on attribute 3, a domain of the region. The meshes: the cube in
+  // hexahedra and in tetrahedra, and a mixed mesh.
+  const int mesh_type = GENERATE(0, 1, 2);
+  const bool by_side = GENERATE(false, true);
+  const bool nd = GENERATE(false, true);
+  CAPTURE(mesh_type, by_side, nd);
+  constexpr int order = 2;
+  fem::DefaultIntegrationOrder::p_trial = order;
+  auto mesh = MakeMesh(
+      (mesh_type < 2) ? MakeParitySerial(8, {mesh_type == 1}) : MakeMixedSerial(), by_side);
+  const auto v = [](int attr) { return (attr == 3) ? 0.0 : 1.0 + attr; };
+  const auto vb = [](int attr, int nbr_attr) { return 1.0 + 0.1 * attr + 0.01 * nbr_attr; };
+  mfem::H1_FECollection h1_fec(order, 3);
+  mfem::ND_FECollection nd_fec(order, 3);
+  FiniteElementSpace fespace(*mesh[0],
+                             nd ? static_cast<mfem::FiniteElementCollection *>(&nd_fec)
+                                : static_cast<mfem::FiniteElementCollection *>(&h1_fec));
+
+  // Restricting the elements keeps the order of the sums of the full assembly on the CPU.
+  const double tol = (ceed::Print().find("/gpu/") == std::string::npos)
+                         ? 0.0
+                         : 8.0 * std::numeric_limits<double>::epsilon();
+  for (const auto &attrs : {kRegion, kEnvironment})
+  {
+    CAPTURE(attrs);
+    auto f = DomainCoefficient(*mesh[0], v), fb = BoundaryCoefficient(*mesh[0], vb);
+    auto f_ref = f, fb_ref = fb;
+    f_ref.RestrictCoefficient(mesh[0]->GetCeedAttributes(attrs));
+    fb_ref.RestrictCoefficient(mesh[0]->GetCeedBdrAttributesByNeighbor(attrs));
+    BilinearForm a(fespace), a_ref(fespace), a_dom(fespace);
+    if (nd)
+    {
+      a.AddDomainIntegrator<CurlCurlMassIntegrator>(f, f);
+      a_ref.AddDomainIntegrator<CurlCurlMassIntegrator>(f_ref, f_ref);
+      a.AddBoundaryIntegrator<VectorFEMassIntegrator>(fb);
+      a_ref.AddBoundaryIntegrator<VectorFEMassIntegrator>(fb_ref);
+      a_dom.AddDomainIntegrator<CurlCurlMassIntegrator>(f, f);
+    }
+    else
+    {
+      a.AddDomainIntegrator<DiffusionIntegrator>(f);
+      a_ref.AddDomainIntegrator<DiffusionIntegrator>(f_ref);
+      a.AddBoundaryIntegrator<MassIntegrator>(fb);
+      a_ref.AddBoundaryIntegrator<MassIntegrator>(fb_ref);
+      a_dom.AddDomainIntegrator<DiffusionIntegrator>(f);
+    }
+    a.SetAssemblyDomains(attrs);
+    a_dom.SetAssemblyDomains(attrs);
+    constexpr bool skip_zeros = true;
+    auto A = a.FullAssemble(skip_zeros), A_ref = a_ref.FullAssemble(skip_zeros);
+    CHECK(NumDifferentEntries(*A, *A_ref, tol) == 0);
+
+    // The same operator applied matrix-free (the sums of shared DOFs may be reordered).
+    auto op = a.PartialAssemble(), op_ref = a_ref.PartialAssemble();
+    Vector x(op_ref->Width()), y(op_ref->Height()), y_ref(op_ref->Height());
+    x.UseDevice(true);
+    y.UseDevice(true);
+    y_ref.UseDevice(true);
+    x.Randomize(1);
+    op->Mult(x, y);
+    op_ref->Mult(x, y_ref);
+    const double norm_ref = linalg::Norml2(Mpi::World(), y_ref);
+    REQUIRE(norm_ref > 0.0);
+    y -= y_ref;
+    CHECK(linalg::Norml2(Mpi::World(), y) <= 1.0e-14 * norm_ref);
+
+    // Only the elements of the domains with a nonzero coefficient are assembled.
+    std::vector<int> nonzero_attrs;
+    std::copy_if(attrs.begin(), attrs.end(), std::back_inserter(nonzero_attrs),
+                 [&](int attr) { return v(attr) != 0.0; });
+    CHECK(NumAssembledElements(*a_dom.PartialAssemble()) ==
+          NumElements(mesh[0]->Get(), nonzero_attrs));
+  }
+}
+
+TEST_CASE("AssemblyDomains restricts the assembly while a Restriction is in scope",
+          "[substructure][Serial]")
+{
+  AssemblyDomains domains;
+  REQUIRE(domains.Get() == nullptr);
+  {
+    AssemblyDomains::Restriction region(domains, kRegion);
+    REQUIRE(domains.Get() != nullptr);
+    CHECK(*domains.Get() == kRegion);
+    {
+      AssemblyDomains::Restriction environment(domains, kEnvironment);
+      REQUIRE(domains.Get() != nullptr);
+      CHECK(*domains.Get() == kEnvironment);
+    }
+    REQUIRE(domains.Get() != nullptr);
+    CHECK(*domains.Get() == kRegion);
+  }
+  CHECK(domains.Get() == nullptr);
+
+  // A form restricted after the scopes ended assembles every element.
+  fem::DefaultIntegrationOrder::p_trial = 1;
+  auto mesh = MakeMesh(MakeParitySerial(8, {}));
+  mfem::H1_FECollection fec(1, 3);
+  FiniteElementSpace fespace(*mesh[0], &fec);
+  auto f = DomainCoefficient(*mesh[0], [](int attr) { return 1.0 + attr; });
+  BilinearForm a(fespace);
+  a.AddDomainIntegrator<DiffusionIntegrator>(f);
+  domains.Restrict(a);
+  CHECK(NumAssembledElements(*a.PartialAssemble()) ==
+        NumElements(mesh[0]->Get(), {1, 2, 3, 4}));
 }
 
 TEST_CASE(

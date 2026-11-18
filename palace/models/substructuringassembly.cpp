@@ -45,26 +45,24 @@ SubstructuringSolver::Impl::GetTerm(const std::vector<int> *attrs, Term term,
   if (!magnetostatic)
   {
     MFEM_ASSERT(term == Term::VOLUME, "Electrostatic operators have the volume term only!");
-    std::optional<LaplaceOperator::AssemblyRestriction> restriction;
+    std::optional<AssemblyDomains::Restriction> restriction;
     if (attrs)
     {
-      restriction.emplace(*laplace_op, *attrs);
+      restriction.emplace(laplace_op->GetAssemblyDomains(), *attrs);
     }
     return laplace_op->GetUnconstrainedStiffnessMatrix(assemble);
   }
   if (term == Term::MASS)
   {
-    // The regularization mag_eps (1/mu) M on the domains (the exactly zero entries of the
-    // other elements are not stored), weighted as the curl-curl operator. The coefficient
-    // is built for every attribute and then restricted, so that it is a matrix one also on
-    // a process without an element of the domains.
+    // The regularization mag_eps (1/mu) M on the elements of the domains, weighted as the
+    // curl-curl operator.
     MFEM_ASSERT(attrs, "The regularization is assembled on the region or the environment!");
     const auto &mat_op = curlcurl_op->GetMaterialOp();
     MaterialPropertyCoefficient eps(mat_op.GetAttributeToMaterial(),
                                     mat_op.GetInvPermeability(), mag_eps);
-    eps.RestrictCoefficient(mat_op.GetCeedAttributes(*attrs));
     BilinearForm m(SolutionSpace());
     m.AddDomainIntegrator<VectorFEMassIntegrator>(eps);
+    m.SetAssemblyDomains(*attrs);
     return std::make_unique<ParOperator>(
         assemble ? std::unique_ptr<Operator>(m.FullAssemble(true)) : m.PartialAssemble(),
         SolutionSpace());
@@ -73,10 +71,10 @@ SubstructuringSolver::Impl::GetTerm(const std::vector<int> *attrs, Term term,
   {
     return nullptr;
   }
-  std::optional<CurlCurlOperator::AssemblyRestriction> restriction;
+  std::optional<AssemblyDomains::Restriction> restriction;
   if (attrs)
   {
-    restriction.emplace(*curlcurl_op, *attrs);
+    restriction.emplace(curlcurl_op->GetAssemblyDomains(), *attrs);
   }
   return curlcurl_op->GetUnconstrainedStiffnessMatrix(term == Term::VOLUME,
                                                       term == Term::SHEETS, assemble);

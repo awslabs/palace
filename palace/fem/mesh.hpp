@@ -41,6 +41,9 @@ struct CeedGeomFactorData
   // when no subset is configured, full-sized when every element is active).
   std::vector<int> indices, active_indices;
 
+  // The libCEED attribute of each element of indices.
+  std::vector<int> attributes;
+
   // Mesh geometry factor data: {attr, w * |J|, adj(J)^T / |J|}. Jacobian matrix is
   // space_dim x dim, stored column-major by component. The vector uses the libCEED
   // backend's strided layout (CEED_STRIDES_BACKEND) and is only accessed through the
@@ -62,6 +65,11 @@ struct CeedGeomFactorData
     }
     return geom_data_restr;
   }
+
+  // Return a new restriction (owned by the caller) of the geometry factors to the elements
+  // at the given positions in indices, which addresses the geom_data vector.
+  CeedElemRestriction BuildGeomDataRestriction(Ceed ceed,
+                                               const std::vector<int> &positions) const;
 };
 
 }  // namespace ceed

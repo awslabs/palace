@@ -5,10 +5,8 @@
 #define PALACE_MODELS_CURL_CURL_OPERATOR_HPP
 
 #include <deque>
-#include <initializer_list>
 #include <map>
 #include <memory>
-#include <optional>
 #include <set>
 #include <vector>
 #include <mfem.hpp>
@@ -170,21 +168,12 @@ private:
                                 const mfem::Array<int> &pc_dbc_attr,
                                 std::vector<mfem::Array<int>> &h1_dbc_tdof_lists);
 
-  // Optional restriction of the assembled operators to a set of domain attributes:
-  // libCEED domain attributes and boundary attributes (by neighboring domain) kept, and the
-  // domain attributes, for the sheet terms on a broken space.
-  struct AssemblyDomains
-  {
-    mfem::Array<int> domain, boundary;
-    std::vector<int> attrs;
-  };
-  std::optional<AssemblyDomains> assembly_domains;
-  void
-  RestrictToAssemblyDomains(std::initializer_list<MaterialPropertyCoefficient *> f,
-                            std::initializer_list<MaterialPropertyCoefficient *> fb) const;
+  // Optional restriction of the stiffness form, and of the sheet terms on a broken space,
+  // to a set of domains.
+  AssemblyDomains assembly_domains;
 
   // The stiffness form on the finest solution space, with the coefficients its integrators
-  // point to (AddStiffnessCoefficients, restricted to the assembly domains if set): the
+  // point to (AddStiffnessCoefficients), assembled on the assembly domains if set: the
   // volume terms if volume, the sheet terms of an unbroken space if sheets (the broken
   // sheet matrix is added to the assembled operators, see AddBrokenSheetMatrix).
   struct StiffnessForm
@@ -209,22 +198,9 @@ public:
                    const std::vector<std::unique_ptr<Mesh>> &mesh);
   CurlCurlOperator(const IoData &iodata, const std::vector<std::unique_ptr<Mesh>> &mesh);
 
-  // Restricts the stiffness form (GetUnconstrainedStiffnessMatrix) to the elements with the
-  // given domain
-  // attributes and the boundary elements bounding them while in scope (the previous
-  // restriction is restored).
-  class AssemblyRestriction
-  {
-  public:
-    AssemblyRestriction(CurlCurlOperator &op, const std::vector<int> &domain_attrs);
-    ~AssemblyRestriction() { op.assembly_domains = std::move(previous); }
-    AssemblyRestriction(const AssemblyRestriction &) = delete;
-    AssemblyRestriction &operator=(const AssemblyRestriction &) = delete;
-
-  private:
-    CurlCurlOperator &op;
-    std::optional<AssemblyDomains> previous;
-  };
+  // The domains to which the stiffness form (GetUnconstrainedStiffnessMatrix) is restricted
+  // while an AssemblyDomains::Restriction is in scope.
+  AssemblyDomains &GetAssemblyDomains() { return assembly_domains; }
 
   // Return material operator for postprocessing.
   const MaterialOperator &GetMaterialOp() const { return mat_op; }

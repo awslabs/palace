@@ -5,6 +5,8 @@
 #define PALACE_FEM_BILINEARFORM_HPP
 
 #include <memory>
+#include <optional>
+#include <utility>
 #include <vector>
 #include <mfem.hpp>
 #include "fem/integrator.hpp"
@@ -34,6 +36,9 @@ protected:
   // Assemble eligible integrators over shared support unions which omit elements where
   // their coefficients are identically zero (see SkipZeroCoefficientElements).
   bool skip_zero_coeff_elems = false;
+
+  // Domain attributes to which the assembly is restricted (see SetAssemblyDomains).
+  std::optional<std::vector<int>> assembly_domains;
 
   std::unique_ptr<ceed::Operator> PartialAssemble(const FiniteElementSpace &trial_fespace,
                                                   const FiniteElementSpace &test_fespace,
@@ -76,6 +81,13 @@ public:
   // ParOperator::ParallelAssemble).
   void SkipZeroCoefficientElements(bool skip = true) { skip_zero_coeff_elems = skip; }
 
+  // Assemble only the elements with the given domain attributes, and the boundary elements
+  // whose neighboring domain (the one with the lower attribute, for an interior boundary)
+  // has one of them, and of those only the ones where the coefficients of an integrator are
+  // nonzero. The other elements are not assembled at all, so the sparsity pattern of a
+  // fully assembled matrix depends on the domains and the coefficient values.
+  void SetAssemblyDomains(const std::vector<int> &attrs) { assembly_domains = attrs; }
+
   std::unique_ptr<ceed::Operator> PartialAssemble() const
   {
     return PartialAssemble(GetTrialSpace(), GetTestSpace(), skip_zero_coeff_elems);
@@ -84,7 +96,8 @@ public:
   std::unique_ptr<hypre::HypreCSRMatrix> FullAssemble(bool skip_zeros) const
   {
     // Full assembly keeps the explicit zeros of the zero-coefficient elements, so that the
-    // sparsity pattern does not depend on the coefficient values.
+    // sparsity pattern does not depend on the coefficient values (unless the assembly is
+    // restricted to domains, see SetAssemblyDomains).
     constexpr bool skip_zero_coeff_elems = false;
     return FullAssemble(
         *PartialAssemble(GetTrialSpace(), GetTestSpace(), skip_zero_coeff_elems),
@@ -105,6 +118,48 @@ public:
   std::vector<std::unique_ptr<Operator>>
   Assemble(const FiniteElementSpaceHierarchy &fespaces, bool skip_zeros,
            std::size_t l0 = 0) const;
+};
+
+//
+// The domains to which a model operator restricts the assembly of its bilinear forms
+// (BilinearForm::SetAssemblyDomains) while a Restriction is in scope.
+//
+class AssemblyDomains
+{
+private:
+  std::optional<std::vector<int>> attrs;
+
+public:
+  // Restricts the assembly to the given domain attributes while in scope (the previous
+  // restriction is restored).
+  class Restriction
+  {
+  public:
+    Restriction(AssemblyDomains &assembly_domains, const std::vector<int> &domain_attrs)
+      : domains(assembly_domains),
+        previous(std::exchange(assembly_domains.attrs, domain_attrs))
+    {
+    }
+    ~Restriction() { domains.attrs = std::move(previous); }
+    Restriction(const Restriction &) = delete;
+    Restriction &operator=(const Restriction &) = delete;
+
+  private:
+    AssemblyDomains &domains;
+    std::optional<std::vector<int>> previous;
+  };
+
+  // The domain attributes, or nullptr without a restriction.
+  const std::vector<int> *Get() const { return attrs ? &*attrs : nullptr; }
+
+  // Restrict the assembly of the form to the domains, if any.
+  void Restrict(BilinearForm &form) const
+  {
+    if (attrs)
+    {
+      form.SetAssemblyDomains(*attrs);
+    }
+  }
 };
 
 // Discrete linear operators map primal vectors to primal vectors for interpolation between
