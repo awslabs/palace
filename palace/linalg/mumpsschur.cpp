@@ -33,16 +33,15 @@ int GlobalIndex(int l, int b, int me, int np)
 
 MumpsSchurSolver::MumpsSchurSolver(const mfem::HypreParMatrix &A,
                                    const std::vector<HYPRE_BigInt> &schur_vars,
-                                   double blr_tol, bool serial,
-                                   SymbolicFactorization ordering, int block)
-  : comm(A.GetComm()), serial(serial), n_glob(A.GetGlobalNumRows()), n_loc(A.Height()),
+                                   double blr_tol, SymbolicFactorization ordering,
+                                   int block)
+  : comm(A.GetComm()), n_glob(A.GetGlobalNumRows()), n_loc(A.Height()),
     n_schur(static_cast<int>(schur_vars.size())), mb(block),
     rows(comm, A.GetRowStarts()[0], A.Height(), schur_vars)
 {
   MPI_Comm_rank(comm, &rank);
-  active = !serial || rank == 0;
 #if MFEM_MUMPS_VERSION >= 530
-  distributed = !serial;
+  distributed = true;
 #endif
   int nranks;
   MPI_Comm_size(comm, &nranks);
@@ -102,124 +101,84 @@ MumpsSchurSolver::MumpsSchurSolver(const mfem::HypreParMatrix &A,
       v /= scale;
     }
   }
-  if (serial)
-  {
-    // Gather the entries on rank 0, which factors alone (centralized assembled input).
-    static_assert(sizeof(MUMPS_INT) == sizeof(int), "MUMPS_INT must be a 32-bit int!");
-    int nnz_loc = static_cast<int>(irn.size());
-    std::vector<int> cnt(nranks), disp(nranks, 0);
-    MPI_Gather(&nnz_loc, 1, MPI_INT, cnt.data(), 1, MPI_INT, 0, comm);
-    std::size_t total = 0;
-    for (int r = 0; rank == 0 && r < nranks; r++)
-    {
-      disp[r] = static_cast<int>(total);
-      total += cnt[r];
-    }
-    std::vector<MUMPS_INT> irn_g(total), jcn_g(total);
-    std::vector<double> val_g(total);
-    MPI_Gatherv(irn.data(), nnz_loc, MPI_INT, irn_g.data(), cnt.data(), disp.data(),
-                MPI_INT, 0, comm);
-    MPI_Gatherv(jcn.data(), nnz_loc, MPI_INT, jcn_g.data(), cnt.data(), disp.data(),
-                MPI_INT, 0, comm);
-    MPI_Gatherv(val.data(), nnz_loc, MPI_DOUBLE, val_g.data(), cnt.data(), disp.data(),
-                MPI_DOUBLE, 0, comm);
-    irn.swap(irn_g);
-    jcn.swap(jcn_g);
-    val.swap(val_g);
-  }
   for (HYPRE_BigInt v : schur_vars)
   {
     listvar.push_back(static_cast<MUMPS_INT>(v + 1));
   }
 
   auto icntl = [&](int i) -> MUMPS_INT & { return id.icntl[i - 1]; };
-  if (active)
+  id.sym = 1;  // symmetric positive definite (no pivoting)
+  id.par = 1;  // the host takes part in the factorization
+  id.comm_fortran = static_cast<MUMPS_INT>(MPI_Comm_c2f(comm));
+  id.job = -1;
+  dmumps_c(&id);
+  icntl(1) = -1;  // silence errors / diagnostics / global info / printing
+  icntl(2) = -1;
+  icntl(3) = -1;
+  icntl(4) = 0;
+  icntl(5) = 0;   // assembled input
+  icntl(18) = 3;  // distributed matrix entries
+  // Complete Schur (if any Schur variables), 2D block cyclic on a near-square grid of the
+  // processes (MUMPS symmetrizes it with blocks of the same rows and
+  // columns).
+  icntl(19) = (n_schur > 0) ? 3 : 0;
+  nprow = static_cast<int>(std::sqrt(static_cast<double>(nranks)));
+  npcol = nranks / nprow;
+  // Fill-reducing ordering: sequential (ICNTL(7)), or parallel (ICNTL(29)) for ParMETIS
+  // and PT-SCOTCH if there are no Schur variables.
+  const bool parallel = n_schur == 0 && (ordering == SymbolicFactorization::PARMETIS ||
+                                         ordering == SymbolicFactorization::PTSCOTCH);
+  icntl(28) = parallel ? 2 : 1;
+  switch (ordering)
   {
-    id.sym = 1;  // symmetric positive definite (no pivoting)
-    id.par = 1;  // the host takes part in the factorization
-    id.comm_fortran = static_cast<MUMPS_INT>(MPI_Comm_c2f(serial ? MPI_COMM_SELF : comm));
-    id.job = -1;
-    dmumps_c(&id);
-    icntl(1) = -1;  // silence errors / diagnostics / global info / printing
-    icntl(2) = -1;
-    icntl(3) = -1;
-    icntl(4) = 0;
-    icntl(5) = 0;                // assembled input
-    icntl(18) = serial ? 0 : 3;  // centralized or distributed matrix entries
-    // Complete Schur (if any Schur variables), 2D block cyclic on a near-square grid of the
-    // processes taking part (MUMPS symmetrizes it with blocks of the same rows and
-    // columns).
-    icntl(19) = (n_schur > 0) ? 3 : 0;
-    const int np = serial ? 1 : nranks;
-    nprow = static_cast<int>(std::sqrt(static_cast<double>(np)));
-    npcol = np / nprow;
-    // Fill-reducing ordering: sequential (ICNTL(7)), or parallel (ICNTL(29)) for ParMETIS
-    // and PT-SCOTCH if there are no Schur variables.
-    const bool parallel = !serial && n_schur == 0 &&
-                          (ordering == SymbolicFactorization::PARMETIS ||
-                           ordering == SymbolicFactorization::PTSCOTCH);
-    icntl(28) = parallel ? 2 : 1;
-    switch (ordering)
-    {
-      case SymbolicFactorization::PARMETIS:
-        icntl(7) = 5;  // METIS
-        icntl(29) = 2;
-        break;
-      case SymbolicFactorization::PTSCOTCH:
-        icntl(7) = 3;  // SCOTCH
-        icntl(29) = 1;
-        break;
-      case SymbolicFactorization::SCOTCH:
-        icntl(7) = 3;
-        break;
-      case SymbolicFactorization::PORD:
-        icntl(7) = 4;
-        break;
-      case SymbolicFactorization::AMD:
-      case SymbolicFactorization::RCM:
-        icntl(7) = 0;
-        break;
-      case SymbolicFactorization::METIS:
-      case SymbolicFactorization::DEFAULT:
-        icntl(7) = 5;
-        break;
-    }
-    icntl(20) = distributed ? 10 : 0;  // distributed or centralized right-hand sides
-    icntl(21) = distributed ? 1 : 0;   // distributed or centralized solution
-    icntl(26) = 0;   // solve the internal problem (Schur variables held at 0)
-    icntl(14) = 50;  // workspace relaxation (%); raised on a workspace failure below
-    if (blr_tol > 0.0)
-    {
-      icntl(35) = 2;         // BLR in both factorization and solve (compressed factors)
-      icntl(36) = 1;         // UCFS variant: compress earlier, fewer operations
-      id.cntl[6] = blr_tol;  // CNTL(7): dropping parameter (relative, after the scaling)
-    }
-    id.n = static_cast<MUMPS_INT>(n_glob);
-    if (serial)
-    {
-      id.nnz = static_cast<MUMPS_INT8>(irn.size());
-      id.irn = irn.data();
-      id.jcn = jcn.data();
-      id.a = val.data();
-    }
-    else
-    {
-      id.nnz_loc = static_cast<MUMPS_INT8>(irn.size());
-      id.irn_loc = irn.data();
-      id.jcn_loc = jcn.data();
-      id.a_loc = val.data();
-    }
-    id.size_schur = n_schur;
-    id.listvar_schur = listvar.data();
-    id.nprow = nprow;
-    id.npcol = npcol;
-    id.mblock = mb;
-    id.nblock = mb;
-    id.job = 1;  // analysis
-    dmumps_c(&id);
+    case SymbolicFactorization::PARMETIS:
+      icntl(7) = 5;  // METIS
+      icntl(29) = 2;
+      break;
+    case SymbolicFactorization::PTSCOTCH:
+      icntl(7) = 3;  // SCOTCH
+      icntl(29) = 1;
+      break;
+    case SymbolicFactorization::SCOTCH:
+      icntl(7) = 3;
+      break;
+    case SymbolicFactorization::PORD:
+      icntl(7) = 4;
+      break;
+    case SymbolicFactorization::AMD:
+    case SymbolicFactorization::RCM:
+      icntl(7) = 0;
+      break;
+    case SymbolicFactorization::METIS:
+    case SymbolicFactorization::DEFAULT:
+      icntl(7) = 5;
+      break;
   }
+  icntl(20) = distributed ? 10 : 0;  // distributed or centralized right-hand sides
+  icntl(21) = distributed ? 1 : 0;   // distributed or centralized solution
+  icntl(26) = 0;   // solve the internal problem (Schur variables held at 0)
+  icntl(14) = 50;  // workspace relaxation (%); raised on a workspace failure below
+  if (blr_tol > 0.0)
+  {
+    icntl(35) = 2;         // BLR in both factorization and solve (compressed factors)
+    icntl(36) = 1;         // UCFS variant: compress earlier, fewer operations
+    id.cntl[6] = blr_tol;  // CNTL(7): dropping parameter (relative, after the scaling)
+  }
+  id.n = static_cast<MUMPS_INT>(n_glob);
+  id.nnz_loc = static_cast<MUMPS_INT8>(irn.size());
+  id.irn_loc = irn.data();
+  id.jcn_loc = jcn.data();
+  id.a_loc = val.data();
+  id.size_schur = n_schur;
+  id.listvar_schur = listvar.data();
+  id.nprow = nprow;
+  id.npcol = npcol;
+  id.mblock = mb;
+  id.nblock = mb;
+  id.job = 1;  // analysis
+  dmumps_c(&id);
   Check("analysis");
-  if (active && n_schur > 0 && rank < nprow * npcol)
+  if (n_schur > 0 && rank < nprow * npcol)
   {
     id.schur_lld = std::max<MUMPS_INT>(1, id.schur_mloc);
     schur.assign(static_cast<std::size_t>(id.schur_lld) *
@@ -237,7 +196,7 @@ MumpsSchurSolver::MumpsSchurSolver(const mfem::HypreParMatrix &A,
   // relaxation and the memory allowed, from what each process allocated (INFO(16)) with
   // twice their shortfall (INFO(2) entries) more on the processes that ran short, and
   // retry.
-  for (int attempt = 0; active; attempt++)
+  for (int attempt = 0;; attempt++)
   {
     id.job = 2;
     dmumps_c(&id);
@@ -301,11 +260,8 @@ MumpsSchurSolver::MumpsSchurSolver(const mfem::HypreParMatrix &A,
 
 MumpsSchurSolver::~MumpsSchurSolver()
 {
-  if (active)
-  {
-    id.job = -2;
-    dmumps_c(&id);
-  }
+  id.job = -2;
+  dmumps_c(&id);
 }
 
 void MumpsSchurSolver::SetRhs(const std::vector<const mfem::Vector *> &X, int c0, int nb)
@@ -359,11 +315,8 @@ void MumpsSchurSolver::SolveInternal(const std::vector<const mfem::Vector *> &X,
   {
     const int nb = std::min(kBlock, n - c0);
     SetRhs(X, c0, nb);
-    if (active)
-    {
-      id.job = 3;
-      dmumps_c(&id);
-    }
+    id.job = 3;
+    dmumps_c(&id);
     Check("solve");
     if (distributed)
     {
@@ -405,13 +358,10 @@ void MumpsSchurSolver::Condense(const std::vector<const mfem::Vector *> &X,
       id.redrhs = g.data() + static_cast<std::size_t>(n_schur) * c0;
       id.lredrhs = n_schur;
     }
-    if (active)
-    {
-      id.icntl[25] = 1;  // ICNTL(26): condensation onto the Schur variables
-      id.job = 3;
-      dmumps_c(&id);
-      id.icntl[25] = 0;
-    }
+    id.icntl[25] = 1;  // ICNTL(26): condensation onto the Schur variables
+    id.job = 3;
+    dmumps_c(&id);
+    id.icntl[25] = 0;
     Check("condensation");
   }
 }
@@ -508,7 +458,7 @@ std::vector<double> MumpsSchurSolver::ReleaseSchurRows()
     }
   }
   const int ngrid = nprow * npcol;
-  const bool grid = active && rank < ngrid;
+  const bool grid = rank < ngrid;
   const int myrow = grid ? rank / npcol : 0, mycol = grid ? rank % npcol : 0,
             mloc = grid ? LocalCount(ns, mb, myrow, nprow) : 0;
   const std::size_t lld = std::max(1, mloc);
@@ -574,12 +524,8 @@ std::vector<double> MumpsSchurSolver::ReleaseSchurRows()
 
 void MumpsSchurSolver::Check(const char *phase) const
 {
-  // INFOG is global (identical on the ranks taking part); serially, rank 0 has it.
-  int info[2] = {id.infog[0], id.infog[1]};
-  if (serial)
-  {
-    MPI_Bcast(info, 2, MPI_INT, 0, comm);
-  }
+  // INFOG is global (identical on all ranks).
+  const int info[2] = {id.infog[0], id.infog[1]};
   MFEM_VERIFY(info[0] >= 0, "MUMPS " << phase << " failed: INFOG(1) = " << info[0]
                                      << ", INFOG(2) = " << info[1] << "!");
 }

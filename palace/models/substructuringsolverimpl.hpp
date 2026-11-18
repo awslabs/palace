@@ -21,12 +21,10 @@
 #include "fem/mesh.hpp"
 #include "fem/substructure.hpp"
 #include "fem/substructuremodel.hpp"
-#include "linalg/ksp.hpp"
 #include "linalg/mumpsschur.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/rap.hpp"
 #include "linalg/schursolver.hpp"
-#include "linalg/solver.hpp"
 #include "linalg/strumpack.hpp"
 #include "linalg/strumpackschur.hpp"
 #include "linalg/superlu.hpp"
@@ -83,22 +81,18 @@ inline const char *DirectSolverName(const IoData &iodata)
 
 #if defined(MFEM_USE_MUMPS)
 // MUMPS factorization of a symmetric operator (MumpsSchurSolver without Schur variables:
-// silent, and retried with a larger workspace when the estimate is too small), optionally
-// on rank 0 alone.
+// silent, and retried with a larger workspace when the estimate is too small).
 class MumpsDirectSolver : public mfem::Solver
 {
 public:
-  MumpsDirectSolver(bool serial, SymbolicFactorization ordering)
-    : serial(serial), ordering(ordering)
-  {
-  }
+  explicit MumpsDirectSolver(SymbolicFactorization ordering) : ordering(ordering) {}
   void SetOperator(const mfem::Operator &op) override
   {
     const auto *A = dynamic_cast<const mfem::HypreParMatrix *>(&op);
     MFEM_VERIFY(A, "MumpsDirectSolver requires a HypreParMatrix operator!");
     height = width = A->Height();
-    mumps = std::make_unique<MumpsSchurSolver>(*A, std::vector<HYPRE_BigInt>{}, 0.0, serial,
-                                               ordering);
+    mumps =
+        std::make_unique<MumpsSchurSolver>(*A, std::vector<HYPRE_BigInt>{}, 0.0, ordering);
   }
   void Mult(const mfem::Vector &x, mfem::Vector &y) const override
   {
@@ -112,16 +106,13 @@ public:
   }
 
 private:
-  bool serial;
   SymbolicFactorization ordering;
   std::unique_ptr<MumpsSchurSolver> mumps;
 };
 #endif
 
-// With serial, a small system is factored on rank 0 alone (MUMPS only).
 inline std::unique_ptr<mfem::Solver> MakeDirectSolver(const IoData &iodata,
-                                                      [[maybe_unused]] MPI_Comm comm,
-                                                      [[maybe_unused]] bool serial = false)
+                                                      [[maybe_unused]] MPI_Comm comm)
 {
   switch (DirectSolverType(iodata))
   {
@@ -134,8 +125,7 @@ inline std::unique_ptr<mfem::Solver> MakeDirectSolver(const IoData &iodata,
 #endif
 #if defined(MFEM_USE_MUMPS)
     case LinearSolver::MUMPS:
-      return std::make_unique<MumpsDirectSolver>(serial,
-                                                 iodata.solver.linear.sym_factorization);
+      return std::make_unique<MumpsDirectSolver>(iodata.solver.linear.sym_factorization);
 #endif
 #if defined(MFEM_USE_SUPERLU)
     case LinearSolver::SUPERLU:
@@ -170,7 +160,7 @@ MakePartialFactorization(const IoData &iodata,
   if (any || type == LinearSolver::MUMPS)
   {
     name = "MUMPS";
-    return std::make_unique<MumpsSchurSolver>(A, schur_vars, kEnvBlrTol, false,
+    return std::make_unique<MumpsSchurSolver>(A, schur_vars, kEnvBlrTol,
                                               iodata.solver.linear.sym_factorization);
   }
 #endif
@@ -243,40 +233,6 @@ private:
   std::unique_ptr<mfem::Solver> solver;
   mutable int block;
   mutable mfem::Vector pad_in, pad_out;
-};
-
-// Region-condensed system operator: (region operator on region-free true DOFs) + implicit
-// DtN on the interface, with non-region-free true DOFs pinned to identity.
-class RegionCondensedOperator : public mfem::Operator
-{
-public:
-  RegionCondensedOperator(mfem::HypreParMatrix &A_region_free, const mfem::Operator &dtn,
-                          const std::vector<char> &is_region_free)
-    : mfem::Operator(A_region_free.Height()), A_region_free(A_region_free), dtn(dtn),
-      is_region_free(is_region_free), td(A_region_free.Height())
-  {
-  }
-
-  void Mult(const mfem::Vector &x, mfem::Vector &y) const override
-  {
-    A_region_free.Mult(x, y);
-    dtn.Mult(x, td);
-    const double *t = td.HostRead();
-    double *yy = y.HostReadWrite();
-    for (int i = 0; i < height; i++)
-    {
-      if (is_region_free[i])
-      {
-        yy[i] += t[i];
-      }
-    }
-  }
-
-private:
-  mfem::HypreParMatrix &A_region_free;
-  const mfem::Operator &dtn;
-  const std::vector<char> &is_region_free;
-  mutable mfem::Vector td;
 };
 
 // Materialized DtN: applies the precomputed interface operator S_E to a distributed
@@ -403,14 +359,11 @@ struct SubstructuringSolver::Impl
 
   std::unique_ptr<mfem::HypreParMatrix> A_region, A_region_free;
   mfem::Array<int> ra_arr, ea_arr;
-  // Direct factorization of the region-free block (the region pc, or the exact region solve
-  // when region_exact) and its (local) region-free true DOFs.
+  // Direct factorization of the region-free block with S_E on Gamma (the region solve).
   std::unique_ptr<substructuring::BlockedDirectSolver> reg_lu;
-  bool region_exact = false;
   // Local true DOFs: region-free (the region solve), of region elements (where the region
   // operators act), and interface.
   mfem::Array<int> rf_idx, rc_idx, gamma_idx;
-  mutable mfem::Vector reg_r, reg_z;
   std::unique_ptr<mfem::HypreParMatrix> env_A_ee_parent;  // parent-space A_EE (eliminated)
   std::unique_ptr<substructuring::BlockedDirectSolver> env_lu_parent;  // its direct factor
   // The environment with Gamma as the Schur variables, which gives S_E and every
@@ -420,27 +373,10 @@ struct SubstructuringSolver::Impl
   std::string env_partial;
   // Block size of the batched multi-RHS environment solves.
   static constexpr int kMaterializeBlock = substructuring::BlockedDirectSolver::kMaxBlock;
-  // Largest interface for which the region preconditioner factors the dense Gamma block of
-  // the exact condensed operator (dense block + its fill ~ 3 |Gamma|^2 doubles in total).
-  static constexpr int kDirectCondensedMaxInterface = 10000;
-  // The exact dense-Gamma region factor (~|Gamma|^3 once) pays off against CG on
-  // A_region_free (~|Gamma|^2 per iteration, per excitation) from about |Gamma| /
-  // kDenseInterfacePerExcitation excitations in a batch.
-  static constexpr int kDenseInterfacePerExcitation = 1000;
-  // Region-free size up to which the region is factored on one rank (MUMPS's per-rank
-  // workspace dominates a small factorization spread over many ranks), unless the factor
-  // holds the dense Gamma block (~|Gamma|^3 / 3 flops).
-  static constexpr long long kSerialRegionFactorDofs = 100000;
-  // Conjugate gradients on the region when its exact factor does not pay off (see
-  // EnsureRegionFactor), preconditioned by the factor of A_region_free: the energies are
-  // stationary in the error of the region solves.
-  static constexpr double kRegionCgTol = 1.0e-10;
-  static constexpr int kRegionCgMaxIts = 2000;
   // Relative tolerance of the fingerprint checks of a saved model: the fingerprints are
   // sums over elements, which the partition changes by rounding only.
   static constexpr double kFingerprintTol = 1.0e-9;
-  bool region_dense_eligible = false;  // a dense S_E fits the exact region factor
-  mfem::Array<int> non_env_int;        // parent true DOFs that are not environment-interior
+  mfem::Array<int> non_env_int;  // parent true DOFs that are not environment-interior
   // Region energy operator: the solve operator (electrostatics), the volume terms
   // (magnetostatics).
   std::unique_ptr<mfem::HypreParMatrix> A_region_energy;
@@ -458,9 +394,6 @@ struct SubstructuringSolver::Impl
   // The domain attributes of the environment: those of the configuration, or by default the
   // attributes of the mesh not in the region.
   std::vector<int> env_attributes;
-
-  std::unique_ptr<substructuring::RegionCondensedOperator> region_op;
-  std::unique_ptr<KspSolver> region_ksp;  // CG on the region-condensed operator
 
   // Interface operator S_E over a global interface enumeration, distributed by rows: each
   // rank stores its own rows [gamma_off, gamma_off + gamma_nloc) (row-major, x nG_global).
@@ -857,15 +790,11 @@ struct SubstructuringSolver::Impl
   std::unique_ptr<mfem::HypreParMatrix>
   AssembleSelection(const std::vector<char> &mark) const;
 
-  // Create the direct region preconditioner on the first solve batch (n excitations, by
-  // SolveRegion): the exact dense-Gamma factor A_region_free + S_E when the batch amortizes
-  // it, else A_region_free, restricted to the region-free DOFs. Created once (destroying a
-  // never-factored SuperLU object crashes in SuperLU_DIST). Collective.
+  // Factor the region on the first solve batch (n excitations, by SolveRegion), with S_E on
+  // Gamma as one sparse system (its dense block a front of the factorization), restricted
+  // to the region-free DOFs. Created once (destroying a never-factored SuperLU object
+  // crashes in SuperLU_DIST). Collective.
   void EnsureRegionFactor(int n);
-
-  // Region preconditioner apply with the direct factor: identity off the region-free DOFs
-  // (A_region_free is identity there), the factor on them.
-  void ApplyRegionFactor(const mfem::Vector &r, mfem::Vector &z) const;
 
   // Region-condensed solves on the region-free DOFs (rf_idx), in place: right-hand sides
   // in, solutions out. One multi-RHS solve with the exact factor, else CG per excitation.
@@ -913,11 +842,6 @@ struct SubstructuringSolver::Impl
 
   // Save S_E, the region mesh and the sections to the model file. Collective.
   void SaveModel(const std::string &model_path, int sig_w);
-
-  // The region-condensed solver: CG on A_region_free + S_E, preconditioned by the direct
-  // factor of A_region_free (with the exact factor, SolveRegion bypasses CG). Returns its
-  // description. Collective.
-  std::string SetUpRegionSolver();
 };
 
 }  // namespace palace

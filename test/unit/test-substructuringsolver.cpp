@@ -2136,15 +2136,14 @@ std::unique_ptr<mfem::ParMesh> MakeRefinedGradedSplit(int a, int b, int n,
 
 }  // namespace
 
-TEST_CASE("SubstructuringSolver region solve by conjugate gradients",
+TEST_CASE("SubstructuringSolver region factored with the environment operator",
           "[substructure][Serial][Parallel]")
 {
-  // With one excitation and an interface of over 1000 DOFs, the region is solved by CG,
-  // preconditioned by the factor of the region operator without S_E, also for a region
-  // without a Dirichlet boundary, whose region operator is singular (its factor still
-  // preconditions the nonsingular condensed operator). The capacitance is that of a
-  // monolith, of the terminal at x = 1 against the grounded sides of the environment, with
-  // the region grounded at x = 0 or not.
+  // The region is factored with S_E as one sparse system, here with one excitation and an
+  // interface of over 1000 DOFs, the dense block of the factorization. Without a Dirichlet
+  // boundary, the region operator alone is singular, but not with S_E. The capacitance is
+  // that of a monolith, of the terminal at x = 1 against the grounded sides of the
+  // environment, with the region grounded at x = 0 or not.
   const bool grounded = GENERATE(true, false);
   CAPTURE(grounded);
   const std::vector<int> ground = grounded ? std::vector<int>{2, 4} : std::vector<int>{4};

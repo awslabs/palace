@@ -30,14 +30,12 @@ public:
   // schur_vars: global (0-based) true-DOF indices of the Schur variables, in the order the
   // Schur rows/columns should appear (replicated on all ranks); empty for a plain
   // factorization of A. blr_tol > 0 enables a block low-rank (BLR) factorization with that
-  // relative accuracy (0: exact). With serial, rank 0 factors alone (for a small system, it
-  // avoids MUMPS's per-rank workspace). ordering is the fill-reducing ordering ("Default":
+  // relative accuracy (0: exact). ordering is the fill-reducing ordering ("Default":
   // METIS); MUMPS computes a Schur complement only after a sequential analysis, so with
   // Schur variables a parallel ordering is replaced by its sequential counterpart. block:
   // the block size of the distribution of the Schur complement.
   MumpsSchurSolver(const mfem::HypreParMatrix &A,
                    const std::vector<HYPRE_BigInt> &schur_vars, double blr_tol = 0.0,
-                   bool serial = false,
                    SymbolicFactorization ordering = SymbolicFactorization::DEFAULT,
                    int block = 64);
 
@@ -67,9 +65,9 @@ private:
 
   MPI_Comm comm;
   int rank = 0;
-  // active: this rank takes part in the factorization; distributed: right-hand sides and
-  // solutions stay distributed (MUMPS >= 5.3), else they pass through rank 0.
-  bool serial = false, active = true, distributed = false;
+  // Right-hand sides and solutions stay distributed (MUMPS >= 5.3), else they pass through
+  // rank 0.
+  bool distributed = false;
   HYPRE_BigInt n_glob, row0 = 0;
   int n_loc, n_schur, nsol_loc = 0;
   // The grid of the Schur complement (nprow x npcol, of the first processes, in blocks of

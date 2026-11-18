@@ -12,7 +12,6 @@
 #include "fem/gridfunction.hpp"
 #include "fem/multigrid.hpp"
 #include "linalg/errorestimator.hpp"
-#include "linalg/iterative.hpp"
 #include "models/materialoperator.hpp"
 #include "models/postoperator.hpp"
 #include "utils/geodata.hpp"
@@ -23,23 +22,6 @@ namespace palace
 
 namespace
 {
-
-// Preconditioner forwarding to a callable (the region factor, built on the first solve
-// batch, so SetOperator is a no-op).
-class CallableSolver : public Solver<Operator>
-{
-public:
-  CallableSolver(int h, std::function<void(const mfem::Vector &, mfem::Vector &)> f)
-    : Solver<Operator>(false), apply(std::move(f))
-  {
-    height = width = h;
-  }
-  void SetOperator(const Operator &) override {}
-  void Mult(const mfem::Vector &x, mfem::Vector &y) const override { apply(x, y); }
-
-private:
-  std::function<void(const mfem::Vector &, mfem::Vector &)> apply;
-};
 
 // The solver configuration of the native operator of the substructuring: the finest mesh
 // and space only (the factorizations need no multigrid hierarchy).
@@ -466,46 +448,18 @@ void SubstructuringSolver::Impl::EnsureRegionFactor(int n)
     return;
   }
   BlockTimer bt(Timer::KSP_SETUP);
-  // The exact factor solves each batch directly (one multi-RHS solve), the other one
-  // preconditions CG per excitation, which converges to its tolerance. With London
-  // sheets, the exact factor is used whenever it fits.
-  region_exact =
-      region_dense_eligible &&
-      (has_sheets ||
-       static_cast<long long>(std::max(n, 1)) * kDenseInterfacePerExcitation >= nG_global);
-  long long nrf = rf_idx.Size();
-  MPI_Allreduce(MPI_IN_PLACE, &nrf, 1, MPI_LONG_LONG, MPI_SUM, parent_fes.GetComm());
-  const bool serial = !region_exact && nrf <= kSerialRegionFactorDofs;
   reg_lu = std::make_unique<substructuring::BlockedDirectSolver>(
-      substructuring::MakeDirectSolver(iodata, parent_fes.GetComm(), serial),
-      region_exact
-          ? std::min(substructuring::BlockedDirectSolver::kMaxBlock, std::max(n, 1))
-          : 1);
-  std::unique_ptr<mfem::HypreParMatrix> E = AssembleSelection(is_region_free);
-  std::unique_ptr<mfem::HypreParMatrix> P;
-  if (region_exact)
+      substructuring::MakeDirectSolver(iodata, parent_fes.GetComm()),
+      std::min(substructuring::BlockedDirectSolver::kMaxBlock, std::max(n, 1)));
+  std::unique_ptr<mfem::HypreParMatrix> A;
+  if (nG_global > 0)
   {
-    std::unique_ptr<mfem::HypreParMatrix> S_mat = AssembleDenseInterface();
-    std::unique_ptr<mfem::HypreParMatrix> A(mfem::ParAdd(A_region_free.get(), S_mat.get()));
-    S_mat.reset();
-    P.reset(mfem::RAP(A.get(), E.get()));
+    A.reset(mfem::ParAdd(A_region_free.get(), AssembleDenseInterface().get()));
   }
-  else
-  {
-    P.reset(mfem::RAP(A_region_free.get(), E.get()));
-  }
+  const std::unique_ptr<mfem::HypreParMatrix> E = AssembleSelection(is_region_free);
+  const std::unique_ptr<mfem::HypreParMatrix> P(
+      mfem::RAP(A ? A.get() : A_region_free.get(), E.get()));
   reg_lu->SetOperator(*P);  // the factor keeps its own copy of P
-  reg_r.SetSize(rf_idx.Size());
-  reg_z.SetSize(rf_idx.Size());
-}
-
-void SubstructuringSolver::Impl::ApplyRegionFactor(const mfem::Vector &r,
-                                                   mfem::Vector &z) const
-{
-  z = r;
-  r.GetSubVector(rf_idx, reg_r);
-  reg_lu->Mult({&reg_r}, {&reg_z});
-  z.SetSubVector(rf_idx, reg_z);
 }
 
 void SubstructuringSolver::Impl::SolveRegion(std::vector<mfem::Vector> &x)
@@ -513,31 +467,14 @@ void SubstructuringSolver::Impl::SolveRegion(std::vector<mfem::Vector> &x)
   const int n = static_cast<int>(x.size());
   EnsureRegionFactor(n);
   BlockTimer bt(Timer::KSP);
-  if (region_exact)
-  {
-    std::vector<const mfem::Vector *> X(n);
-    std::vector<mfem::Vector *> Y(n);
-    for (int k = 0; k < n; k++)
-    {
-      X[k] = &x[k];
-      Y[k] = &x[k];
-    }
-    reg_lu->Mult(X, Y);
-    return;
-  }
-  mfem::Vector b(nt), u(nt);
-  b.UseDevice(true);
-  u.UseDevice(true);
+  std::vector<const mfem::Vector *> X(n);
+  std::vector<mfem::Vector *> Y(n);
   for (int k = 0; k < n; k++)
   {
-    b = 0.0;
-    b.SetSubVector(rf_idx, x[k]);
-    u = 0.0;
-    region_ksp->Mult(b, u);
-    MFEM_VERIFY(region_ksp->GetConverged() || !has_sheets,
-                "Substructuring region solve with London sheets did not converge!");
-    u.GetSubVector(rf_idx, x[k]);
+    X[k] = &x[k];
+    Y[k] = &x[k];
   }
+  reg_lu->Mult(X, Y);
 }
 
 mfem::Vector SubstructuringSolver::Impl::DirichletField(const mfem::Vector &xd) const
@@ -715,28 +652,6 @@ bool SubstructuringSolver::Impl::CurrentCloses(const Vector &J)
   return !open;
 }
 
-std::string SubstructuringSolver::Impl::SetUpRegionSolver()
-{
-  MPI_Comm comm = parent_fes.GetComm();
-  // The exact condensed operator A_region_free + S_E (dense Gamma block; a sparsified S_E
-  // is a worse preconditioner than none) or A_region_free, chosen at the first solve batch
-  // (EnsureRegionFactor).
-  region_dense_eligible = nG_global > 0 && nG_global <= kDirectCondensedMaxInterface;
-  auto pc = std::make_unique<CallableSolver>(A_region_free->Height(),
-                                             [this](const mfem::Vector &r, mfem::Vector &z)
-                                             { ApplyRegionFactor(r, z); });
-  auto pcg = std::make_unique<CgSolver<Operator>>(comm, 0);
-  pcg->SetInitialGuess(false);
-  pcg->SetRelTol(kRegionCgTol);
-  pcg->SetAbsTol(std::numeric_limits<double>::epsilon());
-  pcg->SetMaxIter(kRegionCgMaxIts);
-  region_op = std::make_unique<substructuring::RegionCondensedOperator>(
-      *A_region_free, *mat_dtn, is_region_free);
-  region_ksp = std::make_unique<KspSolver>(std::move(pcg), std::move(pc));
-  region_ksp->SetOperators(*region_op, *A_region_free);
-  return fmt::format("{} factorization", substructuring::DirectSolverName(iodata));
-}
-
 SubstructuringSolver::SubstructuringSolver(const IoData &iodata,
                                            const std::vector<std::unique_ptr<Mesh>> &mesh)
   : impl(std::make_unique<Impl>(iodata, mesh))
@@ -839,7 +754,8 @@ void SubstructuringSolver::CondenseEnvironment()
         impl->SKin_rows, impl->gamma_off, impl->gamma_global, impl->nG_global, comm);
   }
 
-  const std::string region_solver = impl->SetUpRegionSolver();
+  const std::string region_solver =
+      fmt::format("{} factorization", substructuring::DirectSolverName(impl->iodata));
 
   // Summary: the sizes, and how the environment was condensed and the region is solved.
   std::string env_solver;
