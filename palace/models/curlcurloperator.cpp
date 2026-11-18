@@ -50,6 +50,49 @@ public:
   }
 };
 
+// Whether an edge or face of the film is also one of an element of a London domain.
+bool FilmTouchesLondonDomain(const FiniteElementSpace &nd_fespace,
+                             const MaterialOperator &mat_op,
+                             const std::vector<int> &film_attributes)
+{
+  if (!mat_op.HasLondonDepth())
+  {
+    return false;
+  }
+  const auto &mesh = nd_fespace.GetParMesh();
+  mfem::Vector london(nd_fespace.GetVSize());
+  london.UseDevice(false);
+  london = 0.0;
+  mfem::Array<int> dofs;
+  for (int e = 0; e < mesh.GetNE(); e++)
+  {
+    if (mat_op.GetInvLondonDepth(mesh.GetAttribute(e)).MaxMaxNorm() > 0.0)
+    {
+      nd_fespace.Get().GetElementDofs(e, dofs);
+      for (int d : dofs)
+      {
+        london((d >= 0) ? d : -1 - d) = 1.0;
+      }
+    }
+  }
+  // |P|ᵀ on the host, so that a true DOF of an element on another process is counted.
+  const auto &P = *nd_fespace.Get().Dof_TrueDof_Matrix();
+  mfem::Vector london_t(P.Width());
+  london_t.UseDevice(false);
+  P.AbsMultTranspose(1.0, london, 0.0, london_t);
+  mfem::Array<int> film_attr(const_cast<int *>(film_attributes.data()),
+                             static_cast<int>(film_attributes.size()));
+  mfem::Array<int> film_tdofs;
+  nd_fespace.GetEssentialTrueDofs(mesh::BdrAttrToMarker(mesh, film_attr, true), film_tdofs);
+  int touch = 0;
+  for (int t : film_tdofs)
+  {
+    touch += (london_t(t) > 0.0);
+  }
+  Mpi::GlobalSum(1, &touch, mesh.GetComm());
+  return touch > 0;
+}
+
 }  // namespace
 
 CurlCurlOperator::CurlCurlOperator(const config::BoundaryData &boundaries,
@@ -246,6 +289,12 @@ void CurlCurlOperator::SetUpLondonFluxConstraints()
             << idx << " lists " << data.hole_attributes.size()
             << " holes, but the cut-cohomology generator supports exactly one hole per "
                "flux loop. Model each hole as a separate FluxLoop excitation.");
+
+    // A London domain has no phase to carry the fluxoid of the hole.
+    MFEM_VERIFY(!FilmTouchesLondonDomain(GetNDSpace(), mat_op, data.film_attributes),
+                "FluxLoop index " << idx
+                                  << " has a film touching a London domain, which "
+                                     "cannot carry the fluxoid of its hole!");
 
     // Fluxoid functional c = Curlᵀ·f, where f is the hole-cap flux functional on the RT
     // (curl) space: f·B = ∫_hole B·n (assembled via VectorFEBoundaryFluxLFIntegrator over

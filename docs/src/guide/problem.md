@@ -235,7 +235,7 @@ and width, including strips a few penetration depths thick and wide where the sh
 do not apply, but its elements must resolve the penetration depth at the conductor surfaces.
 In both, the inductance includes the kinetic energy of the supercurrent, which the magnetic
 field energies in `domain-E.csv` do not. Superconducting loops hold zero fluxoid, except the
-holes of films driven by a flux loop.
+holes of films driven by a flux loop, which therefore must not touch a London domain.
 
 When running on GPU, the 2D surface curl solve for flux loop
 boundary conditions is performed on the host while the main 3D magnetostatic solve uses
