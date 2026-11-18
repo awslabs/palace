@@ -44,8 +44,9 @@ namespace substructuring
 {
 
 // Sparse direct solver for the environment and region factorizations: the one
-// config["Solver"]["Linear"]["Type"] names, else STRUMPACK, MUMPS or SuperLU_DIST, in this
-// order of preference among those Palace is built with.
+// config["Solver"]["Linear"]["Type"] names, else MUMPS, STRUMPACK or SuperLU_DIST, in this
+// order of preference among those Palace is built with. The systems are symmetric, and
+// MUMPS alone factors them as such (LDLᵀ, with half the work and memory of an LU).
 inline LinearSolver DirectSolverType(const IoData &iodata)
 {
   const LinearSolver type = iodata.solver.substructuring->direct_solver;
@@ -58,10 +59,10 @@ inline LinearSolver DirectSolverType(const IoData &iodata)
     default:
       break;
   }
-#if defined(MFEM_USE_STRUMPACK)
-  return LinearSolver::STRUMPACK;
-#elif defined(MFEM_USE_MUMPS)
+#if defined(MFEM_USE_MUMPS)
   return LinearSolver::MUMPS;
+#elif defined(MFEM_USE_STRUMPACK)
+  return LinearSolver::STRUMPACK;
 #else
   return LinearSolver::SUPERLU;
 #endif
