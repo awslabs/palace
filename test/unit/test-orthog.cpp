@@ -6,6 +6,7 @@
 #include <cmath>
 #include <complex>
 #include <numbers>
+#include <random>
 #include <span>
 #include <type_traits>
 #include <utility>
@@ -82,16 +83,23 @@ struct CountingWeightOperator
   }
 };
 
-// Random entries in [-1, 1] (and imaginary parts) with a fixed seed.
+// Random entries in [-1, 1] (and imaginary parts) with a fixed seed, the same on every
+// platform: Vector::Randomize uses std::rand, whose sequence depends on the C library and
+// can make the vectors of nearby seeds almost linearly dependent.
 void Randomize(Vector &v, int seed)
 {
-  v.Randomize(seed);
+  std::mt19937 gen(seed);
+  auto *data = v.HostWrite();
+  for (int i = 0; i < v.Size(); i++)
+  {
+    data[i] = 2.0 * (gen() / 4294967296.0) - 1.0;
+  }
 }
 
 void Randomize(ComplexVector &v, int seed)
 {
-  v.Real().Randomize(seed);
-  v.Imag().Randomize(seed + 1);
+  Randomize(v.Real(), seed);
+  Randomize(v.Imag(), seed + 1);
 }
 
 // Per-vector CGS of w against the first m vectors of V, with hⱼ = dot(w, vⱼ) = vⱼᴴ W w.
@@ -121,9 +129,9 @@ void ReferenceCGS(MPI_Comm comm, const std::vector<VecType> &V, VecType &w, Scal
 TEMPLATE_TEST_CASE("OrthogonalizeColumnCGS", "[orthog][Serial][Parallel][GPU]", Vector,
                    ComplexVector)
 {
-  // CGS of the last vector of V, with one weight application per pass and one for the
-  // final norm (W applied to the real and imaginary parts for complex vectors), compared
-  // with the per-vector CGS.
+  // CGS of the last vector of V, with one weight application per pass (W applied to the
+  // real and imaginary parts for complex vectors) and one more for the norm after without
+  // refinement, compared with the per-vector CGS.
   using VecType = TestType;
   using ScalarType = decltype(linalg::LocalDot(std::declval<const VecType &>(),
                                                std::declval<const VecType &>()));
@@ -184,7 +192,8 @@ TEMPLATE_TEST_CASE("OrthogonalizeColumnCGS", "[orthog][Serial][Parallel][GPU]", 
       comm, std::span(V), H.data(), refine, weighted ? &W : nullptr, &work);
   if (weighted)
   {
-    CHECK(W.applications == p * ((m == 0) ? 1 : (refine ? 3 : 2)));
+    // The second pass of a refinement never removes most of w here.
+    CHECK(W.applications == p * ((m == 0) ? 1 : 2));
   }
   CHECK_THAT(pre_norm, WithinRel(pre_norm_ref, 1.0e-14));
   CHECK_THAT(post_norm, WithinRel(norm(w), 1.0e-14));

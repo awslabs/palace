@@ -108,12 +108,15 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Performance Improvements
 
-  - On GPUs, the inner products and the update of each pass of classical Gram-Schmidt,
-    used with `config["Solver"]["Linear"]["GSOrthogonalization"]` `"CGS"` or `"CGS2"` and
-    for the reduced-order models of adaptive driven sweeps, take the vectors and the
-    coefficients as kernel arguments instead of copying them to the device, which made the
-    host wait for the device. The inner products read each basis vector once instead of
-    once for each vector it is multiplied with.
+  - Classical Gram-Schmidt with reorthogonalization, used with
+    `config["Solver"]["Linear"]["GSOrthogonalization"]` `"CGS2"` and for the reduced-order
+    models of adaptive driven sweeps, now takes the norm of the orthogonalized vector from
+    the inner products of its second pass, unless that pass removes most of the vector,
+    which saves one global reduction per vector. On GPUs, the inner products and the update
+    of each pass of classical Gram-Schmidt take the vectors and the coefficients as kernel
+    arguments instead of copying them to the device, which made the host wait for the
+    device, and the inner products read each basis vector once instead of once for each
+    vector it is multiplied with.
   - On GPUs, the inner product of two vectors and the sum of the entries of a vector take
     one reduction kernel and one host-device synchronization instead of one hypre reduction
     per real-valued product or sum (four for a complex inner product), which speeds up the
