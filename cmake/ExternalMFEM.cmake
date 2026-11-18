@@ -570,6 +570,16 @@ if(PALACE_WITH_CUDSS)
   )
 endif()
 
+# https://github.com/mfem/mfem/pull/5754
+# A conforming parallel space that had a prolongation builds it again on all processes when
+# it is updated, so that the cached true vectors of its grid functions stay valid, for MFEM
+# 4.10.
+download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
+  mfem_pr5754.diff
+  "https://raw.githubusercontent.com/awslabs/palace/20477343879bfd528827b9b52f630de9626d8d8e/extern/patch/mfem/mfem_pr5754.diff"
+  8a5cfeaf4fa4d7f9e9fe656413096beb8bad0d6ac46558c3484a368e1695577a
+)
+
 include(ExternalProject)
 ExternalProject_Add(mfem
   DEPENDS           ${MFEM_DEPENDENCIES}
