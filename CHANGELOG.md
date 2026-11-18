@@ -64,6 +64,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Performance Improvements
 
+  - The AMS solver, used with a fixed number of iterations, now has a tolerance of zero and
+    flags its zero initial guess. With a hypre patch, it then computes no residual norms,
+    each a fine-level matrix-vector product and a reduction over all processes, and the
+    first relaxation of its auxiliary space solves skips the exchange of their zero initial
+    guess. Results are unchanged. [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
   - With `config["Solver"]["Linear"]["ComplexCoarseSolve"]`, SuperLU_DIST (with or without
     `"SuperLU3DCommunicator"`), STRUMPACK (with or without compression), and MUMPS now
     factor the complex-valued coarse-level matrix in complex arithmetic instead of the
