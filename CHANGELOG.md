@@ -19,14 +19,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### New Features
 
-  - Magnetostatic simulations now model superconducting domains, those whose material has a
-    `LondonDepth`: the supercurrent `J = -A/(mu lambda^2)` of the London equations adds the
-    London term to the curl-curl operator, and its kinetic energy is included in the
-    extracted inductance. Unlike the `Superconductor` sheets, the domains resolve the
-    current distribution through conductors of any thickness and width. Such simulations
-    also use the `LondonPCShift` preconditioner, enable `Solver.Linear.MGAuxiliarySmoother`,
-    and disable `Solver.Linear.AMSSingularOperator` by default. SchemaVer 4-2-4
-    [PR 1111](https://github.com/awslabs/palace/pull/1111).
+  - Magnetostatic simulations now model domains with a `LondonDepth`: the London term is
+    added to the curl-curl operator and the kinetic energy of the supercurrent to the
+    extracted inductance, so conductors of any thickness and width can be modeled as
+    volumes. SchemaVer 4-2-4 [PR 1111](https://github.com/awslabs/palace/pull/1111).
   - `validate-config` accepts several configuration files and validates them in one Julia
     session. [PR 1180](https://github.com/awslabs/palace/pull/1180).
 
