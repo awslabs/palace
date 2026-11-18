@@ -7,11 +7,22 @@ ARG SPACK_PACKAGES_COMMIT
 # fix.
 #
 # noble's default archive does not carry gcc-15 yet; pull it from the
-# ubuntu-toolchain-r/test PPA.
-RUN apt-get -yqq update && \
-    apt-get -yqq install --no-install-recommends software-properties-common && \
-    add-apt-repository -y ppa:ubuntu-toolchain-r/test && \
-    apt-get -yqq install --no-install-recommends gcc-15 g++-15 gfortran-15 && \
+# ubuntu-toolchain-r/test PPA. The PPA is configured directly, with its signing
+# key (fingerprint C8EC952E2A0E1FBDC5090F6A2C277A0A352154E5) pinned below,
+# instead of with add-apt-repository, which also needs the Launchpad API. apt
+# checks the signed index against that key, so plain HTTP, which Launchpad
+# serves more reliably than HTTPS, is safe.
+RUN mkdir -p /etc/apt/keyrings && \
+    echo "mQINBGYzeoEBEADEVzm0fPTo1KfunTjKV5ZP0Mb86Z6izCXSYbeYt/iAaIfK7a8xc13I/uAOxzjcuZHD4sQh7/22I74ignCSexoJD3PnytpZtAxNjyj3jkJpIrdFOVd4Cmua5tnEI1Av+B21YLlYYftK2wR+Z6hpsz3NyQ8URR1SCX04BOV9AGxcWb7izkV9RHu6xR4x8kAjuTObhhqw/ZR73+U9mig785qmrtapQkF/IanYj2OofqUJwosDo8YAshi01735JP9s5do4nnsb6w6xcYQ0HlGn3AxR1k4WA2CK/90QybOmVbLz7IOF3Ou3cPfoDzSxAiQemge2msJWPaQLSy/HPUivPB2uNPxkcNIHUVwbjgIig0yaN0EOsvego1m6QvS8sm1MEA2ySl+9+q8wdqTnXbSgA3hq/5OoG4rvHD9GUAd6oRxbz/wdOU3J7BlAhEMAHgeQ9DyIzRP9lGeU3QnWNA+WFiiDrLljf+6xewe5iyqLxPqvCkFUDPCFemp2oIqeWf6l04IMtM4SJz2AnU1EvytprEEvntMvHMXlBBinw1Q5r3ES/QlPfWr4o5CUpu2P3GpZtflDe7jvccyJUMDtlqOVv7wBZPMZykjTAPQ16clGdtIqWdQSk3/bUA96RSdpM4gMGXFBGLBoAd7CptafRvPjpRnbMxs2jIxicnASfwJALEFgbQARAQABtD9MYXVuY2hwYWQgUFBBIGZvciBQUEEgZm9yIFVidW50dSBUb29sY2hhaW4gVXBsb2FkcyAocmVzdHJpY3RlZCmJAk4EEwEKADgWIQTI7JUuKg4fvcUJD2osJ3oKNSFU5QUCZjN6gQIbAwULCQgHAgYVCgkICwIEFgIDAQIeAQIXgAAKCRAsJ3oKNSFU5TkTEACpFJ+q0xqfAmRF1886cgtVw+ruJTqfsxdj7ms1os3/I5VXLhPMbUg56mtK9Okj0Nf9rY5bnDagJobjtS2JgzMbYWXocPJuwK6ZvmMD5tFSsTov19R3SyIT2x3JAy7S/LNWqVeZS41RtM8uSu56PhghE7aAP9PigFTI3CUargpx1DQh6xiHKRR57ZMrLcd4l6tj8yb4Hl+OeFRQMcoim696lPMSqzVtJ0epP7yNsz2LFaRmkRP/hf+S4JlSs8uCwzAl9eJR2h1v1WoBr0pAW2gjjd8VyKWhaKjneicJPqo5GDvhDl+lbrpqSwSHENlHDVyC+XvAjvTf4JhTQE/M1L/sGrqqa65n+WF4ZqauiDvn1bUw0vnL0oaiK/hyH1YGXW7khJ7JDlw/6LFNZ6Ih0UuVRTzVBBBz3Sipw5hgM9ztKEYLMI5zlwWGlhEjMnxDX5WauIUWjPv3dKQp1qTthN7Fgv3/2J6j+2/tMAfWeWB1tL8H4lVPUCfcpQpkTP/EHTnB3oaRiYy6GDuGKsNkhEUvlV2AnVAxO17IN5QQ2lMQ261zaPj9y9v1oCQlzGfmUKRJWFGbsooapdm7DTrqrfO+zyRXWPe6GRnYlmeXTRWi8CEIXpCkhhf8rma8KNnWS96jsTSU97Lo0hnIbL+4o3qf2BiYcfIwfoIXzUaj5ajGEA==" | base64 -d > /etc/apt/keyrings/ubuntu-toolchain-r.gpg && \
+    printf '%s\n' \
+      'Types: deb' \
+      'URIs: http://ppa.launchpadcontent.net/ubuntu-toolchain-r/test/ubuntu' \
+      "Suites: $(. /etc/os-release && echo "$VERSION_CODENAME")" \
+      'Components: main' \
+      'Signed-By: /etc/apt/keyrings/ubuntu-toolchain-r.gpg' \
+      > /etc/apt/sources.list.d/ubuntu-toolchain-r-test.sources && \
+    apt-get -yqq -o Acquire::Retries=5 update && \
+    apt-get -yqq -o Acquire::Retries=5 install --no-install-recommends gcc-15 g++-15 gfortran-15 && \
     rm -rf /var/lib/apt/lists/*
 
 RUN spack repo update --commit "$SPACK_PACKAGES_COMMIT" builtin && \
@@ -249,10 +260,9 @@ RUN set -e; \
 # FIXME(awslabs/palace#731): mirror the build-stage PPA install in the final
 # image so libstdc++6 there is gcc-15's, matching what palace was built
 # against. Remove with the spack.yaml `compilers` group fix.
-RUN apt-get -yqq update && \
-    apt-get -yqq install --no-install-recommends software-properties-common && \
-    add-apt-repository -y ppa:ubuntu-toolchain-r/test && \
-    apt-get -yqq install --no-install-recommends libstdc++6 && \
-    apt-get -yqq purge --auto-remove -y software-properties-common && \
+COPY --from=builder /etc/apt/keyrings/ubuntu-toolchain-r.gpg /etc/apt/keyrings/
+COPY --from=builder /etc/apt/sources.list.d/ubuntu-toolchain-r-test.sources /etc/apt/sources.list.d/
+RUN apt-get -yqq -o Acquire::Retries=5 update && \
+    apt-get -yqq -o Acquire::Retries=5 install --no-install-recommends libstdc++6 && \
     rm -rf /var/lib/apt/lists/*
 {% endblock %}
