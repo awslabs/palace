@@ -735,10 +735,9 @@ void IoData::CheckConfiguration()
     }
   }
   // One-sided V-cycles make a nonsymmetric preconditioner, for GMRES and FGMRES only. They
-  // speed up the mildly indefinite systems of eigenmode problems, but can slow down the
-  // strongly indefinite ones of driven problems and boundary mode solves, so they are the
-  // default only for eigenmode problems. They smooth once per level and cycle, so their
-  // default order is twice that of symmetric V-cycles, for the same smoothing work.
+  // are the default only for eigenmode problems, since they can slow down the strongly
+  // indefinite systems of driven problems and boundary mode solves. Smoothing once per
+  // level, they default to twice the order of symmetric V-cycles.
   const bool gmres = (solver.linear.krylov_solver == KrylovSolver::GMRES ||
                       solver.linear.krylov_solver == KrylovSolver::FGMRES);
   if (solver.linear.mg_one_sided < 0)
