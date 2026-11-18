@@ -59,16 +59,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     admittance of both faces, which lowers the conductor loss compared to previous versions:
     set `"Crack": true` to restore the previous results, or `"Crack": false` to silence the
     warning. [PR 1168](https://github.com/awslabs/palace/pull/1168).
-  - Uniform lumped ports and surface current sources now take their width from the length
-    of their cross-section normal to `"Direction"` half way along them, and their length
-    from their area over their width, the mean distance between their ends. This fixes
-    setup aborting for valid geometry, such as a port whose ends follow curved conductors,
-    a port folded over a step, or a cylindrical port. A port must be a strip along
-    `"Direction"`: setup aborts when `"Direction"` is more than 1 degree from the axis of
-    the port, or when the mean length differs from the extent of the port along its axis
-    by more than 5%. This rejects some setups which were accepted before, such as an
-    L-shaped port or a 2D port with `"Direction"` normal to its edge. Such configurations
-    must be updated.
+  - Uniform lumped ports and surface current sources now take their width from their
+    cross-section normal to `"Direction"`, and their length as their area over their width.
+    This fixes setup aborting for ports with curved ends, folded ports, and cylindrical
+    ports. Ports which are not strips along `"Direction"`, such as L-shaped ports, and 2D
+    ports with `"Direction"` normal to their edge, now abort.
     [PR 1194](https://github.com/awslabs/palace/pull/1194).
 
 #### New Features
