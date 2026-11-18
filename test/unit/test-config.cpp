@@ -1268,6 +1268,33 @@ TEST_CASE("Config Eigenmode iteration limits", "[config][Serial]")
   CHECK(nonlinear.nonlinear_max_it == 500);
 }
 
+TEST_CASE("Config Refinement RebalanceMethod", "[config][Serial]")
+{
+  // Without the key, the gather, whether or not Palace is built with PT-Scotch.
+  config::RefinementData defaults(json::object());
+  CHECK(defaults.rebalance_method == RebalanceMethod::GATHER);
+  config::RefinementData gather(json{{"RebalanceMethod", "Gather"}});
+  CHECK(gather.rebalance_method == RebalanceMethod::GATHER);
+  config::RefinementData parallel(json{{"RebalanceMethod", "Parallel"}});
+  CHECK(parallel.rebalance_method == RebalanceMethod::PARALLEL);
+  CHECK_THROWS(config::RefinementData(json{{"RebalanceMethod", "Root"}}));
+
+  // The parallel rebalance needs PT-Scotch.
+  json config = {
+      {"Problem", {{"Type", "Eigenmode"}, {"Output", "test_output"}}},
+      {"Model", {{"Mesh", "test.msh"}, {"Refinement", {{"RebalanceMethod", "Parallel"}}}}},
+      {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+      {"Boundaries", {{"PEC", {{"Attributes", {2}}}}}},
+      {"Solver", {{"Eigenmode", {{"Target", 1.0}}}}}};
+#if defined(PALACE_WITH_SCOTCH)
+  CHECK_NOTHROW(IoData(config, false));
+#else
+  CHECK_THROWS(IoData(config, false));
+#endif
+  config["Model"]["Refinement"]["RebalanceMethod"] = "Gather";
+  CHECK_NOTHROW(IoData(config, false));
+}
+
 TEST_CASE("Config Magnetostatic InactivePorts", "[config][Serial]")
 {
   auto MixedConfig = []()
@@ -2047,6 +2074,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(r2.max_nc_levels == r1.max_nc_levels);
     CHECK(r2.update_fraction == r1.update_fraction);
     CHECK(r2.maximum_imbalance == r1.maximum_imbalance);
+    CHECK(r2.rebalance_method == r1.rebalance_method);
     CHECK(r2.save_adapt_iterations == r1.save_adapt_iterations);
     CHECK(r2.save_adapt_mesh == r1.save_adapt_mesh);
     CHECK(r2.uniform_ref_levels == r1.uniform_ref_levels);

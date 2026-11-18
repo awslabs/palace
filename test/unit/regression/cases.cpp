@@ -24,6 +24,7 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "regression_helpers.hpp"
+#include "utils/communication.hpp"
 #include "utils/constants.hpp"
 #include "utils/tablecsv.hpp"
 
@@ -1533,6 +1534,43 @@ TEST_CASE("spheres", "[Serial][Parallel][GPU][Regression]")
   opts.excluded_columns = {"Maximum", "Minimum"};
   opts.gridfunction_fields = true;
   palace::test::RunRegressionCase("spheres", "spheres.json", "", opts);
+}
+
+// Conformal AMR with a rebalance after each refinement, by each value of
+// config["Model"]["Refinement"]["RebalanceMethod"]. Both methods mark the mesh anew at each
+// rebalance, and a serial run does not rebalance: the parallel method, with two
+// refinements, is compared with a run on 2 processes and skipped on one; the gather method
+// (curved tetrahedra), compared after one refinement only, with a serial run. Omits [GPU]:
+// adaptive cases skip GPU CI (cf. circular_hole_london_nc_amr).
+// Parallel case on a straight mesh: the curved nodes read from the mesh file differ in
+// their last bits between builds of MFEM, and so does the marking of the refined meshes.
+TEST_CASE("spheres_amr_rebalance_parallel", "[Serial][Parallel][Regression]")
+{
+#if !defined(PALACE_WITH_SCOTCH)
+  SKIP("Parallel rebalancing requires Palace built with PT-Scotch");
+#endif
+  if (palace::Mpi::Size(palace::Mpi::World()) == 1)
+  {
+    SKIP("Rebalancing requires more than one process");
+  }
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("spheres_amr", "spheres_amr_parallel.json",
+                                  "amr_parallel", opts);
+}
+
+TEST_CASE("spheres_amr_rebalance_gather", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("spheres_amr", "spheres_amr_gather.json", "amr_gather",
+                                  opts);
 }
 
 TEST_CASE("rings", "[Serial][Parallel][GPU][Regression]")
