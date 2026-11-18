@@ -741,6 +741,12 @@ void IoData::CheckConfiguration()
       solver.linear.mg_smooth_aux = 1;
     }
   }
+  // The magnetostatic auxiliary operators come with the gauge shift (see
+  // CurlCurlOperator::GetPreconditionerMatrix).
+  MFEM_VERIFY(problem.type != ProblemType::MAGNETOSTATIC ||
+                  solver.linear.mg_smooth_aux <= 0 || solver.linear.london_pc_shift > 0.0,
+              "Magnetostatic simulations with \"MGAuxiliarySmoother\" require a positive "
+              "\"LondonPCShift\"!");
   if (solver.linear.mg_smooth_order < 0)
   {
     solver.linear.mg_smooth_order = std::max(2 * solver.order, 4);

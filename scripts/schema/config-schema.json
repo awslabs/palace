@@ -3017,7 +3017,7 @@
         },
         "MGAuxiliarySmoother": {
           "type": "boolean",
-          "description": "Use an auxiliary space smoother on multigrid levels. If omitted, Palace disables this for electrostatic and magnetostatic simulations and enables it otherwise. Magnetostatic simulations with superconductors (`\"Superconductor\"` or `\"FluxLoop\"` boundaries, or domains with a `\"LondonDepth\"`) enable it when `\"LondonPCShift\"` is positive.",
+          "description": "Use an auxiliary space smoother on multigrid levels. If omitted, Palace disables this for electrostatic and magnetostatic simulations and enables it otherwise. Magnetostatic simulations with superconductors (`\"Superconductor\"` or `\"FluxLoop\"` boundaries, or domains with a `\"LondonDepth\"`) enable it when `\"LondonPCShift\"` is positive. In magnetostatic simulations, it requires a positive `\"LondonPCShift\"`.",
           "x-palace-advanced": true
         },
         "MGCycleIts": {
