@@ -282,7 +282,8 @@ TEST_CASE("AMS zero initial guess", "[amg][Serial][Parallel]")
     std::unique_ptr<mfem::HypreParMatrix> Ae(A->EliminateRowsCols(dbc_tdof_list));
 
     HypreAmsSolver ams(nd_fespace, h1_fespace, cycle_it, smooth_it, /*vector_interp*/ false,
-                       singular, /*agg_coarsen*/ true, /*print*/ 0);
+                       singular, /*agg_coarsen*/ true, /*agglomeration_target*/ 0,
+                       /*print*/ 0);
     ams.SetOperator(*A);
     const int n = A->Height();
     mfem::Vector b(n), x(n), z(n);
