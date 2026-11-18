@@ -172,12 +172,14 @@ jobs:
 
         # We have to upgrade CMake because the bundled one has a bug with
         # FindMPI that prevents it from finding MPI when compiling with GNU
-        # compilers.
+        # compilers. Install it from PyPI, where pip retries failed downloads.
       - name: Setup cmake
         if: needs.filter.outputs.test == 'true'
-        uses: jwlawson/actions-setup-cmake@0d6a7d60b009d01c9e7523be22153ff8f19460d3 # v2.2.0
-        with:
-          cmake-version: '3.31.8'
+        run: |
+          pipx install cmake==3.31.10
+          PIPX_BIN_DIR=$(pipx environment --value PIPX_BIN_DIR)
+          echo "$PIPX_BIN_DIR" >> "$GITHUB_PATH"
+          "$PIPX_BIN_DIR/cmake" --version
 
       # Configure downloads dependency patches from GitHub, and skips any file
       # already present with the expected hash. Restoring them from a cache keeps
