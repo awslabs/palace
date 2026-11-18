@@ -934,6 +934,39 @@ TEST_CASE_METHOD(
   CHECK((post_op.GetSurfaceResponseOperator() != nullptr) == correction);
   post_op.ConfigureReducedPostprocessing(rom_op, iodata.solver.driven.adaptive_tol);
   CHECK(post_op.HasReducedPostprocessing() == !correction);
+
+  // Review r2135 m-1: the correction leg above keeps the interface dielectric
+  // postprocessing entry of its TargetInterfaces, so upstream's own clause (interface
+  // dielectric postprocessing) refuses the reduced path there as well as ours
+  // (surface_response_op). The only form in which our clause would be the sole refusal, a
+  // correction without interface dielectric postprocessing entries, does not construct
+  // (with or without TargetInterfaces): the automatic matching finds no target interface.
+  // Upstream's clause therefore refuses every correction that constructs.
+  if (correction)
+  {
+    for (const bool target_interfaces : {true, false})
+    {
+      CAPTURE(target_interfaces);
+      json no_interfaces = config;
+      no_interfaces["Boundaries"].erase("Postprocessing");
+      if (!target_interfaces)
+      {
+        no_interfaces["Solver"]["SurfaceResponseCorrection"].erase("TargetInterfaces");
+      }
+      const auto construct = [&no_interfaces]()
+      {
+        IoData no_interfaces_iodata(no_interfaces, false);
+        std::vector<std::unique_ptr<Mesh>> no_interfaces_meshes;
+        no_interfaces_meshes.push_back(
+            std::make_unique<Mesh>(mesh::ReadMesh(no_interfaces_iodata, Mpi::World())));
+        SpaceOperator no_interfaces_space_op(no_interfaces_iodata, no_interfaces_meshes);
+        PostOperator<ProblemType::DRIVEN> no_interfaces_post_op(no_interfaces_iodata,
+                                                                no_interfaces_space_op);
+      };
+      CHECK_THROWS_WITH(construct(),
+                        ContainsSubstring("response matching found no target interfaces"));
+    }
+  }
 #endif
 }
 
