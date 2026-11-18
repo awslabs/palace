@@ -110,9 +110,8 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   BlockTimer bt0(Timer::CONSTRUCT);
   CurlCurlOperator curlcurl_op(iodata, mesh);
   auto K = curlcurl_op.GetStiffnessMatrix();
-  // Preconditioner-only gauge shift for the London path (see GetPreconditionerMatrix).
-  // Non-null only when a London flux film is present and LondonPCShift > 0; null otherwise,
-  // so K preconditions itself.
+  // Preconditioner-only gauge shift with superconductors or the auxiliary smoother (see
+  // GetPreconditionerMatrix); null otherwise, so K preconditions itself.
   auto P_london = curlcurl_op.GetPreconditionerMatrix();
   const auto &Curl = curlcurl_op.GetCurlMatrix();
 

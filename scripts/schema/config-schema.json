@@ -3112,7 +3112,7 @@
         },
         "LondonPCShift": {
           "type": "number",
-          "description": "Preconditioner-only gauge shift for magnetostatic problems with superconductors (`\"Superconductor\"` or `\"FluxLoop\"` boundaries, or domains with a `\"LondonDepth\"`). Adds this multiple of the reluctance-weighted volume mass outside the London domains to the preconditioner matrix only (leaving the operator, solution, and extracted inductance unchanged) to lift the residual gradient null space so AMS is SPD-solvable in parallel. Ignored without superconductors.",
+          "description": "Preconditioner-only gauge shift for magnetostatic problems with superconductors (`\"Superconductor\"` or `\"FluxLoop\"` boundaries, or domains with a `\"LondonDepth\"`) or the auxiliary smoother (`\"MGAuxiliarySmoother\"`). Adds this multiple of the reluctance-weighted volume mass outside the London domains to the preconditioner matrix only (leaving the operator, solution, and extracted inductance unchanged) to lift the residual gradient null space so AMS is SPD-solvable in parallel. Ignored otherwise.",
           "default": 0.1,
           "x-palace-advanced": true
         },

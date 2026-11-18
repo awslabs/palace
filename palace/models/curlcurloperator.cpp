@@ -406,7 +406,8 @@ std::vector<std::unique_ptr<Operator>> CurlCurlOperator::AssembleStiffness() con
 
 bool CurlCurlOperator::HasShiftedPreconditioner() const
 {
-  return (!sc_sheet_op.empty() || mat_op.HasLondonDepth()) && london_pc_shift_ > 0.0;
+  return (mg_smooth_aux_ || !sc_sheet_op.empty() || mat_op.HasLondonDepth()) &&
+         london_pc_shift_ > 0.0;
 }
 
 std::unique_ptr<Operator> CurlCurlOperator::GetStiffnessMatrix()

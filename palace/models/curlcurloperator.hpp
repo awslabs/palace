@@ -159,7 +159,8 @@ private:
                     MaterialPropertyCoefficient &fb) const;
   std::vector<std::unique_ptr<Operator>> AssembleStiffness() const;
 
-  // True if a superconductor (film or London domain) is present and the shift is positive.
+  // True if the shift is positive, with a superconductor (sheet or London domain) or the
+  // auxiliary smoother, whose gradient operator the shift makes definite.
   bool HasShiftedPreconditioner() const;
 
   // Assemble the London preconditioner (stiffness + shift·(1/µ)∫|A|²) constraining the
@@ -260,12 +261,12 @@ public:
   // True if any domain has a London depth, adding (μλ²)⁻¹ A·v to the stiffness operator.
   bool HasLondonDomains() const { return mat_op.HasLondonDepth(); }
 
-  // Construct the preconditioner matrix with superconductors: the stiffness matrix plus the
-  // gauge shift london_pc_shift_ · (1/µ) ∫|A|² outside the London domains, which lifts the
-  // residual gradient null space so AMS is SPD-solvable in parallel. Only the
-  // preconditioner is shifted, so the solution is unchanged. Returns nullptr without a
-  // superconductor or a positive shift, in which case the stiffness matrix preconditions
-  // itself.
+  // Construct the preconditioner matrix with superconductors or the auxiliary smoother: the
+  // stiffness matrix plus the gauge shift london_pc_shift_ · (1/µ) ∫|A|² outside the London
+  // domains, which lifts the residual gradient null space so AMS is SPD-solvable in
+  // parallel. Only the preconditioner is shifted, so the solution is unchanged. Returns
+  // nullptr otherwise or without a positive shift, in which case the stiffness matrix
+  // preconditions itself.
   std::unique_ptr<Operator> GetPreconditionerMatrix();
 
   // Return the stiffness matrix with extra essential (PEC) attributes beyond those set at
