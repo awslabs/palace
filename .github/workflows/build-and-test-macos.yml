@@ -179,6 +179,19 @@ jobs:
         with:
           cmake-version: '3.31.8'
 
+      # Configure downloads dependency patches from GitHub, and skips any file
+      # already present with the expected hash. Restoring them from a cache keeps
+      # configure off the network. Only the STRUMPACK patches depend on the
+      # configuration, hence with-solver in the key.
+      - name: Restore dependency patches
+        id: patch-cache
+        if: needs.filter.outputs.test == 'true'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: palace-build/extern/*-patches
+          key: patches-${{ runner.os }}-${{ matrix.with-solver }}-${{ hashFiles('cmake/External*.cmake') }}
+          restore-keys: patches-${{ runner.os }}-${{ matrix.with-solver }}-
+
       - name: Build Palace
         if: needs.filter.outputs.test == 'true'
         env:
@@ -236,7 +249,7 @@ jobs:
           if [[ "$REGRESSION_NUMPROC" -lt 1 ]]; then
             REGRESSION_NUMPROC=1
           fi
-          mkdir palace-build && cd palace-build
+          mkdir -p palace-build && cd palace-build
           cmake .. \
             -DCMAKE_INSTALL_PREFIX=$(pwd)/../palace-install \
             -DPALACE_TESTS_NUMPROC=2 \
@@ -252,6 +265,18 @@ jobs:
             -DPALACE_WITH_ARPACK=$WITH_ARPACK \
             -DPALACE_MFEM_USE_EXCEPTIONS=ON
           make -j$NUM_PROC_BUILD palace-tests
+
+      # Save whenever configure succeeded (palace-build/Makefile exists), even if
+      # the build itself failed.
+      - name: Save dependency patches
+        if: |
+          !cancelled() && needs.filter.outputs.test == 'true' &&
+          steps.patch-cache.outputs.cache-hit != 'true' &&
+          hashFiles('palace-build/Makefile') != ''
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: palace-build/extern/*-patches
+          key: ${{ steps.patch-cache.outputs.cache-primary-key }}
 
       - name: Run unit tests
         if: needs.filter.outputs.test == 'true'
