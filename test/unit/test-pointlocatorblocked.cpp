@@ -2,12 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <array>
+#include <cmath>
 #include <cstring>
 #include <functional>
 #include <limits>
 #include <vector>
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include "models/surfaceresponseoperator.hpp"
 #include "utils/communication.hpp"
 
@@ -156,4 +158,51 @@ TEST_CASE("Blocked point-locator exchanges locate every point as the unblocked o
     CHECK(without_values.owners == unblocked.owners);
   }
 #endif
+}
+
+TEST_CASE("Unlocated trace points keep the clear error unless their patch is excluded late",
+          "[surfaceresponseoperator][pointlocator][Serial][Parallel]")
+{
+  // Decision 2156 (the late domain-boundary exclusion's gross-mismatch test): planted
+  // points outside the unit cube (spread over the ranks) with their exact distances to the
+  // meshed domain; a point of the device metal (an edge point) and a point beyond its
+  // coupon's contour radius keep the clear error, the others are late exclusions. The same
+  // answer on every rank (collective).
+  using Catch::Matchers::WithinAbs;
+  MPI_Comm comm = Mpi::World();
+  auto mesh = MakeSpreadParMesh(comm);
+  const std::vector<std::array<double, 3>> points = {
+      {1.05, 0.5, 0.5},     // 0.05 beyond the face x = 1
+      {1.5, 0.5, 0.5},      // 0.5 beyond it: beyond the contour radius 0.2
+      {1.05, 0.5, 0.5},     // 0.05 beyond it, a point of the device metal
+      {1.03, 1.04, 0.5},    // 0.05 from the cube's edge x = y = 1
+      {-0.06, -0.08, 1.0},  // 0.1 from the cube's corner (0, 0, 1)
+      {0.5, 0.5, 0.5}};     // inside: distance 0
+  const std::vector<unsigned char> edge_points = {0, 0, 1, 0, 0, 0};
+  const std::vector<double> radii(points.size(), 0.2);
+  const auto result = ClassifyUnlocatedTracePoints(*mesh, 3, points, edge_points, radii);
+  REQUIRE(result.distances.size() == points.size());
+  REQUIRE(result.verdicts.size() == points.size());
+  CHECK_THAT(result.distances[0], WithinAbs(0.05, 1.0e-14));
+  CHECK(std::isinf(result.distances[1]));
+  CHECK_THAT(result.distances[2], WithinAbs(0.05, 1.0e-14));
+  CHECK_THAT(result.distances[3], WithinAbs(0.05, 1.0e-14));
+  CHECK_THAT(result.distances[4], WithinAbs(0.1, 1.0e-14));
+  CHECK(result.distances[5] == 0.0);
+  using Verdict = UnlocatedTracePointVerdict;
+  CHECK(result.verdicts[0] == Verdict::LATE_EXCLUSION);
+  CHECK(result.verdicts[1] == Verdict::BEYOND_CONTOUR_RADIUS);
+  CHECK(result.verdicts[2] == Verdict::OWN_EDGE_POINT);
+  CHECK(result.verdicts[3] == Verdict::LATE_EXCLUSION);
+  CHECK(result.verdicts[4] == Verdict::LATE_EXCLUSION);
+  CHECK(result.verdicts[5] == Verdict::LATE_EXCLUSION);
+  // The root's distances on every rank (the ranks' minimum).
+  std::vector<double> root = result.distances;
+  for (auto &value : root)
+  {
+    value = std::isinf(value) ? -1.0 : value;
+  }
+  std::vector<double> mine = root;
+  Mpi::Broadcast(static_cast<int>(root.size()), root.data(), 0, comm);
+  CHECK(root == mine);
 }
