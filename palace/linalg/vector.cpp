@@ -7,7 +7,6 @@
 #include <cstdint>
 #include <limits>
 #include <random>
-#include <utility>
 #include <mfem/general/forall.hpp>
 #include <mfem/general/reducers.hpp>
 #include "utils/omp.hpp"
@@ -880,92 +879,143 @@ void AXPYAndAYPX(std::complex<double> alpha, ComplexVector &x, ComplexVector &y,
 namespace
 {
 
-// y = Σⱼ c[j] X[j] (plus y if add), for the real and, if YI is not null, the imaginary
-// parts of the coefficients. The zero parts are skipped, and the terms are added in order.
-void LinearCombination(std::span<const Vector> X, const double *CR, const double *CI,
-                       Vector &yr, Vector *yi, bool add)
+template <int K>
+void LinearCombination(std::span<const Vector> X, const double *C,
+                       std::span<Vector *const> Y, const double *s, bool add)
 {
-  const int n = static_cast<int>(X.size()), N = yr.Size();
-  for (const auto &Xj : X)
+  const int n = static_cast<int>(X.size()), N = Y[0]->Size();
+  const bool dev = mfem::Device::Allows(mfem::Backend::DEVICE_MASK);
+  // An X[j] may alias an output. Without add, read the X[j] first: after Write() of an
+  // output, Read() of the same memory would not copy its host data to the device. With add,
+  // read the outputs first: on MFEM's debug device, reading an alias protects its host
+  // memory, from which ReadWrite() of the output would then copy.
+  std::vector<const double *> XP(n);
+  double *YP[K], S[K];
+  auto outputs = [&]()
   {
-    MFEM_VERIFY(Xj.Size() == N, "Size mismatch for linear combination!");
-  }
-  if (mfem::Device::Allows(mfem::Backend::DEVICE_MASK))
-  {
-    // One pass over y with all terms, each thread reading one entry of every X[j].
-    mfem::Array<const double *> P(n);
-    mfem::Array<double> C(2 * n);
-    for (int j = 0; j < n; j++)
+    for (int k = 0; k < K; k++)
     {
-      P[j] = X[j].Read();
-      C[j] = CR[j];
-      C[n + j] = CI ? CI[j] : 0.0;
+      MFEM_VERIFY(Y[k]->Size() == N, "Size mismatch for linear combination!");
+      YP[k] = add ? Y[k]->ReadWrite(dev) : Y[k]->Write(dev);
+      S[k] = s ? s[k] : 1.0;
     }
-    const auto *XP = P.Read();
-    const auto *CC = C.Read();
-    auto *YR = add ? yr.ReadWrite() : yr.Write();
-    auto *YI = yi ? (add ? yi->ReadWrite() : yi->Write()) : nullptr;
-    mfem::forall(N,
-                 [=] MFEM_HOST_DEVICE(int i)
-                 {
-                   double sr = add ? YR[i] : 0.0, si = (add && YI) ? YI[i] : 0.0;
-                   for (int j = 0; j < n; j++)
+  };
+  if (add)
+  {
+    outputs();
+  }
+  for (int j = 0; j < n; j++)
+  {
+    MFEM_VERIFY(X[j].Size() == N, "Size mismatch for linear combination!");
+    XP[j] = X[j].Read(dev);
+  }
+  if (!add)
+  {
+    outputs();
+  }
+  // Terms with only zero coefficients are skipped, so that their vectors may hold anything:
+  // under a floating-point model which assumes finite values, a zero coefficient alone does
+  // not keep a NaN out of the sum.
+  std::vector<int> terms;
+  terms.reserve(n);
+  for (int j = 0; j < n; j++)
+  {
+    if (std::any_of(C + K * j, C + K * (j + 1), [](double c) { return c != 0.0; }))
+    {
+      terms.push_back(j);
+    }
+  }
+  const int nz = static_cast<int>(terms.size());
+  if (dev)
+  {
+    // One pass over the outputs for each chunk of terms, each thread reading one entry of
+    // every X[j] of the chunk. The pointers and coefficients of a chunk are kernel
+    // arguments (under 4 KB), so that nothing is copied to the device and the host does not
+    // wait for it. The terms which alias an output come first, so that they are read before
+    // any output is written.
+    constexpr int chunk = 3840 / (8 * (K + 1));
+    std::vector<int> order(terms);
+    const auto others =
+        std::stable_partition(order.begin(), order.end(), [&](int j)
+                              { return XP[j] && std::find(YP, YP + K, XP[j]) != YP + K; });
+    MFEM_VERIFY(others - order.begin() <= chunk,
+                "Too many terms of a linear combination alias an output!");
+    for (int j0 = 0; j0 == 0 || j0 < nz; j0 += chunk)
+    {
+      const double *XC[chunk] = {};
+      double CC[chunk][K] = {};
+      const int nc = std::min(chunk, nz - j0);
+      for (int j = 0; j < nc; j++)
+      {
+        XC[j] = XP[order[j0 + j]];
+        std::copy_n(C + K * order[j0 + j], K, CC[j]);
+      }
+      const bool acc = add || j0 > 0, last = j0 + chunk >= nz;
+      mfem::forall(N,
+                   [=] MFEM_HOST_DEVICE(int i)
                    {
-                     const double x = XP[j][i];
-                     if (CC[j] != 0.0)
+                     double y[K];
+                     for (int k = 0; k < K; k++)
                      {
-                       sr += CC[j] * x;
+                       y[k] = acc ? YP[k][i] : 0.0;
                      }
-                     if (CC[n + j] != 0.0)
+                     for (int j = 0; j < nc; j++)
                      {
-                       si += CC[n + j] * x;
+                       const double x = XC[j][i];
+                       for (int k = 0; k < K; k++)
+                       {
+                         if (CC[j][k] != 0.0)
+                         {
+                           y[k] += CC[j][k] * x;
+                         }
+                       }
                      }
-                   }
-                   YR[i] = sr;
-                   if (YI)
-                   {
-                     YI[i] = si;
-                   }
-                 });
+                     for (int k = 0; k < K; k++)
+                     {
+                       YP[k][i] = last ? S[k] * y[k] : y[k];
+                     }
+                   });
+    }
     return;
   }
 
-  // On the host, add all terms to one block of y at a time, which stays in cache, so each
-  // X[j] is read once and y is written once. The blocks are smaller when needed to give
-  // every thread one.
+  // On the host, add all terms to one block of the outputs at a time, kept in cache, so
+  // that each X[j] is read once and each output is written once. The blocks are smaller
+  // when needed to give every thread one.
+  constexpr int Bmax = 1024;
   const int nt = utils::GetMaxThreads();
-  const int B = std::clamp((N + nt - 1) / nt, 64, 1024);
-  std::vector<const double *> XP(n);
-  for (int j = 0; j < n; j++)
-  {
-    XP[j] = X[j].HostRead();
-  }
-  auto *YR = add ? yr.HostReadWrite() : yr.HostWrite();
-  auto *YI = yi ? (add ? yi->HostReadWrite() : yi->HostWrite()) : nullptr;
+  const int B = std::clamp((N + nt - 1) / nt, 64, Bmax);
   PalacePragmaOmp(parallel for schedule(static) if (N > B))
   for (int b = 0; b < N; b += B)
   {
-    const int e = std::min(b + B, N);
-    if (!add)
+    const int len = std::min(B, N - b);
+    double y[K][Bmax];
+    for (int k = 0; k < K; k++)
     {
-      std::fill(YR + b, YR + e, 0.0);
-      if (YI)
+      for (int i = 0; i < len; i++)
       {
-        std::fill(YI + b, YI + e, 0.0);
+        y[k][i] = add ? YP[k][b + i] : 0.0;
       }
     }
-    for (int j = 0; j < n; j++)
+    for (int j : terms)
     {
-      const double *Xj = XP[j];
-      for (auto [Y, cj] : {std::pair{YR, CR[j]}, std::pair{YI, CI ? CI[j] : 0.0}})
+      const double *Xj = XP[j] + b;
+      for (int k = 0; k < K; k++)
       {
-        if (Y && cj != 0.0)
+        if (const double c = C[k + K * j]; c != 0.0)
         {
-          for (int i = b; i < e; i++)
+          for (int i = 0; i < len; i++)
           {
-            Y[i] += cj * Xj[i];
+            y[k][i] += c * Xj[i];
           }
         }
+      }
+    }
+    for (int k = 0; k < K; k++)
+    {
+      for (int i = 0; i < len; i++)
+      {
+        YP[k][b + i] = S[k] * y[k][i];
       }
     }
   }
@@ -973,25 +1023,35 @@ void LinearCombination(std::span<const Vector> X, const double *CR, const double
 
 }  // namespace
 
+void LinearCombination(std::span<const Vector> X, const double *C,
+                       std::span<Vector *const> Y, const double *s, bool add)
+{
+  switch (Y.size())
+  {
+    case 1:
+      return LinearCombination<1>(X, C, Y, s, add);
+    case 2:
+      return LinearCombination<2>(X, C, Y, s, add);
+    case 4:
+      return LinearCombination<4>(X, C, Y, s, add);
+    default:
+      MFEM_ABORT("Unsupported number of outputs for linear combinations!");
+  }
+}
+
 void LinearCombination(std::span<const Vector> X, std::span<const std::complex<double>> c,
                        ComplexVector &y, bool add)
 {
   MFEM_VERIFY(c.size() == X.size(), "Size mismatch for linear combination coefficients!");
-  const auto *C = reinterpret_cast<const double *>(c.data());
-  std::vector<double> CR(c.size()), CI(c.size());
-  for (std::size_t j = 0; j < c.size(); j++)
-  {
-    CR[j] = C[2 * j];
-    CI[j] = C[2 * j + 1];
-  }
-  LinearCombination(X, CR.data(), CI.data(), y.Real(), &y.Imag(), add);
+  LinearCombination<2>(X, reinterpret_cast<const double *>(c.data()),
+                       std::array{&y.Real(), &y.Imag()}, nullptr, add);
 }
 
 void LinearCombination(std::span<const Vector> X, std::span<const double> c, Vector &y,
                        bool add)
 {
   MFEM_VERIFY(c.size() == X.size(), "Size mismatch for linear combination coefficients!");
-  LinearCombination(X, c.data(), nullptr, y, nullptr, add);
+  LinearCombination<1>(X, c.data(), std::array{&y}, nullptr, add);
 }
 
 void LocalDots(std::span<const Vector> X, std::span<const Vector *const> Y, double *H)
@@ -1005,80 +1065,123 @@ void LocalDots(std::span<const Vector> X, std::span<const Vector *const> Y, doub
     return;
   }
   const int N = X[0].Size();
-  mfem::Array<const double *> P(m + k);
+  const bool dev = mfem::Device::Allows(mfem::Backend::DEVICE_MASK);
+  std::vector<const double *> P(m + k);
   for (int i = 0; i < m + k; i++)
   {
     const Vector &x = (i < m) ? X[i] : *Y[i - m];
     MFEM_VERIFY(x.Size() == N, "Size mismatch for local inner products!");
-    P[i] = x.Read();
+    P[i] = x.Read(dev);
   }
 
-  // Partial sums over nb slices of the entries of each pair, then added in slice order, so
-  // the result does not depend on the number of threads. On the host a slice is a block of
-  // contiguous entries, with all pairs of a block next to each other and the Y index
+  // Partial sums over nb slices of the entries of each pair, then added in a fixed order,
+  // so the result does not depend on the number of threads. On the host a slice is a block
+  // of contiguous entries, with all pairs of a block next to each other and the Y index
   // varying fastest, so that each X is read once from memory while a block of every Y stays
   // in cache. On the device a slice is every nb-th entry, so that neighboring threads read
-  // neighboring entries, with enough slices to fill the device. The partial sums take at
-  // most max_partial doubles.
+  // neighboring entries, with enough slices to fill the device, and a thread computes the
+  // products of a slice of one X with all Y of a launch, so that each X is read once from
+  // memory. The vectors of a launch are kernel arguments (under 4 KB), so that nothing is
+  // copied to the device. The partial sums take at most max_partial doubles.
   constexpr int B = 1024, max_partial = 1 << 22;
-  const bool dev = mfem::Device::Allows(mfem::Backend::DEVICE_MASK);
   const int nb = std::max(
       1, std::min({dev ? std::max(N, 1) : (N + B - 1) / B,
                    dev ? 8192 : std::numeric_limits<int>::max(), max_partial / mk}));
-  const int len = (N + nb - 1) / nb;  // Entries per slice
-  Vector partial(nb * mk, mfem::Device::GetDeviceMemoryType()),
-      h(mk, mfem::Device::GetDeviceMemoryType());
+  Vector partial(nb * mk, mfem::Device::GetDeviceMemoryType());
   partial.UseDevice(true);
-  h.UseDevice(true);
-  const auto *XY = P.Read();
   auto *S = partial.Write();
-  mfem::forall(nb * mk,
-               [=] MFEM_HOST_DEVICE(int t)
-               {
-                 const int b = dev ? t % nb : t / mk, q = dev ? t / nb : t % mk;
-                 const int i = dev ? q % m : q / k, j = dev ? q / m : q % k;
-                 const double *x = XY[i], *y = XY[m + j];
-                 // Entries l = start + r stride of the slice, r < count.
-                 const int start = dev ? b : b * len, stride = dev ? nb : 1;
-                 const int rest = N - start;
-                 const int count = dev ? (rest + nb - 1) / nb
-                                       : (rest < len ? (rest > 0 ? rest : 0) : len);
-                 constexpr int K = 8;
-                 double s[K] = {};
-                 int r = 0;
-                 for (; r + K <= count; r += K)
-                 {
-                   for (int l = 0; l < K; l++)
-                   {
-                     const int e = start + (r + l) * stride;
-                     s[l] += x[e] * y[e];
-                   }
-                 }
-                 for (int l = 0; r < count; r++, l++)
-                 {
-                   const int e = start + r * stride;
-                   s[l] += x[e] * y[e];
-                 }
-                 double sum = 0.0;
-                 for (int l = 0; l < K; l++)
-                 {
-                   sum += s[l];
-                 }
-                 S[b * mk + i + j * m] = sum;
-               });
-  const auto *PS = partial.Read();
-  auto *D = h.Write();
-  mfem::forall(mk,
-               [=] MFEM_HOST_DEVICE(int p)
-               {
-                 double sum = 0.0;
-                 for (int b = 0; b < nb; b++)
-                 {
-                   sum += PS[p + b * mk];
-                 }
-                 D[p] = sum;
-               });
-  std::copy_n(h.HostRead(), mk, H);
+  if (dev)
+  {
+    Vector h(mk, mfem::Device::GetDeviceMemoryType());
+    h.UseDevice(true);
+    constexpr int nx = 240, ny = 16;
+    for (int i0 = 0; i0 < m; i0 += nx)
+    {
+      for (int j0 = 0; j0 < k; j0 += ny)
+      {
+        const int mc = std::min(nx, m - i0), kc = std::min(ny, k - j0);
+        const double *XC[nx] = {}, *YC[ny] = {};
+        std::copy_n(P.begin() + i0, mc, XC);
+        std::copy_n(P.begin() + m + j0, kc, YC);
+        mfem::forall(nb * mc,
+                     [=] MFEM_HOST_DEVICE(int t)
+                     {
+                       const int b = t % nb, i = t / nb;
+                       double s[ny] = {};
+                       for (int e = b; e < N; e += nb)
+                       {
+                         const double x = XC[i][e];
+                         for (int j = 0; j < ny; j++)
+                         {
+                           if (j < kc)
+                           {
+                             s[j] += x * YC[j][e];
+                           }
+                         }
+                       }
+                       for (int j = 0; j < ny; j++)
+                       {
+                         if (j < kc)
+                         {
+                           S[b * mk + (i0 + i) + (j0 + j) * m] = s[j];
+                         }
+                       }
+                     });
+      }
+    }
+    // One block of threads adds the partial sums of each pair: with one thread per pair,
+    // this would take most of the time for few pairs.
+    const auto *PS = partial.Read();
+    auto *D = h.Write();
+    constexpr int bs = 256;
+    mfem::forall_2D(mk, bs, 1,
+                    [=] MFEM_HOST_DEVICE(int p)
+                    {
+                      MFEM_SHARED double sm[bs];
+                      MFEM_FOREACH_THREAD(t, x, bs)
+                      {
+                        double sum = 0.0;
+                        for (int b = t; b < nb; b += bs)
+                        {
+                          sum += PS[p + b * mk];
+                        }
+                        sm[t] = sum;
+                      }
+                      for (int w = bs / 2; w > 0; w /= 2)
+                      {
+                        MFEM_SYNC_THREAD;
+                        MFEM_FOREACH_THREAD(t, x, w)
+                        {
+                          sm[t] += sm[t + w];
+                        }
+                      }
+                      MFEM_FOREACH_THREAD(t, x, 1)
+                      {
+                        D[p] = sm[0];
+                      }
+                    });
+    std::copy_n(h.HostRead(), mk, H);
+    return;
+  }
+
+  const int len = (N + nb - 1) / nb;  // Entries per slice
+  PalacePragmaOmp(parallel for schedule(static) if (N > B))
+  for (int t = 0; t < nb * mk; t++)
+  {
+    // The products of the entries of slice b.
+    const int b = t / mk, q = t % mk, i = q / k, j = q % k;
+    const double *x = P[i], *y = P[m + j];
+    S[b * mk + i + j * m] = HostSums<1>(b * len, std::min(N, (b + 1) * len),
+                                        [=](int e) { return std::array{x[e] * y[e]}; })[0];
+  }
+  std::fill_n(H, mk, 0.0);
+  for (int b = 0; b < nb; b++)
+  {
+    for (int p = 0; p < mk; p++)
+    {
+      H[p] += S[p + b * mk];
+    }
+  }
 }
 
 void Sqrt(Vector &x, double s)

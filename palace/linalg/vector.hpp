@@ -353,8 +353,15 @@ template <typename VecType, typename ScalarType>
 void AXPYAndAYPX(ScalarType alpha, VecType &x, VecType &y, ScalarType beta,
                  const VecType &z);
 
+// Linear combinations Y[k] = s[k] (Y[k] + Σⱼ C[k + K j] X[j]) of the real vectors X, for
+// K = 1, 2 or 4 real vectors Y, without Y[k] on the right if !add and with s[k] = 1 if s is
+// null, in one pass over all vectors. An X[j] may also be one of the Y, for its value
+// before the update. Zero coefficients skip their terms.
+void LinearCombination(std::span<const Vector> X, const double *C,
+                       std::span<Vector *const> Y, const double *s, bool add);
+
 // Linear combination y = Σⱼ c[j] X[j] of the real vectors X with complex or real
-// coefficients c, or y += Σⱼ c[j] X[j] if add. y must not alias any X[j].
+// coefficients c, or y += Σⱼ c[j] X[j] if add.
 void LinearCombination(std::span<const Vector> X, std::span<const std::complex<double>> c,
                        ComplexVector &y, bool add = false);
 void LinearCombination(std::span<const Vector> X, std::span<const double> c, Vector &y,

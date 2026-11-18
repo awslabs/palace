@@ -226,16 +226,75 @@ TEST_CASE("Vector LinearCombination", "[vector][Serial][Parallel][GPU]")
   CHECK(mismatch == 0);
 }
 
+TEST_CASE("Vector LinearCombination with several outputs",
+          "[vector][Serial][Parallel][GPU]")
+{
+  // Y[k] = s[k] (Y[k] + Σⱼ C[k + K j] X[j]), where the last X is also the last output (with
+  // its value before the update), and with enough terms for several device launches.
+  const int N = GENERATE(1, 1025, 3001);
+  const int n = GENERATE(1, 6, 300);
+  const int K = GENERATE(1, 2, 4);
+  const bool add = GENERATE(false, true);
+  CAPTURE(N, n, K, add);
+  const int rank = Mpi::Rank(Mpi::World());
+  std::vector<Vector> X(n, Vector(N)), Y(K, Vector(N));
+  for (int j = 0; j < n + K; j++)
+  {
+    auto &v = (j < n) ? X[j] : Y[j - n];
+    v.UseDevice(true);
+    auto *V = v.HostWrite();
+    for (int i = 0; i < N; i++)
+    {
+      V[i] = std::sin(0.3 * i + 1.7 * j + 0.1 * rank);
+    }
+  }
+  X[n - 1].MakeRef(Y[K - 1], 0, N);
+  std::vector<double> C(K * n), s(K);
+  for (int q = 0; q < K * n; q++)
+  {
+    C[q] = (q % 7 == 3) ? 0.0 : std::cos(0.9 * q + 0.2);
+  }
+  std::vector<Vector *> Yp(K);
+  std::vector<std::vector<double>> ref(K, std::vector<double>(N));
+  for (int k = 0; k < K; k++)
+  {
+    s[k] = 0.5 + k;
+    Yp[k] = &Y[k];
+    for (int i = 0; i < N; i++)
+    {
+      double sum = add ? Y[k].HostRead()[i] : 0.0;
+      for (int j = 0; j < n; j++)
+      {
+        sum += C[k + K * j] * X[j].HostRead()[i];
+      }
+      ref[k][i] = s[k] * sum;
+    }
+  }
+  linalg::LinearCombination(X, C.data(), Yp, s.data(), add);
+  double err = 0.0, scale = 1.0;
+  for (int k = 0; k < K; k++)
+  {
+    const auto *Yk = Y[k].HostRead();
+    for (int i = 0; i < N; i++)
+    {
+      err = std::max(err, std::abs(Yk[i] - ref[k][i]));
+      scale = std::max(scale, std::abs(ref[k][i]));
+    }
+  }
+  CHECK(err <= 1.0e-13 * scale);
+}
+
 TEST_CASE("Vector LocalDots", "[vector][Serial][Parallel][GPU]")
 {
   // N = 0 stands for a process without entries; with more than one process, the first one
-  // has none for every N. With m k = 576 pairs, the partial sums on the device are capped
-  // at 2^22 doubles, which limits the slices to fewer than 8192 for N >= 10000.
+  // has none for every N. With up to m k = 4097 pairs, the partial sums on the device are
+  // capped at 2^22 doubles, which limits the slices to fewer than 8192 for large N, and
+  // m > 240 or k > 16 take several device launches.
   const int rank = Mpi::Rank(Mpi::World());
   const int N0 = GENERATE(0, 1, 7, 64, 513, 1025, 3001, 10000, 70001);
   const int N = (rank == 0 && Mpi::Size(Mpi::World()) > 1) ? 0 : N0;
-  const int m = GENERATE(0, 1, 3, 8, 64);
-  const int k = GENERATE(1, 2, 7, 9);
+  const int m = GENERATE(0, 1, 3, 8, 64, 241);
+  const int k = GENERATE(1, 2, 7, 9, 17);
   auto fill = [&](Vector &x, double a)
   {
     x.UseDevice(true);
