@@ -42,8 +42,7 @@ void Initialize();
 void Finalize();
 
 // Configure the region of the eigenvalues λ = iω (scaled) searched for above the target
-// λ = i s, s > 0: Im{λ} >= s, and quality factors Q = |ω| / (2 Im{ω}) >= q_min > 0.5 for
-// damped modes and |Q| >= 10 for growing ones.
+// λ = i s, s > 0: Im{λ} >= s, and quality factors |Q| = |ω| / (2 |Im{ω}|) >= q_min > 0.5.
 void ConfigureQualityFactorRegion(RG rg, PetscReal s, double q_min);
 
 //

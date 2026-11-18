@@ -350,11 +350,11 @@ TEST_CASE("Eigenmode quality factor region", "[eigenmode][Serial]")
   CHECK(!Inside({0.4, 0.0}));
   CHECK(!Inside(Damped(0.4, 10.0)));
 
-  // Growing modes are kept for |Q| >= 10 only.
+  // Growing modes with the same bound on |Q|.
   CHECK(Inside(std::conj(Damped(1.0, 1.0e6))));
-  CHECK(Inside(std::conj(Damped(1.0, 10.5))));
-  CHECK(!Inside(std::conj(Damped(1.0, 9.5))));
-  CHECK(!Inside(std::conj(Damped(1.0, 1.0))));
+  CHECK(Inside(std::conj(Damped(1.0, 0.55))));
+  CHECK(!Inside(std::conj(Damped(1.0, 0.53))));
+  CHECK(!Inside(std::conj(Damped(100.0, 0.53))));
   PalacePetscCall(RGDestroy(&rg));
 }
 

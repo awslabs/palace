@@ -207,17 +207,14 @@ PetscErrorCode __eps_first_cycle_monitor(EPS eps, PetscInt its, PetscInt nconv,
 
 void ConfigureQualityFactorRegion(RG rg, PetscReal s, double q_min)
 {
-  // For λ = iω, Q = |ω| / (2 Im{ω}) >= q_min for a damped mode if Re{ω} / (2 Im{ω}) =
-  // Im{λ} / (-2 Re{λ}) >= (q_min² - 1/4)^½. Growing modes (Re{λ} > 0) are kept for |Q| >=
-  // 10, which includes lossless modes computed with a small error of either sign. The
+  // For λ = iω, |Q| = |ω| / (2 |Im{ω}|) >= q_min if |Re{ω}| / (2 |Im{ω}|) =
+  // Im{λ} / (2 |Re{λ}|) >= (q_min² - 1/4)^½, for damped (Re{λ} < 0) and growing modes. The
   // region is a trapezoid from Im{λ} = s up to far above any eigenvalue near the target.
   MFEM_VERIFY(s > 0.0 && q_min > 0.5,
               "Invalid target or minimum quality factor for the eigenvalue region!");
-  constexpr double q_grow = 10.0;
   const PetscReal a = 0.5 / std::sqrt(q_min * q_min - 0.25);
-  const PetscReal b = 0.5 / std::sqrt(q_grow * q_grow - 0.25);
   const PetscReal h = 1.0e3 * std::max(PetscReal(1.0), s);
-  PetscScalar v[4] = {PetscScalar(-a * s, s), PetscScalar(b * s, s), PetscScalar(b * h, h),
+  PetscScalar v[4] = {PetscScalar(-a * s, s), PetscScalar(a * s, s), PetscScalar(a * h, h),
                       PetscScalar(-a * h, h)};
   PalacePetscCall(RGSetType(rg, RGPOLYGON));
   PalacePetscCall(RGPolygonSetVertices(rg, 4, v, nullptr));
