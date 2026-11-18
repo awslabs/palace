@@ -83,6 +83,25 @@ runs:
 
         end_timer "Setup podman"
 
+    # The PPA signing keys in apt-keys/ are pinned. Warn, without failing, when
+    # Launchpad lists a different key for a PPA, so that the pin gets updated.
+    - name: Check pinned PPA keys
+      continue-on-error: true
+      shell: bash
+      run: |
+        for ppa in apptainer/ppa ubuntu-toolchain-r/test; do
+          key_file="$GITHUB_ACTION_PATH/apt-keys/${ppa/\//-}.asc"
+          pinned=$(gpg --show-keys --with-colons "$key_file" | awk -F: '/^fpr/ {print $10; exit}')
+          if ! current=$(curl -fsS --retry 3 "https://api.launchpad.net/1.0/~${ppa%/*}/+archive/ubuntu/${ppa#*/}" |
+              python3 -c 'import json, sys; print(json.load(sys.stdin)["signing_key_fingerprint"])'); then
+            echo "::notice::Could not get the signing key of ppa:$ppa from Launchpad"
+          elif [[ "$current" != "$pinned" ]]; then
+            echo "::warning::ppa:$ppa is signed with key $current, but apt-keys/${ppa/\//-}.asc pins $pinned"
+          else
+            echo "ppa:$ppa: pinned key $pinned is current"
+          fi
+        done
+
     - name: Compute image metadata
       id: name
       shell: bash
@@ -188,6 +207,7 @@ runs:
             --build-arg "PALACE_TARGET=$PALACE_TARGET" \
             --build-arg "SPACK_PACKAGES_COMMIT=$SPACK_PACKAGES_COMMIT" \
             --build-arg "PALACE_GIT_COMMIT_ID=$PALACE_GIT_COMMIT_ID" \
+            --build-context "apt-keys=$GITHUB_ACTION_PATH/apt-keys" \
             -t "$IMAGE_NAME" .
         }
 
@@ -228,24 +248,23 @@ runs:
         end_timer "Save OCI image"
 
     # Only the SIF conversion needs Apptainer. Its PPA is configured directly,
-    # with the signing key (fingerprint F6B0F5193D4F3301EF491FF0AFE36534FC6218AE)
-    # pinned below, instead of with add-apt-repository, which also needs the
-    # Launchpad API. apt checks the signed index against that key, so plain HTTP,
-    # which Launchpad serves more reliably than HTTPS, is safe.
+    # with the signing key pinned in apt-keys/, instead of with
+    # add-apt-repository, which also needs the Launchpad API. apt checks the
+    # signed index against that key, so plain HTTP, which Launchpad serves more
+    # reliably than HTTPS, is safe.
     - name: Install Apptainer
       if: steps.name.outputs.publish_artifacts == 'true'
       shell: bash
       run: |
         source /tmp/timing_functions.sh
         start_timer
-        sudo mkdir -p /etc/apt/keyrings
-        echo "mQINBGPKLe0BEADKAHtUqLFryPhZ3m6uwuIQvwUr4US17QggRrOaS+jAb6e0P8kN1clzJDuh3C6GnxEZKiTW3aZpcrW/n39qO263OMoUZhm1AliqiViJgthnqYGSbMgZ/OB6ToQeHydZ+MgI/jpdAyYSI4Tf4SVPRbOafLvnUW5g/vJLMzgTAxyyWEjvH9LxyjOAXpxubz0Wu2xcoefN0mKCpaPsa9Y8xmog1lsylU+H/4BX6yAG7zt5hIvadc9ZY/vkDLh8kNaEtkXmmnTqGOsLgH6Nc5dnslR6Gwq966EC2Jbw0WbE50pi4g21s6WiwdU27/XprunXhhLdv6PYUaqdXxPRdBh+9u0LmNZsAyUxT6EgN05TAWFtaMOz7I3BV6IpHuLqmIcnqulHrLi+0D/aiCv53WEZrBRmDBGX7p52lcyS+Q+LFf0+iYeY7pRGfPXboBDr+6DelkYFIxam06purSGR3T9RJyrMP7qMWiInWxcxBoCMNfy8VudP0DAyr2yXmHZbgSGjfJey03dnNwQH7huBcQ1VLEqtL+bjn3HubmYK87FltX7xomETFqclQmiT+WBttFRGtO6SFHHiBXOXUn0ihwabtr6gRKeJssCnFS3Y46RDv4z3Je92roLtTPY8F9CgZrGiAoKq530BzEhJB6vfW3faRnLKdLePX/LToCP0g2t2jKwkzQARAQABtBtMYXVuY2hwYWQgUFBBIGZvciBBcHB0YWluZXKJAk4EEwEKADgWIQT2sPUZPU8zAe9JH/Cv42U0/GIYrgUCY8ot7QIbAwULCQgHAgYVCgkICwIEFgIDAQIeAQIXgAAKCRCv42U0/GIYrut4EAC06vTJP2wgnh3BIZ3n2HKaSp4QsuYKS7F7UQJ5Yt+PpnKnPgjq3R4fYzOHyASv+TCj9QkMaeqWGWb6Zw0n47EtrCW9U5099Vdk2L42KjrqZLiWqQ11hwWXUlc1ZYSOb0J4WTumgO6MrUCFkmNrbRE7yB42hxr/AU/XNM38YjN2NyOK2gvORRKFwlLKrjE+70HmoCW09Yk64BZl1eCubM/qy5tKzSlC910uz87FvZmrGKKFrXa2HGlO4O3Ty7bMSeRKl9m1OYuffAXNwp3/Vale9eDHOeq58nn7wU9pSosmqrXbSLOwqQylc1YoLZMj+Xjx644xm5e2bhyD00WiHeqHmvlfQQWCWaPt4i4K0nJuYXwmBCA6YUgSfDZJfg/FxJdU7ero5F9st2GK4WDBiz+1Eftw6Ik/WnMDSxXaZ8pwnd9N+aAEc/QKP5e8kjxJMC9kfvXGUVzZuMbkUV+PycZhUWl4Aelua91lnTicVYfpuVCCGqY0StWQeOxLJneI+1FqLFoBOZghzoTY5AYCp99RjKqQvY1vF4uErltmNeN1vtBmCZyDOLQuQfqWWAunUwXVuxMJIENSVeLXunhu9ac24Vnf2rFqH4XVMDxiKc6+sv+vfKpamSQOUSmfWJTnry/LiYbspi1OB2x3GQk3/4ANw0S4L83A6oXHUMg8x7/sZw==" | base64 -d | sudo tee /etc/apt/keyrings/apptainer-ppa.gpg > /dev/null
+        sudo install -D -m 644 "$GITHUB_ACTION_PATH/apt-keys/apptainer-ppa.asc" /etc/apt/keyrings/apptainer-ppa.asc
         printf '%s\n' \
           'Types: deb' \
           'URIs: http://ppa.launchpadcontent.net/apptainer/ppa/ubuntu' \
           "Suites: $(. /etc/os-release && echo "$VERSION_CODENAME")" \
           'Components: main' \
-          'Signed-By: /etc/apt/keyrings/apptainer-ppa.gpg' |
+          'Signed-By: /etc/apt/keyrings/apptainer-ppa.asc' |
           sudo tee /etc/apt/sources.list.d/apptainer-ppa.sources
         sudo apt-get -o Acquire::Retries=5 update
         sudo apt-get -o Acquire::Retries=5 install -y apptainer
