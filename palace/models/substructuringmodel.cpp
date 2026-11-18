@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <limits>
 #include <system_error>
 #include <utility>
@@ -20,31 +21,30 @@ namespace
 // The doubles of a chunk of rows passed through rank 0 (8 MB).
 constexpr std::size_t kIoChunk = std::size_t(1) << 20;
 
+// The payload of a record of modes: K, then its ids and fingerprints, and its interface
+// rows of width K and K x K blocks in turn, read with Next.
+struct Modes
+{
+  std::vector<char> p;
+  std::size_t at = 0;
+  int K = 0;
+  template <typename T>
+  std::vector<T> Next(std::size_t n)
+  {
+    std::vector<T> x(n);
+    std::memcpy(x.data(), p.data() + at, sizeof(T) * n);
+    at += sizeof(T) * n;
+    return x;
+  }
+};
+
 }  // namespace
 
-void SubstructuringSolver::Impl::WriteModel(
-    const std::string &path, bool append,
+void SubstructuringSolver::Impl::AppendRecord(
+    const std::string &path, std::uint32_t tag, long long size,
     const std::function<void(std::ofstream &)> &write) const
 {
-  ApplyOnRootFilesystem(
-      parent_fes.GetComm(), fmt::format("Writing the substructuring model \"{}\"", path),
-      [&]()
-      {
-        std::ofstream f(path,
-                        std::ios::binary | (append ? std::ios::app : std::ios::trunc));
-        if (!f)
-        {
-          throw fs::filesystem_error("Could not open the model file", path,
-                                     std::make_error_code(std::errc::io_error));
-        }
-        write(f);
-        f.close();
-        if (f.fail())
-        {
-          throw fs::filesystem_error("Could not write the model file", path,
-                                     std::make_error_code(std::errc::io_error));
-        }
-      });
+  ModelFile::Append(path, parent_fes.GetComm(), tag, size, write);
 }
 
 namespace substructuring
@@ -129,37 +129,28 @@ void RowsFromRoot::Next(double *x)
 
 }  // namespace substructuring
 
-void SubstructuringSolver::Impl::AppendRows(const std::string &path,
+void SubstructuringSolver::Impl::AppendRows(const std::string &path, std::uint32_t tag,
                                             const std::vector<double> &rows) const
 {
   MPI_Comm comm = parent_fes.GetComm();
   const int nG = nG_global;
+  const long long size = static_cast<long long>(sizeof(double)) * nG * nG;
   if (nG == 0)
   {
+    ModelFile::Append(path, comm, tag, size, [](std::ofstream &) {});
     return;
   }
   std::vector<int> cnt, disp;
   RowLayout(cnt, disp);
-  if (!Mpi::Root(comm))
-  {
-    substructuring::RowsToRoot(comm, rows, nG, cnt, kIoChunk, {});
-  }
-  ApplyOnRootFilesystem(
-      comm, fmt::format("Writing the substructuring model \"{}\"", path),
-      [&]()
+  ModelFile::Append(
+      path, comm, tag, size,
+      [&](std::ofstream &f)
       {
-        // A failed stream writes nothing.
-        std::ofstream f(path, std::ios::binary | std::ios::app);
         substructuring::RowsToRoot(
             comm, rows, nG, cnt, kIoChunk, [&](const double *x, int n)
             { f.write(reinterpret_cast<const char *>(x), sizeof(double) * n * nG); });
-        f.close();
-        if (f.fail())
-        {
-          throw fs::filesystem_error("Could not write the model file", path,
-                                     std::make_error_code(std::errc::io_error));
-        }
-      });
+      },
+      [&]() { substructuring::RowsToRoot(comm, rows, nG, cnt, kIoChunk, {}); });
 }
 
 std::vector<double> SubstructuringSolver::Impl::ReadRows(const std::string &path,
@@ -208,11 +199,15 @@ void SubstructuringSolver::Impl::AppendSourceModes(const std::string &path)
   const std::vector<double> H_full = GatherRows(SH_rows, K);
   const std::vector<double> Hkin_full =
       have_skin ? GatherRows(SHkin_rows, K) : std::vector<double>();
-  WriteModel(
-      path, true,
+  const long long k = K, n = nG_global;
+  const long long size =
+      static_cast<long long>(sizeof(int)) * (1 + k) +
+      static_cast<long long>(sizeof(double)) *
+          (2 * k + 2 * n * k + 2 * k * k + (have_skin ? n * k + k * k : 0));
+  AppendRecord(
+      path, kSourceModesTag, size,
       [&](std::ofstream &f)
       {
-        f.write(reinterpret_cast<const char *>(&kSourceModesMagic), sizeof(int));
         f.write(reinterpret_cast<const char *>(&K), sizeof(int));
         f.write(reinterpret_cast<const char *>(src_ids.data()), sizeof(int) * K);
         f.write(reinterpret_cast<const char *>(src_fp.data()), sizeof(double) * 2 * K);
@@ -241,104 +236,74 @@ SubstructuringSolver::Impl::SavedHead
 SubstructuringSolver::Impl::ReadSavedHead(const std::string &path, MPI_Comm comm)
 {
   SavedHead h;
-  // Version, order, nG, signature type, width, with the fingerprint, with the moments.
-  int head[7] = {-1, 0, 0, 0, 0, 0, 0};
-  auto offsets = [&h](std::streamoff nG, std::streamoff width)
+  h.file = ModelFile::Read(path, comm);
+  h.version = h.file.version;
+  if (h.version <= 0)
   {
-    h.S_pos = kHeadInts * static_cast<std::streamoff>(sizeof(int)) +
-              static_cast<std::streamoff>(sizeof(double)) * nG * width;
-    h.sections_pos = h.S_pos + static_cast<std::streamoff>(sizeof(double)) * nG * nG;
-  };
-  if (Mpi::Root(comm))
-  {
-    std::ifstream f(path, std::ios::binary | std::ios::ate);
-    const std::streamoff size = f ? static_cast<std::streamoff>(f.tellg()) : -1;
-    f.seekg(0);
-    int v[kHeadInts] = {0, 0, 0, 0, 0};
-    head[0] = (size < 0) ? -1 : 0;
-    if (f.read(reinterpret_cast<char *>(v), sizeof(v)) && v[0] == kModelMagic)
-    {
-      head[0] = v[1];
-      head[1] = v[2];
-      head[2] = v[3];
-      head[3] = v[4];
-      // The file holds the signatures and S_E (in floating point: any nG read).
-      const double n = v[3], w = SignatureFileWidth(v[4]);
-      const double end = kHeadInts * sizeof(int) + sizeof(double) * n * (w + n);
-      head[4] =
-          (v[1] == kModelVersion && n >= 0.0 && w > 0.0 && end <= static_cast<double>(size))
-              ? static_cast<int>(w)
-              : 0;
-    }
-    if (head[4] > 0)
-    {
-      offsets(head[2], head[4]);
-      h.sig.resize(static_cast<std::size_t>(head[2]) * head[4]);
-      f.read(reinterpret_cast<char *>(h.sig.data()), sizeof(double) * h.sig.size());
-      f.seekg(h.sections_pos);
-      int magic = 0;
-      auto read = [&f](double *x, int n)
-      {
-        return static_cast<bool>(f.read(reinterpret_cast<char *>(x), sizeof(double) * n));
-      };
-      while (f.read(reinterpret_cast<char *>(&magic), sizeof(int)))
-      {
-        if (magic == kLengthMagic)
-        {
-          read(&h.length, 1);
-        }
-        else if (magic == kEpsMagic)
-        {
-          read(&h.regularization, 1);
-        }
-        else if (magic == kSheetSidesMagic)
-        {
-          h.sheet_sides.resize(4);
-          read(h.sheet_sides.data(), 4);
-        }
-        else if (magic == kEnvFpMagic)
-        {
-          f.seekg(sizeof(double) * kEnvFpSize, std::ios::cur);  // read by LoadSections
-          head[5] = f && f.tellg() <= size;
-        }
-        else if (magic == kEnvMeshMagic)
-        {
-          head[6] = read(h.env_moments.data(), 6) && read(h.region_moments.data(), 6);
-        }
-        else
-        {
-          break;  // the sections loaded with S_E
-        }
-      }
-    }
+    return h;
   }
-  Mpi::Broadcast(7, head, 0, comm);
+  if (h.version != static_cast<int>(ModelFile::kVersion))
+  {
+    h.version = kModelVersion + 1;
+    return h;
+  }
+  // The payload of the record tag, if it has n values of type T.
+  auto values = [&]<typename T>(std::uint32_t tag, std::size_t n, T *x)
+  {
+    const auto *r = h.file.Find(tag);
+    if (!r || r->size != static_cast<long long>(sizeof(T) * n))
+    {
+      return false;
+    }
+    const std::vector<char> p = ModelFile::ReadPayload(path, *r, comm);
+    if (p.size() != sizeof(T) * n)
+    {
+      return false;
+    }
+    std::memcpy(x, p.data(), p.size());
+    return true;
+  };
+  int head[4] = {0, 0, 0, 0};
+  h.version = kModelVersion;  // a model without its head is incomplete
+  if (!values(kHeadTag, 4, head))
+  {
+    return h;
+  }
   h.version = head[0];
   h.order = head[1];
   h.nG = head[2];
   h.sig_type = head[3];
-  h.width = (head[5] && head[6]) ? head[4] : 0;
-  if (h.width == 0)
+  if (h.version != kModelVersion)
   {
-    // Only the broadcast fields: rank 0 may have read more of an incomplete model.
-    SavedHead incomplete;
-    incomplete.version = h.version;
-    incomplete.order = h.order;
-    incomplete.nG = h.nG;
-    incomplete.sig_type = h.sig_type;
-    return incomplete;
+    return h;
   }
-  Mpi::Broadcast(1, &h.length, 0, comm);
-  Mpi::Broadcast(1, &h.regularization, 0, comm);
-  int n_sides = static_cast<int>(h.sheet_sides.size());
-  Mpi::Broadcast(1, &n_sides, 0, comm);
-  h.sheet_sides.resize(n_sides);
-  Mpi::Broadcast(n_sides, h.sheet_sides.data(), 0, comm);
-  offsets(h.nG, h.width);
-  h.sig.resize(static_cast<std::size_t>(h.nG) * h.width);
-  Mpi::Broadcast(static_cast<int>(h.sig.size()), h.sig.data(), 0, comm);
-  Mpi::Broadcast(6, h.env_moments.data(), 0, comm);
-  Mpi::Broadcast(6, h.region_moments.data(), 0, comm);
+  values(kLengthTag, 1, &h.length);
+  // A complete model holds its signatures, S_E, environment fingerprint and moments.
+  const int w = SignatureFileWidth(h.sig_type);
+  const long long nG = h.nG;
+  const auto *S = h.file.Find(kSETag);
+  const auto *fp = h.file.Find(kEnvFpTag);
+  std::array<double, 12> moments = {};
+  h.sig.resize(static_cast<std::size_t>(nG) * w);
+  if (h.file.incomplete || w == 0 || nG < 0 || !S ||
+      S->size != static_cast<long long>(sizeof(double)) * nG * nG || !fp ||
+      fp->size != static_cast<long long>(sizeof(double)) * kEnvFpSize ||
+      !values(kEnvMeshTag, moments.size(), moments.data()) ||
+      !values(kSigsTag, h.sig.size(), h.sig.data()))
+  {
+    h.sig.clear();
+    return h;
+  }
+  h.width = w;
+  h.S_pos = S->pos;
+  std::copy_n(moments.begin(), 6, h.env_moments.begin());
+  std::copy_n(moments.begin() + 6, 6, h.region_moments.begin());
+  values(kEpsTag, 1, &h.regularization);
+  h.sheet_sides.resize(4);
+  if (!values(kSheetSidesTag, 4, h.sheet_sides.data()))
+  {
+    h.sheet_sides.clear();
+  }
   return h;
 }
 
@@ -444,34 +409,32 @@ void SubstructuringSolver::Impl::AppendEnvMoments(const std::string &path,
   const auto &env = iodata.solver.substructuring->environment_attributes;
   const std::array<double, 6> m[2] = {ElementMoments(parent, env),
                                       ElementMoments(parent, env, written)};  // collective
-  WriteModel(path, true,
-             [&](std::ofstream &f)
-             {
-               f.write(reinterpret_cast<const char *>(&kEnvMeshMagic), sizeof(int));
-               f.write(reinterpret_cast<const char *>(m[0].data()), sizeof(double) * 6);
-               f.write(reinterpret_cast<const char *>(m[1].data()), sizeof(double) * 6);
-             });
+  AppendRecord(path, kEnvMeshTag, sizeof(double) * 12,
+               [&](std::ofstream &f)
+               {
+                 f.write(reinterpret_cast<const char *>(m[0].data()), sizeof(double) * 6);
+                 f.write(reinterpret_cast<const char *>(m[1].data()), sizeof(double) * 6);
+               });
 }
 
 void SubstructuringSolver::Impl::AppendEnvFingerprint(const std::string &path)
 {
   const std::array<double, kEnvFpSize> fp = EnvironmentFingerprint();  // collective
   BlockTimer bt(Timer::IO);
-  WriteModel(path, true,
-             [&](std::ofstream &f)
-             {
-               f.write(reinterpret_cast<const char *>(&kEnvFpMagic), sizeof(int));
-               f.write(reinterpret_cast<const char *>(fp.data()),
-                       sizeof(double) * fp.size());
-               if (magnetostatic)
-               {
-                 f.write(reinterpret_cast<const char *>(&kEpsMagic), sizeof(int));
-                 f.write(reinterpret_cast<const char *>(&mag_eps), sizeof(double));
-                 f.write(reinterpret_cast<const char *>(&kSheetSidesMagic), sizeof(int));
-                 f.write(reinterpret_cast<const char *>(gamma_sheet_sides.data()),
-                         sizeof(double) * gamma_sheet_sides.size());
-               }
-             });
+  AppendRecord(
+      path, kEnvFpTag, sizeof(double) * fp.size(), [&](std::ofstream &f)
+      { f.write(reinterpret_cast<const char *>(fp.data()), sizeof(double) * fp.size()); });
+  if (magnetostatic)
+  {
+    AppendRecord(path, kEpsTag, sizeof(double), [&](std::ofstream &f)
+                 { f.write(reinterpret_cast<const char *>(&mag_eps), sizeof(double)); });
+    AppendRecord(path, kSheetSidesTag, sizeof(double) * gamma_sheet_sides.size(),
+                 [&](std::ofstream &f)
+                 {
+                   f.write(reinterpret_cast<const char *>(gamma_sheet_sides.data()),
+                           sizeof(double) * gamma_sheet_sides.size());
+                 });
+  }
 }
 
 std::vector<char>
@@ -711,214 +674,103 @@ void SubstructuringSolver::Impl::CheckEnvFingerprint()
   MFEM_VERIFY(ok, kEnvironmentDiffers);
 }
 
-void SubstructuringSolver::Impl::AppendOperator(const std::string &path, int magic,
-                                                const std::vector<double> &rows) const
-{
-  BlockTimer bt(Timer::IO);
-  WriteModel(path, true, [&](std::ofstream &f)
-             { f.write(reinterpret_cast<const char *>(&magic), sizeof(int)); });
-  AppendRows(path, rows);
-}
-
 void SubstructuringSolver::Impl::AppendModes(const std::string &path)
 {
   BlockTimer bt(Timer::IO);
   const int K = static_cast<int>(mode_ids.size());
   const std::vector<double> G_full = GatherRows(G_rows, K);
-  WriteModel(path, true,
-             [&](std::ofstream &f)
-             {
-               f.write(reinterpret_cast<const char *>(&kModesMagic), sizeof(int));
-               f.write(reinterpret_cast<const char *>(&K), sizeof(int));
-               f.write(reinterpret_cast<const char *>(mode_ids.data()), sizeof(int) * K);
-               f.write(reinterpret_cast<const char *>(mode_fp.data()),
-                       sizeof(double) * 2 * K);
-               f.write(reinterpret_cast<const char *>(G_full.data()),
-                       sizeof(double) * G_full.size());
-               f.write(reinterpret_cast<const char *>(Cmode.data()),
-                       sizeof(double) * Cmode.size());
-             });
+  const long long k = K, n = nG_global;
+  AppendRecord(path, kModesTag,
+               static_cast<long long>(sizeof(int)) * (1 + k) +
+                   static_cast<long long>(sizeof(double)) * (2 * k + n * k + k * k),
+               [&](std::ofstream &f)
+               {
+                 f.write(reinterpret_cast<const char *>(&K), sizeof(int));
+                 f.write(reinterpret_cast<const char *>(mode_ids.data()), sizeof(int) * K);
+                 f.write(reinterpret_cast<const char *>(mode_fp.data()),
+                         sizeof(double) * 2 * K);
+                 f.write(reinterpret_cast<const char *>(G_full.data()),
+                         sizeof(double) * G_full.size());
+                 f.write(reinterpret_cast<const char *>(Cmode.data()),
+                         sizeof(double) * Cmode.size());
+               });
 }
 
-void SubstructuringSolver::Impl::LoadSections(const std::string &path, std::streamoff pos,
+void SubstructuringSolver::Impl::LoadSections(const std::string &path,
                                               const SignatureMap &map)
 {
   MPI_Comm comm = parent_fes.GetComm();
-  const bool root = (Mpi::Rank(comm) == 0);
-  const int nG = nG_global;
-  std::ifstream f;
-  std::streamoff size = 0;
-  if (root)
+  const bool root = Mpi::Root(comm);
+  const long long nG = nG_global;
+  const auto &file = saved.file;
+  auto complete = [&](bool ok)
   {
-    f.open(path, std::ios::binary | std::ios::ate);
-    size = f.tellg();
-    f.seekg(pos);
-  }
-  // Abort unless the rest of the file holds the next bytes of a section (counted on rank
-  // 0 from the sizes it read, in floating point: any size read). Collective.
-  auto holds = [&](double bytes)
-  {
-    int ok = 1;
-    if (root)
-    {
-      ok = f && bytes >= 0.0 &&
-           static_cast<double>(size - static_cast<std::streamoff>(f.tellg())) >= bytes;
-    }
-    Mpi::Broadcast(1, &ok, 0, comm);
     MFEM_VERIFY(ok, "The saved substructuring model \""
                         << path << "\" is incomplete: rerun in \"Offline\" mode!");
   };
-  constexpr double I = sizeof(int), D = sizeof(double);
-  // Saved interface rows of width K, re-ordered onto the online numbering (rank 0).
-  auto read_rows = [&](int K, std::vector<double> &full)
   {
-    if (root)
+    const std::vector<char> p = ModelFile::ReadPayload(path, *file.Find(kEnvFpTag), comm);
+    complete(p.size() == sizeof(double) * kEnvFpSize);
+    std::memcpy(saved_env_fp.data(), p.data(), p.size());
+    have_env_fp = true;
+  }
+  for (const auto tag : {kSKenTag, kSKinTag})
+  {
+    if (const auto *r = file.Find(tag))
     {
-      std::vector<double> off(static_cast<std::size_t>(nG) * K);
-      f.read(reinterpret_cast<char *>(off.data()), sizeof(double) * off.size());
-      full = map.DualRows(off, K);
+      complete(r->size == static_cast<long long>(sizeof(double)) * nG * nG);
+      (tag == kSKenTag ? SK_rows : SKin_rows) = ReadRows(path, r->pos, map);
+      (tag == kSKenTag ? have_sk : have_skin) = true;
     }
+  }
+
+  // The modes of a record, with the interface rows re-ordered onto the online numbering
+  // on rank 0.
+  auto read_modes = [&](std::uint32_t tag, long long rows, long long blocks)
+  {
+    Modes m;
+    if (const auto *r = file.Find(tag))
+    {
+      m.p = ModelFile::ReadPayload(path, *r, comm);
+      complete(m.p.size() >= sizeof(int));
+      std::memcpy(&m.K, m.p.data(), sizeof(int));
+      m.at = sizeof(int);
+      const long long k = m.K;
+      complete(k >= 0 && static_cast<long long>(m.p.size()) ==
+                             static_cast<long long>(sizeof(int)) * (1 + k) +
+                                 static_cast<long long>(sizeof(double)) *
+                                     (2 * k + rows * nG * k + blocks * k * k));
+    }
+    return m;
   };
-  while (true)
+  auto interface_rows = [&](Modes &m, std::vector<double> &rows)
   {
-    int magic = 0;
-    if (root && !f.read(reinterpret_cast<char *>(&magic), sizeof(int)))
+    const std::vector<double> saved_rows = m.Next<double>(nG * m.K);
+    ScatterRows(root ? map.DualRows(saved_rows, m.K) : std::vector<double>(), m.K, rows);
+  };
+  if (Modes m = read_modes(kModesTag, 1, 1); !m.p.empty())
+  {
+    mode_ids = m.Next<int>(m.K);
+    mode_fp = m.Next<double>(2 * m.K);
+    interface_rows(m, G_rows);
+    Cmode = m.Next<double>(static_cast<std::size_t>(m.K) * m.K);
+    modes_ready = true;
+  }
+  if (Modes m = read_modes(kSourceModesTag, have_skin ? 3 : 2, have_skin ? 3 : 2);
+      !m.p.empty())
+  {
+    src_ids = m.Next<int>(m.K);
+    src_fp = m.Next<double>(2 * m.K);
+    interface_rows(m, SG_rows);
+    interface_rows(m, SH_rows);
+    SC = m.Next<double>(static_cast<std::size_t>(m.K) * m.K);
+    SB = m.Next<double>(static_cast<std::size_t>(m.K) * m.K);
+    if (have_skin)
     {
-      magic = 0;
+      interface_rows(m, SHkin_rows);
+      SCkin = m.Next<double>(static_cast<std::size_t>(m.K) * m.K);
     }
-    MPI_Bcast(&magic, 1, MPI_INT, 0, comm);
-    if (magic == kLengthMagic || magic == kEpsMagic || magic == kEnvMeshMagic ||
-        magic == kSheetSidesMagic)
-    {
-      const int n = (magic == kEnvMeshMagic) ? 12 : (magic == kSheetSidesMagic) ? 4 : 1;
-      holds(D * n);
-      if (root)
-      {
-        f.seekg(sizeof(double) * n, std::ios::cur);  // read by ReadSavedHead
-      }
-    }
-    else if (magic == kEnvFpMagic)
-    {
-      holds(D * kEnvFpSize);
-      if (root)
-      {
-        f.read(reinterpret_cast<char *>(saved_env_fp.data()),
-               sizeof(double) * saved_env_fp.size());
-      }
-      MPI_Bcast(saved_env_fp.data(), kEnvFpSize, MPI_DOUBLE, 0, comm);
-      have_env_fp = true;
-    }
-    else if (magic == kSKenMagic || magic == kSKinMagic)
-    {
-      holds(D * nG * static_cast<double>(nG));
-      std::streamoff at = 0;
-      if (root)
-      {
-        at = f.tellg();
-        f.seekg(static_cast<std::streamoff>(sizeof(double)) * nG * nG, std::ios::cur);
-      }
-      Mpi::Broadcast(1, &at, 0, comm);
-      if (magic == kSKenMagic)
-      {
-        SK_rows = ReadRows(path, at, map);
-        have_sk = true;
-      }
-      else
-      {
-        SKin_rows = ReadRows(path, at, map);
-        have_skin = true;
-      }
-    }
-    else if (magic == kSourceModesMagic)
-    {
-      holds(I);
-      int K = 0;
-      if (root)
-      {
-        f.read(reinterpret_cast<char *>(&K), sizeof(int));
-      }
-      // ids, fingerprints, g and h rows, c and B, and with S^Kin the h^kin rows and c^kin.
-      const double k = K;
-      holds((k < 0.0) ? -1.0
-                      : I * k + D * (2.0 * k + 2.0 * k * nG + 2.0 * k * k +
-                                     (have_skin ? k * nG + k * k : 0.0)));
-      MPI_Bcast(&K, 1, MPI_INT, 0, comm);
-      std::vector<int> ids(K);
-      std::vector<double> fp(2 * K), C(static_cast<std::size_t>(K) * K), B(C.size()),
-          G_full, H_full;
-      if (root)
-      {
-        f.read(reinterpret_cast<char *>(ids.data()), sizeof(int) * K);
-        f.read(reinterpret_cast<char *>(fp.data()), sizeof(double) * 2 * K);
-      }
-      read_rows(K, G_full);
-      read_rows(K, H_full);
-      if (root)
-      {
-        f.read(reinterpret_cast<char *>(C.data()), sizeof(double) * C.size());
-        f.read(reinterpret_cast<char *>(B.data()), sizeof(double) * B.size());
-      }
-      if (have_skin)
-      {
-        std::vector<double> Hkin_full, Ckin(C.size());
-        read_rows(K, Hkin_full);
-        if (root)
-        {
-          f.read(reinterpret_cast<char *>(Ckin.data()), sizeof(double) * Ckin.size());
-        }
-        MPI_Bcast(Ckin.data(), K * K, MPI_DOUBLE, 0, comm);
-        ScatterRows(Hkin_full, K, SHkin_rows);
-        SCkin = std::move(Ckin);
-      }
-      MPI_Bcast(ids.data(), K, MPI_INT, 0, comm);
-      MPI_Bcast(fp.data(), 2 * K, MPI_DOUBLE, 0, comm);
-      MPI_Bcast(C.data(), K * K, MPI_DOUBLE, 0, comm);
-      MPI_Bcast(B.data(), K * K, MPI_DOUBLE, 0, comm);
-      ScatterRows(G_full, K, SG_rows);
-      ScatterRows(H_full, K, SH_rows);
-      src_ids = ids;
-      src_fp = fp;
-      SC = C;
-      SB = B;
-      src_ready = true;
-    }
-    else if (magic == kModesMagic)
-    {
-      holds(I);
-      int K = 0;
-      if (root)
-      {
-        f.read(reinterpret_cast<char *>(&K), sizeof(int));
-      }
-      // ids, fingerprints, the G rows and Cmode.
-      const double k = K;
-      holds((k < 0.0) ? -1.0 : I * k + D * (2.0 * k + k * nG + k * k));
-      MPI_Bcast(&K, 1, MPI_INT, 0, comm);
-      std::vector<int> ids(K);
-      std::vector<double> fp(2 * K), C(static_cast<std::size_t>(K) * K), G_full;
-      if (root)
-      {
-        f.read(reinterpret_cast<char *>(ids.data()), sizeof(int) * K);
-        f.read(reinterpret_cast<char *>(fp.data()), sizeof(double) * 2 * K);
-      }
-      read_rows(K, G_full);
-      if (root)
-      {
-        f.read(reinterpret_cast<char *>(C.data()), sizeof(double) * C.size());
-      }
-      MPI_Bcast(ids.data(), K, MPI_INT, 0, comm);
-      MPI_Bcast(fp.data(), 2 * K, MPI_DOUBLE, 0, comm);
-      MPI_Bcast(C.data(), K * K, MPI_DOUBLE, 0, comm);
-      ScatterRows(G_full, K, G_rows);
-      mode_ids = ids;
-      mode_fp = fp;
-      Cmode = C;
-      modes_ready = true;
-    }
-    else
-    {
-      break;
-    }
+    src_ready = true;
   }
 }
 
@@ -947,9 +799,9 @@ void SubstructuringSolver::Impl::LoadModel(const std::string &model_path, int si
     S_rows = ReadRows(model_path, saved.S_pos, map);
   }
   {
-    // Sections after S_E (fingerprint, S^K, modes).
+    // The records after S_E (fingerprint, S^K, modes).
     BlockTimer bt_io(Timer::IO);
-    LoadSections(model_path, saved.sections_pos, map);
+    LoadSections(model_path, map);
   }
   if (region_only)
   {
@@ -969,31 +821,30 @@ void SubstructuringSolver::Impl::SaveModel(const std::string &model_path, int si
       InterfaceSignatures(sig_w);  // collective: all ranks participate
   {
     BlockTimer bt_io(Timer::IO);
-    WriteModel(model_path, false,
-               [&](std::ofstream &f)
-               {
-                 const int head[kHeadInts] = {kModelMagic, kModelVersion,
-                                              iodata.solver.order, nG, sig_type};
-                 f.write(reinterpret_cast<const char *>(head), sizeof(head));
-                 f.write(reinterpret_cast<const char *>(sig.data()),
-                         sizeof(double) * nG * sig_w);
-               });
-    AppendRows(model_path, S_rows);  // collective
-    WriteModel(model_path, true,
-               [&](std::ofstream &f)
-               {
-                 f.write(reinterpret_cast<const char *>(&kLengthMagic), sizeof(int));
-                 f.write(reinterpret_cast<const char *>(&iodata.model.Lc), sizeof(double));
-               });
+    ModelFile::Create(model_path, parent_fes.GetComm());
+    const int head[4] = {kModelVersion, iodata.solver.order, nG, sig_type};
+    AppendRecord(model_path, kHeadTag, sizeof(head), [&](std::ofstream &f)
+                 { f.write(reinterpret_cast<const char *>(head), sizeof(head)); });
+    AppendRecord(model_path, kSigsTag, static_cast<long long>(sizeof(double)) * nG * sig_w,
+                 [&](std::ofstream &f)
+                 {
+                   f.write(reinterpret_cast<const char *>(sig.data()),
+                           sizeof(double) * nG * sig_w);
+                 });
+    AppendRows(model_path, kSETag, S_rows);  // collective
+    AppendRecord(
+        model_path, kLengthTag, sizeof(double), [&](std::ofstream &f)
+        { f.write(reinterpret_cast<const char *>(&iodata.model.Lc), sizeof(double)); });
   }
   AppendEnvFingerprint(model_path);  // collective
   AppendEnvMoments(model_path, WriteRegionMesh(RegionMeshPath(model_path)));
   if (have_sk)
   {
-    AppendOperator(model_path, kSKenMagic, SK_rows);  // collective
+    BlockTimer bt_io(Timer::IO);
+    AppendRows(model_path, kSKenTag, SK_rows);  // collective
     if (have_skin)
     {
-      AppendOperator(model_path, kSKinMagic, SKin_rows);
+      AppendRows(model_path, kSKinTag, SKin_rows);
     }
   }
   if (modes_ready)

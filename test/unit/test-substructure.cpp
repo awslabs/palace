@@ -4,6 +4,9 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <memory>
 #include <numeric>
 #include <random>
@@ -11,7 +14,10 @@
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 #include "fem/substructure.hpp"
+#include "fem/substructuremodel.hpp"
+#include "fixtures.hpp"
 #include "utils/communication.hpp"
 
 namespace palace
@@ -406,6 +412,85 @@ TEST_CASE("Eliminated rows without a stored diagonal become identity rows",
     CAPTURE(i);
     CHECK(yy[i] == expected[i]);
   }
+}
+
+TEST_CASE_METHOD(palace::test::SharedTempDir, "Records of a substructuring model file",
+                 "[substructure][Serial][Parallel]")
+{
+  // Records appended to a model file are read back by tag, the last of a tag superseding
+  // the earlier ones; a record cut short ends the complete ones, and a file of another
+  // container version or none is told apart.
+  using substructuring::ModelFile;
+  MPI_Comm comm = Mpi::World();
+  const std::string path = (temp_dir / "records.model").string();
+  const auto A = ModelFile::Tag("AAAA"), B = ModelFile::Tag("BBBB");
+  auto append = [&](std::uint32_t tag, std::vector<double> x)
+  {
+    ModelFile::Append(
+        path, comm, tag, static_cast<long long>(sizeof(double) * x.size()),
+        [&](std::ofstream &f)
+        { f.write(reinterpret_cast<const char *>(x.data()), sizeof(double) * x.size()); });
+  };
+  auto values = [&](const ModelFile &file, std::uint32_t tag)
+  {
+    const auto *r = file.Find(tag);
+    REQUIRE(r);
+    const std::vector<char> p = ModelFile::ReadPayload(path, *r, comm);
+    std::vector<double> x(p.size() / sizeof(double));
+    std::memcpy(x.data(), p.data(), p.size());
+    return x;
+  };
+  ModelFile::Create(path, comm);
+  append(A, {1.0, 2.0});
+  append(B, {3.0});
+  append(A, {4.0, 5.0, 6.0});
+  ModelFile file = ModelFile::Read(path, comm);
+  CHECK(file.version == static_cast<int>(ModelFile::kVersion));
+  CHECK_FALSE(file.incomplete);
+  CHECK(file.records.size() == 3);
+  CHECK(values(file, A) == std::vector<double>{4.0, 5.0, 6.0});
+  CHECK(values(file, B) == std::vector<double>{3.0});
+  CHECK(file.Find(ModelFile::Tag("CCCC")) == nullptr);
+
+  // A cut inside the last record leaves the first two.
+  if (Mpi::Root(comm))
+  {
+    std::filesystem::resize_file(path, std::filesystem::file_size(path) - sizeof(double));
+  }
+  Mpi::Barrier(comm);
+  file = ModelFile::Read(path, comm);
+  CHECK(file.incomplete);
+  CHECK(file.records.size() == 2);
+  CHECK(values(file, A) == std::vector<double>{1.0, 2.0});
+
+  // A record of another size than announced stops every rank.
+#if defined(MFEM_USE_EXCEPTIONS)
+  CHECK_THROWS_WITH(ModelFile::Append(path, comm, A, 8, [](std::ofstream &) {}),
+                    Catch::Matchers::ContainsSubstring("instead of 8"));
+#endif
+
+  // Another container version, a file that is not a model, and no file.
+  if (Mpi::Root(comm))
+  {
+    std::fstream f(path, std::ios::binary | std::ios::in | std::ios::out);
+    const std::uint32_t version = ModelFile::kVersion + 1;
+    f.seekp(sizeof(std::uint32_t));
+    f.write(reinterpret_cast<const char *>(&version), sizeof(version));
+  }
+  Mpi::Barrier(comm);
+  CHECK(ModelFile::Read(path, comm).version == static_cast<int>(ModelFile::kVersion) + 1);
+  if (Mpi::Root(comm))
+  {
+    std::ofstream(path, std::ios::binary) << "not a model";
+  }
+  Mpi::Barrier(comm);
+  CHECK(ModelFile::Read(path, comm).version == 0);
+  if (Mpi::Root(comm))
+  {
+    std::filesystem::remove(path);
+  }
+  Mpi::Barrier(comm);
+  CHECK(ModelFile::Read(path, comm).version == -1);
 }
 
 }  // namespace palace

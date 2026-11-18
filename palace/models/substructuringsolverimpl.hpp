@@ -20,6 +20,7 @@
 #include "fem/fespace.hpp"
 #include "fem/mesh.hpp"
 #include "fem/substructure.hpp"
+#include "fem/substructuremodel.hpp"
 #include "linalg/ksp.hpp"
 #include "linalg/mumpsschur.hpp"
 #include "linalg/operator.hpp"
@@ -608,7 +609,6 @@ struct SubstructuringSolver::Impl
   // constants c and the works B_ij = b^E_i^T W_j, and with S^Kin their kinetic parts
   // h^kin_k = Z^T M_sheet^E (W_k - a_k) (Gamma rows) and c^kin_ij = (W_i - a_i)^T
   // M_sheet^E (W_j - a_j). Only sources with an environment part have modes.
-  static constexpr int kSourceModesMagic = 0x33435253;  // "SRC3"
   std::vector<int> src_ids;
   std::vector<double> src_fp, SG_rows, SH_rows, SC, SB, SHkin_rows, SCkin;
   bool src_ready = false;
@@ -640,10 +640,10 @@ struct SubstructuringSolver::Impl
   bool SourceModesMatch(const std::vector<int> &ids, const std::vector<Source> &src,
                         std::vector<int> &col, std::vector<char> &need);
 
-  // Write to the model file from rank 0, anew or appended, and abort on every rank if it
-  // cannot be written. Collective.
-  void WriteModel(const std::string &path, bool append,
-                  const std::function<void(std::ofstream &)> &write) const;
+  // Append a record of size bytes to the model file, whose payload rank 0 writes with
+  // write (see substructuring::ModelFile::Append). Collective.
+  void AppendRecord(const std::string &path, std::uint32_t tag, long long size,
+                    const std::function<void(std::ofstream &)> &write) const;
 
   void AppendSourceModes(const std::string &path);
 
@@ -715,9 +715,10 @@ struct SubstructuringSolver::Impl
   void ScatterRows(const std::vector<double> &full, int w, std::vector<double> &rows) const;
 
   // Append an interface operator (nG x nG, row-major, each rank its rows like S_rows) to
-  // the model: rank 0 writes the rows of the ranks in turn, which the others send it in
-  // chunks, so that it holds one chunk of theirs at a time. Collective.
-  void AppendRows(const std::string &path, const std::vector<double> &rows) const;
+  // the model as the record tag: rank 0 writes the rows of the ranks in turn, which the
+  // others send it in chunks, so that it holds one chunk of theirs at a time. Collective.
+  void AppendRows(const std::string &path, std::uint32_t tag,
+                  const std::vector<double> &rows) const;
 
   // The rows of this rank of an interface operator of the model at byte offset pos, mapped
   // onto the current interface (SignatureMap::DualMatrix): rank 0 reads the saved rows that
@@ -725,47 +726,51 @@ struct SubstructuringSolver::Impl
   std::vector<double> ReadRows(const std::string &path, std::streamoff pos,
                                const SignatureMap &map) const;
 
-  // A model file: [kModelMagic][kModelVersion][Solver.Order][nG][signature type]
-  // [signatures nG x width][S_E nG x nG], then the sections [kLengthMagic][Model.Lc of the
-  // offline run], [kEnvFpMagic][environment fingerprint, 11 doubles], [kEpsMagic][the
-  // magnetostatic regularization eps] (magnetostatics), [kEnvMeshMagic][ElementMoments of
-  // the environment and of its elements in the mesh of the region, 12 doubles],
-  // [kSheetSidesMagic][the sides of the sheet faces on Gamma, 4 doubles] (magnetostatics),
-  // [kSKenMagic][S^K nG x nG] (magnetostatics), [kSKinMagic][S^Kin nG x nG] (with London
-  // sheets in the environment), [kModesMagic][K][ids][fingerprints 2K][G nG x K][Cmode
-  // KxK] (electrostatics), and [kSourceModesMagic][K][ids][fingerprints 2K][g nG x K][h nG
-  // x K][c KxK][B KxK] (then [h^kin nG x K][c^kin KxK] in a model with S^Kin, which
-  // precedes them).
-  static constexpr int kModelMagic = 0x4c444d53;  // "SMDL"
-  static constexpr int kModelVersion = 5;
-  static constexpr int kHeadInts = 5;
-  static constexpr int kSKenMagic = 0x4e454b53;        // "SKEN"
-  static constexpr int kSKinMagic = 0x4e494b53;        // "SKIN"
-  static constexpr int kModesMagic = 0x33444f4d;       // "MOD3"
-  static constexpr int kEnvFpMagic = 0x33564e45;       // "ENV3"
-  static constexpr int kLengthMagic = 0x434e454c;      // "LENC"
-  static constexpr int kEpsMagic = 0x5350454d;         // "MEPS"
-  static constexpr int kEnvMeshMagic = 0x48534d45;     // "EMSH"
-  static constexpr int kSheetSidesMagic = 0x53444953;  // "SIDS"
+  // The records of a model file (see substructuring::ModelFile): HEAD [kModelVersion,
+  // Solver.Order, nG, signature type], SIGS [signatures nG x width], SENV [S_E nG x nG],
+  // LENC [Model.Lc of the offline run], ENVF [environment fingerprint, 11 doubles], in
+  // magnetostatics MEPS [the regularization eps] and SIDS [the sides of the sheet faces on
+  // Gamma, 4 doubles], EMSH [ElementMoments of the environment and of its elements in the
+  // mesh of the region, 12 doubles], and as they are computed SKEN [S^K nG x nG]
+  // (magnetostatics), SKIN [S^Kin nG x nG] (with London sheets in the environment), MODE
+  // [K][ids][fingerprints 2K][G nG x K][Cmode KxK] (electrostatics), and SRCM [K][ids]
+  // [fingerprints 2K][g nG x K][h nG x K][c KxK][B KxK] (then [h^kin nG x K][c^kin KxK]
+  // in a model with S^Kin).
+  static constexpr int kModelVersion = 6;
+  using ModelFile = substructuring::ModelFile;
+  static constexpr std::uint32_t kHeadTag = ModelFile::Tag("HEAD"),
+                                 kSigsTag = ModelFile::Tag("SIGS"),
+                                 kSETag = ModelFile::Tag("SENV"),
+                                 kLengthTag = ModelFile::Tag("LENC"),
+                                 kEnvFpTag = ModelFile::Tag("ENVF"),
+                                 kEpsTag = ModelFile::Tag("MEPS"),
+                                 kSheetSidesTag = ModelFile::Tag("SIDS"),
+                                 kEnvMeshTag = ModelFile::Tag("EMSH"),
+                                 kSKenTag = ModelFile::Tag("SKEN"),
+                                 kSKinTag = ModelFile::Tag("SKIN"),
+                                 kModesTag = ModelFile::Tag("MODE"),
+                                 kSourceModesTag = ModelFile::Tag("SRCM");
 
   // The width of the interface signatures of a model by their type: 1 H1 coordinates, 2
   // H(curl) moments, 3 with the side moments of split DOFs (0: not a model).
   static int SignatureFileWidth(int sig_type);
 
   // The head of a model, from rank 0: its format version (-1: the file cannot be read, 0:
-  // not a model), order, interface size, signature type and width (0: another version, or
-  // an incomplete model), the interface signatures, the offsets of S_E and of the sections
-  // after it, the reference length, environment fingerprint, element moments of the
-  // environment and of the mesh of the region, magnetostatic regularization, and sides of
-  // the sheet faces on Gamma (0 or empty: not saved). Collective.
+  // not a model; a container of another version reads as another version), order,
+  // interface size, signature type and width (0: another version, or an incomplete model),
+  // its records, the interface signatures, the position of S_E, the reference length,
+  // element moments of the environment and of the mesh of the region, magnetostatic
+  // regularization, and sides of the sheet faces on Gamma (0 or empty: not saved).
+  // Collective.
   struct SavedHead
   {
     int version = -1, order = 0, nG = 0, sig_type = 0, width = 0;
+    ModelFile file;
     std::vector<double> sig;
     std::array<double, 6> env_moments = {}, region_moments = {};
     double length = 0.0, regularization = 0.0;
     std::vector<double> sheet_sides;
-    std::streamoff S_pos = 0, sections_pos = 0;
+    long long S_pos = 0;
   };
   static SavedHead ReadSavedHead(const std::string &path, MPI_Comm comm);
   // The head of the model of an online run (read by the constructor).
@@ -827,16 +832,12 @@ struct SubstructuringSolver::Impl
   // one.
   void CheckEnvFingerprint();
 
-  // Append an interface operator (distributed rows, like S_rows) as the section magic.
-  void AppendOperator(const std::string &path, int magic,
-                      const std::vector<double> &rows) const;
   void AppendModes(const std::string &path);
 
-  // Load the sections at byte offset `pos` (collective). Interface rows are mapped onto the
-  // online interface like S_E (dual quantities: x_cur = M^-T x_saved, rows and S^K
-  // columns). Reading stops at the first unknown section; a later mode section supersedes
-  // an earlier one, and modes absent here are recomputed on demand.
-  void LoadSections(const std::string &path, std::streamoff pos, const SignatureMap &map);
+  // Load the records after S_E (collective). Interface rows are mapped onto the online
+  // interface like S_E (dual quantities: x_cur = M^-T x_saved, rows and S^K columns); modes
+  // absent here are recomputed on demand.
+  void LoadSections(const std::string &path, const SignatureMap &map);
 
   // Factor A_EE: A_env with the true DOFs outside the environment interior eliminated, on
   // the parent space. Collective.

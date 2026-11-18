@@ -757,7 +757,7 @@ void SubstructuringSolver::CondenseEnvironment()
   {
     // Fail before the condensation if the model cannot be written (an existing one is
     // kept until it is replaced).
-    impl->WriteModel(model_path, true, [](std::ofstream &) {});
+    substructuring::ModelFile::CheckWritable(model_path, impl->parent_fes.GetComm());
   }
   // The versions of the interface DOFs on a two-sided film crossing Gamma are told apart
   // by the faces of their sides (InterfaceSignatures), of which a coarse face of a

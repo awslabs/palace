@@ -25,6 +25,7 @@
 #include "fem/mesh.hpp"
 #include "fem/multigrid.hpp"
 #include "fem/substructure.hpp"
+#include "fem/substructuremodel.hpp"
 #include "fixtures.hpp"
 #include "linalg/errorestimator.hpp"
 #include "linalg/rap.hpp"
@@ -1611,20 +1612,13 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
     SubstructuringSolver off(offline, mesh);
     off.CondenseEnvironment();
   }
-  // Keep the head (5 ints, nG the fourth), the signatures (nG x 3), S_E (nG x nG) and the
-  // reference length (1 int + 1 double).
+  // Keep the records up to the reference length.
+  const auto file = substructuring::ModelFile::Read(model_path, Mpi::World());
+  const auto *length = file.Find(substructuring::ModelFile::Tag("LENC"));
+  REQUIRE(length);
   if (Mpi::Root(Mpi::World()))
   {
-    int head[5] = {0, 0, 0, 0, 0};
-    {
-      std::ifstream f(model_path, std::ios::binary);
-      f.read(reinterpret_cast<char *>(head), sizeof(head));
-    }
-    const int nG = head[3];
-    std::filesystem::resize_file(model_path,
-                                 static_cast<std::uintmax_t>(6 * sizeof(int)) +
-                                     static_cast<std::uintmax_t>(sizeof(double)) *
-                                         (nG * 3 + nG * nG + 1));
+    std::filesystem::resize_file(model_path, length->pos + length->size);
   }
   Mpi::Barrier(Mpi::World());
   IoData online = make_config("Online", 0.0);
@@ -1739,21 +1733,13 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   off.CondenseEnvironment();
   const mfem::DenseMatrix C_off = off.CapacitanceMatrix(terms);
 
-  // Strip the terminal-mode section: keep the head (5 ints, nG the fourth), signatures (nG
-  // x 3), S_E (nG x nG), reference length (1 int + 1 double), environment fingerprint (1
-  // int + 11 doubles) and element moments (1 int + 12 doubles).
+  // Strip the record of the terminal modes, the last one.
+  const auto file = substructuring::ModelFile::Read(model_path, Mpi::World());
+  REQUIRE(!file.records.empty());
+  REQUIRE(file.records.back().tag == substructuring::ModelFile::Tag("MODE"));
   if (Mpi::Root(Mpi::World()))
   {
-    int head[5] = {0, 0, 0, 0, 0};
-    {
-      std::ifstream f(model_path, std::ios::binary);
-      f.read(reinterpret_cast<char *>(head), sizeof(head));
-    }
-    const int nG = head[3];
-    const auto kept = static_cast<std::uintmax_t>(8 * sizeof(int)) +
-                      static_cast<std::uintmax_t>(sizeof(double)) * (nG * 3 + nG * nG + 24);
-    CHECK(std::filesystem::file_size(model_path) > kept);
-    std::filesystem::resize_file(model_path, kept);
+    std::filesystem::resize_file(model_path, file.records.back().pos - 12);
   }
   Mpi::Barrier(Mpi::World());
 
@@ -2498,8 +2484,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "SubstructuringSolver London sheet
   IoData iodata_cut = make_config("Online", true, cut_path);
   std::vector<std::unique_ptr<Mesh>> mesh_cut;
   mesh_cut.push_back(std::make_unique<Mesh>(MakeGradedSplit(4, 5, 6, design)));
-  SubstructuringSolver cut(iodata_cut, mesh_cut);
-  CHECK_THROWS_WITH(cut.CondenseEnvironment(),
+  CHECK_THROWS_WITH(SubstructuringSolver(iodata_cut, mesh_cut),
                     Catch::Matchers::ContainsSubstring("is incomplete"));
 }
 
