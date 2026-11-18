@@ -50,6 +50,16 @@ namespace
 // SubstructuringSolver::Impl::kMagRegularization and kMagRegularizationSheets).
 constexpr double kMagRegularization = 1.0e-3, kMagRegularizationSheets = 1.0e-7;
 
+// SubstructuringSolver's scale of the magnetostatic regularization eps (1/mu) M: 1/L^2, L
+// the largest side of the bounding box of the mesh.
+double RegularizationScale(const mfem::ParMesh &mesh)
+{
+  mfem::Vector bbmin, bbmax;
+  mesh::GetAxisAlignedBoundingBox(mesh, bbmin, bbmax);
+  bbmax -= bbmin;
+  return 1.0 / (bbmax.Max() * bbmax.Max());
+}
+
 // Domain attributes of the cube: the region is x < 1/2 (attribute 1, and 3 in the block y,
 // z < 1/2), the environment x > 1/2 (attribute 2, and 4 in the block).
 const std::vector<int> kRegion = {1, 3}, kEnvironment = {2, 4};
@@ -368,9 +378,11 @@ void CheckMagnetostatic(IoData &iodata, const std::vector<std::unique_ptr<Mesh>>
   ParOperator Kcc(kcc.Assemble(false), nd_fespace);
   std::vector<int> domain_attrs(kRegion);
   domain_attrs.insert(domain_attrs.end(), kEnvironment.begin(), kEnvironment.end());
-  MaterialPropertyCoefficient eps_func(mat_op.MaxCeedAttribute());
-  eps_func.AddMaterialProperty(mat_op.GetCeedAttributes(domain_attrs),
-                               with_sheets ? kMagRegularizationSheets : kMagRegularization);
+  MaterialPropertyCoefficient eps_func(
+      mat_op.GetAttributeToMaterial(), mat_op.GetInvPermeability(),
+      (with_sheets ? kMagRegularizationSheets : kMagRegularization) *
+          RegularizationScale(static_cast<const mfem::ParMesh &>(nd_fespace.GetMesh())));
+  eps_func.RestrictCoefficient(mat_op.GetCeedAttributes(domain_attrs));
   BilinearForm m(nd_fespace);
   m.AddDomainIntegrator<VectorFEMassIntegrator>(eps_func);
   ParOperator M(m.Assemble(false), nd_fespace);

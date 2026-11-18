@@ -185,8 +185,11 @@ but not lie on it, and the region of an adaptive refinement cannot hold one. A s
 the condensed excitations of the environment, so an online run needs no environment solve as long as
 the excitations in the environment are unchanged; excitations inside the region, such as a port
 added or moved in a redesign, need none at all. A small mass regularization keeps the curl-curl
-operator definite; the extracted energies use the unregularized operator, in a form whose error is
-quadratic in the regularization. Each surface current must close: it has to start and end on `"PEC"`
+operator definite. It is weighted by the inverse permeability and scaled with the extent of the
+mesh, so that it scales as the curl-curl operator and the results depend on neither the
+permeability nor [`config["Model"]["Lc"]`](../config/reference.md#config-model); the extracted
+energies use the unregularized operator, in a form whose error is quadratic in the regularization.
+Each surface current must close: it has to start and end on `"PEC"`
 boundaries or superconducting films, as in a physical circuit. A current that does not close has no
 magnetostatic solution and is rejected.
 

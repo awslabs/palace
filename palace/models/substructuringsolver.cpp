@@ -285,9 +285,15 @@ SubstructuringSolver::Impl::Impl(const IoData &iodata,
   if (magnetostatic)
   {
     CheckSheets();
-    mag_eps = (model_eps > 0.0) ? model_eps
-              : has_sheets      ? kMagRegularizationSheets
-                                : kMagRegularization;
+    mag_eps = model_eps;
+    if (!(mag_eps > 0.0))
+    {
+      mfem::Vector bbmin, bbmax;
+      mesh::GetAxisAlignedBoundingBox(parent, bbmin, bbmax);
+      bbmax -= bbmin;
+      const double L = bbmax.Max();
+      mag_eps = (has_sheets ? kMagRegularizationSheets : kMagRegularization) / (L * L);
+    }
   }
   AssembleRegion();
 }

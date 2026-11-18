@@ -35,6 +35,7 @@
 #include "models/superconductorsheetoperator.hpp"
 #include "models/surfacecurlsolver.hpp"
 #include "utils/communication.hpp"
+#include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
 
 using json = nlohmann::json;
@@ -44,6 +45,19 @@ namespace palace
 
 namespace
 {
+
+// The magnetostatic regularization eps (1/mu) M / L^2 of SubstructuringSolver (see
+// SubstructuringSolver::Impl::kMagRegularization), and its scale 1/L^2, L the largest side
+// of the bounding box of the mesh.
+constexpr double kMagRegularization = 1.0e-3;
+
+double RegularizationScale(const mfem::ParMesh &mesh)
+{
+  mfem::Vector bbmin, bbmax;
+  mesh::GetAxisAlignedBoundingBox(mesh, bbmin, bbmax);
+  bbmax -= bbmin;
+  return 1.0 / (bbmax.Max() * bbmax.Max());
+}
 
 // Unit-cube ParMesh split at x=0.5 (domain attrs 1/2), boundary attrs 1 (x=0), 2 (x=1),
 // 3 (other faces).
@@ -741,8 +755,9 @@ TEST_CASE("SubstructuringSolver reproduces full-domain magnetostatic energy",
   mass_by_attr = 0.0;
   nu_by_attr(0) = 1.0 / mu_r;
   nu_by_attr(1) = 1.0 / mu_e;
-  mass_by_attr(0) = 1.0e-3;  // match SubstructuringSolver::Impl::kMagRegularization
-  mass_by_attr(1) = 1.0e-3;
+  const double eps = kMagRegularization * RegularizationScale(pmesh);
+  mass_by_attr(0) = eps / mu_r;
+  mass_by_attr(1) = eps / mu_e;
   mfem::PWConstCoefficient nu(nu_by_attr), massc(mass_by_attr);
   mfem::ParBilinearForm asolve(&pfes);
   asolve.AddDomainIntegrator(new mfem::CurlCurlIntegrator(nu));
@@ -2971,13 +2986,14 @@ void CheckNonconformingMagnetostaticEnergy(const std::filesystem::path &temp_dir
   const Vector f = ClosedCurrent(pmesh, order);
   const double e_sub = Energy(ss, ss.SolveSource(f));
 
-  const double mag_eps = 1.0e-3;  // SubstructuringSolver's regularization
+  const double mag_eps = kMagRegularization;
   CurlCurlOperator curlcurl_op(iodata, mesh);
   const auto &nd_fespace = curlcurl_op.GetSolutionNDSpace();
   const auto &mat_op = curlcurl_op.GetMaterialOp();
   auto K = curlcurl_op.GetUnconstrainedStiffnessMatrix(true, false);
-  MaterialPropertyCoefficient eps_func(mat_op.MaxCeedAttribute());
-  eps_func.AddMaterialProperty(mat_op.GetCeedAttributes(std::vector<int>{1, 2}), mag_eps);
+  MaterialPropertyCoefficient eps_func(mat_op.GetAttributeToMaterial(),
+                                       mat_op.GetInvPermeability(),
+                                       mag_eps * RegularizationScale(pmesh));
   BilinearForm m(nd_fespace);
   m.AddDomainIntegrator<VectorFEMassIntegrator>(eps_func);
   ParOperator M(m.Assemble(false), nd_fespace);
@@ -3004,11 +3020,12 @@ void CheckNonconformingMagnetostaticEnergy(const std::filesystem::path &temp_dir
   // meaningful.
   {
     mfem::Vector nu_by_attr(2), mass_by_attr(2);
+    auto coarse = MakeGradedSplit(4, 5, 6);
     nu_by_attr(0) = 1.0 / mu_r;
     nu_by_attr(1) = 1.0 / mu_e;
-    mass_by_attr = mag_eps;
+    mass_by_attr = nu_by_attr;
+    mass_by_attr *= mag_eps * RegularizationScale(*coarse);
     mfem::PWConstCoefficient nu(nu_by_attr), massc(mass_by_attr);
-    auto coarse = MakeGradedSplit(4, 5, 6);
     mfem::ParFiniteElementSpace cfes(coarse.get(), &fec);
     const Vector cf = ClosedCurrent(*coarse, order);
     mfem::ParBilinearForm cs(&cfes), ce(&cfes);
@@ -3331,7 +3348,8 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   mfem::Vector nu_by_attr(2), mass_by_attr(2);
   nu_by_attr(0) = 1.0;
   nu_by_attr(1) = 0.25;
-  mass_by_attr = 1.0e-3;
+  mass_by_attr = nu_by_attr;
+  mass_by_attr *= kMagRegularization * RegularizationScale(pm);
   mfem::PWConstCoefficient nu(nu_by_attr), massc(mass_by_attr);
   mfem::ParBilinearForm asolve(&pfes), aenergy(&pfes);
   asolve.AddDomainIntegrator(new mfem::CurlCurlIntegrator(nu));
@@ -3739,6 +3757,53 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   }
   CHECK(d <= 1.0e-9 * m);
   CHECK(change >= 1.0e-2 * m);  // the redesign really changed the capacitance
+}
+
+TEST_CASE("SubstructuringSolver magnetostatic energies scale with the permeability and "
+          "the mesh",
+          "[substructure][Serial][Parallel]")
+{
+  // For a fixed dual vector J, scaling the permeability by m scales the curl-curl operator
+  // by 1/m and the energy by m, and scaling the mesh by s scales the curl-curl operator by
+  // 1/s and the mass by s, so the energy by s. The regularization scales as the curl-curl
+  // operator, so this holds whatever the scales.
+  const int order = 1;
+  auto energy = [order](double m, double s, Vector &J)
+  {
+    json config = {
+        {"Problem", {{"Type", "Magnetostatic"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains",
+         {{"Materials",
+           {{{"Attributes", {1}}, {"Permeability", m}},
+            {{"Attributes", {2}}, {"Permeability", 4.0 * m}}}}}},
+        {"Boundaries", json::object()},
+        {"Solver",
+         {{"Order", order},
+          {"Substructuring",
+           {{"Region", {{"Attributes", {1}}}}, {"Environment", {{"Attributes", {2}}}}}}}}};
+    IoData iodata(config, false);
+    auto pmesh = MakeSplitCube(4);
+    mfem::VectorFunctionCoefficient scale(3, [s](const mfem::Vector &x, mfem::Vector &y)
+                                          { add(s, x, 0.0, x, y); });
+    pmesh->Transform(scale);
+    std::vector<std::unique_ptr<Mesh>> mesh;
+    mesh.push_back(std::make_unique<Mesh>(std::move(pmesh)));
+    SubstructuringSolver ss(iodata, mesh);
+    ss.CondenseEnvironment();
+    if (J.Size() == 0)
+    {
+      J = ClosedCurrent(*mesh.back(), order);
+    }
+    return CurrentEnergies(ss, {1}, {J})(0, 0);
+  };
+  Vector J;
+  const double E = energy(1.0, 1.0, J), E_m = energy(1.0e5, 1.0, J),
+               E_s = energy(1.0, 1.0e3, J);
+  CAPTURE(E, E_m, E_s);
+  CHECK(E > 0.0);
+  CHECK(std::abs(E_m - 1.0e5 * E) <= 1.0e-10 * 1.0e5 * E);
+  CHECK(std::abs(E_s - 1.0e3 * E) <= 1.0e-10 * 1.0e3 * E);
 }
 
 TEST_CASE_METHOD(palace::test::SharedTempDir,

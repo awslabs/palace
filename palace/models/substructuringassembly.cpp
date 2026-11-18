@@ -53,16 +53,14 @@ SubstructuringSolver::Impl::GetTerm(const std::vector<int> *attrs, Term term,
   }
   if (term == Term::MASS)
   {
-    // The regularization eps M on the domains (the exactly zero entries of the other
-    // elements are not stored).
+    // The regularization mag_eps (1/mu) M on the domains (the exactly zero entries of the
+    // other elements are not stored), weighted as the curl-curl operator. The coefficient
+    // is built for every attribute and then restricted, so that it is a matrix one also on
+    // a process without an element of the domains.
     MFEM_ASSERT(attrs, "The regularization is assembled on the region or the environment!");
-    // The coefficient is built for every attribute and then restricted, so that it is a
-    // scalar one also on a process without an element of the domains.
     const auto &mat_op = curlcurl_op->GetMaterialOp();
-    const auto &attr_mat = mat_op.GetAttributeToMaterial();
-    mfem::DenseTensor value(1, 1, attr_mat.Max() + 1);
-    value = mag_eps;
-    MaterialPropertyCoefficient eps(attr_mat, value);
+    MaterialPropertyCoefficient eps(mat_op.GetAttributeToMaterial(),
+                                    mat_op.GetInvPermeability(), mag_eps);
     eps.RestrictCoefficient(mat_op.GetCeedAttributes(*attrs));
     BilinearForm m(SolutionSpace());
     m.AddDomainIntegrator<VectorFEMassIntegrator>(eps);

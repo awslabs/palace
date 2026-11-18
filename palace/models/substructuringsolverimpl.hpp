@@ -547,12 +547,16 @@ struct SubstructuringSolver::Impl
   // them, and its version maps. Collective.
   void SetUpBrokenSpace();
 
-  // Mass regularization eps M making the singular magnetostatic curl-curl definite; the
-  // energies use the unregularized operator and are stationary, so their error is O(eps^2).
-  // With London sheets, the flux-loop and surface-current sources are orthogonal to the
-  // null space of the curl-curl + sheet operator, so a much smaller eps is safe. On the
-  // mesh of the region, which may lack the sheets of the environment, eps is that of the
-  // model.
+  // Mass regularization eps (1/mu) M / L^2 making the singular magnetostatic curl-curl
+  // definite, L the extent of the mesh (the largest side of its bounding box, in units of
+  // Lc: 1 for the default Lc), so that it scales as the curl-curl operator whatever the
+  // permeability and Lc; mag_eps is eps / L^2. The surface-current energies use the
+  // unregularized operator in a form stationary in eps, with an error O(eps^2), but the
+  // part of a current that its quadrature leaves incompatible with the null space is
+  // amplified by 1/eps. The flux-loop sources are orthogonal to the null space and their
+  // London energies are linear in eps, so London sheets take a much smaller eps. On the
+  // mesh of the region, which may lack the sheets of the environment and has another
+  // extent, mag_eps is that of the model.
   static constexpr double kMagRegularization = 1.0e-3;
   static constexpr double kMagRegularizationSheets = 1.0e-7;
   // Largest regularization energy of a surface current relative to its magnetic energy
@@ -707,7 +711,7 @@ struct SubstructuringSolver::Impl
   // x K][c KxK][B KxK] (then [h^kin nG x K][c^kin KxK] in a model with S^Kin, which
   // precedes them).
   static constexpr int kModelMagic = 0x4c444d53;  // "SMDL"
-  static constexpr int kModelVersion = 4;
+  static constexpr int kModelVersion = 5;
   static constexpr int kHeadInts = 5;
   static constexpr int kSKenMagic = 0x4e454b53;     // "SKEN"
   static constexpr int kSKinMagic = 0x4e494b53;     // "SKIN"
