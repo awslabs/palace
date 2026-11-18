@@ -389,7 +389,8 @@ BaseKspSolver<OperType>::BaseKspSolver(const IoData &iodata,
 template <OperatorType OperType>
 BaseKspSolver<OperType>::BaseKspSolver(std::unique_ptr<IterativeSolver<OperType>> &&ksp,
                                        std::unique_ptr<Solver<OperType>> &&pc)
-  : ksp(std::move(ksp)), pc(std::move(pc)), ksp_mult(0), ksp_mult_it(0), use_timer(false)
+  : ksp(std::move(ksp)), pc(std::move(pc)), ksp_mult(0), ksp_mult_it(0),
+    ksp_mult_unconverged(0), use_timer(false)
 {
   if (this->pc)
   {
@@ -435,6 +436,7 @@ void BaseKspSolver<OperType>::Mult(const VecType &x, VecType &y) const
         ksp->GetComm(),
         "Linear solver did not converge, norm(Ax-b)/norm(b) = {:.3e} (norm(b) = {:.3e})!\n",
         ksp->GetFinalRes() / ksp->GetInitialRes(), ksp->GetInitialRes());
+    ksp_mult_unconverged++;
   }
   ksp_mult++;
   ksp_mult_it += ksp->GetNumIterations();

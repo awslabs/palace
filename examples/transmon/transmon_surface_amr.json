@@ -56,12 +56,6 @@
           "LossTan": 2.0e-3,
           "AutomaticEdges": true,
           "LocalizeEdgeEnergy": true,
-          "EdgeRefinement": {
-            "Radius": 0.2,
-            "ElementsPerRadius": 3,
-            "OuterRadiusFactor": 2.0,
-            "CoreIndicatorWeight": 0.0
-          },
           "EdgeDistances": [
             0.2,
             0.3,
@@ -81,12 +75,6 @@
           "LossTan": 3.0e-4,
           "AutomaticEdges": true,
           "LocalizeEdgeEnergy": true,
-          "EdgeRefinement": {
-            "Radius": 0.2,
-            "ElementsPerRadius": 3,
-            "OuterRadiusFactor": 2.0,
-            "CoreIndicatorWeight": 0.0
-          },
           "EdgeDistances": [
             0.2,
             0.3,
@@ -106,12 +94,6 @@
           "LossTan": 3.0e-2,
           "AutomaticEdges": true,
           "LocalizeEdgeEnergy": true,
-          "EdgeRefinement": {
-            "Radius": 0.2,
-            "ElementsPerRadius": 3,
-            "OuterRadiusFactor": 2.0,
-            "CoreIndicatorWeight": 0.0
-          },
           "EdgeDistances": [
             0.2,
             0.3,
@@ -128,6 +110,7 @@
       "Tol": 1.0e-12,
       "MaxIts": 5,
       "MaxSize": 12000000,
+      "MaxSizePredicted": true,
       "UpdateFraction": 0.7,
       "SaveAdaptIterations": true
     },

@@ -3,10 +3,16 @@
 
 #include <cmath>
 #include <complex>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
+#include <optional>
 #include <string>
+#include <utility>
 #include <vector>
+#include <unistd.h>
+#include <fmt/format.h>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
@@ -327,6 +333,99 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
          test::ReadFile(entry.path()).find("E_corrected_real") != std::string::npos);
   }
   CHECK(has_corrected_field);
+#endif
+}
+
+// Decision 2159 (OI-EIGEN-SC-CORRECTED-LINEAR-SOLVE-NONCONVERGED-RESULT-UNFLAGGED): the
+// corrected linear solves of the self-consistent eigenproblem that did not reach their
+// tolerance are counted in palace.json (SurfaceResponse.CorrectedSolver.Eigenmode.
+// NonConvergedLinearSolves, the total over the solve: its shift-invert solves build one
+// subspace for all modes) and named by one line at the end of the log when there are any.
+// The convex PEC island (CorrectionMode Both, two modes): with the default linear solver
+// (a sparse direct preconditioner of the raw operator) every corrected solve converges;
+// with Solver.Linear.MaxIts 2 the corrected solves (the raw preconditioner on the corrected
+// operator) stop at the limit.
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "Eigenmode self-consistent corrected solves that did not converge are "
+                 "counted",
+                 "[eigensolver][surface-response][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  MPI_Comm comm = Mpi::World();
+  const fs::path mesh_path = temp.temp_dir / "unconverged-island.mesh";
+  if (Mpi::Root(comm))
+  {
+    mfem::Mesh serial = MakeSerialIslandMesh();
+    std::ofstream output(mesh_path);
+    serial.Print(output);
+  }
+  Mpi::Barrier(comm);
+  test::json config = ConvexMaxwellIslandConfig(test::CrackPolicy::Legacy);
+  config["Model"]["Mesh"] = mesh_path.string();
+  // Mesh units are metres, unscaled, as the library's R (m).
+  config["Model"]["L0"] = 1.0;
+  config["Model"]["Lc"] = 1.0;
+  config["Solver"]["SurfaceResponseCorrection"]["CorrectionMode"] = "Both";
+  // The two lowest modes of the 2 m PEC box (about 0.1 GHz).
+  config["Solver"]["Eigenmode"] = {{"Target", 0.05}, {"N", 2}, {"Save", 0}};
+  constexpr const char *kUnconvergedLine =
+      "corrected linear solves did not reach their tolerance";
+  // The run's palace.json and, on the root, its log.
+  auto Run = [&](const std::string &stem, std::optional<int> max_its)
+  {
+    test::json run = config;
+    const fs::path output = temp.temp_dir / stem;
+    run["Problem"]["Output"] = output.string();
+    if (max_its)
+    {
+      run["Solver"]["Linear"]["MaxIts"] = *max_its;
+    }
+    IoData iodata(run, false);
+    MakeOutputFolder(iodata, comm);
+    BlockTimer::Reset();
+    std::fflush(stdout);
+    const int saved = dup(fileno(stdout));
+    std::FILE *log = std::fopen((temp.temp_dir / (stem + ".log")).c_str(), "w");
+    REQUIRE(log);
+    dup2(fileno(log), fileno(stdout));
+    palace::Run(iodata, comm, utils::ConfigureOmp(), /*git_tag=*/nullptr);
+    std::fflush(stdout);
+    dup2(saved, fileno(stdout));
+    close(saved);
+    std::fclose(log);
+    Mpi::Barrier(comm);
+    std::ifstream text(temp.temp_dir / (stem + ".log"));
+    std::ifstream metadata(output / "palace.json");
+    REQUIRE(metadata);
+    return std::pair{test::json::parse(metadata),
+                     std::string(std::istreambuf_iterator<char>(text),
+                                 std::istreambuf_iterator<char>())};
+  };
+  const auto [converged_metadata, converged_log] = Run("converged", std::nullopt);
+  const auto [limited_metadata, limited_log] = Run("limited", 2);
+  if (!Mpi::Root(comm))
+  {
+    return;
+  }
+  const auto &converged =
+      converged_metadata.at("SurfaceResponse").at("CorrectedSolver").at("Eigenmode");
+  const auto &limited =
+      limited_metadata.at("SurfaceResponse").at("CorrectedSolver").at("Eigenmode");
+  INFO("default: " << converged.dump() << "; Solver.Linear.MaxIts 2: " << limited.dump());
+  CHECK(converged.at("LinearSolves").get<long long>() > 0);
+  CHECK(converged.at("NonConvergedLinearSolves").get<long long>() == 0);
+  CHECK(converged_log.find(kUnconvergedLine) == std::string::npos);
+  const auto limited_count = limited.at("NonConvergedLinearSolves").get<long long>();
+  CHECK(limited_count > 0);
+  CHECK(limited_count <= limited.at("LinearSolves").get<long long>());
+  const auto line =
+      fmt::format("{:d} of {:d} {}", limited_count,
+                  limited.at("LinearSolves").get<long long>(), kUnconvergedLine);
+  INFO("expected log line: " << line);
+  CHECK(limited_log.find(line) != std::string::npos);
+  CHECK(limited_log.find("Solver.Linear.MaxIts") != std::string::npos);
 #endif
 }
 

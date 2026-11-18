@@ -848,12 +848,19 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
   BlockTimer bt2(Timer::POSTPRO);
   SaveMetadata(*ksp);
+  // Decision 2159 (OI-EIGEN-SC-CORRECTED-LINEAR-SOLVE-NONCONVERGED-RESULT-UNFLAGGED): the
+  // corrected linear solves of the whole self-consistent solve (the refine's included) that
+  // did not reach their tolerance, counted for palace.json and the end of the log (the
+  // solves build one subspace for all modes: no per-mode split).
+  int corrected_solves = 0, corrected_unconverged_solves = 0;
   if (self_consistent_response)
   {
     MFEM_ASSERT(corrected_ksp, "Missing corrected eigenmode linear solver!");
-    SaveSurfaceResponseSolverMetadata(space_op.GetComm(), "Eigenmode",
-                                      corrected_ksp->NumTotalMult(),
-                                      corrected_ksp->NumTotalMultIterations());
+    corrected_solves = corrected_ksp->NumTotalMult();
+    corrected_unconverged_solves = corrected_ksp->NumTotalMultUnconverged();
+    SaveSurfaceResponseSolverMetadata(space_op.GetComm(), "Eigenmode", corrected_solves,
+                                      corrected_ksp->NumTotalMultIterations(),
+                                      corrected_unconverged_solves);
   }
 
   // Calculate and record the error indicators, and postprocess the results.
@@ -1181,6 +1188,16 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   if (response_correction)
   {
     SaveMetadata(*response_correction);
+  }
+  if (corrected_unconverged_solves > 0)
+  {
+    Mpi::Print(
+        space_op.GetComm(),
+        " Warning: {:d} of {:d} corrected linear solves did not reach their "
+        "tolerance in the self-consistent corrected eigenproblem: its corrected "
+        "values rest on inexact solves; allow more iterations (Solver.Linear.MaxIts) "
+        "or set a looser linear tolerance (Solver.Linear.Tol)\n",
+        corrected_unconverged_solves, corrected_solves);
   }
   return {indicator, space_op.GlobalTrueVSize()};
 }

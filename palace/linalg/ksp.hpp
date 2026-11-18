@@ -45,8 +45,8 @@ protected:
   std::unique_ptr<Solver<OperType>> pc;
 
   // Counters for number of calls to Mult method for linear solves, and cumulative number
-  // of iterations.
-  mutable int ksp_mult, ksp_mult_it;
+  // of iterations; and the number of those solves that did not converge.
+  mutable int ksp_mult, ksp_mult_it, ksp_mult_unconverged;
 
   // Enable timer contribution for Timer::KSP_PRECONDITIONER.
   bool use_timer;
@@ -62,6 +62,7 @@ public:
 
   int NumTotalMult() const { return ksp_mult; }
   int NumTotalMultIterations() const { return ksp_mult_it; }
+  int NumTotalMultUnconverged() const { return ksp_mult_unconverged; }
   double GetInitialResidual() const { return ksp->GetInitialRes(); }
   double GetFinalResidual() const { return ksp->GetFinalRes(); }
   double GetFinalRelativeResidual() const

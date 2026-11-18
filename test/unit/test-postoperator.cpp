@@ -1958,6 +1958,31 @@ TEST_CASE_METHOD(test::SharedTempDir,
   d_rt = 0.0;
   CHECK_THROWS_WITH(post_op.SetRecoveredElectricFlux(d_rt),
                     ContainsSubstring("does not match the flux recovery space"));
+  // The refusal is collective (review r2152 A S4-5): EVERY process throws, also one whose
+  // local RT and broken sizes agree (no sheet DOF on it), on both setters; before, such a
+  // process went on alone into the face-neighbour exchange (the 8-rank deadlock).
+  auto CountRefusingRanks = [&](auto &&set)
+  {
+    int refused = 0;
+    try
+    {
+      set();
+    }
+    catch (const std::exception &)
+    {
+      refused = 1;
+    }
+    Mpi::GlobalSum(1, &refused, comm);
+    return refused;
+  };
+  int agreeing_ranks = (d_rt.Size() == d.Size()) ? 1 : 0;
+  Mpi::GlobalSum(1, &agreeing_ranks, comm);
+  INFO("ranks whose local RT and broken flux sizes agree: " << agreeing_ranks << " of "
+                                                            << Mpi::Size(comm));
+  CHECK(CountRefusingRanks([&] { post_op.SetRecoveredElectricFlux(d_rt); }) ==
+        Mpi::Size(comm));
+  CHECK(CountRefusingRanks([&] { post_op.SetSurfaceResponseCorrectedField(e, &d_rt); }) ==
+        Mpi::Size(comm));
 
   // The corrected flux output = the FIRST version of D on the RT space.
   post_op.SetSurfaceResponseCorrectedField(e, &d);

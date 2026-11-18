@@ -14,6 +14,7 @@
       "Tol": 1.0e-12,
       "MaxIts": 8,
       "MaxSize": 2000000,
+      "MaxSizePredicted": true,
       "UpdateFraction": 0.7,
       "SaveAdaptIterations": true
     }
