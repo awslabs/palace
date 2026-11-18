@@ -10,12 +10,13 @@
     "Mesh": "mesh/cylinder_prism.msh",
     "L0": 1.0e-2,  // cm
     // One adaptation iteration, whose solve starts from the eigenvectors of the initial one
-    // (the initial solve takes more than two Krylov cycles).
+    // (the initial solve takes more than two Krylov cycles). It refines every element, so
+    // that the mesh does not depend on the number of processes.
     "Refinement":
     {
       "Tol": 1.0e-4,
       "MaxIts": 1,
-      "UpdateFraction": 0.2
+      "UpdateFraction": 0.999999999
     }
   },
   "Domains":
@@ -52,11 +53,11 @@
   },
   "Solver":
   {
-    "Order": 3,
+    "Order": 2,
     "Device": "CPU",
     "Eigenmode":
     {
-      "N": 15,
+      "N": 16,  // Whole degenerate pairs
       "Tol": 1.0e-8,
       "Target": 2.0  // TE f111 ~ 2.9 GHz
     },

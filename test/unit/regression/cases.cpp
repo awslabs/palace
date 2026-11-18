@@ -1810,9 +1810,10 @@ TEST_CASE("cylinder_cavity_impedance", "[Serial][Parallel][GPU][Regression]")
                                   opts);
 }
 
-// One adaptation iteration of cylinder_cavity_impedance at order 3: the initial solve takes
-// nine Krylov cycles, so the solve of the adaptation iteration starts from its eigenvectors
-// (warm start), with the tighter linear solver tolerance in its first cycle.
+// One adaptation iteration of cylinder_cavity_impedance at order 2, refining every element:
+// the initial solve takes about nine Krylov cycles, so the solve of the adaptation
+// iteration starts from its eigenvectors (warm start), with the tighter linear solver
+// tolerance in its first cycle.
 TEST_CASE("cylinder_cavity_impedance_amr", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
