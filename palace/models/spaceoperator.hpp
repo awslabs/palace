@@ -127,8 +127,11 @@ private:
   void AddDampingPeriodicBdrCoefficients(double coeff, MaterialPropertyCoefficient &frb);
   void AddStiffnessPeriodicBdrCoefficients(double coeff, MaterialPropertyCoefficient &fpb);
 
-  // Helper functions for excitation vector assembly.
-  bool AddExcitationVector1Internal(int excitation_idx, Vector &RHS);
+  // Helper functions for excitation vector assembly. The first adds the real part of the
+  // frequency independent excitation to RHS1r, and its imaginary part (nonzero for a
+  // lumped port with a complex excitation weight) to RHS1i, which must be provided unless
+  // the excitation is real.
+  bool AddExcitationVector1Internal(int excitation_idx, Vector &RHS1r, Vector *RHS1i);
   bool AddExcitationVector2Internal(int excitation_idx, double omega, ComplexVector &RHS);
 
   // Helper functions to build the preconditioner matrix. The type of a3 selects the
@@ -212,11 +215,7 @@ public:
   std::unique_ptr<ComplexOperator>
   GetExtraSystemOperator(std::complex<double> omega, Operator::DiagonalPolicy diag_policy);
 
-  // Get the rank-1 terms of the wave-port modal correction W = Σ_k g_k s_k s_kᵀ at ω, for
-  // callers that project onto a reduced basis (the PROM / adaptive sweep) rather than
-  // applying the matrix-free operator built by GetExtraSystemOperator. Forwards to
-  // WavePortOperator::GetModalCorrectionTerms on the finest ND space.
-  std::vector<WavePortOperator::ModalCorrectionTerm> GetModalCorrectionTerms(double omega);
+  // Get the full modal n×H vector of a wave port at ω on the finest ND space.
   std::unique_ptr<ComplexVector> GetWavePortModeVector(int port_idx, double omega);
 
   // Circuit-synthesis form of the wave-port modal correction W (see
@@ -424,12 +423,15 @@ public:
 
   // Assemble the right-hand side source term vector for an incident field or current source
   // applied on specified excited boundaries. The return value indicates whether or not the
-  // excitation is nonzero (and thus is true most of the time).
+  // excitation is nonzero (and thus is true most of the time). The lumped port incident
+  // fields include the complex excitation weight of each port; the real (time domain)
+  // version requires the weights to be real.
   bool GetExcitationVector(int excitation_idx, Vector &RHS);
   bool GetExcitationVector(int excitation_idx, double omega, ComplexVector &RHS);
 
-  // Separate out RHS vector as RHS = iω RHS1 + RHS2(ω). The return value indicates whether
-  // or not the excitation is nonzero (and thus is true most of the time).
+  // Separate out RHS vector as RHS = iω RHS1 + RHS2(ω). RHS1 does not depend on frequency,
+  // and is complex when a lumped port has a complex excitation weight. The return value
+  // indicates whether or not the excitation is nonzero (and thus is true most of the time).
   bool GetExcitationVector1(int excitation_idx, ComplexVector &RHS1);
   bool GetExcitationVector2(int excitation_idx, double omega, ComplexVector &RHS2);
 

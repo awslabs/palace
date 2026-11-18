@@ -1,6 +1,11 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <array>
+#include <cmath>
+#include <complex>
+#include <functional>
+#include <map>
 #include <numbers>
 #include <Eigen/Dense>
 #include <catch2/catch_test_macros.hpp>
@@ -12,7 +17,10 @@
 #include "fem/fespace.hpp"
 #include "fem/gridfunction.hpp"
 #include "fem/mesh.hpp"
+#include "fixtures.hpp"
+#include "linalg/vector.hpp"
 #include "models/materialoperator.hpp"
+#include "models/portexcitations.hpp"
 #include "models/postoperator.hpp"
 #include "models/postoperatorcsv.hpp"
 #include "models/spaceoperator.hpp"
@@ -1018,4 +1026,489 @@ TEST_CASE("LumpedPort_ReactiveExcitation_Cube321", "[lumped_port][Serial][Parall
   CHECK(std::isfinite(S_proj.real()));
   CHECK(std::isfinite(S_proj.imag()));
   CHECK(std::abs(S_proj) > 0.0);
+}
+
+TEST_CASE("LumpedPort excitation weight from amplitude and phase", "[lumped_port][Serial]")
+{
+  using C = std::complex<double>;
+
+  // Multiples of 90 degrees are exact, so a weight which is real (or imaginary) in exact
+  // arithmetic is also real (or imaginary) in floating point.
+  CHECK(ExcitationWeight(2.0, 0.0) == C(2.0, 0.0));
+  CHECK(ExcitationWeight(2.0, 90.0) == C(0.0, 2.0));
+  CHECK(ExcitationWeight(2.0, 180.0) == C(-2.0, 0.0));
+  CHECK(ExcitationWeight(2.0, 270.0) == C(0.0, -2.0));
+  CHECK(ExcitationWeight(2.0, -90.0) == C(0.0, -2.0));
+  CHECK(ExcitationWeight(2.0, -180.0) == C(-2.0, 0.0));
+  CHECK(ExcitationWeight(2.0, 360.0) == C(2.0, 0.0));
+  CHECK(ExcitationWeight(2.0, -360.0) == C(2.0, 0.0));
+  CHECK(ExcitationWeight(2.0, 810.0) == C(0.0, 2.0));
+  CHECK(ExcitationWeight(2.0, -1.0e-20) == C(2.0, 0.0));
+  CHECK(ExcitationWeight(2.0, 180.0).imag() == 0.0);
+  CHECK(ExcitationWeight(3.0, 90.0).real() == 0.0);
+
+  // Other phases, reduced modulo 360 degrees.
+  for (const double phase : {30.0, -110.0, 75.0, 359.0})
+  {
+    CAPTURE(phase);
+    const C expected = std::polar(0.5, phase * std::numbers::pi / 180.0);
+    CHECK(std::abs(ExcitationWeight(0.5, phase) - expected) <= 1.0e-15);
+    CHECK(std::abs(ExcitationWeight(0.5, phase + 360.0) - expected) <= 1.0e-14);
+    CHECK(std::abs(ExcitationWeight(0.5, phase - 720.0) - expected) <= 1.0e-14);
+  }
+}
+
+TEST_CASE("LumpedPort weighted excitation vector", "[lumped_port][Serial][Parallel]")
+{
+  MPI_Comm comm = Mpi::World();
+  auto [mesh_is_hex, mesh_path] =
+      GENERATE(std::make_tuple(true, fs::path(PALACE_TEST_DATA_DIR) /
+                                         "lumpedport_mesh/cube_mesh_3_2_1_hex.msh"),
+               std::make_tuple(false, fs::path(PALACE_TEST_DATA_DIR) /
+                                          "lumpedport_mesh/cube_mesh_3_2_1_tet.msh"));
+  auto order = GENERATE(1, 2);
+  CAPTURE(mesh_is_hex, order);
+  const fs::path mesh_file = mesh_path;
+  const int solver_order = order;
+
+  // Port 1 is a single element port on attribute 1 and port 2 is a multielement port, as
+  // in the other lumped port tests. The extra JSON entries override the defaults and add
+  // the excitation options.
+  auto MakePort1 = [](const json &extra)
+  {
+    json port = {
+        {"Index", 1}, {"R", 50.0}, {"Attributes", json::array({1})}, {"Direction", "+Y"}};
+    port.update(extra);
+    return port;
+  };
+  auto MakePort2 = [](const json &extra)
+  {
+    json port = {
+        {"Index", 2},
+        {"R", 75.0},
+        {"Elements", json::array({json::object({{"Attributes", json::array({9, 11})},
+                                                {"Direction", "+Y"}}),
+                                  json::object({{"Attributes", json::array({2, 6, 10})},
+                                                {"Direction", "+X"}})})}};
+    port.update(extra);
+    return port;
+  };
+
+  // Excitation vectors and incident quantities of the ports of one configuration.
+  struct Drive
+  {
+    ComplexVector rhs1;
+    Vector rhs_time;
+    std::array<std::complex<double>, 2> weight, v_inc, i_inc;
+    std::array<double, 2> v_exc, p_exc;
+  };
+  auto Assemble =
+      [&](const json &port1, const json &port2, int excitation_idx, bool time_domain)
+  {
+    IoData iodata{Units(1.0e-6, 7.0)};
+    iodata.model.mesh = mesh_file;
+    iodata.model.L0 = 1.0e-6;
+    iodata.model.Lc = 7.0;
+    iodata.model.crack_bdr_elements = false;
+    iodata.solver.order = solver_order;
+    json domains_json = {
+        {"Materials",
+         json::array({json::object({{"Attributes", json::array({1, 2, 3, 4, 5, 6})},
+                                    {"Permeability", 1.0},
+                                    {"Permittivity", 1.0},
+                                    {"LossTan", 0.0}})})}};
+    iodata.domains = config::DomainData(domains_json);
+    json boundaries_json = {
+        {"LumpedPort", json::array({MakePort1(port1), MakePort2(port2)})}};
+    iodata.boundaries = config::BoundaryData(boundaries_json);
+    iodata.CheckConfiguration();
+
+    auto mesh = LoadScaleParMesh(iodata, comm);
+    SpaceOperator space_op(iodata, mesh);
+
+    Drive out;
+    out.rhs1.UseDevice(true);
+    REQUIRE(space_op.GetExcitationVector1(excitation_idx, out.rhs1));
+    if (time_domain)
+    {
+      REQUIRE(space_op.GetExcitationVector(excitation_idx, out.rhs_time));
+    }
+    for (int i = 0; i < 2; i++)
+    {
+      const auto &port = space_op.GetLumpedPortOp().GetPort(i + 1);
+      out.weight[i] = port.GetExcitationWeight();
+      out.v_inc[i] = port.GetIncidentVoltage();
+      out.i_inc[i] = port.GetIncidentCurrent();
+      out.v_exc[i] = port.GetExcitationVoltage();
+      out.p_exc[i] = port.GetExcitationPower();
+    }
+    return out;
+  };
+
+  const std::complex<double> a1 = std::polar(2.0, 30.0 * std::numbers::pi / 180.0);
+  const std::complex<double> a2 = std::polar(0.5, -110.0 * std::numbers::pi / 180.0);
+  const json no_port = json::object();
+
+  // Each port driven alone with the default weight, as references.
+  const auto drive_1 = Assemble(json{{"Excitation", 1}}, no_port, 1, true);
+  const auto drive_2 = Assemble(no_port, json{{"Excitation", 2}}, 2, false);
+  const double norm_1 = linalg::Norml2(comm, drive_1.rhs1);
+  const double norm_2 = linalg::Norml2(comm, drive_2.rhs1);
+  REQUIRE(norm_1 > 0.0);
+  REQUIRE(norm_2 > 0.0);
+  CHECK(linalg::Norml2(comm, drive_1.rhs1.Imag()) == 0.0);
+  CHECK(linalg::Norml2(comm, drive_2.rhs1.Imag()) == 0.0);
+
+  // The weights default to one for the excited port and zero for the other.
+  CHECK(drive_1.weight[0] == std::complex<double>(1.0, 0.0));
+  CHECK(drive_1.weight[1] == std::complex<double>(0.0, 0.0));
+  CHECK(drive_1.v_inc[1] == std::complex<double>(0.0, 0.0));
+  CHECK(drive_1.i_inc[1] == std::complex<double>(0.0, 0.0));
+  CHECK(drive_1.p_exc[1] == 0.0);
+
+  SECTION("Both ports in one excitation add with their complex weights")
+  {
+    const auto drive_w = Assemble(
+        json{{"Excitation", 1}, {"ExcitationAmplitude", 2.0}, {"ExcitationPhase", 30.0}},
+        json{{"Excitation", 1}, {"ExcitationAmplitude", 0.5}, {"ExcitationPhase", -110.0}},
+        1, false);
+    const double norm_w = linalg::Norml2(comm, drive_w.rhs1);
+    REQUIRE(norm_w > 0.0);
+    CHECK(linalg::Norml2(comm, drive_w.rhs1.Imag()) > 0.0);
+
+    // RHS1 = a1 RHS1(port 1 alone) + a2 RHS1(port 2 alone).
+    ComplexVector diff(drive_w.rhs1);
+    diff.AXPY(-a1, drive_1.rhs1);
+    diff.AXPY(-a2, drive_2.rhs1);
+    CHECK(linalg::Norml2(comm, diff) <= 1.0e-12 * norm_w);
+
+    // The weights are applied to the excitation and the incident quantities, but not to
+    // the unit-normalized ones.
+    CHECK(std::abs(drive_w.weight[0] - a1) <= 1.0e-15);
+    CHECK(std::abs(drive_w.weight[1] - a2) <= 1.0e-15);
+    CHECK(drive_w.v_exc[0] == drive_1.v_exc[0]);
+    CHECK(drive_w.v_exc[1] == drive_2.v_exc[1]);
+    CHECK(drive_w.p_exc[0] == 1.0);
+    CHECK(drive_w.p_exc[1] == 1.0);
+    const std::array<std::complex<double>, 2> a = {a1, a2};
+    for (int i = 0; i < 2; i++)
+    {
+      CAPTURE(i);
+      REQUIRE(drive_w.v_exc[i] > 0.0);
+      CHECK(std::abs(drive_w.v_inc[i] - a[i] * drive_w.v_exc[i]) <=
+            1.0e-14 * std::abs(a[i]) * drive_w.v_exc[i]);
+      CHECK(std::abs(drive_w.i_inc[i] - a[i] / drive_w.v_exc[i]) <=
+            1.0e-14 * std::abs(a[i]) / drive_w.v_exc[i]);
+    }
+  }
+
+  SECTION("A phase of 180 degrees is a flipped direction")
+  {
+    const auto drive_180 =
+        Assemble(json{{"Excitation", 1}, {"ExcitationPhase", 180.0}}, no_port, 1, false);
+    const auto drive_flip =
+        Assemble(json{{"Excitation", 1}, {"Direction", "-Y"}}, no_port, 1, false);
+
+    // The weight is exactly real, so the imaginary part is not assembled.
+    CHECK(drive_180.weight[0] == std::complex<double>(-1.0, 0.0));
+    CHECK(linalg::Norml2(comm, drive_180.rhs1.Imag()) == 0.0);
+
+    ComplexVector diff(drive_180.rhs1);
+    diff -= drive_flip.rhs1;
+    CHECK(linalg::Norml2(comm, diff) <= 1.0e-12 * norm_1);
+
+    // Also the negative of the unweighted vector.
+    diff.Set(drive_180.rhs1);
+    diff += drive_1.rhs1;
+    CHECK(linalg::Norml2(comm, diff) <= 1.0e-12 * norm_1);
+  }
+
+  SECTION("The amplitude scales the real and time domain excitation")
+  {
+    const auto drive_3 =
+        Assemble(json{{"Excitation", 1}, {"ExcitationAmplitude", 3.0}}, no_port, 1, true);
+    CHECK(drive_3.weight[0] == std::complex<double>(3.0, 0.0));
+    CHECK(linalg::Norml2(comm, drive_3.rhs1.Imag()) == 0.0);
+    CHECK(drive_3.p_exc[0] == 1.0);
+    CHECK(drive_3.v_exc[0] == drive_1.v_exc[0]);
+    CHECK(std::abs(drive_3.v_inc[0] - 3.0 * drive_1.v_exc[0]) <=
+          1.0e-14 * 3.0 * drive_1.v_exc[0]);
+
+    // Frequency domain RHS1.
+    ComplexVector diff(drive_3.rhs1);
+    diff.AXPY(-3.0, drive_1.rhs1);
+    CHECK(linalg::Norml2(comm, diff) <= 1.0e-12 * norm_1);
+
+    // Time domain vector, which also equals the real part of RHS1.
+    REQUIRE(drive_3.rhs_time.Size() == drive_1.rhs_time.Size());
+    Vector diff_time(drive_3.rhs_time);
+    diff_time.Add(-3.0, drive_1.rhs_time);
+    CHECK(linalg::Norml2(comm, diff_time) <= 1.0e-12 * norm_1);
+    Vector diff_real(drive_3.rhs_time);
+    diff_real -= drive_3.rhs1.Real();
+    CHECK(linalg::Norml2(comm, diff_real) <= 1.0e-12 * norm_1);
+  }
+}
+
+namespace
+{
+
+class EigenmodePostOperatorTest : public PostOperator<ProblemType::EIGENMODE>
+{
+public:
+  using PostOperator<ProblemType::EIGENMODE>::PostOperator;
+  const auto &GetMeasurement() const { return measurement_cache; }
+};
+
+struct ResistorLossCase
+{
+  std::unique_ptr<mfem::Mesh> mesh;
+  json boundaries;
+  std::function<void(const mfem::Vector &, mfem::Vector &)> Er, Ei;
+};
+
+struct ResistorLossResult
+{
+  std::map<int, double> R;  // Nondimensional port resistance
+  std::map<int, Measurement::PortPostData> vi;
+  double energy_electric;  // Measured E_elec
+  double damping_ratio;    // Eᴴ C E / Eᴴ M E of the system matrices
+};
+
+// Measure the eigenmode lumped port outputs for a manufactured field E through the
+// PostOperator, with unit internal units and relative permittivity 2.
+ResistorLossResult MeasureResistorLoss(ResistorLossCase &c, const fs::path &output)
+{
+  IoData iodata{Units(1.0, 1.0)};
+  iodata.model.L0 = 1.0;
+  iodata.model.Lc = 1.0;
+  iodata.problem.type = ProblemType::EIGENMODE;
+  iodata.problem.output = output.string();
+  iodata.solver.order = 2;
+  iodata.domains = config::DomainData(
+      json{{"Materials", json::array({json::object({{"Attributes", json::array({1})},
+                                                    {"Permittivity", 2.0}})})}});
+  iodata.boundaries = config::BoundaryData(c.boundaries);
+  iodata.CheckConfiguration();
+  iodata.NondimensionalizeInputs(c.mesh);
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  mesh.push_back(
+      std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(Mpi::World(), *c.mesh)));
+  SpaceOperator space_op(iodata, mesh);
+  EigenmodePostOperatorTest post_op(iodata, space_op);
+
+  const int dim = mesh.back()->Dimension();
+  GridFunction E(space_op.GetNDSpace(), true);
+  mfem::VectorFunctionCoefficient Er(dim, c.Er), Ei(dim, c.Ei);
+  E.Real().ProjectCoefficient(Er);
+  E.Imag().ProjectCoefficient(Ei);
+  ComplexVector e(space_op.GetNDSpace().GetTrueVSize()),
+      b(space_op.GetCurlSpace().GetTrueVSize());
+  e.UseDevice(true);
+  b.UseDevice(true);
+  E.Real().GetTrueDofs(e.Real());
+  E.Imag().GetTrueDofs(e.Imag());
+  b = 0.0;
+  post_op.MeasureAndPrintAll(0, e, b, 1.0, 0.0, 0.0, 1);
+
+  ResistorLossResult result;
+  for (const auto &[idx, data] : space_op.GetLumpedPortOp())
+  {
+    result.R[idx] = data.R;
+  }
+  result.vi = post_op.GetMeasurement().lumped_port_vi;
+  result.energy_electric = post_op.GetMeasurement().domain_E_field_energy_all;
+  auto C = space_op.GetDampingMatrix<Operator>(Operator::DIAG_ZERO);
+  auto M = space_op.GetMassMatrix<Operator>(Operator::DIAG_ZERO);
+  REQUIRE(C);
+  REQUIRE(M);
+  auto Quadratic = [&](const Operator &A)
+  {
+    Vector Ae(A.Height());
+    Ae.UseDevice(true);
+    A.Mult(e.Real(), Ae);
+    double dot = linalg::Dot(space_op.GetComm(), e.Real(), Ae);
+    A.Mult(e.Imag(), Ae);
+    return dot + linalg::Dot(space_op.GetComm(), e.Imag(), Ae);
+  };
+  result.damping_ratio = Quadratic(*C) / Quadratic(*M);
+  return result;
+}
+
+}  // namespace
+
+TEST_CASE_METHOD(test::SharedTempDir, "LumpedPort eigenmode resistor loss",
+                 "[lumped_port][Serial][Parallel]")
+{
+  // The |κ| of a resistive port is its dissipated power over the electric energy,
+  // |κ| = P / E. The power P = 1/2 ∫ |E_t|² / R_s dS is the port term of the damping matrix
+  // C, so κ must include the field components which do not change the port voltage. The
+  // sum of |κ| over the active ports is Eᴴ C E / Eᴴ M E, which is 2 Im{ω} for an eigenpair
+  // when the ports are the only loss. All quantities are nondimensional, and ε_r = 2.
+  constexpr double eps = 2.0;
+  SECTION("2D port")
+  {
+    // Rectangle [0, 1] x [0, 1/2] made of three quadrilaterals, with the port on the edge
+    // y = 0 (unit length and width).
+    const int field = GENERATE(0, 1, 2);
+    CAPTURE(field);
+    ResistorLossCase c;
+    c.mesh = std::make_unique<mfem::Mesh>(
+        mfem::Mesh::MakeCartesian2D(3, 1, mfem::Element::QUADRILATERAL, false, 1.0, 0.5));
+    for (int i = 0; i < c.mesh->GetNBE(); i++)
+    {
+      mfem::Vector center;
+      auto *T = c.mesh->GetBdrElementTransformation(i);
+      T->Transform(mfem::Geometries.GetCenter(c.mesh->GetBdrElementGeometry(i)), center);
+      c.mesh->SetBdrAttribute(i, (center(1) == 0.0) ? 2 : 3);
+    }
+    c.mesh->SetAttributes();
+    c.boundaries = {
+        {"LumpedPort", json::array({json::object({{"Index", 1},
+                                                  {"Attributes", json::array({2})},
+                                                  {"Direction", "+X"},
+                                                  {"R", 50.0}})})}};
+
+    // Integrals of |E_t|² over the port and |E|² over the domain, and the port voltage.
+    double port_int, domain_int;
+    std::complex<double> V;
+    auto zero = [](const mfem::Vector &x, mfem::Vector &v) { v = 0.0; };
+    auto uniform = [](const mfem::Vector &x, mfem::Vector &v)
+    {
+      v(0) = 1.0;
+      v(1) = 0.0;
+    };
+    auto cancelling = [](const mfem::Vector &x, mfem::Vector &v)
+    {
+      v(0) = x(0) - 0.5;
+      v(1) = 0.0;
+    };
+    switch (field)
+    {
+      case 0:
+        // Zero port voltage.
+        c.Er = cancelling;
+        c.Ei = zero;
+        port_int = 1.0 / 12.0;
+        domain_int = 1.0 / 24.0;
+        V = 0.0;
+        break;
+      case 1:
+        // Uniform port mode: the voltage estimate |V|² / (2R) is exact.
+        c.Er = uniform;
+        c.Ei = zero;
+        port_int = 1.0;
+        domain_int = 0.5;
+        V = 1.0;
+        break;
+      default:
+        c.Er = uniform;
+        c.Ei = cancelling;
+        port_int = 1.0 + 1.0 / 12.0;
+        domain_int = 0.5 + 1.0 / 24.0;
+        V = 1.0;
+        break;
+    }
+    auto result = MeasureResistorLoss(c, temp_dir);
+    const auto &vi = result.vi.at(1);
+    const double R = result.R.at(1);
+    const double P = 0.5 * port_int / R, energy = 0.5 * eps * domain_int;
+    CHECK_THAT(result.energy_electric, WithinRel(energy, 1.0e-12));
+    CHECK_THAT(std::abs(vi.V - V), WithinAbs(0.0, 1.0e-12));
+    CHECK_THAT(std::abs(vi.mode_port_kappa), WithinRel(P / energy, 1.0e-10));
+    CHECK_THAT(vi.quality_factor, WithinRel(energy / P, 1.0e-10));
+    CHECK_THAT(std::abs(vi.mode_port_kappa), WithinRel(result.damping_ratio, 1.0e-10));
+    if (field != 0)
+    {
+      CHECK(vi.mode_port_kappa > 0.0);  // V = 1, so Re{I} > 0
+    }
+    if (field == 1)
+    {
+      CHECK_THAT(std::abs(vi.mode_port_kappa),
+                 WithinRel(std::norm(vi.V) / (2.0 * R * energy), 1.0e-10));
+    }
+  }
+
+  SECTION("3D multielement and inactive ports")
+  {
+    // Unit cube made of 2 x 2 x 2 hexahedra. Port 1 has one element on each of the faces z
+    // = 0 and z = 1, port 2 is inactive on x = 0, and port 3 is on x = 1. Every port
+    // element is a unit square. The field is E = (y - 1/2, x - 1/2, i x).
+    ResistorLossCase c;
+    c.mesh = std::make_unique<mfem::Mesh>(
+        mfem::Mesh::MakeCartesian3D(2, 2, 2, mfem::Element::HEXAHEDRON));
+    for (int i = 0; i < c.mesh->GetNBE(); i++)
+    {
+      mfem::Vector center;
+      auto *T = c.mesh->GetBdrElementTransformation(i);
+      T->Transform(mfem::Geometries.GetCenter(c.mesh->GetBdrElementGeometry(i)), center);
+      const int attr = (center(2) == 0.0)   ? 1
+                       : (center(2) == 1.0) ? 2
+                       : (center(0) == 0.0) ? 3
+                       : (center(0) == 1.0) ? 4
+                                            : 5;
+      c.mesh->SetBdrAttribute(i, attr);
+    }
+    c.mesh->SetAttributes();
+    c.boundaries = {
+        {"LumpedPort",
+         json::array(
+             {json::object(
+                  {{"Index", 1},
+                   {"R", 50.0},
+                   {"Elements", json::array({json::object({{"Attributes", json::array({1})},
+                                                           {"Direction", "+X"}}),
+                                             json::object({{"Attributes", json::array({2})},
+                                                           {"Direction", "+Y"}})})}}),
+              json::object({{"Index", 2},
+                            {"R", 75.0},
+                            {"Active", false},
+                            {"Attributes", json::array({3})},
+                            {"Direction", "+Y"}}),
+              json::object({{"Index", 3},
+                            {"R", 100.0},
+                            {"Attributes", json::array({4})},
+                            {"Direction", "+Z"}})})}};
+    c.Er = [](const mfem::Vector &x, mfem::Vector &v)
+    {
+      v(0) = x(1) - 0.5;
+      v(1) = x(0) - 0.5;
+      v(2) = 0.0;
+    };
+    c.Ei = [](const mfem::Vector &x, mfem::Vector &v)
+    {
+      v(0) = 0.0;
+      v(1) = 0.0;
+      v(2) = x(0);
+    };
+    auto result = MeasureResistorLoss(c, temp_dir);
+    const double energy = 0.5 * eps * (1.0 / 6.0 + 1.0 / 3.0);
+    CHECK_THAT(result.energy_electric, WithinRel(energy, 1.0e-12));
+
+    // Port 1: zero voltage, ∫ |E_t|² = 1/6 on each element, with R_s = 2 R.
+    // Port 2: uniform E_t = -1/2 ŷ, so the voltage estimate is exact.
+    // Port 3: E_t = 1/2 ŷ + i ẑ, but only the ẑ component sets the voltage V = i.
+    const std::map<int, double> P = {{1, 1.0 / (12.0 * result.R.at(1))},
+                                     {2, 1.0 / (8.0 * result.R.at(2))},
+                                     {3, 5.0 / (8.0 * result.R.at(3))}};
+    const std::map<int, std::complex<double>> V = {
+        {1, 0.0}, {2, -0.5}, {3, std::complex<double>(0.0, 1.0)}};
+    for (const auto &[idx, P_idx] : P)
+    {
+      CAPTURE(idx);
+      const auto &vi = result.vi.at(idx);
+      CHECK_THAT(std::abs(vi.V - V.at(idx)), WithinAbs(0.0, 1.0e-12));
+      CHECK_THAT(std::abs(vi.mode_port_kappa), WithinRel(P_idx / energy, 1.0e-10));
+      CHECK_THAT(vi.quality_factor, WithinRel(energy / P_idx, 1.0e-10));
+    }
+    CHECK_THAT(std::abs(result.vi.at(2).mode_port_kappa),
+               WithinRel(std::norm(V.at(2)) / (2.0 * result.R.at(2) * energy), 1.0e-10));
+    // Re{I} is only well defined for port 2 (V = -1/2), where κ is negative.
+    CHECK(result.vi.at(2).mode_port_kappa < 0.0);
+
+    // Only the active ports 1 and 3 are in the damping matrix.
+    CHECK_THAT(std::abs(result.vi.at(1).mode_port_kappa) +
+                   std::abs(result.vi.at(3).mode_port_kappa),
+               WithinRel(result.damping_ratio, 1.0e-10));
+  }
 }

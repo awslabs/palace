@@ -290,7 +290,7 @@ The source term ``\bm{U}^{inc}`` in a driven frequency-response problem is relat
 tangential component of the incident field at an excited port boundary by
 
 ```math
-\bm{U}^{inc} = -2\gamma_{exc}(\bm{n}\times\bm{E}^{inc})\times\bm{n} \,, \qquad
+\bm{U}^{inc} = -2a\gamma_{exc}(\bm{n}\times\bm{E}^{inc})\times\bm{n} \,, \qquad
 \gamma_{exc} = \frac{i\omega}{R_{ref}}
 ```
 
@@ -300,15 +300,24 @@ excited port: the port resistance ``R`` when ``R > 0``, or the impedance of free
 ``Z_0`` for a purely reactive port with ``R = 0`` (see the discussion of reactive port
 excitation below). The excitation coefficient ``\gamma_{exc}`` is in general distinct from
 the termination coefficient ``\gamma = i\omega/Z_s`` appearing in the Robin boundary
-condition, and the two coincide for a purely resistive port. The excitation amplitude is
-fixed at the unit-power mode normalization described above, ``1~\mathrm{W}``.
+condition, and the two coincide for a purely resistive port. The field ``\bm{E}^{inc}`` is
+the unit-power mode normalized as described above, ``1~\mathrm{W}``, and ``a = A e^{i\varphi}``
+is the complex excitation weight of the port, set by the port's
+[`"ExcitationAmplitude"`](config/reference.md#config-boundaries-lumpedport) ``A`` and
+`"ExcitationPhase"` ``\varphi`` (``a = 1`` by default). The weight scales the source term
+``\bm{U}^{inc}`` by ``a``, so the incident power of the excited port is ``A^2`` times that of
+the unit-power excitation.
 
 In the time-domain formulation, the source term ``\bm{U}^{inc}`` appears as
 
 ```math
-\bm{U}^{inc} = -2 R_{ref}^{-1}\left(\bm{n}\times\frac{\partial\bm{E}^{inc}}{\partial t}\right)
+\bm{U}^{inc} = -2 A R_{ref}^{-1}\left(\bm{n}\times\frac{\partial\bm{E}^{inc}}{\partial t}\right)
     \times\bm{n} \,.
 ```
+
+where the source is scaled by the amplitude ``A``. The time-domain excitation is real, so the
+weight must be real in that case (``\varphi`` a multiple of 180 degrees); for ``\varphi = 180``
+degrees, ``A`` is replaced by ``-A``.
 
 The incident field ``\bm{E}^{inc}(\bm{x},t)`` is
 
@@ -550,7 +559,9 @@ orthogonalized real and imaginary components, ``\mathrm{Re}(\bm{x}^*)`` and
 ``\mathrm{Im}(\bm{x}^*)``, as separate real basis vectors. The Gram-Schmidt
 orthogonalization variant is controlled by
 [`config["Solver"]["Driven"]["AdaptiveGSOrthogonalization"]`](config/reference.md#config-solver-driven),
-though most users should not need to change it.
+though most users should not need to change it. `"MGS"` is applied as `"CGS2"`, classical
+Gram-Schmidt with reorthogonalization, which is as stable with three reductions per vector
+(one per pass and one for the norm) instead of one per basis vector.
 
 ### Internal sample selection
 
@@ -767,14 +778,25 @@ The EPR can also be used to estimate mode quality factors due to input-output (I
 coupling. The mode coupling quality factor due to the ``j``-th I-O port is given by
 
 ```math
-Q_{mj} = \frac{\omega_m}{\kappa_{mj}}
+Q_{mj} = \frac{\text{Re}\{\omega_m\}}{|\kappa_{mj}|}
 ```
 
-where the port coupling rate ``\kappa_{mj}`` is calculated as
+The magnitude of the port coupling rate ``\kappa_{mj}`` is the power dissipated in the
+resistive boundary of port ``j`` divided by the electric energy of mode ``m``, and its sign
+is the sign of the real part of the port current ``I_{mj} = \overline{V}_{mj}/R_j``:
 
 ```math
-\kappa_{mj} = \frac{1}{\mathcal{E}^{elec}_m} \, \frac{1}{2}\,R_j I_{mj}^2 \,.
+\kappa_{mj} = \text{sign}(\text{Re}\{I_{mj}\}) \, \frac{1}{\mathcal{E}^{elec}_m} \,
+    \frac{1}{2} \sum_e \int_{\Gamma_e} \frac{|\bm{E}_{m,t}|^2}{R_{s,e}} \, dS \,,
 ```
+
+where ``\bm{E}_{m,t}`` is the tangential electric field of mode ``m`` on element ``e`` of
+the port and ``R_{s,e}`` is the sheet resistance of that element.
+
+When the active resistive ports are the only loss,
+``\sum_j |\kappa_{mj}| = 2\,\text{Im}\{\omega_m\}``, so ``\sum_j 1/Q_{mj}`` is
+``|\omega_m|/\text{Re}\{\omega_m\}`` times the ``1/Q`` of the eigenvalue above, and close
+to it only when ``Q \gg 1``.
 
 ## Bulk and interface dielectric loss
 
@@ -922,8 +944,10 @@ density. On element ``K``, we have
 ```
 
 where ``\bm{R}_{ND}`` and ``\bm{R}_{RT}`` are the smooth-space recovery operators which
-orthogonally project their argument onto ``H(\text{curl})`` and ``H(\text{div})``,
-discretized by Nédélec and Raviart-Thomas elements, respectively.
+project their argument onto ``H(\text{curl})`` and ``H(\text{div})``, discretized by Nédélec
+and Raviart-Thomas elements, respectively. Each projection is orthogonal in the weighted
+``L^2`` inner product of the norm it is measured in (``\mu_r`` for ``\bm{R}_{ND}``,
+``\varepsilon_r^{-1}`` for ``\bm{R}_{RT}``), so the recovered field minimizes the estimate.
 
 ## Far-field extraction
 

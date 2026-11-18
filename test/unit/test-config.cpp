@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <iterator>
+#include <limits>
 #include <numbers>
 #include <set>
 #include <string>
@@ -804,6 +805,168 @@ TEST_CASE("Config Boundary Ports", "[config][Serial]")
   }
 }
 
+TEST_CASE("LumpedPort excitation weight", "[config][Serial]")
+{
+  using Catch::Matchers::ContainsSubstring;
+
+  auto MakePort = [](const json &extra)
+  {
+    json port = {{"Index", 3},
+                 {"Attributes", {5}},
+                 {"R", 50.0},
+                 {"Direction", "+Y"},
+                 {"Excitation", true}};
+    port.update(extra);
+    return port;
+  };
+
+  SECTION("Defaults are unit amplitude and zero phase")
+  {
+    config::LumpedPortData excited(MakePort(json::object()));
+    CHECK(excited.excitation_amplitude == 1.0);
+    CHECK(excited.excitation_phase == 0.0);
+
+    // A port without excitation also has the default weight.
+    json passive = MakePort(json::object());
+    passive.erase("Excitation");
+    config::LumpedPortData unexcited(passive);
+    CHECK(unexcited.excitation == 0);
+    CHECK(unexcited.excitation_amplitude == 1.0);
+    CHECK(unexcited.excitation_phase == 0.0);
+  }
+
+  SECTION("Parsed values")
+  {
+    config::LumpedPortData port(
+        MakePort({{"ExcitationAmplitude", 2.5}, {"ExcitationPhase", -45.0}}));
+    CHECK(port.excitation != 0);
+    CHECK(port.excitation_amplitude == 2.5);
+    CHECK(port.excitation_phase == -45.0);
+
+    // Integer values and a multielement port with an integer excitation index.
+    json elements = {{"Index", 4},
+                     {"R", 75.0},
+                     {"Excitation", 2},
+                     {"ExcitationAmplitude", 3},
+                     {"ExcitationPhase", 90},
+                     {"Elements",
+                      {{{"Attributes", {2}}, {"Direction", "+X"}},
+                       {{"Attributes", {9}}, {"Direction", "+Y"}}}}};
+    config::LumpedPortData multi(elements);
+    CHECK(multi.excitation == 2);
+    CHECK(multi.excitation_amplitude == 3.0);
+    CHECK(multi.excitation_phase == 90.0);
+  }
+
+  SECTION("Amplitude must be positive and finite")
+  {
+    CHECK_THROWS_WITH(config::LumpedPortData(MakePort({{"ExcitationAmplitude", 0.0}})),
+                      ContainsSubstring("ExcitationAmplitude"));
+    CHECK_THROWS(config::LumpedPortData(MakePort({{"ExcitationAmplitude", -1.0}})));
+    CHECK_THROWS(config::LumpedPortData(
+        MakePort({{"ExcitationAmplitude", std::numeric_limits<double>::infinity()}})));
+    CHECK_THROWS(config::LumpedPortData(
+        MakePort({{"ExcitationAmplitude", std::numeric_limits<double>::quiet_NaN()}})));
+  }
+
+  SECTION("Phase must be finite")
+  {
+    CHECK_THROWS_WITH(config::LumpedPortData(MakePort(
+                          {{"ExcitationPhase", std::numeric_limits<double>::infinity()}})),
+                      ContainsSubstring("ExcitationPhase"));
+  }
+
+  SECTION("Weight keys require an excitation")
+  {
+    for (const auto &key : {"ExcitationAmplitude", "ExcitationPhase"})
+    {
+      CAPTURE(key);
+
+      // No "Excitation" key.
+      json missing = MakePort({{key, 1.0}});
+      missing.erase("Excitation");
+      CHECK_THROWS_WITH(config::LumpedPortData(missing),
+                        ContainsSubstring("require a nonzero \"Excitation\""));
+
+      // Explicitly not excited, as a boolean and as an index.
+      CHECK_THROWS(config::LumpedPortData(MakePort({{key, 1.0}, {"Excitation", false}})));
+      CHECK_THROWS(config::LumpedPortData(MakePort({{key, 1.0}, {"Excitation", 0}})));
+    }
+  }
+
+  SECTION("Transient simulations reject a complex weight")
+  {
+    auto MakeConfig = [&](const json &extra)
+    {
+      return json{
+          {"Problem", {{"Type", "Transient"}, {"Output", "test_output"}}},
+          {"Model", {{"Mesh", "test.msh"}}},
+          {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+          {"Boundaries", {{"LumpedPort", json::array({MakePort(extra)})}}},
+          {"Solver",
+           {{"Transient",
+             {{"Excitation", "Sinusoidal"}, {"MaxTime", 1.0}, {"TimeStep", 0.01}}}}}};
+    };
+
+    CHECK_NOTHROW(IoData(MakeConfig(json::object()), false));
+    CHECK_THROWS_WITH(IoData(MakeConfig({{"ExcitationPhase", 30.0}}), false),
+                      ContainsSubstring("ExcitationPhase"));
+    CHECK_THROWS_WITH(IoData(MakeConfig({{"ExcitationPhase", 30.0}}), false),
+                      ContainsSubstring("multiple of 180"));
+    CHECK_THROWS(IoData(MakeConfig({{"ExcitationPhase", -90.0}}), false));
+    CHECK_THROWS(IoData(MakeConfig({{"ExcitationPhase", 270.0}}), false));
+
+    // A multiple of 180 degrees gives a real weight, and the amplitude is unrestricted.
+    CHECK_NOTHROW(IoData(MakeConfig({{"ExcitationPhase", 180.0}}), false));
+    CHECK_NOTHROW(IoData(MakeConfig({{"ExcitationPhase", -180.0}}), false));
+    CHECK_NOTHROW(IoData(MakeConfig({{"ExcitationPhase", 360.0}}), false));
+    CHECK_NOTHROW(IoData(MakeConfig({{"ExcitationAmplitude", 2.0}}), false));
+
+    // Driven simulations accept any phase.
+    json driven = MakeConfig({{"ExcitationPhase", 30.0}});
+    driven["Problem"]["Type"] = "Driven";
+    driven["Solver"] = {
+        {"Driven", {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 0.1}}}};
+    CHECK_NOTHROW(IoData(driven, false));
+  }
+
+  SECTION("Concretized configuration keeps the weight and re-parses")
+  {
+    json config = {
+        {"Problem", {{"Type", "Driven"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+        {"Boundaries",
+         {{"LumpedPort",
+           json::array({MakePort({{"ExcitationAmplitude", 2.0}, {"ExcitationPhase", 30.0}}),
+                        json{{"Index", 4},
+                             {"Attributes", {6}},
+                             {"R", 50.0},
+                             {"Direction", "-Y"}}})}}},
+        {"Solver", {{"Driven", {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 0.1}}}}}};
+
+    IoData iodata1(config, false);
+    config = IoData::ConcretizeDefaults(iodata1, config);
+
+    // The weight is emitted for the excited port only, because the parser rejects it on a
+    // port without an excitation.
+    const auto &j_ports = config["Boundaries"]["LumpedPort"];
+    CHECK(j_ports[0]["ExcitationAmplitude"].get<double>() == 2.0);
+    CHECK(j_ports[0]["ExcitationPhase"].get<double>() == 30.0);
+    CHECK_FALSE(j_ports[1].contains("ExcitationAmplitude"));
+    CHECK_FALSE(j_ports[1].contains("ExcitationPhase"));
+
+    std::string err = ValidateConfig(config);
+    INFO("schema validation error: " << err);
+    CHECK(err.empty());
+
+    IoData iodata2(config, false);
+    CHECK(iodata2.boundaries.lumpedport.at(3).excitation_amplitude == 2.0);
+    CHECK(iodata2.boundaries.lumpedport.at(3).excitation_phase == 30.0);
+    CHECK(iodata2.boundaries.lumpedport.at(4).excitation_amplitude == 1.0);
+  }
+}
+
 TEST_CASE("Config Driven Solver", "[config][Serial]")
 {
   using namespace Catch::Matchers;
@@ -933,6 +1096,23 @@ TEST_CASE("Config Driven Solver", "[config][Serial]")
     }
     CHECK(driven_solver.save_indices == save_indices);
     CHECK(driven_solver.prom_indices == prom_indices);
+  }
+
+  SECTION("Save and PROM samples which differ from the sample frequencies by rounding")
+  {
+    // Same frequency with different rounding, as from two overlapping ranges.
+    const double f_sweep = 7.85, f_prom = std::nextafter(7.85, 8.0);
+    REQUIRE(f_prom != f_sweep);
+    json driven = {{"Samples",
+                    {{{"Freq", {6.0, 7.0, f_sweep, 8.0}}},
+                     {{"Freq", {f_prom}}, {"SaveStep", 1}, {"AddToPROM", true}},
+                     {{"Freq", {std::nextafter(8.0, 9.0)}}, {"AddToPROM", true}}}},
+                   {"AdaptiveTol", 1e-3}};
+    config::DrivenSolverData driven_solver(driven);
+
+    CHECK(driven_solver.sample_f == std::vector{6.0, 7.0, f_sweep, 8.0});
+    CHECK(driven_solver.save_indices == std::vector<size_t>{2});
+    CHECK(driven_solver.prom_indices == std::vector<size_t>{0, 3, 2});
   }
 
   SECTION("Invalid configs throw")
@@ -1632,6 +1812,114 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(j_eigen["StartVector"].get<bool>() == true);
     CHECK(j_eigen["StartVectorConstant"].get<bool>() == false);
     CHECK(j_eigen["MassOrthogonal"].get<bool>() == false);
+  }
+
+  SECTION("ComplexCoarseSolve is disabled with AMS and BoomerAMG")
+  {
+    // AMS and BoomerAMG cannot be given the complex-valued coarse matrix as a real-valued
+    // system of twice the size: an explicit true falls back to false, also when the type
+    // is the resolved default, and the resolved configuration says so. Other types keep
+    // it, and so does a boundary mode problem without multigrid, which replaces AMS and
+    // BoomerAMG by a sparse direct solver.
+    auto Resolve = [](const char *problem, json solver)
+    {
+      json config = {{"Problem", {{"Type", problem}, {"Output", "test_output"}}},
+                     {"Model", {{"Mesh", "test.msh"}}},
+                     {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                     {"Boundaries", json::object()},
+                     {"Solver", std::move(solver)}};
+      IoData iodata(config, false);
+      config = IoData::ConcretizeDefaults(iodata, config);
+      CHECK(config["Solver"]["Linear"]["ComplexCoarseSolve"].get<bool>() ==
+            iodata.solver.linear.complex_coarse_solve);
+      return iodata.solver.linear;
+    };
+    auto Linear = [](const char *type, int mg_max_levels = -1)
+    {
+      json linear = {{"Type", type}, {"ComplexCoarseSolve", true}};
+      if (mg_max_levels > 0)
+      {
+        linear["MGMaxLevels"] = mg_max_levels;
+      }
+      return linear;
+    };
+    const json eigenmode = {{"Target", 1.0}}, boundary_mode = {{"Freq", 10.0}};
+    for (const char *type : {"AMS", "BoomerAMG"})
+    {
+      INFO("type " << type);
+      CHECK_FALSE(Resolve("Eigenmode", {{"Eigenmode", eigenmode}, {"Linear", Linear(type)}})
+                      .complex_coarse_solve);
+      CHECK_FALSE(
+          Resolve("Eigenmode", {{"Eigenmode", eigenmode}, {"Linear", Linear(type, 1)}})
+              .complex_coarse_solve);
+      CHECK_FALSE(Resolve("BoundaryMode",
+                          {{"BoundaryMode", boundary_mode}, {"Linear", Linear(type, 2)}})
+                      .complex_coarse_solve);
+      CHECK(Resolve("BoundaryMode",
+                    {{"BoundaryMode", boundary_mode}, {"Linear", Linear(type)}})
+                .complex_coarse_solve);
+    }
+    {
+      // A real-valued problem does not use the option: it is left as it is, without a
+      // warning.
+      const auto linear = Resolve("Magnetostatic", {{"Linear", Linear("Default")}});
+      CHECK(linear.type == LinearSolver::AMS);
+      CHECK(linear.complex_coarse_solve);
+    }
+    for (const bool pc_mat_real : {false, true})
+    {
+      // The wave ports of a driven problem keep the inherited value for their mode solver,
+      // which uses a sparse direct solver, unless PCMatReal overrides it. An explicit
+      // per-port value is kept as it is.
+      INFO("PCMatReal " << pc_mat_real);
+      auto linear = Linear("AMS");
+      linear["PCMatReal"] = pc_mat_real;
+      json config = {
+          {"Problem", {{"Type", "Driven"}, {"Output", "test_output"}}},
+          {"Model", {{"Mesh", "test.msh"}}},
+          {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+          {"Boundaries",
+           {{"WavePort",
+             {{{"Index", 1}, {"Attributes", {2}}, {"Excitation", true}},
+              {{"Index", 2}, {"Attributes", {3}}, {"ComplexCoarseSolve", false}}}}}},
+          {"Solver",
+           {{"Driven",
+             {{"Samples", {{{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 0.5}}}}}},
+            {"Linear", linear}}}};
+      IoData iodata(config, false);
+      CHECK_FALSE(iodata.solver.linear.complex_coarse_solve);
+      const auto &port1 = iodata.boundaries.waveport.at(1).complex_coarse_solve;
+      const auto &port2 = iodata.boundaries.waveport.at(2).complex_coarse_solve;
+      CHECK(port1.has_value() == !pc_mat_real);
+      CHECK(port1.value_or(true));
+      CHECK(port2.has_value());
+      CHECK_FALSE(port2.value_or(true));
+
+      // The resolved configuration has the values which are used, so that it gives the
+      // same simulation.
+      config = IoData::ConcretizeDefaults(iodata, config);
+      const auto &j_ports = config["Boundaries"]["WavePort"];
+      CHECK_FALSE(config["Solver"]["Linear"]["ComplexCoarseSolve"].get<bool>());
+      CHECK(j_ports[0].contains("ComplexCoarseSolve") == !pc_mat_real);
+      CHECK(j_ports[0].value("ComplexCoarseSolve", true));
+      CHECK_FALSE(j_ports[1].at("ComplexCoarseSolve").get<bool>());
+      IoData iodata2(config, false);
+      CHECK_FALSE(iodata2.solver.linear.complex_coarse_solve);
+      CHECK(iodata2.boundaries.waveport.at(1).complex_coarse_solve == port1);
+      CHECK(iodata2.boundaries.waveport.at(2).complex_coarse_solve == port2);
+    }
+    {
+      // The default of a frequency domain problem is a sparse direct solver if there is
+      // one in the build, AMS otherwise.
+      const auto linear =
+          Resolve("Eigenmode", {{"Eigenmode", eigenmode}, {"Linear", Linear("Default")}});
+      CHECK(linear.complex_coarse_solve == (linear.type != LinearSolver::AMS));
+    }
+    CHECK(Resolve("Eigenmode", {{"Eigenmode", eigenmode}, {"Linear", Linear("Jacobi")}})
+              .complex_coarse_solve);
+    CHECK_FALSE(
+        Resolve("Eigenmode", {{"Eigenmode", eigenmode}, {"Linear", {{"Type", "AMS"}}}})
+            .complex_coarse_solve);
   }
 
   SECTION("Round-trip: resolved config validates and re-parses identically")
