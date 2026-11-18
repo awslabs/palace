@@ -62,6 +62,8 @@ region and the environment are given by domain attributes, which together must c
     environment model to that file.
   - `"Mode": "Online"` loads the model from `"SaveModel"` and solves only the region. The region
     may be re-meshed between runs, as long as the environment and the interface are unchanged.
+  - `"RegionMesh": true` tells an `"Online"` run that its mesh is the mesh of the region written
+    with the model (see below), not the full mesh.
 
 An `"Offline"` run that saves a model on a conforming mesh (not one from adaptive refinement) also
 writes a mesh of the region next to it (`<model>_region.mesh` for `"SaveModel": "<model>.model"`),
@@ -69,8 +71,8 @@ with the few environment elements along the boundary conditions of the environme
 interface and, in magnetostatics, at the surface currents and flux loops of the environment (with
 the films of the flux loops whole and, if these elements reach a `"TwoSided"` film where it crosses
 the interface, the environment along every such crossing) and next to the films on the interface. An
-`"Online"` run on it (`"Model"/"Mesh"`, with the configuration otherwise unchanged) reads and
-partitions the region only. The environment is then that of the model, whatever the configuration
+`"Online"` run on it (`"Model"/"Mesh"` and `"RegionMesh": true`, with the configuration otherwise
+unchanged) reads and partitions the region only. The environment is then that of the model, whatever the configuration
 says of it (on the full mesh, an environment that differs from that of the model is rejected), and
 the mesh must hold the environment elements written with it; the interface is found from the saved
 interface DOFs, and the nondimensionalization is that of the model. Every excitation with sources in

@@ -159,6 +159,9 @@ TEST_CASE("Config Substructuring", "[config][Serial]")
     CHECK(data.substructuring->environment_attributes == std::vector<int>{2, 3});
     CHECK(data.substructuring->mode == SubstructuringMode::OFFLINE);
     CHECK(data.substructuring->save_model == "env_dtn.dat");
+    CHECK_FALSE(data.substructuring->region_mesh);
+    solver["Substructuring"]["RegionMesh"] = true;
+    CHECK(config::SolverData(solver).substructuring->region_mesh);
   }
 
   SECTION("Absent block leaves substructuring unset")

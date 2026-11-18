@@ -1263,6 +1263,10 @@ public:
   // Optional path for the serialized environment DtN model (offline/online reuse).
   std::string save_model = "";
 
+  // Online: whether the mesh is the mesh of the region written next to the model (or a
+  // re-meshing of its region), rather than the full mesh.
+  bool region_mesh = false;
+
   // Relative block low-rank (BLR) tolerance of the MUMPS environment factorization (0:
   // exact factorization).
   double factorization_tol = 0.0;

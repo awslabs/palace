@@ -17,5 +17,6 @@
     "Magnetostatic": { "Save": 0 },
     "Linear": { "Type": "AMS", "KSPType": "CG", "Tol": 1e-10, "MaxIts": 1000 },
     "Substructuring": { "Region": { "Attributes": [8] }, "Environment": { "Attributes": [1] },
-      "Mode": "Online", "SaveModel": "environment_two_sided.model" } }
+      "Mode": "Online", "SaveModel": "environment_two_sided.model",
+      "RegionMesh": true } }
 }

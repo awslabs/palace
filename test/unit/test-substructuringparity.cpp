@@ -593,7 +593,9 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   const double E_on = energy(make_config("Online"), MakeParitySerial(8, opt));
   mfem::Mesh region_mesh(RegionMeshPath(model_path).c_str());
   const int region_ne = region_mesh.GetNE();
-  const double E_region = energy(make_config("Online"), std::move(region_mesh));
+  IoData online = make_config("Online");
+  online.solver.substructuring->region_mesh = true;
+  const double E_region = energy(online, std::move(region_mesh));
   CAPTURE(E_off, E_on, E_region, region_ne);
   CHECK(region_ne < 8 * 8 * 8);  // the mesh of the region, not the full mesh
   CHECK(E_off > 0.0);
@@ -616,6 +618,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
     auto &sub = config["Solver"]["Substructuring"];
     sub["Mode"] = mode;
     sub["SaveModel"] = model_path;
+    sub["RegionMesh"] = (mode == "Online");
     if (renumbered)
     {
       std::vector<int> region;

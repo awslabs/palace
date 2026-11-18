@@ -747,23 +747,29 @@ bool MomentsMatch(const std::array<double, 6> &a, const std::array<double, 6> &b
   return match;
 }
 
-bool RegionOnlyMesh(mfem::ParMesh &mesh, const std::vector<int> &environment_attributes,
+void CheckModelMesh(mfem::ParMesh &mesh, const std::vector<int> &environment_attributes,
                     const std::array<double, 6> &env_moments,
-                    const std::array<double, 6> &region_moments, double tol)
+                    const std::array<double, 6> &region_moments, double tol,
+                    bool region_mesh)
 {
   const auto moments = ElementMoments(mesh, environment_attributes);
-  const bool region_only = !MomentsMatch(moments, env_moments, tol);
-  if (region_only && !MomentsMatch(moments, region_moments, tol))
+  const bool full = MomentsMatch(moments, env_moments, tol),
+             region = MomentsMatch(moments, region_moments, tol);
+  if (region_mesh)
   {
-    // Refinement keeps the volume and the first moments of the elements, but not their
-    // number nor the moment of the distances of their centers.
-    auto kept = moments;
-    kept[0] = region_moments[0];
-    kept[2] = region_moments[2];
-    MFEM_VERIFY(!MomentsMatch(kept, region_moments, tol), kRegionMeshRefined);
-    MFEM_ABORT(kEnvironmentDiffers);
+    MFEM_VERIFY(region,
+                (full ? "\"RegionMesh\" is set, but the mesh holds the whole "
+                        "environment of the saved substructuring model: unset it on "
+                        "the full mesh!"
+                      : "The mesh is not the mesh of the region written with the "
+                        "saved substructuring model, nor a re-meshing of its region!"));
   }
-  return region_only;
+  else
+  {
+    MFEM_VERIFY(full, (region ? "The mesh is the mesh of the region written with the saved "
+                                "substructuring model: set \"RegionMesh\": true!"
+                              : kEnvironmentDiffers));
+  }
 }
 
 std::vector<char> RegionMeshInterface(mfem::ParFiniteElementSpace &parent_fespace,

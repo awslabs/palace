@@ -328,11 +328,9 @@ SubstructuringSolver::Impl::Impl(const IoData &iodata,
                 "The saved substructuring model \""
                     << model << "\" has \"Order\": " << saved.order << ", unlike this run ("
                     << iodata.solver.order << ")!");
-    // The mesh holds the environment of the model, or its part in the mesh of the region.
-    region_only = RegionOnlyMesh(parent, sub.environment_attributes, saved.env_moments,
-                                 saved.region_moments, kFingerprintTol);
-    // S_E was condensed with the regularization of the model: the region uses the same.
-    model_eps = saved.regularization;
+    // The mesh holds the environment of the model, or with "RegionMesh" its part in the
+    // mesh of the region, which cannot be refined.
+    region_only = sub.region_mesh;
     if (region_only)
     {
       MFEM_VERIFY(iodata.model.refinement.max_it == 0,
@@ -343,6 +341,13 @@ SubstructuringSolver::Impl::Impl(const IoData &iodata,
                       refinement.ser_uniform_ref_levels == 0 &&
                       refinement.GetBoxes().empty() && refinement.GetSpheres().empty(),
                   kRegionMeshRefined);
+    }
+    CheckModelMesh(parent, sub.environment_attributes, saved.env_moments,
+                   saved.region_moments, kFingerprintTol, region_only);
+    // S_E was condensed with the regularization of the model: the region uses the same.
+    model_eps = saved.regularization;
+    if (region_only)
+    {
       // The versions on the region side only of the DOFs on the boundary, at the points of
       // the saved interface DOFs, are interface DOFs (both sides of a two-sided film
       // crossing Gamma).

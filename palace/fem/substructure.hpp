@@ -195,14 +195,14 @@ inline constexpr const char *kRegionMeshRefined =
     "The mesh of the region is written refined: an online run on it takes no "
     "\"UniformLevels\", \"SerialUniformLevels\", \"Boxes\" or \"Spheres\" refinement!";
 
-// Online, whether the mesh holds the region only (its environment elements those written
-// with the model in the mesh of the region, region_moments) rather than the environment of
-// the model (env_moments), by the ElementMoments of its environment elements within the
-// relative tolerance. Aborts if neither: with kRegionMeshRefined if they are the written
-// elements refined, else with kEnvironmentDiffers. Collective.
-bool RegionOnlyMesh(mfem::ParMesh &mesh, const std::vector<int> &environment_attributes,
+// Online, check that the environment elements of the mesh are those of the model, by their
+// ElementMoments within the relative tolerance: on the mesh of the region (region_mesh),
+// those written with the model in it (region_moments), else the whole environment
+// (env_moments). A mismatch names the other mesh if it fits. Collective.
+void CheckModelMesh(mfem::ParMesh &mesh, const std::vector<int> &environment_attributes,
                     const std::array<double, 6> &env_moments,
-                    const std::array<double, 6> &region_moments, double tol);
+                    const std::array<double, 6> &region_moments, double tol,
+                    bool region_mesh);
 
 // On a mesh of the region, the interface: the DOFs t of the region side (candidate[t])
 // whose parent true DOF (parent[t], or t if parent is empty, for a space broken across
