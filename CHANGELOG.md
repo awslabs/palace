@@ -63,6 +63,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     admittance of both faces, which lowers the conductor loss compared to previous versions:
     set `"Crack": true` to restore the previous results, or `"Crack": false` to silence the
     warning. [PR 1168](https://github.com/awslabs/palace/pull/1168).
+  - Uniform lumped ports and surface current sources now take their width from a
+    cross-section across the port, and their length as their area over their width (in 2D,
+    the width counts the edges crossing it). This fixes setup aborting for ports with curved
+    ends, folded ports, and cylindrical ports. Ports which are not strips along
+    `"Direction"`, such as L-shaped ports, and 2D ports with `"Direction"` normal to their
+    edge, now abort.
+    [PR 1194](https://github.com/awslabs/palace/pull/1194).
 
 #### New Features
 
