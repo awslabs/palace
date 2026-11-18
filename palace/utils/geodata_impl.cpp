@@ -5,6 +5,7 @@
 
 #include "geodata_impl.hpp"
 
+#include <algorithm>
 #include <array>
 #include <limits>
 #include <random>
@@ -23,6 +24,207 @@ using CVector3dMap = Eigen::Map<const Eigen::Vector3d>;
 bool EigenLE(const Eigen::Vector3d &x, const Eigen::Vector3d &y)
 {
   return std::lexicographical_compare(x.begin(), x.end(), y.begin(), y.end());
+}
+
+std::vector<int> PartitionGraphOnNodes(const std::vector<idx_t> &xadj,
+                                       const std::vector<idx_t> &adjncy,
+                                       const std::vector<int> &rank_node)
+{
+  // METIS k-way partition into nparts parts with target weights tpwgts (or equal weights).
+  auto PartKway = [](idx_t n, const idx_t *xadj, const idx_t *adjncy, idx_t nparts,
+                     real_t *tpwgts, idx_t *part)
+  {
+    if (nparts == 1)
+    {
+      std::fill(part, part + n, 0);
+      return true;
+    }
+    if (n < nparts)
+    {
+      return false;
+    }
+    // The dummy is a valid adjacency pointer also for a graph without edges.
+    idx_t options[METIS_NOPTIONS], ncon = 1, objval, dummy = 0;
+    METIS_SetDefaultOptions(options);
+    if (!tpwgts)  // Into the ranks of a node: 1% imbalance and fewer refinement passes
+    {
+      options[METIS_OPTION_UFACTOR] = 10;
+      options[METIS_OPTION_NITER] = 4;
+    }
+    return METIS_PartGraphKway(&n, &ncon, const_cast<idx_t *>(xadj),
+                               adjncy ? const_cast<idx_t *>(adjncy) : &dummy, nullptr,
+                               nullptr, nullptr, &nparts, tpwgts, nullptr, options, &objval,
+                               part) == METIS_OK;
+  };
+
+  // Partition into the nodes, in proportion to their numbers of ranks.
+  const auto size = static_cast<int>(rank_node.size());
+  std::vector<std::vector<int>> node_ranks(size);
+  for (int r = 0; r < size; r++)
+  {
+    node_ranks[rank_node[r]].push_back(r);
+  }
+  std::erase_if(node_ranks, [](const auto &ranks) { return ranks.empty(); });
+  const auto num_nodes = static_cast<idx_t>(node_ranks.size());
+  const idx_t n = static_cast<idx_t>(xadj.size()) - 1;
+  std::vector<int> rank(n), count(size, 0);
+  if (num_nodes == 1)  // Partition the graph itself, without a copy
+  {
+    std::vector<idx_t> part(n);
+    if (!PartKway(n, xadj.data(), adjncy.data(), size, nullptr, part.data()))
+    {
+      return {};
+    }
+    std::ranges::copy(part, rank.begin());
+    for (int r : rank)
+    {
+      count[r]++;
+    }
+    return (std::ranges::find(count, 0) != count.end()) ? std::vector<int>{} : rank;
+  }
+  std::vector<real_t> tpwgts(num_nodes);
+  for (idx_t k = 0; k < num_nodes; k++)
+  {
+    tpwgts[k] = static_cast<real_t>(node_ranks[k].size()) / static_cast<real_t>(size);
+  }
+  std::vector<idx_t> node(n), loc(n);
+  if (!PartKway(n, xadj.data(), adjncy.data(), num_nodes, tpwgts.data(), node.data()))
+  {
+    return {};
+  }
+
+  // Partition the subgraph of each node, with its vertices in order, into its ranks.
+  std::vector<std::vector<idx_t>> vertices(num_nodes);
+  for (idx_t v = 0; v < n; v++)
+  {
+    loc[v] = static_cast<idx_t>(vertices[node[v]].size());
+    vertices[node[v]].push_back(v);
+  }
+  std::vector<idx_t> sub_xadj, sub_adjncy, part;
+  for (idx_t k = 0; k < num_nodes; k++)
+  {
+    sub_xadj.assign(1, 0);
+    sub_adjncy.clear();
+    for (idx_t v : vertices[k])
+    {
+      for (idx_t j = xadj[v]; j < xadj[v + 1]; j++)
+      {
+        if (node[adjncy[j]] == k)
+        {
+          sub_adjncy.push_back(loc[adjncy[j]]);
+        }
+      }
+      sub_xadj.push_back(static_cast<idx_t>(sub_adjncy.size()));
+    }
+    const auto &ranks = node_ranks[k];
+    part.resize(vertices[k].size());
+    if (!PartKway(static_cast<idx_t>(part.size()), sub_xadj.data(), sub_adjncy.data(),
+                  static_cast<idx_t>(ranks.size()), nullptr, part.data()))
+    {
+      return {};
+    }
+    for (std::size_t i = 0; i < part.size(); i++)
+    {
+      rank[vertices[k][i]] = ranks[part[i]];
+      count[ranks[part[i]]]++;
+    }
+  }
+  if (std::ranges::find(count, 0) != count.end())
+  {
+    return {};
+  }
+  return rank;
+}
+
+bool GatherElementGraph(mfem::ParMesh &mesh, std::vector<idx_t> &xadj,
+                        std::vector<idx_t> &adjncy, std::vector<int> &rank_ne,
+                        std::vector<int> &rank_node)
+{
+  MPI_Comm comm = mesh.GetComm();
+  const int size = Mpi::Size(comm), rank = Mpi::Rank(comm), ne = mesh.GetNE();
+  const long long offset = mesh.GetGlobalElementNum(0);
+
+  // Neighbors of the local elements, in the global numbering. The numbers of the face
+  // neighbors on other processes come from a piecewise constant field.
+  std::vector<std::vector<idx_t>> adj(ne);
+  {
+    mfem::L2_FECollection fec(0, mesh.Dimension());
+    mfem::ParFiniteElementSpace fes(&mesh, &fec);
+    mfem::ParGridFunction gid(&fes);
+    mfem::Array<int> vdofs;
+    double *h_gid = gid.HostWrite();
+    for (int e = 0; e < ne; e++)
+    {
+      fes.GetElementVDofs(e, vdofs);
+      h_gid[vdofs[0]] = static_cast<double>(offset + e);
+    }
+    gid.ExchangeFaceNbrData();
+    const double *nbr = gid.FaceNbrData().HostRead();
+    for (int i = 0; i < mesh.GetNumFacesWithGhost(); i++)
+    {
+      const auto info = mesh.GetFaceInformation(i);
+      const int e1 = info.element[0].index, e2 = info.element[1].index;
+      if (info.IsLocal() && e1 != e2)  // A periodic face can connect an element to itself
+      {
+        adj[e1].push_back(static_cast<idx_t>(offset + e2));
+        adj[e2].push_back(static_cast<idx_t>(offset + e1));
+      }
+      else if (info.IsShared())
+      {
+        fes.GetFaceNbrElementVDofs(e2, vdofs);
+        adj[e1].push_back(static_cast<idx_t>(nbr[vdofs[0]]));
+      }
+    }
+  }
+  std::vector<idx_t> deg(ne), local;
+  for (int e = 0; e < ne; e++)
+  {
+    std::ranges::sort(adj[e]);
+    const auto dup = std::ranges::unique(adj[e]);
+    adj[e].erase(dup.begin(), dup.end());
+    deg[e] = static_cast<idx_t>(adj[e].size());
+    local.insert(local.end(), adj[e].begin(), adj[e].end());
+  }
+
+  // Gather the graph, and the number of elements and the node of each rank, on the root.
+  int node = rank;
+  {
+    MPI_Comm node_comm;
+    MPI_Comm_split_type(comm, MPI_COMM_TYPE_SHARED, rank, MPI_INFO_NULL, &node_comm);
+    Mpi::Broadcast(1, &node, 0, node_comm);
+    MPI_Comm_free(&node_comm);
+  }
+  const int sizes[3] = {ne, static_cast<int>(local.size()), node};
+  std::vector<int> all(3 * size), ecounts(size), vdispls(size), edispls(size);
+  MPI_Gather(sizes, 3, MPI_INT, all.data(), 3, MPI_INT, 0, comm);
+  rank_ne.resize(size);
+  rank_node.resize(size);
+  long long gnv = 0, gnnz = 0;  // Only nonzero on the root
+  for (int i = 0; i < size; i++)
+  {
+    rank_ne[i] = all[3 * i];
+    ecounts[i] = all[3 * i + 1];
+    rank_node[i] = all[3 * i + 2];
+    vdispls[i] = static_cast<int>(gnv);
+    edispls[i] = static_cast<int>(gnnz);
+    gnv += rank_ne[i];
+    gnnz += ecounts[i];
+  }
+  int ok = (gnv + gnnz <= std::numeric_limits<int>::max());  // MPI displacements are int
+  Mpi::Broadcast(1, &ok, 0, comm);
+  if (!ok)
+  {
+    return false;
+  }
+  xadj.assign(gnv + 1, 0);
+  adjncy.resize(gnnz);
+  const MPI_Datatype idx_type = mpi::DataType<idx_t>();
+  MPI_Gatherv(deg.data(), ne, idx_type, xadj.data() + 1, rank_ne.data(), vdispls.data(),
+              idx_type, 0, comm);
+  MPI_Gatherv(local.data(), sizes[1], idx_type, adjncy.data(), ecounts.data(),
+              edispls.data(), idx_type, 0, comm);
+  std::partial_sum(xadj.begin(), xadj.end(), xadj.begin());
+  return true;
 }
 
 // Helper for collecting a point cloud from a mesh, used in calculating bounding boxes and

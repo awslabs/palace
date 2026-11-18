@@ -1,14 +1,17 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <fstream>
 #include <memory>
 #include <numbers>
+#include <set>
 #include <sstream>
 #include <utility>
 #include <vector>
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
 #include <catch2/generators/catch_generators_all.hpp>
@@ -878,6 +881,146 @@ TEST_CASE("CrackQuadrilateralCorners", "[geodata][Serial]")
   CHECK(n_crack == 8);
   CHECK(n_merged == 0);
   fs::remove(mesh_path);
+}
+
+TEST_CASE("PartitionGraphOnNodes", "[geodata][Serial]")
+{
+  // Graph of the elements of an n x n x n hexahedral mesh through their faces.
+  constexpr int n = 12, nv = n * n * n;
+  auto grid = mfem::Mesh::MakeCartesian3D(n, n, n, mfem::Element::HEXAHEDRON);
+  const mfem::Table &e2e = grid.ElementToElementTable();
+  const std::vector<idx_t> xadj(e2e.GetI(), e2e.GetI() + nv + 1),
+      adjncy(e2e.GetJ(), e2e.GetJ() + e2e.Size_of_connections());
+  auto Check = [&](const std::vector<int> &node)
+  {
+    const auto rank = mesh::PartitionGraphOnNodes(xadj, adjncy, node);
+    REQUIRE(rank.size() == static_cast<std::size_t>(nv));
+    // Balanced as METIS is asked to, up to a vertex for rounding: each node within 3% of
+    // its share (METIS's default), each rank within 1% of the average of its node, and
+    // below the default MaximumImbalance overall.
+    const auto size = static_cast<int>(node.size());
+    const double share = static_cast<double>(nv) / size;
+    std::vector<int> count(size, 0), node_count(size, 0);
+    for (int r : rank)
+    {
+      count[r]++;
+      node_count[node[r]]++;
+    }
+    for (int r = 0; r < size; r++)
+    {
+      const auto ranks = static_cast<double>(std::ranges::count(node, node[r]));
+      CHECK(node_count[node[r]] <= 1.03 * share * ranks + 1.0);
+      CHECK(count[r] <= 1.01 * node_count[node[r]] / ranks + 1.0);
+    }
+    CHECK(std::ranges::max(count) <= 1.1 * std::ranges::min(count));
+    // The faces between nodes are few: about a plane of n x n for two nodes.
+    int cut = 0;
+    for (int v = 0; v < nv; v++)
+    {
+      for (idx_t j = xadj[v]; j < xadj[v + 1]; j++)
+      {
+        cut += (node[rank[v]] != node[rank[adjncy[j]]]);
+      }
+    }
+    return cut / 2;
+  };
+  CHECK(Check({0, 0, 0, 0, 0, 0, 0, 0}) == 0);
+  CHECK(Check({0, 0, 0, 0, 1, 1, 1, 1}) <= 2 * n * n);
+  CHECK(Check({0, 1, 0, 1, 0, 1, 0, 1}) <= 2 * n * n);
+  CHECK(Check({0, 0, 0, 1, 1, 1, 1, 1}) <= 2 * n * n);
+  CHECK(Check({0, 1, 2, 3}) > 0);
+
+  // More ranks than vertices.
+  CHECK(mesh::PartitionGraphOnNodes({0, 0}, {0}, {0, 0}).empty());
+}
+
+TEST_CASE("GatherElementGraph", "[geodata][Serial][Parallel]")
+{
+  // Hexahedra refined on alternate elements, and on the elements with a shared face on even
+  // ranks only, so that there are nonconforming faces on each rank and between ranks.
+  MPI_Comm comm = Mpi::World();
+  auto serial = mfem::Mesh::MakeCartesian3D(4, 4, 4, mfem::Element::HEXAHEDRON);
+  serial.EnsureNCMesh();
+  mfem::ParMesh pmesh(comm, serial);
+  pmesh.ExchangeFaceNbrData();  // For GetFaceInformation to see the shared faces
+  std::vector<bool> on_shared_face(pmesh.GetNE(), false);
+  for (int i = 0; i < pmesh.GetNumFaces(); i++)
+  {
+    const auto info = pmesh.GetFaceInformation(i);
+    if (info.IsShared())
+    {
+      on_shared_face[info.element[0].index] = true;
+    }
+  }
+  const bool even = (Mpi::Rank(comm) % 2 == 0);
+  mfem::Array<int> marked;
+  for (int e = 0; e < pmesh.GetNE(); e++)
+  {
+    if (on_shared_face[e] ? even : (e % 2 == 0))
+    {
+      marked.Append(e);
+    }
+  }
+  pmesh.GeneralRefinement(marked);
+  pmesh.ExchangeFaceNbrData();
+  int shared_nc = 0;
+  for (int i = 0; i < pmesh.GetNumFacesWithGhost(); i++)
+  {
+    const auto info = pmesh.GetFaceInformation(i);
+    shared_nc += (info.IsShared() && !info.IsConforming());
+  }
+  Mpi::GlobalSum(1, &shared_nc, comm);
+  CHECK((Mpi::Size(comm) == 1 || shared_nc > 0));
+  std::vector<idx_t> xadj, adjncy;
+  std::vector<int> rank_ne, rank_node;
+  REQUIRE(mesh::GatherElementGraph(pmesh, xadj, adjncy, rank_ne, rank_node));
+
+  // The same mesh with all its elements, and so all its faces, on the root.
+  mfem::ParMesh root(pmesh);
+  mfem::Array<int> on_root(pmesh.GetNE());
+  on_root = 0;
+  root.Rebalance(on_root);
+  if (!Mpi::Root(comm))
+  {
+    return;
+  }
+  const idx_t nv = root.GetNE();
+  REQUIRE(xadj.size() == static_cast<std::size_t>(nv) + 1);
+  std::set<std::pair<idx_t, idx_t>> edges;
+  std::vector<idx_t> deg(nv), root_deg(nv, 0);
+  for (idx_t v = 0; v < nv; v++)
+  {
+    deg[v] = xadj[v + 1] - xadj[v];
+    for (idx_t j = xadj[v]; j < xadj[v + 1]; j++)
+    {
+      CHECK(adjncy[j] != v);
+      edges.emplace(v, adjncy[j]);
+    }
+  }
+  CHECK(edges.size() == adjncy.size());  // No duplicate edges
+  CHECK(std::ranges::all_of(edges, [&](const auto &e)
+                            { return edges.contains({e.second, e.first}); }));
+
+  // One edge in each direction per pair of elements sharing a face, with or without hanging
+  // nodes, on the root.
+  std::set<std::pair<int, int>> pairs;
+  for (int i = 0; i < root.GetNumFaces(); i++)
+  {
+    const auto info = root.GetFaceInformation(i);
+    if (info.IsLocal() && info.element[0].index != info.element[1].index)
+    {
+      pairs.insert(std::minmax(info.element[0].index, info.element[1].index));
+    }
+  }
+  for (const auto &[a, b] : pairs)
+  {
+    root_deg[a]++;
+    root_deg[b]++;
+  }
+  CHECK(2 * pairs.size() == adjncy.size());
+  std::ranges::sort(deg);
+  std::ranges::sort(root_deg);
+  CHECK(deg == root_deg);
 }
 
 TEST_CASE("Default IOData", "[iodata][Serial]")

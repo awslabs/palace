@@ -21,12 +21,16 @@ bool PrintParallelNCMesh(const mfem::ParMesh &mesh, double length_scale,
                          const std::string &path, bool compress,
                          MeshEntityCounts *counts = nullptr, std::string *reason = nullptr);
 
-// Rebalance a nonconforming mesh as MFEM's default partition does (consecutive ranges of
-// the leaves, in the order of the processes), but with each root of the refinement tree on
-// the process its middle leaf goes to, so that saving the mesh moves no root; unless that
-// is less balanced than half the tolerance on the largest load over the mean, or than the
+// Rebalance a nonconforming mesh as the partition `base` of its elements does, but with
+// each root of the refinement tree on one process, so that saving the mesh moves no root:
+// the process which gets the most of its leaves in `base`. A root already split between
+// processes keeps the partition of `base`. Without `base`, as MFEM's default partition
+// does (consecutive ranges of the leaves, in the order of the processes), with each root
+// on the process its middle leaf goes to. Rebalance as `base` does instead if that is less
+// balanced than half the tolerance on the largest load over the mean, or than the
 // tolerance on the largest load over the smallest.
-void RebalanceRootAligned(mfem::ParMesh &mesh, double tol);
+void RebalanceRootAligned(mfem::ParMesh &mesh, double tol,
+                          const mfem::Array<int> *base = nullptr);
 
 // Scale the top-level vertex coordinates which a nonconforming mesh without nodes keeps in
 // its NCMesh: MFEM's mesh transformations only move the vertices.

@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <functional>
 #include <limits>
+#include <map>
 #include <memory>
 #include <numeric>
 #include <sstream>
@@ -192,7 +193,7 @@ std::vector<RootLeaves> GetRootLeaves(const mfem::ParMesh &mesh, bool &split)
 
 }  // namespace
 
-void RebalanceRootAligned(mfem::ParMesh &mesh, double tol)
+void RebalanceRootAligned(mfem::ParMesh &mesh, double tol, const mfem::Array<int> *base)
 {
   MPI_Comm comm = mesh.GetComm();
   const int P = Mpi::Size(comm);
@@ -200,15 +201,34 @@ void RebalanceRootAligned(mfem::ParMesh &mesh, double tol)
   const auto roots = GetRootLeaves(mesh, split);
   const long long total = mesh.GetGlobalNE();
   mfem::Array<int> part(mesh.GetNE());
-  std::vector<long long> load(P, 0);
   for (std::size_t i = 0, e = 0; i < roots.size(); e += roots[i++].leaves)
   {
-    if (roots[i].leaves)
+    const int n = roots[i].leaves;
+    if (n && !base)
     {
       const int r = static_cast<int>((roots[i].first + roots[i].total / 2) * P / total);
-      std::fill_n(part.begin() + e, roots[i].leaves, r);
-      load[r] += roots[i].leaves;
+      std::fill_n(part.begin() + e, n, r);
     }
+    else if (n && roots[i].whole)
+    {
+      // The process which gets the most leaves of the root, then the lowest.
+      std::map<int, int> votes;
+      std::for_each(base->begin() + e, base->begin() + e + n, [&](int r) { votes[r]++; });
+      const int r = std::max_element(votes.begin(), votes.end(),
+                                     [](const auto &a, const auto &b)
+                                     { return a.second < b.second; })
+                        ->first;
+      std::fill_n(part.begin() + e, n, r);
+    }
+    else if (n)
+    {
+      std::copy_n(base->begin() + e, n, part.begin() + e);
+    }
+  }
+  std::vector<long long> load(P, 0);
+  for (int r : part)
+  {
+    load[r]++;
   }
   // Accept the snapped partition when its largest load is within half of the tolerance of
   // the mean, and its largest over its smallest (as for MaximumImbalance) within the
@@ -221,6 +241,10 @@ void RebalanceRootAligned(mfem::ParMesh &mesh, double tol)
   if (max_load <= (1.0 + 0.5 * (tol - 1.0)) * total / P && max_load <= tol * min_load)
   {
     mesh.Rebalance(part);
+  }
+  else if (base)
+  {
+    mesh.Rebalance(*base);
   }
   else
   {
