@@ -357,14 +357,14 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   Mpi::Print(" Scaling γ = {:.3e}, δ = {:.3e}\n", eigen->GetScalingGamma(),
              eigen->GetScalingDelta());
 
-  // For problems with damping, exclude the strongly damped modes from the search, whose
-  // slow convergence can stall the others.
+  // For problems with damping, exclude the strongly damped and growing modes from the
+  // search, whose slow convergence can stall the others.
   const bool q_region = type == EigenSolverBackend::SLEPC &&
                         nonlinear_type != NonlinearEigenSolver::SLP && (C || has_A2) &&
                         iodata.solver.eigenmode.min_q > 0.5;
   if (q_region)
   {
-    Mpi::Print(" Eigenvalue search excludes modes with Q < {:.3g}\n",
+    Mpi::Print(" Eigenvalue search excludes modes with |Q| < {:.3g}\n",
                iodata.solver.eigenmode.min_q);
     eigen->SetMinQualityFactor(iodata.solver.eigenmode.min_q);
   }
