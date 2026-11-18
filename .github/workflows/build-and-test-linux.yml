@@ -270,16 +270,15 @@ jobs:
 
       # Configure downloads dependency patches from GitHub, and skips any file
       # already present with the expected hash. Restoring them from a cache keeps
-      # configure off the network. Only the STRUMPACK patches depend on the
-      # configuration, hence with-solver in the key.
+      # configure off the network. This restores the most recent entry.
       - name: Restore dependency patches
         id: patch-cache
         if: needs.filter.outputs.test == 'true'
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: palace-build/extern/*-patches
-          key: patches-${{ runner.os }}-${{ matrix.with-solver }}-${{ hashFiles('cmake/External*.cmake') }}
-          restore-keys: patches-${{ runner.os }}-${{ matrix.with-solver }}-
+          key: patches-${{ runner.os }}
+          restore-keys: patches-${{ runner.os }}-
 
       - name: Build Palace
         if: needs.filter.outputs.test == 'true'
@@ -383,17 +382,18 @@ jobs:
 
           make -j$NUM_PROC_BUILD palace-tests
 
-      # Save whenever configure succeeded (palace-build/Makefile exists), even if
-      # the build itself failed.
+      # Save a new entry when configure succeeded (palace-build/Makefile exists),
+      # even if the build failed, and downloaded patches that the restored entry
+      # did not have. The key starts with the hash of the patches to tell.
       - name: Save dependency patches
         if: |
           !cancelled() && needs.filter.outputs.test == 'true' &&
-          steps.patch-cache.outputs.cache-hit != 'true' &&
-          hashFiles('palace-build/Makefile') != ''
+          hashFiles('palace-build/Makefile') != '' &&
+          !startsWith(steps.patch-cache.outputs.cache-matched-key, format('patches-{0}-{1}-', runner.os, hashFiles('palace-build/extern/*-patches/*')))
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: palace-build/extern/*-patches
-          key: ${{ steps.patch-cache.outputs.cache-primary-key }}
+          key: patches-${{ runner.os }}-${{ hashFiles('palace-build/extern/*-patches/*') }}-${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}
 
       - name: Run unit tests
         if: needs.filter.outputs.test == 'true'
