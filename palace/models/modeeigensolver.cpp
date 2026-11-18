@@ -637,7 +637,7 @@ void ModeEigenSolver::SetUpMultigridLinearSolver(MPI_Comm comm)
                 bmo->GetNDSpaceHierarchy().GetFESpaceAtLevel(0),
                 bmo->GetH1AuxSpaceHierarchy().GetFESpaceAtLevel(0), linear.ams_max_it,
                 linear.mg_smooth_it, linear.ams_vector_interp, linear.ams_singular_op,
-                linear.amg_agg_coarsen, print),
+                linear.amg_agg_coarsen, linear.ams_agglomeration_target, print),
             true, linear.complex_coarse_solve, linear.drop_small_entries,
             linear.reorder_reuse);
       case LinearSolver::BOOMER_AMG:

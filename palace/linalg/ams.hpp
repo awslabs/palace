@@ -28,6 +28,11 @@ private:
   const int cycle_type, space_dim, ams_it, ams_smooth_it;
   const bool ams_singular, agg_coarsen;
 
+  // Target number of rows per process for the agglomeration of the coarse levels of the
+  // auxiliary space AMG hierarchies during the solve (0: no agglomeration). Ignored
+  // without the hypre patch for it in extern/patch/hypre.
+  [[maybe_unused]] const int agglomeration_target;
+
   // Control print level for debugging.
   const int print;
 
@@ -51,7 +56,7 @@ public:
   // internally as needed.
   HypreAmsSolver(FiniteElementSpace &nd_fespace, FiniteElementSpace &h1_fespace,
                  int cycle_it, int smooth_it, bool vector_interp, bool singular_op,
-                 bool agg_coarsen, int print);
+                 bool agg_coarsen, int agglomeration_target, int print);
   HypreAmsSolver(const IoData &iodata, bool coarse_solver, FiniteElementSpace &nd_fespace,
                  FiniteElementSpace &h1_fespace, int print)
     : HypreAmsSolver(
@@ -59,7 +64,8 @@ public:
           coarse_solver ? iodata.solver.linear.ams_max_it
                         : iodata.solver.linear.mg_cycle_it,
           iodata.solver.linear.mg_smooth_it, iodata.solver.linear.ams_vector_interp,
-          iodata.solver.linear.ams_singular_op, iodata.solver.linear.amg_agg_coarsen, print)
+          iodata.solver.linear.ams_singular_op, iodata.solver.linear.amg_agg_coarsen,
+          iodata.solver.linear.ams_agglomeration_target, print)
   {
   }
   ~HypreAmsSolver() override;
