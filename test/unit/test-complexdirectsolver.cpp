@@ -150,16 +150,19 @@ void TestComplexDirectSolver(Solver<ComplexOperator> &solver, Solver<ComplexOper
 TEST_CASE("STRUMPACK complex arithmetic solver", "[strumpack][Serial][Parallel]")
 {
   // Complex symmetric and unsymmetric matrices, with and without the reuse of the
-  // reordering.
+  // reordering, and with the permutation stored on every process and once per node (which
+  // has no effect when STRUMPACK is built without that option).
   MPI_Comm comm = Mpi::World();
   const bool unsymmetric = GENERATE(false, true);
   const bool reorder_reuse = GENERATE(true, false);
+  const bool shared_permutation = GENERATE(false, true);
+  CAPTURE(unsymmetric, reorder_reuse, shared_permutation);
   StrumpackComplexSolver solver(comm, SymbolicFactorization::DEFAULT,
                                 SparseCompression::NONE, 0.0, 0, 0, false, reorder_reuse,
-                                0);
+                                shared_permutation, 0);
   MfemWrapperSolver<ComplexOperator> ref(
       std::make_unique<StrumpackSolver>(comm, SymbolicFactorization::DEFAULT,
-                                        SparseCompression::NONE, 0.0, 0, 0, true, 0),
+                                        SparseCompression::NONE, 0.0, 0, 0, true, true, 0),
       true, true, false, true);
   TestComplexDirectSolver(solver, ref, 1.0e-11, unsymmetric);
 }
@@ -204,7 +207,7 @@ TEST_CASE("STRUMPACK complex arithmetic solver with compression",
     const double norm_b = linalg::Norml2(comm, b);
     {
       StrumpackComplexSolver ref(comm, SymbolicFactorization::DEFAULT,
-                                 SparseCompression::NONE, 0.0, 0, 0, false, true, 0);
+                                 SparseCompression::NONE, 0.0, 0, 0, false, true, true, 0);
       ref.SetOperator(*A);
       ref.Mult(b, x_ref);
     }
@@ -212,7 +215,7 @@ TEST_CASE("STRUMPACK complex arithmetic solver with compression",
     {
       INFO("compression " << static_cast<int>(type) << ", lossy precision " << lossy_prec);
       StrumpackComplexSolver solver(comm, SymbolicFactorization::DEFAULT, type, 1.0e-6, 1,
-                                    lossy_prec, false, true, 0);
+                                    lossy_prec, false, true, true, 0);
       GmresSolver<ComplexOperator> gmres(comm, 0);
       gmres.SetRelTol(1.0e-10);
       gmres.SetMaxIter(max_it);
@@ -317,7 +320,7 @@ TEST_CASE("STRUMPACK complex arithmetic solver unsymmetric sparsity pattern",
   }
   A.Mult(x_ex, b);
   StrumpackComplexSolver solver(comm, SymbolicFactorization::DEFAULT,
-                                SparseCompression::NONE, 0.0, 0, 0, false, true, 0);
+                                SparseCompression::NONE, 0.0, 0, 0, false, true, true, 0);
   for (int k = 0; k < 2; k++)
   {
     // Factorization, and refactorization reusing the reordering.
@@ -858,7 +861,7 @@ TEST_CASE("Complex arithmetic solvers drop small entries",
     {
       return std::make_unique<StrumpackComplexSolver>(comm, SymbolicFactorization::DEFAULT,
                                                       SparseCompression::NONE, 0.0, 0, 0,
-                                                      drop_small_entries, true, 0);
+                                                      drop_small_entries, true, true, 0);
     }
 #endif
 #if defined(MFEM_USE_SUPERLU)

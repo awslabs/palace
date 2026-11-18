@@ -19,6 +19,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### New Features
 
+  - Added `config["Solver"]["Linear"]["STRUMPACKSharedPermutation"]` (default `true`) to
+    store the fill-reducing permutation of the STRUMPACK solvers once per node instead of
+    on every process (see the performance improvements below). SchemaVer 4-5-0
+    [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
   - `validate-config` accepts several configuration files and validates them in one Julia
     session. [PR 1180](https://github.com/awslabs/palace/pull/1180).
   - Added `Boundaries.LumpedPort[].ExcitationAmplitude` and `ExcitationPhase` (degrees),
@@ -64,6 +68,17 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Performance Improvements
 
+  - Added a STRUMPACK patch for
+    [pghysels/STRUMPACK#174](https://github.com/pghysels/STRUMPACK/pull/174), an option to
+    store the fill-reducing permutation of the distributed STRUMPACK solver and its inverse
+    (two integers per coarse matrix row) once per node, in an MPI shared memory window,
+    instead of on every process. *Palace* uses it by default in all its STRUMPACK solvers,
+    in real and in complex arithmetic, which lowers their memory when many processes share
+    a node. It applies to the sequential column orderings (METIS, which is the default,
+    AMD, and RCM, not ParMETIS) without compression, and needs free space for the window
+    in `/dev/shm` on every node; otherwise all processes keep their own copy, with a
+    warning from STRUMPACK when the window cannot be allocated. Results are unchanged.
+    [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
   - With `config["Solver"]["Linear"]["ComplexCoarseSolve"]`, SuperLU_DIST (with or without
     `"SuperLU3DCommunicator"`), STRUMPACK (with or without compression), and MUMPS now
     factor the complex-valued coarse-level matrix in complex arithmetic instead of the

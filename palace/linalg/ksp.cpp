@@ -213,7 +213,7 @@ ConfigurePreconditionerSolver(const config::LinearSolverData &linear,
                     linear, comm, linear.sym_factorization,
                     linear.strumpack_compression_type, linear.strumpack_lr_tol,
                     linear.strumpack_butterfly_l, linear.strumpack_lossy_precision,
-                    linear.reorder_reuse, print);
+                    linear.reorder_reuse, linear.strumpack_shared_permutation, print);
               },
               [linear, comm, print]()
               {
@@ -221,7 +221,7 @@ ConfigurePreconditionerSolver(const config::LinearSolverData &linear,
                     comm, linear.sym_factorization, linear.strumpack_compression_type,
                     linear.strumpack_lr_tol, linear.strumpack_butterfly_l,
                     linear.strumpack_lossy_precision, linear.drop_small_entries,
-                    linear.reorder_reuse, print);
+                    linear.reorder_reuse, linear.strumpack_shared_permutation, print);
               },
               verbose > 0);
           break;
@@ -230,7 +230,8 @@ ConfigurePreconditionerSolver(const config::LinearSolverData &linear,
       pc = MakeWrapperSolver<OperType, StrumpackSolver>(
           linear, comm, linear.sym_factorization, linear.strumpack_compression_type,
           linear.strumpack_lr_tol, linear.strumpack_butterfly_l,
-          linear.strumpack_lossy_precision, linear.reorder_reuse, print);
+          linear.strumpack_lossy_precision, linear.reorder_reuse,
+          linear.strumpack_shared_permutation, print);
 #endif
       break;
     case LinearSolver::STRUMPACK_MP:
@@ -238,7 +239,8 @@ ConfigurePreconditionerSolver(const config::LinearSolverData &linear,
       pc = MakeWrapperSolver<OperType, StrumpackMixedPrecisionSolver>(
           linear, comm, linear.sym_factorization, linear.strumpack_compression_type,
           linear.strumpack_lr_tol, linear.strumpack_butterfly_l,
-          linear.strumpack_lossy_precision, linear.reorder_reuse, print);
+          linear.strumpack_lossy_precision, linear.reorder_reuse,
+          linear.strumpack_shared_permutation, print);
 #endif
       break;
     case LinearSolver::MUMPS:
