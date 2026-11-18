@@ -6,6 +6,7 @@
 #include <vector>
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include "linalg/strumpack.hpp"
 #include "utils/communication.hpp"
 
@@ -153,8 +154,12 @@ TEST_CASE("StrumpackSolver unsymmetric sparsity pattern", "[strumpack][Serial][P
   }
   A.Mult(x_ex, b);
 
+  // With the permutation stored on every process and once per node, which has no effect
+  // when STRUMPACK is built without that option.
+  const bool shared_permutation = GENERATE(false, true);
+  CAPTURE(shared_permutation);
   StrumpackSolver strumpack(comm, SymbolicFactorization::DEFAULT, SparseCompression::NONE,
-                            0.0, 0, 0, false, 0);
+                            0.0, 0, 0, false, shared_permutation, 0);
   strumpack.SetOperator(A);
   x = 0.0;
   strumpack.Mult(b, x);
@@ -268,7 +273,7 @@ TEST_CASE("StrumpackSolver BLR compression of an indefinite matrix",
   // tolerance. With the defect it was 0.23 on 2 processes, 0.44 on 4 and 0.46 on 8, and at
   // least 0.045 on 2 to 8 processes.
   StrumpackSolver strumpack(comm, SymbolicFactorization::DEFAULT, SparseCompression::BLR,
-                            1.0e-9, 0, 0, false, 0);
+                            1.0e-9, 0, 0, false, true, 0);
   strumpack.SetOperator(A);
   x = 0.0;
   strumpack.Mult(b, x);

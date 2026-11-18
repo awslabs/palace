@@ -6,6 +6,8 @@
 #if defined(MFEM_USE_STRUMPACK)
 
 #include <complex>
+#include <type_traits>
+#include <utility>
 
 namespace palace
 {
@@ -36,6 +38,21 @@ strumpack::CompressionType GetCompressionType(SparseCompression type)
   }
   return strumpack::CompressionType::NONE;  // For compiler warning
 }
+
+// Detect if the STRUMPACK options have the node-shared permutation. STRUMPACK defines no
+// macro for it, so this keeps Palace building with a STRUMPACK which lacks the option.
+template <typename OptionsType, typename = void>
+struct HasSharedPermutation : std::false_type
+{
+};
+
+template <typename OptionsType>
+struct HasSharedPermutation<
+    OptionsType,
+    std::void_t<decltype(std::declval<OptionsType &>().enable_shared_permutation())>>
+  : std::true_type
+{
+};
 
 }  // namespace
 
@@ -76,10 +93,25 @@ template void ConfigureStrumpackCompression(strumpack::SPOptions<double> &,
 template void ConfigureStrumpackCompression(strumpack::SPOptions<std::complex<double>> &,
                                             SparseCompression, double, int, int);
 
+template <typename ScalarType>
+void EnableStrumpackSharedPermutation(strumpack::SPOptions<ScalarType> &opts)
+{
+  if constexpr (HasSharedPermutation<strumpack::SPOptions<ScalarType>>::value)
+  {
+    opts.enable_shared_permutation();
+  }
+}
+
+template void EnableStrumpackSharedPermutation(strumpack::SPOptions<float> &);
+template void EnableStrumpackSharedPermutation(strumpack::SPOptions<double> &);
+template void
+EnableStrumpackSharedPermutation(strumpack::SPOptions<std::complex<double>> &);
+
 template <typename StrumpackSolverType>
 StrumpackSolverBase<StrumpackSolverType>::StrumpackSolverBase(
     MPI_Comm comm, SymbolicFactorization reorder, SparseCompression compression,
-    double lr_tol, int butterfly_l, int lossy_prec, bool reorder_reuse, int print)
+    double lr_tol, int butterfly_l, int lossy_prec, bool reorder_reuse,
+    bool shared_permutation, int print)
   : StrumpackSolverType(comm), comm(comm)
 {
   // Configure the solver.
@@ -120,6 +152,20 @@ StrumpackSolverBase<StrumpackSolverType>::StrumpackSolverBase(
   // Configure compression.
   ConfigureStrumpackCompression(this->solver_->options(), compression, lr_tol, butterfly_l,
                                 lossy_prec);
+
+  // Store the permutation once per node. The mixed precision solver computes the ordering
+  // in its single precision solver, which has its own options.
+  if (shared_permutation)
+  {
+    if constexpr (std::is_same_v<StrumpackSolverType, mfem::STRUMPACKMixedPrecisionSolver>)
+    {
+      EnableStrumpackSharedPermutation(this->solver_->solver().options());
+    }
+    else
+    {
+      EnableStrumpackSharedPermutation(this->solver_->options());
+    }
+  }
   // if (mfem::Device::Allows(mfem::Backend::DEVICE_MASK))
   // {
   //   this->EnableGPU();  // XX TODO: GPU support disabled for now

@@ -58,10 +58,11 @@ StrumpackComplexSolver::StrumpackComplexSolver(MPI_Comm comm, SymbolicFactorizat
                                                SparseCompression compression, double lr_tol,
                                                int butterfly_l, int lossy_prec,
                                                bool drop_small_entries, bool reorder_reuse,
-                                               int print)
+                                               bool shared_permutation, int print)
   : Solver<ComplexOperator>(), comm(comm), reorder(reorder), compression(compression),
     lr_tol(lr_tol), butterfly_l(butterfly_l), lossy_prec(lossy_prec),
-    drop_small_entries(drop_small_entries), reorder_reuse(reorder_reuse), print(print)
+    drop_small_entries(drop_small_entries), reorder_reuse(reorder_reuse),
+    shared_permutation(shared_permutation), print(print)
 {
 }
 
@@ -97,6 +98,10 @@ void StrumpackComplexSolver::SetOperator(const ComplexOperator &op)
       ConfigureOptions(solver->options(), reorder, print);
       ConfigureStrumpackCompression(solver->options(), compression, lr_tol, butterfly_l,
                                     lossy_prec);
+      if (shared_permutation)
+      {
+        EnableStrumpackSharedPermutation(solver->options());
+      }
       solver->set_distributed_csr_matrix(csr.n_loc, csr.I.data(), csr.J.data(),
                                          csr.V.data(), dist.data(), false);
     }
