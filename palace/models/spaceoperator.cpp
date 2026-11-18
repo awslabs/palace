@@ -1076,13 +1076,6 @@ SpaceOperator::GetExtraSystemOperator(std::complex<double> omega,
   return std::make_unique<SumComplexOperator>(std::move(A2), std::move(W));
 }
 
-std::vector<WavePortOperator::ModalCorrectionTerm>
-SpaceOperator::GetModalCorrectionTerms(double omega)
-{
-  return wave_port_op.GetModalCorrectionTerms(omega, GetNDSpace(),
-                                              nd_dbc_tdof_lists.back());
-}
-
 std::unique_ptr<ComplexVector> SpaceOperator::GetWavePortModeVector(int port_idx,
                                                                     double omega)
 {
