@@ -10,6 +10,7 @@
 #include "fem/mesh.hpp"
 #include "linalg/vector.hpp"
 #include "models/curlcurloperator.hpp"
+#include "models/domainpostoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
@@ -21,7 +22,7 @@ namespace palace
 using namespace Catch::Matchers;
 
 // A uniform field A = a has no curl, so AᵀK·A is the London energy |a|² V_L/(μλ²) of the
-// London domain alone, as is AᵀM_L·A.
+// London domain alone, twice its kinetic energy.
 TEST_CASE("CurlCurlOperator London domains", "[curlcurloperator][Serial][Parallel]")
 {
   MPI_Comm comm = Mpi::World();
@@ -88,8 +89,10 @@ TEST_CASE("CurlCurlOperator London domains", "[curlcurloperator][Serial][Paralle
   K->Mult(A, y);
   CHECK_THAT(linalg::Dot(comm, A, y), WithinRel(london, 1.0e-10));
 
-  curlcurl_op.ApplyLondonMass(A, y);
-  CHECK_THAT(linalg::Dot(comm, A, y), WithinRel(london, 1.0e-10));
+  DomainPostOperator dom_post_op(iodata, curlcurl_op.GetMaterialOp(),
+                                 curlcurl_op.GetNDSpace());
+  CHECK_THAT(dom_post_op.GetLondonKineticEnergy(A_gf.Real(), comm),
+             WithinRel(0.5 * london, 1.0e-10));
 
   // The preconditioner adds the gauge shift · (1/μ) ∫|A|² over the whole domain.
   auto P = curlcurl_op.GetPreconditionerMatrix();

@@ -689,20 +689,6 @@ void CurlCurlOperator::EnsureSheetMass()
   M_sheet_ = std::make_unique<ParOperator>(std::move(m_mat.back()), GetNDSpace());
 }
 
-void CurlCurlOperator::ApplyLondonMass(const Vector &x, Vector &y)
-{
-  if (!M_london_)
-  {
-    MaterialPropertyCoefficient f(mat_op.GetAttributeToMaterial(),
-                                  mat_op.GetInvLondonDepth());
-    BilinearForm m(GetSolutionNDSpace());
-    m.SkipZeroCoefficientElements();
-    m.AddDomainIntegrator<VectorFEMassIntegrator>(f);
-    M_london_ = std::make_unique<ParOperator>(m.PartialAssemble(), GetSolutionNDSpace());
-  }
-  M_london_->Mult(x, y);
-}
-
 template <ProblemType T>
 void CurlCurlOperator::GetFluxExcitationVector(int idx, Vector &RHS,
                                                PostOperator<T> &post_op)
