@@ -243,7 +243,8 @@ Lumped ports in *Palace* can be composed of two types of elements:
     should point between two conductors. We denote the length of the port along the polarization as
     ``l`` and the perpendicular width as ``w``. The port must be a strip along ``\hat{\bm{l}}``,
     which may be folded or bent about ``\hat{\bm{l}}``: ``w`` is the length of its cross-section
-    normal to ``\hat{\bm{l}}`` half way along it, and ``l`` is its area divided by ``w``.
+    normal to ``\hat{\bm{l}}`` (for a flat port, to its principal axis closest to ``\hat{\bm{l}}``)
+    half way along it, and ``l`` is its area divided by ``w``.
 
  2. *Coaxial*: ``\bm{E}^{inc} = {E_0 r_0} \hat{\bm{r}} / {r}``, where ``E_0 r_0`` is a
     normalization constant, ``r`` is the distance from the port center, and ``\hat{\bm{r}}`` is the

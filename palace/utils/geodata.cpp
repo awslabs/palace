@@ -1268,71 +1268,17 @@ BoundingBox GetBoundingBall(const mfem::ParMesh &mesh, const mfem::Array<int> &m
   return ball;
 }
 
-std::pair<double, double> GetProjectedInterval(const mfem::ParMesh &mesh,
-                                               const mfem::Array<int> &marker, bool bdr,
-                                               const mfem::Vector &dir)
+namespace
 {
-  // Project the vertices, or the points of a refined element on a curved mesh as for the
-  // point cloud of the marked elements.
-  mfem::Vector unit_dir(dir);
-  unit_dir /= unit_dir.Norml2();
-  int ref = 1;
-  if (mesh.GetNodes())
-  {
-    mesh.GetNodes()->HostRead();
-    ref = mesh.GetNodes()->FESpace()->GetMaxElementOrder();
-  }
-  const int ne = bdr ? mesh.GetNBE() : mesh.GetNE();
-  double x_min = mfem::infinity(), x_max = -mfem::infinity();
-  PalacePragmaOmp(parallel reduction(min : x_min) reduction(max : x_max))
-  {
-    mfem::GeometryRefiner refiner;
-    mfem::IsoparametricTransformation T;
-    mfem::DenseMatrix pointmat;
-    PalacePragmaOmp(for schedule(static))
-    for (int i = 0; i < ne; i++)
-    {
-      if (!marker[(bdr ? mesh.GetBdrAttribute(i) : mesh.GetAttribute(i)) - 1])
-      {
-        continue;
-      }
-      if (bdr)
-      {
-        mesh.GetBdrElementTransformation(i, &T);
-      }
-      else
-      {
-        mesh.GetElementTransformation(i, &T);
-      }
-      T.Transform(refiner.Refine(T.GetGeometryType(), ref)->RefPts, pointmat);
-      for (int j = 0; j < pointmat.Width(); j++)
-      {
-        double x = 0.0;
-        for (int d = 0; d < pointmat.Height(); d++)
-        {
-          x += pointmat(d, j) * unit_dir(d);
-        }
-        x_min = std::min(x_min, x);
-        x_max = std::max(x_max, x);
-      }
-    }
-  }
-  Mpi::GlobalMin(1, &x_min, mesh.GetComm());
-  Mpi::GlobalMax(1, &x_max, mesh.GetComm());
-  MFEM_VERIFY(x_min <= x_max, "No marked elements to project onto a direction!");
-  return {x_min, x_max};
-}
 
-double GetCrossSection(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
-                       const mfem::Vector &dir, double offset, mfem::Vector &centroid)
+// Call f(pointmat, RefG, geom) for each marked boundary element, with pointmat the points
+// of the element refined by RefG: its vertices, or on a curved mesh the points of 4 * order
+// subdivisions of each edge. The loop is serial, so that sums over the elements are
+// reproducible.
+template <typename Function>
+void ForEachMarkedBdrElement(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
+                             Function &&f)
 {
-  // Cut the marked boundary elements, as sub-elements of a refined element on a curved
-  // mesh, with quadrilaterals split into triangles. Each sub-element is cut along the line
-  // (in 2D, at the point) joining the crossings of its edges. Points within round-off of
-  // the plane are moved onto it, so that all elements sharing a point agree on its side.
-  const int sdim = mesh.SpaceDimension();
-  mfem::Vector unit_dir(dir);
-  unit_dir /= unit_dir.Norml2();
   int ref = 1;
   if (mesh.GetNodes())
   {
@@ -1340,102 +1286,145 @@ double GetCrossSection(const mfem::ParMesh &mesh, const mfem::Array<int> &marker
     const int order = mesh.GetNodes()->FESpace()->GetMaxElementOrder();
     ref = (order > 1) ? 4 * order : 1;
   }
+  mfem::GeometryRefiner refiner;
+  mfem::IsoparametricTransformation T;
+  mfem::DenseMatrix pointmat;
+  for (int i = 0; i < mesh.GetNBE(); i++)
+  {
+    if (!marker[mesh.GetBdrAttribute(i) - 1])
+    {
+      continue;
+    }
+    mesh.GetBdrElementTransformation(i, &T);
+    const auto geom = T.GetGeometryType();
+    const mfem::RefinedGeometry &RefG = *refiner.Refine(geom, ref);
+    T.Transform(RefG.RefPts, pointmat);
+    f(pointmat, RefG, geom);
+  }
+}
+
+}  // namespace
+
+std::pair<double, double> GetProjectedInterval(const mfem::ParMesh &mesh,
+                                               const mfem::Array<int> &marker,
+                                               const mfem::Vector &dir)
+{
+  mfem::Vector unit_dir(dir);
+  unit_dir /= unit_dir.Norml2();
+  double x_min = mfem::infinity(), x_max = -mfem::infinity();
+  ForEachMarkedBdrElement(mesh, marker,
+                          [&](const mfem::DenseMatrix &pointmat, const auto &, auto)
+                          {
+                            for (int j = 0; j < pointmat.Width(); j++)
+                            {
+                              double x = 0.0;
+                              for (int d = 0; d < pointmat.Height(); d++)
+                              {
+                                x += pointmat(d, j) * unit_dir(d);
+                              }
+                              x_min = std::min(x_min, x);
+                              x_max = std::max(x_max, x);
+                            }
+                          });
+  Mpi::GlobalMin(1, &x_min, mesh.GetComm());
+  Mpi::GlobalMax(1, &x_max, mesh.GetComm());
+  MFEM_VERIFY(x_min <= x_max, "No marked boundary elements to project onto a direction!");
+  return {x_min, x_max};
+}
+
+double GetCrossSection(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
+                       const mfem::Vector &dir, double offset, mfem::Vector &centroid)
+{
+  // Cut each refined element, with quadrilaterals split into triangles, along the line (in
+  // 2D, at the point) joining the crossings of its edges. Points within round-off of the
+  // plane, relative to the coordinates of the element, are moved onto it, so that all
+  // elements sharing a point agree on its side.
+  const int sdim = mesh.SpaceDimension();
+  mfem::Vector unit_dir(dir);
+  unit_dir /= unit_dir.Norml2();
   constexpr double snap_tol = 1.0e-12;
   std::array<double, 4> sum = {};  // Measure, then its first moments
-  PalacePragmaOmp(parallel)
-  {
-    mfem::GeometryRefiner refiner;
-    mfem::IsoparametricTransformation T;
-    mfem::DenseMatrix pointmat;
-    std::vector<double> s;
-    std::array<double, 4> loc_sum = {};
-    auto Cut = [&](const int *v, int nv)
-    {
-      // Crossings of the edges of a segment (nv = 2) or triangle (nv = 3).
-      std::array<std::array<double, 3>, 2> x;
-      int n = 0;
-      for (int k = 0; k < ((nv == 2) ? 1 : nv); k++)
+  std::vector<double> s;
+  ForEachMarkedBdrElement(
+      mesh, marker,
+      [&](const mfem::DenseMatrix &pointmat, const mfem::RefinedGeometry &RefG,
+          mfem::Geometry::Type geom)
       {
-        const int a = v[k], b = v[(k + 1) % nv];
-        if ((s[a] >= 0.0) != (s[b] >= 0.0))
+        double scale = std::abs(offset);
+        s.resize(pointmat.Width());
+        for (int j = 0; j < pointmat.Width(); j++)
         {
-          const double t = s[a] / (s[a] - s[b]);
+          s[j] = -offset;
           for (int d = 0; d < sdim; d++)
           {
-            x[n][d] = pointmat(d, a) + t * (pointmat(d, b) - pointmat(d, a));
+            s[j] += pointmat(d, j) * unit_dir(d);
+            scale = std::max(scale, std::abs(pointmat(d, j)));
           }
-          n++;
         }
-      }
-      if (nv == 2 && n == 1)
-      {
-        loc_sum[0] += 1.0;
-        for (int d = 0; d < sdim; d++)
+        for (auto &s_j : s)
         {
-          loc_sum[1 + d] += x[0][d];
+          if (std::abs(s_j) <= snap_tol * scale)
+          {
+            s_j = 0.0;
+          }
         }
-      }
-      else if (nv == 3 && n == 2)
-      {
-        double len = 0.0;
-        for (int d = 0; d < sdim; d++)
+        auto Cut = [&](const int *v, int nv)
         {
-          len += (x[1][d] - x[0][d]) * (x[1][d] - x[0][d]);
-        }
-        len = std::sqrt(len);
-        loc_sum[0] += len;
-        for (int d = 0; d < sdim; d++)
+          // Crossings of the edges of a segment (nv = 2) or triangle (nv = 3).
+          std::array<std::array<double, 3>, 2> x;
+          int n = 0;
+          for (int k = 0; k < ((nv == 2) ? 1 : nv); k++)
+          {
+            const int a = v[k], b = v[(k + 1) % nv];
+            if ((s[a] >= 0.0) != (s[b] >= 0.0))
+            {
+              const double t = s[a] / (s[a] - s[b]);
+              for (int d = 0; d < sdim; d++)
+              {
+                x[n][d] = pointmat(d, a) + t * (pointmat(d, b) - pointmat(d, a));
+              }
+              n++;
+            }
+          }
+          if (nv == 2 && n == 1)
+          {
+            sum[0] += 1.0;
+            for (int d = 0; d < sdim; d++)
+            {
+              sum[1 + d] += x[0][d];
+            }
+          }
+          else if (nv == 3 && n == 2)
+          {
+            double len = 0.0;
+            for (int d = 0; d < sdim; d++)
+            {
+              len += (x[1][d] - x[0][d]) * (x[1][d] - x[0][d]);
+            }
+            len = std::sqrt(len);
+            sum[0] += len;
+            for (int d = 0; d < sdim; d++)
+            {
+              sum[1 + d] += 0.5 * len * (x[0][d] + x[1][d]);
+            }
+          }
+        };
+        const int nv = mfem::Geometry::NumVerts[geom];
+        for (int k = 0; k < RefG.RefGeoms.Size(); k += nv)
         {
-          loc_sum[1 + d] += 0.5 * len * (x[0][d] + x[1][d]);
+          const int *v = RefG.RefGeoms.GetData() + k;
+          if (nv == 4)
+          {
+            const std::array<int, 3> t1 = {v[0], v[1], v[2]}, t2 = {v[0], v[2], v[3]};
+            Cut(t1.data(), 3);
+            Cut(t2.data(), 3);
+          }
+          else
+          {
+            Cut(v, nv);
+          }
         }
-      }
-    };
-    PalacePragmaOmp(for schedule(static))
-    for (int i = 0; i < mesh.GetNBE(); i++)
-    {
-      if (!marker[mesh.GetBdrAttribute(i) - 1])
-      {
-        continue;
-      }
-      mesh.GetBdrElementTransformation(i, &T);
-      const auto geom = T.GetGeometryType();
-      mfem::RefinedGeometry *RefG = refiner.Refine(geom, ref);
-      T.Transform(RefG->RefPts, pointmat);
-      s.resize(pointmat.Width());
-      for (int j = 0; j < pointmat.Width(); j++)
-      {
-        double x_dir = 0.0, scale = std::abs(offset);
-        for (int d = 0; d < sdim; d++)
-        {
-          x_dir += pointmat(d, j) * unit_dir(d);
-          scale = std::max(scale, std::abs(pointmat(d, j)));
-        }
-        s[j] = (std::abs(x_dir - offset) > snap_tol * scale) ? x_dir - offset : 0.0;
-      }
-      const int nv = mfem::Geometry::NumVerts[geom];
-      for (int k = 0; k < RefG->RefGeoms.Size(); k += nv)
-      {
-        const int *v = RefG->RefGeoms.GetData() + k;
-        if (nv == 4)
-        {
-          const std::array<int, 3> t1 = {v[0], v[1], v[2]}, t2 = {v[0], v[2], v[3]};
-          Cut(t1.data(), 3);
-          Cut(t2.data(), 3);
-        }
-        else
-        {
-          Cut(v, nv);
-        }
-      }
-    }
-    PalacePragmaOmp(critical(CrossSection))
-    {
-      for (std::size_t k = 0; k < sum.size(); k++)
-      {
-        sum[k] += loc_sum[k];
-      }
-    }
-  }
+      });
   Mpi::GlobalSum(1 + sdim, sum.data(), mesh.GetComm());
   centroid.SetSize(sdim);
   for (int d = 0; d < sdim; d++)
@@ -1443,6 +1432,73 @@ double GetCrossSection(const mfem::ParMesh &mesh, const mfem::Array<int> &marker
     centroid(d) = (sum[0] > 0.0) ? sum[1 + d] / sum[0] : 0.0;
   }
   return sum[0];
+}
+
+double GetSurfaceMoments(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
+                         mfem::Vector &centroid, mfem::DenseMatrix &covariance)
+{
+  // Integrate the area and first moments, then the second moments about the centroid, to
+  // avoid the cancellation of moments about a distant origin. The loops are serial, so that
+  // the sums are reproducible.
+  const int sdim = mesh.SpaceDimension();
+  mfem::IsoparametricTransformation T;
+  mfem::Vector x(sdim);
+  auto Integrate = [&](auto &&f)
+  {
+    for (int i = 0; i < mesh.GetNBE(); i++)
+    {
+      if (!marker[mesh.GetBdrAttribute(i) - 1])
+      {
+        continue;
+      }
+      mesh.GetBdrElementTransformation(i, &T);
+      const mfem::IntegrationRule &ir =
+          mfem::IntRules.Get(T.GetGeometryType(), 2 * T.Order() + T.OrderJ());
+      for (int j = 0; j < ir.GetNPoints(); j++)
+      {
+        const mfem::IntegrationPoint &ip = ir.IntPoint(j);
+        T.SetIntPoint(&ip);
+        T.Transform(ip, x);
+        f(ip.weight * T.Weight(), x);
+      }
+    }
+  };
+  std::vector<double> first(1 + sdim, 0.0);  // Area, then the first moments
+  Integrate(
+      [&](double w, const mfem::Vector &x)
+      {
+        first[0] += w;
+        for (int d = 0; d < sdim; d++)
+        {
+          first[1 + d] += w * x(d);
+        }
+      });
+  Mpi::GlobalSum(1 + sdim, first.data(), mesh.GetComm());
+  const double area = first[0];
+  centroid.SetSize(sdim);
+  for (int d = 0; d < sdim; d++)
+  {
+    centroid(d) = (area > 0.0) ? first[1 + d] / area : 0.0;
+  }
+  covariance.SetSize(sdim);
+  covariance = 0.0;
+  Integrate(
+      [&](double w, const mfem::Vector &x)
+      {
+        for (int d1 = 0; d1 < sdim; d1++)
+        {
+          for (int d2 = 0; d2 < sdim; d2++)
+          {
+            covariance(d1, d2) += w * (x(d1) - centroid(d1)) * (x(d2) - centroid(d2));
+          }
+        }
+      });
+  Mpi::GlobalSum(sdim * sdim, covariance.Data(), mesh.GetComm());
+  if (area > 0.0)
+  {
+    covariance *= 1.0 / area;
+  }
+  return area;
 }
 
 double GetDistanceFromPoint(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,

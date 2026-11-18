@@ -113,13 +113,14 @@ TEST_CASE("UniformElementData geometry", "[lumped_port][Serial][Parallel]")
   auto Bottom = [](const mfem::Vector &x) { return x(x.Size() - 1) == 0.0; };
   auto Identity = [](double *) {};
   const mfem::Array<int> attr_list({2});
-  constexpr auto Hex = mfem::Element::HEXAHEDRON;
+  // Hexahedra have quadrilateral boundary faces, and tetrahedra triangular ones.
+  const auto type = GENERATE(mfem::Element::HEXAHEDRON, mfem::Element::TETRAHEDRON);
 
   SECTION("Rectangle rotated out of the axes")
   {
     const Eigen::Matrix3d R =
         Eigen::AngleAxisd(0.7, Eigen::Vector3d(1.0, 2.0, 3.0).normalized()).matrix();
-    auto mesh = PortMesh(mfem::Mesh::MakeCartesian3D(3, 2, 1, Hex, 3.0, 2.0, 1.0), Bottom,
+    auto mesh = PortMesh(mfem::Mesh::MakeCartesian3D(3, 2, 1, type, 3.0, 2.0, 1.0), Bottom,
                          [&R](double *x)
                          {
                            Eigen::Map<Eigen::Vector3d> v(x);
@@ -132,22 +133,35 @@ TEST_CASE("UniformElementData geometry", "[lumped_port][Serial][Parallel]")
 
   SECTION("Wide rectangle with the direction 0.5 degrees off its side")
   {
-    // 1 x 10 rectangle, wider across the direction than long along it. The cross-sections
-    // are normal to the direction, so l and w are off by O(t^2), and the extent along the
-    // direction exceeds l by 10 sin(t), 8.7%, but the extent along the axis does not.
+    // 1 x 50 rectangle, much wider across the direction than long along it. Cuts normal to
+    // the direction would run out through its ends, but those normal to its principal axis
+    // cross it from side to side.
     const double t = 0.5 * std::numbers::pi / 180.0;
-    auto mesh = PortMesh(mfem::Mesh::MakeCartesian3D(2, 10, 1, Hex, 1.0, 10.0, 1.0), Bottom,
-                         Identity);
+    auto mesh = PortMesh(mfem::Mesh::MakeCartesian3D(2, 50, 1, type, 1.0, 50.0, 1.0),
+                         Bottom, Identity);
     UniformElementData data({std::cos(t), std::sin(t), 0.0}, attr_list, *mesh);
-    CHECK_THAT(data.GetGeometryLength(), WithinRel(std::cos(t), 1.0e-12));
-    CHECK_THAT(data.GetGeometryWidth(), WithinRel(10.0 / std::cos(t), 1.0e-12));
+    CHECK_THAT(data.GetGeometryLength(), WithinRel(1.0, 1.0e-12));
+    CHECK_THAT(data.GetGeometryWidth(), WithinRel(50.0, 1.0e-12));
+  }
+
+  SECTION("Wide strip with ends 0.5 degrees from normal to the direction")
+  {
+    // 1 x 10 parallelogram with its sides along the direction and its ends slanted. Its
+    // principal axis is within (1 / 10)^2 of normal to the ends, so l and w are those of a
+    // strip between the ends to second order.
+    const double t = 0.5 * std::numbers::pi / 180.0;
+    auto mesh = PortMesh(mfem::Mesh::MakeCartesian3D(2, 10, 1, type, 1.0, 10.0, 1.0),
+                         Bottom, [t](double *x) { x[0] += std::tan(t) * x[1]; });
+    UniformElementData data({1.0, 0.0, 0.0}, attr_list, *mesh);
+    CHECK_THAT(data.GetGeometryLength(), WithinRel(std::cos(t), 1.0e-5));
+    CHECK_THAT(data.GetGeometryWidth(), WithinRel(10.0 / std::cos(t), 1.0e-5));
   }
 
   SECTION("Bracket folded over a step (#89)")
   {
     // Top and side faces of a 2 x 2 x 1 block, folded along the direction.
     auto mesh = PortMesh(
-        mfem::Mesh::MakeCartesian3D(2, 2, 1, Hex, 2.0, 2.0, 1.0),
+        mfem::Mesh::MakeCartesian3D(2, 2, 1, type, 2.0, 2.0, 1.0),
         [](const mfem::Vector &x) { return x(2) == 1.0 || x(0) == 0.0; }, Identity);
     UniformElementData data({0.0, 1.0, 0.0}, attr_list, *mesh);
     CHECK_THAT(data.GetGeometryLength(), WithinRel(2.0, 1.0e-12));
@@ -158,7 +172,7 @@ TEST_CASE("UniformElementData geometry", "[lumped_port][Serial][Parallel]")
   {
     // Lateral surface of a 16-sided cylinder of radius 1 and height 0.2.
     auto mesh = PortMesh(
-        mfem::Mesh::MakeCartesian3D(1, 16, 1, Hex),
+        mfem::Mesh::MakeCartesian3D(1, 16, 1, type),
         [](const mfem::Vector &x) { return x(0) == 0.0; },
         [](double *x)
         {
@@ -178,7 +192,7 @@ TEST_CASE("UniformElementData geometry", "[lumped_port][Serial][Parallel]")
   {
     // Lateral surface of a cylinder of radius 1 and height 0.2, on a mesh of order 3.
     auto mesh = PortMesh(
-        mfem::Mesh::MakeCartesian3D(1, 16, 1, Hex),
+        mfem::Mesh::MakeCartesian3D(1, 16, 1, type),
         [](const mfem::Vector &x) { return x(0) == 0.0; },
         [](double *x)
         {
@@ -199,7 +213,7 @@ TEST_CASE("UniformElementData geometry", "[lumped_port][Serial][Parallel]")
     // 1 x 4 strip bent by s along the direction at its middle: one end bulges out and the
     // other in. The extent is 4 + s, but the distance between the ends is 4 everywhere.
     constexpr double s = 2.0e-2;
-    auto mesh = PortMesh(mfem::Mesh::MakeCartesian3D(4, 8, 1, Hex, 1.0, 4.0, 0.5), Bottom,
+    auto mesh = PortMesh(mfem::Mesh::MakeCartesian3D(4, 8, 1, type, 1.0, 4.0, 0.5), Bottom,
                          [](double *x)
                          {
                            if (x[2] == 0.0)
@@ -215,7 +229,7 @@ TEST_CASE("UniformElementData geometry", "[lumped_port][Serial][Parallel]")
   SECTION("Planar L-shaped port")
   {
     auto mesh = PortMesh(
-        mfem::Mesh::MakeCartesian3D(2, 2, 1, Hex, 2.0, 2.0, 1.0), [](const mfem::Vector &x)
+        mfem::Mesh::MakeCartesian3D(2, 2, 1, type, 2.0, 2.0, 1.0), [](const mfem::Vector &x)
         { return x(2) == 0.0 && (x(0) < 1.0 || x(1) < 1.0); }, Identity);
     CHECK_THROWS_WITH(UniformElementData({0.0, 1.0, 0.0}, attr_list, *mesh),
                       ContainsSubstring("not a strip along its direction"));
@@ -223,7 +237,7 @@ TEST_CASE("UniformElementData geometry", "[lumped_port][Serial][Parallel]")
 
   SECTION("Square with the direction 45 degrees off its sides")
   {
-    auto mesh = PortMesh(mfem::Mesh::MakeCartesian3D(2, 2, 1, Hex), Bottom, Identity);
+    auto mesh = PortMesh(mfem::Mesh::MakeCartesian3D(2, 2, 1, type), Bottom, Identity);
     CHECK_THROWS_WITH(UniformElementData({1.0, 1.0, 0.0}, attr_list, *mesh),
                       ContainsSubstring("not a strip along its direction"));
   }
@@ -232,7 +246,7 @@ TEST_CASE("UniformElementData geometry", "[lumped_port][Serial][Parallel]")
   {
     const double t = 10.0 * std::numbers::pi / 180.0;
     auto mesh = PortMesh(
-        mfem::Mesh::MakeCartesian3D(2, 2, 1, Hex, 2.0, 2.0, 0.2),
+        mfem::Mesh::MakeCartesian3D(2, 2, 1, type, 2.0, 2.0, 0.2),
         [](const mfem::Vector &x) { return x(2) > 0.1 || x(0) == 0.0; }, Identity);
     CHECK_THROWS_WITH(UniformElementData({std::sin(t), std::cos(t), 0.0}, attr_list, *mesh),
                       ContainsSubstring("not a strip along its direction"));
@@ -240,7 +254,7 @@ TEST_CASE("UniformElementData geometry", "[lumped_port][Serial][Parallel]")
 
   SECTION("Direction normal to the port")
   {
-    auto mesh = PortMesh(mfem::Mesh::MakeCartesian3D(2, 2, 1, Hex), Bottom, Identity);
+    auto mesh = PortMesh(mfem::Mesh::MakeCartesian3D(2, 2, 1, type), Bottom, Identity);
     CHECK_THROWS_WITH(UniformElementData({0.0, 0.0, 1.0}, attr_list, *mesh),
                       ContainsSubstring("no extent"));
   }
