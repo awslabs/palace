@@ -35,15 +35,18 @@ public:
   void AssembleDiagonal(Vector &diag) const override
   {
     diag.SetSize(2);
-    diag[0] = 4.0;
-    diag[1] = 3.0;
+    auto *D = diag.HostWrite();
+    D[0] = 4.0;
+    D[1] = 3.0;
   }
 
   void Mult(const Vector &x, Vector &y) const override
   {
     y.SetSize(2);
-    y[0] = 4.0 * x[0] + x[1];
-    y[1] = x[0] + 3.0 * x[1];
+    const auto *X = x.HostRead();
+    auto *Y = y.HostWrite();
+    Y[0] = 4.0 * X[0] + X[1];
+    Y[1] = X[0] + 3.0 * X[1];
   }
 
   void MultTranspose(const Vector &x, Vector &y) const override { Mult(x, y); }
