@@ -132,8 +132,8 @@ public:
   }
 
   // Relative tolerance of the first num_solves linear solves, at most until the first
-  // restart (all of the first Krylov cycle if num_solves < 0), used if positive and smaller
-  // than that of the linear solver. Not all solvers support it.
+  // restart, used if positive and smaller than that of the linear solver. Not all solvers
+  // support it.
   virtual void SetFirstCycleLinearSolverTol(double tol, int num_solves) {}
 
   // Number of iterations (restarts) of the last solve, or -1 if not available.

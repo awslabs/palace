@@ -410,7 +410,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   }
 
   // With adaptive mesh refinement, the SLEPc Krylov-Schur solver can start from the
-  // eigenvectors of the previous solve (warm start). Its more accurate first Krylov cycle
+  // eigenvectors of the previous solve (warm start). Its more accurate first linear solves
   // can cost more than a warm start saves on solves of two cycles: the eigenvectors are
   // kept only if the last solve without a warm start took three cycles or more, and only if
   // the adaptation goes on.
@@ -468,15 +468,14 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
       // A warm-started solve converges after few linear solves, and their error, kept in
       // the Krylov vectors through the restarts, is not seen by the error estimate of the
-      // eigenvalue solver: tighten the first cycle by 100, but not below 1e-3 times the
-      // tolerance of the eigenvalue solve (of the initial guess for the hybrid nonlinear
-      // solver) or 1e-12. The wanted Ritz pairs are set by the first num_warm + 1 linear
-      // solves, the error of a linear solve entering a pair with the pair's component along
-      // the Krylov vector solved for. Looser solves excite the strongly damped modes, so
-      // without the quality factor region the whole first Krylov cycle is tightened.
+      // eigenvalue solver. The error of a linear solve enters a wanted Ritz pair with the
+      // pair's component along the Krylov vector solved for, which is small after the first
+      // num_warm + 1 solves: tighten these by 100, but not below 1e-3 times the tolerance
+      // of the eigenvalue solve (of the initial guess for the hybrid nonlinear solver) or
+      // 1e-12.
       eigen->SetFirstCycleLinearSolverTol(
           std::max({1.0e-2 * iodata.solver.linear.tol, 1.0e-3 * tol, 1.0e-12}),
-          q_region ? num_warm + 1 : -1);
+          num_warm + 1);
     }
     else
     {

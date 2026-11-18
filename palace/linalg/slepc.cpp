@@ -509,8 +509,7 @@ SlepcEPSSolverBase::SlepcEPSSolverBase(MPI_Comm comm, int print, const std::stri
   }
   A0 = A1 = nullptr;
   first_cycle_tol = lin_tol = 0.0;
-  first_cycle_solves = -1;
-  first_cycle_count = 0;
+  first_cycle_solves = first_cycle_count = 0;
   first_cycle_monitor = first_cycle = false;
 }
 
@@ -687,7 +686,7 @@ int SlepcEPSSolverBase::Solve()
   lin_tol = opInv->GetRelTol();
   first_cycle_count = 0;
   first_cycle =
-      (first_cycle_tol > 0.0 && first_cycle_tol < lin_tol && first_cycle_solves != 0);
+      (first_cycle_tol > 0.0 && first_cycle_tol < lin_tol && first_cycle_solves > 0);
   if (first_cycle)
   {
     if (!first_cycle_monitor)
@@ -698,10 +697,9 @@ int SlepcEPSSolverBase::Solve()
     opInv->SetRelTol(first_cycle_tol);
     if (print > 0)
     {
-      Mpi::Print(
-          GetComm(), " Linear solver tolerance {:.3e} for the first {}\n", first_cycle_tol,
-          (first_cycle_solves > 0) ? fmt::format("{:d} linear solves", first_cycle_solves)
-                                   : std::string("Krylov cycle"));
+      Mpi::Print(GetComm(),
+                 " Linear solver tolerance {:.3e} for the first {:d} linear solves\n",
+                 first_cycle_tol, first_cycle_solves);
     }
   }
 
