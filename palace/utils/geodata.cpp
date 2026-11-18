@@ -279,6 +279,36 @@ std::unique_ptr<mfem::Mesh> Load(IoData &iodata, MPI_Comm comm)
                      "cracked! Use a mesh which is cracked along them, for "
                      "example from a previous adaptive simulation with the "
                      "same boundary conditions.");
+
+  // Warn about interior conductivity boundaries which are uncracked sheets by default, on
+  // the conformal input mesh. Only the root rank holds the mesh of the whole run for sure
+  // and prints, there is no communication here.
+  if (Mpi::Root(comm) && conforming && !iodata.boundaries.conductivity.empty() &&
+      !iodata.model.crack_bdr_elements.has_value() &&
+      (iodata.problem.type == ProblemType::DRIVEN ||
+       iodata.problem.type == ProblemType::EIGENMODE ||
+       iodata.problem.type == ProblemType::BOUNDARYMODE))
+  {
+    const auto attrs =
+        GetDefaultConductivitySheetAttributes(*smesh, iodata.boundaries.conductivity);
+    if (!attrs.empty())
+    {
+      Mpi::Print(comm, "\n");
+      Mpi::Warning(
+          comm,
+          "Interior \"Conductivity\" boundaries without \"Crack\" are a single sheet "
+          "with the admittance of both conductor faces (\"Crack\": false, the default "
+          "since Palace 0.19.0)!\n"
+          "A conductor meshed as a dielectric volume enclosed by these boundaries, or "
+          "much thicker than the skin depth with current on one face, has a lower "
+          "loss than with the cracked mesh of previous versions. Set \"Crack\": true "
+          "to model independent conductor faces (previous results), or \"Crack\": "
+          "false to keep the sheet model and silence this warning.");
+      utils::PrettyPrint(attrs, "Boundary attribute list:", comm);
+      Mpi::Print(comm, "\n");
+    }
+  }
+
   RegionRefine(refinement, *smesh);
   MFEM_VERIFY(
       interior_crack_attrs.empty() || smesh->Conforming(),
@@ -316,6 +346,38 @@ std::unique_ptr<mfem::Mesh> Load(IoData &iodata, MPI_Comm comm)
   }
 
   return smesh;
+}
+
+std::vector<int> GetDefaultConductivitySheetAttributes(
+    const mfem::Mesh &mesh, const std::vector<config::ConductivityData> &conductivity)
+{
+  const int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+  if (bdr_attr_max == 0)
+  {
+    return {};
+  }
+
+  // Unmark the attributes of which all boundary elements are interior, as for the interior
+  // sheets of SurfaceConductivityOperator.
+  mfem::Array<int> marker(bdr_attr_max);
+  marker = 1;
+  mesh.UnmarkInternalBoundaries(marker, true);
+  std::set<int> attrs;
+  for (const auto &data : conductivity)
+  {
+    if (data.crack_given)
+    {
+      continue;
+    }
+    for (const int attr : data.attributes)
+    {
+      if (attr > 0 && attr <= bdr_attr_max && !marker[attr - 1])
+      {
+        attrs.insert(attr);
+      }
+    }
+  }
+  return {attrs.begin(), attrs.end()};
 }
 
 std::unique_ptr<mfem::ParMesh> Partition(IoData &iodata, std::unique_ptr<mfem::Mesh> smesh,

@@ -789,6 +789,98 @@ TEST_CASE("Interior boundary mesh cracking", "[geodata][Serial]")
   fs::remove(mesh_path);
 }
 
+TEST_CASE("Default conductivity sheet warning", "[geodata][Serial]")
+{
+  // Unit cube hexahedral mesh with interior boundary elements (attribute 7) on z = 0.5,
+  // spanning the domain (exterior boundary attributes 1-6). One exterior element and one
+  // element on z = 0.5 have attribute 8, which is both exterior and interior.
+  auto base = mfem::Mesh::MakeCartesian3D(2, 2, 2, mfem::Element::HEXAHEDRON);
+  std::vector<int> sheet_faces;
+  mfem::Array<int> fv;
+  for (int f = 0; f < base.GetNumFaces(); f++)
+  {
+    int e1, e2;
+    base.GetFaceElements(f, &e1, &e2);
+    base.GetFaceVertices(f, fv);
+    bool on_sheet = (e2 >= 0);
+    for (auto v : fv)
+    {
+      on_sheet = on_sheet && std::abs(base.GetVertex(v)[2] - 0.5) < 1.0e-12;
+    }
+    if (on_sheet)
+    {
+      sheet_faces.push_back(f);
+    }
+  }
+  REQUIRE(sheet_faces.size() == 4);
+  mfem::Mesh mesh(3, base.GetNV(), base.GetNE(),
+                  base.GetNBE() + static_cast<int>(sheet_faces.size()));
+  for (int v = 0; v < base.GetNV(); v++)
+  {
+    mesh.AddVertex(base.GetVertex(v));
+  }
+  for (int e = 0; e < base.GetNE(); e++)
+  {
+    mesh.AddElement(base.GetElement(e)->Duplicate(&mesh));
+  }
+  for (int be = 0; be < base.GetNBE(); be++)
+  {
+    auto *el = base.GetBdrElement(be)->Duplicate(&mesh);
+    if (be == 0)
+    {
+      el->SetAttribute(8);
+    }
+    mesh.AddBdrElement(el);
+  }
+  for (auto f : sheet_faces)
+  {
+    auto *el = base.GetFace(f)->Duplicate(&mesh);
+    el->SetAttribute(f == sheet_faces.back() ? 8 : 7);
+    mesh.AddBdrElement(el);
+  }
+  mesh.FinalizeTopology();
+  mesh.Finalize();
+  mesh.SetAttributes();
+
+  config::ConductivityData cond;
+  cond.sigma = 5.8e7;
+  cond.attributes = {7};
+  auto Sheets = [&](const config::ConductivityData &data)
+  {
+    return mesh::GetDefaultConductivitySheetAttributes(
+        mesh, std::vector<config::ConductivityData>{data});
+  };
+
+  // Interior boundary without "Crack", also with a "Thickness".
+  CHECK(Sheets(cond) == std::vector<int>{7});
+  config::ConductivityData film = cond;
+  film.h = 1.0e-3;
+  CHECK(Sheets(film) == std::vector<int>{7});
+
+  // Exterior boundaries, and attributes with an exterior element, are not reported.
+  cond.attributes = {1};
+  CHECK(Sheets(cond).empty());
+  cond.attributes = {8};
+  CHECK(Sheets(cond).empty());
+  cond.attributes = {1, 7, 8};
+  CHECK(Sheets(cond) == std::vector<int>{7});
+  cond.attributes = {7, 12};  // No boundary elements with attribute 12.
+  CHECK(Sheets(cond) == std::vector<int>{7});
+  cond.attributes = {7};
+
+  // An explicit "Crack", either way, is an informed choice.
+  config::ConductivityData given = cond;
+  given.crack_given = true;
+  CHECK(Sheets(given).empty());
+  given.crack = true;
+  CHECK(Sheets(given).empty());
+
+  // Nothing is reported without conductivity boundaries.
+  CHECK(mesh::GetDefaultConductivitySheetAttributes(mesh,
+                                                    std::vector<config::ConductivityData>{})
+            .empty());
+}
+
 // MFEM identifies a face by its three smallest vertex numbers. A cracked quadrilateral with
 // three vertices on the crack front (at a corner of the crack) merges with its twin and the
 // crack closes there, unless the front vertices are numbered last.

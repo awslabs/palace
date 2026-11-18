@@ -18,6 +18,13 @@ namespace palace
 class IoData;
 class Units;
 
+namespace config
+{
+
+struct ConductivityData;
+
+}  // namespace config
+
 namespace mesh
 {
 
@@ -32,6 +39,11 @@ namespace mesh
 // before Preprocess hooks on the solver mutate the serial mesh (e.g. BoundaryMode
 // submesh extraction).
 std::unique_ptr<mfem::Mesh> Load(IoData &iodata, MPI_Comm comm);
+
+// Interior conductivity boundary attributes without "Crack" (all of their elements are
+// interior), which are uncracked sheets by default. Serial mesh, no communication.
+std::vector<int> GetDefaultConductivitySheetAttributes(
+    const mfem::Mesh &mesh, const std::vector<config::ConductivityData> &conductivity);
 
 // Partition and distribute a serial mesh prepared by Load, producing a parallel mesh.
 // `smesh` is non-null only on loading ranks (see Load's contract).
