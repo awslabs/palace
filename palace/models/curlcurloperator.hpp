@@ -150,11 +150,14 @@ private:
   // Assemble the London sheet mass M_sheet = ∫_Σ (1/L_ksq) A_t·v_t on first use.
   void EnsureSheetMass();
 
-  // Add the stiffness coefficients: curl-curl (μ⁻¹), London domains ((μλ²)⁻¹), and the
-  // kinetic sheet term (1/L_ksq, unbroken spaces only).
-  void AddStiffnessCoefficients(MaterialPropertyCoefficient &df,
-                                MaterialPropertyCoefficient &f,
-                                MaterialPropertyCoefficient &fb) const;
+  // Assemble the stiffness matrix on every level of the solution space: curl-curl (μ⁻¹),
+  // London domains ((μλ²)⁻¹), the kinetic sheet term (1/L_ksq, unbroken spaces only), and
+  // the gauge shift · (1/µ) ∫|A|². The domain and boundary mass coefficients are added to f
+  // and fb, for the auxiliary operators.
+  std::vector<std::unique_ptr<Operator>>
+  AssembleStiffness(double shift, MaterialPropertyCoefficient &f,
+                    MaterialPropertyCoefficient &fb) const;
+  std::vector<std::unique_ptr<Operator>> AssembleStiffness() const;
 
   // True if a superconductor (film or London domain) is present and the shift is positive.
   bool HasShiftedPreconditioner() const;

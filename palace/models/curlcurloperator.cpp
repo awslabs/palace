@@ -343,10 +343,35 @@ void PrintHeader(const mfem::ParFiniteElementSpace &h1_fespace,
   }
 }
 
-void AddStiffnessIntegrators(BilinearForm &k, const MaterialPropertyCoefficient &df,
-                             const MaterialPropertyCoefficient &f,
-                             const MaterialPropertyCoefficient &fb)
+}  // namespace
+
+std::vector<std::unique_ptr<Operator>>
+CurlCurlOperator::AssembleStiffness(double shift, MaterialPropertyCoefficient &f,
+                                    MaterialPropertyCoefficient &fb) const
 {
+  // Contribution from material permeability. In 2D, curl is scalar so the curl-curl
+  // coefficient is scalar (1x1).
+  MaterialPropertyCoefficient df(mat_op.GetAttributeToMaterial(),
+                                 mat_op.GetCurlCurlInvPermeability());
+
+  // Contribution for London superconductors (supercurrent J = −A/(μλ²)), and the gauge
+  // shift.
+  if (mat_op.HasLondonDepth())
+  {
+    f.AddCoefficient(mat_op.GetAttributeToMaterial(), mat_op.GetInvLondonDepth());
+  }
+  if (shift > 0.0)
+  {
+    f.AddCoefficient(mat_op.GetAttributeToMaterial(), mat_op.GetInvPermeability(), shift);
+  }
+
+  // Kinetic sheet term (1/L_ksq) A_t·v_t; on broken spaces, see AddBrokenSheetMatrix.
+  if (!IsBroken())
+  {
+    sc_sheet_op.AddStiffnessBdrCoefficients(1.0, fb);
+  }
+
+  BilinearForm k(GetSolutionNDSpace());
   if (f.empty())
   {
     k.AddDomainIntegrator<CurlCurlIntegrator>(df);
@@ -359,29 +384,16 @@ void AddStiffnessIntegrators(BilinearForm &k, const MaterialPropertyCoefficient 
   {
     k.AddBoundaryIntegrator<VectorFEMassIntegrator>(fb);
   }
+  // k.AssembleQuadratureData();
+  constexpr bool skip_zeros = false;
+  return k.Assemble(GetSolutionNDSpaces(), skip_zeros);
 }
 
-}  // namespace
-
-void CurlCurlOperator::AddStiffnessCoefficients(MaterialPropertyCoefficient &df,
-                                                MaterialPropertyCoefficient &f,
-                                                MaterialPropertyCoefficient &fb) const
+std::vector<std::unique_ptr<Operator>> CurlCurlOperator::AssembleStiffness() const
 {
-  // Contribution from material permeability. In 2D, curl is scalar so the curl-curl
-  // coefficient is scalar (1x1).
-  df.AddCoefficient(mat_op.GetAttributeToMaterial(), mat_op.GetCurlCurlInvPermeability());
-
-  // Contribution for London superconductors (supercurrent J = −A/(μλ²)).
-  if (mat_op.HasLondonDepth())
-  {
-    f.AddCoefficient(mat_op.GetAttributeToMaterial(), mat_op.GetInvLondonDepth());
-  }
-
-  // Kinetic sheet term (1/L_ksq) A_t·v_t; on broken spaces, see AddBrokenSheetMatrix.
-  if (!IsBroken())
-  {
-    sc_sheet_op.AddStiffnessBdrCoefficients(1.0, fb);
-  }
+  MaterialPropertyCoefficient f(mat_op.MaxCeedAttribute()),
+      fb(mat_op.MaxCeedBdrAttribute());
+  return AssembleStiffness(0.0, f, fb);
 }
 
 bool CurlCurlOperator::HasShiftedPreconditioner() const
@@ -395,14 +407,7 @@ std::unique_ptr<Operator> CurlCurlOperator::GetStiffnessMatrix()
   // data if the spaces correspond to the same mesh.
   PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
 
-  constexpr bool skip_zeros = false;
-  MaterialPropertyCoefficient df(mat_op.MaxCeedAttribute()), f(mat_op.MaxCeedAttribute()),
-      fb(mat_op.MaxCeedBdrAttribute());
-  AddStiffnessCoefficients(df, f, fb);
-  BilinearForm k(GetSolutionNDSpace());
-  AddStiffnessIntegrators(k, df, f, fb);
-  // k.AssembleQuadratureData();
-  auto k_vec = k.Assemble(GetSolutionNDSpaces(), skip_zeros);
+  auto k_vec = AssembleStiffness();
   auto K = std::make_unique<MultigridOperator>(GetSolutionNDSpaces().GetNumLevels());
   for (std::size_t l = 0; l < GetSolutionNDSpaces().GetNumLevels(); l++)
   {
@@ -438,15 +443,9 @@ std::unique_ptr<Operator> CurlCurlOperator::AssembleShiftedPreconditioner(
 {
   // Assemble K̃_pc = K + london_pc_shift_ · (1/µ) ∫|A|². The volume mass lifts the gradient
   // modes K leaves in its kernel outside the superconductors, so GᵀK̃_pcG is SPD for AMS.
-  constexpr bool skip_zeros = false;
-  MaterialPropertyCoefficient df(mat_op.MaxCeedAttribute()), f(mat_op.MaxCeedAttribute()),
+  MaterialPropertyCoefficient f(mat_op.MaxCeedAttribute()),
       fb(mat_op.MaxCeedBdrAttribute());
-  AddStiffnessCoefficients(df, f, fb);
-  f.AddCoefficient(mat_op.GetAttributeToMaterial(), mat_op.GetInvPermeability(),
-                   london_pc_shift_);
-  BilinearForm k(GetSolutionNDSpace());
-  AddStiffnessIntegrators(k, df, f, fb);
-  auto k_vec = k.Assemble(GetSolutionNDSpaces(), skip_zeros);
+  auto k_vec = AssembleStiffness(london_pc_shift_, f, fb);
   auto K = std::make_unique<MultigridOperator>(GetSolutionNDSpaces().GetNumLevels());
   for (std::size_t l = 0; l < GetSolutionNDSpaces().GetNumLevels(); l++)
   {
@@ -470,6 +469,7 @@ std::unique_ptr<Operator> CurlCurlOperator::AssembleShiftedPreconditioner(
     {
       a_aux.AddBoundaryIntegrator<DiffusionIntegrator>(fb);
     }
+    constexpr bool skip_zeros = false;
     auto a_aux_vec = a_aux.Assemble(h1_fespaces_aux, skip_zeros);
     const auto &pmesh = static_cast<const mfem::ParMesh &>(GetMesh());
     auto marker = mesh::BdrAttrToMarker(pmesh, pc_dbc_attr, true);
@@ -554,15 +554,7 @@ CurlCurlOperator::GetScreenedStiffnessMatrix(const mfem::Array<int> &extra_dbc_a
   const auto &pmesh = static_cast<const mfem::ParMesh &>(GetMesh());
   auto merged_marker = mesh::BdrAttrToMarker(pmesh, merged_attr, true);
 
-  // Same terms as the base stiffness matrix, so shorted-port assemblies carry the same
-  // kinetic inductance.
-  constexpr bool skip_zeros = false;
-  MaterialPropertyCoefficient df(mat_op.MaxCeedAttribute()), f(mat_op.MaxCeedAttribute()),
-      fb(mat_op.MaxCeedBdrAttribute());
-  AddStiffnessCoefficients(df, f, fb);
-  BilinearForm k(GetSolutionNDSpace());
-  AddStiffnessIntegrators(k, df, f, fb);
-  auto k_vec = k.Assemble(GetSolutionNDSpaces(), skip_zeros);
+  auto k_vec = AssembleStiffness();
 
   // Add the new entry before binding essential DOFs, since SetEssentialTrueDofs keeps a
   // shallow reference to the tdof list and that list must stay put. Drop the older entry
