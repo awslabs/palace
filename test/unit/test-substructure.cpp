@@ -7,12 +7,14 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <memory>
 #include <numeric>
 #include <random>
 #include <vector>
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <nlohmann/json.hpp>
 #include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 #include "fem/substructure.hpp"
@@ -83,11 +85,11 @@ TEST_CASE("Element moments tell sets of elements apart", "[substructure][Serial]
     part[e] = (serial.GetNE() - 1 - e) % Mpi::Size(Mpi::World());  // another partition
   }
   mfem::ParMesh mesh_repartitioned(Mpi::World(), serial, part.data());
-  const auto m = ElementMoments(mesh, {1});
+  const auto m = AttributeMoments(mesh, {1})[0];
   CHECK(m[0] == 16.0);
   CHECK(std::abs(m[1] - 0.72) <= 1.0e-12);
-  CHECK(MomentsMatch(m, ElementMoments(mesh_repartitioned, {1}), 1.0e-12));
-  const auto r = ElementMoments(mesh_rotated, {1});
+  CHECK(MomentsMatch(m, AttributeMoments(mesh_repartitioned, {1})[0], 1.0e-12));
+  const auto r = AttributeMoments(mesh_rotated, {1})[0];
   CHECK(r[0] == m[0]);
   CHECK(std::abs(r[1] - m[1]) <= 1.0e-12 * m[1]);
   CHECK(std::abs(r[2] - m[2]) <= 1.0e-12 * m[2]);
@@ -97,7 +99,249 @@ TEST_CASE("Element moments tell sets of elements apart", "[substructure][Serial]
   {
     half[e] = 1;
   }
-  CHECK_FALSE(MomentsMatch(m, ElementMoments(mesh, {1}, half), 1.0e-9));
+  CHECK_FALSE(MomentsMatch(m, AttributeMoments(mesh, {1}, half)[0], 1.0e-9));
+}
+
+TEST_CASE("Configuration hash of the environment", "[substructure][Serial]")
+{
+  // The hash of the configuration on an environment (domain attributes 2 and 3, boundary
+  // attributes 4, 5, 8 and 9) sees no change off it, of postprocessing, or of the order of
+  // entries and lists, but any change on it; without the excitations, neither the indices
+  // nor the sources.
+  using json = nlohmann::json;
+  const json base = json::parse(R"({
+    "Problem": {"Type": "Magnetostatic", "Output": "postpro"},
+    "Model": {"Mesh": "mesh.msh", "Refinement": {}},
+    "Domains": {
+      "Materials": [{"Attributes": [1, 2], "Permeability": 2.0},
+                    {"Attributes": [3], "Permeability": [5.0, 1.0, 1.0],
+                     "MaterialAxes": [[1, 0, 0], [0, 1, 0], [0, 0, 1]]}],
+      "Postprocessing": {"Energy": [{"Index": 1, "Attributes": [2]}]}},
+    "Boundaries": {
+      "PEC": {"Attributes": [4, 7]},
+      "Superconductor": [{"Attributes": [8], "PenetrationDepth": 0.1, "Thickness": 0.01}],
+      "SurfaceCurrent": [{"Index": 1, "Elements": [{"Attributes": [5], "Direction": "+X"},
+                                                   {"Attributes": [6], "Direction": "-X"}]}],
+      "FluxLoop": [{"Index": 2, "FilmAttributes": [8], "HoleAttributes": [9]}],
+      "Periodic": {"BoundaryPairs": [
+          {"DonorAttributes": [4], "ReceiverAttributes": [9], "Translation": [1, 0, 0]},
+          {"DonorAttributes": [6], "ReceiverAttributes": [7], "Translation": [0, 1, 0]}]},
+      "Postprocessing": {"SurfaceFlux": [{"Index": 1, "Attributes": [5], "Type": "Magnetic"}]}},
+    "Solver": {"Order": 2, "QuadratureOrderExtra": 0,
+               "Substructuring": {"Mode": "Offline", "ModelFile": "model.bin"}}})");
+  const std::vector<int> attrs = {3, 2}, bdr = {9, 8, 5, 4};
+  for (const bool excitations : {false, true})
+  {
+    CAPTURE(excitations);
+    const auto hash = EnvironmentConfigHash(base, attrs, bdr, excitations);
+    auto differs = [&](const std::function<void(json &)> &change)
+    {
+      json config = base;
+      change(config);
+      return EnvironmentConfigHash(config, attrs, bdr, excitations) != hash;
+    };
+    auto &mat = base["Domains"]["Materials"];
+    // Off the environment, of postprocessing, the order, and the run.
+    CHECK_FALSE(differs(
+        [&](json &c)
+        {
+          c["Domains"]["Materials"] = {{{"Attributes", {3}},
+                                        {"Permeability", mat[1]["Permeability"]},
+                                        {"MaterialAxes", mat[1]["MaterialAxes"]}},
+                                       {{"Attributes", {2, 2}}, {"Permeability", 2.0}},
+                                       {{"Attributes", {1}}, {"Permeability", 7.0}}};
+        }));
+    CHECK_FALSE(differs([](json &c) { c["Boundaries"]["PEC"]["Attributes"] = {4}; }));
+    CHECK_FALSE(
+        differs([](json &c) { c["Boundaries"]["PEC"]["Attributes"] = {7, 4, 1, 4}; }));
+    CHECK_FALSE(differs(
+        [](json &c)
+        { c["Boundaries"]["SurfaceCurrent"][0]["Elements"][1]["Direction"] = "+Y"; }));
+    CHECK_FALSE(differs(
+        [](json &c)
+        {
+          c["Domains"]["Postprocessing"]["Energy"][0]["Attributes"] = {3};
+          c["Boundaries"]["Postprocessing"]["SurfaceFlux"][0]["Attributes"] = {4};
+        }));
+    CHECK_FALSE(differs(
+        [](json &c)
+        {
+          c["Problem"]["Output"] = "online";
+          c["Model"]["Mesh"] = "region.mesh";
+          c["Model"]["Refinement"]["UniformLevels"] = 1;
+          c["Solver"]["Substructuring"]["Mode"] = "Online";
+        }));
+    CHECK_FALSE(differs(
+        [](json &c)
+        { c["Boundaries"]["Periodic"]["BoundaryPairs"][1]["Translation"] = {0, 2, 0}; }));
+    // On the environment.
+    CHECK(differs(
+        [](json &c)
+        { c["Boundaries"]["Periodic"]["BoundaryPairs"][0]["Translation"] = {2, 0, 0}; }));
+    CHECK(differs([](json &c) { c["Domains"]["Materials"][1]["Permeability"][0] = 6.0; }));
+    CHECK(differs([](json &c)
+                  { c["Domains"]["Materials"][1]["MaterialAxes"][0] = {0, 1, 0}; }));
+    CHECK(differs([](json &c) { c["Domains"]["Materials"][0]["Attributes"] = {1}; }));
+    CHECK(differs([](json &c) { c["Domains"]["Materials"][1]["Attributes"] = {2, 3}; }));
+    CHECK(differs([](json &c) { c["Boundaries"]["PEC"]["Attributes"] = {7}; }));
+    CHECK(differs([](json &c) { c["Boundaries"]["PMC"]["Attributes"] = {9}; }));
+    CHECK(differs([](json &c)
+                  { c["Boundaries"]["Superconductor"][0]["PenetrationDepth"] = 0.2; }));
+    CHECK(differs([](json &c) { c["Solver"]["Order"] = 3; }));
+    CHECK(differs([](json &c) { c["Solver"]["QuadratureOrderExtra"] = 1; }));
+    CHECK(differs([](json &c) { c["Model"]["CrackInternalBoundaryElements"] = true; }));
+    CHECK(differs([](json &c) { c["Problem"]["Type"] = "Electrostatic"; }));
+    // The excitations.
+    CHECK(differs([](json &c) { c["Boundaries"]["FluxLoop"][0]["Index"] = 3; }) ==
+          excitations);
+    CHECK(
+        differs([](json &c) { c["Boundaries"]["FluxLoop"][0]["HoleAttributes"] = {5}; }) ==
+        excitations);
+    CHECK(differs(
+              [](json &c)
+              {
+                c["Boundaries"]["SurfaceCurrent"][0]["Elements"][0]["Direction"] = "+Y";
+              }) == excitations);
+  }
+}
+
+// A box [0, 2] x [0, 1]^2 of 4 x 2 x 2 hexahedra: the domains x < 1 (attribute 1) and x > 1
+// (2), the faces x = 0 (1), x = 2 (2) and the others (3), and the interior boundaries x = 1
+// between the domains (4) and x = 3/2 inside the second (5).
+mfem::Mesh MakeInteriorBoundaryBox()
+{
+  constexpr int nx = 4, n = 2;
+  auto vid = [](int i, int j, int k) { return (i * (n + 1) + j) * (n + 1) + k; };
+  mfem::Mesh mesh(3, (nx + 1) * (n + 1) * (n + 1), nx * n * n, 2 * n * n * 2 + 4 * nx * n,
+                  3);
+  for (int i = 0; i <= nx; i++)
+  {
+    for (int j = 0; j <= n; j++)
+    {
+      for (int k = 0; k <= n; k++)
+      {
+        mesh.AddVertex(0.5 * i, 0.5 * j, 0.5 * k);
+      }
+    }
+  }
+  for (int i = 0; i < nx; i++)
+  {
+    for (int j = 0; j < n; j++)
+    {
+      for (int k = 0; k < n; k++)
+      {
+        const int v[8] = {vid(i, j, k),
+                          vid(i + 1, j, k),
+                          vid(i + 1, j + 1, k),
+                          vid(i, j + 1, k),
+                          vid(i, j, k + 1),
+                          vid(i + 1, j, k + 1),
+                          vid(i + 1, j + 1, k + 1),
+                          vid(i, j + 1, k + 1)};
+        mesh.AddHex(v, (i < 2) ? 1 : 2);
+      }
+    }
+  }
+  for (int a = 0; a < n; a++)
+  {
+    for (int b = 0; b < n; b++)
+    {
+      for (const auto [i, attr] : {std::pair{0, 1}, {2, 4}, {3, 5}, {nx, 2}})
+      {
+        const int q[4] = {vid(i, a, b), vid(i, a + 1, b), vid(i, a + 1, b + 1),
+                          vid(i, a, b + 1)};
+        mesh.AddBdrQuad(q, attr);
+      }
+    }
+  }
+  for (int i = 0; i < nx; i++)
+  {
+    for (int a = 0; a < n; a++)
+    {
+      for (int side = 0; side <= n; side += n)
+      {
+        const int qy[4] = {vid(i, side, a), vid(i + 1, side, a), vid(i + 1, side, a + 1),
+                           vid(i, side, a + 1)};
+        const int qz[4] = {vid(i, a, side), vid(i + 1, a, side), vid(i + 1, a + 1, side),
+                           vid(i, a + 1, side)};
+        mesh.AddBdrQuad(qy, 3);
+        mesh.AddBdrQuad(qz, 3);
+      }
+    }
+  }
+  mesh.FinalizeHexMesh(1, 0, true);
+  return mesh;
+}
+
+TEST_CASE("Environment records are those of any partition",
+          "[substructure][Serial][Parallel]")
+{
+  // The boundary attributes next to a domain (either side of an interior boundary), the
+  // moments of its elements and of the boundary elements within it (not those between the
+  // domains), and so the record of an environment, are those of any partition; the record
+  // survives its bytes, and other bytes are none.
+  mfem::Mesh serial = MakeInteriorBoundaryBox();
+  std::vector<int> part(serial.GetNE());
+  for (int e = 0; e < serial.GetNE(); e++)
+  {
+    part[e] = (serial.GetNE() - 1 - e) % Mpi::Size(Mpi::World());
+  }
+  mfem::ParMesh mesh(Mpi::World(), serial),
+      repartitioned(Mpi::World(), serial, part.data());
+  CHECK(BoundaryAttributesNextTo(mesh, {2}) == std::vector<int>{2, 3, 4, 5});
+  CHECK(BoundaryAttributesNextTo(mesh, {1}) == std::vector<int>{1, 3, 4});
+  const auto m = BoundaryAttributeMoments(mesh, {2, 3, 4, 5}, {2});
+  REQUIRE(m.size() == 4);
+  const double count[4] = {4.0, 16.0, 0.0, 4.0}, area[4] = {1.0, 4.0, 0.0, 1.0};
+  for (int a = 0; a < 4; a++)
+  {
+    CHECK(m[a][0] == count[a]);
+    CHECK(std::abs(m[a][1] - area[a]) <= 1.0e-12);
+  }
+  const auto config = nlohmann::json::parse(
+      R"({"Domains": {"Materials": [{"Attributes": [2], "Permittivity": 2.0}]}})");
+  std::vector<char> written(mesh.GetNE(), 0), written_rep(repartitioned.GetNE(), 0);
+  mfem::Vector c;
+  for (int e = 0; e < mesh.GetNE(); e++)
+  {
+    mesh.GetElementCenter(e, c);
+    written[e] = (c(0) < 1.5);
+  }
+  for (int e = 0; e < repartitioned.GetNE(); e++)
+  {
+    repartitioned.GetElementCenter(e, c);
+    written_rep[e] = (c(0) < 1.5);
+  }
+  const auto r = EnvironmentRecord::Make(mesh, {2}, config, written),
+             s = EnvironmentRecord::Make(repartitioned, {2}, config, written_rep);
+  CHECK(r.bdr_attributes == s.bdr_attributes);
+  CHECK(r.config_hash == s.config_hash);
+  CHECK(r.excitations_hash == s.excitations_hash);
+  for (const auto v : {&EnvironmentRecord::moments, &EnvironmentRecord::region_moments,
+                       &EnvironmentRecord::bdr_moments})
+  {
+    REQUIRE((r.*v).size() == (s.*v).size());
+    for (std::size_t a = 0; a < (r.*v).size(); a++)
+    {
+      CHECK(MomentsMatch((r.*v)[a], (s.*v)[a], 1.0e-12));
+    }
+  }
+  CHECK(r.region_moments[0][0] == 4.0);
+  const auto bytes = r.Serialize();
+  const auto t = EnvironmentRecord::Deserialize(bytes);
+  REQUIRE(t);
+  CHECK(t->attributes == r.attributes);
+  CHECK(t->bdr_attributes == r.bdr_attributes);
+  CHECK(t->moments == r.moments);
+  CHECK(t->region_moments == r.region_moments);
+  CHECK(t->bdr_moments == r.bdr_moments);
+  CHECK(t->config_hash == r.config_hash);
+  CHECK(t->excitations_hash == r.excitations_hash);
+  CHECK_FALSE(
+      EnvironmentRecord::Deserialize(std::vector<char>(bytes.begin(), bytes.end() - 1)));
+  auto longer = bytes;
+  longer.push_back(0);
+  CHECK_FALSE(EnvironmentRecord::Deserialize(longer));
 }
 
 TEST_CASE("Nédélec DOFs at the points of saved ones", "[substructure][Serial]")

@@ -356,8 +356,8 @@ SubstructuringSolver::Impl::Impl(const IoData &iodata,
                       refinement.GetBoxes().empty() && refinement.GetSpheres().empty(),
                   kRegionMeshRefined);
     }
-    CheckModelMesh(parent, env_attributes, saved.env_moments, saved.region_moments,
-                   kFingerprintTol, region_only);
+    saved.environment.Check(parent, *iodata.resolved_config, env_attributes,
+                            kFingerprintTol, region_only);
     // S_E was condensed with the regularization of the model: the region uses the same.
     model_eps = saved.regularization;
     if (region_only)

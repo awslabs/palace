@@ -1053,6 +1053,140 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
                     Catch::Matchers::ContainsSubstring("The environment differs"));
   CHECK_THROWS_WITH(condense(make_config("Online", 2.0, 5.0, 5)),
                     Catch::Matchers::ContainsSubstring("The environment differs"));
+  // An environment half moved to the region, on the same mesh and materials.
+  IoData half = make_config("Online", 2.0, 5.0, 4);
+  half.solver.substructuring->region_attributes = {1, 3};
+  half.solver.substructuring->environment_attributes = {2};
+  CHECK_THROWS_WITH(condense(half),
+                    Catch::Matchers::ContainsSubstring("The environment differs"));
+}
+
+TEST_CASE_METHOD(
+    palace::test::SharedTempDir,
+    "SubstructuringSolver mesh of the region rejects a changed environment configuration",
+    "[substructure][Serial][Parallel][GPU]")
+{
+  // The mesh of the region holds little of the environment, so its configuration tells a
+  // changed environment there: another material or boundary condition on it is rejected,
+  // while the region may change.
+  const std::string model_path = (temp_dir / "substruct_region_config.bin").string();
+  auto make_config =
+      [&](const std::string &mode, double eps_region, double eps_env, bool ground)
+  {
+    json config = {
+        {"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains",
+         {{"Materials",
+           {{{"Attributes", {1}}, {"Permittivity", eps_region}},
+            {{"Attributes", {2}}, {"Permittivity", eps_env}}}}}},
+        {"Boundaries",
+         {{"Terminal",
+           {{{"Index", 1}, {"Attributes", {1}}}, {{"Index", 2}, {"Attributes", {2}}}}}}},
+        {"Solver",
+         {{"Order", 1},
+          {"Substructuring",
+           {{"Region", {{"Attributes", {1}}}},
+            {"Environment", {{"Attributes", {2}}}},
+            {"Mode", mode},
+            {"ModelFile", model_path},
+            {"RegionMesh", mode == "Online"}}}}}};
+    if (ground)
+    {
+      config["Boundaries"]["Ground"] = {{"Attributes", {3}}};
+    }
+    return IoData(config, false);
+  };
+  auto condense = [](const IoData &iodata, std::unique_ptr<mfem::ParMesh> &&pmesh)
+  {
+    std::vector<std::unique_ptr<Mesh>> mesh;
+    mesh.push_back(std::make_unique<Mesh>(std::move(pmesh)));
+    SubstructuringSolver ss(iodata, mesh);
+    ss.CondenseEnvironment();
+  };
+  auto region_mesh = [&]()
+  {
+    mfem::Mesh serial(RegionMeshPath(model_path).c_str());
+    return std::make_unique<mfem::ParMesh>(Mpi::World(), serial);
+  };
+  condense(make_config("Offline", 1.0, 10.0, false), MakeSplitCube(4));
+  CHECK_NOTHROW(condense(make_config("Online", 1.0, 10.0, false), region_mesh()));
+  CHECK_NOTHROW(condense(make_config("Online", 2.5, 10.0, false), region_mesh()));
+  const auto changed = Catch::Matchers::ContainsSubstring(
+      "its attributes, materials, boundary conditions or discretization changed");
+  CHECK_THROWS_WITH(condense(make_config("Online", 1.0, 12.0, false), region_mesh()),
+                    changed);
+  CHECK_THROWS_WITH(condense(make_config("Online", 1.0, 10.0, true), region_mesh()),
+                    changed);
+}
+
+TEST_CASE_METHOD(
+    palace::test::SharedTempDir,
+    "SubstructuringSolver saved model rejects re-tagged environment boundaries",
+    "[substructure][Serial][Parallel][GPU]")
+{
+  // The grounded faces of the environment extended, with the configuration unchanged: the
+  // moments of the boundary attributes next to the environment tell the mesh apart.
+  const std::string model_path = (temp_dir / "substruct_retag.bin").string();
+  auto make_config = [&model_path](const std::string &mode)
+  {
+    json config = {
+        {"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains",
+         {{"Materials",
+           {{{"Attributes", {1}}, {"Permittivity", 1.0}},
+            {{"Attributes", {2}}, {"Permittivity", 10.0}}}}}},
+        {"Boundaries",
+         {{"Ground", {{"Attributes", {4}}}},
+          {"Terminal",
+           {{{"Index", 1}, {"Attributes", {1}}}, {{"Index", 2}, {"Attributes", {2}}}}}}},
+        {"Solver",
+         {{"Order", 1},
+          {"Substructuring",
+           {{"Region", {{"Attributes", {1}}}},
+            {"Environment", {{"Attributes", {2}}}},
+            {"Mode", mode},
+            {"ModelFile", model_path}}}}}};
+    return IoData(config, false);
+  };
+  // The unit cube split at x = 1/2 (attributes 1 and 2), with the faces x = 0 (1), x = 1
+  // (2), y = 0 with x > x0 (4), and the others (3).
+  auto condense = [](const IoData &iodata, double x0)
+  {
+    mfem::Mesh serial = mfem::Mesh::MakeCartesian3D(4, 4, 4, mfem::Element::HEXAHEDRON);
+    mfem::Vector c;
+    for (int e = 0; e < serial.GetNE(); e++)
+    {
+      serial.GetElementCenter(e, c);
+      serial.SetAttribute(e, (c(0) < 0.5) ? 1 : 2);
+    }
+    for (int b = 0; b < serial.GetNBE(); b++)
+    {
+      mfem::Array<int> vtx;
+      serial.GetBdrElementVertices(b, vtx);
+      double xc[2] = {0.0, 0.0};
+      for (int j = 0; j < vtx.Size(); j++)
+      {
+        xc[0] += serial.GetVertex(vtx[j])[0] / vtx.Size();
+        xc[1] += serial.GetVertex(vtx[j])[1] / vtx.Size();
+      }
+      serial.SetBdrAttribute(b, (xc[0] < 1e-9)                 ? 1
+                                : (xc[0] > 1.0 - 1e-9)         ? 2
+                                : (xc[1] < 1e-9 && xc[0] > x0) ? 4
+                                                               : 3);
+    }
+    serial.SetAttributes();
+    std::vector<std::unique_ptr<Mesh>> mesh;
+    mesh.push_back(
+        std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(Mpi::World(), serial)));
+    SubstructuringSolver ss(iodata, mesh);
+    ss.CondenseEnvironment();
+  };
+  condense(make_config("Offline"), 0.75);
+  CHECK_NOTHROW(condense(make_config("Online"), 0.75));
+  CHECK_THROWS_WITH(condense(make_config("Online"), 0.5),
+                    Catch::Matchers::ContainsSubstring("its mesh changed"));
 }
 
 TEST_CASE_METHOD(palace::test::SharedTempDir,
@@ -1445,8 +1579,9 @@ TEST_CASE_METHOD(
     "[substructure][Serial][Parallel]")
 {
   // On the mesh of the region, a terminal on the environment's boundary (attribute 2, at
-  // x = 1) has no DOFs: the model must hold it, so a renamed one needs the full mesh (and
-  // would otherwise give a zero row of C).
+  // x = 1) has no DOFs: the model must hold it (the terminal would otherwise give a zero
+  // row of C). A renamed one is an excitation of the environment which differs from the
+  // model's, and so is one of a model without its terminal modes: both need the full mesh.
   const std::string model_path = (temp_dir / "substruct_terminals.bin").string();
   auto make_config = [&](const std::string &mode, int env_index)
   {
@@ -1480,8 +1615,20 @@ TEST_CASE_METHOD(
   mfem::Mesh serial(RegionMeshPath(model_path).c_str());
   auto region = [&]() { return std::make_unique<mfem::ParMesh>(Mpi::World(), serial); };
   CHECK(capacitance(OnRegionMesh(make_config("Online", 2)), region(), 2)(1, 1) > 0.0);
-  CHECK_THROWS_WITH(capacitance(OnRegionMesh(make_config("Online", 5)), region(), 5),
-                    Catch::Matchers::ContainsSubstring("Excitation 5 has no DOFs"));
+  CHECK_THROWS_WITH(
+      capacitance(OnRegionMesh(make_config("Online", 5)), region(), 5),
+      Catch::Matchers::ContainsSubstring("The excitations of the environment differ"));
+  // Strip the record of the terminal modes, the last one.
+  const auto file = substructuring::ModelFile::Read(model_path, Mpi::World());
+  REQUIRE(!file.records.empty());
+  REQUIRE(file.records.back().tag == substructuring::ModelFile::Tag("MODE"));
+  if (Mpi::Root(Mpi::World()))
+  {
+    std::filesystem::resize_file(model_path, file.records.back().pos - 12);
+  }
+  Mpi::Barrier(Mpi::World());
+  CHECK_THROWS_WITH(capacitance(OnRegionMesh(make_config("Online", 2)), region(), 2),
+                    Catch::Matchers::ContainsSubstring("Excitation 2 has no DOFs"));
 }
 
 TEST_CASE("SubstructuringSolver magnetostatics ignores terminals",

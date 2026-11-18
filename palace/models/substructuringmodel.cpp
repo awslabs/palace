@@ -278,17 +278,19 @@ SubstructuringSolver::Impl::ReadSavedHead(const std::string &path, MPI_Comm comm
     return h;
   }
   values(kLengthTag, 1, &h.length);
-  // A complete model holds its signatures, S_E, environment fingerprint and moments.
+  // A complete model holds its signatures, S_E, environment fingerprint and record.
   const int w = SignatureFileWidth(h.sig_type);
   const long long nG = h.nG;
   const auto *S = h.file.Find(kSETag);
   const auto *fp = h.file.Find(kEnvFpTag);
-  std::array<double, 12> moments = {};
+  const auto *env = h.file.Find(kEnvRecordTag);
+  const auto environment =
+      env ? EnvironmentRecord::Deserialize(ModelFile::ReadPayload(path, *env, comm))
+          : std::nullopt;
   h.sig.resize(static_cast<std::size_t>(nG) * w);
   if (h.file.incomplete || w == 0 || nG < 0 || !S ||
       S->size != static_cast<long long>(sizeof(double)) * nG * nG || !fp ||
-      fp->size != static_cast<long long>(sizeof(double)) * kEnvFpSize ||
-      !values(kEnvMeshTag, moments.size(), moments.data()) ||
+      fp->size != static_cast<long long>(sizeof(double)) * kEnvFpSize || !environment ||
       !values(kSigsTag, h.sig.size(), h.sig.data()))
   {
     h.sig.clear();
@@ -296,8 +298,7 @@ SubstructuringSolver::Impl::ReadSavedHead(const std::string &path, MPI_Comm comm
   }
   h.width = w;
   h.S_pos = S->pos;
-  std::copy_n(moments.begin(), 6, h.env_moments.begin());
-  std::copy_n(moments.begin() + 6, 6, h.region_moments.begin());
+  h.environment = *environment;
   values(kEpsTag, 1, &h.regularization);
   h.sheet_sides.resize(4);
   if (!values(kSheetSidesTag, 4, h.sheet_sides.data()))
@@ -380,15 +381,6 @@ SubstructuringSolver::Impl::EnvironmentFingerprint() const
   {
     fp[2 + k] = mfem::InnerProduct(parent_fes.GetComm(), *r[k], Ar[k]);
   }
-  // The Dirichlet DOFs of the parent space (the same on both sides of the two-sided films).
-  std::vector<char> dbc(parent_fes.GetTrueVSize(), 0);
-  for (int i = 0; i < nt; i++)
-  {
-    dbc[ParentTrueDof(i)] |= env_dbc[i];
-  }
-  const std::array<double, 6> sums =
-      TrueDofPointSums(parent_fes, dbc, FingerprintCenters());
-  std::copy(sums.begin(), sums.end(), fp.begin() + 5);
   env_fp = fp;
   return *env_fp;
 }
@@ -402,19 +394,15 @@ const mfem::Vector &SubstructuringSolver::Impl::CachedFingerprintField(int k) co
   return fp_fields[k];
 }
 
-void SubstructuringSolver::Impl::AppendEnvMoments(const std::string &path,
-                                                  const std::vector<char> &written)
+void SubstructuringSolver::Impl::AppendEnvRecord(const std::string &path,
+                                                 const std::vector<char> &written)
 {
   BlockTimer bt(Timer::IO);
-  const auto &env = env_attributes;
-  const std::array<double, 6> m[2] = {ElementMoments(parent, env),
-                                      ElementMoments(parent, env, written)};  // collective
-  AppendRecord(path, kEnvMeshTag, sizeof(double) * 12,
-               [&](std::ofstream &f)
-               {
-                 f.write(reinterpret_cast<const char *>(m[0].data()), sizeof(double) * 6);
-                 f.write(reinterpret_cast<const char *>(m[1].data()), sizeof(double) * 6);
-               });
+  const std::vector<char> record =
+      EnvironmentRecord::Make(parent, env_attributes, *iodata.resolved_config, written)
+          .Serialize();  // collective
+  AppendRecord(path, kEnvRecordTag, static_cast<long long>(record.size()),
+               [&](std::ofstream &f) { f.write(record.data(), record.size()); });
 }
 
 void SubstructuringSolver::Impl::AppendEnvFingerprint(const std::string &path)
@@ -661,15 +649,12 @@ void SubstructuringSolver::Impl::CheckEnvFingerprint()
   const std::array<double, kEnvFpSize> fp = EnvironmentFingerprint();  // collective
   MFEM_VERIFY(have_env_fp, "The saved substructuring model has no environment "
                            "fingerprint: rerun in \"Offline\" mode to condense it again!");
-  // The counts exactly, the energies and the absolute sums relative to themselves, and the
-  // sums relative to the absolute sums (they may cancel).
+  // The counts exactly, the energies relative to themselves.
   bool ok = (fp[0] == saved_env_fp[0] && fp[1] == saved_env_fp[1]);
   for (int q = 2; q < kEnvFpSize; q++)
   {
-    const int scale = (q >= 5 && q < 8) ? q + 3 : q;
-    ok = ok &&
-         std::abs(fp[q] - saved_env_fp[q]) <=
-             kFingerprintTol * std::max(std::abs(fp[scale]), std::abs(saved_env_fp[scale]));
+    ok = ok && std::abs(fp[q] - saved_env_fp[q]) <=
+                   kFingerprintTol * std::max(std::abs(fp[q]), std::abs(saved_env_fp[q]));
   }
   MFEM_VERIFY(ok, kEnvironmentDiffers);
 }
@@ -837,7 +822,7 @@ void SubstructuringSolver::Impl::SaveModel(const std::string &model_path, int si
         { f.write(reinterpret_cast<const char *>(&iodata.model.Lc), sizeof(double)); });
   }
   AppendEnvFingerprint(model_path);  // collective
-  AppendEnvMoments(model_path, WriteRegionMesh(RegionMeshPath(model_path)));
+  AppendEnvRecord(model_path, WriteRegionMesh(RegionMeshPath(model_path)));
   if (have_sk)
   {
     BlockTimer bt_io(Timer::IO);

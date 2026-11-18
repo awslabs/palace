@@ -733,15 +733,14 @@ struct SubstructuringSolver::Impl
 
   // The records of a model file (see substructuring::ModelFile): HEAD [kModelVersion,
   // Solver.Order, nG, signature type], SIGS [signatures nG x width], SENV [S_E nG x nG],
-  // LENC [Model.Lc of the offline run], ENVF [environment fingerprint, 11 doubles], in
+  // LENC [Model.Lc of the offline run], ENVF [environment fingerprint, 5 doubles], in
   // magnetostatics MEPS [the regularization eps] and SIDS [the sides of the sheet faces on
-  // Gamma, 4 doubles], EMSH [ElementMoments of the environment and of its elements in the
-  // mesh of the region, 12 doubles], and as they are computed SKEN [S^K nG x nG]
-  // (magnetostatics), SKIN [S^Kin nG x nG] (with London sheets in the environment), MODE
-  // [K][ids][fingerprints 2K][G nG x K][Cmode KxK] (electrostatics), and SRCM [K][ids]
+  // Gamma, 4 doubles], ENVR [the EnvironmentRecord], and as they are computed SKEN [S^K nG
+  // x nG] (magnetostatics), SKIN [S^Kin nG x nG] (with London sheets in the environment),
+  // MODE [K][ids][fingerprints 2K][G nG x K][Cmode KxK] (electrostatics), and SRCM [K][ids]
   // [fingerprints 2K][g nG x K][h nG x K][c KxK][B KxK] (then [h^kin nG x K][c^kin KxK]
   // in a model with S^Kin).
-  static constexpr int kModelVersion = 6;
+  static constexpr int kModelVersion = 7;
   using ModelFile = substructuring::ModelFile;
   static constexpr std::uint32_t kHeadTag = ModelFile::Tag("HEAD"),
                                  kSigsTag = ModelFile::Tag("SIGS"),
@@ -750,7 +749,7 @@ struct SubstructuringSolver::Impl
                                  kEnvFpTag = ModelFile::Tag("ENVF"),
                                  kEpsTag = ModelFile::Tag("MEPS"),
                                  kSheetSidesTag = ModelFile::Tag("SIDS"),
-                                 kEnvMeshTag = ModelFile::Tag("EMSH"),
+                                 kEnvRecordTag = ModelFile::Tag("ENVR"),
                                  kSKenTag = ModelFile::Tag("SKEN"),
                                  kSKinTag = ModelFile::Tag("SKIN"),
                                  kModesTag = ModelFile::Tag("MODE"),
@@ -763,16 +762,15 @@ struct SubstructuringSolver::Impl
   // The head of a model, from rank 0: its format version (-1: the file cannot be read, 0:
   // not a model; a container of another version reads as another version), order,
   // interface size, signature type and width (0: another version, or an incomplete model),
-  // its records, the interface signatures, the position of S_E, the reference length,
-  // element moments of the environment and of the mesh of the region, magnetostatic
-  // regularization, and sides of the sheet faces on Gamma (0 or empty: not saved).
-  // Collective.
+  // its records, the interface signatures, the position of S_E, the reference length, the
+  // record of the environment, magnetostatic regularization, and sides of the sheet faces
+  // on Gamma (0 or empty: not saved). Collective.
   struct SavedHead
   {
     int version = -1, order = 0, nG = 0, sig_type = 0, width = 0;
     ModelFile file;
     std::vector<double> sig;
-    std::array<double, 6> env_moments = {}, region_moments = {};
+    EnvironmentRecord environment;
     double length = 0.0, regularization = 0.0;
     std::vector<double> sheet_sides;
     long long S_pos = 0;
@@ -788,14 +786,13 @@ struct SubstructuringSolver::Impl
   const std::array<std::array<double, 3>, 3> &FingerprintCenters() const;
   mutable std::optional<std::array<std::array<double, 3>, 3>> fp_centers;
 
-  // Fingerprint of the environment: global counts of the environment-closure DOFs and of
-  // the Dirichlet DOFs of environment elements, the energies r^T A_env r of the three fixed
-  // fields, and the TrueDofPointSums of these Dirichlet DOFs (the sums, then the sums of
-  // the absolute values). Independent of the region (A_env has no region contribution), of
+  // Fingerprint of the environment operator: global counts of the environment-closure DOFs
+  // and of the Dirichlet DOFs of environment elements, and the energies r^T A_env r of the
+  // three fixed fields. Independent of the region (A_env has no region contribution), of
   // the partition, the DOF numbering and the H(curl) orientations, but it changes with the
   // environment mesh, materials, order, physics or Dirichlet boundaries. With A_env applied
   // by EnvApply (an online run assembles no A_env). Collective.
-  static constexpr int kEnvFpSize = 11;
+  static constexpr int kEnvFpSize = 5;
   std::array<double, kEnvFpSize> EnvironmentFingerprint() const;
   mutable std::optional<std::array<double, kEnvFpSize>> env_fp;
 
@@ -807,7 +804,9 @@ struct SubstructuringSolver::Impl
   std::array<double, kEnvFpSize> saved_env_fp = {};
   bool have_env_fp = false;
 
-  void AppendEnvMoments(const std::string &path, const std::vector<char> &written);
+  // Append the EnvironmentRecord, with written marking the elements written in the mesh of
+  // the region. Collective.
+  void AppendEnvRecord(const std::string &path, const std::vector<char> &written);
 
   void AppendEnvFingerprint(const std::string &path);
 

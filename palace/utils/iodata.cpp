@@ -287,6 +287,7 @@ IoData::IoData(const nlohmann::json &config, bool print) : units(1.0, 1.0), init
 
   // Check compatibility of configuration file and problem type.
   CheckConfiguration();
+  resolved_config = std::make_shared<const json>(ConcretizeDefaults(*this, config));
 }
 
 IoData::IoData(const char *filename, bool print) : IoData(ParseAndValidate(filename), print)

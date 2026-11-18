@@ -37,10 +37,11 @@ with ``\bm{S}_E``, so terminal energies need no environment solve.
 
 The environment model (``\bm{S}_E`` and the terminal couplings) can be saved to a file. A later
 run loads it and solves only the region, possibly after re-meshing the region: its solves then
-follow the size of the region rather than of the device. On the full mesh the environment is
-checked against the model with its operator applied matrix-free, without assembling it; on the
-mesh of the region written with the model, only the region is read. The formulation is written
-out in the [reference](../reference.md#Substructuring).
+follow the size of the region rather than of the device. The run checks that its environment is
+the model's: its elements and boundaries, the configuration on its attributes (materials, boundary
+conditions, order and quadrature) exactly, and on the full mesh its operator, applied matrix-free
+without assembling it; on the mesh of the region written with the model, only the region is read.
+The formulation is written out in the [reference](../reference.md#Substructuring).
 
 ## Configuration
 
@@ -73,13 +74,13 @@ interface and, in magnetostatics, at the surface currents and flux loops of the 
 the films of the flux loops whole and, if these elements reach a `"TwoSided"` film where it crosses
 the interface, the environment along every such crossing) and next to the films on the interface. An
 `"Online"` run on it (`"Model"/"Mesh"` and `"RegionMesh": true`, with the configuration otherwise
-unchanged) reads and partitions the region only. The environment is then that of the model, whatever the configuration
-says of it (on the full mesh, an environment that differs from that of the model is rejected), and
-the mesh must hold the environment elements written with it; the interface is found from the saved
-interface DOFs, and the nondimensionalization is that of the model. Every excitation with sources in
-the environment must be in the model, the fields are written in the region and on the interface
-only, and a priori and adaptive refinement need the full mesh (the mesh of the region is written
-refined).
+unchanged) reads and partitions the region only. The environment is then that of the model: a
+configuration that changes it is rejected (an excitation of the environment that changed needs the
+full mesh), and the mesh must hold the environment elements written with it; the interface is found
+from the saved interface DOFs, and the nondimensionalization is that of the model. Every excitation
+with sources in the environment must be in the model, the fields are written in the region and on
+the interface only, and a priori and adaptive refinement need the full mesh (the mesh of the region
+is written refined).
 A redesign of the region is re-meshed inside the mesh of the region with
 [`examples/substructuring/remesh_region.py`](https://github.com/awslabs/palace/blob/main/examples/substructuring/remesh_region.py)
 and `--region-mesh` (see [Example: qubit lattice](@ref substructuring-lattice-example)).

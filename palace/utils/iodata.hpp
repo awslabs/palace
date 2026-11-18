@@ -4,6 +4,7 @@
 #ifndef PALACE_UTILS_IODATA_HPP
 #define PALACE_UTILS_IODATA_HPP
 
+#include <memory>
 #include <sstream>
 #include <nlohmann/json_fwd.hpp>
 #include "utils/configfile.hpp"
@@ -36,6 +37,10 @@ public:
 
   // Class that holds mesh scale and converts between SI quantities and normalized values.
   Units units;
+
+  // The configuration this was constructed from, with its defaults resolved
+  // (ConcretizeDefaults); null if constructed from units only.
+  std::shared_ptr<const nlohmann::json> resolved_config;
 
 private:
   bool init;
