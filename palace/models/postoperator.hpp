@@ -190,6 +190,12 @@ protected:
   std::unique_ptr<GridFunction> MakeRecoveredFluxGridFunction(bool complex);
   void SetRecoveredFluxGridFunction(const Vector &d, mfem::ParGridFunction &flux) const;
 
+  // Refuse a recovered flux whose true-dof size is not the flux recovery space's, on EVERY
+  // process (review r2152 A S4-5): the sizes are rank-local, so the mismatch is reduced
+  // over the communicator first (a process whose sizes agree, e.g. one without a sheet DOF,
+  // would otherwise go on alone into the face-neighbour exchange). Collective.
+  void VerifyRecoveredFluxTrueVSize(int size) const;
+
   // Fields: Electric, recovered electric displacement, Magnetic, Scalar Potential, Vector
   // Potential.
   std::unique_ptr<GridFunction> E, D_recovered, B, V, A;
@@ -855,8 +861,7 @@ public:
     surface_response_corrected_field->Imag().ExchangeFaceNbrData();
     if (d)
     {
-      MFEM_VERIFY(d->Size() == GetRecoveredElectricFluxTrueVSize(),
-                  kRecoveredFluxSpaceMessage);
+      VerifyRecoveredFluxTrueVSize(d->Size());
       if (!surface_response_corrected_flux)
       {
         surface_response_corrected_flux =

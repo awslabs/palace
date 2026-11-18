@@ -1441,10 +1441,18 @@ PostOperator<solver_t>::MakeRecoveredFluxGridFunction(bool complex)
 }
 
 template <ProblemType solver_t>
+void PostOperator<solver_t>::VerifyRecoveredFluxTrueVSize(int size) const
+{
+  int mismatch = (size != GetRecoveredElectricFluxTrueVSize()) ? 1 : 0;
+  Mpi::GlobalMax(1, &mismatch, fem_op->GetComm());
+  MFEM_VERIFY(mismatch == 0, kRecoveredFluxSpaceMessage);
+}
+
+template <ProblemType solver_t>
 void PostOperator<solver_t>::SetRecoveredFluxGridFunction(const Vector &d,
                                                           mfem::ParGridFunction &flux) const
 {
-  MFEM_VERIFY(d.Size() == GetRecoveredElectricFluxTrueVSize(), kRecoveredFluxSpaceMessage);
+  VerifyRecoveredFluxTrueVSize(d.Size());
   if (!flux_space)
   {
     flux.SetFromTrueDofs(d);
