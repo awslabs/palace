@@ -1,6 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <fstream>
@@ -244,8 +245,14 @@ TEST_CASE("TwoDimensionalDiagonalSquarePort", "[geodata][Serial]")
 
 TEST_CASE("TetToHex", "[geodata][Serial]")
 {
-
+  // The DOF layout below assumes the vertex order (3, 2, 1, 0) of the tetrahedron of
+  // SingleTetMesh(): set it, as the marking for refinement may order its equal edges
+  // otherwise.
   mfem::Mesh single_tet(SingleTetMesh());
+  const int order_3210[4] = {3, 2, 1, 0};
+  single_tet.GetElement(0)->SetVertices(order_3210);
+  single_tet.FinalizeTopology();
+  single_tet.Finalize(false, false);
 
   SECTION("Linear")
   {
@@ -436,6 +443,101 @@ TEST_CASE("LocalEdgeSplit", "[geodata][Serial]")
 
   CHECK(mesh->CheckElementOrientation(false) == 0);
   CHECK(mesh->CheckBdrElementOrientation(false) == 0);
+}
+
+TEST_CASE("ConformalRefinementAfterUniformRefinement", "[geodata][Serial][Parallel]")
+{
+  // Prisms over equilateral triangles, split into tetrahedra: many shared triangles have
+  // edges of equal length, so the marking of the tetrahedra after a uniform refinement (as
+  // before adaptive refinement) must break the ties between edges the same way on all
+  // processes. The mesh refined locally must then be conforming across the processes: the
+  // lowest-order Nédélec and Raviart-Thomas interpolants of a smooth field are continuous.
+  // Without a consistent marking this fails from 3 processes on.
+  mfem::Mesh wedges = mfem::Mesh::MakeCartesian3D(4, 4, 4, mfem::Element::WEDGE);
+  for (int v = 0; v < wedges.GetNV(); v++)
+  {
+    double *x = wedges.GetVertex(v);
+    x[0] -= 0.5 * x[1];
+    x[1] *= std::sqrt(0.75);
+  }
+  mfem::Mesh serial = mfem::Mesh::MakeSimplicial(wedges);
+  serial.Finalize(true);
+  mfem::ParMesh mesh(Mpi::World(), serial);
+  mesh.UniformRefinement();
+  mesh.Finalize(true);
+  mfem::Array<int> marked;
+  mfem::Vector c;
+  for (int e = 0; e < mesh.GetNE(); e++)
+  {
+    mesh.GetElementCenter(e, c);
+    if (c(0) < 0.5)
+    {
+      marked.Append(e);
+    }
+  }
+  mesh.GeneralRefinement(marked, 0);
+  mfem::ND_FECollection nd(1, 3);
+  mfem::RT_FECollection rt(0, 3);
+  mfem::VectorFunctionCoefficient f(3,
+                                    [](const mfem::Vector &x, mfem::Vector &y)
+                                    {
+                                      y(0) = 1.0 + x(1);
+                                      y(1) = 2.0 + x(2);
+                                      y(2) = 3.0 + x(0);
+                                    });
+  for (mfem::FiniteElementCollection *fec :
+       {static_cast<mfem::FiniteElementCollection *>(&nd),
+        static_cast<mfem::FiniteElementCollection *>(&rt)})
+  {
+    mfem::ParFiniteElementSpace fespace(&mesh, fec);
+    mfem::ParGridFunction u(&fespace), v(&fespace);
+    u.ProjectCoefficient(f);
+    mfem::Vector t(fespace.GetTrueVSize());
+    u.GetTrueDofs(t);
+    v.SetFromTrueDofs(t);
+    v -= u;
+    double error = v.Normlinf();
+    Mpi::GlobalMax(1, &error, Mpi::World());
+    CAPTURE(fec->Name());
+    CHECK(error < 1.0e-12);
+  }
+}
+
+TEST_CASE("TetrahedronMarkingWithNearlyEqualEdges", "[geodata][Serial]")
+{
+  // A tetrahedron with a boundary triangle on each face, whose face 0-1-2 has edges of
+  // squared lengths 1, 1 + 0.6e-6 and 1 + 1.2e-6 (a relative tolerance of 1e-6 would take
+  // the first two and the last two as equal, but not the first and the last, and its result
+  // would depend on the order of the comparisons). The boundary triangles must be marked as
+  // the faces of the tetrahedron whatever the orders of their vertices, or the refinement
+  // aborts.
+  const double x = 0.5 - 0.3e-6, y = std::sqrt(1.0 + 0.6e-6 - x * x);
+  const double p[4][3] = {{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}, {x, y, 0.0}, {0.5, 0.3, 0.8}};
+  int tv[4] = {0, 1, 2, 3};
+  do
+  {
+    for (int rot = 0; rot < 3; rot++)
+    {
+      mfem::Mesh mesh(3, 4, 1, 4);
+      for (int v = 0; v < 4; v++)
+      {
+        mesh.AddVertex(p[v]);
+      }
+      mesh.AddTet(tv);
+      for (int f = 0; f < 4; f++)
+      {
+        const int *fv = mfem::Geometry::Constants<mfem::Geometry::TETRAHEDRON>::FaceVert[f];
+        const int bv[3] = {tv[fv[rot]], tv[fv[(rot + 1) % 3]], tv[fv[(rot + 2) % 3]]};
+        mesh.AddBdrTriangle(bv, 1 + f);
+      }
+      mesh.FinalizeTopology();
+      mesh.Finalize(true);
+      mfem::Array<int> marked(1);
+      marked[0] = 0;
+      mesh.GeneralRefinement(marked, 0);
+      CHECK(mesh.GetNE() == 8);
+    }
+  } while (std::next_permutation(tv, tv + 4));
 }
 
 TEST_CASE_METHOD(palace::test::SharedTempDir,
