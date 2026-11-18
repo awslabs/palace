@@ -532,12 +532,10 @@ void DrivenSubstructuredSweep::SetUpModel()
     MFEM_VERIFY(iodata.solver.driven.adaptive_max_size >= n_init,
                 "Adaptive frequency sweep must sample at least " << n_init
                                                                  << " frequency points!");
-    model.capacity = static_cast<int>(iodata.solver.driven.adaptive_max_size);
   }
   else
   {
     model.omega = omega_sample;
-    model.capacity = static_cast<int>(omega_sample.size());
   }
   for (int p : env_ports)
   {
@@ -548,7 +546,8 @@ void DrivenSubstructuredSweep::SetUpModel()
   {
     Mpi::Print(" Saving the substructuring model to {} ({}{:d} frequencies, {:d} "
                "excitations with environment sources, {:d} environment ports)\n",
-               model_path, adaptive ? "up to " : "", model.capacity,
+               model_path, adaptive ? "up to " : "",
+               adaptive ? iodata.solver.driven.adaptive_max_size : omega_sample.size(),
                model.excitations.size(), env_ports.size());
     // The mesh of the region for online runs, with the environment's ports, and the
     // element moments of the environment and of its part in that mesh (in the header).

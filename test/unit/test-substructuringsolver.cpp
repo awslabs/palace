@@ -3331,9 +3331,9 @@ TEST_CASE("Saved driven excitations match across partitions", "[substructure][Se
 
 TEST_CASE("A cut or corrupted driven model header is rejected", "[substructure][Serial]")
 {
-  // The header is read part by part, each only if the rest of the file holds it: a header
-  // cut short, and one whose sizes exceed the file (also a negative one) or its room, are
-  // incomplete; another format version is rejected, and a file of another kind is not a
+  // The header is read part by part, each only if its record holds it: a header cut short,
+  // one whose sizes exceed its record (also a negative one), and one without frequencies,
+  // are incomplete; another format version is rejected, and a file of another kind is not a
   // model.
   DrivenSubstructureModel m;
   m.nG = 2;
@@ -3341,9 +3341,14 @@ TEST_CASE("A cut or corrupted driven model header is rejected", "[substructure][
   m.signatures = {0.25, 0.75};
   m.env_fp = {100.0, 20.0, 3.0, 0.0};
   m.omega = {1.0};
-  m.capacity = 1;
   const auto path =
       (std::filesystem::temp_directory_path() / "palace-driven-model-cut.bin").string();
+  // The position of the header in the file.
+  auto header = [&path]()
+  {
+    using substructuring::ModelFile;
+    return ModelFile::Read(path, Mpi::World()).Find(ModelFile::Tag("DHED"))->pos;
+  };
   m.WriteHeader(path);
   DrivenSubstructureModel saved;
   saved.ReadHeader(path, Mpi::World());
@@ -3352,15 +3357,16 @@ TEST_CASE("A cut or corrupted driven model header is rejected", "[substructure][
   std::filesystem::resize_file(path, std::filesystem::file_size(path) / 2);
   CHECK_THROWS_WITH(saved.ReadHeader(path, Mpi::World()),
                     ContainsSubstring("is incomplete"));
-  // The interface size (head entry 2) beyond the file or negative, and more frequencies
-  // (entry 8) than the header has room for, or none (an adaptive offline run stopped before
-  // its first sample).
-  for (const auto [entry, value] : {std::pair{2, 1000}, {2, -5}, {8, 7}, {8, 0}})
+  // The interface size (head entry 1) beyond the record or negative, and more frequencies
+  // (entry 6) than the record holds, or none (an adaptive offline run stopped before its
+  // first sample).
+  for (const auto [entry, value] : {std::pair{1, 1000}, {1, -5}, {6, 7}, {6, 0}})
   {
     m.WriteHeader(path);
+    const auto pos = header();
     {
       std::fstream f(path, std::ios::binary | std::ios::in | std::ios::out);
-      f.seekp(entry * sizeof(int));
+      f.seekp(pos + entry * static_cast<long long>(sizeof(int)));
       f.write(reinterpret_cast<const char *>(&value), sizeof(int));
     }
     CAPTURE(entry, value);
@@ -3369,9 +3375,10 @@ TEST_CASE("A cut or corrupted driven model header is rejected", "[substructure][
   }
   m.WriteHeader(path);
   {
+    const auto pos = header();
     std::fstream f(path, std::ios::binary | std::ios::in | std::ios::out);
     const int version = DrivenSubstructureModel::kVersion + 1;
-    f.seekp(sizeof(int));
+    f.seekp(pos);
     f.write(reinterpret_cast<const char *>(&version), sizeof(int));
   }
   CHECK_THROWS_WITH(saved.ReadHeader(path, Mpi::World()),
@@ -3400,7 +3407,6 @@ TEST_CASE("A saved driven model continues from its complete records",
   m.port_data = {50.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0};
   m.region_bdr_attributes = {5, 7};
   m.omega = {1.0, 2.0, 3.0};
-  m.capacity = 3;
   m.length_scale = 1.0e-6;
   auto record = [](double s)
   {

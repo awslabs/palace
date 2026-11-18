@@ -27,6 +27,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include "fem/substructuremodel.hpp"
 #include "models/drivensubstructure.hpp"
 #include "regression_helpers.hpp"
 #include "utils/communication.hpp"
@@ -2192,11 +2193,6 @@ TEST_CASE("substructuring_driven_offline_restart", "[Serial][Parallel][GPU][Regr
   opts.linear_solver_policy = force_default_solver;
   opts.paraview_fields = false;
   opts.setup_config = "driven_offline.json";
-  auto record_bytes = [](const DrivenSubstructureModel &m)
-  {
-    const auto sz = m.PartSizes();
-    return sizeof(std::complex<double>) * (sz[0] + sz[1] + sz[2] + sz[3]);
-  };
   opts.after_setup = [&](const fs::path &dir)
   {
     if (!palace::Mpi::Root(palace::Mpi::World()))
@@ -2244,10 +2240,17 @@ TEST_CASE("substructuring_driven_offline_restart", "[Serial][Parallel][GPU][Regr
     // The model: its first record and half of its second.
     const auto model = dir / "environment_model.bin";
     fs::copy_file(model, dir / "environment_model_full.bin");
-    DrivenSubstructureModel m;
-    m.ReadHeader(model.string(), MPI_COMM_SELF);
-    const auto bytes = record_bytes(m);
-    fs::resize_file(model, fs::file_size(model) - 2 * bytes + bytes / 2);
+    using palace::substructuring::ModelFile;
+    std::vector<ModelFile::Record> records;
+    for (const auto &r : ModelFile::Read(model.string(), MPI_COMM_SELF).records)
+    {
+      if (r.tag == ModelFile::Tag("DREC"))
+      {
+        records.push_back(r);
+      }
+    }
+    REQUIRE(records.size() == 3);
+    fs::resize_file(model, records[1].pos + records[1].size / 2);
   };
   opts.after_run = [&](const fs::path &dir)
   {

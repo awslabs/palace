@@ -6,6 +6,8 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdint>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <limits>
@@ -13,6 +15,7 @@
 #include <utility>
 #include <Eigen/Dense>
 #include "fem/substructure.hpp"
+#include "fem/substructuremodel.hpp"
 #include "linalg/directschur.hpp"
 #include "linalg/lowertriangle.hpp"
 #include "linalg/mumpsschur.hpp"
@@ -1385,13 +1388,25 @@ bool DrivenSubstructure::OnInterface(const ComplexVector &b) const
 namespace
 {
 
-constexpr int kDrivenModelMagic = 0x31565244;  // "DRV1"
+// The records of a driven model in its file (see substructuring::ModelFile): the header (a
+// later one supersedes it, as the frequencies of an adaptive sweep are added) and the
+// condensed environment at each frequency, in the order of the frequencies.
+using ModelFile = substructuring::ModelFile;
+constexpr std::uint32_t kHeaderTag = ModelFile::Tag("DHED"),
+                        kRecordTag = ModelFile::Tag("DREC");
 
-template <typename T>
-void ReadVec(std::ifstream &f, std::vector<T> &v, std::size_t n)
+// The records of the frequencies of a model file.
+std::vector<ModelFile::Record> FrequencyRecords(const ModelFile &file)
 {
-  v.resize(n);
-  f.read(reinterpret_cast<char *>(v.data()), static_cast<std::streamsize>(sizeof(T) * n));
+  std::vector<ModelFile::Record> records;
+  for (const auto &r : file.records)
+  {
+    if (r.tag == kRecordTag)
+    {
+      records.push_back(r);
+    }
+  }
+  return records;
 }
 
 }  // namespace
@@ -1641,17 +1656,6 @@ std::vector<std::complex<double>> DrivenSubstructureModel::Flatten(const Record 
   return x;
 }
 
-std::size_t DrivenSubstructureModel::HeaderBytes() const
-{
-  // 11 ints, the reference length and the element moments, the arrays, and room for
-  // capacity frequencies and weights.
-  return sizeof(int) * 11 + sizeof(double) * 13 + sizeof(double) * signatures.size() +
-         sizeof(double) * env_fp.size() + sizeof(int) * excitations.size() +
-         sizeof(double) * exc_fp.size() + sizeof(int) * ports.size() +
-         sizeof(int) * region_bdr_attributes.size() + sizeof(double) * port_data.size() +
-         (sizeof(double) + sizeof(std::complex<double>)) * capacity;
-}
-
 std::size_t DrivenSubstructureModel::RecordBytes() const
 {
   const auto sz = PartSizes();
@@ -1660,167 +1664,133 @@ std::size_t DrivenSubstructureModel::RecordBytes() const
 
 void DrivenSubstructureModel::WriteHeader(const std::string &path, bool create) const
 {
-  MFEM_VERIFY(capacity >= static_cast<int>(omega.size()) &&
-                  port_data.size() == kPortData * ports.size() &&
+  MFEM_VERIFY(port_data.size() == kPortData * ports.size() &&
                   (weights.empty() || weights.size() == omega.size()),
               "Invalid substructuring model header!");
-  std::fstream f(path, create ? (std::ios::binary | std::ios::out | std::ios::trunc)
-                              : (std::ios::binary | std::ios::in | std::ios::out));
-  MFEM_VERIFY(f.good(), "Cannot write the substructuring model \"" << path << "\"!");
-  const int head[11] = {kDrivenModelMagic,
-                        kVersion,
-                        nG,
-                        sig_w,
-                        static_cast<int>(env_fp.size()),
-                        static_cast<int>(excitations.size()),
-                        static_cast<int>(ports.size()),
-                        capacity,
-                        static_cast<int>(omega.size()),
-                        weights.empty() ? 0 : 1,
-                        static_cast<int>(region_bdr_attributes.size())};
-  std::vector<double> om(omega);
-  std::vector<std::complex<double>> wt(weights);
-  om.resize(capacity, 0.0);
-  wt.resize(capacity, 0.0);
-  f.write(reinterpret_cast<const char *>(head), sizeof(head));
-  f.write(reinterpret_cast<const char *>(&length_scale), sizeof(double));
-  f.write(reinterpret_cast<const char *>(env_moments.data()), sizeof(double) * 6);
-  f.write(reinterpret_cast<const char *>(region_moments.data()), sizeof(double) * 6);
-  for (const auto *v : {&signatures, &env_fp})
+  if (create)
   {
-    f.write(reinterpret_cast<const char *>(v->data()),
-            static_cast<std::streamsize>(sizeof(double) * v->size()));
+    ModelFile::Create(path, MPI_COMM_SELF);
   }
-  f.write(reinterpret_cast<const char *>(excitations.data()),
-          static_cast<std::streamsize>(sizeof(int) * excitations.size()));
-  f.write(reinterpret_cast<const char *>(exc_fp.data()),
-          static_cast<std::streamsize>(sizeof(double) * exc_fp.size()));
-  for (const auto *v : {&ports, &region_bdr_attributes})
-  {
-    f.write(reinterpret_cast<const char *>(v->data()),
-            static_cast<std::streamsize>(sizeof(int) * v->size()));
-  }
-  f.write(reinterpret_cast<const char *>(port_data.data()),
-          static_cast<std::streamsize>(sizeof(double) * port_data.size()));
-  f.write(reinterpret_cast<const char *>(om.data()),
-          static_cast<std::streamsize>(sizeof(double) * om.size()));
-  f.write(reinterpret_cast<const char *>(wt.data()),
-          static_cast<std::streamsize>(sizeof(std::complex<double>) * wt.size()));
-  f.close();
-  MFEM_VERIFY(!f.fail(), "Cannot write the substructuring model \"" << path << "\"!");
+  const int head[9] = {kVersion,
+                       nG,
+                       sig_w,
+                       static_cast<int>(env_fp.size()),
+                       static_cast<int>(excitations.size()),
+                       static_cast<int>(ports.size()),
+                       static_cast<int>(omega.size()),
+                       weights.empty() ? 0 : 1,
+                       static_cast<int>(region_bdr_attributes.size())};
+  const long long size =
+      sizeof(head) +
+      sizeof(double) * (13 + signatures.size() + env_fp.size() + exc_fp.size() +
+                        port_data.size() + omega.size()) +
+      sizeof(int) * (excitations.size() + ports.size() + region_bdr_attributes.size()) +
+      sizeof(std::complex<double>) * weights.size();
+  ModelFile::Append(path, MPI_COMM_SELF, kHeaderTag, size,
+                    [&](std::ofstream &f)
+                    {
+                      auto write = [&f](const auto *x, std::size_t n)
+                      {
+                        f.write(reinterpret_cast<const char *>(x),
+                                static_cast<std::streamsize>(sizeof(*x) * n));
+                      };
+                      write(head, 9);
+                      write(&length_scale, 1);
+                      write(env_moments.data(), 6);
+                      write(region_moments.data(), 6);
+                      write(signatures.data(), signatures.size());
+                      write(env_fp.data(), env_fp.size());
+                      write(excitations.data(), excitations.size());
+                      write(exc_fp.data(), exc_fp.size());
+                      write(ports.data(), ports.size());
+                      write(region_bdr_attributes.data(), region_bdr_attributes.size());
+                      write(port_data.data(), port_data.size());
+                      write(omega.data(), omega.size());
+                      write(weights.data(), weights.size());
+                    });
 }
 
 void DrivenSubstructureModel::AppendRecord(const std::string &path, const Record &r) const
 {
-  std::ofstream f(path, std::ios::binary | std::ios::app);
-  MFEM_VERIFY(f.good(), "Cannot write the substructuring model \"" << path << "\"!");
   const auto x = Flatten(r);
-  f.write(reinterpret_cast<const char *>(x.data()),
-          static_cast<std::streamsize>(sizeof(std::complex<double>) * x.size()));
-  f.close();
-  MFEM_VERIFY(!f.fail(), "Cannot write the substructuring model \"" << path << "\"!");
+  ModelFile::Append(
+      path, MPI_COMM_SELF, kRecordTag,
+      static_cast<long long>(sizeof(std::complex<double>) * x.size()),
+      [&](std::ofstream &f)
+      {
+        f.write(reinterpret_cast<const char *>(x.data()),
+                static_cast<std::streamsize>(sizeof(std::complex<double>) * x.size()));
+      });
 }
 
 void DrivenSubstructureModel::ReadHeader(const std::string &path, MPI_Comm comm)
 {
-  int head[11] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
-  length_scale = 0.0;
-  env_moments = {};
-  region_moments = {};
-  const bool root = Mpi::Root(comm);
-  std::ifstream f;
-  std::streamoff size = 0;
-  int known = 0;  // a model
-  if (root)
-  {
-    f.open(path, std::ios::binary | std::ios::ate);
-    if (f.good())
-    {
-      size = f.tellg();
-      f.seekg(0);
-      f.read(reinterpret_cast<char *>(head), sizeof(int) * 2);
-      known = f.good() && head[0] == kDrivenModelMagic;
-    }
-    if (known && head[1] == kVersion)
-    {
-      f.read(reinterpret_cast<char *>(head + 2), sizeof(int) * 9);
-      f.read(reinterpret_cast<char *>(&length_scale), sizeof(double));
-      f.read(reinterpret_cast<char *>(env_moments.data()), sizeof(double) * 6);
-      f.read(reinterpret_cast<char *>(region_moments.data()), sizeof(double) * 6);
-    }
-  }
-  Mpi::Broadcast(1, &known, 0, comm);
-  MFEM_VERIFY(known, "Cannot read the driven substructuring model \""
-                         << path
-                         << "\" (run in \"Offline\" mode with \"ModelFile\" first)!");
-  Mpi::Broadcast(2, head, 0, comm);
-  MFEM_VERIFY(head[1] == kVersion, "The saved substructuring model \""
-                                       << path
-                                       << "\" was written by another version of Palace: "
-                                          "rerun in \"Offline\" mode!");
+  const auto file = ModelFile::Read(path, comm);
+  MFEM_VERIFY(file.version > 0,
+              "Cannot read the driven substructuring model \""
+                  << path << "\" (run in \"Offline\" mode with \"ModelFile\" first)!");
   auto incomplete = [&](bool ok)
   {
     MFEM_VERIFY(ok, "The saved substructuring model \""
                         << path << "\" is incomplete: rerun in \"Offline\" mode!");
   };
-  Mpi::Broadcast(11, head, 0, comm);
-  Mpi::Broadcast(1, &length_scale, 0, comm);
-  Mpi::Broadcast(6, env_moments.data(), 0, comm);
-  Mpi::Broadcast(6, region_moments.data(), 0, comm);
-  nG = head[2];
-  sig_w = head[3];
-  // An array of n entries, read on rank 0 if the rest of the file holds it (n counted in
-  // floating point, so that any size read is checked before it is allocated; a header cut
-  // in its fixed part fails the first read). Collective.
+  const auto *h = file.Find(kHeaderTag);
+  incomplete(h);
+  const std::vector<char> p = ModelFile::ReadPayload(path, *h, comm);
+  // The next n entries of the payload, if it holds them (n counted in floating point, so
+  // that any size is checked before it is allocated).
+  std::size_t at = 0;
   auto read = [&](auto &v, double n)
   {
     using T = typename std::decay_t<decltype(v)>::value_type;
-    int ok = 1;
-    if (root)
-    {
-      ok = n >= 0.0 && n * sizeof(T) <= static_cast<double>(
-                                            size - static_cast<std::streamoff>(f.tellg()));
-      if (ok)
-      {
-        ReadVec(f, v, static_cast<std::size_t>(n));
-        ok = f.good();
-      }
-    }
-    Mpi::Broadcast(1, &ok, 0, comm);
-    incomplete(ok);
+    incomplete(n >= 0.0 && n * sizeof(T) <= static_cast<double>(p.size() - at));
     v.resize(static_cast<std::size_t>(n));
-    Mpi::Broadcast(static_cast<int>(n), v.data(), 0, comm);
+    std::memcpy(v.data(), p.data() + at, sizeof(T) * v.size());
+    at += sizeof(T) * v.size();
   };
+  std::vector<int> head;
+  read(head, 1);
+  MFEM_VERIFY(head[0] == kVersion, "The saved substructuring model \""
+                                       << path
+                                       << "\" was written by another version of Palace: "
+                                          "rerun in \"Offline\" mode!");
+  at = 0;  // the version, then the whole head
+  read(head, 9);
+  std::vector<double> scale_moments;
+  read(scale_moments, 13);
+  length_scale = scale_moments[0];
+  std::copy_n(scale_moments.begin() + 1, 6, env_moments.begin());
+  std::copy_n(scale_moments.begin() + 7, 6, region_moments.begin());
+  nG = head[1];
+  sig_w = head[2];
   read(signatures, static_cast<double>(nG) * sig_w);
-  read(env_fp, head[4]);
-  read(excitations, head[5]);
-  read(exc_fp, static_cast<double>(kSourceFp) * head[5]);
-  read(ports, head[6]);
-  read(region_bdr_attributes, head[10]);
-  read(port_data, static_cast<double>(kPortData) * head[6]);
-  capacity = head[7];
-  read(omega, capacity);
-  read(weights, capacity);
-  incomplete(head[8] > 0 && head[8] <= capacity);
-  omega.resize(head[8]);
-  weights.resize(head[9] ? head[8] : 0);
+  read(env_fp, head[3]);
+  read(excitations, head[4]);
+  read(exc_fp, static_cast<double>(kSourceFp) * head[4]);
+  read(ports, head[5]);
+  read(region_bdr_attributes, head[8]);
+  read(port_data, static_cast<double>(kPortData) * head[5]);
+  read(omega, head[6]);
+  read(weights, head[7] ? head[6] : 0);
+  incomplete(head[6] > 0 && at == p.size());
 }
 
 int DrivenSubstructureModel::NumRecords(const std::string &path) const
 {
-  std::ifstream f(path, std::ios::binary | std::ios::ate);
-  if (!f.good())
-  {
-    return 0;
-  }
-  const auto size = static_cast<std::size_t>(f.tellg());
-  return (size < HeaderBytes()) ? 0
-                                : static_cast<int>((size - HeaderBytes()) / RecordBytes());
+  return static_cast<int>(FrequencyRecords(ModelFile::Read(path, MPI_COMM_SELF)).size());
 }
 
 void DrivenSubstructureModel::TruncateRecords(const std::string &path, int n) const
 {
-  std::filesystem::resize_file(path, HeaderBytes() + RecordBytes() * n);
+  // Before the tag and size of the next record, if any, else at the end of the last
+  // complete record (dropping an incomplete one).
+  const auto file = ModelFile::Read(path, MPI_COMM_SELF);
+  const auto records = FrequencyRecords(file);
+  const auto end = (static_cast<std::size_t>(n) < records.size())
+                       ? records[n].pos - static_cast<long long>(sizeof(std::uint32_t) +
+                                                                 sizeof(long long))
+                       : file.records.back().pos + file.records.back().size;
+  std::filesystem::resize_file(path, end);
 }
 
 bool DrivenSubstructureModel::SameHeader(const DrivenSubstructureModel &saved,
@@ -1830,8 +1800,7 @@ bool DrivenSubstructureModel::SameHeader(const DrivenSubstructureModel &saved,
       saved.excitations != excitations || saved.exc_fp.size() != exc_fp.size() ||
       saved.ports != ports || saved.region_bdr_attributes != region_bdr_attributes ||
       saved.port_data != port_data || saved.omega != omega || saved.weights != weights ||
-      saved.capacity != capacity || saved.length_scale != length_scale ||
-      !SameEnvironment(saved.env_fp, env_fp) ||
+      saved.length_scale != length_scale || !SameEnvironment(saved.env_fp, env_fp) ||
       !MomentsMatch(saved.env_moments, env_moments, kEnvironmentTol) ||
       !MomentsMatch(saved.region_moments, region_moments, kEnvironmentTol))
   {
@@ -1851,11 +1820,15 @@ bool DrivenSubstructureModel::SameHeader(const DrivenSubstructureModel &saved,
 std::vector<std::complex<double>>
 DrivenSubstructureModel::ReadFlatRecord(const std::string &path, int j) const
 {
-  std::ifstream f(path, std::ios::binary);
-  f.seekg(static_cast<std::streamoff>(HeaderBytes() + RecordBytes() * j));
-  std::vector<std::complex<double>> x;
-  ReadVec(f, x, RecordBytes() / sizeof(std::complex<double>));
-  MFEM_VERIFY(f.good(), "Truncated substructuring model \"" << path << "\"!");
+  const auto records = FrequencyRecords(ModelFile::Read(path, MPI_COMM_SELF));
+  MFEM_VERIFY(static_cast<std::size_t>(j) < records.size() &&
+                  records[j].size == static_cast<long long>(RecordBytes()),
+              "Truncated substructuring model \"" << path << "\"!");
+  const std::vector<char> p = ModelFile::ReadPayload(path, records[j], MPI_COMM_SELF);
+  std::vector<std::complex<double>> x(RecordBytes() / sizeof(std::complex<double>));
+  MFEM_VERIFY(p.size() == RecordBytes(),
+              "Truncated substructuring model \"" << path << "\"!");
+  std::memcpy(x.data(), p.data(), p.size());
   return x;
 }
 

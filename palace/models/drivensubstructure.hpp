@@ -81,7 +81,7 @@ private:
 //
 struct DrivenSubstructureModel
 {
-  static constexpr int kVersion = 6;   // of the file format
+  static constexpr int kVersion = 7;   // of the header
   static constexpr int kSourceFp = 7;  // see DrivenSubstructure::SourceFingerprint
   static constexpr int kPortData = 7;  // parameters per port (see port_data)
   int nG = 0, sig_w = 0;
@@ -101,7 +101,6 @@ struct DrivenSubstructureModel
   std::vector<double> port_data;
   std::vector<double> omega;                  // frequencies of the records (nondimensional)
   std::vector<std::complex<double>> weights;  // barycentric weights (rational model)
-  int capacity = 0;  // records the header has room for (at least omega.size())
 
   struct Record
   {
@@ -115,12 +114,14 @@ struct DrivenSubstructureModel
   std::vector<std::complex<double>> Flatten(const Record &r) const;
   std::array<std::size_t, 4> PartSizes() const;
 
-  // The header, in a new file or rewritten in place (with the same capacity).
+  // The records of the model in its file (see substructuring::ModelFile), written and read
+  // by the calling process (ReadHeader is collective): the header, in a new file or
+  // appended (superseding the previous one), and the records of the frequencies.
   void WriteHeader(const std::string &path, bool create = true) const;
   void AppendRecord(const std::string &path, const Record &r) const;
   void ReadHeader(const std::string &path, MPI_Comm comm);
   std::vector<std::complex<double>> ReadFlatRecord(const std::string &path, int j) const;
-  // Number of complete records in the file.
+  // Number of complete records of frequencies in the file.
   int NumRecords(const std::string &path) const;
   // The file cut to the header and its first n records (for a restarted sweep).
   void TruncateRecords(const std::string &path, int n) const;
@@ -150,7 +151,6 @@ struct DrivenSubstructureModel
   static bool Passive(const std::complex<double> *lower, int n, double tol);
 
 private:
-  std::size_t HeaderBytes() const;
   std::size_t RecordBytes() const;
 };
 
