@@ -20,6 +20,7 @@
 #include "fem/substructure.hpp"
 #include "fem/substructuremodel.hpp"
 #include "fixtures.hpp"
+#include "test-helpers.hpp"
 #include "utils/communication.hpp"
 
 namespace palace
@@ -203,74 +204,6 @@ TEST_CASE("Configuration hash of the environment", "[substructure][Serial]")
                 c["Boundaries"]["SurfaceCurrent"][0]["Elements"][0]["Direction"] = "+Y";
               }) == excitations);
   }
-}
-
-// A box [0, 2] x [0, 1]^2 of 4 x 2 x 2 hexahedra: the domains x < 1 (attribute 1) and x > 1
-// (2), the faces x = 0 (1), x = 2 (2) and the others (3), and the interior boundaries x = 1
-// between the domains (4) and x = 3/2 inside the second (5).
-mfem::Mesh MakeInteriorBoundaryBox()
-{
-  constexpr int nx = 4, n = 2;
-  auto vid = [](int i, int j, int k) { return (i * (n + 1) + j) * (n + 1) + k; };
-  mfem::Mesh mesh(3, (nx + 1) * (n + 1) * (n + 1), nx * n * n, 2 * n * n * 2 + 4 * nx * n,
-                  3);
-  for (int i = 0; i <= nx; i++)
-  {
-    for (int j = 0; j <= n; j++)
-    {
-      for (int k = 0; k <= n; k++)
-      {
-        mesh.AddVertex(0.5 * i, 0.5 * j, 0.5 * k);
-      }
-    }
-  }
-  for (int i = 0; i < nx; i++)
-  {
-    for (int j = 0; j < n; j++)
-    {
-      for (int k = 0; k < n; k++)
-      {
-        const int v[8] = {vid(i, j, k),
-                          vid(i + 1, j, k),
-                          vid(i + 1, j + 1, k),
-                          vid(i, j + 1, k),
-                          vid(i, j, k + 1),
-                          vid(i + 1, j, k + 1),
-                          vid(i + 1, j + 1, k + 1),
-                          vid(i, j + 1, k + 1)};
-        mesh.AddHex(v, (i < 2) ? 1 : 2);
-      }
-    }
-  }
-  for (int a = 0; a < n; a++)
-  {
-    for (int b = 0; b < n; b++)
-    {
-      for (const auto [i, attr] : {std::pair{0, 1}, {2, 4}, {3, 5}, {nx, 2}})
-      {
-        const int q[4] = {vid(i, a, b), vid(i, a + 1, b), vid(i, a + 1, b + 1),
-                          vid(i, a, b + 1)};
-        mesh.AddBdrQuad(q, attr);
-      }
-    }
-  }
-  for (int i = 0; i < nx; i++)
-  {
-    for (int a = 0; a < n; a++)
-    {
-      for (int side = 0; side <= n; side += n)
-      {
-        const int qy[4] = {vid(i, side, a), vid(i + 1, side, a), vid(i + 1, side, a + 1),
-                           vid(i, side, a + 1)};
-        const int qz[4] = {vid(i, a, side), vid(i + 1, a, side), vid(i + 1, a + 1, side),
-                           vid(i, a + 1, side)};
-        mesh.AddBdrQuad(qy, 3);
-        mesh.AddBdrQuad(qz, 3);
-      }
-    }
-  }
-  mesh.FinalizeHexMesh(1, 0, true);
-  return mesh;
 }
 
 TEST_CASE("Environment records are those of any partition",

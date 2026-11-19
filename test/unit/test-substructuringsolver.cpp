@@ -46,6 +46,7 @@
 #include "models/substructuringsolverimpl.hpp"
 #include "models/superconductorsheetoperator.hpp"
 #include "models/surfacecurlsolver.hpp"
+#include "test-helpers.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
@@ -4006,25 +4007,73 @@ void RunDrivenSheetSquare(const std::filesystem::path &dir, const std::string &m
   palace::Run(iodata, comm, 1);
 }
 
+// A driven sweep of the box of MakeInteriorBoundaryBox (Γ the interior boundary x = 1
+// between the region x < 1 and the environment, lumped port 1 on the face x = 0 and the
+// face x = 2 absorbing), run in process. Collective.
+void RunDrivenBox(const std::filesystem::path &dir, const std::string &mode,
+                  const std::function<void(json &)> &edit = {})
+{
+  const auto mesh = dir / "box.mesh";
+  if (Mpi::Root(Mpi::World()))
+  {
+    MakeInteriorBoundaryBox().Save(mesh.string());
+  }
+  Mpi::Barrier(Mpi::World());
+  json config = {
+      {"Problem", {{"Type", "Driven"}, {"Output", (dir / ("postpro_" + mode)).string()}}},
+      {"Model", {{"Mesh", mesh.string()}, {"L0", 1.0e-3}}},
+      {"Domains",
+       {{"Materials",
+         {{{"Attributes", {1}}, {"Permittivity", 4.0}},
+          {{"Attributes", {2}}, {"Permittivity", 2.0}}}}}},
+      {"Boundaries",
+       {{"PEC", {{"Attributes", {3}}}},
+        {"Absorbing", {{"Attributes", {2}}, {"Order", 1}}},
+        {"LumpedPort",
+         {{{"Index", 1},
+           {"R", 50.0},
+           {"Attributes", {1}},
+           {"Direction", "+Y"},
+           {"Excitation", 1}}}}}},
+      {"Solver",
+       {{"Order", 1},
+        {"Device", "CPU"},
+        {"Driven", {{"MinFreq", 20.0}, {"MaxFreq", 20.0}, {"FreqStep", 1.0}}},
+        {"Substructuring",
+         {{"Region", {{"Attributes", {1}}}},
+          {"Environment", {{"Attributes", {2}}}},
+          {"Mode", mode},
+          {"ModelFile", (dir / "box_model.bin").string()}}}}}};
+  if (edit)
+  {
+    edit(config);
+  }
+  IoData iodata(config, false);
+  MPI_Comm comm = Mpi::World();
+  MakeOutputFolder(iodata, comm);
+  BlockTimer::Reset();
+  palace::Run(iodata, comm, 1);
+}
+
 }  // namespace
 
 TEST_CASE_METHOD(palace::test::SharedTempDir,
                  "Driven substructuring needs the sources of a model away from Γ",
                  "[substructure][Serial][Parallel]")
 {
-  // A surface current on the sheet crossing Γ, along Γ so that its Nédélec DOFs on Γ carry
-  // it, loads Γ, which a model cannot hold: an offline sweep saving a model and an online
-  // one from it reject it.
+  // A surface current on Γ, the interior boundary between the domains of the box, loads Γ,
+  // which a model cannot hold: an offline sweep saving a model and an online one from it
+  // reject it.
   auto current = [](json &config)
   {
     config["Boundaries"]["SurfaceCurrent"] = {
-        {{"Index", 3}, {"Attributes", {8}}, {"Direction", "+Y"}}};
+        {{"Index", 2}, {"Attributes", {4}}, {"Direction", "+Y"}}};
   };
   using Catch::Matchers::ContainsSubstring;
-  CHECK_THROWS_WITH(RunDrivenSheetSquare(temp_dir, "Offline", current),
+  CHECK_THROWS_WITH(RunDrivenBox(temp_dir, "Offline", current),
                     ContainsSubstring("has sources on the substructuring interface"));
-  RunDrivenSheetSquare(temp_dir, "Offline");
-  CHECK_THROWS_WITH(RunDrivenSheetSquare(temp_dir, "Online", current),
+  RunDrivenBox(temp_dir, "Offline");
+  CHECK_THROWS_WITH(RunDrivenBox(temp_dir, "Online", current),
                     ContainsSubstring("has sources on the substructuring interface"));
 }
 
