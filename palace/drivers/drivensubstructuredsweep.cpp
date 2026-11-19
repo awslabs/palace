@@ -15,6 +15,7 @@
 #include <fmt/core.h>
 #include <mfem.hpp>
 #include "fem/errorindicator.hpp"
+#include "fem/interpolator.hpp"
 #include "fem/substructure.hpp"
 #include "linalg/vector.hpp"
 #include "models/drivensubstructure.hpp"
@@ -453,9 +454,13 @@ DrivenSubstructuredSweep::DrivenSubstructuredSweep(const IoData &iodata,
         ++it;
       }
     }
+    // A probe is interpolated in the element it is found in, which for a probe on Γ can be
+    // one of the environment.
+    const auto probes_in_region =
+        fem::ProbesInDomains(domains.postpro.probe, mesh, sub.region_attributes);
     for (auto it = domains.postpro.probe.begin(); it != domains.postpro.probe.end();)
     {
-      if (!PointInRegion(mesh, it->second.center, sub.region_attributes))
+      if (!contains(probes_in_region, it->first))
       {
         skipped_probe.push_back(it->first);
         it = domains.postpro.probe.erase(it);

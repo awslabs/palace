@@ -163,10 +163,6 @@ std::unique_ptr<mfem::HypreParMatrix> EliminateToIdentity(const mfem::HypreParMa
 std::vector<int> BoundaryAttributesInRegion(const mfem::ParMesh &mesh,
                                             const std::vector<int> &region_attributes);
 
-// Whether a point (mesh coordinates) lies in an element of the region. Collective.
-bool PointInRegion(const mfem::ParMesh &mesh, const std::array<double, 3> &x,
-                   const std::vector<int> &region_attributes);
-
 // The mesh of the region written next to a saved substructuring model: <model>_region.mesh.
 std::string RegionMeshPath(const std::string &model_path);
 

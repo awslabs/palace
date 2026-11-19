@@ -47,6 +47,13 @@ public:
 namespace fem
 {
 
+// The indices of the probes found in elements with the given attributes, the elements an
+// InterpolationOperator interpolates them in (a probe on a face between elements is found
+// in one of them). Collective.
+std::vector<int> ProbesInDomains(const std::map<int, config::ProbeData> &probe,
+                                 const mfem::ParMesh &mesh,
+                                 const std::vector<int> &attributes);
+
 // Interpolate a function on a serial or parallel mesh to a different mesh, using GSLIB.
 // Similar to MFEM's field-interp miniapp.
 void InterpolateFunction(const mfem::GridFunction &U, mfem::GridFunction &V);
