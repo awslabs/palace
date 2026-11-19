@@ -412,7 +412,8 @@ void AddStiffnessIntegrators(BilinearForm &k, const MaterialPropertyCoefficient 
 
 }  // namespace
 
-void CurlCurlOperator::AddStiffnessCoefficients(double shift, MaterialPropertyCoefficient &df,
+void CurlCurlOperator::AddStiffnessCoefficients(double shift,
+                                                MaterialPropertyCoefficient &df,
                                                 MaterialPropertyCoefficient &f,
                                                 MaterialPropertyCoefficient &fb) const
 {
