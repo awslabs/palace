@@ -75,14 +75,39 @@ runs:
         source /tmp/timing_functions.sh
         start_timer
 
-        sudo add-apt-repository -y ppa:apptainer/ppa
-
-        sudo apt install -y podman apptainer
+        sudo apt-get -o Acquire::Retries=5 update
+        sudo apt-get -o Acquire::Retries=5 install -y podman
 
         # Configure podman to resolve short image names from Docker Hub
         echo 'unqualified-search-registries = ["docker.io"]' | sudo tee /etc/containers/registries.conf.d/docker.conf
 
-        end_timer "Setup podman and apptainer"
+        end_timer "Setup podman"
+
+    # The PPA signing keys in apt-keys/ are pinned. Warn, without failing, when
+    # Launchpad lists a different key for a PPA, so that the pin gets updated.
+    # Each PPA's page lists its signing key fingerprint (for example
+    # https://launchpad.net/~apptainer/+archive/ubuntu/ppa), and the key itself
+    # can be downloaded from the Ubuntu keyserver:
+    #   curl -fsS "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x<fingerprint>" \
+    #     > .github/actions/build-container/apt-keys/<owner>-<name>.asc
+    - name: Check pinned PPA keys
+      continue-on-error: true
+      shell: bash
+      run: |
+        for ppa in apptainer/ppa ubuntu-toolchain-r/test; do
+          key_file="$GITHUB_ACTION_PATH/apt-keys/${ppa/\//-}.asc"
+          pinned=$(gpg --show-keys --with-colons "$key_file" | awk -F: '/^fpr/ {print $10; exit}')
+          if ! current=$(curl -fsS --max-time 15 --retry 1 "https://api.launchpad.net/1.0/~${ppa%/*}/+archive/ubuntu/${ppa#*/}" |
+              python3 -c 'import json, sys; print(json.load(sys.stdin)["signing_key_fingerprint"])' 2>/dev/null); then
+            echo "::notice::Could not get the signing key of ppa:$ppa from Launchpad"
+          elif [[ "$current" != "$pinned" ]]; then
+            echo "::warning::ppa:$ppa is signed with key $current, but apt-keys/${ppa/\//-}.asc pins $pinned." \
+              "Update it with: curl -fsS 'https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x$current'" \
+              "> .github/actions/build-container/apt-keys/${ppa/\//-}.asc"
+          else
+            echo "ppa:$ppa: pinned key $pinned is current"
+          fi
+        done
 
     - name: Compute image metadata
       id: name
@@ -189,6 +214,7 @@ runs:
             --build-arg "PALACE_TARGET=$PALACE_TARGET" \
             --build-arg "SPACK_PACKAGES_COMMIT=$SPACK_PACKAGES_COMMIT" \
             --build-arg "PALACE_GIT_COMMIT_ID=$PALACE_GIT_COMMIT_ID" \
+            --build-context "apt-keys=$GITHUB_ACTION_PATH/apt-keys" \
             -t "$IMAGE_NAME" .
         }
 
@@ -227,6 +253,29 @@ runs:
         sudo podman save ${{ steps.name.outputs.image_name }}:latest -o ${{ steps.name.outputs.image_name }}.tar
         sudo chmod a+r ${{ steps.name.outputs.image_name }}.tar
         end_timer "Save OCI image"
+
+    # Only the SIF conversion needs Apptainer. Its PPA is configured directly,
+    # with the signing key pinned in apt-keys/, instead of with
+    # add-apt-repository, which also needs the Launchpad API. apt checks the
+    # signed index against that key, so plain HTTP, which Launchpad serves more
+    # reliably than HTTPS, is safe.
+    - name: Install Apptainer
+      if: steps.name.outputs.publish_artifacts == 'true'
+      shell: bash
+      run: |
+        source /tmp/timing_functions.sh
+        start_timer
+        sudo install -D -m 644 "$GITHUB_ACTION_PATH/apt-keys/apptainer-ppa.asc" /etc/apt/keyrings/apptainer-ppa.asc
+        printf '%s\n' \
+          'Types: deb' \
+          'URIs: http://ppa.launchpadcontent.net/apptainer/ppa/ubuntu' \
+          "Suites: $(. /etc/os-release && echo "$VERSION_CODENAME")" \
+          'Components: main' \
+          'Signed-By: /etc/apt/keyrings/apptainer-ppa.asc' |
+          sudo tee /etc/apt/sources.list.d/apptainer-ppa.sources
+        sudo apt-get -o Acquire::Retries=5 update
+        sudo apt-get -o Acquire::Retries=5 install -y apptainer
+        end_timer "Install Apptainer"
 
     - name: Convert to SIF
       if: steps.name.outputs.publish_artifacts == 'true'
