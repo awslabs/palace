@@ -1,0 +1,83 @@
+#!/usr/bin/env python3
+
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+"""Check that the patch URLs of the superbuild still serve the pinned content.
+
+Downloads every patch listed with download_patch() in cmake/External*.cmake and compares
+its sha256 with the pinned one. CI restores the patches from a cache, and CMake does not
+download a patch that is already present with the expected hash, so the builds would not
+notice a URL that changed. A mismatch is an error; a failed download, for example while
+GitHub has an outage, is only reported as a warning.
+
+Usage: check-patches [CMAKE_DIR] (default: cmake)
+"""
+
+import concurrent.futures
+import glob
+import hashlib
+import os
+import re
+import sys
+import time
+import urllib.request
+
+# download_patch(PATCH_FILES PATCH_DIR FILENAME URL SHA256)
+DOWNLOAD_PATCH = re.compile(
+    r'download_patch\(\s*\S+\s+("[^"]*"|\S+)\s+(\S+)\s+"([^"]+)"\s+([0-9a-f]{64})\s*\)'
+)
+
+
+def find_patches(cmake_dir):
+    patches = []
+    for path in sorted(glob.glob(os.path.join(cmake_dir, "External*.cmake"))):
+        with open(path) as f:
+            text = f.read()
+        for m in DOWNLOAD_PATCH.finditer(text):
+            line = text.count("\n", 0, m.start()) + 1
+            patches.append((path, line, m.group(2), m.group(3), m.group(4)))
+    return patches
+
+
+def fetch(url, attempts=3):
+    for attempt in range(attempts):
+        try:
+            with urllib.request.urlopen(url, timeout=60) as response:
+                return response.read(), None
+        except Exception as e:  # HTTP and network errors
+            error = e
+            time.sleep(5 * (attempt + 1))
+    return None, error
+
+
+def main():
+    cmake_dir = sys.argv[1] if len(sys.argv) > 1 else "cmake"
+    patches = find_patches(cmake_dir)
+    if not patches:
+        print(f"::error::No download_patch() calls found in {cmake_dir}")
+        return 1
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(pool.map(lambda p: fetch(p[3]), patches))
+    mismatches = 0
+    for (path, line, filename, url, sha256), (data, error) in zip(patches, results):
+        location = f"file={path},line={line}"
+        if data is None:
+            print(f"::warning {location}::Could not download {filename} from {url}: {error}")
+            continue
+        got = hashlib.sha256(data).hexdigest()
+        if got != sha256:
+            mismatches += 1
+            print(
+                f"::error {location}::{url} now serves sha256 {got} instead of the pinned "
+                f"{sha256} for {filename}. Check the new content, then update the hash (for "
+                "a GitHub-generated diff, prefer a URL with ?full_index=1)."
+            )
+        else:
+            print(f"OK {filename}")
+    print(f"Checked {len(patches)} patches, {mismatches} with a different sha256")
+    return 1 if mismatches else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

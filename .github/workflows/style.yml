@@ -95,6 +95,17 @@ jobs:
       - name: Test CMake architecture helpers
         run: cmake -P cmake/tests/MultiArchitecture.cmake
 
+  # The builds restore the dependency patches from a cache, and CMake skips downloading a
+  # patch that is already present with the expected hash, so they would not notice a patch
+  # URL that changed. A different hash fails this job; a failed download only warns.
+  check-patches:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Check dependency patch URLs
+        run: ./scripts/check-patches
+
   check-license:
     runs-on: ubuntu-latest
     steps:
