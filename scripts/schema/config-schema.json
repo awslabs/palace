@@ -2620,7 +2620,7 @@
         },
         "Restart": {
           "type": "integer",
-          "description": "1-based sample index from which to restart a partial frequency sweep (i.e. `\"Restart\": x` starts from the *x*-th sample of the combined sample set). Not valid for adaptive sweep.",
+          "description": "1-based sample index from which to restart a partial frequency sweep (i.e. `\"Restart\": x` starts from the *x*-th sample of the combined sample set). Not valid for adaptive sweep. With several excitations, the solves are counted all frequencies of an excitation before the next one, and in a substructured sweep all excitations at a frequency before the next one.",
           "exclusiveMinimum": 0,
           "default": 1
         },

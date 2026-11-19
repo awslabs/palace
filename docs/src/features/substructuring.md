@@ -89,15 +89,16 @@ A redesign of the region is re-meshed inside the mesh of the region with
 [`examples/substructuring/remesh_region.py`](https://github.com/awslabs/palace/blob/main/examples/substructuring/remesh_region.py)
 and `--region-mesh` (see [Example: qubit lattice](@ref substructuring-lattice-example)).
 
-The remaining settings (terminals, materials, `"Solver"/"Order"`, ...) are those of the regular
-electrostatic or magnetostatic simulation, except `"KSPType"`, `"Tol"` and `"MaxIts"` of
-`config["Solver"]["Linear"]`, which are not used; its `"Type"` only selects the sparse direct solver
-(see [Solvers](#Solvers)), and another type is not used (*Palace* warns). The capacitance and
-inductance matrices are written to the files of a regular simulation (`terminal-C.csv`,
-`terminal-M.csv`, and the others). The domain and surface postprocessing of a regular simulation is
-that of the region, from its field and the total energy of the condensation, so that the
-participation ratios are those of the whole model: the energies of the domains of the region and
-the probes in it (`config["Domains"]["Postprocessing"]`), and the `"SurfaceFlux"` and
+In electrostatics and magnetostatics (driven runs are described in
+[Driven problems](#Driven-problems)), the remaining settings (terminals, materials,
+`"Solver"/"Order"`, ...) are those of the regular simulation, except `"KSPType"`, `"Tol"` and
+`"MaxIts"` of `config["Solver"]["Linear"]`, which are not used; its `"Type"` only selects the sparse
+direct solver (see [Solvers](#Solvers)), and another type is not used (*Palace* warns). The
+capacitance and inductance matrices are written to the files of a regular simulation
+(`terminal-C.csv`, `terminal-M.csv`, and the others). The domain and surface postprocessing of a
+regular simulation is that of the region, from its field and the total energy of the condensation,
+so that the participation ratios are those of the whole model: the energies of the domains of the
+region and the probes in it (`config["Domains"]["Postprocessing"]`), and the `"SurfaceFlux"` and
 `"Dielectric"` entries of `config["Boundaries"]["Postprocessing"]` on surfaces in it. The others are
 left out with a warning, and `"FarField"` is rejected. Field output follows
 `"Solver"/"Electrostatic"/"Save"` and `"Solver"/"Magnetostatic"/"Save"`, in the formats of
@@ -146,8 +147,8 @@ of the field in the volume (without the kinetic energy of the London sheets).
 ### Solvers
 
 Substructuring also runs with a GPU device (`config["Solver"]["Device"]` `"GPU"`), with the dense
-interface operator and the sparse direct factorizations on the CPU. The environment and the region
-are factored with a sparse direct solver (the one
+interface operator and the sparse direct factorizations on the CPU. In electrostatics and
+magnetostatics, the environment and the region are factored with a sparse direct solver (the one
 [`config["Solver"]["Linear"]["Type"]`](../config/reference.md#config-solver-linear-type) names, or
 else STRUMPACK, MUMPS or SuperLU_DIST, preferred in this order among those Palace is built with), so
 *Palace* must be built with one of them. The region operator is factored together with the dense
@@ -157,17 +158,17 @@ of the environment comes instead from a single partial factorization, by MUMPS o
 STRUMPACK (with the Schur complement interface that the superbuild and the Spack package patch in),
 unless `"Type"` names another solver; MUMPS compresses its fronts at round-off (block low-rank),
 which is faster than full rank at no loss of accuracy. A saved magnetostatic model also holds the
-energy operator of the environment, which
-takes an environment solve and a condensation (the forward elimination of the partial factorization,
-half a solve) per interface unknown, and with London sheets in the environment their kinetic energy
-operator, for another condensation per interface unknown and as many values again in the model. The
-factorizations follow the
+energy operator of the environment, which takes an environment solve and a condensation (the forward
+elimination of the partial factorization, half a solve) per interface unknown, and with London
+sheets in the environment their kinetic energy operator, for another condensation per interface
+unknown and as many values again in the model. The factorizations follow the
 [`"ColumnOrdering"`](../config/reference.md#config-solver-linear-columnordering) of
 `config["Solver"]["Linear"]` (with `"ParMETIS"` or `"PTScotch"`, those without a Schur complement
 are analyzed in parallel, the others with the sequential counterpart), and take no other option of
 it: they are exact, so the compression of STRUMPACK and the 3D algorithm of SuperLU_DIST are not
 used (*Palace* warns). When running MUMPS with MPI, setting `OPENBLAS_NUM_THREADS=1` (or the
-equivalent for the BLAS in use) avoids oversubscribing cores.
+equivalent for the BLAS in use) avoids oversubscribing cores. Driven runs follow the same
+`"ColumnOrdering"`, with the sparse direct solvers of [Driven problems](#Driven-problems).
 
 ## Magnetostatics
 
@@ -207,15 +208,14 @@ connected conductor. A current that does not close has no magnetostatic solution
 
 ## Driven problems
 
-For a [driven](../guide/problem.md#Driven-problems-in-the-frequency-domain) simulation the environment operator depends on
-the frequency, and substructuring condenses it exactly at each frequency of a uniform sweep
-(`"Solver"/"Driven"` with `"MinFreq"`, `"MaxFreq"` and `"FreqStep"`): one partial
-factorization of the environment gives ``\bm{S}_E(\omega)``, and the region is factored against
-it once for all excitations. Lumped ports, impedance, absorbing and conductivity boundaries, and
-lossy materials may lie in the region, in the environment, or on both sides, and wave ports
-inside either side, away from the interface (their modal terms border that side's
-factorization); the outputs are those of a regular simulation (port S-parameters, voltages and
-currents, domain energies and fields).
+For a [driven](../guide/problem.md#Driven-problems-in-the-frequency-domain) simulation the
+environment operator depends on the frequency, and substructuring condenses it exactly at each
+frequency of a sweep (`"Solver"/"Driven"/"Samples"`): one partial factorization of the environment
+gives ``\bm{S}_E(\omega)``, and the region is factored against it once for all excitations. Lumped
+ports, impedance, absorbing and conductivity boundaries, and lossy materials may lie in the region,
+in the environment, or on both sides, and wave ports inside either side, away from the interface
+(their modal terms border that side's factorization); the outputs are those of a regular simulation
+(port S-parameters, voltages and currents, domain energies and fields).
 
 With `"ModelFile"`, an offline sweep also saves, per frequency, ``\bm{S}_E(\omega)``, the
 condensation of the environment's sources onto the interface, and the condensed voltages of the
@@ -243,8 +243,10 @@ partitioning the full mesh take most of an online sweep's time.
 
 A restarted sweep ([`"Restart": x`](../config/reference.md#config-solver-driven-restart)) continues
 in the order of its solves, all excitations at a frequency before the next one, after its first
-``x - 1`` results. An offline sweep continues the model it was saving, so it runs in the same
-configuration on as many processes.
+``x - 1`` results. With more than one excitation, a regular sweep counts its solves the other way
+(all frequencies of an excitation before the next one), so the same ``x`` resumes elsewhere. An
+offline sweep continues the model it was saving, so it runs in the same configuration on as many
+processes.
 
 An [adaptive sweep](../guide/problem.md#Driven-problems-in-the-frequency-domain) (nonzero
 `"AdaptiveTol"`) instead condenses the environment at frequencies chosen greedily, as the
@@ -430,10 +432,11 @@ region. The middle feedline crosses the interface, and all ports are in the envi
 cd examples/substructuring
 julia --project -e 'include("cpw_resonator_grid.jl"); generate_cpw_resonator_grid()'
 python3 cpw_resonator_grid_substructuring.py
-palace cpw_resonator_grid.json           # regular sweep, for comparison
-palace cpw_resonator_grid_offline.json   # condense the environment, save the model
-palace cpw_resonator_grid_online.json    # reuse the model: only the region is solved
-palace cpw_resonator_grid_redesign.json  # region substrate permittivity 0.4% higher
+palace cpw_resonator_grid.json                # regular sweep, for comparison
+palace cpw_resonator_grid_offline.json        # condense the environment, save the model
+palace cpw_resonator_grid_online.json         # reuse the model: only the region is solved
+palace cpw_resonator_grid_online_region.json  # the same on the mesh of the region
+palace cpw_resonator_grid_redesign.json       # region substrate permittivity 0.4% higher
 ```
 
 The sweep resolves the resonance of resonator 6 near 18.29 GHz in the transmission between the

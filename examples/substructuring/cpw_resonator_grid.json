@@ -138,9 +138,14 @@
     "Order": 2,
     "Device": "CPU",
     "Driven": {
-      "MinFreq": 18.2,
-      "MaxFreq": 18.38,
-      "FreqStep": 0.005
+      "Samples": [
+        {
+          "Type": "Linear",
+          "MinFreq": 18.2,
+          "MaxFreq": 18.38,
+          "FreqStep": 0.005
+        }
+      ]
     },
     "Linear": {
       "KSPType": "GMRES",
