@@ -37,19 +37,22 @@ const char *FilmServiceName(FilmService service)
 namespace
 {
 
-// The sheet form of a metal attribute in the mesh (decision 2197 (2): an inductive sheet is
-// sometimes cracked and sometimes not): the per-face law differs between the forms.
+// The sheet form of a metal attribute in the mesh (an inductive sheet is sometimes cracked
+// and sometimes not): the per-face law differs between the forms for one configured Ls
+// (surfaceimpedanceoperator.cpp: each boundary element of the attribute carries 1 / (s Ls),
+// s = 2 on a legacy split): uncracked, one element carries 1 / Ls once (one sheet of total
+// Ls); cracked, the two crack faces carry 1 / Ls each; the legacy split, 1 / (2 Ls) each.
 std::string SheetFormName(const config::BoundaryData &boundaries, int attribute)
 {
   if (boundaries.split_impedance_attributes.contains(attribute))
   {
-    return "cracked, legacy split (2 Ls on each face)";
+    return "cracked, legacy split (two faces of 2 Ls each)";
   }
   if (boundaries.cracked_attributes.contains(attribute))
   {
-    return "cracked (Ls on each face)";
+    return "cracked (two faces of Ls each)";
   }
-  return "uncracked (one sheet of Ls)";
+  return "uncracked (one sheet of total Ls)";
 }
 
 }  // namespace
@@ -157,9 +160,10 @@ FilmRuleResolution ResolveImpedanceMetalFilm(
   for (const auto &data : boundaries.impedance)
   {
     const double inductance = data.Ls * inductance_scale;
-    // Apply (decision 2206 (a)): a purely inductive sheet is served within the Ls range
-    // [0, ImpedanceMetalMaxInductance] of its configured Ls, in every sheet form; above it
-    // it is not served. Record serves any Ls (the measuring mode of stage A).
+    // Apply (decision 2206 (a); 2208 (3)): a purely inductive sheet is served when its
+    // CONFIGURED Ls (the number of the Impedance boundary, whatever the sheet form; the
+    // per-face meaning is printed with the form) lies in [0, ImpedanceMetalMaxInductance];
+    // above it it is not served. Record serves any Ls (the measuring mode of stage A).
     const bool inductive =
         data.Rs == 0.0 && data.Cs == 0.0 && (!apply || inductance >= 0.0);
     const bool in_range = !apply || inductance <= resolution.max_inductance;
@@ -299,13 +303,17 @@ FilmRuleResolution ResolveImpedanceMetalFilm(
     }
     resolution.lines.push_back(fmt::format(
         "Impedance-metal rule (APPLY): treated as the library's perfect-conductor film (an "
-        "ASSUMPTION): {}; Ls range served: 0 <= Ls <= {:.6g} H/sq "
-        "(ImpedanceMetalMaxInductance{}); served Ls met: {}",
+        "ASSUMPTION): {}; Ls range served: 0 <= configured Ls <= {:.6g} H/sq in every "
+        "sheet "
+        "form (ImpedanceMetalMaxInductance, {}); served Ls met: {}",
         film.empty() ? "none" : film, resolution.max_inductance,
-        resolution.max_inductance_is_default
-            ? ": the default, a placeholder until the breakdown study"
-            : ": configured",
+        resolution.max_inductance_is_default ? "the default" : "configured",
         met.empty() ? "none" : fmt::format("{} H/sq", fmt::join(met, ", "))));
+    // Decision 2208 (1): the one line that holds serving off for designers while it is not
+    // validated (removing it is the switch, by its own review).
+    resolution.lines.push_back(
+        "Impedance-metal rule (APPLY): corrected values on impedance sheets are "
+        "experimental and not validated");
   }
   else
   {
@@ -363,18 +371,14 @@ nlohmann::json ImpedanceApplyRecord(
                       {"Model", feature.model}});
     }
   }
-  nlohmann::json record = {
-      {"Mode", "Apply"},
-      {"Lines", film.lines},
-      {"MaxInductance", film.max_inductance},
-      {"MaxInductanceIsDefault", film.max_inductance_is_default},
-      {"ServedInductances", film.served_inductances},
-      {"LawStatusCounts", counts},
-      {"ServedImpedanceFeatures", served},
-      {"ServedImpedanceLength", served_length},
-      {"Validated", false},
-      {"Note", "corrected values on impedance sheets are served by perfect-conductor "
-               "models: computed, not validated"}};
+  nlohmann::json record = {{"Mode", "Apply"},
+                           {"Lines", film.lines},
+                           {"MaxInductance", film.max_inductance},
+                           {"MaxInductanceIsDefault", film.max_inductance_is_default},
+                           {"ServedInductances", film.served_inductances},
+                           {"LawStatusCounts", counts},
+                           {"ServedImpedanceFeatures", served},
+                           {"ServedImpedanceLength", served_length}};
   if (with_features)
   {
     record["Features"] = std::move(rows);

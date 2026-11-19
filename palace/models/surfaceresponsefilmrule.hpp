@@ -48,9 +48,10 @@ struct FilmRuleAttribute
   std::string law;
   FilmService service = FilmService::NOT_DECLARED;
   bool overridden = false;
-  // A purely inductive sheet's configured Ls (H/sq, SI; 0 for every other law) and the
-  // sheet form of the attribute in the mesh ("uncracked (one sheet of Ls)", "cracked (Ls on
-  // each face)" or "cracked, legacy split (2 Ls on each face)").
+  // A purely inductive sheet's configured Ls (H/sq, SI; 0 for every other law: the value
+  // Apply's range check compares) and the sheet form of the attribute in the mesh
+  // ("uncracked (one sheet of total Ls)", "cracked (two faces of Ls each)" or "cracked,
+  // legacy split (two faces of 2 Ls each)").
   double inductance = 0.0;
   std::string form;
 };
@@ -121,7 +122,7 @@ bool ImpedanceLawStatusServesSheet(const std::string &status);
 // preflight manifest of record; decision 2206 (a)): the mode, the printed lines, the Ls
 // range, the Ls values met and, from the feature rows (`features`: the root's), the
 // law-status counts and the features served on impedance sheets; the rows themselves when
-// `with_features`. "Validated" is false: no Ls corrected value is validated yet.
+// `with_features` (the lines include the one experimental-status line, decision 2208 (1)).
 nlohmann::json ImpedanceApplyRecord(
     const FilmRuleResolution &film,
     const std::vector<

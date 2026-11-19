@@ -19,7 +19,9 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 #include "fem/gridfunction.hpp"
 #include "fem/mesh.hpp"
+#include "linalg/ksp.hpp"
 #include "linalg/vector.hpp"
+#include "models/laplaceoperator.hpp"
 #include "models/spaceoperator.hpp"
 #include "models/surfaceresponsefilmrule.hpp"
 #include "models/surfaceresponseoperator.hpp"
@@ -171,14 +173,20 @@ TEST_CASE("Impedance-metal rule Apply film resolution, Ls range check and refusa
                                        "library's perfect-conductor film (an ASSUMPTION)"));
     CHECK_THAT(line, ContainsSubstring("PEC [1]"));
     CHECK_THAT(line, ContainsSubstring("Impedance Rs 0 Ls 4.5e-14 Cs 0, uncracked (one "
-                                       "sheet of Ls) [2]"));
-    CHECK_THAT(line, ContainsSubstring("Ls range served: 0 <= Ls <= 9e-14 H/sq "
-                                       "(ImpedanceMetalMaxInductance: the default, a "
-                                       "placeholder until the breakdown study)"));
+                                       "sheet of total Ls) [2]"));
+    CHECK_THAT(line, ContainsSubstring("Ls range served: 0 <= configured Ls <= 9e-14 H/sq "
+                                       "in every sheet form (ImpedanceMetalMaxInductance, "
+                                       "the default)"));
+    // Decision 2208 (1): ONE line holds serving off while it is not validated.
+    CHECK(std::count_if(film.lines.begin(), film.lines.end(), [](const std::string &text)
+                        { return text.find("not validated") != std::string::npos; }) == 1);
+    CHECK(HasLine(film,
+                  "Impedance-metal rule (APPLY): corrected values on impedance sheets "
+                  "are experimental and not validated"));
     CHECK_THAT(line, ContainsSubstring("served Ls met: 4.5e-14 H/sq"));
     CHECK(HasLine(film, "not served (Impedance Rs 0 Ls 2e-12 Cs 0, uncracked (one sheet "
-                        "of Ls): ABOVE the Ls range <= 9e-14 H/sq): attributes [7]: their "
-                        "corrected values are not served (raw)"));
+                        "of total Ls): ABOVE the Ls range <= 9e-14 H/sq): attributes [7]: "
+                        "their corrected values are not served (raw)"));
     CHECK(HasLine(film, "not served (Conductivity): attributes [5]"));
     // An above-range sheet serves no segment; a served one does.
     CHECK(film.SegmentService({7}) == FilmService::NOT_DECLARED);
@@ -193,7 +201,7 @@ TEST_CASE("Impedance-metal rule Apply film resolution, Ls range check and refusa
     auto film = ResolveImpedanceMetalFilm(boundaries, request, units, false);
     CHECK(film.attributes.at(2).service == FilmService::FILM_INDUCTIVE);  // at the bound
     CHECK_FALSE(film.max_inductance_is_default);
-    CHECK_THAT(film.lines.front(), ContainsSubstring("(ImpedanceMetalMaxInductance: "
+    CHECK_THAT(film.lines.front(), ContainsSubstring("(ImpedanceMetalMaxInductance, "
                                                      "configured)"));
     request.impedance_metal_max_inductance = 4.4e-14;
     film = ResolveImpedanceMetalFilm(boundaries, request, units, false);
@@ -212,13 +220,16 @@ TEST_CASE("Impedance-metal rule Apply film resolution, Ls range check and refusa
     boundaries.split_impedance_attributes = {7};
     request.impedance_metal_max_inductance = 3.0e-12;
     const auto film = ResolveImpedanceMetalFilm(boundaries, request, units, false);
-    CHECK(film.attributes.at(2).form == "cracked (Ls on each face)");
-    CHECK(film.attributes.at(7).form == "cracked, legacy split (2 Ls on each face)");
+    CHECK(film.attributes.at(2).form == "cracked (two faces of Ls each)");
+    CHECK(film.attributes.at(7).form == "cracked, legacy split (two faces of 2 Ls each)");
     CHECK_THAT(film.lines.front(),
-               ContainsSubstring("Ls 4.5e-14 Cs 0, cracked (Ls on each face) [2]"));
+               ContainsSubstring("Ls 4.5e-14 Cs 0, cracked (two faces of Ls each) [2]"));
     CHECK_THAT(film.lines.front(),
-               ContainsSubstring("Ls 2e-12 Cs 0, cracked, legacy split (2 Ls on each "
-                                 "face) [7]"));
+               ContainsSubstring("Ls 2e-12 Cs 0, cracked, legacy split (two faces of 2 Ls "
+                                 "each) [7]"));
+    // The range check compares the CONFIGURED Ls in every form (decision 2208 (3)): the
+    // same 2e-12 is served cracked and split alike under a 3e-12 bound.
+    CHECK(film.attributes.at(7).inductance == 2.0e-12);
     // Record keeps the branch's lines (no form, no range).
     request.impedance_metal_rule = ResponseCorrectionData::ImpedanceMetalRule::RECORD;
     const auto record = ResolveImpedanceMetalFilm(boundaries, request, units, false);
@@ -267,10 +278,54 @@ TEST_CASE("Impedance-metal rule Apply film resolution, Ls range check and refusa
     CHECK(record.at("LawStatusCounts").at("PEC") == 1);
     CHECK(record.at("MaxInductance").get<double>() == 9.0e-14);
     CHECK(record.at("MaxInductanceIsDefault") == true);
-    CHECK(record.at("Validated") == false);
+    CHECK(record.at("Lines").size() == film.lines.size());
     CHECK_FALSE(record.contains("Features"));
     CHECK(ImpedanceApplyRecord(film, features, true).at("Features").size() == 3);
   }
+}
+
+// Decision 2208 / DESIGN-APPLY s8: an electrostatic run solves no impedance boundary, so
+// "Apply" serves nothing differently there: the operator is the one of "Off" (no seam, the
+// same patches, the same corrected response).
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "Impedance-metal rule Apply in an electrostatic run serves nothing "
+                 "differently",
+                 "[surfaceresponsefilmrule][impedancemetalrule][Serial]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  auto Response = [&](const std::string &rule)
+  {
+    json config = ConvexIslandConfig();
+    config["Solver"]["Electrostatic"]["ResponseCorrection"]["ImpedanceMetalRule"] = rule;
+    IoData iodata(config, false);
+    iodata.boundaries.cracked_attributes.insert(9);
+    std::vector<std::unique_ptr<Mesh>> meshes;
+    meshes.push_back(std::make_unique<Mesh>(MakeIslandMesh()));
+    LaplaceOperator laplace(iodata, meshes);
+    auto K = laplace.GetStiffnessMatrix();
+    KspSolver ksp(iodata, laplace.GetH1Spaces());
+    ksp.SetOperators(*K, *K);
+    Vector V, RHS;
+    laplace.GetExcitationVector(1, *K, V, RHS);
+    ksp.Mult(RHS, V);
+    SurfaceResponseOperator response(iodata, laplace);
+    CHECK(response.GetImpedanceApplyRule() == nullptr);
+    CHECK_FALSE(response.IsImpedanceRuleCandidate());
+    return std::pair{response.GetPatchCount(), response.GetElectrostaticResponse(V)};
+  };
+  const auto [off_patches, off] = Response("Off");
+  const auto [apply_patches, apply] = Response("Apply");
+  REQUIRE(off_patches > 0);
+  CHECK(apply_patches == off_patches);
+  CHECK(apply.domain_correction == off.domain_correction);
+  REQUIRE(apply.fabricated_surface_energy.size() == off.fabricated_surface_energy.size());
+  for (const auto &[interface, energy] : off.fabricated_surface_energy)
+  {
+    CHECK(apply.fabricated_surface_energy.at(interface) == energy);
+  }
+#endif
 }
 
 // t1 (STAGEA-NOTE s1): the configuration keys.

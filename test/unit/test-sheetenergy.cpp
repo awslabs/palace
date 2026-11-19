@@ -884,9 +884,30 @@ TEST_CASE_METHOD(
   constexpr int metal_attr = 9;  // the island of MakeSerialIslandMesh
   const auto mesh_path =
       WriteSheetMesh(temp.temp_dir, MakeSerialIslandMesh(), "island-apply.mesh");
+  // The Features construction (the seam's path; the candidate test's form): the convex
+  // library with every model on the island's one target interface (SA).
+  const fs::path sa_library_path = temp.temp_dir / "impedance-apply-convex-sa-3d.json";
+  if (Mpi::Root(Mpi::World()))
+  {
+    json library = json::parse(std::ifstream(convex_library_3d_path));
+    library["Name"] = "unit-test-process-impedance-apply-convex-sa-3d";
+    for (auto &model : library["Models"])
+    {
+      model["Interfaces"] = {{{"Type", "SA"}, {"Coupon", 1}}};
+    }
+    std::ofstream(sa_library_path) << library.dump(2) << "\n";
+  }
+  Mpi::Barrier(Mpi::World());
   auto IslandConfig = [&](bool legacy_key)
   {
     json config = ConvexMaxwellIslandConfig();
+    auto &correction = config["Solver"]["SurfaceResponseCorrection"];
+    correction.erase("PatchConstruction");
+    correction["Library"] = sa_library_path.string();
+    correction["UnmatchedPolicy"] = "Warn";
+    correction["GeometryFailurePolicy"] = "RecordRaw";
+    correction["TraceCoupling"] = "Collocated";
+    correction["CorrectionMode"] = "PostprocessOnly";
     config["Model"]["Mesh"] = mesh_path.string();
     if (legacy_key)
     {
@@ -922,20 +943,15 @@ TEST_CASE_METHOD(
         entry["Crack"] = (form == MetalCrackForm::CrackTrue);
       }
       config["Boundaries"]["Impedance"] = json::array({entry});
-      auto &correction = config["Solver"]["SurfaceResponseCorrection"];
-      correction["ImpedanceMetalRule"] = rule;
-      if (rule != "Apply")
-      {
-        correction["UnmatchedPolicy"] = "Warn";
-        correction["GeometryFailurePolicy"] = "RecordRaw";
-      }
+      config["Boundaries"]["Postprocessing"]["Dielectric"][0]["Attributes"] = {metal_attr};
+      config["Solver"]["SurfaceResponseCorrection"]["ImpedanceMetalRule"] = rule;
       return config;
     };
     const std::string form_text =
         form == MetalCrackForm::LegacyKey
-            ? "cracked, legacy split (2 Ls on each face)"
-            : (form == MetalCrackForm::CrackTrue ? "cracked (Ls on each face)"
-                                                 : "uncracked (one sheet of Ls)");
+            ? "cracked, legacy split (two faces of 2 Ls each)"
+            : (form == MetalCrackForm::CrackTrue ? "cracked (two faces of Ls each)"
+                                                 : "uncracked (one sheet of total Ls)");
 
     // Apply at the designers' Ls: the perfect-conductor island's identification.
     MaxwellIslandResponse sheet(SheetConfig("Apply", 4.5e-14));
@@ -951,8 +967,13 @@ TEST_CASE_METHOD(
     CHECK_THAT(normal.matched_length_fraction, WithinAbs(1.0, 1.0e-12));
     CHECK(normal.boundary_law_verified);
     CHECK_THAT(normal.domain_correction, WithinRel(pec_normal.domain_correction, 1.0e-10));
-    CHECK_THAT(normal.fabricated_surface_energy.at(4),
-               WithinRel(pec_normal.fabricated_surface_energy.at(4), 1.0e-10));
+    REQUIRE(normal.fabricated_surface_energy.size() ==
+            pec_normal.fabricated_surface_energy.size());
+    for (const auto &[interface, energy] : pec_normal.fabricated_surface_energy)
+    {
+      CHECK_THAT(normal.fabricated_surface_energy.at(interface),
+                 WithinRel(energy, 1.0e-10));
+    }
     if (Mpi::Root(Mpi::World()))
     {
       const auto &features = sheet.response->GetImpedanceLawFeatures();
@@ -970,11 +991,7 @@ TEST_CASE_METHOD(
     CHECK(off.response->GetPatchCount() == 0);
 
     // Apply above the Ls range (100 x the designers' value): not served, named.
-    json above_config = SheetConfig("Apply", 4.5e-12);
-    above_config["Solver"]["SurfaceResponseCorrection"]["UnmatchedPolicy"] = "Warn";
-    above_config["Solver"]["SurfaceResponseCorrection"]["GeometryFailurePolicy"] =
-        "RecordRaw";
-    MaxwellIslandResponse above(above_config);
+    MaxwellIslandResponse above(SheetConfig("Apply", 4.5e-12));
     REQUIRE(above.response->GetImpedanceApplyRule() != nullptr);
     CHECK(above.response->GetImpedanceApplyRule()->attributes.at(metal_attr).service ==
           FilmService::INDUCTIVE_ABOVE_RANGE);

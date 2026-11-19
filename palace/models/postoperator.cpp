@@ -6696,8 +6696,8 @@ void PostOperator<solver_t>::WriteImpedanceApplyFeatures() const
   table.WriteFullTableTrunc();
   Mpi::Print(fem_op->GetComm(),
              "Impedance-metal rule (APPLY): {:d} of {:d} identified feature(s) on "
-             "impedance sheets are served by perfect-conductor models (computed, not "
-             "validated); per-feature table: {}\n",
+             "impedance sheets are served by perfect-conductor models; per-feature table: "
+             "{}\n",
              served, static_cast<int>(features.size()), path.string());
 }
 

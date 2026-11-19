@@ -873,8 +873,7 @@ void BaseSolver::SaveMetadata(SurfaceResponseOperator &response) const
         }
         coverage_banner += fmt::format(
             "*** IMPEDANCE-METAL RULE (APPLY): {:d} corrected feature(s) on purely "
-            "inductive sheets (Ls {} H/sq) are served by perfect-conductor models: "
-            "computed, not validated ***\n",
+            "inductive sheets (Ls {} H/sq) are served by perfect-conductor models ***\n",
             served, fmt::join(inductances, ", "));
       }
     }
