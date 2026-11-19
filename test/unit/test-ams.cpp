@@ -79,6 +79,14 @@ void CheckAgglomeration(MPI_Comm comm, const HypreAmsSolver &ams, int target)
   CHECK(owned <= 1);
   CHECK(num_concurrent == num_planned);
 
+  // hypre leaves a hierarchy distributed, without a message, if its cycle depends on the
+  // data distribution (a hybrid Gauss-Seidel relaxation, for example). The hierarchies of
+  // these tests are all agglomerated on two or more processes.
+  if (Mpi::Size(comm) > 1)
+  {
+    CHECK(num_agglomerated == num_pi);
+  }
+
   // With at least two processes for each hierarchy, the corrections are always concurrent
   // (if hypre can agglomerate all hierarchies: not the ones with a coarsest level of
   // several times the target, when their coarsening stalls).
