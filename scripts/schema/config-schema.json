@@ -3033,7 +3033,7 @@
         },
         "MGSmoothOrder": {
           "type": "integer",
-          "description": "Polynomial smoothing order for geometric multigrid, for each application of the smoother. If omitted, Palace uses `max(4 \u00d7 solution order, 8)` with one-sided V-cycles ([`\"MGOneSided\"`](@ref config-solver-linear-mgonesided)) and `max(2 \u00d7 solution order, 4)` otherwise, for the same smoothing work per V-cycle.",
+          "description": "Polynomial smoothing order for geometric multigrid, for each application of the smoother. If omitted, Palace uses `max(4 \u00d7 solution order, 8)` with one-sided V-cycles ([`\"MGOneSided\"`](@ref config-solver-linear-mgonesided)) and `max(2 \u00d7 solution order, 4)` otherwise, for the same smoothing work per V-cycle. An explicit order keeps symmetric V-cycles unless `\"MGOneSided\"` is `true`.",
           "exclusiveMinimum": 0
         },
         "MGSmoothEigScaleMax": {
@@ -3058,7 +3058,7 @@
         },
         "MGOneSided": {
           "type": "boolean",
-          "description": "Use one-sided V-cycles for geometric multigrid, which pre-smooth but do not post-smooth, except for the auxiliary space correction of distributive relaxation, which follows the coarse-grid correction. They make a nonsymmetric preconditioner, so they require the GMRES or FGMRES Krylov solver. If omitted, Palace enables this for eigenmode simulations with GMRES or FGMRES, and disables it otherwise: one-sided V-cycles can slow down the strongly indefinite linear systems of some driven simulations and boundary mode solves.",
+          "description": "Use one-sided V-cycles for geometric multigrid, which pre-smooth but do not post-smooth, except for the auxiliary space correction of distributive relaxation, which follows the coarse-grid correction. They make a nonsymmetric preconditioner, so they require the GMRES or FGMRES Krylov solver. If omitted, Palace enables this for eigenmode simulations with GMRES or FGMRES and without an explicit [`\"MGSmoothOrder\"`](@ref config-solver-linear-mgsmoothorder), and disables it otherwise: one-sided V-cycles can slow down the strongly indefinite linear systems of some driven simulations and boundary mode solves.",
           "x-palace-advanced": true
         },
         "PCMatReal": {
