@@ -17,6 +17,7 @@
 #include "embedded_schema.hpp"
 #include "linalg/ksp.hpp"
 #include "utils/configfile.hpp"
+#include "utils/enum_string.hpp"
 #include "utils/iodata.hpp"
 #include "utils/jsonschema.hpp"
 
@@ -1588,6 +1589,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(iodata.solver.linear.initial_guess == 1);
     CHECK(iodata.solver.linear.pc_mat_shifted == 0);
     CHECK(iodata.solver.linear.mg_smooth_aux == 0);
+    CHECK(iodata.solver.linear.mg_cycle == MultigridCycle::SYMMETRIC);
     CHECK(iodata.solver.linear.ams_singular_op == 0);
     CHECK(iodata.solver.linear.amg_agg_coarsen == 1);
     CHECK(iodata.solver.linear.ams_max_it == 1);
@@ -1603,6 +1605,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(j_linear["InitialGuess"].get<int>() == 1);
     CHECK(j_linear["PCMatShifted"].get<int>() == 0);
     CHECK(j_linear["MGAuxiliarySmoother"].get<int>() == 0);
+    CHECK(j_linear["MGCycleType"].get<std::string>() == "Symmetric");
     CHECK(j_linear["AMSSingularOperator"].get<int>() == 0);
     CHECK(j_linear["AMGAggressiveCoarsening"].get<int>() == 1);
     CHECK(j_linear["AMSMaxIts"].get<int>() == 1);
@@ -1946,6 +1949,96 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
             .complex_coarse_solve);
   }
 
+  SECTION("Multigrid V-cycles resolve from the problem and the Krylov solver")
+  {
+    // The first solve chooses the V-cycles by default for eigenmode problems with GMRES and
+    // FGMRES, unless the smoothing order is explicit. One-sided V-cycles, or the choice,
+    // are an error with CG. The smoothing order is that of symmetric V-cycles.
+    auto Resolve = [](const char *problem, json linear, int order = 2)
+    {
+      json solver = {{"Order", order}, {"Linear", std::move(linear)}};
+      json boundaries = json::object();
+      if (std::string(problem) == "Eigenmode")
+      {
+        solver["Eigenmode"] = {{"Target", 1.0}};
+      }
+      else if (std::string(problem) == "BoundaryMode")
+      {
+        solver["BoundaryMode"] = {{"Freq", 10.0}};
+      }
+      else if (std::string(problem) == "Driven")
+      {
+        solver["Driven"] = {
+            {"Samples", {{{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 0.5}}}}};
+        boundaries["LumpedPort"] = {{{"Index", 1},
+                                     {"Attributes", {2}},
+                                     {"R", 50.0},
+                                     {"Direction", "+X"},
+                                     {"Excitation", true}}};
+      }
+      else if (std::string(problem) == "Transient")
+      {
+        solver["Transient"] = {
+            {"Excitation", "Sinusoidal"}, {"MaxTime", 1.0}, {"TimeStep", 0.01}};
+      }
+      json config = {{"Problem", {{"Type", problem}, {"Output", "test_output"}}},
+                     {"Model", {{"Mesh", "test.msh"}}},
+                     {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                     {"Boundaries", std::move(boundaries)},
+                     {"Solver", std::move(solver)}};
+      IoData iodata(config, false);
+      config = IoData::ConcretizeDefaults(iodata, config);
+      CHECK(config["Solver"]["Linear"]["MGCycleType"].get<std::string>() ==
+            ToString(iodata.solver.linear.mg_cycle));
+      CHECK(config["Solver"]["Linear"]["MGSmoothOrder"].get<int>() ==
+            iodata.solver.linear.mg_smooth_order);
+
+      // The resolved configuration, with both settings, resolves to the same V-cycles.
+      IoData resolved(config, false);
+      CHECK(resolved.solver.linear.mg_cycle == iodata.solver.linear.mg_cycle);
+      CHECK(resolved.solver.linear.mg_smooth_order == iodata.solver.linear.mg_smooth_order);
+      return iodata.solver.linear;
+    };
+    const auto eigenmode = Resolve("Eigenmode", json::object());
+    CHECK(eigenmode.krylov_solver == KrylovSolver::GMRES);
+    CHECK(eigenmode.mg_cycle == MultigridCycle::AUTO);
+    CHECK(eigenmode.mg_smooth_order == 4);
+    CHECK(Resolve("Eigenmode", json::object(), 3).mg_smooth_order == 6);
+    CHECK(Resolve("Eigenmode", {{"KSPType", "FGMRES"}}).mg_cycle == MultigridCycle::AUTO);
+    const auto driven = Resolve("Driven", json::object());
+    CHECK(driven.krylov_solver == KrylovSolver::GMRES);
+    CHECK(driven.mg_cycle == MultigridCycle::SYMMETRIC);
+    const auto driven_one_sided = Resolve("Driven", {{"MGCycleType", "OneSided"}});
+    CHECK(driven_one_sided.mg_cycle == MultigridCycle::ONE_SIDED);
+    CHECK(driven_one_sided.mg_smooth_order == 4);
+    const auto boundary_mode = Resolve("BoundaryMode", {{"MGMaxLevels", 2}});
+    CHECK(boundary_mode.krylov_solver == KrylovSolver::GMRES);
+    CHECK(boundary_mode.mg_cycle == MultigridCycle::SYMMETRIC);
+    CHECK(Resolve("BoundaryMode", {{"MGMaxLevels", 2}, {"MGCycleType", "Auto"}}).mg_cycle ==
+          MultigridCycle::AUTO);
+    for (const char *problem : {"Electrostatic", "Magnetostatic", "Transient"})
+    {
+      INFO("problem " << problem);
+      const auto linear = Resolve(problem, json::object());
+      CHECK(linear.krylov_solver == KrylovSolver::CG);
+      CHECK(linear.mg_cycle == MultigridCycle::SYMMETRIC);
+      CHECK(linear.mg_smooth_order == 4);
+    }
+    CHECK(Resolve("Eigenmode", {{"KSPType", "CG"}}).mg_cycle == MultigridCycle::SYMMETRIC);
+    CHECK(Resolve("Eigenmode", {{"MGCycleType", "Symmetric"}}).mg_cycle ==
+          MultigridCycle::SYMMETRIC);
+    CHECK(Resolve("Eigenmode", {{"MGCycleType", "OneSided"}}).mg_cycle ==
+          MultigridCycle::ONE_SIDED);
+    const auto explicit_order = Resolve("Eigenmode", {{"MGSmoothOrder", 6}});
+    CHECK(explicit_order.mg_cycle == MultigridCycle::SYMMETRIC);
+    CHECK(explicit_order.mg_smooth_order == 6);
+    CHECK(Resolve("Eigenmode", {{"MGSmoothOrder", 6}, {"MGCycleType", "Auto"}}).mg_cycle ==
+          MultigridCycle::AUTO);
+    CHECK_THROWS(Resolve("Eigenmode", {{"KSPType", "CG"}, {"MGCycleType", "OneSided"}}));
+    CHECK_THROWS(Resolve("Eigenmode", {{"KSPType", "CG"}, {"MGCycleType", "Auto"}}));
+    CHECK_THROWS(Resolve("Electrostatic", {{"MGCycleType", "OneSided"}}));
+  }
+
   SECTION("Round-trip: resolved config validates and re-parses identically")
   {
     // Start from a sparse Electrostatic config with one non-default (Order=3) and one
@@ -1979,6 +2072,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(l2.pc_mat_shifted == l1.pc_mat_shifted);
     CHECK(l2.mg_smooth_aux == l1.mg_smooth_aux);
     CHECK(l2.mg_smooth_order == l1.mg_smooth_order);
+    CHECK(l2.mg_cycle == l1.mg_cycle);
     CHECK(l2.mg_cycle_it == l1.mg_cycle_it);
     CHECK(l2.ams_singular_op == l1.ams_singular_op);
     CHECK(l2.ams_max_it == l1.ams_max_it);

@@ -9,7 +9,6 @@
 #include "linalg/operator.hpp"
 #include "linalg/solver.hpp"
 #include "linalg/vector.hpp"
-#include "utils/iodata.hpp"
 
 namespace mfem
 {
@@ -25,7 +24,7 @@ namespace palace
 //
 // Geometric multigrid preconditioner using a given coarse solver for the provided
 // hierarchy of finite element spaces. Optionally can be configured to use auxiliary space
-// smoothing at each level.
+// smoothing at each level, and one-sided V-cycles.
 //
 template <OperatorType OperType>
 class GeometricMultigridSolver : public Solver<OperType>
@@ -53,6 +52,14 @@ private:
   // Enable timer contribution for Timer::KSP_COARSE_SOLVE.
   bool use_timer;
 
+  // Polynomial order of the pre- and post-smoothers of symmetric V-cycles.
+  const int smooth_order;
+
+  // One-sided V-cycles, which pre-smooth but do not post-smooth, at twice the smoothing
+  // order (Phillips and Fischer, 2022): the preconditioner is not symmetric, so only for
+  // GMRES and FGMRES.
+  bool one_sided;
+
   // Internal function to perform a single V-cycle iteration.
   void VCycle(int l, bool initial_guess) const;
 
@@ -61,24 +68,20 @@ public:
                            const std::vector<const Operator *> &P,
                            const std::vector<const Operator *> *G, int cycle_it,
                            int smooth_it, int cheby_order, double cheby_sf_max,
-                           double cheby_sf_min, bool cheby_4th_kind);
-  GeometricMultigridSolver(const IoData &iodata, MPI_Comm comm,
-                           std::unique_ptr<Solver<OperType>> &&coarse_solver,
-                           const std::vector<const Operator *> &P,
-                           const std::vector<const Operator *> *G = nullptr)
-    : GeometricMultigridSolver(
-          comm, std::move(coarse_solver), P, G, iodata.solver.linear.mg_cycle_it,
-          iodata.solver.linear.mg_smooth_it, iodata.solver.linear.mg_smooth_order,
-          iodata.solver.linear.mg_smooth_sf_max, iodata.solver.linear.mg_smooth_sf_min,
-          iodata.solver.linear.mg_smooth_cheby_4th)
-  {
-  }
+                           double cheby_sf_min, bool cheby_4th_kind,
+                           bool one_sided = false);
 
   void SetOperator(const OperType &op) override;
 
   void Mult(const VecType &x, VecType &y) const override;
 
   void EnableTimer() { use_timer = true; }
+
+  auto GetNumLevels() const { return A.size(); }
+
+  // Switch between one-sided and symmetric V-cycles.
+  void SetOneSided(bool one_sided_cycle);
+  bool IsOneSided() const { return one_sided; }
 };
 
 }  // namespace palace

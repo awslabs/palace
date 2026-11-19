@@ -139,6 +139,16 @@ enum class KrylovSolver : char
   BICGSTAB
 };
 
+// Multigrid V-cycles: symmetric ones, one-sided ones, or the one-sided ones if they need at
+// most as many iterations in the first linear solve.
+enum class MultigridCycle : char
+{
+  DEFAULT,
+  SYMMETRIC,
+  ONE_SIDED,
+  AUTO
+};
+
 // Method of coarsening for p-multigrid.
 enum class MultigridCoarsening : char
 {

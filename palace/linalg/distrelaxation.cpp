@@ -67,6 +67,13 @@ void DistRelaxationSmoother<OperType>::SetOperators(const OperType &op,
   this->width = op.Width();
 }
 
+template <OperatorType OperType>
+void DistRelaxationSmoother<OperType>::SetOrder(int cheby_order)
+{
+  SetChebyshevOrder(*B, cheby_order);
+  SetChebyshevOrder(*B_G, cheby_order);
+}
+
 namespace
 {
 
@@ -97,24 +104,43 @@ inline void RealMultTranspose(const Operator &op, const ComplexVector &x, Comple
 template <OperatorType OperType>
 void DistRelaxationSmoother<OperType>::Mult2(const VecType &x, VecType &y, VecType &r) const
 {
+  MultExceptLastAuxiliary2(x, y, r);
+  MultAuxiliary2(x, y, r);
+}
+
+template <OperatorType OperType>
+void DistRelaxationSmoother<OperType>::MultExceptLastAuxiliary2(const VecType &x,
+                                                                VecType &y,
+                                                                VecType &r) const
+{
   // Apply smoother.
   for (int it = 0; it < pc_it; it++)
   {
+    if (it > 0)
+    {
+      MultAuxiliary2(x, y, r);
+    }
+
     // y = y + B (x - A y)
     B->SetInitialGuess(this->initial_guess || it > 0);
     B->Mult2(x, y, r);
-
-    // y = y + G B_G Gᵀ (x - A y)
-    A->Mult(y, r);
-    linalg::AXPBY(1.0, x, -1.0, r);
-    RealMultTranspose(*G, r, x_G);
-    if (dbc_tdof_list_G)
-    {
-      linalg::SetSubVector(x_G, *dbc_tdof_list_G, 0.0);
-    }
-    B_G->Mult2(x_G, y_G, r_G);
-    RealAddMult(*G, y_G, y);
   }
+}
+
+template <OperatorType OperType>
+void DistRelaxationSmoother<OperType>::MultAuxiliary2(const VecType &x, VecType &y,
+                                                      VecType &r) const
+{
+  // y = y + G B_G Gᵀ (x - A y)
+  A->Mult(y, r);
+  linalg::AXPBY(1.0, x, -1.0, r);
+  RealMultTranspose(*G, r, x_G);
+  if (dbc_tdof_list_G)
+  {
+    linalg::SetSubVector(x_G, *dbc_tdof_list_G, 0.0);
+  }
+  B_G->Mult2(x_G, y_G, r_G);
+  RealAddMult(*G, y_G, y);
 }
 
 template <OperatorType OperType>

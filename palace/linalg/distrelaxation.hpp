@@ -62,6 +62,9 @@ public:
 
   void SetOperators(const OperType &op, const OperType &op_G);
 
+  // Change the order of the Chebyshev smoothers of both spaces.
+  void SetOrder(int cheby_order);
+
   void Mult(const VecType &x, VecType &y) const override
   {
     if (r.Size() != y.Size())
@@ -85,6 +88,12 @@ public:
   void Mult2(const VecType &x, VecType &y, VecType &r) const override;
 
   void MultTranspose2(const VecType &x, VecType &y, VecType &r) const override;
+
+  // Mult2 is MultExceptLastAuxiliary2 followed by MultAuxiliary2, the auxiliary space
+  // correction y = y + G B_G Gᵀ (x - A y) of the last smoother iteration.
+  void MultExceptLastAuxiliary2(const VecType &x, VecType &y, VecType &r) const;
+
+  void MultAuxiliary2(const VecType &x, VecType &y, VecType &r) const;
 };
 
 }  // namespace palace

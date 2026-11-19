@@ -29,7 +29,8 @@ private:
   MPI_Comm comm;
 
   // Number of smoother iterations and polynomial order.
-  const int pc_it, order;
+  const int pc_it;
+  int order;
 
   // System matrix (not owned).
   const OperType *A;
@@ -51,6 +52,9 @@ public:
   ChebyshevSmoother(MPI_Comm comm, int smooth_it, int poly_order, double sf_max);
 
   void SetOperator(const OperType &op) override;
+
+  // Change the polynomial order, without a new eigenvalue estimate.
+  void SetOrder(int poly_order);
 
   void Mult(const VecType &x, VecType &y) const override
   {
@@ -96,7 +100,8 @@ private:
   MPI_Comm comm;
 
   // Number of smoother iterations and polynomial order.
-  const int pc_it, order;
+  const int pc_it;
+  int order;
 
   // System matrix (not owned).
   const OperType *A;
@@ -105,8 +110,9 @@ private:
   VecType dinv;
 
   // Parameters depending on maximum and minimum operator eigenvalue estimates for Chebyshev
-  // polynomial smoothing.
-  double theta, delta, sf_max, sf_min;
+  // polynomial smoothing (sf_min <= 0 for the optimized minimum, which depends on the
+  // order).
+  double lambda_max, theta, delta, sf_max, sf_min;
 
   // Dominant vector of the latest maximum eigenvalue estimate, from which the estimate for
   // the next operator starts.
@@ -115,11 +121,17 @@ private:
   // Temporary vector for smoother application.
   mutable VecType d, r;
 
+  // Set theta and delta from the maximum eigenvalue estimate and the order.
+  void SetCoefficients();
+
 public:
   ChebyshevSmoother1stKind(MPI_Comm comm, int smooth_it, int poly_order, double sf_max,
                            double sf_min);
 
   void SetOperator(const OperType &op) override;
+
+  // Change the polynomial order, without a new eigenvalue estimate.
+  void SetOrder(int poly_order);
 
   void Mult(const VecType &x, VecType &y) const override
   {
@@ -148,6 +160,10 @@ public:
     Mult2(x, y, r);  // Assumes operator symmetry
   }
 };
+
+// Change the polynomial order of a ChebyshevSmoother or ChebyshevSmoother1stKind.
+template <OperatorType OperType>
+void SetChebyshevOrder(Solver<OperType> &smoother, int poly_order);
 
 }  // namespace palace
 
