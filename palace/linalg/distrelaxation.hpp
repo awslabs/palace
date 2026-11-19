@@ -62,6 +62,9 @@ public:
 
   void SetOperators(const OperType &op, const OperType &op_G);
 
+  // Change the order of the Chebyshev smoothers of both spaces.
+  void SetOrder(int cheby_order);
+
   void Mult(const VecType &x, VecType &y) const override
   {
     if (r.Size() != y.Size())

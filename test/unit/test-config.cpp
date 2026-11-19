@@ -17,6 +17,7 @@
 #include "embedded_schema.hpp"
 #include "linalg/ksp.hpp"
 #include "utils/configfile.hpp"
+#include "utils/enum_string.hpp"
 #include "utils/iodata.hpp"
 #include "utils/jsonschema.hpp"
 
@@ -1588,7 +1589,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(iodata.solver.linear.initial_guess == 1);
     CHECK(iodata.solver.linear.pc_mat_shifted == 0);
     CHECK(iodata.solver.linear.mg_smooth_aux == 0);
-    CHECK(iodata.solver.linear.mg_one_sided == 0);
+    CHECK(iodata.solver.linear.mg_cycle == MultigridCycle::SYMMETRIC);
     CHECK(iodata.solver.linear.ams_singular_op == 0);
     CHECK(iodata.solver.linear.amg_agg_coarsen == 1);
     CHECK(iodata.solver.linear.ams_max_it == 1);
@@ -1604,7 +1605,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(j_linear["InitialGuess"].get<int>() == 1);
     CHECK(j_linear["PCMatShifted"].get<int>() == 0);
     CHECK(j_linear["MGAuxiliarySmoother"].get<int>() == 0);
-    CHECK_FALSE(j_linear["MGOneSided"].get<bool>());
+    CHECK(j_linear["MGCycleType"].get<std::string>() == "Symmetric");
     CHECK(j_linear["AMSSingularOperator"].get<int>() == 0);
     CHECK(j_linear["AMGAggressiveCoarsening"].get<int>() == 1);
     CHECK(j_linear["AMSMaxIts"].get<int>() == 1);
@@ -1948,11 +1949,11 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
             .complex_coarse_solve);
   }
 
-  SECTION("One-sided multigrid V-cycles resolve from the problem and the Krylov solver")
+  SECTION("Multigrid V-cycles resolve from the problem and the Krylov solver")
   {
-    // One-sided V-cycles default to eigenmode problems with GMRES and FGMRES, with twice
-    // the default smoothing order, and are an error with CG. An explicit order applies as
-    // given, with symmetric V-cycles unless one-sided ones are explicit too.
+    // The first solve chooses the V-cycles by default for eigenmode problems with GMRES and
+    // FGMRES, unless the smoothing order is explicit. One-sided V-cycles, or the choice,
+    // are an error with CG. The smoothing order is that of symmetric V-cycles.
     auto Resolve = [](const char *problem, json linear, int order = 2)
     {
       json solver = {{"Order", order}, {"Linear", std::move(linear)}};
@@ -1987,56 +1988,50 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
                      {"Solver", std::move(solver)}};
       IoData iodata(config, false);
       config = IoData::ConcretizeDefaults(iodata, config);
-      CHECK(config["Solver"]["Linear"]["MGOneSided"].get<bool>() ==
-            static_cast<bool>(iodata.solver.linear.mg_one_sided));
+      CHECK(config["Solver"]["Linear"]["MGCycleType"].get<std::string>() ==
+            ToString(iodata.solver.linear.mg_cycle));
       CHECK(config["Solver"]["Linear"]["MGSmoothOrder"].get<int>() ==
             iodata.solver.linear.mg_smooth_order);
       return iodata.solver.linear;
     };
     const auto eigenmode = Resolve("Eigenmode", json::object());
     CHECK(eigenmode.krylov_solver == KrylovSolver::GMRES);
-    CHECK(eigenmode.mg_one_sided == 1);
-    CHECK(eigenmode.mg_smooth_order == 8);
-    CHECK(Resolve("Eigenmode", json::object(), 3).mg_smooth_order == 12);
-    const auto fgmres = Resolve("Eigenmode", {{"KSPType", "FGMRES"}});
-    CHECK(fgmres.mg_one_sided == 1);
-    CHECK(fgmres.mg_smooth_order == 8);
+    CHECK(eigenmode.mg_cycle == MultigridCycle::AUTO);
+    CHECK(eigenmode.mg_smooth_order == 4);
+    CHECK(Resolve("Eigenmode", json::object(), 3).mg_smooth_order == 6);
+    CHECK(Resolve("Eigenmode", {{"KSPType", "FGMRES"}}).mg_cycle == MultigridCycle::AUTO);
     const auto driven = Resolve("Driven", json::object());
     CHECK(driven.krylov_solver == KrylovSolver::GMRES);
-    CHECK(driven.mg_one_sided == 0);
-    CHECK(driven.mg_smooth_order == 4);
-    CHECK(Resolve("Driven", {{"MGOneSided", true}}).mg_smooth_order == 8);
+    CHECK(driven.mg_cycle == MultigridCycle::SYMMETRIC);
+    const auto driven_one_sided = Resolve("Driven", {{"MGCycleType", "OneSided"}});
+    CHECK(driven_one_sided.mg_cycle == MultigridCycle::ONE_SIDED);
+    CHECK(driven_one_sided.mg_smooth_order == 4);
     const auto boundary_mode = Resolve("BoundaryMode", {{"MGMaxLevels", 2}});
     CHECK(boundary_mode.krylov_solver == KrylovSolver::GMRES);
-    CHECK(boundary_mode.mg_one_sided == 0);
-    CHECK(boundary_mode.mg_smooth_order == 4);
-    const auto boundary_mode_one_sided =
-        Resolve("BoundaryMode", {{"MGMaxLevels", 2}, {"MGOneSided", true}});
-    CHECK(boundary_mode_one_sided.mg_one_sided == 1);
-    CHECK(boundary_mode_one_sided.mg_smooth_order == 8);
+    CHECK(boundary_mode.mg_cycle == MultigridCycle::SYMMETRIC);
+    CHECK(Resolve("BoundaryMode", {{"MGMaxLevels", 2}, {"MGCycleType", "Auto"}}).mg_cycle ==
+          MultigridCycle::AUTO);
     for (const char *problem : {"Electrostatic", "Magnetostatic", "Transient"})
     {
       INFO("problem " << problem);
       const auto linear = Resolve(problem, json::object());
       CHECK(linear.krylov_solver == KrylovSolver::CG);
-      CHECK(linear.mg_one_sided == 0);
+      CHECK(linear.mg_cycle == MultigridCycle::SYMMETRIC);
       CHECK(linear.mg_smooth_order == 4);
     }
-    const auto cg = Resolve("Eigenmode", {{"KSPType", "CG"}});
-    CHECK(cg.mg_one_sided == 0);
-    CHECK(cg.mg_smooth_order == 4);
-    const auto symmetric = Resolve("Eigenmode", {{"MGOneSided", false}});
-    CHECK(symmetric.mg_one_sided == 0);
-    CHECK(symmetric.mg_smooth_order == 4);
-    const auto explicit_order = Resolve("Eigenmode", {{"MGSmoothOrder", 4}});
-    CHECK(explicit_order.mg_one_sided == 0);
-    CHECK(explicit_order.mg_smooth_order == 4);
-    const auto explicit_order_one_sided =
-        Resolve("Eigenmode", {{"MGSmoothOrder", 4}, {"MGOneSided", true}});
-    CHECK(explicit_order_one_sided.mg_one_sided == 1);
-    CHECK(explicit_order_one_sided.mg_smooth_order == 4);
-    CHECK_THROWS(Resolve("Eigenmode", {{"KSPType", "CG"}, {"MGOneSided", true}}));
-    CHECK_THROWS(Resolve("Electrostatic", {{"MGOneSided", true}}));
+    CHECK(Resolve("Eigenmode", {{"KSPType", "CG"}}).mg_cycle == MultigridCycle::SYMMETRIC);
+    CHECK(Resolve("Eigenmode", {{"MGCycleType", "Symmetric"}}).mg_cycle ==
+          MultigridCycle::SYMMETRIC);
+    CHECK(Resolve("Eigenmode", {{"MGCycleType", "OneSided"}}).mg_cycle ==
+          MultigridCycle::ONE_SIDED);
+    const auto explicit_order = Resolve("Eigenmode", {{"MGSmoothOrder", 6}});
+    CHECK(explicit_order.mg_cycle == MultigridCycle::SYMMETRIC);
+    CHECK(explicit_order.mg_smooth_order == 6);
+    CHECK(Resolve("Eigenmode", {{"MGSmoothOrder", 6}, {"MGCycleType", "Auto"}}).mg_cycle ==
+          MultigridCycle::AUTO);
+    CHECK_THROWS(Resolve("Eigenmode", {{"KSPType", "CG"}, {"MGCycleType", "OneSided"}}));
+    CHECK_THROWS(Resolve("Eigenmode", {{"KSPType", "CG"}, {"MGCycleType", "Auto"}}));
+    CHECK_THROWS(Resolve("Electrostatic", {{"MGCycleType", "OneSided"}}));
   }
 
   SECTION("Round-trip: resolved config validates and re-parses identically")
@@ -2072,7 +2067,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(l2.pc_mat_shifted == l1.pc_mat_shifted);
     CHECK(l2.mg_smooth_aux == l1.mg_smooth_aux);
     CHECK(l2.mg_smooth_order == l1.mg_smooth_order);
-    CHECK(l2.mg_one_sided == l1.mg_one_sided);
+    CHECK(l2.mg_cycle == l1.mg_cycle);
     CHECK(l2.mg_cycle_it == l1.mg_cycle_it);
     CHECK(l2.ams_singular_op == l1.ams_singular_op);
     CHECK(l2.ams_max_it == l1.ams_max_it);

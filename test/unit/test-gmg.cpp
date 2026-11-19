@@ -58,12 +58,14 @@ TEST_CASE("Geometric multigrid one-sided V-cycles", "[gmg][Serial][Parallel][GPU
     }
     iodata.solver.order = 3;
     iodata.solver.linear.krylov_solver = KrylovSolver::GMRES;
-    iodata.solver.linear.mg_one_sided = one_sided;
+    iodata.solver.linear.mg_cycle =
+        one_sided ? MultigridCycle::ONE_SIDED : MultigridCycle::SYMMETRIC;
     iodata.solver.linear.tol = 1.0e-10;
     iodata.NondimensionalizeInputs(smesh);
     iodata.CheckConfiguration();
-    REQUIRE(iodata.solver.linear.mg_one_sided == one_sided);
-    REQUIRE(iodata.solver.linear.mg_smooth_order == (one_sided ? 12 : 6));
+    REQUIRE(iodata.solver.linear.mg_cycle ==
+            (one_sided ? MultigridCycle::ONE_SIDED : MultigridCycle::SYMMETRIC));
+    REQUIRE(iodata.solver.linear.mg_smooth_order == 6);
     std::vector<std::unique_ptr<Mesh>> mesh;
     mesh.push_back(std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(comm, *smesh)));
     LaplaceOperator laplace_op(iodata, mesh);
@@ -135,10 +137,10 @@ TEST_CASE("Geometric multigrid one-sided V-cycles with distributive relaxation",
     iodata.solver.order = 2;
     iodata.solver.linear.krylov_solver = KrylovSolver::GMRES;
     iodata.solver.linear.mg_smooth_it = smooth_it;
+    iodata.solver.linear.mg_cycle = MultigridCycle::ONE_SIDED;
     iodata.solver.linear.tol = 1.0e-10;
     iodata.NondimensionalizeInputs(smesh);
     iodata.CheckConfiguration();
-    REQUIRE(iodata.solver.linear.mg_one_sided == 1);
     REQUIRE(iodata.solver.linear.mg_smooth_aux == 1);
     std::vector<std::unique_ptr<Mesh>> mesh;
     mesh.push_back(std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(comm, *smesh)));
@@ -156,7 +158,7 @@ TEST_CASE("Geometric multigrid one-sided V-cycles with distributive relaxation",
     // Mult2 is MultExceptLastAuxiliary2 followed by MultAuxiliary2.
     const auto &mg_op = dynamic_cast<const ComplexMultigridOperator &>(*P);
     DistRelaxationSmoother<ComplexOperator> B(comm, space_op.GetGradMatrix(), smooth_it, 1,
-                                              iodata.solver.linear.mg_smooth_order, 1.0,
+                                              2 * iodata.solver.linear.mg_smooth_order, 1.0,
                                               0.0, true);
     B.SetOperators(mg_op.GetFinestOperator(), mg_op.GetFinestAuxiliaryOperator());
     B.SetInitialGuess(false);

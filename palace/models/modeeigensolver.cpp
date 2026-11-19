@@ -710,7 +710,8 @@ void ModeEigenSolver::SetUpMultigridLinearSolver(MPI_Comm comm)
   auto nd_gmg = std::make_unique<GeometricMultigridSolver<ComplexOperator>>(
       comm, MakeCoarseSolver(nd_pc_type), nd_P, &nd_G, linear.mg_cycle_it,
       linear.mg_smooth_it, linear.mg_smooth_order, linear.mg_smooth_sf_max,
-      linear.mg_smooth_sf_min, linear.mg_smooth_cheby_4th, linear.mg_one_sided);
+      linear.mg_smooth_sf_min, linear.mg_smooth_cheby_4th,
+      linear.mg_cycle != MultigridCycle::SYMMETRIC);
   nd_gmg->EnableTimer();
 
   // H1 block: p-multigrid with Chebyshev smoothing.
@@ -718,10 +719,13 @@ void ModeEigenSolver::SetUpMultigridLinearSolver(MPI_Comm comm)
   auto h1_gmg = std::make_unique<GeometricMultigridSolver<ComplexOperator>>(
       comm, MakeCoarseSolver(h1_pc_type), h1_P, nullptr, linear.mg_cycle_it,
       linear.mg_smooth_it, linear.mg_smooth_order, linear.mg_smooth_sf_max,
-      linear.mg_smooth_sf_min, linear.mg_smooth_cheby_4th, linear.mg_one_sided);
+      linear.mg_smooth_sf_min, linear.mg_smooth_cheby_4th,
+      linear.mg_cycle != MultigridCycle::SYMMETRIC);
   h1_gmg->EnableTimer();
 
   // Combine into block-diagonal preconditioner.
+  std::vector<GeometricMultigridSolver<ComplexOperator> *> gmg = {nd_gmg.get(),
+                                                                  h1_gmg.get()};
   auto block_pc = std::make_unique<BlockDiagonalPreconditioner<ComplexOperator>>(
       nd_size, std::move(nd_gmg), std::move(h1_gmg));
   block_pc_ptr = block_pc.get();
@@ -756,6 +760,10 @@ void ModeEigenSolver::SetUpMultigridLinearSolver(MPI_Comm comm)
   krylov->EnableTimer();
 
   ksp = std::make_unique<ComplexKspSolver>(std::move(krylov), std::move(block_pc));
+  if (linear.mg_cycle == MultigridCycle::AUTO)
+  {
+    ksp->SetAutoMultigridCycle(std::move(gmg), verbose);
+  }
 }
 
 std::unique_ptr<ComplexMultigridOperator>

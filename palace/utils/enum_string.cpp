@@ -108,6 +108,11 @@ PALACE_ENUM_STRING_DEFINE(KrylovSolver, {{KrylovSolver::DEFAULT, "Default"},
                                          {KrylovSolver::FGMRES, "FGMRES"},
                                          {KrylovSolver::BICGSTAB, "BiCGSTAB"}})
 
+PALACE_ENUM_STRING_DEFINE(MultigridCycle, {{MultigridCycle::DEFAULT, "Default"},
+                                           {MultigridCycle::SYMMETRIC, "Symmetric"},
+                                           {MultigridCycle::ONE_SIDED, "OneSided"},
+                                           {MultigridCycle::AUTO, "Auto"}})
+
 PALACE_ENUM_STRING_DEFINE(MultigridCoarsening,
                           {{MultigridCoarsening::LINEAR, "Linear"},
                            {MultigridCoarsening::LOGARITHMIC, "Logarithmic"}})

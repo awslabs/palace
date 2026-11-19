@@ -326,7 +326,7 @@ ConfigurePreconditionerSolver(const config::LinearSolverData &linear,
             comm, std::move(pc), fespaces.GetProlongationOperators(), &G,
             linear.mg_cycle_it, linear.mg_smooth_it, linear.mg_smooth_order,
             linear.mg_smooth_sf_max, linear.mg_smooth_sf_min, linear.mg_smooth_cheby_4th,
-            linear.mg_one_sided);
+            linear.mg_cycle != MultigridCycle::SYMMETRIC);
       }
       else
       {
@@ -334,7 +334,7 @@ ConfigurePreconditionerSolver(const config::LinearSolverData &linear,
             comm, std::move(pc), fespaces.GetProlongationOperators(), nullptr,
             linear.mg_cycle_it, linear.mg_smooth_it, linear.mg_smooth_order,
             linear.mg_smooth_sf_max, linear.mg_smooth_sf_min, linear.mg_smooth_cheby_4th,
-            linear.mg_one_sided);
+            linear.mg_cycle != MultigridCycle::SYMMETRIC);
       }
     }();
     gmg->EnableTimer();  // Enable timing for primary geometric multigrid solver
@@ -377,6 +377,13 @@ BaseKspSolver<OperType>::BaseKspSolver(const config::LinearSolverData &linear,
                       fespaces, aux_fespaces))
 {
   use_timer = true;
+  if (linear.mg_cycle == MultigridCycle::AUTO)
+  {
+    if (auto *gmg = dynamic_cast<GeometricMultigridSolver<OperType> *>(pc.get()))
+    {
+      SetAutoMultigridCycle({gmg}, verbose);
+    }
+  }
 }
 
 template <OperatorType OperType>
@@ -391,7 +398,8 @@ BaseKspSolver<OperType>::BaseKspSolver(const IoData &iodata,
 template <OperatorType OperType>
 BaseKspSolver<OperType>::BaseKspSolver(std::unique_ptr<IterativeSolver<OperType>> &&ksp,
                                        std::unique_ptr<Solver<OperType>> &&pc)
-  : ksp(std::move(ksp)), pc(std::move(pc)), ksp_mult(0), ksp_mult_it(0), use_timer(false)
+  : ksp(std::move(ksp)), pc(std::move(pc)), ksp_mult(0), ksp_mult_it(0), converged(false),
+    use_timer(false), auto_cycle_print(0)
 {
   if (this->pc)
   {
@@ -420,19 +428,110 @@ void BaseKspSolver<OperType>::SetOperators(const OperType &op, const OperType &p
 }
 
 template <OperatorType OperType>
+void BaseKspSolver<OperType>::SetAutoMultigridCycle(
+    std::vector<GeometricMultigridSolver<OperType> *> &&gmg, int print)
+{
+  auto_cycle_gmg.clear();
+  for (auto *gmg_l : gmg)
+  {
+    if (gmg_l->GetNumLevels() > 1)
+    {
+      auto_cycle_gmg.push_back(gmg_l);
+    }
+  }
+  auto_cycle_print = print;
+}
+
+template <OperatorType OperType>
 void BaseKspSolver<OperType>::Mult(const VecType &x, VecType &y) const
 {
   BlockTimer bt(Timer::KSP, use_timer);
-  ksp->Mult(x, y);
-  if (!ksp->GetConverged())
+  double final_res, initial_res;
+  if (!auto_cycle_gmg.empty())
+  {
+    converged = MultAutoCycle(x, y, final_res, initial_res);
+  }
+  else
+  {
+    ksp->Mult(x, y);
+    converged = ksp->GetConverged();
+    final_res = ksp->GetFinalRes();
+    initial_res = ksp->GetInitialRes();
+    ksp_mult_it += ksp->GetNumIterations();
+  }
+  if (!converged)
   {
     Mpi::Warning(
         ksp->GetComm(),
         "Linear solver did not converge, norm(Ax-b)/norm(b) = {:.3e} (norm(b) = {:.3e})!\n",
-        ksp->GetFinalRes() / ksp->GetInitialRes(), ksp->GetInitialRes());
+        final_res / initial_res, initial_res);
   }
   ksp_mult++;
-  ksp_mult_it += ksp->GetNumIterations();
+}
+
+template <OperatorType OperType>
+bool BaseKspSolver<OperType>::MultAutoCycle(const VecType &x, VecType &y, double &final_res,
+                                            double &initial_res) const
+{
+  // Solve with one-sided V-cycles, then again with symmetric ones, with at most one
+  // iteration fewer and without printing, and keep the V-cycles which need fewer
+  // iterations, with their solution.
+  auto SetOneSided = [this](bool one_sided)
+  {
+    for (auto *gmg : auto_cycle_gmg)
+    {
+      gmg->SetOneSided(one_sided);
+    }
+  };
+  VecType y_sym;
+  y_sym.SetSize(y.Size());
+  y_sym.UseDevice(true);
+  y_sym = y;
+  SetOneSided(true);
+  ksp->Mult(x, y);
+  const int its_one_sided = ksp->GetNumIterations();
+  const bool converged_one_sided = ksp->GetConverged();
+  final_res = ksp->GetFinalRes();
+  initial_res = ksp->GetInitialRes();
+  ksp_mult_it += its_one_sided;
+  bool symmetric = false, converged_sym = false;
+  int its_sym = 0;
+  if (!converged_one_sided || its_one_sided > 1)
+  {
+    const int max_it = ksp->GetMaxIter();
+    const auto print = ksp->GetPrintLevel();
+    if (converged_one_sided)
+    {
+      ksp->SetMaxIter(its_one_sided - 1);
+    }
+    ksp->SetPrintLevel(mfem::IterativeSolver::PrintLevel().None());
+    SetOneSided(false);
+    ksp->Mult(x, y_sym);
+    ksp->SetMaxIter(max_it);
+    ksp->SetPrintLevel(print);
+    its_sym = ksp->GetNumIterations();
+    converged_sym = symmetric = ksp->GetConverged();
+    ksp_mult_it += its_sym;
+    if (symmetric)
+    {
+      y = y_sym;
+      final_res = ksp->GetFinalRes();
+      initial_res = ksp->GetInitialRes();
+    }
+  }
+  SetOneSided(!symmetric);
+  if (auto_cycle_print > 0)
+  {
+    Mpi::Print(ksp->GetComm(),
+               " Multigrid V-cycles: {} (first solve: {:d} iterations one-sided{}{})\n",
+               symmetric ? "symmetric" : "one-sided", its_one_sided,
+               converged_one_sided ? "" : " without converging",
+               (its_sym == 0) ? ""
+                              : fmt::format(", {}{:d} symmetric",
+                                            converged_sym ? "" : "more than ", its_sym));
+  }
+  auto_cycle_gmg.clear();
+  return symmetric ? converged_sym : converged_one_sided;
 }
 
 template class BaseKspSolver<Operator>;

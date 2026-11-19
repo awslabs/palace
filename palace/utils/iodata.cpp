@@ -747,27 +747,26 @@ void IoData::CheckConfiguration()
                   solver.linear.mg_smooth_aux <= 0 || solver.linear.london_pc_shift > 0.0,
               "Magnetostatic simulations with \"MGAuxiliarySmoother\" require a positive "
               "\"LondonPCShift\"!");
-  // One-sided V-cycles make a nonsymmetric preconditioner, for GMRES and FGMRES only. They
-  // are the default only for eigenmode problems, since they can slow down the strongly
-  // indefinite systems of driven problems and boundary mode solves, and not with an
-  // explicit smoothing order, which is that of symmetric V-cycles in existing
-  // configurations. Smoothing once per level, they default to twice the order of symmetric
-  // V-cycles.
+  // One-sided V-cycles make a nonsymmetric preconditioner, for GMRES and FGMRES only. By
+  // default, the first linear solve of eigenmode problems chooses between them and
+  // symmetric V-cycles, unless the smoothing order is explicit, as in existing
+  // configurations. Other problems keep symmetric V-cycles: one-sided ones can slow down
+  // the strongly indefinite systems of driven problems and boundary mode solves.
   const bool gmres = (solver.linear.krylov_solver == KrylovSolver::GMRES ||
                       solver.linear.krylov_solver == KrylovSolver::FGMRES);
-  if (solver.linear.mg_one_sided < 0)
+  if (solver.linear.mg_cycle == MultigridCycle::DEFAULT)
   {
-    solver.linear.mg_one_sided = gmres && problem.type == ProblemType::EIGENMODE &&
-                                 solver.linear.mg_smooth_order < 0;
+    solver.linear.mg_cycle = (gmres && problem.type == ProblemType::EIGENMODE &&
+                              solver.linear.mg_smooth_order < 0)
+                                 ? MultigridCycle::AUTO
+                                 : MultigridCycle::SYMMETRIC;
   }
-  MFEM_VERIFY(!solver.linear.mg_one_sided || gmres,
-              "One-sided multigrid V-cycles (\"MGOneSided\") require the GMRES or FGMRES "
+  MFEM_VERIFY(solver.linear.mg_cycle == MultigridCycle::SYMMETRIC || gmres,
+              "One-sided multigrid V-cycles (\"MGCycleType\") require the GMRES or FGMRES "
               "Krylov solver (\"KSPType\")!");
   if (solver.linear.mg_smooth_order < 0)
   {
-    solver.linear.mg_smooth_order = solver.linear.mg_one_sided
-                                        ? std::max(4 * solver.order, 8)
-                                        : std::max(2 * solver.order, 4);
+    solver.linear.mg_smooth_order = std::max(2 * solver.order, 4);
   }
   // A FilmAttributes boundary not declared a Superconductor is the λ→0 London limit:
   // register it as a sheet with small effective L_ksq = λ⊥ = pec_lperp. The sheet

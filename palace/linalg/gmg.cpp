@@ -20,7 +20,7 @@ GeometricMultigridSolver<OperType>::GeometricMultigridSolver(
     bool cheby_4th_kind, bool one_sided)
   : Solver<OperType>(), pc_it(cycle_it), P(P.begin(), P.end()), A(P.size() + 1),
     dbc_tdof_lists(P.size()), B(P.size() + 1), X(P.size() + 1), Y(P.size() + 1),
-    R(P.size() + 1), use_timer(false), one_sided(one_sided)
+    R(P.size() + 1), use_timer(false), smooth_order(cheby_order), one_sided(one_sided)
 {
   // Configure levels of geometric coarsening. Multigrid vectors will be configured at first
   // call to Mult. The multigrid operator size is set based on the finest space dimension.
@@ -36,30 +36,53 @@ GeometricMultigridSolver<OperType>::GeometricMultigridSolver(
 
   // Configure level smoothers. Use distributive relaxation smoothing if an auxiliary
   // finite element space was provided.
+  const int order = one_sided ? 2 * cheby_order : cheby_order;
   for (std::size_t l = 1; l < n_levels; l++)
   {
     if (G)
     {
       const int cheby_smooth_it = 1;
       B[l] = std::make_unique<DistRelaxationSmoother<OperType>>(
-          comm, *(*G)[l], smooth_it, cheby_smooth_it, cheby_order, cheby_sf_max,
-          cheby_sf_min, cheby_4th_kind);
+          comm, *(*G)[l], smooth_it, cheby_smooth_it, order, cheby_sf_max, cheby_sf_min,
+          cheby_4th_kind);
     }
     else
     {
       const int cheby_smooth_it = smooth_it;
       if (cheby_4th_kind)
       {
-        B[l] = std::make_unique<ChebyshevSmoother<OperType>>(comm, cheby_smooth_it,
-                                                             cheby_order, cheby_sf_max);
+        B[l] = std::make_unique<ChebyshevSmoother<OperType>>(comm, cheby_smooth_it, order,
+                                                             cheby_sf_max);
       }
       else
       {
         B[l] = std::make_unique<ChebyshevSmoother1stKind<OperType>>(
-            comm, cheby_smooth_it, cheby_order, cheby_sf_max, cheby_sf_min);
+            comm, cheby_smooth_it, order, cheby_sf_max, cheby_sf_min);
       }
     }
   }
+}
+
+template <OperatorType OperType>
+void GeometricMultigridSolver<OperType>::SetOneSided(bool one_sided_cycle)
+{
+  if (one_sided_cycle == one_sided)
+  {
+    return;
+  }
+  const int order = one_sided_cycle ? 2 * smooth_order : smooth_order;
+  for (std::size_t l = 1; l < B.size(); l++)
+  {
+    if (auto *dist_smoother = dynamic_cast<DistRelaxationSmoother<OperType> *>(B[l].get()))
+    {
+      dist_smoother->SetOrder(order);
+    }
+    else
+    {
+      SetChebyshevOrder(*B[l], order);
+    }
+  }
+  one_sided = one_sided_cycle;
 }
 
 template <OperatorType OperType>
