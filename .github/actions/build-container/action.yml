@@ -97,8 +97,8 @@ runs:
         for ppa in apptainer/ppa ubuntu-toolchain-r/test; do
           key_file="$GITHUB_ACTION_PATH/apt-keys/${ppa/\//-}.asc"
           pinned=$(gpg --show-keys --with-colons "$key_file" | awk -F: '/^fpr/ {print $10; exit}')
-          if ! current=$(curl -fsS --retry 3 "https://api.launchpad.net/1.0/~${ppa%/*}/+archive/ubuntu/${ppa#*/}" |
-              python3 -c 'import json, sys; print(json.load(sys.stdin)["signing_key_fingerprint"])'); then
+          if ! current=$(curl -fsS --max-time 15 --retry 1 "https://api.launchpad.net/1.0/~${ppa%/*}/+archive/ubuntu/${ppa#*/}" |
+              python3 -c 'import json, sys; print(json.load(sys.stdin)["signing_key_fingerprint"])' 2>/dev/null); then
             echo "::notice::Could not get the signing key of ppa:$ppa from Launchpad"
           elif [[ "$current" != "$pinned" ]]; then
             echo "::warning::ppa:$ppa is signed with key $current, but apt-keys/${ppa/\//-}.asc pins $pinned." \
