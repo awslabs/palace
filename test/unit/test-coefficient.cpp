@@ -15,6 +15,7 @@
 #include "fem/mesh.hpp"
 #include "models/materialoperator.hpp"
 #include "models/surfacecurrentoperator.hpp"
+#include "models/surfacepostoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/configfile.hpp"
 
@@ -242,6 +243,95 @@ TEST_CASE("InterfaceDielectricCoefficient recovered normal flux", "[coefficient]
   CheckBatched(ma_batch);
   CheckBatched(ms_batch);
   CheckBatched(sa_batch);
+}
+
+TEST_CASE("SA interface entry on an interior metal sheet in vacuum is warned at set-up",
+          "[coefficient][Serial][Parallel]")
+{
+  // The USER's warning (decisions 2197 (4) / 2204): the SA coefficient averages the two
+  // sides of an interior face, so on a metal sheet with vacuum on both sides (uncracked) a
+  // substrate-air entry reads near-zero raw energy. 8 x 4 squares of [0, 4] x [0, 1]:
+  // vacuum for x < 2 (attribute 1), a substrate (epsilon 4) beyond (attribute 2); interior
+  // boundary faces at x = 1 (vacuum on both sides; a PEC sheet, attribute 10), at x = 2
+  // (vacuum / substrate; a dielectric face, attribute 11) and at x = 3 (substrate on both
+  // sides; a PEC sheet, attribute 12).
+  mfem::Mesh serial_mesh =
+      mfem::Mesh::MakeCartesian2D(8, 4, mfem::Element::QUADRILATERAL, false, 4.0, 1.0);
+  for (int e = 0; e < serial_mesh.GetNE(); e++)
+  {
+    mfem::Vector center(2);
+    serial_mesh.GetElementCenter(e, center);
+    serial_mesh.SetAttribute(e, center(0) < 2.0 ? 1 : 2);
+  }
+  for (int f = 0; f < serial_mesh.GetNumFaces(); f++)
+  {
+    int e1, e2;
+    serial_mesh.GetFaceElements(f, &e1, &e2);
+    if (e1 < 0 || e2 < 0)
+    {
+      continue;
+    }
+    mfem::Array<int> vertices;
+    serial_mesh.GetFaceVertices(f, vertices);
+    const double x0 = serial_mesh.GetVertex(vertices[0])[0];
+    const double x1 = serial_mesh.GetVertex(vertices[1])[0];
+    for (const int k : {1, 2, 3})
+    {
+      if (std::abs(x0 - k) < 1.0e-12 && std::abs(x1 - k) < 1.0e-12)
+      {
+        serial_mesh.AddBdrElement(serial_mesh.GetFace(f)->Duplicate(&serial_mesh));
+        serial_mesh.SetBdrAttribute(serial_mesh.GetNBE() - 1, 9 + k);
+      }
+    }
+  }
+  serial_mesh.FinalizeTopology();
+  serial_mesh.Finalize();
+  serial_mesh.SetAttributes();
+  auto par_mesh = std::make_unique<mfem::ParMesh>(Mpi::World(), serial_mesh);
+  Mesh mesh(std::move(par_mesh));
+  config::MaterialData vacuum, substrate;
+  vacuum.attributes = {1};
+  substrate.attributes = {2};
+  substrate.epsilon_r.s = {4.0, 4.0, 4.0};
+  config::PeriodicBoundaryData periodic;
+  MaterialOperator mat_op({vacuum, substrate}, periodic, ProblemType::ELECTROSTATIC, mesh);
+
+  // The boundaries that model a metal sheet: not lumped ports.
+  config::BoundaryData boundaries;
+  boundaries.pec.attributes = {12, 10};
+  config::LumpedPortData port;
+  port.elements.emplace_back();
+  port.elements.back().attributes = {30};
+  boundaries.lumpedport.emplace(1, port);
+  config::TerminalData terminal;
+  terminal.attributes = {20};
+  boundaries.terminal.emplace(1, terminal);
+  const auto metal = GetMetalSheetAttributes(boundaries);
+  CHECK(metal == std::vector<int>{10, 12, 20});
+
+  auto Warned = [&](InterfaceDielectric type, const std::vector<int> &attributes)
+  {
+    return GetVacuumMetalSheetSubstrateAirAttributes(mesh.Get(), mat_op, type, attributes,
+                                                     metal);
+  };
+  // Fires for the SA entry on the sheet in vacuum, also within a longer list.
+  CHECK(Warned(InterfaceDielectric::SA, {10}) == std::vector<int>{10});
+  CHECK(Warned(InterfaceDielectric::SA, {12, 11, 10}) == std::vector<int>{10});
+  // Not for an SA entry on a dielectric face, nor on a sheet inside the substrate.
+  CHECK(Warned(InterfaceDielectric::SA, {11}).empty());
+  CHECK(Warned(InterfaceDielectric::SA, {12}).empty());
+  // Not for a metal-air (or any other) entry on the sheet in vacuum.
+  CHECK(Warned(InterfaceDielectric::MA, {10}).empty());
+  CHECK(Warned(InterfaceDielectric::MS, {10}).empty());
+  CHECK(Warned(InterfaceDielectric::DEFAULT, {10}).empty());
+
+  // The one line names the entry and the attributes, what is read there and what to do.
+  const auto line = VacuumMetalSheetSubstrateAirWarning(3, {10});
+  CHECK(line.find("postprocessing index 3") != std::string::npos);
+  CHECK(line.find("boundary attributes 10") != std::string::npos);
+  CHECK(line.find("near-zero raw energy in the uncracked form") != std::string::npos);
+  CHECK(line.find("metal-air") != std::string::npos);
+  CHECK(line.find('\n') == std::string::npos);
 }
 
 TEST_CASE("BdrSurfaceFluxCoefficient direction orients geometric normal",

@@ -50,6 +50,27 @@ enum class ProblemType : char;
 // CLASSIFIED edge trees the export partitions against only then.
 bool ExclusionEnergyRequested(const config::SolverData &solver);
 
+// The USER's warning (decisions 2197 (4) / 2204): the boundary attributes of `boundaries`
+// that model a metal sheet: PEC (and Ground), Terminal, PrescribedPotential (with its
+// terminal attributes), Impedance, RationalImpedance, Conductivity, Superconductor and the
+// FluxLoop films (not lumped ports or surface currents). Sorted, unique.
+std::vector<int> GetMetalSheetAttributes(const config::BoundaryData &boundaries);
+
+// The attributes of an interface dielectric entry of Type `type` which lie on an interior
+// face of a metal sheet (`metal_sheet_attributes`) with vacuum on both sides, by the vacuum
+// test of the SA coefficient (both neighbouring elements' maximum light speed >= 1 - 1e-6):
+// there the SA coefficient averages the fields of the two sides, which read near-zero raw
+// energy for a charged sheet in the uncracked form. Empty unless `type` is SA; a cracked
+// sheet's faces are exterior and never listed. Collective (the same inputs on every rank).
+std::vector<int> GetVacuumMetalSheetSubstrateAirAttributes(
+    mfem::ParMesh &mesh, const MaterialOperator &mat_op, InterfaceDielectric type,
+    const std::vector<int> &entry_attributes,
+    const std::vector<int> &metal_sheet_attributes);
+
+// The one-line text of that warning for the interface dielectric entry `index`.
+std::string VacuumMetalSheetSubstrateAirWarning(int index,
+                                                const std::vector<int> &attributes);
+
 // Mesh-independent automatic edge-distance geometry retained across AMR iterations. Only
 // aggregate edge-distance trees are cached; mesh-segment-localized diagnostics are rebuilt.
 class SurfacePostGeometry
