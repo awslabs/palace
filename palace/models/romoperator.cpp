@@ -1171,14 +1171,18 @@ void RomOperator::AddLumpedPortAnchorModesForSynthesis(const std::vector<double>
   // limit, and so do the frequency-dependent boundary terms A2(ω) of wave ports and surface
   // conductivity; an inductive rational surface impedance (Zs ~ s·L as s → 0) keeps a
   // finite DC Robin term, and the second-order farfield pole at ω = 0 is omitted (see
-  // SpaceOperator::AddExtraSystemBdrCoefficients(QuasistaticLimit, ...)). The positive
-  // mass coefficient makes the (real part of the) system positive definite — unlike the
-  // driven system at real frequency ω, which is indefinite (K − ω²M) and can resonate with
-  // band or near-degenerate modes. The same positive coefficient also gives a genuinely
+  // SpaceOperator::AddExtraSystemBdrCoefficients(QuasistaticLimit, ...)). When no port
+  // inductance is negative, the positive mass coefficient makes the (real part of the)
+  // system positive definite — unlike the driven system at real frequency ω, which is
+  // indefinite (K − ω²M) and can resonate with band or near-degenerate modes — and gives a
   // positive-definite preconditioner without the sign-shift heuristic used for the driven
-  // case, assembled from the same quasistatic boundary terms (no boundary is evaluated at
-  // ω = 0, where the second-order farfield and surface conductivity terms are singular and
-  // a wave port has no mode).
+  // case. A negative port inductance (the linearized inductance of a Josephson junction
+  // biased at a phase beyond π/2, for example) makes both indefinite, and the system
+  // singular when ν² = −ω_m² for a mode of the linearized model with ω_m² < 0; the anchor
+  // is otherwise still the quasistatic response of the port. The preconditioner is
+  // assembled from the same quasistatic boundary terms (no boundary is evaluated at ω = 0,
+  // where the second-order farfield and surface conductivity terms are singular and a wave
+  // port has no mode).
   //
   // The screening biases the anchor away from the unscreened (bare inductive-limit)
   // response x₀ solving K₀ x₀ = b_p: in ε = ν² the resolvent expansion is
@@ -1197,11 +1201,12 @@ void RomOperator::AddLumpedPortAnchorModesForSynthesis(const std::vector<double>
   //
   // Each further screening frequency ν_k adds the screened response x(ν_k) of every
   // anchored port, the response at the imaginary frequency iν_k, as its own basis vector.
-  // As the reduced system is a Galerkin projection of a symmetric positive definite system,
-  // the synthesized matrices then reproduce the screened port response b_pᵀ (K₀ + ν_k²M)⁻¹
-  // b_p and its derivative in ν_k² exactly, and the response at every other imaginary
-  // frequency is a lower bound which each added vector raises toward the full one. This is
-  // useful above the sweep band, where the samples do not resolve the response.
+  // As the reduced system is a Galerkin projection of a symmetric system, the synthesized
+  // matrices then reproduce the screened port response b_pᵀ (K₀ + ν_k²M)⁻¹ b_p and its
+  // derivative in ν_k² exactly, and, when no port inductance is negative (the system is
+  // then positive definite), the response at every other imaginary frequency is a lower
+  // bound which each added vector raises toward the full one. This is useful above the
+  // sweep band, where the samples do not resolve the response.
   Mpi::Print("\nComputing anchor solves for {:d} lumped ports at {:d} screening "
              "frequenc{} (ν² screening{})\n",
              NumSynthesisAnchorPorts(), nu.size(), (nu.size() > 1) ? "ies" : "y",

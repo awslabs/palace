@@ -44,11 +44,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     postprocessing.
     [PR 1156](https://github.com/awslabs/palace/pull/1156).
   - Added quasistatic anchor solves to adaptive driven circuit synthesis. A lumped port with
-    `"SynthesisAnchor": true` (an inductive port, such as a Josephson junction) adds to the
-    reduced basis the solution of the screened quasistatic system `(K + ν²M) x = b_p` for a
-    drive on the port, the column `anchor_<index>_re` of the synthesized matrices, so
-    that the inductive-limit response of the junction is available without a pseudo-inverse
-    of `L⁻¹`. The screening frequency `ν/2π` is set by
+    `"SynthesisAnchor": true` and a nonzero, possibly negative, inductance (such as a
+    Josephson junction) adds to the reduced basis the solution of the screened quasistatic
+    system `(K + ν²M) x = b_p` for a drive on the port, the column `anchor_<index>_re` of
+    the synthesized matrices, so that the inductive-limit response of the junction is
+    available without a pseudo-inverse of `L⁻¹`. The screening frequency `ν/2π` is set by
     `config["Solver"]["Driven"]["AdaptiveCircuitSynthesisAnchorFreq"]` (default: one tenth
     of the lowest sweep frequency). A list of screening frequencies adds, for each frequency
     above the lowest, the screened response of the port as a further column
