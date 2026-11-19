@@ -244,6 +244,14 @@ public:
   std::unique_ptr<OperType> GetStiffnessMatrix(Operator::DiagonalPolicy diag_policy);
   template <OperatorType OperType>
   std::unique_ptr<OperType> GetDampingMatrix(Operator::DiagonalPolicy diag_policy);
+
+  // DIAGNOSTIC: the boundary part of the damping matrix restricted to the given (global
+  // mesh) boundary attributes, for splitting the damping quadratic form xᴴ C x of an
+  // eigenvector by boundary. Returns nullptr if no damping boundary condition is applied on
+  // any of the given attributes on any process.
+  std::unique_ptr<ComplexOperator>
+  GetBdrDampingMatrixRestricted(const std::vector<int> &bdr_attrs,
+                                Operator::DiagonalPolicy diag_policy);
   template <OperatorType OperType>
   std::unique_ptr<OperType> GetMassMatrix(Operator::DiagonalPolicy diag_policy);
   template <OperatorType OperType>

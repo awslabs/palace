@@ -4,12 +4,21 @@
 #include "eigensolver.hpp"
 
 #include <complex>
+#include <fstream>
+#include <map>
 #include <numbers>
+#include <set>
+#include <string>
 #include <vector>
+#include <fmt/format.h>
+#include <fmt/ranges.h>
 #include <mfem.hpp>
 #include "drivers/fluxerrorestimator.hpp"
 #include "fem/errorindicator.hpp"
+#include "fem/gridfunction.hpp"
+#include "fem/lumpedelement.hpp"
 #include "fem/mesh.hpp"
+#include "fem/output_functionals.hpp"
 #include "linalg/arpack.hpp"
 #include "linalg/divfree.hpp"
 #include "linalg/errorestimator.hpp"
@@ -31,6 +40,39 @@ namespace palace
 {
 
 using namespace std::complex_literals;
+
+namespace
+{
+
+// DIAGNOSTIC: quadratic forms of a computed eigenvector x (normalized in the mass inner
+// product) of the quadratic eigenvalue problem P(λ) x = (K + λ C + λ² M) x = 0, λ = iω,
+// and the split of the damping form xᴴ C x by boundary.
+struct EigenvectorDiagnostics
+{
+  // One-sided (xᴴ A x) and two-sided (xᵀ A x) forms of K, C, and M.
+  std::complex<double> kH = 0.0, cH = 0.0, mH = 0.0, kT = 0.0, cT = 0.0, mT = 0.0;
+
+  // xᵀ P(λ) x for the Ritz value λ, xᵀ P'(λ) x = xᵀ (C + 2 λ M) x, ||P(λ) x||₂, and ||x||₂.
+  std::complex<double> xTr = 0.0, xTdP = 0.0;
+  double res = 0.0, xnorm = 0.0;
+
+  // xᴴ C_j x for each boundary damping group.
+  std::vector<double> cj;
+
+  // Lumped port element voltages V_e = (1/w_e) ∫ E ⋅ l̂_e dS.
+  std::vector<std::complex<double>> Ve;
+};
+
+// Root of m μ² + c μ + k = 0 closest to the given value.
+std::complex<double> QuadraticRoot(std::complex<double> m, std::complex<double> c,
+                                   std::complex<double> k, std::complex<double> guess)
+{
+  const auto d = std::sqrt(c * c - 4.0 * m * k);
+  const auto r1 = (-c + d) / (2.0 * m), r2 = (-c - d) / (2.0 * m);
+  return (std::abs(r1 - guess) < std::abs(r2 - guess)) ? r1 : r2;
+}
+
+}  // namespace
 
 std::pair<ErrorIndicator, long long int>
 EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
@@ -486,6 +528,175 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   }
   std::vector<std::complex<double>> eigenvalues(num_report);
   std::vector<double> errors_bkwd(num_report), errors_abs(num_report);
+
+  // DIAGNOSTIC: boundary damping groups (each lumped port and lumped port element, each
+  // impedance boundary with nonzero resistance, and each conductor loss postprocessing
+  // index), and the quadratic forms of each converged eigenvector.
+  std::vector<std::string> group_names;
+  std::vector<std::unique_ptr<ComplexOperator>> group_ops;
+  if (C && !has_A2)
+  {
+    auto AddGroup = [&](const std::string &name, const std::vector<int> &attrs)
+    {
+      auto Cj = space_op.GetBdrDampingMatrixRestricted(attrs, Operator::DIAG_ZERO);
+      if (Cj)
+      {
+        group_names.push_back(name);
+        group_ops.push_back(std::move(Cj));
+      }
+    };
+    for (const auto &[idx, data] : iodata.boundaries.lumpedport)
+    {
+      std::vector<int> port_attrs;
+      for (std::size_t e = 0; e < data.elements.size(); e++)
+      {
+        const auto &attrs = data.elements[e].attributes;
+        port_attrs.insert(port_attrs.end(), attrs.begin(), attrs.end());
+        if (data.elements.size() > 1)
+        {
+          AddGroup(fmt::format("port{:d}_e{:d}", idx, e + 1), attrs);
+        }
+      }
+      AddGroup(fmt::format("port{:d}", idx), port_attrs);
+    }
+    for (const auto &data : iodata.boundaries.impedance)
+    {
+      if (data.Rs != 0.0)
+      {
+        AddGroup(fmt::format("imp[{}]", fmt::join(data.attributes, "+")), data.attributes);
+      }
+    }
+    for (const auto &[idx, data] : iodata.boundaries.postpro.conductor)
+    {
+      AddGroup(fmt::format("cond{:d}", idx), data.attributes);
+    }
+  }
+  // Lumped port element voltage functional, binned by element: each element contributes
+  // V_e = (1/w_e) ∫ E ⋅ l̂_e dS with resistance R_e = n R (elements add in parallel).
+  struct PortElement
+  {
+    int port, elem;
+    double R_e;
+  };
+  std::vector<PortElement> port_elems;
+  std::unique_ptr<SurfaceFunctional> elem_vfunc;
+  mfem::Array<int> elem_attr_to_bin;
+  if (C && !has_A2)
+  {
+    const auto &pmesh = space_op.GetNDSpace().GetParMesh();
+    const int bdr_attr_max = pmesh.bdr_attributes.Size() ? pmesh.bdr_attributes.Max() : 0;
+    elem_attr_to_bin.SetSize(bdr_attr_max);
+    elem_attr_to_bin = -1;
+    std::vector<SurfaceModeCoefficient> modes;
+    bool ok = true;
+    for (const auto &[idx, data] : space_op.GetLumpedPortOp())
+    {
+      if (std::abs(data.R) == 0.0)
+      {
+        continue;
+      }
+      for (std::size_t k = 0; k < data.elems.size(); k++)
+      {
+        const auto *uniform = dynamic_cast<const UniformElementData *>(data.elems[k].get());
+        if (!uniform)
+        {
+          ok = false;
+          continue;
+        }
+        SurfaceModeCoefficient mode;
+        mode.type = SurfaceModeCoefficient::Type::UNIFORM;
+        mode.attr_list = uniform->GetAttrList();
+        mode.scale = 1.0 / uniform->GetGeometryWidth();
+        for (int d = 0; d < 3; d++)
+        {
+          mode.direction[d] =
+              (d < uniform->GetDirection().Size()) ? uniform->GetDirection()(d) : 0.0;
+        }
+        for (int attr : mode.attr_list)
+        {
+          if (attr <= 0 || attr > bdr_attr_max || elem_attr_to_bin[attr - 1] >= 0)
+          {
+            ok = false;
+          }
+          else
+          {
+            elem_attr_to_bin[attr - 1] = static_cast<int>(port_elems.size());
+          }
+        }
+        port_elems.push_back({idx, static_cast<int>(k) + 1,
+                              data.R * static_cast<double>(data.elems.size())});
+        modes.push_back(std::move(mode));
+      }
+    }
+    if (ok && !modes.empty())
+    {
+      elem_vfunc = std::make_unique<SurfaceFunctional>(space_op.GetMaterialOp().GetMesh(),
+                                                       space_op.GetNDSpace().Get(), modes);
+      if (!elem_vfunc->IsValid())
+      {
+        elem_vfunc.reset();
+      }
+    }
+  }
+  std::vector<EigenvectorDiagnostics> diags(num_report);
+  if (C && !has_A2)
+  {
+    const auto comm = space_op.GetComm();
+    GridFunction Egf(space_op.GetNDSpace(), true);
+    ComplexVector x(Curl.Width()), Kx(Curl.Width()), Cx(Curl.Width()), Mx(Curl.Width()),
+        r(Curl.Width()), y(Curl.Width());
+    for (auto *v : {&x, &Kx, &Cx, &Mx, &r, &y})
+    {
+      v->UseDevice(true);
+    }
+    for (int i = 0; i < num_report; i++)
+    {
+      const std::complex<double> lambda = eigen->GetEigenvalue(i);
+      eigen->GetEigenvector(i, x);
+      K->Mult(x, Kx);
+      C->Mult(x, Cx);
+      M->Mult(x, Mx);
+      r = Kx;
+      r.AXPY(lambda, Cx);
+      r.AXPY(lambda * lambda, Mx);
+      y = Cx;
+      y.AXPY(2.0 * lambda, Mx);
+      std::complex<double> loc[10] = {Kx.Dot(x),          Cx.Dot(x),
+                                      Mx.Dot(x),          x.TransposeDot(Kx),
+                                      x.TransposeDot(Cx), x.TransposeDot(Mx),
+                                      x.TransposeDot(r),  x.TransposeDot(y),
+                                      r.Dot(r),           x.Dot(x)};
+      Mpi::GlobalSum(10, loc, comm);
+      auto &d = diags[i];
+      d.kH = loc[0];
+      d.cH = loc[1];
+      d.mH = loc[2];
+      d.kT = loc[3];
+      d.cT = loc[4];
+      d.mT = loc[5];
+      d.xTr = loc[6];
+      d.xTdP = loc[7];
+      d.res = std::sqrt(std::abs(loc[8]));
+      d.xnorm = std::sqrt(std::abs(loc[9]));
+      d.cj.resize(group_ops.size());
+      for (std::size_t j = 0; j < group_ops.size(); j++)
+      {
+        group_ops[j]->Mult(x, y);
+        std::complex<double> cj = y.Dot(x);
+        Mpi::GlobalSum(1, &cj, comm);
+        d.cj[j] = cj.real();
+      }
+      if (elem_vfunc)
+      {
+        Egf.Real().SetFromTrueDofs(x.Real());
+        Egf.Imag().SetFromTrueDofs(x.Imag());
+        Egf.Real().ExchangeFaceNbrData();
+        Egf.Imag().ExchangeFaceNbrData();
+        d.Ve = elem_vfunc->EvalModeOverlapByAttribute(Egf, elem_attr_to_bin,
+                                                      static_cast<int>(port_elems.size()));
+      }
+    }
+  }
   const bool stage_eigenvectors = post_op.WillWriteFields();
   // Field output can construct large libCEED visualization operators. Only in that case,
   // stage the converged eigenvectors in host memory so the eigensolver and matrices can
@@ -578,6 +789,127 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     }
   }
   post_op.MeasureFinalize(indicator);
+
+  // DIAGNOSTIC: write the eigenvalue consistency checks and the damping split by boundary.
+  if (has_C && !has_A2 && Mpi::Root(space_op.GetComm()))
+  {
+    auto ToFreq = [&](std::complex<double> lambda)
+    {
+      // λ = iω → f = ω / 2π [GHz].
+      const std::complex<double> omega = lambda / 1i;
+      return iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(omega) /
+             (2 * std::numbers::pi);
+    };
+    auto QFromLambda = [](std::complex<double> lambda)
+    {
+      const std::complex<double> omega = lambda / 1i;
+      return 0.5 * std::abs(omega) / std::abs(omega.imag());
+    };
+    std::ofstream fo(std::string(iodata.problem.output) + "/eig-diag.csv");
+    fo << "m,Re{f} (GHz),Im{f} (GHz),Q,Re{f_TS} (GHz),Im{f_TS} (GHz),Q_TS,"
+          "Re{f_EB} (GHz),Im{f_EB} (GHz),Q_EB,Re{df_Newton} (GHz),Im{df_Newton} (GHz),"
+          "|df| bound (GHz),||r||/||x||,||x||^2,Im{x^T C x}/Re,Im{x^H M x}";
+    for (const auto &name : group_names)
+    {
+      fo << ",Q_damp[" << name << "]";
+    }
+    fo << ",Q_damp[sum of ports],Q_damp[all C]";
+    for (const auto &pe : port_elems)
+    {
+      fo << ",Re{V[" << pe.port << "_e" << pe.elem << "]},Im{V[" << pe.port << "_e"
+         << pe.elem << "]},Q_V[" << pe.port << "_e" << pe.elem << "]";
+    }
+    {
+      std::set<int> ports_seen;
+      for (const auto &pe : port_elems)
+      {
+        if (ports_seen.insert(pe.port).second)
+        {
+          fo << ",Q_Velems[" << pe.port << "],Q_Vmean[" << pe.port << "]";
+        }
+      }
+    }
+    fo << "\n";
+    Mpi::Print("\nEigenvector diagnostics (TS = two-sided Rayleigh quotient root, EB = "
+               "one-sided root = energy balance, Newton = -x^T r / x^T P' x):\n");
+    for (int i = 0; i < num_report; i++)
+    {
+      const auto &d = diags[i];
+      const std::complex<double> lambda = eigenvalues[i];
+      const auto lTS = QuadraticRoot(d.mT, d.cT, d.kT, lambda);
+      const auto lEB = QuadraticRoot(d.mH.real(), d.cH.real(), d.kH.real(), lambda);
+      const auto dl = -d.xTr / d.xTdP;
+      const double dl_bound = d.res * d.xnorm / std::abs(d.xTdP);
+      const auto f = ToFreq(lambda), fTS = ToFreq(lTS), fEB = ToFreq(lEB);
+      const auto df = ToFreq(lambda + dl) - f;
+      const double df_bound =
+          iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(dl_bound) /
+          (2 * std::numbers::pi);
+      // Damping quality factor of each group, consistent with the energy balance:
+      // Q_j = Re{ω_EB} xᴴ M x / xᴴ C_j x, such that 1/Q_EB = ∑_j 1/Q_j for a partition.
+      const double w_EB = (lEB / 1i).real();
+      auto Qj = [&](double c)
+      { return (c > 0.0) ? w_EB * d.mH.real() / c : mfem::infinity(); };
+      double c_ports = 0.0;
+      for (std::size_t j = 0; j < group_names.size(); j++)
+      {
+        if (group_names[j].rfind("port", 0) == 0 &&
+            group_names[j].find("_e") == std::string::npos)
+        {
+          c_ports += d.cj[j];
+        }
+      }
+      fo << fmt::format(
+          "{:d},{:.15e},{:.15e},{:.15e},{:.15e},{:.15e},{:.15e},{:.15e},{:.15e},"
+          "{:.15e},{:.15e},{:.15e},{:.15e},{:.15e},{:.15e},{:.15e},{:.15e}",
+          i + 1, f.real(), f.imag(), QFromLambda(lambda), fTS.real(), fTS.imag(),
+          QFromLambda(lTS), fEB.real(), fEB.imag(), QFromLambda(lEB), df.real(), df.imag(),
+          df_bound, d.res / d.xnorm, d.xnorm * d.xnorm, d.cH.imag() / d.cH.real(),
+          d.mH.imag());
+      for (auto c : d.cj)
+      {
+        fo << fmt::format(",{:.15e}", Qj(c));
+      }
+      fo << fmt::format(",{:.15e},{:.15e}", Qj(c_ports), Qj(d.cH.real()));
+      // V-based port damping: per element |V_e|² / R_e, summed over the elements of a port
+      // (uniform field in each element), and |mean(V_e)|² / R (the circuit postprocessing
+      // of port-Q.csv).
+      std::map<int, double> c_Velems;
+      std::map<int, std::complex<double>> V_sum;
+      std::map<int, int> n_elems;
+      for (std::size_t k = 0; k < port_elems.size(); k++)
+      {
+        const auto &pe = port_elems[k];
+        const auto V = (k < d.Ve.size()) ? d.Ve[k] : 0.0;
+        const double c = std::norm(V) / pe.R_e;
+        fo << fmt::format(",{:.15e},{:.15e},{:.15e}", V.real(), V.imag(), Qj(c));
+        c_Velems[pe.port] += c;
+        V_sum[pe.port] += V;
+        n_elems[pe.port]++;
+      }
+      {
+        std::set<int> ports_seen;
+        for (const auto &pe : port_elems)
+        {
+          if (ports_seen.insert(pe.port).second)
+          {
+            const int n = n_elems[pe.port];
+            const double R = pe.R_e / n;
+            const auto Vmean = V_sum[pe.port] / static_cast<double>(n);
+            fo << fmt::format(",{:.15e},{:.15e}", Qj(c_Velems[pe.port]),
+                              Qj(std::norm(Vmean) / R));
+          }
+        }
+      }
+      fo << "\n";
+      Mpi::Print(
+          " m = {:d}: f = {:.12e}{:+.6e}i GHz, Q = {:.6e} | Q_TS = {:.6e}, Q_EB = "
+          "{:.6e} | df_Newton = {:+.3e}{:+.3e}i GHz (bound {:.3e}) | Q_damp(ports) = "
+          "{:.6e}, Q_damp(all C) = {:.6e}\n",
+          i + 1, f.real(), f.imag(), QFromLambda(lambda), QFromLambda(lTS),
+          QFromLambda(lEB), df.real(), df.imag(), df_bound, Qj(c_ports), Qj(d.cH.real()));
+    }
+  }
   return {indicator, space_op.GlobalTrueVSize()};
 }
 

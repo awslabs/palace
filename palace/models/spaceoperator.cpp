@@ -1405,6 +1405,36 @@ void SpaceOperator::AddDampingBdrCoefficients(double coeff, MaterialPropertyCoef
   lumped_port_op.AddDampingBdrCoefficients(coeff, fb);
 }
 
+std::unique_ptr<ComplexOperator>
+SpaceOperator::GetBdrDampingMatrixRestricted(const std::vector<int> &bdr_attrs,
+                                             Operator::DiagonalPolicy diag_policy)
+{
+  MaterialPropertyCoefficient fb(mat_op.MaxCeedBdrAttribute());
+  AddDampingBdrCoefficients(1.0, fb);
+  const auto &attr_mat = fb.GetAttributeToMaterial();
+  mfem::Array<int> ceed_attrs;
+  for (auto attr : mat_op.GetCeedBdrAttributes(bdr_attrs))
+  {
+    if (attr >= 1 && attr <= attr_mat.Size() && attr_mat[attr - 1] >= 0)
+    {
+      ceed_attrs.Append(attr);
+    }
+  }
+  int has_attrs = (ceed_attrs.Size() > 0);
+  Mpi::GlobalMax(1, &has_attrs, GetComm());
+  if (!has_attrs)
+  {
+    return {};
+  }
+  fb.RestrictCoefficient(ceed_attrs);
+  constexpr bool skip_zeros = false;
+  auto c =
+      AssembleOperator(GetNDSpace(), nullptr, nullptr, nullptr, &fb, nullptr, skip_zeros);
+  auto Cj = std::make_unique<ComplexParOperator>(std::move(c), nullptr, GetNDSpace());
+  Cj->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+  return Cj;
+}
+
 void SpaceOperator::AddRealMassCoefficients(double coeff, MaterialPropertyCoefficient &f)
 {
   f.AddCoefficient(mat_op.GetAttributeToMaterial(), mat_op.GetPermittivityReal(), coeff);
