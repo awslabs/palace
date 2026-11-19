@@ -327,9 +327,8 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   BlockTimer bt0(Timer::CONSTRUCT);
   CurlCurlOperator curlcurl_op(iodata, mesh);
   auto K = curlcurl_op.GetStiffnessMatrix();
-  // Preconditioner-only gauge shift for the London path (see GetPreconditionerMatrix).
-  // Non-null only when a London flux film is present and LondonPCShift > 0; null otherwise,
-  // so K preconditions itself.
+  // Preconditioner-only gauge shift with superconductors or the auxiliary smoother (see
+  // GetPreconditionerMatrix); null otherwise, so K preconditions itself.
   auto P_london = curlcurl_op.GetPreconditionerMatrix();
   const auto &Curl = curlcurl_op.GetCurlMatrix();
 
@@ -360,7 +359,7 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       bound_op = &op;
     }
   };
-  // Base preconditioner: gauge-shifted P_london (SPD) on the London path, else K itself.
+  // Base preconditioner: the gauge-shifted P_london (SPD) if there is one, else K itself.
   const Operator &K_pc = P_london ? *P_london : *K;
 
   // Surface current source indices and flux loop excitations define the sources over which
@@ -389,9 +388,10 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
   // Per London flux step: a_h and M_sheet·(A − a_h), used to add the shifted kinetic energy
   // to the volume-only AᵀM_mag·A in PostprocessTerminals. Empty for other steps. The
-  // kinetic penalty energy S(A − a_h) itself is kept per step for the excitation energies.
+  // kinetic energy of each step (sheets and domains) is kept for the excitation energies.
   std::vector<Vector> london_ah(n_step), london_ms_shifted(n_step);
   std::vector<double> london_kinetic_step(n_step, 0.0);
+  Vector A_l;  // L-vector of a solution, for the kinetic energy of the London domains
 
   // Magnetic flux linked through each current port's element apertures during each flux
   // excitation, used to recover the current-flux mutual inductance in a mixed simulation.
@@ -517,8 +517,8 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       {
         Mpi::Warning(curlcurl_op.GetComm(),
                      "Current source solve did not converge for port {:d}!\n", idx);
-        // Halt only on the London path (unreliable stiff-penalty inductance); otherwise
-        // warn and continue like the other drivers.
+        // Halt only with superconductor sheets (unreliable stiff-penalty inductance);
+        // otherwise warn and continue like the other drivers.
         if (!curlcurl_op.GetSuperconductorOp().empty())
         {
           solve_converged_ = false;
@@ -613,6 +613,15 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       // Retain M_sheet·(A − a_h) for the shifted-kinetic cross-energy added to the
       // volume-only AᵀM_mag·A in PostprocessTerminals.
       london_ms_shifted[step] = msd;
+    }
+
+    // Kinetic energy of the London domains, not part of AᵀM_mag·A. The generators a_h live
+    // on the films, so it is unshifted.
+    if (curlcurl_op.HasLondonDomains())
+    {
+      post_op.GetSolutionLVector(A[step], A_l);
+      london_kinetic_step[step] += 2.0 * post_op.GetDomainPostOp().GetLondonKineticEnergy(
+                                             A_l, curlcurl_op.GetComm());
     }
   }
 
@@ -718,8 +727,8 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   SaveMetadata(ksp);
   if (surf_flux_op.HasSingleLoopExcitations())
   {
-    PostprocessTerminals(post_op, curlcurl_op.GetSurfaceCurrentOp(), surf_flux_op, A, I_inc,
-                         Phi_inc, linked_flux, london_ah, london_ms_shifted);
+    PostprocessTerminals(post_op, curlcurl_op, A, I_inc, Phi_inc, linked_flux, london_ah,
+                         london_ms_shifted);
   }
   else
   {
@@ -735,9 +744,9 @@ void MagnetostaticSolver::PostprocessExcitations(
     const std::vector<double> &london_kinetic) const
 {
   // Without an inductance matrix, terminal-Phi.csv reports each excitation's total stored
-  // energy E = ½AᵀM_mag·A + ½(A − a_h)ᵀM_sheet(A − a_h) (so E = ½ΦᵀM⁻¹Φ for the fluxoid
-  // state Φ imposed on the loops) and the fluxoid cᵀa_h it imposes on every flux loop, zero
-  // for the loops it does not drive and for the current source steps.
+  // energy E = ½AᵀM_mag·A + ½(A − a_h)ᵀM_sheet(A − a_h) + ½AᵀM_london·A (so E = ½ΦᵀM⁻¹Φ for
+  // the fluxoid state Φ imposed on the loops) and the fluxoid cᵀa_h it imposes on every
+  // flux loop, zero for the loops it does not drive and for the current source steps.
   const auto &surf_j_op = curlcurl_op.GetSurfaceCurrentOp();
   const auto &surf_flux_op = curlcurl_op.GetSurfaceFluxOp();
   const int n = static_cast<int>(domain_energy.size());
@@ -755,19 +764,20 @@ void MagnetostaticSolver::PostprocessExcitations(
     loop_idx.push_back(idx);
   }
   // The fluxoid functional is a collective dot product, so measure before the root write.
+  // The current source steps impose none.
   mfem::DenseMatrix fluxoid(n, static_cast<int>(loop_idx.size()));
   fluxoid = 0.0;
   std::vector<double> energy(n);
   for (int i = 0; i < n; i++)
   {
     energy[i] = domain_energy[i] + 0.5 * london_kinetic[i];
+  }
+  for (int i = static_cast<int>(surf_j_op.Size()); i < n; i++)
+  {
     for (std::size_t j = 0; j < loop_idx.size(); j++)
     {
-      if (london_ah[i].Size() > 0)
-      {
-        fluxoid(i, static_cast<int>(j)) =
-            curlcurl_op.MeasureLondonHoleFlux(loop_idx[j], london_ah[i]);
-      }
+      fluxoid(i, static_cast<int>(j)) =
+          curlcurl_op.MeasureLondonHoleFlux(loop_idx[j], london_ah[i]);
     }
   }
   PrintExcitations(excitation_idx, loop_idx, energy, fluxoid);
@@ -808,8 +818,7 @@ void MagnetostaticSolver::PrintExcitations(const std::vector<int> &excitation_id
 }
 
 void MagnetostaticSolver::PostprocessTerminals(
-    PostOperator<ProblemType::MAGNETOSTATIC> &post_op,
-    const SurfaceCurrentOperator &surf_j_op, const SurfaceFluxOperator &surf_flux_op,
+    PostOperator<ProblemType::MAGNETOSTATIC> &post_op, const CurlCurlOperator &curlcurl_op,
     const std::vector<Vector> &A, const std::vector<double> &I_inc,
     const std::vector<double> &Phi_inc, const mfem::DenseMatrix &linked_flux,
     const std::vector<Vector> &london_ah,
@@ -863,6 +872,8 @@ void MagnetostaticSolver::PostprocessTerminals(
   // well-defined and reciprocal. We therefore report self-inductances for all ports, but
   // mutual inductances only between ports that are Open when inactive; other off-diagonals
   // are set to NaN and Minv/Mm are computed over the Open-Open sub-block only.
+  const auto &surf_j_op = curlcurl_op.GetSurfaceCurrentOp();
+  const auto &surf_flux_op = curlcurl_op.GetSurfaceFluxOp();
   const int n = static_cast<int>(A.size());
   std::vector<int> current_idx, flux_idx;
   for (const auto &[idx, data] : surf_j_op)
@@ -879,12 +890,14 @@ void MagnetostaticSolver::PostprocessTerminals(
   // Compute cross-energy matrix and diagonals. Off-diagonals are only meaningful between
   // reciprocal (Open-Open) port pairs; other pairs are left as NaN.
   //
-  // M_mag is volume-only (AᵀM_mag·A = 2W), so add the shifted London kinetic energy
-  //   S(A_i − a_h_i, A_j − a_h_j) = Dot(A_i − a_h_i, M_sheet(A_j − a_h_j))
-  // on the diagonal and London-London off-diagonals; zero unless both steps carry a drive.
+  // M_mag is volume-only (AᵀM_mag·A = 2W), so add the kinetic energy of the London domains
+  // AᵀM_london·A, and with superconductor sheets the shifted kinetic energy
+  //   S(A_i − a_h_i, A_j − a_h_j) = Dot(A_i − a_h_i, M_sheet(A_j − a_h_j)),
+  // which every step then carries.
+  const bool sheets = !curlcurl_op.GetSuperconductorOp().empty();
   auto london_correction = [&](int i, int j) -> double
   {
-    if (london_ms_shifted[i].Size() == 0 || london_ms_shifted[j].Size() == 0)
+    if (!sheets)
     {
       return 0.0;
     }
@@ -893,14 +906,19 @@ void MagnetostaticSolver::PostprocessTerminals(
     return linalg::Dot<Vector>(post_op.GetComm(), d, london_ms_shifted[j]);
   };
 
+  const auto &dom_post_op = post_op.GetDomainPostOp();
   mfem::DenseMatrix cross_energy(n);
   cross_energy = std::numeric_limits<double>::quiet_NaN();
   Vector A_gf;  // L-vector of the solution space (broken across two-sided films)
   for (int i = 0; i < n; i++)
   {
-    auto &H_gf = post_op.GetDomainPostOp().H;
+    auto &H_gf = dom_post_op.H;
     post_op.GetSolutionLVector(A[i], A_gf);
-    post_op.GetDomainPostOp().M_mag->Mult(A_gf, H_gf);
+    dom_post_op.M_mag->Mult(A_gf, H_gf);
+    if (dom_post_op.M_london)
+    {
+      dom_post_op.M_london->AddMult(A_gf, H_gf);
+    }
     cross_energy(i, i) = linalg::Dot<Vector>(post_op.GetComm(), A_gf, H_gf);
     cross_energy(i, i) += london_correction(i, i);
 

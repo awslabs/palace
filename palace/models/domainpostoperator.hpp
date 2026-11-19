@@ -41,6 +41,10 @@ public:
   std::unique_ptr<Operator> M_elec, M_mag;
   std::map<int, std::pair<std::unique_ptr<Operator>, std::unique_ptr<Operator>>> M_i;
 
+  // London domain mass ∫ (μλ²)⁻¹ A·v for magnetostatics, with ½AᵀM_london·A the kinetic
+  // energy of the supercurrent (null without London domains).
+  std::unique_ptr<Operator> M_london;
+
   // The field is known on part of the domain only: no total energies (see
   // config::DomainPostData::partial).
   bool partial = false;
@@ -76,6 +80,10 @@ public:
   // spaces without MFEM grid functions (broken spaces).
   double GetMagneticFieldEnergy(const Vector &a_l, MPI_Comm comm) const;
   double GetDomainMagneticFieldEnergy(int idx, const Vector &a_l, MPI_Comm comm) const;
+
+  // The kinetic energy of the London domains from a real L-vector of the space of
+  // construction.
+  double GetLondonKineticEnergy(const Vector &a_l, MPI_Comm comm) const;
 };
 
 }  // namespace palace

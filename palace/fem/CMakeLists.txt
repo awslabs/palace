@@ -18,6 +18,7 @@ target_sources(${LIB_TARGET_NAME}
   ${CMAKE_CURRENT_SOURCE_DIR}/face_sampling_plan.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/facenbrexchange.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/fespace.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/fieldtransfer.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/gridfunction.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/integrator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/interpolator.cpp
