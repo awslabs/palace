@@ -1,0 +1,106 @@
+#!/usr/bin/env python3
+
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+"""Check that the dependency patch URLs still serve the pinned content.
+
+Downloads every patch listed with download_patch() in cmake/External*.cmake (superbuild)
+and with patch() in spack_repo/**/package.py (Spack), and compares its sha256 with the
+pinned one. CI restores the superbuild patches from a cache, CMake does not download a
+patch that is already present with the expected hash, and the Spack jobs mostly install
+the dependencies from a buildcache, so the builds would not notice a URL that changed. A
+different hash is an error; a failed download, for example while GitHub has an outage, is
+only reported as a warning.
+
+Usage: check-patches [SOURCE_DIR] (default: .)
+"""
+
+import ast
+import concurrent.futures
+import glob
+import hashlib
+import os
+import re
+import sys
+import time
+import urllib.request
+
+# download_patch(PATCH_FILES PATCH_DIR FILENAME URL SHA256)
+DOWNLOAD_PATCH = re.compile(
+    r'download_patch\(\s*\S+\s+("[^"]*"|\S+)\s+\S+\s+"([^"]+)"\s+([0-9a-f]{64})\s*\)'
+)
+
+
+def cmake_patches(source_dir):
+    for path in sorted(glob.glob(os.path.join(source_dir, "cmake", "External*.cmake"))):
+        with open(path) as f:
+            text = f.read()
+        for m in DOWNLOAD_PATCH.finditer(text):
+            yield path, text.count("\n", 0, m.start()) + 1, m.group(2), m.group(3)
+
+
+def spack_patches(source_dir):
+    pattern = os.path.join(source_dir, "spack_repo", "**", "package.py")
+    for path in sorted(glob.glob(pattern, recursive=True)):
+        with open(path) as f:
+            tree = ast.parse(f.read())
+        for node in ast.walk(tree):
+            # patch("https://...", sha256="...", ...); adjacent string literals are joined
+            if not (
+                isinstance(node, ast.Call)
+                and getattr(node.func, "id", None) == "patch"
+                and node.args
+                and isinstance(node.args[0], ast.Constant)
+                and str(node.args[0].value).startswith(("http://", "https://"))
+            ):
+                continue
+            keywords = {k.arg: k.value for k in node.keywords}
+            # For compressed patches, sha256 is the hash of the uncompressed file
+            sha256 = keywords.get("archive_sha256", keywords.get("sha256"))
+            if isinstance(sha256, ast.Constant):
+                yield path, node.lineno, node.args[0].value, sha256.value
+
+
+def fetch(url, attempts=3):
+    for attempt in range(attempts):
+        try:
+            with urllib.request.urlopen(url, timeout=60) as response:
+                return hashlib.sha256(response.read()).hexdigest(), None
+        except Exception as e:  # HTTP and network errors
+            error = e
+            time.sleep(5 * (attempt + 1))
+    return None, error
+
+
+def main():
+    source_dir = sys.argv[1] if len(sys.argv) > 1 else "."
+    patches = list(cmake_patches(source_dir)) + list(spack_patches(source_dir))
+    if not patches:
+        print(f"::error::No patches found in {source_dir}")
+        return 1
+    urls = sorted({url for _, _, url, _ in patches})
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+        results = dict(zip(urls, pool.map(fetch, urls)))
+    mismatches = 0
+    for path, line, url, sha256 in patches:
+        location = f"file={os.path.relpath(path, source_dir)},line={line}"
+        got, error = results[url]
+        if got is None:
+            print(f"::warning {location}::Could not download {url}: {error}")
+        elif got != sha256:
+            mismatches += 1
+            print(
+                f"::error {location}::{url} now serves sha256 {got} instead of the pinned "
+                f"{sha256}. Check the new content, then update the hash (for a "
+                "GitHub-generated diff, prefer a URL with ?full_index=1)."
+            )
+    print(
+        f"Checked {len(patches)} patches ({len(urls)} URLs): "
+        f"{mismatches} with a different sha256"
+    )
+    return 1 if mismatches else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
