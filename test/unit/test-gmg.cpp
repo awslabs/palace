@@ -83,7 +83,7 @@ struct ShiftedMaxwellProblem
   std::unique_ptr<SpaceOperator> space_op;
   std::unique_ptr<ComplexOperator> K, C, M, A, P;
 
-  ShiftedMaxwellProblem(MultigridCycle cycle, int smooth_order = -1)
+  ShiftedMaxwellProblem(MultigridCycle cycle, int smooth_order = -1, int smooth_it = 1)
     : units(1.0, 1.0), iodata(units)
   {
     using namespace std::complex_literals;
@@ -100,6 +100,7 @@ struct ShiftedMaxwellProblem
     iodata.solver.linear.krylov_solver = KrylovSolver::GMRES;
     iodata.solver.linear.mg_cycle = cycle;
     iodata.solver.linear.mg_smooth_order = smooth_order;
+    iodata.solver.linear.mg_smooth_it = smooth_it;
     iodata.solver.linear.tol = 1.0e-10;
     iodata.NondimensionalizeInputs(smesh);
     iodata.CheckConfiguration();
@@ -130,45 +131,23 @@ double RelativeDifference(MPI_Comm comm, const VecType &x, const VecType &y)
 
 TEST_CASE("Geometric multigrid one-sided V-cycles", "[gmg][Serial][Parallel][GPU]")
 {
-  // An electrostatic problem on the unit cube at order 3, so with p-multigrid, solved with
-  // GMRES. One-sided V-cycles, with twice the default smoothing order, make a nonsymmetric
-  // preconditioner, with which GMRES converges as with symmetric V-cycles.
+  // One-sided V-cycles, with twice the smoothing order, make a nonsymmetric preconditioner
+  // for the electrostatic problem, with which GMRES converges as with symmetric V-cycles.
   MPI_Comm comm = Mpi::World();
   for (bool one_sided : {false, true})
   {
     CAPTURE(one_sided);
-    auto smesh = std::make_unique<mfem::Mesh>(
-        mfem::Mesh::MakeCartesian3D(4, 4, 4, mfem::Element::HEXAHEDRON, 1.0, 1.0, 1.0));
-    Units units(1.0, 1.0);
-    IoData iodata(units);
-    iodata.model.Lc = 1.0;
-    iodata.problem.type = ProblemType::ELECTROSTATIC;
-    iodata.domains.materials.emplace_back().attributes = {1};
-    for (int i = 0; i < smesh->bdr_attributes.Size(); i++)
-    {
-      iodata.boundaries.pec.attributes.push_back(smesh->bdr_attributes[i]);
-    }
-    iodata.solver.order = 3;
-    iodata.solver.linear.krylov_solver = KrylovSolver::GMRES;
-    iodata.solver.linear.mg_cycle =
-        one_sided ? MultigridCycle::ONE_SIDED : MultigridCycle::SYMMETRIC;
-    iodata.solver.linear.tol = 1.0e-10;
-    iodata.NondimensionalizeInputs(smesh);
-    iodata.CheckConfiguration();
-    REQUIRE(iodata.solver.linear.mg_cycle ==
-            (one_sided ? MultigridCycle::ONE_SIDED : MultigridCycle::SYMMETRIC));
-    REQUIRE(iodata.solver.linear.mg_smooth_order == 6);
-    std::vector<std::unique_ptr<Mesh>> mesh;
-    mesh.push_back(std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(comm, *smesh)));
-    LaplaceOperator laplace_op(iodata, mesh);
-    REQUIRE(laplace_op.GetH1Spaces().GetNumLevels() > 1);
-    auto K = laplace_op.GetStiffnessMatrix();
-    InspectableKspSolver<Operator> ksp(iodata, laplace_op.GetH1Spaces());
-    ksp.SetOperators(*K, *K);
+    ElectrostaticProblem problem(one_sided ? MultigridCycle::ONE_SIDED
+                                           : MultigridCycle::SYMMETRIC);
+    REQUIRE(problem.iodata.solver.linear.mg_smooth_order == 6);
+    REQUIRE(problem.laplace_op->GetH1Spaces().GetNumLevels() > 1);
+    const auto &K = *problem.K;
+    InspectableKspSolver<Operator> ksp(problem.iodata, problem.laplace_op->GetH1Spaces());
+    ksp.SetOperators(K, K);
 
     // (y, B x) = (x, B y) only for symmetric V-cycles. The strong smoothers of this small
     // problem leave little asymmetry to the one-sided ones.
-    const int n = K->Height();
+    const int n = K.Height();
     Vector x(n), y(n), Bx(n), By(n), r(n);
     for (auto *v : {&x, &y, &Bx, &By, &r})
     {
@@ -196,7 +175,7 @@ TEST_CASE("Geometric multigrid one-sided V-cycles", "[gmg][Serial][Parallel][GPU
     u = 0.0;
     ksp.Mult(x, u);
     CHECK(ksp.GetConverged());
-    K->Mult(u, r);
+    K.Mult(u, r);
     r -= x;
     CHECK(linalg::Norml2(comm, r) <= 1.0e-8 * linalg::Norml2(comm, x));
   }
@@ -205,56 +184,28 @@ TEST_CASE("Geometric multigrid one-sided V-cycles", "[gmg][Serial][Parallel][GPU
 TEST_CASE("Geometric multigrid one-sided V-cycles with distributive relaxation",
           "[gmg][Serial][Parallel][GPU]")
 {
-  // The shifted operator K - σ M of an eigenmode problem in a PEC cube at order 2, so with
-  // p-multigrid and distributive relaxation smoothing, below the first eigenvalue 2π². The
-  // smoother splits into the auxiliary space correction of its last iteration and the rest,
-  // which one-sided V-cycles apply after and before the coarse-grid correction. GMRES
-  // converges with one-sided V-cycles with one or two smoothing iterations.
-  using namespace std::complex_literals;
+  // The smoother of the shifted Maxwell problem splits into the auxiliary space correction
+  // of its last iteration and the rest, which one-sided V-cycles apply after and before the
+  // coarse-grid correction. GMRES converges with one-sided V-cycles with one or two
+  // smoothing iterations.
   MPI_Comm comm = Mpi::World();
   for (int smooth_it : {1, 2})
   {
     CAPTURE(smooth_it);
-    auto smesh = std::make_unique<mfem::Mesh>(
-        mfem::Mesh::MakeCartesian3D(4, 4, 4, mfem::Element::HEXAHEDRON, 1.0, 1.0, 1.0));
-    Units units(1.0, 1.0);
-    IoData iodata(units);
-    iodata.model.Lc = 1.0;
-    iodata.problem.type = ProblemType::EIGENMODE;
-    iodata.domains.materials.emplace_back().attributes = {1};
-    for (int i = 0; i < smesh->bdr_attributes.Size(); i++)
-    {
-      iodata.boundaries.pec.attributes.push_back(smesh->bdr_attributes[i]);
-    }
-    iodata.solver.order = 2;
-    iodata.solver.linear.krylov_solver = KrylovSolver::GMRES;
-    iodata.solver.linear.mg_smooth_it = smooth_it;
-    iodata.solver.linear.mg_cycle = MultigridCycle::ONE_SIDED;
-    iodata.solver.linear.tol = 1.0e-10;
-    iodata.NondimensionalizeInputs(smesh);
-    iodata.CheckConfiguration();
-    REQUIRE(iodata.solver.linear.mg_smooth_aux == 1);
-    std::vector<std::unique_ptr<Mesh>> mesh;
-    mesh.push_back(std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(comm, *smesh)));
-    SpaceOperator space_op(iodata, mesh);
+    ShiftedMaxwellProblem problem(MultigridCycle::ONE_SIDED, -1, smooth_it);
+    REQUIRE(problem.iodata.solver.linear.mg_smooth_aux == 1);
+    const auto &space_op = *problem.space_op;
     REQUIRE(space_op.GetNDSpaces().GetNumLevels() > 1);
-    constexpr double target = 3.0;
-    auto K = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
-    auto C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
-    auto M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
-    auto A = space_op.GetSystemMatrix(1.0 + 0.0i, 1i * target, -target * target + 0.0i,
-                                      K.get(), C.get(), M.get());
-    auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(
-        1.0 + 0.0i, 1i * target, -target * target + 0.0i, target + 0.0i);
+    const auto &A = *problem.A;
 
     // Mult2 is MultExceptLastAuxiliary2 followed by MultAuxiliary2.
-    const auto &mg_op = dynamic_cast<const ComplexMultigridOperator &>(*P);
-    DistRelaxationSmoother<ComplexOperator> B(comm, space_op.GetGradMatrix(), smooth_it, 1,
-                                              2 * iodata.solver.linear.mg_smooth_order, 1.0,
-                                              0.0, true);
+    const auto &mg_op = dynamic_cast<const ComplexMultigridOperator &>(*problem.P);
+    DistRelaxationSmoother<ComplexOperator> B(
+        comm, space_op.GetGradMatrix(), smooth_it, 1,
+        2 * problem.iodata.solver.linear.mg_smooth_order, 1.0, 0.0, true);
     B.SetOperators(mg_op.GetFinestOperator(), mg_op.GetFinestAuxiliaryOperator());
     B.SetInitialGuess(false);
-    const int n = A->Height();
+    const int n = A.Height();
     ComplexVector x(n), y(n), z(n), r(n);
     for (auto *v : {&x, &y, &z, &r})
     {
@@ -272,15 +223,16 @@ TEST_CASE("Geometric multigrid one-sided V-cycles with distributive relaxation",
 
     // GMRES converges to the solution of A u = x, in 9 iterations with one smoothing
     // iteration (50 without the auxiliary space correction).
-    ComplexKspSolver ksp(iodata, space_op.GetNDSpaces(), &space_op.GetH1Spaces());
-    ksp.SetOperators(*A, *P);
+    ComplexKspSolver ksp(problem.iodata, problem.space_op->GetNDSpaces(),
+                         &problem.space_op->GetH1Spaces());
+    ksp.SetOperators(A, *problem.P);
     ComplexVector u(n);
     u.UseDevice(true);
     u = 0.0;
     ksp.Mult(x, u);
     CHECK(ksp.GetConverged());
     CHECK(ksp.NumTotalMultIterations() <= 20);
-    A->Mult(u, r);
+    A.Mult(u, r);
     r -= x;
     CHECK(linalg::Norml2(comm, r) <= 1.0e-8 * linalg::Norml2(comm, x));
   }
