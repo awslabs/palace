@@ -60,6 +60,19 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     adaptive driven sweeps with `"CGS2"`, which is as stable with fewer reductions. The
     minimal rational interpolation of the error estimate always uses `"CGS2"`. SchemaVer
     4-3-1 [PR 1187](https://github.com/awslabs/palace/pull/1187).
+  - Added a warning for interior `"Conductivity"` boundaries without `"Crack"`, such as the
+    surface of a conductor meshed as a dielectric volume. Since
+    [PR 994](https://github.com/awslabs/palace/pull/994) these are uncracked sheets with the
+    admittance of both faces, which lowers the conductor loss compared to previous versions:
+    set `"Crack": true` to restore the previous results, or `"Crack": false` to silence the
+    warning. [PR 1168](https://github.com/awslabs/palace/pull/1168).
+  - Uniform lumped ports and surface current sources now take their width from a
+    cross-section across the port, and their length as their area over their width (in 2D,
+    the width counts the edges crossing it). This fixes setup aborting for ports with curved
+    ends, folded ports, and cylindrical ports. Ports which are not strips along
+    `"Direction"`, such as L-shaped ports, and 2D ports with `"Direction"` normal to their
+    edge, now abort.
+    [PR 1194](https://github.com/awslabs/palace/pull/1194).
 
 #### New Features
 
@@ -71,6 +84,14 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Performance Improvements
 
+  - Complex operators on CPUs which pack matching pairs of real and imaginary libCEED terms
+    now also pair the H1 diffusion terms and pack the real terms without a partner, such as
+    those of the lossless materials of partially lossy models, so that each of them acts on
+    the real and imaginary parts in one application. This speeds up every multigrid level
+    above the coarsest, and its H1 auxiliary operator, in driven and eigenmode simulations
+    with losses. Operators without any pair, as in lossless problems, keep their original
+    action, which needs less memory. Results change at most at the level of round-off.
+    [PR 1173](https://github.com/awslabs/palace/pull/1173).
   - With `config["Solver"]["Linear"]["ComplexCoarseSolve"]`, SuperLU_DIST (with or without
     `"SuperLU3DCommunicator"`), STRUMPACK (with or without compression), and MUMPS now
     factor the complex-valued coarse-level matrix in complex arithmetic instead of the
@@ -89,6 +110,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     with BoomerAMG did not converge), `"ComplexCoarseSolve": true` is now disabled with a
     warning. Wave ports keep it for their mode solver, which uses a sparse direct solver.
     SchemaVer 4-4-0 [PR 1193](https://github.com/awslabs/palace/pull/1193).
+  - Each excitation of a uniform driven sweep now starts its first linear solve from zero
+    instead of from the last solution of the previous excitation, which saves a few
+    iterations for every excitation after the first.
+    [PR 1219](https://github.com/awslabs/palace/pull/1219).
   - Added a STRUMPACK patch for
     [pghysels/STRUMPACK#171](https://github.com/pghysels/STRUMPACK/pull/171), which lowers
     the memory of the distributed STRUMPACK solver by 12 bytes per coarse matrix row on
@@ -416,6 +441,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     [PR 1180](https://github.com/awslabs/palace/pull/1180).
   - The Spack package now builds STRUMPACK without SLATE by default, as the superbuild does.
     [PR 1223](https://github.com/awslabs/palace/pull/1223).
+  - The superbuild builds fmt 12.1.0 instead of 12.2.0, which does not compile with nvcc,
+    and builds Umpire with it instead of letting Umpire install its own copy of fmt over it.
+    [PR 1228](https://github.com/awslabs/palace/pull/1228).
 
 ## [0.19.0] - 2026-11-02
 
