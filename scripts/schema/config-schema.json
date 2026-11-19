@@ -2369,7 +2369,7 @@
         },
         {
           "const": "ParMETIS",
-          "description": "Use ParMETIS column ordering."
+          "description": "Use ParMETIS column ordering. Requires *Palace* built with ParMETIS (`PALACE_WITH_PARMETIS=ON`), otherwise METIS is used."
         },
         {
           "const": "Scotch",

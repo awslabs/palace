@@ -476,9 +476,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - The superbuild now builds MUMPS with complex double precision (`zmumps`), which
     *Palace* now requires with `PALACE_WITH_MUMPS`, also in the Spack package
     (`mumps@5.3:+double+complex`). [PR 1193](https://github.com/awslabs/palace/pull/1193).
-  - The superbuild now always builds ParMETIS, which *Palace* links directly. Previously
-    it was built only with SuperLU_DIST, STRUMPACK, or MUMPS, so configuring with cuDSS as
-    the only sparse direct solver failed.
+  - The superbuild now builds ParMETIS, which *Palace* links directly, whenever it is
+    enabled. Previously it was built only with SuperLU_DIST, STRUMPACK, or MUMPS, so
+    configuring with cuDSS as the only sparse direct solver failed.
     [PR 1133](https://github.com/awslabs/palace/pull/1133).
   - The superbuild's sub-makes (the unit tests, GSLIB, LIBXSMM, libCEED, SLEPc, and MFEM's
     test step) now inherit the make jobserver, so GNU make 4.3 and later build them in
@@ -487,6 +487,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     [PR 1180](https://github.com/awslabs/palace/pull/1180).
   - The Spack package now builds STRUMPACK without SLATE by default, as the superbuild does.
     [PR 1223](https://github.com/awslabs/palace/pull/1223).
+  - ParMETIS is now optional and disabled by default: enable it with
+    `-DPALACE_WITH_PARMETIS=ON` (Spack variant `+parmetis`). Otherwise, `"ParMETIS"` for
+    `config["Solver"]["Linear"]["ColumnOrdering"]` falls back to METIS with a warning.
+    SchemaVer 4-4-3. [PR 1195](https://github.com/awslabs/palace/pull/1195).
   - Building the unit tests now requires MFEM with exceptions (`PALACE_MFEM_USE_EXCEPTIONS`
     in the superbuild, `mfem+exceptions` in Spack). The tests of error handling expect
     `MFEM_VERIFY` and `MFEM_ABORT` to throw, and without exceptions the first of them ended
