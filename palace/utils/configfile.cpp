@@ -1653,6 +1653,8 @@ LinearSolverData::LinearSolverData(const json &linear)
   mg_smooth_sf_min = linear.value("MGSmoothEigScaleMin", mg_smooth_sf_min);
   mg_smooth_cheby_4th = linear.value("MGSmoothChebyshev4th", mg_smooth_cheby_4th);
   mg_one_sided = linear.value("MGOneSided", mg_one_sided);
+  mg_post_smooth_order = linear.value("MGPostSmoothOrder", mg_post_smooth_order);
+  mg_coarse_flip_abc2 = linear.value("MGCoarseFlipABC2", mg_coarse_flip_abc2);
 
   // Preconditioner-specific options.
   pc_mat_real = linear.value("PCMatReal", pc_mat_real);

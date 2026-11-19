@@ -1169,6 +1169,14 @@ public:
   // (for the GMRES and FGMRES Krylov solvers). By default only for eigenmode problems.
   int mg_one_sided = -1;
 
+  // EXPERIMENT (PR 1233 review): post-smoother order (-1: the pre-smoother order, or 0 with
+  // one-sided V-cycles).
+  int mg_post_smooth_order = -1;
+
+  // EXPERIMENT (PR 1233 review): flip the second-order absorbing BC term in the real-valued
+  // coarse solve.
+  bool mg_coarse_flip_abc2 = false;
+
   // For frequency domain applications, precondition linear systems with a real-valued
   // approximation to the system matrix.
   bool pc_mat_real = false;

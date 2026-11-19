@@ -17,10 +17,11 @@ GeometricMultigridSolver<OperType>::GeometricMultigridSolver(
     MPI_Comm comm, std::unique_ptr<Solver<OperType>> &&coarse_solver,
     const std::vector<const Operator *> &P, const std::vector<const Operator *> *G,
     int cycle_it, int smooth_it, int cheby_order, double cheby_sf_max, double cheby_sf_min,
-    bool cheby_4th_kind, bool one_sided)
+    bool cheby_4th_kind, bool one_sided, int cheby_post_order)
   : Solver<OperType>(), pc_it(cycle_it), P(P.begin(), P.end()), A(P.size() + 1),
-    dbc_tdof_lists(P.size()), B(P.size() + 1), X(P.size() + 1), Y(P.size() + 1),
-    R(P.size() + 1), use_timer(false), one_sided(one_sided)
+    dbc_tdof_lists(P.size()), B(P.size() + 1), B_post(P.size() + 1), X(P.size() + 1),
+    Y(P.size() + 1), R(P.size() + 1), use_timer(false), one_sided(one_sided),
+    post_order((cheby_post_order >= 0) ? cheby_post_order : (one_sided ? 0 : cheby_order))
 {
   // Configure levels of geometric coarsening. Multigrid vectors will be configured at first
   // call to Mult. The multigrid operator size is set based on the finest space dimension.
@@ -36,28 +37,30 @@ GeometricMultigridSolver<OperType>::GeometricMultigridSolver(
 
   // Configure level smoothers. Use distributive relaxation smoothing if an auxiliary
   // finite element space was provided.
-  for (std::size_t l = 1; l < n_levels; l++)
+  auto MakeSmoother = [&](std::size_t l, int order) -> std::unique_ptr<Solver<OperType>>
   {
     if (G)
     {
       const int cheby_smooth_it = 1;
-      B[l] = std::make_unique<DistRelaxationSmoother<OperType>>(
-          comm, *(*G)[l], smooth_it, cheby_smooth_it, cheby_order, cheby_sf_max,
-          cheby_sf_min, cheby_4th_kind);
+      return std::make_unique<DistRelaxationSmoother<OperType>>(
+          comm, *(*G)[l], smooth_it, cheby_smooth_it, order, cheby_sf_max, cheby_sf_min,
+          cheby_4th_kind);
     }
-    else
+    const int cheby_smooth_it = smooth_it;
+    if (cheby_4th_kind)
     {
-      const int cheby_smooth_it = smooth_it;
-      if (cheby_4th_kind)
-      {
-        B[l] = std::make_unique<ChebyshevSmoother<OperType>>(comm, cheby_smooth_it,
-                                                             cheby_order, cheby_sf_max);
-      }
-      else
-      {
-        B[l] = std::make_unique<ChebyshevSmoother1stKind<OperType>>(
-            comm, cheby_smooth_it, cheby_order, cheby_sf_max, cheby_sf_min);
-      }
+      return std::make_unique<ChebyshevSmoother<OperType>>(comm, cheby_smooth_it, order,
+                                                           cheby_sf_max);
+    }
+    return std::make_unique<ChebyshevSmoother1stKind<OperType>>(
+        comm, cheby_smooth_it, order, cheby_sf_max, cheby_sf_min);
+  };
+  for (std::size_t l = 1; l < n_levels; l++)
+  {
+    B[l] = MakeSmoother(l, cheby_order);
+    if (post_order > 0 && post_order != cheby_order)
+    {
+      B_post[l] = MakeSmoother(l, post_order);
     }
   }
 }
@@ -95,18 +98,25 @@ void GeometricMultigridSolver<OperType>::SetOperator(const OperType &op)
       dbc_tdof_lists[l] = PtAP_l->GetEssentialTrueDofs();
     }
 
-    auto *dist_smoother = dynamic_cast<DistRelaxationSmoother<OperType> *>(B[l].get());
-    if (dist_smoother)
+    for (auto *smoother : {B[l].get(), B_post[l].get()})
     {
-      MFEM_VERIFY(mg_op->HasAuxiliaryOperators(),
-                  "Distributive relaxation smoother relies on both primary space and "
-                  "auxiliary space operators for multigrid smoothing!");
-      dist_smoother->SetOperators(mg_op->GetOperatorAtLevel(l),
-                                  mg_op->GetAuxiliaryOperatorAtLevel(l));
-    }
-    else
-    {
-      B[l]->SetOperator(mg_op->GetOperatorAtLevel(l));
+      if (!smoother)
+      {
+        continue;
+      }
+      auto *dist_smoother = dynamic_cast<DistRelaxationSmoother<OperType> *>(smoother);
+      if (dist_smoother)
+      {
+        MFEM_VERIFY(mg_op->HasAuxiliaryOperators(),
+                    "Distributive relaxation smoother relies on both primary space and "
+                    "auxiliary space operators for multigrid smoothing!");
+        dist_smoother->SetOperators(mg_op->GetOperatorAtLevel(l),
+                                    mg_op->GetAuxiliaryOperatorAtLevel(l));
+      }
+      else
+      {
+        smoother->SetOperator(mg_op->GetOperatorAtLevel(l));
+      }
     }
 
     X[l].SetSize(A[l]->Height());
@@ -180,12 +190,12 @@ void GeometricMultigridSolver<OperType>::VCycle(int l, bool initial_guess) const
     B[l]->Mult(X[l], Y[l]);
     return;
   }
-  // EXPERIMENT (PR 1233 review): one-sided V-cycles with distributive relaxation smoothing
-  // pre-smooth with the primary space smoother only, and apply the auxiliary space
-  // correction after the coarse-grid correction.
+  // EXPERIMENT (PR 1233 review): without post-smoothing, V-cycles with distributive
+  // relaxation smoothing pre-smooth with the primary space smoother only and apply the
+  // auxiliary space correction after the coarse-grid correction.
   const auto *dist =
-      one_sided ? dynamic_cast<const DistRelaxationSmoother<OperType> *>(B[l].get())
-                : nullptr;
+      (post_order == 0) ? dynamic_cast<const DistRelaxationSmoother<OperType> *>(B[l].get())
+                        : nullptr;
   if (dist)
   {
     dist->MultPrimary2(X[l], Y[l], R[l]);
@@ -210,7 +220,7 @@ void GeometricMultigridSolver<OperType>::VCycle(int l, bool initial_guess) const
   // Prolongate and add.
   RealMult(*P[l - 1], Y[l - 1], R[l]);
   Y[l] += R[l];
-  if (one_sided)
+  if (post_order == 0)
   {
     if (dist)
     {
@@ -220,8 +230,9 @@ void GeometricMultigridSolver<OperType>::VCycle(int l, bool initial_guess) const
   }
 
   // Post-smooth, with nonzero initial guess.
-  B[l]->SetInitialGuess(true);
-  B[l]->MultTranspose2(X[l], Y[l], R[l]);
+  auto &B_l = B_post[l] ? B_post[l] : B[l];
+  B_l->SetInitialGuess(true);
+  B_l->MultTranspose2(X[l], Y[l], R[l]);
 }
 
 template class GeometricMultigridSolver<Operator>;

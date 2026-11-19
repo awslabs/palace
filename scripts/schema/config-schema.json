@@ -3056,6 +3056,17 @@
           "default": true,
           "x-palace-advanced": true
         },
+        "MGCoarseFlipABC2": {
+          "type": "boolean",
+          "description": "EXPERIMENT: flip the sign of the second-order absorbing boundary term in the real-valued coarse solve.",
+          "x-palace-advanced": true
+        },
+        "MGPostSmoothOrder": {
+          "type": "integer",
+          "description": "EXPERIMENT: polynomial order of the post-smoother of geometric multigrid (0 for none). If omitted, Palace uses the pre-smoothing order, or 0 with one-sided V-cycles.",
+          "minimum": 0,
+          "x-palace-advanced": true
+        },
         "MGOneSided": {
           "type": "boolean",
           "description": "Use one-sided V-cycles for geometric multigrid, which pre-smooth but do not post-smooth. They make a nonsymmetric preconditioner, so they require the GMRES or FGMRES Krylov solver. If omitted, Palace enables this for eigenmode simulations with GMRES or FGMRES, and disables it otherwise: one-sided V-cycles can slow down the strongly indefinite linear systems of some driven simulations and boundary mode solves.",

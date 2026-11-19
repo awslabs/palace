@@ -51,6 +51,9 @@ private:
   const bool pc_mat_real;     // Use real-valued matrix for preconditioner
   const bool pc_mat_shifted;  // Use shifted mass matrix for preconditioner
   const bool pc_mat_amg;      // Preconditioner uses AMS/BoomerAMG on the real-valued matrix
+  // EXPERIMENT (PR 1233 review): flip the sign of the second-order absorbing BC term in the
+  // coarse level of the preconditioner when the coarse solve uses the real-valued Ar + Ai.
+  const bool pc_flip_abc2_coarse;
 
   // Helper variables for log file printing.
   bool print_hdr, print_prec_hdr;

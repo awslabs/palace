@@ -45,6 +45,10 @@ private:
   // Smoothers for each level. Coarse-level solver is B[0].
   mutable std::vector<std::unique_ptr<Solver<OperType>>> B;
 
+  // EXPERIMENT (PR 1233 review): post-smoothers of another polynomial order than the
+  // pre-smoothers (null where they are the same smoother).
+  mutable std::vector<std::unique_ptr<Solver<OperType>>> B_post;
+
   // Temporary vectors for preconditioner application. The type of these is dictated by the
   // MFEM Operator interface for multiple RHS.
   mutable std::vector<VecType> X, Y, R;
@@ -56,6 +60,11 @@ private:
   // 2022): the preconditioner is not symmetric, so only for GMRES and FGMRES.
   const bool one_sided;
 
+  // EXPERIMENT (PR 1233 review): polynomial order of the post-smoother (0 for none, as in
+  // one-sided V-cycles, which then apply the auxiliary space correction after the
+  // coarse-grid correction).
+  int post_order;
+
   // Internal function to perform a single V-cycle iteration.
   void VCycle(int l, bool initial_guess) const;
 
@@ -64,8 +73,8 @@ public:
                            const std::vector<const Operator *> &P,
                            const std::vector<const Operator *> *G, int cycle_it,
                            int smooth_it, int cheby_order, double cheby_sf_max,
-                           double cheby_sf_min, bool cheby_4th_kind,
-                           bool one_sided = false);
+                           double cheby_sf_min, bool cheby_4th_kind, bool one_sided = false,
+                           int cheby_post_order = -1);
 
   void SetOperator(const OperType &op) override;
 

@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <optional>
 #include <set>
 #include <type_traits>
 #include "fem/bilinearform.hpp"
@@ -36,6 +37,8 @@ SpaceOperator::SpaceOperator(const config::SolverData &solver,
   : pc_mat_real(solver.linear.pc_mat_real), pc_mat_shifted(solver.linear.pc_mat_shifted),
     pc_mat_amg(solver.linear.type == LinearSolver::AMS ||
                solver.linear.type == LinearSolver::BOOMER_AMG),
+    pc_flip_abc2_coarse(solver.linear.mg_coarse_flip_abc2 &&
+                        !solver.linear.complex_coarse_solve && !pc_mat_amg),
     print_hdr(true), print_prec_hdr(true),
     dbc_attr(SetUpBoundaryProperties(boundaries.pec, *mesh.back())),
     nd_fecs(fem::ConstructFECollections<mfem::ND_FECollection>(
@@ -480,8 +483,19 @@ auto AssembleOperators(
     const MaterialPropertyCoefficient *f, const MaterialPropertyCoefficient *dfb,
     const MaterialPropertyCoefficient *fb, const MaterialPropertyCoefficient *fp,
     const MaterialPropertyCoefficient *frb, const MaterialPropertyCoefficient *fpb,
-    bool skip_zeros = false, bool assemble_q_data = false)
+    bool skip_zeros = false, bool assemble_q_data = false, bool flip_dfb_coarse = false)
 {
+  // EXPERIMENT (PR 1233 review): optionally flip the sign of dfb (the second-order
+  // absorbing BC term) on the coarse level only.
+  std::optional<MaterialPropertyCoefficient> dfb_flip;
+  const MaterialPropertyCoefficient *dfb_coarse = dfb;
+  if (flip_dfb_coarse && dfb && !dfb->empty())
+  {
+    dfb_flip.emplace(*dfb);
+    *dfb_flip *= -1.0;
+    dfb_coarse = &*dfb_flip;
+  }
+
   // Keep configured coefficient support on the coarse sparse level. This is required for
   // an exact-complex coarse solve: a nonlinear eigenvalue seed λ = iω has Im(λ²) = 0, but
   // the corresponding full-domain imaginary mass term becomes nonzero once Re(λ) != 0.
@@ -490,7 +504,7 @@ auto AssembleOperators(
   // independent of the chosen sparse-solver representation. Fine partial-assembly levels
   // have no symbolic structure to preserve, so exact-zero terms are omitted there.
   BilinearForm coarse(fespaces.GetFESpaceAtLevel(0));
-  AddConfiguredIntegrators(coarse, df, f, dfb, fb, fp, frb, fpb);
+  AddConfiguredIntegrators(coarse, df, f, dfb_coarse, fb, fp, frb, fpb);
   std::vector<std::unique_ptr<Operator>> ops;
   ops.reserve(fespaces.GetNumLevels());
   ops.push_back(coarse.Assemble(skip_zeros));
@@ -1298,14 +1312,14 @@ void SpaceOperator::AssemblePreconditioner(
   if (!empty[0])
   {
     br_vec = AssembleOperators(GetNDSpaces(), &dfr, &fr, &dfbr, &fbr, &fpr, &frbr, &fpbr,
-                               skip_zeros, assemble_q_data);
+                               skip_zeros, assemble_q_data, pc_flip_abc2_coarse);
     br_aux_vec =
         AssembleAuxOperators(GetH1Spaces(), &fr, &fbr, &frbr, skip_zeros, assemble_q_data);
   }
   if (!empty[1])
   {
     bi_vec = AssembleOperators(GetNDSpaces(), &dfi, &fi, &dfbi, &fbi, &fpi, &frbi, &fpbi,
-                               skip_zeros, assemble_q_data);
+                               skip_zeros, assemble_q_data, pc_flip_abc2_coarse);
     bi_aux_vec =
         AssembleAuxOperators(GetH1Spaces(), &fi, &fbi, &frbi, skip_zeros, assemble_q_data);
   }
