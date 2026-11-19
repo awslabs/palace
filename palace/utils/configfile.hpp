@@ -1177,6 +1177,10 @@ public:
   // coarse solve.
   bool mg_coarse_flip_abc2 = false;
 
+  // EXPERIMENT (PR 1233 review): choose between one-sided and symmetric V-cycles from the
+  // iterations of the first solves.
+  bool mg_cycle_auto = false;
+
   // For frequency domain applications, precondition linear systems with a real-valued
   // approximation to the system matrix.
   bool pc_mat_real = false;

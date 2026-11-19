@@ -92,6 +92,9 @@ public:
   void MultPrimary2(const VecType &x, VecType &y, VecType &r) const;
   // y = y + G B_G Gᵀ (x - A y), always from the current y.
   void MultAux2(const VecType &x, VecType &y, VecType &r) const;
+
+  // EXPERIMENT (PR 1233 review): order of the 4th-kind Chebyshev smoothers of both spaces.
+  void SetSmootherOrder(int order);
 };
 
 }  // namespace palace

@@ -3,6 +3,8 @@
 
 #include "gmg.hpp"
 
+#include <algorithm>
+
 #include <mfem.hpp>
 #include "linalg/chebyshev.hpp"
 #include "linalg/distrelaxation.hpp"
@@ -21,7 +23,8 @@ GeometricMultigridSolver<OperType>::GeometricMultigridSolver(
   : Solver<OperType>(), pc_it(cycle_it), P(P.begin(), P.end()), A(P.size() + 1),
     dbc_tdof_lists(P.size()), B(P.size() + 1), B_post(P.size() + 1), X(P.size() + 1),
     Y(P.size() + 1), R(P.size() + 1), use_timer(false), one_sided(one_sided),
-    post_order((cheby_post_order >= 0) ? cheby_post_order : (one_sided ? 0 : cheby_order))
+    post_order((cheby_post_order >= 0) ? cheby_post_order : (one_sided ? 0 : cheby_order)),
+    cycle_order(cheby_order)
 {
   // Configure levels of geometric coarsening. Multigrid vectors will be configured at first
   // call to Mult. The multigrid operator size is set based on the finest space dimension.
@@ -233,6 +236,29 @@ void GeometricMultigridSolver<OperType>::VCycle(int l, bool initial_guess) const
   auto &B_l = B_post[l] ? B_post[l] : B[l];
   B_l->SetInitialGuess(true);
   B_l->MultTranspose2(X[l], Y[l], R[l]);
+}
+
+template <OperatorType OperType>
+void GeometricMultigridSolver<OperType>::SetOneSidedCycle(bool one_sided_cycle)
+{
+  const int order = one_sided_cycle ? cycle_order : std::max(cycle_order / 2, 1);
+  for (std::size_t l = 1; l < B.size(); l++)
+  {
+    MFEM_VERIFY(!B_post[l], "SetOneSidedCycle does not support a separate post-smoother!");
+    if (auto *dist = dynamic_cast<DistRelaxationSmoother<OperType> *>(B[l].get()))
+    {
+      dist->SetSmootherOrder(order);
+    }
+    else if (auto *cheby = dynamic_cast<ChebyshevSmoother<OperType> *>(B[l].get()))
+    {
+      cheby->SetOrder(order);
+    }
+    else
+    {
+      MFEM_ABORT("SetOneSidedCycle requires 4th-kind Chebyshev smoothers!");
+    }
+  }
+  post_order = one_sided_cycle ? 0 : order;
 }
 
 template class GeometricMultigridSolver<Operator>;

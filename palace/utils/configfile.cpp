@@ -1655,6 +1655,7 @@ LinearSolverData::LinearSolverData(const json &linear)
   mg_one_sided = linear.value("MGOneSided", mg_one_sided);
   mg_post_smooth_order = linear.value("MGPostSmoothOrder", mg_post_smooth_order);
   mg_coarse_flip_abc2 = linear.value("MGCoarseFlipABC2", mg_coarse_flip_abc2);
+  mg_cycle_auto = linear.value("MGCycleAuto", mg_cycle_auto);
 
   // Preconditioner-specific options.
   pc_mat_real = linear.value("PCMatReal", pc_mat_real);

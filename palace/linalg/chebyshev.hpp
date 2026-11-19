@@ -29,7 +29,8 @@ private:
   MPI_Comm comm;
 
   // Number of smoother iterations and polynomial order.
-  const int pc_it, order;
+  const int pc_it;
+  int order;
 
   // System matrix (not owned).
   const OperType *A;
@@ -51,6 +52,15 @@ public:
   ChebyshevSmoother(MPI_Comm comm, int smooth_it, int poly_order, double sf_max);
 
   void SetOperator(const OperType &op) override;
+
+  // EXPERIMENT (PR 1233 review): change the polynomial order (the coefficients only depend
+  // on the order and the maximum eigenvalue estimate).
+  void SetOrder(int poly_order)
+  {
+    MFEM_VERIFY(poly_order > 0,
+                "Polynomial order for Chebyshev smoothing must be positive!");
+    order = poly_order;
+  }
 
   void Mult(const VecType &x, VecType &y) const override
   {

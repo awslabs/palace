@@ -51,6 +51,15 @@ protected:
   // Enable timer contribution for Timer::KSP_PRECONDITIONER.
   bool use_timer;
 
+  // EXPERIMENT (PR 1233 review): choose between one-sided and symmetric multigrid V-cycles
+  // from the iterations of the first solves: the first solve (warm-up) and the second use
+  // one-sided V-cycles, the third symmetric ones, and the cycle that needed fewer
+  // iterations is kept. -1 when off, 0 to 2 for the next trial solve, 3 when chosen.
+  mutable int cycle_trial;
+  mutable int cycle_trial_its;
+  int cycle_print;
+  void MultCycleTrial(const VecType &x, VecType &y) const;
+
 public:
   BaseKspSolver(const config::LinearSolverData &linear, MatrixSymmetry pc_mat_sym,
                 int verbose, FiniteElementSpaceHierarchy &fespaces,

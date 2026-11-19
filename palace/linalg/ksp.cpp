@@ -377,6 +377,14 @@ BaseKspSolver<OperType>::BaseKspSolver(const config::LinearSolverData &linear,
                       fespaces, aux_fespaces))
 {
   use_timer = true;
+  if (linear.mg_cycle_auto && linear.mg_one_sided && linear.mg_smooth_cheby_4th &&
+      (linear.krylov_solver == KrylovSolver::GMRES ||
+       linear.krylov_solver == KrylovSolver::FGMRES) &&
+      dynamic_cast<GeometricMultigridSolver<OperType> *>(pc.get()))
+  {
+    cycle_trial = 0;
+    cycle_print = verbose;
+  }
 }
 
 template <OperatorType OperType>
@@ -391,7 +399,8 @@ BaseKspSolver<OperType>::BaseKspSolver(const IoData &iodata,
 template <OperatorType OperType>
 BaseKspSolver<OperType>::BaseKspSolver(std::unique_ptr<IterativeSolver<OperType>> &&ksp,
                                        std::unique_ptr<Solver<OperType>> &&pc)
-  : ksp(std::move(ksp)), pc(std::move(pc)), ksp_mult(0), ksp_mult_it(0), use_timer(false)
+  : ksp(std::move(ksp)), pc(std::move(pc)), ksp_mult(0), ksp_mult_it(0), use_timer(false),
+    cycle_trial(-1), cycle_trial_its(0), cycle_print(0)
 {
   if (this->pc)
   {
@@ -423,7 +432,14 @@ template <OperatorType OperType>
 void BaseKspSolver<OperType>::Mult(const VecType &x, VecType &y) const
 {
   BlockTimer bt(Timer::KSP, use_timer);
-  ksp->Mult(x, y);
+  if (cycle_trial >= 0 && cycle_trial < 3)
+  {
+    MultCycleTrial(x, y);
+  }
+  else
+  {
+    ksp->Mult(x, y);
+  }
   if (!ksp->GetConverged())
   {
     Mpi::Warning(
@@ -433,6 +449,52 @@ void BaseKspSolver<OperType>::Mult(const VecType &x, VecType &y) const
   }
   ksp_mult++;
   ksp_mult_it += ksp->GetNumIterations();
+}
+
+template <OperatorType OperType>
+void BaseKspSolver<OperType>::MultCycleTrial(const VecType &x, VecType &y) const
+{
+  auto *gmg = static_cast<GeometricMultigridSolver<OperType> *>(pc.get());
+  const bool one_sided = (cycle_trial < 2);
+  VecType y0;
+  y0.SetSize(y.Size());
+  y0.UseDevice(true);
+  y0 = y;
+  gmg->SetOneSidedCycle(one_sided);
+  ksp->Mult(x, y);
+  const int its = ksp->GetNumIterations();
+  auto Choose = [&](bool choice, const char *reason)
+  {
+    gmg->SetOneSidedCycle(choice);
+    cycle_trial = 3;
+    if (cycle_print > 0)
+    {
+      Mpi::Print(ksp->GetComm(), " Multigrid V-cycles: {} ({})\n",
+                 choice ? "one-sided" : "symmetric", reason);
+    }
+  };
+  if (!ksp->GetConverged())
+  {
+    // The trial cycle did not converge: solve again with the other one, and keep it.
+    ksp_mult_it += its;
+    Choose(!one_sided,
+           one_sided ? "one-sided did not converge" : "symmetric did not converge");
+    y = y0;
+    ksp->Mult(x, y);
+    return;
+  }
+  if (cycle_trial == 1)
+  {
+    cycle_trial_its = its;
+  }
+  else if (cycle_trial == 2)
+  {
+    const auto reason = fmt::format("{:d} GMRES iterations one-sided, {:d} symmetric",
+                                    cycle_trial_its, its);
+    Choose(cycle_trial_its <= its, reason.c_str());
+    return;
+  }
+  cycle_trial++;
 }
 
 template class BaseKspSolver<Operator>;

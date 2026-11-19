@@ -172,6 +172,16 @@ void DistRelaxationSmoother<OperType>::MultAux2(const VecType &x, VecType &y,
   RealAddMult(*G, y_G, y);
 }
 
+template <OperatorType OperType>
+void DistRelaxationSmoother<OperType>::SetSmootherOrder(int order)
+{
+  auto *cheby = dynamic_cast<ChebyshevSmoother<OperType> *>(B.get());
+  auto *cheby_G = dynamic_cast<ChebyshevSmoother<OperType> *>(B_G.get());
+  MFEM_VERIFY(cheby && cheby_G, "SetSmootherOrder requires 4th-kind Chebyshev smoothers!");
+  cheby->SetOrder(order);
+  cheby_G->SetOrder(order);
+}
+
 template class DistRelaxationSmoother<Operator>;
 template class DistRelaxationSmoother<ComplexOperator>;
 

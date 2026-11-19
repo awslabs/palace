@@ -3056,6 +3056,11 @@
           "default": true,
           "x-palace-advanced": true
         },
+        "MGCycleAuto": {
+          "type": "boolean",
+          "description": "EXPERIMENT: choose between one-sided and symmetric V-cycles from the iterations of the first linear solves.",
+          "x-palace-advanced": true
+        },
         "MGCoarseFlipABC2": {
           "type": "boolean",
           "description": "EXPERIMENT: flip the sign of the second-order absorbing boundary term in the real-valued coarse solve.",

@@ -65,6 +65,10 @@ private:
   // coarse-grid correction).
   int post_order;
 
+  // EXPERIMENT (PR 1233 review): smoothing order of one-sided V-cycles, given at
+  // construction.
+  const int cycle_order;
+
   // Internal function to perform a single V-cycle iteration.
   void VCycle(int l, bool initial_guess) const;
 
@@ -81,6 +85,11 @@ public:
   void Mult(const VecType &x, VecType &y) const override;
 
   void EnableTimer() { use_timer = true; }
+
+  // EXPERIMENT (PR 1233 review): one-sided V-cycles of the construction order, or symmetric
+  // V-cycles of half that order (the same smoothing work per V-cycle).
+  void SetOneSidedCycle(bool one_sided_cycle);
+  bool IsOneSidedCycle() const { return post_order == 0; }
 };
 
 }  // namespace palace
