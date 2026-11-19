@@ -934,6 +934,10 @@ void IoData::CheckConfiguration()
     // seam depend on the partition.
     MFEM_VERIFY(boundaries.periodic.boundary_pairs.empty(),
                 "Substructuring does not support \"Periodic\" boundaries!");
+    MFEM_VERIFY(problem.type != ProblemType::DRIVEN || model.refinement.max_it == 0,
+                "Adaptive mesh refinement with driven substructuring refines the full "
+                "model: run the adaptation without \"Solver.Substructuring\" (with "
+                "\"SaveAdaptMesh\") and condense the saved mesh offline!");
     // Adaptive refinement refines the region of an online run only: the environment was
     // condensed on its final mesh, and nonconforming refinement without a level constraint
     // does not spread into it.
@@ -968,10 +972,6 @@ void IoData::CheckConfiguration()
           "not SuperLU_DIST, whose condensation goes wrong through a resonance: "
           "build Palace with one of them, and do not name SuperLU in "
           "\"Solver\"/\"Linear\"/\"Type\" offline!");
-      MFEM_VERIFY(model.refinement.max_it == 0,
-                  "Adaptive mesh refinement with driven substructuring refines the full "
-                  "model: run the adaptation without \"Solver.Substructuring\" (with "
-                  "\"SaveAdaptMesh\") and condense the saved mesh offline!");
       // Floquet ports make the system non-symmetric.
       MFEM_VERIFY(boundaries.floquetport.empty(),
                   "Driven substructuring does not support Floquet ports!");

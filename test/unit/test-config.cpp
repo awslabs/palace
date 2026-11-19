@@ -347,8 +347,12 @@ TEST_CASE("Config Substructuring", "[config][Serial]")
     const json wave = {{"WavePort", {{{"Index", 2}, {"Attributes", {5}}}}}};
     CHECK_NOTHROW(IoData(make_config(uniform, wave), false));
 #endif
+    // Adaptive mesh refinement refines no driven run, offline or online (before the checks
+    // of the static substructuring, which ask for an online run and "MaxNCLevels": 0).
     json amr = make_config(uniform, json::object());
-    amr["Model"]["Refinement"] = {{"MaxIts", 1}, {"MaxNCLevels", 0}};
+    amr["Model"]["Refinement"] = {{"MaxIts", 1}};
+    CHECK_THROWS_WITH(IoData(amr, false),
+                      Catch::Matchers::ContainsSubstring("driven substructuring refines"));
     amr["Solver"]["Substructuring"]["ModelFile"] = "environment.model";
     amr["Solver"]["Substructuring"]["Mode"] = "Online";
     CHECK_THROWS_WITH(IoData(amr, false),
