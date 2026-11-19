@@ -86,12 +86,11 @@ public:
 
   void MultTranspose2(const VecType &x, VecType &y, VecType &r) const override;
 
-  // EXPERIMENT (PR 1233 review): the two parts of Mult2 on their own, for one-sided
-  // V-cycles that apply the auxiliary space correction after the coarse-grid correction.
-  // y = y + B (x - A y), with the initial guess flag of this smoother.
-  void MultPrimary2(const VecType &x, VecType &y, VecType &r) const;
-  // y = y + G B_G Gᵀ (x - A y), always from the current y.
-  void MultAux2(const VecType &x, VecType &y, VecType &r) const;
+  // Mult2 is MultExceptLastAuxiliary2 followed by MultAuxiliary2, the auxiliary space
+  // correction y = y + G B_G Gᵀ (x - A y) of the last smoother iteration.
+  void MultExceptLastAuxiliary2(const VecType &x, VecType &y, VecType &r) const;
+
+  void MultAuxiliary2(const VecType &x, VecType &y, VecType &r) const;
 };
 
 }  // namespace palace
