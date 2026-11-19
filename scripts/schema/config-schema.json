@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:4-4-1",
+  "$id": "urn:palace:schema:4-4-2",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -2486,7 +2486,7 @@
         },
         "StartVector": {
           "type": "boolean",
-          "description": "Use a random start vector for the eigensolver.",
+          "description": "Use a random start vector for the eigensolver. With adaptive mesh refinement on nonconforming meshes, the solve of each adaptation iteration after the first can start from the eigenvectors of the previous one instead, for the SLEPc Krylov-Schur solver (linear problems, and quadratic ones with [`\"PEPLinear\"`](@ref config-solver-eigenmode-peplinear)), except with the `\"SLP\"` nonlinear solver.",
           "default": true,
           "x-palace-advanced": true
         },
