@@ -3510,7 +3510,9 @@ TEST_CASE("Saved driven excitations match across partitions", "[substructure][Se
   CHECK_FALSE(Model::SameEnvironment(env, env2));
 }
 
-TEST_CASE("A cut or corrupted driven model header is rejected", "[substructure][Serial]")
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "A cut or corrupted driven model header is rejected",
+                 "[substructure][Serial]")
 {
   // The header is read part by part, each only if its record holds it: a header cut short,
   // one whose sizes exceed its record (also a negative one), one without frequencies, and a
@@ -3527,8 +3529,7 @@ TEST_CASE("A cut or corrupted driven model header is rejected", "[substructure][
   m.error = 0.5;
   m.tol = 1.0e-8;
   m.passivity = -1.0e-3;
-  const auto path =
-      (std::filesystem::temp_directory_path() / "palace-driven-model-cut.bin").string();
+  const auto path = (temp_dir / "driven-model-cut.bin").string();
   // The position of the header in the file.
   auto header = [&path]()
   {
@@ -3587,11 +3588,11 @@ TEST_CASE("A cut or corrupted driven model header is rejected", "[substructure][
   std::ofstream(path, std::ios::binary) << "not a model";
   CHECK_THROWS_WITH(saved.ReadHeader(path, Mpi::World()),
                     ContainsSubstring("Cannot read the driven substructuring model"));
-  std::filesystem::remove(path);
 }
 
-TEST_CASE("A saved driven model continues from its complete records",
-          "[substructure][Serial]")
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "A saved driven model continues from its complete records",
+                 "[substructure][Serial]")
 {
   // A model of two interface unknowns, an excitation and a port at three frequencies,
   // interrupted while writing its third record, then cut to its first record by a restart
@@ -3625,8 +3626,7 @@ TEST_CASE("A saved driven model continues from its complete records",
     r.c = {s};
     return r;
   };
-  const auto path =
-      (std::filesystem::temp_directory_path() / "palace-driven-model-restart.bin").string();
+  const auto path = (temp_dir / "driven-model-restart.bin").string();
   m.WriteHeader(path);
   m.AppendRecord(path, record(1.0));
   m.AppendRecord(path, record(2.0));
@@ -3677,7 +3677,6 @@ TEST_CASE("A saved driven model continues from its complete records",
   other.exc_fp[6] *= 1.0 + 1.0e-6;
   CHECK_FALSE(other.SameHeader(saved, 1.0e-10));
   CHECK(other.SameHeader(saved, 1.0e-4));
-  std::filesystem::remove(path);
 }
 
 #if defined(MFEM_USE_SUPERLU) || defined(MFEM_USE_STRUMPACK)

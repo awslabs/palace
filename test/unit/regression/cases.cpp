@@ -2399,7 +2399,8 @@ TEST_CASE("substructuring_driven", "[Serial][Parallel][GPU][Regression]")
 
 // The offline sweep of substructuring_driven, interrupted after three of its six results
 // (with the model halfway through its second record) and restarted from the fourth: the
-// references are those of the uninterrupted sweep, whose model it reproduces.
+// references are those of the uninterrupted sweep, whose model it reproduces. A sentinel in
+// the first record, which the restart keeps, shows that it continued.
 TEST_CASE("substructuring_driven_offline_restart", "[Serial][Parallel][GPU][Regression]")
 {
   namespace fs = std::filesystem;
@@ -2410,6 +2411,7 @@ TEST_CASE("substructuring_driven_offline_restart", "[Serial][Parallel][GPU][Regr
   opts.linear_solver_policy = force_default_solver;
   opts.paraview_fields = false;
   opts.setup_config = "driven_offline.json";
+  const std::complex<double> sentinel(12345.0, -678.0);
   opts.after_setup = [&](const fs::path &dir)
   {
     if (!palace::Mpi::Root(palace::Mpi::World()))
@@ -2468,6 +2470,9 @@ TEST_CASE("substructuring_driven_offline_restart", "[Serial][Parallel][GPU][Regr
     }
     REQUIRE(records.size() == 3);
     fs::resize_file(model, records[1].pos + records[1].size / 2);
+    std::fstream f(model, std::ios::binary | std::ios::in | std::ios::out);
+    f.seekp(records[0].pos);
+    f.write(reinterpret_cast<const char *>(&sentinel), sizeof(sentinel));
   };
   opts.after_run = [&](const fs::path &dir)
   {
@@ -2485,7 +2490,13 @@ TEST_CASE("substructuring_driven_offline_restart", "[Serial][Parallel][GPU][Regr
     CHECK(fs::file_size(path) == fs::file_size(full));
     for (int j = 0; j < std::min(m.NumRecords(path), ref.NumRecords(full)); j++)
     {
-      const auto x = m.ReadFlatRecord(path, j), y = ref.ReadFlatRecord(full, j);
+      auto x = m.ReadFlatRecord(path, j);
+      const auto y = ref.ReadFlatRecord(full, j);
+      if (j == 0)
+      {
+        CHECK(x[0] == sentinel);
+        x[0] = y[0];
+      }
       double diff = 0.0, scale = 0.0;
       for (std::size_t i = 0; i < x.size(); i++)
       {

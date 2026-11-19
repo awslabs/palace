@@ -11,7 +11,7 @@
       { "Index": 2, "R": 50.0, "Attributes": [10], "Direction": "+X", "Excitation": 2 } ] },
   "Solver": { "Order": 1, "Device": "CPU",
     "Driven": { "MinFreq": 1000.0, "MaxFreq": 3000.0, "FreqStep": 1000.0 },
-    "Linear": { "Type": "MUMPS", "KSPType": "GMRES", "Tol": 1e-12, "MaxIts": 100 },
+    "Linear": { "Type": "Default", "KSPType": "GMRES", "Tol": 1e-12, "MaxIts": 100 },
     "Substructuring": { "Region": { "Attributes": [1] }, "Environment": { "Attributes": [2] },
       "ModelFile": "environment_model.bin" } }
 }
