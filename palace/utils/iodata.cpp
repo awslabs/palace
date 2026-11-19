@@ -636,13 +636,12 @@ void IoData::CheckConfiguration()
   }
   if (solver.linear.initial_guess < 0)
   {
-    if ((problem.type == ProblemType::DRIVEN && solver.driven.adaptive_tol <= 0.0) ||
-        problem.type == ProblemType::TRANSIENT ||
+    if (problem.type == ProblemType::DRIVEN || problem.type == ProblemType::TRANSIENT ||
         problem.type == ProblemType::ELECTROSTATIC ||
         problem.type == ProblemType::MAGNETOSTATIC)
     {
-      // Default true only driven simulations without adaptive frequency sweep, transient
-      // simulations, electrostatics, or magnetostatics.
+      // Default true for driven (adaptive frequency sweeps certify convergence from the
+      // PROM solution), transient, electrostatic, and magnetostatic simulations.
       solver.linear.initial_guess = 1;
     }
     else
@@ -871,6 +870,14 @@ void IoData::CheckConfiguration()
 #if !defined(MFEM_USE_CUDSS)
   MFEM_VERIFY(solver.linear.type != LinearSolver::CUDSS,
               "Linear solver cuDSS requested but Palace was not built with cuDSS support!");
+#endif
+#if !defined(PALACE_WITH_PARMETIS)
+  if (solver.linear.sym_factorization == SymbolicFactorization::PARMETIS)
+  {
+    Mpi::Warning("ParMETIS column ordering requested but Palace was not built with "
+                 "ParMETIS support, using METIS instead!\n");
+    solver.linear.sym_factorization = SymbolicFactorization::METIS;
+  }
 #endif
 
   // Configure settings for quadrature rules and partial assembly.
