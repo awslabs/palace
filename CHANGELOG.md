@@ -58,6 +58,19 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     adaptive driven sweeps with `"CGS2"`, which is as stable with fewer reductions. The
     minimal rational interpolation of the error estimate always uses `"CGS2"`. SchemaVer
     4-3-1 [PR 1187](https://github.com/awslabs/palace/pull/1187).
+  - Added a warning for interior `"Conductivity"` boundaries without `"Crack"`, such as the
+    surface of a conductor meshed as a dielectric volume. Since
+    [PR 994](https://github.com/awslabs/palace/pull/994) these are uncracked sheets with the
+    admittance of both faces, which lowers the conductor loss compared to previous versions:
+    set `"Crack": true` to restore the previous results, or `"Crack": false` to silence the
+    warning. [PR 1168](https://github.com/awslabs/palace/pull/1168).
+  - Uniform lumped ports and surface current sources now take their width from a
+    cross-section across the port, and their length as their area over their width (in 2D,
+    the width counts the edges crossing it). This fixes setup aborting for ports with curved
+    ends, folded ports, and cylindrical ports. Ports which are not strips along
+    `"Direction"`, such as L-shaped ports, and 2D ports with `"Direction"` normal to their
+    edge, now abort.
+    [PR 1194](https://github.com/awslabs/palace/pull/1194).
 
 #### New Features
 
@@ -69,6 +82,26 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Performance Improvements
 
+  - The AMS solver, used with a fixed number of iterations, now has a tolerance of zero and
+    flags its zero initial guess. With a hypre patch, it then computes no residual norms,
+    each a fine-level matrix-vector product and a reduction over all processes, and the
+    first relaxation of its auxiliary space solves skips the exchange of their zero initial
+    guess. Results are unchanged. [PR 1238](https://github.com/awslabs/palace/pull/1238).
+  - Added a STRUMPACK patch for
+    [pghysels/STRUMPACK#174](https://github.com/pghysels/STRUMPACK/pull/174), which *Palace*
+    always enables: the STRUMPACK solvers store their fill-reducing permutation once per
+    node, in an MPI shared memory window, instead of on every process, for the sequential
+    column orderings (all but ParMETIS and PT-Scotch) without compression. If the window
+    cannot be allocated, or with `OMPI_MCA_osc=^sm,ucx` for Open MPI, every process keeps
+    its copy. Results are unchanged. [PR 1231](https://github.com/awslabs/palace/pull/1231).
+  - Complex operators on CPUs which pack matching pairs of real and imaginary libCEED terms
+    now also pair the H1 diffusion terms and pack the real terms without a partner, such as
+    those of the lossless materials of partially lossy models, so that each of them acts on
+    the real and imaginary parts in one application. This speeds up every multigrid level
+    above the coarsest, and its H1 auxiliary operator, in driven and eigenmode simulations
+    with losses. Operators without any pair, as in lossless problems, keep their original
+    action, which needs less memory. Results change at most at the level of round-off.
+    [PR 1173](https://github.com/awslabs/palace/pull/1173).
   - With `config["Solver"]["Linear"]["ComplexCoarseSolve"]`, SuperLU_DIST (with or without
     `"SuperLU3DCommunicator"`), STRUMPACK (with or without compression), and MUMPS now
     factor the complex-valued coarse-level matrix in complex arithmetic instead of the
@@ -87,6 +120,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     with BoomerAMG did not converge), `"ComplexCoarseSolve": true` is now disabled with a
     warning. Wave ports keep it for their mode solver, which uses a sparse direct solver.
     SchemaVer 4-4-0 [PR 1193](https://github.com/awslabs/palace/pull/1193).
+  - Each excitation of a uniform driven sweep now starts its first linear solve from zero
+    instead of from the last solution of the previous excitation, which saves a few
+    iterations for every excitation after the first.
+    [PR 1219](https://github.com/awslabs/palace/pull/1219).
   - Added a STRUMPACK patch for
     [pghysels/STRUMPACK#171](https://github.com/pghysels/STRUMPACK/pull/171), which lowers
     the memory of the distributed STRUMPACK solver by 12 bytes per coarse matrix row on
@@ -210,6 +247,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - The Floquet port DtN correction and the wave-port modal correction now use a single MPI
     reduction per operator application instead of four per rank-one term, and only touch
     the port degrees of freedom instead of full-length vectors.
+    [PR 1089](https://github.com/awslabs/palace/pull/1089).
+  - The Floquet port DtN correction and the wave-port modal correction now pack their
+    rank-one terms per port, so that each term only touches the degrees of freedom of its
+    own port, and compute their dot products on GPUs with block reductions instead of one
+    thread per term. [PR 1155](https://github.com/awslabs/palace/pull/1155).
   - GPU builds now share one Umpire device memory pool between MFEM and hypre, created on
     each rank's GPU, and use standard host memory instead of the slow Umpire host allocator.
     hypre no longer reserves its own 4 GiB device pool per rank, which reduces peak GPU memory
@@ -230,6 +272,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Bug Fixes
 
+  - The `Initialization` time now includes MPI initialization and the parsing of the
+    configuration file, which were counted in `Total` but in no row of the report (up to
+    tens of seconds on many nodes). MPI initialization, which includes waiting for all
+    processes to start, has its own row, `MPI Startup`.
+    [PR 1242](https://github.com/awslabs/palace/pull/1242).
   - Fixed the pivoting of distributed BLR fronts in STRUMPACK with a patch from upstream.
     With BLR compression (`"STRUMPACKCompressionType"` `"BLR"`, `"BLR-HODLR"` or
     `"ZFP-BLR-HODLR"`) on two or more MPI processes, the factorization of an indefinite
@@ -425,6 +472,15 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     [PR 1180](https://github.com/awslabs/palace/pull/1180).
   - The Spack package now builds STRUMPACK without SLATE by default, as the superbuild does.
     [PR 1223](https://github.com/awslabs/palace/pull/1223).
+  - Building the unit tests now requires MFEM with exceptions (`PALACE_MFEM_USE_EXCEPTIONS`
+    in the superbuild, `mfem+exceptions` in Spack). The tests of error handling expect
+    `MFEM_VERIFY` and `MFEM_ABORT` to throw, and without exceptions the first of them ended
+    the whole test run. Without them, `make palace-tests` in the superbuild now fails right
+    away instead of after building all the dependencies.
+    [PR 1240](https://github.com/awslabs/palace/pull/1240).
+  - The superbuild builds fmt 12.1.0 instead of 12.2.0, which does not compile with nvcc,
+    and builds Umpire with it instead of letting Umpire install its own copy of fmt over it.
+    [PR 1228](https://github.com/awslabs/palace/pull/1228).
 
 ## [0.19.0] - 2026-11-02
 

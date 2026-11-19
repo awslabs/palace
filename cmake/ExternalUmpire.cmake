@@ -5,12 +5,17 @@
 # Build Umpire.
 #
 
+# Force build order
+set(UMPIRE_DEPENDENCIES fmt)
+
 set(UMPIRE_OPTIONS ${PALACE_SUPERBUILD_DEFAULT_ARGS})
 list(APPEND UMPIRE_OPTIONS
   "-DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}"
   "-DCMAKE_CXX_FLAGS=${CMAKE_CXX_FLAGS}"
   "-DENABLE_C=ON"
   "-DENABLE_FORTRAN=ON"
+  # Use the fmt of the superbuild, otherwise Umpire installs its own copy of fmt over it
+  "-Dfmt_DIR=${CMAKE_INSTALL_PREFIX}"
 )
 
 # Configure GPU support.
@@ -34,6 +39,7 @@ message(STATUS "UMPIRE_OPTIONS: ${UMPIRE_OPTIONS_PRINT}")
 
 include(ExternalProject)
 ExternalProject_Add(umpire
+  DEPENDS           ${UMPIRE_DEPENDENCIES}
   GIT_REPOSITORY    ${EXTERN_UMPIRE_URL}
   GIT_TAG           ${EXTERN_UMPIRE_GIT_TAG}
   SOURCE_DIR        ${CMAKE_BINARY_DIR}/extern/umpire

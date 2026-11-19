@@ -546,7 +546,7 @@ index 7509fd399b20b43b4e1c5fb641129f295b07f3fe..75451b9cf309da8b386f6e83eb8e8bcf
   public :: STRUMPACK_set_distributed_csr_matrix
   public :: STRUMPACK_update_distributed_csr_matrix_values
 diff --git a/src/sparse/EliminationTreeMPIDist.cpp b/src/sparse/EliminationTreeMPIDist.cpp
-index ee30c5b91d87f52fdcc35713a55557256240affc..c7ebfa6f745f1df96eab7c29f58036a8f67f16a5 100644
+index 2d4e9d74ae6d0881a4d52749e06581eaf66ff69f..8d00fbdaf835806b6fee507f6f7168e64717b4d3 100644
 --- a/src/sparse/EliminationTreeMPIDist.cpp
 +++ b/src/sparse/EliminationTreeMPIDist.cpp
 @@ -267,6 +267,20 @@ namespace strumpack {
@@ -850,7 +850,7 @@ index 8b5e165047e6724ce20579d84e461893f4bf58c8..90a06d1b26c679576b009cde0a06aecb
      forward_multifrontal_solve(DenseM_t& bloc, DistM_t* bdist,
                                 DistM_t& bupd, DenseM_t& seqbupd,
 diff --git a/src/sparse/ordering/MatrixReordering.cpp b/src/sparse/ordering/MatrixReordering.cpp
-index 7f706b19de41168e6d0b77133f8629c492bb3d3b..69958e34cd30427f1a6ce5f464450f87f7ce5931 100644
+index 0afb01b551023b89652ac7536f38f599a4538c4f..43d7f57448bf4e1d2c58d3daabd33c901b725584 100644
 --- a/src/sparse/ordering/MatrixReordering.cpp
 +++ b/src/sparse/ordering/MatrixReordering.cpp
 @@ -73,6 +73,31 @@ namespace strumpack {
@@ -949,7 +949,7 @@ index 7f706b19de41168e6d0b77133f8629c492bb3d3b..69958e34cd30427f1a6ce5f464450f87
    MatrixReordering<scalar_t,integer_t>::set_permutation
    (const Opts_t& opts, const CSR_t& A, const int* p, int base) {
 diff --git a/src/sparse/ordering/MatrixReordering.hpp b/src/sparse/ordering/MatrixReordering.hpp
-index c921f6958c135146b53231e00ca5ff9000998b1c..a62ccf35c6c427155b22f634b610a435b5f0b5fc 100644
+index acb9b171c7db32d9da9550ada63e52cb2ae6ee7d..19d8acc6240d41fe8dd176907f33537b5714581e 100644
 --- a/src/sparse/ordering/MatrixReordering.hpp
 +++ b/src/sparse/ordering/MatrixReordering.hpp
 @@ -38,6 +38,7 @@
@@ -1021,11 +1021,11 @@ index c921f6958c135146b53231e00ca5ff9000998b1c..a62ccf35c6c427155b22f634b610a435
      void
      nested_dissection_print(const Opts_t& opts, integer_t nnz,
 diff --git a/src/sparse/ordering/MatrixReorderingMPI.cpp b/src/sparse/ordering/MatrixReorderingMPI.cpp
-index ff3b03a289963dcc699295658293092d1498fd1c..f9d8fa410159a77a8bee45cfdd2247398184881a 100644
+index c67cddc1d2aefadb70287af42a151ed87422efbb..4af6b5fb54e9229d0fd09a80d929138f370bc147 100644
 --- a/src/sparse/ordering/MatrixReorderingMPI.cpp
 +++ b/src/sparse/ordering/MatrixReorderingMPI.cpp
-@@ -73,6 +73,13 @@ namespace strumpack {
-       auto P = comm_->size();
+@@ -214,6 +214,13 @@ namespace strumpack {
+       if (!shared || !rank) alloc_perm();
        auto Aseq = A.gather_graph();
        SeparatorTree<integer_t> global_sep_tree;
 +      // with Schur variables, order the graph of the other variables
@@ -1038,11 +1038,11 @@ index ff3b03a289963dcc699295658293092d1498fd1c..f9d8fa410159a77a8bee45cfdd224739
        if (Aseq) { // only root
          switch (opts.reordering_method()) {
          case ReorderingStrategy::NATURAL: {
-@@ -127,6 +134,7 @@ namespace strumpack {
+@@ -268,6 +275,7 @@ namespace strumpack {
          default: assert(true);
          }
          Aseq.reset();
 +        this->add_schur_root(global_sep_tree, other);
          global_sep_tree.check();
        }
-       comm_->broadcast(perm_);
+       if (shared && !share_perm()) {
