@@ -17,6 +17,13 @@
 #include <StrumpackConfig.hpp>
 #endif
 
+// Tests of error handling expect MFEM_VERIFY and MFEM_ABORT to throw. Without exceptions,
+// MFEM calls MPI_Abort instead, which ends the whole test run at the first such check.
+#if !defined(MFEM_USE_EXCEPTIONS)
+#error "Palace unit tests require MFEM built with MFEM_USE_EXCEPTIONS"
+#error "Configure with -DPALACE_MFEM_USE_EXCEPTIONS=ON, or use mfem+exceptions in Spack"
+#endif
+
 using namespace palace;
 
 // Global test options configurable from command line.
@@ -97,9 +104,10 @@ int main(int argc, char *argv[])
     device_str += ",omp";
 
   // Initialize the device and assign GPUs to MPI ranks.
-  mfem::Device device(
-      device_str.c_str(),
-      palace::utils::GetDeviceId(Mpi::World(), palace::utils::GetDeviceCount()));
+  const int device_id =
+      palace::utils::GetDeviceId(Mpi::World(), palace::utils::GetDeviceCount());
+  palace::utils::ConfigureMemory(device_str, device_id);
+  mfem::Device device(device_str.c_str(), device_id);
 
   // Initialize HYPRE with correct memory location based on device.
   // TODO: Create a palace::Device class that takes care of all of this.

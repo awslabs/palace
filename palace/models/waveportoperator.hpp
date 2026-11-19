@@ -86,6 +86,11 @@ public:
   const mfem::Array<int> &GetDbcTDofList() const { return port_dbc_tdof_list; }
 
 private:
+  // Complex power P = ∫_Γ (E_mode x H_mode⋆)·n of the normalized mode (|P| = 1), recomputed
+  // each Initialize(): unity for a lossless propagating mode, complex for a lossy one. Zero
+  // until the first Initialize().
+  std::complex<double> modal_power = 0.0;
+
   // Raw-gauge reference reactions of the frozen e0 at ω0, cached for
   // ComputeComplexReactions to transport reactions into the ω0 gauge. Recomputed when
   // omega0 changes.
@@ -149,6 +154,10 @@ private:
   // Warn once if the selected mode is evanescent (Re kₙ² < 0).
   bool warned_evanescent = false;
   void WarnEvanescent(std::complex<double> kn, std::complex<double> omega);
+
+  // Warn once if the unconjugated reaction of the normalized mode is small.
+  bool warned_reaction = false;
+  void WarnReaction();
 
   // Communicator for processes which have elements for this port.
   MPI_Comm port_comm = MPI_COMM_NULL;
@@ -249,7 +258,7 @@ public:
   // wave-port BC at the complex eigenvalue. MPI-collective on the FE space communicator
   // (matrix assembly), with the eigenvalue broadcast from the port root. For real ω this
   // returns the same k_n as Initialize(ω) (full complex value, including any cross-section
-  // loss), whereas GetWavePortKn truncates to the real part.
+  // loss).
   std::complex<double> SolveKnComplex(std::complex<double> omega);
 
   // kₙ(ω) with the TRUE unconjugated modal reactions R_full(ω), R_scalar(ω) of the mode
@@ -292,8 +301,8 @@ public:
   std::unique_ptr<mfem::VectorCoefficient>
   GetModeFieldCoefficientImag(double scaling = 1.0) const;
 
-  // Characteristic impedance Z = |V|^2 / (2P) from the port mode voltage and unit power.
-  // Requires voltage coordinates to be configured.
+  // Characteristic impedance Z_PV = |V|² / P* from the port mode voltage and complex power
+  // (unity for a lossless propagating mode). Requires voltage coordinates to be configured.
   std::complex<double> GetCharacteristicImpedance() const;
 
   double GetExcitationPower() const;
@@ -366,13 +375,9 @@ public:
     }
   }
 
-  // Freeze the per-port modal reference state (mode field, k_n0, reactions) at a real
-  // frequency so the complex-ω modal correction (eigenmode nonlinear solve) can extrapolate
-  // k_n(ω) around it. Idempotent per ω; a no-op when there are no wave ports.
-  void InitializeModalReference(double omega) { Initialize(omega); }
-
-  // Prepare all frequency-dependent modal state once before evaluating multiple
-  // excitations at the same frequency.
+  // Compute the modes of all ports at a real frequency, cached: the modal state for the
+  // excitations, postprocessing, and the reference of the complex-ω modal correction
+  // (eigenmode nonlinear solve). A no-op when there are no wave ports.
   void PrepareFrequency(double omega) { Initialize(omega); }
 
   // Configure training before any adaptive HDM or synthesis-reference solve. The capacity
@@ -410,24 +415,23 @@ public:
   // full complex wave-port term i·k_n(ω)·M_p with k_n(ω) from the exact cross-section EVP
   // solved at the genuinely complex frequency ω = -i·λ (WavePortData::SolveKnComplex): the
   // line-attenuation −Im(k_n)·M goes on fbr and the propagating Re(k_n)·M on fbi. Does not
-  // disturb the cached real-ω modal state. For real ω this matches the double overload's
-  // physics with the attenuation additionally carried on fbr.
+  // disturb the cached real-ω modal state. For real ω this matches the double overload.
   void AddExtraSystemBdrCoefficients(std::complex<double> omega,
                                      MaterialPropertyCoefficient &fbr,
                                      MaterialPropertyCoefficient &fbi);
 
-  // Compute and return the (real part of the) modal propagation constant k_n for the
-  // specified port at the given operating frequency. Triggers the per-port cross-section
-  // EVP via WavePortData::Initialize; result is cached per port (per ω). Used by the
-  // reduced-order model to assemble the wave-port contribution online without touching
-  // any HDM-size object.
-  double GetWavePortKn(int port_idx, double omega);
+  // Compute and return the (complex) modal propagation constant k_n for the specified port
+  // at the given operating frequency. Triggers the per-port cross-section EVP via
+  // WavePortData::Initialize; result is cached per port (per ω). Used by the reduced-order
+  // model to assemble the wave-port contribution online without touching any HDM-size
+  // object.
+  std::complex<double> GetWavePortKn(int port_idx, double omega);
 
   // Complex-frequency propagation constant k_n(ω) for the eigenmode nonlinear solve's
   // complex-λ wave-port BC (λ = i·ω). Runs the cross-section modal EVP at a genuinely
   // complex ω and returns the recovered complex k_n without disturbing the cached real-ω
-  // modal field. The complex-ω counterpart of GetWavePortKn (which solves at real ω and
-  // truncates to Re(k_n)). See WavePortData::SolveKnComplex.
+  // modal field. The complex-ω counterpart of GetWavePortKn (which solves at real ω). See
+  // WavePortData::SolveKnComplex.
   std::complex<double> GetWavePortKnComplex(int port_idx, std::complex<double> omega);
 
   // Add contributions to the right-hand side source term vector for an incident field at
@@ -443,11 +447,13 @@ public:
   // A single rank-1 term g·s·sᵀ of the modal correction W = Σ_k g_k s_k s_kᵀ. Exposed so
   // the PROM / adaptive sweep can build the Galerkin projection Wᵣ = Σ_k g_k
   // (Vᵀs_k)(Vᵀs_k)ᵀ directly instead of applying the matrix-free operator. `s` lives on the
-  // parent ND true-dof space with essential dofs eliminated; `g = ±iω/R`.
+  // parent ND true-dof space with essential dofs eliminated; `g = ±iω/R`; `port` is the
+  // index of the wave port the term belongs to.
   struct ModalCorrectionTerm
   {
     std::unique_ptr<ComplexVector> s;
     std::complex<double> g;
+    int port;
   };
 
   // Assemble the rank-1 terms of the modal correction W = Σ_ports (W_full − W_scalar) over

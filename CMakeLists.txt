@@ -31,6 +31,7 @@ set(PALACE_WITH_SUPERLU ON CACHE BOOL "Build with SuperLU_DIST sparse direct sol
 set(PALACE_WITH_STRUMPACK OFF CACHE BOOL "Build with STRUMPACK sparse direct solver")
 set(PALACE_WITH_MUMPS OFF CACHE BOOL "Build with MUMPS sparse direct solver")
 set(PALACE_WITH_CUDSS OFF CACHE BOOL "Build with cuDSS sparse direct solver")
+set(PALACE_WITH_PARMETIS OFF CACHE BOOL "Build with ParMETIS column ordering for sparse direct solvers")
 set(PALACE_WITH_SLEPC ON CACHE BOOL "Build with SLEPc eigenvalue solver")
 set(PALACE_WITH_ARPACK OFF CACHE BOOL "Build with ARPACK eigenvalue solver")
 set(PALACE_WITH_LIBXSMM ON CACHE BOOL "Build with LIBXSMM backend for libCEED")
@@ -229,6 +230,10 @@ if(NOT "${CMAKE_INSTALL_RPATH_USE_LINK_PATH}" STREQUAL "")
     "-DCMAKE_INSTALL_RPATH_USE_LINK_PATH=${CMAKE_INSTALL_RPATH_USE_LINK_PATH}"
   )
 endif()
+
+# Sub-make for the external project steps: $(MAKE) passes the parent make's jobserver, which
+# GNU make 4.3 and later otherwise drop (building at -j1)
+set(PALACE_MAKE_COMMAND "$(MAKE)")
 
 # Add other third-party dependency builds
 include(ExternalGitTags)

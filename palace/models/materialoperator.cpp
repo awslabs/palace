@@ -178,6 +178,7 @@ void MaterialOperator::SetUpMaterialProperties(
     mat_muinv_scalar.SetSize(1, 1, nmats);
     mat_epsilon_scalar.SetSize(1, 1, nmats);
     mat_epsilon_imag_scalar.SetSize(1, 1, nmats);
+    mat_epsilon_abs_scalar.SetSize(1, 1, nmats);
     mat_sigma_scalar.SetSize(1, 1, nmats);
     mat_invLondon_scalar.SetSize(1, 1, nmats);
   }
@@ -232,12 +233,11 @@ void MaterialOperator::SetUpMaterialProperties(
       MFEM_VERIFY(internal::mat::IsValid(data.mu_r),
                   "Material has no valid permeability defined!");
       if (!internal::mat::IsIdentity(data.epsilon_r) ||
-          internal::mat::IsValid(data.tandelta) || internal::mat::IsValid(data.sigma) ||
-          std::abs(data.lambda_L) > 0.0)
+          internal::mat::IsValid(data.tandelta) || internal::mat::IsValid(data.sigma))
       {
         Mpi::Warning(
             "Magnetostatic problem type does not account for material permittivity,\n"
-            "loss tangent, electrical conductivity, or London depth!\n");
+            "loss tangent, or electrical conductivity!\n");
       }
     }
     else
@@ -305,6 +305,16 @@ void MaterialOperator::SetUpMaterialProperties(
       mfem::DenseMatrix epstd_3d(3, 3);
       Mult(mat_eps_3d, mat_td_3d, epstd_3d);
       mat_epsilon_imag_scalar(count)(0, 0) = -ProjectNormal(epstd_3d);
+
+      // ε * √(I + tan(δ) * tan(δ)ᵀ), as for the in-plane components below.
+      mfem::DenseMatrix tdtdt_3d(3, 3), epsabs_3d(3, 3);
+      MultAAt(mat_td_3d, tdtdt_3d);
+      for (int d = 0; d < 3; d++)
+      {
+        tdtdt_3d(d, d) += 1.0;
+      }
+      Mult(mat_eps_3d, linalg::MatrixSqrt(tdtdt_3d), epsabs_3d);
+      mat_epsilon_abs_scalar(count)(0, 0) = ProjectNormal(epsabs_3d);
 
       mfem::DenseMatrix mat_sigma_3d = internal::mat::ToDenseMatrix(data.sigma);
       mat_sigma_scalar(count)(0, 0) = ProjectNormal(mat_sigma_3d);

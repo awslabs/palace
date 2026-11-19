@@ -202,6 +202,11 @@ protected:
   // Shell matrices for the generalized eigenvalue problem.
   Mat A0, A1;
 
+  // Linear solver tolerance of the first Krylov cycle and the one restored after it, and
+  // whether the monitor restoring it is installed and has yet to act in the current solve.
+  double first_cycle_tol, lin_tol;
+  bool first_cycle_monitor, first_cycle;
+
   void Customize() override;
 
 public:
@@ -228,7 +233,15 @@ public:
 
   void SetInitialSpace(const ComplexVector &v) override;
 
+  void SetFirstCycleLinearSolverTol(double tol) override { first_cycle_tol = tol; }
+
+  // Restore the linear solver tolerance after the first Krylov cycle (called by the
+  // eigensolver monitor after each restart).
+  void EndFirstCycle();
+
   int Solve() override;
+
+  int GetNumIterations() const override;
 
   std::complex<double> GetEigenvalue(int i) const override;
 
@@ -316,6 +329,9 @@ public:
   void SetBMat(const Operator &B) override;
 
   void SetInitialSpace(const ComplexVector &v) override;
+
+  void SetInitialSpaceBlocks(const ComplexVector &v,
+                             const ComplexVector &v_lambda) override;
 
   void GetEigenvector(int i, ComplexVector &x) const override;
 };
@@ -510,6 +526,10 @@ public:
 private:
   // Operator norms for scaling.
   mutable PetscReal normK, normC, normM;
+
+  // Shared by the SetOperators overloads, with C = nullptr when there is no damping.
+  void SetOperatorsImpl(const ComplexOperator &K, const ComplexOperator *C,
+                        const ComplexOperator &M, ScaleType type);
 
 protected:
   PetscReal GetResidualNorm(PetscScalar l, const ComplexVector &x,

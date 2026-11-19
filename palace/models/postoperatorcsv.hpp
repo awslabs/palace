@@ -141,8 +141,10 @@ struct Measurement
   // Stored nondimensional; dimensionalized in Measurement::Dimensionalize.
   struct ModeImpedanceResult
   {
-    double Z0 = 0.0;    // Nondimensional characteristic impedance [P-V]
-    double Z_VI = 0.0;  // Nondimensional V/I impedance
+    // Nondimensional complex characteristic impedances: power-voltage Z_PV = |V|² / 2P*
+    // and voltage-current Z_VI = V / I (oriented with the mode power).
+    std::complex<double> Z0 = 0.0;
+    std::complex<double> Z_VI = 0.0;
     bool has_impedance = false;
     bool has_vi_impedance = false;
   };
@@ -350,6 +352,13 @@ protected:
   std::optional<TableWithCSVFile> port_V;
   std::optional<TableWithCSVFile> port_I;
 
+  // Whether the incident lumped-port voltages and currents are written as real and
+  // imaginary parts (columns Re{V_inc[...]} and Im{V_inc[...]}, and likewise for I_inc)
+  // instead of as single real values. Decided in InitializePortVI, once for all
+  // excitations: true when any excited lumped port has a weight that is not real
+  // (HasComplexExcitationWeight, "ExcitationPhase" not a multiple of 180 degrees).
+  bool complex_incident_port_VI = false;
+
   void InitializePortVI(const SpaceOperator &fem_op)
     requires(solver_t == ProblemType::EIGENMODE || solver_t == ProblemType::DRIVEN ||
              solver_t == ProblemType::TRANSIENT);
@@ -449,27 +458,6 @@ public:
   {
     m_ex_idx = ex_idx;
     PrintAllCSVData(post_op, nondim_measurement_cache, idx_value_dimensionful, step);
-  }
-
-  // Adaptive reduced-order path preserving the default domain-energy and S tables.
-  void PrintReducedCSVData(const PostOperator<solver_t> &post_op,
-                           const Measurement &nondim_measurement_cache,
-                           double idx_value_dimensionful, int step, int ex_idx)
-    requires(solver_t == ProblemType::DRIVEN)
-  {
-    if (!Mpi::Root(post_op.fem_op->GetComm()))
-    {
-      return;
-    }
-    row_idx_v = idx_value_dimensionful;
-    row_i = step;
-    m_ex_idx = ex_idx;
-    measurement_cache =
-        Measurement::Dimensionalize(post_op.units, nondim_measurement_cache);
-    PrintDomainE();
-    PrintPortVI(post_op.fem_op->GetLumpedPortOp(), post_op.units);
-    PrintPortS();
-    MaybeFlushDeferredTables();
   }
 
   // Special case of global indicator — init and print all at once.
