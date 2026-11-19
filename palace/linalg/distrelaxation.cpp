@@ -97,24 +97,43 @@ inline void RealMultTranspose(const Operator &op, const ComplexVector &x, Comple
 template <OperatorType OperType>
 void DistRelaxationSmoother<OperType>::Mult2(const VecType &x, VecType &y, VecType &r) const
 {
+  MultExceptLastAuxiliary2(x, y, r);
+  MultAuxiliary2(x, y, r);
+}
+
+template <OperatorType OperType>
+void DistRelaxationSmoother<OperType>::MultExceptLastAuxiliary2(const VecType &x,
+                                                                VecType &y,
+                                                                VecType &r) const
+{
   // Apply smoother.
   for (int it = 0; it < pc_it; it++)
   {
+    if (it > 0)
+    {
+      MultAuxiliary2(x, y, r);
+    }
+
     // y = y + B (x - A y)
     B->SetInitialGuess(this->initial_guess || it > 0);
     B->Mult2(x, y, r);
-
-    // y = y + G B_G Gᵀ (x - A y)
-    A->Mult(y, r);
-    linalg::AXPBY(1.0, x, -1.0, r);
-    RealMultTranspose(*G, r, x_G);
-    if (dbc_tdof_list_G)
-    {
-      linalg::SetSubVector(x_G, *dbc_tdof_list_G, 0.0);
-    }
-    B_G->Mult2(x_G, y_G, r_G);
-    RealAddMult(*G, y_G, y);
   }
+}
+
+template <OperatorType OperType>
+void DistRelaxationSmoother<OperType>::MultAuxiliary2(const VecType &x, VecType &y,
+                                                      VecType &r) const
+{
+  // y = y + G B_G Gᵀ (x - A y)
+  A->Mult(y, r);
+  linalg::AXPBY(1.0, x, -1.0, r);
+  RealMultTranspose(*G, r, x_G);
+  if (dbc_tdof_list_G)
+  {
+    linalg::SetSubVector(x_G, *dbc_tdof_list_G, 0.0);
+  }
+  B_G->Mult2(x_G, y_G, r_G);
+  RealAddMult(*G, y_G, y);
 }
 
 template <OperatorType OperType>
@@ -147,29 +166,6 @@ void DistRelaxationSmoother<OperType>::MultTranspose2(const VecType &x, VecType 
     // y = y + Bᵀ (x - A y)
     B->MultTranspose2(x, y, r);
   }
-}
-
-template <OperatorType OperType>
-void DistRelaxationSmoother<OperType>::MultPrimary2(const VecType &x, VecType &y,
-                                                    VecType &r) const
-{
-  B->SetInitialGuess(this->initial_guess);
-  B->Mult2(x, y, r);
-}
-
-template <OperatorType OperType>
-void DistRelaxationSmoother<OperType>::MultAux2(const VecType &x, VecType &y,
-                                                VecType &r) const
-{
-  A->Mult(y, r);
-  linalg::AXPBY(1.0, x, -1.0, r);
-  RealMultTranspose(*G, r, x_G);
-  if (dbc_tdof_list_G)
-  {
-    linalg::SetSubVector(x_G, *dbc_tdof_list_G, 0.0);
-  }
-  B_G->Mult2(x_G, y_G, r_G);
-  RealAddMult(*G, y_G, y);
 }
 
 template class DistRelaxationSmoother<Operator>;

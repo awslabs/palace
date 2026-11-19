@@ -180,15 +180,16 @@ void GeometricMultigridSolver<OperType>::VCycle(int l, bool initial_guess) const
     B[l]->Mult(X[l], Y[l]);
     return;
   }
-  // EXPERIMENT (PR 1233 review): one-sided V-cycles with distributive relaxation smoothing
-  // pre-smooth with the primary space smoother only, and apply the auxiliary space
-  // correction after the coarse-grid correction.
+  // One-sided V-cycles with distributive relaxation apply the auxiliary space correction of
+  // the last smoother iteration after the coarse-grid correction, where the post-smoother
+  // of symmetric V-cycles starts: before it, GMRES stops converging on Floquet problems at
+  // order 3 and above.
   const auto *dist =
       one_sided ? dynamic_cast<const DistRelaxationSmoother<OperType> *>(B[l].get())
                 : nullptr;
   if (dist)
   {
-    dist->MultPrimary2(X[l], Y[l], R[l]);
+    dist->MultExceptLastAuxiliary2(X[l], Y[l], R[l]);
   }
   else
   {
@@ -214,7 +215,7 @@ void GeometricMultigridSolver<OperType>::VCycle(int l, bool initial_guess) const
   {
     if (dist)
     {
-      dist->MultAux2(X[l], Y[l], R[l]);
+      dist->MultAuxiliary2(X[l], Y[l], R[l]);
     }
     return;
   }

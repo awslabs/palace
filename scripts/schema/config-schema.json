@@ -3058,7 +3058,7 @@
         },
         "MGOneSided": {
           "type": "boolean",
-          "description": "Use one-sided V-cycles for geometric multigrid, which pre-smooth but do not post-smooth. They make a nonsymmetric preconditioner, so they require the GMRES or FGMRES Krylov solver. If omitted, Palace enables this for eigenmode simulations with GMRES or FGMRES, and disables it otherwise: one-sided V-cycles can slow down the strongly indefinite linear systems of some driven simulations and boundary mode solves.",
+          "description": "Use one-sided V-cycles for geometric multigrid, which pre-smooth but do not post-smooth, except for the auxiliary space correction of distributive relaxation, which follows the coarse-grid correction. They make a nonsymmetric preconditioner, so they require the GMRES or FGMRES Krylov solver. If omitted, Palace enables this for eigenmode simulations with GMRES or FGMRES, and disables it otherwise: one-sided V-cycles can slow down the strongly indefinite linear systems of some driven simulations and boundary mode solves.",
           "x-palace-advanced": true
         },
         "PCMatReal": {
