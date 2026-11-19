@@ -8,6 +8,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
 #include "linalg/strumpack.hpp"
+#include "test-helpers.hpp"
 #include "utils/communication.hpp"
 
 #if defined(MFEM_USE_STRUMPACK)
@@ -155,9 +156,17 @@ TEST_CASE("StrumpackSolver unsymmetric sparsity pattern", "[strumpack][Serial][P
   A.Mult(x_ex, b);
 
   // With the permutation stored on every process and once per node, which has no effect
-  // when STRUMPACK is built without that option.
+  // when STRUMPACK is built without that option. The tests run on one node, where the
+  // permutation is not sent to other nodes: with STRUMPACK_SHARED_PERM_GROUP=1, every
+  // process acts as a node, so that on several processes the root broadcasts the
+  // permutation to the other node leaders as on several nodes. STRUMPACK reads the variable
+  // on every process at each reordering, so it is set before the solver is constructed and
+  // restored after the solver is destroyed.
   const bool shared_permutation = GENERATE(false, true);
-  CAPTURE(shared_permutation);
+  const bool process_as_node = GENERATE(false, true);
+  CAPTURE(shared_permutation, process_as_node);
+  ScopedEnvironmentVariable group("STRUMPACK_SHARED_PERM_GROUP",
+                                  process_as_node ? "1" : nullptr);
   StrumpackSolver strumpack(comm, SymbolicFactorization::DEFAULT, SparseCompression::NONE,
                             0.0, 0, 0, false, shared_permutation, 0);
   strumpack.SetOperator(A);
