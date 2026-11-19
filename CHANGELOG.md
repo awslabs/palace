@@ -489,7 +489,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     overwriting `SDKROOT` with a hard-coded Xcode path, which broke the LIBXSMM build when
     `SDKROOT` was set in the environment, as CMake 4 needs with Homebrew's compilers
     ([libxsmm/libxsmm#1116](https://github.com/libxsmm/libxsmm/pull/1116)). The LIBXSMM of a
-    Spack build is not patched.
+    Spack build is not patched. [PR 1249](https://github.com/awslabs/palace/pull/1249).
 
 ## [0.19.0] - 2026-11-02
 
