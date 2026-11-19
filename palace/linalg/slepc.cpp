@@ -43,8 +43,8 @@ namespace
 // SLEPc solves the small dense problems of its solvers (DS) on every process, and needs
 // all of them to get the same result. LAPACK does not guarantee bitwise identical results
 // on different processes (MKL does not on some processors), and then the processes can
-// disagree on convergence and deadlock. Solve the dense problems on the first process and
-// broadcast the results instead.
+// disagree on convergence and deadlock. Make all processes use the solution of the first
+// one instead, which SLEPc's solvers broadcast in DSSynchronize.
 inline PetscErrorCode SynchronizeDS(DS ds)
 {
   return DSSetParallel(ds, DS_PARALLEL_SYNCHRONIZED);
