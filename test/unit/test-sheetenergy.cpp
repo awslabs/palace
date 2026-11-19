@@ -864,12 +864,11 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 #endif
 }
 
-TEST_CASE_METHOD(
-    test::SurfaceResponseFiles,
-    "Impedance-metal rule Apply serves a purely inductive sheet by the "
-    "perfect-conductor models in every crack form",
-    "[surfaceresponsefilmrule][impedancemetalrule][sheetenergy][maxwell][Serial]["
-    "Parallel]")
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "Impedance-metal rule Apply serves a purely inductive sheet by the "
+                 "perfect-conductor models in every crack form",
+                 "[surfaceresponsefilmrule][impedancemetalrule][sheetenergy][maxwell]"
+                 "[Serial][Parallel]")
 {
 #if !defined(MFEM_USE_GSLIB)
   SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
