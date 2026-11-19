@@ -460,6 +460,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     (for example with "The inner product is not well defined") when the LAPACK library did
     not return identical results on all processes, as MKL on some Intel processors. SLEPc
     now solves its small dense problems on the first process and broadcasts the results.
+    [PR 1251](https://github.com/awslabs/palace/pull/1251).
 
 #### Documentation
 
