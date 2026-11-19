@@ -384,6 +384,75 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 #endif
 }
 
+// Review r2206 MINOR-4 (decision 2215 (B)): the Legacy patch construction has no film seam,
+// so an "Apply" preflight there writes the manifest of "Off" (its requirements carry the
+// device law, the law of the run).
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "Impedance-metal rule Apply preflight on the Legacy patch construction "
+                 "writes the manifest of Off",
+                 "[surfaceresponsefilmrule][impedancemetalrule][maxwell][3d][Serial]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  Mesh island_mesh(MakeIslandMesh());
+  auto StripWallTime = [](auto &self, json &node) -> void
+  {
+    if (node.is_object())
+    {
+      node.erase("WallTime");
+    }
+    if (node.is_object() || node.is_array())
+    {
+      for (auto &child : node)
+      {
+        self(self, child);
+      }
+    }
+  };
+  auto Preflight = [&](const std::string &rule)
+  {
+    json config = ConvexMaxwellIslandConfig();  // PatchConstruction "Legacy"
+    config["Boundaries"]["Ground"]["Attributes"] = {1, 2, 3, 4, 5, 6};
+    config["Boundaries"]["Impedance"] =
+        json::array({{{"Attributes", {9}}, {"Ls", 4.5e-14}}});
+    auto &correction = config["Solver"]["SurfaceResponseCorrection"];
+    REQUIRE(correction.at("PatchConstruction") == "Legacy");
+    correction["UnmatchedPolicy"] = "Warn";
+    correction["ImpedanceMetalRule"] = rule;
+    IoData iodata(config, false);
+    iodata.boundaries.cracked_attributes.insert(9);
+    const auto dir = temp.temp_dir / ("impedance-legacy-preflight-" + rule);
+    fs::create_directories(dir);
+    const auto manifest_path = dir / "surface-response-requirements.json";
+    const std::string log = CaptureStdout(
+        dir / "preflight.log", [&]
+        { WriteSurfaceResponseRequirements(iodata, island_mesh, manifest_path.string()); });
+    std::ifstream input(manifest_path);
+    REQUIRE(input);
+    json manifest = json::parse(input);
+    StripWallTime(StripWallTime, manifest);
+    return std::pair<json, std::string>(std::move(manifest), log);
+  };
+  const auto [off, off_log] = Preflight("Off");
+  const auto [apply, apply_log] = Preflight("Apply");
+  CHECK(apply == off);
+  CHECK_FALSE(apply.contains("ImpedanceMetalRule"));
+  CHECK_THAT(apply_log,
+             ContainsSubstring("Impedance-metal rule (APPLY): no seam on this path "
+                               "(PatchConstruction Legacy): as \"Off\""));
+  CHECK_THAT(off_log, !ContainsSubstring("Impedance-metal rule"));
+  // The requirements carry the device law (the Impedance sheet), as under "Off".
+  bool impedance_requirement = false;
+  for (const auto &requirement : apply.at("Requirements"))
+  {
+    impedance_requirement = impedance_requirement ||
+                            requirement.at("BoundaryCondition").at("Type") == "Impedance";
+  }
+  CHECK(impedance_requirement);
+#endif
+}
+
 // t1 (STAGEA-NOTE s1): the configuration keys.
 TEST_CASE_METHOD(test::SurfaceResponseFiles,
                  "Impedance-metal rule configuration keys (ImpedanceMetalRule, "

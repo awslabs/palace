@@ -18130,6 +18130,8 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
             }
             slot++;
           }
+          // The device law is the law of the run here: the Legacy path has no film seam
+          // (Apply runs as Off on it and the Record candidate is refused on it).
           const auto boundary_condition =
               maxwell && !source.conditions.empty()
                   ? GetBoundaryConditionLaw(iodata.boundaries, source.conditions.front())
