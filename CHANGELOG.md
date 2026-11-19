@@ -36,6 +36,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Interface Changes
 
+  - `config["Solver"]["Linear"]["GSOrthogonalization"]` accepts `"Default"`, its new
+    default: GMRES and FGMRES use `"CGS2"` on GPUs (`config["Solver"]["Device"]` `"GPU"`)
+    and `"MGS"` otherwise, as before, and the SLEPc eigenvalue solvers keep `"MGS"`. The
+    GMRES and FGMRES of the wave port and boundary mode solvers, which always used
+    `"MGS"`, now follow it too. Set `"MGS"` to keep the previous behavior on GPUs.
+    SchemaVer 5-1-0 [PR 1246](https://github.com/awslabs/palace/pull/1246).
   - With adaptive mesh refinement on nonconforming meshes, the SLEPc Krylov-Schur eigenvalue
     solves of later adaptation iterations can start from the eigenvectors of the previous
     one, transferred to the refined mesh, instead of the start vector of
@@ -108,6 +114,25 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Performance Improvements
 
+  - With `config["Solver"]["Linear"]["GSOrthogonalization"]` `"CGS2"`, GMRES and FGMRES now
+    reorthogonalize each basis vector one iteration late, with the first pass of the next
+    one (classical Gram-Schmidt with delayed reorthogonalization): an iteration takes one
+    global reduction (and one host-device synchronization on GPUs) and one fused update pass
+    over the basis, instead of three reductions and two Gram-Schmidt passes. Iteration
+    counts and residual norms are unchanged up to round-off.
+    [PR 1246](https://github.com/awslabs/palace/pull/1246).
+  - Classical Gram-Schmidt with reorthogonalization, used for the reduced-order models of
+    adaptive driven sweeps, now takes the norm from the inner products of its second pass,
+    unless that pass removes most of the vector: one global reduction fewer per vector. On
+    GPUs, the inner products and updates of classical Gram-Schmidt pass the vectors and
+    coefficients as kernel arguments, instead of copies to the device for which the host
+    waited, and the inner products read each basis vector once instead of once per product.
+    [PR 1246](https://github.com/awslabs/palace/pull/1246).
+  - On GPUs, the inner product of two vectors and the sum of the entries of a vector take
+    one reduction kernel and one host-device synchronization instead of one hypre reduction
+    per real-valued product or sum (four for a complex inner product), which speeds up the
+    `"MGS"` orthogonalization of GMRES and FGMRES.
+    [PR 1246](https://github.com/awslabs/palace/pull/1246).
   - The AMS solver, used with a fixed number of iterations, now has a tolerance of zero and
     flags its zero initial guess. With a hypre patch, it then computes no residual norms,
     each a fine-level matrix-vector product and a reduction over all processes, and the

@@ -114,28 +114,36 @@ TEST_CASE("Vector Sum - Complex", "[vector][Serial][Parallel][GPU]")
   CHECK_THAT(sum.imag(), WithinRel(expected_imag));
 }
 
-// On the host, inner products are computed with several partial sums (by blocks with
-// several OpenMP threads), and the complex ones in a single pass; compare with plain sums.
-TEST_CASE("Vector Dot", "[vector][Serial][Parallel]")
+// Inner products are computed with several partial sums (by blocks with several OpenMP
+// threads on the host, in one reduction on the device), and the complex ones in a single
+// pass; compare with sums in extended precision. The largest size needs several entries per
+// thread of the device reduction.
+TEST_CASE("Vector Dot", "[vector][Serial][Parallel][GPU]")
 {
-  const int n = GENERATE(1, 7, 8, 9, 1003);
+  const int n = GENERATE(1, 7, 8, 9, 1003, (1 << 20) + 1);
   MPI_Comm comm = Mpi::World();
   ComplexVector x(n), y(n);
-  double ref[4] = {0.0, 0.0, 0.0, 0.0};  // Re(yᴴ x), Im(yᴴ x), yᵣᵀ xᵣ, xᴴ x
+  x.UseDevice(true);
+  y.UseDevice(true);
+  long double ref[4] = {};  // Re(yᴴ x), Im(yᴴ x), yᵣᵀ xᵣ, xᴴ x
+  auto *XR = x.Real().HostWrite(), *XI = x.Imag().HostWrite();
+  auto *YR = y.Real().HostWrite(), *YI = y.Imag().HostWrite();
   for (int i = 0; i < n; i++)
   {
     const int j = i + n * Mpi::Rank(comm);
-    x.Real()[i] = std::sin(0.3 * j);
-    x.Imag()[i] = std::cos(0.7 * j);
-    y.Real()[i] = std::cos(1.1 * j + 0.2);
-    y.Imag()[i] = std::sin(0.5 * j - 0.4);
-    ref[0] += y.Real()[i] * x.Real()[i] + y.Imag()[i] * x.Imag()[i];
-    ref[1] += y.Real()[i] * x.Imag()[i] - y.Imag()[i] * x.Real()[i];
-    ref[2] += y.Real()[i] * x.Real()[i];
-    ref[3] += x.Real()[i] * x.Real()[i] + x.Imag()[i] * x.Imag()[i];
+    XR[i] = std::sin(0.3 * j);
+    XI[i] = std::cos(0.7 * j);
+    YR[i] = std::cos(1.1 * j + 0.2);
+    YI[i] = std::sin(0.5 * j - 0.4);
+    const long double xr = XR[i], xi = XI[i], yr = YR[i], yi = YI[i];
+    ref[0] += yr * xr + yi * xi;
+    ref[1] += yr * xi - yi * xr;
+    ref[2] += yr * xr;
+    ref[3] += xr * xr + xi * xi;
   }
   Mpi::GlobalSum(4, ref, comm);
-  const double tol = 1.0e-14 * n * Mpi::Size(comm);
+  // The sums are about n per process; MFEM's debug device sums serially.
+  const double tol = 1.0e-12 * n * Mpi::Size(comm);
   const auto dot = linalg::Dot(comm, x, y);
   CHECK_THAT(dot.real(), WithinAbs(ref[0], tol));
   CHECK_THAT(dot.imag(), WithinAbs(ref[1], tol));
@@ -218,16 +226,75 @@ TEST_CASE("Vector LinearCombination", "[vector][Serial][Parallel][GPU]")
   CHECK(mismatch == 0);
 }
 
+TEST_CASE("Vector LinearCombination with several outputs",
+          "[vector][Serial][Parallel][GPU]")
+{
+  // Y[k] = s[k] (Y[k] + Σⱼ C[k + K j] X[j]), where the last X is also the last output (with
+  // its value before the update), and with enough terms for several device launches.
+  const int N = GENERATE(1, 1025, 3001);
+  const int n = GENERATE(1, 6, 300);
+  const int K = GENERATE(1, 2, 4);
+  const bool add = GENERATE(false, true);
+  CAPTURE(N, n, K, add);
+  const int rank = Mpi::Rank(Mpi::World());
+  std::vector<Vector> X(n, Vector(N)), Y(K, Vector(N));
+  for (int j = 0; j < n + K; j++)
+  {
+    auto &v = (j < n) ? X[j] : Y[j - n];
+    v.UseDevice(true);
+    auto *V = v.HostWrite();
+    for (int i = 0; i < N; i++)
+    {
+      V[i] = std::sin(0.3 * i + 1.7 * j + 0.1 * rank);
+    }
+  }
+  X[n - 1].MakeRef(Y[K - 1], 0, N);
+  std::vector<double> C(K * n), s(K);
+  for (int q = 0; q < K * n; q++)
+  {
+    C[q] = (q % 7 == 3) ? 0.0 : std::cos(0.9 * q + 0.2);
+  }
+  std::vector<Vector *> Yp(K);
+  std::vector<std::vector<double>> ref(K, std::vector<double>(N));
+  for (int k = 0; k < K; k++)
+  {
+    s[k] = 0.5 + k;
+    Yp[k] = &Y[k];
+    for (int i = 0; i < N; i++)
+    {
+      double sum = add ? Y[k].HostRead()[i] : 0.0;
+      for (int j = 0; j < n; j++)
+      {
+        sum += C[k + K * j] * X[j].HostRead()[i];
+      }
+      ref[k][i] = s[k] * sum;
+    }
+  }
+  linalg::LinearCombination(X, C.data(), Yp, s.data(), add);
+  double err = 0.0, scale = 1.0;
+  for (int k = 0; k < K; k++)
+  {
+    const auto *Yk = Y[k].HostRead();
+    for (int i = 0; i < N; i++)
+    {
+      err = std::max(err, std::abs(Yk[i] - ref[k][i]));
+      scale = std::max(scale, std::abs(ref[k][i]));
+    }
+  }
+  CHECK(err <= 1.0e-13 * scale);
+}
+
 TEST_CASE("Vector LocalDots", "[vector][Serial][Parallel][GPU]")
 {
   // N = 0 stands for a process without entries; with more than one process, the first one
-  // has none for every N. With m k = 576 pairs, the partial sums on the device are capped
-  // at 2^22 doubles, which limits the slices to fewer than 8192 for N >= 10000.
+  // has none for every N. With up to m k = 4097 pairs, the partial sums on the device are
+  // capped at 2^22 doubles, which limits the slices to fewer than 8192 for large N, and
+  // m > 240 or k > 16 take several device launches.
   const int rank = Mpi::Rank(Mpi::World());
   const int N0 = GENERATE(0, 1, 7, 64, 513, 1025, 3001, 10000, 70001);
   const int N = (rank == 0 && Mpi::Size(Mpi::World()) > 1) ? 0 : N0;
-  const int m = GENERATE(0, 1, 3, 8, 64);
-  const int k = GENERATE(1, 2, 7, 9);
+  const int m = GENERATE(0, 1, 3, 8, 64, 241);
+  const int k = GENERATE(1, 2, 7, 9, 17);
   auto fill = [&](Vector &x, double a)
   {
     x.UseDevice(true);
@@ -297,6 +364,46 @@ TEST_CASE("ComplexVector Set", "[vector][Serial][Parallel][GPU]")
 
   CHECK_THAT(cv.Imag()[0], WithinRel(10.0 * rank) || WithinAbs(0.0, 1e-14));
   CHECK_THAT(cv.Imag()[1], WithinRel(20.0 * rank) || WithinAbs(0.0, 1e-14));
+}
+
+TEST_CASE("ComplexVector LocalDot", "[vector][Serial][GPU]")
+{
+  // The fused complex dot must agree with the four real dots it replaces.
+  const auto N = GENERATE(0, 1, 7, 1000);
+  const bool on_dev = mfem::Device::Allows(mfem::Backend::DEVICE_MASK);
+  ComplexVector x(N), y(N);
+  x.UseDevice(on_dev);
+  y.UseDevice(on_dev);
+  {
+    auto *XR = x.Real().HostWrite(), *XI = x.Imag().HostWrite();
+    auto *YR = y.Real().HostWrite(), *YI = y.Imag().HostWrite();
+    for (int i = 0; i < N; i++)
+    {
+      XR[i] = std::sin(0.3 * i + 0.1);
+      XI[i] = std::cos(1.7 * i - 0.4);
+      YR[i] = std::sin(2.1 * i + 0.5) * (1.0 + i % 3);
+      YI[i] = std::cos(0.9 * i + 1.2) / (1.0 + i % 4);
+    }
+  }
+
+  const auto xy = linalg::LocalDot(x, y);
+  const double ref_r =
+      linalg::LocalDot(x.Real(), y.Real()) + linalg::LocalDot(x.Imag(), y.Imag());
+  const double ref_i =
+      linalg::LocalDot(x.Imag(), y.Real()) - linalg::LocalDot(x.Real(), y.Imag());
+  CHECK_THAT(xy.real(), WithinRel(ref_r, 1e-12) || WithinAbs(ref_r, 1e-12));
+  CHECK_THAT(xy.imag(), WithinRel(ref_i, 1e-12) || WithinAbs(ref_i, 1e-12));
+
+  // Conjugate symmetry, yᴴx = conj(xᴴy).
+  const auto yx = linalg::LocalDot(y, x);
+  CHECK_THAT(yx.real(), WithinRel(xy.real(), 1e-12) || WithinAbs(xy.real(), 1e-12));
+  CHECK_THAT(yx.imag(), WithinRel(-xy.imag(), 1e-12) || WithinAbs(-xy.imag(), 1e-12));
+
+  const auto xx = linalg::LocalDot(x, x);
+  const double ref_xx =
+      linalg::LocalDot(x.Real(), x.Real()) + linalg::LocalDot(x.Imag(), x.Imag());
+  CHECK_THAT(xx.real(), WithinRel(ref_xx, 1e-12) || WithinAbs(ref_xx, 1e-12));
+  CHECK(xx.imag() == 0.0);
 }
 
 TEST_CASE("StaticVectorConstruction", "[Vector][Serial]")

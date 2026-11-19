@@ -4,6 +4,8 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <memory>
+#include <numbers>
 #include <string>
 #include <type_traits>
 #include <utility>
@@ -411,10 +413,11 @@ public:
 };
 
 // Solve without restarts to a relative tolerance of 10⁻¹⁰ from a zero initial guess and
-// check the residual and the orthonormality of the Krylov basis of all iterations (left
-// unchanged by the solve, without right preconditioning in GMRES). The basis is orthonormal
-// to round-off with CGS2, while MGS and CGS lose orthogonality as the residual decreases,
-// to about 10⁻⁵ here.
+// check the residual and the orthonormality of the Krylov basis V[0], ..., V[k - 1] of the
+// solution after k iterations (left unchanged by the solve, without right preconditioning
+// in GMRES; with CGS2, V[k] is not reorthogonalized yet). The basis is orthonormal to
+// round-off with CGS2, while MGS and CGS lose orthogonality as the residual decreases, to
+// about 10⁻⁵ here.
 template <typename KspType, typename OperType, typename VecType>
 void CheckGmresSolve(const std::type_identity_t<OperType> &A, const Solver<OperType> *B,
                      const VecType &b, Orthogonalization orthog)
@@ -439,7 +442,7 @@ void CheckGmresSolve(const std::type_identity_t<OperType> &A, const Solver<OperT
   CHECK(linalg::Norml2(comm, r) <= 1.0e-9 * linalg::Norml2(comm, b));
   const auto &V = ksp.GetBasis();
   double loss = 0.0;
-  for (int i = 0; i <= ksp.GetNumIterations(); i++)
+  for (int i = 0; i < ksp.GetNumIterations() + (orthog != Orthogonalization::CGS2); i++)
   {
     for (int j = 0; j <= i; j++)
     {
@@ -448,6 +451,107 @@ void CheckGmresSolve(const std::type_identity_t<OperType> &A, const Solver<OperT
     }
   }
   CHECK(loss <= ((orthog == Orthogonalization::CGS2) ? 1.0e-13 : 1.0e-3));
+}
+
+// The upper bidiagonal stencil [a + r cos(θᵢ + t), s] on the local rows of each process,
+// with θᵢ = 2π frac(i φ) for the golden ratio φ: with the imaginary part r sin(θᵢ) (a = 0,
+// s = 0, t = -π/2), the eigenvalues fill the circle of radius r around a, and GMRES
+// converges at the rate r.
+class BidiagonalTestOperator : public Operator
+{
+  Vector d;
+  const double s;
+
+public:
+  BidiagonalTestOperator(int n, double a, double r, double s, double t = 0.0)
+    : Operator(n), d(n), s(s)
+  {
+    for (int i = 0; i < n; i++)
+    {
+      const double theta = 2.0 * std::numbers::pi * std::fmod(std::numbers::phi * i, 1.0);
+      d[i] = a + r * std::cos(theta + t);
+    }
+  }
+
+  void AssembleDiagonal(Vector &diag) const override { diag = d; }
+
+  void Mult(const Vector &x, Vector &y) const override
+  {
+    y.SetSize(height);
+    const auto *D = d.HostRead(), *X = x.HostRead();
+    auto *Y = y.HostWrite();
+    for (int i = 0; i < height; i++)
+    {
+      Y[i] = D[i] * X[i] + ((i < height - 1) ? s * X[i + 1] : 0.0);
+    }
+  }
+};
+
+// GMRES, or FGMRES if flexible, for A with the preconditioner B if any.
+template <typename OperType>
+auto MakeGmres(const OperType &A, const Solver<OperType> *B, bool flexible,
+               Orthogonalization orthog, double tol, int max_it)
+{
+  auto ksp = flexible ? std::make_unique<FgmresSolver<OperType>>(Mpi::World(), 0)
+                      : std::make_unique<GmresSolver<OperType>>(Mpi::World(), 0);
+  ksp->SetOperator(A);
+  if (B)
+  {
+    ksp->SetPreconditioner(*B);
+  }
+  ksp->SetOrthogonalization(orthog);
+  ksp->SetRelTol(tol);
+  ksp->SetMaxIter(max_it);
+  return ksp;
+}
+
+// Solve from a zero initial guess with MGS and CGS2 (with delayed reorthogonalization in
+// GMRES and FGMRES), restarted unless restart = -1: CGS2 needs the same number of
+// iterations as MGS, up to one, and reaches the same solution.
+template <typename OperType>
+void CheckGmresIterations(const OperType &A, const Solver<OperType> *B, bool flexible,
+                          PreconditionerSide side, int restart, double tol)
+{
+  using VecType =
+      std::conditional_t<std::is_same_v<OperType, ComplexOperator>, ComplexVector, Vector>;
+  MPI_Comm comm = Mpi::World();
+  const int n = A.Height();
+  VecType b(n), r(n), Br(n), Bb(n);
+  std::array<VecType, 2> x = {VecType(n), VecType(n)};
+  for (auto *v : {&b, &r, &Br, &Bb, &x[0], &x[1]})
+  {
+    v->UseDevice(true);
+  }
+  linalg::SetRandom(comm, b, 7);
+  const std::array types = {Orthogonalization::MGS, Orthogonalization::CGS2};
+  std::array<int, 2> its = {};
+  for (int k = 0; k < 2; k++)
+  {
+    CAPTURE(k, flexible, restart);
+    auto ksp = MakeGmres(A, B, flexible, types[k], tol, 1000);
+    ksp->SetPreconditionerSide(side);  // Only RIGHT for FGMRES
+    ksp->SetRestartDim(restart);
+    ksp->Mult(b, x[k]);
+    CHECK(ksp->GetConverged());
+    its[k] = ksp->GetNumIterations();
+
+    // The true residual, preconditioned for left preconditioning.
+    A.Mult(x[k], r);
+    r -= b;
+    const bool left = (B && side == PreconditionerSide::LEFT);
+    if (left)
+    {
+      B->Mult(r, Br);
+      B->Mult(b, Bb);
+    }
+    CHECK(linalg::Norml2(comm, left ? Br : r) <=
+          10.0 * tol * linalg::Norml2(comm, left ? Bb : b));
+  }
+  CAPTURE(flexible, restart, its[0], its[1]);
+  CHECK(its[0] > 2);
+  CHECK(std::abs(its[1] - its[0]) <= 1);
+  x[1] -= x[0];
+  CHECK(linalg::Norml2(comm, x[1]) <= 1.0e-6 * linalg::Norml2(comm, x[0]));
 }
 
 }  // namespace
@@ -603,7 +707,10 @@ TEST_CASE("GmresSolver correction limit", "[iterative][Serial][Parallel]")
   constexpr int n = 101;
   MPI_Comm comm = Mpi::World();
   TridiagonalTestOperator A(n);
+  const auto orthog = GENERATE(Orthogonalization::MGS, Orthogonalization::CGS2);
+  INFO("CGS2 = " << (orthog == Orthogonalization::CGS2));
   GmresSolver<Operator> ksp(comm, 0);
+  ksp.SetOrthogonalization(orthog);
   ksp.SetOperator(A);
   ksp.SetRelTol(1.0e-12);
   ksp.SetMaxIter(200);
@@ -692,6 +799,8 @@ TEST_CASE("GmresSolver correction limit with preconditioning",
   TridiagonalTestOperator A(n);
   JacobiSmoother<Operator> jacobi(comm);
   jacobi.SetOperator(A);
+  const auto orthog = GENERATE(Orthogonalization::MGS, Orthogonalization::CGS2);
+  INFO("CGS2 = " << (orthog == Orthogonalization::CGS2));
   Vector b(n), d(n), x(n), y(n);
   for (int i = 0; i < n; i++)
   {
@@ -704,6 +813,7 @@ TEST_CASE("GmresSolver correction limit with preconditioning",
     const bool left = (side == PreconditionerSide::LEFT);
     INFO("left preconditioning = " << left);
     GmresSolver<Operator> ksp(comm, 0);
+    ksp.SetOrthogonalization(orthog);
     ksp.SetOperator(A);
     ksp.SetPreconditioner(jacobi);
     ksp.SetPreconditionerSide(side);
@@ -729,6 +839,7 @@ TEST_CASE("GmresSolver correction limit with preconditioning",
   }
 
   FgmresSolver<Operator> fksp(comm, 0);
+  fksp.SetOrthogonalization(orthog);
   fksp.SetOperator(A);
   fksp.SetPreconditioner(jacobi);
   fksp.SetRelTol(1.0e-12);
@@ -1011,7 +1122,7 @@ TEST_CASE("CgSolver local sizes", "[iterative][Serial][Parallel]")
 }
 
 // GMRES and FGMRES with each orthogonalization on real and complex nonsymmetric systems.
-TEST_CASE("GmresSolver orthogonalization", "[iterative][Serial][Parallel]")
+TEST_CASE("GmresSolver orthogonalization", "[iterative][Serial][Parallel][GPU]")
 {
   constexpr int n = 200;
   MPI_Comm comm = Mpi::World();
@@ -1048,6 +1159,70 @@ TEST_CASE("GmresSolver orthogonalization", "[iterative][Serial][Parallel]")
     TridiagonalTestSolver<ComplexOperator> pc;
     CheckGmresSolve<GmresSolver<ComplexOperator>, ComplexOperator>(Ac, nullptr, b, orthog);
     CheckGmresSolve<FgmresSolver<ComplexOperator>, ComplexOperator>(Ac, &pc, b, orthog);
+  }
+}
+
+// GMRES and FGMRES, restarted or not and with each preconditioning side, on slowly
+// converging problems where MGS loses orthogonality, also scaled by 10^±120, and on a
+// problem close to the identity where each new vector loses most of its norm in the
+// orthogonalization.
+TEST_CASE("GmresSolver iterations with CGS2", "[iterative][Serial][Parallel][GPU]")
+{
+  const double tol = GENERATE(1.0e-10, 1.0e-12);
+  CAPTURE(tol);
+  MPI_Comm comm = Mpi::World();
+  const int n = 400 + 37 * Mpi::Rank(comm);
+  BidiagonalTestOperator Ar(n, 1.0, 0.8, 0.3),
+      Ai(n, 0.0, 0.8, 0.0, -0.5 * std::numbers::pi), Af(n, 1.0, 1.0e-4, 1.0e-4),
+      Ab(n, 1.0e120, 0.8e120, 0.3e120), As(n, 1.0e-120, 0.8e-120, 0.3e-120);
+  ComplexWrapperOperator A(&Ar, &Ai);
+  JacobiSmoother<Operator> jacobi(comm);
+  jacobi.SetOperator(Ar);
+  TridiagonalTestSolver<ComplexOperator> pc;
+  constexpr auto left = PreconditionerSide::LEFT, right = PreconditionerSide::RIGHT;
+  CheckGmresIterations<Operator>(Ar, nullptr, false, left, -1, tol);
+  CheckGmresIterations<Operator>(Ar, &jacobi, false, left, -1, tol);
+  CheckGmresIterations<Operator>(Af, nullptr, false, left, -1, tol);
+  CheckGmresIterations<Operator>(Ab, nullptr, false, left, -1, tol);
+  CheckGmresIterations<Operator>(As, nullptr, false, left, -1, tol);
+  CheckGmresIterations<Operator>(Ar, &jacobi, true, right, -1, tol);
+  CheckGmresIterations<ComplexOperator>(A, nullptr, false, left, -1, tol);
+  CheckGmresIterations<ComplexOperator>(A, &pc, false, left, -1, tol);
+  CheckGmresIterations<ComplexOperator>(A, &pc, false, right, -1, tol);
+  CheckGmresIterations<ComplexOperator>(A, &pc, true, right, -1, tol);
+  CheckGmresIterations<ComplexOperator>(A, &pc, false, left, 25, tol);
+  CheckGmresIterations<ComplexOperator>(A, &pc, true, right, 25, tol);
+}
+
+// Iterations after convergence, with a zero tolerance, on a diagonal operator with two
+// distinct eigenvalues, without a preconditioner and with the exact Jacobi preconditioner:
+// new basis vectors are then often round-off (with the preconditioner, every one), which
+// CGS2 in GMRES and FGMRES reorthogonalizes with two more passes, and the solution stays
+// accurate.
+TEST_CASE("GmresSolver CGS2 after convergence", "[iterative][Serial][Parallel][GPU]")
+{
+  MPI_Comm comm = Mpi::World();
+  const int n = 100 + 7 * Mpi::Rank(comm);
+  TridiagonalTestOperator A(n, 0.0, 1.0, 2);  // diag(4, 5, 4, 5, ...)
+  JacobiSmoother<Operator> jacobi(comm);
+  jacobi.SetOperator(A);
+  Vector b(n), x(n), x_ref(n);
+  for (auto *v : {&b, &x, &x_ref})
+  {
+    v->UseDevice(true);
+  }
+  linalg::SetRandom(comm, b, 5);
+  jacobi.Mult(b, x_ref);  // A⁻¹ b
+  for (int c = 0; c < 3; c++)
+  {
+    const bool flexible = (c == 2), pc = (c > 0);
+    CAPTURE(flexible, pc);
+    auto ksp = MakeGmres<Operator>(A, pc ? &jacobi : nullptr, flexible,
+                                   Orthogonalization::CGS2, 0.0, 8);
+    ksp->Mult(b, x);
+    CHECK(ksp->GetNumIterations() >= (pc ? 2 : 3));
+    x -= x_ref;
+    CHECK(linalg::Norml2(comm, x) <= 1.0e-13 * linalg::Norml2(comm, x_ref));
   }
 }
 
