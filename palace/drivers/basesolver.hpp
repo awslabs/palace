@@ -79,9 +79,10 @@ public:
   // These methods write different simulation metadata to a JSON file in post_dir.
   void SaveMetadata(const FiniteElementSpaceHierarchy &fespaces) const;
   // Writes the given (1-based) AMR iteration index to post_dir's palace.json as
-  // "Problem"/"Iteration". The index matches the "iterationXX" archive subdirectory (the
-  // initial solve is iteration 1).
-  void SaveAdaptationIteration(int iteration) const;
+  // "Problem"/"Iteration", and first to archive_dir's copy if given. The index matches the
+  // "iterationXX" archive subdirectory (the initial solve is iteration 1). It is written
+  // once the iteration's output is in its final location, archived or not.
+  void SaveAdaptationIteration(int iteration, const fs::path &archive_dir = {}) const;
   template <typename SolverType>
   void SaveMetadata(const SolverType &ksp) const;
   void SaveMetadata(const Timer &timer) const;
@@ -94,8 +95,8 @@ public:
 // "iterationXX" inside output_dir and moves all files and directories into it, leaving
 // relative symlinks behind so that the output directory always has accessible results.
 // The palace.json metadata file is copied (not moved) since it is read and updated by
-// subsequent iterations.
-void SaveIteration(MPI_Comm comm, const fs::path &output_dir, int step, int width);
+// subsequent iterations. Returns the path of the "iterationXX" subfolder.
+fs::path SaveIteration(MPI_Comm comm, const fs::path &output_dir, int step, int width);
 
 }  // namespace palace
 

@@ -29,7 +29,7 @@ namespace palace
 
 using json = nlohmann::json;
 
-void SaveIteration(MPI_Comm comm, const fs::path &output_dir, int step, int width)
+fs::path SaveIteration(MPI_Comm comm, const fs::path &output_dir, int step, int width)
 {
   BlockTimer bt(Timer::IO);
   Mpi::Barrier(comm);  // Wait for all processes to write postprocessing files
@@ -107,6 +107,7 @@ void SaveIteration(MPI_Comm comm, const fs::path &output_dir, int step, int widt
           }
         }
       });
+  return step_output;
 }
 
 namespace
@@ -248,10 +249,6 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
               "Initial solve did not converge; no converged result to fall back on!");
   double err = indicators.Norml2(comm);
 
-  // Record the initial solve as iteration 1 (matching the "iteration01" archive
-  // subdirectory written for adaptive runs).
-  SaveAdaptationIteration(1);
-
   // True topological entity counts of the final adapted mesh.
   mesh::MeshEntityCounts mesh_counts;
 
@@ -280,11 +277,18 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
                     ? ", max. size = " + std::to_string(refinement.max_size)
                     : ""));
 
-    // Optionally save off the previous solution.
+    // Optionally save off the previous solution, then record it as completed. The index is
+    // written only once the "iterationXX" archive is complete, so a reader of palace.json
+    // never sees an iteration whose output is still being moved.
     if (refinement.save_adapt_iterations)
     {
-      SaveIteration(comm, post_dir, it,
-                    1 + static_cast<int>(std::log10(refinement.max_it)));
+      SaveAdaptationIteration(
+          it, SaveIteration(comm, post_dir, it,
+                            1 + static_cast<int>(std::log10(refinement.max_it))));
+    }
+    else
+    {
+      SaveAdaptationIteration(it);
     }
 
     // Mark.
@@ -366,11 +370,13 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
       break;
     }
     err = indicators.Norml2(comm);
+  }
 
-    // Record that this AMR iteration has completed; the Solve above has already written all
-    // of its postprocessing output. The 1-based index (it + 1, since the initial solve is
-    // iteration 1) matches the "iterationXX" archive subdirectory and signals completion
-    // via palace.json without parsing the log.
+  // The last converged solve is never archived: its output stays in post_dir. A failed
+  // solve after refinement leaves iteration it as the last converged one, already recorded
+  // above.
+  if (solve_converged_)
+  {
     SaveAdaptationIteration(it + 1);
   }
 
@@ -403,12 +409,17 @@ void BaseSolver::SaveMetadata(const FiniteElementSpaceHierarchy &fespaces) const
   }
 }
 
-void BaseSolver::SaveAdaptationIteration(int iteration) const
+void BaseSolver::SaveAdaptationIteration(int iteration, const fs::path &archive_dir) const
 {
   if (root)
   {
     json meta = LoadMetadata(post_dir);
     meta["Problem"]["Iteration"] = iteration;
+    if (!archive_dir.empty())
+    {
+      // Update the archived copy before post_dir, which is the one readers poll.
+      WriteMetadata(archive_dir, meta);
+    }
     WriteMetadata(post_dir, meta);
   }
 }

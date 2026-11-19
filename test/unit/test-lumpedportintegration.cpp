@@ -12,10 +12,12 @@
 #include <nlohmann/json.hpp>
 #include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 #include "drivers/drivensolver.hpp"
 #include "fem/bilinearform.hpp"
 #include "fem/fespace.hpp"
 #include "fem/gridfunction.hpp"
+#include "fem/lumpedelement.hpp"
 #include "fem/mesh.hpp"
 #include "fixtures.hpp"
 #include "linalg/vector.hpp"
@@ -71,6 +73,219 @@ auto LoadScaleParMesh(IoData &iodata, MPI_Comm world_comm)
     }
   }
   return mesh_;
+}
+
+TEST_CASE("UniformElementData geometry", "[lumped_port][Serial][Parallel]")
+{
+  // Make a parallel mesh from a Cartesian mesh. Boundary elements whose center satisfies
+  // in_port make up the lumped element (attribute 2), then the vertices and the nodes of
+  // the mesh, of the given order, are mapped. Palace gives every mesh nodes, so the
+  // geometry is computed as in a simulation.
+  auto PortMesh = [](mfem::Mesh smesh, auto in_port, auto map, int order = 1)
+  {
+    mfem::Array<int> verts;
+    mfem::Vector center(smesh.SpaceDimension());
+    for (int i = 0; i < smesh.GetNBE(); i++)
+    {
+      smesh.GetBdrElementVertices(i, verts);
+      center = 0.0;
+      for (auto v : verts)
+      {
+        center.Add(1.0 / verts.Size(), mfem::Vector(smesh.GetVertex(v), center.Size()));
+      }
+      smesh.SetBdrAttribute(i, in_port(center) ? 2 : 1);
+    }
+    smesh.SetAttributes();
+    smesh.SetCurvature(order);
+    mfem::VectorFunctionCoefficient f(smesh.SpaceDimension(),
+                                      [&map](const mfem::Vector &x, mfem::Vector &y)
+                                      {
+                                        y = x;
+                                        map(y.GetData());
+                                      });
+    smesh.Transform(f);
+    for (int v = 0; v < smesh.GetNV(); v++)
+    {
+      map(smesh.GetVertex(v));
+    }
+    return std::make_unique<mfem::ParMesh>(Mpi::World(), smesh);
+  };
+  auto Bottom = [](const mfem::Vector &x) { return x(x.Size() - 1) == 0.0; };
+  auto Identity = [](double *) {};
+  const mfem::Array<int> attr_list({2});
+  // Hexahedra have quadrilateral boundary faces, and tetrahedra triangular ones.
+  const auto type = GENERATE(mfem::Element::HEXAHEDRON, mfem::Element::TETRAHEDRON);
+
+  SECTION("Rectangle rotated out of the axes")
+  {
+    const Eigen::Matrix3d R =
+        Eigen::AngleAxisd(0.7, Eigen::Vector3d(1.0, 2.0, 3.0).normalized()).matrix();
+    auto mesh = PortMesh(mfem::Mesh::MakeCartesian3D(3, 2, 1, type, 3.0, 2.0, 1.0), Bottom,
+                         [&R](double *x)
+                         {
+                           Eigen::Map<Eigen::Vector3d> v(x);
+                           v = R * v;
+                         });
+    UniformElementData data({R(0, 0), R(1, 0), R(2, 0)}, attr_list, *mesh);
+    CHECK_THAT(data.GetGeometryLength(), WithinRel(3.0, 1.0e-12));
+    CHECK_THAT(data.GetGeometryWidth(), WithinRel(2.0, 1.0e-12));
+  }
+
+  SECTION("Wide rectangle with the direction 0.5 degrees off its side")
+  {
+    // 1 x 50 rectangle, much wider across the direction than long along it. Cuts normal to
+    // the direction would run out through its ends, but those normal to its principal axis
+    // cross it from side to side.
+    const double t = 0.5 * std::numbers::pi / 180.0;
+    auto mesh = PortMesh(mfem::Mesh::MakeCartesian3D(2, 50, 1, type, 1.0, 50.0, 1.0),
+                         Bottom, Identity);
+    UniformElementData data({std::cos(t), std::sin(t), 0.0}, attr_list, *mesh);
+    CHECK_THAT(data.GetGeometryLength(), WithinRel(1.0, 1.0e-12));
+    CHECK_THAT(data.GetGeometryWidth(), WithinRel(50.0, 1.0e-12));
+  }
+
+  SECTION("Wide strip with ends 0.5 degrees from normal to the direction")
+  {
+    // 1 x 10 parallelogram with its sides along the direction and its ends slanted. Its
+    // principal axis is within (1 / 10)^2 of normal to the ends, so l and w are those of a
+    // strip between the ends to second order.
+    const double t = 0.5 * std::numbers::pi / 180.0;
+    auto mesh = PortMesh(mfem::Mesh::MakeCartesian3D(2, 10, 1, type, 1.0, 10.0, 1.0),
+                         Bottom, [t](double *x) { x[0] += std::tan(t) * x[1]; });
+    UniformElementData data({1.0, 0.0, 0.0}, attr_list, *mesh);
+    CHECK_THAT(data.GetGeometryLength(), WithinRel(std::cos(t), 1.0e-5));
+    CHECK_THAT(data.GetGeometryWidth(), WithinRel(10.0 / std::cos(t), 1.0e-5));
+  }
+
+  SECTION("Bracket folded over a step (#89)")
+  {
+    // Top and side faces of a 2 x 2 x 1 block, folded along the direction.
+    auto mesh = PortMesh(
+        mfem::Mesh::MakeCartesian3D(2, 2, 1, type, 2.0, 2.0, 1.0),
+        [](const mfem::Vector &x) { return x(2) == 1.0 || x(0) == 0.0; }, Identity);
+    UniformElementData data({0.0, 1.0, 0.0}, attr_list, *mesh);
+    CHECK_THAT(data.GetGeometryLength(), WithinRel(2.0, 1.0e-12));
+    CHECK_THAT(data.GetGeometryWidth(), WithinRel(3.0, 1.0e-12));
+  }
+
+  SECTION("Cylinder with the direction along its axis (#417)")
+  {
+    // Lateral surface of a 16-sided cylinder of radius 1 and height 0.2.
+    auto mesh = PortMesh(
+        mfem::Mesh::MakeCartesian3D(1, 16, 1, type),
+        [](const mfem::Vector &x) { return x(0) == 0.0; },
+        [](double *x)
+        {
+          const double r = 1.0 + 0.5 * x[0];
+          const double t = 2.0 * std::numbers::pi * x[1];
+          x[0] = r * std::cos(t);
+          x[1] = r * std::sin(t);
+          x[2] *= 0.2;
+        });
+    UniformElementData data({0.0, 0.0, 1.0}, attr_list, *mesh);
+    CHECK_THAT(data.GetGeometryLength(), WithinRel(0.2, 1.0e-12));
+    CHECK_THAT(data.GetGeometryWidth(),
+               WithinRel(32.0 * std::sin(std::numbers::pi / 16.0), 1.0e-12));
+  }
+
+  SECTION("Cylinder on a curved mesh")
+  {
+    // Lateral surface of a cylinder of radius 1 and height 0.2, on a mesh of order 3.
+    auto mesh = PortMesh(
+        mfem::Mesh::MakeCartesian3D(1, 16, 1, type),
+        [](const mfem::Vector &x) { return x(0) == 0.0; },
+        [](double *x)
+        {
+          const double r = 1.0 + 0.5 * x[0];
+          const double t = 2.0 * std::numbers::pi * x[1];
+          x[0] = r * std::cos(t);
+          x[1] = r * std::sin(t);
+          x[2] *= 0.2;
+        },
+        3);
+    UniformElementData data({0.0, 0.0, 1.0}, attr_list, *mesh);
+    CHECK_THAT(data.GetGeometryLength(), WithinRel(0.2, 1.0e-4));
+    CHECK_THAT(data.GetGeometryWidth(), WithinRel(2.0 * std::numbers::pi, 1.0e-4));
+  }
+
+  SECTION("Strip with curved ends (#1194)")
+  {
+    // 1 x 4 strip bent by s along the direction at its middle: one end bulges out and the
+    // other in. The extent is 4 + s, but the distance between the ends is 4 everywhere.
+    constexpr double s = 2.0e-2;
+    auto mesh = PortMesh(mfem::Mesh::MakeCartesian3D(4, 8, 1, type, 1.0, 4.0, 0.5), Bottom,
+                         [](double *x)
+                         {
+                           if (x[2] == 0.0)
+                           {
+                             x[1] += s * (1.0 - std::pow(2.0 * x[0] - 1.0, 2));
+                           }
+                         });
+    UniformElementData data({0.0, 1.0, 0.0}, attr_list, *mesh);
+    CHECK_THAT(data.GetGeometryLength(), WithinRel(4.0, 1.0e-12));
+    CHECK_THAT(data.GetGeometryWidth(), WithinRel(1.0, 1.0e-12));
+  }
+
+  SECTION("Planar L-shaped port")
+  {
+    auto mesh = PortMesh(
+        mfem::Mesh::MakeCartesian3D(2, 2, 1, type, 2.0, 2.0, 1.0), [](const mfem::Vector &x)
+        { return x(2) == 0.0 && (x(0) < 1.0 || x(1) < 1.0); }, Identity);
+    CHECK_THROWS_WITH(UniformElementData({0.0, 1.0, 0.0}, attr_list, *mesh),
+                      ContainsSubstring("not a strip along its direction"));
+  }
+
+  SECTION("Square with the direction 45 degrees off its sides")
+  {
+    auto mesh = PortMesh(mfem::Mesh::MakeCartesian3D(2, 2, 1, type), Bottom, Identity);
+    CHECK_THROWS_WITH(UniformElementData({1.0, 1.0, 0.0}, attr_list, *mesh),
+                      ContainsSubstring("not a strip along its direction"));
+  }
+
+  SECTION("Bracket folded over a thin step with the direction rotated 10 degrees")
+  {
+    const double t = 10.0 * std::numbers::pi / 180.0;
+    auto mesh = PortMesh(
+        mfem::Mesh::MakeCartesian3D(2, 2, 1, type, 2.0, 2.0, 0.2),
+        [](const mfem::Vector &x) { return x(2) > 0.1 || x(0) == 0.0; }, Identity);
+    CHECK_THROWS_WITH(UniformElementData({std::sin(t), std::cos(t), 0.0}, attr_list, *mesh),
+                      ContainsSubstring("not a strip along its direction"));
+  }
+
+  SECTION("Direction normal to the port")
+  {
+    auto mesh = PortMesh(mfem::Mesh::MakeCartesian3D(2, 2, 1, type), Bottom, Identity);
+    CHECK_THROWS_WITH(UniformElementData({0.0, 0.0, 1.0}, attr_list, *mesh),
+                      ContainsSubstring("no extent"));
+  }
+
+  SECTION("2D edge along the direction")
+  {
+    auto mesh = PortMesh(
+        mfem::Mesh::MakeCartesian2D(4, 1, mfem::Element::QUADRILATERAL, false, 4.0, 1.0),
+        Bottom, Identity);
+    UniformElementData data({1.0, 0.0, 0.0}, attr_list, *mesh);
+    CHECK_THAT(data.GetGeometryLength(), WithinRel(4.0, 1.0e-12));
+    CHECK_THAT(data.GetGeometryWidth(), WithinRel(1.0, 1.0e-12));
+  }
+
+  SECTION("2D edge with the direction 45 degrees off it")
+  {
+    auto mesh = PortMesh(
+        mfem::Mesh::MakeCartesian2D(4, 1, mfem::Element::QUADRILATERAL, false, 4.0, 1.0),
+        Bottom, Identity);
+    CHECK_THROWS_WITH(UniformElementData({1.0, 1.0, 0.0}, attr_list, *mesh),
+                      ContainsSubstring("not a strip along its direction"));
+  }
+
+  SECTION("2D edge with the direction normal to it")
+  {
+    auto mesh = PortMesh(
+        mfem::Mesh::MakeCartesian2D(4, 1, mfem::Element::QUADRILATERAL, false, 4.0, 1.0),
+        Bottom, Identity);
+    CHECK_THROWS_WITH(UniformElementData({0.0, 1.0, 0.0}, attr_list, *mesh),
+                      ContainsSubstring("no extent"));
+  }
 }
 
 TEST_CASE("LumpedPort batched voltages", "[lumped_port][Serial][Parallel][GPU]")
@@ -269,33 +484,11 @@ TEST_CASE("LumpedPort_BasicTests_1ElementPort_Cube321", "[lumped_port][Serial][P
   // Scale factor between element wave impedance and port impedance: (W / L) * n_elems
   CHECK_THAT(port_1.GetToSquare(*el_ptr), WithinRel(1.0));
 
-  // Validate against mesh properties at the attribute level.
-  // TODO: Factor this out as a separate test for geometries of boundaries.
-  // TODO: Need test for non-axis aligned port.
-  {
-    CHECK(el_ptr->GetAttrList().Size() == 1);
-    auto el_attr = el_ptr->GetAttrList()[0];
-    auto bbox = mesh::GetBoundingBox(mesh, el_attr, true);
-
-    CHECK(bbox.planar);
-    CHECK_THAT(bbox.Area(), WithinRel(length_dx_m * length_dx_m));
-    CHECK(bbox.Volume() == 0.0);
-
-    // Can do exact equals below as axis alignment of port means that there should be
-    // strictly no double rounding.
-
-    auto bbox_lengths = bbox.Lengths();
-    CHECK(bbox_lengths.Size() == 3);
-    CHECK(bbox_lengths(0) == length_dx_m);
-    CHECK(bbox_lengths(1) == length_dx_m);
-    CHECK(bbox_lengths(2) == 0.0);
-  }
-
   mfem::Array<int> attr_marker_loc;
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   mesh::AttrToMarker(bdr_attr_max, el_ptr->GetAttrList(), attr_marker_loc);
 
-  // Geometry Tests: not via point-cloud construction as for bbox above
+  // Geometry tests at the attribute level.
   CHECK_THAT(mesh::GetSurfaceArea(mesh, attr_marker_loc),
              WithinRel(length_dx_m * length_dx_m));
 
