@@ -52,6 +52,13 @@ if(CMAKE_SYSTEM_NAME MATCHES "Darwin")
   )
 endif()
 
+# Take the macOS SDK from xcrun instead of overwriting SDKROOT with a hard-coded Xcode path,
+# which breaks the build when SDKROOT is set in the environment (see
+# https://github.com/libxsmm/libxsmm/pull/1116)
+set(LIBXSMM_PATCH_FILES
+  "${CMAKE_SOURCE_DIR}/extern/patch/libxsmm/libxsmm_pr1116.diff"
+)
+
 # Always build LIBXSMM as a shared library
 list(APPEND LIBXSMM_OPTIONS
   "STATIC=0"
@@ -107,6 +114,7 @@ ExternalProject_Add(libxsmm
   PREFIX            ${CMAKE_BINARY_DIR}/extern/libxsmm-cmake
   BUILD_IN_SOURCE   TRUE
   UPDATE_COMMAND    ""
+  PATCH_COMMAND     git apply "${LIBXSMM_PATCH_FILES}"
   CONFIGURE_COMMAND ""
   BUILD_COMMAND     ${PALACE_MAKE_COMMAND} ${LIBXSMM_OPTIONS}
   INSTALL_COMMAND

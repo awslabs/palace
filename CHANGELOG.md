@@ -485,6 +485,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - The superbuild builds fmt 12.1.0 instead of 12.2.0, which does not compile with nvcc,
     and builds Umpire with it instead of letting Umpire install its own copy of fmt over it.
     [PR 1228](https://github.com/awslabs/palace/pull/1228).
+  - On macOS, the superbuild patches LIBXSMM to take the SDK from `xcrun` instead of
+    overwriting `SDKROOT` with a hard-coded Xcode path, which broke the LIBXSMM build when
+    `SDKROOT` was set in the environment, as CMake 4 needs with Homebrew's compilers
+    ([libxsmm/libxsmm#1116](https://github.com/libxsmm/libxsmm/pull/1116)). The LIBXSMM of a
+    Spack build is not patched.
 
 ## [0.19.0] - 2026-11-02
 
