@@ -371,6 +371,15 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     rule touches and a `ContinuationOwnership.PartialStretch` counter block (only when it
     acted). A placement rule: keys, requirements and the response-geometry cache (version
     20) are unchanged.
+  - Self-consistent corrected eigenmode runs write the number of corrected linear solves
+    that did not reach `config["Solver"]["Linear"]["Tol"]` within `"MaxIts"` to
+    `palace.json` as `SurfaceResponse.CorrectedSolver.Eigenmode.NonConvergedLinearSolves`
+    (the total over the whole solve, beside `LinearSolves` and `LinearIterations`; 0 in
+    every run whose solves converged), and print one warning at the end of the log when it
+    is above 0. The example configurations with an AMR size cap now state
+    `"MaxSizePredicted"` beside `"MaxSize"` (checked by
+    `python3 examples/test_max_size_predicted.py`), and the transmon refinement example no
+    longer pre-refines edge tubes by default (`"EdgeRefinement"` stays an explicit opt-in).
 
 #### Interface Changes
 

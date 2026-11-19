@@ -1,6 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <algorithm>
 #include <cmath>
 #include <complex>
 #include <cstdio>
@@ -432,6 +433,17 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   INFO("expected log line: " << line);
   CHECK(limited_log.find(line) != std::string::npos);
   CHECK(limited_log.find("Solver.Linear.MaxIts") != std::string::npos);
+  // A warning (review r2157 m-4): the log's banner right before the line, and the advice
+  // not to loosen the tolerance of the inexact solves unless shown harmless.
+  const auto line_position = limited_log.find(line);
+  REQUIRE(line_position != std::string::npos);
+  const auto banner_position = limited_log.rfind("--> Warning!", line_position);
+  REQUIRE(banner_position != std::string::npos);
+  CHECK(std::count(limited_log.begin() + banner_position,
+                   limited_log.begin() + line_position, '\n') <= 2);
+  CHECK(limited_log.find("loosen Solver.Linear.Tol only where the corrected values are "
+                         "shown insensitive to it") != std::string::npos);
+  CHECK(limited_log.find("set a looser linear tolerance") == std::string::npos);
 #endif
 }
 
