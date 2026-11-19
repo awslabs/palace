@@ -3954,7 +3954,8 @@ TEST_CASE("DirectSchurSolver condenses exactly", "[substructure][Serial][Paralle
 }
 #endif
 
-#if defined(MFEM_USE_MUMPS) || defined(MFEM_USE_SUPERLU) || defined(MFEM_USE_STRUMPACK)
+// The sweeps run in process condense the environment offline, by MUMPS or STRUMPACK.
+#if defined(MFEM_USE_MUMPS) || defined(MFEM_USE_STRUMPACK)
 
 namespace
 {
@@ -4150,6 +4151,10 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
         Catch::Matchers::ContainsSubstring("is written refined"));
   }
 }
+
+#endif
+
+#if defined(MFEM_USE_MUMPS) || defined(MFEM_USE_SUPERLU) || defined(MFEM_USE_STRUMPACK)
 
 #if defined(MFEM_USE_MUMPS)
 TEST_CASE("MumpsSchurSolver refactors with new values", "[substructure][Serial][Parallel]")
