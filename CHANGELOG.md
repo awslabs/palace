@@ -129,7 +129,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - The linear solves of driven simulations without adaptive frequency sweep now start from
     the minimal-residual combination of the solutions at up to four previous frequencies,
     and GMRES and FGMRES scale nonzero initial guesses to minimize the initial residual.
-    This reduces the iterations of frequency sweeps.
+    This reduces the iterations of frequency sweeps. SchemaVer 4-4-4.
     [PR 1229](https://github.com/awslabs/palace/pull/1229).
   - Each excitation of a uniform driven sweep now starts its first linear solve from zero
     instead of from the last solution of the previous excitation, which saves a few
