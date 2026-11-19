@@ -97,6 +97,7 @@ void StrumpackComplexSolver::SetOperator(const ComplexOperator &op)
       ConfigureOptions(solver->options(), reorder, print);
       ConfigureStrumpackCompression(solver->options(), compression, lr_tol, butterfly_l,
                                     lossy_prec);
+      EnableStrumpackSharedPermutation(solver->options());
       solver->set_distributed_csr_matrix(csr.n_loc, csr.I.data(), csr.J.data(),
                                          csr.V.data(), dist.data(), false);
     }

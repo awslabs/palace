@@ -30,9 +30,10 @@ namespace palace
 //
 // STRUMPACK sparse direct solver for complex-valued operators in complex arithmetic. Its
 // factors need about 40% less memory than those of the equivalent real-valued system of
-// twice the size used by MfemWrapperSolver. The compression options are those of
-// StrumpackSolver, and small entries are dropped as described for ComplexLocalCSR. The
-// integer type is HYPRE_BigInt, as for StrumpackSolver (mfem::STRUMPACKSolver).
+// twice the size used by MfemWrapperSolver. The compression options and the node-shared
+// permutation are those of StrumpackSolver, and small entries are dropped as described for
+// ComplexLocalCSR. The integer type is HYPRE_BigInt, as for StrumpackSolver
+// (mfem::STRUMPACKSolver).
 //
 class StrumpackComplexSolver : public Solver<ComplexOperator>
 {
