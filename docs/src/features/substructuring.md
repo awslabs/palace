@@ -270,7 +270,7 @@ voltage of a lumped port, would depend on both sides.
     interface that the superbuild and the Spack package patch in, else with one solve per
     interface unknown). SuperLU_DIST, whose condensation goes wrong through a resonance, is not
     used offline. Online, the region is factored with the Schur complement of the environment as
-    one sparse system, by STRUMPACK, SuperLU_DIST or MUMPS (preferred in this order). A sparse
+    one sparse system, by STRUMPACK, MUMPS or SuperLU_DIST (preferred in this order). A sparse
     direct solver that
     [`config["Solver"]["Linear"]["Type"]`](../config/reference.md#config-solver-linear-type) names
     is used for all of them instead.

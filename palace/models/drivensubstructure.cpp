@@ -82,10 +82,10 @@ LinearSolver CoupledSolver(LinearSolver type)
   }
 #if defined(MFEM_USE_STRUMPACK)
   return LinearSolver::STRUMPACK;
-#elif defined(MFEM_USE_SUPERLU)
-  return LinearSolver::SUPERLU;
-#else
+#elif defined(MFEM_USE_MUMPS)
   return LinearSolver::MUMPS;
+#else
+  return LinearSolver::SUPERLU;
 #endif
 }
 
