@@ -45,11 +45,12 @@ auto toEigenMatrix(const T &op, int n)
   for (int i = 0; i < n; i++)
   {
     w = 0.0;
-    w[i] = 1.0;
+    w.HostReadWrite()[i] = 1.0;
     op.Mult(w, v);
+    const auto *V = v.HostRead();
     for (int j = 0; j < n; j++)
     {
-      mat(j, i) = v(j);
+      mat(j, i) = V[j];
     }
   }
   return mat;
