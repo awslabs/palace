@@ -225,6 +225,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - The Floquet port DtN correction and the wave-port modal correction now use a single MPI
     reduction per operator application instead of four per rank-one term, and only touch
     the port degrees of freedom instead of full-length vectors.
+    [PR 1089](https://github.com/awslabs/palace/pull/1089).
+  - The Floquet port DtN correction and the wave-port modal correction now pack their
+    rank-one terms per port, so that each term only touches the degrees of freedom of its
+    own port, and compute their dot products on GPUs with block reductions instead of one
+    thread per term. [PR 1155](https://github.com/awslabs/palace/pull/1155).
   - GPU builds now share one Umpire device memory pool between MFEM and hypre, created on
     each rank's GPU, and use standard host memory instead of the slow Umpire host allocator.
     hypre no longer reserves its own 4 GiB device pool per rank, which reduces peak GPU memory
@@ -439,6 +444,15 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     [PR 1180](https://github.com/awslabs/palace/pull/1180).
   - The Spack package now builds STRUMPACK without SLATE by default, as the superbuild does.
     [PR 1223](https://github.com/awslabs/palace/pull/1223).
+  - Building the unit tests now requires MFEM with exceptions (`PALACE_MFEM_USE_EXCEPTIONS`
+    in the superbuild, `mfem+exceptions` in Spack). The tests of error handling expect
+    `MFEM_VERIFY` and `MFEM_ABORT` to throw, and without exceptions the first of them ended
+    the whole test run. Without them, `make palace-tests` in the superbuild now fails right
+    away instead of after building all the dependencies.
+    [PR 1240](https://github.com/awslabs/palace/pull/1240).
+  - The superbuild builds fmt 12.1.0 instead of 12.2.0, which does not compile with nvcc,
+    and builds Umpire with it instead of letting Umpire install its own copy of fmt over it.
+    [PR 1228](https://github.com/awslabs/palace/pull/1228).
 
 ## [0.19.0] - 2026-11-02
 

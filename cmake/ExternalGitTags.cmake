@@ -260,9 +260,10 @@ set(EXTERN_JSON_SCHEMA_VALIDATOR_URL
   "URL for external nlohmann/json-schema-validator build"
 )
 
-# fmt
+# fmt: 12.2.0 and 12.2.1 do not compile with nvcc, as they lack fmtlib/fmt#4813 (the
+# operator~ of the fallback uint128 that nvcc uses), and Umpire requires 12.1.0
 set(EXTERN_FMT_URL
-  "https://github.com/fmtlib/fmt/releases/download/12.2.0/fmt-12.2.0.zip" CACHE STRING
+  "https://github.com/fmtlib/fmt/releases/download/12.1.0/fmt-12.1.0.zip" CACHE STRING
   "URL for external fmt build"
 )
 

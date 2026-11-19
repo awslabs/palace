@@ -27,6 +27,10 @@ if(PALACE_WITH_MAGMA)
   include(ExternalMAGMA)
 endif()
 
+# Add fmt (before Umpire, which uses it)
+message(STATUS "====================== Configuring fmt dependency ======================")
+include(ExternalFmt)
+
 # Add UMPIRE (for HYPRE)
 if(PALACE_WITH_UMPIRE)
   message(STATUS "==================== Configuring UMPIRE dependency =====================")
@@ -74,10 +78,6 @@ include(ExternalJSON)
 # Add JSON Schema Validator
 message(STATUS "========== Configuring nlohmann/json-schema-validator dependency ==========")
 include(ExternalJSONSchemaValidator)
-
-# Add fmt
-message(STATUS "====================== Configuring fmt dependency ======================")
-include(ExternalFmt)
 
 # Add scn
 message(STATUS "====================== Configuring scn dependency ======================")
