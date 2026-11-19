@@ -410,11 +410,11 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   }
 
   // With adaptive mesh refinement, the SLEPc Krylov-Schur solver can start from the
-  // eigenvectors of the previous solve (warm start). It saves nothing on solves of a single
-  // Krylov cycle but costs its more accurate first linear solves: the eigenvectors are kept
-  // only if the last solve without a warm start took two cycles or more, and only if the
-  // adaptation goes on.
-  constexpr int min_cold_its = 2;
+  // eigenvectors of the previous solve (warm start). Its more accurate first Krylov cycle
+  // can cost more than a warm start saves on solves of two cycles: the eigenvectors are
+  // kept only if the last solve without a warm start took three cycles or more, and only if
+  // the adaptation goes on.
+  constexpr int min_cold_its = 3;
   const auto &eigenmode = iodata.solver.eigenmode;
   const auto &refinement = iodata.model.refinement;
   const int adapt_it = num_solves++;
@@ -468,14 +468,11 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
       // A warm-started solve converges after few linear solves, and their error, kept in
       // the Krylov vectors through the restarts, is not seen by the error estimate of the
-      // eigenvalue solver. The error of a linear solve enters a wanted Ritz pair with the
-      // pair's component along the Krylov vector solved for, which is small after the first
-      // num_warm + 1 solves: tighten these by 100, but not below 1e-3 times the tolerance
-      // of the eigenvalue solve (of the initial guess for the hybrid nonlinear solver) or
-      // 1e-12.
+      // eigenvalue solver: tighten the first cycle by 100, but not below 1e-3 times the
+      // tolerance of the eigenvalue solve (of the initial guess for the hybrid nonlinear
+      // solver) or 1e-12.
       eigen->SetFirstCycleLinearSolverTol(
-          std::max({1.0e-2 * iodata.solver.linear.tol, 1.0e-3 * tol, 1.0e-12}),
-          num_warm + 1);
+          std::max({1.0e-2 * iodata.solver.linear.tol, 1.0e-3 * tol, 1.0e-12}));
     }
     else
     {

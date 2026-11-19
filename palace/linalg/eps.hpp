@@ -131,10 +131,9 @@ public:
     SetInitialSpace(v);
   }
 
-  // Relative tolerance of the first num_solves linear solves, at most until the first
-  // restart, used if positive and smaller than that of the linear solver. Not all solvers
-  // support it.
-  virtual void SetFirstCycleLinearSolverTol(double tol, int num_solves) {}
+  // Relative tolerance of the linear solves of the first Krylov cycle, used if positive and
+  // smaller than that of the linear solver. Not all solvers support it.
+  virtual void SetFirstCycleLinearSolverTol(double tol) {}
 
   // Number of iterations (restarts) of the last solve, or -1 if not available.
   virtual int GetNumIterations() const { return -1; }
