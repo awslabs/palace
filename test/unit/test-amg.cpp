@@ -8,7 +8,11 @@
 #include <vector>
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include "fem/fespace.hpp"
+#include "fem/integrator.hpp"
+#include "fem/mesh.hpp"
 #include "linalg/amg.hpp"
+#include "linalg/ams.hpp"
 #include "utils/communication.hpp"
 
 namespace palace
@@ -237,6 +241,75 @@ TEST_CASE("AMS relaxation of a zero-flagged initial guess", "[amg][Serial][Paral
   hypre_ParVectorSetZeros(x);
   ams.Mult(b, x);
   CHECK(RelMaxDiff(comm, x, z) == 0.0);
+}
+
+// HypreAmsSolver runs a fixed number of AMS iterations with a zero tolerance, and flags its
+// zero initial guess as zero. Neither may change the result: hypre then skips residual
+// norms and the exchanges of zero vectors, not arithmetic on nonzero values, so the results
+// are the same to the last bit.
+TEST_CASE("AMS zero initial guess", "[amg][Serial][Parallel]")
+{
+  MPI_Comm comm = Mpi::World();
+  auto smesh = mfem::Mesh::MakeCartesian3D(6, 5, 4, mfem::Element::TETRAHEDRON);
+  Mesh mesh(comm, smesh);
+  constexpr int order = 1;
+  // The discrete gradient for AMS is assembled with libCEED, which needs the default
+  // quadrature order (set by IoData in a simulation).
+  fem::DefaultIntegrationOrder::p_trial = order;
+  mfem::ND_FECollection nd_fec(order, mesh.Dimension());
+  mfem::H1_FECollection h1_fec(order, mesh.Dimension());
+  FiniteElementSpace nd_fespace(mesh, &nd_fec), h1_fespace(mesh, &h1_fec);
+  mfem::Array<int> dbc_marker(mesh.Get().bdr_attributes.Max()), dbc_tdof_list;
+  dbc_marker = 1;
+  nd_fespace.Get().GetEssentialTrueDofs(dbc_marker, dbc_tdof_list);
+
+  // With and without the mass term (singular for magnetostatics), with one or several AMS
+  // iterations and smoothing sweeps (the zero flag must not survive the first relaxation).
+  for (auto [singular, cycle_it, smooth_it] :
+       {std::tuple{false, 1, 1}, std::tuple{false, 3, 2}, std::tuple{true, 2, 1},
+        std::tuple{true, 3, 2}})
+  {
+    mfem::ConstantCoefficient one(1.0);
+    mfem::ParBilinearForm a(&nd_fespace.Get());
+    a.AddDomainIntegrator(new mfem::CurlCurlIntegrator(one));
+    if (!singular)
+    {
+      a.AddDomainIntegrator(new mfem::VectorFEMassIntegrator(one));
+    }
+    a.Assemble();
+    a.Finalize();
+    std::unique_ptr<mfem::HypreParMatrix> A(a.ParallelAssemble());
+    std::unique_ptr<mfem::HypreParMatrix> Ae(A->EliminateRowsCols(dbc_tdof_list));
+
+    HypreAmsSolver ams(nd_fespace, h1_fespace, cycle_it, smooth_it, /*vector_interp*/ false,
+                       singular, /*agg_coarsen*/ true, /*print*/ 0);
+    ams.SetOperator(*A);
+    const int n = A->Height();
+    mfem::Vector b(n), x(n), z(n);
+    b.Randomize(1 + Mpi::Rank(comm));
+    for (int rep = 0; rep < 2; rep++)
+    {
+      // Zero initial guess flagged as zero.
+      x = 1.0;
+      ams.Mult(b, x);
+
+      // Same result when the zero initial guess is given explicitly (not flagged).
+      ams.iterative_mode = true;
+      z = 0.0;
+      ams.Mult(b, z);
+      ams.iterative_mode = false;
+      CHECK(RelMaxDiff(comm, z, x) == 0.0);
+    }
+
+    // A zero right-hand side gives a zero solution.
+    mfem::Vector b0(n);
+    b0 = 0.0;
+    x = 1.0;
+    ams.Mult(b0, x);
+    double x_max = x.Normlinf();
+    Mpi::GlobalMax(1, &x_max, comm);
+    CHECK(x_max == 0.0);
+  }
 }
 
 }  // namespace palace

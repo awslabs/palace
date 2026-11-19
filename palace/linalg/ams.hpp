@@ -65,6 +65,10 @@ public:
 
   void SetOperator(const Operator &op) override;
 
+  // Flags a zero initial guess so that hypre can skip work on it.
+  using mfem::HypreSolver::Mult;
+  void Mult(const mfem::HypreParVector &b, mfem::HypreParVector &x) const override;
+
   operator HYPRE_Solver() const override { return ams; }
 
   HYPRE_PtrToParSolverFcn SetupFcn() const override
