@@ -247,7 +247,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
   - The `Initialization` time now includes MPI initialization and the parsing of the
     configuration file, which were counted in `Total` but in no row of the report (up to
-    tens of seconds on many nodes). [PR 1242](https://github.com/awslabs/palace/pull/1242).
+    tens of seconds on many nodes). MPI initialization, which includes waiting for all
+    processes to start, has its own row, `MPI Startup`.
+    [PR 1242](https://github.com/awslabs/palace/pull/1242).
   - Fixed the pivoting of distributed BLR fronts in STRUMPACK with a patch from upstream.
     With BLR compression (`"STRUMPACKCompressionType"` `"BLR"`, `"BLR-HODLR"` or
     `"ZFP-BLR-HODLR"`) on two or more MPI processes, the factorization of an indefinite
