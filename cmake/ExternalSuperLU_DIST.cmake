@@ -6,7 +6,11 @@
 #
 
 # Force build order
-set(SUPERLU_DEPENDENCIES parmetis)
+if(PALACE_WITH_PARMETIS)
+  set(SUPERLU_DEPENDENCIES parmetis)
+else()
+  set(SUPERLU_DEPENDENCIES metis)
+endif()
 
 set(SUPERLU_OPTIONS ${PALACE_SUPERBUILD_DEFAULT_ARGS})
 list(APPEND SUPERLU_OPTIONS
@@ -21,11 +25,18 @@ list(APPEND SUPERLU_OPTIONS
   "-Denable_single=ON"
   "-Denable_complex16=ON"
   "-Denable_python=OFF"
-  "-DTPL_ENABLE_PARMETISLIB=ON"
+  "-DTPL_ENABLE_PARMETISLIB=${PALACE_WITH_PARMETIS}"
   "-DTPL_PARMETIS_LIBRARIES=${PARMETIS_LIBRARIES}$<SEMICOLON>${METIS_LIBRARIES}"
   "-DTPL_PARMETIS_INCLUDE_DIRS=${CMAKE_INSTALL_PREFIX}/include"
   "-DTPL_ENABLE_COMBBLASLIB=OFF"
 )
+if(NOT PALACE_WITH_PARMETIS)
+  # METIS alone, for the METIS ordering (needs the patch below)
+  list(APPEND SUPERLU_OPTIONS
+    "-DTPL_ENABLE_METISLIB=ON"
+    "-DTPL_METIS_LIBRARIES=${METIS_LIBRARIES}"
+  )
+endif()
 
 # Always disable OpenMP (seems slower in all cases, just link to threaded BLAS/LAPACK)
 # if(PALACE_WITH_OPENMP)
@@ -133,6 +144,16 @@ list(APPEND SUPERLU_PATCH_FILES
   "${CMAKE_SOURCE_DIR}/extern/patch/superlu_dist/superlu_dist_pr254.diff"
   "${CMAKE_SOURCE_DIR}/extern/patch/superlu_dist/superlu_dist_pr255.diff"
   "${CMAKE_SOURCE_DIR}/extern/patch/superlu_dist/superlu_dist_pr256.diff"
+)
+
+# Keep the METIS ordering, and its default, without ParMETIS: SuperLU_DIST compiles it out
+# otherwise (aborting with "Invalid ISPEC" when it is requested) and defaults to MMD
+# (https://github.com/xiaoyeli/superlu_dist/pull/258)
+include(PatchHelpers)
+download_patch(SUPERLU_PATCH_FILES "${CMAKE_BINARY_DIR}/extern/superlu_dist-patches"
+  superlu_dist_pr258.diff
+  "https://github.com/xiaoyeli/superlu_dist/commit/a7dfeb58cccd9c8ea363e52bb5eead815f3c32f7.diff?full_index=1"
+  534a69a4a9bd0b0464d8a46c367c8e92c78de69d78aaa94e542e411300f76f5c
 )
 
 include(ExternalProject)
