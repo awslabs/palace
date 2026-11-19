@@ -4400,6 +4400,108 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 #endif
 }
 
+// Decision 2192 (review r2184 MAJOR-1): the Maxwell PostOperator constructor asks for the
+// census table's path on EVERY rank (CollectiveDiagnosticsPath) AHEAD of the root's patch
+// table. A failure of the root's directory work in the first construction of a run (here
+// a regular file where the directory goes; decision 2194) must end EVERY rank in the
+// constructor with the collective message before the root writes into the directory.
+// Before, the root's patch table did that work first and alone: the root threw its raw
+// filesystem error and the other ranks waited in the collective form's exchange.
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "Diagnostics.Directory: a failure of the root's directory work in the "
+                 "Maxwell PostOperator constructor ends every rank with the collective "
+                 "message",
+                 "[postoperator][surfaceresponseoperator][cornerarmtrim][3d][maxwell]"
+                 "[patchenergy][diagnosticsdirectory][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  const fs::path mesh_path = temp.temp_dir / "diagctor-lead.mesh";
+  const auto basis_path = temp.temp_dir / "diagctor-basis-points.csv";
+  const auto edge_library_path = temp.temp_dir / "fabrication-process-diagctor-edges.json";
+  MPI_Comm comm = Mpi::World();
+  if (Mpi::Root(comm))
+  {
+    {
+      mfem::Mesh serial = MakeSerialLeadMesh(0.0, 0.75);
+      std::ofstream output(mesh_path);
+      serial.Print(output);
+    }
+    {
+      std::ofstream output(basis_path);
+      output << "x,y,z\n"
+             << "-0.2,-0.2,0.0\n"
+             << "0.2,-0.2,0.0\n"
+             << "0.2,0.2,0.0\n"
+             << "-0.2,0.2,0.0\n";
+    }
+    std::ifstream input(convex_library_3d_path);
+    REQUIRE(input);
+    json library = json::parse(input);
+    library["Name"] = "unit-test-process-diagctor-edges";
+    json models = json::array();
+    for (auto &model : library["Models"])
+    {
+      if (model["Topology"] == "IsolatedEdge")
+      {
+        model["Interfaces"] = {{{"Type", "SA"}, {"Coupon", 1}}};
+        model["BasisPoints"] = basis_path.string();
+        models.push_back(model);
+      }
+    }
+    library["Models"] = std::move(models);
+    std::ofstream output(edge_library_path);
+    output << library.dump(2) << "\n";
+  }
+  Mpi::Barrier(comm);
+  json run = IslandConfig();
+  run["Model"]["Mesh"] = mesh_path.string();
+  run["Model"]["L0"] = 1.0;
+  run["Problem"]["Type"] = "Eigenmode";
+  run["Boundaries"]["Ground"]["Attributes"] = {4, 9};
+  run["Boundaries"].erase("Terminal");
+  const fs::path output_dir = temp.temp_dir / "diagctor";
+  run["Problem"]["Output"] = output_dir.string();
+  run["Solver"] = {{"Order", 1},
+                   {"Eigenmode", {{"Target", 1.0}}},
+                   {"SurfaceResponseCorrection",
+                    {{"Library", edge_library_path.string()},
+                     {"TargetInterfaces", {4}},
+                     {"UnmatchedPolicy", "Warn"},
+                     {"CorrectionMode", "PostprocessOnly"},
+                     {"PatchEnergy", true},
+                     {"Diagnostics", {{"Directory", "diagnostics"}}}}}};
+  IoData iodata(run, false);
+  iodata.boundaries.cracked_attributes.insert(9);
+  MakeOutputFolder(iodata, comm);
+  std::vector<std::unique_ptr<Mesh>> meshes;
+  meshes.push_back(std::make_unique<Mesh>(MakeLeadMesh(0.0, 0.75)));
+  SpaceOperator space_op(iodata, meshes);
+  // A regular file where the directory goes, before the first construction (set on the
+  // root): the root's directory work fails (create_directories: Not a directory).
+  const fs::path directory = output_dir / "diagnostics";
+  if (Mpi::Root(comm))
+  {
+    std::ofstream(directory) << "not a directory\n";
+  }
+  Mpi::Barrier(comm);
+  CHECK_THROWS_WITH([&]()
+                    { PostOperator<ProblemType::EIGENMODE> post_op(iodata, space_op); }(),
+                    ContainsSubstring("Preparing the diagnostics directory") &&
+                        ContainsSubstring("failed on MPI rank 0") &&
+                        ContainsSubstring("Not a directory"));
+  // The file is left in place.
+  int file = 0;
+  if (Mpi::Root(comm))
+  {
+    file = fs::is_regular_file(fs::symlink_status(directory)) ? 1 : 0;
+  }
+  Mpi::Broadcast(1, &file, 0, comm);
+  CHECK(file == 1);
+#endif
+}
+
 // OI-MX-LOOPGATE (decision 955) fixture: the 922-B lead (MakeLeadMesh(0.0, 0.75)) with the
 // one isolated-edge model of the convex library on a 4-knot ring (the square of side 2 R =
 // 0.4 shifted R / 2 along v: the path's start knot, the nearest to the PEC anchor (-R, 0),

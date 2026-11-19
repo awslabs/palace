@@ -569,6 +569,16 @@ PostOperator<solver_t>::PostOperator(
               {portion.p0, portion.p1, portion.topology, portion.feature});
         }
       }
+      // Decision 2192 (review r2184 MAJOR-1): the census table's path is asked on EVERY
+      // rank AHEAD of the root's patch table, so that a failure of the root's directory
+      // work ends every rank here with the collective message before the root writes into
+      // the directory (PatchEnergy only, the census table's own condition).
+      fs::path resolution_patches_path;
+      if (surface_response_patch_energy_enabled)
+      {
+        resolution_patches_path = surface_response_op->CollectiveDiagnosticsPath(
+            post_dir, "surface-response-resolution-patches.csv");
+      }
       if (surface_response_patch_energy_enabled && Mpi::Root(fem_op->GetComm()) &&
           !surface_response_op->GetPatchAssignments().empty())
       {
@@ -609,12 +619,8 @@ PostOperator<solver_t>::PostOperator(
       if (surface_response_patch_energy_enabled)
       {
         // Lane rescensus-product (decision 1817): the census's per-patch readings
-        // (PatchEnergy only; collective; the path's filesystem work on the root).
-        surface_response_op->WriteResolutionPatchTable(
-            surface_response_op
-                ->CollectiveDiagnosticsPath(post_dir,
-                                            "surface-response-resolution-patches.csv")
-                .string());
+        // (PatchEnergy only; collective; its path prepared above).
+        surface_response_op->WriteResolutionPatchTable(resolution_patches_path.string());
       }
     }
   }
