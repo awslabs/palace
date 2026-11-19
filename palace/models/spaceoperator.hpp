@@ -52,6 +52,12 @@ private:
   const bool pc_mat_shifted;  // Use shifted mass matrix for preconditioner
   const bool pc_mat_amg;      // Preconditioner uses AMS/BoomerAMG on the real-valued matrix
 
+  // Whether the coarse solve of the complex-valued preconditioner factors the real-valued
+  // Br + Bi instead of the complex-valued matrix (sparse direct solvers without
+  // ComplexCoarseSolve): the second-order absorbing BC term then has its sign flipped on
+  // the coarse level (see AssemblePreconditioner).
+  const bool pc_coarse_real_approx;
+
   // Helper variables for log file printing.
   bool print_hdr, print_prec_hdr;
 
