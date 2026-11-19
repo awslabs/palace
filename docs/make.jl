@@ -128,8 +128,8 @@ makedocs(
     ]
 )
 
-# Concurrent PR previews (docs and coverage) race to push gh-pages, and the loser's
-# --force-with-lease push is rejected. Each deploydocs call clones gh-pages afresh, so retry.
+# Concurrent deployments race to push gh-pages, and the loser's --force-with-lease push is
+# rejected. Each deploydocs call clones gh-pages afresh, so retry.
 for attempt = 1:5
     try
         deploydocs(
