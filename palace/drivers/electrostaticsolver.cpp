@@ -1168,15 +1168,23 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     }
     else
     {
+      // Decision 2192 (review r2184 MAJOR-1): the census table's path is asked on EVERY
+      // rank AHEAD of the root's patch table, so that a failure of the root's directory
+      // work ends every rank here with the collective message before the root writes into
+      // the directory (PatchEnergy only, the census table's own condition; without it the
+      // directory work stays the root writers' own, as before).
+      std::filesystem::path resolution_patches_path;
+      if (patch_energy_response)
+      {
+        resolution_patches_path = response_correction->CollectiveDiagnosticsPath(
+            post_dir, "surface-response-resolution-patches.csv");
+      }
       WritePatchTable();
       if (patch_energy_response)
       {
         // Lane rescensus-product (decision 1817): the census's per-patch readings
-        // (PatchEnergy only; collective).
-        response_correction->WriteResolutionPatchTable(
-            response_correction
-                ->DiagnosticsPath(post_dir, "surface-response-resolution-patches.csv")
-                .string());
+        // (PatchEnergy only; collective; its path prepared above).
+        response_correction->WriteResolutionPatchTable(resolution_patches_path.string());
       }
       if (self_consistent_response)
       {
