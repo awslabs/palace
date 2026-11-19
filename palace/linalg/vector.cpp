@@ -9,6 +9,7 @@
 #include <random>
 #include <utility>
 #include <mfem/general/forall.hpp>
+#include <mfem/general/reducers.hpp>
 #include "linalg/hypre.hpp"
 #include "utils/omp.hpp"
 
@@ -685,23 +686,83 @@ double LocalDot(const Vector &x, const Vector &y)
   return ThreadedHostSums<1>(x.Size(), [=](int i) { return std::array{Y[i] * X[i]}; })[0];
 }
 
+namespace
+{
+
+// Partial sums yrᵀxr, yiᵀxi, yrᵀxi, yiᵀxr of the complex inner product yᴴx.
+struct ComplexDotSums
+{
+  double rr, ii, ir, ri;
+};
+
+// Carries the four sums through one reduction, so a single kernel produces all of them.
+struct ComplexDotReducer
+{
+  using value_type = ComplexDotSums;
+  static MFEM_HOST_DEVICE void Join(value_type &a, const value_type &b)
+  {
+    a.rr += b.rr;
+    a.ii += b.ii;
+    a.ir += b.ir;
+    a.ri += b.ri;
+  }
+  static MFEM_HOST_DEVICE void SetInitialValue(value_type &a)
+  {
+    a.rr = 0.0;
+    a.ii = 0.0;
+    a.ir = 0.0;
+    a.ri = 0.0;
+  }
+};
+
+}  // namespace
+
 std::complex<double> LocalDot(const ComplexVector &x, const ComplexVector &y)
 {
+  MFEM_ASSERT(x.Size() == y.Size(), "Size mismatch for vector inner product!");
   if (mfem::Device::Allows(mfem::Backend::DEVICE_MASK))
   {
-    if (&x == &y)
+    // One pass over both parts of each vector: one kernel launch and one copy back to the
+    // host instead of four of each.
+    const bool herm = (&x == &y);
+    const bool use_dev = x.UseDevice() || y.UseDevice();
+    const int N = x.Size();
+    const auto *XR = x.Real().Read(use_dev);
+    const auto *XI = x.Imag().Read(use_dev);
+    ComplexDotSums s = {0.0, 0.0, 0.0, 0.0};
+    // Reused between calls, since this sits in the Krylov inner loop.
+    static mfem::Array<ComplexDotSums> workspace;
+    // xᴴx is real, so it needs only the two diagonal sums.
+    if (herm)
     {
-      return {LocalDot(x.Real(), y.Real()) + LocalDot(x.Imag(), y.Imag()), 0.0};
+      mfem::reduce(
+          N, s,
+          [=] MFEM_HOST_DEVICE(int i, ComplexDotSums &r)
+          {
+            r.rr += XR[i] * XR[i];
+            r.ii += XI[i] * XI[i];
+          },
+          ComplexDotReducer{}, use_dev, workspace);
     }
     else
     {
-      return {LocalDot(x.Real(), y.Real()) + LocalDot(x.Imag(), y.Imag()),
-              LocalDot(x.Imag(), y.Real()) - LocalDot(x.Real(), y.Imag())};
+      const auto *YR = y.Real().Read(use_dev);
+      const auto *YI = y.Imag().Read(use_dev);
+      mfem::reduce(
+          N, s,
+          [=] MFEM_HOST_DEVICE(int i, ComplexDotSums &r)
+          {
+            r.rr += XR[i] * YR[i];
+            r.ii += XI[i] * YI[i];
+            r.ir += XI[i] * YR[i];
+            r.ri += XR[i] * YI[i];
+          },
+          ComplexDotReducer{}, use_dev, workspace);
     }
+    return {s.rr + s.ii, herm ? 0.0 : s.ir - s.ri};
   }
 
   // On the host, a single pass over the data instead of one per real inner product.
-  MFEM_ASSERT(x.Size() == y.Size(), "Size mismatch for vector inner product!");
   const auto *XR = x.Real().HostRead(), *XI = x.Imag().HostRead();
   const auto *YR = y.Real().HostRead(), *YI = y.Imag().HostRead();
   if (&x == &y)
