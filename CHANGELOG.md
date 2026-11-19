@@ -312,6 +312,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Bug Fixes
 
+  - Fixed magnetostatic solves that did not converge, and gave wrong inductances, when the
+    PEC boundaries allow a constant vector potential: no PEC at all, or PEC only on planes
+    normal to one axis, such as planar films with a natural far field. For singular
+    operators, AMS now relaxes the coarsest level of its auxiliary space solves instead of
+    using Gaussian elimination. [PR NNNN](https://github.com/awslabs/palace/pull/NNNN).
   - The `"Problem"`/`"Iteration"` field of `palace.json` is now updated only after the AMR
     iteration's output is in its final location. With `SaveAdaptIterations`, it used to be
     written before the output was moved into `iterationXX`, so a reader polling it could
