@@ -656,23 +656,19 @@ void DrivenSubstructure::Condense(double omega, bool region_too)
     // factorizations.
     Setup(env, omega);
   }
-  if (region_too && !region.schur)
+  const bool set_up = region_too && !coupled;
+  if (set_up)
   {
     Setup(region, omega);
   }
-  // The dense interface matrices on rank 0 move between MUMPS's Schur buffers, S and T,
-  // without copies (the buffers are allocated again at the next factorization).
+  // S_E on rank 0 moves out of MUMPS's Schur buffer without a copy (the buffer is allocated
+  // again at the next factorization).
   Release(S);
-  Release(T);
   Factor(env, omega);
-  if (region_too)
-  {
-    Factor(region, omega);
-  }
   S = env.schur->ReleaseSchur();
   if (region_too)
   {
-    FactorInterface();
+    FactorCoupled(omega, S, false, set_up);
   }
   solvable = region_too;
 }
@@ -680,6 +676,14 @@ void DrivenSubstructure::Condense(double omega, bool region_too)
 void DrivenSubstructure::Condense(double omega, std::vector<std::complex<double>> &&S_env)
 {
   MFEM_VERIFY(online, "An offline substructure condenses its own environment!");
+  FactorCoupled(omega, S_env, true, false);
+  solvable = true;
+}
+
+void DrivenSubstructure::FactorCoupled(double omega,
+                                       std::vector<std::complex<double>> &S_env,
+                                       bool release, bool set_up)
+{
   MPI_Comm comm = space_op.GetComm();
   const bool root = Mpi::Root(comm);
   const int nG = InterfaceSize();
@@ -701,7 +705,10 @@ void DrivenSubstructure::Condense(double omega, std::vector<std::complex<double>
   };
   if (!coupled)
   {
-    Setup(region, omega);
+    if (!set_up)
+    {
+      Setup(region, omega);
+    }
     Factorization::Coo coo{std::move(region.irn_sys), std::move(region.jcn_sys),
                            std::move(region.val)};
     coupled_region_entries = coo.val.size();
@@ -712,7 +719,10 @@ void DrivenSubstructure::Condense(double omega, std::vector<std::complex<double>
           coo.jcn.push_back(static_cast<int>(b + 1));
           coo.val.push_back(v);
         });
-    Release(S_env);
+    if (release)
+    {
+      Release(S_env);
+    }
     coupled = MakeFactorization(CoupledSolver(solver), ordering, comm, region.n_sys,
                                 std::move(coo), {}, region.rows);
   }
@@ -725,28 +735,11 @@ void DrivenSubstructure::Condense(double omega, std::vector<std::complex<double>
     Fill(region, omega, extra, ModalTerms(region, omega), val);
     std::size_t k = coupled_region_entries;
     add_schur([&](HYPRE_BigInt, HYPRE_BigInt, std::complex<double> v) { val[k++] = v; });
-    Release(S_env);
-    coupled->Refactor();
-  }
-  solvable = true;
-}
-
-void DrivenSubstructure::FactorInterface()
-{
-  // The interface system S_R + S_E, factored on rank 0 (LU: the symmetric factorization of
-  // common LAPACKs is slower, despite its half of the operations).
-  T = region.schur->ReleaseSchur();
-  if (Mpi::Root(space_op.GetComm()))
-  {
-    const int nG = InterfaceSize();
-    for (std::size_t k = 0; k < T.size(); k++)
+    if (release)
     {
-      T[k] += S[k];
+      Release(S_env);
     }
-    T_piv.resize(nG);
-    int info = 0;
-    zgetrf_(&nG, &nG, T.data(), &nG, T_piv.data(), &info);
-    MFEM_VERIFY(info == 0, "Factorization of the interface system failed: info = " << info);
+    coupled->Refactor();
   }
 }
 
@@ -779,68 +772,39 @@ void DrivenSubstructure::Solve(const std::vector<const ComplexVector *> &rhs,
   MFEM_VERIFY(solvable, "Condense (with the region) must be called before Solve!");
   MFEM_VERIFY(online == (g_env != nullptr),
               "The environment's source condensation is given online only!");
-  MPI_Comm comm = space_op.GetComm();
-  const int n = static_cast<int>(rhs.size()), nt = space_op.GetNDSpace().GetTrueVSize();
-  const int nG = InterfaceSize();
   if (online)
   {
     SolveCoupled(rhs, u, *g_env);
     return;
   }
 
-  // Condensation of the sources onto Γ: the environment's with the interface loads b_Γ,
-  // b_Γ - A_ΓE A_EE^-1 b_E, and the region's, -A_ΓR A_RR^-1 b_R.
-  std::vector<ComplexVector> w(n), y(n);
-  std::vector<const ComplexVector *> W(n), Y(n);
+  // The environment's sources condensed onto Γ with the interface loads b_Γ,
+  // b_Γ - A_ΓE A_EE^-1 b_E, the region and Γ solved with them as online, and the
+  // environment interior from the interface solution, A_EE^-1 (b_E - A_EΓ u_Γ).
+  const int n = static_cast<int>(rhs.size()), nt = space_op.GetNDSpace().GetTrueVSize();
+  std::vector<ComplexVector> w(n);
+  std::vector<const ComplexVector *> W(n);
+  std::vector<ComplexVector *> Wo(n);
   for (int k = 0; k < n; k++)
   {
     w[k] = Masked(*rhs[k], is_env_int, &is_gamma);
     W[k] = &w[k];
-    y[k] = Masked(*rhs[k], is_region_int);
-    Y[k] = &y[k];
-  }
-  std::vector<std::complex<double>> rR;
-  env.schur->Reduce(W, g_last);
-  region.schur->Reduce(Y, rR);
-  if (Mpi::Root(comm))
-  {
-    u_last = g_last;
-    for (std::size_t q = 0; q < u_last.size(); q++)
-    {
-      u_last[q] += rR[q];
-    }
-    if (nG > 0)
-    {
-      int info = 0;
-      zgetrs_("N", &nG, &n, T.data(), &nG, T_piv.data(), u_last.data(), &nG, &info);
-      MFEM_VERIFY(info == 0, "Solve of the interface system failed: info = " << info);
-    }
-  }
-
-  // The interiors from the interface solution, A_II^-1 (b_I - A_IΓ u_Γ) (the interface
-  // values come out of either expansion; the Dirichlet DOFs are 0).
-  std::vector<ComplexVector *> Wo(n), Yo(n);
-  for (int k = 0; k < n; k++)
-  {
     Wo[k] = &w[k];
-    Yo[k] = &y[k];
   }
+  env.schur->Reduce(W, g_last);
+  SolveCoupled(rhs, u, g_last);
   env.schur->Expand(u_last, Wo);
-  region.schur->Expand(u_last, Yo);
-  u.resize(n);
   for (int k = 0; k < n; k++)
   {
-    u[k].SetSize(nt);
-    u[k].UseDevice(true);
-    double *ur = u[k].Real().HostWrite(), *ui = u[k].Imag().HostWrite();
-    const double *yr = y[k].Real().HostRead(), *yi = y[k].Imag().HostRead();
+    double *ur = u[k].Real().HostReadWrite(), *ui = u[k].Imag().HostReadWrite();
     const double *wr = w[k].Real().HostRead(), *wi = w[k].Imag().HostRead();
     for (int i = 0; i < nt; i++)
     {
-      const bool from_region = is_region_int[i];
-      const bool from_env = is_env_int[i] || is_gamma[i];
-      ur[i] = from_region ? yr[i] : (from_env ? wr[i] : 0.0);
-      ui[i] = from_region ? yi[i] : (from_env ? wi[i] : 0.0);
+      if (is_env_int[i])
+      {
+        ur[i] = wr[i];
+        ui[i] = wi[i];
+      }
     }
   }
 }

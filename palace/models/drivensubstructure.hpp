@@ -163,11 +163,10 @@ private:
 // Exact per-frequency substructuring of a driven problem: the environment operator
 // A_E(ω) = K_E + iω C_E - ω² M_E + A2_E(ω), assembled with Palace's operators restricted
 // to the environment, is condensed onto the interface Γ by a partial complex symmetric
-// MUMPS factorization, which gives S_E(ω). The region is condensed onto Γ in the same way,
-// and the interface system S_R(ω) + S_E(ω) is factored densely. Online, the environment is
-// not assembled: S_E(ω) and the condensation of the environment's sources come from a
-// saved model, the region is factored with S_E(ω) added on Γ as one system, and the
-// environment interior of the solution is not computed.
+// MUMPS factorization, which gives S_E(ω). The region is factored with S_E(ω) added on Γ
+// as one system. Online, the environment is not assembled: S_E(ω) and the condensation of
+// the environment's sources come from a saved model, and the environment interior of the
+// solution is not computed.
 //
 class DrivenSubstructure
 {
@@ -175,10 +174,10 @@ public:
   // Online, with the saved model: on the mesh of the region (region_mesh), Γ is the set of
   // the region's boundary DOFs at the points of the saved interface DOFs. The
   // factorizations are by the sparse direct solver given (STRUMPACK, MUMPS or SUPERLU),
-  // else: of a side with its Schur complement onto Γ, by MUMPS (its partial factorization),
-  // STRUMPACK or SuperLU_DIST (one solve per interface DOF), of the region with S_E online
-  // (one system) by STRUMPACK, MUMPS or SuperLU_DIST, in these orders among those Palace is
-  // built with, with the fill-reducing ordering given.
+  // else: of the environment with its Schur complement onto Γ, by MUMPS (its partial
+  // factorization), STRUMPACK or SuperLU_DIST (one solve per interface DOF), of the region
+  // with S_E (one system) by STRUMPACK, MUMPS or SuperLU_DIST, in these orders among those
+  // Palace is built with, with the fill-reducing ordering given.
   DrivenSubstructure(SpaceOperator &space_op, const std::vector<int> &region_attributes,
                      const std::vector<int> &environment_attributes, bool online = false,
                      const DrivenSubstructureModel *saved = nullptr,
@@ -348,14 +347,13 @@ private:
   };
   Side env, region;
   bool solvable = false;  // the region is factored against the environment
-  // Online: the region with S_E on Γ, factored as one system; its entries are the region's,
-  // then (on rank 0) S_E's lower triangle.
+  // The region with S_E on Γ, factored as one system; its entries are the region's, then
+  // (on rank 0) S_E's lower triangle.
   std::unique_ptr<SchurFactorization<std::complex<double>>> coupled;
   std::size_t coupled_region_entries = 0;
-  // On rank 0: S_E, and the factored interface system S_R + S_E with its pivots (offline);
-  // the environment's source condensation and the interface solution of the last Solve.
-  std::vector<std::complex<double>> S, T, g_last, u_last;
-  std::vector<int> T_piv;
+  // On rank 0: S_E (offline), the environment's source condensation and the interface
+  // solution of the last Solve.
+  std::vector<std::complex<double>> S, g_last, u_last;
 
   // The local true DOFs of the wave ports (each in the wave_ports of its side).
   std::map<int, std::vector<char>> wave_port_dofs;
@@ -378,10 +376,13 @@ private:
   std::vector<std::vector<double>> red_parts;
   std::vector<double> red_gamma;
 
-  // Factor S_R + S_E on rank 0 (offline).
-  void FactorInterface();
+  // Factor the region with S_E (on rank 0) added on Γ as one system, releasing S_E once its
+  // entries are in the factored values if release (set_up: Setup of the region was called
+  // for its first factorization).
+  void FactorCoupled(double omega, std::vector<std::complex<double>> &S_env, bool release,
+                     bool set_up);
 
-  // Online Solve, with the coupled factorization of the region and S_E.
+  // The region and Γ from the coupled factorization, with g_env (rank 0) on Γ.
   void SolveCoupled(const std::vector<const ComplexVector *> &rhs,
                     std::vector<ComplexVector> &u,
                     const std::vector<std::complex<double>> &g_env);

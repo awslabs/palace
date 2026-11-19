@@ -37,12 +37,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     in the adaptive fast frequency sweep. The offline sweep also writes a mesh of the
     region, on which online sweeps read and partition the region only. Runs on CPUs and
     GPUs, with the factorizations on the CPU. Offline, the partial factorization of MUMPS
-    or, without it, of STRUMPACK gives the condensed sides (SuperLU_DIST, whose condensation
-    goes wrong through a resonance, is not used offline). Online, the region is factored
-    with the condensed environment as one system, by STRUMPACK, MUMPS or SuperLU_DIST. A
-    sparse direct solver that `config["Solver"]["Linear"]["Type"]` names factors both
-    instead. Adds a driven example in `examples/substructuring` (a 3 x 4 grid of CPW
-    resonators). SchemaVer 5-1-1.
+    or, without it, of STRUMPACK gives the condensed environment (SuperLU_DIST, whose
+    condensation goes wrong through a resonance, is not used offline). Offline and online,
+    the region is factored with the condensed environment as one system, by STRUMPACK,
+    MUMPS or SuperLU_DIST. A sparse direct solver that `config["Solver"]["Linear"]["Type"]`
+    names factors both instead. Adds a driven example in `examples/substructuring` (a 3 x 4
+    grid of CPW resonators). SchemaVer 5-1-1.
     [PR 1044](https://github.com/awslabs/palace/pull/1044).
   - `validate-config` accepts several configuration files and validates them in one Julia
     session. [PR 1180](https://github.com/awslabs/palace/pull/1180).
