@@ -36,6 +36,14 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Interface Changes
 
+  - When `Solver.Linear.ColumnOrdering` is `"Default"` (or omitted), the STRUMPACK solver
+    (`"Type": "STRUMPACK"`, or `"Default"` when it selects STRUMPACK) now orders the matrix
+    with a METIS nested dissection which is parallel over the separator tree, instead of
+    METIS on one process (see the performance improvements below). Results change within
+    the solver tolerances. Set `"ColumnOrdering": "METIS"` to keep the previous ordering.
+    The mixed precision solver (`"Type": "STRUMPACK-MP"`) and the wave port and boundary
+    mode eigenvalue solves are not changed: their default ordering is still METIS.
+    SchemaVer 6-0-0 [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
   - With adaptive mesh refinement on nonconforming meshes, the SLEPc Krylov-Schur eigenvalue
     solves of later adaptation iterations can start from the eigenvectors of the previous
     one, transferred to the refined mesh, instead of the start vector of
@@ -108,6 +116,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Performance Improvements
 
+  - Added a STRUMPACK patch with a METIS nested dissection ordering which is parallel over
+    the separator tree, now the default column ordering of the STRUMPACK solver (not of
+    `"STRUMPACK-MP"`, which keeps METIS). With METIS, one process orders the graph of the
+    whole coarse matrix while all other processes wait. Now one process computes only the
+    top separators, and the processes then order different parts of the graph at the same
+    time. It needs METIS only, the factors have about the same size, and the permutation is
+    still stored once per node. [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
   - The AMS solver, used with a fixed number of iterations, now has a tolerance of zero and
     flags its zero initial guess. With a hypre patch, it then computes no residual norms,
     each a fine-level matrix-vector product and a reduction over all processes, and the

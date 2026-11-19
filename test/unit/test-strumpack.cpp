@@ -3,8 +3,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <type_traits>
 #include <vector>
 #include <mfem.hpp>
+#include <catch2/catch_template_test_macros.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
 #include "linalg/strumpack.hpp"
@@ -73,6 +75,14 @@ HYPRE_BigInt CountEntriesWithoutTranspose(const mfem::HypreParMatrix &A)
   hypre_CSRMatrixDestroy(csr);
   Mpi::GlobalSum(1, &missing, comm);
   return missing;
+}
+
+// Whether STRUMPACK has the METIS nested dissection which is parallel over the separator
+// tree, a patch in the STRUMPACK builds of Palace.
+template <typename Strategy = strumpack::ReorderingStrategy>
+constexpr bool HasMetisTreeReordering()
+{
+  return requires { Strategy::METIS_TREE; };
 }
 
 }  // namespace
@@ -278,8 +288,9 @@ TEST_CASE("StrumpackSolver BLR compression of an indefinite matrix",
 
   // The residual of one solve is 1e-10 to 3e-10 on 1 to 8 processes at this compression
   // tolerance. With the defect it was 0.23 on 2 processes, 0.44 on 4 and 0.46 on 8, and at
-  // least 0.045 on 2 to 8 processes.
-  StrumpackSolver strumpack(comm, SymbolicFactorization::DEFAULT, SparseCompression::BLR,
+  // least 0.045 on 2 to 8 processes. These numbers, and the separator described above, are
+  // those of the METIS ordering.
+  StrumpackSolver strumpack(comm, SymbolicFactorization::METIS, SparseCompression::BLR,
                             1.0e-9, 0, 0, false, 0);
   strumpack.SetOperator(A);
   x = 0.0;
@@ -289,6 +300,115 @@ TEST_CASE("StrumpackSolver BLR compression of an indefinite matrix",
   const double res =
       std::sqrt(mfem::InnerProduct(comm, r, r) / mfem::InnerProduct(comm, b, b));
   CHECK(res <= 1.0e-6);
+}
+
+// With "ColumnOrdering": "Default", the real-valued solver uses the METIS nested dissection
+// which is parallel over the separator tree, when STRUMPACK is built with it (otherwise
+// METIS), and the other values of the option select the orderings they name. The single
+// precision solver of the mixed precision solver, which computes its ordering, uses METIS
+// for every value of the option.
+TEMPLATE_TEST_CASE("StrumpackSolver column ordering", "[strumpack][Serial][Parallel]",
+                   StrumpackSolver, StrumpackMixedPrecisionSolver)
+{
+  MPI_Comm comm = Mpi::World();
+  const int P = Mpi::Size(comm), rank = Mpi::Rank(comm);
+  const bool mixed_precision = std::is_same_v<TestType, StrumpackMixedPrecisionSolver>;
+  using Strategy = strumpack::ReorderingStrategy;
+
+  // Solves with the default ordering and with METIS, with the permutation stored once per
+  // node and with every process as a node (see the first test case).
+  const auto reorder =
+      GENERATE(SymbolicFactorization::DEFAULT, SymbolicFactorization::METIS);
+  const bool process_as_node = GENERATE(false, true);
+  CAPTURE(static_cast<int>(reorder), process_as_node);
+  ScopedEnvironmentVariable group("STRUMPACK_SHARED_PERM_GROUP",
+                                  process_as_node ? "1" : nullptr);
+
+  auto GetStrategy = [&](SymbolicFactorization value)
+  {
+    return TestType(comm, value, SparseCompression::NONE, 0.0, 0, 0, false, 0)
+        .GetReorderingStrategy();
+  };
+  CHECK((GetStrumpackDefaultReordering() != Strategy::METIS) == HasMetisTreeReordering());
+  if (mixed_precision)
+  {
+    for (auto value : {SymbolicFactorization::DEFAULT, SymbolicFactorization::METIS,
+                       SymbolicFactorization::PARMETIS, SymbolicFactorization::SCOTCH,
+                       SymbolicFactorization::PTSCOTCH, SymbolicFactorization::PORD,
+                       SymbolicFactorization::AMD, SymbolicFactorization::RCM})
+    {
+      CAPTURE(static_cast<int>(value));
+      CHECK(GetStrategy(value) == Strategy::METIS);
+    }
+  }
+  else
+  {
+    CHECK(GetStrategy(SymbolicFactorization::DEFAULT) == GetStrumpackDefaultReordering());
+    CHECK(GetStrategy(SymbolicFactorization::METIS) == Strategy::METIS);
+    CHECK(GetStrategy(SymbolicFactorization::AMD) == Strategy::AMD);
+    CHECK(GetStrategy(SymbolicFactorization::RCM) == Strategy::RCM);
+  }
+
+  // Five-point Laplacian on an m x m grid, rows distributed in contiguous blocks: with
+  // 16384 rows, the separator tree of the default ordering of the real-valued solver has
+  // one leaf per process on up to 8 processes (a leaf has 2000 rows or more, and with one
+  // leaf the ordering is METIS).
+  const int m = 128;
+  const HYPRE_BigInt N = m * m;
+  const HYPRE_BigInt first = (N * rank) / P, last = (N * (rank + 1)) / P;
+  const int n_loc = static_cast<int>(last - first);
+  std::vector<int> I(n_loc + 1, 0);
+  std::vector<HYPRE_BigInt> J;
+  std::vector<double> data;
+  for (HYPRE_BigInt i = first; i < last; i++)
+  {
+    const HYPRE_BigInt ix = i % m, iy = i / m;
+    auto Add = [&](bool has, HYPRE_BigInt j, double v)
+    {
+      if (has)
+      {
+        J.push_back(j);
+        data.push_back(v);
+      }
+    };
+    Add(iy > 0, i - m, -1.0);
+    Add(ix > 0, i - 1, -1.0);
+    Add(true, i, 4.0);
+    Add(ix < m - 1, i + 1, -1.0);
+    Add(iy < m - 1, i + m, -1.0);
+    I[i - first + 1] = static_cast<int>(J.size());
+  }
+  HYPRE_BigInt row_starts[2] = {first, last};
+  mfem::HypreParMatrix A(comm, n_loc, N, N, I.data(), J.data(), data.data(), row_starts,
+                         row_starts);
+
+  // Manufactured solution.
+  mfem::HypreParVector x_ex(A), b(A), x(A);
+  for (int i = 0; i < n_loc; i++)
+  {
+    const double t = static_cast<double>(first + i) / static_cast<double>(N);
+    x_ex(i) = std::sin(7.0 * t) + t;
+  }
+  A.Mult(x_ex, b);
+
+  // Factorization, and refactorization reusing the reordering.
+  TestType strumpack(comm, reorder, SparseCompression::NONE, 0.0, 0, 0, true, 0);
+  for (int k = 0; k < 2; k++)
+  {
+    strumpack.SetOperator(A);
+    x = 0.0;
+    strumpack.Mult(b, x);
+    double err = 0.0, nrm = 0.0;
+    for (int i = 0; i < n_loc; i++)
+    {
+      err = std::max(err, std::abs(x(i) - x_ex(i)));
+      nrm = std::max(nrm, std::abs(x_ex(i)));
+    }
+    Mpi::GlobalMax(1, &err, comm);
+    Mpi::GlobalMax(1, &nrm, comm);
+    // The mixed precision solver is used without refinement: single precision accuracy.
+    CHECK(err <= (mixed_precision ? 1.0e-4 : 1.0e-11) * nrm);
+  }
 }
 
 }  // namespace palace

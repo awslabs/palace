@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:5-0-0",
+  "$id": "urn:palace:schema:6-0-0",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -3087,7 +3087,7 @@
         },
         "ColumnOrdering": {
           "$ref": "#/$defs/SymbolicFactorization",
-          "description": "Column ordering algorithm for sparse direct solvers. If omitted, Palace uses the sparse direct solver's default ordering.",
+          "description": "Column ordering algorithm for sparse direct solvers. If omitted, Palace uses the sparse direct solver's default ordering, except for STRUMPACK (`\"Type\": \"STRUMPACK\"`), where the default is a METIS nested dissection which is parallel over the separator tree: one process computes the top separators, and the processes then order different parts of the graph of the matrix at the same time, while with `\"METIS\"` one process orders the whole graph. The factors have about the same size, and results agree with those of `\"METIS\"` to within the solver tolerances, not bitwise. On one process, for matrices of fewer than 4000 rows, for the wave port and boundary mode eigenvalue problems, and when STRUMPACK is built without this ordering (the superbuild and the Spack package of Palace build it), the default for STRUMPACK is `\"METIS\"`. The mixed precision solver (`\"Type\": \"STRUMPACK-MP\"`) orders with METIS for every value of this option.",
           "x-palace-advanced": true
         },
         "STRUMPACKCompressionType": {
