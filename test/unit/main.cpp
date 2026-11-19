@@ -173,6 +173,13 @@ int main(int argc, char *argv[])
     cfg.testsOrTags.emplace_back("~[Regression]");
     cfg.testsOrTags.emplace_back("~[Long]");
   }
+
+  // Only the root process writes the --out file: catch_discover_tests (Catch2 >= 3.15.2)
+  // lists the tests through it, and concurrent writes from all ranks corrupt it.
+  if (!Mpi::Root(Mpi::World()))
+  {
+    cfg.defaultOutputFilename.clear();
+  }
   session.useConfigData(cfg);
 
   // Forward regression-harness overrides into the helpers. Solver
