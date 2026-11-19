@@ -6,6 +6,7 @@
 #include <cstring>
 #include <functional>
 #include <limits>
+#include <string>
 #include <vector>
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -163,12 +164,15 @@ TEST_CASE("Blocked point-locator exchanges locate every point as the unblocked o
 TEST_CASE("Unlocated trace points keep the clear error unless their patch is excluded late",
           "[surfaceresponseoperator][pointlocator][Serial][Parallel]")
 {
-  // Decision 2156 (the late domain-boundary exclusion's gross-mismatch test): planted
+  // Decisions 2156 / 2180 (the late domain-boundary exclusion's classification): planted
   // points outside the unit cube (spread over the ranks) with their exact distances to the
-  // meshed domain; a point of the device metal (an edge point) and a point beyond its
-  // coupon's contour radius keep the clear error, the others are late exclusions. The same
-  // answer on every rank (collective).
+  // meshed domain, and one inside it. On this first-order simplex mesh a point of the
+  // device metal (an edge point), a point beyond its coupon's contour radius and the point
+  // inside the mesh (a search defect, decision 2174 m-2) keep the clear error; the others
+  // are late exclusions. The same answer on every rank (collective).
   using Catch::Matchers::WithinAbs;
+  using Decision = UnlocatedTracePointDecision;
+  using Verdict = UnlocatedTracePointVerdict;
   MPI_Comm comm = Mpi::World();
   auto mesh = MakeSpreadParMesh(comm);
   const std::vector<std::array<double, 3>> points = {
@@ -178,24 +182,32 @@ TEST_CASE("Unlocated trace points keep the clear error unless their patch is exc
       {1.03, 1.04, 0.5},    // 0.05 from the cube's edge x = y = 1
       {-0.06, -0.08, 1.0},  // 0.1 from the cube's corner (0, 0, 1)
       {0.5, 0.5, 0.5}};     // inside: distance 0
-  const std::vector<unsigned char> edge_points = {0, 0, 1, 0, 0, 0};
+  const std::vector<bool> edge_points = {false, false, true, false, false, false};
   const std::vector<double> radii(points.size(), 0.2);
-  const auto result = ClassifyUnlocatedTracePoints(*mesh, 3, points, edge_points, radii);
+  const auto result = ClassifyUnlocatedTracePoints(*mesh, 3, points, radii);
   REQUIRE(result.distances.size() == points.size());
   REQUIRE(result.verdicts.size() == points.size());
+  CHECK(result.first_order_simplex_mesh);
   CHECK_THAT(result.distances[0], WithinAbs(0.05, 1.0e-14));
   CHECK(std::isinf(result.distances[1]));
   CHECK_THAT(result.distances[2], WithinAbs(0.05, 1.0e-14));
   CHECK_THAT(result.distances[3], WithinAbs(0.05, 1.0e-14));
   CHECK_THAT(result.distances[4], WithinAbs(0.1, 1.0e-14));
   CHECK(result.distances[5] == 0.0);
-  using Verdict = UnlocatedTracePointVerdict;
-  CHECK(result.verdicts[0] == Verdict::LATE_EXCLUSION);
-  CHECK(result.verdicts[1] == Verdict::BEYOND_CONTOUR_RADIUS);
-  CHECK(result.verdicts[2] == Verdict::OWN_EDGE_POINT);
-  CHECK(result.verdicts[3] == Verdict::LATE_EXCLUSION);
-  CHECK(result.verdicts[4] == Verdict::LATE_EXCLUSION);
-  CHECK(result.verdicts[5] == Verdict::LATE_EXCLUSION);
+  const std::vector<Verdict> verdicts = {
+      Verdict::WITHIN_CONTOUR_RADIUS, Verdict::BEYOND_CONTOUR_RADIUS,
+      Verdict::WITHIN_CONTOUR_RADIUS, Verdict::WITHIN_CONTOUR_RADIUS,
+      Verdict::WITHIN_CONTOUR_RADIUS, Verdict::INSIDE_MESH};
+  const std::vector<Decision> decisions = {
+      Decision::LATE_EXCLUSION, Decision::BEYOND_CONTOUR_RADIUS, Decision::OWN_EDGE_POINT,
+      Decision::LATE_EXCLUSION, Decision::LATE_EXCLUSION,        Decision::INSIDE_MESH};
+  for (std::size_t i = 0; i < points.size(); i++)
+  {
+    INFO("point " << i);
+    CHECK(result.verdicts[i] == verdicts[i]);
+    CHECK(DecideUnlocatedTracePoint(result.verdicts[i], edge_points[i], false,
+                                    result.first_order_simplex_mesh) == decisions[i]);
+  }
   // The root's distances on every rank (the ranks' minimum).
   std::vector<double> root = result.distances;
   for (auto &value : root)
@@ -205,4 +217,84 @@ TEST_CASE("Unlocated trace points keep the clear error unless their patch is exc
   std::vector<double> mine = root;
   Mpi::Broadcast(static_cast<int>(root.size()), root.data(), 0, comm);
   CHECK(root == mine);
+
+  // The same mesh curved (second-order nodes, decision 2180): the distances are element-box
+  // lower bounds, so the inside point's 0 does not show that it is inside; it stays a late
+  // exclusion, counted as undecided. The outside distances are the same here.
+  mesh->SetCurvature(2);
+  const auto curved = ClassifyUnlocatedTracePoints(*mesh, 3, points, radii);
+  CHECK(!curved.first_order_simplex_mesh);
+  CHECK_THAT(curved.distances[0], WithinAbs(0.05, 1.0e-12));
+  CHECK(std::isinf(curved.distances[1]));
+  CHECK_THAT(curved.distances[3], WithinAbs(0.05, 1.0e-12));
+  CHECK_THAT(curved.distances[4], WithinAbs(0.1, 1.0e-12));
+  CHECK(curved.distances[5] == 0.0);
+  CHECK(curved.verdicts[5] == Verdict::INSIDE_MESH);
+  CHECK(DecideUnlocatedTracePoint(curved.verdicts[5], false, false,
+                                  curved.first_order_simplex_mesh) ==
+        Decision::LATE_EXCLUSION_UNDECIDED);
+}
+
+TEST_CASE("Unlocated trace point decisions of the late domain-boundary exclusion",
+          "[surfaceresponseoperator][pointlocator][Serial]")
+{
+  // Decision 2180: the decision of the late block for every combination of the point's
+  // verdict, kind (a point of the device metal or a trace point), patch class (applied or
+  // diagnostic-only) and mesh kind (first-order simplex or not), and the reason the clear
+  // error gives. Rows: the gross mismatch (BEYOND_CONTOUR_RADIUS), decision 2174 m-1 (a
+  // diagnostic-only patch keeps the clear error) and m-2 (inside a first-order simplex
+  // mesh: the clear error; elsewhere undecided, a late exclusion).
+  using Decision = UnlocatedTracePointDecision;
+  using Verdict = UnlocatedTracePointVerdict;
+  struct Row
+  {
+    Verdict verdict;
+    bool edge_point, diagnostic_patch, first_order_simplex_mesh;
+    Decision decision;
+  };
+  const Verdict W = Verdict::WITHIN_CONTOUR_RADIUS, B = Verdict::BEYOND_CONTOUR_RADIUS,
+                I = Verdict::INSIDE_MESH;
+  const std::vector<Row> rows = {
+      {W, false, false, true, Decision::LATE_EXCLUSION},
+      {W, false, false, false, Decision::LATE_EXCLUSION},
+      {W, false, true, true, Decision::DIAGNOSTIC_PATCH},
+      {W, false, true, false, Decision::DIAGNOSTIC_PATCH},
+      {W, true, false, true, Decision::OWN_EDGE_POINT},
+      {W, true, false, false, Decision::OWN_EDGE_POINT},
+      {W, true, true, true, Decision::OWN_EDGE_POINT},
+      {W, true, true, false, Decision::OWN_EDGE_POINT},
+      {B, false, false, true, Decision::BEYOND_CONTOUR_RADIUS},
+      {B, false, false, false, Decision::BEYOND_CONTOUR_RADIUS},
+      {B, false, true, true, Decision::BEYOND_CONTOUR_RADIUS},
+      {B, false, true, false, Decision::BEYOND_CONTOUR_RADIUS},
+      {B, true, false, true, Decision::OWN_EDGE_POINT},
+      {B, true, false, false, Decision::OWN_EDGE_POINT},
+      {B, true, true, true, Decision::OWN_EDGE_POINT},
+      {B, true, true, false, Decision::OWN_EDGE_POINT},
+      {I, false, false, true, Decision::INSIDE_MESH},
+      {I, false, false, false, Decision::LATE_EXCLUSION_UNDECIDED},
+      {I, false, true, true, Decision::INSIDE_MESH},
+      {I, false, true, false, Decision::DIAGNOSTIC_PATCH},
+      {I, true, false, true, Decision::OWN_EDGE_POINT},
+      {I, true, false, false, Decision::OWN_EDGE_POINT},
+      {I, true, true, true, Decision::OWN_EDGE_POINT},
+      {I, true, true, false, Decision::OWN_EDGE_POINT}};
+  REQUIRE(rows.size() == 24);
+  for (std::size_t i = 0; i < rows.size(); i++)
+  {
+    const auto &row = rows[i];
+    INFO("row " << i);
+    CHECK(DecideUnlocatedTracePoint(row.verdict, row.edge_point, row.diagnostic_patch,
+                                    row.first_order_simplex_mesh) == row.decision);
+  }
+  CHECK(UnlocatedTracePointErrorReason(Decision::LATE_EXCLUSION, 1.0).empty());
+  CHECK(UnlocatedTracePointErrorReason(Decision::LATE_EXCLUSION_UNDECIDED, 1.0).empty());
+  CHECK(UnlocatedTracePointErrorReason(Decision::OWN_EDGE_POINT, 1.0)
+            .find("own metal edge") != std::string::npos);
+  CHECK(UnlocatedTracePointErrorReason(Decision::BEYOND_CONTOUR_RADIUS, 2.687006)
+            .find("contour radius 2.687006e+00 mesh units") != std::string::npos);
+  CHECK(UnlocatedTracePointErrorReason(Decision::INSIDE_MESH, 1.0)
+            .find("inside the meshed domain") != std::string::npos);
+  CHECK(UnlocatedTracePointErrorReason(Decision::DIAGNOSTIC_PATCH, 1.0)
+            .find("diagnostic-only patch") != std::string::npos);
 }

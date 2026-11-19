@@ -169,6 +169,16 @@ charge:
     example, the uncracked sheet shares the current equally between its two faces,
     which halves the conductor loss. Use `"Crack": true` for such conductors.
 
+    Since *Palace* 0.19.0, the default `"Crack": false` also applies to conductivity
+    boundaries which enclose a conductor meshed as a dielectric volume (a shell), where the
+    mesh was previously cracked. The conductor loss is then lower than with previous
+    versions. A warning lists the interior conductivity boundaries without `"Crack"`: set
+    `"Crack": true` to restore the previous model, or `"Crack": false` to keep the sheet
+    model and silence the warning. Leaving the conductor volume of a shell out of
+    [`config["Domains"]["Materials"]`](../config/reference.md#config-domains-materials)
+    removes it from the mesh, which gives the same result as `"Crack": true` with fewer
+    unknowns.
+
 The mesh can only be cracked where it is conformal. Interior boundaries which are to be
 cracked are an error on a mesh with hexahedra, prisms, or pyramids with
 [refinement regions](model.md#Mesh-refinement), which make it nonconformal, and on a
@@ -246,15 +256,15 @@ for implementation details.
     lumped port. To use this functionality, use the `"Elements"` object under
     [`"LumpedPort"`](../config/reference.md#config-boundaries-lumpedport).
 
-    The geometry of a uniform (Cartesian) element is discovered from the bounding box of
-    its boundary faces: the length along `"Direction"` and the width as area / length,
-    with a consistency check of the box length against the extent projected on the
-    direction. A ragged planar element (for example a thick-metal junction-port tile whose
-    mitred corner nodes skew the discovered box) can state its length explicitly with
-    `"Length"` (mesh units, along `"Direction"`): the configured length is used, the width
-    is still area / length, the discovered box length is reported beside it and the
-    projected-length check is skipped for that element only; the circuit values are
-    unchanged. Without `"Length"` nothing changes.
+    The geometry of a uniform (Cartesian) element is computed from a cross-section across
+    it: the width is the length of the cross-section normal to its axis half way along it,
+    and the length is area / width (see the [reference](../reference.md)). Where the
+    designer's length must rule (for example a thick-metal junction-port tile), an element
+    can state it with `"Length"` (mesh units, along `"Direction"`): the configured length
+    is used, the width is area / length, a warning states the computed length beside it,
+    and the check of the computed length against the element's extent is skipped for that
+    element only (the other shape checks still apply); the circuit values are unchanged.
+    Without `"Length"` the computed geometry is used.
 
   - [`config["Boundaries"]["WavePort"]`](../config/reference.md#config-boundaries-waveport) :
     Numeric wave ports are available for frequency domain driven and eigenmode simulations. In this case,

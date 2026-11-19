@@ -39,10 +39,10 @@ struct ElementData
   // List of boundary attributes for this element.
   std::vector<int> attributes = {};
 
-  // Decision 929: an OPTIONAL geometry override for a ragged planar lumped-port element,
-  // the element's length measured along its Direction (mesh units at parse,
-  // nondimensionalized with the mesh); 0 = absent (the bounding-box length and its
-  // projected-length check apply). A LumpedPort key only (no surface current reads it).
+  // Decision 929: an OPTIONAL length of a uniform lumped-port element, measured along its
+  // Direction (mesh units at parse, nondimensionalized with the mesh), used instead of the
+  // computed mean length; 0 = absent (the computed pair and its mean-length check apply). A
+  // LumpedPort key only (no surface current reads it).
   double length = 0.0;
 };
 
@@ -449,6 +449,10 @@ public:
   // sheet with a single tangential electric field on it and the admittance of both faces
   // (a film thinner than the skin depth).
   bool crack = false;
+
+  // Whether "Crack" is given in the configuration, to warn about the default sheet model
+  // of interior boundaries (see mesh::Load).
+  bool crack_given = false;
 
   // List of boundary attributes for this surface conductivity boundary condition.
   std::vector<int> attributes = {};

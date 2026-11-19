@@ -1191,12 +1191,12 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   }
   if (corrected_unconverged_solves > 0)
   {
-    Mpi::Print(
+    Mpi::Warning(
         space_op.GetComm(),
-        " Warning: {:d} of {:d} corrected linear solves did not reach their "
-        "tolerance in the self-consistent corrected eigenproblem: its corrected "
-        "values rest on inexact solves; allow more iterations (Solver.Linear.MaxIts) "
-        "or set a looser linear tolerance (Solver.Linear.Tol)\n",
+        "{:d} of {:d} corrected linear solves did not reach their tolerance in the "
+        "self-consistent corrected eigenproblem: its corrected values rest on inexact "
+        "solves; allow more iterations (Solver.Linear.MaxIts); loosen Solver.Linear.Tol "
+        "only where the corrected values are shown insensitive to it\n",
         corrected_unconverged_solves, corrected_solves);
   }
   return {indicator, space_op.GlobalTrueVSize()};

@@ -1983,6 +1983,16 @@ TEST_CASE_METHOD(test::SharedTempDir,
         Mpi::Size(comm));
   CHECK(CountRefusingRanks([&] { post_op.SetSurfaceResponseCorrectedField(e, &d_rt); }) ==
         Mpi::Size(comm));
+  // The same at every process count (review r2157 m-1): the right size on every process but
+  // the last, which holds one extra entry. A process-local check would let all the others
+  // pass (and go on alone into the exchange); the collective one refuses on every process.
+  ComplexVector d_one(flux_space.GetTrueVSize() +
+                      ((Mpi::Rank(comm) == Mpi::Size(comm) - 1) ? 1 : 0));
+  d_one = 0.0;
+  CHECK(CountRefusingRanks([&] { post_op.SetRecoveredElectricFlux(d_one); }) ==
+        Mpi::Size(comm));
+  CHECK(CountRefusingRanks([&] { post_op.SetSurfaceResponseCorrectedField(e, &d_one); }) ==
+        Mpi::Size(comm));
 
   // The corrected flux output = the FIRST version of D on the RT space.
   post_op.SetSurfaceResponseCorrectedField(e, &d);
