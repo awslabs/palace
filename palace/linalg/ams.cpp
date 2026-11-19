@@ -218,7 +218,7 @@ void HypreAmsSolver::InitializeSolver()
   // singular when a constant vector field satisfies the essential boundary conditions (Π c
   // is then a gradient), and Gaussian elimination amplifies the rounding-level null space
   // component of every residual into large gradients which stall the Krylov solver.
-  const int coarse_relax_type = ams_singular ? 8 : 9;
+  const int coarse_relax_type = ams_singular ? 18 : 9;
   HYPRE_AMSSetAlphaAMGCoarseRelaxType(ams, coarse_relax_type);
   HYPRE_AMSSetBetaAMGCoarseRelaxType(ams, coarse_relax_type);
 
