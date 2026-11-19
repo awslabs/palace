@@ -2010,6 +2010,17 @@ ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
                   "Response-correction \"ConductorConsistency\" must be an object!");
       data.conductor_consistency_record_only =
           gate->value("RecordOnly", data.conductor_consistency_record_only);
+      if (auto exclusion = gate->find("Exclusion"); exclusion != gate->end())
+      {
+        MFEM_VERIFY(exclusion->is_string() &&
+                        (*exclusion == "PerExcitation" || *exclusion == "Sticky"),
+                    "Response-correction \"ConductorConsistency.Exclusion\" must be "
+                    "\"PerExcitation\" or \"Sticky\"!");
+        data.conductor_consistency_exclusion =
+            *exclusion == "Sticky"
+                ? ResponseCorrectionData::ConductorConsistencyExclusion::STICKY
+                : ResponseCorrectionData::ConductorConsistencyExclusion::PER_EXCITATION;
+      }
       if (auto flips = gate->find("ControlFlipProbePiece"); flips != gate->end())
       {
         // Decision 1292 (B): a diagnostic CONTROL admitted only with RecordOnly true.
@@ -2071,11 +2082,12 @@ ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
       for (const auto &[key, value] : gate->items())
       {
         (void)value;
-        MFEM_VERIFY(key == "RecordOnly" || key == "ControlFlipProbePiece" ||
+        MFEM_VERIFY(key == "RecordOnly" || key == "Exclusion" ||
+                        key == "ControlFlipProbePiece" ||
                         key == "ControlStateAnchorSetbackOverR",
                     "Response-correction \"ConductorConsistency\" has an unknown key \""
                         << key
-                        << "\" (RecordOnly, ControlFlipProbePiece and "
+                        << "\" (RecordOnly, Exclusion, ControlFlipProbePiece and "
                            "ControlStateAnchorSetbackOverR are the only keys)!");
       }
     }

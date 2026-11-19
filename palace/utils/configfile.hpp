@@ -1631,6 +1631,18 @@ public:
     // leg and the hardening fixtures (B.4 (F)): a run of record with it set is refused by
     // the comparator, never by this reader.
     bool conductor_consistency_record_only = false;
+    // Exclusion (lane ccpx; decisions 2226 / 2229): where a conductor-consistency exclusion
+    // acts. PerExcitation (the default): at the excitation whose own test fails, and there
+    // only (every patch is tested again at every excitation). Sticky: the legacy rule of
+    // the records (weight 0 from the excluding excitation on; a weight-0 patch is not
+    // tested again), with which every output is the former one.
+    enum class ConductorConsistencyExclusion
+    {
+      PER_EXCITATION,
+      STICKY
+    };
+    ConductorConsistencyExclusion conductor_consistency_exclusion =
+        ConductorConsistencyExclusion::PER_EXCITATION;
     // ControlFlipProbePiece (mx-sc-magnetic Phase 3 (a), DESIGN-v2 a.3; supervisor decision
     // 1292 (B)): a DIAGNOSTIC CONTROL, not a modelling option. Every entry flips the LOCAL
     // PIECE label of one model edge's conductor-consistency probes at the probe

@@ -2369,6 +2369,52 @@ TEST_CASE("Response-correction ConductorConsistency.RecordOnly is read and bound
   CHECK_THROWS_WITH(IoData(config, false), ContainsSubstring("unknown key \"Tolerance\""));
 }
 
+// Lane ccpx (decisions 2226 / 2229): ConductorConsistency.Exclusion selects where an
+// exclusion acts: "PerExcitation" (the default) or "Sticky" (the legacy rule); any other
+// value is refused by name.
+TEST_CASE("Response-correction ConductorConsistency.Exclusion is read and bounded",
+          "[surfaceresponseoperator][conductorconsistency][r0a][config][Serial]")
+{
+  using Exclusion = ResponseCorrectionData::ConductorConsistencyExclusion;
+  json config = {
+      {"Problem", {{"Type", "Electrostatic"}, {"Output", "unused"}}},
+      {"Model", {{"Mesh", "unused.msh"}}},
+      {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+      {"Boundaries", {{"Ground", {{"Attributes", {1}}}}}},
+      {"Solver",
+       {{"Electrostatic", {{"ResponseCorrection", {{"Library", "unused.json"}}}}}}}};
+  auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
+  {
+    IoData iodata(config, false);
+    REQUIRE(iodata.solver.electrostatic.response_correction);
+    CHECK(
+        iodata.solver.electrostatic.response_correction->conductor_consistency_exclusion ==
+        Exclusion::PER_EXCITATION);
+  }
+  correction["ConductorConsistency"] = {{"Exclusion", "Sticky"}};
+  {
+    IoData iodata(config, false);
+    CHECK(
+        iodata.solver.electrostatic.response_correction->conductor_consistency_exclusion ==
+        Exclusion::STICKY);
+    CHECK_FALSE(
+        iodata.solver.electrostatic.response_correction->conductor_consistency_record_only);
+  }
+  correction["ConductorConsistency"] = {{"Exclusion", "PerExcitation"}};
+  {
+    IoData iodata(config, false);
+    CHECK(
+        iodata.solver.electrostatic.response_correction->conductor_consistency_exclusion ==
+        Exclusion::PER_EXCITATION);
+  }
+  for (const json &value : {json("perexcitation"), json("Final"), json(true), json(0)})
+  {
+    correction["ConductorConsistency"] = {{"Exclusion", value}};
+    CHECK_THROWS_WITH(IoData(config, false),
+                      ContainsSubstring("must be \"PerExcitation\" or \"Sticky\""));
+  }
+}
+
 // OI-COVERAGE-EXCLUSION-ENERGY (idfix DESIGN section 8; decisions 1064 (2) / 1072 Q3 /
 // 1074): the config leaf Diagnostics.ExclusionEnergy; the identification's excluded /
 // unclaimed portions by class close the perimeter partition (perimeter = assigned +
