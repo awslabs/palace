@@ -3522,6 +3522,7 @@ TEST_CASE("A cut or corrupted driven model header is rejected", "[substructure][
   m.signatures = {0.25, 0.75};
   m.env_fp = {100.0, 20.0, 3.0, 0.0};
   m.omega = {1.0};
+  m.fp_centers = {{{0.1, 0.2, 0.3}, {0.4, 0.5, 0.6}, {0.7, 0.8, 0.9}}};
   m.converged = false;
   m.error = 0.5;
   m.tol = 1.0e-8;
@@ -3538,6 +3539,7 @@ TEST_CASE("A cut or corrupted driven model header is rejected", "[substructure][
   DrivenSubstructureModel saved;
   saved.ReadHeader(path, Mpi::World());
   CHECK(saved.signatures == m.signatures);
+  CHECK(saved.fp_centers == m.fp_centers);
   CHECK_FALSE(saved.converged);
   CHECK(saved.error == m.error);
   CHECK(saved.tol == m.tol);
@@ -4396,7 +4398,8 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   // The record of the environment tells the mesh of the region from the full mesh, and
   // rejects an environment refined, with another material, or with another resistance of
   // its port on the mesh of the region (which holds no environment to fingerprint). The
-  // excitation of the environment's port is not its configuration: a sweep without it runs.
+  // excitation of the environment's port is not its configuration: a sweep without it runs,
+  // as does one with it on the mesh of the region, which fingerprints its sources there.
   RunDrivenSheetSquare(temp_dir, "Offline");
   const std::string region_mesh = RegionMeshPath((temp_dir / "driven_model.bin").string());
   auto on_region = [&](json &config)
@@ -4431,6 +4434,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
         on_region(config);
         config["Boundaries"]["LumpedPort"][1].erase("Excitation");
       });
+  online(on_region);
 }
 
 TEST_CASE_METHOD(
@@ -4499,6 +4503,106 @@ TEST_CASE_METHOD(
     CHECK_THAT(converged, !ContainsSubstring("did not converge"));
     CHECK_THAT(cut, ContainsSubstring("did not converge"));
   }
+}
+
+TEST_CASE_METHOD(
+    palace::test::SharedTempDir,
+    "Driven substructuring rejects an environment reflected through the origin",
+    "[substructure][Serial][Parallel]")
+{
+  // A box [-2, 2] x [-1, 1]^2 of 8 x 4 x 4 hexahedra about the origin: the region x > 1
+  // (attribute 1) and the environment, which holds two elements reflected into each other
+  // through the origin (3 and 4), an object of four elements centered at the origin, away
+  // from the boundary (5), and the rest (2). Swapping the materials of 3 and 4 changes the
+  // configuration of the environment. Reflecting the object through the origin moves the
+  // boundary elements added on its interfaces, but changes no moment of an attribute and
+  // no energy of a field centered at the origin: without the interface elements, only
+  // the fingerprint of the operator, with fields centered off the origin, tells it.
+  auto write = [&](bool reflect)
+  {
+    const auto path = temp_dir / (reflect ? "reflected.mesh" : "mirror.mesh");
+    if (Mpi::Root(Mpi::World()))
+    {
+      auto mesh =
+          mfem::Mesh::MakeCartesian3D(8, 4, 4, mfem::Element::HEXAHEDRON, 4.0, 2.0, 2.0);
+      for (int v = 0; v < mesh.GetNV(); v++)
+      {
+        double *x = mesh.GetVertex(v);
+        x[0] -= 2.0;
+        x[1] -= 1.0;
+        x[2] -= 1.0;
+      }
+      const double s = reflect ? -1.0 : 1.0;
+      const std::vector<std::array<double, 4>> parts = {
+          // element center, attribute
+          {-0.75, 0.25, -0.25, 3},
+          {0.75, -0.25, 0.25, 4},
+          {0.75 * s, 0.25 * s, 0.25 * s, 5},
+          {-0.25 * s, -0.25 * s, -0.25 * s, 5},
+          {-0.25 * s, 0.25 * s, -0.25 * s, 5},
+          {-0.25 * s, -0.25 * s, 0.25 * s, 5}};
+      mfem::Vector c;
+      for (int e = 0; e < mesh.GetNE(); e++)
+      {
+        mesh.GetElementCenter(e, c);
+        int attr = (c(0) > 1.0) ? 1 : 2;
+        for (const auto &p : parts)
+        {
+          if (std::abs(c(0) - p[0]) + std::abs(c(1) - p[1]) + std::abs(c(2) - p[2]) <
+              1.0e-9)
+          {
+            attr = static_cast<int>(p[3]);
+          }
+        }
+        mesh.SetAttribute(e, attr);
+      }
+      // The faces x = 2 (lumped port 1), x = -2 (absorbing) and the others (PEC).
+      mfem::Array<int> v;
+      for (int b = 0; b < mesh.GetNBE(); b++)
+      {
+        mesh.GetBdrElementVertices(b, v);
+        double x = 0.0;
+        for (int i : v)
+        {
+          x += mesh.GetVertex(i)[0] / v.Size();
+        }
+        mesh.SetBdrAttribute(b, (x > 2.0 - 1.0e-9) ? 1 : (x < -2.0 + 1.0e-9) ? 2 : 3);
+      }
+      mesh.SetAttributes();
+      mesh.Save(path.string());
+    }
+    Mpi::Barrier(Mpi::World());
+    return path.string();
+  };
+  const auto mesh = write(false), reflected = write(true);
+  auto run = [&](const std::string &mode, const std::string &m, double eps3, double eps4,
+                 bool interfaces = true)
+  {
+    RunDrivenBox(
+        temp_dir, mode,
+        [&](json &config)
+        {
+          config["Model"]["Mesh"] = m;
+          config["Model"]["AddInterfaceBoundaryElements"] = interfaces;
+          config["Domains"]["Materials"] = {{{"Attributes", {1}}, {"Permittivity", 4.0}},
+                                            {{"Attributes", {2}}, {"Permittivity", 2.0}},
+                                            {{"Attributes", {3}}, {"Permittivity", eps3}},
+                                            {{"Attributes", {4}}, {"Permittivity", eps4}},
+                                            {{"Attributes", {5}}, {"Permittivity", 8.0}}};
+          config["Solver"]["Substructuring"]["Environment"]["Attributes"] = {2, 3, 4, 5};
+        });
+  };
+  run("Offline", mesh, 3.0, 6.0);
+  using Catch::Matchers::ContainsSubstring;
+  CHECK_THROWS_WITH(run("Online", mesh, 6.0, 3.0),
+                    ContainsSubstring("materials, boundary conditions or discretization"));
+  CHECK_THROWS_WITH(run("Online", reflected, 3.0, 6.0),
+                    ContainsSubstring("its mesh changed"));
+  run("Online", mesh, 3.0, 6.0);
+  run("Offline", mesh, 3.0, 6.0, false);
+  CHECK_THROWS_WITH(run("Online", reflected, 3.0, 6.0, false),
+                    ContainsSubstring("(environment mesh, materials"));
+  run("Online", mesh, 3.0, 6.0, false);
 }
 
 TEST_CASE_METHOD(palace::test::SharedTempDir,

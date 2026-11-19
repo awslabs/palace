@@ -82,7 +82,7 @@ private:
 //
 struct DrivenSubstructureModel
 {
-  static constexpr int kVersion = 9;   // of the header
+  static constexpr int kVersion = 10;  // of the header
   static constexpr int kSourceFp = 7;  // see DrivenSubstructure::SourceFingerprint
   // Relative tolerance of the comparisons of the environment with that of a saved model:
   // its fingerprint and element moments are sums over elements, which the partition changes
@@ -91,11 +91,12 @@ struct DrivenSubstructureModel
   int nG = 0, sig_w = 0;
   double length_scale = 0.0;  // model.Lc of the offline run
   EnvironmentRecord environment;
-  std::vector<double> signatures;  // nG x sig_w
-  std::vector<double> env_fp;      // environment fingerprint
-  std::vector<int> excitations;    // excitations with environment sources
-  std::vector<double> exc_fp;      // their source fingerprints (kSourceFp each)
-  std::vector<int> ports;  // environment lumped ports (index) and wave ports (-index)
+  std::vector<double> signatures;                        // nG x sig_w
+  std::vector<double> env_fp;                            // environment fingerprint
+  std::array<std::array<double, 3>, 3> fp_centers = {};  // of its fields
+  std::vector<int> excitations;  // excitations with environment sources
+  std::vector<double> exc_fp;    // their source fingerprints (kSourceFp each)
+  std::vector<int> ports;        // environment lumped ports (index) and wave ports (-index)
   std::vector<int> region_bdr_attributes;     // see BoundaryAttributesInRegion
   std::vector<double> omega;                  // frequencies of the records (nondimensional)
   std::vector<std::complex<double>> weights;  // barycentric weights (rational model)
@@ -287,6 +288,13 @@ public:
   // environment operators. Collective.
   std::vector<double> EnvironmentFingerprint(double omega) const;
 
+  // The centers of the fields r_k: those of the saved model, else the FingerprintCenters of
+  // the environment.
+  const std::array<std::array<double, 3>, 3> &FingerprintCenters() const
+  {
+    return fp_centers;
+  }
+
   // Fingerprint of the environment part b_E of a right-hand side, independent of the
   // partition (which changes the basis of some Nédélec DOFs): whether b_E is nonzero, and
   // r_k^T b_E for the three fixed fields r_k (complex). Collective.
@@ -353,6 +361,7 @@ private:
   std::map<int, std::vector<char>> wave_port_dofs;
 
   // The fixed fields r_k of the fingerprints (true DOFs), projected on first use.
+  std::array<std::array<double, 3>, 3> fp_centers;
   mutable std::array<Vector, 3> fp_fields;
   const Vector &FingerprintField(int k) const;
 

@@ -515,6 +515,7 @@ void DrivenSubstructuredSweep::SetUpModel()
   model.sig_w = SignatureWidth(space_op.GetNDSpace().Get());
   model.signatures =
       TrueDofSignatures(space_op.GetNDSpace().Get(), ds->InterfaceIndex(), nG);
+  model.fp_centers = ds->FingerprintCenters();
   model.env_fp = ds->EnvironmentFingerprint(omega_sample[0]);
   for (int k = 0; k < n; k++)
   {

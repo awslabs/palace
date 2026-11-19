@@ -134,6 +134,9 @@ DrivenSubstructure::DrivenSubstructure(SpaceOperator &space_op,
   const auto &fes = space_op.GetNDSpace().Get();
   const auto &mesh = *fes.GetParMesh();
   CheckSubstructuringAttributes(mesh, region.attrs, env.attrs);
+  fp_centers =
+      saved ? saved->fp_centers
+            : palace::FingerprintCenters(space_op.GetNDSpace().GetParMesh(), env.attrs);
 
   // Interface DOFs: on region and environment elements; environment (region) interior: on
   // environment (region) elements only; all without the Dirichlet DOFs.
@@ -1301,8 +1304,7 @@ const Vector &DrivenSubstructure::FingerprintField(int k) const
 {
   if (fp_fields[k].Size() == 0)
   {
-    fp_fields[k] =
-        palace::FingerprintField(space_op.GetNDSpace().Get(), k, {0.0, 0.0, 0.0});
+    fp_fields[k] = palace::FingerprintField(space_op.GetNDSpace().Get(), k, fp_centers[k]);
   }
   return fp_fields[k];
 }
@@ -1697,7 +1699,7 @@ void DrivenSubstructureModel::WriteHeader(const std::string &path, bool create) 
                         converged ? 1 : 0};
   const double scalars[4] = {length_scale, error, tol, passivity};
   const long long size =
-      sizeof(head) + sizeof(scalars) +
+      sizeof(head) + sizeof(scalars) + sizeof(fp_centers) +
       sizeof(double) * (signatures.size() + env_fp.size() + exc_fp.size() + omega.size()) +
       sizeof(int) * (excitations.size() + ports.size() + region_bdr_attributes.size()) +
       sizeof(std::complex<double>) * weights.size();
@@ -1711,6 +1713,10 @@ void DrivenSubstructureModel::WriteHeader(const std::string &path, bool create) 
                       };
                       write(head, 10);
                       write(scalars, 4);
+                      for (const auto &c : fp_centers)
+                      {
+                        write(c.data(), 3);
+                      }
                       write(signatures.data(), signatures.size());
                       write(env_fp.data(), env_fp.size());
                       write(excitations.data(), excitations.size());
@@ -1780,6 +1786,12 @@ void DrivenSubstructureModel::ReadHeader(const std::string &path, MPI_Comm comm)
   tol = scalars[2];
   passivity = scalars[3];
   converged = head[9] != 0;
+  std::vector<double> centers;
+  read(centers, 9);
+  for (int k = 0; k < 3; k++)
+  {
+    std::copy_n(centers.begin() + 3 * k, 3, fp_centers[k].begin());
+  }
   nG = head[1];
   sig_w = head[2];
   read(signatures, static_cast<double>(nG) * sig_w);
