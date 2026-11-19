@@ -77,6 +77,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Performance Improvements
 
+  - The AMS solver, used with a fixed number of iterations, now has a tolerance of zero and
+    flags its zero initial guess. With a hypre patch, it then computes no residual norms,
+    each a fine-level matrix-vector product and a reduction over all processes, and the
+    first relaxation of its auxiliary space solves skips the exchange of their zero initial
+    guess. Results are unchanged. [PR 1238](https://github.com/awslabs/palace/pull/1238).
   - Added a STRUMPACK patch for
     [pghysels/STRUMPACK#174](https://github.com/pghysels/STRUMPACK/pull/174), which *Palace*
     always enables: the STRUMPACK solvers store their fill-reducing permutation once per
