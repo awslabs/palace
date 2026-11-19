@@ -174,6 +174,10 @@ int main(int argc, char *argv[])
     cfg.testsOrTags.emplace_back("~[Long]");
   }
 
+  // Catch2 >= 3.9.0 runs the tests in random order by default, with a seed drawn by each
+  // process: use the root's, so that all processes run the same tests in the same order.
+  Mpi::Broadcast(1, &cfg.rngSeed, 0, Mpi::World());
+
   // Only the root process writes the --out file: catch_discover_tests (Catch2 >= 3.15.2)
   // lists the tests through it, and concurrent writes from all ranks corrupt it.
   if (!Mpi::Root(Mpi::World()))
