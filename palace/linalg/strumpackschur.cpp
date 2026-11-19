@@ -20,8 +20,7 @@ StrumpackSchurSolver::StrumpackSchurSolver(const mfem::HypreParMatrix &A,
 {
   MFEM_VERIFY(A.GetGlobalNumRows() <= INT_MAX,
               "STRUMPACK Schur complement needs fewer than 2^31 unknowns!");
-  // The Schur complement needs neither matching nor the GPU (and a sequential graph
-  // reordering without compression).
+  // No matching, GPU or compression for the Schur complement, and a sequential ordering.
   solver.options().set_matching(strumpack::MatchingJob::NONE);
   solver.options().disable_gpu();
   switch (ordering)

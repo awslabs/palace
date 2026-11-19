@@ -118,18 +118,16 @@ std::pair<ErrorIndicator, long long int> MagnetostaticSolver::SolveSubstructured
   SubstructuringSolver sub(iodata, mesh);
   SaveMetadata(sub.GetFESpaces());
   const SurfaceFluxOperator surf_flux_op(iodata);  // all the flux loops
-  MFEM_VERIFY(sub.GetCurlCurlOperator().GetSurfaceCurrentOp().Size() +
-                      surf_flux_op.GetExcitations().size() >
-                  0,
-              "Magnetostatic substructuring requires flux-loop or surface-current "
-              "excitations!");
+  const std::size_t n_excitations = sub.GetCurlCurlOperator().GetSurfaceCurrentOp().Size() +
+                                    surf_flux_op.GetExcitations().size();
+  MFEM_VERIFY(n_excitations > 0, "Magnetostatic substructuring requires flux-loop or "
+                                 "surface-current excitations!");
   sub.CondenseEnvironment();
-  // Excitations of the surface currents (and their aperture flux functionals, for mixed
+  // Excitations of the surface currents (with their aperture flux functionals, for mixed
   // extraction) and fluxoid generators of the flux loops, from the operator of the
-  // substructuring. The excitations of the flux loops of the environment are zero on the
-  // region and in the model on the environment: on the mesh of the region, which leaves
-  // these loops out, and online when the excitations of the environment are those of the
-  // model, they need no generator.
+  // substructuring. A flux loop of the environment has no generator where the model holds
+  // its excitation (see SubstructuringSolver::ModelExcitations), nor on the mesh of the
+  // region, which leaves it out.
   std::vector<int> current_idx, flux_idx, loop_idx;
   std::vector<Vector> J, apertures, a;
   std::vector<double> I_inc, Phi_inc;
@@ -281,8 +279,8 @@ std::pair<ErrorIndicator, long long int> MagnetostaticSolver::SolveSubstructured
   {
     indicator = sub.RegionErrorIndicator(region_fields, volume_energy);
   }
-  // The postprocessing of a regular simulation on the region, with the full fields of the
-  // saved excitations and the fields of the region of the others (zero on the environment
+  // The postprocessing of a regular simulation, on the region: with the full fields of the
+  // saved excitations, the fields of the region of the others (zero on the environment
   // interior), and the energies in the volume of the condensation.
   if (post)
   {

@@ -41,11 +41,10 @@ public:
   // configured one must equal. Collective.
   static void UseModelLength(IoData &iodata, MPI_Comm comm);
 
-  // The boundaries of the configuration for the operators on the mesh of the run: without
-  // the terminal attributes the mesh does not hold (those of the environment, on the mesh
-  // of the region, whose modes are in the model), and on the mesh of the region, without
-  // the flux loops of the environment that it leaves out (their excitations are in the
-  // model) and the superconductor attributes it does not hold. Collective.
+  // The boundary conditions of the configuration for the operators on this mesh: without
+  // the terminal attributes it does not hold and, on the mesh of the region, without the
+  // flux loops it leaves out and the superconductor attributes it does not hold (the model
+  // holds their parts). Collective.
   static config::BoundaryData MeshBoundaries(const IoData &iodata,
                                              const mfem::ParMesh &mesh);
 
@@ -65,17 +64,15 @@ public:
   // Magnetostatic energy matrix of surface currents and London flux states (currents
   // first). Surface current k drives the assembled excitation J_k (zero on the Dirichlet
   // DOFs), with E_ij = u_i^T K u_j (+ the sheet kinetic energy u_i^T M_sheet u_j) in a form
-  // stationary in the regularization of the solve; a current that does not close is
-  // rejected. Flux loop k with the fluxoid generator a_k drives the source M_sheet a_k with
-  // the superconducting films as free London sheets, with E_ij = u_i^T K u_j + (u_i -
-  // a_i)^T M_sheet (u_j - a_j) as in the native solver. The cross block is zero (the two
-  // kinds of states are energy-orthogonal). With the aperture flux functionals l_c of the
-  // ports, linked_flux(c, f) = l_c^T u_f for the flux states f. If fields is non-null, it
-  // receives the full fields of the first n_fields states; if region_fields is non-null
-  // (with a saved model), it receives the solutions of all states on the region and
-  // interface (zero on the environment interior). If volume_energy is non-null, it receives
-  // the energies of the fields in the volume, (E_kk - (u_k - a_k)^T M_sheet (u_k - a_k)) /
-  // 2 (without the kinetic energy of the London sheets), which normalize the error
+  // stationary in the regularization; a current that does not close is rejected. Flux loop
+  // k with the fluxoid generator a_k drives M_sheet a_k with the films as free London
+  // sheets, with E_ij = u_i^T K u_j + (u_i - a_i)^T M_sheet (u_j - a_j) as in the native
+  // solver. The cross block is zero (the two kinds of states are energy-orthogonal). With
+  // the aperture flux functionals l_c of the ports, linked_flux(c, f) = l_c^T u_f. If
+  // non-null, fields receives the full fields of the first n_fields states, region_fields
+  // the solutions of all states on the region and interface (zero on the environment
+  // interior; the full fields without a saved model), and volume_energy their energies in
+  // the volume, (E_kk - (u_k - a_k)^T M_sheet (u_k - a_k)) / 2, which normalize the error
   // indicators as in the regular solve.
   mfem::DenseMatrix MagnetostaticEnergyMatrix(
       const std::vector<int> &current_ids, const std::vector<Vector> &J,
@@ -85,18 +82,17 @@ public:
       std::vector<Vector> *region_fields = nullptr,
       std::vector<double> *volume_energy = nullptr);
 
-  // The fluxoids c_j^T a_k that the flux-loop excitations k (ids) impose on the flux loops
-  // j (loop_ids), measured on the mesh: appended to the model of an offline run that saves
-  // one, and on the mesh of the region, which leaves out the flux loops of the environment,
-  // on these loops those of the model. Collective.
+  // The fluxoids c_j^T a_k of the flux-loop excitations k (ids) on the loops j (loop_ids),
+  // measured on the mesh: saved with the model offline, and on the mesh of the region taken
+  // from the model on the loops it leaves out. Collective.
   void EnvironmentFluxoids(const std::vector<int> &ids, const std::vector<int> &loop_ids,
                            mfem::DenseMatrix &fluxoid) const;
 
-  // Online, the flux-loop excitations (excitation index -> its loops) of one flux loop of
-  // the environment of the model, which holds their modes, when the excitations of the
-  // environment are those of the model (always on the mesh of the region): they have no
-  // part in the region, and so need no fluxoid generator. None if an excitation drives
-  // several loops (their fluxoids are reported). After CondenseEnvironment.
+  // Online, the excitations (index -> loops) of a single flux loop of the environment whose
+  // modes the model holds, if the excitations of the environment are those of the model
+  // (always on the mesh of the region): having no part in the region, they need no fluxoid
+  // generator. None if an excitation drives several loops, whose fluxoids are reported.
+  // After CondenseEnvironment.
   std::vector<int> ModelExcitations(const std::map<int, std::vector<int>> &excitations);
 
   // Error indicators for adaptive refinement of the region only: Palace's gradient-flux
@@ -113,9 +109,8 @@ public:
   // Global parent true-DOF size.
   long long int GlobalTrueVSize() const;
 
-  // The native operators of an electrostatic or a magnetostatic problem (on the finest mesh
-  // and space only), on which its postprocessing operates, and in magnetostatics which
-  // forms its excitations.
+  // The native operator of the problem (finest mesh and space only), for its postprocessing
+  // and, in magnetostatics, its excitations.
   LaplaceOperator &GetLaplaceOperator();
   CurlCurlOperator &GetCurlCurlOperator();
 
@@ -123,11 +118,11 @@ public:
   // probes, surface fluxes or interface dielectrics) or saves fields.
   static bool Postprocesses(const IoData &iodata);
 
-  // The configuration of the postprocessing of the region: the energies of the domains of
-  // the region, the probes in it, and the surface fluxes and interface dielectrics on
-  // surfaces in it (on the mesh of the region, not those next to the environment on the
-  // full mesh, whose part there is cut off). The others, which the field of the region does
-  // not give, are left out with a warning. Collective.
+  // The configuration with the postprocessing that the field of the region gives: the
+  // energies of its domains, the probes in it, and the surface fluxes and interface
+  // dielectrics on surfaces in it (on the mesh of the region, none next to the environment
+  // on the full mesh, which is cut off there). The rest is left out with a warning.
+  // Collective.
   IoData RegionPostprocessing(const IoData &iodata) const;
 
   // The finite element spaces of the regular operator (for the problem size).

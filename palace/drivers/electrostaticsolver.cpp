@@ -52,7 +52,6 @@ std::pair<ErrorIndicator, long long int> ElectrostaticSolver::SolveSubstructured
       terminals, &fields, n_save, (adapt || post) ? &region_fields : nullptr);
   PostprocessCapacitance(terminals, C);
   // Adaptive refinement of the region only (the indicators are zero on the environment).
-  // The energy of a terminal is that of the condensation.
   ErrorIndicator indicator;
   if (adapt)
   {
@@ -63,9 +62,9 @@ std::pair<ErrorIndicator, long long int> ElectrostaticSolver::SolveSubstructured
     }
     indicator = sub.RegionErrorIndicator(region_fields, energy);
   }
-  // The postprocessing of a regular simulation on the region, with the full fields of the
-  // saved terminals and the fields of the region of the others (zero on the environment
-  // interior).
+  // The postprocessing of a regular simulation, on the region: with the full fields of the
+  // saved terminals, the fields of the region of the others (zero on the environment
+  // interior), and the energies of the condensation.
   if (post)
   {
     PostOperator<ProblemType::ELECTROSTATIC> post_op(sub.RegionPostprocessing(iodata),

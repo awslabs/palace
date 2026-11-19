@@ -1413,8 +1413,8 @@ palace::test::CustomCheck TestOfflineRunReproduced(const std::string &offline,
   };
 }
 
-// The check, and the mesh of the region written next to the model (in the staging
-// directory) without the boundary attributes left out, but with those kept.
+// The check, and that the mesh of the region next to the model (in the staging directory)
+// lacks the boundary attributes left_out and holds those kept.
 palace::test::CustomCheck TestRegionMeshLeavesOut(const std::string &mesh,
                                                   const std::vector<int> &left_out,
                                                   const std::vector<int> &kept,
@@ -1856,11 +1856,9 @@ TEST_CASE("substructuring_electrostatic", "[Serial][Parallel][GPU][Regression]")
                                   "base", opts);
 }
 
-// The postprocessing of the region of the substructured solves: the energy of the domain
-// of the region, and the surface flux and the interface dielectric on the terminal of the
-// region, from its field and the energy of the condensation, not those outside it. The
-// references are a regular simulation of the region's postprocessing (to a tight tolerance,
-// as the substructured solves are direct).
+// The postprocessing of the region: the energy of its domain, and the surface flux and the
+// interface dielectric on its terminal, not those outside it. The references are a regular
+// simulation of these, solved to a tight tolerance (the substructured solves are direct).
 TEST_CASE("substructuring_electrostatic_postprocessing",
           "[Serial][Parallel][GPU][Regression]")
 {

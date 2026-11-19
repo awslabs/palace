@@ -13,7 +13,6 @@
 #include "fem/multigrid.hpp"
 #include "linalg/errorestimator.hpp"
 #include "models/materialoperator.hpp"
-#include "models/postoperator.hpp"
 #include "utils/geodata.hpp"
 #include "utils/timer.hpp"
 
@@ -32,8 +31,8 @@ config::SolverData SingleLevel(const config::SolverData &solver)
   return single;
 }
 
-// The native curl-curl operator, with the flux loops on the mesh, whose excitations it
-// forms (see SubstructuringSolver::GetCurlCurlOperator).
+// The native curl-curl operator (finest level), with the flux loops of the mesh, whose
+// excitations it forms.
 std::unique_ptr<CurlCurlOperator>
 MakeCurlCurlOperator(const IoData &iodata, const std::vector<std::unique_ptr<Mesh>> &mesh)
 {
@@ -657,12 +656,6 @@ SubstructuringSolver::SubstructuringSolver(const IoData &iodata,
 {
 }
 
-LaplaceOperator &SubstructuringSolver::GetLaplaceOperator()
-{
-  MFEM_VERIFY(impl->laplace_op, "GetLaplaceOperator needs an electrostatic problem!");
-  return *impl->laplace_op;
-}
-
 bool SubstructuringSolver::Postprocesses(const IoData &iodata)
 {
   const int n_post = (iodata.problem.type == ProblemType::ELECTROSTATIC)
@@ -680,8 +673,7 @@ IoData SubstructuringSolver::RegionPostprocessing(const IoData &iodata) const
   const auto &mesh = impl->parent;
   auto contains = [](const std::vector<int> &v, int a)
   { return std::ranges::find(v, a) != v.end(); };
-  // Keep the entries of a postprocessing map that the field of the region gives, and list
-  // the others.
+  // Erase the entries that the field of the region does not give, returning their indices.
   auto keep = [](auto &entries, auto &&in_region)
   {
     std::vector<int> left_out;
@@ -739,12 +731,6 @@ IoData SubstructuringSolver::RegionPostprocessing(const IoData &iodata) const
                  fmt::join(left_out, "; "));
   }
   return post;
-}
-
-CurlCurlOperator &SubstructuringSolver::GetCurlCurlOperator()
-{
-  MFEM_VERIFY(impl->curlcurl_op, "GetCurlCurlOperator needs a magnetostatic problem!");
-  return *impl->curlcurl_op;
 }
 
 config::BoundaryData SubstructuringSolver::MeshBoundaries(const IoData &iodata,
@@ -1832,6 +1818,18 @@ double SubstructuringSolver::MutualSystemEnergy(const Vector &ui, const Vector &
 long long int SubstructuringSolver::GlobalTrueVSize() const
 {
   return impl->SolutionSpace().GlobalTrueVSize();
+}
+
+LaplaceOperator &SubstructuringSolver::GetLaplaceOperator()
+{
+  MFEM_VERIFY(impl->laplace_op, "GetLaplaceOperator needs an electrostatic problem!");
+  return *impl->laplace_op;
+}
+
+CurlCurlOperator &SubstructuringSolver::GetCurlCurlOperator()
+{
+  MFEM_VERIFY(impl->curlcurl_op, "GetCurlCurlOperator needs a magnetostatic problem!");
+  return *impl->curlcurl_op;
 }
 
 const FiniteElementSpaceHierarchy &SubstructuringSolver::GetFESpaces() const

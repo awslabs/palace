@@ -119,8 +119,7 @@ MumpsSchurSolver::MumpsSchurSolver(const mfem::HypreParMatrix &A,
   icntl(5) = 0;   // assembled input
   icntl(18) = 3;  // distributed matrix entries
   // Complete Schur (if any Schur variables), 2D block cyclic on a near-square grid of the
-  // processes (MUMPS symmetrizes it with blocks of the same rows and
-  // columns).
+  // processes (MUMPS symmetrizes it with blocks of the same rows and columns).
   icntl(19) = (n_schur > 0) ? 3 : 0;
   nprow = static_cast<int>(std::sqrt(static_cast<double>(nranks)));
   npcol = nranks / nprow;

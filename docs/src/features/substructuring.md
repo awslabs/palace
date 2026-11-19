@@ -148,13 +148,14 @@ interface operator and the sparse direct factorizations on the CPU. The environm
 are factored with a sparse direct solver (the one
 [`config["Solver"]["Linear"]["Type"]`](../config/reference.md#config-solver-linear-type) names, or
 else STRUMPACK, MUMPS or SuperLU_DIST, preferred in this order among those Palace is built with), so
-*Palace* must be built with one of them. The region operator is factored together with the dense ``\bm{S}_E``, as one sparse system
-whose dense block on the interface is a front of the factorization: its cost grows as the cube of
-the number of interface unknowns. The Schur complement of the environment comes instead
-from a single partial factorization, by MUMPS or, without it, by STRUMPACK (with the Schur
-complement interface that the superbuild and the Spack package patch in), unless `"Type"` names
-another solver; MUMPS compresses its fronts at round-off (block low-rank), which is faster than
-full rank at no loss of accuracy. A saved magnetostatic model also holds the energy operator of the environment, which
+*Palace* must be built with one of them. The region operator is factored together with the dense
+``\bm{S}_E``, as one sparse system whose dense block on the interface is a front of the
+factorization: its cost grows as the cube of the number of interface unknowns. The Schur complement
+of the environment comes instead from a single partial factorization, by MUMPS or, without it, by
+STRUMPACK (with the Schur complement interface that the superbuild and the Spack package patch in),
+unless `"Type"` names another solver; MUMPS compresses its fronts at round-off (block low-rank),
+which is faster than full rank at no loss of accuracy. A saved magnetostatic model also holds the
+energy operator of the environment, which
 takes an environment solve and a condensation (the forward elimination of the partial factorization,
 half a solve) per interface unknown, and with London sheets in the environment their kinetic energy
 operator, for another condensation per interface unknown and as many values again in the model. The

@@ -602,9 +602,9 @@ std::vector<char> SubstructuringSolver::Impl::WriteRegionMesh(const std::string 
         }
       }
     }
-    // A flux loop of the environment has no DOF of its film and hole on a region element
-    // (also none on Gamma), and no surface current or aperture on them: its excitation,
-    // zero on the region, is in the model.
+    // A flux loop of the environment (env_loops) has no DOF of its film and hole on a
+    // region element (none on Gamma either), and no surface current or aperture on them:
+    // its excitation, zero on the region, is in the model.
     const std::set<int> current_attrs(attrs.begin(), attrs.end());
     std::vector<char> region_dofs(parent_fes.GetTrueVSize(), 0);
     for (int t : rc_idx)
@@ -617,18 +617,18 @@ std::vector<char> SubstructuringSolver::Impl::WriteRegionMesh(const std::string 
       std::vector<int> loop_attrs(data.film_attributes);
       loop_attrs.insert(loop_attrs.end(), data.hole_attributes.begin(),
                         data.hole_attributes.end());
-      int in_region =
+      int kept =
           std::ranges::any_of(loop_attrs, [&](int a) { return current_attrs.contains(a); });
-      if (!in_region)
+      if (!kept)
       {
         const auto loop_mark = BoundaryTrueDofs(parent_fes, loop_attrs);
-        for (std::size_t i = 0; i < loop_mark.size() && !in_region; i++)
+        for (std::size_t i = 0; i < loop_mark.size() && !kept; i++)
         {
-          in_region = loop_mark[i] && region_dofs[i];
+          kept = loop_mark[i] && region_dofs[i];
         }
-        Mpi::GlobalMax(1, &in_region, parent.GetComm());
+        Mpi::GlobalMax(1, &kept, parent.GetComm());
       }
-      if (!in_region)
+      if (!kept)
       {
         env_loops.push_back(idx);
         continue;
@@ -695,8 +695,17 @@ void SubstructuringSolver::Impl::AppendFluxoids(const std::string &path,
                                                 const mfem::DenseMatrix &fluxoid) const
 {
   const int KL[2] = {static_cast<int>(ids.size()), static_cast<int>(loop_ids.size())};
+  std::vector<double> values;
+  values.reserve(static_cast<std::size_t>(KL[0]) * KL[1]);
+  for (int k = 0; k < KL[0]; k++)
+  {
+    for (int j = 0; j < KL[1]; j++)
+    {
+      values.push_back(fluxoid(k, j));
+    }
+  }
   const long long size = static_cast<long long>(sizeof(int)) * (2 + KL[0] + KL[1]) +
-                         static_cast<long long>(sizeof(double)) * KL[0] * KL[1];
+                         static_cast<long long>(sizeof(double)) * values.size();
   AppendRecord(path, kFluxoidsTag, size,
                [&](std::ofstream &f)
                {
@@ -704,14 +713,8 @@ void SubstructuringSolver::Impl::AppendFluxoids(const std::string &path,
                  f.write(reinterpret_cast<const char *>(ids.data()), sizeof(int) * KL[0]);
                  f.write(reinterpret_cast<const char *>(loop_ids.data()),
                          sizeof(int) * KL[1]);
-                 for (int k = 0; k < KL[0]; k++)
-                 {
-                   for (int j = 0; j < KL[1]; j++)
-                   {
-                     const double v = fluxoid(k, j);
-                     f.write(reinterpret_cast<const char *>(&v), sizeof(double));
-                   }
-                 }
+                 f.write(reinterpret_cast<const char *>(values.data()),
+                         sizeof(double) * values.size());
                });
 }
 

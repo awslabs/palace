@@ -696,16 +696,15 @@ struct SubstructuringSolver::Impl
                                  kEnvLoopsTag = ModelFile::Tag("ELPS"),
                                  kFluxoidsTag = ModelFile::Tag("FLXD");
 
-  // The flux loops of the environment (with no DOF of their films and holes in the region
-  // or on Gamma), which the mesh of the region leaves out: set by WriteRegionMesh, and read
-  // from the model online (an empty list if the model has none). ReadEnvLoops is
-  // collective.
+  // The flux loops of the environment, left out of the mesh of the region: no DOF of their
+  // films and holes in the region or on Gamma, and no surface current or aperture on them.
+  // Set by WriteRegionMesh, read from the model online (ReadEnvLoops, collective).
   std::vector<int> env_loops;
   static std::vector<int> ReadEnvLoops(const std::string &path, MPI_Comm comm);
 
-  // Online, whether the excitations of the environment are those of the model (always on
-  // the mesh of the region), and the sources whose environment parts the model holds, with
-  // no part in the region (see SubstructuringSolver::ModelExcitations).
+  // Online: whether the excitations of the environment are those of the model (always on
+  // the mesh of the region), and the sources taken from the model whole (see
+  // SubstructuringSolver::ModelExcitations).
   bool env_excitations_unchanged = false;
   std::set<int> model_sources;
 
@@ -788,8 +787,7 @@ struct SubstructuringSolver::Impl
   // The mesh of the region for online runs: the region, with the environment elements
   // touching the region's Dirichlet DOFs (set on Γ by boundary conditions of the
   // environment) and, in magnetostatics, those of the surface currents and of the flux
-  // loops other than those of the environment (env_loops, whose excitations come from the
-  // model), whose excitations need their boundaries (the films of these flux loops whole),
+  // loops not in env_loops (their films whole), whose excitations need their boundaries,
   // and the two-sided films of RegionFilmClosure. Collective.
   std::vector<char> WriteRegionMesh(const std::string &path);
 
@@ -821,9 +819,8 @@ struct SubstructuringSolver::Impl
   // crashes in SuperLU_DIST). Collective.
   void EnsureRegionFactor(int n);
 
-  // Region-condensed solves on the region-free DOFs (rf_idx), in place: right-hand sides
-  // in, solutions out. One multi-RHS solve with the exact factor, else CG per excitation.
-  // Collective.
+  // Region solves on the region-free DOFs (rf_idx), in place (right-hand sides in,
+  // solutions out), in one multi-RHS solve with the region factor. Collective.
   void SolveRegion(std::vector<mfem::Vector> &x);
 
   // Full parent vectors from Dirichlet values xd (on dbc_tdofs) and from region-free values

@@ -2223,11 +2223,11 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
                  "[substructure][Serial][Parallel]")
 {
   // The postprocessing of the region keeps the energies of its domains, the probes in it,
-  // and the surface fluxes and interface dielectrics on surfaces in it, and leaves out the
-  // others: those of the environment and of surfaces that cross the interface, and a probe
-  // outside the mesh. On the mesh of the region, the sides of the cube (a natural boundary,
-  // along which no environment element is written) border the region only, but on the
-  // full mesh the environment borders them too: they are left out there as well.
+  // and the surface fluxes and interface dielectrics on its surfaces, and leaves out the
+  // others: of the environment, across the interface, and a probe outside the mesh. On the
+  // mesh of the region, the sides of the cube (a natural boundary, along which no
+  // environment element is written) seem to border the region only: they are left out
+  // there too.
   auto flux = [](int index, int attr)
   { return json{{"Index", index}, {"Attributes", {attr}}, {"Type", "Electric"}}; };
   auto dielectric = [](int index, int attr)

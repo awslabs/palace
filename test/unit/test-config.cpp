@@ -238,7 +238,7 @@ TEST_CASE("Config Substructuring", "[config][Serial]")
         output({{"STRUMPACKCompressionType", "HSS"}}),
         ContainsSubstring("\"Solver.Linear.STRUMPACKCompressionType\" is not used!"));
     CHECK_THAT(output({{"SuperLU3DCommunicator", true}}),
-               ContainsSubstring("\"Solver.Linear.SuperLU3DCommunicator\"!"));
+               ContainsSubstring("\"Solver.Linear.SuperLU3DCommunicator\" is not used!"));
     CHECK_THAT(output({{"ColumnOrdering", "AMD"}}), !ContainsSubstring("Warning"));
   }
 
@@ -338,9 +338,9 @@ TEST_CASE("Config Substructuring", "[config][Serial]")
 
   SECTION("Substructuring takes the postprocessing of the region")
   {
-    // The postprocessing of a regular simulation, of which the substructured solves give
-    // that of the region (see SubstructuringSolver::RegionPostprocessing), and the saved
-    // fields in any output format, but no far field.
+    // Substructuring takes the postprocessing of a regular simulation (that of the region,
+    // see SubstructuringSolver::RegionPostprocessing) and saved fields in any format, but
+    // no far field.
     auto config =
         [](const std::string &type, const json &postpro, const json &domains_postpro)
     {
