@@ -100,11 +100,11 @@ AssembleDiagonalTestMatrix(mfem::ParFiniteElementSpace &fespace)
 // equivalent real-valued system, also for repeated factorizations of matrices with the same
 // sparsity pattern and with a different sparsity pattern.
 void TestComplexDirectSolver(Solver<ComplexOperator> &solver, Solver<ComplexOperator> &ref,
-                             double tol, bool unsymmetric = false)
+                             double tol, bool unsymmetric = false, int mesh_n = 6)
 {
   MPI_Comm comm = Mpi::World();
-  mfem::Mesh serial_mesh =
-      mfem::Mesh::MakeCartesian3D(6, 6, 6, mfem::Element::HEXAHEDRON, 1.0, 1.0, 1.0);
+  mfem::Mesh serial_mesh = mfem::Mesh::MakeCartesian3D(
+      mesh_n, mesh_n, mesh_n, mfem::Element::HEXAHEDRON, 1.0, 1.0, 1.0);
   mfem::ParMesh mesh(comm, serial_mesh);
   mfem::H1_FECollection fec(2, 3);
   mfem::ParFiniteElementSpace fespace(&mesh, &fec);
@@ -171,6 +171,33 @@ TEST_CASE("STRUMPACK complex arithmetic solver", "[strumpack][Serial][Parallel]"
                                         SparseCompression::NONE, 0.0, 0, 0, true, 0),
       true, true, false, true);
   TestComplexDirectSolver(solver, ref, 1.0e-11, unsymmetric);
+}
+
+TEST_CASE("STRUMPACK complex arithmetic solver column ordering",
+          "[strumpack][Serial][Parallel]")
+{
+  // With "ColumnOrdering": "Default", the solver uses the METIS nested dissection which is
+  // parallel over the separator tree, when STRUMPACK is built with it (see
+  // GetStrumpackDefaultReordering), and "METIS" keeps the ordering on one process. The
+  // matrix has 15625 rows, so that the separator tree of the default ordering has one leaf
+  // per process on up to 7 processes (a leaf has 2000 rows or more, and with one leaf the
+  // ordering is METIS), with the permutation stored once per node and with every process
+  // as a node (see the first test case).
+  MPI_Comm comm = Mpi::World();
+  const bool unsymmetric = GENERATE(false, true);
+  const bool process_as_node = GENERATE(false, true);
+  CAPTURE(unsymmetric, process_as_node);
+  ScopedEnvironmentVariable group("STRUMPACK_SHARED_PERM_GROUP",
+                                  process_as_node ? "1" : nullptr);
+  StrumpackComplexSolver solver(comm, SymbolicFactorization::DEFAULT,
+                                SparseCompression::NONE, 0.0, 0, 0, false, true, 0);
+  StrumpackComplexSolver ref(comm, SymbolicFactorization::METIS, SparseCompression::NONE,
+                             0.0, 0, 0, false, true, 0);
+  TestComplexDirectSolver(solver, ref, 1.0e-11, unsymmetric, 12);
+  CHECK(solver.GetSolver().options().reordering_method() ==
+        GetStrumpackDefaultReordering());
+  CHECK(ref.GetSolver().options().reordering_method() ==
+        strumpack::ReorderingStrategy::METIS);
 }
 
 TEST_CASE("STRUMPACK complex arithmetic solver with compression",

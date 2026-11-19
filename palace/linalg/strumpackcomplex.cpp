@@ -24,31 +24,7 @@ void ConfigureOptions(strumpack::SPOptions<std::complex<double>> &opts,
   opts.set_verbose(print > 1);
   opts.set_Krylov_solver(strumpack::KrylovSolver::DIRECT);
   opts.set_matching(strumpack::MatchingJob::NONE);
-  switch (reorder)
-  {
-    case SymbolicFactorization::METIS:
-      opts.set_reordering_method(strumpack::ReorderingStrategy::METIS);
-      break;
-    case SymbolicFactorization::PARMETIS:
-      opts.set_reordering_method(strumpack::ReorderingStrategy::PARMETIS);
-      break;
-    case SymbolicFactorization::SCOTCH:
-      opts.set_reordering_method(strumpack::ReorderingStrategy::SCOTCH);
-      break;
-    case SymbolicFactorization::PTSCOTCH:
-      opts.set_reordering_method(strumpack::ReorderingStrategy::PTSCOTCH);
-      break;
-    case SymbolicFactorization::AMD:
-      opts.set_reordering_method(strumpack::ReorderingStrategy::AMD);
-      break;
-    case SymbolicFactorization::RCM:
-      opts.set_reordering_method(strumpack::ReorderingStrategy::RCM);
-      break;
-    case SymbolicFactorization::PORD:
-    case SymbolicFactorization::DEFAULT:
-      // Should have good default.
-      break;
-  }
+  ConfigureStrumpackReordering(opts, reorder);
   opts.disable_gpu();
 }
 

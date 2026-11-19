@@ -71,6 +71,19 @@ double GetMumpsBLRTol(const config::LinearSolverData &linear)
 }
 #endif
 
+#if defined(MFEM_USE_STRUMPACK)
+// Column ordering of STRUMPACK for the mode problems: METIS for "Default", for which the
+// solver of the 3D problem uses a METIS nested dissection which is parallel over the
+// separator tree (see GetStrumpackDefaultReordering). The matrices of the mode problems
+// are 2D and mostly small, so that their ordering takes little time with METIS.
+SymbolicFactorization GetStrumpackOrdering(const config::LinearSolverData &linear)
+{
+  return (linear.sym_factorization == SymbolicFactorization::DEFAULT)
+             ? SymbolicFactorization::METIS
+             : linear.sym_factorization;
+}
+#endif
+
 }  // namespace
 
 ModeEigenSolver::ModeEigenSolver(
@@ -576,7 +589,7 @@ void ModeEigenSolver::SetUpLinearSolver(MPI_Comm comm)
         {
 #if defined(MFEM_USE_STRUMPACK)
           return std::make_unique<StrumpackSolver>(
-              comm, linear.sym_factorization, linear.strumpack_compression_type,
+              comm, GetStrumpackOrdering(linear), linear.strumpack_compression_type,
               linear.strumpack_lr_tol, linear.strumpack_butterfly_l,
               linear.strumpack_lossy_precision, reorder_reuse, verbose - 1);
 #endif
@@ -665,7 +678,7 @@ void ModeEigenSolver::SetUpMultigridLinearSolver(MPI_Comm comm)
 #if defined(MFEM_USE_STRUMPACK)
         return std::make_unique<MfemWrapperSolver<ComplexOperator>>(
             std::make_unique<StrumpackSolver>(
-                comm, linear.sym_factorization, linear.strumpack_compression_type,
+                comm, GetStrumpackOrdering(linear), linear.strumpack_compression_type,
                 linear.strumpack_lr_tol, linear.strumpack_butterfly_l,
                 linear.strumpack_lossy_precision, true, print),
             false, linear.complex_coarse_solve, linear.drop_small_entries,
