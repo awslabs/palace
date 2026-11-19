@@ -66,9 +66,11 @@ std::vector<int> GetVacuumMetalSheetSubstrateAirAttributes(
     const std::vector<int> &metal_sheet_attributes);
 
 // The one-line text of that warning for the interface dielectric entry `index`. It names
-// the "Crack" setting only when one of `attributes` belongs to an Impedance,
+// the "Crack" setting only for those of `attributes` which belong to an Impedance,
 // RationalImpedance or Conductivity boundary of `boundaries` (the boundaries which have
-// that setting; perfect conductors are not cracked).
+// that setting; perfect conductors are not cracked) and which this run did not crack
+// (`boundaries.cracked_attributes`, filled by the mesh read); for the cracked ones it says
+// that the crack leaves these faces joined.
 std::string VacuumMetalSheetSubstrateAirWarning(int index,
                                                 const std::vector<int> &attributes,
                                                 const config::BoundaryData &boundaries);

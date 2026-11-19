@@ -1059,19 +1059,38 @@ std::string VacuumMetalSheetSubstrateAirWarning(int index,
   crack_setting_attributes.erase(
       std::unique(crack_setting_attributes.begin(), crack_setting_attributes.end()),
       crack_setting_attributes.end());
-  const std::string crack_advice =
-      crack_setting_attributes.empty()
-          ? std::string()
-          : fmt::format(" (or separate the faces by the \"Crack\" setting of the "
-                        "Impedance, RationalImpedance or Conductivity boundary of "
-                        "attributes {})",
-                        fmt::join(crack_setting_attributes, ", "));
+  // Split them by whether the mesh read cracked them in this run
+  // (boundaries.cracked_attributes: the boundary's "Crack" or the global
+  // CrackInternalBoundaryElements key): only the uncracked ones can be separated by the
+  // setting; a crack can leave faces of a cracked sheet joined.
+  std::vector<int> uncracked_attributes, cracked_attributes;
+  for (const int attr : crack_setting_attributes)
+  {
+    (boundaries.cracked_attributes.contains(attr) ? cracked_attributes
+                                                  : uncracked_attributes)
+        .push_back(attr);
+  }
+  std::string crack_text;
+  if (!uncracked_attributes.empty())
+  {
+    crack_text += fmt::format(" (or separate the faces by the \"Crack\" setting of the "
+                              "Impedance, RationalImpedance or Conductivity boundary of "
+                              "attributes {})",
+                              fmt::join(uncracked_attributes, ", "));
+  }
+  if (!cracked_attributes.empty())
+  {
+    crack_text += fmt::format(" (attributes {} are cracked, but the crack leaves these "
+                              "faces joined, for example between a crack tip and a "
+                              "junction with an uncracked sheet)",
+                              fmt::join(cracked_attributes, ", "));
+  }
   return fmt::format(
       "Interface dielectric postprocessing index {:d} (\"Type\": \"SA\") contains interior "
       "(unseparated) faces of a metal sheet with vacuum on both sides (boundary attributes "
       "{}): there a substrate-air entry averages the fields of the two sides and reads "
       "near-zero raw energy; a metal sheet in vacuum is a metal-air (\"MA\") entry{}!",
-      index, fmt::join(attributes, ", "), crack_advice);
+      index, fmt::join(attributes, ", "), crack_text);
 }
 
 bool ExclusionEnergyRequested(const config::SolverData &solver)

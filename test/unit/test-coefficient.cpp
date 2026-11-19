@@ -452,20 +452,34 @@ TEST_CASE("SA warning on a cracked Ls sheet lists only its unseparated faces",
   CHECK(Warned({11}) == std::vector<int>{11});
   CHECK(Warned({9, 10, 11, 12}) == std::vector<int>{10, 11, 12});
 
-  // The texts: the "Crack" setting is named for the Ls sheets only.
+  // The texts: the "Crack" setting is named for the uncracked Ls sheets only; a cracked
+  // Ls sheet with a joined face is told that it is cracked, and a PEC sheet gets no
+  // crack words.
   const auto pec_line = VacuumMetalSheetSubstrateAirWarning(2, Warned({10}), boundaries);
   CHECK(pec_line.find("interior (unseparated) faces") != std::string::npos);
   CHECK(pec_line.find("boundary attributes 10)") != std::string::npos);
   CHECK(pec_line.find("Crack") == std::string::npos);
+  CHECK(pec_line.find("crack") == std::string::npos);
   const auto ls_line = VacuumMetalSheetSubstrateAirWarning(2, Warned({11}), boundaries);
   CHECK(ls_line.find("interior (unseparated) faces") != std::string::npos);
   CHECK(ls_line.find("boundary attributes 11)") != std::string::npos);
-  CHECK(ls_line.find("\"Crack\" setting of the Impedance, RationalImpedance or "
-                     "Conductivity boundary of attributes 11)!") != std::string::npos);
+  CHECK(ls_line.find("metal-air (\"MA\") entry (attributes 11 are cracked, but the crack "
+                     "leaves these faces joined, for example between a crack tip and a "
+                     "junction with an uncracked sheet)!") != std::string::npos);
+  CHECK(ls_line.find("separate the faces by") == std::string::npos);
+  const auto ls_pair_line =
+      VacuumMetalSheetSubstrateAirWarning(2, Warned({11, 12}), boundaries);
+  CHECK(ls_pair_line.find("boundary attributes 11, 12)") != std::string::npos);
+  CHECK(ls_pair_line.find("metal-air (\"MA\") entry (or separate the faces by the "
+                          "\"Crack\" setting of the Impedance, RationalImpedance or "
+                          "Conductivity boundary of attributes 12) (attributes 11 are "
+                          "cracked, but the crack leaves these faces joined") !=
+        std::string::npos);
   const auto all_line =
       VacuumMetalSheetSubstrateAirWarning(2, Warned({9, 10, 11, 12}), boundaries);
   CHECK(all_line.find("boundary attributes 10, 11, 12)") != std::string::npos);
-  CHECK(all_line.find("boundary of attributes 11, 12)!") != std::string::npos);
+  CHECK(all_line.find("boundary of attributes 12) (attributes 11 are cracked, but the "
+                      "crack leaves these faces joined") != std::string::npos);
 }
 
 TEST_CASE("BdrSurfaceFluxCoefficient direction orients geometric normal",
