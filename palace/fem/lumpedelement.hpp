@@ -46,10 +46,10 @@ private:
 
 public:
   // Decision 929: `length_override` > 0 (nondimensional mesh units, measured along
-  // `input_dir`) replaces the bounding-box length of a ragged planar element and skips the
-  // projected-length check for this element only (a warning states the box length vs the
-  // override); the width stays area / length, so the circuit totals are unchanged. 0 =
-  // today's behaviour.
+  // `input_dir`) replaces the computed mean length (area / cross-section width) and skips
+  // the mean-length check for this element only (a warning states the computed length
+  // beside the override); the width becomes area / length, so the circuit totals are
+  // unchanged. 0 = the computed pair.
   UniformElementData(const std::array<double, 3> &input_dir,
                      const mfem::Array<int> &attr_list, const mfem::ParMesh &mesh,
                      double length_override = 0.0);

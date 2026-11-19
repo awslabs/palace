@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:4-5-0",
+  "$id": "urn:palace:schema:4-5-1",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -1140,7 +1140,7 @@
         "Length": {
           "type": "number",
           "exclusiveMinimum": 0,
-          "description": "Optional geometry override for a ragged planar element: the element length in mesh units measured along `\"Direction\"`. When present, the lumped element uses this length and width = area / length (the area exact from the port faces), the discovered bounding-box length is reported beside it and the projected-length consistency check is skipped for this element only; when absent, the bounding-box length and the check apply. Cartesian (uniform) elements only; the circuit totals R / L / C are unchanged. No automatic fallback."
+          "description": "Optional length of a uniform (Cartesian) element in mesh units, measured along `\"Direction\"`. Without it, the width is the length of a cross-section across the element and the length is area / width. Set it only where the designer's length must rule: the width is then area / length, a warning states the computed length beside it, and the check of the computed length against the element's extent is skipped for this element only (the other shape checks still apply). The circuit totals R / L / C are unchanged. No automatic fallback."
         },
         "R": {
           "type": "number",
@@ -1332,7 +1332,7 @@
         "Length": {
           "type": "number",
           "exclusiveMinimum": 0,
-          "description": "Optional geometry override for a ragged planar element: this element's length in mesh units along its `\"Direction\"`; see `/LumpedPort/Length`."
+          "description": "Optional length of this uniform (Cartesian) element in mesh units along its `\"Direction\"`, used instead of the computed length where the designer's length must rule; see `/LumpedPort/Length`."
         }
       }
     },

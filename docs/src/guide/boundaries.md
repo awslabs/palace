@@ -256,15 +256,15 @@ for implementation details.
     lumped port. To use this functionality, use the `"Elements"` object under
     [`"LumpedPort"`](../config/reference.md#config-boundaries-lumpedport).
 
-    The geometry of a uniform (Cartesian) element is discovered from the bounding box of
-    its boundary faces: the length along `"Direction"` and the width as area / length,
-    with a consistency check of the box length against the extent projected on the
-    direction. A ragged planar element (for example a thick-metal junction-port tile whose
-    mitred corner nodes skew the discovered box) can state its length explicitly with
-    `"Length"` (mesh units, along `"Direction"`): the configured length is used, the width
-    is still area / length, the discovered box length is reported beside it and the
-    projected-length check is skipped for that element only; the circuit values are
-    unchanged. Without `"Length"` nothing changes.
+    The geometry of a uniform (Cartesian) element is computed from a cross-section across
+    it: the width is the length of the cross-section normal to its axis half way along it,
+    and the length is area / width (see the [reference](../reference.md)). Where the
+    designer's length must rule (for example a thick-metal junction-port tile), an element
+    can state it with `"Length"` (mesh units, along `"Direction"`): the configured length
+    is used, the width is area / length, a warning states the computed length beside it,
+    and the check of the computed length against the element's extent is skipped for that
+    element only (the other shape checks still apply); the circuit values are unchanged.
+    Without `"Length"` the computed geometry is used.
 
   - [`config["Boundaries"]["WavePort"]`](../config/reference.md#config-boundaries-waveport) :
     Numeric wave ports are available for frequency domain driven and eigenmode simulations. In this case,
