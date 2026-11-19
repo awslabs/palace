@@ -148,12 +148,15 @@ private:
   // Assemble the London sheet mass M_sheet = ∫_Σ (1/L_ksq) A_t·v_t on first use.
   void EnsureSheetMass();
 
-  // Add the stiffness coefficients: curl-curl (μ⁻¹), and the kinetic sheet term (1/L_ksq,
-  // unbroken spaces only).
-  void AddStiffnessCoefficients(MaterialPropertyCoefficient &df,
+  // Add the stiffness coefficients: curl-curl (μ⁻¹) to df, the London domains ((μλ²)⁻¹)
+  // and, for shift > 0, the gauge shift · (1/µ) ∫|A|² outside them to f, and the kinetic
+  // sheet term (1/L_ksq, unbroken spaces only) to fb.
+  void AddStiffnessCoefficients(double shift, MaterialPropertyCoefficient &df,
+                                MaterialPropertyCoefficient &f,
                                 MaterialPropertyCoefficient &fb) const;
 
-  // True if a superconductor film is present and the shift is positive.
+  // True if the shift is positive, with a superconductor (sheet or London domain) or the
+  // auxiliary smoother, whose gradient operator the shift makes definite.
   bool HasShiftedPreconditioner() const;
 
   // Assemble the London preconditioner (stiffness + shift·(1/µ)∫|A|²) constraining the
@@ -170,16 +173,17 @@ private:
   AssemblyDomains assembly_domains;
 
   // The stiffness form on the finest solution space, with the coefficients its integrators
-  // point to (AddStiffnessCoefficients), assembled on the assembly domains if set: the
-  // volume terms if volume, the sheet terms of an unbroken space if sheets (the broken
-  // sheet matrix is added to the assembled operators, see AddBrokenSheetMatrix).
+  // point to (AddStiffnessCoefficients, with the gauge shift given), assembled on the
+  // assembly domains if set: the volume terms if volume, the sheet terms of an unbroken
+  // space if sheets (the broken sheet matrix is added to the assembled operators, see
+  // AddBrokenSheetMatrix).
   struct StiffnessForm
   {
-    MaterialPropertyCoefficient df, fb;
+    MaterialPropertyCoefficient df, f, fb;
     BilinearForm k;
   };
-  std::unique_ptr<StiffnessForm> GetStiffnessForm(bool volume = true,
-                                                  bool sheets = true) const;
+  std::unique_ptr<StiffnessForm> GetStiffnessForm(bool volume = true, bool sheets = true,
+                                                  double shift = 0.0) const;
 
   mfem::Array<int>
   SetUpBoundaryProperties(const config::PecBoundaryData &pec,
@@ -280,13 +284,15 @@ public:
   // interior gives the shifted-penalty operator a residual 1-D gradient null space.
   bool HasLondonFluxLoops() const { return !london_flux_loops_.empty(); }
 
-  // Construct the preconditioner matrix for the London magnetostatic path: the stiffness
-  // matrix plus a small reluctance-weighted volume mass (london_pc_shift_ · (1/µ) ∫|A|²)
-  // that lifts the residual gradient null space so AMS is SPD-solvable in parallel. This
-  // shift is applied ONLY to the preconditioner, so the operator, solution, and extracted
-  // inductance are unchanged. Returns nullptr when there is no London flux film or the
-  // shift is non-positive, signaling that the stiffness matrix itself should be used as
-  // preconditioner.
+  // True if any domain has a London depth, adding (μλ²)⁻¹ A·v to the stiffness operator.
+  bool HasLondonDomains() const { return mat_op.HasLondonDepth(); }
+
+  // Construct the preconditioner matrix with superconductors or the auxiliary smoother: the
+  // stiffness matrix plus the gauge shift london_pc_shift_ · (1/µ) ∫|A|² outside the London
+  // domains, which lifts the residual gradient null space so AMS is SPD-solvable in
+  // parallel. Only the preconditioner is shifted, so the solution is unchanged. Returns
+  // nullptr otherwise or without a positive shift, in which case the stiffness matrix
+  // preconditions itself.
   std::unique_ptr<Operator> GetPreconditionerMatrix();
 
   // Return the stiffness matrix with extra essential (PEC) attributes beyond those set at

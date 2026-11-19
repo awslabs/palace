@@ -50,6 +50,49 @@ public:
   }
 };
 
+// Whether an edge or face of the film is also one of an element of a London domain.
+bool FilmTouchesLondonDomain(const FiniteElementSpace &nd_fespace,
+                             const MaterialOperator &mat_op,
+                             const std::vector<int> &film_attributes)
+{
+  if (!mat_op.HasLondonDepth())
+  {
+    return false;
+  }
+  const auto &mesh = nd_fespace.GetParMesh();
+  mfem::Vector london(nd_fespace.GetVSize());
+  london.UseDevice(false);
+  london = 0.0;
+  mfem::Array<int> dofs;
+  for (int e = 0; e < mesh.GetNE(); e++)
+  {
+    if (mat_op.GetInvLondonDepth(mesh.GetAttribute(e)).MaxMaxNorm() > 0.0)
+    {
+      nd_fespace.Get().GetElementDofs(e, dofs);
+      for (int d : dofs)
+      {
+        london((d >= 0) ? d : -1 - d) = 1.0;
+      }
+    }
+  }
+  // |P|ᵀ on the host, so that a true DOF of an element on another process is counted.
+  const auto &P = *nd_fespace.Get().Dof_TrueDof_Matrix();
+  mfem::Vector london_t(P.Width());
+  london_t.UseDevice(false);
+  P.AbsMultTranspose(1.0, london, 0.0, london_t);
+  mfem::Array<int> film_attr(const_cast<int *>(film_attributes.data()),
+                             static_cast<int>(film_attributes.size()));
+  mfem::Array<int> film_tdofs;
+  nd_fespace.GetEssentialTrueDofs(mesh::BdrAttrToMarker(mesh, film_attr, true), film_tdofs);
+  int touch = 0;
+  for (int t : film_tdofs)
+  {
+    touch += (london_t(t) > 0.0);
+  }
+  Mpi::GlobalSum(1, &touch, mesh.GetComm());
+  return touch > 0;
+}
+
 }  // namespace
 
 CurlCurlOperator::CurlCurlOperator(const config::BoundaryData &boundaries,
@@ -247,6 +290,12 @@ void CurlCurlOperator::SetUpLondonFluxConstraints()
             << " holes, but the cut-cohomology generator supports exactly one hole per "
                "flux loop. Model each hole as a separate FluxLoop excitation.");
 
+    // A London domain has no phase to carry the fluxoid of the hole.
+    MFEM_VERIFY(!FilmTouchesLondonDomain(GetNDSpace(), mat_op, data.film_attributes),
+                "FluxLoop index " << idx
+                                  << " has a film touching a London domain, which "
+                                     "cannot carry the fluxoid of its hole!");
+
     // Fluxoid functional c = Curlᵀ·f, where f is the hole-cap flux functional on the RT
     // (curl) space: f·B = ∫_hole B·n (assembled via VectorFEBoundaryFluxLFIntegrator over
     // the hole attributes). Then cᵀA = fᵀ(Curl A) = ∫_hole (curl A)·n = ∮_∂hole A·dl
@@ -344,9 +393,17 @@ void PrintHeader(const mfem::ParFiniteElementSpace &h1_fespace,
 }
 
 void AddStiffnessIntegrators(BilinearForm &k, const MaterialPropertyCoefficient &df,
+                             const MaterialPropertyCoefficient &f,
                              const MaterialPropertyCoefficient &fb)
 {
-  k.AddDomainIntegrator<CurlCurlIntegrator>(df);
+  if (f.empty())
+  {
+    k.AddDomainIntegrator<CurlCurlIntegrator>(df);
+  }
+  else
+  {
+    k.AddDomainIntegrator<CurlCurlMassIntegrator>(df, f);
+  }
   if (!fb.empty())
   {
     k.AddBoundaryIntegrator<VectorFEMassIntegrator>(fb);
@@ -355,12 +412,32 @@ void AddStiffnessIntegrators(BilinearForm &k, const MaterialPropertyCoefficient 
 
 }  // namespace
 
-void CurlCurlOperator::AddStiffnessCoefficients(MaterialPropertyCoefficient &df,
+void CurlCurlOperator::AddStiffnessCoefficients(double shift, MaterialPropertyCoefficient &df,
+                                                MaterialPropertyCoefficient &f,
                                                 MaterialPropertyCoefficient &fb) const
 {
   // Contribution from material permeability. In 2D, curl is scalar so the curl-curl
   // coefficient is scalar (1x1).
   df.AddCoefficient(mat_op.GetAttributeToMaterial(), mat_op.GetCurlCurlInvPermeability());
+
+  // Contribution for London superconductors (supercurrent J = −A/(μλ²)), and the gauge
+  // shift outside them, where the London mass does not lift the gradients.
+  if (mat_op.HasLondonDepth())
+  {
+    f.AddCoefficient(mat_op.GetAttributeToMaterial(), mat_op.GetInvLondonDepth());
+  }
+  if (shift > 0.0)
+  {
+    mfem::DenseTensor muinv(mat_op.GetInvPermeability());
+    for (int i = 0; i < muinv.SizeK(); i++)
+    {
+      if (mat_op.GetInvLondonDepth()(i).MaxMaxNorm() > 0.0)
+      {
+        muinv(i) = 0.0;
+      }
+    }
+    f.AddCoefficient(mat_op.GetAttributeToMaterial(), muinv, shift);
+  }
 
   // Kinetic sheet term (1/L_ksq) A_t·v_t; on broken spaces, see AddBrokenSheetMatrix.
   if (!IsBroken())
@@ -371,7 +448,8 @@ void CurlCurlOperator::AddStiffnessCoefficients(MaterialPropertyCoefficient &df,
 
 bool CurlCurlOperator::HasShiftedPreconditioner() const
 {
-  return (!london_flux_loops_.empty() || !sc_sheet_op.empty()) && london_pc_shift_ > 0.0;
+  return (mg_smooth_aux_ || !sc_sheet_op.empty() || mat_op.HasLondonDepth()) &&
+         london_pc_shift_ > 0.0;
 }
 
 std::unique_ptr<Operator> CurlCurlOperator::GetStiffnessMatrix()
@@ -414,24 +492,26 @@ std::unique_ptr<Operator> CurlCurlOperator::GetStiffnessMatrix()
 }
 
 std::unique_ptr<CurlCurlOperator::StiffnessForm>
-CurlCurlOperator::GetStiffnessForm(bool volume, bool sheets) const
+CurlCurlOperator::GetStiffnessForm(bool volume, bool sheets, double shift) const
 {
   // The integrators keep pointers to the coefficients, which the form owns.
   std::unique_ptr<StiffnessForm> form(
       new StiffnessForm{MaterialPropertyCoefficient(mat_op.MaxCeedAttribute()),
+                        MaterialPropertyCoefficient(mat_op.MaxCeedAttribute()),
                         MaterialPropertyCoefficient(mat_op.MaxCeedBdrAttribute()),
                         BilinearForm(GetSolutionNDSpace())});
-  AddStiffnessCoefficients(form->df, form->fb);
+  AddStiffnessCoefficients(shift, form->df, form->f, form->fb);
   if (!volume)
   {
-    // Zero coefficients on every element.
+    // Zero coefficients on every element, and no domain mass.
     form->df.RestrictCoefficient(mfem::Array<int>());
+    form->f = MaterialPropertyCoefficient(mat_op.MaxCeedAttribute());
   }
   if (!sheets)
   {
     form->fb = MaterialPropertyCoefficient(mat_op.MaxCeedBdrAttribute());
   }
-  AddStiffnessIntegrators(form->k, form->df, form->fb);
+  AddStiffnessIntegrators(form->k, form->df, form->f, form->fb);
   assembly_domains.Restrict(form->k);
   return form;
 }
@@ -469,15 +549,12 @@ std::unique_ptr<Operator> CurlCurlOperator::AssembleShiftedPreconditioner(
     const std::vector<mfem::Array<int>> &pc_dbc_tdof_lists,
     const mfem::Array<int> &pc_dbc_attr, std::vector<mfem::Array<int>> &h1_dbc_tdof_lists)
 {
-  // Assemble K̃_pc = A_curlcurl + (1/L_ksq) M_sheet + london_pc_shift_ · (1/µ) ∫|A|². The
-  // first two terms track the true stiffness; the volume mass is a reluctance-weighted
-  // regularization lifting the film-constant gradient mode so GᵀK̃_pcG is SPD for AMS.
+  // Assemble K̃_pc = K + london_pc_shift_ · (1/µ) ∫|A|² outside the London domains. The
+  // volume mass lifts the gradient modes K leaves in its kernel outside the
+  // superconductors, so GᵀK̃_pcG is SPD for AMS.
   constexpr bool skip_zeros = false;
-  const auto form = GetStiffnessForm();
-  const auto &fb = form->fb;
-  MaterialPropertyCoefficient mass_func(mat_op.GetAttributeToMaterial(),
-                                        mat_op.GetInvPermeability(), london_pc_shift_);
-  form->k.AddDomainIntegrator<VectorFEMassIntegrator>(mass_func);
+  const auto form = GetStiffnessForm(true, true, london_pc_shift_);
+  const auto &f = form->f, &fb = form->fb;
   auto k_vec = form->k.Assemble(GetSolutionNDSpaces(), skip_zeros);
   auto K = std::make_unique<MultigridOperator>(GetSolutionNDSpaces().GetNumLevels());
   for (std::size_t l = 0; l < GetSolutionNDSpaces().GetNumLevels(); l++)
@@ -489,15 +566,15 @@ std::unique_ptr<Operator> CurlCurlOperator::AssembleShiftedPreconditioner(
     K->AddOperator(std::move(K_l));
   }
 
-  // Gradient-space operator GᵀK̃G for the distributive-relaxation smoother: the shift and
-  // sheet terms lift the gradients off the curl-curl kernel, so they must be smoothed. On
-  // spaces broken across two-sided films, the sheet terms are GᵀSG with the broken sheet
-  // matrix S, which carries both the one-sided and the two-sided sheets.
+  // Gradient-space operator GᵀK̃G for the distributive-relaxation smoother: the shift,
+  // London, and sheet terms lift the gradients off the curl-curl kernel, so they must be
+  // smoothed. On spaces broken across two-sided films, the sheet terms are GᵀSG with the
+  // broken sheet matrix S, which carries both the one-sided and the two-sided sheets.
   if (mg_smooth_aux_)
   {
     const auto &h1_fespaces_aux = GetSolutionH1Spaces();
     BilinearForm a_aux(h1_fespaces_aux.GetFinestFESpace());
-    a_aux.AddDomainIntegrator<DiffusionIntegrator>(mass_func);
+    a_aux.AddDomainIntegrator<DiffusionIntegrator>(f);
     if (!fb.empty())
     {
       a_aux.AddBoundaryIntegrator<DiffusionIntegrator>(fb);
@@ -527,9 +604,7 @@ std::unique_ptr<Operator> CurlCurlOperator::AssembleShiftedPreconditioner(
 
 std::unique_ptr<Operator> CurlCurlOperator::GetPreconditionerMatrix()
 {
-  // Preconditioner-only gauge shift for the London path: any active superconductor sheet —
-  // not just flux-loop films — has the free-interior gradient null the shift lifts, so
-  // current-port sheet problems need it too. Null when there is no sheet or no shift.
+  // Preconditioner-only gauge shift, null without it (see HasShiftedPreconditioner).
   if (!HasShiftedPreconditioner())
   {
     return nullptr;

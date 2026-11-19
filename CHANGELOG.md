@@ -19,6 +19,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### New Features
 
+  - Magnetostatic simulations now model domains with a `LondonDepth`: the London term is
+    added to the curl-curl operator and the kinetic energy of the supercurrent to the
+    extracted inductance, so conductors of any thickness and width can be modeled as
+    volumes. SchemaVer 4-4-1 [PR 1111](https://github.com/awslabs/palace/pull/1111).
   - Added substructuring for electrostatic and magnetostatic simulations
     (`config["Solver"]["Substructuring"]`): the environment of a region is condensed onto
     their interface once and saved, and later runs solve only the region, also after a
@@ -37,6 +41,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Interface Changes
 
+  - With adaptive mesh refinement on nonconforming meshes, the SLEPc Krylov-Schur eigenvalue
+    solves of later adaptation iterations can start from the eigenvectors of the previous
+    one, transferred to the refined mesh, instead of the start vector of
+    `config["Solver"]["Eigenmode"]["StartVector"]`, and then need fewer Krylov restarts. The
+    eigenvalues of adaptive simulations change at the level of the solver tolerances, and
+    fewer converged eigenpairs beyond the requested ones can be reported. SchemaVer 4-4-2.
+    [PR 1203](https://github.com/awslabs/palace/pull/1203).
   - When `Solver.Linear.Type` is `"Default"` (or omitted) for frequency domain problems,
     and for the wave port and boundary mode eigenvalue solves, *Palace* now prefers
     STRUMPACK over SuperLU_DIST, then MUMPS, as the sparse direct solver when built with
