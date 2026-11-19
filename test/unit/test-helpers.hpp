@@ -4,6 +4,8 @@
 #ifndef PALACE_TEST_HELPERS_HPP
 #define PALACE_TEST_HELPERS_HPP
 
+#include <cstdlib>
+#include <optional>
 #include <string>
 #include <mfem.hpp>
 
@@ -19,5 +21,39 @@ mfem::Mesh MakeInteriorBoundaryBox();
 // are "star-quad.mesh" and "fichera-hex.mesh" after mfem::Mesh::MakeSimplicial, written on
 // first use to a temporary file private to the calling process and removed at exit.
 std::string TestMeshPath(const std::string &name);
+
+// Sets an environment variable of the calling process, or unsets it when the value is
+// null, and restores its previous state on destruction.
+class ScopedEnvironmentVariable
+{
+private:
+  std::string name;
+  std::optional<std::string> previous;
+
+  void Set(const char *value)
+  {
+    if (value)
+    {
+      setenv(name.c_str(), value, 1);
+    }
+    else
+    {
+      unsetenv(name.c_str());
+    }
+  }
+
+public:
+  ScopedEnvironmentVariable(const std::string &name, const char *value) : name(name)
+  {
+    if (const char *old = std::getenv(name.c_str()))
+    {
+      previous = old;
+    }
+    Set(value);
+  }
+  ScopedEnvironmentVariable(const ScopedEnvironmentVariable &) = delete;
+  ScopedEnvironmentVariable &operator=(const ScopedEnvironmentVariable &) = delete;
+  ~ScopedEnvironmentVariable() { Set(previous ? previous->c_str() : nullptr); }
+};
 
 #endif  // PALACE_TEST_HELPERS_HPP

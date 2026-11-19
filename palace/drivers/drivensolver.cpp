@@ -164,6 +164,9 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
       Mpi::Print("\nSweeping excitation index {:d} ({:d}/{:d}):\n", excitation_idx,
                  excitation_counter, port_excitations.Size());
     }
+    // Start each excitation from zero rather than the previous excitation's solution.
+    E = 0.0;
+
     // Frequency loop. Delay the potentially large visualization operators until the
     // first solution is ready, so they do not increase the solve/preconditioner peak.
     const std::size_t omega_start =

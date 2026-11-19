@@ -447,11 +447,13 @@ public:
   // A single rank-1 term g·s·sᵀ of the modal correction W = Σ_k g_k s_k s_kᵀ. Exposed so
   // the PROM / adaptive sweep can build the Galerkin projection Wᵣ = Σ_k g_k
   // (Vᵀs_k)(Vᵀs_k)ᵀ directly instead of applying the matrix-free operator. `s` lives on the
-  // parent ND true-dof space with essential dofs eliminated; `g = ±iω/R`.
+  // parent ND true-dof space with essential dofs eliminated; `g = ±iω/R`; `port` is the
+  // index of the wave port the term belongs to.
   struct ModalCorrectionTerm
   {
     std::unique_ptr<ComplexVector> s;
     std::complex<double> g;
+    int port;
   };
 
   // Assemble the rank-1 terms of the modal correction W = Σ_ports (W_full − W_scalar) over

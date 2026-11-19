@@ -35,11 +35,11 @@ cmake -DPALACE_MFEM_USE_EXCEPTIONS=yes ..
 make -j $(nproc) palace-tests
 ```
 
-The `PALACE_MFEM_USE_EXCEPTIONS` option is necessary to properly capture and
-test assertions. If you want to also measure test coverage, turn
-`PALACE_BUILD_WITH_COVERAGE` on. See [Unit test coverage](#Unit-test-coverage)
-for more details on this. For Spack, these are the `mfem+exceptions` and the
-`palace+coverage` variants.
+The `PALACE_MFEM_USE_EXCEPTIONS` option is required: the unit tests check that
+MFEM assertions throw, and the unit-test build stops without it. If you want to
+also measure test coverage, turn `PALACE_BUILD_WITH_COVERAGE` on. See
+[Unit test coverage](#Unit-test-coverage) for more details on this. For Spack,
+these are the `mfem+exceptions` and the `palace+coverage` variants.
 
 ### Enzyme-backed MMS tests
 
@@ -441,7 +441,7 @@ together with a single CMake option:
 
 ```bash
 mkdir build && cd build
-cmake -DPALACE_BUILD_WITH_SANITIZERS=ON ..
+cmake -DPALACE_MFEM_USE_EXCEPTIONS=yes -DPALACE_BUILD_WITH_SANITIZERS=ON ..
 make -j palace-tests
 ```
 

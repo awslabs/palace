@@ -34,17 +34,12 @@ struct BoundingBall
   bool planar;
 };
 
-// Helper for collecting a point cloud from a mesh, used in calculating bounding boxes and
-// bounding balls. Returns the dominant rank, for which the vertices argument will be
-// filled, while all other ranks will have an empty vector. Vertices are de-duplicated to a
-// certain floating point precision.
+// Helper for collecting a point cloud from a mesh, used in calculating bounding balls and
+// distances from a point. Returns the dominant rank, for which the vertices argument will
+// be filled, while all other ranks will have an empty vector. Vertices are de-duplicated to
+// a certain floating point precision.
 int CollectPointCloudOnRoot(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
                             bool bdr, std::vector<Eigen::Vector3d> &vertices);
-
-// Calculates a bounding box from a point cloud, result is broadcast across all processes.
-BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm,
-                                      const std::vector<Eigen::Vector3d> &vertices,
-                                      int dominant_rank);
 
 // Compute the distance from a point orthogonal to the list of normal axes, relative to
 // the given origin.

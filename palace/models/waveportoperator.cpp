@@ -66,14 +66,14 @@ private:
   LowRankComplexUpdate<false> update;
 
 public:
-  // The term vectors are copied, so they need not outlive the operator.
+  // The term vectors are copied, so they need not outlive the operator. Term k belongs to
+  // port block[k].
   WavePortModalCorrection(MPI_Comm comm, int n, const std::vector<const ComplexVector *> &s,
-                          const std::vector<std::complex<double>> &g)
-    : ComplexOperator(n), update(comm, s, g)
+                          const std::vector<std::complex<double>> &g,
+                          const std::vector<int> &block)
+    : ComplexOperator(n), update(comm, n, s, g, block)
   {
   }
-
-  bool Empty() const { return update.NumTerms() == 0; }
 
   void Mult(const ComplexVector &x, ComplexVector &y) const override
   {
@@ -2149,9 +2149,9 @@ std::unique_ptr<ComplexVector> AssembleNxHVector(FiniteElementSpace &nd_fespace,
 }
 
 // Wrap the assembled rank-1 terms as the modal-correction operator, or nullptr if none.
-std::unique_ptr<ComplexOperator>
-BuildModalCorrectionOperator(std::vector<WavePortOperator::ModalCorrectionTerm> terms,
-                             FiniteElementSpace &nd_fespace)
+std::unique_ptr<ComplexOperator> BuildModalCorrectionOperator(
+    const std::vector<WavePortOperator::ModalCorrectionTerm> &terms,
+    FiniteElementSpace &nd_fespace)
 {
   if (terms.empty())
   {
@@ -2159,13 +2159,15 @@ BuildModalCorrectionOperator(std::vector<WavePortOperator::ModalCorrectionTerm> 
   }
   std::vector<const ComplexVector *> s;
   std::vector<std::complex<double>> g;
+  std::vector<int> port;
   for (const auto &term : terms)
   {
     s.push_back(term.s.get());
     g.push_back(term.g);
+    port.push_back(term.port);
   }
   return std::make_unique<WavePortModalCorrection>(nd_fespace.GetComm(),
-                                                   nd_fespace.GetTrueVSize(), s, g);
+                                                   nd_fespace.GetTrueVSize(), s, g, port);
 }
 
 }  // namespace
@@ -2206,12 +2208,12 @@ WavePortOperator::GetModalCorrectionTerms(double omega, FiniteElementSpace &nd_f
     auto ci = data.GetModeExcitationCoefficientImag(/*include_gradient=*/true);
     terms.push_back(
         {AssembleNxHVector(nd_fespace, nd_dbc_tdof_list, data.GetAttrMarker(), *cr, *ci),
-         std::complex<double>(0.0, -omega) / data.modal_reaction});
+         std::complex<double>(0.0, -omega) / data.modal_reaction, idx});
     auto cr_s = data.GetModeExcitationCoefficientReal(/*include_gradient=*/false);
     auto ci_s = data.GetModeExcitationCoefficientImag(/*include_gradient=*/false);
     terms.push_back({AssembleNxHVector(nd_fespace, nd_dbc_tdof_list, data.GetAttrMarker(),
                                        *cr_s, *ci_s),
-                     std::complex<double>(0.0, omega) / data.modal_reaction_scalar});
+                     std::complex<double>(0.0, omega) / data.modal_reaction_scalar, idx});
   }
   return terms;
 }
@@ -2267,8 +2269,8 @@ WavePortOperator::GetModalCorrectionTerms(std::complex<double> omega,
     {
       continue;
     }
-    terms.push_back({std::move(smp.s_full), smp.g_full});
-    terms.push_back({std::move(smp.s_scalar), smp.g_scalar});
+    terms.push_back({std::move(smp.s_full), smp.g_full, idx});
+    terms.push_back({std::move(smp.s_scalar), smp.g_scalar, idx});
   }
   return terms;
 }
@@ -2311,7 +2313,7 @@ WavePortOperator::GetModalCorrectionOperator(double omega, FiniteElementSpace &n
                                              const mfem::Array<int> &nd_dbc_tdof_list)
 {
   auto terms = GetModalCorrectionTerms(omega, nd_fespace, nd_dbc_tdof_list);
-  return BuildModalCorrectionOperator(std::move(terms), nd_fespace);
+  return BuildModalCorrectionOperator(terms, nd_fespace);
 }
 
 std::unique_ptr<ComplexOperator>
@@ -2320,7 +2322,7 @@ WavePortOperator::GetModalCorrectionOperator(std::complex<double> omega,
                                              const mfem::Array<int> &nd_dbc_tdof_list)
 {
   auto terms = GetModalCorrectionTerms(omega, nd_fespace, nd_dbc_tdof_list);
-  return BuildModalCorrectionOperator(std::move(terms), nd_fespace);
+  return BuildModalCorrectionOperator(terms, nd_fespace);
 }
 
 std::vector<int>

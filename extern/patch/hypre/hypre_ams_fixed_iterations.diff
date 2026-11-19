@@ -1,0 +1,101 @@
+diff --git a/src/parcsr_ls/_hypre_parcsr_ls.h b/src/parcsr_ls/_hypre_parcsr_ls.h
+index 594c210e02fb966157289439fcaf3118699bf4b3..6f9c26f855972a9ccdffcefe18ca5304bee58009 100644
+--- a/src/parcsr_ls/_hypre_parcsr_ls.h
++++ b/src/parcsr_ls/_hypre_parcsr_ls.h
+@@ -1950,6 +1950,9 @@ HYPRE_Int hypre_AMSComputeGPi ( hypre_ParCSRMatrix *A, hypre_ParCSRMatrix *G, hy
+                                 hypre_ParVector *Gy, hypre_ParVector *Gz, HYPRE_Int dim, hypre_ParCSRMatrix **GPi_ptr );
+ HYPRE_Int hypre_AMSSetup ( void *solver, hypre_ParCSRMatrix *A, hypre_ParVector *b,
+                            hypre_ParVector *x );
++/* hypre_AMSSolve uses (and maintains) the zero flag of the initial guess, and with tol = 0
++   and print level 0 computes no residual norms */
++#define HYPRE_AMS_ZERO_GUESS_FLAG 1
+ HYPRE_Int hypre_AMSSolve ( void *solver, hypre_ParCSRMatrix *A, hypre_ParVector *b,
+                            hypre_ParVector *x );
+ HYPRE_Int hypre_ParCSRSubspacePrec ( hypre_ParCSRMatrix *A0, HYPRE_Int A0_relax_type,
+diff --git a/src/parcsr_ls/ams.c b/src/parcsr_ls/ams.c
+index 6b072c1b57f01487ce791bfb362f24ac6d266fc6..b124ebef36d6c3177a6e732dcb35d3fe018b30d8 100644
+--- a/src/parcsr_ls/ams.c
++++ b/src/parcsr_ls/ams.c
+@@ -74,6 +74,7 @@ hypre_ParCSRRelax( hypre_ParCSRMatrix *A,              /* matrix to relax with *
+                                  omega, l1_norms, u, v, z);
+          }
+       }
++      hypre_ParVectorAllZeros(u) = 0;
+    }
+ 
+    return hypre_error_flag;
+@@ -3942,14 +3943,25 @@ HYPRE_Int hypre_AMSSolve(void *solver,
+ 
+    for (i = 0; i < ams_data -> maxit; i++)
+    {
+-      /* Compute initial residual norms */
+-      if (ams_data -> maxit > 1 && i == 0)
++      /* Compute initial residual norms (only needed for a tolerance or printing) */
++      if (ams_data -> maxit > 1 && i == 0 && (ams_data -> tol > 0.0 || ams_data -> print_level > 0))
+       {
+-         hypre_ParVectorCopy(b, ams_data -> r0);
+-         hypre_ParCSRMatrixMatvec(-1.0, ams_data -> A, x, 1.0, ams_data -> r0);
+-         r_norm = hypre_sqrt(hypre_ParVectorInnerProd(ams_data -> r0, ams_data -> r0));
+-         r0_norm = r_norm;
+-         b_norm = hypre_sqrt(hypre_ParVectorInnerProd(b, b));
++         if (hypre_ParVectorAllZeros(x))
++         {
++            /* zero initial guess: r0 = b */
++            hypre_ParVectorCopy(b, ams_data -> r0);
++            b_norm = hypre_sqrt(hypre_ParVectorInnerProd(b, b));
++            r_norm = b_norm;
++            r0_norm = r_norm;
++         }
++         else
++         {
++            hypre_ParVectorCopy(b, ams_data -> r0);
++            hypre_ParCSRMatrixMatvec(-1.0, ams_data -> A, x, 1.0, ams_data -> r0);
++            r_norm = hypre_sqrt(hypre_ParVectorInnerProd(ams_data -> r0, ams_data -> r0));
++            r0_norm = r_norm;
++            b_norm = hypre_sqrt(hypre_ParVectorInnerProd(b, b));
++         }
+          if (b_norm != 0.0)
+          {
+             relative_resid = r_norm / b_norm;
+@@ -3986,8 +3998,8 @@ HYPRE_Int hypre_AMSSolve(void *solver,
+                                cycle,
+                                z);
+ 
+-      /* Compute new residual norms */
+-      if (ams_data -> maxit > 1)
++      /* Compute new residual norms (only needed for a tolerance or printing) */
++      if (ams_data -> maxit > 1 && (ams_data -> tol > 0.0 || ams_data -> print_level > 0))
+       {
+          old_resid = r_norm;
+          hypre_ParVectorCopy(b, ams_data -> r0);
+@@ -4013,6 +4025,8 @@ HYPRE_Int hypre_AMSSolve(void *solver,
+       }
+    }
+ 
++   hypre_ParVectorAllZeros(x) = 0;
++
+    if (my_id == 0 && ams_data -> print_level > 0 && ams_data -> maxit > 1)
+    {
+       hypre_printf("\n\n Average Convergence Factor = %f\n\n",
+@@ -4117,6 +4131,7 @@ HYPRE_Int hypre_ParCSRSubspacePrec(/* fine space matrix */
+                            A0_cheby_order,
+                            A0_cheby_fraction,
+                            y, g0, z);
++         hypre_ParVectorAllZeros(y) = 0;
+       }
+ 
+       /* subspace correction: y += P B^{-1} P^t r */
+@@ -4144,11 +4159,12 @@ HYPRE_Int hypre_ParCSRSubspacePrec(/* fine space matrix */
+             hypre_ParCSRMatrixMatvecT(1.0, P[i], g0, 0.0, r[i]);
+          }
+ 
+-         hypre_ParVectorSetConstantValues(g[i], 0.0);
++         hypre_ParVectorSetZeros(g[i]);
+          (*HB[i]) (B[i], (HYPRE_Matrix)A[i],
+                    (HYPRE_Vector)r[i], (HYPRE_Vector)g[i]);
+          hypre_ParCSRMatrixMatvec(1.0, P[i], g[i], 0.0, g0);
+          hypre_ParVectorAxpy(1.0, g0, y);
++         hypre_ParVectorAllZeros(y) = 0;
+       }
+    }
+ 

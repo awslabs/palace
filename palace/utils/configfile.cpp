@@ -409,6 +409,7 @@ ConductivityData::ConductivityData(const json &boundary)
   h = boundary.value("Thickness", h);
   external = boundary.value("External", external);
   crack = boundary.value("Crack", crack);
+  crack_given = boundary.contains("Crack");
 }
 
 ImpedanceData::ImpedanceData(const json &boundary)
