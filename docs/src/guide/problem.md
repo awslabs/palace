@@ -18,6 +18,12 @@ the directory specified by
 this file are the mode quality factors and errors (absolute and backward) computed for each
 eigenpair.
 
+With adaptive mesh refinement, the eigenvalue solves of later adaptation iterations can
+start from the eigenmodes of the previous one, transferred to the refined mesh, and then
+need fewer Krylov restarts. Setting
+[`config["Solver"]["Eigenmode"]["StartVector"]`](../config/reference.md#config-solver-eigenmode-startvector)
+to `false` turns this off.
+
 Calculations related to
 [energy-participation ratio (EPR) quantization](https://www.nature.com/articles/s41534-021-00461-8)
 can be performed with *Palace* when the user specifies lumped ports corresponding to the
