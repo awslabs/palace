@@ -254,14 +254,3 @@ RUN set -e; \
       ! -name activate.sh -exec rm -rf {} +
 
 {% endblock %}
-
-{% block final_stage %}
-# FIXME(awslabs/palace#731): mirror the build-stage PPA install in the final
-# image so libstdc++6 there is gcc-15's, matching what palace was built
-# against. Remove with the spack.yaml `compilers` group fix.
-COPY --from=builder /etc/apt/keyrings/ubuntu-toolchain-r-test.asc /etc/apt/keyrings/
-COPY --from=builder /etc/apt/sources.list.d/ubuntu-toolchain-r-test.sources /etc/apt/sources.list.d/
-RUN apt-get -yqq -o Acquire::Retries=5 update && \
-    apt-get -yqq -o Acquire::Retries=5 install --no-install-recommends libstdc++6 && \
-    rm -rf /var/lib/apt/lists/*
-{% endblock %}
