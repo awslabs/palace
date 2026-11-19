@@ -556,8 +556,11 @@ public:
   // matrices. It is needed to distinguish port and solution field configuration as well as
   // to reconstruct if field configuration are pure real, imaginary or complex. Returns the
   // coefficients c of u in the updated basis, u = V c. If the real or imaginary part of u
-  // is in the span of the basis (to the orthogonalization tolerance), aborts, or, with
-  // abort_if_dependent = false, leaves the PROM unchanged and returns an empty vector.
+  // is in the span of the basis to the orthogonalization tolerance, aborts and leaves the
+  // PROM unchanged, or, with abort_if_dependent = false, does not add this part, whose
+  // coefficients are then its projections onto the basis: the PROM is updated with the
+  // other part only, or is unchanged if neither part is added (compare
+  // GetReducedDimension() before and after).
   Eigen::VectorXcd UpdatePROM(const ComplexVector &u, std::string_view node_label,
                               bool abort_if_dependent = true);
 

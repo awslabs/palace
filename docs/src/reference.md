@@ -589,7 +589,13 @@ The initial samples are the frequency-domain endpoints and any user-requested sa
 [`"AddToPROM": true`](config/reference.md#config-solver-driven-samples). After
 that, the interpolation suggests the next sample from an error indicator that can be
 evaluated without another HDM solve. The selected HDM solution is then added to the shared
-PROM basis.
+PROM basis, as one basis vector for its real part and one for its imaginary part. A part
+already in the span of the basis to the orthogonalization tolerance is not added, and is
+represented by its projection onto the basis instead. This can happen at a sample next to a
+previous one at a sharp resonance, where the error indicator can peak again (for example
+with FGMRES). If neither part is added and the PROM error at the sample still exceeds
+`"AdaptiveTol"`, the error is limited by the accuracy of the HDM solves rather than by the
+basis, and a warning suggests a tighter linear solver tolerance or a looser `"AdaptiveTol"`.
 
 HDM solutions are solved from zero. When
 [`config["Solver"]["Linear"]["InitialGuess"]`](config/reference.md#config-solver-linear) is
@@ -597,10 +603,10 @@ enabled (the default), the sample which would complete the convergence memory (s
 solved from the PROM solution there instead, to certify the PROM: if the linear solver
 converges, to the tighter of its tolerance and `"AdaptiveTol"`, and changes the PROM
 solution by less than `"AdaptiveTol"`, the sweep of this excitation has converged, and this
-solution is added to the basis as the last sample, unless it is already in the span of the
-basis to round-off (for example when the PROM solution already meets this tolerance, so
-that the solve takes no iteration). Otherwise, the solve is stopped as soon as the change
-exceeds `"AdaptiveTol"` (with GMRES and left preconditioning, the defaults; FGMRES or right
+solution is added to the basis as the last sample, except a part already in the span of the
+basis (for example when the PROM solution already meets this tolerance, so that the solve
+takes no iteration). Otherwise, the solve is stopped as soon as the change exceeds
+`"AdaptiveTol"` (with GMRES and left preconditioning, the defaults; FGMRES or right
 preconditioning solve to convergence), and the sample is solved again from zero, reusing
 the assembled operators and preconditioner. The other samples are not started from the
 PROM solution: the linear solver controls the residual of the preconditioned system, and

@@ -343,6 +343,8 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
     }
   }
 
+  const auto num_port_modes = prom_op.GetReducedDimension();
+
   // Initialize the basis with samples from the top and bottom of the frequency
   // range of interest. Each call for an HDM solution adds the frequency sample to P_S and
   // removes it from P \ P_S. Timing for the HDM construction and solve is handled inside
@@ -351,27 +353,37 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
   auto UpdatePROM =
       [&](int excitation_idx, double omega, std::size_t sample_idx, bool certified)
   {
-    // Add the HDM solution to the PROM reduced basis. A certified solution, started from
-    // the PROM solution, can be in the span of the basis to round-off (the linear solver
-    // barely changed the PROM solution, or took no iteration): it is then not added, and
-    // enters the minimal rational interpolation as the PROM solution, which it is within
-    // the tolerance of.
+    // Add the HDM solution to the PROM reduced basis. Its real or imaginary part can be in
+    // the span of the basis to the orthogonalization tolerance, and is then not added (see
+    // RomOperator::UpdatePROM): for a certified solution, started from the PROM solution,
+    // when the linear solver barely changed the PROM solution or took no iteration, but
+    // also for a solution from zero at a sample next to a previous one, for example at a
+    // sharp resonance, where the error indicator can peak again. The coefficients c of the
+    // solution in the basis then hold the projection of this part onto the basis, so that
+    // the error is still that of the PROM solution against the HDM solution (to the
+    // orthogonalization tolerance).
+    const auto n = prom_op.GetReducedDimension();
     prom_op.SolvePROM(omega);
     Eigen::VectorXcd d = -prom_op.GetReducedSolution(excitation_idx);
-    auto c = prom_op.UpdatePROM(
-        E, fmt::format("sample_e{:d}_s{:d}", excitation_idx, sample_idx), !certified);
-    if (certified && c.size() == 0)
-    {
-      Mpi::Print(" Certified sample (or its real or imaginary part) is in the span of the "
-                 "PROM basis to round-off: not added\n");
-      c = -d;
-    }
+    const auto c = prom_op.UpdatePROM(
+        E, fmt::format("sample_e{:d}_s{:d}", excitation_idx, sample_idx), false);
     prom_op.UpdateMRI(excitation_idx, omega, c);
     d.conservativeResizeLike(Eigen::VectorXcd::Zero(c.size()));
     // The error decides whether to sample again, so it must be the same on every process,
     // while the replicated dense computations can differ in round-off between them.
     double error = prom_op.BasisNorm(c + d) / prom_op.BasisNorm(c);
     Mpi::GlobalMax(1, &error, space_op.GetComm());
+    if (!certified && prom_op.GetReducedDimension() == n && error > offline_tol)
+    {
+      Mpi::Warning(
+          "Adaptive sample at {:.3e} GHz is in the span of the PROM basis to the "
+          "orthogonalization tolerance, but the PROM error there, {:.3e}, exceeds the "
+          "tolerance {:.3e}. The error is limited by the accuracy of the HDM solves "
+          "rather than by the basis, so that more samples may not reduce it; try "
+          "tightening config[\"Solver\"][\"Linear\"][\"Tol\"] or using a looser "
+          "config[\"Solver\"][\"Driven\"][\"AdaptiveTol\"].\n",
+          omega * unit_GHz, error, offline_tol);
+    }
 
     // Compute B = -1/(iω) ∇ x E on the true dofs, and set the internal GridFunctions in
     // PostOperator for energy postprocessing and error estimation.
@@ -468,6 +480,10 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
       SolveHDMSample(excitation_idx, omega);
       max_errors.push_back(UpdatePROM(excitation_idx, omega, counter_rom_sample++, false));
     }
+    MFEM_VERIFY(prom_op.GetReducedDimension() > num_port_modes,
+                "No HDM solution at the initial samples of the adaptive frequency sweep "
+                "was added to the PROM basis: they are zero, or in the span of the port "
+                "modes to the orthogonalization tolerance!");
     // The estimates associated to the end points are assumed inaccurate.
     max_errors[0] = std::numeric_limits<double>::infinity();
     max_errors[1] = std::numeric_limits<double>::infinity();
@@ -496,7 +512,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
       // tighter of the linear solver tolerance and the tolerance of the sweep, with a
       // correction below the tolerance, the PROM solution is within the tolerance of an
       // acceptable HDM solution and the sweep has converged. The certified solution is
-      // still added to the basis (unless it is in its span to round-off), as the last
+      // still added to the basis (except a part in its span, see UpdatePROM), as the last
       // sample is without initial guesses: the PROM is then already accurate to the
       // tolerance there, so that the solution only differs from it by a correction below
       // the tolerance. Otherwise, the solve is stopped as soon as the correction exceeds

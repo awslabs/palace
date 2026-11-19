@@ -947,9 +947,8 @@ TEST_CASE_METHOD(palace::test::PerRankTempDir, "RomOperator-Synthesis-PortOrthog
                     Catch::Matchers::ContainsSubstring("should have exactly zero overlap"));
 }
 
-// Currently all vectors being added to the PROM basis must be different. The logic of
-// dropping degenerate (or almost degenerate) vectors is not implemented. This tests checks
-// that adding the same vector twice fails.
+// By default (abort_if_dependent = true), adding a vector in the span of the PROM basis
+// aborts. This tests checks that adding the same vector twice fails.
 TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-UpdatePROM-LinearDependence",
                  "[romoperator][Serial][Parallel]")
 {
@@ -1011,7 +1010,8 @@ namespace
 {
 
 // Driven problem on the 3x2x1 cube with one lumped port, for the linear dependence tests.
-json DependenceTestSetup(const std::string &temp_dir, double tol, int max_its)
+json DependenceTestSetup(const std::string &temp_dir, double tol, int max_its,
+                         bool synthesis = false)
 {
   auto mesh_path =
       fs::path(PALACE_TEST_DATA_DIR) / "lumpedport_mesh/cube_mesh_3_2_1_tet.msh";
@@ -1036,8 +1036,11 @@ json DependenceTestSetup(const std::string &temp_dir, double tol, int max_its)
                                                     {"Direction", "+Z"}})})}})})}};
   setup_json["Solver"] = json::object();
   setup_json["Solver"]["Device"] = "CPU";
-  setup_json["Solver"]["Driven"] = {
-      {"AdaptiveTol", 1e-3}, {"MinFreq", 2.0}, {"MaxFreq", 32.0}, {"FreqStep", 1.0}};
+  setup_json["Solver"]["Driven"] = {{"AdaptiveTol", 1e-3},
+                                    {"AdaptiveCircuitSynthesis", synthesis},
+                                    {"MinFreq", 2.0},
+                                    {"MaxFreq", 32.0},
+                                    {"FreqStep", 1.0}};
   setup_json["Solver"]["Linear"] = {{"Type", "Default"},
                                     {"KSPType", "GMRES"},
                                     {"MaxIts", max_its},
@@ -1046,12 +1049,26 @@ json DependenceTestSetup(const std::string &temp_dir, double tol, int max_its)
   return setup_json;
 }
 
+// Relative distance ||V c - u|| / ||u|| of the vector with coefficients c in the PROM basis
+// to u.
+double BasisDistance(MPI_Comm comm, const RomOperatorTest &prom_op,
+                     const Eigen::VectorXcd &c, const ComplexVector &u)
+{
+  const auto &V = prom_op.GetVectors();
+  REQUIRE(c.size() == static_cast<Eigen::Index>(V.size()));
+  ComplexVector w(u.Size());
+  w.UseDevice(true);
+  linalg::LinearCombination(V, {c.data(), static_cast<std::size_t>(c.size())}, w);
+  w -= u;
+  return linalg::Norml2(comm, w) / linalg::Norml2(comm, u);
+}
+
 }  // namespace
 
 // With abort_if_dependent = false, a sample in the span of the PROM basis (the same vector
 // twice, or the same vector up to a perturbation below the linear dependence tolerance)
-// leaves the PROM unchanged and returns no coefficients. A perturbation above the tolerance
-// is added.
+// leaves the PROM unchanged and returns its coefficients in the basis. A perturbation above
+// the tolerance is added.
 TEST_CASE_METHOD(palace::test::SharedTempDir,
                  "RomOperator-UpdatePROM-LinearDependence-NoAbort",
                  "[romoperator][Serial][Parallel]")
@@ -1070,12 +1087,15 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   REQUIRE(prom_op.GetReducedDimension() == 1);
   const Eigen::MatrixXd R0 = prom_op.GetOrthR();
 
-  CHECK(prom_op.UpdatePROM(u, "vec_0_duplicate", false).size() == 0);
+  const auto c = prom_op.UpdatePROM(u, "vec_0_duplicate", false);
   CHECK(prom_op.GetReducedDimension() == 1);
   CHECK(prom_op.GetVectors().size() == 1);
   CHECK(prom_op.GetOrthR().rows() == 1);
   CHECK(prom_op.GetOrthR().cols() == 1);
   CHECK(prom_op.GetOrthR()(0, 0) == R0(0, 0));
+  REQUIRE(c.size() == 1);
+  CHECK_THAT(c(0).real(), WithinRel(R0(0, 0), 1.0e-12));
+  CHECK(c(0).imag() == 0.0);
 
   // Perturbations of relative size 1e-14 and 1e-6 (the tolerance is 1e-12).
   ComplexVector w(u.Size()), v(u.Size());
@@ -1086,7 +1106,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   const double scale = linalg::Norml2(world_comm, u) / linalg::Norml2(world_comm, w);
   v = u;
   linalg::AXPY(1.0e-14 * scale, w, v);
-  CHECK(prom_op.UpdatePROM(v, "vec_0_near_duplicate", false).size() == 0);
+  CHECK(prom_op.UpdatePROM(v, "vec_0_near_duplicate", false).size() == 1);
   CHECK(prom_op.GetReducedDimension() == 1);
   v = u;
   linalg::AXPY(1.0e-6 * scale, w, v);
@@ -1096,9 +1116,10 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   CHECK(prom_op.GetOrthR()(0, 0) == R0(0, 0));
 }
 
-// With abort_if_dependent = false, a sample with one part in the span of the basis is
-// rejected as a whole and the PROM is left unchanged: both when the real part is the
-// dependent one, and when the real part was already appended to the basis before the
+// With abort_if_dependent = false, a sample with one part in the span of the basis adds
+// the other part only, and returns the coefficients of the sample in the updated basis,
+// with the projections onto the basis for the part in its span: both when the real part is
+// the dependent one, and when the real part was already appended to the basis before the
 // imaginary part was found dependent (the real part is added first).
 TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-UpdatePROM-PartialDependence",
                  "[romoperator][Serial][Parallel]")
@@ -1117,35 +1138,118 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-UpdatePROM-PartialDep
   u.Imag() = 0.0;
   REQUIRE(prom_op.UpdatePROM(u, "vec_0").size() == 1);
   REQUIRE(prom_op.GetReducedDimension() == 1);
+  const double norm_u = prom_op.GetOrthR()(0, 0);
 
-  // Real part in the span, new imaginary part.
+  // Real part in the span, new imaginary part: the imaginary part is added.
   x.Real() = u.Real();
   x.Imag().Randomize(43);
-  CHECK(prom_op.UpdatePROM(x, "vec_1", false).size() == 0);
-  CHECK(prom_op.GetReducedDimension() == 1);
-  CHECK(prom_op.GetOrthR().rows() == 1);
+  auto c = prom_op.UpdatePROM(x, "vec_1", false);
+  CHECK(prom_op.GetReducedDimension() == 2);
+  CHECK(prom_op.GetOrthR().rows() == 2);
+  CHECK(prom_op.GetOrthR().isUpperTriangular());
+  REQUIRE(c.size() == 2);
+  CHECK_THAT(c(0).real(), WithinRel(norm_u, 1.0e-12));
+  CHECK(c(1).real() == 0.0);
+  CHECK(c(1).imag() == prom_op.GetOrthR()(1, 1));
+  CHECK(BasisDistance(world_comm, prom_op, c, x) <= 1.0e-12);
 
-  // New real part (added first), imaginary part in the span: also rolled back.
+  // New real part (added first), imaginary part in the span: the real part is added.
   x.Real().Randomize(44);
   x.Imag() = u.Real();
-  CHECK(prom_op.UpdatePROM(x, "vec_2", false).size() == 0);
-  CHECK(prom_op.GetReducedDimension() == 1);
-  CHECK(prom_op.GetVectors().size() == 1);
-  CHECK(prom_op.GetOrthR().rows() == 1);
-
-  // After the rollbacks, a sample with two new parts is added, with consistent R.
-  x.Real().Randomize(45);
-  x.Imag().Randomize(46);
-  CHECK(prom_op.UpdatePROM(x, "vec_3", false).size() == 3);
+  c = prom_op.UpdatePROM(x, "vec_2", false);
   CHECK(prom_op.GetReducedDimension() == 3);
+  CHECK(prom_op.GetVectors().size() == 3);
   CHECK(prom_op.GetOrthR().rows() == 3);
   CHECK(prom_op.GetOrthR().isUpperTriangular());
+  REQUIRE(c.size() == 3);
+  CHECK(c(2).real() == prom_op.GetOrthR()(2, 2));
+  CHECK_THAT(c(0).imag(), WithinRel(norm_u, 1.0e-12));
+  CHECK(BasisDistance(world_comm, prom_op, c, x) <= 1.0e-12);
+
+  // Then, a sample with two new parts adds both, with consistent R.
+  x.Real().Randomize(45);
+  x.Imag().Randomize(46);
+  c = prom_op.UpdatePROM(x, "vec_3", false);
+  CHECK(c.size() == 5);
+  CHECK(prom_op.GetReducedDimension() == 5);
+  CHECK(prom_op.GetOrthR().rows() == 5);
+  CHECK(prom_op.GetOrthR().isUpperTriangular());
+  CHECK(BasisDistance(world_comm, prom_op, c, x) <= 1.0e-12);
+}
+
+// In the adaptive sweep, the error of the PROM solution y at a sample (before the update)
+// is ||c - y|| / ||c|| in the norm of the basis, from the coefficients c of the HDM
+// solution u in the updated basis. This is the error of the expanded PROM solution against
+// u also when u, or one of its parts, is in the span of the basis and not added: for the
+// same sample twice, and for a sample of which only the imaginary part is added, without
+// and with the synthesis weight.
+TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-UpdatePROM-DependentSampleError",
+                 "[romoperator][Serial][Parallel]")
+{
+  MPI_Comm world_comm = Mpi::World();
+  const bool synthesis = GENERATE(false, true);
+  IoData iodata(DependenceTestSetup(temp_dir, 1.0e-8, 200, synthesis), false);
+  auto mesh_io = LoadScaleParMesh2(iodata, world_comm);
+  SpaceOperator space_op(iodata, mesh_io);
+  RomOperatorTest prom_op(iodata, space_op, 10);
+  if (synthesis)
+  {
+    prom_op.AddLumpedPortModesForSynthesis();
+  }
+  const auto &sample_f = iodata.solver.driven.sample_f;
+  const double omega0 = sample_f.front(), omega1 = sample_f[sample_f.size() / 2];
+
+  const auto n = space_op.GetNDSpace().GetTrueVSize();
+  ComplexVector u0(n), u1(n), x(n), Vy(n);
+  u0.UseDevice(true);
+  u1.UseDevice(true);
+  x.UseDevice(true);
+  Vy.UseDevice(true);
+  CHECK(prom_op.SolveHDM(1, omega0, u0));
+  REQUIRE(prom_op.UpdatePROM(u0, "sample_0").size() > 0);
+  CHECK(prom_op.SolveHDM(1, omega1, u1));
+  const auto c1 = prom_op.UpdatePROM(u1, "sample_1");
+  const auto dim = prom_op.GetReducedDimension();
+  REQUIRE(c1.size() == static_cast<Eigen::Index>(dim));
+
+  // Error of the PROM solution at omega (before the update) as in the adaptive sweep,
+  // checked against the error of its expansion against the sample x.
+  auto UpdateError = [&](double omega, std::string_view label)
+  {
+    prom_op.SolvePROM(omega);
+    prom_op.ExpandPROMSolution(1, Vy);
+    Eigen::VectorXcd d = -prom_op.GetReducedSolution(1);
+    const auto c = prom_op.UpdatePROM(x, label, false);
+    d.conservativeResizeLike(Eigen::VectorXcd::Zero(c.size()));
+    const double error = prom_op.BasisNorm(c + d) / prom_op.BasisNorm(c);
+    linalg::AXPY(-1.0, x, Vy);
+    const double error_ref = linalg::Norml2(world_comm, Vy) / linalg::Norml2(world_comm, x);
+    CAPTURE(synthesis, label, error, error_ref);
+    CHECK(std::abs(error - error_ref) <= 1.0e-11 * std::max(1.0, error_ref));
+    return c;
+  };
+
+  // The same sample again: not added, with the coefficients of the first time.
+  x = u1;
+  auto c = UpdateError(omega1, "sample_1_duplicate");
+  CHECK(prom_op.GetReducedDimension() == dim);
+  REQUIRE(c.size() == c1.size());
+  CHECK((c - c1).norm() <= 1.0e-12 * c1.norm());
+  CHECK(BasisDistance(world_comm, prom_op, c, x) <= 1.0e-12);
+
+  // A sample with its real part in the span of the basis: only the imaginary part is added.
+  x.Real() = u1.Real();
+  x.Imag().Randomize(42);
+  c = UpdateError(omega0, "sample_2");
+  CHECK(prom_op.GetReducedDimension() == dim + 1);
+  CHECK(BasisDistance(world_comm, prom_op, c, x) <= 1.0e-12);
 }
 
 // The adaptive sweep adds a certified sample, solved from the PROM solution, with
-// abort_if_dependent = false. Where the PROM is already accurate to about the linear solver
-// tolerance, the solution is in the span of the basis to round-off: UpdatePROM must not
-// abort, and leaves the PROM unchanged if it returns no coefficients, with tight and loose
+// abort_if_dependent = false. When the linear solver barely changes the PROM solution, or
+// takes no iteration, the real or imaginary part of the solution can be in the span of the
+// basis to the orthogonalization tolerance: UpdatePROM must not abort, adds the other part
+// only, and returns the coefficients of the solution in the basis, with tight and loose
 // linear solver tolerances.
 TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-UpdatePROM-CertifiedSample",
                  "[romoperator][Serial][Parallel]")
@@ -1173,7 +1277,8 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-UpdatePROM-CertifiedS
 
   // Second sample at the same frequency, certified from the PROM solution there: the PROM
   // is exact to the solver tolerance, so the solve converges with a correction below the
-  // sweep tolerance, and the sample is (to round-off) in the span of the basis.
+  // sweep tolerance, and the sample can be in the span of the basis to the
+  // orthogonalization tolerance.
   prom_op.SolvePROM(omega);
   prom_op.ExpandPROMSolution(1, x0);
   u = x0;
@@ -1184,23 +1289,19 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-UpdatePROM-CertifiedS
   REQUIRE(linalg::Norml2(world_comm, u) > 0.0);
   linalg::AXPY(-1.0, u, x0);
   CHECK(linalg::Norml2(world_comm, x0) < adaptive_tol * linalg::Norml2(world_comm, u));
-  bool added = true;
-  CHECK_NOTHROW(added = (prom_op.UpdatePROM(u, "sample_1", false).size() > 0));
+  Eigen::VectorXcd c;
+  CHECK_NOTHROW(c = prom_op.UpdatePROM(u, "sample_1", false));
+  const bool added = (prom_op.GetReducedDimension() > dim);
   CAPTURE(cert_it, added);
   if (cert_it == 0)
   {
-    // Not corrected: u is the PROM solution, in the span of the basis to round-off.
+    // Not corrected: u is the PROM solution, in the span of the basis.
     CHECK_FALSE(added);
   }
-  if (!added)
-  {
-    CHECK(prom_op.GetReducedDimension() == dim);
-    CHECK(prom_op.GetOrthR().rows() == static_cast<Eigen::Index>(dim));
-  }
-  else
-  {
-    CHECK(prom_op.GetReducedDimension() <= dim + 2);
-  }
+  CHECK(prom_op.GetReducedDimension() <= dim + 2);
+  CHECK(prom_op.GetOrthR().rows() ==
+        static_cast<Eigen::Index>(prom_op.GetReducedDimension()));
+  CHECK(BasisDistance(world_comm, prom_op, c, u) <= 1.0e-11);
 }
 
 // SolveHDM starts from zero unless asked to start from the given vector. Started from the

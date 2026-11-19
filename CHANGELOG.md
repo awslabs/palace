@@ -318,6 +318,14 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     first diagonal entry of the tensor was equal to the scalar to a relative 1e-9. In one
     `"BoundaryMode"` example this changed the propagation constant by 6%.
     [PR 1209](https://github.com/awslabs/palace/pull/1209).
+  - Adaptive frequency sweeps no longer abort with "Linearly dependent vector added to PROM
+    basis" when the real or imaginary part of the HDM solution at a sample is in the span of
+    the reduced basis to the orthogonalization tolerance, as can happen at a sample next to
+    a previous one at a sharp resonance, for example with FGMRES. Such a part is not added
+    to the basis and is represented by its projection onto it, while the other part is
+    added. A warning is printed if neither part is added and the PROM error at the sample
+    exceeds `"AdaptiveTol"`: the error is then limited by the accuracy of the HDM solves.
+    [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
   - The `"Problem"`/`"Iteration"` field of `palace.json` is now updated only after the AMR
     iteration's output is in its final location. With `SaveAdaptIterations`, it used to be
     written before the output was moved into `iterationXX`, so a reader polling it could

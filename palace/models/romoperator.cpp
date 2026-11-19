@@ -1148,18 +1148,20 @@ Eigen::VectorXcd RomOperator::UpdatePROM(const ComplexVector &u,
   const bool has_imag = (norm_im > norm_tol);
 
   const std::size_t dim_V_old = V.size();
-  std::size_t dim_V_new = V.size() + std::size_t{has_real} + std::size_t{has_imag};
+  const auto dim_V_max = static_cast<Eigen::Index>(dim_V_old + has_real + has_imag);
+  orth_R.conservativeResizeLike(Eigen::MatrixXd::Zero(dim_V_max, dim_V_max));
 
-  orth_R.conservativeResizeLike(Eigen::MatrixXd::Zero(dim_V_new, dim_V_new));
-
-  // Small lambda to add vector to basis. Lambda returns a bool, which is false when the new
-  // vector is below the linear dependence tolerance. The MFEM_VERIFY happens after the
-  // lambda. This is done for MPI syncronization reasons. If the MFEM_VERIFY throws / aborts
-  // on one rank why others are in an inconsistent state, this could lead to MPI
-  // communication failures in the memory unwinding and global MPI hard crash (e.g. in the
-  // unit tests).
-  auto add_real_vector_to_basis = [this](const Vector &vector,
-                                         std::string_view node_label) -> bool
+  // Small lambda to add the real or imaginary part of u to the basis. It returns the
+  // coefficients of the part in the basis, its column of R: the projections onto the
+  // previous basis vectors, and the norm of the remainder, which is the new basis vector. A
+  // part whose remainder is below the linear dependence tolerance is in the span of the
+  // basis to the orthogonalization tolerance: it is not added, and its coefficients are its
+  // projections. The abort for a dependent part happens after the lambda. This is done for
+  // MPI syncronization reasons. If the MFEM_ABORT throws / aborts on one rank why others
+  // are in an inconsistent state, this could lead to MPI communication failures in the
+  // memory unwinding and global MPI hard crash (e.g. in the unit tests).
+  bool dependent = false;
+  auto add_real_vector_to_basis = [&](const Vector &vector, bool imag)
   {
     auto dim_V = V.size();
     MFEM_VERIFY(dim_V < V.capacity(),
@@ -1170,48 +1172,50 @@ Eigen::VectorXcd RomOperator::UpdatePROM(const ComplexVector &u,
     // basis vector.
     const bool refine = (orthog_type != Orthogonalization::CGS);
     double *H = orth_R.col(dim_V).data();
-    MPI_Comm comm = space_op.GetComm();
     const auto [pre_norm, norm] = linalg::OrthogonalizeColumnCGS(
         comm, std::span(V), H, refine, weight_op_W ? &*weight_op_W : nullptr, &r);
-    orth_R(dim_V, dim_V) = norm;
-
-    if (orth_R(dim_V, dim_V) <= ORTHOG_TOL * pre_norm)
+    if (norm <= ORTHOG_TOL * pre_norm)
     {
-      return false;
+      V.pop_back();
+      dependent = true;
+      if (!abort_if_dependent)
+      {
+        Mpi::Print(" {} part of {} is in the span of the PROM basis to the "
+                   "orthogonalization tolerance (relative remainder {:.3e}): not added\n",
+                   imag ? "Imaginary" : "Real", node_label, norm / pre_norm);
+      }
+      return Eigen::VectorXd(orth_R.col(dim_V));
     }
-
-    v *= 1.0 / orth_R(dim_V, dim_V);
-    v_node_label.emplace_back(node_label);
-    return true;
+    orth_R(dim_V, dim_V) = norm;
+    v *= 1.0 / norm;
+    v_node_label.emplace_back(fmt::format("{}_{}", node_label, imag ? "im" : "re"));
+    return Eigen::VectorXd(orth_R.col(dim_V));
   };
 
-  const bool added =
-      (!has_real || add_real_vector_to_basis(u.Real(), fmt::format("{}_re", node_label))) &&
-      (!has_imag || add_real_vector_to_basis(u.Imag(), fmt::format("{}_im", node_label)));
-  if (!added)
+  // Coefficients of u in the updated basis (a part below the tolerance relative to u is
+  // dropped).
+  Eigen::VectorXcd c = Eigen::VectorXcd::Zero(dim_V_max);
+  if (has_real)
   {
-    // Leave the basis unchanged (also when aborting, so that the PROM is consistent if the
-    // error is caught).
+    c.real() = add_real_vector_to_basis(u.Real(), false);
+  }
+  if (has_imag && !(dependent && abort_if_dependent))
+  {
+    c.imag() = add_real_vector_to_basis(u.Imag(), true);
+  }
+  if (dependent && abort_if_dependent)
+  {
+    // Leave the basis unchanged, so that the PROM is consistent if the error is caught.
     V.resize(dim_V_old);
     v_node_label.resize(dim_V_old);
     orth_R.conservativeResize(dim_V_old, dim_V_old);
-    MFEM_VERIFY(!abort_if_dependent,
-                "Linearly dependent vector added to PROM basis. This indicates a "
-                "convergence issue or a code error (the same vector was added multiple "
-                "times accidentally).");
-    return {};
+    MFEM_ABORT("Linearly dependent vector added to PROM basis. This indicates a "
+               "convergence issue or a code error (the same vector was added multiple "
+               "times accidentally).");
   }
-
-  // Coefficients of u in the updated basis (a part below the tolerance is dropped).
-  Eigen::VectorXcd c = Eigen::VectorXcd::Zero(dim_V_new);
-  if (has_real)
-  {
-    c.real() = orth_R.col(dim_V_old);
-  }
-  if (has_imag)
-  {
-    c.imag() = orth_R.col(dim_V_new - 1);
-  }
+  const std::size_t dim_V_new = V.size();
+  orth_R.conservativeResize(dim_V_new, dim_V_new);
+  c.conservativeResize(dim_V_new);
   if (dim_V_new == dim_V_old)
   {
     return c;
