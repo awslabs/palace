@@ -188,6 +188,7 @@ TEST_CASE("Unlocated trace points keep the clear error unless their patch is exc
   REQUIRE(result.distances.size() == points.size());
   REQUIRE(result.verdicts.size() == points.size());
   CHECK(result.first_order_simplex_mesh);
+  CHECK(result.first_order_mesh);
   CHECK_THAT(result.distances[0], WithinAbs(0.05, 1.0e-14));
   CHECK(std::isinf(result.distances[1]));
   CHECK_THAT(result.distances[2], WithinAbs(0.05, 1.0e-14));
@@ -206,7 +207,8 @@ TEST_CASE("Unlocated trace points keep the clear error unless their patch is exc
     INFO("point " << i);
     CHECK(result.verdicts[i] == verdicts[i]);
     CHECK(DecideUnlocatedTracePoint(result.verdicts[i], edge_points[i], false,
-                                    result.first_order_simplex_mesh) == decisions[i]);
+                                    result.first_order_simplex_mesh,
+                                    result.first_order_mesh) == decisions[i]);
   }
   // The root's distances on every rank (the ranks' minimum).
   std::vector<double> root = result.distances;
@@ -224,15 +226,65 @@ TEST_CASE("Unlocated trace points keep the clear error unless their patch is exc
   mesh->SetCurvature(2);
   const auto curved = ClassifyUnlocatedTracePoints(*mesh, 3, points, radii);
   CHECK(!curved.first_order_simplex_mesh);
+  CHECK(!curved.first_order_mesh);
   CHECK_THAT(curved.distances[0], WithinAbs(0.05, 1.0e-12));
   CHECK(std::isinf(curved.distances[1]));
   CHECK_THAT(curved.distances[3], WithinAbs(0.05, 1.0e-12));
   CHECK_THAT(curved.distances[4], WithinAbs(0.1, 1.0e-12));
   CHECK(curved.distances[5] == 0.0);
   CHECK(curved.verdicts[5] == Verdict::INSIDE_MESH);
-  CHECK(DecideUnlocatedTracePoint(curved.verdicts[5], false, false,
-                                  curved.first_order_simplex_mesh) ==
-        Decision::LATE_EXCLUSION_UNDECIDED);
+  CHECK(DecideUnlocatedTracePoint(
+            curved.verdicts[5], false, false, curved.first_order_simplex_mesh,
+            curved.first_order_mesh) == Decision::LATE_EXCLUSION_UNDECIDED);
+  // On the curved mesh a positive element-box distance is a lower bound: the point is
+  // outside, a decided late exclusion (decision 2204).
+  CHECK(curved.verdicts[0] == Verdict::WITHIN_CONTOUR_RADIUS);
+  CHECK(DecideUnlocatedTracePoint(curved.verdicts[0], false, false,
+                                  curved.first_order_simplex_mesh,
+                                  curved.first_order_mesh) == Decision::LATE_EXCLUSION);
+
+  // Decision 2204 (ERRATUM-2190 m-3): a first-order MIXED mesh, hexahedra in the unit cube
+  // and tetrahedra in the cube shifted by 2 along x. A point inside a hexahedron has a
+  // positive facet distance (a non-simplex element is taken to exclude the point), so on
+  // such a mesh no distance decides inside or outside: every late point is undecided; the
+  // point beyond its contour radius keeps the clear error.
+  {
+    mfem::Mesh hexahedra =
+        mfem::Mesh::MakeCartesian3D(4, 4, 4, mfem::Element::HEXAHEDRON, 1.0, 1.0, 1.0);
+    mfem::Mesh tetrahedra =
+        mfem::Mesh::MakeCartesian3D(4, 4, 4, mfem::Element::TETRAHEDRON, 1.0, 1.0, 1.0);
+    for (int v = 0; v < tetrahedra.GetNV(); v++)
+    {
+      tetrahedra.GetVertex(v)[0] += 2.0;
+    }
+    mfem::Mesh *pieces[2] = {&hexahedra, &tetrahedra};
+    mfem::Mesh serial(pieces, 2);
+    mfem::ParMesh mixed(comm, serial);
+    const std::vector<std::array<double, 3>> mixed_points = {
+        {0.6, 0.6, 0.6},   // inside a hexahedron: facet distance 0.1
+        {1.05, 0.6, 0.6},  // 0.05 beyond the hexahedra's face x = 1
+        {2.6, 0.6, 0.6},   // inside the tetrahedra: distance 0
+        {1.5, 0.5, 0.5}};  // 0.5 from both blocks: beyond the contour radius 0.2
+    const std::vector<double> mixed_radii(mixed_points.size(), 0.2);
+    const auto first_order =
+        ClassifyUnlocatedTracePoints(mixed, 3, mixed_points, mixed_radii);
+    CHECK(!first_order.first_order_simplex_mesh);
+    CHECK(first_order.first_order_mesh);
+    CHECK_THAT(first_order.distances[0], WithinAbs(0.1, 1.0e-14));
+    CHECK_THAT(first_order.distances[1], WithinAbs(0.05, 1.0e-14));
+    CHECK(first_order.distances[2] == 0.0);
+    CHECK(std::isinf(first_order.distances[3]));
+    const std::vector<Decision> mixed_decisions = {
+        Decision::LATE_EXCLUSION_UNDECIDED, Decision::LATE_EXCLUSION_UNDECIDED,
+        Decision::LATE_EXCLUSION_UNDECIDED, Decision::BEYOND_CONTOUR_RADIUS};
+    for (std::size_t i = 0; i < mixed_points.size(); i++)
+    {
+      INFO("mixed-mesh point " << i);
+      CHECK(DecideUnlocatedTracePoint(first_order.verdicts[i], false, false,
+                                      first_order.first_order_simplex_mesh,
+                                      first_order.first_order_mesh) == mixed_decisions[i]);
+    }
+  }
 }
 
 TEST_CASE("Unlocated trace point decisions of the late domain-boundary exclusion",
@@ -240,52 +292,54 @@ TEST_CASE("Unlocated trace point decisions of the late domain-boundary exclusion
 {
   // Decision 2180: the decision of the late block for every combination of the point's
   // verdict, kind (a point of the device metal or a trace point), patch class (applied or
-  // diagnostic-only) and mesh kind (first-order simplex or not), and the reason the clear
-  // error gives. Rows: the gross mismatch (BEYOND_CONTOUR_RADIUS), decision 2174 m-1 (a
-  // diagnostic-only patch keeps the clear error) and m-2 (inside a first-order simplex
-  // mesh: the clear error; elsewhere undecided, a late exclusion).
+  // diagnostic-only) and mesh kind (first-order simplex, first-order with a non-simplex
+  // element, or curved), and the reason the clear error gives. Rows: the gross mismatch
+  // (BEYOND_CONTOUR_RADIUS), decision 2174 m-1 (a diagnostic-only patch keeps the clear
+  // error) and m-2 (inside a first-order simplex mesh: the clear error; elsewhere
+  // undecided, a late exclusion), and decision 2204 (ERRATUM-2190 m-3: on a first-order
+  // mesh with a non-simplex element every late point is undecided).
   using Decision = UnlocatedTracePointDecision;
   using Verdict = UnlocatedTracePointVerdict;
   struct Row
   {
     Verdict verdict;
-    bool edge_point, diagnostic_patch, first_order_simplex_mesh;
+    bool edge_point, diagnostic_patch, first_order_simplex_mesh, first_order_mesh;
     Decision decision;
   };
   const Verdict W = Verdict::WITHIN_CONTOUR_RADIUS, B = Verdict::BEYOND_CONTOUR_RADIUS,
                 I = Verdict::INSIDE_MESH;
+  const Decision L = Decision::LATE_EXCLUSION, U = Decision::LATE_EXCLUSION_UNDECIDED,
+                 E = Decision::OWN_EDGE_POINT, R = Decision::BEYOND_CONTOUR_RADIUS,
+                 M = Decision::INSIDE_MESH, D = Decision::DIAGNOSTIC_PATCH;
+  // Mesh kinds: (true, true) first-order simplex, (false, true) first-order with a
+  // non-simplex element, (false, false) curved.
   const std::vector<Row> rows = {
-      {W, false, false, true, Decision::LATE_EXCLUSION},
-      {W, false, false, false, Decision::LATE_EXCLUSION},
-      {W, false, true, true, Decision::DIAGNOSTIC_PATCH},
-      {W, false, true, false, Decision::DIAGNOSTIC_PATCH},
-      {W, true, false, true, Decision::OWN_EDGE_POINT},
-      {W, true, false, false, Decision::OWN_EDGE_POINT},
-      {W, true, true, true, Decision::OWN_EDGE_POINT},
-      {W, true, true, false, Decision::OWN_EDGE_POINT},
-      {B, false, false, true, Decision::BEYOND_CONTOUR_RADIUS},
-      {B, false, false, false, Decision::BEYOND_CONTOUR_RADIUS},
-      {B, false, true, true, Decision::BEYOND_CONTOUR_RADIUS},
-      {B, false, true, false, Decision::BEYOND_CONTOUR_RADIUS},
-      {B, true, false, true, Decision::OWN_EDGE_POINT},
-      {B, true, false, false, Decision::OWN_EDGE_POINT},
-      {B, true, true, true, Decision::OWN_EDGE_POINT},
-      {B, true, true, false, Decision::OWN_EDGE_POINT},
-      {I, false, false, true, Decision::INSIDE_MESH},
-      {I, false, false, false, Decision::LATE_EXCLUSION_UNDECIDED},
-      {I, false, true, true, Decision::INSIDE_MESH},
-      {I, false, true, false, Decision::DIAGNOSTIC_PATCH},
-      {I, true, false, true, Decision::OWN_EDGE_POINT},
-      {I, true, false, false, Decision::OWN_EDGE_POINT},
-      {I, true, true, true, Decision::OWN_EDGE_POINT},
-      {I, true, true, false, Decision::OWN_EDGE_POINT}};
-  REQUIRE(rows.size() == 24);
+      {W, false, false, true, true, L},   {W, false, false, false, true, U},
+      {W, false, false, false, false, L}, {W, false, true, true, true, D},
+      {W, false, true, false, true, D},   {W, false, true, false, false, D},
+      {W, true, false, true, true, E},    {W, true, false, false, true, E},
+      {W, true, false, false, false, E},  {W, true, true, true, true, E},
+      {W, true, true, false, true, E},    {W, true, true, false, false, E},
+      {B, false, false, true, true, R},   {B, false, false, false, true, R},
+      {B, false, false, false, false, R}, {B, false, true, true, true, R},
+      {B, false, true, false, true, R},   {B, false, true, false, false, R},
+      {B, true, false, true, true, E},    {B, true, false, false, true, E},
+      {B, true, false, false, false, E},  {B, true, true, true, true, E},
+      {B, true, true, false, true, E},    {B, true, true, false, false, E},
+      {I, false, false, true, true, M},   {I, false, false, false, true, U},
+      {I, false, false, false, false, U}, {I, false, true, true, true, M},
+      {I, false, true, false, true, D},   {I, false, true, false, false, D},
+      {I, true, false, true, true, E},    {I, true, false, false, true, E},
+      {I, true, false, false, false, E},  {I, true, true, true, true, E},
+      {I, true, true, false, true, E},    {I, true, true, false, false, E}};
+  REQUIRE(rows.size() == 36);
   for (std::size_t i = 0; i < rows.size(); i++)
   {
     const auto &row = rows[i];
     INFO("row " << i);
     CHECK(DecideUnlocatedTracePoint(row.verdict, row.edge_point, row.diagnostic_patch,
-                                    row.first_order_simplex_mesh) == row.decision);
+                                    row.first_order_simplex_mesh,
+                                    row.first_order_mesh) == row.decision);
   }
   CHECK(UnlocatedTracePointErrorReason(Decision::LATE_EXCLUSION, 1.0).empty());
   CHECK(UnlocatedTracePointErrorReason(Decision::LATE_EXCLUSION_UNDECIDED, 1.0).empty());
