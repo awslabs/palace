@@ -273,6 +273,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Bug Fixes
 
+  - The `"Problem"`/`"Iteration"` field of `palace.json` is now updated only after the AMR
+    iteration's output is in its final location. With `SaveAdaptIterations`, it used to be
+    written before the output was moved into `iterationXX`, so a reader polling it could
+    find a partially filled `iterationXX` directory.
+    [PR 1235](https://github.com/awslabs/palace/pull/1235).
   - The `Initialization` time now includes MPI initialization and the parsing of the
     configuration file, which were counted in `Total` but in no row of the report (up to
     tens of seconds on many nodes). MPI initialization, which includes waiting for all
