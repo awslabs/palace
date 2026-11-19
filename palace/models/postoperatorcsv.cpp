@@ -1487,8 +1487,8 @@ void PostOperatorCSV<solver_t>::PrintPortZ()
     // factor), so Z = (V · conj(V)) / conj(P). This is direction-specific (sign of P
     // depends on whether the field at port i is incoming or outgoing): Re{Z[i][i]} > 0
     // at the driven port, but Re{Z[i][j]} for i ≠ j can be negative when port i is a
-    // passive receiver of power leaving the domain.
-    if (std::abs(data.P) > 0.0)
+    // passive receiver of power leaving the domain. A power not known (NaN) gives NaN.
+    if (std::abs(data.P) != 0.0)
     {
       auto Z = (data.V * std::conj(data.V)) / std::conj(data.P);
       port_Z->table[format("re_z_{}_{}", idx, m_ex_idx)] << Z.real();

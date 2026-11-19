@@ -13,6 +13,7 @@
 #include <optional>
 #include <random>
 #include <regex>
+#include <sstream>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -4131,6 +4132,86 @@ TEST_CASE_METHOD(
       CHECK_THAT(freq[0], Catch::Matchers::WithinRel(20.0, 1.0e-6));
       CHECK_THAT(freq[1], Catch::Matchers::WithinRel(30.0, 1.0e-6));
     }
+  }
+}
+
+TEST_CASE_METHOD(
+    palace::test::SharedTempDir,
+    "Driven substructuring gives no voltage of the environment's wave port online",
+    "[substructure][Serial][Parallel]")
+{
+  // The voltage and the impedance of a wave port need its field: offline they are those of
+  // the environment's port, online, where the port's field is not known, they are NaN, not
+  // 0 (its S-parameter comes from the model).
+  const auto dir = std::filesystem::path(PALACE_TEST_DATA_DIR) / "regression" / "input" /
+                   "substructuring_driven_wave";
+  auto run = [&](const std::string &file)
+  {
+    std::ifstream fi(dir / file);
+    json config = json::parse(fi);
+    config["Model"]["Mesh"] = (dir / config["Model"]["Mesh"].get<std::string>()).string();
+    config["Problem"]["Output"] = (temp_dir / file).string();
+    config["Solver"]["Linear"]["Type"] = "Default";
+    config["Solver"]["Substructuring"]["ModelFile"] = (temp_dir / "model.bin").string();
+    config["Boundaries"]["WavePort"][1]["VoltagePath"] = {{0.0, 0.0, 0.0},
+                                                          {2.74, 0.0, 0.0}};
+    IoData iodata(config, false);
+    MPI_Comm comm = Mpi::World();
+    MakeOutputFolder(iodata, comm);
+    BlockTimer::Reset();
+    palace::Run(iodata, comm, 1);
+  };
+  // The values of the columns of a CSV file whose header holds name.
+  auto values =
+      [&](const std::string &file, const std::string &csv, const std::string &name)
+  {
+    std::ifstream f(temp_dir / file / csv);
+    REQUIRE(f.good());
+    std::vector<std::string> rows;
+    for (std::string line; std::getline(f, line);)
+    {
+      rows.push_back(line);
+    }
+    REQUIRE(rows.size() > 1);
+    auto split = [](const std::string &line)
+    {
+      std::vector<std::string> cells;
+      std::stringstream ss(line);
+      for (std::string cell; std::getline(ss, cell, ',');)
+      {
+        cells.push_back(cell);
+      }
+      return cells;
+    };
+    const auto header = split(rows[0]);
+    std::vector<double> v;
+    for (std::size_t r = 1; r < rows.size(); r++)
+    {
+      const auto cells = split(rows[r]);
+      for (std::size_t c = 0; c < header.size() && c < cells.size(); c++)
+      {
+        if (header[c].find(name) != std::string::npos)
+        {
+          v.push_back(std::stod(cells[c]));
+        }
+      }
+    }
+    return v;
+  };
+  run("driven_wave_inactive_offline.json");
+  run("driven_wave_inactive_online.json");
+  for (const std::string name : {"V_wp[2]", "Z[2]"})
+  {
+    CAPTURE(name);
+    const auto off = values("driven_wave_inactive_offline.json",
+                            (name == "Z[2]") ? "port-Z.csv" : "port-V.csv", name);
+    const auto on = values("driven_wave_inactive_online.json",
+                           (name == "Z[2]") ? "port-Z.csv" : "port-V.csv", name);
+    REQUIRE(!off.empty());
+    REQUIRE(on.size() == off.size());
+    CHECK(std::ranges::all_of(off, [](double x) { return std::isfinite(x); }));
+    CHECK(std::ranges::any_of(off, [](double x) { return x != 0.0; }));
+    CHECK(std::ranges::all_of(on, [](double x) { return std::isnan(x); }));
   }
 }
 

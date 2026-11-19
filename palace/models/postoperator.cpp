@@ -1874,8 +1874,13 @@ void PostOperator<solver_t>::MeasureWavePorts() const
       vi.S = (given != wave_port_overlaps.end()) ? given->second : data.GetSParameter(*E);
       if (data.HasVoltageCoords())
       {
-        vi.P = (given != wave_port_overlaps.end()) ? 0.0 : data.GetPower(*E, *B);
-        vi.V = (given != wave_port_overlaps.end()) ? 0.0 : data.GetVoltage(*E);
+        // The power and the voltage need the field at the port, which a port with a given
+        // overlap (of the environment of a substructuring model) has not: NaN, not 0.
+        constexpr double nan = std::numeric_limits<double>::quiet_NaN();
+        vi.P = (given != wave_port_overlaps.end()) ? std::complex<double>(nan, nan)
+                                                   : data.GetPower(*E, *B);
+        vi.V = (given != wave_port_overlaps.end()) ? std::complex<double>(nan, nan)
+                                                   : data.GetVoltage(*E);
         vi.Z_PV = data.GetCharacteristicImpedance();
       }
     }
