@@ -293,6 +293,12 @@ std::vector<char> RegionMeshInterface(mfem::ParFiniteElementSpace &parent_fespac
                                       const std::vector<double> &saved_signatures,
                                       int saved_width);
 
+// Centers for the three fields of FingerprintField, at fixed fractions of the bounding box
+// of the centers of the elements with the given attributes (the origin without any).
+// Collective.
+std::array<std::array<double, 3>, 3> FingerprintCenters(mfem::ParMesh &mesh,
+                                                        const std::vector<int> &attributes);
+
 // The k-th (0, 1 or 2) of three fixed polynomial fields of x - center, vector fields for
 // H(curl) and scalar ones for H1, as true DOFs of the space: to fingerprint operators and
 // sources independently of the partition and of the DOF numbering. A center of its own for

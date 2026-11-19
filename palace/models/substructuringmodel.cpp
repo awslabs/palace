@@ -6,7 +6,6 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
-#include <limits>
 #include <system_error>
 #include <utility>
 #include "utils/outputdir.hpp"
@@ -313,34 +312,7 @@ SubstructuringSolver::Impl::FingerprintCenters() const
 {
   if (!fp_centers)
   {
-    double box[6] = {
-        std::numeric_limits<double>::max(), std::numeric_limits<double>::max(),
-        std::numeric_limits<double>::max(), std::numeric_limits<double>::max(),
-        std::numeric_limits<double>::max(), std::numeric_limits<double>::max()};
-    mfem::Vector c;
-    for (int e = 0; e < parent.GetNE(); e++)
-    {
-      if (ea_arr.Find(parent.GetAttribute(e)) >= 0)
-      {
-        parent.GetElementCenter(e, c);
-        for (int d = 0; d < c.Size(); d++)
-        {
-          box[d] = std::min(box[d], c(d));
-          box[3 + d] = std::min(box[3 + d], -c(d));
-        }
-      }
-    }
-    MPI_Allreduce(MPI_IN_PLACE, box, 6, MPI_DOUBLE, MPI_MIN, parent_fes.GetComm());
-    constexpr double f[3][3] = {{0.21, 0.37, 0.16}, {0.62, 0.28, 0.41}, {0.35, 0.73, 0.57}};
-    fp_centers.emplace();
-    for (int k = 0; k < 3; k++)
-    {
-      for (int d = 0; d < 3; d++)
-      {
-        const double lo = box[d], hi = -box[3 + d];
-        (*fp_centers)[k][d] = (lo <= hi) ? lo + f[k][d] * (hi - lo) : 0.0;
-      }
-    }
+    fp_centers = palace::FingerprintCenters(parent, env_attributes);
   }
   return *fp_centers;
 }
