@@ -28,6 +28,7 @@
 #include "linalg/superlucomplex.hpp"
 #include "linalg/vector.hpp"
 #include "models/spaceoperator.hpp"
+#include "test-helpers.hpp"
 #include "utils/communication.hpp"
 #include "utils/configfile.hpp"
 #include "utils/geodata.hpp"
@@ -150,10 +151,18 @@ void TestComplexDirectSolver(Solver<ComplexOperator> &solver, Solver<ComplexOper
 TEST_CASE("STRUMPACK complex arithmetic solver", "[strumpack][Serial][Parallel]")
 {
   // Complex symmetric and unsymmetric matrices, with and without the reuse of the
-  // reordering.
+  // reordering. The solvers store the permutation once per node, when STRUMPACK is built
+  // with that option: with STRUMPACK_SHARED_PERM_GROUP=1, every process acts as a node, so
+  // that on several processes the root broadcasts the permutation to the other node leaders
+  // as on several nodes. STRUMPACK reads the variable on every process at each reordering,
+  // so it is set before the solvers are constructed and restored after they are destroyed.
   MPI_Comm comm = Mpi::World();
   const bool unsymmetric = GENERATE(false, true);
   const bool reorder_reuse = GENERATE(true, false);
+  const bool process_as_node = GENERATE(false, true);
+  CAPTURE(unsymmetric, reorder_reuse, process_as_node);
+  ScopedEnvironmentVariable group("STRUMPACK_SHARED_PERM_GROUP",
+                                  process_as_node ? "1" : nullptr);
   StrumpackComplexSolver solver(comm, SymbolicFactorization::DEFAULT,
                                 SparseCompression::NONE, 0.0, 0, 0, false, reorder_reuse,
                                 0);
