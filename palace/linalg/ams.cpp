@@ -171,7 +171,9 @@ void HypreAmsSolver::InitializeSolver()
   // Control printing and number of iterations for use as a preconditioner.
   HYPRE_AMSSetPrintLevel(ams, print);
   HYPRE_AMSSetMaxIter(ams, ams_it);
-  // HYPRE_AMSSetTol(ams, 1.0e-16);  // Avoid issues with zero RHS
+  // A fixed number of iterations: with a zero tolerance and no printing, hypre computes no
+  // residual norms (with the patch in extern/patch/hypre) and flags no convergence error.
+  HYPRE_AMSSetTol(ams, 0.0);
 
   // Set this option when solving a curl-curl problem with zero mass term.
   if (ams_singular)
@@ -228,6 +230,20 @@ void HypreAmsSolver::InitializeSolver()
     HYPRE_ParCSRMatrix HY_Piz = (Piz) ? (HYPRE_ParCSRMatrix)*Piz : nullptr;
     HYPRE_AMSSetInterpolations(ams, HY_Pi, HY_Pix, HY_Piy, HY_Piz);
   }
+}
+
+void HypreAmsSolver::Mult(const mfem::HypreParVector &b, mfem::HypreParVector &x) const
+{
+#if defined(HYPRE_AMS_ZERO_GUESS_FLAG)
+  // Only valid if hypre_AMSSolve maintains the flag: the relaxation skips the exchange of a
+  // vector flagged as zero.
+  if (!iterative_mode)
+  {
+    x.HypreWrite();
+    hypre_ParVectorSetZeros(x);
+  }
+#endif
+  mfem::HypreSolver::Mult(b, x);
 }
 
 void HypreAmsSolver::SetOperator(const Operator &op)

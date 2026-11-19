@@ -537,6 +537,10 @@ public:
 
   const ElementBox &GetBounds() const { return nodes.front().box; }
 
+  // Decision 2204: the local mesh is first order (DistanceToElements is then 0 inside a
+  // simplex, else a facet distance), not curved (element-box distances).
+  bool FirstOrderElements() const { return linear_mesh; }
+
   // Decision 2180: every local element is a first-order simplex (DistanceToElements is then
   // 0 exactly for the points of the local elements).
   bool FirstOrderSimplexElements() const
@@ -1629,6 +1633,14 @@ public:
     return first_order_simplex;
   }
 
+  // Decision 2204: the mesh is first order (not curved). Collective.
+  bool FirstOrderMesh() const
+  {
+    bool first_order = local.FirstOrderElements();
+    Mpi::GlobalAnd(1, &first_order, comm);
+    return first_order;
+  }
+
   // Decision 2156: the distance from each point (the same list on every rank) to the meshed
   // domain within its search radius (infinity beyond): the minimum over the ranks of
   // ElementPointLocator::DistanceToElements. Collective.
@@ -1663,6 +1675,7 @@ ClassifyUnlocatedTracePoints(const DistributedPointLocator &locator,
   UnlocatedTracePointClassification result;
   result.distances = locator.DistancesToMesh(points, contour_radii);
   result.first_order_simplex_mesh = locator.FirstOrderSimplexMesh();
+  result.first_order_mesh = locator.FirstOrderMesh();
   result.verdicts.resize(points.size());
   for (std::size_t i = 0; i < points.size(); i++)
   {
@@ -1689,7 +1702,8 @@ ClassifyUnlocatedTracePoints(mfem::ParMesh &mesh, int dimension,
 UnlocatedTracePointDecision DecideUnlocatedTracePoint(UnlocatedTracePointVerdict verdict,
                                                       bool edge_point,
                                                       bool diagnostic_patch,
-                                                      bool first_order_simplex_mesh)
+                                                      bool first_order_simplex_mesh,
+                                                      bool first_order_mesh)
 {
   using Decision = UnlocatedTracePointDecision;
   if (edge_point)
@@ -1708,9 +1722,13 @@ UnlocatedTracePointDecision DecideUnlocatedTracePoint(UnlocatedTracePointVerdict
   {
     return Decision::DIAGNOSTIC_PATCH;
   }
-  return (verdict == UnlocatedTracePointVerdict::INSIDE_MESH)
-             ? Decision::LATE_EXCLUSION_UNDECIDED
-             : Decision::LATE_EXCLUSION;
+  // Decision 2204 (ERRATUM-2190 m-3): a distance of 0 off a first-order simplex mesh does
+  // not show that the point is inside, and on a first-order mesh with a non-simplex element
+  // a positive facet distance does not show that it is outside (such an element is taken to
+  // exclude the point).
+  const bool undecided = (verdict == UnlocatedTracePointVerdict::INSIDE_MESH) ||
+                         (first_order_mesh && !first_order_simplex_mesh);
+  return undecided ? Decision::LATE_EXCLUSION_UNDECIDED : Decision::LATE_EXCLUSION;
 }
 
 std::string UnlocatedTracePointErrorReason(UnlocatedTracePointDecision decision,
@@ -34712,8 +34730,9 @@ std::unique_ptr<SurfaceResponseOperator> SurfaceResponseOperator::ConstructElect
         laplace_op.GetH1Space().GetComm(),
         "Late domain-boundary exclusion (decision 2156): {:d} applied patch(es) with "
         "{:d} trace point(s) that no search locates in the device mesh (the largest "
-        "distance outside {:.6e} mesh units; {:d} of the points at a distance of 0 on a "
-        "mesh that is not first-order simplex, where inside or outside is not decided; "
+        "distance outside {:.6e} mesh units; {:d} of the points where inside or outside "
+        "is not decided: at a distance of 0 on a mesh that is curved or not all simplex, "
+        "or on a first-order mesh with a non-simplex element; "
         "first patch {:d} (0-based {:d}), model {}) are not applied, their raw claims "
         "kept; the construction is repeated without them (pass {:d} of at most {:d})\n",
         static_cast<int>(request.size()), points, distance * op->mesh_coordinate_scale,
@@ -37536,7 +37555,7 @@ void SurfaceResponseOperator::ConfigurePointCommunication(
         const double distance = classification.distances[i];
         const auto decision = DecideUnlocatedTracePoint(
             classification.verdicts[i], record[5] != 0.0, record[8] != 0.0,
-            classification.first_order_simplex_mesh);
+            classification.first_order_simplex_mesh, classification.first_order_mesh);
         if (decision != UnlocatedTracePointDecision::LATE_EXCLUSION &&
             decision != UnlocatedTracePointDecision::LATE_EXCLUSION_UNDECIDED)
         {

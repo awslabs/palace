@@ -31,6 +31,7 @@ public:
   enum Index
   {
     INIT = 0,
+    MPI_STARTUP,                  // MPI initialization, including waiting for all processes
     MESH_PREPROCESS,              // Preprocessing mesh
     CONSTRUCT,                    // Space and operator construction
     CONSTRUCT_SURFACE_POST,       // Surface postprocessing setup
@@ -76,6 +77,7 @@ public:
   // clang-format off
   static constexpr auto descriptions = std::to_array<std::string_view>({
       "Initialization",
+      "  MPI Startup",
       "  Mesh Preprocessing",
       "Operator Construction",
       "  Surface Post Setup",

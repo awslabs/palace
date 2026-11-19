@@ -169,6 +169,15 @@ inline void ConfigureRG(RG rg, PetscReal lr, PetscReal ur, PetscReal li, PetscRe
   }
 }
 
+PetscErrorCode __eps_first_cycle_monitor(EPS eps, PetscInt its, PetscInt nconv,
+                                         PetscScalar *eigr, PetscScalar *eigi,
+                                         PetscReal *errest, PetscInt nest, void *ctx)
+{
+  PetscFunctionBeginUser;
+  static_cast<SlepcEPSSolverBase *>(ctx)->EndFirstCycle();
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
 }  // namespace
 
 void Initialize(int &argc, char **&argv, const char rc_file[], const char help[])
@@ -289,7 +298,12 @@ void SlepcEigenvalueSolver::SetOrthogonalization(bool mgs, bool cgs2)
       type = BV_ORTHOG_CGS;
       refine = BV_ORTHOG_REFINE_ALWAYS;
     }
-    PalacePetscCall(BVSetOrthogonalization(bv, type, refine, 1.0, BV_ORTHOG_BLOCK_GS));
+    // With refinement, a vector counts as linearly dependent (breakdown) when the second
+    // pass reduces its norm below eta times that after the first one. With eta = 1, this
+    // would flag almost every vector of a nearly invariant Krylov space, as after a warm
+    // start: use SLEPc's default eta = 1/√2.
+    PalacePetscCall(
+        BVSetOrthogonalization(bv, type, refine, PETSC_DETERMINE, BV_ORTHOG_BLOCK_GS));
   }
 }
 
@@ -411,6 +425,8 @@ SlepcEPSSolverBase::SlepcEPSSolverBase(MPI_Comm comm, int print, const std::stri
     }
   }
   A0 = A1 = nullptr;
+  first_cycle_tol = lin_tol = 0.0;
+  first_cycle_monitor = first_cycle = false;
 }
 
 SlepcEPSSolverBase::~SlepcEPSSolverBase()
@@ -560,14 +576,43 @@ void SlepcEPSSolverBase::Customize()
   }
 }
 
+void SlepcEPSSolverBase::EndFirstCycle()
+{
+  if (first_cycle)
+  {
+    opInv->SetRelTol(lin_tol);
+    first_cycle = false;
+  }
+}
+
 int SlepcEPSSolverBase::Solve()
 {
   MFEM_VERIFY(A0 && A1 && opInv, "Operators are not set for SlepcEPSSolverBase!");
+
+  // Tighten the linear solver tolerance for the first Krylov cycle: a monitor restores it
+  // after the first restart.
+  lin_tol = opInv->GetRelTol();
+  first_cycle = (first_cycle_tol > 0.0 && first_cycle_tol < lin_tol);
+  if (first_cycle)
+  {
+    if (!first_cycle_monitor)
+    {
+      PalacePetscCall(EPSMonitorSet(eps, __eps_first_cycle_monitor, (void *)this, nullptr));
+      first_cycle_monitor = true;
+    }
+    opInv->SetRelTol(first_cycle_tol);
+    if (print > 0)
+    {
+      Mpi::Print(GetComm(), " Linear solver tolerance {:.3e} for the first Krylov cycle\n",
+                 first_cycle_tol);
+    }
+  }
 
   // Solve the eigenvalue problem.
   PetscInt num_conv;
   Customize();
   PalacePetscCall(EPSSolve(eps));
+  EndFirstCycle();
   PalacePetscCall(EPSGetConverged(eps, &num_conv));
   if (print > 0)
   {
@@ -582,6 +627,13 @@ int SlepcEPSSolverBase::Solve()
   // Compute and store the eigenpair residuals.
   RescaleEigenvectors(num_conv);
   return static_cast<int>(num_conv);
+}
+
+int SlepcEPSSolverBase::GetNumIterations() const
+{
+  PetscInt num_it;
+  PalacePetscCall(EPSGetIterationNumber(eps, &num_it));
+  return static_cast<int>(num_it);
 }
 
 std::complex<double> SlepcEPSSolverBase::GetEigenvalue(int i) const
@@ -815,6 +867,23 @@ void SlepcPEPLinearSolver::SetInitialSpace(const ComplexVector &v)
     PalacePetscCall(MatCreateVecs(A0, nullptr, &v0));
   }
   PalacePetscCall(ToPetscVec(v, v0, 0, 2));
+  Vec is[1] = {v0};
+  PalacePetscCall(EPSSetInitialSpace(eps, 1, is));
+}
+
+void SlepcPEPLinearSolver::SetInitialSpaceBlocks(const ComplexVector &v,
+                                                 const ComplexVector &v_lambda)
+{
+  MFEM_VERIFY(A0 && A1, "Must call SetOperators before using SetInitialSpaceBlocks for "
+                        "SLEPc eigenvalue solver!");
+  if (!v0)
+  {
+    PalacePetscCall(MatCreateVecs(A0, nullptr, &v0));
+  }
+  // The second block of the eigenvectors of the linearization is (λ / γ) x.
+  ComplexVector v2(v_lambda);
+  v2 *= 1.0 / gamma;
+  PalacePetscCall(ToPetscVec(v, v2, v0));
   Vec is[1] = {v0};
   PalacePetscCall(EPSSetInitialSpace(eps, 1, is));
 }

@@ -1031,12 +1031,19 @@ public:
   std::map<int, FluxLoopData> fluxloop = {};
   BoundaryPostData postpro = {};
 
+  // Return the boundary attributes of boundary conditions which model a metal sheet: PEC
+  // (and Ground), Terminal, PrescribedPotential (with its terminal attributes), Impedance,
+  // RationalImpedance, Conductivity and Superconductor boundaries, and the flux loop films.
+  // Sorted, unique. The one list of metal sheets: GetSheetAttributes adds the lumped ports
+  // and surface current sources to it.
+  std::vector<int> GetMetalSheetAttributes() const;
+
   // Return the boundary attributes of boundary conditions which model sheets carrying a
-  // surface current or charge (conductors, impedance and superconductor sheets, flux loop
-  // films, lumped ports, and surface current sources), across which the fields are
-  // discontinuous when interior. For these, the error estimator allows discontinuous
-  // recovered fluxes, and interface dielectric energies sum the contributions of both faces
-  // (when cracked, the faces are exterior boundaries anyway).
+  // surface current or charge (the metal sheets of GetMetalSheetAttributes, lumped ports,
+  // and surface current sources), across which the fields are discontinuous when interior.
+  // For these, the error estimator allows discontinuous recovered fluxes, and interface
+  // dielectric energies sum the contributions of both faces (when cracked, the faces are
+  // exterior boundaries anyway).
   std::vector<int> GetSheetAttributes() const;
 
   // Return the boundary attributes for which the mesh is cracked when interior, given the
@@ -2391,10 +2398,10 @@ public:
   int ams_singular_op = -1;
 
   // Preconditioner-only gauge shift for the London magnetostatic operator: adds
-  // london_pc_shift · (1/µ) ∫|A|² to the preconditioner matrix only (operator, solution and
-  // extracted inductance unchanged) to lift the shifted-penalty operator's residual
-  // gradient null space so AMS is SPD-solvable in parallel. Ignored when no London sheet is
-  // present.
+  // london_pc_shift · (1/µ) ∫|A|² outside the London domains to the preconditioner matrix
+  // only (operator, solution and extracted inductance unchanged) to lift the residual
+  // gradient null space so AMS is SPD-solvable in parallel. Ignored without superconductor
+  // sheets, London domains, or the auxiliary smoother.
   double london_pc_shift = 1.0e-1;
 
   // Option to use aggressive coarsening for Hypre AMG solves (with BoomerAMG or AMS).

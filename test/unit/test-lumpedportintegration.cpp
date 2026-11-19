@@ -1287,6 +1287,27 @@ TEST_CASE("LumpedElement_RaggedTile_LengthOverride", "[lumped_port][Serial][Para
     CHECK_THAT(overridden.GetGeometryWidth(),
                WithinRel(discovered.GetGeometryWidth(), 1.0e-12));
   }
+  // ERRATUM-2190 m-5: the key in 2D, where the element is a boundary edge with a unit
+  // out-of-plane depth: its "area" is the edge length and its width counts the edges
+  // crossing the line normal to its axis. The bottom side (attribute 1) of a 6 x 1
+  // rectangle (60 x 10 quadrilaterals): without the key w = 1 and l = 6; with "Length"
+  // 3.0, l = 3.0 and w = area / l = 2, so that l w = area as for the computed pair.
+  {
+    mfem::Mesh serial_2d =
+        mfem::Mesh::MakeCartesian2D(60, 10, mfem::Element::QUADRILATERAL, true, 6.0, 1.0);
+    mfem::ParMesh pmesh_2d(comm, serial_2d);
+    mfem::Array<int> bottom;
+    bottom.Append(1);
+    const UniformElementData computed_2d(direction, bottom, pmesh_2d);
+    CHECK_THAT(computed_2d.GetGeometryWidth(), WithinRel(1.0, 1.0e-12));
+    CHECK_THAT(computed_2d.GetGeometryLength(), WithinRel(6.0, 1.0e-12));
+    const UniformElementData overridden_2d(direction, bottom, pmesh_2d, 3.0);
+    CHECK_THAT(overridden_2d.GetGeometryLength(), WithinRel(3.0, 1.0e-12));
+    CHECK_THAT(overridden_2d.GetGeometryWidth(), WithinRel(2.0, 1.0e-12));
+    CHECK_THAT(overridden_2d.GetGeometryLength() * overridden_2d.GetGeometryWidth(),
+               WithinRel(computed_2d.GetGeometryLength() * computed_2d.GetGeometryWidth(),
+                         1.0e-12));
+  }
 }
 
 TEST_CASE("LumpedPort excitation weight from amplitude and phase", "[lumped_port][Serial]")

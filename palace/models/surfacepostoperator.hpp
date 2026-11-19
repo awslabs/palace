@@ -50,6 +50,31 @@ enum class ProblemType : char;
 // CLASSIFIED edge trees the export partitions against only then.
 bool ExclusionEnergyRequested(const config::SolverData &solver);
 
+// The USER's warning (decisions 2197 (4) / 2204): the attributes of an interface
+// dielectric entry of Type `type` which lie on an interior (unseparated) face of a metal
+// sheet (`metal_sheet_attributes`: config::BoundaryData::GetMetalSheetAttributes) with
+// vacuum on both sides, by the vacuum test of the SA coefficient (both neighbouring
+// elements' maximum light speed >= 1 - 1e-6): there the SA coefficient averages the fields
+// of the two sides, which read near-zero raw energy for a charged sheet. Empty unless
+// `type` is SA. The faces which a crack separates are exterior and not listed, but a crack
+// can leave faces of a cracked sheet interior (for example a face between the crack tip
+// and a junction with an uncracked sheet), and those are listed. Collective (the same
+// inputs on every rank).
+std::vector<int> GetVacuumMetalSheetSubstrateAirAttributes(
+    mfem::ParMesh &mesh, const MaterialOperator &mat_op, InterfaceDielectric type,
+    const std::vector<int> &entry_attributes,
+    const std::vector<int> &metal_sheet_attributes);
+
+// The one-line text of that warning for the interface dielectric entry `index`. It names
+// the "Crack" setting only for those of `attributes` which belong to an Impedance,
+// RationalImpedance or Conductivity boundary of `boundaries` (the boundaries which have
+// that setting; perfect conductors are not cracked) and which this run did not crack
+// (`boundaries.cracked_attributes`, filled by the mesh read); for the cracked ones it says
+// that the crack leaves these faces joined.
+std::string VacuumMetalSheetSubstrateAirWarning(int index,
+                                                const std::vector<int> &attributes,
+                                                const config::BoundaryData &boundaries);
+
 // Mesh-independent automatic edge-distance geometry retained across AMR iterations. Only
 // aggregate edge-distance trees are cached; mesh-segment-localized diagnostics are rebuilt.
 class SurfacePostGeometry

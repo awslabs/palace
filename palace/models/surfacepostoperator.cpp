@@ -969,6 +969,130 @@ SurfacePostOperator::FarFieldData::FarFieldData(const config::FarFieldPostData &
   Mpi::GlobalOr(1, &interior, mesh.GetComm());
 }
 
+std::vector<int> GetVacuumMetalSheetSubstrateAirAttributes(
+    mfem::ParMesh &mesh, const MaterialOperator &mat_op, InterfaceDielectric type,
+    const std::vector<int> &entry_attributes,
+    const std::vector<int> &metal_sheet_attributes)
+{
+  if (type != InterfaceDielectric::SA)
+  {
+    return {};
+  }
+  std::vector<int> candidates;
+  for (const int attr : entry_attributes)
+  {
+    if (std::binary_search(metal_sheet_attributes.begin(), metal_sheet_attributes.end(),
+                           attr))
+    {
+      candidates.push_back(attr);
+    }
+  }
+  std::sort(candidates.begin(), candidates.end());
+  candidates.erase(std::unique(candidates.begin(), candidates.end()), candidates.end());
+  if (candidates.empty())
+  {
+    return {};
+  }
+  // The vacuum test of InterfaceDielectricCoefficient (Qualifies / GetLocalVectorValue).
+  constexpr double vacuum_threshold = 1.0 - 1.0e-6;
+  mesh.ExchangeFaceNbrData();
+  std::vector<int> found(candidates.size(), 0);
+  mfem::FaceElementTransformations FET;
+  mfem::IsoparametricTransformation T1, T2;
+  for (int be = 0; be < mesh.GetNBE(); be++)
+  {
+    const auto it =
+        std::lower_bound(candidates.begin(), candidates.end(), mesh.GetBdrAttribute(be));
+    if (it == candidates.end() || *it != mesh.GetBdrAttribute(be))
+    {
+      continue;
+    }
+    BdrGridFunctionCoefficient::GetBdrElementNeighborTransformations(be, mesh, FET, T1, T2);
+    if (FET.Elem1 && FET.Elem2 &&
+        mat_op.GetLightSpeedMax(FET.Elem1->Attribute) >= vacuum_threshold &&
+        mat_op.GetLightSpeedMax(FET.Elem2->Attribute) >= vacuum_threshold)
+    {
+      found[it - candidates.begin()] = 1;
+    }
+  }
+  Mpi::GlobalMax(static_cast<int>(found.size()), found.data(), mesh.GetComm());
+  std::vector<int> attributes;
+  for (std::size_t k = 0; k < candidates.size(); k++)
+  {
+    if (found[k])
+    {
+      attributes.push_back(candidates[k]);
+    }
+  }
+  return attributes;
+}
+
+std::string VacuumMetalSheetSubstrateAirWarning(int index,
+                                                const std::vector<int> &attributes,
+                                                const config::BoundaryData &boundaries)
+{
+  // The listed attributes of the boundaries with a "Crack" setting.
+  std::vector<int> crack_setting_attributes;
+  auto Append = [&](const std::vector<int> &boundary_attributes)
+  {
+    for (const int attr : attributes)
+    {
+      if (std::ranges::find(boundary_attributes, attr) != boundary_attributes.end())
+      {
+        crack_setting_attributes.push_back(attr);
+      }
+    }
+  };
+  for (const auto &data : boundaries.impedance)
+  {
+    Append(data.attributes);
+  }
+  for (const auto &data : boundaries.rational_impedance)
+  {
+    Append(data.attributes);
+  }
+  for (const auto &data : boundaries.conductivity)
+  {
+    Append(data.attributes);
+  }
+  std::sort(crack_setting_attributes.begin(), crack_setting_attributes.end());
+  crack_setting_attributes.erase(
+      std::unique(crack_setting_attributes.begin(), crack_setting_attributes.end()),
+      crack_setting_attributes.end());
+  // Split them by whether the mesh read cracked them in this run
+  // (boundaries.cracked_attributes: the boundary's "Crack" or the global
+  // CrackInternalBoundaryElements key): only the uncracked ones can be separated by the
+  // setting; a crack can leave faces of a cracked sheet joined.
+  std::vector<int> uncracked_attributes, cracked_attributes;
+  for (const int attr : crack_setting_attributes)
+  {
+    (boundaries.cracked_attributes.contains(attr) ? cracked_attributes
+                                                  : uncracked_attributes)
+        .push_back(attr);
+  }
+  std::string crack_text;
+  if (!uncracked_attributes.empty())
+  {
+    crack_text += fmt::format(" (or separate the faces by the \"Crack\" setting of the "
+                              "Impedance, RationalImpedance or Conductivity boundary of "
+                              "attributes {})",
+                              fmt::join(uncracked_attributes, ", "));
+  }
+  if (!cracked_attributes.empty())
+  {
+    crack_text += fmt::format(" (attributes {} are cracked, but the crack leaves these "
+                              "faces joined, for example between a crack tip and a "
+                              "junction with an uncracked sheet)",
+                              fmt::join(cracked_attributes, ", "));
+  }
+  return fmt::format(
+      "Interface dielectric postprocessing index {:d} (\"Type\": \"SA\") contains interior "
+      "(unseparated) faces of a metal sheet with vacuum on both sides (boundary attributes "
+      "{}): there a substrate-air entry averages the fields of the two sides and reads "
+      "near-zero raw energy; a metal sheet in vacuum is a metal-air (\"MA\") entry{}!",
+      index, fmt::join(attributes, ", "), crack_text);
+}
+
 bool ExclusionEnergyRequested(const config::SolverData &solver)
 {
   return (solver.electrostatic.response_correction &&
@@ -1140,6 +1264,18 @@ SurfacePostOperator::SurfacePostOperator(
                            mat_op.GetMesh().GetCrackSides(entry_sheet_attributes).Any();
       Mpi::GlobalMax(1, &interior_sheet, mesh.GetComm());
       MFEM_VERIFY(!interior_sheet, refusal);
+    }
+    if (boundaries && data.type == InterfaceDielectric::SA)
+    {
+      // The USER's warning (decisions 2197 (4) / 2204): log only, at every construction.
+      const auto vacuum_sheet = GetVacuumMetalSheetSubstrateAirAttributes(
+          *h1_fespace.GetParMesh(), mat_op, data.type, data.attributes,
+          boundaries->GetMetalSheetAttributes());
+      if (!vacuum_sheet.empty())
+      {
+        Mpi::Warning(mesh.GetComm(), "{}\n",
+                     VacuumMetalSheetSubstrateAirWarning(idx, vacuum_sheet, *boundaries));
+      }
     }
     auto it = eps_surfs.try_emplace(idx, data, bdr_attr_marker).first;
     it->second.sum_sides_marker = mesh::AttrToMarker(bdr_attr_max, sheet_attributes, true);
