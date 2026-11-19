@@ -4016,6 +4016,44 @@ void RunDrivenSheetSquare(const std::filesystem::path &dir, const std::string &m
   palace::Run(iodata, comm, 1);
 }
 
+// The header (trimmed) and the rows of a CSV file written by Palace.
+std::pair<std::vector<std::string>, std::vector<std::vector<double>>>
+ReadCsv(const std::filesystem::path &path)
+{
+  std::ifstream f(path);
+  REQUIRE(f.good());
+  auto split = [](const std::string &line)
+  {
+    std::vector<std::string> cells;
+    std::stringstream ss(line);
+    for (std::string cell; std::getline(ss, cell, ',');)
+    {
+      cells.push_back(cell);
+    }
+    return cells;
+  };
+  std::string line;
+  std::getline(f, line);
+  std::vector<std::string> header;
+  for (auto cell : split(line))
+  {
+    cell.erase(0, cell.find_first_not_of(' '));
+    cell.erase(cell.find_last_not_of(' ') + 1);
+    header.push_back(cell);
+  }
+  std::vector<std::vector<double>> rows;
+  while (std::getline(f, line))
+  {
+    std::vector<double> row;
+    for (const auto &cell : split(line))
+    {
+      row.push_back(std::stod(cell));
+    }
+    rows.push_back(row);
+  }
+  return {header, rows};
+}
+
 // A driven sweep of the box of MakeInteriorBoundaryBox (Γ the interior boundary x = 1
 // between the region x < 1 and the environment, lumped port 1 on the face x = 0 and the
 // face x = 2 absorbing), run in process. Collective.
@@ -4085,6 +4123,63 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   CHECK_THROWS_WITH(RunDrivenBox(temp_dir, "Online", current),
                     ContainsSubstring("has sources on the substructuring interface"));
 }
+
+#if defined(MFEM_USE_GSLIB)
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "Driven substructuring writes the probes it interpolates in the region",
+                 "[substructure][Serial][Parallel]")
+{
+  // Two probes on Γ, interpolated in the element the point search finds them in, of either
+  // side, and one in the region: online on the full mesh, the probes written are those
+  // found in the region, with the values of a regular sweep, and the one in the region is.
+  auto probes = [](json &config)
+  {
+    config["Domains"]["Postprocessing"]["Probe"] = {
+        {{"Index", 1}, {"Center", {0.5, -3.1, 4.7}}},
+        {{"Index", 2}, {"Center", {0.5, 0.3, 0.2}}},
+        {{"Index", 3}, {"Center", {-6.0, 0.0, -3.0}}}};
+  };
+  RunDrivenSheetSquare(temp_dir, "Offline", probes);
+  RunDrivenSheetSquare(temp_dir, "Online", probes);
+  RunDrivenSheetSquare(temp_dir, "Regular",
+                       [&](json &config)
+                       {
+                         probes(config);
+                         config["Solver"].erase("Substructuring");
+                         config["Solver"]["Linear"] = {{"Tol", 1.0e-12}, {"MaxIts", 1000}};
+                       });
+  for (const std::string csv : {"probe-E.csv", "probe-B.csv"})
+  {
+    CAPTURE(csv);
+    const auto online = ReadCsv(temp_dir / "postpro_Online" / csv);
+    const auto regular = ReadCsv(temp_dir / "postpro_Regular" / csv);
+    REQUIRE(online.second.size() == regular.second.size());
+    double scale = 0.0;
+    for (const auto &row : regular.second)
+    {
+      for (std::size_t c = 1; c < row.size(); c++)
+      {
+        scale = std::max(scale, std::abs(row[c]));
+      }
+    }
+    bool region_probe = false;
+    for (std::size_t c = 1; c < online.first.size(); c++)
+    {
+      const auto &name = online.first[c];
+      CAPTURE(name);
+      region_probe = region_probe || name.find("[3][") != std::string::npos;
+      const auto it = std::ranges::find(regular.first, name);
+      REQUIRE(it != regular.first.end());
+      const auto k = static_cast<std::size_t>(it - regular.first.begin());
+      for (std::size_t r = 0; r < online.second.size(); r++)
+      {
+        CHECK(std::abs(online.second[r][c] - regular.second[r][k]) <= 1.0e-8 * scale);
+      }
+    }
+    CHECK(region_probe);
+  }
+}
+#endif
 
 TEST_CASE_METHOD(
     palace::test::SharedTempDir,
@@ -4170,34 +4265,16 @@ TEST_CASE_METHOD(
   auto values =
       [&](const std::string &file, const std::string &csv, const std::string &name)
   {
-    std::ifstream f(temp_dir / file / csv);
-    REQUIRE(f.good());
-    std::vector<std::string> rows;
-    for (std::string line; std::getline(f, line);)
-    {
-      rows.push_back(line);
-    }
-    REQUIRE(rows.size() > 1);
-    auto split = [](const std::string &line)
-    {
-      std::vector<std::string> cells;
-      std::stringstream ss(line);
-      for (std::string cell; std::getline(ss, cell, ',');)
-      {
-        cells.push_back(cell);
-      }
-      return cells;
-    };
-    const auto header = split(rows[0]);
+    const auto csv_data = ReadCsv(temp_dir / file / csv);
+    const auto &header = csv_data.first;
     std::vector<double> v;
-    for (std::size_t r = 1; r < rows.size(); r++)
+    for (const auto &row : csv_data.second)
     {
-      const auto cells = split(rows[r]);
-      for (std::size_t c = 0; c < header.size() && c < cells.size(); c++)
+      for (std::size_t c = 0; c < header.size() && c < row.size(); c++)
       {
         if (header[c].find(name) != std::string::npos)
         {
-          v.push_back(std::stod(cells[c]));
+          v.push_back(row[c]);
         }
       }
     }
