@@ -340,6 +340,31 @@ TEST_CASE("Impedance-metal rule Apply film resolution, Ls range check and refusa
   }
 }
 
+// Decision 2215: an override refused under "Apply" stops every rank (the refusal follows
+// from the configuration alone); the root carries the reason, the other ranks one short
+// line.
+TEST_CASE("Impedance-metal rule Apply override refusal names its reason on the root only",
+          "[surfaceresponsefilmrule][impedancemetalrule][Serial][Parallel]")
+{
+  config::BoundaryData boundaries(FilmRuleBoundaries());
+  const Units units(1.0, 1.0);
+  ResponseCorrectionData request;
+  request.impedance_metal_rule = ResponseCorrectionData::ImpedanceMetalRule::APPLY;
+  request.impedance_metal_film_overrides = {{{3}, true}};
+  const std::string reason = "attribute 3 (Impedance Rs 1 Ls 0 Cs 0) cannot be served";
+  const std::string pointer = "(the reason is printed by the root process)";
+  if (Mpi::Root(Mpi::World()))
+  {
+    CHECK_THROWS_WITH(ResolveImpedanceMetalFilm(boundaries, request, units, false),
+                      ContainsSubstring(reason) && !ContainsSubstring(pointer));
+  }
+  else
+  {
+    CHECK_THROWS_WITH(ResolveImpedanceMetalFilm(boundaries, request, units, false),
+                      ContainsSubstring(pointer) && !ContainsSubstring(reason));
+  }
+}
+
 // Decision 2208 / DESIGN-APPLY s8: an electrostatic run solves no impedance boundary, so
 // "Apply" serves nothing differently there: the operator is the one of "Off" (no seam, the
 // same patches, the same corrected response).

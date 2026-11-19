@@ -9,6 +9,7 @@
 #include <fmt/ranges.h>
 #include <mfem.hpp>
 #include <nlohmann/json.hpp>
+#include "utils/communication.hpp"
 #include "utils/units.hpp"
 
 namespace palace
@@ -215,9 +216,15 @@ FilmRuleResolution ResolveImpedanceMetalFilm(
         }
         else
         {
-          MFEM_VERIFY(
-              !apply,
-              "ImpedanceMetalFilmOverrides: attribute "
+          if (apply)
+          {
+            // Decision 2215: the refusal follows from the configuration alone, so every
+            // rank takes this branch and stops; the root prints the reason, the other ranks
+            // one short line.
+            if (Mpi::Root(Mpi::World()))
+            {
+              MFEM_ABORT(
+                  "ImpedanceMetalFilmOverrides: attribute "
                   << attribute << " (" << record.law
                   << ") cannot be served by an override under \"ImpedanceMetalRule\": "
                      "\"Apply\": "
@@ -229,6 +236,11 @@ FilmRuleResolution ResolveImpedanceMetalFilm(
                           : std::string("Apply serves perfect conductors and purely "
                                         "inductive sheets (Rs = 0, Cs = 0) only"))
                   << "!");
+            }
+            MFEM_ABORT("ImpedanceMetalFilmOverrides: an override is refused under "
+                       "\"ImpedanceMetalRule\": \"Apply\" (the reason is printed by the "
+                       "root process)!");
+          }
           record.service = FilmService::SERVED_BY_OVERRIDE;
           override_lines.push_back(fmt::format(
               "  override: attribute {:d} ({}) served by override: not a purely inductive "
