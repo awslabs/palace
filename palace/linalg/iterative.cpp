@@ -369,17 +369,31 @@ inline double ScaledInitialResidual(MPI_Comm comm, PreconditionerSide side,
 }
 
 // Sets the residual r of x at the start of a GMRES cycle and returns its norm. The first
-// cycle starts from zero without an initial guess, else from the initial guess scaled as
-// above unless it is zero, and sets initial_res, the reference of the stopping test.
+// cycle starts from zero without an initial guess, else from the initial guess unless it is
+// zero, scaled as above with scale_guess, and sets initial_res, the reference of the
+// stopping test (the residual norm of a zero initial guess).
 template <typename OperType, typename VecType>
 inline double CycleResidual(MPI_Comm comm, PreconditionerSide side, const OperType *A,
                             const Solver<OperType> *B, const VecType &b, VecType &x,
                             VecType &r, VecType &z, bool first_cycle, bool initial_guess,
-                            double &initial_res, bool use_timer = true)
+                            bool scale_guess, double &initial_res, bool use_timer = true)
 {
   if (first_cycle && initial_guess && linalg::Norml2(comm, x) != 0.0)
   {
-    initial_res = ScaledInitialResidual(comm, side, A, B, b, x, r, z, use_timer);
+    if (scale_guess)
+    {
+      initial_res = ScaledInitialResidual(comm, side, A, B, b, x, r, z, use_timer);
+    }
+    else
+    {
+      InitialResidual(side, A, B, b, x, r, z, true, use_timer);
+      const bool left = (B && side == PreconditionerSide::LEFT);
+      if (left)
+      {
+        ApplyB(B, b, z, use_timer);
+      }
+      initial_res = linalg::Norml2(comm, left ? z : b);
+    }
     return linalg::Norml2(comm, r);
   }
   InitialResidual(side, A, B, b, x, r, z, !first_cycle, use_timer);
@@ -686,7 +700,8 @@ void GmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
   Initialize();
 
   // Monitor the correction to a nonzero initial guess, if requested: x - x₀ = V y with
-  // orthonormal V for left or no preconditioning (first cycle only).
+  // orthonormal V for left or no preconditioning (first cycle only). With a correction
+  // limit, the guess is not scaled, so that the correction is to x₀ as given.
   correction_exceeded = false;
   RealType x0_norm = 0.0;
   const bool monitor_correction = max_rel_correction > 0.0 && this->initial_guess &&
@@ -704,8 +719,9 @@ void GmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
   for (; it < max_it; restart++)
   {
     // Initialize.
-    true_beta = CycleResidual(comm, pc_side, A, B, b, x, r, V[0], it == 0,
-                              this->initial_guess, initial_res, this->use_timer);
+    true_beta =
+        CycleResidual(comm, pc_side, A, B, b, x, r, V[0], it == 0, this->initial_guess,
+                      max_rel_correction <= 0.0, initial_res, this->use_timer);
     CheckDot(true_beta, "GMRES residual norm is not valid: beta = ");
     if (it == 0)
     {
@@ -890,7 +906,8 @@ void FgmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
   {
     // Initialize.
     true_beta = CycleResidual(comm, PreconditionerSide::RIGHT, A, B, b, x, Z[0], V[0],
-                              it == 0, this->initial_guess, initial_res, this->use_timer);
+                              it == 0, this->initial_guess, max_rel_correction <= 0.0,
+                              initial_res, this->use_timer);
     CheckDot(true_beta, "FGMRES residual norm is not valid: beta = ");
     if (it == 0)
     {

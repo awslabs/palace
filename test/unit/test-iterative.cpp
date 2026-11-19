@@ -494,12 +494,13 @@ struct GmresTestStats
   int it, operator_applications, preconditioner_applications;
   bool converged;
   double initial_res, final_res;
+  bool correction_exceeded;
 };
 
 template <typename OperType, typename VecType>
 GmresTestStats SolveGmres(const GmresTestCase<OperType> &c, const OperType &A,
                           const VecType &b, VecType &x, bool initial_guess, double rel_tol,
-                          int max_it, int restart_dim = -1)
+                          int max_it, int restart_dim = -1, double max_rel_correction = 0.0)
 {
   MPI_Comm comm = Mpi::World();
   std::unique_ptr<GmresSolver<OperType>> ksp;
@@ -522,6 +523,7 @@ GmresTestStats SolveGmres(const GmresTestCase<OperType> &c, const OperType &A,
   ksp->SetRelTol(rel_tol);
   ksp->SetMaxIter(max_it);
   ksp->SetRestartDim(restart_dim);
+  ksp->SetMaxRelativeCorrection(max_rel_correction);
   ksp->EnableTimer();
   const int count = BlockTimer::GlobalTimer().Counts(Timer::KSP_PRECONDITIONER);
   ksp->Mult(b, x);
@@ -530,7 +532,8 @@ GmresTestStats SolveGmres(const GmresTestCase<OperType> &c, const OperType &A,
           BlockTimer::GlobalTimer().Counts(Timer::KSP_PRECONDITIONER) - count,
           ksp->GetConverged(),
           ksp->GetInitialRes(),
-          ksp->GetFinalRes()};
+          ksp->GetFinalRes(),
+          ksp->GetCorrectionExceeded()};
 }
 
 // The vectors u and w of the norm of the GMRES stopping test, ||w - u|| for the guess x:
@@ -769,6 +772,61 @@ void CheckGmresInitialGuess(const OperType &A, const Solver<OperType> &jacobi,
   }
 }
 
+// Check that with a correction limit (as when certifying the PROM solution of an adaptive
+// frequency sweep), GMRES and FGMRES do not scale the initial guess, so that the
+// correction is to the guess itself, for the system A x = b with the exact solution xs
+// and a scalar c ≠ 1: the multiple c xs of the exact solution, which is scaled to it
+// without iterations otherwise, is corrected from its own residual, computed with one
+// application of A (and two of B, to b - A x and b, with left preconditioning). With left
+// or no preconditioning, the correction exceeds the limit at the first iteration and stops
+// the solve; with right preconditioning and FGMRES, it is not monitored and the solve
+// converges.
+template <typename OperType, typename VecType, typename ScalarType>
+void CheckGmresCorrectionLimitGuess(const OperType &A, const Solver<OperType> &jacobi,
+                                    const VecType &xs, ScalarType c)
+{
+  const int n = xs.Size();
+  VecType b(n), x(n);
+  UseDevice(b, x);
+  A.Mult(xs, b);
+  constexpr auto left = PreconditionerSide::LEFT, right = PreconditionerSide::RIGHT;
+  for (const GmresTestCase<OperType> &test :
+       {GmresTestCase<OperType>{"GMRES, none", nullptr, left, false},
+        GmresTestCase<OperType>{"GMRES, left Jacobi", &jacobi, left, false},
+        GmresTestCase<OperType>{"GMRES, right Jacobi", &jacobi, right, false},
+        GmresTestCase<OperType>{"FGMRES, Jacobi", &jacobi, right, true}})
+  {
+    INFO("Solver: " << test.name);
+    const bool monitored = !test.B || test.Left();
+    x = 0.0;
+    const auto zero = SolveGmres(test, A, b, x, false, 1.0e-8, 1000);
+    REQUIRE(zero.converged);
+
+    x = xs;
+    x *= c;
+    const auto scaled = SolveGmres(test, A, b, x, true, 1.0e-8, 1000);
+    CHECK(scaled.it == 0);
+    CHECK(scaled.converged);
+
+    x = xs;
+    x *= c;
+    const auto limited = SolveGmres(test, A, b, x, true, 1.0e-8, 1000, -1, 1.0e-6);
+    CHECK(limited.it >= 1);
+    CHECK(limited.correction_exceeded == monitored);
+    CHECK(limited.converged == !monitored);
+    if (monitored)
+    {
+      CHECK(limited.it == 1);
+    }
+    CHECK_THAT(limited.initial_res, WithinRel(zero.initial_res, 1.0e-12));
+    CHECK(limited.operator_applications == limited.it + 1);
+    if (test.Left())
+    {
+      CHECK(limited.preconditioner_applications == limited.it + 2);
+    }
+  }
+}
+
 }  // namespace
 
 // A zero residual with eps = 0 used to fall through the strict convergence test and
@@ -869,20 +927,21 @@ double RelativeCorrection(MPI_Comm comm, const Vector &x, const Vector &x0)
   return norm_c / (linalg::Norml2(comm, x0) + norm_c);
 }
 
-// Solve from x₀ = x + e, ‖e‖ = 10⁻³ ‖x‖. Without a limit, the relative correction after
-// k = 1, 2, ... iterations is computed from the iterates, up to the first one above all
-// previous ones. With a limit between this one and the largest previous one, the solve must
-// stop after exactly k iterations, at the same iterate: the stop is decided on the exact
-// correction, not on an estimate of it (such as the residual norm, or the rotated
-// right-hand side before the back substitution), to the margin between the two (0.5% with
-// Jacobi left preconditioning, 8% without a preconditioner).
+// Solve from x₀ = x + e, ‖e‖ = 10⁻³ ‖x‖. With a limit of 1, which cannot be exceeded (and,
+// unlike no limit, keeps x₀ unscaled), the relative correction after k = 1, 2, ...
+// iterations is computed from the iterates, up to the first one above all previous ones.
+// With a limit between this one and the largest previous one, the solve must stop after
+// exactly k iterations, at the same iterate: the stop is decided on the exact correction,
+// not on an estimate of it (such as the residual norm, or the rotated right-hand side
+// before the back substitution), to the margin between the two (0.5% with Jacobi left
+// preconditioning, 8% without a preconditioner).
 void CheckCorrectionLimitStop(GmresSolver<Operator> &ksp, MPI_Comm comm, const Vector &b,
                               const Vector &x, const Vector &d)
 {
   Vector x0(x), y(x.Size());
   x0.Add(1.0e-3 * linalg::Norml2(comm, x) / linalg::Norml2(comm, d), d);
   ksp.SetInitialGuess(true);
-  ksp.SetMaxRelativeCorrection(0.0);
+  ksp.SetMaxRelativeCorrection(1.0);
   double c_max = 0.0, c_k = 0.0;
   int k = 0;
   while (k < 10)
@@ -917,7 +976,7 @@ void CheckCorrectionLimitStop(GmresSolver<Operator> &ksp, MPI_Comm comm, const V
 
 // With a correction limit, GMRES started from a nonzero initial guess stops as soon as the
 // correction to the guess exceeds the limit relative to the solution, and otherwise
-// converges as without the limit.
+// converges as with a limit which cannot be exceeded.
 TEST_CASE("GmresSolver correction limit", "[iterative][Serial][Parallel]")
 {
   constexpr int n = 101;
@@ -962,12 +1021,13 @@ TEST_CASE("GmresSolver correction limit", "[iterative][Serial][Parallel]")
     CHECK_FALSE(ksp.GetCorrectionExceeded());
     CHECK(ksp.GetConverged());
 
-    // As without the limit: the monitor only reads the least-squares problem.
+    // As with a limit of 1, which cannot be exceeded (without a limit, the guess would be
+    // scaled): the monitor only reads the least-squares problem.
     const int num_it = ksp.GetNumIterations();
     Vector z(n);
     z = x;
     z += d;
-    ksp.SetMaxRelativeCorrection(0.0);
+    ksp.SetMaxRelativeCorrection(1.0);
     ksp.Mult(b, z);
     CHECK(ksp.GetNumIterations() == num_it);
     z -= y;
@@ -1411,6 +1471,44 @@ TEST_CASE("GmresSolver scaled initial guess", "[iterative][Serial][Parallel][GPU
     jacobi.SetOperator(Ac);
     CheckGmresInitialGuess<ComplexOperator>(Ac, jacobi, tridiagonal, xs,
                                             std::complex<double>(0.3, -1.7));
+  }
+}
+
+TEST_CASE("GmresSolver correction limit without scaling",
+          "[iterative][Serial][Parallel][GPU]")
+{
+  constexpr int n = 200;
+  MPI_Comm comm = Mpi::World();
+  TridiagonalTestOperator A(n);
+
+  SECTION("Real")
+  {
+    Vector xs(n);
+    for (int i = 0; i < n; i++)
+    {
+      xs[i] = std::cos(0.5 * i) + 0.1 * Mpi::Rank(comm);
+    }
+    UseDevice(xs);
+    JacobiSmoother<Operator> jacobi(comm);
+    jacobi.SetOperator(A);
+    CheckGmresCorrectionLimitGuess<Operator>(A, jacobi, xs, 0.5);
+  }
+
+  SECTION("Complex")
+  {
+    TridiagonalTestOperator S(n, 0.5, 0.25, 3);
+    ComplexWrapperOperator Ac(&A, &S);
+    ComplexVector xs(n);
+    for (int i = 0; i < n; i++)
+    {
+      xs.Real()[i] = std::cos(0.5 * i) + 0.1 * Mpi::Rank(comm);
+      xs.Imag()[i] = std::sin(0.3 * i);
+    }
+    UseDevice(xs);
+    JacobiSmoother<ComplexOperator> jacobi(comm);
+    jacobi.SetOperator(Ac);
+    CheckGmresCorrectionLimitGuess<ComplexOperator>(Ac, jacobi, xs,
+                                                    std::complex<double>(0.3, -1.7));
   }
 }
 
