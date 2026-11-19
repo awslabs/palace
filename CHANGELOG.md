@@ -484,6 +484,15 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Build system
 
+  - Fixed the unit-test build against Catch2 3.15.2 and later, which failed intermittently
+    after linking: `catch_discover_tests` lists the tests through a file that every MPI
+    process wrote at once. Only the root process writes it now.
+    [PR 1248](https://github.com/awslabs/palace/pull/1248).
+  - Fixed MPI runs of several unit tests at once (`mpirun -np 2 palace-unit-tests`) with
+    Catch2 3.9.0 and later, which run the tests in random order by default: the processes
+    used different seeds, ran the tests in different orders, and their collectives did not
+    match. All processes now use the seed of the root.
+    [PR 1248](https://github.com/awslabs/palace/pull/1248).
   - With MPICH and the MPI implementations derived from it, the superbuild patches the BLACS
     of ScaLAPACK to receive point-to-point messages with derived datatypes packed and unpack
     them locally. This works around an MPICH bug for processes on the same node
