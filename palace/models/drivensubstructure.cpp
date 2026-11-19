@@ -101,7 +101,7 @@ MakeFactorization(LinearSolver type, SymbolicFactorization ordering, MPI_Comm co
   if (type == LinearSolver::MUMPS)
   {
     return std::make_unique<MumpsSchurSolverT<std::complex<double>>>(
-        comm, n_glob, n_loc, std::move(coo), schur_vars, kBlrTol, 0, true, false, rows,
+        comm, n_glob, n_loc, std::move(coo), schur_vars, kBlrTol, true, false, rows,
         ordering);
   }
 #endif

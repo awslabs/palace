@@ -44,18 +44,15 @@ public:
   // schur_vars: global (0-based) true-DOF indices of the Schur variables, in the order the
   // Schur rows/columns should appear (replicated on all ranks); empty for a plain
   // factorization of A. blr_tol > 0 enables a block low-rank (BLR) factorization with that
-  // relative accuracy (0: exact). With procs > 0, about that many ranks factor (every
-  // ceil(size / procs)-th, rank 0 among them), the others sending them their entries: for a
-  // small system, it avoids MUMPS's per-rank workspace on every rank (0: all ranks). With
-  // refactor, the entries are kept so that Refactor can factor new values with the same
-  // pattern, reusing the analysis. spd: A is positive definite, so it is factored without
-  // numerical pivoting. ordering is the fill-reducing ordering ("Default": METIS); MUMPS
-  // computes a Schur complement only after a sequential analysis, so with Schur variables a
-  // parallel ordering is replaced by its sequential counterpart. block: the block size of
-  // the distribution of the Schur complement.
+  // relative accuracy (0: exact). With refactor, the entries are kept so that Refactor can
+  // factor new values with the same pattern, reusing the analysis. spd: A is positive
+  // definite, so it is factored without numerical pivoting. ordering is the fill-reducing
+  // ordering ("Default": METIS); MUMPS computes a Schur complement only after a sequential
+  // analysis, so with Schur variables a parallel ordering is replaced by its sequential
+  // counterpart. block: the block size of the distribution of the Schur complement.
   MumpsSchurSolverT(const mfem::HypreParMatrix &A,
                     const std::vector<HYPRE_BigInt> &schur_vars, double blr_tol = 0.0,
-                    int procs = 0, bool refactor = false, bool spd = true,
+                    bool refactor = false, bool spd = true,
                     SymbolicFactorization ordering = SymbolicFactorization::DEFAULT,
                     int block = 64);
 
@@ -65,8 +62,7 @@ public:
   // are 0).
   MumpsSchurSolverT(MPI_Comm comm, HYPRE_BigInt n_glob, int n_loc, Coo &&A,
                     const std::vector<HYPRE_BigInt> &schur_vars, double blr_tol = 0.0,
-                    int procs = 0, bool refactor = false, bool spd = true,
-                    std::vector<int> rows = {},
+                    bool refactor = false, bool spd = true, std::vector<int> rows = {},
                     SymbolicFactorization ordering = SymbolicFactorization::DEFAULT,
                     int block = 64);
 
@@ -94,11 +90,9 @@ public:
 private:
   void Init(const std::vector<HYPRE_BigInt> &schur_vars);
   void Factor();
-  // This rank holds a part of the Schur complement: the factoring ranks are every
-  // stride-th, the processes of the grid the first of them.
-  bool InGrid() const { return active && rank / stride < nprow * npcol; }
+  // This rank holds a part of the Schur complement, whose grid is of the first ranks.
+  bool InGrid() const { return rank < nprow * npcol; }
   void Check(const char *phase) const;
-  void GatherEntries();
   // The largest diagonal entry of the local values (diag_pos), over the ranks: the scale of
   // the BLR tolerance.
   double DiagonalScale() const;
@@ -123,25 +117,18 @@ private:
   }
 
   MPI_Comm comm;
-  int rank = 0, procs = 0, stride = 1;
+  int rank = 0;
   bool refactor = false, spd = true, factored = false;
   SymbolicFactorization ordering = SymbolicFactorization::DEFAULT;
-  bool active = true;  // this rank takes part in the factorization
-  // With fewer ranks factoring: the ranks factoring, and the group of each (one factoring
-  // rank and the ranks sending it their entries, with the counts and offsets of their
-  // entries on the factoring rank).
-  MPI_Comm sub = MPI_COMM_NULL, grp = MPI_COMM_NULL;
-  std::vector<int> grp_cnt, grp_disp, grp_row_cnt, grp_row_disp;
   HYPRE_BigInt n_glob;
   int n_loc, n_schur;
-  // The grid of the Schur complement (nprow x npcol, of the first ranks factoring, in
-  // blocks of mb).
+  // The grid of the Schur complement (nprow x npcol, of the first ranks, in blocks of mb).
   int nprow = 1, npcol = 1, mb;
   SchurRowGather gather;
   std::vector<int> row_cnt, row_disp, rows;
   int parent = 0;  // the vectors of the solves are of the parent space of rows
   std::vector<MUMPS_INT> irn, jcn, listvar, irhs_loc, isol_loc;
-  std::vector<T> val, grp_val, schur, redrhs, rhs_loc, sol_loc;
+  std::vector<T> val, schur, redrhs, rhs_loc, sol_loc;
   int reduced = 0;  // right-hand sides of the last Reduce, pending Expand
   double blr_tol = 0.0, scale = 1.0;
   std::vector<std::size_t> diag_pos;  // the diagonal entries of the local values (BLR)

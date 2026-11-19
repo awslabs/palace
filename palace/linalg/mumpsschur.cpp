@@ -72,10 +72,10 @@ typename MumpsSchurSolverT<T>::Coo LowerTriangle(const mfem::HypreParMatrix &A)
 template <typename T>
 MumpsSchurSolverT<T>::MumpsSchurSolverT(const mfem::HypreParMatrix &A,
                                         const std::vector<HYPRE_BigInt> &schur_vars,
-                                        double blr_tol, int procs, bool refactor, bool spd,
+                                        double blr_tol, bool refactor, bool spd,
                                         SymbolicFactorization ordering, int block)
   : MumpsSchurSolverT(A.GetComm(), A.GetGlobalNumRows(), A.Height(), LowerTriangle<T>(A),
-                      schur_vars, blr_tol, procs, refactor, spd, {}, ordering, block)
+                      schur_vars, blr_tol, refactor, spd, {}, ordering, block)
 {
 }
 
@@ -83,11 +83,11 @@ template <typename T>
 MumpsSchurSolverT<T>::MumpsSchurSolverT(MPI_Comm comm, HYPRE_BigInt n_glob, int n_loc,
                                         Coo &&A,
                                         const std::vector<HYPRE_BigInt> &schur_vars,
-                                        double blr_tol, int procs, bool refactor, bool spd,
+                                        double blr_tol, bool refactor, bool spd,
                                         std::vector<int> rows,
                                         SymbolicFactorization ordering, int block)
-  : comm(comm), procs(procs), refactor(refactor), spd(spd), ordering(ordering),
-    n_glob(n_glob), n_loc(n_loc), n_schur(static_cast<int>(schur_vars.size())), mb(block),
+  : comm(comm), refactor(refactor), spd(spd), ordering(ordering), n_glob(n_glob),
+    n_loc(n_loc), n_schur(static_cast<int>(schur_vars.size())), mb(block),
     gather(comm, n_loc, schur_vars), rows(std::move(rows)), irn(std::move(A.irn)),
     jcn(std::move(A.jcn)), val(std::move(A.val)), blr_tol(blr_tol)
 {
@@ -105,11 +105,8 @@ void MumpsSchurSolverT<T>::Init(const std::vector<HYPRE_BigInt> &schur_vars)
   MPI_Comm_rank(comm, &rank);
   int nranks;
   MPI_Comm_size(comm, &nranks);
-  stride = (procs > 0 && procs < nranks) ? (nranks + procs - 1) / procs : 1;
-  procs = (nranks + stride - 1) / stride;
-  nprow = static_cast<int>(std::sqrt(static_cast<double>(procs)));
-  npcol = procs / nprow;
-  active = (rank % stride == 0);
+  nprow = static_cast<int>(std::sqrt(static_cast<double>(nranks)));
+  npcol = nranks / nprow;
   row_cnt.assign(nranks, 0);
   row_disp.assign(nranks, 0);
   MPI_Allgather(&n_loc, 1, MPI_INT, row_cnt.data(), 1, MPI_INT, comm);
@@ -137,48 +134,11 @@ void MumpsSchurSolverT<T>::Init(const std::vector<HYPRE_BigInt> &schur_vars)
       v /= scale;
     }
   }
-  if (stride > 1)
+  // The rows of the right-hand sides this rank passes to MUMPS (1-based): its own.
+  irhs_loc.resize(std::max(n_loc, 1), 1);
+  for (int i = 0; i < n_loc; i++)
   {
-    // Groups of stride consecutive ranks, whose first rank factors: the pattern of the
-    // group's entries on it.
-    MPI_Comm_split(comm, active ? 0 : MPI_UNDEFINED, rank, &sub);
-    MPI_Comm_split(comm, rank / stride, rank, &grp);
-    int ng, nnz_loc = static_cast<int>(irn.size());
-    MPI_Comm_size(grp, &ng);
-    grp_cnt.assign(active ? ng : 0, 0);
-    grp_disp.assign(active ? ng : 0, 0);
-    MPI_Gather(&nnz_loc, 1, MPI_INT, grp_cnt.data(), 1, MPI_INT, 0, grp);
-    for (int r = 1; r < static_cast<int>(grp_cnt.size()); r++)
-    {
-      grp_disp[r] = grp_disp[r - 1] + grp_cnt[r - 1];
-    }
-    const std::size_t total = active ? grp_disp.back() + grp_cnt.back() : 0;
-    std::vector<MUMPS_INT> irn_g(total), jcn_g(total);
-    MPI_Gatherv(irn.data(), nnz_loc, MPI_INT, irn_g.data(), grp_cnt.data(), grp_disp.data(),
-                MPI_INT, 0, grp);
-    MPI_Gatherv(jcn.data(), nnz_loc, MPI_INT, jcn_g.data(), grp_cnt.data(), grp_disp.data(),
-                MPI_INT, 0, grp);
-    irn.swap(irn_g);
-    jcn.swap(jcn_g);
-  }
-  GatherEntries();
-  // The rows of the right-hand sides each factoring rank passes to MUMPS (1-based): those
-  // of its group of consecutive ranks, contiguous.
-  if (active)
-  {
-    const int g1 = std::min(rank + stride, nranks);
-    grp_row_cnt.assign(row_cnt.begin() + rank, row_cnt.begin() + g1);
-    grp_row_disp.assign(grp_row_cnt.size(), 0);
-    for (std::size_t r = 1; r < grp_row_cnt.size(); r++)
-    {
-      grp_row_disp[r] = grp_row_disp[r - 1] + grp_row_cnt[r - 1];
-    }
-    const int m = grp_row_disp.back() + grp_row_cnt.back();
-    irhs_loc.resize(std::max(m, 1), 1);
-    for (int i = 0; i < m; i++)
-    {
-      irhs_loc[i] = static_cast<MUMPS_INT>(row_disp[rank] + i + 1);
-    }
+    irhs_loc[i] = static_cast<MUMPS_INT>(row_disp[rank] + i + 1);
   }
   for (HYPRE_BigInt v : schur_vars)
   {
@@ -186,78 +146,74 @@ void MumpsSchurSolverT<T>::Init(const std::vector<HYPRE_BigInt> &schur_vars)
   }
 
   auto icntl = [&](int i) -> MUMPS_INT & { return id.icntl[i - 1]; };
-  if (active)
+  id.sym = (spd && !kComplex) ? 1 : 2;  // positive definite (no pivoting), or symmetric
+  id.par = 1;                           // the host takes part in the factorization
+  id.comm_fortran = static_cast<MUMPS_INT>(MPI_Comm_c2f(comm));
+  id.job = -1;
+  Call();
+  icntl(1) = -1;  // silence errors / diagnostics / global info / printing
+  icntl(2) = -1;
+  icntl(3) = -1;
+  icntl(4) = 0;
+  icntl(5) = 0;   // assembled input
+  icntl(18) = 3;  // distributed matrix entries
+  // Complete Schur (if any Schur variables), 2D block cyclic on a near-square grid of the
+  // ranks (MUMPS symmetrizes it with blocks of the same rows and columns).
+  icntl(19) = (n_schur > 0) ? 3 : 0;
+  // Fill-reducing ordering: sequential (ICNTL(7)), or parallel (ICNTL(29)) for ParMETIS
+  // and PT-SCOTCH if there are no Schur variables.
+  const bool parallel = n_schur == 0 && (ordering == SymbolicFactorization::PARMETIS ||
+                                         ordering == SymbolicFactorization::PTSCOTCH);
+  icntl(28) = parallel ? 2 : 1;
+  switch (ordering)
   {
-    id.sym = (spd && !kComplex) ? 1 : 2;  // positive definite (no pivoting), or symmetric
-    id.par = 1;                           // the host takes part in the factorization
-    id.comm_fortran =
-        static_cast<MUMPS_INT>(MPI_Comm_c2f(sub != MPI_COMM_NULL ? sub : comm));
-    id.job = -1;
-    Call();
-    icntl(1) = -1;  // silence errors / diagnostics / global info / printing
-    icntl(2) = -1;
-    icntl(3) = -1;
-    icntl(4) = 0;
-    icntl(5) = 0;   // assembled input
-    icntl(18) = 3;  // distributed matrix entries
-    // Complete Schur (if any Schur variables), 2D block cyclic on a near-square grid of the
-    // ranks factoring (MUMPS symmetrizes it with blocks of the same rows and columns).
-    icntl(19) = (n_schur > 0) ? 3 : 0;
-    // Fill-reducing ordering: sequential (ICNTL(7)), or parallel (ICNTL(29)) for ParMETIS
-    // and PT-SCOTCH if there are no Schur variables.
-    const bool parallel = n_schur == 0 && (ordering == SymbolicFactorization::PARMETIS ||
-                                           ordering == SymbolicFactorization::PTSCOTCH);
-    icntl(28) = parallel ? 2 : 1;
-    switch (ordering)
-    {
-      case SymbolicFactorization::PARMETIS:
-        icntl(7) = 5;  // METIS
-        icntl(29) = 2;
-        break;
-      case SymbolicFactorization::PTSCOTCH:
-        icntl(7) = 3;  // SCOTCH
-        icntl(29) = 1;
-        break;
-      case SymbolicFactorization::SCOTCH:
-        icntl(7) = 3;
-        break;
-      case SymbolicFactorization::PORD:
-        icntl(7) = 4;
-        break;
-      case SymbolicFactorization::AMD:
-      case SymbolicFactorization::RCM:
-        icntl(7) = 0;
-        break;
-      case SymbolicFactorization::METIS:
-      case SymbolicFactorization::DEFAULT:
-        icntl(7) = 5;
-        break;
-    }
-    icntl(14) = 50;  // workspace relaxation (%); raised on a workspace failure below
-    if (blr_tol > 0.0)
-    {
-      icntl(35) = 2;  // BLR in both factorization and solve (compressed factors)
-      icntl(36) = 1;  // UCFS variant: compress earlier, fewer operations
-      if (spd)
-      {
-        id.cntl[0] = 0.0;  // CNTL(1): no numerical pivoting
-      }
-      id.cntl[6] = blr_tol;  // CNTL(7): dropping parameter (relative, after the scaling)
-    }
-    id.n = static_cast<MUMPS_INT>(n_glob);
-    id.nnz_loc = static_cast<MUMPS_INT8>(irn.size());
-    id.irn_loc = irn.data();
-    id.jcn_loc = jcn.data();
-    id.a_loc = Entries(grp != MPI_COMM_NULL ? grp_val.data() : val.data());
-    id.size_schur = n_schur;
-    id.listvar_schur = listvar.data();
-    id.nprow = nprow;
-    id.npcol = npcol;
-    id.mblock = mb;
-    id.nblock = mb;
-    id.job = 1;  // analysis
-    Call();
+    case SymbolicFactorization::PARMETIS:
+      icntl(7) = 5;  // METIS
+      icntl(29) = 2;
+      break;
+    case SymbolicFactorization::PTSCOTCH:
+      icntl(7) = 3;  // SCOTCH
+      icntl(29) = 1;
+      break;
+    case SymbolicFactorization::SCOTCH:
+      icntl(7) = 3;
+      break;
+    case SymbolicFactorization::PORD:
+      icntl(7) = 4;
+      break;
+    case SymbolicFactorization::AMD:
+    case SymbolicFactorization::RCM:
+      icntl(7) = 0;
+      break;
+    case SymbolicFactorization::METIS:
+    case SymbolicFactorization::DEFAULT:
+      icntl(7) = 5;
+      break;
   }
+  icntl(14) = 50;  // workspace relaxation (%); raised on a workspace failure below
+  if (blr_tol > 0.0)
+  {
+    icntl(35) = 2;  // BLR in both factorization and solve (compressed factors)
+    icntl(36) = 1;  // UCFS variant: compress earlier, fewer operations
+    if (spd)
+    {
+      id.cntl[0] = 0.0;  // CNTL(1): no numerical pivoting
+    }
+    id.cntl[6] = blr_tol;  // CNTL(7): dropping parameter (relative, after the scaling)
+  }
+  id.n = static_cast<MUMPS_INT>(n_glob);
+  id.nnz_loc = static_cast<MUMPS_INT8>(irn.size());
+  id.irn_loc = irn.data();
+  id.jcn_loc = jcn.data();
+  id.a_loc = Entries(val.data());
+  id.size_schur = n_schur;
+  id.listvar_schur = listvar.data();
+  id.nprow = nprow;
+  id.npcol = npcol;
+  id.mblock = mb;
+  id.nblock = mb;
+  id.job = 1;  // analysis
+  Call();
   Check("analysis");
   if (InGrid() && n_schur > 0)
   {
@@ -269,8 +225,8 @@ void MumpsSchurSolverT<T>::Init(const std::vector<HYPRE_BigInt> &schur_vars)
 template <typename T>
 std::vector<T> MumpsSchurSolverT<T>::ReleaseSchurRows()
 {
-  // S is 2D block cyclic (local parts column-major) on the grid of the first ranks
-  // factoring, process p (the rank p stride) at (p / npcol, p % npcol). Each round sends
+  // S is 2D block cyclic (local parts column-major) on the grid of the first nprow npcol
+  // ranks, rank p at (p / npcol, p % npcol). Each round sends
   // one local block column of every process to the owners of its rows, column by column and
   // in a column the rows of each owner in turn, which place them by the same traversal.
   const int nranks = static_cast<int>(row_cnt.size()), ns = n_schur,
@@ -305,8 +261,7 @@ std::vector<T> MumpsSchurSolverT<T>::ReleaseSchurRows()
   }
   const int ngrid = nprow * npcol;
   const bool grid = InGrid();
-  const int me = rank / stride, myrow = grid ? me / npcol : 0,
-            mycol = grid ? me % npcol : 0,
+  const int myrow = grid ? rank / npcol : 0, mycol = grid ? rank % npcol : 0,
             mloc = grid ? LocalCount(ns, mb, myrow, nprow) : 0;
   const std::size_t lld = std::max(1, mloc);
   std::vector<int> dest(mloc);
@@ -330,7 +285,7 @@ std::vector<T> MumpsSchurSolverT<T>::ReleaseSchurRows()
     }
     for (int p = 0; p < ngrid; p++)
     {
-      rcnt[p * stride] = static_cast<int>(mine[p / npcol].size()) * width(p % npcol);
+      rcnt[p] = static_cast<int>(mine[p / npcol].size()) * width(p % npcol);
     }
     for (int r = 1; r < nranks; r++)
     {
@@ -353,7 +308,7 @@ std::vector<T> MumpsSchurSolverT<T>::ReleaseSchurRows()
     for (int p = 0; p < ngrid; p++)
     {
       const int pr = p / npcol, pc = p % npcol;
-      std::size_t q = rdsp[p * stride];
+      std::size_t q = rdsp[p];
       for (int j = 0; j < width(pc); j++)
       {
         const int c = GlobalIndex(k * mb + j, mb, pc, npcol);
@@ -402,7 +357,7 @@ void MumpsSchurSolverT<T>::Factor()
                  T(0.0));
     id.schur = Entries(schur.data());
   }
-  for (int attempt = 0; active; attempt++)
+  for (int attempt = 0;; attempt++)
   {
     id.job = 2;
     Call();
@@ -437,7 +392,6 @@ void MumpsSchurSolverT<T>::Factor()
     Release(irn);
     Release(jcn);
     Release(val);
-    Release(grp_val);
   }
   if (blr_tol > 0.0)
   {
@@ -450,13 +404,14 @@ void MumpsSchurSolverT<T>::Factor()
       // INFOG(21/22), (18/19), (16/17): memory used, allocated and estimated (full rank),
       // max per rank / total (MB); INFOG(29/35): theoretical / effective factor entries.
       auto big = [](MUMPS_INT v) { return v >= 0 ? static_cast<double>(v) : -1.0e6 * v; };
+      const int nranks = static_cast<int>(row_cnt.size());
       Mpi::Print(
           comm,
           " MUMPS BLR (tol = {:.1e}): factor entries {:.1f}% of full rank, memory "
           "{:.2f} GB used of {:.2f} GB allocated ({:.2f} GB estimated) on {:d} rank{} "
           "({:.2f} / {:.2f} GB max per rank)\n",
           blr_tol, 100.0 * big(id.infog[34]) / big(id.infog[28]), id.infog[21] / 1024.0,
-          id.infog[18] / 1024.0, id.infog[16] / 1024.0, procs, (procs > 1) ? "s" : "",
+          id.infog[18] / 1024.0, id.infog[16] / 1024.0, nranks, (nranks > 1) ? "s" : "",
           id.infog[20] / 1024.0, id.infog[17] / 1024.0);
     }
   }
@@ -487,48 +442,22 @@ void MumpsSchurSolverT<T>::Refactor()
   {
     v /= scale;
   }
-  GatherEntries();
-  if (active)
-  {
-    id.a_loc = Entries(grp != MPI_COMM_NULL ? grp_val.data() : val.data());
-  }
+  id.a_loc = Entries(val.data());
   Factor();
 }
 
 template <typename T>
 MumpsSchurSolverT<T>::~MumpsSchurSolverT()
 {
-  if (active)
-  {
-    id.job = -2;
-    Call();
-  }
-  for (MPI_Comm *c : {&sub, &grp})
-  {
-    if (*c != MPI_COMM_NULL)
-    {
-      MPI_Comm_free(c);
-    }
-  }
-}
-
-template <typename T>
-void MumpsSchurSolverT<T>::GatherEntries()
-{
-  // The values of the group's entries on its factoring rank.
-  if (grp != MPI_COMM_NULL)
-  {
-    grp_val.resize(active ? grp_disp.back() + grp_cnt.back() : 0);
-    MPI_Gatherv(val.data(), static_cast<int>(val.size()), MpiType<T>(), grp_val.data(),
-                grp_cnt.data(), grp_disp.data(), MpiType<T>(), 0, grp);
-  }
+  id.job = -2;
+  Call();
 }
 
 template <typename T>
 void MumpsSchurSolverT<T>::SetRhs(const std::vector<const VecType *> &X)
 {
-  // The right-hand sides distributed by rows (ICNTL(20) = 10): each factoring rank passes
-  // the rows of its group, column-major.
+  // The right-hand sides distributed by rows (ICNTL(20) = 10): each rank passes its rows,
+  // column-major.
   const int nb = static_cast<int>(X.size());
   std::vector<T> loc(static_cast<std::size_t>(n_loc) * nb);
   for (int k = 0; k < nb; k++)
@@ -554,31 +483,14 @@ void MumpsSchurSolverT<T>::SetRhs(const std::vector<const VecType *> &X)
       }
     }
   }
-  const int m = active ? grp_row_disp.back() + grp_row_cnt.back() : 0;
-  if (grp != MPI_COMM_NULL)
-  {
-    rhs_loc.assign(static_cast<std::size_t>(std::max(m, 1)) * nb, T(0.0));
-    for (int k = 0; k < nb; k++)
-    {
-      MPI_Gatherv(loc.data() + static_cast<std::size_t>(k) * n_loc, n_loc, MpiType<T>(),
-                  active ? rhs_loc.data() + static_cast<std::size_t>(k) * m : nullptr,
-                  grp_row_cnt.data(), grp_row_disp.data(), MpiType<T>(), 0, grp);
-    }
-  }
-  else
-  {
-    loc.resize(static_cast<std::size_t>(std::max(m, 1)) * nb);
-    rhs_loc.swap(loc);
-  }
-  if (active)
-  {
-    id.icntl[19] = 10;  // ICNTL(20): distributed right-hand sides
-    id.nrhs = nb;
-    id.nloc_rhs = m;
-    id.lrhs_loc = std::max(m, 1);
-    id.rhs_loc = Entries(rhs_loc.data());
-    id.irhs_loc = irhs_loc.data();
-  }
+  loc.resize(static_cast<std::size_t>(std::max(n_loc, 1)) * nb);
+  rhs_loc.swap(loc);
+  id.icntl[19] = 10;  // ICNTL(20): distributed right-hand sides
+  id.nrhs = nb;
+  id.nloc_rhs = n_loc;
+  id.lrhs_loc = std::max(n_loc, 1);
+  id.rhs_loc = Entries(rhs_loc.data());
+  id.irhs_loc = irhs_loc.data();
 }
 
 template <typename T>
@@ -586,17 +498,14 @@ void MumpsSchurSolverT<T>::SetSolution(int nb)
 {
   // Room for the solution distributed as MUMPS leaves it (ICNTL(21) = 1): INFO(23) rows on
   // each rank after the factorization.
-  if (active)
-  {
-    const int ns = std::max<MUMPS_INT>(id.info[22], 1);
-    sol_loc.assign(static_cast<std::size_t>(ns) * nb, T(0.0));
-    isol_loc.assign(ns, 0);
-    id.icntl[20] = 1;  // ICNTL(21): distributed solution
-    id.nrhs = nb;
-    id.lsol_loc = ns;
-    id.sol_loc = Entries(sol_loc.data());
-    id.isol_loc = isol_loc.data();
-  }
+  const int ns = std::max<MUMPS_INT>(id.info[22], 1);
+  sol_loc.assign(static_cast<std::size_t>(ns) * nb, T(0.0));
+  isol_loc.assign(ns, 0);
+  id.icntl[20] = 1;  // ICNTL(21): distributed solution
+  id.nrhs = nb;
+  id.lsol_loc = ns;
+  id.sol_loc = Entries(sol_loc.data());
+  id.isol_loc = isol_loc.data();
 }
 
 template <typename T>
@@ -606,7 +515,7 @@ void MumpsSchurSolverT<T>::ScatterSolution(const std::vector<VecType *> &Y)
   // internal problem, u_S for an expansion), to the ranks owning their rows, unscaled:
   // (A / s)^-1 b = s A^-1 b.
   const int nb = static_cast<int>(Y.size()), nranks = static_cast<int>(row_cnt.size());
-  const int ns = active ? id.info[22] : 0;
+  const int ns = id.info[22];
   std::vector<int> owner(ns), scnt(nranks, 0), rcnt(nranks), sdsp(nranks, 0),
       rdsp(nranks, 0);
   for (int q = 0; q < ns; q++)
@@ -700,12 +609,9 @@ void MumpsSchurSolverT<T>::SolveInternal(const std::vector<const VecType *> &X,
     const int nb = std::min(B, n - c0);
     SetRhs({X.begin() + c0, X.begin() + c0 + nb});
     SetSolution(nb);
-    if (active)
-    {
-      id.icntl[25] = 0;  // ICNTL(26): the internal problem (Schur variables held at 0)
-      id.job = 3;
-      Call();
-    }
+    id.icntl[25] = 0;  // ICNTL(26): the internal problem (Schur variables held at 0)
+    id.job = 3;
+    Call();
     Check("solve");
     Release(rhs_loc);
     ScatterSolution({Y.begin() + c0, Y.begin() + c0 + nb});
@@ -728,12 +634,9 @@ void MumpsSchurSolverT<T>::Reduce(const std::vector<const VecType *> &B,
     id.redrhs = Entries(redrhs.data());
     id.lredrhs = n_schur;
   }
-  if (active)
-  {
-    id.icntl[25] = 1;  // ICNTL(26): condensation onto the Schur variables
-    id.job = 3;
-    Call();
-  }
+  id.icntl[25] = 1;  // ICNTL(26): condensation onto the Schur variables
+  id.job = 3;
+  Call();
   Check("condensation");
   Release(rhs_loc);
   Release(sol_loc);
@@ -764,15 +667,12 @@ void MumpsSchurSolverT<T>::Expand(const std::vector<T> &u, const std::vector<Vec
     id.lredrhs = n_schur;
   }
   SetSolution(nb);
-  if (active)
-  {
-    // The right-hand sides are those of the condensation (kept by MUMPS).
-    id.icntl[19] = 0;  // ICNTL(20)
-    id.rhs = nullptr;
-    id.icntl[25] = 2;  // ICNTL(26): expansion from the Schur part of the solution
-    id.job = 3;
-    Call();
-  }
+  // The right-hand sides are those of the condensation (kept by MUMPS).
+  id.icntl[19] = 0;  // ICNTL(20)
+  id.rhs = nullptr;
+  id.icntl[25] = 2;  // ICNTL(26): expansion from the Schur part of the solution
+  id.job = 3;
+  Call();
   Check("expansion");
   Release(redrhs);
   reduced = 0;
@@ -791,12 +691,8 @@ void MumpsSchurSolverT<T>::Condense(const std::vector<const VecType *> &X,
 template <typename T>
 void MumpsSchurSolverT<T>::Check(const char *phase) const
 {
-  // INFOG is global (identical on the ranks taking part, rank 0 among them).
-  int info[2] = {id.infog[0], id.infog[1]};
-  if (grp != MPI_COMM_NULL)
-  {
-    MPI_Bcast(info, 2, MPI_INT, 0, comm);
-  }
+  // INFOG is global (identical on all ranks).
+  const int info[2] = {id.infog[0], id.infog[1]};
   MFEM_VERIFY(info[0] >= 0, "MUMPS " << phase << " failed: INFOG(1) = " << info[0]
                                      << ", INFOG(2) = " << info[1] << "!");
 }

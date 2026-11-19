@@ -4056,12 +4056,11 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
 }
 
 #if defined(MFEM_USE_MUMPS)
-TEST_CASE("MumpsSchurSolver factors on a subset of the ranks",
-          "[substructure][Serial][Parallel]")
+TEST_CASE("MumpsSchurSolver refactors with new values", "[substructure][Serial][Parallel]")
 {
   // A complex symmetric shifted Laplacian with Schur variables on a face of the cube,
-  // factored on all ranks and on fewer: the same Schur complement and internal solves,
-  // also after a refactorization with new values.
+  // refactored with its values doubled: the Schur complement doubles, and the internal
+  // solves halve.
   auto pmesh = MakeSplitCube(4);
   mfem::H1_FECollection fec(2, 3);
   mfem::ParFiniteElementSpace fes(pmesh.get(), &fec);
@@ -4099,70 +4098,45 @@ TEST_CASE("MumpsSchurSolver factors on a subset of the ranks",
   x.Real().Randomize(1 + Mpi::Rank(comm));
   x.Imag().Randomize(2 + Mpi::Rank(comm));
 
-  struct Result
+  ComplexMumpsSchurSolver::Coo coo;
+  std::vector<std::vector<double>> vals;
+  std::vector<int> row_ptr;
+  LowerTrianglePattern({A.get()}, coo.irn, coo.jcn, vals, row_ptr);
+  for (double v : vals[0])
   {
-    std::vector<std::complex<double>> S[2];
-    ComplexVector y[2];
-  };
-  auto run = [&](int procs)
+    coo.val.push_back(std::complex<double>(1.0, 0.1) * v);
+  }
+  ComplexMumpsSchurSolver solver(comm, A->GetGlobalNumRows(), nt, std::move(coo),
+                                 schur_vars, 0.0, true, false);
+  std::vector<std::complex<double>> S[2];
+  ComplexVector y[2];
+  for (int k = 0; k < 2; k++)
   {
-    ComplexMumpsSchurSolver::Coo coo;
-    std::vector<std::vector<double>> vals;
-    std::vector<int> row_ptr;
-    LowerTrianglePattern({A.get()}, coo.irn, coo.jcn, vals, row_ptr);
-    for (double v : vals[0])
+    if (k == 1)
     {
-      coo.val.push_back(std::complex<double>(1.0, 0.1) * v);
-    }
-    ComplexMumpsSchurSolver solver(comm, A->GetGlobalNumRows(), nt, std::move(coo),
-                                   schur_vars, 0.0, procs, true, false);
-    Result res;
-    for (int k = 0; k < 2; k++)
-    {
-      if (k == 1)
+      for (auto &v : solver.Values())
       {
-        for (auto &v : solver.Values())
-        {
-          v *= 2.0;
-        }
-        solver.Refactor();
+        v *= 2.0;
       }
-      res.S[k] = solver.ReleaseSchur();
-      solver.SolveInternal({&x}, {&res.y[k]});
+      solver.Refactor();
     }
-    return res;
-  };
-  auto dist = [](const std::vector<std::complex<double>> &a,
-                 const std::vector<std::complex<double>> &b, std::complex<double> c)
-  {
-    double d = 0.0, m = 0.0;
-    for (std::size_t q = 0; q < b.size(); q++)
-    {
-      d = std::max(d, std::abs(a[q] - c * b[q]));
-      m = std::max(m, std::abs(c * b[q]));
-    }
-    return d / m;
-  };
-  const Result ref = run(0);
+    S[k] = solver.ReleaseSchur();
+    solver.SolveInternal({&x}, {&y[k]});
+  }
   if (Mpi::Root(comm))
   {
-    CHECK(dist(ref.S[1], ref.S[0], 2.0) <= 1.0e-12);
-  }
-  for (int procs : {1, 2})
-  {
-    CAPTURE(procs, nranks);
-    const Result res = run(procs);
-    for (int k = 0; k < 2; k++)
+    double d = 0.0, m = 0.0;
+    for (std::size_t q = 0; q < S[0].size(); q++)
     {
-      if (Mpi::Root(comm))
-      {
-        CHECK(dist(res.S[k], ref.S[k], 1.0) <= 1.0e-12);
-      }
-      ComplexVector d(res.y[k]);
-      d -= ref.y[k];
-      CHECK(linalg::Norml2(comm, d) <= 1.0e-12 * linalg::Norml2(comm, ref.y[k]));
+      d = std::max(d, std::abs(S[1][q] - 2.0 * S[0][q]));
+      m = std::max(m, std::abs(2.0 * S[0][q]));
     }
+    CHECK(d <= 1.0e-12 * m);
   }
+  ComplexVector d(y[1]);
+  d *= 2.0;
+  d -= y[0];
+  CHECK(linalg::Norml2(comm, d) <= 1.0e-12 * linalg::Norml2(comm, y[0]));
 }
 
 TEST_CASE("MumpsSchurSolver keeps its tolerance relative when refactored",
@@ -4216,7 +4190,7 @@ TEST_CASE("MumpsSchurSolver keeps its tolerance relative when refactored",
     }
     const auto values = coo.val;
     ComplexMumpsSchurSolver solver(comm, A->GetGlobalNumRows(), nt, std::move(coo),
-                                   schur_vars, blr_tol, 0, true, false);
+                                   schur_vars, blr_tol, true, false);
     std::array<std::vector<std::complex<double>>, 2> S;
     S[0] = solver.ReleaseSchur();
     for (std::size_t q = 0; q < values.size(); q++)

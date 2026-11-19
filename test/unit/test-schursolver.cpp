@@ -173,7 +173,6 @@ TEST_CASE("Schur solvers give the Schur complement and the internal solves",
 #if defined(MFEM_USE_MUMPS)
   backends.push_back("MUMPS");
   backends.push_back("MUMPS, blocks of 4");
-  backends.push_back("MUMPS on every other rank, blocks of 4");
 #endif
 #if defined(PALACE_WITH_STRUMPACK_SCHUR)
   backends.push_back("STRUMPACK");
@@ -196,15 +195,8 @@ TEST_CASE("Schur solvers give the Schur complement and the internal solves",
     if (backend == "MUMPS, blocks of 4")
     {
       // Several blocks of S on each process of the grid.
-      return std::make_unique<MumpsSchurSolver>(A_elim, schur_vars, 0.0, 0, false, true,
+      return std::make_unique<MumpsSchurSolver>(A_elim, schur_vars, 0.0, false, true,
                                                 SymbolicFactorization::DEFAULT, 4);
-    }
-    if (backend == "MUMPS on every other rank, blocks of 4")
-    {
-      // The grid of the ranks factoring, every stride-th.
-      return std::make_unique<MumpsSchurSolver>(A_elim, schur_vars, 0.0,
-                                                std::max(1, Mpi::Size(comm) / 2), false,
-                                                true, SymbolicFactorization::DEFAULT, 4);
     }
 #endif
 #if defined(PALACE_WITH_STRUMPACK_SCHUR)
