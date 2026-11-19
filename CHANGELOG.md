@@ -300,6 +300,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     tens of seconds on many nodes). MPI initialization, which includes waiting for all
     processes to start, has its own row, `MPI Startup`.
     [PR 1242](https://github.com/awslabs/palace/pull/1242).
+  - Fixed the error estimates being all zero when MFEM uses a device but libCEED a CPU
+    backend, as with `"Device": "Debug"` or a GPU run with a CPU `"Backend"`, which kept
+    adaptive mesh refinement from refining. Default GPU runs were not affected.
+    [PR 1241](https://github.com/awslabs/palace/pull/1241).
   - Fixed the pivoting of distributed BLR fronts in STRUMPACK with a patch from upstream.
     With BLR compression (`"STRUMPACKCompressionType"` `"BLR"`, `"BLR-HODLR"` or
     `"ZFP-BLR-HODLR"`) on two or more MPI processes, the factorization of an indefinite
