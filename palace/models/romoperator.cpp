@@ -791,6 +791,12 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
     // per included port.
     max_prom_size += 2 * NumSynthesisWavePortModes();
 
+    // Each anchor-flagged port adds exactly one real basis vector per screening frequency
+    // (the anchor solve keeps only the real response; see
+    // AddLumpedPortAnchorModesForSynthesis).
+    max_prom_size += NumSynthesisAnchorPorts() *
+                     iodata.solver.driven.adaptive_circuit_synthesis_anchor_freq.size();
+
     // Build inner-product weight matrix.
     weight_op_W = HybridBulkBoundaryOperator{
         space_op, iodata.solver.driven.adaptive_circuit_synthesis_domain_orthog};
@@ -1034,6 +1040,19 @@ std::size_t RomOperator::NumSynthesisWavePortModes() const
   return n;
 }
 
+std::size_t RomOperator::NumSynthesisAnchorPorts() const
+{
+  std::size_t n = 0;
+  for (const auto &[port_idx, port_data] : space_op.GetLumpedPortOp())
+  {
+    if (port_data.synthesis_anchor)
+    {
+      n++;
+    }
+  }
+  return n;
+}
+
 void RomOperator::AddLumpedPortModesForSynthesis()
 {
   // Add modes for lumped port to use them a circuit matrices.
@@ -1115,6 +1134,156 @@ void RomOperator::AddWavePortModesForSynthesis(double omega_ref)
     }
     space_op.GetWavePortFieldVectorPrimaryEt(port_idx, omega_ref, vec);
     UpdatePROM(vec, fmt::format("waveport_{:d}", port_idx));
+  }
+}
+
+std::vector<double>
+RomOperator::GetAnchorScreeningFrequencies(const std::vector<double> &nu, double omega_min)
+{
+  std::vector<double> nu_s(nu);
+  for (auto &nu_k : nu_s)
+  {
+    if (nu_k <= 0.0)
+    {
+      nu_k = 0.1 * omega_min;
+    }
+  }
+  std::ranges::sort(nu_s);
+  nu_s.erase(std::unique(nu_s.begin(), nu_s.end()), nu_s.end());
+  return nu_s;
+}
+
+void RomOperator::AddLumpedPortAnchorModesForSynthesis(const std::vector<double> &nu,
+                                                       bool extrapolate)
+{
+  MFEM_VERIFY(!nu.empty() && nu.front() > 0.0 &&
+                  std::ranges::adjacent_find(nu, std::ranges::greater_equal{}) == nu.end(),
+              "Anchor solves require distinct positive screening frequencies in ascending "
+              "order!");
+  if (NumSynthesisAnchorPorts() == 0)
+  {
+    return;
+  }
+
+  // The anchor is the screened quasistatic response (K₀ + ν²M) x(ν) = b_p, where
+  // K₀ = K + A2(0) is the static system stiffness: the ω → 0 limit of the system matrix
+  // A(ω) = K + iωC − ω²M + A2(ω) without its mass term. Damping (iωC) vanishes in this
+  // limit, and so do the frequency-dependent boundary terms A2(ω) of wave ports and surface
+  // conductivity; an inductive rational surface impedance (Zs ~ s·L as s → 0) keeps a
+  // finite DC Robin term, and the second-order farfield pole at ω = 0 is omitted (see
+  // SpaceOperator::AddExtraSystemBdrCoefficients(QuasistaticLimit, ...)). When no port
+  // inductance is negative, the positive mass coefficient makes the (real part of the)
+  // system positive definite — unlike the driven system at real frequency ω, which is
+  // indefinite (K − ω²M) and can resonate with band or near-degenerate modes — and gives a
+  // positive-definite preconditioner without the sign-shift heuristic used for the driven
+  // case. A negative port inductance (the linearized inductance of a Josephson junction
+  // biased at a phase beyond π/2, for example) makes both indefinite, and the system
+  // singular when ν² = −ω_m² for a mode of the linearized model with ω_m² < 0; the anchor
+  // is otherwise still the quasistatic response of the port. The preconditioner is
+  // assembled from the same quasistatic boundary terms (no boundary is evaluated at ω = 0,
+  // where the second-order farfield and surface conductivity terms are singular and a wave
+  // port has no mode).
+  //
+  // The screening biases the anchor away from the unscreened (bare inductive-limit)
+  // response x₀ solving K₀ x₀ = b_p: in ε = ν² the resolvent expansion is
+  //
+  //   x(ε) = x₀ − ε K₀⁻¹ M x₀ + O(ε²),
+  //
+  // so the exported column satisfies L⁻¹ v + ν² C v = s e_p rather than L⁻¹ v = s e_p, an
+  // O((ν/ω)²) relative deviation from the bare L-column identity. When `extrapolate` is
+  // set, solve at both ν and ν/2 and combine by Richardson extrapolation,
+  //
+  //   x₀ ≈ [4 x(ν²/4) − x(ν²)] / 3,
+  //
+  // which cancels the leading O(ε) term exactly and leaves O(ν⁴). This costs one extra
+  // solve and one extra operator/preconditioner setup per shift, and yields a column that
+  // satisfies the bare L-column identity to the solver tolerance.
+  //
+  // Each further screening frequency ν_k adds the screened response x(ν_k) of every
+  // anchored port, the response at the imaginary frequency iν_k, as its own basis vector.
+  // As the reduced system is a Galerkin projection of a symmetric system, the synthesized
+  // matrices then reproduce the screened port response b_pᵀ (K₀ + ν_k²M)⁻¹ b_p and its
+  // derivative in ν_k² exactly, and, when no port inductance is negative (the system is
+  // then positive definite), the response at every other imaginary frequency is a lower
+  // bound which each added vector raises toward the full one. This is useful above the
+  // sweep band, where the samples do not resolve the response.
+  Mpi::Print("\nComputing anchor solves for {:d} lumped ports at {:d} screening "
+             "frequenc{} (ν² screening{})\n",
+             NumSynthesisAnchorPorts(), nu.size(), (nu.size() > 1) ? "ies" : "y",
+             extrapolate ? ", Richardson-extrapolated over ν and ν/2 at the lowest" : "");
+
+  ComplexVector rhs, u;
+  rhs.SetSize(space_op.GetNDSpace().GetTrueVSize());
+  rhs.UseDevice(true);
+  u.SetSize(space_op.GetNDSpace().GetTrueVSize());
+  u.UseDevice(true);
+
+  // DC limit of the frequency-dependent boundary terms (null when none contributes).
+  constexpr SpaceOperator::QuasistaticLimit dc{};
+  auto A2_dc = space_op.GetExtraSystemMatrix(dc, Operator::DIAG_ZERO);
+
+  // Solve for every anchored port at one shift, so that each (expensive) operator and
+  // preconditioner assembly is shared by all of them, and accumulate the solutions with the
+  // given weight.
+  auto SolveAnchors = [&](double nu_s, double weight, std::map<int, ComplexVector> &u_port)
+  {
+    auto A = space_op.GetSystemMatrix(
+        std::complex<double>(1.0, 0.0), std::complex<double>(0.0, 0.0),
+        std::complex<double>(nu_s * nu_s, 0.0), K.get(), C.get(), M.get(), A2_dc.get());
+    auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(1.0 + 0.0i, 0.0 + 0.0i,
+                                                               nu_s * nu_s + 0.0i, dc);
+    // Safe to repurpose the shared solver: every SolveHDM call resets the operators.
+    ksp->SetOperators(*A, *P);
+    for (const auto &[port_idx, port_data] : space_op.GetLumpedPortOp())
+    {
+      if (!port_data.synthesis_anchor)
+      {
+        continue;
+      }
+      if (!space_op.GetLumpedPortExcitationVector(port_idx, rhs))
+      {
+        continue;
+      }
+      ksp->Mult(rhs, u);
+      auto [it, inserted] = u_port.try_emplace(port_idx);
+      if (inserted)
+      {
+        it->second.SetSize(u.Size());
+        it->second.UseDevice(true);
+        it->second = 0.0;
+      }
+      it->second.Add(weight, u);
+    }
+  };
+  auto AddAnchors = [this](std::map<int, ComplexVector> &u_port, std::string_view suffix)
+  {
+    for (auto &[port_idx, u_p] : u_port)
+    {
+      // Keep only the real part: the anchor is the response of a real symmetric positive
+      // definite system to a real drive, a real field configuration.
+      u_p.Imag() = 0.0;
+      UpdatePROM(u_p, fmt::format("anchor_{:d}{}", port_idx, suffix));
+    }
+  };
+
+  // Quasistatic anchors at the lowest frequency ν, Richardson-extrapolated over ν (weight
+  // −1/3) and ν/2 (weight 4/3) when requested.
+  {
+    std::map<int, ComplexVector> u_port;
+    SolveAnchors(nu.front(), extrapolate ? (-1.0 / 3.0) : 1.0, u_port);
+    if (extrapolate)
+    {
+      SolveAnchors(0.5 * nu.front(), 4.0 / 3.0, u_port);
+    }
+    AddAnchors(u_port, "");
+  }
+
+  // Screened anchors at the other frequencies.
+  for (std::size_t k = 1; k < nu.size(); k++)
+  {
+    std::map<int, ComplexVector> u_port;
+    SolveAnchors(nu[k], 1.0, u_port);
+    AddAnchors(u_port, fmt::format("_nu{:d}", k));
   }
 }
 

@@ -43,6 +43,24 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     points, and checked on the synthesized eigenvectors against the interface energy
     postprocessing.
     [PR 1156](https://github.com/awslabs/palace/pull/1156).
+  - Added quasistatic anchor solves to adaptive driven circuit synthesis. A lumped port with
+    `"SynthesisAnchor": true` and a nonzero, possibly negative, inductance (such as a
+    Josephson junction) adds to the reduced basis the solution of the screened quasistatic
+    system `(K + ν²M) x = b_p` for a drive on the port, the column `anchor_<index>_re` of
+    the synthesized matrices, so that the inductive-limit response of the junction is
+    available without a pseudo-inverse of `L⁻¹`. The screening frequency `ν/2π` is set by
+    `config["Solver"]["Driven"]["AdaptiveCircuitSynthesisAnchorFreq"]` (default: one tenth
+    of the lowest sweep frequency). A list of screening frequencies adds, for each frequency
+    above the lowest, the screened response of the port as a further column
+    `anchor_<index>_nu<k>_re`, which makes the response of the port at that imaginary
+    frequency exact in the synthesized circuit, for example above the sweep band. With
+    `config["Solver"]["Driven"]["AdaptiveCircuitSynthesisAnchorExtrapolate"]`, the
+    quasistatic anchor is solved at `ν` and `ν/2` and Richardson-extrapolated, so that its
+    column satisfies the unscreened identity `L⁻¹v = s·e_p` up to `O(ν⁴)`.
+    Frequency-dependent boundaries enter the anchor solves at their static (DC) limit: an
+    inductive `RationalImpedance` keeps its DC term, while `WavePort`, `Conductivity`, and
+    second-order `Absorbing` terms drop out. SchemaVer 4-5-0
+    [PR 1157](https://github.com/awslabs/palace/pull/1157).
 
 #### Interface Changes
 

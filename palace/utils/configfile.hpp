@@ -528,6 +528,20 @@ public:
   // configurations where an excited port has IncludeInSynthesis = false.
   bool include_in_synthesis = true;
 
+  // Whether this port receives a screened quasistatic anchor solve, (K₀ + ν²M) x = b_p with
+  // K₀ the static (DC) system stiffness, whose solution is added to the PROM basis during
+  // adaptive driven circuit synthesis. Anchor vectors provide the junction-anchored
+  // (unit-current) field configuration used by downstream bare-basis netlist extraction,
+  // without requiring a pseudo-inverse of the exported inverse-inductance matrix. Default
+  // false (opt-in, preserving existing behavior); requires a port with a nonzero
+  // inductance, which may be negative (the linearized inductance of a Josephson junction
+  // biased at a phase beyond π/2, for example), included in synthesis. A port alone under
+  // its excitation index needs no anchor (its quasistatic response is in the basis from the
+  // sample at the lowest frequency), unlike a port which shares its index with other ports
+  // or is not excited. The responses of the two arms of a SQUID differ by its loop mode,
+  // which anchoring both arms brings into the basis.
+  bool synthesis_anchor = false;
+
   // For each lumped port index, each element contains a list of attributes making up a
   // single element of a potentially multielement lumped port.
   std::vector<internal::ElementData> elements = {};
@@ -939,6 +953,25 @@ public:
   // Domain orthogonalization type for circuit synthesis weight matrix.
   DomainOrthogonalizationWeight adaptive_circuit_synthesis_domain_orthog =
       DomainOrthogonalizationWeight::ENERGY;
+
+  // Screening frequencies ν of the anchor solves during circuit synthesis [GHz]
+  // (nondimensionalized on input like the sweep frequencies), in ascending order. Each
+  // anchor system (K₀ + ν²M) x = b_p is symmetric, and positive definite for any ν > 0 when
+  // no port inductance is negative, so that the solve cannot resonate with band or
+  // near-degenerate basis modes. The lowest frequency should sit well below the sweep band,
+  // so that its anchor is the quasistatic (inductive-limit) response of the port; each
+  // other frequency adds the screened response of the port at that imaginary frequency to
+  // the basis. 0 (default) selects 1/10 of the lowest sweep sample frequency.
+  std::vector<double> adaptive_circuit_synthesis_anchor_freq = {0.0};
+
+  // Cancel the O(ν²) screening bias of the quasistatic anchor solves by Richardson
+  // extrapolation: solve at ν and ν/2 and combine as (4 x(ν/2) − x(ν))/3, which is the
+  // unscreened response K₀ x = b_p up to O(ν⁴). Costs one extra solve and one extra
+  // preconditioner setup per shift, and the exported anchor column then satisfies
+  // L⁻¹ v = s e_p (the bare L-column identity) rather than L⁻¹ v + ν² C v = s e_p.
+  // Default false: the single-shift anchor is sufficient whenever the downstream consumer
+  // accounts for the screening term.
+  bool adaptive_circuit_synthesis_anchor_extrapolate = false;
 
   DrivenSolverData() = default;
   DrivenSolverData(const json &driven);

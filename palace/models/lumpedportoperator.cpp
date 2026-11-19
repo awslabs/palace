@@ -27,6 +27,7 @@ LumpedPortData::LumpedPortData(const config::LumpedPortData &data,
                                const MaterialOperator &mat_op, const mfem::ParMesh &mesh)
   : mat_op(mat_op), excitation(data.excitation), active(data.active),
     include_in_synthesis(data.include_in_synthesis),
+    synthesis_anchor(data.synthesis_anchor),
     excitation_weight(ExcitationWeight(data.excitation_amplitude, data.excitation_phase))
 {
   // Check inputs. Only one of the circuit or per square properties should be specified
@@ -999,6 +1000,40 @@ void LumpedPortOperator::AddMassBdrCoefficients(double coeff,
   }
 }
 
+namespace
+{
+
+void AddPortDriveBdrCoefficients(const LumpedPortData &data, std::complex<double> weight,
+                                 SumVectorCoefficient &fbr, SumVectorCoefficient *fbi)
+{
+  // Normalize the incident field to a real reference resistance. For a resistive port
+  // this is the port resistance R (legacy behaviour, unchanged). For a purely reactive
+  // excited port (R == 0) there is no real port resistance to reference the incident power
+  // to, so we use the unit reference |Z_R| = 1 in internal units purely to define a finite
+  // drive amplitude; the reactance itself acts through the system-matrix termination, not
+  // through this normalization. The incident field is scaled by the complex weight, whose
+  // real part is added to fbr and imaginary part to fbi.
+  MFEM_VERIFY(fbi || weight.imag() == 0.0,
+              "A complex lumped port drive weight needs an imaginary coefficient!");
+  const double R_ref = data.GetExcitationRefResistance();
+  for (const auto &elem : data.elems)
+  {
+    const double Rs = R_ref * data.GetToSquare(*elem);
+    const double Hinc = 1.0 / std::sqrt(Rs * elem->GetGeometryWidth() *
+                                        elem->GetGeometryLength() * data.elems.size());
+    if (weight.real() != 0.0)
+    {
+      fbr.AddCoefficient(elem->GetModeCoefficient(2.0 * Hinc * weight.real()));
+    }
+    if (weight.imag() != 0.0)
+    {
+      fbi->AddCoefficient(elem->GetModeCoefficient(2.0 * Hinc * weight.imag()));
+    }
+  }
+}
+
+}  // namespace
+
 void LumpedPortOperator::AddExcitationBdrCoefficients(int excitation_idx,
                                                       SumVectorCoefficient &fbr,
                                                       SumVectorCoefficient &fbi)
@@ -1024,29 +1059,18 @@ void LumpedPortOperator::AddExcitationBdrCoefficients(int excitation_idx,
     {
       continue;
     }
-    const std::complex<double> weight = data.GetExcitationWeight();
-    // Normalize the incident field to a real reference resistance. For a resistive port
-    // this is the port resistance R (legacy behaviour, unchanged). For a purely reactive
-    // excited port (R == 0) there is no real port resistance to reference the incident
-    // power to, so we use the unit reference |Z_R| = 1 in internal units purely to define a
-    // finite drive amplitude; the reactance itself acts through the system-matrix
-    // termination, not through this normalization.
-    const double R_ref = data.GetExcitationRefResistance();
-    for (const auto &elem : data.elems)
-    {
-      const double Rs = R_ref * data.GetToSquare(*elem);
-      const double Hinc = 1.0 / std::sqrt(Rs * elem->GetGeometryWidth() *
-                                          elem->GetGeometryLength() * data.elems.size());
-      if (weight.real() != 0.0)
-      {
-        fbr.AddCoefficient(elem->GetModeCoefficient(2.0 * Hinc * weight.real()));
-      }
-      if (weight.imag() != 0.0)
-      {
-        fbi.AddCoefficient(elem->GetModeCoefficient(2.0 * Hinc * weight.imag()));
-      }
-    }
+    AddPortDriveBdrCoefficients(data, data.GetExcitationWeight(), fbr, &fbi);
   }
+}
+
+void LumpedPortOperator::AddPortExcitationBdrCoefficient(int port_idx,
+                                                         SumVectorCoefficient &fb)
+{
+  // Same drive term as AddExcitationBdrCoefficients but for a single port selected by its
+  // port index, with unit weight, independent of any "Excitation" grouping and excitation
+  // weight in the configuration. Used for the quasistatic anchor solves in circuit
+  // synthesis, which drive each anchored port in isolation.
+  AddPortDriveBdrCoefficients(GetPort(port_idx), 1.0, fb, nullptr);
 }
 
 }  // namespace palace

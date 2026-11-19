@@ -587,6 +587,18 @@ LumpedPortData::LumpedPortData(const json &port)
                           "{:d} because it is excited; the excitation vector is always "
                           "added to the synthesis basis.",
                           index));
+  synthesis_anchor = port.value("SynthesisAnchor", synthesis_anchor);
+  MFEM_VERIFY(!(synthesis_anchor && L == 0.0 && Ls == 0.0),
+              fmt::format("\"SynthesisAnchor\" cannot be true on lumped port index {:d} "
+                          "because it has no inductance (a nonzero \"L\" or \"Ls\" is "
+                          "required); the anchor solve computes the quasistatic response "
+                          "of an inductive (junction) port.",
+                          index));
+  MFEM_VERIFY(!(synthesis_anchor && !include_in_synthesis),
+              fmt::format("\"SynthesisAnchor\" cannot be true on lumped port index {:d} "
+                          "because it has \"IncludeInSynthesis\" false; anchor vectors "
+                          "are part of the synthesis basis.",
+                          index));
   if (port.contains("Attributes"))
   {
     auto &elem = elements.emplace_back();
@@ -1367,6 +1379,26 @@ DrivenSolverData::DrivenSolverData(const json &driven)
   adaptive_circuit_synthesis_domain_orthog =
       driven.value("AdaptiveCircuitSynthesisDomainOrthogonalization",
                    adaptive_circuit_synthesis_domain_orthog);
+  if (auto it = driven.find("AdaptiveCircuitSynthesisAnchorFreq"); it != driven.end())
+  {
+    // A single screening frequency or a list of them.
+    adaptive_circuit_synthesis_anchor_freq = it->is_array()
+                                                 ? it->get<std::vector<double>>()
+                                                 : std::vector<double>{it->get<double>()};
+  }
+  {
+    auto &anchor_freq = adaptive_circuit_synthesis_anchor_freq;
+    MFEM_VERIFY(!anchor_freq.empty(),
+                "\"AdaptiveCircuitSynthesisAnchorFreq\" must not be an empty list!");
+    MFEM_VERIFY(std::ranges::all_of(anchor_freq, [](double f) { return f >= 0.0; }),
+                "\"AdaptiveCircuitSynthesisAnchorFreq\" must be non-negative!");
+    std::ranges::sort(anchor_freq);
+    MFEM_VERIFY(std::ranges::adjacent_find(anchor_freq) == anchor_freq.end(),
+                "\"AdaptiveCircuitSynthesisAnchorFreq\" must not list a frequency twice!");
+  }
+  adaptive_circuit_synthesis_anchor_extrapolate =
+      driven.value("AdaptiveCircuitSynthesisAnchorExtrapolate",
+                   adaptive_circuit_synthesis_anchor_extrapolate);
 
   MFEM_VERIFY(!(restart != 1 && adaptive_tol > 0.0),
               "\"Restart\" is incompatible with adaptive frequency sweep!");
@@ -1972,6 +2004,10 @@ void Nondimensionalize(const Units &units, EigenSolverData &data)
 void Nondimensionalize(const Units &units, DrivenSolverData &data)
 {
   for (auto &f : data.sample_f)
+  {
+    f = 2 * std::numbers::pi * units.Nondimensionalize<Units::ValueType::FREQUENCY>(f);
+  }
+  for (auto &f : data.adaptive_circuit_synthesis_anchor_freq)
   {
     f = 2 * std::numbers::pi * units.Nondimensionalize<Units::ValueType::FREQUENCY>(f);
   }

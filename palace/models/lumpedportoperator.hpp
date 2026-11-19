@@ -51,6 +51,10 @@ public:
   int excitation;
   bool active;
   bool include_in_synthesis;
+  // Whether this port receives a screened quasistatic anchor solve during circuit
+  // synthesis (see RomOperator::AddLumpedPortAnchorModesForSynthesis). Opt-in via the
+  // per-port "SynthesisAnchor" config flag (default false).
+  bool synthesis_anchor;
 
 private:
   // Complex weight a = A exp(i φ) on the unit-power incident wave of this port, from the
@@ -256,6 +260,11 @@ public:
   // to fbi, for the frequency domain only. Both are frequency independent.
   void AddExcitationBdrCoefficients(int excitation_idx, SumVectorCoefficient &fbr,
                                     SumVectorCoefficient &fbi);
+
+  // Same drive term for a single port selected by port index, with unit weight, independent
+  // of any "Excitation" grouping and excitation weight in the configuration. Used for the
+  // quasistatic anchor solves in circuit synthesis.
+  void AddPortExcitationBdrCoefficient(int port_idx, SumVectorCoefficient &fb);
 };
 
 }  // namespace palace

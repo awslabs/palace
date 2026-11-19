@@ -3,12 +3,14 @@
 
 #include "drivensolver.hpp"
 
+#include <algorithm>
 #include <complex>
 #include <cstddef>
 #include <iostream>
 #include <numbers>
 #include <Eigen/Dense>
 #include <fmt/core.h>
+#include <fmt/ranges.h>
 #include <mfem.hpp>
 #include "drivers/fluxerrorestimator.hpp"
 #include "fem/errorindicator.hpp"
@@ -302,7 +304,11 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
       max_size_per_excitation, port_excitations.Size(),
       iodata.solver.driven.adaptive_circuit_synthesis);
 
-  // Add ports to PROM if we do synthesis.
+  // Add ports to PROM if we do synthesis, followed by the anchor solves for any ports opted
+  // in via "SynthesisAnchor" (default screening frequency ν is 1/10 of the lowest sweep
+  // sample, well below the band so the anchors capture the inductive-limit response). They
+  // are added before the offline sampling loop so the RHS1r projection bookkeeping stays
+  // consistent.
   if (iodata.solver.driven.adaptive_circuit_synthesis)
   {
     prom_op.AddLumpedPortModesForSynthesis();
@@ -312,6 +318,31 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
       // The choice rescales the basis vector but does not change correctness.
       const double omega_ref = 0.5 * (omega_sample.front() + omega_sample.back());
       prom_op.AddWavePortModesForSynthesis(omega_ref);
+    }
+    const auto &lumped_port_op = space_op.GetLumpedPortOp();
+    if (std::any_of(lumped_port_op.begin(), lumped_port_op.end(),
+                    [](const auto &port) { return port.second.synthesis_anchor; }))
+    {
+      // Screening frequencies in ascending order, where 0 selects one tenth of the lowest
+      // sweep sample (sample_f is sorted ascending on input).
+      const auto nu = RomOperator::GetAnchorScreeningFrequencies(
+          iodata.solver.driven.adaptive_circuit_synthesis_anchor_freq,
+          omega_sample.front());
+      std::vector<double> nu_GHz;
+      for (auto nu_k : nu)
+      {
+        nu_GHz.push_back(nu_k * unit_GHz);
+      }
+      Mpi::Print(" Anchor screening frequenc{}: ν = {:.3e} GHz\n",
+                 (nu.size() > 1) ? "ies" : "y", fmt::join(nu_GHz, ", "));
+      if (nu.front() >= omega_sample.front())
+      {
+        Mpi::Warning("The lowest anchor screening frequency ({:.3e} GHz) is not below the "
+                     "sweep band, so its anchors are not quasistatic!\n",
+                     nu_GHz.front());
+      }
+      prom_op.AddLumpedPortAnchorModesForSynthesis(
+          nu, iodata.solver.driven.adaptive_circuit_synthesis_anchor_extrapolate);
     }
   }
 
