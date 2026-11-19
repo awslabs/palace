@@ -326,6 +326,26 @@ list(APPEND STRUMPACK_PATCH_FILES
 list(APPEND STRUMPACK_PATCH_FILES
   "${CMAKE_SOURCE_DIR}/extern/patch/STRUMPACK/strumpack_pr171.diff"
 )
+# Fix the pivoting of the distributed BLR fronts: the row interchanges of a diagonal tile
+# were not applied to the tiles of L on its left, which the solve expects, so that with BLR
+# compression on two or more processes the factorization of an indefinite matrix was
+# inaccurate whatever the compression tolerance. These are the changes to
+# src/BLR/BLRMatrix.cpp and src/BLR/BLRMatrixMPI.cpp of the STRUMPACK commits
+# https://github.com/pghysels/STRUMPACK/commit/3f30760de7fdff5d7dd5cf31333ba004460db249
+# and
+# https://github.com/pghysels/STRUMPACK/commit/668cd1b80e741b9ebff486905024e46853164afd
+# by the STRUMPACK maintainer, which came after STRUMPACK 8.1.0, without their tests, which
+# need test infrastructure added after 8.1.0. To be removed with the next STRUMPACK release
+list(APPEND STRUMPACK_PATCH_FILES
+  "${CMAKE_SOURCE_DIR}/extern/patch/STRUMPACK/strumpack_blr_pivoting.diff"
+)
+# Add an option, off by default, to store the fill-reducing permutation of the distributed
+# solver and its inverse once per node, in an MPI shared memory window, instead of on every
+# process (https://github.com/pghysels/STRUMPACK/pull/174), without its tests, which need
+# test infrastructure added after STRUMPACK 8.1.0
+list(APPEND STRUMPACK_PATCH_FILES
+  "${CMAKE_SOURCE_DIR}/extern/patch/STRUMPACK/strumpack_pr174.diff"
+)
 
 include(ExternalProject)
 ExternalProject_Add(strumpack

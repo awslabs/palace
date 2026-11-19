@@ -9,6 +9,7 @@
 #include <utility>
 #include <vector>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include "linalg/iterative.hpp"
 #include "linalg/jacobi.hpp"
@@ -398,6 +399,55 @@ int SolveJacobiPcg(const std::type_identity_t<OperType> &op,
   ksp.Mult(b, x);
   CHECK(ksp.GetNumIterations() == max_it);
   return BlockTimer::GlobalTimer().Counts(Timer::KSP_PRECONDITIONER) - count;
+}
+
+// GmresSolver or FgmresSolver with access to its Krylov basis.
+template <typename KspType>
+class KrylovBasisTestSolver : public KspType
+{
+public:
+  using KspType::KspType;
+  const auto &GetBasis() const { return this->V; }
+};
+
+// Solve without restarts to a relative tolerance of 10⁻¹⁰ from a zero initial guess and
+// check the residual and the orthonormality of the Krylov basis of all iterations (left
+// unchanged by the solve, without right preconditioning in GMRES). The basis is orthonormal
+// to round-off with CGS2, while MGS and CGS lose orthogonality as the residual decreases,
+// to about 10⁻⁵ here.
+template <typename KspType, typename OperType, typename VecType>
+void CheckGmresSolve(const std::type_identity_t<OperType> &A, const Solver<OperType> *B,
+                     const VecType &b, Orthogonalization orthog)
+{
+  MPI_Comm comm = Mpi::World();
+  KrylovBasisTestSolver<KspType> ksp(comm, 0);
+  ksp.SetOperator(A);
+  if (B)
+  {
+    ksp.SetPreconditioner(*B);
+  }
+  ksp.SetOrthogonalization(orthog);
+  ksp.SetMaxIter(100);
+  ksp.SetRelTol(1.0e-10);
+  VecType x(b.Size()), r(b.Size());
+  x = 0.0;
+  ksp.Mult(b, x);
+  CHECK(ksp.GetConverged());
+  CHECK(ksp.GetNumIterations() < 50);
+  A.Mult(x, r);
+  r -= b;
+  CHECK(linalg::Norml2(comm, r) <= 1.0e-9 * linalg::Norml2(comm, b));
+  const auto &V = ksp.GetBasis();
+  double loss = 0.0;
+  for (int i = 0; i <= ksp.GetNumIterations(); i++)
+  {
+    for (int j = 0; j <= i; j++)
+    {
+      loss =
+          std::max(loss, std::abs(linalg::Dot(comm, V[i], V[j]) - ((i == j) ? 1.0 : 0.0)));
+    }
+  }
+  CHECK(loss <= ((orthog == Orthogonalization::CGS2) ? 1.0e-13 : 1.0e-3));
 }
 
 }  // namespace
@@ -957,6 +1007,47 @@ TEST_CASE("CgSolver local sizes", "[iterative][Serial][Parallel]")
         }
       }
     }
+  }
+}
+
+// GMRES and FGMRES with each orthogonalization on real and complex nonsymmetric systems.
+TEST_CASE("GmresSolver orthogonalization", "[iterative][Serial][Parallel]")
+{
+  constexpr int n = 200;
+  MPI_Comm comm = Mpi::World();
+  const auto orthog =
+      GENERATE(Orthogonalization::MGS, Orthogonalization::CGS, Orthogonalization::CGS2);
+  INFO("Orthogonalization: " << static_cast<int>(orthog));
+  TridiagonalTestOperator T(n);
+  SkewTridiagonalTestOperator K(n, 0.5);
+  SumOperator A(T, K);
+
+  SECTION("Real")
+  {
+    Vector b(n);
+    for (int i = 0; i < n; i++)
+    {
+      b[i] = std::sin(1.0 + i + Mpi::Rank(comm));
+    }
+    TridiagonalTestSolver<Operator> pc;
+    CheckGmresSolve<GmresSolver<Operator>, Operator>(A, nullptr, b, orthog);
+    CheckGmresSolve<FgmresSolver<Operator>, Operator>(A, &pc, b, orthog);
+  }
+
+  SECTION("Complex")
+  {
+    // The imaginary part is symmetric, so the operator is neither symmetric nor Hermitian.
+    TridiagonalTestOperator Ai(n, 0.5, 0.25, 3);
+    ComplexWrapperOperator Ac(&A, &Ai);
+    ComplexVector b(n);
+    for (int i = 0; i < n; i++)
+    {
+      b.Real()[i] = std::sin(1.0 + i + Mpi::Rank(comm));
+      b.Imag()[i] = std::cos(2.0 * i);
+    }
+    TridiagonalTestSolver<ComplexOperator> pc;
+    CheckGmresSolve<GmresSolver<ComplexOperator>, ComplexOperator>(Ac, nullptr, b, orthog);
+    CheckGmresSolve<FgmresSolver<ComplexOperator>, ComplexOperator>(Ac, &pc, b, orthog);
   }
 }
 

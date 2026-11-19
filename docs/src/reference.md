@@ -241,7 +241,10 @@ Lumped ports in *Palace* can be composed of two types of elements:
  1. *Rectangular*: The incident field is ``\bm{E}^{inc} = E_0 \, \hat{\bm{l}}``. Here ``E_0`` is a
     normalization constant and ``\hat{\bm{l}}`` is the user-defined polarization direction, which
     should point between two conductors. We denote the length of the port along the polarization as
-    ``l`` and the perpendicular width as ``w``.
+    ``l`` and the perpendicular width as ``w``. The port must be a strip along ``\hat{\bm{l}}``,
+    which may be folded or bent about ``\hat{\bm{l}}``: ``w`` is the length of its cross-section
+    normal to ``\hat{\bm{l}}`` (for a flat port, to its principal axis closest to ``\hat{\bm{l}}``)
+    half way along it, and ``l`` is its area divided by ``w``.
 
  2. *Coaxial*: ``\bm{E}^{inc} = {E_0 r_0} \hat{\bm{r}} / {r}``, where ``E_0 r_0`` is a
     normalization constant, ``r`` is the distance from the port center, and ``\hat{\bm{r}}`` is the
@@ -559,7 +562,9 @@ orthogonalized real and imaginary components, ``\mathrm{Re}(\bm{x}^*)`` and
 ``\mathrm{Im}(\bm{x}^*)``, as separate real basis vectors. The Gram-Schmidt
 orthogonalization variant is controlled by
 [`config["Solver"]["Driven"]["AdaptiveGSOrthogonalization"]`](config/reference.md#config-solver-driven),
-though most users should not need to change it.
+though most users should not need to change it. `"MGS"` is applied as `"CGS2"`, classical
+Gram-Schmidt with reorthogonalization, which is as stable with three reductions per vector
+(one per pass and one for the norm) instead of one per basis vector.
 
 ### Internal sample selection
 
@@ -800,14 +805,25 @@ The EPR can also be used to estimate mode quality factors due to input-output (I
 coupling. The mode coupling quality factor due to the ``j``-th I-O port is given by
 
 ```math
-Q_{mj} = \frac{\omega_m}{\kappa_{mj}}
+Q_{mj} = \frac{\text{Re}\{\omega_m\}}{|\kappa_{mj}|}
 ```
 
-where the port coupling rate ``\kappa_{mj}`` is calculated as
+The magnitude of the port coupling rate ``\kappa_{mj}`` is the power dissipated in the
+resistive boundary of port ``j`` divided by the electric energy of mode ``m``, and its sign
+is the sign of the real part of the port current ``I_{mj} = \overline{V}_{mj}/R_j``:
 
 ```math
-\kappa_{mj} = \frac{1}{\mathcal{E}^{elec}_m} \, \frac{1}{2}\,R_j I_{mj}^2 \,.
+\kappa_{mj} = \text{sign}(\text{Re}\{I_{mj}\}) \, \frac{1}{\mathcal{E}^{elec}_m} \,
+    \frac{1}{2} \sum_e \int_{\Gamma_e} \frac{|\bm{E}_{m,t}|^2}{R_{s,e}} \, dS \,,
 ```
+
+where ``\bm{E}_{m,t}`` is the tangential electric field of mode ``m`` on element ``e`` of
+the port and ``R_{s,e}`` is the sheet resistance of that element.
+
+When the active resistive ports are the only loss,
+``\sum_j |\kappa_{mj}| = 2\,\text{Im}\{\omega_m\}``, so ``\sum_j 1/Q_{mj}`` is
+``|\omega_m|/\text{Re}\{\omega_m\}`` times the ``1/Q`` of the eigenvalue above, and close
+to it only when ``Q \gg 1``.
 
 ## Bulk and interface dielectric loss
 
@@ -927,8 +943,27 @@ specified surfaces of the model. The magnetic field energy associated with any s
 \mathcal{E}(\bm{A}_i) = \frac{1}{2}\int_\Omega\mu_r^{-1}\bm{B}_i\cdot\bm{B}_i\,dV
 ```
 
-where ``\bm{B}_i = \nabla\times\bm{A}_i`` is the magnetic flux density. Then, the entries of
-the inductance matrix, ``\bm{M}``, are given by
+where ``\bm{B}_i = \nabla\times\bm{A}_i`` is the magnetic flux density.
+
+In a superconducting domain ``\Omega_L``, with London penetration depth ``\lambda_L``, the
+static London equations relate the supercurrent to the vector potential, in the London
+gauge, as ``\bm{J} = -(\mu_r\lambda_L^2)^{-1}\bm{A}``. The first equation then becomes
+
+```math
+\nabla\times(\mu_r^{-1}\nabla\times\bm{A}_i) + (\mu_r\lambda_L^2)^{-1}\bm{A}_i = 0 \,,\;
+    \bm{x}\in\Omega_L
+```
+
+and the energy includes the kinetic energy of the supercurrent:
+
+```math
+\mathcal{E}(\bm{A}_i) = \frac{1}{2}\int_\Omega\mu_r^{-1}\bm{B}_i\cdot\bm{B}_i\,dV
+    + \frac{1}{2}\int_{\Omega_L}(\mu_r\lambda_L^2)^{-1}\bm{A}_i\cdot\bm{A}_i\,dV \,.
+```
+
+With the vector potential in the London gauge, every closed loop within a superconducting
+domain has zero fluxoid: a superconducting ring screens the flux of the sources rather than
+trapping flux. Then, the entries of the inductance matrix, ``\bm{M}``, are given by
 
 ```math
 \bm{M}_{ij} = \frac{1}{I_i I_j}\mathcal{E}(\bm{A}_i+\bm{A}_j)

@@ -14,6 +14,31 @@
 namespace palace
 {
 
+// Set the compression options of STRUMPACK, for the real-valued solvers and for the solver
+// in complex arithmetic (StrumpackComplexSolver).
+template <typename ScalarType>
+void ConfigureStrumpackCompression(strumpack::SPOptions<ScalarType> &opts,
+                                   SparseCompression compression, double lr_tol,
+                                   int butterfly_l, int lossy_prec);
+
+// Enable the STRUMPACK option which stores the fill-reducing permutation of the distributed
+// solver and its inverse (two integers per matrix row) once per node, in an MPI shared
+// memory window, instead of on every process. Palace enables it in all its STRUMPACK
+// solvers, in real and in complex arithmetic. STRUMPACK does this after a sequential
+// ordering (not ParMETIS or PT-Scotch) without compression, and falls back to a copy per
+// process, with a warning, if the window cannot be allocated (with Open MPI,
+// OMPI_MCA_osc=^sm,ucx makes every process keep its copy). The option is a patch in the
+// STRUMPACK builds of Palace (superbuild and Spack package), and STRUMPACK defines no macro
+// for it: this does nothing with a STRUMPACK which lacks it.
+template <typename ScalarType>
+inline void EnableStrumpackSharedPermutation(strumpack::SPOptions<ScalarType> &opts)
+{
+  if constexpr (requires { opts.enable_shared_permutation(); })
+  {
+    opts.enable_shared_permutation();
+  }
+}
+
 //
 // A wrapper for the STRUMPACK direct solver package.
 //

@@ -163,6 +163,16 @@ charge:
     example, the uncracked sheet shares the current equally between its two faces,
     which halves the conductor loss. Use `"Crack": true` for such conductors.
 
+    Since *Palace* 0.19.0, the default `"Crack": false` also applies to conductivity
+    boundaries which enclose a conductor meshed as a dielectric volume (a shell), where the
+    mesh was previously cracked. The conductor loss is then lower than with previous
+    versions. A warning lists the interior conductivity boundaries without `"Crack"`: set
+    `"Crack": true` to restore the previous model, or `"Crack": false` to keep the sheet
+    model and silence the warning. Leaving the conductor volume of a shell out of
+    [`config["Domains"]["Materials"]`](../config/reference.md#config-domains-materials)
+    removes it from the mesh, which gives the same result as `"Crack": true` with fewer
+    unknowns.
+
 The mesh can only be cracked where it is conformal. Interior boundaries which are to be
 cracked are an error on a mesh with hexahedra, prisms, or pyramids with
 [refinement regions](model.md#Mesh-refinement), which make it nonconformal, and on a
@@ -354,8 +364,12 @@ simulated consecutively during the Palace run. The results are printed to shared
 there are multiple excitations, the columns of the csv files are post-indexed by the excitation
 index (e.g. `Φ_elec[1][5] (C)` denoting the flux through surface 1 of excitation 5). The far-field
 file (`farfield-rE.csv`) is the exception: it has one row per (frequency, angle) pair so the
-excitation index is encoded as a row column (`exc`) rather than a column suffix. Note that a port
-can only be part of one excitation.
+excitation index is encoded as a row column (`exc`) rather than a column suffix. The saved fields
+of excitation `i` are written to a subfolder `excitation_i` (with leading zeros when there are ten
+or more excitations) of each field output folder, for example `paraview/driven/excitation_1/`
+and `gridfunction/driven/excitation_1/`. The grid function files of the mesh (`mesh`), its
+partitioning (`rank`), and the error indicator (`indicator`) are shared by all excitations and
+written once to `gridfunction/driven/`. Note that a port can only be part of one excitation.
 
 Each excited lumped port can be given a complex weight on its incident wave with the
 optional settings `"ExcitationAmplitude"` ``A`` (greater than 0, default 1) and

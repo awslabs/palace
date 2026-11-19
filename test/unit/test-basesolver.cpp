@@ -144,12 +144,11 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   CreateFile(temp_dir / "domain-E.csv", "f,E\n1.0,2.0\n");
   CreateFile(temp_dir / "port-S.csv", "f,S11\n1.0,0.5\n");
 
-  SaveIteration(comm, temp_dir, 1, 2);
+  auto iter_dir = SaveIteration(comm, temp_dir, 1, 2);
 
-  auto iter_dir = temp_dir / "iteration01";
-
-  SECTION("Iteration subfolder is created")
+  SECTION("Iteration subfolder is created and returned")
   {
+    CHECK(iter_dir == temp_dir / "iteration01");
     CHECK(fs::is_directory(iter_dir));
   }
 
