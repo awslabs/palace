@@ -81,9 +81,11 @@ of the driven solver as well as the following additional files:
     $R_{\mathrm{ref}}$ is the configured `R` when it is non-zero and $Z_0$ otherwise. The full RLC
     load remains in the synthesized matrices and `rom-portload-*` files. For a wave port,
     $Y_{\mathrm{ref}}(\omega)$ is the terminal admittance of that port's synthesized load pencil,
-    i.e. the Schur complement of the port's `rom-portload-<label>-*` block onto its terminal node. It
-    therefore carries the fitted propagation constant $k_n(\omega)$ together with the modal correction
-    $\bm{W}$ and any auxiliary states, and may vary with frequency. It is the port's driving-point
+    i.e. the Schur complement of the port's `rom-portload-<label>-*` block onto its terminal node,
+    over every other row and column of the block with a nonzero entry. The block is exactly zero in
+    all other rows, such as those of the modes of the other ports. It therefore carries the fitted
+    propagation constant $k_n(\omega)$ together with the modal correction $\bm{W}$ and any auxiliary
+    states, and may vary with frequency. It is the port's driving-point
     admittance, not the incident/outgoing wave coupling: for a mode whose $\bm{n}\times\bm{H}$ shape
     rotates with frequency (a hybrid / LSM wave port with $E_n\neq 0$) the terminal $Y_{\mathrm{ref}}$
     alone does not reproduce the solver's S-parameters, and the frequency-dependent coupling maps

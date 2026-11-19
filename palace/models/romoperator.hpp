@@ -419,6 +419,11 @@ protected:
   void PrintPortReferenceData(const Units &units, const fs::path &post_dir,
                               const NormalizedMatrices &matrices) const;
 
+  // Rows of the Schur complement for the reference admittance of a wave port, from its load
+  // Y = L⁻¹/s + R⁻¹ + s·C on the total labels: the physical row `phys` first, then every
+  // other row with a nonzero entry.
+  static std::vector<long> WavePortLoadRows(const Eigen::MatrixXcd &Y, long phys);
+
   // Sample kₙ,ₚ(ω) on the sweep band, fit a quadratic, run AAA on the residual when
   // augmenting, and pack the result. The dense-grid residual is captured for both
   // regimes for diagnostic logging.
@@ -474,6 +479,22 @@ protected:
                const std::vector<std::complex<double>> &residues, double rank_tol);
   static bool AddAuxBlockDirections(WavePortAuxBlock &blk, const Eigen::MatrixXcd &Mp_r,
                                     double rank_tol);
+
+  // Zero the rows of a factor U of A in which A is exactly zero. The left singular vectors
+  // of A with nonzero singular values, and the eigenvectors of a symmetric A with nonzero
+  // eigenvalues, are exactly zero there, but a dense factorization leaves roundoff. So the
+  // couplings of a boundary's load are exactly zero outside its support.
+  template <typename MatrixA, typename MatrixU>
+  static void ZeroRowsOfFactor(const MatrixA &A, MatrixU &U)
+  {
+    for (Eigen::Index i = 0; i < A.rows(); i++)
+    {
+      if (A.row(i).cwiseAbs().maxCoeff() == 0.0)
+      {
+        U.row(i).setZero();
+      }
+    }
+  }
 
   // Append aux-state rows/columns for regime-2 wave ports onto an n×n base pencil
   // (Kr_total, Cr_total, Mr_total). Returns the (n+aux)×(n+aux) augmented matrices and

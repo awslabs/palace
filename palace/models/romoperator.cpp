@@ -1668,6 +1668,10 @@ bool RomOperator::AddAuxBlockDirections(WavePortAuxBlock &blk, const Eigen::Matr
   {
     return false;
   }
+  // The kept directions have nonzero eigenvalues, so they are exactly zero in the zero rows
+  // of M_proj, the basis vectors without support on the boundary.
+  Eigen::MatrixXd U = eig.eigenvectors();
+  ZeroRowsOfFactor(M_proj, U);
   const double weight_max = eig.eigenvalues().cwiseAbs().maxCoeff();
   // Do not let an extremely tight fit tolerance resolve the partition-dependent numerical
   // tail, but retain physical modal-correction directions below the old 3e-3 floor.
@@ -1685,7 +1689,7 @@ bool RomOperator::AddAuxBlockDirections(WavePortAuxBlock &blk, const Eigen::Matr
     if (weight_max > 0.0 && std::abs(weight) / weight_max > eff_tol)
     {
       blk.weights.push_back(weight);
-      blk.u_dirs.push_back(eig.eigenvectors().col(j));
+      blk.u_dirs.push_back(U.col(j));
     }
   }
   return !blk.weights.empty();
@@ -2181,7 +2185,10 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
                      waveport_synthesis_tol);
         r = WAVEPORT_SYNTHESIS_SUBSPACE_RANK_MAX;
       }
-      const Eigen::MatrixXcd Q = svd.matrixU().leftCols(r);
+      // Q is exactly zero in the zero rows of the samples, the basis vectors without
+      // support on the port, and so are its lifts Q·X·Qᵀ below.
+      Eigen::MatrixXcd Q = svd.matrixU().leftCols(r);
+      ZeroRowsOfFactor(cols, Q);
       Mpi::Print(" Wave port {:d} modal-correction synthesis subspace rank {:d}\n",
                  port_idx, r);
       // M(ω), shared by a common-pole matrix-valued rational fit. Fitting every entry
@@ -2634,6 +2641,24 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
   return out;
 }
 
+std::vector<long> RomOperator::WavePortLoadRows(const Eigen::MatrixXcd &Y, long phys)
+{
+  // An internal row is a full constraint whatever its size: the Schur complement does not
+  // change when an internal row and column are scaled. So this takes every row with a
+  // nonzero entry, and relies on the load being exactly zero outside the port's support
+  // (ZeroRowsOfFactor).
+  std::vector<long> rows{phys};
+  for (long i = 0; i < Y.rows(); i++)
+  {
+    if (i != phys &&
+        (Y.row(i).cwiseAbs().maxCoeff() > 0.0 || Y.col(i).cwiseAbs().maxCoeff() > 0.0))
+    {
+      rows.push_back(i);
+    }
+  }
+  return rows;
+}
+
 void RomOperator::PrintPortReferenceData(const Units &units, const fs::path &post_dir,
                                          const NormalizedMatrices &matrices) const
 {
@@ -2731,15 +2756,7 @@ void RomOperator::PrintPortReferenceData(const Units &units, const fs::path &pos
     // Order the physical port row first, then any internal (imag/aux) rows carrying load,
     // and Schur-complement the internal rows onto the physical row for the terminal
     // admittance.
-    std::vector<long> rows{phys};
-    for (long i = 0; i < Y.rows(); i++)
-    {
-      if (i != phys &&
-          (Y.row(i).cwiseAbs().maxCoeff() > 0.0 || Y.col(i).cwiseAbs().maxCoeff() > 0.0))
-      {
-        rows.push_back(i);
-      }
-    }
+    const auto rows = WavePortLoadRows(Y, phys);
     const long n = static_cast<long>(rows.size());
     Eigen::MatrixXcd Ys(n, n);
     for (long i = 0; i < n; i++)

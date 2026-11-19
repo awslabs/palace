@@ -74,7 +74,9 @@ public:
   using RomOperator::RomOperator;
   using RomOperator::WavePortAuxBlock;
   using RomOperator::WavePortDispersionFit;
+  using RomOperator::WavePortLoadRows;
   using RomOperator::wp_pairing_error;
+  using RomOperator::ZeroRowsOfFactor;
   auto &GetWeightOp() const { return weight_op_W; }
   auto &GetOrthR() const { return orth_R; }
   auto &GetVectors() const { return V; }
@@ -2920,6 +2922,61 @@ TEST_CASE("RomOperator-AugmentedPencil-Eigenvalues", "[romoperator][Serial]")
   };
   CHECK(std::abs(eval_unaug(root_plus)) < 1.0e-10);
   CHECK(std::abs(eval_unaug(root_minus)) < 1.0e-10);
+}
+
+// The reference admittance of a wave port is the Schur complement of the port's load onto
+// its physical row, and an internal row constrains it whatever the size of the row. So the
+// load must be exactly zero in the rows of the modes of other ports, where the dense
+// factorizations for the aux-state directions and the modal correction leave roundoff,
+// and a small row which the boundary mass of the port couples must be internal.
+TEST_CASE("RomOperator-WavePortLoadRows", "[romoperator][Serial]")
+{
+  // Rows: the mode of another port, the mode of this port (the physical row), the mode of
+  // another port, two samples, a sample which the boundary mass couples at 1e-15, and the
+  // mode of another port.
+  Eigen::MatrixXd M = Eigen::MatrixXd::Zero(7, 7);
+  M(1, 1) = 1.0;
+  M(3, 3) = 0.5;
+  M(4, 4) = 0.8;
+  M(1, 3) = M(3, 1) = 0.3;
+  M(1, 4) = M(4, 1) = -0.2;
+  M(3, 4) = M(4, 3) = 0.1;
+  M(1, 5) = M(5, 1) = 1.0e-15;
+  M(5, 5) = 1.0e-30;
+
+  // A factor with roundoff in the rows of the other ports, larger than the entries of the
+  // small sample: no threshold can tell them apart.
+  Eigen::MatrixXd U = Eigen::MatrixXd::Constant(7, 2, 5.0e-13);
+  U.row(1) << 0.8, -0.5;
+  U.row(3) << 0.4, 0.6;
+  U.row(4) << -0.3, 0.7;
+  U.row(5) << 1.0e-15, -2.0e-15;
+  Eigen::MatrixXd U_want = U;
+  for (long i : {0, 2, 6})
+  {
+    U_want.row(i).setZero();
+  }
+  RomOperatorTest::ZeroRowsOfFactor(M, U);
+  CHECK(U == U_want);
+
+  // The load of the port with its aux states. The eigendecomposition for their directions
+  // leaves roundoff in row 2.
+  const std::complex<double> i1(0.0, 1.0);
+  const Eigen::MatrixXcd Mp_r = i1 * M.cast<std::complex<double>>();
+  RomOperatorTest::WavePortAuxBlock blk;
+  blk.port_idx = 1;
+  REQUIRE(RomOperatorTest::AddAuxBlockDirections(blk, Mp_r, 1.0e-12));
+  REQUIRE(blk.u_dirs.size() == 3);
+  blk.poles = {std::complex<double>(2.0, -0.5)};
+  blk.residues = {std::complex<double>(0.3, 0.1)};
+  Eigen::MatrixXcd Kr = Eigen::MatrixXcd::Zero(7, 7), Cr = Kr, Mr = Kr;
+  RomOperatorTest::ApplyComplexPolynomialFitCorrections({0.4, 0.1}, {2.0, 0.0}, {0.1, 0.0},
+                                                        Mp_r, Kr, Cr, Mr);
+  std::vector<std::string> aux_labels;
+  const auto aug = RomOperatorTest::BuildAugmentedPencil(Kr, Cr, Mr, {blk}, aux_labels);
+  const double omega = 1.3;
+  const Eigen::MatrixXcd Y = aug.Kr + i1 * omega * aug.Cr - omega * omega * aug.Mr;
+  CHECK(RomOperatorTest::WavePortLoadRows(Y, 1) == std::vector<long>{1, 3, 4, 5, 7, 8, 9});
 }
 
 namespace
