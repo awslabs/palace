@@ -715,6 +715,13 @@ void BaseSolver::SaveMetadata(const Timer &timer) const
     json meta = LoadMetadata(post_dir);
     for (int i = Timer::INIT; i < Timer::NUM_TIMINGS; i++)
     {
+      // The impedance-metal rule's categories (Record only) are written when counted: a
+      // run without the rule keeps today's key set.
+      if ((i == Timer::CONSTRUCT_IMPEDANCE_RULE || i == Timer::POSTPRO_IMPEDANCE_RULE) &&
+          timer.Counts(static_cast<Timer::Index>(i)) == 0)
+      {
+        continue;
+      }
       std::string key(Timer::descriptions[i]);
       std::erase_if(key, isspace);
       meta["ElapsedTime"]["Durations"][key] = timer.Data(static_cast<Timer::Index>(i));
@@ -771,6 +778,16 @@ void BaseSolver::SaveMetadata(const PortExcitations &excitation_helper) const
   {
     nlohmann::json meta = LoadMetadata(post_dir);
     meta["Excitations"] = excitation_helper;
+    WriteMetadata(post_dir, meta);
+  }
+}
+
+void BaseSolver::SaveImpedanceRuleCandidateMetadata(const nlohmann::json &block) const
+{
+  if (root)
+  {
+    nlohmann::json meta = LoadMetadata(post_dir);
+    meta["SurfaceResponse"]["ImpedanceRuleCandidate"] = block;
     WriteMetadata(post_dir, meta);
   }
 }

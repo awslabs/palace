@@ -9,6 +9,7 @@
 #include <iterator>
 #include <limits>
 #include <numbers>
+#include <set>
 #include <sstream>
 #include <string_view>
 #include <fmt/format.h>
@@ -1860,6 +1861,22 @@ EigenSolverData::EigenSolverData(const json &eigenmode)
                                      "greater than config[\"Eigenmode\"][\"Target\"]!");
 }
 
+void VerifyImpedanceMetalRuleCoveragePolicy(
+    const ElectrostaticSolverData::ResponseCorrectionData &data)
+{
+  using ResponseCorrectionData = ElectrostaticSolverData::ResponseCorrectionData;
+  MFEM_VERIFY(
+      data.impedance_metal_rule != ResponseCorrectionData::ImpedanceMetalRule::RECORD ||
+          data.coverage.policy !=
+              ResponseCorrectionData::CoverageData::Policy::MARK_NOT_APPLIED,
+      "Response-correction \"ImpedanceMetalRule\": \"Record\" runs only with "
+      "\"Coverage\": {\"Policy\": \"Warn\"}: the measuring mode prints candidate "
+      "values beside the values of record, and the coverage policy in force "
+      "(\"MarkNotApplied\", set by the key or by default) withholds corrected values "
+      "of poorly covered cells; set \"Coverage\": {\"Policy\": \"Warn\"} in "
+      "Solver.SurfaceResponseCorrection, or remove \"ImpedanceMetalRule\"!");
+}
+
 ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
 {
   n_post = electrostatic.value("Save", n_post);
@@ -2260,6 +2277,73 @@ ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
                     "Response-correction \"PreflightOnly\" must be a boolean!");
         data.preflight_only = preflight->get<bool>();
       }
+      if (auto rule = correction.find("ImpedanceMetalRule"); rule != correction.end())
+      {
+        MFEM_VERIFY(rule->is_string(),
+                    "Response-correction \"ImpedanceMetalRule\" must be \"Off\" or "
+                    "\"Record\"!");
+        const std::string value = rule->get<std::string>();
+        MFEM_VERIFY(
+            value != "Apply",
+            "Response-correction \"ImpedanceMetalRule\": \"Apply\" is reserved "
+            "and not available in this build: this version of the impedance-metal "
+            "rule measures only (\"Record\"); corrected values on impedance metals "
+            "need a validated tolerance of the on-metal check, which does not exist "
+            "yet; use \"Record\" (corrected values of record unchanged, candidate "
+            "values in separate files) or \"Off\"!");
+        if (value == "Off")
+        {
+          data.impedance_metal_rule = ResponseCorrectionData::ImpedanceMetalRule::OFF;
+        }
+        else if (value == "Record")
+        {
+          data.impedance_metal_rule = ResponseCorrectionData::ImpedanceMetalRule::RECORD;
+        }
+        else
+        {
+          MFEM_ABORT("Response-correction \"ImpedanceMetalRule\" must be \"Off\" or "
+                     "\"Record\"!");
+        }
+      }
+      if (auto overrides = correction.find("ImpedanceMetalFilmOverrides");
+          overrides != correction.end())
+      {
+        MFEM_VERIFY(data.impedance_metal_rule ==
+                        ResponseCorrectionData::ImpedanceMetalRule::RECORD,
+                    "Response-correction \"ImpedanceMetalFilmOverrides\" requires "
+                    "\"ImpedanceMetalRule\": \"Record\" (an override has no effect "
+                    "otherwise and is refused rather than ignored)!");
+        MFEM_VERIFY(overrides->is_array(),
+                    "Response-correction \"ImpedanceMetalFilmOverrides\" must be an "
+                    "array!");
+        std::set<int> seen;
+        for (const auto &entry : *overrides)
+        {
+          MFEM_VERIFY(entry.is_object() && entry.contains("Attributes") &&
+                          entry["Attributes"].is_array() && !entry["Attributes"].empty() &&
+                          entry.contains("Serve") && entry["Serve"].is_boolean(),
+                      "Response-correction \"ImpedanceMetalFilmOverrides\" entries need "
+                      "a non-empty Attributes array and a boolean Serve!");
+          for (const auto &item : entry.items())
+          {
+            MFEM_VERIFY(item.key() == "Attributes" || item.key() == "Serve",
+                        "Response-correction \"ImpedanceMetalFilmOverrides\" entry has "
+                        "an unknown key \""
+                            << item.key() << "\"!");
+          }
+          ResponseCorrectionData::ImpedanceMetalFilmOverrideData override_data;
+          override_data.attributes = entry["Attributes"].get<std::vector<int>>();
+          override_data.serve = entry["Serve"].get<bool>();
+          for (const int attribute : override_data.attributes)
+          {
+            MFEM_VERIFY(attribute > 0 && seen.insert(attribute).second,
+                        "Response-correction \"ImpedanceMetalFilmOverrides\": attribute "
+                            << attribute
+                            << " is not positive or is listed more than once!");
+          }
+          data.impedance_metal_film_overrides.push_back(std::move(override_data));
+        }
+      }
       if (auto geometry_policy = correction.find("GeometryFailurePolicy");
           geometry_policy != correction.end())
       {
@@ -2322,6 +2406,7 @@ ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
           data.span_cap_allowances.push_back(std::move(allowance));
         }
       }
+      VerifyImpedanceMetalRuleCoveragePolicy(data);
       response_correction = std::move(data);
       return;
     }
