@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <cmath>
+#include <fstream>
 #include <map>
 #include <memory>
 #include <mfem.hpp>
@@ -13,11 +14,14 @@
 #include "fem/coefficient.hpp"
 #include "fem/fespace.hpp"
 #include "fem/mesh.hpp"
+#include "fixtures.hpp"
 #include "models/materialoperator.hpp"
 #include "models/surfacecurrentoperator.hpp"
 #include "models/surfacepostoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/configfile.hpp"
+#include "utils/geodata.hpp"
+#include "utils/iodata.hpp"
 
 using namespace palace;
 
@@ -326,12 +330,142 @@ TEST_CASE("SA interface entry on an interior metal sheet in vacuum is warned at 
   CHECK(Warned(InterfaceDielectric::DEFAULT, {10}).empty());
 
   // The one line names the entry and the attributes, what is read there and what to do.
-  const auto line = VacuumMetalSheetSubstrateAirWarning(3, {10});
+  // On a perfect conductor (never cracked) it names no "Crack" setting.
+  const auto line = VacuumMetalSheetSubstrateAirWarning(3, {10}, boundaries);
   CHECK(line.find("postprocessing index 3") != std::string::npos);
+  CHECK(line.find("interior (unseparated) faces") != std::string::npos);
   CHECK(line.find("boundary attributes 10") != std::string::npos);
-  CHECK(line.find("near-zero raw energy in the uncracked form") != std::string::npos);
-  CHECK(line.find("metal-air") != std::string::npos);
+  CHECK(line.find("near-zero raw energy;") != std::string::npos);
+  CHECK(line.find("uncracked") == std::string::npos);
+  CHECK(line.find("metal-air (\"MA\") entry!") != std::string::npos);
+  CHECK(line.find("Crack") == std::string::npos);
   CHECK(line.find('\n') == std::string::npos);
+
+  // An Impedance (Ls) sheet has the "Crack" setting: the line names it, with the listed
+  // attributes of that boundary only.
+  config::ImpedanceData impedance;
+  impedance.Ls = 1.0e-12;
+  impedance.attributes = {14};
+  boundaries.impedance.push_back(impedance);
+  const auto ls_line = VacuumMetalSheetSubstrateAirWarning(3, {10, 14}, boundaries);
+  CHECK(ls_line.find("interior (unseparated) faces") != std::string::npos);
+  CHECK(ls_line.find("boundary attributes 10, 14") != std::string::npos);
+  CHECK(ls_line.find("metal-air (\"MA\") entry (or separate the faces by the \"Crack\" "
+                     "setting of the Impedance, RationalImpedance or Conductivity "
+                     "boundary of attributes 14)!") != std::string::npos);
+  CHECK(ls_line.find('\n') == std::string::npos);
+  // Only the listed attributes decide: the PEC entry alone names no "Crack".
+  CHECK(VacuumMetalSheetSubstrateAirWarning(3, {10}, boundaries) == line);
+}
+
+TEST_CASE("SA warning on a cracked Ls sheet lists only its unseparated faces",
+          "[coefficient][Serial][Parallel]")
+{
+  // Review r2198 m-2: a crack can leave faces of a cracked sheet interior. 8 x 4 squares
+  // (triangles) of [0, 4] x [0, 1] in vacuum, with interior boundary edges for
+  // y in [0.25, 0.75] at x = 1 (attribute 9, an Ls sheet with "Crack": both of its edges
+  // separated), at x = 2 (attribute 12, an Ls sheet without "Crack") and at x = 3 (a PEC
+  // edge, attribute 10, below an Ls edge with "Crack", attribute 11: the crack has no
+  // interior vertex there, so the Ls edge between the junction and the crack tip stays
+  // interior). The mesh is cracked by mesh::ReadMesh, as in a run.
+  test::SharedTempDir temp;
+  const auto mesh_path = temp.temp_dir / "sa-cracked-ls-sheets.mesh";
+  if (Mpi::Root(Mpi::World()))
+  {
+    mfem::Mesh serial_mesh =
+        mfem::Mesh::MakeCartesian2D(8, 4, mfem::Element::TRIANGLE, false, 4.0, 1.0);
+    for (int f = 0; f < serial_mesh.GetNumFaces(); f++)
+    {
+      int e1, e2;
+      serial_mesh.GetFaceElements(f, &e1, &e2);
+      if (e1 < 0 || e2 < 0)
+      {
+        continue;
+      }
+      mfem::Array<int> vertices;
+      serial_mesh.GetFaceVertices(f, vertices);
+      const double *v0 = serial_mesh.GetVertex(vertices[0]);
+      const double *v1 = serial_mesh.GetVertex(vertices[1]);
+      const double x = v0[0], y = 0.5 * (v0[1] + v1[1]);
+      if (std::abs(v1[0] - x) > 1.0e-12 || y < 0.25 || y > 0.75)
+      {
+        continue;
+      }
+      int attr = 0;
+      if (std::abs(x - 1.0) < 1.0e-12)
+      {
+        attr = 9;
+      }
+      else if (std::abs(x - 2.0) < 1.0e-12)
+      {
+        attr = 12;
+      }
+      else if (std::abs(x - 3.0) < 1.0e-12)
+      {
+        attr = (y < 0.5) ? 10 : 11;
+      }
+      if (attr > 0)
+      {
+        serial_mesh.AddBdrElement(serial_mesh.GetFace(f)->Duplicate(&serial_mesh));
+        serial_mesh.SetBdrAttribute(serial_mesh.GetNBE() - 1, attr);
+      }
+    }
+    serial_mesh.FinalizeTopology();
+    serial_mesh.Finalize();
+    serial_mesh.SetAttributes();
+    std::ofstream output(mesh_path);
+    serial_mesh.Print(output);
+  }
+  Mpi::Barrier(Mpi::World());
+  const config::json config = {
+      {"Problem",
+       {{"Type", "Eigenmode"}, {"Verbose", 0}, {"Output", temp.temp_dir.string()}}},
+      {"Model", {{"Mesh", mesh_path.string()}}},
+      {"Domains", {{"Materials", config::json::array({{{"Attributes", {1}}}})}}},
+      {"Boundaries",
+       {{"PEC", {{"Attributes", {10}}}},
+        {"Impedance",
+         config::json::array({{{"Attributes", {9, 11}}, {"Ls", 1.0e-12}, {"Crack", true}},
+                              {{"Attributes", {12}}, {"Ls", 1.0e-12}}})}}},
+      {"Solver", {{"Eigenmode", {{"Target", 1.0}}}}}};
+  IoData iodata(config, false);
+  Mesh mesh(mesh::ReadMesh(iodata, Mpi::World()));
+  REQUIRE(iodata.boundaries.cracked_attributes.contains(9));
+  REQUIRE(iodata.boundaries.cracked_attributes.contains(11));
+  REQUIRE(!iodata.boundaries.cracked_attributes.contains(10));
+  REQUIRE(!iodata.boundaries.cracked_attributes.contains(12));
+  config::MaterialData vacuum;
+  vacuum.attributes = {1};
+  config::PeriodicBoundaryData periodic;
+  MaterialOperator mat_op({vacuum}, periodic, ProblemType::ELECTROSTATIC, mesh);
+
+  const auto &boundaries = iodata.boundaries;
+  const auto metal = GetMetalSheetAttributes(boundaries);
+  auto Warned = [&](const std::vector<int> &attributes)
+  {
+    return GetVacuumMetalSheetSubstrateAirAttributes(
+        mesh.Get(), mat_op, InterfaceDielectric::SA, attributes, metal);
+  };
+  // The fully separated Ls sheet is not listed; the uncracked PEC and Ls sheets are, and
+  // so is the cracked Ls sheet with an unseparated face.
+  CHECK(Warned({9}).empty());
+  CHECK(Warned({11}) == std::vector<int>{11});
+  CHECK(Warned({9, 10, 11, 12}) == std::vector<int>{10, 11, 12});
+
+  // The texts: the "Crack" setting is named for the Ls sheets only.
+  const auto pec_line = VacuumMetalSheetSubstrateAirWarning(2, Warned({10}), boundaries);
+  CHECK(pec_line.find("interior (unseparated) faces") != std::string::npos);
+  CHECK(pec_line.find("boundary attributes 10)") != std::string::npos);
+  CHECK(pec_line.find("Crack") == std::string::npos);
+  const auto ls_line = VacuumMetalSheetSubstrateAirWarning(2, Warned({11}), boundaries);
+  CHECK(ls_line.find("interior (unseparated) faces") != std::string::npos);
+  CHECK(ls_line.find("boundary attributes 11)") != std::string::npos);
+  CHECK(ls_line.find("\"Crack\" setting of the Impedance, RationalImpedance or "
+                     "Conductivity boundary of attributes 11)!") != std::string::npos);
+  const auto all_line =
+      VacuumMetalSheetSubstrateAirWarning(2, Warned({9, 10, 11, 12}), boundaries);
+  CHECK(all_line.find("boundary attributes 10, 11, 12)") != std::string::npos);
+  CHECK(all_line.find("boundary of attributes 11, 12)!") != std::string::npos);
 }
 
 TEST_CASE("BdrSurfaceFluxCoefficient direction orients geometric normal",

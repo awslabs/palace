@@ -1068,15 +1068,50 @@ std::vector<int> GetVacuumMetalSheetSubstrateAirAttributes(
 }
 
 std::string VacuumMetalSheetSubstrateAirWarning(int index,
-                                                const std::vector<int> &attributes)
+                                                const std::vector<int> &attributes,
+                                                const config::BoundaryData &boundaries)
 {
+  // The listed attributes of the boundaries with a "Crack" setting.
+  std::vector<int> crack_setting_attributes;
+  auto Append = [&](const std::vector<int> &boundary_attributes)
+  {
+    for (const int attr : attributes)
+    {
+      if (std::ranges::find(boundary_attributes, attr) != boundary_attributes.end())
+      {
+        crack_setting_attributes.push_back(attr);
+      }
+    }
+  };
+  for (const auto &data : boundaries.impedance)
+  {
+    Append(data.attributes);
+  }
+  for (const auto &data : boundaries.rational_impedance)
+  {
+    Append(data.attributes);
+  }
+  for (const auto &data : boundaries.conductivity)
+  {
+    Append(data.attributes);
+  }
+  std::sort(crack_setting_attributes.begin(), crack_setting_attributes.end());
+  crack_setting_attributes.erase(
+      std::unique(crack_setting_attributes.begin(), crack_setting_attributes.end()),
+      crack_setting_attributes.end());
+  const std::string crack_advice =
+      crack_setting_attributes.empty()
+          ? std::string()
+          : fmt::format(" (or separate the faces by the \"Crack\" setting of the "
+                        "Impedance, RationalImpedance or Conductivity boundary of "
+                        "attributes {})",
+                        fmt::join(crack_setting_attributes, ", "));
   return fmt::format(
       "Interface dielectric postprocessing index {:d} (\"Type\": \"SA\") contains interior "
-      "faces of a metal sheet with vacuum on both sides (boundary attributes {}): there a "
-      "substrate-air entry averages the fields of the two sides and reads near-zero raw "
-      "energy in the uncracked form; a metal sheet in vacuum is a metal-air (\"MA\") entry "
-      "(or set the sheet's \"Crack\")!",
-      index, fmt::join(attributes, ", "));
+      "(unseparated) faces of a metal sheet with vacuum on both sides (boundary attributes "
+      "{}): there a substrate-air entry averages the fields of the two sides and reads "
+      "near-zero raw energy; a metal sheet in vacuum is a metal-air (\"MA\") entry{}!",
+      index, fmt::join(attributes, ", "), crack_advice);
 }
 
 bool ExclusionEnergyRequested(const config::SolverData &solver)
@@ -1260,7 +1295,7 @@ SurfacePostOperator::SurfacePostOperator(
       if (!vacuum_sheet.empty())
       {
         Mpi::Warning(mesh.GetComm(), "{}\n",
-                     VacuumMetalSheetSubstrateAirWarning(idx, vacuum_sheet));
+                     VacuumMetalSheetSubstrateAirWarning(idx, vacuum_sheet, *boundaries));
       }
     }
     auto it = eps_surfs.try_emplace(idx, data, bdr_attr_marker).first;

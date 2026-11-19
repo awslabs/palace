@@ -57,19 +57,25 @@ bool ExclusionEnergyRequested(const config::SolverData &solver);
 std::vector<int> GetMetalSheetAttributes(const config::BoundaryData &boundaries);
 
 // The attributes of an interface dielectric entry of Type `type` which lie on an interior
-// face of a metal sheet (`metal_sheet_attributes`) with vacuum on both sides, by the vacuum
-// test of the SA coefficient (both neighbouring elements' maximum light speed >= 1 - 1e-6):
-// there the SA coefficient averages the fields of the two sides, which read near-zero raw
-// energy for a charged sheet in the uncracked form. Empty unless `type` is SA; a cracked
-// sheet's faces are exterior and never listed. Collective (the same inputs on every rank).
+// (unseparated) face of a metal sheet (`metal_sheet_attributes`) with vacuum on both sides,
+// by the vacuum test of the SA coefficient (both neighbouring elements' maximum light speed
+// >= 1 - 1e-6): there the SA coefficient averages the fields of the two sides, which read
+// near-zero raw energy for a charged sheet. Empty unless `type` is SA. The faces which a
+// crack separates are exterior and not listed, but a crack can leave faces of a cracked
+// sheet interior (for example a face between the crack tip and a junction with an
+// uncracked sheet), and those are listed. Collective (the same inputs on every rank).
 std::vector<int> GetVacuumMetalSheetSubstrateAirAttributes(
     mfem::ParMesh &mesh, const MaterialOperator &mat_op, InterfaceDielectric type,
     const std::vector<int> &entry_attributes,
     const std::vector<int> &metal_sheet_attributes);
 
-// The one-line text of that warning for the interface dielectric entry `index`.
+// The one-line text of that warning for the interface dielectric entry `index`. It names
+// the "Crack" setting only when one of `attributes` belongs to an Impedance,
+// RationalImpedance or Conductivity boundary of `boundaries` (the boundaries which have
+// that setting; perfect conductors are not cracked).
 std::string VacuumMetalSheetSubstrateAirWarning(int index,
-                                                const std::vector<int> &attributes);
+                                                const std::vector<int> &attributes,
+                                                const config::BoundaryData &boundaries);
 
 // Mesh-independent automatic edge-distance geometry retained across AMR iterations. Only
 // aggregate edge-distance trees are cached; mesh-segment-localized diagnostics are rebuilt.
