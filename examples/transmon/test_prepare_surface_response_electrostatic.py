@@ -11,7 +11,20 @@ import unittest
 from pathlib import Path
 
 SCRIPT = Path(__file__).with_name("prepare_surface_response_electrostatic.py")
-SOURCE = Path(__file__).with_name("transmon_surface_amr.json")
+EXAMPLE = Path(__file__).with_name("transmon_surface_amr.json")
+# The example has no EdgeRefinement block since its tube default changed (S4-a item (6)), so the
+# test writes its own --source: the example with one EdgeRefinement block per dielectric, which
+# the script must strip unless --edge-refinement is given (review r2157 m-2).
+SOURCE_EDGE_REFINEMENT = {"Radius": 0.2, "ElementsPerRadius": 3, "OuterRadiusFactor": 2.0, "CoreIndicatorWeight": 0.0}
+
+
+def write_source(directory):
+    config = json.loads(EXAMPLE.read_text())
+    for dielectric in config["Boundaries"]["Postprocessing"]["Dielectric"]:
+        dielectric["EdgeRefinement"] = dict(SOURCE_EDGE_REFINEMENT)
+    source = Path(directory, "source.json")
+    source.write_text(json.dumps(config, indent=2) + "\n")
+    return source
 
 
 def prepare(*extra):
@@ -19,14 +32,22 @@ def prepare(*extra):
         library = Path(tmp, "process-library.json")
         library.write_text("{}\n")
         output = Path(tmp, "config.json")
+        source = write_source(tmp)
         command = [sys.executable, str(SCRIPT), "--mesh", str(Path(tmp, "device.msh2")), "--library", str(library),
-                   "--output", str(output), "--postpro", str(Path(tmp, "postpro")), "--source", str(SOURCE), *extra]
+                   "--output", str(output), "--postpro", str(Path(tmp, "postpro")), "--source", str(source), *extra]
         result = subprocess.run(command, capture_output=True, text=True)
         config = json.loads(output.read_text()) if result.returncode == 0 else None
         return result, config
 
 
 class PrepareSurfaceResponseElectrostaticTest(unittest.TestCase):
+    def test_the_source_carries_an_edge_refinement_block_per_dielectric(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            dielectrics = json.loads(write_source(tmp).read_text())["Boundaries"]["Postprocessing"]["Dielectric"]
+        self.assertGreater(len(dielectrics), 0)
+        for dielectric in dielectrics:
+            self.assertEqual(dielectric["EdgeRefinement"], SOURCE_EDGE_REFINEMENT)
+
     def test_default_is_a_single_solve_without_the_source_edge_refinement(self):
         result, config = prepare("--order", "3")
         self.assertEqual(result.returncode, 0, result.stderr)

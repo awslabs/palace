@@ -388,7 +388,11 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     std::fflush(stdout);
     const int saved = dup(fileno(stdout));
     std::FILE *log = std::fopen((temp.temp_dir / (stem + ".log")).c_str(), "w");
-    REQUIRE(log);
+    // Every rank's flag reduced before the collective run (review r2157 m-3): a rank-local
+    // REQUIRE would leave the other ranks alone in palace::Run.
+    bool log_opened = (log != nullptr);
+    Mpi::GlobalAnd(1, &log_opened, comm);
+    REQUIRE(log_opened);
     dup2(fileno(log), fileno(stdout));
     palace::Run(iodata, comm, utils::ConfigureOmp(), /*git_tag=*/nullptr);
     std::fflush(stdout);
@@ -398,7 +402,9 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     Mpi::Barrier(comm);
     std::ifstream text(temp.temp_dir / (stem + ".log"));
     std::ifstream metadata(output / "palace.json");
-    REQUIRE(metadata);
+    bool metadata_opened = static_cast<bool>(metadata);
+    Mpi::GlobalAnd(1, &metadata_opened, comm);
+    REQUIRE(metadata_opened);
     return std::pair{test::json::parse(metadata),
                      std::string(std::istreambuf_iterator<char>(text),
                                  std::istreambuf_iterator<char>())};
