@@ -42,11 +42,6 @@ namespace palace
 namespace
 {
 
-// Relative tolerance of the comparisons of the environment with that of a saved model: its
-// fingerprint and element moments are sums over elements, which the partition changes by
-// rounding only.
-constexpr double kEnvironmentTol = 1.0e-10;
-
 #if defined(MFEM_USE_MUMPS)
 // BLR tolerance of the factorizations, at round-off: MUMPS's BLR factorization is faster
 // than its full-rank one here, at no loss of accuracy.
@@ -161,30 +156,9 @@ DrivenSubstructure::DrivenSubstructure(SpaceOperator &space_op,
   // A mesh of the region (online): Γ also holds the region's boundary DOFs at the points
   // of the saved interface DOFs, where the environment was cut off.
   std::vector<char> cut(nt, 0);
-  if (saved)
-  {
-    // The mesh holds the environment of the model, or with "RegionMesh" its part in the
-    // mesh of the region.
-    region_only = region_mesh;
-    const auto moments = EnvironmentMoments();
-    const bool full = MomentsMatch(moments, saved->env_moments, kEnvironmentTol),
-               part = MomentsMatch(moments, saved->region_moments, kEnvironmentTol);
-    if (region_only)
-    {
-      MFEM_VERIFY(part, (full ? "\"RegionMesh\" is set, but the mesh holds the whole "
-                                "environment of the saved substructuring model: unset it "
-                                "on the full mesh!"
-                              : "The mesh is not the mesh of the region written with the "
-                                "saved substructuring model, nor a re-meshing of its "
-                                "region!"));
-    }
-    else
-    {
-      MFEM_VERIFY(full, (part ? "The mesh is the mesh of the region written with the saved "
-                                "substructuring model: set \"RegionMesh\": true!"
-                              : kEnvironmentMeshDiffers));
-    }
-  }
+  // With the saved model, the mesh holds its environment or, with "RegionMesh", the part of
+  // it in the mesh of the region (the sweep checks which against the model's record).
+  region_only = saved && region_mesh;
   if (region_only)
   {
     std::vector<char> region_side(nt);
@@ -1267,23 +1241,6 @@ DrivenSubstructure::WriteRegionMesh(const std::string &path,
   return written;
 }
 
-std::array<double, 6>
-DrivenSubstructure::EnvironmentMoments(const std::vector<char> &mark) const
-{
-  std::array<double, 6> moments = {};
-  for (const auto &m : AttributeMoments(
-           *const_cast<mfem::ParFiniteElementSpace &>(space_op.GetNDSpace().Get())
-                .GetParMesh(),
-           env.attrs, mark))
-  {
-    for (int q = 0; q < 6; q++)
-    {
-      moments[q] += m[q];
-    }
-  }
-  return moments;
-}
-
 const Vector &DrivenSubstructure::FingerprintField(int k) const
 {
   if (fp_fields[k].Size() == 0)
@@ -1388,11 +1345,13 @@ bool DrivenSubstructure::OnInterface(const ComplexVector &b) const
 namespace
 {
 
-// The records of a driven model in its file (see substructuring::ModelFile): the header (a
-// later one supersedes it, as the frequencies of an adaptive sweep are added) and the
-// condensed environment at each frequency, in the order of the frequencies.
+// The records of a driven model in its file (see substructuring::ModelFile): the header and
+// the record of the environment (later ones supersede them, as the frequencies of an
+// adaptive sweep are added) and the condensed environment at each frequency, in the order
+// of the frequencies.
 using ModelFile = substructuring::ModelFile;
 constexpr std::uint32_t kHeaderTag = ModelFile::Tag("DHED"),
+                        kEnvRecordTag = ModelFile::Tag("ENVR"),
                         kRecordTag = ModelFile::Tag("DREC");
 
 // The records of the frequencies of a model file.
@@ -1664,8 +1623,7 @@ std::size_t DrivenSubstructureModel::RecordBytes() const
 
 void DrivenSubstructureModel::WriteHeader(const std::string &path, bool create) const
 {
-  MFEM_VERIFY(port_data.size() == kPortData * ports.size() &&
-                  (weights.empty() || weights.size() == omega.size()),
+  MFEM_VERIFY(weights.empty() || weights.size() == omega.size(),
               "Invalid substructuring model header!");
   if (create)
   {
@@ -1682,8 +1640,8 @@ void DrivenSubstructureModel::WriteHeader(const std::string &path, bool create) 
                        static_cast<int>(region_bdr_attributes.size())};
   const long long size =
       sizeof(head) +
-      sizeof(double) * (13 + signatures.size() + env_fp.size() + exc_fp.size() +
-                        port_data.size() + omega.size()) +
+      sizeof(double) *
+          (1 + signatures.size() + env_fp.size() + exc_fp.size() + omega.size()) +
       sizeof(int) * (excitations.size() + ports.size() + region_bdr_attributes.size()) +
       sizeof(std::complex<double>) * weights.size();
   ModelFile::Append(path, MPI_COMM_SELF, kHeaderTag, size,
@@ -1696,18 +1654,20 @@ void DrivenSubstructureModel::WriteHeader(const std::string &path, bool create) 
                       };
                       write(head, 9);
                       write(&length_scale, 1);
-                      write(env_moments.data(), 6);
-                      write(region_moments.data(), 6);
                       write(signatures.data(), signatures.size());
                       write(env_fp.data(), env_fp.size());
                       write(excitations.data(), excitations.size());
                       write(exc_fp.data(), exc_fp.size());
                       write(ports.data(), ports.size());
                       write(region_bdr_attributes.data(), region_bdr_attributes.size());
-                      write(port_data.data(), port_data.size());
                       write(omega.data(), omega.size());
                       write(weights.data(), weights.size());
                     });
+  const std::vector<char> record = environment.Serialize();
+  ModelFile::Append(
+      path, MPI_COMM_SELF, kEnvRecordTag, static_cast<long long>(record.size()),
+      [&](std::ofstream &f)
+      { f.write(record.data(), static_cast<std::streamsize>(record.size())); });
 }
 
 void DrivenSubstructureModel::AppendRecord(const std::string &path, const Record &r) const
@@ -1756,11 +1716,9 @@ void DrivenSubstructureModel::ReadHeader(const std::string &path, MPI_Comm comm)
                                           "rerun in \"Offline\" mode!");
   at = 0;  // the version, then the whole head
   read(head, 9);
-  std::vector<double> scale_moments;
-  read(scale_moments, 13);
-  length_scale = scale_moments[0];
-  std::copy_n(scale_moments.begin() + 1, 6, env_moments.begin());
-  std::copy_n(scale_moments.begin() + 7, 6, region_moments.begin());
+  std::vector<double> scale;
+  read(scale, 1);
+  length_scale = scale[0];
   nG = head[1];
   sig_w = head[2];
   read(signatures, static_cast<double>(nG) * sig_w);
@@ -1769,10 +1727,15 @@ void DrivenSubstructureModel::ReadHeader(const std::string &path, MPI_Comm comm)
   read(exc_fp, static_cast<double>(kSourceFp) * head[4]);
   read(ports, head[5]);
   read(region_bdr_attributes, head[8]);
-  read(port_data, static_cast<double>(kPortData) * head[5]);
   read(omega, head[6]);
   read(weights, head[7] ? head[6] : 0);
   incomplete(head[6] > 0 && at == p.size());
+  const auto *e = file.Find(kEnvRecordTag);
+  incomplete(e);
+  const auto record =
+      EnvironmentRecord::Deserialize(ModelFile::ReadPayload(path, *e, comm));
+  incomplete(record.has_value());
+  environment = *record;
 }
 
 int DrivenSubstructureModel::NumRecords(const std::string &path) const
@@ -1796,13 +1759,25 @@ void DrivenSubstructureModel::TruncateRecords(const std::string &path, int n) co
 bool DrivenSubstructureModel::SameHeader(const DrivenSubstructureModel &saved,
                                          double source_tol) const
 {
+  auto same = [](const std::vector<std::array<double, 6>> &a,
+                 const std::vector<std::array<double, 6>> &b)
+  {
+    return std::ranges::equal(a, b, [](const auto &x, const auto &y)
+                              { return MomentsMatch(x, y, kEnvironmentTol); });
+  };
+  const EnvironmentRecord &env = environment, &saved_env = saved.environment;
   if (saved.nG != nG || saved.sig_w != sig_w || saved.signatures != signatures ||
       saved.excitations != excitations || saved.exc_fp.size() != exc_fp.size() ||
       saved.ports != ports || saved.region_bdr_attributes != region_bdr_attributes ||
-      saved.port_data != port_data || saved.omega != omega || saved.weights != weights ||
+      saved.omega != omega || saved.weights != weights ||
       saved.length_scale != length_scale || !SameEnvironment(saved.env_fp, env_fp) ||
-      !MomentsMatch(saved.env_moments, env_moments, kEnvironmentTol) ||
-      !MomentsMatch(saved.region_moments, region_moments, kEnvironmentTol))
+      saved_env.attributes != env.attributes ||
+      saved_env.bdr_attributes != env.bdr_attributes ||
+      saved_env.config_hash != env.config_hash ||
+      saved_env.excitations_hash != env.excitations_hash ||
+      !same(saved_env.moments, env.moments) ||
+      !same(saved_env.region_moments, env.region_moments) ||
+      !same(saved_env.bdr_moments, env.bdr_moments))
   {
     return false;
   }

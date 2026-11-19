@@ -273,9 +273,8 @@ struct EnvironmentRecord
   // the mesh of the region, some of them), that the mesh holds the environment within the
   // relative tolerance of the moments (on the mesh of the region, the elements written in
   // it, else all of them and their boundaries), and that the configuration on it is
-  // unchanged (its excitations too, on the mesh of the region). A mesh which does not match
-  // is named if it is the other one. Returns whether the excitations of the environment are
-  // those of the record. Collective.
+  // unchanged. A mesh which does not match is named if it is the other one. Returns whether
+  // the excitations of the environment are those of the record. Collective.
   bool Check(mfem::ParMesh &mesh, const nlohmann::json &config,
              const std::vector<int> &environment_attributes, double tol,
              bool region_mesh) const;

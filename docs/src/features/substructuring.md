@@ -221,8 +221,9 @@ With `"ModelFile"`, an offline sweep also saves, per frequency, ``\bm{S}_E(\omeg
 condensation of the environment's sources onto the interface, and the condensed voltages of the
 environment's lumped ports and wave port overlaps. An `"Online"` sweep at saved frequencies (any
 subset of them, matched by value) then factors only the region, which may be redesigned (materials,
-re-meshing) and run on a different number of processes, as long as the environment, its excitations
-and the interface are unchanged. The online field is known in the region and on the interface only:
+re-meshing) and run on a different number of processes, as long as the environment and the
+interface are unchanged and the excitations with sources in the environment are among the model's.
+The online field is known in the region and on the interface only:
 
   - S-parameters of all ports, voltages and currents of the lumped ports, and the energies of
     lumped elements, are those of a regular simulation;

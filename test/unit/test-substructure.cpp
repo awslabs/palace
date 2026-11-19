@@ -352,6 +352,16 @@ TEST_CASE("Environment records are those of any partition",
                                         {"FluxAmounts", {1.0}},
                                         {"Direction", "+Z"}}};
   CHECK_FALSE(r.Check(mesh, excited, {2}, 1.0e-9, false));
+  // A port next to the environment is of its configuration, but whether and how it is
+  // excited is of its excitations.
+  auto port = config;
+  port["Boundaries"]["LumpedPort"] = {
+      {{"Index", 1}, {"R", 50.0}, {"Attributes", {5}}, {"Direction", "+Z"}}};
+  const auto q = EnvironmentRecord::Make(mesh, {2}, port, written);
+  CHECK(q.config_hash != r.config_hash);
+  port["Boundaries"]["LumpedPort"][0]["Excitation"] = true;
+  port["Boundaries"]["LumpedPort"][0]["ExcitationAmplitude"] = 2.0;
+  CHECK_FALSE(q.Check(mesh, port, {2}, 1.0e-9, false));
 }
 
 TEST_CASE("Boundaries and points of the region", "[substructure][Serial][Parallel]")

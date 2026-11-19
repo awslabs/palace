@@ -3503,9 +3503,9 @@ TEST_CASE("Saved driven excitations match across partitions", "[substructure][Se
 TEST_CASE("A cut or corrupted driven model header is rejected", "[substructure][Serial]")
 {
   // The header is read part by part, each only if its record holds it: a header cut short,
-  // one whose sizes exceed its record (also a negative one), and one without frequencies,
-  // are incomplete; another format version is rejected, and a file of another kind is not a
-  // model.
+  // one whose sizes exceed its record (also a negative one), one without frequencies, and a
+  // model without the record of its environment, are incomplete; another format version is
+  // rejected, and a file of another kind is not a model.
   DrivenSubstructureModel m;
   m.nG = 2;
   m.sig_w = 1;
@@ -3546,6 +3546,16 @@ TEST_CASE("A cut or corrupted driven model header is rejected", "[substructure][
   }
   m.WriteHeader(path);
   {
+    using substructuring::ModelFile;
+    const auto file = ModelFile::Read(path, Mpi::World());
+    const auto *e = file.Find(ModelFile::Tag("ENVR"));
+    REQUIRE(e);
+    std::filesystem::resize_file(path, e->pos - 12);
+  }
+  CHECK_THROWS_WITH(saved.ReadHeader(path, Mpi::World()),
+                    ContainsSubstring("is incomplete"));
+  m.WriteHeader(path);
+  {
     const auto pos = header();
     std::fstream f(path, std::ios::binary | std::ios::in | std::ios::out);
     const int version = DrivenSubstructureModel::kVersion + 1;
@@ -3575,8 +3585,15 @@ TEST_CASE("A saved driven model continues from its complete records",
   m.excitations = {1};
   m.exc_fp = {1.0, 0.0, 0.5, 0.0, 0.25, 0.0, -0.125};
   m.ports = {1};
-  m.port_data = {50.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0};
   m.region_bdr_attributes = {5, 7};
+  m.environment.attributes = {2};
+  m.environment.bdr_attributes = {3, 4};
+  m.environment.moments = {{4.0, 1.0, 0.5, 0.25, 0.75, 0.3}};
+  m.environment.region_moments = {{2.0, 0.5, 0.25, 0.1, 0.4, 0.1}};
+  m.environment.bdr_moments = {{2.0, 1.0, 0.5, 0.5, 1.0, 0.25},
+                               {1.0, 0.5, 0.0, 0.25, 0.5, 0.1}};
+  m.environment.config_hash = 11;
+  m.environment.excitations_hash = 13;
   m.omega = {1.0, 2.0, 3.0};
   m.length_scale = 1.0e-6;
   auto record = [](double s)
@@ -3602,7 +3619,8 @@ TEST_CASE("A saved driven model continues from its complete records",
   Model saved;
   saved.ReadHeader(path, Mpi::World());
   CHECK(saved.region_bdr_attributes == m.region_bdr_attributes);
-  CHECK(saved.port_data == m.port_data);
+  CHECK(saved.environment.bdr_moments == m.environment.bdr_moments);
+  CHECK(saved.environment.config_hash == m.environment.config_hash);
   CHECK(m.SameHeader(saved, 1.0e-10));
   m.TruncateRecords(path, 1);
   CHECK(m.NumRecords(path) == 1);
@@ -3612,13 +3630,23 @@ TEST_CASE("A saved driven model continues from its complete records",
   CHECK(m.ReadFlatRecord(path, 1) == m.Flatten(record(4.0)));
 
   // The model of another sweep does not continue: other frequencies, interface, boundaries,
-  // ports or sources (beyond their tolerance).
+  // ports, environment (beyond the rounding of its moments) or sources (beyond their
+  // tolerance).
   auto other = m;
   other.region_bdr_attributes = {5};
   CHECK_FALSE(other.SameHeader(saved, 1.0e-10));
   other = m;
-  other.port_data[0] = 60.0;
+  other.ports = {2};
   CHECK_FALSE(other.SameHeader(saved, 1.0e-10));
+  other = m;
+  other.environment.config_hash++;
+  CHECK_FALSE(other.SameHeader(saved, 1.0e-10));
+  other = m;
+  other.environment.region_moments[0][1] *= 1.0 + 1.0e-6;
+  CHECK_FALSE(other.SameHeader(saved, 1.0e-10));
+  other.environment.region_moments[0][1] =
+      m.environment.region_moments[0][1] * (1.0 + 1.0e-13);
+  CHECK(other.SameHeader(saved, 1.0e-10));
   other = m;
   other.omega[2] = 3.5;
   CHECK_FALSE(other.SameHeader(saved, 1.0e-10));
@@ -4001,11 +4029,13 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
 }
 
 TEST_CASE_METHOD(palace::test::SharedTempDir,
-                 "Driven substructuring checks the environment's ports against the model",
+                 "Driven substructuring checks the environment against the model",
                  "[substructure][Serial][Parallel]")
 {
-  // On the mesh of the region, which holds no environment to fingerprint, an environment
-  // port whose resistance differs from the model's is rejected (its S_E is the model's).
+  // The record of the environment tells the mesh of the region from the full mesh, and
+  // rejects an environment refined, with another material, or with another resistance of
+  // its port on the mesh of the region (which holds no environment to fingerprint). The
+  // excitation of the environment's port is not its configuration: a sweep without it runs.
   RunDrivenSheetSquare(temp_dir, "Offline");
   const std::string region_mesh = RegionMeshPath((temp_dir / "driven_model.bin").string());
   auto on_region = [&](json &config)
@@ -4013,16 +4043,33 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
     config["Model"]["Mesh"] = region_mesh;
     config["Solver"]["Substructuring"]["RegionMesh"] = true;
   };
-  RunDrivenSheetSquare(temp_dir, "Online", on_region);
+  auto online = [&](const std::function<void(json &)> &edit)
+  { RunDrivenSheetSquare(temp_dir, "Online", edit); };
   using Catch::Matchers::ContainsSubstring;
-  CHECK_THROWS_WITH(RunDrivenSheetSquare(temp_dir, "Online",
-                                         [&](json &config)
-                                         {
-                                           on_region(config);
-                                           config["Boundaries"]["LumpedPort"][1]["R"] =
-                                               60.0;
-                                         }),
-                    ContainsSubstring("The parameters of the environment's ports"));
+  CHECK_THROWS_WITH(
+      online([](json &config) { config["Solver"]["Substructuring"]["RegionMesh"] = true; }),
+      ContainsSubstring("\"RegionMesh\" is set, but the mesh holds"));
+  CHECK_THROWS_WITH(online([&](json &config) { config["Model"]["Mesh"] = region_mesh; }),
+                    ContainsSubstring("set \"RegionMesh\": true"));
+  CHECK_THROWS_WITH(
+      online([](json &config) { config["Model"]["Refinement"]["UniformLevels"] = 1; }),
+      ContainsSubstring("its mesh changed"));
+  CHECK_THROWS_WITH(
+      online([](json &config) { config["Domains"]["Materials"][1]["Permittivity"] = 3.0; }),
+      ContainsSubstring("discretization changed"));
+  CHECK_THROWS_WITH(online(
+                        [&](json &config)
+                        {
+                          on_region(config);
+                          config["Boundaries"]["LumpedPort"][1]["R"] = 60.0;
+                        }),
+                    ContainsSubstring("discretization changed"));
+  online(
+      [&](json &config)
+      {
+        on_region(config);
+        config["Boundaries"]["LumpedPort"][1].erase("Excitation");
+      });
 }
 
 TEST_CASE_METHOD(palace::test::SharedTempDir,
@@ -4246,46 +4293,6 @@ TEST_CASE("DrivenSubstructure rejects attribute sets that do not split the mesh"
   CHECK_THROWS_WITH(
       DrivenSubstructure(space_op, {1, 4}, {2}),
       Catch::Matchers::ContainsSubstring("\"Region\" attribute 4 is not a domain"));
-}
-
-TEST_CASE_METHOD(palace::test::SharedTempDir,
-                 "DrivenSubstructure recognizes the environment of a saved model",
-                 "[substructure][Serial][Parallel]")
-{
-  // The element moments of the environment of a model, and of its part in the mesh of the
-  // region, tell a full mesh from another environment (a coarser mesh).
-  json config = {{"Problem", {{"Type", "Driven"}, {"Output", "test_output"}}},
-                 {"Model", {{"Mesh", "test.msh"}}},
-                 {"Domains", {{"Materials", {{{"Attributes", {1, 2}}}}}}},
-                 {"Boundaries",
-                  {{"PEC", {{"Attributes", {1}}}},
-                   {"LumpedPort",
-                    {{{"Index", 1},
-                      {"R", 1.0},
-                      {"Attributes", {2}},
-                      {"Direction", "+Y"},
-                      {"Excitation", true}}}}}},
-                 {"Solver",
-                  {{"Device", "CPU"},
-                   {"Driven", {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 1.0}}}}}};
-  IoData iodata(config, false);
-  std::vector<std::unique_ptr<Mesh>> mesh, coarse;
-  mesh.push_back(std::make_unique<Mesh>(MakeGradedSplit(2, 3, 2)));
-  coarse.push_back(std::make_unique<Mesh>(MakeGradedSplit(2, 2, 2)));
-  SpaceOperator space_op(iodata, mesh), space_coarse(iodata, coarse);
-  DrivenSubstructure off(space_op, {1}, {2});
-  DrivenSubstructureModel model;
-  model.nG = off.InterfaceSize();
-  model.sig_w = SignatureWidth(space_op.GetNDSpace().Get());
-  model.signatures =
-      TrueDofSignatures(space_op.GetNDSpace().Get(), off.InterfaceIndex(), model.nG);
-  const auto written =
-      off.WriteRegionMesh((temp_dir / "substruct_driven_region.mesh").string(), {2}, 1.0);
-  model.env_moments = off.EnvironmentMoments();
-  model.region_moments = off.EnvironmentMoments(written);
-  CHECK_FALSE(DrivenSubstructure(space_op, {1}, {2}, true, &model).RegionOnly());
-  CHECK_THROWS_WITH(DrivenSubstructure(space_coarse, {1}, {2}, true, &model),
-                    Catch::Matchers::ContainsSubstring("The environment differs"));
 }
 
 TEST_CASE("DrivenSubstructure condenses the environment exactly",

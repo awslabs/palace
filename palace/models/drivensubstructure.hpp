@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 #include <mfem.hpp>
+#include "fem/substructure.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/schursolver.hpp"
 #include "linalg/vector.hpp"
@@ -71,8 +72,8 @@ private:
 // A model saved by an offline driven substructuring sweep, written and read on rank 0 (the
 // header broadcast): the header (the interface signatures, the fingerprints of the
 // environment and of its sources, the environment's ports, the boundary attributes of the
-// region, the frequencies, the reference length of the nondimensionalization) and one
-// record per frequency: S_E(ω), the
+// region, the frequencies, the reference length of the nondimensionalization), the record
+// of the environment (see EnvironmentRecord) and one record per frequency: S_E(ω), the
 // condensation g of the environment's sources (per excitation with environment sources),
 // and the condensed functionals of the environment's ports, whose values are V_j = c_jk +
 // h_j^T u_Γ for excitation k. An exact model holds the frequencies of a uniform sweep, a
@@ -81,24 +82,21 @@ private:
 //
 struct DrivenSubstructureModel
 {
-  static constexpr int kVersion = 7;   // of the header
+  static constexpr int kVersion = 8;   // of the header
   static constexpr int kSourceFp = 7;  // see DrivenSubstructure::SourceFingerprint
-  static constexpr int kPortData = 7;  // parameters per port (see port_data)
+  // Relative tolerance of the comparisons of the environment with that of a saved model:
+  // its fingerprint and element moments are sums over elements, which the partition changes
+  // by rounding only.
+  static constexpr double kEnvironmentTol = 1.0e-10;
   int nG = 0, sig_w = 0;
   double length_scale = 0.0;  // model.Lc of the offline run
-  // The moments (AttributeMoments summed over the environment attributes) of the
-  // environment and of its elements in the mesh of the region.
-  std::array<double, 6> env_moments = {}, region_moments = {};
+  EnvironmentRecord environment;
   std::vector<double> signatures;  // nG x sig_w
   std::vector<double> env_fp;      // environment fingerprint
   std::vector<int> excitations;    // excitations with environment sources
   std::vector<double> exc_fp;      // their source fingerprints (kSourceFp each)
   std::vector<int> ports;  // environment lumped ports (index) and wave ports (-index)
-  std::vector<int> region_bdr_attributes;  // see BoundaryAttributesInRegion
-  // The parameters of the ports that enter S_E, kPortData per port: R, L, C, Rs, Ls, Cs and
-  // the damping flag of a lumped port, the mode, offset and activity of a wave port (then
-  // zeros).
-  std::vector<double> port_data;
+  std::vector<int> region_bdr_attributes;     // see BoundaryAttributesInRegion
   std::vector<double> omega;                  // frequencies of the records (nondimensional)
   std::vector<std::complex<double>> weights;  // barycentric weights (rational model)
 
@@ -115,8 +113,9 @@ struct DrivenSubstructureModel
   std::array<std::size_t, 4> PartSizes() const;
 
   // The records of the model in its file (see substructuring::ModelFile), written and read
-  // by the calling process (ReadHeader is collective): the header, in a new file or
-  // appended (superseding the previous one), and the records of the frequencies.
+  // by the calling process (ReadHeader is collective): the header and the record of the
+  // environment, in a new file or appended (superseding the previous ones), and the records
+  // of the frequencies.
   void WriteHeader(const std::string &path, bool create = true) const;
   void AppendRecord(const std::string &path, const Record &r) const;
   void ReadHeader(const std::string &path, MPI_Comm comm);
@@ -127,8 +126,8 @@ struct DrivenSubstructureModel
   void TruncateRecords(const std::string &path, int n) const;
 
   // Whether a saved header is that of this model: the same interface (and so partition),
-  // environment, sources (to source_tol, see SameSource), ports, boundaries and
-  // frequencies.
+  // environment (its fingerprint and record), sources (to source_tol, see SameSource),
+  // ports, boundaries and frequencies.
   bool SameHeader(const DrivenSubstructureModel &saved, double source_tol) const;
 
   // Whether fingerprints agree, to a relative tolerance: the environment's (two counts,
@@ -167,14 +166,13 @@ private:
 class DrivenSubstructure
 {
 public:
-  // Online, with the saved model: on the mesh of the region (region_mesh; the moments of
-  // the environment elements check the mesh), Γ is the set of the region's boundary DOFs at
-  // the points of the saved interface DOFs. The factorizations are by the sparse direct
-  // solver given (STRUMPACK, MUMPS or SUPERLU), else: of a side with its Schur complement
-  // onto Γ, by MUMPS (its partial factorization), STRUMPACK or SuperLU_DIST (one solve per
-  // interface DOF), of the region with S_E online (one system) by STRUMPACK, MUMPS or
-  // SuperLU_DIST, in these orders among those Palace is built with, with the fill-reducing
-  // ordering given.
+  // Online, with the saved model: on the mesh of the region (region_mesh), Γ is the set of
+  // the region's boundary DOFs at the points of the saved interface DOFs. The
+  // factorizations are by the sparse direct solver given (STRUMPACK, MUMPS or SUPERLU),
+  // else: of a side with its Schur complement onto Γ, by MUMPS (its partial factorization),
+  // STRUMPACK or SuperLU_DIST (one solve per interface DOF), of the region with S_E online
+  // (one system) by STRUMPACK, MUMPS or SuperLU_DIST, in these orders among those Palace is
+  // built with, with the fill-reducing ordering given.
   DrivenSubstructure(SpaceOperator &space_op, const std::vector<int> &region_attributes,
                      const std::vector<int> &environment_attributes, bool online = false,
                      const DrivenSubstructureModel *saved = nullptr,
@@ -248,10 +246,6 @@ public:
   std::vector<char> WriteRegionMesh(const std::string &path,
                                     const std::vector<int> &port_attributes,
                                     double length_scale) const;
-
-  // The AttributeMoments of the environment elements (those marked, if mark is not empty),
-  // summed over the environment attributes. Collective.
-  std::array<double, 6> EnvironmentMoments(const std::vector<char> &mark = {}) const;
 
   // The wave ports in the environment (each wave port lies inside one side).
   std::vector<int> EnvironmentWavePorts() const;

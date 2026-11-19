@@ -75,30 +75,6 @@ std::vector<int> EnvironmentPorts(const IoData &iodata, const DrivenSubstructure
   return env_ports;
 }
 
-// The parameters of the environment's ports that enter S_E (see
-// DrivenSubstructureModel::port_data).
-std::vector<double> EnvironmentPortData(const IoData &iodata,
-                                        const std::vector<int> &env_ports)
-{
-  std::vector<double> data;
-  for (int p : env_ports)
-  {
-    if (p > 0)
-    {
-      const auto &lp = iodata.boundaries.lumpedport.at(p);
-      data.insert(data.end(),
-                  {lp.R, lp.L, lp.C, lp.Rs, lp.Ls, lp.Cs, lp.active ? 1.0 : 0.0});
-    }
-    else
-    {
-      const auto &wp = iodata.boundaries.waveport.at(-p);
-      data.insert(data.end(), {static_cast<double>(wp.mode_idx), wp.d_offset,
-                               wp.active ? 1.0 : 0.0, 0.0, 0.0, 0.0, 0.0});
-    }
-  }
-  return data;
-}
-
 // The functional of a wave port's S-parameter at ω as a true-DOF vector l (S = l^T E), as
 // in WavePortData::GetSParameter: s / R, the unconjugated reaction of the field with the
 // port's n×H mode vector s relative to that of the mode itself, R.
@@ -366,15 +342,20 @@ DrivenSubstructuredSweep::DrivenSubstructuredSweep(const IoData &iodata,
   if (online)
   {
     model.ReadHeader(model_path, comm);
-  }
-  if (online && sub.region_mesh)
-  {
-    // The mesh of the region is written refined, and checked against the model after.
-    const auto &refinement = iodata.model.refinement;
-    MFEM_VERIFY(refinement.uniform_ref_levels == 0 &&
-                    refinement.ser_uniform_ref_levels == 0 &&
-                    refinement.GetBoxes().empty() && refinement.GetSpheres().empty(),
-                kRegionMeshRefined);
+    if (sub.region_mesh)
+    {
+      // The mesh of the region is written refined.
+      const auto &refinement = iodata.model.refinement;
+      MFEM_VERIFY(refinement.uniform_ref_levels == 0 &&
+                      refinement.ser_uniform_ref_levels == 0 &&
+                      refinement.GetBoxes().empty() && refinement.GetSpheres().empty(),
+                  kRegionMeshRefined);
+    }
+    // The mesh and the configuration of the environment are those of the model (the
+    // sources of the excitations, which may be fewer, are checked one by one in OpenModel).
+    model.environment.Check(space_op.GetNDSpace().GetParMesh(), *iodata.resolved_config,
+                            sub.environment_attributes,
+                            DrivenSubstructureModel::kEnvironmentTol, sub.region_mesh);
   }
   ds = std::make_unique<DrivenSubstructure>(
       space_op, sub.region_attributes, sub.environment_attributes, online,
@@ -522,7 +503,6 @@ void DrivenSubstructuredSweep::SetUpModel()
     }
   }
   model.ports = env_ports;
-  model.port_data = EnvironmentPortData(iodata, env_ports);
   model.region_bdr_attributes =
       BoundaryAttributesInRegion(space_op.GetMesh().Get(), sub.region_attributes);
   model.length_scale = iodata.model.Lc;
@@ -549,8 +529,8 @@ void DrivenSubstructuredSweep::SetUpModel()
                model_path, adaptive ? "up to " : "",
                adaptive ? iodata.solver.driven.adaptive_max_size : omega_sample.size(),
                model.excitations.size(), env_ports.size());
-    // The mesh of the region for online runs, with the environment's ports, and the
-    // element moments of the environment and of its part in that mesh (in the header).
+    // The mesh of the region for online runs, with the environment's ports, and the record
+    // of the environment and of its part in that mesh.
     std::vector<int> port_attrs;
     for (int p : env_ports)
     {
@@ -571,8 +551,9 @@ void DrivenSubstructuredSweep::SetUpModel()
     const auto region_mesh = RegionMeshPath(model_path);
     const std::vector<char> written = ds->WriteRegionMesh(
         region_mesh, port_attrs, iodata.units.GetMeshLengthRelativeScale());
-    model.env_moments = ds->EnvironmentMoments();
-    model.region_moments = ds->EnvironmentMoments(written);
+    model.environment = EnvironmentRecord::Make(space_op.GetNDSpace().GetParMesh(),
+                                                sub.environment_attributes,
+                                                *iodata.resolved_config, written);
   }
   if (save && first_freq > 0)
   {
@@ -628,10 +609,6 @@ void DrivenSubstructuredSweep::OpenModel()
   MFEM_VERIFY(env_ports == model.ports,
               "The environment's lumped ports differ from those of the saved "
               "substructuring model!");
-  MFEM_VERIFY(EnvironmentPortData(iodata, env_ports) == model.port_data,
-              "The parameters of the environment's ports (the R, L and C of a lumped port, "
-              "the mode of a wave port) differ from those of the saved substructuring "
-              "model!");
   int nrec = root ? model.NumRecords(model_path) : 0;
   Mpi::Broadcast(1, &nrec, 0, comm);
   MFEM_VERIFY(nrec >= static_cast<int>(model.omega.size()),

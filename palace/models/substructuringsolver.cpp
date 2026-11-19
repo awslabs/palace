@@ -338,6 +338,7 @@ SubstructuringSolver::Impl::Impl(const IoData &iodata,
     }
     env_excitations_unchanged = saved.environment.Check(
         parent, *iodata.resolved_config, env_attributes, kFingerprintTol, region_only);
+    MFEM_VERIFY(!region_only || env_excitations_unchanged, kEnvironmentExcitationsDiffer);
     // S_E was condensed with the regularization of the model: the region uses the same.
     model_eps = saved.regularization;
     if (region_only)
