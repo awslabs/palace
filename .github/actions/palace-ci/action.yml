@@ -263,6 +263,22 @@ runs:
         spack -e . concretize -f --test root
         end_timer "Concretize"
 
+    # Spack looks in its source cache before downloading and checks the sha256,
+    # but every runner starts with an empty one. Keep the URL patches across runs
+    # so building a dependency from source does not need GitHub to serve them.
+    # Files are named by their sha256; patches have no extension, while source
+    # archives always do (.tar.gz, .zip, ...), so they are left out.
+    - name: Restore Spack patches
+      id: spack-patches
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          spack/var/spack/cache/_source-cache/archive/*/*
+          !spack/var/spack/cache/_source-cache/archive/*/*.*
+        # No entry has this exact key, so this restores the most recent one.
+        key: spack-patches
+        restore-keys: spack-patches-
+
     - name: Build Dependencies
       shell: bash
       run: |
@@ -291,9 +307,31 @@ runs:
             echo "Dependency installation failed after ${attempts} attempts."
             exit 1
           fi
-          echo "Dependency installation attempt ${attempt} failed; retrying."
+          # Back off, so that a download outage of a few minutes does not fail
+          # every attempt.
+          echo "Dependency installation attempt ${attempt} failed; retrying in $((120 * attempt)) s."
+          sleep $((120 * attempt))
         done
         end_timer "Build Dependencies"
+
+    # Save a new entry when this run downloaded patches that the restored entry
+    # did not have. The key starts with the hash of the patches to tell.
+    - name: Hash Spack patches
+      id: spack-patches-hash
+      if: ${{ !cancelled() }}
+      shell: bash
+      run: echo "hash=${{ hashFiles('spack/var/spack/cache/_source-cache/archive/*/*', '!spack/var/spack/cache/_source-cache/archive/*/*.*') }}" >> "$GITHUB_OUTPUT"
+
+    - name: Save Spack patches
+      if: >-
+        !cancelled() && steps.spack-patches-hash.outputs.hash != '' &&
+        !startsWith(steps.spack-patches.outputs.cache-matched-key, format('spack-patches-{0}-', steps.spack-patches-hash.outputs.hash))
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          spack/var/spack/cache/_source-cache/archive/*/*
+          !spack/var/spack/cache/_source-cache/archive/*/*.*
+        key: spack-patches-${{ steps.spack-patches-hash.outputs.hash }}-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
 
     - name: Print @develop commit hashes
       if: inputs.use-develop-deps == 'true'

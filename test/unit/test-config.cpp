@@ -204,6 +204,14 @@ TEST_CASE("Config Interior Boundary Sheets", "[config][Serial]")
   CHECK(data.impedance[1].crack);
   CHECK_FALSE(data.conductivity[0].crack);
   CHECK(data.conductivity[1].crack);
+  // Whether "Crack" is given is recorded, to tell an explicit false from the default.
+  CHECK_FALSE(data.conductivity[0].crack_given);
+  CHECK(data.conductivity[1].crack_given);
+  const json explicit_false = {
+      {"Attributes", {15}}, {"Conductivity", 1.0e7}, {"Crack", false}};
+  const config::ConductivityData cond_false(explicit_false);
+  CHECK(cond_false.crack_given);
+  CHECK_FALSE(cond_false.crack);
   CHECK_FALSE(data.rational_impedance[0].crack);
   CHECK(data.GetSheetAttributes() == std::vector<int>{1, 4, 5, 6, 7, 8, 9, 10});
   // All impedance sheets are sheets, including purely capacitive ones.
@@ -1367,6 +1375,22 @@ TEST_CASE("Config Magnetostatic InactivePorts", "[config][Serial]")
     CHECK(aperture.direction[1] == Catch::Approx(0.6));
     CHECK(aperture.direction[2] == Catch::Approx(0.8));
   }
+}
+
+TEST_CASE("Config Magnetostatic auxiliary smoother", "[config][Serial]")
+{
+  using Catch::Matchers::ContainsSubstring;
+  auto Check = [](int mg_smooth_aux, double london_pc_shift)
+  {
+    IoData iodata{Units(1.0, 1.0)};
+    iodata.problem.type = ProblemType::MAGNETOSTATIC;
+    iodata.solver.linear.mg_smooth_aux = mg_smooth_aux;
+    iodata.solver.linear.london_pc_shift = london_pc_shift;
+    iodata.CheckConfiguration();
+  };
+  CHECK_THROWS_WITH(Check(1, 0.0), ContainsSubstring("\"LondonPCShift\""));
+  CHECK_NOTHROW(Check(1, 0.1));
+  CHECK_NOTHROW(Check(-1, 0.0));
 }
 
 TEST_CASE("FarField", "[config][Serial]")
