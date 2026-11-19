@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <map>
 #include <memory>
 #include <numeric>
 #include <random>
@@ -17,6 +18,7 @@
 #include <nlohmann/json.hpp>
 #include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
+#include "fem/interpolator.hpp"
 #include "fem/substructure.hpp"
 #include "fem/substructuremodel.hpp"
 #include "fixtures.hpp"
@@ -359,7 +361,8 @@ TEST_CASE("Boundaries and points of the region", "[substructure][Serial][Paralle
   // Unit cube with the region at x < 1/2 and interior boundaries at x = 1/4 (attribute 7)
   // and x = 1/2 (8), on processes alternating in x: the boundaries at x = 0 (5) and x = 1/4
   // border the region only, the one at x = 1 (3) the environment only, and y = 0 (2) and
-  // x = 1/2 both.
+  // x = 1/2 both. A probe is in the region if it is found in one of its elements, and one
+  // on x = 1/2 is found on one side.
   mfem::Mesh cube = mfem::Mesh::MakeCartesian3D(4, 4, 4, mfem::Element::HEXAHEDRON);
   mfem::Mesh serial(3, cube.GetNV(), cube.GetNE(), cube.GetNBE() + 32);
   for (int v = 0; v < cube.GetNV(); v++)
@@ -408,9 +411,20 @@ TEST_CASE("Boundaries and points of the region", "[substructure][Serial][Paralle
   CHECK(BoundaryAttributesInRegion(mesh, {2}) == std::vector<int>{3});
   CHECK(BoundaryAttributesInRegion(mesh, {1, 2}) ==
         std::vector<int>{1, 2, 3, 4, 5, 6, 7, 8});
-  CHECK(PointInRegion(mesh, {0.2, 0.4, 0.6}, region));
-  CHECK_FALSE(PointInRegion(mesh, {0.8, 0.4, 0.6}, region));
-  CHECK_FALSE(PointInRegion(mesh, {2.0, 0.4, 0.6}, region));
+#if defined(MFEM_USE_GSLIB)
+  mesh.EnsureNodes();  // as a Palace mesh, for the point search
+  std::map<int, config::ProbeData> probes;
+  probes[1].center = {0.2, 0.4, 0.6};
+  probes[2].center = {0.8, 0.4, 0.6};
+  probes[3].center = {2.0, 0.4, 0.6};
+  CHECK(fem::ProbesInDomains(probes, mesh, region) == std::vector<int>{1});
+  CHECK(fem::ProbesInDomains(probes, mesh, {2}) == std::vector<int>{2});
+  std::map<int, config::ProbeData> on_gamma;
+  on_gamma[1].center = {0.5, 0.4, 0.6};
+  CHECK(fem::ProbesInDomains(on_gamma, mesh, region).size() +
+            fem::ProbesInDomains(on_gamma, mesh, {2}).size() ==
+        1);
+#endif
 }
 
 TEST_CASE("Nédélec DOFs at the points of saved ones", "[substructure][Serial]")

@@ -591,29 +591,6 @@ std::vector<int> BoundaryAttributesInRegion(const mfem::ParMesh &mesh,
   return attrs;
 }
 
-bool PointInRegion(const mfem::ParMesh &mesh, const std::array<double, 3> &x,
-                   const std::vector<int> &region_attributes)
-{
-  auto &pmesh = const_cast<mfem::ParMesh &>(mesh);
-  mfem::DenseMatrix point(pmesh.SpaceDimension(), 1);
-  for (int d = 0; d < pmesh.SpaceDimension(); d++)
-  {
-    point(d, 0) = x[d];
-  }
-  mfem::Array<int> elem;
-  mfem::Array<mfem::IntegrationPoint> ip;
-  pmesh.FindPoints(point, elem, ip, false);
-  int found[2] = {0, 0};  // anywhere, in the region
-  if (elem[0] >= 0)
-  {
-    found[0] = 1;
-    found[1] = std::ranges::find(region_attributes, pmesh.GetAttribute(elem[0])) !=
-               region_attributes.end();
-  }
-  Mpi::GlobalSum(2, found, mesh.GetComm());
-  return found[0] > 0 && found[1] == found[0];
-}
-
 std::string RegionMeshPath(const std::string &model_path)
 {
   std::filesystem::path p(model_path);

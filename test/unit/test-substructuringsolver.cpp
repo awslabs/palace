@@ -2248,11 +2248,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
          {{"Energy",
            {{{"Index", 1}, {"Attributes", {1}}},
             {{"Index", 2}, {"Attributes", {2}}},
-            {{"Index", 3}, {"Attributes", {1, 2}}}}},
-          {"Probe",
-           {{{"Index", 1}, {"Center", {0.25, 0.5, 0.5}}},
-            {{"Index", 2}, {"Center", {0.75, 0.5, 0.5}}},
-            {{"Index", 3}, {"Center", {2.0, 0.5, 0.5}}}}}}}}},
+            {{"Index", 3}, {"Attributes", {1, 2}}}}}}}}},
       {"Boundaries",
        {{"Terminal",
          {{{"Index", 1}, {"Attributes", {1}}}, {{"Index", 2}, {"Attributes", {2}}}}},
@@ -2263,6 +2259,13 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
        {{"Order", 1},
         {"Substructuring",
          {{"Region", {{"Attributes", {1}}}}, {"Environment", {{"Attributes", {2}}}}}}}}};
+#if defined(MFEM_USE_GSLIB)
+  // Probes need GSLIB.
+  config["Domains"]["Postprocessing"]["Probe"] = {
+      {{"Index", 1}, {"Center", {0.25, 0.5, 0.5}}},
+      {{"Index", 2}, {"Center", {0.75, 0.5, 0.5}}},
+      {{"Index", 3}, {"Center", {2.0, 0.5, 0.5}}}};
+#endif
   IoData iodata(config, false);
   CHECK(SubstructuringSolver::Postprocesses(iodata));
   std::vector<std::unique_ptr<Mesh>> mesh;
@@ -2279,7 +2282,9 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
     return idx;
   };
   CHECK(indices(post.domains.postpro.energy) == std::vector<int>{1});
+#if defined(MFEM_USE_GSLIB)
   CHECK(indices(post.domains.postpro.probe) == std::vector<int>{1});
+#endif
   CHECK(indices(post.boundaries.postpro.flux) == std::vector<int>{1});
   CHECK(indices(post.boundaries.postpro.dielectric) == std::vector<int>{1});
   const std::string model_path = (temp_dir / "substruct_postprocessing_model.bin").string();

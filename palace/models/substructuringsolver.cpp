@@ -10,6 +10,7 @@
 #include <set>
 #include <utility>
 #include "fem/gridfunction.hpp"
+#include "fem/interpolator.hpp"
 #include "fem/multigrid.hpp"
 #include "linalg/errorestimator.hpp"
 #include "models/materialoperator.hpp"
@@ -679,7 +680,7 @@ IoData SubstructuringSolver::RegionPostprocessing(const IoData &iodata) const
     std::vector<int> left_out;
     for (auto it = entries.begin(); it != entries.end();)
     {
-      if (in_region(it->second))
+      if (in_region(it->first, it->second))
       {
         ++it;
       }
@@ -692,20 +693,24 @@ IoData SubstructuringSolver::RegionPostprocessing(const IoData &iodata) const
     return left_out;
   };
   const auto energy = keep(post.domains.postpro.energy,
-                           [&](const auto &data)
+                           [&](int, const auto &data)
                            {
                              return std::ranges::all_of(data.attributes, [&](int a)
                                                         { return contains(region, a); });
                            });
-  const auto probe = keep(post.domains.postpro.probe, [&](const auto &data)
-                          { return PointInRegion(mesh, data.center, region); });
+  // A probe is interpolated in the element it is found in, which for a probe on Γ can be
+  // one of the environment.
+  const auto probes_in_region =
+      fem::ProbesInDomains(post.domains.postpro.probe, mesh, region);
+  const auto probe = keep(post.domains.postpro.probe, [&](int idx, const auto &)
+                          { return contains(probes_in_region, idx); });
   auto surfaces = BoundaryAttributesInRegion(mesh, region);
   if (impl->region_only)
   {
     std::erase_if(surfaces, [&](int a)
                   { return contains(impl->saved.environment.bdr_attributes, a); });
   }
-  auto on_surfaces = [&](const auto &data)
+  auto on_surfaces = [&](int, const auto &data)
   {
     return !data.attributes.empty() &&
            std::ranges::all_of(data.attributes,
