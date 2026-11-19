@@ -19,10 +19,6 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### New Features
 
-  - Added `config["Solver"]["Linear"]["STRUMPACKSharedPermutation"]` (default `true`) to
-    store the fill-reducing permutation of the STRUMPACK solvers once per node instead of
-    on every process (see the performance improvements below). SchemaVer 4-7-0
-    [PR 1231](https://github.com/awslabs/palace/pull/1231).
   - `validate-config` accepts several configuration files and validates them in one Julia
     session. [PR 1180](https://github.com/awslabs/palace/pull/1180).
   - Added `Boundaries.LumpedPort[].ExcitationAmplitude` and `ExcitationPhase` (degrees),
@@ -82,12 +78,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 #### Performance Improvements
 
   - Added a STRUMPACK patch for
-    [pghysels/STRUMPACK#174](https://github.com/pghysels/STRUMPACK/pull/174), which stores
-    the fill-reducing permutation of the distributed STRUMPACK solver once per node, in an
-    MPI shared memory window, instead of on every process (two integers per coarse matrix
-    row each). *Palace* enables it by default in all its STRUMPACK solvers, for the
-    sequential column orderings (all but ParMETIS and PT-Scotch) without compression.
-    Results are unchanged. [PR 1231](https://github.com/awslabs/palace/pull/1231).
+    [pghysels/STRUMPACK#174](https://github.com/pghysels/STRUMPACK/pull/174), which *Palace*
+    always enables: the STRUMPACK solvers store their fill-reducing permutation once per
+    node, in an MPI shared memory window, instead of on every process, for the sequential
+    column orderings (all but ParMETIS and PT-Scotch) without compression. If the window
+    cannot be allocated, or with `OMPI_MCA_osc=^sm,ucx` for Open MPI, every process keeps
+    its copy. Results are unchanged. [PR 1231](https://github.com/awslabs/palace/pull/1231).
   - Complex operators on CPUs which pack matching pairs of real and imaginary libCEED terms
     now also pair the H1 diffusion terms and pack the real terms without a partner, such as
     those of the lossless materials of partially lossy models, so that each of them acts on

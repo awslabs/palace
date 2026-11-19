@@ -1930,57 +1930,6 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
             .complex_coarse_solve);
   }
 
-  SECTION("STRUMPACKSharedPermutation defaults to true")
-  {
-    auto make_config = [](const json &linear)
-    {
-      json config = {{"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
-                     {"Model", {{"Mesh", "test.msh"}}},
-                     {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
-                     {"Boundaries", json::object()},
-                     {"Solver", json::object()}};
-      if (!linear.empty())
-      {
-        config["Solver"]["Linear"] = linear;
-      }
-      return config;
-    };
-
-    // Omitted: true, written to the resolved configuration, which validates and parses to
-    // the same value.
-    {
-      json config = make_config(json::object());
-      IoData iodata(config, false);
-      CHECK(iodata.solver.linear.strumpack_shared_permutation);
-      config = IoData::ConcretizeDefaults(iodata, config);
-      const auto &j_linear = config["Solver"]["Linear"];
-      REQUIRE(j_linear["STRUMPACKSharedPermutation"].is_boolean());
-      CHECK(j_linear["STRUMPACKSharedPermutation"].get<bool>());
-      std::string err = ValidateConfig(config);
-      INFO("schema validation error: " << err);
-      CHECK(err.empty());
-      IoData iodata2(config, false);
-      CHECK(iodata2.solver.linear.strumpack_shared_permutation);
-    }
-
-    // Explicit values are kept, also by the resolved configuration.
-    for (bool value : {false, true})
-    {
-      json config = make_config({{"STRUMPACKSharedPermutation", value}});
-      CHECK(ValidateConfig(config).empty());
-      IoData iodata(config, false);
-      CHECK(iodata.solver.linear.strumpack_shared_permutation == value);
-      config = IoData::ConcretizeDefaults(iodata, config);
-      CHECK(config["Solver"]["Linear"]["STRUMPACKSharedPermutation"].get<bool>() == value);
-      CHECK(ValidateConfig(config).empty());
-      IoData iodata2(config, false);
-      CHECK(iodata2.solver.linear.strumpack_shared_permutation == value);
-    }
-
-    // The key is a boolean.
-    CHECK_FALSE(ValidateConfig(make_config({{"STRUMPACKSharedPermutation", 1}})).empty());
-  }
-
   SECTION("Round-trip: resolved config validates and re-parses identically")
   {
     // Start from a sparse Electrostatic config with one non-default (Order=3) and one
@@ -2019,7 +1968,6 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(l2.ams_max_it == l1.ams_max_it);
     CHECK(l2.amg_agg_coarsen == l1.amg_agg_coarsen);
     CHECK(l2.reorder_reuse == l1.reorder_reuse);
-    CHECK(l2.strumpack_shared_permutation == l1.strumpack_shared_permutation);
     CHECK(l2.pc_side == l1.pc_side);
     CHECK(l2.sym_factorization == l1.sym_factorization);
     CHECK(l2.gs_orthog == l1.gs_orthog);

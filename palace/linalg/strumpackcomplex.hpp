@@ -43,7 +43,7 @@ private:
   SparseCompression compression;
   double lr_tol;
   int butterfly_l, lossy_prec;
-  bool drop_small_entries, reorder_reuse, shared_permutation;
+  bool drop_small_entries, reorder_reuse;
   int print;
   std::unique_ptr<strumpack::SparseSolverMPIDist<std::complex<double>, HYPRE_BigInt>>
       solver;
@@ -57,7 +57,7 @@ public:
   StrumpackComplexSolver(MPI_Comm comm, SymbolicFactorization reorder,
                          SparseCompression compression, double lr_tol, int butterfly_l,
                          int lossy_prec, bool drop_small_entries, bool reorder_reuse,
-                         bool shared_permutation, int print);
+                         int print);
   ~StrumpackComplexSolver() override;
 
   // Access the underlying solver (after SetOperator).

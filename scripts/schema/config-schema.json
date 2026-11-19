@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:4-7-0",
+  "$id": "urn:palace:schema:4-4-0",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -3114,12 +3114,6 @@
           "description": "Number of butterfly levels for STRUMPACK HODLR compression.",
           "minimum": 0,
           "default": 1,
-          "x-palace-advanced": true
-        },
-        "STRUMPACKSharedPermutation": {
-          "type": "boolean",
-          "description": "Store the fill-reducing permutation of the STRUMPACK solvers once per compute node, in an MPI shared memory window, instead of on every process, which lowers their memory without changing the results. Has no effect with the ParMETIS and PT-Scotch orderings or with compression. If the window cannot be allocated, every process keeps its own copy.",
-          "default": true,
           "x-palace-advanced": true
         },
         "SuperLU3DCommunicator": {

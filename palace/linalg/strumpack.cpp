@@ -80,8 +80,7 @@ template void ConfigureStrumpackCompression(strumpack::SPOptions<std::complex<do
 template <typename StrumpackSolverType>
 StrumpackSolverBase<StrumpackSolverType>::StrumpackSolverBase(
     MPI_Comm comm, SymbolicFactorization reorder, SparseCompression compression,
-    double lr_tol, int butterfly_l, int lossy_prec, bool reorder_reuse,
-    bool shared_permutation, int print)
+    double lr_tol, int butterfly_l, int lossy_prec, bool reorder_reuse, int print)
   : StrumpackSolverType(comm), comm(comm)
 {
   // Configure the solver.
@@ -125,16 +124,13 @@ StrumpackSolverBase<StrumpackSolverType>::StrumpackSolverBase(
 
   // Store the permutation once per node. The mixed precision solver computes the ordering
   // in its single precision solver, which has its own options.
-  if (shared_permutation)
+  if constexpr (std::is_same_v<StrumpackSolverType, mfem::STRUMPACKMixedPrecisionSolver>)
   {
-    if constexpr (std::is_same_v<StrumpackSolverType, mfem::STRUMPACKMixedPrecisionSolver>)
-    {
-      EnableStrumpackSharedPermutation(this->solver_->solver().options());
-    }
-    else
-    {
-      EnableStrumpackSharedPermutation(this->solver_->options());
-    }
+    EnableStrumpackSharedPermutation(this->solver_->solver().options());
+  }
+  else
+  {
+    EnableStrumpackSharedPermutation(this->solver_->options());
   }
   // if (mfem::Device::Allows(mfem::Backend::DEVICE_MASK))
   // {

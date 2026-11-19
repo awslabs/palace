@@ -155,20 +155,18 @@ TEST_CASE("StrumpackSolver unsymmetric sparsity pattern", "[strumpack][Serial][P
   }
   A.Mult(x_ex, b);
 
-  // With the permutation stored on every process and once per node, which has no effect
-  // when STRUMPACK is built without that option. The tests run on one node, where the
-  // permutation is not sent to other nodes: with STRUMPACK_SHARED_PERM_GROUP=1, every
-  // process acts as a node, so that on several processes the root broadcasts the
-  // permutation to the other node leaders as on several nodes. STRUMPACK reads the variable
-  // on every process at each reordering, so it is set before the solver is constructed and
-  // restored after the solver is destroyed.
-  const bool shared_permutation = GENERATE(false, true);
+  // The solver stores the permutation once per node, when STRUMPACK is built with that
+  // option. The tests run on one node, where the permutation is not sent to other nodes:
+  // with STRUMPACK_SHARED_PERM_GROUP=1, every process acts as a node, so that on several
+  // processes the root broadcasts the permutation to the other node leaders as on several
+  // nodes. STRUMPACK reads the variable on every process at each reordering, so it is set
+  // before the solver is constructed and restored after the solver is destroyed.
   const bool process_as_node = GENERATE(false, true);
-  CAPTURE(shared_permutation, process_as_node);
+  CAPTURE(process_as_node);
   ScopedEnvironmentVariable group("STRUMPACK_SHARED_PERM_GROUP",
                                   process_as_node ? "1" : nullptr);
   StrumpackSolver strumpack(comm, SymbolicFactorization::DEFAULT, SparseCompression::NONE,
-                            0.0, 0, 0, false, shared_permutation, 0);
+                            0.0, 0, 0, false, 0);
   strumpack.SetOperator(A);
   x = 0.0;
   strumpack.Mult(b, x);
@@ -282,7 +280,7 @@ TEST_CASE("StrumpackSolver BLR compression of an indefinite matrix",
   // tolerance. With the defect it was 0.23 on 2 processes, 0.44 on 4 and 0.46 on 8, and at
   // least 0.045 on 2 to 8 processes.
   StrumpackSolver strumpack(comm, SymbolicFactorization::DEFAULT, SparseCompression::BLR,
-                            1.0e-9, 0, 0, false, true, 0);
+                            1.0e-9, 0, 0, false, 0);
   strumpack.SetOperator(A);
   x = 0.0;
   strumpack.Mult(b, x);
