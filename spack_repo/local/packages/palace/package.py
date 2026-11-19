@@ -580,21 +580,20 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 when="@4.10:",
             ),
             # https://github.com/mfem/mfem/pull/5731: setters for the supernode sizes of
-            # SuperLUSolver (narrow to @4.10.0 once merged upstream and Lookahead flags it)
+            # SuperLUSolver
             patch(
                 "https://github.com/mfem/mfem/commit/"
                 "67dd11d697fafba16d8826172343a42e7a0c5df1.diff?full_index=1",
                 sha256="96ef4106945e25b4f262d7ae2a8f5034e1b08d3276c09615ed429fd0b4c7268b",
-                when="@4.10:",
+                when="@4.10.0",
             ),
             # https://github.com/mfem/mfem/pull/5732: SuperLUSolver frees the factors on all
-            # the layers of a 3D process grid (narrow to @4.10.0 once merged upstream and
-            # Lookahead flags it)
+            # the layers of a 3D process grid
             patch(
                 "https://github.com/mfem/mfem/commit/"
                 "5e9a26308ef95e6a8337f7b266e9a92914adcca0.diff?full_index=1",
                 sha256="2f30df267053a925d4fc53513c53b4d75bf3f1dde07c706ab5afd3d59adcac41",
-                when="@4.10:",
+                when="@4.10.0",
             ),
             # https://github.com/mfem/mfem/pull/5686: DeviceGroupCommunicator::Exchange
             # synchronizes the device stream before the GPU-aware MPI exchange
