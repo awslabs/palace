@@ -7,7 +7,6 @@
 
 #include <complex>
 #include <type_traits>
-#include <utility>
 
 namespace palace
 {
@@ -38,21 +37,6 @@ strumpack::CompressionType GetCompressionType(SparseCompression type)
   }
   return strumpack::CompressionType::NONE;  // For compiler warning
 }
-
-// Detect if the STRUMPACK options have the node-shared permutation. STRUMPACK defines no
-// macro for it, so this keeps Palace building with a STRUMPACK which lacks the option.
-template <typename OptionsType, typename = void>
-struct HasSharedPermutation : std::false_type
-{
-};
-
-template <typename OptionsType>
-struct HasSharedPermutation<
-    OptionsType,
-    std::void_t<decltype(std::declval<OptionsType &>().enable_shared_permutation())>>
-  : std::true_type
-{
-};
 
 }  // namespace
 
@@ -92,20 +76,6 @@ template void ConfigureStrumpackCompression(strumpack::SPOptions<double> &,
                                             SparseCompression, double, int, int);
 template void ConfigureStrumpackCompression(strumpack::SPOptions<std::complex<double>> &,
                                             SparseCompression, double, int, int);
-
-template <typename ScalarType>
-void EnableStrumpackSharedPermutation(strumpack::SPOptions<ScalarType> &opts)
-{
-  if constexpr (HasSharedPermutation<strumpack::SPOptions<ScalarType>>::value)
-  {
-    opts.enable_shared_permutation();
-  }
-}
-
-template void EnableStrumpackSharedPermutation(strumpack::SPOptions<float> &);
-template void EnableStrumpackSharedPermutation(strumpack::SPOptions<double> &);
-template void
-EnableStrumpackSharedPermutation(strumpack::SPOptions<std::complex<double>> &);
 
 template <typename StrumpackSolverType>
 StrumpackSolverBase<StrumpackSolverType>::StrumpackSolverBase(

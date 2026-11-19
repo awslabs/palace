@@ -27,10 +27,16 @@ void ConfigureStrumpackCompression(strumpack::SPOptions<ScalarType> &opts,
 // for the real-valued solvers and for the solver in complex arithmetic. STRUMPACK does this
 // after a sequential ordering (not ParMETIS or PT-Scotch) without compression, and falls
 // back to a copy per process, with a warning, if the window cannot be allocated. The option
-// is a patch in the STRUMPACK builds of Palace (superbuild and Spack package): this does
-// nothing with a STRUMPACK which lacks it.
+// is a patch in the STRUMPACK builds of Palace (superbuild and Spack package), and
+// STRUMPACK defines no macro for it: this does nothing with a STRUMPACK which lacks it.
 template <typename ScalarType>
-void EnableStrumpackSharedPermutation(strumpack::SPOptions<ScalarType> &opts);
+inline void EnableStrumpackSharedPermutation(strumpack::SPOptions<ScalarType> &opts)
+{
+  if constexpr (requires { opts.enable_shared_permutation(); })
+  {
+    opts.enable_shared_permutation();
+  }
+}
 
 //
 // A wrapper for the STRUMPACK direct solver package.
