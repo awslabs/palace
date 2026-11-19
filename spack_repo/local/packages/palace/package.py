@@ -411,8 +411,8 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             # https://github.com/mfem/mfem/commit/e4a2b9568c40f20e24612066d155cc6a9973b247
             patch(
                 "https://github.com/mfem/mfem/commit/"
-                "e4a2b9568c40f20e24612066d155cc6a9973b247.diff",
-                sha256="6ced66f487780af66fb8184d329b9aad4b694e711b65830391e8c6d0c898713e",
+                "e4a2b9568c40f20e24612066d155cc6a9973b247.diff?full_index=1",
+                sha256="0ba65bae6c14f3305842f64a094a7d5a12c41f7d292e1314663ee919340414bb",
                 when="@4.9.0",
             ),
             # Curated snapshots retain only the parts of these PRs that
@@ -442,8 +442,9 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             ),
             # https://github.com/mfem/mfem/pull/5415
             patch(
-                "https://github.com/mfem/mfem/commit/9d1438d8a2502cc927c63e093cf8c855ff17918e.diff",
-                sha256="482655b6b740b880713d67bcca843571244b7d383c95e0cef3d3102b3327ff2f",
+                "https://github.com/mfem/mfem/commit/"
+                "9d1438d8a2502cc927c63e093cf8c855ff17918e.diff?full_index=1",
+                sha256="2cae055c3110f04509b09965cee815aae1358b866bd07bfe8c2e7550ef942663",
                 when="@4.9.0",
             ),
             # https://github.com/mfem/mfem/pull/5494 (source-only backport for 4.9)
@@ -457,8 +458,8 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             # https://github.com/mfem/mfem/pull/5502
             patch(
                 "https://github.com/mfem/mfem/commit/"
-                "3091ba40b238c4008b67216314bb26da6738b833.diff",
-                sha256="52ccf3332f87aaf7ebc84674448226201c04343a3e298006bea5fd8be8e92533",
+                "3091ba40b238c4008b67216314bb26da6738b833.diff?full_index=1",
+                sha256="84563db833fc08f50cc759c783235289f4ebdf9850af41ee0daf3801eabb6d64",
                 when="@4.9.0",
             ),
         ],
@@ -501,70 +502,70 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             # https://github.com/mfem/mfem/pull/5502
             patch(
                 "https://github.com/mfem/mfem/commit/"
-                "3091ba40b238c4008b67216314bb26da6738b833.diff",
-                sha256="52ccf3332f87aaf7ebc84674448226201c04343a3e298006bea5fd8be8e92533",
+                "3091ba40b238c4008b67216314bb26da6738b833.diff?full_index=1",
+                sha256="84563db833fc08f50cc759c783235289f4ebdf9850af41ee0daf3801eabb6d64",
                 when="@4.10.0",
             ),
             # https://github.com/mfem/mfem/pull/5531
             patch(
                 "https://github.com/mfem/mfem/commit/"
-                "641e56439e63a1774f43bc2ba904797694a047ad.diff",
-                sha256="2da8792e74465c9c0767c4c21961bb5af11fa9b4cd57aa06e8ce0db6479641fe",
+                "641e56439e63a1774f43bc2ba904797694a047ad.diff?full_index=1",
+                sha256="418a36909e888844d03fbacf989f62e0b3127d8602dbcb4bf02a0523ba81e601",
                 when="@4.10.0",
             ),
             # https://github.com/mfem/mfem/pull/5639 (narrow to @4.10.0 once
             # merged upstream and Lookahead flags it)
             patch(
                 "https://github.com/mfem/mfem/commit/"
-                "864d476acf25135d2059d3379d208e635823f26c.diff",
-                sha256="9b0063b6a6717fa951bb4af1bc7944f9896eccb69ec01d869c7e48aef9066e03",
+                "864d476acf25135d2059d3379d208e635823f26c.diff?full_index=1",
+                sha256="97ddf27f24f7595b411a00eb3426d4675b2bdfc0a3f797f330cbb483281272fc",
                 when="@4.10:",
             ),
             # https://github.com/mfem/mfem/pull/5698 (narrow to @4.10.0 once
             # merged upstream and Lookahead flags it)
             patch(
                 "https://github.com/mfem/mfem/commit/"
-                "e38d2e051b05ba10e27eeb96dfc556ce6424c649.diff",
-                sha256="eed51f3d84468daa250f1ba71f0bd6072e9c98ab96f244b62820bf0a1c32bc7f",
+                "e38d2e051b05ba10e27eeb96dfc556ce6424c649.diff?full_index=1",
+                sha256="ea248283d410f4d0cb98fff988aa34cd9d75bd57998f8d01cbbd4377139f3ea3",
                 when="@4.10:",
             ),
             # https://github.com/mfem/mfem/pull/5610
             patch(
                 "https://github.com/mfem/mfem/commit/"
-                "e9247694fb4e8e433df3ce24c4aaa3c5d5487c91.diff",
-                sha256="917b2c01f2032ececb8f7ae3b7a23c82d2ccd3b7c8ebcdffdea80d64c10ab964",
+                "e9247694fb4e8e433df3ce24c4aaa3c5d5487c91.diff?full_index=1",
+                sha256="d64d2c4d9bef8cb2e4d657da0fe1ff5cc3d82020f6990ad2b969c11b06e9b99f",
                 when="@4.10.0",
             ),
             # https://github.com/mfem/mfem/pull/5714 (narrow to @4.10.0 once
             # merged upstream and Lookahead flags it)
             patch(
                 "https://github.com/mfem/mfem/commit/"
-                "c09fb9b6c1178afaae083aa19448a9b4abc3c35f.diff",
-                sha256="3c692ce61f90033c3aa9434f64fc91360859f9a7db10c72b1ae1366ccbb673b5",
+                "c09fb9b6c1178afaae083aa19448a9b4abc3c35f.diff?full_index=1",
+                sha256="6a0a99ae986bb725987f4e6da1d03477c829f47d93984eb8d2c00c3cccaefd43",
                 when="@4.10:",
             ),
             # https://github.com/mfem/mfem/pull/5717 (narrow to @4.10.0 once
             # merged upstream and Lookahead flags it)
             patch(
                 "https://github.com/mfem/mfem/commit/"
-                "d7d1f7f944d81f6f30a62a59ad70bf10f6ca1810.diff",
-                sha256="f4790b244052fde312590c9264f6609b81efb434f1298b23cbd6d4ea3aaa60c3",
+                "d7d1f7f944d81f6f30a62a59ad70bf10f6ca1810.diff?full_index=1",
+                sha256="343b7d3b1762dd1edcbeacf9c80088b9993ec2a5e19fe578ef2e47a76b8cec14",
                 when="@4.10:",
             ),
             # https://github.com/mfem/mfem/pull/5721 (narrow to @4.10.0 once
             # merged upstream and Lookahead flags it)
             patch(
                 "https://github.com/mfem/mfem/commit/"
-                "c79f309399361b2d6aadc207087ca6dc475513b4.diff",
-                sha256="75576858e3dd903b89fb049a5757966153c65406d52456915ff6f2b19c261456",
+                "c79f309399361b2d6aadc207087ca6dc475513b4.diff?full_index=1",
+                sha256="8e3b016986383d5999c2f83a49aaacb9dae08ca75acc877ba18b1b0bd7844318",
                 when="@4.10:",
             ),
             # https://github.com/mfem/mfem/pull/5731: setters for the supernode sizes of
             # SuperLUSolver (narrow to @4.10.0 once merged upstream and Lookahead flags it)
             patch(
                 "https://github.com/mfem/mfem/commit/"
-                "67dd11d697fafba16d8826172343a42e7a0c5df1.diff",
-                sha256="17fd1f5a87e9b5b8b29fda0cc11165257735d0b79e34ee760d2b5305d3d2f392",
+                "67dd11d697fafba16d8826172343a42e7a0c5df1.diff?full_index=1",
+                sha256="96ef4106945e25b4f262d7ae2a8f5034e1b08d3276c09615ed429fd0b4c7268b",
                 when="@4.10:",
             ),
             # https://github.com/mfem/mfem/pull/5732: SuperLUSolver frees the factors on all
@@ -572,8 +573,8 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             # Lookahead flags it)
             patch(
                 "https://github.com/mfem/mfem/commit/"
-                "5e9a26308ef95e6a8337f7b266e9a92914adcca0.diff",
-                sha256="7226ea4e223b0e2bd1bc4b21de93498f22b2d8c1dcb194415a377848f9200cc0",
+                "5e9a26308ef95e6a8337f7b266e9a92914adcca0.diff?full_index=1",
+                sha256="2f30df267053a925d4fc53513c53b4d75bf3f1dde07c706ab5afd3d59adcac41",
                 when="@4.10:",
             ),
         ],

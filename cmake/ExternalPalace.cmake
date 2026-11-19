@@ -168,14 +168,26 @@ ExternalProject_Add(palace
   TEST_COMMAND      ""
 )
 
-# Add target for Palace unit tests
-ExternalProject_Add_Step(palace tests
-  COMMAND           ${PALACE_MAKE_COMMAND} unit-tests
-  COMMAND           ${CMAKE_COMMAND} --install <BINARY_DIR>/test/unit --prefix ${CMAKE_INSTALL_PREFIX}
-  DEPENDEES         install
-  DEPENDERS         ""
-  COMMENT           "Building and installing unit tests for 'palace'"
-  WORKING_DIRECTORY <BINARY_DIR>
-  EXCLUDE_FROM_MAIN TRUE
-)
-ExternalProject_Add_StepTargets(palace tests)
+# Add target for Palace unit tests. They require MFEM with exceptions (see
+# test/unit/main.cpp): when the superbuild builds MFEM without them, fail right away instead
+# of after building all the dependencies.
+if(PALACE_BUILD_EXTERNAL_DEPS AND "${MFEM_DIR}" STREQUAL "" AND
+   NOT PALACE_MFEM_USE_EXCEPTIONS)
+  add_custom_target(palace-tests
+    COMMAND ${CMAKE_COMMAND} -E echo
+      "Palace unit tests require MFEM built with MFEM_USE_EXCEPTIONS:"
+      "configure with -DPALACE_MFEM_USE_EXCEPTIONS=ON"
+    COMMAND ${CMAKE_COMMAND} -E false
+  )
+else()
+  ExternalProject_Add_Step(palace tests
+    COMMAND           ${PALACE_MAKE_COMMAND} unit-tests
+    COMMAND           ${CMAKE_COMMAND} --install <BINARY_DIR>/test/unit --prefix ${CMAKE_INSTALL_PREFIX}
+    DEPENDEES         install
+    DEPENDERS         ""
+    COMMENT           "Building and installing unit tests for 'palace'"
+    WORKING_DIRECTORY <BINARY_DIR>
+    EXCLUDE_FROM_MAIN TRUE
+  )
+  ExternalProject_Add_StepTargets(palace tests)
+endif()
