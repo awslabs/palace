@@ -14,6 +14,7 @@
 #include <iomanip>
 #include <map>
 #include <memory>
+#include <optional>
 #include <set>
 #include <sstream>
 #include <string>
@@ -61,12 +62,29 @@ namespace
 // 0.25], y in [0.25, 0.375], z in [0.25, 0.375]) is removed: a cavity between the knots
 // of the left edge's cross-sections (x = 0.05 and 0.45 at y = 0.3) that its mortar
 // samples along the ring segment between them enter.
-mfem::Mesh MakeSerialObliqueCutLeadMesh(double shear, bool notch)
+// With a wall dent (decision 2174 m-8, the W-a43 form), the four elements x in [0, 0.25], y
+// in [0.125, 0.25], z in [(k - 1) h, (k + 1) h] at the domain face x = 0 are removed and
+// the vertices x = 0, h, 2 h of their ceiling line y = 0.25, z = k h are raised by `rise`
+// and moved along z by `shift` (before the shear): the dent's ceiling rises above the left
+// edge's knot line y = 0.3 only near that line, so the trace samples there leave the mesh
+// while the knots of the sections farther along stay in.
+struct WallDent
+{
+  int k;
+  double rise, shift;
+};
+
+mfem::Mesh MakeSerialObliqueCutLeadMesh(double shear, bool notch,
+                                        std::optional<WallDent> dent = std::nullopt)
 {
   constexpr int n = 8;
   constexpr double h = 1.0 / n;
   auto Vertex = [](int i, int j, int k) { return i + (n + 1) * (j + (n + 1) * k); };
-  auto IsNotch = [&](int i, int j, int k) { return notch && i == 1 && j == 2 && k == 2; };
+  auto IsNotch = [&](int i, int j, int k)
+  {
+    return (notch && i == 1 && j == 2 && k == 2) ||
+           (dent && i <= 1 && j == 1 && (k == dent->k - 1 || k == dent->k));
+  };
   int element_count = 0;
   for (int k = 0; k < n; k++)
   {
@@ -85,7 +103,9 @@ mfem::Mesh MakeSerialObliqueCutLeadMesh(double shear, bool notch)
     {
       for (int i = 0; i <= n; i++)
       {
-        serial.AddVertex(i * h, j * h, k * h);
+        const bool raised = dent && i <= 2 && j == 2 && k == dent->k;
+        serial.AddVertex(i * h, j * h + (raised ? dent->rise : 0.0),
+                         k * h + (raised ? dent->shift : 0.0));
       }
     }
   }
@@ -193,9 +213,11 @@ mfem::Mesh MakeSerialObliqueCutLeadMesh(double shear, bool notch)
   return serial;
 }
 
-std::unique_ptr<mfem::ParMesh> MakeObliqueCutLeadMesh(double shear, bool notch)
+std::unique_ptr<mfem::ParMesh>
+MakeObliqueCutLeadMesh(double shear, bool notch,
+                       std::optional<WallDent> dent = std::nullopt)
 {
-  mfem::Mesh serial = MakeSerialObliqueCutLeadMesh(shear, notch);
+  mfem::Mesh serial = MakeSerialObliqueCutLeadMesh(shear, notch, dent);
   return std::make_unique<mfem::ParMesh>(Mpi::World(), serial);
 }
 
@@ -4470,17 +4492,22 @@ TEST_CASE("Truncation planes are deterministic across rank counts",
 // DomainBoundary portions) and the construction is repeated without it; every other
 // exclusion is the containment test's, which the dry run lists alone (the dry run cannot
 // know a late exclusion).
-TEST_CASE_METHOD(test::SurfaceResponseFiles,
-                 "Electrostatic run excludes a patch whose trace sample leaves the mesh",
-                 "[surfaceresponseoperator][domainboundary][3d][Serial][Parallel]")
+#if defined(MFEM_USE_GSLIB)
+namespace
 {
-#if !defined(MFEM_USE_GSLIB)
-  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
-#else
-  constexpr double shear = 0.45;
-  const auto basis_path = temp.temp_dir / "late-domain-boundary-basis-points.csv";
-  const auto library_path = temp.temp_dir / "fabrication-process-late-domain-boundary.json";
-  const auto mesh_path = temp.temp_dir / "late-domain-boundary-notch.mesh";
+
+// Decision 2156: the files (written on the root) and the configuration of the notch run of
+// the late domain-boundary exclusion: an oblique-cut lead (shear `shear`) with the notch, a
+// four-knot isolated-edge basis and the SurfaceMortar trace (the late case and the pass
+// bound).
+json LateDomainBoundaryNotchConfig(const test::SurfaceResponseFiles &files, double shear,
+                                   std::optional<WallDent> dent = std::nullopt)
+{
+  const auto basis_path = files.temp.temp_dir / "late-domain-boundary-basis-points.csv";
+  const auto library_path =
+      files.temp.temp_dir / "fabrication-process-late-domain-boundary.json";
+  const auto mesh_path = files.temp.temp_dir / (dent ? "late-domain-boundary-dent.mesh"
+                                                     : "late-domain-boundary-notch.mesh");
   if (Mpi::Root(Mpi::World()))
   {
     {
@@ -4491,7 +4518,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
              << "0.2,0.2,0.0\n"
              << "-0.2,0.2,0.0\n";
     }
-    std::ifstream input(convex_library_3d_path);
+    std::ifstream input(files.convex_library_3d_path);
     REQUIRE(input);
     json library = json::parse(input);
     library["Name"] = "unit-test-process-late-domain-boundary";
@@ -4505,13 +4532,13 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     }
     std::ofstream output(library_path);
     output << library.dump(2) << "\n";
-    mfem::Mesh serial = MakeSerialObliqueCutLeadMesh(shear, true);
+    mfem::Mesh serial = MakeSerialObliqueCutLeadMesh(shear, !dent, dent);
     std::ofstream mesh_output(mesh_path);
     mesh_output.precision(17);
     serial.Print(mesh_output);
   }
   Mpi::Barrier(Mpi::World());
-  json config = IslandConfig();
+  json config = files.IslandConfig();
   config["Model"]["Mesh"] = mesh_path.string();
   config["Model"]["L0"] = 1.0;
   config["Model"]["Lc"] = 1.0;
@@ -4522,8 +4549,26 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   correction["Library"] = library_path.string();
   correction["TraceCoupling"] = "SurfaceMortar";
   correction["MortarOversampling"] = 2;
+  config["Problem"]["Output"] =
+      (files.temp.temp_dir /
+       (dent ? "late-domain-boundary-dent-run" : "late-domain-boundary-run"))
+          .string();
+  return config;
+}
+
+}  // namespace
+#endif
+
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "Electrostatic run excludes a patch whose trace sample leaves the mesh",
+                 "[surfaceresponseoperator][domainboundary][3d][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  constexpr double shear = 0.45;
+  json config = LateDomainBoundaryNotchConfig(*this, shear);
   const fs::path output_dir = temp.temp_dir / "late-domain-boundary-run";
-  config["Problem"]["Output"] = output_dir.string();
 
   // The dry run's record: the containment test's exclusions only.
   std::set<std::size_t> dry_run_excluded;
@@ -4597,6 +4642,132 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   {
     CHECK(raw_patches.count(patch) == 1);
   }
+#endif
+}
+
+// Decision 2174 m-8 (the W-a43 form): the domain wall itself bulges into a coupon BETWEEN
+// two tested sections of one cell. A dent at the domain face x = 0 raises its ceiling above
+// the left edge's knot line only near z = 0.26 (sheared: z' 0.154-0.185, between the tested
+// sections z' = 0.151 and 0.1875 of one cell), so the knots of every tested section stay in
+// the mesh (the containment test keeps the patch) while trace samples between them leave
+// it: a late exclusion of that patch, located between the two sections.
+TEST_CASE_METHOD(
+    test::SurfaceResponseFiles,
+    "Electrostatic run excludes a patch whose trace sample enters a dent of the "
+    "wall between two tested sections",
+    "[surfaceresponseoperator][domainboundary][3d][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  constexpr double shear = 0.45;
+  // The ceiling is above y = 0.3 over x in [0, 0.25] for z' in [0.1543, 0.1850] (computed
+  // from the trilinear dent): inside the cell [0.125, 0.1875] of the left edge, clear of
+  // its tested sections z' = 0.125, 0.1514 and 0.1875 (by 0.0029 and 0.0025).
+  const WallDent dent{2, 0.057, 0.011};
+  json config = LateDomainBoundaryNotchConfig(*this, shear, dent);
+  const fs::path output_dir = temp.temp_dir / "late-domain-boundary-dent-run";
+  std::set<std::size_t> dry_run_excluded;
+  {
+    IoData iodata(config, false);
+    iodata.boundaries.cracked_attributes.insert(9);
+    const auto manifest_path =
+        temp.temp_dir / "late-domain-boundary-dent-requirements.json";
+    Mesh dry_run_mesh(MakeObliqueCutLeadMesh(shear, false, dent));
+    WriteSurfaceResponseRequirements(iodata, dry_run_mesh, manifest_path.string());
+    Mpi::Barrier(Mpi::World());
+    std::ifstream input(manifest_path);
+    REQUIRE(input);
+    const json manifest = json::parse(input);
+    for (const auto &entry :
+         manifest["Identification"]["Diagnostics"]["DomainBoundaryExclusions"]["Patches"])
+    {
+      dry_run_excluded.insert(entry["Patch"].get<std::size_t>());
+    }
+  }
+  CHECK_NOTHROW(test::RunElectrostatic(config));
+  Mpi::Barrier(Mpi::World());
+  std::ifstream input(output_dir / "palace.json");
+  REQUIRE(input);
+  const json meta = json::parse(input);
+  const auto &exclusions =
+      meta["SurfaceResponse"]["Diagnostics"]["DomainBoundaryExclusions"];
+  int late_count = 0, between_count = 0;
+  for (const auto &entry : exclusions["Patches"])
+  {
+    if (entry["Reason"].get<std::string>() != "LateTracePoint")
+    {
+      continue;
+    }
+    const auto patch = entry["Patch"].get<std::size_t>();
+    INFO("late patch " << patch);
+    late_count++;
+    // The containment test kept it: the knots of its tested sections are in the mesh.
+    CHECK(dry_run_excluded.count(patch) == 0);
+    CHECK(entry["Late"]["Distance"].get<double>() > 0.0);
+    // Its farthest unlocated point lies along the left edge's axis (z, either orientation)
+    // strictly inside its cell and away from the three tested sections (origin, both ends).
+    const auto cell = entry["Cell"].get<std::array<double, 2>>();
+    const auto origin = entry["Origin"].get<std::array<double, 3>>();
+    const auto point = entry["NearestOutsidePoint"].get<std::array<double, 3>>();
+    for (const double sign : {1.0, -1.0})
+    {
+      const double t = sign * (point[2] - origin[2]);
+      if (t > cell[0] && t < cell[1] &&
+          std::min({t - cell[0], std::abs(t), cell[1] - t}) > 1.0e-3)
+      {
+        between_count++;
+        break;
+      }
+    }
+  }
+  CHECK(late_count >= 1);
+  CHECK(between_count == late_count);
+#endif
+}
+
+// Decision 2180 (decision 2174 m-8, the pass bound): ConstructElectrostatic makes at most
+// `maximum_passes` construction passes and the last one fails closed as the plain
+// constructor. On the notch run one late pass suffices: with a bound of 1 the first pass is
+// the last and stops with the clear error; with 2 it excludes the notch's patches late and
+// gives the default bound's record.
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "Electrostatic construction passes are bounded",
+                 "[surfaceresponseoperator][domainboundary][3d][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  constexpr double shear = 0.45;
+  const json config = LateDomainBoundaryNotchConfig(*this, shear);
+  IoData iodata(config, false);
+  iodata.boundaries.cracked_attributes.insert(9);
+  std::vector<std::unique_ptr<Mesh>> meshes;
+  meshes.push_back(std::make_unique<Mesh>(MakeObliqueCutLeadMesh(shear, true)));
+  LaplaceOperator laplace_op(iodata, meshes);
+  // The last pass's clear error is the plain constructor's, raised by the ranks that hold
+  // the unlocated points only (a product run then stops on that rank's abort): at more than
+  // one rank the others would go on alone into the next collective, so this leg runs on
+  // one.
+  if (Mpi::Size(Mpi::World()) == 1)
+  {
+    CHECK_THROWS_WITH(
+        SurfaceResponseOperator::ConstructElectrostatic(iodata, laplace_op, nullptr, 1),
+        ContainsSubstring("could not be located in the device mesh"));
+  }
+  std::unique_ptr<SurfaceResponseOperator> two, bound;
+  CHECK_NOTHROW(two = SurfaceResponseOperator::ConstructElectrostatic(iodata, laplace_op,
+                                                                      nullptr, 2));
+  CHECK_NOTHROW(
+      bound = SurfaceResponseOperator::ConstructElectrostatic(iodata, laplace_op, nullptr));
+  REQUIRE(two);
+  REQUIRE(bound);
+  CHECK(!two->GetDomainBoundaryPortions().empty());
+  CHECK(two->GetDomainBoundaryPortions().size() ==
+        bound->GetDomainBoundaryPortions().size());
+  CHECK_THROWS_WITH(
+      SurfaceResponseOperator::ConstructElectrostatic(iodata, laplace_op, nullptr, 0),
+      ContainsSubstring("allows 1 to 3 passes"));
 #endif
 }
 
