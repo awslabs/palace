@@ -26,3 +26,4 @@ docs/src/assets/examples/coaxial-4.svg
 
 # Spack develop build symlinks.
 build-*
+!/.github/actions/build-container/
