@@ -12,9 +12,7 @@
 #include "fem/gridfunction.hpp"
 #include "fem/multigrid.hpp"
 #include "linalg/errorestimator.hpp"
-#include "linalg/iterative.hpp"
 #include "models/materialoperator.hpp"
-#include "models/postoperator.hpp"
 #include "utils/geodata.hpp"
 #include "utils/timer.hpp"
 
@@ -23,23 +21,6 @@ namespace palace
 
 namespace
 {
-
-// Preconditioner forwarding to a callable (the region factor, built on the first solve
-// batch, so SetOperator is a no-op).
-class CallableSolver : public Solver<Operator>
-{
-public:
-  CallableSolver(int h, std::function<void(const mfem::Vector &, mfem::Vector &)> f)
-    : Solver<Operator>(false), apply(std::move(f))
-  {
-    height = width = h;
-  }
-  void SetOperator(const Operator &) override {}
-  void Mult(const mfem::Vector &x, mfem::Vector &y) const override { apply(x, y); }
-
-private:
-  std::function<void(const mfem::Vector &, mfem::Vector &)> apply;
-};
 
 // The solver configuration of the native operator of the substructuring: the finest mesh
 // and space only (the factorizations need no multigrid hierarchy).
@@ -50,21 +31,23 @@ config::SolverData SingleLevel(const config::SolverData &solver)
   return single;
 }
 
+// The native curl-curl operator (finest level), with the flux loops of the mesh, whose
+// excitations it forms.
+std::unique_ptr<CurlCurlOperator>
+MakeCurlCurlOperator(const IoData &iodata, const std::vector<std::unique_ptr<Mesh>> &mesh)
+{
+  IoData op_iodata(iodata);
+  op_iodata.boundaries = SubstructuringSolver::MeshBoundaries(iodata, mesh.back()->Get());
+  op_iodata.solver = SingleLevel(iodata.solver);
+  return std::make_unique<CurlCurlOperator>(op_iodata, mesh);
+}
+
 std::unique_ptr<LaplaceOperator>
 MakeLaplaceOperator(const IoData &iodata, const std::vector<std::unique_ptr<Mesh>> &mesh)
 {
-  // The terminals of the environment are not on the mesh of the region (their modes are in
-  // the model), which the operator would reject.
-  config::BoundaryData boundaries(iodata.boundaries);
-  const auto &bdr_attributes = mesh.back()->Get().bdr_attributes;
-  for (auto it = boundaries.terminal.begin(); it != boundaries.terminal.end();)
-  {
-    std::erase_if(it->second.attributes, [&](int a) { return bdr_attributes.Find(a) < 0; });
-    it = it->second.attributes.empty() ? boundaries.terminal.erase(it) : std::next(it);
-  }
-  return std::make_unique<LaplaceOperator>(boundaries, SingleLevel(iodata.solver),
-                                           iodata.domains.materials, iodata.problem.type,
-                                           mesh);
+  return std::make_unique<LaplaceOperator>(
+      SubstructuringSolver::MeshBoundaries(iodata, mesh.back()->Get()),
+      SingleLevel(iodata.solver), iodata.domains.materials, iodata.problem.type, mesh);
 }
 
 // The entrywise absolute value of a matrix, zero on the rows not marked (all rows are
@@ -200,11 +183,7 @@ SubstructuringSolver::Impl::Impl(const IoData &iodata,
   : iodata(iodata), mesh(*mesh_.back()), parent(mesh.Get()),
     magnetostatic(iodata.problem.type == ProblemType::MAGNETOSTATIC),
     laplace_op(magnetostatic ? nullptr : MakeLaplaceOperator(iodata, mesh_)),
-    curlcurl_op(magnetostatic ? std::make_unique<CurlCurlOperator>(
-                                    iodata.boundaries, SingleLevel(iodata.solver),
-                                    iodata.domains.materials, iodata.problem.type,
-                                    iodata.units, mesh_)
-                              : nullptr),
+    curlcurl_op(magnetostatic ? MakeCurlCurlOperator(iodata, mesh_) : nullptr),
     parent_space(magnetostatic ? curlcurl_op->GetNDSpace() : laplace_op->GetH1Space()),
     parent_fes(parent_space.Get())
 {
@@ -345,6 +324,7 @@ SubstructuringSolver::Impl::Impl(const IoData &iodata,
     // The mesh holds the environment of the model, or with "RegionMesh" its part in the
     // mesh of the region, which cannot be refined.
     region_only = sub.region_mesh;
+    env_loops = ReadEnvLoops(model, parent.GetComm());
     if (region_only)
     {
       MFEM_VERIFY(iodata.model.refinement.max_it == 0,
@@ -356,8 +336,8 @@ SubstructuringSolver::Impl::Impl(const IoData &iodata,
                       refinement.GetBoxes().empty() && refinement.GetSpheres().empty(),
                   kRegionMeshRefined);
     }
-    saved.environment.Check(parent, *iodata.resolved_config, env_attributes,
-                            kFingerprintTol, region_only);
+    env_excitations_unchanged = saved.environment.Check(
+        parent, *iodata.resolved_config, env_attributes, kFingerprintTol, region_only);
     // S_E was condensed with the regularization of the model: the region uses the same.
     model_eps = saved.regularization;
     if (region_only)
@@ -466,46 +446,18 @@ void SubstructuringSolver::Impl::EnsureRegionFactor(int n)
     return;
   }
   BlockTimer bt(Timer::KSP_SETUP);
-  // The exact factor solves each batch directly (one multi-RHS solve), the other one
-  // preconditions CG per excitation, which converges to its tolerance. With London
-  // sheets, the exact factor is used whenever it fits.
-  region_exact =
-      region_dense_eligible &&
-      (has_sheets ||
-       static_cast<long long>(std::max(n, 1)) * kDenseInterfacePerExcitation >= nG_global);
-  long long nrf = rf_idx.Size();
-  MPI_Allreduce(MPI_IN_PLACE, &nrf, 1, MPI_LONG_LONG, MPI_SUM, parent_fes.GetComm());
-  const bool serial = !region_exact && nrf <= kSerialRegionFactorDofs;
   reg_lu = std::make_unique<substructuring::BlockedDirectSolver>(
-      substructuring::MakeDirectSolver(iodata, parent_fes.GetComm(), serial),
-      region_exact
-          ? std::min(substructuring::BlockedDirectSolver::kMaxBlock, std::max(n, 1))
-          : 1);
-  std::unique_ptr<mfem::HypreParMatrix> E = AssembleSelection(is_region_free);
-  std::unique_ptr<mfem::HypreParMatrix> P;
-  if (region_exact)
+      substructuring::MakeDirectSolver(iodata, parent_fes.GetComm()),
+      std::min(substructuring::BlockedDirectSolver::kMaxBlock, std::max(n, 1)));
+  std::unique_ptr<mfem::HypreParMatrix> A;
+  if (nG_global > 0)
   {
-    std::unique_ptr<mfem::HypreParMatrix> S_mat = AssembleDenseInterface();
-    std::unique_ptr<mfem::HypreParMatrix> A(mfem::ParAdd(A_region_free.get(), S_mat.get()));
-    S_mat.reset();
-    P.reset(mfem::RAP(A.get(), E.get()));
+    A.reset(mfem::ParAdd(A_region_free.get(), AssembleDenseInterface().get()));
   }
-  else
-  {
-    P.reset(mfem::RAP(A_region_free.get(), E.get()));
-  }
+  const std::unique_ptr<mfem::HypreParMatrix> E = AssembleSelection(is_region_free);
+  const std::unique_ptr<mfem::HypreParMatrix> P(
+      mfem::RAP(A ? A.get() : A_region_free.get(), E.get()));
   reg_lu->SetOperator(*P);  // the factor keeps its own copy of P
-  reg_r.SetSize(rf_idx.Size());
-  reg_z.SetSize(rf_idx.Size());
-}
-
-void SubstructuringSolver::Impl::ApplyRegionFactor(const mfem::Vector &r,
-                                                   mfem::Vector &z) const
-{
-  z = r;
-  r.GetSubVector(rf_idx, reg_r);
-  reg_lu->Mult({&reg_r}, {&reg_z});
-  z.SetSubVector(rf_idx, reg_z);
 }
 
 void SubstructuringSolver::Impl::SolveRegion(std::vector<mfem::Vector> &x)
@@ -513,31 +465,14 @@ void SubstructuringSolver::Impl::SolveRegion(std::vector<mfem::Vector> &x)
   const int n = static_cast<int>(x.size());
   EnsureRegionFactor(n);
   BlockTimer bt(Timer::KSP);
-  if (region_exact)
-  {
-    std::vector<const mfem::Vector *> X(n);
-    std::vector<mfem::Vector *> Y(n);
-    for (int k = 0; k < n; k++)
-    {
-      X[k] = &x[k];
-      Y[k] = &x[k];
-    }
-    reg_lu->Mult(X, Y);
-    return;
-  }
-  mfem::Vector b(nt), u(nt);
-  b.UseDevice(true);
-  u.UseDevice(true);
+  std::vector<const mfem::Vector *> X(n);
+  std::vector<mfem::Vector *> Y(n);
   for (int k = 0; k < n; k++)
   {
-    b = 0.0;
-    b.SetSubVector(rf_idx, x[k]);
-    u = 0.0;
-    region_ksp->Mult(b, u);
-    MFEM_VERIFY(region_ksp->GetConverged() || !has_sheets,
-                "Substructuring region solve with London sheets did not converge!");
-    u.GetSubVector(rf_idx, x[k]);
+    X[k] = &x[k];
+    Y[k] = &x[k];
   }
+  reg_lu->Mult(X, Y);
 }
 
 mfem::Vector SubstructuringSolver::Impl::DirichletField(const mfem::Vector &xd) const
@@ -715,32 +650,114 @@ bool SubstructuringSolver::Impl::CurrentCloses(const Vector &J)
   return !open;
 }
 
-std::string SubstructuringSolver::Impl::SetUpRegionSolver()
-{
-  MPI_Comm comm = parent_fes.GetComm();
-  // The exact condensed operator A_region_free + S_E (dense Gamma block; a sparsified S_E
-  // is a worse preconditioner than none) or A_region_free, chosen at the first solve batch
-  // (EnsureRegionFactor).
-  region_dense_eligible = nG_global > 0 && nG_global <= kDirectCondensedMaxInterface;
-  auto pc = std::make_unique<CallableSolver>(A_region_free->Height(),
-                                             [this](const mfem::Vector &r, mfem::Vector &z)
-                                             { ApplyRegionFactor(r, z); });
-  auto pcg = std::make_unique<CgSolver<Operator>>(comm, 0);
-  pcg->SetInitialGuess(false);
-  pcg->SetRelTol(kRegionCgTol);
-  pcg->SetAbsTol(std::numeric_limits<double>::epsilon());
-  pcg->SetMaxIter(kRegionCgMaxIts);
-  region_op = std::make_unique<substructuring::RegionCondensedOperator>(
-      *A_region_free, *mat_dtn, is_region_free);
-  region_ksp = std::make_unique<KspSolver>(std::move(pcg), std::move(pc));
-  region_ksp->SetOperators(*region_op, *A_region_free);
-  return fmt::format("{} factorization", substructuring::DirectSolverName(iodata));
-}
-
 SubstructuringSolver::SubstructuringSolver(const IoData &iodata,
                                            const std::vector<std::unique_ptr<Mesh>> &mesh)
   : impl(std::make_unique<Impl>(iodata, mesh))
 {
+}
+
+bool SubstructuringSolver::Postprocesses(const IoData &iodata)
+{
+  const int n_post = (iodata.problem.type == ProblemType::ELECTROSTATIC)
+                         ? iodata.solver.electrostatic.n_post
+                         : iodata.solver.magnetostatic.n_post;
+  return n_post > 0 || !iodata.domains.postpro.energy.empty() ||
+         !iodata.domains.postpro.probe.empty() || !iodata.boundaries.postpro.flux.empty() ||
+         !iodata.boundaries.postpro.dielectric.empty();
+}
+
+IoData SubstructuringSolver::RegionPostprocessing(const IoData &iodata) const
+{
+  IoData post(iodata);
+  const auto &region = iodata.solver.substructuring->region_attributes;
+  const auto &mesh = impl->parent;
+  auto contains = [](const std::vector<int> &v, int a)
+  { return std::ranges::find(v, a) != v.end(); };
+  // Erase the entries that the field of the region does not give, returning their indices.
+  auto keep = [](auto &entries, auto &&in_region)
+  {
+    std::vector<int> left_out;
+    for (auto it = entries.begin(); it != entries.end();)
+    {
+      if (in_region(it->second))
+      {
+        ++it;
+      }
+      else
+      {
+        left_out.push_back(it->first);
+        it = entries.erase(it);
+      }
+    }
+    return left_out;
+  };
+  const auto energy = keep(post.domains.postpro.energy,
+                           [&](const auto &data)
+                           {
+                             return std::ranges::all_of(data.attributes, [&](int a)
+                                                        { return contains(region, a); });
+                           });
+  const auto probe = keep(post.domains.postpro.probe, [&](const auto &data)
+                          { return PointInRegion(mesh, data.center, region); });
+  auto surfaces = BoundaryAttributesInRegion(mesh, region);
+  if (impl->region_only)
+  {
+    std::erase_if(surfaces, [&](int a)
+                  { return contains(impl->saved.environment.bdr_attributes, a); });
+  }
+  auto on_surfaces = [&](const auto &data)
+  {
+    return !data.attributes.empty() &&
+           std::ranges::all_of(data.attributes,
+                               [&](int a) { return contains(surfaces, a); });
+  };
+  const auto flux = keep(post.boundaries.postpro.flux, on_surfaces);
+  const auto dielectric = keep(post.boundaries.postpro.dielectric, on_surfaces);
+  std::vector<std::string> left_out;
+  for (const auto &[idx, key] : {std::pair{&energy, "Energy"},
+                                 {&probe, "Probe"},
+                                 {&flux, "SurfaceFlux"},
+                                 {&dielectric, "Dielectric"}})
+  {
+    if (!idx->empty())
+    {
+      left_out.push_back(fmt::format("\"{}\" {}", key, fmt::join(*idx, ", ")));
+    }
+  }
+  if (!left_out.empty())
+  {
+    Mpi::Warning("Substructuring postprocesses the field of the region only, without the "
+                 "postprocessing outside it: {}!\n",
+                 fmt::join(left_out, "; "));
+  }
+  return post;
+}
+
+config::BoundaryData SubstructuringSolver::MeshBoundaries(const IoData &iodata,
+                                                          const mfem::ParMesh &mesh)
+{
+  config::BoundaryData boundaries(iodata.boundaries);
+  auto absent = [&](int a) { return mesh.bdr_attributes.Find(a) < 0; };
+  for (auto it = boundaries.terminal.begin(); it != boundaries.terminal.end();)
+  {
+    std::erase_if(it->second.attributes, absent);
+    it = it->second.attributes.empty() ? boundaries.terminal.erase(it) : std::next(it);
+  }
+  const auto &sub = *iodata.solver.substructuring;
+  if (sub.mode == SubstructuringMode::ONLINE && sub.region_mesh)
+  {
+    for (int loop : Impl::ReadEnvLoops(sub.model_file, mesh.GetComm()))
+    {
+      boundaries.fluxloop.erase(loop);
+    }
+    for (auto &data : boundaries.superconductor)
+    {
+      std::erase_if(data.attributes, absent);
+    }
+    std::erase_if(boundaries.superconductor,
+                  [](const auto &data) { return data.attributes.empty(); });
+  }
+  return boundaries;
 }
 
 SubstructuringSolver::~SubstructuringSolver() = default;
@@ -839,7 +856,8 @@ void SubstructuringSolver::CondenseEnvironment()
         impl->SKin_rows, impl->gamma_off, impl->gamma_global, impl->nG_global, comm);
   }
 
-  const std::string region_solver = impl->SetUpRegionSolver();
+  const std::string region_solver =
+      fmt::format("{} factorization", substructuring::DirectSolverName(impl->iodata));
 
   // Summary: the sizes, and how the environment was condensed and the region is solved.
   std::string env_solver;
@@ -1178,7 +1196,6 @@ mfem::DenseMatrix SubstructuringSolver::SourceEnergyMatrix(
   // the environment, in one batch, and each operator applied once per source.
   if (!impl->mat_dtn_K)
   {
-    MFEM_VERIFY(!region_fields, "Region solutions need a saved substructuring model!");
     std::vector<Vector> b(n, Vector(nt));
     for (int k = 0; k < n; k++)
     {
@@ -1250,6 +1267,10 @@ mfem::DenseMatrix SubstructuringSolver::SourceEnergyMatrix(
     if (fields)
     {
       fields->assign(u.begin(), u.begin() + nf);
+    }
+    if (region_fields)
+    {
+      region_fields->assign(u.begin(), u.end());  // full fields
     }
     return E;
   }
@@ -1799,49 +1820,22 @@ long long int SubstructuringSolver::GlobalTrueVSize() const
   return impl->SolutionSpace().GlobalTrueVSize();
 }
 
+LaplaceOperator &SubstructuringSolver::GetLaplaceOperator()
+{
+  MFEM_VERIFY(impl->laplace_op, "GetLaplaceOperator needs an electrostatic problem!");
+  return *impl->laplace_op;
+}
+
+CurlCurlOperator &SubstructuringSolver::GetCurlCurlOperator()
+{
+  MFEM_VERIFY(impl->curlcurl_op, "GetCurlCurlOperator needs a magnetostatic problem!");
+  return *impl->curlcurl_op;
+}
+
 const FiniteElementSpaceHierarchy &SubstructuringSolver::GetFESpaces() const
 {
   return impl->magnetostatic ? impl->curlcurl_op->GetNDSpaces()
                              : impl->laplace_op->GetH1Spaces();
-}
-
-void SubstructuringSolver::WriteParaView(const std::string &dir,
-                                         const std::vector<int> &ids,
-                                         const std::vector<Vector> &fields) const
-{
-  BlockTimer bt(Timer::POSTPRO_PARAVIEW);
-  MFEM_VERIFY(ids.size() == fields.size(), "WriteParaView requires one field per id!");
-  const int order = impl->iodata.solver.order;
-  const auto &units = impl->iodata.units;
-  GridFunction phi(impl->parent_fes);
-  mfem::ParaViewDataCollection pv("paraview", &impl->parent);
-  pv.SetPrefixPath(dir);
-  pv.SetLevelsOfDetail(order);
-  pv.SetHighOrderOutput(order > 1);
-  pv.SetDataFormat(mfem::VTKFormat::BINARY);
-  pv.RegisterField(impl->magnetostatic ? "A" : "V", &phi.Real());
-  // The mesh and the fields in the units of the input, as PostOperator writes them.
-  const double mesh_Lc0 = units.GetMeshLengthRelativeScale();
-  mesh::DimensionalizeMesh(impl->parent, mesh_Lc0);
-  mfem::Vector u0;
-  for (std::size_t j = 0; j < fields.size(); j++)
-  {
-    phi.Real().SetFromTrueDofs(impl->FirstVersion(fields[j], u0));
-    ScaleGridFunction(mesh_Lc0, phi);
-    if (impl->magnetostatic)
-    {
-      units.DimensionalizeInPlace<Units::ValueType::CURRENT>(phi.Real());
-    }
-    else
-    {
-      units.DimensionalizeInPlace<Units::ValueType::VOLTAGE>(phi.Real());
-    }
-    phi.Real().HostRead();  // the writer reads the host copy
-    pv.SetCycle(static_cast<int>(j));
-    pv.SetTime(static_cast<double>(ids[j]));
-    pv.Save();
-  }
-  mesh::NondimensionalizeMesh(impl->parent, mesh_Lc0);
 }
 
 }  // namespace palace

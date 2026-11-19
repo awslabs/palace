@@ -21,6 +21,7 @@
 #include "models/substructuringsolver.hpp"
 #include "models/surfacecurlsolver.hpp"
 #include "models/surfacecurrentoperator.hpp"
+#include "models/surfacefluxoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
 #include "utils/tablecsv.hpp"
@@ -114,18 +115,30 @@ std::pair<ErrorIndicator, long long int> MagnetostaticSolver::SolveSubstructured
     const std::vector<std::unique_ptr<Mesh>> &mesh) const
 {
   BlockTimer bt(Timer::CONSTRUCT);
-  // Excitations of the surface currents (and their aperture flux functionals, for mixed
-  // extraction) and fluxoid generators of the flux loops, from the native operator,
-  // freed before the condensation.
+  SubstructuringSolver sub(iodata, mesh);
+  SaveMetadata(sub.GetFESpaces());
+  const SurfaceFluxOperator surf_flux_op(iodata);  // all the flux loops
+  const std::size_t n_excitations = sub.GetCurlCurlOperator().GetSurfaceCurrentOp().Size() +
+                                    surf_flux_op.GetExcitations().size();
+  MFEM_VERIFY(n_excitations > 0, "Magnetostatic substructuring requires flux-loop or "
+                                 "surface-current excitations!");
+  sub.CondenseEnvironment();
+  // Excitations of the surface currents (with their aperture flux functionals, for mixed
+  // extraction) and fluxoid generators of the flux loops, from the operator of the
+  // substructuring. A flux loop of the environment has no generator where the model holds
+  // its excitation (see SubstructuringSolver::ModelExcitations), nor on the mesh of the
+  // region, which leaves it out.
   std::vector<int> current_idx, flux_idx, loop_idx;
   std::vector<Vector> J, apertures, a;
   std::vector<double> I_inc, Phi_inc;
-  bool single_loops = true;
-  mfem::DenseMatrix fluxoid;
+  const bool single_loops = surf_flux_op.HasSingleLoopExcitations();
+  const std::vector<int> model_excitations =
+      sub.ModelExcitations(surf_flux_op.GetExcitations());
+  mfem::DenseMatrix loop_fluxoid;
   {
-    CurlCurlOperator curlcurl_op(iodata, mesh);
-    const bool mixed = curlcurl_op.GetSurfaceCurrentOp().Size() > 0 &&
-                       curlcurl_op.GetSurfaceFluxOp().Size() > 0;
+    CurlCurlOperator &curlcurl_op = sub.GetCurlCurlOperator();
+    const bool mixed =
+        curlcurl_op.GetSurfaceCurrentOp().Size() > 0 && surf_flux_op.Size() > 0;
     Vector RHS, boundary_values;
     // The apertures read the first version of B on the two-sided films, as the regular
     // solve.
@@ -164,48 +177,50 @@ std::pair<ErrorIndicator, long long int> MagnetostaticSolver::SolveSubstructured
     // A flux loop excitation drives its loops together, with the sum of their fluxoid
     // generators (each normalized to its own loop's fluxoid); a loop held at zero fluxoid
     // is a London sheet without a drive.
-    const auto &surf_flux_op = curlcurl_op.GetSurfaceFluxOp();
-    single_loops = surf_flux_op.HasSingleLoopExcitations();
-    if (surf_flux_op.Size() > 0)
+    std::set<int> on_mesh;
+    for (const auto &[loop, data] : curlcurl_op.GetSurfaceFluxOp())
     {
-      PostOperator<ProblemType::MAGNETOSTATIC> post_op(iodata, curlcurl_op);
-      for (const auto &[idx, loops] : surf_flux_op.GetExcitations())
+      on_mesh.insert(loop);
+    }
+    for (const auto &[idx, loops] : surf_flux_op.GetExcitations())
+    {
+      Vector a_ex(curlcurl_op.GetSolutionNDSpace().GetTrueVSize());
+      a_ex.UseDevice(true);
+      a_ex = 0.0;
+      const bool from_model =
+          std::ranges::find(model_excitations, idx) != model_excitations.end();
+      for (int loop : loops)
       {
-        Vector a_ex;
-        for (int loop : loops)
+        if (on_mesh.contains(loop) && !from_model)
         {
-          curlcurl_op.GetFluxExcitationVector(loop, RHS, post_op, &boundary_values);
-          if (a_ex.Size() == 0)
-          {
-            a_ex.SetSize(boundary_values.Size());
-            a_ex.UseDevice(true);
-            a_ex = 0.0;
-          }
+          curlcurl_op.GetFluxExcitationVector(loop, RHS, &boundary_values);
           a_ex += boundary_values;
         }
-        a.push_back(std::move(a_ex));
-        flux_idx.push_back(idx);
-        Phi_inc.push_back((loops.size() == 1)
-                              ? surf_flux_op.GetSource(loops.front()).GetExcitationFlux()
-                              : std::numeric_limits<double>::quiet_NaN());
       }
-      if (!single_loops)
+      a.push_back(std::move(a_ex));
+      flux_idx.push_back(idx);
+      Phi_inc.push_back((loops.size() == 1)
+                            ? surf_flux_op.GetSource(loops.front()).GetExcitationFlux()
+                            : std::numeric_limits<double>::quiet_NaN());
+    }
+    if (!single_loops)
+    {
+      // The fluxoids cᵀa_h that each excitation imposes on the loops, for the report of the
+      // excitation energies (on the loops of the environment, from the model on the mesh of
+      // the region).
+      for (const auto &[loop, data] : surf_flux_op)
       {
-        // The fluxoids cᵀa_h that each excitation imposes on the loops, for the report of
-        // the excitation energies (zero for the surface currents).
-        const int nc = static_cast<int>(J.size());
-        fluxoid.SetSize(nc + static_cast<int>(a.size()),
-                        static_cast<int>(surf_flux_op.Size()));
-        fluxoid = 0.0;
-        for (const auto &[loop, data] : surf_flux_op)
+        loop_idx.push_back(loop);
+      }
+      loop_fluxoid.SetSize(static_cast<int>(a.size()), static_cast<int>(loop_idx.size()));
+      loop_fluxoid = 0.0;
+      for (std::size_t k = 0; k < a.size(); k++)
+      {
+        for (std::size_t j = 0; j < loop_idx.size(); j++)
         {
-          loop_idx.push_back(loop);
-        }
-        for (std::size_t k = 0; k < a.size(); k++)
-        {
-          for (std::size_t j = 0; j < loop_idx.size(); j++)
+          if (on_mesh.contains(loop_idx[j]))
           {
-            fluxoid(nc + static_cast<int>(k), static_cast<int>(j)) =
+            loop_fluxoid(static_cast<int>(k), static_cast<int>(j)) =
                 curlcurl_op.MeasureLondonHoleFlux(loop_idx[j], a[k]);
           }
         }
@@ -213,11 +228,10 @@ std::pair<ErrorIndicator, long long int> MagnetostaticSolver::SolveSubstructured
     }
   }
   const int nc = static_cast<int>(J.size()), nf = static_cast<int>(a.size());
-  MFEM_VERIFY(nc + nf > 0, "Magnetostatic substructuring requires flux-loop or "
-                           "surface-current excitations!");
-  SubstructuringSolver sub(iodata, mesh);
-  SaveMetadata(sub.GetFESpaces());
-  sub.CondenseEnvironment();
+  if (!single_loops)
+  {
+    sub.EnvironmentFluxoids(flux_idx, loop_idx, loop_fluxoid);
+  }
   BlockTimer bt1(Timer::POSTPRO);
   Mpi::Print("\nSubstructuring inductance sweep: {:d} surface current{} and {:d} flux "
              "loop excitation{}\n",
@@ -227,13 +241,15 @@ std::pair<ErrorIndicator, long long int> MagnetostaticSolver::SolveSubstructured
   // need the environment interior.
   const int n_save = std::min(iodata.solver.magnetostatic.n_post, nc + nf);
   const bool adapt = (iodata.model.refinement.max_it > 0);
+  const bool post = SubstructuringSolver::Postprocesses(iodata);
   std::vector<Vector> A, region_fields;
   std::vector<double> volume_energy;
   mfem::DenseMatrix linked_flux(nc, nf);
   linked_flux = 0.0;
   const mfem::DenseMatrix E = sub.MagnetostaticEnergyMatrix(
       current_idx, J, flux_idx, a, apertures, apertures.empty() ? nullptr : &linked_flux,
-      &A, n_save, adapt ? &region_fields : nullptr, adapt ? &volume_energy : nullptr);
+      &A, n_save, (adapt || post) ? &region_fields : nullptr,
+      (adapt || post) ? &volume_energy : nullptr);
   if (single_loops)
   {
     // Excitations in the layout of the regular solve (currents first, zero elsewhere).
@@ -251,27 +267,47 @@ std::pair<ErrorIndicator, long long int> MagnetostaticSolver::SolveSubstructured
     {
       energy[i] = 0.5 * E(i, i);
     }
+    // The surface currents impose no fluxoid.
+    mfem::DenseMatrix fluxoid(nc + nf, static_cast<int>(loop_idx.size()));
+    fluxoid = 0.0;
+    fluxoid.SetSubMatrix(nc, 0, loop_fluxoid);
     PrintExcitations(excitation_idx, loop_idx, energy, fluxoid);
   }
-  if (n_save > 0)
-  {
-    std::vector<int> ids(current_idx);
-    ids.insert(ids.end(), flux_idx.begin(), flux_idx.end());
-    ids.resize(n_save);
-    sub.WriteParaView(post_dir.string(), ids, A);
-  }
-  Mpi::Print("\nSubstructuring inductance sweep complete\n");
   // Adaptive refinement of the region only (the indicators are zero on the environment).
   ErrorIndicator indicator;
   if (adapt)
   {
     indicator = sub.RegionErrorIndicator(region_fields, volume_energy);
+  }
+  // The postprocessing of a regular simulation, on the region: with the full fields of the
+  // saved excitations, the fields of the region of the others (zero on the environment
+  // interior), and the energies in the volume of the condensation.
+  if (post)
+  {
+    PostOperator<ProblemType::MAGNETOSTATIC> post_op(sub.RegionPostprocessing(iodata),
+                                                     sub.GetCurlCurlOperator());
+    const auto &Curl = sub.GetCurlCurlOperator().GetCurlMatrix();
+    Vector B(Curl.Height());
+    std::vector<int> ids(current_idx);
+    ids.insert(ids.end(), flux_idx.begin(), flux_idx.end());
+    for (int i = 0; i < nc + nf; i++)
+    {
+      const Vector &Ai = (i < n_save) ? A[i] : region_fields[i];
+      Curl.Mult(Ai, B);
+      post_op.SetTotalFieldEnergy(volume_energy[i]);
+      post_op.MeasureAndPrintAll(i, Ai, B, ids[i]);
+    }
+    post_op.MeasureFinalize(indicator);
+  }
+  else if (adapt)
+  {
     const auto indicator_stats = indicator.GetSummaryStatistics(mesh.back()->GetComm());
     if (root)
     {
       WriteErrorIndicatorCSV(post_dir, indicator_stats);
     }
   }
+  Mpi::Print("\nSubstructuring inductance sweep complete\n");
   return {indicator, sub.GlobalTrueVSize()};
 }
 
@@ -530,7 +566,7 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       {
         MFEM_VERIFY(curlcurl_op.IsLondonFluxLoop(loop_idx),
                     "Flux loop " << loop_idx << " is not a London sheet!");
-        curlcurl_op.GetFluxExcitationVector(loop_idx, RHS_loop, post_op, &boundary_values);
+        curlcurl_op.GetFluxExcitationVector(loop_idx, RHS_loop, &boundary_values);
         RHS += RHS_loop;
         london_ah[step] += boundary_values;
       }

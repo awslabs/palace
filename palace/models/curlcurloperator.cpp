@@ -718,16 +718,7 @@ void CurlCurlOperator::EnsureSheetMass()
   M_sheet_ = std::make_unique<ParOperator>(std::move(m_mat.back()), GetNDSpace());
 }
 
-template <ProblemType T>
 void CurlCurlOperator::GetFluxExcitationVector(int idx, Vector &RHS,
-                                               PostOperator<T> &post_op)
-{
-  GetFluxExcitationVector(idx, RHS, post_op, nullptr);
-}
-
-template <ProblemType T>
-void CurlCurlOperator::GetFluxExcitationVector(int idx, Vector &RHS,
-                                               PostOperator<T> &post_op,
                                                Vector *boundary_values)
 {
   RHS.SetSize(GetSolutionNDSpace().GetTrueVSize());
@@ -739,16 +730,7 @@ void CurlCurlOperator::GetFluxExcitationVector(int idx, Vector &RHS,
   // gradient part the 3D solve absorbs (no spurious penalty energy). Every flux loop is a
   // London sheet (a bare PEC film is auto-registered as a λ→0 Superconductor in iodata), so
   // there is a single path here.
-  Vector flux_solution;
-  if (boundary_values)
-  {
-    SolveSurfaceCurlProblem(idx, post_op, *boundary_values);
-    flux_solution = *boundary_values;  // Use the pre-allocated result
-  }
-  else
-  {
-    flux_solution = SolveSurfaceCurlProblem(idx, post_op);
-  }
+  Vector flux_solution = SolveSurfaceCurlProblem(idx);
   if (IsBroken())
   {
     // a_h is a field of the film surface, the same on both sides of two-sided films.
@@ -758,10 +740,10 @@ void CurlCurlOperator::GetFluxExcitationVector(int idx, Vector &RHS,
         .BuildVersionMap(FiniteElementSpace::VersionMap::ALL)
         ->MultTranspose(flux_solution, a_h);
     flux_solution = std::move(a_h);
-    if (boundary_values)
-    {
-      *boundary_values = flux_solution;
-    }
+  }
+  if (boundary_values)
+  {
+    *boundary_values = flux_solution;
   }
 
   // Early exit if the generator is zero.
@@ -799,30 +781,10 @@ void CurlCurlOperator::GetFluxExcitationVector(int idx, Vector &RHS,
   linalg::SetSubVector(RHS, dbc_tdof_lists.back(), 0.0);
 }
 
-template <ProblemType T>
-Vector CurlCurlOperator::SolveSurfaceCurlProblem(int flux_loop_idx,
-                                                 PostOperator<T> &post_op) const
+Vector CurlCurlOperator::SolveSurfaceCurlProblem(int flux_loop_idx) const
 {
-  // Validate flux loop index exists
   MFEM_VERIFY(surf_flux_op.Size() > 0, "No flux loops configured!");
-  surf_flux_op.GetSource(flux_loop_idx);  // Will throw if not found
-
-  Vector result;
-  surf_flux_op.SolveSurfaceCurlProblem(flux_loop_idx, GetMesh(), GetNDSpace(), post_op,
-                                       result);
-  return result;
-}
-
-template <ProblemType T>
-void CurlCurlOperator::SolveSurfaceCurlProblem(int flux_loop_idx, PostOperator<T> &post_op,
-                                               Vector &result) const
-{
-  // Validate flux loop index exists
-  MFEM_VERIFY(surf_flux_op.Size() > 0, "No flux loops configured!");
-  surf_flux_op.GetSource(flux_loop_idx);  // Will throw if not found
-
-  surf_flux_op.SolveSurfaceCurlProblem(flux_loop_idx, GetMesh(), GetNDSpace(), post_op,
-                                       result);
+  return surf_flux_op.SolveSurfaceCurlProblem(flux_loop_idx, GetMesh(), GetNDSpace());
 }
 
 void CurlCurlOperator::SetUpBrokenSpaces()
@@ -904,20 +866,5 @@ void CurlCurlOperator::GetFirstVersion(const FiniteElementSpace &broken_fespace,
   auto *h_y = y.HostWrite();
   std::copy(h_x, h_x + n, h_y);
 }
-
-// Explicit template instantiations for PostOperator<ProblemType::MAGNETOSTATIC>
-template void CurlCurlOperator::GetFluxExcitationVector<ProblemType::MAGNETOSTATIC>(
-    int idx, Vector &RHS, PostOperator<ProblemType::MAGNETOSTATIC> &post_op);
-
-template void CurlCurlOperator::GetFluxExcitationVector<ProblemType::MAGNETOSTATIC>(
-    int idx, Vector &RHS, PostOperator<ProblemType::MAGNETOSTATIC> &post_op,
-    Vector *boundary_values);
-
-template Vector CurlCurlOperator::SolveSurfaceCurlProblem<ProblemType::MAGNETOSTATIC>(
-    int flux_loop_idx, PostOperator<ProblemType::MAGNETOSTATIC> &post_op) const;
-
-template void CurlCurlOperator::SolveSurfaceCurlProblem<ProblemType::MAGNETOSTATIC>(
-    int flux_loop_idx, PostOperator<ProblemType::MAGNETOSTATIC> &post_op,
-    Vector &result) const;
 
 }  // namespace palace

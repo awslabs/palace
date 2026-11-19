@@ -1418,6 +1418,37 @@ palace::test::CustomCheck TestOfflineRunReproduced(const std::string &offline,
   };
 }
 
+// The check, and that the mesh of the region next to the model (in the staging directory)
+// lacks the boundary attributes left_out and holds those kept.
+palace::test::CustomCheck TestRegionMeshLeavesOut(const std::string &mesh,
+                                                  const std::vector<int> &left_out,
+                                                  const std::vector<int> &kept,
+                                                  const palace::test::CustomCheck &check)
+{
+  return [=](palace::Table &actual, palace::Table &reference,
+             const std::filesystem::path &actual_path)
+  {
+    check(actual, reference, actual_path);
+    const auto path = actual_path.parent_path().parent_path().parent_path() / mesh;
+    CHECK(std::filesystem::is_regular_file(path));
+    if (!std::filesystem::is_regular_file(path))
+    {
+      return;
+    }
+    mfem::Mesh region_mesh(path.string().c_str());
+    for (int a : left_out)
+    {
+      CAPTURE(a);
+      CHECK(region_mesh.bdr_attributes.Find(a) < 0);
+    }
+    for (int a : kept)
+    {
+      CAPTURE(a);
+      CHECK(region_mesh.bdr_attributes.Find(a) >= 0);
+    }
+  };
+}
+
 // The default comparison, and the error indicators next to the file: substructured adaptive
 // refinement writes them as a regular one does, but they are those of the region only, so
 // no regular simulation gives their reference.
@@ -1830,6 +1861,36 @@ TEST_CASE("substructuring_electrostatic", "[Serial][Parallel][GPU][Regression]")
                                   "base", opts);
 }
 
+// The postprocessing of the region: the energy of its domain, and the surface flux and the
+// interface dielectric on its terminal, not those outside it. The references are a regular
+// simulation of these, solved to a tight tolerance (the substructured solves are direct).
+TEST_CASE("substructuring_electrostatic_postprocessing",
+          "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-6;
+  opts.atol = 1.0e-19;
+  opts.paraview_fields = false;  // Solver.Electrostatic.Save = 0
+  palace::test::RunRegressionCase("substructuring_electrostatic",
+                                  "electrostatic_postpro.json", "postpro", opts);
+}
+
+// The same online on the mesh of the region, where the sides of the cube, which the
+// environment also borders, are not in the region either.
+TEST_CASE("substructuring_electrostatic_postprocessing_region",
+          "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-6;
+  opts.atol = 1.0e-19;
+  opts.paraview_fields = false;  // Solver.Electrostatic.Save = 0
+  opts.setup_config = "electrostatic_postpro.json";
+  opts.custom_checks["surface-Q.csv"] = TestOfflineRunReproduced("postpro", opts);
+  palace::test::RunRegressionCase("substructuring_electrostatic",
+                                  "electrostatic_postpro_online_region.json",
+                                  "postpro_online_region", opts);
+}
+
 // An online run on the mesh of the region written by the offline run (the environment's
 // terminal is not in it), against the reference of the full mesh.
 TEST_CASE("substructuring_electrostatic_region", "[Serial][Parallel][GPU][Regression]")
@@ -1953,6 +2014,106 @@ TEST_CASE("substructuring_magnetostatic_mixed_region",
   palace::test::RunRegressionCase("substructuring_magnetostatic",
                                   "magnetostatic_mixed_online_region.json",
                                   "mixed_online_region", opts);
+}
+
+// An online run on the mesh of the region written by an offline run, for two films with a
+// flux loop each, one in the region and one in the environment: the mesh leaves out the
+// film and the hole of the environment, whose excitation comes from the model. The
+// references are regular simulations.
+TEST_CASE("substructuring_magnetostatic_two_films_region",
+          "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-5;
+  opts.atol = 1.0e-19;
+  opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
+  opts.setup_config = "magnetostatic_two_films.json";
+  opts.custom_checks["terminal-M.csv"] =
+      TestRegionMeshLeavesOut("environment_two_films_region.mesh", {4, 5}, {2, 3},
+                              TestOfflineRunReproduced("two_films", opts));
+  palace::test::RunRegressionCase("substructuring_magnetostatic",
+                                  "magnetostatic_two_films_online_region.json",
+                                  "two_films_online_region", opts);
+}
+
+// An online run on the full mesh of the two films: the excitation of the flux loop of the
+// environment, unchanged, needs no generator, as the model holds it. The references are
+// regular simulations.
+TEST_CASE("substructuring_magnetostatic_two_films_online",
+          "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-5;
+  opts.atol = 1.0e-19;
+  opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
+  opts.setup_config = "magnetostatic_two_films.json";
+  opts.custom_checks["terminal-M.csv"] = TestOfflineRunReproduced("two_films", opts);
+  palace::test::RunRegressionCase("substructuring_magnetostatic",
+                                  "magnetostatic_two_films_online.json", "two_films_online",
+                                  opts);
+}
+
+// The same with the flux of the loop of the environment changed: its excitation is then
+// that of its generator, whose modes are computed again. The references are regular
+// simulations of this configuration.
+TEST_CASE("substructuring_magnetostatic_two_films_online_changed",
+          "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-5;
+  opts.atol = 1.0e-19;
+  opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
+  opts.setup_config = "magnetostatic_two_films.json";
+  palace::test::RunRegressionCase("substructuring_magnetostatic",
+                                  "magnetostatic_two_films_online_changed.json",
+                                  "two_films_online_changed", opts);
+}
+
+// The postprocessing of the region of the two films: the energy of the domain of the region
+// and the flux through the hole of its loop, not those of the environment. The references
+// are a regular simulation of the region's postprocessing (to a tight tolerance).
+TEST_CASE("substructuring_magnetostatic_two_films_postprocessing",
+          "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-5;
+  opts.atol = 1.0e-19;
+  opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
+  palace::test::RunRegressionCase("substructuring_magnetostatic",
+                                  "magnetostatic_two_films_postpro.json",
+                                  "two_films_postpro", opts);
+}
+
+// The same online on the mesh of the region.
+TEST_CASE("substructuring_magnetostatic_two_films_postprocessing_region",
+          "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-5;
+  opts.atol = 1.0e-19;
+  opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
+  opts.setup_config = "magnetostatic_two_films_postpro.json";
+  opts.custom_checks["surface-F.csv"] = TestOfflineRunReproduced("two_films_postpro", opts);
+  palace::test::RunRegressionCase("substructuring_magnetostatic",
+                                  "magnetostatic_two_films_postpro_online_region.json",
+                                  "two_films_postpro_online_region", opts);
+}
+
+// The same with the two loops in one excitation: the stored energy and the fluxoids of the
+// loops, that on the loop of the environment from the model.
+TEST_CASE("substructuring_magnetostatic_two_films_grouped_region",
+          "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-5;
+  opts.atol = 1.0e-19;
+  opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
+  opts.setup_config = "magnetostatic_two_films_grouped.json";
+  opts.custom_checks["terminal-Phi.csv"] =
+      TestOfflineRunReproduced("two_films_grouped", opts);
+  palace::test::RunRegressionCase("substructuring_magnetostatic",
+                                  "magnetostatic_two_films_grouped_online_region.json",
+                                  "two_films_grouped_online_region", opts);
 }
 
 // Online adaptive refinement of the region of the mixed case (one iteration), with the

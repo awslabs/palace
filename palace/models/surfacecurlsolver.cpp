@@ -16,7 +16,6 @@
 #include "linalg/iterative.hpp"
 #include "linalg/jacobi.hpp"
 #include "models/materialoperator.hpp"
-#include "models/postoperator.hpp"
 #include "utils/communication.hpp"
 
 namespace palace
@@ -326,25 +325,11 @@ Vector BuildCutCohomologyGenerator(const SurfaceFluxData &flux_data,
 }  // namespace
 
 Vector SolveSurfaceCurlProblem(const SurfaceFluxData &flux_data, const Mesh &mesh,
-                               const FiniteElementSpace &nd_fespace,
-                               PostOperator<ProblemType::MAGNETOSTATIC> &post_op)
-{
-  Vector result;
-  SolveSurfaceCurlProblem(flux_data, mesh, nd_fespace, post_op, result);
-  return result;
-}
-
-void SolveSurfaceCurlProblem(const SurfaceFluxData &flux_data, const Mesh &mesh,
-                             const FiniteElementSpace &nd_fespace,
-                             PostOperator<ProblemType::MAGNETOSTATIC> &post_op,
-                             Vector &result)
+                               const FiniteElementSpace &nd_fespace)
 {
   // London drive: build a_h directly on the 3D ND space as a curl-free cohomology generator
   // via a topological cut cochain (gauge-invariant; see BuildCutCohomologyGenerator).
-  result = BuildCutCohomologyGenerator(flux_data, nd_fespace.Get(), mesh);
-  // Populate the post_op A buffer (used only as scratch downstream).
-  auto &A_3d = post_op.GetAGridFunction().Real();
-  A_3d.SetFromTrueDofs(result);
+  return BuildCutCohomologyGenerator(flux_data, nd_fespace.Get(), mesh);
 }
 
 double ComputeFluxThroughSurface(const mfem::ParGridFunction &B_gf,

@@ -72,10 +72,12 @@ region and the environment are given by domain attributes, which together must c
 An `"Offline"` run that saves a model on a conforming mesh (not one from adaptive refinement) also
 writes a mesh of the region next to it (`<model>_region.mesh` for `"ModelFile": "<model>.model"`),
 with the few environment elements along the boundary conditions of the environment that reach the
-interface and, in magnetostatics, at the surface currents and flux loops of the environment (with
-the films of the flux loops whole and, if these elements reach a `"TwoSided"` film where it crosses
-the interface, the environment along every such crossing) and next to the films on the interface. An
-`"Online"` run on it (`"Model"/"Mesh"` and `"RegionMesh": true`, with the configuration otherwise
+interface and, in magnetostatics, at the surface currents of the environment and at the flux loops
+whose film or hole reaches the region or the interface (with these films whole and, if these
+elements reach a `"TwoSided"` film where it crosses the interface, the environment along every such
+crossing) and next to the films on the interface. The flux loops entirely in the environment are
+left out: their excitations and the fluxoids they impose come from the model. An `"Online"` run on
+it (`"Model"/"Mesh"` and `"RegionMesh": true`, with the configuration otherwise
 unchanged) reads and partitions the region only. The environment is then that of the model: a
 configuration that changes it is rejected (an excitation of the environment that changed needs the
 full mesh), and the mesh must hold the environment elements written with it; the interface is found
@@ -92,13 +94,15 @@ electrostatic or magnetostatic simulation, except `"KSPType"`, `"Tol"` and `"Max
 `config["Solver"]["Linear"]`, which are not used; its `"Type"` only selects the sparse direct solver
 (see [Solvers](#Solvers)), and another type is not used (*Palace* warns). The capacitance and
 inductance matrices are written to the files of a regular simulation (`terminal-C.csv`,
-`terminal-M.csv`, and the others). The domain and surface
-postprocessing and the probes of a regular simulation are not computed, and a configuration that
-requests them is rejected: `config["Domains"]["Postprocessing"]`, and `"SurfaceFlux"`,
-`"Dielectric"` (in electrostatics) and `"FarField"` in `config["Boundaries"]["Postprocessing"]`.
-Field output follows `"Solver"/"Electrostatic"/"Save"` and `"Solver"/"Magnetostatic"/"Save"`, in the
-ParaView format only; the environment part of a saved field is recovered only when fields are
-written.
+`terminal-M.csv`, and the others). The domain and surface postprocessing of a regular simulation is
+that of the region, from its field and the total energy of the condensation, so that the
+participation ratios are those of the whole model: the energies of the domains of the region and
+the probes in it (`config["Domains"]["Postprocessing"]`), and the `"SurfaceFlux"` and
+`"Dielectric"` entries of `config["Boundaries"]["Postprocessing"]` on surfaces in it. The others are
+left out with a warning, and `"FarField"` is rejected. Field output follows
+`"Solver"/"Electrostatic"/"Save"` and `"Solver"/"Magnetostatic"/"Save"`, in the formats of
+`config["Problem"]["OutputFormats"]`; the environment part of a saved field is recovered only when
+fields are written.
 
 ### Choosing the region
 
@@ -147,20 +151,22 @@ are factored with a sparse direct solver (the one
 [`config["Solver"]["Linear"]["Type"]`](../config/reference.md#config-solver-linear-type) names, or
 else STRUMPACK, MUMPS or SuperLU_DIST, preferred in this order among those Palace is built with), so
 *Palace* must be built with one of them. The region operator is factored together with the dense
-``\bm{S}_E`` when the interface has at most 10,000 unknowns and the excitations solved together
-amortize it; otherwise the region is solved by conjugate gradients, preconditioned by the
-factorization of the region operator alone. The Schur complement of the environment comes instead
-from a single partial factorization, by MUMPS or, without it, by STRUMPACK (with the Schur
-complement interface that the superbuild and the Spack package patch in), unless `"Type"` names
-another solver; MUMPS compresses its fronts at round-off (block low-rank), which is faster than
-full rank at no loss of accuracy. A saved magnetostatic model also holds the energy operator of the environment, which
+``\bm{S}_E``, as one sparse system whose dense block on the interface is a front of the
+factorization: its cost grows as the cube of the number of interface unknowns. The Schur complement
+of the environment comes instead from a single partial factorization, by MUMPS or, without it, by
+STRUMPACK (with the Schur complement interface that the superbuild and the Spack package patch in),
+unless `"Type"` names another solver; MUMPS compresses its fronts at round-off (block low-rank),
+which is faster than full rank at no loss of accuracy. A saved magnetostatic model also holds the
+energy operator of the environment, which
 takes an environment solve and a condensation (the forward elimination of the partial factorization,
 half a solve) per interface unknown, and with London sheets in the environment their kinetic energy
 operator, for another condensation per interface unknown and as many values again in the model. The
-MUMPS factorizations follow the
+factorizations follow the
 [`"ColumnOrdering"`](../config/reference.md#config-solver-linear-columnordering) of
-`config["Solver"]["Linear"]`; with `"ParMETIS"` or `"PTScotch"`, those without a Schur complement
-are analyzed in parallel. When running MUMPS with MPI, setting `OPENBLAS_NUM_THREADS=1` (or the
+`config["Solver"]["Linear"]` (with `"ParMETIS"` or `"PTScotch"`, those without a Schur complement
+are analyzed in parallel, the others with the sequential counterpart), and take no other option of
+it: they are exact, so the compression of STRUMPACK and the 3D algorithm of SuperLU_DIST are not
+used (*Palace* warns). When running MUMPS with MPI, setting `OPENBLAS_NUM_THREADS=1` (or the
 equivalent for the BLAS in use) avoids oversubscribing cores.
 
 ## Magnetostatics

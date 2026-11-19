@@ -153,11 +153,6 @@ bool SubstructuringSolver::Impl::SourceModesMatch(const std::vector<int> &ids,
   {
     std::array<double, 3> fp;
     (void)EnvSource(src[j], fp);  // collective: always evaluated
-    if (fp[0] == 0.0)
-    {
-      continue;
-    }
-    need[j] = 1;
     for (std::size_t k = 0; src_ready && k < src_ids.size(); k++)
     {
       if (src_ids[k] == ids[j])
@@ -165,14 +160,23 @@ bool SubstructuringSolver::Impl::SourceModesMatch(const std::vector<int> &ids,
         col[j] = static_cast<int>(k);
       }
     }
+    if ((region_only || model_sources.contains(ids[j])) && col[j] >= 0)
+    {
+      // The model holds the environment and its sources, also those without a generator
+      // here (left out of the mesh of the region, or taken from the model).
+      need[j] = 1;
+      continue;
+    }
+    if (fp[0] == 0.0)
+    {
+      col[j] = -1;
+      continue;
+    }
+    need[j] = 1;
     if (col[j] < 0)
     {
       ok = false;
       continue;
-    }
-    if (region_only)
-    {
-      continue;  // the environment, and so its sources, are those of the model
     }
     // Relative to the larger pairing (either may vanish, up to rounding).
     const double scale =

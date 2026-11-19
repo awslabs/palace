@@ -597,6 +597,18 @@ void IoData::CheckConfiguration()
                    "\"Solver.Linear.Type\" \"{}\" is not used!\n",
                    ToString(solver.linear.type));
     }
+    // The factorizations are exact: of the options of the sparse direct solvers, they take
+    // only the column ordering.
+    if (solver.linear.strumpack_compression_type != SparseCompression::NONE)
+    {
+      Mpi::Warning("Substructuring factors exactly: "
+                   "\"Solver.Linear.STRUMPACKCompressionType\" is not used!\n");
+    }
+    if (solver.linear.superlu_3d)
+    {
+      Mpi::Warning("Substructuring factors with the column ordering only: "
+                   "\"Solver.Linear.SuperLU3DCommunicator\" is not used!\n");
+    }
     solver.substructuring->direct_solver = solver.linear.type;
   }
 
@@ -954,33 +966,11 @@ void IoData::CheckConfiguration()
     }
     else
     {
-      // The substructured static solves give the terminal matrices and the saved fields,
-      // not the domain and surface postprocessing of a regular simulation (in
-      // magnetostatics, the regular solve ignores "Dielectric" too).
-      auto not_computed = [](bool given, const char *key)
-      {
-        MFEM_VERIFY(!given,
-                    "Substructuring does not compute \""
-                        << key
-                        << "\": remove it, or run without \"Solver.Substructuring\"!");
-      };
-      not_computed(!domains.postpro.energy.empty(), "Domains.Postprocessing.Energy");
-      not_computed(!domains.postpro.probe.empty(), "Domains.Postprocessing.Probe");
-      not_computed(!boundaries.postpro.flux.empty(),
-                   "Boundaries.Postprocessing.SurfaceFlux");
-      not_computed(problem.type == ProblemType::ELECTROSTATIC &&
-                       !boundaries.postpro.dielectric.empty(),
-                   "Boundaries.Postprocessing.Dielectric");
-      not_computed(!boundaries.postpro.farfield.empty(),
-                   "Boundaries.Postprocessing.FarField");
-      const int n_post = (problem.type == ProblemType::ELECTROSTATIC)
-                             ? solver.electrostatic.n_post
-                             : solver.magnetostatic.n_post;
-      MFEM_VERIFY(n_post == 0 || (problem.output_formats.paraview &&
-                                  !problem.output_formats.gridfunction),
-                  "Substructuring saves the fields in the ParaView format only: set "
-                  "\"Problem.OutputFormats\" to \"Paraview\": true and \"GridFunction\": "
-                  "false!");
+      // The substructured static solves postprocess the field of the region (see
+      // SubstructuringSolver::RegionPostprocessing), which gives no far field.
+      MFEM_VERIFY(boundaries.postpro.farfield.empty(),
+                  "Substructuring does not compute \"Boundaries.Postprocessing.FarField\": "
+                  "remove it, or run without \"Solver.Substructuring\"!");
     }
     if (problem.type == ProblemType::MAGNETOSTATIC)
     {

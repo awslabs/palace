@@ -1628,7 +1628,8 @@ void PostOperator<solver_t>::MeasureDomainFieldEnergy() const
   {
     // Use V if it has it rather than E.
     auto &field = V ? *V : *E;
-    auto energy = dom_post_op.GetElectricFieldEnergy(field);
+    auto energy = total_field_energy ? *total_field_energy
+                                     : dom_post_op.GetElectricFieldEnergy(field);
     measurement_cache.domain_E_field_energy_all = energy;
 
     for (const auto &[idx, data] : dom_post_op.M_i)
@@ -1654,8 +1655,9 @@ void PostOperator<solver_t>::MeasureDomainFieldEnergy() const
     // A broken magnetostatic solution has no grid function, but its L-vector.
     auto &field = A ? *A : *B;
     const bool use_l = (a_l.Size() > 0);
-    auto energy = use_l ? dom_post_op.GetMagneticFieldEnergy(a_l, field.GetComm())
-                        : dom_post_op.GetMagneticFieldEnergy(field);
+    auto energy = total_field_energy ? *total_field_energy
+                  : use_l ? dom_post_op.GetMagneticFieldEnergy(a_l, field.GetComm())
+                          : dom_post_op.GetMagneticFieldEnergy(field);
     measurement_cache.domain_H_field_energy_all = energy;
 
     for (const auto &[idx, data] : dom_post_op.M_i)

@@ -1,6 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <filesystem>
@@ -1487,9 +1488,10 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
 TEST_CASE_METHOD(palace::test::SharedTempDir, "SubstructuringSolver column orderings",
                  "[substructure][Serial][Parallel]")
 {
-  // Solver.Linear.ColumnOrdering orders the MUMPS factorizations: the environment factor of
-  // a saved magnetostatic model has no Schur variables, so ParMETIS analyzes it in
-  // parallel. The energy of a closed current does not depend on the ordering.
+  // Solver.Linear.ColumnOrdering orders the factorizations: with MUMPS, the environment
+  // factor of a saved magnetostatic model has no Schur variables, so ParMETIS analyzes it
+  // in parallel, and the partial factorization of STRUMPACK takes METIS for it. The energy
+  // of a closed current does not depend on the ordering.
   const std::string model_path = (temp_dir / "substruct_ordering_model.bin").string();
   auto energy = [&](const std::string &ordering)
   {
@@ -2147,15 +2149,184 @@ std::unique_ptr<mfem::ParMesh> MakeRefinedGradedSplit(int a, int b, int n,
 
 }  // namespace
 
-TEST_CASE("SubstructuringSolver region solve by conjugate gradients",
+TEST_CASE_METHOD(palace::test::SharedTempDir, "SubstructuringSolver boundaries of the mesh",
+                 "[substructure][Serial]")
+{
+  // The operators on the mesh of a run leave out the terminal attributes it does not hold
+  // and, on the mesh of the region, the flux loops of the environment that the model lists
+  // (whatever attributes the mesh holds) and the superconductor attributes it does not
+  // hold. The mesh holds the boundary attributes 1 to 6.
+  mfem::Mesh serial = mfem::Mesh::MakeCartesian3D(2, 2, 2, mfem::Element::HEXAHEDRON);
+  mfem::ParMesh mesh(Mpi::World(), serial);
+  const std::string model = (temp_dir / "substruct_boundaries.model").string();
+  using substructuring::ModelFile;
+  ModelFile::Create(model, Mpi::World());
+  const int env_loop = 2;
+  ModelFile::Append(model, Mpi::World(), ModelFile::Tag("ELPS"), sizeof(int),
+                    [&](std::ofstream &f)
+                    { f.write(reinterpret_cast<const char *>(&env_loop), sizeof(int)); });
+  auto boundaries = [&](const std::string &type, const json &bdr, bool region_mesh)
+  {
+    json sub = {{"Region", {{"Attributes", {1}}}},
+                {"Environment", {{"Attributes", {2}}}},
+                {"ModelFile", model}};
+    if (region_mesh)
+    {
+      sub["Mode"] = "Online";
+      sub["RegionMesh"] = true;
+    }
+    const json config = {{"Problem", {{"Type", type}, {"Output", "test_output"}}},
+                         {"Model", {{"Mesh", "test.msh"}}},
+                         {"Domains", {{"Materials", {{{"Attributes", {1, 2}}}}}}},
+                         {"Boundaries", bdr},
+                         {"Solver", {{"Substructuring", sub}}}};
+    return SubstructuringSolver::MeshBoundaries(IoData(config, false), mesh);
+  };
+  const json terminals = {
+      {"Terminal",
+       {{{"Index", 1}, {"Attributes", {1, 9}}}, {{"Index", 2}, {"Attributes", {9}}}}},
+      {"Ground", {{"Attributes", {3}}}}};
+  for (const bool region_mesh : {false, true})
+  {
+    CAPTURE(region_mesh);
+    const auto b = boundaries("Electrostatic", terminals, region_mesh);
+    CHECK(b.terminal.size() == 1);
+    CHECK(b.terminal.contains(1));
+    CHECK((b.terminal.contains(1) && b.terminal.at(1).attributes == std::vector<int>{1}));
+  }
+  auto loop = [](int index, int film, int hole)
+  {
+    return json{{"Index", index},
+                {"FilmAttributes", {film}},
+                {"HoleAttributes", {hole}},
+                {"FluxAmounts", {1.0}},
+                {"Direction", "+Z"}};
+  };
+  const json films = {
+      {"PEC", {{"Attributes", {6}}}},
+      {"FluxLoop", {loop(1, 2, 3), loop(2, 4, 5)}},
+      {"Superconductor",
+       {{{"Attributes", {2, 9}}, {"PenetrationDepth", 0.1}, {"Thickness", 0.05}},
+        {{"Attributes", {8}}, {"PenetrationDepth", 0.1}, {"Thickness", 0.05}}}}};
+  auto attributes = [](const config::BoundaryData &b)
+  {
+    std::vector<int> attrs;
+    for (const auto &data : b.superconductor)
+    {
+      attrs.insert(attrs.end(), data.attributes.begin(), data.attributes.end());
+    }
+    std::ranges::sort(attrs);
+    return attrs;
+  };
+  // With the sheet of the film of loop 2, which has no superconductor entry.
+  const auto full = boundaries("Magnetostatic", films, false);
+  CHECK(full.fluxloop.size() == 2);
+  CHECK(full.superconductor.size() == 3);
+  CHECK(attributes(full) == std::vector<int>{2, 4, 8, 9});
+  const auto region = boundaries("Magnetostatic", films, true);
+  CHECK(region.fluxloop.size() == 1);
+  CHECK(region.fluxloop.contains(1));
+  CHECK(region.superconductor.size() == 2);
+  CHECK(attributes(region) == std::vector<int>{2, 4});
+}
+
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "SubstructuringSolver postprocessing of the region",
+                 "[substructure][Serial][Parallel]")
+{
+  // The postprocessing of the region keeps the energies of its domains, the probes in it,
+  // and the surface fluxes and interface dielectrics on its surfaces, and leaves out the
+  // others: of the environment, across the interface, and a probe outside the mesh. On the
+  // mesh of the region, the sides of the cube (a natural boundary, along which no
+  // environment element is written) seem to border the region only: they are left out
+  // there too.
+  auto flux = [](int index, int attr)
+  { return json{{"Index", index}, {"Attributes", {attr}}, {"Type", "Electric"}}; };
+  auto dielectric = [](int index, int attr)
+  {
+    return json{{"Index", index},
+                {"Attributes", {attr}},
+                {"Thickness", 1.0e-3},
+                {"Permittivity", 4.0}};
+  };
+  json config = {
+      {"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+      {"Model", {{"Mesh", "test.msh"}}},
+      {"Domains",
+       {{"Materials",
+         {{{"Attributes", {1}}, {"Permittivity", 1.0}},
+          {{"Attributes", {2}}, {"Permittivity", 4.0}}}},
+        {"Postprocessing",
+         {{"Energy",
+           {{{"Index", 1}, {"Attributes", {1}}},
+            {{"Index", 2}, {"Attributes", {2}}},
+            {{"Index", 3}, {"Attributes", {1, 2}}}}},
+          {"Probe",
+           {{{"Index", 1}, {"Center", {0.25, 0.5, 0.5}}},
+            {{"Index", 2}, {"Center", {0.75, 0.5, 0.5}}},
+            {{"Index", 3}, {"Center", {2.0, 0.5, 0.5}}}}}}}}},
+      {"Boundaries",
+       {{"Terminal",
+         {{{"Index", 1}, {"Attributes", {1}}}, {{"Index", 2}, {"Attributes", {2}}}}},
+        {"Postprocessing",
+         {{"SurfaceFlux", {flux(1, 1), flux(2, 2), flux(3, 3)}},
+          {"Dielectric", {dielectric(1, 1), dielectric(2, 3)}}}}}},
+      {"Solver",
+       {{"Order", 1},
+        {"Substructuring",
+         {{"Region", {{"Attributes", {1}}}}, {"Environment", {{"Attributes", {2}}}}}}}}};
+  IoData iodata(config, false);
+  CHECK(SubstructuringSolver::Postprocesses(iodata));
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  mesh.push_back(std::make_unique<Mesh>(MakeSplitCube(4)));
+  SubstructuringSolver ss(iodata, mesh);
+  const IoData post = ss.RegionPostprocessing(iodata);
+  auto indices = [](const auto &entries)
+  {
+    std::vector<int> idx;
+    for (const auto &[i, data] : entries)
+    {
+      idx.push_back(i);
+    }
+    return idx;
+  };
+  CHECK(indices(post.domains.postpro.energy) == std::vector<int>{1});
+  CHECK(indices(post.domains.postpro.probe) == std::vector<int>{1});
+  CHECK(indices(post.boundaries.postpro.flux) == std::vector<int>{1});
+  CHECK(indices(post.boundaries.postpro.dielectric) == std::vector<int>{1});
+  const std::string model_path = (temp_dir / "substruct_postprocessing_model.bin").string();
+  config["Solver"]["Substructuring"]["ModelFile"] = model_path;
+  {
+    std::vector<std::unique_ptr<Mesh>> full;
+    full.push_back(std::make_unique<Mesh>(MakeSplitCube(4)));
+    const IoData saving(config, false);
+    SubstructuringSolver offline(saving, full);
+    offline.CondenseEnvironment();
+  }
+  config["Solver"]["Substructuring"]["Mode"] = "Online";
+  config["Solver"]["Substructuring"]["RegionMesh"] = true;
+  const IoData online(config, false);
+  mfem::Mesh serial(RegionMeshPath(model_path).c_str());
+  std::vector<std::unique_ptr<Mesh>> region;
+  region.push_back(
+      std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(Mpi::World(), serial)));
+  const IoData region_post =
+      SubstructuringSolver(online, region).RegionPostprocessing(online);
+  CHECK(indices(region_post.boundaries.postpro.flux) == std::vector<int>{1});
+  CHECK(indices(region_post.boundaries.postpro.dielectric) == std::vector<int>{1});
+  config["Domains"].erase("Postprocessing");
+  config["Boundaries"].erase("Postprocessing");
+  CHECK_FALSE(SubstructuringSolver::Postprocesses(IoData(config, false)));
+}
+
+TEST_CASE("SubstructuringSolver region factored with the environment operator",
           "[substructure][Serial][Parallel]")
 {
-  // With one excitation and an interface of over 1000 DOFs, the region is solved by CG,
-  // preconditioned by the factor of the region operator without S_E, also for a region
-  // without a Dirichlet boundary, whose region operator is singular (its factor still
-  // preconditions the nonsingular condensed operator). The capacitance is that of a
-  // monolith, of the terminal at x = 1 against the grounded sides of the environment, with
-  // the region grounded at x = 0 or not.
+  // The region is factored with S_E as one sparse system, here with one excitation and an
+  // interface of over 1000 DOFs, the dense block of the factorization. Without a Dirichlet
+  // boundary, the region operator alone is singular, but not with S_E. The capacitance is
+  // that of a monolith, of the terminal at x = 1 against the grounded sides of the
+  // environment, with the region grounded at x = 0 or not.
   const bool grounded = GENERATE(true, false);
   CAPTURE(grounded);
   const std::vector<int> ground = grounded ? std::vector<int>{2, 4} : std::vector<int>{4};

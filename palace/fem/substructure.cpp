@@ -1098,7 +1098,7 @@ EnvironmentRecord::Deserialize(const std::vector<char> &bytes)
   return r;
 }
 
-void EnvironmentRecord::Check(mfem::ParMesh &mesh, const nlohmann::json &config,
+bool EnvironmentRecord::Check(mfem::ParMesh &mesh, const nlohmann::json &config,
                               const std::vector<int> &environment_attributes, double tol,
                               bool region_mesh) const
 {
@@ -1136,9 +1136,10 @@ void EnvironmentRecord::Check(mfem::ParMesh &mesh, const nlohmann::json &config,
                   EnvironmentConfigHash(config, attributes, bdr_attributes, false) ==
                       config_hash,
               kEnvironmentConfigDiffers);
-  MFEM_VERIFY(!region_mesh || EnvironmentConfigHash(config, attributes, bdr_attributes,
-                                                    true) == excitations_hash,
-              kEnvironmentExcitationsDiffer);
+  const bool excitations =
+      EnvironmentConfigHash(config, attributes, bdr_attributes, true) == excitations_hash;
+  MFEM_VERIFY(!region_mesh || excitations, kEnvironmentExcitationsDiffer);
+  return excitations;
 }
 
 bool MomentsMatch(const std::array<double, 6> &a, const std::array<double, 6> &b,

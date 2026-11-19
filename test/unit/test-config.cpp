@@ -2,12 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <algorithm>
+#include <cstdio>
+#include <functional>
 #include <iterator>
 #include <limits>
 #include <numbers>
 #include <set>
 #include <string>
 #include <vector>
+#include <unistd.h>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
@@ -22,6 +25,45 @@
 
 using json = nlohmann::json;
 using namespace palace;
+
+namespace
+{
+
+// What the process prints to stdout while f runs.
+std::string CaptureStdout(const std::function<void()> &f)
+{
+  std::fflush(stdout);
+  std::FILE *file = std::tmpfile();
+  const int saved = dup(fileno(stdout));
+  dup2(fileno(file), fileno(stdout));
+  auto restore = [&]()
+  {
+    std::fflush(stdout);
+    dup2(saved, fileno(stdout));
+    close(saved);
+  };
+  try
+  {
+    f();
+  }
+  catch (...)
+  {
+    restore();
+    std::fclose(file);
+    throw;
+  }
+  restore();
+  std::rewind(file);
+  std::string out;
+  for (int c = std::fgetc(file); c != EOF; c = std::fgetc(file))
+  {
+    out.push_back(static_cast<char>(c));
+  }
+  std::fclose(file);
+  return out;
+}
+
+}  // namespace
 
 namespace
 {
@@ -170,6 +212,34 @@ TEST_CASE("Config Substructuring", "[config][Serial]")
   {
     config::SolverData data(json::object());
     CHECK(!data.substructuring.has_value());
+  }
+
+  SECTION("Substructuring warns about the linear solver options it does not use")
+  {
+    // The factorizations take the solver type and the column ordering of Solver.Linear
+    // only.
+    auto output = [](const json &linear)
+    {
+      json config = {{"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+                     {"Model", {{"Mesh", "test.msh"}}},
+                     {"Domains", {{"Materials", {{{"Attributes", {1, 2}}}}}}},
+                     {"Boundaries", json::object()},
+                     {"Solver",
+                      {{"Linear", linear},
+                       {"Substructuring",
+                        {{"Region", {{"Attributes", {1}}}},
+                         {"Environment", {{"Attributes", {2}}}}}}}}};
+      return CaptureStdout([&config]() { IoData iodata(config, false); });
+    };
+    using Catch::Matchers::ContainsSubstring;
+    CHECK_THAT(output({{"Type", "AMS"}}),
+               ContainsSubstring("\"Solver.Linear.Type\" \"AMS\" is not used!"));
+    CHECK_THAT(
+        output({{"STRUMPACKCompressionType", "HSS"}}),
+        ContainsSubstring("\"Solver.Linear.STRUMPACKCompressionType\" is not used!"));
+    CHECK_THAT(output({{"SuperLU3DCommunicator", true}}),
+               ContainsSubstring("\"Solver.Linear.SuperLU3DCommunicator\" is not used!"));
+    CHECK_THAT(output({{"ColumnOrdering", "AMD"}}), !ContainsSubstring("Warning"));
   }
 
   SECTION("Substructuring rejects periodic boundaries")
@@ -357,67 +427,58 @@ TEST_CASE("Config Substructuring", "[config][Serial]")
 #endif
   }
 
-  SECTION("Substructuring rejects the postprocessing it does not compute")
+  SECTION("Substructuring takes the postprocessing of the region")
   {
-    // Each key of a regular simulation that the substructured solves would skip.
-    auto check = [](const std::string &type, const char *key, const json &postpro,
-                    const json &domains_postpro)
+    // Substructuring takes the postprocessing of a regular simulation (that of the region,
+    // see SubstructuringSolver::RegionPostprocessing) and saved fields in any format, but
+    // no far field.
+    auto config =
+        [](const std::string &type, const json &postpro, const json &domains_postpro)
     {
-      json config = {{"Problem", {{"Type", type}, {"Output", "test_output"}}},
-                     {"Model", {{"Mesh", "test.msh"}}},
-                     {"Domains", {{"Materials", {{{"Attributes", {1, 2}}}}}}},
-                     {"Boundaries", json::object()},
-                     {"Solver",
-                      {{"Substructuring",
-                        {{"Region", {{"Attributes", {1}}}},
-                         {"Environment", {{"Attributes", {2}}}}}}}}};
-      CHECK_NOTHROW(IoData(config, false));
+      json c = {{"Problem", {{"Type", type}, {"Output", "test_output"}}},
+                {"Model", {{"Mesh", "test.msh"}}},
+                {"Domains", {{"Materials", {{{"Attributes", {1, 2}}}}}}},
+                {"Boundaries", json::object()},
+                {"Solver",
+                 {{"Substructuring",
+                   {{"Region", {{"Attributes", {1}}}},
+                    {"Environment", {{"Attributes", {2}}}}}}}}};
       if (!postpro.is_null())
       {
-        config["Boundaries"]["Postprocessing"] = postpro;
+        c["Boundaries"]["Postprocessing"] = postpro;
       }
       if (!domains_postpro.is_null())
       {
-        config["Domains"]["Postprocessing"] = domains_postpro;
+        c["Domains"]["Postprocessing"] = domains_postpro;
       }
-      CHECK_THROWS_WITH(IoData(config, false), Catch::Matchers::ContainsSubstring(key));
+      return c;
     };
     const json energy = {{"Energy", {{{"Index", 1}, {"Attributes", {1}}}}}};
     const json probe = {{"Probe", {{{"Index", 1}, {"Center", {0.5, 0.5, 0.5}}}}}};
-    const json flux = {
-        {"SurfaceFlux", {{{"Index", 1}, {"Attributes", {3}}, {"Type", "Electric"}}}}};
     const json dielectric = {{"Dielectric",
                               {{{"Index", 1},
                                 {"Attributes", {3}},
                                 {"Thickness", 1.0e-9},
                                 {"Permittivity", 4.0}}}}};
     const json farfield = {{"FarField", {{"Attributes", {3}}, {"NSample", 8}}}};
-    for (const std::string type : {"Electrostatic", "Magnetostatic"})
+    for (const auto &[type, flux_type] :
+         {std::pair{"Electrostatic", "Electric"}, {"Magnetostatic", "Magnetic"}})
     {
       CAPTURE(type);
-      check(type, "Domains.Postprocessing.Energy", nullptr, energy);
-      check(type, "Domains.Postprocessing.Probe", nullptr, probe);
-      check(type, "Boundaries.Postprocessing.SurfaceFlux", flux, nullptr);
-      check(type, "Boundaries.Postprocessing.FarField", farfield, nullptr);
+      const json flux = {
+          {"SurfaceFlux", {{{"Index", 1}, {"Attributes", {3}}, {"Type", flux_type}}}}};
+      CHECK_NOTHROW(IoData(config(type, nullptr, energy), false));
+      CHECK_NOTHROW(IoData(config(type, nullptr, probe), false));
+      CHECK_NOTHROW(IoData(config(type, flux, nullptr), false));
+      CHECK_THROWS_WITH(
+          IoData(config(type, farfield, nullptr), false),
+          Catch::Matchers::ContainsSubstring("Boundaries.Postprocessing.FarField"));
     }
-    check("Electrostatic", "Boundaries.Postprocessing.Dielectric", dielectric, nullptr);
-
-    // The saved fields are written in the ParaView format only.
-    json config = {
-        {"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
-        {"Model", {{"Mesh", "test.msh"}}},
-        {"Domains", {{"Materials", {{{"Attributes", {1, 2}}}}}}},
-        {"Boundaries", json::object()},
-        {"Solver",
-         {{"Electrostatic", {{"Save", 1}}},
-          {"Substructuring",
-           {{"Region", {{"Attributes", {1}}}}, {"Environment", {{"Attributes", {2}}}}}}}}};
-    CHECK_NOTHROW(IoData(config, false));
-    config["Problem"]["OutputFormats"] = {{"Paraview", true}, {"GridFunction", true}};
-    CHECK_THROWS_WITH(IoData(config, false),
-                      Catch::Matchers::ContainsSubstring("Problem.OutputFormats"));
-    config["Solver"]["Electrostatic"]["Save"] = 0;
-    CHECK_NOTHROW(IoData(config, false));
+    CHECK_NOTHROW(IoData(config("Electrostatic", dielectric, nullptr), false));
+    json saved = config("Electrostatic", nullptr, nullptr);
+    saved["Solver"]["Electrostatic"] = {{"Save", 1}};
+    saved["Problem"]["OutputFormats"] = {{"Paraview", true}, {"GridFunction", true}};
+    CHECK_NOTHROW(IoData(saved, false));
   }
 
   SECTION("Magnetostatic substructuring excitations")

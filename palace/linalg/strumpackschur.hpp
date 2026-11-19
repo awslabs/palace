@@ -11,6 +11,7 @@
 #include <vector>
 #include <StrumpackSparseSolverMPIDist.hpp>
 #include "linalg/schursolver.hpp"
+#include "utils/labels.hpp"
 
 namespace palace
 {
@@ -25,9 +26,12 @@ class StrumpackSchurSolver : public SchurSolver<double>
 {
 public:
   // schur_vars: the global (0-based) rows of the Schur variables, in the order of their
-  // rows and columns in S (replicated). Factors A (collective).
+  // rows and columns in S (replicated). ordering is the fill-reducing ordering ("Default":
+  // STRUMPACK's); the Schur complement needs a sequential one, so a parallel ordering is
+  // replaced by its sequential counterpart. Factors A (collective).
   StrumpackSchurSolver(const mfem::HypreParMatrix &A,
-                       const std::vector<HYPRE_BigInt> &schur_vars);
+                       const std::vector<HYPRE_BigInt> &schur_vars,
+                       SymbolicFactorization ordering = SymbolicFactorization::DEFAULT);
 
   std::vector<double> ReleaseSchurRows() override;
 
