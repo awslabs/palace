@@ -3067,6 +3067,12 @@
           "minimum": 0,
           "x-palace-advanced": true
         },
+        "MGCoarseSmoothOrder": {
+          "type": "integer",
+          "description": "EXPERIMENT: polynomial order of the geometric multigrid smoothers of the levels between the coarsest and the finest. If omitted, Palace uses MGSmoothOrder.",
+          "minimum": 1,
+          "x-palace-advanced": true
+        },
         "MGOneSided": {
           "type": "boolean",
           "description": "Use one-sided V-cycles for geometric multigrid, which pre-smooth but do not post-smooth. They make a nonsymmetric preconditioner, so they require the GMRES or FGMRES Krylov solver. If omitted, Palace enables this for eigenmode simulations with GMRES or FGMRES, and disables it otherwise: one-sided V-cycles can slow down the strongly indefinite linear systems of some driven simulations and boundary mode solves.",

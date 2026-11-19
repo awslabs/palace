@@ -17,7 +17,7 @@ GeometricMultigridSolver<OperType>::GeometricMultigridSolver(
     MPI_Comm comm, std::unique_ptr<Solver<OperType>> &&coarse_solver,
     const std::vector<const Operator *> &P, const std::vector<const Operator *> *G,
     int cycle_it, int smooth_it, int cheby_order, double cheby_sf_max, double cheby_sf_min,
-    bool cheby_4th_kind, bool one_sided, int cheby_post_order)
+    bool cheby_4th_kind, bool one_sided, int cheby_post_order, int cheby_coarse_order)
   : Solver<OperType>(), pc_it(cycle_it), P(P.begin(), P.end()), A(P.size() + 1),
     dbc_tdof_lists(P.size()), B(P.size() + 1), B_post(P.size() + 1), X(P.size() + 1),
     Y(P.size() + 1), R(P.size() + 1), use_timer(false), one_sided(one_sided),
@@ -55,12 +55,21 @@ GeometricMultigridSolver<OperType>::GeometricMultigridSolver(
     return std::make_unique<ChebyshevSmoother1stKind<OperType>>(
         comm, cheby_smooth_it, order, cheby_sf_max, cheby_sf_min);
   };
+  // EXPERIMENT (PR 1233 review): the levels between the coarsest and the finest can use
+  // another order (cheby_coarse_order > 0), and their post-smoothers scale with it.
   for (std::size_t l = 1; l < n_levels; l++)
   {
-    B[l] = MakeSmoother(l, cheby_order);
-    if (post_order > 0 && post_order != cheby_order)
+    const bool finest = (l + 1 == n_levels);
+    const int order =
+        (!finest && cheby_coarse_order > 0) ? cheby_coarse_order : cheby_order;
+    const int order_post =
+        (!finest && cheby_coarse_order > 0 && post_order > 0)
+            ? std::max(1, (post_order * cheby_coarse_order + cheby_order / 2) / cheby_order)
+            : post_order;
+    B[l] = MakeSmoother(l, order);
+    if (order_post > 0 && order_post != order)
     {
-      B_post[l] = MakeSmoother(l, post_order);
+      B_post[l] = MakeSmoother(l, order_post);
     }
   }
 }

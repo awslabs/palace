@@ -74,7 +74,7 @@ public:
                            const std::vector<const Operator *> *G, int cycle_it,
                            int smooth_it, int cheby_order, double cheby_sf_max,
                            double cheby_sf_min, bool cheby_4th_kind, bool one_sided = false,
-                           int cheby_post_order = -1);
+                           int cheby_post_order = -1, int cheby_coarse_order = -1);
 
   void SetOperator(const OperType &op) override;
 

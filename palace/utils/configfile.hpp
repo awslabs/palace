@@ -1173,6 +1173,10 @@ public:
   // one-sided V-cycles).
   int mg_post_smooth_order = -1;
 
+  // EXPERIMENT (PR 1233 review): polynomial order of the smoothers of the levels between
+  // the coarsest and the finest (-1: MGSmoothOrder).
+  int mg_coarse_smooth_order = -1;
+
   // EXPERIMENT (PR 1233 review): flip the second-order absorbing BC term in the real-valued
   // coarse solve.
   bool mg_coarse_flip_abc2 = false;
