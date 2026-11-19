@@ -901,6 +901,14 @@ void IoData::CheckConfiguration()
   MFEM_VERIFY(solver.linear.type != LinearSolver::CUDSS,
               "Linear solver cuDSS requested but Palace was not built with cuDSS support!");
 #endif
+#if !defined(PALACE_WITH_PARMETIS)
+  if (solver.linear.sym_factorization == SymbolicFactorization::PARMETIS)
+  {
+    Mpi::Warning("ParMETIS column ordering requested but Palace was not built with "
+                 "ParMETIS support, using METIS instead!\n");
+    solver.linear.sym_factorization = SymbolicFactorization::METIS;
+  }
+#endif
 
   // Validate substructuring configuration: region and environment attribute sets must be
   // nonempty and disjoint (a well-posed complementary split).

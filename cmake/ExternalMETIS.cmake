@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 #
-# Build METIS and ParMETIS (from PETSc forks)
+# Build METIS and, with PALACE_WITH_PARMETIS, ParMETIS (from PETSc forks)
 #
 
 # Force build order
@@ -76,6 +76,10 @@ endif()
 set(METIS_LIBRARIES ${CMAKE_INSTALL_PREFIX}/lib/libmetis${_METIS_LIB_SUFFIX} CACHE STRING
   "List of library files for METIS"
 )
+
+if(NOT PALACE_WITH_PARMETIS)
+  return()
+endif()
 
 # Build ParMETIS
 set(PARMETIS_OPTIONS ${PALACE_SUPERBUILD_DEFAULT_ARGS})
