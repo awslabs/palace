@@ -666,10 +666,12 @@ public:
   // (SpaceOperator::GetExtraSystemMatrix(QuasistaticLimit, ...)): nonzero only for an
   // inductive rational surface impedance, since wave-port, surface-conductivity, and
   // frequency-dependent permittivity terms vanish at DC like the damping matrix, and the
-  // second-order farfield pole at ω = 0 is omitted. The positive screening term makes the
-  // system symmetric positive definite, so the solve cannot resonate with band or
-  // near-degenerate basis modes; with ν well below the sweep band the solution is the
-  // quasistatic (inductive-limit) response of the port. Must be called after
+  // second-order farfield pole at ω = 0 is omitted. When no port inductance is negative,
+  // the positive screening term makes the system symmetric positive definite, so the solve
+  // cannot resonate with band or near-degenerate basis modes; a negative port inductance
+  // makes it indefinite, and singular when ν² = −ω_m² for a mode of the linearized model
+  // with ω_m² < 0. With ν well below the sweep band the solution is the quasistatic
+  // (inductive-limit) response of the port. Must be called after
   // AddLumpedPortModesForSynthesis and before the offline sampling loop, so the leading
   // port-mode block and the RHS1r projection bookkeeping stay consistent.
   //

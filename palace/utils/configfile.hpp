@@ -734,12 +734,13 @@ public:
   // adaptive driven circuit synthesis. Anchor vectors provide the junction-anchored
   // (unit-current) field configuration used by downstream bare-basis netlist extraction,
   // without requiring a pseudo-inverse of the exported inverse-inductance matrix. Default
-  // false (opt-in, preserving existing behavior); requires an inductive port that is
-  // included in synthesis. A port alone under its excitation index needs no anchor (its
-  // quasistatic response is in the basis from the sample at the lowest frequency), unlike a
-  // port which shares its index with other ports or is not excited. The responses of the
-  // two arms of a SQUID differ by its loop mode, which anchoring both arms brings into the
-  // basis.
+  // false (opt-in, preserving existing behavior); requires a port with a nonzero
+  // inductance, which may be negative (the linearized inductance of a Josephson junction
+  // biased at a phase beyond π/2, for example), included in synthesis. A port alone under
+  // its excitation index needs no anchor (its quasistatic response is in the basis from the
+  // sample at the lowest frequency), unlike a port which shares its index with other ports
+  // or is not excited. The responses of the two arms of a SQUID differ by its loop mode,
+  // which anchoring both arms brings into the basis.
   bool synthesis_anchor = false;
 
   // For each lumped port index, each element contains a list of attributes making up a
@@ -1162,12 +1163,12 @@ public:
 
   // Screening frequencies ν of the anchor solves during circuit synthesis [GHz]
   // (nondimensionalized on input like the sweep frequencies), in ascending order. Each
-  // anchor system (K₀ + ν²M) x = b_p is symmetric positive definite for any ν > 0, so the
-  // solve cannot resonate with band or near-degenerate basis modes. The lowest frequency
-  // should sit well below the sweep band, so that its anchor is the quasistatic
-  // (inductive-limit) response of the port; each other frequency adds the screened response
-  // of the port at that imaginary frequency to the basis. 0 (default) selects 1/10 of the
-  // lowest sweep sample frequency.
+  // anchor system (K₀ + ν²M) x = b_p is symmetric, and positive definite for any ν > 0 when
+  // no port inductance is negative, so that the solve cannot resonate with band or
+  // near-degenerate basis modes. The lowest frequency should sit well below the sweep band,
+  // so that its anchor is the quasistatic (inductive-limit) response of the port; each
+  // other frequency adds the screened response of the port at that imaginary frequency to
+  // the basis. 0 (default) selects 1/10 of the lowest sweep sample frequency.
   std::vector<double> adaptive_circuit_synthesis_anchor_freq = {0.0};
 
   // Cancel the O(ν²) screening bias of the quasistatic anchor solves by Richardson

@@ -5913,6 +5913,98 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   CHECK(r.tail(r.size() - 1).norm() <= 1.0e-8 * std::abs(r(0)));
 }
 
+// A port with a negative inductance, for example the linearized inductance of a Josephson
+// junction biased at a phase beyond π/2, can be anchored as well, here the second of two
+// ports (an excited port must have a nonnegative inductance). The negative inductance makes
+// the screened system (K + ν²M) indefinite, but away from ν² = −ω_m² for the modes of the
+// linearized model with ω_m² < 0 it is nonsingular, and the anchor still solves it, with
+// (Kr + ν²Mr) c = s e_p in the reduced basis as for a positive inductance. A negative
+// per-square inductance is accepted too.
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "RomOperator-Synthesis-AnchorWithNegativeInductance",
+                 "[romoperator][Serial][Parallel]")
+{
+  const double L = GENERATE(10.0e-9, -10.0e-9);
+  CAPTURE(L);
+  MPI_Comm world_comm = Mpi::World();
+  json setup_json;
+  setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 0}, {"Output", temp_dir}};
+  setup_json["Model"] = {
+      {"Mesh", fs::path(PALACE_TEST_DATA_DIR) / "lumpedport_mesh/cube_mesh_3_2_1_tet.msh"},
+      {"L0", 1.0e-2},
+      {"Refinement", json::object({})}};
+  setup_json["Domains"] = {
+      {"Materials",
+       json::array({json::object({{"Attributes", json::array({1, 2, 3, 4, 5, 6})},
+                                  {"Permeability", 1.0},
+                                  {"Permittivity", 4.0}})})}};
+  // The ports are on boundary attributes 1 and 14, which share no vertex.
+  setup_json["Boundaries"] = {
+      {"LumpedPort",
+       json::array(
+           {json::object(
+                {{"Index", 1},
+                 {"R", 50.0},
+                 {"Excitation", uint(1)},
+                 {"Elements", json::array({json::object({{"Attributes", json::array({1})},
+                                                         {"Direction", "+Y"}})})}}),
+            json::object(
+                {{"Index", 2},
+                 {"L", L},
+                 {"C", 1.0e-12},
+                 {"SynthesisAnchor", true},
+                 {"Elements", json::array({json::object({{"Attributes", json::array({14})},
+                                                         {"Direction", "+Z"}})})}})})}};
+  setup_json["Solver"] = {
+      {"Order", 2UL},
+      {"Device", "CPU"},
+      {"Driven",
+       {{"AdaptiveTol", 1.0e-3},
+        {"AdaptiveCircuitSynthesis", true},
+        {"MinFreq", 1.0},
+        {"MaxFreq", 3.0},
+        {"FreqStep", 0.5}}},
+      {"Linear",
+       {{"Type", "Default"}, {"KSPType", "GMRES"}, {"MaxIts", 500}, {"Tol", 1.0e-12}}}};
+  {
+    json per_square = setup_json;
+    auto &port = per_square["Boundaries"]["LumpedPort"][1];
+    port.erase("L");
+    port.erase("C");
+    port["Ls"] = L;
+    CHECK_NOTHROW(IoData(per_square, false));
+  }
+
+  IoData iodata(setup_json, false);
+  auto mesh_io = LoadScaleParMesh2(iodata, world_comm);
+  SpaceOperator space_op(iodata, mesh_io);
+  RomOperatorTest prom_op(iodata, space_op, 10);
+  prom_op.AddLumpedPortModesForSynthesis();
+  const double nu = 0.1 * iodata.solver.driven.sample_f.front();
+  prom_op.AddLumpedPortAnchorModesForSynthesis(nu);
+  for (int seed : {42, 44})
+  {
+    ComplexVector sample(space_op.GetNDSpace().GetTrueVSize());
+    sample.UseDevice(true);
+    linalg::SetRandom(world_comm, sample.Real(), seed);
+    linalg::SetRandom(world_comm, sample.Imag(), seed + 1);
+    prom_op.UpdatePROM(sample, fmt::format("sample_{:d}", seed));
+  }
+  const auto &labels = prom_op.GetNodeLabels();
+  REQUIRE(labels.size() == 7);
+  REQUIRE(labels[0] == "port_1_re");
+  REQUIRE(labels[1] == "port_2_re");
+  REQUIRE(labels[2] == "anchor_2_re");
+
+  const Eigen::VectorXd c = prom_op.GetOrthR().col(2);
+  Eigen::VectorXd r = (prom_op.GetKr().real() + nu * nu * prom_op.GetMr().real()) * c;
+  CAPTURE(r.transpose());
+  const double r_port = r(1);
+  REQUIRE(std::abs(r_port) > 0.0);
+  r(1) = 0.0;
+  CHECK(r.norm() <= 1.0e-8 * std::abs(r_port));
+}
+
 // With several screening frequencies, the lowest gives the quasistatic anchor anchor_1_re,
 // the same as alone and Richardson-extrapolated when requested, and each other frequency
 // ν_k adds the screened response of the port at that frequency, anchor_1_nu<k>_re, whose

@@ -913,11 +913,11 @@ LumpedPortData::LumpedPortData(const json &port)
                           "added to the synthesis basis.",
                           index));
   synthesis_anchor = port.value("SynthesisAnchor", synthesis_anchor);
-  MFEM_VERIFY(!(synthesis_anchor && L <= 0.0 && Ls <= 0.0),
+  MFEM_VERIFY(!(synthesis_anchor && L == 0.0 && Ls == 0.0),
               fmt::format("\"SynthesisAnchor\" cannot be true on lumped port index {:d} "
-                          "because it has no inductance (\"L\" or \"Ls\" > 0 required); "
-                          "the anchor solve computes the quasistatic response of an "
-                          "inductive (junction) port.",
+                          "because it has no inductance (a nonzero \"L\" or \"Ls\" is "
+                          "required); the anchor solve computes the quasistatic response "
+                          "of an inductive (junction) port.",
                           index));
   MFEM_VERIFY(!(synthesis_anchor && !include_in_synthesis),
               fmt::format("\"SynthesisAnchor\" cannot be true on lumped port index {:d} "
