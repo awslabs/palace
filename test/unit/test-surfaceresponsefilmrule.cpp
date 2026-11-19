@@ -6,13 +6,16 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <map>
 #include <memory>
 #include <set>
 #include <string>
 #include <vector>
+#include <unistd.h>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
@@ -22,6 +25,7 @@
 #include "linalg/ksp.hpp"
 #include "linalg/vector.hpp"
 #include "models/laplaceoperator.hpp"
+#include "models/postoperator.hpp"
 #include "models/spaceoperator.hpp"
 #include "models/surfaceresponsefilmrule.hpp"
 #include "models/surfaceresponseoperator.hpp"
@@ -29,6 +33,7 @@
 #include "utils/configfile.hpp"
 #include "utils/iodata.hpp"
 #include "utils/metadatafile.hpp"
+#include "utils/outputdir.hpp"
 #include "utils/timer.hpp"
 #include "utils/units.hpp"
 
@@ -60,6 +65,24 @@ bool HasLine(const FilmRuleResolution &film, const std::string &text)
 {
   return std::any_of(film.lines.begin(), film.lines.end(), [&](const std::string &line)
                      { return line.find(text) != std::string::npos; });
+}
+
+// The text a callable writes to the process's standard output (the root's log).
+template <typename F>
+std::string CaptureStdout(const fs::path &file, F &&run)
+{
+  std::fflush(stdout);
+  const int saved = dup(fileno(stdout));
+  std::FILE *target = std::fopen(file.c_str(), "w");
+  REQUIRE(target);
+  dup2(fileno(target), fileno(stdout));
+  run();
+  std::fflush(stdout);
+  dup2(saved, fileno(stdout));
+  close(saved);
+  std::fclose(target);
+  std::ifstream input(file);
+  return {std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
 }
 
 }  // namespace
@@ -771,6 +794,21 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     }
     SameResponse(twin_response,
                  candidate.GetMaxwellResponse(Field(*run->space, 0.3, 1.0, 0.7), 0.0));
+  }
+
+  SECTION("RECORD through the post-operator of a three-dimensional eigenmode run: the "
+          "candidate is set up and the two-dimensional line is not printed")
+  {
+    auto run = Build(Config({{9, film_law}}, sa_library_path), MakeIslandMesh());
+    MPI_Comm comm = Mpi::World();
+    MakeOutputFolder(*run->iodata, comm);
+    const std::string log = CaptureStdout(
+        temp.temp_dir / "impedance-record-post.log",
+        [&] { PostOperator<ProblemType::EIGENMODE> post_op(*run->iodata, *run->space); });
+    CHECK_THAT(log, ContainsSubstring("Impedance-metal rule (RECORD): film = the library's "
+                                      "film: an ASSUMPTION"));
+    CHECK_THAT(log, !ContainsSubstring("two-dimensional boundary-mode runs"));
+    CHECK_THAT(log, !ContainsSubstring("Impedance-metal rule (APPLY)"));
   }
 
   SECTION("the negative laws: Rs only, Cs only, a Conductivity law: not served (nothing "

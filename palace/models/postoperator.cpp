@@ -673,17 +673,17 @@ PostOperator<solver_t>::PostOperator(
                                       record_setup_bytes);
         }
       }
-      if (surface_response_op->GetImpedanceApplyRule())
-      {
-        // The impedance-metal rule's "Apply" (decision 2206 (a)): the per-feature law
-        // service of the operator of record, after every object of record is built.
-        WriteImpedanceApplyFeatures();
-      }
       else if (impedance_record)
       {
         Mpi::Print(
             "\nImpedance-metal rule (RECORD): two-dimensional boundary-mode runs are "
             "out of stage A: no candidate, no law reading\n");
+      }
+      if (surface_response_op->GetImpedanceApplyRule())
+      {
+        // The impedance-metal rule's "Apply" (decision 2206 (a)): the per-feature law
+        // service of the operator of record, after every object of record is built.
+        WriteImpedanceApplyFeatures();
       }
     }
   }
