@@ -161,12 +161,14 @@ FilmRuleResolution ResolveImpedanceMetalFilm(
   for (const auto &data : boundaries.impedance)
   {
     const double inductance = data.Ls * inductance_scale;
-    // Apply (decision 2206 (a); 2208 (3)): a purely inductive sheet is served when its
-    // CONFIGURED Ls (the number of the Impedance boundary, whatever the sheet form; the
-    // per-face meaning is printed with the form) lies in [0, ImpedanceMetalMaxInductance];
-    // above it it is not served. Record serves any Ls (the measuring mode of stage A).
-    const bool inductive =
-        data.Rs == 0.0 && data.Cs == 0.0 && (!apply || inductance >= 0.0);
+    // Apply (decision 2206 (a); 2208 (3); 2215): a purely inductive sheet is served when
+    // its CONFIGURED Ls (the number of the Impedance boundary, whatever the sheet form; the
+    // per-face meaning is printed with the form) lies in (0, ImpedanceMetalMaxInductance];
+    // above it it is not served; Ls = 0 with Rs = Cs = 0 is no sheet (the solve refuses
+    // such a boundary): not served, named. Record serves any Ls (the measuring mode of
+    // stage A).
+    const bool no_sheet = apply && data.Rs == 0.0 && data.Cs == 0.0 && data.Ls == 0.0;
+    const bool inductive = data.Rs == 0.0 && data.Cs == 0.0 && (!apply || inductance > 0.0);
     const bool in_range = !apply || inductance <= resolution.max_inductance;
     const std::string law =
         fmt::format("Impedance Rs {:.6g} Ls {:.6g} Cs {:.6g}", data.Rs * impedance_scale,
@@ -180,6 +182,7 @@ FilmRuleResolution ResolveImpedanceMetalFilm(
       auto &entry = resolution.attributes[attribute];
       entry.inductance = inductive ? inductance : 0.0;
       entry.form = SheetFormName(boundaries, attribute);
+      entry.no_sheet = no_sheet;
     }
   }
   for (const auto &data : boundaries.rational_impedance)
@@ -233,8 +236,10 @@ FilmRuleResolution ResolveImpedanceMetalFilm(
                                         "(ImpedanceMetalMaxInductance = {:.6g} H/sq); a "
                                         "larger ImpedanceMetalMaxInductance serves it",
                                         resolution.max_inductance)
-                          : std::string("Apply serves perfect conductors and purely "
-                                        "inductive sheets (Rs = 0, Cs = 0) only"))
+                          : std::string(record.no_sheet
+                                            ? "it is no sheet (Rs, Ls and Cs are all 0)"
+                                            : "Apply serves perfect conductors and purely "
+                                              "inductive sheets (Rs = 0, Cs = 0) only"))
                   << "!");
             }
             MFEM_ABORT("ImpedanceMetalFilmOverrides: an override is refused under "
@@ -288,7 +293,9 @@ FilmRuleResolution ResolveImpedanceMetalFilm(
                                  : (record.service == FilmService::INDUCTIVE_ABOVE_RANGE
                                         ? fmt::format(": ABOVE the Ls range <= {:.6g} H/sq",
                                                       resolution.max_inductance)
-                                        : ""))]
+                                        : (record.no_sheet
+                                               ? ": no sheet (Rs, Ls and Cs are all 0)"
+                                               : "")))]
           .push_back(attribute);
     }
     if (record.service == FilmService::FILM_INDUCTIVE ||
@@ -315,7 +322,7 @@ FilmRuleResolution ResolveImpedanceMetalFilm(
     }
     resolution.lines.push_back(fmt::format(
         "Impedance-metal rule (APPLY): treated as the library's perfect-conductor film (an "
-        "ASSUMPTION): {}; Ls range served: 0 <= configured Ls <= {:.6g} H/sq in every "
+        "ASSUMPTION): {}; Ls range served: 0 < configured Ls <= {:.6g} H/sq in every "
         "sheet "
         "form (ImpedanceMetalMaxInductance, {}); served Ls met: {}",
         film.empty() ? "none" : film, resolution.max_inductance,

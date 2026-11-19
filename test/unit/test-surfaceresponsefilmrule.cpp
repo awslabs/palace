@@ -197,7 +197,7 @@ TEST_CASE("Impedance-metal rule Apply film resolution, Ls range check and refusa
     CHECK_THAT(line, ContainsSubstring("PEC [1]"));
     CHECK_THAT(line, ContainsSubstring("Impedance Rs 0 Ls 4.5e-14 Cs 0, uncracked (one "
                                        "sheet of total Ls) [2]"));
-    CHECK_THAT(line, ContainsSubstring("Ls range served: 0 <= configured Ls <= 9e-14 H/sq "
+    CHECK_THAT(line, ContainsSubstring("Ls range served: 0 < configured Ls <= 9e-14 H/sq "
                                        "in every sheet form (ImpedanceMetalMaxInductance, "
                                        "the default)"));
     // Decision 2208 (1): ONE line holds serving off while it is not validated.
@@ -283,6 +283,37 @@ TEST_CASE("Impedance-metal rule Apply film resolution, Ls range check and refusa
     request.impedance_metal_film_overrides = {{{7}, true}};
     CHECK_THROWS_WITH(ResolveImpedanceMetalFilm(boundaries, request, units, false),
                       ContainsSubstring("a larger ImpedanceMetalMaxInductance serves it"));
+  }
+
+  SECTION("the lower end: Ls = 0 with Rs = Cs = 0 is no sheet: not served, named; an "
+          "override cannot serve it; Record keeps it")
+  {
+    config::BoundaryData zero(json{
+        {"PEC", {{"Attributes", {1}}}},
+        {"Impedance",
+         {{{"Attributes", {8}}, {"Ls", 0.0}}, {{"Attributes", {2}}, {"Ls", 1.0e-15}}}}});
+    const auto film = ResolveImpedanceMetalFilm(zero, request, units, false);
+    CHECK(film.attributes.at(8).service == FilmService::NOT_DECLARED);
+    CHECK(film.attributes.at(8).no_sheet);
+    CHECK(film.attributes.at(2).service == FilmService::FILM_INDUCTIVE);
+    CHECK_FALSE(film.attributes.at(2).no_sheet);
+    CHECK(film.served_inductances == std::vector<double>{1.0e-15});
+    CHECK_THAT(film.lines.front(), ContainsSubstring("0 < configured Ls <= 9e-14 H/sq"));
+    CHECK(HasLine(film,
+                  "not served (Impedance Rs 0 Ls 0 Cs 0, uncracked (one sheet of total "
+                  "Ls): no sheet (Rs, Ls and Cs are all 0)): attributes [8]"));
+    CHECK(film.SegmentService({8}) == FilmService::NOT_DECLARED);
+    request.impedance_metal_film_overrides = {{{8}, true}};
+    CHECK_THROWS_WITH(
+        ResolveImpedanceMetalFilm(zero, request, units, false),
+        ContainsSubstring("attribute 8 (Impedance Rs 0 Ls 0 Cs 0) cannot be "
+                          "served by an override under \"ImpedanceMetalRule\": "
+                          "\"Apply\": it is no sheet (Rs, Ls and Cs are all 0)"));
+    request.impedance_metal_film_overrides.clear();
+    request.impedance_metal_rule = ResponseCorrectionData::ImpedanceMetalRule::RECORD;
+    const auto record = ResolveImpedanceMetalFilm(zero, request, units, false);
+    CHECK(record.attributes.at(8).service == FilmService::FILM_INDUCTIVE);
+    CHECK_FALSE(record.attributes.at(8).no_sheet);
   }
 
   SECTION("the palace.json / manifest record of an Apply run")

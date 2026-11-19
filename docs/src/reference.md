@@ -2526,7 +2526,7 @@ the tables of record withhold.
 `"ImpedanceMetalRule": "Apply"` (EXPERIMENTAL, off by default): corrected values on impedance
 sheets are experimental and not validated, and every run with `"Apply"` prints one line that
 says so. On the same runs as `"Record"`, the operator of record itself treats a perfect
-conductor and a purely inductive `Impedance` sheet (`Rs` = 0, `Cs` = 0, 0 <= `Ls` <=
+conductor and a purely inductive `Impedance` sheet (`Rs` = 0, `Cs` = 0, 0 < `Ls` <=
 `"ImpedanceMetalMaxInductance"`, cracked or not) as the library's film: its features are
 identified, keyed, matched and placed as a perfect conductor's and corrected by the
 perfect-conductor models, while the solve keeps the impedance law. No candidate is built
@@ -2536,7 +2536,9 @@ element carries `1/Ls` once); a cracked sheet (`"Crack": true`) is two faces of 
 deprecated global crack key splits it into two faces of `2 Ls` each. The range check
 compares the CONFIGURED `Ls` (the number of the `Impedance` boundary) with
 `"ImpedanceMetalMaxInductance"` (H/sq; default `9e-14`, twice the common design value
-`4.5e-14`) in every form; a sheet above it is not served (`ABOVE-RANGE`: raw, named). The
+`4.5e-14`) in every form; a sheet above it is not served (`ABOVE-RANGE`: raw, named), and an
+`Impedance` boundary with `Rs`, `Ls` and `Cs` all 0 is no sheet (not served, named; the
+solve refuses it). The
 tables of record keep their columns and status words; `palace.json`
 `SurfaceResponse.ImpedanceMetalRule` records the mode, the printed lines, the bound, the `Ls`
 met, the law-status counts and the count of the features on impedance sheets:

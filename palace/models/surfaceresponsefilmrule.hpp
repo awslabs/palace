@@ -20,7 +20,7 @@ class Units;
 // read under Solver.SurfaceResponseCorrection.ImpedanceMetalRule "Record" or "Apply"). By
 // default, with no tag from the designer, a metal boundary is treated as the library's film
 // iff it is a perfect conductor or a PURELY INDUCTIVE Impedance sheet (Rs = 0 and Cs = 0;
-// any Ls under "Record"; 0 <= Ls <= ImpedanceMetalMaxInductance under "Apply"): an
+// any Ls under "Record"; 0 < Ls <= ImpedanceMetalMaxInductance under "Apply"): an
 // ASSUMPTION, printed on every run. A boundary with Rs != 0 or Cs != 0, a Conductivity or a
 // RationalImpedance law is not served. ImpedanceMetalFilmOverrides serves or un-serves an
 // attribute: under "Record" in either direction, whatever its law, under "Apply" serving
@@ -54,13 +54,15 @@ struct FilmRuleAttribute
   // legacy split (two faces of 2 Ls each)").
   double inductance = 0.0;
   std::string form;
+  // Apply: an Impedance boundary with Rs, Ls and Cs all 0, which is no sheet (not served).
+  bool no_sheet = false;
 };
 
 struct FilmRuleResolution
 {
   std::map<int, FilmRuleAttribute> attributes;
   // "Apply" (decision 2206 (a)): the film rule is the seam of the operator of record, with
-  // the Ls range [0, max_inductance] (H/sq); false = "Record" (the candidate's seam).
+  // the Ls range (0, max_inductance] (H/sq); false = "Record" (the candidate's seam).
   bool apply = false;
   double max_inductance = 0.0;
   bool max_inductance_is_default = true;
