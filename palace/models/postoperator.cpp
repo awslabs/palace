@@ -6670,10 +6670,8 @@ void PostOperator<solver_t>::WriteImpedanceApplyFeatures() const
   table.table.insert(Column::Text("served_key_hash", "ServedKeyHash"));
   table.table.insert(Column::Text("model", "Matched model"));
   table.table.insert("length", "length (m)");
-  int served = 0;
   for (const auto &feature : features)
   {
-    served += ImpedanceLawStatusServesSheet(feature.status) ? 1 : 0;
     table.table["feature"] << feature.feature;
     table.table["type"] << feature.type;
     // A text cell holds no comma (tablecsv.hpp): the law JSON's commas as ';'.
@@ -6694,11 +6692,8 @@ void PostOperator<solver_t>::WriteImpedanceApplyFeatures() const
     table.table["length"] << units.Dimensionalize<Units::ValueType::LENGTH>(feature.length);
   }
   table.WriteFullTableTrunc();
-  Mpi::Print(fem_op->GetComm(),
-             "Impedance-metal rule (APPLY): {:d} of {:d} identified feature(s) on "
-             "impedance sheets are served by perfect-conductor models; per-feature table: "
-             "{}\n",
-             served, static_cast<int>(features.size()), path.string());
+  Mpi::Print(fem_op->GetComm(), "Impedance-metal rule (APPLY): {}; per-feature table: {}\n",
+             ImpedanceApplyCountText(CountImpedanceApplyFeatures(features)), path.string());
 }
 
 template class PostOperator<ProblemType::DRIVEN>;

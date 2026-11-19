@@ -340,25 +340,52 @@ bool ImpedanceLawStatusServesSheet(const std::string &status)
          status == ImpedanceLawStatusName(ImpedanceLawStatus::SERVED_BY_OVERRIDE);
 }
 
+ImpedanceApplyCounts CountImpedanceApplyFeatures(
+    const std::vector<
+        config::ElectrostaticSolverData::ResponseCorrectionData::ImpedanceLawFeatureData>
+        &features)
+{
+  ImpedanceApplyCounts counts;
+  for (const auto &feature : features)
+  {
+    counts.sheet += feature.impedance_sheet ? 1 : 0;
+    if (!ImpedanceLawStatusServesSheet(feature.status))
+    {
+      continue;
+    }
+    counts.substituted++;
+    if (feature.model.empty())
+    {
+      counts.missing++;
+    }
+    else
+    {
+      counts.corrected++;
+      counts.corrected_length += feature.length;
+    }
+  }
+  return counts;
+}
+
+std::string ImpedanceApplyCountText(const ImpedanceApplyCounts &counts)
+{
+  return fmt::format("{:d} of {:d} feature(s) on impedance sheets are corrected by "
+                     "perfect-conductor models ({:d} Missing, as for a perfect conductor)",
+                     counts.corrected, counts.sheet, counts.missing);
+}
+
 nlohmann::json ImpedanceApplyRecord(
     const FilmRuleResolution &film,
     const std::vector<
         config::ElectrostaticSolverData::ResponseCorrectionData::ImpedanceLawFeatureData>
         &features,
-    bool with_features)
+    const Units &units, bool with_features)
 {
   std::map<std::string, int> counts;
-  int served = 0;
-  double served_length = 0.0;
   nlohmann::json rows = nlohmann::json::array();
   for (const auto &feature : features)
   {
     counts[feature.status]++;
-    if (ImpedanceLawStatusServesSheet(feature.status))
-    {
-      served++;
-      served_length += feature.length;
-    }
     if (with_features)
     {
       rows.push_back({{"Id", feature.feature},
@@ -371,14 +398,20 @@ nlohmann::json ImpedanceApplyRecord(
                       {"Model", feature.model}});
     }
   }
-  nlohmann::json record = {{"Mode", "Apply"},
-                           {"Lines", film.lines},
-                           {"MaxInductance", film.max_inductance},
-                           {"MaxInductanceIsDefault", film.max_inductance_is_default},
-                           {"ServedInductances", film.served_inductances},
-                           {"LawStatusCounts", counts},
-                           {"ServedImpedanceFeatures", served},
-                           {"ServedImpedanceLength", served_length}};
+  const auto sheet_counts = CountImpedanceApplyFeatures(features);
+  nlohmann::json record = {
+      {"Mode", "Apply"},
+      {"Lines", film.lines},
+      {"MaxInductance", film.max_inductance},
+      {"MaxInductanceIsDefault", film.max_inductance_is_default},
+      {"ServedInductances", film.served_inductances},
+      {"LawStatusCounts", counts},
+      {"ImpedanceSheetFeatures", sheet_counts.sheet},
+      {"SubstitutedImpedanceFeatures", sheet_counts.substituted},
+      {"ServedImpedanceFeatures", sheet_counts.corrected},
+      {"MissingImpedanceFeatures", sheet_counts.missing},
+      {"ServedImpedanceLength",
+       units.Dimensionalize<Units::ValueType::LENGTH>(sheet_counts.corrected_length)}};
   if (with_features)
   {
     record["Features"] = std::move(rows);

@@ -118,17 +118,44 @@ FilmRuleResolution ResolveImpedanceMetalFilm(
 // a perfect conductor (SUBSTITUTED, MIXED-LAW, SERVED-BY-OVERRIDE).
 bool ImpedanceLawStatusServesSheet(const std::string &status);
 
+// The count of an "Apply" run's features on impedance sheets (from the root's feature
+// rows): `sheet` (n) the features whose device law is an Impedance sheet, served or not;
+// `substituted` (s) the features whose law status serves the sheet; of those, `corrected`
+// (k) the features corrected by a perfect-conductor model (matched and placed) and
+// `missing` (m = s - k) the features without one (Missing, as for a perfect conductor);
+// `corrected_length` the k features' length (the rows' nondimensional length).
+struct ImpedanceApplyCounts
+{
+  int sheet = 0;
+  int substituted = 0;
+  int corrected = 0;
+  int missing = 0;
+  double corrected_length = 0.0;
+};
+
+ImpedanceApplyCounts CountImpedanceApplyFeatures(
+    const std::vector<
+        config::ElectrostaticSolverData::ResponseCorrectionData::ImpedanceLawFeatureData>
+        &features);
+
+// The count line of an "Apply" run: "k of n feature(s) on impedance sheets are corrected
+// by perfect-conductor models (m Missing, as for a perfect conductor)".
+std::string ImpedanceApplyCountText(const ImpedanceApplyCounts &counts);
+
 // The "ImpedanceMetalRule" record of an "Apply" run (palace.json SurfaceResponse and the
 // preflight manifest of record; decision 2206 (a)): the mode, the printed lines, the Ls
-// range, the Ls values met and, from the feature rows (`features`: the root's), the
-// law-status counts and the features served on impedance sheets; the rows themselves when
-// `with_features` (the lines include the one experimental-status line, decision 2208 (1)).
+// range, the Ls values met, the law-status counts and, from the feature rows (`features`:
+// the root's), ImpedanceSheetFeatures n, SubstitutedImpedanceFeatures s,
+// ServedImpedanceFeatures k (corrected), MissingImpedanceFeatures m and
+// ServedImpedanceLength (the k features' length in metres, through `units`); the rows
+// themselves when `with_features` (the lines include the one experimental-status line,
+// decision 2208 (1)).
 nlohmann::json ImpedanceApplyRecord(
     const FilmRuleResolution &film,
     const std::vector<
         config::ElectrostaticSolverData::ResponseCorrectionData::ImpedanceLawFeatureData>
         &features,
-    bool with_features);
+    const Units &units, bool with_features);
 
 }  // namespace palace
 

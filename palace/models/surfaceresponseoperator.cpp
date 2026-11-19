@@ -10435,6 +10435,9 @@ void ClassifyCandidateFeatureLaws(IdentificationResult &result,
       for (const int law : status == ImpedanceLawStatus::LAW_JOINT ? joint_laws : own_laws)
       {
         record.device_law += (record.device_law.empty() ? "" : " | ") + law_texts[law];
+        record.impedance_sheet =
+            record.impedance_sheet ||
+            laws.laws[law].type == MetalBoundaryConditionType::IMPEDANCE;
       }
       record.status = ImpedanceLawStatusName(status);
       record.override_status =
@@ -15705,6 +15708,26 @@ FeaturePatchSummary BuildFeaturePatches(
     record.interfaces = fallback.interfaces;
     record.topology = fallback.type;
     geometry_ledger->Record(std::move(record));
+  }
+
+  // The impedance-metal rule's law records (the root's): a record names a model only when
+  // its feature is corrected (matched and placed here); a served feature without one is
+  // Missing, as for a perfect conductor.
+  if (!result.impedance_law_features.empty())
+  {
+    std::map<int, const std::string *> corrected_models;
+    for (const auto &feature : identification.features)
+    {
+      if (feature.matched_model && !placement_rejected.count(feature.id))
+      {
+        corrected_models.emplace(feature.id, &*feature.matched_model);
+      }
+    }
+    for (auto &record : result.impedance_law_features)
+    {
+      const auto it = corrected_models.find(record.feature);
+      record.model = it != corrected_models.end() ? *it->second : std::string();
+    }
   }
 
   // Uncovered requirements (decision 394, F2): the portions of every unmatched feature as
@@ -24169,8 +24192,8 @@ SurfaceResponsePreflightOutcome WriteSurfaceResponseRequirements(const IoData &i
   manifest["Maxwell"] = maxwell;
   if (apply_film)
   {
-    manifest["ImpedanceMetalRule"] =
-        ImpedanceApplyRecord(*apply_film, patches.impedance_law_features, true);
+    manifest["ImpedanceMetalRule"] = ImpedanceApplyRecord(
+        *apply_film, patches.impedance_law_features, iodata.units, true);
   }
   // The magnetic (inductive) leaves (DESIGN-v2 section 3; decision 1229 Q4): the library's
   // rules and every model's leaf verdict (r1-r4, on the model data; the same evaluation the

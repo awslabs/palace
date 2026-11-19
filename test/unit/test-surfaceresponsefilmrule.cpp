@@ -265,22 +265,55 @@ TEST_CASE("Impedance-metal rule Apply film resolution, Ls range check and refusa
   SECTION("the palace.json / manifest record of an Apply run")
   {
     const auto film = ResolveImpedanceMetalFilm(boundaries, request, units, false);
-    std::vector<ResponseCorrectionData::ImpedanceLawFeatureData> features(3);
+    // n 4 (the rows on an impedance sheet), s 3 (their law status serves the sheet), k 2
+    // (corrected by a model), m 1 (SUBSTITUTED without a model: Missing).
+    std::vector<ResponseCorrectionData::ImpedanceLawFeatureData> features(5);
     features[0].status = "SUBSTITUTED";
+    features[0].impedance_sheet = true;
+    features[0].model = "isolated";
     features[0].length = 2.0;
     features[1].status = "PEC";
     features[2].status = "MIXED-LAW";
+    features[2].impedance_sheet = true;
+    features[2].model = "convex-corner-90";
     features[2].length = 0.5;
-    const auto record = ImpedanceApplyRecord(film, features, false);
+    features[3].status = "SUBSTITUTED";
+    features[3].impedance_sheet = true;
+    features[3].length = 4.0;
+    features[4].status = "NOT-DECLARED";
+    features[4].impedance_sheet = true;
+    features[4].length = 8.0;
+    const auto counts = CountImpedanceApplyFeatures(features);
+    CHECK(counts.sheet == 4);
+    CHECK(counts.substituted == 3);
+    CHECK(counts.corrected == 2);
+    CHECK(counts.missing == 1);
+    CHECK(counts.corrected_length == 2.5);
+    CHECK(ImpedanceApplyCountText(counts) ==
+          "2 of 4 feature(s) on impedance sheets are corrected by perfect-conductor models "
+          "(1 Missing, as for a perfect conductor)");
+    // ServedImpedanceLength in metres: the rows' nondimensional length times Lc.
+    const Units scaled_units(1.0e-6, 2.0e-3);
+    const auto record = ImpedanceApplyRecord(film, features, scaled_units, false);
     CHECK(record.at("Mode") == "Apply");
+    CHECK(record.at("ImpedanceSheetFeatures") == 4);
+    CHECK(record.at("SubstitutedImpedanceFeatures") == 3);
     CHECK(record.at("ServedImpedanceFeatures") == 2);
-    CHECK(record.at("ServedImpedanceLength").get<double>() == 2.5);
+    CHECK(record.at("MissingImpedanceFeatures") == 1);
+    CHECK(record.at("ServedImpedanceLength").get<double>() ==
+          Catch::Approx(2.5 * 2.0e-3).epsilon(1.0e-14));
     CHECK(record.at("LawStatusCounts").at("PEC") == 1);
+    CHECK(record.at("LawStatusCounts").at("SUBSTITUTED") == 2);
     CHECK(record.at("MaxInductance").get<double>() == 9.0e-14);
     CHECK(record.at("MaxInductanceIsDefault") == true);
     CHECK(record.at("Lines").size() == film.lines.size());
     CHECK_FALSE(record.contains("Features"));
-    CHECK(ImpedanceApplyRecord(film, features, true).at("Features").size() == 3);
+    CHECK(ImpedanceApplyRecord(film, features, units, true).at("Features").size() == 5);
+    // An all-perfect-conductor run: no feature on an impedance sheet (n 0).
+    const std::vector<ResponseCorrectionData::ImpedanceLawFeatureData> pec(2, features[1]);
+    CHECK(ImpedanceApplyCountText(CountImpedanceApplyFeatures(pec)) ==
+          "0 of 0 feature(s) on impedance sheets are corrected by perfect-conductor models "
+          "(0 Missing, as for a perfect conductor)");
   }
 }
 

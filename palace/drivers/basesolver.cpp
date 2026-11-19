@@ -862,19 +862,19 @@ void BaseSolver::SaveMetadata(SurfaceResponseOperator &response) const
     if (const auto *film = response.GetImpedanceApplyRule())
     {
       auto &record = meta["SurfaceResponse"]["ImpedanceMetalRule"];
-      record = ImpedanceApplyRecord(*film, response.GetImpedanceLawFeatures(), false);
-      const int served = record.at("ServedImpedanceFeatures").get<int>();
-      if (served > 0)
+      const auto &features = response.GetImpedanceLawFeatures();
+      record = ImpedanceApplyRecord(*film, features, iodata.units, false);
+      const auto counts = CountImpedanceApplyFeatures(features);
+      if (counts.corrected > 0)
       {
         std::vector<std::string> inductances;
         for (const double inductance : film->served_inductances)
         {
           inductances.push_back(fmt::format("{:.6g}", inductance));
         }
-        coverage_banner += fmt::format(
-            "*** IMPEDANCE-METAL RULE (APPLY): {:d} corrected feature(s) on purely "
-            "inductive sheets (Ls {} H/sq) are served by perfect-conductor models ***\n",
-            served, fmt::join(inductances, ", "));
+        coverage_banner +=
+            fmt::format("*** IMPEDANCE-METAL RULE (APPLY): {}; served Ls: {} H/sq ***\n",
+                        ImpedanceApplyCountText(counts), fmt::join(inductances, ", "));
       }
     }
     // Round 2a R2 (decision 1475 (1)): the Records spilled by the root are spliced in place

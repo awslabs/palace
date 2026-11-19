@@ -1915,9 +1915,13 @@ public:
     struct ImpedanceLawFeatureData
     {
       int feature = -1;
+      // `model`: the model that corrects the feature (matched and placed); empty when the
+      // feature has none (Missing).
       std::string type, device_law, status, override_status, device_hash, served_hash,
           model;
       double length = 0.0;
+      // The device law named by `device_law` includes an Impedance sheet (served or not).
+      bool impedance_sheet = false;
     };
     std::vector<ImpedanceLawFeatureData> impedance_law_features;
     // DomainBoundary rule (decisions 442 / 454 / 455; boundary-cut DESIGN 2.2): the

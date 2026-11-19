@@ -887,6 +887,8 @@ TEST_CASE_METHOD(
   // The Features construction (the seam's path; the candidate test's form): the convex
   // library with every model on the island's one target interface (SA).
   const fs::path sa_library_path = temp.temp_dir / "impedance-apply-convex-sa-3d.json";
+  const fs::path no_corner_library_path =
+      temp.temp_dir / "impedance-apply-convex-sa-3d-no-corner.json";
   if (Mpi::Root(Mpi::World()))
   {
     json library = json::parse(std::ifstream(convex_library_3d_path));
@@ -896,6 +898,18 @@ TEST_CASE_METHOD(
       model["Interfaces"] = {{{"Type", "SA"}, {"Coupon", 1}}};
     }
     std::ofstream(sa_library_path) << library.dump(2) << "\n";
+    json no_corner = library;
+    no_corner["Name"] = "unit-test-process-impedance-apply-convex-sa-3d-no-corner";
+    no_corner["Models"] = json::array();
+    for (const auto &model : library["Models"])
+    {
+      if (model.value("Topology", std::string()) != "ConvexCorner")
+      {
+        no_corner["Models"].push_back(model);
+      }
+    }
+    REQUIRE(no_corner["Models"].size() + 1 == library["Models"].size());
+    std::ofstream(no_corner_library_path) << no_corner.dump(2) << "\n";
   }
   Mpi::Barrier(Mpi::World());
   auto IslandConfig = [&](bool legacy_key)
@@ -981,7 +995,38 @@ TEST_CASE_METHOD(
       for (const auto &feature : features)
       {
         CHECK(feature.status == "SUBSTITUTED");
+        CHECK(feature.impedance_sheet);
         CHECK(!feature.model.empty());
+      }
+      const auto counts = CountImpedanceApplyFeatures(features);
+      CHECK(counts.sheet == static_cast<int>(features.size()));
+      CHECK(counts.substituted == counts.sheet);
+      CHECK(counts.corrected == counts.sheet);
+      CHECK(counts.missing == 0);
+    }
+
+    // Apply with a library without the corner model: the corners keep their law status
+    // (SUBSTITUTED) and have no model: Missing, as for a perfect conductor (k < s).
+    {
+      json config = SheetConfig("Apply", 4.5e-14);
+      config["Solver"]["SurfaceResponseCorrection"]["Library"] =
+          no_corner_library_path.string();
+      MaxwellIslandResponse cornerless(config);
+      REQUIRE(cornerless.response->GetImpedanceApplyRule() != nullptr);
+      if (Mpi::Root(Mpi::World()))
+      {
+        const auto &features = cornerless.response->GetImpedanceLawFeatures();
+        const auto counts = CountImpedanceApplyFeatures(features);
+        CHECK(counts.sheet == static_cast<int>(features.size()));
+        CHECK(counts.substituted == counts.sheet);
+        CHECK(counts.missing > 0);
+        CHECK(counts.corrected > 0);
+        CHECK(counts.corrected + counts.missing == counts.substituted);
+        for (const auto &feature : features)
+        {
+          CHECK(feature.status == "SUBSTITUTED");
+          CHECK(feature.model.empty() == (feature.type == "ConvexCorner"));
+        }
       }
     }
 
@@ -998,6 +1043,17 @@ TEST_CASE_METHOD(
     CHECK_THAT(above.response->GetImpedanceApplyRule()->lines.back(),
                ContainsSubstring("ABOVE the Ls range <= 9e-14 H/sq): attributes [9]"));
     CHECK(above.response->GetPatchCount() == 0);
+    if (Mpi::Root(Mpi::World()))
+    {
+      // n > 0 and s = k = m = 0: the features lie on an impedance sheet that is not served.
+      const auto &features = above.response->GetImpedanceLawFeatures();
+      REQUIRE(!features.empty());
+      const auto counts = CountImpedanceApplyFeatures(features);
+      CHECK(counts.sheet == static_cast<int>(features.size()));
+      CHECK(counts.substituted == 0);
+      CHECK(counts.corrected == 0);
+      CHECK(counts.missing == 0);
+    }
   }
 #endif
 }

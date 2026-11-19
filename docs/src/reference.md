@@ -2539,9 +2539,16 @@ compares the CONFIGURED `Ls` (the number of the `Impedance` boundary) with
 `4.5e-14`) in every form; a sheet above it is not served (`ABOVE-RANGE`: raw, named). The
 tables of record keep their columns and status words; `palace.json`
 `SurfaceResponse.ImpedanceMetalRule` records the mode, the printed lines, the bound, the `Ls`
-met and the law-status counts; the run's coverage banner adds one line when a feature on an
-impedance sheet is served; and `surface-response-impedance-rule-features.csv` (per feature:
-device law, law status, both key hashes, model) is written in the diagnostics directory
+met, the law-status counts and the count of the features on impedance sheets:
+`ImpedanceSheetFeatures` (n: the features whose device law is an `Impedance` sheet, served
+or not), `SubstitutedImpedanceFeatures` (s: those whose law status serves the sheet),
+`ServedImpedanceFeatures` (k: those of s corrected by a perfect-conductor model, matched and
+placed), `MissingImpedanceFeatures` (m = s - k: no model, Missing as for a perfect
+conductor) and `ServedImpedanceLength` (the k features' length in metres). The run prints
+"k of n feature(s) on impedance sheets are corrected by perfect-conductor models (m Missing,
+as for a perfect conductor)", and its coverage banner adds that line when k > 0; and
+`surface-response-impedance-rule-features.csv` (per feature: device law, law status, both key
+hashes, the model that corrects it or `-`) is written in the diagnostics directory
 (`Diagnostics.Directory`, or `impedance-rule` when it is unset). A preflight's manifest of
 record is the served identification, with an `ImpedanceMetalRule` block. Under `"Apply"` an
 override may un-serve any metal and may serve only what the rule serves by default (any
