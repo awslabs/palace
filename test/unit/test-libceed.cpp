@@ -2587,26 +2587,35 @@ TEST_CASE("libCEED packed complex QData application",
   {
     SKIP("Packed application requires one CPU CEED context and one thread");
   }
-  const auto [name, mesh_file, order, curl, boundary, nested, nonsymmetric, subset] =
-      GENERATE(table<const char *, const char *, int, bool, bool, bool, bool, bool>(
-          {{"H(div) mass/mass and shared QData", "fichera-tet.mesh", 1, false, false, false,
-            false, false},
-           {"Curlmass/mass and p3 face orientations", "fichera-tet.mesh", 3, true, false,
-            false, false, false},
-           {"Hexahedron and unmatched boundary terms", "fichera-hex.mesh", 3, true, true,
-            false, false, false},
-           {"Direct volume pair and nested remainder", "fichera-tet.mesh", 2, true, false,
-            true, false, false},
-           {"Mixed H(curl) pairs and nonsymmetric tensors", "fichera-mixed-p2.mesh", 2,
-            true, false, false, true, false},
-           {"Mixed H(div) pairs", "fichera-mixed-p2.mesh", 1, false, false, false, false,
-            false},
-           {"Pyramid H(curl) pair", nullptr, 1, true, false, false, false, false},
-           {"Pyramid H(div) pair", nullptr, 1, false, false, false, false, false},
-           {"H(div) pair over a subset", "fichera-tet.mesh", 1, false, false, false, false,
-            true},
-           {"H(curl) hexahedra, subset and boundary remainder", "fichera-hex.mesh", 2, true,
-            true, false, false, true}}));
+  const auto [name, mesh_file, order, curl, boundary, nested, nonsymmetric, subset, extra,
+              extra_imag] = GENERATE(table<const char *, const char *, int, bool, bool,
+                                           bool, bool, bool, bool, bool>(
+      {{"H(div) mass/mass and shared QData", "fichera-tet.mesh", 1, false, false, false,
+        false, false, false, false},
+       {"Curlmass/mass and p3 face orientations", "fichera-tet.mesh", 3, true, false, false,
+        false, false, false, false},
+       {"Hexahedron and unmatched boundary terms", "fichera-hex.mesh", 3, true, true, false,
+        false, false, false, false},
+       {"Direct volume pair and nested remainder", "fichera-tet.mesh", 2, true, false, true,
+        false, false, false, false},
+       {"Mixed H(curl) pairs and nonsymmetric tensors", "fichera-mixed-p2.mesh", 2, true,
+        false, false, true, false, false, false},
+       {"Mixed H(div) pairs", "fichera-mixed-p2.mesh", 1, false, false, false, false, false,
+        false, false},
+       {"Pyramid H(curl) pair", nullptr, 1, true, false, false, false, false, false, false},
+       {"Pyramid H(div) pair", nullptr, 1, false, false, false, false, false, false, false},
+       {"H(div) pair over a subset", "fichera-tet.mesh", 1, false, false, false, false,
+        true, false, false},
+       {"H(curl) hexahedra, subset and boundary remainder", "fichera-hex.mesh", 2, true,
+        true, false, false, true, false, false},
+       {"Curlmass/mass pair and a real curlmass term without a partner", "fichera-tet.mesh",
+        2, true, false, false, false, false, true, false},
+       {"H(div) pair over a subset and a real term without a partner", "fichera-tet.mesh",
+        1, false, false, false, false, true, true, false},
+       {"Curlmass/mass pair and a second imaginary mass term", "fichera-tet.mesh", 2, true,
+        false, false, false, false, false, true},
+       {"H(div) pair over a subset and a second imaginary mass term", "fichera-tet.mesh", 1,
+        false, false, false, false, true, false, true}}));
   CAPTURE(name);
   // BilinearForm labels square operators symmetric; the nonsymmetric coefficient case
   // therefore exercises forward application only.
@@ -2640,6 +2649,9 @@ TEST_CASE("libCEED packed complex QData application",
   auto real_curl = BuildCoefficient(mesh, false, CoeffType::Matrix);
   auto bdr_mass = BuildCoefficient(mesh, true, CoeffType::Matrix);
   auto bdr_curl = BuildCoefficient(mesh, true, CoeffType::Scalar);
+  auto extra_mass = BuildCoefficient(mesh, false, CoeffType::Matrix);
+  auto extra_curl = BuildCoefficient(mesh, false, CoeffType::Matrix);
+  auto extra_imag_mass = BuildCoefficient(mesh, false, CoeffType::Matrix);
   if (nonsymmetric)
   {
     // Unequal off-diagonal entries expose tensor-index transposition in both the
@@ -2663,6 +2675,9 @@ TEST_CASE("libCEED packed complex QData application",
   imag_mass *= 0.19;
   real_curl *= 1.37;
   bdr_mass *= -0.23;
+  extra_mass *= 0.43;
+  extra_curl *= -0.61;
+  extra_imag_mass *= 0.29;
   if (subset)
   {
     std::vector<int> lossy_attr;
@@ -2684,6 +2699,26 @@ TEST_CASE("libCEED packed complex QData application",
     ar.AddDomainIntegrator<VectorFEMassIntegrator>(real_mass);
   }
   ai.AddDomainIntegrator<VectorFEMassIntegrator>(imag_mass);
+  if (extra_imag)
+  {
+    // A second imaginary volume term on all elements finds no real partner left, and
+    // stays in the remainder. Over a subset, the first term pairs on the processes that
+    // hold subset elements and the second one on the others.
+    ai.AddDomainIntegrator<VectorFEMassIntegrator>(extra_imag_mass);
+  }
+  if (extra)
+  {
+    // A second real volume term on all elements has no imaginary partner left, and is
+    // packed on its own along with the pair.
+    if (curl)
+    {
+      ar.AddDomainIntegrator<CurlCurlMassIntegrator>(extra_curl, extra_mass);
+    }
+    else
+    {
+      ar.AddDomainIntegrator<VectorFEMassIntegrator>(extra_mass);
+    }
+  }
   if (boundary)
   {
     // Deliberately unmatched real/imaginary boundary field layouts.
@@ -2812,13 +2847,32 @@ TEST_CASE("Ordinary driven fine preconditioner activates packed complex QData",
   REQUIRE(coarse);
   REQUIRE(dynamic_cast<const hypre::HypreCSRMatrix *>(coarse->LocalOperator().Real()));
   REQUIRE(IsOriginalComplexWrapper(coarse->LocalOperator()));
+  // The fine and H1 auxiliary operators are packed when they have a pair of real and
+  // imaginary volume leaves, together with their real volume leaves without a partner.
+  // Without any pair (lossless volume or real-valued preconditioner), they keep the
+  // original action.
+  const bool pairs = lossy && !real_pc;
   const auto &aux =
       dynamic_cast<const ComplexParOperator &>(mg->GetFinestAuxiliaryOperator());
-  REQUIRE(IsOriginalComplexWrapper(aux.LocalOperator()));
   const auto &local = fine->LocalOperator();
-  if (!partial_lossy)
+  for (const ComplexOperator *op : {&aux.LocalOperator(), &local})
   {
-    REQUIRE(!IsOriginalComplexWrapper(local) == (lossy && !real_pc));
+    // A rank with no lossy element has no pair: count the packed operators over all ranks,
+    // so that every rank checks the same.
+    long long num_packed = !IsOriginalComplexWrapper(*op);
+    Mpi::GlobalSum(1, &num_packed, Mpi::World());
+    if (!pairs)
+    {
+      REQUIRE(num_packed == 0);
+    }
+    else if (partial_lossy)
+    {
+      REQUIRE(num_packed > 0);
+    }
+    else
+    {
+      REQUIRE(num_packed == Mpi::Size(Mpi::World()));
+    }
   }
   // Assemble independent reference operators and exercise the unchanged borrowed RAP
   // constructor. Numerical agreement is checked against separate real ParOperators below.
@@ -2828,6 +2882,20 @@ TEST_CASE("Ordinary driven fine preconditioner activates packed complex QData",
       dynamic_cast<const ComplexParOperator &>(ref_mg.GetFinestOperator()).LocalOperator();
   ComplexWrapperOperator local_reference(ref_local.Real(), ref_local.Imag());
   CheckPackedActions(local, local_reference);
+  REQUIRE(mg->GetNumAuxiliaryLevels() == ref_mg.GetNumAuxiliaryLevels());
+  for (std::size_t l = 0; l < mg->GetNumAuxiliaryLevels(); l++)
+  {
+    // The H1 diffusion leaves of the auxiliary operators, including the subset pairs with
+    // their complement on partially lossy levels.
+    const auto &aux_level =
+        dynamic_cast<const ComplexParOperator &>(mg->GetAuxiliaryOperatorAtLevel(l))
+            .LocalOperator();
+    const auto &aux_level_ref =
+        dynamic_cast<const ComplexParOperator &>(ref_mg.GetAuxiliaryOperatorAtLevel(l))
+            .LocalOperator();
+    ComplexWrapperOperator aux_reference(aux_level_ref.Real(), aux_level_ref.Imag());
+    CheckPackedActions(aux_level, aux_reference);
+  }
   if (partial_lossy)
   {
     long long num_subsets = 0;
@@ -2900,20 +2968,24 @@ TEST_CASE("Ordinary driven fine preconditioner activates packed complex QData",
   }
 }
 
-TEST_CASE("libCEED packed complex unsupported input fallbacks",
+TEST_CASE("libCEED packed complex input fallbacks",
           "[libCEED][ComplexPacked][Serial][Parallel]")
 {
   if (!PackedTestBackend())
   {
     SKIP("Packed application requires one CPU CEED context and one thread");
   }
-  const auto [name, qdata, h1_space, tensor, scaled, real_only] =
-      GENERATE(table<const char *, bool, bool, bool, bool, bool>(
-          {{"Unassembled quadrature data", false, false, false, false, false},
-           {"Tensor H1 basis", true, true, true, false, false},
-           {"Non-tensor H1 basis", true, true, false, false, false},
-           {"Input with dof multiplicity", true, false, false, true, false},
-           {"Real-only input", true, false, false, false, true}}));
+  const auto [name, qdata, h1_space, tensor, scaled, real_only, extra, extra_imag] =
+      GENERATE(table<const char *, bool, bool, bool, bool, bool, bool, bool>(
+          {{"Unassembled quadrature data", false, false, false, false, false, false, false},
+           {"Tensor H1 basis", true, true, true, false, false, false, false},
+           {"Non-tensor H1 basis", true, true, false, false, false, false, false},
+           {"Non-tensor H1 basis and a real term without a partner", true, true, false,
+            false, false, true, false},
+           {"Non-tensor H1 basis and a second imaginary term", true, true, false, false,
+            false, false, true},
+           {"Input with dof multiplicity", true, false, false, true, false, false, false},
+           {"Real-only input", true, false, false, false, true, false, false}}));
   CAPTURE(name);
   PackedIntegrationSettings settings(3);
   const char *file = tensor ? "fichera-hex.mesh" : "fichera-tet.mesh";
@@ -2925,10 +2997,21 @@ TEST_CASE("libCEED packed complex unsupported input fallbacks",
                                        : static_cast<mfem::FiniteElementCollection *>(&nd));
   auto coeff = BuildCoefficient(mesh, false, CoeffType::Matrix);
   BilinearForm ar(fespace), ai(fespace);
+  auto extra_coeff = BuildCoefficient(mesh, false, CoeffType::Matrix);
+  extra_coeff *= 0.57;
   if (h1_space)
   {
     ar.AddDomainIntegrator<DiffusionIntegrator>(coeff);
     ai.AddDomainIntegrator<DiffusionIntegrator>(coeff);
+    if (extra)
+    {
+      ar.AddDomainIntegrator<DiffusionIntegrator>(extra_coeff);
+    }
+    if (extra_imag)
+    {
+      // The second imaginary term finds no real partner left, and stays in the remainder.
+      ai.AddDomainIntegrator<DiffusionIntegrator>(extra_coeff);
+    }
   }
   else
   {
@@ -2957,7 +3040,10 @@ TEST_CASE("libCEED packed complex unsupported input fallbacks",
     ref_imag.reset();
   }
   auto actual = ceed::CreateComplexOperator(std::move(real), std::move(imag), fespace);
-  REQUIRE(IsOriginalComplexWrapper(*actual));
+  // Non-tensor H1 bases are packed; tensor-product bases, dof multiplicity, unassembled
+  // vector quadrature data, and real-only inputs (no pair to pack) keep the original
+  // action.
+  REQUIRE(IsOriginalComplexWrapper(*actual) == (tensor || scaled || !qdata || real_only));
   ComplexWrapperOperator reference(ref_real.get(), ref_imag.get());
   CheckPackedActions(*actual, reference);
 }

@@ -19,6 +19,7 @@ target_sources(${LIB_TARGET_NAME}
   ${CMAKE_CURRENT_SOURCE_DIR}/jsonschema.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/memoryreporting.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/meshio.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/ncmeshio.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/omp.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/tablecsv.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/versions.cpp

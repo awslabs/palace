@@ -360,12 +360,14 @@ const std::vector<std::string> eigen_excluded = {"Maximum", "Minimum", "Mean",
 constexpr auto force_default_solver = palace::test::SolverOverridePolicy::ForceDefault;
 
 // Floquet-port S-parameters: compare only the |S[...]| (dB) magnitude columns
-// (phase isn't reproducible). NaN entries (evanescent modes) and signals below
-// -200 dB (negligible) count as matches. Ports the Julia test_floquet_sparams.
-palace::test::CustomCheck TestFloquetSParams(double rtol, double atol)
+// (phase isn't reproducible). NaN entries (evanescent modes) count as matches. By default
+// the dB values are compared and signals below -200 dB (negligible) count as matches; with
+// linear, the magnitudes |S| = 10^(dB/20) are compared within atol + rtol |S|, which gives
+// adaptive sweeps an absolute tolerance near 0 dB. Ports the Julia test_floquet_sparams.
+palace::test::CustomCheck TestFloquetSParams(double rtol, double atol, bool linear = false)
 {
-  return [rtol, atol](palace::Table &actual, palace::Table &reference,
-                      const std::filesystem::path &)
+  return [rtol, atol, linear](palace::Table &actual, palace::Table &reference,
+                              const std::filesystem::path &)
   {
     const std::size_t n_cols = std::min(actual.n_cols(), reference.n_cols());
     const std::size_t n_rows = std::min(actual.n_rows(), reference.n_rows());
@@ -380,13 +382,22 @@ palace::test::CustomCheck TestFloquetSParams(double rtol, double atol)
       {
         const double v_new = actual[c].data[r];
         const double v_ref = reference[c].data[r];
-        if ((std::isnan(v_new) && std::isnan(v_ref)) || v_ref < -200.0)
+        if ((std::isnan(v_new) && std::isnan(v_ref)) || (!linear && v_ref < -200.0))
         {
           continue;
         }
         INFO("row " << r + 1 << " column '" << hdr << "'");
-        CHECK_THAT(v_new, Catch::Matchers::WithinRel(v_ref, rtol) ||
-                              Catch::Matchers::WithinAbs(v_ref, atol));
+        if (linear)
+        {
+          const double s_new = std::pow(10.0, v_new / 20.0);
+          const double s_ref = std::pow(10.0, v_ref / 20.0);
+          CHECK(std::abs(s_new - s_ref) <= atol + rtol * std::max(s_new, s_ref));
+        }
+        else
+        {
+          CHECK_THAT(v_new, Catch::Matchers::WithinRel(v_ref, rtol) ||
+                                Catch::Matchers::WithinAbs(v_ref, atol));
+        }
       }
     }
   };
@@ -1763,6 +1774,51 @@ TEST_CASE("coaxial_magnetostatic_superconductor", "[Serial][Parallel][GPU][Regre
                                   "magnetostatic_superconductor", opts);
 }
 
+// Two-port line of three London slabs (λ = t = 0.2 μm, gaps d = 0.5 μm, W = 1 μm,
+// ℓ = 4 μm), a port across each gap and the far end shorted: the exact
+// L11 = L22 = μ0 ℓ/W (d + 2λ coth(t/λ)) and M12 = −μ0 ℓ/W λ csch(t/λ), which comes from the
+// middle slab, match to 3e-10.
+TEST_CASE("parallel_plate_london", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = force_default_solver;
+  palace::test::RunRegressionCase("parallel_plate_london", "parallel_plate_london.json",
+                                  "london", opts);
+}
+
+// The same line with Short inactive ports: each self-inductance is the screened L11 −
+// M12²/L22.
+TEST_CASE("parallel_plate_london_short", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = force_default_solver;
+  palace::test::RunRegressionCase("parallel_plate_london",
+                                  "parallel_plate_london_short.json", "london_short", opts);
+}
+
+// The same line with the upper slab replaced by the equivalent one-sided Superconductor
+// sheet: the inductance matrix is unchanged, checking the sum of the sheet and domain
+// kinetic energies.
+TEST_CASE("parallel_plate_london_sheet", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = force_default_solver;
+  palace::test::RunRegressionCase("parallel_plate_london",
+                                  "parallel_plate_london_sheet.json", "london_sheet", opts);
+}
+
 // Current-driven microstrip with PEC conductors (lambda -> 0 limit).
 TEST_CASE("microstrip_pec", "[Serial][Parallel][GPU][Regression]")
 {
@@ -1856,6 +1912,22 @@ TEST_CASE("cylinder_cavity_impedance", "[Serial][Parallel][GPU][Regression]")
   opts.skip_rowcount = true;
   palace::test::RunRegressionCase("cylinder", "cavity_impedance.json", "cavity_impedance",
                                   opts);
+}
+
+// One adaptation iteration of cylinder_cavity_impedance at order 2, refining every element:
+// the initial solve takes about nine Krylov cycles, so the solve of the adaptation
+// iteration starts from its eigenvectors (warm start), with the tighter linear solver
+// tolerance in its first cycle.
+TEST_CASE("cylinder_cavity_impedance_amr", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = eigen_excluded;
+  opts.skip_rowcount = true;
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("cylinder", "cavity_impedance_amr.json",
+                                  "cavity_impedance_amr", opts);
 }
 
 // The SLEPc NEP (SLP) shell receives device arrays on a GPU. The impedance boundary adds
@@ -2193,6 +2265,20 @@ TEST_CASE("floquet_dielectric_slab_lossy", "[Serial][Parallel][Regression]")
   opts.unstored_files = {"domain-E.csv", "error-indicators.csv"};
   opts.custom_checks["port-floquet-S.csv"] = TestDielectricSlab(0.05);
   palace::test::RunRegressionCase("dielectric_slab", "lossy.json", "lossy", opts);
+}
+
+// Adaptive (PROM) counterpart of dielectric_grating_uniform, which assembles the Floquet
+// DtN correction at every greedy sample. As in the other adaptive cases, the outputs other
+// than the S-parameters are structural smoke checks.
+TEST_CASE("dielectric_grating_adaptive", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = std::numeric_limits<double>::infinity();
+  opts.atol = std::numeric_limits<double>::infinity();
+  opts.paraview_fields = false;
+  opts.custom_checks["port-floquet-S.csv"] = TestFloquetSParams(1.0e-3, 1.0e-4, true);
+  palace::test::RunRegressionCase("dielectric_grating", "dielectric_grating_adaptive.json",
+                                  "adaptive", opts);
 }
 
 // Mixed Floquet + lumped/wave port S-parameter tests: validate the sqrt(2) power

@@ -570,6 +570,29 @@ void GmresSolver<OperType>::Update(int j) const
 }
 
 template <OperatorType OperType>
+typename GmresSolver<OperType>::RealType GmresSolver<OperType>::CorrectionNorm(int j) const
+{
+  // Back substitution with the rotated Hessenberg matrix (upper triangular), on a copy of
+  // the rotated right-hand side: O(j²) scalar operations, no vector operations.
+  std::vector<ScalarType> y(s.begin(), s.begin() + j + 1);
+  for (int i = j; i >= 0; i--)
+  {
+    const ScalarType *Hi = H.data() + i * (max_dim + 1);
+    y[i] /= Hi[i];
+    for (int k = i - 1; k >= 0; k--)
+    {
+      y[k] -= Hi[k] * y[i];
+    }
+  }
+  RealType norm2 = 0.0;
+  for (const auto &yi : y)
+  {
+    norm2 += std::norm(yi);
+  }
+  return std::sqrt(norm2);
+}
+
+template <OperatorType OperType>
 void GmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
 {
   // Set up workspace.
@@ -580,6 +603,14 @@ void GmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
   r.SetSize(A->Height());
   r.UseDevice(true);
   Initialize();
+
+  // Monitor the correction to a nonzero initial guess, if requested: x - x₀ = V y with
+  // orthonormal V for left or no preconditioning (first cycle only).
+  correction_exceeded = false;
+  RealType x0_norm = 0.0;
+  const bool monitor_correction = max_rel_correction > 0.0 && this->initial_guess &&
+                                  (!B || pc_side == PreconditionerSide::LEFT) &&
+                                  (x0_norm = linalg::Norml2(comm, x)) > 0.0;
 
   // Begin iterations.
   converged = false;
@@ -671,7 +702,12 @@ void GmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
       beta = std::abs(s[j + 1]);
       CheckDot(beta, "GMRES residual norm is not valid: beta = ");
       converged = (beta <= eps);
-      if (converged || j + 1 == max_dim || it + 1 == max_it)
+      if (monitor_correction && restart == 0)
+      {
+        const RealType corr = CorrectionNorm(j);
+        correction_exceeded = (corr > max_rel_correction * (x0_norm + corr));
+      }
+      if (converged || correction_exceeded || j + 1 == max_dim || it + 1 == max_it)
       {
         it++;
         break;
@@ -705,7 +741,7 @@ void GmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
       ApplyB(B, r, V[0], this->use_timer);
       x += V[0];
     }
-    if (converged)
+    if (converged || correction_exceeded)
     {
       break;
     }
@@ -715,7 +751,18 @@ void GmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
     Mpi::Print(comm, "{}{:{}d} (restart {:d}) KSP residual norm {:.6e}\n",
                std::string(tab_width, ' '), it, int_width, restart, beta);
   }
-  if (print_opts.summary || (print_opts.warnings && eps > 0.0 && !converged))
+  if (correction_exceeded)
+  {
+    if (print_opts.summary || print_opts.warnings)
+    {
+      Mpi::Print(
+          comm,
+          "{}GMRES solver stopped in {:d} iteration{}: the correction to the initial "
+          "guess exceeds {:.3e} of the solution\n",
+          std::string(tab_width, ' '), it, (it == 1) ? "" : "s", max_rel_correction);
+    }
+  }
+  else if (print_opts.summary || (print_opts.warnings && eps > 0.0 && !converged))
   {
     Mpi::Print(comm, "{}GMRES solver {} in {:d} iteration{}", std::string(tab_width, ' '),
                converged ? "converged" : "did NOT converge", it, (it == 1) ? "" : "s");
