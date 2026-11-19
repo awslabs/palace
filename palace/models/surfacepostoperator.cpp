@@ -969,46 +969,6 @@ SurfacePostOperator::FarFieldData::FarFieldData(const config::FarFieldPostData &
   Mpi::GlobalOr(1, &interior, mesh.GetComm());
 }
 
-std::vector<int> GetMetalSheetAttributes(const config::BoundaryData &boundaries)
-{
-  std::vector<int> attr_list;
-  auto Append = [&attr_list](const std::vector<int> &attrs)
-  { attr_list.insert(attr_list.end(), attrs.begin(), attrs.end()); };
-  Append(boundaries.pec.attributes);
-  for (const auto &[idx, data] : boundaries.terminal)
-  {
-    Append(data.attributes);
-  }
-  for (const auto &[idx, data] : boundaries.prescribed_potential)
-  {
-    Append(data.attributes);
-    Append(data.terminal_attributes);
-  }
-  for (const auto &data : boundaries.impedance)
-  {
-    Append(data.attributes);
-  }
-  for (const auto &data : boundaries.rational_impedance)
-  {
-    Append(data.attributes);
-  }
-  for (const auto &data : boundaries.conductivity)
-  {
-    Append(data.attributes);
-  }
-  for (const auto &data : boundaries.superconductor)
-  {
-    Append(data.attributes);
-  }
-  for (const auto &[idx, data] : boundaries.fluxloop)
-  {
-    Append(data.film_attributes);
-  }
-  std::sort(attr_list.begin(), attr_list.end());
-  attr_list.erase(std::unique(attr_list.begin(), attr_list.end()), attr_list.end());
-  return attr_list;
-}
-
 std::vector<int> GetVacuumMetalSheetSubstrateAirAttributes(
     mfem::ParMesh &mesh, const MaterialOperator &mat_op, InterfaceDielectric type,
     const std::vector<int> &entry_attributes,
@@ -1291,7 +1251,7 @@ SurfacePostOperator::SurfacePostOperator(
       // The USER's warning (decisions 2197 (4) / 2204): log only, at every construction.
       const auto vacuum_sheet = GetVacuumMetalSheetSubstrateAirAttributes(
           *h1_fespace.GetParMesh(), mat_op, data.type, data.attributes,
-          GetMetalSheetAttributes(*boundaries));
+          boundaries->GetMetalSheetAttributes());
       if (!vacuum_sheet.empty())
       {
         Mpi::Warning(mesh.GetComm(), "{}\n",

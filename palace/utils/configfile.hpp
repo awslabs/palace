@@ -1031,12 +1031,19 @@ public:
   std::map<int, FluxLoopData> fluxloop = {};
   BoundaryPostData postpro = {};
 
+  // Return the boundary attributes of boundary conditions which model a metal sheet: PEC
+  // (and Ground), Terminal, PrescribedPotential (with its terminal attributes), Impedance,
+  // RationalImpedance, Conductivity and Superconductor boundaries, and the flux loop films.
+  // Sorted, unique. The one list of metal sheets: GetSheetAttributes adds the lumped ports
+  // and surface current sources to it.
+  std::vector<int> GetMetalSheetAttributes() const;
+
   // Return the boundary attributes of boundary conditions which model sheets carrying a
-  // surface current or charge (conductors, impedance and superconductor sheets, flux loop
-  // films, lumped ports, and surface current sources), across which the fields are
-  // discontinuous when interior. For these, the error estimator allows discontinuous
-  // recovered fluxes, and interface dielectric energies sum the contributions of both faces
-  // (when cracked, the faces are exterior boundaries anyway).
+  // surface current or charge (the metal sheets of GetMetalSheetAttributes, lumped ports,
+  // and surface current sources), across which the fields are discontinuous when interior.
+  // For these, the error estimator allows discontinuous recovered fluxes, and interface
+  // dielectric energies sum the contributions of both faces (when cracked, the faces are
+  // exterior boundaries anyway).
   std::vector<int> GetSheetAttributes() const;
 
   // Return the boundary attributes for which the mesh is cracked when interior, given the

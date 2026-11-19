@@ -310,7 +310,7 @@ TEST_CASE("SA interface entry on an interior metal sheet in vacuum is warned at 
   config::TerminalData terminal;
   terminal.attributes = {20};
   boundaries.terminal.emplace(1, terminal);
-  const auto metal = GetMetalSheetAttributes(boundaries);
+  const auto metal = boundaries.GetMetalSheetAttributes();
   CHECK(metal == std::vector<int>{10, 12, 20});
 
   auto Warned = [&](InterfaceDielectric type, const std::vector<int> &attributes)
@@ -440,7 +440,7 @@ TEST_CASE("SA warning on a cracked Ls sheet lists only its unseparated faces",
   MaterialOperator mat_op({vacuum}, periodic, ProblemType::ELECTROSTATIC, mesh);
 
   const auto &boundaries = iodata.boundaries;
-  const auto metal = GetMetalSheetAttributes(boundaries);
+  const auto metal = boundaries.GetMetalSheetAttributes();
   auto Warned = [&](const std::vector<int> &attributes)
   {
     return GetVacuumMetalSheetSubstrateAirAttributes(
