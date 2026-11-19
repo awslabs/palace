@@ -2882,7 +2882,7 @@
         },
         "StartVector": {
           "type": "boolean",
-          "description": "Use a random start vector for the eigensolver.",
+          "description": "Use a random start vector for the eigensolver. With adaptive mesh refinement on nonconforming meshes, the solve of each adaptation iteration after the first can start from the eigenvectors of the previous one instead, for the SLEPc Krylov-Schur solver (linear problems, and quadratic ones with [`\"PEPLinear\"`](@ref config-solver-eigenmode-peplinear)), except with the `\"SLP\"` nonlinear solver.",
           "default": true,
           "x-palace-advanced": true
         },
@@ -4074,7 +4074,7 @@
         },
         "MGAuxiliarySmoother": {
           "type": "boolean",
-          "description": "Use an auxiliary space smoother on multigrid levels. If omitted, Palace disables this for electrostatic and magnetostatic simulations and enables it otherwise. Magnetostatic simulations with `\"Superconductor\"` or `\"FluxLoop\"` boundaries enable it when `\"LondonPCShift\"` is positive.",
+          "description": "Use an auxiliary space smoother on multigrid levels. If omitted, Palace disables this for electrostatic and magnetostatic simulations and enables it otherwise. Magnetostatic simulations with superconductors (`\"Superconductor\"` or `\"FluxLoop\"` boundaries, or domains with a `\"LondonDepth\"`) enable it when `\"LondonPCShift\"` is positive. In magnetostatic simulations, it requires a positive `\"LondonPCShift\"`.",
           "x-palace-advanced": true
         },
         "MGCycleIts": {
@@ -4187,12 +4187,12 @@
         },
         "AMSSingularOperator": {
           "type": "boolean",
-          "description": "Indicate to AMS that the operator is singular (e.g. magnetostatics with no essential boundary conditions). If omitted, Palace enables this for magnetostatic simulations and disables it otherwise.",
+          "description": "Indicate to AMS that the operator is singular (e.g. magnetostatics with no essential boundary conditions). If omitted, Palace enables this for magnetostatic simulations without superconductors (`\"Superconductor\"` or `\"FluxLoop\"` boundaries, or domains with a `\"LondonDepth\"`) and disables it otherwise.",
           "x-palace-advanced": true
         },
         "LondonPCShift": {
           "type": "number",
-          "description": "Preconditioner-only gauge shift for magnetostatic problems with a London (superconductor) sheet term. Adds this multiple of the reluctance-weighted volume mass to the preconditioner matrix only (leaving the operator, solution, and extracted inductance unchanged) to lift the residual gradient null space so AMS is SPD-solvable in parallel. Ignored when no London sheet term is present.",
+          "description": "Preconditioner-only gauge shift for magnetostatic problems with superconductors (`\"Superconductor\"` or `\"FluxLoop\"` boundaries, or domains with a `\"LondonDepth\"`) or the auxiliary smoother (`\"MGAuxiliarySmoother\"`). Adds this multiple of the reluctance-weighted volume mass outside the London domains to the preconditioner matrix only (leaving the operator, solution, and extracted inductance unchanged) to lift the residual gradient null space so AMS is SPD-solvable in parallel. Ignored otherwise.",
           "default": 0.1,
           "x-palace-advanced": true
         },

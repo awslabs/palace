@@ -34,7 +34,7 @@ namespace palace
 
 using json = nlohmann::json;
 
-void SaveIteration(MPI_Comm comm, const fs::path &output_dir, int step, int width)
+fs::path SaveIteration(MPI_Comm comm, const fs::path &output_dir, int step, int width)
 {
   BlockTimer bt(Timer::IO);
   Mpi::Barrier(comm);  // Wait for all processes to write postprocessing files
@@ -112,6 +112,7 @@ void SaveIteration(MPI_Comm comm, const fs::path &output_dir, int step, int widt
           }
         }
       });
+  return step_output;
 }
 
 namespace
@@ -347,6 +348,15 @@ void BaseSolver::Preprocess(IoData &iodata, std::unique_ptr<mfem::Mesh> &smesh,
   iodata.NondimensionalizeInputs(smesh);
 }
 
+bool BaseSolver::ContinueAdaptation(int it, long long int ntdof, double err) const
+{
+  // Stop when out of iterations, out of unknowns if a limit was set, or below the
+  // tolerance.
+  const auto &refinement = iodata.model.refinement;
+  return it < refinement.max_it &&
+         !(refinement.max_size > 0 && ntdof > refinement.max_size) && err >= refinement.tol;
+}
+
 void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mesh) const
 {
   const auto &refinement = iodata.model.refinement;
@@ -387,27 +397,12 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
       BuildMarkingIndicators(indicators, mesh.back()->Get(), iodata.boundaries);
   double err = linalg::Norml2(comm, marking_indicators);
 
-  // Record the initial solve as iteration 1 (matching the "iteration01" archive
-  // subdirectory written for adaptive runs).
-  SaveAdaptationIteration(1);
-
-  // Collection of all tests that might exhaust resources.
-  auto ExhaustedResources = [&refinement](auto it, auto ntdof)
-  {
-    bool ret = false;
-    // Run out of iterations.
-    ret |= (it >= refinement.max_it);
-    // Run out of DOFs if a limit was set.
-    ret |= (refinement.max_size > 0 && ntdof > refinement.max_size);
-    return ret;
-  };
-
   // True topological entity counts of the final adapted mesh.
   mesh::MeshEntityCounts mesh_counts;
 
   // Main AMR loop.
   int it = 0;
-  while (use_amr && !ExhaustedResources(it, ntdof) && err >= refinement.tol)
+  while (use_amr && ContinueAdaptation(it, ntdof, err))
   {
     // Print timing summary.
     Mpi::Print(comm, "\nCumulative timing statistics:\n");
@@ -483,11 +478,12 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
 
     // Refine.
     const auto [initial_elem_count, final_elem_count] =
-        [&mesh, &refinement, &marked_elements]
+        [this, &mesh, &refinement, &marked_elements]
     {
       mfem::ParMesh &fine_mesh = *mesh.back();
       const long long int initial_elem_count = fine_mesh.GetGlobalNE();
       fine_mesh.GeneralRefinement(marked_elements, -1, refinement.max_nc_levels);
+      UpdateAfterMeshChange(*mesh.back());
       const long long int final_elem_count = fine_mesh.GetGlobalNE();
       Mpi::Print(" {} mesh refinement added {:d} elements (initial = {:d}, final = {:d})\n",
                  fine_mesh.Nonconforming() ? "Nonconforming" : "Conforming",
@@ -529,11 +525,18 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
       break;
     }
 
-    // Optionally save off the previous solution.
+    // Optionally save off the previous solution, then record it as completed. The index is
+    // written only once the "iterationXX" archive is complete, so a reader of palace.json
+    // never sees an iteration whose output is still being moved.
     if (refinement.save_adapt_iterations)
     {
-      SaveIteration(comm, post_dir, it,
-                    1 + static_cast<int>(std::log10(refinement.max_it)));
+      SaveAdaptationIteration(
+          it, SaveIteration(comm, post_dir, it,
+                            1 + static_cast<int>(std::log10(refinement.max_it))));
+    }
+    else
+    {
+      SaveAdaptationIteration(it);
     }
 
     // Optionally rebalance and write the adapted mesh to file.
@@ -551,6 +554,7 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
                    ratio_pre, refinement.maximum_imbalance, ratio_post);
       }
       mesh.back()->Update();
+      UpdateAfterMeshChange(*mesh.back());
     }
 
     // Record the adapted mesh's topology now, paired with the mesh file RebalanceMesh
@@ -589,11 +593,13 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
     marking_indicators =
         BuildMarkingIndicators(indicators, mesh.back()->Get(), iodata.boundaries);
     err = linalg::Norml2(comm, marking_indicators);
+  }
 
-    // Record that this AMR iteration has completed; the Solve above has already written all
-    // of its postprocessing output. The 1-based index (it + 1, since the initial solve is
-    // iteration 1) matches the "iterationXX" archive subdirectory and signals completion
-    // via palace.json without parsing the log.
+  // The last converged solve is never archived: its output stays in post_dir. A failed
+  // solve after refinement leaves iteration it as the last converged one, already recorded
+  // above.
+  if (solve_converged_)
+  {
     SaveAdaptationIteration(it + 1);
   }
 
@@ -630,12 +636,17 @@ void BaseSolver::SaveMetadata(const FiniteElementSpaceHierarchy &fespaces) const
   }
 }
 
-void BaseSolver::SaveAdaptationIteration(int iteration) const
+void BaseSolver::SaveAdaptationIteration(int iteration, const fs::path &archive_dir) const
 {
   if (root)
   {
     json meta = LoadMetadata(post_dir);
     meta["Problem"]["Iteration"] = iteration;
+    if (!archive_dir.empty())
+    {
+      // Update the archived copy before post_dir, which is the one readers poll.
+      WriteMetadata(archive_dir, meta);
+    }
     WriteMetadata(post_dir, meta);
   }
 }

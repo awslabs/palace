@@ -2268,6 +2268,22 @@ TEST_CASE("Config Magnetostatic InactivePorts", "[config][Serial]")
   }
 }
 
+TEST_CASE("Config Magnetostatic auxiliary smoother", "[config][Serial]")
+{
+  using Catch::Matchers::ContainsSubstring;
+  auto Check = [](int mg_smooth_aux, double london_pc_shift)
+  {
+    IoData iodata{Units(1.0, 1.0)};
+    iodata.problem.type = ProblemType::MAGNETOSTATIC;
+    iodata.solver.linear.mg_smooth_aux = mg_smooth_aux;
+    iodata.solver.linear.london_pc_shift = london_pc_shift;
+    iodata.CheckConfiguration();
+  };
+  CHECK_THROWS_WITH(Check(1, 0.0), ContainsSubstring("\"LondonPCShift\""));
+  CHECK_NOTHROW(Check(1, 0.1));
+  CHECK_NOTHROW(Check(-1, 0.0));
+}
+
 TEST_CASE("FarField", "[config][Serial]")
 {
   constexpr double delta_eps = 1.0e-6;

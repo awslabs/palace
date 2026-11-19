@@ -166,12 +166,21 @@ static void PrintPalaceInfo(MPI_Comm comm, int np, int nt, int ngpu, mfem::Devic
 
 int main(int argc, char *argv[])
 {
+  // The total elapsed time is measured from process start-up (the timer is a static
+  // object), so credit everything before palace::Run, including MPI_Init, to INIT.
+  std::optional<BlockTimer> init_timer(std::in_place, Timer::INIT);
+
   // Initialize MPI.
 #if defined(MFEM_USE_STRUMPACK) && \
     (defined(STRUMPACK_USE_PTSCOTCH) || defined(STRUMPACK_USE_SLATE_SCALAPACK))
   Mpi::default_thread_required = MPI_THREAD_MULTIPLE;
 #endif
-  Mpi::Init(argc, argv);
+  {
+    // MPI_Init waits for all processes to start, which on many nodes can take much longer
+    // than the setup itself, so it gets its own row.
+    BlockTimer bt(Timer::MPI_STARTUP);
+    Mpi::Init(argc, argv);
+  }
   // Every return from main is a normal shutdown; an exit() before it (a library's die())
   // skips this guard and Mpi's destructor aborts all ranks instead of blocking in
   // MPI_Finalize.
@@ -312,40 +321,38 @@ int main(int argc, char *argv[])
     iodata.WriteResolvedConfig(config, argv[argc - 1]);
   }
 
-  // Initialize device + numerics. The BlockTimer is scoped to this block so it
-  // credits the INIT phase before palace::Run starts its own timing.
-  int omp_threads, ngpu;
-  std::optional<mfem::Device> device;
-  {
-    BlockTimer bt(Timer::INIT);
-    omp_threads = utils::ConfigureOmp();
-    ngpu = utils::GetDeviceCount();
-    const std::string device_str = ConfigureDevice(iodata.solver.device);
-    const int device_id = utils::GetDeviceId(world_comm, ngpu);
-    utils::ConfigureMemory(device_str, device_id);
-    device.emplace(device_str, device_id);
-    ConfigureCeedBackend(iodata.solver.ceed_backend);
+  // Initialize device + numerics.
+  const int omp_threads = utils::ConfigureOmp();
+  const int ngpu = utils::GetDeviceCount();
+  const std::string device_str = ConfigureDevice(iodata.solver.device);
+  const int device_id = utils::GetDeviceId(world_comm, ngpu);
+  utils::ConfigureMemory(device_str, device_id);
+  mfem::Device device(device_str, device_id);
+  ConfigureCeedBackend(iodata.solver.ceed_backend);
 #if defined(PALACE_WITH_GPU_AWARE_MPI)
-    device->SetGPUAwareMPI(true);
+  device.SetGPUAwareMPI(true);
 #endif
 
-    // Initialize Hypre and, optionally, SLEPc/PETSc.
-    hypre::Initialize();
+  // Initialize Hypre and, optionally, SLEPc/PETSc.
+  hypre::Initialize();
 #if defined(PALACE_WITH_SLEPC)
-    slepc::Initialize(argc, argv, nullptr, nullptr);
-    if (PETSC_COMM_WORLD != world_comm)
-    {
-      Mpi::Print(world_comm, "Error: Problem during MPI initialization!\n\n");
-      return 1;
-    }
-#endif
+  slepc::Initialize(argc, argv, nullptr, nullptr);
+  if (PETSC_COMM_WORLD != world_comm)
+  {
+    Mpi::Print(world_comm, "Error: Problem during MPI initialization!\n\n");
+    return 1;
   }
+#endif
 
   // Hand off to the driver library entry point. Keeping the lifted block out of
   // main keeps the executable body thin and lets the Catch2 regression harness
   // reuse the exact same code path on an in-process IoData. See palace/driver.hpp
-  // for the preconditions it expects.
-  PrintPalaceInfo(world_comm, world_size, omp_threads, ngpu, *device);
+  // for the preconditions it expects. INIT must end before palace::Run: its top-level
+  // timers need an empty stack, otherwise its untimed gaps are credited to INIT and
+  // BlockTimer::Finalize pops this frame.
+  // The two mesh inspection modes below are entry points of the same kind.
+  PrintPalaceInfo(world_comm, world_size, omp_threads, ngpu, device);
+  init_timer.reset();
   int exit_status = 0;
   if (mesh_statistics)
   {

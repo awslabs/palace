@@ -6,6 +6,7 @@
 #if defined(MFEM_USE_STRUMPACK)
 
 #include <complex>
+#include <type_traits>
 
 namespace palace
 {
@@ -120,6 +121,17 @@ StrumpackSolverBase<StrumpackSolverType>::StrumpackSolverBase(
   // Configure compression.
   ConfigureStrumpackCompression(this->solver_->options(), compression, lr_tol, butterfly_l,
                                 lossy_prec);
+
+  // Store the permutation once per node. The mixed precision solver computes the ordering
+  // in its single precision solver, which has its own options.
+  if constexpr (std::is_same_v<StrumpackSolverType, mfem::STRUMPACKMixedPrecisionSolver>)
+  {
+    EnableStrumpackSharedPermutation(this->solver_->solver().options());
+  }
+  else
+  {
+    EnableStrumpackSharedPermutation(this->solver_->options());
+  }
   // if (mfem::Device::Allows(mfem::Backend::DEVICE_MASK))
   // {
   //   this->EnableGPU();  // XX TODO: GPU support disabled for now

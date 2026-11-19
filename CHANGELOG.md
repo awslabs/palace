@@ -19,6 +19,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### New Features
 
+  - Magnetostatic simulations now model domains with a `LondonDepth`: the London term is
+    added to the curl-curl operator and the kinetic energy of the supercurrent to the
+    extracted inductance, so conductors of any thickness and width can be modeled as
+    volumes. SchemaVer 4-4-1 [PR 1111](https://github.com/awslabs/palace/pull/1111).
   - `validate-config` accepts several configuration files and validates them in one Julia
     session. [PR 1180](https://github.com/awslabs/palace/pull/1180).
   - Added `Boundaries.LumpedPort[].ExcitationAmplitude` and `ExcitationPhase` (degrees),
@@ -383,6 +387,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Interface Changes
 
+  - With adaptive mesh refinement on nonconforming meshes, the SLEPc Krylov-Schur eigenvalue
+    solves of later adaptation iterations can start from the eigenvectors of the previous
+    one, transferred to the refined mesh, instead of the start vector of
+    `config["Solver"]["Eigenmode"]["StartVector"]`, and then need fewer Krylov restarts. The
+    eigenvalues of adaptive simulations change at the level of the solver tolerances, and
+    fewer converged eigenpairs beyond the requested ones can be reported. SchemaVer 4-4-2.
+    [PR 1203](https://github.com/awslabs/palace/pull/1203).
   - When `Solver.Linear.Type` is `"Default"` (or omitted) for frequency domain problems,
     and for the wave port and boundary mode eigenvalue solves, *Palace* now prefers
     STRUMPACK over SuperLU_DIST, then MUMPS, as the sparse direct solver when built with
@@ -449,6 +460,18 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Performance Improvements
 
+  - The AMS solver, used with a fixed number of iterations, now has a tolerance of zero and
+    flags its zero initial guess. With a hypre patch, it then computes no residual norms,
+    each a fine-level matrix-vector product and a reduction over all processes, and the
+    first relaxation of its auxiliary space solves skips the exchange of their zero initial
+    guess. Results are unchanged. [PR 1238](https://github.com/awslabs/palace/pull/1238).
+  - Added a STRUMPACK patch for
+    [pghysels/STRUMPACK#174](https://github.com/pghysels/STRUMPACK/pull/174), which *Palace*
+    always enables: the STRUMPACK solvers store their fill-reducing permutation once per
+    node, in an MPI shared memory window, instead of on every process, for the sequential
+    column orderings (all but ParMETIS and PT-Scotch) without compression. If the window
+    cannot be allocated, or with `OMPI_MCA_osc=^sm,ucx` for Open MPI, every process keeps
+    its copy. Results are unchanged. [PR 1231](https://github.com/awslabs/palace/pull/1231).
   - Complex operators on CPUs which pack matching pairs of real and imaginary libCEED terms
     now also pair the H1 diffusion terms and pack the real terms without a partner, such as
     those of the lossless materials of partially lossy models, so that each of them acts on
@@ -597,6 +620,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - The Floquet port DtN correction and the wave-port modal correction now use a single MPI
     reduction per operator application instead of four per rank-one term, and only touch
     the port degrees of freedom instead of full-length vectors.
+    [PR 1089](https://github.com/awslabs/palace/pull/1089).
+  - The Floquet port DtN correction and the wave-port modal correction now pack their
+    rank-one terms per port, so that each term only touches the degrees of freedom of its
+    own port, and compute their dot products on GPUs with block reductions instead of one
+    thread per term. [PR 1155](https://github.com/awslabs/palace/pull/1155).
   - GPU builds now share one Umpire device memory pool between MFEM and hypre, created on
     each rank's GPU, and use standard host memory instead of the slow Umpire host allocator.
     hypre no longer reserves its own 4 GiB device pool per rank, which reduces peak GPU memory
@@ -671,6 +699,16 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Bug Fixes
 
+  - The `"Problem"`/`"Iteration"` field of `palace.json` is now updated only after the AMR
+    iteration's output is in its final location. With `SaveAdaptIterations`, it used to be
+    written before the output was moved into `iterationXX`, so a reader polling it could
+    find a partially filled `iterationXX` directory.
+    [PR 1235](https://github.com/awslabs/palace/pull/1235).
+  - The `Initialization` time now includes MPI initialization and the parsing of the
+    configuration file, which were counted in `Total` but in no row of the report (up to
+    tens of seconds on many nodes). MPI initialization, which includes waiting for all
+    processes to start, has its own row, `MPI Startup`.
+    [PR 1242](https://github.com/awslabs/palace/pull/1242).
   - Fixed the pivoting of distributed BLR fronts in STRUMPACK with a patch from upstream.
     With BLR compression (`"STRUMPACKCompressionType"` `"BLR"`, `"BLR-HODLR"` or
     `"ZFP-BLR-HODLR"`) on two or more MPI processes, the factorization of an indefinite
@@ -899,6 +937,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     [PR 1180](https://github.com/awslabs/palace/pull/1180).
   - The Spack package now builds STRUMPACK without SLATE by default, as the superbuild does.
     [PR 1223](https://github.com/awslabs/palace/pull/1223).
+  - Building the unit tests now requires MFEM with exceptions (`PALACE_MFEM_USE_EXCEPTIONS`
+    in the superbuild, `mfem+exceptions` in Spack). The tests of error handling expect
+    `MFEM_VERIFY` and `MFEM_ABORT` to throw, and without exceptions the first of them ended
+    the whole test run. Without them, `make palace-tests` in the superbuild now fails right
+    away instead of after building all the dependencies.
+    [PR 1240](https://github.com/awslabs/palace/pull/1240).
   - The superbuild builds fmt 12.1.0 instead of 12.2.0, which does not compile with nvcc,
     and builds Umpire with it instead of letting Umpire install its own copy of fmt over it.
     [PR 1228](https://github.com/awslabs/palace/pull/1228).
