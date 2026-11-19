@@ -1992,6 +1992,11 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
             ToString(iodata.solver.linear.mg_cycle));
       CHECK(config["Solver"]["Linear"]["MGSmoothOrder"].get<int>() ==
             iodata.solver.linear.mg_smooth_order);
+
+      // The resolved configuration, with both settings, resolves to the same V-cycles.
+      IoData resolved(config, false);
+      CHECK(resolved.solver.linear.mg_cycle == iodata.solver.linear.mg_cycle);
+      CHECK(resolved.solver.linear.mg_smooth_order == iodata.solver.linear.mg_smooth_order);
       return iodata.solver.linear;
     };
     const auto eigenmode = Resolve("Eigenmode", json::object());
