@@ -2589,6 +2589,21 @@ TEST_CASE("substructuring_driven_wave", "[Serial][Parallel][GPU][Regression]")
                                   opts);
 }
 
+// The adaptive sweep of substructuring_driven_wave: a rational model of the environment,
+// and the region, which holds the wave port, reduced by Galerkin projection, with the
+// port's boundary term and modal correction projected at each frequency. The references are
+// those of substructuring_driven_wave, in the adaptive sweep's columns.
+TEST_CASE("substructuring_driven_wave_adaptive", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-6;
+  opts.atol = 1.0e-22;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("substructuring_driven_wave", "driven_wave_adaptive.json",
+                                  "adaptive", opts);
+}
+
 TEST_CASE("substructuring_driven_wave_online", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
