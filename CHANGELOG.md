@@ -434,6 +434,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     [PR 1180](https://github.com/awslabs/palace/pull/1180).
   - The Spack package now builds STRUMPACK without SLATE by default, as the superbuild does.
     [PR 1223](https://github.com/awslabs/palace/pull/1223).
+  - Building the unit tests now requires MFEM with exceptions (`PALACE_MFEM_USE_EXCEPTIONS`
+    in the superbuild, `mfem+exceptions` in Spack). The tests of error handling expect
+    `MFEM_VERIFY` and `MFEM_ABORT` to throw, and without exceptions the first of them ended
+    the whole test run. Without them, `make palace-tests` in the superbuild now fails right
+    away instead of after building all the dependencies.
+    [PR 1240](https://github.com/awslabs/palace/pull/1240).
 
 ## [0.19.0] - 2026-11-02
 
