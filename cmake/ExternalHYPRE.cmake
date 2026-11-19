@@ -124,6 +124,13 @@ download_patch(HYPRE_PATCH_FILES "${CMAKE_BINARY_DIR}/extern/hypre-patches"
   fb6f85c347503c9b1d5de7b10caaa542816c3b33bb2af4f73ba10651a7743e2a
 )
 
+# AMS with a fixed number of iterations: no residual norms with a zero tolerance and no
+# printing, and the zero flag of the initial guess used and maintained, so that the first
+# relaxation of the auxiliary space solves skips its exchange
+list(APPEND HYPRE_PATCH_FILES
+  "${CMAKE_SOURCE_DIR}/extern/patch/hypre/hypre_ams_fixed_iterations.diff"
+)
+
 include(ExternalProject)
 ExternalProject_Add(hypre
   DEPENDS           ${HYPRE_DEPENDENCIES}

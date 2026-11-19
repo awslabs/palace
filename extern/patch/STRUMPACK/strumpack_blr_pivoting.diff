@@ -1,0 +1,346 @@
+diff --git a/src/BLR/BLRMatrix.cpp b/src/BLR/BLRMatrix.cpp
+index abaa6ae94996cabeb46994f6973172accc936217..ed352810cfa26a1e437bd4b0e3c677155518d8db 100644
+--- a/src/BLR/BLRMatrix.cpp
++++ b/src/BLR/BLRMatrix.cpp
+@@ -139,8 +139,8 @@ namespace strumpack {
+             create_dense_tile(i, i, A);
+             auto tpiv = tile(i, i).LU(opts.pivot_threshold());
+             std::copy(tpiv.begin(), tpiv.end(), piv_.begin()+tileroff(i));
+-            for (std::size_t jj = 0; jj < i; jj++)
+-              if (block(i, jj)) tile(i, jj).laswp(tpiv, true);
++            // the row interchanges are applied to the L tiles left
++            // of the diagonal after all tasks completed, see below
+           }
+           // COMPRESS and SOLVE
+           for (std::size_t j=i+1; j<rb; j++) {
+@@ -241,6 +241,18 @@ namespace strumpack {
+           }
+         }
+       }
++      // Apply the row interchanges of each diagonal tile to the L
++      // tiles left of it. This cannot be done in the diagonal LU
++      // task: those tiles are still read, in unpermuted row order, by
++      // Schur complement update tasks that are not ordered with
++      // respect to the diagonal LU task. Only the solve needs them in
++      // permuted row order.
++      for (std::size_t i=1; i<rb; i++) {
++        std::vector<int> tpiv
++          (piv_.begin()+tileroff(i), piv_.begin()+tileroff(i+1));
++        for (std::size_t jj=0; jj<i; jj++)
++          if (block(i, jj)) tile(i, jj).laswp(tpiv, true);
++      }
+       for (std::size_t i=0; i<rb; i++)
+         for (std::size_t l=tileroff(i); l<tileroff(i+1); l++)
+           piv_[l] += tileroff(i);
+@@ -780,8 +792,8 @@ namespace strumpack {
+               auto tpiv = B11.tile(i, i).LU(opts.pivot_threshold());
+               std::copy(tpiv.begin(), tpiv.end(),
+                         B11.piv_.begin()+B11.tileroff(i));
+-              for (std::size_t jj = 0; jj < i; jj++)
+-                if (B11.block(i, jj)) B11.tile(i, jj).laswp(tpiv, true);
++              // the row interchanges are applied to the L tiles left
++              // of the diagonal after all tasks completed, see below
+             }
+             for (std::size_t j=i+1; j<rb; j++) {
+ #if defined(STRUMPACK_USE_OPENMP_TASK_DEPEND)
+@@ -1036,6 +1048,16 @@ namespace strumpack {
+           }
+         }
+       }
++      // Apply the row interchanges of each diagonal tile to the L
++      // tiles left of it, after all tasks completed (these tiles are
++      // read in unpermuted order by concurrent Schur update tasks).
++      for (std::size_t i=1; i<rb; i++) {
++        std::vector<int> tpiv
++          (B11.piv_.begin()+B11.tileroff(i),
++           B11.piv_.begin()+B11.tileroff(i+1));
++        for (std::size_t jj=0; jj<i; jj++)
++          if (B11.block(i, jj)) B11.tile(i, jj).laswp(tpiv, true);
++      }
+       for (std::size_t i=0; i<rb; i++)
+         for (std::size_t l=B11.tileroff(i); l<B11.tileroff(i+1); l++)
+           B11.piv_[l] += B11.tileroff(i);
+@@ -1281,8 +1303,8 @@ namespace strumpack {
+               auto tpiv = B11.tile(i, i).LU(opts.pivot_threshold());
+               std::copy(tpiv.begin(), tpiv.end(),
+                         B11.piv_.begin()+B11.tileroff(i));
+-              for (std::size_t jj = 0; jj < i; jj++)
+-                if (B11.block(i, jj)) B11.tile(i, jj).laswp(tpiv, true);
++              // the row interchanges are applied to the L tiles left
++              // of the diagonal after all tasks completed, see below
+             }
+             for (std::size_t j=i+1; j<rb; j++) {
+ #if defined(STRUMPACK_USE_OPENMP_TASK_DEPEND)
+@@ -1330,9 +1352,11 @@ namespace strumpack {
+ #pragma omp task default(shared) firstprivate(i,j,j2i,ii)       \
+   depend(in:B[ii]) depend(inout:B[j2i])
+ #endif
+-              B21.compress_tile(j, i, opts);
+-              trsm(Side::R, UpLo::U, Trans::N, Diag::N,
+-                   scalar_t(1.), B11.tile(i, i), B21.tile(j, i));
++              { // both statements must be part of the task
++                B21.compress_tile(j, i, opts);
++                trsm(Side::R, UpLo::U, Trans::N, Diag::N,
++                     scalar_t(1.), B11.tile(i, i), B21.tile(j, i));
++              }
+             }
+             for (std::size_t j=i+1; j<rb; j++) {
+               for (std::size_t k=i+1; k<rb; k++) {
+@@ -1397,6 +1421,16 @@ namespace strumpack {
+           }
+         }
+       }
++      // Apply the row interchanges of each diagonal tile to the L
++      // tiles left of it, after all tasks completed (these tiles are
++      // read in unpermuted order by concurrent Schur update tasks).
++      for (std::size_t i=1; i<rb; i++) {
++        std::vector<int> tpiv
++          (B11.piv_.begin()+B11.tileroff(i),
++           B11.piv_.begin()+B11.tileroff(i+1));
++        for (std::size_t jj=0; jj<i; jj++)
++          if (B11.block(i, jj)) B11.tile(i, jj).laswp(tpiv, true);
++      }
+       for (std::size_t i=0; i<rb; i++)
+         for (std::size_t l=B11.tileroff(i); l<B11.tileroff(i+1); l++)
+           B11.piv_[l] += B11.tileroff(i);
+@@ -1422,13 +1456,21 @@ namespace strumpack {
+           B11.fill_col(0., i, CP);
+           B21.fill_col(0., i, CP);
+           blockcol(i, true, CP);
++          // Apply the row interchanges of the already factored
++          // diagonal blocks to this block column, before any update.
++          // The L tiles B11(k, k') (k' < k) are stored in permuted
++          // row order (permuted when B11(k, k) was factored), so the
++          // updates B11(k, i) -= B11(k, k') B11(k', i) below must be
++          // applied to the permuted B11(k, i).
+           for (std::size_t k=0; k<i; k++) {
+-            if (admissible(k, i))
+-              B11.compress_tile(k, i, opts);
+             std::vector<int> tpiv
+               (B11.piv_.begin()+B11.tileroff(k),
+                B11.piv_.begin()+B11.tileroff(k+1));
+             B11.tile(k, i).laswp(tpiv, true);
++          }
++          for (std::size_t k=0; k<i; k++) {
++            if (admissible(k, i))
++              B11.compress_tile(k, i, opts);
+             trsm(Side::L, UpLo::L, Trans::N, Diag::U,
+                  scalar_t(1.), B11.tile(k, k), B11.tile(k, i));
+ #pragma omp taskloop
+@@ -1464,12 +1506,15 @@ namespace strumpack {
+           B12.fill_col(0., i, CP);
+           B22.fill_col(0., i, CP);
+           blockcol(i, false, CP);
++          // apply all row interchanges before the updates, see above
+           for (std::size_t k=0; k<rb; k++) {
+-            B12.compress_tile(k, i, opts);
+             std::vector<int> tpiv
+               (B11.piv_.begin()+B11.tileroff(k),
+                B11.piv_.begin()+B11.tileroff(k+1));
+             B12.tile(k, i).laswp(tpiv, true);
++          }
++          for (std::size_t k=0; k<rb; k++) {
++            B12.compress_tile(k, i, opts);
+             trsm(Side::L, UpLo::L, Trans::N, Diag::U,
+                  scalar_t(1.), B11.tile(k, k), B12.tile(k, i));
+ #pragma omp taskloop
+@@ -1923,6 +1968,15 @@ namespace strumpack {
+         if (opts.pivot_threshold() > 0)
+           gpu::replace_pivots
+             (D.rows(), D.data(), opts.pivot_threshold(), &copy_stream);
++        // Apply the row interchanges of diagonal tile i also to the
++        // (already factored) L tiles left of it, as in the CPU code:
++        // the solve applies the full pivot vector to the right-hand
++        // side, so L must be stored in permuted row order. Same stream
++        // as getrf. These tiles are still on the device: the strictly
++        // lower tiles of B11 are only moved to the host per block row,
++        // after this step (see below).
++        for (std::size_t jj=0; jj<i; jj++)
++          B11.tile(i, jj).laswp(handle2, dpiv+B11.tileroff(i), true);
+ 
+         VBatchedARA<scalar_t> ara;
+         for (std::size_t j=i+1; j<rb; j++) {
+@@ -2007,12 +2061,21 @@ namespace strumpack {
+             b3.run(scalar_t(-1.), scalar_t(1.), comp_stream, handle);
+           }
+           if (i > 0) {
++            // upper and diagonal tiles of block column i-1 are final
+ #if defined(STRUMPACK_USE_OPENMP_TASKLOOP)
+ #pragma omp taskloop
+ #endif
+-              for (std::size_t j=0; j<rb; j++)
++              for (std::size_t j=0; j<i; j++)
+                 B11.tile(j, i-1).move_to_cpu
+                   (copy_stream, pinned+B11.tileroff(j)*B11.tilecols(i-1));
++            // strictly lower tiles of block row i are final now that
++            // the row interchanges of diagonal tile i have been applied
++#if defined(STRUMPACK_USE_OPENMP_TASKLOOP)
++#pragma omp taskloop
++#endif
++              for (std::size_t jj=0; jj<i; jj++)
++                B11.tile(i, jj).move_to_cpu
++                  (copy_stream, pinned+B11.tilecoff(jj)*B11.tilerows(i));
+ #if defined(STRUMPACK_USE_OPENMP_TASKLOOP)
+ #pragma omp taskloop
+ #endif
+diff --git a/src/BLR/BLRMatrixMPI.cpp b/src/BLR/BLRMatrixMPI.cpp
+index a030477ae2f995ee21617cf7fee602174372ee7f..c14942e7ec3b2d9aac6499c79297a11ed49db246 100644
+--- a/src/BLR/BLRMatrixMPI.cpp
++++ b/src/BLR/BLRMatrixMPI.cpp
+@@ -1258,6 +1258,12 @@ namespace strumpack {
+                 piv_tile = tile(i, i).LU(opts.pivot_threshold());
+               else piv_tile.resize(tilerows(i));
+               grid()->row_comm().broadcast_from(piv_tile, i % grid()->npcols());
++              // apply the row interchanges also to the (already
++              // factored) L tiles left of the diagonal, the solve
++              // applies the full pivot vector to the right-hand side
++              for (std::size_t jj=0; jj<i; jj++)
++                if (grid()->is_local_col(jj))
++                  tile(i, jj).laswp(piv_tile, true);
+               int r0 = tileroff(i);
+               std::transform
+                 (piv_tile.begin(), piv_tile.end(), std::back_inserter(piv),
+@@ -1403,6 +1409,17 @@ namespace strumpack {
+         //construct the (i/CP+1) CP block-columns as dense tiles
+         fill_col(0., i, CP);
+         blockcol(i, true, CP);
++        // Apply the row interchanges of the already factored diagonal
++        // blocks to these block columns, before any update. The L
++        // tiles (k, k') (k' < k) are stored in permuted row order
++        // (permuted when diagonal block k was factored), so the
++        // updates (k, j) -= (k, k') (k', j) must be applied to the
++        // permuted (k, j).
++        for (std::size_t k=0; k<i; k++)
++          if (grid()->is_local_row(k))
++            for (std::size_t j=i; j<std::min(i+CP, colblocks()); j++)
++              if (grid()->is_local_col(j))
++                tile(k, j).laswp(piv_tile_global[k/grid()->nprows()], true);
+         for (std::size_t k=0; k<i; k++) {
+ #pragma omp parallel
+ #pragma omp single nowait
+@@ -1423,11 +1440,9 @@ namespace strumpack {
+               for (std::size_t j=i; j<std::min(i+CP, colblocks()); j++) {
+                 if (grid()->is_local_col(j)) {
+ #pragma omp task default(shared) firstprivate(i,j,k)
+-                  {
+-                    tile(k, j).laswp(piv_tile_global[k/grid()->nprows()], true);
+-                    trsm(Side::L, UpLo::L, Trans::N, Diag::U,
+-                         scalar_t(1.), Tcc_vec[k/grid()->nprows()], tile(k, j));
+-                  }
++                  // row interchanges were already applied, see above
++                  trsm(Side::L, UpLo::L, Trans::N, Diag::U,
++                       scalar_t(1.), Tcc_vec[k/grid()->nprows()], tile(k, j));
+                 }
+               }
+             }
+@@ -1464,6 +1479,11 @@ namespace strumpack {
+                 else piv_tile.resize(tilerows(c));
+                 grid()->row_comm().broadcast_from(piv_tile, c % grid()->npcols());
+                 piv_tile_global.push_back(piv_tile);
++                // apply the row interchanges also to the L tiles left
++                // of the diagonal (solve applies full pivot vector)
++                for (std::size_t jj=0; jj<c; jj++)
++                  if (grid()->is_local_col(jj))
++                    tile(c, jj).laswp(piv_tile, true);
+                 int r0 = tileroff(c);
+                 std::transform
+                   (piv_tile.begin(), piv_tile.end(), std::back_inserter(piv),
+@@ -1566,6 +1586,12 @@ namespace strumpack {
+         F11.fill_col(0., i, CP);
+         F21.fill_col(0., i, CP);
+         blockcol(i, true, CP);
++        // apply all row interchanges before the updates, see factor_col
++        for (std::size_t k=0; k<i; k++)
++          if (g->is_local_row(k))
++            for (std::size_t j=i; j<std::min(i+CP, B1_c); j++)
++              if (g->is_local_col(j))
++                F11.tile(k, j).laswp(piv_tile_global[k/g->nprows()], true);
+         for (std::size_t k=0; k<i; k++) {
+ #pragma omp parallel
+ #pragma omp single nowait
+@@ -1586,7 +1612,7 @@ namespace strumpack {
+               for (std::size_t j=i; j<std::min(i+CP, B1_c); j++) {
+                 if (g->is_local_col(j)) {
+ #pragma omp task default(shared) firstprivate(i,k,j)
+-                  F11.tile(k, j).laswp(piv_tile_global[k/g->nprows()], true);
++                  // row interchanges were already applied, see above
+                   trsm(Side::L, UpLo::L, Trans::N, Diag::U,
+                        scalar_t(1.), Tcc_vec[k/g->nprows()], F11.tile(k, j));
+                 }
+@@ -1641,6 +1667,11 @@ namespace strumpack {
+               if (g->is_local_row(c)) {
+                 g->row_comm().broadcast_from(piv_tile, c % g->npcols());
+                 piv_tile_global.push_back(piv_tile);
++                // apply the row interchanges also to the L tiles left
++                // of the diagonal (solve applies full pivot vector)
++                for (std::size_t jj=0; jj<c; jj++)
++                  if (g->is_local_col(jj))
++                    F11.tile(c, jj).laswp(piv_tile, true);
+                 int r0 = F11.tileroff(c);
+                 std::transform
+                   (piv_tile.begin(), piv_tile.end(), std::back_inserter(piv),
+@@ -1744,6 +1775,12 @@ namespace strumpack {
+         F12.fill_col(0., i, CP);
+         F22.fill_col(0., i, CP);
+         blockcol(i, false, CP);
++        // apply all row interchanges before the updates, see factor_col
++        for (std::size_t k=0; k<B1_r; k++)
++          if (g->is_local_row(k))
++            for (std::size_t j=i; j<std::min(i+CP, B2_c); j++)
++              if (g->is_local_col(j))
++                F12.tile(k, j).laswp(piv_tile_global[k/g->nprows()], true);
+         for (std::size_t k=0; k<B1_r; k++) {
+ #pragma omp parallel
+ #pragma omp single nowait
+@@ -1764,7 +1801,7 @@ namespace strumpack {
+               for (std::size_t j=i; j<std::min(i+CP, B2_c); j++) {
+                 if (g->is_local_col(j)) {
+ #pragma omp task default(shared) firstprivate(i,k,j)
+-                  F12.tile(k, j).laswp(piv_tile_global[k/g->nprows()], true);
++                  // row interchanges were already applied, see above
+                   trsm(Side::L, UpLo::L, Trans::N, Diag::U,
+                        scalar_t(1.), Tcc_vec[k/g->nprows()], F12.tile(k, j));
+                 }
+@@ -1847,6 +1884,11 @@ namespace strumpack {
+             }
+             if (g->is_local_row(i)) {
+               g->row_comm().broadcast_from(piv_tile, i % g->npcols());
++              // apply the row interchanges also to the L tiles left
++              // of the diagonal (solve applies full pivot vector)
++              for (std::size_t jj=0; jj<i; jj++)
++                if (g->is_local_col(jj))
++                  A11.tile(i, jj).laswp(piv_tile, true);
+               int r0 = A11.tileroff(i);
+               std::transform
+                 (piv_tile.begin(), piv_tile.end(), std::back_inserter(piv),
+@@ -2838,9 +2880,11 @@ namespace strumpack {
+           if (g->is_local_col(i)) {
+             auto& D = A11.tile(i, i).D();
+             gpu::getrf(handle, D, dwork, getrf_work_size, dpiv, dinfo);
++            // handle uses comp_stream, replace_pivots must run on the
++            // same stream, after getrf
+             if (opts.pivot_threshold() > 0)
+               gpu::replace_pivots
+-                (D.rows(), D.data(), opts.pivot_threshold(), &copy_stream);
++                (D.rows(), D.data(), opts.pivot_threshold(), &comp_stream);
+             comp_stream.synchronize();
+             gpu::copy(Tii->D(), D);
+             gpu::copy<int>(piv_tile.data(), dpiv, mi);
+@@ -2852,6 +2896,17 @@ namespace strumpack {
+             gpu::copy<int>(dpiv, piv_tile.data(), mi);
+             if (!gpu_aware) Tii->move_to_gpu(copy_stream, dcol1);
+           }
++          // Apply the row interchanges also to the (already factored)
++          // L tiles left of the diagonal: the solve applies the full
++          // pivot vector to the right-hand side. Block column i-1 is
++          // still on the device (it is moved to the host at the end of
++          // this iteration, after comp_stream is synchronized), older
++          // block columns are already on the host.
++          for (std::size_t jj=0; jj<i; jj++)
++            if (g->is_local_col(jj)) {
++              if (jj+1 == i) A11.tile(i, jj).laswp(handle, dpiv, true);
++              else A11.tile(i, jj).laswp(piv_tile, true);
++            }
+           int r0 = A11.tileroff(i);
+           std::transform
+             (piv_tile.begin(), piv_tile.end(), std::back_inserter(piv),

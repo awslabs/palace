@@ -23,6 +23,7 @@
 #include "fem/integrator.hpp"
 #include "models/portexcitations.hpp"
 #include "utils/communication.hpp"
+#include "utils/enum_string.hpp"
 #include "utils/geodata.hpp"
 #include "utils/jsonschema.hpp"
 
@@ -661,6 +662,35 @@ void IoData::CheckConfiguration()
       solver.linear.mg_max_levels = 100;
     }
   }
+  if (solver.linear.complex_coarse_solve &&
+      (problem.type == ProblemType::DRIVEN || problem.type == ProblemType::EIGENMODE ||
+       problem.type == ProblemType::BOUNDARYMODE) &&
+      (solver.linear.type == LinearSolver::AMS ||
+       solver.linear.type == LinearSolver::BOOMER_AMG) &&
+      !(problem.type == ProblemType::BOUNDARYMODE && solver.linear.mg_max_levels == 1))
+  {
+    // AMS and BoomerAMG are built for the real-valued matrix of the finite element space.
+    // With the equivalent real-valued system of twice the size of the complex-valued
+    // matrix, AMS aborts and BoomerAMG is not a preconditioner with which the solves
+    // converge, so they keep the real-valued approximation. A boundary mode problem
+    // without multigrid replaces them by a sparse direct solver, which supports the
+    // option, as the mode solver of wave ports does: the wave ports without their own
+    // "ComplexCoarseSolve" keep the inherited value (unless "PCMatReal" overrides it).
+    if (!solver.linear.pc_mat_real)
+    {
+      for (auto &[idx, port] : boundaries.waveport)
+      {
+        if (!port.complex_coarse_solve)
+        {
+          port.complex_coarse_solve = true;
+        }
+      }
+    }
+    Mpi::Warning("\"ComplexCoarseSolve\" is not supported with the {} linear solver and "
+                 "is disabled!\n",
+                 ToString(solver.linear.type));
+    solver.linear.complex_coarse_solve = false;
+  }
   if (solver.linear.pc_mat_shifted < 0)
   {
     if (problem.type == ProblemType::DRIVEN && solver.linear.type == LinearSolver::AMS)
@@ -678,16 +708,23 @@ void IoData::CheckConfiguration()
       solver.linear.pc_mat_shifted = 0;
     }
   }
+  // Magnetostatic superconducting domains, with a London depth.
+  const bool london_domains =
+      problem.type == ProblemType::MAGNETOSTATIC &&
+      std::any_of(domains.materials.begin(), domains.materials.end(),
+                  [](const auto &data) { return std::abs(data.lambda_L) > 0.0; });
   // The preconditioner matrix symmetry for sparse direct solvers is a derived runtime
   // property; it is computed at Ksp construction (see GetPreconditionerMatrixSymmetry)
   // rather than stored on LinearSolverData.
   if (solver.linear.mg_smooth_aux < 0)
   {
-    // A London sheet's shifted preconditioner lifts the gradients off the curl-curl kernel,
-    // so they need the distributive relaxation that the pure curl-curl problem does not.
-    const bool london_pc =
-        problem.type == ProblemType::MAGNETOSTATIC && solver.linear.london_pc_shift > 0.0 &&
-        (!boundaries.superconductor.empty() || !boundaries.fluxloop.empty());
+    // A London sheet's or domain's shifted preconditioner lifts the gradients off the
+    // curl-curl kernel, so they need the distributive relaxation that the pure curl-curl
+    // problem does not.
+    const bool london_pc = problem.type == ProblemType::MAGNETOSTATIC &&
+                           solver.linear.london_pc_shift > 0.0 &&
+                           (!boundaries.superconductor.empty() ||
+                            !boundaries.fluxloop.empty() || london_domains);
     if (london_pc)
     {
       solver.linear.mg_smooth_aux = 1;
@@ -704,6 +741,12 @@ void IoData::CheckConfiguration()
       solver.linear.mg_smooth_aux = 1;
     }
   }
+  // The magnetostatic auxiliary operators come with the gauge shift (see
+  // CurlCurlOperator::GetPreconditionerMatrix).
+  MFEM_VERIFY(problem.type != ProblemType::MAGNETOSTATIC ||
+                  solver.linear.mg_smooth_aux <= 0 || solver.linear.london_pc_shift > 0.0,
+              "Magnetostatic simulations with \"MGAuxiliarySmoother\" require a positive "
+              "\"LondonPCShift\"!");
   if (solver.linear.mg_smooth_order < 0)
   {
     solver.linear.mg_smooth_order = std::max(2 * solver.order, 4);
@@ -737,12 +780,12 @@ void IoData::CheckConfiguration()
   }
   if (solver.linear.ams_singular_op < 0)
   {
-    // A Superconductor sheet's (1/L_ksq) M_sheet penalty leaves a residual gradient null
-    // space, so K̃ is not the pure singular curl-curl operator; use full AMS (G-space
-    // corrections) rather than singular-AMS, which stalls in parallel.
+    // A Superconductor sheet's (1/L_ksq) M_sheet penalty, or a London domain's mass, leaves
+    // a residual gradient null space, so K̃ is not the pure singular curl-curl operator; use
+    // full AMS (G-space corrections) rather than singular-AMS, which stalls in parallel.
     const bool has_london_film = !boundaries.superconductor.empty();
     solver.linear.ams_singular_op =
-        (problem.type == ProblemType::MAGNETOSTATIC && !has_london_film);
+        (problem.type == ProblemType::MAGNETOSTATIC && !has_london_film && !london_domains);
   }
   if (solver.linear.amg_agg_coarsen < 0)
   {
@@ -828,6 +871,14 @@ void IoData::CheckConfiguration()
 #if !defined(MFEM_USE_CUDSS)
   MFEM_VERIFY(solver.linear.type != LinearSolver::CUDSS,
               "Linear solver cuDSS requested but Palace was not built with cuDSS support!");
+#endif
+#if !defined(PALACE_WITH_PARMETIS)
+  if (solver.linear.sym_factorization == SymbolicFactorization::PARMETIS)
+  {
+    Mpi::Warning("ParMETIS column ordering requested but Palace was not built with "
+                 "ParMETIS support, using METIS instead!\n");
+    solver.linear.sym_factorization = SymbolicFactorization::METIS;
+  }
 #endif
 
   // Configure settings for quadrature rules and partial assembly.
