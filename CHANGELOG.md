@@ -33,15 +33,18 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 #### Interface Changes
 
   - The geometric multigrid preconditioners of eigenmode simulations now use one-sided
-    V-cycles, which pre-smooth but do not post-smooth, at twice the default smoothing order
-    (`max(4p, 8)` for solution order `p`). On production models, eigenmode simulations take
-    1% to 44% less time, and the first eigenvalue solves of models of 90M to 127M unknowns
-    are 1.15x to 1.19x faster. The new `config["Solver"]["Linear"]["MGOneSided"]` defaults
-    to `true` for eigenmode simulations with GMRES or FGMRES and to `false` otherwise, and
-    is an error with CG. Results change at the level of the linear solver tolerance.
-    Configurations with an explicit `"MGSmoothOrder"`, as every resolved configuration has,
-    now smooth half as much per V-cycle: set `"MGOneSided": false` to keep the previous
-    V-cycles. SchemaVer 4-5-0 [PR 1233](https://github.com/awslabs/palace/pull/1233).
+    V-cycles, which pre-smooth but do not post-smooth, apart from the auxiliary space
+    correction of distributive relaxation after the coarse-grid correction, at twice the
+    default smoothing order (`max(4p, 8)` for solution order `p`). On production models,
+    eigenmode simulations take 5% to 44% less time, and the first eigenvalue solves of
+    models of 90M to 127M unknowns are 1.15x to 1.19x faster. The new
+    `config["Solver"]["Linear"]["MGOneSided"]` defaults to `true` for eigenmode simulations
+    with GMRES or FGMRES and without an explicit `"MGSmoothOrder"`, which keeps the previous
+    V-cycles of existing and resolved configurations, and to `false` otherwise, and is an
+    error with CG. Results change at the level of the linear solver tolerance. Linear
+    solves that converge in a few iterations, and problems dominated by radiation, can need
+    more iterations: set `"MGOneSided": false` for them. SchemaVer 4-5-0
+    [PR 1233](https://github.com/awslabs/palace/pull/1233).
   - When `Solver.Linear.Type` is `"Default"` (or omitted) for frequency domain problems,
     and for the wave port and boundary mode eigenvalue solves, *Palace* now prefers
     STRUMPACK over SuperLU_DIST, then MUMPS, as the sparse direct solver when built with
