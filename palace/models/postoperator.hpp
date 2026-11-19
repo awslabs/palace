@@ -412,6 +412,10 @@ protected:
   // kept-raw energies, the law reading, the self-check (a twin), the candidate rows.
   void MeasureAndPrintImpedanceRuleCandidate(double output_index, int excitation,
                                              int source, const ComplexVector &e) const;
+  // APPLY (decision 2206 (a)): the per-feature law service of the operator of record
+  // (surface-response-impedance-rule-features.csv under the diagnostics directory, or its
+  // "impedance-rule" sub-directory when unset: never at top level) and its count line.
+  void WriteImpedanceApplyFeatures() const;
   // The uncovered requirements (decision 394 F2) and the DomainBoundary raw claims (F-DB-a)
   // of the response operator as the surface postoperator's perimeter portions: their raw
   // within-R interface energy is kept in the corrected interface energies as the

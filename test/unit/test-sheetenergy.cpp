@@ -36,6 +36,7 @@
 #include "models/romoperator.hpp"
 #include "models/spaceoperator.hpp"
 #include "models/surfacepostoperator.hpp"
+#include "models/surfaceresponsefilmrule.hpp"
 #include "models/surfaceresponseoperator.hpp"
 #include "surfaceresponse-fixtures.hpp"
 #include "utils/communication.hpp"
@@ -859,6 +860,127 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
       CHECK_THAT(result.fabricated_surface_energy.at(4),
                  WithinRel(*metal_oblique_surface_energy, 1.0e-10));
     }
+  }
+#endif
+}
+
+TEST_CASE_METHOD(
+    test::SurfaceResponseFiles,
+    "Impedance-metal rule Apply serves a purely inductive sheet by the "
+    "perfect-conductor models in every crack form",
+    "[surfaceresponsefilmrule][impedancemetalrule][sheetenergy][maxwell][Serial]["
+    "Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  // Decision 2206 (a) (DESIGN-APPLY s3): the island metal of the Maxwell island problem as
+  // a purely inductive Impedance sheet, cracked by the legacy key (the impedance split),
+  // cracked by "Crack" true and uncracked ("Crack" false), loaded by mesh::ReadMesh, with
+  // the PEC library of record unchanged. Under "Apply" every form is keyed, matched and
+  // placed as the perfect-conductor island (the same patches order-free, every edge
+  // matched, the law verified, every feature SUBSTITUTED); under "Off" nothing matches
+  // (raw); above the Ls range "Apply" serves nothing (raw) and says so.
+  constexpr int metal_attr = 9;  // the island of MakeSerialIslandMesh
+  const auto mesh_path =
+      WriteSheetMesh(temp.temp_dir, MakeSerialIslandMesh(), "island-apply.mesh");
+  auto IslandConfig = [&](bool legacy_key)
+  {
+    json config = ConvexMaxwellIslandConfig();
+    config["Model"]["Mesh"] = mesh_path.string();
+    if (legacy_key)
+    {
+      config["Model"]["CrackInternalBoundaryElements"] = true;
+    }
+    else
+    {
+      config["Model"].erase("CrackInternalBoundaryElements");
+    }
+    return config;
+  };
+  MaxwellIslandResponse pec(IslandConfig(false));
+  REQUIRE(pec.response->GetPatchCount() > 0);
+  CHECK(pec.response->GetImpedanceApplyRule() == nullptr);
+  const auto pec_patches = PatchSignatures(*pec.response);
+  mfem::Vector normal_value(3);
+  normal_value = 0.0;
+  normal_value[1] = -0.4;
+  mfem::VectorConstantCoefficient normal_coefficient(normal_value);
+  const auto pec_normal = pec.ConstantFieldResponse(normal_coefficient);
+
+  for (const auto form :
+       {MetalCrackForm::LegacyKey, MetalCrackForm::CrackTrue, MetalCrackForm::CrackFalse})
+  {
+    INFO(MetalCrackFormName(form));
+    auto SheetConfig = [&](const std::string &rule, double ls)
+    {
+      json config = IslandConfig(form == MetalCrackForm::LegacyKey);
+      config["Boundaries"]["Ground"]["Attributes"] = {1, 2, 3, 4, 5, 6};
+      json entry = {{"Attributes", {metal_attr}}, {"Ls", ls}};
+      if (form != MetalCrackForm::LegacyKey)
+      {
+        entry["Crack"] = (form == MetalCrackForm::CrackTrue);
+      }
+      config["Boundaries"]["Impedance"] = json::array({entry});
+      auto &correction = config["Solver"]["SurfaceResponseCorrection"];
+      correction["ImpedanceMetalRule"] = rule;
+      if (rule != "Apply")
+      {
+        correction["UnmatchedPolicy"] = "Warn";
+        correction["GeometryFailurePolicy"] = "RecordRaw";
+      }
+      return config;
+    };
+    const std::string form_text =
+        form == MetalCrackForm::LegacyKey
+            ? "cracked, legacy split (2 Ls on each face)"
+            : (form == MetalCrackForm::CrackTrue ? "cracked (Ls on each face)"
+                                                 : "uncracked (one sheet of Ls)");
+
+    // Apply at the designers' Ls: the perfect-conductor island's identification.
+    MaxwellIslandResponse sheet(SheetConfig("Apply", 4.5e-14));
+    CHECK(sheet.iodata.boundaries.cracked_attributes.contains(metal_attr) ==
+          (form != MetalCrackForm::CrackFalse));
+    const auto *film = sheet.response->GetImpedanceApplyRule();
+    REQUIRE(film != nullptr);
+    CHECK(film->attributes.at(metal_attr).service == FilmService::FILM_INDUCTIVE);
+    CHECK(film->attributes.at(metal_attr).form == form_text);
+    CHECK_THAT(film->lines.front(), ContainsSubstring(form_text + " [9]"));
+    CHECK(PatchSignatures(*sheet.response) == pec_patches);
+    const auto normal = sheet.ConstantFieldResponse(normal_coefficient);
+    CHECK_THAT(normal.matched_length_fraction, WithinAbs(1.0, 1.0e-12));
+    CHECK(normal.boundary_law_verified);
+    CHECK_THAT(normal.domain_correction, WithinRel(pec_normal.domain_correction, 1.0e-10));
+    CHECK_THAT(normal.fabricated_surface_energy.at(4),
+               WithinRel(pec_normal.fabricated_surface_energy.at(4), 1.0e-10));
+    if (Mpi::Root(Mpi::World()))
+    {
+      const auto &features = sheet.response->GetImpedanceLawFeatures();
+      REQUIRE(!features.empty());
+      for (const auto &feature : features)
+      {
+        CHECK(feature.status == "SUBSTITUTED");
+        CHECK(!feature.model.empty());
+      }
+    }
+
+    // Off: the law is part of the key and no model of the library carries it (raw).
+    MaxwellIslandResponse off(SheetConfig("Off", 4.5e-14));
+    CHECK(off.response->GetImpedanceApplyRule() == nullptr);
+    CHECK(off.response->GetPatchCount() == 0);
+
+    // Apply above the Ls range (100 x the designers' value): not served, named.
+    json above_config = SheetConfig("Apply", 4.5e-12);
+    above_config["Solver"]["SurfaceResponseCorrection"]["UnmatchedPolicy"] = "Warn";
+    above_config["Solver"]["SurfaceResponseCorrection"]["GeometryFailurePolicy"] =
+        "RecordRaw";
+    MaxwellIslandResponse above(above_config);
+    REQUIRE(above.response->GetImpedanceApplyRule() != nullptr);
+    CHECK(above.response->GetImpedanceApplyRule()->attributes.at(metal_attr).service ==
+          FilmService::INDUCTIVE_ABOVE_RANGE);
+    CHECK_THAT(above.response->GetImpedanceApplyRule()->lines.back(),
+               ContainsSubstring("ABOVE the Ls range <= 9e-14 H/sq): attributes [9]"));
+    CHECK(above.response->GetPatchCount() == 0);
   }
 #endif
 }

@@ -10170,6 +10170,8 @@ void ClassifyCandidateFeatureLaws(IdentificationResult &result,
                                   bool root, ResponseCorrectionData *candidate_result,
                                   std::set<int> *exact_features)
 {
+  // Apply (decision 2206 (a)): the same statuses on the operator of record.
+  const bool apply = laws.film_rule && laws.film_rule->apply;
   std::vector<std::string> law_texts;
   for (const auto &law : laws.laws)
   {
@@ -10314,7 +10316,9 @@ void ClassifyCandidateFeatureLaws(IdentificationResult &result,
       {
         corner_matches->erase(feature.id);
       }
-      feature.match_note = "impedance-metal rule (candidate): " + why;
+      feature.match_note = std::string(apply ? "impedance-metal rule (Apply): "
+                                             : "impedance-metal rule (candidate): ") +
+                           why;
     };
     std::string joint_text;
     for (const int law : joint_laws)
@@ -10454,12 +10458,13 @@ void ClassifyCandidateFeatureLaws(IdentificationResult &result,
     summary += fmt::format("{}{} {:d}", summary.empty() ? "" : ", ",
                            ImpedanceLawStatusName(status), count);
   }
-  Mpi::Print(
-      "  Impedance-metal rule (CANDIDATE: NOT OF RECORD): feature law statuses: {}\n",
-      summary.empty() ? "none" : summary);
+  Mpi::Print("  Impedance-metal rule ({}): feature law statuses: {}\n",
+             apply ? "APPLY" : "CANDIDATE: NOT OF RECORD",
+             summary.empty() ? "none" : summary);
   for (const auto &example : joint_examples)
   {
-    Mpi::Print("  Impedance-metal rule (candidate): LAW-JOINT, Missing: {}\n", example);
+    Mpi::Print("  Impedance-metal rule ({}): LAW-JOINT, Missing: {}\n",
+               apply ? "APPLY" : "candidate", example);
   }
 }
 
@@ -24114,6 +24119,7 @@ SurfaceResponsePreflightOutcome WriteSurfaceResponseRequirements(const IoData &i
   const auto &parallel_mesh = mesh.Get();
   const bool maxwell = iodata.problem.type != ProblemType::ELECTROSTATIC;
   ResponseCorrectionData patches;
+  std::optional<FilmRuleResolution> apply_film;
   if (parallel_mesh.Dimension() == 2 && parallel_mesh.SpaceDimension() == 2)
   {
     BuildAutomaticResponseData2D(iodata, parallel_mesh, mat_op, request, maxwell, nullptr,
@@ -24121,12 +24127,38 @@ SurfaceResponsePreflightOutcome WriteSurfaceResponseRequirements(const IoData &i
   }
   else if (parallel_mesh.Dimension() == 3 && parallel_mesh.SpaceDimension() == 3)
   {
+    // The impedance-metal rule's "Apply" (decision 2206 (a)): the manifest of record is the
+    // identification through the film rule's seam (what the run serves), as in the
+    // operator.
+    if (maxwell &&
+        request.impedance_metal_rule == ResponseCorrectionData::ImpedanceMetalRule::APPLY &&
+        request.patch_construction == ResponseCorrectionData::PatchConstruction::FEATURES)
+    {
+      apply_film.emplace(ResolveImpedanceMetalFilm(iodata.boundaries, request, iodata.units,
+                                                   iodata.InputsNondimensionalized()));
+      Mpi::Print(parallel_mesh.GetComm(), "\n");
+      for (const auto &line : apply_film->lines)
+      {
+        Mpi::Print(parallel_mesh.GetComm(), "{}\n", line);
+      }
+    }
     patches = BuildAutomaticResponseData3D(iodata, parallel_mesh, mat_op, request, maxwell,
-                                           nullptr, &requirements, &statistics);
+                                           nullptr, &requirements, &statistics,
+                                           apply_film ? &*apply_film : nullptr);
   }
   else
   {
     MFEM_ABORT("Surface-response preflight requires a 2D or 3D solve mesh!");
+  }
+  if (request.impedance_metal_rule == ResponseCorrectionData::ImpedanceMetalRule::APPLY &&
+      !apply_film)
+  {
+    Mpi::Print(parallel_mesh.GetComm(),
+               "\nImpedance-metal rule (APPLY): no seam on this path ({}): as \"Off\"\n",
+               !maxwell ? "an electrostatic run solves no impedance boundary: every metal "
+                          "is a perfect conductor there"
+                        : (parallel_mesh.Dimension() != 3 ? "a two-dimensional mesh"
+                                                          : "PatchConstruction Legacy"));
   }
 
   requirements.SetStatistics(BuildAutomaticStatistics(parallel_mesh.GetComm(), statistics));
@@ -24135,6 +24167,11 @@ SurfaceResponsePreflightOutcome WriteSurfaceResponseRequirements(const IoData &i
   auto manifest = requirements.Build();
   manifest["MeshDimension"] = parallel_mesh.Dimension();
   manifest["Maxwell"] = maxwell;
+  if (apply_film)
+  {
+    manifest["ImpedanceMetalRule"] =
+        ImpedanceApplyRecord(*apply_film, patches.impedance_law_features, true);
+  }
   // The magnetic (inductive) leaves (DESIGN-v2 section 3; decision 1229 Q4): the library's
   // rules and every model's leaf verdict (r1-r4, on the model data; the same evaluation the
   // operator runs), and Summary.MagneticElectricOnly = the applied patches whose model
@@ -24746,8 +24783,10 @@ struct SurfaceResponseGeometry::Impl
   nlohmann::json statistics;
   bool maxwell = false;
   int dimension = 0;
-  // Built by an impedance-metal-rule candidate (its cache is never the record's).
+  // Built by an impedance-metal-rule candidate (its cache is never the record's), or by an
+  // operator of record with the rule's "Apply" seam.
   bool impedance_rule_candidate = false;
+  bool impedance_rule_apply = false;
   // Written by the electrostatic constructor through the shared const geometry: the cache
   // is a derived record of this configuration, not a change to it.
   mutable std::optional<DomainBoundaryContainmentCache> containment;
@@ -31501,7 +31540,7 @@ bool SurfaceResponseOperator::ImpedanceRuleActs() const
 
 int SurfaceResponseOperator::ImpedanceLawStatusOfFeature(int feature) const
 {
-  if (!impedance_rule_candidate || feature < 0 ||
+  if ((!impedance_rule_candidate && !impedance_apply_rule) || feature < 0 ||
       feature >= static_cast<int>(impedance_law_feature_status.size()))
   {
     return -1;
@@ -35572,6 +35611,35 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
               "\"PatchEnergy\" is a three-dimensional export: the Maxwell surface response "
               "of a two-dimensional mesh does not support it!");
 
+  // The impedance-metal rule's APPLY (decision 2206 (a); DESIGN-APPLY s3): THIS operator
+  // of record is built with the film rule at its seam (no candidate, no law reading); the
+  // seam exists on the three-dimensional Features path only, other paths run as "Off".
+  const FilmRuleResolution *film_seam = candidate_film_rule;
+  if (!impedance_rule_candidate &&
+      request->impedance_metal_rule == ResponseCorrectionData::ImpedanceMetalRule::APPLY)
+  {
+    if (dimension == 3 &&
+        request->patch_construction == ResponseCorrectionData::PatchConstruction::FEATURES)
+    {
+      impedance_apply_rule = std::make_shared<const FilmRuleResolution>(
+          ResolveImpedanceMetalFilm(iodata.boundaries, *request, iodata.units,
+                                    iodata.InputsNondimensionalized()));
+      film_seam = impedance_apply_rule.get();
+      Mpi::Print(fespace.GetComm(), "\n");
+      for (const auto &line : impedance_apply_rule->lines)
+      {
+        Mpi::Print(fespace.GetComm(), "{}\n", line);
+      }
+    }
+    else
+    {
+      Mpi::Print(fespace.GetComm(),
+                 "\nImpedance-metal rule (APPLY): no seam on this path ({}): as \"Off\" "
+                 "(impedance-sheet features are not served)\n",
+                 dimension != 3 ? "a two-dimensional mesh" : "PatchConstruction Legacy");
+    }
+  }
+
 #if defined(MFEM_USE_GSLIB)
   maxwell = true;
   maxwell_loop_remainder_measured = dimension == 3;
@@ -35594,6 +35662,10 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
     MFEM_VERIFY(cached_geometry->impl->impedance_rule_candidate == impedance_rule_candidate,
                 "A cached surface-response geometry is reused across the impedance-metal "
                 "rule's candidate and the operator of record!");
+    MFEM_VERIFY(cached_geometry->impl->impedance_rule_apply ==
+                    (impedance_apply_rule != nullptr),
+                "A cached surface-response geometry is reused across the impedance-metal "
+                "rule's \"Apply\" seam and an operator without it!");
     // C6: the full placed-patch list again (released after the previous construction).
     cached_geometry->RestoreReplicatedPatches(fespace.GetComm());
     config_ptr = movable_config = &cached_geometry->impl->config;
@@ -35611,9 +35683,9 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
     }
     else
     {
-      local_config = BuildAutomaticResponseData3D(
-          iodata, fespace.GetParMesh(), mat_op, *request, true, &local_diagnostics, nullptr,
-          &local_statistics, candidate_film_rule);
+      local_config = BuildAutomaticResponseData3D(iodata, fespace.GetParMesh(), mat_op,
+                                                  *request, true, &local_diagnostics,
+                                                  nullptr, &local_statistics, film_seam);
     }
     MFEM_VERIFY(!impedance_rule_candidate || dimension == 3,
                 "The impedance-metal rule's candidate is built on three-dimensional meshes "
@@ -35633,6 +35705,7 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
       impl->maxwell = true;
       impl->dimension = dimension;
       impl->impedance_rule_candidate = impedance_rule_candidate;
+      impl->impedance_rule_apply = impedance_apply_rule != nullptr;
       cached_geometry = std::shared_ptr<const SurfaceResponseGeometry>(
           new SurfaceResponseGeometry(std::move(impl)));
       *automatic_geometry = cached_geometry;
@@ -35646,7 +35719,7 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
     }
   }
   const auto &config = *config_ptr;
-  if (impedance_rule_candidate)
+  if (film_seam)
   {
     // The candidate's law statuses (copied: a cached candidate geometry keeps them for the
     // next AMR iteration's construction).

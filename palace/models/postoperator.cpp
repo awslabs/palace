@@ -673,6 +673,12 @@ PostOperator<solver_t>::PostOperator(
                                       record_setup_bytes);
         }
       }
+      if (surface_response_op->GetImpedanceApplyRule())
+      {
+        // The impedance-metal rule's "Apply" (decision 2206 (a)): the per-feature law
+        // service of the operator of record, after every object of record is built.
+        WriteImpedanceApplyFeatures();
+      }
       else if (impedance_record)
       {
         Mpi::Print(
@@ -6640,6 +6646,59 @@ void PostOperator<solver_t>::WriteImpedanceRuleCandidateRecords() const
   MFEM_VERIFY(spill->Remove(), "Removing the impedance-metal rule candidate's "
                                "conductor-consistency records scratch file \""
                                    << spill->Path() << "\" failed!");
+}
+
+template <ProblemType solver_t>
+void PostOperator<solver_t>::WriteImpedanceApplyFeatures() const
+{
+  const auto &features = surface_response_op->GetImpedanceLawFeatures();
+  const auto path = surface_response_op->DiagnosticsPath(
+      post_dir, "surface-response-impedance-rule-features.csv",
+      SurfaceResponseOperator::kImpedanceApplyDiagnosticsDirectory);
+  if (!Mpi::Root(fem_op->GetComm()))
+  {
+    return;
+  }
+  TableWithCSVFile table(path.string());
+  table.table.insert(Column::Integer("feature", "feature"));
+  table.table.insert(Column::Text("type", "Type"));
+  table.table.insert(Column::Text("device_law", "DeviceLaw"));
+  table.table.insert(Column::Text("served_film", "ServedFilm"));
+  table.table.insert(Column::Text("law_status", "LawStatus"));
+  table.table.insert(Column::Text("override", "Override"));
+  table.table.insert(Column::Text("device_key_hash", "DeviceKeyHash"));
+  table.table.insert(Column::Text("served_key_hash", "ServedKeyHash"));
+  table.table.insert(Column::Text("model", "Matched model"));
+  table.table.insert("length", "length (m)");
+  int served = 0;
+  for (const auto &feature : features)
+  {
+    served += ImpedanceLawStatusServesSheet(feature.status) ? 1 : 0;
+    table.table["feature"] << feature.feature;
+    table.table["type"] << feature.type;
+    // A text cell holds no comma (tablecsv.hpp): the law JSON's commas as ';'.
+    std::string device_law = feature.device_law;
+    std::replace(device_law.begin(), device_law.end(), ',', ';');
+    table.table["device_law"] << device_law;
+    table.table["served_film"] << std::string(
+        feature.status == "NOT-DECLARED" || feature.status == "NOT-SERVED-BY-OVERRIDE" ||
+                feature.status == "LAW-JOINT"
+            ? "none"
+            : (feature.status == "EXACT" ? "device law (exact model)"
+                                         : "base film as PEC"));
+    table.table["law_status"] << feature.status;
+    table.table["override"] << feature.override_status;
+    table.table["device_key_hash"] << feature.device_hash;
+    table.table["served_key_hash"] << feature.served_hash;
+    table.table["model"] << (feature.model.empty() ? std::string("-") : feature.model);
+    table.table["length"] << units.Dimensionalize<Units::ValueType::LENGTH>(feature.length);
+  }
+  table.WriteFullTableTrunc();
+  Mpi::Print(fem_op->GetComm(),
+             "Impedance-metal rule (APPLY): {:d} of {:d} identified feature(s) on "
+             "impedance sheets are served by perfect-conductor models (computed, not "
+             "validated); per-feature table: {}\n",
+             served, static_cast<int>(features.size()), path.string());
 }
 
 template class PostOperator<ProblemType::DRIVEN>;

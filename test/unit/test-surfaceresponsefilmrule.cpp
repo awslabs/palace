@@ -138,6 +138,141 @@ TEST_CASE("Impedance-metal rule film resolution (decisions 2006 / 2012)",
   }
 }
 
+// Decision 2206 (a) (DESIGN-APPLY s2 / s4 / s5): "Apply" serves PEC and purely inductive
+// sheets within the Ls range [0, ImpedanceMetalMaxInductance], names each sheet's form,
+// and refuses an override that would serve anything else.
+TEST_CASE("Impedance-metal rule Apply film resolution, Ls range check and refusals",
+          "[surfaceresponsefilmrule][impedancemetalrule][Serial]")
+{
+  config::BoundaryData boundaries(FilmRuleBoundaries());
+  const Units units(1.0, 1.0);
+  ResponseCorrectionData request;
+  request.impedance_metal_rule = ResponseCorrectionData::ImpedanceMetalRule::APPLY;
+
+  SECTION("the default bound 9e-14 H/sq: the designers' 4.5e-14 served, 2e-12 not")
+  {
+    const auto film = ResolveImpedanceMetalFilm(boundaries, request, units, false);
+    CHECK(film.apply);
+    CHECK(film.max_inductance == 9.0e-14);
+    CHECK(film.max_inductance_is_default);
+    CHECK(film.attributes.at(1).service == FilmService::FILM_PEC);
+    CHECK(film.attributes.at(2).service == FilmService::FILM_INDUCTIVE);
+    CHECK(film.attributes.at(7).service == FilmService::INDUCTIVE_ABOVE_RANGE);
+    CHECK(film.attributes.at(3).service == FilmService::NOT_DECLARED);  // Rs only
+    CHECK(film.attributes.at(4).service == FilmService::NOT_DECLARED);  // Cs only
+    CHECK(film.attributes.at(5).service == FilmService::NOT_DECLARED);  // Conductivity
+    CHECK(film.attributes.at(6).service == FilmService::NOT_DECLARED);  // Rational
+    CHECK(std::string(FilmServiceName(FilmService::INDUCTIVE_ABOVE_RANGE)) ==
+          "ABOVE-RANGE");
+    CHECK(film.served_inductances == std::vector<double>{4.5e-14});
+    REQUIRE(!film.lines.empty());
+    const auto &line = film.lines.front();
+    CHECK_THAT(line, ContainsSubstring("Impedance-metal rule (APPLY): treated as the "
+                                       "library's perfect-conductor film (an ASSUMPTION)"));
+    CHECK_THAT(line, ContainsSubstring("PEC [1]"));
+    CHECK_THAT(line, ContainsSubstring("Impedance Rs 0 Ls 4.5e-14 Cs 0, uncracked (one "
+                                       "sheet of Ls) [2]"));
+    CHECK_THAT(line, ContainsSubstring("Ls range served: 0 <= Ls <= 9e-14 H/sq "
+                                       "(ImpedanceMetalMaxInductance: the default, a "
+                                       "placeholder until the breakdown study)"));
+    CHECK_THAT(line, ContainsSubstring("served Ls met: 4.5e-14 H/sq"));
+    CHECK(HasLine(film, "not served (Impedance Rs 0 Ls 2e-12 Cs 0, uncracked (one sheet "
+                        "of Ls): ABOVE the Ls range <= 9e-14 H/sq): attributes [7]: their "
+                        "corrected values are not served (raw)"));
+    CHECK(HasLine(film, "not served (Conductivity): attributes [5]"));
+    // An above-range sheet serves no segment; a served one does.
+    CHECK(film.SegmentService({7}) == FilmService::NOT_DECLARED);
+    CHECK(film.SegmentService({2, 7}) == FilmService::NOT_DECLARED);
+    CHECK(film.SegmentService({1, 2}) == FilmService::FILM_INDUCTIVE);
+  }
+
+  SECTION("at, below and above a configured bound")
+  {
+    request.impedance_metal_max_inductance = 4.5e-14;
+    request.impedance_metal_max_inductance_given = true;
+    auto film = ResolveImpedanceMetalFilm(boundaries, request, units, false);
+    CHECK(film.attributes.at(2).service == FilmService::FILM_INDUCTIVE);  // at the bound
+    CHECK_FALSE(film.max_inductance_is_default);
+    CHECK_THAT(film.lines.front(), ContainsSubstring("(ImpedanceMetalMaxInductance: "
+                                                     "configured)"));
+    request.impedance_metal_max_inductance = 4.4e-14;
+    film = ResolveImpedanceMetalFilm(boundaries, request, units, false);
+    CHECK(film.attributes.at(2).service == FilmService::INDUCTIVE_ABOVE_RANGE);
+    CHECK_THAT(film.lines.front(), ContainsSubstring("served Ls met: none"));
+    request.impedance_metal_max_inductance = 3.0e-12;
+    film = ResolveImpedanceMetalFilm(boundaries, request, units, false);
+    CHECK(film.attributes.at(7).service == FilmService::FILM_INDUCTIVE);
+    CHECK(film.served_inductances == std::vector<double>{4.5e-14, 2.0e-12});
+    CHECK_THAT(film.lines.front(), ContainsSubstring("served Ls met: 4.5e-14, 2e-12 H/sq"));
+  }
+
+  SECTION("the sheet form of each attribute: uncracked, cracked, the legacy split")
+  {
+    boundaries.cracked_attributes = {2, 7};
+    boundaries.split_impedance_attributes = {7};
+    request.impedance_metal_max_inductance = 3.0e-12;
+    const auto film = ResolveImpedanceMetalFilm(boundaries, request, units, false);
+    CHECK(film.attributes.at(2).form == "cracked (Ls on each face)");
+    CHECK(film.attributes.at(7).form == "cracked, legacy split (2 Ls on each face)");
+    CHECK_THAT(film.lines.front(),
+               ContainsSubstring("Ls 4.5e-14 Cs 0, cracked (Ls on each face) [2]"));
+    CHECK_THAT(film.lines.front(),
+               ContainsSubstring("Ls 2e-12 Cs 0, cracked, legacy split (2 Ls on each "
+                                 "face) [7]"));
+    // Record keeps the branch's lines (no form, no range).
+    request.impedance_metal_rule = ResponseCorrectionData::ImpedanceMetalRule::RECORD;
+    const auto record = ResolveImpedanceMetalFilm(boundaries, request, units, false);
+    CHECK(record.attributes.at(7).service == FilmService::FILM_INDUCTIVE);
+    CHECK_THAT(record.lines.front(),
+               ContainsSubstring("Impedance-metal rule (RECORD): film = the library's "
+                                 "film: an ASSUMPTION: Impedance Rs 0 Ls 2e-12 Cs 0 [7]"));
+  }
+
+  SECTION("overrides: un-serve any metal; serve only what the rule serves by default")
+  {
+    request.impedance_metal_film_overrides = {{{2}, false}, {{1}, true}};
+    const auto film = ResolveImpedanceMetalFilm(boundaries, request, units, false);
+    CHECK(film.attributes.at(2).service == FilmService::NOT_SERVED_BY_OVERRIDE);
+    CHECK(film.attributes.at(1).service == FilmService::FILM_PEC);
+    CHECK(film.served_inductances.empty());
+    CHECK(HasLine(film, "attribute 1 (PEC) served: it is the library's film by default"));
+    request.impedance_metal_film_overrides = {{{3}, true}};
+    CHECK_THROWS_WITH(
+        ResolveImpedanceMetalFilm(boundaries, request, units, false),
+        ContainsSubstring("attribute 3 (Impedance Rs 1 Ls 0 Cs 0) cannot be served by an "
+                          "override under \"ImpedanceMetalRule\": \"Apply\": Apply serves "
+                          "perfect conductors and purely inductive sheets (Rs = 0, Cs = 0) "
+                          "only"));
+    request.impedance_metal_film_overrides = {{{5}, true}};
+    CHECK_THROWS_WITH(ResolveImpedanceMetalFilm(boundaries, request, units, false),
+                      ContainsSubstring("attribute 5 (Conductivity) cannot be served"));
+    request.impedance_metal_film_overrides = {{{7}, true}};
+    CHECK_THROWS_WITH(ResolveImpedanceMetalFilm(boundaries, request, units, false),
+                      ContainsSubstring("a larger ImpedanceMetalMaxInductance serves it"));
+  }
+
+  SECTION("the palace.json / manifest record of an Apply run")
+  {
+    const auto film = ResolveImpedanceMetalFilm(boundaries, request, units, false);
+    std::vector<ResponseCorrectionData::ImpedanceLawFeatureData> features(3);
+    features[0].status = "SUBSTITUTED";
+    features[0].length = 2.0;
+    features[1].status = "PEC";
+    features[2].status = "MIXED-LAW";
+    features[2].length = 0.5;
+    const auto record = ImpedanceApplyRecord(film, features, false);
+    CHECK(record.at("Mode") == "Apply");
+    CHECK(record.at("ServedImpedanceFeatures") == 2);
+    CHECK(record.at("ServedImpedanceLength").get<double>() == 2.5);
+    CHECK(record.at("LawStatusCounts").at("PEC") == 1);
+    CHECK(record.at("MaxInductance").get<double>() == 9.0e-14);
+    CHECK(record.at("MaxInductanceIsDefault") == true);
+    CHECK(record.at("Validated") == false);
+    CHECK_FALSE(record.contains("Features"));
+    CHECK(ImpedanceApplyRecord(film, features, true).at("Features").size() == 3);
+  }
+}
+
 // t1 (STAGEA-NOTE s1): the configuration keys.
 TEST_CASE_METHOD(test::SurfaceResponseFiles,
                  "Impedance-metal rule configuration keys (ImpedanceMetalRule, "
@@ -164,13 +299,48 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     CHECK(request.impedance_metal_film_overrides[0].attributes == std::vector<int>{9});
     CHECK_FALSE(request.impedance_metal_film_overrides[0].serve);
   }
+  // "Apply" (decision 2206 (a)): accepted, with its bound (default 9e-14 H/sq) and the
+  // overrides; the bound is refused without "Apply" and when not a positive number.
   json apply = config;
   apply["Solver"]["SurfaceResponseCorrection"]["ImpedanceMetalRule"] = "Apply";
-  CHECK_THROWS_WITH(IoData(apply, false), ContainsSubstring("\"Apply\" is reserved"));
+  {
+    const IoData iodata(apply, false);
+    const auto &request = *iodata.solver.surface_response_correction;
+    CHECK(request.impedance_metal_rule ==
+          ResponseCorrectionData::ImpedanceMetalRule::APPLY);
+    CHECK(request.impedance_metal_max_inductance == 9.0e-14);
+    CHECK_FALSE(request.impedance_metal_max_inductance_given);
+    REQUIRE(request.impedance_metal_film_overrides.size() == 1);
+  }
+  apply["Solver"]["SurfaceResponseCorrection"]["ImpedanceMetalMaxInductance"] = 2.5e-13;
+  {
+    const IoData iodata(apply, false);
+    const auto &request = *iodata.solver.surface_response_correction;
+    CHECK(request.impedance_metal_max_inductance == 2.5e-13);
+    CHECK(request.impedance_metal_max_inductance_given);
+  }
+  for (const json &bad : {json(0.0), json(-1.0e-14), json("9e-14")})
+  {
+    json invalid = apply;
+    invalid["Solver"]["SurfaceResponseCorrection"]["ImpedanceMetalMaxInductance"] = bad;
+    CHECK_THROWS_WITH(IoData(invalid, false),
+                      ContainsSubstring("must be a finite positive surface inductance"));
+  }
+  json bound_record = config;
+  bound_record["Solver"]["SurfaceResponseCorrection"]["ImpedanceMetalMaxInductance"] =
+      1.0e-13;
+  CHECK_THROWS_WITH(IoData(bound_record, false),
+                    ContainsSubstring("\"ImpedanceMetalMaxInductance\" requires "
+                                      "\"ImpedanceMetalRule\": \"Apply\""));
+  // "Apply" writes no candidate value: it runs under either coverage policy.
+  json apply_marked = apply;
+  apply_marked["Solver"]["SurfaceResponseCorrection"]["Coverage"]["Policy"] =
+      "MarkNotApplied";
+  CHECK_NOTHROW(IoData(apply_marked, false));
   json other = config;
   other["Solver"]["SurfaceResponseCorrection"]["ImpedanceMetalRule"] = "On";
   CHECK_THROWS_WITH(IoData(other, false),
-                    ContainsSubstring("must be \"Off\" or \"Record\""));
+                    ContainsSubstring("must be \"Off\", \"Record\" or \"Apply\""));
   json off = config;
   off["Solver"]["SurfaceResponseCorrection"]["ImpedanceMetalRule"] = "Off";
   CHECK_THROWS_WITH(IoData(off, false),
@@ -216,6 +386,8 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     flipped.impedance_metal_rule = ResponseCorrectionData::ImpedanceMetalRule::OFF;
     flipped.coverage.policy =
         ResponseCorrectionData::CoverageData::Policy::MARK_NOT_APPLIED;
+    CHECK_NOTHROW(config::VerifyImpedanceMetalRuleCoveragePolicy(flipped));
+    flipped.impedance_metal_rule = ResponseCorrectionData::ImpedanceMetalRule::APPLY;
     CHECK_NOTHROW(config::VerifyImpedanceMetalRuleCoveragePolicy(flipped));
   }
 }

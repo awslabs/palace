@@ -8,6 +8,7 @@
 #include <fmt/format.h>
 #include <fmt/ranges.h>
 #include <mfem.hpp>
+#include <nlohmann/json.hpp>
 #include "utils/units.hpp"
 
 namespace palace
@@ -27,9 +28,31 @@ const char *FilmServiceName(FilmService service)
       return "SERVED-BY-OVERRIDE";
     case FilmService::NOT_SERVED_BY_OVERRIDE:
       return "NOT-SERVED-BY-OVERRIDE";
+    case FilmService::INDUCTIVE_ABOVE_RANGE:
+      return "ABOVE-RANGE";
   }
   return "NOT-DECLARED";
 }
+
+namespace
+{
+
+// The sheet form of a metal attribute in the mesh (decision 2197 (2): an inductive sheet is
+// sometimes cracked and sometimes not): the per-face law differs between the forms.
+std::string SheetFormName(const config::BoundaryData &boundaries, int attribute)
+{
+  if (boundaries.split_impedance_attributes.contains(attribute))
+  {
+    return "cracked, legacy split (2 Ls on each face)";
+  }
+  if (boundaries.cracked_attributes.contains(attribute))
+  {
+    return "cracked (Ls on each face)";
+  }
+  return "uncracked (one sheet of Ls)";
+}
+
+}  // namespace
 
 const char *ImpedanceLawStatusName(ImpedanceLawStatus status)
 {
@@ -96,7 +119,13 @@ FilmRuleResolution ResolveImpedanceMetalFilm(
     const config::ElectrostaticSolverData::ResponseCorrectionData &request,
     const Units &units, bool nondimensionalized)
 {
+  using ImpedanceMetalRule =
+      config::ElectrostaticSolverData::ResponseCorrectionData::ImpedanceMetalRule;
   FilmRuleResolution resolution;
+  const bool apply = request.impedance_metal_rule == ImpedanceMetalRule::APPLY;
+  resolution.apply = apply;
+  resolution.max_inductance = request.impedance_metal_max_inductance;
+  resolution.max_inductance_is_default = !request.impedance_metal_max_inductance_given;
   const double impedance_scale =
       nondimensionalized ? units.GetScaleFactor<Units::ValueType::IMPEDANCE>() : 1.0;
   const double inductance_scale =
@@ -127,14 +156,25 @@ FilmRuleResolution ResolveImpedanceMetalFilm(
   }
   for (const auto &data : boundaries.impedance)
   {
-    const bool inductive = data.Rs == 0.0 && data.Cs == 0.0;
+    const double inductance = data.Ls * inductance_scale;
+    // Apply (decision 2206 (a)): a purely inductive sheet is served within the Ls range
+    // [0, ImpedanceMetalMaxInductance] of its configured Ls, in every sheet form; above it
+    // it is not served. Record serves any Ls (the measuring mode of stage A).
+    const bool inductive =
+        data.Rs == 0.0 && data.Cs == 0.0 && (!apply || inductance >= 0.0);
+    const bool in_range = !apply || inductance <= resolution.max_inductance;
     const std::string law =
         fmt::format("Impedance Rs {:.6g} Ls {:.6g} Cs {:.6g}", data.Rs * impedance_scale,
-                    data.Ls * inductance_scale, data.Cs * capacitance_scale);
+                    inductance, data.Cs * capacitance_scale);
     for (const int attribute : data.attributes)
     {
       Add(attribute, law,
-          inductive ? FilmService::FILM_INDUCTIVE : FilmService::NOT_DECLARED);
+          inductive ? (in_range ? FilmService::FILM_INDUCTIVE
+                                : FilmService::INDUCTIVE_ABOVE_RANGE)
+                    : FilmService::NOT_DECLARED);
+      auto &entry = resolution.attributes[attribute];
+      entry.inductance = inductive ? inductance : 0.0;
+      entry.form = SheetFormName(boundaries, attribute);
     }
   }
   for (const auto &data : boundaries.rational_impedance)
@@ -171,6 +211,20 @@ FilmRuleResolution ResolveImpedanceMetalFilm(
         }
         else
         {
+          MFEM_VERIFY(
+              !apply,
+              "ImpedanceMetalFilmOverrides: attribute "
+                  << attribute << " (" << record.law
+                  << ") cannot be served by an override under \"ImpedanceMetalRule\": "
+                     "\"Apply\": "
+                  << (record.service == FilmService::INDUCTIVE_ABOVE_RANGE
+                          ? fmt::format("its Ls is above the Ls range served "
+                                        "(ImpedanceMetalMaxInductance = {:.6g} H/sq); a "
+                                        "larger ImpedanceMetalMaxInductance serves it",
+                                        resolution.max_inductance)
+                          : std::string("Apply serves perfect conductors and purely "
+                                        "inductive sheets (Rs = 0, Cs = 0) only"))
+                  << "!");
           record.service = FilmService::SERVED_BY_OVERRIDE;
           override_lines.push_back(fmt::format(
               "  override: attribute {:d} ({}) served by override: not a purely inductive "
@@ -190,22 +244,35 @@ FilmRuleResolution ResolveImpedanceMetalFilm(
   }
 
   // The printed lines: the film line (the laws treated as the library's film and their
-  // attributes), the overrides, then one line per law not served.
+  // attributes; under Apply with each sheet's form, the Ls range and the Ls values met),
+  // the overrides, then one line per law not served.
   std::map<std::string, std::vector<int>> film_laws, not_served_laws;
+  std::set<double> served_inductances;
   for (const auto &[attribute, record] : resolution.attributes)
   {
+    const bool sheet = record.law.rfind("Impedance", 0) == 0;
+    const std::string law = apply && sheet && !record.form.empty()
+                                ? record.law + ", " + record.form
+                                : record.law;
     if (FilmServiceServes(record.service))
     {
-      film_laws[record.law + (record.service == FilmService::SERVED_BY_OVERRIDE
-                                  ? " (served by override)"
-                                  : "")]
+      film_laws[law + (record.service == FilmService::SERVED_BY_OVERRIDE
+                           ? " (served by override)"
+                           : "")]
           .push_back(attribute);
+      if (record.service == FilmService::FILM_INDUCTIVE)
+      {
+        served_inductances.insert(record.inductance);
+      }
     }
     else
     {
-      not_served_laws[record.law + (record.service == FilmService::NOT_SERVED_BY_OVERRIDE
-                                        ? " (not served by override)"
-                                        : "")]
+      not_served_laws[law + (record.service == FilmService::NOT_SERVED_BY_OVERRIDE
+                                 ? " (not served by override)"
+                                 : (record.service == FilmService::INDUCTIVE_ABOVE_RANGE
+                                        ? fmt::format(": ABOVE the Ls range <= {:.6g} H/sq",
+                                                      resolution.max_inductance)
+                                        : ""))]
           .push_back(attribute);
     }
     if (record.service == FilmService::FILM_INDUCTIVE ||
@@ -215,24 +282,104 @@ FilmRuleResolution ResolveImpedanceMetalFilm(
       resolution.candidate_differs = true;
     }
   }
+  resolution.served_inductances.assign(served_inductances.begin(),
+                                       served_inductances.end());
   std::string film;
   for (const auto &[law, attributes] : film_laws)
   {
     film += fmt::format("{}{} [{}]", film.empty() ? "" : "; ", law,
                         fmt::join(attributes, ", "));
   }
-  resolution.lines.push_back(fmt::format(
-      "Impedance-metal rule (RECORD): film = the library's film: an ASSUMPTION: "
-      "{}",
-      film.empty() ? "none" : film));
+  if (apply)
+  {
+    std::vector<std::string> met;
+    for (const double inductance : resolution.served_inductances)
+    {
+      met.push_back(fmt::format("{:.6g}", inductance));
+    }
+    resolution.lines.push_back(fmt::format(
+        "Impedance-metal rule (APPLY): treated as the library's perfect-conductor film (an "
+        "ASSUMPTION): {}; Ls range served: 0 <= Ls <= {:.6g} H/sq "
+        "(ImpedanceMetalMaxInductance{}); served Ls met: {}",
+        film.empty() ? "none" : film, resolution.max_inductance,
+        resolution.max_inductance_is_default
+            ? ": the default, a placeholder until the breakdown study"
+            : ": configured",
+        met.empty() ? "none" : fmt::format("{} H/sq", fmt::join(met, ", "))));
+  }
+  else
+  {
+    resolution.lines.push_back(fmt::format(
+        "Impedance-metal rule (RECORD): film = the library's film: an ASSUMPTION: "
+        "{}",
+        film.empty() ? "none" : film));
+  }
   resolution.lines.insert(resolution.lines.end(), override_lines.begin(),
                           override_lines.end());
   for (const auto &[law, attributes] : not_served_laws)
   {
-    resolution.lines.push_back(fmt::format("  not served ({}): attributes [{}]", law,
-                                           fmt::join(attributes, ", ")));
+    resolution.lines.push_back(fmt::format(
+        "  not served ({}): attributes [{}]{}", law, fmt::join(attributes, ", "),
+        apply ? ": their corrected values are not served (raw)" : ""));
   }
   return resolution;
+}
+
+bool ImpedanceLawStatusServesSheet(const std::string &status)
+{
+  return status == ImpedanceLawStatusName(ImpedanceLawStatus::SUBSTITUTED) ||
+         status == ImpedanceLawStatusName(ImpedanceLawStatus::MIXED_LAW) ||
+         status == ImpedanceLawStatusName(ImpedanceLawStatus::SERVED_BY_OVERRIDE);
+}
+
+nlohmann::json ImpedanceApplyRecord(
+    const FilmRuleResolution &film,
+    const std::vector<
+        config::ElectrostaticSolverData::ResponseCorrectionData::ImpedanceLawFeatureData>
+        &features,
+    bool with_features)
+{
+  std::map<std::string, int> counts;
+  int served = 0;
+  double served_length = 0.0;
+  nlohmann::json rows = nlohmann::json::array();
+  for (const auto &feature : features)
+  {
+    counts[feature.status]++;
+    if (ImpedanceLawStatusServesSheet(feature.status))
+    {
+      served++;
+      served_length += feature.length;
+    }
+    if (with_features)
+    {
+      rows.push_back({{"Id", feature.feature},
+                      {"Type", feature.type},
+                      {"DeviceLaw", feature.device_law},
+                      {"LawStatus", feature.status},
+                      {"Override", feature.override_status},
+                      {"DeviceKeyHash", feature.device_hash},
+                      {"ServedKeyHash", feature.served_hash},
+                      {"Model", feature.model}});
+    }
+  }
+  nlohmann::json record = {
+      {"Mode", "Apply"},
+      {"Lines", film.lines},
+      {"MaxInductance", film.max_inductance},
+      {"MaxInductanceIsDefault", film.max_inductance_is_default},
+      {"ServedInductances", film.served_inductances},
+      {"LawStatusCounts", counts},
+      {"ServedImpedanceFeatures", served},
+      {"ServedImpedanceLength", served_length},
+      {"Validated", false},
+      {"Note", "corrected values on impedance sheets are served by perfect-conductor "
+               "models: computed, not validated"}};
+  if (with_features)
+  {
+    record["Features"] = std::move(rows);
+  }
+  return record;
 }
 
 }  // namespace palace

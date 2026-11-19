@@ -1879,16 +1879,28 @@ public:
     // the measuring-only mode: the operator of record is built and evaluated as under OFF,
     // and a CANDIDATE (what the rule would give: the library's film metals served as
     // perfect conductors) is written to separate files marked "CANDIDATE: NOT OF RECORD".
-    // "Apply" is refused at load in this stage.
+    // APPLY (decision 2206 (a); DESIGN-APPLY) = the serving route: the operator of record
+    // itself serves perfect conductors and purely inductive Impedance sheets (Rs = 0,
+    // Cs = 0, Ls within impedance_metal_max_inductance) by the perfect-conductor models; no
+    // candidate is built and no law reading is taken.
     enum class ImpedanceMetalRule : char
     {
       OFF,
-      RECORD
+      RECORD,
+      APPLY
     };
     ImpedanceMetalRule impedance_metal_rule = ImpedanceMetalRule::OFF;
+    // ImpedanceMetalMaxInductance (APPLY only; H/sq, SI, never nondimensionalized): the
+    // upper end of the Ls range APPLY serves; an inductive sheet above it is not served
+    // (raw) and the run says so. The default is a placeholder until the breakdown study of
+    // decision 2206: twice the designers' value of record 4.5e-14 H/sq.
+    static constexpr double kDefaultImpedanceMetalMaxInductance = 9.0e-14;
+    double impedance_metal_max_inductance = kDefaultImpedanceMetalMaxInductance;
+    bool impedance_metal_max_inductance_given = false;
     // ImpedanceMetalFilmOverrides: per metal boundary attribute, serve (true) or do not
-    // serve (false) it as the library's film, whatever its law (ruling 2012); RECORD only;
-    // every override is printed.
+    // serve (false) it as the library's film (ruling 2012): RECORD in either direction,
+    // whatever its law; APPLY un-serves any metal, and serves only what the rule serves by
+    // default (any other Serve true is refused at set-up). Every override is printed.
     struct ImpedanceMetalFilmOverrideData
     {
       std::vector<int> attributes;
@@ -2242,6 +2254,7 @@ public:
 // values beside the values of record, so it runs only where the coverage policy prints
 // every corrected value: "Record" with the RESOLVED Coverage.Policy "MarkNotApplied" (the
 // key, or the default when the key is absent) is refused (ruling 2065). Called at load.
+// "Apply" writes no candidate value, so it runs under either policy (DESIGN-APPLY s7).
 void VerifyImpedanceMetalRuleCoveragePolicy(
     const ElectrostaticSolverData::ResponseCorrectionData &data);
 

@@ -1154,6 +1154,16 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                  "every metal is a perfect conductor there (nothing to substitute; no "
                  "candidate, no law reading)\n");
     }
+    else if (response_config->impedance_metal_rule ==
+             config::ElectrostaticSolverData::ResponseCorrectionData::ImpedanceMetalRule::
+                 APPLY)
+    {
+      // The impedance-metal rule's "Apply" (decision 2206 (a); DESIGN-APPLY s8): an
+      // electrostatic run solves no impedance boundary, so the rule serves nothing here.
+      Mpi::Print("\nImpedance-metal rule (APPLY): electrostatic runs solve no impedance "
+                 "boundary: every metal is a perfect conductor there; the rule serves "
+                 "nothing; values as \"Off\"\n");
+    }
     response_correction = SurfaceResponseOperator::ConstructElectrostatic(
         iodata, laplace_op, &response_geometry);
     // Lane fix-response-memory (decisions 1446 / 1447): the gathered per-patch records live

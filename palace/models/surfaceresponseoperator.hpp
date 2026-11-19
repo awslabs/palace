@@ -1882,6 +1882,13 @@ public:
   };
   bool LawReadingEnabled() const { return law_reading_enabled; }
   bool IsImpedanceRuleCandidate() const { return impedance_rule_candidate; }
+  // The impedance-metal rule's "Apply" (decision 2206 (a)): the film resolution this
+  // operator of record was built with at its seam; null otherwise (also under "Apply" on a
+  // path without the seam).
+  const FilmRuleResolution *GetImpedanceApplyRule() const
+  {
+    return impedance_apply_rule.get();
+  }
   // The readings of the last Maxwell gate call (root; sorted by patch; empty elsewhere).
   const std::vector<LawReadingRecord> &GetLawReadings() const { return law_readings; }
   // The candidate's per-feature law service (root's table rows; every rank's statuses).
@@ -1891,7 +1898,8 @@ public:
   {
     return impedance_law_features;
   }
-  // The law status (ImpedanceLawStatus code) of a feature; -1 on an operator of record.
+  // The law status (ImpedanceLawStatus code) of a feature; -1 on an operator of record
+  // without the "Apply" seam.
   int ImpedanceLawStatusOfFeature(int feature) const;
   // The runtime model's topology name and the law status of a global patch's feature
   // (the root's view: the record carries the feature).
@@ -1899,6 +1907,7 @@ public:
 
 private:
   bool impedance_rule_candidate = false;
+  std::shared_ptr<const FilmRuleResolution> impedance_apply_rule;
   bool law_reading_enabled = false;
   std::vector<signed char> impedance_law_feature_status;
   std::vector<
@@ -2098,6 +2107,9 @@ public:
   // sub-directory of the output directory when the key is unset.
   static constexpr const char *kImpedanceCandidateDiagnosticsDirectory =
       "impedance-rule-candidate";
+  // The impedance-metal rule's "Apply" (decision 2206 (a)): its per-feature table's
+  // sub-directory of the output directory when Diagnostics.Directory is unset.
+  static constexpr const char *kImpedanceApplyDiagnosticsDirectory = "impedance-rule";
   static constexpr const char *kImpedanceCandidateRecordsFile =
       "surface-response-impedance-conductor-consistency-records.json";
   const std::string &GetDiagnosticsDirectory() const { return diagnostics_directory; }

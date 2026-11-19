@@ -6,6 +6,7 @@
 #include <array>
 #include <cmath>
 #include <utility>
+#include <fmt/ranges.h>
 #include <mfem.hpp>
 #include <nlohmann/json.hpp>
 #include "drivers/transientsolver.hpp"
@@ -17,6 +18,7 @@
 #include "models/portexcitations.hpp"
 #include "models/postoperator.hpp"
 #include "models/surfacepostoperator.hpp"
+#include "models/surfaceresponsefilmrule.hpp"
 #include "models/surfaceresponseoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/dorfler.hpp"
@@ -854,6 +856,28 @@ void BaseSolver::SaveMetadata(SurfaceResponseOperator &response) const
     meta["SurfaceResponse"]["Resolution"] =
         ResolutionRunMetadata(response.GetResolutionRunRecord(), solve_level, solve_levels);
     resolution_banner = ResolutionRunBanner(meta["SurfaceResponse"]["Resolution"]);
+    // The impedance-metal rule's "Apply" (decision 2206 (a); DESIGN-APPLY s6): its record
+    // beside the coverage block, and one banner line when it served a feature on an
+    // impedance sheet (the tables of record keep their headers and status words).
+    if (const auto *film = response.GetImpedanceApplyRule())
+    {
+      auto &record = meta["SurfaceResponse"]["ImpedanceMetalRule"];
+      record = ImpedanceApplyRecord(*film, response.GetImpedanceLawFeatures(), false);
+      const int served = record.at("ServedImpedanceFeatures").get<int>();
+      if (served > 0)
+      {
+        std::vector<std::string> inductances;
+        for (const double inductance : film->served_inductances)
+        {
+          inductances.push_back(fmt::format("{:.6g}", inductance));
+        }
+        coverage_banner += fmt::format(
+            "*** IMPEDANCE-METAL RULE (APPLY): {:d} corrected feature(s) on purely "
+            "inductive sheets (Ls {} H/sq) are served by perfect-conductor models: "
+            "computed, not validated ***\n",
+            served, fmt::join(inductances, ", "));
+      }
+    }
     // Round 2a R2 (decision 1475 (1)): the Records spilled by the root are spliced in place
     // of the empty in-memory array (the same bytes), then the scratch file is removed.
     auto *spill = response.GetConductorConsistencyRecordsSpill();

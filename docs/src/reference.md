@@ -2521,7 +2521,33 @@ every measurement checks that the candidate equals the record cell for cell (a m
 ends the run with an error). `"Record"` runs
 only with `Coverage.Policy` `"Warn"`: with `"MarkNotApplied"` (set by the key or by
 default) it is refused at load, since the candidate tables would print values for cells
-the tables of record withhold. `"Apply"` is reserved and refused in this build.
+the tables of record withhold.
+
+`"ImpedanceMetalRule": "Apply"` (decision 2206 (a); EXPERIMENTAL, opt-in, NOT VALIDATED)
+is the serving route: on the same runs, the operator of record itself treats a perfect
+conductor and a purely inductive `Impedance` sheet (`Rs` = 0, `Cs` = 0, 0 <= `Ls` <=
+`"ImpedanceMetalMaxInductance"`, cracked or not) as the library's film: its features are
+identified, keyed, matched and placed as a perfect conductor's and corrected by the
+perfect-conductor models, while the solve keeps the impedance law. No candidate is built
+and no law reading is taken. One printed line names what was treated as metal (with each
+sheet's form: uncracked, one sheet of `Ls`; cracked, `Ls` on each face; or the legacy
+split, `2 Ls` on each face), the `Ls` range served and the `Ls` values met;
+`"ImpedanceMetalMaxInductance"` (H/sq; default `9e-14`, twice the designers' `4.5e-14`:
+a placeholder until the breakdown study) bounds the configured `Ls` in every form, and a
+sheet above it is not served (`ABOVE-RANGE`: raw, named). The tables of record keep their
+columns and status words; `palace.json` `SurfaceResponse.ImpedanceMetalRule` records the
+mode, the lines, the bound, the `Ls` met and the law-status counts, the run's coverage
+banner adds one line when a feature on an impedance sheet is served, and
+`surface-response-impedance-rule-features.csv` (per feature: device law, law status, both
+key hashes, model) is written in the diagnostics directory (`Diagnostics.Directory`, or
+`impedance-rule` when it is unset). A preflight's manifest of record is the served
+identification, with an `ImpedanceMetalRule` block. Under `"Apply"` an override may
+un-serve any metal and may serve only what the rule serves by default (any other `Serve`
+true is refused before the solve). `"Apply"` runs under either coverage policy (it prints
+no candidate value). Electrostatic runs solve no impedance boundary: there `"Apply"`
+serves nothing (one line; values as `"Off"`); two-dimensional boundary-mode runs and
+`PatchConstruction` `"Legacy"` have no seam (one line; as `"Off"`). Every corrected value on
+an impedance sheet is computed, not validated.
 
 Exit status of a preflight: `0` when it completed; `3` when it wrote its manifest and patch
 dry run (3D) in full and then ended because `GeometryFailurePolicy` is `FailClosed` (the

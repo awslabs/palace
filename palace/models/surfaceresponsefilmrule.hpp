@@ -7,6 +7,7 @@
 #include <map>
 #include <string>
 #include <vector>
+#include <nlohmann/json_fwd.hpp>
 #include "utils/configfile.hpp"
 
 namespace palace
@@ -15,14 +16,15 @@ namespace palace
 class Units;
 
 //
-// The impedance-metal rule's film resolution (decisions 2006 / 2012; EXPERIMENTAL, stage A:
-// read only under Solver.SurfaceResponseCorrection.ImpedanceMetalRule = "Record"). By
+// The impedance-metal rule's film resolution (decisions 2006 / 2012 / 2206; EXPERIMENTAL:
+// read under Solver.SurfaceResponseCorrection.ImpedanceMetalRule "Record" or "Apply"). By
 // default, with no tag from the designer, a metal boundary is treated as the library's film
-// iff it is a perfect conductor or a PURELY INDUCTIVE Impedance sheet (Rs = 0 and Cs = 0,
-// any Ls): an ASSUMPTION, printed on every run. A boundary with Rs != 0 or Cs != 0, a
-// Conductivity or a RationalImpedance law is not served. ImpedanceMetalFilmOverrides serves
-// or un-serves an attribute in either direction, whatever its law; every override is
-// printed.
+// iff it is a perfect conductor or a PURELY INDUCTIVE Impedance sheet (Rs = 0 and Cs = 0;
+// any Ls under "Record"; 0 <= Ls <= ImpedanceMetalMaxInductance under "Apply"): an
+// ASSUMPTION, printed on every run. A boundary with Rs != 0 or Cs != 0, a Conductivity or a
+// RationalImpedance law is not served. ImpedanceMetalFilmOverrides serves or un-serves an
+// attribute: under "Record" in either direction, whatever its law, under "Apply" serving
+// only what the rule serves by default; every override is printed.
 //
 
 // What the candidate does with the metal of one boundary attribute.
@@ -32,7 +34,8 @@ enum class FilmService : char
   FILM_INDUCTIVE,      // a purely inductive sheet: served as the film (substituted)
   NOT_DECLARED,        // another law: not served (as today)
   SERVED_BY_OVERRIDE,  // another law, served by an override (not a purely inductive sheet)
-  NOT_SERVED_BY_OVERRIDE  // a film law the designer marked "not the library's film"
+  NOT_SERVED_BY_OVERRIDE,  // a film law the designer marked "not the library's film"
+  INDUCTIVE_ABOVE_RANGE    // Apply: a purely inductive sheet above the Ls range: not served
 };
 
 // The name of a service in the candidate tables.
@@ -45,11 +48,23 @@ struct FilmRuleAttribute
   std::string law;
   FilmService service = FilmService::NOT_DECLARED;
   bool overridden = false;
+  // A purely inductive sheet's configured Ls (H/sq, SI; 0 for every other law) and the
+  // sheet form of the attribute in the mesh ("uncracked (one sheet of Ls)", "cracked (Ls on
+  // each face)" or "cracked, legacy split (2 Ls on each face)").
+  double inductance = 0.0;
+  std::string form;
 };
 
 struct FilmRuleResolution
 {
   std::map<int, FilmRuleAttribute> attributes;
+  // "Apply" (decision 2206 (a)): the film rule is the seam of the operator of record, with
+  // the Ls range [0, max_inductance] (H/sq); false = "Record" (the candidate's seam).
+  bool apply = false;
+  double max_inductance = 0.0;
+  bool max_inductance_is_default = true;
+  // The Ls values (H/sq, sorted, distinct) of the purely inductive sheets served.
+  std::vector<double> served_inductances;
   // The candidate's seam differs from the record's on some attribute (a served law that is
   // not PEC, or an override that changes the default): a candidate operator is built.
   bool candidate_differs = false;
@@ -89,13 +104,30 @@ inline bool FilmServiceServes(FilmService service)
 }
 
 // The resolution of the rule on the run's metal boundaries (PEC, AuxPEC, Conductivity,
-// Impedance, RationalImpedance). `nondimensionalized`: the boundary data hold scaled
-// values (printed in SI through `units`). An override naming an attribute that is not a
-// metal boundary of the run is refused.
+// Impedance, RationalImpedance), in the mode of `request` ("Record" or "Apply").
+// `nondimensionalized`: the boundary data hold scaled values (printed and range-checked in
+// SI through `units`). An override naming an attribute that is not a metal boundary of the
+// run is refused; under "Apply" so is an override that serves what the rule does not.
 FilmRuleResolution ResolveImpedanceMetalFilm(
     const config::BoundaryData &boundaries,
     const config::ElectrostaticSolverData::ResponseCorrectionData &request,
     const Units &units, bool nondimensionalized);
+
+// Whether a feature's law status (ImpedanceLawStatusName) is served on a metal that is not
+// a perfect conductor (SUBSTITUTED, MIXED-LAW, SERVED-BY-OVERRIDE).
+bool ImpedanceLawStatusServesSheet(const std::string &status);
+
+// The "ImpedanceMetalRule" record of an "Apply" run (palace.json SurfaceResponse and the
+// preflight manifest of record; decision 2206 (a)): the mode, the printed lines, the Ls
+// range, the Ls values met and, from the feature rows (`features`: the root's), the
+// law-status counts and the features served on impedance sheets; the rows themselves when
+// `with_features`. "Validated" is false: no Ls corrected value is validated yet.
+nlohmann::json ImpedanceApplyRecord(
+    const FilmRuleResolution &film,
+    const std::vector<
+        config::ElectrostaticSolverData::ResponseCorrectionData::ImpedanceLawFeatureData>
+        &features,
+    bool with_features);
 
 }  // namespace palace
 

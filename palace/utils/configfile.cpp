@@ -2280,17 +2280,9 @@ ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
       if (auto rule = correction.find("ImpedanceMetalRule"); rule != correction.end())
       {
         MFEM_VERIFY(rule->is_string(),
-                    "Response-correction \"ImpedanceMetalRule\" must be \"Off\" or "
-                    "\"Record\"!");
+                    "Response-correction \"ImpedanceMetalRule\" must be \"Off\", "
+                    "\"Record\" or \"Apply\"!");
         const std::string value = rule->get<std::string>();
-        MFEM_VERIFY(
-            value != "Apply",
-            "Response-correction \"ImpedanceMetalRule\": \"Apply\" is reserved "
-            "and not available in this build: this version of the impedance-metal "
-            "rule measures only (\"Record\"); corrected values on impedance metals "
-            "need a validated tolerance of the on-metal check, which does not exist "
-            "yet; use \"Record\" (corrected values of record unchanged, candidate "
-            "values in separate files) or \"Off\"!");
         if (value == "Off")
         {
           data.impedance_metal_rule = ResponseCorrectionData::ImpedanceMetalRule::OFF;
@@ -2299,20 +2291,39 @@ ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
         {
           data.impedance_metal_rule = ResponseCorrectionData::ImpedanceMetalRule::RECORD;
         }
+        else if (value == "Apply")
+        {
+          data.impedance_metal_rule = ResponseCorrectionData::ImpedanceMetalRule::APPLY;
+        }
         else
         {
-          MFEM_ABORT("Response-correction \"ImpedanceMetalRule\" must be \"Off\" or "
-                     "\"Record\"!");
+          MFEM_ABORT("Response-correction \"ImpedanceMetalRule\" must be \"Off\", "
+                     "\"Record\" or \"Apply\"!");
         }
+      }
+      if (auto bound = correction.find("ImpedanceMetalMaxInductance");
+          bound != correction.end())
+      {
+        MFEM_VERIFY(data.impedance_metal_rule ==
+                        ResponseCorrectionData::ImpedanceMetalRule::APPLY,
+                    "Response-correction \"ImpedanceMetalMaxInductance\" requires "
+                    "\"ImpedanceMetalRule\": \"Apply\" (the bound has no effect "
+                    "otherwise and is refused rather than ignored)!");
+        MFEM_VERIFY(bound->is_number() && std::isfinite(bound->get<double>()) &&
+                        bound->get<double>() > 0.0,
+                    "Response-correction \"ImpedanceMetalMaxInductance\" must be a "
+                    "finite positive surface inductance (H/sq)!");
+        data.impedance_metal_max_inductance = bound->get<double>();
+        data.impedance_metal_max_inductance_given = true;
       }
       if (auto overrides = correction.find("ImpedanceMetalFilmOverrides");
           overrides != correction.end())
       {
-        MFEM_VERIFY(data.impedance_metal_rule ==
-                        ResponseCorrectionData::ImpedanceMetalRule::RECORD,
+        MFEM_VERIFY(data.impedance_metal_rule !=
+                        ResponseCorrectionData::ImpedanceMetalRule::OFF,
                     "Response-correction \"ImpedanceMetalFilmOverrides\" requires "
-                    "\"ImpedanceMetalRule\": \"Record\" (an override has no effect "
-                    "otherwise and is refused rather than ignored)!");
+                    "\"ImpedanceMetalRule\": \"Record\" or \"Apply\" (an override "
+                    "has no effect otherwise and is refused rather than ignored)!");
         MFEM_VERIFY(overrides->is_array(),
                     "Response-correction \"ImpedanceMetalFilmOverrides\" must be an "
                     "array!");
