@@ -1171,8 +1171,9 @@ public:
   bool mg_smooth_cheby_4th = true;
 
   // Symmetric or one-sided V-cycles for geometric multigrid, which pre-smooth but do not
-  // post-smooth (for the GMRES and FGMRES Krylov solvers), or those which need fewer
-  // iterations in the first linear solve, the default for eigenmode problems.
+  // post-smooth (for the GMRES and FGMRES Krylov solvers), or the one-sided ones if they
+  // need at most as many iterations in the first linear solve, the default for eigenmode
+  // problems.
   MultigridCycle mg_cycle = MultigridCycle::DEFAULT;
 
   // For frequency domain applications, precondition linear systems with a real-valued

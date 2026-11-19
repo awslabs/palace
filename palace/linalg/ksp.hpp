@@ -89,8 +89,9 @@ public:
 
   void SetOperators(const OperType &op, const OperType &pc_op);
 
-  // Choose between one-sided and symmetric V-cycles for these multigrid preconditioners on
-  // the next solve: the V-cycles which need fewer iterations are kept.
+  // Choose between symmetric and one-sided V-cycles for these multigrid preconditioners on
+  // the next solve: the one-sided V-cycles are kept if they need at most as many
+  // iterations.
   void SetAutoMultigridCycle(std::vector<GeometricMultigridSolver<OperType> *> &&gmg,
                              int print);
 
