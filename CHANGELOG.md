@@ -43,6 +43,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     eigenvalues of adaptive simulations change at the level of the solver tolerances, and
     fewer converged eigenpairs beyond the requested ones can be reported. SchemaVer 4-4-2.
     [PR 1203](https://github.com/awslabs/palace/pull/1203).
+  - Rebalancing a nonconforming mesh during adaptive refinement now keeps each root of its
+    refinement tree on one process, when the load stays within half of
+    `Model.Refinement.MaximumImbalance`, so that saving the adapted mesh needs no
+    redistribution; the partition, and so round-off, can differ from before.
+    [PR 1214](https://github.com/awslabs/palace/pull/1214).
   - When `Solver.Linear.Type` is `"Default"` (or omitted) for frequency domain problems,
     and for the wave port and boundary mode eigenvalue solves, *Palace* now prefers
     STRUMPACK over SuperLU_DIST, then MUMPS, as the sparse direct solver when built with
@@ -77,6 +82,21 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     `"Direction"`, such as L-shaped ports, and 2D ports with `"Direction"` normal to their
     edge, now abort.
     [PR 1194](https://github.com/awslabs/palace/pull/1194).
+  - `config["Solver"]["Linear"]["InitialGuess"]` now defaults to `true` for adaptive
+    frequency sweeps too. There, the HDM solve of the sample which would complete the
+    convergence memory starts from the PROM solution, to certify the PROM: if the linear
+    solver converges, to the tighter of `"Tol"` and `"AdaptiveTol"`, and changes it by less
+    than `"AdaptiveTol"`, the sweep stops, and this solution is added to the basis as the
+    last sample (unless it is already in the span of the basis, for example when the PROM
+    solution already meets this tolerance); otherwise, the sample is solved again from zero
+    (reusing the operators and the preconditioner), as are all other samples. With GMRES and
+    left preconditioning (the defaults), a certification which fails stops as soon as the
+    change exceeds `"AdaptiveTol"`. With an explicit `"InitialGuess": true`, adaptive sweeps
+    used to start each HDM solve from the solution at the previous sample. When the PROM is
+    certified, the last HDM solve of the excitation needs fewer linear solver iterations,
+    and the results of adaptive sweeps change by about the accuracy of the PROM. Set
+    `"InitialGuess": false` to restore the previous default behavior. SchemaVer 5-0-0
+    [PR 1126](https://github.com/awslabs/palace/pull/1126).
 
 #### New Features
 
@@ -93,6 +113,18 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     each a fine-level matrix-vector product and a reduction over all processes, and the
     first relaxation of its auxiliary space solves skips the exchange of their zero initial
     guess. Results are unchanged. [PR 1238](https://github.com/awslabs/palace/pull/1238).
+  - With `Model.Refinement.SaveAdaptMesh`, a nonconforming adapted mesh is saved without
+    gathering it on the root: every process prints its part of the file, and the root only
+    writes the compressed parts. The saved file holds the same mesh and refinement tree as
+    before, numbered differently (the roots are listed process by process). Meshes the
+    parallel save does not support are still gathered, with a warning.
+    [PR 1214](https://github.com/awslabs/palace/pull/1214).
+  - A restart from a nonconforming adapted mesh which *Palace* saved reads the mesh in
+    parallel: every process reads a slice of the file (the root decompresses a compressed
+    file and sends each process its slice), the coarse mesh is rebuilt from the roots of the
+    refinement tree, and each process refines its roots and reads their nodes, instead of
+    every process reading the whole mesh.
+    [PR 1215](https://github.com/awslabs/palace/pull/1215).
   - Added a STRUMPACK patch for
     [pghysels/STRUMPACK#174](https://github.com/pghysels/STRUMPACK/pull/174), which *Palace*
     always enables: the STRUMPACK solvers store their fill-reducing permutation once per
@@ -129,7 +161,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - The linear solves of driven simulations without adaptive frequency sweep now start from
     the minimal-residual combination of the solutions at up to four previous frequencies,
     and GMRES and FGMRES scale nonzero initial guesses to minimize the initial residual.
-    This reduces the iterations of frequency sweeps. SchemaVer 4-4-4.
+    This reduces the iterations of frequency sweeps. SchemaVer 5-0-1.
     [PR 1229](https://github.com/awslabs/palace/pull/1229).
   - Each excitation of a uniform driven sweep now starts its first linear solve from zero
     instead of from the last solution of the previous excitation, which saves a few
@@ -301,6 +333,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     sapphire substrate, and AMR spent refinement there. The error indicator decreases for
     models with material interfaces, and their AMR meshes change.
     [PR 1072](https://github.com/awslabs/palace/pull/1072).
+  - Scaling a nonconforming mesh without nodes (for example with
+    `Model.RemoveCurvature`) now also scales the top-level vertex coordinates kept by its
+    refinement tree, so that its saved adapted mesh and restarts from it have the right
+    length unit.
+    [PR 1214](https://github.com/awslabs/palace/pull/1214).
   - Fixed driven frequency sweeps aborting with "... not found in sample frequencies!" when
     overlapping `"Samples"` ranges compute the same frequency with different rounding.
     [PR 1192](https://github.com/awslabs/palace/pull/1192).
