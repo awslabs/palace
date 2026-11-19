@@ -82,6 +82,11 @@ public:
     int_width = 1 + static_cast<int>(std::log10(its));
   }
 
+  // EXPERIMENT (PR 1233 review): get the maximum number of iterations, and the print level.
+  int GetMaxIter() const { return max_it; }
+  const mfem::IterativeSolver::PrintLevel &GetPrintLevel() const { return print_opts; }
+  void SetPrintLevel(const mfem::IterativeSolver::PrintLevel &print) { print_opts = print; }
+
   // Set the operator for the solver.
   void SetOperator(const OperType &op) override
   {

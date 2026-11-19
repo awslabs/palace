@@ -400,7 +400,7 @@ template <OperatorType OperType>
 BaseKspSolver<OperType>::BaseKspSolver(std::unique_ptr<IterativeSolver<OperType>> &&ksp,
                                        std::unique_ptr<Solver<OperType>> &&pc)
   : ksp(std::move(ksp)), pc(std::move(pc)), ksp_mult(0), ksp_mult_it(0), use_timer(false),
-    cycle_trial(-1), cycle_trial_its(0), cycle_print(0)
+    cycle_trial(-1), cycle_print(0)
 {
   if (this->pc)
   {
@@ -432,15 +432,18 @@ template <OperatorType OperType>
 void BaseKspSolver<OperType>::Mult(const VecType &x, VecType &y) const
 {
   BlockTimer bt(Timer::KSP, use_timer);
-  if (cycle_trial >= 0 && cycle_trial < 3)
+  bool converged;
+  if (cycle_trial == 0)
   {
-    MultCycleTrial(x, y);
+    converged = MultCycleTrial(x, y);
   }
   else
   {
     ksp->Mult(x, y);
+    converged = ksp->GetConverged();
+    ksp_mult_it += ksp->GetNumIterations();
   }
-  if (!ksp->GetConverged())
+  if (!converged)
   {
     Mpi::Warning(
         ksp->GetComm(),
@@ -448,53 +451,63 @@ void BaseKspSolver<OperType>::Mult(const VecType &x, VecType &y) const
         ksp->GetFinalRes() / ksp->GetInitialRes(), ksp->GetInitialRes());
   }
   ksp_mult++;
-  ksp_mult_it += ksp->GetNumIterations();
 }
 
 template <OperatorType OperType>
-void BaseKspSolver<OperType>::MultCycleTrial(const VecType &x, VecType &y) const
+bool BaseKspSolver<OperType>::MultCycleTrial(const VecType &x, VecType &y) const
 {
   auto *gmg = static_cast<GeometricMultigridSolver<OperType> *>(pc.get());
-  const bool one_sided = (cycle_trial < 2);
   VecType y0;
   y0.SetSize(y.Size());
   y0.UseDevice(true);
   y0 = y;
-  gmg->SetOneSidedCycle(one_sided);
+
+  // One-sided V-cycles first: their solution is kept unless the symmetric ones need fewer
+  // iterations.
+  gmg->SetOneSidedCycle(true);
   ksp->Mult(x, y);
-  const int its = ksp->GetNumIterations();
-  auto Choose = [&](bool choice, const char *reason)
+  const int its_1s = ksp->GetNumIterations();
+  const bool conv_1s = ksp->GetConverged();
+  ksp_mult_it += its_1s;
+
+  // Symmetric V-cycles on the same system, with at most its_1s - 1 iterations (quietly)
+  // when the one-sided solve converged.
+  VecType y_sym;
+  y_sym.SetSize(y.Size());
+  y_sym.UseDevice(true);
+  y_sym = y0;
+  const int max_it = ksp->GetMaxIter();
+  const auto print = ksp->GetPrintLevel();
+  gmg->SetOneSidedCycle(false);
+  if (conv_1s)
   {
-    gmg->SetOneSidedCycle(choice);
-    cycle_trial = 3;
-    if (cycle_print > 0)
-    {
-      Mpi::Print(ksp->GetComm(), " Multigrid V-cycles: {} ({})\n",
-                 choice ? "one-sided" : "symmetric", reason);
-    }
-  };
-  if (!ksp->GetConverged())
-  {
-    // The trial cycle did not converge: solve again with the other one, and keep it.
-    ksp_mult_it += its;
-    Choose(!one_sided,
-           one_sided ? "one-sided did not converge" : "symmetric did not converge");
-    y = y0;
-    ksp->Mult(x, y);
-    return;
+    ksp->SetMaxIter(std::max(its_1s - 1, 1));
+    ksp->SetPrintLevel(mfem::IterativeSolver::PrintLevel().None());
   }
-  if (cycle_trial == 1)
+  ksp->Mult(x, y_sym);
+  ksp->SetMaxIter(max_it);
+  ksp->SetPrintLevel(print);
+  const int its_sym = ksp->GetNumIterations();
+  const bool conv_sym = ksp->GetConverged();
+  ksp_mult_it += its_sym;
+
+  const bool symmetric = conv_sym && (!conv_1s || its_sym < its_1s);
+  if (symmetric)
   {
-    cycle_trial_its = its;
+    y = y_sym;
   }
-  else if (cycle_trial == 2)
+  gmg->SetOneSidedCycle(!symmetric);
+  cycle_trial = 3;
+  if (cycle_print > 0)
   {
-    const auto reason = fmt::format("{:d} GMRES iterations one-sided, {:d} symmetric",
-                                    cycle_trial_its, its);
-    Choose(cycle_trial_its <= its, reason.c_str());
-    return;
+    Mpi::Print(ksp->GetComm(),
+               " Multigrid V-cycles: {} (first solve: one-sided {:d} GMRES iterations{}, "
+               "symmetric {}{:d}{})\n",
+               symmetric ? "symmetric" : "one-sided", its_1s,
+               conv_1s ? "" : " without converging", conv_sym ? "" : "more than ",
+               conv_sym ? its_sym : its_sym, conv_sym ? "" : "");
   }
-  cycle_trial++;
+  return symmetric ? conv_sym : conv_1s;
 }
 
 template class BaseKspSolver<Operator>;
