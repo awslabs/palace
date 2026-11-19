@@ -27,7 +27,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     (`config["Solver"]["Substructuring"]`): the environment of a region is condensed onto
     their interface once and saved, and later runs solve only the region, also after a
     redesign or re-meshing of it, for the capacitance and inductance matrices. SchemaVer
-    4-5-0. [PR 995](https://github.com/awslabs/palace/pull/995).
+    5-1-0. [PR 995](https://github.com/awslabs/palace/pull/995).
   - Added driven substructuring (`config["Solver"]["Substructuring"]` for driven problems):
     uniform frequency sweeps condense the environment exactly at each frequency, with lumped
     ports, wave ports and lossy boundaries and materials on either side, and an online sweep
@@ -42,7 +42,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     with the condensed environment as one system, by STRUMPACK, MUMPS or SuperLU_DIST. A
     sparse direct solver that `config["Solver"]["Linear"]["Type"]` names factors both
     instead. Adds a driven example in `examples/substructuring` (a 3 x 4 grid of CPW
-    resonators). SchemaVer 4-5-1.
+    resonators). SchemaVer 5-1-1.
     [PR 1044](https://github.com/awslabs/palace/pull/1044).
   - `validate-config` accepts several configuration files and validates them in one Julia
     session. [PR 1180](https://github.com/awslabs/palace/pull/1180).
@@ -103,6 +103,21 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     `"Direction"`, such as L-shaped ports, and 2D ports with `"Direction"` normal to their
     edge, now abort.
     [PR 1194](https://github.com/awslabs/palace/pull/1194).
+  - `config["Solver"]["Linear"]["InitialGuess"]` now defaults to `true` for adaptive
+    frequency sweeps too. There, the HDM solve of the sample which would complete the
+    convergence memory starts from the PROM solution, to certify the PROM: if the linear
+    solver converges, to the tighter of `"Tol"` and `"AdaptiveTol"`, and changes it by less
+    than `"AdaptiveTol"`, the sweep stops, and this solution is added to the basis as the
+    last sample (unless it is already in the span of the basis, for example when the PROM
+    solution already meets this tolerance); otherwise, the sample is solved again from zero
+    (reusing the operators and the preconditioner), as are all other samples. With GMRES and
+    left preconditioning (the defaults), a certification which fails stops as soon as the
+    change exceeds `"AdaptiveTol"`. With an explicit `"InitialGuess": true`, adaptive sweeps
+    used to start each HDM solve from the solution at the previous sample. When the PROM is
+    certified, the last HDM solve of the excitation needs fewer linear solver iterations,
+    and the results of adaptive sweeps change by about the accuracy of the PROM. Set
+    `"InitialGuess": false` to restore the previous default behavior. SchemaVer 5-0-0
+    [PR 1126](https://github.com/awslabs/palace/pull/1126).
 
 #### New Features
 
