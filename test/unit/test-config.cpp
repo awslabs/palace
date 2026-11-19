@@ -1928,7 +1928,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
   {
     // One-sided V-cycles default to eigenmode problems with GMRES and FGMRES, with twice
     // the default smoothing order, and are an error with CG. An explicit order applies as
-    // given.
+    // given, with symmetric V-cycles unless one-sided ones are explicit too.
     auto Resolve = [](const char *problem, json linear, int order = 2)
     {
       json solver = {{"Order", order}, {"Linear", std::move(linear)}};
@@ -2005,8 +2005,12 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(symmetric.mg_one_sided == 0);
     CHECK(symmetric.mg_smooth_order == 4);
     const auto explicit_order = Resolve("Eigenmode", {{"MGSmoothOrder", 4}});
-    CHECK(explicit_order.mg_one_sided == 1);
+    CHECK(explicit_order.mg_one_sided == 0);
     CHECK(explicit_order.mg_smooth_order == 4);
+    const auto explicit_order_one_sided =
+        Resolve("Eigenmode", {{"MGSmoothOrder", 4}, {"MGOneSided", true}});
+    CHECK(explicit_order_one_sided.mg_one_sided == 1);
+    CHECK(explicit_order_one_sided.mg_smooth_order == 4);
     CHECK_THROWS(Resolve("Eigenmode", {{"KSPType", "CG"}, {"MGOneSided", true}}));
     CHECK_THROWS(Resolve("Electrostatic", {{"MGOneSided", true}}));
   }
