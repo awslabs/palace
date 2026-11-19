@@ -170,17 +170,6 @@ jobs:
           echo "DYLD_LIBRARY_PATH=/opt/arm/armpl_24.10_flang-new_clang_19/lib:${DYLD_LIBRARY_PATH:+${DYLD_LIBRARY_PATH}:}" >> $GITHUB_ENV
           hdiutil detach "/Volumes/armpl_24.10_flang-new_clang_19_installer" -quiet
 
-        # We have to upgrade CMake because the bundled one has a bug with
-        # FindMPI that prevents it from finding MPI when compiling with GNU
-        # compilers. Install it from PyPI, where pip retries failed downloads.
-      - name: Setup cmake
-        if: needs.filter.outputs.test == 'true'
-        run: |
-          pipx install cmake==3.31.10
-          PIPX_BIN_DIR=$(pipx environment --value PIPX_BIN_DIR)
-          echo "$PIPX_BIN_DIR" >> "$GITHUB_PATH"
-          "$PIPX_BIN_DIR/cmake" --version
-
       # Configure downloads dependency patches from GitHub, and skips any file
       # already present with the expected hash. Restoring them from a cache keeps
       # configure off the network. This restores the most recent entry.
@@ -200,6 +189,10 @@ jobs:
           NUM_PROC_BUILD_MAX: '32'
         run: |
           # Configure environment
+          # CMake 4 no longer passes the macOS SDK to the compiler, and Homebrew
+          # LLVM does not find the SDK's headers on its own.
+          export SDKROOT=$(xcrun --sdk macosx --show-sdk-path)
+          cmake --version
           if [[ "${{ matrix.compiler }}" == 'clang' ]]; then
             export CC=$(brew --prefix llvm@18)/bin/clang
             export CXX=$(brew --prefix llvm@18)/bin/clang++
