@@ -235,6 +235,11 @@ public:
   // Local true DOFs touched by the boundary elements with the given attributes.
   std::vector<char> BoundaryTrueDofs(const std::vector<int> &bdr_attributes) const;
 
+  // The attributes among bdr_attributes of boundary elements on Γ: each of their DOFs an
+  // interface DOF or a Dirichlet one, and one at least an interface DOF. Collective.
+  std::vector<int>
+  InterfaceBoundaryAttributes(const std::vector<int> &bdr_attributes) const;
+
   // Online, whether the mesh holds the region only (and the environment comes from the
   // saved model).
   bool RegionOnly() const { return region_only; }

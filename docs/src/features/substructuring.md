@@ -237,8 +237,9 @@ The online field is known in the region and on the interface only:
 
 The mesh of the region written by the offline sweep (see [Configuration](#Configuration)) also
 holds the environment elements at the environment's ports, whose excitations and outputs need
-them. On large designs, reading and partitioning the full mesh take most of an online sweep's
-time.
+them. Impedance and conductivity boundaries on the interface itself need the full mesh online,
+since the mesh of the region would hold them in the region alone. On large designs, reading and
+partitioning the full mesh take most of an online sweep's time.
 
 A restarted sweep ([`"Restart": x`](../config/reference.md#config-solver-driven-restart)) continues
 in the order of its solves, all excitations at a frequency before the next one, after its first

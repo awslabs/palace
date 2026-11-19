@@ -361,6 +361,28 @@ DrivenSubstructuredSweep::DrivenSubstructuredSweep(const IoData &iodata,
       space_op, sub.region_attributes, sub.environment_attributes, online,
       online ? &model : nullptr, sub.region_mesh, sub.direct_solver,
       iodata.solver.linear.sym_factorization);
+  if (ds->RegionOnly())
+  {
+    // Γ is on the boundary of the mesh of the region, so a boundary term on it would be the
+    // region's alone: in a full run it is of the side of the lower-numbered element (so
+    // possibly in S_E), and a conducting sheet couples the two sides. (A model holds no
+    // lumped port or surface current on Γ.)
+    std::vector<int> attrs;
+    for (const auto &data : iodata.boundaries.impedance)
+    {
+      attrs.insert(attrs.end(), data.attributes.begin(), data.attributes.end());
+    }
+    for (const auto &data : iodata.boundaries.conductivity)
+    {
+      attrs.insert(attrs.end(), data.attributes.begin(), data.attributes.end());
+    }
+    const std::vector<int> on_gamma = ds->InterfaceBoundaryAttributes(attrs);
+    MFEM_VERIFY(on_gamma.empty(),
+                "On the mesh of the region, boundary conditions on the substructuring "
+                "interface (attributes "
+                    << fmt::format("{}", fmt::join(on_gamma, ", "))
+                    << ") would be held by the region alone: run online on the full mesh!");
+  }
   nG = ds->InterfaceSize();
   Mpi::Print("\nSubstructuring: |Γ| = {:d} interface unknowns\n", nG);
   for (const auto &[idx, spec] : port_excitations)

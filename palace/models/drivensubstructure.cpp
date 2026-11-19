@@ -1200,6 +1200,62 @@ DrivenSubstructure::BoundaryTrueDofs(const std::vector<int> &bdr_attributes) con
       bdr_attributes);
 }
 
+std::vector<int> DrivenSubstructure::InterfaceBoundaryAttributes(
+    const std::vector<int> &bdr_attributes) const
+{
+  // On the local DOFs, also those other ranks own: 2 on Γ, 1 on the Dirichlet boundary
+  // (which Γ excludes, and which a face on Γ can touch), else 0.
+  auto &fes = const_cast<mfem::ParFiniteElementSpace &>(space_op.GetNDSpace().Get());
+  const auto &mesh = *fes.GetParMesh();
+  mfem::Vector t(fes.GetTrueVSize());
+  t = 0.0;
+  const auto &dbc_list = space_op.GetNDDbcTDofLists().back();
+  const int *dl = dbc_list.HostRead();
+  for (int q = 0; q < dbc_list.Size(); q++)
+  {
+    t(dl[q]) = 1.0;
+  }
+  for (int i = 0; i < t.Size(); i++)
+  {
+    if (is_gamma[i])
+    {
+      t(i) = 2.0;
+    }
+  }
+  mfem::ParGridFunction g(&fes);
+  g.SetFromTrueDofs(t);
+  const int amax = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+  std::vector<int> found(amax + 1, 0);
+  mfem::Array<int> dofs;
+  for (int be = 0; be < mesh.GetNBE(); be++)
+  {
+    const int a = mesh.GetBdrAttribute(be);
+    if (found[a] || std::ranges::find(bdr_attributes, a) == bdr_attributes.end())
+    {
+      continue;
+    }
+    fes.GetBdrElementDofs(be, dofs);
+    bool all = true, any = false;
+    for (int d : dofs)
+    {
+      const double v = g((d >= 0) ? d : -1 - d);
+      all = all && v > 0.5;
+      any = any || v > 1.5;
+    }
+    found[a] = all && any;
+  }
+  MPI_Allreduce(MPI_IN_PLACE, found.data(), amax + 1, MPI_INT, MPI_MAX, fes.GetComm());
+  std::vector<int> attrs;
+  for (int a = 1; a <= amax; a++)
+  {
+    if (found[a])
+    {
+      attrs.push_back(a);
+    }
+  }
+  return attrs;
+}
+
 std::vector<char>
 DrivenSubstructure::WriteRegionMesh(const std::string &path,
                                     const std::vector<int> &port_attributes,

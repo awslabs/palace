@@ -4078,6 +4078,89 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
                     ContainsSubstring("has sources on the substructuring interface"));
 }
 
+TEST_CASE("DrivenSubstructure finds the boundary attributes on Γ",
+          "[substructure][Serial][Parallel]")
+{
+  // In the box, the interior boundary between the domains is Γ, with its DOFs on the PEC
+  // faces around it; the PEC faces themselves, all Dirichlet, and the interior boundary
+  // inside the environment are not.
+  json config = {{"Problem", {{"Type", "Driven"}, {"Output", "test_output"}}},
+                 {"Model", {{"Mesh", "test.msh"}}},
+                 {"Domains", {{"Materials", {{{"Attributes", {1, 2}}}}}}},
+                 {"Boundaries",
+                  {{"PEC", {{"Attributes", {3}}}},
+                   {"LumpedPort",
+                    {{{"Index", 1},
+                      {"R", 50.0},
+                      {"Attributes", {1}},
+                      {"Direction", "+Y"},
+                      {"Excitation", true}}}}}},
+                 {"Solver",
+                  {{"Device", "CPU"},
+                   {"Driven", {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 1.0}}}}}};
+  IoData iodata(config, false);
+  mfem::Mesh serial = MakeInteriorBoundaryBox();
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  mesh.push_back(
+      std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(Mpi::World(), serial)));
+  SpaceOperator space_op(iodata, mesh);
+  DrivenSubstructure ds(space_op, {1}, {2});
+  CHECK(ds.InterfaceBoundaryAttributes({3, 4, 5}) == std::vector<int>{4});
+}
+
+TEST_CASE_METHOD(
+    palace::test::SharedTempDir,
+    "Driven substructuring on the mesh of the region rejects boundary terms on Γ",
+    "[substructure][Serial][Parallel]")
+{
+  // An impedance or a conducting sheet on Γ, the interior boundary between the domains of
+  // the box, would be the region's alone on the mesh of the region, while the full mesh
+  // runs from the model. An impedance on the interior boundary inside the environment is
+  // the model's.
+  const std::string region_mesh = RegionMeshPath((temp_dir / "box_model.bin").string());
+  using Edit = std::function<void(json &)>;
+  const std::vector<std::tuple<std::string, Edit, bool>> terms = {
+      {"impedance", [](json &config)
+       { config["Boundaries"]["Impedance"] = {{{"Attributes", {4}}, {"Rs", 377.0}}}; },
+       true},
+      {"conductivity",
+       [](json &config)
+       {
+         config["Boundaries"]["Conductivity"] = {
+             {{"Attributes", {4}}, {"Conductivity", 1.0e6}}};
+       },
+       true},
+      {"impedance in the environment", [](json &config)
+       { config["Boundaries"]["Impedance"] = {{{"Attributes", {5}}, {"Rs", 377.0}}}; },
+       false}};
+  using Catch::Matchers::ContainsSubstring;
+  for (const auto &t : terms)
+  {
+    const std::string &name = std::get<0>(t);
+    const Edit &term = std::get<1>(t);
+    const bool on_gamma = std::get<2>(t);
+    CAPTURE(name);
+    RunDrivenBox(temp_dir, "Offline", term);
+    RunDrivenBox(temp_dir, "Online", term);
+    auto on_region = [&](json &config)
+    {
+      term(config);
+      config["Model"]["Mesh"] = region_mesh;
+      config["Solver"]["Substructuring"]["RegionMesh"] = true;
+    };
+    if (on_gamma)
+    {
+      CHECK_THROWS_WITH(RunDrivenBox(temp_dir, "Online", on_region),
+                        ContainsSubstring("boundary conditions on the substructuring "
+                                          "interface (attributes 4)"));
+    }
+    else
+    {
+      RunDrivenBox(temp_dir, "Online", on_region);
+    }
+  }
+}
+
 TEST_CASE_METHOD(palace::test::SharedTempDir,
                  "Driven substructuring checks the environment against the model",
                  "[substructure][Serial][Parallel]")
