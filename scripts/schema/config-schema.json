@@ -3118,7 +3118,7 @@
         },
         "STRUMPACKSharedPermutation": {
           "type": "boolean",
-          "description": "Store the fill-reducing permutation of the STRUMPACK solvers once per compute node, in an MPI shared memory window, instead of on every process, which lowers their memory without changing the results. Has no effect with the ParMETIS ordering or with compression. If the window cannot be allocated, every process keeps its own copy.",
+          "description": "Store the fill-reducing permutation of the STRUMPACK solvers once per compute node, in an MPI shared memory window, instead of on every process, which lowers their memory without changing the results. Has no effect with the ParMETIS and PT-Scotch orderings or with compression. If the window cannot be allocated, every process keeps its own copy.",
           "default": true,
           "x-palace-advanced": true
         },
