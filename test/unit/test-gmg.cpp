@@ -312,9 +312,10 @@ TEST_CASE("Geometric multigrid V-cycle switch", "[gmg][Serial][Parallel][GPU]")
 TEST_CASE("Geometric multigrid V-cycles chosen on the first solve",
           "[gmg][Serial][Parallel]")
 {
-  // With "Auto", the first solve keeps the V-cycles which need fewer GMRES iterations, with
-  // their solution, and the next solves use them. On the shifted Maxwell problem, symmetric
-  // V-cycles need fewer iterations with smoothing order 2, and one-sided ones with order 1.
+  // With "Auto", the first solve keeps the one-sided V-cycles if they need at most as many
+  // GMRES iterations as symmetric ones, otherwise the symmetric ones, with their solution,
+  // and the next solves use them. On the shifted Maxwell problem, symmetric V-cycles need
+  // fewer iterations with smoothing order 2, and one-sided ones with order 1.
   MPI_Comm comm = Mpi::World();
   for (int smooth_order : {1, 2})
   {
@@ -356,17 +357,16 @@ TEST_CASE("Geometric multigrid V-cycles chosen on the first solve",
     }
     const int its_one_sided = Solve(ksp_one_sided, x1, u_one_sided);
     const int its_symmetric = Solve(ksp_symmetric, x1, u_symmetric);
-    const bool symmetric = (its_symmetric < its_one_sided);
-    CHECK(symmetric == (smooth_order == 2));
+    const bool one_sided = (its_one_sided <= its_symmetric);
+    CHECK(one_sided == (smooth_order == 1));
 
     // The first solve tries both, the second uses the kept V-cycles.
-    CHECK(Solve(ksp, x1, u) ==
-          its_one_sided + (symmetric ? its_symmetric : its_one_sided - 1));
-    CHECK(RelativeDifference(comm, u, symmetric ? u_symmetric : u_one_sided) <= 1.0e-12);
+    CHECK(Solve(ksp, x1, u) == its_symmetric + (one_sided ? its_one_sided : its_symmetric));
+    CHECK(RelativeDifference(comm, u, one_sided ? u_one_sided : u_symmetric) <= 1.0e-12);
     const auto &gmg =
         dynamic_cast<GeometricMultigridSolver<ComplexOperator> &>(ksp.GetPreconditioner());
-    CHECK(gmg.IsOneSided() == !symmetric);
-    CHECK(Solve(ksp, x2, u) == Solve(symmetric ? ksp_symmetric : ksp_one_sided, x2, u2));
+    CHECK(gmg.IsOneSided() == one_sided);
+    CHECK(Solve(ksp, x2, u) == Solve(one_sided ? ksp_one_sided : ksp_symmetric, x2, u2));
     CHECK(RelativeDifference(comm, u, u2) <= 1.0e-12);
   }
 }

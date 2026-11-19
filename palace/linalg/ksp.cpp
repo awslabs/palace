@@ -326,7 +326,7 @@ ConfigurePreconditionerSolver(const config::LinearSolverData &linear,
             comm, std::move(pc), fespaces.GetProlongationOperators(), &G,
             linear.mg_cycle_it, linear.mg_smooth_it, linear.mg_smooth_order,
             linear.mg_smooth_sf_max, linear.mg_smooth_sf_min, linear.mg_smooth_cheby_4th,
-            linear.mg_cycle != MultigridCycle::SYMMETRIC);
+            linear.mg_cycle == MultigridCycle::ONE_SIDED);
       }
       else
       {
@@ -334,7 +334,7 @@ ConfigurePreconditionerSolver(const config::LinearSolverData &linear,
             comm, std::move(pc), fespaces.GetProlongationOperators(), nullptr,
             linear.mg_cycle_it, linear.mg_smooth_it, linear.mg_smooth_order,
             linear.mg_smooth_sf_max, linear.mg_smooth_sf_min, linear.mg_smooth_cheby_4th,
-            linear.mg_cycle != MultigridCycle::SYMMETRIC);
+            linear.mg_cycle == MultigridCycle::ONE_SIDED);
       }
     }();
     gmg->EnableTimer();  // Enable timing for primary geometric multigrid solver
@@ -473,10 +473,10 @@ template <OperatorType OperType>
 bool BaseKspSolver<OperType>::MultAutoCycle(const VecType &x, VecType &y, double &final_res,
                                             double &initial_res) const
 {
-  // Solve with one-sided V-cycles, then the same system with symmetric ones, without
-  // printing and, when the one-sided solve converged, with at most one iteration fewer. The
-  // V-cycles which need fewer iterations are kept with their solution, the one-sided ones
-  // when tied.
+  // Solve with symmetric V-cycles, then the same system with one-sided ones, without
+  // printing and, when the symmetric solve converged, with at most as many iterations. The
+  // one-sided V-cycles are kept with their solution if they converge, so the trial costs at
+  // most one more solve.
   auto SetOneSided = [this](bool one_sided)
   {
     for (auto *gmg : auto_cycle_gmg)
@@ -484,55 +484,56 @@ bool BaseKspSolver<OperType>::MultAutoCycle(const VecType &x, VecType &y, double
       gmg->SetOneSided(one_sided);
     }
   };
-  VecType y_sym;
-  y_sym.SetSize(y.Size());
-  y_sym.UseDevice(true);
-  y_sym = y;
-  SetOneSided(true);
+  VecType y_one_sided;
+  y_one_sided.SetSize(y.Size());
+  y_one_sided.UseDevice(true);
+  y_one_sided = y;
+  SetOneSided(false);
   ksp->Mult(x, y);
-  const int its_one_sided = ksp->GetNumIterations();
-  const bool converged_one_sided = ksp->GetConverged();
+  const int its_sym = ksp->GetNumIterations();
+  const bool converged_sym = ksp->GetConverged();
   final_res = ksp->GetFinalRes();
   initial_res = ksp->GetInitialRes();
-  ksp_mult_it += its_one_sided;
-  bool symmetric = false;
-  int its_sym = 0;
-  if (!converged_one_sided || its_one_sided > 1)
+  ksp_mult_it += its_sym;
+  bool one_sided = false;
+  int its_one_sided = 0;
+  if (!converged_sym || its_sym > 0)
   {
     const int max_it = ksp->GetMaxIter();
     const auto print = ksp->GetPrintLevel();
-    if (converged_one_sided)
+    if (converged_sym)
     {
-      ksp->SetMaxIter(its_one_sided - 1);
+      ksp->SetMaxIter(its_sym);
     }
     ksp->SetPrintLevel(mfem::IterativeSolver::PrintLevel().None());
-    SetOneSided(false);
-    ksp->Mult(x, y_sym);
+    SetOneSided(true);
+    ksp->Mult(x, y_one_sided);
     ksp->SetMaxIter(max_it);
     ksp->SetPrintLevel(print);
-    its_sym = ksp->GetNumIterations();
-    symmetric = ksp->GetConverged();
-    ksp_mult_it += its_sym;
-    if (symmetric)
+    its_one_sided = ksp->GetNumIterations();
+    one_sided = ksp->GetConverged();
+    ksp_mult_it += its_one_sided;
+    if (one_sided)
     {
-      y = y_sym;
+      y = y_one_sided;
       final_res = ksp->GetFinalRes();
       initial_res = ksp->GetInitialRes();
     }
   }
-  SetOneSided(!symmetric);
+  SetOneSided(one_sided);
   if (auto_cycle_print > 0)
   {
     Mpi::Print(ksp->GetComm(),
-               " Multigrid V-cycles: {} (first solve: {:d} iterations one-sided{}{})\n",
-               symmetric ? "symmetric" : "one-sided", its_one_sided,
-               converged_one_sided ? "" : " without converging",
-               (its_sym == 0) ? ""
-                              : fmt::format(", {}{:d} symmetric",
-                                            symmetric ? "" : "more than ", its_sym));
+               " Multigrid V-cycles: {} (first solve: {:d} iterations symmetric{}{})\n",
+               one_sided ? "one-sided" : "symmetric", its_sym,
+               converged_sym ? "" : " without converging",
+               (its_one_sided == 0)
+                   ? ""
+                   : fmt::format(", {}{:d} one-sided", one_sided ? "" : "more than ",
+                                 its_one_sided));
   }
   auto_cycle_gmg.clear();
-  return symmetric || converged_one_sided;
+  return one_sided || converged_sym;
 }
 
 template class BaseKspSolver<Operator>;

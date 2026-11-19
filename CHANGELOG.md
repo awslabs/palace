@@ -37,8 +37,8 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 #### Interface Changes
 
   - The geometric multigrid preconditioners of eigenmode simulations now choose their
-    V-cycles on the first linear solve: it is solved with one-sided V-cycles and again with
-    symmetric ones, and the V-cycles which need fewer iterations are kept. One-sided
+    V-cycles on the first linear solve: it is solved with symmetric V-cycles and again with
+    one-sided ones, which are kept if they need at most as many iterations. One-sided
     V-cycles pre-smooth but do not post-smooth, at twice the smoothing order, apart from
     the auxiliary space correction of distributive relaxation, which follows the
     coarse-grid correction. They are kept on most production models, where eigenmode

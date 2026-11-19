@@ -2342,7 +2342,7 @@
         },
         {
           "const": "Auto",
-          "description": "Solve the first linear system with one-sided V-cycles and again with symmetric ones, and keep the V-cycles which need fewer iterations for the next solves. Requires the GMRES or FGMRES Krylov solver."
+          "description": "Solve the first linear system with symmetric V-cycles and again with one-sided ones, which are kept for the next solves if they need at most as many iterations. Requires the GMRES or FGMRES Krylov solver."
         }
       ]
     },
