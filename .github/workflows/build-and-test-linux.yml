@@ -256,16 +256,17 @@ jobs:
         with:
           version: '1'
 
-      # Restore the Julia depot on every run but save it only from main. A cache
-      # saved from a pull request is visible only to that pull request, and at
-      # several hundred MB each they used up the repository's 10 GB cache.
+      # Restore the Julia depot on every run but save it only from main, and only
+      # when the resolved packages (examples/Manifest.toml) changed. A cache saved from a
+      # pull request is visible only to that pull request, and at several hundred
+      # MB each they used up the repository's 10 GB cache.
       - name: Restore Julia depot
         id: julia-cache
         if: needs.filter.outputs.test == 'true' && matrix.arch == 'x86' && matrix.compiler == 'gcc' && matrix.math-libs == 'openblas' && !matrix.with-coverage
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.julia
-          key: julia-${{ github.job }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.setup-julia.outputs.julia-version }}-${{ github.run_id }}
+          key: julia-${{ github.job }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.setup-julia.outputs.julia-version }}
           restore-keys: julia-${{ github.job }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.setup-julia.outputs.julia-version }}-
 
       # Configure downloads dependency patches from GitHub, and skips any file
@@ -545,8 +546,10 @@ jobs:
           julia --project=examples examples/antenna/plot_farfield.jl --model short_dipole --file "$FARFIELD"
 
       - name: Save Julia depot
-        if: needs.filter.outputs.test == 'true' && matrix.arch == 'x86' && matrix.compiler == 'gcc' && matrix.math-libs == 'openblas' && !matrix.with-coverage && github.ref == 'refs/heads/main'
+        if: >-
+          needs.filter.outputs.test == 'true' && matrix.arch == 'x86' && matrix.compiler == 'gcc' && matrix.math-libs == 'openblas' && !matrix.with-coverage && github.ref == 'refs/heads/main' &&
+          !startsWith(steps.julia-cache.outputs.cache-matched-key, format('{0}-{1}-', steps.julia-cache.outputs.cache-primary-key, hashFiles('examples/Manifest.toml')))
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.julia
-          key: ${{ steps.julia-cache.outputs.cache-primary-key }}
+          key: ${{ steps.julia-cache.outputs.cache-primary-key }}-${{ hashFiles('examples/Manifest.toml') }}-${{ github.run_id }}
