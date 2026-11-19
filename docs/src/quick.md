@@ -18,22 +18,24 @@ fix_attributes_format(json_str) = replace(replace(json_str, r"\"Attributes\":\s*
 # Print just one section of the entire JSON file and prepend the correct header
 print_section(json, section) = println("\"$section\":", fix_attributes_format(JSON.json(json[section], 4)))
 
-# Move mesh and json file to build directory, so that we don't pollute the example directory
+# Run the example in a temporary directory, so that its files pollute neither the example
+# directory nor the built site, which only gets the two files that the GLVis viewer loads
 spheres_basepath = joinpath(@__DIR__, "..", "..", "examples", "spheres")
 json_name = "spheres.json"
 mesh_name = "spheres.msh"
 json_basepath = joinpath(spheres_basepath, json_name)
 
-Base.cp(json_basepath, json_name, force = true)
-Base.mkpath("mesh")
-Base.cp(joinpath(spheres_basepath, "mesh", mesh_name), joinpath("mesh", mesh_name), force = true)
+rundir = mktempdir()
+Base.cp(json_basepath, joinpath(rundir, json_name), force = true)
+Base.mkpath(joinpath(rundir, "mesh"))
+Base.cp(joinpath(spheres_basepath, "mesh", mesh_name), joinpath(rundir, "mesh", mesh_name), force = true)
 
 json_text = strip_json_comments(read(json_basepath, String))
 spheres_json = JSON.parse(json_text, dicttype=OrderedDict)
 
 function logrun(cmd)
     try
-        run(cmd)
+        run(Cmd(cmd; dir = rundir))
     catch e
         println(e)
     end
@@ -432,6 +434,12 @@ configuration option in the JSON file.
 
 ```@example json
 logrun(`palace -np 1 spheres.json`); # hide
+# The GLVis viewer at the end of this page loads these two files from the built site # hide
+glvis_dir = joinpath("postpro", "gridfunction", "electrostatic") # hide
+mkpath(glvis_dir) # hide
+for f in ("mesh.000000", "V_000001.gf.000000") # hide
+    cp(joinpath(rundir, glvis_dir, f), joinpath(glvis_dir, f); force = true) # hide
+end # hide
 nothing # hide
 ```
 
