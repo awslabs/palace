@@ -495,42 +495,40 @@ bool BaseKspSolver<OperType>::MultAutoCycle(const VecType &x, VecType &y, double
   final_res = ksp->GetFinalRes();
   initial_res = ksp->GetInitialRes();
   ksp_mult_it += its_sym;
-  bool one_sided = false;
-  int its_one_sided = 0;
-  if (!converged_sym || its_sym > 0)
+  if (converged_sym && its_sym == 0)
   {
-    const int max_it = ksp->GetMaxIter();
-    const auto print = ksp->GetPrintLevel();
-    if (converged_sym)
-    {
-      ksp->SetMaxIter(its_sym);
-    }
-    ksp->SetPrintLevel(mfem::IterativeSolver::PrintLevel().None());
-    SetOneSided(true);
-    ksp->Mult(x, y_one_sided);
-    ksp->SetMaxIter(max_it);
-    ksp->SetPrintLevel(print);
-    its_one_sided = ksp->GetNumIterations();
-    one_sided = ksp->GetConverged();
-    ksp_mult_it += its_one_sided;
-    if (one_sided)
-    {
-      y = y_one_sided;
-      final_res = ksp->GetFinalRes();
-      initial_res = ksp->GetInitialRes();
-    }
+    // Nothing to compare: the next solve tries again.
+    return true;
+  }
+  const int max_it = ksp->GetMaxIter();
+  const auto print = ksp->GetPrintLevel();
+  if (converged_sym)
+  {
+    ksp->SetMaxIter(its_sym);
+  }
+  ksp->SetPrintLevel(mfem::IterativeSolver::PrintLevel().None());
+  SetOneSided(true);
+  ksp->Mult(x, y_one_sided);
+  ksp->SetMaxIter(max_it);
+  ksp->SetPrintLevel(print);
+  const int its_one_sided = ksp->GetNumIterations();
+  const bool one_sided = ksp->GetConverged();
+  ksp_mult_it += its_one_sided;
+  if (one_sided)
+  {
+    y = y_one_sided;
+    final_res = ksp->GetFinalRes();
+    initial_res = ksp->GetInitialRes();
   }
   SetOneSided(one_sided);
   if (auto_cycle_print > 0)
   {
     Mpi::Print(ksp->GetComm(),
-               " Multigrid V-cycles: {} (first solve: {:d} iterations symmetric{}{})\n",
+               " Multigrid V-cycles: {} (first solve: {:d} iterations symmetric{}, {}{:d} "
+               "one-sided)\n",
                one_sided ? "one-sided" : "symmetric", its_sym,
-               converged_sym ? "" : " without converging",
-               (its_one_sided == 0)
-                   ? ""
-                   : fmt::format(", {}{:d} one-sided", one_sided ? "" : "more than ",
-                                 its_one_sided));
+               converged_sym ? "" : " without converging", one_sided ? "" : "more than ",
+               its_one_sided);
   }
   auto_cycle_gmg.clear();
   return one_sided || converged_sym;
