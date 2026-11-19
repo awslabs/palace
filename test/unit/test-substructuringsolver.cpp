@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -3521,6 +3522,10 @@ TEST_CASE("A cut or corrupted driven model header is rejected", "[substructure][
   m.signatures = {0.25, 0.75};
   m.env_fp = {100.0, 20.0, 3.0, 0.0};
   m.omega = {1.0};
+  m.converged = false;
+  m.error = 0.5;
+  m.tol = 1.0e-8;
+  m.passivity = -1.0e-3;
   const auto path =
       (std::filesystem::temp_directory_path() / "palace-driven-model-cut.bin").string();
   // The position of the header in the file.
@@ -3533,6 +3538,10 @@ TEST_CASE("A cut or corrupted driven model header is rejected", "[substructure][
   DrivenSubstructureModel saved;
   saved.ReadHeader(path, Mpi::World());
   CHECK(saved.signatures == m.signatures);
+  CHECK_FALSE(saved.converged);
+  CHECK(saved.error == m.error);
+  CHECK(saved.tol == m.tol);
+  CHECK(saved.passivity == m.passivity);
   using Catch::Matchers::ContainsSubstring;
   std::filesystem::resize_file(path, std::filesystem::file_size(path) / 2);
   CHECK_THROWS_WITH(saved.ReadHeader(path, Mpi::World()),
@@ -4422,6 +4431,74 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
         on_region(config);
         config["Boundaries"]["LumpedPort"][1].erase("Excitation");
       });
+}
+
+TEST_CASE_METHOD(
+    palace::test::SharedTempDir,
+    "Driven substructuring warns about a rational model which did not converge",
+    "[substructure][Serial][Parallel]")
+{
+  // An online sweep warns about a rational model whose sampling stopped before it met
+  // "AdaptiveTol": at "AdaptiveMaxSamples", or in an offline run cut short, which leaves
+  // the header of its last sample.
+  auto offline = [&](int max_samples)
+  {
+    RunDrivenSheetSquare(temp_dir, "Offline",
+                         [&](json &config)
+                         {
+                           config["Solver"]["Driven"] = {
+                               {"MinFreq", 1000.0},
+                               {"MaxFreq", 3000.0},
+                               {"FreqStep", 250.0},
+                               {"AdaptiveTol", 1.0e-8},
+                               {"AdaptiveMaxSamples", max_samples}};
+                         });
+  };
+  auto online = [&]()
+  {
+    return CaptureStdout(
+        [&]()
+        {
+          RunDrivenSheetSquare(temp_dir, "Online",
+                               [](json &config)
+                               {
+                                 config["Solver"]["Driven"] = {{"MinFreq", 1500.0},
+                                                               {"MaxFreq", 2500.0},
+                                                               {"FreqStep", 1000.0}};
+                               });
+        });
+  };
+  offline(3);
+  const auto capped = online();
+  offline(20);
+  const auto converged = online();
+  const bool root = Mpi::Root(Mpi::World());
+  if (root)
+  {
+    // The model without its final header.
+    using substructuring::ModelFile;
+    const auto path = (temp_dir / "driven_model.bin").string();
+    long long pos = 0;
+    for (const auto &r : ModelFile::Read(path, MPI_COMM_SELF).records)
+    {
+      pos = (r.tag == ModelFile::Tag("DHED")) ? r.pos : pos;
+    }
+    CHECK(pos > 0);
+    if (pos > 0)
+    {
+      std::filesystem::resize_file(
+          path, pos - static_cast<long long>(sizeof(std::uint32_t) + sizeof(long long)));
+    }
+  }
+  Mpi::Barrier(Mpi::World());
+  const auto cut = online();
+  if (root)
+  {
+    using Catch::Matchers::ContainsSubstring;
+    CHECK_THAT(capped, ContainsSubstring("did not converge"));
+    CHECK_THAT(converged, !ContainsSubstring("did not converge"));
+    CHECK_THAT(cut, ContainsSubstring("did not converge"));
+  }
 }
 
 TEST_CASE_METHOD(palace::test::SharedTempDir,

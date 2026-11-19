@@ -258,7 +258,9 @@ sample there. The region is then reduced as the adaptive fast frequency sweep re
 device, by Galerkin projection onto its fields at greedily chosen frequencies, which gives every
 frequency of the sweep with the outputs of an online sweep. Saved, such a model serves online
 sweeps at any frequency between its lowest and highest samples, reduced the same way with a
-nonzero `"AdaptiveTol"`, or solved frequency by frequency.
+nonzero `"AdaptiveTol"`, or solved frequency by frequency. An online sweep warns when the
+sampling of the model did not converge (it stopped at `"AdaptiveMaxSamples"` samples, or the
+offline run stopped before it ended), and when the model is not passive between its samples.
 
 A saved model, and an adaptive sweep, need the lumped ports and the other sources (surface
 currents, current dipoles) away from the interface: the excitation of a source on it, and the

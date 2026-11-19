@@ -657,6 +657,21 @@ void DrivenSubstructuredSweep::OpenModel()
     }
     Mpi::Print(" Rational substructuring model: {:d} samples from {:.3e} to {:.3e} GHz\n",
                model.omega.size(), lo * unit_GHz, hi * unit_GHz);
+    if (!model.converged)
+    {
+      Mpi::Warning("The saved rational substructuring model did not converge (its sampling "
+                   "stopped at {:d} samples, with an error of {:.3e} for \"AdaptiveTol\" "
+                   "{:.3e}): rerun the offline sweep with a larger "
+                   "\"AdaptiveMaxSamples\"!\n",
+                   model.omega.size(), model.error, model.tol);
+    }
+    if (model.passivity < -model.tol)
+    {
+      Mpi::Warning("The saved rational substructuring model is not passive between its "
+                   "samples (least eigenvalue of Im S_E / ‖S_E‖ = {:.3e}): rerun the "
+                   "offline sweep with a larger \"AdaptiveMaxSamples\"!\n",
+                   model.passivity);
+    }
   }
   else
   {
@@ -876,6 +891,7 @@ void DrivenSubstructuredSweep::SampleEnvironment()
   Mpi::Print("\nAdaptive sampling of the condensed environment (tol = {:.3e}, at most "
              "{:d} frequencies):\n",
              tol, max_samples);
+  model.tol = tol;
   // The relative error of the rational model at a new sample, before adding it.
   auto sample = [&](double omega)
   {
@@ -905,6 +921,9 @@ void DrivenSubstructuredSweep::SampleEnvironment()
     }
     Mpi::Broadcast(1, &err, 0, comm);
     model.omega.push_back(omega);
+    // A saved model is one stopped here, until the sampling ends.
+    model.converged = false;
+    model.error = err;
     if (save && root)
     {
       model.WriteHeader(model_path, false);
@@ -938,6 +957,8 @@ void DrivenSubstructuredSweep::SampleEnvironment()
              "memory = {:d}/{:d}\n",
              (memory < memory_size) ? " reached maximum" : " converged with",
              model.omega.size(), errors.back(), tol, memory, memory_size);
+  const bool converged = (memory >= memory_size);
+  const double error = errors.back();
   // Passivity between the samples (Im S_E positive semidefinite), tested by Cholesky
   // factorizations: a violation beyond the tolerance adds a sample where it is largest.
   double passivity = 0.0;  // the least eigenvalue of the violations, relative (0: none)
@@ -990,6 +1011,13 @@ void DrivenSubstructuredSweep::SampleEnvironment()
   }
   utils::PrettyPrint(model.omega, unit_GHz, " Sampled frequencies (GHz):");
   utils::PrettyPrint(errors, 1.0, " Sample errors:");
+  model.converged = converged;
+  model.error = error;
+  model.passivity = passivity;
+  if (save && root)
+  {
+    model.WriteHeader(model_path, false);
+  }
 
   // The frequencies of the sweep from the model, on the region only.
   ds.reset();

@@ -3,12 +3,14 @@
 
 #include "test-helpers.hpp"
 
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <limits>
 #include <map>
 #include <stdexcept>
 #include <utility>
+#include <unistd.h>
 #include "fixtures.hpp"
 
 mfem::Mesh SingleTetMesh()
@@ -26,6 +28,39 @@ mfem::Mesh SingleTetMesh()
   mesh.FinalizeTopology();
   mesh.Finalize(true, false);
   return mesh;
+}
+
+std::string CaptureStdout(const std::function<void()> &f)
+{
+  std::fflush(stdout);
+  std::FILE *file = std::tmpfile();
+  const int saved = dup(fileno(stdout));
+  dup2(fileno(file), fileno(stdout));
+  auto restore = [&]()
+  {
+    std::fflush(stdout);
+    dup2(saved, fileno(stdout));
+    close(saved);
+  };
+  try
+  {
+    f();
+  }
+  catch (...)
+  {
+    restore();
+    std::fclose(file);
+    throw;
+  }
+  restore();
+  std::rewind(file);
+  std::string out;
+  for (int c = std::fgetc(file); c != EOF; c = std::fgetc(file))
+  {
+    out.push_back(static_cast<char>(c));
+  }
+  std::fclose(file);
+  return out;
 }
 
 mfem::Mesh MakeInteriorBoundaryBox()

@@ -1685,19 +1685,20 @@ void DrivenSubstructureModel::WriteHeader(const std::string &path, bool create) 
   {
     ModelFile::Create(path, MPI_COMM_SELF);
   }
-  const int head[9] = {kVersion,
-                       nG,
-                       sig_w,
-                       static_cast<int>(env_fp.size()),
-                       static_cast<int>(excitations.size()),
-                       static_cast<int>(ports.size()),
-                       static_cast<int>(omega.size()),
-                       weights.empty() ? 0 : 1,
-                       static_cast<int>(region_bdr_attributes.size())};
+  const int head[10] = {kVersion,
+                        nG,
+                        sig_w,
+                        static_cast<int>(env_fp.size()),
+                        static_cast<int>(excitations.size()),
+                        static_cast<int>(ports.size()),
+                        static_cast<int>(omega.size()),
+                        weights.empty() ? 0 : 1,
+                        static_cast<int>(region_bdr_attributes.size()),
+                        converged ? 1 : 0};
+  const double scalars[4] = {length_scale, error, tol, passivity};
   const long long size =
-      sizeof(head) +
-      sizeof(double) *
-          (1 + signatures.size() + env_fp.size() + exc_fp.size() + omega.size()) +
+      sizeof(head) + sizeof(scalars) +
+      sizeof(double) * (signatures.size() + env_fp.size() + exc_fp.size() + omega.size()) +
       sizeof(int) * (excitations.size() + ports.size() + region_bdr_attributes.size()) +
       sizeof(std::complex<double>) * weights.size();
   ModelFile::Append(path, MPI_COMM_SELF, kHeaderTag, size,
@@ -1708,8 +1709,8 @@ void DrivenSubstructureModel::WriteHeader(const std::string &path, bool create) 
                         f.write(reinterpret_cast<const char *>(x),
                                 static_cast<std::streamsize>(sizeof(*x) * n));
                       };
-                      write(head, 9);
-                      write(&length_scale, 1);
+                      write(head, 10);
+                      write(scalars, 4);
                       write(signatures.data(), signatures.size());
                       write(env_fp.data(), env_fp.size());
                       write(excitations.data(), excitations.size());
@@ -1771,10 +1772,14 @@ void DrivenSubstructureModel::ReadHeader(const std::string &path, MPI_Comm comm)
                                        << "\" was written by another version of Palace: "
                                           "rerun in \"Offline\" mode!");
   at = 0;  // the version, then the whole head
-  read(head, 9);
-  std::vector<double> scale;
-  read(scale, 1);
-  length_scale = scale[0];
+  read(head, 10);
+  std::vector<double> scalars;
+  read(scalars, 4);
+  length_scale = scalars[0];
+  error = scalars[1];
+  tol = scalars[2];
+  passivity = scalars[3];
+  converged = head[9] != 0;
   nG = head[1];
   sig_w = head[2];
   read(signatures, static_cast<double>(nG) * sig_w);

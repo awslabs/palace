@@ -82,7 +82,7 @@ private:
 //
 struct DrivenSubstructureModel
 {
-  static constexpr int kVersion = 8;   // of the header
+  static constexpr int kVersion = 9;   // of the header
   static constexpr int kSourceFp = 7;  // see DrivenSubstructure::SourceFingerprint
   // Relative tolerance of the comparisons of the environment with that of a saved model:
   // its fingerprint and element moments are sums over elements, which the partition changes
@@ -99,6 +99,11 @@ struct DrivenSubstructureModel
   std::vector<int> region_bdr_attributes;     // see BoundaryAttributesInRegion
   std::vector<double> omega;                  // frequencies of the records (nondimensional)
   std::vector<std::complex<double>> weights;  // barycentric weights (rational model)
+  // The adaptive sampling of a rational model: whether it met its tolerance tol (false
+  // until it ends), the error estimate of its last sample, and the least eigenvalue of
+  // Im S_E / ‖S_E‖ between its samples (0 if passive).
+  bool converged = true;
+  double error = 0.0, tol = 0.0, passivity = 0.0;
 
   struct Record
   {

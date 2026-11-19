@@ -2,15 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <algorithm>
-#include <cstdio>
-#include <functional>
 #include <iterator>
 #include <limits>
 #include <numbers>
 #include <set>
 #include <string>
 #include <vector>
-#include <unistd.h>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
@@ -19,51 +16,13 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 #include "embedded_schema.hpp"
 #include "linalg/ksp.hpp"
+#include "test-helpers.hpp"
 #include "utils/configfile.hpp"
 #include "utils/iodata.hpp"
 #include "utils/jsonschema.hpp"
 
 using json = nlohmann::json;
 using namespace palace;
-
-namespace
-{
-
-// What the process prints to stdout while f runs.
-std::string CaptureStdout(const std::function<void()> &f)
-{
-  std::fflush(stdout);
-  std::FILE *file = std::tmpfile();
-  const int saved = dup(fileno(stdout));
-  dup2(fileno(file), fileno(stdout));
-  auto restore = [&]()
-  {
-    std::fflush(stdout);
-    dup2(saved, fileno(stdout));
-    close(saved);
-  };
-  try
-  {
-    f();
-  }
-  catch (...)
-  {
-    restore();
-    std::fclose(file);
-    throw;
-  }
-  restore();
-  std::rewind(file);
-  std::string out;
-  for (int c = std::fgetc(file); c != EOF; c = std::fgetc(file))
-  {
-    out.push_back(static_cast<char>(c));
-  }
-  std::fclose(file);
-  return out;
-}
-
-}  // namespace
 
 namespace
 {
