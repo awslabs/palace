@@ -241,7 +241,10 @@ Lumped ports in *Palace* can be composed of two types of elements:
  1. *Rectangular*: The incident field is ``\bm{E}^{inc} = E_0 \, \hat{\bm{l}}``. Here ``E_0`` is a
     normalization constant and ``\hat{\bm{l}}`` is the user-defined polarization direction, which
     should point between two conductors. We denote the length of the port along the polarization as
-    ``l`` and the perpendicular width as ``w``.
+    ``l`` and the perpendicular width as ``w``. The port must be a strip along ``\hat{\bm{l}}``,
+    which may be folded or bent about ``\hat{\bm{l}}``: ``w`` is the length of its cross-section
+    normal to ``\hat{\bm{l}}`` (for a flat port, to its principal axis closest to ``\hat{\bm{l}}``)
+    half way along it, and ``l`` is its area divided by ``w``.
 
  2. *Coaxial*: ``\bm{E}^{inc} = {E_0 r_0} \hat{\bm{r}} / {r}``, where ``E_0 r_0`` is a
     normalization constant, ``r`` is the distance from the port center, and ``\hat{\bm{r}}`` is the
@@ -916,8 +919,27 @@ specified surfaces of the model. The magnetic field energy associated with any s
 \mathcal{E}(\bm{A}_i) = \frac{1}{2}\int_\Omega\mu_r^{-1}\bm{B}_i\cdot\bm{B}_i\,dV
 ```
 
-where ``\bm{B}_i = \nabla\times\bm{A}_i`` is the magnetic flux density. Then, the entries of
-the inductance matrix, ``\bm{M}``, are given by
+where ``\bm{B}_i = \nabla\times\bm{A}_i`` is the magnetic flux density.
+
+In a superconducting domain ``\Omega_L``, with London penetration depth ``\lambda_L``, the
+static London equations relate the supercurrent to the vector potential, in the London
+gauge, as ``\bm{J} = -(\mu_r\lambda_L^2)^{-1}\bm{A}``. The first equation then becomes
+
+```math
+\nabla\times(\mu_r^{-1}\nabla\times\bm{A}_i) + (\mu_r\lambda_L^2)^{-1}\bm{A}_i = 0 \,,\;
+    \bm{x}\in\Omega_L
+```
+
+and the energy includes the kinetic energy of the supercurrent:
+
+```math
+\mathcal{E}(\bm{A}_i) = \frac{1}{2}\int_\Omega\mu_r^{-1}\bm{B}_i\cdot\bm{B}_i\,dV
+    + \frac{1}{2}\int_{\Omega_L}(\mu_r\lambda_L^2)^{-1}\bm{A}_i\cdot\bm{A}_i\,dV \,.
+```
+
+With the vector potential in the London gauge, every closed loop within a superconducting
+domain has zero fluxoid: a superconducting ring screens the flux of the sources rather than
+trapping flux. Then, the entries of the inductance matrix, ``\bm{M}``, are given by
 
 ```math
 \bm{M}_{ij} = \frac{1}{I_i I_j}\mathcal{E}(\bm{A}_i+\bm{A}_j)

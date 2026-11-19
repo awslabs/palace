@@ -165,6 +165,15 @@ DomainPostOperator::DomainPostOperator(const config::DomainPostData &postpro,
       H.SetSize(M_mag->Height());
       H.UseDevice(true);
     }
+    if (mat_op.HasLondonDepth())
+    {
+      MaterialPropertyCoefficient f(mat_op.GetAttributeToMaterial(),
+                                    mat_op.GetInvLondonDepth());
+      BilinearForm m(fespace);
+      m.SkipZeroCoefficientElements();
+      m.AddDomainIntegrator<VectorFEMassIntegrator>(f);
+      M_london = m.PartialAssemble();
+    }
 
     for (const auto &[idx, data] : postpro.energy)
     {
@@ -314,6 +323,18 @@ double DomainPostOperator::GetMagneticFieldEnergy(const Vector &a_l, MPI_Comm co
     return 0.0;
   }
   M_mag->Mult(a_l, H);
+  double dot = linalg::LocalDot(a_l, H);
+  Mpi::GlobalSum(1, &dot, comm);
+  return 0.5 * dot;
+}
+
+double DomainPostOperator::GetLondonKineticEnergy(const Vector &a_l, MPI_Comm comm) const
+{
+  if (!M_london)
+  {
+    return 0.0;
+  }
+  M_london->Mult(a_l, H);
   double dot = linalg::LocalDot(a_l, H);
   Mpi::GlobalSum(1, &dot, comm);
   return 0.5 * dot;

@@ -8,7 +8,6 @@
 #include <array>
 #include <limits>
 #include <map>
-#include <numbers>
 #include <numeric>
 #include <queue>
 #include <set>
@@ -33,9 +32,6 @@
 
 namespace palace
 {
-
-using Vector3dMap = Eigen::Map<Eigen::Vector3d>;
-using CVector3dMap = Eigen::Map<const Eigen::Vector3d>;
 
 namespace
 {
@@ -279,6 +275,36 @@ std::unique_ptr<mfem::Mesh> Load(IoData &iodata, MPI_Comm comm)
                      "cracked! Use a mesh which is cracked along them, for "
                      "example from a previous adaptive simulation with the "
                      "same boundary conditions.");
+
+  // Warn about interior conductivity boundaries which are uncracked sheets by default, on
+  // the conformal input mesh. Only the root rank holds the mesh of the whole run for sure
+  // and prints, there is no communication here.
+  if (Mpi::Root(comm) && conforming && !iodata.boundaries.conductivity.empty() &&
+      !iodata.model.crack_bdr_elements.has_value() &&
+      (iodata.problem.type == ProblemType::DRIVEN ||
+       iodata.problem.type == ProblemType::EIGENMODE ||
+       iodata.problem.type == ProblemType::BOUNDARYMODE))
+  {
+    const auto attrs =
+        GetDefaultConductivitySheetAttributes(*smesh, iodata.boundaries.conductivity);
+    if (!attrs.empty())
+    {
+      Mpi::Print(comm, "\n");
+      Mpi::Warning(
+          comm,
+          "Interior \"Conductivity\" boundaries without \"Crack\" are a single sheet "
+          "with the admittance of both conductor faces (\"Crack\": false, the default "
+          "since Palace 0.19.0)!\n"
+          "A conductor meshed as a dielectric volume enclosed by these boundaries, or "
+          "much thicker than the skin depth with current on one face, has a lower "
+          "loss than with the cracked mesh of previous versions. Set \"Crack\": true "
+          "to model independent conductor faces (previous results), or \"Crack\": "
+          "false to keep the sheet model and silence this warning.");
+      utils::PrettyPrint(attrs, "Boundary attribute list:", comm);
+      Mpi::Print(comm, "\n");
+    }
+  }
+
   RegionRefine(refinement, *smesh);
   MFEM_VERIFY(
       interior_crack_attrs.empty() || smesh->Conforming(),
@@ -316,6 +342,38 @@ std::unique_ptr<mfem::Mesh> Load(IoData &iodata, MPI_Comm comm)
   }
 
   return smesh;
+}
+
+std::vector<int> GetDefaultConductivitySheetAttributes(
+    const mfem::Mesh &mesh, const std::vector<config::ConductivityData> &conductivity)
+{
+  const int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+  if (bdr_attr_max == 0)
+  {
+    return {};
+  }
+
+  // Unmark the attributes of which all boundary elements are interior, as for the interior
+  // sheets of SurfaceConductivityOperator.
+  mfem::Array<int> marker(bdr_attr_max);
+  marker = 1;
+  mesh.UnmarkInternalBoundaries(marker, true);
+  std::set<int> attrs;
+  for (const auto &data : conductivity)
+  {
+    if (data.crack_given)
+    {
+      continue;
+    }
+    for (const int attr : data.attributes)
+    {
+      if (attr > 0 && attr <= bdr_attr_max && !marker[attr - 1])
+      {
+        attrs.insert(attr);
+      }
+    }
+  }
+  return {attrs.begin(), attrs.end()};
 }
 
 std::unique_ptr<mfem::ParMesh> Partition(IoData &iodata, std::unique_ptr<mfem::Mesh> smesh,
@@ -1152,45 +1210,6 @@ void GetAxisAlignedBoundingBox(const mfem::ParMesh &mesh, const mfem::Array<int>
   Mpi::GlobalMax(dim, max.HostReadWrite(), mesh.GetComm());
 }
 
-double BoundingBox::Area() const
-{
-  const int dim = Dim();
-  if (dim == 3)
-  {
-    return 4.0 *
-           CVector3dMap(axes.GetColumn(0)).cross(CVector3dMap(axes.GetColumn(1))).norm();
-  }
-  // 2D: area of the parallelogram spanned by the two axis vectors (2D cross product).
-  const double *a0 = axes.GetColumn(0);
-  const double *a1 = axes.GetColumn(1);
-  return 4.0 * std::abs(a0[0] * a1[1] - a0[1] * a1[0]);
-}
-
-double BoundingBox::Volume() const
-{
-  if (Dim() < 3 || planar)
-  {
-    return 0.0;
-  }
-  return 2.0 * CVector3dMap(axes.GetColumn(2)).norm() * Area();
-}
-
-mfem::DenseMatrix BoundingBox::Normals() const
-{
-  const int dim = Dim();
-  mfem::DenseMatrix normals(axes);
-  for (int i = 0; i < dim; i++)
-  {
-    mfem::Vector col(normals.GetColumn(i), normals.Height());
-    double nrm = col.Norml2();
-    if (nrm > 0.0)
-    {
-      col /= nrm;
-    }
-  }
-  return normals;
-}
-
 mfem::Vector BoundingBox::Lengths() const
 {
   const int dim = Dim();
@@ -1207,31 +1226,6 @@ mfem::Vector BoundingBox::Lengths() const
     lengths(i) = 2.0 * std::sqrt(nrm);
   }
   return lengths;
-}
-
-mfem::Vector BoundingBox::Deviations(const mfem::Vector &direction) const
-{
-  const int dim = Dim();
-  const int h = axes.Height();
-  MFEM_VERIFY(direction.Size() == dim,
-              "Direction vector size must match bounding box dimension!");
-  double dir_norm = direction.Norml2();
-  mfem::Vector deviation_deg(dim);
-  for (int i = 0; i < dim; i++)
-  {
-    const double *col = axes.GetColumn(i);
-    double ax_norm = 0.0, dot = 0.0;
-    for (int j = 0; j < h; j++)
-    {
-      ax_norm += col[j] * col[j];
-      dot += direction(j) * col[j];
-    }
-    ax_norm = std::sqrt(ax_norm);
-    double cosine = (dir_norm > 0.0 && ax_norm > 0.0) ? dot / (dir_norm * ax_norm) : 0.0;
-    deviation_deg(i) =
-        std::acos(std::min(1.0, std::abs(cosine))) * (180.0 / std::numbers::pi);
-  }
-  return deviation_deg;
 }
 
 namespace
@@ -1264,16 +1258,6 @@ void TrimBoundingBox(BoundingBox &box, int sdim)
 
 }  // namespace
 
-BoundingBox GetBoundingBox(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
-                           bool bdr)
-{
-  std::vector<Eigen::Vector3d> vertices;
-  int dominant_rank = CollectPointCloudOnRoot(mesh, marker, bdr, vertices);
-  auto box = BoundingBoxFromPointCloud(mesh.GetComm(), vertices, dominant_rank);
-  TrimBoundingBox(box, mesh.SpaceDimension());
-  return box;
-}
-
 BoundingBox GetBoundingBall(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
                             bool bdr)
 {
@@ -1284,27 +1268,237 @@ BoundingBox GetBoundingBall(const mfem::ParMesh &mesh, const mfem::Array<int> &m
   return ball;
 }
 
-double GetProjectedLength(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
-                          bool bdr, const mfem::Vector &dir)
+namespace
 {
-  std::vector<Eigen::Vector3d> vertices;
-  int dominant_rank = CollectPointCloudOnRoot(mesh, marker, bdr, vertices);
-  double length;
-  if (dominant_rank == Mpi::Rank(mesh.GetComm()))
+
+// Call f(pointmat, RefG, geom) for each marked boundary element, with pointmat the points
+// of the element refined by RefG: its vertices, or on a curved mesh the points of 4 * order
+// subdivisions of each edge. The loop is serial, so that sums over the elements are
+// reproducible.
+template <typename Function>
+void ForEachMarkedBdrElement(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
+                             Function &&f)
+{
+  int ref = 1;
+  if (mesh.GetNodes())
   {
-    Eigen::Vector3d direction = Eigen::Vector3d::Zero();
-    for (int i = 0; i < dir.Size(); i++)
-    {
-      direction(i) = dir(i);
-    }
-    auto Dot = [&](const auto &x, const auto &y)
-    { return direction.dot(x) < direction.dot(y); };
-    auto p_min = std::ranges::min_element(vertices, Dot);
-    auto p_max = std::ranges::max_element(vertices, Dot);
-    length = (*p_max - *p_min).dot(direction.normalized());
+    mesh.GetNodes()->HostRead();
+    const int order = mesh.GetNodes()->FESpace()->GetMaxElementOrder();
+    ref = (order > 1) ? 4 * order : 1;
   }
-  Mpi::Broadcast(1, &length, dominant_rank, mesh.GetComm());
-  return length;
+  mfem::GeometryRefiner refiner;
+  mfem::IsoparametricTransformation T;
+  mfem::DenseMatrix pointmat;
+  for (int i = 0; i < mesh.GetNBE(); i++)
+  {
+    if (!marker[mesh.GetBdrAttribute(i) - 1])
+    {
+      continue;
+    }
+    mesh.GetBdrElementTransformation(i, &T);
+    const auto geom = T.GetGeometryType();
+    const mfem::RefinedGeometry &RefG = *refiner.Refine(geom, ref);
+    T.Transform(RefG.RefPts, pointmat);
+    f(pointmat, RefG, geom);
+  }
+}
+
+}  // namespace
+
+std::pair<double, double> GetProjectedInterval(const mfem::ParMesh &mesh,
+                                               const mfem::Array<int> &marker,
+                                               const mfem::Vector &dir)
+{
+  mfem::Vector unit_dir(dir);
+  unit_dir /= unit_dir.Norml2();
+  double x_min = mfem::infinity(), x_max = -mfem::infinity();
+  ForEachMarkedBdrElement(mesh, marker,
+                          [&](const mfem::DenseMatrix &pointmat, const auto &, auto)
+                          {
+                            for (int j = 0; j < pointmat.Width(); j++)
+                            {
+                              double x = 0.0;
+                              for (int d = 0; d < pointmat.Height(); d++)
+                              {
+                                x += pointmat(d, j) * unit_dir(d);
+                              }
+                              x_min = std::min(x_min, x);
+                              x_max = std::max(x_max, x);
+                            }
+                          });
+  Mpi::GlobalMin(1, &x_min, mesh.GetComm());
+  Mpi::GlobalMax(1, &x_max, mesh.GetComm());
+  MFEM_VERIFY(x_min <= x_max, "No marked boundary elements to project onto a direction!");
+  return {x_min, x_max};
+}
+
+double GetCrossSection(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
+                       const mfem::Vector &dir, double offset, mfem::Vector &centroid)
+{
+  // Cut each refined element, with quadrilaterals split into triangles, along the line (in
+  // 2D, at the point) joining the crossings of its edges. Points within round-off of the
+  // plane, relative to the coordinates of the element, are moved onto it, so that all
+  // elements sharing a point agree on its side.
+  const int sdim = mesh.SpaceDimension();
+  mfem::Vector unit_dir(dir);
+  unit_dir /= unit_dir.Norml2();
+  constexpr double snap_tol = 1.0e-12;
+  std::array<double, 4> sum = {};  // Measure, then its first moments
+  std::vector<double> s;
+  ForEachMarkedBdrElement(
+      mesh, marker,
+      [&](const mfem::DenseMatrix &pointmat, const mfem::RefinedGeometry &RefG,
+          mfem::Geometry::Type geom)
+      {
+        double scale = std::abs(offset);
+        s.resize(pointmat.Width());
+        for (int j = 0; j < pointmat.Width(); j++)
+        {
+          s[j] = -offset;
+          for (int d = 0; d < sdim; d++)
+          {
+            s[j] += pointmat(d, j) * unit_dir(d);
+            scale = std::max(scale, std::abs(pointmat(d, j)));
+          }
+        }
+        for (auto &s_j : s)
+        {
+          if (std::abs(s_j) <= snap_tol * scale)
+          {
+            s_j = 0.0;
+          }
+        }
+        auto Cut = [&](const int *v, int nv)
+        {
+          // Crossings of the edges of a segment (nv = 2) or triangle (nv = 3).
+          std::array<std::array<double, 3>, 2> x;
+          int n = 0;
+          for (int k = 0; k < ((nv == 2) ? 1 : nv); k++)
+          {
+            const int a = v[k], b = v[(k + 1) % nv];
+            if ((s[a] >= 0.0) != (s[b] >= 0.0))
+            {
+              const double t = s[a] / (s[a] - s[b]);
+              for (int d = 0; d < sdim; d++)
+              {
+                x[n][d] = pointmat(d, a) + t * (pointmat(d, b) - pointmat(d, a));
+              }
+              n++;
+            }
+          }
+          if (nv == 2 && n == 1)
+          {
+            sum[0] += 1.0;
+            for (int d = 0; d < sdim; d++)
+            {
+              sum[1 + d] += x[0][d];
+            }
+          }
+          else if (nv == 3 && n == 2)
+          {
+            double len = 0.0;
+            for (int d = 0; d < sdim; d++)
+            {
+              len += (x[1][d] - x[0][d]) * (x[1][d] - x[0][d]);
+            }
+            len = std::sqrt(len);
+            sum[0] += len;
+            for (int d = 0; d < sdim; d++)
+            {
+              sum[1 + d] += 0.5 * len * (x[0][d] + x[1][d]);
+            }
+          }
+        };
+        const int nv = mfem::Geometry::NumVerts[geom];
+        for (int k = 0; k < RefG.RefGeoms.Size(); k += nv)
+        {
+          const int *v = RefG.RefGeoms.GetData() + k;
+          if (nv == 4)
+          {
+            const std::array<int, 3> t1 = {v[0], v[1], v[2]}, t2 = {v[0], v[2], v[3]};
+            Cut(t1.data(), 3);
+            Cut(t2.data(), 3);
+          }
+          else
+          {
+            Cut(v, nv);
+          }
+        }
+      });
+  Mpi::GlobalSum(1 + sdim, sum.data(), mesh.GetComm());
+  centroid.SetSize(sdim);
+  for (int d = 0; d < sdim; d++)
+  {
+    centroid(d) = (sum[0] > 0.0) ? sum[1 + d] / sum[0] : 0.0;
+  }
+  return sum[0];
+}
+
+double GetSurfaceMoments(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
+                         mfem::Vector &centroid, mfem::DenseMatrix &covariance)
+{
+  // Integrate the area and first moments, then the second moments about the centroid, to
+  // avoid the cancellation of moments about a distant origin. The loops are serial, so that
+  // the sums are reproducible.
+  const int sdim = mesh.SpaceDimension();
+  mfem::IsoparametricTransformation T;
+  mfem::Vector x(sdim);
+  auto Integrate = [&](auto &&f)
+  {
+    for (int i = 0; i < mesh.GetNBE(); i++)
+    {
+      if (!marker[mesh.GetBdrAttribute(i) - 1])
+      {
+        continue;
+      }
+      mesh.GetBdrElementTransformation(i, &T);
+      const mfem::IntegrationRule &ir =
+          mfem::IntRules.Get(T.GetGeometryType(), 2 * T.Order() + T.OrderJ());
+      for (int j = 0; j < ir.GetNPoints(); j++)
+      {
+        const mfem::IntegrationPoint &ip = ir.IntPoint(j);
+        T.SetIntPoint(&ip);
+        T.Transform(ip, x);
+        f(ip.weight * T.Weight(), x);
+      }
+    }
+  };
+  std::vector<double> first(1 + sdim, 0.0);  // Area, then the first moments
+  Integrate(
+      [&](double w, const mfem::Vector &x)
+      {
+        first[0] += w;
+        for (int d = 0; d < sdim; d++)
+        {
+          first[1 + d] += w * x(d);
+        }
+      });
+  Mpi::GlobalSum(1 + sdim, first.data(), mesh.GetComm());
+  const double area = first[0];
+  centroid.SetSize(sdim);
+  for (int d = 0; d < sdim; d++)
+  {
+    centroid(d) = (area > 0.0) ? first[1 + d] / area : 0.0;
+  }
+  covariance.SetSize(sdim);
+  covariance = 0.0;
+  Integrate(
+      [&](double w, const mfem::Vector &x)
+      {
+        for (int d1 = 0; d1 < sdim; d1++)
+        {
+          for (int d2 = 0; d2 < sdim; d2++)
+          {
+            covariance(d1, d2) += w * (x(d1) - centroid(d1)) * (x(d2) - centroid(d2));
+          }
+        }
+      });
+  Mpi::GlobalSum(sdim * sdim, covariance.Data(), mesh.GetComm());
+  if (area > 0.0)
+  {
+    covariance *= 1.0 / area;
+  }
+  return area;
 }
 
 double GetDistanceFromPoint(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,

@@ -5,7 +5,6 @@
 #include <cmath>
 #include <fstream>
 #include <memory>
-#include <numbers>
 #include <sstream>
 #include <utility>
 #include <vector>
@@ -118,129 +117,6 @@ void CheckVertex(const mfem::Mesh &mesh, int v, const std::array<double, 3> &coo
 //     }
 //   }
 // }
-
-TEST_CASE("TwoDimensionalDiagonalSquarePort", "[geodata][Serial]")
-{
-  std::vector<Eigen::Vector3d> vertices{
-      {-0.19942181818181828, -0.5838274545454543, 0},
-      {-0.19926108900667502, -0.5836667480978528, 0},
-      {-0.19926061925486355, -0.5838279242308415, -8.56131891164518e-17},
-      {-0.19926014950305207, -0.5839891003638303, 0},
-      {-0.19910035983153176, -0.5835060416502512, 0},
-      {-0.1990998900797203, -0.5836672177832399, -8.56131891164518e-17},
-      {-0.1990994203279088, -0.5838283939162288, -1.3698110258632289e-16},
-      {-0.19909895057609733, -0.5839895700492176, -8.56131891164518e-17},
-      {-0.19909848082428586, -0.5841507461822064, 0},
-      {-0.1989396306563885, -0.5833453352026496, 0},
-      {-0.19893916090457703, -0.5835065113356385, -8.56131891164518e-17},
-      {-0.19893869115276555, -0.5836676874686273, -1.3698110258632289e-16},
-      {-0.19893822140095407, -0.583828863601616, -1.5410374040961326e-16},
-      {-0.1989377516491426, -0.583990039734605, -1.3698110258632289e-16},
-      {-0.19893728189733112, -0.5841512158675937, -8.56131891164518e-17},
-      {-0.19893681214551964, -0.5843123920005826, 0},
-      {-0.19877890148124525, -0.5831846287550482, 0},
-      {-0.19877843172943377, -0.5833458048880369, -8.56131891164518e-17},
-      {-0.1987779619776223, -0.5835069810210257, -1.3698110258632289e-16},
-      {-0.19877749222581081, -0.5836681571540145, -1.5410374040961326e-16},
-      {-0.19877702247399934, -0.5838293332870034, -1.3698110258632289e-16},
-      {-0.19877655272218786, -0.5839905094199922, -1.5410374040961326e-16},
-      {-0.19877608297037638, -0.584151685552981, -1.3698110258632289e-16},
-      {-0.1987756132185649, -0.5843128616859699, -8.56131891164518e-17},
-      {-0.19877514346675343, -0.5844740378189587, 0},
-      {-0.19861817611093396, -0.5830239261117406, 0},
-      {-0.1986153576000651, -0.5846338010914915, 0},
-      {-0.19845746797462832, -0.583506036157253, -8.56131891164518e-17},
-      {-0.19845745074062265, -0.582863223468433, 0},
-      {-0.19845699822281687, -0.5836672122902418, -1.3698110258632289e-16},
-      {-0.19845652969381722, -0.5831855725288573, -8.56131891164518e-17},
-      {-0.19845652847100537, -0.5838283884232307, -1.5410374040961326e-16},
-      {-0.1984560587191939, -0.5839895645562194, -1.3698110258632289e-16},
-      {-0.1984555889673824, -0.5841507406892084, -1.5410374040961326e-16},
-      {-0.19845557173337677, -0.5847935643640245, 0},
-      {-0.19845511921557096, -0.5843119168221971, -1.3698110258632289e-16},
-      {-0.19845464946375949, -0.5844730929551859, -8.56131891164518e-17},
-      {-0.19829672537031137, -0.5827025208251255, 0},
-      {-0.19829580432350594, -0.5830248698855497, -8.56131891164518e-17},
-      {-0.19829578586668845, -0.5849533276365575, 0},
-      {-0.19829486359707116, -0.5846328562277189, -8.56131891164518e-17},
-      {-0.1981360344680114, -0.583827443559458, -1.3698110258632289e-16},
-      {-0.1981360000000001, -0.5851130909090906, 0},
-      {-0.1981360000000001, -0.5825418181818179, 0},
-      {-0.19813556471619992, -0.5839886196924468, -1.5410374040961324e-16},
-      {-0.19813509618720032, -0.5835069799310624, -1.3698110258632289e-16},
-      {-0.19813509496438844, -0.5841497958254356, -1.3698110258632289e-16},
-      {-0.19813507895319465, -0.5828641672422421, -8.56131891164518e-17},
-      {-0.19813507773038283, -0.5847926195002519, -8.56131891164518e-17},
-      {-0.198134625212577, -0.5843109719584244, -1.5410374040961324e-16},
-      {-0.19813415790638922, -0.5831865163026665, -1.3698110258632289e-16},
-      {-0.19813415546076552, -0.5844721480914132, -1.3698110258632289e-16},
-      {-0.19797529186369447, -0.5849523827727849, -8.56131891164518e-17},
-      {-0.1979743695940772, -0.5846319113639462, -1.3698110258632289e-16},
-      {-0.19797435358288337, -0.5827034645989346, -8.56131891164518e-17},
-      {-0.19797343253607796, -0.5830258136593589, -1.3698110258632289e-16},
-      {-0.19781460096139447, -0.584148850961663, -1.5410374040961326e-16},
-      {-0.19781458372738883, -0.5847916746364793, -1.3698110258632289e-16},
-      {-0.197814131209583, -0.5843100270946517, -1.3698110258632289e-16},
-      {-0.19781366268058337, -0.5838283873332673, -1.5410374040961326e-16},
-      {-0.19781366145777152, -0.5844712032276406, -1.5410374040961326e-16},
-      {-0.19781272439977232, -0.5835079237048715, -1.5410374040961324e-16},
-      {-0.19781270716576665, -0.5828651110160513, -1.3698110258632289e-16},
-      {-0.19781178611896122, -0.5831874600764757, -1.5410374040961326e-16},
-      {-0.1976538755910832, -0.5846309665001737, -1.5410374040961326e-16},
-      {-0.1976510607486499, -0.583026757433168, -1.5410374040961326e-16},
-      {-0.19749316745477752, -0.584470258363868, -1.3698110258632289e-16},
-      {-0.19749222917396644, -0.5841497947354722, -1.3698110258632289e-16},
-      {-0.19749129089315537, -0.5838293311070765, -1.3698110258632289e-16},
-      {-0.19749035261234427, -0.5835088674786807, -1.3698110258632289e-16},
-      {-0.1974894143315332, -0.5831884038502848, -1.3698110258632289e-16},
-      {-0.1973324665001741, -0.5843095574092645, -1.3698110258632289e-16},
-      {-0.19733152821936303, -0.5839890937808687, -1.3698110258632289e-16},
-      {-0.19733058993855196, -0.583668630152473, 1.3698110258632289e-16},
-      {-0.19732965165774086, -0.5833481665240772, -1.3698110258632289e-16},
-      {-0.19717176554557067, -0.5841488564546611, -1.3698110258632289e-16},
-      {-0.1971708272647596, -0.5838283928262653, -1.3698110258632289e-16},
-      {-0.1971698889839485, -0.5835079291978695, -1.3698110258632289e-16},
-      {-0.1970110645909672, -0.5839881555000577, -1.3698110258632289e-16},
-      {-0.19701012631015613, -0.5836676918716619, -1.3698110258632289e-16},
-      {-0.19685036363636374, -0.5838274545454543, -1.3698110258632289e-16}};
-
-  auto comm = Mpi::World();
-  auto box = mesh::BoundingBoxFromPointCloud(comm, vertices, 0);
-
-  // True box at 45 degrees
-  auto invsqrt2 = 1.0 / std::numbers::sqrt2;
-  std::array<double, 3> ax0{invsqrt2, -invsqrt2, 0.0}, ax1{invsqrt2, invsqrt2, 0.0};
-
-  // Find the bounding points from knowing its at 45.
-  auto inf = std::numeric_limits<double>::infinity();
-  double min_x = inf, min_y = inf, max_x = -inf, max_y = -inf;
-  for (const auto &v : vertices)
-  {
-    min_x = min_x > v(0) ? v(0) : min_x;
-    min_y = min_y > v(1) ? v(1) : min_y;
-    max_x = max_x < v(0) ? v(0) : max_x;
-    max_y = max_y < v(1) ? v(1) : max_y;
-  }
-  auto length_x = (max_x - min_x) * invsqrt2;
-  auto length_y = (max_y - min_y) * invsqrt2;
-
-  CHECK_THAT(length_x, WithinAbs(length_y, 1e-6));
-
-  auto length = (length_x + length_y) / 2;
-  auto lengths = box.Lengths();
-  CHECK_THAT(lengths[0], WithinAbs(length, 1e-6));
-  CHECK_THAT(lengths[1], WithinAbs(length, 1e-6));
-  CHECK_THAT(lengths[2], WithinRel(0.0));
-
-  auto normals = box.Normals();
-  CHECK_THAT(normals(0, 0), WithinAbs(ax0[0], 1e-4));
-  CHECK_THAT(normals(1, 0), WithinAbs(ax0[1], 1e-4));
-  CHECK_THAT(normals(2, 0), WithinAbs(ax0[2], 1e-4));
-  CHECK_THAT(normals(0, 1), WithinAbs(ax1[0], 1e-4));
-  CHECK_THAT(normals(1, 1), WithinAbs(ax1[1], 1e-4));
-  CHECK_THAT(normals(2, 1), WithinAbs(ax1[2], 1e-4));
-  CHECK(box.planar);
-}
 
 TEST_CASE("TetToHex", "[geodata][Serial]")
 {
@@ -787,6 +663,98 @@ TEST_CASE("Interior boundary mesh cracking", "[geodata][Serial]")
   fs::remove(nc_path);
   fs::remove(nc_cut_path);
   fs::remove(mesh_path);
+}
+
+TEST_CASE("Default conductivity sheet warning", "[geodata][Serial]")
+{
+  // Unit cube hexahedral mesh with interior boundary elements (attribute 7) on z = 0.5,
+  // spanning the domain (exterior boundary attributes 1-6). One exterior element and one
+  // element on z = 0.5 have attribute 8, which is both exterior and interior.
+  auto base = mfem::Mesh::MakeCartesian3D(2, 2, 2, mfem::Element::HEXAHEDRON);
+  std::vector<int> sheet_faces;
+  mfem::Array<int> fv;
+  for (int f = 0; f < base.GetNumFaces(); f++)
+  {
+    int e1, e2;
+    base.GetFaceElements(f, &e1, &e2);
+    base.GetFaceVertices(f, fv);
+    bool on_sheet = (e2 >= 0);
+    for (auto v : fv)
+    {
+      on_sheet = on_sheet && std::abs(base.GetVertex(v)[2] - 0.5) < 1.0e-12;
+    }
+    if (on_sheet)
+    {
+      sheet_faces.push_back(f);
+    }
+  }
+  REQUIRE(sheet_faces.size() == 4);
+  mfem::Mesh mesh(3, base.GetNV(), base.GetNE(),
+                  base.GetNBE() + static_cast<int>(sheet_faces.size()));
+  for (int v = 0; v < base.GetNV(); v++)
+  {
+    mesh.AddVertex(base.GetVertex(v));
+  }
+  for (int e = 0; e < base.GetNE(); e++)
+  {
+    mesh.AddElement(base.GetElement(e)->Duplicate(&mesh));
+  }
+  for (int be = 0; be < base.GetNBE(); be++)
+  {
+    auto *el = base.GetBdrElement(be)->Duplicate(&mesh);
+    if (be == 0)
+    {
+      el->SetAttribute(8);
+    }
+    mesh.AddBdrElement(el);
+  }
+  for (auto f : sheet_faces)
+  {
+    auto *el = base.GetFace(f)->Duplicate(&mesh);
+    el->SetAttribute(f == sheet_faces.back() ? 8 : 7);
+    mesh.AddBdrElement(el);
+  }
+  mesh.FinalizeTopology();
+  mesh.Finalize();
+  mesh.SetAttributes();
+
+  config::ConductivityData cond;
+  cond.sigma = 5.8e7;
+  cond.attributes = {7};
+  auto Sheets = [&](const config::ConductivityData &data)
+  {
+    return mesh::GetDefaultConductivitySheetAttributes(
+        mesh, std::vector<config::ConductivityData>{data});
+  };
+
+  // Interior boundary without "Crack", also with a "Thickness".
+  CHECK(Sheets(cond) == std::vector<int>{7});
+  config::ConductivityData film = cond;
+  film.h = 1.0e-3;
+  CHECK(Sheets(film) == std::vector<int>{7});
+
+  // Exterior boundaries, and attributes with an exterior element, are not reported.
+  cond.attributes = {1};
+  CHECK(Sheets(cond).empty());
+  cond.attributes = {8};
+  CHECK(Sheets(cond).empty());
+  cond.attributes = {1, 7, 8};
+  CHECK(Sheets(cond) == std::vector<int>{7});
+  cond.attributes = {7, 12};  // No boundary elements with attribute 12.
+  CHECK(Sheets(cond) == std::vector<int>{7});
+  cond.attributes = {7};
+
+  // An explicit "Crack", either way, is an informed choice.
+  config::ConductivityData given = cond;
+  given.crack_given = true;
+  CHECK(Sheets(given).empty());
+  given.crack = true;
+  CHECK(Sheets(given).empty());
+
+  // Nothing is reported without conductivity boundaries.
+  CHECK(mesh::GetDefaultConductivitySheetAttributes(mesh,
+                                                    std::vector<config::ConductivityData>{})
+            .empty());
 }
 
 // MFEM identifies a face by its three smallest vertex numbers. A cracked quadrilateral with
