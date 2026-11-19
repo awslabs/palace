@@ -352,10 +352,10 @@ fs::path PostOperator<solver_t>::ExcitationSubFolder(int ex_idx) const
 }
 
 template <ProblemType solver_t>
-void PostOperator<solver_t>::InitializeParaviewDataCollection(int ex_idx)
+void PostOperator<solver_t>::InitializeParaviewDataCollection(int ex_idx, bool restart)
   requires(solver_t == ProblemType::DRIVEN)
 {
-  InitializeParaviewDataCollection(ExcitationSubFolder(ex_idx));
+  InitializeParaviewDataCollection(ExcitationSubFolder(ex_idx), restart);
 }
 
 template <ProblemType solver_t>
@@ -768,7 +768,7 @@ void PostOperator<solver_t>::EnsureParaviewDataCollection()
 
 template <ProblemType solver_t>
 void PostOperator<solver_t>::InitializeParaviewDataCollection(
-    const fs::path &sub_folder_name)
+    const fs::path &sub_folder_name, bool restart)
 {
   EnsureFieldCoefficientsSetup();
   if (!ShouldWriteParaviewFields())
@@ -791,6 +791,8 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
   // Set up postprocessing for output to disk.
   paraview = {paraview_dir_v, &fem_op->GetNDSpace().GetParMesh()};
   paraview_bdr = {paraview_dir_b, &fem_op->GetNDSpace().GetParMesh()};
+  paraview->UseRestartMode(restart);
+  paraview_bdr->UseRestartMode(restart);
 
   const mfem::VTKFormat format = mfem::VTKFormat::BINARY32;
   const bool use_ho = true;

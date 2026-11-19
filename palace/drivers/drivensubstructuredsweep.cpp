@@ -1420,6 +1420,12 @@ ErrorIndicator DrivenSubstructuredSweep::Run()
         post_op->SetLumpedPortVoltages(std::move(Vk));
         post_op->SetWavePortOverlaps(std::move(Sk));
       }
+      if (n > 1 && post_op->WillWriteFields(static_cast<int>(omega_i)))
+      {
+        // As in a regular sweep, the fields of each excitation go to its own ParaView
+        // collection, continued at each frequency (the run starts with no ParaView output).
+        post_op->InitializeParaviewDataCollection(ex_idx[k], true);
+      }
       post_op->MeasureAndPrintAll(ex_idx[k], int(omega_i), E[k], B, omega);
     }
   }

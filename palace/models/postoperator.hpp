@@ -259,8 +259,10 @@ protected:
   void SetupFieldCoefficients();
   void EnsureFieldCoefficientsSetup();
 
-  // Initialize Paraview, register all fields to write.
-  void InitializeParaviewDataCollection(const fs::path &sub_folder_name = "");
+  // Initialize Paraview, register all fields to write. With restart, the collection
+  // continues the one in its folder, whose cycles before the next write are kept.
+  void InitializeParaviewDataCollection(const fs::path &sub_folder_name = "",
+                                        bool restart = false);
   void EnsureParaviewDataCollection();
 
   // Subfolder for the field output of a driven excitation, the same for ParaView and grid
@@ -271,7 +273,7 @@ protected:
 public:
   // Public overload for the driven solver only, that takes in an excitation index and
   // sets the correct sub_folder_name path for the primary function above.
-  void InitializeParaviewDataCollection(int ex_idx)
+  void InitializeParaviewDataCollection(int ex_idx, bool restart = false)
     requires(solver_t == ProblemType::DRIVEN);
 
   // Whether this solve requests any field output. Drivers use this to release solver

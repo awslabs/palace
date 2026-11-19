@@ -12,6 +12,7 @@
 #include <numeric>
 #include <optional>
 #include <random>
+#include <regex>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -22,6 +23,7 @@
 #include <nlohmann/json.hpp>
 #include <catch2/generators/catch_generators.hpp>
 #include <catch2/generators/catch_generators_range.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 #include "driver.hpp"
 #include "fem/bilinearform.hpp"
@@ -4076,6 +4078,60 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   RunDrivenBox(temp_dir, "Offline");
   CHECK_THROWS_WITH(RunDrivenBox(temp_dir, "Online", current),
                     ContainsSubstring("has sources on the substructuring interface"));
+}
+
+TEST_CASE_METHOD(
+    palace::test::SharedTempDir,
+    "Driven substructuring writes each excitation's fields to its own collection",
+    "[substructure][Serial][Parallel]")
+{
+  // Two excitations at two frequencies: as in a regular sweep, the ParaView collections of
+  // each excitation hold its fields at both frequencies (the last one also the final mesh
+  // partitioning, at a later time), and not those of an earlier sweep in the same folder.
+  auto sweep = [&](double min_freq, double max_freq)
+  {
+    RunDrivenBox(temp_dir, "Offline",
+                 [=](json &config)
+                 {
+                   config["Boundaries"]["LumpedPort"].push_back({{"Index", 2},
+                                                                 {"R", 50.0},
+                                                                 {"Attributes", {5}},
+                                                                 {"Direction", "+Y"},
+                                                                 {"Excitation", 2}});
+                   config["Solver"]["Driven"] = {{"MinFreq", min_freq},
+                                                 {"MaxFreq", max_freq},
+                                                 {"FreqStep", 10.0},
+                                                 {"SaveStep", 1}};
+                 });
+  };
+  sweep(10.0, 10.0);
+  sweep(20.0, 30.0);
+  const auto root = temp_dir / "postpro_Offline" / "paraview";
+  for (const std::string collection : {"driven", "driven_boundary"})
+  {
+    for (int excitation : {1, 2})
+    {
+      const std::string folder = fmt::format("excitation_{}", excitation);
+      CAPTURE(collection, excitation);
+      std::ifstream pvd(root / collection / folder / (folder + ".pvd"));
+      REQUIRE(pvd.good());
+      const std::string contents(std::istreambuf_iterator<char>(pvd), {});
+      const std::regex timestep("timestep=\"([^\"]+)\"");
+      std::vector<double> freq;
+      for (auto it = std::sregex_iterator(contents.begin(), contents.end(), timestep);
+           it != std::sregex_iterator(); ++it)
+      {
+        const double t = std::stod((*it)[1].str());
+        if (t < 90.0)
+        {
+          freq.push_back(t);
+        }
+      }
+      REQUIRE(freq.size() == 2);
+      CHECK_THAT(freq[0], Catch::Matchers::WithinRel(20.0, 1.0e-6));
+      CHECK_THAT(freq[1], Catch::Matchers::WithinRel(30.0, 1.0e-6));
+    }
+  }
 }
 
 TEST_CASE("DrivenSubstructure finds the boundary attributes on Γ",
