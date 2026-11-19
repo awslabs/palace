@@ -148,9 +148,8 @@ ComplexVector VoltageFunctional(SpaceOperator &space_op, int idx,
   return l;
 }
 
-// The full S_E (n x n, column-major) of a record's lower triangle (by columns), mapped to
-// the current interface as M^-T S_E M^-1 with map (rows[g]: row g of M^-T), on one
-// triangle.
+// The full S_E (n x n) of a record's lower triangle (by columns), mapped to the current
+// interface as M^-T S_E M^-1 with map (SignatureMap::DualMatrix).
 std::vector<std::complex<double>> FullSchur(const std::complex<double> *lower, int n,
                                             const SignatureMap *map)
 {
@@ -163,28 +162,21 @@ std::vector<std::complex<double>> FullSchur(const std::complex<double> *lower, i
     return lower[static_cast<std::size_t>(b) * n -
                  static_cast<std::size_t>(b) * (b - 1) / 2 + (a - b)];
   };
-  std::vector<std::complex<double>> S(static_cast<std::size_t>(n) * n);
-  for (int j = 0; j < n; j++)
+  auto read_row = [&](int a, std::complex<double> *x)
   {
-    for (int i = j; i < n; i++)
+    for (int b = 0; b < n; b++)
     {
-      std::complex<double> v = 0.0;
-      if (map)
-      {
-        for (const auto &[a, ca] : map->rows[i])
-        {
-          for (const auto &[b, cb] : map->rows[j])
-          {
-            v += ca * cb * at(a, b);
-          }
-        }
-      }
-      else
-      {
-        v = at(i, j);
-      }
-      S[static_cast<std::size_t>(j) * n + i] = S[static_cast<std::size_t>(i) * n + j] = v;
+      x[b] = at(a, b);
     }
+  };
+  if (map)
+  {
+    return map->DualMatrix<std::complex<double>>(0, n, read_row);
+  }
+  std::vector<std::complex<double>> S(static_cast<std::size_t>(n) * n);
+  for (int a = 0; a < n; a++)
+  {
+    read_row(a, S.data() + static_cast<std::size_t>(a) * n);
   }
   return S;
 }
@@ -266,7 +258,7 @@ private:
   // The environment's reduced terms on rank 0, with W = M^-1 V_Γ: W^T S_i W and W^T g_i per
   // record (and S_i W, to extend them as the basis grows).
   std::vector<std::complex<double>> W;
-  std::vector<std::vector<std::complex<double>>> SW, RS, RG;
+  std::vector<std::vector<std::complex<double>>> RS, RG;
   BarycentricInterpolant field;  // the fields' minimal rational interpolant
 
   // The model of an offline sweep that saves one, or of an adaptive sweep, and the model
@@ -777,12 +769,7 @@ DrivenSubstructureModel::Record DrivenSubstructuredSweep::CondenseAndSolve(doubl
   {
     for (int j = 0; j < np; j++)
     {
-      const auto &l = port_l[j];
-      lu[static_cast<std::size_t>(k) * np + j] = {
-          mfem::InnerProduct(l.Real(), E[k].Real()) -
-              mfem::InnerProduct(l.Imag(), E[k].Imag()),
-          mfem::InnerProduct(l.Real(), E[k].Imag()) +
-              mfem::InnerProduct(l.Imag(), E[k].Real())};
+      lu[static_cast<std::size_t>(k) * np + j] = port_l[j].TransposeDot(E[k]);
     }
   }
   Mpi::GlobalSum(static_cast<int>(lu.size()), lu.data(), comm);
@@ -835,12 +822,7 @@ DrivenSubstructureModel::Record DrivenSubstructuredSweep::EnvironmentRecord(doub
   {
     for (int j = 0; j < np; j++)
     {
-      const auto &l = port_l[j];
-      c[static_cast<std::size_t>(e) * np + j] = {
-          mfem::InnerProduct(l.Real(), x[e].Real()) -
-              mfem::InnerProduct(l.Imag(), x[e].Imag()),
-          mfem::InnerProduct(l.Real(), x[e].Imag()) +
-              mfem::InnerProduct(l.Imag(), x[e].Real())};
+      c[static_cast<std::size_t>(e) * np + j] = port_l[j].TransposeDot(x[e]);
     }
   }
   Mpi::GlobalSum(static_cast<int>(c.size()), c.data(), comm);
@@ -1156,22 +1138,22 @@ void DrivenSubstructuredSweep::UpdateEnvTerms()
   }
   for (std::size_t i = 0; i < EnvRecords().size(); i++)
   {
+    // S_i (symmetric, by its lower triangle) times the new columns of W, in one pass.
     const auto *S = EnvRecords()[i].data();
-    SW[i].resize(static_cast<std::size_t>(nG) * r, 0.0);
-    for (int j = r0; j < r; j++)
+    const auto *Wn = W.data() + static_cast<std::size_t>(r0) * nG;
+    std::vector<std::complex<double>> SW(static_cast<std::size_t>(nG) * (r - r0), 0.0);
+    std::size_t q = 0;
+    for (int c = 0; c < nG; c++)
     {
-      // S_i (symmetric, by its lower triangle) times column j of W.
-      const auto *wj = W.data() + static_cast<std::size_t>(j) * nG;
-      auto *y = SW[i].data() + static_cast<std::size_t>(j) * nG;
-      std::size_t q = 0;
-      for (int c = 0; c < nG; c++)
+      for (int a = c; a < nG; a++, q++)
       {
-        for (int a = c; a < nG; a++, q++)
+        for (int j = 0; j < r - r0; j++)
         {
-          y[a] += S[q] * wj[c];
+          const std::size_t o = static_cast<std::size_t>(j) * nG;
+          SW[o + a] += S[q] * Wn[o + c];
           if (a != c)
           {
-            y[c] += S[q] * wj[a];
+            SW[o + c] += S[q] * Wn[o + a];
           }
         }
       }
@@ -1197,7 +1179,7 @@ void DrivenSubstructuredSweep::UpdateEnvTerms()
         for (int q = 0; q < nG; q++)
         {
           d += W[static_cast<std::size_t>(a) * nG + q] *
-               SW[i][static_cast<std::size_t>(j) * nG + q];
+               SW[static_cast<std::size_t>(j - r0) * nG + q];
         }
         R[static_cast<std::size_t>(j) * r + a] = R[static_cast<std::size_t>(a) * r + j] = d;
       }
@@ -1389,7 +1371,6 @@ ErrorIndicator DrivenSubstructuredSweep::Run()
     Mpi::Warning("An adaptive online sweep needs a model saved by an adaptive sweep: every "
                  "frequency is solved!\n");
   }
-  SW.assign(EnvRecords().size(), {});
   RS.assign(EnvRecords().size(), {});
   RG.assign(EnvRecords().size(), {});
   if (region_adaptive)

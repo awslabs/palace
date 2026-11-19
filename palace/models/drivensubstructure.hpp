@@ -365,6 +365,11 @@ private:
   mutable std::array<Vector, 3> fp_fields;
   const Vector &FingerprintField(int k) const;
 
+  // The real and imaginary parts of the stiffness (op = 0), damping (1) or mass (2) matrix
+  // of a side, assembled on its elements, with its pinned DOFs eliminated (null if zero).
+  std::array<std::unique_ptr<mfem::HypreParMatrix>, 2> SideParts(const Side &side,
+                                                                 int op) const;
+
   // The reduced region: its operator parts (Kr, Ki, Cr, Ci, Mr, Mi on the region, with the
   // pinned DOFs eliminated), the basis V, the parts' projections V^T P V (r x r,
   // column-major), and the interface rows of V on rank 0.

@@ -24,12 +24,6 @@ void Release(V &v)
   V().swap(v);
 }
 
-template <typename T>
-MPI_Datatype MpiType()
-{
-  return std::is_same_v<T, double> ? MPI_DOUBLE : MPI_C_DOUBLE_COMPLEX;
-}
-
 // The number of the n indices of a block-cyclic dimension (blocks of b over np processes,
 // from process 0) held by process me (ScaLAPACK's NUMROC).
 int LocalCount(int n, int b, int me, int np)
@@ -303,8 +297,8 @@ std::vector<T> MumpsSchurSolverT<T>::ReleaseSchurRows()
         sbuf[at[dest[l]]++] = col[l];
       }
     }
-    MPI_Alltoallv(sbuf.data(), scnt.data(), sdsp.data(), MpiType<T>(), rbuf.data(),
-                  rcnt.data(), rdsp.data(), MpiType<T>(), comm);
+    MPI_Alltoallv(sbuf.data(), scnt.data(), sdsp.data(), mpi::DataType<T>(), rbuf.data(),
+                  rcnt.data(), rdsp.data(), mpi::DataType<T>(), comm);
     for (int p = 0; p < ngrid; p++)
     {
       const int pr = p / npcol, pc = p % npcol;
@@ -557,8 +551,8 @@ void MumpsSchurSolverT<T>::ScatterSolution(const std::vector<VecType *> &Y)
     rdsp[r] *= nb;
   }
   std::vector<T> rval(static_cast<std::size_t>(nrecv) * nb);
-  MPI_Alltoallv(sval.data(), scnt.data(), sdsp.data(), MpiType<T>(), rval.data(),
-                rcnt.data(), rdsp.data(), MpiType<T>(), comm);
+  MPI_Alltoallv(sval.data(), scnt.data(), sdsp.data(), mpi::DataType<T>(), rval.data(),
+                rcnt.data(), rdsp.data(), mpi::DataType<T>(), comm);
   Release(sval);
   for (int k = 0; k < nb; k++)
   {

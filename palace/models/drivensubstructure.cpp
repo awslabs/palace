@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <fstream>
 #include <limits>
+#include <span>
 #include <type_traits>
 #include <utility>
 #include <Eigen/Dense>
@@ -19,6 +20,7 @@
 #include "linalg/directschur.hpp"
 #include "linalg/lowertriangle.hpp"
 #include "linalg/mumpsschur.hpp"
+#include "linalg/orthog.hpp"
 #include "linalg/rap.hpp"
 #include "models/romoperator.hpp"
 #include "models/spaceoperator.hpp"
@@ -437,23 +439,16 @@ void DrivenSubstructure::Setup(Side &side, double omega)
   side.parts.assign(6, {});
   for (int op = 0; op < 3; op++)
   {
-    std::unique_ptr<ComplexOperator> A;
-    {
-      AssemblyDomains::Restriction restriction(space_op.GetAssemblyDomains(), side.attrs);
-      A = (op == 0)   ? space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ZERO)
-          : (op == 1) ? space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO)
-                      : space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
-    }
+    auto parts = SideParts(side, op);
     for (int p = 0; p < 2; p++)
     {
-      auto X = StealPart(A.get(), p == 1);
+      const auto &X = parts[p];
       if (!X)
       {
         MFEM_VERIFY(op > 0 || p > 0,
                     "Missing stiffness matrix of a substructure operator!");
         continue;
       }
-      X->EliminateBC(side.pinned, Operator::DIAG_ZERO);
       auto &part = side.parts[2 * op + p];
       if (op == 0 && p == 0)
       {
@@ -545,6 +540,28 @@ void DrivenSubstructure::Setup(Side &side, double omega)
   auto extra = ExtraParts(side, omega);
   side.extra = extra[0] || extra[1];
   Fill(side, omega, extra, terms, side.val);
+}
+
+std::array<std::unique_ptr<mfem::HypreParMatrix>, 2>
+DrivenSubstructure::SideParts(const Side &side, int op) const
+{
+  std::unique_ptr<ComplexOperator> A;
+  {
+    AssemblyDomains::Restriction restriction(space_op.GetAssemblyDomains(), side.attrs);
+    A = (op == 0)   ? space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ZERO)
+        : (op == 1) ? space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO)
+                    : space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+  }
+  std::array<std::unique_ptr<mfem::HypreParMatrix>, 2> X;
+  for (int p = 0; p < 2; p++)
+  {
+    X[p] = StealPart(A.get(), p == 1);
+    if (X[p])
+    {
+      X[p]->EliminateBC(side.pinned, Operator::DIAG_ZERO);
+    }
+  }
+  return X;
 }
 
 void DrivenSubstructure::Fill(
@@ -695,6 +712,7 @@ void DrivenSubstructure::Condense(double omega, std::vector<std::complex<double>
           coo.jcn.push_back(static_cast<int>(b + 1));
           coo.val.push_back(v);
         });
+    Release(S_env);
     coupled = MakeFactorization(CoupledSolver(solver), ordering, comm, region.n_sys,
                                 std::move(coo), {}, region.rows);
   }
@@ -707,6 +725,7 @@ void DrivenSubstructure::Condense(double omega, std::vector<std::complex<double>
     Fill(region, omega, extra, ModalTerms(region, omega), val);
     std::size_t k = coupled_region_entries;
     add_schur([&](HYPRE_BigInt, HYPRE_BigInt, std::complex<double> v) { val[k++] = v; });
+    Release(S_env);
     coupled->Refactor();
   }
   solvable = true;
@@ -933,58 +952,32 @@ void DrivenSubstructure::AddReducedBasis(const std::vector<ComplexVector> &u)
     red_ops.resize(6);
     for (int op = 0; op < 3; op++)
     {
-      std::unique_ptr<ComplexOperator> A;
-      {
-        AssemblyDomains::Restriction restriction(space_op.GetAssemblyDomains(),
-                                                 region.attrs);
-        A = (op == 0)   ? space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ZERO)
-            : (op == 1) ? space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO)
-                        : space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
-      }
-      for (int p = 0; p < 2; p++)
-      {
-        red_ops[2 * op + p] = StealPart(A.get(), p == 1);
-        if (red_ops[2 * op + p])
-        {
-          red_ops[2 * op + p]->EliminateBC(region.pinned, Operator::DIAG_ZERO);
-        }
-      }
+      auto parts = SideParts(region, op);
+      red_ops[2 * op] = std::move(parts[0]);
+      red_ops[2 * op + 1] = std::move(parts[1]);
     }
     red_parts.assign(6, {});
   }
 
   // Orthonormalize the real and imaginary parts (classical Gram-Schmidt, twice), dropping
-  // the ones already in the span.
+  // those in the span to the tolerance of RomOperator: the solves of the region are direct,
+  // so a part within it adds only rounding (a zero part, nothing).
   const std::size_t r0 = red_basis.size();
+  std::vector<double> H;
   for (const auto &uk : u)
   {
     for (const Vector *part : {&uk.Real(), &uk.Imag()})
     {
-      Vector v(*part);
-      const double nrm0 = linalg::Norml2(comm, v);
-      if (nrm0 == 0.0)
+      red_basis.push_back(*part);
+      H.resize(red_basis.size());
+      const auto [pre_norm, norm] =
+          linalg::OrthogonalizeColumnCGS(comm, std::span(red_basis), H.data(), true);
+      if (norm <= 1.0e-12 * pre_norm)
       {
+        red_basis.pop_back();
         continue;
       }
-      for (int pass = 0; pass < 2; pass++)
-      {
-        std::vector<double> d(red_basis.size());
-        for (std::size_t i = 0; i < red_basis.size(); i++)
-        {
-          d[i] = mfem::InnerProduct(red_basis[i], v);
-        }
-        Mpi::GlobalSum(static_cast<int>(d.size()), d.data(), comm);
-        for (std::size_t i = 0; i < red_basis.size(); i++)
-        {
-          v.Add(-d[i], red_basis[i]);
-        }
-      }
-      const double nrm = linalg::Norml2(comm, v);
-      if (nrm > 1.0e-10 * nrm0)
-      {
-        v *= 1.0 / nrm;
-        red_basis.push_back(std::move(v));
-      }
+      red_basis.back() *= 1.0 / norm;
     }
   }
 

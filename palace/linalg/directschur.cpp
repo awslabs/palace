@@ -356,7 +356,7 @@ public:
     blocks(0, 1) = blocks(1, 0) = &Ai;
     coef(0, 0) = coef(0, 1) = coef(1, 0) = 1.0;
     coef(1, 1) = -1.0;
-    A2.reset(mfem::HypreParMatrixFromBlocks(blocks, &coef));
+    std::unique_ptr<mfem::HypreParMatrix> A2(mfem::HypreParMatrixFromBlocks(blocks, &coef));
     solver->SetOperator(*A2);
     return false;
   }
@@ -403,7 +403,6 @@ private:
   MPI_Comm comm;
   int n_loc = 0;
   std::unique_ptr<mfem::Solver> solver;
-  std::unique_ptr<mfem::HypreParMatrix> A2;
 };
 #endif
 
