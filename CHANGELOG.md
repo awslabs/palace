@@ -456,6 +456,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     shared by all excitations and stay in `gridfunction/driven/`. The output of driven
     simulations with a single excitation is unchanged.
     [PR 1220](https://github.com/awslabs/palace/pull/1220).
+  - Fixed SLEPc eigenvalue solves on more than one process that occasionally hung or failed
+    (for example with "The inner product is not well defined") when the LAPACK library did
+    not return identical results on all processes, as MKL on some Intel processors. SLEPc
+    now solves its small dense problems on the first process and broadcasts the results.
 
 #### Documentation
 

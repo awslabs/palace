@@ -40,6 +40,16 @@ using namespace std::complex_literals;
 namespace
 {
 
+// SLEPc solves the small dense problems of its solvers (DS) on every process, and needs
+// all of them to get the same result. LAPACK does not guarantee bitwise identical results
+// on different processes (MKL does not on some processors), and then the processes can
+// disagree on convergence and deadlock. Solve the dense problems on the first process and
+// broadcast the results instead.
+inline PetscErrorCode SynchronizeDS(DS ds)
+{
+  return DSSetParallel(ds, DS_PARALLEL_SYNCHRONIZED);
+}
+
 inline PetscErrorCode FromPetscVec(Vec x, palace::ComplexVector &y, int block = 0,
                                    int nblocks = 1)
 {
@@ -407,6 +417,9 @@ SlepcEPSSolverBase::SlepcEPSSolverBase(MPI_Comm comm, int print, const std::stri
 {
   PalacePetscCall(EPSCreate(comm, &eps));
   PalacePetscCall(EPSSetOptionsPrefix(eps, prefix.c_str()));
+  DS ds;
+  PalacePetscCall(EPSGetDS(eps, &ds));
+  PalacePetscCall(SynchronizeDS(ds));
   if (print > 0)
   {
     std::string opts = "-eps_monitor";
@@ -944,6 +957,9 @@ SlepcPEPSolverBase::SlepcPEPSolverBase(MPI_Comm comm, int print, const std::stri
 {
   PalacePetscCall(PEPCreate(comm, &pep));
   PalacePetscCall(PEPSetOptionsPrefix(pep, prefix.c_str()));
+  DS ds;
+  PalacePetscCall(PEPGetDS(pep, &ds));
+  PalacePetscCall(SynchronizeDS(ds));
   if (print > 0)
   {
     std::string opts = "-pep_monitor";
@@ -1295,6 +1311,9 @@ SlepcNEPSolverBase::SlepcNEPSolverBase(MPI_Comm comm, int print, const std::stri
 {
   PalacePetscCall(NEPCreate(comm, &nep));
   PalacePetscCall(NEPSetOptionsPrefix(nep, prefix.c_str()));
+  DS ds;
+  PalacePetscCall(NEPGetDS(nep, &ds));
+  PalacePetscCall(SynchronizeDS(ds));
   if (print > 0)
   {
     std::string opts = "-nep_monitor";
@@ -1626,6 +1645,9 @@ void SlepcNEPSolver::SetOperatorsImpl(const ComplexOperator &K, const ComplexOpe
     PalacePetscCall(KSPSetType(ksp, KSPPREONLY));
     PalacePetscCall(NEPSLPGetEPS(nep, &eps));
     PalacePetscCall(EPSSetType(eps, EPSKRYLOVSCHUR));
+    DS ds;
+    PalacePetscCall(EPSGetDS(eps, &ds));
+    PalacePetscCall(SynchronizeDS(ds));
     PalacePetscCall(KSPGetPC(ksp, &pc));
     PalacePetscCall(PCSetType(pc, PCSHELL));
     PalacePetscCall(PCShellSetContext(pc, (void *)this));
