@@ -1966,9 +1966,17 @@ public:
   // no filesystem access. Set: post_dir / Directory / name, the directory created first; a
   // symlink at that path (SaveIteration's link into the previous adaptive iteration's
   // archive) is removed before, so that an iteration never writes into an archived folder.
-  // Called by the root writers when they create the file.
+  // That filesystem work is done on the ROOT only; every other rank derives the same path
+  // without touching the filesystem (OI-DIAGDIR-RANK-RACE-HANG: ranks that each removed
+  // the link and re-created the directory removed it under the root's open). Called by the
+  // root writers when they create the file.
   std::filesystem::path DiagnosticsPath(const std::filesystem::path &post_dir,
                                         const std::string &name) const;
+  // DiagnosticsPath for a call on EVERY rank (collective; the census table's path before
+  // its gather): the root's filesystem work through ApplyOnRootFilesystem, so that its
+  // failure ends every rank with the root's message.
+  std::filesystem::path CollectiveDiagnosticsPath(const std::filesystem::path &post_dir,
+                                                  const std::string &name) const;
   const std::string &GetDiagnosticsDirectory() const { return diagnostics_directory; }
   // Diagnostics.ConductorConsistencyRecords "Directory": the Records array leaves
   // palace.json for DiagnosticsPath(post_dir, kConductorConsistencyRecordsFile).

@@ -609,10 +609,11 @@ PostOperator<solver_t>::PostOperator(
       if (surface_response_patch_energy_enabled)
       {
         // Lane rescensus-product (decision 1817): the census's per-patch readings
-        // (PatchEnergy only; collective).
+        // (PatchEnergy only; collective; the path's filesystem work on the root).
         surface_response_op->WriteResolutionPatchTable(
             surface_response_op
-                ->DiagnosticsPath(post_dir, "surface-response-resolution-patches.csv")
+                ->CollectiveDiagnosticsPath(post_dir,
+                                            "surface-response-resolution-patches.csv")
                 .string());
       }
     }

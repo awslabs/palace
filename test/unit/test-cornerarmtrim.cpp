@@ -4259,6 +4259,147 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 #endif
 }
 
+// OI-DIAGDIR-RANK-RACE-HANG (decision 2184): after the adaptive archive step (SaveIteration
+// leaves post_dir/diagnostics as a link into iteration1/), a rank other than the root that
+// asks for a diagnostics path must not touch the filesystem. Before the fix every rank
+// removed the link and created the directory itself; a rank that had read the link before
+// another rank re-created the directory then removed that directory under the root's open
+// (the root's exception; the other ranks in the census table's gather). The deterministic
+// form: the other ranks ask first while the root waits, and the link must still be there.
+// Then the collective form on every rank (the link replaced by the directory on the root)
+// and a failure of the root's filesystem work, which must end every rank alike.
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "Diagnostics.Directory paths leave the filesystem to the root after the "
+                 "adaptive archive step",
+                 "[postoperator][surfaceresponseoperator][cornerarmtrim][3d][maxwell]"
+                 "[patchenergy][diagnosticsdirectory][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  const fs::path mesh_path = temp.temp_dir / "diagpath-lead.mesh";
+  const auto basis_path = temp.temp_dir / "diagpath-basis-points.csv";
+  const auto edge_library_path = temp.temp_dir / "fabrication-process-diagpath-edges.json";
+  MPI_Comm comm = Mpi::World();
+  if (Mpi::Root(comm))
+  {
+    {
+      mfem::Mesh serial = MakeSerialLeadMesh(0.0, 0.75);
+      std::ofstream output(mesh_path);
+      serial.Print(output);
+    }
+    {
+      std::ofstream output(basis_path);
+      output << "x,y,z\n"
+             << "-0.2,-0.2,0.0\n"
+             << "0.2,-0.2,0.0\n"
+             << "0.2,0.2,0.0\n"
+             << "-0.2,0.2,0.0\n";
+    }
+    std::ifstream input(convex_library_3d_path);
+    REQUIRE(input);
+    json library = json::parse(input);
+    library["Name"] = "unit-test-process-diagpath-edges";
+    json models = json::array();
+    for (auto &model : library["Models"])
+    {
+      if (model["Topology"] == "IsolatedEdge")
+      {
+        model["Interfaces"] = {{{"Type", "SA"}, {"Coupon", 1}}};
+        model["BasisPoints"] = basis_path.string();
+        models.push_back(model);
+      }
+    }
+    library["Models"] = std::move(models);
+    std::ofstream output(edge_library_path);
+    output << library.dump(2) << "\n";
+  }
+  Mpi::Barrier(comm);
+  json run = IslandConfig();
+  run["Model"]["Mesh"] = mesh_path.string();
+  run["Model"]["L0"] = 1.0;
+  run["Problem"]["Type"] = "Eigenmode";
+  run["Boundaries"]["Ground"]["Attributes"] = {4, 9};
+  run["Boundaries"].erase("Terminal");
+  const fs::path output_dir = temp.temp_dir / "diagpath";
+  run["Problem"]["Output"] = output_dir.string();
+  run["Solver"] = {{"Order", 1},
+                   {"Eigenmode", {{"Target", 1.0}}},
+                   {"SurfaceResponseCorrection",
+                    {{"Library", edge_library_path.string()},
+                     {"TargetInterfaces", {4}},
+                     {"UnmatchedPolicy", "Warn"},
+                     {"CorrectionMode", "PostprocessOnly"},
+                     {"PatchEnergy", true},
+                     {"Diagnostics", {{"Directory", "diagnostics"}}}}}};
+  IoData iodata(run, false);
+  iodata.boundaries.cracked_attributes.insert(9);
+  MakeOutputFolder(iodata, comm);
+  std::vector<std::unique_ptr<Mesh>> meshes;
+  meshes.push_back(std::make_unique<Mesh>(MakeLeadMesh(0.0, 0.75)));
+  SpaceOperator space_op(iodata, meshes);
+  PostOperator<ProblemType::EIGENMODE> post_op(iodata, space_op);
+  const auto *response = post_op.GetSurfaceResponseOperator();
+  REQUIRE(response);
+  const fs::path directory = output_dir / "diagnostics";
+  const fs::path census = "surface-response-resolution-patches.csv";
+  // The root's reading of the shared directory, seen by every rank (every CHECK below holds
+  // or fails on every rank alike).
+  auto RootReads = [&](auto &&read)
+  {
+    int value = Mpi::Root(comm) ? (read() ? 1 : 0) : 0;
+    Mpi::Broadcast(1, &value, 0, comm);
+    return value == 1;
+  };
+  auto IsLink = [&]() { return fs::is_symlink(fs::symlink_status(directory)); };
+  auto IsDirectory = [&]()
+  { return !fs::is_symlink(fs::symlink_status(directory)) && fs::is_directory(directory); };
+  // The constructor wrote the census table there.
+  CHECK(RootReads([&]()
+                  { return IsDirectory() && fs::is_regular_file(directory / census); }));
+  SaveIteration(comm, output_dir, 1, 1);
+  REQUIRE(RootReads(IsLink));
+  // The other ranks ask first; the root waits. Every rank derives the same path.
+  if (!Mpi::Root(comm))
+  {
+    CHECK(response->DiagnosticsPath(output_dir, "x.csv") == directory / "x.csv");
+  }
+  Mpi::Barrier(comm);
+  CHECK(RootReads(IsLink));
+  // The root's own call replaces the link by a directory; the archive is untouched.
+  if (Mpi::Root(comm))
+  {
+    CHECK(response->DiagnosticsPath(output_dir, "x.csv") == directory / "x.csv");
+  }
+  Mpi::Barrier(comm);
+  CHECK(RootReads(IsDirectory));
+  CHECK(RootReads(
+      [&]()
+      { return fs::is_regular_file(output_dir / "iteration1" / "diagnostics" / census); }));
+  // The collective form (the census table's path, asked on every rank before its gather):
+  // the root's work through ApplyOnRootFilesystem, every rank the same path.
+  SaveIteration(comm, output_dir, 2, 1);
+  REQUIRE(RootReads(IsLink));
+  CHECK(response->CollectiveDiagnosticsPath(output_dir, "y.csv") == directory / "y.csv");
+  CHECK(RootReads(IsDirectory));
+  CHECK(RootReads([&]()
+                  { return fs::is_directory(output_dir / "iteration2" / "diagnostics"); }));
+  // A failure of the root's filesystem work ends every rank with the root's message (a
+  // regular file where the directory goes).
+  if (Mpi::Root(comm))
+  {
+    fs::remove_all(directory);
+    std::ofstream(directory) << "not a directory\n";
+  }
+  Mpi::Barrier(comm);
+  CHECK_THROWS_WITH(
+      response->CollectiveDiagnosticsPath(output_dir, "z.csv"),
+      Catch::Matchers::ContainsSubstring("Preparing the diagnostics directory") &&
+          Catch::Matchers::ContainsSubstring("failed on MPI rank 0"));
+  CHECK(RootReads([&]() { return fs::is_regular_file(directory); }));
+#endif
+}
+
 // OI-MX-LOOPGATE (decision 955) fixture: the 922-B lead (MakeLeadMesh(0.0, 0.75)) with the
 // one isolated-edge model of the convex library on a 4-knot ring (the square of side 2 R =
 // 0.4 shifted R / 2 along v: the path's start knot, the nearest to the PEC anchor (-R, 0),

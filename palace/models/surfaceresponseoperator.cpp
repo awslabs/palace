@@ -52,6 +52,7 @@
 #include "utils/iodata.hpp"
 #include "utils/memoryreporting.hpp"
 #include "utils/metaledge.hpp"
+#include "utils/outputdir.hpp"
 #include "utils/tablecsv.hpp"
 #include "utils/timer.hpp"
 #include "utils/units.hpp"
@@ -30255,6 +30256,22 @@ void SurfaceResponseOperator::CheckReferencedModelMatricesAgainstRoot() const
 }
 #endif
 
+namespace
+{
+
+// The filesystem work of a diagnostics path (ROOT ONLY; OI-DIAGDIR-RANK-RACE-HANG): a
+// symlink at the directory's path is removed, then the directory is created.
+void PrepareDiagnosticsDirectory(const std::filesystem::path &directory)
+{
+  if (std::filesystem::is_symlink(std::filesystem::symlink_status(directory)))
+  {
+    std::filesystem::remove(directory);
+  }
+  std::filesystem::create_directories(directory);
+}
+
+}  // namespace
+
 std::filesystem::path
 SurfaceResponseOperator::DiagnosticsPath(const std::filesystem::path &post_dir,
                                          const std::string &name) const
@@ -30264,11 +30281,26 @@ SurfaceResponseOperator::DiagnosticsPath(const std::filesystem::path &post_dir,
     return post_dir / name;
   }
   const auto directory = post_dir / diagnostics_directory;
-  if (std::filesystem::is_symlink(std::filesystem::symlink_status(directory)))
+  if (Mpi::Root(fespace.GetComm()))
   {
-    std::filesystem::remove(directory);
+    PrepareDiagnosticsDirectory(directory);
   }
-  std::filesystem::create_directories(directory);
+  return directory / name;
+}
+
+std::filesystem::path
+SurfaceResponseOperator::CollectiveDiagnosticsPath(const std::filesystem::path &post_dir,
+                                                   const std::string &name) const
+{
+  if (diagnostics_directory.empty())
+  {
+    return post_dir / name;
+  }
+  const auto directory = post_dir / diagnostics_directory;
+  ApplyOnRootFilesystem(
+      fespace.GetComm(),
+      fmt::format("Preparing the diagnostics directory \"{}\"", directory.string()),
+      [&]() { PrepareDiagnosticsDirectory(directory); });
   return directory / name;
 }
 

@@ -1172,10 +1172,11 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       if (patch_energy_response)
       {
         // Lane rescensus-product (decision 1817): the census's per-patch readings
-        // (PatchEnergy only; collective).
+        // (PatchEnergy only; collective; the path's filesystem work on the root).
         response_correction->WriteResolutionPatchTable(
             response_correction
-                ->DiagnosticsPath(post_dir, "surface-response-resolution-patches.csv")
+                ->CollectiveDiagnosticsPath(post_dir,
+                                            "surface-response-resolution-patches.csv")
                 .string());
       }
       if (self_consistent_response)
