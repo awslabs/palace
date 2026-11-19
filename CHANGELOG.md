@@ -50,6 +50,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     `"Symmetric"` otherwise. `"OneSided"` and `"Auto"` are an error with CG. Results change
     at the level of the linear solver tolerance. SchemaVer 4-5-0
     [PR 1233](https://github.com/awslabs/palace/pull/1233).
+  - With adaptive mesh refinement on nonconforming meshes, the SLEPc Krylov-Schur eigenvalue
+    solves of later adaptation iterations can start from the eigenvectors of the previous
+    one, transferred to the refined mesh, instead of the start vector of
+    `config["Solver"]["Eigenmode"]["StartVector"]`, and then need fewer Krylov restarts. The
+    eigenvalues of adaptive simulations change at the level of the solver tolerances, and
+    fewer converged eigenpairs beyond the requested ones can be reported. SchemaVer 4-4-2.
+    [PR 1203](https://github.com/awslabs/palace/pull/1203).
   - When `Solver.Linear.Type` is `"Default"` (or omitted) for frequency domain problems,
     and for the wave port and boundary mode eigenvalue solves, *Palace* now prefers
     STRUMPACK over SuperLU_DIST, then MUMPS, as the sparse direct solver when built with
