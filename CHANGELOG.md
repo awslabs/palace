@@ -108,6 +108,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Performance Improvements
 
+  - When AMS is the coarse solver of geometric multigrid for a singular operator (see
+    [`"AMSSingularOperator"`](https://awslabs.github.io/palace/dev/config/reference/#config-solver-linear-amssingularoperator)),
+    each AMS iteration now applies 8 to 32 smoothing sweeps before and after its auxiliary
+    space corrections, instead of `"MGSmoothIts"`: the more, the larger the finer multigrid
+    levels are next to the coarsest one. This lowers the number of linear solver iterations.
+    [PR 1159](https://github.com/awslabs/palace/pull/1159).
   - The AMS solver, used with a fixed number of iterations, now has a tolerance of zero and
     flags its zero initial guess. With a hypre patch, it then computes no residual norms,
     each a fine-level matrix-vector product and a reduction over all processes, and the
