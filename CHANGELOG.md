@@ -489,7 +489,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     [mfem/mfem#5758](https://github.com/mfem/mfem/pull/5758), as the Spack build does. With
     cuDSS 0.8, the parallel cuDSS solver of MFEM 4.10 did not set the communicator for
     device buffers, and `"Type": "cuDSS"` in `config["Solver"]["Linear"]` crashed in the
-    first factorization. [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
+    first factorization. [PR 1250](https://github.com/awslabs/palace/pull/1250).
 
 ## [0.19.0] - 2026-11-02
 
