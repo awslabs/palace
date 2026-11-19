@@ -543,7 +543,7 @@ download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
 if(PALACE_WITH_CUDSS)
   download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
     mfem_pr5758.diff
-    "https://github.com/mfem/mfem/commit/6e14f8141825ad1e26c1b65c0655d73552b49c0c.diff?full_index=1"
+    "https://github.com/mfem/mfem/pull/5758.diff?full_index=1"
     d8a68635d2694311abc6241e97eea059d4bdc7945d19b5d7852bbd6640ea78f5
   )
 endif()
