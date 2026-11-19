@@ -24,6 +24,7 @@
 #include "utils/diagnostic.hpp"
 #include "utils/filesystem.hpp"
 #include "utils/meshio.hpp"
+#include "utils/ncmeshio.hpp"
 #include "utils/omp.hpp"
 #include "utils/outputdir.hpp"
 #include "utils/prettyprint.hpp"
@@ -119,9 +120,22 @@ bool UseAmr(const config::RefinementData &refinement)
   return false;
 }
 
+// True if a nonconforming mesh which Palace wrote in parallel is read in parallel (see
+// ReadNCMeshCoarse), as its coarse mesh which Partition refines: unless the preprocessing,
+// or the partition, would change the mesh otherwise than its coarse mesh.
+bool UseNCMeshFile(const IoData &iodata)
+{
+  const auto &model = iodata.model;
+  return !model.remove_curvature && !model.make_simplex && !model.make_hex &&
+         model.refinement.ser_uniform_ref_levels == 0 &&
+         model.refinement.GetBoxes().empty() && model.refinement.GetSpheres().empty() &&
+         iodata.boundaries.periodic.boundary_pairs.empty() && model.partitioning.empty() &&
+         iodata.problem.type != ProblemType::BOUNDARYMODE;
+}
+
 }  // namespace
 
-std::unique_ptr<mfem::Mesh> Load(IoData &iodata, MPI_Comm comm)
+std::unique_ptr<mfem::Mesh> Load(IoData &iodata, MPI_Comm comm, bool parallel_nc)
 {
   BlockTimer bt0(Timer::MESH_PREPROCESS);
 
@@ -135,8 +149,24 @@ std::unique_ptr<mfem::Mesh> Load(IoData &iodata, MPI_Comm comm)
   std::unique_ptr<mfem::Mesh> smesh;
   bool use_mesh_partitioner = !use_amr || !refinement.nonconformal;
   {
+    // The coarse mesh of a mesh read in parallel, on every process, without nodes until
+    // Partition refines it.
     BlockTimer bt(Timer::IO);
-    if (Mpi::Root(comm))
+    std::string coarse;
+    iodata.nc_mesh_file = ReadNCMeshCoarse(comm, iodata.model.mesh,
+                                           parallel_nc && UseNCMeshFile(iodata), coarse);
+    if (iodata.nc_mesh_file)
+    {
+      constexpr bool generate_edges = false, refine = false, fix_orientation = true;
+      std::istringstream fi(coarse);
+      smesh = ReadMeshStream(fi, generate_edges, refine, fix_orientation);
+      use_mesh_partitioner = false;
+    }
+  }
+  const bool nc_file = static_cast<bool>(iodata.nc_mesh_file);
+  {
+    BlockTimer bt(Timer::IO);
+    if (Mpi::Root(comm) && !nc_file)
     {
       smesh = LoadMesh(iodata.model.mesh, iodata.model.remove_curvature, iodata.boundaries);
       use_mesh_partitioner &= smesh->Conforming();
@@ -152,7 +182,7 @@ std::unique_ptr<mfem::Mesh> Load(IoData &iodata, MPI_Comm comm)
   }
   {
     BlockTimer bt1(Timer::IO);
-    if (!use_mesh_partitioner && Mpi::Root(node_comm) && !Mpi::Root(comm))
+    if (!use_mesh_partitioner && Mpi::Root(node_comm) && !Mpi::Root(comm) && !nc_file)
     {
       // Only one process per node reads the serial mesh when not using the partitioner.
       smesh = LoadMesh(iodata.model.mesh, iodata.model.remove_curvature, iodata.boundaries);
@@ -427,6 +457,33 @@ std::unique_ptr<mfem::ParMesh> Partition(IoData &iodata, std::unique_ptr<mfem::M
     iodata.boundaries.split_impedance_attributes = iodata.boundaries.cracked_attributes;
   }
 
+  // A mesh read in parallel, from its coarse mesh on every process, with nodes as for a
+  // mesh read whole (see LoadMesh); or, if the file does not match, the whole mesh, read as
+  // without the parallel read and nondimensionalized as the coarse mesh was.
+  std::unique_ptr<mfem::ParMesh> pmesh;
+  if (auto nc_file = std::move(iodata.nc_mesh_file))
+  {
+    pmesh = PartitionNCMeshFile(comm, *nc_file, std::move(smesh),
+                                iodata.units.GetMeshLengthRelativeScale(),
+                                refinement.maximum_imbalance);
+    nc_file.reset();
+    if (pmesh)
+    {
+      pmesh->EnsureNodes();
+    }
+    else
+    {
+      Mpi::Warning(comm,
+                   "The mesh \"{}\" cannot be read in parallel, so it is read whole!\n",
+                   iodata.model.mesh);
+      smesh = Load(iodata, comm, false);
+      if (smesh)
+      {
+        NondimensionalizeMesh(*smesh, iodata.units.GetMeshLengthRelativeScale());
+      }
+    }
+  }
+
   // Generate partitioning from the serial mesh on loading ranks.
   std::unique_ptr<int[]> partitioning;
   if (smesh)
@@ -434,12 +491,11 @@ std::unique_ptr<mfem::ParMesh> Partition(IoData &iodata, std::unique_ptr<mfem::M
     partitioning = GetMeshPartitioning(*smesh, Mpi::Size(comm), iodata.model.partitioning);
   }
 
-  std::unique_ptr<mfem::ParMesh> pmesh;
-  if (use_mesh_partitioner)
+  if (!pmesh && use_mesh_partitioner)
   {
     pmesh = DistributeMesh(comm, smesh, partitioning.get(), iodata.problem.output);
   }
-  else
+  else if (!pmesh)
   {
     // Send the preprocessed serial mesh and partitioning as a byte string. The
     // serialized mesh can exceed INT_MAX bytes for large meshes, so use a 64-bit
@@ -923,6 +979,7 @@ void ScaleMesh(mfem::Mesh &mesh, double L)
       std::transform(v, v + mesh.SpaceDimension(), v, [L](double val) { return val * L; });
     }
   }
+  ScaleNCMeshCoordinates(mesh, L);
   if (mesh.GetNodes())
   {
     *mesh.GetNodes() *= L;
@@ -2909,9 +2966,34 @@ double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh,
 {
   BlockTimer bt0(Timer::REBALANCE);
   MPI_Comm comm = mesh->GetComm();
+
+  // If there is more than one processor, may perform rebalancing: a nonconforming mesh
+  // before it is saved, with whole refinement-tree roots, so that the save need not move
+  // them.
+  double ratio = 1.0;
+  const double tol = iodata.model.refinement.maximum_imbalance;
+  if (Mpi::Size(comm) > 1)
+  {
+    int min_elem, max_elem;
+    min_elem = max_elem = mesh->GetNE();
+    Mpi::GlobalMin(1, &min_elem, comm);
+    Mpi::GlobalMax(1, &max_elem, comm);
+    ratio = double(max_elem) / min_elem;
+    if constexpr (false)
+    {
+      Mpi::Print("Rebalancing: max/min elements per processor = {:d}/{:d} (ratio = {:.3e}, "
+                 "tol = {:.3e})\n",
+                 max_elem, min_elem, ratio, tol);
+    }
+  }
+  if (ratio > tol && mesh->Nonconforming())
+  {
+    RebalanceRootAligned(*mesh, tol);
+  }
+
   if (iodata.model.refinement.save_adapt_mesh)
   {
-    // Create a separate serial mesh to write to disk. When MFEM is built with zlib the mesh
+    // Write the mesh to disk as one serial file. When MFEM is built with zlib the mesh
     // is gzip-compressed and written with a ".meshgz" extension; MFEM detects gzip from the
     // file's magic bytes on read, so a restart reopens it transparently regardless of the
     // name. Without zlib it is written uncompressed as ".mesh".
@@ -2946,50 +3028,38 @@ double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh,
           compress_mesh);
     };
 
-    if (mesh->Nonconforming())
+    std::string reason;
+    if (mesh->Nonconforming() &&
+        !PrintParallelNCMesh(*mesh, iodata.units.GetMeshLengthRelativeScale(),
+                             sfile.string(), compress_mesh, out_counts, &reason))
     {
+      static bool warned = false;
+      if (!warned)
+      {
+        Mpi::Warning(comm,
+                     "The adapted mesh cannot be saved in parallel ({}), so it is gathered "
+                     "on the root, with time and memory proportional to its size!\n",
+                     reason);
+        warned = true;
+      }
       mfem::ParMesh smesh(*mesh);
       mfem::Array<int> serial_partition(mesh->GetNE());
       serial_partition = 0;
       smesh.Rebalance(serial_partition);
       PrintSerial(smesh);
     }
-    else
+    else if (!mesh->Nonconforming())
     {
       mfem::Mesh smesh = mesh->GetSerialMesh(0);
       PrintSerial(smesh);
     }
   }
 
-  // If there is more than one processor, may perform rebalancing.
-  if (Mpi::Size(comm) == 1)
+  if (ratio > tol && !mesh->Nonconforming())
   {
-    return 1.0;
-  }
-  int min_elem, max_elem;
-  min_elem = max_elem = mesh->GetNE();
-  Mpi::GlobalMin(1, &min_elem, comm);
-  Mpi::GlobalMax(1, &max_elem, comm);
-  const double ratio = double(max_elem) / min_elem;
-  const double tol = iodata.model.refinement.maximum_imbalance;
-  if constexpr (false)
-  {
-    Mpi::Print("Rebalancing: max/min elements per processor = {:d}/{:d} (ratio = {:.3e}, "
-               "tol = {:.3e})\n",
-               max_elem, min_elem, ratio, tol);
-  }
-  if (ratio > tol)
-  {
-    if (mesh->Nonconforming())
-    {
-      mesh->Rebalance();
-    }
-    else
-    {
-      // Without access to a refinement tree, partitioning must be done on the root
-      // processor and then redistributed.
-      RebalanceConformalMesh(mesh);
-    }
+    // Without access to a refinement tree, partitioning must be done on the root processor
+    // and then redistributed.
+    RebalanceConformalMesh(mesh);
   }
   return ratio;
 }
