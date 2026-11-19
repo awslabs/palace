@@ -286,6 +286,91 @@ TridiagonalEigenTestResult SolveTridiagonalEigenTest(int n, double s, int nev, i
   return result;
 }
 
+// Quadratic problem K + λ C + λ² M with diagonal K and C and M = I, scaled, with
+// eigenvalues λ = iω, Re{ω} = ω_r and Q = |ω| / (2 Im{ω}) for c = ω_r / (Q² - 1/4)^½ and
+// k = Q² c², for the target λ = i. The mode closest to the target in Re{ω} has Q = 0.52,
+// the next one Q = 100.
+struct DampedEigenTestProblem
+{
+  static constexpr int n = 20;
+  const std::complex<double> lambda_s = {0.0, 1.0};  // λ = iσ
+  std::vector<double> omega_r = {1.05, 1.3}, q = {0.52, 100.0};
+  std::vector<std::complex<double>> k, c, m, a;
+
+  DampedEigenTestProblem() : k(n), c(n), m(n, 1.0), a(n)
+  {
+    for (int i = 2; i < n; i++)
+    {
+      omega_r.push_back(1.5 + 0.5 * i);
+      q.push_back(50.0);
+    }
+    for (int i = 0; i < n; i++)
+    {
+      c[i] = omega_r[i] / std::sqrt(q[i] * q[i] - 0.25);
+      k[i] = q[i] * q[i] * c[i] * c[i];
+      a[i] = k[i] + lambda_s * c[i] + lambda_s * lambda_s * m[i];
+    }
+  }
+
+  // Eigenvalue ω = λ / i of mode i.
+  std::complex<double> Omega(int i) const { return {omega_r[i], 0.5 * c[i].real()}; }
+
+  struct Result
+  {
+    std::complex<double> omega;  // First eigenvalue ω = λ / i
+    int its;                     // Number of restarts
+  };
+
+  // Solve for one mode with SLEPc's Krylov-Schur solver for the linearization or TOAR, for
+  // the minimum quality factor q_min, from a random start vector or, if start >= 0, from
+  // the eigenvector of mode start (a warm start if warm).
+  Result Solve(slepc::SlepcEigenvalueSolver::Type type, double q_min, int start = -1,
+               bool warm = false) const
+  {
+    MPI_Comm comm = Mpi::World();
+    DiagonalEigenTestOperator K(k), C(c), M(m), A(a);
+    auto gmres = std::make_unique<GmresSolver<ComplexOperator>>(comm, 0);
+    gmres->SetRelTol(1.0e-12);
+    gmres->SetMaxIter(100);
+    ComplexKspSolver ksp(std::move(gmres),
+                         std::make_unique<JacobiSmoother<ComplexOperator>>(comm));
+    ksp.SetOperators(A, A);
+    std::unique_ptr<slepc::SlepcEigenvalueSolver> eps;
+    if (type == slepc::SlepcEigenvalueSolver::Type::TOAR)
+    {
+      eps = std::make_unique<slepc::SlepcPEPSolver>(comm, 0);
+    }
+    else
+    {
+      eps = std::make_unique<slepc::SlepcPEPLinearSolver>(comm, 0);
+    }
+    eps->SetType(type);
+    eps->SetProblemType(slepc::SlepcEigenvalueSolver::ProblemType::GEN_NON_HERMITIAN);
+    eps->SetOperators(K, C, M, EigenvalueSolver::ScaleType::NORM_2);
+    eps->SetNumModes(1, 16);
+    eps->SetTol(1.0e-10);
+    eps->SetLinearSolver(ksp);
+    eps->SetShiftInvert(lambda_s);
+    eps->SetWhichEigenpairs(EigenvalueSolver::WhichType::TARGET_IMAGINARY);
+    eps->SetMinQualityFactor(q_min);
+    if (start >= 0)
+    {
+      ComplexVector v(n), v_lambda(n), r(n);
+      linalg::SetRandom(comm, r);
+      v = 0.0;
+      v.Real().HostReadWrite()[start] = 1.0;
+      v.Add(1.0e-12 / std::sqrt(static_cast<double>(n)), r);
+      v_lambda = v;
+      v_lambda *= std::complex<double>(-0.5 * c[start].real(), omega_r[start]);
+      eps->SetInitialSpaceBlocks(v, v_lambda);
+      eps->SetWarmStart(warm);
+    }
+    REQUIRE(eps->Solve() >= 1);
+    return {eps->GetEigenvalue(0) / std::complex<double>(0.0, 1.0),
+            eps->GetNumIterations()};
+  }
+};
+
 }  // namespace
 
 TEST_CASE("Eigenmode warm start", "[eigenmode][Serial]")
@@ -372,52 +457,40 @@ TEST_CASE("Eigenmode quality factor region", "[eigenmode][Serial]")
 
 TEST_CASE("Eigenmode quality factor region in a damped solve", "[eigenmode][Serial]")
 {
-  // Quadratic problem K + λ C + λ² M with diagonal K and C and M = I, scaled, with
-  // eigenvalues λ = iω, Re{ω} = ω_r and Q = |ω| / (2 Im{ω}) for c = ω_r / (Q² - 1/4)^½ and
-  // k = Q² c². The mode closest to the target in Re{ω} has Q = 0.52, the next one Q = 100:
-  // the solve for one mode returns the second with MinQ = 0.54, and the first without.
-  constexpr int n = 20;
-  const std::complex<double> lambda_s(0.0, 1.0);  // λ = iσ
-  std::vector<double> omega_r = {1.05, 1.3}, q = {0.52, 100.0};
-  for (int i = 2; i < n; i++)
-  {
-    omega_r.push_back(1.5 + 0.5 * i);
-    q.push_back(50.0);
-  }
-  std::vector<std::complex<double>> k(n), c(n), m(n, 1.0), a(n);
-  for (int i = 0; i < n; i++)
-  {
-    c[i] = omega_r[i] / std::sqrt(q[i] * q[i] - 0.25);
-    k[i] = q[i] * q[i] * c[i] * c[i];
-    a[i] = k[i] + lambda_s * c[i] + lambda_s * lambda_s * m[i];
-  }
-  DiagonalEigenTestOperator K(k), C(c), M(m), A(a);
-  MPI_Comm comm = Mpi::World();
+  // The solve for one mode returns the second mode of the damped test problem, with
+  // Q = 100, with MinQ = 0.54, and the first one, with Q = 0.52, without.
+  const DampedEigenTestProblem p;
   for (double q_min : {0.0, 0.54})
   {
-    auto gmres = std::make_unique<GmresSolver<ComplexOperator>>(comm, 0);
-    gmres->SetRelTol(1.0e-12);
-    gmres->SetMaxIter(100);
-    ComplexKspSolver ksp(std::move(gmres),
-                         std::make_unique<JacobiSmoother<ComplexOperator>>(comm));
-    ksp.SetOperators(A, A);
-    slepc::SlepcPEPLinearSolver eps(comm, 0);
-    eps.SetType(slepc::SlepcEigenvalueSolver::Type::KRYLOVSCHUR);
-    eps.SetProblemType(slepc::SlepcEigenvalueSolver::ProblemType::GEN_NON_HERMITIAN);
-    eps.SetOperators(K, C, M, EigenvalueSolver::ScaleType::NORM_2);
-    eps.SetNumModes(1, 16);
-    eps.SetTol(1.0e-10);
-    eps.SetLinearSolver(ksp);
-    eps.SetShiftInvert(lambda_s);
-    eps.SetWhichEigenpairs(EigenvalueSolver::WhichType::TARGET_IMAGINARY);
-    eps.SetMinQualityFactor(q_min);
-    REQUIRE(eps.Solve() >= 1);
     const int i = (q_min > 0.5) ? 1 : 0;
-    const std::complex<double> omega =
-        eps.GetEigenvalue(0) / std::complex<double>(0.0, 1.0);
-    CHECK(std::abs(omega - std::complex<double>(omega_r[i], 0.5 * c[i].real())) <=
-          1.0e-8 * omega_r[i]);
+    const auto result = p.Solve(slepc::SlepcEigenvalueSolver::Type::KRYLOVSCHUR, q_min);
+    CHECK(std::abs(result.omega - p.Omega(i)) <= 1.0e-8 * p.omega_r[i]);
   }
+}
+
+TEST_CASE("Eigenmode settled Ritz values in the quality factor region",
+          "[eigenmode][Serial]")
+{
+  // With the quality factor region, an eigenpair converges only once its Ritz value was
+  // also present at the previous restart, except in the first Krylov cycle of a solve which
+  // is not warm-started. From a start vector along the wanted eigenvector, the solve then
+  // converges in one Krylov cycle, or in two if warm-started. Without the region, the
+  // warm-started solve converges in one cycle.
+  const DampedEigenTestProblem p;
+  for (auto type : {slepc::SlepcEigenvalueSolver::Type::KRYLOVSCHUR,
+                    slepc::SlepcEigenvalueSolver::Type::TOAR})
+  {
+    for (bool warm : {false, true})
+    {
+      const auto result = p.Solve(type, 0.54, 1, warm);
+      CHECK(result.its == (warm ? 2 : 1));
+      CHECK(std::abs(result.omega - p.Omega(1)) <= 1.0e-8 * p.omega_r[1]);
+    }
+  }
+  const auto result =
+      p.Solve(slepc::SlepcEigenvalueSolver::Type::KRYLOVSCHUR, 0.0, 0, true);
+  CHECK(result.its == 1);
+  CHECK(std::abs(result.omega - p.Omega(0)) <= 1.0e-8 * p.omega_r[0]);
 }
 
 #endif

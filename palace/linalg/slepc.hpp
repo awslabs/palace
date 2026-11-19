@@ -16,6 +16,8 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
+#include <vector>
 #include <mpi.h>
 #include "linalg/eps.hpp"
 #include "linalg/ksp.hpp"
@@ -119,11 +121,26 @@ protected:
   // Boolean to handle SetFromOptions calls.
   mutable bool cl_custom;
 
-  // Minimum quality factor of the search (see SetMinQualityFactor).
+  // Minimum quality factor of the search (see SetMinQualityFactor), and whether the region
+  // of the current solve restricts it.
   double q_min;
+  bool q_region;
+
+  // Whether the next solve is warm-started, and whether the convergence test of the solves
+  // with the quality factor region is installed.
+  bool warm_start, ritz_test;
+
+  // State of that convergence test (see CheckRitzValue): the Ritz values of the previous
+  // and current restarts, each with the number of restarts it was held back, and the
+  // current restart.
+  std::vector<std::pair<PetscScalar, int>> ritz_prev, ritz_curr;
+  PetscInt ritz_its;
 
   // Customize object with command line options set.
   virtual void Customize();
+
+  // Clear the state of the convergence test before a solve.
+  void ResetRitzValues();
 
   // Helper routine for computing the eigenvector normalization.
   PetscReal GetEigenvectorNorm(const ComplexVector &x, ComplexVector &Bx) const;
@@ -176,6 +193,13 @@ public:
   void SetOrthogonalization(bool mgs, bool cgs2);
 
   void SetMinQualityFactor(double q) override { q_min = q; }
+
+  void SetWarmStart(bool warm) override { warm_start = warm; }
+
+  // Update the relative error estimate of the Ritz value theta of the transformed problem
+  // at restart its, for the tolerance tol (called by the convergence test of the solves
+  // with the quality factor region).
+  void CheckRitzValue(PetscInt its, PetscReal tol, PetscScalar theta, PetscReal *errest);
 
   // Get the corresponding eigenpair error.
   PetscReal GetError(int i, ErrorType type) const override;
@@ -382,6 +406,8 @@ public:
   void SetInitialSpace(const ComplexVector &v) override;
 
   int Solve() override;
+
+  int GetNumIterations() const override;
 
   std::complex<double> GetEigenvalue(int i) const override;
 

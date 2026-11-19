@@ -179,6 +179,35 @@ PetscErrorCode __eps_first_cycle_monitor(EPS eps, PetscInt its, PetscInt nconv,
   PetscFunctionReturn(PETSC_SUCCESS);
 }
 
+PetscErrorCode __eps_convergence_test(EPS eps, PetscScalar eigr, PetscScalar eigi,
+                                      PetscReal res, PetscReal *errest, void *ctx)
+{
+  // The error estimate relative to the eigenvalue (as EPS_CONV_REL), for a Ritz value which
+  // also settled since the previous restart.
+  PetscFunctionBeginUser;
+  PetscInt its;
+  PetscReal tol;
+  PetscCall(EPSConvergedRelative(eps, eigr, eigi, res, errest, nullptr));
+  PetscCall(EPSGetIterationNumber(eps, &its));
+  PetscCall(EPSGetTolerances(eps, &tol, nullptr));
+  static_cast<SlepcEigenvalueSolver *>(ctx)->CheckRitzValue(its, tol, eigr, errest);
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
+PetscErrorCode __pep_convergence_test(PEP pep, PetscScalar eigr, PetscScalar eigi,
+                                      PetscReal res, PetscReal *errest, void *ctx)
+{
+  // As __eps_convergence_test, with PEP_CONV_REL.
+  PetscFunctionBeginUser;
+  PetscInt its;
+  PetscReal tol;
+  PetscCall(PEPConvergedRelative(pep, eigr, eigi, res, errest, nullptr));
+  PetscCall(PEPGetIterationNumber(pep, &its));
+  PetscCall(PEPGetTolerances(pep, &tol, nullptr));
+  static_cast<SlepcEigenvalueSolver *>(ctx)->CheckRitzValue(its, tol, eigr, errest);
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
 }  // namespace
 
 void ConfigureQualityFactorRegion(RG rg, PetscReal s, double q_min)
@@ -239,6 +268,8 @@ SlepcEigenvalueSolver::SlepcEigenvalueSolver(int print) : print(print)
 
   cl_custom = false;
   q_min = 0.0;
+  q_region = warm_start = ritz_test = false;
+  ritz_its = -1;
 
   // SLEPc passes device arrays to the shell callbacks when the device is in use. SetSize
   // keeps the device flag, so the derived classes only need to size the workspace.
@@ -339,6 +370,7 @@ void SlepcEigenvalueSolver::Customize()
   }
 
   // Configure the region based on the given target if necessary.
+  q_region = false;
   if (sinvert && region)
   {
     if (PetscImaginaryPart(sigma) == 0.0)
@@ -361,6 +393,7 @@ void SlepcEigenvalueSolver::Customize()
       if (si > 0.0 && q_min > 0.5)
       {
         ConfigureQualityFactorRegion(GetRG(), si / gamma, q_min);
+        q_region = true;
       }
       else if (si > 0.0)
       {
@@ -378,6 +411,67 @@ void SlepcEigenvalueSolver::Customize()
       MFEM_ABORT("Shift-and-invert with general complex eigenvalue target is unsupported!");
     }
   }
+}
+
+void SlepcEigenvalueSolver::ResetRitzValues()
+{
+  ritz_prev.clear();
+  ritz_curr.clear();
+  ritz_its = -1;
+}
+
+void SlepcEigenvalueSolver::CheckRitzValue(PetscInt its, PetscReal tol, PetscScalar theta,
+                                           PetscReal *errest)
+{
+  // SLEPc's error estimate for a Ritz pair of the transformed problem assumes exact linear
+  // solves, and can be below the tolerance for an eigenvalue several times the tolerance
+  // off when its Ritz value just appeared: after a restart which purged the Ritz values
+  // outside of the quality factor region, or in the first Krylov cycle of a warm-started
+  // solve. A Ritz value with an error estimate below the tolerance thus converges only if
+  // the nearest Ritz value of the previous restart is the same eigenpair, within a relative
+  // distance max(Tol, min(1e-3, 0.1 d₂)) for the relative distance d₂ of the second nearest
+  // one, except in the first Krylov cycle of a solve which is not warm-started. Otherwise
+  // its error estimate becomes that distance, unless it was held back at the two previous
+  // restarts already. The test sees every Ritz value of a restart in order (track all), and
+  // only those before the first unconverged one converge.
+  constexpr PetscReal max_distance = 1.0e-3, max_fraction = 0.1;
+  constexpr int max_unsettled = 2;
+  if (its != ritz_its)
+  {
+    ritz_its = its;
+    ritz_prev.swap(ritz_curr);
+    ritz_curr.clear();
+  }
+  int unsettled = 0;
+  if (*errest < tol && (its > 1 || warm_start))
+  {
+    PetscReal d1 = mfem::infinity(), d2 = mfem::infinity();
+    int count = 0;
+    for (const auto &[theta_prev, count_prev] : ritz_prev)
+    {
+      const PetscReal d = PetscAbsScalar(theta - theta_prev);
+      if (d < d1)
+      {
+        d2 = d1;
+        d1 = d;
+        count = count_prev;
+      }
+      else if (d < d2)
+      {
+        d2 = d;
+      }
+    }
+    const PetscReal a = PetscAbsScalar(theta);
+    d1 /= a;
+    d2 /= a;
+    if (count < max_unsettled &&
+        d1 > std::max(tol, std::min(max_distance, max_fraction * d2)))
+    {
+      *errest = std::min(d1, PetscReal(1.0));
+      unsettled = count + 1;
+    }
+  }
+  ritz_curr.emplace_back(theta, unsettled);
 }
 
 PetscReal SlepcEigenvalueSolver::GetEigenvectorNorm(const ComplexVector &x,
@@ -629,9 +723,23 @@ int SlepcEPSSolverBase::Solve()
     }
   }
 
-  // Solve the eigenvalue problem.
+  // Solve the eigenvalue problem. With the quality factor region, an eigenpair converges
+  // only once its Ritz value settled (see CheckRitzValue).
   PetscInt num_conv;
   Customize();
+  if (q_region)
+  {
+    PalacePetscCall(
+        EPSSetConvergenceTestFunction(eps, __eps_convergence_test, (void *)this, nullptr));
+    PalacePetscCall(EPSSetTrackAll(eps, PETSC_TRUE));
+  }
+  else if (ritz_test)
+  {
+    PalacePetscCall(EPSSetConvergenceTest(eps, EPS_CONV_REL));
+    PalacePetscCall(EPSSetTrackAll(eps, PETSC_FALSE));
+  }
+  ritz_test = q_region;
+  ResetRitzValues();
   PalacePetscCall(EPSSolve(eps));
   EndFirstCycle();
   PalacePetscCall(EPSGetConverged(eps, &num_conv));
@@ -1131,9 +1239,23 @@ int SlepcPEPSolverBase::Solve()
 {
   MFEM_VERIFY(A0 && A1 && A2 && opInv, "Operators are not set for SlepcPEPSolverBase!");
 
-  // Solve the eigenvalue problem.
+  // Solve the eigenvalue problem. With the quality factor region, an eigenpair converges
+  // only once its Ritz value settled (see CheckRitzValue).
   PetscInt num_conv;
   Customize();
+  if (q_region)
+  {
+    PalacePetscCall(
+        PEPSetConvergenceTestFunction(pep, __pep_convergence_test, (void *)this, nullptr));
+    PalacePetscCall(PEPSetTrackAll(pep, PETSC_TRUE));
+  }
+  else if (ritz_test)
+  {
+    PalacePetscCall(PEPSetConvergenceTest(pep, PEP_CONV_REL));
+    PalacePetscCall(PEPSetTrackAll(pep, PETSC_FALSE));
+  }
+  ritz_test = q_region;
+  ResetRitzValues();
   PalacePetscCall(PEPSolve(pep));
   PalacePetscCall(PEPGetConverged(pep, &num_conv));
   if (print > 0)
@@ -1149,6 +1271,13 @@ int SlepcPEPSolverBase::Solve()
   // Compute and store the eigenpair residuals.
   RescaleEigenvectors(num_conv);
   return static_cast<int>(num_conv);
+}
+
+int SlepcPEPSolverBase::GetNumIterations() const
+{
+  PetscInt num_it;
+  PalacePetscCall(PEPGetIterationNumber(pep, &num_it));
+  return static_cast<int>(num_it);
 }
 
 std::complex<double> SlepcPEPSolverBase::GetEigenvalue(int i) const

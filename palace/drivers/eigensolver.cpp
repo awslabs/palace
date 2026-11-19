@@ -465,6 +465,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       {
         eigen->SetInitialSpace(v);  // Copies the vector
       }
+      eigen->SetWarmStart(true);
 
       // A warm-started solve converges after few linear solves, and their error, kept in
       // the Krylov vectors through the restarts, is not seen by the error estimate of the

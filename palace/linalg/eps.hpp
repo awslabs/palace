@@ -135,12 +135,18 @@ public:
   // smaller than that of the linear solver. Not all solvers support it.
   virtual void SetFirstCycleLinearSolverTol(double tol) {}
 
+  // Whether the initial vector of the next solve approximates the wanted eigenvectors (warm
+  // start). Not all solvers use it.
+  virtual void SetWarmStart(bool warm) {}
+
   // Number of iterations (restarts) of the last solve, or -1 if not available.
   virtual int GetNumIterations() const { return -1; }
 
   // Restrict the search to modes with quality factor |Q| = |ω| / (2 |Im{ω}|) >= q_min
   // (eigenvalues λ = iω of a quadratic problem), so that strongly damped or growing Ritz
-  // values cannot stall the convergence of the others. A q_min <= 0.5 disables the
+  // values cannot stall the convergence of the others. An eigenpair then converges only
+  // once its Ritz value was also present at the previous restart, except in the first
+  // Krylov cycle of a solve which is not warm-started. A q_min <= 0.5 disables the
   // restriction. Not all solvers support it.
   virtual void SetMinQualityFactor(double q_min) {}
 
