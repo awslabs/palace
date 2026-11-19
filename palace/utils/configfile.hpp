@@ -1157,7 +1157,8 @@ public:
   // level.
   int mg_smooth_it = 1;
 
-  // Order of polynomial smoothing for geometric multigrid, for each smoother application.
+  // Order of polynomial smoothing for geometric multigrid, of the pre- and post-smoothers
+  // of symmetric V-cycles. One-sided V-cycles smooth once at twice this order.
   int mg_smooth_order = -1;
 
   // Safety factors for eigenvalue estimates associated with Chebyshev smoothing for
@@ -1169,9 +1170,10 @@ public:
   // use standard 1st-kind polynomials.
   bool mg_smooth_cheby_4th = true;
 
-  // Use one-sided V-cycles for geometric multigrid, which pre-smooth but do not post-smooth
-  // (for the GMRES and FGMRES Krylov solvers). By default only for eigenmode problems.
-  int mg_one_sided = -1;
+  // Symmetric or one-sided V-cycles for geometric multigrid, which pre-smooth but do not
+  // post-smooth (for the GMRES and FGMRES Krylov solvers), or those which need fewer
+  // iterations in the first linear solve, the default for eigenmode problems.
+  MultigridCycle mg_cycle = MultigridCycle::DEFAULT;
 
   // For frequency domain applications, precondition linear systems with a real-valued
   // approximation to the system matrix.

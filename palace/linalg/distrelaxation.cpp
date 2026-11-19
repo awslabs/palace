@@ -67,6 +67,13 @@ void DistRelaxationSmoother<OperType>::SetOperators(const OperType &op,
   this->width = op.Width();
 }
 
+template <OperatorType OperType>
+void DistRelaxationSmoother<OperType>::SetOrder(int cheby_order)
+{
+  SetChebyshevOrder(*B, cheby_order);
+  SetChebyshevOrder(*B_G, cheby_order);
+}
+
 namespace
 {
 

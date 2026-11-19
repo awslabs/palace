@@ -254,6 +254,13 @@ void ChebyshevSmoother<OperType>::SetOperator(const OperType &op)
 }
 
 template <OperatorType OperType>
+void ChebyshevSmoother<OperType>::SetOrder(int poly_order)
+{
+  MFEM_VERIFY(poly_order > 0, "Polynomial order for Chebyshev smoothing must be positive!");
+  order = poly_order;
+}
+
+template <OperatorType OperType>
 void ChebyshevSmoother<OperType>::Mult2(const VecType &x, VecType &y, VecType &r) const
 {
   // Apply smoother: y = y + p(A) (x - A y) .
@@ -290,7 +297,7 @@ ChebyshevSmoother1stKind<OperType>::ChebyshevSmoother1stKind(MPI_Comm comm, int 
                                                              int poly_order, double sf_max,
                                                              double sf_min)
   : Solver<OperType>(), comm(comm), pc_it(smooth_it), order(poly_order), A(nullptr),
-    theta(0.0), sf_max(sf_max), sf_min(sf_min)
+    lambda_max(0.0), theta(0.0), delta(0.0), sf_max(sf_max), sf_min(sf_min)
 {
   MFEM_VERIFY(order > 0, "Polynomial order for Chebyshev smoothing must be positive!");
 }
@@ -306,22 +313,37 @@ void ChebyshevSmoother1stKind<OperType>::SetOperator(const OperType &op)
   op.AssembleDiagonal(dinv);
   dinv.Reciprocal();
 
-  // Set up Chebyshev coefficients using the computed maximum eigenvalue estimate. The
-  // optimized estimate of lambda_min comes from (2.24) of Phillips and Fischer (2022). See
+  // Set up Chebyshev coefficients using the computed maximum eigenvalue estimate. See
   // ChebyshevSmoother::SetOperator for the starting vector.
-  if (sf_min <= 0.0)
-  {
-    sf_min = 1.69 / (std::pow(order, 1.68) + 2.11 * order + 1.98);
-  }
-  const double lambda_max = sf_max * GetLambdaMax(comm, *A, dinv, lambda_vec);
+  lambda_max = sf_max * GetLambdaMax(comm, *A, dinv, lambda_vec);
   MFEM_VERIFY(std::isfinite(lambda_max) && lambda_max > 0.0,
               "Encountered invalid maximum eigenvalue in Chebyshev smoother!");
-  const double lambda_min = sf_min * lambda_max;
-  theta = 0.5 * (lambda_max + lambda_min);
-  delta = 0.5 * (lambda_max - lambda_min);
+  SetCoefficients();
 
   this->height = op.Height();
   this->width = op.Width();
+}
+
+template <OperatorType OperType>
+void ChebyshevSmoother1stKind<OperType>::SetCoefficients()
+{
+  // The optimized estimate of lambda_min comes from (2.24) of Phillips and Fischer (2022).
+  const double lambda_min =
+      ((sf_min > 0.0) ? sf_min : 1.69 / (std::pow(order, 1.68) + 2.11 * order + 1.98)) *
+      lambda_max;
+  theta = 0.5 * (lambda_max + lambda_min);
+  delta = 0.5 * (lambda_max - lambda_min);
+}
+
+template <OperatorType OperType>
+void ChebyshevSmoother1stKind<OperType>::SetOrder(int poly_order)
+{
+  MFEM_VERIFY(poly_order > 0, "Polynomial order for Chebyshev smoothing must be positive!");
+  order = poly_order;
+  if (A)
+  {
+    SetCoefficients();
+  }
 }
 
 template <OperatorType OperType>
@@ -359,10 +381,30 @@ void ChebyshevSmoother1stKind<OperType>::Mult2(const VecType &x, VecType &y,
   }
 }
 
+template <OperatorType OperType>
+void SetChebyshevOrder(Solver<OperType> &smoother, int poly_order)
+{
+  if (auto *cheby = dynamic_cast<ChebyshevSmoother<OperType> *>(&smoother))
+  {
+    cheby->SetOrder(poly_order);
+  }
+  else if (auto *cheby_1st = dynamic_cast<ChebyshevSmoother1stKind<OperType> *>(&smoother))
+  {
+    cheby_1st->SetOrder(poly_order);
+  }
+  else
+  {
+    MFEM_ABORT("SetChebyshevOrder requires a Chebyshev smoother!");
+  }
+}
+
 template class ChebyshevSmoother<Operator>;
 template class ChebyshevSmoother<ComplexOperator>;
 
 template class ChebyshevSmoother1stKind<Operator>;
 template class ChebyshevSmoother1stKind<ComplexOperator>;
+
+template void SetChebyshevOrder(Solver<Operator> &, int);
+template void SetChebyshevOrder(Solver<ComplexOperator> &, int);
 
 }  // namespace palace

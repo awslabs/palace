@@ -52,9 +52,13 @@ private:
   // Enable timer contribution for Timer::KSP_COARSE_SOLVE.
   bool use_timer;
 
-  // One-sided V-cycles, which pre-smooth but do not post-smooth (Phillips and Fischer,
-  // 2022): the preconditioner is not symmetric, so only for GMRES and FGMRES.
-  const bool one_sided;
+  // Polynomial order of the pre- and post-smoothers of symmetric V-cycles.
+  const int smooth_order;
+
+  // One-sided V-cycles, which pre-smooth but do not post-smooth, at twice the smoothing
+  // order (Phillips and Fischer, 2022): the preconditioner is not symmetric, so only for
+  // GMRES and FGMRES.
+  bool one_sided;
 
   // Internal function to perform a single V-cycle iteration.
   void VCycle(int l, bool initial_guess) const;
@@ -72,6 +76,12 @@ public:
   void Mult(const VecType &x, VecType &y) const override;
 
   void EnableTimer() { use_timer = true; }
+
+  auto GetNumLevels() const { return A.size(); }
+
+  // Switch between one-sided and symmetric V-cycles.
+  void SetOneSided(bool one_sided_cycle);
+  bool IsOneSided() const { return one_sided; }
 };
 
 }  // namespace palace
