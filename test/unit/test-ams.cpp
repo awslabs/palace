@@ -110,9 +110,12 @@ void TestAgglomeration(mfem::Mesh &smesh)
 
   // With and without the mass term (singular for magnetostatics, without the G-space
   // hierarchy), and with one or several smoothing sweeps.
-  for (auto [singular, smooth_it] :
+  for (const auto &params :
        {std::pair{true, 1}, std::pair{false, 1}, std::pair{true, 3}, std::pair{false, 3}})
   {
+    // Not a structured binding: Clang cannot capture one in a lambda with OpenMP.
+    const bool singular = params.first;
+    const int smooth_it = params.second;
     mfem::ConstantCoefficient one(1.0);
     mfem::ParBilinearForm a(&nd_fespace.Get());
     a.AddDomainIntegrator(new mfem::CurlCurlIntegrator(one));
