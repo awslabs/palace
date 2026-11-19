@@ -1190,6 +1190,39 @@ double FingerprintPolynomial(int k, double X, double Y, double Z)
 
 }  // namespace
 
+std::array<std::array<double, 3>, 3> FingerprintCenters(mfem::ParMesh &mesh,
+                                                        const std::vector<int> &attributes)
+{
+  double box[6] = {std::numeric_limits<double>::max(), std::numeric_limits<double>::max(),
+                   std::numeric_limits<double>::max(), std::numeric_limits<double>::max(),
+                   std::numeric_limits<double>::max(), std::numeric_limits<double>::max()};
+  mfem::Vector c;
+  for (int e = 0; e < mesh.GetNE(); e++)
+  {
+    if (std::ranges::find(attributes, mesh.GetAttribute(e)) != attributes.end())
+    {
+      mesh.GetElementCenter(e, c);
+      for (int d = 0; d < c.Size(); d++)
+      {
+        box[d] = std::min(box[d], c(d));
+        box[3 + d] = std::min(box[3 + d], -c(d));
+      }
+    }
+  }
+  Mpi::GlobalMin(6, box, mesh.GetComm());
+  constexpr double f[3][3] = {{0.21, 0.37, 0.16}, {0.62, 0.28, 0.41}, {0.35, 0.73, 0.57}};
+  std::array<std::array<double, 3>, 3> centers;
+  for (int k = 0; k < 3; k++)
+  {
+    for (int d = 0; d < 3; d++)
+    {
+      const double lo = box[d], hi = -box[3 + d];
+      centers[k][d] = (lo <= hi) ? lo + f[k][d] * (hi - lo) : 0.0;
+    }
+  }
+  return centers;
+}
+
 mfem::Vector FingerprintField(const mfem::ParFiniteElementSpace &fespace, int k,
                               const std::array<double, 3> &center)
 {
