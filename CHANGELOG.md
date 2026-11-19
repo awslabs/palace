@@ -463,7 +463,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - ParMETIS is now optional and disabled by default: enable it with
     `-DPALACE_WITH_PARMETIS=ON` (Spack variant `+parmetis`). Otherwise, `"ParMETIS"` for
     `config["Solver"]["Linear"]["ColumnOrdering"]` falls back to METIS with a warning.
-    SchemaVer 4-4-1. [PR 1195](https://github.com/awslabs/palace/pull/1195).
+    SchemaVer 4-4-2. [PR 1195](https://github.com/awslabs/palace/pull/1195).
   - Building the unit tests now requires MFEM with exceptions (`PALACE_MFEM_USE_EXCEPTIONS`
     in the superbuild, `mfem+exceptions` in Spack). The tests of error handling expect
     `MFEM_VERIFY` and `MFEM_ABORT` to throw, and without exceptions the first of them ended
