@@ -347,6 +347,13 @@ list(APPEND STRUMPACK_PATCH_FILES
 list(APPEND STRUMPACK_PATCH_FILES
   "${CMAKE_SOURCE_DIR}/extern/patch/STRUMPACK/strumpack_blr_pivoting.diff"
 )
+# Add an option, off by default, to store the fill-reducing permutation of the distributed
+# solver and its inverse once per node, in an MPI shared memory window, instead of on every
+# process (https://github.com/pghysels/STRUMPACK/pull/174), without its tests, which need
+# test infrastructure added after STRUMPACK 8.1.0
+list(APPEND STRUMPACK_PATCH_FILES
+  "${CMAKE_SOURCE_DIR}/extern/patch/STRUMPACK/strumpack_pr174.diff"
+)
 
 include(ExternalProject)
 ExternalProject_Add(strumpack
