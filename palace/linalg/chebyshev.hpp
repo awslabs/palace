@@ -114,14 +114,15 @@ private:
   // order).
   double lambda_max, theta, delta, sf_max, sf_min;
 
-  void SetCoefficients();
-
   // Dominant vector of the latest maximum eigenvalue estimate, from which the estimate for
   // the next operator starts.
   VecType lambda_vec;
 
   // Temporary vector for smoother application.
   mutable VecType d, r;
+
+  // Set theta and delta from the maximum eigenvalue estimate and the order.
+  void SetCoefficients();
 
 public:
   ChebyshevSmoother1stKind(MPI_Comm comm, int smooth_it, int poly_order, double sf_max,

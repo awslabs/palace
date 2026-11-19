@@ -86,7 +86,7 @@ public:
   int GetMaxIter() const { return max_it; }
 
   // Get and set the level of printing during solves.
-  const auto &GetPrintLevel() const { return print_opts; }
+  const mfem::IterativeSolver::PrintLevel &GetPrintLevel() const { return print_opts; }
   void SetPrintLevel(const mfem::IterativeSolver::PrintLevel &print) { print_opts = print; }
 
   // Set the operator for the solver.

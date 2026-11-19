@@ -473,9 +473,10 @@ template <OperatorType OperType>
 bool BaseKspSolver<OperType>::MultAutoCycle(const VecType &x, VecType &y, double &final_res,
                                             double &initial_res) const
 {
-  // Solve with one-sided V-cycles, then again with symmetric ones, with at most one
-  // iteration fewer and without printing, and keep the V-cycles which need fewer
-  // iterations, with their solution.
+  // Solve with one-sided V-cycles, then the same system with symmetric ones, without
+  // printing and, when the one-sided solve converged, with at most one iteration fewer. The
+  // V-cycles which need fewer iterations are kept with their solution, the one-sided ones
+  // when tied.
   auto SetOneSided = [this](bool one_sided)
   {
     for (auto *gmg : auto_cycle_gmg)
@@ -494,7 +495,7 @@ bool BaseKspSolver<OperType>::MultAutoCycle(const VecType &x, VecType &y, double
   final_res = ksp->GetFinalRes();
   initial_res = ksp->GetInitialRes();
   ksp_mult_it += its_one_sided;
-  bool symmetric = false, converged_sym = false;
+  bool symmetric = false;
   int its_sym = 0;
   if (!converged_one_sided || its_one_sided > 1)
   {
@@ -510,7 +511,7 @@ bool BaseKspSolver<OperType>::MultAutoCycle(const VecType &x, VecType &y, double
     ksp->SetMaxIter(max_it);
     ksp->SetPrintLevel(print);
     its_sym = ksp->GetNumIterations();
-    converged_sym = symmetric = ksp->GetConverged();
+    symmetric = ksp->GetConverged();
     ksp_mult_it += its_sym;
     if (symmetric)
     {
@@ -528,10 +529,10 @@ bool BaseKspSolver<OperType>::MultAutoCycle(const VecType &x, VecType &y, double
                converged_one_sided ? "" : " without converging",
                (its_sym == 0) ? ""
                               : fmt::format(", {}{:d} symmetric",
-                                            converged_sym ? "" : "more than ", its_sym));
+                                            symmetric ? "" : "more than ", its_sym));
   }
   auto_cycle_gmg.clear();
-  return symmetric ? converged_sym : converged_one_sided;
+  return symmetric || converged_one_sided;
 }
 
 template class BaseKspSolver<Operator>;
