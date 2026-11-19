@@ -1584,6 +1584,20 @@ TEST_CASE("rings", "[Serial][Parallel][GPU][Regression]")
   palace::test::RunRegressionCase("rings", "rings.json", "", opts);
 }
 
+// The rings with a natural far field (PEC only on the planar rings): the constant field
+// along z satisfies the boundary conditions, so AMS's auxiliary space operator is singular.
+// Checks that the singular AMS solve converges.
+TEST_CASE("rings_natural_farfield", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum"};
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = force_default_solver;
+  palace::test::RunRegressionCase("rings_natural", "rings_natural.json", "", opts);
+}
+
 TEST_CASE("rings_multiring_inactive_ports", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
