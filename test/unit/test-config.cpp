@@ -216,6 +216,8 @@ TEST_CASE("Config Interior Boundary Sheets", "[config][Serial]")
   CHECK_FALSE(cond_false.crack);
   CHECK_FALSE(data.rational_impedance[0].crack);
   CHECK(data.GetSheetAttributes() == std::vector<int>{1, 4, 5, 6, 7, 8, 9, 10});
+  // The metal sheets: not the lumped port (9) or the surface current source (10).
+  CHECK(data.GetMetalSheetAttributes() == std::vector<int>{1, 4, 5, 6, 7, 8});
   // All impedance sheets are sheets, including purely capacitive ones.
   boundaries["Impedance"][0].erase("Ls");
   boundaries["Impedance"][0]["Cs"] = 1.0e-15;
@@ -238,6 +240,7 @@ TEST_CASE("Config Interior Boundary Sheets", "[config][Serial]")
          {"FluxAmounts", {1.0}}}}}};
   config::BoundaryData sc_data(sc_boundaries);
   CHECK(sc_data.GetSheetAttributes() == std::vector<int>{1, 12, 13});
+  CHECK(sc_data.GetMetalSheetAttributes() == std::vector<int>{1, 12, 13});
   CHECK(sc_data.GetMeshCrackAttributes(std::nullopt).empty());
   CHECK(sc_data.GetMeshCrackAttributes(true) == std::vector<int>{1});
 
@@ -259,6 +262,52 @@ TEST_CASE("Config Interior Boundary Sheets", "[config][Serial]")
   CHECK(ValidateConfig(config).empty());
   config["Boundaries"]["Superconductor"][0]["Crack"] = true;
   CHECK_FALSE(ValidateConfig(config).empty());
+}
+
+TEST_CASE("Config metal sheet attributes are the one list of metal sheets",
+          "[config][Serial]")
+{
+  // Review r2198 m-4: BoundaryData::GetMetalSheetAttributes is the one list of the
+  // boundaries which model a metal sheet (the SA vacuum-sheet warning reads it), and
+  // GetSheetAttributes is that list with the lumped ports and surface current sources. One
+  // boundary of every kind (the parse accepts Terminal with PrescribedPotential; only the
+  // validation refuses the pair).
+  json boundaries = {
+      {"PEC", {{"Attributes", {1}}}},
+      {"PMC", {{"Attributes", {2}}}},
+      {"Terminal", {{{"Index", 1}, {"Attributes", {3}}}}},
+      {"PrescribedPotential",
+       {{{"Index", 2},
+         {"Attributes", {4}},
+         {"DataFile", "trace.csv"},
+         {"TerminalAttributes", {5}}}}},
+      {"Impedance", {{{"Attributes", {6}}, {"Ls", 1.0e-12}, {"Crack", true}}}},
+      {"RationalImpedance",
+       {{{"Attributes", {7}}, {"Numerator", {1.0}}, {"Denominator", {1.0}}}}},
+      {"Conductivity", {{{"Attributes", {8}}, {"Conductivity", 1.0e7}}}},
+      {"Superconductor", {{{"Attributes", {9}}, {"KineticInductance", 1.0e-12}}}},
+      {"FluxLoop",
+       {{{"Index", 3},
+         {"FilmAttributes", {10}},
+         {"HoleAttributes", {11}},
+         {"FluxAmounts", {1.0}}}}},
+      {"LumpedPort",
+       {{{"Index", 4}, {"Attributes", {12}}, {"R", 50.0}, {"Direction", "+X"}}}},
+      {"SurfaceCurrent", {{{"Index", 5}, {"Attributes", {13}}, {"Direction", "+X"}}}},
+      {"Absorbing", {{"Attributes", {14}}}}};
+  config::BoundaryData data(boundaries);
+  const auto metal = data.GetMetalSheetAttributes();
+  CHECK(metal == std::vector<int>{1, 3, 4, 5, 6, 7, 8, 9, 10});
+  auto sheets = metal;
+  sheets.insert(sheets.end(), {12, 13});
+  CHECK(data.GetSheetAttributes() == sheets);
+
+  // Without lumped ports and surface current sources the two lists are equal.
+  boundaries.erase("LumpedPort");
+  boundaries.erase("SurfaceCurrent");
+  config::BoundaryData metal_data(boundaries);
+  CHECK(metal_data.GetMetalSheetAttributes() == metal);
+  CHECK(metal_data.GetSheetAttributes() == metal);
 }
 
 TEST_CASE("Config Terminal and PrescribedPotential are exclusive",
@@ -2266,6 +2315,22 @@ TEST_CASE("Config Magnetostatic InactivePorts", "[config][Serial]")
     CHECK(aperture.direction[1] == Catch::Approx(0.6));
     CHECK(aperture.direction[2] == Catch::Approx(0.8));
   }
+}
+
+TEST_CASE("Config Magnetostatic auxiliary smoother", "[config][Serial]")
+{
+  using Catch::Matchers::ContainsSubstring;
+  auto Check = [](int mg_smooth_aux, double london_pc_shift)
+  {
+    IoData iodata{Units(1.0, 1.0)};
+    iodata.problem.type = ProblemType::MAGNETOSTATIC;
+    iodata.solver.linear.mg_smooth_aux = mg_smooth_aux;
+    iodata.solver.linear.london_pc_shift = london_pc_shift;
+    iodata.CheckConfiguration();
+  };
+  CHECK_THROWS_WITH(Check(1, 0.0), ContainsSubstring("\"LondonPCShift\""));
+  CHECK_NOTHROW(Check(1, 0.1));
+  CHECK_NOTHROW(Check(-1, 0.0));
 }
 
 TEST_CASE("FarField", "[config][Serial]")

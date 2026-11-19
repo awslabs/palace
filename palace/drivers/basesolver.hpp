@@ -76,6 +76,14 @@ protected:
   // an anomalous spike; negative until the first London solve sets it.
   mutable double prev_london_kinetic_ = -1.0;
 
+  // Called after each modification (refinement, rebalancing) of the finest mesh during
+  // adaptation, for example to transfer solution data to the modified mesh.
+  virtual void UpdateAfterMeshChange(Mesh &mesh) const {}
+
+  // Whether the adaptive mesh refinement goes on after the solve of adaptation iteration it
+  // (0 for the initial solve), with ntdof unknowns and the error estimate err.
+  bool ContinueAdaptation(int it, long long int ntdof, double err) const;
+
 public:
   BaseSolver(const IoData &iodata, bool root, int size = 0, int num_thread = 0,
              const char *git_tag = nullptr);
@@ -93,9 +101,10 @@ public:
   // These methods write different simulation metadata to a JSON file in post_dir.
   void SaveMetadata(const FiniteElementSpaceHierarchy &fespaces) const;
   // Writes the given (1-based) AMR iteration index to post_dir's palace.json as
-  // "Problem"/"Iteration". The index matches the "iterationXX" archive subdirectory (the
-  // initial solve is iteration 1).
-  void SaveAdaptationIteration(int iteration) const;
+  // "Problem"/"Iteration", and first to archive_dir's copy if given. The index matches the
+  // "iterationXX" archive subdirectory (the initial solve is iteration 1). It is written
+  // once the iteration's output is in its final location, archived or not.
+  void SaveAdaptationIteration(int iteration, const fs::path &archive_dir = {}) const;
   template <typename SolverType>
   void SaveMetadata(const SolverType &ksp) const;
   void SaveLinearSolverMetadata(MPI_Comm comm, long long int solves,
@@ -184,8 +193,8 @@ FloorMarking MarkEligibleElements(MPI_Comm comm, const Vector &e,
 // "iterationXX" inside output_dir and moves all files and directories into it, leaving
 // relative symlinks behind so that the output directory always has accessible results.
 // The palace.json metadata file is copied (not moved) since it is read and updated by
-// subsequent iterations.
-void SaveIteration(MPI_Comm comm, const fs::path &output_dir, int step, int width);
+// subsequent iterations. Returns the path of the "iterationXX" subfolder.
+fs::path SaveIteration(MPI_Comm comm, const fs::path &output_dir, int step, int width);
 
 }  // namespace palace
 

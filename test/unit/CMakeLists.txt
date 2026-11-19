@@ -52,6 +52,7 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-cornerfamily.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-conductorconsistency.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-conductorconsistency-r0a.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-curlcurloperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-densematrix.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-domainboundary.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-domainboundary-blocked.cpp
@@ -63,6 +64,7 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-domainpostoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-domainsubmesh.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-eigensolver.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-eigenmode.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-errorestimator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-floquetport.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-geodata.cpp
@@ -338,6 +340,20 @@ set_tests_properties(failfast-AbnormalExitAbortsAllRanks PROPERTIES
   TIMEOUT 120
   PROCESSORS ${PALACE_TESTS_PROCESSORS}
 )
+
+# Device code paths that MFEM's debug device runs on the host, so that CPU builds test them
+if(NOT (PALACE_WITH_CUDA OR PALACE_WITH_HIP))
+  catch_discover_tests(unit-tests
+    TEST_PREFIX "debug-"
+    TEST_SPEC "[lowrank][Parallel]"
+    TEST_EXECUTOR ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${PALACE_TESTS_NUMPROC} ${MPIEXEC_PREFLAGS}
+    EXTRA_ARGS ${MPIEXEC_POSTFLAGS} --device debug --skip-benchmarks
+    PROPERTIES
+      PROCESSORS ${PALACE_TESTS_PROCESSORS}
+      SKIP_RETURN_CODE 4
+      ENVIRONMENT "${PALACE_TESTS_OMP_ENV};$<${SHOULD_SET_LLVM_PROFILE_FILE}:LLVM_PROFILE_FILE=${CMAKE_BINARY_DIR}/coverage/mpi/coverage-%p.profraw>"
+  )
+endif()
 
 # Regression tests: full-mesh Palace solves diffed against reference CSVs under
 # PALACE_TEST_DATA_DIR/regression/ref. Slow enough to deserve their own ctest

@@ -62,8 +62,8 @@ bool ResponseMemoryCensusEnabled(MPI_Comm comm);
 // SurfaceResponseOperator::ConstructElectrostatic repeats the construction without it.
 // `patch` is the placed (0-based) index; `point` / `distance` are the unlocated point
 // farthest from the meshed domain and that distance (mesh coordinates); `pass` is the
-// construction pass (1-based) that found it; `undecided_points` the unlocated points at a
-// distance of 0 on a mesh that is not first-order simplex (inside or outside not decided).
+// construction pass (1-based) that found it; `undecided_points` the unlocated points whose
+// distance does not decide inside or outside (DecideUnlocatedTracePoint).
 struct LateDomainBoundaryExclusion
 {
   std::size_t patch = 0;
@@ -3178,8 +3178,10 @@ LocateDistributedPoints(mfem::ParMesh &mesh, int dimension, const mfem::Vector &
 // taken to exclude the point); on a curved mesh the element-box distance, a lower bound (0
 // there does not show that the point is inside); infinity beyond the point's radius.
 // `first_order_simplex_mesh`: every element of the mesh is a first-order simplex, so that
-// a distance of 0 shows the point is in the meshed domain (decision 2180). Collective: the
-// same points on every rank.
+// a distance of 0 shows the point is in the meshed domain (decision 2180);
+// `first_order_mesh`: the mesh is first order (not curved), so that a positive distance
+// is a facet distance, which proves nothing where an element is not a simplex (decision
+// 2204). Collective: the same points on every rank.
 enum class UnlocatedTracePointVerdict
 {
   WITHIN_CONTOUR_RADIUS,
@@ -3191,6 +3193,7 @@ struct UnlocatedTracePointClassification
   std::vector<double> distances;
   std::vector<UnlocatedTracePointVerdict> verdicts;
   bool first_order_simplex_mesh = false;
+  bool first_order_mesh = false;
 };
 UnlocatedTracePointClassification
 ClassifyUnlocatedTracePoints(mfem::ParMesh &mesh, int dimension,
@@ -3201,10 +3204,13 @@ ClassifyUnlocatedTracePoints(mfem::ParMesh &mesh, int dimension,
 // point of the device metal (`edge_point`: a conductor reference or conductor-consistency
 // probe), whether its patch is diagnostic-only (`diagnostic_patch`: a local patch index at
 // or above the applied count, e.g. dropped by the spatial-cluster priority, which a late
-// exclusion cannot remove) and the mesh kind. The patch is excluded late (LATE_EXCLUSION;
-// LATE_EXCLUSION_UNDECIDED for a distance of 0 on a mesh that is not first-order simplex,
-// where inside or outside is not decided), or the run stops with the clear error that
-// names the reason (every other value). No side effects.
+// exclusion cannot remove) and the mesh kind (`first_order_simplex_mesh` implies
+// `first_order_mesh`). The patch is excluded late (LATE_EXCLUSION;
+// LATE_EXCLUSION_UNDECIDED where the distance does not decide inside or outside: a
+// distance of 0 on a mesh that is curved or not all simplex, and any distance on a
+// first-order mesh with a non-simplex element (decision 2204); on a curved mesh a positive
+// element-box distance, a lower bound, decides outside), or the run stops with the clear
+// error that names the reason (every other value). No side effects.
 enum class UnlocatedTracePointDecision
 {
   LATE_EXCLUSION,
@@ -3217,7 +3223,8 @@ enum class UnlocatedTracePointDecision
 UnlocatedTracePointDecision DecideUnlocatedTracePoint(UnlocatedTracePointVerdict verdict,
                                                       bool edge_point,
                                                       bool diagnostic_patch,
-                                                      bool first_order_simplex_mesh);
+                                                      bool first_order_simplex_mesh,
+                                                      bool first_order_mesh);
 // The reason of the clear error of a decision other than a late exclusion (empty for
 // those), with the coupon's contour radius in mesh units for BEYOND_CONTOUR_RADIUS.
 std::string UnlocatedTracePointErrorReason(UnlocatedTracePointDecision decision,

@@ -1470,7 +1470,7 @@ BoundaryData::BoundaryData(const json &boundaries)
   attributes.shrink_to_fit();
 }
 
-std::vector<int> BoundaryData::GetSheetAttributes() const
+std::vector<int> BoundaryData::GetMetalSheetAttributes() const
 {
   std::vector<int> attr_list;
   auto Append = [&attr_list](const std::vector<int> &attrs)
@@ -1492,13 +1492,6 @@ std::vector<int> BoundaryData::GetSheetAttributes() const
   {
     Append(data.attributes);
   }
-  for (const auto &[idx, data] : lumpedport)
-  {
-    for (const auto &elem : data.elements)
-    {
-      Append(elem.attributes);
-    }
-  }
   for (const auto &[idx, data] : terminal)
   {
     Append(data.attributes);
@@ -1511,16 +1504,33 @@ std::vector<int> BoundaryData::GetSheetAttributes() const
     Append(data.attributes);
     Append(data.terminal_attributes);
   }
-  for (const auto &[idx, data] : current)
+  for (const auto &[idx, data] : fluxloop)
+  {
+    Append(data.film_attributes);
+  }
+  std::sort(attr_list.begin(), attr_list.end());
+  attr_list.erase(std::unique(attr_list.begin(), attr_list.end()), attr_list.end());
+  return attr_list;
+}
+
+std::vector<int> BoundaryData::GetSheetAttributes() const
+{
+  std::vector<int> attr_list = GetMetalSheetAttributes();
+  auto Append = [&attr_list](const std::vector<int> &attrs)
+  { attr_list.insert(attr_list.end(), attrs.begin(), attrs.end()); };
+  for (const auto &[idx, data] : lumpedport)
   {
     for (const auto &elem : data.elements)
     {
       Append(elem.attributes);
     }
   }
-  for (const auto &[idx, data] : fluxloop)
+  for (const auto &[idx, data] : current)
   {
-    Append(data.film_attributes);
+    for (const auto &elem : data.elements)
+    {
+      Append(elem.attributes);
+    }
   }
   std::sort(attr_list.begin(), attr_list.end());
   attr_list.erase(std::unique(attr_list.begin(), attr_list.end()), attr_list.end());
