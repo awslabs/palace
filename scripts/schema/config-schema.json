@@ -2498,7 +2498,7 @@
         },
         "MinQ": {
           "type": "number",
-          "description": "Minimum quality factor `|Q| = |\u03c9| / (2 |Im{\u03c9}|)` of the eigenmodes searched for in problems with damping: strongly damped or growing modes with lower `|Q|` are excluded from the search, so that their slowly converging Ritz values cannot stall the others. Values \u2264 0.5 disable the restriction (every damped mode has `Q` \u2265 0.5). Only used by the SLEPc solver, except with the `\"SLP\"` nonlinear solver, and with `\"Hybrid\"` only for its initial guess. Structures whose wanted modes have lower `Q` need a lower value.",
+          "description": "Minimum quality factor `|Q| = |\u03c9| / (2 |Im{\u03c9}|)` of the eigenmodes searched for in problems with damping: strongly damped or growing modes with lower `|Q|` are excluded from the search, so that their slowly converging Ritz values cannot stall the others. Values \u2264 0.5 disable the restriction (every damped mode has `Q` \u2265 0.5). With the restriction, an eigenpair is accepted only once its Ritz value was also present at the previous Krylov restart. Only used by the SLEPc solver, except with the `\"SLP\"` nonlinear solver, and with `\"Hybrid\"` only for its initial guess. Structures whose wanted modes have lower `Q` need a lower value.",
           "minimum": 0.0,
           "default": 0.54,
           "x-palace-advanced": true
