@@ -4898,6 +4898,87 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 #endif
 }
 
+TEST_CASE("SurfaceResponseOperator first-order split floor",
+          "[surfaceresponseoperator][curvature][Serial]")
+{
+  // Decision 2268: the first-order split fraction a = (R / rho_inner) / 0.1 of a portion
+  // (FirstOrderSplitFraction, the operations SplitOf uses) against the noise floor
+  // kFirstOrderSplitFloor = 1e-12. Above it the fraction carries the bits of the
+  // expression it replaced (a placed split keeps its weight and, by the turn's sign, its
+  // class); at or below it nullopt with the fraction reported (the anchor alone, counted),
+  // on both sides of the boundary turn; no turn, no length or an outer edge tighter than
+  // the separation: nullopt without a report.
+  const double R = 2.0, length = 3.0;
+  // SplitOf's expression before the floor (main f3cc6964ba).
+  auto OldFraction = [&](double turn, double separation, bool inner)
+  {
+    const double rho_side = length / std::abs(turn);
+    const double rho_inner = inner ? rho_side : rho_side - separation;
+    const double first_order_kappa = 1.0 / kStraightBendRadiusOverRadius;
+    const double kappa = R / rho_inner;
+    return kappa / first_order_kappa;
+  };
+  auto TurnOf = [&](double a) { return a * length / (kStraightBendRadiusOverRadius * R); };
+  for (const double sign : {1.0, -1.0})
+  {
+    for (const double target : {1.0001e-12, 1.0e-9, 1.4e-7, 6.0e-4, 0.5, 1.5})
+    {
+      const double turn = sign * TurnOf(target);
+      for (const auto &[separation, inner] :
+           std::vector<std::pair<double, bool>>{{0.0, true}, {0.2, false}})
+      {
+        double suppressed = -1.0;
+        const auto a =
+            FirstOrderSplitFraction(turn, length, R, separation, inner, &suppressed);
+        REQUIRE(a.has_value());
+        CHECK(*a == OldFraction(turn, separation, inner));
+        CHECK(*a > kFirstOrderSplitFloor);
+        CHECK(suppressed == -1.0);
+      }
+    }
+    for (const double target : {0.9999e-12, 2.2e-15, 3.5e-17, 1.0e-300})
+    {
+      double suppressed = -1.0;
+      const auto a =
+          FirstOrderSplitFraction(sign * TurnOf(target), length, R, 0.0, true, &suppressed);
+      CHECK_FALSE(a.has_value());
+      CHECK_THAT(suppressed, WithinRel(target, 1.0e-9));
+    }
+    // The boundary: the largest turn whose fraction is at or below the floor is suppressed,
+    // the next double above it is placed.
+    double t = TurnOf(kFirstOrderSplitFloor);
+    while (OldFraction(t, 0.0, true) > kFirstOrderSplitFloor)
+    {
+      t = std::nextafter(t, 0.0);
+    }
+    while (OldFraction(std::nextafter(t, 1.0), 0.0, true) <= kFirstOrderSplitFloor)
+    {
+      t = std::nextafter(t, 1.0);
+    }
+    const double t_above = std::nextafter(t, 1.0);
+    double suppressed = -1.0;
+    CHECK_FALSE(
+        FirstOrderSplitFraction(sign * t, length, R, 0.0, true, &suppressed).has_value());
+    CHECK(suppressed == OldFraction(t, 0.0, true));
+    CHECK(suppressed <= kFirstOrderSplitFloor);
+    suppressed = -1.0;
+    const auto above =
+        FirstOrderSplitFraction(sign * t_above, length, R, 0.0, true, &suppressed);
+    REQUIRE(above.has_value());
+    CHECK(*above == OldFraction(t_above, 0.0, true));
+    CHECK(suppressed == -1.0);
+  }
+  // No turn, no length, an outer edge tighter than the separation: no split, no report.
+  double suppressed = -1.0;
+  CHECK_FALSE(FirstOrderSplitFraction(0.0, length, R, 0.0, true, &suppressed).has_value());
+  CHECK_FALSE(FirstOrderSplitFraction(0.1, 0.0, R, 0.0, true, &suppressed).has_value());
+  CHECK_FALSE(
+      FirstOrderSplitFraction(0.1, length, R, 2.0 * length / 0.1, false, &suppressed)
+          .has_value());
+  CHECK(suppressed == -1.0);
+  CHECK_FALSE(FirstOrderSplitFraction(1.0e-20, length, R, 0.0, true, nullptr).has_value());
+}
+
 TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator corner angle family",
                  "[surfaceresponseoperator][3d][corner][features][Serial][Parallel]")
 {

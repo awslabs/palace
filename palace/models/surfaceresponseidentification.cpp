@@ -6524,32 +6524,48 @@ void Identifier::ComputeCurvature()
       }
     }
     // Sweep over the contribution ends (+density at x0, -density at x1); the signed
-    // density is carried alongside (the same breakpoints).
+    // density is carried alongside (the same breakpoints). `open` counts the contributions
+    // a piece lies in (+1 at a start, -1 at an end, 0 at the chain's ends).
     struct Event
     {
       double x, density, signed_density;
+      int open;
       bool operator<(const Event &other) const
       {
         return std::tie(x, density, signed_density) <
                std::tie(other.x, other.density, other.signed_density);
       }
     };
-    std::vector<Event> events = {{0.0, 0.0, 0.0}, {chain.length, 0.0, 0.0}};
+    std::vector<Event> events = {{0.0, 0.0, 0.0, 0}, {chain.length, 0.0, 0.0, 0}};
     for (const auto &c : contributions)
     {
-      events.push_back({std::clamp(c.x0, 0.0, chain.length), c.density, c.signed_density});
       events.push_back(
-          {std::clamp(c.x1, 0.0, chain.length), -c.density, -c.signed_density});
+          {std::clamp(c.x0, 0.0, chain.length), c.density, c.signed_density, 1});
+      events.push_back(
+          {std::clamp(c.x1, 0.0, chain.length), -c.density, -c.signed_density, -1});
     }
     std::sort(events.begin(), events.end());
     std::vector<Piece> pieces;
     double density = 0.0, signed_density = 0.0;
+    int open = 0;
     for (std::size_t i = 0; i < events.size(); i++)
     {
       density += events[i].density;
       signed_density += events[i].signed_density;
+      open += events[i].open;
       if (i + 1 < events.size() && events[i + 1].x > events[i].x)
       {
+        // No contribution open (read after every event at this x: at one x an end sorts
+        // before a start): the running sums hold only the round-off of the earlier +d / -d
+        // pairs (two abutting half-chord windows may overlap by an ulp). The stretch reads
+        // exactly zero and the next contribution starts from zero (decision 2268: a
+        // nonzero turn on a straight stretch would place a first-order split of round-off
+        // weight whose convexity is the round-off's sign).
+        if (open == 0)
+        {
+          density = 0.0;
+          signed_density = 0.0;
+        }
         pieces.push_back({events[i].x, events[i + 1].x, std::max(0.0, density),
                           std::abs(signed_density) <= 1.0e-12 * std::abs(density)
                               ? 0.0

@@ -1120,6 +1120,84 @@ TEST_CASE("SurfaceResponseIdentificationConvexity",
   }
 }
 
+TEST_CASE("SurfaceResponseIdentificationRoundoffTurnOnStraightStretch",
+          "[surfaceresponseidentification][Serial]")
+{
+  // Decision 2268 (round-off splits): ComputeCurvature sweeps the ends of a chain's density
+  // contributions with running sums. A stretch where no contribution is open carries a
+  // signed turn of exactly zero, whatever round-off the earlier contributions leave in
+  // those sums (two joint windows that abut, x_k + c_k / 2 and x_(k+1) - c_k / 2, may
+  // overlap by an ulp): a nonzero turn there would make the first-order term place a split
+  // of round-off weight on a straight edge, its convexity the round-off's sign. Bars (3 R
+  // wide) along a straight-like zig-zag polyline (joints of unequal turns of both senses,
+  // net +3 deg; no fitted arc) between two long straight leads, at three chord scalings:
+  // every portion on the far half of a lead (beyond the end joint's half chord and the
+  // window) has a turn of exactly 0.0, no feature there carries a bend, and each side keeps
+  // the net signed turn (the inner side around the gap, as in the Convexity case).
+  const double R = 2.0, lead = 60.0, width = 6.0;
+  const double degree = std::acos(-1.0) / 180.0;
+  const double reach = 0.5 * lead + 2.0 * R + width;
+  const std::vector<double> turns = {1.3, -2.9, 0.7, -3.7, 1.9, -2.3, 3.1,  -0.9,
+                                     2.6, -1.7, 0.4, -2.2, 3.4, 1.1,  -0.6, 2.8};
+  const std::vector<double> chords = {1.7, 2.3, 1.1, 2.9, 1.3, 2.1, 0.9, 1.9,
+                                      2.7, 1.4, 2.2, 1.6, 0.8, 2.4, 1.2};
+  for (const double scale : {1.0, 1.37, 0.73})
+  {
+    std::vector<Point2> centreline = {{-lead, 0.0}, {0.0, 0.0}};
+    double angle = 0.0;
+    for (std::size_t k = 0; k < turns.size(); k++)
+    {
+      angle += turns[k] * degree;
+      const double chord = k < chords.size() ? scale * chords[k] : lead;
+      const Point2 p = centreline.back();
+      centreline.push_back(
+          {p[0] + chord * std::cos(angle), p[1] + chord * std::sin(angle)});
+    }
+    const double sweep = angle;
+    const Point2 end = centreline[centreline.size() - 2];
+    const Point2 d_end = {std::cos(angle), std::sin(angle)};
+    const auto input = MakeInput({{BarAroundCentreline(centreline, width), 0, 1.0}}, R);
+    const auto result = IdentifyMetalPerimeter(input);
+    CheckPartition(input, result);
+    // Lead 1 runs along -x from the origin, the trailing lead along d_end from `end`; the
+    // side of a segment by its gap direction against the nearest lead's left normal.
+    int far_portions = 0;
+    double left_turn = 0.0, right_turn = 0.0;
+    for (const auto &feature : result.features)
+    {
+      bool all_far = !feature.portions.empty();
+      for (const auto &portion : feature.portions)
+      {
+        const auto &segment = input.segments[portion.segment];
+        const Point2 m = {0.5 * (segment.p0[0] + segment.p1[0]),
+                          0.5 * (segment.p0[1] + segment.p1[1])};
+        const double along = (m[0] - end[0]) * d_end[0] + (m[1] - end[1]) * d_end[1];
+        const bool left = m[0] < 0.0 ? segment.gap_direction[1] > 0.0
+                                     : segment.gap_direction[1] * d_end[0] -
+                                               segment.gap_direction[0] * d_end[1] >
+                                           0.0;
+        if (-m[0] > reach || along > reach)
+        {
+          far_portions++;
+          CHECK(portion.turn == 0.0);
+        }
+        else
+        {
+          all_far = false;
+        }
+        (left ? left_turn : right_turn) += portion.turn;
+      }
+      if (all_far)
+      {
+        CHECK_FALSE(feature.bend_radius_over_R.has_value());
+      }
+    }
+    CHECK(far_portions > 0);
+    CHECK_THAT(left_turn, WithinRel(-sweep, 0.10));
+    CHECK_THAT(right_turn, WithinRel(sweep, 0.10));
+  }
+}
+
 TEST_CASE("SurfaceResponseIdentificationPairsAtTheThreshold",
           "[surfaceresponseidentification][Serial]")
 {
