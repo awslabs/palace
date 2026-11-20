@@ -40,6 +40,12 @@ if(PALACE_WITH_STRUMPACK AND NOT PALACE_WITH_OPENMP)
   endif()
 endif()
 
+# MFEM marks tetrahedra for refinement by comparing exact edge lengths; the default fast
+# model of icpx computes their fused multiply-adds as separate products and sums.
+if(CMAKE_CXX_COMPILER_ID STREQUAL "IntelLLVM")
+  set(MFEM_CXX_FLAGS "${MFEM_CXX_FLAGS} -fp-model=precise")
+endif()
+
 # Silence some CUDA/HIP include file warnings
 if(PALACE_WITH_CUDA OR PALACE_WITH_HIP)
   set(MFEM_CUDA_FLAGS "${CMAKE_CUDA_FLAGS}")
