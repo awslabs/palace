@@ -174,14 +174,12 @@ DrivenSubstructure::DrivenSubstructure(SpaceOperator &space_op,
     cut = RegionMeshInterface(const_cast<mfem::ParFiniteElementSpace &>(fes), region_side,
                               {}, saved->signatures, saved->sig_w);
   }
-  is_env_int.assign(nt, 0);
-  is_gamma.assign(nt, 0);
-  is_region_int.assign(nt, 0);
+  auto classes = ClassifyInterfaceTrueDofs(rm, em, dbc, cut);
+  is_gamma = std::move(classes.gamma);
+  is_env_int = std::move(classes.env_int);
+  is_region_int = std::move(classes.region_int);
   for (int i = 0; i < nt; i++)
   {
-    is_gamma[i] = !dbc[i] && ((rm[i] && em[i]) || cut[i]);
-    is_env_int[i] = !dbc[i] && em[i] && !rm[i];
-    is_region_int[i] = !dbc[i] && rm[i] && !em[i] && !cut[i];
     if (!is_gamma[i] && !is_env_int[i])
     {
       env.pinned.Append(i);
@@ -1360,11 +1358,12 @@ bool DrivenSubstructure::OnInterface(const ComplexVector &b) const
 namespace
 {
 
-// The records of a driven model in its file (see substructuring::ModelFile): the header and
-// the record of the environment (later ones supersede them, as the frequencies of an
-// adaptive sweep are added) and the condensed environment at each frequency, in the order
-// of the frequencies.
+// The records of a driven model in its file (see substructuring::ModelFile): the interface
+// records, the header and the record of the environment (later ones supersede them, as the
+// frequencies of an adaptive sweep are added) and the condensed environment at each
+// frequency, in the order of the frequencies.
 using ModelFile = substructuring::ModelFile;
+using substructuring::InterfaceRecords;
 constexpr std::uint32_t kHeaderTag = ModelFile::Tag("DHED"),
                         kEnvRecordTag = ModelFile::Tag("ENVR"),
                         kRecordTag = ModelFile::Tag("DREC");
@@ -1388,37 +1387,13 @@ std::vector<ModelFile::Record> FrequencyRecords(const ModelFile &file)
 bool DrivenSubstructureModel::SameEnvironment(const std::vector<double> &a,
                                               const std::vector<double> &b)
 {
-  constexpr double tol = kEnvironmentTol;
-  if (a.size() != b.size() || a.size() < 2 || a.size() % 2 != 0)
-  {
-    return false;
-  }
-  for (std::size_t q = 0; q < a.size(); q += (q < 2) ? 1 : 2)
-  {
-    const std::complex<double> za(a[q], (q < 2) ? 0.0 : a[q + 1]),
-        zb(b[q], (q < 2) ? 0.0 : b[q + 1]);
-    if (std::abs(za - zb) > tol * std::max(std::abs(za), std::abs(zb)))
-    {
-      return false;
-    }
-  }
-  return true;
+  return FingerprintsMatch(a, b, 2, kEnvironmentTol, true);
 }
 
 bool DrivenSubstructureModel::SameSource(const double *a, const double *b, double tol)
 {
-  if (a[0] != b[0])
-  {
-    return false;
-  }
-  double scale = 0.0, diff = 0.0;
-  for (int q = 1; q < kSourceFp; q += 2)
-  {
-    const std::complex<double> za(a[q], a[q + 1]), zb(b[q], b[q + 1]);
-    scale = std::max({scale, std::abs(za), std::abs(zb)});
-    diff = std::max(diff, std::abs(za - zb));
-  }
-  return diff <= tol * scale;
+  return a[0] == b[0] &&
+         PairingsMatch({a + 1, kSourceFp - 1}, {b + 1, kSourceFp - 1}, tol, true);
 }
 
 void BarycentricInterpolant::AddSample(double omega,
@@ -1643,21 +1618,20 @@ void DrivenSubstructureModel::WriteHeader(const std::string &path, bool create) 
   if (create)
   {
     ModelFile::Create(path, MPI_COMM_SELF);
+    InterfaceRecords{nG, sig_w, signatures, length_scale}.Append(path, MPI_COMM_SELF);
   }
-  const int head[10] = {kVersion,
-                        nG,
-                        sig_w,
-                        static_cast<int>(env_fp.size()),
-                        static_cast<int>(excitations.size()),
-                        static_cast<int>(ports.size()),
-                        static_cast<int>(omega.size()),
-                        weights.empty() ? 0 : 1,
-                        static_cast<int>(region_bdr_attributes.size()),
-                        converged ? 1 : 0};
-  const double scalars[4] = {length_scale, error, tol, passivity};
+  const int head[8] = {kVersion,
+                       static_cast<int>(env_fp.size()),
+                       static_cast<int>(excitations.size()),
+                       static_cast<int>(ports.size()),
+                       static_cast<int>(omega.size()),
+                       weights.empty() ? 0 : 1,
+                       static_cast<int>(region_bdr_attributes.size()),
+                       converged ? 1 : 0};
+  const double scalars[3] = {error, tol, passivity};
   const long long size =
       sizeof(head) + sizeof(scalars) + sizeof(fp_centers) +
-      sizeof(double) * (signatures.size() + env_fp.size() + exc_fp.size() + omega.size()) +
+      sizeof(double) * (env_fp.size() + exc_fp.size() + omega.size()) +
       sizeof(int) * (excitations.size() + ports.size() + region_bdr_attributes.size()) +
       sizeof(std::complex<double>) * weights.size();
   ModelFile::Append(path, MPI_COMM_SELF, kHeaderTag, size,
@@ -1668,13 +1642,12 @@ void DrivenSubstructureModel::WriteHeader(const std::string &path, bool create) 
                         f.write(reinterpret_cast<const char *>(x),
                                 static_cast<std::streamsize>(sizeof(*x) * n));
                       };
-                      write(head, 10);
-                      write(scalars, 4);
+                      write(head, 8);
+                      write(scalars, 3);
                       for (const auto &c : fp_centers)
                       {
                         write(c.data(), 3);
                       }
-                      write(signatures.data(), signatures.size());
                       write(env_fp.data(), env_fp.size());
                       write(excitations.data(), excitations.size());
                       write(exc_fp.data(), exc_fp.size());
@@ -1735,31 +1708,33 @@ void DrivenSubstructureModel::ReadHeader(const std::string &path, MPI_Comm comm)
                                        << "\" was written by another version of Palace: "
                                           "rerun in \"Offline\" mode!");
   at = 0;  // the version, then the whole head
-  read(head, 10);
+  read(head, 8);
   std::vector<double> scalars;
-  read(scalars, 4);
-  length_scale = scalars[0];
-  error = scalars[1];
-  tol = scalars[2];
-  passivity = scalars[3];
-  converged = head[9] != 0;
+  read(scalars, 3);
+  error = scalars[0];
+  tol = scalars[1];
+  passivity = scalars[2];
+  converged = head[7] != 0;
   std::vector<double> centers;
   read(centers, 9);
   for (int k = 0; k < 3; k++)
   {
     std::copy_n(centers.begin() + 3 * k, 3, fp_centers[k].begin());
   }
-  nG = head[1];
-  sig_w = head[2];
-  read(signatures, static_cast<double>(nG) * sig_w);
-  read(env_fp, head[3]);
-  read(excitations, head[4]);
-  read(exc_fp, static_cast<double>(kSourceFp) * head[4]);
-  read(ports, head[5]);
-  read(region_bdr_attributes, head[8]);
-  read(omega, head[6]);
-  read(weights, head[7] ? head[6] : 0);
-  incomplete(head[6] > 0 && at == p.size());
+  read(env_fp, head[1]);
+  read(excitations, head[2]);
+  read(exc_fp, static_cast<double>(kSourceFp) * head[2]);
+  read(ports, head[3]);
+  read(region_bdr_attributes, head[6]);
+  read(omega, head[4]);
+  read(weights, head[5] ? head[4] : 0);
+  incomplete(head[4] > 0 && at == p.size());
+  InterfaceRecords iface;
+  incomplete(iface.Read(path, file, comm));
+  nG = iface.n;
+  sig_w = iface.width;
+  signatures = std::move(iface.signatures);
+  length_scale = iface.length;
   const auto *e = file.Find(kEnvRecordTag);
   incomplete(e);
   const auto record =

@@ -14,12 +14,12 @@
 #include "drivers/fluxerrorestimator.hpp"
 #include "fem/errorindicator.hpp"
 #include "fem/mesh.hpp"
+#include "fem/substructuremodel.hpp"
 #include "linalg/errorestimator.hpp"
 #include "linalg/floquetcorrection.hpp"
 #include "linalg/ksp.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
-#include "models/drivensubstructure.hpp"
 #include "models/floquetportoperator.hpp"
 #include "models/lumpedportoperator.hpp"
 #include "models/portexcitations.hpp"
@@ -86,19 +86,7 @@ DrivenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 void DrivenSolver::Preprocess(IoData &iodata, std::unique_ptr<mfem::Mesh> &smesh,
                               MPI_Comm comm) const
 {
-  if (const auto &sub = iodata.solver.substructuring;
-      sub && sub->mode == SubstructuringMode::ONLINE)
-  {
-    DrivenSubstructureModel model;
-    model.ReadHeader(sub->model_file, comm);
-    MFEM_VERIFY(
-        !(iodata.model.Lc > 0.0) ||
-            std::abs(iodata.model.Lc - model.length_scale) <= 1.0e-12 * model.length_scale,
-        "\"Model\": \"Lc\" (" << iodata.model.Lc
-                              << ") differs from that of the saved substructuring model ("
-                              << model.length_scale << ")!");
-    iodata.model.Lc = model.length_scale;
-  }
+  substructuring::UseModelLength(iodata, comm);
   BaseSolver::Preprocess(iodata, smesh, comm);
 }
 

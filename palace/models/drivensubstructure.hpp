@@ -82,7 +82,7 @@ private:
 //
 struct DrivenSubstructureModel
 {
-  static constexpr int kVersion = 10;  // of the header
+  static constexpr int kVersion = 11;  // of the header
   static constexpr int kSourceFp = 7;  // see DrivenSubstructure::SourceFingerprint
   // Relative tolerance of the comparisons of the environment with that of a saved model:
   // its fingerprint and element moments are sums over elements, which the partition changes
@@ -119,9 +119,10 @@ struct DrivenSubstructureModel
   std::array<std::size_t, 4> PartSizes() const;
 
   // The records of the model in its file (see substructuring::ModelFile), written and read
-  // by the calling process (ReadHeader is collective): the header and the record of the
-  // environment, in a new file or appended (superseding the previous ones), and the records
-  // of the frequencies.
+  // by the calling process (ReadHeader is collective): in a new file, the interface records
+  // (substructuring::InterfaceRecords: nG, sig_w, the signatures and length_scale), the
+  // header and the record of the environment, in a new file or appended (superseding the
+  // previous ones), and the records of the frequencies.
   void WriteHeader(const std::string &path, bool create = true) const;
   void AppendRecord(const std::string &path, const Record &r) const;
   void ReadHeader(const std::string &path, MPI_Comm comm);

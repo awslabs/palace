@@ -3532,12 +3532,11 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   m.tol = 1.0e-8;
   m.passivity = -1.0e-3;
   const auto path = (temp_dir / "driven-model-cut.bin").string();
-  // The position of the header in the file.
-  auto header = [&path]()
-  {
-    using substructuring::ModelFile;
-    return ModelFile::Read(path, Mpi::World()).Find(ModelFile::Tag("DHED"))->pos;
-  };
+  // The position of the payload of the last record with a tag in the file.
+  using substructuring::ModelFile;
+  auto payload = [&path](std::uint32_t tag)
+  { return ModelFile::Read(path, Mpi::World()).Find(tag)->pos; };
+  const auto header = ModelFile::Tag("DHED"), signatures = ModelFile::Tag("SIGS");
   m.WriteHeader(path);
   DrivenSubstructureModel saved;
   saved.ReadHeader(path, Mpi::World());
@@ -3551,13 +3550,16 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   std::filesystem::resize_file(path, std::filesystem::file_size(path) / 2);
   CHECK_THROWS_WITH(saved.ReadHeader(path, Mpi::World()),
                     ContainsSubstring("is incomplete"));
-  // The interface size (head entry 1) beyond the record or negative, and more frequencies
-  // (entry 6) than the record holds, or none (an adaptive offline run stopped before its
-  // first sample).
-  for (const auto [entry, value] : {std::pair{1, 1000}, {1, -5}, {6, 7}, {6, 0}})
+  // The interface size (the first entry of the interface record) beyond the record or
+  // negative, and more frequencies (head entry 4) than the record holds, or none (an
+  // adaptive offline run stopped before its first sample).
+  for (const auto [tag, entry, value] : {std::tuple{signatures, 0, 1000},
+                                         {signatures, 0, -5},
+                                         {header, 4, 7},
+                                         {header, 4, 0}})
   {
     m.WriteHeader(path);
-    const auto pos = header();
+    const auto pos = payload(tag);
     {
       std::fstream f(path, std::ios::binary | std::ios::in | std::ios::out);
       f.seekp(pos + entry * static_cast<long long>(sizeof(int)));
@@ -3579,7 +3581,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
                     ContainsSubstring("is incomplete"));
   m.WriteHeader(path);
   {
-    const auto pos = header();
+    const auto pos = payload(header);
     std::fstream f(path, std::ios::binary | std::ios::in | std::ios::out);
     const int version = DrivenSubstructureModel::kVersion + 1;
     f.seekp(pos);
