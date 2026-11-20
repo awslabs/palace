@@ -729,7 +729,7 @@ struct SubstructuringSolver::Impl
     ModelFile file;
     std::vector<double> sig;
     EnvironmentRecord environment;
-    double length = 0.0, regularization = 0.0;
+    double regularization = 0.0;
     std::vector<double> sheet_sides;
     long long S_pos = 0;
   };

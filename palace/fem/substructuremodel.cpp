@@ -4,7 +4,6 @@
 #include "substructuremodel.hpp"
 
 #include <algorithm>
-#include <cmath>
 #include <cstring>
 #include <filesystem>
 #include <limits>
@@ -12,7 +11,6 @@
 #include <system_error>
 #include <fmt/format.h>
 #include "utils/communication.hpp"
-#include "utils/iodata.hpp"
 #include "utils/outputdir.hpp"
 
 namespace palace::substructuring
@@ -228,26 +226,20 @@ bool InterfaceRecords::Read(const std::string &path, const ModelFile &file, MPI_
   return true;
 }
 
-void UseModelLength(IoData &iodata, MPI_Comm comm)
+double InterfaceRecords::ReadLength(const std::string &path, MPI_Comm comm)
 {
-  const auto &sub = iodata.solver.substructuring;
-  if (!sub || sub->mode != SubstructuringMode::ONLINE || sub->model_file.empty())
+  const auto file = ModelFile::Read(path, comm);
+  const auto *l = file.Find(kLengthTag);
+  double length = 0.0;
+  if (l && l->size == static_cast<long long>(sizeof(double)))
   {
-    return;
+    const std::vector<char> q = ModelFile::ReadPayload(path, *l, comm);
+    if (q.size() == sizeof(double))
+    {
+      std::memcpy(&length, q.data(), sizeof(double));
+    }
   }
-  InterfaceRecords r;
-  if (!r.Read(sub->model_file, ModelFile::Read(sub->model_file, comm), comm) ||
-      !(r.length > 0.0))
-  {
-    return;
-  }
-  MFEM_VERIFY(!(iodata.model.Lc > 0.0) ||
-                  std::abs(iodata.model.Lc - r.length) <= 1.0e-12 * r.length,
-              "\"Model\": \"Lc\" (" << iodata.model.Lc
-                                    << ") differs from that of the saved substructuring "
-                                       "model ("
-                                    << r.length << ")!");
-  iodata.model.Lc = r.length;
+  return length;
 }
 
 }  // namespace palace::substructuring

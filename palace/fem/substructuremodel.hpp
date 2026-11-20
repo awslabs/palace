@@ -11,13 +11,6 @@
 #include <vector>
 #include <mpi.h>
 
-namespace palace
-{
-
-class IoData;
-
-}  // namespace palace
-
 namespace palace::substructuring
 {
 
@@ -83,7 +76,7 @@ struct ModelFile
 
 // The records of the interface every substructuring model holds: the signatures of its DOFs
 // (n x width, row-major, see TrueDofSignatures) and the characteristic length of the run
-// that saved it (model.Lc, which an online run takes, see UseModelLength).
+// that saved it (model.Lc, which an online run takes, see BaseSolver::Preprocess).
 struct InterfaceRecords
 {
   static constexpr std::uint32_t kSignaturesTag = ModelFile::Tag("SIGS"),
@@ -98,11 +91,11 @@ struct InterfaceRecords
   // Read them from the records of a file: false if one is missing or does not hold its
   // sizes. Collective.
   bool Read(const std::string &path, const ModelFile &file, MPI_Comm comm);
-};
 
-// The characteristic length of the saved model of an online substructuring run, which it
-// takes as model.Lc (a configured one must equal it). Collective.
-void UseModelLength(IoData &iodata, MPI_Comm comm);
+  // The characteristic length of a model file, from its length record alone (0 if it holds
+  // none). Collective.
+  static double ReadLength(const std::string &path, MPI_Comm comm);
+};
 
 }  // namespace palace::substructuring
 

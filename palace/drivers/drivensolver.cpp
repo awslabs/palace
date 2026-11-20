@@ -14,7 +14,6 @@
 #include "drivers/fluxerrorestimator.hpp"
 #include "fem/errorindicator.hpp"
 #include "fem/mesh.hpp"
-#include "fem/substructuremodel.hpp"
 #include "linalg/errorestimator.hpp"
 #include "linalg/floquetcorrection.hpp"
 #include "linalg/ksp.hpp"
@@ -81,13 +80,6 @@ DrivenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   }
   return {adaptive ? SweepAdaptive(space_op) : SweepUniform(space_op),
           space_op.GlobalTrueVSize()};
-}
-
-void DrivenSolver::Preprocess(IoData &iodata, std::unique_ptr<mfem::Mesh> &smesh,
-                              MPI_Comm comm) const
-{
-  substructuring::UseModelLength(iodata, comm);
-  BaseSolver::Preprocess(iodata, smesh, comm);
 }
 
 ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
