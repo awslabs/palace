@@ -25,15 +25,12 @@
 namespace palace
 {
 
-class FarfieldBoundaryOperator;
 class IoData;
 class MaterialOperator;
 class MaterialPropertyCoefficient;
 class SumVectorCoefficient;
-class SurfaceConductivityOperator;
 class SurfaceFunctional;
-class SurfaceRationalImpedanceOperator;
-class SurfaceImpedanceOperator;
+class SurfaceTerms;
 class Units;
 
 namespace config
@@ -125,10 +122,7 @@ private:
   // Submesh-specific material operator and boundary condition operators. Constructed on
   // the remapped submesh with rebuilt CEED data for correct attribute mapping.
   std::unique_ptr<MaterialOperator> port_mat_op;
-  std::unique_ptr<SurfaceImpedanceOperator> port_surf_z_op;
-  std::unique_ptr<FarfieldBoundaryOperator> port_farfield_op;
-  std::unique_ptr<SurfaceConductivityOperator> port_surf_sigma_op;
-  std::unique_ptr<SurfaceRationalImpedanceOperator> port_surf_rz_op;
+  std::unique_ptr<SurfaceTerms> port_surface_terms;
 
   // Port-local linear solver configuration and boundary mode eigenvalue problem solver.
   // The local copy allows per-port overrides without changing the full 3D linear solver.

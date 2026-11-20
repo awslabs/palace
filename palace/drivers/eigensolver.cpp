@@ -174,12 +174,11 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   }
   if (nonlinear_type == NonlinearEigenSolver::SLP && !has_A2)
   {
-    // The SLP nonlinear eigensolver requires a frequency-dependent term A2(λ) (wave ports
-    // or absorbing boundaries). Without one the NEP function/Jacobian shells dereference a
-    // null A2; fall back to the standard linear/quadratic eigensolver instead.
-    Mpi::Warning(
-        "SLP nonlinear eigensolver requires a nonlinear system term (wave ports or "
-        "absorbing boundaries), none found; using a linear eigensolver!\n");
+    // The SLP nonlinear eigensolver requires a frequency-dependent term A2(λ). Without one
+    // the NEP function/Jacobian shells dereference a null A2; fall back to the standard
+    // linear/quadratic eigensolver instead.
+    Mpi::Warning("SLP nonlinear eigensolver requires a frequency-dependent system term, "
+                 "none found; using a linear eigensolver!\n");
     nonlinear_type = NonlinearEigenSolver::HYBRID;
   }
   if (has_A2 && nonlinear_type == NonlinearEigenSolver::HYBRID)
@@ -206,32 +205,35 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
           std::move(M_ff), [](std::complex<double> lambda) { return -0.5 / lambda; },
           1i * target);
     }
-    // Fit-or-freeze seed for rational impedance boundaries. Each boundary contributes
-    // g(λ)·M_b to A2(λ) with g(λ) = λ·D(λ)/N(λ) = P(λ) + R(λ)/N(λ). The polynomial part
-    // P is exactly representable in the seed pencil when deg(P) <= 2, so only the strictly
-    // proper pole part R/N is a candidate for freezing. We freeze it at the target when
-    // that approximates g over the interpolation window better than the polynomial
-    // interpolant does; otherwise keep the fit.
-    const auto &surf_rz_op = space_op.GetRationalImpedanceOp();
-    for (int idx = 0; idx < surf_rz_op.GetNumBoundaries(); idx++)
+    // Fit-or-freeze seed for the frequency-dependent boundary mass terms with an exact
+    // split of their scale (rational impedance boundaries). Each such term contributes
+    // c(λ)·M_i to A2(λ) with c(λ) = P(λ) + R(λ), for a rational impedance boundary the
+    // Robin coefficient λ·D(λ)/N(λ) with the pole part R(λ)/N(λ). The polynomial part P is
+    // exactly representable in the seed pencil when deg(P) <= 2, so only the strictly
+    // proper pole part R is a candidate for freezing (otherwise the whole coefficient). We
+    // freeze it at the target when that approximates c over the interpolation window
+    // better than the polynomial interpolant does; otherwise keep the fit. Terms without a
+    // split (finite conductivity) are left to the interpolant.
+    const auto &surface_terms = space_op.GetSurfaceTerms();
+    for (int i = 0; i < surface_terms.GetNumExtraSystemBdrMassTerms(); i++)
     {
-      const bool proper_split = (surf_rz_op.GetRobinQuotientDegree(idx) <= 2);
-      auto f_full = [&surf_rz_op, idx](std::complex<double> lambda)
-      { return surf_rz_op.EvalRobinCoefficient(idx, lambda); };
-      auto f_frozen = [&surf_rz_op, idx, proper_split](std::complex<double> lambda)
+      const auto split = surface_terms.GetExtraSystemBdrMassTermSplit(i);
+      if (!split)
       {
-        return proper_split ? surf_rz_op.EvalRobinRemainder(idx, lambda)
-                            : surf_rz_op.EvalRobinCoefficient(idx, lambda);
-      };
+        continue;
+      }
+      const bool proper_split = (split->degree <= 2);
+      const auto &f_full = split->coefficient;
+      const auto &f_frozen = proper_split ? split->remainder : split->coefficient;
       double fit_err, freeze_err;
       if (interp->DetermineFrozen(f_full, f_frozen, 1i * target, fit_err, freeze_err))
       {
-        Mpi::Print(" Freezing rational impedance boundary (attribute {}) pole part in the "
-                   "NLEPS seed (fit error {:.2e} > freeze error {:.2e})\n",
-                   fmt::join(surf_rz_op.GetAttrList(idx), ", "), fit_err, freeze_err);
-        auto M_b = space_op.GetRationalImpedanceBoundaryMassMatrix<ComplexOperator>(
-            idx, Operator::DIAG_ZERO);
-        interp->AddFrozenPole(std::move(M_b), f_frozen, 1i * target);
+        Mpi::Print(" Freezing {} pole part in the NLEPS seed (fit error {:.2e} > freeze "
+                   "error {:.2e})\n",
+                   surface_terms.GetExtraSystemBdrMassTermName(i), fit_err, freeze_err);
+        auto M_i = space_op.GetExtraSystemBdrMassTermMatrix<ComplexOperator>(
+            i, Operator::DIAG_ZERO);
+        interp->AddFrozenPole(std::move(M_i), f_frozen, 1i * target);
       }
     }
     A2_0 = interp->GetInterpolationOperator(0);
