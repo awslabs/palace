@@ -329,8 +329,9 @@ TEST_CASE("ConformalRefinementAfterUniformRefinement", "[geodata][Serial][Parall
   // edges of equal length, so the marking of the tetrahedra after a uniform refinement (as
   // before adaptive refinement) must break the ties between edges the same way on all
   // processes. The mesh refined locally must then be conforming across the processes: the
-  // lowest-order Nédélec and Raviart-Thomas interpolants of a smooth field are continuous.
-  // Without a consistent marking this fails from 3 processes on.
+  // lowest-order Nédélec and Raviart-Thomas interpolants of a smooth field are continuous,
+  // and it must have as many elements as the same mesh refined in serial. Without a
+  // consistent marking the count differs from 2 processes on, the interpolants from 3.
   mfem::Mesh wedges = mfem::Mesh::MakeCartesian3D(4, 4, 4, mfem::Element::WEDGE);
   for (int v = 0; v < wedges.GetNV(); v++)
   {
@@ -340,20 +341,27 @@ TEST_CASE("ConformalRefinementAfterUniformRefinement", "[geodata][Serial][Parall
   }
   mfem::Mesh serial = mfem::Mesh::MakeSimplicial(wedges);
   serial.Finalize(true);
+  mfem::Mesh serial_ref(serial);
   mfem::ParMesh mesh(Mpi::World(), serial);
-  mesh.UniformRefinement();
-  mesh.Finalize(true);
-  mfem::Array<int> marked;
-  mfem::Vector c;
-  for (int e = 0; e < mesh.GetNE(); e++)
+  const auto RefineLeft = [](mfem::Mesh &m)
   {
-    mesh.GetElementCenter(e, c);
-    if (c(0) < 0.5)
+    m.UniformRefinement();
+    m.Finalize(true);
+    mfem::Array<int> marked;
+    mfem::Vector c;
+    for (int e = 0; e < m.GetNE(); e++)
     {
-      marked.Append(e);
+      m.GetElementCenter(e, c);
+      if (c(0) < 0.5)
+      {
+        marked.Append(e);
+      }
     }
-  }
-  mesh.GeneralRefinement(marked, 0);
+    m.GeneralRefinement(marked, 0);
+  };
+  RefineLeft(mesh);
+  RefineLeft(serial_ref);
+  CHECK(mesh.GetGlobalNE() == serial_ref.GetNE());
   mfem::ND_FECollection nd(1, 3);
   mfem::RT_FECollection rt(0, 3);
   mfem::VectorFunctionCoefficient f(3,
