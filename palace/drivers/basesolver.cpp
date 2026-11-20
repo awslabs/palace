@@ -3,7 +3,10 @@
 
 #include "basesolver.hpp"
 
+#include <algorithm>
 #include <array>
+#include <cstdint>
+#include <cstring>
 #include <mfem.hpp>
 #include <nlohmann/json.hpp>
 #include "drivers/transientsolver.hpp"
@@ -28,6 +31,58 @@ namespace palace
 {
 
 using json = nlohmann::json;
+
+// Diagnostic (not for upstream): hashes of the mesh which do not depend on its partition,
+// to compare builds: the number of elements; the sum over the elements of a hash of the
+// bits of their vertex coordinates, sorted (geometry) and in the element's vertex order
+// (marks).
+void PrintMeshHashes(const mfem::ParMesh &mesh, const char *when)
+{
+  auto Mix = [](std::uint64_t h, std::uint64_t v)
+  {
+    h ^= v + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
+    return h;
+  };
+  std::uint64_t geom = 0, marks = 0;
+  for (int e = 0; e < mesh.GetNE(); e++)
+  {
+    const mfem::Element *el = mesh.GetElement(e);
+    std::vector<std::array<std::uint64_t, 3>> pts;
+    for (int j = 0; j < el->GetNVertices(); j++)
+    {
+      const double *x = mesh.GetVertex(el->GetVertices()[j]);
+      std::array<std::uint64_t, 3> p = {0, 0, 0};
+      for (int d = 0; d < mesh.SpaceDimension(); d++)
+      {
+        std::memcpy(&p[d], &x[d], sizeof(double));
+      }
+      pts.push_back(p);
+    }
+    std::uint64_t hm = 0;
+    for (const auto &p : pts)
+    {
+      for (auto v : p)
+      {
+        hm = Mix(hm, v);
+      }
+    }
+    std::sort(pts.begin(), pts.end());
+    std::uint64_t hg = 0;
+    for (const auto &p : pts)
+    {
+      for (auto v : p)
+      {
+        hg = Mix(hg, v);
+      }
+    }
+    geom += hg;
+    marks += hm;
+  }
+  unsigned long long v[2] = {geom, marks};
+  MPI_Allreduce(MPI_IN_PLACE, v, 2, MPI_UNSIGNED_LONG_LONG, MPI_SUM, mesh.GetComm());
+  Mpi::Print(" Mesh hashes {}: elements {:d}, geometry {:016x}, marks {:016x}\n", when,
+             mesh.GetGlobalNE(), v[0], v[1]);
+}
 
 fs::path SaveIteration(MPI_Comm comm, const fs::path &output_dir, int step, int width)
 {
@@ -317,6 +372,7 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
         fine_mesh.Finalize(/*refine=*/true);
       }
       UpdateAfterMeshChange(*mesh.back());
+      PrintMeshHashes(fine_mesh, "after refinement");
       const auto final_elem_count = fine_mesh.GetGlobalNE();
       Mpi::Print(" {} mesh refinement added {:d} elements (initial = {:d}, final = {:d})\n",
                  fine_mesh.Nonconforming() ? "Nonconforming" : "Conforming",
@@ -333,6 +389,7 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
       }
       mesh.back()->Update();
       UpdateAfterMeshChange(*mesh.back());
+      PrintMeshHashes(*mesh.back(), "after rebalance");
     }
 
     // Record the adapted mesh's topology now, paired with the mesh file RebalanceMesh
