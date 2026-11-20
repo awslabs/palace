@@ -4,6 +4,7 @@
 #include "bilinearform.hpp"
 
 #include <algorithm>
+#include <set>
 #include "fem/fespace.hpp"
 #include "fem/libceed/basis.hpp"
 #include "fem/libceed/ceed.hpp"
@@ -106,6 +107,11 @@ BilinearForm::PartialAssemble(const FiniteElementSpace &trial_fespace,
         // Assemble domain or boundary integrators on this element geometry type.
         CeedBasis trial_basis = trial_fespace.GetCeedBasis(ceed, geom);
         CeedBasis test_basis = test_fespace.GetCeedBasis(ceed, geom);
+        mfem::IsoparametricTransformation T;  // The coordinate map of the domain elements.
+        if (!use_bdr && mesh.Get().GetNodes())
+        {
+          T.SetFE(mesh.Get().GetNodalFESpace()->FEColl()->FiniteElementForGeometry(geom));
+        }
 
         MFEM_ASSERT(subsets.size() == integs.size(), "Missing integrator subset data!");
         for (std::size_t i = 0; i < integs.size(); i++)
@@ -124,8 +130,48 @@ BilinearForm::PartialAssemble(const FiniteElementSpace &trial_fespace,
 
           CeedOperator sub_op;
           integ->SetMapTypes(trial_map_type, test_map_type);
-          integ->Assemble(ceed, trial_restr, test_restr, trial_basis, test_basis,
-                          data.geom_data, data.GetGeomDataRestriction(*subset), &sub_op);
+          const int q_order = (use_bdr || !T.GetFE()) ? -1 : integ->GetIntegrationOrder(T);
+          if (q_order >= 0 && q_order != fem::DefaultIntegrationOrder::Get(T))
+          {
+            // The bases, the mesh nodes basis and the attribute basis at the points of the
+            // integrator's quadrature (the sub-operator keeps references to them).
+            MFEM_VERIFY(*subset == ceed::CeedElementSubset::Full,
+                        "An integrator with a quadrature order of its own must be "
+                        "assembled on every element!");
+            const auto &nodes = *mesh.Get().GetNodes()->FESpace();
+            CeedBasis q_trial = FiniteElementSpace::BuildCeedBasis(trial_fespace.Get(),
+                                                                   ceed, geom, q_order);
+            CeedBasis q_test = (&trial_fespace == &test_fespace)
+                                   ? q_trial
+                                   : FiniteElementSpace::BuildCeedBasis(
+                                         test_fespace.Get(), ceed, geom, q_order);
+            ceed::CeedGeomFactorData q_data = data;
+            q_data.nodes_basis =
+                FiniteElementSpace::BuildCeedBasis(nodes, ceed, geom, q_order);
+            CeedInt num_qpts;
+            PalaceCeedCall(ceed,
+                           CeedBasisGetNumQuadraturePoints(q_data.nodes_basis, &num_qpts));
+            ceed::InitConstantLineBasis(ceed, 1, num_qpts, &q_data.attr_basis);
+            MFEM_VERIFY(integ->AssembleOnTheFly(ceed, trial_restr, test_restr, q_trial,
+                                                q_test, q_data, &sub_op),
+                        "An integrator with a quadrature order of its own must compute the "
+                        "geometry factors on the fly!");
+            PalaceCeedCall(ceed, CeedBasisDestroy(&q_data.nodes_basis));
+            PalaceCeedCall(ceed, CeedBasisDestroy(&q_data.attr_basis));
+            if (q_test != q_trial)
+            {
+              PalaceCeedCall(ceed, CeedBasisDestroy(&q_test));
+            }
+            PalaceCeedCall(ceed, CeedBasisDestroy(&q_trial));
+          }
+          else if (*subset != ceed::CeedElementSubset::Full ||
+                   !integ->AssembleOnTheFly(ceed, trial_restr, test_restr, trial_basis,
+                                            test_basis, data, &sub_op))
+          {
+            mesh.EnsureGeometryFactors(ceed, data);
+            integ->Assemble(ceed, trial_restr, test_restr, trial_basis, test_basis,
+                            data.geom_data, data.GetGeomDataRestriction(*subset), &sub_op);
+          }
           // Sub-operator owned by ceed::Operator.
           op->AddSubOperator(sub_op);
         }
@@ -205,12 +251,37 @@ BilinearForm::Assemble(const FiniteElementSpaceHierarchy &fespaces, bool skip_ze
     skip_zero_coeff_elems =
         !UseFullAssembly(fespaces.GetFESpaceAtLevel(l), pa_order_threshold);
   }
+  // An integrator with a quadrature order of its own on an element geometry of the mesh
+  // (see BilinearFormIntegrator::GetIntegrationOrder) is assembled on each level at that
+  // order: a coarsened operator would use the bases of the coarse space at the default
+  // quadrature.
+  bool own_order = false;
+  {
+    const auto &pmesh = trial_fespace.GetParMesh();
+    std::set<mfem::Geometry::Type> geoms;
+    for (int e = 0; e < pmesh.GetNE() && pmesh.GetNodes(); e++)
+    {
+      geoms.insert(pmesh.GetElementGeometry(e));
+    }
+    for (const auto geom : geoms)
+    {
+      mfem::IsoparametricTransformation T;
+      T.SetFE(pmesh.GetNodalFESpace()->FEColl()->FiniteElementForGeometry(geom));
+      for (const auto &integ : domain_integs)
+      {
+        const int q_order = integ->GetIntegrationOrder(T);
+        own_order =
+            own_order || (q_order >= 0 && q_order != fem::DefaultIntegrationOrder::Get(T));
+      }
+    }
+  }
   std::vector<std::unique_ptr<ceed::Operator>> pa_ops;
   pa_ops.reserve(fespaces.GetNumLevels() - l0);
   for (std::size_t l = l0; l < fespaces.GetNumLevels(); l++)
   {
-    if (l > l0 && &fespaces.GetFESpaceAtLevel(l).GetMesh() ==
-                      &fespaces.GetFESpaceAtLevel(l - 1).GetMesh())
+    if (l > l0 && !own_order &&
+        &fespaces.GetFESpaceAtLevel(l).GetMesh() ==
+            &fespaces.GetFESpaceAtLevel(l - 1).GetMesh())
     {
       pa_ops.push_back(
           ceed::CeedOperatorCoarsen(*pa_ops.back(), fespaces.GetFESpaceAtLevel(l)));

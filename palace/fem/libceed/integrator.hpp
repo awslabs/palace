@@ -11,6 +11,8 @@
 namespace palace::ceed
 {
 
+struct CeedGeomFactorData;
+
 // Evaluation modes for CeedOperator fields for various integrators.
 enum EvalMode : unsigned int
 {
@@ -64,6 +66,17 @@ void AssembleCeedOperator(const CeedQFunctionInfo &info, void *ctx, std::size_t 
                           CeedElemRestriction test_restr, CeedBasis trial_basis,
                           CeedBasis test_basis, CeedVector geom_data,
                           CeedElemRestriction geom_data_restr, CeedOperator *op);
+
+// Create the libCEED operator of AssembleCeedOperator with the geometry factors computed at
+// the quadrature points from the mesh nodes, element attributes and quadrature weights of
+// data (see CeedGeomFactorData) by info.apply_qf (inputs: attr, q_w, grad_x, then the
+// active inputs). No quadrature data assembly.
+void AssembleCeedOperatorOnTheFly(const CeedQFunctionInfo &info, void *ctx,
+                                  std::size_t ctx_size, Ceed ceed,
+                                  CeedElemRestriction trial_restr,
+                                  CeedElemRestriction test_restr, CeedBasis trial_basis,
+                                  CeedBasis test_basis, const CeedGeomFactorData &data,
+                                  CeedOperator *op);
 
 // Construct libCEED operators for interpolation operations and their transpose between
 // the two spaces. Note that contributions for shared degrees of freedom are added, so the

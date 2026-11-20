@@ -1775,19 +1775,14 @@ FiniteElementSpace::BuildBrokenInterpolator(const mfem::HypreParMatrix &G,
 }
 
 CeedBasis FiniteElementSpace::BuildCeedBasis(const mfem::FiniteElementSpace &fespace,
-                                             Ceed ceed, mfem::Geometry::Type geom)
+                                             Ceed ceed, mfem::Geometry::Type geom,
+                                             int q_order)
 {
   // Find the appropriate integration rule for the element.
-  mfem::IsoparametricTransformation T;
-  const mfem::FiniteElement *fe_nodal =
-      fespace.GetMesh()->GetNodalFESpace()->FEColl()->FiniteElementForGeometry(geom);
-  if (!fe_nodal)
+  if (q_order < 0)
   {
-    fe_nodal =
-        fespace.GetMesh()->GetNodalFESpace()->FEColl()->TraceFiniteElementForGeometry(geom);
+    q_order = fem::DefaultIntegrationOrder::Get(*fespace.GetMesh(), geom);
   }
-  T.SetFE(fe_nodal);
-  const int q_order = fem::DefaultIntegrationOrder::Get(T);
   const mfem::IntegrationRule &ir = mfem::IntRules.Get(geom, q_order);
 
   // Build the libCEED basis.

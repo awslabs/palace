@@ -5,11 +5,13 @@
 
 #include "fem/libceed/coefficient.hpp"
 #include "fem/libceed/integrator.hpp"
+#include "fem/mesh.hpp"
 #include "utils/diagnostic.hpp"
 
 PalacePragmaDiagnosticPush
 PalacePragmaDiagnosticDisableUnused
 
+#include "fem/qfunctions/33/hdiv_x_33_qf.h"
 #include "fem/qfunctions/hdiv_qf.h"
 #include "fem/qfunctions/l2_qf.h"
 
@@ -72,6 +74,35 @@ void CurlCurlIntegrator::Assemble(Ceed ceed, CeedElemRestriction trial_restr,
   AssembleCeedOperator(info, (void *)ctx.data(), ctx.size() * sizeof(CeedIntScalar), ceed,
                        trial_restr, test_restr, trial_basis, test_basis, geom_data,
                        geom_data_restr, op);
+}
+
+bool CurlCurlIntegrator::AssembleOnTheFly(Ceed ceed, CeedElemRestriction trial_restr,
+                                          CeedElemRestriction test_restr,
+                                          CeedBasis trial_basis, CeedBasis test_basis,
+                                          const ceed::CeedGeomFactorData &data,
+                                          CeedOperator *op) const
+{
+  if (!geometry_on_the_fly || assemble_q_data || !data.nodes || data.dim != 3 ||
+      data.space_dim != 3)
+  {
+    return false;
+  }
+  CeedInt trial_num_comp, test_num_comp;
+  PalaceCeedCall(ceed, CeedBasisGetNumComponents(trial_basis, &trial_num_comp));
+  PalaceCeedCall(ceed, CeedBasisGetNumComponents(test_basis, &test_num_comp));
+  MFEM_VERIFY(trial_num_comp == test_num_comp && trial_num_comp == 1,
+              "CurlCurlIntegrator requires test and trial spaces with a single component!");
+  CeedQFunctionInfo info;
+  info.assemble_q_data = false;
+  info.apply_qf = f_apply_hdiv_x_33;
+  info.apply_qf_path = PalaceQFunctionRelativePath(f_apply_hdiv_x_33_loc);
+  info.trial_ops = EvalMode::Curl;
+  info.test_ops = EvalMode::Curl;
+  const auto ctx = PopulateCoefficientContext(3, Q, transpose);
+  AssembleCeedOperatorOnTheFly(info, (void *)ctx.data(), ctx.size() * sizeof(CeedIntScalar),
+                               ceed, trial_restr, test_restr, trial_basis, test_basis, data,
+                               op);
+  return true;
 }
 
 }  // namespace palace

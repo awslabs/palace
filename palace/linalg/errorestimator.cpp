@@ -657,6 +657,7 @@ GradFluxErrorEstimator<VecType>::GradFluxErrorEstimator(
       info.assemble_q_data = false;
       info.trial_ops = info.test_ops = ceed::EvalMode::Interp;
       CeedOperator sub_op;
+      mesh.EnsureGeometryFactors(ceed, data);
       if (complex_route)
       {
         // Complex constitutive flux: context tables ε', ε'', W⁻¹, set at each frequency
@@ -992,6 +993,7 @@ CurlFluxErrorEstimator<VecType>::CurlFluxErrorEstimator(
       }
 
       CeedOperator sub_op;
+      mesh.EnsureGeometryFactors(ceed, data);
       ceed::AssembleCeedElementErrorIntegrator(
           info, (void *)ctx.data(), ctx.size() * sizeof(CeedIntScalar), ceed, B_gf_vec,
           H_gf_vec, rt_restr, nd_restr, rt_basis, nd_basis, mesh_elem_restr, data.geom_data,

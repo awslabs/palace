@@ -297,12 +297,33 @@ auto AssembleGeometryData(Ceed ceed, mfem::Geometry::Type geom, std::vector<int>
   ceed::AssembleCeedGeometryData(ceed, mesh_restr, mesh_basis, mesh_nodes_vec, attr_restr,
                                  attr_basis, elem_attr_vec, data.geom_data,
                                  data.geom_data_restr);
+  if (data.dim == 3 && data.space_dim == 3 && data.dim == mesh.Dimension())
+  {
+    // Keep the nodes and attributes (copied: the vectors above borrow arrays which do not
+    // outlive this function) for operators with geometry factors computed on the fly.
+    auto Copy = [&](CeedVector v, CeedVector *c)
+    {
+      CeedSize n;
+      PalaceCeedCall(ceed, CeedVectorGetLength(v, &n));
+      PalaceCeedCall(ceed, CeedVectorCreate(ceed, n, c));
+      PalaceCeedCall(ceed, CeedVectorCopy(v, *c));
+    };
+    Copy(mesh_nodes_vec, &data.nodes);
+    Copy(elem_attr_vec, &data.elem_attr);
+    data.nodes_restr = mesh_restr;
+    data.nodes_basis = mesh_basis;
+    data.attr_restr = attr_restr;
+    data.attr_basis = attr_basis;
+  }
+  else
+  {
+    PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&mesh_restr));
+    PalaceCeedCall(ceed, CeedBasisDestroy(&mesh_basis));
+    PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&attr_restr));
+    PalaceCeedCall(ceed, CeedBasisDestroy(&attr_basis));
+  }
   PalaceCeedCall(ceed, CeedVectorDestroy(&mesh_nodes_vec));
-  PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&mesh_restr));
-  PalaceCeedCall(ceed, CeedBasisDestroy(&mesh_basis));
   PalaceCeedCall(ceed, CeedVectorDestroy(&elem_attr_vec));
-  PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&attr_restr));
-  PalaceCeedCall(ceed, CeedBasisDestroy(&attr_basis));
 
   return data;
 }
@@ -416,6 +437,37 @@ void Mesh::SetCeedActiveAttributes(std::vector<int> lossy_attr_,
   active_bdr_attr = std::move(active_bdr_attr_);
 }
 
+void Mesh::ReleaseGeometryFactors() const
+{
+  for (auto &[ceed, geom_data_map] : geom_data)
+  {
+    for (auto &[key, val] : geom_data_map)
+    {
+      if (val.nodes)
+      {
+        PalaceCeedCall(ceed, CeedVectorDestroy(&val.geom_data));
+      }
+    }
+  }
+}
+
+void Mesh::EnsureGeometryFactors(Ceed ceed, const ceed::CeedGeomFactorData &data) const
+{
+  if (data.geom_data)
+  {
+    return;
+  }
+  MFEM_VERIFY(data.nodes,
+              "Released geometry factors without the mesh nodes to compute them!");
+  auto &val = const_cast<ceed::CeedGeomFactorData &>(data);
+  CeedSize length;
+  PalaceCeedCall(ceed, CeedElemRestrictionGetLVectorSize(val.geom_data_restr, &length));
+  PalaceCeedCall(ceed, CeedVectorCreate(ceed, length, &val.geom_data));
+  ceed::AssembleCeedGeometryData(ceed, val.nodes_restr, val.nodes_basis, val.nodes,
+                                 val.attr_restr, val.attr_basis, val.elem_attr,
+                                 val.geom_data, val.geom_data_restr);
+}
+
 void Mesh::ResetCeedObjects()
 {
   for (auto &[ceed, geom_data_map] : geom_data)
@@ -425,6 +477,12 @@ void Mesh::ResetCeedObjects()
       PalaceCeedCall(ceed, CeedVectorDestroy(&val.geom_data));
       PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&val.geom_data_restr));
       PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&val.active_geom_data_restr));
+      PalaceCeedCall(ceed, CeedVectorDestroy(&val.nodes));
+      PalaceCeedCall(ceed, CeedVectorDestroy(&val.elem_attr));
+      PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&val.nodes_restr));
+      PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&val.attr_restr));
+      PalaceCeedCall(ceed, CeedBasisDestroy(&val.nodes_basis));
+      PalaceCeedCall(ceed, CeedBasisDestroy(&val.attr_basis));
     }
   }
   geom_data.clear();

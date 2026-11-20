@@ -385,8 +385,10 @@ public:
     ResetCeedObjects();
   }
 
+  // The libCEED basis at the points of the quadrature rule of the given order, by default
+  // that of fem::DefaultIntegrationOrder.
   static CeedBasis BuildCeedBasis(const mfem::FiniteElementSpace &fespace, Ceed ceed,
-                                  mfem::Geometry::Type geom);
+                                  mfem::Geometry::Type geom, int q_order = -1);
   static CeedElemRestriction
   BuildCeedElemRestriction(const mfem::FiniteElementSpace &fespace, Ceed ceed,
                            mfem::Geometry::Type geom, const std::vector<int> &indices,

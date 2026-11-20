@@ -3,6 +3,8 @@
 
 #include "integrator.hpp"
 
+#include "fem/mesh.hpp"
+
 #include <string>
 #include <ceed/backend.h>
 #include <mfem.hpp>
@@ -419,6 +421,52 @@ void AssembleCeedGeometryData(Ceed ceed, CeedElemRestriction mesh_restr,
   PalaceCeedCall(
       ceed, CeedOperatorApply(build_op, mesh_nodes, geom_data, CEED_REQUEST_IMMEDIATE));
   PalaceCeedCall(ceed, CeedOperatorDestroy(&build_op));
+}
+
+void AssembleCeedOperatorOnTheFly(const CeedQFunctionInfo &info, void *ctx,
+                                  std::size_t ctx_size, Ceed ceed,
+                                  CeedElemRestriction trial_restr,
+                                  CeedElemRestriction test_restr, CeedBasis trial_basis,
+                                  CeedBasis test_basis, const CeedGeomFactorData &data,
+                                  CeedOperator *op)
+{
+  MFEM_VERIFY(!info.assemble_q_data && data.nodes && data.elem_attr,
+              "Operators with geometry factors on the fly need the mesh node data!");
+  CeedInt dim, space_dim;
+  PalaceCeedCall(ceed, CeedBasisGetDimension(data.nodes_basis, &dim));
+  PalaceCeedCall(ceed, CeedBasisGetNumComponents(data.nodes_basis, &space_dim));
+
+  CeedQFunction apply_qf;
+  PalaceCeedCall(ceed, CeedQFunctionCreateInterior(ceed, 1, info.apply_qf,
+                                                   info.apply_qf_path.c_str(), &apply_qf));
+  CeedQFunctionContext apply_ctx;
+  PalaceCeedCall(ceed, CeedQFunctionContextCreate(ceed, &apply_ctx));
+  PalaceCeedCall(ceed, CeedQFunctionContextSetData(apply_ctx, CEED_MEM_HOST,
+                                                   CEED_COPY_VALUES, ctx_size, ctx));
+  PalaceCeedCall(ceed, CeedQFunctionSetContext(apply_qf, apply_ctx));
+  PalaceCeedCall(ceed, CeedQFunctionContextDestroy(&apply_ctx));
+
+  // Inputs/outputs: the geometry (as for the geometry factor data), then the active ones.
+  PalaceCeedCall(ceed, CeedQFunctionAddInput(apply_qf, "attr", 1, CEED_EVAL_INTERP));
+  PalaceCeedCall(ceed, CeedQFunctionAddInput(apply_qf, "q_w", 1, CEED_EVAL_WEIGHT));
+  PalaceCeedCall(
+      ceed, CeedQFunctionAddInput(apply_qf, "grad_x", space_dim * dim, CEED_EVAL_GRAD));
+  MFEM_VERIFY(!(info.trial_ops & EvalMode::Weight) && !(info.test_ops & EvalMode::Weight),
+              "Unexpected quadrature weight field for an operator on the fly!");
+  AddQFunctionActiveInputs(info.trial_ops, ceed, trial_basis, apply_qf);
+  AddQFunctionActiveOutputs(info.test_ops, ceed, test_basis, apply_qf);
+
+  PalaceCeedCall(ceed, CeedOperatorCreate(ceed, apply_qf, nullptr, nullptr, op));
+  PalaceCeedCall(ceed, CeedQFunctionDestroy(&apply_qf));
+  PalaceCeedCall(ceed, CeedOperatorSetField(*op, "attr", data.attr_restr, data.attr_basis,
+                                            data.elem_attr));
+  PalaceCeedCall(ceed, CeedOperatorSetField(*op, "q_w", CEED_ELEMRESTRICTION_NONE,
+                                            data.nodes_basis, CEED_VECTOR_NONE));
+  PalaceCeedCall(ceed, CeedOperatorSetField(*op, "grad_x", data.nodes_restr,
+                                            data.nodes_basis, data.nodes));
+  AddOperatorActiveInputFields(info.trial_ops, ceed, trial_restr, trial_basis, *op);
+  AddOperatorActiveOutputFields(info.test_ops, ceed, test_restr, test_basis, *op);
+  PalaceCeedCall(ceed, CeedOperatorCheckReady(*op));
 }
 
 void AssembleCeedOperator(const CeedQFunctionInfo &info, void *ctx, std::size_t ctx_size,

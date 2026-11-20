@@ -4,6 +4,7 @@
 #ifndef PALACE_FEM_INTEGRATOR_HPP
 #define PALACE_FEM_INTEGRATOR_HPP
 
+#include <functional>
 #include <optional>
 #include <vector>
 #include <mfem.hpp>
@@ -13,6 +14,13 @@ namespace palace
 {
 
 class MaterialPropertyCoefficient;
+
+namespace ceed
+{
+
+struct CeedGeomFactorData;
+
+}  // namespace ceed
 
 //
 // Classes which implement or extend bilinear and linear form integrators. In doc strings u
@@ -63,6 +71,27 @@ public:
                         CeedElemRestriction geom_data_restr, CeedOperator *op) const = 0;
 
   virtual void SetMapTypes(int trial_type, int test_type) {}
+
+  // Assemble with the geometry factors computed at the quadrature points on the fly from
+  // the mesh nodes (see ceed::CeedGeomFactorData) instead of read from the geometry data,
+  // if the integrator does (returns false otherwise, when Assemble is used).
+  virtual bool AssembleOnTheFly(Ceed ceed, CeedElemRestriction trial_restr,
+                                CeedElemRestriction test_restr, CeedBasis trial_basis,
+                                CeedBasis test_basis, const ceed::CeedGeomFactorData &data,
+                                CeedOperator *op) const
+  {
+    return false;
+  }
+
+  // The quadrature order of the integrator on the domain elements whose coordinate map is
+  // T (the nodal element of the mesh for their geometry), or -1 for the order of
+  // fem::DefaultIntegrationOrder. An integrator with an order of its own is assembled with
+  // the geometry factors on the fly (see AssembleOnTheFly): the geometry factor data of
+  // the mesh are at the default quadrature points.
+  virtual int GetIntegrationOrder(const mfem::IsoparametricTransformation &T) const
+  {
+    return -1;
+  }
 
   // Sorted list of the (libCEED, 1-based) attributes on which the integrator's coefficients
   // are not identically zero, or no value if the integrator may contribute on every
@@ -155,12 +184,37 @@ public:
 // Integrator for a(u, v) = (Q curl u, curl v) for Nedelec elements.
 class CurlCurlIntegrator : public BilinearFormIntegrator
 {
+protected:
+  bool geometry_on_the_fly = false;
+  std::function<int(const mfem::IsoparametricTransformation &)> q_order;
+
 public:
   using BilinearFormIntegrator::BilinearFormIntegrator;
 
   void Assemble(Ceed ceed, CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
                 CeedBasis trial_basis, CeedBasis test_basis, CeedVector geom_data,
                 CeedElemRestriction geom_data_restr, CeedOperator *op) const override;
+
+  // Compute the geometry factors on the fly from the mesh nodes (3D, full element sets):
+  // the libCEED operator then keeps no copy of the mesh geometry data (the CPU backends
+  // keep one in the work vectors of every operator, also of coarsened ones). Optionally
+  // with a quadrature order of its own (see GetIntegrationOrder).
+  void ComputeGeometryOnTheFly(
+      std::function<int(const mfem::IsoparametricTransformation &)> order = nullptr)
+  {
+    geometry_on_the_fly = true;
+    q_order = std::move(order);
+  }
+
+  int GetIntegrationOrder(const mfem::IsoparametricTransformation &T) const override
+  {
+    return (geometry_on_the_fly && q_order) ? q_order(T) : -1;
+  }
+
+  bool AssembleOnTheFly(Ceed ceed, CeedElemRestriction trial_restr,
+                        CeedElemRestriction test_restr, CeedBasis trial_basis,
+                        CeedBasis test_basis, const ceed::CeedGeomFactorData &data,
+                        CeedOperator *op) const override;
 };
 
 // Integrator for a(u, v) = (Q div u, div v) for Raviart-Thomas elements.
