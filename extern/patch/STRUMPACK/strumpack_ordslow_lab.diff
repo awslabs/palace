@@ -1,9 +1,113 @@
+diff --git a/src/misc/MPIWrapper.hpp b/src/misc/MPIWrapper.hpp
+index 33e6be6c..fb32276f 100644
+--- a/src/misc/MPIWrapper.hpp
++++ b/src/misc/MPIWrapper.hpp
+@@ -48,9 +48,33 @@
+ 
+ #include "StrumpackParameters.hpp"
+ #include "Triplet.hpp"
++#include <time.h> // LAB
+ 
+ namespace strumpack {
+ 
++  // LAB ONLY (see misc/OrdSlowLab.hpp): when a2a_hook() is set,
++  // all_to_allv_sparse records the times of its first two calls
++  // (right-hand side to the tree, solution back).
++  namespace ordslow {
++    struct A2A {
++      int level = 1; // 2: wait for the receives one by one
++      int calls = 0;
++      // time of the loops which post the receives and the sends, the
++      // longest single send and its destination, time from the start
++      // to the last receive, the source of the last receive and the
++      // time between the last two receives, wait for the sends after
++      double post_r[2] = {0, 0}, post_s[2] = {0, 0}, smax[2] = {0, 0},
++        rdone[2] = {0, 0}, rlastgap[2] = {0, 0}, swait[2] = {0, 0};
++      int smax_dst[2] = {-1, -1}, rlast_src[2] = {-1, -1};
++    };
++    inline A2A*& a2a_hook() { static A2A* p = nullptr; return p; }
++    inline double a2a_now() {
++      struct timespec ts;
++      clock_gettime(CLOCK_MONOTONIC, &ts);
++      return ts.tv_sec + 1e-9 * ts.tv_nsec;
++    }
++  }
++
+   /**
+    * Return the corresponding MPI_Datatype, for simple C++ data types.
+    *
+@@ -636,19 +660,62 @@ namespace strumpack {
+       auto P = size();
+       int r = rank(), nreqs = 0;
+       std::unique_ptr<MPI_Request[]> reqs(new MPI_Request[2*P]);
++      // LAB: time the parts of this exchange
++      auto lab = ordslow::a2a_hook();
++      const int lc = (lab && lab->calls < 2) ? lab->calls++ : -1;
++      std::vector<int> lab_src;
++      double lab_t0 = (lc >= 0) ? ordslow::a2a_now() : 0.;
+       for (int p=0; p<P; p++) {
+         auto src = (r + p) % P;
+-        if (rcnts[src])
++        if (rcnts[src]) {
+           MPI_Irecv(rbuf + rdispls[src], rcnts[src], mpi_type<T>(), src, tag,
+                     comm_, reqs.get()+nreqs++);
++          if (lc >= 0) lab_src.push_back(src);
++        }
+       }
++      const int nrecvs = nreqs;
++      double lab_t1 = (lc >= 0) ? ordslow::a2a_now() : 0.;
+       for (int p=0; p<P; p++) {
+         auto dst = (r + p) % P;
+-        if (scnts[dst])
++        if (scnts[dst]) {
++          double ts = (lc >= 0) ? ordslow::a2a_now() : 0.;
+           MPI_Isend(sbuf + sdispls[dst], scnts[dst], mpi_type<T>(), dst, tag,
+                     comm_, reqs.get()+nreqs++);
++          if (lc >= 0) {
++            double dt = ordslow::a2a_now() - ts;
++            if (dt > lab->smax[lc]) {
++              lab->smax[lc] = dt;
++              lab->smax_dst[lc] = dst;
++            }
++          }
++        }
++      }
++      if (lc < 0) {
++        MPI_Waitall(nreqs, reqs.get(), MPI_STATUSES_IGNORE);
++        return;
++      }
++      double lab_t2 = ordslow::a2a_now();
++      lab->post_r[lc] = lab_t1 - lab_t0;
++      lab->post_s[lc] = lab_t2 - lab_t1;
++      if (lab->level >= 2 && nrecvs > 0) {
++        // the receives one by one, to know which source is last
++        double tprev = lab_t2, tlast = lab_t2;
++        for (int k=0; k<nrecvs; k++) {
++          int idx = MPI_UNDEFINED;
++          MPI_Waitany(nrecvs, reqs.get(), &idx, MPI_STATUS_IGNORE);
++          if (idx == MPI_UNDEFINED) break;
++          tprev = tlast;
++          tlast = ordslow::a2a_now();
++          lab->rlast_src[lc] = lab_src[idx];
++        }
++        lab->rlastgap[lc] = tlast - tprev;
++        lab->rdone[lc] = tlast - lab_t0;
++        MPI_Waitall(nreqs-nrecvs, reqs.get()+nrecvs, MPI_STATUSES_IGNORE);
++        lab->swait[lc] = ordslow::a2a_now() - tlast;
++      } else {
++        MPI_Waitall(nreqs, reqs.get(), MPI_STATUSES_IGNORE);
++        lab->rdone[lc] = ordslow::a2a_now() - lab_t0;
+       }
+-      MPI_Waitall(nreqs, reqs.get(), MPI_STATUSES_IGNORE);
+     }
+ 
+     /**
 diff --git a/src/misc/OrdSlowLab.hpp b/src/misc/OrdSlowLab.hpp
 new file mode 100644
-index 00000000..885c0e89
+index 00000000..aac7da84
 --- /dev/null
 +++ b/src/misc/OrdSlowLab.hpp
-@@ -0,0 +1,573 @@
+@@ -0,0 +1,689 @@
 +/*
 + * LAB ONLY (not for a pull request): instrumentation of the
 + * distributed triangular solve, switched on with the environment
@@ -23,6 +127,14 @@ index 00000000..885c0e89
 + *   #OST  one line per process for a selected solve
 + *   #OSV  counters of /proc/vmstat, change over a batch
 + *   #OSM  one line per process: means over all the solves of a tree
++ *   #OSX  one line per process: the processes it gets right-hand side
++ *         rows from and sends them to (once per tree)
++ *
++ * STRUMPACK_ORDSLOW=2 also waits for the receives of the two
++ * redistributions one by one, to know which source is last.
++ * Fields with two numbers in one, "microseconds.rank": ismax, osmax
++ * (longest single send and its destination), irlast, orlast (time
++ * between the last two receives and the source of the last one).
 + */
 +#ifndef STRUMPACK_ORDSLOW_LAB_HPP
 +#define STRUMPACK_ORDSLOW_LAB_HPP
@@ -42,7 +154,9 @@ index 00000000..885c0e89
 +#include <sys/resource.h>
 +#include <time.h>
 +#include <unistd.h>
++#include <glob.h>
 +#include <mpi.h>
++#include "misc/MPIWrapper.hpp"
 +
 +namespace strumpack {
 +  namespace ordslow {
@@ -72,19 +186,28 @@ index 00000000..885c0e89
 +      F_BRKOUT,  // change of the program break since the previous solve
 +      F_ENTRY,   // wall clock at entry
 +      F_EXIT,    // wall clock at exit
++      // the redistribution of the right-hand side (i) and of the
++      // solution (o), see ordslow::A2A in misc/MPIWrapper.hpp
++      F_IPOSTR, F_IPOSTS, F_ISMAX, F_IRDONE, F_IRLAST, F_ISWAIT,
++      F_OPOSTS, F_OSMAX, F_ORDONE, F_ORLAST,
 +      NF
 +    };
 +    inline const char* field_name(int f) {
 +      static const char* n[NF] =
 +        {"in", "fwd", "dist", "bwd", "out", "tot", "gap", "ea", "f2", "b1",
 +         "ex", "flt", "fltout", "vcsw", "ivcsw", "cpuchg", "utime", "stime",
-+         "cput", "brk", "brkout", "entry", "exit"};
++         "cput", "brk", "brkout", "entry", "exit", "ipostr", "iposts",
++         "ismax", "irdone", "irlast", "iswait", "oposts", "osmax", "ordone",
++         "orlast"};
 +      return n[f];
 +    }
-+    // 0: time in ms, 1: count, 2: bytes (printed in kB), 3: wall clock
++    // 0: time in ms, 1: count, 2: bytes (printed in kB), 3: wall clock,
++    // 4: microseconds.rank
 +    inline int field_kind(int f) {
 +      if (f == F_BRK || f == F_BRKOUT) return 2;
 +      if (f == F_ENTRY || f == F_EXIT) return 3;
++      if (f == F_ISMAX || f == F_IRLAST || f == F_OSMAX || f == F_ORLAST)
++        return 4;
 +      if (f >= F_FLT && f <= F_CPUCHG) return 1;
 +      return 0;
 +    }
@@ -115,6 +238,7 @@ index 00000000..885c0e89
 +      double sum[NF];
 +      bool sub_done = false, static_done = false, reader = false;
 +      double stat[NS];
++      std::string peers; // sources and destinations of the redistribution
 +      int tables = 0;
 +      double fast_ref = 0;
 +      std::vector<double> vm0;
@@ -142,6 +266,7 @@ index 00000000..885c0e89
 +      int prev_cpu = -1;
 +      // leaves of the distributed tree: (P0, P), on every process
 +      std::vector<int> leafmap;
++      A2A a2a;
 +    };
 +    inline State& st() { static State s; return s; }
 +
@@ -197,13 +322,54 @@ index 00000000..885c0e89
 +          if (k == keys[i]) v[i] = x;
 +      return v;
 +    }
++    // counters of the network devices of the node (EFA), summed over
++    // the devices: /sys/class/infiniband/*/ports/*/hw_counters/<name>
++    enum { NVM = 12, NHW = 16, NCNT = NVM + NHW };
 +    inline const char* vmstat_name(int i) {
-+      static const char* keys[] =
++      static const char* keys[NCNT] =
 +        {"pgfault", "thp_fault_alloc", "thp_fault_fallback",
 +         "thp_collapse_alloc", "thp_split_page", "thp_split_pmd",
 +         "compact_stall", "numa_hint_faults", "numa_pages_migrated",
-+         "pgmigrate_success", "numa_pte_updates", "pgfree"};
++         "pgmigrate_success", "numa_pte_updates", "pgfree",
++         "rx_drops", "retrans_pkts", "retrans_bytes",
++         "retrans_timeout_events", "unresponsive_remote_events",
++         "impaired_remote_conn_events", "tx_pkts", "rx_pkts", "send_wrs",
++         "recv_wrs", "rdma_read_wrs", "rdma_write_wrs", "rdma_read_wr_err",
++         "rdma_write_wr_err", "tx_bytes", "rx_bytes"};
 +      return keys[i];
++    }
++    inline std::string hw_counter_names() {
++      std::string out;
++      glob_t g;
++      if (!glob("/sys/class/infiniband/*/ports/*/hw_counters/*", 0,
++                nullptr, &g)) {
++        for (std::size_t i=0; i<g.gl_pathc; i++) {
++          std::string f(g.gl_pathv[i]);
++          out += " " + f.substr(f.find("/infiniband/") + 12);
++        }
++        globfree(&g);
++      }
++      return out;
++    }
++    inline std::vector<double> read_counters() {
++      auto v = read_vmstat();
++      v.resize(NCNT, 0.);
++      glob_t g;
++      if (!glob("/sys/class/infiniband/*/ports/*/hw_counters/*", 0,
++                nullptr, &g)) {
++        for (std::size_t i=0; i<g.gl_pathc; i++) {
++          std::string f(g.gl_pathv[i]);
++          auto name = f.substr(f.rfind('/') + 1);
++          for (int k=NVM; k<NCNT; k++)
++            if (name == vmstat_name(k)) {
++              std::ifstream in(f);
++              double x = 0;
++              if (in >> x) v[k] += x;
++            }
++        }
++        globfree(&g);
++      }
++      return v;
 +    }
 +
 +    /** Start of a solve of the tree owner, on every process of comm. */
@@ -220,7 +386,7 @@ index 00000000..885c0e89
 +        int rank;
 +        MPI_Comm_rank(comm, &rank);
 +        it->second.reader = (rank % s.ppn == 0);
-+        if (it->second.reader) it->second.vm0 = read_vmstat();
++        if (it->second.reader) it->second.vm0 = read_counters();
 +      }
 +      s.cur = &it->second;
 +      s.ncols = ncols;
@@ -228,6 +394,9 @@ index 00000000..885c0e89
 +      getrusage(RUSAGE_SELF, &s.r0);
 +      s.cpu0 = cputime();
 +      s.brk0 = s.brk2 = long(sbrk(0));
++      s.a2a = A2A();
++      s.a2a.level = s.level;
++      a2a_hook() = &s.a2a;
 +      s.real0 = real();
 +      s.t0 = s.t1 = s.t2 = wall();
 +    }
@@ -239,6 +408,21 @@ index 00000000..885c0e89
 +      s.brk2 = long(sbrk(0));
 +    }
 +    inline bool want_static() { return st().cur && !st().cur->sub_done; }
++    /** Ranks with a nonzero count, as ranges "a-b,c,...". */
++    inline std::string rank_list(const std::vector<int>& cnt) {
++      std::ostringstream o;
++      const int P = cnt.size();
++      for (int p=0; p<P; p++) {
++        if (!cnt[p]) continue;
++        int q = p;
++        while (q+1 < P && cnt[q+1]) q++;
++        if (o.tellp() > 0) o << ",";
++        o << p;
++        if (q > p) o << "-" << q;
++        p = q;
++      }
++      return o.str();
++    }
 +
 +    inline void print_fields(std::ostringstream& o, const double* v,
 +                             const int* fields, int nf) {
@@ -249,6 +433,7 @@ index 00000000..885c0e89
 +        case 0: std::snprintf(b, 64, " %.3f", 1e3 * v[f]); break;
 +        case 1: std::snprintf(b, 64, " %.0f", v[f]); break;
 +        case 2: std::snprintf(b, 64, " %.0f", v[f] / 1024.); break;
++        case 4: std::snprintf(b, 64, " %.4f", v[f]); break;
 +        default: std::snprintf(b, 64, " %.3f", 1e3 * v[f]);
 +        }
 +        o << b;
@@ -299,6 +484,12 @@ index 00000000..885c0e89
 +        gethostname(name, 63);
 +        std::vector<char> names(rank ? 0 : std::size_t(P) * 64);
 +        std::vector<double> stat(rank ? 0 : std::size_t(P) * NS);
++        const int plen = 768;
++        std::vector<char> peers(rank ? 0 : std::size_t(P) * plen);
++        std::vector<char> mypeers(plen, 0);
++        std::strncpy(mypeers.data(), r.peers.c_str(), plen-1);
++        MPI_Gather(mypeers.data(), plen, MPI_CHAR, peers.data(), plen,
++                   MPI_CHAR, 0, comm);
 +        MPI_Gather(name, 64, MPI_CHAR, names.data(), 64, MPI_CHAR, 0, comm);
 +        MPI_Gather(r.stat, NS, MPI_DOUBLE, stat.data(), NS, MPI_DOUBLE,
 +                   0, comm);
@@ -312,7 +503,12 @@ index 00000000..885c0e89
 +            << "\" numa_balancing \""
 +            << read_line("/proc/sys/kernel/numa_balancing")
 +            << "\" GLIBC_TUNABLES \"" << (tun ? tun : "") << "\" pagesize "
-+            << sysconf(_SC_PAGESIZE) << "\n";
++            << sysconf(_SC_PAGESIZE) << " level " << s.level << "\n";
++          o << "#OSE tree " << r.seq << " network counters of the node:"
++            << hw_counter_names() << "\n";
++          for (int p=0; p<P; p++)
++            o << "#OSX " << r.seq << " " << p << " "
++              << &peers[std::size_t(p) * plen] << "\n";
 +          std::vector<std::string> nodes;
 +          std::vector<int> node(P);
 +          for (int p=0; p<P; p++) {
@@ -385,6 +581,10 @@ index 00000000..885c0e89
 +                std::snprintf(b, 256, " %.0f %.1f %.0f %d", lo/1024.,
 +                              av/1024., hi/1024., mx[k+f].r);
 +                break;
++              case 4:
++                std::snprintf(b, 256, " %.4f %.4f %.4f %d", lo, av, hi,
++                              mx[k+f].r);
++                break;
 +              default:
 +                std::snprintf(b, 256, " %.3f %.3f %.3f %d", 1e3*(lo-e0),
 +                              1e3*(av-e0), 1e3*(hi-e0), mx[k+f].r);
@@ -419,7 +619,9 @@ index 00000000..885c0e89
 +        static const int tf[] =
 +          {F_IN, F_FWD, F_DIST, F_BWD, F_OUT, F_TOT, F_GAP, F_EA, F_F2,
 +           F_B1, F_EX, F_FLT, F_FLTOUT, F_VCSW, F_IVCSW, F_CPUCHG, F_UTIME,
-+           F_STIME, F_CPUT, F_BRK, F_BRKOUT, F_ENTRY, F_EXIT};
++           F_STIME, F_CPUT, F_BRK, F_BRKOUT, F_ENTRY, F_EXIT, F_IPOSTR,
++           F_IPOSTS, F_ISMAX, F_IRDONE, F_IRLAST, F_ISWAIT, F_OPOSTS, F_OSMAX,
++           F_ORDONE, F_ORLAST};
 +        const int ntf = sizeof(tf) / sizeof(tf[0]);
 +        for (int t=0; t<2; t++) {
 +          if (sel[t] < 0) continue;
@@ -445,11 +647,11 @@ index 00000000..885c0e89
 +        }
 +        // counters of the nodes: one reader per node (ranks 0, ppn, ...)
 +        {
-+          const int nk = 12;
++          const int nk = NCNT;
 +          std::vector<DI> d(nk), dmx(nk);
 +          std::vector<double> ds(nk, 0.), dsum(nk);
 +          if (r.reader) {
-+            auto vm = read_vmstat();
++            auto vm = read_counters();
 +            for (int i=0; i<nk; i++) ds[i] = vm[i] - r.vm0[i];
 +            r.vm0 = vm;
 +          }
@@ -481,7 +683,8 @@ index 00000000..885c0e89
 +          static const int mf[] =
 +            {F_IN, F_FWD, F_DIST, F_BWD, F_OUT, F_TOT, F_GAP, F_EA, F_F2,
 +             F_B1, F_EX, F_FLT, F_FLTOUT, F_VCSW, F_IVCSW, F_CPUCHG, F_UTIME,
-+             F_STIME, F_CPUT};
++             F_STIME, F_CPUT, F_IPOSTR, F_IPOSTS, F_IRDONE, F_ISWAIT,
++             F_OPOSTS, F_ORDONE};
 +          const int nmf = sizeof(mf) / sizeof(mf[0]);
 +          o << "#OSM " << r.seq << " solves " << r.nsolves << " rank";
 +          for (int i=0; i<nmf; i++) o << " " << field_name(mf[i]);
@@ -537,6 +740,23 @@ index 00000000..885c0e89
 +      v[F_BRKOUT] = s.prev_exit ? double(s.brk0 - s.prev_brk) : 0.;
 +      v[F_ENTRY] = s.real0;
 +      v[F_EXIT] = s.real0 + (t3 - s.t0);
++      {
++        auto& a = s.a2a;
++        auto enc = [](double t, int rank) {
++          return double(long(1e6 * t)) + (rank < 0 ? 0.9999 : 1e-4 * rank);
++        };
++        v[F_IPOSTR] = a.post_r[0];
++        v[F_IPOSTS] = a.post_s[0];
++        v[F_ISMAX] = enc(a.smax[0], a.smax_dst[0]);
++        v[F_IRDONE] = a.rdone[0];
++        v[F_IRLAST] = enc(a.rlastgap[0], a.rlast_src[0]);
++        v[F_ISWAIT] = a.swait[0];
++        v[F_OPOSTS] = a.post_s[1];
++        v[F_OSMAX] = enc(a.smax[1], a.smax_dst[1]);
++        v[F_ORDONE] = a.rdone[1];
++        v[F_ORLAST] = enc(a.rlastgap[1], a.rlast_src[1]);
++        a2a_hook() = nullptr;
++      }
 +      for (int f=0; f<NF; f++) r.sum[f] += v[f];
 +      s.prev_flt = r1.ru_minflt;
 +      s.prev_brk = brk3;
@@ -578,7 +798,7 @@ index 00000000..885c0e89
 +
 +#endif // STRUMPACK_ORDSLOW_LAB_HPP
 diff --git a/src/sparse/EliminationTreeMPIDist.cpp b/src/sparse/EliminationTreeMPIDist.cpp
-index 2d4e9d74..559d8f11 100644
+index 2d4e9d74..4121eca6 100644
 --- a/src/sparse/EliminationTreeMPIDist.cpp
 +++ b/src/sparse/EliminationTreeMPIDist.cpp
 @@ -38,6 +38,7 @@
@@ -725,7 +945,7 @@ index 2d4e9d74..559d8f11 100644
  
      rcnts = ibuf;
      scnts = ibuf + P_;
-@@ -443,6 +551,15 @@ namespace strumpack {
+@@ -443,6 +551,26 @@ namespace strumpack {
        sp.out_dst_c[i] = sbuf[i].c;
      }
      sp.ready = true;
@@ -737,11 +957,22 @@ index 2d4e9d74..559d8f11 100644
 +        if (sp.scnts[p]) stat[S_NSEND]++;
 +        if (sp.rcnts[p]) stat[S_NRECV]++;
 +      }
++      int ms = 0, md = -1, mr = 0, msrc = -1;
++      long ts = 0;
++      for (int p=0; p<P_; p++) {
++        ts += sp.scnts[p];
++        if (sp.scnts[p] > ms) { ms = sp.scnts[p]; md = p; }
++        if (sp.rcnts[p] > mr) { mr = sp.rcnts[p]; msrc = p; }
++      }
++      st().cur->peers = "values " + std::to_string(ts) + " maxsend " +
++        std::to_string(ms) + "@" + std::to_string(md) + " maxrecv " +
++        std::to_string(mr) + "@" + std::to_string(msrc) + " src " +
++        rank_list(sp.rcnts) + " dst " + rank_list(sp.scnts);
 +    }
  
      Triplet::free_mpi_type();
    }
-@@ -471,7 +588,9 @@ namespace strumpack {
+@@ -471,7 +599,9 @@ namespace strumpack {
        (f < 0 ? xloc.data() : xdist[f].data())[sp.in_dst_off[i]] = rval[i];
      }
  
@@ -751,7 +982,7 @@ index 2d4e9d74..559d8f11 100644
  
      for (std::size_t k=0; k<rval.size(); k++) {
        auto f = sp.out_src_f[k];
-@@ -757,6 +876,11 @@ namespace strumpack {
+@@ -757,6 +887,11 @@ namespace strumpack {
     int P0, int P, int P0_sib, int P_sib, const MPIComm& fcomm, int level) {
      auto owner = nd_.proc_dist_sep[dsep];
      if (nd_.tree().is_leaf(dsep)) {
