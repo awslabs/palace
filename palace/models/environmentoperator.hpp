@@ -31,10 +31,12 @@ class SpaceOperator;
 // region is then the driven problem on its elements with S_E(ω) added on Γ (see
 // SpaceOperator::SetEnvironment).
 //
-// The terms at a frequency are those of the model's record there, or of the combination of
-// its records, on the current interface, with the rows of Γ of each process held by it.
-// They are formed when a frequency is first asked for, and held until another one is: the
-// calls are collective, for the frequencies in turn.
+// The terms at a frequency are those of the model's record there, or of the combination
+// Σ_k c_k(ω) of its records with the barycentric coefficients of a rational model, on the
+// current interface, each process holding its rows of Γ. They are formed when a frequency
+// is first asked for, and held until another one is: the calls are collective, for the
+// frequencies in turn. The records of a rational model are held whole, for the terms of a
+// reduced model of the region (see RomOperator).
 //
 class EnvironmentOperator
 {
@@ -81,6 +83,20 @@ public:
                   std::map<int, std::complex<double>> &V,
                   std::map<int, std::complex<double>> &S);
 
+  // A rational model: its number of records, their coefficients c_k(ω), y += R_Γᵀ S_k R_Γ x
+  // for record k, and v = R_Γᵀ g_k of an excitation (false if it has no sources in the
+  // environment).
+  std::size_t NumRecords() const { return records.size(); }
+  std::vector<std::complex<double>> Coefficients(double omega) const;
+  void RecordAddMult(std::size_t k, const ComplexVector &x, ComplexVector &y) const;
+
+  // For a real vector: y += the real or imaginary part of R_Γᵀ S_k R_Γ x, and the pairings
+  // v_Γᵀ g_k of v with the condensed sources of an excitation of every record k (empty if
+  // it has no sources in the environment).
+  void RecordAddMultPart(std::size_t k, bool imag, const Vector &x, Vector &y) const;
+  std::vector<std::complex<double>> RecordExcitationPairings(int excitation_idx,
+                                                             const Vector &v) const;
+
   MPI_Comm GetComm() const { return comm; }
 
 private:
@@ -97,8 +113,6 @@ private:
   SignatureMap gamma_map;  // the saved interface on the current one
   // The model column of each excitation with environment sources (absent: none).
   std::map<int, int> ex_col;
-  // The records of a rational model (root).
-  std::vector<std::vector<std::complex<double>>> records;
   mfem::Array<int> pinned;
 
   // The rows of Γ of this process: its local true DOFs (in interface order), and the
@@ -106,19 +120,33 @@ private:
   std::vector<int> gamma_local;
   std::vector<int> gamma_cnt, gamma_disp;
 
-  // The terms at omega_cur: the rows of Γ of this process of S_E (row-major, x nG) and of
-  // the condensed sources g (per model column), and on root, the ports' h (per port) and
-  // c (ports x model columns, column-major).
+  // A record on the current interface, as the rows of Γ of this process: of S_E (x nG,
+  // row-major), of the condensed sources g (per model column) and of the port functionals h
+  // (per port), with c (ports x model columns, column-major) on every process.
+  struct Rows
+  {
+    std::vector<std::complex<double>> S;
+    std::vector<std::vector<std::complex<double>>> g, h;
+    std::vector<std::complex<double>> c;
+  };
+
+  // The records of a rational model, and the terms at omega_cur.
+  std::vector<Rows> records;
   double omega_cur = std::numeric_limits<double>::quiet_NaN();
-  std::vector<std::complex<double>> S_loc;
-  std::vector<std::vector<std::complex<double>>> g_loc, h;
-  std::vector<std::complex<double>> c;
+  Rows cur;
+
+  // The rows of a flat record of the model (on root, in the saved basis). Collective.
+  Rows Distribute(const std::vector<std::complex<double>> &flat) const;
 
   // Form the terms at ω, unless they are held.
   void Prepare(double omega);
 
-  // The values of Γ of a vector on this process, in interface order.
+  // The values of Γ of a vector on this process, in interface order, and the product of
+  // the rows of a dense block with the interface values of x (all of Γ) added to y.
   std::vector<std::complex<double>> LocalInterfaceValues(const ComplexVector &x) const;
+  void AddRows(const std::vector<std::complex<double>> &rows, const ComplexVector &x,
+               ComplexVector &y) const;
+  std::vector<std::complex<double>> AllInterfaceValues(const Vector &x) const;
 };
 
 }  // namespace palace

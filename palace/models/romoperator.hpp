@@ -210,13 +210,16 @@ protected:
   //     g(s) = s·D(s)/N(s).
   //   - Floquet port Robin BC, per port: f = γ₀,ₚ(ω), the specular (0,0) propagation
   //     constant.
+  //   - The environment of a substructured region, per record k of its rational model:
+  //     f = c_k(ω), its barycentric coefficient, and the record's S_E on Γ.
   enum class BoundaryTermKind
   {
     WavePort,
     Farfield,
     SurfaceConductivity,
     RationalImpedance,
-    FloquetPort
+    FloquetPort,
+    Environment
   };
   struct BoundaryTerm
   {
@@ -280,6 +283,14 @@ protected:
   // order basis defined below.
   Eigen::MatrixXcd Kr, Mr, Cr;  // Extend during UpdatePROM as modes are added
   Eigen::MatrixXcd RHS1r;       // Vᴴ RHS1, one column per excitation
+
+  // For a substructured region (see SpaceOperator::SetEnvironment): per excitation, the
+  // pairings Vᵀ g_k of the basis with the condensed sources of each record of the
+  // environment (r x records, empty without sources in the environment), which RHS2ᵣ(ω)
+  // combines with the coefficients c_k(ω); the coefficients at the last frequency.
+  std::vector<Eigen::MatrixXcd> env_RHSr;
+  mutable double env_omega = std::numeric_limits<double>::quiet_NaN();
+  mutable std::vector<std::complex<double>> env_coeffs;
 
   // Projections onto the basis of the Floquet port modes, for the DtN correction
   // F(ω) = Σ_k g_k(ω) v_k v_kᴴ and the excitation of the (0,0) modes (see FloquetPortData).

@@ -617,8 +617,7 @@ void IoData::CheckConfiguration()
     // the first frequency, and exactly (the block low-rank compression of MUMPS at
     // round-off).
     if (problem.type == ProblemType::DRIVEN &&
-        solver.substructuring->mode == SubstructuringMode::ONLINE &&
-        solver.driven.adaptive_tol == 0.0)
+        solver.substructuring->mode == SubstructuringMode::ONLINE)
     {
       auto &linear = solver.linear;
       if (linear.type != LinearSolver::STRUMPACK && linear.type != LinearSolver::MUMPS &&

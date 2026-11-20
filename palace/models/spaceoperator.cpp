@@ -1922,7 +1922,9 @@ bool SpaceOperator::GetExcitationVector2(int excitation_idx, double omega,
   RHS2 = 0.0;
   bool nnz2 = AddExcitationVector2Internal(excitation_idx, omega, RHS2);
   linalg::SetSubVector(RHS2, nd_dbc_tdof_lists.back(), 0.0);
-  return nnz2;
+  const bool nnz_env =
+      environment && environment->AddExcitation(excitation_idx, omega, RHS2);
+  return nnz2 || nnz_env;
 }
 
 bool SpaceOperator::AddExcitationVector1Internal(int excitation_idx, Vector &RHS1r,

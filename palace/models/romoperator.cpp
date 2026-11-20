@@ -24,6 +24,7 @@
 #include "linalg/operator.hpp"
 #include "linalg/orthog.hpp"
 #include "linalg/rap.hpp"
+#include "models/environmentoperator.hpp"
 #include "models/floquetportoperator.hpp"
 #include "models/materialoperator.hpp"
 #include "models/spaceoperator.hpp"
@@ -48,6 +49,62 @@ namespace palace
 {
 
 using namespace std::complex_literals;
+
+namespace
+{
+
+// A record of the rational model of a substructured region's environment as a boundary term
+// of the PROM, R_Γᵀ S_k R_Γ, applied matrix-free by its real and imaginary parts (see
+// EnvironmentOperator).
+class EnvironmentRecordOperator : public ComplexOperator
+{
+private:
+  class Part : public Operator
+  {
+  private:
+    const EnvironmentOperator &env;
+    const std::size_t k;
+    const bool imag;
+
+  public:
+    Part(const EnvironmentOperator &env, std::size_t k, bool imag, int n)
+      : Operator(n), env(env), k(k), imag(imag)
+    {
+    }
+    void Mult(const Vector &x, Vector &y) const override
+    {
+      y = 0.0;
+      env.RecordAddMultPart(k, imag, x, y);
+    }
+  };
+  const EnvironmentOperator &env;
+  const std::size_t k;
+  const Part re, im;
+
+public:
+  EnvironmentRecordOperator(const EnvironmentOperator &env, std::size_t k, int n)
+    : ComplexOperator(n), env(env), k(k), re(env, k, false, n), im(env, k, true, n)
+  {
+  }
+  const Operator *Real() const override { return &re; }
+  const Operator *Imag() const override { return &im; }
+  void Mult(const ComplexVector &x, ComplexVector &y) const override
+  {
+    y = 0.0;
+    env.RecordAddMult(k, x, y);
+  }
+  void AddMult(const ComplexVector &x, ComplexVector &y,
+               const std::complex<double> a) const override
+  {
+    ComplexVector t(y.Size());
+    t.UseDevice(true);
+    t = 0.0;
+    env.RecordAddMult(k, x, t);
+    y.AXPY(a, t);
+  }
+};
+
+}  // namespace
 
 namespace
 {
@@ -678,6 +735,14 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
                  b, Operator::DIAG_ZERO, /*imag_slot=*/true),
              true);
   }
+  if (const auto *env = space_op.GetEnvironment())
+  {
+    for (std::size_t k = 0; k < env->NumRecords(); k++)
+    {
+      add_term(BoundaryTermKind::Environment, static_cast<int>(k),
+               std::make_unique<EnvironmentRecordOperator>(*env, k, K->Height()), true);
+    }
+  }
   for (const auto &[idx, port] : space_op.GetFloquetPortOp())
   {
     add_term(BoundaryTermKind::FloquetPort, idx,
@@ -719,7 +784,8 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
       }
       for (const auto &term : bdr_terms)
       {
-        if (term.kind != BoundaryTermKind::WavePort)
+        if (term.kind != BoundaryTermKind::WavePort &&
+            term.kind != BoundaryTermKind::Environment)
         {
           const auto f = GetBoundaryTermCoefficient(term, omega);
           term.op->Mult(x, z);
@@ -829,6 +895,13 @@ std::complex<double> RomOperator::GetBoundaryTermCoefficient(const BoundaryTerm 
     case BoundaryTermKind::FloquetPort:
       space_op.GetFloquetPortOp().Initialize(omega);
       return space_op.GetFloquetPortOp().GetPort(term.idx).GetGamma0();
+    case BoundaryTermKind::Environment:
+      if (omega != env_omega)
+      {
+        env_coeffs = space_op.GetEnvironment()->Coefficients(omega);
+        env_omega = omega;
+      }
+      return env_coeffs[term.idx];
   }
   return 0.0;
 }
@@ -1266,6 +1339,26 @@ Eigen::VectorXcd RomOperator::UpdatePROM(const ComplexVector &u,
       proj.AddVector(RHS1[k], &RHS1r(n0, k));
     }
   }
+  if (const auto *env = space_op.GetEnvironment())
+  {
+    env_RHSr.resize(RHS1.size());
+    for (std::size_t k = 0;
+         const auto &[excitation_idx, data] : space_op.GetPortExcitations())
+    {
+      for (int j = n0; j < n; j++)
+      {
+        const auto p = env->RecordExcitationPairings(excitation_idx, V[j]);
+        if (!p.empty())
+        {
+          env_RHSr[k].conservativeResizeLike(
+              Eigen::MatrixXcd::Zero(n, static_cast<Eigen::Index>(p.size())));
+          env_RHSr[k].row(j) = Eigen::Map<const Eigen::RowVectorXcd>(
+              p.data(), static_cast<Eigen::Index>(p.size()));
+        }
+      }
+      k++;
+    }
+  }
   floquet_comp_V.conservativeResize(n, 3 * floquet_orders.size());
   for (std::size_t k = 0; k < floquet_orders.size(); k++)
   {
@@ -1420,6 +1513,13 @@ void RomOperator::SolvePROM(double omega)
     // excitation index (see WavePortOperator::AddExcitationBdrCoefficients), from the
     // pairings Vᵀs_full,p at this frequency.
     Eigen::VectorXcd b = (1i * omega) * RHS1r.col(k);
+    // The sources of a substructured region's environment, Σ_k c_k(ω) Vᵀ g_k.
+    if (k < static_cast<Eigen::Index>(env_RHSr.size()) && env_RHSr[k].cols() > 0)
+    {
+      const auto &a = space_op.GetEnvironment()->Coefficients(omega);
+      b += env_RHSr[k] * Eigen::Map<const Eigen::VectorXcd>(
+                             a.data(), static_cast<Eigen::Index>(a.size()));
+    }
     for (const auto &[port_idx, port_data] : space_op.GetWavePortOp())
     {
       if (port_data.excitation == excitation_idx)
@@ -2479,6 +2579,7 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
           break;
         case BoundaryTermKind::WavePort:
         case BoundaryTermKind::FloquetPort:
+        case BoundaryTermKind::Environment:  // no synthesis with substructuring
           break;
       }
       if (fit)

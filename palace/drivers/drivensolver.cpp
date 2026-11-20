@@ -42,6 +42,53 @@ namespace palace
 
 using namespace std::complex_literals;
 
+namespace
+{
+
+// The postprocessing of a sweep: that of the configuration or, for a substructured region,
+// whose field is known in the region and on Γ only, that of the region (see
+// RegionPostprocessing).
+std::pair<config::DomainData, config::BoundaryData>
+SweepPostprocessing(const IoData &iodata, const SpaceOperator &space_op)
+{
+  config::DomainData domains = iodata.domains;
+  config::BoundaryData boundaries = iodata.boundaries;
+  if (const auto *env = space_op.GetEnvironment())
+  {
+    RegionPostprocessing(env->RegionAttributes(), space_op.GetMesh().Get(),
+                         env->RegionMesh() ? &env->RegionBoundaryAttributes() : nullptr,
+                         !env->Ports().empty(), "Online", domains, boundaries);
+  }
+  return {domains, boundaries};
+}
+
+// For a substructured region, the values of the environment's ports from the model at a
+// solution E (on Γ) of an excitation, for the next measurements.
+void SetEnvironmentPorts(SpaceOperator &space_op,
+                         PostOperator<ProblemType::DRIVEN> &post_op, int excitation_idx,
+                         double omega, const ComplexVector &E)
+{
+  if (auto *env = space_op.GetEnvironment())
+  {
+    std::map<int, std::complex<double>> V, S;
+    env->PortValues(excitation_idx, omega, E, V, S);
+    post_op.SetLumpedPortVoltages(std::move(V));
+    post_op.SetWavePortOverlaps(std::move(S));
+  }
+}
+
+void WarnRegionFields(const SpaceOperator &space_op,
+                      const PostOperator<ProblemType::DRIVEN> &post_op)
+{
+  if (space_op.GetEnvironment() && post_op.WillWriteFields())
+  {
+    Mpi::Warning("Online driven substructuring writes the fields in the region and on the "
+                 "interface only (zero in the environment)!\n");
+  }
+}
+
+}  // namespace
+
 std::pair<ErrorIndicator, long long int>
 DrivenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 {
@@ -78,15 +125,21 @@ DrivenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     Mpi::Print("\nRestarting from solve {}", iodata.solver.driven.restart);
   }
 
-  // Main frequency sweep loop. Online, a uniform sweep solves the region against the
-  // environment of the saved model.
+  // Main frequency sweep loop. Online, the region is solved against the environment of the
+  // saved model.
   if (const auto &sub = iodata.solver.substructuring;
-      sub && sub->mode == SubstructuringMode::ONLINE &&
-      iodata.solver.driven.adaptive_tol == 0.0)
+      sub && sub->mode == SubstructuringMode::ONLINE)
   {
     EnvironmentOperator env(iodata, space_op);
     space_op.SetEnvironment(env);
-    return {SweepUniform(space_op), space_op.GlobalTrueVSize()};
+    if (adaptive && env.NumRecords() == 0)
+    {
+      Mpi::Warning("An adaptive online sweep needs a model saved by an adaptive sweep: "
+                   "every frequency is solved!\n");
+      adaptive = false;
+    }
+    return {adaptive ? SweepAdaptive(space_op) : SweepUniform(space_op),
+            space_op.GlobalTrueVSize()};
   }
   if (iodata.solver.substructuring)
   {
@@ -103,23 +156,11 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
 
   // Initialize postprocessing for measurement and printers.
   // Initialize write directory with default path; will be changed for multi-excitations.
-  // The field of a substructured region is known in the region and on Γ only.
-  auto *env = space_op.GetEnvironment();
-  config::DomainData domains = iodata.domains;
-  config::BoundaryData boundaries = iodata.boundaries;
-  if (env)
-  {
-    RegionPostprocessing(env->RegionAttributes(), space_op.GetMesh().Get(),
-                         env->RegionMesh() ? &env->RegionBoundaryAttributes() : nullptr,
-                         !env->Ports().empty(), "Online", domains, boundaries);
-  }
+  const auto *env = space_op.GetEnvironment();
+  const auto [domains, boundaries] = SweepPostprocessing(iodata, space_op);
   PostOperator<ProblemType::DRIVEN> post_op(iodata.problem, iodata.solver, domains,
                                             boundaries, iodata.units, space_op);
-  if (env && post_op.WillWriteFields())
-  {
-    Mpi::Warning("Online driven substructuring writes the fields in the region and on the "
-                 "interface only (zero in the environment)!\n");
-  }
+  WarnRegionFields(space_op, post_op);
 
   // The fixed system matrices are only needed when the system cannot be applied through
   // the preconditioner (see SpaceOperator::GetSystemOperator), so assemble them on first
@@ -308,14 +349,7 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
       // frequency.
       post_op.InitializeParaviewDataCollection(excitation_idx, true);
     }
-    if (env)
-    {
-      // The environment's ports from the model, at the solution on Γ.
-      std::map<int, std::complex<double>> V, S;
-      env->PortValues(excitation_idx, omega, E, V, S);
-      post_op.SetLumpedPortVoltages(std::move(V));
-      post_op.SetWavePortOverlaps(std::move(S));
-    }
+    SetEnvironmentPorts(space_op, post_op, excitation_idx, omega, E);
     auto total_domain_energy =
         post_op.MeasureAndPrintAll(excitation_idx, int(omega_i), E, B, omega);
 
@@ -343,7 +377,11 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
   const auto &omega_sample = iodata.solver.driven.sample_f;
   // Initialize postprocessing for measurement and printers.
   // Initialize write directory with default path; will be changed for multi-excitations.
-  PostOperator<ProblemType::DRIVEN> post_op(iodata, space_op);
+  const auto *env = space_op.GetEnvironment();
+  const auto [domains, boundaries] = SweepPostprocessing(iodata, space_op);
+  PostOperator<ProblemType::DRIVEN> post_op(iodata.problem, iodata.solver, domains,
+                                            boundaries, iodata.units, space_op);
+  WarnRegionFields(space_op, post_op);
 
   // Configure PROM parameters if not specified.
   double offline_tol = iodata.solver.driven.adaptive_tol;
@@ -363,8 +401,13 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
   E = 0.0;
   B = 0.0;
 
-  // Initialize structures for storing and reducing the results of error estimation.
-  const FluxErrorEstimator<ComplexVector> estimator(space_op, iodata);
+  // Initialize structures for storing and reducing the results of error estimation (none
+  // for a substructured region, whose environment field is not known).
+  std::unique_ptr<FluxErrorEstimator<ComplexVector>> estimator;
+  if (!env)
+  {
+    estimator = std::make_unique<FluxErrorEstimator<ComplexVector>>(space_op, iodata);
+  }
   ErrorIndicator indicator;
 
   // If using Floquet BCs, a correction term (kp x E) needs to be added to the B field.
@@ -451,8 +494,11 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
 
     // Measure domain energies for the error indicator only. Don't exchange face_nbr_data,
     // unless printing paraview fields.
-    auto total_domain_energy = post_op.MeasureDomainFieldEnergyOnly(E, B);
-    estimator.AddErrorIndicator(E, B, total_domain_energy, indicator);
+    if (estimator)
+    {
+      auto total_domain_energy = post_op.MeasureDomainFieldEnergyOnly(E, B);
+      estimator->AddErrorIndicator(E, B, total_domain_energy, indicator);
+    }
     return error;
   };
 
@@ -619,7 +665,12 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
   // for the online output sweep; failed residual checks transparently fall back to the
   // exact port eigensolver and enrich the basis.
   space_op.GetWavePortOp().EnableReducedModel(iodata.solver.driven.adaptive_tol);
-  post_op.ConfigureReducedPostprocessing(prom_op, iodata.solver.driven.adaptive_tol);
+  // The reduced postprocessing has no environment's ports, nor partial energies, for a
+  // substructured region, which is postprocessed in full.
+  if (!env)
+  {
+    post_op.ConfigureReducedPostprocessing(prom_op, iodata.solver.driven.adaptive_tol);
+  }
 
   // Main fast frequency sweep loop (online phase).
   Mpi::Print("\nBeginning fast frequency sweep online phase\n");
@@ -674,6 +725,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
       floquet_corr->AddMult(
           E, B, space_op.GetMaterialOp().HasFloquetFrequencyScaling() ? 1.0 : 1.0 / omega);
     }
+    SetEnvironmentPorts(space_op, post_op, excitation_idx, omega, E);
     post_op.MeasureAndPrintAll(excitation_idx, int(omega_i), E, B, omega);
   };
 
