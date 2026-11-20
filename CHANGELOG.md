@@ -542,6 +542,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Removed the `PALACE_WITH_GPU_AWARE_MPI` option: *Palace* now asks MPI at runtime whether
     it is GPU aware.
     [PR 1226](https://github.com/awslabs/palace/pull/1226).
+  - With cuDSS, the superbuild now patches MFEM with
+    [mfem/mfem#5758](https://github.com/mfem/mfem/pull/5758), as the Spack build does. With
+    cuDSS 0.8, the parallel cuDSS solver of MFEM 4.10 did not set the communicator for
+    device buffers, and `"Type": "cuDSS"` in `config["Solver"]["Linear"]` crashed in the
+    first factorization. [PR 1250](https://github.com/awslabs/palace/pull/1250).
   - The unit tests now pass with MFEM's debug device, and the long tests run them on it, on
     1 and 2 processes, to catch host accesses to data whose valid copy is on the device. The installed test tree now also discovers each case on the number of
     processes it runs on, which adds the `[Parallel]`-only regression cases to the Spack
