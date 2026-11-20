@@ -1153,9 +1153,10 @@ last tier's part of the counted sum: the share of the box's fabricated energy as
 the reference point. For those patches no within-R quadrature point of the entry lies on the
 claim (a cell shorter than the spacing of the quadrature points along the edge, faces too
 coarse to have a point within R of a long edge, or no claim at all), so the product cannot
-tell whether the wall cuts them: each counts whole where its origin lies, and the warning
-names this share whenever it is above zero. With `PatchEnergy` the per-patch shares are
-written to `surface-response-region-share.csv`. The `Excitation` of
+tell whether the wall cuts them: each counts whole where its origin lies, and the
+construction's one warning names this share for the target and evaluation it reports, when
+above zero; `Diagnostics.RegionTargets` records it for every evaluation. With `PatchEnergy`
+the per-patch shares are written to `surface-response-region-share.csv`. The `Excitation` of
 `Diagnostics.RegionTargets` and the `excitation` column of the share file are the terminal
 index on an electrostatic run; on an eigenmode or driven run they are the 0-based ordinal of
 the measurements of the response operator's construction (an eigenmode run measures mode m

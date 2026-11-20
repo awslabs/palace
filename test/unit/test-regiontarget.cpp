@@ -219,10 +219,6 @@ std::set<long> EdgeCells(const fs::path &dir, double edge)
   return cells;
 }
 
-// The shares themselves on the two boxes of the wall x = kMidWall (raw and self-consistent
-// rows of `excitation`): every row is its tier's ratio; the cells of the edge x = 0.25
-// count whole in the lower box and not at all in the upper one, those of x = 0.75 the
-// reverse (a patch the share file does not list has s_p = 0).
 // Decision 2257 E-3: the leaf's per-tier magnitudes from the tables (raw rows of target 4):
 // a patch's tier is its share row's (a patch the share file does not list is of tier 4 with
 // s_p = 0) and |f_p| is the patch table's (fixed trace, `source` below 0: the table's first
@@ -277,6 +273,10 @@ void CheckTierMagnitudes(const fs::path &dir, const json &target, int source,
         Catch::Approx(counted[3] / total).epsilon(1.0e-10));
 }
 
+// The shares themselves on the two boxes of the wall x = kMidWall (raw and self-consistent
+// rows of `excitation`): every row is its tier's ratio; the cells of the edge x = 0.25
+// count whole in the lower box and not at all in the upper one, those of x = 0.75 the
+// reverse (a patch the share file does not list has s_p = 0).
 void CheckEdgeShares(const fs::path &window, const fs::path &lower, const fs::path &upper,
                      int excitation)
 {

@@ -2318,7 +2318,9 @@ public:
   // empty when none is due: on a two-dimensional mesh (no patch claims: every patch counts
   // whole where its reference point lies; decision 2257 MAJOR-2), or when its wall cuts
   // patches, or when the reference point assigned a share of the box's fabricated energy
-  // (named whenever above zero; decision 2257 E-3).
+  // (the construction's one warning names that share for the target and evaluation it
+  // reports, when above zero; the leaf Diagnostics.RegionTargets records it for every
+  // evaluation; decision 2257 E-3, decision 2263).
   // `recorded` false (the record-only impedance-metal rule candidate, whose Region leaf is
   // not written; decision 2257 MINOR-4): the text says that its values are not recorded.
   static std::string RegionTargetWarning(int target, const RegionTargetResponse &response,
