@@ -1093,6 +1093,72 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   CHECK(prom_op.GetOrthR()(0, 0) == R0(0, 0));
 }
 
+// A sample solved from zero (abort_if_dependent) with one part in the span of the basis
+// adds its other part, and its coefficients reproduce it: both when the real part is the
+// dependent one, and when the imaginary part is. With neither part new, it aborts.
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "RomOperator-UpdatePROM-PartialDependence-Added",
+                 "[romoperator][Serial][Parallel]")
+{
+  MPI_Comm world_comm = Mpi::World();
+  IoData iodata(DependenceTestSetup(temp_dir, 1.0e-8, 200), false);
+  auto mesh_io = LoadScaleParMesh2(iodata, world_comm);
+  SpaceOperator space_op(iodata, mesh_io);
+  RomOperatorTest prom_op(iodata, space_op, 100);
+
+  const auto n = space_op.GetNDSpace().GetTrueVSize();
+  ComplexVector u(n), x(n);
+  u.UseDevice(true);
+  x.UseDevice(true);
+  u.Real().Randomize(42);
+  u.Imag() = 0.0;
+  REQUIRE(prom_op.UpdatePROM(u, "vec_0").size() == 1);
+
+  // The relative error of V c as the sample x.
+  auto residual = [&](const Eigen::VectorXcd &c)
+  {
+    const auto &V = prom_op.GetVectors();
+    REQUIRE(static_cast<std::size_t>(c.size()) == V.size());
+    Vector re(n), im(n);
+    re.UseDevice(true);
+    im.UseDevice(true);
+    re = x.Real();
+    im = x.Imag();
+    for (std::size_t j = 0; j < V.size(); j++)
+    {
+      re.Add(-c(j).real(), V[j]);
+      im.Add(-c(j).imag(), V[j]);
+    }
+    return std::sqrt(std::pow(linalg::Norml2(world_comm, re), 2) +
+                     std::pow(linalg::Norml2(world_comm, im), 2)) /
+           linalg::Norml2(world_comm, x);
+  };
+
+  // Real part in the span, new imaginary part.
+  x.Real() = u.Real();
+  x.Imag().Randomize(43);
+  auto c = prom_op.UpdatePROM(x, "vec_1");
+  CHECK(prom_op.GetReducedDimension() == 2);
+  CHECK(prom_op.GetOrthR().rows() == 2);
+  CHECK(residual(c) < 1.0e-12);
+
+  // New real part, imaginary part in the span.
+  x.Real().Randomize(44);
+  x.Imag() = u.Real();
+  c = prom_op.UpdatePROM(x, "vec_2");
+  CHECK(prom_op.GetReducedDimension() == 3);
+  CHECK(prom_op.GetOrthR().rows() == 3);
+  CHECK(prom_op.GetOrthR().isUpperTriangular());
+  CHECK(residual(c) < 1.0e-12);
+
+  // Both parts in the span.
+  x.Real() = u.Real();
+  x.Imag() = u.Real();
+  CHECK_THROWS(prom_op.UpdatePROM(x, "vec_3"));
+  CHECK(prom_op.GetReducedDimension() == 3);
+  CHECK(prom_op.GetOrthR().rows() == 3);
+}
+
 // With abort_if_dependent = false, a sample with one part in the span of the basis is
 // rejected as a whole and the PROM is left unchanged: both when the real part is the
 // dependent one, and when the real part was already appended to the basis before the

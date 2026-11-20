@@ -572,9 +572,11 @@ public:
   // "node_label". This will be printed in the header of the csv files when printing PROM
   // matrices. It is needed to distinguish port and solution field configuration as well as
   // to reconstruct if field configuration are pure real, imaginary or complex. Returns the
-  // coefficients c of u in the updated basis, u = V c. If the real or imaginary part of u
-  // is in the span of the basis (to the orthogonalization tolerance), aborts, or, with
-  // abort_if_dependent = false, leaves the PROM unchanged and returns an empty vector.
+  // coefficients c of u in the updated basis, u = V c. A part of u (real or imaginary) in
+  // the span of the basis (to the orthogonalization tolerance) is not added: u then adds
+  // its other part, and aborts if neither is new, or, with abort_if_dependent = false (a
+  // certified sample, added whole or not at all), leaves the PROM unchanged and returns an
+  // empty vector.
   Eigen::VectorXcd UpdatePROM(const ComplexVector &u, std::string_view node_label,
                               bool abort_if_dependent = true);
 

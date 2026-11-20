@@ -1277,10 +1277,34 @@ Eigen::VectorXcd RomOperator::UpdatePROM(const ComplexVector &u,
     return true;
   };
 
-  const bool added =
-      (!has_real || add_real_vector_to_basis(u.Real(), fmt::format("{}_re", node_label))) &&
-      (!has_imag || add_real_vector_to_basis(u.Imag(), fmt::format("{}_im", node_label)));
-  if (!added)
+  // A sample solved from zero (abort_if_dependent) adds the parts of it which are not in
+  // the span of the basis to round-off, a part in the span being its projections onto it,
+  // and is dependent if it adds none. A certified sample is added whole or not at all. Each
+  // part's coefficients in the basis are those of its column of R.
+  bool all = true, any = false;
+  auto add_part = [&](const Vector &x, std::string_view label, Eigen::VectorXd &coef)
+  {
+    const bool added = add_real_vector_to_basis(x, label);
+    const auto j = static_cast<Eigen::Index>(V.size() - 1);
+    coef = orth_R.col(j).head(added ? j + 1 : j);
+    if (!added)
+    {
+      V.pop_back();
+      orth_R.col(j).setZero();
+    }
+    all = all && added;
+    any = any || added;
+  };
+  Eigen::VectorXd c_re, c_im;
+  if (has_real)
+  {
+    add_part(u.Real(), fmt::format("{}_re", node_label), c_re);
+  }
+  if (has_imag && (all || abort_if_dependent))
+  {
+    add_part(u.Imag(), fmt::format("{}_im", node_label), c_im);
+  }
+  if (abort_if_dependent ? (!any && (has_real || has_imag)) : !all)
   {
     // Leave the basis unchanged (also when aborting, so that the PROM is consistent if the
     // error is caught).
@@ -1293,17 +1317,13 @@ Eigen::VectorXcd RomOperator::UpdatePROM(const ComplexVector &u,
                 "times accidentally).");
     return {};
   }
+  dim_V_new = V.size();
+  orth_R.conservativeResize(dim_V_new, dim_V_new);
 
   // Coefficients of u in the updated basis (a part below the tolerance is dropped).
   Eigen::VectorXcd c = Eigen::VectorXcd::Zero(dim_V_new);
-  if (has_real)
-  {
-    c.real() = orth_R.col(dim_V_old);
-  }
-  if (has_imag)
-  {
-    c.imag() = orth_R.col(dim_V_new - 1);
-  }
+  c.real().head(c_re.size()) = c_re;
+  c.imag().head(c_im.size()) = c_im;
   if (dim_V_new == dim_V_old)
   {
     return c;
