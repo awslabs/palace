@@ -611,13 +611,13 @@ void IoData::CheckConfiguration()
     }
     solver.substructuring->direct_solver = solver.linear.type;
 
-    // An online driven sweep solves its region as a driven problem with the dense S_E of
-    // the environment on Γ (see SpaceOperator::SetEnvironment), which a sparse direct
-    // solver factors with it: on one level, in complex arithmetic, reusing the analysis of
-    // the first frequency, and exactly (the block low-rank compression of MUMPS at
-    // round-off).
-    if (problem.type == ProblemType::DRIVEN &&
-        solver.substructuring->mode == SubstructuringMode::ONLINE)
+    // An online driven sweep, and an offline adaptive one once it has sampled the
+    // environment, solve the region as a driven problem with the dense S_E of the
+    // environment on Γ (see SpaceOperator::SetEnvironment), which a sparse direct solver
+    // factors with it: on one level, in complex arithmetic, reusing the analysis of the
+    // first frequency, and exactly (the block low-rank compression of MUMPS at round-off).
+    // An offline exact sweep factors with its own solvers, and takes none of these.
+    if (problem.type == ProblemType::DRIVEN)
     {
       auto &linear = solver.linear;
       if (linear.type != LinearSolver::STRUMPACK && linear.type != LinearSolver::MUMPS &&

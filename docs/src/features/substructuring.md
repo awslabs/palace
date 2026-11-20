@@ -255,11 +255,11 @@ predicts `"AdaptiveConvergenceMemory"` consecutive new samples to `"AdaptiveTol"
 the condensed data), or at `"AdaptiveMaxSamples"` samples. The model's passivity is then checked
 between the samples (the imaginary part of the condensed environment operator, the power the
 environment absorbs, is positive semidefinite), and a violation beyond `"AdaptiveTol"` adds a
-sample there. The region is then reduced as the adaptive fast frequency sweep reduces a whole
-device, by Galerkin projection onto its fields at greedily chosen frequencies, which gives every
-frequency of the sweep with the outputs of an online sweep. Saved, such a model serves online
-sweeps at any frequency between its lowest and highest samples, reduced the same way with a
-nonzero `"AdaptiveTol"`, or solved frequency by frequency. An online sweep warns when the
+sample there. The adaptive fast frequency sweep then reduces the region against the model, as it
+reduces a whole device, by Galerkin projection onto its fields at greedily chosen frequencies,
+which gives every frequency of the sweep with the outputs of an online sweep. Saved, such a model
+serves online sweeps at any frequency between its lowest and highest samples, reduced the same
+way with a nonzero `"AdaptiveTol"`, or solved frequency by frequency. An online sweep warns when the
 sampling of the model did not converge (it stopped at `"AdaptiveMaxSamples"` samples, or the
 offline run stopped before it ended), and when the model is not passive between its samples.
 

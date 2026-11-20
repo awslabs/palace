@@ -907,220 +907,6 @@ void DrivenSubstructure::SolveCoupled(const std::vector<const ComplexVector *> &
   }
 }
 
-void DrivenSubstructure::AddReducedBasis(const std::vector<ComplexVector> &u)
-{
-  MPI_Comm comm = space_op.GetComm();
-  const int nt = static_cast<int>(is_gamma.size());
-  if (red_ops.empty())
-  {
-    // The region's frequency-independent parts, as in Setup.
-    red_ops.resize(6);
-    for (int op = 0; op < 3; op++)
-    {
-      auto parts = SideParts(region, op);
-      red_ops[2 * op] = std::move(parts[0]);
-      red_ops[2 * op + 1] = std::move(parts[1]);
-    }
-    red_parts.assign(6, {});
-  }
-
-  // Orthonormalize the real and imaginary parts (classical Gram-Schmidt, twice), dropping
-  // those in the span to the tolerance of RomOperator: the solves of the region are direct,
-  // so a part within it adds only rounding (a zero part, nothing).
-  const std::size_t r0 = red_basis.size();
-  std::vector<double> H;
-  for (const auto &uk : u)
-  {
-    for (const Vector *part : {&uk.Real(), &uk.Imag()})
-    {
-      red_basis.push_back(*part);
-      H.resize(red_basis.size());
-      const auto [pre_norm, norm] =
-          linalg::OrthogonalizeColumnCGS(comm, std::span(red_basis), H.data(), true);
-      if (norm <= 1.0e-12 * pre_norm)
-      {
-        red_basis.pop_back();
-        continue;
-      }
-      red_basis.back() *= 1.0 / norm;
-    }
-  }
-
-  // The projections of the parts on the new columns (the parts are symmetric).
-  const std::size_t r = red_basis.size();
-  for (int p = 0; p < 6; p++)
-  {
-    if (!red_ops[p])
-    {
-      continue;
-    }
-    std::vector<double> P(r * r, 0.0);
-    for (std::size_t j = 0; j < r0; j++)
-    {
-      std::copy(red_parts[p].begin() + j * r0, red_parts[p].begin() + (j + 1) * r0,
-                P.begin() + j * r);
-    }
-    Vector w(nt);
-    for (std::size_t j = r0; j < r; j++)
-    {
-      red_ops[p]->Mult(red_basis[j], w);
-      std::vector<double> d(j + 1);
-      for (std::size_t i = 0; i <= j; i++)
-      {
-        d[i] = mfem::InnerProduct(red_basis[i], w);
-      }
-      Mpi::GlobalSum(static_cast<int>(d.size()), d.data(), comm);
-      for (std::size_t i = 0; i <= j; i++)
-      {
-        P[j * r + i] = P[i * r + j] = d[i];
-      }
-    }
-    red_parts[p] = std::move(P);
-  }
-
-  // The interface rows of the new columns on rank 0, in interface order.
-  const int nG = InterfaceSize();
-  for (std::size_t j = r0; j < r; j++)
-  {
-    std::vector<double> mine;
-    const double *b = red_basis[j].HostRead();
-    for (int i = 0; i < nt; i++)
-    {
-      if (is_gamma[i])
-      {
-        mine.push_back(b[i]);
-      }
-    }
-    const bool root = Mpi::Root(comm);
-    red_gamma.resize(root ? (j + 1) * nG : 0);
-    MPI_Gatherv(mine.data(), static_cast<int>(mine.size()), MPI_DOUBLE,
-                root ? red_gamma.data() + j * nG : nullptr, gamma_cnt.data(),
-                gamma_disp.data(), MPI_DOUBLE, 0, comm);
-  }
-}
-
-void DrivenSubstructure::SolveReduced(double omega,
-                                      const std::vector<const ComplexVector *> &rhs,
-                                      const std::vector<std::complex<double>> &A_env,
-                                      const std::vector<std::complex<double>> &b_env,
-                                      std::vector<ComplexVector> &u)
-{
-  MPI_Comm comm = space_op.GetComm();
-  const int nt = static_cast<int>(is_gamma.size()), r = ReducedDimension(),
-            n = static_cast<int>(rhs.size()), nG = InterfaceSize();
-  const auto coef = Coefficients(omega);
-
-  // V^T A_R(ω) V: the parts, A2(ω) and the wave-port terms of the region, and V^T b for
-  // the region interior of the right-hand sides.
-  std::vector<std::complex<double>> A(static_cast<std::size_t>(r) * r, 0.0),
-      b(static_cast<std::size_t>(r) * n, 0.0);
-  for (int p = 0; p < 6; p++)
-  {
-    for (std::size_t q = 0; q < red_parts[p].size(); q++)
-    {
-      A[q] += coef[p] * red_parts[p][q];
-    }
-  }
-  std::vector<std::complex<double>> loc(static_cast<std::size_t>(r) * r, 0.0);
-  const auto extra = ExtraParts(region, omega);
-  Vector w(nt);
-  for (int p = 0; p < 2; p++)
-  {
-    for (int j = 0; extra[p] && j < r; j++)
-    {
-      extra[p]->Mult(red_basis[j], w);
-      for (int i = 0; i < r; i++)
-      {
-        loc[static_cast<std::size_t>(j) * r + i] +=
-            coef[6 + p] * mfem::InnerProduct(red_basis[i], w);
-      }
-    }
-  }
-  for (const auto &[idx, term] : ModalTerms(region, omega))
-  {
-    // g (V^T s)(V^T s)^T, with the local parts of V^T s summed below.
-    std::vector<std::complex<double>> z(r);
-    for (int i = 0; i < r; i++)
-    {
-      z[i] = {mfem::InnerProduct(red_basis[i], term.s->Real()),
-              mfem::InnerProduct(red_basis[i], term.s->Imag())};
-    }
-    Mpi::GlobalSum(r, z.data(), comm);
-    if (Mpi::Root(comm))
-    {
-      for (int j = 0; j < r; j++)
-      {
-        for (int i = 0; i < r; i++)
-        {
-          loc[static_cast<std::size_t>(j) * r + i] += term.g * z[i] * z[j];
-        }
-      }
-    }
-  }
-  for (int k = 0; k < n; k++)
-  {
-    const auto y = Masked(*rhs[k], is_region_int);
-    for (int i = 0; i < r; i++)
-    {
-      b[static_cast<std::size_t>(k) * r + i] = {mfem::InnerProduct(red_basis[i], y.Real()),
-                                                mfem::InnerProduct(red_basis[i], y.Imag())};
-    }
-  }
-  Mpi::GlobalSum(static_cast<int>(loc.size()), loc.data(), comm);
-  Mpi::GlobalSum(static_cast<int>(b.size()), b.data(), comm);
-
-  // The reduced system with the environment's terms, on rank 0.
-  if (Mpi::Root(comm))
-  {
-    for (std::size_t q = 0; q < A.size(); q++)
-    {
-      A[q] += loc[q] + A_env[q];
-    }
-    for (std::size_t q = 0; q < b.size(); q++)
-    {
-      b[q] += b_env[q];
-    }
-    std::vector<int> piv(r);
-    int info = 0;
-    zgetrf_(&r, &r, A.data(), &r, piv.data(), &info);
-    MFEM_VERIFY(info == 0, "Factorization of the reduced system failed: info = " << info);
-    zgetrs_("N", &r, &n, A.data(), &r, piv.data(), b.data(), &r, &info);
-    MFEM_VERIFY(info == 0, "Solve of the reduced system failed: info = " << info);
-  }
-  Mpi::Broadcast(static_cast<int>(b.size()), b.data(), 0, comm);
-
-  // u = V y, and the interface solution on rank 0.
-  u.resize(n);
-  for (int k = 0; k < n; k++)
-  {
-    u[k].SetSize(nt);
-    u[k].UseDevice(true);
-    u[k] = 0.0;
-    for (int i = 0; i < r; i++)
-    {
-      const auto y = b[static_cast<std::size_t>(k) * r + i];
-      u[k].Real().Add(y.real(), red_basis[i]);
-      u[k].Imag().Add(y.imag(), red_basis[i]);
-    }
-  }
-  if (Mpi::Root(comm))
-  {
-    u_last.assign(static_cast<std::size_t>(nG) * n, 0.0);
-    for (int k = 0; k < n; k++)
-    {
-      for (int i = 0; i < r; i++)
-      {
-        const auto y = b[static_cast<std::size_t>(k) * r + i];
-        for (int a = 0; a < nG; a++)
-        {
-          u_last[static_cast<std::size_t>(k) * nG + a] +=
-              y * red_gamma[static_cast<std::size_t>(i) * nG + a];
-        }
-      }
-    }
-  }
-}
-
 std::vector<std::complex<double>>
 DrivenSubstructure::CondenseEnvironment(const std::vector<const ComplexVector *> &b,
                                         std::vector<ComplexVector> *xo)
@@ -1397,6 +1183,21 @@ bool DrivenSubstructureModel::SameSource(const double *a, const double *b, doubl
 {
   return a[0] == b[0] &&
          PairingsMatch({a + 1, kSourceFp - 1}, {b + 1, kSourceFp - 1}, tol, true);
+}
+
+std::vector<std::complex<double>> BarycentricInterpolant::Sample(std::size_t j) const
+{
+  const std::size_t m = z.size();
+  std::vector<std::complex<double>> x(Q[0].size(), 0.0);
+  for (std::size_t i = 0; i <= j; i++)
+  {
+    const auto r = R[j * m + i];
+    for (std::size_t q = 0; q < x.size(); q++)
+    {
+      x[q] += r * Q[i][q];
+    }
+  }
+  return x;
 }
 
 void BarycentricInterpolant::AddSample(double omega,

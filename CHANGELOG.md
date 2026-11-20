@@ -33,8 +33,8 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     ports, wave ports and lossy boundaries and materials on either side, and an online sweep
     at saved frequencies solves a redesigned region against the saved environment. Adaptive
     sweeps condense it at frequencies chosen greedily for a rational model, checked for
-    passivity, which online sweeps evaluate anywhere in its band, with the region reduced as
-    in the adaptive fast frequency sweep. The offline sweep also writes a mesh of the
+    passivity, which online sweeps evaluate anywhere in its band, with the region reduced by
+    the adaptive fast frequency sweep. The offline sweep also writes a mesh of the
     region, on which online sweeps read and partition the region only. Runs on CPUs and
     GPUs, with the factorizations on the CPU. Offline, the partial factorization of MUMPS
     or, without it, of STRUMPACK gives the condensed environment (SuperLU_DIST, whose

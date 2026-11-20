@@ -18,6 +18,20 @@ namespace palace
 {
 
 EnvironmentOperator::EnvironmentOperator(const IoData &iodata, SpaceOperator &space_op)
+  : EnvironmentOperator(iodata, space_op, nullptr, {})
+{
+}
+
+EnvironmentOperator::EnvironmentOperator(const IoData &iodata, SpaceOperator &space_op,
+                                         const DrivenSubstructureModel &sampled,
+                                         const RecordFunction &record)
+  : EnvironmentOperator(iodata, space_op, &sampled, record)
+{
+}
+
+EnvironmentOperator::EnvironmentOperator(const IoData &iodata, SpaceOperator &space_op,
+                                         const DrivenSubstructureModel *sampled,
+                                         const RecordFunction &record)
   : space_op(space_op), comm(space_op.GetComm()), root(Mpi::Root(comm)),
     model_path(iodata.solver.substructuring->model_file),
     region_attrs(iodata.solver.substructuring->region_attributes)
@@ -28,20 +42,27 @@ EnvironmentOperator::EnvironmentOperator(const IoData &iodata, SpaceOperator &sp
 
   // The mesh and the configuration of the environment are those of the model (the sources
   // of the excitations, which may be fewer, are checked one by one below), and the mesh of
-  // the region is written refined.
-  model.ReadHeader(model_path, comm);
-  region_mesh = model.environment.CheckMesh(space_op.GetNDSpace().GetParMesh(),
-                                            DrivenSubstructureModel::kEnvironmentTol);
-  if (region_mesh)
+  // the region is written refined. A model sampled in this run is of its environment.
+  if (sampled)
   {
-    const auto &refinement = iodata.model.refinement;
-    MFEM_VERIFY(refinement.uniform_ref_levels == 0 &&
-                    refinement.ser_uniform_ref_levels == 0 &&
-                    refinement.GetBoxes().empty() && refinement.GetSpheres().empty(),
-                kRegionMeshRefined);
+    model = *sampled;
   }
-  model.environment.CheckConfig(*iodata.resolved_config, sub.environment_attributes,
-                                region_mesh);
+  else
+  {
+    model.ReadHeader(model_path, comm);
+    region_mesh = model.environment.CheckMesh(space_op.GetNDSpace().GetParMesh(),
+                                              DrivenSubstructureModel::kEnvironmentTol);
+    if (region_mesh)
+    {
+      const auto &refinement = iodata.model.refinement;
+      MFEM_VERIFY(refinement.uniform_ref_levels == 0 &&
+                      refinement.ser_uniform_ref_levels == 0 &&
+                      refinement.GetBoxes().empty() && refinement.GetSpheres().empty(),
+                  kRegionMeshRefined);
+    }
+    model.environment.CheckConfig(*iodata.resolved_config, sub.environment_attributes,
+                                  region_mesh);
+  }
   ds = std::make_unique<DrivenSubstructure>(
       space_op, sub.region_attributes, sub.environment_attributes, true, &model,
       region_mesh, sub.direct_solver, iodata.solver.linear.sym_factorization);
@@ -119,7 +140,7 @@ EnvironmentOperator::EnvironmentOperator(const IoData &iodata, SpaceOperator &sp
   {
     Mpi::Print(" The mesh holds the region (the environment is that of the model)\n");
   }
-  else
+  else if (!sampled)
   {
     MFEM_VERIFY(DrivenSubstructureModel::SameEnvironment(
                     ds->EnvironmentFingerprint(model.omega[0]), model.env_fp),
@@ -128,10 +149,13 @@ EnvironmentOperator::EnvironmentOperator(const IoData &iodata, SpaceOperator &sp
   MFEM_VERIFY(env_ports == model.ports,
               "The environment's lumped ports differ from those of the saved "
               "substructuring model!");
-  int nrec = root ? model.NumRecords(model_path) : 0;
-  Mpi::Broadcast(1, &nrec, 0, comm);
-  MFEM_VERIFY(nrec >= static_cast<int>(model.omega.size()),
-              "Truncated substructuring model \"" << model_path << "\"!");
+  if (!sampled)
+  {
+    int nrec = root ? model.NumRecords(model_path) : 0;
+    Mpi::Broadcast(1, &nrec, 0, comm);
+    MFEM_VERIFY(nrec >= static_cast<int>(model.omega.size()),
+                "Truncated substructuring model \"" << model_path << "\"!");
+  }
 
   // The frequencies of the sweep: anywhere between the samples of a rational model, or at
   // the frequencies of an exact one.
@@ -149,12 +173,13 @@ EnvironmentOperator::EnvironmentOperator(const IoData &iodata, SpaceOperator &sp
     for (std::size_t j = 0; j < model.omega.size(); j++)
     {
       records.push_back(
-          Distribute(root ? model.ReadFlatRecord(model_path, static_cast<int>(j))
-                          : std::vector<std::complex<double>>()));
+          Distribute(!root     ? std::vector<std::complex<double>>()
+                     : sampled ? record(j)
+                               : model.ReadFlatRecord(model_path, static_cast<int>(j))));
     }
     Mpi::Print(" Rational substructuring model: {:d} samples from {:.3e} to {:.3e} GHz\n",
                model.omega.size(), lo * unit_GHz, hi * unit_GHz);
-    if (!model.converged)
+    if (!sampled && !model.converged)
     {
       Mpi::Warning("The saved rational substructuring model did not converge (its sampling "
                    "stopped at {:d} samples, with an error of {:.3e} for \"AdaptiveTol\" "
@@ -162,7 +187,7 @@ EnvironmentOperator::EnvironmentOperator(const IoData &iodata, SpaceOperator &sp
                    "\"AdaptiveMaxSamples\" if its sampling reached it)!\n",
                    model.omega.size(), model.error, model.tol);
     }
-    if (model.passivity < -model.tol)
+    if (!sampled && model.passivity < -model.tol)
     {
       Mpi::Warning("The saved rational substructuring model is not passive between its "
                    "samples (least eigenvalue of Im S_E / ‖S_E‖ = {:.3e}): rerun the "

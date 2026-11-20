@@ -66,6 +66,9 @@ public:
   const std::vector<double> &Samples() const { return z; }
   const std::vector<std::complex<double>> &Weights() const { return w; }
 
+  // Sample j as added (the local rows), x_j = Σ_i R_ij q_i.
+  std::vector<std::complex<double>> Sample(std::size_t j) const;
+
   // The coefficients a_j(ω) of samples at z with weights w.
   static std::vector<std::complex<double>>
   Coefficients(const std::vector<double> &z, const std::vector<std::complex<double>> &w,
@@ -257,10 +260,6 @@ public:
   std::vector<int>
   InterfaceBoundaryAttributes(const std::vector<int> &bdr_attributes) const;
 
-  // Online, whether the mesh holds the region only (and the environment comes from the
-  // saved model).
-  bool RegionOnly() const { return region_only; }
-
   // Write a mesh of the region for online runs, in mesh length units (coordinates times
   // length_scale): the region, and the environment elements on the boundary elements with
   // the given attributes (the environment's ports, whose excitations and outputs need
@@ -271,27 +270,6 @@ public:
 
   // The wave ports in the environment (each wave port lies inside one side).
   std::vector<int> EnvironmentWavePorts() const;
-
-  // A reduced model of the region against a given environment (online): Galerkin projection
-  // onto the real span of field snapshots, as in the adaptive driven solver. The
-  // environment enters through its reduced terms on Γ, which the caller forms from the
-  // interface rows of the basis.
-  //
-  // Add the real and imaginary parts of the fields u (true DOFs, zero in the environment
-  // interior) to the orthonormal basis (collective).
-  void AddReducedBasis(const std::vector<ComplexVector> &u);
-  int ReducedDimension() const { return static_cast<int>(red_basis.size()); }
-
-  // The interface rows of the basis on rank 0 (|Γ| x r, column-major, in interface order).
-  const std::vector<double> &ReducedInterfaceBasis() const { return red_gamma; }
-
-  // Solve the reduced system at ω for the region parts of rhs, with the environment's
-  // terms A_env (r x r) and b_env (r x |rhs|), column-major on rank 0, and expand: u = V y,
-  // and the interface solution (InterfaceSolution) on rank 0. Collective.
-  void SolveReduced(double omega, const std::vector<const ComplexVector *> &rhs,
-                    const std::vector<std::complex<double>> &A_env,
-                    const std::vector<std::complex<double>> &b_env,
-                    std::vector<ComplexVector> &u);
 
   // Fingerprint of the environment, independent of the region, of the partition and of the
   // DOF numbering: the global counts of environment-interior and interface DOFs, and
@@ -379,14 +357,6 @@ private:
   // of a side, assembled on its elements, with its pinned DOFs eliminated (null if zero).
   std::array<std::unique_ptr<mfem::HypreParMatrix>, 2> SideParts(const Side &side,
                                                                  int op) const;
-
-  // The reduced region: its operator parts (Kr, Ki, Cr, Ci, Mr, Mi on the region, with the
-  // pinned DOFs eliminated), the basis V, the parts' projections V^T P V (r x r,
-  // column-major), and the interface rows of V on rank 0.
-  std::vector<std::unique_ptr<mfem::HypreParMatrix>> red_ops;
-  std::vector<Vector> red_basis;
-  std::vector<std::vector<double>> red_parts;
-  std::vector<double> red_gamma;
 
   // Factor the region with S_E (on rank 0) added on Γ as one system, releasing S_E once its
   // entries are in the factored values if release (set_up: Setup of the region was called

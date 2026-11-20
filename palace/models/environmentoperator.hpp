@@ -6,6 +6,7 @@
 
 #include <array>
 #include <complex>
+#include <functional>
 #include <limits>
 #include <map>
 #include <memory>
@@ -41,11 +42,19 @@ class SpaceOperator;
 class EnvironmentOperator
 {
 public:
+  // The records of a model, in order (flat, in the saved basis, on root).
+  using RecordFunction = std::function<std::vector<std::complex<double>>(std::size_t)>;
+
   // Read the model and check it against the run: the environment (its record and, on the
   // full mesh, the fingerprint of its operator), the interface, the environment's ports,
   // the sources of the excitations and the frequencies of the sweep. Call before the
   // region is set up, on the operators of the full problem. Collective.
   EnvironmentOperator(const IoData &iodata, SpaceOperator &space_op);
+
+  // The rational model of this run's environment, sampled offline on the full mesh, with
+  // its records. Collective.
+  EnvironmentOperator(const IoData &iodata, SpaceOperator &space_op,
+                      const DrivenSubstructureModel &sampled, const RecordFunction &record);
   ~EnvironmentOperator();
 
   // Whether the mesh is the mesh of the region written with the model.
@@ -100,6 +109,9 @@ public:
   MPI_Comm GetComm() const { return comm; }
 
 private:
+  EnvironmentOperator(const IoData &iodata, SpaceOperator &space_op,
+                      const DrivenSubstructureModel *sampled, const RecordFunction &record);
+
   SpaceOperator &space_op;
   MPI_Comm comm;
   const bool root;
