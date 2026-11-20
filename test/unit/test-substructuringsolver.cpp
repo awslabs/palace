@@ -2222,12 +2222,12 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
                  "SubstructuringSolver postprocessing of the region",
                  "[substructure][Serial][Parallel]")
 {
-  // The postprocessing of the region keeps the energies of its domains, the probes in it,
-  // and the surface fluxes and interface dielectrics on its surfaces, and leaves out the
-  // others: of the environment, across the interface, and a probe outside the mesh. On the
-  // mesh of the region, the sides of the cube (a natural boundary, along which no
-  // environment element is written) seem to border the region only: they are left out
-  // there too.
+  // The postprocessing of the region keeps the energies of its domains, the probes in it
+  // (also one on the interface), and the surface fluxes and interface dielectrics on its
+  // surfaces, and leaves out the others: of the environment, across the interface, and a
+  // probe outside the mesh. On the mesh of the region, the sides of the cube (a natural
+  // boundary, along which no environment element is written) seem to border the region
+  // only: they are left out there too.
   auto flux = [](int index, int attr)
   { return json{{"Index", index}, {"Attributes", {attr}}, {"Type", "Electric"}}; };
   auto dielectric = [](int index, int attr)
@@ -2264,7 +2264,8 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   config["Domains"]["Postprocessing"]["Probe"] = {
       {{"Index", 1}, {"Center", {0.25, 0.5, 0.5}}},
       {{"Index", 2}, {"Center", {0.75, 0.5, 0.5}}},
-      {{"Index", 3}, {"Center", {2.0, 0.5, 0.5}}}};
+      {{"Index", 3}, {"Center", {2.0, 0.5, 0.5}}},
+      {{"Index", 4}, {"Center", {0.5, 0.5, 0.5}}}};
 #endif
   IoData iodata(config, false);
   CHECK(SubstructuringSolver::Postprocesses(iodata));
@@ -2283,7 +2284,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   };
   CHECK(indices(post.domains.postpro.energy) == std::vector<int>{1});
 #if defined(MFEM_USE_GSLIB)
-  CHECK(indices(post.domains.postpro.probe) == std::vector<int>{1});
+  CHECK(indices(post.domains.postpro.probe) == std::vector<int>{1, 4});
 #endif
   CHECK(indices(post.boundaries.postpro.flux) == std::vector<int>{1});
   CHECK(indices(post.boundaries.postpro.dielectric) == std::vector<int>{1});

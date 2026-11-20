@@ -6,6 +6,7 @@
 
 #include <complex>
 #include <map>
+#include <memory>
 #include <vector>
 #include <mfem.hpp>
 #include "utils/configfile.hpp"
@@ -31,11 +32,25 @@ private:
 
   int v_dim_fes;  // dimension of interpolated vector from NDSpace
 
+  // With domains, the submesh of their elements, in which the probes are found and the
+  // fields interpolated, and for each space of a field, its counterpart on the submesh with
+  // a field there and the transfer to it.
+  std::unique_ptr<mfem::ParSubMesh> submesh;
+  struct SubmeshField
+  {
+    std::unique_ptr<mfem::ParFiniteElementSpace> fespace;
+    std::unique_ptr<mfem::ParGridFunction> field;
+    std::unique_ptr<mfem::ParTransferMap> transfer;
+  };
+  std::map<const mfem::ParFiniteElementSpace *, SubmeshField> submesh_fields;
+
   std::vector<double> ProbeField(const mfem::ParGridFunction &U);
 
 public:
+  // With domains (attributes), the probes are found, and the fields interpolated, in the
+  // elements of the domains only: a probe on a face of one of them is found in one of them.
   InterpolationOperator(const std::map<int, config::ProbeData> &probe, const Units &units,
-                        FiniteElementSpace &nd_space);
+                        FiniteElementSpace &nd_space, const std::vector<int> &domains = {});
   InterpolationOperator(const IoData &iodata, FiniteElementSpace &nd_space);
 
   auto GetVDim() const { return v_dim_fes; }
@@ -47,9 +62,9 @@ public:
 namespace fem
 {
 
-// The indices of the probes found in elements with the given attributes, the elements an
-// InterpolationOperator interpolates them in (a probe on a face between elements is found
-// in one of them). Collective.
+// The indices of the probes in the elements with the given attributes, as an
+// InterpolationOperator with these domains finds them (also those on a face of one of these
+// elements). Collective.
 std::vector<int> ProbesInDomains(const std::map<int, config::ProbeData> &probe,
                                  const mfem::ParMesh &mesh,
                                  const std::vector<int> &attributes);
