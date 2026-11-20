@@ -310,6 +310,101 @@ inline void InitialResidual(PreconditionerSide side, const OperType *A,
   }
 }
 
+// Replaces the nonzero initial guess x by α x, with α = (u, w) / (u, u) minimizing the
+// initial residual r = w - α u in the norm of the stopping test (w = B b and u = B A x for
+// left preconditioning, else w = b and u = A x), sets r, and returns ||w||, the residual
+// norm of a zero initial guess. Then ||r||² = ||w||² - |(u, w)|² / ||u||² ≤ ||w||², and an
+// exact guess stays exact (α = 1); products which are not finite give α = 0. With left
+// preconditioning, u = w - r₁ reuses the residual r₁ = B (b - A x), so B is applied as for
+// the unscaled guess, and r = (1 - α) w + α r₁ carries the rounding error of B relative to
+// about |1 - α| ||w|| + |α| ||r₁|| (relative to ||w|| with u = B A x). That is amplified
+// for |α| > 1 with an inexact preconditioner, so for |α| > 2, the residual B (b - α A x) is
+// computed instead (one more application of A and B).
+template <typename OperType, typename VecType>
+inline double ScaledInitialResidual(MPI_Comm comm, PreconditionerSide side,
+                                    const OperType *A, const Solver<OperType> *B,
+                                    const VecType &b, VecType &x, VecType &r, VecType &z,
+                                    bool use_timer = true)
+{
+  using ScalarType = decltype(linalg::LocalDot(r, r));
+  const bool left = (B && side == PreconditionerSide::LEFT);
+  if (left)
+  {
+    InitialResidual(side, A, B, b, x, r, z, true, use_timer);  // r = r₁
+    ApplyB(B, b, z, use_timer);
+    linalg::AXPBY(1.0, z, -1.0, r);  // r = u
+  }
+  else
+  {
+    A->Mult(x, r);  // r = u
+  }
+  const VecType &w = left ? z : b, &u = r;
+
+  // The inner products (w, w), (u, w) = uᴴ w, and (u, u) in one reduction.
+  ScalarType dot[3] = {linalg::LocalDot(w, w), linalg::LocalDot(w, u),
+                       linalg::LocalDot(u, u)};
+  Mpi::GlobalSum(3, dot, comm);
+  const double uu = std::real(dot[2]);
+  ScalarType alpha = (uu > 0.0) ? ScalarType(dot[1] / uu) : ScalarType(0.0);
+  if (!std::isfinite(std::abs(alpha)))
+  {
+    alpha = 0.0;
+  }
+  if (alpha == 0.0)
+  {
+    x = 0.0;
+    r = w;
+  }
+  else if (left && std::abs(alpha) > 2.0)
+  {
+    x *= alpha;
+    InitialResidual(side, A, B, b, x, r, z, true, use_timer);
+  }
+  else
+  {
+    x *= alpha;
+    linalg::AXPBY(ScalarType(1.0), w, -alpha, r);
+  }
+  return std::sqrt(std::abs(dot[0]));
+}
+
+// Sets the residual r of x at the start of a GMRES cycle and returns its norm. The first
+// cycle starts from zero without an initial guess, else from the initial guess unless it is
+// zero, scaled as above with scale_guess, and sets initial_res, the reference of the
+// stopping test (the residual norm of a zero initial guess).
+template <typename OperType, typename VecType>
+inline double CycleResidual(MPI_Comm comm, PreconditionerSide side, const OperType *A,
+                            const Solver<OperType> *B, const VecType &b, VecType &x,
+                            VecType &r, VecType &z, bool first_cycle, bool initial_guess,
+                            bool scale_guess, double &initial_res, bool use_timer = true)
+{
+  if (first_cycle && initial_guess && linalg::Norml2(comm, x) != 0.0)
+  {
+    if (scale_guess)
+    {
+      initial_res = ScaledInitialResidual(comm, side, A, B, b, x, r, z, use_timer);
+    }
+    else
+    {
+      InitialResidual(side, A, B, b, x, r, z, true, use_timer);
+      const bool left = (B && side == PreconditionerSide::LEFT);
+      if (left)
+      {
+        ApplyB(B, b, z, use_timer);
+      }
+      initial_res = linalg::Norml2(comm, left ? z : b);
+    }
+    return linalg::Norml2(comm, r);
+  }
+  InitialResidual(side, A, B, b, x, r, z, !first_cycle, use_timer);
+  const double beta = linalg::Norml2(comm, r);
+  if (first_cycle)
+  {
+    initial_res = beta;
+  }
+  return beta;
+}
+
 template <typename OperType, typename VecType>
 inline void ApplyBA(PreconditionerSide side, const OperType *A, const Solver<OperType> *B,
                     const VecType &x, VecType &y, VecType &z, bool use_timer = true)
@@ -605,7 +700,8 @@ void GmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
   Initialize();
 
   // Monitor the correction to a nonzero initial guess, if requested: x - x₀ = V y with
-  // orthonormal V for left or no preconditioning (first cycle only).
+  // orthonormal V for left or no preconditioning (first cycle only). With a correction
+  // limit, the guess is not scaled, so that the correction is to x₀ as given.
   correction_exceeded = false;
   RealType x0_norm = 0.0;
   const bool monitor_correction = max_rel_correction > 0.0 && this->initial_guess &&
@@ -623,31 +719,13 @@ void GmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
   for (; it < max_it; restart++)
   {
     // Initialize.
-    InitialResidual(pc_side, A, B, b, x, r, V[0], (this->initial_guess || restart > 0),
-                    this->use_timer);
-    true_beta = linalg::Norml2(comm, r);
+    true_beta =
+        CycleResidual(comm, pc_side, A, B, b, x, r, V[0], it == 0, this->initial_guess,
+                      max_rel_correction <= 0.0, initial_res, this->use_timer);
     CheckDot(true_beta, "GMRES residual norm is not valid: beta = ");
     if (it == 0)
     {
-      if (this->initial_guess)
-      {
-        RealType beta_rhs;
-        if (B && pc_side == PreconditionerSide::LEFT)
-        {
-          ApplyB(B, b, V[0], this->use_timer);
-          beta_rhs = linalg::Norml2(comm, V[0]);
-        }
-        else  // !B || pc_side == PreconditionerSide::RIGHT
-        {
-          beta_rhs = linalg::Norml2(comm, b);
-        }
-        CheckDot(beta_rhs, "GMRES residual norm is not valid: beta_rhs = ");
-        initial_res = beta_rhs;
-      }
-      else
-      {
-        initial_res = true_beta;
-      }
+      CheckDot(initial_res, "GMRES residual norm is not valid: initial_res = ");
       eps = std::max(rel_tol * initial_res, abs_tol);
     }
     else if (beta > 0.0 && std::abs(beta - true_beta) > 0.1 * true_beta &&
@@ -827,22 +905,13 @@ void FgmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
   for (; it < max_it; restart++)
   {
     // Initialize.
-    InitialResidual(PreconditionerSide::RIGHT, A, B, b, x, Z[0], V[0],
-                    (this->initial_guess || restart > 0), this->use_timer);
-    true_beta = linalg::Norml2(comm, Z[0]);
+    true_beta = CycleResidual(comm, PreconditionerSide::RIGHT, A, B, b, x, Z[0], V[0],
+                              it == 0, this->initial_guess, max_rel_correction <= 0.0,
+                              initial_res, this->use_timer);
     CheckDot(true_beta, "FGMRES residual norm is not valid: beta = ");
     if (it == 0)
     {
-      if (this->initial_guess)
-      {
-        auto beta_rhs = linalg::Norml2(comm, b);
-        CheckDot(beta_rhs, "FGMRES residual norm is not valid: beta_rhs = ");
-        initial_res = beta_rhs;
-      }
-      else
-      {
-        initial_res = true_beta;
-      }
+      CheckDot(initial_res, "FGMRES residual norm is not valid: initial_res = ");
       eps = std::max(rel_tol * initial_res, abs_tol);
     }
     else if (beta > 0.0 && std::abs(beta - true_beta) > 0.1 * true_beta &&

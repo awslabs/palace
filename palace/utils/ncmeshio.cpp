@@ -707,6 +707,7 @@ bool PrintParallelNCMesh(const mfem::ParMesh &orig, double length_scale,
       seg[GEOMETRY] << v[c] * length_scale << (c + 1 < vdim ? ' ' : '\n');
     }
   }
+  const double *X = fes ? x->HostRead() : nullptr;
   for (int c = 0; fes && c < (byvdim ? 1 : vdim); c++)
   {
     for (int cat = 0; cat < 5; cat++)
@@ -716,7 +717,7 @@ bool PrintParallelNCMesh(const mfem::ParMesh &orig, double length_scale,
         for (int i = (byvdim ? 0 : c); i < (byvdim ? vdim : c + 1); i++)
         {
           seg[GEOMETRY + 5 * c + cat]
-              << mfem::ZeroSubnormal((*x)(fes->DofToVDof(d, i)) * length_scale)
+              << mfem::ZeroSubnormal(X[fes->DofToVDof(d, i)] * length_scale)
               << (byvdim && i + 1 < vdim ? ' ' : '\n');
         }
       }
@@ -1053,23 +1054,25 @@ bool ReadFileNodes(mfem::ParMesh &mesh, const NCMeshFile &file, double length_sc
   const auto values = ExchangeRecords(comm, answer, displs);
   std::vector<int> cursor(displs.begin(), displs.end() - 1);
   auto *fes = x.ParFESpace();
-  x = std::numeric_limits<double>::quiet_NaN();
+  auto *X = x.HostWrite();
+  std::fill(X, X + x.Size(), std::numeric_limits<double>::quiet_NaN());
   for (const auto &q : pieces)
   {
     for (long long i = q.i; i < q.i + q.m; i++)
     {
       for (int k = 0; k < nval; k++)
       {
-        x(fes->DofToVDof(dofs[q.cat][i], file.byvdim ? k : q.c)) =
+        X[fes->DofToVDof(dofs[q.cat][i], file.byvdim ? k : q.c)] =
             values[cursor[q.p]++] / length_scale;
       }
     }
   }
   mfem::Vector tv;
   x.GetTrueDofs(tv);
+  const auto *TV = tv.HostRead();
   for (int i = 0; i < tv.Size(); i++)
   {
-    ok = ok && std::isfinite(tv(i));
+    ok = ok && std::isfinite(TV[i]);
   }
   x.SetFromTrueDofs(tv);
   MeshData::UpdateVertices(mesh);

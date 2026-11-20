@@ -260,7 +260,9 @@ to group cases into separate sweeps.
     These cases are tagged `[Regression][Long]` and registered as
     `long-*` ctest entries (label `long`); the long-tests CI workflow
     runs them via `ctest -L "^long$"` when the `trigger-long-tests`
-    PR label is applied.
+    PR label is applied. In an installed test tree, the `long` label also
+    covers the unit tests on the debug device (`debug-np1-*` and
+    `debug-np2-*`).
 
 Category tags are orthogonal to execution-style tags: a regression case is
 still `[Serial][Parallel][GPU][Regression]` because the same case is valid
@@ -335,7 +337,9 @@ When *Palace* is built with `PALACE_BUILD_WITH_COVERAGE`, running the unit tests
 generates coverage information that tracks which parts of the codebase are
 exercised by the tests. The `scripts/measure-test-coverage` script automates
 the entire coverage measurement process, handling compiler detection, test
-execution, and report generation.
+execution, and report generation. In CI, the coverage of each run is uploaded to
+[Codecov](https://app.codecov.io/gh/awslabs/palace), which comments on each pull
+request.
 
 !!! warning "Before continuing"
 
@@ -501,7 +505,12 @@ data rather than reading from the source-tree `examples/` directory.
     GPU runners. Each configuration runs the full unit test suite (serial +
     parallel) and all default regression tests.
  3. Long tests (`long-tests.yml`): Expensive test cases (e.g.,
-    `transmon/transmon_amr`) that are too slow to run on every push.
+    `transmon/transmon_amr`) that are too slow to run on every push. They also
+    run the unit tests on MFEM's debug device (`--device debug`, on 1 and 2
+    processes), which fails on a host access to data whose valid copy is on
+    the device: `operator[]` and `operator()` do not synchronize, so on a GPU
+    such an access reads stale data. Use `HostRead`, `HostWrite`, or
+    `HostReadWrite` in tests too.
 
 The `long-tests` check is required for merging, but long test execution is
 opt-in. The check passes when long testing is deferred. To request an
