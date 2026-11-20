@@ -81,7 +81,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {runner: arm64}
           - {runner: x64}
     runs-on: [self-hosted, '${{ matrix.runner }}']
     steps:
