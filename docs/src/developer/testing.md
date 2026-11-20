@@ -337,7 +337,9 @@ When *Palace* is built with `PALACE_BUILD_WITH_COVERAGE`, running the unit tests
 generates coverage information that tracks which parts of the codebase are
 exercised by the tests. The `scripts/measure-test-coverage` script automates
 the entire coverage measurement process, handling compiler detection, test
-execution, and report generation.
+execution, and report generation. In CI, the coverage of each run is uploaded to
+[Codecov](https://app.codecov.io/gh/awslabs/palace), which comments on each pull
+request.
 
 !!! warning "Before continuing"
 
