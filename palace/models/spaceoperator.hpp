@@ -8,6 +8,7 @@
 #include <complex>
 #include <initializer_list>
 #include <memory>
+#include <optional>
 #include <vector>
 #include <mfem.hpp>
 #include "fem/bilinearform.hpp"
@@ -29,6 +30,7 @@
 namespace palace
 {
 
+class EnvironmentOperator;
 class IoData;
 class Mesh;
 
@@ -93,6 +95,11 @@ private:
   AssemblyDomains assembly_domains;
   void RestrictToAssemblyDomains(std::initializer_list<MaterialPropertyCoefficient *> f,
                                  std::initializer_list<MaterialPropertyCoefficient *> fb);
+
+  // The environment of the region of a driven substructuring, and the restriction of the
+  // assembly to the region (see SetEnvironment).
+  EnvironmentOperator *environment = nullptr;
+  std::optional<AssemblyDomains::Restriction> region_restriction;
 
   mfem::Array<int> SetUpBoundaryProperties(const config::PecBoundaryData &pec,
                                            const mfem::ParMesh &mesh);
@@ -174,6 +181,14 @@ public:
   // matrices are restricted while an AssemblyDomains::Restriction is in scope. The
   // matrix-free wave-port and Floquet terms of GetExtraSystemOperator are not restricted.
   AssemblyDomains &GetAssemblyDomains() { return assembly_domains; }
+
+  // Make the operators those of the region of a driven substructuring against its condensed
+  // environment: assembled on the region's elements, with the environment's DOFs off Γ
+  // eliminated as essential DOFs, and its terms on Γ in the extra system operator, the
+  // preconditioner matrix (its single level, for a sparse direct solver) and the
+  // excitations. The environment must outlive the operators.
+  void SetEnvironment(EnvironmentOperator &env);
+  EnvironmentOperator *GetEnvironment() const { return environment; }
 
   // Return list of all PEC boundary true dofs for all finite element space levels.
   const std::vector<mfem::Array<int>> &GetNDDbcTDofLists() const

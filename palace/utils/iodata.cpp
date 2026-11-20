@@ -610,6 +610,40 @@ void IoData::CheckConfiguration()
                    "\"Solver.Linear.SuperLU3DCommunicator\" is not used!\n");
     }
     solver.substructuring->direct_solver = solver.linear.type;
+
+    // An online driven sweep solves its region as a driven problem with the dense S_E of
+    // the environment on Γ (see SpaceOperator::SetEnvironment), which a sparse direct
+    // solver factors with it: on one level, in complex arithmetic, reusing the analysis of
+    // the first frequency, and exactly (the block low-rank compression of MUMPS at
+    // round-off).
+    if (problem.type == ProblemType::DRIVEN &&
+        solver.substructuring->mode == SubstructuringMode::ONLINE &&
+        solver.driven.adaptive_tol == 0.0)
+    {
+      auto &linear = solver.linear;
+      if (linear.type != LinearSolver::STRUMPACK && linear.type != LinearSolver::MUMPS &&
+          linear.type != LinearSolver::SUPERLU)
+      {
+#if defined(MFEM_USE_STRUMPACK)
+        linear.type = LinearSolver::STRUMPACK;
+#elif defined(MFEM_USE_MUMPS)
+        linear.type = LinearSolver::MUMPS;
+#elif defined(MFEM_USE_SUPERLU)
+        linear.type = LinearSolver::SUPERLU;
+#endif
+      }
+      linear.mg_max_levels = 1;
+      linear.complex_coarse_solve = true;
+      linear.reorder_reuse = true;
+      linear.drop_small_entries = false;
+      linear.pc_mat_real = false;
+      linear.pc_mat_shifted = 0;
+      linear.superlu_3d = false;
+      linear.strumpack_compression_type = (linear.type == LinearSolver::MUMPS)
+                                              ? SparseCompression::BLR
+                                              : SparseCompression::NONE;
+      linear.strumpack_lr_tol = 1.0e-14;
+    }
   }
 
   // Resolve default values in configuration file.

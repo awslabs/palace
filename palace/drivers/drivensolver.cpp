@@ -7,6 +7,7 @@
 #include <complex>
 #include <cstddef>
 #include <iostream>
+#include <map>
 #include <numbers>
 #include <Eigen/Dense>
 #include <fmt/core.h>
@@ -21,6 +22,8 @@
 #include "linalg/ksp.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
+#include "models/drivensubstructure.hpp"
+#include "models/environmentoperator.hpp"
 #include "models/floquetportoperator.hpp"
 #include "models/lumpedportoperator.hpp"
 #include "models/portexcitations.hpp"
@@ -75,7 +78,16 @@ DrivenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     Mpi::Print("\nRestarting from solve {}", iodata.solver.driven.restart);
   }
 
-  // Main frequency sweep loop.
+  // Main frequency sweep loop. Online, a uniform sweep solves the region against the
+  // environment of the saved model.
+  if (const auto &sub = iodata.solver.substructuring;
+      sub && sub->mode == SubstructuringMode::ONLINE &&
+      iodata.solver.driven.adaptive_tol == 0.0)
+  {
+    EnvironmentOperator env(iodata, space_op);
+    space_op.SetEnvironment(env);
+    return {SweepUniform(space_op), space_op.GlobalTrueVSize()};
+  }
   if (iodata.solver.substructuring)
   {
     return {SweepSubstructured(iodata, space_op, adaptive), space_op.GlobalTrueVSize()};
@@ -91,7 +103,23 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
 
   // Initialize postprocessing for measurement and printers.
   // Initialize write directory with default path; will be changed for multi-excitations.
-  PostOperator<ProblemType::DRIVEN> post_op(iodata, space_op);
+  // The field of a substructured region is known in the region and on Γ only.
+  auto *env = space_op.GetEnvironment();
+  config::DomainData domains = iodata.domains;
+  config::BoundaryData boundaries = iodata.boundaries;
+  if (env)
+  {
+    RegionPostprocessing(env->RegionAttributes(), space_op.GetMesh().Get(),
+                         env->RegionMesh() ? &env->RegionBoundaryAttributes() : nullptr,
+                         !env->Ports().empty(), "Online", domains, boundaries);
+  }
+  PostOperator<ProblemType::DRIVEN> post_op(iodata.problem, iodata.solver, domains,
+                                            boundaries, iodata.units, space_op);
+  if (env && post_op.WillWriteFields())
+  {
+    Mpi::Warning("Online driven substructuring writes the fields in the region and on the "
+                 "interface only (zero in the environment)!\n");
+  }
 
   // The fixed system matrices are only needed when the system cannot be applied through
   // the preconditioner (see SpaceOperator::GetSystemOperator), so assemble them on first
@@ -115,8 +143,13 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
   E = 0.0;
   B = 0.0;
 
-  // Initialize structures for storing and reducing the results of error estimation.
-  const FluxErrorEstimator<ComplexVector> estimator(space_op, iodata);
+  // Initialize structures for storing and reducing the results of error estimation (none
+  // for a substructured region, whose environment field is not known).
+  std::unique_ptr<FluxErrorEstimator<ComplexVector>> estimator;
+  if (!env)
+  {
+    estimator = std::make_unique<FluxErrorEstimator<ComplexVector>>(space_op, iodata);
+  }
   ErrorIndicator indicator;
 
   // If using Floquet BCs, a correction term (kp x E) needs to be added to the B field.
@@ -260,12 +293,23 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
         // Switch ParaView subfolders once per excitation, after the first solve.
         post_op.InitializeParaviewDataCollection(excitation_idx);
       }
+      if (env)
+      {
+        // The environment's ports from the model, at the solution on Γ.
+        std::map<int, std::complex<double>> V, S;
+        env->PortValues(excitation_idx, omega, E, V, S);
+        post_op.SetLumpedPortVoltages(std::move(V));
+        post_op.SetWavePortOverlaps(std::move(S));
+      }
       auto total_domain_energy =
           post_op.MeasureAndPrintAll(excitation_idx, int(omega_i), E, B, omega);
 
       // Calculate and record the error indicators.
-      Mpi::Print(" Updating solution error estimates\n");
-      estimator.AddErrorIndicator(E, B, total_domain_energy, indicator);
+      if (estimator)
+      {
+        Mpi::Print(" Updating solution error estimates\n");
+        estimator->AddErrorIndicator(E, B, total_domain_energy, indicator);
+      }
     }
 
     // Final postprocessing & printing. After the last excitation, the solver totals were

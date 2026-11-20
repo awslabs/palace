@@ -17,6 +17,7 @@
 #include "linalg/jacobi.hpp"
 #include "linalg/ksp.hpp"
 #include "linalg/rap.hpp"
+#include "models/environmentoperator.hpp"
 #include "models/floquetportoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
@@ -478,6 +479,42 @@ auto AssembleOperator(const AssemblyDomains &domains, const FiniteElementSpace &
   domains.Restrict(a);
   return a.Assemble(skip_zeros);
 }
+
+// The environment's term R_Γᵀ S_E(ω) R_Γ of the operator of a substructured region,
+// complex symmetric (see EnvironmentOperator).
+class EnvironmentTermOperator : public ComplexOperator
+{
+private:
+  EnvironmentOperator &env;
+  const double omega;
+
+public:
+  EnvironmentTermOperator(EnvironmentOperator &env, double omega, int n)
+    : ComplexOperator(n), env(env), omega(omega)
+  {
+  }
+
+  void Mult(const ComplexVector &x, ComplexVector &y) const override
+  {
+    y = 0.0;
+    env.AddMult(omega, x, y);
+  }
+
+  void AddMult(const ComplexVector &x, ComplexVector &y,
+               const std::complex<double> a) const override
+  {
+    if (a == 1.0)
+    {
+      env.AddMult(omega, x, y);
+      return;
+    }
+    ComplexVector t(y.Size());
+    t.UseDevice(true);
+    t = 0.0;
+    env.AddMult(omega, x, t);
+    y.AXPY(a, t);
+  }
+};
 
 auto AssembleOperators(
     const AssemblyDomains &domains, const FiniteElementSpaceHierarchy &fespaces,
@@ -1067,6 +1104,11 @@ SpaceOperator::GetExtraSystemOperator(double omega, Operator::DiagonalPolicy dia
   add(std::move(A2));
   add(std::move(W));
   add(std::move(F));
+  if (environment)
+  {
+    add(std::make_unique<EnvironmentTermOperator>(*environment, omega,
+                                                  GetNDSpace().GetTrueVSize()));
+  }
   return op;
 }
 
@@ -1473,6 +1515,34 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(ScalarType a0,
       auto B_l =
           BuildLevelParOperator<OperType>(std::move(br_l), std::move(bi_l), fespace_l);
       B_l->SetEssentialTrueDofs(dbc_tdof_lists_l, Operator::DiagonalPolicy::DIAG_ONE);
+      if constexpr (std::is_same_v<OperType, ComplexOperator> &&
+                    std::is_same_v<A3Type, double>)
+      {
+        if (environment && !aux)
+        {
+          // The region's single level, assembled with the environment's S_E(ω) on Γ, which
+          // the sparse direct solver factors with it.
+          auto S = environment->Assemble(a3);
+          auto add = [&S](const Operator *part, int p)
+          {
+            if (!part)
+            {
+              return std::move(S[p]);
+            }
+            const auto &A = dynamic_cast<const ParOperator &>(*part).ParallelAssemble();
+            return std::unique_ptr<mfem::HypreParMatrix>(mfem::Add(1.0, A, 1.0, *S[p]));
+          };
+          auto Ar = add(B_l->Real(), 0);
+          auto Ai = add(B_l->Imag(), 1);
+          // A process without region elements assembles no entry of its rows, so the
+          // eliminated DOFs get their identity rows from S_E's diagonal entries.
+          Ar->EliminateBC(dbc_tdof_lists_l, Operator::DiagonalPolicy::DIAG_ONE);
+          Ai->EliminateBC(dbc_tdof_lists_l, Operator::DiagonalPolicy::DIAG_ZERO);
+          B->AddOperator(
+              std::make_unique<ComplexWrapperOperator>(std::move(Ar), std::move(Ai)));
+          continue;
+        }
+      }
       if (aux)
       {
         B->AddAuxiliaryOperator(std::move(B_l));
@@ -1486,6 +1556,22 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(ScalarType a0,
 
   print_prec_hdr = false;
   return B;
+}
+
+void SpaceOperator::SetEnvironment(EnvironmentOperator &env)
+{
+  MFEM_VERIFY(!environment && GetNDSpaces().GetNumLevels() == 1,
+              "The region of a driven substructuring is set up once, on one level!");
+  environment = &env;
+  region_restriction.emplace(assembly_domains, env.RegionAttributes());
+  auto &dbc = nd_dbc_tdof_lists.back();
+  const auto &pinned = env.PinnedTrueDofs();
+  std::vector<int> merged(dbc.HostRead(), dbc.HostRead() + dbc.Size());
+  merged.insert(merged.end(), pinned.HostRead(), pinned.HostRead() + pinned.Size());
+  std::ranges::sort(merged);
+  merged.erase(std::unique(merged.begin(), merged.end()), merged.end());
+  dbc.SetSize(static_cast<int>(merged.size()));
+  std::copy(merged.begin(), merged.end(), dbc.HostWrite());
 }
 
 std::unique_ptr<ComplexOperator> SpaceOperator::GetSystemOperator(double omega,
@@ -1702,7 +1788,10 @@ bool SpaceOperator::GetExcitationVector(int excitation_idx, double omega,
   RHS *= 1i * omega;
   bool nnz2 = AddExcitationVector2Internal(excitation_idx, omega, RHS);
   linalg::SetSubVector(RHS, nd_dbc_tdof_lists.back(), 0.0);
-  return nnz1 || nnz2;
+  // The sources of the environment, condensed on Γ (their own entries are eliminated).
+  const bool nnz_env =
+      environment && environment->AddExcitation(excitation_idx, omega, RHS);
+  return nnz1 || nnz2 || nnz_env;
 }
 
 void SpaceOperator::GetLumpedPortExcitationVectorPrimaryEt(int port_idx,
