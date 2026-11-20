@@ -170,9 +170,9 @@ public:
                 const Units &units, const std::vector<std::unique_ptr<Mesh>> &mesh);
   SpaceOperator(const IoData &iodata, const std::vector<std::unique_ptr<Mesh>> &mesh);
 
-  // The domains to which the stiffness, damping, mass and extra system matrices are
-  // restricted while an AssemblyDomains::Restriction is in scope. The matrix-free wave-port
-  // and Floquet terms of GetExtraSystemOperator are not restricted.
+  // The domains to which the stiffness, damping, mass, extra system and preconditioner
+  // matrices are restricted while an AssemblyDomains::Restriction is in scope. The
+  // matrix-free wave-port and Floquet terms of GetExtraSystemOperator are not restricted.
   AssemblyDomains &GetAssemblyDomains() { return assembly_domains; }
 
   // Return list of all PEC boundary true dofs for all finite element space levels.

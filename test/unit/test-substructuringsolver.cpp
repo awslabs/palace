@@ -3309,6 +3309,79 @@ TEST_CASE("SpaceOperator assembly restricted to region and environment",
     CHECK(linalg::Norml2(pmesh.GetComm(), y_reg) > 0.0);
     CHECK(linalg::Norml2(pmesh.GetComm(), y_env) > 0.0);
   }
+
+  // So do the preconditioners, at every level and on the auxiliary spaces.
+  auto precond = [&](const std::vector<int> *domains)
+  {
+    std::optional<AssemblyDomains::Restriction> restriction;
+    if (domains)
+    {
+      restriction.emplace(space_op.GetAssemblyDomains(), *domains);
+    }
+    return space_op.GetPreconditionerMatrix<ComplexOperator>(
+        std::complex<double>(1.0), std::complex<double>(0.0, omega),
+        std::complex<double>(-omega * omega), omega);
+  };
+  const auto P_full = precond(nullptr), P_reg = precond(&region),
+             P_env = precond(&environment);
+  auto mg = [](const ComplexOperator &P) -> const ComplexMultigridOperator &
+  { return dynamic_cast<const ComplexMultigridOperator &>(P); };
+  for (const bool aux : {false, true})
+  {
+    for (std::size_t l = 0; l < mg(*P_full).GetNumLevels(); l++)
+    {
+      auto level = [&](const ComplexOperator &P)
+      {
+        return aux ? &mg(P).GetAuxiliaryOperatorAtLevel(l) : &mg(P).GetOperatorAtLevel(l);
+      };
+      const int m = level(*P_full)->Width();
+      Vector xl(m), yl_full(m), yl_reg(m), yl_env(m);
+      xl.Randomize(3 + Mpi::Rank(pmesh.GetComm()));
+      for (const bool imag : {false, true})
+      {
+        CAPTURE(aux, l, imag);
+        apply(level(*P_full), imag, xl, yl_full);
+        apply(level(*P_reg), imag, xl, yl_reg);
+        apply(level(*P_env), imag, xl, yl_env);
+        const double n_full = linalg::Norml2(pmesh.GetComm(), yl_full);
+        yl_reg += yl_env;
+        yl_reg -= yl_full;
+        CHECK(linalg::Norml2(pmesh.GetComm(), yl_reg) <= 1.0e-12 * (n_full + 1.0e-300));
+      }
+    }
+  }
+  auto finest = [&](const ComplexOperator &P) { return &mg(P).GetFinestOperator(); };
+  for (const bool imag : {false, true})
+  {
+    CAPTURE(imag);
+    apply(finest(*P_reg), imag, x_eint, y_reg);
+    apply(finest(*P_env), imag, x_rint, y_env);
+    const double n = linalg::Norml2(pmesh.GetComm(), x);
+    CHECK(linalg::Norml2(pmesh.GetComm(), y_reg) <= 1.0e-12 * n);
+    CHECK(linalg::Norml2(pmesh.GetComm(), y_env) <= 1.0e-12 * n);
+  }
+  // The assembled matrix of the region couples no row of the environment's interior (which
+  // keeps its zero diagonal entry): its elements are left out, not assembled with zero
+  // coefficients, which a sparse direct solver would factor.
+  const auto *part = dynamic_cast<const ParOperator *>(finest(*P_reg)->Real());
+  REQUIRE(part);
+  auto *A = (hypre_ParCSRMatrix *)part->ParallelAssemble();
+  const hypre_CSRMatrix *diag = hypre_ParCSRMatrixDiag(A),
+                        *offd = hypre_ParCSRMatrixOffd(A);
+  int coupled = 0;
+  for (int i = 0; i < nt; i++)
+  {
+    if (marks[1][i] && !marks[0][i])
+    {
+      for (HYPRE_Int k = hypre_CSRMatrixI(diag)[i]; k < hypre_CSRMatrixI(diag)[i + 1]; k++)
+      {
+        coupled += (hypre_CSRMatrixJ(diag)[k] != i);
+      }
+      coupled += hypre_CSRMatrixI(offd)[i + 1] - hypre_CSRMatrixI(offd)[i];
+    }
+  }
+  Mpi::GlobalSum(1, &coupled, pmesh.GetComm());
+  CHECK(coupled == 0);
 }
 
 TEST_CASE("Barycentric interpolation of a rational vector function",

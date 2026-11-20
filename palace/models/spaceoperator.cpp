@@ -480,11 +480,12 @@ auto AssembleOperator(const AssemblyDomains &domains, const FiniteElementSpace &
 }
 
 auto AssembleOperators(
-    const FiniteElementSpaceHierarchy &fespaces, const MaterialPropertyCoefficient *df,
-    const MaterialPropertyCoefficient *f, const MaterialPropertyCoefficient *dfb,
-    const MaterialPropertyCoefficient *fb, const MaterialPropertyCoefficient *fp,
-    const MaterialPropertyCoefficient *frb, const MaterialPropertyCoefficient *fpb,
-    bool skip_zeros = false, bool assemble_q_data = false)
+    const AssemblyDomains &domains, const FiniteElementSpaceHierarchy &fespaces,
+    const MaterialPropertyCoefficient *df, const MaterialPropertyCoefficient *f,
+    const MaterialPropertyCoefficient *dfb, const MaterialPropertyCoefficient *fb,
+    const MaterialPropertyCoefficient *fp, const MaterialPropertyCoefficient *frb,
+    const MaterialPropertyCoefficient *fpb, bool skip_zeros = false,
+    bool assemble_q_data = false)
 {
   // Keep configured coefficient support on the coarse sparse level. This is required for
   // an exact-complex coarse solve: a nonlinear eigenvalue seed λ = iω has Im(λ²) = 0, but
@@ -495,6 +496,7 @@ auto AssembleOperators(
   // have no symbolic structure to preserve, so exact-zero terms are omitted there.
   BilinearForm coarse(fespaces.GetFESpaceAtLevel(0));
   AddConfiguredIntegrators(coarse, df, f, dfb, fb, fp, frb, fpb);
+  domains.Restrict(coarse);
   std::vector<std::unique_ptr<Operator>> ops;
   ops.reserve(fespaces.GetNumLevels());
   ops.push_back(coarse.Assemble(skip_zeros));
@@ -506,6 +508,7 @@ auto AssembleOperators(
     // can be left out.
     fine.SkipZeroCoefficientElements();
     AddIntegrators(fine, df, f, dfb, fb, fp, frb, fpb, assemble_q_data);
+    domains.Restrict(fine);
     auto fine_ops = fine.Assemble(fespaces, skip_zeros, 1);
     for (auto &op : fine_ops)
     {
@@ -515,7 +518,8 @@ auto AssembleOperators(
   return ops;
 }
 
-auto AssembleAuxOperators(const FiniteElementSpaceHierarchy &fespaces,
+auto AssembleAuxOperators(const AssemblyDomains &domains,
+                          const FiniteElementSpaceHierarchy &fespaces,
                           const MaterialPropertyCoefficient *f,
                           const MaterialPropertyCoefficient *fb,
                           const MaterialPropertyCoefficient *frb, bool skip_zeros = false,
@@ -524,6 +528,7 @@ auto AssembleAuxOperators(const FiniteElementSpaceHierarchy &fespaces,
   // Match the configured coarse-support policy of the primary hierarchy above.
   BilinearForm coarse(fespaces.GetFESpaceAtLevel(0));
   AddConfiguredAuxIntegrators(coarse, f, fb, frb);
+  domains.Restrict(coarse);
   std::vector<std::unique_ptr<Operator>> ops;
   ops.reserve(fespaces.GetNumLevels());
   ops.push_back(coarse.Assemble(skip_zeros));
@@ -532,6 +537,7 @@ auto AssembleAuxOperators(const FiniteElementSpaceHierarchy &fespaces,
     BilinearForm fine(fespaces.GetFinestFESpace());
     fine.SkipZeroCoefficientElements();
     AddAuxIntegrators(fine, f, fb, frb, assemble_q_data);
+    domains.Restrict(fine);
     auto fine_ops = fine.Assemble(fespaces, skip_zeros, 1);
     for (auto &op : fine_ops)
     {
@@ -1306,17 +1312,17 @@ void SpaceOperator::AssemblePreconditioner(
   Mpi::GlobalMin(2, empty, GetComm());
   if (!empty[0])
   {
-    br_vec = AssembleOperators(GetNDSpaces(), &dfr, &fr, &dfbr, &fbr, &fpr, &frbr, &fpbr,
-                               skip_zeros, assemble_q_data);
-    br_aux_vec =
-        AssembleAuxOperators(GetH1Spaces(), &fr, &fbr, &frbr, skip_zeros, assemble_q_data);
+    br_vec = AssembleOperators(assembly_domains, GetNDSpaces(), &dfr, &fr, &dfbr, &fbr,
+                               &fpr, &frbr, &fpbr, skip_zeros, assemble_q_data);
+    br_aux_vec = AssembleAuxOperators(assembly_domains, GetH1Spaces(), &fr, &fbr, &frbr,
+                                      skip_zeros, assemble_q_data);
   }
   if (!empty[1])
   {
-    bi_vec = AssembleOperators(GetNDSpaces(), &dfi, &fi, &dfbi, &fbi, &fpi, &frbi, &fpbi,
-                               skip_zeros, assemble_q_data);
-    bi_aux_vec =
-        AssembleAuxOperators(GetH1Spaces(), &fi, &fbi, &frbi, skip_zeros, assemble_q_data);
+    bi_vec = AssembleOperators(assembly_domains, GetNDSpaces(), &dfi, &fi, &dfbi, &fbi,
+                               &fpi, &frbi, &fpbi, skip_zeros, assemble_q_data);
+    bi_aux_vec = AssembleAuxOperators(assembly_domains, GetH1Spaces(), &fi, &fbi, &frbi,
+                                      skip_zeros, assemble_q_data);
   }
 }
 
@@ -1356,10 +1362,10 @@ void SpaceOperator::AssemblePreconditioner(
   Mpi::GlobalMin(1, &empty, GetComm());
   if (!empty)
   {
-    br_vec = AssembleOperators(GetNDSpaces(), &dfr, &fr, &dfbr, &fbr, nullptr, &frbr,
-                               nullptr, skip_zeros, assemble_q_data);
-    br_aux_vec =
-        AssembleAuxOperators(GetH1Spaces(), &fr, &fbr, &frbr, skip_zeros, assemble_q_data);
+    br_vec = AssembleOperators(assembly_domains, GetNDSpaces(), &dfr, &fr, &dfbr, &fbr,
+                               nullptr, &frbr, nullptr, skip_zeros, assemble_q_data);
+    br_aux_vec = AssembleAuxOperators(assembly_domains, GetH1Spaces(), &fr, &fbr, &frbr,
+                                      skip_zeros, assemble_q_data);
   }
 }
 
@@ -1393,10 +1399,10 @@ void SpaceOperator::AssemblePreconditioner(
   Mpi::GlobalMin(1, &empty, GetComm());
   if (!empty)
   {
-    br_vec = AssembleOperators(GetNDSpaces(), &dfr, &fr, &dfbr, &fbr, nullptr, &frbr,
-                               nullptr, skip_zeros, assemble_q_data);
-    br_aux_vec =
-        AssembleAuxOperators(GetH1Spaces(), &fr, &fbr, &frbr, skip_zeros, assemble_q_data);
+    br_vec = AssembleOperators(assembly_domains, GetNDSpaces(), &dfr, &fr, &dfbr, &fbr,
+                               nullptr, &frbr, nullptr, skip_zeros, assemble_q_data);
+    br_aux_vec = AssembleAuxOperators(assembly_domains, GetH1Spaces(), &fr, &fbr, &frbr,
+                                      skip_zeros, assemble_q_data);
   }
 }
 
