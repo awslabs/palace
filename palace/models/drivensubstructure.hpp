@@ -21,6 +21,17 @@
 namespace palace
 {
 
+class IoData;
+
+namespace config
+{
+
+struct BoundaryData;
+struct DomainData;
+
+}  // namespace config
+
+class PortExcitations;
 class SpaceOperator;
 
 //
@@ -409,6 +420,39 @@ private:
             const std::vector<std::pair<int, WavePortOperator::ModalCorrectionTerm>> &terms,
             std::vector<std::complex<double>> &val) const;
 };
+
+// The lumped ports on the environment side (and its wave ports, as -index), with the true
+// DOFs of its lumped ports, aborting for a lumped port touching Γ (its excitation and
+// voltage would depend on both sides). Collective.
+std::vector<int> EnvironmentPorts(const IoData &iodata, const DrivenSubstructure &ds,
+                                  std::map<int, std::vector<char>> &port_dofs);
+
+// The full S_E (n x n, row-major) of a record's lower triangle (by columns), mapped to the
+// current interface as M^-T S_E M^-1 with map, if given (SignatureMap::DualMatrix).
+std::vector<std::complex<double>> FullSchur(const std::complex<double> *lower, int n,
+                                            const SignatureMap *map);
+
+// The index of x in y (relative tolerance tol), -1 if none.
+int FindValue(const std::vector<double> &y, double x, double tol = 1.0e-10);
+
+// The tolerance of the source fingerprint of an excitation (see
+// DrivenSubstructureModel::SameSource): the modes of the environment's wave ports, and so
+// their sources, are reproducible to their eigensolver tolerance over the spectral gap
+// only.
+double SourceTolerance(const IoData &iodata, const PortExcitations &port_excitations,
+                       const std::vector<int> &env_ports, int excitation_idx);
+
+// The postprocessing of a region whose field is known in the region and on Γ only (from a
+// model, online or adaptive): the energies of the domain postprocessing in the region,
+// without totals or participation ratios, the surface fluxes on boundaries in the region
+// (on the mesh of the region, region_bdr_attributes, those the model records), and the
+// probes found in its elements, with a warning (what: "Online" or "Adaptive") naming those
+// left out, and the power of the environment's ports if it has some. Collective.
+void RegionPostprocessing(const std::vector<int> &region_attributes,
+                          const mfem::ParMesh &mesh,
+                          const std::vector<int> *region_bdr_attributes, bool env_ports,
+                          const char *what, config::DomainData &domains,
+                          config::BoundaryData &boundaries);
 
 }  // namespace palace
 
