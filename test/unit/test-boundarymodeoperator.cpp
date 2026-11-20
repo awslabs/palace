@@ -407,9 +407,10 @@ public:
       E.GetTrueDofs(t);
       x.Real().SetVector(t, 0);
     }
+    auto *X = x.Real().HostReadWrite();
     for (int i = nd_size; i < nd_size + h1_size; i++)
     {
-      x.Real()[i] = en;
+      X[i] = en;
     }
     component.op->Mult(x, y);
     return {linalg::Dot(comm, x.Real(), y.Real()), linalg::Dot(comm, x.Real(), y.Imag())};

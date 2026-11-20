@@ -40,23 +40,26 @@ public:
   void AssembleDiagonal(Vector &diag) const override
   {
     diag.SetSize(height);
-    diag[0] = sign * 100.0;
-    diag[1] = sign * 2.0;
+    auto *D = diag.HostWrite();
+    D[0] = sign * 100.0;
+    D[1] = sign * 2.0;
     if (eliminated_dof)
     {
-      diag[2] = 1.0;
+      D[2] = 1.0;
     }
   }
 
   void Mult(const Vector &x, Vector &y) const override
   {
     y.SetSize(height);
-    const double x0 = x[0], x1 = x[1];
-    y[0] = sign * (100.0 * x0 + 10.0 * x1);
-    y[1] = sign * (10.0 * x0 + 2.0 * x1);
+    const auto *X = x.HostRead();
+    const double x0 = X[0], x1 = X[1];
+    auto *Y = y.HostWrite();
+    Y[0] = sign * (100.0 * x0 + 10.0 * x1);
+    Y[1] = sign * (10.0 * x0 + 2.0 * x1);
     if (eliminated_dof)
     {
-      y[2] = x[2];
+      Y[2] = X[2];
     }
   }
 
@@ -74,15 +77,18 @@ public:
   void AssembleDiagonal(Vector &diag) const override
   {
     diag.SetSize(2);
-    diag[0] = 1.0;
-    diag[1] = has_zero_entry ? 0.0 : 1.0;
+    auto *D = diag.HostWrite();
+    D[0] = 1.0;
+    D[1] = has_zero_entry ? 0.0 : 1.0;
   }
 
   void Mult(const Vector &x, Vector &y) const override
   {
     y.SetSize(2);
-    y[0] = x[0];
-    y[1] = has_zero_entry ? 0.0 : x[1];
+    const auto *X = x.HostRead();
+    auto *Y = y.HostWrite();
+    Y[0] = X[0];
+    Y[1] = has_zero_entry ? 0.0 : X[1];
   }
 
   void MultTranspose(const Vector &x, Vector &y) const override { Mult(x, y); }
@@ -107,9 +113,10 @@ public:
   void AssembleDiagonal(Vector &diag) const override
   {
     diag.SetSize(height);
+    auto *D = diag.HostWrite();
     for (int i = 0; i < height; i++)
     {
-      diag(i) = Diagonal(i);
+      D[i] = Diagonal(i);
     }
   }
 
@@ -174,9 +181,10 @@ void Check(Smoother &smoother, const Operator &A, double expected)
   Vector x(A.Height()), y(A.Height());
   A.AssembleDiagonal(x);
   smoother.Mult(x, y);
+  const auto *Y = y.HostRead();
   for (int i = 0; i < y.Size(); i++)
   {
-    CHECK_THAT(y[i], WithinRel(expected, 2.0e-3));
+    CHECK_THAT(Y[i], WithinRel(expected, 2.0e-3));
   }
 }
 
@@ -188,9 +196,10 @@ void Check(Smoother &smoother, const ComplexOperator &A, double expected)
   x = 0.0;
   A.Real()->AssembleDiagonal(x.Real());
   smoother.Mult(x, y);
+  const auto *YR = y.Real().HostRead();
   for (int i = 0; i < y.Size(); i++)
   {
-    CHECK_THAT(y.Real()[i], WithinRel(expected, 2.0e-3));
+    CHECK_THAT(YR[i], WithinRel(expected, 2.0e-3));
   }
   CHECK(y.Imag().Normlinf() == 0.0);
 }

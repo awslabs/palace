@@ -7,6 +7,7 @@
 #include <functional>
 #include <map>
 #include <numbers>
+#include <span>
 #include <Eigen/Dense>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
@@ -525,7 +526,6 @@ TEST_CASE("LumpedPort_BasicTests_1ElementPort_Cube321", "[lumped_port][Serial][P
 
   // Port mode is in y direction, so filter in x.
   StaticVector<3> x_dir;
-  x_dir.UseDevice(true);
   x_dir = 0.0;
   x_dir(0) = 1.0;
   fb_perp.AddCoefficient(
@@ -695,6 +695,7 @@ TEST_CASE("LumpedPort_BasicTests_1ElementPort_Cube321", "[lumped_port][Serial][P
   // In the case where there is a neighbouring PEC condition, RHS and VecFormS are no
   // longer equal — the DoF on the shared edge with the PEC neighbours are zeroed.
   const auto &nd_dbc_tdof = space_op.GetNDDbcTDofLists().back();
+  const std::span<const int> dbc_tdof(nd_dbc_tdof.HostRead(), nd_dbc_tdof.Size());
   if (boundary_pec_type != PEC::NONE)
   {
     // If more than 1 MPI rank only know that total tdof is non-zero.
@@ -704,6 +705,8 @@ TEST_CASE("LumpedPort_BasicTests_1ElementPort_Cube321", "[lumped_port][Serial][P
   }
 
   REQUIRE(RHS.Real().Size() == VecFormS.Real().Size());
+  const auto *rhs = RHS.Real().HostRead();
+  const auto *vec_s = VecFormS.Real().HostRead();
   // This should true up to normalization, but is not currently due to non-subtracted metal.
   for (int i = 0; i < RHS.Real().Size(); i++)
   {
@@ -711,26 +714,24 @@ TEST_CASE("LumpedPort_BasicTests_1ElementPort_Cube321", "[lumped_port][Serial][P
     // dofs if PEC is at the end of the port.
     if (boundary_pec_type == PEC::SIDE || (!mesh_is_hex && boundary_pec_type == PEC::ENDS))
     {
-      const auto *find_pec = std::ranges::find(nd_dbc_tdof, i);
-      if (find_pec != nd_dbc_tdof.end())
+      if (std::ranges::find(dbc_tdof, i) != dbc_tdof.end())
       {
-        CHECK(RHS.Real()[i] == 0.0);
+        CHECK(rhs[i] == 0.0);
         continue;
       }
     }
-    CHECK_THAT(RHS.Real()[i], WithinAbs(VecFormS.Real()[i], 1e-12));
+    CHECK_THAT(rhs[i], WithinAbs(vec_s[i], 1e-12));
   }
 
   // Check that form_s and form_v are the same apart from the factor 1 / sqrt(R). In actual
   // fact, this should only true in the ideal case, without any metal subtraction. Here it
   // is always true because of the form definitions.
   REQUIRE(VecFormS.Real().Size() == VecFormV.Real().Size());
+  const auto *vec_v = VecFormV.Real().HostRead();
+  const double sqrt_r = iodata.units.Nondimensionalize<VT::VOLTAGE>(std::sqrt(50.));
   for (int i = 0; i < VecFormS.Real().Size(); i++)
   {
-    CHECK_THAT(VecFormV.Real()[i],
-               WithinAbs(VecFormS.Real()[i] *
-                             iodata.units.Nondimensionalize<VT::VOLTAGE>(std::sqrt(50.)),
-                         1e-12));
+    CHECK_THAT(vec_v[i], WithinAbs(vec_s[i] * sqrt_r, 1e-12));
   }
 }
 
@@ -1048,6 +1049,7 @@ TEST_CASE("LumpedPort_BasicTests_3ElementPort_Cube321", "[lumped_port][Serial][P
   // In the case where there is a neighbouring PEC condition, RHS and VecFormS are no
   // longer equal — the DoF on the shared edge with the PEC neighbours are zeroed.
   const auto &nd_dbc_tdof = space_op.GetNDDbcTDofLists().back();
+  const std::span<const int> dbc_tdof(nd_dbc_tdof.HostRead(), nd_dbc_tdof.Size());
   if (boundary_pec_type != PEC::NONE)
   {
     auto nd_dbc_tdof_size = nd_dbc_tdof.Size();
@@ -1056,6 +1058,8 @@ TEST_CASE("LumpedPort_BasicTests_3ElementPort_Cube321", "[lumped_port][Serial][P
   }
 
   REQUIRE(RHS.Real().Size() == VecFormS.Real().Size());
+  const auto *rhs = RHS.Real().HostRead();
+  const auto *vec_s = VecFormS.Real().HostRead();
   // This should true up to normalization, but is not currently due to non-subtracted metal.
   for (int i = 0; i < RHS.Real().Size(); i++)
   {
@@ -1063,26 +1067,24 @@ TEST_CASE("LumpedPort_BasicTests_3ElementPort_Cube321", "[lumped_port][Serial][P
     // dofs if PEC is at the end of the port.
     if (boundary_pec_type == PEC::SIDE || (!mesh_is_hex && boundary_pec_type == PEC::ENDS))
     {
-      const auto *find_pec = std::ranges::find(nd_dbc_tdof, i);
-      if (find_pec != nd_dbc_tdof.end())
+      if (std::ranges::find(dbc_tdof, i) != dbc_tdof.end())
       {
-        CHECK(RHS.Real()[i] == 0.0);
+        CHECK(rhs[i] == 0.0);
         continue;
       }
     }
-    CHECK_THAT(RHS.Real()[i], WithinAbs(VecFormS.Real()[i], 1e-12));
+    CHECK_THAT(rhs[i], WithinAbs(vec_s[i], 1e-12));
   }
 
   // Check that form_s and form_v are the same apart from the factor 1 / sqrt(R). In actual
   // fact, this should only true in the ideal case, without any metal subtraction. Here it
   // is always true because of the form definitions.
   REQUIRE(VecFormS.Real().Size() == VecFormV.Real().Size());
+  const auto *vec_v = VecFormV.Real().HostRead();
+  const double sqrt_r = iodata.units.Nondimensionalize<VT::VOLTAGE>(std::sqrt(50.));
   for (int i = 0; i < VecFormS.Real().Size(); i++)
   {
-    CHECK_THAT(VecFormV.Real()[i],
-               WithinAbs(VecFormS.Real()[i] *
-                             iodata.units.Nondimensionalize<VT::VOLTAGE>(std::sqrt(50.)),
-                         1e-12));
+    CHECK_THAT(vec_v[i], WithinAbs(vec_s[i] * sqrt_r, 1e-12));
   }
 }
 
@@ -1195,10 +1197,11 @@ TEST_CASE("LumpedPort_ReactiveExcitation_Cube321", "[lumped_port][Serial][Parall
   ComplexVector RHS;
   space_op.GetExcitationVector1(1, RHS);
   double max_abs = 0.0;
+  const auto *rhs = RHS.Real().HostRead();
   for (int i = 0; i < RHS.Real().Size(); i++)
   {
-    CHECK(std::isfinite(RHS.Real()[i]));
-    max_abs = std::max(max_abs, std::abs(RHS.Real()[i]));
+    CHECK(std::isfinite(rhs[i]));
+    max_abs = std::max(max_abs, std::abs(rhs[i]));
   }
   Mpi::GlobalMax(1, &max_abs, world_comm);
   // The drive is nonzero (a genuine incident field was assembled).
