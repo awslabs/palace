@@ -1436,6 +1436,16 @@ std::string Sha256Hex(const std::string &text)
   return Sha256HexImpl(text);
 }
 
+double JointTurnMagnitude(const std::array<double, 3> &a, const std::array<double, 3> &b)
+{
+  // A contracted multiply-add makes Cross(a, b) and -Cross(b, a) differ in the last bits:
+  // the lexicographically smaller tangent is always the first operand.
+  const bool swap = b < a;
+  const Point3D &first = swap ? b : a;
+  const Point3D &second = swap ? a : b;
+  return std::atan2(Norm(Cross(first, second)), Dot(first, second));
+}
+
 std::pair<std::string, std::string> SignatureKeyAndHash(nlohmann::json signature,
                                                         const std::string &type)
 {
@@ -6422,8 +6432,10 @@ void Identifier::ComputeCurvature()
       }
       // The geometric turn of every joint (the pair rule reads the local joint turn of the
       // polyline whether or not an arc accounts for it); an arc joint contributes no
-      // density of its own.
-      chain.joint_turn[k] = std::acos(std::clamp(Dot(a.tangent, b.tangent), -1.0, 1.0));
+      // density of its own. Its magnitude in the well-conditioned form (decision 2286): the
+      // arc-cosine of the dot product read 1.49e-8 sqrt(k) rad for collinear runs (split
+      // where the frame changes) whose tangents differ by k units in the last place.
+      chain.joint_turn[k] = JointTurnMagnitude(a.tangent, b.tangent);
       if (const int arc = vertex_arc[b.start_vertex]; arc >= 0)
       {
         chain.joint_excluded[k] = true;

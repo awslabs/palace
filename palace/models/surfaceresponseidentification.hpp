@@ -1056,6 +1056,14 @@ nlohmann::json RepresentativeSignature(const std::vector<nlohmann::json> &signat
 
 std::string Sha256Hex(const std::string &text);
 
+// The magnitude (radians, in [0, pi]) of the turn between two unit tangents, the turn of a
+// joint between two runs of a chain (decision 2286): atan2(|a x b|, a . b), well
+// conditioned for every angle (the arc-cosine of the dot product alone reads
+// 1.49e-8 sqrt(k) rad for collinear tangents that differ by k units in the last place). The
+// operands are taken in a fixed order, so the result does not depend on which tangent comes
+// first. Exposed for the unit tests.
+double JointTurnMagnitude(const std::array<double, 3> &a, const std::array<double, 3> &b);
+
 }  // namespace palace
 
 #endif  // PALACE_MODELS_SURFACE_RESPONSE_IDENTIFICATION_HPP
