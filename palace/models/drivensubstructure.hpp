@@ -119,7 +119,7 @@ struct DrivenSubstructureModel
   std::array<std::size_t, 4> PartSizes() const;
 
   // The records of the model in its file (see substructuring::ModelFile), written and read
-  // by the calling process (ReadHeader is collective): in a new file, the interface records
+  // by the calling process (ReadHeader is collective): the interface records of a new file
   // (substructuring::InterfaceRecords: nG, sig_w, the signatures and length_scale), the
   // header and the record of the environment, in a new file or appended (superseding the
   // previous ones), and the records of the frequencies.
@@ -138,11 +138,11 @@ struct DrivenSubstructureModel
   bool SameHeader(const DrivenSubstructureModel &saved, double source_tol) const;
 
   // Whether fingerprints agree, to a relative tolerance: the environment's (two counts,
-  // then complex quadratic forms) entry by entry, a source's (a nonzero flag, then complex
-  // pairings with the fingerprint fields) relative to its largest pairing, since a pairing
-  // can vanish up to a rounding that depends on the partition. The default tol suits the
-  // exact sources of lumped ports; those of wave ports follow their modes, to the
-  // tolerance of their eigensolver.
+  // then complex quadratic forms) entry by entry (FingerprintsMatch), a source's (a nonzero
+  // flag, then complex pairings with the fingerprint fields) relative to its largest
+  // pairing (PairingsMatch), since a pairing can vanish up to a rounding that depends on
+  // the partition. The default tol suits the exact sources of lumped ports; those of wave
+  // ports follow their modes, to the tolerance of their eigensolver.
   static bool SameEnvironment(const std::vector<double> &a, const std::vector<double> &b);
   static bool SameSource(const double *a, const double *b, double tol = 1.0e-10);
 

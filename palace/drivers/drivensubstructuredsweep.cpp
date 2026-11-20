@@ -654,8 +654,8 @@ void DrivenSubstructuredSweep::OpenModel()
     {
       Mpi::Warning("The saved rational substructuring model did not converge (its sampling "
                    "stopped at {:d} samples, with an error of {:.3e} for \"AdaptiveTol\" "
-                   "{:.3e}): rerun the offline sweep with a larger "
-                   "\"AdaptiveMaxSamples\"!\n",
+                   "{:.3e}): rerun the offline sweep (with a larger "
+                   "\"AdaptiveMaxSamples\" if its sampling reached it)!\n",
                    model.omega.size(), model.error, model.tol);
     }
     if (model.passivity < -model.tol)
