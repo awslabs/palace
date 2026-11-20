@@ -9,6 +9,7 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iterator>
 #include <map>
 #include <memory>
@@ -34,6 +35,7 @@
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
 #include "utils/metadatafile.hpp"
+#include "utils/outputdir.hpp"
 
 namespace palace
 {
@@ -1558,6 +1560,143 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     }
     CHECK(excluded_a == excluded_b);
     CHECK(excluded_a > 0);
+  }
+#endif
+}
+
+// Lane ccpx fix round (decision 2242 m-2): on the Maxwell path the conductor-consistency
+// energy table has rows only at a measurement at which a patch is excluded. The shorted CPW
+// stub as two eigenmodes through the PostOperator: mode 1 = the strip at V (every stub
+// patch fails its test), mode 2 = a uniform E_y (every patch passes). PerExcitation: rows
+// at m 1 only (nothing was excluded at mode 2: no zero rows are written); Sticky (the
+// legacy value): rows at m 1 and m 2 with the same portions (main's table: mode 2 keeps the
+// exclusion of mode 1 and serves its claims raw).
+TEST_CASE_METHOD(
+    test::SurfaceResponseFiles,
+    "Maxwell conductor-consistency energy table has rows only where a patch is "
+    "excluded (eigenmode, exclusion at the first mode only)",
+    "[postoperator][surfaceresponseoperator][conductorconsistency][r0a][maxwell]"
+    "[3d][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  const std::string exclusion =
+      GENERATE(std::string("PerExcitation"), std::string("Sticky"));
+  INFO("exclusion: " << exclusion);
+  const bool sticky = exclusion == "Sticky";
+  const auto library_path =
+      WriteStubLibrary(temp.temp_dir, convex_library_3d_path, 0.1, "r0a");
+  const fs::path output_dir = temp.temp_dir / ("cc-table-" + exclusion);
+  json config = ConvexMaxwellIslandConfig();
+  config["Problem"]["Output"] = output_dir.string();
+  config["Boundaries"]["Ground"]["Attributes"] = {1, 2, 3, 4, 5, 6, 9};
+  auto &correction = config["Solver"]["SurfaceResponseCorrection"];
+  correction.erase("PatchConstruction");
+  correction["Library"] = library_path.string();
+  correction["UnmatchedPolicy"] = "Warn";  // the short's corner cluster has no model: raw
+  correction["TraceCoupling"] = "Collocated";
+  correction["ConductorConsistency"] = {{"Exclusion", exclusion}};
+  IoData iodata(config, false);
+  iodata.boundaries.cracked_attributes.insert(9);
+  MPI_Comm comm = Mpi::World();
+  MakeOutputFolder(iodata, comm);
+  std::vector<std::unique_ptr<Mesh>> meshes;
+  {
+    mfem::Mesh serial = MakeSerialShortedCpwMesh();
+    meshes.push_back(
+        std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(Mpi::World(), serial)));
+  }
+  SpaceOperator space_op(iodata, meshes);
+  PostOperator<ProblemType::EIGENMODE> post_op(iodata, space_op);
+  auto *response = post_op.GetSurfaceResponseOperator();
+  REQUIRE(response);
+  REQUIRE(response->HasConductorConsistencyProbes());
+  REQUIRE(response->ConductorConsistencyPerExcitation() == !sticky);
+
+  auto Field = [&](const std::function<void(const mfem::Vector &, mfem::Vector &)> &f)
+  {
+    GridFunction field(space_op.GetNDSpace(), true);
+    mfem::VectorFunctionCoefficient coefficient(3, f);
+    field.Real().ProjectCoefficient(coefficient);
+    field.Imag() = 0.0;
+    ComplexVector E(field.Real().ParFESpace()->GetTrueVSize());
+    field.Real().GetTrueDofs(E.Real());
+    field.Imag().GetTrueDofs(E.Imag());
+    return E;
+  };
+  StubField strip;
+  strip.amplitude = 1.0;
+  strip.x0 = 0.5;
+  strip.x1 = 2.0;
+  const ComplexVector failing =
+      Field([&](const mfem::Vector &x, mfem::Vector &E) { strip(x, E); });
+  const ComplexVector passing = Field(
+      [](const mfem::Vector &, mfem::Vector &E)
+      {
+        E.SetSize(3);
+        E = 0.0;
+        E[1] = 1.0;
+      });
+  ComplexVector b(space_op.GetRTSpace().GetTrueVSize());
+  b = 0.0;
+  const std::complex<double> omega(1.0, 0.0);
+  auto Mode = [&](int step, const ComplexVector &e)
+  {
+    // The eigen driver's order: the gate on this mode's field, then its measurement.
+    response->ApplyConductorConsistencyGate(e, step, 5.0, false);
+    post_op.SetSurfaceResponseCorrectedField(e, nullptr, omega, 1.0);
+    post_op.MeasureAndPrintAll(step, e, b, omega, 0.0, 0.0, 2);
+  };
+  Mode(0, failing);
+  CHECK(response->GetPatchWeight() == 0.0);
+  CHECK_FALSE(response->GetConductorConsistencyPortions().empty());
+  Mode(1, passing);
+  // PerExcitation: nothing is served raw at mode 2; Sticky: mode 1's claims still are.
+  CHECK(response->GetConductorConsistencyPortions().empty() == !sticky);
+
+  Mpi::Barrier(comm);
+  if (!Mpi::Root(comm))
+  {
+    return;
+  }
+  const fs::path table_path =
+      output_dir / "surface-response-conductor-consistency-energy.csv";
+  REQUIRE(fs::exists(table_path));
+  const auto table = test::ReadTextCsv(table_path);
+  REQUIRE(table.header.size() > 6);
+  CHECK(table.header[0] == "m");
+  std::map<int, std::vector<std::vector<std::string>>> rows_by_mode;
+  for (const auto &row : table.rows)
+  {
+    rows_by_mode[std::stoi(row[table.Column("m")])].push_back(row);
+  }
+  REQUIRE(rows_by_mode.count(1) == 1);
+  CHECK_FALSE(rows_by_mode.at(1).empty());
+  for (const auto &row : rows_by_mode.at(1))
+  {
+    CHECK(std::stoi(row[table.Column("portions")]) > 0);
+  }
+  if (!sticky)
+  {
+    // An absent row: nothing was excluded at mode 2.
+    CHECK(rows_by_mode.size() == 1);
+    CHECK(rows_by_mode.count(2) == 0);
+  }
+  else
+  {
+    REQUIRE(rows_by_mode.size() == 2);
+    REQUIRE(rows_by_mode.count(2) == 1);
+    const auto &first = rows_by_mode.at(1), &second = rows_by_mode.at(2);
+    REQUIRE(second.size() == first.size());
+    for (std::size_t i = 0; i < first.size(); i++)
+    {
+      for (const char *column :
+           {"exc", "evaluation", "type", "portions", "length (m)", "geometric cells"})
+      {
+        CHECK(second[i][table.Column(column)] == first[i][table.Column(column)]);
+      }
+    }
   }
 #endif
 }

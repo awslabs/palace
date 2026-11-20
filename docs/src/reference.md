@@ -1925,9 +1925,13 @@ feature type in `surface-response-conductor-consistency-energy.csv` beside
 `surface-response-uncovered-energy.csv` and `surface-response-domain-boundary-energy.csv`
 (`source`, `evaluation`, `type` with a `Total` row, `portions`, `length (m)`, `geometric
 cells`, then per target interface `conductorconsistency raw energy[k] (J)` and
-`conductorconsistency share[k]`; written only when a patch was excluded, an excitation
-that excluded nothing (`"Sticky"`: evaluated before the exclusion) reads zero), with the portions under
-`Diagnostics.ConductorConsistency.RawPortions`. A solve with no exclusion writes nothing
+`conductorconsistency share[k]`; written only when a patch was excluded), with the portions under
+`Diagnostics.ConductorConsistency.RawPortions`. On an electrostatic run the table has rows
+at every terminal, and a terminal that excluded nothing (`"Sticky"`: evaluated before the
+exclusion) reads zero. On an eigenmode or driven run it has rows only at a mode or a
+(frequency, port excitation) at which a patch is excluded (`"PerExcitation"`: whose own
+test excluded something; `"Sticky"`: from the first exclusion on): an absent row means that
+nothing was excluded there (no zero rows are written). A solve with no exclusion writes nothing
 new. On the Maxwell path a postprocessing interface that is not a response target carries
 its raw energy in the corrected and fixed-flux columns of `surface-Q-corrected.csv` (the
 electrostatic driver's convention; trace closure spread 0, matched edge length fraction and
