@@ -1907,7 +1907,9 @@ construction, with the construction weights; a driven run also writes it once, a
 construction, with the construction weights (each on both rules).
 `"PerExcitation"` adds `ExcludedByExcitation`, `ConstructionPatchWeight`, a log line per
 excitation naming the models excluded there and their raw share per interface and Type, and
-the `conductor-consistency raw share of W` of each flagged coverage cell. An eigenmode's
+the `conductor-consistency raw share of W` of each flagged coverage cell. On an eigenmode
+run `Source` (and the per-mode line's `source`) is the 0-based mode index m - 1, while the
+tables' `source` and `m` columns carry m. An eigenmode's
 self-consistent problem is solved once, before the gate. The patch is
 recorded under `Diagnostics.ConductorConsistency` of the solve's `palace.json` with the
 claimed edge length left uncorrected, next to every tested patch's reading (lengths and
