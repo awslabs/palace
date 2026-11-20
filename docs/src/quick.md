@@ -438,7 +438,7 @@ logrun(`palace -np 1 spheres.json`); # hide
 glvis_dir = joinpath("postpro", "gridfunction", "electrostatic") # hide
 mkpath(glvis_dir) # hide
 for f in ("mesh.000000", "V_000001.gf.000000") # hide
-    cp(joinpath(rundir, glvis_dir, f), joinpath(glvis_dir, f); force = true) # hide
+    cp(joinpath(rundir, glvis_dir, f), joinpath(glvis_dir, f); force=true) # hide
 end # hide
 nothing # hide
 ```
