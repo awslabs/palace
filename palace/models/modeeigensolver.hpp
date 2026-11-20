@@ -21,13 +21,10 @@ namespace palace
 {
 
 class BoundaryModeOperator;
-class FarfieldBoundaryOperator;
 class FiniteElementSpace;
 class FiniteElementSpaceHierarchy;
 class MaterialOperator;
-class SurfaceConductivityOperator;
-class SurfaceImpedanceOperator;
-class SurfaceRationalImpedanceOperator;
+class SurfaceTerms;
 
 template <OperatorType OperType>
 class BlockDiagonalPreconditioner;
@@ -68,11 +65,7 @@ public:
   // port ranks; pass MPI_COMM_NULL to fall back to the FE space comm. For 3D wave port
   // submeshes `normal` is the outward surface normal.
   ModeEigenSolver(const MaterialOperator &mat_op, const mfem::Vector *normal,
-                  SurfaceImpedanceOperator &surf_z_op,
-                  FarfieldBoundaryOperator &farfield_op,
-                  SurfaceConductivityOperator &surf_sigma_op,
-                  SurfaceRationalImpedanceOperator &surf_rz_op,
-                  const FiniteElementSpace &nd_fespace,
+                  SurfaceTerms &surface_terms, const FiniteElementSpace &nd_fespace,
                   const FiniteElementSpace &h1_fespace,
                   const mfem::Array<int> &dbc_tdof_list, int num_modes, int num_vec,
                   double eig_tol, EigenvalueSolver::WhichType which_eig,
@@ -159,10 +152,7 @@ private:
   // Outward surface normal for the WavePort submesh path (null for BoundaryMode). Only the
   // operator model uses its value; the solver uses it to distinguish the two paths.
   const mfem::Vector *normal;
-  SurfaceImpedanceOperator &surf_z_op;
-  FarfieldBoundaryOperator &farfield_op;
-  SurfaceConductivityOperator &surf_sigma_op;
-  SurfaceRationalImpedanceOperator &surf_rz_op;
+  SurfaceTerms &surface_terms;
 
   // References to FE spaces (not owned). Finest level of bmo's hierarchies when set.
   const FiniteElementSpace &nd_fespace;

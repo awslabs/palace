@@ -1,0 +1,74 @@
+{
+  "Problem":
+  {
+    "Type": "Eigenmode",
+    "Verbose": 2,
+    "Output": "postpro/series_rlc18_shunt_eigen_seed"
+  },
+  "Model":
+  {
+    "Mesh": "mesh/parallel_plate.msh",
+    "L0": 1.0e-3  // mm
+  },
+  "Domains":
+  {
+    "Materials":
+    [
+      {
+        "Attributes": [1],  // Vacuum fill
+        "Permeability": 1.0,
+        "Permittivity": 1.0,
+        "LossTan": 0.0
+      }
+    ]
+  },
+  "Boundaries":
+  {
+    "PEC":
+    {
+      "Attributes": [2]  // Parallel plates (conductors)
+    },
+    "PMC":
+    {
+      "Attributes": [3]  // Side walls (magnetic walls -> clean TEM)
+    },
+    "RationalImpedance":
+    [
+      {
+        "Attributes": [5],   // Termination under test (z = L)
+        // The series RLC of series_rlc18_rational_eigen_seed.json (R = eta0, L = 2.0e-8
+        // H/sq, C = 3.909e-15 F/sq, notch at 18 GHz) in parallel with Cp = 5e-14 F/sq:
+        // Zs = N/D with N = s^2 LC + s RC + 1 and D = s Cp N + s C. The Robin coefficient
+        // s D/N = s^2 Cp + 1/L + R(s)/N(s) has a polynomial part of degree 2, exact in the
+        // seed, and a pole part, which the seed freezes at the target.
+        "Numerator":   [7.817992564995199e-23, 1.4726373956323666e-12, 1.0],
+        "Denominator": [3.9089962824975994e-36, 7.363186978161833e-26, 5.39089962824976e-14, 0.0]
+      }
+    ]
+  },
+  "Solver":
+  {
+    "Order": 2,
+    "Device": "CPU",
+    "Eigenmode":
+    {
+      "N": 1,
+      "Target": 9.0,  // GHz
+      "Tol": 1.0e-6,
+      // The modes of the polynomial seed pencil, without the quasi-Newton refinement: with
+      // the pole part of the impedance frozen at the target the seed mode is ~11.41 +
+      // 0.032i GHz, and with the whole Robin coefficient frozen or interpolated it is
+      // ~9.96 + 1.35i GHz.
+      "RefineNonlinear": false
+    },
+    "Linear":
+    {
+      "Type": "Default",
+      "KSPType": "GMRES",
+      "Tol": 1.0e-10,
+      "MaxIts": 100,
+      "ComplexCoarseSolve": true,
+      "MGMaxLevels": 1
+    }
+  }
+}

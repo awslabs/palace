@@ -1,0 +1,71 @@
+{
+  "Problem":
+  {
+    "Type": "Eigenmode",
+    "Verbose": 2,
+    "Output": "postpro/series_rlc40_eigen_seed"
+  },
+  "Model":
+  {
+    "Mesh": "mesh/parallel_plate.msh",
+    "L0": 1.0e-3  // mm
+  },
+  "Domains":
+  {
+    "Materials":
+    [
+      {
+        "Attributes": [1],  // Vacuum fill
+        "Permeability": 1.0,
+        "Permittivity": 1.0,
+        "LossTan": 0.0
+      }
+    ]
+  },
+  "Boundaries":
+  {
+    "PEC":
+    {
+      "Attributes": [2]  // Parallel plates (conductors)
+    },
+    "PMC":
+    {
+      "Attributes": [3]  // Side walls (magnetic walls -> clean TEM)
+    },
+    "RationalImpedance":
+    [
+      {
+        "Attributes": [5],   // Termination under test (z = L)
+        // Series RLC, Zs = (s^2 LC + s RC + 1)/(sC): R = eta0, L = 2.0e-8 H/sq,
+        // C = 7.916e-16 F/sq -> notch at 40 GHz, above the interpolation window of the
+        // NLEPS seed (9 to 27 GHz), so that the seed keeps the fit of the Robin coefficient.
+        "Numerator":   [1.5831434944115278e-23, 2.9820907261555426e-13, 1.0],
+        "Denominator": [7.915717472057639e-16, 0.0]
+      }
+    ]
+  },
+  "Solver":
+  {
+    "Order": 2,
+    "Device": "CPU",
+    "Eigenmode":
+    {
+      "N": 1,
+      "Target": 9.0,  // GHz
+      "Tol": 1.0e-6,
+      // The modes of the polynomial seed pencil, without the quasi-Newton refinement: with
+      // the polynomial interpolant of the Robin coefficient the seed mode is ~9.9388 -
+      // 0.00065i GHz, and with its pole part frozen at the target ~9.9420 + 0.0009i GHz.
+      "RefineNonlinear": false
+    },
+    "Linear":
+    {
+      "Type": "Default",
+      "KSPType": "GMRES",
+      "Tol": 1.0e-10,
+      "MaxIts": 100,
+      "ComplexCoarseSolve": true,
+      "MGMaxLevels": 1
+    }
+  }
+}

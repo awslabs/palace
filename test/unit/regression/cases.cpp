@@ -2472,6 +2472,76 @@ TEST_CASE("rational_impedance_eigen", "[Serial][Parallel][GPU][Regression]")
                                   "series_rlc18_eigen", opts);
 }
 
+// The seed of the nonlinear eigensolve of rational_impedance_eigen, without the
+// quasi-Newton refinement. Its Robin coefficient has a pole (the 18 GHz notch) inside the
+// interpolation window, which the seed freezes at the target instead of interpolating; the
+// seed mode is then within 1% of the mode at ~9.60 + 0.045i GHz (Q = 131 for 108), and 4%
+// off with Q = 14 when the coefficient is interpolated.
+TEST_CASE("rational_impedance_eigen_seed", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 2.0e-2;
+  opts.atol = 1.0e-11;
+  opts.excluded_columns = eigen_excluded;
+  opts.skip_rowcount = true;
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("rational_impedance",
+                                  "series_rlc18_rational_eigen_seed.json",
+                                  "series_rlc18_eigen_seed", opts);
+}
+
+// The seed of rational_impedance_eigen_seed with a capacitance in parallel with the
+// termination, whose Robin coefficient has a polynomial part of degree 2, exact in the
+// seed, and a pole part, which the seed freezes at the target: the seed mode is ~11.41 +
+// 0.032i GHz, and ~9.96 + 1.35i GHz when the whole Robin coefficient is frozen or
+// interpolated.
+TEST_CASE("rational_impedance_eigen_seed_shunt", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 2.0e-2;
+  opts.atol = 1.0e-11;
+  opts.excluded_columns = eigen_excluded;
+  opts.skip_rowcount = true;
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("rational_impedance",
+                                  "series_rlc18_shunt_rational_eigen_seed.json",
+                                  "series_rlc18_shunt_eigen_seed", opts);
+}
+
+// The seed of rational_impedance_eigen_seed with an admittance 1e-26 s² in parallel with
+// the termination (not passive), whose Robin coefficient has a polynomial part of degree 3,
+// not exact in the seed: the seed freezes the whole coefficient at the target, with the
+// seed mode ~9.6695 + 0.0004i GHz, against ~9.6694 - 0.0035i GHz with only its pole part
+// frozen and ~9.24 + 0.32i GHz with the interpolant of the whole coefficient.
+TEST_CASE("rational_impedance_eigen_seed_cubic", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 2.0e-2;
+  opts.atol = 1.0e-11;
+  opts.excluded_columns = eigen_excluded;
+  opts.skip_rowcount = true;
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("rational_impedance",
+                                  "series_rlc18_cubic_rational_eigen_seed.json",
+                                  "series_rlc18_cubic_eigen_seed", opts);
+}
+
+// The seed of a series RLC termination whose notch (40 GHz) lies above the interpolation
+// window: the seed keeps the polynomial interpolant of its Robin coefficient, with the seed
+// mode ~9.9388 - 0.00065i GHz, against ~9.9420 + 0.0009i GHz with its pole part frozen.
+TEST_CASE("rational_impedance_eigen_seed_fit", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 2.0e-2;
+  opts.atol = 1.0e-11;
+  opts.excluded_columns = eigen_excluded;
+  opts.skip_rowcount = true;
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("rational_impedance",
+                                  "series_rlc40_rational_eigen_seed.json",
+                                  "series_rlc40_eigen_seed", opts);
+}
+
 TEST_CASE("cpw_lumped_uniform", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;

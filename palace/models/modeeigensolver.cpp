@@ -27,11 +27,8 @@
 #include "linalg/strumpack.hpp"
 #include "linalg/superlu.hpp"
 #include "models/boundarymodeoperator.hpp"
-#include "models/farfieldboundaryoperator.hpp"
 #include "models/materialoperator.hpp"
-#include "models/surfaceconductivityoperator.hpp"
-#include "models/surfaceimpedanceoperator.hpp"
-#include "models/surfacerationalimpedanceoperator.hpp"
+#include "models/surfaceterms.hpp"
 #include "utils/communication.hpp"
 #include "utils/configfile.hpp"
 #include "utils/iodata.hpp"
@@ -74,18 +71,14 @@ double GetMumpsBLRTol(const config::LinearSolverData &linear)
 }  // namespace
 
 ModeEigenSolver::ModeEigenSolver(
-    const MaterialOperator &mat_op, const mfem::Vector *normal,
-    SurfaceImpedanceOperator &surf_z_op, FarfieldBoundaryOperator &farfield_op,
-    SurfaceConductivityOperator &surf_sigma_op,
-    SurfaceRationalImpedanceOperator &surf_rz_op, const FiniteElementSpace &nd_fespace,
-    const FiniteElementSpace &h1_fespace, const mfem::Array<int> &dbc_tdof_list,
-    int num_modes, int num_vec, double eig_tol, EigenvalueSolver::WhichType which_eig,
-    const config::LinearSolverData &linear, EigenSolverBackend eigen_backend, int verbose,
-    MPI_Comm solver_comm)
+    const MaterialOperator &mat_op, const mfem::Vector *normal, SurfaceTerms &surface_terms,
+    const FiniteElementSpace &nd_fespace, const FiniteElementSpace &h1_fespace,
+    const mfem::Array<int> &dbc_tdof_list, int num_modes, int num_vec, double eig_tol,
+    EigenvalueSolver::WhichType which_eig, const config::LinearSolverData &linear,
+    EigenSolverBackend eigen_backend, int verbose, MPI_Comm solver_comm)
   : num_modes(num_modes), num_vec(num_vec), eig_tol(eig_tol), which_eig(which_eig),
     linear(linear), eigen_backend(eigen_backend), verbose(verbose), mat_op(mat_op),
-    normal(normal), surf_z_op(surf_z_op), farfield_op(farfield_op),
-    surf_sigma_op(surf_sigma_op), surf_rz_op(surf_rz_op), nd_fespace(nd_fespace),
+    normal(normal), surface_terms(surface_terms), nd_fespace(nd_fespace),
     h1_fespace(h1_fespace), dbc_tdof_list(dbc_tdof_list)
 {
   // Assemble Atn, Btn = -Atn^T, Btt locally (no BMO available on this path).
@@ -107,8 +100,8 @@ ModeEigenSolver::ModeEigenSolver(
   Btni = owned_Btni.get();
   Bttr = owned_Bttr.get();
   mode_op_model = std::make_unique<mode_assembly::ModeOperatorModel>(
-      nd_fespace, h1_fespace, mat_op, normal, surf_z_op, farfield_op, surf_sigma_op,
-      surf_rz_op, *Bttr, Atnr, Atni, Btnr, dbc_tdof_list);
+      nd_fespace, h1_fespace, mat_op, normal, surface_terms, *Bttr, Atnr, Atni, Btnr,
+      dbc_tdof_list);
 
   Init(solver_comm);
 }
@@ -121,10 +114,9 @@ ModeEigenSolver::ModeEigenSolver(BoundaryModeOperator &bmo,
                                  EigenSolverBackend eigen_backend, int verbose)
   : num_modes(num_modes), num_vec(num_vec), eig_tol(eig_tol), which_eig(which_eig),
     linear(linear), eigen_backend(eigen_backend), verbose(verbose),
-    mat_op(bmo.GetMaterialOp()), normal(nullptr), surf_z_op(bmo.GetSurfZOp()),
-    farfield_op(bmo.GetFarfieldOp()), surf_sigma_op(bmo.GetSurfSigmaOp()),
-    surf_rz_op(bmo.GetSurfRZOp()), nd_fespace(bmo.GetNDSpace()),
-    h1_fespace(bmo.GetH1Space()), bmo(&bmo), dbc_tdof_list(dbc_tdof_list)
+    mat_op(bmo.GetMaterialOp()), normal(nullptr), surface_terms(bmo.GetSurfaceTerms()),
+    nd_fespace(bmo.GetNDSpace()), h1_fespace(bmo.GetH1Space()), bmo(&bmo),
+    dbc_tdof_list(dbc_tdof_list)
 {
   // Alias BMO-owned frequency-independent matrices; no local assembly.
   Atnr = bmo.GetAtnr();
@@ -133,8 +125,8 @@ ModeEigenSolver::ModeEigenSolver(BoundaryModeOperator &bmo,
   Btni = bmo.GetBtni();
   Bttr = bmo.GetBtt();
   mode_op_model = std::make_unique<mode_assembly::ModeOperatorModel>(
-      nd_fespace, h1_fespace, mat_op, nullptr, surf_z_op, farfield_op, surf_sigma_op,
-      surf_rz_op, *Bttr, Atnr, Atni, Btnr, dbc_tdof_list);
+      nd_fespace, h1_fespace, mat_op, nullptr, surface_terms, *Bttr, Atnr, Atni, Btnr,
+      dbc_tdof_list);
 
   Init(nd_fespace.GetComm());
 }
@@ -816,12 +808,10 @@ ModeEigenSolver::AssembleAttPreconditioner(double omega, double sigma) const
   MaterialPropertyCoefficient fbr(max_bdr_attr), fbi(max_bdr_attr);
   auto &fb_loss = real_pc ? fbr : fbi;
   const double damp_coeff = real_pc ? std::abs(omega) : omega;
-  surf_z_op.AddStiffnessBdrCoefficients(1.0, fbr);
-  surf_z_op.AddMassBdrCoefficients(mass_coeff, fbr);
-  surf_z_op.AddDampingBdrCoefficients(damp_coeff, fb_loss);
-  farfield_op.AddDampingBdrCoefficients(damp_coeff, fb_loss);
-  surf_sigma_op.AddExtraSystemBdrCoefficients(omega, fbr, fb_loss);
-  surf_rz_op.AddExtraSystemBdrCoefficients(omega, fbr, fb_loss);
+  surface_terms.AddStiffnessBdrCoefficients(1.0, fbr);
+  surface_terms.AddMassBdrCoefficients(mass_coeff, fbr);
+  surface_terms.AddDampingBdrCoefficients(damp_coeff, fb_loss);
+  surface_terms.AddExtraSystemBdrMassCoefficients(omega, fbr, fb_loss);
   const bool has_imag = AnyNonEmpty(solver_comm, {&fi, &fbi});
 
   // Assemble ND operators at all levels, and the auxiliary H1 operators for Hiptmair
@@ -935,16 +925,13 @@ ModeEigenSolver::AssembleAnnPreconditioner(double omega) const
   MaterialPropertyCoefficient fbr(max_bdr_attr), fbi(max_bdr_attr);
   auto &fb_loss = real_pc ? fbr : fbi;
   const double damp_coeff = real_pc ? std::abs(omega) : omega;
-  surf_z_op.AddStiffnessBdrCoefficients(-1.0, fbr);
-  surf_z_op.AddMassBdrCoefficients(omega * omega, fbr);
-  surf_z_op.AddDampingBdrCoefficients(-damp_coeff, fb_loss);
-  mode_assembly::AddFarfieldScalarDampingBdrCoefficients(mat_op, farfield_op, -damp_coeff,
-                                                         fb_loss);
+  surface_terms.AddStiffnessBdrCoefficients(-1.0, fbr);
+  surface_terms.AddMassBdrCoefficients(omega * omega, fbr);
+  surface_terms.AddScalarDampingBdrCoefficients(-damp_coeff, fb_loss);
   {
     MaterialPropertyCoefficient robin_r(max_bdr_attr), robin_i(max_bdr_attr);
     auto &robin_loss = real_pc ? robin_r : robin_i;
-    surf_sigma_op.AddExtraSystemBdrCoefficients(omega, robin_r, robin_loss);
-    surf_rz_op.AddExtraSystemBdrCoefficients(omega, robin_r, robin_loss);
+    surface_terms.AddScalarExtraSystemBdrMassCoefficients(omega, robin_r, robin_loss);
     for (auto [robin, fb] : {std::pair{&robin_r, &fbr}, std::pair{&robin_i, &fbi}})
     {
       if (!robin->empty())

@@ -311,6 +311,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Bug Fixes
 
+  - Fixed boundary terms that could take the anisotropic material tensor of another
+    boundary. The scalar coefficient of an `"Impedance"`, `"Conductivity"` or
+    `"RationalImpedance"` boundary or a lumped port could be replaced by the tensor of an
+    `"Absorbing"` boundary, wave port or Floquet port on an anisotropic material when the
+    first diagonal entry of the tensor was equal to the scalar to a relative 1e-9. In one
+    `"BoundaryMode"` example this changed the propagation constant by 6%.
+    [PR 1209](https://github.com/awslabs/palace/pull/1209).
   - The `"Problem"`/`"Iteration"` field of `palace.json` is now updated only after the AMR
     iteration's output is in its final location. With `SaveAdaptIterations`, it used to be
     written before the output was moved into `iterationXX`, so a reader polling it could
