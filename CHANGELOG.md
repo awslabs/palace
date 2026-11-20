@@ -158,6 +158,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     with BoomerAMG did not converge), `"ComplexCoarseSolve": true` is now disabled with a
     warning. Wave ports keep it for their mode solver, which uses a sparse direct solver.
     SchemaVer 4-4-0 [PR 1193](https://github.com/awslabs/palace/pull/1193).
+  - The linear solves of driven simulations without adaptive frequency sweep now start from
+    the minimal-residual combination of the solutions at up to four previous frequencies,
+    and GMRES and FGMRES scale nonzero initial guesses to minimize the initial residual
+    (except when certifying the PROM solution of an adaptive frequency sweep). This reduces
+    the iterations of frequency sweeps. SchemaVer 5-0-1.
+    [PR 1229](https://github.com/awslabs/palace/pull/1229).
   - Each excitation of a uniform driven sweep now starts its first linear solve from zero
     instead of from the last solution of the previous excitation, which saves a few
     iterations for every excitation after the first.
