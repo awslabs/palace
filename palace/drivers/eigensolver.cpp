@@ -668,6 +668,57 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     }
   }
 
+  // [Diagnostic, not for merging] Two-sided Rayleigh quotient of each converged eigenpair:
+  // the root of x^T P(λ) x = 0 nearest the Ritz value, with the unconjugated product. For
+  // complex symmetric K, C and M the left eigenvector is x itself, so the quotient is
+  // stationary and its error quadratic in the eigenvector error. Printed only.
+  if (!has_A2 && !space_op.GetMaterialOp().HasWaveVector())
+  {
+    const auto &dbc_tdof_list = space_op.GetNDDbcTDofLists().back();
+    MPI_Comm comm = space_op.GetComm();
+    auto TDot = [comm](const ComplexVector &u, const ComplexVector &v)
+    {
+      const double rr = linalg::Dot(comm, u.Real(), v.Real());
+      const double ii = linalg::Dot(comm, u.Imag(), v.Imag());
+      const double ri = linalg::Dot(comm, u.Real(), v.Imag());
+      const double ir = linalg::Dot(comm, u.Imag(), v.Real());
+      return std::complex<double>(rr - ii, ri + ir);
+    };
+    ComplexVector x(Curl.Width()), y(Curl.Width());
+    x.UseDevice(true);
+    y.UseDevice(true);
+    for (int i = 0; i < num_report; i++)
+    {
+      eigen->GetEigenvector(i, x);
+      linalg::SetSubVector(x, dbc_tdof_list, 0.0);
+      K->Mult(x, y);
+      const std::complex<double> k = TDot(x, y);
+      M->Mult(x, y);
+      const std::complex<double> m = TDot(x, y);
+      std::complex<double> omega, omega_rq;
+      if (C)
+      {
+        C->Mult(x, y);
+        const std::complex<double> c = TDot(x, y);
+        const std::complex<double> d = std::sqrt(c * c - 4.0 * m * k);
+        const std::complex<double> r1 = (-c + d) / (2.0 * m), r2 = (-c - d) / (2.0 * m);
+        const std::complex<double> lambda_rq =
+            (std::abs(r1 - eigenvalues[i]) < std::abs(r2 - eigenvalues[i])) ? r1 : r2;
+        omega = eigenvalues[i] / 1i;
+        omega_rq = lambda_rq / 1i;
+      }
+      else
+      {
+        omega = std::sqrt(eigenvalues[i]);
+        omega_rq = std::sqrt(k / m);
+      }
+      Mpi::Print(" RQ diagnostic mode {:d}: Ritz {:.16e}{:+.16e}i, Rayleigh {:.16e}{:+.16e}i "
+                 "(rel. diff. {:.3e})\n",
+                 i + 1, omega.real(), omega.imag(), omega_rq.real(), omega_rq.imag(),
+                 std::abs(omega_rq - omega) / std::abs(omega));
+    }
+  }
+
   if (stage_eigenvectors)
   {
     eigen.reset();
