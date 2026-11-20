@@ -651,14 +651,15 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         "mfem",
         when="@0.20:",
         patches=[
-            # https://github.com/mfem/mfem/pull/5754: a conforming parallel space builds its
-            # prolongation again on all processes when it is updated
+            # https://github.com/mfem/mfem/pull/5754 (narrow to @4.10.0 once merged upstream and
+            # Lookahead flags it): a conforming parallel space builds its prolongation again on
+            # all processes when it is updated
             patch(
                 "https://raw.githubusercontent.com/awslabs/palace/"
                 "20477343879bfd528827b9b52f630de9626d8d8e/extern/patch/mfem/"
                 "mfem_pr5754.diff",
                 sha256="8a5cfeaf4fa4d7f9e9fe656413096beb8bad0d6ac46558c3484a368e1695577a",
-                when="@4.10.0",
+                when="@4.10:",
             ),
         ],
     )
