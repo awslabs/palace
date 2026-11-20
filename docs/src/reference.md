@@ -1118,6 +1118,32 @@ entry to roundoff. Like the ownership partition, a region filters surfaces only:
 `LocalizeEdgeEnergy` on a region-filtered entry requires `SaveLocalEdgeEnergy: false`
 (no localized volume diagnostics). Without `Region` every output is unchanged.
 
+When an entry with a `Region` is a response-correction target, its corrected energies
+(fixed-trace, fixed-flux and self-consistent, and the fabricated energy of its coverage
+summary) count, of each patch's fabricated energy, the share of the patch's own within-R
+raw energy that lies in the region (ruling 2251). The patch's own points are the entry's
+within-R quadrature points whose nearest foot on the edge tree lies on the patch's claim
+and that no kept class (Missing, DomainBoundary, SpatialClusterPriority,
+ConductorConsistency) holds at that excitation; the region test is the entry's own 0 / 1
+test at the same points as its raw energies, on the field of the column (the raw field, or
+the corrected field for the self-consistent column). Where those points carry no energy,
+every point of the claim decides by energy, then by area, and a claim that holds no
+within-R point of the entry counts whole where its reference point (the patch origin) lies
+in the region. A patch wholly inside counts whole, one wholly outside not at all, and
+targets whose regions partition the interface sum to the unfiltered entry. The rule is an
+apportionment by the raw field, not a model: where a region wall runs along an edge inside
+the matching distance (a distance band), the split follows the thin-sheet raw field, which
+does not describe how the true energy is distributed with distance from the edge, and a
+large share of cut patches is the sign of it. The point sampling of the region and distance
+tests is unchanged. A warning prints once per construction when a region wall cuts patches;
+`Diagnostics.RegionTargets` in the `SurfaceResponse` block of `palace.json` records, per
+evaluation, the window-wide and the box fabricated energies, the patches inside, cut and
+outside and per tier, the cut patches' share, and the closure spread and failure fraction of
+the patches weighted with their shares; with `PatchEnergy` the per-patch shares are written
+to `surface-response-region-share.csv`. The entry's own closure spread, the run's maximum
+spread and `confident`, the model and patch tables and the census stay window-wide: for
+such an entry they describe the patches of the whole window, not those of the box.
+
 ### Local fabrication response matrices
 
 An electrostatic fabrication-resolved coupon can be driven by a set of

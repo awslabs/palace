@@ -43,6 +43,7 @@ struct FilmRuleResolution;
 class LaplaceOperator;
 class MaterialOperator;
 class SpaceOperator;
+class Units;
 struct IdentifiedFeature;
 struct IdentificationResult;
 // Lane fix-response-memory round 2 (decision 1469 (1) (i)): the LOG-ONLY memory census of
@@ -1118,6 +1119,18 @@ private:
   // PatchEnergy (decision 922 B-1): the applied patches' raw claims by model set; empty
   // unless the configuration requests PatchEnergy.
   ModelRawClaimPortions model_raw_claim_portions;
+  // Ruling 2251 (OI-REGION-TARGET-CORRECTED-NOT-FILTERED): the applied patches' own claims
+  // (the coverage partition's served claims before their model-set labels; portion i held
+  // by region_claim_patches[i]) and every placed patch's reference point (its origin, mesh
+  // units), built only when a dielectric entry carries a Region (empty otherwise).
+  bool region_claims_requested = false;
+  std::vector<SurfacePostOperator::UncoveredPerimeterPortion> region_claim_portions;
+  std::vector<std::vector<std::size_t>> region_claim_patches;
+  std::vector<std::array<double, 3>> region_reference_points;
+  // The loud warning of a Region target whose wall cuts patches: once per construction.
+  bool region_cut_warning_printed = false;
+  int region_raw_records = 0;  // the Raw evaluations recorded (RecordRegionResponse)
+  mutable bool region_share_rows_started = false;  // WriteRegionShareRows
   // kSignatureParameterToleranceOverRadius x R (mesh units): the claim portions' length
   // floor and deduplication tolerance (the DomainBoundary rule's).
   double conductor_consistency_claim_tolerance = 0.0;
@@ -1335,6 +1348,36 @@ public:
     std::map<int, double> fabricated_surface_energy_fixed_flux;
   };
 
+  // Ruling 2251 (OI-REGION-TARGET-CORRECTED-NOT-FILTERED): per placed patch (index) the
+  // share s_p of its fabricated energy that a target with a Region counts, the tier that
+  // formed it (1-4, ComputeRegionPatchShares) and its placement against the region wall.
+  enum class RegionPlacement : int
+  {
+    OUTSIDE = 0,
+    INSIDE = 1,
+    CUT = 2
+  };
+  struct RegionPatchShares
+  {
+    std::vector<double> share;
+    std::vector<int> tier;
+    std::vector<RegionPlacement> placement;
+  };
+  // A target with a Region: its box values sum_p s_p f_p and the census of the patches
+  // adding to it (by placement and by tier); the closure accumulation of those patches with
+  // s_p as a factor (ruling 2251 Q3; the window-wide values stay in the response).
+  struct RegionTargetResponse
+  {
+    double fabricated_surface_energy = 0.0;
+    double fabricated_surface_energy_fixed_flux = 0.0;
+    double cut_share = 0.0;  // the cut patches' share of sum_p |s_p f_p| (fixed trace)
+    int patches_inside = 0, patches_cut = 0, patches_outside = 0;
+    std::array<int, 4> patches_by_tier = {0, 0, 0, 0};
+    double trace_closure_spread = 0.0;
+    double response_weighted_trace_closure_spread = 0.0;
+    double trace_closure_response_failure_fraction = 0.0;
+  };
+
   struct ElectrostaticResponse
   {
     double domain_correction = 0.0;
@@ -1348,6 +1391,8 @@ public:
     double response_weighted_trace_closure_spread = 0.0;
     double trace_closure_response_failure_fraction = 0.0;
     bool confident = true;
+    // Ruling 2251: the targets with a Region (only when shares are given).
+    std::map<int, RegionTargetResponse> region_targets;
   };
 
   struct MaxwellResponse
@@ -1495,6 +1540,8 @@ public:
     // recorded here, and the operator dK carries it as dM does.
     int magnetic_fallback_patch_count = 0;
     double loop_fallback_magnetic_domain_correction = 0.0;
+    // Ruling 2251: the targets with a Region (only when shares are given).
+    std::map<int, RegionTargetResponse> region_targets;
   };
   // OI-MX-LOOPGATE (decision 955 D5 / D6, pre-registered): a patch whose circulating share
   // is at most the floor contributes no remainder (the uncounted part is at most the floor
@@ -1668,9 +1715,12 @@ public:
   // With `resolution`, the census adds every local patch's fixed-trace fabricated energy
   // per Type to it (nothing else in the evaluation changes).
   ElectrostaticResponse
-  GetElectrostaticResponse(const Vector &x, bool include_fixed_flux = true,
-                           bool include_patches = false,
-                           ResolutionAccumulator *resolution = nullptr) const;
+  // With `region_shares` (ruling 2251), each target it names also gets its box values
+  // (region_targets) from the same per-patch energies, in a separate reduction.
+  GetElectrostaticResponse(
+      const Vector &x, bool include_fixed_flux = true, bool include_patches = false,
+      ResolutionAccumulator *resolution = nullptr,
+      const std::map<int, RegionPatchShares> *region_shares = nullptr) const;
 
   // The (ii-a) clipped-correction diagnostic of the SpatialClusterPriority-dropped coupons
   // (OI-SCP-BOXGROW, decisions 958 (b) / 960 / 969 Q1): per dropped patch (the order of
@@ -1973,9 +2023,12 @@ public:
   // Evaluate a postprocessing-only response for a complex Nedelec Maxwell field. Coupon
   // voltages are reconstructed from transverse contour integrals and applied through
   // Hermitian response-matrix quadratic forms.
-  MaxwellResponse GetMaxwellResponse(const GridFunction &E, std::complex<double> omega,
-                                     bool include_patches = false,
-                                     ResolutionAccumulator *resolution = nullptr) const;
+  // With `region_shares`: as GetElectrostaticResponse (ruling 2251).
+  MaxwellResponse
+  GetMaxwellResponse(const GridFunction &E, std::complex<double> omega,
+                     bool include_patches = false,
+                     ResolutionAccumulator *resolution = nullptr,
+                     const std::map<int, RegionPatchShares> *region_shares = nullptr) const;
 
   bool HasSurfaceResponse() const;
   std::set<int> GetTargetInterfaces() const;
@@ -2221,6 +2274,49 @@ public:
   {
     return conductor_consistency_union_patches;
   }
+  // Ruling 2251: the claim record of the targets with a Region (see the members).
+  bool HasRegionClaims() const { return region_claims_requested; }
+  const std::vector<SurfacePostOperator::UncoveredPerimeterPortion> &
+  GetRegionClaimPortions() const
+  {
+    return region_claim_portions;
+  }
+  const std::vector<std::vector<std::size_t>> &GetRegionClaimPatches() const
+  {
+    return region_claim_patches;
+  }
+  const std::vector<std::array<double, 3>> &GetRegionReferencePoints() const
+  {
+    return region_reference_points;
+  }
+  // Ruling 2251: per target with a Region, each placed patch's share from its footprint by
+  // the tiers (1) its own not-kept points by energy, (2) all its own points by energy, (3)
+  // by area, (4) its reference point.
+  static std::map<int, RegionPatchShares> ComputeRegionPatchShares(
+      const std::map<int, std::vector<SurfacePostOperator::RegionPatchFootprint>>
+          &footprints);
+  // Ruling 2251: one evaluation's box values of the targets with a Region into
+  // Diagnostics.RegionTargets of palace.json, with the loud warning (once per construction)
+  // when a Region target has patches its wall cuts. `source` = the electrostatic terminal
+  // index, or -1: the 0-based ordinal of the Maxwell measurement in this construction (an
+  // eigenmode run measures mode m as m - 1); `evaluation` "Raw" or "SelfConsistent".
+  // The energies are written in J (`energy_scale` = J per energy unit of the solve).
+  void RecordRegionResponse(int source, const std::string &evaluation,
+                            const std::map<int, RegionTargetResponse> &targets,
+                            const std::map<int, double> &window_fabricated,
+                            const std::map<int, double> &window_fabricated_fixed_flux,
+                            double energy_scale);
+  // Ruling 2251 (PatchEnergy only): one evaluation's rows of
+  // surface-response-region-share.csv (root; created with its header by the construction's
+  // first call): per target with a Region, every placed patch with a footprint on it or its
+  // reference point inside (every other patch has share 0). Patch indices 1-based like the
+  // patch table; `source` as RecordRegionResponse's (-1: the last Raw record's ordinal);
+  // `evaluation` 0 the raw field, 2 the self-consistent field (the patch table's codes).
+  void WriteRegionShareRows(
+      const std::filesystem::path &post_dir, int source, int evaluation,
+      const std::map<int, std::vector<SurfacePostOperator::RegionPatchFootprint>>
+          &footprints,
+      const std::map<int, RegionPatchShares> &shares, const Units &units) const;
   // PatchEnergy (decision 922 B-1): the applied patches' raw claims labelled by model set
   // (lane L1: always built, the coverage partition's served claims).
   const ModelRawClaimPortions &GetModelRawClaimPortions() const

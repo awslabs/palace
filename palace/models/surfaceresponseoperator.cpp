@@ -30401,7 +30401,10 @@ SpatialClusterPriorityExclusions CollectSpatialClusterPriorityPortions(
 // of every applied patch (weight > 0 and not in `excluded`), by the DomainBoundary rule,
 // labelled by the ascending set of the models whose patches share the claim ("m<idx>"
 // joined by '+').
-ModelRawClaimPortions CollectModelRawClaimPortions(
+// The applied patches' raw claims (every patch not excluded and of weight above 0; a
+// co-located split pair's interval once, held by both): the served claims of the coverage
+// partition before their model-set labels.
+ExcludedPatchPortions CollectAppliedPatchClaims(
     const std::set<std::size_t> &excluded, const std::vector<ResponsePatchData> &patches,
     const ResponseCorrectionData &config, const ContinuationOwnership &ownership,
     const UncoveredSpatialSupportClipping &uncovered_clipping, double matching_radius)
@@ -30417,6 +30420,16 @@ ModelRawClaimPortions CollectModelRawClaimPortions(
     AppendExcludedPatchClaim(claims, patch_idx, patches, config, ownership,
                              uncovered_clipping, tolerance);
   }
+  return claims;
+}
+
+ModelRawClaimPortions CollectModelRawClaimPortions(
+    const std::set<std::size_t> &excluded, const std::vector<ResponsePatchData> &patches,
+    const ResponseCorrectionData &config, const ContinuationOwnership &ownership,
+    const UncoveredSpatialSupportClipping &uncovered_clipping, double matching_radius)
+{
+  const ExcludedPatchPortions claims = CollectAppliedPatchClaims(
+      excluded, patches, config, ownership, uncovered_clipping, matching_radius);
   ModelRawClaimPortions result;
   result.length = claims.length;
   std::map<std::pair<std::string, int>, ModelRawClaimPortions::GroupMember> members;
@@ -32959,6 +32972,19 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
       }
     }
   }
+  // Ruling 2251: every placed patch's reference point (its origin, mesh units; tier 4 of
+  // a target with a Region), kept only when a dielectric entry carries a Region
+  // (the claims below exist on three-dimensional meshes only).
+  region_claim_portions.clear();
+  region_claim_patches.clear();
+  region_reference_points.clear();
+  if (region_claims_requested)
+  {
+    for (const auto &patch : placed_patches)
+    {
+      region_reference_points.push_back(patch.origin);
+    }
+  }
   if (dimension == 3)
   {
     std::vector<std::string> skipped;
@@ -33630,6 +33656,23 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
         model_raw_claim_portions.portions.FinishAppending();
         PlacementStamp("model raw claim portions (PatchEnergy)");
       }
+      // Ruling 2251: the per-patch claim record of the targets with a Region (built only
+      // when a dielectric entry carries one): the same claims, with their patches.
+      if (region_claims_requested)
+      {
+        const ExcludedPatchPortions claims = CollectAppliedPatchClaims(
+            spatially_owned_patches, placed_patches, config, ownership,
+            uncovered_spatial_support_clipping, config.matching_radius);
+        region_claim_portions.clear();
+        region_claim_portions.reserve(claims.portions.size());
+        for (const auto &portion : claims.portions)
+        {
+          region_claim_portions.push_back(
+              {portion.p0, portion.p1, portion.topology, portion.feature});
+        }
+        region_claim_patches = claims.patches;
+        PlacementStamp("region claim record (ruling 2251)");
+      }
       // Decision 1475 (2): the memory census INSIDE the placement, at the end of its claims
       // phases (log only; collective gate).
       if (ResponseMemoryCensusEnabled(fespace.GetComm()))
@@ -34153,6 +34196,11 @@ SurfaceResponseOperator::SurfaceResponseOperator(
     basis_size(0), late_exclusion_pass(late_exclusion_pass_)
 {
   BlockTimer setup_timer(Timer::CONSTRUCT_RESPONSE);
+  // Ruling 2251: the claim record of the targets with a Region, only when an entry has one.
+  region_claims_requested =
+      std::any_of(iodata.boundaries.postpro.dielectric.begin(),
+                  iodata.boundaries.postpro.dielectric.end(),
+                  [](const auto &entry) { return entry.second.region.has_value(); });
   // Setup phase stamps (decision 538 diagnosis): printed only with
   // PALACE_RESPONSE_SETUP_TIMING set, so the default log is byte-identical.
   const bool setup_timing = std::getenv("PALACE_RESPONSE_SETUP_TIMING") != nullptr;
@@ -35867,6 +35915,11 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
     const FilmRuleResolution *candidate_film_rule, bool law_reading)
 {
   BlockTimer setup_timer(Timer::CONSTRUCT_RESPONSE);
+  // Ruling 2251: the claim record of the targets with a Region, only when an entry has one.
+  region_claims_requested =
+      std::any_of(iodata.boundaries.postpro.dielectric.begin(),
+                  iodata.boundaries.postpro.dielectric.end(),
+                  [](const auto &entry) { return entry.second.region.has_value(); });
   // The impedance-metal rule (decisions 2006 / 2012): a candidate is never cached or
   // shared (its geometry is built from the film rule's seam), and its law statuses come
   // with its own construction.
@@ -40640,10 +40693,300 @@ SurfaceResponseOperator::GetFabricatedSurfaceEnergy(const Vector &x) const
   return energy;
 }
 
+namespace
+{
+
+// Ruling 2251: the local sums of one target with a Region: [0] / [1] sum s_p f_p (fixed
+// trace / fixed flux); [2] / [3] sum |s_p f_p| (fixed trace) of the cut patches / of every
+// patch; [4] / [5] / [6] the closure accumulation with s_p as a factor (weight x spread^2,
+// failed weight, weight); [7] / [8] / [9] the patches inside / cut / outside; [10]-[13] the
+// patches per tier 1-4.
+constexpr std::size_t kRegionTargetSums = 14;
+
+void AccumulateRegionPatch(std::array<double, kRegionTargetSums> &sums,
+                           const SurfaceResponseOperator::RegionPatchShares &shares,
+                           int global_index, double fixed_trace_energy,
+                           double fixed_flux_energy, bool closure,
+                           double maximum_trace_closure_spread)
+{
+  MFEM_VERIFY(global_index >= 0 &&
+                  static_cast<std::size_t>(global_index) < shares.share.size(),
+              "A Region target's shares do not hold patch " << global_index << "!");
+  const double s = shares.share[global_index];
+  const auto placement = shares.placement[global_index];
+  sums[0] += s * fixed_trace_energy;
+  sums[1] += s * fixed_flux_energy;
+  const double magnitude = std::abs(s * fixed_trace_energy);
+  sums[2] += placement == SurfaceResponseOperator::RegionPlacement::CUT ? magnitude : 0.0;
+  sums[3] += magnitude;
+  if (closure)
+  {
+    const double weight =
+        std::max(std::abs(fixed_trace_energy), std::abs(fixed_flux_energy));
+    if (weight > 0.0)
+    {
+      const double spread = std::abs(fixed_trace_energy - fixed_flux_energy) / weight;
+      sums[4] += s * weight * spread * spread;
+      sums[5] += spread > maximum_trace_closure_spread ? s * weight : 0.0;
+      sums[6] += s * weight;
+    }
+  }
+  switch (placement)
+  {
+    case SurfaceResponseOperator::RegionPlacement::INSIDE:
+      sums[7] += 1.0;
+      break;
+    case SurfaceResponseOperator::RegionPlacement::CUT:
+      sums[8] += 1.0;
+      break;
+    case SurfaceResponseOperator::RegionPlacement::OUTSIDE:
+      sums[9] += 1.0;
+      break;
+  }
+  sums[9 + shares.tier[global_index]] += 1.0;
+}
+
+// Reduces the local sums of every target with a Region (one reduction, issued only when
+// shares are given) and forms its box values.
+std::map<int, SurfaceResponseOperator::RegionTargetResponse>
+ReduceRegionTargets(std::map<int, std::array<double, kRegionTargetSums>> &local,
+                    bool closure, MPI_Comm comm)
+{
+  std::vector<double> reduction;
+  reduction.reserve(kRegionTargetSums * local.size());
+  for (const auto &[target, sums] : local)
+  {
+    (void)target;
+    reduction.insert(reduction.end(), sums.begin(), sums.end());
+  }
+  if (!reduction.empty())
+  {
+    Mpi::GlobalSum(static_cast<int>(reduction.size()), reduction.data(), comm);
+  }
+  std::map<int, SurfaceResponseOperator::RegionTargetResponse> result;
+  std::size_t k = 0;
+  for (const auto &[target, sums] : local)
+  {
+    (void)sums;
+    const double *r = reduction.data() + k;
+    k += kRegionTargetSums;
+    auto &response = result[target];
+    response.fabricated_surface_energy = r[0];
+    response.fabricated_surface_energy_fixed_flux = r[1];
+    response.cut_share = r[3] > 0.0 ? r[2] / r[3] : 0.0;
+    response.patches_inside = static_cast<int>(std::llround(r[7]));
+    response.patches_cut = static_cast<int>(std::llround(r[8]));
+    response.patches_outside = static_cast<int>(std::llround(r[9]));
+    for (int t = 0; t < 4; t++)
+    {
+      response.patches_by_tier[t] = static_cast<int>(std::llround(r[10 + t]));
+    }
+    if (closure)
+    {
+      const double scale = std::max(std::abs(r[0]), std::abs(r[1]));
+      response.trace_closure_spread = scale > 0.0 ? std::abs(r[0] - r[1]) / scale : 0.0;
+      if (r[6] > 0.0)
+      {
+        response.response_weighted_trace_closure_spread = std::sqrt(r[4] / r[6]);
+        response.trace_closure_response_failure_fraction = r[5] / r[6];
+      }
+    }
+  }
+  return result;
+}
+
+}  // namespace
+
+std::map<int, SurfaceResponseOperator::RegionPatchShares>
+SurfaceResponseOperator::ComputeRegionPatchShares(
+    const std::map<int, std::vector<SurfacePostOperator::RegionPatchFootprint>> &footprints)
+{
+  // Ruling 2251 Q4: a point counts for a patch only where the corrected sum replaces its
+  // raw energy by the patch's fabricated energy (no kept class holds it): tier 1; then
+  // every point of the own claim by energy (2), by area (3); a claim without a within-R
+  // point of the entry: the reference point (4). The placement is geometric (area).
+  std::map<int, RegionPatchShares> result;
+  for (const auto &[target, list] : footprints)
+  {
+    auto &shares = result[target];
+    shares.share.resize(list.size(), 0.0);
+    shares.tier.resize(list.size(), 4);
+    shares.placement.resize(list.size(), RegionPlacement::OUTSIDE);
+    for (std::size_t p = 0; p < list.size(); p++)
+    {
+      const auto &footprint = list[p];
+      if (footprint.open_energy != 0.0)
+      {
+        shares.tier[p] = 1;
+        shares.share[p] = footprint.open_energy_in / footprint.open_energy;
+      }
+      else if (footprint.energy != 0.0)
+      {
+        shares.tier[p] = 2;
+        shares.share[p] = footprint.energy_in / footprint.energy;
+      }
+      else if (footprint.area > 0.0)
+      {
+        shares.tier[p] = 3;
+        shares.share[p] = footprint.area_in / footprint.area;
+      }
+      else
+      {
+        shares.tier[p] = 4;
+        shares.share[p] = footprint.reference_in ? 1.0 : 0.0;
+      }
+      if (footprint.area > 0.0)
+      {
+        shares.placement[p] = footprint.area_in == footprint.area ? RegionPlacement::INSIDE
+                              : footprint.area_in == 0.0          ? RegionPlacement::OUTSIDE
+                                                                  : RegionPlacement::CUT;
+      }
+      else
+      {
+        shares.placement[p] =
+            footprint.reference_in ? RegionPlacement::INSIDE : RegionPlacement::OUTSIDE;
+      }
+    }
+  }
+  return result;
+}
+
+void SurfaceResponseOperator::RecordRegionResponse(
+    int source, const std::string &evaluation,
+    const std::map<int, RegionTargetResponse> &targets,
+    const std::map<int, double> &window_fabricated,
+    const std::map<int, double> &window_fabricated_fixed_flux, double energy_scale)
+{
+  if (targets.empty())
+  {
+    return;
+  }
+  auto &record = ownership_diagnostics["RegionTargets"];
+  if (!record.contains("Rule"))
+  {
+    record["Rule"] =
+        "Ruling 2251: a target entry with a Region counts s_p of each patch's fabricated "
+        "energy, s_p = the share of the patch's own within-R raw energy (its points no "
+        "kept "
+        "class holds) inside the region, by the same 0 / 1 test at the same face "
+        "quadrature "
+        "points as the raw energies; tiers 2-4 (all its points by energy, by area, its "
+        "reference point) where tier 1 has no energy. A wall along an edge inside R (a "
+        "distance band) apportions by the thin-sheet raw field: not a model of the true "
+        "distribution with distance. The closure spreads, confident, the model and patch "
+        "tables and the census stay window-wide";
+    record["EnergyUnit"] = "J";
+    record["Evaluations"] = nlohmann::json::array();
+  }
+  if (evaluation == "Raw")
+  {
+    region_raw_records++;
+  }
+  const int excitation = source >= 0 ? source : region_raw_records - 1;
+  nlohmann::json entry = {{"Excitation", excitation}, {"Evaluation", evaluation}};
+  entry["Targets"] = nlohmann::json::array();
+  for (const auto &[target, response] : targets)
+  {
+    const auto window = window_fabricated.find(target);
+    const auto window_fixed_flux = window_fabricated_fixed_flux.find(target);
+    entry["Targets"].push_back(
+        {{"Index", target},
+         {"FabricatedEnergyWindow",
+          energy_scale * (window != window_fabricated.end() ? window->second : 0.0)},
+         {"FabricatedEnergyWindowFixedFlux",
+          energy_scale * (window_fixed_flux != window_fabricated_fixed_flux.end()
+                              ? window_fixed_flux->second
+                              : 0.0)},
+         {"FabricatedEnergyRegion", energy_scale * response.fabricated_surface_energy},
+         {"FabricatedEnergyRegionFixedFlux",
+          energy_scale * response.fabricated_surface_energy_fixed_flux},
+         {"CutShare", response.cut_share},
+         {"PatchesInside", response.patches_inside},
+         {"PatchesCut", response.patches_cut},
+         {"PatchesOutside", response.patches_outside},
+         {"PatchesByTier", response.patches_by_tier},
+         {"TraceClosureSpread", response.trace_closure_spread},
+         {"ResponseWeightedTraceClosureSpread",
+          response.response_weighted_trace_closure_spread},
+         {"TraceClosureResponseFailureFraction",
+          response.trace_closure_response_failure_fraction}});
+    if (response.patches_cut > 0 && !region_cut_warning_printed)
+    {
+      region_cut_warning_printed = true;
+      Mpi::Warning(
+          fespace.GetComm(),
+          "REGION TARGET {:d}: its region wall cuts {:d} patch(es) carrying {:.3e} of the "
+          "box's fabricated energy (fixed trace; excitation {:d}, {} evaluation; every "
+          "value in "
+          "Diagnostics.RegionTargets). A cut patch's fabricated energy is split by the "
+          "share "
+          "of its own within-R raw energy inside the region (the same 0 / 1 test at the "
+          "same face quadrature points as the raw energies; tiers by energy, area, "
+          "reference point: {:d} / {:d} / {:d} / {:d} patches). Where a wall runs along an "
+          "edge inside the matching distance R (a distance band) the split follows the "
+          "thin-sheet raw field, not a model of how the true energy is distributed with "
+          "distance: such a box value is an apportionment, and a large share is its sign. "
+          "Printed once per construction.\n",
+          target, response.patches_cut, response.cut_share, excitation, evaluation,
+          response.patches_by_tier[0], response.patches_by_tier[1],
+          response.patches_by_tier[2], response.patches_by_tier[3]);
+    }
+  }
+  record["Evaluations"].push_back(std::move(entry));
+}
+
+void SurfaceResponseOperator::WriteRegionShareRows(
+    const std::filesystem::path &post_dir, int source, int evaluation,
+    const std::map<int, std::vector<SurfacePostOperator::RegionPatchFootprint>> &footprints,
+    const std::map<int, RegionPatchShares> &shares, const Units &units) const
+{
+  const bool first = !region_share_rows_started;
+  region_share_rows_started = true;
+  if (!Mpi::Root(fespace.GetComm()))
+  {
+    return;
+  }
+  const int excitation = source >= 0 ? source : region_raw_records - 1;
+  using VT = Units::ValueType;
+  const auto path = DiagnosticsPath(post_dir, "surface-response-region-share.csv");
+  std::ofstream out(path, first ? std::ios::trunc : std::ios::app);
+  MFEM_VERIFY(out, "Unable to open " << path << " for writing!");
+  if (first)
+  {
+    out << "excitation,evaluation,target,patch,tier,placement,share,open_energy (J),"
+           "open_energy_in (J),energy (J),energy_in (J),area (m^2),area_in (m^2)\n";
+  }
+  const double area_unit =
+      units.Dimensionalize<VT::LENGTH>(units.Dimensionalize<VT::LENGTH>(1.0));
+  for (const auto &[target, list] : footprints)
+  {
+    const auto &target_shares = shares.at(target);
+    for (std::size_t p = 0; p < list.size(); p++)
+    {
+      const auto &f = list[p];
+      if (f.area <= 0.0 && !f.reference_in)
+      {
+        continue;
+      }
+      out << fmt::format("{:d},{:d},{:d},{:d},{:d},{:d},{:.17e},{:.17e},{:.17e},{:.17e},"
+                         "{:.17e},{:.17e},{:.17e}\n",
+                         excitation, evaluation, target, p + 1, target_shares.tier[p],
+                         static_cast<int>(target_shares.placement[p]),
+                         target_shares.share[p],
+                         units.Dimensionalize<VT::ENERGY>(f.open_energy),
+                         units.Dimensionalize<VT::ENERGY>(f.open_energy_in),
+                         units.Dimensionalize<VT::ENERGY>(f.energy),
+                         units.Dimensionalize<VT::ENERGY>(f.energy_in), f.area * area_unit,
+                         f.area_in * area_unit);
+    }
+  }
+}
+
 SurfaceResponseOperator::ElectrostaticResponse
-SurfaceResponseOperator::GetElectrostaticResponse(const Vector &x, bool include_fixed_flux,
-                                                  bool include_patches,
-                                                  ResolutionAccumulator *resolution) const
+SurfaceResponseOperator::GetElectrostaticResponse(
+    const Vector &x, bool include_fixed_flux, bool include_patches,
+    ResolutionAccumulator *resolution,
+    const std::map<int, RegionPatchShares> *region_shares) const
 {
   ApplyTrace(x, trace);
   ElectrostaticResponse result;
@@ -40657,6 +41000,16 @@ SurfaceResponseOperator::GetElectrostaticResponse(const Vector &x, bool include_
   // cell end, domain correction, fixed-flux domain correction, interface count,
   // (interface, fixed-trace energy, fixed-flux energy)...], gathered below.
   std::vector<double> local_patch_records;
+  // Ruling 2251: every target the shares name, on every rank (one reduction layout).
+  std::map<int, std::array<double, kRegionTargetSums>> region_local;
+  if (region_shares)
+  {
+    for (const auto &[target, shares] : *region_shares)
+    {
+      (void)shares;
+      region_local[target].fill(0.0);
+    }
+  }
   for (const auto &model : models)
   {
     ModelContribution contribution;
@@ -40767,6 +41120,16 @@ SurfaceResponseOperator::GetElectrostaticResponse(const Vector &x, bool include_
           failed_trace_closure_response_weight +=
               spread > maximum_trace_closure_spread ? weight : 0.0;
           trace_closure_response_weight += weight;
+        }
+      }
+      if (region_shares && patch.weight > 0.0)
+      {
+        const auto shares = region_shares->find(interface);
+        if (shares != region_shares->end())
+        {
+          AccumulateRegionPatch(region_local[interface], shares->second, patch.global_index,
+                                fixed_trace_energy, fixed_flux_energy, include_fixed_flux,
+                                maximum_trace_closure_spread);
         }
       }
       if (include_patches)
@@ -40881,6 +41244,11 @@ SurfaceResponseOperator::GetElectrostaticResponse(const Vector &x, bool include_
     }
   }
   MFEM_ASSERT(i == reduction.size(), "Incorrect batched model-contribution reduction!");
+  if (region_shares)
+  {
+    result.region_targets =
+        ReduceRegionTargets(region_local, include_fixed_flux, fespace.GetComm());
+  }
   if (include_patches)
   {
     result.patch_contributions = GatherPatchContributions(local_patch_records);
@@ -41136,7 +41504,8 @@ SurfaceResponseOperator::GatherPatchTraces(const Vector &x, bool spatial_only,
 
 SurfaceResponseOperator::MaxwellResponse SurfaceResponseOperator::GetMaxwellResponse(
     const GridFunction &E, std::complex<double> omega, bool include_patches,
-    ResolutionAccumulator *resolution) const
+    ResolutionAccumulator *resolution,
+    const std::map<int, RegionPatchShares> *region_shares) const
 {
   // Lane rescensus-product: the patch's fixed-trace fabricated energy per census Type.
   std::vector<double> resolution_energy(resolution ? resolution->types : 0);
@@ -41205,6 +41574,16 @@ SurfaceResponseOperator::MaxwellResponse SurfaceResponseOperator::GetMaxwellResp
   // model, contour size, basis size, real..., imag...], gathered below. The totals'
   // arithmetic is untouched: the records read the values the loop computes anyway.
   std::vector<double> local_patch_records, local_loop_records, local_trace_records;
+  // Ruling 2251: every target the shares name, on every rank (one reduction layout).
+  std::map<int, std::array<double, kRegionTargetSums>> region_local;
+  if (region_shares)
+  {
+    for (const auto &[target, shares] : *region_shares)
+    {
+      (void)shares;
+      region_local[target].fill(0.0);
+    }
+  }
   std::vector<double> local_share_records, local_remainder_records;
   // The per-patch fallback verdicts, read by the magnetic block below (decision 1235).
   std::vector<bool> patch_loop_fallback(patches.size(), false);
@@ -41448,6 +41827,16 @@ SurfaceResponseOperator::MaxwellResponse SurfaceResponseOperator::GetMaxwellResp
           failed_trace_closure_response_weight += weight;
         }
       }
+      if (region_shares && surface_weight > 0.0)
+      {
+        const auto shares = region_shares->find(interface);
+        if (shares != region_shares->end())
+        {
+          AccumulateRegionPatch(region_local[interface], shares->second, patch.global_index,
+                                fixed_trace_energy, fixed_flux_energy, true,
+                                maximum_trace_closure_spread);
+        }
+      }
     }
     if (resolution)
     {
@@ -41642,6 +42031,10 @@ SurfaceResponseOperator::MaxwellResponse SurfaceResponseOperator::GetMaxwellResp
                                                      << " has no recorded raw claim!");
       result.loop_remainders[k].claim_portions = std::move(claims[k].portions);
     }
+  }
+  if (region_shares)
+  {
+    result.region_targets = ReduceRegionTargets(region_local, true, fespace.GetComm());
   }
   if (include_patches)
   {

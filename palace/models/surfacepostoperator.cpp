@@ -15,6 +15,7 @@
 #include <sstream>
 #include <string>
 #include <tuple>
+#include <unordered_map>
 #include <utility>
 #include "fem/gridfunction.hpp"
 #include "fem/integrator.hpp"
@@ -318,6 +319,7 @@ struct UncoveredEdgeIntervals
       return located;
     };
     bool short_inside = false;
+    std::unordered_map<std::string, int> type_index;
     for (std::size_t i = 0; i < portions.Size(); i++)
     {
       const auto &portion_p0 = portions.P0(i), &portion_p1 = portions.P1(i);
@@ -337,11 +339,13 @@ struct UncoveredEdgeIntervals
                       << located.off0 << " / " << located.off1
                       << " off the segment): the identification's perimeter differs from "
                          "the postprocessing perimeter!");
-      auto type = std::find(types.begin(), types.end(), portion_type);
-      if (type == types.end())
+      // The first-seen order of the labels (a hash lookup: ruling 2251's per-claim labels
+      // are one per portion).
+      const auto [type, inserted] =
+          type_index.emplace(portion_type, static_cast<int>(types.size()));
+      if (inserted)
       {
         types.push_back(portion_type);
-        type = std::prev(types.end());
       }
       double e0 = a0, e1 = a1;
       if (check)
@@ -383,7 +387,7 @@ struct UncoveredEdgeIntervals
         }
       }
       by_segment[located.segment].push_back(
-          {std::min(e0, e1), std::max(e0, e1), static_cast<int>(type - types.begin())});
+          {std::min(e0, e1), std::max(e0, e1), type->second});
     }
     // Ruling 1731: bit 4 at the round-off-short ends this list also reaches unsnapped (a
     // second pass, so that the order of the portions does not matter; nothing is stored
@@ -892,7 +896,7 @@ SurfacePostOperator::InterfaceDielectricData::InterfaceDielectricData(
 std::unique_ptr<mfem::Coefficient>
 SurfacePostOperator::InterfaceDielectricData::GetCoefficient(
     const GridFunction &E, const GridFunction *D, const MaterialOperator &mat_op,
-    InterfaceDielectricComponent component) const
+    InterfaceDielectricComponent component, bool apply_region) const
 {
   const GridFunction *recovered_flux = flux_recovery ? D : nullptr;
   MFEM_VERIFY(!flux_recovery || recovered_flux,
@@ -927,7 +931,7 @@ SurfacePostOperator::InterfaceDielectricData::GetCoefficient(
     coefficient = std::make_unique<OwnershipCoefficient>(std::move(coefficient), ownership,
                                                          ownership_slot);
   }
-  if (region)
+  if (region && apply_region)
   {
     coefficient = std::make_unique<RegionCoefficient>(std::move(coefficient), region);
   }
@@ -2302,6 +2306,247 @@ SurfacePostOperator::GetInterfaceCoveragePartition(
     partition.kept_ends.near_energy = local_energies[interface.stake + 3];
   }
   return partitions;
+}
+
+std::set<int> SurfacePostOperator::GetRegionInterfaces(const std::set<int> &indices) const
+{
+  std::set<int> result;
+  for (const int idx : indices)
+  {
+    const auto it = eps_surfs.find(idx);
+    if (it != eps_surfs.end() && it->second.region)
+    {
+      result.insert(idx);
+    }
+  }
+  return result;
+}
+
+std::map<int, std::vector<SurfacePostOperator::RegionPatchFootprint>>
+SurfacePostOperator::GetInterfaceRegionPatchFootprints(
+    const std::set<int> &indices, const GridFunction &E, const GridFunction *D,
+    const std::vector<CoveragePartitionClass> &kept_classes,
+    const std::vector<UncoveredPerimeterPortion> &claims,
+    const std::vector<std::vector<std::size_t>> &claim_patches,
+    const std::vector<std::array<double, 3>> &reference_points) const
+{
+  MFEM_VERIFY(claims.size() == claim_patches.size(),
+              "Region patch footprints require one patch list per claim portion!");
+  auto &mesh = *h1_fespace.GetParMesh();
+  const int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+  // One label per claim portion (its index): UncoveredEdgeIntervals keeps each apart.
+  std::vector<UncoveredPerimeterPortion> labelled(claims);
+  for (std::size_t i = 0; i < labelled.size(); i++)
+  {
+    labelled[i].type = std::to_string(i);
+  }
+  // The coverage partition's piece test: the group of the piece holding the foot, or -1.
+  auto Holding = [](const auto &by_segment, std::size_t segment, double foot) -> int
+  {
+    const auto found = by_segment.find(segment);
+    if (found == by_segment.end() || found->second.empty())
+    {
+      return -1;
+    }
+    auto piece = std::upper_bound(found->second.begin(), found->second.end(), foot,
+                                  [](double x, const auto &p) { return x < p.a; });
+    if (piece == found->second.begin())
+    {
+      return -1;
+    }
+    piece = std::prev(piece);
+    const bool last = std::next(piece) == found->second.end();
+    return (foot >= piece->a && (foot < piece->b || (last && foot == piece->b)))
+               ? piece->group
+               : -1;
+  };
+  std::map<int, std::vector<RegionPatchFootprint>> result;
+  for (const int idx : indices)
+  {
+    const auto it = eps_surfs.find(idx);
+    MFEM_VERIFY(it != eps_surfs.end(),
+                "Unknown interface dielectric postprocessing index requested!");
+    const auto &data = it->second;
+    MFEM_VERIFY(data.region,
+                "Region patch footprints are formed on entries with a Region!");
+    MFEM_VERIFY(!data.edge_distances.empty() && data.edge_distance_tree,
+                "The region patch footprints require a matching edge distance!");
+    const EdgeDistanceTree &tree = *data.edge_distance_tree;
+    const double radius = data.edge_distances.back();
+    const double tolerance = kSignatureParameterToleranceOverRadius * radius;
+    // The kept classes' pieces as the partition builds them, and the own claims' intervals
+    // with the served claims' end snap (ruling 1714 (B)); the end census is not used here.
+    ClaimEndCheck kept_check, own_check;
+    kept_check.radius = own_check.radius = radius;
+    own_check.snap = true;
+    std::vector<PartitionedEdgePieces> kept;
+    for (const auto &kept_class : kept_classes)
+    {
+      MFEM_VERIFY(kept_class.portions, "A coverage-partition class requires its portions!");
+      kept.emplace_back(
+          UncoveredEdgeIntervals(tree, *kept_class.portions, tolerance, &kept_check));
+    }
+    const UncoveredEdgeIntervals own(tree, labelled, tolerance, &own_check);
+    std::vector<std::size_t> type_portion;
+    type_portion.reserve(own.types.size());
+    for (const auto &label : own.types)
+    {
+      type_portion.push_back(static_cast<std::size_t>(std::stoull(label)));
+    }
+    // The own claims' elementary pieces per tree segment (between the distinct interval
+    // ends); a piece's group = the set of patches whose claims hold its midpoint.
+    struct OwnPiece
+    {
+      double a = 0.0, b = 0.0;
+      int group = -1;
+    };
+    std::map<std::size_t, std::vector<OwnPiece>> own_pieces;
+    std::map<std::vector<std::size_t>, int> group_index;
+    std::vector<const std::vector<std::size_t> *> groups;
+    for (const auto &[segment, list] : own.by_segment)
+    {
+      std::vector<double> ends;
+      for (const auto &interval : list)
+      {
+        ends.push_back(interval.a);
+        ends.push_back(interval.b);
+      }
+      std::sort(ends.begin(), ends.end());
+      ends.erase(std::unique(ends.begin(), ends.end()), ends.end());
+      auto &pieces = own_pieces[segment];
+      for (std::size_t i = 0; i + 1 < ends.size(); i++)
+      {
+        const double midpoint = 0.5 * (ends[i] + ends[i + 1]);
+        std::set<std::size_t> holders;
+        for (const auto &interval : list)
+        {
+          if (midpoint >= interval.a && midpoint <= interval.b)
+          {
+            const auto &patches = claim_patches[type_portion[interval.type]];
+            holders.insert(patches.begin(), patches.end());
+          }
+        }
+        if (holders.empty())
+        {
+          continue;
+        }
+        const auto [group, inserted] =
+            group_index.emplace(std::vector<std::size_t>(holders.begin(), holders.end()),
+                                static_cast<int>(groups.size()));
+        if (inserted)
+        {
+          groups.push_back(&group->first);
+        }
+        pieces.push_back({ends[i], ends[i + 1], group->second});
+      }
+    }
+    // Per group: the not-kept energy and its in-region part, the energy of every point and
+    // its in-region part, the area and its in-region part; ONE reduction per entry.
+    std::vector<double> local(6 * groups.size(), 0.0);
+    const auto attr_marker = mesh::AttrToMarker(bdr_attr_max, data.attr_list);
+    auto coefficient =
+        data.GetCoefficient(E, D, mat_op, InterfaceDielectricComponent::TOTAL, false);
+    const int quadrature_order = data.ownership_quadrature_order;
+    const std::optional<OwnershipQuadrature> ownership_rules =
+        quadrature_order > 0 ? std::optional<OwnershipQuadrature>(quadrature_order)
+                             : std::nullopt;
+    mfem::Vector point(mesh.SpaceDimension());
+    for (int be = 0; be < mesh.GetNBE() && !groups.empty(); be++)
+    {
+      const int attr = mesh.GetBdrAttribute(be);
+      if (attr <= 0 || attr > attr_marker.Size() || !attr_marker[attr - 1])
+      {
+        continue;
+      }
+      auto *T = mesh.GetBdrElementTransformation(be);
+      const auto geometry = h1_fespace.GetBE(be)->GetGeomType();
+      const mfem::IntegrationRule &rule =
+          ownership_rules
+              ? ownership_rules->Get(geometry)
+              : mfem::IntRules.Get(geometry, fem::DefaultIntegrationOrder::Get(*T));
+      for (int q = 0; q < rule.GetNPoints(); q++)
+      {
+        const auto &ip = rule.IntPoint(q);
+        T->SetIntPoint(&ip);
+        T->Transform(ip, point);
+        const auto nearest = tree.Nearest(point);
+        const double within =
+            1.0 - EdgeDistanceOutsideWeight(std::sqrt(nearest.distance_squared), radius,
+                                            data.edge_distance_smoothing);
+        if (within <= 0.0)
+        {
+          continue;
+        }
+        const auto &segment = tree.GetSegment(nearest.segment);
+        double length2 = 0.0, projection = 0.0;
+        for (int d = 0; d < point.Size(); d++)
+        {
+          const double chord = segment.p1[d] - segment.p0[d];
+          length2 += chord * chord;
+          projection += (point(d) - segment.p0[d]) * chord;
+        }
+        const double t = projection / length2;
+        const double foot = std::clamp(t, 0.0, 1.0) * std::sqrt(length2);
+        const int group = Holding(own_pieces, nearest.segment, foot);
+        if (group < 0)
+        {
+          continue;
+        }
+        bool kept_point = false;
+        for (const auto &list : kept)
+        {
+          if (Holding(list.by_segment, nearest.segment, foot) >= 0)
+          {
+            kept_point = true;
+            break;
+          }
+        }
+        // The raw filter's value of the point (RegionCoefficient: the same test at the
+        // same transformed point, the same product).
+        const double weight = PhysicalQuadratureWeight(*T, ip, axisymmetric);
+        const double value = weight * (within * coefficient->Eval(*T, ip));
+        const double area = weight * within;
+        const bool inside = data.region->Contains(point);
+        double *sums = local.data() + 6 * static_cast<std::size_t>(group);
+        if (!kept_point)
+        {
+          sums[0] += value;
+          sums[1] += inside ? value : 0.0;
+        }
+        sums[2] += value;
+        sums[3] += inside ? value : 0.0;
+        sums[4] += area;
+        sums[5] += inside ? area : 0.0;
+      }
+    }
+    if (!local.empty())
+    {
+      Mpi::GlobalSum(static_cast<int>(local.size()), local.data(), E.GetComm());
+    }
+    auto &footprints = result[idx];
+    footprints.resize(reference_points.size());
+    for (std::size_t p = 0; p < reference_points.size(); p++)
+    {
+      footprints[p].reference_in = data.region->Contains(reference_points[p].data());
+    }
+    for (std::size_t g = 0; g < groups.size(); g++)
+    {
+      const double *sums = local.data() + 6 * g;
+      for (const std::size_t p : *groups[g])
+      {
+        MFEM_VERIFY(p < footprints.size(),
+                    "A region patch footprint names a patch without a reference point!");
+        auto &footprint = footprints[p];
+        footprint.open_energy += sums[0];
+        footprint.open_energy_in += sums[1];
+        footprint.energy += sums[2];
+        footprint.energy_in += sums[3];
+        footprint.area += sums[4];
+        footprint.area_in += sums[5];
+      }
+    }
+  }
+  return result;
 }
 
 std::vector<SurfacePostOperator::UncoveredPerimeterPortion>

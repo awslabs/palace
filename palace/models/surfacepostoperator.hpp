@@ -178,10 +178,11 @@ private:
                             const mfem::Array<int> &bdr_attr_marker);
 
     // The entry's energy density coefficient on its attributes, zero at the quadrature
-    // points outside its ownership slot and its region.
+    // points outside its ownership slot and (unless apply_region is false) its region.
     std::unique_ptr<mfem::Coefficient> GetCoefficient(
         const GridFunction &E, const GridFunction *D, const MaterialOperator &mat_op,
-        InterfaceDielectricComponent component = InterfaceDielectricComponent::TOTAL) const;
+        InterfaceDielectricComponent component = InterfaceDielectricComponent::TOTAL,
+        bool apply_region = true) const;
 
     // Whether a quadrature point enters this entry's integrals (the ownership slot and the
     // region); the explicit sample loops apply the same filter as GetCoefficient.
@@ -570,6 +571,30 @@ public:
       const std::set<int> &indices, const GridFunction &E, const GridFunction *D,
       const std::vector<CoveragePartitionClass> &kept_classes, PerimeterPortionView served,
       const std::vector<CoveragePartitionClass> &remainder_classes = {}) const;
+  // Ruling 2251 (OI-REGION-TARGET-CORRECTED-NOT-FILTERED): the footprint of an applied
+  // patch on an entry with a Region = the entry's within-R points of the coverage partition
+  // (the same rule, nearest tree segment, clamped foot and within weight) whose foot lies
+  // on the patch's own claim; a portion held by several patches counts for each. The region
+  // test is the entry's own 0 / 1 test at the same point (RegionCoefficient), so an `_in`
+  // sum holds the raw filter's values of its points. Reduced (sum) on every rank.
+  struct RegionPatchFootprint
+  {
+    double open_energy = 0.0, open_energy_in = 0.0;  // the points no kept class holds
+    double energy = 0.0, energy_in = 0.0;            // every point of the claim
+    double area = 0.0, area_in = 0.0;                // quadrature weight x within
+    bool reference_in = false;                       // the patch's reference point
+  };
+  // Per entry of `indices` (each with a Region), per patch of the claim record (claims[i]
+  // held by claim_patches[i]; reference_points by patch index): its footprint. The kept
+  // classes take precedence as in GetInterfaceCoveragePartition. Collective.
+  std::map<int, std::vector<RegionPatchFootprint>> GetInterfaceRegionPatchFootprints(
+      const std::set<int> &indices, const GridFunction &E, const GridFunction *D,
+      const std::vector<CoveragePartitionClass> &kept_classes,
+      const std::vector<UncoveredPerimeterPortion> &claims,
+      const std::vector<std::vector<std::size_t>> &claim_patches,
+      const std::vector<std::array<double, 3>> &reference_points) const;
+  // The entries of `indices` that carry a Region.
+  std::set<int> GetRegionInterfaces(const std::set<int> &indices) const;
   // Ruling 1688 (lane L1, the stage-0 Missing LENGTH line): per interface the length of its
   // edge-distance tree and, per portion list, the length of the union of the list's
   // intervals on that tree (the energies' foot assignment: a portion on its midpoint's
