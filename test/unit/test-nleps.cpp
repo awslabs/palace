@@ -133,6 +133,20 @@ public:
   }
 };
 
+// Append decoupled dofs with the diagonal entry pad to the global vector v of a problem of
+// v.size() dofs, so that it has more dofs than processes: MFEM's partitioning then leaves
+// no process without a dof, which the eigenvalue solvers require on every process (an
+// empty process fails a verification, and the others wait in a collective). With
+// min_local > 1 it has twice min_local dofs per process, for a partitioning which is not
+// even: PARPACK requires its number of basis vectors ≤ the local size on every process.
+// The tests keep these dofs out of their solves: zero in a start vector, and far from the
+// target.
+void AddDecoupledDofs(std::vector<double> &v, double pad, int min_local = 1)
+{
+  const auto size = static_cast<std::size_t>(Mpi::Size(Mpi::World()));
+  v.resize(std::max(v.size(), (min_local > 1) ? 2 * min_local * size : size + 1), pad);
+}
+
 struct DiagonalLorentzProblem
 {
   std::vector<double> k;  // Global, by element
@@ -176,6 +190,14 @@ struct DiagonalLorentzProblem
   }
 
   int LocalSize() const { return static_cast<int>(gid.size()); }
+
+  // The smallest number of dofs of a process.
+  int MinLocalSize() const
+  {
+    int n = LocalSize();
+    Mpi::GlobalMin(1, &n, Mpi::World());
+    return n;
+  }
 
   // A2(λ) = λ² χ(λ) I.
   std::unique_ptr<ComplexOperator> A2(std::complex<double> l) const
@@ -334,11 +356,16 @@ public:
 TEST_CASE("Linearized eigensolvers solve rational terms exactly",
           "[nleps][Serial][Parallel]")
 {
-  const RationalDiagonalProblem q(
-      {1.5, 2.5, 4.0, 6.5, 3.0, 12.0, 16.0, 20.0, 25.0, 30.0, 36.0, 42.0},
-      {1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0});
+  std::vector<double> k = {1.5,  2.5,  4.0,  6.5,  3.0,  12.0,
+                           16.0, 20.0, 25.0, 30.0, 36.0, 42.0},
+                      b = {1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+  // The vectors of ARPACK have 2 + 2 blocks (the poles) of the dofs.
+  constexpr int nev = 9, ncv = 24, min_local = ncv / 4;
+  const auto num_coupled = static_cast<long long>(k.size());
+  AddDecoupledDofs(k, 1.0e4, min_local);
+  AddDecoupledDofs(b, 0.0, min_local);
+  const RationalDiagonalProblem q(k, b);
   const std::complex<double> sigma(0.0, 1.6);
-  constexpr int nev = 9;
   auto Nearer = [sigma](auto a, auto b)
   { return std::abs(a - sigma) < std::abs(b - sigma); };
   std::vector<std::complex<double>> expected;
@@ -365,8 +392,9 @@ TEST_CASE("Linearized eigensolvers solve rational terms exactly",
     auto *vi = start.Imag().HostWrite();
     for (int i = 0; i < q.p.LocalSize(); i++)
     {
-      vr[i] = 1.0 + 0.1 * q.p.gid[i];
-      vi[i] = 0.3 - 0.05 * q.p.gid[i];
+      const bool coupled = (q.p.gid[i] < num_coupled);
+      vr[i] = coupled ? 1.0 + 0.1 * q.p.gid[i] : 0.0;
+      vi[i] = coupled ? 0.3 - 0.05 * q.p.gid[i] : 0.0;
     }
   }
   const auto scale =
@@ -378,7 +406,7 @@ TEST_CASE("Linearized eigensolvers solve rational terms exactly",
     eigen.SetLinearSolver(ksp);
     eigen.SetShiftInvert(sigma);
     eigen.SetWhichEigenpairs(EigenvalueSolver::WhichType::TARGET_MAGNITUDE);
-    eigen.SetNumModes(nev, 24);
+    eigen.SetNumModes(nev, ncv);
     eigen.SetTol(1.0e-10);
     eigen.SetMaxIter(200);
     eigen.SetInitialSpace(start);
@@ -414,6 +442,7 @@ TEST_CASE("Linearized eigensolvers solve rational terms exactly",
 #if defined(PALACE_WITH_ARPACK)
   SECTION("ARPACK")
   {
+    REQUIRE(q.p.MinLocalSize() >= min_local);
     arpack::ArpackPEPSolver eigen(Mpi::World(), 0);
     Check(eigen);
   }
@@ -435,15 +464,20 @@ TEST_CASE("ARPACK returns the eigenpairs converged within its iteration limit",
   {
     k[j] = 1.0 + j + 0.37 * std::sin(1.0 + j);  // Distinct
   }
+  constexpr int nev = 8, ncv = nev + 2;
+  const auto num_coupled = static_cast<long long>(k.size());
+  AddDecoupledDofs(k, 1.0e4, ncv);
   const DiagonalLorentzProblem p(k);
+  REQUIRE(p.MinLocalSize() >= ncv);
   const double sigma = 10.3;
   std::vector<std::complex<double>> d(p.LocalSize());
   ComplexVector start(p.LocalSize());
   for (int i = 0; i < p.LocalSize(); i++)
   {
+    const bool coupled = (p.gid[i] < num_coupled);
     d[i] = p.k.at(p.gid[i]) - sigma;
-    start.Real()(i) = 1.0 + 0.1 * p.gid[i];
-    start.Imag()(i) = 0.3 - 0.05 * p.gid[i];
+    start.Real()(i) = coupled ? 1.0 + 0.1 * p.gid[i] : 0.0;
+    start.Imag()(i) = coupled ? 0.3 - 0.05 * p.gid[i] : 0.0;
   }
   const DiagonalComplexOperator A(std::move(d));
   auto gmres = std::make_unique<GmresSolver<ComplexOperator>>(Mpi::World(), 0);
@@ -451,7 +485,6 @@ TEST_CASE("ARPACK returns the eigenpairs converged within its iteration limit",
   gmres->SetMaxIter(100);
   ComplexKspSolver ksp(std::move(gmres), std::make_unique<ScaledDiagonalInverse>(1.0));
   ksp.SetOperators(A, A);
-  constexpr int nev = 8;
   auto Solve = [&](int max_it)
   {
     arpack::ArpackEPSSolver eigen(Mpi::World(), 0);
@@ -459,7 +492,7 @@ TEST_CASE("ARPACK returns the eigenpairs converged within its iteration limit",
     eigen.SetLinearSolver(ksp);
     eigen.SetShiftInvert(sigma);
     eigen.SetWhichEigenpairs(EigenvalueSolver::WhichType::LARGEST_MAGNITUDE);
-    eigen.SetNumModes(nev, nev + 2);
+    eigen.SetNumModes(nev, ncv);
     eigen.SetTol(1.0e-10);
     eigen.SetMaxIter(max_it);
     eigen.SetInitialSpace(start);
@@ -508,7 +541,10 @@ TEST_CASE("ARPACK rescales the eigenpairs kept at any raw index",
   {
     k[j] = 1.0 + j + 0.37 * std::sin(1.0 + j);  // Distinct
   }
+  constexpr int nev = 4, ncv = 2 * nev + 2;
+  AddDecoupledDofs(k, 1.0e4, ncv);  // Far from the target, in the random start
   const DiagonalLorentzProblem p(k);
+  REQUIRE(p.MinLocalSize() >= ncv);
   const double sigma = 10.3;
   std::vector<std::complex<double>> d(p.LocalSize());
   Vector b(p.LocalSize());
@@ -525,13 +561,12 @@ TEST_CASE("ARPACK rescales the eigenpairs kept at any raw index",
   gmres->SetMaxIter(100);
   ComplexKspSolver ksp(std::move(gmres), std::make_unique<ScaledDiagonalInverse>(1.0));
   ksp.SetOperators(A, A);
-  constexpr int nev = 4;
   ArpackEPSSolverKept eigen(Mpi::World(), 0);
   eigen.SetOperators(*p.K, *p.M, EigenvalueSolver::ScaleType::NONE);
   eigen.SetLinearSolver(ksp);
   eigen.SetShiftInvert(sigma);
   eigen.SetWhichEigenpairs(EigenvalueSolver::WhichType::LARGEST_MAGNITUDE);
-  eigen.SetNumModes(nev, 2 * nev + 2);
+  eigen.SetNumModes(nev, ncv);
   eigen.SetTol(1.0e-10);
   eigen.SetMaxIter(300);
   REQUIRE(eigen.Solve() >= nev);
@@ -565,12 +600,16 @@ TEST_CASE("ARPACK rescales the eigenpairs kept at any raw index",
 // t₁(λ*) = δk = Δ / 19 is small, then contracts by Δ / (δk + Δ) = 0.95 per step: with the
 // operator of λ₀ it needs about 150 iterations to the tolerance 1e-10, more than the 100
 // of one attempt. The update at the check where that rate is too slow converges the
-// eigenpair in about 22.
+// eigenpair in about 22. On more processes than dofs, decoupled dofs, zero in the seed,
+// keep the iteration that of the three dofs.
 TEST_CASE("Quasi-Newton updates a stale preconditioner below PreconditionerLagTol",
           "[nleps][Serial][Parallel]")
 {
   constexpr double k0 = 4.0, Delta = 0.4, rho = 0.95, tol = 1.0e-10;
-  const DiagonalLorentzProblem p({k0, k0 + Delta * (1.0 - rho) / rho, 9.0});
+  std::vector<double> k = {k0, k0 + Delta * (1.0 - rho) / rho, 9.0};
+  const auto num_coupled = static_cast<long long>(k.size());
+  AddDecoupledDofs(k, 1.0e4);
+  const DiagonalLorentzProblem p(k);
   const auto roots = p.Roots(k0);
   const auto ls =
       *std::ranges::max_element(roots, [](auto a, auto b) { return a.imag() < b.imag(); });
@@ -583,7 +622,7 @@ TEST_CASE("Quasi-Newton updates a stale preconditioner below PreconditionerLagTo
   x0 = 0.0;
   for (int i = 0; i < p.LocalSize(); i++)
   {
-    x0.Real()(i) = (p.gid[i] == 0) ? 1.0 : 1.0e-5;
+    x0.Real()(i) = (p.gid[i] == 0) ? 1.0 : (p.gid[i] < num_coupled) ? 1.0e-5 : 0.0;
   }
   std::vector<std::complex<double>> theta = {l0};
   std::vector<ComplexVector> vecs = {x0};

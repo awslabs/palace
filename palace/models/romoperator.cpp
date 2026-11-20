@@ -2807,12 +2807,14 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
             // R(s) (s = iω) of deg(P) <= 2 (a rational impedance boundary) has its
             // polynomial part put into the pencil and AAA run directly on the strictly
             // proper remainder, which reproduces the coefficient to rounding. The others (a
-            // finite conductivity group, or a split of deg(P) > 2, from a non-passive
-            // impedance) are fit by complex poly + AAA. A term without a split (a finite
-            // conductivity group, or the absorbing boundaries next to a frequency-dependent
-            // material) has the polynomial part of a fit with poles on the directions of
-            // its poles, as the terms of frequency-dependent materials
-            // (AddScalarDispersionSynthesis).
+            // split of deg(P) > 2, from a non-passive impedance, and the terms without a
+            // split: a finite conductivity group, or the absorbing boundaries next to a
+            // frequency-dependent material, AddScalarDispersionSynthesis) are fit by
+            // complex poly + AAA. As for the terms of frequency-dependent materials, the
+            // polynomial part of a fit with poles is realized on the directions of its
+            // poles: on the full mass, the directions below the rank cutoff carry the
+            // polynomial part alone, which can exceed f_i by orders of magnitude where it
+            // cancels the pole part (a series RLC sheet below its resonance).
             const auto &surface_terms = space_op.GetSurfaceTerms();
             const auto label = surface_terms.GetExtraSystemBdrMassTermLabel(term.idx);
             const auto split = surface_terms.GetExtraSystemBdrMassTermSplit(term.idx);
@@ -2856,8 +2858,12 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
       }
       if (fit)
       {
+        // The polynomial part on the directions of the poles, as for the terms without a
+        // split.
+        const Eigen::MatrixXcd Mp_fit =
+            fit->aux ? KeptDirectionsMass(*fit->aux, term.Ar.rows()) : term.Ar;
         ApplyComplexPolynomialFitCorrections(fit->alpha0c, fit->alpha1c, fit->alpha2c,
-                                             term.Ar, Kr_total_corr, Cr_total_corr,
+                                             Mp_fit, Kr_total_corr, Cr_total_corr,
                                              Mr_total_corr);
         if (fit->aux)
         {
@@ -3239,6 +3245,7 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
   auto eigs = ComputeEigenvalueEstimates(*matrices.L_inv, matrices.R_inv.get(), *matrices.C,
                                          fmin_GHz, fmax_GHz);
   ComputeEigenvalueEstimateErrors(units, eigs);
+  WarnGrowingEigenvalueEstimates(space_op.GetComm(), eigs);
 
   // Synthesized port realization Y_syn(ω) y = G(ω) a, b = H(ω) y - a, so
   // S(ω) = H(ω) Y_syn(ω)⁻¹ G(ω) - I. Each map column is √y_ref times the port's coupling
@@ -3755,6 +3762,36 @@ std::vector<RomOperator::EigenvalueEstimate> RomOperator::ComputeEigenvalueEstim
   // numerical representation to remove here; if one is ever observed it needs an
   // eigenvector/rank-aware policy, not frequency clustering.
   return modes;
+}
+
+void RomOperator::WarnGrowingEigenvalueEstimates(
+    MPI_Comm comm, const std::vector<EigenvalueEstimate> &estimates)
+{
+  // The fits of the frequency-dependent boundaries (AAA) do not constrain their poles to
+  // the stable half-plane, so a circuit which matches the reduced-order model on the band
+  // can have roots with Im{f} < 0 on their auxiliary states.
+  const EigenvalueEstimate *fastest = nullptr;
+  std::size_t num_growing = 0;
+  for (const auto &est : estimates)
+  {
+    if (est.freq_im_GHz < 0.0)
+    {
+      num_growing++;
+      if (!fastest || est.freq_im_GHz < fastest->freq_im_GHz)
+      {
+        fastest = &est;
+      }
+    }
+  }
+  if (fastest)
+  {
+    Mpi::Warning(comm,
+                 "{:d} of {:d} synthesized-system eigenvalue estimates have Im{{f}} < 0, "
+                 "down to f = {:+.6e} {:+.6e}i GHz!\nThese roots grow in time: the circuit "
+                 "matches the reduced-order model on the band, but it is not stable, for "
+                 "example in a transient circuit simulation.\n",
+                 num_growing, estimates.size(), fastest->freq_re_GHz, fastest->freq_im_GHz);
+  }
 }
 
 void RomOperator::ComputeEigenvalueEstimateErrors(

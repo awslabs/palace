@@ -702,6 +702,13 @@ public:
   // basis block to the HDM space.
   void ComputeEigenvalueEstimateErrors(const Units &units,
                                        std::vector<EigenvalueEstimate> &estimates) const;
+
+  // Warn when any estimate has Im{f} < 0, a root of the synthesized circuit which grows in
+  // time: Q, from |Im{f}|, does not show it. The estimates are replicated, so the warning
+  // is the same on every process.
+  static void
+  WarnGrowingEigenvalueEstimates(MPI_Comm comm,
+                                 const std::vector<EigenvalueEstimate> &estimates);
 };
 
 }  // namespace palace

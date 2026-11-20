@@ -131,6 +131,11 @@ is the same term as
 {"Type": "PoleResidue", "Pole": -1.0e11, "Residue": 5.0e10}
 ```
 
+The two forms give the same ``\epsilon(\omega)`` and the same field solve, but the
+`PoleResidue` form specifies no stored energy (see below): `E_elec` and the outputs
+normalized by it are omitted, and the error indicators are normalized differently, so that
+adaptive mesh refinement can differ.
+
 A pole and residue fit in GHz must be multiplied by ``2\pi \times 10^9`` first: the check for
 gain does not depend on the scale of the rates, and does not detect a fit in other units.
 

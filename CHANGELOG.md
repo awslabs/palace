@@ -436,11 +436,22 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     rational impedance boundaries which are not split exactly, to bound their error relative
     to the fitted response at each frequency instead of relative to its largest value over
     the band, which did not bound the error where the response is small. The polynomial
-    part of a surface conductivity fit with poles is now realized on the directions of its
-    poles only, as for the frequency-dependent materials. The circuits of existing inputs
-    with these boundaries change, including the support points of their AAA fits: the
-    S-parameters of the circuit of the `coaxial_wave_conductivity_synth` regression case
-    differ from those of its reduced-order model by 5e-6 instead of 9e-6.
+    part of a fit with poles, of a surface conductivity or a rational impedance boundary
+    (split exactly or not), is now realized on the directions of its poles only, as for the
+    frequency-dependent materials: on the full mass, a direction below the rank cutoff kept
+    the polynomial part alone, which for a series RLC sheet below its resonance left the
+    term in the circuit 3e-5 from that of the reduced model where the fit residual was
+    1e-13. The circuits of existing inputs with these boundaries change, including the
+    support points of their AAA fits: the S-parameters of the circuit of the
+    `coaxial_wave_conductivity_synth` regression case differ from those of its reduced-order
+    model by 5e-6 instead of 9e-6.
+    [PR 877](https://github.com/awslabs/palace/pull/877).
+  - Added a warning when eigenvalue estimates of a synthesized circuit
+    (`rom-eigenvalues.csv`) have Im{f} < 0. These roots grow in time, which their Q does not
+    show. They come from the poles of the AAA fits of frequency-dependent boundaries, such
+    as wave ports in lossy or frequency-dependent media, which are not constrained to the
+    stable half-plane: the circuit can match the reduced-order model on the band and not be
+    stable, for example in a transient circuit simulation.
     [PR 877](https://github.com/awslabs/palace/pull/877).
   - Fixed the quasi-Newton nonlinear eigenvalue solver stalling below
     `config["Solver"]["Eigenmode"]["PreconditionerLagTol"]`, where it kept a stale

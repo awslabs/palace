@@ -322,7 +322,9 @@ palace::test::CustomCheck CompareComplexValues(double rtol, double atol)
 
 // Compare port-S.csv as complex scattering amplitudes rather than separately comparing
 // logarithmic magnitude and wrapped phase. This gives a stable absolute tolerance near
-// transmission zeros and a relative tolerance for order-one reflection/transmission.
+// transmission zeros and a relative tolerance for order-one reflection/transmission. In
+// port-floquet-S.csv, an order which is evanescent at a frequency has a NaN magnitude and
+// phase, which match a NaN in the reference.
 palace::test::CustomCheck ComparePortSParameters(double rtol, double atol)
 {
   return [rtol, atol](palace::Table &actual, palace::Table &reference,
@@ -374,6 +376,10 @@ palace::test::CustomCheck ComparePortSParameters(double rtol, double atol)
       REQUIRE(phase_r != nullptr);
       for (std::size_t row = 0; row < n_rows; row++)
       {
+        if (std::isnan(mag_a->data[row]) && std::isnan(mag_r.data[row]))
+        {
+          continue;
+        }
         const double amp_a = std::pow(10.0, mag_a->data[row] / 20.0);
         const double amp_r = std::pow(10.0, mag_r.data[row] / 20.0);
         const double phase_a_rad = phase_a->data[row] * std::numbers::pi / 180.0;
@@ -2471,7 +2477,7 @@ TEST_CASE("waveguide_absorbing_order2", "[Serial][Parallel][GPU][Regression]")
 // Im{k_n}: the coupled round-trip reconstructs S11 from the synthesized pencil to ~1e-8 of
 // the live field-derived port-S, which a fit of Re{k_n} only misses by up to 8e-3. The
 // synthesized eigenvalue estimates are not converged HDM eigenpairs here, so they are
-// presence-checked only.
+// presence-checked only, without a stored reference.
 TEST_CASE("cylinder_driven_wave_tm_lossy_synth", "[Serial][Parallel][Regression]")
 {
   palace::test::RegressionOptions opts;
@@ -2487,9 +2493,12 @@ TEST_CASE("cylinder_driven_wave_tm_lossy_synth", "[Serial][Parallel][Regression]
                          "rom-orthogonalization-matrix-R",
                          "rom-coupled-S",
                          "rom-coupled-G",
-                         "rom-coupled-H"};
-  opts.excluded_files = {"rom-eigenvalues", "rom-eigenvectors", "rom-port-reference",
-                         "error-indicators.csv", "domain-E.csv"};
+                         "rom-coupled-H",
+                         "rom-eigenvalues",
+                         "rom-eigenvectors"};
+  opts.required_unstored_files = {"rom-eigenvalues.csv", "rom-eigenvectors-re.csv",
+                                  "rom-eigenvectors-im.csv"};
+  opts.excluded_files = {"rom-port-reference", "error-indicators.csv", "domain-E.csv"};
   opts.custom_checks["port-S.csv"] = [round_trip = TestWavePortCoupledRoundTrip(1.0e-6),
                                       compare_s = ComparePortSParameters(1.0e-4, 1.0e-7)](
                                          palace::Table &actual, palace::Table &reference,
@@ -2672,16 +2681,15 @@ TEST_CASE("floquet_wave", "[Serial][Parallel][GPU][Regression]")
 // floquet_wave filled with a lossless Lorentz medium, at oblique incidence. The reference
 // wave-port S-parameters, including the coupling from the Floquet port, are from the
 // constant permittivity ε(ω) solved at each frequency. The Floquet S-parameters are
-// compared as magnitudes, as in the other Floquet cases, with an absolute tolerance of 1e-8
-// (-160 dB): the orders that are not excited are round-off below -170 dB, and the excited
-// orders, down to -52 dB, are compared to the relative tolerance.
+// compared as complex values, so that their phases are checked too, with an absolute
+// tolerance of 1e-8 (-160 dB): the orders that are not excited are round-off below -170
+// dB, and the excited orders, down to -52 dB, are compared to the relative tolerance.
 TEST_CASE("floquet_wave_dispersive", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-5;
   opts.atol = 1.0e-16;
-  opts.custom_checks["port-floquet-S.csv"] =
-      TestFloquetSParams(opts.rtol, 1.0e-8, /*linear=*/true);
+  opts.custom_checks["port-floquet-S.csv"] = ComparePortSParameters(opts.rtol, 1.0e-8);
   opts.paraview_fields = false;
   palace::test::RunRegressionCase("floquet_wave", "floquet_wave_dispersive.json",
                                   "floquet_wave_dispersive", opts);
@@ -2851,10 +2859,13 @@ TEST_CASE("coaxial_wave_losstan", "[Serial][Parallel][GPU][Regression]")
 // Circuit synthesis of the uniform coaxial line of finite-conductivity conductors between
 // two wave ports of coaxial_wave_conductivity. The synthesized port loads must carry the
 // attenuation of the lossy quasi-TEM port modes, Im{k_n}: the coupled round-trip
-// reconstructs the 2x2 S from the synthesized pencil to ~1e-5 of the live field-derived
-// port-S, which a fit of Re{k_n} only (a lossless port line) misses by up to 5e-2. The
-// synthesized eigenvalues are the far, nonphysical poles of the matched line (Q < 1), so
-// they are presence-checked only.
+// reconstructs the 2x2 S from the synthesized pencil to 5e-6 of the live field-derived
+// port-S, which a fit of Re{k_n} only (a lossless port line) misses by up to 5e-2, and the
+// polynomial part of the fits of the conductivity terms realized on their full projected
+// mass instead of the directions of their poles by 8.4e-5. The synthesized eigenvalues are
+// the far, nonphysical poles of the matched line (Q < 1), and the reference admittance
+// exported for port 1 changes with the partition and the build by up to 10%, so these
+// outputs and the eigenvectors are presence-checked only, without a stored reference.
 TEST_CASE("coaxial_wave_conductivity_synth", "[Serial][Parallel][Regression]")
 {
   palace::test::RegressionOptions opts;
@@ -2870,10 +2881,14 @@ TEST_CASE("coaxial_wave_conductivity_synth", "[Serial][Parallel][Regression]")
                          "rom-orthogonalization-matrix-R",
                          "rom-coupled-S",
                          "rom-coupled-G",
-                         "rom-coupled-H"};
-  opts.excluded_files = {"rom-eigenvalues", "rom-eigenvectors", "rom-port-reference",
-                         "error-indicators.csv"};
-  opts.custom_checks["port-S.csv"] = [round_trip = TestWavePortCoupledRoundTrip(1.0e-4),
+                         "rom-coupled-H",
+                         "rom-eigenvalues",
+                         "rom-eigenvectors",
+                         "rom-port-reference"};
+  opts.required_unstored_files = {"rom-eigenvalues.csv", "rom-eigenvectors-re.csv",
+                                  "rom-eigenvectors-im.csv", "rom-port-reference.csv"};
+  opts.excluded_files = {"error-indicators.csv"};
+  opts.custom_checks["port-S.csv"] = [round_trip = TestWavePortCoupledRoundTrip(2.0e-5),
                                       compare_s = ComparePortSParameters(1.0e-4, 1.0e-5)](
                                          palace::Table &actual, palace::Table &reference,
                                          const std::filesystem::path &actual_path)

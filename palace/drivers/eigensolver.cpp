@@ -296,12 +296,27 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     // interpolated in the seed, and changes on the scale of a resonance where the port is
     // in a frequency-dependent material: warn with any such material on the mesh, also
     // without a resonance near the window (a Drude, Debye, or Djordjevic-Sarkar material).
-    if (space_op.GetWavePortOp().Size() > 0 && mat_op.HasFrequencyDependentPermittivity())
+    // The terms of an absorbing boundary (of either order) next to a frequency-dependent
+    // material are interpolated in the seed in the same way, and also skip modes: one
+    // warning names the wave ports, the absorbing boundary, or both. An absorbing boundary
+    // next to constant materials only does not change on that scale.
+    const bool wave_port =
+        space_op.GetWavePortOp().Size() > 0 && mat_op.HasFrequencyDependentPermittivity();
+    const bool absorbing =
+        space_op.GetSurfaceTerms().GetFarfieldOp().NumDispersiveMaterials() > 0;
+    if (wave_port || absorbing)
     {
-      Mpi::Warning("The eigenmode problem has a wave port and a frequency-dependent "
-                   "Permittivity, and is solved with the nonlinear eigensolver!\nIt can "
-                   "miss modes nearest the target or stop with fewer modes than requested, "
-                   "most of all near a resonance of a material at a wave port.\n");
+      Mpi::Warning(
+          "The eigenmode problem has {} a frequency-dependent Permittivity, and is "
+          "solved with the nonlinear eigensolver!\nIt can miss modes nearest the "
+          "target or stop with fewer modes than requested, most of all near a "
+          "resonance of a material at {}.\n",
+          !absorbing  ? "a wave port and"
+          : wave_port ? "a wave port and an absorbing boundary next to"
+                      : "an absorbing boundary next to",
+          !absorbing  ? "a wave port"
+          : wave_port ? "a wave port or the absorbing boundary"
+                      : "the absorbing boundary");
     }
     for (std::size_t m = 0; m < mat_op.NumFrequencyDependentPermittivityMaterials(); m++)
     {

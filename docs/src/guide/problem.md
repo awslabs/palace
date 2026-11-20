@@ -60,8 +60,10 @@ mode does not show that no lower mode was missed. Changing `Target`, `TargetUppe
 number of modes changes its starting values. It can also converge fewer modes than were
 requested, for example near a material resonance with a wave port or an absorbing boundary
 next to the material, or with `"SLP"` or `"PEPLinear": false`, which do not linearize the
-pole terms; the solve then stops with an error. A wave port mode solve at a complex
-frequency that does not converge is fatal.
+pole terms; the solve then stops with an error. A wave port or an absorbing boundary next
+to a frequency-dependent material can make it miss modes nearest the target also without a
+resonance, as with a `Debye` or `Drude` material, and *Palace* warns of such a boundary on
+this route. A wave port mode solve at a complex frequency that does not converge is fatal.
 
 The divergence-free projection is disabled for frequency-dependent permittivity: a fixed
 high-frequency projector does not impose the frequency-dependent interface condition, and

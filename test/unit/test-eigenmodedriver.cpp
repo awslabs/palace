@@ -567,41 +567,131 @@ TEST_CASE_METHOD(test::SharedTempDir,
 }
 
 TEST_CASE_METHOD(test::SharedTempDir,
-                 "Eigenmode driver: warning of a wave port with a frequency-dependent "
-                 "material",
+                 "Eigenmode driver: warning of a wave port or an absorbing boundary with a "
+                 "frequency-dependent material",
                  "[eigenmodedriver][Serial][Parallel]")
 {
-  // The partially filled cavity of the next test with a wave port on its top face, in the
-  // vacuum, from 9 GHz: the problem is solved by the nonlinear eigensolver, which warns of
-  // the wave port with the Lorentz slab, which has no resonance within 3 half-widths of the
-  // search window. With a constant slab it does not warn.
+  // The partially filled cavity of the next test from 9 GHz, with a wave port on its top
+  // face (attribute 6), in the vacuum, with an absorbing boundary of either order on a side
+  // face (2 or 3), next to the slab and the vacuum, or on its top face, next to the vacuum
+  // only, or with both a wave port and an absorbing boundary next to the slab. The slab is
+  // the Lorentz medium, which has no resonance within 3 half-widths of the search window,
+  // or a Debye medium, which has none. On the route of the nonlinear eigensolver, one
+  // warning names the wave port, the absorbing boundary next to the material, or both. It
+  // is not given for a constant slab, nor for an absorbing boundary next to the vacuum
+  // only: of the second order, on the nonlinear route, or of the first order, where the
+  // pole terms are linearized exactly.
   const auto mesh = WriteSlabMesh(temp_dir);
-  const std::string warning = "The eigenmode problem has a wave port and a "
-                              "frequency-dependent Permittivity, and is "
-                              "solved with the nonlinear eigensolver!";
-  for (const bool dispersive : {true, false})
+  const std::string warning = "The eigenmode problem has ";
+  const json debye = {{"HighFrequencyLimit", slab_eps_inf},
+                      {"Terms",
+                       {{{"Type", "Debye"},
+                         {"DeltaPermittivity", slab_delta_eps},
+                         {"RelaxationTime", 0.01}}}}};
+  enum class Route
   {
-    CAPTURE(dispersive);
+    EXACT,
+    SEED,
+    ANY
+  };
+  // The case, the slab (Lorentz, Debye, or constant), whether there is a wave port, the
+  // attribute and order of the absorbing boundary (none for attribute 0), what the warning
+  // names (none if empty), and the route.
+  struct Case
+  {
+    std::string name, slab;
+    bool wave_port;
+    int absorbing_attr, order;
+    std::string named;
+    Route route;
+  };
+  for (const auto &c :
+       std::vector<Case>{{"lorentz", "lorentz", true, 0, 1, "a wave port and", Route::SEED},
+                         {"constant", "constant", true, 0, 1, "", Route::ANY},
+                         {"absorbing_1_slab", "debye", false, 2, 1,
+                          "an absorbing boundary next to", Route::SEED},
+                         {"absorbing_2_slab", "debye", false, 3, 2,
+                          "an absorbing boundary next to", Route::SEED},
+                         {"absorbing_1_vacuum", "debye", false, 6, 1, "", Route::EXACT},
+                         {"absorbing_2_vacuum", "debye", false, 6, 2, "", Route::SEED},
+                         {"wave_port_absorbing", "debye", true, 2, 1,
+                          "a wave port and an absorbing boundary next to", Route::SEED}})
+  {
+    CAPTURE(c.name);
     auto config = SlabConfig(mesh, 1, 9.0, "Default");
     config["Solver"]["Eigenmode"]["Tol"] = 1.0e-8;
     config["Solver"]["Eigenmode"]["TargetUpper"] = 9.5;
-    config["Boundaries"] = {
-        {"PEC", {{"Attributes", {1, 2, 3, 4, 5}}}},
-        {"WavePort", {{{"Index", 1}, {"Attributes", {6}}, {"Mode", 1}}}}};
-    if (!dispersive)
+    json pec = json::array();
+    for (int attr = 1; attr <= 6; attr++)
     {
-      config["Domains"]["Materials"][1]["Permittivity"] = slab_eps_inf;
+      if (attr != c.absorbing_attr && !(c.wave_port && attr == 6))
+      {
+        pec.push_back(attr);
+      }
     }
-    const auto name = std::string(dispersive ? "lorentz" : "constant");
+    config["Boundaries"] = {{"PEC", {{"Attributes", pec}}}};
+    if (c.wave_port)
+    {
+      config["Boundaries"]["WavePort"] = {{{"Index", 1}, {"Attributes", {6}}, {"Mode", 1}}};
+    }
+    if (c.absorbing_attr > 0)
+    {
+      config["Boundaries"]["Absorbing"] = {{"Attributes", {c.absorbing_attr}},
+                                           {"Order", c.order}};
+    }
+    if (c.slab != "lorentz")
+    {
+      config["Domains"]["Materials"][1]["Permittivity"] =
+          (c.slab == "debye") ? debye : json(slab_eps_inf);
+    }
+    // Next to the slab, the solve can stop without the requested mode, as the warning says
+    // (on some processes and backends, depending on the faces and the slab).
     Eigenvalues modes;
-    const auto out =
-        test::CaptureStdout([&] { modes = RunEigenmode(config, temp_dir, name); });
-    CHECK(modes.f.size() >= 1);
+    bool stopped = false;
+    const auto out = test::CaptureStdout(
+        [&]
+        {
+          try
+          {
+            modes = RunEigenmode(config, temp_dir, c.name);
+          }
+          catch (const std::exception &e)
+          {
+            stopped = (c.absorbing_attr > 0 && !c.named.empty() &&
+                       std::string(e.what()).find("Eigenmode solve only found") !=
+                           std::string::npos);
+            if (!stopped)
+            {
+              throw;
+            }
+          }
+        });
+    CAPTURE(stopped);
+    CHECK((modes.f.size() >= 1 || stopped));
     if (Mpi::Root(Mpi::World()))
     {
       CAPTURE(out);
-      CHECK((out.find(warning) != std::string::npos) == dispersive);
+      std::size_t count = 0;
+      for (auto pos = out.find(warning); pos != std::string::npos;
+           pos = out.find(warning, pos + 1))
+      {
+        count++;
+      }
+      CHECK(count == (c.named.empty() ? 0 : 1));
+      if (!c.named.empty())
+      {
+        CHECK(out.find(warning + c.named +
+                       " a frequency-dependent Permittivity, and is solved with the "
+                       "nonlinear eigensolver!") != std::string::npos);
+      }
       CHECK(out.find("has a resonance at") == std::string::npos);
+      if (c.route != Route::ANY)
+      {
+        CHECK((out.find("linearized exactly") != std::string::npos) ==
+              (c.route == Route::EXACT));
+        CHECK((out.find("poles taken exactly in the initial guesses") !=
+               std::string::npos) == (c.route == Route::SEED));
+      }
     }
   }
 }

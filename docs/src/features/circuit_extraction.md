@@ -124,6 +124,12 @@ of the driven solver as well as the following additional files:
     and imaginary parts of the corresponding eigenvectors in the synthesized node space. An
     HDM error is NaN when a wave port mode does not converge at the complex frequency of the
     estimate, so that the error is not evaluated; *Palace* warns which estimates these are.
+    A root with ``\mathrm{Im}~f < 0`` grows in time, which its quality factor, from
+    ``|\mathrm{Im}~f|``, does not show: the poles of the AAA fits of frequency-dependent
+    boundaries, for example of wave ports in lossy or frequency-dependent media, are not
+    constrained to the stable half-plane, so that the circuit can match the reduced-order model on
+    the band and not be stable, for example in a transient circuit simulation. *Palace* warns how
+    many estimates have ``\mathrm{Im}~f < 0``.
 
 There are several constraints and considerations for using this feature:
 
