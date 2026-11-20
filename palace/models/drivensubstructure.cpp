@@ -1620,6 +1620,19 @@ DrivenSubstructureModel::ReadFlatRecord(const std::string &path, int j) const
   return x;
 }
 
+std::vector<long long> DrivenSubstructureModel::RecordPositions(const std::string &path,
+                                                                MPI_Comm comm) const
+{
+  std::vector<long long> pos;
+  for (const auto &r : FrequencyRecords(ModelFile::Read(path, comm)))
+  {
+    MFEM_VERIFY(r.size == static_cast<long long>(RecordBytes()),
+                "Truncated substructuring model \"" << path << "\"!");
+    pos.push_back(r.pos);
+  }
+  return pos;
+}
+
 std::vector<int> EnvironmentPorts(const IoData &iodata, const DrivenSubstructure &ds,
                                   std::map<int, std::vector<char>> &port_dofs)
 {

@@ -289,7 +289,8 @@ voltage of a lumped port, would depend on both sides.
     `"AdaptiveCircuitSynthesis"` and the adaptive refinement of the region in online sweeps are not
     supported yet, nor, from a model, interface dielectric and far-field postprocessing. The model
     holds one dense ``|\Gamma| \times |\Gamma|`` matrix per frequency or sample (16 bytes per entry
-    of its lower triangle), which one process holds whole at each frequency.
+    of its lower triangle). Online, the processes read it in parallel and hold it distributed;
+    offline, one process holds it whole to write it, and the samples of an adaptive sweep.
 
 ## [Example: transmon capacitance](@id substructuring-transmon-example)
 

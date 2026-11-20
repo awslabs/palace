@@ -144,6 +144,10 @@ private:
   int nG = 0, np = 0, ne = 0;
   std::vector<int> env_ports;
   SignatureMap gamma_map;  // the saved interface on the current one
+  // The current interface DOFs each saved one adds to, with M^-T's coefficients, and the
+  // positions of the records in the model file.
+  std::vector<std::vector<std::pair<int, double>>> saved_to_current;
+  std::vector<long long> record_pos;
   // The model column of each excitation with environment sources (absent: none).
   std::map<int, int> ex_col;
   mfem::Array<int> pinned;
@@ -173,8 +177,17 @@ private:
   std::vector<int> grid_rows, grid_cols;
   double pc_omega = std::numeric_limits<double>::quiet_NaN();
 
-  // The rows of a flat record of the model (on root, in the saved basis). Collective.
+  // A record from its flat entries on root (in the saved basis, see
+  // DrivenSubstructureModel::Flatten), or record j of the model file, whose S_E each
+  // process reads a share of, and the record from the parts after S_E on root. Collective.
   Rows Distribute(const std::vector<std::complex<double>> &flat) const;
+  Rows ReadRecord(int j) const;
+  Rows DistributeVectors(const std::complex<double> *tail) const;
+
+  // S_E of the record whose payload starts at byte pos of the model file, on the grid: each
+  // process reads an equal share of its lower triangle, and sends each entry, mapped onto
+  // the current interface, to the processes holding the entries it adds to. Collective.
+  std::vector<std::complex<double>> ReadSchur(long long pos) const;
 
   // Form the terms at ω, unless they are held.
   void Prepare(double omega);

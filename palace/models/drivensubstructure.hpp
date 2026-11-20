@@ -144,6 +144,10 @@ struct DrivenSubstructureModel
   std::vector<std::complex<double>> ReadFlatRecord(const std::string &path, int j) const;
   // Number of complete records of frequencies in the file.
   int NumRecords(const std::string &path) const;
+
+  // The positions in a model file of the payloads of its records, in order, each checked to
+  // be of RecordBytes() (on every process). Collective.
+  std::vector<long long> RecordPositions(const std::string &path, MPI_Comm comm) const;
   // The file cut to the header and its first n records (for a restarted sweep).
   void TruncateRecords(const std::string &path, int n) const;
 
