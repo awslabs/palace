@@ -534,6 +534,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Added an MFEM patch for [mfem/mfem#5754](https://github.com/mfem/mfem/pull/5754): an
     updated parallel space builds its prolongation on all processes, as a grid function with a
     cached true vector needs. [PR 1232](https://github.com/awslabs/palace/pull/1232).
+  - Conformal AMR marks the mesh again after each refinement. The marks no longer depend on
+    whether a step rebalanced or on the number of processes; results of steps that did not
+    rebalance change. [PR 1232](https://github.com/awslabs/palace/pull/1232).
   - Fixed driven frequency sweeps aborting with "... not found in sample frequencies!" when
     overlapping `"Samples"` ranges compute the same frequency with different rounding.
     [PR 1192](https://github.com/awslabs/palace/pull/1192).
