@@ -5136,6 +5136,42 @@ void PostOperator<solver_t>::PrintSurfaceResponsePortionEnergies(double output_i
                             "conductorconsistency", result.conductor_consistency,
                             result.self_consistent_conductor_consistency);
   }
+  if (surface_response_op->ConductorConsistencyPerExcitation() &&
+      !result.conductor_consistency.empty() && result.has_postprocessed)
+  {
+    // Lane ccpx (decisions 2226 / 2229): the designer's line of this excitation: the raw
+    // share of the patches excluded HERE, per target interface and its Type, of the
+    // corrected interface energy (evaluation 0; the table's Total rows).
+    std::string shares;
+    const auto types = GetInterfaceTypes(&target_interfaces);
+    for (const int interface : target_interfaces)
+    {
+      double share = nan;
+      const auto energy = result.conductor_consistency.find(interface);
+      const auto corrected = result.interfaces.find(interface);
+      if (energy != result.conductor_consistency.end() &&
+          corrected != result.interfaces.end() && corrected->second.corrected_energy > 0.0)
+      {
+        share = energy->second.energy / corrected->second.corrected_energy;
+      }
+      const auto type = types.find(interface);
+      shares += fmt::format("{}{:d} ({}) {:.3e}", shares.empty() ? "" : ", ", interface,
+                            type != types.end() ? type->second : std::string("?"), share);
+    }
+    // The eigen driver passes excitation 0 and the mode number m = step + 1 as the output
+    // index; its gate line and ExcludedByExcitation name the mode by its source index
+    // step, so the line names both (decision 2242 m-3).
+    const std::string excitation_label =
+        solver_t == ProblemType::DRIVEN
+            ? fmt::format("f (GHz) {}, excitation {:d}", output_index, excitation)
+            : fmt::format("m {:d}, source {:d}", std::lround(output_index),
+                          std::lround(output_index) - 1);
+    Mpi::Print(" Conductor-consistency raw share at {} (the patches "
+               "excluded at this {} only; of the corrected interface energy, "
+               "evaluation 0): {}\n",
+               excitation_label, solver_t == ProblemType::DRIVEN ? "excitation" : "mode",
+               shares);
+  }
 }
 
 template <ProblemType solver_t>

@@ -314,6 +314,75 @@ Vector BuildMarkingIndicators(const ErrorIndicator &indicators, const mfem::ParM
   return marking;
 }
 
+// The conductor-consistency end banners (idfix R0-a, DESIGN A.1 (c) / B.3 (e); USER
+// decision 1000 (b)): the LOW-confidence banner whenever the gate excluded a patch on
+// either path (RecordRaw: its raw claim served RAW as the ConductorConsistency share;
+// the raw share per Type is the energy table's); a RecordOnly run is named a DIAGNOSTIC,
+// never a run of record. Formed from the operator's statistics BEFORE SaveMetadata moves
+// the diagnostics record into palace.json on the root (decision 2231, lane ccpx:
+// formed after it, they read a moved-from record and never printed).
+std::string ConductorConsistencyBanner(const json &statistics)
+{
+  std::string banner;
+  const auto diagnostics = statistics.find("Diagnostics");
+  if (diagnostics == statistics.end() || !diagnostics->is_object() ||
+      !diagnostics->contains("ConductorConsistency") ||
+      !diagnostics->at("ConductorConsistency").is_object())
+  {
+    return banner;
+  }
+  const auto &gate = diagnostics->at("ConductorConsistency");
+  const int excluded = gate.value("Count", 0);
+  if (excluded > 0 && gate.value("Exclusion", "") == "PerExcitation")
+  {
+    // Lane ccpx (decisions 2226 / 2229): each exclusion acts at its own excitation.
+    int verdicts = 0, excitations = 0;
+    for (const auto &entry : gate.contains("ExcludedByExcitation")
+                                 ? gate.at("ExcludedByExcitation")
+                                 : json::array())
+    {
+      verdicts += entry.value("Count", 0);
+      excitations++;
+    }
+    banner += fmt::format(
+        "\n*** LOW CONFIDENCE: the conductor-consistency gate (the device potential on "
+        "each coupon's metal must match its conductor) EXCLUDED {:d} (patch, "
+        "excitation) verdict(s) on {:d} distinct patch(es) at {:d} excitation(s), each "
+        "at its own excitation only (Exclusion PerExcitation; {:d} patch tests; claims "
+        "{:.6e}, cells {:.6e} mesh-file units of the distinct patches, served RAW as "
+        "the ConductorConsistency share where excluded): see "
+        "SurfaceResponse.Diagnostics.ConductorConsistency.ExcludedByExcitation of "
+        "palace.json and the raw share per Type of each excitation in "
+        "surface-response-conductor-consistency-energy.csv ***\n",
+        verdicts, excluded, excitations, gate.value("TestedPatches", 0),
+        gate.value("ClaimLength", 0.0), gate.value("CellLength", 0.0));
+  }
+  else if (excluded > 0)
+  {
+    banner += fmt::format(
+        "\n*** LOW CONFIDENCE: the conductor-consistency gate (the device potential on "
+        "each coupon's metal must match its conductor) EXCLUDED {:d} patch(es) of {:d} "
+        "tested (claims {:.6e}, cells {:.6e} "
+        "mesh-file units served RAW as the ConductorConsistency share): see "
+        "SurfaceResponse.Diagnostics.ConductorConsistency of palace.json and the "
+        "raw share per Type in surface-response-conductor-consistency-energy.csv "
+        "***\n",
+        excluded, gate.value("TestedPatches", 0), gate.value("ClaimLength", 0.0),
+        gate.value("CellLength", 0.0));
+  }
+  if (gate.value("RecordOnly", false))
+  {
+    banner += fmt::format(
+        "\n*** DIAGNOSTIC: SurfaceResponseCorrection.ConductorConsistency.RecordOnly "
+        "was set: the gate recorded {:d} verdict(s) and EXCLUDED NOTHING; this is "
+        "NOT a run of record ***\n",
+        gate.contains("RecordOnlyVerdicts")
+            ? static_cast<int>(gate.at("RecordOnlyVerdicts").size())
+            : 0);
+  }
+  return banner;
+}
+
 }  // namespace
 
 BaseSolver::BaseSolver(const IoData &iodata, bool root, int size, int num_thread,
@@ -811,6 +880,7 @@ void BaseSolver::SaveMetadata(SurfaceResponseOperator &response) const
   // The final write (round 2a R1, decision 1475 (1)): the operator's diagnostics record is
   // moved, not copied (ReleaseStatistics; the record is the same).
   auto statistics = response.ReleaseStatistics();
+  const std::string conductor_consistency_banner = ConductorConsistencyBanner(statistics);
   std::string coverage_banner, resolution_banner;
   if (root)
   {
@@ -931,41 +1001,7 @@ void BaseSolver::SaveMetadata(SurfaceResponseOperator &response) const
                                        << spill->Path() << "\" failed!");
     }
   }
-  // The conductor-consistency gate (idfix R0-a, DESIGN A.1 (c) / B.3 (e); USER decision
-  // 1000 (b)): the LOW-confidence banner whenever the gate excluded a patch on either path
-  // (RecordRaw: its raw claim served RAW as the ConductorConsistency share); the raw share
-  // per Type is the energy table's; a RecordOnly run is named a DIAGNOSTIC, never a run of
-  // record.
-  if (const auto diagnostics = statistics.find("Diagnostics");
-      diagnostics != statistics.end() && diagnostics->is_object() &&
-      diagnostics->contains("ConductorConsistency") &&
-      (*diagnostics)["ConductorConsistency"].is_object())
-  {
-    const auto &gate = (*diagnostics)["ConductorConsistency"];
-    const int excluded = gate.value("Count", 0);
-    if (excluded > 0)
-    {
-      Mpi::Print(
-          "\n*** LOW CONFIDENCE: the conductor-consistency gate (the device potential on "
-          "each coupon's metal must match its conductor) EXCLUDED {:d} patch(es) of {:d} "
-          "tested (claims {:.6e}, cells {:.6e} "
-          "mesh-file units served RAW as the ConductorConsistency share): see "
-          "SurfaceResponse.Diagnostics.ConductorConsistency of palace.json and the "
-          "raw share per Type in surface-response-conductor-consistency-energy.csv "
-          "***\n",
-          excluded, gate.value("TestedPatches", 0), gate.value("ClaimLength", 0.0),
-          gate.value("CellLength", 0.0));
-    }
-    if (gate.value("RecordOnly", false))
-    {
-      Mpi::Print(
-          "\n*** DIAGNOSTIC: SurfaceResponseCorrection.ConductorConsistency.RecordOnly "
-          "was set: the gate recorded {:d} verdict(s) and EXCLUDED NOTHING; this is "
-          "NOT a run of record ***\n",
-          static_cast<int>(
-              gate.value("RecordOnlyVerdicts", nlohmann::json::array()).size()));
-    }
-  }
+  Mpi::Print("{}", conductor_consistency_banner);
   // Geometry fallbacks (USER decision 1000 (b) / 1001): the LOW-confidence banner closes
   // the run summary whenever a converted site fired; never silent.
   if (const auto record = response.GetGeometryFallbackRecord(); !record.is_null())

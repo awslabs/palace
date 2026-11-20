@@ -758,9 +758,14 @@ private:
     std::vector<
         config::ElectrostaticSolverData::ResponseCorrectionPatchData::ConductorProbe>
         conductor_probes;
-    // The conductor-consistency gate's sticky exclusion (B.3 (e) / C.1): weight 0 from the
-    // excluding source on; the patch stays in the Maxwell floor's set (C.1).
+    // The conductor-consistency gate's exclusion (B.3 (e) / C.1): weight 0 from the
+    // excluding source on under Exclusion Sticky; at the excluding source only under
+    // PerExcitation (lane ccpx), where the next pass restores the weight first. The patch
+    // stays in the Maxwell floor's set (C.1) on both rules.
     bool conductor_consistency_excluded = false;
+    // PerExcitation (lane ccpx): excluded at one or more gate passes of this operator (the
+    // UNION, which equals the Sticky rule's final excluded set).
+    bool conductor_consistency_in_union = false;
     // The probes read on the device arc chords (decision 611 (2)): the placed patch's
     // ProbeSnaps applied to probe_points, for the record.
     std::vector<ConductorConsistencyRecord::ProbeSnap> probe_snaps;
@@ -770,7 +775,8 @@ private:
     double cell_length = 0.0;
     // The dual R0-a gate on the MAGNETIC term only (DESIGN-v2 section 3): the flux trace
     // read at the patch's conductor probes departs from the piece's flux state; the patch
-    // keeps its electric term and loses its magnetic one (sticky, named).
+    // keeps its electric term and loses its magnetic one (sticky under Sticky, at this
+    // excitation only under PerExcitation; named).
     bool magnetic_excluded = false;
   };
 
@@ -1608,8 +1614,8 @@ public:
   // The dual R0-a gate (the magnetic term only; DESIGN-v2 section 3): the flux read along
   // the R0-a probe legs against the piece's flux state, on the magnetic chain trace, with
   // the electric gate's tolerance and floor; a failing patch loses its magnetic term
-  // (Patch::magnetic_excluded, sticky), keeps its electric one. Called where the electric
-  // gate is, on the raw field of the source.
+  // (Patch::magnetic_excluded; sticky, or per excitation under PerExcitation), keeps its
+  // electric one. Called where the electric gate is, on the raw field of the source.
   void ApplyMagneticConductorConsistencyGate(const ComplexVector &E, int source,
                                              double frequency);
   // Per model the leaf's load-time record (surface-response-magnetic.csv; the manifest).
@@ -1799,10 +1805,12 @@ public:
   // patch: the device potential at every model Edge's metal point on both end faces of
   // its cell, grouped into local metal pieces by the Edges' GapDirections, against the
   // reference its metal is held at), exclude the patches whose max_ratio exceeds
-  // kConductorConsistencyTolerance (weight 0 from now on, STICKY, like a DomainBoundary
-  // cell: the fixed-trace energies, the self-consistent operator and the ModelCatalog
-  // weights of this and every later excitation omit them; their raw claims are served
-  // RAW), append the records to the Diagnostics ("ConductorConsistency": every tested
+  // kConductorConsistencyTolerance (weight 0 like a DomainBoundary cell: the fixed-trace
+  // energies and the self-consistent operator omit them; their raw claims are served RAW;
+  // Exclusion Sticky: at this and every later excitation, a weight-0 patch is not tested
+  // again; PerExcitation (lane ccpx): at this excitation only, the next call restores the
+  // weight and tests the patch again), append the records to the Diagnostics
+  // ("ConductorConsistency": every tested
   // patch of every excitation, the excluded ones with their claim / cell lengths next to
   // the DomainBoundary record) and return the records of this excitation (ordered by
   // global patch index, replicated on all ranks). Under
@@ -1818,12 +1826,14 @@ public:
   // legs (MaxwellProbe), P(q) complex; the patch's trace amplitude A_p = max |t_i| over its
   // FIT trace incl. the states; the floor F(s, f) = kConductorConsistencyAmplitudeFloor x
   // the largest A_p over the PRE-GATE applied set (every patch with weight > 0 by every
-  // rule other than this gate: a sticky exclusion keeps its patch in the set, so F depends
-  // on the field at (s, f) only; GlobalMax); the deviation D(q) = |P(q) - C(piece(q))| with
+  // rule other than this gate: an exclusion at another excitation keeps its patch in the
+  // set, so F depends on the field at (s, f) only; GlobalMax); the deviation D(q) =
+  // |P(q) - C(piece(q))| with
   // C = 0 for the anchor's conductor / a one-reference model and the piece's
   // conductor-state trace otherwise; ratio = D / max(A_p, F) >
   // kConductorConsistencyTolerance on any probe excludes the patch (RecordRaw: weight 0,
-  // sticky, its raw claim served RAW, recorded, never an abort). self_consistent_pre_gate
+  // sticky or per excitation as above, its raw claim served RAW, recorded, never an
+  // abort). self_consistent_pre_gate
   // marks a record whose self-consistent field was solved before the gate could act (an
   // eigenmode, decision 1064 (1)). Collective.
   std::vector<ConductorConsistencyRecord>
@@ -1833,6 +1843,10 @@ public:
   // with conductor vertices on the process plane, or a translational patch with its edge
   // probes).
   bool HasConductorConsistencyProbes() const;
+  // Lane ccpx (ruling 2229 D3): after the last excitation, the run-level forms (the
+  // corrected capacitance matrix) take ONE operator: under PerExcitation every patch of the
+  // union gets weight 0 (= the Sticky rule's final weights); a no-op under Sticky.
+  void ApplyConductorConsistencyUnionWeights();
 
   // The impedance-metal rule's on-metal LAW READING (ruling 2012 Q4; RECORD only; refuses
   // nothing): per applied patch and gate call, L = max over the patch's ON-METAL probe legs
@@ -1935,6 +1949,25 @@ private:
                                  int source, double excitation_potential);
   // The diagnostic opt-out (RecordOnly): record, never exclude.
   bool conductor_consistency_record_only = false;
+  // Lane ccpx (decisions 2226 / 2229): ConductorConsistency.Exclusion PerExcitation and
+  // not RecordOnly. An exclusion then acts at its own excitation only: every pass first
+  // undoes the previous pass's exclusions (BeginConductorConsistencyPass) and tests every
+  // patch whose pre-gate weight is above 0; conductor_consistency_portions holds the
+  // pass's portions; the run-level readers take the union. False: the Sticky rule, every
+  // code path as before.
+  bool conductor_consistency_per_excitation = false;
+  // PerExcitation: the last pass's exclusions (patch index, pre-gate weight), undone at
+  // the next pass's start.
+  std::vector<std::pair<std::size_t, double>> conductor_consistency_pass_restore;
+  // PerExcitation: the global indices (ascending, replicated) of the patches excluded at
+  // the last pass, and of those excluded at one or more passes (the union).
+  std::vector<int> conductor_consistency_pass_patches, conductor_consistency_union_patches;
+  // PerExcitation: the union's raw-claim portions, appended at each patch's FIRST
+  // exclusion in ascending patch order per pass: the Sticky rule's list, call for call.
+  ExcludedPatchPortions conductor_consistency_union_portions;
+  // PerExcitation: restore the weights the last pass zeroed, clear its flags and empty
+  // the pass's portion list; a no-op under Sticky.
+  void BeginConductorConsistencyPass();
 
 public:
   // Evaluate a postprocessing-only response for a complex Nedelec Maxwell field. Coupon
@@ -2149,14 +2182,12 @@ public:
   {
     return spatial_cluster_priority;
   }
-  // The raw claims of the patches the conductor-consistency gate has excluded so far
-  // (S7diag R1, decision 758; empty before the first exclusion and on every window with 0
+  // The raw claims of the patches the conductor-consistency gate has excluded (S7diag R1,
+  // decision 758; empty before the first exclusion and on every window with 0
   // exclusions): kept in the corrected interface energies like the uncovered requirements
-  // and reported as the ConductorConsistency share. The gate runs on the electrostatic path
-  // only (ApplyConductorConsistencyGate refuses a Maxwell operator), so a Maxwell
-  // operator's list is empty by construction: the Maxwell path consumes no such term today
-  // (decision 763); when it gains the gate, it consumes this list as the electrostatic
-  // driver does.
+  // and reported as the ConductorConsistency share. Exclusion Sticky: the patches excluded
+  // so far (the list only grows). PerExcitation (lane ccpx): the patches excluded at the
+  // LAST gate pass, i.e. at the excitation being measured.
   const std::vector<
       config::ElectrostaticSolverData::ResponseCorrectionData::UncoveredPortionData> &
   GetConductorConsistencyPortions() const
@@ -2166,6 +2197,29 @@ public:
   const ExcludedPatchPortions &GetConductorConsistencyPortionRecord() const
   {
     return conductor_consistency_portions;
+  }
+  // The run-level record (after the last excitation: the corrected capacitance matrix and
+  // its coverage, the electrostatic table's rows, RawPortions): the patches excluded at one
+  // or more excitations. Sticky: GetConductorConsistencyPortionRecord() (the same list).
+  const ExcludedPatchPortions &GetConductorConsistencyUnionPortionRecord() const
+  {
+    return conductor_consistency_per_excitation ? conductor_consistency_union_portions
+                                                : conductor_consistency_portions;
+  }
+  // Lane ccpx: whether the exclusion acts per excitation (Exclusion PerExcitation, not
+  // RecordOnly), and then the global patch indices (ascending, every rank) excluded at the
+  // last gate pass and at one or more passes; both empty under Sticky.
+  bool ConductorConsistencyPerExcitation() const
+  {
+    return conductor_consistency_per_excitation;
+  }
+  const std::vector<int> &GetConductorConsistencyPassPatches() const
+  {
+    return conductor_consistency_pass_patches;
+  }
+  const std::vector<int> &GetConductorConsistencyUnionPatches() const
+  {
+    return conductor_consistency_union_patches;
   }
   // PatchEnergy (decision 922 B-1): the applied patches' raw claims labelled by model set
   // (lane L1: always built, the coverage partition's served claims).

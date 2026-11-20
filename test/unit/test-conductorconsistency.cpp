@@ -8,6 +8,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -19,6 +20,7 @@
 #include <tuple>
 #include <utility>
 #include <vector>
+#include <unistd.h>
 #include <fmt/format.h>
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -43,6 +45,25 @@ using namespace Catch::Matchers;
 
 namespace
 {
+
+// The text a callable writes to the process's standard output (the root's log; the form of
+// test-lawcausedmissing.cpp).
+template <typename F>
+std::string CaptureStdout(const fs::path &file, F &&run)
+{
+  std::fflush(stdout);
+  const int saved = dup(fileno(stdout));
+  std::FILE *target = std::fopen(file.c_str(), "w");
+  REQUIRE(target);
+  dup2(fileno(target), fileno(stdout));
+  run();
+  std::fflush(stdout);
+  dup2(saved, fileno(stdout));
+  close(saved);
+  std::fclose(target);
+  std::ifstream input(file);
+  return {std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
+}
 
 // A two-conductor spatial coupon hand-placed across the gap between the two islands of
 // MakeIslandMesh(neighboring_island): island 1 (attribute 9, terminal 1) occupies x in
@@ -542,9 +563,21 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 
   SECTION("coupon metal over a device gap at another potential is excluded and recorded")
   {
+    // Lane ccpx: both exclusion rules (the default PerExcitation and the legacy Sticky);
+    // they differ only at the later excitation (the tail of this section).
+    const std::string exclusion =
+        GENERATE(std::string("PerExcitation"), std::string("Sticky"));
+    INFO("exclusion: " << exclusion);
+    json rule_config = config;
+    rule_config["Solver"]["Electrostatic"]["ResponseCorrection"]["ConductorConsistency"]
+               ["Exclusion"] = exclusion;
+    IoData rule_iodata(rule_config, false);
+    rule_iodata.boundaries.cracked_attributes.insert(9);
+    rule_iodata.boundaries.cracked_attributes.insert(10);
     const auto files = WriteCoupon(temp.temp_dir, CouponVariant::INCONSISTENT);
     test::GeometryCacheEnvGuard cache_env(files.cache.string(), false);
-    SurfaceResponseOperator response(iodata, laplace);
+    SurfaceResponseOperator response(rule_iodata, laplace);
+    CHECK(response.ConductorConsistencyPerExcitation() == (exclusion == "PerExcitation"));
     REQUIRE(response.GetPatchCount() == 1);
     REQUIRE(response.GetBasisSize() == files.contour_size + 1);
     const auto before = response.GetElectrostaticResponse(V[0]);
@@ -648,14 +681,166 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     };
     REQUIRE(diagnostics.contains("RawPortions"));
     CheckServedClaim(diagnostics["RawPortions"]);
-    // The exclusion is sticky: the next excitation finds no applied probe patch.
     const auto later = response.ApplyConductorConsistencyGate(V[1], 2);
-    CHECK(later.empty());
-    CHECK(statistics["Diagnostics"]["ConductorConsistency"]["Records"].size() == 1);
-    // ... and serves the same two portions (no duplicate appended).
     const auto later_statistics = response.GetStatistics();
-    CheckServedClaim(
-        later_statistics["Diagnostics"]["ConductorConsistency"]["RawPortions"]);
+    const auto &later_record = later_statistics["Diagnostics"]["ConductorConsistency"];
+    if (exclusion == "Sticky")
+    {
+      // The exclusion is sticky: the next excitation finds no applied probe patch.
+      CHECK(later.empty());
+      CHECK(later_record["Records"].size() == 1);
+      CHECK_FALSE(later_record.contains("Exclusion"));
+      CHECK_FALSE(later_record.contains("ExcludedByExcitation"));
+      CHECK_FALSE(later_statistics["ModelCatalog"][0].contains("ConstructionPatchWeight"));
+    }
+    else
+    {
+      // PerExcitation: the patch is tested again at source 2 (island 2 at 1 V: the
+      // fictitious vertex reads the gap potential again) and excluded there too.
+      REQUIRE(later.size() == 1);
+      CHECK(later.front().excluded);
+      CHECK(later_record["Exclusion"] == "PerExcitation");
+      CHECK(later_record["Records"].size() == 2);
+      CHECK(later_record["TestedPatches"].get<int>() == 2);
+      CHECK(later_record["ExcludedPatches"].size() == 2);
+      CHECK(later_record["Count"].get<int>() == 1);  // distinct patches
+      CHECK_THAT(later_record["ClaimLength"].get<double>(), WithinAbs(0.8, 1.0e-12));
+      REQUIRE(later_record["ExcludedByExcitation"].size() == 2);
+      for (int k = 0; k < 2; k++)
+      {
+        const auto &entry = later_record["ExcludedByExcitation"][k];
+        CHECK(entry["Source"].get<int>() == k + 1);
+        CHECK(entry["Count"].get<int>() == 1);
+        REQUIRE(entry["Models"].size() == 1);
+        CHECK(entry["Models"][0]["Model"] == "gap-junction-inconsistent");
+        CHECK(entry["Models"][0]["Count"].get<int>() == 1);
+      }
+      CHECK(later_statistics["ModelCatalog"][0]["PatchWeight"].get<double>() == 0.0);
+      CHECK(later_statistics["ModelCatalog"][0]["ConstructionPatchWeight"].get<double>() ==
+            1.0);
+      CHECK(response.GetConductorConsistencyUnionPatches() == std::vector<int>{0});
+      CHECK(response.GetConductorConsistencyPassPatches() == std::vector<int>{0});
+    }
+    // ... and serves the same eight portions (no duplicate appended).
+    CheckServedClaim(later_record["RawPortions"]);
+  }
+
+  SECTION("PerExcitation: an exclusion acts at its own excitation only, whatever the order")
+  {
+    // Lane ccpx (decisions 2226 / 2229). The INCONSISTENT coupon under two excitations:
+    // `barely` (both islands within 1e-6 V of each other at ~1 V: the coupon barely sees
+    // it, its ratio rests on the floor and it PASSES) and V[0] (island 1 at 1 V: it FAILS).
+    const auto files = WriteCoupon(temp.temp_dir, CouponVariant::INCONSISTENT);
+    test::GeometryCacheEnvGuard cache_env(files.cache.string(), false);
+    Vector barely(V[0]);
+    barely *= 1.0e-6;
+    barely += 1.0;
+    // (i) A failure at ONE excitation: passes at 1, fails at 2, passes again at 3 with the
+    // weight, the response and the operator of excitation 1, bitwise.
+    {
+      SurfaceResponseOperator response(iodata, laplace);
+      REQUIRE(response.ConductorConsistencyPerExcitation());
+      const auto first = response.ApplyConductorConsistencyGate(barely, 1);
+      REQUIRE(first.size() == 1);
+      CHECK_FALSE(first.front().excluded);
+      const auto applied = response.GetElectrostaticResponse(barely);
+      CHECK(applied.domain_correction != 0.0);
+      Vector y_applied(barely.Size());
+      response.Mult(barely, y_applied);
+      const auto failed = response.ApplyConductorConsistencyGate(V[0], 2);
+      REQUIRE(failed.size() == 1);
+      CHECK(failed.front().excluded);
+      CHECK(response.GetElectrostaticResponse(barely).domain_correction == 0.0);
+      CHECK_FALSE(response.GetConductorConsistencyPortions().empty());
+      const auto again = response.ApplyConductorConsistencyGate(barely, 3);
+      REQUIRE(again.size() == 1);
+      CHECK_FALSE(again.front().excluded);
+      CHECK(again.front().max_ratio == first.front().max_ratio);
+      const auto reapplied = response.GetElectrostaticResponse(barely);
+      CHECK(reapplied.domain_correction == applied.domain_correction);
+      CHECK(reapplied.fabricated_surface_energy == applied.fabricated_surface_energy);
+      Vector y_again(barely.Size());
+      response.Mult(barely, y_again);
+      y_again -= y_applied;
+      CHECK(linalg::Norml2(Mpi::World(), y_again) == 0.0);
+      CHECK(response.GetConductorConsistencyPortions().empty());
+      CHECK(response.GetConductorConsistencyPassPatches().empty());
+      CHECK(response.GetConductorConsistencyUnionPatches() == std::vector<int>{0});
+      const auto statistics = response.GetStatistics();
+      const auto &record = statistics["Diagnostics"]["ConductorConsistency"];
+      CHECK(record["Count"].get<int>() == 1);
+      CHECK(record["TestedPatches"].get<int>() == 3);
+      REQUIRE(record["ExcludedPatches"].size() == 1);
+      CHECK(record["ExcludedPatches"][0]["Source"].get<int>() == 2);
+      REQUIRE(record["ExcludedByExcitation"].size() == 1);
+      CHECK(record["ExcludedByExcitation"][0]["Source"].get<int>() == 2);
+      CHECK(record.contains("RawPortions"));  // the union: the patch excluded at 2
+      // The run-level weight is the weight kept at EVERY excitation; the construction
+      // weight beside it.
+      CHECK(statistics["ModelCatalog"][0]["PatchWeight"].get<double>() == 0.0);
+      CHECK(statistics["ModelCatalog"][0]["ConstructionPatchWeight"].get<double>() == 1.0);
+    }
+    // (ii) ORDER-INDEPENDENCE: (barely, V[0]) and (V[0], barely) on fresh operators give
+    // each field the same record and the same response, bitwise (the same field, the same
+    // weights, the same reductions); (iii) Sticky: barely after V[0] is not tested and
+    // keeps nothing.
+    struct Outcome
+    {
+      double max_ratio = -1.0;
+      bool excluded = false;
+      double domain_correction = 0.0;
+      std::map<int, double> fabricated;
+      bool tested = false;
+    };
+    auto Run = [&](const std::string &exclusion, bool fail_first)
+    {
+      json rule_config = config;
+      rule_config["Solver"]["Electrostatic"]["ResponseCorrection"]["ConductorConsistency"]
+                 ["Exclusion"] = exclusion;
+      IoData rule_iodata(rule_config, false);
+      rule_iodata.boundaries.cracked_attributes.insert(9);
+      rule_iodata.boundaries.cracked_attributes.insert(10);
+      SurfaceResponseOperator response(rule_iodata, laplace);
+      std::map<char, Outcome> outcomes;  // 'B' = barely, 'F' = V[0]
+      for (const int step : {1, 2})
+      {
+        const bool fail = (step == 1) == fail_first;
+        const Vector &x = fail ? V[0] : barely;
+        auto &outcome = outcomes[fail ? 'F' : 'B'];
+        const auto records = response.ApplyConductorConsistencyGate(x, step);
+        if (!records.empty())
+        {
+          outcome.tested = true;
+          outcome.max_ratio = records.front().max_ratio;
+          outcome.excluded = records.front().excluded;
+        }
+        const auto measured = response.GetElectrostaticResponse(x);
+        outcome.domain_correction = measured.domain_correction;
+        outcome.fabricated = measured.fabricated_surface_energy;
+      }
+      return outcomes;
+    };
+    const auto pass_first = Run("PerExcitation", false);
+    const auto fail_first = Run("PerExcitation", true);
+    for (const char key : {'B', 'F'})
+    {
+      INFO("field " << key);
+      const auto &a = pass_first.at(key), &b = fail_first.at(key);
+      CHECK(a.tested);
+      CHECK(b.tested);
+      CHECK(a.max_ratio == b.max_ratio);
+      CHECK(a.excluded == (key == 'F'));
+      CHECK(b.excluded == a.excluded);
+      CHECK(a.domain_correction == b.domain_correction);
+      CHECK(a.fabricated == b.fabricated);
+    }
+    CHECK(pass_first.at('B').domain_correction != 0.0);
+    const auto sticky_fail_first = Run("Sticky", true);
+    CHECK_FALSE(sticky_fail_first.at('B').tested);
+    CHECK(sticky_fail_first.at('B').domain_correction == 0.0);
+    const auto sticky_pass_first = Run("Sticky", false);
+    CHECK(sticky_pass_first.at('B').domain_correction ==
+          pass_first.at('B').domain_correction);
   }
 
   SECTION("the ratio is scale invariant and floored at a fraction of the excitation")
@@ -957,6 +1142,14 @@ TEST_CASE_METHOD(
   // P3-23: both crack forms (the legacy key of SD-801; upstream's default = the key unset).
   const auto crack_policy = GENERATE(test::CrackPolicy::Legacy, test::CrackPolicy::Default);
   INFO("crack policy: " << test::CrackPolicyName(crack_policy));
+  // Lane ccpx: both exclusion rules. Sticky: the inconsistent coupon excluded at source 1
+  // is not tested at source 2; PerExcitation (the default): it is tested again at source 2
+  // and fails there too (the gap potential under island 2's excitation), so every table
+  // below reads the same, and only the record's per-excitation counts differ.
+  const std::string exclusion =
+      GENERATE(std::string("PerExcitation"), std::string("Sticky"));
+  INFO("exclusion: " << exclusion);
+  const bool sticky = exclusion == "Sticky";
   constexpr double R = kHalfU;
   const fs::path mesh_path = temp.temp_dir / "conductor-consistency-islands.mesh";
   if (Mpi::Root(Mpi::World()))
@@ -1001,13 +1194,67 @@ TEST_CASE_METHOD(
   correction["TraceCoupling"] = "SurfaceMortar";
   correction["MortarOversampling"] = 2;
   correction["CorrectionMode"] = "Both";
+  correction["ConductorConsistency"]["Exclusion"] = exclusion;
   config["Solver"]["Linear"] = {{"Tol", 1.0e-12}, {"MaxIts", 400}};
   const fs::path excluded_dir = temp.temp_dir / "cc-excluded";
   const fs::path applied_dir = temp.temp_dir / "cc-applied";
   {
     test::GeometryCacheEnvGuard cache_env(inconsistent.cache.string(), false);
     config["Problem"]["Output"] = excluded_dir.string();
-    test::RunElectrostatic(config);
+    // Decision 2231 (lane ccpx): the LOW-CONFIDENCE banner prints at the end of a run with
+    // an exclusion, on both rules (it was formed after the record had moved into
+    // palace.json and never printed).
+    const auto log = CaptureStdout(
+        temp.temp_dir / fmt::format("cc-excluded-{}.log", Mpi::Rank(Mpi::World())),
+        [&]() { test::RunElectrostatic(config); });
+    if (Mpi::Root(Mpi::World()))
+    {
+      CHECK_THAT(log,
+                 ContainsSubstring("*** LOW CONFIDENCE: the conductor-consistency gate"));
+      CHECK_THAT(log, ContainsSubstring(sticky ? "EXCLUDED 1 patch(es) of 1 tested"
+                                               : "EXCLUDED 2 (patch, excitation) "
+                                                 "verdict(s) on 1 distinct patch(es) at 2 "
+                                                 "excitation(s)"));
+      CHECK_THAT(log, !ContainsSubstring("*** DIAGNOSTIC: SurfaceResponseCorrection"));
+      // Lane ccpx: the lines that tell a designer what was excluded where (PerExcitation
+      // only; Sticky prints the former log).
+      for (const int source : {1, 2})
+      {
+        INFO("source " << source);
+        const std::string share_line =
+            fmt::format(" Conductor-consistency raw share at excitation {:d} (the patches "
+                        "excluded at this excitation only; of the corrected interface "
+                        "energy, evaluation 0): 4 (",
+                        source);
+        CHECK(ContainsSubstring(share_line).match(log) == !sticky);
+      }
+      CHECK(
+          ContainsSubstring("  excluded at THIS excitation only (Exclusion PerExcitation; "
+                            "every patch is tested again at the next one): 1 patch(es) of "
+                            "1 model(s): gap-junction-inconsistent 1")
+              .match(log) == !sticky);
+    }
+  }
+  if (!sticky && crack_policy == test::CrackPolicy::Default)
+  {
+    // ... and RecordOnly prints the DIAGNOSTIC banner (2 verdicts: one per source), no
+    // LOW-CONFIDENCE banner (nothing excluded).
+    json record_only = config;
+    record_only["Solver"]["Electrostatic"]["ResponseCorrection"]["ConductorConsistency"] = {
+        {"RecordOnly", true}};
+    record_only["Problem"]["Output"] = (temp.temp_dir / "cc-record-only").string();
+    test::GeometryCacheEnvGuard cache_env(inconsistent.cache.string(), false);
+    const auto log = CaptureStdout(
+        temp.temp_dir / fmt::format("cc-record-only-{}.log", Mpi::Rank(Mpi::World())),
+        [&]() { test::RunElectrostatic(record_only); });
+    if (Mpi::Root(Mpi::World()))
+    {
+      CHECK_THAT(log, ContainsSubstring("*** DIAGNOSTIC: "
+                                        "SurfaceResponseCorrection.ConductorConsistency."
+                                        "RecordOnly was set: the gate recorded 2 "
+                                        "verdict(s) and EXCLUDED NOTHING"));
+      CHECK_THAT(log, !ContainsSubstring("*** LOW CONFIDENCE: the conductor-consistency"));
+    }
   }
   {
     test::GeometryCacheEnvGuard cache_env(consistent.cache.string(), false);
@@ -1223,8 +1470,32 @@ TEST_CASE_METHOD(
     const auto metadata = Metadata(excluded_dir);
     const auto &record =
         metadata.at("SurfaceResponse").at("Diagnostics").at("ConductorConsistency");
+    // Lane ccpx (ruling 2229 D4): PerExcitation names each flagged coverage cell's
+    // conductor-consistency raw share of W (here the whole method gap of its source).
+    const auto &flagged = metadata.at("SurfaceResponse").at("Coverage").at("Flagged");
+    REQUIRE_FALSE(flagged.empty());
+    for (const auto &entry : flagged)
+    {
+      REQUIRE(entry.contains("conductor-consistency raw share of W") == !sticky);
+      if (!sticky && entry.at("W within-R raw (J)").is_number() &&
+          entry.at("W within-R raw (J)").get<double>() > 0.0)
+      {
+        const double cc = entry.at("conductor-consistency raw share of W").get<double>();
+        CHECK(cc > 0.0);
+        CHECK(cc <= entry.at("method-gap raw share of W").get<double>() + 1.0e-12);
+      }
+    }
     CHECK(record.at("Count").get<int>() == 1);
-    CHECK(record.at("TestedPatches").get<int>() == 1);
+    CHECK(record.at("TestedPatches").get<int>() == (sticky ? 1 : 2));
+    REQUIRE(record.at("ExcludedPatches").size() == (sticky ? 1 : 2));
+    for (std::size_t k = 0; k < record.at("ExcludedPatches").size(); k++)
+    {
+      CHECK(record.at("ExcludedPatches")[k].at("Patch").get<int>() == 0);
+      CHECK(record.at("ExcludedPatches")[k].at("Source").get<int>() ==
+            static_cast<int>(k) + 1);
+    }
+    CHECK(record.contains("ExcludedByExcitation") == !sticky);
+    CHECK(record.contains("Exclusion") == !sticky);
     REQUIRE(record.contains("RawPortions"));
     const auto &raw = record.at("RawPortions");
     CHECK(raw.at("Count").get<int>() == 8);
@@ -1296,10 +1567,14 @@ TEST_CASE_METHOD(
     const auto &record =
         metadata.at("SurfaceResponse").at("Diagnostics").at("ConductorConsistency");
     CHECK(record.at("Count").get<int>() == 1);
-    REQUIRE(record.at("ExcludedPatches").size() == 1);
-    CHECK(record.at("ExcludedPatches")[0].at("Patch").get<int>() == 0);
-    // Both coupons probed at source 1, the applied one again at source 2.
-    CHECK(record.at("TestedPatches").get<int>() == 3);
+    REQUIRE(record.at("ExcludedPatches").size() == (sticky ? 1 : 2));
+    for (const auto &entry : record.at("ExcludedPatches"))
+    {
+      CHECK(entry.at("Patch").get<int>() == 0);
+    }
+    // Both coupons probed at source 1, the applied one again at source 2 (Sticky), both
+    // again at source 2 (PerExcitation).
+    CHECK(record.at("TestedPatches").get<int>() == (sticky ? 3 : 4));
     REQUIRE(record.contains("RawPortions"));
     const auto &raw = record.at("RawPortions");
     CHECK(raw.at("Count").get<int>() == 8);

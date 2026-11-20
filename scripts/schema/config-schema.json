@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:4-5-3",
+  "$id": "urn:palace:schema:4-5-4",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -3769,6 +3769,12 @@
                   "type": "boolean",
                   "description": "DIAGNOSTIC: record every probe reading and verdict but exclude nothing (every patch keeps its weight); the run prints a DIAGNOSTIC banner and writes `ConductorConsistency.RecordOnly: true` into its diagnostics. Admitted only for the named ITEM-0 test leg and the hardening fixtures; a run of record with it set is refused by the comparator.",
                   "default": false
+                },
+                "Exclusion": {
+                  "type": "string",
+                  "enum": ["PerExcitation", "Sticky"],
+                  "description": "Where an exclusion acts. PerExcitation: at the excitation (eigenmode, driven port excitation and frequency, electrostatic terminal) whose own test fails, and there only; every patch is tested at every excitation, so the result of an excitation does not depend on the order of the excitations. Sticky: the legacy rule (weight 0 from the excluding excitation on; an excluded patch is not tested again), for comparisons with results made before PerExcitation existed.",
+                  "default": "PerExcitation"
                 },
                 "ControlStateAnchorSetbackOverR": {
                   "type": "number",

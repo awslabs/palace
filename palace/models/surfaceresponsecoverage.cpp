@@ -376,6 +376,11 @@ SummarizeCoverageInterface(const SurfacePostOperator::InterfaceCoveragePartition
   }
   for (const auto &[key, energy] : partition.classes)
   {
+    if (key.first == "ConductorConsistency")
+    {
+      summary.conductor_consistency += energy;
+      continue;
+    }
     if (key.first != "Missing")
     {
       continue;
@@ -414,6 +419,7 @@ CoverageCell ComputeCoverageCell(const std::string &type,
     cell.partition_within += interface.partition_within;
     cell.loop_remainder_unserved += interface.loop_remainder_unserved;
     cell.loop_remainder_excluded += interface.loop_remainder_excluded;
+    cell.conductor_consistency += interface.conductor_consistency;
     for (const auto &[sum, add] :
          {std::make_pair(&cell.served_ends, &interface.served_ends),
           std::make_pair(&cell.kept_ends, &interface.kept_ends)})
@@ -442,6 +448,7 @@ CoverageCell ComputeCoverageCell(const std::string &type,
     cell.missing_share = cell.missing / cell.within;
     cell.method_gap_share = cell.method_gap / cell.within;
     cell.method_gap_signed_share = (cell.uncovered - cell.missing) / cell.within;
+    cell.conductor_consistency_share = cell.conductor_consistency / cell.within;
     cell.pending_share = cell.pending / cell.within;
     cell.no_status_share = cell.no_status / cell.within;
     if (cell.method_gap_signed_share < -kCoverageInconsistentShare)
@@ -466,7 +473,8 @@ CoverageCell ComputeCoverageCell(const std::string &type,
   {
     // Ruling 1654 (III) Q1: nothing to cover; the shares print nan, never 0.
     cell.uncovered_share = cell.missing_share = cell.method_gap_share = cell.pending_share =
-        cell.no_status_share = cell.method_gap_signed_share = nan;
+        cell.no_status_share = cell.method_gap_signed_share =
+            cell.conductor_consistency_share = nan;
     cell.status = CoverageStatus::NO_ENERGY;
   }
   const auto range = regime.ranges.find({type, excitation});
@@ -504,9 +512,11 @@ CoverageCell NotMeasuredCoverageCell(const std::string &type)
   cell.type = type;
   cell.within = cell.uncovered = cell.missing = cell.method_gap = cell.pending =
       cell.no_status = cell.served = cell.fabricated = cell.partition_within =
-          cell.loop_remainder_unserved = cell.loop_remainder_excluded = nan;
+          cell.loop_remainder_unserved = cell.loop_remainder_excluded =
+              cell.conductor_consistency = nan;
   cell.uncovered_share = cell.missing_share = cell.method_gap_share = cell.pending_share =
-      cell.no_status_share = cell.method_gap_signed_share = nan;
+      cell.no_status_share = cell.method_gap_signed_share =
+          cell.conductor_consistency_share = nan;
   cell.factor = cell.validated_min = cell.validated_max = nan;
   cell.status = CoverageStatus::NOT_MEASURED;
   cell.regime = RegimeStatus::NO_MODEL;
@@ -1255,6 +1265,11 @@ nlohmann::json CoverageRunMetadata(const CoverageRunRecord &record,
                         Number(cell.untargeted_share)},
                        {"loop remainder of excluded patches kept raw twice (J)",
                         Number(cell.loop_remainder_excluded * energy_scale)}});
+    if (record.conductor_consistency_share)
+    {
+      flagged.back()["conductor-consistency raw share of W"] =
+          Number(cell.conductor_consistency_share);
+    }
     if (mark_not_applied)
     {
       flagged.back()["Marked"] = IsCoverageStatusMarked(cell.status);
@@ -1431,13 +1446,20 @@ std::string CoverageRunBanner(const nlohmann::json &metadata)
     }
     else
     {
+      // Lane ccpx (ruling 2229 D4): under PerExcitation the method gap names the part the
+      // patches excluded at this excitation hold.
+      const std::string method_gap =
+          entry.contains("conductor-consistency raw share of W")
+              ? fmt::format("{} (of which conductor-consistency {})",
+                            Percent(entry.at("method-gap raw share of W")),
+                            Percent(entry.at("conductor-consistency raw share of W")))
+              : Percent(entry.at("method-gap raw share of W"));
       banner += fmt::format(
           "*** COVERAGE {} (interim thresholds): {} {}: U = {} of W (Missing {}, method "
           "gap {}, pending {}); {} ***\n",
           status, cell, entry.at("Type").get<std::string>(),
           Percent(entry.at("uncovered raw share of W")),
-          Percent(entry.at("missing raw share of W")),
-          Percent(entry.at("method-gap raw share of W")),
+          Percent(entry.at("missing raw share of W")), method_gap,
           Percent(entry.at("pending-model share of W")), factor);
     }
     if (mark_not_applied && entry.value("Marked", false) && banner.size() > line_start)

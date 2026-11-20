@@ -1881,6 +1881,12 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // source completes (a killed run keeps the finished sources).
   std::vector<std::pair<int, CoverageMeasurement>> coverage_measurements;
   std::vector<std::size_t> coverage_conductor_consistency_counts;
+  // Lane ccpx (Exclusion PerExcitation): per source (the corrected_results order) the
+  // patches excluded at its own gate pass and its own portion record: a source is
+  // re-measured for the matrix where its exclusion SET differs from the union, and the
+  // conductor-consistency table's rows carry their own source's portion columns.
+  std::vector<std::vector<int>> coverage_conductor_consistency_patches;
+  std::vector<ExcludedPatchPortions> conductor_consistency_source_records;
   const auto coverage_path = post_dir / "surface-response-coverage.csv";
   const auto coverage_by_key_path =
       post_dir / "surface-response-uncovered-energy-by-key.csv";
@@ -2220,8 +2226,10 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       BlockTimer response_timer(Timer::POSTPRO_RESPONSE);
       // The conductor-consistency gate (decision 277): the device potential at the spatial
       // coupons' metal cross-sections on their box faces against the conductor potentials,
-      // before any energy of this excitation is formed; an excluded patch leaves every
-      // later evaluation (fixed trace, self-consistent) and the patch table.
+      // before any energy of this excitation is formed; an excluded patch leaves this
+      // excitation's evaluations (fixed trace, self-consistent) under Exclusion
+      // PerExcitation, every later one too under Sticky (lane ccpx); the patch table ends
+      // at the union on both rules.
       if (response_correction->HasConductorConsistencyProbes())
       {
         {
@@ -2545,6 +2553,36 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                             postprocess_response,
                             self_consistent_response,
                             response.confident});
+        if (response_correction->ConductorConsistencyPerExcitation() &&
+            !response_correction->GetConductorConsistencyPassPatches().empty() &&
+            corrected_results.back().has_postprocessed)
+        {
+          // Lane ccpx (decisions 2226 / 2229): the designer's line of this excitation: the
+          // raw share of the patches excluded HERE, per target interface and its Type, of
+          // the corrected interface energy (evaluation 0; the table's Total rows).
+          const auto &result = corrected_results.back();
+          const auto targets = response_correction->GetTargetInterfaces();
+          std::string shares;
+          for (const auto &[interface, type] : post_op.GetInterfaceTypes(&targets))
+          {
+            double share = std::numeric_limits<double>::quiet_NaN();
+            const auto energy = result.raw_conductor_consistency.find(interface);
+            const auto corrected =
+                result.postprocessed_fixed_trace.interfaces.find(interface);
+            if (energy != result.raw_conductor_consistency.end() &&
+                corrected != result.postprocessed_fixed_trace.interfaces.end() &&
+                corrected->second.energy > 0.0)
+            {
+              share = energy->second.energy / corrected->second.energy;
+            }
+            shares += fmt::format("{}{:d} ({}) {:.3e}", shares.empty() ? "" : ", ",
+                                  interface, type, share);
+          }
+          Mpi::Print(" Conductor-consistency raw share at excitation {:d} (the patches "
+                     "excluded at this excitation only; of the corrected interface energy, "
+                     "evaluation 0): {}\n",
+                     idx, shares);
+        }
         // The per-patch rows of this source (root; PatchEnergy), then the gathered vectors
         // released: the result keeps its O(interfaces + models) scalars.
         WritePatchEnergyRows(corrected_results.back());
@@ -2555,6 +2593,13 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         // Lane L1: this source's coverage, measured and written before the next source.
         coverage_conductor_consistency_counts.push_back(
             response_correction->GetConductorConsistencyPortions().size());
+        if (response_correction->ConductorConsistencyPerExcitation())
+        {
+          coverage_conductor_consistency_patches.push_back(
+              response_correction->GetConductorConsistencyPassPatches());
+          conductor_consistency_source_records.push_back(
+              response_correction->GetConductorConsistencyPortionRecord());
+        }
         if (root)
         {
           coverage_measurements.emplace_back(
@@ -2630,20 +2675,32 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       // FINAL conductor-consistency portions where a later exclusion changed them (else its
       // own measurement is the final one); entry (i, j) = the worse of sources i and j.
       // The per-source rows keep their own measurement (what they print).
-      const std::size_t final_count =
-          response_correction->GetConductorConsistencyPortions().size();
+      // Lane ccpx (ruling 2229 D3 = X1): under PerExcitation the FINAL portions are the
+      // union's (every patch excluded at one or more excitations = the Sticky final list)
+      // and a source's own measurement is final where its own exclusion SET is the union.
+      const auto &final_record =
+          response_correction->GetConductorConsistencyUnionPortionRecord();
+      const std::size_t final_count = final_record.portions.size();
+      const bool per_excitation = response_correction->ConductorConsistencyPerExcitation();
+      auto OwnMeasurementIsFinal = [&](std::size_t i)
+      {
+        return per_excitation
+                   ? coverage_conductor_consistency_patches.at(i) ==
+                         response_correction->GetConductorConsistencyUnionPatches()
+                   : coverage_conductor_consistency_counts.at(i) == final_count;
+      };
       std::vector<CoverageMeasurement> final_coverage;
       std::vector<bool> remeasured;
       std::vector<SurfacePostOperator::UncoveredPerimeterPortion>
           final_conductor_consistency;
-      for (const auto &portion : response_correction->GetConductorConsistencyPortions())
+      for (const auto &portion : final_record.portions)
       {
         final_conductor_consistency.push_back(
             {portion.p0, portion.p1, portion.topology, portion.feature});
       }
       for (std::size_t i = 0; i < coverage_partitions.size() && i < V.size(); i++)
       {
-        if (coverage_conductor_consistency_counts.at(i) == final_count || V[i].Size() == 0)
+        if (OwnMeasurementIsFinal(i) || V[i].Size() == 0)
         {
           if (root)
           {
@@ -2709,6 +2766,10 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                                   final_coverage[i].MarksWholeMeasurement());
         }
       }
+      // Lane ccpx (ruling 2229 D3 = X1): the matrices take ONE operator, construction
+      // minus the union (the Sticky final weights; a no-op under Sticky); the corrected
+      // fields V_corrected were solved with their own excitation's weights.
+      response_correction->ApplyConductorConsistencyUnionWeights();
       PostprocessCorrectedTerminals(
           post_op, laplace_op.GetSources(), V, V_corrected, *response_correction,
           postprocess_response, self_consistent_accepted,
@@ -3093,12 +3154,17 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       double extra = 0.0;  // clipped length (uncovered) or geometric cells (DomainBoundary)
     };
     using PortionEnergies = std::map<int, SurfacePostOperator::UncoveredEdgeEnergy>;
+    // `source_portions_by_type` (lane ccpx, Exclusion PerExcitation; the corrected_results
+    // order): each source's rows carry its OWN portion columns over the types of
+    // `portions_by_type` (0 where the source has none); null: every row the given ones.
     auto WritePortionEnergyTable =
         [&](const std::filesystem::path &path,
             const std::map<std::string, PortionTypeRow> &portions_by_type,
             const std::string &extra_header, const std::string &energy_label,
             const std::function<const PortionEnergies &(const CorrectedResult &, bool)>
-                &energies_of)
+                &energies_of,
+            const std::vector<std::map<std::string, PortionTypeRow>>
+                *source_portions_by_type = nullptr)
     {
       PortionTypeRow portions_total;
       for (const auto &[type, entry] : portions_by_type)
@@ -3164,10 +3230,29 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         output << '\n';
       };
       const bool extra_is_length = extra_header.find("(m)") != std::string::npos;
-      for (const auto &result : corrected_results)
+      for (std::size_t k = 0; k < corrected_results.size(); k++)
       {
-        for (const auto &[type, portions] : portions_by_type)
+        const auto &result = corrected_results[k];
+        PortionTypeRow source_total = portions_total;
+        if (source_portions_by_type)
         {
+          source_total = PortionTypeRow();
+          for (const auto &[type, entry] : source_portions_by_type->at(k))
+          {
+            source_total.portions += entry.portions;
+            source_total.length += entry.length;
+            source_total.extra += entry.extra;
+          }
+        }
+        for (const auto &[type, all_portions] : portions_by_type)
+        {
+          PortionTypeRow portions = all_portions;
+          if (source_portions_by_type)
+          {
+            const auto own = source_portions_by_type->at(k).find(type);
+            portions = own != source_portions_by_type->at(k).end() ? own->second
+                                                                   : PortionTypeRow();
+          }
           Append(result.source, 0, type, portions, energies_of(result, false),
                  result.postprocessed_fixed_trace, result.has_postprocessed,
                  extra_is_length);
@@ -3177,11 +3262,11 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
           Append(result.source, 2, type, portions, energies_of(result, true),
                  result.corrected, result.has_self_consistent, extra_is_length);
         }
-        Append(result.source, 0, "Total", portions_total, energies_of(result, false),
+        Append(result.source, 0, "Total", source_total, energies_of(result, false),
                result.postprocessed_fixed_trace, result.has_postprocessed, extra_is_length);
-        Append(result.source, 1, "Total", portions_total, energies_of(result, false),
+        Append(result.source, 1, "Total", source_total, energies_of(result, false),
                result.postprocessed_fixed_flux, result.has_postprocessed, extra_is_length);
-        Append(result.source, 2, "Total", portions_total, energies_of(result, true),
+        Append(result.source, 2, "Total", source_total, energies_of(result, true),
                result.corrected, result.has_self_consistent, extra_is_length);
       }
     };
@@ -3407,20 +3492,35 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         output << '\n';
       }
     }
-    if (!response_correction->GetConductorConsistencyPortions().empty())
+    if (!response_correction->GetConductorConsistencyUnionPortionRecord().portions.empty())
     {
       // S7diag R1 (decision 758): the ConductorConsistency share per type (the
-      // DomainBoundary table's columns). The portion rows describe the FINAL list of the
-      // solve; an excitation evaluated before the exclusion kept the model and reads 0.
-      std::map<std::string, PortionTypeRow> portions_by_type;
-      const auto &record = response_correction->GetConductorConsistencyPortionRecord();
-      for (std::size_t i = 0; i < record.portions.size(); i++)
+      // DomainBoundary table's columns). Sticky: the portion rows describe the FINAL list
+      // of the solve; an excitation evaluated before the exclusion kept the model and
+      // reads 0. PerExcitation (lane ccpx): the rows' types are the union's, each source's
+      // portion columns its own exclusions' (an excitation that excluded none reads 0).
+      auto ByType = [&PortionLength](const ExcludedPatchPortions &record)
       {
-        auto &entry = portions_by_type[record.portions[i].topology];
-        entry.portions++;
-        entry.length += PortionLength(record.portions[i]);
-        entry.extra += record.translational[i] ? 1.0 : 0.0;
+        std::map<std::string, PortionTypeRow> portions_by_type;
+        for (std::size_t i = 0; i < record.portions.size(); i++)
+        {
+          auto &entry = portions_by_type[record.portions[i].topology];
+          entry.portions++;
+          entry.length += PortionLength(record.portions[i]);
+          entry.extra += record.translational[i] ? 1.0 : 0.0;
+        }
+        return portions_by_type;
+      };
+      const auto portions_by_type =
+          ByType(response_correction->GetConductorConsistencyUnionPortionRecord());
+      std::vector<std::map<std::string, PortionTypeRow>> source_portions_by_type;
+      for (const auto &record : conductor_consistency_source_records)
+      {
+        source_portions_by_type.push_back(ByType(record));
       }
+      MFEM_VERIFY(!response_correction->ConductorConsistencyPerExcitation() ||
+                      source_portions_by_type.size() == corrected_results.size(),
+                  "One conductor-consistency portion record per corrected source!");
       WritePortionEnergyTable(
           post_dir / "surface-response-conductor-consistency-energy.csv", portions_by_type,
           "geometric cells", "conductorconsistency",
@@ -3428,7 +3528,10 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
           {
             return corrected ? result.corrected_conductor_consistency
                              : result.raw_conductor_consistency;
-          });
+          },
+          response_correction->ConductorConsistencyPerExcitation()
+              ? &source_portions_by_type
+              : nullptr);
     }
   }
   post_op.MeasureFinalize(indicator);

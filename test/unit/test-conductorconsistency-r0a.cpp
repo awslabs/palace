@@ -7,8 +7,10 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iterator>
 #include <map>
 #include <memory>
@@ -16,6 +18,7 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include <unistd.h>
 #include <fmt/format.h>
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -34,6 +37,7 @@
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
 #include "utils/metadatafile.hpp"
+#include "utils/outputdir.hpp"
 
 namespace palace
 {
@@ -51,6 +55,25 @@ namespace
 // Phase 3 (a) of mx-sc-magnetic shares them with test-magneticresponse.cpp).
 using test::AddShortedCpwMetalPlane;
 using test::MakeSerialShortedCpwMesh;
+
+// The process's stdout while `run` runs (the designer's log lines; Mpi::Print writes on the
+// root only), read back from `file`.
+template <typename F>
+std::string CaptureStdout(const fs::path &file, F &&run)
+{
+  std::fflush(stdout);
+  const int saved = dup(fileno(stdout));
+  std::FILE *target = std::fopen(file.c_str(), "w");
+  REQUIRE(target);
+  dup2(fileno(target), fileno(stdout));
+  run();
+  std::fflush(stdout);
+  dup2(saved, fileno(stdout));
+  close(saved);
+  std::fclose(target);
+  std::ifstream input(file);
+  return {std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
+}
 
 // The stub with a VOID (U-H14a), TETRAHEDRAL (the exact segment intersections the line
 // coverage reads exist on simplices only; a hexahedral mesh samples the lines blindly and
@@ -1221,11 +1244,140 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
       CHECK_FALSE(entry["FloorApplied"].get<bool>());
       CHECK(entry["ProbeKind"] == "TranslationalEdge");
     }
-    // Sticky: a later source with the strip at 0 re-tests nothing (the weights stay 0).
+    // PerExcitation (the default; lane ccpx): a later source with the strip at 0 tests
+    // every patch again and keeps every one; the run-level weight (kept at EVERY
+    // excitation) stays 0 and nothing is served RAW at that source.
     const auto later = StubRecords(response.ApplyConductorConsistencyGate(
         Field(space, StubField{0.0, 0.5, 2.0}, 0.0), 1, 6.0, false));
-    CHECK(later.empty());
+    REQUIRE(later.size() == static_cast<std::size_t>(patch_count));
+    for (const auto &record : later)
+    {
+      CHECK_FALSE(record.excluded);
+    }
     CHECK(response.GetPatchWeight() == 0.0);
+    CHECK(response.GetConductorConsistencyPortions().empty());
+    CHECK_FALSE(response.GetConductorConsistencyUnionPortionRecord().portions.empty());
+    // Sticky (the legacy rule): the later source re-tests nothing (the weights stay 0).
+    json sticky_config = config;
+    sticky_config["Solver"]["SurfaceResponseCorrection"]["ConductorConsistency"]
+                 ["Exclusion"] = "Sticky";
+    std::vector<std::unique_ptr<Mesh>> sticky_meshes;
+    IoData sticky_iodata = Build(sticky_config, sticky_meshes);
+    SpaceOperator sticky_space(sticky_iodata, sticky_meshes);
+    SurfaceResponseOperator sticky_response(sticky_iodata, sticky_space);
+    CHECK_FALSE(sticky_response.ConductorConsistencyPerExcitation());
+    CHECK(StubRecords(sticky_response.ApplyConductorConsistencyGate(
+                          Field(sticky_space, stub, 0.0), 0, 5.0, false))
+              .size() == static_cast<std::size_t>(patch_count));
+    CHECK(
+        StubRecords(sticky_response.ApplyConductorConsistencyGate(
+                        Field(sticky_space, StubField{0.0, 0.5, 2.0}, 0.0), 1, 6.0, false))
+            .empty());
+    CHECK(sticky_response.GetPatchWeight() == 0.0);
+  }
+
+  SECTION("(h) PerExcitation: a source's verdicts and response do not depend on the "
+          "order of the sources (Sticky: they do)")
+  {
+    // Lane ccpx (decisions 2226 / 2229): source S = the strip at V on [0.5, 2] (every stub
+    // patch fails); source A = the strip at V on [1.5, 2] + 5e-6 V on [0.5, 1] (the [1.5,
+    // 2] cells fail, the others pass, the [0.5, 1] cells with a small nonzero response).
+    // Two fresh operators gate (S, A) and (A, S); per field the records and the Maxwell
+    // response after its gate are BITWISE equal under PerExcitation (the same field, the
+    // same weights, the same reductions). Under Sticky A after S finds no patch to test and
+    // keeps nothing.
+    StubField strip;
+    strip.amplitude = 1.0;
+    strip.x0 = 0.5;
+    strip.x1 = 2.0;
+    StubField partial;
+    partial.amplitude = 1.0;
+    partial.x0 = 1.5;
+    partial.x1 = 2.0;
+    partial.tiny = 5.0e-6;
+    partial.x2 = 0.5;
+    partial.x3 = 1.0;
+    struct Outcome
+    {
+      std::vector<std::pair<double, bool>> verdicts;  // (max_ratio, excluded) per patch
+      double domain_correction = 0.0;
+      std::map<int, double> fabricated;
+    };
+    auto Gate = [&](const std::string &exclusion, bool strip_first)
+    {
+      json order_config = config;
+      order_config["Solver"]["SurfaceResponseCorrection"]["ConductorConsistency"]
+                  ["Exclusion"] = exclusion;
+      std::vector<std::unique_ptr<Mesh>> order_meshes;
+      IoData order_iodata = Build(order_config, order_meshes);
+      SpaceOperator order_space(order_iodata, order_meshes);
+      SurfaceResponseOperator order_response(order_iodata, order_space);
+      std::map<char, Outcome> outcomes;  // 'S' / 'A'
+      for (const int step : {0, 1})
+      {
+        const bool is_strip = (step == 0) == strip_first;
+        const ComplexVector E = Field(order_space, is_strip ? strip : partial, 0.0);
+        auto &outcome = outcomes[is_strip ? 'S' : 'A'];
+        for (const auto &record :
+             StubRecords(order_response.ApplyConductorConsistencyGate(E, step, 5.0, false)))
+        {
+          outcome.verdicts.emplace_back(record.max_ratio, record.excluded);
+        }
+        GridFunction field(order_space.GetNDSpace(), true);
+        field.Real().SetFromTrueDofs(E.Real());
+        field.Imag().SetFromTrueDofs(E.Imag());
+        const auto measured = order_response.GetMaxwellResponse(field, 1.0);
+        outcome.domain_correction = measured.domain_correction;
+        outcome.fabricated = measured.fabricated_surface_energy;
+      }
+      return outcomes;
+    };
+    const auto strip_first = Gate("PerExcitation", true);
+    const auto partial_first = Gate("PerExcitation", false);
+    int partial_excluded = 0;
+    for (const char key : {'S', 'A'})
+    {
+      INFO("field " << key);
+      const auto &a = strip_first.at(key), &b = partial_first.at(key);
+      REQUIRE(a.verdicts.size() == static_cast<std::size_t>(patch_count));
+      REQUIRE(b.verdicts.size() == a.verdicts.size());
+      for (std::size_t i = 0; i < a.verdicts.size(); i++)
+      {
+        CHECK(a.verdicts[i].first == b.verdicts[i].first);
+        CHECK(a.verdicts[i].second == b.verdicts[i].second);
+        if (key == 'S')
+        {
+          CHECK(a.verdicts[i].second);
+        }
+        else
+        {
+          partial_excluded += a.verdicts[i].second ? 1 : 0;
+        }
+      }
+      CHECK(a.domain_correction == b.domain_correction);
+      CHECK(a.fabricated == b.fabricated);
+    }
+    CHECK(partial_excluded > 0);
+    CHECK(partial_excluded < patch_count);
+    // The stub's fabricated domain matrix is its thin one (no domain defect): the
+    // fixed-trace fabricated surface energy carries the weights.
+    auto Fabricated = [](const Outcome &outcome)
+    {
+      double total = 0.0;
+      for (const auto &[interface, energy] : outcome.fabricated)
+      {
+        total += std::abs(energy);
+      }
+      return total;
+    };
+    CHECK(Fabricated(strip_first.at('A')) > 0.0);
+    CHECK(Fabricated(strip_first.at('S')) == 0.0);
+    // Sticky: A after S tests nothing and keeps nothing; A first keeps its passing cells.
+    const auto sticky_strip_first = Gate("Sticky", true);
+    const auto sticky_partial_first = Gate("Sticky", false);
+    CHECK(sticky_strip_first.at('A').verdicts.empty());
+    CHECK(Fabricated(sticky_strip_first.at('A')) == 0.0);
+    CHECK(sticky_partial_first.at('A').fabricated == strip_first.at('A').fabricated);
   }
 
   SECTION("(g) the probe path is the end-face w = 0 leg, not a chord: a ramp V(x) = x")
@@ -1429,6 +1581,156 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     }
     CHECK(excluded_a == excluded_b);
     CHECK(excluded_a > 0);
+  }
+#endif
+}
+
+// Lane ccpx fix round (decision 2242 m-2): on the Maxwell path the conductor-consistency
+// energy table has rows only at a measurement at which a patch is excluded. The shorted CPW
+// stub as two eigenmodes through the PostOperator: mode 1 = the strip at V (every stub
+// patch fails its test), mode 2 = a uniform E_y (every patch passes). PerExcitation: rows
+// at m 1 only (nothing was excluded at mode 2: no zero rows are written); Sticky (the
+// legacy value): rows at m 1 and m 2 with the same portions (main's table: mode 2 keeps the
+// exclusion of mode 1 and serves its claims raw).
+TEST_CASE_METHOD(
+    test::SurfaceResponseFiles,
+    "Maxwell conductor-consistency energy table has rows only where a patch is "
+    "excluded (eigenmode, exclusion at the first mode only)",
+    "[postoperator][surfaceresponseoperator][conductorconsistency][r0a][maxwell]"
+    "[3d][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  const std::string exclusion =
+      GENERATE(std::string("PerExcitation"), std::string("Sticky"));
+  INFO("exclusion: " << exclusion);
+  const bool sticky = exclusion == "Sticky";
+  const auto library_path =
+      WriteStubLibrary(temp.temp_dir, convex_library_3d_path, 0.1, "r0a");
+  const fs::path output_dir = temp.temp_dir / ("cc-table-" + exclusion);
+  json config = ConvexMaxwellIslandConfig();
+  config["Problem"]["Output"] = output_dir.string();
+  config["Boundaries"]["Ground"]["Attributes"] = {1, 2, 3, 4, 5, 6, 9};
+  auto &correction = config["Solver"]["SurfaceResponseCorrection"];
+  correction.erase("PatchConstruction");
+  correction["Library"] = library_path.string();
+  correction["UnmatchedPolicy"] = "Warn";  // the short's corner cluster has no model: raw
+  correction["TraceCoupling"] = "Collocated";
+  correction["ConductorConsistency"] = {{"Exclusion", exclusion}};
+  IoData iodata(config, false);
+  iodata.boundaries.cracked_attributes.insert(9);
+  MPI_Comm comm = Mpi::World();
+  MakeOutputFolder(iodata, comm);
+  std::vector<std::unique_ptr<Mesh>> meshes;
+  {
+    mfem::Mesh serial = MakeSerialShortedCpwMesh();
+    meshes.push_back(
+        std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(Mpi::World(), serial)));
+  }
+  SpaceOperator space_op(iodata, meshes);
+  PostOperator<ProblemType::EIGENMODE> post_op(iodata, space_op);
+  auto *response = post_op.GetSurfaceResponseOperator();
+  REQUIRE(response);
+  REQUIRE(response->HasConductorConsistencyProbes());
+  REQUIRE(response->ConductorConsistencyPerExcitation() == !sticky);
+
+  auto Field = [&](const std::function<void(const mfem::Vector &, mfem::Vector &)> &f)
+  {
+    GridFunction field(space_op.GetNDSpace(), true);
+    mfem::VectorFunctionCoefficient coefficient(3, f);
+    field.Real().ProjectCoefficient(coefficient);
+    field.Imag() = 0.0;
+    ComplexVector E(field.Real().ParFESpace()->GetTrueVSize());
+    field.Real().GetTrueDofs(E.Real());
+    field.Imag().GetTrueDofs(E.Imag());
+    return E;
+  };
+  StubField strip;
+  strip.amplitude = 1.0;
+  strip.x0 = 0.5;
+  strip.x1 = 2.0;
+  const ComplexVector failing =
+      Field([&](const mfem::Vector &x, mfem::Vector &E) { strip(x, E); });
+  const ComplexVector passing = Field(
+      [](const mfem::Vector &, mfem::Vector &E)
+      {
+        E.SetSize(3);
+        E = 0.0;
+        E[1] = 1.0;
+      });
+  ComplexVector b(space_op.GetRTSpace().GetTrueVSize());
+  b = 0.0;
+  const std::complex<double> omega(1.0, 0.0);
+  auto Mode = [&](int step, const ComplexVector &e)
+  {
+    // The eigen driver's order: the gate on this mode's field, then its measurement.
+    response->ApplyConductorConsistencyGate(e, step, 5.0, false);
+    post_op.SetSurfaceResponseCorrectedField(e, nullptr, omega, 1.0);
+    post_op.MeasureAndPrintAll(step, e, b, omega, 0.0, 0.0, 2);
+  };
+  // Decision 2242 m-3: the per-mode share line names the mode and its source index (the
+  // gate line's and ExcludedByExcitation's Source), PerExcitation only.
+  const auto log =
+      CaptureStdout(temp.temp_dir / ("cc-table-" + exclusion + ".log"),
+                    [&]()
+                    {
+                      Mode(0, failing);
+                      CHECK(response->GetPatchWeight() == 0.0);
+                      CHECK_FALSE(response->GetConductorConsistencyPortions().empty());
+                      Mode(1, passing);
+                    });
+  // PerExcitation: nothing is served raw at mode 2; Sticky: mode 1's claims still are.
+  CHECK(response->GetConductorConsistencyPortions().empty() == !sticky);
+
+  Mpi::Barrier(comm);
+  if (!Mpi::Root(comm))
+  {
+    return;
+  }
+  const std::string share_line = " Conductor-consistency raw share at m 1, source 0 (the "
+                                 "patches excluded at this mode only; ";
+  CHECK((log.find(share_line) != std::string::npos) == !sticky);
+  CHECK(log.find("Conductor-consistency raw share at m 2") == std::string::npos);
+  CHECK(log.find("Conductor-consistency raw share at m 1, excitation") ==
+        std::string::npos);
+  const fs::path table_path =
+      output_dir / "surface-response-conductor-consistency-energy.csv";
+  REQUIRE(fs::exists(table_path));
+  const auto table = test::ReadTextCsv(table_path);
+  REQUIRE(table.header.size() > 6);
+  CHECK(table.header[0] == "m");
+  std::map<int, std::vector<std::vector<std::string>>> rows_by_mode;
+  for (const auto &row : table.rows)
+  {
+    rows_by_mode[std::stoi(row[table.Column("m")])].push_back(row);
+  }
+  REQUIRE(rows_by_mode.count(1) == 1);
+  CHECK_FALSE(rows_by_mode.at(1).empty());
+  for (const auto &row : rows_by_mode.at(1))
+  {
+    CHECK(std::stoi(row[table.Column("portions")]) > 0);
+  }
+  if (!sticky)
+  {
+    // An absent row: nothing was excluded at mode 2.
+    CHECK(rows_by_mode.size() == 1);
+    CHECK(rows_by_mode.count(2) == 0);
+  }
+  else
+  {
+    REQUIRE(rows_by_mode.size() == 2);
+    REQUIRE(rows_by_mode.count(2) == 1);
+    const auto &first = rows_by_mode.at(1), &second = rows_by_mode.at(2);
+    REQUIRE(second.size() == first.size());
+    for (std::size_t i = 0; i < first.size(); i++)
+    {
+      for (const char *column :
+           {"exc", "evaluation", "type", "portions", "length (m)", "geometric cells"})
+      {
+        CHECK(second[i][table.Column(column)] == first[i][table.Column(column)]);
+      }
+    }
   }
 #endif
 }
@@ -2367,6 +2669,52 @@ TEST_CASE("Response-correction ConductorConsistency.RecordOnly is read and bound
   config["Solver"]["Electrostatic"]["ResponseCorrection"]["ConductorConsistency"] = {
       {"Tolerance", 0.05}};
   CHECK_THROWS_WITH(IoData(config, false), ContainsSubstring("unknown key \"Tolerance\""));
+}
+
+// Lane ccpx (decisions 2226 / 2229): ConductorConsistency.Exclusion selects where an
+// exclusion acts: "PerExcitation" (the default) or "Sticky" (the legacy rule); any other
+// value is refused by name.
+TEST_CASE("Response-correction ConductorConsistency.Exclusion is read and bounded",
+          "[surfaceresponseoperator][conductorconsistency][r0a][config][Serial]")
+{
+  using Exclusion = ResponseCorrectionData::ConductorConsistencyExclusion;
+  json config = {
+      {"Problem", {{"Type", "Electrostatic"}, {"Output", "unused"}}},
+      {"Model", {{"Mesh", "unused.msh"}}},
+      {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+      {"Boundaries", {{"Ground", {{"Attributes", {1}}}}}},
+      {"Solver",
+       {{"Electrostatic", {{"ResponseCorrection", {{"Library", "unused.json"}}}}}}}};
+  auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
+  {
+    IoData iodata(config, false);
+    REQUIRE(iodata.solver.electrostatic.response_correction);
+    CHECK(
+        iodata.solver.electrostatic.response_correction->conductor_consistency_exclusion ==
+        Exclusion::PER_EXCITATION);
+  }
+  correction["ConductorConsistency"] = {{"Exclusion", "Sticky"}};
+  {
+    IoData iodata(config, false);
+    CHECK(
+        iodata.solver.electrostatic.response_correction->conductor_consistency_exclusion ==
+        Exclusion::STICKY);
+    CHECK_FALSE(
+        iodata.solver.electrostatic.response_correction->conductor_consistency_record_only);
+  }
+  correction["ConductorConsistency"] = {{"Exclusion", "PerExcitation"}};
+  {
+    IoData iodata(config, false);
+    CHECK(
+        iodata.solver.electrostatic.response_correction->conductor_consistency_exclusion ==
+        Exclusion::PER_EXCITATION);
+  }
+  for (const json &value : {json("perexcitation"), json("Final"), json(true), json(0)})
+  {
+    correction["ConductorConsistency"] = {{"Exclusion", value}};
+    CHECK_THROWS_WITH(IoData(config, false),
+                      ContainsSubstring("must be \"PerExcitation\" or \"Sticky\""));
+  }
 }
 
 // OI-COVERAGE-EXCLUSION-ENERGY (idfix DESIGN section 8; decisions 1064 (2) / 1072 Q3 /

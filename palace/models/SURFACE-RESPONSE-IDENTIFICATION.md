@@ -2529,13 +2529,42 @@ sit at one potential) and ExcitationPotential = max |V| of the excitation (its l
 terminal potential). The floor (decision 279, MINOR-3) keeps a patch whose trace amplitude
 is a near-zero fraction of the excitation (noise over noise) from being excluded
 spuriously: such a patch carries at most 1e-6 of a unit-amplitude patch's energy (energy
-~ amplitude^2), a defective coupon is still excluded at the excitation that fields it (the
-exclusion is sticky), and the record marks it `FloorApplied` (the transmon's far corner
+~ amplitude^2), a defective coupon is still excluded at the excitation that fields it, and
+the record marks it `FloorApplied` (the transmon's far corner
 patches read amplitudes 1e-6 to 1e-3 V under a 1-V excitation; the S1p flagged coupons
 ~1.1 V).
 MaxRatio > `kConductorConsistencyTolerance` = 0.02 EXCLUDES the patch like a DomainBoundary
-cell: weight 0 from that excitation on (fixed-trace energies, the self-consistent operator
-and its right-hand side, ModelCatalog weights), `surface-response-patches.csv` rewritten,
+cell (weight 0: fixed-trace energies, the self-consistent operator and its right-hand
+side). WHERE the exclusion acts is `ConductorConsistency.Exclusion` (lane ccpx, decisions
+2226 / 2229): `PerExcitation` (the default) excludes the patch at the excitation whose own
+test fails and there only (an eigenmode; a driven port excitation at one frequency; an
+electrostatic terminal): every gate pass first restores the weights the previous pass
+zeroed, so every patch with a pre-gate weight above 0 is tested at every excitation and the
+result of an excitation does not depend on the order of the excitations (nor on a driven
+Restart); `Sticky` (the legacy rule of every result made before it) keeps the weight 0 from
+the excluding excitation on and never tests the patch again, so a mode's correction then
+depends on which modes were solved before it. The electric verdict of a patch at an
+excitation depends only on that excitation's raw field and floor, so the patches excluded at
+one or more excitations under `PerExcitation` (the UNION) are exactly `Sticky`'s final set;
+the run-level outputs read the union and keep their `Sticky` values: `ModelCatalog`
+`PatchWeight` (the weight kept at every excitation; `PerExcitation` adds the construction
+weight as `ConstructionPatchWeight`), `Count` / `ClaimLength` / `CellLength` (distinct
+patches), `RawPortions`, and the electrostatic corrected capacitance matrices, which are
+formed with ONE operator (construction minus the union) while each source's corrected field
+was solved with its own excitation's weights (the same kind of mismatch as `Sticky` has for
+the sources solved before the last exclusion). The magnetic dual gate acts per excitation
+too (its floor's set drops the same excitation's electric exclusions, so for it the union
+equality is not claimed). The eigenmode self-consistent problem is solved ONCE, with the
+construction weights, before any gate (`SelfConsistentPreGate`): a patch excluded at mode i
+still sits in mode i's self-consistent operator (the fixed-trace energies and the forms on
+the corrected field take mode i's weights). `surface-response-patches.csv` is written at
+construction with the construction weight on the eigenmode and driven paths; the
+electrostatic driver rewrites it after a pass with an exclusion, ending at the union (on
+both rules the same file). `PerExcitation` also writes `Exclusion`, `ExcludedByExcitation`
+(per excitation with an exclusion: Source, Frequency, Count, ClaimLength, CellLength and the
+Models with their counts), one `ExcludedPatches` entry per (patch, excitation), a log line
+per excitation naming the models excluded there and the raw share per interface and Type,
+and `conductor-consistency raw share of W` per flagged coverage cell. Then
 the record `SurfaceResponse.Diagnostics.ConductorConsistency` of palace.json (every tested
 patch of every excitation: Amplitude, State, ExcitationPotential, Normalization,
 FloorApplied, MaxDeviation, MaxRatio, MaxRatioOverState, the worst knot's vertex /
