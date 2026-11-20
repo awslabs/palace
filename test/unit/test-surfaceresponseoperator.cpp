@@ -4979,6 +4979,170 @@ TEST_CASE("SurfaceResponseOperator first-order split floor",
   CHECK_FALSE(FirstOrderSplitFraction(1.0e-20, length, R, 0.0, true, nullptr).has_value());
 }
 
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "SurfaceResponseOperator first-order split floor at placement",
+                 "[surfaceresponseoperator][3d][curvature][features][Serial]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  // Decision 2286 (review MINOR-1): the placement honours the split floor. The library of
+  // the curvature family rings case (the SA-only isolated anchor at R 0.2 and the
+  // CurvedEdge nodes of both convexities at kappa 0.1 / 0.25 / 0.5 / 0.8) on a bar 6.2 x
+  // 0.6 (3 R wide) on the plane y = 0.5 whose right half turns by 0.02 rad at x = 6: a
+  // noise joint of each long edge, so both are straight-like isolated edges with a
+  // first-order term, a = 10 R x 0.02 / window where the windowed curvature (the mean
+  // density over a window of length R) lies wholly in the joint's window (half of each
+  // lead). On the left lead the window starts at its midpoint 4.45, so the windowed
+  // curvature ramps up from 0 at 4.35. On the top edge the mesh vertex at x = 4.4 moves
+  // to 4.35 + 8.9e-7: the portion of the segment [4.3, 4.35 + 8.9e-7] meets the ramp
+  // over 8.9e-7, its turn is the density x (8.9e-7)^2 / (2 R) and its fraction about 5e-13,
+  // at or below kFirstOrderSplitFloor. It keeps the anchor alone with weight exactly 1 (no
+  // curved node), Summary.FirstOrderBelowFloor counts exactly it, and a portion inside the
+  // window keeps its split.
+  constexpr double bar_R = 0.2, kink = 0.02, x_joint = 6.0, tail = 8.9e-7;
+  const double h = 0.1, extent = 12.0;
+  const int n = static_cast<int>(std::lround(extent / h));
+  mfem::Mesh serial =
+      mfem::Mesh::MakeCartesian3D(n, 4, n, mfem::Element::HEXAHEDRON, extent, 1.0, extent);
+  for (int face = 0; face < serial.GetNumFaces(); face++)
+  {
+    int element1, element2;
+    serial.GetFaceElements(face, &element1, &element2);
+    if (element1 < 0 || element2 < 0)
+    {
+      continue;
+    }
+    mfem::Array<int> vertices;
+    serial.GetFaceVertices(face, vertices);
+    bool on_bar = true;
+    for (const int vertex : vertices)
+    {
+      const double *point = serial.GetVertex(vertex);
+      on_bar = on_bar && std::abs(point[1] - 0.5) < 1.0e-12 && point[0] > 2.9 - 1.0e-9 &&
+               point[0] < 9.1 + 1.0e-9 && point[2] > 5.7 - 1.0e-9 &&
+               point[2] < 6.3 + 1.0e-9;
+    }
+    if (on_bar)
+    {
+      serial.AddBdrElement(serial.GetFace(face)->Duplicate(&serial));
+      serial.SetBdrAttribute(serial.GetNBE() - 1, 9);
+    }
+  }
+  // The tail vertex, then the kink (z raised by (x - 6) tan 0.02 beyond x = 6 in the band
+  // |z - 6| <= 1, tapered to 0 at |z - 6| = 2: the bar's edges stay straight on each side).
+  int moved = 0;
+  for (int vertex = 0; vertex < serial.GetNV(); vertex++)
+  {
+    double *point = serial.GetVertex(vertex);
+    if (std::abs(point[1] - 0.5) < 1.0e-12 && std::abs(point[0] - 4.4) < 1.0e-9 &&
+        std::abs(point[2] - 6.3) < 1.0e-9)
+    {
+      point[0] = 4.35 + tail;
+      moved++;
+    }
+    const double band = std::clamp(2.0 - std::abs(point[2] - 6.0), 0.0, 1.0);
+    if (point[0] > x_joint)
+    {
+      point[2] += (point[0] - x_joint) * std::tan(kink) * band;
+    }
+  }
+  REQUIRE(moved == 1);
+  serial.FinalizeTopology();
+  serial.Finalize();
+  auto bar_mesh = std::make_unique<mfem::ParMesh>(Mpi::World(), serial);
+  const auto library_path = temp.temp_dir / "fabrication-process-curved-floor-3d.json";
+  if (Mpi::Root(Mpi::World()))
+  {
+    json library = {
+        {"Version", 3},
+        {"TraceLiftVersion", 2},
+        {"Name", "unit-test-curved-floor-3d"},
+        {"MatchingRadius", bar_R},
+        {"CouponDepth", 0.2},
+        {"Fabrication",
+         {{"InterfaceLayers", {{"SA", {{"Thickness", 0.002}, {"Permittivity", 4.0}}}}}}},
+        {"Models", json::array()}};
+    json anchor = {{"Name", "isolated"},
+                   {"Topology", "IsolatedEdge"},
+                   {"CouponDepth", 0.2},
+                   {"FabricatedMatrix", fabricated_path.string()},
+                   {"ThinMatrix", thin_path.string()},
+                   {"FabricatedSurfaceMatrix", fabricated_surface_path.string()},
+                   {"ThinSurfaceMatrix", thin_surface_path.string()},
+                   {"BasisPoints", points_path.string()},
+                   {"Interfaces", {{{"Type", "SA"}, {"Coupon", 1}}}}};
+    library["Models"].push_back(anchor);
+    for (const char *convexity : {"Convex", "Concave"})
+    {
+      for (const double kappa : {0.1, 0.25, 0.5, 0.8})
+      {
+        auto model = anchor;
+        model["Name"] = std::string("curved-") + convexity + "-" + std::to_string(kappa);
+        model["Topology"] = "CurvedEdge";
+        model["Kappa"] = kappa;
+        model["Convexity"] = convexity;
+        model["CouponDepth"] = 2.0 * M_PI * bar_R / kappa;
+        library["Models"].push_back(model);
+      }
+    }
+    std::ofstream output(library_path);
+    output << library.dump(2) << "\n";
+  }
+  Mpi::Barrier(Mpi::World());
+  json config = IslandConfig();
+  auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
+  correction.erase("PatchConstruction");
+  correction["UnmatchedPolicy"] = "Warn";
+  correction["Library"] = library_path.string();
+  const auto manifest_path = temp.temp_dir / "surface-response-requirements-floor.json";
+  const auto patches_path = temp.temp_dir / "surface-response-patches.csv";
+  IoData iodata(config, false);
+  iodata.boundaries.cracked_attributes.insert(9);
+  if (Mpi::Root(Mpi::World()))
+  {
+    fs::remove(patches_path);
+  }
+  Mpi::Barrier(Mpi::World());
+  WriteSurfaceResponseRequirements(iodata, *bar_mesh, manifest_path.string());
+  Mpi::Barrier(Mpi::World());
+  std::ifstream input(manifest_path);
+  REQUIRE(input);
+  const json manifest = json::parse(input);
+  REQUIRE(manifest["Summary"].contains("FirstOrderBelowFloor"));
+  const auto &below = manifest["Summary"]["FirstOrderBelowFloor"];
+  CHECK(below["Count"].get<int>() == 1);
+  CHECK(below["LargestFraction"].get<double>() > 1.0e-13);
+  CHECK(below["LargestFraction"].get<double>() <= kFirstOrderSplitFloor);
+  // Rows by their origin on the top edge's left lead (z = 6.3): the tail portion x in (4.3,
+  // 4.35), a portion on the plateau x in (4.6, 4.7).
+  const double window = 0.5 * (3.1 + 3.1 / std::cos(kink));
+  const double a_full = kStraightBendRadiusOverRadius * bar_R * kink / window;
+  int tail_rows = 0, next_split_rows = 0;
+  for (const auto &row : ReadPatchRows(patches_path))
+  {
+    const double x = std::stod(row[13]), z = std::stod(row[15]);
+    if (std::abs(z - 6.3) > 1.0e-6)
+    {
+      continue;
+    }
+    if (x > 4.3 && x < 4.35)
+    {
+      tail_rows++;
+      CHECK(row[3] == "isolated");
+      CHECK(std::stod(row[6]) == 1.0);
+    }
+    else if (x > 4.6 && x < 4.7 && row[3].rfind("curved-", 0) == 0)
+    {
+      next_split_rows++;
+      CHECK_THAT(std::stod(row[6]), WithinRel(a_full, 1.0e-6));
+    }
+  }
+  CHECK(tail_rows > 0);
+  CHECK(next_split_rows > 0);
+#endif
+}
+
 TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator corner angle family",
                  "[surfaceresponseoperator][3d][corner][features][Serial][Parallel]")
 {
