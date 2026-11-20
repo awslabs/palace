@@ -125,7 +125,8 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
   // Initialize postprocessing for measurement and printers.
   // Initialize write directory with default path; will be changed for multi-excitations.
   PostOperator<ProblemType::DRIVEN> post_op(iodata, space_op, &response_geometry,
-                                            &surface_post_geometry);
+                                            &surface_post_geometry,
+                                            &impedance_candidate_geometry);
 
   // The fixed system matrices are only needed when the system cannot be applied through
   // the preconditioner (see SpaceOperator::GetSystemOperator), so assemble them on first
@@ -411,6 +412,13 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
   {
     SaveMetadata(*response_correction);
   }
+  if (const auto *candidate = post_op.GetImpedanceRuleCandidateRecord())
+  {
+    // The impedance-metal rule (RECORD): the candidate block and the candidate's
+    // conductor-consistency records, never of record.
+    SaveImpedanceRuleCandidateMetadata(*candidate);
+    post_op.WriteImpedanceRuleCandidateRecords();
+  }
   return indicator;
 }
 
@@ -421,7 +429,8 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
   // Initialize postprocessing for measurement and printers.
   // Initialize write directory with default path; will be changed for multi-excitations.
   PostOperator<ProblemType::DRIVEN> post_op(iodata, space_op, &response_geometry,
-                                            &surface_post_geometry);
+                                            &surface_post_geometry,
+                                            &impedance_candidate_geometry);
   SurfaceResponseOperator *response_correction = post_op.GetSurfaceResponseOperator();
   if (response_correction && iodata.model.refinement.max_it == 0)
   {
@@ -832,6 +841,13 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
   if (response_correction)
   {
     SaveMetadata(*response_correction);
+  }
+  if (const auto *candidate = post_op.GetImpedanceRuleCandidateRecord())
+  {
+    // The impedance-metal rule (RECORD): the candidate block and the candidate's
+    // conductor-consistency records, never of record.
+    SaveImpedanceRuleCandidateMetadata(*candidate);
+    post_op.WriteImpedanceRuleCandidateRecords();
   }
   return indicator;
 }
