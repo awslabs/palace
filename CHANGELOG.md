@@ -538,6 +538,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Removed the `PALACE_WITH_GPU_AWARE_MPI` option: *Palace* now asks MPI at runtime whether
     it is GPU aware.
     [PR 1226](https://github.com/awslabs/palace/pull/1226).
+  - With cuDSS, the superbuild now patches MFEM with
+    [mfem/mfem#5758](https://github.com/mfem/mfem/pull/5758), as the Spack build does. With
+    cuDSS 0.8, the parallel cuDSS solver of MFEM 4.10 did not set the communicator for
+    device buffers, and `"Type": "cuDSS"` in `config["Solver"]["Linear"]` crashed in the
+    first factorization. [PR 1250](https://github.com/awslabs/palace/pull/1250).
 
 ## [0.19.0] - 2026-11-02
 
