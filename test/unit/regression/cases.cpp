@@ -24,6 +24,7 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "regression_helpers.hpp"
+#include "utils/communication.hpp"
 #include "utils/constants.hpp"
 #include "utils/tablecsv.hpp"
 
@@ -2607,6 +2608,13 @@ TEST_CASE("cpw_wave_adaptive", "[Serial][Parallel][GPU][Regression]")
 // more. The error indicators depend on the samples.
 TEST_CASE("cube_lumped_adaptive_loose", "[Serial][Parallel][Regression]")
 {
+  // The mesh has 36 elements, and a mesh is not partitioned into more parts than it has
+  // elements. That error is raised on the root process only, so the others would wait
+  // for their part of the mesh without end.
+  if (palace::Mpi::Size(palace::Mpi::World()) > 36)
+  {
+    SKIP("The mesh has fewer elements than there are MPI processes");
+  }
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-6;
   opts.atol = 0.0;
