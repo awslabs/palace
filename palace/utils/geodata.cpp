@@ -2906,10 +2906,14 @@ bool GetRebalancePartitioning(mfem::ParMesh &mesh, mfem::Array<int> &partitionin
   MPI_Comm comm = mesh.GetComm();
   std::vector<idx_t> xadj, adjncy;
   std::vector<int> rank_ne, rank_node, part;
-  if (!GatherElementGraph(mesh, xadj, adjncy, rank_ne, rank_node))
   {
-    return false;
+    BlockTimer bt(Timer::REBALANCE_GATHER);
+    if (!GatherElementGraph(mesh, xadj, adjncy, rank_ne, rank_node))
+    {
+      return false;
+    }
   }
+  BlockTimer bt(Timer::REBALANCE_PARTITION);
   int ok = 1;
   if (Mpi::Root(comm))
   {
@@ -3008,6 +3012,7 @@ RebalanceResult RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMes
     mfem::Array<int> partitioning;
     if (GetRebalancePartitioning(*mesh, partitioning))
     {
+      BlockTimer bt(Timer::REBALANCE_MOVE);
       mesh->Rebalance(partitioning);
     }
     else
@@ -3016,6 +3021,7 @@ RebalanceResult RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMes
       // still moves, with another partition.
       Mpi::Warning(comm, "Could not partition the nonconforming mesh on the root, "
                          "rebalancing it with MFEM's default partition!\n");
+      BlockTimer bt(Timer::REBALANCE_MOVE);
       RebalanceRootAligned(*mesh, tol);
     }
     result.moved = true;
@@ -3097,6 +3103,7 @@ RebalanceResult RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMes
     mfem::Array<int> partitioning;
     if (GetRebalancePartitioning(*mesh, partitioning))
     {
+      BlockTimer bt(Timer::REBALANCE_MOVE);
       mesh->Rebalance(partitioning);
       result.moved = true;
     }
