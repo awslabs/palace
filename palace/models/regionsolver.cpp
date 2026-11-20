@@ -10,15 +10,43 @@
 #include "models/environmentoperator.hpp"
 #include "models/spaceoperator.hpp"
 #include "utils/communication.hpp"
+#include "utils/enum_string.hpp"
 #include "utils/iodata.hpp"
 
 namespace palace
 {
 
+namespace
+{
+
+// The sparse direct solver of the region's Schur complement onto Γ, unless one is
+// configured: STRUMPACK's partial factorization while Γ is small, as its Schur complement
+// is gathered on rank 0 (|Γ|^2 x 16 bytes), else MUMPS's, distributed, whose factorization
+// holds a workspace of a few hundred MB on every process (which dominates for a small
+// region on many processes), else back-solves (see SchurSolverType).
+constexpr int kRootSchur = 10000;
+
+LinearSolver RegionSchurSolverType(LinearSolver type, int n_schur)
+{
+#if defined(PALACE_WITH_STRUMPACK_SCHUR)
+  if (type != LinearSolver::STRUMPACK && type != LinearSolver::MUMPS &&
+      type != LinearSolver::SUPERLU && n_schur <= kRootSchur)
+  {
+    return LinearSolver::STRUMPACK;
+  }
+#else
+  MFEM_CONTRACT_VAR(n_schur);
+#endif
+  return SchurSolverType(type);
+}
+
+}  // namespace
+
 RegionSolver::RegionSolver(const IoData &iodata, SpaceOperator &space_op,
                            EnvironmentOperator &env)
   : space_op(space_op), env(env),
-    type(SchurSolverType(iodata.solver.substructuring->direct_solver)),
+    type(RegionSchurSolverType(iodata.solver.substructuring->direct_solver,
+                               env.Grid().Size())),
     ordering(iodata.solver.linear.sym_factorization)
 {
 }
@@ -92,6 +120,11 @@ void RegionSolver::Setup(const mfem::HypreParMatrix *Ar, const mfem::HypreParMat
   factorization = MakeSchurFactorization(type, ordering, comm, n_sys, std::move(coo),
                                          schur_vars, rows, &env.Grid());
   lu = std::make_unique<BlockCyclicLU>(env.Grid());
+  Mpi::Print(comm,
+             " Region solver: Schur complement onto the interface by {} ({}), dense LU "
+             "on a {:d} x {:d} process grid\n",
+             ToString(type), (type == LinearSolver::MUMPS) ? "distributed" : "on rank 0",
+             env.Grid().NumProcessRows(), env.Grid().NumProcessCols());
 }
 
 void RegionSolver::SetOperator(const ComplexOperator &op)
