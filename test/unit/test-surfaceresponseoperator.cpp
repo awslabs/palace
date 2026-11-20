@@ -13307,6 +13307,33 @@ TEST_CASE("SurfaceResponseOperatorSpatialClusterPriorityRawRemainder",
   CHECK_THAT(record.portions.portions[1].p1[1], WithinAbs(12.0 + R, 1.0e-12));
   CHECK(record.portions.translational == std::vector<bool>{false, false});
   CHECK_THAT(record.portions.length, WithinAbs(1.1 + R, 1.0e-9));
+  // Ruling 2276 (review dropcover-r2271 MAJOR-1): the coverage partition's feed. The boxes
+  // = the supports with claims (the cluster: token m1, its patch); the inside pieces = what
+  // the clip removed (the straddling corner's first arm over [10.1, 10.9], both arms of
+  // the corner inside the box), labelled by the dropped patch; the holders per window.
+  const auto &windows = record.coverage_windows;
+  REQUIRE(windows.boxes.size() == 1);
+  CHECK(windows.boxes[0].token == "m1");
+  CHECK(windows.boxes[0].model == 1);
+  CHECK(windows.boxes[0].patch == static_cast<int>(cluster_patch));
+  std::map<std::string, double> inside_length;
+  std::map<std::string, int> inside_feature;
+  for (const auto &piece : windows.inside)
+  {
+    inside_length[piece.type] += std::hypot(
+        piece.p1[0] - piece.p0[0], piece.p1[1] - piece.p0[1], piece.p1[2] - piece.p0[2]);
+    inside_feature[piece.type] = piece.feature;
+  }
+  const std::string straddling_label = "p" + std::to_string(straddling),
+                    inside_label = "p" + std::to_string(inside);
+  REQUIRE(inside_length.size() == 2);
+  CHECK_THAT(inside_length.at(straddling_label), WithinAbs(R - 1.1, 1.0e-9));
+  CHECK_THAT(inside_length.at(inside_label), WithinAbs(2.0 * R, 1.0e-12));
+  CHECK(inside_feature.at(straddling_label) == 34);
+  CHECK(inside_feature.at(inside_label) == 35);
+  CHECK(windows.holders.size() == 2);
+  CHECK(windows.holders.at(straddling_label) == std::vector<std::size_t>{0});
+  CHECK(windows.holders.at(inside_label) == std::vector<std::size_t>{0});
 
   const auto description =
       DescribeSpatialClusterPriorityExclusions(record, data.patches, data, supports, 1.0);

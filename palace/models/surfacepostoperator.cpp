@@ -2160,7 +2160,8 @@ SurfacePostOperator::GetInterfaceCoveragePartition(
     const std::set<int> &indices, const GridFunction &E, const GridFunction *D,
     const std::vector<CoveragePartitionClass> &kept_classes, PerimeterPortionView served,
     const std::vector<CoveragePartitionClass> &remainder_classes,
-    const CoverageDroppedWindows *dropped_windows) const
+    const CoverageDroppedWindows *dropped_windows,
+    const std::set<int> &excluded_patches) const
 {
   // Per interface the local bins in a fixed order (identical on every rank: the portion
   // lists are): per kept class its piece groups, the served groups, the remainder and the
@@ -2186,9 +2187,12 @@ SurfacePostOperator::GetInterfaceCoveragePartition(
     // second array: per candidate b, held by b alone and held by b first with others
     // (their holders OR-ed into overlap_masks from `masks`), then the beyond bin. `kinds` =
     // the 4 bins kept-inside-box, claim end, no claims, elsewhere; `kept_list` = the index
-    // of the dropped windows' kept class (none: the largest size_t).
+    // of the dropped windows' kept class (none: the largest size_t). Ruling 2295 (A): a
+    // holder whose patch is excluded at this measurement is no candidate; per piece group
+    // `excluded` lists such holders, and a group with any has one more bin after the beyond
+    // bin (inside a box whose model is excluded).
     std::optional<PartitionedEdgePieces> context;
-    std::vector<std::vector<std::size_t>> candidates;
+    std::vector<std::vector<std::size_t>> candidates, excluded;
     std::vector<std::size_t> context_bins, masks;
     std::size_t kinds = 0, kept_list = 0;
   };
@@ -2252,21 +2256,29 @@ SurfacePostOperator::GetInterfaceCoveragePartition(
           UncoveredEdgeIntervals(tree, dropped_windows->inside, tolerance, nullptr));
       for (const auto &group : interface.context->groups)
       {
-        std::set<std::size_t> candidates;
+        std::set<std::size_t> candidates, excluded;
         for (const auto &window : SplitPlusTokens(group))
         {
           const auto holders = dropped_windows->holders.find(window);
           if (holders != dropped_windows->holders.end())
           {
-            candidates.insert(holders->second.begin(), holders->second.end());
+            for (const std::size_t b : holders->second)
+            {
+              (excluded_patches.count(dropped_windows->boxes[b].patch) > 0 ? excluded
+                                                                           : candidates)
+                  .insert(b);
+            }
           }
         }
         MFEM_VERIFY(candidates.size() <= 64,
                     "A dropped coupon's window piece meets more than 64 matched cluster "
                     "boxes; the coverage partition cannot tell its holders apart!");
         interface.candidates.emplace_back(candidates.begin(), candidates.end());
+        interface.excluded.emplace_back(excluded.begin(), excluded.end());
         interface.context_bins.push_back(extra_energies.size());
-        extra_energies.resize(extra_energies.size() + 2 * candidates.size() + 1, 0.0);
+        extra_energies.resize(extra_energies.size() + 2 * candidates.size() +
+                                  (excluded.empty() ? 1 : 2),
+                              0.0);
         interface.masks.push_back(overlap_masks.size());
         overlap_masks.resize(overlap_masks.size() + candidates.size(), 0);
       }
@@ -2365,7 +2377,15 @@ SurfacePostOperator::GetInterfaceCoveragePartition(
           const std::size_t first = interface.context_bins[context_group];
           if (holders == 0)
           {
-            extra_energies[first + 2 * candidates.size()] += value;
+            // Ruling 2295 (A): a point that only a holder excluded at this measurement
+            // contains is inside a box whose model is excluded; none: beyond every box.
+            bool in_excluded = false;
+            for (const std::size_t b : interface.excluded[context_group])
+            {
+              in_excluded =
+                  in_excluded || PointInsideContextBox(point, dropped_windows->boxes[b]);
+            }
+            extra_energies[first + 2 * candidates.size() + (in_excluded ? 1 : 0)] += value;
           }
           else
           {
@@ -2544,6 +2564,10 @@ SurfacePostOperator::GetInterfaceCoveragePartition(
         }
       }
       partition.context_beyond += extra_energies[first + 2 * candidates.size()];
+      if (!interface.excluded[group].empty())
+      {
+        partition.inside_excluded_box += extra_energies[first + 2 * candidates.size() + 1];
+      }
     }
     partition.kept_inside_box = extra_energies[interface.kinds];
     partition.unclaimed_claim_end = extra_energies[interface.kinds + 1];

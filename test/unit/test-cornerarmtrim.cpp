@@ -3127,7 +3127,9 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 // pieces hold as a served claim; the served bins are bitwise those of (a). (c) Two boxes: a
 // box overlap "m4+m5". (d) A box
 // holding part of the lead: the rest is beyond every box. (e) The same portions as the
-// windows' kept class: the mirror (kept raw inside a box) is a part of that class.
+// windows' kept class: the mirror (kept raw inside a box) is a part of that class. (f) A
+// box that is no holder (its clip removed none of the window's pieces) holds nothing. (g)
+// Ruling 2295 (A): a holder whose patch is excluded at the measurement holds nothing.
 TEST_CASE_METHOD(
     test::SurfaceResponseFiles,
     "Coverage partition holds a dropped window inside a matched box as context",
@@ -3267,6 +3269,7 @@ TEST_CASE_METHOD(
     SurfacePostOperator::CoverageContextBox box;
     box.token = "m" + std::to_string(model);
     box.model = model;
+    box.patch = 100 + model;
     box.axes = {{{1.0, 0.0, 0.0}, {0.0, 1.0, 0.0}, {0.0, 0.0, 1.0}}};
     box.frame_min = box.min = {-1.0e3, -1.0e3, -1.0e3};
     box.frame_max = box.max = {x_max, 1.0e3, 1.0e3};
@@ -3286,7 +3289,7 @@ TEST_CASE_METHOD(
   // Every exclusive bin (the mirror is a part of a class, not a bin).
   auto BinSum = [](const SurfacePostOperator::InterfaceCoveragePartition &p)
   {
-    double sum = p.unclaimed + p.context_beyond;
+    double sum = p.unclaimed + p.context_beyond + p.inside_excluded_box;
     for (const auto *bins : {&p.served, &p.context, &p.context_overlap})
     {
       for (const auto &[label, energy] : *bins)
@@ -3369,6 +3372,68 @@ TEST_CASE_METHOD(
   CHECK_THAT(d.context.at("m4") + d.context_beyond + d.unclaimed,
              WithinRel(plain.unclaimed, 1.0e-12));
   CHECK_THAT(BinSum(d), WithinRel(d.within, 1.0e-12));
+
+  // (f) Ruling 2276 R3: a box that contains the window's points but whose clip removed
+  // none of its pieces is no holder: no context, all beyond every box; beside a holder it
+  // makes no overlap.
+  auto not_holder = WithBoxes({Box(4, 1.0e3)});
+  not_holder.holders.clear();
+  const auto f =
+      surf_post_op
+          .GetInterfaceCoveragePartition({4}, field, nullptr, {}, claim, {}, &not_holder)
+          .at(4);
+  CHECK((f.context.empty() && f.context_overlap.empty()));
+  CHECK_THAT(f.context_beyond, WithinRel(b.context.at("m4"), 1.0e-12));
+  CHECK(f.unclaimed == b.unclaimed);
+  auto one_holder = WithBoxes({Box(5, 1.0e3), Box(4, 1.0e3)});
+  one_holder.holders["p1"] = {0};  // the box of m5 only
+  const auto f_one =
+      surf_post_op
+          .GetInterfaceCoveragePartition({4}, field, nullptr, {}, claim, {}, &one_holder)
+          .at(4);
+  CHECK(f_one.context_overlap.empty());
+  REQUIRE(f_one.context.count("m5") == 1);
+  CHECK(f_one.context.size() == 1);
+  CHECK_THAT(f_one.context.at("m5"), WithinRel(b.context.at("m4"), 1.0e-12));
+  CHECK(f_one.context_beyond == 0.0);
+
+  // (g) Ruling 2295 (A): a holder whose patch is excluded at this measurement holds
+  // nothing. One box, its patch excluded: no context, the window is inside a box whose
+  // model is excluded (not beyond every box); the claims' bins unchanged.
+  const auto g = surf_post_op
+                     .GetInterfaceCoveragePartition({4}, field, nullptr, {}, claim, {},
+                                                    &one_box, {104})
+                     .at(4);
+  CHECK((g.context.empty() && g.context_overlap.empty()));
+  CHECK(g.context_beyond == 0.0);
+  CHECK_THAT(g.inside_excluded_box, WithinRel(b.context.at("m4"), 1.0e-12));
+  CHECK((g.served == plain.served && g.unclaimed == b.unclaimed));
+  CHECK_THAT(BinSum(g), WithinRel(g.within, 1.0e-12));
+  // An overlap with one holder excluded: the serving holder's alone, labelled by it.
+  const auto g_overlap = surf_post_op
+                             .GetInterfaceCoveragePartition({4}, field, nullptr, {}, claim,
+                                                            {}, &two_boxes, {104})
+                             .at(4);
+  CHECK(g_overlap.context_overlap.empty());
+  REQUIRE(g_overlap.context.count("m5") == 1);
+  CHECK(g_overlap.context.size() == 1);
+  CHECK_THAT(g_overlap.context.at("m5"), WithinRel(c.context_overlap.at("m4+m5"), 1.0e-12));
+  CHECK(g_overlap.inside_excluded_box == 0.0);
+  // The part box excluded: what it held moves to that bin; the rest stays beyond.
+  const auto g_part = surf_post_op
+                          .GetInterfaceCoveragePartition({4}, field, nullptr, {}, claim, {},
+                                                         &part_box, {104})
+                          .at(4);
+  CHECK(g_part.context.empty());
+  CHECK_THAT(g_part.inside_excluded_box, WithinRel(d.context.at("m4"), 1.0e-12));
+  CHECK_THAT(g_part.context_beyond, WithinRel(d.context_beyond, 1.0e-12));
+  // A patch excluded that holds no box changes nothing.
+  const auto g_other = surf_post_op
+                           .GetInterfaceCoveragePartition({4}, field, nullptr, {}, claim,
+                                                          {}, &one_box, {105})
+                           .at(4);
+  CHECK(g_other.context == b.context);
+  CHECK(g_other.inside_excluded_box == 0.0);
 
   // (e) The window as the windows' kept class: its points inside the box are the mirror,
   // a part of that class (the class's bin itself is that of the call without windows).

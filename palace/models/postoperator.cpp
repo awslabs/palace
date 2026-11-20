@@ -2888,12 +2888,15 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
         remainder_classes.push_back({"Excluded", &surface_response_exclusion_energy});
       }
       // Ruling 2276: the dropped coupons' windows (none: the partition of a run without).
+      // Ruling 2295 (A): a box whose patch the gate excludes at this measurement (the
+      // portion record in force, as for the excluded remainders below) holds nothing.
       const auto &dropped_windows =
           surface_response_op->GetSpatialClusterPriorityExclusions().coverage_windows;
       auto coverage = surf_post_op.GetInterfaceCoveragePartition(
           coverage_interfaces, *E, D_recovered.get(), kept_classes,
           surface_response_model_raw, remainder_classes,
-          dropped_windows.Empty() ? nullptr : &dropped_windows);
+          dropped_windows.Empty() ? nullptr : &dropped_windows,
+          surface_response_op->GetConductorConsistencyPortionRecord().PatchSet());
       SurfacePostOperator::MoveCoverageServedLabel(coverage, "unpatched", "UnpatchedPairs");
       return coverage;
     };

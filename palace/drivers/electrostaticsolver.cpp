@@ -2301,9 +2301,12 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         {
           remainder_classes.push_back({"Excluded", &exclusion_energy_portions});
         }
+        // Ruling 2295 (A): a box whose patch this source's gate pass excludes (the portion
+        // record in force) holds nothing.
         auto partition = post_op.GetElectrostaticCoveragePartition(
             response_correction->GetCoverageInterfaces(), kept_classes, model_raw_portions,
-            remainder_classes, dropped_windows);
+            remainder_classes, dropped_windows,
+            response_correction->GetConductorConsistencyPortionRecord().PatchSet());
         SurfacePostOperator::MoveCoverageServedLabel(partition, "unpatched",
                                                      "UnpatchedPairs");
         coverage_partitions.emplace_back(idx, std::move(partition));
@@ -2828,9 +2831,10 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         {
           remainder_classes.push_back({"Excluded", &exclusion_energy_portions});
         }
+        // Ruling 2295 (A): a box whose patch is in the FINAL set holds nothing.
         auto partition = post_op.GetElectrostaticCoveragePartition(
             response_correction->GetCoverageInterfaces(), kept_classes, model_raw_portions,
-            remainder_classes, dropped_windows);
+            remainder_classes, dropped_windows, final_record.PatchSet());
         SurfacePostOperator::MoveCoverageServedLabel(partition, "unpatched",
                                                      "UnpatchedPairs");
         if (root)

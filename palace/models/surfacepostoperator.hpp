@@ -538,12 +538,15 @@ public:
     // only): the points a matched cluster box holds AS CONTEXT, by the label of the holding
     // boxes' model tokens ('+'-joined, ascending model index): `context` held by one box,
     // `context_overlap` by two or more boxes (a box overlap; the label joins every holder);
-    // `context_beyond` the points of an inside piece that no holding box holds. These three
-    // are bins of their own (out of `unclaimed`). `kept_inside_box` = the points of the
+    // `context_beyond` the points of an inside piece that no holding box holds;
+    // `inside_excluded_box` (ruling 2295 (A)) those that no serving holder holds but a
+    // holder whose patch the conductor-consistency test excludes at this measurement
+    // contains (such a box holds nothing). These four are bins of their own (out of
+    // `unclaimed`). `kept_inside_box` = the points of the
     // dropped windows' kept class (CoverageDroppedWindows::kept_class) that lie inside a
     // matched box: a PART of that class's bins, not a bin.
     std::map<std::string, double> context, context_overlap;
-    double context_beyond = 0.0, kept_inside_box = 0.0;
+    double context_beyond = 0.0, inside_excluded_box = 0.0, kept_inside_box = 0.0;
     // Ruling 2277: `unclaimed` by kind (their sum is `unclaimed` up to round-off): the
     // clamped foot within kCoverageClaimEndOverRadius R of an end of a piece of a kept
     // class, a served claim or a remainder class on its segment; no such piece on its
@@ -593,12 +596,13 @@ public:
   // = the window's label "p<patch>"); `holders` per window label the indices into `boxes`
   // of the boxes whose clip removed a piece of it; `boxes` = every matched cluster box (its
   // patch-frame box, the strict-interior test of the clip; `min` / `max` its mesh AABB, a
-  // prefilter only; `token` = "m<model index>"). `kept_class` = the name of the kept class
-  // that holds the windows' parts outside every box. Mesh units.
+  // prefilter only; `token` = "m<model index>"; `patch` = its support's global patch
+  // index). `kept_class` = the name of the kept class that holds the windows' parts
+  // outside every box. Mesh units.
   struct CoverageContextBox
   {
     std::string token;
-    int model = -1;
+    int model = -1, patch = -1;
     std::array<std::array<double, 3>, 3> axes{};
     std::array<double, 3> frame_min{}, frame_max{}, min{}, max{};
   };
@@ -614,11 +618,15 @@ public:
   // point).
   static bool PointInsideContextBox(const mfem::Vector &point,
                                     const CoverageContextBox &box);
+  // Ruling 2295 (A): `excluded_patches` = the patches the conductor-consistency test
+  // excludes at this measurement (the rule in force); a box whose patch is one of them
+  // holds nothing.
   std::map<int, InterfaceCoveragePartition> GetInterfaceCoveragePartition(
       const std::set<int> &indices, const GridFunction &E, const GridFunction *D,
       const std::vector<CoveragePartitionClass> &kept_classes, PerimeterPortionView served,
       const std::vector<CoveragePartitionClass> &remainder_classes = {},
-      const CoverageDroppedWindows *dropped_windows = nullptr) const;
+      const CoverageDroppedWindows *dropped_windows = nullptr,
+      const std::set<int> &excluded_patches = {}) const;
   // Ruling 2251 (OI-REGION-TARGET-CORRECTED-NOT-FILTERED): the footprint of an applied
   // patch on an entry with a Region = the entry's within-R points of the coverage partition
   // (the same rule, nearest tree segment, clamped foot and within weight) whose foot lies

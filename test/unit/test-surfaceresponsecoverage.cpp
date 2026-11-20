@@ -825,15 +825,17 @@ TEST_CASE("Coverage compact claim list is exact", "[SurfaceResponseCoverage][Ser
 // matched boxes. Dyadic energies, so every identity is exact. (a) The context joins the
 // served energy (and the pending / no-status shares by its holders' models); the coverage's
 // U, missing part and method gap are re-derived from the budget's bins, which add up to W
-// (closure 0); the mirror is a part of its class, not a bin. (b) The table row: one value
-// per header column, the closure 0. (c) The run's warnings: the box overlap with its
-// holders, the dropped share with its parts. (d) Without context the summary keeps every
-// field.
+// (closure 0); the mirror is a part of its class, not a bin; ruling 2295: the bin inside a
+// box whose model is excluded is a dropped bin, and the context's pending / no-status parts
+// are carried. (b) The table row: one value per header column, the closure 0. (c) The run's
+// warnings: the box overlap with its holders, the dropped share with its parts; the overlap
+// line ranks by the overlap share, and each line prints without the other. (d) Without
+// context the summary keeps every field.
 TEST_CASE("Coverage near-edge energy budget and the context held by boxes",
           "[SurfaceResponseCoverage][Serial]")
 {
   auto partition = InterfaceOne();
-  partition.within = 17.5;
+  partition.within = 18.0;
   partition.classes[{"LoopRemainder", "m0"}] = 0.5;  // 0.25 of it on no served label
   partition.loop_remainder_unserved = 0.25;
   partition.classes[{"SpatialClusterPriority", "p9"}] = 0.25;
@@ -841,14 +843,16 @@ TEST_CASE("Coverage near-edge energy budget and the context held by boxes",
   partition.context = {{"m1", 0.5}};              // model 1 pending
   partition.context_overlap = {{"m0+m2", 0.25}};  // model 2 no status
   partition.context_beyond = 0.125;
+  partition.inside_excluded_box = 0.5;
   partition.unclaimed = 1.375;
   partition.unclaimed_claim_end = 0.25;
   partition.unclaimed_no_claims = 0.625;
   partition.unclaimed_elsewhere = 0.5;
-  const auto summary = SummarizeCoverageInterface(partition, 17.5, 13.5, Keys(), Models());
+  const auto summary = SummarizeCoverageInterface(partition, 18.0, 13.5, Keys(), Models());
   const auto &b = summary.budget;
   CHECK(summary.served == 12.25);
   CHECK((b.served == 11.5 && b.context == 0.5 && b.context_overlap == 0.25));
+  CHECK((b.context_pending == 0.5 && b.context_no_status == 0.25));
   CHECK(summary.pending == 2.5);
   CHECK(summary.no_status == 1.75);
   CHECK((summary.missing == 1.25 && b.missing == 1.25 && b.missing_method_gap == 0.5));
@@ -858,8 +862,9 @@ TEST_CASE("Coverage near-edge energy budget and the context held by boxes",
   CHECK((b.unclaimed_claim_end == 0.25 && b.unclaimed_no_claims == 0.625));
   CHECK((b.unclaimed_elsewhere == 0.5 && b.kept_inside_box == 0.125));
   CHECK(b.overlaps == partition.context_overlap);
-  CHECK(b.Sum() == 17.5);
-  CHECK(b.Dropped() == 1.75);
+  CHECK(b.inside_excluded_box == 0.5);
+  CHECK(b.Sum() == 18.0);
+  CHECK(b.Dropped() == 2.25);
   const auto cell =
       ComputeCoverageCell("SA", {summary}, CoverageThresholds{}, CoverageValidatedRegime{},
                           CoverageExcitationClass::DRIVEN);
@@ -874,7 +879,7 @@ TEST_CASE("Coverage near-edge energy budget and the context held by boxes",
   std::map<int, SurfacePostOperator::InterfaceCoveragePartition> partitions;
   partitions[1] = partition;
   const auto measurement = ComputeCoverageMeasurement(
-      partitions, {{1, "SA"}}, {{1, 17.5}}, {{1, 13.5}}, Keys(), Models(),
+      partitions, {{1, "SA"}}, {{1, 18.0}}, {{1, 13.5}}, Keys(), Models(),
       CoverageThresholds{}, CoverageValidatedRegime{}, CoverageExcitationClass::DRIVEN);
   CHECK(measurement.served_pending_models.count(1) == 1);
   CHECK(measurement.served_no_status_models.count(2) == 1);
@@ -885,10 +890,14 @@ TEST_CASE("Coverage near-edge energy budget and the context held by boxes",
   const std::string row = rows.str();
   CHECK(header.rfind("m,exc,Type,W within-R raw (J),served raw share of W,held by one box",
                      0) == 0);
+  CHECK(header.find(",beyond every box raw share of W,inside a box whose model is excluded "
+                    "at this excitation raw share of W,") != std::string::npos);
   CHECK(std::count(header.begin(), header.end(), ',') ==
         std::count(row.begin(), row.end(), ','));
-  CHECK(row.find(fmt::format(",{:+.12e},+0.000000000000e+00\n", 0.125 / 17.5)) !=
+  CHECK(row.find(fmt::format(",{:+.12e},{:+.12e},", 0.125 / 18.0, 0.5 / 18.0)) !=
         std::string::npos);
+  CHECK(row.find(fmt::format(",{:+.12e},{:+.12e},{:+.12e},+0.000000000000e+00\n",
+                             0.125 / 18.0, 0.5 / 18.0, 0.25 / 18.0)) != std::string::npos);
 
   // (c) The run's warnings.
   CoverageRunRecord record;
@@ -899,7 +908,39 @@ TEST_CASE("Coverage near-edge energy budget and the context held by boxes",
   CHECK(lines[0].find("may be counted by each holder (not measured)") != std::string::npos);
   CHECK(lines[1].find("neither replaces by a model nor keeps raw") != std::string::npos);
   CHECK(lines[1].find("(m 1 SA: unclaimed") != std::string::npos);
+  CHECK(lines[1].find("inside a box whose model is excluded at this excitation 2.778 %") !=
+        std::string::npos);
   CHECK(CoverageNearEdgeWarnings(CoverageRunRecord{}).empty());
+  // The overlap line ranks by the overlap share: the cell with the larger one-box share
+  // (m 1) is not named; an overlap-only record prints that line alone, a dropped-only
+  // record the dropped line alone.
+  auto Cell = [](double context, double overlap, const std::string &holders, double beyond)
+  {
+    CoverageCell cell;
+    cell.type = "SA";
+    cell.within = 1.0;
+    cell.budget.context = context;
+    cell.budget.context_overlap = overlap;
+    if (overlap > 0.0)
+    {
+      cell.budget.overlaps[holders] = overlap;
+    }
+    cell.budget.beyond_box = beyond;
+    return cell;
+  };
+  CoverageRunRecord overlap_only;
+  overlap_only.entries.push_back({{{"m", 1.0}}, Cell(0.5, 0.125, "m4+m5", 0.0)});
+  overlap_only.entries.push_back({{{"m", 2.0}}, Cell(0.0, 0.25, "m6+m7", 0.0)});
+  const auto overlap_lines = CoverageNearEdgeWarnings(overlap_only);
+  REQUIRE(overlap_lines.size() == 1);
+  CHECK(overlap_lines[0].find("holders m6+m7): up to 25 % of W (m 2 SA)") !=
+        std::string::npos);
+  CoverageRunRecord dropped_only;
+  dropped_only.entries.push_back({{{"m", 3.0}}, Cell(0.5, 0.0, "", 0.125)});
+  const auto dropped_lines = CoverageNearEdgeWarnings(dropped_only);
+  REQUIRE(dropped_lines.size() == 1);
+  CHECK(dropped_lines[0].find("keeps raw: up to 12.5 % of W (m 3 SA: unclaimed 0 %, "
+                              "beyond every box 12.5 %") != std::string::npos);
 
   // (d) Without context: the summary of the existing fixture, field by field.
   const auto plain =

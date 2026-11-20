@@ -192,7 +192,6 @@ CoverageKeyRecord ClassifyCoverageKey(const std::string &hash, bool matched,
                                       const std::string &placement_rejection,
                                       bool unboxable);
 
-// One interface of one cell: W and the partition's sums (J).
 // Ruling 2277 (lane dropcover): the NEAR-EDGE ENERGY BUDGET of an interface / cell: every
 // EXCLUSIVE bin of the coverage partition (J), each within-R point once by the partition's
 // first-list rule (the kept classes' own tables integrate each class alone and can count a
@@ -201,23 +200,28 @@ CoverageKeyRecord ClassifyCoverageKey(const std::string &hash, bool matched,
 // context (ruling 2276); `missing` = the Missing class on keys a library could hold (the
 // coverage's missing part), `missing_method_gap` on Unboxable / placement-rejected keys;
 // `loop_remainder` = the part the partition moved out of the served claims;
-// `kept_inside_box` (the mirror) is a PART of `spatial_cluster_priority`, not a bin.
+// `inside_excluded_box` = a dropped window's points that only a box excluded at this
+// excitation contains (ruling 2295 (A): such a box holds nothing; dropped);
+// `kept_inside_box` (the mirror) is a PART of `spatial_cluster_priority`, not a bin, and
+// `context_pending` / `context_no_status` the PARTS of the two context bins that the
+// coverage counts pending / no-status (by the holders' models, labels counted whole).
 struct CoverageNearEdgeBudget
 {
   double served = 0.0, context = 0.0, context_overlap = 0.0;
   double missing = 0.0, missing_method_gap = 0.0, domain_boundary = 0.0,
          spatial_cluster_priority = 0.0, conductor_consistency = 0.0, loop_remainder = 0.0;
   double unpatched_pairs = 0.0, excluded = 0.0, beyond_box = 0.0, unclaimed_claim_end = 0.0,
-         unclaimed_no_claims = 0.0, unclaimed_elsewhere = 0.0;
-  double kept_inside_box = 0.0;
+         unclaimed_no_claims = 0.0, unclaimed_elsewhere = 0.0, inside_excluded_box = 0.0;
+  double kept_inside_box = 0.0, context_pending = 0.0, context_no_status = 0.0;
   // Per holder label ("m4+m5"), the energy held in a box overlap.
   std::map<std::string, double> overlaps;
-  // The sum of the exclusive bins (every member but kept_inside_box and overlaps).
+  // The sum of the exclusive bins (every member but the parts and overlaps).
   double Sum() const;
   // The energy the corrected total neither replaces by a model nor keeps raw.
   double Dropped() const;
   void Add(const CoverageNearEdgeBudget &other);
 };
+// One interface of one cell: W and the partition's sums (J).
 struct CoverageInterfaceSummary
 {
   double within = 0.0;            // W (raw - outside at R): the corrected bookkeeping's

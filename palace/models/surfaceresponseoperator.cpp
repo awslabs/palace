@@ -30378,9 +30378,9 @@ SpatialClusterPriorityExclusions CollectSpatialClusterPriorityPortions(
     }
     const int box_model = patches[support.patch].model;
     box_index[support.patch] = coverage_windows.boxes.size();
-    coverage_windows.boxes.push_back({fmt::format("m{}", box_model), box_model,
-                                      support.axes, support.frame_min, support.frame_max,
-                                      support.min, support.max});
+    coverage_windows.boxes.push_back(
+        {fmt::format("m{}", box_model), box_model, static_cast<int>(support.patch),
+         support.axes, support.frame_min, support.frame_max, support.min, support.max});
   }
   for (const auto &[patch_idx, owner] : exclusions)
   {

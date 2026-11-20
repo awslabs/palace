@@ -129,6 +129,20 @@ struct ExcludedPatchPortions
   // lazily to `portions.size()` at every append, so portions pushed directly stay found.
   std::unordered_map<int, std::vector<std::size_t>> feature_portions;
   std::size_t indexed_portions = 0;
+  // Ruling 2295 (A): every portion's excluded patches (global indices), as the coverage
+  // partition's context test reads them: a matched box whose patch is here holds nothing.
+  std::set<int> PatchSet() const
+  {
+    std::set<int> set;
+    for (const auto &list : patches)
+    {
+      for (const std::size_t patch : list)
+      {
+        set.insert(static_cast<int>(patch));
+      }
+    }
+    return set;
+  }
 };
 
 // H14a (hardening-2 DESIGN; idfix DESIGN section 7; decision 1074): a Maxwell contour or
