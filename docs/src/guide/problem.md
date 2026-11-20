@@ -27,12 +27,16 @@ to `false` turns this off.
 For problems with damping, the SLEPc eigenvalue solver does not search for strongly damped
 or growing modes with a quality factor `|Q|` below
 [`config["Solver"]["Eigenmode"]["MinQ"]`](../config/reference.md#config-solver-eigenmode-minq),
-whose slow convergence would delay the other modes, and it accepts an eigenpair only once
-its Ritz value was also present at the previous Krylov restart. ARPACK and the `"SLP"`
-nonlinear solver search for all modes, and the `"Hybrid"` nonlinear solver restricts only
-its initial guess, so its refinement can still return a mode below `MinQ`. Structures whose
-wanted modes have quality factors close to 0.5 need a lower `MinQ`: otherwise these modes
-are not found, and the solve can end with fewer modes than requested.
+whose slow convergence would delay the other modes. ARPACK and the `"SLP"` nonlinear solver
+search for all modes, and the `"Hybrid"` nonlinear solver restricts only its initial guess,
+so its refinement can still return a mode below `MinQ`. Structures whose wanted modes have
+quality factors close to 0.5 need a lower `MinQ`: otherwise these modes are not found, and
+the solve can end with fewer modes than requested. With adaptive mesh refinement, a solve
+which starts from the eigenmodes of the previous adaptation iteration then accepts an
+eigenpair at its first Krylov restart only if its error estimate is below a tenth of the
+tolerance: the eigenvalue errors of damped modes can be several times their error
+estimates, and without the strongly damped Ritz values nothing else delays these first
+acceptances.
 
 Calculations related to
 [energy-participation ratio (EPR) quantization](https://www.nature.com/articles/s41534-021-00461-8)

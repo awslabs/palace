@@ -144,10 +144,9 @@ public:
 
   // Restrict the search to modes with quality factor |Q| = |ω| / (2 |Im{ω}|) >= q_min
   // (eigenvalues λ = iω of a quadratic problem), so that strongly damped or growing Ritz
-  // values cannot stall the convergence of the others. An eigenpair then converges only
-  // once its Ritz value was also present at the previous restart, except in the first
-  // Krylov cycle of a solve which is not warm-started. A q_min <= 0.5 disables the
-  // restriction. Not all solvers support it.
+  // values cannot stall the convergence of the others. A warm-started solve then accepts an
+  // eigenpair at its first restart only if its error estimate is below a tenth of the
+  // tolerance. A q_min <= 0.5 disables the restriction. Not all solvers support it.
   virtual void SetMinQualityFactor(double q_min) {}
 
   // Solve the eigenvalue problem. Returns the number of converged eigenvalues.

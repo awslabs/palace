@@ -39,9 +39,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - For problems with damping, the SLEPc eigenvalue solver no longer searches for strongly
     damped or growing modes with quality factor `|Q|` below
     `config["Solver"]["Eigenmode"]["MinQ"]` (new, default `0.54`), whose slowly converging
-    Ritz values could stall the others, and it then accepts an eigenpair only once its Ritz
-    value was also present at the previous Krylov restart. Fewer converged eigenpairs beyond
-    the requested ones can be reported. SchemaVer 5-1-0.
+    Ritz values could stall the others. With adaptive mesh refinement, a warm-started solve
+    then accepts an eigenpair at its first Krylov restart only if its error estimate is
+    below a tenth of the tolerance. SchemaVer 5-1-0.
     [PR 1205](https://github.com/awslabs/palace/pull/1205).
   - With adaptive mesh refinement on nonconforming meshes, the SLEPc Krylov-Schur eigenvalue
     solves of later adaptation iterations can start from the eigenvectors of the previous

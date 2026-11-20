@@ -319,13 +319,15 @@ struct DampedEigenTestProblem
   {
     std::complex<double> omega;  // First eigenvalue ω = λ / i
     int its;                     // Number of restarts
+    double errest;               // SLEPc's relative error estimate of the first eigenpair
   };
 
-  // Solve for one mode with SLEPc's Krylov-Schur solver for the linearization or TOAR, for
-  // the minimum quality factor q_min, from a random start vector or, if start >= 0, from
-  // the eigenvector of mode start (a warm start if warm).
-  Result Solve(slepc::SlepcEigenvalueSolver::Type type, double q_min, int start = -1,
-               bool warm = false) const
+  // Solve for one mode with SLEPc's Krylov-Schur solver for the linearization, for the
+  // minimum quality factor q_min and tolerance tol, with ncv Krylov vectors, from a random
+  // start vector or, if start >= 0, from the eigenvector of mode start plus noise times a
+  // random vector (a warm start if warm).
+  Result Solve(double q_min, int start = -1, bool warm = false, double tol = 1.0e-10,
+               double noise = 1.0e-12, int ncv = 16) const
   {
     MPI_Comm comm = Mpi::World();
     DiagonalEigenTestOperator K(k), C(c), M(m), A(a);
@@ -335,39 +337,33 @@ struct DampedEigenTestProblem
     ComplexKspSolver ksp(std::move(gmres),
                          std::make_unique<JacobiSmoother<ComplexOperator>>(comm));
     ksp.SetOperators(A, A);
-    std::unique_ptr<slepc::SlepcEigenvalueSolver> eps;
-    if (type == slepc::SlepcEigenvalueSolver::Type::TOAR)
-    {
-      eps = std::make_unique<slepc::SlepcPEPSolver>(comm, 0);
-    }
-    else
-    {
-      eps = std::make_unique<slepc::SlepcPEPLinearSolver>(comm, 0);
-    }
-    eps->SetType(type);
-    eps->SetProblemType(slepc::SlepcEigenvalueSolver::ProblemType::GEN_NON_HERMITIAN);
-    eps->SetOperators(K, C, M, EigenvalueSolver::ScaleType::NORM_2);
-    eps->SetNumModes(1, 16);
-    eps->SetTol(1.0e-10);
-    eps->SetLinearSolver(ksp);
-    eps->SetShiftInvert(lambda_s);
-    eps->SetWhichEigenpairs(EigenvalueSolver::WhichType::TARGET_IMAGINARY);
-    eps->SetMinQualityFactor(q_min);
+    slepc::SlepcPEPLinearSolver eps(comm, 0);
+    eps.SetType(slepc::SlepcEigenvalueSolver::Type::KRYLOVSCHUR);
+    eps.SetProblemType(slepc::SlepcEigenvalueSolver::ProblemType::GEN_NON_HERMITIAN);
+    eps.SetOperators(K, C, M, EigenvalueSolver::ScaleType::NORM_2);
+    eps.SetNumModes(1, ncv);
+    eps.SetTol(tol);
+    eps.SetLinearSolver(ksp);
+    eps.SetShiftInvert(lambda_s);
+    eps.SetWhichEigenpairs(EigenvalueSolver::WhichType::TARGET_IMAGINARY);
+    eps.SetMinQualityFactor(q_min);
     if (start >= 0)
     {
       ComplexVector v(n), v_lambda(n), r(n);
       linalg::SetRandom(comm, r);
       v = 0.0;
       v.Real().HostReadWrite()[start] = 1.0;
-      v.Add(1.0e-12 / std::sqrt(static_cast<double>(n)), r);
+      v.Add(noise / std::sqrt(static_cast<double>(n)), r);
       v_lambda = v;
       v_lambda *= std::complex<double>(-0.5 * c[start].real(), omega_r[start]);
-      eps->SetInitialSpaceBlocks(v, v_lambda);
-      eps->SetWarmStart(warm);
+      eps.SetInitialSpaceBlocks(v, v_lambda);
+      eps.SetWarmStart(warm);
     }
-    REQUIRE(eps->Solve() >= 1);
-    return {eps->GetEigenvalue(0) / std::complex<double>(0.0, 1.0),
-            eps->GetNumIterations()};
+    REQUIRE(eps.Solve() >= 1);
+    PetscReal errest;
+    PalacePetscCall(EPSGetErrorEstimate(eps, 0, &errest));
+    return {eps.GetEigenvalue(0) / std::complex<double>(0.0, 1.0), eps.GetNumIterations(),
+            errest};
   }
 };
 
@@ -463,34 +459,50 @@ TEST_CASE("Eigenmode quality factor region in a damped solve", "[eigenmode][Seri
   for (double q_min : {0.0, 0.54})
   {
     const int i = (q_min > 0.5) ? 1 : 0;
-    const auto result = p.Solve(slepc::SlepcEigenvalueSolver::Type::KRYLOVSCHUR, q_min);
+    const auto result = p.Solve(q_min);
     CHECK(std::abs(result.omega - p.Omega(i)) <= 1.0e-8 * p.omega_r[i]);
   }
 }
 
-TEST_CASE("Eigenmode settled Ritz values in the quality factor region",
+TEST_CASE("Eigenmode first restart of a warm start in the quality factor region",
           "[eigenmode][Serial]")
 {
-  // With the quality factor region, an eigenpair converges only once its Ritz value was
-  // also present at the previous restart, except in the first Krylov cycle of a solve which
-  // is not warm-started. From a start vector along the wanted eigenvector, the solve then
-  // converges in one Krylov cycle, or in two if warm-started. Without the region, the
-  // warm-started solve converges in one cycle.
+  // With the quality factor region, a warm-started solve accepts an eigenpair at its first
+  // restart only if its error estimate is below a tenth of the tolerance. The start vector
+  // is the wanted eigenvector plus noise, which sets the error estimate at the first
+  // restart, measured by a cold solve which converges there. The warm-started solve takes
+  // one more restart when this estimate is 0.3 times the tolerance, but not when it is 0.05
+  // times the tolerance, nor without the region.
   const DampedEigenTestProblem p;
-  for (auto type : {slepc::SlepcEigenvalueSolver::Type::KRYLOVSCHUR,
-                    slepc::SlepcEigenvalueSolver::Type::TOAR})
+  constexpr double noise = 1.0e-4;
+  constexpr int ncv = 6;
+  for (double q_min : {0.54, 0.0})
   {
-    for (bool warm : {false, true})
+    const int i = (q_min > 0.5) ? 1 : 0;
+    const auto first = p.Solve(q_min, i, false, 1.0e-3, noise, ncv);
+    REQUIRE(first.its == 1);
+    REQUIRE(first.errest > 1.0e-12);
+    for (double ratio : {0.3, 0.05})
     {
-      const auto result = p.Solve(type, 0.54, 1, warm);
-      CHECK(result.its == (warm ? 2 : 1));
-      CHECK(std::abs(result.omega - p.Omega(1)) <= 1.0e-8 * p.omega_r[1]);
+      const double tol = first.errest / ratio;
+      const auto cold = p.Solve(q_min, i, false, tol, noise, ncv);
+      const auto warm = p.Solve(q_min, i, true, tol, noise, ncv);
+      CHECK(cold.its == 1);
+      CHECK(warm.its == ((q_min > 0.5 && ratio > 0.1) ? 2 : 1));
+      CHECK(std::abs(warm.omega - p.Omega(i)) <= 1.0e-6 * p.omega_r[i]);
     }
   }
-  const auto result =
-      p.Solve(slepc::SlepcEigenvalueSolver::Type::KRYLOVSCHUR, 0.0, 0, true);
-  CHECK(result.its == 1);
-  CHECK(std::abs(result.omega - p.Omega(0)) <= 1.0e-8 * p.omega_r[0]);
+
+  // The margin applies to the first restart only: a solve which accepts the eigenpair at
+  // its second restart with an estimate of 0.3 times the tolerance takes two restarts
+  // whether warm-started or not.
+  const auto first = p.Solve(0.54, 1, false, 1.0e-3, 100.0 * noise, ncv / 2);
+  REQUIRE(first.its == 1);
+  const auto second = p.Solve(0.54, 1, false, 0.5 * first.errest, 100.0 * noise, ncv / 2);
+  REQUIRE(second.its == 2);
+  const double tol = second.errest / 0.3;
+  REQUIRE(tol < first.errest);
+  CHECK(p.Solve(0.54, 1, true, tol, 100.0 * noise, ncv / 2).its == 2);
 }
 
 #endif
