@@ -1588,9 +1588,9 @@ $\kappa$: the exact coupon at a node, the linear combination of the anchor and t
 node for $\kappa$ at or below it (the first-order correction of straight-like features),
 otherwise the cubic Lagrange interpolant on the four nearest nodes, formed on the matrices
 (negative weights never reach a patch). A portion of a straight-like feature whose
-first-order split fraction (its $\kappa$ over that smallest node, $0.1$) is at or below
-$10^{-12}$ is treated as straight (the anchor alone): a turn that small is floating-point
-round-off on a straight edge. A $\kappa$ beyond the largest node is reported
+first-order split fraction (its $\kappa$ over $0.1$, the $\kappa$ of the node the split goes
+to) is at or below $10^{-12}$ is treated as straight (the anchor alone): a turn that small
+is floating-point round-off on a straight edge. A $\kappa$ beyond the largest node is reported
 unmatched, never treated as straight. On an axisymmetric application mesh, every isolated
 edge site at $r = \rho$ is such a curved edge with patch weight $2 \pi \rho /$ `CouponDepth`.
 

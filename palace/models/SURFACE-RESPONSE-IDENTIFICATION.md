@@ -536,9 +536,14 @@ smaller endpoint.
      sum `TurnTowardMetal` for a one-sided feature). The turn is the weight of the
      first-order curvature term (design (e): C4, decision 108). A stretch of the chain on
      which no density contribution is open reads exactly zero (the sweep over the
-     contribution ends sets both running sums to 0 there; decision 2268), so a straight
-     edge carries no bend annotation and no turn whatever round-off the chain's earlier
-     contributions leave (two abutting half-chord windows can overlap by an ulp);
+     contribution ends sets both running sums to 0 there; decision 2268), so a stretch
+     outside every contribution carries no turn and no bend annotation whatever round-off
+     the chain's earlier contributions leave (two abutting half-chord windows can overlap by
+     an ulp); a joint between collinear runs (a straight edge cut into runs where its frame
+     changes) carries no turn either: a joint's turn is atan2(|a x b|, a . b) of the two run
+     tangents (`JointTurnMagnitude`, operands in a fixed order; decision 2286), zero to
+     round-off where the arc-cosine of the dot product read 1.49e-8 sqrt(k) rad for unit
+     tangents k units in the last place apart (OI-FIRST-ORDER-COLLINEAR-JOINT-TURN);
    * an unpaired curved portion is a `CurvedEdge` feature (one per curved chain section)
      with `RadiusOverR` = the section's tightest windowed radius and `Convexity` in the
      signature: `Convex` when the signed windowed curvature over the section bends around
@@ -2714,10 +2719,11 @@ difference for the fixed-flux transform, which is per model). A split fraction a
 below `kFirstOrderSplitFloor` = 1e-12 (`FirstOrderSplitFraction`, read before the node) is
 a turn of round-off size: the portion is treated as straight (the anchor alone, weight 1,
 no missing-node report), counted in a `Curvature:` summary line and in the manifest's
-`Summary.FirstOrderBelowFloor` (`Count`, `LargestFraction`, `Floor`; both only when the
-count is positive; decision 2268: the fabricated values are linear in a, so the floor
-moves them by at most 1e-12 relative; round-off fractions of up to 2.2e-15 and real ones
-from 1.4e-7 were seen). A missing first-order node
+`Summary.FirstOrderBelowFloor` (`Count`, `LargestFraction`, `Floor`, `Rule`; both only when
+the count is positive; decision 2268: the fabricated values are linear in a, so the floor
+moves them by at most 1e-12 relative; round-off fractions of up to 2.2e-15 were seen before
+it, and the smallest fraction placed on the measured chip and windows after decision 2286
+is 1.9e-8). A missing first-order node
 leaves the anchor alone on that portion, counted and warned (`Curvature:` summary line;
 never silent); the A7 audit's per-interval rule (sum of quadrature x model weights = 1) and
 the per-patch weight formula hold with two models per interval. The A10 placement audit
