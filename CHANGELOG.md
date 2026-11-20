@@ -306,9 +306,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 #### Bug Fixes
 
   - Fixed slow and failing linear solves with the second-order absorbing boundary condition
-    (`"Absorbing"` with `"Order": 2`) and the default real-valued coarse solve: the sign of
-    its term is now flipped on the coarse level, and only there for AMS and BoomerAMG.
-    [PR 1252](https://github.com/awslabs/palace/pull/1252).
+    (`"Absorbing"` with `"Order": 2`) without `"ComplexCoarseSolve"`: the sign of its term
+    is now flipped in the real-valued coarse solve, as it already was for AMS and BoomerAMG,
+    which now flip it only there. [PR 1252](https://github.com/awslabs/palace/pull/1252).
   - The `"Problem"`/`"Iteration"` field of `palace.json` is now updated only after the AMR
     iteration's output is in its final location. With `SaveAdaptIterations`, it used to be
     written before the output was moved into `iterationXX`, so a reader polling it could
