@@ -928,7 +928,7 @@ void CheckHomogeneousEstimator(int dim, mfem::Element::Type type)
   vacuum.attributes = {1, 2};
   MaterialOperator vacuum_op({vacuum}, periodic, ProblemType::DRIVEN, mesh);
   GradFluxErrorEstimator<ComplexVector> vacuum_est(vacuum_op, nd_fespace, rt_fespaces, tol,
-                                                   max_it, 0, false);
+                                                   0.0, max_it, 0, false);
   // Complex fields require their frequency. The constant reference does not depend on it,
   // so it is evaluated at one fixture frequency and used at every frequency below.
   constexpr double omega_ref = 1.0;
@@ -952,7 +952,7 @@ void CheckHomogeneousEstimator(int dim, mfem::Element::Type type)
         {MakeMaterial({1}, model.terms), MakeMaterial({2}, model.terms)}, periodic,
         ProblemType::DRIVEN, mesh);
     GradFluxErrorEstimator<ComplexVector> estimator(mat_op, nd_fespace, rt_fespaces, tol,
-                                                    max_it, 0, false);
+                                                    0.0, max_it, 0, false);
     // The frequency is required (at compile time), and each change refreshes the retained
     // contexts and projection weights.
     static_assert(!IndicatorWithoutFrequency<GradFluxErrorEstimator<ComplexVector>> &&
@@ -996,8 +996,8 @@ void CheckHomogeneousEstimator(int dim, mfem::Element::Type type)
                                     ProblemType::DRIVEN, mesh);
     REQUIRE_FALSE(compensated_op.HasStoredElectricEnergy(1));
     REQUIRE_FALSE(compensated_op.HasStoredElectricEnergy());
-    GradFluxErrorEstimator<ComplexVector> compensated(compensated_op, nd_fespace,
-                                                      rt_fespaces, tol, max_it, 0, false);
+    GradFluxErrorEstimator<ComplexVector> compensated(
+        compensated_op, nd_fespace, rt_fespaces, tol, 0.0, max_it, 0, false);
     ErrorIndicator ind;
     compensated.AddErrorIndicator(E, std::nullopt, omega, ind);
     // A total energy is not accepted without one.
@@ -1025,7 +1025,7 @@ void CheckHomogeneousEstimator(int dim, mfem::Element::Type type)
     MaterialOperator lorentz_op({MakeMaterial({1, 2}, Models()[1].terms)}, periodic,
                                 ProblemType::DRIVEN, mesh);
     GradFluxErrorEstimator<ComplexVector> lorentz_est(lorentz_op, nd_fespace, rt_fespaces,
-                                                      tol, max_it, 0, false);
+                                                      tol, 0.0, max_it, 0, false);
     ErrorIndicator unused;
     CHECK_THROWS(lorentz_est.AddErrorIndicator(E, std::nullopt, omega, unused));
   }
@@ -1050,7 +1050,7 @@ void CheckHomogeneousEstimator(int dim, mfem::Element::Type type)
     lossy.tandelta.s = {tandelta, tandelta, tandelta};
     MaterialOperator mixed_op({lossy, MakeMaterial({2}, lorentz.terms)}, periodic,
                               ProblemType::DRIVEN, mesh);
-    GradFluxErrorEstimator<ComplexVector> mixed(mixed_op, nd_fespace, rt_fespaces, tol,
+    GradFluxErrorEstimator<ComplexVector> mixed(mixed_op, nd_fespace, rt_fespaces, tol, 0.0,
                                                 max_it, 0, false);
     ErrorIndicator mixed_ind;
     mixed.AddErrorIndicator(E, 1.0, w, mixed_ind);
@@ -1122,7 +1122,7 @@ TEST_CASE("Gradient flux estimator of a layered medium with continuous normal D"
   FiniteElementSpaceHierarchy rt_fespaces(
       std::make_unique<FiniteElementSpace>(mesh, &rt_fec));
   GradFluxErrorEstimator<ComplexVector> estimator(mat_op, nd_fespace, rt_fespaces, 1.0e-14,
-                                                  1000, 0, false);
+                                                  0.0, 1000, 0, false);
 
   auto Estimate = [&](bool continuous)
   {
@@ -1186,7 +1186,7 @@ TEST_CASE("Flux error estimator without a total energy normalization",
   FiniteElementSpaceHierarchy rt_fespaces(
       std::make_unique<FiniteElementSpace>(mesh, &rt_fec));
   TimeDependentFluxErrorEstimator<ComplexVector> estimator(mat_op, nd_fespaces, rt_fespaces,
-                                                           1.0e-14, 1000, 0, false);
+                                                           1.0e-14, 0.0, 1000, 0, false);
   ComplexVector E(nd_fespaces.GetFinestFESpace().GetTrueVSize()),
       B(rt_fespaces.GetFinestFESpace().GetTrueVSize());
   E.UseDevice(true);
@@ -1221,7 +1221,7 @@ TEST_CASE("Flux error estimator without a total energy normalization",
   MaterialOperator constant_op({MakeMaterial({1}, {}), MakeMaterial({2}, {})}, periodic,
                                ProblemType::DRIVEN, mesh);
   TimeDependentFluxErrorEstimator<ComplexVector> constant_estimator(
-      constant_op, nd_fespaces, rt_fespaces, 1.0e-14, 1000, 0, false);
+      constant_op, nd_fespaces, rt_fespaces, 1.0e-14, 0.0, 1000, 0, false);
   // The established scale for Et ≤ 0 is 1, that of the time-averaged Et = 0.25 of the
   // complex fields (ErrorEstimateNormalization).
   ErrorIndicator established;
@@ -1325,7 +1325,7 @@ TEST_CASE("2D magnetic flux recovery uses the physical B of the INTEGRAL map",
     mfem::ConstantCoefficient one(1.0);
     B.Real().ProjectCoefficient(one);
     CurlFluxErrorEstimator<Vector> estimator(c.mat_op, c.l2_fespace, c.h1_fespaces, 1.0e-14,
-                                             1000, 0, false);
+                                             0.0, 1000, 0, false);
     ErrorIndicator ind;
     estimator.AddErrorIndicator(B.Real(), 0.5, ind);  // Scale 1
     const auto *h = ind.Local().HostRead();
@@ -1345,7 +1345,7 @@ TEST_CASE("2D magnetic flux recovery uses the physical B of the INTEGRAL map",
     mfem::ConstantCoefficient one(1.0);
     B.Real().ProjectCoefficient(one);
     CurlFluxErrorEstimator<Vector> estimator(c.mat_op, c.l2_fespace, c.h1_fespaces, 1.0e-14,
-                                             1000, 0, false);
+                                             0.0, 1000, 0, false);
     ErrorIndicator ind;
     estimator.AddErrorIndicator(B.Real(), 0.5, ind);  // Scale 1
     const auto *h = ind.Local().HostRead();
@@ -1390,7 +1390,7 @@ TEST_CASE("2D magnetic flux recovery uses the physical B of the INTEGRAL map",
     H.SetFromTrueDofs(Ht);
 
     CurlFluxErrorEstimator<Vector> estimator(c.mat_op, c.l2_fespace, c.h1_fespaces, 1.0e-15,
-                                             2000, 0, false);
+                                             0.0, 2000, 0, false);
     ErrorIndicator ind;
     estimator.AddErrorIndicator(B.Real(), 0.5, ind);  // Scale 1: η_K
     const auto *h = ind.Local().HostRead();

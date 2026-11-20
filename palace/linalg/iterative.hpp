@@ -142,8 +142,51 @@ protected:
   // Temporary workspace for solve.
   mutable VecType r, z, p;
 
+  // Tolerance and squared norm ‖d‖² for the least-squares convergence test, and the
+  // cumulative decrease of the least-squares objective over the iterations of a solve.
+  double ls_tol;
+  double ls_norm2;
+  mutable std::vector<RealType> ls_decrease;
+
 public:
-  CgSolver(MPI_Comm comm, int print) : IterativeSolver<OperType>(comm, print) {}
+  CgSolver(MPI_Comm comm, int print)
+    : IterativeSolver<OperType>(comm, print), ls_tol(-1.0), ls_norm2(-1.0)
+  {
+  }
+
+  // Convergence test for a system A x = b which is the normal equation of the least-squares
+  // problem min ‖d - G x‖² (A = Gᴴ G, b = Gᴴ d), given ‖d‖² (see SetLeastSquaresNorm), used
+  // in addition to the residual test of the relative and absolute tolerances (a negative
+  // tol disables it, the default). From a zero initial guess, iteration k decreases the
+  // objective φ(x) = ‖d - G x‖² = φ(x*) + ‖x - x*‖²_A by δₖ = αₖ (rₖ, zₖ), so φ(xₘ) is
+  // known, and the iterations stop once the squared error of xₘ in the A-norm is estimated
+  // to be below tol² φ(xₘ), or once the decrease of φ is below its rounding error, ε ‖d‖².
+  //
+  // The squared error is estimated by the decrease of φ over the second half of the
+  // iterations, Δ = δ_⌈m/2⌉ + ... + δₘ₋₁ = ‖x_⌈m/2⌉ - x*‖²_A - ‖xₘ - x*‖²_A, the
+  // Hestenes-Stiefel lower bound for the error of the midpoint iterate: an upper bound for
+  // that of xₘ as long as the squared error at least halves when the number of iterations
+  // doubles. This is checked against the decrease over the iterations ⌈m/4⌉, ..., ⌈m/2⌉ - 1
+  // before: for a ratio s = Δ / Δ' of the two above 1/2, the estimate is that of an error
+  // decreasing as a power of the number of iterations, Δ s / (1 - s), and for s ≥ 1, while
+  // the decrease is not slowing down (as in the first iterations, before the Krylov space
+  // resolves the smallest eigenvalues), the iterations continue.
+  //
+  // This is an estimate, not a bound: the error in the part of the spectrum the iterations
+  // have not yet resolved is not seen in the decrease. A guaranteed bound requires a lower
+  // bound μ for the spectrum of the preconditioned operator (‖e‖²_A ≤ (r, z) / μ, or the
+  // Gauss-Radau bound of Meurant and Tichý). For point Jacobi and the mass matrix of a mesh
+  // with flat elements, the computable μ, the smallest eigenvalue of the Jacobi-scaled
+  // element matrices, is set by the flattest element: on such meshes, even the Gauss-Radau
+  // bound takes about twice the iterations of the estimate (up to 7x), close to those of
+  // the residual test. A fixed delay (the decrease over a fixed number of the last
+  // iterations) underestimates the error by orders of magnitude when the convergence is
+  // slow.
+  void SetLeastSquaresTol(double tol) { ls_tol = tol; }
+
+  // Set ‖d‖² for the least-squares convergence test (before each solve). A negative value
+  // skips the test in the following solves.
+  void SetLeastSquaresNorm(double norm2) { ls_norm2 = norm2; }
 
   void Mult(const VecType &b, VecType &x) const override;
 };
