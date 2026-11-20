@@ -1344,6 +1344,71 @@ TEST_CASE("CgSolver exit paths", "[iterative][Serial][Parallel]")
   }
 }
 
+// The least-squares convergence test: for A x = b, the normal equation of min ‖d - G x‖²
+// with ‖d‖² given, the error of the last iterate in the A-norm is at most tol √φ(x) for the
+// objective φ(x) = ‖d‖² - 2 bᵀ x + xᵀ A x = φ(x*) + ‖x - x*‖²_A, with fewer iterations than
+// to the rounding error, the residual test still applies, and a zero tolerance iterates to
+// the rounding error.
+TEST_CASE("CgSolver least-squares convergence test", "[iterative][Serial][Parallel]")
+{
+  // The stencil [-1, 2.02, -1], for which PCG with Jacobi takes about 200 iterations.
+  constexpr int n = 1001;
+  MPI_Comm comm = Mpi::World();
+  TridiagonalTestOperator A(n, -1.0, 0.505, 1);
+  JacobiSmoother<Operator> jacobi(comm);
+  jacobi.SetOperator(A);
+  Vector b(n), x(n), xs(n), Ae(n);
+  for (int i = 0; i < n; i++)
+  {
+    b[i] = std::sin(1.0 + i + Mpi::Rank(comm));
+  }
+  auto Solve = [&](double ls_tol, double rel_tol, double norm2, Vector &y)
+  {
+    CgSolver<Operator> cg(comm, 0);
+    cg.SetOperator(A);
+    cg.SetPreconditioner(jacobi);
+    cg.SetRelTol(rel_tol);
+    cg.SetAbsTol(0.0);
+    cg.SetMaxIter(10000);
+    cg.SetLeastSquaresTol(ls_tol);
+    cg.SetLeastSquaresNorm(norm2);
+    cg.Mult(b, y);
+    return cg.GetNumIterations();
+  };
+  const int its_ref = Solve(-1.0, 1.0e-14, 0.0, xs);
+  // A least-squares problem with φ(x*) = 10⁻² ‖G x*‖² (‖G x*‖² = bᵀ x*).
+  const double norm2 = 1.01 * linalg::Dot(comm, b, xs);
+  auto Objective = [&](const Vector &y)
+  {
+    A.Mult(y, Ae);
+    return norm2 - 2.0 * linalg::Dot(comm, b, y) + linalg::Dot(comm, y, Ae);
+  };
+  auto Error2 = [&](const Vector &y)
+  {
+    Vector e(y);
+    e -= xs;
+    A.Mult(e, Ae);
+    return linalg::Dot(comm, e, Ae);
+  };
+  for (const double tol : {1.0e-1, 1.0e-2, 1.0e-3})
+  {
+    const int its = Solve(tol, 0.0, norm2, x);
+    INFO("tol = " << tol << ": " << its << " iterations (" << its_ref
+                  << " to the rounding error), error² / (tol² φ) = "
+                  << Error2(x) / (tol * tol * Objective(x)));
+    CHECK(its < its_ref);
+    CHECK(Error2(x) <= tol * tol * Objective(x));
+
+    // With the residual test as well, the iterations stop at whichever test is met first.
+    for (const double rel_tol : {1.0e-2, 1.0e-8})
+    {
+      CHECK(Solve(tol, rel_tol, norm2, x) == std::min(its, Solve(-1.0, rel_tol, norm2, x)));
+    }
+  }
+  Solve(0.0, 0.0, norm2, x);
+  CHECK(Error2(x) <= 1.0e-14 * norm2);
+}
+
 // Local sizes around the chunk size of the fused Jacobi path, and an empty first process.
 TEST_CASE("CgSolver local sizes", "[iterative][Serial][Parallel]")
 {

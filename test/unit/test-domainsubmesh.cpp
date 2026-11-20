@@ -116,8 +116,8 @@ TEST_CASE("Gradient flux error estimator on a domain submesh with an empty proce
     FiniteElementSpace nd_fespace(*mesh, &nd_fec);
     FiniteElementSpaceHierarchy rt_fespaces(
         std::make_unique<FiniteElementSpace>(*mesh, &rt_fec));
-    GradFluxErrorEstimator<Vector> estimator(mat_op, nd_fespace, rt_fespaces, 1.0e-14, 1000,
-                                             0, false);
+    GradFluxErrorEstimator<Vector> estimator(mat_op, nd_fespace, rt_fespaces, 1.0e-14, 0.0,
+                                             1000, 0, false);
 
     mfem::VectorFunctionCoefficient f(3,
                                       [](const mfem::Vector &x, mfem::Vector &v)

@@ -98,6 +98,7 @@ void ConcretizeLinear(const config::LinearSolverData &linear, json &j_linear)
                 {"DivFreeTol", linear.divfree_tol},
                 {"DivFreeMaxIts", linear.divfree_max_it},
                 {"EstimatorTol", linear.estimator_tol},
+                {"EstimatorErrorTol", linear.estimator_error_tol},
                 {"EstimatorMaxIts", linear.estimator_max_it},
                 {"EstimatorMG", linear.estimator_mg},
                 {"GSOrthogonalization", ToString(linear.gs_orthog)}});

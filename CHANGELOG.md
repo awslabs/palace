@@ -33,6 +33,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     imaginary parts of the incident voltage and current. A phase that is not a multiple of
     180 degrees is an error for transient simulations. SchemaVer 4-3-0
     [PR 1169](https://github.com/awslabs/palace/pull/1169).
+  - Added `config["Solver"]["Linear"]["EstimatorErrorTol"]`, default `1e-2`. The flux
+    projection of the error estimator now also stops once its error is below this tolerance
+    relative to the estimate, or at `"EstimatorTol"` as before, whichever comes first. On
+    meshes with flat elements the projection could take thousands of iterations; on 22
+    electrostatic models it now takes 0.62x the time in total, and the element indicators
+    change by at most 3e-3. Set it to `0` for the previous behavior. SchemaVer 5-1-0
+    [PR NNNN](https://github.com/awslabs/palace/pull/NNNN).
 
 #### Interface Changes
 

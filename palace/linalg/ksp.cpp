@@ -442,6 +442,14 @@ bool BaseKspSolver<OperType>::GetCorrectionExceeded() const
 }
 
 template <OperatorType OperType>
+void BaseKspSolver<OperType>::SetLeastSquaresNorm(double norm2)
+{
+  auto *cg = dynamic_cast<CgSolver<OperType> *>(ksp.get());
+  MFEM_VERIFY(cg, "The least-squares convergence test requires a CG solver!");
+  cg->SetLeastSquaresNorm(norm2);
+}
+
+template <OperatorType OperType>
 void BaseKspSolver<OperType>::Mult(const VecType &x, VecType &y) const
 {
   BlockTimer bt(Timer::KSP, use_timer);

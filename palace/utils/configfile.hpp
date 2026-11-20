@@ -1242,6 +1242,10 @@ public:
   // Relative tolerance for solving linear systems in the error estimator.
   double estimator_tol = 1.0e-6;
 
+  // Tolerance for the error of the flux projection of the error estimator, in the norm of
+  // the estimate, relative to the estimate (zero disables this test).
+  double estimator_error_tol = 1.0e-2;
+
   // Maximum number of iterations for solving linear systems in the error estimator.
   int estimator_max_it = 10000;
 

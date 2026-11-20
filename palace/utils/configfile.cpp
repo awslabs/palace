@@ -1702,6 +1702,7 @@ LinearSolverData::LinearSolverData(const json &linear)
   divfree_tol = linear.value("DivFreeTol", divfree_tol);
   divfree_max_it = linear.value("DivFreeMaxIts", divfree_max_it);
   estimator_tol = linear.value("EstimatorTol", estimator_tol);
+  estimator_error_tol = linear.value("EstimatorErrorTol", estimator_error_tol);
   estimator_max_it = linear.value("EstimatorMaxIts", estimator_max_it);
   estimator_mg = linear.value("EstimatorMG", estimator_mg);
   gs_orthog = linear.value("GSOrthogonalization", gs_orthog);
