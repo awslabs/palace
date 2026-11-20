@@ -78,6 +78,10 @@ public:
   void SetRelTol(double tol) { ksp->SetRelTol(tol); }
   void SetAbsTol(double tol) { ksp->SetAbsTol(tol); }
 
+  // Set ‖d‖² for the least-squares convergence test of the CG solver (see
+  // CgSolver::SetLeastSquaresNorm). The iterative solver must be a CgSolver.
+  void SetLeastSquaresNorm(double norm2);
+
   void SetOperators(const OperType &op, const OperType &pc_op);
 
   // Whether the iterative solver uses the given solution vector as initial guess.

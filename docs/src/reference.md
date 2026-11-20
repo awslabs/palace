@@ -1021,6 +1021,28 @@ and Raviart-Thomas elements, respectively. Each projection is orthogonal in the 
 ``L^2`` inner product of the norm it is measured in (``\mu_r`` for ``\bm{R}_{ND}``,
 ``\varepsilon_r^{-1}`` for ``\bm{R}_{RT}``), so the recovered field minimizes the estimate.
 
+The projections are computed with the preconditioned conjugate gradient method, from a zero
+initial guess, for the mass matrix of the Nédélec or Raviart-Thomas space. For the flux
+``\bm{D}``, an iterate ``\bm{G}``, and the projection ``\bm{G}^*``, orthogonality gives
+
+```math
+\|\bm{G}-\bm{D}\|^2 = \|\bm{G}^*-\bm{D}\|^2 + \|\bm{G}-\bm{G}^*\|^2
+```
+
+in the norm of the estimate: the estimate of an iterate is never below that of the
+projection, and it decreases in each iteration by an amount known from the iteration. The
+element indicators of the iterate differ from those of the projection by at most
+``\|\bm{G}-\bm{G}^*\|`` in the ``\ell^2`` norm over the elements (by the triangle inequality
+on each element). The iterations stop at the relative residual
+`config["Solver"]["Linear"]["EstimatorTol"]`, or once ``\|\bm{G}-\bm{G}^*\|``, estimated by
+the decrease of the estimate over the second half of the iterations, is below
+`config["Solver"]["Linear"]["EstimatorErrorTol"]` times the estimate, whichever comes first.
+This estimate assumes that the squared error at least halves when the number of iterations
+doubles: when the decrease over the second half is more than half of that over the quarter
+of the iterations before it, the estimate is extrapolated from the ratio of the two instead.
+With a frequency-dependent permittivity, whose indicator is not measured in the norm of the
+projection, only the residual test applies.
+
 ## Far-field extraction
 
 This feature is based upon Stratton-Chu's transformations [6] in the limit of ``kr \gg 1``

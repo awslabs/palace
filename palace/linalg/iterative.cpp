@@ -526,6 +526,16 @@ void CgSolver<OperType>::Mult(const VecType &b, VecType &x) const
   eps = std::max(rel_tol * initial_res, abs_tol);
   converged = (res <= eps);
 
+  // Cumulative decrease of the least-squares objective, φ(x₀) - φ(xₖ), for the
+  // least-squares convergence test (with x₀ = 0, φ(x₀) = ‖d‖²).
+  const bool ls_test = (ls_tol >= 0.0 && ls_norm2 >= 0.0);
+  if (ls_test)
+  {
+    MFEM_VERIFY(!this->initial_guess,
+                "The least-squares convergence test of PCG requires a zero initial guess!");
+    ls_decrease.assign(1, 0.0);
+  }
+
   // Begin iterations. x is updated with each search direction in the same pass as the next
   // one is computed, and with the last one after the iterations.
   int it = 0;
@@ -581,6 +591,32 @@ void CgSolver<OperType>::Mult(const VecType &b, VecType &x) const
     CheckDot(beta, "PCG preconditioner is not positive definite: (Br, r) = ");
     res = std::sqrt(std::abs(beta));
     converged = (res <= eps);
+    if (ls_test)
+    {
+      // The objective decreases by αₖ (rₖ, zₖ) = |(rₖ, zₖ)|² / (pₖ, A pₖ) in iteration k.
+      // After m iterations, the squared error of xₘ is estimated by the decrease over the
+      // iterations ⌈m/2⌉, ..., m - 1, extrapolated when it is more than half of that over
+      // ⌈m/4⌉, ..., ⌈m/2⌉ - 1 (see SetLeastSquaresTol), and compared to tol² φ(xₘ). The
+      // iterations also stop once the decrease is below the rounding error of φ.
+      const int m = it + 1;
+      ls_decrease.push_back(ls_decrease.back() +
+                            std::abs(beta_prev) * std::abs(beta_prev) / std::abs(denom));
+      const RealType phi = ls_norm2 - ls_decrease[m];
+      const RealType last = ls_decrease[m] - ls_decrease[(m + 1) / 2];
+      const RealType prev = ls_decrease[(m + 1) / 2] - ls_decrease[(m + 3) / 4];
+      RealType err2 = std::numeric_limits<RealType>::infinity();
+      if (last <= 0.5 * prev)
+      {
+        err2 = last;
+      }
+      else if (last < prev)
+      {
+        err2 = last * last / (prev - last);
+      }
+      converged = converged ||
+                  (m >= 2 && (err2 <= ls_tol * ls_tol * phi ||
+                              last <= std::numeric_limits<RealType>::epsilon() * ls_norm2));
+    }
   }
   if (it > 0)
   {

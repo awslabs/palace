@@ -63,17 +63,23 @@ private:
 public:
   // The constant flux F₀ only, and with the weighted terms Fₖ of the coefficients coeff_k,
   // relative to coeff. Not a default argument: the coefficient type is incomplete here.
+  // The projection stops at the relative residual tol, or once its error is estimated to
+  // be below error_tol times the estimate (the norm of the difference of the flux and the
+  // projection), whichever comes first. A tolerance of zero disables its test.
   FluxProjector(const MaterialPropertyCoefficient &coeff,
                 const FiniteElementSpaceHierarchy &smooth_fespaces,
-                const FiniteElementSpace &rhs_fespace, double tol, int max_it, int print,
-                bool use_mg);
+                const FiniteElementSpace &rhs_fespace, double tol, double error_tol,
+                int max_it, int print, bool use_mg);
   FluxProjector(const MaterialPropertyCoefficient &coeff,
                 const FiniteElementSpaceHierarchy &smooth_fespaces,
-                const FiniteElementSpace &rhs_fespace, double tol, int max_it, int print,
-                bool use_mg, const std::vector<MaterialPropertyCoefficient> &coeff_k);
+                const FiniteElementSpace &rhs_fespace, double tol, double error_tol,
+                int max_it, int print, bool use_mg,
+                const std::vector<MaterialPropertyCoefficient> &coeff_k);
 
-  // y = M⁻¹ F₀ x.
+  // y = M⁻¹ F₀ x, with the residual test only, and with the test relative to the estimate,
+  // which requires the squared norm of the flux, flux_norm2 (the estimate for y = 0).
   void Mult(const VecType &x, VecType &y) const;
+  void MultWithFluxNorm(const VecType &x, VecType &y, double flux_norm2) const;
 
   // y = M⁻¹ (F₀ + Σₖ wₖ Fₖ) x, with one weight per term.
   void Mult(const VecType &x, VecType &y, const std::vector<std::complex<double>> &w) const
@@ -171,8 +177,8 @@ public:
   // separating the two sides, e.g. thin conducting sheets), using a broken finite element
   // space as for a mesh cut along these interior boundaries.
   GradFluxErrorEstimator(const MaterialOperator &mat_op, FiniteElementSpace &nd_fespace,
-                         FiniteElementSpaceHierarchy &rt_fespaces, double tol, int max_it,
-                         int print, bool use_mg,
+                         FiniteElementSpaceHierarchy &rt_fespaces, double tol,
+                         double error_tol, int max_it, int print, bool use_mg,
                          const std::vector<int> &crack_attr_list = {});
 
   // Compute elemental error indicators given the electric field as a vector of true dofs,
@@ -223,8 +229,8 @@ public:
   // The recovered H is allowed to be discontinuous across the interior boundaries formed
   // by the boundary attributes in crack_attr_list, see GradFluxErrorEstimator.
   CurlFluxErrorEstimator(const MaterialOperator &mat_op, FiniteElementSpace &rt_fespace,
-                         FiniteElementSpaceHierarchy &nd_fespaces, double tol, int max_it,
-                         int print, bool use_mg,
+                         FiniteElementSpaceHierarchy &nd_fespaces, double tol,
+                         double error_tol, int max_it, int print, bool use_mg,
                          const std::vector<int> &crack_attr_list = {});
 
   // Compute elemental error indicators given the magnetic flux density as a vector of true
@@ -248,7 +254,7 @@ public:
   TimeDependentFluxErrorEstimator(const MaterialOperator &mat_op,
                                   FiniteElementSpaceHierarchy &nd_fespaces,
                                   FiniteElementSpaceHierarchy &rt_fespaces, double tol,
-                                  int max_it, int print, bool use_mg,
+                                  double error_tol, int max_it, int print, bool use_mg,
                                   const std::vector<int> &crack_attr_list = {});
 
   // Real fields only; complex fields require their frequency, below.
@@ -279,7 +285,7 @@ public:
                                  FiniteElementSpaceHierarchy &rt_fespaces,
                                  FiniteElementSpace &curl_fespace,
                                  FiniteElementSpaceHierarchy &h1_fespaces, double tol,
-                                 int max_it, int print, bool use_mg,
+                                 double error_tol, int max_it, int print, bool use_mg,
                                  const std::vector<int> &crack_attr_list = {});
 
   // Real (transient) fields only; complex fields require their frequency, below.

@@ -1438,7 +1438,7 @@ TEST_CASE("Flux recovery of a dispersive material on part of the mesh",
   FluxProjector<ComplexVector> projector(
       MaterialPropertyCoefficient(mat_op.GetAttributeToMaterial(),
                                   mat_op.GetPermittivityReal()),
-      space_op.GetRTSpaces(), nd_fespace, 1.0e-12, 1000, 0, false, coeff_k);
+      space_op.GetRTSpaces(), nd_fespace, 1.0e-12, 0.0, 1000, 0, false, coeff_k);
 
   std::vector<bool> material_dof(nd_fespace.GetVSize(), false);
   mfem::Array<int> dofs;

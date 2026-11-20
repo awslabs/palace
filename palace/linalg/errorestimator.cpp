@@ -72,7 +72,7 @@ auto BuildLevelParOperator(std::unique_ptr<Operator> &&a, const FiniteElementSpa
 
 template <OperatorType OperType>
 auto ConfigureLinearSolver(const FiniteElementSpaceHierarchy &fespaces, double tol,
-                           int max_it, int print, bool use_mg)
+                           double error_tol, int max_it, int print, bool use_mg)
 {
   // The system matrix for the projection is real, SPD and diagonally dominant.
   std::unique_ptr<Solver<OperType>> pc;
@@ -106,6 +106,13 @@ auto ConfigureLinearSolver(const FiniteElementSpaceHierarchy &fespaces, double t
   pcg->SetInitialGuess(false);
   pcg->SetRelTol(tol);
   pcg->SetAbsTol(std::numeric_limits<double>::epsilon());
+  // The projection G* of the flux D minimizes ‖G - D‖² over the recovery space, so the
+  // estimate of an iterate G is ‖G - D‖² = ‖G* - D‖² + ‖G - G*‖²_M: it exceeds the estimate
+  // of the projection by the squared error of the iterate, and the element indicators
+  // differ from its own by at most this error in the ℓ² norm over the elements. The
+  // iterations also stop when the error is small relative to the estimate (the
+  // least-squares test of CgSolver, with ‖D‖² set for each projection).
+  pcg->SetLeastSquaresTol((error_tol > 0.0) ? error_tol : -1.0);
   pcg->SetMaxIter(max_it);
   return std::make_unique<BaseKspSolver<OperType>>(std::move(pcg), std::move(pc));
 }
@@ -142,8 +149,9 @@ template <typename VecType>
 FluxProjector<VecType>::FluxProjector(const MaterialPropertyCoefficient &coeff,
                                       const FiniteElementSpaceHierarchy &smooth_fespaces,
                                       const FiniteElementSpace &rhs_fespace, double tol,
-                                      int max_it, int print, bool use_mg)
-  : FluxProjector(coeff, smooth_fespaces, rhs_fespace, tol, max_it, print, use_mg, {})
+                                      double error_tol, int max_it, int print, bool use_mg)
+  : FluxProjector(coeff, smooth_fespaces, rhs_fespace, tol, error_tol, max_it, print,
+                  use_mg, {})
 {
 }
 
@@ -151,8 +159,8 @@ template <typename VecType>
 FluxProjector<VecType>::FluxProjector(
     const MaterialPropertyCoefficient &coeff,
     const FiniteElementSpaceHierarchy &smooth_fespaces,
-    const FiniteElementSpace &rhs_fespace, double tol, int max_it, int print, bool use_mg,
-    const std::vector<MaterialPropertyCoefficient> &coeff_k)
+    const FiniteElementSpace &rhs_fespace, double tol, double error_tol, int max_it,
+    int print, bool use_mg, const std::vector<MaterialPropertyCoefficient> &coeff_k)
 {
   BlockTimer bt(Timer::CONSTRUCT_ESTIMATOR);
   const auto &smooth_fespace = smooth_fespaces.GetFinestFESpace();
@@ -240,7 +248,8 @@ FluxProjector<VecType>::FluxProjector(
   {
     Flux_k.push_back(AssembleFlux(&f));
   }
-  ksp = ConfigureLinearSolver<OperType>(smooth_fespaces, tol, max_it, print, use_mg);
+  ksp = ConfigureLinearSolver<OperType>(smooth_fespaces, tol, error_tol, max_it, print,
+                                        use_mg);
   ksp->SetOperators(*M, *M);
   rhs.SetSize(smooth_fespace.GetTrueVSize());
   rhs.UseDevice(true);
@@ -249,11 +258,19 @@ FluxProjector<VecType>::FluxProjector(
 template <typename VecType>
 void FluxProjector<VecType>::Mult(const VecType &x, VecType &y) const
 {
+  MultWithFluxNorm(x, y, -1.0);
+}
+
+template <typename VecType>
+void FluxProjector<VecType>::MultWithFluxNorm(const VecType &x, VecType &y,
+                                              double flux_norm2) const
+{
   BlockTimer bt(Timer::SOLVE_ESTIMATOR);
   MFEM_ASSERT(x.Size() == Flux->Width() && y.Size() == rhs.Size(),
               "Invalid vector dimensions for FluxProjector::Mult!");
   // Mpi::Print(" Computing smooth flux recovery (projection) for error estimation\n");
   Flux->Mult(x, rhs);
+  ksp->SetLeastSquaresNorm(flux_norm2);
   ksp->Mult(rhs, y);
 }
 
@@ -274,6 +291,9 @@ void FluxProjector<VecType>::Mult(const VecType &x, VecType &y,
       Flux_k[k]->AddMult(x, rhs, w[k]);
     }
   }
+  // The indicator of a frequency-dependent material is not measured in the norm of the
+  // projection, so only the residual test applies.
+  ksp->SetLeastSquaresNorm(-1.0);
   ksp->Mult(rhs, y);
 }
 
@@ -438,10 +458,15 @@ Vector ComputeErrorEstimates(const VecType &F, VecType &F_gf, VecType &G, VecTyp
                              const ceed::Operator &integ_op)
 {
   // Compute the projection of the discontinuous flux onto the smooth finite element space
-  // (recovery) and populate the corresponding grid functions.
+  // (recovery) and populate the corresponding grid functions. The estimate of the smooth
+  // flux G = 0 is the squared norm of the discontinuous flux, relative to which the
+  // projection measures its error.
   BlockTimer bt(Timer::ESTIMATION);
-  projector.Mult(F, G);
   Prolong(fespace, F, F_gf);
+  G_gf = 0.0;
+  const double flux_norm2 = linalg::Sum(
+      fespace.GetComm(), IntegrateRealErrors(fespace.GetMesh(), integ_op, F_gf, G_gf));
+  projector.MultWithFluxNorm(F, G, flux_norm2);
   Prolong(smooth_fespace, G, G_gf);
 
   // Use libCEED operators to perform the error estimate integration over each element.
@@ -483,8 +508,8 @@ double IndicatorScale(const std::optional<double> &Et, const MaterialOperator &m
 template <typename VecType>
 GradFluxErrorEstimator<VecType>::GradFluxErrorEstimator(
     const MaterialOperator &mat_op, FiniteElementSpace &nd_fespace,
-    FiniteElementSpaceHierarchy &rt_fespaces, double tol, int max_it, int print,
-    bool use_mg, const std::vector<int> &crack_attr_list)
+    FiniteElementSpaceHierarchy &rt_fespaces, double tol, double error_tol, int max_it,
+    int print, bool use_mg, const std::vector<int> &crack_attr_list)
   : broken_rt_fespaces(BuildBrokenRecoverySpace(rt_fespaces, crack_attr_list)),
     nd_fespace(nd_fespace),
     rt_fespace(broken_rt_fespaces ? broken_rt_fespaces->GetFinestFESpace()
@@ -507,7 +532,7 @@ GradFluxErrorEstimator<VecType>::GradFluxErrorEstimator(
     projector(MaterialPropertyCoefficient(mat_op.GetAttributeToMaterial(),
                                           mat_op.GetPermittivityReal()),
               broken_rt_fespaces ? *broken_rt_fespaces : rt_fespaces, nd_fespace, tol,
-              max_it, print, use_mg && !broken_rt_fespaces,
+              error_tol, max_it, print, use_mg && !broken_rt_fespaces,
               [&]()
               {
                 // The weighted terms of the complex constitutive flux, relative to
@@ -847,8 +872,8 @@ void GradFluxErrorEstimator<VecType>::AddErrorIndicator(const VecType &E,
 template <typename VecType>
 CurlFluxErrorEstimator<VecType>::CurlFluxErrorEstimator(
     const MaterialOperator &mat_op, FiniteElementSpace &rt_fespace,
-    FiniteElementSpaceHierarchy &nd_fespaces, double tol, int max_it, int print,
-    bool use_mg, const std::vector<int> &crack_attr_list)
+    FiniteElementSpaceHierarchy &nd_fespaces, double tol, double error_tol, int max_it,
+    int print, bool use_mg, const std::vector<int> &crack_attr_list)
   : broken_nd_fespaces(BuildBrokenRecoverySpace(nd_fespaces, crack_attr_list)),
     rt_fespace(rt_fespace),
     nd_fespace(broken_nd_fespaces ? broken_nd_fespaces->GetFinestFESpace()
@@ -856,7 +881,7 @@ CurlFluxErrorEstimator<VecType>::CurlFluxErrorEstimator(
     projector(MaterialPropertyCoefficient(mat_op.GetAttributeToMaterial(),
                                           mat_op.GetCurlCurlInvPermeability()),
               broken_nd_fespaces ? *broken_nd_fespaces : nd_fespaces, rt_fespace, tol,
-              max_it, print, use_mg && !broken_nd_fespaces),
+              error_tol, max_it, print, use_mg && !broken_nd_fespaces),
     integ_op(nd_fespace.GetMesh().GetNE(), rt_fespace.GetVSize()),
     B_gf(rt_fespace.GetVSize()), H(nd_fespace.GetTrueVSize()), H_gf(nd_fespace.GetVSize())
 {
@@ -1010,12 +1035,12 @@ void AddFluxErrorIndicator(Vector grad_estimates, const Vector &curl_estimates,
 template <typename VecType>
 TimeDependentFluxErrorEstimator<VecType>::TimeDependentFluxErrorEstimator(
     const MaterialOperator &mat_op, FiniteElementSpaceHierarchy &nd_fespaces,
-    FiniteElementSpaceHierarchy &rt_fespaces, double tol, int max_it, int print,
-    bool use_mg, const std::vector<int> &crack_attr_list)
-  : grad_estimator(mat_op, nd_fespaces.GetFinestFESpace(), rt_fespaces, tol, max_it, print,
-                   use_mg, crack_attr_list),
-    curl_estimator(mat_op, rt_fespaces.GetFinestFESpace(), nd_fespaces, tol, max_it, print,
-                   use_mg, crack_attr_list)
+    FiniteElementSpaceHierarchy &rt_fespaces, double tol, double error_tol, int max_it,
+    int print, bool use_mg, const std::vector<int> &crack_attr_list)
+  : grad_estimator(mat_op, nd_fespaces.GetFinestFESpace(), rt_fespaces, tol, error_tol,
+                   max_it, print, use_mg, crack_attr_list),
+    curl_estimator(mat_op, rt_fespaces.GetFinestFESpace(), nd_fespaces, tol, error_tol,
+                   max_it, print, use_mg, crack_attr_list)
 {
 }
 
@@ -1052,11 +1077,11 @@ template <typename VecType>
 BoundaryModeFluxErrorEstimator<VecType>::BoundaryModeFluxErrorEstimator(
     const MaterialOperator &mat_op, FiniteElementSpaceHierarchy &nd_fespaces,
     FiniteElementSpaceHierarchy &rt_fespaces, FiniteElementSpace &curl_fespace,
-    FiniteElementSpaceHierarchy &h1_fespaces, double tol, int max_it, int print,
-    bool use_mg, const std::vector<int> &crack_attr_list)
-  : grad_estimator(mat_op, nd_fespaces.GetFinestFESpace(), rt_fespaces, tol, max_it, print,
-                   use_mg, crack_attr_list),
-    curl_estimator(mat_op, curl_fespace, h1_fespaces, tol, max_it, print, use_mg,
+    FiniteElementSpaceHierarchy &h1_fespaces, double tol, double error_tol, int max_it,
+    int print, bool use_mg, const std::vector<int> &crack_attr_list)
+  : grad_estimator(mat_op, nd_fespaces.GetFinestFESpace(), rt_fespaces, tol, error_tol,
+                   max_it, print, use_mg, crack_attr_list),
+    curl_estimator(mat_op, curl_fespace, h1_fespaces, tol, error_tol, max_it, print, use_mg,
                    crack_attr_list)
 {
 }
