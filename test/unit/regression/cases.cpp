@@ -1546,6 +1546,35 @@ TEST_CASE("spheres", "[Serial][Parallel][GPU][Regression]")
   palace::test::RunRegressionCase("spheres", "spheres.json", "", opts);
 }
 
+// Conformal AMR of the spheres with a forced rebalance after each refinement. The mesh is
+// marked again after each refinement, so its marks depend neither on whether a step
+// rebalanced nor on the number of processes: serial runs, which do not rebalance, use the
+// same references. Without curvature, the case runs two
+// refinements; with it, one: the curved nodes of a refined mesh vary in their last bits
+// between builds of MFEM, and so could its next refinement. Omits [GPU]: adaptive cases
+// skip GPU CI (cf. circular_hole_london_nc_amr).
+TEST_CASE("spheres_amr_rebalance", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("spheres_amr", "spheres_amr_straight.json",
+                                  "amr_straight", opts);
+}
+
+TEST_CASE("spheres_amr_rebalance_curved", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("spheres_amr", "spheres_amr_curved.json", "amr_curved",
+                                  opts);
+}
+
 TEST_CASE("rings", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
@@ -2510,6 +2539,22 @@ TEST_CASE("cpw_lumped_conductivity_crack", "[Serial][Parallel][GPU][Regression]"
   opts.linear_solver_policy = force_default_solver;
   palace::test::RunRegressionCase("cpw", "cpw_lumped_conductivity_crack.json",
                                   "lumped_conductivity_crack", opts);
+}
+
+// The cracked CPW with lumped ports through a conformal move: one refinement, then a forced
+// rebalance. The reference comes from 2 processes with the mesh gathered on the root and
+// distributed again, as before the parallel move; the refined mesh is the same. Omits
+// [GPU]: adaptive cases skip GPU CI.
+TEST_CASE("cpw_lumped_conformal_amr_rebalance", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-11;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = force_default_solver;
+  palace::test::RunRegressionCase("cpw", "cpw_lumped_conformal_amr_rebalance.json",
+                                  "lumped_conformal_amr_rebalance", opts);
 }
 
 TEST_CASE("cpw_wave_uniform", "[Serial][Parallel][GPU][Regression]")
