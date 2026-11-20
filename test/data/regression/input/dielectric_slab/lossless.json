@@ -1,0 +1,27 @@
+{
+  "Problem": {"Type": "Driven", "Verbose": 1, "Output": "postpro/lossless"},
+  "Model": {"Mesh": "mesh/slab.msh", "L0": 0.01},
+  "Domains": {
+    "Materials": [
+      {"Attributes": [1], "Permittivity": 1.0},
+      {"Attributes": [2], "Permittivity": 4.0, "LossTan": 0.0}
+    ]
+  },
+  "Boundaries": {
+    "Periodic": {
+      "BoundaryPairs": [
+        {"DonorAttributes": [1], "ReceiverAttributes": [2]},
+        {"DonorAttributes": [3], "ReceiverAttributes": [4]}
+      ]
+    },
+    "FloquetPort": [
+      {"Index": 1, "Attributes": [5], "Excitation": true, "IncidentPolarization": "TE", "MaxOrder": 0},
+      {"Index": 2, "Attributes": [6], "MaxOrder": 0}
+    ]
+  },
+  "Solver": {
+    "Order": 3,
+    "Driven": {"MinFreq": 2.0, "MaxFreq": 2.0, "FreqStep": 1.0},
+    "Linear": {"Type": "Default", "KSPType": "GMRES", "Tol": 1.0e-10, "MaxIts": 200, "ComplexCoarseSolve": true}
+  }
+}
