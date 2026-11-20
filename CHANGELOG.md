@@ -321,6 +321,17 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Bug Fixes
 
+  - Fixed slow and failing linear solves with the second-order absorbing boundary condition
+    (`"Absorbing"` with `"Order": 2`) without `"ComplexCoarseSolve"`: the sign of its term
+    is now flipped in the real-valued coarse solve, as it already was for AMS and BoomerAMG,
+    which now flip it only there. [PR 1252](https://github.com/awslabs/palace/pull/1252).
+  - Fixed boundary terms that could take the anisotropic material tensor of another
+    boundary. The scalar coefficient of an `"Impedance"`, `"Conductivity"` or
+    `"RationalImpedance"` boundary or a lumped port could be replaced by the tensor of an
+    `"Absorbing"` boundary, wave port or Floquet port on an anisotropic material when the
+    first diagonal entry of the tensor was equal to the scalar to a relative 1e-9. In one
+    `"BoundaryMode"` example this changed the propagation constant by 6%.
+    [PR 1209](https://github.com/awslabs/palace/pull/1209).
   - The `"Problem"`/`"Iteration"` field of `palace.json` is now updated only after the AMR
     iteration's output is in its final location. With `SaveAdaptIterations`, it used to be
     written before the output was moved into `iterationXX`, so a reader polling it could
@@ -341,6 +352,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     matrix was inaccurate whatever the tolerance, so the linear solves needed more
     iterations and could return wrong solutions with `"ComplexCoarseSolve"`.
     [PR 1222](https://github.com/awslabs/palace/pull/1222).
+  - Fixed adaptive frequency sweeps which could keep sampling up to `"AdaptiveMaxSamples"`,
+    with spurious resonances in the band, when `"AdaptiveTol"` is close to the accuracy of
+    the HDM solutions. *Palace* now refines the samples which the PROM does not reproduce to
+    `"AdaptiveTol"`, no longer aborts on a sample in the span of the basis, and warns when
+    the sampling reaches `"AdaptiveMaxSamples"` before converging.
+    [PR 1218](https://github.com/awslabs/palace/pull/1218).
   - Fixed the flux recovery in the error estimators to use the projection which minimizes the
     error it is measured in (ε⁻¹-weighted for the electric flux, μ-weighted for the magnetic
     field). The unweighted projection overestimated the error in the low-permittivity

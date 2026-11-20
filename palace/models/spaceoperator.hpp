@@ -13,15 +13,12 @@
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
 #include "models/currentdipoleoperator.hpp"
-#include "models/farfieldboundaryoperator.hpp"
 #include "models/floquetportoperator.hpp"
 #include "models/lumpedportoperator.hpp"
 #include "models/materialoperator.hpp"
 #include "models/portexcitations.hpp"
-#include "models/surfaceconductivityoperator.hpp"
 #include "models/surfacecurrentoperator.hpp"
-#include "models/surfaceimpedanceoperator.hpp"
-#include "models/surfacerationalimpedanceoperator.hpp"
+#include "models/surfaceterms.hpp"
 #include "models/waveportoperator.hpp"
 
 namespace palace
@@ -50,7 +47,7 @@ class SpaceOperator
 private:
   const bool pc_mat_real;     // Use real-valued matrix for preconditioner
   const bool pc_mat_shifted;  // Use shifted mass matrix for preconditioner
-  const bool pc_mat_amg;      // Preconditioner uses AMS/BoomerAMG on the real-valued matrix
+  const bool pc_coarse_real;  // Coarse-level solver is applied to the real-valued Br + Bi
 
   // Helper variables for log file printing.
   bool print_hdr, print_prec_hdr;
@@ -74,10 +71,7 @@ private:
 
   // Operators for boundary conditions and source excitations.
   CurrentDipoleOperator current_dipole_op;
-  FarfieldBoundaryOperator farfield_op;
-  SurfaceConductivityOperator surf_sigma_op;
-  SurfaceImpedanceOperator surf_z_op;
-  SurfaceRationalImpedanceOperator surf_rz_op;
+  SurfaceTerms surface_terms;
   LumpedPortOperator lumped_port_op;
   WavePortOperator wave_port_op;
   FloquetPortOperator floquet_port_op;
@@ -111,9 +105,9 @@ private:
       MaterialPropertyCoefficient &frbr, MaterialPropertyCoefficient &frbi,
       MaterialPropertyCoefficient *fpbr, MaterialPropertyCoefficient *fpbi,
       bool include_wave_ports = true);
-  // Complex-ω overload: dispatches to the farfield / surf-σ / wave-port complex
-  // AddExtraSystemBdrCoefficients overloads for the eigenmode nonlinear solve and its
-  // matching preconditioner. Reduces to the double overload for real ω.
+  // Complex-ω overload: dispatches to the complex AddExtraSystemBdrCoefficients overloads
+  // of SurfaceTerms and the wave ports for the eigenmode nonlinear solve and its matching
+  // preconditioner. Reduces to the double overload for real ω.
   void AddExtraSystemBdrCoefficients(
       std::complex<double> omega, MaterialPropertyCoefficient &dfbr,
       MaterialPropertyCoefficient &dfbi, MaterialPropertyCoefficient &fbr,
@@ -193,13 +187,11 @@ public:
   auto &GetWavePortOp() { return wave_port_op; }
   auto &GetFloquetPortOp() { return floquet_port_op; }
   auto &GetSurfaceCurrentOp() { return surf_j_op; }
-  auto &GetSurfaceConductivityOp() { return surf_sigma_op; }
   const auto &GetLumpedPortOp() const { return lumped_port_op; }
   const auto &GetWavePortOp() const { return wave_port_op; }
   const auto &GetFloquetPortOp() const { return floquet_port_op; }
   const auto &GetSurfaceCurrentOp() const { return surf_j_op; }
-  const auto &GetRationalImpedanceOp() const { return surf_rz_op; }
-  const auto &GetSurfaceConductivityOp() const { return surf_sigma_op; }
+  const auto &GetSurfaceTerms() const { return surface_terms; }
 
   // Get the full frequency-dependent operator A2(ω) + F(ω), where A2 is the assembled
   // sparse boundary operator and F is the low-rank Floquet DtN correction. The returned
@@ -310,30 +302,21 @@ public:
   GetFarfieldBoundaryCurlCurlMatrix(Operator::DiagonalPolicy diag_policy,
                                     bool imag_slot = false);
 
-  // Construct the ω-independent boundary mass matrix A_σ for surface-conductivity group
-  // `group_idx`, with unit coefficient, on the IMAGINARY slot (matching the wave-port
-  // convention). The full A2 contribution at frequency ω is `(i·ω/Z_g(ω))·A_σ` =
-  // `f_g(ω)·(i·A_σ)` with f_g(ω) = ω/Z_g(ω) the real-or-complex scalar from
-  // GetSurfaceConductivityOp().EvaluateScalar(group, ω)/i. Returns null if the group
-  // contributes no DoFs on any rank (the check is collective, so the null contract is
-  // rank-uniform). Used to fold surface conductivity into circuit synthesis.
-  // `NumSurfaceConductivityGroups()` gives the group count.
+  // Construct the ω-independent boundary mass matrix M_i of the frequency-dependent
+  // boundary mass term i of SurfaceTerms (finite conductivity groups, then rational
+  // impedance boundaries; see SurfaceTerms::GetNumExtraSystemBdrMassTerms), with unit
+  // coefficient, stored on the real slot: the contribution of the term to A2 at ω is
+  // `GetSurfaceTerms().GetExtraSystemBdrMassTermScale(i, ω)·M_i`, and a caller scales this
+  // matrix by the appropriate complex coefficient. Set `imag_slot=true` to instead store
+  // i·M_i, matching the wave-port boundary-mass convention (i·f(ω)·M with the i baked in,
+  // f(ω) = scale(ω)/i) so it can be folded into circuit synthesis uniformly with wave
+  // ports. Returns a null pointer if the term contributes no DoFs on any rank (the check
+  // is collective, so the null contract is rank-uniform). Used by the adaptive sweep, its
+  // circuit synthesis, and the NLEPS HYBRID fit-or-freeze seed strategy.
   template <OperatorType OperType>
   std::unique_ptr<OperType>
-  GetSurfaceConductivityBoundaryMatrix(int group_idx, Operator::DiagonalPolicy diag_policy);
-
-  // Construct the λ-independent boundary mass matrix M_b for rational impedance boundary
-  // idx, with unit coefficient (including crack scaling), stored on the real slot. The
-  // full A2 contribution at λ = iω is `g(λ)·M_b` with the scalar Robin coefficient
-  // `g(λ) = λ·D(λ)/N(λ)` from `GetRationalImpedanceOp().EvalRobinCoefficient(idx, λ)`; a
-  // caller scales this matrix by the appropriate complex coefficient. Returns a null
-  // pointer if the boundary contributes no DoFs on any rank (the check is collective, so
-  // the null contract is rank-uniform). Used by the NLEPS HYBRID fit-or-freeze seed
-  // strategy.
-  template <OperatorType OperType>
-  std::unique_ptr<OperType>
-  GetRationalImpedanceBoundaryMassMatrix(int idx, Operator::DiagonalPolicy diag_policy,
-                                         bool imag_slot = false);
+  GetExtraSystemBdrMassTermMatrix(int i, Operator::DiagonalPolicy diag_policy,
+                                  bool imag_slot = false);
 
   // Construct the ω-independent µ⁻¹ boundary mass for a single Floquet port's Robin BC,
   // placed on the imaginary slot. The full online term is i·γ₀,p(ω)·M_floquet_p with
@@ -382,10 +365,8 @@ public:
   // A2(ω) = GetExtraSystemOperator(ω), applied through the finest level of
   // P = GetPreconditionerMatrix<ComplexOperator>(1, iω, -ω², ω), which assembles the same
   // terms, plus the matrix-free terms of A2. It refers to P, which must outlive it. Returns
-  // nullptr, at every ω, when the finest level can be a different matrix (real-valued,
-  // shifted, or for AMS and BoomerAMG, which flip the sign of the second-order absorbing
-  // boundary term) or is the assembled coarse matrix (a single level). Then use
-  // GetSystemMatrix.
+  // nullptr, at every ω, when the finest level can be a different matrix (real-valued or
+  // shifted) or is the assembled coarse matrix (a single level). Then use GetSystemMatrix.
   std::unique_ptr<ComplexOperator> GetSystemOperator(double omega,
                                                      const ComplexOperator &P);
 

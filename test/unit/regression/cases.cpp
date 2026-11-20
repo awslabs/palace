@@ -3004,6 +3004,76 @@ TEST_CASE("rational_impedance_eigen", "[Serial][Parallel][GPU][Regression]")
                                   "series_rlc18_eigen", opts);
 }
 
+// The seed of the nonlinear eigensolve of rational_impedance_eigen, without the
+// quasi-Newton refinement. Its Robin coefficient has a pole (the 18 GHz notch) inside the
+// interpolation window, which the seed freezes at the target instead of interpolating; the
+// seed mode is then within 1% of the mode at ~9.60 + 0.045i GHz (Q = 131 for 108), and 4%
+// off with Q = 14 when the coefficient is interpolated.
+TEST_CASE("rational_impedance_eigen_seed", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 2.0e-2;
+  opts.atol = 1.0e-11;
+  opts.excluded_columns = eigen_excluded;
+  opts.skip_rowcount = true;
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("rational_impedance",
+                                  "series_rlc18_rational_eigen_seed.json",
+                                  "series_rlc18_eigen_seed", opts);
+}
+
+// The seed of rational_impedance_eigen_seed with a capacitance in parallel with the
+// termination, whose Robin coefficient has a polynomial part of degree 2, exact in the
+// seed, and a pole part, which the seed freezes at the target: the seed mode is ~11.41 +
+// 0.032i GHz, and ~9.96 + 1.35i GHz when the whole Robin coefficient is frozen or
+// interpolated.
+TEST_CASE("rational_impedance_eigen_seed_shunt", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 2.0e-2;
+  opts.atol = 1.0e-11;
+  opts.excluded_columns = eigen_excluded;
+  opts.skip_rowcount = true;
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("rational_impedance",
+                                  "series_rlc18_shunt_rational_eigen_seed.json",
+                                  "series_rlc18_shunt_eigen_seed", opts);
+}
+
+// The seed of rational_impedance_eigen_seed with an admittance 1e-26 s² in parallel with
+// the termination (not passive), whose Robin coefficient has a polynomial part of degree 3,
+// not exact in the seed: the seed freezes the whole coefficient at the target, with the
+// seed mode ~9.6695 + 0.0004i GHz, against ~9.6694 - 0.0035i GHz with only its pole part
+// frozen and ~9.24 + 0.32i GHz with the interpolant of the whole coefficient.
+TEST_CASE("rational_impedance_eigen_seed_cubic", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 2.0e-2;
+  opts.atol = 1.0e-11;
+  opts.excluded_columns = eigen_excluded;
+  opts.skip_rowcount = true;
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("rational_impedance",
+                                  "series_rlc18_cubic_rational_eigen_seed.json",
+                                  "series_rlc18_cubic_eigen_seed", opts);
+}
+
+// The seed of a series RLC termination whose notch (40 GHz) lies above the interpolation
+// window: the seed keeps the polynomial interpolant of its Robin coefficient, with the seed
+// mode ~9.9388 - 0.00065i GHz, against ~9.9420 + 0.0009i GHz with its pole part frozen.
+TEST_CASE("rational_impedance_eigen_seed_fit", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 2.0e-2;
+  opts.atol = 1.0e-11;
+  opts.excluded_columns = eigen_excluded;
+  opts.skip_rowcount = true;
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("rational_impedance",
+                                  "series_rlc40_rational_eigen_seed.json",
+                                  "series_rlc40_eigen_seed", opts);
+}
+
 TEST_CASE("cpw_lumped_uniform", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
@@ -3076,6 +3146,26 @@ TEST_CASE("cpw_wave_adaptive", "[Serial][Parallel][GPU][Regression]")
   opts.atol = std::numeric_limits<double>::infinity();
   opts.custom_checks["port-S.csv"] = ComparePortSParameters(1.0e-3, 1.0e-4);
   palace::test::RunRegressionCase("cpw", "cpw_wave_adaptive.json", "wave_adaptive", opts);
+}
+
+// Adaptive sweep of a lumped port on a small cube with an "AdaptiveTol" of 1e-6, far below
+// the accuracy of the HDM solutions at a linear tolerance of 1e-3. The sweep converges only
+// if the samples which the PROM does not reproduce are refined: its outputs must then match
+// those of a uniform sweep at a linear tolerance of 1e-12 to "AdaptiveTol". Without the
+// refinement, the sampling reaches "AdaptiveMaxSamples" with domain energies off by 1e-4 or
+// more. The error indicators depend on the samples.
+TEST_CASE("cube_lumped_adaptive_loose", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-6;
+  opts.atol = 0.0;
+  opts.excluded_files = {"error-indicators.csv"};
+  opts.paraview_fields = false;
+  opts.custom_checks["port-V.csv"] = CompareComplexValues(opts.rtol, opts.atol);
+  opts.custom_checks["port-I.csv"] = CompareComplexValues(opts.rtol, opts.atol);
+  opts.custom_checks["port-S.csv"] = ComparePortSParameters(opts.rtol, opts.atol);
+  palace::test::RunRegressionCase("cube", "lumped_adaptive_loose.json",
+                                  "lumped_adaptive_loose", opts);
 }
 
 TEST_CASE("cpw_lumped_eigen", "[Serial][Parallel][GPU][Regression]")

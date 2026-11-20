@@ -30,6 +30,12 @@ struct LinearSolverData;
 // LinearSolverData.
 MatrixSymmetry GetPreconditionerMatrixSymmetry(const IoData &iodata);
 
+// Whether the coarse-level solver of a complex-valued multigrid preconditioner is applied
+// to the real-valued Br + Bi of its complex-valued operator (see MfemWrapperSolver), rather
+// than to the complex-valued operator: AMS, BoomerAMG, and the sparse direct solvers
+// without ComplexCoarseSolve.
+bool UseRealCoarseApproximation(const config::LinearSolverData &linear);
+
 //
 // Linear solver class composing an iterative solver and preconditioner object.
 //
