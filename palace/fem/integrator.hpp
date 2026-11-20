@@ -14,6 +14,13 @@ namespace palace
 
 class MaterialPropertyCoefficient;
 
+namespace ceed
+{
+
+struct CeedGeomFactorData;
+
+}  // namespace ceed
+
 //
 // Classes which implement or extend bilinear and linear form integrators. In doc strings u
 // refers to the trial function, and v the test function.
@@ -63,6 +70,17 @@ public:
                         CeedElemRestriction geom_data_restr, CeedOperator *op) const = 0;
 
   virtual void SetMapTypes(int trial_type, int test_type) {}
+
+  // Assemble with the geometry factors computed at the quadrature points on the fly from
+  // the mesh nodes (see ceed::CeedGeomFactorData) instead of read from the geometry data,
+  // if the integrator does (returns false otherwise, when Assemble is used).
+  virtual bool AssembleOnTheFly(Ceed ceed, CeedElemRestriction trial_restr,
+                                CeedElemRestriction test_restr, CeedBasis trial_basis,
+                                CeedBasis test_basis, const ceed::CeedGeomFactorData &data,
+                                CeedOperator *op) const
+  {
+    return false;
+  }
 
   // Sorted list of the (libCEED, 1-based) attributes on which the integrator's coefficients
   // are not identically zero, or no value if the integrator may contribute on every
@@ -155,12 +173,25 @@ public:
 // Integrator for a(u, v) = (Q curl u, curl v) for Nedelec elements.
 class CurlCurlIntegrator : public BilinearFormIntegrator
 {
+protected:
+  bool geometry_on_the_fly = false;
+
 public:
   using BilinearFormIntegrator::BilinearFormIntegrator;
 
   void Assemble(Ceed ceed, CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
                 CeedBasis trial_basis, CeedBasis test_basis, CeedVector geom_data,
                 CeedElemRestriction geom_data_restr, CeedOperator *op) const override;
+
+  // Compute the geometry factors on the fly from the mesh nodes (3D, full element sets):
+  // the libCEED operator then keeps no copy of the mesh geometry data (the CPU backends
+  // keep one in the work vectors of every operator, also of coarsened ones).
+  void ComputeGeometryOnTheFly() { geometry_on_the_fly = true; }
+
+  bool AssembleOnTheFly(Ceed ceed, CeedElemRestriction trial_restr,
+                        CeedElemRestriction test_restr, CeedBasis trial_basis,
+                        CeedBasis test_basis, const ceed::CeedGeomFactorData &data,
+                        CeedOperator *op) const override;
 };
 
 // Integrator for a(u, v) = (Q div u, div v) for Raviart-Thomas elements.

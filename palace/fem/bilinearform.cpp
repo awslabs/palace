@@ -124,8 +124,14 @@ BilinearForm::PartialAssemble(const FiniteElementSpace &trial_fespace,
 
           CeedOperator sub_op;
           integ->SetMapTypes(trial_map_type, test_map_type);
-          integ->Assemble(ceed, trial_restr, test_restr, trial_basis, test_basis,
-                          data.geom_data, data.GetGeomDataRestriction(*subset), &sub_op);
+          if (*subset != ceed::CeedElementSubset::Full ||
+              !integ->AssembleOnTheFly(ceed, trial_restr, test_restr, trial_basis,
+                                       test_basis, data, &sub_op))
+          {
+            mesh.EnsureGeometryFactors(ceed, data);
+            integ->Assemble(ceed, trial_restr, test_restr, trial_basis, test_basis,
+                            data.geom_data, data.GetGeomDataRestriction(*subset), &sub_op);
+          }
           // Sub-operator owned by ceed::Operator.
           op->AddSubOperator(sub_op);
         }
