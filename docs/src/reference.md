@@ -1120,40 +1120,50 @@ entry to roundoff. Like the ownership partition, a region filters surfaces only:
 
 When an entry with a `Region` is a response-correction target, its corrected energies
 (fixed-trace, fixed-flux and self-consistent, and the fabricated energy of its coverage
-summary) count, of each patch's fabricated energy, the share of the patch's own within-R
-raw energy that lies in the region (ruling 2251). The patch's own points are the entry's
-within-R quadrature points whose nearest foot on the edge tree lies on the patch's claim
-and that no kept class (Missing, DomainBoundary, SpatialClusterPriority,
-ConductorConsistency) holds at that excitation; the region test is the entry's own 0 / 1
-test at the same points as its raw energies, on the field of the column (the raw field, or
-the corrected field for the self-consistent column). Where those points carry no energy,
-every point of the claim decides by energy, then by area, and a claim that holds no
-within-R point of the entry counts whole where its reference point (the patch origin) lies
-in the region. On a two-dimensional mesh no claims exist: every patch counts whole where its
-origin lies; a wall within R of an edge splits the raw terms but not the patches (a warning
-says so once per construction; the run is not refused). A patch wholly inside counts whole, one wholly outside not at all, and
-targets whose regions partition the interface sum to the unfiltered entry. The rule is an
-apportionment by the raw field, not a model: where a region wall runs along an edge inside
-the matching distance (a distance band), the split follows the thin-sheet raw field, which
-does not describe how the true energy is distributed with distance from the edge, and a
-large share of cut patches is the sign of it. The point sampling of the region and distance
-tests is unchanged. A warning prints once per construction when a region wall cuts patches,
-when the reference point assigned part of the box's fabricated energy, or when the mesh is
-two-dimensional; `Diagnostics.RegionTargets` in the `SurfaceResponse` block of `palace.json`
-records, per evaluation, the window-wide and the box fabricated energies, the patches
-inside, cut and outside and per tier, the cut patches' share, the closure spread and failure
-fraction of the patches weighted with their shares, and per tier the sums of the magnitudes
-of the patches' fabricated energies (`FabricatedEnergyMagnitudeByTier`) and of their counted
-parts (`CountedFabricatedEnergyMagnitudeByTier`; fixed trace, in J). `ReferencePointShare`
-is the last tier's part of the counted sum: the share of the box's fabricated energy
-assigned by the reference point. For those patches no within-R quadrature point of the
-entry lies on the claim (a cell shorter than the spacing of the quadrature points along
-the edge, faces too coarse to have a point within R of a long edge, or no claim at all), so
-the product cannot tell whether the wall cuts them: each counts whole where its origin
-lies, and the warning names this share whenever it is above zero. With `PatchEnergy` the
-per-patch shares are written to `surface-response-region-share.csv`. The entry's own closure spread, the run's maximum
-spread and `confident`, the model and patch tables and the census stay window-wide: for
-such an entry they describe the patches of the whole window, not those of the box.
+summary) count, of each patch's fabricated energy, the share of the patch's own within-R raw
+energy that lies in the region (ruling 2251). The patch's own points are the entry's
+within-R quadrature points whose nearest foot on the edge tree lies on the patch's claim and
+that no kept class (Missing, DomainBoundary, SpatialClusterPriority, ConductorConsistency)
+holds at that excitation; the region test is the entry's own 0 / 1 test at the same points
+as its raw energies, on the field of the column (the raw field, or the corrected field for
+the self-consistent column). Where those points carry no energy, every point of the claim
+decides by energy, then by area, and a claim that holds no within-R point of the entry
+counts whole where its reference point (the patch origin) lies in the region. On a
+two-dimensional mesh no claims exist: every patch counts whole where its origin lies; a wall
+within R of an edge splits the raw terms but not the patches (a warning says so once per
+construction; the run is not refused). A patch wholly inside counts whole, one wholly
+outside not at all, and targets whose regions partition the interface sum to the unfiltered
+entry. Such targets are separate runs: two targets of one `Type` on the same metal-perimeter
+segment end the run with `Automatic response matching found multiple target interfaces of
+type <T> on the same three-dimensional metal-perimeter segment!` (on a two-dimensional mesh:
+`... with the same EdgeAttributes!`). The rule is an apportionment by the raw field, not a
+model: where a region wall runs along an edge inside the matching distance (a distance
+band), the split follows the thin-sheet raw field, which does not describe how the true
+energy is distributed with distance from the edge, and a large share of cut patches is the
+sign of it. The point sampling of the region and distance tests is unchanged. A warning
+prints once per construction when a region wall cuts patches, when the reference point
+assigned part of the box's fabricated energy, or when the mesh is two-dimensional;
+`Diagnostics.RegionTargets` in the `SurfaceResponse` block of `palace.json` records, per
+evaluation, the window-wide and the box fabricated energies, the patches inside, cut and
+outside and per tier, the cut patches' share, the closure spread and failure fraction of the
+patches weighted with their shares, and per tier the sums of the magnitudes of the patches'
+fabricated energies (`FabricatedEnergyMagnitudeByTier`) and of their counted parts
+(`CountedFabricatedEnergyMagnitudeByTier`; fixed trace, in J). `ReferencePointShare` is the
+last tier's part of the counted sum: the share of the box's fabricated energy assigned by
+the reference point. For those patches no within-R quadrature point of the entry lies on the
+claim (a cell shorter than the spacing of the quadrature points along the edge, faces too
+coarse to have a point within R of a long edge, or no claim at all), so the product cannot
+tell whether the wall cuts them: each counts whole where its origin lies, and the warning
+names this share whenever it is above zero. With `PatchEnergy` the per-patch shares are
+written to `surface-response-region-share.csv`. The `Excitation` of
+`Diagnostics.RegionTargets` and the `excitation` column of the share file are the terminal
+index on an electrostatic run; on an eigenmode or driven run they are the 0-based ordinal of
+the measurements of the response operator's construction (an eigenmode run measures mode m
+as m - 1; a driven run counts its measurements over excitations and frequencies, from 0 in
+each construction, so again from 0 in a restarted run); a self-consistent record carries the
+index of its raw record. The entry's own closure spread, the run's maximum spread and
+`confident`, the model and patch tables and the census stay window-wide: for such an entry
+they describe the patches of the whole window, not those of the box.
 
 ### Local fabrication response matrices
 
