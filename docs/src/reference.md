@@ -1898,9 +1898,13 @@ driven port excitation at one frequency, an electrostatic terminal): every patch
 again at every excitation, so an excitation's result does not depend on the order of the
 excitations; `"Sticky"` (the rule of results made before this setting existed) excludes it
 at that and every later excitation and does not test it again. Run-level outputs (the
-`ModelCatalog` `PatchWeight`, `Count`, `ClaimLength`, `CellLength`, `RawPortions`, the
-electrostatic corrected capacitance matrices and `surface-response-patches.csv`) take the
-patches excluded at one or more excitations, which are the same on both rules;
+`ModelCatalog` `PatchWeight`, `Count`, `ClaimLength`, `CellLength`, `RawPortions` and the
+electrostatic corrected capacitance matrices) take the patches excluded at one or more
+excitations, which are the same on both rules. `surface-response-patches.csv` depends on
+the driver: an electrostatic run rewrites it at each exclusion, so it ends with the patches
+excluded at one or more terminals at weight zero; an eigenmode run writes it once, at
+construction, with the construction weights; a driven run also writes it once, at
+construction, with the construction weights (each on both rules).
 `"PerExcitation"` adds `ExcludedByExcitation`, `ConstructionPatchWeight`, a log line per
 excitation naming the models excluded there and their raw share per interface and Type, and
 the `conductor-consistency raw share of W` of each flagged coverage cell. An eigenmode's
