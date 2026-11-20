@@ -1303,9 +1303,9 @@ void SpaceOperator::AssemblePreconditioner(
   AddRealMassBdrCoefficients(pc_mat_shifted ? std::abs(a2.real()) : a2.real(), fbr);
   AddExtraSystemBdrCoefficients(a3, dfbr, dfbr, fbr, fbr, frbr, frbr, nullptr, nullptr);
   // Real-valued preconditioner (every level, including the smoothers): flip the sign of the
-  // second-order absorbing BC term on every level so it stays positive semidefinite (see
-  // above). Like the domain Floquet cross terms, the antisymmetric mixed boundary curl
-  // terms of this BC are dropped.
+  // second-order absorbing BC term so it stays positive semidefinite (see above). Like the
+  // domain Floquet cross terms, the antisymmetric mixed boundary curl terms of this BC are
+  // dropped.
   dfbr *= -1.0;
   if (mat_op.HasFloquetFrequencyScaling())
   {
