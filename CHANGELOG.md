@@ -316,7 +316,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     whose linear solves stopped at the iteration limit, with wrong results, now converge.
     AMS and BoomerAMG now flip it on the coarse level only, so that the other levels apply
     the system matrix, which also speeds up their solves with this condition. Results
-    otherwise change at the level of the linear solver tolerance. [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
+    otherwise change at the level of the linear solver tolerance. [PR 1252](https://github.com/awslabs/palace/pull/1252).
   - The `"Problem"`/`"Iteration"` field of `palace.json` is now updated only after the AMR
     iteration's output is in its final location. With `SaveAdaptIterations`, it used to be
     written before the output was moved into `iterationXX`, so a reader polling it could
