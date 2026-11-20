@@ -77,6 +77,12 @@ public:
   // condition.
   void AddDampingBdrCoefficients(double coeff, MaterialPropertyCoefficient &fb);
 
+  // Add coeff times the scalar inverse impedance of the domain material adjacent to each
+  // first-order absorbing boundary element to fb, the boundary coefficient of a scalar
+  // field (the out-of-plane field component of a 2D mode solve). Assumes an isotropic
+  // material at the absorbing boundaries.
+  void AddScalarDampingBdrCoefficients(double coeff, MaterialPropertyCoefficient &fb) const;
+
   // Add the second-order absorbing BC term at the frequency ω (see
   // AddCurlCurlBdrCoefficients with a = β = 1/(2iω)) to the real and imaginary parts of the
   // system matrix. Without a Floquet wave vector, only the boundary curl-curl coefficients

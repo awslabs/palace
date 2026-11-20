@@ -899,6 +899,12 @@ public:
   // (when cracked, the faces are exterior boundaries anyway).
   std::vector<int> GetSheetAttributes() const;
 
+  // Return the boundary attributes of boundary conditions whose faces, where they meet a 2D
+  // cross-section of the mesh (the face of a wave port, or the cross-section of a boundary
+  // mode problem), become boundary edges of the 2D mesh with their boundary condition (PEC,
+  // wave port PEC, impedance, conductivity, rational impedance, and absorbing boundaries).
+  std::vector<int> GetCrossSectionEdgeAttributes() const;
+
   // Return the boundary attributes for which the mesh is cracked when interior, given the
   // value of config::ModelData::crack_bdr_elements.
   std::vector<int> GetMeshCrackAttributes(std::optional<bool> crack_bdr_elements) const;

@@ -5,6 +5,7 @@
 #define PALACE_MODELS_ROM_OPERATOR_HPP
 
 #include <complex>
+#include <cstddef>
 #include <limits>
 #include <map>
 #include <memory>
@@ -19,6 +20,7 @@
 #include "linalg/operator.hpp"
 #include "linalg/rap.hpp"
 #include "linalg/vector.hpp"
+#include "models/surfaceterms.hpp"
 #include "utils/communication.hpp"
 #include "utils/filesystem.hpp"
 #include "utils/units.hpp"
@@ -205,9 +207,9 @@ protected:
   //     do not contribute to A(ω).
   //   - Second-order farfield ABC: f = 0.5/ω, with the negative sign of β inside M (see
   //     SpaceOperator::GetFarfieldBoundaryCurlCurlMatrix).
-  //   - Surface conductivity, per attribute group: f = ω/Z(ω).
-  //   - Rational surface impedance, per boundary: f = g(iω)/i for the Robin coefficient
-  //     g(s) = s·D(s)/N(s).
+  //   - The frequency-dependent boundary mass terms of SurfaceTerms, per term i (one per
+  //     finite conductivity group, then one per rational impedance boundary):
+  //     f = scale_i(ω)/i (SurfaceTerms::GetExtraSystemBdrMassTermScale).
   //   - Floquet port Robin BC, per port: f = γ₀,ₚ(ω), the specular (0,0) propagation
   //     constant.
   //   - The environment of a substructured region, per record k of its rational model:
@@ -216,15 +218,14 @@ protected:
   {
     WavePort,
     Farfield,
-    SurfaceConductivity,
-    RationalImpedance,
+    SurfaceTerm,
     FloquetPort,
     Environment
   };
   struct BoundaryTerm
   {
     BoundaryTermKind kind;
-    int idx;  // Port, group, or boundary index
+    int idx;  // Port or term index
     std::unique_ptr<ComplexOperator> op;
     bool symmetric;
     Eigen::MatrixXcd Ar;  // Vᵀ op V
@@ -272,12 +273,19 @@ protected:
   // HDM linear system solver and preconditioner.
   std::unique_ptr<ComplexKspSolver> ksp;
 
-  // HDM operators of the most recent SolveHDM, kept so that a second solve at the same
-  // frequency (a sample solved again from zero after its certification failed) reuses the
-  // assembled operators and the preconditioner setup. hdm_A refers to hdm_P and
-  // hdm_A2_full, so it is declared last (destroyed first).
+  // HDM operators and right-hand side of the most recent SolveHDM, kept so that a second
+  // solve at the same frequency (a sample solved again from zero after its certification
+  // failed) reuses the assembled operators and the preconditioner setup, and for the
+  // refinement of the solution until the sample is added to the PROM (see AddSamplePROM).
+  // hdm_A refers to hdm_P and hdm_A2_full, so it is declared last (destroyed first).
   std::unique_ptr<ComplexOperator> hdm_P, hdm_A2_full, hdm_A;
   double hdm_omega = std::numeric_limits<double>::quiet_NaN();
+  ComplexVector hdm_b;
+
+  // One step of iterative refinement of the solution u of the last HDM solve: the
+  // correction for the true residual b - A u, solved from zero with the same solver to a
+  // relative tolerance of 1e-2 (or the linear solver tolerance, if looser), is added to u.
+  void RefineHDM(ComplexVector &u);
 
   // PROM matrices and vectors. Projected matrices are Mr = Vᴴ M V where V is the reduced
   // order basis defined below.
@@ -311,6 +319,12 @@ protected:
 
   // Column of an excitation in RHS1, RHS1r, and Y.
   Eigen::Index GetExcitationColumn(int excitation_idx) const;
+
+  // Remove all but the first n basis vectors. UpdatePROM only appends to the basis and to
+  // the projections onto it, so the PROM is then that of the first n basis vectors, as if
+  // the later ones had never been added. The PROM system is reassembled at the next
+  // SolvePROM.
+  void TruncatePROM(std::size_t n);
 
   // PROM reduced-order basis (real-valued).
   std::vector<Vector> V;
@@ -453,9 +467,10 @@ protected:
   static std::complex<double> EvaluateWavePortKnFit(const WavePortDispersionFit &fit,
                                                     std::complex<double> omega);
 
-  // Generalized scalar-dispersion fit for the other frequency-dependent BCs (surface
-  // conductivity). Like FitWavePortDispersion but driven by an arbitrary scalar function
-  // f(ω) (here ω/Z_g(ω), generally COMPLEX) instead of the wave-port kₙ(ω). The projected
+  // Generalized scalar-dispersion fit for the other frequency-dependent BCs (the
+  // frequency-dependent boundary mass terms of SurfaceTerms). Like FitWavePortDispersion
+  // but driven by an arbitrary scalar function f(ω) (for example ω/Z_g(ω) of a surface
+  // conductivity group, generally COMPLEX) instead of the wave-port kₙ(ω). The projected
   // boundary mass `Mp_r` is purely imaginary (= i·M_proj) so the assembled contribution is
   // i·f(ω)·M_proj·v. Produces complex α₀/α₁/α₂ and, when augmenting, an aux block with
   // complex residues. `label` is used in the diagnostic print and aux-state labels.
@@ -464,13 +479,15 @@ protected:
                       const std::function<std::complex<double>(std::complex<double>)> &f,
                       bool allow_augment) const;
 
-  // Exact-split fit for a rational surface impedance boundary: the Robin coefficient
-  // g(s) = s·D(s)/N(s) = P(s) + R(s)/N(s) (long division) has a polynomial part P that is
-  // exactly representable in the pencil (deg(P) <= 2 for any passive input), so only the
-  // strictly proper remainder R/N is AAA-fit — directly.
-  WavePortDispersionFit FitRationalImpedanceDispersion(const std::string &label,
-                                                       const Eigen::MatrixXcd &Mp_r,
-                                                       int idx) const;
+  // Exact-split fit for a frequency-dependent boundary mass term with an exact split of
+  // its scale (SurfaceTerms::ExactSplit), such as a rational surface impedance boundary:
+  // the Robin coefficient g(s) = s·D(s)/N(s) = P(s) + R(s)/N(s) (long division) has a
+  // polynomial part P that is exactly representable in the pencil when deg(P) <= 2 (for
+  // any passive input; the caller checks), so only the strictly proper remainder R/N is
+  // AAA-fit — directly.
+  WavePortDispersionFit
+  FitExactSplitDispersion(const std::string &label, const Eigen::MatrixXcd &Mp_r,
+                          const SurfaceTerms::ExactSplit &split) const;
 
   // Accumulate the polynomial-fit corrections of one frequency-dependent BC (a wave port,
   // or another BC) into the running Kr_corr, Cr_corr, Mr_corr buffers: folds α₀·Mp_r into
@@ -548,11 +565,13 @@ public:
   // GmresSolver::SetMaxRelativeCorrection), and is solved to the tighter of the linear
   // solver tolerance and max_rel_correction. Returns whether the solve converged to its
   // tolerance without being stopped. The assembled operators and the preconditioner are
-  // reused by the next solve at the same frequency.
+  // reused by the next solve at the same frequency, and are kept, with the right-hand
+  // side, for the refinement of the solution until it is added to the PROM with
+  // AddSamplePROM.
   bool SolveHDM(int excitation_idx, double omega, ComplexVector &u,
                 bool initial_guess = false, double max_rel_correction = 0.0);
 
-  // Release the HDM operators and preconditioner kept for reuse by SolveHDM.
+  // Release the HDM operators, preconditioner and right-hand side kept by SolveHDM.
   void ReleaseHDMOperators();
 
   // Add port fields to PROM for circuit synthesis to connect to the outside world. Requires
@@ -572,13 +591,38 @@ public:
   // "node_label". This will be printed in the header of the csv files when printing PROM
   // matrices. It is needed to distinguish port and solution field configuration as well as
   // to reconstruct if field configuration are pure real, imaginary or complex. Returns the
-  // coefficients c of u in the updated basis, u = V c. A part of u (real or imaginary) in
-  // the span of the basis (to the orthogonalization tolerance) is not added: u then adds
-  // its other part, and aborts if neither is new, or, with abort_if_dependent = false (a
-  // certified sample, added whole or not at all), leaves the PROM unchanged and returns an
-  // empty vector.
+  // coefficients c of u in the updated basis, u = V c. If the real or imaginary part of u
+  // is in the span of the basis to the orthogonalization tolerance, aborts and leaves the
+  // PROM unchanged, or, with abort_if_dependent = false, does not add this part, whose
+  // coefficients are then its projections onto the basis: the PROM is updated with the
+  // other part only, or is unchanged if neither part is added (compare
+  // GetReducedDimension() before and after).
   Eigen::VectorXcd UpdatePROM(const ComplexVector &u, std::string_view node_label,
                               bool abort_if_dependent = true);
+
+  // Add the solution u of the last HDM solve, at the frequency ω, to the reduced-order
+  // basis, as UpdatePROM does, and return the relative error of the PROM solution of the
+  // excitation at ω before the update, ||u - PROM(ω)|| / ||u||, with the coefficients of u
+  // for UpdateMRI. A part of u in the span of the basis adds no basis vector. With an
+  // accurate sample in its basis, the Galerkin PROM reproduces it: if the PROM with u does
+  // not reproduce it to the relative tolerance tol, u is not accurate enough, and it is
+  // removed, refined in place (see RefineHDM) and added again, up to max_refine times.
+  // Releases the HDM operators (see ReleaseHDMOperators).
+  struct SampleUpdate
+  {
+    // Relative PROM error at ω before the update (the same on every process).
+    double error = 0.0;
+
+    // Coefficients of u in the updated basis.
+    Eigen::VectorXcd c;
+
+    // Number of refinements of u, and whether the PROM with u reproduces it to tol.
+    int num_refined = 0;
+    bool reproduced = true;
+  };
+  static constexpr int max_refine = 4;
+  SampleUpdate AddSamplePROM(int excitation_idx, double omega, ComplexVector &u,
+                             std::string_view node_label, double tol);
 
   // Add the solution with basis coefficients c to the minimal-rational interpolation for
   // error estimation. MRI are separated by excitation index.
