@@ -4445,6 +4445,34 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   online(on_region);
 }
 
+TEST_CASE("The record of a driven environment covers its ports", "[substructure][Serial]")
+{
+  // The configuration hash of the environment covers every key of its ports but their
+  // excitations, so also the direction of a lumped port and the mode target of a wave port,
+  // whose functionals give the voltages of an online sweep.
+  const json base = json::parse(R"({
+    "Problem": {"Type": "Driven", "Output": "postpro"},
+    "Model": {"Mesh": "mesh.msh"},
+    "Domains": {"Materials": [{"Attributes": [1, 2], "Permittivity": 2.0}]},
+    "Boundaries": {
+      "LumpedPort": [{"Index": 1, "R": 50.0, "Attributes": [3], "Direction": "+X",
+                      "Excitation": true}],
+      "WavePort": [{"Index": 2, "Attributes": [4], "Mode": 1, "Target": 0.65}]},
+    "Solver": {"Order": 2}})");
+  const std::vector<int> attrs = {2}, bdr = {3, 4};
+  const auto hash = EnvironmentConfigHash(base, attrs, bdr, false);
+  auto differs = [&](const std::function<void(json &)> &change)
+  {
+    json config = base;
+    change(config);
+    return EnvironmentConfigHash(config, attrs, bdr, false) != hash;
+  };
+  CHECK(differs([](json &c) { c["Boundaries"]["LumpedPort"][0]["Direction"] = "-X"; }));
+  CHECK(differs([](json &c) { c["Boundaries"]["WavePort"][0]["Target"] = 1.1; }));
+  CHECK_FALSE(
+      differs([](json &c) { c["Boundaries"]["LumpedPort"][0].erase("Excitation"); }));
+}
+
 TEST_CASE_METHOD(
     palace::test::SharedTempDir,
     "Driven substructuring warns about a rational model which did not converge",
