@@ -1211,13 +1211,14 @@ public:
       const std::set<int> &response_targets,
       const std::vector<SurfacePostOperator::CoveragePartitionClass> &kept_classes,
       SurfacePostOperator::PerimeterPortionView served,
-      const std::vector<SurfacePostOperator::CoveragePartitionClass> &remainder_classes)
-      const
+      const std::vector<SurfacePostOperator::CoveragePartitionClass> &remainder_classes,
+      const SurfacePostOperator::CoverageDroppedWindows *dropped_windows = nullptr) const
       -> std::enable_if_t<U == ProblemType::ELECTROSTATIC,
                           std::map<int, SurfacePostOperator::InterfaceCoveragePartition>>
   {
     return surf_post_op.GetInterfaceCoveragePartition(
-        response_targets, *E, D_recovered.get(), kept_classes, served, remainder_classes);
+        response_targets, *E, D_recovered.get(), kept_classes, served, remainder_classes,
+        dropped_windows);
   }
   // Ruling 2251: the applied patches' footprints on the targets with a Region, of the same
   // field (SurfacePostOperator::GetInterfaceRegionPatchFootprints).

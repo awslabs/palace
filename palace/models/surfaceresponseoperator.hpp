@@ -171,6 +171,11 @@ struct SpatialClusterPriorityExclusions
   };
   std::vector<Entry> entries;
   ExcludedPatchPortions portions;
+  // Ruling 2276 (OI-COVERAGE-INSIDE-BOX-DROP-COUNTED-UNCOVERED): the coverage partition's
+  // view of the windows: their INSIDE pieces (the pieces the clip removed, labelled
+  // PatchLabel), per window the matched boxes that removed them, and every matched cluster
+  // box (the clip's supports with claims). Empty when no coupon is dropped.
+  SurfacePostOperator::CoverageDroppedWindows coverage_windows;
   // The per-patch raw-energy label of an entry (`topology` of its window_portions /
   // outside_portions).
   static std::string PatchLabel(std::size_t patch) { return "p" + std::to_string(patch); }

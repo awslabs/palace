@@ -25176,7 +25176,19 @@ struct ResponseMemoryCensus
   }
   static double Heap(const SpatialClusterPriorityExclusions &d)
   {
-    return Heap(d.entries) + Heap(d.portions);
+    return Heap(d.entries) + Heap(d.portions) + Heap(d.coverage_windows);
+  }
+  static double Heap(const SurfacePostOperator::UncoveredPerimeterPortion &d)
+  {
+    return Heap(d.type);
+  }
+  static double Heap(const SurfacePostOperator::CoverageContextBox &d)
+  {
+    return Heap(d.token);
+  }
+  static double Heap(const SurfacePostOperator::CoverageDroppedWindows &d)
+  {
+    return Heap(d.inside) + Heap(d.holders) + Heap(d.boxes);
   }
   static double Heap(const ModelRawClaimPortions::GroupMember &d) { return Heap(d.label); }
   static double Heap(const SurfacePostOperator::CompactPerimeterPortions &d)
@@ -30354,6 +30366,22 @@ SpatialClusterPriorityExclusions CollectSpatialClusterPriorityPortions(
 {
   SpatialClusterPriorityExclusions result;
   const double tolerance = kSignatureParameterToleranceOverRadius * matching_radius;
+  // Ruling 2276: the matched cluster boxes (the supports the clip below uses: with claims)
+  // for the coverage partition, only when a coupon is dropped.
+  std::map<std::size_t, std::size_t> box_index;  // support patch -> index in `boxes`
+  auto &coverage_windows = result.coverage_windows;
+  for (const auto &support : supports)
+  {
+    if (exclusions.empty() || support.claims.empty())
+    {
+      continue;
+    }
+    const int box_model = patches[support.patch].model;
+    box_index[support.patch] = coverage_windows.boxes.size();
+    coverage_windows.boxes.push_back({fmt::format("m{}", box_model), box_model,
+                                      support.axes, support.frame_min, support.frame_max,
+                                      support.min, support.max});
+  }
   for (const auto &[patch_idx, owner] : exclusions)
   {
     const auto &patch = patches[patch_idx];
@@ -30383,7 +30411,19 @@ SpatialClusterPriorityExclusions CollectSpatialClusterPriorityPortions(
     }
     // The parts inside any matched cluster's box are the owner coupons'; the kept pieces
     // outside every box are the RAW remainder.
-    ClipUncoveredPortionsBySpatialSupport(window, supports, dimension);
+    const auto clipping =
+        ClipUncoveredPortionsBySpatialSupport(window, supports, dimension);
+    // Ruling 2276: the removed (inside) pieces and their boxes, for the coverage partition.
+    std::set<std::size_t> holders;
+    for (const auto &clip : clipping.clips)
+    {
+      coverage_windows.inside.push_back({clip.p0, clip.p1, label, clip.feature});
+      holders.insert(box_index.at(clip.spatial_patch));
+    }
+    if (!holders.empty())
+    {
+      coverage_windows.holders[label].assign(holders.begin(), holders.end());
+    }
     for (const auto &portion : window)
     {
       entry.outside_length += Norm(Subtract(portion.p1, portion.p0));

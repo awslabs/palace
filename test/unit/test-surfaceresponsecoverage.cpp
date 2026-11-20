@@ -821,4 +821,92 @@ TEST_CASE("Coverage compact claim list is exact", "[SurfaceResponseCoverage][Ser
   CHECK_THROWS(compact.Append({0.0, std::nan(""), 0.0}, {0.0, 0.0, 0.0}, "m1", 1));
 }
 
+// Rulings 2276 / 2277 (lane dropcover): the near-edge energy budget and the context held by
+// matched boxes. Dyadic energies, so every identity is exact. (a) The context joins the
+// served energy (and the pending / no-status shares by its holders' models); the coverage's
+// U, missing part and method gap are re-derived from the budget's bins, which add up to W
+// (closure 0); the mirror is a part of its class, not a bin. (b) The table row: one value
+// per header column, the closure 0. (c) The run's warnings: the box overlap with its
+// holders, the dropped share with its parts. (d) Without context the summary keeps every
+// field.
+TEST_CASE("Coverage near-edge energy budget and the context held by boxes",
+          "[SurfaceResponseCoverage][Serial]")
+{
+  auto partition = InterfaceOne();
+  partition.within = 17.5;
+  partition.classes[{"LoopRemainder", "m0"}] = 0.5;  // 0.25 of it on no served label
+  partition.loop_remainder_unserved = 0.25;
+  partition.classes[{"SpatialClusterPriority", "p9"}] = 0.25;
+  partition.kept_inside_box = 0.125;
+  partition.context = {{"m1", 0.5}};              // model 1 pending
+  partition.context_overlap = {{"m0+m2", 0.25}};  // model 2 no status
+  partition.context_beyond = 0.125;
+  partition.unclaimed = 1.375;
+  partition.unclaimed_claim_end = 0.25;
+  partition.unclaimed_no_claims = 0.625;
+  partition.unclaimed_elsewhere = 0.5;
+  const auto summary = SummarizeCoverageInterface(partition, 17.5, 13.5, Keys(), Models());
+  const auto &b = summary.budget;
+  CHECK(summary.served == 12.25);
+  CHECK((b.served == 11.5 && b.context == 0.5 && b.context_overlap == 0.25));
+  CHECK(summary.pending == 2.5);
+  CHECK(summary.no_status == 1.75);
+  CHECK((summary.missing == 1.25 && b.missing == 1.25 && b.missing_method_gap == 0.5));
+  CHECK((b.domain_boundary == 0.25 && b.spatial_cluster_priority == 0.25));
+  CHECK((b.conductor_consistency == 1.0 && b.loop_remainder == 0.25));
+  CHECK((b.unpatched_pairs == 0.25 && b.excluded == 0.0 && b.beyond_box == 0.125));
+  CHECK((b.unclaimed_claim_end == 0.25 && b.unclaimed_no_claims == 0.625));
+  CHECK((b.unclaimed_elsewhere == 0.5 && b.kept_inside_box == 0.125));
+  CHECK(b.overlaps == partition.context_overlap);
+  CHECK(b.Sum() == 17.5);
+  CHECK(b.Dropped() == 1.75);
+  const auto cell =
+      ComputeCoverageCell("SA", {summary}, CoverageThresholds{}, CoverageValidatedRegime{},
+                          CoverageExcitationClass::DRIVEN);
+  CHECK(cell.uncovered == cell.within - (cell.budget.served + cell.budget.context +
+                                         cell.budget.context_overlap));
+  CHECK(cell.missing == cell.budget.missing);
+  CHECK(cell.method_gap == std::max(0.0, cell.uncovered - cell.budget.missing));
+  CHECK(cell.within - cell.budget.Sum() == 0.0);
+  CHECK(cell.factor == 13.5 / 12.25);
+
+  // (b) The table row.
+  std::map<int, SurfacePostOperator::InterfaceCoveragePartition> partitions;
+  partitions[1] = partition;
+  const auto measurement = ComputeCoverageMeasurement(
+      partitions, {{1, "SA"}}, {{1, 17.5}}, {{1, 13.5}}, Keys(), Models(),
+      CoverageThresholds{}, CoverageValidatedRegime{}, CoverageExcitationClass::DRIVEN);
+  CHECK(measurement.served_pending_models.count(1) == 1);
+  CHECK(measurement.served_no_status_models.count(2) == 1);
+  const Units units(1.0, 1.0);
+  std::ostringstream rows;
+  WriteNearEdgeBudgetRows(rows, "1,0", measurement, units);
+  const std::string header = NearEdgeBudgetTableHeader("m,exc");
+  const std::string row = rows.str();
+  CHECK(header.rfind("m,exc,Type,W within-R raw (J),served raw share of W,held by one box",
+                     0) == 0);
+  CHECK(std::count(header.begin(), header.end(), ',') ==
+        std::count(row.begin(), row.end(), ','));
+  CHECK(row.find(fmt::format(",{:+.12e},+0.000000000000e+00\n", 0.125 / 17.5)) !=
+        std::string::npos);
+
+  // (c) The run's warnings.
+  CoverageRunRecord record;
+  record.entries.push_back({{{"m", 1.0}}, measurement.cells.at(0)});
+  const auto lines = CoverageNearEdgeWarnings(record);
+  REQUIRE(lines.size() == 2);
+  CHECK(lines[0].find("holders m0+m2") != std::string::npos);
+  CHECK(lines[0].find("may be counted by each holder (not measured)") != std::string::npos);
+  CHECK(lines[1].find("neither replaces by a model nor keeps raw") != std::string::npos);
+  CHECK(lines[1].find("(m 1 SA: unclaimed") != std::string::npos);
+  CHECK(CoverageNearEdgeWarnings(CoverageRunRecord{}).empty());
+
+  // (d) Without context: the summary of the existing fixture, field by field.
+  const auto plain =
+      SummarizeCoverageInterface(InterfaceOne(), 16.0, 13.5, Keys(), Models());
+  CHECK((plain.served == 11.5 && plain.budget.served == 11.5 && plain.pending == 2.0));
+  CHECK((plain.no_status == 1.5 && plain.missing == 1.25));
+  CHECK((plain.budget.context == 0.0 && plain.budget.context_overlap == 0.0));
+}
+
 }  // namespace palace

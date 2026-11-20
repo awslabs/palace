@@ -3168,13 +3168,31 @@ correction actually covers. The definitions are energies of the RAW field:
     whatever is not served by an applied patch is uncovered, whatever diagnostic switch is
     on or off). ``U`` = missing + method gap: the missing share lies on uncovered features
     whose key the identification reports `Missing` (a library could hold a model for it);
-    the method gap is everything else left raw (DomainBoundary, SpatialClusterPriority and
-    conductor-consistency-excluded claims, the circulating loop remainder, unpatched pairs,
-    the Unboxable and placement-rejected keys, the unclaimed remainder). The method gap is a
-    LOWER BOUND of what no library can cover today, so `NOT-ACHIEVABLE` is conservative.
-    One named part of the unclaimed remainder: the window of a corner coupon dropped by
-    `SpatialClusterPriority` that lies INSIDE the owner cluster's box is given to the owner
-    by the corrected total (not kept raw) but no applied claim holds it.
+    the method gap is the rest of ``U``. UNCOVERED IS NOT THE SAME AS KEPT RAW: of ``U``,
+    the corrected total KEEPS the raw energy of the Missing class (the Unboxable and
+    placement-rejected keys included), the DomainBoundary claims, the part of a
+    `SpatialClusterPriority`-dropped window outside every matched cluster box, the
+    conductor-consistency-excluded claims and the circulating loop remainder, and it DROPS
+    the rest (neither a model's energy nor the raw energy is in the corrected total): the
+    unpatched pairs, the excluded remainder, the unclaimed remainder and the part of a
+    dropped window beyond every box (the energy budget below lists every class). The
+    method gap is a LOWER BOUND of what no library can cover today, so `NOT-ACHIEVABLE` is
+    conservative.
+  - HELD BY A BOX AS CONTEXT: a within-``R`` point that no kept class and no claim holds,
+    whose foot lies on a piece of a `SpatialClusterPriority`-dropped coupon's window that
+    the clip by the matched cluster boxes removed, is held AS CONTEXT by the boxes of that
+    clip that contain the point. The coverage counts it as SERVED (out of ``U``; in the
+    pending and no-status shares by the holders' models; in the denominator of the covered
+    correction factor), because the coupon of such a box models its whole box: the
+    corrected total already gives that energy to the coupon's model and drops its raw
+    value. Served by context is a statement of bookkeeping, not of accuracy: the coupon's
+    model includes those edges, but no qualification of a coupon covers the energy at its
+    context corners. A point held by two or more boxes lies in a BOX OVERLAP: its share is
+    printed on its own, and a warning names the holders (the fabricated energy of that
+    region may be counted by each holder; not measured). A point on such a piece that no
+    such box contains is BEYOND EVERY BOX: no coupon models it and it is not kept raw, so
+    it stays in ``U`` (reported only). No corrected value changes through this rule: the
+    claims, the Region apportionment and the corrected tables read the claims alone.
   - A served claim whose end point differs from the end point of the perimeter segment it
     lies on by arithmetic round-off only (at most 16 units in the last place per coordinate)
     is taken to end exactly there, so ``U`` no longer counts a convex vertex's exterior
@@ -3238,6 +3256,37 @@ value does not exist):
     PlacementRejected key has a model whose placement the geometry refused (its reason says
     why: the model or the layout must change); an Unboxable key has a signature no coupon box
     can hold (the chain cannot build it today).
+  - `surface-response-near-edge-energy-budget.csv` (every corrected run): the NEAR-EDGE
+    ENERGY BUDGET, one row per cell and `Type`: `W within-R raw (J)`, then every bin of the
+    coverage partition as a raw share of ``W``, each within-``R`` point counted ONCE by the
+    partition's first-list rule (the kept classes' own tables, such as
+    `surface-response-uncovered-energy.csv`, integrate each class alone and can count a
+    point that lies in two windows twice; the budget never does), then the mirror and the
+    closure. What the corrected total does with each bin's raw energy:
+
+    | Column (`... raw share of W`) | Corrected total |
+    |:----------------------------- |:--------------- |
+    | `served` (by a claim) | replaced by the model's fabricated energy |
+    | `held by one box as context`, `held by a box overlap as context` | replaced by the holding coupon's model (bookkeeping; see above) |
+    | `missing`, `missing on method-gap keys` | kept raw |
+    | `domain boundary` | kept raw |
+    | `spatial-cluster priority outside every box` | kept raw |
+    | `conductor-consistency` | kept raw |
+    | `loop remainder` (the part the partition moved out of the claims) | kept raw |
+    | `unpatched pairs` | dropped |
+    | `excluded remainder` (with `Diagnostics.ExclusionEnergy` only) | dropped |
+    | `beyond every box` | dropped |
+    | `unclaimed at a claim end`, `unclaimed on an edge without claims`, `unclaimed elsewhere on a claimed edge` | dropped |
+
+    "At a claim end": the point's foot on its segment lies within ``0.05 R`` of an end of a
+    piece of a kept class, a claim or the excluded remainder there. `spatial-cluster
+    priority inside a box (part of its class; not in the sum)` = the points of the kept
+    outside part that lie inside a matched box (kept raw AND inside a coupon's model).
+    `closure (W minus the bins) share of W` = ``(W - \sum \text{bins}) / W``: 0 up to the
+    round-off of the two integrals (never clamped: a value away from 0 is a defect to
+    report). The coverage's ``U`` = ``W`` minus the served and context bins; its missing
+    part = the `missing` bin. A warning at the end of the run names the largest share held
+    in a box overlap (with its holders) and the largest dropped share (with its parts).
   - `terminal-C-corrected-coverage.csv` (electrostatic terminals): entry (i, j) is the worse
     coverage status of sources i and j. The corrected matrix is formed with the FINAL patch
     weights, so a source measured before a later conductor-consistency exclusion is
@@ -3345,8 +3394,12 @@ measurement without any coverage cell marks its whole values, and a coverage int
 `Type` has no cell marks that interface's values (both counted in `MarkedMeasurements` and
 listed in `MarkedWithoutCell` with the reason). A marked cell prints the bare token `nan` and its value
 moves to an appended column with the same header and the suffix ` partial (uncovered part
-raw)` (nan where the cell is not marked): the value is the covered part corrected plus the
-uncovered within-`R` part raw. Per interface of `surface-Q-corrected.csv` the `E` / `p` /
+raw)` (nan where the cell is not marked): the value is the corrected value itself, the
+covered part corrected plus, of the uncovered part, the kept-raw classes raw (the dropped
+bins of the near-edge energy budget are in neither part, despite the suffix's words). The
+mark follows the coverage it reads: what the coverage counts as served (a dropped window
+held by a box as context included) sets the status, and so whether a value is withheld; the
+value itself does not depend on it. Per interface of `surface-Q-corrected.csv` the `E` / `p` /
 `Q` corrected, corrected fixed-flux and self-consistent columns follow the interface's `Type`
 cell (the electrostatic `E` / `p` / `Q` postprocessed fixed-trace, fixed-flux and corrected
 columns the same); the corrected normalizations (`E_norm` / `E_elec` corrected, fixed-flux,

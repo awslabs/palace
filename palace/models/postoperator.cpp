@@ -2887,9 +2887,13 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
       {
         remainder_classes.push_back({"Excluded", &surface_response_exclusion_energy});
       }
+      // Ruling 2276: the dropped coupons' windows (none: the partition of a run without).
+      const auto &dropped_windows =
+          surface_response_op->GetSpatialClusterPriorityExclusions().coverage_windows;
       auto coverage = surf_post_op.GetInterfaceCoveragePartition(
           coverage_interfaces, *E, D_recovered.get(), kept_classes,
-          surface_response_model_raw, remainder_classes);
+          surface_response_model_raw, remainder_classes,
+          dropped_windows.Empty() ? nullptr : &dropped_windows);
       SurfacePostOperator::MoveCoverageServedLabel(coverage, "unpatched", "UnpatchedPairs");
       return coverage;
     };
@@ -4585,12 +4589,15 @@ void PostOperator<solver_t>::PrintSurfaceResponseCoverage(double output_index,
   // reads as this run's); each writes its header with its first rows.
   const auto coverage_path = post_dir / "surface-response-coverage.csv";
   const auto by_key_path = post_dir / "surface-response-uncovered-energy-by-key.csv";
+  // Ruling 2277: the near-edge energy budget beside them (top level).
+  const auto budget_path = post_dir / kNearEdgeBudgetTableName;
   // Lane rescensus-product (decision 1817): the census table beside them (top level).
   const auto resolution_path = post_dir / "surface-response-resolution.csv";
   if (!surface_response_coverage_started)
   {
     fs::remove(coverage_path);
     fs::remove(by_key_path);
+    fs::remove(budget_path);
     fs::remove(resolution_path);
     surface_response_coverage_started = true;
   }
@@ -4603,7 +4610,7 @@ void PostOperator<solver_t>::PrintSurfaceResponseCoverage(double output_index,
   const std::string key_header = solver_t == ProblemType::DRIVEN ? "f (GHz),exc" : "m,exc";
   // Ruling 1738: the coverage cells' interfaces (the served and the configured not served).
   const auto target_interfaces = surface_response_op->GetCoverageInterfaces();
-  for (const auto &path : {coverage_path, by_key_path})
+  for (const auto &path : {coverage_path, by_key_path, budget_path})
   {
     const bool write_header =
         surface_response_tables_with_header.insert(path.string()).second;
@@ -4614,6 +4621,11 @@ void PostOperator<solver_t>::PrintSurfaceResponseCoverage(double output_index,
     {
       output << (write_header ? CoverageTableHeader(key_header) : "");
       WriteCoverageRows(output, keys, coverage, units);
+    }
+    else if (path == budget_path)
+    {
+      output << (write_header ? NearEdgeBudgetTableHeader(key_header) : "");
+      WriteNearEdgeBudgetRows(output, keys, coverage, units);
     }
     else
     {

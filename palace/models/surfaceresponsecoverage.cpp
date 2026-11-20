@@ -342,6 +342,47 @@ CoverageKeyRecord ClassifyCoverageKey(const std::string &hash, bool matched,
   return record;
 }
 
+double CoverageNearEdgeBudget::Sum() const
+{
+  return served + context + context_overlap + missing + missing_method_gap +
+         domain_boundary + spatial_cluster_priority + conductor_consistency +
+         loop_remainder + unpatched_pairs + excluded + beyond_box + unclaimed_claim_end +
+         unclaimed_no_claims + unclaimed_elsewhere;
+}
+
+double CoverageNearEdgeBudget::Dropped() const
+{
+  return unpatched_pairs + excluded + beyond_box + unclaimed_claim_end +
+         unclaimed_no_claims + unclaimed_elsewhere;
+}
+
+void CoverageNearEdgeBudget::Add(const CoverageNearEdgeBudget &other)
+{
+  for (const auto &[sum, add] :
+       {std::make_pair(&served, &other.served), std::make_pair(&context, &other.context),
+        std::make_pair(&context_overlap, &other.context_overlap),
+        std::make_pair(&missing, &other.missing),
+        std::make_pair(&missing_method_gap, &other.missing_method_gap),
+        std::make_pair(&domain_boundary, &other.domain_boundary),
+        std::make_pair(&spatial_cluster_priority, &other.spatial_cluster_priority),
+        std::make_pair(&conductor_consistency, &other.conductor_consistency),
+        std::make_pair(&loop_remainder, &other.loop_remainder),
+        std::make_pair(&unpatched_pairs, &other.unpatched_pairs),
+        std::make_pair(&excluded, &other.excluded),
+        std::make_pair(&beyond_box, &other.beyond_box),
+        std::make_pair(&unclaimed_claim_end, &other.unclaimed_claim_end),
+        std::make_pair(&unclaimed_no_claims, &other.unclaimed_no_claims),
+        std::make_pair(&unclaimed_elsewhere, &other.unclaimed_elsewhere),
+        std::make_pair(&kept_inside_box, &other.kept_inside_box)})
+  {
+    *sum += *add;
+  }
+  for (const auto &[label, energy] : other.overlaps)
+  {
+    overlaps[label] += energy;
+  }
+}
+
 CoverageInterfaceSummary
 SummarizeCoverageInterface(const SurfacePostOperator::InterfaceCoveragePartition &partition,
                            double within, double fabricated,
@@ -355,7 +396,9 @@ SummarizeCoverageInterface(const SurfacePostOperator::InterfaceCoveragePartition
   summary.loop_remainder_unserved = partition.loop_remainder_unserved;
   summary.served_ends = partition.served_ends;
   summary.kept_ends = partition.kept_ends;
-  for (const auto &[label, energy] : partition.served)
+  // A served label's energy (a claim's, or ruling 2276's context held by boxes): served,
+  // and pending / no-status by its model tokens.
+  auto CountServed = [&](const std::string &label, double energy)
   {
     summary.served += energy;
     bool pending = false, no_status = false;
@@ -373,9 +416,53 @@ SummarizeCoverageInterface(const SurfacePostOperator::InterfaceCoveragePartition
     // model is pending, not no-status.
     summary.pending += pending ? energy : 0.0;
     summary.no_status += (!pending && no_status) ? energy : 0.0;
+  };
+  for (const auto &[label, energy] : partition.served)
+  {
+    CountServed(label, energy);
   }
+  // Ruling 2277: the budget's bin of the claims before the context joins `served`.
+  summary.budget.served = summary.served;
+  for (const auto &[label, energy] : partition.context)
+  {
+    CountServed(label, energy);
+    summary.budget.context += energy;
+  }
+  for (const auto &[label, energy] : partition.context_overlap)
+  {
+    CountServed(label, energy);
+    summary.budget.context_overlap += energy;
+  }
+  summary.budget.overlaps = partition.context_overlap;
+  auto &budget = summary.budget;
   for (const auto &[key, energy] : partition.classes)
   {
+    // Ruling 2277: the budget's bin of every class of the partition.
+    if (key.first == "DomainBoundary")
+    {
+      budget.domain_boundary += energy;
+    }
+    else if (key.first == "SpatialClusterPriority")
+    {
+      budget.spatial_cluster_priority += energy;
+    }
+    else if (key.first == "ConductorConsistency")
+    {
+      budget.conductor_consistency += energy;
+    }
+    else if (key.first == "LoopRemainder")
+    {
+      budget.loop_remainder += energy;
+    }
+    else if (key.first == "UnpatchedPairs")
+    {
+      budget.unpatched_pairs += energy;
+    }
+    else if (key.first == "Excluded")
+    {
+      budget.excluded += energy;
+    }
+    // (A class of no bin here would show in the budget's closure column.)
     if (key.first == "ConductorConsistency")
     {
       summary.conductor_consistency += energy;
@@ -395,7 +482,16 @@ SummarizeCoverageInterface(const SurfacePostOperator::InterfaceCoveragePartition
           method_gap && record != keys_by_feature.end() && record->second.method_gap;
     }
     summary.missing += method_gap ? 0.0 : energy;
+    budget.missing += method_gap ? 0.0 : energy;
+    budget.missing_method_gap += method_gap ? energy : 0.0;
   }
+  // The loop remainder's part no served label held is in another bin too (ruling 1649 Q3).
+  budget.loop_remainder -= partition.loop_remainder_unserved;
+  budget.beyond_box = partition.context_beyond;
+  budget.unclaimed_claim_end = partition.unclaimed_claim_end;
+  budget.unclaimed_no_claims = partition.unclaimed_no_claims;
+  budget.unclaimed_elsewhere = partition.unclaimed_elsewhere;
+  budget.kept_inside_box = partition.kept_inside_box;
   return summary;
 }
 
@@ -420,6 +516,7 @@ CoverageCell ComputeCoverageCell(const std::string &type,
     cell.loop_remainder_unserved += interface.loop_remainder_unserved;
     cell.loop_remainder_excluded += interface.loop_remainder_excluded;
     cell.conductor_consistency += interface.conductor_consistency;
+    cell.budget.Add(interface.budget);
     for (const auto &[sum, add] :
          {std::make_pair(&cell.served_ends, &interface.served_ends),
           std::make_pair(&cell.kept_ends, &interface.kept_ends)})
@@ -773,23 +870,28 @@ CoverageMeasurement ComputeCoverageMeasurement(
     {
       continue;
     }
-    for (const auto &[label, energy] : partition.served)
+    // Ruling 2276: the context held by boxes is served by their models too.
+    for (const auto *labels :
+         {&partition.served, &partition.context, &partition.context_overlap})
     {
-      if (!(energy > 0.0))
+      for (const auto &[label, energy] : *labels)
       {
-        continue;
-      }
-      for (const auto &token : LabelTokens(label))
-      {
-        const auto model = models.find(TokenIndex(token));
-        if (model != models.end() && model->second == CoverageModelQualification::PENDING)
+        if (!(energy > 0.0))
         {
-          measurement.served_pending_models.insert(model->first);
+          continue;
         }
-        else if (model != models.end() &&
-                 model->second == CoverageModelQualification::NO_STATUS)
+        for (const auto &token : LabelTokens(label))
         {
-          measurement.served_no_status_models.insert(model->first);
+          const auto model = models.find(TokenIndex(token));
+          if (model != models.end() && model->second == CoverageModelQualification::PENDING)
+          {
+            measurement.served_pending_models.insert(model->first);
+          }
+          else if (model != models.end() &&
+                   model->second == CoverageModelQualification::NO_STATUS)
+          {
+            measurement.served_no_status_models.insert(model->first);
+          }
         }
       }
     }
@@ -952,6 +1054,47 @@ void WriteCoverageRows(std::ostream &output, const std::string &keys,
            << ','
            << CoverageNumber(units.Dimensionalize<VT::ENERGY>(cell.loop_remainder_excluded))
            << ',' << CoverageNumber(cell.method_gap_signed_share) << '\n';
+  }
+}
+
+std::string NearEdgeBudgetTableHeader(const std::string &key_header)
+{
+  return key_header +
+         ",Type,W within-R raw (J),served raw share of W,held by one box as context raw "
+         "share of W,held by a box overlap as context raw share of W,missing raw share of "
+         "W,missing on method-gap keys raw share of W,domain boundary raw share of "
+         "W,spatial-cluster priority outside every box raw share of "
+         "W,conductor-consistency "
+         "raw share of W,loop remainder raw share of W,unpatched pairs raw share of "
+         "W,excluded remainder raw share of W,beyond every box raw share of W,unclaimed at "
+         "a claim end raw share of W,unclaimed on an edge without claims raw share of "
+         "W,unclaimed elsewhere on a claimed edge raw share of W,spatial-cluster priority "
+         "inside a box (part of its class; not in the sum) raw share of W,closure (W minus "
+         "the bins) share of W\n";
+}
+
+void WriteNearEdgeBudgetRows(std::ostream &output, const std::string &keys,
+                             const CoverageMeasurement &measurement, const Units &units)
+{
+  using VT = Units::ValueType;
+  const double nan = std::numeric_limits<double>::quiet_NaN();
+  for (const auto &cell : measurement.cells)
+  {
+    const auto &b = cell.budget;
+    auto Share = [&](double energy)
+    { return cell.within > 0.0 ? energy / cell.within : nan; };
+    output << keys << ',' << cell.type << ','
+           << CoverageNumber(units.Dimensionalize<VT::ENERGY>(cell.within));
+    for (const double energy :
+         {b.served, b.context, b.context_overlap, b.missing, b.missing_method_gap,
+          b.domain_boundary, b.spatial_cluster_priority, b.conductor_consistency,
+          b.loop_remainder, b.unpatched_pairs, b.excluded, b.beyond_box,
+          b.unclaimed_claim_end, b.unclaimed_no_claims, b.unclaimed_elsewhere,
+          b.kept_inside_box, cell.within - b.Sum()})
+    {
+      output << ',' << CoverageNumber(Share(energy));
+    }
+    output << '\n';
   }
 }
 
@@ -1300,6 +1443,40 @@ nlohmann::json CoverageRunMetadata(const CoverageRunRecord &record,
   metadata["StatusCounts"] = std::move(status_counts);
   metadata["RegimeCounts"] = std::move(regime_counts);
   metadata["Flagged"] = std::move(flagged);
+  // Ruling 2276: the dropped coupons' windows held by boxes as context (only when a cell
+  // has any: a run without a dropped window keeps its block).
+  nlohmann::json overlaps = nlohmann::json::array();
+  bool any_context = false;
+  for (const auto &entry : record.entries)
+  {
+    const auto &budget = entry.cell.budget;
+    any_context = any_context || budget.context > 0.0 || budget.context_overlap > 0.0 ||
+                  budget.beyond_box > 0.0 || budget.kept_inside_box > 0.0;
+    for (const auto &[label, energy] : budget.overlaps)
+    {
+      nlohmann::json keys = nlohmann::json::object();
+      for (const auto &[name, value] : entry.keys)
+      {
+        keys[name] = value;
+      }
+      overlaps.push_back({{"Cell", std::move(keys)},
+                          {"Type", entry.cell.type},
+                          {"Holders", label},
+                          {"raw share of W", Number(energy / entry.cell.within)}});
+    }
+  }
+  if (any_context)
+  {
+    metadata["DroppedWindows"] = {
+        {"Rule",
+         "ruling 2276: a within-R point no kept class and no claim holds, whose foot "
+         "lies on a piece of a dropped coupon's window that the clip by the matched "
+         "cluster boxes removed, is held AS CONTEXT by the boxes of that clip that "
+         "contain the point (served in the coverage; bookkeeping, not accuracy); a "
+         "point no such box contains is beyond every box (uncovered, dropped)"},
+        {"Table", kNearEdgeBudgetTableName},
+        {"Overlaps", std::move(overlaps)}};
+  }
   metadata["ServedPendingModels"] = static_cast<int>(record.served_pending_models.size());
   metadata["ServedNoStatusModels"] =
       static_cast<int>(record.served_no_status_models.size());
@@ -1317,6 +1494,68 @@ nlohmann::json CoverageRunMetadata(const CoverageRunRecord &record,
   metadata["Level"] = level;
   metadata["Levels"] = levels;
   return metadata;
+}
+
+std::vector<std::string> CoverageNearEdgeWarnings(const CoverageRunRecord &record)
+{
+  // The largest share of W over the cells, with the cell that holds it.
+  auto CellName = [](const CoverageRunRecord::Entry &entry)
+  {
+    std::string name;
+    for (const auto &[key, value] : entry.keys)
+    {
+      name += fmt::format("{}{} {:g}", name.empty() ? "" : ", ", key, value);
+    }
+    return name + (name.empty() ? "" : " ") + entry.cell.type;
+  };
+  const CoverageRunRecord::Entry *overlap = nullptr, *dropped = nullptr;
+  double overlap_share = 0.0, dropped_share = 0.0;
+  for (const auto &entry : record.entries)
+  {
+    const auto &cell = entry.cell;
+    if (!(cell.within > 0.0))
+    {
+      continue;
+    }
+    if (cell.budget.context_overlap / cell.within > overlap_share)
+    {
+      overlap_share = cell.budget.context_overlap / cell.within;
+      overlap = &entry;
+    }
+    if (cell.budget.Dropped() / cell.within > dropped_share)
+    {
+      dropped_share = cell.budget.Dropped() / cell.within;
+      dropped = &entry;
+    }
+  }
+  std::vector<std::string> lines;
+  if (overlap)
+  {
+    std::string holders;
+    for (const auto &[label, energy] : overlap->cell.budget.overlaps)
+    {
+      holders += (holders.empty() ? "" : ", ") + label;
+    }
+    lines.push_back(fmt::format(
+        "Near-edge energy held by two or more matched coupon boxes as context (a box "
+        "overlap; holders {}): up to {:.4g} % of W ({}); the fabricated energy of that "
+        "region may be counted by each holder (not measured); see {}!",
+        holders, 100.0 * overlap_share, CellName(*overlap), kNearEdgeBudgetTableName));
+  }
+  if (dropped)
+  {
+    const auto &b = dropped->cell.budget;
+    const double percent = 100.0 / dropped->cell.within;
+    lines.push_back(fmt::format(
+        "Near-edge raw energy that the corrected total neither replaces by a model nor "
+        "keeps raw: up to {:.4g} % of W ({}: unclaimed {:.4g} %, beyond every box {:.4g} "
+        "%, unpatched pairs {:.4g} %, excluded remainder {:.4g} %); see {}!",
+        100.0 * dropped_share, CellName(*dropped),
+        percent * (b.unclaimed_claim_end + b.unclaimed_no_claims + b.unclaimed_elsewhere),
+        percent * b.beyond_box, percent * b.unpatched_pairs, percent * b.excluded,
+        kNearEdgeBudgetTableName));
+  }
+  return lines;
 }
 
 std::string CoverageRunBanner(const nlohmann::json &metadata)

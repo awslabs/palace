@@ -96,6 +96,11 @@ private:
 // of the coordinate and R, per coordinate: the round-off of a point formed as key0 + s / L
 // (key1 - key0)); never a geometric tolerance.
 inline constexpr double kClaimEndRoundoffUlps = 16.0;
+// Ruling 2277: an unclaimed point counts "at a claim end" when its clamped foot lies within
+// this fraction of R of an end of a piece on its segment (the residual lane's reader's
+// rule, so that the kinds compare with its dump; a reporting threshold, never a
+// correction).
+inline constexpr double kCoverageClaimEndOverRadius = 0.05;
 
 class SurfacePostOperator
 {
@@ -529,6 +534,21 @@ public:
     // in the class "LoopRemainder" and in another bin both (the bins then sum to `within`
     // plus this amount).
     double loop_remainder_unserved = 0.0;
+    // Ruling 2276 (OI-COVERAGE-INSIDE-BOX-DROP-COUNTED-UNCOVERED; with dropped windows
+    // only): the points a matched cluster box holds AS CONTEXT, by the label of the holding
+    // boxes' model tokens ('+'-joined, ascending model index): `context` held by one box,
+    // `context_overlap` by two or more boxes (a box overlap; the label joins every holder);
+    // `context_beyond` the points of an inside piece that no holding box holds. These three
+    // are bins of their own (out of `unclaimed`). `kept_inside_box` = the points of the
+    // dropped windows' kept class (CoverageDroppedWindows::kept_class) that lie inside a
+    // matched box: a PART of that class's bins, not a bin.
+    std::map<std::string, double> context, context_overlap;
+    double context_beyond = 0.0, kept_inside_box = 0.0;
+    // Ruling 2277: `unclaimed` by kind (their sum is `unclaimed` up to round-off): the
+    // clamped foot within kCoverageClaimEndOverRadius R of an end of a piece of a kept
+    // class, a served claim or a remainder class on its segment; no such piece on its
+    // segment; elsewhere on a segment with such pieces.
+    double unclaimed_claim_end = 0.0, unclaimed_no_claims = 0.0, unclaimed_elsewhere = 0.0;
     // Rulings 1714 / 1715 / 1731 (lane L1): the census of portion ends at a tree-segment
     // end, for the SERVED claims and for the KEPT classes, by DIRECTION. "Round-off short":
     // the end POINT agrees with the segment's end point within kClaimEndRoundoffUlps ulps
@@ -567,10 +587,38 @@ public:
   static std::pair<ClaimEndMatch, double> ClassifyClaimEnd(const std::array<double, 3> &p,
                                                            const std::array<double, 3> &v,
                                                            double radius);
+  // Ruling 2276 (OI-COVERAGE-INSIDE-BOX-DROP-COUNTED-UNCOVERED): the windows of the coupons
+  // the SpatialClusterPriority rule dropped, as the coverage partition reads them. `inside`
+  // = the pieces of the windows that the clip by the matched cluster boxes removed (`type`
+  // = the window's label "p<patch>"); `holders` per window label the indices into `boxes`
+  // of the boxes whose clip removed a piece of it; `boxes` = every matched cluster box (its
+  // patch-frame box, the strict-interior test of the clip; `min` / `max` its mesh AABB, a
+  // prefilter only; `token` = "m<model index>"). `kept_class` = the name of the kept class
+  // that holds the windows' parts outside every box. Mesh units.
+  struct CoverageContextBox
+  {
+    std::string token;
+    int model = -1;
+    std::array<std::array<double, 3>, 3> axes{};
+    std::array<double, 3> frame_min{}, frame_max{}, min{}, max{};
+  };
+  struct CoverageDroppedWindows
+  {
+    std::vector<UncoveredPerimeterPortion> inside;
+    std::map<std::string, std::vector<std::size_t>> holders;
+    std::vector<CoverageContextBox> boxes;
+    std::string kept_class = "SpatialClusterPriority";
+    bool Empty() const { return inside.empty() && boxes.empty(); }
+  };
+  // A point strictly inside a box's patch-frame box (LineInsideBox's arithmetic at a
+  // point).
+  static bool PointInsideContextBox(const mfem::Vector &point,
+                                    const CoverageContextBox &box);
   std::map<int, InterfaceCoveragePartition> GetInterfaceCoveragePartition(
       const std::set<int> &indices, const GridFunction &E, const GridFunction *D,
       const std::vector<CoveragePartitionClass> &kept_classes, PerimeterPortionView served,
-      const std::vector<CoveragePartitionClass> &remainder_classes = {}) const;
+      const std::vector<CoveragePartitionClass> &remainder_classes = {},
+      const CoverageDroppedWindows *dropped_windows = nullptr) const;
   // Ruling 2251 (OI-REGION-TARGET-CORRECTED-NOT-FILTERED): the footprint of an applied
   // patch on an entry with a Region = the entry's within-R points of the coverage partition
   // (the same rule, nearest tree segment, clamped foot and within weight) whose foot lies

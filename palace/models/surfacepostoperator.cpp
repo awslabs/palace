@@ -769,6 +769,42 @@ public:
   }
 };
 
+// The '+'-joined tokens of a label, in order.
+std::vector<std::string> SplitPlusTokens(const std::string &label)
+{
+  std::vector<std::string> tokens;
+  std::size_t begin = 0;
+  while (begin <= label.size())
+  {
+    const std::size_t end = std::min(label.find('+', begin), label.size());
+    tokens.push_back(label.substr(begin, end - begin));
+    begin = end + 1;
+  }
+  return tokens;
+}
+
+// Ruling 2276: the piece group of `pieces` holding a clamped foot on `segment` by the
+// coverage partition's rule (GetInterfaceCoveragePartition), or -1.
+int FindPieceGroup(const PartitionedEdgePieces &pieces, std::size_t segment, double foot)
+{
+  const auto found = pieces.by_segment.find(segment);
+  if (found == pieces.by_segment.end() || found->second.empty())
+  {
+    return -1;
+  }
+  auto piece = std::upper_bound(found->second.begin(), found->second.end(), foot,
+                                [](double x, const auto &p) { return x < p.a; });
+  if (piece == found->second.begin())
+  {
+    return -1;
+  }
+  piece = std::prev(piece);
+  const bool last = std::next(piece) == found->second.end();
+  return (foot >= piece->a && (foot < piece->b || (last && foot == piece->b)))
+             ? piece->group
+             : -1;
+}
+
 }  // namespace
 
 SurfacePostOperator::SurfaceFluxData::SurfaceFluxData(
@@ -2009,6 +2045,25 @@ SurfacePostOperator::GetInterfaceUncoveredFeatureEdgeEnergies(
   return energies;
 }
 
+bool SurfacePostOperator::PointInsideContextBox(const mfem::Vector &point,
+                                                const CoverageContextBox &box)
+{
+  // LineInsideBox's frame arithmetic at one point: strictly inside on every frame axis.
+  for (int k = 0; k < 3; k++)
+  {
+    double o = 0.0;
+    for (int d = 0; d < point.Size(); d++)
+    {
+      o += point(d) * box.axes[k][d];
+    }
+    if (!(o > box.frame_min[k] && o < box.frame_max[k]))
+    {
+      return false;
+    }
+  }
+  return true;
+}
+
 std::pair<SurfacePostOperator::ClaimEndMatch, double>
 SurfacePostOperator::ClassifyClaimEnd(const std::array<double, 3> &p,
                                       const std::array<double, 3> &v, double radius)
@@ -2104,11 +2159,15 @@ std::map<int, SurfacePostOperator::InterfaceCoveragePartition>
 SurfacePostOperator::GetInterfaceCoveragePartition(
     const std::set<int> &indices, const GridFunction &E, const GridFunction *D,
     const std::vector<CoveragePartitionClass> &kept_classes, PerimeterPortionView served,
-    const std::vector<CoveragePartitionClass> &remainder_classes) const
+    const std::vector<CoveragePartitionClass> &remainder_classes,
+    const CoverageDroppedWindows *dropped_windows) const
 {
   // Per interface the local bins in a fixed order (identical on every rank: the portion
   // lists are): per kept class its piece groups, the served groups, the remainder and the
-  // within-R total; ONE reduction for all of them.
+  // within-R total; ONE reduction for all of them. Rulings 2276 / 2277: the bins of the
+  // dropped windows' context list and of the unclaimed kinds are a SECOND array with its
+  // own reduction, so that the first array and its reduction are those of a run without
+  // them.
   auto &mesh = *h1_fespace.GetParMesh();
   const int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   struct InterfaceBins
@@ -2122,9 +2181,20 @@ SurfacePostOperator::GetInterfaceCoveragePartition(
     // near, kept round-off / near).
     ClaimEndCheck served_check, kept_check;
     std::size_t stake = 0;
+    // Ruling 2276: the dropped windows' inside pieces, per piece group its candidate boxes
+    // (ascending indices into CoverageDroppedWindows::boxes) and its first bin of the
+    // second array: per candidate b, held by b alone and held by b first with others
+    // (their holders OR-ed into overlap_masks from `masks`), then the beyond bin. `kinds` =
+    // the 4 bins kept-inside-box, claim end, no claims, elsewhere; `kept_list` = the index
+    // of the dropped windows' kept class (none: the largest size_t).
+    std::optional<PartitionedEdgePieces> context;
+    std::vector<std::vector<std::size_t>> candidates;
+    std::vector<std::size_t> context_bins, masks;
+    std::size_t kinds = 0, kept_list = 0;
   };
   std::vector<InterfaceBins> bins;
-  std::vector<double> local_energies;
+  std::vector<double> local_energies, extra_energies;
+  std::vector<std::uint64_t> overlap_masks;
   for (const int idx : indices)
   {
     auto it = eps_surfs.find(idx);
@@ -2165,6 +2235,44 @@ SurfacePostOperator::GetInterfaceCoveragePartition(
     local_energies.push_back(0.0);
     interface.stake = local_energies.size();
     local_energies.resize(local_energies.size() + 4, 0.0);
+    // Ruling 2276: the context list (after the served claims) and its candidate boxes.
+    interface.kept_list = std::numeric_limits<std::size_t>::max();
+    if (dropped_windows)
+    {
+      for (std::size_t list = 0; list < kept_classes.size(); list++)
+      {
+        interface.kept_list = kept_classes[list].name == dropped_windows->kept_class
+                                  ? list
+                                  : interface.kept_list;
+      }
+    }
+    if (dropped_windows && !dropped_windows->inside.empty())
+    {
+      interface.context.emplace(
+          UncoveredEdgeIntervals(tree, dropped_windows->inside, tolerance, nullptr));
+      for (const auto &group : interface.context->groups)
+      {
+        std::set<std::size_t> candidates;
+        for (const auto &window : SplitPlusTokens(group))
+        {
+          const auto holders = dropped_windows->holders.find(window);
+          if (holders != dropped_windows->holders.end())
+          {
+            candidates.insert(holders->second.begin(), holders->second.end());
+          }
+        }
+        MFEM_VERIFY(candidates.size() <= 64,
+                    "A dropped coupon's window piece meets more than 64 matched cluster "
+                    "boxes; the coverage partition cannot tell its holders apart!");
+        interface.candidates.emplace_back(candidates.begin(), candidates.end());
+        interface.context_bins.push_back(extra_energies.size());
+        extra_energies.resize(extra_energies.size() + 2 * candidates.size() + 1, 0.0);
+        interface.masks.push_back(overlap_masks.size());
+        overlap_masks.resize(overlap_masks.size() + candidates.size(), 0);
+      }
+    }
+    interface.kinds = extra_energies.size();
+    extra_energies.resize(extra_energies.size() + 4, 0.0);
 
     const auto attr_marker = mesh::AttrToMarker(bdr_attr_max, data.attr_list);
     auto coefficient = data.GetCoefficient(E, D, mat_op);
@@ -2237,8 +2345,89 @@ SurfacePostOperator::GetInterfaceCoveragePartition(
         }
         const double value = PhysicalQuadratureWeight(*T, ip, axisymmetric) *
                              (within * coefficient->Eval(*T, ip));
-        local_energies[bin] += value;
+        // Ruling 2276: the context list takes a point no kept class and no served claim
+        // holds whose foot lies on an inside piece of a dropped window; the candidate boxes
+        // that contain the POINT hold it (the lowest first), none: beyond every box.
+        const int context_group =
+            (interface.context && held > kept_classes.size())
+                ? FindPieceGroup(*interface.context, nearest.segment, foot)
+                : -1;
+        if (context_group >= 0)
+        {
+          const auto &candidates = interface.candidates[context_group];
+          std::uint64_t holders = 0;
+          for (std::size_t b = 0; b < candidates.size(); b++)
+          {
+            holders |= PointInsideContextBox(point, dropped_windows->boxes[candidates[b]])
+                           ? (std::uint64_t(1) << b)
+                           : std::uint64_t(0);
+          }
+          const std::size_t first = interface.context_bins[context_group];
+          if (holders == 0)
+          {
+            extra_energies[first + 2 * candidates.size()] += value;
+          }
+          else
+          {
+            std::size_t b = 0;
+            while (!((holders >> b) & 1))
+            {
+              b++;
+            }
+            const bool overlap = (holders & (holders - 1)) != 0;
+            extra_energies[first + 2 * b + (overlap ? 1 : 0)] += value;
+            overlap_masks[interface.masks[context_group] + b] |= overlap ? holders : 0;
+          }
+        }
+        else
+        {
+          local_energies[bin] += value;
+        }
         local_energies[interface.within] += value;
+        if (dropped_windows && held == interface.kept_list)
+        {
+          // Ruling 2276 R7 (a), the mirror: a point of the windows' kept part (outside
+          // every box by its foot) that lies inside a matched box (the AABB a prefilter).
+          for (const auto &box : dropped_windows->boxes)
+          {
+            bool in_aabb = true;
+            for (int d = 0; d < point.Size(); d++)
+            {
+              in_aabb = in_aabb && point(d) >= box.min[d] && point(d) <= box.max[d];
+            }
+            if (in_aabb && PointInsideContextBox(point, box))
+            {
+              extra_energies[interface.kinds] += value;
+              break;
+            }
+          }
+        }
+        else if (context_group < 0 && held == interface.pieces.size())
+        {
+          // Ruling 2277: the unclaimed point's kind by the pieces of every list on its
+          // segment (the context list's pieces are windows, not claims).
+          bool claimed_segment = false;
+          double end_distance = std::numeric_limits<double>::infinity();
+          for (const auto &list : interface.pieces)
+          {
+            const auto found = list.by_segment.find(nearest.segment);
+            if (found == list.by_segment.end() || found->second.empty())
+            {
+              continue;
+            }
+            claimed_segment = true;
+            for (const auto &piece : found->second)
+            {
+              end_distance = std::min(
+                  {end_distance, std::abs(foot - piece.a), std::abs(foot - piece.b)});
+            }
+          }
+          extra_energies[interface.kinds +
+                         (!claimed_segment                                       ? 2
+                          : end_distance <= kCoverageClaimEndOverRadius * radius ? 1
+                                                                                 : 3)] +=
+              value;
+        }
         if (t <= 0.0 || t >= 1.0)
         {
           // The clamped foot at a segment end: the vertex quadrant (census only). Ruling
@@ -2271,6 +2460,36 @@ SurfacePostOperator::GetInterfaceCoveragePartition(
     Mpi::GlobalSum(static_cast<int>(local_energies.size()), local_energies.data(),
                    E.GetComm());
   }
+  // Rulings 2276 / 2277: the second array (every rank holds the same layout).
+  if (!extra_energies.empty())
+  {
+    Mpi::GlobalSum(static_cast<int>(extra_energies.size()), extra_energies.data(),
+                   E.GetComm());
+  }
+  if (!overlap_masks.empty())
+  {
+    MPI_Allreduce(MPI_IN_PLACE, overlap_masks.data(),
+                  static_cast<int>(overlap_masks.size()), MPI_UINT64_T, MPI_BOR,
+                  E.GetComm());
+  }
+  // The holders' label: the '+'-joined model tokens, ascending by model index.
+  auto HolderLabel = [&](const std::vector<std::size_t> &candidates, std::uint64_t holders)
+  {
+    std::set<int> models;
+    for (std::size_t b = 0; b < candidates.size(); b++)
+    {
+      if ((holders >> b) & 1)
+      {
+        models.insert(dropped_windows->boxes[candidates[b]].model);
+      }
+    }
+    std::string label;
+    for (const int model : models)
+    {
+      label += fmt::format("{}m{}", label.empty() ? "" : "+", model);
+    }
+    return label;
+  };
   std::map<int, InterfaceCoveragePartition> partitions;
   for (const auto &interface : bins)
   {
@@ -2304,6 +2523,32 @@ SurfacePostOperator::GetInterfaceCoveragePartition(
     partition.kept_ends = interface.kept_check.census;
     partition.kept_ends.roundoff_energy = local_energies[interface.stake + 2];
     partition.kept_ends.near_energy = local_energies[interface.stake + 3];
+    // Rulings 2276 / 2277: the context bins by holders, the beyond bin, the mirror and the
+    // unclaimed kinds.
+    for (std::size_t group = 0; group < interface.candidates.size(); group++)
+    {
+      const auto &candidates = interface.candidates[group];
+      const std::size_t first = interface.context_bins[group];
+      for (std::size_t b = 0; b < candidates.size(); b++)
+      {
+        const double alone = extra_energies[first + 2 * b];
+        const double shared = extra_energies[first + 2 * b + 1];
+        if (alone != 0.0)
+        {
+          partition.context[HolderLabel(candidates, std::uint64_t(1) << b)] += alone;
+        }
+        if (shared != 0.0)
+        {
+          partition.context_overlap[HolderLabel(
+              candidates, overlap_masks[interface.masks[group] + b])] += shared;
+        }
+      }
+      partition.context_beyond += extra_energies[first + 2 * candidates.size()];
+    }
+    partition.kept_inside_box = extra_energies[interface.kinds];
+    partition.unclaimed_claim_end = extra_energies[interface.kinds + 1];
+    partition.unclaimed_no_claims = extra_energies[interface.kinds + 2];
+    partition.unclaimed_elsewhere = extra_energies[interface.kinds + 3];
   }
   return partitions;
 }

@@ -193,6 +193,31 @@ CoverageKeyRecord ClassifyCoverageKey(const std::string &hash, bool matched,
                                       bool unboxable);
 
 // One interface of one cell: W and the partition's sums (J).
+// Ruling 2277 (lane dropcover): the NEAR-EDGE ENERGY BUDGET of an interface / cell: every
+// EXCLUSIVE bin of the coverage partition (J), each within-R point once by the partition's
+// first-list rule (the kept classes' own tables integrate each class alone and can count a
+// point in two windows). `served` = by a claim (after the unpatched and loop-remainder
+// moves); `context` / `context_overlap` = held by one / two or more matched boxes as
+// context (ruling 2276); `missing` = the Missing class on keys a library could hold (the
+// coverage's missing part), `missing_method_gap` on Unboxable / placement-rejected keys;
+// `loop_remainder` = the part the partition moved out of the served claims;
+// `kept_inside_box` (the mirror) is a PART of `spatial_cluster_priority`, not a bin.
+struct CoverageNearEdgeBudget
+{
+  double served = 0.0, context = 0.0, context_overlap = 0.0;
+  double missing = 0.0, missing_method_gap = 0.0, domain_boundary = 0.0,
+         spatial_cluster_priority = 0.0, conductor_consistency = 0.0, loop_remainder = 0.0;
+  double unpatched_pairs = 0.0, excluded = 0.0, beyond_box = 0.0, unclaimed_claim_end = 0.0,
+         unclaimed_no_claims = 0.0, unclaimed_elsewhere = 0.0;
+  double kept_inside_box = 0.0;
+  // Per holder label ("m4+m5"), the energy held in a box overlap.
+  std::map<std::string, double> overlaps;
+  // The sum of the exclusive bins (every member but kept_inside_box and overlaps).
+  double Sum() const;
+  // The energy the corrected total neither replaces by a model nor keeps raw.
+  double Dropped() const;
+  void Add(const CoverageNearEdgeBudget &other);
+};
 struct CoverageInterfaceSummary
 {
   double within = 0.0;            // W (raw - outside at R): the corrected bookkeeping's
@@ -210,6 +235,9 @@ struct CoverageInterfaceSummary
   // Lane ccpx (ruling 2229 D4): the ConductorConsistency kept class's energy (inside U and
   // the method gap, which keep their definitions; printed only under PerExcitation).
   double conductor_consistency = 0.0;
+  // Ruling 2277: the near-edge energy budget (`served` above = budget.served +
+  // budget.context + budget.context_overlap: ruling 2276 counts the context as served).
+  CoverageNearEdgeBudget budget;
 };
 CoverageInterfaceSummary
 SummarizeCoverageInterface(const SurfacePostOperator::InterfaceCoveragePartition &partition,
@@ -252,6 +280,8 @@ struct CoverageCell
   // its share of W (nan where the other shares are): the part of U (inside the method gap)
   // held by the patches excluded at this excitation.
   double conductor_consistency = 0.0, conductor_consistency_share = 0.0;
+  // Ruling 2277: the Type's near-edge energy budget (the interfaces' sums, J).
+  CoverageNearEdgeBudget budget;
   // The edge-resolution census (decision 1817) is not a column here: it writes its own
   // table, block, PREFLIGHT line and banner (models/surfaceresponseresolution.hpp).
 };
@@ -393,6 +423,14 @@ std::string CoverageByKeyTableHeader(const std::string &key_header,
                                      const std::set<int> &targets);
 void WriteCoverageRows(std::ostream &output, const std::string &keys,
                        const CoverageMeasurement &measurement, const Units &units);
+// Ruling 2277: the near-edge energy budget table (one row per coverage cell, every
+// exclusive bin of the partition as a raw share of W, the closure W - the bins; beside
+// surface-response-coverage.csv, on every corrected run).
+inline constexpr const char *kNearEdgeBudgetTableName =
+    "surface-response-near-edge-energy-budget.csv";
+std::string NearEdgeBudgetTableHeader(const std::string &key_header);
+void WriteNearEdgeBudgetRows(std::ostream &output, const std::string &keys,
+                             const CoverageMeasurement &measurement, const Units &units);
 void WriteCoverageByKeyRows(std::ostream &output, const std::string &keys,
                             const CoverageMeasurement &measurement,
                             const std::set<int> &targets,
@@ -463,6 +501,10 @@ nlohmann::json CoverageRunMetadata(const CoverageRunRecord &record,
 // APPLIED]" and adds the share-denominator line; a "Warn" block prints the banner exactly
 // as before.
 std::string CoverageRunBanner(const nlohmann::json &metadata);
+// Ruling 2276 R7 (b): the run's near-edge warnings (each line once; none: empty): energy
+// held in a box overlap (its holders; the fabricated energy there may be counted by each
+// holder, not measured) and energy the corrected total neither models nor keeps raw.
+std::vector<std::string> CoverageNearEdgeWarnings(const CoverageRunRecord &record);
 
 // Ruling 1688 (the stage-0 Missing LENGTH line; a log line only): the uncovered portions
 // split by their feature's key class: first = Missing (and a feature without a key record),

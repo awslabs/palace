@@ -882,6 +882,7 @@ void BaseSolver::SaveMetadata(SurfaceResponseOperator &response) const
   auto statistics = response.ReleaseStatistics();
   const std::string conductor_consistency_banner = ConductorConsistencyBanner(statistics);
   std::string coverage_banner, resolution_banner;
+  std::vector<std::string> near_edge_warnings;
   if (root)
   {
     nlohmann::json meta = LoadMetadata(post_dir);
@@ -932,6 +933,8 @@ void BaseSolver::SaveMetadata(SurfaceResponseOperator &response) const
         solve_levels, response.CoverageMarkNotApplied());
     coverage_block_written = true;
     coverage_banner = CoverageRunBanner(meta["SurfaceResponse"]["Coverage"]);
+    // Ruling 2276 R7 (b): the near-edge warnings of the run's cells (root: the record).
+    near_edge_warnings = CoverageNearEdgeWarnings(response.GetCoverageRunRecord());
     // Lane rescensus-product (decision 1817; ruling 1819): the edge-resolution census of
     // the level (written beside the coverage block; "Final" set with the coverage block's).
     meta["SurfaceResponse"]["Resolution"] =
@@ -1019,6 +1022,10 @@ void BaseSolver::SaveMetadata(SurfaceResponseOperator &response) const
   if (!coverage_banner.empty())
   {
     Mpi::Print("{}", coverage_banner);
+  }
+  for (const auto &line : near_edge_warnings)
+  {
+    Mpi::Warning("{}\n", line);
   }
   if (!resolution_banner.empty())
   {
