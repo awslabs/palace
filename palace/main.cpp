@@ -49,6 +49,7 @@ namespace
 //   8: no transparent huge pages for this process
 //  16: STRUMPACK proportional mapping by factor size
 //  64: instrumentation reduced over batches of 1024 solves instead of 64
+// 128: the instrumentation waits for the receives of the redistribution one by one
 int ordslow_flags = 0, ordslow_mallopt = 0, ordslow_prctl = 0;
 
 void OrdslowLabSetup(int argc, char *argv[])
@@ -84,7 +85,8 @@ void OrdslowLabSetup(int argc, char *argv[])
   ordslow_flags = static_cast<int>(v - 1000);
   if (ordslow_flags & 1)
   {
-    setenv("STRUMPACK_ORDSLOW", "1", 1);
+    // 128: also find the last source of every receiver of the right-hand side rows.
+    setenv("STRUMPACK_ORDSLOW", (ordslow_flags & 128) ? "2" : "1", 1);
   }
   if (ordslow_flags & 64)
   {
@@ -272,7 +274,8 @@ int main(int argc, char *argv[])
   {
     Mpi::Print(world_comm,
                "LAB ordslow: flags {:d} (1 instrumentation, 2 no shared permutation, 4 "
-               "mallopt, 8 no THP, 16 mapping by factor size, 64 large batches); mallopt "
+               "mallopt, 8 no THP, 16 mapping by factor size, 64 large batches, 128 "
+               "receives one by one); mallopt "
                "results {:d} (7 = all three set), prctl result {:d}\n",
                ordslow_flags, ordslow_mallopt, ordslow_prctl);
   }
