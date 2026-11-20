@@ -1161,7 +1161,10 @@ index on an electrostatic run; on an eigenmode or driven run they are the 0-base
 the measurements of the response operator's construction (an eigenmode run measures mode m
 as m - 1; a driven run counts its measurements over excitations and frequencies, from 0 in
 each construction, so again from 0 in a restarted run); a self-consistent record carries the
-index of its raw record. The entry's own closure spread, the run's maximum spread and
+index of its raw record. The record-only impedance-metal rule candidate
+(`ImpedanceMetalRule` `Record`) forms its values of such a target by the same rule but does
+not record them: its warning says so and names as its excitation the driven excitation index
+or the 0-based eigenmode index. The entry's own closure spread, the run's maximum spread and
 `confident`, the model and patch tables and the census stay window-wide: for such an entry
 they describe the patches of the whole window, not those of the box.
 

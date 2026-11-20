@@ -40934,7 +40934,8 @@ void SurfaceResponseOperator::RecordRegionResponse(
     if (!region_warning_printed)
     {
       const std::string warning = RegionTargetWarning(
-          target, response, excitation, evaluation, fespace.GetParMesh().Dimension() == 2);
+          target, response, excitation, evaluation, fespace.GetParMesh().Dimension() == 2,
+          !impedance_rule_candidate);
       if (!warning.empty())
       {
         region_warning_printed = true;
@@ -40947,8 +40948,13 @@ void SurfaceResponseOperator::RecordRegionResponse(
 
 std::string SurfaceResponseOperator::RegionTargetWarning(
     int target, const RegionTargetResponse &response, int excitation,
-    const std::string &evaluation, bool two_dimensional)
+    const std::string &evaluation, bool two_dimensional, bool recorded)
 {
+  // Decision 2257 MINOR-4: where the values are (the record-only impedance-metal rule
+  // candidate does not record its Region leaf).
+  const char *values = recorded ? "every value in Diagnostics.RegionTargets"
+                                : "the impedance-metal rule candidate's values are not "
+                                  "recorded";
   // Decision 2257 E-3: the share of the box's fabricated energy that the reference point
   // assigned, named whenever it is above zero.
   const std::string reference =
@@ -40967,26 +40973,23 @@ std::string SurfaceResponseOperator::RegionTargetWarning(
         "REGION TARGET {:d} ON A TWO-DIMENSIONAL MESH: no patch claims exist on a "
         "two-dimensional mesh, so every patch counts whole where its reference point (its "
         "origin) lies; a wall within the matching distance R of an edge splits the raw "
-        "terms but not the patches (excitation {:d}, {} evaluation; every value in "
-        "Diagnostics.RegionTargets).{} The run is not refused. Printed once per "
-        "construction.\n",
-        target, excitation, evaluation, reference);
+        "terms but not the patches (excitation {:d}, {} evaluation; {}).{} The run is not "
+        "refused. Printed once per construction.\n",
+        target, excitation, evaluation, values, reference);
   }
   if (response.patches_cut <= 0)
   {
     return reference.empty()
                ? std::string()
                : fmt::format("REGION TARGET {:d}: its region wall cuts no patch "
-                             "(excitation {:d}, {} evaluation; every value in "
-                             "Diagnostics.RegionTargets).{} Printed once per "
-                             "construction.\n",
-                             target, excitation, evaluation, reference);
+                             "(excitation {:d}, {} evaluation; {}).{} Printed once "
+                             "per construction.\n",
+                             target, excitation, evaluation, values, reference);
   }
   return fmt::format(
       "REGION TARGET {:d}: its region wall cuts {:d} patch(es) carrying {:.3e} of the "
-      "box's fabricated energy (fixed trace; excitation {:d}, {} evaluation; every "
-      "value in "
-      "Diagnostics.RegionTargets). A cut patch's fabricated energy is split by the "
+      "box's fabricated energy (fixed trace; excitation {:d}, {} evaluation; {}). A "
+      "cut patch's fabricated energy is split by the "
       "share "
       "of its own within-R raw energy inside the region (the same 0 / 1 test at the "
       "same face quadrature points as the raw energies; tiers by energy, area, "
@@ -40995,7 +40998,7 @@ std::string SurfaceResponseOperator::RegionTargetWarning(
       "thin-sheet raw field, not a model of how the true energy is distributed with "
       "distance: such a box value is an apportionment, and a large share is its "
       "sign.{} Printed once per construction.\n",
-      target, response.patches_cut, response.cut_share, excitation, evaluation,
+      target, response.patches_cut, response.cut_share, excitation, evaluation, values,
       response.patches_by_tier[0], response.patches_by_tier[1], response.patches_by_tier[2],
       response.patches_by_tier[3], reference);
 }

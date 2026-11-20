@@ -2319,9 +2319,11 @@ public:
   // whole where its reference point lies; decision 2257 MAJOR-2), or when its wall cuts
   // patches, or when the reference point assigned a share of the box's fabricated energy
   // (named whenever above zero; decision 2257 E-3).
+  // `recorded` false (the record-only impedance-metal rule candidate, whose Region leaf is
+  // not written; decision 2257 MINOR-4): the text says that its values are not recorded.
   static std::string RegionTargetWarning(int target, const RegionTargetResponse &response,
                                          int excitation, const std::string &evaluation,
-                                         bool two_dimensional);
+                                         bool two_dimensional, bool recorded = true);
   // Ruling 2251 (PatchEnergy only): one evaluation's rows of
   // surface-response-region-share.csv (root; created with its header by the construction's
   // first call): per target with a Region, every placed patch with a footprint on it or its

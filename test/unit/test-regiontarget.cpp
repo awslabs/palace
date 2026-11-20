@@ -902,6 +902,16 @@ TEST_CASE("Region target warning text", "[regiontarget][surfaceresponseoperator]
   response.reference_point_share = 0.0;
   CHECK_THAT(SurfaceResponseOperator::RegionTargetWarning(4, response, 1, "Raw", false),
              !ContainsSubstring("assigned by the reference point"));
+  // Decision 2257 MINOR-4: the record-only impedance-metal rule candidate's warning says
+  // that its values are not recorded (it writes no Region leaf).
+  const std::string candidate =
+      SurfaceResponseOperator::RegionTargetWarning(4, response, 1, "Raw", false, false);
+  CHECK_THAT(
+      candidate,
+      ContainsSubstring("the impedance-metal rule candidate's values are not recorded"));
+  CHECK_THAT(candidate, !ContainsSubstring("Diagnostics.RegionTargets"));
+  CHECK_THAT(SurfaceResponseOperator::RegionTargetWarning(4, response, 1, "Raw", false),
+             ContainsSubstring("every value in Diagnostics.RegionTargets"));
 }
 
 // Decision 2257 MAJOR-2 (the run): the 2D automatic problem (MakeAutomatic2DMesh: the metal
