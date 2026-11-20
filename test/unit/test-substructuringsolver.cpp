@@ -1785,9 +1785,10 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   }
   Mpi::Barrier(Mpi::World());
   IoData online = make_config("Online", 0.0);
-  substructuring::UseModelLength(online, Mpi::World());
-  double Lc[2] = {online.model.Lc, -online.model.Lc};
+  const double L = substructuring::InterfaceRecords::ReadLength(model_path, Mpi::World());
+  double Lc[2] = {L, -L};
   Mpi::GlobalMin(2, Lc, Mpi::World());
+  CHECK(L == 2.0);
   CHECK(Lc[0] == -Lc[1]);
   std::vector<std::unique_ptr<Mesh>> mesh;
   mesh.push_back(std::make_unique<Mesh>(MakeSplitCube(4)));

@@ -294,7 +294,6 @@ SubstructuringSolver::Impl::ReadSavedHead(const std::string &path, MPI_Comm comm
     return h;
   }
   h.sig = std::move(iface.signatures);
-  h.length = iface.length;
   h.width = w;
   h.S_pos = S->pos;
   h.environment = *environment;

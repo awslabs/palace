@@ -6,7 +6,6 @@
 #include <mfem.hpp>
 #include "fem/errorindicator.hpp"
 #include "fem/mesh.hpp"
-#include "fem/substructuremodel.hpp"
 #include "linalg/errorestimator.hpp"
 #include "linalg/ksp.hpp"
 #include "linalg/operator.hpp"
@@ -20,13 +19,6 @@
 
 namespace palace
 {
-
-void ElectrostaticSolver::Preprocess(IoData &iodata, std::unique_ptr<mfem::Mesh> &smesh,
-                                     MPI_Comm comm) const
-{
-  substructuring::UseModelLength(iodata, comm);
-  BaseSolver::Preprocess(iodata, smesh, comm);
-}
 
 std::pair<ErrorIndicator, long long int> ElectrostaticSolver::SolveSubstructured(
     const std::vector<std::unique_ptr<Mesh>> &mesh) const
