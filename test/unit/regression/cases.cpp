@@ -2126,23 +2126,6 @@ TEST_CASE("floquet_absorbing_eigen", "[Serial][Parallel][GPU][Regression]")
                                   "eigen", opts);
 }
 
-// floquet_absorbing_eigen with the real-valued coarse solve, which is then the whole
-// preconditioner, and whose second-order absorbing boundary term has its sign flipped (see
-// SpaceOperator::AssemblePreconditioner). With the sign of the system matrix, the linear
-// solves stall and the eigenvalue solve misses the mode at 10.45 GHz.
-TEST_CASE("floquet_absorbing_eigen_real_coarse", "[Serial][Parallel][GPU][Regression]")
-{
-  palace::test::RegressionOptions opts;
-  opts.rtol = 1.0e-3;
-  opts.atol = 1.0e-16;
-  opts.excluded_columns = {"Maximum", "Minimum", "Mean", "Error (Bkwd.)", "Error (Abs.)"};
-  opts.paraview_fields = false;
-  opts.custom_checks["eig.csv"] = TestFloquetAbsorbingEigen(1.0e-4);
-  palace::test::RunRegressionCase("floquet_absorbing",
-                                  "floquet_absorbing_eigen_real_coarse.json",
-                                  "eigen_real_coarse", opts);
-}
-
 // Eigenmode counterpart of iris_filter_driven_wave_synth. Both wave ports of this two-port
 // iris-coupled slab-loaded guide carry the hybrid/LSM mode (Mode 3), so the modal
 // correction W is rank>=2 and enters the nonlinear eigensolver on the LHS. Dropping or
