@@ -249,6 +249,12 @@ Vector ComputeErrorEstimates(const VecType &F, VecType &F_gf, VecType &G, VecTyp
   {
     return estimates;
   }
+
+  // libCEED adds into the estimates in the memory space of its backend, which is the host
+  // also when MFEM uses a device but libCEED a CPU backend (as for the debug device), so
+  // the copy there must be the valid one.
+  const CeedMemType mem = ceed::GetUsableMemType(ceed::internal::GetCeedObjects()[0]);
+  auto *estimates_data = estimates.ReadWrite(mem == CEED_MEM_DEVICE);
   PalacePragmaOmp(parallel if (ceed::internal::NumCeeds() > 1))
   {
     Ceed ceed = ceed::internal::GetCeedObjects()[utils::GetThreadNum()];
@@ -286,7 +292,9 @@ Vector ComputeErrorEstimates(const VecType &F, VecType &F_gf, VecType &G, VecTyp
 
     // Each thread writes to non-overlapping entries of the estimates vector.
     CeedVector estimates_vec;
-    ceed::InitCeedVector(estimates, ceed, &estimates_vec);
+    PalaceCeedCall(ceed, CeedVectorCreate(ceed, estimates.Size(), &estimates_vec));
+    PalaceCeedCall(
+        ceed, CeedVectorSetArray(estimates_vec, mem, CEED_USE_POINTER, estimates_data));
 
     // Do the integration (both input vectors are passive). For the complex case, add sum of
     // squares of real and imaginary parts to the estimates before square root.

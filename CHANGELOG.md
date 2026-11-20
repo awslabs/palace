@@ -321,6 +321,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     tens of seconds on many nodes). MPI initialization, which includes waiting for all
     processes to start, has its own row, `MPI Startup`.
     [PR 1242](https://github.com/awslabs/palace/pull/1242).
+  - Fixed the error estimates being all zero when MFEM uses a device but libCEED a CPU
+    backend, as with `"Device": "Debug"` or a GPU run with a CPU `"Backend"`, which kept
+    adaptive mesh refinement from refining. Default GPU runs were not affected.
+    [PR 1241](https://github.com/awslabs/palace/pull/1241).
   - Fixed the pivoting of distributed BLR fronts in STRUMPACK with a patch from upstream.
     With BLR compression (`"STRUMPACKCompressionType"` `"BLR"`, `"BLR-HODLR"` or
     `"ZFP-BLR-HODLR"`) on two or more MPI processes, the factorization of an indefinite
@@ -403,6 +407,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     meshes written with `"SaveAdaptMesh"`, and the round-off of the results computed on
     them no longer depend on the timing of MPI messages.
     [PR 1129](https://github.com/awslabs/palace/pull/1129).
+  - Added an MFEM patch for [mfem/mfem#5686](https://github.com/mfem/mfem/pull/5686), which
+    fixes nondeterministic, non-converging multigrid solves of multi-GPU runs with GPU-aware
+    MPI ([#1061](https://github.com/awslabs/palace/issues/1061)).
+    [PR 1226](https://github.com/awslabs/palace/pull/1226).
   - Fixed a segmentation fault reading 2D meshes with boundary elements which are not an
     edge of any element, for example a conductor face tagged on an outer boundary of the
     mesh, which the conductor (a hole in the mesh) covers. These boundary elements, which
@@ -477,6 +485,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     shared by all excitations and stay in `gridfunction/driven/`. The output of driven
     simulations with a single excitation is unchanged.
     [PR 1220](https://github.com/awslabs/palace/pull/1220).
+  - Fixed SLEPc eigenvalue solves on more than one process that occasionally hung, failed
+    (for example with "The inner product is not well defined"), or returned wrong modes
+    when the LAPACK library did not return identical results on all processes, such as MKL
+    on some Intel processors. All processes now use the first process's solution of the
+    small dense problems of SLEPc's solvers.
+    [PR 1251](https://github.com/awslabs/palace/pull/1251).
 
 #### Documentation
 
@@ -537,6 +551,19 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - The superbuild builds fmt 12.1.0 instead of 12.2.0, which does not compile with nvcc,
     and builds Umpire with it instead of letting Umpire install its own copy of fmt over it.
     [PR 1228](https://github.com/awslabs/palace/pull/1228).
+  - Removed the `PALACE_WITH_GPU_AWARE_MPI` option: *Palace* now asks MPI at runtime whether
+    it is GPU aware.
+    [PR 1226](https://github.com/awslabs/palace/pull/1226).
+  - With cuDSS, the superbuild now patches MFEM with
+    [mfem/mfem#5758](https://github.com/mfem/mfem/pull/5758), as the Spack build does. With
+    cuDSS 0.8, the parallel cuDSS solver of MFEM 4.10 did not set the communicator for
+    device buffers, and `"Type": "cuDSS"` in `config["Solver"]["Linear"]` crashed in the
+    first factorization. [PR 1250](https://github.com/awslabs/palace/pull/1250).
+  - The unit tests now pass with MFEM's debug device, and the long tests run them on it, on
+    1 and 2 processes, to catch host accesses to data whose valid copy is on the device. The installed test tree now also discovers each case on the number of
+    processes it runs on, which adds the `[Parallel]`-only regression cases to the Spack
+    test jobs.
+    [PR 1241](https://github.com/awslabs/palace/pull/1241).
 
 ## [0.19.0] - 2026-11-02
 
