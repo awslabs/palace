@@ -397,6 +397,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     meshes written with `"SaveAdaptMesh"`, and the round-off of the results computed on
     them no longer depend on the timing of MPI messages.
     [PR 1129](https://github.com/awslabs/palace/pull/1129).
+  - Added an MFEM patch for [mfem/mfem#5686](https://github.com/mfem/mfem/pull/5686), which
+    fixes nondeterministic, non-converging multigrid solves of multi-GPU runs with GPU-aware
+    MPI ([#1061](https://github.com/awslabs/palace/issues/1061)).
+    [PR 1226](https://github.com/awslabs/palace/pull/1226).
   - Fixed a segmentation fault reading 2D meshes with boundary elements which are not an
     edge of any element, for example a conductor face tagged on an outer boundary of the
     mesh, which the conductor (a hole in the mesh) covers. These boundary elements, which
@@ -531,6 +535,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - The superbuild builds fmt 12.1.0 instead of 12.2.0, which does not compile with nvcc,
     and builds Umpire with it instead of letting Umpire install its own copy of fmt over it.
     [PR 1228](https://github.com/awslabs/palace/pull/1228).
+  - Removed the `PALACE_WITH_GPU_AWARE_MPI` option: *Palace* now asks MPI at runtime whether
+    it is GPU aware.
+    [PR 1226](https://github.com/awslabs/palace/pull/1226).
 
 ## [0.19.0] - 2026-11-02
 
