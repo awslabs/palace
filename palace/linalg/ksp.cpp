@@ -346,6 +346,14 @@ ConfigurePreconditionerSolver(const config::LinearSolverData &linear,
 
 }  // namespace
 
+bool UseRealCoarseApproximation(const config::LinearSolverData &linear)
+{
+  // ConfigurePreconditionerSolver builds Jacobi, which applies the complex-valued diagonal,
+  // a ComplexCoarseSolver, or an MfemWrapperSolver, which is given the complex-valued
+  // matrix with ComplexCoarseSolve and Br + Bi otherwise (see MakeWrapperSolver).
+  return !linear.complex_coarse_solve && linear.type != LinearSolver::JACOBI;
+}
+
 MatrixSymmetry GetPreconditionerMatrixSymmetry(const IoData &iodata)
 {
   // Mirrors the prior derivation that used to be stored on LinearSolverData::pc_mat_sym.

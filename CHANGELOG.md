@@ -311,6 +311,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Bug Fixes
 
+  - Fixed slow and failing linear solves with the second-order absorbing boundary condition
+    (`"Absorbing"` with `"Order": 2`) without `"ComplexCoarseSolve"`: the sign of its term
+    is now flipped in the real-valued coarse solve, as it already was for AMS and BoomerAMG,
+    which now flip it only there. [PR 1252](https://github.com/awslabs/palace/pull/1252).
   - Fixed boundary terms that could take the anisotropic material tensor of another
     boundary. The scalar coefficient of an `"Impedance"`, `"Conductivity"` or
     `"RationalImpedance"` boundary or a lumped port could be replaced by the tensor of an

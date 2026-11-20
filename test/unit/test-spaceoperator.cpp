@@ -459,10 +459,11 @@ TEST_CASE("Driven system operator from the preconditioner",
 
   // The system operator from the preconditioner and its transpose must match the ones
   // assembled from K, C, M and GetExtraSystemOperator, as the driven solvers do otherwise.
-  auto CheckSystemOperator = [&](const config::BoundaryData &test_boundaries)
+  auto CheckSystemOperator = [&](const config::BoundaryData &test_boundaries,
+                                 const config::SolverData *test_solver = nullptr)
   {
-    SpaceOperator space_op(solver, domains, test_boundaries, ProblemType::DRIVEN, units,
-                           mesh);
+    SpaceOperator space_op(test_solver ? *test_solver : solver, domains, test_boundaries,
+                           ProblemType::DRIVEN, units, mesh);
     auto K = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
     auto C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
     auto M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
@@ -553,11 +554,11 @@ TEST_CASE("Driven system operator from the preconditioner",
 
   SECTION("AMS")
   {
-    // AMS and BoomerAMG flip the sign of the second-order absorbing boundary term in the
-    // preconditioner.
+    // AMS and BoomerAMG flip the sign of the second-order absorbing boundary term on the
+    // coarse level only, so the finest level is the system matrix.
     auto ams_solver = solver;
     ams_solver.linear.type = LinearSolver::AMS;
-    CheckNoSystemOperator(ams_solver, farfield_boundaries);
+    CheckSystemOperator(farfield_boundaries, &ams_solver);
   }
 
   SECTION("Single multigrid level")
@@ -579,6 +580,155 @@ TEST_CASE("Driven system operator from the preconditioner",
     floquet_boundaries.farfield.order = 2;
     floquet_boundaries.farfield.attributes = {6};
     CheckSystemOperator(floquet_boundaries);
+  }
+}
+
+// The coarse-level solver of the complex-valued preconditioner is applied to the
+// real-valued Br + Bi, unless ComplexCoarseSolve is set or it is Jacobi (see
+// UseRealCoarseApproximation). There, and only on the coarse level, the second-order
+// absorbing boundary term has its sign flipped, so that it does not cancel the boundary
+// curl-curl part of Br (see SpaceOperator::AssemblePreconditioner). The term is imaginary
+// at a real ω, as in the driven solvers, and has both parts at a complex ω, as in the
+// nonlinear eigenvalue solver: both parts of the flipped coarse level are the reflection of
+// the exact ones about those of the first-order boundary, and the finest level is the exact
+// operator.
+TEST_CASE("Second-order absorbing boundary term of the coarse preconditioner",
+          "[spaceoperator][Serial][Parallel]")
+{
+  using namespace std::complex_literals;
+
+  const auto comm = Mpi::World();
+  auto serial_mesh = mfem::Mesh::MakeCartesian3D(2, 2, 2, mfem::Element::TETRAHEDRON);
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  mesh.push_back(std::make_unique<Mesh>(comm, serial_mesh));
+
+  IntegrationSettingsGuard settings_guard;
+  config::SolverData solver;
+  solver.order = 2;
+  solver.pa_order_threshold = 2;
+  solver.linear.mg_max_levels = 2;
+  solver.linear.mg_coarsening = MultigridCoarsening::LINEAR;
+  // Solver.Linear.PCMatShifted defaults to -1 (resolved in IoData), which would shift the
+  // mass term of every level.
+  solver.linear.pc_mat_shifted = 0;
+  BilinearForm::pa_order_threshold = solver.pa_order_threshold;
+  fem::DefaultIntegrationOrder::p_trial = solver.order;
+  fem::DefaultIntegrationOrder::q_order_jac = solver.q_order_jac;
+  fem::DefaultIntegrationOrder::q_order_extra_pk = solver.q_order_extra;
+  fem::DefaultIntegrationOrder::q_order_extra_qk = solver.q_order_extra;
+
+  config::MaterialData material;
+  material.attributes = {1};
+  material.mu_r.s = {1.0, 2.0, 3.0};
+  material.epsilon_r.s = {2.0, 4.0, 5.0};
+  config::DomainData domains;
+  domains.attributes = {1};
+  domains.materials = {material};
+  config::BoundaryData boundaries;
+  boundaries.pec.attributes = {1, 2, 3};
+  boundaries.farfield.attributes = {4, 5, 6};
+  Units units(1.0, 1.0);
+
+  // Real and imaginary parts of level l of the preconditioner at ω applied to x, for the
+  // given coarse-level solver and order of the absorbing boundary. A real ω takes the
+  // real-ω overload of the driven solvers, a complex ω the one of the nonlinear eigenvalue
+  // solver.
+  Vector x;
+  auto ApplyLevel = [&](std::complex<double> omega, LinearSolver type,
+                        bool complex_coarse_solve, int farfield_order, std::size_t l,
+                        Vector &yr, Vector &yi)
+  {
+    auto test_solver = solver;
+    test_solver.linear.type = type;
+    test_solver.linear.complex_coarse_solve = complex_coarse_solve;
+    auto test_boundaries = boundaries;
+    test_boundaries.farfield.order = farfield_order;
+    SpaceOperator space_op(test_solver, domains, test_boundaries, ProblemType::DRIVEN,
+                           units, mesh);
+    auto P = (omega.imag() == 0.0)
+                 ? space_op.GetPreconditionerMatrix<ComplexOperator>(
+                       1.0 + 0.0i, 1i * omega, -omega * omega, omega.real())
+                 : space_op.GetPreconditionerMatrix<ComplexOperator>(1.0 + 0.0i, 1i * omega,
+                                                                     -omega * omega, omega);
+    const auto *mg = dynamic_cast<const ComplexMultigridOperator *>(P.get());
+    REQUIRE(mg);
+    REQUIRE(mg->GetNumLevels() == 2);
+    const auto &B = mg->GetOperatorAtLevel(l);
+    if (x.Size() != B.Width())
+    {
+      x.SetSize(B.Width());
+      x.UseDevice(true);
+      linalg::SetRandom(comm, x);
+    }
+    ComplexVector xc(x.Size()), y(B.Height());
+    xc.UseDevice(true);
+    y.UseDevice(true);
+    xc.Real() = x;
+    xc.Imag() = 0.0;
+    B.Mult(xc, y);
+    yr = y.Real();
+    yi = y.Imag();
+  };
+  auto Norm = [&](const Vector &v) { return linalg::Norml2(comm, v); };
+  auto Diff = [&](const Vector &a, const Vector &b)
+  {
+    Vector d(a);
+    d -= b;
+    return Norm(d);
+  };
+  // With the flip, y - y_first = -(y_exact - y_first).
+  auto Reflected = [&](const Vector &y, const Vector &y_exact, const Vector &y_first)
+  {
+    Vector y_mean(y);
+    y_mean += y_exact;
+    y_mean *= 0.5;
+    return Diff(y_mean, y_first) <= 1.0e-12 * Norm(y_first);
+  };
+
+  for (std::complex<double> omega : {2.0 + 0.0i, 2.0 + 0.3i})
+  {
+    CAPTURE(omega.real(), omega.imag());
+    for (std::size_t l : {std::size_t(0), std::size_t(1)})
+    {
+      CAPTURE(l);
+      x.SetSize(0);
+      Vector yr_exact, yi_exact, yr_first, yi_first;
+      ApplyLevel(omega, LinearSolver::MUMPS, true, 2, l, yr_exact, yi_exact);
+      ApplyLevel(omega, LinearSolver::MUMPS, true, 1, l, yr_first, yi_first);
+      REQUIRE(Diff(yi_exact, yi_first) > 1.0e-3 * Norm(yi_exact));
+      if (omega.imag() != 0.0)
+      {
+        REQUIRE(Diff(yr_exact, yr_first) > 1.0e-3 * Norm(yr_exact));
+      }
+      for (auto [type, complex_coarse_solve] :
+           {std::pair{LinearSolver::JACOBI, false}, std::pair{LinearSolver::MUMPS, false},
+            std::pair{LinearSolver::SUPERLU, false},
+            std::pair{LinearSolver::STRUMPACK, false},
+            std::pair{LinearSolver::STRUMPACK_MP, false},
+            std::pair{LinearSolver::CUDSS, false}, std::pair{LinearSolver::AMS, false},
+            std::pair{LinearSolver::BOOMER_AMG, false},
+            std::pair{LinearSolver::SUPERLU, true},
+            std::pair{LinearSolver::STRUMPACK, true},
+            std::pair{LinearSolver::STRUMPACK_MP, true},
+            std::pair{LinearSolver::CUDSS, true}})
+      {
+        CAPTURE(static_cast<int>(type), complex_coarse_solve);
+        Vector yr, yi;
+        ApplyLevel(omega, type, complex_coarse_solve, 2, l, yr, yi);
+        const bool flipped =
+            (l == 0 && type != LinearSolver::JACOBI && !complex_coarse_solve);
+        if (flipped)
+        {
+          CHECK(Reflected(yr, yr_exact, yr_first));
+          CHECK(Reflected(yi, yi_exact, yi_first));
+        }
+        else
+        {
+          CHECK(Diff(yr, yr_exact) <= 1.0e-12 * Norm(yr_exact));
+          CHECK(Diff(yi, yi_exact) <= 1.0e-12 * Norm(yi_exact));
+        }
+      }
+    }
   }
 }
 
