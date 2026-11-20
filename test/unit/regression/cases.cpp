@@ -1828,6 +1828,23 @@ TEST_CASE("circular_hole_london_nc_amr_rebalance", "[Serial][Parallel][Regressio
                                   opts);
 }
 
+// London flux film under two conformal AMR steps, each followed by a forced rebalance. The
+// mesh is marked again after each refinement, so its marks depend neither on whether a step
+// rebalanced nor on the number of processes: one reference serves any number of processes.
+// Omits [GPU]: adaptive cases skip GPU CI.
+TEST_CASE("circular_hole_london_conformal_amr_rebalance", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = force_default_solver;
+  palace::test::RunRegressionCase("circular_hole_london",
+                                  "circular_hole_conformal_amr_rebalance.json",
+                                  "conformal_amr_rebalance", opts);
+}
+
 // Mixed current-flux excitation. The current-flux mutual M[1][2] is measured from a surface
 // flux integral over the current port's aperture (not energy-recoverable); that quadrature
 // is reduced over partitioner-split faces, so M[1][2] shifts ~1e-4 across partitions and
