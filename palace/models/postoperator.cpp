@@ -1470,13 +1470,13 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step,
 
   const int local_rank = mesh.GetMyRank();
 
+  std::string error;
   auto write_grid_function = [&](const auto &gridfunc, const std::string &name)
   {
     auto path =
         output_dir / fmt::format("{}_{:0{}d}.gf.{:0{}d}", name, step, pad_digits_default,
                                  local_rank, pad_digits_default);
-    std::ofstream file(path);
-    gridfunc.Save(file);
+    WriteRankOutputFile(path, [&](std::ostream &os) { gridfunc.Save(os); }, error);
   };
 
   // Write grid functions using MFEM's built-in Save method.
@@ -1622,7 +1622,7 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step,
   {
     units.NondimensionalizeInPlace<Units::ValueType::FIELD_B>(*Bt_inplane);
   }
-  Mpi::Barrier(fem_op->GetComm());
+  AbortOnOutputFileErrors(fem_op->GetComm(), error);
 }
 
 template <ProblemType solver_t>
@@ -1649,12 +1649,12 @@ void PostOperator<solver_t>::WriteMFEMGridFunctionsFinal(const ErrorIndicator *i
 
   const int local_rank = mesh.GetMyRank();
 
+  std::string error;
   auto write_grid_function = [&](const auto &gridfunc, const std::string &name)
   {
     auto path = fs::path(gridfunction_output_dir) /
                 fmt::format("{}.gf.{:0{}d}", name, local_rank, pad_digits_default);
-    std::ofstream file(path);
-    gridfunc.Save(file);
+    WriteRankOutputFile(path, [&](std::ostream &os) { gridfunc.Save(os); }, error);
   };
 
   // Write mesh partitioning (rank information).
@@ -1674,12 +1674,20 @@ void PostOperator<solver_t>::WriteMFEMGridFunctionsFinal(const ErrorIndicator *i
     write_grid_function(eta, "indicator");
   }
 
-  // Save ParMesh files; necessary to visualize grid functions.
-  fs::path mesh_filename = fs::path(gridfunction_output_dir) / "mesh";
-  mesh.Save(mesh_filename);
+  // Save ParMesh files; necessary to visualize grid functions. Written as
+  // mfem::ParMesh::Save writes them, which does not check the write.
+  WriteRankOutputFile(
+      fs::path(gridfunction_output_dir) /
+          fmt::format("mesh.{:0{}d}", local_rank, pad_digits_default),
+      [&](std::ostream &os)
+      {
+        os.precision(16);
+        mesh.Print(os);
+      },
+      error);
 
   mesh::NondimensionalizeMesh(mesh, mesh_Lc0);
-  Mpi::Barrier(fem_op->GetComm());
+  AbortOnOutputFileErrors(fem_op->GetComm(), error);
 }
 
 // Measurements.
