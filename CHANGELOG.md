@@ -158,6 +158,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     with BoomerAMG did not converge), `"ComplexCoarseSolve": true` is now disabled with a
     warning. Wave ports keep it for their mode solver, which uses a sparse direct solver.
     SchemaVer 4-4-0 [PR 1193](https://github.com/awslabs/palace/pull/1193).
+  - The linear solves of driven simulations without adaptive frequency sweep now start from
+    the minimal-residual combination of the solutions at up to four previous frequencies,
+    and GMRES and FGMRES scale nonzero initial guesses to minimize the initial residual
+    (except when certifying the PROM solution of an adaptive frequency sweep). This reduces
+    the iterations of frequency sweeps. SchemaVer 5-0-1.
+    [PR 1229](https://github.com/awslabs/palace/pull/1229).
   - Each excitation of a uniform driven sweep now starts its first linear solve from zero
     instead of from the last solution of the previous excitation, which saves a few
     iterations for every excitation after the first.
@@ -309,6 +315,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     (`"Absorbing"` with `"Order": 2`) without `"ComplexCoarseSolve"`: the sign of its term
     is now flipped in the real-valued coarse solve, as it already was for AMS and BoomerAMG,
     which now flip it only there. [PR 1252](https://github.com/awslabs/palace/pull/1252).
+  - Fixed boundary terms that could take the anisotropic material tensor of another
+    boundary. The scalar coefficient of an `"Impedance"`, `"Conductivity"` or
+    `"RationalImpedance"` boundary or a lumped port could be replaced by the tensor of an
+    `"Absorbing"` boundary, wave port or Floquet port on an anisotropic material when the
+    first diagonal entry of the tensor was equal to the scalar to a relative 1e-9. In one
+    `"BoundaryMode"` example this changed the propagation constant by 6%.
+    [PR 1209](https://github.com/awslabs/palace/pull/1209).
   - The `"Problem"`/`"Iteration"` field of `palace.json` is now updated only after the AMR
     iteration's output is in its final location. With `SaveAdaptIterations`, it used to be
     written before the output was moved into `iterationXX`, so a reader polling it could
@@ -319,6 +332,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     tens of seconds on many nodes). MPI initialization, which includes waiting for all
     processes to start, has its own row, `MPI Startup`.
     [PR 1242](https://github.com/awslabs/palace/pull/1242).
+  - Fixed the error estimates being all zero when MFEM uses a device but libCEED a CPU
+    backend, as with `"Device": "Debug"` or a GPU run with a CPU `"Backend"`, which kept
+    adaptive mesh refinement from refining. Default GPU runs were not affected.
+    [PR 1241](https://github.com/awslabs/palace/pull/1241).
   - Fixed the pivoting of distributed BLR fronts in STRUMPACK with a patch from upstream.
     With BLR compression (`"STRUMPACKCompressionType"` `"BLR"`, `"BLR-HODLR"` or
     `"ZFP-BLR-HODLR"`) on two or more MPI processes, the factorization of an indefinite
@@ -401,6 +418,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     meshes written with `"SaveAdaptMesh"`, and the round-off of the results computed on
     them no longer depend on the timing of MPI messages.
     [PR 1129](https://github.com/awslabs/palace/pull/1129).
+  - Added an MFEM patch for [mfem/mfem#5686](https://github.com/mfem/mfem/pull/5686), which
+    fixes nondeterministic, non-converging multigrid solves of multi-GPU runs with GPU-aware
+    MPI ([#1061](https://github.com/awslabs/palace/issues/1061)).
+    [PR 1226](https://github.com/awslabs/palace/pull/1226).
   - Fixed a segmentation fault reading 2D meshes with boundary elements which are not an
     edge of any element, for example a conductor face tagged on an outer boundary of the
     mesh, which the conductor (a hole in the mesh) covers. These boundary elements, which
@@ -475,6 +496,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     shared by all excitations and stay in `gridfunction/driven/`. The output of driven
     simulations with a single excitation is unchanged.
     [PR 1220](https://github.com/awslabs/palace/pull/1220).
+  - Fixed SLEPc eigenvalue solves on more than one process that occasionally hung, failed
+    (for example with "The inner product is not well defined"), or returned wrong modes
+    when the LAPACK library did not return identical results on all processes, such as MKL
+    on some Intel processors. All processes now use the first process's solution of the
+    small dense problems of SLEPc's solvers.
+    [PR 1251](https://github.com/awslabs/palace/pull/1251).
 
 #### Documentation
 
@@ -488,6 +515,15 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Build system
 
+  - Fixed the unit-test build against Catch2 3.15.2 and later, which failed intermittently
+    after linking: `catch_discover_tests` lists the tests through a file that every MPI
+    process wrote at once. Only the root process writes it now.
+    [PR 1248](https://github.com/awslabs/palace/pull/1248).
+  - Fixed MPI runs of several unit tests at once (`mpirun -np 2 palace-unit-tests`) with
+    Catch2 3.9.0 and later, which run the tests in random order by default: the processes
+    used different seeds, ran the tests in different orders, and their collectives did not
+    match. All processes now use the seed of the root.
+    [PR 1248](https://github.com/awslabs/palace/pull/1248).
   - With MPICH and the MPI implementations derived from it, the superbuild patches the BLACS
     of ScaLAPACK to receive point-to-point messages with derived datatypes packed and unpack
     them locally. This works around an MPICH bug for processes on the same node
@@ -526,6 +562,19 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - The superbuild builds fmt 12.1.0 instead of 12.2.0, which does not compile with nvcc,
     and builds Umpire with it instead of letting Umpire install its own copy of fmt over it.
     [PR 1228](https://github.com/awslabs/palace/pull/1228).
+  - Removed the `PALACE_WITH_GPU_AWARE_MPI` option: *Palace* now asks MPI at runtime whether
+    it is GPU aware.
+    [PR 1226](https://github.com/awslabs/palace/pull/1226).
+  - With cuDSS, the superbuild now patches MFEM with
+    [mfem/mfem#5758](https://github.com/mfem/mfem/pull/5758), as the Spack build does. With
+    cuDSS 0.8, the parallel cuDSS solver of MFEM 4.10 did not set the communicator for
+    device buffers, and `"Type": "cuDSS"` in `config["Solver"]["Linear"]` crashed in the
+    first factorization. [PR 1250](https://github.com/awslabs/palace/pull/1250).
+  - The unit tests now pass with MFEM's debug device, and the long tests run them on it, on
+    1 and 2 processes, to catch host accesses to data whose valid copy is on the device. The installed test tree now also discovers each case on the number of
+    processes it runs on, which adds the `[Parallel]`-only regression cases to the Spack
+    test jobs.
+    [PR 1241](https://github.com/awslabs/palace/pull/1241).
 
 ## [0.19.0] - 2026-11-02
 

@@ -3,6 +3,7 @@
 
 #include "drivensolver.hpp"
 
+#include <algorithm>
 #include <complex>
 #include <cstddef>
 #include <iostream>
@@ -15,6 +16,7 @@
 #include "fem/mesh.hpp"
 #include "linalg/errorestimator.hpp"
 #include "linalg/floquetcorrection.hpp"
+#include "linalg/initialguess.hpp"
 #include "linalg/ksp.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
@@ -128,6 +130,24 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
       ((iodata.solver.driven.restart - 1) / omega_sample.size()) + 1;
   const std::size_t freq_restart_idx =
       (iodata.solver.driven.restart - 1) % omega_sample.size();
+
+  // With an initial guess, each solve of an excitation after the first starts from the
+  // combination of its solutions at up to num_guess previous frequencies which minimizes
+  // ||RHS - A E|| (for the second, the previous solution), which the iterative solver then
+  // scales in the norm of its stopping test. Errors of the previous solutions which a
+  // left-preconditioned stopping test does not see are carried over, amplified by up to
+  // Σⱼ |cⱼ|; in tests, the outputs stayed at the level of the linear solver tolerance.
+  // The images A E_prev only exist during the least squares solve. E_prev keeps fewer
+  // solutions than the solves of an excitation in this run, and none if it could keep only
+  // one.
+  constexpr std::size_t num_guess = 4;
+  const std::size_t max_solves = (excitation_restart_counter == port_excitations.Size())
+                                     ? omega_sample.size() - freq_restart_idx
+                                     : omega_sample.size();
+  const std::size_t capacity = std::min(num_guess, max_solves - 1);
+  linalg::SolutionHistory<ComplexOperator> E_prev(
+      (iodata.solver.linear.initial_guess && capacity > 1) ? capacity : 0, E.Size());
+
   for (const auto &[excitation_idx, excitation_spec] : port_excitations)
   {
     if (++excitation_counter < excitation_restart_counter)
@@ -141,6 +161,7 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
     }
     // Start each excitation from zero rather than the previous excitation's solution.
     E = 0.0;
+    E_prev.Clear();
 
     // Frequency loop. Delay the potentially large visualization operators until the
     // first solution is ready, so they do not increase the solve/preconditioner peak.
@@ -183,9 +204,15 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
 
       // Solve linear system.
       space_op.GetExcitationVector(excitation_idx, omega, RHS);
+      if (E_prev.Size() > 1)
+      {
+        BlockTimer bt(Timer::KSP_INITIAL_GUESS);
+        E_prev.MinimalResidualCombination(space_op.GetComm(), *A, RHS, E);
+      }
 
       Mpi::Print("\n");
       ksp->Mult(RHS, E);
+      E_prev.Push(E);
 
       if (omega_i + 1 == omega_sample.size() &&
           excitation_counter == port_excitations.Size())
@@ -195,6 +222,7 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
         // and error estimation which follow.
         SaveMetadata(*ksp);
         ksp.reset();
+        E_prev.Release();
         A.reset();
         A2.reset();
         P.reset();

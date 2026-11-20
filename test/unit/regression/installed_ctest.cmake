@@ -9,6 +9,9 @@
 #
 #   ctest --test-dir <prefix>/share/palace/test -L "^regression$"
 #
+# The "long" label also runs the unit tests on MFEM's debug device, on 1 and 2 processes
+# (see the end of this file).
+#
 # It is fully generic -- nothing is baked at build time, so it never needs
 # regeneration. Everything is taken at `ctest` time:
 #
@@ -22,9 +25,10 @@
 #   PALACE_TEST_LINEAR_SOLVER  Solver.Linear.Type override (default: case JSON)
 #   PALACE_TEST_DEVICE         MFEM device, e.g. cuda      (default: cpu)
 #
-# Each case reserves PALACE_TEST_NUMPROC * PALACE_TEST_OMP_THREADS CTest slots
-# (PROCESSORS) and runs with OMP_NUM_THREADS pinned to the same thread count, so
-# the slot accounting is derived from a single source and cannot drift.
+# Each case reserves its number of processes (PALACE_TEST_NUMPROC for the regression
+# and long cases) times PALACE_TEST_OMP_THREADS CTest slots (PROCESSORS) and runs with
+# OMP_NUM_THREADS pinned to the same thread count, so the slot accounting is derived
+# from a single source and cannot drift.
 
 find_program(_palace_bin NAMES palace-unit-tests)
 if(NOT _palace_bin)
@@ -43,14 +47,14 @@ set(_palace_omp "$ENV{PALACE_TEST_OMP_THREADS}")
 if(NOT _palace_omp)
   set(_palace_omp 1)
 endif()
-math(EXPR _palace_procs "${_palace_np} * ${_palace_omp}")
 
 # Per-run solver/device, appended to each case command only (not to discovery,
 # so listing never needs a GPU).
-set(_palace_args "")
+set(_palace_solver_args "")
 if(NOT "$ENV{PALACE_TEST_LINEAR_SOLVER}" STREQUAL "")
-  list(APPEND _palace_args "--palace-linear-solver" "$ENV{PALACE_TEST_LINEAR_SOLVER}")
+  list(APPEND _palace_solver_args "--palace-linear-solver" "$ENV{PALACE_TEST_LINEAR_SOLVER}")
 endif()
+set(_palace_args ${_palace_solver_args})
 if(NOT "$ENV{PALACE_TEST_DEVICE}" STREQUAL "")
   list(APPEND _palace_args "--device" "$ENV{PALACE_TEST_DEVICE}")
 endif()
@@ -68,30 +72,63 @@ if(NOT "$ENV{PALACE_TEST_DEVICE}" STREQUAL "")
   set(_palace_tag_filter "[GPU]")
 endif()
 
-function(_palace_register spec label)
-  # Discover via a file, not OUTPUT_VARIABLE: ctest's script interpreter
-  # truncates large execute_process captures, but file output is complete.
-  set(_xml_file "${_palace_tmp}/palace-ctest-${label}.xml")
+# Register the cases matching SPEC as "<PREFIX>-<case>" tests with label LABEL, each run on
+# NUMPROC processes with the extra ARGS.
+function(_palace_register)
+  cmake_parse_arguments(PARSE_ARGV 0 arg "" "SPEC;LABEL;PREFIX;NUMPROC" "ARGS")
+  math(EXPR _procs "${arg_NUMPROC} * ${_palace_omp}")
+  # Discover on the processes the cases run on, as catch_discover_tests does: the binary
+  # selects [Serial] cases on one process and [Parallel] ones on more. Discover via a file,
+  # not OUTPUT_VARIABLE: ctest's script interpreter truncates large execute_process
+  # captures, but file output is complete.
+  set(_xml_file "${_palace_tmp}/palace-ctest-${arg_PREFIX}.xml")
   execute_process(
-    COMMAND "${_palace_bin}" "${spec}" --list-tests --reporter xml
+    COMMAND "${_palace_mpiexec}" "-n" "${arg_NUMPROC}" "${_palace_bin}" "${arg_SPEC}"
+      --list-tests --reporter xml
     OUTPUT_FILE "${_xml_file}"
     RESULT_VARIABLE _rc)
   if(NOT _rc EQUAL 0)
-    message(FATAL_ERROR "Failed to list '${spec}' cases from ${_palace_bin} (${_rc})")
+    message(FATAL_ERROR "Failed to list '${arg_SPEC}' cases from ${_palace_bin} (${_rc})")
   endif()
   file(READ "${_xml_file}" _xml)
   string(REGEX MATCHALL "<Name>[^<]*</Name>" _names "${_xml}")
+  set(_seen "")
   foreach(_tag IN LISTS _names)
     string(REGEX REPLACE "<Name>(.*)</Name>" "\\1" _case "${_tag}")
-    add_test("${label}-${_case}"
-      "${_palace_mpiexec}" "-n" "${_palace_np}" "${_palace_bin}" "${_case}" ${_palace_args})
-    set_tests_properties("${label}-${_case}" PROPERTIES
-      LABELS "${label}"
-      PROCESSORS "${_palace_procs}"
+    # Cases with the same name run together, as one test. (No IN_LIST: ctest reads this file
+    # without a policy version.)
+    list(FIND _seen "${_case}" _index)
+    if(NOT _index EQUAL -1)
+      continue()
+    endif()
+    list(APPEND _seen "${_case}")
+    # Escape the characters that Catch2 parses in a test spec, as CatchAddTests.cmake does
+    # (backslash first).
+    set(_spec "${_case}")
+    foreach(_char "\\" "," "[" "]")
+      string(REPLACE "${_char}" "\\${_char}" _spec "${_spec}")
+    endforeach()
+    add_test("${arg_PREFIX}-${_case}"
+      "${_palace_mpiexec}" "-n" "${arg_NUMPROC}" "${_palace_bin}" "${_spec}" ${arg_ARGS})
+    set_tests_properties("${arg_PREFIX}-${_case}" PROPERTIES
+      LABELS "${arg_LABEL}"
+      PROCESSORS "${_procs}"
       SKIP_RETURN_CODE 4
       ENVIRONMENT "OMP_NUM_THREADS=${_palace_omp}")
   endforeach()
 endfunction()
 
-_palace_register("[Regression]${_palace_tag_filter}~[Long]" "regression")
-_palace_register("[Long]${_palace_tag_filter}" "long")
+_palace_register(SPEC "[Regression]${_palace_tag_filter}~[Long]" LABEL regression
+  PREFIX regression NUMPROC ${_palace_np} ARGS ${_palace_args})
+_palace_register(SPEC "[Long]${_palace_tag_filter}" LABEL long
+  PREFIX long NUMPROC ${_palace_np} ARGS ${_palace_args})
+
+# Run the unit tests on MFEM's debug device with the long cases, always on the CPU
+# (PALACE_TEST_DEVICE does not apply). Without a GPU, the debug device fails on a host access
+# to data whose valid copy is on the device (operator[] and operator() do not synchronize),
+# which on a GPU would read stale data, and it runs libCEED on its CPU backend.
+foreach(_palace_debug_np 1 2)
+  _palace_register(SPEC "~[Regression]~[Long]" LABEL long
+    PREFIX debug-np${_palace_debug_np} NUMPROC ${_palace_debug_np}
+    ARGS ${_palace_solver_args} --device debug --skip-benchmarks)
+endforeach()

@@ -149,7 +149,9 @@ public:
 };
 
 // Preconditioned Generalized Minimum Residual Method (GMRES) for general nonsymmetric
-// linear systems.
+// linear systems. A nonzero initial guess is scaled to minimize the initial residual in the
+// norm of the stopping test, which is then never larger than that of a zero initial guess,
+// unless a correction limit is set (see SetMaxRelativeCorrection).
 template <OperatorType OperType>
 class GmresSolver : public IterativeSolver<OperType>
 {
@@ -226,7 +228,8 @@ public:
   // guess x₀ exceeds tol times the norm of the iterate: ‖x_j - x₀‖ > tol (‖x₀‖ + ‖x_j -
   // x₀‖) (no limit if tol = 0). The correction norm is exact and free for left (or no)
   // preconditioning, where it is ‖y_j‖; it is not monitored with right preconditioning, by
-  // FGMRES, or after a restart.
+  // FGMRES, or after a restart. With a limit, x₀ is not scaled (also by FGMRES), so that
+  // the correction is to x₀ itself, as when certifying x₀.
   void SetMaxRelativeCorrection(double tol) { max_rel_correction = tol; }
 
   // Whether the previous solve was stopped by the correction limit.
@@ -270,6 +273,7 @@ protected:
   using GmresSolver<OperType>::s;
   using GmresSolver<OperType>::sn;
   using GmresSolver<OperType>::cs;
+  using GmresSolver<OperType>::max_rel_correction;
 
   // Temporary workspace for solve.
   mutable std::vector<VecType> Z;

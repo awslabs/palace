@@ -251,6 +251,131 @@ TEST_CASE("MaterialPropertyCoefficient adds a term only to the listed attributes
   }
 }
 
+TEST_CASE("MaterialPropertyCoefficient compares a scalar as the scalar times the identity",
+          "[materialoperator][Serial]")
+{
+  // A scalar s on the attributes {1, 2} stands for s I. A tensor T on the attributes {3, 4}
+  // shares its entry, in either order, only if T equals s I to a relative 1e-9 (then the
+  // value added last is kept for all four). Otherwise the attributes {1, 2} keep s I and
+  // {3, 4} keep T.
+  constexpr double s = 2.0;
+  const mfem::Array<int> scalar_attrs({1, 2}), tensor_attrs({3, 4});
+  auto Tensor = [](double t00, double t01, double t11)
+  {
+    mfem::DenseMatrix T(2);
+    T(0, 0) = t00;
+    T(0, 1) = T(1, 0) = t01;
+    T(1, 1) = t11;
+    return T;
+  };
+  // Coefficient of the attribute attr, as a 2 x 2 matrix.
+  auto Get = [&](const MaterialPropertyCoefficient &fb, int attr)
+  {
+    const int k = fb.GetAttributeToMaterial()[attr - 1];
+    REQUIRE(k >= 0);
+    const auto &mat = fb.GetMaterialProperties();
+    if (mat.SizeI() == 1 && mat.SizeJ() == 1)
+    {
+      return Tensor(mat(0, 0, k), 0.0, mat(0, 0, k));
+    }
+    REQUIRE((mat.SizeI() == 2 && mat.SizeJ() == 2));
+    mfem::DenseMatrix A(2);
+    for (int j = 0; j < 2; j++)
+    {
+      for (int i = 0; i < 2; i++)
+      {
+        A(i, j) = mat(i, j, k);
+      }
+    }
+    return A;
+  };
+  auto CheckEqual = [](const mfem::DenseMatrix &A, const mfem::DenseMatrix &B)
+  {
+    CHECK(A(0, 0) == B(0, 0));
+    CHECK(A(0, 1) == B(0, 1));
+    CHECK(A(1, 0) == B(1, 0));
+    CHECK(A(1, 1) == B(1, 1));
+  };
+  auto Check = [&](const mfem::DenseMatrix &T, bool shared)
+  {
+    const auto sI = Tensor(s, 0.0, s);
+    for (bool scalar_first : {true, false})
+    {
+      CAPTURE(scalar_first);
+      MaterialPropertyCoefficient fb(4);
+      if (scalar_first)
+      {
+        fb.AddMaterialProperty(scalar_attrs, s);
+        fb.AddMaterialProperty(tensor_attrs, T);
+      }
+      else
+      {
+        fb.AddMaterialProperty(tensor_attrs, T);
+        fb.AddMaterialProperty(scalar_attrs, s);
+      }
+      const auto &attr_mat = fb.GetAttributeToMaterial();
+      CHECK((attr_mat[0] == attr_mat[2]) == shared);
+      const auto &last = scalar_first ? T : sI;
+      for (int attr : {1, 2})
+      {
+        CAPTURE(attr);
+        CheckEqual(Get(fb, attr), shared ? last : sI);
+      }
+      for (int attr : {3, 4})
+      {
+        CAPTURE(attr);
+        CheckEqual(Get(fb, attr), shared ? last : T);
+      }
+    }
+  };
+
+  SECTION("Anisotropic tensor whose first entry equals the scalar")
+  {
+    Check(Tensor(s * (1.0 + 1.0e-10), 0.0, 5.0), false);
+  }
+
+  SECTION("Tensor with the scalar on the diagonal and off-diagonal entries")
+  {
+    Check(Tensor(s, 1.0, s), false);
+  }
+
+  SECTION("Tensor equal to the scalar times the identity")
+  {
+    Check(Tensor(s * (1.0 + 1.0e-10), 0.0, s * (1.0 - 1.0e-10)), true);
+  }
+}
+
+TEST_CASE("MaterialPropertyCoefficient projects a scalar as the scalar times the identity",
+          "[materialoperator][Serial]")
+{
+  // The normal projection nᵀ M n of a stored scalar s, which stands for s I, is s |n|², as
+  // for the tensor s I.
+  constexpr double s = 2.0;
+  mfem::Vector normal(3);
+  normal(0) = 0.6;
+  normal(1) = 0.0;
+  normal(2) = 0.8;
+  mfem::Array<int> attr_mat(1);
+  attr_mat = 0;
+  mfem::DenseTensor scalar(1, 1, 1), tensor(3, 3, 1);
+  scalar = s;
+  tensor = 0.0;
+  for (int i = 0; i < 3; i++)
+  {
+    tensor(i, i, 0) = s;
+  }
+  MaterialPropertyCoefficient scalar_coeff(attr_mat, scalar),
+      tensor_coeff(attr_mat, tensor);
+  scalar_coeff.NormalProjectedCoefficient(normal);
+  tensor_coeff.NormalProjectedCoefficient(normal);
+  const auto &scalar_mat = scalar_coeff.GetMaterialProperties();
+  const auto &tensor_mat = tensor_coeff.GetMaterialProperties();
+  REQUIRE((scalar_mat.SizeI() == 1 && scalar_mat.SizeJ() == 1 && scalar_mat.SizeK() == 1));
+  REQUIRE((tensor_mat.SizeI() == 1 && tensor_mat.SizeJ() == 1 && tensor_mat.SizeK() == 1));
+  CHECK_THAT(tensor_mat(0, 0, 0), Matchers::WithinRel(s, 1.0e-14));
+  CHECK_THAT(scalar_mat(0, 0, 0), Matchers::WithinRel(s, 1.0e-14));
+}
+
 TEST_CASE("MaterialOperator requires materials for retained mesh domains",
           "[materialoperator][Serial][Parallel]")
 {

@@ -45,6 +45,7 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-floquetport.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-geodata.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-helpers.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-initialguess.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-iterative.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-libceed.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-lineintegrator.cpp
@@ -73,6 +74,7 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-superconductorsheetoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-surfaceimpedanceoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-surfacerationalimpedanceoperator.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-surfaceterms.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-tablecsv.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-vector.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-waveportimpedance.cpp

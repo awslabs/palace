@@ -654,22 +654,11 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
            space_op.GetFarfieldBoundaryCurlCurlMatrix<ComplexOperator>(Operator::DIAG_ZERO,
                                                                        /*imag_slot=*/true),
            !mat_op.HasWaveVector() || mat_op.HasFloquetFrequencyScaling());
-  const auto &surf_sigma_op = space_op.GetSurfaceConductivityOp();
-  for (std::size_t g = 0; g < surf_sigma_op.Size(); g++)
+  for (int i = 0; i < space_op.GetSurfaceTerms().GetNumExtraSystemBdrMassTerms(); i++)
   {
-    if (surf_sigma_op.IsActive(g))
-    {
-      add_term(BoundaryTermKind::SurfaceConductivity, static_cast<int>(g),
-               space_op.GetSurfaceConductivityBoundaryMatrix<ComplexOperator>(
-                   static_cast<int>(g), Operator::DIAG_ZERO),
-               true);
-    }
-  }
-  for (int b = 0; b < space_op.GetRationalImpedanceOp().GetNumBoundaries(); b++)
-  {
-    add_term(BoundaryTermKind::RationalImpedance, b,
-             space_op.GetRationalImpedanceBoundaryMassMatrix<ComplexOperator>(
-                 b, Operator::DIAG_ZERO, /*imag_slot=*/true),
+    add_term(BoundaryTermKind::SurfaceTerm, i,
+             space_op.GetExtraSystemBdrMassTermMatrix<ComplexOperator>(
+                 i, Operator::DIAG_ZERO, /*imag_slot=*/true),
              true);
   }
   for (const auto &[idx, port] : space_op.GetFloquetPortOp())
@@ -815,10 +804,8 @@ std::complex<double> RomOperator::GetBoundaryTermCoefficient(const BoundaryTerm 
                  : 0.0;
     case BoundaryTermKind::Farfield:
       return 0.5 / omega;
-    case BoundaryTermKind::SurfaceConductivity:
-      return space_op.GetSurfaceConductivityOp().EvaluateScalar(term.idx, omega) / 1i;
-    case BoundaryTermKind::RationalImpedance:
-      return space_op.GetRationalImpedanceOp().EvalRobinCoefficient(term.idx, 1i * omega) /
+    case BoundaryTermKind::SurfaceTerm:
+      return space_op.GetSurfaceTerms().GetExtraSystemBdrMassTermScale(term.idx, omega) /
              1i;
     case BoundaryTermKind::FloquetPort:
       space_op.GetFloquetPortOp().Initialize(omega);
@@ -1808,34 +1795,26 @@ RomOperator::WavePortDispersionFit RomOperator::FitScalarDispersion(
 }
 
 RomOperator::WavePortDispersionFit
-RomOperator::FitRationalImpedanceDispersion(const std::string &label,
-                                            const Eigen::MatrixXcd &Mp_r, int idx) const
+RomOperator::FitExactSplitDispersion(const std::string &label, const Eigen::MatrixXcd &Mp_r,
+                                     const SurfaceTerms::ExactSplit &split) const
 {
-  // Exact split of the rational Robin coefficient g(s) = s·D(s)/N(s) = P(s) + R(s)/N(s)
-  // (long division, precomputed by SurfaceRationalImpedanceOperator). The full term is
-  // g(iω)·M_b = i·f(ω)·M_b with f(ω) = g(iω)/i, so the polynomial part contributes
-  // f_P(ω) = P(iω)/i = P₀/i + P₁ω + i·P₂ω² + ... — exactly representable in the pencil
-  // for deg(P) <= 2 (guaranteed for any passive N/D). The strictly proper remainder
-  // f_R(ω) = (R/N)(iω)/i is itself rational in ω with the poles of g (the zeros of Zs
-  // mapped to the ω plane), so AAA on f_R directly reproduces it to rounding.
-  const auto &surf_rz_op = space_op.GetRationalImpedanceOp();
-  const int deg_P = surf_rz_op.GetRobinQuotientDegree(idx);
-  if (deg_P > 2)
-  {
-    // Non-passive input (|deg N - deg D| > 1); fall back to the generic recipe.
-    auto f = [&surf_rz_op, idx](std::complex<double> omega) -> std::complex<double>
-    {
-      return surf_rz_op.EvalRobinCoefficient(idx, std::complex<double>(0.0, 1.0) * omega) /
-             std::complex<double>(0.0, 1.0);
-    };
-    return FitScalarDispersion(label, Mp_r, f, /*allow_augment=*/true);
-  }
-
+  // Exact split of the scale of a frequency-dependent boundary mass term, c(s) = P(s) +
+  // R(s) with s = iω, for example the long division of the Robin coefficient g(s) =
+  // s·D(s)/N(s) = P(s) + R(s)/N(s) of a rational impedance boundary. The full term is
+  // c(iω)·M = i·f(ω)·M with f(ω) = c(iω)/i, so the polynomial part contributes f_P(ω) =
+  // P(iω)/i = P₀/i + P₁ω + i·P₂ω² + ... — exactly representable in the pencil for
+  // deg(P) <= 2 (guaranteed for any passive N/D), which the caller checks. The strictly
+  // proper remainder f_R(ω) = R(iω)/i is itself rational in ω with the poles of c (for a
+  // rational impedance, the zeros of Zs mapped to the ω plane), so AAA on f_R directly
+  // reproduces it to rounding.
+  MFEM_ASSERT(split.degree <= 2,
+              "The exact split of a synthesized term needs a polynomial part of degree at "
+              "most 2!");
   WavePortDispersionFit fit;
   fit.port_idx = -1;
 
   // Polynomial part, exact: with P(s) = Σ_k P_k s^k, f_P(ω) = Σ_k P_k i^{k-1} ω^k.
-  const auto &P = surf_rz_op.GetRobinQuotient(idx);
+  const auto &P = split.polynomial;
   const auto n_P = static_cast<int>(P.size());
   auto P_coeff = [&](int k) -> double  // P_k, coefficient of s^k (stored high-first)
   { return (k < n_P) ? P[n_P - 1 - k] : 0.0; };
@@ -1847,15 +1826,13 @@ RomOperator::FitRationalImpedanceDispersion(const std::string &label,
   constexpr int n_dense = 200;
   auto fit_omegas = SampleChebyshevLobatto(sweep_omega_min, sweep_omega_max, n_fit);
   auto dense_omegas = SampleChebyshevGauss(sweep_omega_min, sweep_omega_max, n_dense);
-  auto f_rem = [&surf_rz_op, idx](double w) -> std::complex<double>
+  auto f_rem = [&split](double w) -> std::complex<double>
   {
-    return surf_rz_op.EvalRobinRemainder(idx, std::complex<double>(0.0, w)) /
-           std::complex<double>(0.0, 1.0);
+    return split.remainder(std::complex<double>(0.0, w)) / std::complex<double>(0.0, 1.0);
   };
-  auto f_full = [&surf_rz_op, idx](double w) -> std::complex<double>
+  auto f_full = [&split](double w) -> std::complex<double>
   {
-    return surf_rz_op.EvalRobinCoefficient(idx, std::complex<double>(0.0, w)) /
-           std::complex<double>(0.0, 1.0);
+    return split.coefficient(std::complex<double>(0.0, w)) / std::complex<double>(0.0, 1.0);
   };
 
   // AAA directly on the strictly proper remainder (no LSQ residual step — the
@@ -1893,8 +1870,7 @@ RomOperator::FitRationalImpedanceDispersion(const std::string &label,
              pr.poles.size() == 1 ? "" : "s");
   if (fit.rel_err_augmented > waveport_synthesis_tol)
   {
-    Mpi::Warning("{}: rational impedance synthesis residual {:.3e} exceeds tolerance "
-                 "{:.3e}!\n",
+    Mpi::Warning("{}: exact-split synthesis residual {:.3e} exceeds tolerance {:.3e}!\n",
                  label, fit.rel_err_augmented, waveport_synthesis_tol);
   }
   return fit;
@@ -2452,24 +2428,30 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
             }
           }
           break;
-        case BoundaryTermKind::SurfaceConductivity:
-          // Surface conductivity, one group at a time: fit f_g(ω) = ω/Z_g(ω) with complex
-          // poly + AAA.
-          fit = FitScalarDispersion(
-              fmt::format("surfsigma_{:d}", term.idx), term.Ar,
-              [this, &term](std::complex<double> omega)
-              {
-                return space_op.GetSurfaceConductivityOp().EvaluateScalar(term.idx, omega) /
-                       1i;
-              },
-              /*allow_augment=*/true);
-          break;
-        case BoundaryTermKind::RationalImpedance:
-          // Rational surface impedance, one boundary at a time: the exact long-division
-          // split of f_b(ω) = g(iω)/i (polynomial part into the pencil, AAA directly on the
-          // strictly proper remainder) reproduces the rational coefficient to rounding.
-          fit = FitRationalImpedanceDispersion(fmt::format("rationalz_{:d}", term.idx),
-                                               term.Ar, term.idx);
+        case BoundaryTermKind::SurfaceTerm:
+          {
+            // The frequency-dependent boundary mass terms of SurfaceTerms, one at a time:
+            // f_i(ω) = scale_i(ω)/i. A term with an exact split of its scale c(s) = P(s) +
+            // R(s) (s = iω) of deg(P) <= 2 (a rational impedance boundary) has its
+            // polynomial part put into the pencil and AAA run directly on the strictly
+            // proper remainder, which reproduces the coefficient to rounding. The others (a
+            // finite conductivity group, or a split of deg(P) > 2, from a non-passive
+            // impedance) are fit by complex poly + AAA.
+            const auto &surface_terms = space_op.GetSurfaceTerms();
+            const auto label = surface_terms.GetExtraSystemBdrMassTermLabel(term.idx);
+            const auto split = surface_terms.GetExtraSystemBdrMassTermSplit(term.idx);
+            fit = (split && split->degree <= 2)
+                      ? FitExactSplitDispersion(label, term.Ar, *split)
+                      : FitScalarDispersion(
+                            label, term.Ar,
+                            [&surface_terms, &term](std::complex<double> omega)
+                            {
+                              return surface_terms.GetExtraSystemBdrMassTermScale(term.idx,
+                                                                                  omega) /
+                                     1i;
+                            },
+                            /*allow_augment=*/true);
+          }
           break;
         case BoundaryTermKind::WavePort:
         case BoundaryTermKind::FloquetPort:
@@ -3353,8 +3335,8 @@ void RomOperator::ComputeEigenvalueEstimateErrors(
   //   error_abs  = ‖(K + iωC − ω²M + A2(ω)) u‖₂ / ‖u‖₂,
   //   error_bkwd = error_abs / (‖K‖₂ + |ω|‖C‖₂ + |ω|²‖M‖₂),
   // with ω the complex eigenfrequency in nondimensional angular units and u = V·y the
-  // prolongation of the eigenvector's basis block. The frequency-dependent A2(ω) —
-  // wave ports, second-order farfield ABC, surface conductivity — is evaluated exactly
+  // prolongation of the eigenvector's basis block. The frequency-dependent A2(ω) — wave
+  // ports, second-order farfield ABC, the terms of SurfaceTerms — is evaluated exactly
   // at complex ω via SpaceOperator::GetExtraSystemMatrix, so this also validates the
   // rational dispersion fit content that the aux rows encode. The aux entries of the
   // eigenvector have no HDM image and are dropped from the prolongation; for a converged

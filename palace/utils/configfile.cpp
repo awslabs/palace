@@ -1235,6 +1235,29 @@ std::vector<int> BoundaryData::GetSheetAttributes() const
   return attr_list;
 }
 
+std::vector<int> BoundaryData::GetCrossSectionEdgeAttributes() const
+{
+  std::vector<int> attr_list;
+  auto Append = [&attr_list](const std::vector<int> &attrs)
+  { attr_list.insert(attr_list.end(), attrs.begin(), attrs.end()); };
+  Append(pec.attributes);
+  Append(auxpec.attributes);
+  for (const auto &data : impedance)
+  {
+    Append(data.attributes);
+  }
+  for (const auto &data : conductivity)
+  {
+    Append(data.attributes);
+  }
+  for (const auto &data : rational_impedance)
+  {
+    Append(data.attributes);
+  }
+  Append(farfield.attributes);
+  return attr_list;
+}
+
 std::vector<int>
 BoundaryData::GetMeshCrackAttributes(std::optional<bool> crack_bdr_elements) const
 {

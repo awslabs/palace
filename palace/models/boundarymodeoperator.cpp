@@ -5,11 +5,8 @@
 
 #include "fem/multigrid.hpp"
 #include "linalg/operator.hpp"
-#include "models/farfieldboundaryoperator.hpp"
 #include "models/modeoperatorassembly.hpp"
-#include "models/surfaceconductivityoperator.hpp"
-#include "models/surfaceimpedanceoperator.hpp"
-#include "models/surfacerationalimpedanceoperator.hpp"
+#include "models/surfaceterms.hpp"
 #include "utils/communication.hpp"
 
 namespace palace
@@ -30,11 +27,7 @@ BoundaryModeOperator::BoundaryModeOperator(const IoData &iodata_,
   SetUpFESpaces(mesh);
 
   // Boundary operators.
-  auto &pmesh = solve_mesh->Get();
-  surf_z_op = std::make_unique<SurfaceImpedanceOperator>(iodata, mat_op, pmesh);
-  farfield_op = std::make_unique<FarfieldBoundaryOperator>(iodata, mat_op, pmesh);
-  surf_sigma_op = std::make_unique<SurfaceConductivityOperator>(iodata, mat_op, pmesh);
-  surf_rz_op = std::make_unique<SurfaceRationalImpedanceOperator>(iodata, mat_op, pmesh);
+  surface_terms = std::make_unique<SurfaceTerms>(iodata, mat_op, solve_mesh->Get());
 
   // Frequency-independent block matrices. Atn is the ND/H1 gradient coupling,
   // Btn = -Atn^T, Btt is the ND mass.

@@ -738,13 +738,25 @@ bool Equals(const mfem::DenseMatrix &mat_coeff, const mfem::DenseMatrix &coeff, 
   {
     return Equals(mat_coeff, coeff(0, 0), a);
   }
+  // A stored scalar s stands for s I, so a tensor equals it only if it equals s I. A tensor
+  // of another shape is not equal.
+  mfem::DenseMatrix T;
+  if (mat_coeff.Height() == 1 && mat_coeff.Width() == 1 && coeff.Height() == coeff.Width())
+  {
+    T.Diag(mat_coeff(0, 0), coeff.Height());
+  }
+  else if (mat_coeff.Height() == coeff.Height() && mat_coeff.Width() == coeff.Width())
+  {
+    T = mat_coeff;
+  }
   else
   {
-    constexpr double tol = 1.0e-9;
-    mfem::DenseMatrix T(mat_coeff);
-    T.Add(-a, coeff);
-    return (T.MaxMaxNorm() < tol * mat_coeff.MaxMaxNorm());
+    return false;
   }
+  constexpr double tol = 1.0e-9;
+  const double norm = T.MaxMaxNorm();
+  T.Add(-a, coeff);
+  return (T.MaxMaxNorm() < tol * norm);
 }
 
 }  // namespace
@@ -932,6 +944,12 @@ void MaterialPropertyCoefficient::RestrictCoefficient(const mfem::Array<int> &at
 
 void MaterialPropertyCoefficient::NormalProjectedCoefficient(const mfem::Vector &normal)
 {
+  if (mat_coeff.SizeI() == 1 && mat_coeff.SizeJ() == 1)
+  {
+    // A scalar s stands for s I, whose projection is s |n|².
+    *this *= normal * normal;
+    return;
+  }
   mfem::DenseTensor mat_coeff_backup(mat_coeff);
   mat_coeff.SetSize(1, 1, mat_coeff_backup.SizeK());
   for (int k = 0; k < mat_coeff.SizeK(); k++)
