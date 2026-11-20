@@ -5158,10 +5158,18 @@ void PostOperator<solver_t>::PrintSurfaceResponsePortionEnergies(double output_i
       shares += fmt::format("{}{:d} ({}) {:.3e}", shares.empty() ? "" : ", ", interface,
                             type != types.end() ? type->second : std::string("?"), share);
     }
-    Mpi::Print(" Conductor-consistency raw share at {} {}, excitation {:d} (the patches "
-               "excluded at this excitation only; of the corrected interface energy, "
+    // The eigen driver passes excitation 0 and the mode number m = step + 1 as the output
+    // index; its gate line and ExcludedByExcitation name the mode by its source index
+    // step, so the line names both (decision 2242 m-3).
+    const std::string excitation_label =
+        solver_t == ProblemType::DRIVEN
+            ? fmt::format("f (GHz) {}, excitation {:d}", output_index, excitation)
+            : fmt::format("m {:d}, source {:d}", std::lround(output_index),
+                          std::lround(output_index) - 1);
+    Mpi::Print(" Conductor-consistency raw share at {} (the patches "
+               "excluded at this {} only; of the corrected interface energy, "
                "evaluation 0): {}\n",
-               solver_t == ProblemType::DRIVEN ? "f (GHz)" : "m", output_index, excitation,
+               excitation_label, solver_t == ProblemType::DRIVEN ? "excitation" : "mode",
                shares);
   }
 }

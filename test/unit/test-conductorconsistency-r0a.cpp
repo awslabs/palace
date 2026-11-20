@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -17,6 +18,7 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include <unistd.h>
 #include <fmt/format.h>
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -53,6 +55,25 @@ namespace
 // Phase 3 (a) of mx-sc-magnetic shares them with test-magneticresponse.cpp).
 using test::AddShortedCpwMetalPlane;
 using test::MakeSerialShortedCpwMesh;
+
+// The process's stdout while `run` runs (the designer's log lines; Mpi::Print writes on the
+// root only), read back from `file`.
+template <typename F>
+std::string CaptureStdout(const fs::path &file, F &&run)
+{
+  std::fflush(stdout);
+  const int saved = dup(fileno(stdout));
+  std::FILE *target = std::fopen(file.c_str(), "w");
+  REQUIRE(target);
+  dup2(fileno(target), fileno(stdout));
+  run();
+  std::fflush(stdout);
+  dup2(saved, fileno(stdout));
+  close(saved);
+  std::fclose(target);
+  std::ifstream input(file);
+  return {std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
+}
 
 // The stub with a VOID (U-H14a), TETRAHEDRAL (the exact segment intersections the line
 // coverage reads exist on simplices only; a hexahedral mesh samples the lines blindly and
@@ -1648,10 +1669,17 @@ TEST_CASE_METHOD(
     post_op.SetSurfaceResponseCorrectedField(e, nullptr, omega, 1.0);
     post_op.MeasureAndPrintAll(step, e, b, omega, 0.0, 0.0, 2);
   };
-  Mode(0, failing);
-  CHECK(response->GetPatchWeight() == 0.0);
-  CHECK_FALSE(response->GetConductorConsistencyPortions().empty());
-  Mode(1, passing);
+  // Decision 2242 m-3: the per-mode share line names the mode and its source index (the
+  // gate line's and ExcludedByExcitation's Source), PerExcitation only.
+  const auto log =
+      CaptureStdout(temp.temp_dir / ("cc-table-" + exclusion + ".log"),
+                    [&]()
+                    {
+                      Mode(0, failing);
+                      CHECK(response->GetPatchWeight() == 0.0);
+                      CHECK_FALSE(response->GetConductorConsistencyPortions().empty());
+                      Mode(1, passing);
+                    });
   // PerExcitation: nothing is served raw at mode 2; Sticky: mode 1's claims still are.
   CHECK(response->GetConductorConsistencyPortions().empty() == !sticky);
 
@@ -1660,6 +1688,12 @@ TEST_CASE_METHOD(
   {
     return;
   }
+  const std::string share_line = " Conductor-consistency raw share at m 1, source 0 (the "
+                                 "patches excluded at this mode only; ";
+  CHECK((log.find(share_line) != std::string::npos) == !sticky);
+  CHECK(log.find("Conductor-consistency raw share at m 2") == std::string::npos);
+  CHECK(log.find("Conductor-consistency raw share at m 1, excitation") ==
+        std::string::npos);
   const fs::path table_path =
       output_dir / "surface-response-conductor-consistency-energy.csv";
   REQUIRE(fs::exists(table_path));
