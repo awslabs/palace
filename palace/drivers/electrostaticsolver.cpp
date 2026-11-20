@@ -2533,6 +2533,36 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                             postprocess_response,
                             self_consistent_response,
                             response.confident});
+        if (response_correction->ConductorConsistencyPerExcitation() &&
+            !response_correction->GetConductorConsistencyPassPatches().empty() &&
+            corrected_results.back().has_postprocessed)
+        {
+          // Lane ccpx (decisions 2226 / 2229): the designer's line of this excitation: the
+          // raw share of the patches excluded HERE, per target interface and its Type, of
+          // the corrected interface energy (evaluation 0; the table's Total rows).
+          const auto &result = corrected_results.back();
+          const auto targets = response_correction->GetTargetInterfaces();
+          std::string shares;
+          for (const auto &[interface, type] : post_op.GetInterfaceTypes(&targets))
+          {
+            double share = std::numeric_limits<double>::quiet_NaN();
+            const auto energy = result.raw_conductor_consistency.find(interface);
+            const auto corrected =
+                result.postprocessed_fixed_trace.interfaces.find(interface);
+            if (energy != result.raw_conductor_consistency.end() &&
+                corrected != result.postprocessed_fixed_trace.interfaces.end() &&
+                corrected->second.energy > 0.0)
+            {
+              share = energy->second.energy / corrected->second.energy;
+            }
+            shares += fmt::format("{}{:d} ({}) {:.3e}", shares.empty() ? "" : ", ",
+                                  interface, type, share);
+          }
+          Mpi::Print(" Conductor-consistency raw share at excitation {:d} (the patches "
+                     "excluded at this excitation only; of the corrected interface energy, "
+                     "evaluation 0): {}\n",
+                     idx, shares);
+        }
         // The per-patch rows of this source (root; PatchEnergy), then the gathered vectors
         // released: the result keeps its O(interfaces + models) scalars.
         WritePatchEnergyRows(corrected_results.back());

@@ -33436,6 +33436,9 @@ SurfaceResponseOperator::SurfaceResponseOperator(
       !conductor_consistency_record_only;
   exclusion_energy = request->exclusion_energy;
   ConfigureCoverage(*request, fespace.GetComm());
+  // Lane ccpx (ruling 2229 D4): PerExcitation names the conductor-consistency share of
+  // each flagged coverage cell.
+  coverage_run_record.conductor_consistency_share = conductor_consistency_per_excitation;
   diagnostics_directory = request->diagnostics_directory;
   conductor_consistency_records_in_directory =
       request->conductor_consistency_records ==
@@ -35118,6 +35121,9 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
           ConductorConsistencyRecordsOutput::DIRECTORY;
   within_r_volume_energy = request->within_r_volume_energy;
   ConfigureCoverage(*request, fespace.GetComm());
+  // Lane ccpx (ruling 2229 D4): PerExcitation names the conductor-consistency share of
+  // each flagged coverage cell.
+  coverage_run_record.conductor_consistency_share = conductor_consistency_per_excitation;
   if (conductor_consistency_record_only)
   {
     ConductorConsistencyDiagnostics()["RecordOnly"] = true;

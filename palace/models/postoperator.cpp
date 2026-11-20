@@ -5061,6 +5061,34 @@ void PostOperator<solver_t>::PrintSurfaceResponsePortionEnergies(double output_i
                             "conductorconsistency", result.conductor_consistency,
                             result.self_consistent_conductor_consistency);
   }
+  if (surface_response_op->ConductorConsistencyPerExcitation() &&
+      !result.conductor_consistency.empty() && result.has_postprocessed)
+  {
+    // Lane ccpx (decisions 2226 / 2229): the designer's line of this excitation: the raw
+    // share of the patches excluded HERE, per target interface and its Type, of the
+    // corrected interface energy (evaluation 0; the table's Total rows).
+    std::string shares;
+    const auto types = GetInterfaceTypes(&target_interfaces);
+    for (const int interface : target_interfaces)
+    {
+      double share = nan;
+      const auto energy = result.conductor_consistency.find(interface);
+      const auto corrected = result.interfaces.find(interface);
+      if (energy != result.conductor_consistency.end() &&
+          corrected != result.interfaces.end() && corrected->second.corrected_energy > 0.0)
+      {
+        share = energy->second.energy / corrected->second.corrected_energy;
+      }
+      const auto type = types.find(interface);
+      shares += fmt::format("{}{:d} ({}) {:.3e}", shares.empty() ? "" : ", ", interface,
+                            type != types.end() ? type->second : std::string("?"), share);
+    }
+    Mpi::Print(" Conductor-consistency raw share at {} {}, excitation {:d} (the patches "
+               "excluded at this excitation only; of the corrected interface energy, "
+               "evaluation 0): {}\n",
+               solver_t == ProblemType::DRIVEN ? "f (GHz)" : "m", output_index, excitation,
+               shares);
+  }
 }
 
 template <ProblemType solver_t>

@@ -1216,6 +1216,23 @@ TEST_CASE_METHOD(
                                                  "verdict(s) on 1 distinct patch(es) at 2 "
                                                  "excitation(s)"));
       CHECK_THAT(log, !ContainsSubstring("*** DIAGNOSTIC: SurfaceResponseCorrection"));
+      // Lane ccpx: the lines that tell a designer what was excluded where (PerExcitation
+      // only; Sticky prints the former log).
+      for (const int source : {1, 2})
+      {
+        INFO("source " << source);
+        const std::string share_line =
+            fmt::format(" Conductor-consistency raw share at excitation {:d} (the patches "
+                        "excluded at this excitation only; of the corrected interface "
+                        "energy, evaluation 0): 4 (",
+                        source);
+        CHECK(ContainsSubstring(share_line).match(log) == !sticky);
+      }
+      CHECK(
+          ContainsSubstring("  excluded at THIS excitation only (Exclusion PerExcitation; "
+                            "every patch is tested again at the next one): 1 patch(es) of "
+                            "1 model(s): gap-junction-inconsistent 1")
+              .match(log) == !sticky);
     }
   }
   if (!sticky && crack_policy == test::CrackPolicy::Default)
@@ -1453,6 +1470,21 @@ TEST_CASE_METHOD(
     const auto metadata = Metadata(excluded_dir);
     const auto &record =
         metadata.at("SurfaceResponse").at("Diagnostics").at("ConductorConsistency");
+    // Lane ccpx (ruling 2229 D4): PerExcitation names each flagged coverage cell's
+    // conductor-consistency raw share of W (here the whole method gap of its source).
+    const auto &flagged = metadata.at("SurfaceResponse").at("Coverage").at("Flagged");
+    REQUIRE_FALSE(flagged.empty());
+    for (const auto &entry : flagged)
+    {
+      REQUIRE(entry.contains("conductor-consistency raw share of W") == !sticky);
+      if (!sticky && entry.at("W within-R raw (J)").is_number() &&
+          entry.at("W within-R raw (J)").get<double>() > 0.0)
+      {
+        const double cc = entry.at("conductor-consistency raw share of W").get<double>();
+        CHECK(cc > 0.0);
+        CHECK(cc <= entry.at("method-gap raw share of W").get<double>() + 1.0e-12);
+      }
+    }
     CHECK(record.at("Count").get<int>() == 1);
     CHECK(record.at("TestedPatches").get<int>() == (sticky ? 1 : 2));
     REQUIRE(record.at("ExcludedPatches").size() == (sticky ? 1 : 2));

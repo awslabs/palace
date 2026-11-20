@@ -207,6 +207,9 @@ struct CoverageInterfaceSummary
   double loop_remainder_unserved = 0.0, loop_remainder_excluded = 0.0;
   // Rulings 1714 / 1715: the partition's end census (served claims; kept classes).
   SurfacePostOperator::InterfaceCoveragePartition::EndCensus served_ends, kept_ends;
+  // Lane ccpx (ruling 2229 D4): the ConductorConsistency kept class's energy (inside U and
+  // the method gap, which keep their definitions; printed only under PerExcitation).
+  double conductor_consistency = 0.0;
 };
 CoverageInterfaceSummary
 SummarizeCoverageInterface(const SurfacePostOperator::InterfaceCoveragePartition &partition,
@@ -245,6 +248,10 @@ struct CoverageCell
   double loop_remainder_unserved = 0.0, loop_remainder_excluded = 0.0;
   // The Type's sums of the end census (counts and energies summed, distances the largest).
   SurfacePostOperator::InterfaceCoveragePartition::EndCensus served_ends, kept_ends;
+  // Lane ccpx (ruling 2229 D4): the Type's ConductorConsistency kept-class energy (J) and
+  // its share of W (nan where the other shares are): the part of U (inside the method gap)
+  // held by the patches excluded at this excitation.
+  double conductor_consistency = 0.0, conductor_consistency_share = 0.0;
   // The edge-resolution census (decision 1817) is not a column here: it writes its own
   // table, block, PREFLIGHT line and banner (models/surfaceresponseresolution.hpp).
 };
@@ -424,6 +431,9 @@ struct CoverageRunRecord
     std::string reason;
   };
   std::vector<MarkWithoutCell> marked_without_cell;
+  // Lane ccpx (ruling 2229 D4): Exclusion PerExcitation writes each flagged cell's
+  // conductor-consistency raw share of W (palace.json and the banner); false: as before.
+  bool conductor_consistency_share = false;
   void Add(const std::vector<std::pair<std::string, double>> &keys,
            const CoverageMeasurement &measurement);
 };
