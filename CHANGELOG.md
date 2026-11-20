@@ -48,8 +48,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     `Boundaries.PrescribedPotential`; `"Length"` of a lumped port and of its
     `"Elements"`; and the impedance-metal rule's `"ImpedanceMetalRule"` (`"Off"`,
     `"Record"`, `"Apply"`), `"ImpedanceMetalFilmOverrides"` and
-    `"ImpedanceMetalMaxInductance"` of `Solver.SurfaceResponseCorrection` (EXPERIMENTAL).
-    SchemaVer 4-5-3
+    `"ImpedanceMetalMaxInductance"` of `Solver.SurfaceResponseCorrection` (EXPERIMENTAL);
+    and `"ConductorConsistency": {"Exclusion"}` (`"PerExcitation"`, `"Sticky"`) of the
+    surface-response correction, whose default `"PerExcitation"` CHANGES the meaning of a
+    configuration whose run has a conductor-consistency exclusion before a later excitation
+    (that excitation's correction no longer omits the patch unless its own test fails; set
+    `"Sticky"` for the former rule). SchemaVer 4-5-4
   - Added the edge-resolution census of the surface-response correction (lane
     rescensus-product; outputs only, ON by default whenever the correction is on:
     `"Resolution": {"Enabled", "BarsFile"}`): one added point location of every applied
