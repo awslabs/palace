@@ -297,10 +297,12 @@ std::unique_ptr<ceed::Operator> DiscreteLinearOperator::PartialAssemble() const
   op->Finalize();
 
   // Construct dof multiplicity vector for scaling to account for dofs shared between
-  // elements (on host, then copy to device).
+  // elements (on host, then copy to device). The elements of a broken space read the copies
+  // of their side.
   Vector test_multiplicity(test_fespace.GetVSize());
   test_multiplicity = 0.0;
   auto *h_mult = test_multiplicity.HostReadWrite();
+  const bool broken = test_fespace.IsBroken();
   PalacePragmaOmp(parallel)
   {
     mfem::Array<int> dofs;
@@ -308,7 +310,14 @@ std::unique_ptr<ceed::Operator> DiscreteLinearOperator::PartialAssemble() const
     PalacePragmaOmp(for schedule(static))
     for (int i = 0; i < test_fespace.GetMesh().GetNE(); i++)
     {
-      test_fespace.Get().GetElementVDofs(i, dofs, dof_trans);
+      if (broken)
+      {
+        test_fespace.GetElementDofs(i, dofs, dof_trans);
+      }
+      else
+      {
+        test_fespace.Get().GetElementVDofs(i, dofs, dof_trans);
+      }
       for (int j = 0; j < dofs.Size(); j++)
       {
         const int k = dofs[j];
@@ -317,8 +326,26 @@ std::unique_ptr<ceed::Operator> DiscreteLinearOperator::PartialAssemble() const
       }
     }
   }
+  for (int i = 0; i < test_multiplicity.Size(); i++)
+  {
+    // L-DOFs read by no element (copies of other processes' elements in a broken L-vector
+    // do not occur, every L-DOF is read by a local element) keep a zero scaling.
+    h_mult[i] = (h_mult[i] > 0.0) ? 1.0 / h_mult[i] : 0.0;
+  }
+  if (broken)
+  {
+    // A broken test space has no restriction matrix: its restriction is R = Pᵀ diag(w) (see
+    // FiniteElementSpace::GetRestrictionWeights), whose weights are applied here, with the
+    // multiplicity, so that the ParOperator applies Pᵀ (see ParOperator). Without weights
+    // (a copy read only through constraints) the interpolator cannot be applied element by
+    // element (see FiniteElementSpaceHierarchy::BuildProlongationAtLevel).
+    Vector w;
+    MFEM_VERIFY(test_fespace.GetRestrictionWeights(w),
+                "Matrix-free interpolation into a broken space with copies read only "
+                "through constraints!");
+    test_multiplicity *= w;
+  }
   test_multiplicity.UseDevice(true);
-  test_multiplicity.Reciprocal();
   op->SetDofMultiplicity(std::move(test_multiplicity));
 
   return op;
