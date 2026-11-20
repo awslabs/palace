@@ -27,9 +27,11 @@ private:
   mutable std::unique_ptr<VectorFieldTransfer> prev_eigenvectors;
   mutable int prev_num_eigenvectors = 0;
 
-  // Number of Krylov cycles of the last solve without a warm start, and number of solves so
-  // far (the initial one, then one per adaptation iteration).
+  // Number of Krylov cycles of the last solve without a warm start, whether a warm start
+  // still follows cold solves of two cycles (see EigenSolver::Solve), and number of solves
+  // so far (the initial one, then one per adaptation iteration).
   mutable int last_cold_its = -1;
+  mutable bool warm_after_two_cycles = true;
   mutable int num_solves = 0;
 
   std::pair<ErrorIndicator, long long int>
