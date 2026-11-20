@@ -381,8 +381,7 @@
         ]
       },
       "Mode": "Online",
-      "ModelFile": "postpro/qubit_lattice_environment.model",
-      "RegionMesh": true
+      "ModelFile": "postpro/qubit_lattice_environment.model"
     }
   }
 }

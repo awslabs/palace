@@ -344,16 +344,18 @@ TEST_CASE("Environment records are those of any partition",
   auto longer = bytes;
   longer.push_back(0);
   CHECK_FALSE(EnvironmentRecord::Deserialize(longer));
-  // On the full mesh, the record tells whether the excitations of the environment are its
-  // own (a flux loop added next to it changes them, not its configuration).
-  CHECK(r.Check(mesh, config, {2}, 1.0e-9, false));
+  // The full mesh is told from the mesh of the region, and the record tells whether the
+  // excitations of the environment are its own (a flux loop added next to it changes them,
+  // not its configuration).
+  CHECK_FALSE(r.CheckMesh(mesh, 1.0e-9));
+  CHECK(r.CheckConfig(config, {2}, false));
   auto excited = config;
   excited["Boundaries"]["FluxLoop"] = {{{"Index", 1},
                                         {"FilmAttributes", {3}},
                                         {"HoleAttributes", {4}},
                                         {"FluxAmounts", {1.0}},
                                         {"Direction", "+Z"}}};
-  CHECK_FALSE(r.Check(mesh, excited, {2}, 1.0e-9, false));
+  CHECK_FALSE(r.CheckConfig(excited, {2}, false));
 }
 
 TEST_CASE("Boundaries and points of the region", "[substructure][Serial][Parallel]")

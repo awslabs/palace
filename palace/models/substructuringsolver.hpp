@@ -38,11 +38,11 @@ public:
   ~SubstructuringSolver();
 
   // The boundary conditions of the configuration for the operators on this mesh: without
-  // the terminal attributes it does not hold and, on the mesh of the region, without the
-  // flux loops it leaves out and the superconductor attributes it does not hold (the model
-  // holds their parts). Collective.
+  // the terminal attributes it does not hold and, on the mesh of the region (region_mesh),
+  // without the flux loops it leaves out and the superconductor attributes it does not
+  // hold (the model holds their parts). Collective.
   static config::BoundaryData MeshBoundaries(const IoData &iodata,
-                                             const mfem::ParMesh &mesh);
+                                             const mfem::ParMesh &mesh, bool region_mesh);
 
   // Condense the environment to S_E (or load it from a saved model). Called once, before
   // any solve.

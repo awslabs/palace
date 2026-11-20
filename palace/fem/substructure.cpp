@@ -9,6 +9,7 @@
 #include <complex>
 #include <cstring>
 #include <filesystem>
+#include <initializer_list>
 #include <limits>
 #include <set>
 #include <nlohmann/json.hpp>
@@ -1076,37 +1077,60 @@ EnvironmentRecord::Deserialize(const std::vector<char> &bytes)
   return r;
 }
 
-bool EnvironmentRecord::Check(mfem::ParMesh &mesh, const nlohmann::json &config,
-                              const std::vector<int> &environment_attributes, double tol,
-                              bool region_mesh) const
+namespace
 {
+
+// Whether the moments k of two moments of AttributeMoments agree within the relative
+// tolerance (the centroid moments relative to the distance moment, as they may vanish).
+bool MomentsAgree(const std::array<double, 6> &a, const std::array<double, 6> &b,
+                  double tol, std::initializer_list<int> k)
+{
+  return std::ranges::all_of(k,
+                             [&](int q)
+                             {
+                               const int s = std::min(q, 2);  // the scale of the moment
+                               return std::abs(a[q] - b[q]) <=
+                                      tol * std::max(std::abs(a[s]), std::abs(b[s]));
+                             });
+}
+
+}  // namespace
+
+bool EnvironmentRecord::CheckMesh(mfem::ParMesh &mesh, double tol) const
+{
+  // Whether the moments of each attribute match, or with refined only those which a
+  // refinement of the elements keeps: their volume and first moments, not their number.
   auto match = [tol](const std::vector<std::array<double, 6>> &a,
-                     const std::vector<std::array<double, 6>> &b)
+                     const std::vector<std::array<double, 6>> &b, bool refined = false)
   {
-    return std::ranges::equal(a, b, [tol](const auto &x, const auto &y)
-                              { return MomentsMatch(x, y, tol); });
+    return std::ranges::equal(a, b,
+                              [&](const auto &x, const auto &y)
+                              {
+                                return refined ? MomentsAgree(x, y, tol, {1, 3, 4, 5})
+                                               : MomentsMatch(x, y, tol);
+                              });
   };
   const auto current = AttributeMoments(mesh, attributes);
-  const bool full = match(current, moments), region = match(current, region_moments);
-  if (region_mesh)
+  if (match(current, moments))
   {
-    MFEM_VERIFY(region,
-                (full ? "\"RegionMesh\" is set, but the mesh holds the whole "
-                        "environment of the saved substructuring model: unset it on "
-                        "the full mesh!"
-                      : "The mesh is not the mesh of the region written with the "
-                        "saved substructuring model, nor a re-meshing of its region!"));
-  }
-  else
-  {
-    MFEM_VERIFY(full, (region ? "The mesh is the mesh of the region written with the saved "
-                                "substructuring model: set \"RegionMesh\": true!"
-                              : kEnvironmentMeshDiffers));
     MFEM_VERIFY(
         BoundaryAttributesNextTo(mesh, attributes) == bdr_attributes &&
             match(BoundaryAttributeMoments(mesh, bdr_attributes, attributes), bdr_moments),
         kEnvironmentMeshDiffers);
+    return false;
   }
+  // The mesh of the region is written refined, and refined again, it is told from another
+  // mesh by the moments of its environment elements that refinement keeps.
+  const bool region = match(current, region_moments);
+  MFEM_VERIFY(region || !match(current, region_moments, true), kRegionMeshRefined);
+  MFEM_VERIFY(region, kEnvironmentMeshDiffers);
+  return true;
+}
+
+bool EnvironmentRecord::CheckConfig(const nlohmann::json &config,
+                                    const std::vector<int> &environment_attributes,
+                                    bool region_mesh) const
+{
   std::vector<int> env = environment_attributes;
   std::ranges::sort(env);
   env.erase(std::unique(env.begin(), env.end()), env.end());
@@ -1123,14 +1147,7 @@ bool EnvironmentRecord::Check(mfem::ParMesh &mesh, const nlohmann::json &config,
 bool MomentsMatch(const std::array<double, 6> &a, const std::array<double, 6> &b,
                   double tol)
 {
-  bool match = (a[0] == b[0]);
-  for (int q = 1; q < 6; q++)
-  {
-    const int s = std::min(q, 2);  // the scale of the moment
-    match =
-        match && std::abs(a[q] - b[q]) <= tol * std::max(std::abs(a[s]), std::abs(b[s]));
-  }
-  return match;
+  return a[0] == b[0] && MomentsAgree(a, b, tol, {1, 2, 3, 4, 5});
 }
 
 std::vector<char> RegionMeshInterface(mfem::ParFiniteElementSpace &parent_fespace,

@@ -340,6 +340,31 @@ struct SubstructuringSolver::Impl
   Mesh &mesh;
   mfem::ParMesh &parent;
   bool magnetostatic;
+  // The head of a model, from rank 0: its format version (-1: the file cannot be read, 0:
+  // not a model; a container of another version reads as another version), order,
+  // interface size, signature type and width (0: another version, or an incomplete model),
+  // its records, the interface signatures, the position of S_E, the record of the
+  // environment, magnetostatic regularization, and sides of the sheet faces on Gamma (0 or
+  // empty: not saved). Collective.
+  struct SavedHead
+  {
+    int version = -1, order = 0, nG = 0, sig_type = 0, width = 0;
+    substructuring::ModelFile file;
+    std::vector<double> sig;
+    EnvironmentRecord environment;
+    double regularization = 0.0;
+    std::vector<double> sheet_sides;
+    long long S_pos = 0;
+  };
+  static SavedHead ReadSavedHead(const std::string &path, MPI_Comm comm);
+  // The head of the model of an online run, checked against the run (empty offline).
+  // Collective.
+  static SavedHead ReadOnlineHead(const IoData &iodata, bool magnetostatic, MPI_Comm comm);
+  SavedHead saved;
+  // Online on a mesh of the region (written offline next to the model, whose environment
+  // elements it holds, which tell it from the full mesh): Γ also holds the region's
+  // boundary DOFs at the saved interface DOFs, and the environment is that of the model.
+  bool region_only;
   // The operator of the regular electrostatic or magnetostatic solve on the finest mesh,
   // which assembles the operators of the sides (see GetTerm), and its (unbroken)
   // finite element space.
@@ -385,11 +410,6 @@ struct SubstructuringSolver::Impl
   std::vector<char> env_dbc;  // the Dirichlet true DOFs of environment elements
   std::map<int, std::vector<int>> terminal_tdofs;  // terminal index -> its true DOFs
   std::vector<char> region_dbc;                    // Dirichlet DOFs of region elements
-  // Online on a mesh of the region (written offline next to the model, whose environment
-  // elements it holds): Γ also holds the region's boundary DOFs at the saved interface
-  // DOFs, and the environment is that of the model.
-  bool region_only = false;
-
   // The domain attributes of the environment: those of the configuration, or by default the
   // attributes of the mesh not in the region.
   std::vector<int> env_attributes;
@@ -716,26 +736,6 @@ struct SubstructuringSolver::Impl
   // The width of the interface signatures of a model by their type: 1 H1 coordinates, 2
   // H(curl) moments, 3 with the side moments of split DOFs (0: not a model).
   static int SignatureFileWidth(int sig_type);
-
-  // The head of a model, from rank 0: its format version (-1: the file cannot be read, 0:
-  // not a model; a container of another version reads as another version), order,
-  // interface size, signature type and width (0: another version, or an incomplete model),
-  // its records, the interface signatures, the position of S_E, the reference length, the
-  // record of the environment, magnetostatic regularization, and sides of the sheet faces
-  // on Gamma (0 or empty: not saved). Collective.
-  struct SavedHead
-  {
-    int version = -1, order = 0, nG = 0, sig_type = 0, width = 0;
-    ModelFile file;
-    std::vector<double> sig;
-    EnvironmentRecord environment;
-    double regularization = 0.0;
-    std::vector<double> sheet_sides;
-    long long S_pos = 0;
-  };
-  static SavedHead ReadSavedHead(const std::string &path, MPI_Comm comm);
-  // The head of the model of an online run (read by the constructor).
-  SavedHead saved;
 
   // Fixed projected polynomial field k of the fingerprints (the same on both sides of the
   // two-sided films), about its center: fixed fractions of the bounding box of the centers

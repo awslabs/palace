@@ -35,19 +35,22 @@ config::SolverData SingleLevel(const config::SolverData &solver)
 // The native curl-curl operator (finest level), with the flux loops of the mesh, whose
 // excitations it forms.
 std::unique_ptr<CurlCurlOperator>
-MakeCurlCurlOperator(const IoData &iodata, const std::vector<std::unique_ptr<Mesh>> &mesh)
+MakeCurlCurlOperator(const IoData &iodata, const std::vector<std::unique_ptr<Mesh>> &mesh,
+                     bool region_mesh)
 {
   IoData op_iodata(iodata);
-  op_iodata.boundaries = SubstructuringSolver::MeshBoundaries(iodata, mesh.back()->Get());
+  op_iodata.boundaries =
+      SubstructuringSolver::MeshBoundaries(iodata, mesh.back()->Get(), region_mesh);
   op_iodata.solver = SingleLevel(iodata.solver);
   return std::make_unique<CurlCurlOperator>(op_iodata, mesh);
 }
 
 std::unique_ptr<LaplaceOperator>
-MakeLaplaceOperator(const IoData &iodata, const std::vector<std::unique_ptr<Mesh>> &mesh)
+MakeLaplaceOperator(const IoData &iodata, const std::vector<std::unique_ptr<Mesh>> &mesh,
+                    bool region_mesh)
 {
   return std::make_unique<LaplaceOperator>(
-      SubstructuringSolver::MeshBoundaries(iodata, mesh.back()->Get()),
+      SubstructuringSolver::MeshBoundaries(iodata, mesh.back()->Get(), region_mesh),
       SingleLevel(iodata.solver), iodata.domains.materials, iodata.problem.type, mesh);
 }
 
@@ -179,12 +182,54 @@ std::vector<HYPRE_BigInt> ConnectedComponents(const mfem::HypreParMatrix &A)
 
 }  // namespace
 
+SubstructuringSolver::Impl::SavedHead
+SubstructuringSolver::Impl::ReadOnlineHead(const IoData &iodata, bool magnetostatic,
+                                           MPI_Comm comm)
+{
+  const auto &sub = iodata.solver.substructuring;
+  if (!sub || sub->mode != SubstructuringMode::ONLINE || sub->model_file.empty())
+  {
+    return {};
+  }
+  const std::string &model = sub->model_file;
+  SavedHead saved;
+  {
+    BlockTimer bt(Timer::IO);
+    saved = ReadSavedHead(model, comm);
+  }
+  MFEM_VERIFY(saved.version >= 0, "Cannot read the saved substructuring model \""
+                                      << model << "\" (run in \"Offline\" mode first)!");
+  MFEM_VERIFY(saved.version > 0, "\"" << model
+                                      << "\" is not a saved substructuring model: run "
+                                         "in \"Offline\" mode to write one!");
+  MFEM_VERIFY(saved.version == kModelVersion,
+              "The saved substructuring model \""
+                  << model
+                  << "\" was written by another version of Palace: rerun in "
+                     "\"Offline\" mode!");
+  MFEM_VERIFY(saved.width > 0, "The saved substructuring model \""
+                                   << model
+                                   << "\" is incomplete: rerun in \"Offline\" mode!");
+  MFEM_VERIFY((saved.sig_type == 1) != magnetostatic,
+              "The saved substructuring model \""
+                  << model << "\" is "
+                  << (magnetostatic ? "electrostatic" : "magnetostatic")
+                  << ", unlike this run!");
+  MFEM_VERIFY(saved.order == iodata.solver.order,
+              "The saved substructuring model \""
+                  << model << "\" has \"Order\": " << saved.order << ", unlike this run ("
+                  << iodata.solver.order << ")!");
+  return saved;
+}
+
 SubstructuringSolver::Impl::Impl(const IoData &iodata,
                                  const std::vector<std::unique_ptr<Mesh>> &mesh_)
   : iodata(iodata), mesh(*mesh_.back()), parent(mesh.Get()),
     magnetostatic(iodata.problem.type == ProblemType::MAGNETOSTATIC),
-    laplace_op(magnetostatic ? nullptr : MakeLaplaceOperator(iodata, mesh_)),
-    curlcurl_op(magnetostatic ? MakeCurlCurlOperator(iodata, mesh_) : nullptr),
+    saved(ReadOnlineHead(iodata, magnetostatic, parent.GetComm())),
+    region_only(saved.width > 0 && saved.environment.CheckMesh(parent, kFingerprintTol)),
+    laplace_op(magnetostatic ? nullptr : MakeLaplaceOperator(iodata, mesh_, region_only)),
+    curlcurl_op(magnetostatic ? MakeCurlCurlOperator(iodata, mesh_, region_only) : nullptr),
     parent_space(magnetostatic ? curlcurl_op->GetNDSpace() : laplace_op->GetH1Space()),
     parent_fes(parent_space.Get())
 {
@@ -202,7 +247,7 @@ SubstructuringSolver::Impl::Impl(const IoData &iodata,
       }
     }
   }
-  MFEM_VERIFY(!env_attributes.empty() || sub.region_mesh,
+  MFEM_VERIFY(!env_attributes.empty() || region_only,
               "The substructuring \"Region\" holds every domain attribute of the mesh: the "
               "environment is empty!");
   CheckSubstructuringAttributes(parent, sub.region_attributes, env_attributes);
@@ -289,42 +334,13 @@ SubstructuringSolver::Impl::Impl(const IoData &iodata,
     region_dbc[i] = rm[i] && dir_mark[i];
   }
 
-  // Online, the head of the model and whether the mesh is that of the region.
+  // Online, the configuration on the environment is that of the model, and on the mesh of
+  // the region (written refined) the interface is at the saved interface DOFs.
   std::vector<char> cut(nt, 0);
   double model_eps = 0.0;
-  if (sub.mode == SubstructuringMode::ONLINE && !sub.model_file.empty())
+  if (saved.width > 0)
   {
-    {
-      BlockTimer bt(Timer::IO);
-      saved = ReadSavedHead(sub.model_file, parent_fes.GetComm());
-    }
-    const std::string &model = sub.model_file;
-    MFEM_VERIFY(saved.version >= 0, "Cannot read the saved substructuring model \""
-                                        << model << "\" (run in \"Offline\" mode first)!");
-    MFEM_VERIFY(saved.version > 0, "\"" << model
-                                        << "\" is not a saved substructuring model: run "
-                                           "in \"Offline\" mode to write one!");
-    MFEM_VERIFY(saved.version == kModelVersion,
-                "The saved substructuring model \""
-                    << model
-                    << "\" was written by another version of Palace: rerun in "
-                       "\"Offline\" mode!");
-    MFEM_VERIFY(saved.width > 0, "The saved substructuring model \""
-                                     << model
-                                     << "\" is incomplete: rerun in \"Offline\" mode!");
-    MFEM_VERIFY((saved.sig_type == 1) != magnetostatic,
-                "The saved substructuring model \""
-                    << model << "\" is "
-                    << (magnetostatic ? "electrostatic" : "magnetostatic")
-                    << ", unlike this run!");
-    MFEM_VERIFY(saved.order == iodata.solver.order,
-                "The saved substructuring model \""
-                    << model << "\" has \"Order\": " << saved.order << ", unlike this run ("
-                    << iodata.solver.order << ")!");
-    // The mesh holds the environment of the model, or with "RegionMesh" its part in the
-    // mesh of the region, which cannot be refined.
-    region_only = sub.region_mesh;
-    env_loops = ReadEnvLoops(model, parent.GetComm());
+    env_loops = ReadEnvLoops(sub.model_file, parent.GetComm());
     if (region_only)
     {
       MFEM_VERIFY(iodata.model.refinement.max_it == 0,
@@ -336,8 +352,8 @@ SubstructuringSolver::Impl::Impl(const IoData &iodata,
                       refinement.GetBoxes().empty() && refinement.GetSpheres().empty(),
                   kRegionMeshRefined);
     }
-    env_excitations_unchanged = saved.environment.Check(
-        parent, *iodata.resolved_config, env_attributes, kFingerprintTol, region_only);
+    env_excitations_unchanged =
+        saved.environment.CheckConfig(*iodata.resolved_config, env_attributes, region_only);
     // S_E was condensed with the regularization of the model: the region uses the same.
     model_eps = saved.regularization;
     if (region_only)
@@ -723,7 +739,8 @@ IoData SubstructuringSolver::RegionPostprocessing(const IoData &iodata) const
 }
 
 config::BoundaryData SubstructuringSolver::MeshBoundaries(const IoData &iodata,
-                                                          const mfem::ParMesh &mesh)
+                                                          const mfem::ParMesh &mesh,
+                                                          bool region_mesh)
 {
   config::BoundaryData boundaries(iodata.boundaries);
   auto absent = [&](int a) { return mesh.bdr_attributes.Find(a) < 0; };
@@ -732,10 +749,10 @@ config::BoundaryData SubstructuringSolver::MeshBoundaries(const IoData &iodata,
     std::erase_if(it->second.attributes, absent);
     it = it->second.attributes.empty() ? boundaries.terminal.erase(it) : std::next(it);
   }
-  const auto &sub = *iodata.solver.substructuring;
-  if (sub.mode == SubstructuringMode::ONLINE && sub.region_mesh)
+  if (region_mesh)
   {
-    for (int loop : Impl::ReadEnvLoops(sub.model_file, mesh.GetComm()))
+    for (int loop :
+         Impl::ReadEnvLoops(iodata.solver.substructuring->model_file, mesh.GetComm()))
     {
       boundaries.fluxloop.erase(loop);
     }

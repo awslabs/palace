@@ -2997,12 +2997,7 @@
         },
         "ModelFile": {
           "type": "string",
-          "description": "Path of the environment model file written in \"Offline\" mode and read in \"Online\" mode. An \"Offline\" run on a conforming mesh also writes, and replaces, the mesh of the region next to it (`<stem>_region.mesh` for `<stem>.model`), for \"Online\" runs with \"RegionMesh\"."
-        },
-        "RegionMesh": {
-          "type": "boolean",
-          "default": false,
-          "description": "For an \"Online\" run: the mesh is the mesh of the region written with the model (or a re-meshing of its region), not the full mesh. Either way, the run checks the environment elements of the mesh against the model."
+          "description": "Path of the environment model file written in \"Offline\" mode and read in \"Online\" mode. An \"Offline\" run on a conforming mesh also writes, and replaces, the mesh of the region next to it (`<stem>_region.mesh` for `<stem>.model`), on which \"Online\" runs read only the region: they tell it from the full mesh by the environment elements it holds."
         }
       }
     },
