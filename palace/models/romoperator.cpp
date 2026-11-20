@@ -1450,6 +1450,13 @@ void RomOperator::TruncatePROM(std::size_t n)
     term.Ar.conservativeResize(ne, ne);
   }
   RHS1r.conservativeResize(ne, Eigen::NoChange);
+  for (auto &pairings : env_RHSr)
+  {
+    if (pairings.rows() > ne)
+    {
+      pairings.conservativeResize(ne, Eigen::NoChange);
+    }
+  }
   floquet_comp_V.conservativeResize(ne, Eigen::NoChange);
   if (weight_op_W)
   {

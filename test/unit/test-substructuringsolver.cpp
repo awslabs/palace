@@ -49,6 +49,7 @@
 #include "models/environmentoperator.hpp"
 #include "models/materialoperator.hpp"
 #include "models/regionsolver.hpp"
+#include "models/romoperator.hpp"
 #include "models/spaceoperator.hpp"
 #include "models/substructuringsolver.hpp"
 #include "models/substructuringsolverimpl.hpp"
@@ -4246,6 +4247,104 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
     linalg::AXPY(-1.0, x, r);
     CHECK(linalg::Norml2(comm, r) <= 1.0e-10 * linalg::Norml2(comm, x));
   }
+}
+
+namespace
+{
+
+// A RomOperator which exposes the truncation of its basis, and the numbers of rows of the
+// pairings of its basis with the sources of the environment, one per excitation.
+class RegionRomOperator : public RomOperator
+{
+public:
+  using RomOperator::RomOperator;
+  using RomOperator::TruncatePROM;
+
+  std::vector<Eigen::Index> EnvironmentPairingRows() const
+  {
+    std::vector<Eigen::Index> rows;
+    for (const auto &pairings : env_RHSr)
+    {
+      rows.push_back(pairings.rows());
+    }
+    return rows;
+  }
+};
+
+}  // namespace
+
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "Driven substructuring PROM truncation also truncates the environment's "
+                 "sources",
+                 "[substructure][Serial][Parallel]")
+{
+  // TruncatePROM(n), with which AddSamplePROM removes a sample to add it again refined,
+  // gives back the PROM of the first n basis vectors also online: with a lumped port in the
+  // environment of a model saved by an adaptive sweep, the pairings of the basis with its
+  // sources lose the rows of the removed vectors, and the reduced solution is that before
+  // the sample was added.
+  auto edit = [](json &config)
+  {
+    config["Boundaries"]["LumpedPort"].push_back({{"Index", 2},
+                                                  {"R", 50.0},
+                                                  {"Attributes", {5}},
+                                                  {"Direction", "+Y"},
+                                                  {"Excitation", 2}});
+    config["Solver"]["Driven"] = {
+        {"MinFreq", 10.0}, {"MaxFreq", 30.0}, {"FreqStep", 10.0}, {"AdaptiveTol", 1.0e-6}};
+  };
+  RunDrivenBox(temp_dir, "Offline", edit);
+  MPI_Comm comm = Mpi::World();
+  IoData iodata(DrivenBoxConfig(temp_dir, "Online", edit), false);
+  MakeOutputFolder(iodata, comm);
+  DrivenSolver driven(iodata, Mpi::Root(comm), Mpi::Size(comm), 1, nullptr);
+  auto smesh = mesh::Load(iodata, comm);
+  driven.Preprocess(iodata, smesh, comm);
+  std::vector<std::unique_ptr<mfem::ParMesh>> pmesh;
+  pmesh.push_back(mesh::Partition(iodata, std::move(smesh), comm));
+  mesh::RefineMesh(iodata, pmesh);
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  mesh.push_back(std::make_unique<Mesh>(std::move(pmesh[0])));
+  SpaceOperator space_op(iodata, mesh);
+  EnvironmentOperator env(iodata, space_op);
+  space_op.SetEnvironment(env);
+  RegionRomOperator prom_op(iodata, space_op, 4);
+
+  auto sample = [&](int seed)
+  {
+    ComplexVector u(space_op.GetNDSpace().GetTrueVSize());
+    u.UseDevice(true);
+    linalg::SetRandom(comm, u.Real(), seed);
+    linalg::SetRandom(comm, u.Imag(), seed + 1);
+    linalg::SetSubVector(u, space_op.GetNDDbcTDofLists().back(), 0.0);
+    return u;
+  };
+  auto pairing_rows = [&](Eigen::Index n)
+  {
+    const auto rows = prom_op.EnvironmentPairingRows();
+    CAPTURE(rows, n);
+    REQUIRE(std::count(rows.begin(), rows.end(), n) > 0);
+    for (const auto r : rows)
+    {
+      REQUIRE((r == 0 || r == n));
+    }
+  };
+  const double omega = iodata.solver.driven.sample_f[0];
+  prom_op.UpdatePROM(sample(71), "s1");
+  const auto n = static_cast<Eigen::Index>(prom_op.GetReducedDimension());
+  pairing_rows(n);
+  prom_op.SolvePROM(omega);
+  const Eigen::VectorXcd x_n = prom_op.GetReducedSolution(2);
+  REQUIRE(x_n.norm() > 0.0);
+
+  prom_op.UpdatePROM(sample(73), "s2");
+  REQUIRE(static_cast<Eigen::Index>(prom_op.GetReducedDimension()) == n + 2);
+  pairing_rows(n + 2);
+  prom_op.TruncatePROM(n);
+  REQUIRE(static_cast<Eigen::Index>(prom_op.GetReducedDimension()) == n);
+  pairing_rows(n);
+  prom_op.SolvePROM(omega);
+  CHECK((prom_op.GetReducedSolution(2) - x_n).norm() <= 1.0e-12 * x_n.norm());
 }
 
 TEST_CASE_METHOD(palace::test::SharedTempDir,
