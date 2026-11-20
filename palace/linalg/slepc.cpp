@@ -727,7 +727,7 @@ int SlepcEPSSolverBase::Solve()
   // only once its Ritz value settled (see CheckRitzValue).
   PetscInt num_conv;
   Customize();
-  if (q_region)
+  if (q_region && false)  // [Experiment] The region without the settled-Ritz test
   {
     PalacePetscCall(
         EPSSetConvergenceTestFunction(eps, __eps_convergence_test, (void *)this, nullptr));
@@ -1243,7 +1243,7 @@ int SlepcPEPSolverBase::Solve()
   // only once its Ritz value settled (see CheckRitzValue).
   PetscInt num_conv;
   Customize();
-  if (q_region)
+  if (q_region && false)  // [Experiment] The region without the settled-Ritz test
   {
     PalacePetscCall(
         PEPSetConvergenceTestFunction(pep, __pep_convergence_test, (void *)this, nullptr));
