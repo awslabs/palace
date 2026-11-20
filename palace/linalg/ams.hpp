@@ -33,6 +33,10 @@ private:
   // without the hypre patch for it in extern/patch/hypre.
   [[maybe_unused]] const int agglomeration_target;
 
+  // Direct (distance-one) interpolation in the auxiliary space AMG hierarchies instead of
+  // extended+i (distance two), see LinearSolverData::ams_aux_direct_interp.
+  const bool direct_interp;
+
   // Control print level for debugging.
   const int print;
 
@@ -56,7 +60,8 @@ public:
   // internally as needed.
   HypreAmsSolver(FiniteElementSpace &nd_fespace, FiniteElementSpace &h1_fespace,
                  int cycle_it, int smooth_it, bool vector_interp, bool singular_op,
-                 bool agg_coarsen, int agglomeration_target, int print);
+                 bool agg_coarsen, int agglomeration_target, int print,
+                 bool direct_interp = false);
   HypreAmsSolver(const IoData &iodata, bool coarse_solver, FiniteElementSpace &nd_fespace,
                  FiniteElementSpace &h1_fespace, int print)
     : HypreAmsSolver(
@@ -65,7 +70,8 @@ public:
                         : iodata.solver.linear.mg_cycle_it,
           iodata.solver.linear.mg_smooth_it, iodata.solver.linear.ams_vector_interp,
           iodata.solver.linear.ams_singular_op, iodata.solver.linear.amg_agg_coarsen,
-          iodata.solver.linear.ams_agglomeration_target, print)
+          iodata.solver.linear.ams_agglomeration_target, print,
+          iodata.solver.linear.ams_aux_direct_interp)
   {
   }
   ~HypreAmsSolver() override;

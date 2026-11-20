@@ -11,11 +11,21 @@
 #include <fstream>
 #include <string>
 #endif
+#if defined(__GLIBC__)
+#include <malloc.h>
+#endif
 
 #include "utils/communication.hpp"
 
 namespace palace::memory_reporting
 {
+
+void ReleaseFreedMemory()
+{
+#if defined(__GLIBC__)
+  malloc_trim(0);
+#endif
+}
 
 // To query current memory on Linux, we look at what the kernel
 // reports for the process.
