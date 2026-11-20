@@ -29,6 +29,7 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-aaa.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-amg.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-basesolver.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-blockcyclic.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-boundarymodeoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-brokenspace.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-coefficient.cpp
