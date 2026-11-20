@@ -51,7 +51,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     meshes with flat elements the projection could take thousands of iterations; on 22
     electrostatic models it now takes 0.62x the time in total, and the element indicators
     change by at most 3e-3. Set it to `0` for the previous behavior. SchemaVer 6-1-0
-    [PR NNNN](https://github.com/awslabs/palace/pull/NNNN).
+    [PR 1259](https://github.com/awslabs/palace/pull/1259).
 
 #### Interface Changes
 
