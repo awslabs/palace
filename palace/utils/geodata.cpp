@@ -78,10 +78,6 @@ std::unique_ptr<int[]> GetMeshPartitioning(const mfem::Mesh &, int,
 std::unique_ptr<mfem::ParMesh> DistributeMesh(MPI_Comm, std::unique_ptr<mfem::Mesh> &,
                                               const int *, const std::string & = "");
 
-// Rebalance a conformal mesh across processor ranks, using the MeshPartitioner. Gathers the
-// mesh onto the root rank before scattering the partitioned mesh.
-void RebalanceConformalMesh(std::unique_ptr<mfem::ParMesh> &);
-
 // Apply box/sphere region-based refinement to a serial mesh in-place. For tensor-element
 // meshes the refinement is non-conforming and the mesh must already be nonconforming.
 // Refinement levels are applied one at a time; at each level every element whose geometry
@@ -2928,13 +2924,13 @@ void FillMeshEntityCounts(mfem::Mesh &smesh, MeshEntityCounts &counts)
   counts.valid = !nonconforming;
 }
 
-// Partition the elements of a nonconforming mesh with METIS on the graph of their faces,
-// conforming and nonconforming, gathered on the root: first into the nodes, then on each
-// node into its processes, so that neighboring subdomains share a node. MFEM's default
-// partition splits the sequence of refinement tree leaves into equal chunks, which
-// fragments the subdomains as the mesh is refined. Returns false if the partition fails.
-bool GetNonconformingRebalancePartitioning(mfem::ParMesh &mesh,
-                                           mfem::Array<int> &partitioning)
+// Partition the elements of a mesh with METIS on the graph of their faces, conforming and
+// nonconforming, gathered on the root: first into the nodes, then on each node into its
+// processes, so that neighboring subdomains share a node. For a nonconforming mesh, MFEM's
+// default partition splits the sequence of refinement tree leaves into equal chunks, which
+// fragments the subdomains as the mesh is refined. Only the graph is gathered, never the
+// mesh. Returns false, on all processes, if the partition fails.
+bool GetRebalancePartitioning(mfem::ParMesh &mesh, mfem::Array<int> &partitioning)
 {
   MPI_Comm comm = mesh.GetComm();
   std::vector<idx_t> xadj, adjncy;
@@ -2995,15 +2991,31 @@ void CompleteMeshEntityCounts(mfem::ParMesh &mesh, MeshEntityCounts &counts)
   }
 }
 
-double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh,
-                     MeshEntityCounts *out_counts)
+std::string RebalanceMessage(const RebalanceResult &result, double tol)
+{
+  if (!result.moved)
+  {
+    return fmt::format(
+        "Mesh not rebalanced: ratio {:.3f} exceeds max. allowed value {:.3f}, "
+        "but no partition was found; the distribution is kept",
+        result.ratio_before, tol);
+  }
+  return fmt::format("Rebalanced mesh: Ratio {:.3f} exceeded max. allowed value {:.3f} "
+                     "(new ratio = {:.3f}{})",
+                     result.ratio_before, tol, result.ratio_after,
+                     (result.ratio_after < result.ratio_before) ? "" : ", not improved");
+}
+
+RebalanceResult RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh,
+                              MeshEntityCounts *out_counts)
 {
   BlockTimer bt0(Timer::REBALANCE);
   MPI_Comm comm = mesh->GetComm();
 
   // If there is more than one processor, may perform rebalancing: a nonconforming mesh
-  // before it is saved, with whole refinement-tree roots, so that the save need not move
-  // them.
+  // before it is saved. The METIS partition need not keep the refinement-tree roots whole;
+  // the parallel save then moves a copy of the mesh which does (PrintParallelNCMesh).
+  RebalanceResult result;
   double ratio = 1.0;
   const double tol = iodata.model.refinement.maximum_imbalance;
   if (Mpi::Size(comm) > 1)
@@ -3023,16 +3035,19 @@ double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh,
   if (ratio > tol && mesh->Nonconforming())
   {
     mfem::Array<int> partitioning;
-    if (GetNonconformingRebalancePartitioning(*mesh, partitioning))
+    if (GetRebalancePartitioning(*mesh, partitioning))
     {
       mesh->Rebalance(partitioning);
     }
     else
     {
+      // Unlike a conformal mesh, which then keeps its distribution, a nonconforming mesh
+      // still moves, with another partition.
       Mpi::Warning(comm, "Could not partition the nonconforming mesh on the root, "
                          "rebalancing it with MFEM's default partition!\n");
       RebalanceRootAligned(*mesh, tol);
     }
+    result.moved = true;
   }
 
   if (iodata.model.refinement.save_adapt_mesh)
@@ -3101,11 +3116,29 @@ double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh,
 
   if (ratio > tol && !mesh->Nonconforming())
   {
-    // Without access to a refinement tree, partitioning must be done on the root processor
-    // and then redistributed.
-    RebalanceConformalMesh(mesh);
+    // The elements move in parallel to the processes of the partition, with the marks of
+    // their refinement: the mesh object is kept and no process holds the whole mesh. MFEM
+    // aborts, on all processes and before anything moves, on a mesh it cannot rebalance.
+    // Without a partition (the graph is too large for MPI's int counts, METIS fails, or a
+    // process would get no element), the distribution is kept, the same on all processes,
+    // and the caller reports it.
+    mfem::Array<int> partitioning;
+    if (GetRebalancePartitioning(*mesh, partitioning))
+    {
+      mesh->Rebalance(partitioning);
+      result.moved = true;
+    }
   }
-  return ratio;
+  result.ratio_before = result.ratio_after = ratio;
+  if (result.moved)
+  {
+    int min_elem, max_elem;
+    min_elem = max_elem = mesh->GetNE();
+    Mpi::GlobalMin(1, &min_elem, comm);
+    Mpi::GlobalMax(1, &max_elem, comm);
+    result.ratio_after = double(max_elem) / min_elem;
+  }
+  return result;
 }
 
 }  // namespace mesh
@@ -4879,51 +4912,6 @@ std::unique_ptr<mfem::ParMesh> DistributeMesh(MPI_Comm comm,
         std::make_unique<mfem::ParMesh>(comm, fi, refine, generate_edges, fix_orientation);
   }
   return pmesh;
-}
-
-void RebalanceConformalMesh(std::unique_ptr<mfem::ParMesh> &pmesh)
-{
-  // Write the parallel mesh to a stream as a serial mesh, then read back in and partition
-  // using METIS.
-  MPI_Comm comm = pmesh->GetComm();
-  constexpr bool generate_edges = false, generate_bdr = false, refine = true,
-                 fix_orientation = false;
-  std::unique_ptr<mfem::Mesh> smesh;
-  if constexpr (false)
-  {
-    // Write the serial mesh to a stream and read that through the Mesh constructor.
-    std::ostringstream fo(std::stringstream::out);
-    // fo << std::fixed;
-    fo << std::scientific;
-    fo.precision(MSH_FLT_PRECISION);
-    pmesh->PrintAsSerial(fo);
-    if (Mpi::Root(comm))
-    {
-      smesh = std::make_unique<mfem::Mesh>(fo, generate_edges, refine, fix_orientation);
-    }
-  }
-  else
-  {
-    // Directly ingest the generated Mesh and release the no longer needed memory.
-    smesh = std::make_unique<mfem::Mesh>(pmesh->GetSerialMesh(0));
-    if (Mpi::Root(comm))
-    {
-      smesh->FinalizeTopology(generate_bdr);
-      smesh->Finalize(refine, fix_orientation);
-    }
-    else
-    {
-      smesh.reset();
-    }
-  }
-
-  // (Re)-construct the parallel mesh.
-  std::unique_ptr<int[]> partitioning;
-  if (Mpi::Root(comm))
-  {
-    partitioning = GetMeshPartitioning(*smesh, Mpi::Size(comm), "", false);
-  }
-  pmesh = DistributeMesh(comm, smesh, partitioning.get());
 }
 
 void RegionRefine(const config::RefinementData &refinement, mfem::Mesh &mesh)
