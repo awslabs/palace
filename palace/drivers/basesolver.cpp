@@ -903,7 +903,29 @@ void BaseSolver::SaveMetadata(SurfaceResponseOperator &response) const
   {
     const auto &gate = (*diagnostics)["ConductorConsistency"];
     const int excluded = gate.value("Count", 0);
-    if (excluded > 0)
+    if (excluded > 0 && gate.value("Exclusion", "") == "PerExcitation")
+    {
+      // Lane ccpx (decisions 2226 / 2229): each exclusion acts at its own excitation.
+      int verdicts = 0, excitations = 0;
+      for (const auto &entry : gate.value("ExcludedByExcitation", nlohmann::json::array()))
+      {
+        verdicts += entry.value("Count", 0);
+        excitations++;
+      }
+      Mpi::Print(
+          "\n*** LOW CONFIDENCE: the conductor-consistency gate (the device potential on "
+          "each coupon's metal must match its conductor) EXCLUDED {:d} (patch, "
+          "excitation) verdict(s) on {:d} distinct patch(es) at {:d} excitation(s), each "
+          "at its own excitation only (Exclusion PerExcitation; {:d} patch tests; claims "
+          "{:.6e}, cells {:.6e} mesh-file units of the distinct patches, served RAW as "
+          "the ConductorConsistency share where excluded): see "
+          "SurfaceResponse.Diagnostics.ConductorConsistency.ExcludedByExcitation of "
+          "palace.json and the raw share per Type of each excitation in "
+          "surface-response-conductor-consistency-energy.csv ***\n",
+          verdicts, excluded, excitations, gate.value("TestedPatches", 0),
+          gate.value("ClaimLength", 0.0), gate.value("CellLength", 0.0));
+    }
+    else if (excluded > 0)
     {
       Mpi::Print(
           "\n*** LOW CONFIDENCE: the conductor-consistency gate (the device potential on "

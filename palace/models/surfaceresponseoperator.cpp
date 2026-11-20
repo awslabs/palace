@@ -30564,8 +30564,81 @@ nlohmann::json &SurfaceResponseOperator::ConductorConsistencyDiagnostics()
         "preflight places and never solves; ProbeSnapsComputed false) is refused by a "
         "solve on every rank alike (decision 632). Tolerance and AmplitudeFloor are "
         "unchanged";
+    if (conductor_consistency_per_excitation)
+    {
+      // Lane ccpx (decisions 2226 / 2229): Exclusion PerExcitation writes the rule leaf and
+      // the per-excitation summary, and the three texts above with their sticky words
+      // replaced (under Sticky every leaf is the former one).
+      diagnostics["Exclusion"] = "PerExcitation";
+      diagnostics["ExcludedByExcitation"] = nlohmann::json::array();
+      auto Reword = [&diagnostics](const char *leaf, const std::string &sticky,
+                                   const std::string &per_excitation)
+      {
+        auto text = diagnostics[leaf].get<std::string>();
+        const auto at = text.find(sticky);
+        MFEM_VERIFY(at != std::string::npos, "The conductor-consistency text "
+                                                 << leaf << " lacks its sticky words!");
+        diagnostics[leaf] = text.replace(at, sticky.size(), per_excitation);
+      };
+      Reword("MaxwellFloorRule",
+             "and a sticky exclusion does not remove a patch from the floor's set",
+             "and an exclusion at another source or frequency does not remove a patch "
+             "from the floor's set");
+      Reword("DeviationNorm",
+             "RecordRaw (weight 0, STICKY across the sources / frequencies of one "
+             "operator, its raw claim served RAW as the ConductorConsistency share",
+             "RecordRaw (weight 0 at that source and frequency ONLY, Exclusion "
+             "PerExcitation: every patch is tested again at every source / frequency of "
+             "one operator; its raw claim served RAW there as the ConductorConsistency "
+             "share");
+      Reword("Rule",
+             "(weight 0 from this excitation on, like a DomainBoundary cell; the patches "
+             "CSV is rewritten)",
+             "(weight 0 at this excitation only, Exclusion PerExcitation: every patch is "
+             "tested again at every excitation; like a DomainBoundary cell; the "
+             "electrostatic patches CSV is rewritten with the patches excluded at one or "
+             "more excitations)");
+    }
   }
   return diagnostics;
+}
+
+void SurfaceResponseOperator::ApplyConductorConsistencyUnionWeights()
+{
+  if (!conductor_consistency_per_excitation)
+  {
+    return;
+  }
+  for (std::size_t i = 0; i < patches.size(); i++)
+  {
+    auto &patch = patches[i];
+    if (patch.conductor_consistency_in_union && !patch.conductor_consistency_excluded)
+    {
+      conductor_consistency_pass_restore.emplace_back(i, patch.weight);
+      patch.weight = 0.0;
+      patch.conductor_consistency_excluded = true;
+    }
+  }
+}
+
+void SurfaceResponseOperator::BeginConductorConsistencyPass()
+{
+  if (!conductor_consistency_per_excitation)
+  {
+    return;
+  }
+  // Lane ccpx (decisions 2226 / 2229): the last pass's exclusions act at their own
+  // excitation only. Restored here, every patch with a pre-gate weight above 0 is tested
+  // at this excitation, and the Maxwell floor's set (weight > 0 or excluded by this gate)
+  // is the pre-gate set, as under Sticky.
+  for (const auto &[index, weight] : conductor_consistency_pass_restore)
+  {
+    patches[index].weight = weight;
+    patches[index].conductor_consistency_excluded = false;
+  }
+  conductor_consistency_pass_restore.clear();
+  conductor_consistency_pass_patches.clear();
+  conductor_consistency_portions = ExcludedPatchPortions();
 }
 
 std::vector<SurfaceResponseOperator::ConductorConsistencyRecord>
@@ -30573,6 +30646,7 @@ SurfaceResponseOperator::ApplyConductorConsistencyGate(const Vector &x, int sour
 {
   MFEM_VERIFY(!maxwell, "The electrostatic conductor-consistency gate reads a real "
                         "potential; the Maxwell path takes the complex field overload!");
+  BeginConductorConsistencyPass();
   // The trace walk also samples the probe points (the device potential at the conductor
   // vertices and at the translational edge probes) into `correction`.
   ApplyTrace(x, trace);
@@ -30706,6 +30780,12 @@ SurfaceResponseOperator::ApplyConductorConsistencyGate(const Vector &x, int sour
     record.excluded = record.max_ratio > kConductorConsistencyTolerance;
     if (record.excluded && !conductor_consistency_record_only)
     {
+      if (conductor_consistency_per_excitation)
+      {
+        conductor_consistency_pass_restore.emplace_back(
+            static_cast<std::size_t>(&patch - patches.data()), patch.weight);
+        patch.conductor_consistency_in_union = true;
+      }
       patch.weight = 0.0;
       patch.conductor_consistency_excluded = true;
     }
@@ -30725,6 +30805,7 @@ SurfaceResponseOperator::ApplyConductorConsistencyGate(const ComplexVector &E, i
   MFEM_VERIFY(maxwell && maxwell_probes.size() == patches.size(),
               "The Maxwell conductor-consistency gate requires a configured Maxwell "
               "surface response!");
+  BeginConductorConsistencyPass();
   // The line integrals of the complex field, the CHAIN trace and the FIT trace (the one the
   // energies use, GetMaxwellResponse): A_p is read on the fit trace.
   Vector line_real, line_imag, trace_real, trace_imag;
@@ -30832,6 +30913,12 @@ SurfaceResponseOperator::ApplyConductorConsistencyGate(const ComplexVector &E, i
     record.excluded = record.max_ratio > kConductorConsistencyTolerance;
     if (record.excluded && !conductor_consistency_record_only)
     {
+      if (conductor_consistency_per_excitation)
+      {
+        conductor_consistency_pass_restore.emplace_back(
+            static_cast<std::size_t>(&patch - patches.data()), patch.weight);
+        patch.conductor_consistency_in_union = true;
+      }
       patch.weight = 0.0;
       patch.conductor_consistency_excluded = true;
     }
@@ -30852,8 +30939,17 @@ void SurfaceResponseOperator::ApplyMagneticConductorConsistencyGate(const Comple
   // flux trace a_m along the probe legs (the same legs, the magnetic stencil) against the
   // piece's flux state; A_z is constant on a PEC piece, so real metal reads ~0 as the
   // electric probe does. The same tolerance and floor; the verdict excludes the patch's
-  // magnetic term (magnetic_excluded, sticky), never its electric one (a patch R0-a has
-  // excluded carries neither: weight 0 skips it here).
+  // magnetic term (magnetic_excluded; sticky or per excitation as the electric gate), never
+  // its electric one (a patch R0-a has excluded carries neither: weight 0 skips it here).
+  if (conductor_consistency_per_excitation)
+  {
+    // Lane ccpx (ruling 2229 D2): the magnetic verdict acts at its own excitation too; its
+    // floor's set is then {weight > 0 after this excitation's electric gate}.
+    for (auto &patch : patches)
+    {
+      patch.magnetic_excluded = false;
+    }
+  }
   Vector line_real, line_imag, trace_real, trace_imag;
   EvaluateMaxwellLines(E.Real(), E.Imag(), line_real, line_imag, true);
   BuildMaxwellChainTrace(line_real, trace_real, true);
@@ -30963,7 +31059,10 @@ void SurfaceResponseOperator::ApplyMagneticConductorConsistencyGate(const Comple
                "(f = {:.6e}); the electric term is kept{}\n",
                MagneticProbeForm(), magnetic_conductor_consistency_tolerance,
                excluded_count, source, frequency,
-               conductor_consistency_record_only ? " (RecordOnly: nothing excluded)" : "");
+               conductor_consistency_record_only ? " (RecordOnly: nothing excluded)"
+               : conductor_consistency_per_excitation
+                   ? " (at this source only: Exclusion PerExcitation)"
+                   : "");
   }
   magnetic_gate_records.insert(magnetic_gate_records.end(), records.begin(), records.end());
 }
@@ -31336,6 +31435,19 @@ SurfaceResponseOperator::FinishConductorConsistencyGate(
   // global index, sorted once per pass at its first exclusion (each excluded record
   // scanned the whole table: excluded x patches on the root).
   std::vector<std::pair<int, std::size_t>> assignment_positions;
+  // Lane ccpx: under PerExcitation the run's distinct totals (Count, ClaimLength,
+  // CellLength) take a patch at its FIRST exclusion only (= the Sticky values: the union is
+  // the Sticky rule's final set); under Sticky every exclusion is a first one. The pass's
+  // exclusions per model index feed the per-excitation summary.
+  const bool per_excitation = conductor_consistency_per_excitation;
+  auto InUnion = [this](int patch)
+  {
+    return std::binary_search(conductor_consistency_union_patches.begin(),
+                              conductor_consistency_union_patches.end(), patch);
+  };
+  int first_count = 0;
+  double first_claims = 0.0, first_cells = 0.0;
+  std::map<int, int> excluded_by_model;
   for (const auto &record : records)
   {
     const bool floor_applied = record.normalization > record.amplitude;
@@ -31416,7 +31528,18 @@ SurfaceResponseOperator::FinishConductorConsistencyGate(
       excluded_count++;
       excluded_claims += record.claim_length * mesh_coordinate_scale;
       excluded_cells += record.cell_length * mesh_coordinate_scale;
-      // The root's patch table (the patches CSV) follows the exclusion.
+      if (!per_excitation || !InUnion(record.patch))
+      {
+        first_count++;
+        first_claims += record.claim_length * mesh_coordinate_scale;
+        first_cells += record.cell_length * mesh_coordinate_scale;
+      }
+      if (per_excitation)
+      {
+        excluded_by_model[record.model]++;
+      }
+      // The root's patch table (the patches CSV) follows the exclusion (under PerExcitation
+      // it accumulates the union, the Sticky rule's final table).
       if (assignment_positions.empty())
       {
         assignment_positions.reserve(patch_assignments.size());
@@ -31482,12 +31605,31 @@ SurfaceResponseOperator::FinishConductorConsistencyGate(
     {
       MFEM_VERIFY(item.present, "Conductor-consistency gate excluded patch "
                                     << item.patch << " without a raw claim record!");
+      // PerExcitation: a patch's FIRST exclusion also appends to the union, in the
+      // Sticky list's sequence (ascending patch order per pass, the same deduplication).
+      const bool first = per_excitation && !InUnion(item.patch);
       for (std::size_t i = 0; i < item.portions.size(); i++)
       {
         AppendExcludedPatchPortion(conductor_consistency_portions, item.patch,
                                    item.portions[i], item.translational[i],
                                    conductor_consistency_claim_tolerance);
+        if (first)
+        {
+          AppendExcludedPatchPortion(conductor_consistency_union_portions, item.patch,
+                                     item.portions[i], item.translational[i],
+                                     conductor_consistency_claim_tolerance);
+        }
       }
+    }
+    if (per_excitation)
+    {
+      conductor_consistency_pass_patches = excluded_patches;
+      std::vector<int> merged;
+      merged.reserve(conductor_consistency_union_patches.size() + excluded_patches.size());
+      std::set_union(conductor_consistency_union_patches.begin(),
+                     conductor_consistency_union_patches.end(), excluded_patches.begin(),
+                     excluded_patches.end(), std::back_inserter(merged));
+      conductor_consistency_union_patches = std::move(merged);
     }
   }
   if (records_spill)
@@ -31526,9 +31668,43 @@ SurfaceResponseOperator::FinishConductorConsistencyGate(
     max_ratio = totals[2];
     tested_records = counts[3];
   }
-  diagnostics["Count"] = diagnostics["Count"].get<int>() + excluded_count;
-  diagnostics["ClaimLength"] = diagnostics["ClaimLength"].get<double>() + excluded_claims;
-  diagnostics["CellLength"] = diagnostics["CellLength"].get<double>() + excluded_cells;
+  if (per_excitation)
+  {
+    double first_totals[2] = {first_claims, first_cells};
+    Mpi::Broadcast(1, &first_count, 0, fespace.GetComm());
+    Mpi::Broadcast(2, first_totals, 0, fespace.GetComm());
+    first_claims = first_totals[0];
+    first_cells = first_totals[1];
+  }
+  else
+  {
+    first_count = excluded_count;
+    first_claims = excluded_claims;
+    first_cells = excluded_cells;
+  }
+  diagnostics["Count"] = diagnostics["Count"].get<int>() + first_count;
+  diagnostics["ClaimLength"] = diagnostics["ClaimLength"].get<double>() + first_claims;
+  diagnostics["CellLength"] = diagnostics["CellLength"].get<double>() + first_cells;
+  if (per_excitation && excluded_count > 0 && HoldsPatchRecords())
+  {
+    // Lane ccpx: what this excitation excluded (the record holders, like ExcludedPatches).
+    nlohmann::json models_excluded = nlohmann::json::array();
+    for (const auto &[model, count] : excluded_by_model)
+    {
+      models_excluded.push_back(
+          {{"Model", model_names.at(model)}, {"ModelIndex", model}, {"Count", count}});
+    }
+    nlohmann::json entry = {{"Source", source},
+                            {"Count", excluded_count},
+                            {"ClaimLength", excluded_claims},
+                            {"CellLength", excluded_cells},
+                            {"Models", std::move(models_excluded)}};
+    if (!records.empty() && records.front().maxwell)
+    {
+      entry["Frequency"] = records.front().frequency;
+    }
+    diagnostics["ExcludedByExcitation"].push_back(std::move(entry));
+  }
   diagnostics["TestedPatches"] = diagnostics["TestedPatches"].get<int>() + tested_records;
   // B.3 (f) / SUPERVISOR AMENDMENT 3 C.4 (decision 1082 Q2): the count of tested patches
   // whose normalization is the floor (FloorApplied), totalled over the gate passes of the
@@ -31536,7 +31712,30 @@ SurfaceResponseOperator::FinishConductorConsistencyGate(
   // records' floor-rested passes. NEW leaf FloorAppliedPatches (allow-listed by name).
   diagnostics["FloorAppliedPatches"] =
       diagnostics.value("FloorAppliedPatches", 0) + floor_applied_count;
-  if (!conductor_consistency_portions.portions.empty())
+  if (per_excitation && !conductor_consistency_union_portions.portions.empty())
+  {
+    // Lane ccpx: the union (every patch excluded at one or more excitations: the Sticky
+    // list); each excitation serves RAW only the portions of its own exclusions.
+    diagnostics["RawPortions"] = DescribeExcludedPatchPortions(
+        conductor_consistency_union_portions, mesh_coordinate_scale,
+        "S7diag R1 (decision 758) with Exclusion PerExcitation (lane ccpx, decisions 2226 "
+        "/ 2229): a conductor-consistency-excluded patch is never dropped. Its raw claim, "
+        "by the DomainBoundary rule (a translational cell's own-edge interval; a vertex "
+        "coupon's arm windows, R along each arm and a trimmed corner's second arm up to s "
+        "= R / cos(theta / 2), the vertex sector by nearest-point ownership of the "
+        "integrator; a spatial cluster's claims plus the cell parts and uncovered portions "
+        "its box removed from others), is served RAW at each excitation at which the patch "
+        "is excluded, and there only: the device's raw within-R energy of these portions "
+        "is kept in every corrected interface energy of that excitation (fixed trace / "
+        "fixed flux on the raw field, self-consistent on the corrected field), reported "
+        "per type in surface-response-conductor-consistency-energy.csv as the "
+        "ConductorConsistency share beside Missing (uncovered) and DomainBoundary: ft = "
+        "E_out + models + uncovered + domainboundary + conductorconsistency. An "
+        "excitation at which the patch passes its own test keeps the model. These "
+        "portions are the UNION (the patches excluded at one or more excitations; "
+        "ExcludedByExcitation lists each excitation's). Portions in mesh-file units");
+  }
+  else if (!per_excitation && !conductor_consistency_portions.portions.empty())
   {
     // Written only once something is excluded: a solve with 0 exclusions records nothing
     // new here (its palace.json is unchanged).
@@ -31617,7 +31816,40 @@ SurfaceResponseOperator::FinishConductorConsistencyGate(
             record.claim_length * mesh_coordinate_scale);
       }
     }
-    if (excluded_count > 0)
+    if (excluded_count > 0 && per_excitation)
+    {
+      // Lane ccpx: what THIS excitation excluded, by model (the largest counts first).
+      std::vector<std::pair<int, std::string>> by_count;
+      for (const auto &[model, count] : excluded_by_model)
+      {
+        by_count.emplace_back(count, model_names.at(model));
+      }
+      std::sort(by_count.begin(), by_count.end(), [](const auto &a, const auto &b)
+                { return a.first != b.first ? a.first > b.first : a.second < b.second; });
+      constexpr std::size_t named_models = 8;
+      std::string names;
+      for (std::size_t i = 0; i < std::min(by_count.size(), named_models); i++)
+      {
+        names += fmt::format("{}{} {:d}", i > 0 ? ", " : "", by_count[i].second,
+                             by_count[i].first);
+      }
+      if (by_count.size() > named_models)
+      {
+        names += fmt::format(", +{:d} more model(s)",
+                             static_cast<int>(by_count.size() - named_models));
+      }
+      Mpi::Print("  excluded at THIS {} only (Exclusion PerExcitation; every patch is "
+                 "tested again at the next one): {:d} patch(es) of {:d} model(s): {}\n",
+                 maxwell_records ? "source" : "excitation", excluded_count,
+                 static_cast<int>(by_count.size()), names);
+      Mpi::Print("  their raw claims are served RAW at this {} only: {:d} portion(s), "
+                 "{:.6e} mesh-file units, kept in its corrected interface energies as the "
+                 "ConductorConsistency share\n",
+                 maxwell_records ? "source" : "excitation",
+                 static_cast<int>(conductor_consistency_portions.portions.size()),
+                 conductor_consistency_portions.length * mesh_coordinate_scale);
+    }
+    else if (excluded_count > 0)
     {
       Mpi::Print("  the excluded patches' raw claims are served RAW: {:d} portion(s), "
                  "{:.6e} mesh-file units so far, kept in the "
@@ -33197,6 +33429,11 @@ SurfaceResponseOperator::SurfaceResponseOperator(
   // The conductor-consistency gate's diagnostic opt-out (idfix R0-a, B.4 (F)): recorded in
   // the Diagnostics whenever set, so that a run of record carrying it is refused by name.
   conductor_consistency_record_only = request->conductor_consistency_record_only;
+  conductor_consistency_per_excitation =
+      request->conductor_consistency_exclusion ==
+          config::ElectrostaticSolverData::ResponseCorrectionData::
+              ConductorConsistencyExclusion::PER_EXCITATION &&
+      !conductor_consistency_record_only;
   exclusion_energy = request->exclusion_energy;
   ConfigureCoverage(*request, fespace.GetComm());
   diagnostics_directory = request->diagnostics_directory;
@@ -34868,6 +35105,11 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
   geometry_fallback_interface_types = config.geometry_fallback_interface_types;
   geometry_fallback_coordinate_scale = iodata.units.GetMeshLengthRelativeScale();
   conductor_consistency_record_only = request->conductor_consistency_record_only;
+  conductor_consistency_per_excitation =
+      request->conductor_consistency_exclusion ==
+          config::ElectrostaticSolverData::ResponseCorrectionData::
+              ConductorConsistencyExclusion::PER_EXCITATION &&
+      !conductor_consistency_record_only;
   exclusion_energy = request->exclusion_energy;
   diagnostics_directory = request->diagnostics_directory;
   conductor_consistency_records_in_directory =
@@ -40719,15 +40961,39 @@ nlohmann::json SurfaceResponseOperator::BuildStatistics(nlohmann::json *release)
                                                          : automatic_statistics;
   std::vector<long long int> model_patch_counts(models.size(), 0);
   std::vector<double> model_patch_weights(models.size(), 0.0);
-  for (const auto &patch : patches)
+  // Lane ccpx (ruling 2229 D5): PatchWeight keeps its meaning on both rules, the weight
+  // kept at every excitation (construction minus the conductor-consistency exclusions: the
+  // union under PerExcitation = the Sticky final weights); PerExcitation adds the sibling
+  // ConstructionPatchWeight (the pre-gate weight; the last pass's zeros restored).
+  std::vector<double> model_construction_weights(
+      conductor_consistency_per_excitation ? models.size() : 0, 0.0);
+  std::vector<double> pass_restored(
+      conductor_consistency_per_excitation ? patches.size() : 0, -1.0);
+  for (const auto &[index, weight] : conductor_consistency_pass_restore)
   {
+    pass_restored[index] = weight;
+  }
+  for (std::size_t i = 0; i < patches.size(); i++)
+  {
+    const auto &patch = patches[i];
     model_patch_counts[patch.model]++;
-    model_patch_weights[patch.model] += patch.weight;
+    model_patch_weights[patch.model] +=
+        patch.conductor_consistency_in_union ? 0.0 : patch.weight;
+    if (conductor_consistency_per_excitation)
+    {
+      model_construction_weights[patch.model] +=
+          pass_restored[i] >= 0.0 ? pass_restored[i] : patch.weight;
+    }
   }
   Mpi::GlobalSum(static_cast<int>(model_patch_counts.size()), model_patch_counts.data(),
                  comm);
   Mpi::GlobalSum(static_cast<int>(model_patch_weights.size()), model_patch_weights.data(),
                  comm);
+  if (conductor_consistency_per_excitation)
+  {
+    Mpi::GlobalSum(static_cast<int>(model_construction_weights.size()),
+                   model_construction_weights.data(), comm);
+  }
   nlohmann::json model_catalog = nlohmann::json::array();
   for (std::size_t i = 0; i < models.size(); i++)
   {
@@ -40739,6 +41005,10 @@ nlohmann::json SurfaceResponseOperator::BuildStatistics(nlohmann::json *release)
                              {"SpatialMortar", models[i].spatial_mortar},
                              {"PatchCount", model_patch_counts[i]},
                              {"PatchWeight", model_patch_weights[i]}});
+    if (conductor_consistency_per_excitation)
+    {
+      model_catalog.back()["ConstructionPatchWeight"] = model_construction_weights[i];
+    }
   }
   result["ModelCatalog"] = std::move(model_catalog);
   if (release && !release->is_null())
@@ -40949,10 +41219,11 @@ std::set<int> SurfaceResponseOperator::GetCoverageInterfaces() const
 
 double SurfaceResponseOperator::GetPatchWeight() const
 {
+  // As ModelCatalog PatchWeight: the weight kept at every excitation (lane ccpx).
   double weight = 0.0;
   for (const auto &patch : patches)
   {
-    weight += patch.weight;
+    weight += patch.conductor_consistency_in_union ? 0.0 : patch.weight;
   }
   Mpi::GlobalSum(1, &weight, fespace.GetComm());
   return weight;

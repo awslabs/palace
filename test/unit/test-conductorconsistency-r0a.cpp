@@ -1221,11 +1221,140 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
       CHECK_FALSE(entry["FloorApplied"].get<bool>());
       CHECK(entry["ProbeKind"] == "TranslationalEdge");
     }
-    // Sticky: a later source with the strip at 0 re-tests nothing (the weights stay 0).
+    // PerExcitation (the default; lane ccpx): a later source with the strip at 0 tests
+    // every patch again and keeps every one; the run-level weight (kept at EVERY
+    // excitation) stays 0 and nothing is served RAW at that source.
     const auto later = StubRecords(response.ApplyConductorConsistencyGate(
         Field(space, StubField{0.0, 0.5, 2.0}, 0.0), 1, 6.0, false));
-    CHECK(later.empty());
+    REQUIRE(later.size() == static_cast<std::size_t>(patch_count));
+    for (const auto &record : later)
+    {
+      CHECK_FALSE(record.excluded);
+    }
     CHECK(response.GetPatchWeight() == 0.0);
+    CHECK(response.GetConductorConsistencyPortions().empty());
+    CHECK_FALSE(response.GetConductorConsistencyUnionPortionRecord().portions.empty());
+    // Sticky (the legacy rule): the later source re-tests nothing (the weights stay 0).
+    json sticky_config = config;
+    sticky_config["Solver"]["SurfaceResponseCorrection"]["ConductorConsistency"]
+                 ["Exclusion"] = "Sticky";
+    std::vector<std::unique_ptr<Mesh>> sticky_meshes;
+    IoData sticky_iodata = Build(sticky_config, sticky_meshes);
+    SpaceOperator sticky_space(sticky_iodata, sticky_meshes);
+    SurfaceResponseOperator sticky_response(sticky_iodata, sticky_space);
+    CHECK_FALSE(sticky_response.ConductorConsistencyPerExcitation());
+    CHECK(StubRecords(sticky_response.ApplyConductorConsistencyGate(
+                          Field(sticky_space, stub, 0.0), 0, 5.0, false))
+              .size() == static_cast<std::size_t>(patch_count));
+    CHECK(
+        StubRecords(sticky_response.ApplyConductorConsistencyGate(
+                        Field(sticky_space, StubField{0.0, 0.5, 2.0}, 0.0), 1, 6.0, false))
+            .empty());
+    CHECK(sticky_response.GetPatchWeight() == 0.0);
+  }
+
+  SECTION("(h) PerExcitation: a source's verdicts and response do not depend on the "
+          "order of the sources (Sticky: they do)")
+  {
+    // Lane ccpx (decisions 2226 / 2229): source S = the strip at V on [0.5, 2] (every stub
+    // patch fails); source A = the strip at V on [1.5, 2] + 5e-6 V on [0.5, 1] (the [1.5,
+    // 2] cells fail, the others pass, the [0.5, 1] cells with a small nonzero response).
+    // Two fresh operators gate (S, A) and (A, S); per field the records and the Maxwell
+    // response after its gate are BITWISE equal under PerExcitation (the same field, the
+    // same weights, the same reductions). Under Sticky A after S finds no patch to test and
+    // keeps nothing.
+    StubField strip;
+    strip.amplitude = 1.0;
+    strip.x0 = 0.5;
+    strip.x1 = 2.0;
+    StubField partial;
+    partial.amplitude = 1.0;
+    partial.x0 = 1.5;
+    partial.x1 = 2.0;
+    partial.tiny = 5.0e-6;
+    partial.x2 = 0.5;
+    partial.x3 = 1.0;
+    struct Outcome
+    {
+      std::vector<std::pair<double, bool>> verdicts;  // (max_ratio, excluded) per patch
+      double domain_correction = 0.0;
+      std::map<int, double> fabricated;
+    };
+    auto Gate = [&](const std::string &exclusion, bool strip_first)
+    {
+      json order_config = config;
+      order_config["Solver"]["SurfaceResponseCorrection"]["ConductorConsistency"]
+                  ["Exclusion"] = exclusion;
+      std::vector<std::unique_ptr<Mesh>> order_meshes;
+      IoData order_iodata = Build(order_config, order_meshes);
+      SpaceOperator order_space(order_iodata, order_meshes);
+      SurfaceResponseOperator order_response(order_iodata, order_space);
+      std::map<char, Outcome> outcomes;  // 'S' / 'A'
+      for (const int step : {0, 1})
+      {
+        const bool is_strip = (step == 0) == strip_first;
+        const ComplexVector E = Field(order_space, is_strip ? strip : partial, 0.0);
+        auto &outcome = outcomes[is_strip ? 'S' : 'A'];
+        for (const auto &record :
+             StubRecords(order_response.ApplyConductorConsistencyGate(E, step, 5.0, false)))
+        {
+          outcome.verdicts.emplace_back(record.max_ratio, record.excluded);
+        }
+        GridFunction field(order_space.GetNDSpace(), true);
+        field.Real().SetFromTrueDofs(E.Real());
+        field.Imag().SetFromTrueDofs(E.Imag());
+        const auto measured = order_response.GetMaxwellResponse(field, 1.0);
+        outcome.domain_correction = measured.domain_correction;
+        outcome.fabricated = measured.fabricated_surface_energy;
+      }
+      return outcomes;
+    };
+    const auto strip_first = Gate("PerExcitation", true);
+    const auto partial_first = Gate("PerExcitation", false);
+    int partial_excluded = 0;
+    for (const char key : {'S', 'A'})
+    {
+      INFO("field " << key);
+      const auto &a = strip_first.at(key), &b = partial_first.at(key);
+      REQUIRE(a.verdicts.size() == static_cast<std::size_t>(patch_count));
+      REQUIRE(b.verdicts.size() == a.verdicts.size());
+      for (std::size_t i = 0; i < a.verdicts.size(); i++)
+      {
+        CHECK(a.verdicts[i].first == b.verdicts[i].first);
+        CHECK(a.verdicts[i].second == b.verdicts[i].second);
+        if (key == 'S')
+        {
+          CHECK(a.verdicts[i].second);
+        }
+        else
+        {
+          partial_excluded += a.verdicts[i].second ? 1 : 0;
+        }
+      }
+      CHECK(a.domain_correction == b.domain_correction);
+      CHECK(a.fabricated == b.fabricated);
+    }
+    CHECK(partial_excluded > 0);
+    CHECK(partial_excluded < patch_count);
+    // The stub's fabricated domain matrix is its thin one (no domain defect): the
+    // fixed-trace fabricated surface energy carries the weights.
+    auto Fabricated = [](const Outcome &outcome)
+    {
+      double total = 0.0;
+      for (const auto &[interface, energy] : outcome.fabricated)
+      {
+        total += std::abs(energy);
+      }
+      return total;
+    };
+    CHECK(Fabricated(strip_first.at('A')) > 0.0);
+    CHECK(Fabricated(strip_first.at('S')) == 0.0);
+    // Sticky: A after S tests nothing and keeps nothing; A first keeps its passing cells.
+    const auto sticky_strip_first = Gate("Sticky", true);
+    const auto sticky_partial_first = Gate("Sticky", false);
+    CHECK(sticky_strip_first.at('A').verdicts.empty());
+    CHECK(Fabricated(sticky_strip_first.at('A')) == 0.0);
+    CHECK(sticky_partial_first.at('A').fabricated == strip_first.at('A').fabricated);
   }
 
   SECTION("(g) the probe path is the end-face w = 0 leg, not a chord: a ramp V(x) = x")

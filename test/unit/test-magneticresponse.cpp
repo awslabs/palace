@@ -1025,6 +1025,99 @@ TEST_CASE_METHOD(
 #endif
 }
 
+// Lane ccpx (decisions 2226 / 2229 D2): the MAGNETIC dual gate acts per excitation under
+// Exclusion PerExcitation. The stub's piece-form library with a magnetic tolerance of 0
+// (MagneticRules.ConductorConsistencyTolerance: any nonzero flux deviation fails), the
+// gap-flux field X (some patches fail) and the zero field Z (every patch passes: ratio 0).
+// Two fresh operators gate (X, Z) and (Z, X): per field the magnetic records and the
+// response's magnetic-excluded count are equal under PerExcitation (Z keeps every magnetic
+// term in both orders); under Sticky Z after X keeps X's magnetic exclusions. The electric
+// gate does not run here, so the magnetic floor's set is the pre-gate set in every pass
+// (the union equality of the electric gate is NOT claimed for the magnetic one).
+TEST_CASE_METHOD(
+    test::SurfaceResponseFiles,
+    "SurfaceResponseOperator magnetic gate: PerExcitation verdicts do not "
+    "depend on the order of the sources",
+    "[surfaceresponseoperator][maxwell][magnetic][conductorconsistency][Serial]"
+    "[Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  auto Build = [&](const json &run_config, std::vector<std::unique_ptr<Mesh>> &meshes)
+  {
+    IoData iodata(run_config, false);
+    iodata.boundaries.cracked_attributes.insert(9);
+    mfem::Mesh serial = test::MakeSerialShortedCpwMesh();
+    meshes.push_back(
+        std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(Mpi::World(), serial)));
+    return iodata;
+  };
+  const auto library =
+      WriteStubMagneticLibrary(temp.temp_dir, convex_library_3d_path, "ccpx-order", true,
+                               {{"ConductorConsistencyTolerance", 0.0}});
+  struct Outcome
+  {
+    std::vector<std::pair<double, bool>> verdicts;  // (max_ratio, excluded) per patch
+    int magnetic_excluded = -1;  // GetMaxwellResponse after the field's gate
+  };
+  auto Run = [&](const std::string &exclusion, bool x_first)
+  {
+    json config = StubMaxwellConfig(*this, library);
+    config["Solver"]["SurfaceResponseCorrection"]["ConductorConsistency"]["Exclusion"] =
+        exclusion;
+    std::vector<std::unique_ptr<Mesh>> meshes;
+    IoData iodata = Build(config, meshes);
+    SpaceOperator space(iodata, meshes);
+    SurfaceResponseOperator response(iodata, space);
+    REQUIRE(response.HasMagneticModels());
+    std::map<char, Outcome> outcomes;
+    for (const int source : {0, 1})
+    {
+      const bool is_x = (source == 0) == x_first;
+      auto coefficient = GapFluxField(is_x ? 1.0 : 0.0);
+      const ComplexVector E = ProjectField(space, coefficient);
+      response.ApplyMagneticConductorConsistencyGate(E, source, 5.0);
+      auto &outcome = outcomes[is_x ? 'X' : 'Z'];
+      for (const auto &record : response.GetMagneticGateRecords())
+      {
+        if (record.source == source)
+        {
+          outcome.verdicts.emplace_back(record.max_ratio, record.excluded);
+        }
+      }
+      GridFunction field(space.GetNDSpace(), true);
+      field.Real().SetFromTrueDofs(E.Real());
+      field.Imag().SetFromTrueDofs(E.Imag());
+      outcome.magnetic_excluded =
+          response.GetMaxwellResponse(field, 1.0).magnetic_excluded_patch_count;
+    }
+    return outcomes;
+  };
+  const auto x_first = Run("PerExcitation", true);
+  const auto z_first = Run("PerExcitation", false);
+  for (const char key : {'X', 'Z'})
+  {
+    INFO("field " << key);
+    const auto &a = x_first.at(key), &b = z_first.at(key);
+    REQUIRE(!a.verdicts.empty());
+    REQUIRE(a.verdicts.size() == b.verdicts.size());
+    for (std::size_t i = 0; i < a.verdicts.size(); i++)
+    {
+      CHECK(a.verdicts[i].first == b.verdicts[i].first);
+      CHECK(a.verdicts[i].second == b.verdicts[i].second);
+    }
+    CHECK(a.magnetic_excluded == b.magnetic_excluded);
+  }
+  CHECK(x_first.at('X').magnetic_excluded > 0);
+  CHECK(x_first.at('Z').magnetic_excluded == 0);
+  // Sticky: Z after X keeps X's magnetic exclusions.
+  const auto sticky_x_first = Run("Sticky", true);
+  CHECK(sticky_x_first.at('X').magnetic_excluded == x_first.at('X').magnetic_excluded);
+  CHECK(sticky_x_first.at('Z').magnetic_excluded == x_first.at('X').magnetic_excluded);
+#endif
+}
+
 // Phase 3 (a) t2 = the a.3 DISCRIMINATION CONTROL (decisions 1256 / 1292 (B)): on the
 // piece-form stub (the gate compares a probe with its PIECE's flux state) under the
 // gap-flux field, the correctly mapped probes read ratio ~0 at FLAT and LIFTED, and
