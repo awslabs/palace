@@ -339,8 +339,10 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
       WriteDefaultConstructionLibrary(convex_library_3d_path, temp.temp_dir), false);
   config["Solver"]["SurfaceResponseCorrection"]["CorrectionMode"] = "Both";
   config["Solver"]["SurfaceResponseCorrection"]["PatchEnergy"] = true;
-  // The lowest mode of the 1 m PEC box.
-  config["Solver"]["Eigenmode"] = {{"Target", 0.05}, {"N", 1}};
+  // The two lowest modes of the 1 m PEC box (as the staged / unstaged case: with N 1 an
+  // 8-rank run measured a converged mode the self-consistent step had no field for); the
+  // checks read mode 1.
+  config["Solver"]["Eigenmode"] = {{"Target", 0.05}, {"N", 2}};
   auto Run = [&](const std::string &stem, const json &region)
   {
     json run = config;
