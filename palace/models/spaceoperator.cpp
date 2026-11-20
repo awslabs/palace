@@ -35,16 +35,8 @@ SpaceOperator::SpaceOperator(const config::SolverData &solver,
                              ProblemType problem_type, const Units &units,
                              const std::vector<std::unique_ptr<Mesh>> &mesh)
   : pc_mat_real(solver.linear.pc_mat_real), pc_mat_shifted(solver.linear.pc_mat_shifted),
-    pc_coarse_real(!solver.linear.complex_coarse_solve &&
-                   (solver.linear.type == LinearSolver::AMS ||
-                    solver.linear.type == LinearSolver::BOOMER_AMG ||
-                    solver.linear.type == LinearSolver::SUPERLU ||
-                    solver.linear.type == LinearSolver::STRUMPACK ||
-                    solver.linear.type == LinearSolver::STRUMPACK_MP ||
-                    solver.linear.type == LinearSolver::MUMPS ||
-                    solver.linear.type == LinearSolver::CUDSS)),
-    print_hdr(true), print_prec_hdr(true),
-    dbc_attr(SetUpBoundaryProperties(boundaries.pec, *mesh.back())),
+    pc_coarse_real(UseRealCoarseApproximation(solver.linear)), print_hdr(true),
+    print_prec_hdr(true), dbc_attr(SetUpBoundaryProperties(boundaries.pec, *mesh.back())),
     nd_fecs(fem::ConstructFECollections<mfem::ND_FECollection>(
         solver.order, mesh.back()->Dimension(), solver.linear.mg_max_levels,
         solver.linear.mg_coarsening, false)),
@@ -1271,17 +1263,19 @@ void SpaceOperator::AssemblePreconditioner(
   AddImagMassCoefficients(a2.real(), fi);
   AddImagMassCoefficients(-a2.imag(), fr);
   AddExtraSystemBdrCoefficients(a3, dfbr, dfbi, fbr, fbi, frbr, frbi, &fpbr, &fpbi);
-  // dfbr/dfbi hold only the second-order absorbing BC term -i(0.5/ω)(μ⁻¹c ∇ₛ×E, ∇ₛ×F),
-  // whose imaginary part is negative semidefinite. The coarse-level solver is applied to
-  // the real-valued Br + Bi unless ComplexCoarseSolve is set or it is Jacobi (see
-  // MfemWrapperSolver), and there this term would cancel part of the positive semidefinite
-  // curl-curl term of Br. So flip its sign on the coarse level, like PCMatShifted does for
-  // the mass term: Br + Bi then has |Bi| for it, as for the losses. The other levels are
-  // applied as the complex-valued operator and keep the correct sign, as does the system
-  // matrix. Its Floquet terms keep their sign: the rotated boundary mass term is
-  // bounded by the first-order absorbing BC term when the tangential Floquet wave vector is
-  // below √2 times the wavenumber at the boundary, in particular for propagating waves
-  // (above, the boundary condition is not passive, see
+  // dfbr/dfbi hold only the second-order absorbing BC term a (μ⁻¹c ∇ₛ×E, ∇ₛ×F), with
+  // a = 1/(2iω) = -0.5 (Im ω + i Re ω) / |ω|²: both parts of a are nonpositive at a real ω
+  // and for decaying modes (Im ω ≥ 0). The coarse-level solver is applied to the
+  // real-valued Br + Bi unless ComplexCoarseSolve is set or it is Jacobi (see
+  // UseRealCoarseApproximation), and there this term would cancel part of the positive
+  // semidefinite curl-curl term of Br. So flip its sign on the coarse level, like
+  // PCMatShifted does for the mass term: it then adds 0.5 (Re ω + Im ω) / |ω|² ≥ 0 times a
+  // positive semidefinite form to Br + Bi, as the losses do. The other levels are applied
+  // as the complex-valued operator and keep the correct sign, as does the system matrix.
+  // Its Floquet terms keep their sign: the rotated boundary mass term is bounded by the
+  // first-order absorbing BC term when the tangential Floquet wave vector is below √2 times
+  // the wavenumber at the boundary, in particular for propagating waves (above, the
+  // boundary condition is not passive, see
   // FarfieldBoundaryOperator::CheckFloquetPassivity), and the mixed boundary curl terms are
   // antisymmetric.
   if (mat_op.HasFloquetFrequencyScaling())
