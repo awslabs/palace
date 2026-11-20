@@ -94,16 +94,8 @@ endif()
 string(REPLACE ";" "; " HYPRE_OPTIONS_PRINT "${HYPRE_OPTIONS}")
 message(STATUS "HYPRE_OPTIONS: ${HYPRE_OPTIONS_PRINT}")
 
-# Sync compute stream before GPU-aware MPI in device matvec, using the patch from the Spack
-# build (https://github.com/hypre-space/hypre/pull/1629,
-# https://github.com/spack/spack-packages/pull/7198)
 include(PatchHelpers)
 set(HYPRE_PATCH_FILES)
-download_patch(HYPRE_PATCH_FILES "${CMAKE_BINARY_DIR}/extern/hypre-patches"
-  hypre_pr1629.patch
-  "https://github.com/hypre-space/hypre/commit/5d0282f44490f406ea532ea6778fe914df677346.patch?full_index=1"
-  8b11d35c29215d462b8e727775e8771d808806ced107e1675082ed80b9ba84fb
-)
 
 # Skip the halo exchange of a zero initial guess in hybrid Gauss-Seidel relaxation
 # (https://github.com/hypre-space/hypre/pull/1651)
