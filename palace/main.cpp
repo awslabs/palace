@@ -27,7 +27,91 @@
 #include <StrumpackConfig.hpp>
 #endif
 
+// LAB (ordslow), not for a pull request.
+#include <climits>
+#include <cstdlib>
+#include <fstream>
+#include <sstream>
+#include <malloc.h>
+#include <sys/prctl.h>
+
 using namespace palace;
+
+namespace
+{
+
+// LAB (ordslow): the variant of a run is given in the configuration file as
+// "STRUMPACKButterflyLevels": 1000 + flags (the value has no effect without HODLR
+// compression), and read here before MPI_Init so that it can act at process start.
+//   1: STRUMPACK prints its per-solve instrumentation (STRUMPACK_ORDSLOW=1)
+//   2: no node-shared permutation
+//   4: glibc malloc with fixed thresholds: no trimming, 64 MB top pad, mmap from 32 MB
+//   8: no transparent huge pages for this process
+//  16: STRUMPACK proportional mapping by factor size
+//  64: instrumentation reduced over batches of 1024 solves instead of 64
+int ordslow_flags = 0, ordslow_mallopt = 0, ordslow_prctl = 0;
+
+void OrdslowLabSetup(int argc, char *argv[])
+{
+  if (argc < 2)
+  {
+    return;
+  }
+  std::ifstream f(argv[argc - 1]);
+  if (!f)
+  {
+    return;
+  }
+  std::stringstream ss;
+  ss << f.rdbuf();
+  const std::string text = ss.str();
+  const std::string key = "\"STRUMPACKButterflyLevels\"";
+  auto pos = text.find(key);
+  if (pos == std::string::npos)
+  {
+    return;
+  }
+  pos = text.find(':', pos + key.size());
+  if (pos == std::string::npos)
+  {
+    return;
+  }
+  const long v = std::strtol(text.c_str() + pos + 1, nullptr, 10);
+  if (v < 1000)
+  {
+    return;
+  }
+  ordslow_flags = static_cast<int>(v - 1000);
+  if (ordslow_flags & 1)
+  {
+    setenv("STRUMPACK_ORDSLOW", "1", 1);
+  }
+  if (ordslow_flags & 64)
+  {
+    setenv("STRUMPACK_ORDSLOW_BATCH", "1024", 1);
+  }
+  if (ordslow_flags & 2)
+  {
+    setenv("PALACE_ORDSLOW_NOSHARE", "1", 1);
+  }
+  if (ordslow_flags & 4)
+  {
+    // Setting any of these also switches off the dynamic adjustment of the thresholds.
+    ordslow_mallopt = mallopt(M_MMAP_THRESHOLD, 32 * 1024 * 1024) +
+                      2 * mallopt(M_TRIM_THRESHOLD, -1) +
+                      4 * mallopt(M_TOP_PAD, 64 * 1024 * 1024);
+  }
+  if (ordslow_flags & 8)
+  {
+    ordslow_prctl = prctl(PR_SET_THP_DISABLE, 1, 0, 0, 0);
+  }
+  if (ordslow_flags & 16)
+  {
+    setenv("PALACE_ORDSLOW_PROPMAP", "1", 1);
+  }
+}
+
+}  // namespace
 
 static consteval const char *GetPalaceGitTag()
 {
@@ -173,6 +257,7 @@ int main(int argc, char *argv[])
     (defined(STRUMPACK_USE_PTSCOTCH) || defined(STRUMPACK_USE_SLATE_SCALAPACK))
   Mpi::default_thread_required = MPI_THREAD_MULTIPLE;
 #endif
+  OrdslowLabSetup(argc, argv);  // LAB (ordslow)
   {
     // MPI_Init waits for all processes to start, which on many nodes can take much longer
     // than the setup itself, so it gets its own row.
@@ -183,6 +268,14 @@ int main(int argc, char *argv[])
   bool world_root = Mpi::Root(world_comm);
   int world_size = Mpi::Size(world_comm);
   Mpi::Print(world_comm, "\n");
+  if (ordslow_flags)
+  {
+    Mpi::Print(world_comm,
+               "LAB ordslow: flags {:d} (1 instrumentation, 2 no shared permutation, 4 "
+               "mallopt, 8 no THP, 16 mapping by factor size, 64 large batches); mallopt "
+               "results {:d} (7 = all three set), prctl result {:d}\n",
+               ordslow_flags, ordslow_mallopt, ordslow_prctl);
+  }
 
   // Parse command-line options.
   std::vector<std::string_view> argv_sv(argv, argv + argc);

@@ -6,6 +6,7 @@
 #if defined(MFEM_USE_STRUMPACK)
 
 #include <complex>
+#include <cstdlib>
 #include <type_traits>
 
 namespace palace
@@ -105,6 +106,12 @@ void ConfigureStrumpackReordering(strumpack::SPOptions<ScalarType> &opts,
     case SymbolicFactorization::DEFAULT:
       opts.set_reordering_method(GetStrumpackDefaultReordering());
       break;
+  }
+  // LAB (ordslow): variant which maps the tree to the processes by factor size instead of
+  // by the operations of the factorization.
+  if (std::getenv("PALACE_ORDSLOW_PROPMAP"))
+  {
+    opts.set_proportional_mapping(strumpack::ProportionalMapping::FACTOR_MEMORY);
   }
 }
 

@@ -4,6 +4,7 @@
 #ifndef PALACE_LINALG_STRUMPACK_HPP
 #define PALACE_LINALG_STRUMPACK_HPP
 
+#include <cstdlib>
 #include <mfem.hpp>
 
 #if defined(MFEM_USE_STRUMPACK)
@@ -63,6 +64,11 @@ void ConfigureStrumpackReordering(strumpack::SPOptions<ScalarType> &opts,
 template <typename ScalarType>
 inline void EnableStrumpackSharedPermutation(strumpack::SPOptions<ScalarType> &opts)
 {
+  // LAB (ordslow): variant without the node-shared permutation.
+  if (std::getenv("PALACE_ORDSLOW_NOSHARE"))
+  {
+    return;
+  }
   if constexpr (requires { opts.enable_shared_permutation(); })
   {
     opts.enable_shared_permutation();

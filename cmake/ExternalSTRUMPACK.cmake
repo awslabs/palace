@@ -362,6 +362,10 @@ list(APPEND STRUMPACK_PATCH_FILES
 list(APPEND STRUMPACK_PATCH_FILES
   "${CMAKE_SOURCE_DIR}/extern/patch/STRUMPACK/strumpack_metis_tree.diff"
 )
+# LAB (ordslow), not for a pull request: per-solve instrumentation of the distributed solve
+list(APPEND STRUMPACK_PATCH_FILES
+  "${CMAKE_SOURCE_DIR}/extern/patch/STRUMPACK/strumpack_ordslow_lab.diff"
+)
 
 include(ExternalProject)
 ExternalProject_Add(strumpack

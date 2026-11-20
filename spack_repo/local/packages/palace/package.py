@@ -265,6 +265,14 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 sha256="ff4599ac53755b60b6132d59ba53052504ca8d76bc205c2943c6b2666cf9a982",
                 when="@8.1.0",
             ),
+            # LAB (ordslow), not for a pull request.
+            patch(
+                "https://raw.githubusercontent.com/awslabs/palace/"
+                "6a0139dd9eed26b458fd6a569278f8145cacf066/extern/patch/STRUMPACK/"
+                "strumpack_ordslow_lab.diff",
+                sha256="dc16a5ff5223ab190dd6310db32e0a715f407bc8ab6176fee4a9bb7c798b6ec9",
+                when="@8.1.0",
+            ),
         ],
     )
 
