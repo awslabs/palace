@@ -1127,8 +1127,9 @@ private:
   std::vector<SurfacePostOperator::UncoveredPerimeterPortion> region_claim_portions;
   std::vector<std::vector<std::size_t>> region_claim_patches;
   std::vector<std::array<double, 3>> region_reference_points;
-  // The loud warning of a Region target whose wall cuts patches: once per construction.
-  bool region_cut_warning_printed = false;
+  // The loud warning of a Region target (its wall cuts patches, or a two-dimensional mesh):
+  // once per construction.
+  bool region_warning_printed = false;
   int region_raw_records = 0;  // the Raw evaluations recorded (RecordRegionResponse)
   mutable bool region_share_rows_started = false;  // WriteRegionShareRows
   // kSignatureParameterToleranceOverRadius x R (mesh units): the claim portions' length
@@ -2306,6 +2307,13 @@ public:
                             const std::map<int, double> &window_fabricated,
                             const std::map<int, double> &window_fabricated_fixed_flux,
                             double energy_scale);
+  // Ruling 2251: the text of the loud warning of a Region target at one evaluation, or
+  // empty when none is due: on a two-dimensional mesh (no patch claims: every patch counts
+  // whole where its reference point lies; decision 2257 MAJOR-2), or when its wall cuts
+  // patches.
+  static std::string RegionTargetWarning(int target, const RegionTargetResponse &response,
+                                         int excitation, const std::string &evaluation,
+                                         bool two_dimensional);
   // Ruling 2251 (PatchEnergy only): one evaluation's rows of
   // surface-response-region-share.csv (root; created with its header by the construction's
   // first call): per target with a Region, every placed patch with a footprint on it or its

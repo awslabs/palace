@@ -40910,29 +40910,55 @@ void SurfaceResponseOperator::RecordRegionResponse(
           response.response_weighted_trace_closure_spread},
          {"TraceClosureResponseFailureFraction",
           response.trace_closure_response_failure_fraction}});
-    if (response.patches_cut > 0 && !region_cut_warning_printed)
+    if (!region_warning_printed)
     {
-      region_cut_warning_printed = true;
-      Mpi::Warning(
-          fespace.GetComm(),
-          "REGION TARGET {:d}: its region wall cuts {:d} patch(es) carrying {:.3e} of the "
-          "box's fabricated energy (fixed trace; excitation {:d}, {} evaluation; every "
-          "value in "
-          "Diagnostics.RegionTargets). A cut patch's fabricated energy is split by the "
-          "share "
-          "of its own within-R raw energy inside the region (the same 0 / 1 test at the "
-          "same face quadrature points as the raw energies; tiers by energy, area, "
-          "reference point: {:d} / {:d} / {:d} / {:d} patches). Where a wall runs along an "
-          "edge inside the matching distance R (a distance band) the split follows the "
-          "thin-sheet raw field, not a model of how the true energy is distributed with "
-          "distance: such a box value is an apportionment, and a large share is its sign. "
-          "Printed once per construction.\n",
-          target, response.patches_cut, response.cut_share, excitation, evaluation,
-          response.patches_by_tier[0], response.patches_by_tier[1],
-          response.patches_by_tier[2], response.patches_by_tier[3]);
+      const std::string warning = RegionTargetWarning(
+          target, response, excitation, evaluation, fespace.GetParMesh().Dimension() == 2);
+      if (!warning.empty())
+      {
+        region_warning_printed = true;
+        Mpi::Warning(fespace.GetComm(), "{}", warning);
+      }
     }
   }
   record["Evaluations"].push_back(std::move(entry));
+}
+
+std::string SurfaceResponseOperator::RegionTargetWarning(
+    int target, const RegionTargetResponse &response, int excitation,
+    const std::string &evaluation, bool two_dimensional)
+{
+  if (two_dimensional)
+  {
+    return fmt::format(
+        "REGION TARGET {:d} ON A TWO-DIMENSIONAL MESH: no patch claims exist on a "
+        "two-dimensional mesh, so every patch counts whole where its reference point (its "
+        "origin) lies; a wall within the matching distance R of an edge splits the raw "
+        "terms but not the patches (excitation {:d}, {} evaluation; every value in "
+        "Diagnostics.RegionTargets). The run is not refused. Printed once per "
+        "construction.\n",
+        target, excitation, evaluation);
+  }
+  if (response.patches_cut <= 0)
+  {
+    return {};
+  }
+  return fmt::format(
+      "REGION TARGET {:d}: its region wall cuts {:d} patch(es) carrying {:.3e} of the "
+      "box's fabricated energy (fixed trace; excitation {:d}, {} evaluation; every "
+      "value in "
+      "Diagnostics.RegionTargets). A cut patch's fabricated energy is split by the "
+      "share "
+      "of its own within-R raw energy inside the region (the same 0 / 1 test at the "
+      "same face quadrature points as the raw energies; tiers by energy, area, "
+      "reference point: {:d} / {:d} / {:d} / {:d} patches). Where a wall runs along an "
+      "edge inside the matching distance R (a distance band) the split follows the "
+      "thin-sheet raw field, not a model of how the true energy is distributed with "
+      "distance: such a box value is an apportionment, and a large share is its sign. "
+      "Printed once per construction.\n",
+      target, response.patches_cut, response.cut_share, excitation, evaluation,
+      response.patches_by_tier[0], response.patches_by_tier[1], response.patches_by_tier[2],
+      response.patches_by_tier[3]);
 }
 
 void SurfaceResponseOperator::WriteRegionShareRows(

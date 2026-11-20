@@ -1129,13 +1129,16 @@ test at the same points as its raw energies, on the field of the column (the raw
 the corrected field for the self-consistent column). Where those points carry no energy,
 every point of the claim decides by energy, then by area, and a claim that holds no
 within-R point of the entry counts whole where its reference point (the patch origin) lies
-in the region. A patch wholly inside counts whole, one wholly outside not at all, and
+in the region. On a two-dimensional mesh no claims exist: every patch counts whole where its
+origin lies; a wall within R of an edge splits the raw terms but not the patches (a warning
+says so once per construction; the run is not refused). A patch wholly inside counts whole, one wholly outside not at all, and
 targets whose regions partition the interface sum to the unfiltered entry. The rule is an
 apportionment by the raw field, not a model: where a region wall runs along an edge inside
 the matching distance (a distance band), the split follows the thin-sheet raw field, which
 does not describe how the true energy is distributed with distance from the edge, and a
 large share of cut patches is the sign of it. The point sampling of the region and distance
-tests is unchanged. A warning prints once per construction when a region wall cuts patches;
+tests is unchanged. A warning prints once per construction when a region wall cuts patches
+or the mesh is two-dimensional;
 `Diagnostics.RegionTargets` in the `SurfaceResponse` block of `palace.json` records, per
 evaluation, the window-wide and the box fabricated energies, the patches inside, cut and
 outside and per tier, the cut patches' share, and the closure spread and failure fraction of

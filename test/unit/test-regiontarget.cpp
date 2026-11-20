@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -13,12 +14,14 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include <unistd.h>
 #include <fmt/format.h>
 #include <mfem.hpp>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
 #include <catch2/generators/catch_generators.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 #include "driver.hpp"
 #include "fem/gridfunction.hpp"
 #include "fem/mesh.hpp"
@@ -251,6 +254,73 @@ void CheckEdgeShares(const fs::path &window, const fs::path &lower, const fs::pa
   }
 }
 
+// The 2D automatic library with its response matrices scaled by 1e-6 (the energy columns
+// from `first_energy` on; the form of test-correctedcapacitance.cpp, whose device needs it:
+// the unscaled correction exceeds the raw energy of the 2D device), written by the root.
+void WriteScaledMatrix(const fs::path &source, const fs::path &target,
+                       std::size_t first_energy, double scale)
+{
+  std::ifstream input(source);
+  REQUIRE(input);
+  std::ofstream output(target);
+  std::string line;
+  std::getline(input, line);
+  output << line << "\n";
+  while (std::getline(input, line))
+  {
+    if (line.empty())
+    {
+      continue;
+    }
+    std::vector<std::string> entries;
+    std::size_t begin = 0;
+    while (begin <= line.size())
+    {
+      const std::size_t end = line.find(',', begin);
+      entries.push_back(line.substr(begin, end == std::string::npos ? end : end - begin));
+      if (end == std::string::npos)
+      {
+        break;
+      }
+      begin = end + 1;
+    }
+    for (std::size_t i = 0; i < entries.size(); i++)
+    {
+      output << (i >= first_energy ? fmt::format("{:.17e}", std::stod(entries[i]) * scale)
+                                   : entries[i])
+             << (i + 1 < entries.size() ? "," : "\n");
+    }
+  }
+}
+
+fs::path WriteScaled2DLibrary(const fs::path &library_path, const fs::path &dir)
+{
+  const fs::path scaled_path = dir / "fabrication-process-region-target-2d.json";
+  if (Mpi::Root(Mpi::World()))
+  {
+    std::ifstream input(library_path);
+    REQUIRE(input);
+    json library = json::parse(input);
+    REQUIRE(library["Models"].size() == 1);
+    auto &model = library["Models"][0];
+    for (const auto &[key, first_energy] :
+         {std::pair<const char *, std::size_t>{"FabricatedMatrix", 2},
+          std::pair<const char *, std::size_t>{"ThinMatrix", 2},
+          std::pair<const char *, std::size_t>{"FabricatedSurfaceMatrix", 5},
+          std::pair<const char *, std::size_t>{"ThinSurfaceMatrix", 5}})
+    {
+      const fs::path source = model[key].get<std::string>();
+      const fs::path target = dir / ("region-target-2d-" + source.filename().string());
+      WriteScaledMatrix(source, target, first_energy, 1.0e-6);
+      model[key] = target.string();
+    }
+    std::ofstream output(scaled_path);
+    output << library.dump(2) << "\n";
+  }
+  Mpi::Barrier(Mpi::World());
+  return scaled_path;
+}
+
 // The convex library in the default patch construction (as the corner-arm trim case
 // writes it: every model on SA coupon 1, the isolated edge on a 4-point basis square);
 // written by the root rank.
@@ -293,6 +363,36 @@ void UseDefaultConstruction(json &correction, const fs::path &library, bool mort
     correction["TraceCoupling"] = "SurfaceMortar";
     correction["MortarOversampling"] = 2;
   }
+}
+
+// The text a callable writes to the process's standard output (the root's log; the form of
+// test-conductorconsistency.cpp).
+template <typename F>
+std::string CaptureStdout(const fs::path &file, F &&run)
+{
+  std::fflush(stdout);
+  const int saved = dup(fileno(stdout));
+  std::FILE *target = std::fopen(file.c_str(), "w");
+  REQUIRE(target);
+  dup2(fileno(target), fileno(stdout));
+  run();
+  std::fflush(stdout);
+  dup2(saved, fileno(stdout));
+  close(saved);
+  std::fclose(target);
+  std::ifstream input(file);
+  return {std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
+}
+
+// The number of occurrences of `text` in `log`.
+int Occurrences(const std::string &log, const std::string &text)
+{
+  int count = 0;
+  for (auto at = log.find(text); at != std::string::npos; at = log.find(text, at + 1))
+  {
+    count++;
+  }
+  return count;
 }
 
 json RegionRecord(const fs::path &dir)
@@ -698,6 +798,120 @@ TEST_CASE_METHOD(
   CHECK(target.share[c] ==
         Catch::Approx(f.open_energy_in / f.open_energy).epsilon(1.0e-14));
   CHECK(std::abs(target.share[c] - f.energy_in / f.energy) > 1.0e-3);
+#endif
+}
+
+// Decision 2257 MAJOR-2 (the text): on a two-dimensional mesh the warning says that every
+// patch counts whole where its reference point lies and that the run is not refused; on a
+// three-dimensional mesh it is due only when the wall cuts patches.
+TEST_CASE("Region target warning text", "[regiontarget][surfaceresponseoperator][Serial]")
+{
+  using Catch::Matchers::ContainsSubstring;
+  SurfaceResponseOperator::RegionTargetResponse response;
+  response.patches_inside = 1;
+  response.patches_outside = 1;
+  response.patches_by_tier = {0, 0, 0, 2};
+  const std::string text =
+      SurfaceResponseOperator::RegionTargetWarning(4, response, 1, "Raw", true);
+  CHECK_THAT(text, ContainsSubstring("REGION TARGET 4 ON A TWO-DIMENSIONAL MESH"));
+  CHECK_THAT(text, ContainsSubstring("every patch counts whole where its reference point "
+                                     "(its origin) lies"));
+  CHECK_THAT(text, ContainsSubstring("a wall within the matching distance R of an edge "
+                                     "splits the raw terms but not the patches"));
+  CHECK_THAT(text, ContainsSubstring("The run is not refused."));
+  CHECK(SurfaceResponseOperator::RegionTargetWarning(4, response, 1, "Raw", false).empty());
+  response.patches_cut = 2;
+  response.cut_share = 0.25;
+  CHECK_THAT(SurfaceResponseOperator::RegionTargetWarning(4, response, 1, "Raw", false),
+             ContainsSubstring("its region wall cuts 2 patch(es) carrying 2.500e-01"));
+}
+
+// Decision 2257 MAJOR-2 (the run): the 2D automatic problem (MakeAutomatic2DMesh: the metal
+// line y = 0.5, x in [0.25, 0.75]; its SA entry 4 at R = 0.1) with entry 4 in the box x <
+// 0.3 (a wall within R of the line end x = 0.25) or x < 0.5 (the corrected-capacitance
+// device: the line as terminal 2, the library scaled by 1e-6). No claims exist: every patch
+// is of tier 4 and the one at x = 0.25 counts whole in both boxes, while the raw energy of
+// entry 4 moves with the wall; the warning prints once per construction; the runs end.
+TEST_CASE_METHOD(
+    test::SurfaceResponseFiles,
+    "Region target on a two-dimensional mesh counts every patch whole where its "
+    "reference point lies, with a warning",
+    "[regiontarget][electrostaticsolver][surfaceresponseoperator][2d][Serial]"
+    "[Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  using Catch::Matchers::ContainsSubstring;
+  const auto crack_policy = GENERATE(test::CrackPolicy::Legacy, test::CrackPolicy::Default);
+  INFO("crack policy: " << test::CrackPolicyName(crack_policy));
+  const fs::path mesh_path = temp.temp_dir / "region-target-2d.mesh";
+  {
+    mfem::Mesh serial = MakeAutomatic2DMesh();
+    if (Mpi::Root(Mpi::World()))
+    {
+      std::ofstream output(mesh_path);
+      serial.Print(output);
+    }
+  }
+  Mpi::Barrier(Mpi::World());
+  json config = AutomaticConfig2D(crack_policy);
+  config["Model"]["Mesh"] = mesh_path.string();
+  config["Solver"]["Electrostatic"]["ResponseCorrection"]["Library"] =
+      WriteScaled2DLibrary(library_path, temp.temp_dir).string();
+  config["Boundaries"]["Ground"] = {{"Attributes", {1, 3, 4}}};
+  config["Boundaries"]["Terminal"] = {{{"Index", 1}, {"Attributes", {2}}},
+                                      {{"Index", 2}, {"Attributes", {9, 10}}}};
+  config["Solver"]["Linear"] = {{"Tol", 1.0e-12}, {"MaxIts", 100}};
+  auto Run = [&](const std::string &stem, double wall)
+  {
+    json run = config;
+    run["Boundaries"]["Postprocessing"]["Dielectric"][0]["Region"] =
+        HalfSpaceRegion(true, wall);
+    const std::string name = stem + "-" + test::CrackPolicyName(crack_policy);
+    const fs::path output = temp.temp_dir / name;
+    run["Problem"]["Output"] = output.string();
+    const std::string log = CaptureStdout(
+        temp.temp_dir / fmt::format("{}-{}.log", name, Mpi::Rank(Mpi::World())),
+        [&]() { test::RunElectrostatic(run); });
+    Mpi::Barrier(Mpi::World());
+    return std::make_pair(output, log);
+  };
+  const auto near = Run("region-2d-near", 0.3);
+  const auto far = Run("region-2d-far", 0.5);
+  if (!Mpi::Root(Mpi::World()))
+  {
+    return;
+  }
+  auto Fabricated = [](const fs::path &dir)
+  {
+    const json record = RegionRecord(dir);
+    REQUIRE(!record.is_null());
+    REQUIRE(record.at("Evaluations").size() >= 1);
+    for (const auto &evaluation : record["Evaluations"])
+    {
+      const auto &target = evaluation["Targets"][0];
+      CHECK(target["Index"].get<int>() == 4);
+      CHECK(target["PatchesCut"].get<int>() == 0);
+      const auto tiers = target["PatchesByTier"].get<std::array<int, 4>>();
+      CHECK(tiers[0] + tiers[1] + tiers[2] == 0);
+      CHECK(tiers[3] > 0);
+    }
+    return record["Evaluations"][0]["Targets"][0]["FabricatedEnergyRegion"].get<double>();
+  };
+  for (const auto &[dir, log] : {near, far})
+  {
+    INFO("run " << dir.filename().string());
+    CHECK(Occurrences(log, "ON A TWO-DIMENSIONAL MESH") == 1);
+    CHECK_THAT(log,
+               ContainsSubstring("every patch counts whole where its reference point"));
+  }
+  const double near_fabricated = Fabricated(near.first);
+  CHECK(near_fabricated != 0.0);
+  CHECK(near_fabricated == Catch::Approx(Fabricated(far.first)).epsilon(1.0e-12));
+  auto Raw = [](const fs::path &dir)
+  { return Single(test::LoadCsv(dir / "surface-Q.csv"), "p_surf[4]", {{"i", 1}}); };
+  CHECK(Raw(near.first) != Catch::Approx(Raw(far.first)).epsilon(1.0e-6));
 #endif
 }
 
