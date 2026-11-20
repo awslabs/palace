@@ -418,11 +418,27 @@ void BaseKspSolver<OperType>::SetOperators(const OperType &op, const OperType &p
 }
 
 template <OperatorType OperType>
+void BaseKspSolver<OperType>::SetMaxRelativeCorrection(double tol)
+{
+  if (auto *gmres = dynamic_cast<GmresSolver<OperType> *>(ksp.get()))
+  {
+    gmres->SetMaxRelativeCorrection(tol);
+  }
+}
+
+template <OperatorType OperType>
+bool BaseKspSolver<OperType>::GetCorrectionExceeded() const
+{
+  const auto *gmres = dynamic_cast<const GmresSolver<OperType> *>(ksp.get());
+  return gmres && gmres->GetCorrectionExceeded();
+}
+
+template <OperatorType OperType>
 void BaseKspSolver<OperType>::Mult(const VecType &x, VecType &y) const
 {
   BlockTimer bt(Timer::KSP, use_timer);
   ksp->Mult(x, y);
-  if (!ksp->GetConverged())
+  if (!ksp->GetConverged() && !GetCorrectionExceeded())
   {
     Mpi::Warning(
         ksp->GetComm(),
