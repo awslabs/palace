@@ -315,6 +315,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     tens of seconds on many nodes). MPI initialization, which includes waiting for all
     processes to start, has its own row, `MPI Startup`.
     [PR 1242](https://github.com/awslabs/palace/pull/1242).
+  - Fixed the error estimates being all zero when MFEM uses a device but libCEED a CPU
+    backend, as with `"Device": "Debug"` or a GPU run with a CPU `"Backend"`, which kept
+    adaptive mesh refinement from refining. Default GPU runs were not affected.
+    [PR 1241](https://github.com/awslabs/palace/pull/1241).
   - Fixed the pivoting of distributed BLR fronts in STRUMPACK with a patch from upstream.
     With BLR compression (`"STRUMPACKCompressionType"` `"BLR"`, `"BLR-HODLR"` or
     `"ZFP-BLR-HODLR"`) on two or more MPI processes, the factorization of an indefinite
@@ -543,6 +547,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     cuDSS 0.8, the parallel cuDSS solver of MFEM 4.10 did not set the communicator for
     device buffers, and `"Type": "cuDSS"` in `config["Solver"]["Linear"]` crashed in the
     first factorization. [PR 1250](https://github.com/awslabs/palace/pull/1250).
+  - The unit tests now pass with MFEM's debug device, and the long tests run them on it, on
+    1 and 2 processes, to catch host accesses to data whose valid copy is on the device. The installed test tree now also discovers each case on the number of
+    processes it runs on, which adds the `[Parallel]`-only regression cases to the Spack
+    test jobs.
+    [PR 1241](https://github.com/awslabs/palace/pull/1241).
 
 ## [0.19.0] - 2026-11-02
 

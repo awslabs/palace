@@ -513,9 +513,10 @@ TEST_CASE("NC parent marker transfer over-constrains port H1 DoFs",
   mfem::Vector transferred_true(submesh_fes.GetTrueVSize());
   submesh_marker_field.ParallelProject(transferred_true);
   int transferred_essential = 0;
+  const auto *T = transferred_true.HostRead();
   for (int i = 0; i < transferred_true.Size(); i++)
   {
-    transferred_essential += transferred_true[i] != 0.0;
+    transferred_essential += T[i] != 0.0;
   }
   // Parent-marker transfer over-constrains two interior H1 DoFs on this NC surface.
   // Essential DoFs must instead be extracted directly from the remapped submesh boundary.
