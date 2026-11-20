@@ -196,6 +196,37 @@ where the matrix ``\bm{A}_2`` represents the nonlinear frequency-dependent bound
 
 The eigenmodes are normalized such that they have unit norm and their mean phase is a positive real number.
 
+### Energy balance of the eigenvectors
+
+The eigenvalue solver returns approximate eigenpairs ``(\omega, \bm{x})``. For each of them,
+the root ``\omega_\text{EB}`` closest to ``\omega`` of the energy balance of the eigenvector,
+
+```math
+\bm{x}^H(\bm{K}+i\omega_\text{EB}\bm{C}-\omega_\text{EB}^2\bm{M}+\bm{A}_2(\omega_\text{EB}))\bm{x} = 0 \,,
+```
+
+is computed, and `eig.csv` reports its quality factor ``Q_\text{EB}`` (`Q_EB`) and the
+relative difference ``|Q-Q_\text{EB}|/Q_\text{EB}`` (`Error (Q)`). For an exact eigenpair,
+``\omega_\text{EB} = \omega``. The loss rate ``\text{Im}\{\omega_\text{EB}\}`` is that of the
+power dissipated by the eigenvector over its stored energy and depends on the eigenvector
+only. With the frequency-dependent boundary conditions, the root is found by a secant
+iteration on ``\bm{A}_2(\omega_\text{EB})``.
+
+The error of an approximate eigenvalue, for example from the inexact linear solves of the
+shift-and-invert spectral transformation, has comparable real and imaginary parts, so that
+the relative error of ``Q`` is about ``2Q`` times the relative error of ``\omega``. To first
+order, the relative error of ``Q_\text{EB}`` is that of the eigenvector and is not amplified
+by ``Q``. For high-Q modes, `Error (Q)` therefore estimates the error of ``Q`` from the
+eigenvalue solve, and ``Q_\text{EB}`` is the more accurate quality factor. The absolute and
+backward errors of the eigenpair, `Error (Abs.)` and `Error (Bkwd.)`, do not bound the error
+of ``Q``: a backward error of ``10^{-12}`` can come with an error of ``Q`` of several percent
+for ``Q \sim 10^6`` when the linear solves are inexact. A warning is printed when
+`Error (Q)` exceeds 1% for a requested mode, which smaller
+[`config["Solver"]["Linear"]["Tol"]`](config/reference.md#config-solver-linear-tol) and
+[`config["Solver"]["Eigenmode"]["Tol"]`](config/reference.md#config-solver-eigenmode-tol)
+reduce. Neither ``Q`` nor ``Q_\text{EB}`` includes the discretization error, which requires
+mesh refinement to estimate.
+
 ## Lumped ports and wave ports
 
 Ports have two effects. First, they impose a boundary condition that relates the electric and

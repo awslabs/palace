@@ -134,7 +134,10 @@ include_example_file("transmon/transmon_coarse", "eig.csv") #hide
 ```
 
 The columns represent the mode number, real and imaginary parts of the
-eigenfrequency, and computed quality factor, respectively. The results
+eigenfrequency, computed quality factor, and absolute and backward errors of the eigenpair,
+followed by the quality factor of the energy balance of the eigenvector, `Q_EB`, and its
+relative difference `Error (Q)` from the quality factor of the eigenvalue (see the
+[reference](../reference.md#Eigenmode-calculations)). The results
 successfully identify two distinct eigenmodes with predominantly real
 frequencies and small imaginary components representing dissipation.
 

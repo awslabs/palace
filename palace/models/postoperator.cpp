@@ -21,6 +21,7 @@
 #include "fem/errorindicator.hpp"
 #include "fem/face_sampling_plan.hpp"
 #include "fem/interpolator.hpp"
+#include "linalg/energybalance.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/orthog.hpp"
 #include "linalg/rap.hpp"
@@ -2551,11 +2552,9 @@ void PostOperator<solver_t>::MeasureAndPrintReduced(int ex_idx, int step,
 }
 
 template <ProblemType solver_t>
-double PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e,
-                                                  const ComplexVector &b,
-                                                  std::complex<double> omega,
-                                                  double error_abs, double error_bkwd,
-                                                  int num_conv)
+double PostOperator<solver_t>::MeasureAndPrintAll(
+    int step, const ComplexVector &e, const ComplexVector &b, std::complex<double> omega,
+    std::complex<double> omega_eb, double error_abs, double error_bkwd, int num_conv)
   requires(solver_t == ProblemType::EIGENMODE)
 {
   BlockTimer bt0(Timer::POSTPRO);
@@ -2564,8 +2563,9 @@ double PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector 
 
   measurement_cache = {};
   measurement_cache.freq = omega;
-  measurement_cache.eigenmode_Q =
-      (omega == 0.0) ? mfem::infinity() : 0.5 * std::abs(omega) / std::abs(omega.imag());
+  measurement_cache.eigenmode_Q = GetQualityFactor(omega);
+  measurement_cache.eigenmode_Q_EB = GetQualityFactor(omega_eb);
+  measurement_cache.error_Q = GetQualityFactorError(omega, omega_eb);
   measurement_cache.error_abs = error_abs;
   measurement_cache.error_bkwd = error_bkwd;
 
@@ -2586,6 +2586,8 @@ double PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector 
     table.insert(Column("q", "Q") << measurement_cache.eigenmode_Q);
     table.insert(Column("err_back", "Error (Bkwd.)") << error_bkwd);
     table.insert(Column("err_abs", "Error (Abs.)") << error_abs);
+    table.insert(Column("q_eb", "Q_EB") << measurement_cache.eigenmode_Q_EB);
+    table.insert(Column("err_q", "Error (Q)") << measurement_cache.error_Q);
     table[0].print_as_int = true;
     Mpi::Print("{}", (step == 0) ? table.format_table() : table.format_row(0));
   }

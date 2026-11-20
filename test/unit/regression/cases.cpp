@@ -353,8 +353,8 @@ palace::test::CustomCheck ComparePortSParameters(double rtol, double atol)
 }
 
 // Standard "drop per-element extrema + eigenmode error columns" list.
-const std::vector<std::string> eigen_excluded = {"Maximum", "Minimum", "Mean",
-                                                 "Error (Bkwd.)", "Error (Abs.)"};
+const std::vector<std::string> eigen_excluded = {
+    "Maximum", "Minimum", "Mean", "Error (Bkwd.)", "Error (Abs.)", "Error (Q)"};
 constexpr auto force_default_solver = palace::test::SolverOverridePolicy::ForceDefault;
 
 // Floquet-port S-parameters: compare only the |S[...]| (dB) magnitude columns
@@ -2316,7 +2316,8 @@ TEST_CASE("floquet_absorbing_eigen", "[Serial][Parallel][GPU][Regression]")
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-3;
   opts.atol = 1.0e-16;
-  opts.excluded_columns = {"Maximum", "Minimum", "Mean", "Error (Bkwd.)", "Error (Abs.)"};
+  opts.excluded_columns = {"Maximum",       "Minimum",      "Mean",
+                           "Error (Bkwd.)", "Error (Abs.)", "Error (Q)"};
   opts.paraview_fields = false;
   opts.custom_checks["eig.csv"] = TestFloquetAbsorbingEigen(1.0e-4);
   palace::test::RunRegressionCase("floquet_absorbing", "floquet_absorbing_eigen.json",
@@ -2824,8 +2825,8 @@ TEST_CASE("cpw_lumped_eigen", "[Serial][Parallel][GPU][Regression]")
   opts.atol = 1.0e-11;
   // Drop phase-sensitive port columns and compare κ_ext by magnitude, since its sign is the
   // sign of Re{I}; keep the farfield magnitude check.
-  opts.excluded_columns = {"Maximum", "Minimum", "Mean",  "Error (Bkwd.)", "Error (Abs.)",
-                           "Re{V[",   "Im{V[",   "Re{I[", "Im{I["};
+  opts.excluded_columns = {"Maximum",   "Minimum", "Mean",  "Error (Bkwd.)", "Error (Abs.)",
+                           "Error (Q)", "Re{V[",   "Im{V[", "Re{I[",         "Im{I["};
   opts.abs_columns = {"\u03ba_ext"};
   opts.skip_rowcount = true;
   opts.custom_checks["farfield-rE.csv"] = TestFarfield(opts.rtol);
@@ -2952,8 +2953,8 @@ TEST_CASE("transmon_coarse", "[Serial][Parallel][GPU][Regression][Long]")
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-2;
   opts.atol = 1.0e-16;
-  opts.excluded_columns = {"Maximum", "Minimum", "Mean",  "Error (Bkwd.)", "Error (Abs.)",
-                           "Re{V[",   "Im{V[",   "Re{I[", "Im{I["};
+  opts.excluded_columns = {"Maximum",   "Minimum", "Mean",  "Error (Bkwd.)", "Error (Abs.)",
+                           "Error (Q)", "Re{V[",   "Im{V[", "Re{I[",         "Im{I["};
   opts.abs_columns = {"\u03ba_ext"};
   opts.skip_rowcount = true;
   opts.gridfunction_fields = true;
@@ -2968,8 +2969,8 @@ TEST_CASE("transmon_amr", "[Serial][Parallel][GPU][Regression][Long]")
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-2;
   opts.atol = 1.0e-16;
-  opts.excluded_columns = {"Maximum", "Minimum", "Mean",  "Error (Bkwd.)", "Error (Abs.)",
-                           "Re{V[",   "Im{V[",   "Re{I[", "Im{I["};
+  opts.excluded_columns = {"Maximum",   "Minimum", "Mean",  "Error (Bkwd.)", "Error (Abs.)",
+                           "Error (Q)", "Re{V[",   "Im{V[", "Re{I[",         "Im{I["};
   opts.abs_columns = {"\u03ba_ext"};
   opts.skip_rowcount = true;
   opts.gridfunction_fields = true;

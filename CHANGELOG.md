@@ -44,6 +44,15 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     or as a thin film with `"ThinFilm": true`, with a warning when this does not match
     the boundary condition of the simulation. Results are written to `surface-Q.csv`.
     SchemaVer 6-0-1.
+  - Eigenmode simulations report the quality factor `Q_EB` of the energy balance of each
+    eigenvector, the root of `xᴴ T(ω) x = 0` closest to the eigenvalue with all the terms of
+    the eigenvalue problem (including frequency-dependent boundary conditions), and its
+    relative difference `Error (Q)` from the quality factor of the eigenvalue, in `eig.csv`
+    and the log. The error of an eigenvalue from the eigenvalue solve, for example from
+    inexact linear solves, is amplified by about `2Q` in the relative error of its quality
+    factor, while `Q_EB` depends on the eigenvector only: for high-Q modes, `Error (Q)`
+    estimates the error of `Q`, which the absolute and backward errors do not, and a warning
+    is printed when it exceeds 1% for a requested mode.
 
 #### Interface Changes
 

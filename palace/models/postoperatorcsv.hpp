@@ -190,10 +190,13 @@ struct Measurement
   // - I_inc(omega) = I_in, for driven so that Jcoeff_excitation = 1.0
   double Jcoeff_excitation = 1.0;  // transient || driven
 
-  // Eigenmode data including error from solver.
+  // Eigenmode data including error from solver, and the quality factor of the energy
+  // balance of the eigenvector with its relative difference to that of the eigenvalue.
   double eigenmode_Q = 0.0;
   double error_bkwd = 0.0;
   double error_abs = 0.0;
+  double eigenmode_Q_EB = 0.0;
+  double error_Q = 0.0;
 
   // "Actual measurements".
 

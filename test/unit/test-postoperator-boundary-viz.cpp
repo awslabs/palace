@@ -942,7 +942,7 @@ TEST_CASE_METHOD(test::SharedTempDir,
   const auto provider_calls_before = CeedParaViewDataCollection::ProviderCallCount();
   const auto batch_views_before = CeedParaViewDataCollection::BatchViewFieldCount();
   const auto avoided_copies_before = CeedParaViewDataCollection::AvoidedSliceCopyCount();
-  post_op.MeasureAndPrintAll(0, e_true, b_true, {1.0, 0.1}, 0.0, 0.0, 1);
+  post_op.MeasureAndPrintAll(0, e_true, b_true, {1.0, 0.1}, {1.0, 0.1}, 0.0, 0.0, 1);
   // Complex 3D E/B output has eight phase-resolved linear fields and three combined
   // quadratic fields. All eleven must share exactly one packed provider callback.
   CHECK(CeedParaViewDataCollection::ProviderCallCount() == provider_calls_before + 1);
@@ -963,7 +963,7 @@ TEST_CASE_METHOD(test::SharedTempDir,
   ComplexVector e_true_second(e_true);
   e_true_second.Real() *= 1.25;
   e_true_second.Imag() *= 0.75;
-  post_op.MeasureAndPrintAll(0, e_true_second, b_true, {1.0, 0.1}, 0.0, 0.0, 2);
+  post_op.MeasureAndPrintAll(0, e_true_second, b_true, {1.0, 0.1}, {1.0, 0.1}, 0.0, 0.0, 2);
   CHECK(CeedParaViewDataCollection::ProviderCallCount() == provider_calls_before + 2);
   CHECK(CeedParaViewDataCollection::BatchViewFieldCount() == batch_views_before + 22);
   CHECK(CeedParaViewDataCollection::AvoidedSliceCopyCount() == avoided_copies_before + 22);
@@ -1125,7 +1125,7 @@ TEST_CASE_METHOD(test::SharedTempDir,
   const auto provider_calls_before = CeedParaViewDataCollection::ProviderCallCount();
   const auto individual_calls_before =
       CeedParaViewDataCollection::IndividualEvaluatorCallCount();
-  post_op.MeasureAndPrintAll(0, e_true, b_true, {1.0, 0.1}, 0.0, 0.0, 1);
+  post_op.MeasureAndPrintAll(0, e_true, b_true, {1.0, 0.1}, {1.0, 0.1}, 0.0, 0.0, 1);
   // The scalar-B 2D route is intentionally outside the 3D E/B bundle contract.
   CHECK(CeedParaViewDataCollection::ProviderCallCount() == provider_calls_before);
   CHECK(CeedParaViewDataCollection::IndividualEvaluatorCallCount() >

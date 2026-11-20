@@ -500,9 +500,11 @@ public:
     requires(solver_t == ProblemType::DRIVEN);
   bool HasReducedPostprocessing() const { return reduced_postprocessing_ready; }
 
+  // Eigenmode: eigenvector E and B fields, eigenvalue ω, energy balance ω_EB of the
+  // eigenvector (see linalg/energybalance.hpp), and eigensolver error estimates.
   double MeasureAndPrintAll(int step, const ComplexVector &e, const ComplexVector &b,
-                            std::complex<double> omega, double error_abs, double error_bkwd,
-                            int num_conv)
+                            std::complex<double> omega, std::complex<double> omega_eb,
+                            double error_abs, double error_bkwd, int num_conv)
     requires(solver_t == ProblemType::EIGENMODE);
 
   double MeasureAndPrintAll(int step, const Vector &v, const Vector &e, int idx)

@@ -16,7 +16,11 @@ for eigenmodes. The computed eigenvalues are written to an ASCII file named `eig
 the directory specified by
 [`config["Problem"]["Output"]`](../config/reference.md#config-problem). Also in
 this file are the mode quality factors and errors (absolute and backward) computed for each
-eigenpair.
+eigenpair, the quality factor `Q_EB` of the energy balance of each eigenvector, and its
+relative difference `Error (Q)` from the quality factor of the eigenvalue. For high-Q modes,
+`Error (Q)` estimates the error of the quality factor from the eigenvalue solve, which the
+absolute and backward errors do not, and `Q_EB` is the more accurate quality factor (see the
+[reference](../reference.md#Eigenmode-calculations)).
 
 With adaptive mesh refinement, the eigenvalue solves of later adaptation iterations can
 start from the eigenmodes of the previous one, transferred to the refined mesh, and then

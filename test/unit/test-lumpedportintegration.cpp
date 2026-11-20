@@ -1504,7 +1504,7 @@ ResistorLossResult MeasureResistorLoss(ResistorLossCase &c, const fs::path &outp
   E.Real().GetTrueDofs(e.Real());
   E.Imag().GetTrueDofs(e.Imag());
   b = 0.0;
-  post_op.MeasureAndPrintAll(0, e, b, 1.0, 0.0, 0.0, 1);
+  post_op.MeasureAndPrintAll(0, e, b, 1.0, 1.0, 0.0, 0.0, 1);
 
   ResistorLossResult result;
   for (const auto &[idx, data] : space_op.GetLumpedPortOp())

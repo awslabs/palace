@@ -14,6 +14,7 @@
 #include "fem/mesh.hpp"
 #include "linalg/arpack.hpp"
 #include "linalg/divfree.hpp"
+#include "linalg/energybalance.hpp"
 #include "linalg/errorestimator.hpp"
 #include "linalg/floquetcorrection.hpp"
 #include "linalg/ksp.hpp"
@@ -626,7 +627,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     eigen->SetBMat(*KM);
     eigen->RescaleEigenvectors(num_report);
   }
-  std::vector<std::complex<double>> eigenvalues(num_report);
+  std::vector<std::complex<double>> eigenvalues(num_report), eigenvalues_eb(num_report);
   std::vector<double> errors_bkwd(num_report), errors_abs(num_report);
 
   // Combine the converged eigenvectors to start the next adaptation iteration: only the
@@ -658,15 +659,49 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   }
   ComplexVector E(Curl.Width());
   E.UseDevice(true);
-  for (int i = 0; i < num_report; i++)
   {
-    eigenvalues[i] = eigen->GetEigenvalue(i);
-    errors_bkwd[i] = eigen->GetError(i, EigenvalueSolver::ErrorType::BACKWARD);
-    errors_abs[i] = eigen->GetError(i, EigenvalueSolver::ErrorType::ABSOLUTE);
-    if (stage_eigenvectors)
+    // The energy balance of each eigenvector, using the operators of the problem it solves
+    // (frequency-dependent boundary terms of the nonlinear problem included).
+    ComplexVector y(Curl.Width());
+    y.UseDevice(true);
+    const ExtraSystemMatrixFunction funcA2_eb = funcA2_full;
+    if (has_A2)
     {
+      space_op.GetWavePortOp().SetSuppressOutput(true);
+    }
+    int num_not_converged = 0;
+    for (int i = 0; i < num_report; i++)
+    {
+      eigenvalues[i] = eigen->GetEigenvalue(i);
+      errors_bkwd[i] = eigen->GetError(i, EigenvalueSolver::ErrorType::BACKWARD);
+      errors_abs[i] = eigen->GetError(i, EigenvalueSolver::ErrorType::ABSOLUTE);
       eigen->GetEigenvector(i, E);
-      E.Get(eigenvectors[i].data(), E.Size(), false);
+      if (!has_C && !has_A2)
+      {
+        eigenvalues_eb[i] = GetEnergyBalanceEigenvalue(space_op.GetComm(), E, *K, *M, y);
+      }
+      else
+      {
+        int num_it = 0;
+        eigenvalues_eb[i] =
+            GetEnergyBalanceEigenvalue(space_op.GetComm(), E, eigenvalues[i], *K, C.get(),
+                                       *M, has_A2 ? &funcA2_eb : nullptr, y, &num_it);
+        num_not_converged += (num_it < 0);
+      }
+      if (stage_eigenvectors)
+      {
+        E.Get(eigenvectors[i].data(), E.Size(), false);
+      }
+    }
+    if (has_A2)
+    {
+      space_op.GetWavePortOp().SetSuppressOutput(false);
+    }
+    if (num_not_converged > 0)
+    {
+      Mpi::Warning("The energy balance of {:d} eigenvector{} did not converge with the "
+                   "frequency-dependent boundary terms!\n",
+                   num_not_converged, (num_not_converged > 1) ? "s" : "");
     }
   }
 
@@ -692,21 +727,34 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   }
   Mpi::Print("\n");
 
+  double max_error_Q = 0.0;
+  int max_error_Q_mode = 0;
   for (int i = 0; i < num_report; i++)
   {
-    // Get the eigenvalue and relative error.
-    std::complex<double> omega = eigenvalues[i];
+    // Get the eigenvalue and relative error, and the energy balance of the eigenvector.
+    std::complex<double> omega = eigenvalues[i], omega_eb = eigenvalues_eb[i];
     double error_bkwd = errors_bkwd[i];
     double error_abs = errors_abs[i];
     if (!has_C && !has_A2)
     {
       // Linear EVP has eigenvalue μ = -λ² = ω².
       omega = std::sqrt(omega);
+      omega_eb = std::sqrt(omega_eb);
     }
     else
     {
       // Quadratic EVP solves for eigenvalue λ = iω.
       omega /= 1i;
+      omega_eb /= 1i;
+    }
+    if (i < num_requested)
+    {
+      const double error_Q = GetQualityFactorError(omega, omega_eb);
+      if (!(error_Q <= max_error_Q))
+      {
+        max_error_Q = error_Q;
+        max_error_Q_mode = i + 1;
+      }
     }
 
     // Compute B = -1/(iω) ∇ x E on the true dofs, and set the internal GridFunctions in
@@ -736,14 +784,31 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       floquet_corr->AddMult(E, B, 1.0 / omega);
     }
 
-    auto total_domain_energy =
-        post_op.MeasureAndPrintAll(i, E, B, omega, error_abs, error_bkwd, num_report);
+    auto total_domain_energy = post_op.MeasureAndPrintAll(
+        i, E, B, omega, omega_eb, error_abs, error_bkwd, num_report);
     if (i < num_requested)
     {
       estimator.AddErrorIndicator(E, B, total_domain_energy, indicator);
     }
   }
   post_op.MeasureFinalize(indicator);
+  if (max_error_Q > 1.0e-2)
+  {
+    // The energy balance depends on the eigenvector only. The absolute error of an
+    // eigenvalue is shared by its real and imaginary parts, and so amplified by 2Q in the
+    // relative error of its quality factor.
+    const bool refined = !(has_A2 && nonlinear_type == NonlinearEigenSolver::HYBRID &&
+                           !iodata.solver.eigenmode.refine_nonlinear);
+    Mpi::Warning("The quality factor Q of the eigenvalue of mode {:d} differs from Q_EB, "
+                 "that of the energy balance of its eigenvector, by {:.2e}: the eigenpair "
+                 "is not accurate. {}\n",
+                 max_error_Q_mode, max_error_Q,
+                 refined ? "Smaller config[\"Solver\"][\"Linear\"][\"Tol\"] and "
+                           "config[\"Solver\"][\"Eigenmode\"][\"Tol\"] reduce the "
+                           "difference."
+                         : "The eigenpairs of the nonlinear problem are not refined "
+                           "(config[\"Solver\"][\"Eigenmode\"][\"RefineNonlinear\"])!");
+  }
   if (num_combined > 0 && ContinueAdaptation(adapt_it, space_op.GlobalTrueVSize(),
                                              indicator.Norml2(space_op.GetComm())))
   {

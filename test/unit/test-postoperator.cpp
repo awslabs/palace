@@ -762,7 +762,7 @@ TEST_CASE_METHOD(test::SharedTempDir, "Field export",
     constexpr int num_conv = 3;
     for (int i = 0; i < num_conv; i++)
     {
-      post_op.MeasureAndPrintAll(i, E, B, 1.0 + i, 0.0, 0.0, num_conv);
+      post_op.MeasureAndPrintAll(i, E, B, 1.0 + i, 1.0 + i, 0.0, 0.0, num_conv);
     }
     check_files("eigenmode", 1, post_op.GetPadDigitsDefault(),
                 {"E_real", "E_imag", "B_real", "B_imag", "S", "U_e", "U_m"});
