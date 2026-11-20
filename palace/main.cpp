@@ -173,6 +173,8 @@ int main(int argc, char *argv[])
     (defined(STRUMPACK_USE_PTSCOTCH) || defined(STRUMPACK_USE_SLATE_SCALAPACK))
   Mpi::default_thread_required = MPI_THREAD_MULTIPLE;
 #endif
+  // Select the device before MPI_Init, see utils::InitDeviceBeforeMpi.
+  const int early_device_id = utils::InitDeviceBeforeMpi();
   {
     // MPI_Init waits for all processes to start, which on many nodes can take much longer
     // than the setup itself, so it gets its own row.
@@ -261,7 +263,8 @@ int main(int argc, char *argv[])
   const int omp_threads = utils::ConfigureOmp();
   const int ngpu = utils::GetDeviceCount();
   const std::string device_str = ConfigureDevice(iodata.solver.device);
-  const int device_id = utils::GetDeviceId(world_comm, ngpu);
+  const int device_id =
+      (early_device_id >= 0) ? early_device_id : utils::GetDeviceId(world_comm, ngpu);
   utils::ConfigureMemory(device_str, device_id);
   mfem::Device device(device_str, device_id);
   ConfigureCeedBackend(iodata.solver.ceed_backend);
