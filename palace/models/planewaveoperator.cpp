@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <numbers>
 #include <span>
 #include <fmt/ranges.h>
 #include "fem/fespace.hpp"
@@ -21,6 +22,9 @@ PlaneWaveOperator::PlaneWaveOperator(const std::map<int, config::PlaneWaveData> 
 {
   MFEM_VERIFY(plane_wave.empty() || mesh.SpaceDimension() == 3,
               "Plane wave excitations require a 3D mesh!");
+  mesh_scale = units.GetMeshLengthRelativeScale();
+  unit_GHz =
+      units.Dimensionalize<Units::ValueType::FREQUENCY>(1.0) / (2.0 * std::numbers::pi);
   const int attr_max = mesh.attributes.Size() ? mesh.attributes.Max() : 0;
   for (const auto &[idx, data] : plane_wave)
   {
@@ -130,9 +134,9 @@ PlaneWaveOperator::GetTotalFieldMarker(int idx, const FiniteElementSpace &nd_fes
   return tmark;
 }
 
-bool PlaneWaveOperator::AddExcitationVector(int idx, double omega, const ComplexOperator &A,
-                                            const FiniteElementSpace &nd_fespace,
-                                            ComplexVector &RHS) const
+bool PlaneWaveOperator::GetIncidentField(int idx, double omega,
+                                         const FiniteElementSpace &nd_fespace,
+                                         ComplexVector &g) const
 {
   auto it = sources.find(idx);
   if (it == sources.end())
@@ -140,27 +144,42 @@ bool PlaneWaveOperator::AddExcitationVector(int idx, double omega, const Complex
     return false;
   }
   const auto &src = it->second;
-  const Vector &tmark = GetTotalFieldMarker(idx, nd_fespace);
 
-  // Interpolate the incident field E_inc = E0 p exp(-i k khat . (x - x0)), with k = omega /
-  // c in the background in nondimensional units.
+  // Interpolate E_inc = E0 p exp(-i k khat . (x - x0)), with k = omega / c in the
+  // background (nondimensional units), times exp(+i k_F . x) for the periodic envelope
+  // which is the unknown with a Floquet wave vector k_F.
   auto &fes = const_cast<mfem::ParFiniteElementSpace &>(nd_fespace.Get());
+  auto &mesh = *fes.GetParMesh();
+  mfem::Vector kf(3);
+  kf = 0.0;
+  if (src.kf.Size() == 3)
+  {
+    kf = src.kf;
+    if (src.kf_scaled)
+    {
+      kf *= omega;
+    }
+  }
   const int n = fes.GetTrueVSize();
-  ComplexVector g(n), y(n);
+  g.SetSize(n);
   g.UseDevice(true);
-  y.UseDevice(true);
+  double jump = 0.0, scale = 0.0;
+  mfem::Array<int> vdofs;
+  mfem::DofTransformation doftrans;
+  mfem::Vector elvect;
   for (int part = 0; part < 2; part++)
   {
     mfem::VectorFunctionCoefficient coef(
         3,
-        [&src, omega, part](const mfem::Vector &x, mfem::Vector &E)
+        [&src, &kf, omega, part](const mfem::Vector &x, mfem::Vector &E)
         {
-          double phase = 0.0;
+          double phase = 0.0, phase_f = 0.0;
           for (int d = 0; d < 3; d++)
           {
             phase += src.direction(d) * (x(d) - src.origin(d));
+            phase_f += kf(d) * x(d);
           }
-          phase *= omega / src.c;
+          phase = phase * omega / src.c - phase_f;
           const double f =
               src.amplitude * ((part == 0) ? std::cos(phase) : -std::sin(phase));
           E.SetSize(3);
@@ -171,8 +190,84 @@ bool PlaneWaveOperator::AddExcitationVector(int idx, double omega, const Complex
         });
     mfem::ParGridFunction gf(&fes);
     gf.ProjectCoefficient(coef);
-    gf.ParallelProject((part == 0) ? g.Real() : g.Imag());
+    Vector &gt = (part == 0) ? g.Real() : g.Imag();
+    gf.ParallelProject(gt);
+    if (!check_interpolated)
+    {
+      continue;
+    }
+
+    // The interpolated field must be the same from every element sharing a dof: it is,
+    // up to rounding, except across the periodic boundaries when the envelope is not
+    // periodic, that is when the incident field is not quasi-periodic with k_F. Compare
+    // the values of each element with the stored ones (the last element wins) on each
+    // process, and with those of the owning process on the shared dofs.
+    for (int e = 0; e < mesh.GetNE(); e++)
+    {
+      fes.GetElementVDofs(e, vdofs, doftrans);
+      elvect.SetSize(vdofs.Size());
+      fes.GetFE(e)->Project(coef, *fes.GetElementTransformation(e), elvect);
+      doftrans.TransformPrimal(elvect);
+      for (int i = 0; i < vdofs.Size(); i++)
+      {
+        const int d = (vdofs[i] >= 0) ? vdofs[i] : -1 - vdofs[i];
+        const double v = (vdofs[i] >= 0) ? elvect(i) : -elvect(i);
+        jump = std::max(jump, std::abs(v - gf(d)));
+        scale = std::max(scale, std::abs(v));
+      }
+    }
+    mfem::ParGridFunction owner(&fes);
+    owner.Distribute(gt);
+    for (int d = 0; d < gf.Size(); d++)
+    {
+      jump = std::max(jump, std::abs(owner(d) - gf(d)));
+    }
   }
+  if (!check_interpolated)
+  {
+    return true;
+  }
+  Mpi::GlobalMax(1, &jump, fes.GetComm());
+  Mpi::GlobalMax(1, &scale, fes.GetComm());
+  const double rel = (scale > 0.0) ? jump / scale : 0.0;
+  if (rel > 1.0e-6)
+  {
+    // Wave vectors in radians per mesh length unit, as the Floquet wave vector in the
+    // configuration file.
+    mfem::Vector k(src.direction);
+    k *= omega / src.c / mesh_scale;
+    kf *= 1.0 / mesh_scale;
+    const auto msg = fmt::format(
+        "Plane wave {:d}: the incident field is not quasi-periodic with the Floquet wave "
+        "vector of the periodic boundaries (relative jump {:.2e} across them). The "
+        "Floquet wave vector [{:.6e}, {:.6e}, {:.6e}] must be the part of the wave vector "
+        "of the plane wave [{:.6e}, {:.6e}, {:.6e}] along the periodic directions, up to a "
+        "reciprocal lattice vector",
+        idx, rel, kf(0), kf(1), kf(2), k(0), k(1), k(2));
+    MFEM_VERIFY(rel <= 1.0e-2, msg << "!");
+    Mpi::Warning(fes.GetComm(),
+                 "{}; the source leaks into the scattered field at the level "
+                 "of this jump.",
+                 msg);
+  }
+  return true;
+}
+
+bool PlaneWaveOperator::AddExcitationVector(int idx, double omega, const ComplexOperator &A,
+                                            const FiniteElementSpace &nd_fespace,
+                                            ComplexVector &RHS) const
+{
+  if (sources.find(idx) == sources.end())
+  {
+    return false;
+  }
+  const Vector &tmark = GetTotalFieldMarker(idx, nd_fespace);
+
+  const int n = nd_fespace.GetTrueVSize();
+  ComplexVector g(n), y(n);
+  g.UseDevice(true);
+  y.UseDevice(true);
+  GetIncidentField(idx, omega, nd_fespace, g);
 
   // b_T = -(A g_O)_T.
   ComplexVector gs(g);
@@ -320,9 +415,103 @@ void PlaneWaveOperator::SetUpBackground(const MaterialOperator &mat_op,
                                  "elements outside of the region which touch it have "
                                  "different permittivities or permeabilities!");
     src.c = std::sqrt(muinv_max / eps_max);
+    if (mat_op.HasWaveVector())
+    {
+      src.kf = mat_op.GetWaveVector();
+      src.kf_scaled = mat_op.HasFloquetFrequencyScaling();
+    }
     Mpi::Print(" Plane wave {:d}: background relative permittivity = {:.3e}, relative "
                "permeability = {:.3e}\n",
                idx, eps_max, 1.0 / muinv_max);
+  }
+}
+
+void PlaneWaveOperator::CheckPeriodicity(const config::PeriodicBoundaryData &periodic,
+                                         const std::vector<double> &omega)
+{
+  if (sources.empty() || periodic.boundary_pairs.empty())
+  {
+    return;
+  }
+
+  // Lattice translations of the periodic boundary pairs (nondimensional).
+  std::vector<mfem::Vector> a;
+  for (const auto &pair : periodic.boundary_pairs)
+  {
+    const auto &T = pair.affine_transform;
+    if (std::ranges::none_of(T, [](double t) { return t != 0.0; }))
+    {
+      // Detected from the mesh: the translation is not available here, so check the
+      // interpolated field at each frequency instead.
+      check_interpolated = true;
+      continue;
+    }
+    for (int i = 0; i < 3; i++)
+    {
+      for (int j = 0; j < 3; j++)
+      {
+        MFEM_VERIFY(std::abs(T[i * 4 + j] - ((i == j) ? 1.0 : 0.0)) <= 1.0e-12,
+                    "Plane wave excitations require periodic boundary pairs which are "
+                    "translations, without rotation!");
+      }
+    }
+    mfem::Vector t(3);
+    for (int i = 0; i < 3; i++)
+    {
+      t(i) = T[i * 4 + 3] / mesh_scale;
+    }
+    a.push_back(std::move(t));
+  }
+
+  for (const auto &[idx, src] : sources)
+  {
+    for (const double w : omega)
+    {
+      mfem::Vector kf(3);
+      kf = 0.0;
+      if (src.kf.Size() == 3)
+      {
+        kf = src.kf;
+        if (src.kf_scaled)
+        {
+          kf *= w;
+        }
+      }
+      mfem::Vector dk(src.direction);
+      dk *= w / src.c;
+      dk -= kf;
+      double mismatch = 0.0;
+      for (const auto &t : a)
+      {
+        // A fixed k_F may differ from the tangential wave vector by a reciprocal lattice
+        // vector, while a k_F which scales with the frequency must match it.
+        const double phase = dk * t;
+        mismatch = std::max(mismatch,
+                            std::abs(src.kf_scaled
+                                         ? phase
+                                         : std::remainder(phase, 2.0 * std::numbers::pi)));
+      }
+      if (mismatch > 1.0e-6)
+      {
+        mfem::Vector k(src.direction);
+        k *= w / src.c / mesh_scale;
+        kf *= 1.0 / mesh_scale;
+        const auto msg = fmt::format(
+            "Plane wave {:d}: the incident field is not quasi-periodic with the Floquet "
+            "wave vector across the periodic boundaries at {:.6e} GHz (phase mismatch "
+            "{:.2e} rad over a lattice translation). The "
+            "Floquet wave vector [{:.6e}, {:.6e}, {:.6e}] (zero if not given) must be the "
+            "part of the wave vector of the plane wave [{:.6e}, {:.6e}, {:.6e}] along the "
+            "periodic directions{}",
+            idx, w * unit_GHz, mismatch, kf(0), kf(1), kf(2), k(0), k(1), k(2),
+            src.kf_scaled ? ", with \"FloquetReferenceFrequency\""
+                          : ", up to a reciprocal lattice vector");
+        MFEM_VERIFY(mismatch <= 1.0e-2, msg << "!");
+        Mpi::Warning("{}; the source leaks into the scattered field at the level of this "
+                     "mismatch.",
+                     msg);
+      }
+    }
   }
 }
 

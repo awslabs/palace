@@ -1587,6 +1587,13 @@ void PostOperatorCSV<solver_t>::InitializeFloquetPortS(const SpaceOperator &fem_
   };
   for (const auto ex_idx : ex_idx_v_all)
   {
+    // Floquet port S-parameters are normalized to the incident Floquet mode of a port, so
+    // they are not written for the excitations with a plane wave.
+    if (std::ranges::any_of(fem_op.GetPlaneWaveOp(),
+                            [ex_idx](const auto &kv) { return kv.first == ex_idx; }))
+    {
+      continue;
+    }
     bool circular_output = floquet_uses_circular_output(ex_idx);
     for (const auto &[port_idx, port] : fem_op.GetFloquetPortOp())
     {

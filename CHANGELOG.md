@@ -57,8 +57,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     scattered field. With a far-field surface (`Boundaries.Postprocessing.FarField`) in the
     scattered-field region, the bistatic radar cross section is written in the far-field
     directions (`farfield-rcs.csv`), and the monostatic one in the backscattering direction
-    of each plane wave (`rcs-monostatic.csv`). See the new example
-    `examples/rcs_coated_sphere`. SchemaVer 5-3-0.
+    of each plane wave (`rcs-monostatic.csv`). On periodic cells, the envelope of the
+    incident field is used with a Floquet wave vector, which is checked at setup against
+    the wave vector of the plane wave over the lattice translations, for all the
+    frequencies of the sweep. See the new example `examples/rcs_coated_sphere`. SchemaVer
+    5-3-0.
     [PR 1212](https://github.com/awslabs/palace/pull/1212).
 
 #### Interface Changes
