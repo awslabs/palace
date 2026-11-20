@@ -1127,8 +1127,9 @@ private:
   std::vector<SurfacePostOperator::UncoveredPerimeterPortion> region_claim_portions;
   std::vector<std::vector<std::size_t>> region_claim_patches;
   std::vector<std::array<double, 3>> region_reference_points;
-  // The loud warning of a Region target (its wall cuts patches, or a two-dimensional mesh):
-  // once per construction.
+  // The loud warning of a Region target (its wall cuts patches, the reference point
+  // assigned a share of its fabricated energy, or a two-dimensional mesh): once per
+  // construction.
   bool region_warning_printed = false;
   int region_raw_records = 0;  // the Raw evaluations recorded (RecordRegionResponse)
   mutable bool region_share_rows_started = false;  // WriteRegionShareRows
@@ -1377,6 +1378,12 @@ public:
     double trace_closure_spread = 0.0;
     double response_weighted_trace_closure_spread = 0.0;
     double trace_closure_response_failure_fraction = 0.0;
+    // Decision 2257 E-3: per tier (1-4) the sums of |f_p| and of |s_p f_p| (fixed trace)
+    // over the patches adding to the target, and the share of sum_p |s_p f_p| that the last
+    // tier (the reference point) forms.
+    std::array<double, 4> fabricated_magnitude_by_tier = {0.0, 0.0, 0.0, 0.0};
+    std::array<double, 4> counted_magnitude_by_tier = {0.0, 0.0, 0.0, 0.0};
+    double reference_point_share = 0.0;
   };
 
   struct ElectrostaticResponse
@@ -2310,7 +2317,8 @@ public:
   // Ruling 2251: the text of the loud warning of a Region target at one evaluation, or
   // empty when none is due: on a two-dimensional mesh (no patch claims: every patch counts
   // whole where its reference point lies; decision 2257 MAJOR-2), or when its wall cuts
-  // patches.
+  // patches, or when the reference point assigned a share of the box's fabricated energy
+  // (named whenever above zero; decision 2257 E-3).
   static std::string RegionTargetWarning(int target, const RegionTargetResponse &response,
                                          int excitation, const std::string &evaluation,
                                          bool two_dimensional);

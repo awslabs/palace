@@ -40700,8 +40700,10 @@ namespace
 // trace / fixed flux); [2] / [3] sum |s_p f_p| (fixed trace) of the cut patches / of every
 // patch; [4] / [5] / [6] the closure accumulation with s_p as a factor (weight x spread^2,
 // failed weight, weight); [7] / [8] / [9] the patches inside / cut / outside; [10]-[13] the
-// patches per tier 1-4.
-constexpr std::size_t kRegionTargetSums = 14;
+// patches per tier 1-4; [14]-[17] / [18]-[21] (decision 2257 E-3) sum |f_p| / sum |s_p f_p|
+// (fixed trace) per tier 1-4, reduced apart from [0]-[13].
+constexpr std::size_t kRegionTargetValueSums = 14;
+constexpr std::size_t kRegionTargetSums = 22;
 
 void AccumulateRegionPatch(std::array<double, kRegionTargetSums> &sums,
                            const SurfaceResponseOperator::RegionPatchShares &shares,
@@ -40744,6 +40746,8 @@ void AccumulateRegionPatch(std::array<double, kRegionTargetSums> &sums,
       break;
   }
   sums[9 + shares.tier[global_index]] += 1.0;
+  sums[13 + shares.tier[global_index]] += std::abs(fixed_trace_energy);
+  sums[17 + shares.tier[global_index]] += magnitude;
 }
 
 // Reduces the local sums of every target with a Region (one reduction, issued only when
@@ -40752,24 +40756,29 @@ std::map<int, SurfaceResponseOperator::RegionTargetResponse>
 ReduceRegionTargets(std::map<int, std::array<double, kRegionTargetSums>> &local,
                     bool closure, MPI_Comm comm)
 {
-  std::vector<double> reduction;
-  reduction.reserve(kRegionTargetSums * local.size());
+  // [0]-[13] in one reduction (as before decision 2257), the tier magnitudes in another.
+  std::vector<double> reduction, magnitudes;
+  reduction.reserve(kRegionTargetValueSums * local.size());
+  magnitudes.reserve((kRegionTargetSums - kRegionTargetValueSums) * local.size());
   for (const auto &[target, sums] : local)
   {
     (void)target;
-    reduction.insert(reduction.end(), sums.begin(), sums.end());
+    reduction.insert(reduction.end(), sums.begin(), sums.begin() + kRegionTargetValueSums);
+    magnitudes.insert(magnitudes.end(), sums.begin() + kRegionTargetValueSums, sums.end());
   }
   if (!reduction.empty())
   {
     Mpi::GlobalSum(static_cast<int>(reduction.size()), reduction.data(), comm);
+    Mpi::GlobalSum(static_cast<int>(magnitudes.size()), magnitudes.data(), comm);
   }
   std::map<int, SurfaceResponseOperator::RegionTargetResponse> result;
   std::size_t k = 0;
   for (const auto &[target, sums] : local)
   {
     (void)sums;
-    const double *r = reduction.data() + k;
-    k += kRegionTargetSums;
+    const double *r = reduction.data() + k * kRegionTargetValueSums;
+    const double *m = magnitudes.data() + k * (kRegionTargetSums - kRegionTargetValueSums);
+    k++;
     auto &response = result[target];
     response.fabricated_surface_energy = r[0];
     response.fabricated_surface_energy_fixed_flux = r[1];
@@ -40780,7 +40789,10 @@ ReduceRegionTargets(std::map<int, std::array<double, kRegionTargetSums>> &local,
     for (int t = 0; t < 4; t++)
     {
       response.patches_by_tier[t] = static_cast<int>(std::llround(r[10 + t]));
+      response.fabricated_magnitude_by_tier[t] = m[t];
+      response.counted_magnitude_by_tier[t] = m[4 + t];
     }
+    response.reference_point_share = r[3] > 0.0 ? m[7] / r[3] : 0.0;
     if (closure)
     {
       const double scale = std::max(std::abs(r[0]), std::abs(r[1]));
@@ -40889,6 +40901,12 @@ void SurfaceResponseOperator::RecordRegionResponse(
   {
     const auto window = window_fabricated.find(target);
     const auto window_fixed_flux = window_fabricated_fixed_flux.find(target);
+    std::array<double, 4> fabricated_by_tier, counted_by_tier;
+    for (int t = 0; t < 4; t++)
+    {
+      fabricated_by_tier[t] = energy_scale * response.fabricated_magnitude_by_tier[t];
+      counted_by_tier[t] = energy_scale * response.counted_magnitude_by_tier[t];
+    }
     entry["Targets"].push_back(
         {{"Index", target},
          {"FabricatedEnergyWindow",
@@ -40905,6 +40923,9 @@ void SurfaceResponseOperator::RecordRegionResponse(
          {"PatchesCut", response.patches_cut},
          {"PatchesOutside", response.patches_outside},
          {"PatchesByTier", response.patches_by_tier},
+         {"FabricatedEnergyMagnitudeByTier", fabricated_by_tier},
+         {"CountedFabricatedEnergyMagnitudeByTier", counted_by_tier},
+         {"ReferencePointShare", response.reference_point_share},
          {"TraceClosureSpread", response.trace_closure_spread},
          {"ResponseWeightedTraceClosureSpread",
           response.response_weighted_trace_closure_spread},
@@ -40928,6 +40949,18 @@ std::string SurfaceResponseOperator::RegionTargetWarning(
     int target, const RegionTargetResponse &response, int excitation,
     const std::string &evaluation, bool two_dimensional)
 {
+  // Decision 2257 E-3: the share of the box's fabricated energy that the reference point
+  // assigned, named whenever it is above zero.
+  const std::string reference =
+      response.reference_point_share > 0.0
+          ? fmt::format(
+                " {:.3e} of the box's fabricated energy (by magnitude, fixed trace) "
+                "was assigned by the reference point (the last tier: no within-R "
+                "face quadrature point of the entry lies on those patches' claims, "
+                "or they have none, so the product cannot tell whether the wall "
+                "cuts them; they count whole where their origin lies).",
+                response.reference_point_share)
+          : std::string();
   if (two_dimensional)
   {
     return fmt::format(
@@ -40935,13 +40968,19 @@ std::string SurfaceResponseOperator::RegionTargetWarning(
         "two-dimensional mesh, so every patch counts whole where its reference point (its "
         "origin) lies; a wall within the matching distance R of an edge splits the raw "
         "terms but not the patches (excitation {:d}, {} evaluation; every value in "
-        "Diagnostics.RegionTargets). The run is not refused. Printed once per "
+        "Diagnostics.RegionTargets).{} The run is not refused. Printed once per "
         "construction.\n",
-        target, excitation, evaluation);
+        target, excitation, evaluation, reference);
   }
   if (response.patches_cut <= 0)
   {
-    return {};
+    return reference.empty()
+               ? std::string()
+               : fmt::format("REGION TARGET {:d}: its region wall cuts no patch "
+                             "(excitation {:d}, {} evaluation; every value in "
+                             "Diagnostics.RegionTargets).{} Printed once per "
+                             "construction.\n",
+                             target, excitation, evaluation, reference);
   }
   return fmt::format(
       "REGION TARGET {:d}: its region wall cuts {:d} patch(es) carrying {:.3e} of the "
@@ -40954,11 +40993,11 @@ std::string SurfaceResponseOperator::RegionTargetWarning(
       "reference point: {:d} / {:d} / {:d} / {:d} patches). Where a wall runs along an "
       "edge inside the matching distance R (a distance band) the split follows the "
       "thin-sheet raw field, not a model of how the true energy is distributed with "
-      "distance: such a box value is an apportionment, and a large share is its sign. "
-      "Printed once per construction.\n",
+      "distance: such a box value is an apportionment, and a large share is its "
+      "sign.{} Printed once per construction.\n",
       target, response.patches_cut, response.cut_share, excitation, evaluation,
       response.patches_by_tier[0], response.patches_by_tier[1], response.patches_by_tier[2],
-      response.patches_by_tier[3]);
+      response.patches_by_tier[3], reference);
 }
 
 void SurfaceResponseOperator::WriteRegionShareRows(

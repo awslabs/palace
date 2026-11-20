@@ -1137,13 +1137,21 @@ apportionment by the raw field, not a model: where a region wall runs along an e
 the matching distance (a distance band), the split follows the thin-sheet raw field, which
 does not describe how the true energy is distributed with distance from the edge, and a
 large share of cut patches is the sign of it. The point sampling of the region and distance
-tests is unchanged. A warning prints once per construction when a region wall cuts patches
-or the mesh is two-dimensional;
-`Diagnostics.RegionTargets` in the `SurfaceResponse` block of `palace.json` records, per
-evaluation, the window-wide and the box fabricated energies, the patches inside, cut and
-outside and per tier, the cut patches' share, and the closure spread and failure fraction of
-the patches weighted with their shares; with `PatchEnergy` the per-patch shares are written
-to `surface-response-region-share.csv`. The entry's own closure spread, the run's maximum
+tests is unchanged. A warning prints once per construction when a region wall cuts patches,
+when the reference point assigned part of the box's fabricated energy, or when the mesh is
+two-dimensional; `Diagnostics.RegionTargets` in the `SurfaceResponse` block of `palace.json`
+records, per evaluation, the window-wide and the box fabricated energies, the patches
+inside, cut and outside and per tier, the cut patches' share, the closure spread and failure
+fraction of the patches weighted with their shares, and per tier the sums of the magnitudes
+of the patches' fabricated energies (`FabricatedEnergyMagnitudeByTier`) and of their counted
+parts (`CountedFabricatedEnergyMagnitudeByTier`; fixed trace, in J). `ReferencePointShare`
+is the last tier's part of the counted sum: the share of the box's fabricated energy
+assigned by the reference point. For those patches no within-R quadrature point of the
+entry lies on the claim (a cell shorter than the spacing of the quadrature points along
+the edge, faces too coarse to have a point within R of a long edge, or no claim at all), so
+the product cannot tell whether the wall cuts them: each counts whole where its origin
+lies, and the warning names this share whenever it is above zero. With `PatchEnergy` the
+per-patch shares are written to `surface-response-region-share.csv`. The entry's own closure spread, the run's maximum
 spread and `confident`, the model and patch tables and the census stay window-wide: for
 such an entry they describe the patches of the whole window, not those of the box.
 

@@ -223,6 +223,60 @@ std::set<long> EdgeCells(const fs::path &dir, double edge)
 // rows of `excitation`): every row is its tier's ratio; the cells of the edge x = 0.25
 // count whole in the lower box and not at all in the upper one, those of x = 0.75 the
 // reverse (a patch the share file does not list has s_p = 0).
+// Decision 2257 E-3: the leaf's per-tier magnitudes from the tables (raw rows of target 4):
+// a patch's tier is its share row's (a patch the share file does not list is of tier 4 with
+// s_p = 0) and |f_p| is the patch table's (fixed trace, `source` below 0: the table's first
+// source); ReferencePointShare = the last tier's part of sum_p |s_p f_p|.
+void CheckTierMagnitudes(const fs::path &dir, const json &target, int source,
+                         int excitation)
+{
+  const Table shares = test::LoadCsv(dir / "surface-response-region-share.csv");
+  const std::vector<std::pair<std::string, int>> share_keys = {
+      {"excitation", excitation}, {"evaluation", 0}, {"target", 4}};
+  const auto listed = Select(shares, "patch", share_keys);
+  const auto tiers = Select(shares, "tier", share_keys);
+  const auto values = Select(shares, "share", share_keys);
+  std::map<long, std::pair<int, double>> row;
+  for (std::size_t i = 0; i < listed.size(); i++)
+  {
+    row[std::lround(listed[i])] = {static_cast<int>(std::lround(tiers[i])), values[i]};
+  }
+  const Table table = test::LoadCsv(dir / "surface-response-patch-energy.csv");
+  if (source < 0)
+  {
+    source = static_cast<int>(std::lround(test::ColumnByHeader(table, "source").data[0]));
+  }
+  const std::vector<std::pair<std::string, int>> keys = {{"source", source},
+                                                         {"evaluation", 0}};
+  const auto patches = Select(table, "patch", keys);
+  const auto energies = Select(table, "fabricated surface energy[4] (J)", keys);
+  std::array<double, 4> fabricated = {0.0, 0.0, 0.0, 0.0}, counted = fabricated;
+  for (std::size_t i = 0; i < patches.size(); i++)
+  {
+    const auto found = row.find(std::lround(patches[i]));
+    const int tier = found != row.end() ? found->second.first : 4;
+    const double share = found != row.end() ? found->second.second : 0.0;
+    fabricated[tier - 1] += std::abs(energies[i]);
+    counted[tier - 1] += std::abs(share * energies[i]);
+  }
+  const auto leaf_fabricated =
+      target.at("FabricatedEnergyMagnitudeByTier").get<std::array<double, 4>>();
+  const auto leaf_counted =
+      target.at("CountedFabricatedEnergyMagnitudeByTier").get<std::array<double, 4>>();
+  const double scale = fabricated[0] + fabricated[1] + fabricated[2] + fabricated[3];
+  REQUIRE(scale > 0.0);
+  for (int t = 0; t < 4; t++)
+  {
+    INFO("tier " << t + 1);
+    CHECK(leaf_fabricated[t] == Catch::Approx(fabricated[t]).margin(1.0e-12 * scale));
+    CHECK(leaf_counted[t] == Catch::Approx(counted[t]).margin(1.0e-12 * scale));
+  }
+  const double total = counted[0] + counted[1] + counted[2] + counted[3];
+  REQUIRE(total > 0.0);
+  CHECK(target.at("ReferencePointShare").get<double>() ==
+        Catch::Approx(counted[3] / total).epsilon(1.0e-10));
+}
+
 void CheckEdgeShares(const fs::path &window, const fs::path &lower, const fs::path &upper,
                      int excitation)
 {
@@ -523,6 +577,9 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     CHECK(target["FabricatedEnergyRegion"].get<double>() /
               target["FabricatedEnergyWindow"].get<double>() ==
           Catch::Approx(box_ft / window_ft).epsilon(1.0e-10));
+    // The middle cells of each edge hold no point (tier 4: the reference point).
+    CHECK(target["ReferencePointShare"].get<double>() > 0.0);
+    CheckTierMagnitudes(dir, target, 1, 1);
   }
   // The shares themselves: each row its tier's ratio on the boxes that cut patches; the
   // edges whole on their side of the wall x = kMidWall.
@@ -660,6 +717,8 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     CHECK(target["FabricatedEnergyRegion"].get<double>() /
               target["FabricatedEnergyWindow"].get<double>() ==
           Catch::Approx(box_ft / window_ft).epsilon(1.0e-10));
+    CHECK(target["ReferencePointShare"].get<double>() > 0.0);
+    CheckTierMagnitudes(dir, target, -1, 0);
   }
   // The shares themselves (mode 1 = excitation 0), as in the electrostatic case.
   for (const fs::path &dir : {lower, upper})
@@ -820,10 +879,29 @@ TEST_CASE("Region target warning text", "[regiontarget][surfaceresponseoperator]
                                      "splits the raw terms but not the patches"));
   CHECK_THAT(text, ContainsSubstring("The run is not refused."));
   CHECK(SurfaceResponseOperator::RegionTargetWarning(4, response, 1, "Raw", false).empty());
+  // Decision 2257 E-3: the reference point's share, named whenever it is above zero (also
+  // without a cut patch, and on a two-dimensional mesh).
+  response.reference_point_share = 0.5;
+  const std::string reference =
+      SurfaceResponseOperator::RegionTargetWarning(4, response, 1, "Raw", false);
+  CHECK_THAT(reference,
+             ContainsSubstring("REGION TARGET 4: its region wall cuts no patch"));
+  CHECK_THAT(reference, ContainsSubstring("5.000e-01 of the box's fabricated energy (by "
+                                          "magnitude, fixed trace) was assigned by the "
+                                          "reference point"));
+  CHECK_THAT(reference,
+             ContainsSubstring("the product cannot tell whether the wall cuts them"));
+  CHECK_THAT(SurfaceResponseOperator::RegionTargetWarning(4, response, 1, "Raw", true),
+             ContainsSubstring("5.000e-01 of the box's fabricated energy"));
   response.patches_cut = 2;
   response.cut_share = 0.25;
+  const std::string cut =
+      SurfaceResponseOperator::RegionTargetWarning(4, response, 1, "Raw", false);
+  CHECK_THAT(cut, ContainsSubstring("its region wall cuts 2 patch(es) carrying 2.500e-01"));
+  CHECK_THAT(cut, ContainsSubstring("5.000e-01 of the box's fabricated energy"));
+  response.reference_point_share = 0.0;
   CHECK_THAT(SurfaceResponseOperator::RegionTargetWarning(4, response, 1, "Raw", false),
-             ContainsSubstring("its region wall cuts 2 patch(es) carrying 2.500e-01"));
+             !ContainsSubstring("assigned by the reference point"));
 }
 
 // Decision 2257 MAJOR-2 (the run): the 2D automatic problem (MakeAutomatic2DMesh: the metal
@@ -905,6 +983,7 @@ TEST_CASE_METHOD(
     CHECK(Occurrences(log, "ON A TWO-DIMENSIONAL MESH") == 1);
     CHECK_THAT(log,
                ContainsSubstring("every patch counts whole where its reference point"));
+    CHECK_THAT(log, ContainsSubstring("1.000e+00 of the box's fabricated energy"));
   }
   const double near_fabricated = Fabricated(near.first);
   CHECK(near_fabricated != 0.0);
