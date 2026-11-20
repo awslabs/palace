@@ -188,6 +188,10 @@ public:
   // skips the test in the following solves.
   void SetLeastSquaresNorm(double norm2) { ls_norm2 = norm2; }
 
+  // The cumulative decrease of the least-squares objective, φ(x₀) - φ(xₖ), after k = 0, 1,
+  // ... iterations of the most recent solve with the least-squares test.
+  const auto &GetLeastSquaresDecrease() const { return ls_decrease; }
+
   void Mult(const VecType &b, VecType &x) const override;
 };
 

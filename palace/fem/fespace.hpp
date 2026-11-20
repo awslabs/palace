@@ -353,6 +353,14 @@ public:
     return G ? *G : BuildDiscreteInterpolator();
   }
 
+  // Release the cached discrete interpolator (rebuilt on demand; references to it become
+  // invalid).
+  void ReleaseDiscreteInterpolator() const
+  {
+    G.reset();
+    aux_fespace = nullptr;
+  }
+
   // Return the basis object for elements of the given element geometry type.
   CeedBasis GetCeedBasis(Ceed ceed, mfem::Geometry::Type geom) const;
 
@@ -445,7 +453,9 @@ public:
 class FiniteElementSpaceHierarchy
 {
 protected:
-  std::vector<std::unique_ptr<FiniteElementSpace>> fespaces;
+  // The levels, owned (owned_fespaces) or not (a space which outlives the hierarchy).
+  std::vector<std::unique_ptr<FiniteElementSpace>> owned_fespaces;
+  std::vector<FiniteElementSpace *> fespaces;
   mutable std::vector<std::unique_ptr<Operator>> P;
 
   const Operator &BuildProlongationAtLevel(std::size_t l) const;
@@ -461,7 +471,15 @@ public:
 
   void AddLevel(std::unique_ptr<FiniteElementSpace> &&fespace)
   {
-    fespaces.push_back(std::move(fespace));
+    fespaces.push_back(fespace.get());
+    owned_fespaces.push_back(std::move(fespace));
+    P.push_back(nullptr);
+  }
+
+  // Add a level which is not owned (the space must outlive the hierarchy).
+  void AddLevel(FiniteElementSpace &fespace)
+  {
+    fespaces.push_back(&fespace);
     P.push_back(nullptr);
   }
 
