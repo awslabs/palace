@@ -116,6 +116,8 @@ std::vector<double> InterpolationOperator::ProbeField(const mfem::ParGridFunctio
   const mfem::ParGridFunction *V = &U;
   if (submesh)
   {
+    MFEM_ASSERT(U.ParFESpace()->GetParMesh() == submesh->GetParent(),
+                "A probed field must be on the mesh of the probes!");
     auto &s = submesh_fields[U.ParFESpace()];
     if (!s.fespace)
     {
@@ -182,7 +184,7 @@ std::vector<int> ProbesInDomains(const std::map<int, config::ProbeData> &probe,
                                  const std::vector<int> &attributes)
 {
   std::vector<int> in_domains;
-  if (probe.empty())
+  if (probe.empty() || attributes.empty())
   {
     return in_domains;
   }
