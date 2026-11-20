@@ -325,7 +325,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     to the basis and is represented by its projection onto it, while the other part is
     added. A warning is printed if neither part is added and the PROM error at the sample
     exceeds `"AdaptiveTol"`: the error is then limited by the accuracy of the HDM solves.
-    [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
+    [PR 1255](https://github.com/awslabs/palace/pull/1255).
   - The `"Problem"`/`"Iteration"` field of `palace.json` is now updated only after the AMR
     iteration's output is in its final location. With `SaveAdaptIterations`, it used to be
     written before the output was moved into `iterationXX`, so a reader polling it could
