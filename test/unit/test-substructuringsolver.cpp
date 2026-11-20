@@ -4172,6 +4172,49 @@ void RunDrivenBox(const std::filesystem::path &dir, const std::string &mode,
 }  // namespace
 
 TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "Driven substructuring online with a process holding no region element",
+                 "[substructure][Parallel]")
+{
+  // An online sweep partitioned with every region element on the first process, so that
+  // the others hold environment elements only, whose DOFs the region eliminates, gives the
+  // S-parameters of the offline sweep.
+  const int nranks = Mpi::Size(Mpi::World());
+  if (nranks < 2)
+  {
+    return;
+  }
+  RunDrivenBox(temp_dir, "Offline");
+  const auto part = temp_dir / "box_region_on_root.part";
+  if (Mpi::Root(Mpi::World()))
+  {
+    const mfem::Mesh serial = MakeInteriorBoundaryBox();
+    std::ofstream f(part);
+    f << "number_of_elements " << serial.GetNE() << "\nnumber_of_processors " << nranks
+      << "\n";
+    for (int e = 0; e < serial.GetNE(); e++)
+    {
+      f << ((serial.GetAttribute(e) == 1) ? 0 : 1 + e % (nranks - 1)) << "\n";
+    }
+  }
+  Mpi::Barrier(Mpi::World());
+  RunDrivenBox(temp_dir, "Online",
+               [&](json &config) { config["Model"]["Partitioning"] = part.string(); });
+  const auto offline = ReadCsv(temp_dir / "postpro_Offline" / "port-S.csv");
+  const auto online = ReadCsv(temp_dir / "postpro_Online" / "port-S.csv");
+  REQUIRE(online.first == offline.first);
+  REQUIRE(online.second.size() == offline.second.size());
+  for (std::size_t r = 0; r < online.second.size(); r++)
+  {
+    for (std::size_t c = 0; c < online.second[r].size(); c++)
+    {
+      CAPTURE(online.first[c]);
+      CHECK(std::abs(online.second[r][c] - offline.second[r][c]) <=
+            1.0e-8 * (1.0 + std::abs(offline.second[r][c])));
+    }
+  }
+}
+
+TEST_CASE_METHOD(palace::test::SharedTempDir,
                  "Driven substructuring needs the sources of a model away from Γ",
                  "[substructure][Serial][Parallel]")
 {
