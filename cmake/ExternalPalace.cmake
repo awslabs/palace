@@ -7,7 +7,10 @@
 
 # Force build order
 if(PALACE_BUILD_EXTERNAL_DEPS)
-  list(APPEND PALACE_DEPENDENCIES mfem libCEED parmetis json json_schema_validator fmt eigen scn)
+  list(APPEND PALACE_DEPENDENCIES mfem libCEED json json_schema_validator fmt eigen scn)
+  if(PALACE_WITH_PARMETIS)
+    list(APPEND PALACE_DEPENDENCIES parmetis)
+  endif()
   if(PALACE_WITH_SLEPC)
     list(APPEND PALACE_DEPENDENCIES slepc)
   endif()
@@ -31,6 +34,7 @@ list(APPEND PALACE_OPTIONS
   "-DPALACE_WITH_SUPERLU=${PALACE_WITH_SUPERLU}"
   "-DPALACE_WITH_MUMPS=${PALACE_WITH_MUMPS}"
   "-DPALACE_WITH_CUDSS=${PALACE_WITH_CUDSS}"
+  "-DPALACE_WITH_PARMETIS=${PALACE_WITH_PARMETIS}"
   "-DPALACE_WITH_GSLIB=${PALACE_WITH_GSLIB}"
   "-DANALYZE_SOURCES_CLANG_TIDY=${ANALYZE_SOURCES_CLANG_TIDY}"
   "-DANALYZE_SOURCES_CPPCHECK=${ANALYZE_SOURCES_CPPCHECK}"
@@ -80,9 +84,9 @@ if(NOT "${METIS_DIR}" STREQUAL "")
 elseif(PALACE_BUILD_EXTERNAL_DEPS)
   list(APPEND PALACE_OPTIONS "-DMETIS_DIR=${CMAKE_INSTALL_PREFIX}")
 endif()
-if(NOT "${PARMETIS_DIR}" STREQUAL "")
+if(PALACE_WITH_PARMETIS AND NOT "${PARMETIS_DIR}" STREQUAL "")
   list(APPEND PALACE_OPTIONS "-DPARMETIS_DIR=${PARMETIS_DIR}")
-elseif(PALACE_BUILD_EXTERNAL_DEPS)
+elseif(PALACE_WITH_PARMETIS AND PALACE_BUILD_EXTERNAL_DEPS)
   list(APPEND PALACE_OPTIONS "-DPARMETIS_DIR=${CMAKE_INSTALL_PREFIX}")
 endif()
 if(NOT "${HYPRE_DIR}" STREQUAL "")
@@ -120,7 +124,6 @@ endif()
 if(PALACE_WITH_CUDA)
   list(APPEND PALACE_OPTIONS
     "-DPALACE_WITH_CUDA=ON"
-    "-DPALACE_WITH_GPU_AWARE_MPI=${PALACE_WITH_GPU_AWARE_MPI}"
     "-DCMAKE_CUDA_COMPILER=${CMAKE_CUDA_COMPILER}"
     "-DCMAKE_CUDA_FLAGS=${CMAKE_CUDA_FLAGS}"
   )
@@ -133,7 +136,6 @@ endif()
 if(PALACE_WITH_HIP)
   list(APPEND PALACE_OPTIONS
     "-DPALACE_WITH_HIP=ON"
-    "-DPALACE_WITH_GPU_AWARE_MPI=${PALACE_WITH_GPU_AWARE_MPI}"
     "-DCMAKE_HIP_COMPILER=${CMAKE_HIP_COMPILER}"
     "-DCMAKE_HIP_FLAGS=${CMAKE_HIP_FLAGS}"
   )
@@ -164,14 +166,26 @@ ExternalProject_Add(palace
   TEST_COMMAND      ""
 )
 
-# Add target for Palace unit tests
-ExternalProject_Add_Step(palace tests
-  COMMAND           ${PALACE_MAKE_COMMAND} unit-tests
-  COMMAND           ${CMAKE_COMMAND} --install <BINARY_DIR>/test/unit --prefix ${CMAKE_INSTALL_PREFIX}
-  DEPENDEES         install
-  DEPENDERS         ""
-  COMMENT           "Building and installing unit tests for 'palace'"
-  WORKING_DIRECTORY <BINARY_DIR>
-  EXCLUDE_FROM_MAIN TRUE
-)
-ExternalProject_Add_StepTargets(palace tests)
+# Add target for Palace unit tests. They require MFEM with exceptions (see
+# test/unit/main.cpp): when the superbuild builds MFEM without them, fail right away instead
+# of after building all the dependencies.
+if(PALACE_BUILD_EXTERNAL_DEPS AND "${MFEM_DIR}" STREQUAL "" AND
+   NOT PALACE_MFEM_USE_EXCEPTIONS)
+  add_custom_target(palace-tests
+    COMMAND ${CMAKE_COMMAND} -E echo
+      "Palace unit tests require MFEM built with MFEM_USE_EXCEPTIONS:"
+      "configure with -DPALACE_MFEM_USE_EXCEPTIONS=ON"
+    COMMAND ${CMAKE_COMMAND} -E false
+  )
+else()
+  ExternalProject_Add_Step(palace tests
+    COMMAND           ${PALACE_MAKE_COMMAND} unit-tests
+    COMMAND           ${CMAKE_COMMAND} --install <BINARY_DIR>/test/unit --prefix ${CMAKE_INSTALL_PREFIX}
+    DEPENDEES         install
+    DEPENDERS         ""
+    COMMENT           "Building and installing unit tests for 'palace'"
+    WORKING_DIRECTORY <BINARY_DIR>
+    EXCLUDE_FROM_MAIN TRUE
+  )
+  ExternalProject_Add_StepTargets(palace tests)
+endif()

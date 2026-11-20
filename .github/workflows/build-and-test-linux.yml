@@ -4,7 +4,7 @@
 name: Build and Test (Linux)
 
 permissions:
-  contents: write
+  contents: read
 
 on:
   push:
@@ -41,7 +41,7 @@ jobs:
   build-and-test-linux:
     needs: filter
     permissions:
-      contents: write
+      contents: read
       id-token: write  # Codecov OIDC upload
     strategy:
       fail-fast: false
@@ -251,12 +251,35 @@ jobs:
       # Julia is only needed for the antenna postprocessing example below (same
       # gate); the regression sweep itself uses the Catch2 binary.
       - uses: julia-actions/setup-julia@da908477b5db94c10ffce8cfea9f2b3b9d5db687 # v3.0.3
+        id: setup-julia
         if: needs.filter.outputs.test == 'true' && matrix.arch == 'x86' && matrix.compiler == 'gcc' && matrix.math-libs == 'openblas' && !matrix.with-coverage
         with:
           version: '1'
 
-      - uses: julia-actions/cache@9353db09a0f2bbbdec6f41791918c75d37391b36 # v3.5.0
+      # Restore the Julia depot on every run but save it only from main, and only
+      # when the resolved packages (examples/Manifest.toml) changed. A cache saved from a
+      # pull request is visible only to that pull request, and at several hundred
+      # MB each they used up the repository's 10 GB cache.
+      - name: Restore Julia depot
+        id: julia-cache
         if: needs.filter.outputs.test == 'true' && matrix.arch == 'x86' && matrix.compiler == 'gcc' && matrix.math-libs == 'openblas' && !matrix.with-coverage
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.julia
+          key: julia-${{ github.job }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.setup-julia.outputs.julia-version }}
+          restore-keys: julia-${{ github.job }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.setup-julia.outputs.julia-version }}-
+
+      # Configure downloads dependency patches from GitHub, and skips any file
+      # already present with the expected hash. Restoring them from a cache keeps
+      # configure off the network. This restores the most recent entry.
+      - name: Restore dependency patches
+        id: patch-cache
+        if: needs.filter.outputs.test == 'true'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: palace-build/extern/*-patches
+          key: patches-${{ runner.os }}
+          restore-keys: patches-${{ runner.os }}-
 
       - name: Build Palace
         if: needs.filter.outputs.test == 'true'
@@ -337,7 +360,7 @@ jobs:
           if [[ "$REGRESSION_NUMPROC" -lt 1 ]]; then
             REGRESSION_NUMPROC=1
           fi
-          mkdir palace-build && cd palace-build
+          mkdir -p palace-build && cd palace-build
           cmake .. \
             -DCMAKE_INSTALL_PREFIX=$(pwd)/../palace-install \
             -DPALACE_TESTS_NUMPROC=2 \
@@ -359,6 +382,19 @@ jobs:
             -DLLVM_DIR="$LLVM_CMAKE_DIR"
 
           make -j$NUM_PROC_BUILD palace-tests
+
+      # Save a new entry when configure succeeded (palace-build/Makefile exists),
+      # even if the build failed, and downloaded patches that the restored entry
+      # did not have. The key starts with the hash of the patches to tell.
+      - name: Save dependency patches
+        if: |
+          !cancelled() && needs.filter.outputs.test == 'true' &&
+          hashFiles('palace-build/Makefile') != '' &&
+          !startsWith(steps.patch-cache.outputs.cache-matched-key, format('patches-{0}-{1}-', runner.os, hashFiles('palace-build/extern/*-patches/*')))
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: palace-build/extern/*-patches
+          key: patches-${{ runner.os }}-${{ hashFiles('palace-build/extern/*-patches/*') }}-${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}
 
       - name: Run unit tests
         if: needs.filter.outputs.test == 'true'
@@ -408,55 +444,9 @@ jobs:
             ctest -j "$(nproc 2> /dev/null || sysctl -n hw.ncpu)" --output-on-failure -LE "^(regression|long)$"
           fi
 
-      # NOTE: Fork PRs get a read-only GITHUB_TOKEN and cannot push to gh-pages;
-      # for those the coverage report is still available via the artifact below.
-      - name: Deploy coverage to gh-pages
-        id: deploy-coverage
-        continue-on-error: true
-        if: |
-          needs.filter.outputs.test == 'true' && matrix.with-coverage &&
-          (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
-        uses: peaceiris/actions-gh-pages@84c30a85c19949d7eee79c4ff27748b70285e453 # v4.1.0
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: palace-build/coverage_html
-          destination_dir: ${{ github.event_name == 'pull_request' && format('previews/PR{0}/coverage', github.event.pull_request.number) || format('coverage/{0}', github.sha) }}
-          keep_files: true
-
-      # Concurrent PR previews (docs and coverage) race to push gh-pages: retry once.
-      - name: Retry coverage deploy to gh-pages
-        if: steps.deploy-coverage.outcome == 'failure'
-        uses: peaceiris/actions-gh-pages@84c30a85c19949d7eee79c4ff27748b70285e453 # v4.1.0
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: palace-build/coverage_html
-          destination_dir: ${{ github.event_name == 'pull_request' && format('previews/PR{0}/coverage', github.event.pull_request.number) || format('coverage/{0}', github.sha) }}
-          keep_files: true
-
-      - name: Add coverage link to summary
-        if: |
-          needs.filter.outputs.test == 'true' && matrix.with-coverage &&
-          (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          SHA: ${{ github.sha }}
-        run: |
-          if [[ "$EVENT_NAME" == "pull_request" ]]; then
-            COVERAGE_URL="https://awslabs.github.io/palace/previews/PR${PR_NUMBER}/coverage/"
-          else
-            COVERAGE_URL="https://awslabs.github.io/palace/coverage/${SHA}/"
-          fi
-          echo "### Coverage Report" >> "$GITHUB_STEP_SUMMARY"
-          echo "View the coverage report at: [Coverage Report](${COVERAGE_URL})" >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Upload coverage report
-        if: needs.filter.outputs.test == 'true' && matrix.with-coverage
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: coverage-${{ matrix.arch }}-${{ matrix.compiler }}-${{ matrix.mpi }}
-          path: palace-build/coverage_html/
-
+      # Codecov comments on each pull request and shows the line-by-line coverage at
+      # https://app.codecov.io/gh/awslabs/palace. For a local HTML report, run
+      # scripts/measure-test-coverage report.
       - name: Upload coverage to Codecov
         if: needs.filter.outputs.test == 'true' && matrix.with-coverage
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
@@ -508,3 +498,12 @@ jobs:
           fi
           julia --project=examples -e 'using Pkg; Pkg.instantiate()'
           julia --project=examples examples/antenna/plot_farfield.jl --model short_dipole --file "$FARFIELD"
+
+      - name: Save Julia depot
+        if: >-
+          needs.filter.outputs.test == 'true' && matrix.arch == 'x86' && matrix.compiler == 'gcc' && matrix.math-libs == 'openblas' && !matrix.with-coverage && github.ref == 'refs/heads/main' &&
+          !startsWith(steps.julia-cache.outputs.cache-matched-key, format('{0}-{1}-', steps.julia-cache.outputs.cache-primary-key, hashFiles('examples/Manifest.toml')))
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.julia
+          key: ${{ steps.julia-cache.outputs.cache-primary-key }}-${{ hashFiles('examples/Manifest.toml') }}-${{ github.run_id }}

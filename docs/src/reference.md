@@ -241,7 +241,10 @@ Lumped ports in *Palace* can be composed of two types of elements:
  1. *Rectangular*: The incident field is ``\bm{E}^{inc} = E_0 \, \hat{\bm{l}}``. Here ``E_0`` is a
     normalization constant and ``\hat{\bm{l}}`` is the user-defined polarization direction, which
     should point between two conductors. We denote the length of the port along the polarization as
-    ``l`` and the perpendicular width as ``w``.
+    ``l`` and the perpendicular width as ``w``. The port must be a strip along ``\hat{\bm{l}}``,
+    which may be folded or bent about ``\hat{\bm{l}}``: ``w`` is the length of its cross-section
+    normal to ``\hat{\bm{l}}`` (for a flat port, to its principal axis closest to ``\hat{\bm{l}}``)
+    half way along it, and ``l`` is its area divided by ``w``.
 
  2. *Coaxial*: ``\bm{E}^{inc} = {E_0 r_0} \hat{\bm{r}} / {r}``, where ``E_0 r_0`` is a
     normalization constant, ``r`` is the distance from the port center, and ``\hat{\bm{r}}`` is the
@@ -588,6 +591,23 @@ that, the interpolation suggests the next sample from an error indicator that ca
 evaluated without another HDM solve. The selected HDM solution is then added to the shared
 PROM basis.
 
+HDM solutions are solved from zero. When
+[`config["Solver"]["Linear"]["InitialGuess"]`](config/reference.md#config-solver-linear) is
+enabled (the default), the sample which would complete the convergence memory (see below) is
+solved from the PROM solution there instead, to certify the PROM: if the linear solver
+converges, to the tighter of its tolerance and `"AdaptiveTol"`, and changes the PROM
+solution by less than `"AdaptiveTol"`, the sweep of this excitation has converged, and this
+solution is added to the basis as the last sample, unless it is already in the span of the
+basis to round-off (for example when the PROM solution already meets this tolerance, so
+that the solve takes no iteration). Otherwise, the solve is stopped as soon as the change
+exceeds `"AdaptiveTol"` (with GMRES and left preconditioning, the defaults; FGMRES or right
+preconditioning solve to convergence), and the sample is solved again from zero, reusing
+the assembled operators and preconditioner. The other samples are not started from the
+PROM solution: the linear solver controls the residual of the preconditioned system, and
+while the PROM is still inaccurate, a solution started from it can keep errors of the PROM
+which barely affect this residual, for example in weakly excited, high-Q modes, and which
+would then degrade the PROM.
+
 ### Convergence criterion
 
 At a proposed sample frequency ``f^*``, *Palace* compares the HDM solution against the PROM
@@ -607,6 +627,13 @@ related to, but not the same as, a physical energy norm such as
 ``\int \bm{E}^*(\bm{r})\cdot\bm{E}(\bm{r})\,d^3r``. Consequently, the adaptive tolerance is
 not a strict relative-error bound for every derived quantity, such as S-parameters or domain
 energies.
+
+The tolerance of the linear solver
+([`config["Solver"]["Linear"]["Tol"]`](config/reference.md#config-solver-linear)) bounds the
+relative residual of the preconditioned system (with the default left preconditioning), not
+the error of the HDM solution, which can be much larger. Near the accuracy of the HDM
+solves, ``\varepsilon`` no longer measures the PROM error alone, and an `"AdaptiveTol"`
+tighter than this accuracy may not be reached before `"AdaptiveMaxSamples"`.
 
 The indicator is also not a mathematical certificate of the maximum error over the entire
 frequency interval. The convergence memory mitigates accidental early termination when one
@@ -916,8 +943,27 @@ specified surfaces of the model. The magnetic field energy associated with any s
 \mathcal{E}(\bm{A}_i) = \frac{1}{2}\int_\Omega\mu_r^{-1}\bm{B}_i\cdot\bm{B}_i\,dV
 ```
 
-where ``\bm{B}_i = \nabla\times\bm{A}_i`` is the magnetic flux density. Then, the entries of
-the inductance matrix, ``\bm{M}``, are given by
+where ``\bm{B}_i = \nabla\times\bm{A}_i`` is the magnetic flux density.
+
+In a superconducting domain ``\Omega_L``, with London penetration depth ``\lambda_L``, the
+static London equations relate the supercurrent to the vector potential, in the London
+gauge, as ``\bm{J} = -(\mu_r\lambda_L^2)^{-1}\bm{A}``. The first equation then becomes
+
+```math
+\nabla\times(\mu_r^{-1}\nabla\times\bm{A}_i) + (\mu_r\lambda_L^2)^{-1}\bm{A}_i = 0 \,,\;
+    \bm{x}\in\Omega_L
+```
+
+and the energy includes the kinetic energy of the supercurrent:
+
+```math
+\mathcal{E}(\bm{A}_i) = \frac{1}{2}\int_\Omega\mu_r^{-1}\bm{B}_i\cdot\bm{B}_i\,dV
+    + \frac{1}{2}\int_{\Omega_L}(\mu_r\lambda_L^2)^{-1}\bm{A}_i\cdot\bm{A}_i\,dV \,.
+```
+
+With the vector potential in the London gauge, every closed loop within a superconducting
+domain has zero fluxoid: a superconducting ring screens the flux of the sources rather than
+trapping flux. Then, the entries of the inductance matrix, ``\bm{M}``, are given by
 
 ```math
 \bm{M}_{ij} = \frac{1}{I_i I_j}\mathcal{E}(\bm{A}_i+\bm{A}_j)

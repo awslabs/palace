@@ -67,12 +67,12 @@ endif()
 
 # Configure GPU support
 if(PALACE_WITH_CUDA OR PALACE_WITH_HIP)
-  list(APPEND HYPRE_OPTIONS -DHYPRE_ENABLE_UNIFIED_MEMORY=OFF)
-  if(PALACE_WITH_GPU_AWARE_MPI)
-    list(APPEND HYPRE_OPTIONS -DHYPRE_ENABLE_GPU_AWARE_MPI=ON)
-  else()
-    list(APPEND HYPRE_OPTIONS -DHYPRE_ENABLE_GPU_AWARE_MPI=OFF)
-  endif()
+  # Palace enables GPU-aware MPI at runtime when MPI supports it, this only sets hypre's
+  # default (and lets MFEM compile its GPU-aware hypre communication)
+  list(APPEND HYPRE_OPTIONS
+    -DHYPRE_ENABLE_UNIFIED_MEMORY=OFF
+    -DHYPRE_ENABLE_GPU_AWARE_MPI=ON
+  )
 endif()
 if(PALACE_WITH_CUDA)
   list(APPEND HYPRE_OPTIONS
@@ -122,6 +122,13 @@ download_patch(HYPRE_PATCH_FILES "${CMAKE_BINARY_DIR}/extern/hypre-patches"
   hypre_multicomponent_relax.diff
   "https://raw.githubusercontent.com/awslabs/palace/3cc6475f2c247c8f35588b7bbf4f06e58e9fa499/extern/patch/hypre/hypre_multicomponent_relax.diff"
   fb6f85c347503c9b1d5de7b10caaa542816c3b33bb2af4f73ba10651a7743e2a
+)
+
+# AMS with a fixed number of iterations: no residual norms with a zero tolerance and no
+# printing, and the zero flag of the initial guess used and maintained, so that the first
+# relaxation of the auxiliary space solves skips its exchange
+list(APPEND HYPRE_PATCH_FILES
+  "${CMAKE_SOURCE_DIR}/extern/patch/hypre/hypre_ams_fixed_iterations.diff"
 )
 
 include(ExternalProject)

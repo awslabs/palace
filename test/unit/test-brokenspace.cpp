@@ -1525,6 +1525,7 @@ std::vector<double> SortByCenter(Mesh &mesh, const Vector &v)
   auto &pmesh = mesh.Get();
   std::vector<std::pair<std::array<double, 3>, double>> entries;
   mfem::Vector c(pmesh.SpaceDimension());
+  const auto *h_v = v.HostRead();
   for (int e = 0; e < pmesh.GetNE(); e++)
   {
     pmesh.GetElementCenter(e, c);
@@ -1533,7 +1534,7 @@ std::vector<double> SortByCenter(Mesh &mesh, const Vector &v)
     {
       key[d] = std::round(c(d) * 1.0e8) * 1.0e-8;
     }
-    entries.emplace_back(key, v(e));
+    entries.emplace_back(key, h_v[e]);
   }
   std::sort(entries.begin(), entries.end(),
             [](const auto &a, const auto &b) { return a.first < b.first; });

@@ -40,6 +40,16 @@ using namespace std::complex_literals;
 namespace
 {
 
+// SLEPc solves the small dense problems of its solvers (DS) on every process, and needs
+// all of them to get the same result. LAPACK does not guarantee bitwise identical results
+// on different processes (MKL does not on some processors), and then the processes can
+// disagree on convergence and deadlock. Make all processes use the solution of the first
+// one instead, which SLEPc's solvers broadcast in DSSynchronize.
+inline PetscErrorCode SynchronizeDS(DS ds)
+{
+  return DSSetParallel(ds, DS_PARALLEL_SYNCHRONIZED);
+}
+
 inline PetscErrorCode FromPetscVec(Vec x, palace::ComplexVector &y, int block = 0,
                                    int nblocks = 1)
 {
@@ -169,6 +179,15 @@ inline void ConfigureRG(RG rg, PetscReal lr, PetscReal ur, PetscReal li, PetscRe
   }
 }
 
+PetscErrorCode __eps_first_cycle_monitor(EPS eps, PetscInt its, PetscInt nconv,
+                                         PetscScalar *eigr, PetscScalar *eigi,
+                                         PetscReal *errest, PetscInt nest, void *ctx)
+{
+  PetscFunctionBeginUser;
+  static_cast<SlepcEPSSolverBase *>(ctx)->EndFirstCycle();
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
 }  // namespace
 
 void Initialize(int &argc, char **&argv, const char rc_file[], const char help[])
@@ -289,7 +308,12 @@ void SlepcEigenvalueSolver::SetOrthogonalization(bool mgs, bool cgs2)
       type = BV_ORTHOG_CGS;
       refine = BV_ORTHOG_REFINE_ALWAYS;
     }
-    PalacePetscCall(BVSetOrthogonalization(bv, type, refine, 1.0, BV_ORTHOG_BLOCK_GS));
+    // With refinement, a vector counts as linearly dependent (breakdown) when the second
+    // pass reduces its norm below eta times that after the first one. With eta = 1, this
+    // would flag almost every vector of a nearly invariant Krylov space, as after a warm
+    // start: use SLEPc's default eta = 1/√2.
+    PalacePetscCall(
+        BVSetOrthogonalization(bv, type, refine, PETSC_DETERMINE, BV_ORTHOG_BLOCK_GS));
   }
 }
 
@@ -393,6 +417,9 @@ SlepcEPSSolverBase::SlepcEPSSolverBase(MPI_Comm comm, int print, const std::stri
 {
   PalacePetscCall(EPSCreate(comm, &eps));
   PalacePetscCall(EPSSetOptionsPrefix(eps, prefix.c_str()));
+  DS ds;
+  PalacePetscCall(EPSGetDS(eps, &ds));
+  PalacePetscCall(SynchronizeDS(ds));
   if (print > 0)
   {
     std::string opts = "-eps_monitor";
@@ -411,6 +438,8 @@ SlepcEPSSolverBase::SlepcEPSSolverBase(MPI_Comm comm, int print, const std::stri
     }
   }
   A0 = A1 = nullptr;
+  first_cycle_tol = lin_tol = 0.0;
+  first_cycle_monitor = first_cycle = false;
 }
 
 SlepcEPSSolverBase::~SlepcEPSSolverBase()
@@ -560,14 +589,43 @@ void SlepcEPSSolverBase::Customize()
   }
 }
 
+void SlepcEPSSolverBase::EndFirstCycle()
+{
+  if (first_cycle)
+  {
+    opInv->SetRelTol(lin_tol);
+    first_cycle = false;
+  }
+}
+
 int SlepcEPSSolverBase::Solve()
 {
   MFEM_VERIFY(A0 && A1 && opInv, "Operators are not set for SlepcEPSSolverBase!");
+
+  // Tighten the linear solver tolerance for the first Krylov cycle: a monitor restores it
+  // after the first restart.
+  lin_tol = opInv->GetRelTol();
+  first_cycle = (first_cycle_tol > 0.0 && first_cycle_tol < lin_tol);
+  if (first_cycle)
+  {
+    if (!first_cycle_monitor)
+    {
+      PalacePetscCall(EPSMonitorSet(eps, __eps_first_cycle_monitor, (void *)this, nullptr));
+      first_cycle_monitor = true;
+    }
+    opInv->SetRelTol(first_cycle_tol);
+    if (print > 0)
+    {
+      Mpi::Print(GetComm(), " Linear solver tolerance {:.3e} for the first Krylov cycle\n",
+                 first_cycle_tol);
+    }
+  }
 
   // Solve the eigenvalue problem.
   PetscInt num_conv;
   Customize();
   PalacePetscCall(EPSSolve(eps));
+  EndFirstCycle();
   PalacePetscCall(EPSGetConverged(eps, &num_conv));
   if (print > 0)
   {
@@ -582,6 +640,13 @@ int SlepcEPSSolverBase::Solve()
   // Compute and store the eigenpair residuals.
   RescaleEigenvectors(num_conv);
   return static_cast<int>(num_conv);
+}
+
+int SlepcEPSSolverBase::GetNumIterations() const
+{
+  PetscInt num_it;
+  PalacePetscCall(EPSGetIterationNumber(eps, &num_it));
+  return static_cast<int>(num_it);
 }
 
 std::complex<double> SlepcEPSSolverBase::GetEigenvalue(int i) const
@@ -819,6 +884,23 @@ void SlepcPEPLinearSolver::SetInitialSpace(const ComplexVector &v)
   PalacePetscCall(EPSSetInitialSpace(eps, 1, is));
 }
 
+void SlepcPEPLinearSolver::SetInitialSpaceBlocks(const ComplexVector &v,
+                                                 const ComplexVector &v_lambda)
+{
+  MFEM_VERIFY(A0 && A1, "Must call SetOperators before using SetInitialSpaceBlocks for "
+                        "SLEPc eigenvalue solver!");
+  if (!v0)
+  {
+    PalacePetscCall(MatCreateVecs(A0, nullptr, &v0));
+  }
+  // The second block of the eigenvectors of the linearization is (λ / γ) x.
+  ComplexVector v2(v_lambda);
+  v2 *= 1.0 / gamma;
+  PalacePetscCall(ToPetscVec(v, v2, v0));
+  Vec is[1] = {v0};
+  PalacePetscCall(EPSSetInitialSpace(eps, 1, is));
+}
+
 void SlepcPEPLinearSolver::GetEigenvector(int i, ComplexVector &x) const
 {
   // Select the most accurate x for y = [x₁; x₂] from the linearized eigenvalue problem. Or,
@@ -875,6 +957,9 @@ SlepcPEPSolverBase::SlepcPEPSolverBase(MPI_Comm comm, int print, const std::stri
 {
   PalacePetscCall(PEPCreate(comm, &pep));
   PalacePetscCall(PEPSetOptionsPrefix(pep, prefix.c_str()));
+  DS ds;
+  PalacePetscCall(PEPGetDS(pep, &ds));
+  PalacePetscCall(SynchronizeDS(ds));
   if (print > 0)
   {
     std::string opts = "-pep_monitor";
@@ -1226,6 +1311,9 @@ SlepcNEPSolverBase::SlepcNEPSolverBase(MPI_Comm comm, int print, const std::stri
 {
   PalacePetscCall(NEPCreate(comm, &nep));
   PalacePetscCall(NEPSetOptionsPrefix(nep, prefix.c_str()));
+  DS ds;
+  PalacePetscCall(NEPGetDS(nep, &ds));
+  PalacePetscCall(SynchronizeDS(ds));
   if (print > 0)
   {
     std::string opts = "-nep_monitor";
@@ -1557,6 +1645,9 @@ void SlepcNEPSolver::SetOperatorsImpl(const ComplexOperator &K, const ComplexOpe
     PalacePetscCall(KSPSetType(ksp, KSPPREONLY));
     PalacePetscCall(NEPSLPGetEPS(nep, &eps));
     PalacePetscCall(EPSSetType(eps, EPSKRYLOVSCHUR));
+    DS ds;
+    PalacePetscCall(EPSGetDS(eps, &ds));
+    PalacePetscCall(SynchronizeDS(ds));
     PalacePetscCall(KSPGetPC(ksp, &pc));
     PalacePetscCall(PCSetType(pc, PCSHELL));
     PalacePetscCall(PCShellSetContext(pc, (void *)this));
