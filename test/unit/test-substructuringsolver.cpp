@@ -14,6 +14,7 @@
 #include <optional>
 #include <random>
 #include <regex>
+#include <set>
 #include <sstream>
 #include <tuple>
 #include <utility>
@@ -1802,7 +1803,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   }
   Mpi::Barrier(Mpi::World());
   IoData online = make_config("Online", 0.0);
-  SubstructuringSolver::UseModelLength(online, Mpi::World());
+  substructuring::UseModelLength(online, Mpi::World());
   double Lc[2] = {online.model.Lc, -online.model.Lc};
   Mpi::GlobalMin(2, Lc, Mpi::World());
   CHECK(Lc[0] == -Lc[1]);
@@ -2239,12 +2240,12 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
                  "SubstructuringSolver postprocessing of the region",
                  "[substructure][Serial][Parallel]")
 {
-  // The postprocessing of the region keeps the energies of its domains, the probes in it,
-  // and the surface fluxes and interface dielectrics on its surfaces, and leaves out the
-  // others: of the environment, across the interface, and a probe outside the mesh. On the
-  // mesh of the region, the sides of the cube (a natural boundary, along which no
-  // environment element is written) seem to border the region only: they are left out
-  // there too.
+  // The postprocessing of the region keeps the energies of its domains, the probes in it
+  // (also one on the interface), and the surface fluxes and interface dielectrics on its
+  // surfaces, and leaves out the others: of the environment, across the interface, and a
+  // probe outside the mesh. On the mesh of the region, the sides of the cube (a natural
+  // boundary, along which no environment element is written) seem to border the region
+  // only: they are left out there too.
   auto flux = [](int index, int attr)
   { return json{{"Index", index}, {"Attributes", {attr}}, {"Type", "Electric"}}; };
   auto dielectric = [](int index, int attr)
@@ -2281,7 +2282,8 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   config["Domains"]["Postprocessing"]["Probe"] = {
       {{"Index", 1}, {"Center", {0.25, 0.5, 0.5}}},
       {{"Index", 2}, {"Center", {0.75, 0.5, 0.5}}},
-      {{"Index", 3}, {"Center", {2.0, 0.5, 0.5}}}};
+      {{"Index", 3}, {"Center", {2.0, 0.5, 0.5}}},
+      {{"Index", 4}, {"Center", {0.5, 0.5, 0.5}}}};
 #endif
   IoData iodata(config, false);
   CHECK(SubstructuringSolver::Postprocesses(iodata));
@@ -2300,7 +2302,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   };
   CHECK(indices(post.domains.postpro.energy) == std::vector<int>{1});
 #if defined(MFEM_USE_GSLIB)
-  CHECK(indices(post.domains.postpro.probe) == std::vector<int>{1});
+  CHECK(indices(post.domains.postpro.probe) == std::vector<int>{1, 4});
 #endif
   CHECK(indices(post.boundaries.postpro.flux) == std::vector<int>{1});
   CHECK(indices(post.boundaries.postpro.dielectric) == std::vector<int>{1});
@@ -4139,22 +4141,26 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
                  "Driven substructuring writes the probes it interpolates in the region",
                  "[substructure][Serial][Parallel]")
 {
-  // Two probes on Γ, interpolated in the element the point search finds them in, of either
-  // side, and one in the region: online on the full mesh, the probes written are those
-  // found in the region, with the values of a regular sweep, and the one in the region is.
-  auto probes = [](json &config)
+  // Two probes on Γ and one in the region. Online on the full mesh, all three are written,
+  // those on Γ with the field of the region, on its side of Γ, where the normal E jumps
+  // (the permittivities of the sides differ): the values of a regular sweep with the probes
+  // on Γ moved into the region by 1e-9.
+  auto probes = [](double shift)
   {
-    config["Domains"]["Postprocessing"]["Probe"] = {
-        {{"Index", 1}, {"Center", {0.5, -3.1, 4.7}}},
-        {{"Index", 2}, {"Center", {0.5, 0.3, 0.2}}},
-        {{"Index", 3}, {"Center", {-6.0, 0.0, -3.0}}}};
+    return [shift](json &config)
+    {
+      config["Domains"]["Postprocessing"]["Probe"] = {
+          {{"Index", 1}, {"Center", {0.5 - shift, -3.1, 4.7}}},
+          {{"Index", 2}, {"Center", {0.5 - shift, 0.3, 0.2}}},
+          {{"Index", 3}, {"Center", {-6.0, 0.0, -3.0}}}};
+    };
   };
-  RunDrivenSheetSquare(temp_dir, "Offline", probes);
-  RunDrivenSheetSquare(temp_dir, "Online", probes);
+  RunDrivenSheetSquare(temp_dir, "Offline", probes(0.0));
+  RunDrivenSheetSquare(temp_dir, "Online", probes(0.0));
   RunDrivenSheetSquare(temp_dir, "Regular",
                        [&](json &config)
                        {
-                         probes(config);
+                         probes(1.0e-9)(config);
                          config["Solver"].erase("Substructuring");
                          config["Solver"]["Linear"] = {{"Tol", 1.0e-12}, {"MaxIts", 1000}};
                        });
@@ -4172,12 +4178,12 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
         scale = std::max(scale, std::abs(row[c]));
       }
     }
-    bool region_probe = false;
+    std::set<std::string> written;
     for (std::size_t c = 1; c < online.first.size(); c++)
     {
       const auto &name = online.first[c];
       CAPTURE(name);
-      region_probe = region_probe || name.find("[3][") != std::string::npos;
+      written.insert(name.substr(name.find('[') + 1, 1));
       const auto it = std::ranges::find(regular.first, name);
       REQUIRE(it != regular.first.end());
       const auto k = static_cast<std::size_t>(it - regular.first.begin());
@@ -4186,7 +4192,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
         CHECK(std::abs(online.second[r][c] - regular.second[r][k]) <= 1.0e-8 * scale);
       }
     }
-    CHECK(region_probe);
+    CHECK(written == std::set<std::string>{"1", "2", "3"});
   }
 }
 #endif

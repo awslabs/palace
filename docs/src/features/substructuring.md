@@ -98,12 +98,12 @@ capacitance and inductance matrices are written to the files of a regular simula
 (`terminal-C.csv`, `terminal-M.csv`, and the others). The domain and surface postprocessing of a
 regular simulation is that of the region, from its field and the total energy of the condensation,
 so that the participation ratios are those of the whole model: the energies of the domains of the
-region and the probes in it (`config["Domains"]["Postprocessing"]`), and the `"SurfaceFlux"` and
-`"Dielectric"` entries of `config["Boundaries"]["Postprocessing"]` on surfaces in it. The others are
-left out with a warning, and `"FarField"` is rejected. Field output follows
-`"Solver"/"Electrostatic"/"Save"` and `"Solver"/"Magnetostatic"/"Save"`, in the formats of
-`config["Problem"]["OutputFormats"]`; the environment part of a saved field is recovered only when
-fields are written.
+region and the probes in it or on the interface (`config["Domains"]["Postprocessing"]`, a probe on
+the interface with the field of the region), and the `"SurfaceFlux"` and `"Dielectric"` entries of
+`config["Boundaries"]["Postprocessing"]` on surfaces in it. The others are left out with a warning,
+and `"FarField"` is rejected. Field output follows `"Solver"/"Electrostatic"/"Save"` and
+`"Solver"/"Magnetostatic"/"Save"`, in the formats of `config["Problem"]["OutputFormats"]`; the
+environment part of a saved field is recovered only when fields are written.
 
 ### Choosing the region
 
@@ -231,8 +231,9 @@ The online field is known in the region and on the interface only:
     the region, without the total energies and participation ratios (and the power of the
     environment's ports, and the voltage of its wave ports, are not available);
   - surface fluxes (`"Boundaries"/"Postprocessing"/"SurfaceFlux"`) on boundaries that border only
-    region elements (on the mesh of the region, as the model records), and probes in the region, are
-    those of a regular simulation; the others are skipped;
+    region elements (on the mesh of the region, as the model records), and probes in the region
+    or on the interface (there, with the field of the region), are those of a regular simulation;
+    the others are skipped;
   - fields (`"Save"`) are written in the region and on the interface, zero elsewhere.
 
 The mesh of the region written by the offline sweep (see [Configuration](#Configuration)) also

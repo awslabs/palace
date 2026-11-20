@@ -37,10 +37,6 @@ public:
                        const std::vector<std::unique_ptr<Mesh>> &mesh);
   ~SubstructuringSolver();
 
-  // Online, with a saved model: Model.Lc from the model (that of its offline run), which a
-  // configured one must equal. Collective.
-  static void UseModelLength(IoData &iodata, MPI_Comm comm);
-
   // The boundary conditions of the configuration for the operators on this mesh: without
   // the terminal attributes it does not hold and, on the mesh of the region, without the
   // flux loops it leaves out and the superconductor attributes it does not hold (the model

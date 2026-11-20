@@ -145,7 +145,9 @@ PostOperator<solver_t>::PostOperator(const config::ProblemData &problem,
     surf_post_op(boundaries.postpro, solver_t, fem_op->GetMaterialOp(),
                  fem_op->GetH1Space(), fem_op->GetNDSpace(),
                  boundaries.GetSheetAttributes()),
-    interp_op(domains.postpro.probe, units_, fem_op->GetNDSpace())
+    interp_op(domains.postpro.probe, units_, fem_op->GetNDSpace(),
+              solver.substructuring ? solver.substructuring->region_attributes
+                                    : std::vector<int>{})
 {
   // Define primary grid-functions.
   if constexpr (HasVGridFunction<solver_t>())

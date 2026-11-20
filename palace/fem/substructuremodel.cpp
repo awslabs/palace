@@ -4,12 +4,15 @@
 #include "substructuremodel.hpp"
 
 #include <algorithm>
+#include <cmath>
+#include <cstring>
 #include <filesystem>
 #include <limits>
 #include <stdexcept>
 #include <system_error>
 #include <fmt/format.h>
 #include "utils/communication.hpp"
+#include "utils/iodata.hpp"
 #include "utils/outputdir.hpp"
 
 namespace palace::substructuring
@@ -173,6 +176,78 @@ void ModelFile::Append(const std::string &path, MPI_Comm comm, std::uint32_t tag
               "A record of the model holds {:d} bytes instead of {:d}", written, size));
         }
       });
+}
+
+void InterfaceRecords::Append(const std::string &path, MPI_Comm comm) const
+{
+  MFEM_VERIFY(signatures.size() == static_cast<std::size_t>(n) * width,
+              "Invalid interface records of a substructuring model!");
+  const int head[2] = {n, width};
+  ModelFile::Append(
+      path, comm, kSignaturesTag,
+      static_cast<long long>(sizeof(head) + sizeof(double) * signatures.size()),
+      [&](std::ofstream &f)
+      {
+        f.write(reinterpret_cast<const char *>(head), sizeof(head));
+        f.write(reinterpret_cast<const char *>(signatures.data()),
+                static_cast<std::streamsize>(sizeof(double) * signatures.size()));
+      });
+  ModelFile::Append(path, comm, kLengthTag, sizeof(double), [&](std::ofstream &f)
+                    { f.write(reinterpret_cast<const char *>(&length), sizeof(double)); });
+}
+
+bool InterfaceRecords::Read(const std::string &path, const ModelFile &file, MPI_Comm comm)
+{
+  const auto *s = file.Find(kSignaturesTag), *l = file.Find(kLengthTag);
+  int head[2] = {0, 0};
+  if (!s || !l || s->size < static_cast<long long>(sizeof(head)) ||
+      l->size != static_cast<long long>(sizeof(double)))
+  {
+    return false;
+  }
+  const std::vector<char> p = ModelFile::ReadPayload(path, *s, comm),
+                          q = ModelFile::ReadPayload(path, *l, comm);
+  if (p.size() < sizeof(head) || q.size() != sizeof(double))
+  {
+    return false;
+  }
+  std::memcpy(head, p.data(), sizeof(head));
+  // The sizes, in floating point, against the record before anything is allocated.
+  if (head[0] < 0 || head[1] <= 0 ||
+      static_cast<double>(head[0]) * head[1] * sizeof(double) !=
+          static_cast<double>(p.size() - sizeof(head)))
+  {
+    return false;
+  }
+  n = head[0];
+  width = head[1];
+  signatures.resize(static_cast<std::size_t>(n) * width);
+  std::memcpy(signatures.data(), p.data() + sizeof(head),
+              sizeof(double) * signatures.size());
+  std::memcpy(&length, q.data(), sizeof(double));
+  return true;
+}
+
+void UseModelLength(IoData &iodata, MPI_Comm comm)
+{
+  const auto &sub = iodata.solver.substructuring;
+  if (!sub || sub->mode != SubstructuringMode::ONLINE || sub->model_file.empty())
+  {
+    return;
+  }
+  InterfaceRecords r;
+  if (!r.Read(sub->model_file, ModelFile::Read(sub->model_file, comm), comm) ||
+      !(r.length > 0.0))
+  {
+    return;
+  }
+  MFEM_VERIFY(!(iodata.model.Lc > 0.0) ||
+                  std::abs(iodata.model.Lc - r.length) <= 1.0e-12 * r.length,
+              "\"Model\": \"Lc\" (" << iodata.model.Lc
+                                    << ") differs from that of the saved substructuring "
+                                       "model ("
+                                    << r.length << ")!");
+  iodata.model.Lc = r.length;
 }
 
 }  // namespace palace::substructuring

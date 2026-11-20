@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <complex>
 #include <cstring>
 #include <filesystem>
 #include <iterator>
@@ -1189,6 +1190,75 @@ double FingerprintPolynomial(int k, double X, double Y, double Z)
 }
 
 }  // namespace
+
+InterfaceClasses ClassifyInterfaceTrueDofs(const mfem::Array<int> &region_marker,
+                                           const mfem::Array<int> &env_marker,
+                                           const std::vector<char> &dirichlet,
+                                           const std::vector<char> &cut)
+{
+  const int nt = region_marker.Size();
+  InterfaceClasses c{std::vector<char>(nt, 0), std::vector<char>(nt, 0),
+                     std::vector<char>(nt, 0)};
+  for (int i = 0; i < nt; i++)
+  {
+    if (dirichlet[i])
+    {
+      continue;
+    }
+    const bool r = region_marker[i], e = env_marker[i];
+    const bool g = (r && e) || (!cut.empty() && cut[i]);
+    c.gamma[i] = g;
+    c.env_int[i] = e && !g;
+    c.region_int[i] = r && !g;
+  }
+  return c;
+}
+
+bool FingerprintsMatch(std::span<const double> a, std::span<const double> b,
+                       std::size_t n_counts, double tol, bool complex)
+{
+  const std::size_t step = complex ? 2 : 1;
+  if (a.size() != b.size() || a.size() < n_counts || (a.size() - n_counts) % step != 0)
+  {
+    return false;
+  }
+  for (std::size_t q = 0; q < n_counts; q++)
+  {
+    if (a[q] != b[q])
+    {
+      return false;
+    }
+  }
+  for (std::size_t q = n_counts; q < a.size(); q += step)
+  {
+    const std::complex<double> x(a[q], complex ? a[q + 1] : 0.0),
+        y(b[q], complex ? b[q + 1] : 0.0);
+    if (std::abs(x - y) > tol * std::max(std::abs(x), std::abs(y)))
+    {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool PairingsMatch(std::span<const double> a, std::span<const double> b, double tol,
+                   bool complex)
+{
+  const std::size_t step = complex ? 2 : 1;
+  if (a.size() != b.size() || a.size() % step != 0)
+  {
+    return false;
+  }
+  double scale = 0.0, diff = 0.0;
+  for (std::size_t q = 0; q < a.size(); q += step)
+  {
+    const std::complex<double> x(a[q], complex ? a[q + 1] : 0.0),
+        y(b[q], complex ? b[q + 1] : 0.0);
+    scale = std::max({scale, std::abs(x), std::abs(y)});
+    diff = std::max(diff, std::abs(x - y));
+  }
+  return diff <= tol * scale;
+}
 
 std::array<std::array<double, 3>, 3> FingerprintCenters(mfem::ParMesh &mesh,
                                                         const std::vector<int> &attributes)

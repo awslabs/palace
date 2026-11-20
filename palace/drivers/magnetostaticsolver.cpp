@@ -13,6 +13,7 @@
 #include <mfem.hpp>
 #include "fem/errorindicator.hpp"
 #include "fem/mesh.hpp"
+#include "fem/substructuremodel.hpp"
 #include "linalg/errorestimator.hpp"
 #include "linalg/ksp.hpp"
 #include "linalg/operator.hpp"
@@ -107,7 +108,7 @@ void ComputeMinvAndMm(const mfem::DenseMatrix &M, mfem::DenseMatrix &Minv,
 void MagnetostaticSolver::Preprocess(IoData &iodata, std::unique_ptr<mfem::Mesh> &smesh,
                                      MPI_Comm comm) const
 {
-  SubstructuringSolver::UseModelLength(iodata, comm);
+  substructuring::UseModelLength(iodata, comm);
   BaseSolver::Preprocess(iodata, smesh, comm);
 }
 

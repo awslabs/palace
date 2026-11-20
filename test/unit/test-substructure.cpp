@@ -362,11 +362,11 @@ TEST_CASE("Boundaries and points of the region", "[substructure][Serial][Paralle
   probes[3].center = {2.0, 0.4, 0.6};
   CHECK(fem::ProbesInDomains(probes, mesh, region) == std::vector<int>{1});
   CHECK(fem::ProbesInDomains(probes, mesh, {2}) == std::vector<int>{2});
+  // A probe on the face between the domains is in both.
   std::map<int, config::ProbeData> on_gamma;
   on_gamma[1].center = {0.5, 0.4, 0.6};
-  CHECK(fem::ProbesInDomains(on_gamma, mesh, region).size() +
-            fem::ProbesInDomains(on_gamma, mesh, {2}).size() ==
-        1);
+  CHECK(fem::ProbesInDomains(on_gamma, mesh, region) == std::vector<int>{1});
+  CHECK(fem::ProbesInDomains(on_gamma, mesh, {2}) == std::vector<int>{1});
 #endif
 }
 
