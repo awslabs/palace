@@ -315,12 +315,14 @@ const std::vector<std::string> eigen_excluded = {"Maximum", "Minimum", "Mean",
 constexpr auto force_default_solver = palace::test::SolverOverridePolicy::ForceDefault;
 
 // Floquet-port S-parameters: compare only the |S[...]| (dB) magnitude columns
-// (phase isn't reproducible). NaN entries (evanescent modes) and signals below
-// -200 dB (negligible) count as matches. Ports the Julia test_floquet_sparams.
-palace::test::CustomCheck TestFloquetSParams(double rtol, double atol)
+// (phase isn't reproducible). NaN entries (evanescent modes) count as matches. By default
+// the dB values are compared and signals below -200 dB (negligible) count as matches; with
+// linear, the magnitudes |S| = 10^(dB/20) are compared within atol + rtol |S|, which gives
+// adaptive sweeps an absolute tolerance near 0 dB. Ports the Julia test_floquet_sparams.
+palace::test::CustomCheck TestFloquetSParams(double rtol, double atol, bool linear = false)
 {
-  return [rtol, atol](palace::Table &actual, palace::Table &reference,
-                      const std::filesystem::path &)
+  return [rtol, atol, linear](palace::Table &actual, palace::Table &reference,
+                              const std::filesystem::path &)
   {
     const std::size_t n_cols = std::min(actual.n_cols(), reference.n_cols());
     const std::size_t n_rows = std::min(actual.n_rows(), reference.n_rows());
@@ -335,13 +337,22 @@ palace::test::CustomCheck TestFloquetSParams(double rtol, double atol)
       {
         const double v_new = actual[c].data[r];
         const double v_ref = reference[c].data[r];
-        if ((std::isnan(v_new) && std::isnan(v_ref)) || v_ref < -200.0)
+        if ((std::isnan(v_new) && std::isnan(v_ref)) || (!linear && v_ref < -200.0))
         {
           continue;
         }
         INFO("row " << r + 1 << " column '" << hdr << "'");
-        CHECK_THAT(v_new, Catch::Matchers::WithinRel(v_ref, rtol) ||
-                              Catch::Matchers::WithinAbs(v_ref, atol));
+        if (linear)
+        {
+          const double s_new = std::pow(10.0, v_new / 20.0);
+          const double s_ref = std::pow(10.0, v_ref / 20.0);
+          CHECK(std::abs(s_new - s_ref) <= atol + rtol * std::max(s_new, s_ref));
+        }
+        else
+        {
+          CHECK_THAT(v_new, Catch::Matchers::WithinRel(v_ref, rtol) ||
+                                Catch::Matchers::WithinAbs(v_ref, atol));
+        }
       }
     }
   };
@@ -2023,6 +2034,51 @@ TEST_CASE("coaxial_magnetostatic_superconductor", "[Serial][Parallel][GPU][Regre
                                   "magnetostatic_superconductor", opts);
 }
 
+// Two-port line of three London slabs (λ = t = 0.2 μm, gaps d = 0.5 μm, W = 1 μm,
+// ℓ = 4 μm), a port across each gap and the far end shorted: the exact
+// L11 = L22 = μ0 ℓ/W (d + 2λ coth(t/λ)) and M12 = −μ0 ℓ/W λ csch(t/λ), which comes from the
+// middle slab, match to 3e-10.
+TEST_CASE("parallel_plate_london", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = force_default_solver;
+  palace::test::RunRegressionCase("parallel_plate_london", "parallel_plate_london.json",
+                                  "london", opts);
+}
+
+// The same line with Short inactive ports: each self-inductance is the screened L11 −
+// M12²/L22.
+TEST_CASE("parallel_plate_london_short", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = force_default_solver;
+  palace::test::RunRegressionCase("parallel_plate_london",
+                                  "parallel_plate_london_short.json", "london_short", opts);
+}
+
+// The same line with the upper slab replaced by the equivalent one-sided Superconductor
+// sheet: the inductance matrix is unchanged, checking the sum of the sheet and domain
+// kinetic energies.
+TEST_CASE("parallel_plate_london_sheet", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = force_default_solver;
+  palace::test::RunRegressionCase("parallel_plate_london",
+                                  "parallel_plate_london_sheet.json", "london_sheet", opts);
+}
+
 // Current-driven microstrip with PEC conductors (lambda -> 0 limit).
 TEST_CASE("microstrip_pec", "[Serial][Parallel][GPU][Regression]")
 {
@@ -2116,6 +2172,22 @@ TEST_CASE("cylinder_cavity_impedance", "[Serial][Parallel][GPU][Regression]")
   opts.skip_rowcount = true;
   palace::test::RunRegressionCase("cylinder", "cavity_impedance.json", "cavity_impedance",
                                   opts);
+}
+
+// One adaptation iteration of cylinder_cavity_impedance at order 2, refining every element:
+// the initial solve takes about nine Krylov cycles, so the solve of the adaptation
+// iteration starts from its eigenvectors (warm start), with the tighter linear solver
+// tolerance in its first cycle.
+TEST_CASE("cylinder_cavity_impedance_amr", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = eigen_excluded;
+  opts.skip_rowcount = true;
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("cylinder", "cavity_impedance_amr.json",
+                                  "cavity_impedance_amr", opts);
 }
 
 // The SLEPc NEP (SLP) shell receives device arrays on a GPU. The impedance boundary adds
@@ -2450,6 +2522,20 @@ TEST_CASE("dielectric_grating_uniform", "[Serial][Parallel][GPU][Regression]")
                                   "uniform", opts);
 }
 
+// Adaptive (PROM) counterpart of dielectric_grating_uniform, which assembles the Floquet
+// DtN correction at every greedy sample. As in the other adaptive cases, the outputs other
+// than the S-parameters are structural smoke checks.
+TEST_CASE("dielectric_grating_adaptive", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = std::numeric_limits<double>::infinity();
+  opts.atol = std::numeric_limits<double>::infinity();
+  opts.paraview_fields = false;
+  opts.custom_checks["port-floquet-S.csv"] = TestFloquetSParams(1.0e-3, 1.0e-4, true);
+  palace::test::RunRegressionCase("dielectric_grating", "dielectric_grating_adaptive.json",
+                                  "adaptive", opts);
+}
+
 // Mixed Floquet + lumped/wave port S-parameter tests: validate the sqrt(2) power
 // normalization bridge for cross-type observations. Use custom checks to verify power
 // balance (sum |S|^2 = 1 for the lossless structure). Floquet NaN and negligible
@@ -2693,6 +2779,76 @@ TEST_CASE("rational_impedance_eigen", "[Serial][Parallel][GPU][Regression]")
                                   "series_rlc18_eigen", opts);
 }
 
+// The seed of the nonlinear eigensolve of rational_impedance_eigen, without the
+// quasi-Newton refinement. Its Robin coefficient has a pole (the 18 GHz notch) inside the
+// interpolation window, which the seed freezes at the target instead of interpolating; the
+// seed mode is then within 1% of the mode at ~9.60 + 0.045i GHz (Q = 131 for 108), and 4%
+// off with Q = 14 when the coefficient is interpolated.
+TEST_CASE("rational_impedance_eigen_seed", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 2.0e-2;
+  opts.atol = 1.0e-11;
+  opts.excluded_columns = eigen_excluded;
+  opts.skip_rowcount = true;
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("rational_impedance",
+                                  "series_rlc18_rational_eigen_seed.json",
+                                  "series_rlc18_eigen_seed", opts);
+}
+
+// The seed of rational_impedance_eigen_seed with a capacitance in parallel with the
+// termination, whose Robin coefficient has a polynomial part of degree 2, exact in the
+// seed, and a pole part, which the seed freezes at the target: the seed mode is ~11.41 +
+// 0.032i GHz, and ~9.96 + 1.35i GHz when the whole Robin coefficient is frozen or
+// interpolated.
+TEST_CASE("rational_impedance_eigen_seed_shunt", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 2.0e-2;
+  opts.atol = 1.0e-11;
+  opts.excluded_columns = eigen_excluded;
+  opts.skip_rowcount = true;
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("rational_impedance",
+                                  "series_rlc18_shunt_rational_eigen_seed.json",
+                                  "series_rlc18_shunt_eigen_seed", opts);
+}
+
+// The seed of rational_impedance_eigen_seed with an admittance 1e-26 s² in parallel with
+// the termination (not passive), whose Robin coefficient has a polynomial part of degree 3,
+// not exact in the seed: the seed freezes the whole coefficient at the target, with the
+// seed mode ~9.6695 + 0.0004i GHz, against ~9.6694 - 0.0035i GHz with only its pole part
+// frozen and ~9.24 + 0.32i GHz with the interpolant of the whole coefficient.
+TEST_CASE("rational_impedance_eigen_seed_cubic", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 2.0e-2;
+  opts.atol = 1.0e-11;
+  opts.excluded_columns = eigen_excluded;
+  opts.skip_rowcount = true;
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("rational_impedance",
+                                  "series_rlc18_cubic_rational_eigen_seed.json",
+                                  "series_rlc18_cubic_eigen_seed", opts);
+}
+
+// The seed of a series RLC termination whose notch (40 GHz) lies above the interpolation
+// window: the seed keeps the polynomial interpolant of its Robin coefficient, with the seed
+// mode ~9.9388 - 0.00065i GHz, against ~9.9420 + 0.0009i GHz with its pole part frozen.
+TEST_CASE("rational_impedance_eigen_seed_fit", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 2.0e-2;
+  opts.atol = 1.0e-11;
+  opts.excluded_columns = eigen_excluded;
+  opts.skip_rowcount = true;
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("rational_impedance",
+                                  "series_rlc40_rational_eigen_seed.json",
+                                  "series_rlc40_eigen_seed", opts);
+}
+
 TEST_CASE("cpw_lumped_uniform", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
@@ -2767,16 +2923,36 @@ TEST_CASE("cpw_wave_adaptive", "[Serial][Parallel][GPU][Regression]")
   palace::test::RunRegressionCase("cpw", "cpw_wave_adaptive.json", "wave_adaptive", opts);
 }
 
+// Adaptive sweep of a lumped port on a small cube with an "AdaptiveTol" of 1e-6, far below
+// the accuracy of the HDM solutions at a linear tolerance of 1e-3. The sweep converges only
+// if the samples which the PROM does not reproduce are refined: its outputs must then match
+// those of a uniform sweep at a linear tolerance of 1e-12 to "AdaptiveTol". Without the
+// refinement, the sampling reaches "AdaptiveMaxSamples" with domain energies off by 1e-4 or
+// more. The error indicators depend on the samples.
+TEST_CASE("cube_lumped_adaptive_loose", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-6;
+  opts.atol = 0.0;
+  opts.excluded_files = {"error-indicators.csv"};
+  opts.paraview_fields = false;
+  opts.custom_checks["port-V.csv"] = CompareComplexValues(opts.rtol, opts.atol);
+  opts.custom_checks["port-I.csv"] = CompareComplexValues(opts.rtol, opts.atol);
+  opts.custom_checks["port-S.csv"] = ComparePortSParameters(opts.rtol, opts.atol);
+  palace::test::RunRegressionCase("cube", "lumped_adaptive_loose.json",
+                                  "lumped_adaptive_loose", opts);
+}
+
 TEST_CASE("cpw_lumped_eigen", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
   opts.rtol = 2.0e-2;
   opts.atol = 1.0e-11;
-  // Drop phase-sensitive port columns and Q_ext / κ_ext normalisations;
-  // keep the farfield magnitude check.
-  opts.excluded_columns = {"Maximum",      "Minimum", "Mean",      "Error (Bkwd.)",
-                           "Error (Abs.)", "Re{V[",   "Im{V[",     "Re{I[",
-                           "Im{I[",        "Q_ext",   "\u03ba_ext"};
+  // Drop phase-sensitive port columns and compare κ_ext by magnitude, since its sign is the
+  // sign of Re{I}; keep the farfield magnitude check.
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean",  "Error (Bkwd.)", "Error (Abs.)",
+                           "Re{V[",   "Im{V[",   "Re{I[", "Im{I["};
+  opts.abs_columns = {"\u03ba_ext"};
   opts.skip_rowcount = true;
   opts.custom_checks["farfield-rE.csv"] = TestFarfield(opts.rtol);
   palace::test::RunRegressionCase("cpw", "cpw_lumped_eigen.json", "lumped_eigen", opts);

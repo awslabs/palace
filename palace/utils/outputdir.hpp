@@ -4,10 +4,13 @@
 #ifndef PALACE_UTILS_OUTPUTDIR_HPP
 #define PALACE_UTILS_OUTPUTDIR_HPP
 
+#include <deque>
 #include <exception>
 #include <fstream>
 #include <string>
 #include <system_error>
+#include <utility>
+#include <vector>
 #include <fmt/format.h>
 #include "communication.hpp"
 #include "filesystem.hpp"
@@ -213,6 +216,89 @@ inline void WriteRootOutputFile(const fs::path &path, MPI_Comm comm, Func &&writ
                                      std::make_error_code(std::errc::io_error));
         }
       });
+}
+
+// Write a file made of the parts of all processes, part index by part index and process by
+// process within each, without gathering it: the root writes, as for WriteRootOutputFile,
+// and asks the other processes for their parts, a few ahead. Collective; each part must be
+// smaller than 2 GiB.
+inline void WriteRootOutputFileParts(const fs::path &path, MPI_Comm comm,
+                                     const std::vector<std::string> &parts)
+{
+  BlockTimer bt(Timer::IO);
+  const int P = Mpi::Size(comm), S = static_cast<int>(parts.size());
+  std::vector<long long> size(S), sizes(Mpi::Root(comm) ? S * P : 0);
+  for (int s = 0; s < S; s++)
+  {
+    size[s] = static_cast<long long>(parts[s].size());
+  }
+  MPI_Gather(size.data(), S, MPI_LONG_LONG, sizes.data(), S, MPI_LONG_LONG, 0, comm);
+  MPI_Comm wcomm;
+  MPI_Comm_dup(comm, &wcomm);
+  std::string error;
+  if (Mpi::Root(comm))
+  {
+    std::error_code ec;
+    fs::remove_all(path, ec);
+    std::ofstream fo(path, std::ios::binary);
+    std::deque<std::pair<std::string, MPI_Request>> pending;  // at most 16 parts, 256 MB
+    std::size_t bytes = 0;
+    int next = 0;  // the next part to ask for, as s * P + p
+    auto Ask = [&]()
+    {
+      for (; next < S * P && (pending.empty() || (pending.size() < 16 &&
+                                                  bytes + sizes[(next % P) * S + next / P] <
+                                                      (std::size_t(1) << 28)));
+           next++)
+      {
+        const int s = next / P, p = next % P, n = static_cast<int>(sizes[p * S + s]);
+        if (p > 0 && n > 0)
+        {
+          auto &[buf, req] = pending.emplace_back(std::string(n, '\0'), MPI_REQUEST_NULL);
+          const char go = 0;
+          MPI_Send(&go, 1, MPI_BYTE, p, s, wcomm);
+          MPI_Irecv(buf.data(), n, MPI_BYTE, p, s, wcomm, &req);
+          bytes += n;
+        }
+      }
+    };
+    for (int s = 0; s < S; s++)
+    {
+      for (int p = 0; p < P; p++)
+      {
+        if (sizes[p * S + s] > 0 && p == 0)
+        {
+          fo.write(parts[s].data(), parts[s].size());
+        }
+        else if (sizes[p * S + s] > 0)
+        {
+          Ask();
+          auto &[buf, req] = pending.front();
+          MPI_Wait(&req, MPI_STATUS_IGNORE);
+          fo.write(buf.data(), buf.size());
+          bytes -= buf.size();
+          pending.pop_front();
+        }
+      }
+    }
+    fo.close();
+    error = fo.fail() ? "Could not write output file" : "";
+  }
+  else
+  {
+    for (int s = 0; s < S; s++)
+    {
+      if (size[s] > 0)
+      {
+        char go;
+        MPI_Recv(&go, 1, MPI_BYTE, 0, s, wcomm, MPI_STATUS_IGNORE);
+        MPI_Send(parts[s].data(), static_cast<int>(size[s]), MPI_BYTE, 0, s, wcomm);
+      }
+    }
+  }
+  MPI_Comm_free(&wcomm);
+  internal::AbortOnNodeFilesystemError(
+      comm, fmt::format("Writing output file \"{}\"", path.string()), error);
 }
 
 inline void MakeOutputFolder(IoData &iodata, MPI_Comm &comm)

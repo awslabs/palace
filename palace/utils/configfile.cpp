@@ -409,6 +409,7 @@ ConductivityData::ConductivityData(const json &boundary)
   h = boundary.value("Thickness", h);
   external = boundary.value("External", external);
   crack = boundary.value("Crack", crack);
+  crack_given = boundary.contains("Crack");
 }
 
 ImpedanceData::ImpedanceData(const json &boundary)
@@ -565,6 +566,21 @@ LumpedPortData::LumpedPortData(const json &port)
   Cs = port.value("Cs", Cs);
 
   excitation = ParsePortExcitation(port, index);
+  excitation_amplitude = port.value("ExcitationAmplitude", excitation_amplitude);
+  excitation_phase = port.value("ExcitationPhase", excitation_phase);
+  MFEM_VERIFY(excitation != 0 || (!port.contains("ExcitationAmplitude") &&
+                                  !port.contains("ExcitationPhase")),
+              fmt::format("\"ExcitationAmplitude\" and \"ExcitationPhase\" on lumped port "
+                          "index {:d} require a nonzero \"Excitation\"",
+                          index));
+  MFEM_VERIFY(excitation_amplitude > 0.0 && std::isfinite(excitation_amplitude),
+              fmt::format("\"ExcitationAmplitude\" on lumped port index {:d} must be "
+                          "positive and finite; got {:.6e}",
+                          index, excitation_amplitude));
+  MFEM_VERIFY(std::isfinite(excitation_phase),
+              fmt::format("\"ExcitationPhase\" on lumped port index {:d} must be finite; "
+                          "got {:.6e}",
+                          index, excitation_phase));
   active = port.value("Active", active);
   include_in_synthesis = port.value("IncludeInSynthesis", include_in_synthesis);
   MFEM_VERIFY(!(excitation != 0 && !include_in_synthesis),
@@ -1217,6 +1233,29 @@ std::vector<int> BoundaryData::GetSheetAttributes() const
   }
   std::sort(attr_list.begin(), attr_list.end());
   attr_list.erase(std::unique(attr_list.begin(), attr_list.end()), attr_list.end());
+  return attr_list;
+}
+
+std::vector<int> BoundaryData::GetCrossSectionEdgeAttributes() const
+{
+  std::vector<int> attr_list;
+  auto Append = [&attr_list](const std::vector<int> &attrs)
+  { attr_list.insert(attr_list.end(), attrs.begin(), attrs.end()); };
+  Append(pec.attributes);
+  Append(auxpec.attributes);
+  for (const auto &data : impedance)
+  {
+    Append(data.attributes);
+  }
+  for (const auto &data : conductivity)
+  {
+    Append(data.attributes);
+  }
+  for (const auto &data : rational_impedance)
+  {
+    Append(data.attributes);
+  }
+  Append(farfield.attributes);
   return attr_list;
 }
 
@@ -1960,6 +1999,7 @@ void Nondimensionalize(const Units &units, SuperconductorData &data)
 
 void Nondimensionalize(const Units &units, LumpedPortData &data)
 {
+  // The excitation amplitude and phase are dimensionless and need no scaling.
   data.R /= units.GetScaleFactor<Units::ValueType::IMPEDANCE>();
   data.L /= units.GetScaleFactor<Units::ValueType::INDUCTANCE>();
   data.C /= units.GetScaleFactor<Units::ValueType::CAPACITANCE>();

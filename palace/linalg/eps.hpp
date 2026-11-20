@@ -123,6 +123,21 @@ public:
   // Set an initial vector for the solution subspace.
   virtual void SetInitialSpace(const ComplexVector &v) = 0;
 
+  // Set an initial vector for a quadratic eigenvalue problem solved by linearization, with
+  // eigenvectors [x; λ x]: v combines eigenvector approximations xᵢ, and v_lambda the same
+  // combination of λᵢ xᵢ. Other solvers use v only.
+  virtual void SetInitialSpaceBlocks(const ComplexVector &v, const ComplexVector &v_lambda)
+  {
+    SetInitialSpace(v);
+  }
+
+  // Relative tolerance of the linear solves of the first Krylov cycle, used if positive and
+  // smaller than that of the linear solver. Not all solvers support it.
+  virtual void SetFirstCycleLinearSolverTol(double tol) {}
+
+  // Number of iterations (restarts) of the last solve, or -1 if not available.
+  virtual int GetNumIterations() const { return -1; }
+
   // Solve the eigenvalue problem. Returns the number of converged eigenvalues.
   virtual int Solve() = 0;
 

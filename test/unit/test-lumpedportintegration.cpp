@@ -1,18 +1,29 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <array>
+#include <cmath>
+#include <complex>
+#include <functional>
+#include <map>
 #include <numbers>
+#include <span>
 #include <Eigen/Dense>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
 #include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 #include "drivers/drivensolver.hpp"
 #include "fem/bilinearform.hpp"
 #include "fem/fespace.hpp"
 #include "fem/gridfunction.hpp"
+#include "fem/lumpedelement.hpp"
 #include "fem/mesh.hpp"
+#include "fixtures.hpp"
+#include "linalg/vector.hpp"
 #include "models/materialoperator.hpp"
+#include "models/portexcitations.hpp"
 #include "models/postoperator.hpp"
 #include "models/postoperatorcsv.hpp"
 #include "models/spaceoperator.hpp"
@@ -63,6 +74,219 @@ auto LoadScaleParMesh(IoData &iodata, MPI_Comm world_comm)
     }
   }
   return mesh_;
+}
+
+TEST_CASE("UniformElementData geometry", "[lumped_port][Serial][Parallel]")
+{
+  // Make a parallel mesh from a Cartesian mesh. Boundary elements whose center satisfies
+  // in_port make up the lumped element (attribute 2), then the vertices and the nodes of
+  // the mesh, of the given order, are mapped. Palace gives every mesh nodes, so the
+  // geometry is computed as in a simulation.
+  auto PortMesh = [](mfem::Mesh smesh, auto in_port, auto map, int order = 1)
+  {
+    mfem::Array<int> verts;
+    mfem::Vector center(smesh.SpaceDimension());
+    for (int i = 0; i < smesh.GetNBE(); i++)
+    {
+      smesh.GetBdrElementVertices(i, verts);
+      center = 0.0;
+      for (auto v : verts)
+      {
+        center.Add(1.0 / verts.Size(), mfem::Vector(smesh.GetVertex(v), center.Size()));
+      }
+      smesh.SetBdrAttribute(i, in_port(center) ? 2 : 1);
+    }
+    smesh.SetAttributes();
+    smesh.SetCurvature(order);
+    mfem::VectorFunctionCoefficient f(smesh.SpaceDimension(),
+                                      [&map](const mfem::Vector &x, mfem::Vector &y)
+                                      {
+                                        y = x;
+                                        map(y.GetData());
+                                      });
+    smesh.Transform(f);
+    for (int v = 0; v < smesh.GetNV(); v++)
+    {
+      map(smesh.GetVertex(v));
+    }
+    return std::make_unique<mfem::ParMesh>(Mpi::World(), smesh);
+  };
+  auto Bottom = [](const mfem::Vector &x) { return x(x.Size() - 1) == 0.0; };
+  auto Identity = [](double *) {};
+  const mfem::Array<int> attr_list({2});
+  // Hexahedra have quadrilateral boundary faces, and tetrahedra triangular ones.
+  const auto type = GENERATE(mfem::Element::HEXAHEDRON, mfem::Element::TETRAHEDRON);
+
+  SECTION("Rectangle rotated out of the axes")
+  {
+    const Eigen::Matrix3d R =
+        Eigen::AngleAxisd(0.7, Eigen::Vector3d(1.0, 2.0, 3.0).normalized()).matrix();
+    auto mesh = PortMesh(mfem::Mesh::MakeCartesian3D(3, 2, 1, type, 3.0, 2.0, 1.0), Bottom,
+                         [&R](double *x)
+                         {
+                           Eigen::Map<Eigen::Vector3d> v(x);
+                           v = R * v;
+                         });
+    UniformElementData data({R(0, 0), R(1, 0), R(2, 0)}, attr_list, *mesh);
+    CHECK_THAT(data.GetGeometryLength(), WithinRel(3.0, 1.0e-12));
+    CHECK_THAT(data.GetGeometryWidth(), WithinRel(2.0, 1.0e-12));
+  }
+
+  SECTION("Wide rectangle with the direction 0.5 degrees off its side")
+  {
+    // 1 x 50 rectangle, much wider across the direction than long along it. Cuts normal to
+    // the direction would run out through its ends, but those normal to its principal axis
+    // cross it from side to side.
+    const double t = 0.5 * std::numbers::pi / 180.0;
+    auto mesh = PortMesh(mfem::Mesh::MakeCartesian3D(2, 50, 1, type, 1.0, 50.0, 1.0),
+                         Bottom, Identity);
+    UniformElementData data({std::cos(t), std::sin(t), 0.0}, attr_list, *mesh);
+    CHECK_THAT(data.GetGeometryLength(), WithinRel(1.0, 1.0e-12));
+    CHECK_THAT(data.GetGeometryWidth(), WithinRel(50.0, 1.0e-12));
+  }
+
+  SECTION("Wide strip with ends 0.5 degrees from normal to the direction")
+  {
+    // 1 x 10 parallelogram with its sides along the direction and its ends slanted. Its
+    // principal axis is within (1 / 10)^2 of normal to the ends, so l and w are those of a
+    // strip between the ends to second order.
+    const double t = 0.5 * std::numbers::pi / 180.0;
+    auto mesh = PortMesh(mfem::Mesh::MakeCartesian3D(2, 10, 1, type, 1.0, 10.0, 1.0),
+                         Bottom, [t](double *x) { x[0] += std::tan(t) * x[1]; });
+    UniformElementData data({1.0, 0.0, 0.0}, attr_list, *mesh);
+    CHECK_THAT(data.GetGeometryLength(), WithinRel(std::cos(t), 1.0e-5));
+    CHECK_THAT(data.GetGeometryWidth(), WithinRel(10.0 / std::cos(t), 1.0e-5));
+  }
+
+  SECTION("Bracket folded over a step (#89)")
+  {
+    // Top and side faces of a 2 x 2 x 1 block, folded along the direction.
+    auto mesh = PortMesh(
+        mfem::Mesh::MakeCartesian3D(2, 2, 1, type, 2.0, 2.0, 1.0),
+        [](const mfem::Vector &x) { return x(2) == 1.0 || x(0) == 0.0; }, Identity);
+    UniformElementData data({0.0, 1.0, 0.0}, attr_list, *mesh);
+    CHECK_THAT(data.GetGeometryLength(), WithinRel(2.0, 1.0e-12));
+    CHECK_THAT(data.GetGeometryWidth(), WithinRel(3.0, 1.0e-12));
+  }
+
+  SECTION("Cylinder with the direction along its axis (#417)")
+  {
+    // Lateral surface of a 16-sided cylinder of radius 1 and height 0.2.
+    auto mesh = PortMesh(
+        mfem::Mesh::MakeCartesian3D(1, 16, 1, type),
+        [](const mfem::Vector &x) { return x(0) == 0.0; },
+        [](double *x)
+        {
+          const double r = 1.0 + 0.5 * x[0];
+          const double t = 2.0 * std::numbers::pi * x[1];
+          x[0] = r * std::cos(t);
+          x[1] = r * std::sin(t);
+          x[2] *= 0.2;
+        });
+    UniformElementData data({0.0, 0.0, 1.0}, attr_list, *mesh);
+    CHECK_THAT(data.GetGeometryLength(), WithinRel(0.2, 1.0e-12));
+    CHECK_THAT(data.GetGeometryWidth(),
+               WithinRel(32.0 * std::sin(std::numbers::pi / 16.0), 1.0e-12));
+  }
+
+  SECTION("Cylinder on a curved mesh")
+  {
+    // Lateral surface of a cylinder of radius 1 and height 0.2, on a mesh of order 3.
+    auto mesh = PortMesh(
+        mfem::Mesh::MakeCartesian3D(1, 16, 1, type),
+        [](const mfem::Vector &x) { return x(0) == 0.0; },
+        [](double *x)
+        {
+          const double r = 1.0 + 0.5 * x[0];
+          const double t = 2.0 * std::numbers::pi * x[1];
+          x[0] = r * std::cos(t);
+          x[1] = r * std::sin(t);
+          x[2] *= 0.2;
+        },
+        3);
+    UniformElementData data({0.0, 0.0, 1.0}, attr_list, *mesh);
+    CHECK_THAT(data.GetGeometryLength(), WithinRel(0.2, 1.0e-4));
+    CHECK_THAT(data.GetGeometryWidth(), WithinRel(2.0 * std::numbers::pi, 1.0e-4));
+  }
+
+  SECTION("Strip with curved ends (#1194)")
+  {
+    // 1 x 4 strip bent by s along the direction at its middle: one end bulges out and the
+    // other in. The extent is 4 + s, but the distance between the ends is 4 everywhere.
+    constexpr double s = 2.0e-2;
+    auto mesh = PortMesh(mfem::Mesh::MakeCartesian3D(4, 8, 1, type, 1.0, 4.0, 0.5), Bottom,
+                         [](double *x)
+                         {
+                           if (x[2] == 0.0)
+                           {
+                             x[1] += s * (1.0 - std::pow(2.0 * x[0] - 1.0, 2));
+                           }
+                         });
+    UniformElementData data({0.0, 1.0, 0.0}, attr_list, *mesh);
+    CHECK_THAT(data.GetGeometryLength(), WithinRel(4.0, 1.0e-12));
+    CHECK_THAT(data.GetGeometryWidth(), WithinRel(1.0, 1.0e-12));
+  }
+
+  SECTION("Planar L-shaped port")
+  {
+    auto mesh = PortMesh(
+        mfem::Mesh::MakeCartesian3D(2, 2, 1, type, 2.0, 2.0, 1.0), [](const mfem::Vector &x)
+        { return x(2) == 0.0 && (x(0) < 1.0 || x(1) < 1.0); }, Identity);
+    CHECK_THROWS_WITH(UniformElementData({0.0, 1.0, 0.0}, attr_list, *mesh),
+                      ContainsSubstring("not a strip along its direction"));
+  }
+
+  SECTION("Square with the direction 45 degrees off its sides")
+  {
+    auto mesh = PortMesh(mfem::Mesh::MakeCartesian3D(2, 2, 1, type), Bottom, Identity);
+    CHECK_THROWS_WITH(UniformElementData({1.0, 1.0, 0.0}, attr_list, *mesh),
+                      ContainsSubstring("not a strip along its direction"));
+  }
+
+  SECTION("Bracket folded over a thin step with the direction rotated 10 degrees")
+  {
+    const double t = 10.0 * std::numbers::pi / 180.0;
+    auto mesh = PortMesh(
+        mfem::Mesh::MakeCartesian3D(2, 2, 1, type, 2.0, 2.0, 0.2),
+        [](const mfem::Vector &x) { return x(2) > 0.1 || x(0) == 0.0; }, Identity);
+    CHECK_THROWS_WITH(UniformElementData({std::sin(t), std::cos(t), 0.0}, attr_list, *mesh),
+                      ContainsSubstring("not a strip along its direction"));
+  }
+
+  SECTION("Direction normal to the port")
+  {
+    auto mesh = PortMesh(mfem::Mesh::MakeCartesian3D(2, 2, 1, type), Bottom, Identity);
+    CHECK_THROWS_WITH(UniformElementData({0.0, 0.0, 1.0}, attr_list, *mesh),
+                      ContainsSubstring("no extent"));
+  }
+
+  SECTION("2D edge along the direction")
+  {
+    auto mesh = PortMesh(
+        mfem::Mesh::MakeCartesian2D(4, 1, mfem::Element::QUADRILATERAL, false, 4.0, 1.0),
+        Bottom, Identity);
+    UniformElementData data({1.0, 0.0, 0.0}, attr_list, *mesh);
+    CHECK_THAT(data.GetGeometryLength(), WithinRel(4.0, 1.0e-12));
+    CHECK_THAT(data.GetGeometryWidth(), WithinRel(1.0, 1.0e-12));
+  }
+
+  SECTION("2D edge with the direction 45 degrees off it")
+  {
+    auto mesh = PortMesh(
+        mfem::Mesh::MakeCartesian2D(4, 1, mfem::Element::QUADRILATERAL, false, 4.0, 1.0),
+        Bottom, Identity);
+    CHECK_THROWS_WITH(UniformElementData({1.0, 1.0, 0.0}, attr_list, *mesh),
+                      ContainsSubstring("not a strip along its direction"));
+  }
+
+  SECTION("2D edge with the direction normal to it")
+  {
+    auto mesh = PortMesh(
+        mfem::Mesh::MakeCartesian2D(4, 1, mfem::Element::QUADRILATERAL, false, 4.0, 1.0),
+        Bottom, Identity);
+    CHECK_THROWS_WITH(UniformElementData({0.0, 1.0, 0.0}, attr_list, *mesh),
+                      ContainsSubstring("no extent"));
+  }
 }
 
 TEST_CASE("LumpedPort batched voltages", "[lumped_port][Serial][Parallel][GPU]")
@@ -261,33 +485,11 @@ TEST_CASE("LumpedPort_BasicTests_1ElementPort_Cube321", "[lumped_port][Serial][P
   // Scale factor between element wave impedance and port impedance: (W / L) * n_elems
   CHECK_THAT(port_1.GetToSquare(*el_ptr), WithinRel(1.0));
 
-  // Validate against mesh properties at the attribute level.
-  // TODO: Factor this out as a separate test for geometries of boundaries.
-  // TODO: Need test for non-axis aligned port.
-  {
-    CHECK(el_ptr->GetAttrList().Size() == 1);
-    auto el_attr = el_ptr->GetAttrList()[0];
-    auto bbox = mesh::GetBoundingBox(mesh, el_attr, true);
-
-    CHECK(bbox.planar);
-    CHECK_THAT(bbox.Area(), WithinRel(length_dx_m * length_dx_m));
-    CHECK(bbox.Volume() == 0.0);
-
-    // Can do exact equals below as axis alignment of port means that there should be
-    // strictly no double rounding.
-
-    auto bbox_lengths = bbox.Lengths();
-    CHECK(bbox_lengths.Size() == 3);
-    CHECK(bbox_lengths(0) == length_dx_m);
-    CHECK(bbox_lengths(1) == length_dx_m);
-    CHECK(bbox_lengths(2) == 0.0);
-  }
-
   mfem::Array<int> attr_marker_loc;
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   mesh::AttrToMarker(bdr_attr_max, el_ptr->GetAttrList(), attr_marker_loc);
 
-  // Geometry Tests: not via point-cloud construction as for bbox above
+  // Geometry tests at the attribute level.
   CHECK_THAT(mesh::GetSurfaceArea(mesh, attr_marker_loc),
              WithinRel(length_dx_m * length_dx_m));
 
@@ -324,7 +526,6 @@ TEST_CASE("LumpedPort_BasicTests_1ElementPort_Cube321", "[lumped_port][Serial][P
 
   // Port mode is in y direction, so filter in x.
   StaticVector<3> x_dir;
-  x_dir.UseDevice(true);
   x_dir = 0.0;
   x_dir(0) = 1.0;
   fb_perp.AddCoefficient(
@@ -494,6 +695,7 @@ TEST_CASE("LumpedPort_BasicTests_1ElementPort_Cube321", "[lumped_port][Serial][P
   // In the case where there is a neighbouring PEC condition, RHS and VecFormS are no
   // longer equal — the DoF on the shared edge with the PEC neighbours are zeroed.
   const auto &nd_dbc_tdof = space_op.GetNDDbcTDofLists().back();
+  const std::span<const int> dbc_tdof(nd_dbc_tdof.HostRead(), nd_dbc_tdof.Size());
   if (boundary_pec_type != PEC::NONE)
   {
     // If more than 1 MPI rank only know that total tdof is non-zero.
@@ -503,6 +705,8 @@ TEST_CASE("LumpedPort_BasicTests_1ElementPort_Cube321", "[lumped_port][Serial][P
   }
 
   REQUIRE(RHS.Real().Size() == VecFormS.Real().Size());
+  const auto *rhs = RHS.Real().HostRead();
+  const auto *vec_s = VecFormS.Real().HostRead();
   // This should true up to normalization, but is not currently due to non-subtracted metal.
   for (int i = 0; i < RHS.Real().Size(); i++)
   {
@@ -510,26 +714,24 @@ TEST_CASE("LumpedPort_BasicTests_1ElementPort_Cube321", "[lumped_port][Serial][P
     // dofs if PEC is at the end of the port.
     if (boundary_pec_type == PEC::SIDE || (!mesh_is_hex && boundary_pec_type == PEC::ENDS))
     {
-      const auto *find_pec = std::ranges::find(nd_dbc_tdof, i);
-      if (find_pec != nd_dbc_tdof.end())
+      if (std::ranges::find(dbc_tdof, i) != dbc_tdof.end())
       {
-        CHECK(RHS.Real()[i] == 0.0);
+        CHECK(rhs[i] == 0.0);
         continue;
       }
     }
-    CHECK_THAT(RHS.Real()[i], WithinAbs(VecFormS.Real()[i], 1e-12));
+    CHECK_THAT(rhs[i], WithinAbs(vec_s[i], 1e-12));
   }
 
   // Check that form_s and form_v are the same apart from the factor 1 / sqrt(R). In actual
   // fact, this should only true in the ideal case, without any metal subtraction. Here it
   // is always true because of the form definitions.
   REQUIRE(VecFormS.Real().Size() == VecFormV.Real().Size());
+  const auto *vec_v = VecFormV.Real().HostRead();
+  const double sqrt_r = iodata.units.Nondimensionalize<VT::VOLTAGE>(std::sqrt(50.));
   for (int i = 0; i < VecFormS.Real().Size(); i++)
   {
-    CHECK_THAT(VecFormV.Real()[i],
-               WithinAbs(VecFormS.Real()[i] *
-                             iodata.units.Nondimensionalize<VT::VOLTAGE>(std::sqrt(50.)),
-                         1e-12));
+    CHECK_THAT(vec_v[i], WithinAbs(vec_s[i] * sqrt_r, 1e-12));
   }
 }
 
@@ -847,6 +1049,7 @@ TEST_CASE("LumpedPort_BasicTests_3ElementPort_Cube321", "[lumped_port][Serial][P
   // In the case where there is a neighbouring PEC condition, RHS and VecFormS are no
   // longer equal — the DoF on the shared edge with the PEC neighbours are zeroed.
   const auto &nd_dbc_tdof = space_op.GetNDDbcTDofLists().back();
+  const std::span<const int> dbc_tdof(nd_dbc_tdof.HostRead(), nd_dbc_tdof.Size());
   if (boundary_pec_type != PEC::NONE)
   {
     auto nd_dbc_tdof_size = nd_dbc_tdof.Size();
@@ -855,6 +1058,8 @@ TEST_CASE("LumpedPort_BasicTests_3ElementPort_Cube321", "[lumped_port][Serial][P
   }
 
   REQUIRE(RHS.Real().Size() == VecFormS.Real().Size());
+  const auto *rhs = RHS.Real().HostRead();
+  const auto *vec_s = VecFormS.Real().HostRead();
   // This should true up to normalization, but is not currently due to non-subtracted metal.
   for (int i = 0; i < RHS.Real().Size(); i++)
   {
@@ -862,26 +1067,24 @@ TEST_CASE("LumpedPort_BasicTests_3ElementPort_Cube321", "[lumped_port][Serial][P
     // dofs if PEC is at the end of the port.
     if (boundary_pec_type == PEC::SIDE || (!mesh_is_hex && boundary_pec_type == PEC::ENDS))
     {
-      const auto *find_pec = std::ranges::find(nd_dbc_tdof, i);
-      if (find_pec != nd_dbc_tdof.end())
+      if (std::ranges::find(dbc_tdof, i) != dbc_tdof.end())
       {
-        CHECK(RHS.Real()[i] == 0.0);
+        CHECK(rhs[i] == 0.0);
         continue;
       }
     }
-    CHECK_THAT(RHS.Real()[i], WithinAbs(VecFormS.Real()[i], 1e-12));
+    CHECK_THAT(rhs[i], WithinAbs(vec_s[i], 1e-12));
   }
 
   // Check that form_s and form_v are the same apart from the factor 1 / sqrt(R). In actual
   // fact, this should only true in the ideal case, without any metal subtraction. Here it
   // is always true because of the form definitions.
   REQUIRE(VecFormS.Real().Size() == VecFormV.Real().Size());
+  const auto *vec_v = VecFormV.Real().HostRead();
+  const double sqrt_r = iodata.units.Nondimensionalize<VT::VOLTAGE>(std::sqrt(50.));
   for (int i = 0; i < VecFormS.Real().Size(); i++)
   {
-    CHECK_THAT(VecFormV.Real()[i],
-               WithinAbs(VecFormS.Real()[i] *
-                             iodata.units.Nondimensionalize<VT::VOLTAGE>(std::sqrt(50.)),
-                         1e-12));
+    CHECK_THAT(vec_v[i], WithinAbs(vec_s[i] * sqrt_r, 1e-12));
   }
 }
 
@@ -994,10 +1197,11 @@ TEST_CASE("LumpedPort_ReactiveExcitation_Cube321", "[lumped_port][Serial][Parall
   ComplexVector RHS;
   space_op.GetExcitationVector1(1, RHS);
   double max_abs = 0.0;
+  const auto *rhs = RHS.Real().HostRead();
   for (int i = 0; i < RHS.Real().Size(); i++)
   {
-    CHECK(std::isfinite(RHS.Real()[i]));
-    max_abs = std::max(max_abs, std::abs(RHS.Real()[i]));
+    CHECK(std::isfinite(rhs[i]));
+    max_abs = std::max(max_abs, std::abs(rhs[i]));
   }
   Mpi::GlobalMax(1, &max_abs, world_comm);
   // The drive is nonzero (a genuine incident field was assembled).
@@ -1018,4 +1222,489 @@ TEST_CASE("LumpedPort_ReactiveExcitation_Cube321", "[lumped_port][Serial][Parall
   CHECK(std::isfinite(S_proj.real()));
   CHECK(std::isfinite(S_proj.imag()));
   CHECK(std::abs(S_proj) > 0.0);
+}
+
+TEST_CASE("LumpedPort excitation weight from amplitude and phase", "[lumped_port][Serial]")
+{
+  using C = std::complex<double>;
+
+  // Multiples of 90 degrees are exact, so a weight which is real (or imaginary) in exact
+  // arithmetic is also real (or imaginary) in floating point.
+  CHECK(ExcitationWeight(2.0, 0.0) == C(2.0, 0.0));
+  CHECK(ExcitationWeight(2.0, 90.0) == C(0.0, 2.0));
+  CHECK(ExcitationWeight(2.0, 180.0) == C(-2.0, 0.0));
+  CHECK(ExcitationWeight(2.0, 270.0) == C(0.0, -2.0));
+  CHECK(ExcitationWeight(2.0, -90.0) == C(0.0, -2.0));
+  CHECK(ExcitationWeight(2.0, -180.0) == C(-2.0, 0.0));
+  CHECK(ExcitationWeight(2.0, 360.0) == C(2.0, 0.0));
+  CHECK(ExcitationWeight(2.0, -360.0) == C(2.0, 0.0));
+  CHECK(ExcitationWeight(2.0, 810.0) == C(0.0, 2.0));
+  CHECK(ExcitationWeight(2.0, -1.0e-20) == C(2.0, 0.0));
+  CHECK(ExcitationWeight(2.0, 180.0).imag() == 0.0);
+  CHECK(ExcitationWeight(3.0, 90.0).real() == 0.0);
+
+  // Other phases, reduced modulo 360 degrees.
+  for (const double phase : {30.0, -110.0, 75.0, 359.0})
+  {
+    CAPTURE(phase);
+    const C expected = std::polar(0.5, phase * std::numbers::pi / 180.0);
+    CHECK(std::abs(ExcitationWeight(0.5, phase) - expected) <= 1.0e-15);
+    CHECK(std::abs(ExcitationWeight(0.5, phase + 360.0) - expected) <= 1.0e-14);
+    CHECK(std::abs(ExcitationWeight(0.5, phase - 720.0) - expected) <= 1.0e-14);
+  }
+}
+
+TEST_CASE("LumpedPort weighted excitation vector", "[lumped_port][Serial][Parallel]")
+{
+  MPI_Comm comm = Mpi::World();
+  auto [mesh_is_hex, mesh_path] =
+      GENERATE(std::make_tuple(true, fs::path(PALACE_TEST_DATA_DIR) /
+                                         "lumpedport_mesh/cube_mesh_3_2_1_hex.msh"),
+               std::make_tuple(false, fs::path(PALACE_TEST_DATA_DIR) /
+                                          "lumpedport_mesh/cube_mesh_3_2_1_tet.msh"));
+  auto order = GENERATE(1, 2);
+  CAPTURE(mesh_is_hex, order);
+  const fs::path mesh_file = mesh_path;
+  const int solver_order = order;
+
+  // Port 1 is a single element port on attribute 1 and port 2 is a multielement port, as
+  // in the other lumped port tests. The extra JSON entries override the defaults and add
+  // the excitation options.
+  auto MakePort1 = [](const json &extra)
+  {
+    json port = {
+        {"Index", 1}, {"R", 50.0}, {"Attributes", json::array({1})}, {"Direction", "+Y"}};
+    port.update(extra);
+    return port;
+  };
+  auto MakePort2 = [](const json &extra)
+  {
+    json port = {
+        {"Index", 2},
+        {"R", 75.0},
+        {"Elements", json::array({json::object({{"Attributes", json::array({9, 11})},
+                                                {"Direction", "+Y"}}),
+                                  json::object({{"Attributes", json::array({2, 6, 10})},
+                                                {"Direction", "+X"}})})}};
+    port.update(extra);
+    return port;
+  };
+
+  // Excitation vectors and incident quantities of the ports of one configuration.
+  struct Drive
+  {
+    ComplexVector rhs1;
+    Vector rhs_time;
+    std::array<std::complex<double>, 2> weight, v_inc, i_inc;
+    std::array<double, 2> v_exc, p_exc;
+  };
+  auto Assemble =
+      [&](const json &port1, const json &port2, int excitation_idx, bool time_domain)
+  {
+    IoData iodata{Units(1.0e-6, 7.0)};
+    iodata.model.mesh = mesh_file;
+    iodata.model.L0 = 1.0e-6;
+    iodata.model.Lc = 7.0;
+    iodata.model.crack_bdr_elements = false;
+    iodata.solver.order = solver_order;
+    json domains_json = {
+        {"Materials",
+         json::array({json::object({{"Attributes", json::array({1, 2, 3, 4, 5, 6})},
+                                    {"Permeability", 1.0},
+                                    {"Permittivity", 1.0},
+                                    {"LossTan", 0.0}})})}};
+    iodata.domains = config::DomainData(domains_json);
+    json boundaries_json = {
+        {"LumpedPort", json::array({MakePort1(port1), MakePort2(port2)})}};
+    iodata.boundaries = config::BoundaryData(boundaries_json);
+    iodata.CheckConfiguration();
+
+    auto mesh = LoadScaleParMesh(iodata, comm);
+    SpaceOperator space_op(iodata, mesh);
+
+    Drive out;
+    out.rhs1.UseDevice(true);
+    REQUIRE(space_op.GetExcitationVector1(excitation_idx, out.rhs1));
+    if (time_domain)
+    {
+      REQUIRE(space_op.GetExcitationVector(excitation_idx, out.rhs_time));
+    }
+    for (int i = 0; i < 2; i++)
+    {
+      const auto &port = space_op.GetLumpedPortOp().GetPort(i + 1);
+      out.weight[i] = port.GetExcitationWeight();
+      out.v_inc[i] = port.GetIncidentVoltage();
+      out.i_inc[i] = port.GetIncidentCurrent();
+      out.v_exc[i] = port.GetExcitationVoltage();
+      out.p_exc[i] = port.GetExcitationPower();
+    }
+    return out;
+  };
+
+  const std::complex<double> a1 = std::polar(2.0, 30.0 * std::numbers::pi / 180.0);
+  const std::complex<double> a2 = std::polar(0.5, -110.0 * std::numbers::pi / 180.0);
+  const json no_port = json::object();
+
+  // Each port driven alone with the default weight, as references.
+  const auto drive_1 = Assemble(json{{"Excitation", 1}}, no_port, 1, true);
+  const auto drive_2 = Assemble(no_port, json{{"Excitation", 2}}, 2, false);
+  const double norm_1 = linalg::Norml2(comm, drive_1.rhs1);
+  const double norm_2 = linalg::Norml2(comm, drive_2.rhs1);
+  REQUIRE(norm_1 > 0.0);
+  REQUIRE(norm_2 > 0.0);
+  CHECK(linalg::Norml2(comm, drive_1.rhs1.Imag()) == 0.0);
+  CHECK(linalg::Norml2(comm, drive_2.rhs1.Imag()) == 0.0);
+
+  // The weights default to one for the excited port and zero for the other.
+  CHECK(drive_1.weight[0] == std::complex<double>(1.0, 0.0));
+  CHECK(drive_1.weight[1] == std::complex<double>(0.0, 0.0));
+  CHECK(drive_1.v_inc[1] == std::complex<double>(0.0, 0.0));
+  CHECK(drive_1.i_inc[1] == std::complex<double>(0.0, 0.0));
+  CHECK(drive_1.p_exc[1] == 0.0);
+
+  SECTION("Both ports in one excitation add with their complex weights")
+  {
+    const auto drive_w = Assemble(
+        json{{"Excitation", 1}, {"ExcitationAmplitude", 2.0}, {"ExcitationPhase", 30.0}},
+        json{{"Excitation", 1}, {"ExcitationAmplitude", 0.5}, {"ExcitationPhase", -110.0}},
+        1, false);
+    const double norm_w = linalg::Norml2(comm, drive_w.rhs1);
+    REQUIRE(norm_w > 0.0);
+    CHECK(linalg::Norml2(comm, drive_w.rhs1.Imag()) > 0.0);
+
+    // RHS1 = a1 RHS1(port 1 alone) + a2 RHS1(port 2 alone).
+    ComplexVector diff(drive_w.rhs1);
+    diff.AXPY(-a1, drive_1.rhs1);
+    diff.AXPY(-a2, drive_2.rhs1);
+    CHECK(linalg::Norml2(comm, diff) <= 1.0e-12 * norm_w);
+
+    // The weights are applied to the excitation and the incident quantities, but not to
+    // the unit-normalized ones.
+    CHECK(std::abs(drive_w.weight[0] - a1) <= 1.0e-15);
+    CHECK(std::abs(drive_w.weight[1] - a2) <= 1.0e-15);
+    CHECK(drive_w.v_exc[0] == drive_1.v_exc[0]);
+    CHECK(drive_w.v_exc[1] == drive_2.v_exc[1]);
+    CHECK(drive_w.p_exc[0] == 1.0);
+    CHECK(drive_w.p_exc[1] == 1.0);
+    const std::array<std::complex<double>, 2> a = {a1, a2};
+    for (int i = 0; i < 2; i++)
+    {
+      CAPTURE(i);
+      REQUIRE(drive_w.v_exc[i] > 0.0);
+      CHECK(std::abs(drive_w.v_inc[i] - a[i] * drive_w.v_exc[i]) <=
+            1.0e-14 * std::abs(a[i]) * drive_w.v_exc[i]);
+      CHECK(std::abs(drive_w.i_inc[i] - a[i] / drive_w.v_exc[i]) <=
+            1.0e-14 * std::abs(a[i]) / drive_w.v_exc[i]);
+    }
+  }
+
+  SECTION("A phase of 180 degrees is a flipped direction")
+  {
+    const auto drive_180 =
+        Assemble(json{{"Excitation", 1}, {"ExcitationPhase", 180.0}}, no_port, 1, false);
+    const auto drive_flip =
+        Assemble(json{{"Excitation", 1}, {"Direction", "-Y"}}, no_port, 1, false);
+
+    // The weight is exactly real, so the imaginary part is not assembled.
+    CHECK(drive_180.weight[0] == std::complex<double>(-1.0, 0.0));
+    CHECK(linalg::Norml2(comm, drive_180.rhs1.Imag()) == 0.0);
+
+    ComplexVector diff(drive_180.rhs1);
+    diff -= drive_flip.rhs1;
+    CHECK(linalg::Norml2(comm, diff) <= 1.0e-12 * norm_1);
+
+    // Also the negative of the unweighted vector.
+    diff.Set(drive_180.rhs1);
+    diff += drive_1.rhs1;
+    CHECK(linalg::Norml2(comm, diff) <= 1.0e-12 * norm_1);
+  }
+
+  SECTION("The amplitude scales the real and time domain excitation")
+  {
+    const auto drive_3 =
+        Assemble(json{{"Excitation", 1}, {"ExcitationAmplitude", 3.0}}, no_port, 1, true);
+    CHECK(drive_3.weight[0] == std::complex<double>(3.0, 0.0));
+    CHECK(linalg::Norml2(comm, drive_3.rhs1.Imag()) == 0.0);
+    CHECK(drive_3.p_exc[0] == 1.0);
+    CHECK(drive_3.v_exc[0] == drive_1.v_exc[0]);
+    CHECK(std::abs(drive_3.v_inc[0] - 3.0 * drive_1.v_exc[0]) <=
+          1.0e-14 * 3.0 * drive_1.v_exc[0]);
+
+    // Frequency domain RHS1.
+    ComplexVector diff(drive_3.rhs1);
+    diff.AXPY(-3.0, drive_1.rhs1);
+    CHECK(linalg::Norml2(comm, diff) <= 1.0e-12 * norm_1);
+
+    // Time domain vector, which also equals the real part of RHS1.
+    REQUIRE(drive_3.rhs_time.Size() == drive_1.rhs_time.Size());
+    Vector diff_time(drive_3.rhs_time);
+    diff_time.Add(-3.0, drive_1.rhs_time);
+    CHECK(linalg::Norml2(comm, diff_time) <= 1.0e-12 * norm_1);
+    Vector diff_real(drive_3.rhs_time);
+    diff_real -= drive_3.rhs1.Real();
+    CHECK(linalg::Norml2(comm, diff_real) <= 1.0e-12 * norm_1);
+  }
+}
+
+namespace
+{
+
+class EigenmodePostOperatorTest : public PostOperator<ProblemType::EIGENMODE>
+{
+public:
+  using PostOperator<ProblemType::EIGENMODE>::PostOperator;
+  const auto &GetMeasurement() const { return measurement_cache; }
+};
+
+struct ResistorLossCase
+{
+  std::unique_ptr<mfem::Mesh> mesh;
+  json boundaries;
+  std::function<void(const mfem::Vector &, mfem::Vector &)> Er, Ei;
+};
+
+struct ResistorLossResult
+{
+  std::map<int, double> R;  // Nondimensional port resistance
+  std::map<int, Measurement::PortPostData> vi;
+  double energy_electric;  // Measured E_elec
+  double damping_ratio;    // Eᴴ C E / Eᴴ M E of the system matrices
+};
+
+// Measure the eigenmode lumped port outputs for a manufactured field E through the
+// PostOperator, with unit internal units and relative permittivity 2.
+ResistorLossResult MeasureResistorLoss(ResistorLossCase &c, const fs::path &output)
+{
+  IoData iodata{Units(1.0, 1.0)};
+  iodata.model.L0 = 1.0;
+  iodata.model.Lc = 1.0;
+  iodata.problem.type = ProblemType::EIGENMODE;
+  iodata.problem.output = output.string();
+  iodata.solver.order = 2;
+  iodata.domains = config::DomainData(
+      json{{"Materials", json::array({json::object({{"Attributes", json::array({1})},
+                                                    {"Permittivity", 2.0}})})}});
+  iodata.boundaries = config::BoundaryData(c.boundaries);
+  iodata.CheckConfiguration();
+  iodata.NondimensionalizeInputs(c.mesh);
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  mesh.push_back(
+      std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(Mpi::World(), *c.mesh)));
+  SpaceOperator space_op(iodata, mesh);
+  EigenmodePostOperatorTest post_op(iodata, space_op);
+
+  const int dim = mesh.back()->Dimension();
+  GridFunction E(space_op.GetNDSpace(), true);
+  mfem::VectorFunctionCoefficient Er(dim, c.Er), Ei(dim, c.Ei);
+  E.Real().ProjectCoefficient(Er);
+  E.Imag().ProjectCoefficient(Ei);
+  ComplexVector e(space_op.GetNDSpace().GetTrueVSize()),
+      b(space_op.GetCurlSpace().GetTrueVSize());
+  e.UseDevice(true);
+  b.UseDevice(true);
+  E.Real().GetTrueDofs(e.Real());
+  E.Imag().GetTrueDofs(e.Imag());
+  b = 0.0;
+  post_op.MeasureAndPrintAll(0, e, b, 1.0, 0.0, 0.0, 1);
+
+  ResistorLossResult result;
+  for (const auto &[idx, data] : space_op.GetLumpedPortOp())
+  {
+    result.R[idx] = data.R;
+  }
+  result.vi = post_op.GetMeasurement().lumped_port_vi;
+  result.energy_electric = post_op.GetMeasurement().domain_E_field_energy_all;
+  auto C = space_op.GetDampingMatrix<Operator>(Operator::DIAG_ZERO);
+  auto M = space_op.GetMassMatrix<Operator>(Operator::DIAG_ZERO);
+  REQUIRE(C);
+  REQUIRE(M);
+  auto Quadratic = [&](const Operator &A)
+  {
+    Vector Ae(A.Height());
+    Ae.UseDevice(true);
+    A.Mult(e.Real(), Ae);
+    double dot = linalg::Dot(space_op.GetComm(), e.Real(), Ae);
+    A.Mult(e.Imag(), Ae);
+    return dot + linalg::Dot(space_op.GetComm(), e.Imag(), Ae);
+  };
+  result.damping_ratio = Quadratic(*C) / Quadratic(*M);
+  return result;
+}
+
+}  // namespace
+
+TEST_CASE_METHOD(test::SharedTempDir, "LumpedPort eigenmode resistor loss",
+                 "[lumped_port][Serial][Parallel]")
+{
+  // The |κ| of a resistive port is its dissipated power over the electric energy,
+  // |κ| = P / E. The power P = 1/2 ∫ |E_t|² / R_s dS is the port term of the damping matrix
+  // C, so κ must include the field components which do not change the port voltage. The
+  // sum of |κ| over the active ports is Eᴴ C E / Eᴴ M E, which is 2 Im{ω} for an eigenpair
+  // when the ports are the only loss. All quantities are nondimensional, and ε_r = 2.
+  constexpr double eps = 2.0;
+  SECTION("2D port")
+  {
+    // Rectangle [0, 1] x [0, 1/2] made of three quadrilaterals, with the port on the edge
+    // y = 0 (unit length and width).
+    const int field = GENERATE(0, 1, 2);
+    CAPTURE(field);
+    ResistorLossCase c;
+    c.mesh = std::make_unique<mfem::Mesh>(
+        mfem::Mesh::MakeCartesian2D(3, 1, mfem::Element::QUADRILATERAL, false, 1.0, 0.5));
+    for (int i = 0; i < c.mesh->GetNBE(); i++)
+    {
+      mfem::Vector center;
+      auto *T = c.mesh->GetBdrElementTransformation(i);
+      T->Transform(mfem::Geometries.GetCenter(c.mesh->GetBdrElementGeometry(i)), center);
+      c.mesh->SetBdrAttribute(i, (center(1) == 0.0) ? 2 : 3);
+    }
+    c.mesh->SetAttributes();
+    c.boundaries = {
+        {"LumpedPort", json::array({json::object({{"Index", 1},
+                                                  {"Attributes", json::array({2})},
+                                                  {"Direction", "+X"},
+                                                  {"R", 50.0}})})}};
+
+    // Integrals of |E_t|² over the port and |E|² over the domain, and the port voltage.
+    double port_int, domain_int;
+    std::complex<double> V;
+    auto zero = [](const mfem::Vector &x, mfem::Vector &v) { v = 0.0; };
+    auto uniform = [](const mfem::Vector &x, mfem::Vector &v)
+    {
+      v(0) = 1.0;
+      v(1) = 0.0;
+    };
+    auto cancelling = [](const mfem::Vector &x, mfem::Vector &v)
+    {
+      v(0) = x(0) - 0.5;
+      v(1) = 0.0;
+    };
+    switch (field)
+    {
+      case 0:
+        // Zero port voltage.
+        c.Er = cancelling;
+        c.Ei = zero;
+        port_int = 1.0 / 12.0;
+        domain_int = 1.0 / 24.0;
+        V = 0.0;
+        break;
+      case 1:
+        // Uniform port mode: the voltage estimate |V|² / (2R) is exact.
+        c.Er = uniform;
+        c.Ei = zero;
+        port_int = 1.0;
+        domain_int = 0.5;
+        V = 1.0;
+        break;
+      default:
+        c.Er = uniform;
+        c.Ei = cancelling;
+        port_int = 1.0 + 1.0 / 12.0;
+        domain_int = 0.5 + 1.0 / 24.0;
+        V = 1.0;
+        break;
+    }
+    auto result = MeasureResistorLoss(c, temp_dir);
+    const auto &vi = result.vi.at(1);
+    const double R = result.R.at(1);
+    const double P = 0.5 * port_int / R, energy = 0.5 * eps * domain_int;
+    CHECK_THAT(result.energy_electric, WithinRel(energy, 1.0e-12));
+    CHECK_THAT(std::abs(vi.V - V), WithinAbs(0.0, 1.0e-12));
+    CHECK_THAT(std::abs(vi.mode_port_kappa), WithinRel(P / energy, 1.0e-10));
+    CHECK_THAT(vi.quality_factor, WithinRel(energy / P, 1.0e-10));
+    CHECK_THAT(std::abs(vi.mode_port_kappa), WithinRel(result.damping_ratio, 1.0e-10));
+    if (field != 0)
+    {
+      CHECK(vi.mode_port_kappa > 0.0);  // V = 1, so Re{I} > 0
+    }
+    if (field == 1)
+    {
+      CHECK_THAT(std::abs(vi.mode_port_kappa),
+                 WithinRel(std::norm(vi.V) / (2.0 * R * energy), 1.0e-10));
+    }
+  }
+
+  SECTION("3D multielement and inactive ports")
+  {
+    // Unit cube made of 2 x 2 x 2 hexahedra. Port 1 has one element on each of the faces z
+    // = 0 and z = 1, port 2 is inactive on x = 0, and port 3 is on x = 1. Every port
+    // element is a unit square. The field is E = (y - 1/2, x - 1/2, i x).
+    ResistorLossCase c;
+    c.mesh = std::make_unique<mfem::Mesh>(
+        mfem::Mesh::MakeCartesian3D(2, 2, 2, mfem::Element::HEXAHEDRON));
+    for (int i = 0; i < c.mesh->GetNBE(); i++)
+    {
+      mfem::Vector center;
+      auto *T = c.mesh->GetBdrElementTransformation(i);
+      T->Transform(mfem::Geometries.GetCenter(c.mesh->GetBdrElementGeometry(i)), center);
+      const int attr = (center(2) == 0.0)   ? 1
+                       : (center(2) == 1.0) ? 2
+                       : (center(0) == 0.0) ? 3
+                       : (center(0) == 1.0) ? 4
+                                            : 5;
+      c.mesh->SetBdrAttribute(i, attr);
+    }
+    c.mesh->SetAttributes();
+    c.boundaries = {
+        {"LumpedPort",
+         json::array(
+             {json::object(
+                  {{"Index", 1},
+                   {"R", 50.0},
+                   {"Elements", json::array({json::object({{"Attributes", json::array({1})},
+                                                           {"Direction", "+X"}}),
+                                             json::object({{"Attributes", json::array({2})},
+                                                           {"Direction", "+Y"}})})}}),
+              json::object({{"Index", 2},
+                            {"R", 75.0},
+                            {"Active", false},
+                            {"Attributes", json::array({3})},
+                            {"Direction", "+Y"}}),
+              json::object({{"Index", 3},
+                            {"R", 100.0},
+                            {"Attributes", json::array({4})},
+                            {"Direction", "+Z"}})})}};
+    c.Er = [](const mfem::Vector &x, mfem::Vector &v)
+    {
+      v(0) = x(1) - 0.5;
+      v(1) = x(0) - 0.5;
+      v(2) = 0.0;
+    };
+    c.Ei = [](const mfem::Vector &x, mfem::Vector &v)
+    {
+      v(0) = 0.0;
+      v(1) = 0.0;
+      v(2) = x(0);
+    };
+    auto result = MeasureResistorLoss(c, temp_dir);
+    const double energy = 0.5 * eps * (1.0 / 6.0 + 1.0 / 3.0);
+    CHECK_THAT(result.energy_electric, WithinRel(energy, 1.0e-12));
+
+    // Port 1: zero voltage, ∫ |E_t|² = 1/6 on each element, with R_s = 2 R.
+    // Port 2: uniform E_t = -1/2 ŷ, so the voltage estimate is exact.
+    // Port 3: E_t = 1/2 ŷ + i ẑ, but only the ẑ component sets the voltage V = i.
+    const std::map<int, double> P = {{1, 1.0 / (12.0 * result.R.at(1))},
+                                     {2, 1.0 / (8.0 * result.R.at(2))},
+                                     {3, 5.0 / (8.0 * result.R.at(3))}};
+    const std::map<int, std::complex<double>> V = {
+        {1, 0.0}, {2, -0.5}, {3, std::complex<double>(0.0, 1.0)}};
+    for (const auto &[idx, P_idx] : P)
+    {
+      CAPTURE(idx);
+      const auto &vi = result.vi.at(idx);
+      CHECK_THAT(std::abs(vi.V - V.at(idx)), WithinAbs(0.0, 1.0e-12));
+      CHECK_THAT(std::abs(vi.mode_port_kappa), WithinRel(P_idx / energy, 1.0e-10));
+      CHECK_THAT(vi.quality_factor, WithinRel(energy / P_idx, 1.0e-10));
+    }
+    CHECK_THAT(std::abs(result.vi.at(2).mode_port_kappa),
+               WithinRel(std::norm(V.at(2)) / (2.0 * result.R.at(2) * energy), 1.0e-10));
+    // Re{I} is only well defined for port 2 (V = -1/2), where κ is negative.
+    CHECK(result.vi.at(2).mode_port_kappa < 0.0);
+
+    // Only the active ports 1 and 3 are in the damping matrix.
+    CHECK_THAT(std::abs(result.vi.at(1).mode_port_kappa) +
+                   std::abs(result.vi.at(3).mode_port_kappa),
+               WithinRel(result.damping_ratio, 1.0e-10));
+  }
 }

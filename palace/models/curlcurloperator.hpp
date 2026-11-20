@@ -151,6 +151,19 @@ private:
   // Assemble the London sheet mass M_sheet = ∫_Σ (1/L_ksq) A_t·v_t on first use.
   void EnsureSheetMass();
 
+  // Assemble the stiffness matrix on every level of the solution space: curl-curl (μ⁻¹),
+  // London domains ((μλ²)⁻¹), the kinetic sheet term (1/L_ksq, unbroken spaces only), and
+  // the gauge shift · (1/µ) ∫|A|² outside the London domains. The domain and boundary mass
+  // coefficients are added to f and fb, for the auxiliary operators.
+  std::vector<std::unique_ptr<Operator>>
+  AssembleStiffness(double shift, MaterialPropertyCoefficient &f,
+                    MaterialPropertyCoefficient &fb) const;
+  std::vector<std::unique_ptr<Operator>> AssembleStiffness() const;
+
+  // True if the shift is positive, with a superconductor (sheet or London domain) or the
+  // auxiliary smoother, whose gradient operator the shift makes definite.
+  bool HasShiftedPreconditioner() const;
+
   // Assemble the London preconditioner (stiffness + shift·(1/µ)∫|A|²) constraining the
   // given per-level essential DOFs (from attributes pc_dbc_attr); preconditioner-only, so
   // the extracted inductance is unchanged. The auxiliary H1 essential DOFs are written to
@@ -246,13 +259,15 @@ public:
   // interior gives the shifted-penalty operator a residual 1-D gradient null space.
   bool HasLondonFluxLoops() const { return !london_flux_loops_.empty(); }
 
-  // Construct the preconditioner matrix for the London magnetostatic path: the stiffness
-  // matrix plus a small reluctance-weighted volume mass (london_pc_shift_ · (1/µ) ∫|A|²)
-  // that lifts the residual gradient null space so AMS is SPD-solvable in parallel. This
-  // shift is applied ONLY to the preconditioner, so the operator, solution, and extracted
-  // inductance are unchanged. Returns nullptr when there is no London flux film or the
-  // shift is non-positive, signaling that the stiffness matrix itself should be used as
-  // preconditioner.
+  // True if any domain has a London depth, adding (μλ²)⁻¹ A·v to the stiffness operator.
+  bool HasLondonDomains() const { return mat_op.HasLondonDepth(); }
+
+  // Construct the preconditioner matrix with superconductors or the auxiliary smoother: the
+  // stiffness matrix plus the gauge shift london_pc_shift_ · (1/µ) ∫|A|² outside the London
+  // domains, which lifts the residual gradient null space so AMS is SPD-solvable in
+  // parallel. Only the preconditioner is shifted, so the solution is unchanged. Returns
+  // nullptr otherwise or without a positive shift, in which case the stiffness matrix
+  // preconditions itself.
   std::unique_ptr<Operator> GetPreconditionerMatrix();
 
   // Return the stiffness matrix with extra essential (PEC) attributes beyond those set at

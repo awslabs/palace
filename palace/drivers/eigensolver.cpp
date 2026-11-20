@@ -14,6 +14,7 @@
 #include <nlohmann/json.hpp>
 #include "drivers/fluxerrorestimator.hpp"
 #include "fem/errorindicator.hpp"
+#include "fem/fieldtransfer.hpp"
 #include "fem/mesh.hpp"
 #include "fem/shapederivativeform.hpp"
 #include "linalg/arpack.hpp"
@@ -77,7 +78,77 @@ std::complex<double> TransposeProduct(MPI_Comm comm, const ComplexOperator &A,
   return dot;
 }
 
+// Add the eigenpair (λ, x) to the combinations v = Σᵢ xᵢ / ‖xᵢ‖ and, if v_lambda is given,
+// v_lambda = Σᵢ λᵢ xᵢ / ‖xᵢ‖, from which the next adaptation iteration starts. Returns
+// whether x was added.
+bool AddWarmStartEigenvector(MPI_Comm comm, const ComplexVector &x,
+                             std::complex<double> lambda, ComplexVector &v,
+                             ComplexVector *v_lambda)
+{
+  const double norm = linalg::Norml2(comm, x);
+  if (!(norm > 0.0))
+  {
+    return false;
+  }
+  v.AXPY(1.0 / norm, x);
+  if (v_lambda)
+  {
+    v_lambda->AXPY(lambda / norm, x);
+  }
+  return true;
+}
+
+// Starting vector v of a warm-started solve, and the second block v_lambda if given, from
+// the combinations of the previous adaptation iteration (fields 0, 1 and 2, 3 of
+// prev_vectors, as real and imaginary parts), plus eta ‖v‖ / ‖r‖ times the default
+// starting vector r for modes not found before.
+void GetWarmStartVector(const VectorFieldTransfer &prev_vectors, SpaceOperator &space_op,
+                        const ComplexVector &r, double eta, ComplexVector &v,
+                        ComplexVector *v_lambda)
+{
+  auto &nd_fespace = space_op.GetNDSpace().Get();
+  const auto &dbc_tdof_list = space_op.GetNDDbcTDofLists().back();
+  const int n = nd_fespace.GetTrueVSize();
+  for (int b = 0; b < (v_lambda ? 2 : 1); b++)
+  {
+    ComplexVector &u = (b == 0) ? v : *v_lambda;
+    u.SetSize(n);
+    u.UseDevice(true);
+    prev_vectors.GetField(2 * b, nd_fespace, u.Real());
+    prev_vectors.GetField(2 * b + 1, nd_fespace, u.Imag());
+    linalg::SetSubVector(u, dbc_tdof_list, 0.0);
+  }
+  const double norm_r = linalg::Norml2(space_op.GetComm(), r);
+  if (eta > 0.0 && norm_r > 0.0)
+  {
+    v.AXPY(eta * linalg::Norml2(space_op.GetComm(), v) / norm_r, r);
+  }
+}
+
 }  // namespace
+
+EigenSolver::EigenSolver(const IoData &iodata, bool root, int size, int num_thread,
+                         const char *git_tag)
+  : BaseSolver(iodata, root, size, num_thread, git_tag)
+{
+}
+
+EigenSolver::~EigenSolver() = default;
+
+void EigenSolver::UpdateAfterMeshChange(Mesh &mesh) const
+{
+  if (!prev_eigenvectors)
+  {
+    return;
+  }
+  if (prev_eigenvectors->GetParMesh() != &mesh.Get())
+  {
+    // The mesh object was replaced.
+    prev_eigenvectors.reset();
+    return;
+  }
+  prev_eigenvectors->Update();
+}
 
 std::pair<ErrorIndicator, long long int>
 EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
@@ -118,10 +189,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // Freeze the wave-port modal reference at the target so funcA2_full's complex-ω
   // correction W can extrapolate k_n(ω) around it (used by both the SLP and Quasi-Newton
   // solves).
-  if (space_op.GetWavePortOp().Size() > 0)
-  {
-    space_op.GetWavePortOp().InitializeModalReference(target);
-  }
+  space_op.GetWavePortOp().PrepareFrequency(target);
 
   // Extend K, C, M operators with interpolated A2 operator.
   // K' = K + A2_0, C' = C + A2_1, M' = M + A2_2
@@ -147,12 +215,11 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   }
   if (nonlinear_type == NonlinearEigenSolver::SLP && !has_A2)
   {
-    // The SLP nonlinear eigensolver requires a frequency-dependent term A2(λ) (wave ports
-    // or absorbing boundaries). Without one the NEP function/Jacobian shells dereference a
-    // null A2; fall back to the standard linear/quadratic eigensolver instead.
-    Mpi::Warning(
-        "SLP nonlinear eigensolver requires a nonlinear system term (wave ports or "
-        "absorbing boundaries), none found; using a linear eigensolver!\n");
+    // The SLP nonlinear eigensolver requires a frequency-dependent term A2(λ). Without one
+    // the NEP function/Jacobian shells dereference a null A2; fall back to the standard
+    // linear/quadratic eigensolver instead.
+    Mpi::Warning("SLP nonlinear eigensolver requires a frequency-dependent system term, "
+                 "none found; using a linear eigensolver!\n");
     nonlinear_type = NonlinearEigenSolver::HYBRID;
   }
   if (has_A2 && nonlinear_type == NonlinearEigenSolver::HYBRID)
@@ -179,32 +246,35 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
           std::move(M_ff), [](std::complex<double> lambda) { return -0.5 / lambda; },
           1i * target);
     }
-    // Fit-or-freeze seed for rational impedance boundaries. Each boundary contributes
-    // g(λ)·M_b to A2(λ) with g(λ) = λ·D(λ)/N(λ) = P(λ) + R(λ)/N(λ). The polynomial part
-    // P is exactly representable in the seed pencil when deg(P) <= 2, so only the strictly
-    // proper pole part R/N is a candidate for freezing. We freeze it at the target when
-    // that approximates g over the interpolation window better than the polynomial
-    // interpolant does; otherwise keep the fit.
-    const auto &surf_rz_op = space_op.GetRationalImpedanceOp();
-    for (int idx = 0; idx < surf_rz_op.GetNumBoundaries(); idx++)
+    // Fit-or-freeze seed for the frequency-dependent boundary mass terms with an exact
+    // split of their scale (rational impedance boundaries). Each such term contributes
+    // c(λ)·M_i to A2(λ) with c(λ) = P(λ) + R(λ), for a rational impedance boundary the
+    // Robin coefficient λ·D(λ)/N(λ) with the pole part R(λ)/N(λ). The polynomial part P is
+    // exactly representable in the seed pencil when deg(P) <= 2, so only the strictly
+    // proper pole part R is a candidate for freezing (otherwise the whole coefficient). We
+    // freeze it at the target when that approximates c over the interpolation window
+    // better than the polynomial interpolant does; otherwise keep the fit. Terms without a
+    // split (finite conductivity) are left to the interpolant.
+    const auto &surface_terms = space_op.GetSurfaceTerms();
+    for (int i = 0; i < surface_terms.GetNumExtraSystemBdrMassTerms(); i++)
     {
-      const bool proper_split = (surf_rz_op.GetRobinQuotientDegree(idx) <= 2);
-      auto f_full = [&surf_rz_op, idx](std::complex<double> lambda)
-      { return surf_rz_op.EvalRobinCoefficient(idx, lambda); };
-      auto f_frozen = [&surf_rz_op, idx, proper_split](std::complex<double> lambda)
+      const auto split = surface_terms.GetExtraSystemBdrMassTermSplit(i);
+      if (!split)
       {
-        return proper_split ? surf_rz_op.EvalRobinRemainder(idx, lambda)
-                            : surf_rz_op.EvalRobinCoefficient(idx, lambda);
-      };
+        continue;
+      }
+      const bool proper_split = (split->degree <= 2);
+      const auto &f_full = split->coefficient;
+      const auto &f_frozen = proper_split ? split->remainder : split->coefficient;
       double fit_err, freeze_err;
       if (interp->DetermineFrozen(f_full, f_frozen, 1i * target, fit_err, freeze_err))
       {
-        Mpi::Print(" Freezing rational impedance boundary (attribute {}) pole part in the "
-                   "NLEPS seed (fit error {:.2e} > freeze error {:.2e})\n",
-                   fmt::join(surf_rz_op.GetAttrList(idx), ", "), fit_err, freeze_err);
-        auto M_b = space_op.GetRationalImpedanceBoundaryMassMatrix<ComplexOperator>(
-            idx, Operator::DIAG_ZERO);
-        interp->AddFrozenPole(std::move(M_b), f_frozen, 1i * target);
+        Mpi::Print(" Freezing {} pole part in the NLEPS seed (fit error {:.2e} > freeze "
+                   "error {:.2e})\n",
+                   surface_terms.GetExtraSystemBdrMassTermName(i), fit_err, freeze_err);
+        auto M_i = space_op.GetExtraSystemBdrMassTermMatrix<ComplexOperator>(
+            i, Operator::DIAG_ZERO);
+        interp->AddFrozenPole(std::move(M_i), f_frozen, 1i * target);
       }
     }
     A2_0 = interp->GetInterpolationOperator(0);
@@ -370,26 +440,86 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         iodata.solver.linear.tol, iodata.solver.linear.max_it, 0);
   }
 
+  // With adaptive mesh refinement, the SLEPc Krylov-Schur solver can start from the
+  // eigenvectors of the previous solve (warm start). Its more accurate first Krylov cycle
+  // can cost more than a warm start saves on solves of two cycles: the eigenvectors are
+  // kept only if the last solve without a warm start took three cycles or more, and only if
+  // the adaptation goes on.
+  constexpr int min_cold_its = 3;
+  const auto &eigenmode = iodata.solver.eigenmode;
+  const auto &refinement = iodata.model.refinement;
+  const int adapt_it = num_solves++;
+  const bool blocks = (C || has_A2);  // The linearization also takes the block λ x
+  const bool can_warm_start = eigenmode.init_v0 && type == EigenSolverBackend::SLEPC &&
+                              nonlinear_type != NonlinearEigenSolver::SLP &&
+                              (!blocks || eigenmode.pep_linear) &&
+                              space_op.GetNDSpace().GetParMesh().Nonconforming();
+
   // Set up the initial space for the eigenvalue solve. Satisfies boundary conditions and is
   // projected appropriately.
-  if (iodata.solver.eigenmode.init_v0)
+  int num_warm = 0;
+  if (eigenmode.init_v0)
   {
     ComplexVector v0;
-    if (iodata.solver.eigenmode.init_v0_const)
+    if (eigenmode.init_v0_const)
     {
-      Mpi::Print(" Using constant starting vector\n");
       space_op.GetConstantInitialVector(v0);
     }
     else
     {
-      Mpi::Print(" Using random starting vector\n");
       space_op.GetRandomInitialVector(v0);
     }
-    if (divfree)
+    if (prev_eigenvectors &&
+        prev_eigenvectors->IsCurrent(space_op.GetNDSpace().GetParMesh()))
     {
-      divfree->Mult(v0);
+      num_warm = prev_num_eigenvectors;
+      Mpi::Print(" Using starting vector from {:d} eigenvectors of the previous adaptation "
+                 "iteration\n",
+                 num_warm);
+      constexpr double eta = 1.0e-3;
+      ComplexVector v, v_lambda;
+      GetWarmStartVector(*prev_eigenvectors, space_op, v0, eta, v,
+                         blocks ? &v_lambda : nullptr);
+      if (divfree)
+      {
+        divfree->Mult(v);
+        if (blocks)
+        {
+          divfree->Mult(v_lambda);
+        }
+      }
+      if (blocks)
+      {
+        eigen->SetInitialSpaceBlocks(v, v_lambda);  // Copies the vectors
+      }
+      else
+      {
+        eigen->SetInitialSpace(v);  // Copies the vector
+      }
+
+      // A warm-started solve converges after few linear solves, and their error, kept in
+      // the Krylov vectors through the restarts, is not seen by the error estimate of the
+      // eigenvalue solver: tighten the first cycle by 100, but not below 1e-3 times the
+      // tolerance of the eigenvalue solve (of the initial guess for the hybrid nonlinear
+      // solver) or 1e-12.
+      eigen->SetFirstCycleLinearSolverTol(
+          std::max({1.0e-2 * iodata.solver.linear.tol, 1.0e-3 * tol, 1.0e-12}));
     }
-    eigen->SetInitialSpace(v0);  // Copies the vector
+    else
+    {
+      if (adapt_it > 0 && can_warm_start && last_cold_its < min_cold_its)
+      {
+        Mpi::Print(" No warm start: the last solve without one took {:d} Krylov cycle{}\n",
+                   last_cold_its, (last_cold_its > 1) ? "s" : "");
+      }
+      Mpi::Print(" Using {} starting vector\n",
+                 eigenmode.init_v0_const ? "constant" : "random");
+      if (divfree)
+      {
+        divfree->Mult(v0);
+      }
+      eigen->SetInitialSpace(v0);  // Copies the vector
+    }
 
     // Debug
     // const auto &Grad = space_op.GetGradMatrix();
@@ -399,6 +529,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     // Grad.MultTranspose(v0.Imag(), r0.Imag());
     // r0.Print();
   }
+  prev_eigenvectors.reset();
 
   // Configure the shift-and-invert strategy is employed to solve for the eigenvalues
   // closest to the specified target, σ.
@@ -473,6 +604,10 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   BlockTimer bt1(Timer::EPS);
   Mpi::Print("\n");
   int num_conv = eigen->Solve();
+  if (num_warm == 0)
+  {
+    last_cold_its = eigen->GetNumIterations();
+  }
   {
     std::complex<double> lambda = (num_conv > 0) ? eigen->GetEigenvalue(0) : 0.0;
     Mpi::Print(" Found {:d} converged eigenvalue{}{}\n", num_conv,
@@ -534,6 +669,25 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   }
   std::vector<std::complex<double>> eigenvalues(num_report);
   std::vector<double> errors_bkwd(num_report), errors_abs(num_report);
+
+  // Combine the converged eigenvectors to start the next adaptation iteration: only the
+  // combinations follow the refinement and rebalancing of the mesh.
+  const bool combine_eigenvectors =
+      can_warm_start && last_cold_its >= min_cold_its && adapt_it < refinement.max_it;
+  ComplexVector v_comb, v_comb_lambda;
+  int num_combined = 0;
+  if (combine_eigenvectors)
+  {
+    for (auto *u : {&v_comb, &v_comb_lambda})
+    {
+      if (u == &v_comb || blocks)
+      {
+        u->SetSize(Curl.Width());
+        u->UseDevice(true);
+        *u = 0.0;
+      }
+    }
+  }
   const bool stage_eigenvectors = post_op.WillWriteFields();
   // Field output can construct large libCEED visualization operators. Only in that case,
   // stage the converged eigenvectors in host memory so the eigensolver and matrices can
@@ -611,6 +765,11 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       eigen->GetEigenvector(i, E);
     }
     linalg::NormalizePhase(space_op.GetComm(), E);
+    if (combine_eigenvectors)
+    {
+      num_combined += AddWarmStartEigenvector(space_op.GetComm(), E, eigenvalues[i], v_comb,
+                                              blocks ? &v_comb_lambda : nullptr);
+    }
 
     Curl.Mult(E.Real(), B.Real());
     Curl.Mult(E.Imag(), B.Imag());
@@ -630,6 +789,21 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     }
   }
   post_op.MeasureFinalize(indicator);
+  if (num_combined > 0 && ContinueAdaptation(adapt_it, space_op.GlobalTrueVSize(),
+                                             indicator.Norml2(space_op.GetComm())))
+  {
+    prev_eigenvectors = std::make_unique<VectorFieldTransfer>(
+        space_op.GetNDSpace().GetParMesh(), iodata.solver.order);
+    for (auto *u : {&v_comb, &v_comb_lambda})
+    {
+      if (u == &v_comb || blocks)
+      {
+        prev_eigenvectors->AddField(space_op.GetNDSpace().Get(), u->Real());
+        prev_eigenvectors->AddField(space_op.GetNDSpace().Get(), u->Imag());
+      }
+    }
+    prev_num_eigenvectors = num_combined;
+  }
   return {indicator, space_op.GlobalTrueVSize()};
 }
 

@@ -80,7 +80,7 @@ auto ConfigureLinearSolver(const FiniteElementSpaceHierarchy &fespaces, double t
   }
   else
   {
-    auto amg = std::make_unique<BoomerAmgSolver>(1, 1, true, 0);
+    auto amg = std::make_unique<BoomerAmgSolver>(1, 1, 1, 0);
     amg->SetStrengthThresh(0.8);  // More coarsening to save memory
     if (fespaces.GetNumLevels() > 1)
     {
@@ -146,16 +146,24 @@ FluxProjector<VecType>::FluxProjector(const MaterialPropertyCoefficient &coeff,
   const auto map_type = smooth_fespace.GetFEColl().GetMapType(dim);
   const bool scalar_flux =
       (map_type == mfem::FiniteElement::VALUE || map_type == mfem::FiniteElement::INTEGRAL);
+  // The flux error is measured in the coeff⁻¹-weighted norm, ‖coeff^{-1/2} (G − coeff F)‖,
+  // so the recovery G is the projection which minimizes it, (ψ, coeff⁻¹ G) = (ψ, F). The
+  // unweighted projection (ψ, G) = (ψ, coeff F) is not, and at a material interface it
+  // carries flux from the high-coeff side into the neighboring low-coeff elements, where
+  // the weighting then amplifies the apparent error.
+  MaterialPropertyCoefficient inv_coeff(
+      coeff.GetAttributeToMaterial(),
+      linalg::MatrixPow(coeff.GetMaterialProperties(), -1.0));
   {
     constexpr bool skip_zeros = false;
     BilinearForm m(smooth_fespace);
     if (scalar_flux)
     {
-      m.AddDomainIntegrator<MassIntegrator>();
+      m.AddDomainIntegrator<MassIntegrator>(inv_coeff);
     }
     else
     {
-      m.AddDomainIntegrator<VectorFEMassIntegrator>();
+      m.AddDomainIntegrator<VectorFEMassIntegrator>(inv_coeff);
     }
     if (!use_mg)
     {
@@ -179,11 +187,11 @@ FluxProjector<VecType>::FluxProjector(const MaterialPropertyCoefficient &coeff,
     BilinearForm flux(rhs_fespace, smooth_fespace);
     if (scalar_flux)
     {
-      flux.AddDomainIntegrator<MassIntegrator>(coeff);
+      flux.AddDomainIntegrator<MassIntegrator>();
     }
     else
     {
-      flux.AddDomainIntegrator<VectorFEMassIntegrator>(coeff);
+      flux.AddDomainIntegrator<VectorFEMassIntegrator>();
     }
     Flux = BuildLevelParOperator<OperType>(flux.PartialAssemble(), rhs_fespace,
                                            smooth_fespace);
@@ -241,6 +249,12 @@ Vector ComputeErrorEstimates(const VecType &F, VecType &F_gf, VecType &G, VecTyp
   {
     return estimates;
   }
+
+  // libCEED adds into the estimates in the memory space of its backend, which is the host
+  // also when MFEM uses a device but libCEED a CPU backend (as for the debug device), so
+  // the copy there must be the valid one.
+  const CeedMemType mem = ceed::GetUsableMemType(ceed::internal::GetCeedObjects()[0]);
+  auto *estimates_data = estimates.ReadWrite(mem == CEED_MEM_DEVICE);
   PalacePragmaOmp(parallel if (ceed::internal::NumCeeds() > 1))
   {
     Ceed ceed = ceed::internal::GetCeedObjects()[utils::GetThreadNum()];
@@ -278,7 +292,9 @@ Vector ComputeErrorEstimates(const VecType &F, VecType &F_gf, VecType &G, VecTyp
 
     // Each thread writes to non-overlapping entries of the estimates vector.
     CeedVector estimates_vec;
-    ceed::InitCeedVector(estimates, ceed, &estimates_vec);
+    PalaceCeedCall(ceed, CeedVectorCreate(ceed, estimates.Size(), &estimates_vec));
+    PalaceCeedCall(
+        ceed, CeedVectorSetArray(estimates_vec, mem, CEED_USE_POINTER, estimates_data));
 
     // Do the integration (both input vectors are passive). For the complex case, add sum of
     // squares of real and imaginary parts to the estimates before square root.

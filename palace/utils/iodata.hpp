@@ -4,6 +4,7 @@
 #ifndef PALACE_UTILS_IODATA_HPP
 #define PALACE_UTILS_IODATA_HPP
 
+#include <memory>
 #include <sstream>
 #include <nlohmann/json_fwd.hpp>
 #include "utils/configfile.hpp"
@@ -18,6 +19,13 @@ class ParMesh;
 
 namespace palace
 {
+
+namespace mesh
+{
+
+struct NCMeshFile;
+
+}  // namespace mesh
 
 std::stringstream PreprocessFile(const char *filename);
 
@@ -37,6 +45,9 @@ public:
 
   // Class that holds mesh scale and converts between SI quantities and normalized values.
   Units units;
+
+  // What mesh::Load keeps of a mesh file read in parallel, for mesh::Partition.
+  std::shared_ptr<mesh::NCMeshFile> nc_mesh_file;
 
 private:
   bool init;

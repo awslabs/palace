@@ -4,15 +4,19 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <complex>
+#include <memory>
 #include <string>
 #include <type_traits>
 #include <utility>
 #include <vector>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include "linalg/iterative.hpp"
 #include "linalg/jacobi.hpp"
 #include "linalg/operator.hpp"
+#include "test-linalg-helpers.hpp"
 #include "utils/communication.hpp"
 #include "utils/device.hpp"
 #include "utils/timer.hpp"
@@ -21,6 +25,9 @@ namespace palace
 {
 
 using namespace Catch::Matchers;
+using test::SetRandomTestVector;
+using test::TridiagonalTestOperator;
+using test::UseDevice;
 
 namespace
 {
@@ -34,53 +41,18 @@ public:
   void AssembleDiagonal(Vector &diag) const override
   {
     diag.SetSize(2);
-    diag[0] = 4.0;
-    diag[1] = 3.0;
+    auto *D = diag.HostWrite();
+    D[0] = 4.0;
+    D[1] = 3.0;
   }
 
   void Mult(const Vector &x, Vector &y) const override
   {
     y.SetSize(2);
-    y[0] = 4.0 * x[0] + x[1];
-    y[1] = x[0] + 3.0 * x[1];
-  }
-
-  void MultTranspose(const Vector &x, Vector &y) const override { Mult(x, y); }
-};
-
-// The symmetric stencil [s, d_i, s] on the local rows of each process, with
-// d_i = d (4 + i % m).
-class TridiagonalTestOperator : public Operator
-{
-  const double s, d;
-  const int m;
-
-public:
-  TridiagonalTestOperator(int n, double s = -1.0, double d = 1.0, int m = 7)
-    : Operator(n), s(s), d(d), m(m)
-  {
-  }
-
-  void AssembleDiagonal(Vector &diag) const override
-  {
-    diag.SetSize(height);
-    auto *D = diag.HostWrite();
-    for (int i = 0; i < height; i++)
-    {
-      D[i] = d * (4.0 + i % m);
-    }
-  }
-
-  void Mult(const Vector &x, Vector &y) const override
-  {
-    y.SetSize(height);
     const auto *X = x.HostRead();
     auto *Y = y.HostWrite();
-    for (int i = 0; i < height; i++)
-    {
-      Y[i] = d * (4.0 + i % m) * X[i] +
-             s * (((i > 0) ? X[i - 1] : 0.0) + ((i < height - 1) ? X[i + 1] : 0.0));
-    }
+    Y[0] = 4.0 * X[0] + X[1];
+    Y[1] = X[0] + 3.0 * X[1];
   }
 
   void MultTranspose(const Vector &x, Vector &y) const override { Mult(x, y); }
@@ -400,6 +372,461 @@ int SolveJacobiPcg(const std::type_identity_t<OperType> &op,
   return BlockTimer::GlobalTimer().Counts(Timer::KSP_PRECONDITIONER) - count;
 }
 
+// GmresSolver or FgmresSolver with access to its Krylov basis.
+template <typename KspType>
+class KrylovBasisTestSolver : public KspType
+{
+public:
+  using KspType::KspType;
+  const auto &GetBasis() const { return this->V; }
+};
+
+// Solve without restarts to a relative tolerance of 10⁻¹⁰ from a zero initial guess and
+// check the residual and the orthonormality of the Krylov basis of all iterations (left
+// unchanged by the solve, without right preconditioning in GMRES). The basis is orthonormal
+// to round-off with CGS2, while MGS and CGS lose orthogonality as the residual decreases,
+// to about 10⁻⁵ here.
+template <typename KspType, typename OperType, typename VecType>
+void CheckGmresSolve(const std::type_identity_t<OperType> &A, const Solver<OperType> *B,
+                     const VecType &b, Orthogonalization orthog)
+{
+  MPI_Comm comm = Mpi::World();
+  KrylovBasisTestSolver<KspType> ksp(comm, 0);
+  ksp.SetOperator(A);
+  if (B)
+  {
+    ksp.SetPreconditioner(*B);
+  }
+  ksp.SetOrthogonalization(orthog);
+  ksp.SetMaxIter(100);
+  ksp.SetRelTol(1.0e-10);
+  VecType x(b.Size()), r(b.Size());
+  x = 0.0;
+  ksp.Mult(b, x);
+  CHECK(ksp.GetConverged());
+  CHECK(ksp.GetNumIterations() < 50);
+  A.Mult(x, r);
+  r -= b;
+  CHECK(linalg::Norml2(comm, r) <= 1.0e-9 * linalg::Norml2(comm, b));
+  const auto &V = ksp.GetBasis();
+  double loss = 0.0;
+  for (int i = 0; i <= ksp.GetNumIterations(); i++)
+  {
+    for (int j = 0; j <= i; j++)
+    {
+      loss =
+          std::max(loss, std::abs(linalg::Dot(comm, V[i], V[j]) - ((i == j) ? 1.0 : 0.0)));
+    }
+  }
+  CHECK(loss <= ((orthog == Orthogonalization::CGS2) ? 1.0e-13 : 1.0e-3));
+}
+
+// An operator which counts its applications.
+template <typename OperType>
+class CountingTestOperator : public OperType
+{
+  using VecType =
+      std::conditional_t<std::is_same_v<OperType, ComplexOperator>, ComplexVector, Vector>;
+  const OperType &A;
+
+public:
+  mutable int applications = 0;
+  CountingTestOperator(const OperType &A) : OperType(A.Height()), A(A) {}
+
+  void Mult(const VecType &x, VecType &y) const override
+  {
+    applications++;
+    A.Mult(x, y);
+  }
+};
+
+// A Jacobi smoother with its result rounded to single precision, a model of a
+// mixed-precision preconditioner: its error is relative to its argument, and it is not
+// linear.
+template <typename OperType>
+class RoundingJacobiSmoother : public JacobiSmoother<OperType>
+{
+  using VecType = typename Solver<OperType>::VecType;
+
+  static void Round(Vector &y)
+  {
+    auto *Y = y.HostReadWrite();
+    for (int i = 0; i < y.Size(); i++)
+    {
+      Y[i] = static_cast<float>(Y[i]);
+    }
+  }
+
+public:
+  using JacobiSmoother<OperType>::JacobiSmoother;
+
+  void Mult(const VecType &x, VecType &y) const override
+  {
+    JacobiSmoother<OperType>::Mult(x, y);
+    if constexpr (std::is_same_v<VecType, ComplexVector>)
+    {
+      Round(y.Real());
+      Round(y.Imag());
+    }
+    else
+    {
+      Round(y);
+    }
+  }
+};
+
+// A GMRES (with the given preconditioner side) or FGMRES solver and its preconditioner.
+template <typename OperType>
+struct GmresTestCase
+{
+  std::string name;
+  const Solver<OperType> *B;
+  PreconditionerSide side;
+  bool flexible;
+
+  bool Left() const { return B && !flexible && side == PreconditionerSide::LEFT; }
+};
+
+// The statistics of a solve, with the numbers of applications of the operator and the
+// preconditioner.
+struct GmresTestStats
+{
+  int it, operator_applications, preconditioner_applications;
+  bool converged;
+  double initial_res, final_res;
+  bool correction_exceeded;
+};
+
+template <typename OperType, typename VecType>
+GmresTestStats SolveGmres(const GmresTestCase<OperType> &c, const OperType &A,
+                          const VecType &b, VecType &x, bool initial_guess, double rel_tol,
+                          int max_it, int restart_dim = -1, double max_rel_correction = 0.0)
+{
+  MPI_Comm comm = Mpi::World();
+  std::unique_ptr<GmresSolver<OperType>> ksp;
+  if (c.flexible)
+  {
+    ksp = std::make_unique<FgmresSolver<OperType>>(comm, 0);
+  }
+  else
+  {
+    ksp = std::make_unique<GmresSolver<OperType>>(comm, 0);
+    ksp->SetPreconditionerSide(c.side);
+  }
+  CountingTestOperator<OperType> Ac(A);
+  ksp->SetOperator(Ac);
+  if (c.B)
+  {
+    ksp->SetPreconditioner(*c.B);
+  }
+  ksp->SetInitialGuess(initial_guess);
+  ksp->SetRelTol(rel_tol);
+  ksp->SetMaxIter(max_it);
+  ksp->SetRestartDim(restart_dim);
+  ksp->SetMaxRelativeCorrection(max_rel_correction);
+  ksp->EnableTimer();
+  const int count = BlockTimer::GlobalTimer().Counts(Timer::KSP_PRECONDITIONER);
+  ksp->Mult(b, x);
+  return {ksp->GetNumIterations(),
+          Ac.applications,
+          BlockTimer::GlobalTimer().Counts(Timer::KSP_PRECONDITIONER) - count,
+          ksp->GetConverged(),
+          ksp->GetInitialRes(),
+          ksp->GetFinalRes(),
+          ksp->GetCorrectionExceeded()};
+}
+
+// The vectors u and w of the norm of the GMRES stopping test, ||w - u|| for the guess x:
+// u = B A x and w = B b with left preconditioning, else u = A x and w = b.
+template <typename OperType, typename VecType>
+void GmresResidualTerms(const GmresTestCase<OperType> &c, const OperType &A,
+                        const VecType &b, const VecType &x, VecType &u, VecType &w)
+{
+  u.SetSize(b.Size());
+  w.SetSize(b.Size());
+  UseDevice(u, w);
+  A.Mult(x, u);
+  w = b;
+  if (c.Left())
+  {
+    VecType t(b.Size());
+    UseDevice(t);
+    c.B->Mult(u, t);
+    u = t;
+    c.B->Mult(b, w);
+  }
+}
+
+// The residual of x in the norm of the GMRES stopping test.
+template <typename OperType, typename VecType>
+double GmresResidual(const GmresTestCase<OperType> &c, const OperType &A, const VecType &b,
+                     const VecType &x)
+{
+  VecType u, w;
+  GmresResidualTerms(c, A, b, x, u, w);
+  w -= u;
+  return linalg::Norml2(Mpi::World(), w);
+}
+
+// Check the scaled initial guess of GMRES and FGMRES, with no preconditioner, a Jacobi
+// preconditioner, and another one, for the system A x = b with the exact solution xs and a
+// scalar c ≠ 1.
+template <typename OperType, typename VecType, typename ScalarType>
+void CheckGmresInitialGuess(const OperType &A, const Solver<OperType> &jacobi,
+                            const Solver<OperType> &tridiagonal, const VecType &xs,
+                            ScalarType c)
+{
+  MPI_Comm comm = Mpi::World();
+  const int n = xs.Size();
+  VecType b(n), x(n), y(n), x0(n), noise(n);
+  UseDevice(b, x, y, x0, noise);
+  A.Mult(xs, b);
+  auto RelDiff = [&](const VecType &u, const VecType &v)
+  {
+    VecType d(n);
+    UseDevice(d);
+    d = u;
+    d -= v;
+    return linalg::Norml2(comm, d) / linalg::Norml2(comm, v);
+  };
+
+  constexpr auto left = PreconditionerSide::LEFT, right = PreconditionerSide::RIGHT;
+  const std::vector<GmresTestCase<OperType>> tests = {
+      {"GMRES, none", nullptr, left, false},
+      {"GMRES, left Jacobi", &jacobi, left, false},
+      {"GMRES, right Jacobi", &jacobi, right, false},
+      {"GMRES, left tridiagonal", &tridiagonal, left, false},
+      {"GMRES, right tridiagonal", &tridiagonal, right, false},
+      {"FGMRES, Jacobi", &jacobi, right, true},
+      {"FGMRES, tridiagonal", &tridiagonal, right, true}};
+  for (const auto &test : tests)
+  {
+    INFO("Solver: " << test.name);
+
+    // Without an initial guess, for the reference norm of the stopping test (the
+    // residual of a zero initial guess) and the numbers of applications.
+    x = 1.0;
+    const auto zero = SolveGmres(test, A, b, x, false, 1.0e-8, 1000, 5);
+    CHECK(zero.converged);
+
+    // Solve for rhs from the initial guess x, which gives the iterations, final residual,
+    // and solution of the solve without an initial guess (returned first).
+    auto SolveAsWithoutGuess = [&](const VecType &rhs)
+    {
+      y = 1.0;
+      const auto ref = SolveGmres(test, A, rhs, y, false, 1.0e-8, 1000, 5);
+      const auto stats = SolveGmres(test, A, rhs, x, true, 1.0e-8, 1000, 5);
+      CHECK(stats.converged);
+      CHECK(stats.it == ref.it);
+      CHECK(stats.final_res == ref.final_res);
+      y -= x;
+      CHECK(linalg::Norml2(comm, y) == 0.0);
+      return std::pair(ref, stats);
+    };
+
+    // A multiple of the exact solution is scaled to it, without iterations, applying A
+    // once and B twice with left preconditioning (to b - A x and b), else not at all; with
+    // left preconditioning and |α| > 2 (here α = 4), the residual is computed again, with
+    // one more application of each.
+    for (const ScalarType s : {c, ScalarType(0.25)})
+    {
+      INFO("Multiple " << s << " of the exact solution");
+      const bool again = test.Left() && std::abs(s) < 0.5;
+      x = xs;
+      x *= s;
+      const auto stats = SolveGmres(test, A, b, x, true, 1.0e-10, 1000, 5);
+      CHECK(stats.it == 0);
+      CHECK(stats.converged);
+      CHECK(stats.operator_applications == (again ? 2 : 1));
+      CHECK(stats.preconditioner_applications == (test.Left() ? (again ? 3 : 2) : 0));
+      CHECK_THAT(stats.initial_res, WithinRel(zero.initial_res, 1.0e-12));
+      CHECK(stats.final_res <= 1.0e-12 * stats.initial_res);
+      CHECK(RelDiff(x, xs) <= 1.0e-12);
+    }
+
+    // For a guess much smaller than the solution (|α| ~ 10⁶), the residual of the scaled
+    // guess is formed from A x without left preconditioning, or computed again with it, so
+    // its rounding error is not amplified by |α|: the solver returns its true residual.
+    {
+      INFO("Small guess");
+      SetRandomTestVector(noise, 14);
+      x = xs;
+      x.Add(1.0e-4, noise);
+      x *= 1.0e-6;
+      const auto stats = SolveGmres(test, A, b, x, true, 1.0, 1000, 5);
+      CHECK(stats.it == 0);
+      CHECK_THAT(stats.final_res, WithinRel(GmresResidual(test, A, b, x), 1.0e-8));
+    }
+
+    // A zero initial guess takes the path without an initial guess, with the same numbers
+    // of applications.
+    {
+      INFO("Zero initial guess");
+      x = 0.0;
+      const auto [ref, stats] = SolveAsWithoutGuess(b);
+      CHECK(stats.operator_applications == ref.operator_applications);
+      CHECK(stats.preconditioner_applications == ref.preconditioner_applications);
+      CHECK(stats.initial_res == ref.initial_res);
+    }
+
+    // A guess orthogonal to the right-hand side in the norm of the stopping test is scaled
+    // to zero (α = 0 exactly: the supports of u and w are disjoint), which gives the
+    // results without an initial guess, with one more application of A and, with left
+    // preconditioning, of B.
+    {
+      INFO("Guess orthogonal in the stopping norm");
+      VecType b2(n);
+      UseDevice(b2);
+      SetRandomTestVector(b2, 10);
+      SetRandomTestVector(x, 11);
+      linalg::SetSubVector(b2, 0, n / 2, 0.0);
+      linalg::SetSubVector(x, n / 4, n, 0.0);
+      const auto [ref, stats] = SolveAsWithoutGuess(b2);
+      CHECK(stats.operator_applications == ref.operator_applications + 1);
+      CHECK(stats.preconditioner_applications ==
+            ref.preconditioner_applications + (test.Left() ? 1 : 0));
+      CHECK_THAT(stats.initial_res, WithinRel(ref.initial_res, 1.0e-14));
+    }
+
+    // With a zero right-hand side, a nonzero guess is scaled to the zero solution.
+    {
+      INFO("Zero right-hand side");
+      VecType zero_rhs(n);
+      UseDevice(zero_rhs);
+      zero_rhs = 0.0;
+      SetRandomTestVector(x, 12);
+      const auto stats = SolveGmres(test, A, zero_rhs, x, true, 1.0e-8, 1000, 5);
+      CHECK(stats.it == 0);
+      CHECK(stats.converged);
+      CHECK(stats.initial_res == 0.0);
+      CHECK(stats.final_res == 0.0);
+      CHECK(linalg::Norml2(comm, x) == 0.0);
+    }
+
+    // A guess so large that the inner products of its scaling overflow is replaced by a
+    // zero guess (α = 0, not a non-finite α): the results without an initial guess.
+    {
+      INFO("Overflowing guess");
+      VecType b2(n);
+      UseDevice(b2);
+      b2 = b;
+      b2 *= 1.0e10;
+      SetRandomTestVector(x, 13);
+      x *= 1.0e300;
+      SolveAsWithoutGuess(b2);
+    }
+
+    // Other initial guesses x0 = a xs + e noise: random ones, a large one (worse than zero
+    // unscaled), and perturbations of multiples of the exact solution. With a relative
+    // tolerance of 1, the solver returns the scaled guess without iterations, since its
+    // residual is smaller than that of a zero guess. The scaling factor minimizes the
+    // residual.
+    const std::array<std::pair<ScalarType, double>, 6> guesses = {
+        {{0.0, 1.0}, {0.0, 1.0}, {0.0, 100.0}, {1.0, 0.01}, {-3.0, 1.0}, {c, 0.1}}};
+    for (int k = 0; k < 6; k++)
+    {
+      CAPTURE(k);
+      SetRandomTestVector(noise, k);
+      x0 = xs;
+      x0 *= guesses[k].first;
+      x0.Add(guesses[k].second, noise);
+      VecType u, w;
+      GmresResidualTerms(test, A, b, x0, u, w);
+      const auto alpha = linalg::Dot(comm, w, u) / linalg::Dot(comm, u, u);
+      const double res_zero = linalg::Norml2(comm, w);
+      const double res_unscaled = GmresResidual(test, A, b, x0);
+      if (k == 2)
+      {
+        CHECK(res_unscaled > 10.0 * res_zero);
+      }
+
+      x = x0;
+      const auto stats = SolveGmres(test, A, b, x, true, 1.0, 1000, 5);
+      CHECK(stats.it == 0);
+      CHECK_THAT(stats.initial_res, WithinRel(zero.initial_res, 1.0e-12));
+      CHECK_THAT(stats.initial_res, WithinRel(res_zero, 1.0e-12));
+      CHECK(stats.final_res <= stats.initial_res);
+      CHECK(stats.final_res <= res_unscaled);
+      CHECK_THAT(stats.final_res, WithinRel(GmresResidual(test, A, b, x), 1.0e-10));
+      y = x0;
+      y *= alpha;
+      CHECK(RelDiff(x, y) <= 1.0e-12);
+      std::vector<ScalarType> factors = {0.99, 1.01};
+      if constexpr (std::is_same_v<VecType, ComplexVector>)
+      {
+        factors.insert(factors.end(), {ScalarType(1.0, 0.01), ScalarType(1.0, -0.01)});
+      }
+      for (ScalarType t : factors)
+      {
+        y = x;
+        y *= t;
+        CHECK(stats.final_res <= GmresResidual(test, A, b, y));
+      }
+
+      // The solve from the guess converges, also with restarts.
+      x = x0;
+      const auto solve = SolveGmres(test, A, b, x, true, 1.0e-8, 1000, 5);
+      CHECK(solve.converged);
+      CHECK(GmresResidual(test, A, b, x) <= 1.01e-8 * res_zero);
+    }
+  }
+}
+
+// Check that with a correction limit (as when certifying the PROM solution of an adaptive
+// frequency sweep), GMRES and FGMRES do not scale the initial guess, so that the
+// correction is to the guess itself, for the system A x = b with the exact solution xs
+// and a scalar c ≠ 1: the multiple c xs of the exact solution, which is scaled to it
+// without iterations otherwise, is corrected from its own residual, computed with one
+// application of A (and two of B, to b - A x and b, with left preconditioning). With left
+// or no preconditioning, the correction exceeds the limit at the first iteration and stops
+// the solve; with right preconditioning and FGMRES, it is not monitored and the solve
+// converges.
+template <typename OperType, typename VecType, typename ScalarType>
+void CheckGmresCorrectionLimitGuess(const OperType &A, const Solver<OperType> &jacobi,
+                                    const VecType &xs, ScalarType c)
+{
+  const int n = xs.Size();
+  VecType b(n), x(n);
+  UseDevice(b, x);
+  A.Mult(xs, b);
+  constexpr auto left = PreconditionerSide::LEFT, right = PreconditionerSide::RIGHT;
+  for (const GmresTestCase<OperType> &test :
+       {GmresTestCase<OperType>{"GMRES, none", nullptr, left, false},
+        GmresTestCase<OperType>{"GMRES, left Jacobi", &jacobi, left, false},
+        GmresTestCase<OperType>{"GMRES, right Jacobi", &jacobi, right, false},
+        GmresTestCase<OperType>{"FGMRES, Jacobi", &jacobi, right, true}})
+  {
+    INFO("Solver: " << test.name);
+    const bool monitored = !test.B || test.Left();
+    x = 0.0;
+    const auto zero = SolveGmres(test, A, b, x, false, 1.0e-8, 1000);
+    REQUIRE(zero.converged);
+
+    x = xs;
+    x *= c;
+    const auto scaled = SolveGmres(test, A, b, x, true, 1.0e-8, 1000);
+    CHECK(scaled.it == 0);
+    CHECK(scaled.converged);
+
+    x = xs;
+    x *= c;
+    const auto limited = SolveGmres(test, A, b, x, true, 1.0e-8, 1000, -1, 1.0e-6);
+    CHECK(limited.it >= 1);
+    CHECK(limited.correction_exceeded == monitored);
+    CHECK(limited.converged == !monitored);
+    if (monitored)
+    {
+      CHECK(limited.it == 1);
+    }
+    CHECK_THAT(limited.initial_res, WithinRel(zero.initial_res, 1.0e-12));
+    CHECK(limited.operator_applications == limited.it + 1);
+    if (test.Left())
+    {
+      CHECK(limited.preconditioner_applications == limited.it + 2);
+    }
+  }
+}
+
 }  // namespace
 
 // A zero residual with eps = 0 used to fall through the strict convergence test and
@@ -481,9 +908,221 @@ TEST_CASE("GmresSolver zero residual", "[iterative][Serial][Parallel]")
     CHECK(ksp.GetNumIterations() == 0);
     CHECK(ksp.GetConverged());
     CHECK_THAT(ksp.GetFinalRes(), WithinAbs(0.0, 1.0e-14));
-    CHECK_THAT(x[0], WithinAbs(1.0, 1.0e-14));
-    CHECK_THAT(x[1], WithinAbs(-2.0, 1.0e-14));
+    const auto *X = x.HostRead();  // The solver may have used x on the device
+    CHECK_THAT(X[0], WithinAbs(1.0, 1.0e-14));
+    CHECK_THAT(X[1], WithinAbs(-2.0, 1.0e-14));
   }
+}
+
+namespace
+{
+
+// The relative correction ‖x - x₀‖ / (‖x₀‖ + ‖x - x₀‖) which GmresSolver compares to the
+// correction limit.
+double RelativeCorrection(MPI_Comm comm, const Vector &x, const Vector &x0)
+{
+  Vector c(x);
+  c -= x0;
+  const double norm_c = linalg::Norml2(comm, c);
+  return norm_c / (linalg::Norml2(comm, x0) + norm_c);
+}
+
+// Solve from x₀ = x + e, ‖e‖ = 10⁻³ ‖x‖. With a limit of 1, which cannot be exceeded (and,
+// unlike no limit, keeps x₀ unscaled), the relative correction after k = 1, 2, ...
+// iterations is computed from the iterates, up to the first one above all previous ones.
+// With a limit between this one and the largest previous one, the solve must stop after
+// exactly k iterations, at the same iterate: the stop is decided on the exact correction,
+// not on an estimate of it (such as the residual norm, or the rotated right-hand side
+// before the back substitution), to the margin between the two (0.5% with Jacobi left
+// preconditioning, 8% without a preconditioner).
+void CheckCorrectionLimitStop(GmresSolver<Operator> &ksp, MPI_Comm comm, const Vector &b,
+                              const Vector &x, const Vector &d)
+{
+  Vector x0(x), y(x.Size());
+  x0.Add(1.0e-3 * linalg::Norml2(comm, x) / linalg::Norml2(comm, d), d);
+  ksp.SetInitialGuess(true);
+  ksp.SetMaxRelativeCorrection(1.0);
+  double c_max = 0.0, c_k = 0.0;
+  int k = 0;
+  while (k < 10)
+  {
+    k++;
+    ksp.SetMaxIter(k);
+    y = x0;
+    ksp.Mult(b, y);
+    REQUIRE(ksp.GetNumIterations() == k);
+    c_k = RelativeCorrection(comm, y, x0);
+    if (k > 1 && c_k > (1.0 + 1.0e-6) * c_max)
+    {
+      break;
+    }
+    c_max = std::max(c_max, c_k);
+  }
+  CAPTURE(k, c_max, c_k);
+  REQUIRE(c_k > (1.0 + 1.0e-6) * c_max);
+
+  const double limit = std::sqrt(c_max * c_k);
+  ksp.SetMaxIter(200);
+  ksp.SetMaxRelativeCorrection(limit);
+  Vector z(x0);
+  ksp.Mult(b, z);
+  CHECK(ksp.GetCorrectionExceeded());
+  CHECK(ksp.GetNumIterations() == k);
+  z -= y;
+  CHECK(linalg::Norml2(comm, z) <= 1.0e-12 * linalg::Norml2(comm, x0));
+}
+
+}  // namespace
+
+// With a correction limit, GMRES started from a nonzero initial guess stops as soon as the
+// correction to the guess exceeds the limit relative to the solution, and otherwise
+// converges as with a limit which cannot be exceeded.
+TEST_CASE("GmresSolver correction limit", "[iterative][Serial][Parallel]")
+{
+  constexpr int n = 101;
+  MPI_Comm comm = Mpi::World();
+  TridiagonalTestOperator A(n);
+  GmresSolver<Operator> ksp(comm, 0);
+  ksp.SetOperator(A);
+  ksp.SetRelTol(1.0e-12);
+  ksp.SetMaxIter(200);
+
+  // Reference solution, from zero.
+  Vector b(n), x(n), y(n), d(n);
+  for (int i = 0; i < n; i++)
+  {
+    b[i] = std::sin(1.0 + i + Mpi::Rank(comm));
+    d[i] = std::cos(2.0 + i + Mpi::Rank(comm));
+  }
+  x = 0.0;
+  ksp.Mult(b, x);
+  REQUIRE(ksp.GetConverged());
+  const double norm_x = linalg::Norml2(comm, x);
+  linalg::AXPBY(1.0e-9 * norm_x / linalg::Norml2(comm, d), d, 0.0, d);
+
+  ksp.SetInitialGuess(true);
+  ksp.SetMaxRelativeCorrection(1.0e-6);
+
+  SECTION("A guess far from the solution is stopped")
+  {
+    y = x;
+    y *= 0.5;
+    ksp.Mult(b, y);
+    CHECK(ksp.GetCorrectionExceeded());
+    CHECK_FALSE(ksp.GetConverged());
+    CHECK(ksp.GetNumIterations() == 1);
+  }
+
+  SECTION("A guess within the limit converges")
+  {
+    y = x;
+    y += d;
+    ksp.Mult(b, y);
+    CHECK_FALSE(ksp.GetCorrectionExceeded());
+    CHECK(ksp.GetConverged());
+
+    // As with a limit of 1, which cannot be exceeded (without a limit, the guess would be
+    // scaled): the monitor only reads the least-squares problem.
+    const int num_it = ksp.GetNumIterations();
+    Vector z(n);
+    z = x;
+    z += d;
+    ksp.SetMaxRelativeCorrection(1.0);
+    ksp.Mult(b, z);
+    CHECK(ksp.GetNumIterations() == num_it);
+    z -= y;
+    CHECK(linalg::Norml2(comm, z) <= 1.0e-14 * norm_x);
+
+    y -= x;
+    CHECK(linalg::Norml2(comm, y) <= 1.0e-8 * norm_x);
+  }
+
+  SECTION("The stop is decided on the exact correction")
+  {
+    CheckCorrectionLimitStop(ksp, comm, b, x, d);
+  }
+
+  SECTION("Without a limit, or from zero, the solve is not stopped")
+  {
+    for (bool initial_guess : {true, false})
+    {
+      INFO("initial_guess = " << initial_guess);
+      ksp.SetInitialGuess(initial_guess);
+      ksp.SetMaxRelativeCorrection(initial_guess ? 0.0 : 1.0e-6);
+      y = x;
+      y *= 0.5;
+      ksp.Mult(b, y);
+      CHECK_FALSE(ksp.GetCorrectionExceeded());
+      CHECK(ksp.GetConverged());
+      y -= x;
+      CHECK(linalg::Norml2(comm, y) <= 1.0e-8 * norm_x);
+    }
+  }
+}
+
+// The correction limit with a preconditioner: with left preconditioning (the default, as
+// used for the HDM solves of adaptive sweeps), x - x₀ = V y with orthonormal V, and the
+// stop is decided on the exact correction as without a preconditioner. With right
+// preconditioning, and with FGMRES, the correction is not monitored: the solve converges.
+TEST_CASE("GmresSolver correction limit with preconditioning",
+          "[iterative][Serial][Parallel]")
+{
+  constexpr int n = 101;
+  MPI_Comm comm = Mpi::World();
+  TridiagonalTestOperator A(n);
+  JacobiSmoother<Operator> jacobi(comm);
+  jacobi.SetOperator(A);
+  Vector b(n), d(n), x(n), y(n);
+  for (int i = 0; i < n; i++)
+  {
+    b[i] = std::sin(1.0 + i + Mpi::Rank(comm));
+    d[i] = std::cos(2.0 + i + Mpi::Rank(comm));
+  }
+
+  for (auto side : {PreconditionerSide::LEFT, PreconditionerSide::RIGHT})
+  {
+    const bool left = (side == PreconditionerSide::LEFT);
+    INFO("left preconditioning = " << left);
+    GmresSolver<Operator> ksp(comm, 0);
+    ksp.SetOperator(A);
+    ksp.SetPreconditioner(jacobi);
+    ksp.SetPreconditionerSide(side);
+    ksp.SetRelTol(1.0e-12);
+    ksp.SetMaxIter(200);
+    x = 0.0;
+    ksp.Mult(b, x);
+    REQUIRE(ksp.GetConverged());
+    if (left)
+    {
+      CheckCorrectionLimitStop(ksp, comm, b, x, d);
+    }
+    else
+    {
+      ksp.SetInitialGuess(true);
+      ksp.SetMaxRelativeCorrection(1.0e-6);
+      y = x;
+      y *= 0.5;
+      ksp.Mult(b, y);
+      CHECK_FALSE(ksp.GetCorrectionExceeded());
+      CHECK(ksp.GetConverged());
+    }
+  }
+
+  FgmresSolver<Operator> fksp(comm, 0);
+  fksp.SetOperator(A);
+  fksp.SetPreconditioner(jacobi);
+  fksp.SetRelTol(1.0e-12);
+  fksp.SetMaxIter(200);
+  x = 0.0;
+  fksp.Mult(b, x);
+  REQUIRE(fksp.GetConverged());
+  fksp.SetInitialGuess(true);
+  fksp.SetMaxRelativeCorrection(1.0e-6);
+  y = x;
+  y *= 0.5;
+  fksp.Mult(b, y);
+  CHECK_FALSE(fksp.GetCorrectionExceeded());
+  CHECK(fksp.GetConverged());
 }
 
 TEST_CASE("FgmresSolver zero residual", "[iterative][Serial][Parallel]")
@@ -748,6 +1387,205 @@ TEST_CASE("CgSolver local sizes", "[iterative][Serial][Parallel]")
         }
       }
     }
+  }
+}
+
+// GMRES and FGMRES with each orthogonalization on real and complex nonsymmetric systems.
+TEST_CASE("GmresSolver orthogonalization", "[iterative][Serial][Parallel]")
+{
+  constexpr int n = 200;
+  MPI_Comm comm = Mpi::World();
+  const auto orthog =
+      GENERATE(Orthogonalization::MGS, Orthogonalization::CGS, Orthogonalization::CGS2);
+  INFO("Orthogonalization: " << static_cast<int>(orthog));
+  TridiagonalTestOperator T(n);
+  SkewTridiagonalTestOperator K(n, 0.5);
+  SumOperator A(T, K);
+
+  SECTION("Real")
+  {
+    Vector b(n);
+    for (int i = 0; i < n; i++)
+    {
+      b[i] = std::sin(1.0 + i + Mpi::Rank(comm));
+    }
+    TridiagonalTestSolver<Operator> pc;
+    CheckGmresSolve<GmresSolver<Operator>, Operator>(A, nullptr, b, orthog);
+    CheckGmresSolve<FgmresSolver<Operator>, Operator>(A, &pc, b, orthog);
+  }
+
+  SECTION("Complex")
+  {
+    // The imaginary part is symmetric, so the operator is neither symmetric nor Hermitian.
+    TridiagonalTestOperator Ai(n, 0.5, 0.25, 3);
+    ComplexWrapperOperator Ac(&A, &Ai);
+    ComplexVector b(n);
+    for (int i = 0; i < n; i++)
+    {
+      b.Real()[i] = std::sin(1.0 + i + Mpi::Rank(comm));
+      b.Imag()[i] = std::cos(2.0 * i);
+    }
+    TridiagonalTestSolver<ComplexOperator> pc;
+    CheckGmresSolve<GmresSolver<ComplexOperator>, ComplexOperator>(Ac, nullptr, b, orthog);
+    CheckGmresSolve<FgmresSolver<ComplexOperator>, ComplexOperator>(Ac, &pc, b, orthog);
+  }
+}
+
+// GMRES and FGMRES scale a nonzero initial guess to minimize the initial residual in the
+// norm of their stopping test, so it is never worse than a zero initial guess, and take
+// the path without an initial guess for a zero one.
+TEST_CASE("GmresSolver scaled initial guess", "[iterative][Serial][Parallel][GPU]")
+{
+  constexpr int n = 200;
+  MPI_Comm comm = Mpi::World();
+  TridiagonalTestOperator A(n);
+
+  SECTION("Real")
+  {
+    Vector xs(n);
+    for (int i = 0; i < n; i++)
+    {
+      xs[i] = std::cos(0.5 * i) + 0.1 * Mpi::Rank(comm);
+    }
+    UseDevice(xs);
+    JacobiSmoother<Operator> jacobi(comm);
+    TridiagonalTestSolver<Operator> tridiagonal;
+    jacobi.SetOperator(A);
+    CheckGmresInitialGuess<Operator>(A, jacobi, tridiagonal, xs, -2.5);
+  }
+
+  SECTION("Complex")
+  {
+    // A complex symmetric operator with a complex diagonal.
+    TridiagonalTestOperator S(n, 0.5, 0.25, 3);
+    ComplexWrapperOperator Ac(&A, &S);
+    ComplexVector xs(n);
+    for (int i = 0; i < n; i++)
+    {
+      xs.Real()[i] = std::cos(0.5 * i) + 0.1 * Mpi::Rank(comm);
+      xs.Imag()[i] = std::sin(0.3 * i);
+    }
+    UseDevice(xs);
+    JacobiSmoother<ComplexOperator> jacobi(comm);
+    TridiagonalTestSolver<ComplexOperator> tridiagonal;
+    jacobi.SetOperator(Ac);
+    CheckGmresInitialGuess<ComplexOperator>(Ac, jacobi, tridiagonal, xs,
+                                            std::complex<double>(0.3, -1.7));
+  }
+}
+
+TEST_CASE("GmresSolver correction limit without scaling",
+          "[iterative][Serial][Parallel][GPU]")
+{
+  constexpr int n = 200;
+  MPI_Comm comm = Mpi::World();
+  TridiagonalTestOperator A(n);
+
+  SECTION("Real")
+  {
+    Vector xs(n);
+    for (int i = 0; i < n; i++)
+    {
+      xs[i] = std::cos(0.5 * i) + 0.1 * Mpi::Rank(comm);
+    }
+    UseDevice(xs);
+    JacobiSmoother<Operator> jacobi(comm);
+    jacobi.SetOperator(A);
+    CheckGmresCorrectionLimitGuess<Operator>(A, jacobi, xs, 0.5);
+  }
+
+  SECTION("Complex")
+  {
+    TridiagonalTestOperator S(n, 0.5, 0.25, 3);
+    ComplexWrapperOperator Ac(&A, &S);
+    ComplexVector xs(n);
+    for (int i = 0; i < n; i++)
+    {
+      xs.Real()[i] = std::cos(0.5 * i) + 0.1 * Mpi::Rank(comm);
+      xs.Imag()[i] = std::sin(0.3 * i);
+    }
+    UseDevice(xs);
+    JacobiSmoother<ComplexOperator> jacobi(comm);
+    jacobi.SetOperator(Ac);
+    CheckGmresCorrectionLimitGuess<ComplexOperator>(Ac, jacobi, xs,
+                                                    std::complex<double>(0.3, -1.7));
+  }
+}
+
+// With a preconditioner whose error is relative to its argument, a good initial guess
+// converges to a residual below that error relative to the right-hand side, also when it
+// is scaled: with left preconditioning, the scaled initial residual is formed from the
+// residual of the guess (α ≈ 1), or computed again (|α| > 2, a guess much smaller than the
+// solution), not from B A x and B b, whose errors are relative to B b.
+TEST_CASE("GmresSolver scaled initial guess with an inexact preconditioner",
+          "[iterative][Serial][Parallel][GPU]")
+{
+  constexpr int n = 200;
+  constexpr double rel_tol = 1.0e-10;
+  MPI_Comm comm = Mpi::World();
+  TridiagonalTestOperator A(n);
+
+  // The residual is checked in the norm of the stopping test with the exact Jacobi
+  // preconditioner.
+  auto Check =
+      [&]<typename OperType, typename VecType>(const OperType &Aop, const VecType &xs)
+  {
+    JacobiSmoother<OperType> jacobi(comm);
+    RoundingJacobiSmoother<OperType> rounding(comm);
+    jacobi.SetOperator(Aop);
+    rounding.SetOperator(Aop);
+    constexpr auto left = PreconditionerSide::LEFT, right = PreconditionerSide::RIGHT;
+    for (const GmresTestCase<OperType> &test :
+         {GmresTestCase<OperType>{"GMRES, left", &rounding, left, false},
+          GmresTestCase<OperType>{"GMRES, right", &rounding, right, false},
+          GmresTestCase<OperType>{"FGMRES", &rounding, right, true}})
+    {
+      INFO("Solver: " << test.name);
+      const GmresTestCase<OperType> exact{test.name, &jacobi, test.side, test.flexible};
+      VecType b(n), x(n), noise(n);
+      UseDevice(b, x, noise);
+      Aop.Mult(xs, b);
+      SetRandomTestVector(noise, 1);
+      for (double scale : {1.0, 1.0001, 0.2, 0.02})
+      {
+        CAPTURE(scale);
+        x = xs;
+        x.Add(1.0e-6, noise);
+        x *= scale;
+        const auto stats = SolveGmres(test, Aop, b, x, true, rel_tol, 100);
+        CHECK(stats.converged);
+        VecType zero(n);
+        UseDevice(zero);
+        zero = 0.0;
+        CHECK(GmresResidual(exact, Aop, b, x) <=
+              2.0 * rel_tol * GmresResidual(exact, Aop, b, zero));
+      }
+    }
+  };
+
+  SECTION("Real")
+  {
+    Vector xs(n);
+    for (int i = 0; i < n; i++)
+    {
+      xs[i] = std::cos(0.5 * i) + 0.1 * Mpi::Rank(comm);
+    }
+    UseDevice(xs);
+    Check(static_cast<const Operator &>(A), xs);
+  }
+
+  SECTION("Complex")
+  {
+    TridiagonalTestOperator S(n, 0.5, 0.0);
+    ComplexWrapperOperator Ac(&A, &S);
+    ComplexVector xs(n);
+    for (int i = 0; i < n; i++)
+    {
+      xs.Real()[i] = std::cos(0.5 * i) + 0.1 * Mpi::Rank(comm);
+      xs.Imag()[i] = std::sin(0.3 * i);
+    }
+    UseDevice(xs);
+    Check(static_cast<const ComplexOperator &>(Ac), xs);
   }
 }
 

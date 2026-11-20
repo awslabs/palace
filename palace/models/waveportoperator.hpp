@@ -25,15 +25,12 @@
 namespace palace
 {
 
-class FarfieldBoundaryOperator;
 class IoData;
 class MaterialOperator;
 class MaterialPropertyCoefficient;
 class SumVectorCoefficient;
-class SurfaceConductivityOperator;
 class SurfaceFunctional;
-class SurfaceRationalImpedanceOperator;
-class SurfaceImpedanceOperator;
+class SurfaceTerms;
 class Units;
 
 namespace config
@@ -125,10 +122,7 @@ private:
   // Submesh-specific material operator and boundary condition operators. Constructed on
   // the remapped submesh with rebuilt CEED data for correct attribute mapping.
   std::unique_ptr<MaterialOperator> port_mat_op;
-  std::unique_ptr<SurfaceImpedanceOperator> port_surf_z_op;
-  std::unique_ptr<FarfieldBoundaryOperator> port_farfield_op;
-  std::unique_ptr<SurfaceConductivityOperator> port_surf_sigma_op;
-  std::unique_ptr<SurfaceRationalImpedanceOperator> port_surf_rz_op;
+  std::unique_ptr<SurfaceTerms> port_surface_terms;
 
   // Port-local linear solver configuration and boundary mode eigenvalue problem solver.
   // The local copy allows per-port overrides without changing the full 3D linear solver.
@@ -375,13 +369,9 @@ public:
     }
   }
 
-  // Freeze the per-port modal reference state (mode field, k_n0, reactions) at a real
-  // frequency so the complex-ω modal correction (eigenmode nonlinear solve) can extrapolate
-  // k_n(ω) around it. Idempotent per ω; a no-op when there are no wave ports.
-  void InitializeModalReference(double omega) { Initialize(omega); }
-
-  // Prepare all frequency-dependent modal state once before evaluating multiple
-  // excitations at the same frequency.
+  // Compute the modes of all ports at a real frequency, cached: the modal state for the
+  // excitations, postprocessing, and the reference of the complex-ω modal correction
+  // (eigenmode nonlinear solve). A no-op when there are no wave ports.
   void PrepareFrequency(double omega) { Initialize(omega); }
 
   // Configure training before any adaptive HDM or synthesis-reference solve. The capacity
@@ -451,11 +441,13 @@ public:
   // A single rank-1 term g·s·sᵀ of the modal correction W = Σ_k g_k s_k s_kᵀ. Exposed so
   // the PROM / adaptive sweep can build the Galerkin projection Wᵣ = Σ_k g_k
   // (Vᵀs_k)(Vᵀs_k)ᵀ directly instead of applying the matrix-free operator. `s` lives on the
-  // parent ND true-dof space with essential dofs eliminated; `g = ±iω/R`.
+  // parent ND true-dof space with essential dofs eliminated; `g = ±iω/R`; `port` is the
+  // index of the wave port the term belongs to.
   struct ModalCorrectionTerm
   {
     std::unique_ptr<ComplexVector> s;
     std::complex<double> g;
+    int port;
   };
 
   // Assemble the rank-1 terms of the modal correction W = Σ_ports (W_full − W_scalar) over

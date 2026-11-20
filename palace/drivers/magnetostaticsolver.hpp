@@ -18,8 +18,6 @@ class ErrorIndicator;
 class Mesh;
 template <ProblemType>
 class PostOperator;
-class SurfaceCurrentOperator;
-class SurfaceFluxOperator;
 
 //
 // Driver class for magnetostatic simulations.
@@ -28,13 +26,13 @@ class MagnetostaticSolver : public BaseSolver
 {
 private:
   // Compute and write the inductance matrix, returned in nondimensional units.
-  mfem::DenseMatrix PostprocessTerminals(
-      PostOperator<ProblemType::MAGNETOSTATIC> &post_op,
-      const SurfaceCurrentOperator &surf_j_op, const SurfaceFluxOperator &surf_flux_op,
-      const std::vector<Vector> &A, const std::vector<double> &I_inc,
-      const std::vector<double> &Phi_inc, const mfem::DenseMatrix &linked_flux,
-      const std::vector<Vector> &london_ah,
-      const std::vector<Vector> &london_ms_shifted) const;
+  mfem::DenseMatrix
+  PostprocessTerminals(PostOperator<ProblemType::MAGNETOSTATIC> &post_op,
+                       const CurlCurlOperator &curlcurl_op, const std::vector<Vector> &A,
+                       const std::vector<double> &I_inc, const std::vector<double> &Phi_inc,
+                       const mfem::DenseMatrix &linked_flux,
+                       const std::vector<Vector> &london_ah,
+                       const std::vector<Vector> &london_ms_shifted) const;
 
   // Compute and write the derivatives of the inductances of the configured objectives.
   void PostprocessSensitivities(const CurlCurlOperator &curlcurl_op,

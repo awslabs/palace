@@ -5,6 +5,7 @@
 #define PALACE_MODELS_PORT_EXCITATION_MANAGER_HPP
 
 #include <algorithm>
+#include <complex>
 #include <map>
 #include <vector>
 #include <nlohmann/json_fwd.hpp>
@@ -16,6 +17,13 @@ class LumpedPortOperator;
 class WavePortOperator;
 class SurfaceCurrentOperator;
 class CurrentDipoleOperator;
+
+// Complex weight a = A exp(i φ) on the unit-power incident wave of an excited port, for an
+// amplitude A and a phase φ in degrees (e^{iωt} convention). The phase is reduced modulo
+// 360 degrees, and for exact multiples of 90 degrees the result is exactly A{1, i, -1, -i},
+// without round-off in the zero real or imaginary part, so a weight that is real in exact
+// arithmetic is also real in floating point.
+[[nodiscard]] std::complex<double> ExcitationWeight(double amplitude, double phase_deg);
 
 // Small helper class to collect data of what (lumped / wave / surface current / current
 // dipole) sources are excited in driven and transient simulation, as stored in space_op;

@@ -9,12 +9,47 @@
 #include "surfacecurrentoperator.hpp"
 #include "waveportoperator.hpp"
 
+#include <cmath>
+#include <numbers>
 #include <fmt/format.h>
 #include <fmt/ranges.h>
 #include <nlohmann/json.hpp>
 
 namespace palace
 {
+
+std::complex<double> ExcitationWeight(double amplitude, double phase_deg)
+{
+  // Reduce the phase to [0, 360). A negative remainder too small to change 360 is a zero
+  // phase.
+  double phi = std::fmod(phase_deg, 360.0);
+  if (phi < 0.0)
+  {
+    phi += 360.0;
+  }
+  if (phi >= 360.0)
+  {
+    phi = 0.0;
+  }
+
+  // Exact values for multiples of 90 degrees.
+  const double quarter_turns = phi / 90.0;
+  if (quarter_turns == std::floor(quarter_turns))
+  {
+    switch (static_cast<int>(quarter_turns))
+    {
+      case 0:
+        return {amplitude, 0.0};
+      case 1:
+        return {0.0, amplitude};
+      case 2:
+        return {-amplitude, 0.0};
+      case 3:
+        return {0.0, -amplitude};
+    }
+  }
+  return std::polar(amplitude, phi * std::numbers::pi / 180.0);
+}
 
 [[nodiscard]] std::string PortExcitations::FmtLog() const
 {

@@ -3,12 +3,17 @@
 
 #include "lumpedportoperator.hpp"
 
+#include <numbers>
 #include <set>
 #include <fmt/ranges.h>
+#include "fem/bilinearform.hpp"
 #include "fem/coefficient.hpp"
+#include "fem/fespace.hpp"
 #include "fem/gridfunction.hpp"
 #include "fem/integrator.hpp"
+#include "linalg/vector.hpp"
 #include "models/materialoperator.hpp"
+#include "models/portexcitations.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
@@ -21,7 +26,8 @@ using namespace std::complex_literals;
 LumpedPortData::LumpedPortData(const config::LumpedPortData &data,
                                const MaterialOperator &mat_op, const mfem::ParMesh &mesh)
   : mat_op(mat_op), excitation(data.excitation), active(data.active),
-    include_in_synthesis(data.include_in_synthesis)
+    include_in_synthesis(data.include_in_synthesis),
+    excitation_weight(ExcitationWeight(data.excitation_amplitude, data.excitation_phase))
 {
   // Check inputs. Only one of the circuit or per square properties should be specified
   // for the port boundary.
@@ -136,13 +142,26 @@ LumpedPortData::GetCharacteristicImpedance(double omega,
 double LumpedPortData::GetExcitationPower() const
 {
   // The lumped port excitation is normalized such that the power integrated over the port
-  // is 1: ∫ (E_inc x H_inc) ⋅ n dS = 1.
+  // is 1: ∫ (E_inc x H_inc) ⋅ n dS = 1. This is the unit-normalized power, without the
+  // excitation weight.
   return HasExcitation() ? 1.0 : 0.0;
+}
+
+std::complex<double> LumpedPortData::GetIncidentCurrent() const
+{
+  // The weighted incident current is a I_inc,0, with the unit-power incident current
+  // I_inc,0 = P_inc,0 / V_inc,0.
+  if (!HasExcitation())
+  {
+    return 0.0;
+  }
+  return GetExcitationWeight() * (GetExcitationPower() / GetExcitationVoltage());
 }
 
 double LumpedPortData::GetExcitationVoltage() const
 {
-  // Incident voltage should be the same across all elements of an excited lumped port.
+  // This is the unit-normalized incident voltage, without the excitation weight. Incident
+  // voltage should be the same across all elements of an excited lumped port.
   // Reference the same real resistance used to normalize the incident drive
   // (GetExcitationRefResistance: R for a resistive port, the unit reference for a purely
   // reactive R == 0 port), so the reported V_inc is consistent with the assembled drive
@@ -410,6 +429,56 @@ std::complex<double> LumpedPortData::GetVoltage(GridFunction &E) const
   return dot;
 }
 
+void LumpedPortData::AddDampingBdrCoefficients(double coeff,
+                                               MaterialPropertyCoefficient &fb) const
+{
+  if (std::abs(R) > 0.0)
+  {
+    for (const auto &elem : elems)
+    {
+      const double Rs = R * GetToSquare(*elem);
+      fb.AddMaterialProperty(mat_op.GetCeedBdrAttributes(elem->GetAttrList()), coeff / Rs);
+    }
+  }
+}
+
+double LumpedPortData::GetResistorPower(const FiniteElementSpace &nd_fespace,
+                                        const GridFunction &E) const
+{
+  MFEM_VERIFY(E.ParFESpace() == &nd_fespace.Get(),
+              "Lumped port resistor power requires a field on the given ND space!");
+  if (std::abs(R) == 0.0)
+  {
+    return 0.0;
+  }
+  if (!resistor_op)
+  {
+    MaterialPropertyCoefficient fb(mat_op.MaxCeedBdrAttribute());
+    AddDampingBdrCoefficients(1.0, fb);
+    BilinearForm c(nd_fespace);
+    // The operator is only applied, never fully assembled.
+    c.SkipZeroCoefficientElements();
+    if (!fb.empty())  // Empty on a process without port boundary elements
+    {
+      c.AddBoundaryIntegrator<VectorFEMassIntegrator>(fb);
+    }
+    resistor_op = c.PartialAssemble();
+  }
+  MFEM_ASSERT(resistor_op->Width() == E.Real().Size(),
+              "Lumped port resistor operator does not match the field space!");
+  Vector CE(resistor_op->Height());
+  CE.UseDevice(true);
+  resistor_op->Mult(E.Real(), CE);
+  double dot = linalg::LocalDot(E.Real(), CE);
+  if (E.HasImag())
+  {
+    resistor_op->Mult(E.Imag(), CE);
+    dot += linalg::LocalDot(E.Imag(), CE);
+  }
+  Mpi::GlobalSum(1, &dot, E.GetComm());
+  return 0.5 * dot;
+}
+
 LumpedPortOperator::LumpedPortOperator(
     const std::map<int, config::LumpedPortData> &lumpedport, const Units &units,
     const MaterialOperator &mat_op, const mfem::ParMesh &mesh)
@@ -550,11 +619,22 @@ void LumpedPortOperator::PrintBoundaryInfo(const Units &units, const mfem::ParMe
       continue;
     }
 
+    // Show the excitation weight (amplitude and phase in (-180, 180] degrees) unless it is
+    // the default unit weight.
+    std::string weight_str;
+    const std::complex<double> weight = data.GetExcitationWeight();
+    if (weight != std::complex<double>(1.0, 0.0))
+    {
+      weight_str = fmt::format(", A = {:.3e}, φ = {:+.2f} deg", std::abs(weight),
+                               std::arg(weight) * 180.0 / std::numbers::pi);
+    }
+
     for (const auto &elem : data.elems)
     {
       for (auto attr : elem->GetAttrList())
       {
-        fmt::format_to(fmt::appender{buffer_active}, " {:d}: Index = {:d}\n", attr, idx);
+        fmt::format_to(fmt::appender{buffer_active}, " {:d}: Index = {:d}{}\n", attr, idx,
+                       weight_str);
       }
     }
   }
@@ -893,15 +973,7 @@ void LumpedPortOperator::AddDampingBdrCoefficients(double coeff,
     {
       continue;
     }
-    if (std::abs(data.R) > 0.0)
-    {
-      for (const auto &elem : data.elems)
-      {
-        const double Rs = data.R * data.GetToSquare(*elem);
-        fb.AddMaterialProperty(data.mat_op.GetCeedBdrAttributes(elem->GetAttrList()),
-                               coeff / Rs);
-      }
-    }
+    data.AddDampingBdrCoefficients(coeff, fb);
   }
 }
 
@@ -928,7 +1000,8 @@ void LumpedPortOperator::AddMassBdrCoefficients(double coeff,
 }
 
 void LumpedPortOperator::AddExcitationBdrCoefficients(int excitation_idx,
-                                                      SumVectorCoefficient &fb)
+                                                      SumVectorCoefficient &fbr,
+                                                      SumVectorCoefficient &fbi)
 {
   // Construct the RHS source term for lumped port boundaries, which looks like -U_inc =
   // +2 iω/R_ref E_inc for a port boundary with an incident field E_inc, where R_ref is the
@@ -938,14 +1011,20 @@ void LumpedPortOperator::AddExcitationBdrCoefficients(int excitation_idx,
   // incident field magnitude corresponds to a unit incident power over the full port
   // boundary, referenced to R_ref. See p. 49 and p. 82 of the COMSOL RF Module manual for
   // more detail.
-  // Note: The real RHS returned here does not yet have the factor of (iω) included, so
-  // works for time domain simulations requiring RHS -U_inc(t).
+  // The incident field of each port is scaled by its complex excitation weight a = A e^{iφ}
+  // (GetExcitationWeight()), with the real part of the weighted coefficient added to fbr
+  // and the imaginary part added to fbi. The coefficients are frequency independent.
+  // Note: The RHS returned here does not yet have the factor of (iω) included. The real
+  // part (fbr) works for time domain simulations requiring RHS -U_inc(t), while the
+  // imaginary part (fbi) is only nonzero for a phase that is not a multiple of 180
+  // degrees, and is for the frequency domain only.
   for (const auto &[idx, data] : ports)
   {
     if (data.excitation != excitation_idx)
     {
       continue;
     }
+    const std::complex<double> weight = data.GetExcitationWeight();
     // Normalize the incident field to a real reference resistance. For a resistive port
     // this is the port resistance R (legacy behaviour, unchanged). For a purely reactive
     // excited port (R == 0) there is no real port resistance to reference the incident
@@ -958,7 +1037,14 @@ void LumpedPortOperator::AddExcitationBdrCoefficients(int excitation_idx,
       const double Rs = R_ref * data.GetToSquare(*elem);
       const double Hinc = 1.0 / std::sqrt(Rs * elem->GetGeometryWidth() *
                                           elem->GetGeometryLength() * data.elems.size());
-      fb.AddCoefficient(elem->GetModeCoefficient(2.0 * Hinc));
+      if (weight.real() != 0.0)
+      {
+        fbr.AddCoefficient(elem->GetModeCoefficient(2.0 * Hinc * weight.real()));
+      }
+      if (weight.imag() != 0.0)
+      {
+        fbi.AddCoefficient(elem->GetModeCoefficient(2.0 * Hinc * weight.imag()));
+      }
     }
   }
 }

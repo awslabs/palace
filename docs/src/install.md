@@ -197,7 +197,6 @@ Additional build options are (with default values in brackets):
   - `PALACE_WITH_OPENMP [OFF]` :  Use OpenMP for shared-memory parallelism
   - `PALACE_WITH_CUDA [OFF]` :  Use CUDA for NVIDIA GPU support
   - `PALACE_WITH_HIP [OFF]` :  Use HIP for AMD or NVIDIA GPU support
-  - `PALACE_WITH_GPU_AWARE_MPI [OFF]` :  Option to set if MPI distribution is GPU aware
   - `PALACE_WITH_SUPERLU [ON]` :  Build with SuperLU_DIST sparse direct solver
   - `PALACE_WITH_STRUMPACK [OFF]` :  Build with STRUMPACK sparse direct solver
   - `PALACE_WITH_MUMPS [OFF]` :  Build with MUMPS sparse direct solver
@@ -206,6 +205,9 @@ Additional build options are (with default values in brackets):
     `CUDSS_DIR`, which must point at a cuDSS archive installation rather than a pip/conda
     wheel: the MPI communication layer is built from the source it ships against the
     selected MPI)
+  - `PALACE_WITH_PARMETIS [OFF]` :  Build with ParMETIS for the `"ParMETIS"` column
+    ordering, which otherwise falls back to METIS, and to link sparse direct solver
+    libraries built with ParMETIS (static ones, for example)
   - `PALACE_WITH_SLEPC [ON]` :  Build with SLEPc eigenvalue solver
   - `PALACE_WITH_ARPACK [OFF]` :  Build with ARPACK eigenvalue solver
   - `PALACE_WITH_LIBXSMM [ON]` :  Build with LIBXSMM backend for libCEED
@@ -277,8 +279,9 @@ As part of the [Build from source](#Build-from-source), the CMake build will aut
 build and install a small number of third-party dependencies before building *Palace*. The
 source code for these dependencies is downloaded during the build process:
 
-  - [METIS](http://glaros.dtc.umn.edu/gkhome/metis/metis/overview) and
-    [ParMETIS](http://glaros.dtc.umn.edu/gkhome/metis/parmetis/overview)
+  - [METIS](http://glaros.dtc.umn.edu/gkhome/metis/metis/overview)
+  - [ParMETIS](http://glaros.dtc.umn.edu/gkhome/metis/parmetis/overview) (optional, when
+    `PALACE_WITH_PARMETIS=ON`)
   - [Hypre](https://github.com/hypre-space/hypre)
   - [SuperLU_DIST](https://github.com/xiaoyeli/superlu_dist) (optional, when
     `PALACE_WITH_SUPERLU=ON`)
@@ -286,7 +289,9 @@ source code for these dependencies is downloaded during the build process:
     `PALACE_WITH_STRUMPACK=ON`), including
     [ButterflyPACK](https://github.com/liuyangzhuan/ButterflyPACK) and
     [zfp](https://github.com/LLNL/zfp) support
-  - [MUMPS](http://mumps.enseeiht.fr/) (optional, when `PALACE_WITH_MUMPS=ON`)
+  - [MUMPS](http://mumps.enseeiht.fr/) (optional, when `PALACE_WITH_MUMPS=ON`), with real
+    and complex double precision (an external MUMPS installation must also provide the
+    complex double precision library `zmumps`)
   - [SLEPc](https://slepc.upv.es/) (optional, when `PALACE_WITH_SLEPC=ON`), including
     [PETSc](https://petsc.org/release/)
   - [ARPACK-NG](https://github.com/opencollab/arpack-ng) (optional, when

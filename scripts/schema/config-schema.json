@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:4-3-0",
+  "$id": "urn:palace:schema:5-1-0",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -1176,6 +1176,12 @@
             }
           ]
         },
+        "ExcitationAmplitude": {
+          "$ref": "#/$defs/ExcitationAmplitude"
+        },
+        "ExcitationPhase": {
+          "$ref": "#/$defs/ExcitationPhase"
+        },
         "Active": {
           "type": "boolean",
           "description": "Turns on or off the damping boundary condition for this port for driven or transient simulations.",
@@ -1267,6 +1273,12 @@
               "$ref": "#/$defs/ExcitationIndex"
             }
           ]
+        },
+        "ExcitationAmplitude": {
+          "$ref": "#/$defs/ExcitationAmplitude"
+        },
+        "ExcitationPhase": {
+          "$ref": "#/$defs/ExcitationPhase"
         },
         "Active": {
           "type": "boolean",
@@ -1978,6 +1990,17 @@
       "type": "integer",
       "minimum": 0
     },
+    "ExcitationAmplitude": {
+      "type": "number",
+      "exclusiveMinimum": 0.0,
+      "default": 1.0,
+      "description": "Amplitude ``A`` of the complex weight ``a = A e^{i\u03c6}`` applied to the unit-power incident wave of this port, so the incident power is scaled by ``A^2``. Dimensionless and frequency independent. Requires `\"Excitation\"` to be nonzero. S-parameters are normalized by the weight and do not depend on it. See the [boundary conditions guide](../guide/boundaries.md#Lumped-and-wave-port-excitation) for details."
+    },
+    "ExcitationPhase": {
+      "type": "number",
+      "default": 0.0,
+      "description": "Phase ``\u03c6`` in degrees of the complex weight ``a = A e^{i\u03c6}`` applied to the unit-power incident wave of this port, using the ``e^{i\u03c9t}`` time convention. A phase of 180 gives the same fields as reversing `\"Direction\"`. With the phase, the voltage, current, incident voltage and incident current of the port change sign, and its S-parameters do not. Reversing `\"Direction\"` also reverses the voltage reference of the port, so these keep their sign, and the S-parameters between this port and the others change sign. Requires `\"Excitation\"` to be nonzero. S-parameters are normalized by the weight and do not depend on it. Must be a multiple of 180 for transient simulations. See the [boundary conditions guide](../guide/boundaries.md#Lumped-and-wave-port-excitation) for details."
+    },
     "CoordinateSystem": {
       "type": "string",
       "description": "Coordinate system used to express the `\"Direction\"` vector. If a keyword argument is used for `\"Direction\"` this value is ignored.",
@@ -2380,7 +2403,7 @@
         },
         {
           "const": "ParMETIS",
-          "description": "Use ParMETIS column ordering."
+          "description": "Use ParMETIS column ordering. Requires *Palace* built with ParMETIS (`PALACE_WITH_PARMETIS=ON`), otherwise METIS is used."
         },
         {
           "const": "Scotch",
@@ -2497,7 +2520,7 @@
         },
         "StartVector": {
           "type": "boolean",
-          "description": "Use a random start vector for the eigensolver.",
+          "description": "Use a random start vector for the eigensolver. With adaptive mesh refinement on nonconforming meshes, the solve of each adaptation iteration after the first can start from the eigenvectors of the previous one instead, for the SLEPc Krylov-Schur solver (linear problems, and quadratic ones with [`\"PEPLinear\"`](@ref config-solver-eigenmode-peplinear)), except with the `\"SLP\"` nonlinear solver.",
           "default": true,
           "x-palace-advanced": true
         },
@@ -2650,7 +2673,7 @@
         },
         "AdaptiveGSOrthogonalization": {
           "$ref": "#/$defs/Orthogonalization",
-          "description": "Gram-Schmidt variant for orthogonalizing the adaptive reduced-order model basis. Same options as [`/Linear/GSOrthogonalization`](@ref config-solver-linear-gsorthogonalization).",
+          "description": "Gram-Schmidt variant for orthogonalizing the adaptive reduced-order model basis. Same options as [`/Linear/GSOrthogonalization`](@ref config-solver-linear-gsorthogonalization), with `\"MGS\"` applied as `\"CGS2\"`.",
           "default": "CGS2",
           "x-palace-advanced": true
         },
@@ -3008,7 +3031,7 @@
         },
         "InitialGuess": {
           "type": "boolean",
-          "description": "Use the previous solution as an initial guess for the iterative solver. If omitted, Palace enables this for driven simulations without adaptive frequency sweep, transient simulations, electrostatics, and magnetostatics, and disables it otherwise.",
+          "description": "Use the previous solution as an initial guess for the iterative solver. For driven frequency sweeps without adaptive sampling, the initial guess is the combination of the solutions at up to four previous frequencies which minimizes the residual. For adaptive frequency sweeps, the reduced-order model solution is used as initial guess only at the sample which would complete the convergence memory, to certify convergence; the other samples are solved from zero. GMRES and FGMRES scale a nonzero initial guess to minimize the initial residual, except when certifying the reduced-order model solution. If omitted, Palace enables this for driven simulations, transient simulations, electrostatics, and magnetostatics, and disables it otherwise.",
           "x-palace-advanced": true
         },
         "MGMaxLevels": {
@@ -3028,7 +3051,7 @@
         },
         "MGAuxiliarySmoother": {
           "type": "boolean",
-          "description": "Use an auxiliary space smoother on multigrid levels. If omitted, Palace disables this for electrostatic and magnetostatic simulations and enables it otherwise. Magnetostatic simulations with `\"Superconductor\"` or `\"FluxLoop\"` boundaries enable it when `\"LondonPCShift\"` is positive.",
+          "description": "Use an auxiliary space smoother on multigrid levels. If omitted, Palace disables this for electrostatic and magnetostatic simulations and enables it otherwise. Magnetostatic simulations with superconductors (`\"Superconductor\"` or `\"FluxLoop\"` boundaries, or domains with a `\"LondonDepth\"`) enable it when `\"LondonPCShift\"` is positive. In magnetostatic simulations, it requires a positive `\"LondonPCShift\"`.",
           "x-palace-advanced": true
         },
         "MGCycleIts": {
@@ -3078,7 +3101,7 @@
         },
         "ComplexCoarseSolve": {
           "type": "boolean",
-          "description": "When `true`, uses the true complex-valued system matrix for the coarse-level solver. When `false`, uses the real-valued approximation.",
+          "description": "When `true`, uses the true complex-valued system matrix for the coarse-level solver (not supported with AMS or BoomerAMG). When `false`, uses the real-valued approximation.",
           "default": false
         },
         "DropSmallEntries": {
@@ -3141,12 +3164,12 @@
         },
         "AMSSingularOperator": {
           "type": "boolean",
-          "description": "Indicate to AMS that the operator is singular (e.g. magnetostatics with no essential boundary conditions). If omitted, Palace enables this for magnetostatic simulations and disables it otherwise.",
+          "description": "Indicate to AMS that the operator is singular (e.g. magnetostatics with no essential boundary conditions). If omitted, Palace enables this for magnetostatic simulations without superconductors (`\"Superconductor\"` or `\"FluxLoop\"` boundaries, or domains with a `\"LondonDepth\"`) and disables it otherwise.",
           "x-palace-advanced": true
         },
         "LondonPCShift": {
           "type": "number",
-          "description": "Preconditioner-only gauge shift for magnetostatic problems with a London (superconductor) sheet term. Adds this multiple of the reluctance-weighted volume mass to the preconditioner matrix only (leaving the operator, solution, and extracted inductance unchanged) to lift the residual gradient null space so AMS is SPD-solvable in parallel. Ignored when no London sheet term is present.",
+          "description": "Preconditioner-only gauge shift for magnetostatic problems with superconductors (`\"Superconductor\"` or `\"FluxLoop\"` boundaries, or domains with a `\"LondonDepth\"`) or the auxiliary smoother (`\"MGAuxiliarySmoother\"`). Adds this multiple of the reluctance-weighted volume mass outside the London domains to the preconditioner matrix only (leaving the operator, solution, and extracted inductance unchanged) to lift the residual gradient null space so AMS is SPD-solvable in parallel. Ignored otherwise.",
           "default": 0.1,
           "x-palace-advanced": true
         },

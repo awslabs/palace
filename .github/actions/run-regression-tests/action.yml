@@ -75,7 +75,8 @@ runs:
         source /tmp/timing_functions.sh
         start_timer
 
-        eval $(spack -e . load --sh palace)
+        # Also load CMake for ctest: Palace only needs it to build
+        eval $(spack -e . load --sh palace cmake)
 
         # The installed package ships a relocatable, fully generic
         # CTestTestfile next to the test data (share/palace/test), so the
@@ -110,6 +111,13 @@ runs:
           JOBS=1           # one GPU: don't run device cases concurrently
         fi
         export PALACE_TEST_NUMPROC=$NUM_PROC_TEST
+
+        # Disable OpenMPI 5.x default CPU binding, as for the unit tests: the long label also
+        # runs the unit tests on the debug device, on 1 and 2 processes, many at once, and
+        # binding would pile them onto the same cores. OpenMPI 5.x uses PRRTE, so set both the
+        # PRTE and legacy OMPI MCA variables.
+        export PRTE_MCA_hwloc_default_binding_policy=none
+        export OMPI_MCA_hwloc_base_binding_policy=none
 
         run_ctest() {
           ctest --test-dir "$TEST_DIR" --output-on-failure -j "$JOBS" "$@"

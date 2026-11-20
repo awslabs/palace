@@ -56,7 +56,13 @@ written to disk when requested using the relevant parameters under
 When lumped ports are present in a model, the lumped port voltages and currents computed for
 each step of the simulation (eigenmode, frequency, or time step) are written to ASCII files
 named `port-V.csv` and `port-I.csv`, respectively. These files also include the excitation
-voltage and current corresponding to the incident wave on excited port boundaries.
+voltage and current corresponding to the incident wave on excited port boundaries. When the
+weight of an excited lumped port is not real, that is, its
+[`"ExcitationPhase"`](../config/reference.md#config-boundaries-lumpedport) is not a multiple
+of 180 degrees, the incident voltage and current are complex and written as real and
+imaginary parts, columns `Re{V_inc[...]}` and `Im{V_inc[...]}` in `port-V.csv`, and
+likewise for `port-I.csv`; see
+[Lumped and wave port excitation](boundaries.md#Lumped-and-wave-port-excitation).
 
 Additionally, when surface current excitations are present, the excitations are written to
 `surface-I.csv`.
@@ -118,6 +124,8 @@ surface currents, and charge density. These files are found in the `paraview/` o
 directories located in the output directory specified under
 [`config["Problem"]["Output"]`](../config/reference.md#config-problem). The output
 formats are specified in [`config["Problem"]["OutputFormats"]`](../config/reference.md#config-problem).
+Driven simulations with several excitations write the fields of each excitation to a separate
+subfolder, see [Lumped and wave port excitation](boundaries.md#Lumped-and-wave-port-excitation).
 
 *Palace* writes ParaView data using raw-appended binary VTK XML. Use
 [ParaView 5.12.1](https://www.kitware.com/paraview-5-12-1-release-notes/) or newer to
@@ -233,8 +241,18 @@ is enabled and adaptation was performed, *Palace* saves the adapted mesh to disk
 records a `SavedAdaptedMesh` block in `palace.json` summarizing its topology. When *Palace*
 is built with `zlib`, the saved mesh is gzip-compressed and written with a `.meshgz`
 extension; without `zlib` it is written uncompressed as `.mesh`. MFEM detects the compression
-from the file contents when reading, so either file can be used directly as a restart mesh. The block always
-describes the mesh saved next to it: the top-level `palace.json` describes the final adapted
+from the file contents when reading, so either file can be used directly as a restart mesh. A
+nonconforming mesh is written by all processes in parallel: the file keeps the refinement
+tree of the input mesh, with its roots listed process by process, so its numbering depends on
+the partition of the mesh, but not the mesh it describes. When such a mesh is used as the mesh
+of a restart, *Palace* reads it in parallel, which takes much less time and memory for large
+meshes, unless the restart modifies the mesh (for example with `"MakeSimplex"`, refinement
+regions, or periodic boundaries). The root process decompresses a compressed file and sends
+each process its part; for very large meshes, decompressing the file beforehand (for example
+with `gunzip`) is faster, since every process then reads its part of the file directly.
+Meshes which cannot be written in parallel (for example NURBS meshes, or three-dimensional
+meshes with anisotropic refinement) are gathered on the root process instead, with a warning.
+The block always describes the mesh saved next to it: the top-level `palace.json` describes the final adapted
 mesh, and (when `SaveAdaptIterations` is also enabled) each `iterationX/palace.json` describes
 that iteration's saved mesh, so a saved mesh and its block can always be paired. The block
 contains:

@@ -351,8 +351,12 @@ The (average) rows in the table should add up to the Total line at the bottom.
 The categories for breaking down the total simulation time are:
 
 ```
-Initialization                  // < Time spent parsing the configuration file,
-                                //   preprocessing and partitioning the mesh
+Initialization                  // < Time spent initializing the device, parsing the
+                                //   configuration file, and preprocessing and
+                                //   partitioning the mesh
+  MPI Startup                   // < Time spent initializing MPI, which includes waiting
+                                //   for all processes to start (on runs over many
+                                //   nodes, this can dominate Initialization)
 Operator Construction           // < Time spent constructing finite element spaces and
                                 //   setting up linear and bilinear forms on those spaces
   Wave Ports                    // < Time spent configuring and computing the modes
@@ -362,6 +366,8 @@ Linear Solve                    // < Linear solver time
   Preconditioner                // < Preconditioner application time for linear solve
   Coarse Solve                  // < Coarse solve time for geometric multigrid
                                 //   preconditioners
+  Initial Guess                 // < Time spent computing initial guesses from previous
+                                //   solutions (uniform driven frequency sweeps)
 Time Stepping                   // < Time spent in the time integrator for transient
                                 //   simulation types
 Eigenvalue Solve                // < Time spent in the eigenvalue solver (not including

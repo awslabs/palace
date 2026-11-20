@@ -10,9 +10,9 @@
   },
   "Boundaries": {
     "LumpedPort": [
-      { "Index": 1, "R": 1.0, "Excitation": 1, "Attributes": [1, 2, 3], "Direction": "+Y" },
-      { "Index": 2, "R": 1.0, "Attributes": [22, 23, 24], "Direction": "-Y" },
-      { "Index": 3, "L": 5.0e-6, "C": 1.0e-6, "Attributes": [15, 16, 17], "Direction": "+Y" }
+      { "Index": 1, "R": 1.0, "Excitation": 1, "Attributes": [2, 3], "Direction": "+Y" },
+      { "Index": 2, "R": 1.0, "Attributes": [22, 23], "Direction": "-Y" },
+      { "Index": 3, "L": 5.0e-6, "C": 1.0e-6, "Attributes": [15, 16], "Direction": "+X" }
     ],
     "Postprocessing": {
       "SurfaceFlux": [

@@ -9,6 +9,7 @@
 #include <memory>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 #include <mfem.hpp>
 
@@ -17,6 +18,13 @@ namespace palace
 
 class IoData;
 class Units;
+
+namespace config
+{
+
+struct ConductivityData;
+
+}  // namespace config
 
 namespace mesh
 {
@@ -30,8 +38,15 @@ namespace mesh
 // region-based (box/sphere) refinement, boundary cracking, and finalization. Returns a
 // null pointer on ranks that do not hold a copy of the serial mesh. Called by main.cpp
 // before Preprocess hooks on the solver mutate the serial mesh (e.g. BoundaryMode
-// submesh extraction).
-std::unique_ptr<mfem::Mesh> Load(IoData &iodata, MPI_Comm comm);
+// submesh extraction). With `parallel_nc`, a nonconforming mesh which Palace saved is read
+// in parallel instead (see ReadNCMeshCoarse): every process gets its coarse mesh, which
+// Partition refines, and iodata keeps the rest of the file for Partition.
+std::unique_ptr<mfem::Mesh> Load(IoData &iodata, MPI_Comm comm, bool parallel_nc = true);
+
+// Interior conductivity boundary attributes without "Crack" (all of their elements are
+// interior), which are uncracked sheets by default. Serial mesh, no communication.
+std::vector<int> GetDefaultConductivitySheetAttributes(
+    const mfem::Mesh &mesh, const std::vector<config::ConductivityData> &conductivity);
 
 // Partition and distribute a serial mesh prepared by Load, producing a parallel mesh.
 // `smesh` is non-null only on loading ranks (see Load's contract).
@@ -142,9 +157,10 @@ inline void GetAxisAlignedBoundingBox(const mfem::ParMesh &mesh, mfem::Vector &m
   GetAxisAlignedBoundingBox(mesh, marker, false, min, max);
 }
 
-// Struct describing a bounding box in terms of the center and face normals. The normals
-// specify the direction from the center of the box. Supports both 2D and 3D: in 2D,
-// center has 2 entries and axes is 2x2; in 3D, center has 3 entries and axes is 3x3.
+// Struct describing a bounding box in terms of its center and the vectors from the center
+// to its faces, as returned by GetBoundingBall for a bounding ball. Supports both 2D and
+// 3D: in 2D, center has 2 entries and axes is 2x2; in 3D, center has 3 entries and axes is
+// 3x3.
 struct BoundingBox
 {
   // The central point of the bounding box (size 2 or 3).
@@ -162,44 +178,13 @@ struct BoundingBox
   // Return the spatial dimension (number of axes).
   int Dim() const { return axes.Width(); }
 
-  // Compute the area of the bounding box spanned by the first two normals.
-  double Area() const;
-
-  // Compute the volume of the 3D bounding box. Returns zero if planar or 2D.
-  double Volume() const;
-
-  // Compute the normalized axes of the bounding box, returned as columns of a dense
-  // matrix.
-  mfem::DenseMatrix Normals() const;
-
   // Compute the lengths along each axis.
   mfem::Vector Lengths() const;
-
-  // Compute the deviations in degrees of a vector from each of the axis directions. Angles
-  // are returned in the interval [0, 180].
-  mfem::Vector Deviations(const mfem::Vector &direction) const;
 };
 
-// Helper functions for computing bounding boxes from a mesh and markers. These do not need
-// to be axis-aligned. Note: This function only returns a minimum oriented bounding box for
-// points whose convex hull exactly forms a rectangle or rectangular prism, implementing a
-// vastly simplified version of QuickHull for this case. For other shapes, the result is
-// less predictable, and may not even form a bounding box of the sampled point cloud.
-BoundingBox GetBoundingBox(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
-                           bool bdr);
-
-inline BoundingBox GetBoundingBox(const mfem::ParMesh &mesh, int attr, bool bdr)
-{
-  mfem::Array<int> marker(bdr ? mesh.bdr_attributes.Max() : mesh.attributes.Max());
-  marker = 0;
-  marker[attr - 1] = 1;
-  return GetBoundingBox(mesh, marker, bdr);
-}
-
 // Given a mesh and a marker, compute the bounding circle/sphere of the marked elements. In
-// this case the normals of the bounding box object are arbitrary, and the Area and Volume
-// members should not be used, but the Lengths function returns the ball diameter. This
-// function implements Welzl's algorithm.
+// this case the axes of the bounding box object are arbitrary, but the Lengths function
+// returns the ball diameter. This function implements Welzl's algorithm.
 BoundingBox GetBoundingBall(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
                             bool bdr);
 
@@ -211,18 +196,30 @@ inline BoundingBox GetBoundingBall(const mfem::ParMesh &mesh, int attr, bool bdr
   return GetBoundingBall(mesh, marker, bdr);
 }
 
-// Helper function for computing the direction aligned length of a marked group.
-double GetProjectedLength(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
-                          bool bdr, const mfem::Vector &dir);
+// Helper functions for the geometry of the marked boundary elements, sampled at their
+// vertices, or on a curved mesh at the points of 4 * order subdivisions of each edge.
+// Directions need not be normalized.
 
-inline double GetProjectedLength(const mfem::ParMesh &mesh, int attr, bool bdr,
-                                 const mfem::Vector &dir)
-{
-  mfem::Array<int> marker(bdr ? mesh.bdr_attributes.Max() : mesh.attributes.Max());
-  marker = 0;
-  marker[attr - 1] = 1;
-  return GetProjectedLength(mesh, marker, bdr, dir);
-}
+// Compute the interval spanned along a direction: the smallest and largest values of
+// x · dir / |dir| over the points of the elements.
+std::pair<double, double> GetProjectedInterval(const mfem::ParMesh &mesh,
+                                               const mfem::Array<int> &marker,
+                                               const mfem::Vector &dir);
+
+// Compute the cross-section by the plane (a line in 2D) of points x with
+// x · dir / |dir| = offset. Returns its measure: the length of the cut through the surface
+// in 3D, or the number of points where the boundary crosses the line in 2D. The centroid
+// of the cross-section is returned in centroid, and is zero when the cross-section is
+// empty. Points with x · dir / |dir| >= offset are above the plane, and points within
+// round-off of the plane are on it, so a plane through an edge shared by two elements
+// cuts only one of them there.
+double GetCrossSection(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
+                       const mfem::Vector &dir, double offset, mfem::Vector &centroid);
+
+// Compute the area (length in 2D), centroid, and covariance (the second moments about the
+// centroid, per unit area) of the marked boundary elements, integrated on their geometry.
+double GetSurfaceMoments(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
+                         mfem::Vector &centroid, mfem::DenseMatrix &covariance);
 
 // Helper function for computing the closest distance of a marked group to a given point,
 // by brute force searching over the entire point set. Optionally compute the furthest

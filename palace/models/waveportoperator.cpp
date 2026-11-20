@@ -24,11 +24,8 @@
 #include "linalg/solver.hpp"
 #include "linalg/strumpack.hpp"
 #include "linalg/superlu.hpp"
-#include "models/farfieldboundaryoperator.hpp"
 #include "models/materialoperator.hpp"
-#include "models/surfaceconductivityoperator.hpp"
-#include "models/surfaceimpedanceoperator.hpp"
-#include "models/surfacerationalimpedanceoperator.hpp"
+#include "models/surfaceterms.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
@@ -66,14 +63,14 @@ private:
   LowRankComplexUpdate<false> update;
 
 public:
-  // The term vectors are copied, so they need not outlive the operator.
+  // The term vectors are copied, so they need not outlive the operator. Term k belongs to
+  // port block[k].
   WavePortModalCorrection(MPI_Comm comm, int n, const std::vector<const ComplexVector *> &s,
-                          const std::vector<std::complex<double>> &g)
-    : ComplexOperator(n), update(comm, s, g)
+                          const std::vector<std::complex<double>> &g,
+                          const std::vector<int> &block)
+    : ComplexOperator(n), update(comm, n, s, g, block)
   {
   }
-
-  bool Empty() const { return update.NumTerms() == 0; }
 
   void Mult(const ComplexVector &x, ComplexVector &y) const override
   {
@@ -685,48 +682,12 @@ WavePortData::WavePortData(const config::WavePortData &data,
       mfem::ParSubMesh::CreateFromBoundary(mesh, attr_list));
 
   // Add internal boundary elements for edges where the port face intersects other boundary
-  // faces (PEC, impedance, conductivity, rational impedance, absorbing).
+  // faces (see config::BoundaryData::GetCrossSectionEdgeAttributes).
   // ParSubMesh::CreateFromBoundary only creates boundary elements at the geometric boundary
   // of the selected face region, but internal intersections need boundary elements for the
   // 2D eigenvalue problem BCs.
-  {
-    std::vector<int> internal_bdr_attrs;
-    for (auto a : boundaries.pec.attributes)
-    {
-      internal_bdr_attrs.push_back(a);
-    }
-    for (auto a : boundaries.auxpec.attributes)
-    {
-      internal_bdr_attrs.push_back(a);
-    }
-    for (const auto &d : boundaries.impedance)
-    {
-      for (auto a : d.attributes)
-      {
-        internal_bdr_attrs.push_back(a);
-      }
-    }
-    for (const auto &d : boundaries.conductivity)
-    {
-      for (auto a : d.attributes)
-      {
-        internal_bdr_attrs.push_back(a);
-      }
-    }
-    for (const auto &d : boundaries.rational_impedance)
-    {
-      for (auto a : d.attributes)
-      {
-        internal_bdr_attrs.push_back(a);
-      }
-    }
-    for (auto a : boundaries.farfield.attributes)
-    {
-      internal_bdr_attrs.push_back(a);
-    }
-    mesh::AddSubMeshInternalBoundaryElements(*port_submesh_ptr, attr_list,
-                                             internal_bdr_attrs);
-  }
+  mesh::AddSubMeshInternalBoundaryElements(*port_submesh_ptr, attr_list,
+                                           boundaries.GetCrossSectionEdgeAttributes());
 
   port_mesh = std::make_unique<Mesh>(std::move(port_submesh_ptr));
   port_normal = mesh::GetSurfaceNormal(*port_mesh);
@@ -769,16 +730,8 @@ WavePortData::WavePortData(const config::WavePortData &data,
   // attribute lookups which correctly reference the remapped submesh.
   port_mat_op = std::make_unique<MaterialOperator>(domains.materials, boundaries.periodic,
                                                    problem_type, *port_mesh);
-  port_surf_z_op = std::make_unique<SurfaceImpedanceOperator>(
-      boundaries.impedance, boundaries.split_impedance_attributes, units, *port_mat_op,
-      mesh);
-  port_farfield_op = std::make_unique<FarfieldBoundaryOperator>(
-      boundaries.farfield, problem_type, *port_mat_op, mesh);
-  port_surf_sigma_op = std::make_unique<SurfaceConductivityOperator>(
-      boundaries.conductivity, problem_type, units, *port_mat_op, mesh);
-  port_surf_rz_op = std::make_unique<SurfaceRationalImpedanceOperator>(
-      boundaries.rational_impedance, boundaries.split_impedance_attributes, problem_type,
-      units, *port_mat_op, mesh);
+  port_surface_terms =
+      std::make_unique<SurfaceTerms>(boundaries, problem_type, units, *port_mat_op, mesh);
 
   // Construct mapping from parent (boundary) element indices to submesh (domain)
   // elements.
@@ -840,10 +793,10 @@ WavePortData::WavePortData(const config::WavePortData &data,
   // processes. The solver_comm (port_comm) restricts solver setup to port processes only.
   {
     mode_solver = std::make_unique<ModeEigenSolver>(
-        *port_mat_op, &port_normal, *port_surf_z_op, *port_farfield_op, *port_surf_sigma_op,
-        *port_surf_rz_op, *port_nd_fespace, *port_h1_fespace, port_dbc_tdof_list, mode_idx,
-        data.max_size, data.eig_tol, EigenvalueSolver::WhichType::LARGEST_MAGNITUDE,
-        port_linear, data.eigen_solver, data.verbose, port_comm);
+        *port_mat_op, &port_normal, *port_surface_terms, *port_nd_fespace, *port_h1_fespace,
+        port_dbc_tdof_list, mode_idx, data.max_size, data.eig_tol,
+        EigenvalueSolver::WhichType::LARGEST_MAGNITUDE, port_linear, data.eigen_solver,
+        data.verbose, port_comm);
   }
 
   // Configure port mode sign convention: 1ᵀ Re{-n x H} >= 0 on the "upper-right quadrant"
@@ -2149,9 +2102,9 @@ std::unique_ptr<ComplexVector> AssembleNxHVector(FiniteElementSpace &nd_fespace,
 }
 
 // Wrap the assembled rank-1 terms as the modal-correction operator, or nullptr if none.
-std::unique_ptr<ComplexOperator>
-BuildModalCorrectionOperator(std::vector<WavePortOperator::ModalCorrectionTerm> terms,
-                             FiniteElementSpace &nd_fespace)
+std::unique_ptr<ComplexOperator> BuildModalCorrectionOperator(
+    const std::vector<WavePortOperator::ModalCorrectionTerm> &terms,
+    FiniteElementSpace &nd_fespace)
 {
   if (terms.empty())
   {
@@ -2159,13 +2112,15 @@ BuildModalCorrectionOperator(std::vector<WavePortOperator::ModalCorrectionTerm> 
   }
   std::vector<const ComplexVector *> s;
   std::vector<std::complex<double>> g;
+  std::vector<int> port;
   for (const auto &term : terms)
   {
     s.push_back(term.s.get());
     g.push_back(term.g);
+    port.push_back(term.port);
   }
   return std::make_unique<WavePortModalCorrection>(nd_fespace.GetComm(),
-                                                   nd_fespace.GetTrueVSize(), s, g);
+                                                   nd_fespace.GetTrueVSize(), s, g, port);
 }
 
 }  // namespace
@@ -2206,12 +2161,12 @@ WavePortOperator::GetModalCorrectionTerms(double omega, FiniteElementSpace &nd_f
     auto ci = data.GetModeExcitationCoefficientImag(/*include_gradient=*/true);
     terms.push_back(
         {AssembleNxHVector(nd_fespace, nd_dbc_tdof_list, data.GetAttrMarker(), *cr, *ci),
-         std::complex<double>(0.0, -omega) / data.modal_reaction});
+         std::complex<double>(0.0, -omega) / data.modal_reaction, idx});
     auto cr_s = data.GetModeExcitationCoefficientReal(/*include_gradient=*/false);
     auto ci_s = data.GetModeExcitationCoefficientImag(/*include_gradient=*/false);
     terms.push_back({AssembleNxHVector(nd_fespace, nd_dbc_tdof_list, data.GetAttrMarker(),
                                        *cr_s, *ci_s),
-                     std::complex<double>(0.0, omega) / data.modal_reaction_scalar});
+                     std::complex<double>(0.0, omega) / data.modal_reaction_scalar, idx});
   }
   return terms;
 }
@@ -2258,8 +2213,8 @@ WavePortOperator::GetModalCorrectionTerms(std::complex<double> omega,
     {
       continue;
     }
-    terms.push_back({std::move(smp.s_full), smp.g_full});
-    terms.push_back({std::move(smp.s_scalar), smp.g_scalar});
+    terms.push_back({std::move(smp.s_full), smp.g_full, idx});
+    terms.push_back({std::move(smp.s_scalar), smp.g_scalar, idx});
   }
   return terms;
 }
@@ -2302,7 +2257,7 @@ WavePortOperator::GetModalCorrectionOperator(double omega, FiniteElementSpace &n
                                              const mfem::Array<int> &nd_dbc_tdof_list)
 {
   auto terms = GetModalCorrectionTerms(omega, nd_fespace, nd_dbc_tdof_list);
-  return BuildModalCorrectionOperator(std::move(terms), nd_fespace);
+  return BuildModalCorrectionOperator(terms, nd_fespace);
 }
 
 std::unique_ptr<ComplexOperator>
@@ -2311,7 +2266,7 @@ WavePortOperator::GetModalCorrectionOperator(std::complex<double> omega,
                                              const mfem::Array<int> &nd_dbc_tdof_list)
 {
   auto terms = GetModalCorrectionTerms(omega, nd_fespace, nd_dbc_tdof_list);
-  return BuildModalCorrectionOperator(std::move(terms), nd_fespace);
+  return BuildModalCorrectionOperator(terms, nd_fespace);
 }
 
 std::vector<int>
