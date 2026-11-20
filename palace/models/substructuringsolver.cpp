@@ -230,8 +230,7 @@ SubstructuringSolver::Impl::Impl(const IoData &iodata,
   // operator ignores them (CurlCurlOperator::SetUpBoundaryProperties).
   const std::map<int, config::TerminalData> no_terminals;
   const auto &terminals = magnetostatic ? no_terminals : iodata.boundaries.terminal;
-  mfem::Array<int> dir_mark(nt);
-  dir_mark = 0;
+  std::vector<char> dir_mark(nt, 0);
   {
     const int maxb = parent.bdr_attributes.Size() ? parent.bdr_attributes.Max() : 0;
     for (const auto &[idx, term] : terminals)
@@ -370,30 +369,15 @@ SubstructuringSolver::Impl::Impl(const IoData &iodata,
     }
   }
 
-  is_gamma.assign(nt, 0);
-  is_env_int.assign(nt, 0);
+  auto classes = ClassifyInterfaceTrueDofs(rm, em, dir_mark, cut);
+  is_gamma = std::move(classes.gamma);
+  is_env_int = std::move(classes.env_int);
   is_region_free.assign(nt, 0);
   env_dbc.assign(nt, 0);
   for (int i = 0; i < nt; i++)
   {
-    if (dir_mark[i])
-    {
-      env_dbc[i] = em[i];
-      continue;
-    }
-    const bool r = rm[i], e = em[i];
-    if ((r && e) || cut[i])
-    {
-      is_gamma[i] = 1;
-    }
-    else if (e)
-    {
-      is_env_int[i] = 1;
-    }
-    if (r)
-    {
-      is_region_free[i] = 1;  // region-free includes the interface
-    }
+    is_region_free[i] = classes.region_int[i] || is_gamma[i];  // with the interface
+    env_dbc[i] = dir_mark[i] && em[i];
   }
   for (int i = 0; i < nt; i++)
   {

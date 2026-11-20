@@ -669,8 +669,9 @@ struct SubstructuringSolver::Impl
                                const SignatureMap &map) const;
 
   // The records of a model file (see substructuring::ModelFile): HEAD [kModelVersion,
-  // Solver.Order, nG, signature type], SIGS [signatures nG x width], SENV [S_E nG x nG],
-  // LENC [Model.Lc of the offline run], ENVF [environment fingerprint, 5 doubles], in
+  // Solver.Order, nG, signature type], SIGS and LENC (substructuring::InterfaceRecords: the
+  // signatures nG x width and Model.Lc of the offline run), SENV [S_E nG x nG], ENVF
+  // [environment fingerprint, 5 doubles], in
   // magnetostatics MEPS [the regularization eps] and SIDS [the sides of the sheet faces on
   // Gamma, 4 doubles], ENVR [the EnvironmentRecord], ELPS [the flux loops of the
   // environment, which the mesh of the region leaves out], and as they are computed SKEN
@@ -679,12 +680,10 @@ struct SubstructuringSolver::Impl
   // SRCM [K][ids][fingerprints 2K][g nG x K][h nG x K][c KxK][B KxK] (then [h^kin nG x
   // K][c^kin KxK] in a model with S^Kin), and FLXD [K][L][excitation ids K][loop ids L]
   // [fluxoids KxL] (flux loops driven together).
-  static constexpr int kModelVersion = 8;
+  static constexpr int kModelVersion = 9;
   using ModelFile = substructuring::ModelFile;
   static constexpr std::uint32_t kHeadTag = ModelFile::Tag("HEAD"),
-                                 kSigsTag = ModelFile::Tag("SIGS"),
                                  kSETag = ModelFile::Tag("SENV"),
-                                 kLengthTag = ModelFile::Tag("LENC"),
                                  kEnvFpTag = ModelFile::Tag("ENVF"),
                                  kEpsTag = ModelFile::Tag("MEPS"),
                                  kSheetSidesTag = ModelFile::Tag("SIDS"),

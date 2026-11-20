@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
@@ -43,6 +44,20 @@ int MarkInterfaceTrueDofs(const FiniteElementSpace &parent_fespace,
                           const mfem::Array<int> &region_attrs,
                           const mfem::Array<int> &environment_attrs,
                           mfem::Array<int> &region_marker, mfem::Array<int> &env_marker);
+
+// The classes of the local true DOFs of a substructured space, from the markers of
+// MarkInterfaceTrueDofs, the Dirichlet DOFs and, on the mesh of the region, the region's
+// DOFs at the saved interface DOFs (cut, see RegionMeshInterface; empty otherwise): Γ (the
+// DOFs of both sides, or cut), and the environment and region interiors without Γ, none of
+// them Dirichlet.
+struct InterfaceClasses
+{
+  std::vector<char> gamma, env_int, region_int;
+};
+InterfaceClasses ClassifyInterfaceTrueDofs(const mfem::Array<int> &region_marker,
+                                           const mfem::Array<int> &env_marker,
+                                           const std::vector<char> &dirichlet,
+                                           const std::vector<char> &cut);
 
 // Geometric signatures of a set of true DOFs, replicated on all ranks (n x width,
 // row-major, width = SignatureWidth(fespace)), identifying them independently of the DOF
@@ -305,6 +320,17 @@ std::array<std::array<double, 3>, 3> FingerprintCenters(mfem::ParMesh &mesh,
 // each field keeps their energies from being even about one common point.
 mfem::Vector FingerprintField(const mfem::ParFiniteElementSpace &fespace, int k,
                               const std::array<double, 3> &center);
+
+// Whether two fingerprints agree: their first n_counts entries exactly, the others (real,
+// or complex as pairs (re, im)) each relative to the larger of the two.
+bool FingerprintsMatch(std::span<const double> a, std::span<const double> b,
+                       std::size_t n_counts, double tol, bool complex = false);
+
+// Whether two sets of pairings of a source with fixed fields agree, relative to the largest
+// of them, since a pairing can vanish up to a rounding that depends on the partition: real
+// values, or complex as pairs (re, im).
+bool PairingsMatch(std::span<const double> a, std::span<const double> b, double tol,
+                   bool complex = false);
 
 }  // namespace palace
 

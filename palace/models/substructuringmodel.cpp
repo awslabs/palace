@@ -276,7 +276,6 @@ SubstructuringSolver::Impl::ReadSavedHead(const std::string &path, MPI_Comm comm
   {
     return h;
   }
-  values(kLengthTag, 1, &h.length);
   // A complete model holds its signatures, S_E, environment fingerprint and record.
   const int w = SignatureFileWidth(h.sig_type);
   const long long nG = h.nG;
@@ -286,15 +285,16 @@ SubstructuringSolver::Impl::ReadSavedHead(const std::string &path, MPI_Comm comm
   const auto environment =
       env ? EnvironmentRecord::Deserialize(ModelFile::ReadPayload(path, *env, comm))
           : std::nullopt;
-  h.sig.resize(static_cast<std::size_t>(nG) * w);
+  substructuring::InterfaceRecords iface;
   if (h.file.incomplete || w == 0 || nG < 0 || !S ||
       S->size != static_cast<long long>(sizeof(double)) * nG * nG || !fp ||
       fp->size != static_cast<long long>(sizeof(double)) * kEnvFpSize || !environment ||
-      !values(kSigsTag, h.sig.size(), h.sig.data()))
+      !iface.Read(path, h.file, comm) || iface.n != nG || iface.width != w)
   {
-    h.sig.clear();
     return h;
   }
+  h.sig = std::move(iface.signatures);
+  h.length = iface.length;
   h.width = w;
   h.S_pos = S->pos;
   h.environment = *environment;
@@ -696,13 +696,7 @@ void SubstructuringSolver::Impl::CheckEnvFingerprint()
   MFEM_VERIFY(have_env_fp, "The saved substructuring model has no environment "
                            "fingerprint: rerun in \"Offline\" mode to condense it again!");
   // The counts exactly, the energies relative to themselves.
-  bool ok = (fp[0] == saved_env_fp[0] && fp[1] == saved_env_fp[1]);
-  for (int q = 2; q < kEnvFpSize; q++)
-  {
-    ok = ok && std::abs(fp[q] - saved_env_fp[q]) <=
-                   kFingerprintTol * std::max(std::abs(fp[q]), std::abs(saved_env_fp[q]));
-  }
-  MFEM_VERIFY(ok, kEnvironmentDiffers);
+  MFEM_VERIFY(FingerprintsMatch(fp, saved_env_fp, 2, kFingerprintTol), kEnvironmentDiffers);
 }
 
 void SubstructuringSolver::Impl::AppendModes(const std::string &path)
@@ -856,16 +850,9 @@ void SubstructuringSolver::Impl::SaveModel(const std::string &model_path, int si
     const int head[4] = {kModelVersion, iodata.solver.order, nG, sig_type};
     AppendRecord(model_path, kHeadTag, sizeof(head), [&](std::ofstream &f)
                  { f.write(reinterpret_cast<const char *>(head), sizeof(head)); });
-    AppendRecord(model_path, kSigsTag, static_cast<long long>(sizeof(double)) * nG * sig_w,
-                 [&](std::ofstream &f)
-                 {
-                   f.write(reinterpret_cast<const char *>(sig.data()),
-                           sizeof(double) * nG * sig_w);
-                 });
+    substructuring::InterfaceRecords{nG, sig_w, sig, iodata.model.Lc}.Append(
+        model_path, parent_fes.GetComm());
     AppendRows(model_path, kSETag, S_rows);  // collective
-    AppendRecord(
-        model_path, kLengthTag, sizeof(double), [&](std::ofstream &f)
-        { f.write(reinterpret_cast<const char *>(&iodata.model.Lc), sizeof(double)); });
   }
   AppendEnvFingerprint(model_path);  // collective
   AppendEnvRecord(model_path, WriteRegionMesh(RegionMeshPath(model_path)));
@@ -985,25 +972,6 @@ SubstructuringSolver::ModelExcitations(const std::map<int, std::vector<int>> &ex
     }
   }
   return {impl->model_sources.begin(), impl->model_sources.end()};
-}
-
-void SubstructuringSolver::UseModelLength(IoData &iodata, MPI_Comm comm)
-{
-  const auto &sub = iodata.solver.substructuring;
-  if (!sub || sub->mode != SubstructuringMode::ONLINE || sub->model_file.empty())
-  {
-    return;
-  }
-  const double L = Impl::ReadSavedHead(sub->model_file, comm).length;
-  if (L > 0.0)
-  {
-    MFEM_VERIFY(!(iodata.model.Lc > 0.0) || std::abs(iodata.model.Lc - L) <= 1.0e-12 * L,
-                "\"Model\": \"Lc\" (" << iodata.model.Lc
-                                      << ") differs from that of the saved substructuring "
-                                         "model ("
-                                      << L << ")!");
-    iodata.model.Lc = L;
-  }
 }
 
 }  // namespace palace

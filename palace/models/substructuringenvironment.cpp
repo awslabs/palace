@@ -4,6 +4,7 @@
 #include "substructuringsolverimpl.hpp"
 
 #include <cmath>
+#include <span>
 #include "utils/timer.hpp"
 
 namespace palace
@@ -178,17 +179,9 @@ bool SubstructuringSolver::Impl::SourceModesMatch(const std::vector<int> &ids,
       ok = false;
       continue;
     }
-    // Relative to the larger pairing (either may vanish, up to rounding).
-    const double scale =
-        std::max({std::abs(fp[1]), std::abs(fp[2]), std::abs(src_fp[2 * col[j]]),
-                  std::abs(src_fp[2 * col[j] + 1])});
-    for (int q = 0; q < 2; q++)
-    {
-      if (std::abs(fp[1 + q] - src_fp[2 * col[j] + q]) > kFingerprintTol * scale + 1e-300)
-      {
-        ok = false;
-      }
-    }
+    ok = ok && PairingsMatch(std::span<const double>(fp).subspan(1),
+                             std::span<const double>(src_fp).subspan(2 * col[j], 2),
+                             kFingerprintTol);
   }
   return ok;
 }
@@ -461,15 +454,9 @@ bool SubstructuringSolver::Impl::ModesMatch(const std::vector<int> &ids,
       ok = false;
       continue;
     }
-    for (int q = 0; q < 2; q++)
-    {
-      const double ref = mode_fp[2 * col[j] + q];
-      if (std::abs(fps[j][q] - ref) >
-          kFingerprintTol * std::max(std::abs(ref), std::abs(fps[j][q])) + 1e-300)
-      {
-        ok = false;
-      }
-    }
+    ok = ok &&
+         FingerprintsMatch(fps[j], std::span<const double>(mode_fp).subspan(2 * col[j], 2),
+                           0, kFingerprintTol);
   }
   return ok;
 }

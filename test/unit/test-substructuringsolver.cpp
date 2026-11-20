@@ -1785,7 +1785,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   }
   Mpi::Barrier(Mpi::World());
   IoData online = make_config("Online", 0.0);
-  SubstructuringSolver::UseModelLength(online, Mpi::World());
+  substructuring::UseModelLength(online, Mpi::World());
   double Lc[2] = {online.model.Lc, -online.model.Lc};
   Mpi::GlobalMin(2, Lc, Mpi::World());
   CHECK(Lc[0] == -Lc[1]);
