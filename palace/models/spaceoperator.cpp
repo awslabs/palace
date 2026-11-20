@@ -78,6 +78,7 @@ SpaceOperator::SpaceOperator(const config::SolverData &solver,
   // The incident field of a plane wave is that of the background material around its
   // total-field region.
   plane_wave_op.SetUpBackground(mat_op, GetNDSpace());
+  plane_wave_op.CheckPeriodicity(boundaries.periodic, solver.driven.sample_f);
 
   // In 2D, curl maps H(curl) → L2 (scalar), so we need an L2 FE space for B = curl E.
   // Must use INTEGRAL map type so the discrete interpolator recognizes this as the curl

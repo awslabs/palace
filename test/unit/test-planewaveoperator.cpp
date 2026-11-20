@@ -359,4 +359,106 @@ TEST_CASE("PlaneWaveOperator background around the total field",
   CHECK_THROWS(Background({1, 2, 3}, {}));
 }
 
+TEST_CASE("PlaneWaveOperator Floquet envelope", "[planewaveoperator][Serial][Parallel]")
+{
+  // Unit cube periodic in x and y, with the total-field slab 1/3 < z < 2/3 (attribute 1)
+  // in vacuum (attribute 2).
+  auto serial =
+      mfem::Mesh::MakeCartesian3D(6, 6, 6, mfem::Element::TETRAHEDRON, 1.0, 1.0, 1.0);
+  mfem::Vector c;
+  for (int e = 0; e < serial.GetNE(); e++)
+  {
+    serial.GetElementCenter(e, c);
+    serial.SetAttribute(e, (c(2) > 1.0 / 3.0 && c(2) < 2.0 / 3.0) ? 1 : 2);
+  }
+  serial.SetAttributes();
+  std::vector<mfem::Vector> translations = {mfem::Vector({1.0, 0.0, 0.0}),
+                                            mfem::Vector({0.0, 1.0, 0.0})};
+  auto periodic_serial =
+      mfem::Mesh::MakePeriodic(serial, serial.CreatePeriodicVertexMapping(translations));
+  Mesh mesh(std::make_unique<mfem::ParMesh>(Mpi::World(), periodic_serial));
+  mfem::ND_FECollection nd_fec(2, 3);
+  FiniteElementSpace nd_fespace(mesh, &nd_fec);
+  Units units(1.0, 1.0);
+  std::vector<config::MaterialData> materials(1);
+  materials[0].attributes = {1, 2};
+
+  // Periodic boundary pairs, with the lattice translations or (when translate is false)
+  // without, as when they are detected from the mesh.
+  auto Pairs = [](bool translate, double rotate = 0.0)
+  {
+    std::vector<config::PeriodicData> pairs(2);
+    for (int p = 0; p < 2; p++)
+    {
+      if (!translate)
+      {
+        continue;
+      }
+      auto &T = pairs[p].affine_transform;
+      T[0] = T[5] = T[10] = T[15] = 1.0;
+      T[p * 4 + 3] = 1.0;
+      T[1] = rotate;
+      T[4] = -rotate;
+    }
+    return pairs;
+  };
+
+  // Returns whether the incident field is accepted at the angular frequencies omega, for
+  // a plane wave of direction (sin(theta), 0, cos(theta)) and the Floquet wave vector
+  // (kf, 0, 0), defined at omega_ref when omega_ref > 0 (and then scaled with the
+  // frequency). With translate, the lattice translations are checked at setup, otherwise
+  // the interpolated field is checked at each frequency.
+  auto Accepted = [&](double theta, const std::vector<double> &omega, double kf,
+                      double omega_ref = 0.0, bool translate = true, double rotate = 0.0)
+  {
+    config::PeriodicBoundaryData periodic;
+    periodic.wave_vector = {kf, 0.0, 0.0};
+    periodic.floquet_reference_freq = omega_ref;
+    MaterialOperator mat_op(materials, periodic, ProblemType::DRIVEN, mesh);
+    std::map<int, config::PlaneWaveData> plane_wave = {
+        {1, MakePlaneWave({1}, {std::sin(theta), 0.0, std::cos(theta)}, {0.0, 1.0, 0.0})}};
+    PlaneWaveOperator op(plane_wave, units, mesh.Get());
+    op.SetUpBackground(mat_op, nd_fespace);
+    periodic.boundary_pairs = Pairs(translate, rotate);
+    try
+    {
+      op.CheckPeriodicity(periodic, omega);
+      ComplexVector g;
+      for (const double w : omega)
+      {
+        op.GetIncidentField(1, w, nd_fespace, g);
+      }
+    }
+    catch (const std::exception &)
+    {
+      return false;
+    }
+    return true;
+  };
+  const double theta = std::asin(0.5), omega = 2.0;  // k sin(theta) = 1
+  const double omega_big = 9.0, theta_big = std::asin((1.0 + 2.0 * std::numbers::pi) / 9.0);
+
+  for (bool translate : {true, false})
+  {
+    // Normal incidence needs no Floquet wave vector, oblique incidence needs the
+    // tangential part of the wave vector of the plane wave, also without a Floquet wave
+    // vector.
+    CHECK(Accepted(0.0, {omega}, 0.0, 0.0, translate));
+    CHECK(Accepted(theta, {omega}, 1.0, 0.0, translate));
+    CHECK_FALSE(Accepted(theta, {omega}, 0.0, 0.0, translate));
+    CHECK_FALSE(Accepted(theta, {omega}, 0.5, 0.0, translate));
+
+    // Up to a reciprocal lattice vector: k sin(theta) = 1 + 2 pi with k_F = 1.
+    CHECK(Accepted(theta_big, {omega_big}, 1.0, 0.0, translate));
+
+    // A Floquet wave vector which scales with the frequency matches at every frequency, a
+    // fixed one only at its own.
+    CHECK(Accepted(theta, {omega, 1.5 * omega}, 1.0, omega, translate));
+    CHECK_FALSE(Accepted(theta, {omega, 1.5 * omega}, 1.0, 0.0, translate));
+  }
+
+  // Periodic boundary pairs which are not translations are rejected.
+  CHECK_FALSE(Accepted(0.0, {omega}, 0.0, 0.0, true, 0.1));
+}
+
 }  // namespace palace
