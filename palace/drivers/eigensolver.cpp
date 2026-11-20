@@ -700,35 +700,42 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     ComplexVector x(Curl.Width()), y(Curl.Width());
     x.UseDevice(true);
     y.UseDevice(true);
+    auto Rayleigh = [&](const ComplexVector &u, std::complex<double> lambda)
+    {
+      K->Mult(u, y);
+      const std::complex<double> k = TDot(u, y);
+      M->Mult(u, y);
+      const std::complex<double> m = TDot(u, y);
+      if (C)
+      {
+        C->Mult(u, y);
+        const std::complex<double> c = TDot(u, y);
+        const std::complex<double> d = std::sqrt(c * c - 4.0 * m * k);
+        const std::complex<double> r1 = (-c + d) / (2.0 * m), r2 = (-c - d) / (2.0 * m);
+        return ((std::abs(r1 - lambda) < std::abs(r2 - lambda)) ? r1 : r2) / 1i;
+      }
+      return std::sqrt(k / m);
+    };
     for (int i = 0; i < num_report; i++)
     {
       eigen->GetEigenvector(i, x);
       linalg::SetSubVector(x, dbc_tdof_list, 0.0);
-      K->Mult(x, y);
-      const std::complex<double> k = TDot(x, y);
-      M->Mult(x, y);
-      const std::complex<double> m = TDot(x, y);
-      std::complex<double> omega, omega_rq;
-      if (C)
+      const std::complex<double> omega =
+          (C) ? eigenvalues[i] / 1i : std::sqrt(eigenvalues[i]);
+      const std::complex<double> omega_rq = Rayleigh(x, eigenvalues[i]);
+      std::complex<double> omega_rqp = omega_rq;
+      if (divfree)
       {
-        C->Mult(x, y);
-        const std::complex<double> c = TDot(x, y);
-        const std::complex<double> d = std::sqrt(c * c - 4.0 * m * k);
-        const std::complex<double> r1 = (-c + d) / (2.0 * m), r2 = (-c - d) / (2.0 * m);
-        const std::complex<double> lambda_rq =
-            (std::abs(r1 - eigenvalues[i]) < std::abs(r2 - eigenvalues[i])) ? r1 : r2;
-        omega = eigenvalues[i] / 1i;
-        omega_rq = lambda_rq / 1i;
+        divfree->Mult(x);
+        linalg::SetSubVector(x, dbc_tdof_list, 0.0);
+        omega_rqp = Rayleigh(x, eigenvalues[i]);
       }
-      else
-      {
-        omega = std::sqrt(eigenvalues[i]);
-        omega_rq = std::sqrt(k / m);
-      }
-      Mpi::Print(" RQ diagnostic mode {:d}: Ritz {:.16e}{:+.16e}i, Rayleigh {:.16e}{:+.16e}i "
-                 "(rel. diff. {:.3e})\n",
+      Mpi::Print(" RQ diagnostic mode {:d}: Ritz {:.16e}{:+.16e}i, Rayleigh {:.16e}{:+.16e}i, "
+                 "projected {:.16e}{:+.16e}i (rel. diff. {:.3e}, {:.3e})\n",
                  i + 1, omega.real(), omega.imag(), omega_rq.real(), omega_rq.imag(),
-                 std::abs(omega_rq - omega) / std::abs(omega));
+                 omega_rqp.real(), omega_rqp.imag(),
+                 std::abs(omega_rq - omega) / std::abs(omega),
+                 std::abs(omega_rqp - omega) / std::abs(omega));
     }
   }
 
