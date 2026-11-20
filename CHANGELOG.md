@@ -360,6 +360,14 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     refinement tree, so that its saved adapted mesh and restarts from it have the right
     length unit.
     [PR 1214](https://github.com/awslabs/palace/pull/1214).
+  - Fixed wave port sweeps with a degenerate pair of port modes, where the polarization
+    selected within the pair could jump between frequencies: the fields of the sweep were
+    then not those of one excitation, and an adaptive sweep could excite another
+    polarization than it was trained with. Every port mode solve now starts from the same
+    vector, so that its result, and with it the polarization, depends on the frequency
+    only, also in `BoundaryMode` simulations. The index of a mode above an exactly
+    degenerate pair can still depend on roundoff.
+    [PR 1208](https://github.com/awslabs/palace/pull/1208).
   - Fixed driven frequency sweeps aborting with "... not found in sample frequencies!" when
     overlapping `"Samples"` ranges compute the same frequency with different rounding.
     [PR 1192](https://github.com/awslabs/palace/pull/1192).
