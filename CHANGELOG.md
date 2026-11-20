@@ -15,6 +15,14 @@ The format of this changelog is based on
 
 See the [developer notes on schema versioning](https://awslabs.github.io/palace/dev/developer/notes/#Schema-versioning) for how versions are bumped.
 
+## In progress
+
+#### Performance Improvements
+
+  - The GPU of each process is selected, and its context created, before `MPI_Init`, so
+    that MPI libraries which set up the communication between the GPUs of a node in
+    `MPI_Init`, like Open MPI 5, can do so.
+
 ## [0.20.0] - 2026-11-23
 
 #### New Features
