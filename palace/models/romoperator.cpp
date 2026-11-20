@@ -442,6 +442,7 @@ void MinimalRationalInterpolation::AddSolutionSample(double omega,
   x(Eigen::seqN(1, c.size(), 2)) = (1i * omega) * c;
   Q.conservativeResizeLike(Eigen::MatrixXcd::Zero(m, S + 1));
   R.conservativeResizeLike(Eigen::MatrixXcd::Zero(S + 1, S + 1));
+  const double x_norm = x.norm();
   for (int pass = 0; pass < 2; pass++)  // CGS2
   {
     const Eigen::VectorXcd h = Q.leftCols(S).adjoint() * x;
@@ -449,6 +450,9 @@ void MinimalRationalInterpolation::AddSolutionSample(double omega,
     R.col(S).head(S) += h;
   }
   R(S, S) = x.norm();
+  MFEM_VERIFY(R(S, S).real() > ORTHOG_TOL * x_norm,
+              "Minimal rational interpolation sample in the span of the previous ones (the "
+              "same frequency and solution added twice)!");
   Q.col(S) = x / R(S, S).real();
   ComputeMRI(R, q);
   z.push_back(omega);
@@ -1001,6 +1005,9 @@ bool RomOperator::SolveHDM(int excitation_idx, double omega, ComplexVector &u,
     ksp->SetRelTol(max_rel_correction);
   }
   ksp->Mult(r, u);
+  hdm_b.SetSize(r.Size());
+  hdm_b.UseDevice(true);
+  hdm_b = r;
   ksp->SetRelTol(rel_tol);
   ksp->SetMaxRelativeCorrection(0.0);
   ksp->SetInitialGuess(false);
@@ -1013,6 +1020,30 @@ void RomOperator::ReleaseHDMOperators()
   hdm_A2_full.reset();
   hdm_P.reset();
   hdm_omega = std::numeric_limits<double>::quiet_NaN();
+  hdm_b.Real().Destroy();
+  hdm_b.Imag().Destroy();
+}
+
+void RomOperator::RefineHDM(ComplexVector &u)
+{
+  MFEM_VERIFY(hdm_A, "No HDM system to refine the solution of!");
+  ComplexVector res(u.Size()), d(u.Size());
+  res.UseDevice(true);
+  d.UseDevice(true);
+  hdm_A->Mult(u, res);
+  linalg::AXPBY(1.0, hdm_b, -1.0, res);
+  d = 0.0;
+  // The correction is solved from zero: GMRES restarted on the residual can stall for a few
+  // iterations before it converges again, so a correction often costs as many iterations
+  // as the solve of the sample itself. An absolute tolerance would end it at once if the
+  // residual of u is below it.
+  const double rel_tol = ksp->GetRelTol(), abs_tol = ksp->GetAbsTol();
+  ksp->SetRelTol(std::max(rel_tol, 1.0e-2));
+  ksp->SetAbsTol(0.0);
+  ksp->Mult(res, d);
+  ksp->SetRelTol(rel_tol);
+  ksp->SetAbsTol(abs_tol);
+  u += d;
 }
 
 std::size_t RomOperator::NumSynthesisPortModes() const
@@ -1149,18 +1180,20 @@ Eigen::VectorXcd RomOperator::UpdatePROM(const ComplexVector &u,
   const bool has_imag = (norm_im > norm_tol);
 
   const std::size_t dim_V_old = V.size();
-  std::size_t dim_V_new = V.size() + std::size_t{has_real} + std::size_t{has_imag};
+  const auto dim_V_max = static_cast<Eigen::Index>(dim_V_old + has_real + has_imag);
+  orth_R.conservativeResizeLike(Eigen::MatrixXd::Zero(dim_V_max, dim_V_max));
 
-  orth_R.conservativeResizeLike(Eigen::MatrixXd::Zero(dim_V_new, dim_V_new));
-
-  // Small lambda to add vector to basis. Lambda returns a bool, which is false when the new
-  // vector is below the linear dependence tolerance. The MFEM_VERIFY happens after the
-  // lambda. This is done for MPI syncronization reasons. If the MFEM_VERIFY throws / aborts
-  // on one rank why others are in an inconsistent state, this could lead to MPI
-  // communication failures in the memory unwinding and global MPI hard crash (e.g. in the
-  // unit tests).
-  auto add_real_vector_to_basis = [this](const Vector &vector,
-                                         std::string_view node_label) -> bool
+  // Small lambda to add the real or imaginary part of u to the basis. It returns the
+  // coefficients of the part in the basis, its column of R: the projections onto the
+  // previous basis vectors, and the norm of the remainder, which is the new basis vector. A
+  // part whose remainder is below the linear dependence tolerance is in the span of the
+  // basis to the orthogonalization tolerance: it is not added, and its coefficients are its
+  // projections. The abort for a dependent part happens after the lambda. This is done for
+  // MPI syncronization reasons. If the MFEM_ABORT throws / aborts on one rank why others
+  // are in an inconsistent state, this could lead to MPI communication failures in the
+  // memory unwinding and global MPI hard crash (e.g. in the unit tests).
+  bool dependent = false;
+  auto add_real_vector_to_basis = [&](const Vector &vector, bool imag)
   {
     auto dim_V = V.size();
     MFEM_VERIFY(dim_V < V.capacity(),
@@ -1171,48 +1204,50 @@ Eigen::VectorXcd RomOperator::UpdatePROM(const ComplexVector &u,
     // basis vector.
     const bool refine = (orthog_type != Orthogonalization::CGS);
     double *H = orth_R.col(dim_V).data();
-    MPI_Comm comm = space_op.GetComm();
     const auto [pre_norm, norm] = linalg::OrthogonalizeColumnCGS(
         comm, std::span(V), H, refine, weight_op_W ? &*weight_op_W : nullptr, &r);
-    orth_R(dim_V, dim_V) = norm;
-
-    if (orth_R(dim_V, dim_V) <= ORTHOG_TOL * pre_norm)
+    if (norm <= ORTHOG_TOL * pre_norm)
     {
-      return false;
+      V.pop_back();
+      dependent = true;
+      if (!abort_if_dependent)
+      {
+        Mpi::Print(" {} part of {} is in the span of the PROM basis to the "
+                   "orthogonalization tolerance (relative remainder {:.3e}): not added\n",
+                   imag ? "Imaginary" : "Real", node_label, norm / pre_norm);
+      }
+      return Eigen::VectorXd(orth_R.col(dim_V));
     }
-
-    v *= 1.0 / orth_R(dim_V, dim_V);
-    v_node_label.emplace_back(node_label);
-    return true;
+    orth_R(dim_V, dim_V) = norm;
+    v *= 1.0 / norm;
+    v_node_label.emplace_back(fmt::format("{}_{}", node_label, imag ? "im" : "re"));
+    return Eigen::VectorXd(orth_R.col(dim_V));
   };
 
-  const bool added =
-      (!has_real || add_real_vector_to_basis(u.Real(), fmt::format("{}_re", node_label))) &&
-      (!has_imag || add_real_vector_to_basis(u.Imag(), fmt::format("{}_im", node_label)));
-  if (!added)
+  // Coefficients of u in the updated basis (a part below the tolerance relative to u is
+  // dropped).
+  Eigen::VectorXcd c = Eigen::VectorXcd::Zero(dim_V_max);
+  if (has_real)
   {
-    // Leave the basis unchanged (also when aborting, so that the PROM is consistent if the
-    // error is caught).
+    c.real() = add_real_vector_to_basis(u.Real(), false);
+  }
+  if (has_imag && !(dependent && abort_if_dependent))
+  {
+    c.imag() = add_real_vector_to_basis(u.Imag(), true);
+  }
+  if (dependent && abort_if_dependent)
+  {
+    // Leave the basis unchanged, so that the PROM is consistent if the error is caught.
     V.resize(dim_V_old);
     v_node_label.resize(dim_V_old);
     orth_R.conservativeResize(dim_V_old, dim_V_old);
-    MFEM_VERIFY(!abort_if_dependent,
-                "Linearly dependent vector added to PROM basis. This indicates a "
-                "convergence issue or a code error (the same vector was added multiple "
-                "times accidentally).");
-    return {};
+    MFEM_ABORT("Linearly dependent vector added to PROM basis. This indicates a "
+               "convergence issue or a code error (the same vector was added multiple "
+               "times accidentally).");
   }
-
-  // Coefficients of u in the updated basis (a part below the tolerance is dropped).
-  Eigen::VectorXcd c = Eigen::VectorXcd::Zero(dim_V_new);
-  if (has_real)
-  {
-    c.real() = orth_R.col(dim_V_old);
-  }
-  if (has_imag)
-  {
-    c.imag() = orth_R.col(dim_V_new - 1);
-  }
+  const std::size_t dim_V_new = V.size();
+  orth_R.conservativeResize(dim_V_new, dim_V_new);
+  c.conservativeResize(dim_V_new);
   if (dim_V_new == dim_V_old)
   {
     return c;
@@ -1298,6 +1333,98 @@ Eigen::VectorXcd RomOperator::UpdatePROM(const ComplexVector &u,
     gram_L.bottomRightCorner(n - n0, n - n0) = llt.matrixL();
   }
   return c;
+}
+
+void RomOperator::TruncatePROM(std::size_t n)
+{
+  MFEM_VERIFY(n <= V.size(), "Cannot truncate the PROM basis to more vectors than it has!");
+  const auto ne = static_cast<Eigen::Index>(n);
+  V.resize(n);
+  v_node_label.resize(n);
+  orth_R.conservativeResize(ne, ne);
+  Kr.conservativeResize(ne, ne);
+  if (C)
+  {
+    Cr.conservativeResize(ne, ne);
+  }
+  Mr.conservativeResize(ne, ne);
+  for (auto &term : bdr_terms)
+  {
+    term.Ar.conservativeResize(ne, ne);
+  }
+  RHS1r.conservativeResize(ne, Eigen::NoChange);
+  floquet_comp_V.conservativeResize(ne, Eigen::NoChange);
+  if (weight_op_W)
+  {
+    // The Cholesky factor of the leading block of the Gram matrix is the leading block of
+    // its factor.
+    gram_L.conservativeResize(ne, ne);
+  }
+  if (V_wp_dim > n)
+  {
+    for (auto &[port_idx, vp] : V_wp)
+    {
+      vp.resize(n);
+    }
+    V_wp_dim = n;
+  }
+
+  // The PROM system and solutions of the last SolvePROM, and the port pairings cached with
+  // them, are those of the larger basis.
+  Ar.resize(0, 0);
+  Y.resize(0, 0);
+  sV_wp_full.clear();
+}
+
+RomOperator::SampleUpdate RomOperator::AddSamplePROM(int excitation_idx, double omega,
+                                                     ComplexVector &u,
+                                                     std::string_view node_label,
+                                                     double tol)
+{
+  MPI_Comm comm = space_op.GetComm();
+  SampleUpdate update;
+  const std::size_t n0 = V.size();
+
+  // PROM solution at ω before the update. TruncatePROM restores this PROM exactly, so only
+  // the sample changes between the attempts below.
+  SolvePROM(omega);
+  const Eigen::VectorXcd x0 = GetReducedSolution(excitation_idx);
+  while (true)
+  {
+    // Relative PROM error at ω before the update, from the coefficients of u in the updated
+    // basis. The error decides whether to sample again, so it must be the same on every
+    // process, while the replicated dense computations can differ in round-off between
+    // them.
+    Eigen::VectorXcd d = -x0;
+    update.c = UpdatePROM(u, node_label, false);
+    d.conservativeResizeLike(Eigen::VectorXcd::Zero(update.c.size()));
+    update.error = BasisNorm(update.c + d) / BasisNorm(update.c);
+    Mpi::GlobalMax(1, &update.error, comm);
+    // Relative PROM error at ω with u in the basis: the Galerkin PROM reproduces an
+    // accurate sample in its basis. If it does not reproduce u to tol, remove u, refine it
+    // and add it again. If u is in the span of the basis, the PROM is unchanged and this is
+    // the error before the update.
+    double error_full = update.error;
+    if (V.size() > n0)
+    {
+      SolvePROM(omega);
+      const Eigen::VectorXcd y = GetReducedSolution(excitation_idx);
+      error_full = BasisNorm(update.c - y) / BasisNorm(update.c);
+      Mpi::GlobalMax(1, &error_full, comm);
+    }
+    update.reproduced = (error_full < tol);
+    if (update.reproduced || update.num_refined == max_refine)
+    {
+      break;
+    }
+    TruncatePROM(n0);
+    RefineHDM(u);
+    update.num_refined++;
+  }
+
+  // The system of the HDM solve is no longer needed.
+  ReleaseHDMOperators();
+  return update;
 }
 
 double RomOperator::FindMaxError(int excitation_idx) const

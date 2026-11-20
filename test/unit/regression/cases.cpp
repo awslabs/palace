@@ -2691,6 +2691,26 @@ TEST_CASE("cpw_wave_adaptive", "[Serial][Parallel][GPU][Regression]")
   palace::test::RunRegressionCase("cpw", "cpw_wave_adaptive.json", "wave_adaptive", opts);
 }
 
+// Adaptive sweep of a lumped port on a small cube with an "AdaptiveTol" of 1e-6, far below
+// the accuracy of the HDM solutions at a linear tolerance of 1e-3. The sweep converges only
+// if the samples which the PROM does not reproduce are refined: its outputs must then match
+// those of a uniform sweep at a linear tolerance of 1e-12 to "AdaptiveTol". Without the
+// refinement, the sampling reaches "AdaptiveMaxSamples" with domain energies off by 1e-4 or
+// more. The error indicators depend on the samples.
+TEST_CASE("cube_lumped_adaptive_loose", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-6;
+  opts.atol = 0.0;
+  opts.excluded_files = {"error-indicators.csv"};
+  opts.paraview_fields = false;
+  opts.custom_checks["port-V.csv"] = CompareComplexValues(opts.rtol, opts.atol);
+  opts.custom_checks["port-I.csv"] = CompareComplexValues(opts.rtol, opts.atol);
+  opts.custom_checks["port-S.csv"] = ComparePortSParameters(opts.rtol, opts.atol);
+  palace::test::RunRegressionCase("cube", "lumped_adaptive_loose.json",
+                                  "lumped_adaptive_loose", opts);
+}
+
 TEST_CASE("cpw_lumped_eigen", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
