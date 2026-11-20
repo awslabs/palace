@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <optional>
 #include <set>
 #include <type_traits>
 #include "fem/bilinearform.hpp"
@@ -34,8 +35,14 @@ SpaceOperator::SpaceOperator(const config::SolverData &solver,
                              ProblemType problem_type, const Units &units,
                              const std::vector<std::unique_ptr<Mesh>> &mesh)
   : pc_mat_real(solver.linear.pc_mat_real), pc_mat_shifted(solver.linear.pc_mat_shifted),
-    pc_mat_amg(solver.linear.type == LinearSolver::AMS ||
-               solver.linear.type == LinearSolver::BOOMER_AMG),
+    pc_coarse_real(!solver.linear.complex_coarse_solve &&
+                   (solver.linear.type == LinearSolver::AMS ||
+                    solver.linear.type == LinearSolver::BOOMER_AMG ||
+                    solver.linear.type == LinearSolver::SUPERLU ||
+                    solver.linear.type == LinearSolver::STRUMPACK ||
+                    solver.linear.type == LinearSolver::STRUMPACK_MP ||
+                    solver.linear.type == LinearSolver::MUMPS ||
+                    solver.linear.type == LinearSolver::CUDSS)),
     print_hdr(true), print_prec_hdr(true),
     dbc_attr(SetUpBoundaryProperties(boundaries.pec, *mesh.back())),
     nd_fecs(fem::ConstructFECollections<mfem::ND_FECollection>(
@@ -480,8 +487,18 @@ auto AssembleOperators(
     const MaterialPropertyCoefficient *f, const MaterialPropertyCoefficient *dfb,
     const MaterialPropertyCoefficient *fb, const MaterialPropertyCoefficient *fp,
     const MaterialPropertyCoefficient *frb, const MaterialPropertyCoefficient *fpb,
-    bool skip_zeros = false, bool assemble_q_data = false)
+    bool skip_zeros = false, bool assemble_q_data = false, bool flip_coarse_dfb = false)
 {
+  // Optionally flip the sign of dfb on the coarse level only (see AssemblePreconditioner).
+  std::optional<MaterialPropertyCoefficient> dfb_flip;
+  const MaterialPropertyCoefficient *dfb_coarse = dfb;
+  if (flip_coarse_dfb && dfb && !dfb->empty())
+  {
+    dfb_flip.emplace(*dfb);
+    *dfb_flip *= -1.0;
+    dfb_coarse = &*dfb_flip;
+  }
+
   // Keep configured coefficient support on the coarse sparse level. This is required for
   // an exact-complex coarse solve: a nonlinear eigenvalue seed λ = iω has Im(λ²) = 0, but
   // the corresponding full-domain imaginary mass term becomes nonzero once Re(λ) != 0.
@@ -490,7 +507,7 @@ auto AssembleOperators(
   // independent of the chosen sparse-solver representation. Fine partial-assembly levels
   // have no symbolic structure to preserve, so exact-zero terms are omitted there.
   BilinearForm coarse(fespaces.GetFESpaceAtLevel(0));
-  AddConfiguredIntegrators(coarse, df, f, dfb, fb, fp, frb, fpb);
+  AddConfiguredIntegrators(coarse, df, f, dfb_coarse, fb, fp, frb, fpb);
   std::vector<std::unique_ptr<Operator>> ops;
   ops.reserve(fespaces.GetNumLevels());
   ops.push_back(coarse.Assemble(skip_zeros));
@@ -1254,21 +1271,19 @@ void SpaceOperator::AssemblePreconditioner(
   AddImagMassCoefficients(a2.real(), fi);
   AddImagMassCoefficients(-a2.imag(), fr);
   AddExtraSystemBdrCoefficients(a3, dfbr, dfbi, fbr, fbi, frbr, frbi, &fpbr, &fpbi);
-  if (pc_mat_amg)
-  {
-    // dfbr/dfbi hold only the second-order absorbing BC term -i(0.5/ω)(μ⁻¹c ∇ₛ×E, ∇ₛ×F),
-    // whose imaginary part is negative semidefinite. AMS/BoomerAMG are applied to the
-    // real-valued Br + Bi (see MfemWrapperSolver), which this term can make indefinite, so
-    // flip its sign in the preconditioner (like PCMatShifted does for the mass term). The
-    // system matrix keeps the correct sign. Its Floquet terms keep their sign: the rotated
-    // boundary mass term is bounded by the first-order absorbing BC term when the
-    // tangential Floquet wave vector is below √2 times the wavenumber at the boundary, in
-    // particular for propagating waves (above, the boundary condition is not passive, see
-    // FarfieldBoundaryOperator::CheckFloquetPassivity), and the mixed boundary curl terms
-    // are antisymmetric.
-    dfbr *= -1.0;
-    dfbi *= -1.0;
-  }
+  // dfbr/dfbi hold only the second-order absorbing BC term -i(0.5/ω)(μ⁻¹c ∇ₛ×E, ∇ₛ×F),
+  // whose imaginary part is negative semidefinite. The coarse-level solver is applied to
+  // the real-valued Br + Bi unless ComplexCoarseSolve is set or it is Jacobi (see
+  // MfemWrapperSolver), and there this term would cancel part of the positive semidefinite
+  // curl-curl term of Br. So flip its sign on the coarse level, like PCMatShifted does for
+  // the mass term: Br + Bi then has |Bi| for it, as for the losses. The other levels are
+  // applied as the complex-valued operator and keep the correct sign, as does the system
+  // matrix. Its Floquet terms keep their sign: the rotated boundary mass term is
+  // bounded by the first-order absorbing BC term when the tangential Floquet wave vector is
+  // below √2 times the wavenumber at the boundary, in particular for propagating waves
+  // (above, the boundary condition is not passive, see
+  // FarfieldBoundaryOperator::CheckFloquetPassivity), and the mixed boundary curl terms are
+  // antisymmetric.
   if (mat_op.HasFloquetFrequencyScaling())
   {
     // k₀-based tensors: cross terms scale with a1, mass term with a2. For the second-order
@@ -1298,14 +1313,14 @@ void SpaceOperator::AssemblePreconditioner(
   if (!empty[0])
   {
     br_vec = AssembleOperators(GetNDSpaces(), &dfr, &fr, &dfbr, &fbr, &fpr, &frbr, &fpbr,
-                               skip_zeros, assemble_q_data);
+                               skip_zeros, assemble_q_data, pc_coarse_real);
     br_aux_vec =
         AssembleAuxOperators(GetH1Spaces(), &fr, &fbr, &frbr, skip_zeros, assemble_q_data);
   }
   if (!empty[1])
   {
     bi_vec = AssembleOperators(GetNDSpaces(), &dfi, &fi, &dfbi, &fbi, &fpi, &frbi, &fpbi,
-                               skip_zeros, assemble_q_data);
+                               skip_zeros, assemble_q_data, pc_coarse_real);
     bi_aux_vec =
         AssembleAuxOperators(GetH1Spaces(), &fi, &fbi, &frbi, skip_zeros, assemble_q_data);
   }
@@ -1330,9 +1345,9 @@ void SpaceOperator::AssemblePreconditioner(
   AddRealMassBdrCoefficients(pc_mat_shifted ? std::abs(a2.real()) : a2.real(), fbr);
   AddExtraSystemBdrCoefficients(a3, dfbr, dfbr, fbr, fbr, frbr, frbr, nullptr, nullptr);
   // Real-valued preconditioner (every level, including the smoothers): flip the sign of the
-  // second-order absorbing BC term so it stays positive semidefinite (see above). Like the
-  // domain Floquet cross terms, the antisymmetric mixed boundary curl terms of this BC are
-  // dropped.
+  // second-order absorbing BC term on every level so it stays positive semidefinite (see
+  // above). Like the domain Floquet cross terms, the antisymmetric mixed boundary curl
+  // terms of this BC are dropped.
   dfbr *= -1.0;
   if (mat_op.HasFloquetFrequencyScaling())
   {
@@ -1476,7 +1491,7 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(ScalarType a0,
 std::unique_ptr<ComplexOperator> SpaceOperator::GetSystemOperator(double omega,
                                                                   const ComplexOperator &P)
 {
-  if (pc_mat_real || pc_mat_shifted || pc_mat_amg || GetNDSpaces().GetNumLevels() < 2)
+  if (pc_mat_real || pc_mat_shifted || GetNDSpaces().GetNumLevels() < 2)
   {
     return {};
   }

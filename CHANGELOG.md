@@ -305,6 +305,18 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Bug Fixes
 
+  - Fixed slow and failing linear solves of frequency domain simulations with the
+    second-order absorbing boundary condition (`"Absorbing"` with `"Order": 2`), since its
+    sign was corrected in [PR 1070](https://github.com/awslabs/palace/pull/1070). The coarse
+    level of the multigrid preconditioner is solved with the real-valued matrix Br + Bi
+    unless `"ComplexCoarseSolve"` is set, and the negative semidefinite imaginary part of
+    this term cancelled part of the curl-curl term of Br there. Its sign is now flipped on
+    the coarse level, as it already was for AMS and BoomerAMG: eigenmode simulations of
+    radiating structures need up to four times fewer GMRES iterations, and driven sweeps
+    whose linear solves stopped at the iteration limit, with wrong results, now converge.
+    AMS and BoomerAMG now flip it on the coarse level only, so that the other levels apply
+    the system matrix, which also speeds up their solves with this condition. Results
+    otherwise change at the level of the linear solver tolerance. [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
   - The `"Problem"`/`"Iteration"` field of `palace.json` is now updated only after the AMR
     iteration's output is in its final location. With `SaveAdaptIterations`, it used to be
     written before the output was moved into `iterationXX`, so a reader polling it could
