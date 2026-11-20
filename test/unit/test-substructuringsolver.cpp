@@ -4188,12 +4188,23 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   // Online, the RegionSolver of the region of the box (a lumped port, so that the
   // preconditioner matrix is the system's but for S_E) solves the system of the sweep, with
   // S_E, to rounding, also after a refactorization: with the dense matrices on Γ on the
-  // grid of their size, and on a grid of all the processes, and with MUMPS's distributed
-  // Schur complement (by default) or SuperLU_DIST's from back-solves, on rank 0.
+  // grid of their size, and on a grid of all the processes, and with each sparse direct
+  // solver built for the Schur complement (MUMPS's distributed, STRUMPACK's or
+  // SuperLU_DIST's on rank 0), and the default one.
   RunDrivenBox(temp_dir, "Offline");
   MPI_Comm comm = Mpi::World();
   const int grid_procs = GENERATE_COPY(0, Mpi::Size(comm));
-  const std::string type = GENERATE("Default", "SuperLU");
+  std::vector<std::string> types = {"Default"};
+#if defined(MFEM_USE_MUMPS)
+  types.emplace_back("MUMPS");
+#endif
+#if defined(MFEM_USE_STRUMPACK)
+  types.emplace_back("STRUMPACK");
+#endif
+#if defined(MFEM_USE_SUPERLU)
+  types.emplace_back("SuperLU");
+#endif
+  const std::string type = GENERATE_COPY(Catch::Generators::from_range(types));
   IoData iodata(DrivenBoxConfig(temp_dir, "Online", [&](json &config)
                                 { config["Solver"]["Linear"]["Type"] = type; }),
                 false);
