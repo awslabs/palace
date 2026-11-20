@@ -5,6 +5,7 @@
 #include "communication.hpp"
 #include "omp.hpp"
 
+#include <cstdlib>
 #include <mfem.hpp>
 #if defined(MFEM_USE_UMPIRE)
 #include <umpire/ResourceManager.hpp>
@@ -24,6 +25,39 @@ int GetDeviceCount()
 #else
   return 0;
 #endif
+}
+
+int InitDeviceBeforeMpi()
+{
+#if defined(MFEM_USE_CUDA) || defined(MFEM_USE_HIP)
+  // Node-local rank set by Open MPI, MVAPICH, MPICH and Intel MPI, PMI, Slurm, Cray PALS,
+  // or Flux. Like GetDeviceId, assign devices round-robin over the processes of a node.
+  for (const char *name :
+       {"OMPI_COMM_WORLD_LOCAL_RANK", "MV2_COMM_WORLD_LOCAL_RANK", "MPI_LOCALRANKID",
+        "PMI_LOCAL_RANK", "SLURM_LOCALID", "PALS_LOCAL_RANKID", "FLUX_TASK_LOCAL_ID"})
+  {
+    const char *local_rank = std::getenv(name);
+    if (!local_rank)
+    {
+      continue;
+    }
+    const int ngpu = GetDeviceCount();
+    if (ngpu <= 0)
+    {
+      return -1;
+    }
+    const int device_id = std::atoi(local_rank) % ngpu;
+#if defined(MFEM_USE_CUDA)
+    MFEM_GPU_CHECK(cudaSetDevice(device_id));
+    MFEM_GPU_CHECK(cudaFree(nullptr));  // Creates the context
+#else
+    MFEM_GPU_CHECK(hipSetDevice(device_id));
+    MFEM_GPU_CHECK(hipFree(nullptr));  // Creates the context
+#endif
+    return device_id;
+  }
+#endif
+  return -1;
 }
 
 int GetDeviceId(MPI_Comm comm, int ngpu)

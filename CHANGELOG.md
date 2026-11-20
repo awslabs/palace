@@ -108,6 +108,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Performance Improvements
 
+  - The GPU of each process is selected, and its context created, before `MPI_Init`, so
+    that MPI libraries which set up the communication between the GPUs of a node in
+    `MPI_Init`, like Open MPI 5, can do so.
+    [PR 1260](https://github.com/awslabs/palace/pull/1260).
   - The AMS solver, used with a fixed number of iterations, now has a tolerance of zero and
     flags its zero initial guess. With a hypre patch, it then computes no residual norms,
     each a fine-level matrix-vector product and a reduction over all processes, and the
