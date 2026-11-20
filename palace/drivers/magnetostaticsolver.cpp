@@ -1023,12 +1023,15 @@ void MagnetostaticSolver::PostprocessSensitivities(const CurlCurlOperator &curlc
   {
     dK = curlcurl_op.GetStiffnessShapeDerivative();
   }
-  std::vector<std::unique_ptr<Operator>> K_mat;
+  std::vector<std::unique_ptr<Operator>> K_mat, L_mat;
   if (sensitivity.material_properties)
   {
     for (const auto &material : iodata.domains.materials)
     {
       K_mat.push_back(curlcurl_op.GetStiffness(material.attributes));
+      L_mat.push_back((material.lambda_L > 0.0)
+                          ? curlcurl_op.GetLondonMass(material.attributes)
+                          : nullptr);
     }
   }
 
@@ -1049,8 +1052,10 @@ void MagnetostaticSolver::PostprocessSensitivities(const CurlCurlOperator &curlc
                             {"Unit", "H"}};
     if (!K_mat.empty())
     {
-      // K scales with the inverse permeability of each material, and the excitations do not
-      // depend on it, so μ ∂M_ij/∂μ = A_jᵀ K_m A_i / (I_i I_j).
+      // K scales with the inverse permeability of each material, and its London mass L_m
+      // with the inverse square of the London depth, and the excitations depend on neither,
+      // so μ ∂M_ij/∂μ = A_jᵀ K_m A_i / (I_i I_j) and λ ∂M_ij/∂λ = 2 A_jᵀ L_m A_i / (I_i
+      // I_j).
       nd_fespace.GetProlongationMatrix()->Mult(A[i], u_l);
       nd_fespace.GetProlongationMatrix()->Mult(A[j], w_l);
       auto materials = nlohmann::json::array();
@@ -1059,9 +1064,17 @@ void MagnetostaticSolver::PostprocessSensitivities(const CurlCurlOperator &curlc
         K_mat[m]->Mult(u_l, y_l);
         const double dM =
             linalg::Dot<Vector>(curlcurl_op.GetComm(), w_l, y_l) / (I_inc[i] * I_inc[j]);
-        materials.push_back({{"Index", m + 1},
-                             {"Attributes", iodata.domains.materials[m].attributes},
-                             {"Permeability", dM * H}});
+        auto &material = materials.emplace_back(
+            nlohmann::json{{"Index", m + 1},
+                           {"Attributes", iodata.domains.materials[m].attributes},
+                           {"Permeability", dM * H}});
+        if (L_mat[m])
+        {
+          L_mat[m]->Mult(u_l, y_l);
+          material["LondonDepth"] = 2.0 *
+                                    linalg::Dot<Vector>(curlcurl_op.GetComm(), w_l, y_l) /
+                                    (I_inc[i] * I_inc[j]) * H;
+        }
       }
       entry["MaterialProperties"] = materials;
     }

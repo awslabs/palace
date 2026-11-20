@@ -309,8 +309,9 @@ public:
   void GetCurrentExcitationVector(int idx, Vector &RHS);
 
   // The stiffness operator of the elements with the given domain attributes, without
-  // boundary conditions, on L-vectors of the finest ND space.
+  // boundary conditions, on L-vectors of the finest ND space, and its London mass term.
   std::unique_ptr<Operator> GetStiffness(const std::vector<int> &attributes) const;
+  std::unique_ptr<Operator> GetLondonMass(const std::vector<int> &attributes) const;
 
   // Construct the derivatives with respect to the positions of the mesh nodes of the
   // stiffness form, and of the excitation of current source idx at a fixed current

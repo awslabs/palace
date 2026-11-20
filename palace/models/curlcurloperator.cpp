@@ -721,12 +721,34 @@ void CurlCurlOperator::GetCurrentExcitationVector(int idx, Vector &RHS)
 std::unique_ptr<Operator>
 CurlCurlOperator::GetStiffness(const std::vector<int> &attributes) const
 {
+  const auto ceed_attributes = mat_op.GetCeedAttributes(attributes);
   MaterialPropertyCoefficient muinv_func(mat_op.GetAttributeToMaterial(),
                                          mat_op.GetCurlCurlInvPermeability());
-  muinv_func.RestrictCoefficient(mat_op.GetCeedAttributes(attributes));
+  muinv_func.RestrictCoefficient(ceed_attributes);
+  MaterialPropertyCoefficient london_func(mat_op.GetAttributeToMaterial(),
+                                          mat_op.GetInvLondonDepth());
+  london_func.RestrictCoefficient(ceed_attributes);
   BilinearForm k(GetNDSpace());
-  k.AddDomainIntegrator<CurlCurlIntegrator>(muinv_func);
+  if (mat_op.HasLondonDepth())
+  {
+    k.AddDomainIntegrator<CurlCurlMassIntegrator>(muinv_func, london_func);
+  }
+  else
+  {
+    k.AddDomainIntegrator<CurlCurlIntegrator>(muinv_func);
+  }
   return k.PartialAssemble();
+}
+
+std::unique_ptr<Operator>
+CurlCurlOperator::GetLondonMass(const std::vector<int> &attributes) const
+{
+  MaterialPropertyCoefficient london_func(mat_op.GetAttributeToMaterial(),
+                                          mat_op.GetInvLondonDepth());
+  london_func.RestrictCoefficient(mat_op.GetCeedAttributes(attributes));
+  BilinearForm m(GetNDSpace());
+  m.AddDomainIntegrator<VectorFEMassIntegrator>(london_func);
+  return m.PartialAssemble();
 }
 
 std::unique_ptr<ShapeDerivativeOperator>
@@ -736,8 +758,14 @@ CurlCurlOperator::GetStiffnessShapeDerivative() const
               "Shape derivatives are not available with superconductor sheets!");
   MaterialPropertyCoefficient muinv_func(mat_op.GetAttributeToMaterial(),
                                          mat_op.GetCurlCurlInvPermeability());
+  MaterialPropertyCoefficient london_func(mat_op.GetAttributeToMaterial(),
+                                          mat_op.GetInvLondonDepth());
   ShapeDerivativeForm dk(GetNDSpace());
   dk.AddDomainIntegrator<CurlCurlShapeIntegrator>(muinv_func);
+  if (mat_op.HasLondonDepth())
+  {
+    dk.AddDomainIntegrator<VectorFEMassShapeIntegrator>(london_func);
+  }
   return dk.Assemble();
 }
 

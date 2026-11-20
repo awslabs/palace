@@ -8,6 +8,7 @@
 #include <memory>
 #include <random>
 #include <set>
+#include <tuple>
 #include <vector>
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -166,15 +167,16 @@ struct EigenProblem
   }
 };
 
-// The cube as a magnetostatic problem with an anisotropic magnetic material above. The
-// faces x = 0, z = 0 and x = 1 are a connected PEC, and the faces z = 1 and y = 0 are
-// surface current sources 1 and 2 along x, which close current loops through it.
+// The cube as a magnetostatic problem with an anisotropic magnetic material above, with a
+// London depth if given. The faces x = 0, z = 0 and x = 1 are a connected PEC, and the
+// faces z = 1 and y = 0 are surface current sources 1 and 2 along x, which close current
+// loops through it.
 struct MagnetostaticProblem
 {
   IoData iodata;
   std::vector<std::unique_ptr<Mesh>> mesh;
 
-  MagnetostaticProblem(mfem::Element::Type type, int order, bool amr)
+  MagnetostaticProblem(mfem::Element::Type type, int order, bool amr, double lambda_L = 0.0)
     : iodata(Units(1.0, 1.0))
   {
     iodata.model.Lc = 1.0;
@@ -184,6 +186,7 @@ struct MagnetostaticProblem
     auto &upper = iodata.domains.materials.emplace_back();
     upper.attributes = {2};
     upper.mu_r.s = {1.5, 2.0, 2.5};
+    upper.lambda_L = lambda_L;
     iodata.boundaries.pec.attributes = {1, 3, 5};
     for (const auto &[idx, attr] : {std::pair{1, 6}, std::pair{2, 2}})
     {
@@ -213,6 +216,39 @@ std::vector<Vector> SolveTerminals(const IoData &iodata, LaplaceOperator &laplac
     ksp.Mult(RHS, v);
   }
   return V;
+}
+
+// The vector potentials of the surface current sources for unit currents, and the
+// inductances M_ij = A_jᵀ K A_i for (i, j) = (0, 0), (0, 1) and (1, 1), as in
+// MagnetostaticSolver.
+std::pair<std::vector<Vector>, std::vector<double>>
+SolveInductances(const IoData &iodata, CurlCurlOperator &curlcurl_op)
+{
+  auto K = curlcurl_op.GetStiffnessMatrix();
+  auto P = curlcurl_op.GetPreconditionerMatrix();
+  KspSolver ksp(iodata, curlcurl_op.GetNDSpaces(), &curlcurl_op.GetH1Spaces());
+  ksp.SetOperators(*K, P ? *P : *K);
+  std::vector<Vector> A;
+  Vector RHS;
+  for (const auto &[idx, data] : curlcurl_op.GetSurfaceCurrentOp())
+  {
+    REQUIRE(data.GetExcitationCurrent() == 1.0);
+    curlcurl_op.GetCurrentExcitationVector(idx, RHS);
+    auto &a = A.emplace_back(RHS.Size());
+    a.UseDevice(true);
+    a = 0.0;
+    ksp.Mult(RHS, a);
+  }
+  REQUIRE(A.size() == 2);
+  std::vector<double> M;
+  Vector y(RHS.Size());
+  y.UseDevice(true);
+  for (const auto &[i, j] : {std::pair{0, 0}, std::pair{0, 1}, std::pair{1, 1}})
+  {
+    K->Mult(A[i], y);
+    M.push_back(linalg::Dot<Vector>(Mpi::World(), A[j], y));
+  }
+  return {A, M};
 }
 
 // The capacitance C_ij = V_jᵀ K V_i, as in ElectrostaticSolver::PostprocessTerminals.
@@ -569,41 +605,15 @@ TEST_CASE("Magnetostatic inductance sensitivities", "[sensitivity][Serial][Paral
   auto type = GENERATE(mfem::Element::HEXAHEDRON, mfem::Element::TETRAHEDRON);
   auto order = GENERATE(1, 2);
   auto amr = GENERATE(false, true);
-  INFO("Element type: " << type << ", order: " << order << ", AMR: " << amr);
-  MagnetostaticProblem problem(type, order, amr);
+  auto lambda_L = GENERATE(0.0, 0.3);
+  INFO("Element type: " << type << ", order: " << order << ", AMR: " << amr
+                        << ", London depth: " << lambda_L);
+  MagnetostaticProblem problem(type, order, amr, lambda_L);
   auto &mesh = *problem.mesh[0];
   CurlCurlOperator curlcurl_op(problem.iodata, problem.mesh);
 
-  // The vector potentials, and the inductances M_ij = A_jᵀ K A_i for unit currents, as in
-  // MagnetostaticSolver.
-  auto Solve = [&]()
-  {
-    auto K = curlcurl_op.GetStiffnessMatrix();
-    KspSolver ksp(problem.iodata, curlcurl_op.GetNDSpaces(), &curlcurl_op.GetH1Spaces());
-    ksp.SetOperators(*K, *K);
-    std::vector<Vector> A;
-    Vector RHS;
-    for (const auto &[idx, data] : curlcurl_op.GetSurfaceCurrentOp())
-    {
-      REQUIRE(data.GetExcitationCurrent() == 1.0);
-      curlcurl_op.GetCurrentExcitationVector(idx, RHS);
-      auto &a = A.emplace_back(RHS.Size());
-      a.UseDevice(true);
-      a = 0.0;
-      ksp.Mult(RHS, a);
-    }
-    std::vector<double> M;
-    Vector y(RHS.Size());
-    y.UseDevice(true);
-    for (const auto &[i, j] : {std::pair{0, 0}, std::pair{0, 1}, std::pair{1, 1}})
-    {
-      K->Mult(A[i], y);
-      M.push_back(linalg::Dot<Vector>(Mpi::World(), A[j], y));
-    }
-    return std::pair{A, M};
-  };
+  auto Solve = [&]() { return SolveInductances(problem.iodata, curlcurl_op); };
   const auto [A, M] = Solve();
-  REQUIRE(A.size() == 2);
 
   const auto dK = curlcurl_op.GetStiffnessShapeDerivative();
   std::vector<std::unique_ptr<ShapeDerivativeOperator>> db;
@@ -667,6 +677,81 @@ TEST_CASE("Magnetostatic inductance sensitivities", "[sensitivity][Serial][Paral
     INFO("Entry " << k << ": M = " << M[k] << ", g ⋅ W = " << adjoint[k]
                   << ", finite difference = " << fd);
     CHECK(std::abs(adjoint[k] - fd) <= 1.0e-7 * std::abs(fd));
+  }
+}
+
+TEST_CASE("Magnetostatic material derivatives", "[sensitivity][Serial][Parallel]")
+{
+  // The derivatives of the inductances with respect to relative changes of the permeability
+  // and the London depth of the upper material, as in MagnetostaticSolver, against finite
+  // differences.
+  auto type = GENERATE(mfem::Element::HEXAHEDRON, mfem::Element::TETRAHEDRON);
+  INFO("Element type: " << type);
+  constexpr int order = 2;
+  constexpr double lambda_L = 0.3;
+  auto Inductances = [&](double mu_scale, double lambda_scale)
+  {
+    MagnetostaticProblem problem(type, order, false, lambda_L);
+    auto &upper = problem.iodata.domains.materials[1];
+    for (auto &mu : upper.mu_r.s)
+    {
+      mu *= mu_scale;
+    }
+    upper.lambda_L *= lambda_scale;
+    CurlCurlOperator curlcurl_op(problem.iodata, problem.mesh);
+    return SolveInductances(problem.iodata, curlcurl_op).second;
+  };
+
+  MagnetostaticProblem problem(type, order, false, lambda_L);
+  CurlCurlOperator curlcurl_op(problem.iodata, problem.mesh);
+  const auto [A, M] = SolveInductances(problem.iodata, curlcurl_op);
+  const auto &attributes = problem.iodata.domains.materials[1].attributes;
+  const auto K_m = curlcurl_op.GetStiffness(attributes);
+  const auto L_m = curlcurl_op.GetLondonMass(attributes);
+  const auto &nd_fespace = curlcurl_op.GetNDSpace();
+  Vector u(nd_fespace.GetVSize()), w(nd_fespace.GetVSize()), y(nd_fespace.GetVSize());
+  u.UseDevice(true);
+  w.UseDevice(true);
+  y.UseDevice(true);
+  std::vector<double> d_mu, d_lambda;
+  for (const auto &[i, j] : {std::pair{0, 0}, std::pair{0, 1}, std::pair{1, 1}})
+  {
+    nd_fespace.GetProlongationMatrix()->Mult(A[i], u);
+    nd_fespace.GetProlongationMatrix()->Mult(A[j], w);
+    K_m->Mult(u, y);
+    d_mu.push_back(linalg::Dot<Vector>(Mpi::World(), w, y));
+    L_m->Mult(u, y);
+    d_lambda.push_back(2.0 * linalg::Dot<Vector>(Mpi::World(), w, y));
+  }
+
+  const double h = 1.0e-3;
+  // Plain variables rather than structured bindings, which lambdas can't capture with all
+  // compilers.
+  for (const auto &property : {std::tuple{"Permeability", &d_mu, 1.0, 0.0},
+                               std::tuple{"LondonDepth", &d_lambda, 0.0, 1.0}})
+  {
+    const char *name = std::get<0>(property);
+    const auto *derivative = std::get<1>(property);
+    const double mu_step = std::get<2>(property), lambda_step = std::get<3>(property);
+    auto CentralDifference = [&](double h)
+    {
+      const auto Mp = Inductances(1.0 + mu_step * h, 1.0 + lambda_step * h);
+      const auto Mm = Inductances(1.0 - mu_step * h, 1.0 - lambda_step * h);
+      std::vector<double> d;
+      for (std::size_t k = 0; k < Mp.size(); k++)
+      {
+        d.push_back((Mp[k] - Mm[k]) / (2.0 * h));
+      }
+      return d;
+    };
+    const auto d1 = CentralDifference(h), d2 = CentralDifference(0.5 * h);
+    for (std::size_t k = 0; k < M.size(); k++)
+    {
+      const double fd = (4.0 * d2[k] - d1[k]) / 3.0;
+      INFO(name << ", entry " << k << ": M = " << M[k]
+                << ", derivative = " << (*derivative)[k] << ", finite difference = " << fd);
+      CHECK(std::abs((*derivative)[k] - fd) <= 1.0e-7 * std::abs(M[k]));
+    }
   }
 }
 
