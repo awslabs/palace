@@ -32371,16 +32371,6 @@ SurfaceResponseOperator::FinishConductorConsistencyGate(
       excluded_count++;
       excluded_claims += record.claim_length * mesh_coordinate_scale;
       excluded_cells += record.cell_length * mesh_coordinate_scale;
-      if (!per_excitation || !InUnion(record.patch))
-      {
-        first_count++;
-        first_claims += record.claim_length * mesh_coordinate_scale;
-        first_cells += record.cell_length * mesh_coordinate_scale;
-      }
-      if (per_excitation)
-      {
-        excluded_by_model[record.model]++;
-      }
       // The root's patch table (the patches CSV) follows the exclusion (under PerExcitation
       // it accumulates the union, the Sticky rule's final table).
       if (assignment_positions.empty())
@@ -32404,6 +32394,26 @@ SurfaceResponseOperator::FinishConductorConsistencyGate(
     {
       max_ratio = record.max_ratio;
       max_patch = record.patch;
+    }
+  }
+  if (per_excitation)
+  {
+    // In their own loop: the Sticky loop above keeps its former arithmetic (a shared
+    // product there can change how the compiler contracts its sums: the last digit of
+    // CellLength moved on a Sticky run when these sums sat in that loop).
+    for (const auto &record : records)
+    {
+      if (!record.excluded || record.record_only)
+      {
+        continue;
+      }
+      excluded_by_model[record.model]++;
+      if (!InUnion(record.patch))
+      {
+        first_count++;
+        first_claims += record.claim_length * mesh_coordinate_scale;
+        first_cells += record.cell_length * mesh_coordinate_scale;
+      }
     }
   }
   // S7diag R1 (decision 758): the excluded patches' raw claims (built at construction by
