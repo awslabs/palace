@@ -33,55 +33,98 @@ namespace palace
 using json = nlohmann::json;
 
 // Diagnostic (not for upstream): hashes of the mesh which do not depend on its partition,
-// to compare builds: the number of elements; the sum over the elements of a hash of the
-// bits of their vertex coordinates, sorted (geometry) and in the element's vertex order
-// (marks).
-void PrintMeshHashes(const mfem::ParMesh &mesh, const char *when)
+// to compare builds. Vertex positions come from the nodes when the mesh has them (the
+// vertices array is not kept consistent then). Per element: a hash of the bits of its
+// vertex positions, sorted (geometry) and in its vertex order (marks), and the same with
+// positions rounded to float (geometry32, marks32), summed over the (marked) elements.
+std::array<std::uint64_t, 4> ElementHashes(const mfem::ParMesh &mesh, int e)
 {
   auto Mix = [](std::uint64_t h, std::uint64_t v)
   {
     h ^= v + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
     return h;
   };
-  std::uint64_t geom = 0, marks = 0;
-  for (int e = 0; e < mesh.GetNE(); e++)
+  const mfem::GridFunction *nodes = mesh.GetNodes();
+  const mfem::FiniteElementSpace *fes = nodes ? nodes->FESpace() : nullptr;
+  const mfem::Element *el = mesh.GetElement(e);
+  std::vector<std::array<std::uint64_t, 3>> p64, p32;
+  mfem::Array<int> vdofs;
+  for (int j = 0; j < el->GetNVertices(); j++)
   {
-    const mfem::Element *el = mesh.GetElement(e);
-    std::vector<std::array<std::uint64_t, 3>> pts;
-    for (int j = 0; j < el->GetNVertices(); j++)
+    const int v = el->GetVertices()[j];
+    std::array<double, 3> x = {0.0, 0.0, 0.0};
+    if (fes && fes->GetNVDofs() > 0)
     {
-      const double *x = mesh.GetVertex(el->GetVertices()[j]);
-      std::array<std::uint64_t, 3> p = {0, 0, 0};
+      fes->GetVertexVDofs(v, vdofs);
+      for (int d = 0; d < vdofs.Size(); d++)
+      {
+        x[d] = (*nodes)(vdofs[d]);
+      }
+    }
+    else
+    {
       for (int d = 0; d < mesh.SpaceDimension(); d++)
       {
-        std::memcpy(&p[d], &x[d], sizeof(double));
+        x[d] = mesh.GetVertex(v)[d];
       }
-      pts.push_back(p);
     }
-    std::uint64_t hm = 0;
-    for (const auto &p : pts)
+    std::array<std::uint64_t, 3> b64 = {0, 0, 0}, b32 = {0, 0, 0};
+    for (int d = 0; d < 3; d++)
     {
-      for (auto v : p)
-      {
-        hm = Mix(hm, v);
-      }
+      std::memcpy(&b64[d], &x[d], sizeof(double));
+      const float f = static_cast<float>(x[d]);
+      std::uint32_t u;
+      std::memcpy(&u, &f, sizeof(float));
+      b32[d] = u;
     }
-    std::sort(pts.begin(), pts.end());
-    std::uint64_t hg = 0;
-    for (const auto &p : pts)
-    {
-      for (auto v : p)
-      {
-        hg = Mix(hg, v);
-      }
-    }
-    geom += hg;
-    marks += hm;
+    p64.push_back(b64);
+    p32.push_back(b32);
   }
-  unsigned long long v[2] = {geom, marks};
-  MPI_Allreduce(MPI_IN_PLACE, v, 2, MPI_UNSIGNED_LONG_LONG, MPI_SUM, mesh.GetComm());
-  Mpi::Print(" Mesh hashes {}: elements {:d}, geometry {:016x}, marks {:016x}\n", when,
-             mesh.GetGlobalNE(), v[0], v[1]);
+  auto H = [&Mix](const std::vector<std::array<std::uint64_t, 3>> &pts)
+  {
+    std::uint64_t h = 0;
+    for (const auto &p : pts)
+    {
+      for (auto v : p)
+      {
+        h = Mix(h, v);
+      }
+    }
+    return h;
+  };
+  std::array<std::uint64_t, 4> out;
+  out[1] = H(p64);
+  out[3] = H(p32);
+  std::sort(p64.begin(), p64.end());
+  std::sort(p32.begin(), p32.end());
+  out[0] = H(p64);
+  out[2] = H(p32);
+  return out;
+}
+
+void PrintHashSums(const mfem::ParMesh &mesh, const char *what,
+                   const mfem::Array<int> *subset)
+{
+  unsigned long long v[5] = {0, 0, 0, 0, 0};
+  const int n = subset ? subset->Size() : mesh.GetNE();
+  for (int i = 0; i < n; i++)
+  {
+    const auto h = ElementHashes(mesh, subset ? (*subset)[i] : i);
+    for (int k = 0; k < 4; k++)
+    {
+      v[k] += h[k];
+    }
+  }
+  v[4] = n;
+  MPI_Allreduce(MPI_IN_PLACE, v, 5, MPI_UNSIGNED_LONG_LONG, MPI_SUM, mesh.GetComm());
+  Mpi::Print(" Mesh hashes {}: elements {:d}, geometry {:016x}, marks {:016x}, geometry32 "
+             "{:016x}, marks32 {:016x}\n",
+             what, v[4], v[0], v[1], v[2], v[3]);
+}
+
+void PrintMeshHashes(const mfem::ParMesh &mesh, const char *when)
+{
+  PrintHashSums(mesh, when, nullptr);
 }
 
 fs::path SaveIteration(MPI_Comm comm, const fs::path &output_dir, int step, int width)
@@ -299,6 +342,7 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
   MPI_Comm comm = mesh.back()->GetComm();
 
   // Perform initial solve and estimation.
+  PrintMeshHashes(*mesh.back(), "at load");
   auto [indicators, ntdof] = Solve(mesh);
   MFEM_VERIFY(solve_converged_,
               "Initial solve did not converge; no converged result to fall back on!");
@@ -365,6 +409,7 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
     {
       mfem::ParMesh &fine_mesh = *mesh.back();
       const auto initial_elem_count = fine_mesh.GetGlobalNE();
+      PrintHashSums(fine_mesh, "of the marked elements", &marked_elements);
       fine_mesh.GeneralRefinement(marked_elements, -1, refinement.max_nc_levels);
       if (fine_mesh.Conforming())
       {
