@@ -206,7 +206,10 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     serial.Print(output);
   }
   Mpi::Barrier(Mpi::World());
-  json config = ConvexIslandConfig();
+  // Both crack forms of the island sheet (Legacy: cracked; Default: the key unset).
+  const auto crack_policy = GENERATE(test::CrackPolicy::Legacy, test::CrackPolicy::Default);
+  INFO("crack policy: " << test::CrackPolicyName(crack_policy));
+  json config = ConvexIslandConfig(crack_policy);
   config["Model"]["Mesh"] = mesh_path.string();
   config["Model"]["L0"] = 1.0;
   config["Model"]["Lc"] = 1.0;
@@ -224,7 +227,8 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     {
       run["Boundaries"]["Postprocessing"]["Dielectric"][0]["Region"] = region;
     }
-    const fs::path output = temp.temp_dir / stem;
+    const fs::path output =
+        temp.temp_dir / (stem + "-" + test::CrackPolicyName(crack_policy));
     run["Problem"]["Output"] = output.string();
     test::RunElectrostatic(run);
     Mpi::Barrier(Mpi::World());
@@ -330,7 +334,9 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     serial.Print(output);
   }
   Mpi::Barrier(comm);
-  json config = ConvexMaxwellIslandConfig();
+  const auto crack_policy = GENERATE(test::CrackPolicy::Legacy, test::CrackPolicy::Default);
+  INFO("crack policy: " << test::CrackPolicyName(crack_policy));
+  json config = ConvexMaxwellIslandConfig(crack_policy);
   config["Model"]["Mesh"] = mesh_path.string();
   config["Model"]["L0"] = 1.0;
   config["Model"]["Lc"] = 1.0;
@@ -350,7 +356,8 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     {
       run["Boundaries"]["Postprocessing"]["Dielectric"][0]["Region"] = region;
     }
-    const fs::path output = temp.temp_dir / stem;
+    const fs::path output =
+        temp.temp_dir / (stem + "-" + test::CrackPolicyName(crack_policy));
     run["Problem"]["Output"] = output.string();
     IoData iodata(run, false);
     MakeOutputFolder(iodata, comm);
