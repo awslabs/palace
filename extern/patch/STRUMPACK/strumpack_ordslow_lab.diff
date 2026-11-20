@@ -1,0 +1,906 @@
+diff --git a/src/misc/OrdSlowLab.hpp b/src/misc/OrdSlowLab.hpp
+new file mode 100644
+index 00000000..885c0e89
+--- /dev/null
++++ b/src/misc/OrdSlowLab.hpp
+@@ -0,0 +1,573 @@
++/*
++ * LAB ONLY (not for a pull request): instrumentation of the
++ * distributed triangular solve, switched on with the environment
++ * variable STRUMPACK_ORDSLOW=1. Every process records, per solve, the
++ * time of the parts of the solve and a few counters of the operating
++ * system; the records are reduced over the processes in batches (one
++ * set of reductions per STRUMPACK_ORDSLOW_BATCH solves, default 64)
++ * and process 0 prints one line per solve.
++ *
++ * Lines (all start with "#OS"):
++ *   #OSE  settings of the node of process 0 (once per process)
++ *   #OSD  mapping of the tree to the processes (once per tree)
++ *   #OSN  node index and host name
++ *   #OSP  one line per process, static description (once per tree)
++ *   #OSH  names of the fields of #OSL
++ *   #OSL  one line per solve: for each field min mean max rank_of_max
++ *   #OST  one line per process for a selected solve
++ *   #OSV  counters of /proc/vmstat, change over a batch
++ *   #OSM  one line per process: means over all the solves of a tree
++ */
++#ifndef STRUMPACK_ORDSLOW_LAB_HPP
++#define STRUMPACK_ORDSLOW_LAB_HPP
++
++#include <algorithm>
++#include <cstdio>
++#include <cstdlib>
++#include <cstring>
++#include <fstream>
++#include <iostream>
++#include <map>
++#include <sstream>
++#include <string>
++#include <vector>
++#include <malloc.h>
++#include <sched.h>
++#include <sys/resource.h>
++#include <time.h>
++#include <unistd.h>
++#include <mpi.h>
++
++namespace strumpack {
++  namespace ordslow {
++
++    // fields of a solve record
++    enum {
++      F_IN,      // right-hand side to the tree layout
++      F_FWD,     // own sequential subtree, forward
++      F_DIST,    // the rest of the tree solve (distributed fronts)
++      F_BWD,     // own sequential subtree, backward
++      F_OUT,     // solution back to the row distribution
++      F_TOT,     // entry to exit
++      F_GAP,     // exit of the previous solve to this entry
++      F_EA,      // distributed fronts: extend-add of the right-hand side
++      F_F2,      // distributed fronts: forward solve with the front
++      F_B1,      // distributed fronts: backward solve with the front
++      F_EX,      // distributed fronts: extraction for the children
++      F_FLT,     // minor page faults during the solve
++      F_FLTOUT,  // minor page faults since the previous solve
++      F_VCSW,    // voluntary context switches during the solve
++      F_IVCSW,   // involuntary context switches during the solve
++      F_CPUCHG,  // 1 if the core differs from that of the previous solve
++      F_UTIME,   // user CPU time during the solve
++      F_STIME,   // system CPU time during the solve
++      F_CPUT,    // process CPU time during the solve
++      F_BRK,     // growth of the program break during the solve
++      F_BRKOUT,  // change of the program break since the previous solve
++      F_ENTRY,   // wall clock at entry
++      F_EXIT,    // wall clock at exit
++      NF
++    };
++    inline const char* field_name(int f) {
++      static const char* n[NF] =
++        {"in", "fwd", "dist", "bwd", "out", "tot", "gap", "ea", "f2", "b1",
++         "ex", "flt", "fltout", "vcsw", "ivcsw", "cpuchg", "utime", "stime",
++         "cput", "brk", "brkout", "entry", "exit"};
++      return n[f];
++    }
++    // 0: time in ms, 1: count, 2: bytes (printed in kB), 3: wall clock
++    inline int field_kind(int f) {
++      if (f == F_BRK || f == F_BRKOUT) return 2;
++      if (f == F_ENTRY || f == F_EXIT) return 3;
++      if (f >= F_FLT && f <= F_CPUCHG) return 1;
++      return 0;
++    }
++
++    // static description of a process, for #OSP
++    enum {
++      S_CPU, S_NAFF, S_LOCROWS, S_LEAFROWS, S_SUBNNZ, S_SUBFRONTS,
++      S_SUBLEVELS, S_SUBMAXUPD, S_SUBROOTSEP, S_SUBROOTUPD, S_SUBENTRIES,
++      S_NPF, S_MINPFP, S_SUMPFSEP, S_NSEND, S_NRECV, S_ARENA, S_HBLKHD,
++      S_HBLKS, S_KEEPCOST, S_FORDBLKS, S_RSS, S_ANONHUGE, NS
++    };
++    inline const char* static_name(int f) {
++      static const char* n[NS] =
++        {"cpu", "naff", "locrows", "leafrows", "subnnz", "subfronts",
++         "sublevels", "submaxupd", "subrootsep", "subrootupd", "subentries",
++         "npf", "minpfP", "sumpfsep", "nsend", "nrecv", "arenaMB",
++         "mmappedMB", "mmapped", "keepcostkB", "freeMB", "rssMB",
++         "anonhugeMB"};
++      return n[f];
++    }
++
++    struct Rec {
++      MPI_Comm comm = MPI_COMM_NULL;
++      long seq = 0;        // number of the tree, in order of first solve
++      long nsolves = 0;    // solves recorded so far
++      int nbuf = 0;
++      std::vector<double> buf;
++      double sum[NF];
++      bool sub_done = false, static_done = false, reader = false;
++      double stat[NS];
++      int tables = 0;
++      double fast_ref = 0;
++      std::vector<double> vm0;
++      Rec() {
++        std::fill(sum, sum+NF, 0.);
++        std::fill(stat, stat+NS, 0.);
++      }
++    };
++
++    struct State {
++      int level = -1, batch = 64, ppn = 192;
++      long nrec = 0;
++      std::map<const void*,Rec> recs;
++      Rec* cur = nullptr;
++      // accumulated by the fronts during the current solve
++      double fwd = 0, bwd = 0, ea = 0, f2 = 0, b1 = 0, ex = 0;
++      // the current solve
++      double t0 = 0, t1 = 0, t2 = 0, cpu0 = 0, real0 = 0;
++      long brk0 = 0, brk2 = 0;
++      struct rusage r0;
++      int ncols = 0;
++      // the previous solve of this process
++      double prev_exit = 0;
++      long prev_flt = 0, prev_brk = 0;
++      int prev_cpu = -1;
++      // leaves of the distributed tree: (P0, P), on every process
++      std::vector<int> leafmap;
++    };
++    inline State& st() { static State s; return s; }
++
++    inline bool on() {
++      auto& s = st();
++      if (s.level < 0) {
++        auto e = std::getenv("STRUMPACK_ORDSLOW");
++        s.level = e ? std::atoi(e) : 0;
++        if (auto b = std::getenv("STRUMPACK_ORDSLOW_BATCH"))
++          s.batch = std::max(1, std::atoi(b));
++        if (auto p = std::getenv("STRUMPACK_ORDSLOW_PPN"))
++          s.ppn = std::max(1, std::atoi(p));
++      }
++      return s.level > 0;
++    }
++    inline double wall() {
++      struct timespec ts;
++      clock_gettime(CLOCK_MONOTONIC, &ts);
++      return ts.tv_sec + 1e-9 * ts.tv_nsec;
++    }
++    inline double real() {
++      struct timespec ts;
++      clock_gettime(CLOCK_REALTIME, &ts);
++      return (ts.tv_sec - 1700000000L) + 1e-9 * ts.tv_nsec;
++    }
++    inline double cputime() {
++      struct timespec ts;
++      clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &ts);
++      return ts.tv_sec + 1e-9 * ts.tv_nsec;
++    }
++    inline double tv(const struct timeval& t) {
++      return t.tv_sec + 1e-6 * t.tv_usec;
++    }
++    inline std::string read_line(const char* file) {
++      std::ifstream f(file);
++      std::string l;
++      if (f) std::getline(f, l);
++      return l;
++    }
++    inline std::vector<double> read_vmstat() {
++      static const char* keys[] =
++        {"pgfault", "thp_fault_alloc", "thp_fault_fallback",
++         "thp_collapse_alloc", "thp_split_page", "thp_split_pmd",
++         "compact_stall", "numa_hint_faults", "numa_pages_migrated",
++         "pgmigrate_success", "numa_pte_updates", "pgfree"};
++      const int nk = sizeof(keys) / sizeof(keys[0]);
++      std::vector<double> v(nk, 0.);
++      std::ifstream f("/proc/vmstat");
++      std::string k;
++      double x;
++      while (f >> k >> x)
++        for (int i=0; i<nk; i++)
++          if (k == keys[i]) v[i] = x;
++      return v;
++    }
++    inline const char* vmstat_name(int i) {
++      static const char* keys[] =
++        {"pgfault", "thp_fault_alloc", "thp_fault_fallback",
++         "thp_collapse_alloc", "thp_split_page", "thp_split_pmd",
++         "compact_stall", "numa_hint_faults", "numa_pages_migrated",
++         "pgmigrate_success", "numa_pte_updates", "pgfree"};
++      return keys[i];
++    }
++
++    /** Start of a solve of the tree owner, on every process of comm. */
++    inline void begin(const void* owner, MPI_Comm comm, int ncols) {
++      if (!on()) return;
++      auto& s = st();
++      auto it = s.recs.find(owner);
++      if (it == s.recs.end()) {
++        it = s.recs.emplace(owner, Rec()).first;
++        it->second.comm = comm;
++        it->second.seq = s.nrec++;
++        it->second.buf.resize(std::size_t(s.batch) * NF);
++        // one process per node reads the counters of the node
++        int rank;
++        MPI_Comm_rank(comm, &rank);
++        it->second.reader = (rank % s.ppn == 0);
++        if (it->second.reader) it->second.vm0 = read_vmstat();
++      }
++      s.cur = &it->second;
++      s.ncols = ncols;
++      s.fwd = s.bwd = s.ea = s.f2 = s.b1 = s.ex = 0;
++      getrusage(RUSAGE_SELF, &s.r0);
++      s.cpu0 = cputime();
++      s.brk0 = s.brk2 = long(sbrk(0));
++      s.real0 = real();
++      s.t0 = s.t1 = s.t2 = wall();
++    }
++    inline void mark_in() { if (st().cur) st().t1 = wall(); }
++    inline void mark_solved() {
++      auto& s = st();
++      if (!s.cur) return;
++      s.t2 = wall();
++      s.brk2 = long(sbrk(0));
++    }
++    inline bool want_static() { return st().cur && !st().cur->sub_done; }
++
++    inline void print_fields(std::ostringstream& o, const double* v,
++                             const int* fields, int nf) {
++      char b[64];
++      for (int i=0; i<nf; i++) {
++        int f = fields[i];
++        switch (field_kind(f)) {
++        case 0: std::snprintf(b, 64, " %.3f", 1e3 * v[f]); break;
++        case 1: std::snprintf(b, 64, " %.0f", v[f]); break;
++        case 2: std::snprintf(b, 64, " %.0f", v[f] / 1024.); break;
++        default: std::snprintf(b, 64, " %.3f", 1e3 * v[f]);
++        }
++        o << b;
++      }
++    }
++
++    /**
++     * Collective on the communicator of the record: reduce and print
++     * the buffered solves.
++     */
++    inline void flush(Rec& r, bool final) {
++      auto& s = st();
++      MPI_Comm comm = r.comm;
++      int rank, P;
++      MPI_Comm_rank(comm, &rank);
++      MPI_Comm_size(comm, &P);
++      std::ostringstream o;
++      char b[256];
++      if (!r.static_done) {
++        r.static_done = true;
++        cpu_set_t set;
++        CPU_ZERO(&set);
++        sched_getaffinity(0, sizeof(set), &set);
++        r.stat[S_CPU] = sched_getcpu();
++        r.stat[S_NAFF] = CPU_COUNT(&set);
++#if defined(__GLIBC__) && __GLIBC_PREREQ(2, 33)
++        auto mi = mallinfo2();
++#else
++        auto mi = mallinfo();
++#endif
++        r.stat[S_ARENA] = double(mi.arena) / 1048576.;
++        r.stat[S_HBLKHD] = double(mi.hblkhd) / 1048576.;
++        r.stat[S_HBLKS] = double(mi.hblks);
++        r.stat[S_KEEPCOST] = double(mi.keepcost) / 1024.;
++        r.stat[S_FORDBLKS] = double(mi.fordblks) / 1048576.;
++        {
++          std::ifstream f("/proc/self/smaps_rollup");
++          std::string k;
++          while (f >> k) {
++            if (k == "Rss:") { double x; f >> x; r.stat[S_RSS] = x / 1024.; }
++            if (k == "AnonHugePages:") {
++              double x; f >> x; r.stat[S_ANONHUGE] = x / 1024.;
++            }
++          }
++        }
++        char name[64];
++        std::memset(name, 0, 64);
++        gethostname(name, 63);
++        std::vector<char> names(rank ? 0 : std::size_t(P) * 64);
++        std::vector<double> stat(rank ? 0 : std::size_t(P) * NS);
++        MPI_Gather(name, 64, MPI_CHAR, names.data(), 64, MPI_CHAR, 0, comm);
++        MPI_Gather(r.stat, NS, MPI_DOUBLE, stat.data(), NS, MPI_DOUBLE,
++                   0, comm);
++        if (!rank) {
++          auto tun = std::getenv("GLIBC_TUNABLES");
++          o << "#OSE tree " << r.seq << " P " << P << " batch " << s.batch
++            << " thp_enabled \""
++            << read_line("/sys/kernel/mm/transparent_hugepage/enabled")
++            << "\" thp_defrag \""
++            << read_line("/sys/kernel/mm/transparent_hugepage/defrag")
++            << "\" numa_balancing \""
++            << read_line("/proc/sys/kernel/numa_balancing")
++            << "\" GLIBC_TUNABLES \"" << (tun ? tun : "") << "\" pagesize "
++            << sysconf(_SC_PAGESIZE) << "\n";
++          std::vector<std::string> nodes;
++          std::vector<int> node(P);
++          for (int p=0; p<P; p++) {
++            std::string nm(&names[std::size_t(p) * 64]);
++            auto it = std::find(nodes.begin(), nodes.end(), nm);
++            node[p] = it - nodes.begin();
++            if (it == nodes.end()) nodes.push_back(nm);
++          }
++          for (std::size_t i=0; i<nodes.size(); i++)
++            o << "#OSN " << r.seq << " " << i << " " << nodes[i] << "\n";
++          o << "#OSP " << r.seq << " rank node";
++          for (int f=0; f<NS; f++) o << " " << static_name(f);
++          o << "\n";
++          for (int p=0; p<P; p++) {
++            o << "#OSP " << r.seq << " " << p << " " << node[p];
++            for (int f=0; f<NS; f++) {
++              std::snprintf(b, 64, " %.6g", stat[std::size_t(p)*NS+f]);
++              o << b;
++            }
++            o << "\n";
++          }
++          o << "#OSH tree solve ncols | for each of";
++          for (int f=0; f<NF; f++) o << " " << field_name(f);
++          o << ": min mean max rank_of_max (times in ms, brk in kB,"
++            << " entry and exit relative to the first entry);"
++            << " then rank_of_min of entry and exit\n";
++        }
++      }
++      const int n = r.nbuf;
++      if (n > 0) {
++        struct DI { double v; int r; };
++        std::vector<DI> loc(std::size_t(n) * NF), mx, mn;
++        std::vector<double> sm;
++        for (std::size_t i=0; i<loc.size(); i++) {
++          loc[i].v = r.buf[i];
++          loc[i].r = rank;
++        }
++        if (!rank) {
++          mx.resize(loc.size());
++          mn.resize(loc.size());
++          sm.resize(loc.size());
++        }
++        MPI_Reduce(loc.data(), mx.data(), n * NF, MPI_DOUBLE_INT,
++                   MPI_MAXLOC, 0, comm);
++        MPI_Reduce(loc.data(), mn.data(), n * NF, MPI_DOUBLE_INT,
++                   MPI_MINLOC, 0, comm);
++        MPI_Reduce(r.buf.data(), sm.data(), n * NF, MPI_DOUBLE,
++                   MPI_SUM, 0, comm);
++        int sel[2] = {-1, -1};
++        if (!rank) {
++          std::vector<double> tot(n);
++          for (int i=0; i<n; i++) {
++            auto k = std::size_t(i) * NF;
++            tot[i] = sm[k+F_TOT] / P;
++            o << "#OSL " << r.seq << " " << r.nsolves - n + i << " "
++              << s.ncols;
++            const double e0 = mn[k+F_ENTRY].v;
++            for (int f=0; f<NF; f++) {
++              double lo = mn[k+f].v, av = sm[k+f] / P, hi = mx[k+f].v;
++              switch (field_kind(f)) {
++              case 0:
++                std::snprintf(b, 256, " %.3f %.3f %.3f %d", 1e3*lo, 1e3*av,
++                              1e3*hi, mx[k+f].r);
++                break;
++              case 1:
++                std::snprintf(b, 256, " %.0f %.2f %.0f %d", lo, av, hi,
++                              mx[k+f].r);
++                break;
++              case 2:
++                std::snprintf(b, 256, " %.0f %.1f %.0f %d", lo/1024.,
++                              av/1024., hi/1024., mx[k+f].r);
++                break;
++              default:
++                std::snprintf(b, 256, " %.3f %.3f %.3f %d", 1e3*(lo-e0),
++                              1e3*(av-e0), 1e3*(hi-e0), mx[k+f].r);
++              }
++              o << b;
++            }
++            o << " " << mn[k+F_ENTRY].r << " " << mn[k+F_EXIT].r << "\n";
++          }
++          // select solves for a table with one line per process: in
++          // the first batch a typical and the slowest solve, later
++          // the slowest and the fastest of a batch with a slow solve
++          int first = (r.nsolves == n) ? 1 : 0; // skip the first solve
++          if (n > first) {
++            std::vector<int> idx;
++            for (int i=first; i<n; i++) idx.push_back(i);
++            std::sort(idx.begin(), idx.end(),
++                      [&](int a, int c) { return tot[a] < tot[c]; });
++            double med = tot[idx[idx.size()/2]];
++            if (r.fast_ref == 0 || med < r.fast_ref) r.fast_ref = med;
++            bool slow = tot[idx.back()] > 1.3 * r.fast_ref;
++            if (r.nsolves == n) {
++              sel[0] = idx[idx.size()/2];
++              if (slow) sel[1] = idx.back();
++            } else if (slow && r.tables < 6) {
++              sel[0] = idx.back();
++              sel[1] = idx.front();
++              r.tables++;
++            }
++          }
++        }
++        MPI_Bcast(sel, 2, MPI_INT, 0, comm);
++        static const int tf[] =
++          {F_IN, F_FWD, F_DIST, F_BWD, F_OUT, F_TOT, F_GAP, F_EA, F_F2,
++           F_B1, F_EX, F_FLT, F_FLTOUT, F_VCSW, F_IVCSW, F_CPUCHG, F_UTIME,
++           F_STIME, F_CPUT, F_BRK, F_BRKOUT, F_ENTRY, F_EXIT};
++        const int ntf = sizeof(tf) / sizeof(tf[0]);
++        for (int t=0; t<2; t++) {
++          if (sel[t] < 0) continue;
++          std::vector<double> tab(rank ? 0 : std::size_t(P) * NF);
++          MPI_Gather(&r.buf[std::size_t(sel[t]) * NF], NF, MPI_DOUBLE,
++                     tab.data(), NF, MPI_DOUBLE, 0, comm);
++          if (rank) continue;
++          double e0 = tab[F_ENTRY];
++          for (int p=1; p<P; p++)
++            e0 = std::min(e0, tab[std::size_t(p)*NF+F_ENTRY]);
++          o << "#OST " << r.seq << " solve rank";
++          for (int i=0; i<ntf; i++) o << " " << field_name(tf[i]);
++          o << "\n";
++          for (int p=0; p<P; p++) {
++            auto row = &tab[std::size_t(p)*NF];
++            row[F_ENTRY] -= e0;
++            row[F_EXIT] -= e0;
++            o << "#OST " << r.seq << " " << r.nsolves - n + sel[t] << " "
++              << p;
++            print_fields(o, row, tf, ntf);
++            o << "\n";
++          }
++        }
++        // counters of the nodes: one reader per node (ranks 0, ppn, ...)
++        {
++          const int nk = 12;
++          std::vector<DI> d(nk), dmx(nk);
++          std::vector<double> ds(nk, 0.), dsum(nk);
++          if (r.reader) {
++            auto vm = read_vmstat();
++            for (int i=0; i<nk; i++) ds[i] = vm[i] - r.vm0[i];
++            r.vm0 = vm;
++          }
++          for (int i=0; i<nk; i++) {
++            d[i].v = ds[i];
++            d[i].r = rank;
++          }
++          MPI_Reduce(d.data(), dmx.data(), nk, MPI_DOUBLE_INT, MPI_MAXLOC,
++                     0, comm);
++          MPI_Reduce(ds.data(), dsum.data(), nk, MPI_DOUBLE, MPI_SUM,
++                     0, comm);
++          if (!rank) {
++            o << "#OSV " << r.seq << " " << r.nsolves - n << " " << n;
++            for (int i=0; i<nk; i++) {
++              std::snprintf(b, 256, " %s %.0f %.0f %d", vmstat_name(i),
++                            dsum[i], dmx[i].v, dmx[i].r);
++              o << b;
++            }
++            o << "\n";
++          }
++        }
++        r.nbuf = 0;
++      }
++      if (final) {
++        std::vector<double> tab(rank ? 0 : std::size_t(P) * NF);
++        MPI_Gather(r.sum, NF, MPI_DOUBLE, tab.data(), NF, MPI_DOUBLE,
++                   0, comm);
++        if (!rank && r.nsolves) {
++          static const int mf[] =
++            {F_IN, F_FWD, F_DIST, F_BWD, F_OUT, F_TOT, F_GAP, F_EA, F_F2,
++             F_B1, F_EX, F_FLT, F_FLTOUT, F_VCSW, F_IVCSW, F_CPUCHG, F_UTIME,
++             F_STIME, F_CPUT};
++          const int nmf = sizeof(mf) / sizeof(mf[0]);
++          o << "#OSM " << r.seq << " solves " << r.nsolves << " rank";
++          for (int i=0; i<nmf; i++) o << " " << field_name(mf[i]);
++          o << " (means per solve)\n";
++          for (int p=0; p<P; p++) {
++            auto row = &tab[std::size_t(p)*NF];
++            for (int f=0; f<NF; f++) row[f] /= r.nsolves;
++            o << "#OSM " << r.seq << " " << p;
++            for (int i=0; i<nmf; i++) {
++              int f = mf[i];
++              if (field_kind(f) == 1) std::snprintf(b, 64, " %.3f", row[f]);
++              else std::snprintf(b, 64, " %.4f", 1e3 * row[f]);
++              o << b;
++            }
++            o << "\n";
++          }
++        }
++      }
++      if (!rank) std::cout << o.str() << std::flush;
++    }
++
++    /** End of a solve, on every process of the communicator. */
++    inline void end() {
++      auto& s = st();
++      if (!s.cur) return;
++      auto& r = *s.cur;
++      double t3 = wall();
++      struct rusage r1;
++      getrusage(RUSAGE_SELF, &r1);
++      double* v = &r.buf[std::size_t(r.nbuf) * NF];
++      long brk3 = long(sbrk(0));
++      int cpu = sched_getcpu();
++      v[F_IN] = s.t1 - s.t0;
++      v[F_FWD] = s.fwd;
++      v[F_BWD] = s.bwd;
++      v[F_DIST] = (s.t2 - s.t1) - s.fwd - s.bwd;
++      v[F_OUT] = t3 - s.t2;
++      v[F_TOT] = t3 - s.t0;
++      v[F_GAP] = s.prev_exit ? s.t0 - s.prev_exit : 0.;
++      v[F_EA] = s.ea;
++      v[F_F2] = s.f2;
++      v[F_B1] = s.b1;
++      v[F_EX] = s.ex;
++      v[F_FLT] = r1.ru_minflt - s.r0.ru_minflt;
++      v[F_FLTOUT] = s.prev_exit ? s.r0.ru_minflt - s.prev_flt : 0.;
++      v[F_VCSW] = r1.ru_nvcsw - s.r0.ru_nvcsw;
++      v[F_IVCSW] = r1.ru_nivcsw - s.r0.ru_nivcsw;
++      v[F_CPUCHG] = (s.prev_cpu >= 0 && cpu != s.prev_cpu) ? 1. : 0.;
++      v[F_UTIME] = tv(r1.ru_utime) - tv(s.r0.ru_utime);
++      v[F_STIME] = tv(r1.ru_stime) - tv(s.r0.ru_stime);
++      v[F_CPUT] = cputime() - s.cpu0;
++      v[F_BRK] = double(s.brk2 - s.brk0);
++      v[F_BRKOUT] = s.prev_exit ? double(s.brk0 - s.prev_brk) : 0.;
++      v[F_ENTRY] = s.real0;
++      v[F_EXIT] = s.real0 + (t3 - s.t0);
++      for (int f=0; f<NF; f++) r.sum[f] += v[f];
++      s.prev_flt = r1.ru_minflt;
++      s.prev_brk = brk3;
++      s.prev_cpu = cpu;
++      r.sub_done = true;
++      r.nbuf++;
++      r.nsolves++;
++      s.cur = nullptr;
++      if (r.nbuf == s.batch) {
++        flush(r, false);
++        getrusage(RUSAGE_SELF, &r1);
++        s.prev_flt = r1.ru_minflt;
++        s.prev_brk = long(sbrk(0));
++      }
++      s.prev_exit = wall();
++    }
++
++    /** The tree owner is destroyed, on every process of its communicator. */
++    inline void release(const void* owner) {
++      if (!on()) return;
++      auto& s = st();
++      auto it = s.recs.find(owner);
++      if (it == s.recs.end()) return;
++      int finalized = 0;
++      MPI_Finalized(&finalized);
++      if (!finalized) flush(it->second, true);
++      s.recs.erase(it);
++    }
++
++    struct Scope {
++      Scope(const void* owner, MPI_Comm comm, int ncols) {
++        begin(owner, comm, ncols);
++      }
++      ~Scope() { end(); }
++    };
++
++  } // end namespace ordslow
++} // end namespace strumpack
++
++#endif // STRUMPACK_ORDSLOW_LAB_HPP
+diff --git a/src/sparse/EliminationTreeMPIDist.cpp b/src/sparse/EliminationTreeMPIDist.cpp
+index 2d4e9d74..559d8f11 100644
+--- a/src/sparse/EliminationTreeMPIDist.cpp
++++ b/src/sparse/EliminationTreeMPIDist.cpp
+@@ -38,6 +38,7 @@
+ #include "fronts/FrontFactory.hpp"
+ #include "fronts/Front.hpp"
+ #include "fronts/FrontMPI.hpp"
++#include "misc/OrdSlowLab.hpp" // LAB
+ 
+ namespace strumpack {
+ 
+@@ -79,6 +80,7 @@ namespace strumpack {
+     }
+ 
+     local_range_ = {A.size(), 0};
++    if (ordslow::on()) ordslow::st().leafmap.clear(); // LAB
+     MPIComm::control_start("proportional_mapping");
+     this->root_ = prop_map
+       (opts, lupd, ltree_work, dist_upd, dleaf_upd, dtree_work,
+@@ -97,6 +99,94 @@ namespace strumpack {
+     find_row_owner(A);
+     Aprop_.setup(A, nd_, *this, opts.compression() != CompressionType::NONE);
+     MPIComm::control_stop("block_row_A_to_prop_A");
++
++    // LAB: how the tree is mapped to the processes
++    if (ordslow::on() && !rank_) {
++      std::ostringstream o;
++      char b[256];
++      auto top = [&](const char* what,
++                     std::vector<std::pair<double,std::string>>& v) {
++        std::sort(v.begin(), v.end());
++        double sum = 0;
++        for (auto& x : v) sum += x.first;
++        std::snprintf
++          (b, 256, "#OSD %s: count %zu min %.6g mean %.6g median %.6g max %.6g"
++           " sum %.6g; largest:", what, v.size(), v.empty() ? 0. : v[0].first,
++           v.empty() ? 0. : sum / v.size(),
++           v.empty() ? 0. : v[v.size()/2].first,
++           v.empty() ? 0. : v.back().first, sum);
++        o << b;
++        for (std::size_t i=0; i<std::min(v.size(),std::size_t(10)); i++) {
++          auto& x = v[v.size()-1-i];
++          std::snprintf(b, 256, " %.6g(%s)", x.first, x.second.c_str());
++          o << b;
++        }
++        o << "\n";
++      };
++      auto& t = nd_.tree();
++      auto& lm = ordslow::st().leafmap;
++      std::vector<std::pair<double,std::string>> lrows, lwork, lP, prow, pf;
++      std::vector<int> nleaf(P_, 0);
++      int hP[5] = {0, 0, 0, 0, 0};
++      for (integer_t d=0; d<t.separators(); d++) {
++        if (!t.is_leaf(d)) continue;
++        int P0 = -1, P = 0;
++        for (std::size_t k=0; k+2<lm.size(); k+=3)
++          if (lm[k] == d) { P0 = lm[k+1]; P = lm[k+2]; }
++        std::snprintf(b, 256, "owner %d P0 %d P %d rows %lld",
++                      int(nd_.proc_dist_sep[d]), P0, P,
++                      (long long)(t.sizes[d+1]-t.sizes[d]));
++        lrows.emplace_back(double(t.sizes[d+1]-t.sizes[d]), b);
++        lwork.emplace_back(double(dtree_work[d]), b);
++        lP.emplace_back(double(P), b);
++        hP[std::min(P, 4)]++;
++        if (P == 1 && P0 >= 0) nleaf[P0]++;
++      }
++      o << "#OSD tree: distributed tree nodes " << t.separators()
++        << " levels " << t.levels() << " processes " << P_
++        << " rows " << A.size() << " proportional mapping "
++        << int(prop_map_) << "\n";
++      top("leaf rows", lrows);
++      top("leaf work", lwork);
++      top("leaf processes", lP);
++      o << "#OSD leaves on P processes: P=1 " << hP[1] << ", P=2 " << hP[2]
++        << ", P=3 " << hP[3] << ", P>=4 " << hP[4] << "\n";
++      int hl[5] = {0, 0, 0, 0, 0};
++      for (int p=0; p<P_; p++) hl[std::min(nleaf[p], 4)]++;
++      o << "#OSD processes with k whole leaves: k=0 " << hl[0] << ", k=1 "
++        << hl[1] << ", k=2 " << hl[2] << ", k=3 " << hl[3] << ", k>=4 "
++        << hl[4] << "; with 2 or more:";
++      for (int p=0, c=0; p<P_ && c<60; p++)
++        if (nleaf[p] >= 2) { o << " " << p << ":" << nleaf[p]; c++; }
++      o << "\n";
++      int zero = 0;
++      for (int p=0; p<P_; p++) {
++        double rows = subtree_ranges_[p].second - subtree_ranges_[p].first;
++        if (rows == 0) zero++;
++        prow.emplace_back(rows, "rank " + std::to_string(p));
++      }
++      top("rows of the sequential part of a process", prow);
++      o << "#OSD processes without sequential rows: " << zero << "\n";
++      int hf[7] = {0, 0, 0, 0, 0, 0, 0};
++      for (auto& f : all_pfronts_) {
++        std::snprintf(b, 256, "P0 %d P %d grid %dx%d", f.P0, f.P, f.prows,
++                      f.pcols);
++        pf.emplace_back(double(f.dim_sep()), b);
++        hf[f.P<3 ? 0 : f.P<4 ? 1 : f.P<8 ? 2 : f.P<16 ? 3 : f.P<64 ? 4 :
++           f.P<256 ? 5 : 6]++;
++      }
++      top("separator rows of a distributed front", pf);
++      o << "#OSD distributed fronts on 2 / 3 / 4-7 / 8-15 / 16-63 / 64-255 /"
++        << " 256+ processes:";
++      for (int i=0; i<7; i++) o << " " << hf[i];
++      o << "\n";
++      std::cout << o.str() << std::flush;
++    }
++  }
++
++  template<typename scalar_t,typename integer_t>
++  EliminationTreeMPIDist<scalar_t,integer_t>::~EliminationTreeMPIDist() {
++    ordslow::release(this); // LAB
+   }
+ 
+   template<typename scalar_t,typename integer_t> void
+@@ -270,6 +360,22 @@ namespace strumpack {
+     integer_t B = DistM_t::default_MB;
+     integer_t lo = dist[rank_];
+     integer_t m = dist[rank_+1] - lo, n = x.cols();
++    // LAB: record this solve
++    ordslow::Scope lab(this, comm_.comm(), n);
++    if (ordslow::want_static()) {
++      using namespace ordslow;
++      auto& stat = st().cur->stat;
++      stat[S_LOCROWS] = local_range_.second - local_range_.first;
++      stat[S_LEAFROWS] =
++        nd_.sub_graph_range.second - nd_.sub_graph_range.first;
++      stat[S_NPF] = local_pfronts_.size();
++      stat[S_MINPFP] = 0;
++      stat[S_SUMPFSEP] = 0;
++      for (auto& f : local_pfronts_) {
++        if (stat[S_MINPFP] == 0 || f.P < stat[S_MINPFP]) stat[S_MINPFP] = f.P;
++        stat[S_SUMPFSEP] += f.dim_sep();
++      }
++    }
+ 
+     // The redistribution of the right-hand side to/from the
+     // elimination tree layout only depends on the tree, the row
+@@ -393,7 +499,9 @@ namespace strumpack {
+       }
+     }
+ 
++    ordslow::mark_in(); // LAB
+     this->root_->multifrontal_solve(Xloc, xdist.data());
++    ordslow::mark_solved(); // LAB
+ 
+     rcnts = ibuf;
+     scnts = ibuf + P_;
+@@ -443,6 +551,15 @@ namespace strumpack {
+       sp.out_dst_c[i] = sbuf[i].c;
+     }
+     sp.ready = true;
++    if (ordslow::want_static()) { // LAB: processes it exchanges rows with
++      using namespace ordslow;
++      auto& stat = st().cur->stat;
++      stat[S_NSEND] = stat[S_NRECV] = 0;
++      for (int p=0; p<P_; p++) {
++        if (sp.scnts[p]) stat[S_NSEND]++;
++        if (sp.rcnts[p]) stat[S_NRECV]++;
++      }
++    }
+ 
+     Triplet::free_mpi_type();
+   }
+@@ -471,7 +588,9 @@ namespace strumpack {
+       (f < 0 ? xloc.data() : xdist[f].data())[sp.in_dst_off[i]] = rval[i];
+     }
+ 
++    ordslow::mark_in(); // LAB
+     this->root_->multifrontal_solve(Xloc, xdist.data());
++    ordslow::mark_solved(); // LAB
+ 
+     for (std::size_t k=0; k<rval.size(); k++) {
+       auto f = sp.out_src_f[k];
+@@ -757,6 +876,11 @@ namespace strumpack {
+    int P0, int P, int P0_sib, int P_sib, const MPIComm& fcomm, int level) {
+     auto owner = nd_.proc_dist_sep[dsep];
+     if (nd_.tree().is_leaf(dsep)) {
++      if (ordslow::on()) { // LAB
++        ordslow::st().leafmap.push_back(int(dsep));
++        ordslow::st().leafmap.push_back(P0);
++        ordslow::st().leafmap.push_back(P);
++      }
+       RedistSubTree<integer_t> sub_tree
+         (nd_.ltree(), dsep, nd_.sub_graph_range.first,
+          local_upd, local_subtree_work,
+diff --git a/src/sparse/EliminationTreeMPIDist.hpp b/src/sparse/EliminationTreeMPIDist.hpp
+index 2c46a33f..fd937287 100644
+--- a/src/sparse/EliminationTreeMPIDist.hpp
++++ b/src/sparse/EliminationTreeMPIDist.hpp
+@@ -62,6 +62,8 @@ namespace strumpack {
+     EliminationTreeMPIDist(const Opts_t& opts, const CSRMPI_t& A,
+                            Reord_t& nd, const MPIComm& comm);
+ 
++    ~EliminationTreeMPIDist(); // LAB: prints the remaining records
++
+     void update_values(const Opts_t& opts, const CSRMPI_t& A,
+                        Reord_t& nd);
+ 
+diff --git a/src/sparse/fronts/Front.cpp b/src/sparse/fronts/Front.cpp
+index 9cd3c25b..13e0c904 100644
+--- a/src/sparse/fronts/Front.cpp
++++ b/src/sparse/fronts/Front.cpp
+@@ -30,9 +30,11 @@
+ #include <algorithm>
+ #include <random>
+ #include <vector>
++#include <functional>
+ #include <cmath>
+ 
+ #include "Front.hpp"
++#include "misc/OrdSlowLab.hpp" // LAB
+ #if defined(STRUMPACK_USE_MPI)
+ #include "ExtendAdd.hpp"
+ #include "FrontMPI.hpp"
+@@ -450,10 +452,35 @@ namespace strumpack {
+     std::vector<DenseM_t> CB(lvls);
+     // for (auto& cb : CB)
+     //   cb = DenseM_t(max_dupd, bloc.cols());
++    // LAB: time of the sequential subtree of this process, and its
++    // description at the first solve
++    auto lab = ordslow::st().cur;
++    double lab_t = lab ? ordslow::wall() : 0.;
+     for (std::size_t i=0; i<CB.size(); i++)
+       CB[i] = DenseM_t(max_dupd, bloc.cols());
+     forward_multifrontal_solve(bloc, CB.data(), etree_level, 0);
+     seqbupd = CB[0];
++    if (lab) {
++      ordslow::st().fwd += ordslow::wall() - lab_t;
++      if (!lab->sub_done) {
++        std::function<long(const Front<scalar_t,integer_t>*)> count =
++          [&](const Front<scalar_t,integer_t>* f) {
++            long c = 1;
++            if (f->lchild_) c += count(f->lchild_.get());
++            if (f->rchild_) c += count(f->rchild_.get());
++            return c;
++          };
++        using namespace ordslow;
++        lab->stat[S_SUBNNZ] += double(factor_nonzeros());
++        lab->stat[S_SUBFRONTS] += double(count(this));
++        lab->stat[S_SUBLEVELS] = std::max(lab->stat[S_SUBLEVELS], double(lvls));
++        lab->stat[S_SUBMAXUPD] =
++          std::max(lab->stat[S_SUBMAXUPD], double(max_dupd));
++        lab->stat[S_SUBROOTSEP] += double(dim_sep());
++        lab->stat[S_SUBROOTUPD] += double(dim_upd());
++        lab->stat[S_SUBENTRIES] += 1.;
++      }
++    }
+   }
+ 
+   template<typename scalar_t,typename integer_t> void
+@@ -465,10 +492,13 @@ namespace strumpack {
+     std::vector<DenseM_t> CB(lvls);
+     // for (auto& cb : CB)
+     //   cb = DenseM_t(max_dupd, yloc.cols());
++    auto lab = ordslow::st().cur; // LAB
++    double lab_t = lab ? ordslow::wall() : 0.;
+     for (std::size_t i=0; i<CB.size(); i++)
+       CB[i] = DenseM_t(max_dupd, yloc.cols());
+     CB[0] = seqyupd;
+     backward_multifrontal_solve(yloc, CB.data(), etree_level, 0);
++    if (lab) ordslow::st().bwd += ordslow::wall() - lab_t;
+   }
+ 
+   template<typename scalar_t,typename integer_t> void
+diff --git a/src/sparse/fronts/FrontDenseMPI.cpp b/src/sparse/fronts/FrontDenseMPI.cpp
+index ebc936d1..aae94c30 100644
+--- a/src/sparse/fronts/FrontDenseMPI.cpp
++++ b/src/sparse/fronts/FrontDenseMPI.cpp
+@@ -31,6 +31,7 @@
+ #include <type_traits>
+ #include <memory>
+ #include "FrontDenseMPI.hpp"
++#include "misc/OrdSlowLab.hpp" // LAB
+ #include "FrontBLRMPI.hpp"
+ #include "ExtendAdd.hpp"
+ #include "dense/DistTrsmNarrow.hpp"
+@@ -399,9 +400,16 @@ namespace strumpack {
+       rchild_->forward_multifrontal_solve
+         (bloc, bdist, CBr, seqCBr, etree_level);
+     DistM_t& b = bdist[this->sep_];
++    auto lab = ordslow::st().cur; // LAB
++    double lab_t = lab ? ordslow::wall() : 0.;
+     bupd = DistM_t(grid(), this->dim_upd(), b.cols());
+     bupd.zero();
+     this->extend_add_b(b, bupd, CBl, CBr, seqCBl, seqCBr);
++    if (lab) {
++      double t = ordslow::wall();
++      ordslow::st().ea += t - lab_t;
++      lab_t = t;
++    }
+ #if defined(STRUMPACK_USE_ZFP) || defined(STRUMPACK_USE_SZ3)
+     if (compressed_) {
+       const auto dupd = this->dim_upd();
+@@ -413,6 +421,7 @@ namespace strumpack {
+     } else
+ #endif
+       fwd_solve_phase2(F11_, F12_, F21_, b, bupd);
++    if (lab) ordslow::st().f2 += ordslow::wall() - lab_t;
+   }
+ 
+   template<typename scalar_t,typename integer_t> void
+@@ -460,6 +469,8 @@ namespace strumpack {
+   (DenseM_t& yloc, DistM_t* ydist, DistM_t& yupd, DenseM_t&,
+    int etree_level) const {
+     DistM_t& y = ydist[this->sep_];
++    auto lab = ordslow::st().cur; // LAB
++    double lab_t = lab ? ordslow::wall() : 0.;
+ #if defined(STRUMPACK_USE_ZFP) || defined(STRUMPACK_USE_SZ3)
+     if (compressed_) {
+       const auto dupd = this->dim_upd();
+@@ -471,9 +482,15 @@ namespace strumpack {
+     } else
+ #endif
+       bwd_solve_phase1(F11_, F12_, F21_, y, yupd);
++    if (lab) {
++      double t = ordslow::wall();
++      ordslow::st().b1 += t - lab_t;
++      lab_t = t;
++    }
+     DistM_t CBl, CBr;
+     DenseM_t seqCBl, seqCBr;
+     this->extract_b(y, yupd, CBl, CBr, seqCBl, seqCBr);
++    if (lab) ordslow::st().ex += ordslow::wall() - lab_t;
+     if (visit(lchild_))
+       lchild_->backward_multifrontal_solve
+         (yloc, ydist, CBl, seqCBl, etree_level);
