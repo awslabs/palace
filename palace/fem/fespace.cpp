@@ -5,8 +5,12 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
+#include <functional>
+#include <map>
 #include <string>
 #include <unordered_map>
+#include <Eigen/Dense>
 #include "fem/bilinearform.hpp"
 #include "fem/brokenspace.hpp"
 #include "fem/integrator.hpp"
@@ -64,16 +68,9 @@ FiniteElementSpace::GetCeedElemRestriction(Ceed ceed, mfem::Geometry::Type geom,
   const auto &indices = use_active ? active_indices : data.indices;
   if (broken)
   {
-    CeedElemRestriction val;
-    MFEM_VERIFY(mfem::Geometry::Dimension[geom] == GetParMesh().Dimension(),
-                "Only domain element restrictions are available for a broken space!");
-    ceed::ElementDofRemap remap;
-    remap.offsets = broken->override_offsets.data();
-    remap.local = broken->override_local.data();
-    remap.ldof = broken->override_ldof.data();
-    remap.l_size = broken->vsize;
-    ceed::InitRestriction(Get(), indices, false, false, false, ceed, &val, &remap);
-    return geom_restr.emplace(geom, val).first->second;
+    return geom_restr
+        .emplace(geom, BuildBrokenCeedElemRestriction(ceed, geom, indices, false, false))
+        .first->second;
   }
   return geom_restr.emplace(geom, BuildCeedElemRestriction(*this, ceed, geom, indices))
       .first->second;
@@ -88,7 +85,6 @@ FiniteElementSpace::GetInterpCeedElemRestriction(Ceed ceed, mfem::Geometry::Type
   {
     return GetCeedElemRestriction(ceed, geom, data);
   }
-  MFEM_VERIFY(!broken, "Interpolation restrictions are not available for a broken space!");
   auto it = interp_restr.find(ceed);
   MFEM_ASSERT(it != interp_restr.end(),
               "Unknown Ceed context in GetInterpCeedElemRestriction!");
@@ -98,8 +94,13 @@ FiniteElementSpace::GetInterpCeedElemRestriction(Ceed ceed, mfem::Geometry::Type
   {
     return restr_it->second;
   }
+  // A broken space reads the copies of the side of each element (the element DOF
+  // overrides), also for the discrete interpolators between broken spaces.
   return restr_map
-      .emplace(geom, BuildCeedElemRestriction(*this, ceed, geom, data.indices, true, false))
+      .emplace(geom,
+               broken
+                   ? BuildBrokenCeedElemRestriction(ceed, geom, data.indices, true, false)
+                   : BuildCeedElemRestriction(*this, ceed, geom, data.indices, true, false))
       .first->second;
 }
 
@@ -111,7 +112,6 @@ CeedElemRestriction FiniteElementSpace::GetInterpRangeCeedElemRestriction(
   {
     return GetInterpCeedElemRestriction(ceed, geom, data);
   }
-  MFEM_VERIFY(!broken, "Interpolation restrictions are not available for a broken space!");
   auto it = interp_range_restr.find(ceed);
   MFEM_ASSERT(it != interp_range_restr.end(),
               "Unknown Ceed context in GetInterpRangeCeedElemRestriction!");
@@ -122,8 +122,804 @@ CeedElemRestriction FiniteElementSpace::GetInterpRangeCeedElemRestriction(
     return restr_it->second;
   }
   return restr_map
-      .emplace(geom, BuildCeedElemRestriction(*this, ceed, geom, data.indices, true, true))
+      .emplace(geom,
+               broken
+                   ? BuildBrokenCeedElemRestriction(ceed, geom, data.indices, true, true)
+                   : BuildCeedElemRestriction(*this, ceed, geom, data.indices, true, true))
       .first->second;
+}
+
+CeedElemRestriction FiniteElementSpace::BuildBrokenCeedElemRestriction(
+    Ceed ceed, mfem::Geometry::Type geom, const std::vector<int> &indices, bool is_interp,
+    bool is_interp_range) const
+{
+  MFEM_VERIFY(broken && mfem::Geometry::Dimension[geom] == GetParMesh().Dimension(),
+              "Only domain element restrictions are available for a broken space!");
+  CeedElemRestriction val;
+  ceed::ElementDofRemap remap;
+  remap.offsets = broken->override_offsets.data();
+  remap.local = broken->override_local.data();
+  remap.ldof = broken->override_ldof.data();
+  remap.l_size = broken->vsize;
+  ceed::InitRestriction(Get(), indices, false, is_interp, is_interp_range, ceed, &val,
+                        &remap);
+  return val;
+}
+
+bool FiniteElementSpace::GetRestrictionWeights(Vector &w) const
+{
+  MFEM_VERIFY(broken, "Restriction weights are only used for broken spaces!");
+  // An interpolated field (an interpolant of a field of a conforming space) has at every
+  // L-DOF i read by a local element the value (P t)_i of its true DOFs t. A true DOF is
+  // thus determined by any row of P with a single nonzero entry (an unconstrained DOF or a
+  // copy, or a DOF of a hanging entity constrained by a single master DOF), and two true
+  // DOFs by two rows of P whose nonzeros are on them and form a nonsingular block T (the
+  // DOFs of a triangular face shared with another process, whose orientation P
+  // transforms, or the constrained DOFs of a hanging face). Only the L-DOFs read by a local
+  // element hold values: the copy block of a process can hold copies which only the
+  // elements of other processes read. With the blocks B of disjoint rows chosen on each
+  // process, q = T_B⁻ᵀ 1 on their rows, c = Pᵀ q counts the determinations of each true DOF
+  // over all processes, and R = Pᵀ W with W = T_B⁻ᵀ diag(1 / c) T_B⁻¹ on the blocks (the
+  // diagonal weights w for the single rows, the pairs for the others, with w = 1 there).
+  const auto &P = *broken->P.P;
+  hypre_ParCSRMatrix *hP = const_cast<mfem::HypreParMatrix &>(P);
+  const hypre_CSRMatrix *diag = hypre_ParCSRMatrixDiag(hP),
+                        *offd = hypre_ParCSRMatrixOffd(hP);
+  const HYPRE_Int *di = hypre_CSRMatrixI(diag), *dj = hypre_CSRMatrixJ(diag),
+                  *oi = hypre_CSRMatrixI(offd), *oj = hypre_CSRMatrixJ(offd);
+  const HYPRE_Real *dv = hypre_CSRMatrixData(diag), *ov = hypre_CSRMatrixData(offd);
+  const HYPRE_BigInt *cmap = hypre_ParCSRMatrixColMapOffd(hP);
+  const HYPRE_BigInt col0 = hypre_ParCSRMatrixFirstColDiag(hP);
+  const int n = broken->vsize;
+  MFEM_VERIFY(hypre_CSRMatrixNumRows(diag) == n, "Unexpected broken prolongation size!");
+  std::vector<char> read(n, 0);
+  {
+    mfem::Array<int> dofs;
+    mfem::DofTransformation dof_trans;
+    for (int e = 0; e < GetMesh().GetNE(); e++)
+    {
+      GetElementDofs(e, dofs, dof_trans);
+      for (int d : dofs)
+      {
+        read[(d >= 0) ? d : -1 - d] = 1;
+      }
+    }
+  }
+  // The nonzero entries of a row (global columns).
+  auto Nonzeros = [&](int i, std::array<HYPRE_BigInt, 3> &col, std::array<double, 3> &val)
+  {
+    int m = 0;
+    for (HYPRE_Int k = di[i]; k < di[i + 1]; k++)
+    {
+      if (dv[k] != 0.0)
+      {
+        if (m < 3)
+        {
+          col[m] = col0 + dj[k];
+          val[m] = dv[k];
+        }
+        m++;
+      }
+    }
+    for (HYPRE_Int k = (oi ? oi[i] : 0); k < (oi ? oi[i + 1] : 0); k++)
+    {
+      if (ov[k] != 0.0)
+      {
+        if (m < 3)
+        {
+          col[m] = cmap[oj[k]];
+          val[m] = ov[k];
+        }
+        m++;
+      }
+    }
+    return m;
+  };
+  // Rows with one nonzero (flagged) and with two (grouped by their sorted columns; few:
+  // shared faces and hanging entities).
+  std::vector<char> single(n, 0);
+  std::map<std::array<HYPRE_BigInt, 2>, std::vector<int>> two;
+  for (int i = 0; i < n; i++)
+  {
+    if (!read[i])
+    {
+      continue;
+    }
+    std::array<HYPRE_BigInt, 3> col;
+    std::array<double, 3> val;
+    const int m = Nonzeros(i, col, val);
+    if (m == 1)
+    {
+      single[i] = 1;
+    }
+    else if (m == 2)
+    {
+      two[{std::min(col[0], col[1]), std::max(col[0], col[1])}].push_back(i);
+    }
+  }
+  auto SingleValue = [&](int i)
+  {
+    std::array<HYPRE_BigInt, 3> col;
+    std::array<double, 3> val;
+    Nonzeros(i, col, val);
+    return val[0];
+  };
+  // The single rows on the columns of the groups with an odd number of rows (candidates to
+  // complete their last row to a pair).
+  std::map<HYPRE_BigInt, std::vector<int>> one;
+  for (const auto &[cols, rows] : two)
+  {
+    if (rows.size() % 2)
+    {
+      one[cols[0]];
+      one[cols[1]];
+    }
+  }
+  if (!one.empty())
+  {
+    for (int i = 0; i < n; i++)
+    {
+      if (single[i])
+      {
+        std::array<HYPRE_BigInt, 3> col;
+        std::array<double, 3> val;
+        Nonzeros(i, col, val);
+        auto it = one.find(col[0]);
+        if (it != one.end())
+        {
+          it->second.push_back(i);
+        }
+      }
+    }
+  }
+  // The 2 x 2 blocks: two rows of a group of two-entry rows, or a leftover row of a group
+  // with a single-entry row on one of its columns. T has the columns in increasing global
+  // order.
+  auto &pairs = broken->restriction_pairs;
+  auto &blocks = broken->restriction_blocks;
+  pairs.clear();
+  blocks.clear();
+  std::vector<char> used(n, 0);
+  std::vector<std::array<double, 4>> inverse;  // T⁻¹ (row major), per pair.
+  Vector q(n), c(broken->tsize);
+  q = 0.0;
+  auto Row = [&](int i, const std::array<HYPRE_BigInt, 2> &cols, double *t)
+  {
+    std::array<HYPRE_BigInt, 3> col;
+    std::array<double, 3> val;
+    const int m = Nonzeros(i, col, val);
+    t[0] = t[1] = 0.0;
+    for (int k = 0; k < m; k++)
+    {
+      t[col[k] == cols[0] ? 0 : 1] = val[k];
+    }
+  };
+  auto AddPair = [&](int i0, int i1, const std::array<HYPRE_BigInt, 2> &cols)
+  {
+    double T[4];
+    Row(i0, cols, T);
+    Row(i1, cols, T + 2);
+    const double det = T[0] * T[3] - T[1] * T[2],
+                 scale = std::max(
+                     {std::abs(T[0]), std::abs(T[1]), std::abs(T[2]), std::abs(T[3])});
+    if (!(std::abs(det) > 1.0e-8 * scale * scale))
+    {
+      return false;
+    }
+    const std::array<double, 4> Ti = {T[3] / det, -T[1] / det, -T[2] / det, T[0] / det};
+    pairs.push_back(i0);
+    pairs.push_back(i1);
+    inverse.push_back(Ti);
+    q(i0) = Ti[0] + Ti[2];  // T⁻ᵀ (1, 1).
+    q(i1) = Ti[1] + Ti[3];
+    used[i0] = used[i1] = 1;
+    return true;
+  };
+  for (const auto &[cols, rows] : two)
+  {
+    int left = -1;
+    for (int i : rows)
+    {
+      if (left < 0)
+      {
+        left = i;
+      }
+      else if (AddPair(left, i, cols))
+      {
+        left = -1;
+      }
+    }
+    if (left >= 0)
+    {
+      for (const auto col : cols)
+      {
+        auto it = one.find(col);
+        if (it == one.end())
+        {
+          continue;
+        }
+        bool done = false;
+        for (int i : it->second)
+        {
+          if (!used[i] && AddPair(i, left, cols))
+          {
+            done = true;
+            break;
+          }
+        }
+        if (done)
+        {
+          break;
+        }
+      }
+    }
+  }
+  for (int i = 0; i < n; i++)
+  {
+    if (single[i] && !used[i])
+    {
+      q(i) = 1.0 / SingleValue(i);
+    }
+  }
+  P.MultTranspose(q, c);
+  // Every true DOF must be determined somewhere.
+  int missing = 0;
+  for (int t = 0; t < c.Size(); t++)
+  {
+    c(t) = std::round(c(t));
+    missing += (c(t) < 0.5);
+  }
+  Mpi::GlobalSum(1, &missing, GetComm());
+  // The true DOFs undetermined by single rows and pairs (copies of master DOFs read on a
+  // side only through constraint rows with several masters, on nonconforming meshes) are
+  // recovered from the constraint rows of their hanging entities (see
+  // BuildHangingRestriction).
+  int unresolved = missing;
+  if (missing > 0)
+  {
+    if (!broken->hanging)
+    {
+      BuildHangingRestriction(read, c);
+    }
+    unresolved = broken->hanging->unresolved;
+  }
+  else
+  {
+    broken->hanging.reset();
+  }
+  broken->restriction_undetermined = unresolved;
+  broken->restriction_hanging = missing - unresolved;
+  if (unresolved > 0 && !broken->allow_undetermined)
+  {
+    pairs.clear();
+    blocks.clear();
+    broken->hanging.reset();
+    w.SetSize(0);
+    return false;
+  }
+  // The counts at the rows: P c = val c_t at the single rows and T (c_t0, c_t1) at the
+  // pairs.
+  w.SetSize(n);
+  P.Mult(c, w);
+  for (std::size_t k = 0; k < inverse.size(); k++)
+  {
+    const int i0 = pairs[2 * k], i1 = pairs[2 * k + 1];
+    const auto &Ti = inverse[k];
+    const double c0 = Ti[0] * w(i0) + Ti[1] * w(i1), c1 = Ti[2] * w(i0) + Ti[3] * w(i1);
+    // W = T⁻ᵀ diag(1 / c0, 1 / c1) T⁻¹.
+    const double d0 = 1.0 / std::round(c0), d1 = 1.0 / std::round(c1);
+    blocks.push_back(Ti[0] * d0 * Ti[0] + Ti[2] * d1 * Ti[2]);
+    blocks.push_back(Ti[0] * d0 * Ti[1] + Ti[2] * d1 * Ti[3]);
+    blocks.push_back(Ti[1] * d0 * Ti[0] + Ti[3] * d1 * Ti[2]);
+    blocks.push_back(Ti[1] * d0 * Ti[1] + Ti[3] * d1 * Ti[3]);
+  }
+  for (int i = 0; i < n; i++)
+  {
+    // W = 1 / (val² c_t) at a single row, (P c)_i = val c_t.
+    if (single[i] && !used[i])
+    {
+      const double val = SingleValue(i);
+      w(i) = 1.0 / (val * val * std::round(w(i) / val));
+    }
+    else
+    {
+      w(i) = 0.0;
+    }
+  }
+  for (int i : pairs)
+  {
+    w(i) = 1.0;  // W is applied by ApplyRestrictionPairs.
+  }
+  if (broken->hanging)
+  {
+    for (int i : broken->hanging->rows)
+    {
+      w(i) = 1.0;  // The constraint rows are read by BrokenRestrictionMult.
+    }
+  }
+  return true;
+}
+
+void FiniteElementSpace::ApplyRestrictionPairs(Vector &lx) const
+{
+  MFEM_ASSERT(broken, "Restriction pairs are only used for broken spaces!");
+  const auto &pairs = broken->restriction_pairs;
+  const auto &blocks = broken->restriction_blocks;
+  if (pairs.empty())
+  {
+    return;
+  }
+  auto *x = lx.HostReadWrite();
+  for (std::size_t k = 0; k < pairs.size() / 2; k++)
+  {
+    const int i0 = pairs[2 * k], i1 = pairs[2 * k + 1];
+    const double a = x[i0], b = x[i1];
+    x[i0] = blocks[4 * k + 0] * a + blocks[4 * k + 1] * b;
+    x[i1] = blocks[4 * k + 2] * a + blocks[4 * k + 3] * b;
+  }
+}
+
+namespace
+{
+
+// The partition array of a distributed set with n local entries, as for MFEM's
+// HypreParMatrix (2 entries with HYPRE's assumed partition, the offsets of all processes
+// otherwise), and the global size.
+std::vector<HYPRE_BigInt> CompactOffsets(MPI_Comm comm, int n, HYPRE_BigInt &global)
+{
+  const int rank = Mpi::Rank(comm), nprocs = Mpi::Size(comm);
+  std::vector<HYPRE_BigInt> all(nprocs + 1, 0);
+  HYPRE_BigInt local = n;
+  std::vector<HYPRE_BigInt> counts(nprocs);
+  MPI_Allgather(&local, 1, HYPRE_MPI_BIG_INT, counts.data(), 1, HYPRE_MPI_BIG_INT, comm);
+  for (int p = 0; p < nprocs; p++)
+  {
+    all[p + 1] = all[p] + counts[p];
+  }
+  global = all[nprocs];
+  if (HYPRE_AssumedPartitionCheck())
+  {
+    return {all[rank], all[rank + 1]};
+  }
+  return all;
+}
+
+// A HypreParMatrix with the given local rows (CSR with global columns) and partitions.
+std::unique_ptr<mfem::HypreParMatrix>
+MakeParMatrix(MPI_Comm comm, const std::vector<HYPRE_BigInt> &row_part,
+              HYPRE_BigInt global_rows, const HYPRE_BigInt *col_part,
+              HYPRE_BigInt global_cols, std::vector<int> &I, std::vector<HYPRE_BigInt> &J,
+              std::vector<double> &V)
+{
+  const int nrows = static_cast<int>(I.size()) - 1;
+  if (J.empty())
+  {
+    // Valid (non-null) arrays for the constructor.
+    J.push_back(0);
+    V.push_back(0.0);
+  }
+  return std::make_unique<mfem::HypreParMatrix>(
+      comm, nrows, global_rows, global_cols, I.data(), J.data(), V.data(),
+      const_cast<HYPRE_BigInt *>(row_part.data()), const_cast<HYPRE_BigInt *>(col_part));
+}
+
+}  // namespace
+
+void FiniteElementSpace::BuildHangingRestriction(const std::vector<char> &read,
+                                                 const Vector &c) const
+{
+  // An interpolated field y = P t has at every constraint row i read by a local element
+  // y_i = sum_j P_ij t_j. The true DOFs which no single row or pair of rows determines
+  // (u: c < 1/2) are the copies of master DOFs which the elements of their side read only
+  // through such rows: with the others (d) known, y_c - P_cd t_d = P_cu t_u on the rows
+  // with an entry on u, and P_cu has full column rank on each cluster of u (connected by
+  // the rows), since the constraints embed the parent space into the children's space.
+  // The rows of all processes are gathered on the first process, which solves each
+  // cluster's least-squares problem (SVD; columns not in the row space of their cluster's
+  // rows remain unresolved) and returns the coefficients of the pseudo-inverse on each
+  // process's rows (setup only: the clusters are the hanging entities of the interior
+  // boundaries, a few thousand DOFs).
+  MFEM_VERIFY(broken, "Hanging restriction requires a broken space!");
+  auto &H = *(broken->hanging = std::make_unique<BrokenData::HangingRestriction>());
+  const MPI_Comm comm = GetComm();
+  const int rank = Mpi::Rank(comm), nprocs = Mpi::Size(comm);
+  const auto &P = *broken->P.P;
+  hypre_ParCSRMatrix *hP = const_cast<mfem::HypreParMatrix &>(P);
+  const hypre_CSRMatrix *diag = hypre_ParCSRMatrixDiag(hP),
+                        *offd = hypre_ParCSRMatrixOffd(hP);
+  const HYPRE_Int *di = hypre_CSRMatrixI(diag), *dj = hypre_CSRMatrixJ(diag),
+                  *oi = hypre_CSRMatrixI(offd), *oj = hypre_CSRMatrixJ(offd);
+  const HYPRE_Real *dv = hypre_CSRMatrixData(diag), *ov = hypre_CSRMatrixData(offd);
+  const HYPRE_BigInt *cmap = hypre_ParCSRMatrixColMapOffd(hP);
+  const int num_cols_offd = hypre_CSRMatrixNumCols(offd);
+  const HYPRE_BigInt col0 = hypre_ParCSRMatrixFirstColDiag(hP);
+  const int n = broken->vsize, tsize = broken->tsize;
+
+  // Undetermined flags of the local true DOFs and of the off-diagonal columns of P.
+  std::vector<char> undet(tsize), ghost_undet(num_cols_offd, 0);
+  for (int t = 0; t < tsize; t++)
+  {
+    undet[t] = (c(t) < 0.5);
+  }
+  {
+    if (!hypre_ParCSRMatrixCommPkg(hP))
+    {
+      hypre_MatvecCommPkgCreate(hP);
+    }
+    hypre_ParCSRCommPkg *comm_pkg = hypre_ParCSRMatrixCommPkg(hP);
+    const int num_sends = hypre_ParCSRCommPkgNumSends(comm_pkg);
+    const int send_size = hypre_ParCSRCommPkgSendMapStart(comm_pkg, num_sends);
+    std::vector<HYPRE_Complex> send(send_size), recv(num_cols_offd);
+    for (int k = 0; k < send_size; k++)
+    {
+      send[k] = undet[hypre_ParCSRCommPkgSendMapElmt(comm_pkg, k)];
+    }
+    auto *handle = hypre_ParCSRCommHandleCreate(1, comm_pkg, send.data(), recv.data());
+    hypre_ParCSRCommHandleDestroy(handle);
+    for (int k = 0; k < num_cols_offd; k++)
+    {
+      ghost_undet[k] = (recv[k] > 0.5);
+    }
+  }
+
+  // The rows read by local elements with an entry on an undetermined column, with these
+  // entries (global columns).
+  std::vector<int> rows, row_nnz;
+  std::vector<std::int64_t> cols;
+  std::vector<double> vals;
+  for (int i = 0; i < n; i++)
+  {
+    if (!read[i])
+    {
+      continue;
+    }
+    int m = 0;
+    for (HYPRE_Int k = di[i]; k < di[i + 1]; k++)
+    {
+      if (dv[k] != 0.0 && undet[dj[k]])
+      {
+        cols.push_back(col0 + dj[k]);
+        vals.push_back(dv[k]);
+        m++;
+      }
+    }
+    for (HYPRE_Int k = (oi ? oi[i] : 0); k < (oi ? oi[i + 1] : 0); k++)
+    {
+      if (ov[k] != 0.0 && ghost_undet[oj[k]])
+      {
+        cols.push_back(cmap[oj[k]]);
+        vals.push_back(ov[k]);
+        m++;
+      }
+    }
+    if (m > 0)
+    {
+      rows.push_back(i);
+      row_nnz.push_back(m);
+    }
+  }
+
+  // Gather the rows on the first process.
+  auto Gather =
+      [&](const auto &local, auto &all, MPI_Datatype type, std::vector<int> &counts)
+  {
+    int count = static_cast<int>(local.size());
+    counts.assign(nprocs, 0);
+    MPI_Gather(&count, 1, MPI_INT, counts.data(), 1, MPI_INT, 0, comm);
+    std::vector<int> displs(nprocs, 0);
+    for (int p = 1; p < nprocs; p++)
+    {
+      displs[p] = displs[p - 1] + counts[p - 1];
+    }
+    if (rank == 0)
+    {
+      all.resize(displs[nprocs - 1] + counts[nprocs - 1]);
+    }
+    MPI_Gatherv(local.data(), count, type, all.data(), counts.data(), displs.data(), type,
+                0, comm);
+  };
+  std::vector<int> all_nnz, row_counts, entry_counts;
+  std::vector<std::int64_t> all_cols;
+  std::vector<double> all_vals;
+  Gather(row_nnz, all_nnz, MPI_INT, row_counts);
+  Gather(cols, all_cols, MPI_INT64_T, entry_counts);
+  Gather(vals, all_vals, MPI_DOUBLE, entry_counts);
+
+  // On the first process: the clusters (rows connected by their undetermined columns),
+  // their pseudo-inverses, and the coefficients per process (compact local row, global
+  // column, coefficient).
+  std::vector<std::vector<std::int64_t>> send_idx(nprocs);
+  std::vector<std::vector<double>> send_coef(nprocs);
+  int counts[2] = {0, 0};  // Recovered, unresolved.
+  if (rank == 0)
+  {
+    const int nr = static_cast<int>(all_nnz.size());
+    std::vector<int> row_rank(nr), row_local(nr), row_start(nr + 1, 0);
+    for (int p = 0, r = 0; p < nprocs; p++)
+    {
+      for (int k = 0; k < row_counts[p]; k++, r++)
+      {
+        row_rank[r] = p;
+        row_local[r] = k;
+      }
+    }
+    for (int r = 0; r < nr; r++)
+    {
+      row_start[r + 1] = row_start[r] + all_nnz[r];
+    }
+    std::vector<std::int64_t> ucols(all_cols);
+    std::sort(ucols.begin(), ucols.end());
+    ucols.erase(std::unique(ucols.begin(), ucols.end()), ucols.end());
+    auto Index = [&](std::int64_t g)
+    {
+      return static_cast<int>(std::lower_bound(ucols.begin(), ucols.end(), g) -
+                              ucols.begin());
+    };
+    std::vector<int> parent(ucols.size());
+    for (std::size_t k = 0; k < parent.size(); k++)
+    {
+      parent[k] = static_cast<int>(k);
+    }
+    std::function<int(int)> Find = [&](int k)
+    { return (parent[k] == k) ? k : (parent[k] = Find(parent[k])); };
+    for (int r = 0; r < nr; r++)
+    {
+      const int a = Find(Index(all_cols[row_start[r]]));
+      for (int k = row_start[r] + 1; k < row_start[r + 1]; k++)
+      {
+        const int b = Find(Index(all_cols[k]));
+        if (a != b)
+        {
+          parent[b] = a;
+        }
+      }
+    }
+    std::map<int, std::vector<int>> cluster_rows, cluster_cols;
+    for (int r = 0; r < nr; r++)
+    {
+      cluster_rows[Find(Index(all_cols[row_start[r]]))].push_back(r);
+    }
+    for (std::size_t k = 0; k < ucols.size(); k++)
+    {
+      cluster_cols[Find(static_cast<int>(k))].push_back(static_cast<int>(k));
+    }
+    for (const auto &[root, crows] : cluster_rows)
+    {
+      const auto &ccols = cluster_cols[root];
+      const int m = static_cast<int>(crows.size()), k = static_cast<int>(ccols.size());
+      std::unordered_map<int, int> local_col;
+      for (int j = 0; j < k; j++)
+      {
+        local_col[ccols[j]] = j;
+      }
+      Eigen::MatrixXd A = Eigen::MatrixXd::Zero(m, k);
+      for (int r = 0; r < m; r++)
+      {
+        for (int e = row_start[crows[r]]; e < row_start[crows[r] + 1]; e++)
+        {
+          A(r, local_col[Index(all_cols[e])]) += all_vals[e];
+        }
+      }
+      Eigen::JacobiSVD<Eigen::MatrixXd, Eigen::ComputeThinU | Eigen::ComputeThinV> svd(A);
+      const auto &s = svd.singularValues();
+      int rk = 0;
+      while (rk < s.size() && s(rk) > 1.0e-10 * s(0))
+      {
+        rk++;
+      }
+      // X = V_r Σ_r⁻¹ U_rᵀ (k x m); column j is resolved when e_j is in the row space of A
+      // ((V_r V_rᵀ)_jj = 1), then x_j = (X y)_j exactly for y = A x.
+      const Eigen::MatrixXd Vr = svd.matrixV().leftCols(rk);
+      const Eigen::MatrixXd X = Vr * s.head(rk).cwiseInverse().asDiagonal() *
+                                svd.matrixU().leftCols(rk).transpose();
+      for (int j = 0; j < k; j++)
+      {
+        if (Vr.row(j).squaredNorm() < 1.0 - 1.0e-8)
+        {
+          counts[1]++;
+          continue;
+        }
+        counts[0]++;
+        for (int r = 0; r < m; r++)
+        {
+          const double x = X(j, r);
+          if (x == 0.0)
+          {
+            continue;
+          }
+          const int p = row_rank[crows[r]];
+          send_idx[p].push_back(row_local[crows[r]]);
+          send_idx[p].push_back(ucols[ccols[j]]);
+          send_coef[p].push_back(x);
+        }
+      }
+    }
+  }
+  Mpi::Broadcast(2, counts, 0, comm);
+  H.recovered = counts[0];
+  H.unresolved = counts[1];
+
+  // Return the coefficients of each process's rows.
+  auto Scatter = [&](const auto &send, auto &recv, MPI_Datatype type)
+  {
+    std::vector<int> scounts(nprocs, 0), displs(nprocs, 0);
+    std::vector<typename std::decay_t<decltype(recv)>::value_type> buf;
+    if (rank == 0)
+    {
+      for (int p = 0; p < nprocs; p++)
+      {
+        scounts[p] = static_cast<int>(send[p].size());
+        displs[p] = (p > 0) ? displs[p - 1] + scounts[p - 1] : 0;
+        buf.insert(buf.end(), send[p].begin(), send[p].end());
+      }
+    }
+    int count = 0;
+    MPI_Scatter(scounts.data(), 1, MPI_INT, &count, 1, MPI_INT, 0, comm);
+    recv.resize(count);
+    MPI_Scatterv(buf.data(), scounts.data(), displs.data(), type, recv.data(), count, type,
+                 0, comm);
+  };
+  std::vector<std::int64_t> idx;
+  std::vector<double> coef;
+  Scatter(send_idx, idx, MPI_INT64_T);
+  Scatter(send_coef, coef, MPI_DOUBLE);
+
+  // The compact rows: the rows with coefficients, in increasing order.
+  std::vector<std::vector<std::pair<HYPRE_BigInt, double>>> row_coef(rows.size());
+  for (std::size_t e = 0; e < coef.size(); e++)
+  {
+    row_coef[idx[2 * e]].emplace_back(idx[2 * e + 1], coef[e]);
+  }
+  std::vector<int> CtI(1, 0), PcI(1, 0);
+  std::vector<HYPRE_BigInt> CtJ, PcJ;
+  std::vector<double> CtV, PcV;
+  for (std::size_t r = 0; r < rows.size(); r++)
+  {
+    if (row_coef[r].empty())
+    {
+      continue;
+    }
+    const int i = rows[r];
+    H.rows.push_back(i);
+    for (const auto &[j, x] : row_coef[r])
+    {
+      CtJ.push_back(j);
+      CtV.push_back(x);
+    }
+    CtI.push_back(static_cast<int>(CtJ.size()));
+    for (HYPRE_Int k = di[i]; k < di[i + 1]; k++)
+    {
+      if (dv[k] != 0.0 && !undet[dj[k]])
+      {
+        PcJ.push_back(col0 + dj[k]);
+        PcV.push_back(dv[k]);
+      }
+    }
+    for (HYPRE_Int k = (oi ? oi[i] : 0); k < (oi ? oi[i + 1] : 0); k++)
+    {
+      if (ov[k] != 0.0 && !ghost_undet[oj[k]])
+      {
+        PcJ.push_back(cmap[oj[k]]);
+        PcV.push_back(ov[k]);
+      }
+    }
+    PcI.push_back(static_cast<int>(PcJ.size()));
+  }
+  HYPRE_BigInt global_rows;
+  const auto row_part = CompactOffsets(comm, static_cast<int>(H.rows.size()), global_rows);
+  const HYPRE_BigInt *col_part = broken->P.col_offsets.GetData();
+  H.Ct = MakeParMatrix(comm, row_part, global_rows, col_part, broken->global_tsize, CtI,
+                       CtJ, CtV);
+  H.Pc = MakeParMatrix(comm, row_part, global_rows, col_part, broken->global_tsize, PcI,
+                       PcJ, PcV);
+
+  // M = P Pcᵀ, on its nonzero rows (the L-DOFs affected by the determined true DOFs of the
+  // constraint rows).
+  {
+    std::unique_ptr<mfem::HypreParMatrix> PcT(H.Pc->Transpose());
+    std::unique_ptr<mfem::HypreParMatrix> PPcT(mfem::ParMult(&P, PcT.get()));
+    PcT.reset();
+    hypre_ParCSRMatrix *hM = *PPcT;
+    const hypre_CSRMatrix *Md = hypre_ParCSRMatrixDiag(hM),
+                          *Mo = hypre_ParCSRMatrixOffd(hM);
+    const HYPRE_Int *Mdi = hypre_CSRMatrixI(Md), *Mdj = hypre_CSRMatrixJ(Md),
+                    *Moi = hypre_CSRMatrixI(Mo), *Moj = hypre_CSRMatrixJ(Mo);
+    const HYPRE_Real *Mdv = hypre_CSRMatrixData(Md), *Mov = hypre_CSRMatrixData(Mo);
+    const HYPRE_BigInt *Mcmap = hypre_ParCSRMatrixColMapOffd(hM);
+    const HYPRE_BigInt Mcol0 = hypre_ParCSRMatrixFirstColDiag(hM);
+    std::vector<int> MI(1, 0);
+    std::vector<HYPRE_BigInt> MJ;
+    std::vector<double> MV;
+    for (int i = 0; i < hypre_CSRMatrixNumRows(Md); i++)
+    {
+      const std::size_t nnz = MJ.size();
+      for (HYPRE_Int k = Mdi[i]; k < Mdi[i + 1]; k++)
+      {
+        if (Mdv[k] != 0.0)
+        {
+          MJ.push_back(Mcol0 + Mdj[k]);
+          MV.push_back(Mdv[k]);
+        }
+      }
+      for (HYPRE_Int k = (Moi ? Moi[i] : 0); k < (Moi ? Moi[i + 1] : 0); k++)
+      {
+        if (Mov[k] != 0.0)
+        {
+          MJ.push_back(Mcmap[Moj[k]]);
+          MV.push_back(Mov[k]);
+        }
+      }
+      if (MJ.size() > nnz)
+      {
+        H.affected.push_back(i);
+        MI.push_back(static_cast<int>(MJ.size()));
+      }
+    }
+    PPcT.reset();
+    HYPRE_BigInt global_affected;
+    const auto affected_part =
+        CompactOffsets(comm, static_cast<int>(H.affected.size()), global_affected);
+    H.M = MakeParMatrix(comm, affected_part, global_affected, row_part.data(), global_rows,
+                        MI, MJ, MV);
+  }
+  H.yc.SetSize(static_cast<int>(H.rows.size()));
+  H.mc.SetSize(static_cast<int>(H.affected.size()));
+  H.yc.UseDevice(false);
+  H.mc.UseDevice(false);
+}
+
+void FiniteElementSpace::BrokenRestrictionMult(Vector &ly, Vector &ty) const
+{
+  MFEM_ASSERT(broken, "Broken restriction requires a broken space!");
+  // ty = (I - Ctᵀ Pc) Pᵀ Z ly + Ctᵀ S ly, with Z the 2 x 2 blocks of W and the constraint
+  // rows S zeroed (the diagonal of W is applied to ly by the interpolator).
+  ApplyRestrictionPairs(ly);
+  const auto *H = broken->hanging.get();
+  if (H && !H->rows.empty())
+  {
+    auto *x = ly.HostReadWrite();
+    auto *yc = H->yc.HostWrite();
+    for (std::size_t k = 0; k < H->rows.size(); k++)
+    {
+      yc[k] = x[H->rows[k]];
+      x[H->rows[k]] = 0.0;
+    }
+  }
+  broken->P.P->MultTranspose(ly, ty);
+  if (H)
+  {
+    H->Pc->Mult(-1.0, ty, 1.0, H->yc);
+    H->Ct->MultTranspose(1.0, H->yc, 1.0, ty);
+  }
+}
+
+void FiniteElementSpace::BrokenRestrictionMultTranspose(const Vector &ty, Vector &ly) const
+{
+  MFEM_ASSERT(broken, "Broken restriction requires a broken space!");
+  // ly = Zᵀ (P ty - (P Pcᵀ) Ct ty) + Sᵀ Ct ty.
+  broken->P.P->Mult(ty, ly);
+  const auto *H = broken->hanging.get();
+  if (H)
+  {
+    H->Ct->Mult(ty, H->yc);
+    H->M->Mult(H->yc, H->mc);
+    auto *x = ly.HostReadWrite();
+    const auto *mc = H->mc.HostRead();
+    for (std::size_t k = 0; k < H->affected.size(); k++)
+    {
+      x[H->affected[k]] -= mc[k];
+    }
+  }
+  ApplyRestrictionPairs(ly);  // W is symmetric.
+  if (H)
+  {
+    auto *x = ly.HostReadWrite();
+    const auto *yc = H->yc.HostRead();
+    for (std::size_t k = 0; k < H->rows.size(); k++)
+    {
+      x[H->rows[k]] = yc[k];
+    }
+  }
 }
 
 void FiniteElementSpace::ResetCeedObjects()
@@ -976,17 +1772,28 @@ const Operator &FiniteElementSpace::BuildDiscreteInterpolator() const
   const FiniteElementSpace &test_fespace = !swap ? *this : *aux_fespace;
   if (broken || aux_fespace->IsBroken())
   {
-    // Interpolators between broken spaces are assembled from the one between the
-    // underlying spaces.
     MFEM_VERIFY(
         broken && aux_fespace->IsBroken(),
         "Discrete interpolators require both or neither of the spaces to be broken!");
-    const auto *G_u = dynamic_cast<const ParOperator *>(
-        &GetUnbroken().GetDiscreteInterpolator(aux_fespace->GetUnbroken()));
-    MFEM_VERIFY(G_u, "Unexpected discrete interpolator type for the underlying spaces of "
-                     "broken spaces!");
-    G = BuildBrokenInterpolator(G_u->ParallelAssemble(), trial_fespace, test_fespace);
-    return *G;
+    // Interpolators between broken spaces are partially assembled as for unbroken spaces,
+    // with the element restrictions of the broken spaces (each element reads the copies of
+    // its side) and the restriction of the broken test space (see GetRestrictionWeights),
+    // unless some copy of the test space is determined by none of the rows of its
+    // prolongation: then they are assembled from the one between the underlying spaces.
+    // The 2D scalar curl uses MFEM's native assembly, which knows no broken spaces.
+    const bool native =
+        (trial_fespace.GetFEColl().GetMapType(dim) == mfem::FiniteElement::H_CURL &&
+         test_fespace.GetFEColl().GetMapType(dim) == mfem::FiniteElement::INTEGRAL);
+    Vector w;
+    if (native || !test_fespace.GetRestrictionWeights(w))
+    {
+      const auto *G_u = dynamic_cast<const ParOperator *>(
+          &GetUnbroken().GetDiscreteInterpolator(aux_fespace->GetUnbroken()));
+      MFEM_VERIFY(G_u, "Unexpected discrete interpolator type for the underlying spaces of "
+                       "broken spaces!");
+      G = BuildBrokenInterpolator(G_u->ParallelAssemble(), trial_fespace, test_fespace);
+      return *G;
+    }
   }
   const auto aux_map_type = trial_fespace.GetFEColl().GetMapType(dim);
   const auto primal_map_type = test_fespace.GetFEColl().GetMapType(dim);
@@ -1120,6 +1927,7 @@ BuildTrueTransferMatrix(const FiniteElementSpace &coarse, const FiniteElementSpa
 
 const Operator &FiniteElementSpaceHierarchy::BuildProlongationAtLevel(std::size_t l) const
 {
+  Vector w;
   // P is always partially assembled.
   MFEM_VERIFY(l + 1 < GetNumLevels(),
               "Can only construct a finite element space prolongation with more than one "
@@ -1144,10 +1952,14 @@ const Operator &FiniteElementSpaceHierarchy::BuildProlongationAtLevel(std::size_
           *fespaces[l], *fespaces[l + 1], true);
     }
   }
-  else if (fespaces[l]->IsBroken() || fespaces[l + 1]->IsBroken())
+  else if ((fespaces[l]->IsBroken() || fespaces[l + 1]->IsBroken()) &&
+           !fespaces[l + 1]->GetRestrictionWeights(w))
   {
-    // Prolongation between broken spaces, assembled from the one between the underlying
+    // Prolongation between broken spaces when some copy of the fine space is determined by
+    // none of the rows of its prolongation: assembled from the one between the underlying
     // spaces.
+    MFEM_VERIFY(fespaces[l]->IsBroken() && fespaces[l + 1]->IsBroken(),
+                "Prolongation requires both or neither of the spaces to be broken!");
     const auto &coarse = fespaces[l]->GetUnbroken(), &fine = fespaces[l + 1]->GetUnbroken();
     DiscreteLinearOperator p(coarse, fine);
     p.AddDomainInterpolator<IdentityInterpolator>();
@@ -1157,6 +1969,11 @@ const Operator &FiniteElementSpaceHierarchy::BuildProlongationAtLevel(std::size_
   }
   else
   {
+    // Partially assembled, also between broken spaces (with the element restrictions of the
+    // broken spaces, each element reading the copies of its side, and the restriction of
+    // the broken fine space, see FiniteElementSpace::GetRestrictionWeights): no matrix.
+    MFEM_VERIFY(fespaces[l]->IsBroken() == fespaces[l + 1]->IsBroken(),
+                "Prolongation requires both or neither of the spaces to be broken!");
     DiscreteLinearOperator p(*fespaces[l], *fespaces[l + 1]);
     p.AddDomainInterpolator<IdentityInterpolator>();
     P[l] = std::make_unique<ParOperator>(p.PartialAssemble(), *fespaces[l],

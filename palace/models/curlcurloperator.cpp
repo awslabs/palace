@@ -541,8 +541,13 @@ std::unique_ptr<Operator> CurlCurlOperator::AssembleShiftedPreconditioner(
       A_l->SetEssentialTrueDofs(h1_dbc_tdof_lists[l], Operator::DiagonalPolicy::DIAG_ONE);
       if (IsBroken())
       {
-        const auto &G = dynamic_cast<const mfem::HypreParMatrix &>(
-            GetSolutionNDSpaces().GetDiscreteInterpolatorAtLevel(l, h1_fespace_l));
+        // The discrete gradient between the broken spaces is partially assembled, or an
+        // assembled matrix where its restriction needs the assembled path.
+        const auto &G_op =
+            GetSolutionNDSpaces().GetDiscreteInterpolatorAtLevel(l, h1_fespace_l);
+        const auto *PtGP = dynamic_cast<const ParOperator *>(&G_op);
+        const auto &G = PtGP ? PtGP->ParallelAssemble()
+                             : dynamic_cast<const mfem::HypreParMatrix &>(G_op);
         std::unique_ptr<mfem::HypreParMatrix> GtSG(mfem::RAP(&GetBrokenSheetMatrix(l), &G));
         A_l->AddParallelMatrix(*GtSG);
       }

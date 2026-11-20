@@ -48,6 +48,17 @@ ParOperator::ParOperator(const Operator &A, const FiniteElementSpace &trial_fesp
 {
 }
 
+bool ParOperator::ReleaseLocalOperator()
+{
+  if (!RAP || !data_A)
+  {
+    return false;
+  }
+  data_A.reset();
+  A = nullptr;
+  return true;
+}
+
 void ParOperator::SetEssentialTrueDofs(const mfem::Array<int> &tdof_list,
                                        DiagonalPolicy policy)
 {
@@ -131,6 +142,105 @@ mfem::HypreParMatrix &ParOperator::ParallelAssemble(bool skip_zeros) const
     data_sA = BilinearForm::FullAssemble(*cA, skip_zeros, use_R);
     sA = data_sA.get();
   }
+  const bool broken_R = use_R && test_fespace.IsBroken();
+  std::unique_ptr<mfem::HypreParMatrix> hSA;
+  if (broken_R)
+  {
+    // The restriction of a broken test space is R = Pᵀ diag(w) (see
+    // RestrictionMatrixMult): scale the rows of the local interpolator (assembled with
+    // consistent, set entries) by w, then apply Pᵀ as for an unrestricted operator.
+    MFEM_VERIFY(!dynamic_cast<const hypre::HypreCSRMatrix *>(A),
+                "ParallelAssemble of a restricted operator into a broken space requires a "
+                "partially assembled interpolator!");
+    Vector w;
+    MFEM_VERIFY(test_fespace.GetRestrictionWeights(w),
+                "Broken test space without restriction weights!");
+    hypre_CSRMatrix *hsA = *data_sA;
+    const HYPRE_Int *I = hypre_CSRMatrixI(hsA);
+    HYPRE_Real *data = hypre_CSRMatrixData(hsA);
+    const auto *h_w = w.HostRead();
+    for (int i = 0; i < hypre_CSRMatrixNumRows(hsA); i++)
+    {
+      for (HYPRE_Int k = I[i]; k < I[i + 1]; k++)
+      {
+        data[k] *= h_w[i];
+      }
+    }
+    // The 2 x 2 blocks of W (w = 1 on their rows): W A, with W the identity elsewhere.
+    const auto &pairs = test_fespace.GetRestrictionPairs();
+    const auto &blocks = test_fespace.GetRestrictionBlocks();
+    if (!pairs.empty())
+    {
+      const int n = hypre_CSRMatrixNumRows(hsA);
+      std::vector<int> partner(n, -1);
+      for (std::size_t k = 0; k < pairs.size() / 2; k++)
+      {
+        partner[pairs[2 * k]] = static_cast<int>(2 * k);
+        partner[pairs[2 * k + 1]] = static_cast<int>(2 * k + 1);
+      }
+      hypre_CSRMatrix *hW = hypre_CSRMatrixCreate(n, n, n + static_cast<int>(pairs.size()));
+      hypre_CSRMatrixInitialize(hW);
+      HYPRE_Int *WI = hypre_CSRMatrixI(hW), *WJ = hypre_CSRMatrixJ(hW);
+      HYPRE_Real *WV = hypre_CSRMatrixData(hW);
+      HYPRE_Int nnz = 0;
+      for (int i = 0; i < n; i++)
+      {
+        WI[i] = nnz;
+        if (partner[i] < 0)
+        {
+          WJ[nnz] = i;
+          WV[nnz++] = 1.0;
+        }
+        else
+        {
+          const int k = partner[i] / 2, r = partner[i] % 2;
+          WJ[nnz] = pairs[2 * k];
+          WV[nnz++] = blocks[4 * k + 2 * r];
+          WJ[nnz] = pairs[2 * k + 1];
+          WV[nnz++] = blocks[4 * k + 2 * r + 1];
+        }
+      }
+      WI[n] = nnz;
+      hypre_CSRMatrix *WA = hypre_CSRMatrixMultiply(hW, hsA);
+      hypre_CSRMatrixDestroy(hW);
+      data_sA = std::make_unique<hypre::HypreCSRMatrix>(WA);
+      sA = data_sA.get();
+    }
+    // The constraint rows of hanging entities (see FiniteElementSpace::
+    // BrokenRestrictionMult, w = 1 there): R = (I - Ctᵀ Pc) Pᵀ Z + Ctᵀ S. Their rows of the
+    // local interpolator are moved to S A (compact rows, global trial L-DOF columns).
+    if (const auto *H = test_fespace.GetHangingRestriction())
+    {
+      hypre_CSRMatrix *hsA = *data_sA;
+      const HYPRE_Int *I = hypre_CSRMatrixI(hsA), *J = hypre_CSRMatrixJ(hsA);
+      HYPRE_Real *data = hypre_CSRMatrixData(hsA);
+      const bool assumed = HYPRE_AssumedPartitionCheck();
+      const HYPRE_BigInt trial_l0 =
+          trial_fespace.GetDofOffsets()[assumed ? 0 : Mpi::Rank(trial_fespace.GetComm())];
+      std::vector<int> SI(1, 0);
+      std::vector<HYPRE_BigInt> SJ;
+      std::vector<double> SV;
+      for (int i : H->rows)
+      {
+        for (HYPRE_Int k = I[i]; k < I[i + 1]; k++)
+        {
+          SJ.push_back(trial_l0 + J[k]);
+          SV.push_back(data[k]);
+          data[k] = 0.0;
+        }
+        SI.push_back(static_cast<int>(SJ.size()));
+      }
+      if (SJ.empty())
+      {
+        SJ.push_back(0);
+        SV.push_back(0.0);
+      }
+      hSA = std::make_unique<mfem::HypreParMatrix>(
+          test_fespace.GetComm(), static_cast<int>(H->rows.size()),
+          H->Ct->GetGlobalNumRows(), trial_fespace.GlobalVSize(), SI.data(), SJ.data(),
+          SV.data(), H->Ct->GetRowStarts(), trial_fespace.GetDofOffsets());
+    }
+  }
 
   hypre_ParCSRMatrix *hA = hypre_ParCSRMatrixCreate(
       trial_fespace.GetComm(), test_fespace.GlobalVSize(), trial_fespace.GlobalVSize(),
@@ -140,7 +250,7 @@ mfem::HypreParMatrix &ParOperator::ParallelAssemble(bool skip_zeros) const
   hypre_ParCSRMatrixInitialize(hA);
 
   const mfem::HypreParMatrix *P = trial_fespace.Dof_TrueDof_Matrix();
-  if (!use_R)
+  if (!use_R || broken_R)
   {
     const mfem::HypreParMatrix *Rt = test_fespace.Dof_TrueDof_Matrix();
     if (trial_fespace.IsBroken() || test_fespace.IsBroken())
@@ -172,6 +282,20 @@ mfem::HypreParMatrix &ParOperator::ParallelAssemble(bool skip_zeros) const
 
   hypre_ParCSRMatrixDiag(hA) = hA_diag;
   hypre_ParCSRMatrixDestroy(hA);
+  if (hSA)
+  {
+    // RAP += Ctᵀ (S A P - Pc RAP).
+    const auto *H = test_fespace.GetHangingRestriction();
+    std::unique_ptr<mfem::HypreParMatrix> SAP(mfem::ParMult(hSA.get(), P)),
+        PcRAP(mfem::ParMult(H->Pc.get(), RAP.get()));
+    hSA.reset();
+    std::unique_ptr<mfem::HypreParMatrix> E(mfem::Add(1.0, *SAP, -1.0, *PcRAP));
+    SAP.reset();
+    PcRAP.reset();
+    std::unique_ptr<mfem::HypreParMatrix> CtT(H->Ct->Transpose());
+    std::unique_ptr<mfem::HypreParMatrix> CtTE(mfem::ParMult(CtT.get(), E.get()));
+    RAP.reset(mfem::Add(1.0, *RAP, 1.0, *CtTE));
+  }
   hypre_ParCSRMatrixSetNumNonzeros(*RAP);
   if (&trial_fespace == &test_fespace)
   {
@@ -429,9 +553,18 @@ void ParOperator::AddMultTranspose(const Vector &x, Vector &y, const double a) c
   }
 }
 
-void ParOperator::RestrictionMatrixMult(const Vector &ly, Vector &ty) const
+void ParOperator::RestrictionMatrixMult(Vector &ly, Vector &ty) const
 {
-  if (!use_R)
+  // A broken test space has no restriction matrix: its restriction R = Pᵀ W (see
+  // FiniteElementSpace::GetRestrictionWeights) has the diagonal of W applied by the local
+  // operator (a discrete interpolator, see DiscreteLinearOperator::PartialAssemble) and its
+  // 2 x 2 blocks here, on the test L-vector (the scratch vector of this operator).
+  if (use_R && test_fespace.IsBroken())
+  {
+    // With the constraint rows of hanging entities which determine the remaining true DOFs.
+    test_fespace.BrokenRestrictionMult(ly, ty);
+  }
+  else if (!use_R)
   {
     test_fespace.GetProlongationMatrix()->MultTranspose(ly, ty);
   }
@@ -443,7 +576,11 @@ void ParOperator::RestrictionMatrixMult(const Vector &ly, Vector &ty) const
 
 void ParOperator::RestrictionMatrixMultTranspose(const Vector &ty, Vector &ly) const
 {
-  if (!use_R)
+  if (use_R && test_fespace.IsBroken())
+  {
+    test_fespace.BrokenRestrictionMultTranspose(ty, ly);
+  }
+  else if (!use_R)
   {
     test_fespace.GetProlongationMatrix()->Mult(ty, ly);
   }
