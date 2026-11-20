@@ -357,9 +357,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     in one build, refining the same elements gives the same mesh, curved or not, for any
     partition (unless `"ReorientTetMesh"` is set). Refined meshes can differ from before.
     [PR 1232](https://github.com/awslabs/palace/pull/1232).
-  - Added an MFEM patch for [mfem/mfem#5754](https://github.com/mfem/mfem/pull/5754): an
-    updated parallel space builds its prolongation on all processes, as a grid function with a
-    cached true vector needs. [PR 1232](https://github.com/awslabs/palace/pull/1232).
+  - Added an MFEM patch for [mfem/mfem#5754](https://github.com/mfem/mfem/pull/5754): a
+    prerequisite of the conformal rebalance of PR 1254; no other Palace path needs it.
+    [PR 1232](https://github.com/awslabs/palace/pull/1232).
   - Fixed driven frequency sweeps aborting with "... not found in sample frequencies!" when
     overlapping `"Samples"` ranges compute the same frequency with different rounding.
     [PR 1192](https://github.com/awslabs/palace/pull/1192).
