@@ -58,6 +58,12 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         description="Build with cuDSS sparse direct solver",
         when="@0.19:",
     )
+    variant(
+        "parmetis",
+        default=False,
+        description="Build with ParMETIS column ordering for sparse direct solvers",
+        when="@0.20:",
+    )
     variant("slepc", default=True, description="Build with SLEPc eigenvalue solver")
     variant("arpack", default=False, description="Build with ARPACK eigenvalue solver")
     variant(
@@ -150,7 +156,10 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     conflicts("^mumps+int64", msg="Palace requires MUMPS without 64 bit integers")
     with when("+mumps"):
         depends_on("fortran", type="build")
-        depends_on("mumps+metis+parmetis")
+        depends_on("mumps+metis")
+        depends_on("mumps+parmetis", when="@:0.19")
+        depends_on("mumps+parmetis", when="+parmetis")
+        depends_on("mumps~parmetis", when="~parmetis")
         # Real and complex double precision (dmumps and zmumps), with distributed
         # right-hand sides.
         depends_on("mumps@5.3:+double+complex", when="@0.20:")
@@ -160,7 +169,9 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         depends_on("mumps~openmp", when="~openmp")
 
     with when("+superlu-dist"):
-        depends_on("superlu-dist+parmetis")
+        depends_on("superlu-dist+parmetis", when="@:0.19")
+        depends_on("superlu-dist+parmetis", when="+parmetis")
+        depends_on("superlu-dist~parmetis", when="~parmetis")
         depends_on("superlu-dist+shared", when="+shared")
         depends_on("superlu-dist~shared", when="~shared")
         depends_on("superlu-dist+int64", when="+int64")
@@ -170,7 +181,10 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
 
     with when("+strumpack"):
         depends_on("fortran", type="build")
-        depends_on("strumpack+butterflypack+zfp+parmetis")
+        depends_on("strumpack+butterflypack+zfp")
+        depends_on("strumpack+parmetis", when="@:0.19")
+        depends_on("strumpack+parmetis", when="+parmetis")
+        depends_on("strumpack~parmetis", when="~parmetis")
         depends_on("strumpack+shared", when="+shared")
         depends_on("strumpack~shared", when="~shared")
         depends_on("strumpack+openmp", when="+openmp")
@@ -379,7 +393,8 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     # As of version 5.1.0, the PETSc fork of METIS provides a better mesh
     # partitioning.
     depends_on("metis+petsc_patches+gkrand")
-    depends_on("parmetis+petsc_patches")
+    depends_on("parmetis+petsc_patches", when="@:0.19")
+    depends_on("parmetis+petsc_patches", when="+parmetis")
 
     conflicts("^hypre+int64", msg="Palace uses HYPRE's mixedint option for 64 bit integers")
     depends_on("hypre@:2", when="@:0.15.0")
@@ -565,21 +580,28 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 when="@4.10:",
             ),
             # https://github.com/mfem/mfem/pull/5731: setters for the supernode sizes of
-            # SuperLUSolver (narrow to @4.10.0 once merged upstream and Lookahead flags it)
+            # SuperLUSolver
             patch(
                 "https://github.com/mfem/mfem/commit/"
                 "67dd11d697fafba16d8826172343a42e7a0c5df1.diff?full_index=1",
                 sha256="96ef4106945e25b4f262d7ae2a8f5034e1b08d3276c09615ed429fd0b4c7268b",
-                when="@4.10:",
+                when="@4.10.0",
             ),
             # https://github.com/mfem/mfem/pull/5732: SuperLUSolver frees the factors on all
-            # the layers of a 3D process grid (narrow to @4.10.0 once merged upstream and
-            # Lookahead flags it)
+            # the layers of a 3D process grid
             patch(
                 "https://github.com/mfem/mfem/commit/"
                 "5e9a26308ef95e6a8337f7b266e9a92914adcca0.diff?full_index=1",
                 sha256="2f30df267053a925d4fc53513c53b4d75bf3f1dde07c706ab5afd3d59adcac41",
-                when="@4.10:",
+                when="@4.10.0",
+            ),
+            # https://github.com/mfem/mfem/pull/5686: DeviceGroupCommunicator::Exchange
+            # synchronizes the device stream before the GPU-aware MPI exchange
+            patch(
+                "https://github.com/mfem/mfem/commit/"
+                "5bee0d22ad3a88626bf577778aa7b31b28e87db0.diff",
+                sha256="da325c815dc513f0bc9fc32c17757e82144eaeee5ad734d8b537e816e630c856",
+                when="@4.10.0",
             ),
         ],
     )
@@ -675,9 +697,11 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     depends_on("mfem cxxstd=20", when="@0.19: +rocm")
 
     with when("+cuda"):
-        # GPU-aware MPI
+        # GPU-aware MPI. From 0.20, Palace enables it at runtime when MPI supports it, this
+        # only sets hypre's default (and lets MFEM compile its GPU-aware hypre communication).
+        depends_on("hypre+gpu-aware-mpi", when="@0.20:")
         for var in ["openmpi", "mpich", "mvapich-plus"]:
-            depends_on("hypre+gpu-aware-mpi", when=f"^[virtuals=mpi] {var}+cuda")
+            depends_on("hypre+gpu-aware-mpi", when=f"@:0.19 ^[virtuals=mpi] {var}+cuda")
 
         # We need https://github.com/llnl/blt/pull/735, which is not available
         # in blt <= 0.7.1
@@ -699,9 +723,10 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             depends_on(f"strumpack{cuda_variant}", when=f"+strumpack{cuda_variant}")
 
     with when("+rocm"):
+        # GPU-aware MPI, as for CUDA
+        depends_on("hypre+gpu-aware-mpi", when="@0.20:")
         for var in ["openmpi@5:", "mpich", "mvapich-plus"]:
-            # GPU-aware MPI
-            depends_on("hypre+gpu-aware-mpi", when=f"^[virtuals=mpi] {var}+rocm")
+            depends_on("hypre+gpu-aware-mpi", when=f"@:0.19 ^[virtuals=mpi] {var}+rocm")
 
         for arch in ROCmPackage.amdgpu_targets:
             rocm_variant = f"+rocm amdgpu_target={arch}"
@@ -731,6 +756,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             self.define_from_variant("PALACE_WITH_LIBXSMM", "libxsmm"),
             self.define_from_variant("PALACE_WITH_MUMPS", "mumps"),
             self.define_from_variant("PALACE_WITH_CUDSS", "cudss"),
+            self.define_from_variant("PALACE_WITH_PARMETIS", "parmetis"),
             self.define_from_variant("PALACE_WITH_OPENMP", "openmp"),
             self.define_from_variant("PALACE_WITH_SLEPC", "slepc"),
             self.define_from_variant("PALACE_WITH_STRUMPACK", "strumpack"),
@@ -787,7 +813,8 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             if self.spec.satisfies("+superlu-dist"):
                 args.append(self.define("SUPERLU_DIST_DIR", self.spec["superlu-dist"].prefix))
             args.append(self.define("METIS_DIR", self.spec["metis"].prefix))
-            args.append(self.define("PARMETIS_DIR", self.spec["parmetis"].prefix))
+            if self.spec.satisfies("@:0.19") or self.spec.satisfies("+parmetis"):
+                args.append(self.define("PARMETIS_DIR", self.spec["parmetis"].prefix))
             args.append(self.define("HYPRE_DIR", self.spec["hypre"].prefix))
         else:
             # Pass libraries down to the ExternalMFEM cmake file. Needed only
@@ -936,12 +963,13 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 )
             )
 
-        palace_with_gpu_aware_mpi = any(
-            self.spec.satisfies(f"^{var}+cuda") or self.spec.satisfies(f"^{var}+rocm")
-            for var in ["openmpi", "mpich", "mvapich-plus"]
-        )
-
-        args.append(self.define("PALACE_WITH_GPU_AWARE_MPI", palace_with_gpu_aware_mpi))
+        # From 0.20, Palace asks MPI at runtime whether it is GPU aware
+        if self.spec.satisfies("@:0.19"):
+            palace_with_gpu_aware_mpi = any(
+                self.spec.satisfies(f"^{var}+cuda") or self.spec.satisfies(f"^{var}+rocm")
+                for var in ["openmpi", "mpich", "mvapich-plus"]
+            )
+            args.append(self.define("PALACE_WITH_GPU_AWARE_MPI", palace_with_gpu_aware_mpi))
 
         # Pass down external BLAS/LAPACK
         args.extend(

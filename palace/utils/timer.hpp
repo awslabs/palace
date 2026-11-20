@@ -42,6 +42,7 @@ public:
     KSP_SETUP,             // Linear solver setup
     KSP_PRECONDITIONER,    // Linear solver preconditioner
     KSP_COARSE_SOLVE,      // Linear solver coarse-level solve
+    KSP_INITIAL_GUESS,     // Linear solver initial guess from previous solutions
     TS,                    // Time integrator
     EPS,                   // Eigenvalue problem solver
     DIV_FREE,              // Divergence-free projection
@@ -75,6 +76,7 @@ public:
       "  Setup",
       "  Preconditioner",
       "  Coarse Solve",
+      "  Initial Guess",
       "Time Stepping",
       "Eigenvalue Solve",
       "Div.-Free Projection",

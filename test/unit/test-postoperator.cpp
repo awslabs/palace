@@ -994,11 +994,13 @@ TEST_CASE("GridFunction scaling keeps face-neighbor data consistent",
       [](const Vector &baseline, const Vector &values, double scale, double tolerance)
   {
     REQUIRE(baseline.Size() == values.Size());
+    const auto *B = baseline.HostRead();
+    const auto *V = values.HostRead();
     double max_diff = 0.0, max_val = 0.0;
     for (int i = 0; i < baseline.Size(); i++)
     {
-      max_diff = std::max(max_diff, std::abs(scale * baseline(i) - values(i)));
-      max_val = std::max(max_val, std::abs(values(i)));
+      max_diff = std::max(max_diff, std::abs(scale * B[i] - V[i]));
+      max_val = std::max(max_val, std::abs(V[i]));
     }
     CHECK(max_diff <= tolerance * std::max(max_val, 1.0));
   };

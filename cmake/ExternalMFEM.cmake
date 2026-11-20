@@ -204,11 +204,13 @@ if(PALACE_BUILD_EXTERNAL_DEPS)
     "-DMETIS_INCLUDE_DIRS=${CMAKE_INSTALL_PREFIX}/include"
     "-DHYPRE_DIR=${CMAKE_INSTALL_PREFIX}"
   )
-  if(PALACE_WITH_SUPERLU OR PALACE_WITH_STRUMPACK OR PALACE_WITH_MUMPS)
+  set(SOLVER_METIS_PACKAGES "METIS")
+  if(PALACE_WITH_PARMETIS AND (PALACE_WITH_SUPERLU OR PALACE_WITH_STRUMPACK OR PALACE_WITH_MUMPS))
     list(APPEND MFEM_OPTIONS
       "-DParMETIS_LIBRARIES=${PARMETIS_LIBRARIES}$<SEMICOLON>${METIS_LIBRARIES}"
       "-DParMETIS_INCLUDE_DIRS=${CMAKE_INSTALL_PREFIX}/include"
     )
+    list(PREPEND SOLVER_METIS_PACKAGES "ParMETIS")
   endif()
 
   # HYPRE is built with cusparse, curand (or HIP counterparts), and these are added to
@@ -278,7 +280,7 @@ Intel C++ compiler for MUMPS and STRUMPACK dependencies")
 
   # Configure SuperLU_DIST
   if(PALACE_WITH_SUPERLU)
-    set(SUPERLU_REQUIRED_PACKAGES "ParMETIS" "METIS" "LAPACK" "BLAS" "MPI")
+    set(SUPERLU_REQUIRED_PACKAGES ${SOLVER_METIS_PACKAGES} "LAPACK" "BLAS" "MPI")
     set(SUPERLU_REQUIRED_LIBRARIES)
     if(PALACE_WITH_OPENMP)
       list(APPEND SUPERLU_REQUIRED_PACKAGES "OpenMP")
@@ -306,7 +308,7 @@ Intel C++ compiler for MUMPS and STRUMPACK dependencies")
 
   # Configure STRUMPACK
   if(PALACE_WITH_STRUMPACK)
-    set(STRUMPACK_REQUIRED_PACKAGES "ParMETIS" "METIS" "LAPACK" "BLAS" "MPI" "MPI_Fortran")
+    set(STRUMPACK_REQUIRED_PACKAGES ${SOLVER_METIS_PACKAGES} "LAPACK" "BLAS" "MPI" "MPI_Fortran")
     set(STRUMPACK_REQUIRED_LIBRARIES ${SCALAPACK_LIBRARIES} ${STRUMPACK_MUMPS_GFORTRAN_LIBRARY})
     if(NOT "${STRUMPACK_EXTRA_LIBRARIES}" STREQUAL "")
       list(PREPEND STRUMPACK_REQUIRED_LIBRARIES ${STRUMPACK_EXTRA_LIBRARIES})
@@ -333,7 +335,7 @@ Intel C++ compiler for MUMPS and STRUMPACK dependencies")
 
   # Configure MUMPS
   if(PALACE_WITH_MUMPS)
-    set(MUMPS_REQUIRED_PACKAGES "ParMETIS" "METIS" "LAPACK" "BLAS" "MPI" "MPI_Fortran" "Threads")
+    set(MUMPS_REQUIRED_PACKAGES ${SOLVER_METIS_PACKAGES} "LAPACK" "BLAS" "MPI" "MPI_Fortran" "Threads")
     if(PALACE_WITH_OPENMP)
       list(APPEND MUMPS_REQUIRED_PACKAGES "OpenMP")
     endif()
@@ -534,6 +536,26 @@ download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
   "https://github.com/mfem/mfem/commit/5e9a26308ef95e6a8337f7b266e9a92914adcca0.diff?full_index=1"
   2f30df267053a925d4fc53513c53b4d75bf3f1dde07c706ab5afd3d59adcac41
 )
+# https://github.com/mfem/mfem/pull/5686
+# DeviceGroupCommunicator::Exchange synchronizes the device stream before posting the
+# GPU-aware MPI receives into buffers that a previous exchange may still be reading.
+download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
+  mfem_pr5686.diff
+  "https://github.com/mfem/mfem/commit/5bee0d22ad3a88626bf577778aa7b31b28e87db0.diff"
+  da325c815dc513f0bc9fc32c17757e82144eaeee5ad734d8b537e816e630c856
+)
+
+# https://github.com/mfem/mfem/pull/5758
+# The parallel CuDSSSolver also sets the communicator for device buffers, which cuDSS 0.8
+# needs in its multi-GPU mode: without it, cuDSS crashes in the analysis phase. The change
+# only affects builds with cuDSS 0.8 or later. The Spack build applies the same patch.
+if(PALACE_WITH_CUDSS)
+  download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
+    mfem_pr5758.diff
+    "https://github.com/mfem/mfem/pull/5758.diff?full_index=1"
+    d8a68635d2694311abc6241e97eea059d4bdc7945d19b5d7852bbd6640ea78f5
+  )
+endif()
 
 include(ExternalProject)
 ExternalProject_Add(mfem
