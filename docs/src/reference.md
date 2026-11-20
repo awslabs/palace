@@ -1892,7 +1892,19 @@ excluded on noise; the record marks `FloorApplied`). Real metal reads the conduc
 potential exactly; coupon metal where the device has gap (a straight continuation past a
 device corner, a mis-keyed or misplaced coupon) reads the gap potential. A patch whose
 worst knot exceeds 2 % of the normalization is excluded like a domain-boundary cell (weight
-zero for that and every later excitation; `surface-response-patches.csv` is rewritten) and
+zero). `"ConductorConsistency": {"Exclusion": ...}` sets where: `"PerExcitation"` (the
+default) excludes it at the excitation whose own test fails and there only (an eigenmode, a
+driven port excitation at one frequency, an electrostatic terminal): every patch is tested
+again at every excitation, so an excitation's result does not depend on the order of the
+excitations; `"Sticky"` (the rule of results made before this setting existed) excludes it
+at that and every later excitation and does not test it again. Run-level outputs (the
+`ModelCatalog` `PatchWeight`, `Count`, `ClaimLength`, `CellLength`, `RawPortions`, the
+electrostatic corrected capacitance matrices and `surface-response-patches.csv`) take the
+patches excluded at one or more excitations, which are the same on both rules;
+`"PerExcitation"` adds `ExcludedByExcitation`, `ConstructionPatchWeight`, a log line per
+excitation naming the models excluded there and their raw share per interface and Type, and
+the `conductor-consistency raw share of W` of each flagged coverage cell. An eigenmode's
+self-consistent problem is solved once, before the gate. The patch is
 recorded under `Diagnostics.ConductorConsistency` of the solve's `palace.json` with the
 claimed edge length left uncorrected, next to every tested patch's reading (lengths and
 coordinates in the mesh file's units). The solver does not apply the coverage bound: the
@@ -1900,7 +1912,8 @@ consumer of that bound must add `ClaimLength` to the `Missing` and `DomainBounda
 lengths. The excluded patch's claimed perimeter window (its raw claim by the
 domain-boundary rule: a translational cell's own-edge interval, a corner's arm windows, a
 spatial cluster's claims with the cell parts and uncovered portions its box removed from
-others) is never dropped: from the excluding excitation on, its RAW within-`R` surface
+others) is never dropped: at each excitation that excludes it (`"Sticky"`: from the
+excluding excitation on), its RAW within-`R` surface
 energy is kept in the corrected interface energies like a `Missing` or `DomainBoundary`
 portion (fixed trace and fixed flux on the raw field, self-consistent on the corrected
 field; the response operator itself is unchanged, weight zero stands) and reported per
@@ -1909,7 +1922,7 @@ feature type in `surface-response-conductor-consistency-energy.csv` beside
 (`source`, `evaluation`, `type` with a `Total` row, `portions`, `length (m)`, `geometric
 cells`, then per target interface `conductorconsistency raw energy[k] (J)` and
 `conductorconsistency share[k]`; written only when a patch was excluded, an excitation
-evaluated before the exclusion reads zero), with the portions under
+that excluded nothing (`"Sticky"`: evaluated before the exclusion) reads zero), with the portions under
 `Diagnostics.ConductorConsistency.RawPortions`. A solve with no exclusion writes nothing
 new. On the Maxwell path a postprocessing interface that is not a response target carries
 its raw energy in the corrected and fixed-flux columns of `surface-Q-corrected.csv` (the

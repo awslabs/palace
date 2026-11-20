@@ -284,8 +284,9 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
         // The conductor-consistency gate on the Maxwell path (idfix DESIGN B.3; decision
         // 1064 (1)): the raw field of this frequency, BEFORE the self-consistent solve (the
         // weights are read at Mult time, so the corrected field sees the exclusion) and
-        // before any energy of this frequency is formed; an excluded patch stays excluded
-        // at every later frequency of this operator (sticky).
+        // before any energy of this frequency is formed; an excluded patch is excluded at
+        // this (excitation, frequency) only under Exclusion PerExcitation, at every later
+        // one of this operator under Sticky (lane ccpx).
         BlockTimer gate_timer(Timer::POSTPRO_RESPONSE_COUPON);
         response_correction->ApplyConductorConsistencyGate(
             E, excitation_idx,

@@ -2208,8 +2208,10 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       BlockTimer response_timer(Timer::POSTPRO_RESPONSE);
       // The conductor-consistency gate (decision 277): the device potential at the spatial
       // coupons' metal cross-sections on their box faces against the conductor potentials,
-      // before any energy of this excitation is formed; an excluded patch leaves every
-      // later evaluation (fixed trace, self-consistent) and the patch table.
+      // before any energy of this excitation is formed; an excluded patch leaves this
+      // excitation's evaluations (fixed trace, self-consistent) under Exclusion
+      // PerExcitation, every later one too under Sticky (lane ccpx); the patch table ends
+      // at the union on both rules.
       if (response_correction->HasConductorConsistencyProbes())
       {
         {
