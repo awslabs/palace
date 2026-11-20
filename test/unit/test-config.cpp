@@ -160,9 +160,6 @@ TEST_CASE("Config Substructuring", "[config][Serial]")
     CHECK(data.substructuring->environment_attributes == std::vector<int>{2, 3});
     CHECK(data.substructuring->mode == SubstructuringMode::OFFLINE);
     CHECK(data.substructuring->model_file == "env_dtn.dat");
-    CHECK_FALSE(data.substructuring->region_mesh);
-    solver["Substructuring"]["RegionMesh"] = true;
-    CHECK(config::SolverData(solver).substructuring->region_mesh);
     solver["Substructuring"].erase("Environment");
     CHECK(config::SolverData(solver).substructuring->environment_attributes.empty());
   }
@@ -2658,8 +2655,9 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(err.empty());
 
     IoData iodata2(config, false);
-    CHECK(iodata2.solver.substructuring->region_mesh ==
-          iodata1.solver.substructuring->region_mesh);
+    CHECK(iodata2.solver.substructuring->mode == iodata1.solver.substructuring->mode);
+    CHECK(iodata2.solver.substructuring->model_file ==
+          iodata1.solver.substructuring->model_file);
 
     auto sub_gaps = SchemaCoverageGaps("/properties/Solver/properties/Substructuring",
                                        config["Solver"]["Substructuring"]);

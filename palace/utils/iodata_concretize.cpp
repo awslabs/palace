@@ -587,7 +587,6 @@ json IoData::ConcretizeDefaults(const IoData &iodata, json config)
     {
       Concretize(j_sub, "ModelFile", sub.model_file);
     }
-    Concretize(j_sub, "RegionMesh", sub.region_mesh);
   }
 
   if (config.contains("Domains"))

@@ -166,8 +166,7 @@
         ]
       },
       "Mode": "Online",
-      "ModelFile": "postpro/cpw_resonator_grid_environment.model",
-      "RegionMesh": true
+      "ModelFile": "postpro/cpw_resonator_grid_environment.model"
     }
   }
 }

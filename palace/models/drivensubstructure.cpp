@@ -161,8 +161,8 @@ DrivenSubstructure::DrivenSubstructure(SpaceOperator &space_op,
   // A mesh of the region (online): Γ also holds the region's boundary DOFs at the points
   // of the saved interface DOFs, where the environment was cut off.
   std::vector<char> cut(nt, 0);
-  // With the saved model, the mesh holds its environment or, with "RegionMesh", the part of
-  // it in the mesh of the region (the sweep checks which against the model's record).
+  // With the saved model, the mesh holds its environment or the part of it in the mesh of
+  // the region, which the sweep tells by the model's record.
   region_only = saved && region_mesh;
   if (region_only)
   {

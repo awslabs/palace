@@ -66,8 +66,6 @@ region and the environment are given by domain attributes, which together must c
     environment model to that file.
   - `"Mode": "Online"` loads the model from `"ModelFile"` and solves only the region. The region
     may be re-meshed between runs, as long as the environment and the interface are unchanged.
-  - `"RegionMesh": true` tells an `"Online"` run that its mesh is the mesh of the region written
-    with the model (see below), not the full mesh.
 
 An `"Offline"` run that saves a model on a conforming mesh (not one from adaptive refinement) also
 writes a mesh of the region next to it (`<model>_region.mesh` for `"ModelFile": "<model>.model"`),
@@ -77,14 +75,14 @@ whose film or hole reaches the region or the interface (with these films whole a
 elements reach a `"TwoSided"` film where it crosses the interface, the environment along every such
 crossing) and next to the films on the interface. The flux loops entirely in the environment are
 left out: their excitations and the fluxoids they impose come from the model. An `"Online"` run on
-it (`"Model"/"Mesh"` and `"RegionMesh": true`, with the configuration otherwise
-unchanged) reads and partitions the region only. The environment is then that of the model: a
-configuration that changes it is rejected (an excitation of the environment that changed needs the
-full mesh), and the mesh must hold the environment elements written with it; the interface is found
-from the saved interface DOFs, and the nondimensionalization is that of the model. Every excitation
-with sources in the environment must be in the model, the fields are written in the region and on
-the interface only, and a priori and adaptive refinement need the full mesh (the mesh of the region
-is written refined).
+it (as `"Model"/"Mesh"`, with the configuration otherwise unchanged) reads and partitions the
+region only, and tells it from the full mesh by the environment elements it holds. The environment
+is then that of the model: a configuration that changes it is rejected (an excitation of the
+environment that changed needs the full mesh), and the mesh must hold the environment elements
+written with it; the interface is found from the saved interface DOFs, and the nondimensionalization
+is that of the model. Every excitation with sources in the environment must be in the model, the
+fields are written in the region and on the interface only, and a priori and adaptive refinement
+need the full mesh (the mesh of the region is written refined).
 A redesign of the region is re-meshed inside the mesh of the region with
 [`examples/substructuring/remesh_region.py`](https://github.com/awslabs/palace/blob/main/examples/substructuring/remesh_region.py)
 and `--region-mesh` (see [Example: qubit lattice](@ref substructuring-lattice-example)).

@@ -9,6 +9,5 @@
     { "Index": 2, "Attributes": [2] } ] },
   "Solver": { "Order": 2,
     "Substructuring": { "Region": { "Attributes": [1] }, "Environment": { "Attributes": [2] },
-      "Mode": "Online", "ModelFile": "environment_model.bin",
-      "RegionMesh": true } }
+      "Mode": "Online", "ModelFile": "environment_model.bin" } }
 }

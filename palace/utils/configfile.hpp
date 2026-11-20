@@ -1272,10 +1272,6 @@ public:
   // Optional path for the serialized environment DtN model (offline/online reuse).
   std::string model_file = "";
 
-  // Online: whether the mesh is the mesh of the region written next to the model (or a
-  // re-meshing of its region), rather than the full mesh.
-  bool region_mesh = false;
-
   // The sparse direct solver of the factorizations: config["Solver"]["Linear"]["Type"] as
   // given (set by IoData before it resolves the default), DEFAULT for Palace's preference.
   LinearSolver direct_solver = LinearSolver::DEFAULT;

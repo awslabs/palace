@@ -71,13 +71,6 @@ namespace
 // of the bounding box of the mesh.
 constexpr double kMagRegularization = 1.0e-3;
 
-// An online configuration for the mesh of the region written with the model.
-IoData OnRegionMesh(IoData iodata)
-{
-  iodata.solver.substructuring->region_mesh = true;
-  return iodata;
-}
-
 double RegularizationScale(const mfem::ParMesh &mesh)
 {
   mfem::Vector bbmin, bbmax;
@@ -607,8 +600,8 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   // priori refinement would refine the region again, its interface included, so it is
   // rejected (on the full mesh, both runs refine alike).
   const std::string model_path = (temp_dir / "substruct_region_refined.bin").string();
-  auto make_config = [&](const std::string &mode, const json &refinement,
-                         bool ground = false, bool region = false)
+  auto make_config =
+      [&](const std::string &mode, const json &refinement, bool ground = false)
   {
     json config = {
         {"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
@@ -626,8 +619,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
            {{"Region", {{"Attributes", {1}}}},
             {"Environment", {{"Attributes", {2}}}},
             {"Mode", mode},
-            {"ModelFile", model_path},
-            {"RegionMesh", region}}}}}};
+            {"ModelFile", model_path}}}}}};
     if (ground)
     {
       config["Boundaries"]["Ground"] = {{"Attributes", {3}}};
@@ -652,22 +644,13 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
                          {"BoundingBoxMin", {0.0, 0.0, 0.0}},
                          {"BoundingBoxMax", {0.25, 1.0, 1.0}}}}}};
   condense(make_config("Offline", none), MakeSplitCube(4));
-  CHECK_NOTHROW(condense(make_config("Online", none, false, true), region_mesh()));
+  CHECK_NOTHROW(condense(make_config("Online", none), region_mesh()));
   CHECK_NOTHROW(condense(make_config("Online", uniform), MakeSplitCube(4)));
   for (const json &refinement : {uniform, boxes})
   {
-    CHECK_THROWS_WITH(
-        condense(make_config("Online", refinement, false, true), region_mesh()),
-        Catch::Matchers::ContainsSubstring("is written refined"));
+    CHECK_THROWS_WITH(condense(make_config("Online", refinement), region_mesh()),
+                      Catch::Matchers::ContainsSubstring("is written refined"));
   }
-
-  // The mesh must be the one "RegionMesh" says, in an online run.
-  CHECK_THROWS_WITH(condense(make_config("Online", none), region_mesh()),
-                    Catch::Matchers::ContainsSubstring("set \"RegionMesh\": true"));
-  CHECK_THROWS_WITH(condense(make_config("Online", none, false, true), MakeSplitCube(4)),
-                    Catch::Matchers::ContainsSubstring("holds the whole environment"));
-  CHECK_THROWS_WITH(make_config("Offline", none, false, true),
-                    Catch::Matchers::ContainsSubstring("is for an \"Online\""));
 
   // With the ground reaching the interface, environment elements are written with the
   // region: once refined, they are told from a changed environment by the moments that
@@ -677,10 +660,13 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
     pmesh->UniformRefinement();
     return std::move(pmesh);
   };
+  auto no_ground = region_mesh();
   condense(make_config("Offline", none, true), MakeSplitCube(4));
-  CHECK_THROWS_WITH(
-      condense(make_config("Online", uniform, true, true), refined(region_mesh())),
-      Catch::Matchers::ContainsSubstring("is written refined"));
+  CHECK_THROWS_WITH(condense(make_config("Online", uniform, true), refined(region_mesh())),
+                    Catch::Matchers::ContainsSubstring("is written refined"));
+  // A mesh which is neither, as that of the region without the ground, is rejected.
+  CHECK_THROWS_WITH(condense(make_config("Online", none, true), std::move(no_ground)),
+                    Catch::Matchers::ContainsSubstring("its mesh changed"));
   CHECK_THROWS_WITH(
       condense(make_config("Online", uniform, true), refined(MakeSplitCube(4))),
       Catch::Matchers::ContainsSubstring("The environment differs"));
@@ -1108,8 +1094,7 @@ TEST_CASE_METHOD(
            {{"Region", {{"Attributes", {1}}}},
             {"Environment", {{"Attributes", {2}}}},
             {"Mode", mode},
-            {"ModelFile", model_path},
-            {"RegionMesh", mode == "Online"}}}}}};
+            {"ModelFile", model_path}}}}}};
     if (ground)
     {
       config["Boundaries"]["Ground"] = {{"Attributes", {3}}};
@@ -1586,7 +1571,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   }
   mfem::Mesh serial(RegionMeshPath(model_path).c_str());
   const double E_full = energy(make_config("Online", !offline_sheet), MakeSplitCube(4));
-  const double E_region = energy(OnRegionMesh(make_config("Online", !offline_sheet)),
+  const double E_region = energy(make_config("Online", !offline_sheet),
                                  std::make_unique<mfem::ParMesh>(Mpi::World(), serial));
   CAPTURE(E_full, E_region);
   CHECK(E_full > 0.0);
@@ -1634,9 +1619,9 @@ TEST_CASE_METHOD(
   (void)capacitance(make_config("Offline", 2), MakeSplitCube(4), 2);
   mfem::Mesh serial(RegionMeshPath(model_path).c_str());
   auto region = [&]() { return std::make_unique<mfem::ParMesh>(Mpi::World(), serial); };
-  CHECK(capacitance(OnRegionMesh(make_config("Online", 2)), region(), 2)(1, 1) > 0.0);
+  CHECK(capacitance(make_config("Online", 2), region(), 2)(1, 1) > 0.0);
   CHECK_THROWS_WITH(
-      capacitance(OnRegionMesh(make_config("Online", 5)), region(), 5),
+      capacitance(make_config("Online", 5), region(), 5),
       Catch::Matchers::ContainsSubstring("The excitations of the environment differ"));
   // Strip the record of the terminal modes, the last one.
   const auto file = substructuring::ModelFile::Read(model_path, Mpi::World());
@@ -1647,7 +1632,7 @@ TEST_CASE_METHOD(
     std::filesystem::resize_file(model_path, file.records.back().pos - 12);
   }
   Mpi::Barrier(Mpi::World());
-  CHECK_THROWS_WITH(capacitance(OnRegionMesh(make_config("Online", 2)), region(), 2),
+  CHECK_THROWS_WITH(capacitance(make_config("Online", 2), region(), 2),
                     Catch::Matchers::ContainsSubstring("Excitation 2 has no DOFs"));
 }
 
@@ -1741,7 +1726,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   CHECK_FALSE(factored);
   mfem::Mesh serial(RegionMeshPath(model_path).c_str());
   const mfem::DenseMatrix C_region =
-      capacitance(OnRegionMesh(make_config("Online", true, model_path)),
+      capacitance(make_config("Online", true, model_path),
                   std::make_unique<mfem::ParMesh>(Mpi::World(), serial), &factored);
   for (int i = 0; i < 2; i++)
   {
@@ -2174,20 +2159,15 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "SubstructuringSolver boundaries o
                     { f.write(reinterpret_cast<const char *>(&env_loop), sizeof(int)); });
   auto boundaries = [&](const std::string &type, const json &bdr, bool region_mesh)
   {
-    json sub = {{"Region", {{"Attributes", {1}}}},
-                {"Environment", {{"Attributes", {2}}}},
-                {"ModelFile", model}};
-    if (region_mesh)
-    {
-      sub["Mode"] = "Online";
-      sub["RegionMesh"] = true;
-    }
+    const json sub = {{"Region", {{"Attributes", {1}}}},
+                      {"Environment", {{"Attributes", {2}}}},
+                      {"ModelFile", model}};
     const json config = {{"Problem", {{"Type", type}, {"Output", "test_output"}}},
                          {"Model", {{"Mesh", "test.msh"}}},
                          {"Domains", {{"Materials", {{{"Attributes", {1, 2}}}}}}},
                          {"Boundaries", bdr},
                          {"Solver", {{"Substructuring", sub}}}};
-    return SubstructuringSolver::MeshBoundaries(IoData(config, false), mesh);
+    return SubstructuringSolver::MeshBoundaries(IoData(config, false), mesh, region_mesh);
   };
   const json terminals = {
       {"Terminal",
@@ -2317,7 +2297,6 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
     offline.CondenseEnvironment();
   }
   config["Solver"]["Substructuring"]["Mode"] = "Online";
-  config["Solver"]["Substructuring"]["RegionMesh"] = true;
   const IoData online(config, false);
   mfem::Mesh serial(RegionMeshPath(model_path).c_str());
   std::vector<std::unique_ptr<Mesh>> region;
@@ -4384,7 +4363,6 @@ TEST_CASE_METHOD(
     {
       term(config);
       config["Model"]["Mesh"] = region_mesh;
-      config["Solver"]["Substructuring"]["RegionMesh"] = true;
     };
     if (on_gamma)
     {
@@ -4410,19 +4388,10 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   // as does one with it on the mesh of the region, which fingerprints its sources there.
   RunDrivenSheetSquare(temp_dir, "Offline");
   const std::string region_mesh = RegionMeshPath((temp_dir / "driven_model.bin").string());
-  auto on_region = [&](json &config)
-  {
-    config["Model"]["Mesh"] = region_mesh;
-    config["Solver"]["Substructuring"]["RegionMesh"] = true;
-  };
+  auto on_region = [&](json &config) { config["Model"]["Mesh"] = region_mesh; };
   auto online = [&](const std::function<void(json &)> &edit)
   { RunDrivenSheetSquare(temp_dir, "Online", edit); };
   using Catch::Matchers::ContainsSubstring;
-  CHECK_THROWS_WITH(
-      online([](json &config) { config["Solver"]["Substructuring"]["RegionMesh"] = true; }),
-      ContainsSubstring("\"RegionMesh\" is set, but the mesh holds"));
-  CHECK_THROWS_WITH(online([&](json &config) { config["Model"]["Mesh"] = region_mesh; }),
-                    ContainsSubstring("set \"RegionMesh\": true"));
   CHECK_THROWS_WITH(
       online([](json &config) { config["Model"]["Refinement"]["UniformLevels"] = 1; }),
       ContainsSubstring("its mesh changed"));
@@ -4659,15 +4628,13 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
                          {"BoundingBoxMax", {-7.5, -6.9, -6.2}}}}}};
   for (const json &refinement : {uniform, boxes})
   {
-    CHECK_THROWS_WITH(
-        RunDrivenSheetSquare(temp_dir, "Online",
-                             [&](json &config)
-                             {
-                               config["Model"]["Mesh"] = region_mesh;
-                               config["Solver"]["Substructuring"]["RegionMesh"] = true;
-                               config["Model"]["Refinement"] = refinement;
-                             }),
-        Catch::Matchers::ContainsSubstring("is written refined"));
+    CHECK_THROWS_WITH(RunDrivenSheetSquare(temp_dir, "Online",
+                                           [&](json &config)
+                                           {
+                                             config["Model"]["Mesh"] = region_mesh;
+                                             config["Model"]["Refinement"] = refinement;
+                                           }),
+                      Catch::Matchers::ContainsSubstring("is written refined"));
   }
 }
 
@@ -6187,7 +6154,6 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
     {
       config["Solver"]["Substructuring"]["Mode"] = mode;
       config["Solver"]["Substructuring"]["ModelFile"] = model_path;
-      config["Solver"]["Substructuring"]["RegionMesh"] = (serial != nullptr);
     }
     IoData iodata(config, false);
     std::vector<std::unique_ptr<Mesh>> mesh;

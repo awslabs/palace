@@ -332,27 +332,29 @@ DrivenSubstructuredSweep::DrivenSubstructuredSweep(const IoData &iodata,
     nt(static_cast<int>(Curl.Width())), domains(iodata.domains),
     boundaries(iodata.boundaries), field(comm)
 {
+  bool region_mesh = false;
   if (online)
   {
     model.ReadHeader(model_path, comm);
-    if (sub.region_mesh)
+    // The mesh and the configuration of the environment are those of the model (the
+    // sources of the excitations, which may be fewer, are checked one by one in OpenModel),
+    // and the mesh of the region is written refined.
+    region_mesh = model.environment.CheckMesh(space_op.GetNDSpace().GetParMesh(),
+                                              DrivenSubstructureModel::kEnvironmentTol);
+    if (region_mesh)
     {
-      // The mesh of the region is written refined.
       const auto &refinement = iodata.model.refinement;
       MFEM_VERIFY(refinement.uniform_ref_levels == 0 &&
                       refinement.ser_uniform_ref_levels == 0 &&
                       refinement.GetBoxes().empty() && refinement.GetSpheres().empty(),
                   kRegionMeshRefined);
     }
-    // The mesh and the configuration of the environment are those of the model (the
-    // sources of the excitations, which may be fewer, are checked one by one in OpenModel).
-    model.environment.Check(space_op.GetNDSpace().GetParMesh(), *iodata.resolved_config,
-                            sub.environment_attributes,
-                            DrivenSubstructureModel::kEnvironmentTol, sub.region_mesh);
+    model.environment.CheckConfig(*iodata.resolved_config, sub.environment_attributes,
+                                  region_mesh);
   }
   ds = std::make_unique<DrivenSubstructure>(
       space_op, sub.region_attributes, sub.environment_attributes, online,
-      online ? &model : nullptr, sub.region_mesh, sub.direct_solver,
+      online ? &model : nullptr, region_mesh, sub.direct_solver,
       iodata.solver.linear.sym_factorization);
   if (ds->RegionOnly())
   {

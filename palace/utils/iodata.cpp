@@ -927,9 +927,6 @@ void IoData::CheckConfiguration()
                 "Substructuring requires a nonempty Region attribute set!");
     MFEM_VERIFY(sub.mode != SubstructuringMode::ONLINE || !sub.model_file.empty(),
                 "\"Online\" substructuring requires the saved model path \"ModelFile\"!");
-    MFEM_VERIFY(!sub.region_mesh || sub.mode == SubstructuringMode::ONLINE,
-                "\"RegionMesh\" is for an \"Online\" substructuring run on the mesh of the "
-                "region written with the model!");
     // The interface DOFs of a model are matched by their coordinates, which on a periodic
     // seam depend on the partition.
     MFEM_VERIFY(boundaries.periodic.boundary_pairs.empty(),

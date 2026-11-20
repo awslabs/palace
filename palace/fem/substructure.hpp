@@ -280,15 +280,17 @@ struct EnvironmentRecord
   std::vector<char> Serialize() const;
   static std::optional<EnvironmentRecord> Deserialize(const std::vector<char> &bytes);
 
+  // Online, check that the mesh holds the environment within the relative tolerance of the
+  // moments: all its elements and their boundaries, or the elements written in the mesh of
+  // the region (that mesh, or a re-meshing of its region, which is not refined again).
+  // Returns whether it is the mesh of the region. Collective.
+  bool CheckMesh(mfem::ParMesh &mesh, double tol) const;
+
   // Online, check that the environment attributes of the run are those of the record (on
-  // the mesh of the region, some of them), that the mesh holds the environment within the
-  // relative tolerance of the moments (on the mesh of the region, the elements written in
-  // it, else all of them and their boundaries), and that the configuration on it is
-  // unchanged. A mesh which does not match is named if it is the other one. Returns whether
-  // the excitations of the environment are those of the record. Collective.
-  bool Check(mfem::ParMesh &mesh, const nlohmann::json &config,
-             const std::vector<int> &environment_attributes, double tol,
-             bool region_mesh) const;
+  // the mesh of the region, some of them), and that the configuration on it is unchanged.
+  // Returns whether the excitations of the environment are those of the record.
+  bool CheckConfig(const nlohmann::json &config,
+                   const std::vector<int> &environment_attributes, bool region_mesh) const;
 };
 
 // The message of an a priori refinement of the mesh of the region, written refined.

@@ -1696,7 +1696,6 @@ SubstructuringData::SubstructuringData(const json &substructuring)
   }
   mode = substructuring.value("Mode", mode);
   model_file = substructuring.value("ModelFile", model_file);
-  region_mesh = substructuring.value("RegionMesh", region_mesh);
 }
 
 SolverData::SolverData(const json &solver)
