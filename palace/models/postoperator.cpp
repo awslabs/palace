@@ -2046,6 +2046,15 @@ void PostOperator<solver_t>::MeasureFloquetPorts() const
     {
       return;
     }
+    // Floquet port S-parameters are normalized to the incident Floquet mode of a port, so
+    // they are not computed for the excitations with a plane wave.
+    for (const auto &[idx, src] : fem_op->GetPlaneWaveOp())
+    {
+      if (idx == measurement_cache.ex_idx)
+      {
+        return;
+      }
+    }
     // Determine if the excitation uses circular polarization (for output basis).
     bool circular_output = false;
     for (const auto &[idx, port] : fem_op->GetFloquetPortOp())

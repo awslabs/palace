@@ -85,6 +85,26 @@ The mesh needs:
 
 Plane wave excitations are supported for driven simulations with a uniform frequency sweep.
 
+On a periodic cell, the incident field must be quasi-periodic: with a
+[Floquet wave vector](../config/reference.md#config-boundaries-periodic-floquetwavevector)
+``\bm{k}_F``, the unknown is the periodic envelope ``\bm{E}\,e^{i\bm{k}_F\cdot\bm{x}}``
+and *Palace* interpolates the envelope of the incident field, and ``\bm{k}_F`` (zero if
+not given) must be the part of the wave vector ``k\hat{\bm{k}}`` of the plane wave along
+the periodic directions, up to a reciprocal lattice vector. Oblique incidence therefore
+always needs a Floquet wave vector. *Palace* checks this at setup for all the frequencies
+of the sweep, against the translation of each periodic boundary pair: it stops with an
+error for a phase mismatch above ``10^{-2}`` rad over a lattice translation, and warns
+above ``10^{-6}`` rad, since the source then leaks into the scattered field at the level of
+the mismatch. Periodic boundary pairs which are not translations are rejected, and for
+pairs without an explicit `"Translation"` (detected from the mesh) the check is done on
+the interpolated incident field at each frequency instead. A fixed ``\bm{k}_F`` matches an
+oblique plane wave only at isolated frequencies; with
+[`config["Boundaries"]["Periodic"]["FloquetReferenceFrequency"]`](../config/reference.md#config-boundaries-periodic)
+it scales with the frequency, as the wave vector of the plane wave does, and must then
+match it exactly, so a frequency sweep at a fixed angle of incidence stays consistent.
+Floquet port S-parameters (`port-floquet-S.csv`) are normalized to an incident Floquet
+mode, and are not written for excitations with a plane wave.
+
 ## Accuracy
 
 The discrete incident field is not exactly a solution of the discrete problem, so part of

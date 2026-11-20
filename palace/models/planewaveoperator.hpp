@@ -5,6 +5,7 @@
 #define PALACE_MODELS_PLANE_WAVE_OPERATOR_HPP
 
 #include <map>
+#include <vector>
 #include <mfem.hpp>
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
@@ -19,6 +20,7 @@ class Units;
 namespace config
 {
 
+struct PeriodicBoundaryData;
 struct PlaneWaveData;
 
 }  // namespace config
@@ -48,11 +50,25 @@ public:
     mfem::Vector direction, polarization, origin;  // Nondimensional
     double amplitude;                              // Nondimensional
     double c = 1.0;  // Speed of light of the background (nondimensional), vacuum by default
+    // Floquet wave vector of the solution (nondimensional), empty without one. When
+    // kf_scaled, it is k_F / omega and scales with the frequency.
+    mfem::Vector kf;
+    bool kf_scaled = false;
     mfem::Array<int> attr_marker;
   };
 
 private:
   std::map<int, PlaneWaveSource> sources;
+
+  // Nondimensional length of one mesh length unit, for the messages.
+  double mesh_scale = 1.0;
+
+  // Frequency in GHz of a unit nondimensional angular frequency, for the messages.
+  double unit_GHz = 1.0;
+
+  // Whether the quasi-periodicity of the incident field is checked on the interpolated
+  // field at every frequency, when some periodic boundary pair has no explicit translation.
+  bool check_interpolated = false;
 
   // Cached true-dof marker (1 on the dofs of the closure of the total-field region, 0
   // elsewhere) for each source.
@@ -64,6 +80,14 @@ private:
                                 mfem::Array<int> &lmark) const;
 
 public:
+  // Interpolate the incident field of the plane wave with the given excitation index at the
+  // angular frequency omega into the true dofs of the given space, as the periodic envelope
+  // E exp(+i k_F . x) when the solution has a Floquet wave vector k_F. Aborts if the
+  // interpolated field is not continuous across the periodic boundaries, which happens
+  // when it is not quasi-periodic with k_F. Returns false if there is no such plane wave.
+  bool GetIncidentField(int idx, double omega, const FiniteElementSpace &nd_fespace,
+                        ComplexVector &g) const;
+
   PlaneWaveOperator(const std::map<int, config::PlaneWaveData> &plane_wave,
                     const Units &units, const mfem::ParMesh &mesh);
 
@@ -85,10 +109,21 @@ public:
                          const mfem::Array<int> &bdr_attr_marker) const;
 
   // Set the background material of each plane wave from the elements outside of its
-  // total-field region which touch its boundary, where the incident field is evaluated.
-  // Aborts if these are not one homogeneous, isotropic and lossless material.
+  // total-field region which touch its boundary, where the incident field is evaluated,
+  // and the Floquet wave vector of the solution, if any. Aborts if these elements are not
+  // one homogeneous, isotropic and lossless material.
   void SetUpBackground(const MaterialOperator &mat_op,
                        const FiniteElementSpace &nd_fespace);
+
+  // Check that the incident field is quasi-periodic with the Floquet wave vector of the
+  // solution (zero without one) across the periodic boundary pairs, at all the given
+  // angular frequencies (nondimensional): (k khat - k_F) . a must be a multiple of 2 pi for
+  // the translation a of each pair, and zero when k_F scales with the frequency. Aborts
+  // on a phase mismatch above 1e-2 and warns above 1e-6. Pairs with a transformation
+  // which is not a translation are rejected, and without an explicit translation the
+  // check is done on the interpolated field at each frequency instead.
+  void CheckPeriodicity(const config::PeriodicBoundaryData &periodic,
+                        const std::vector<double> &omega);
 
   const PlaneWaveSource &GetSource(int idx) const { return sources.at(idx); }
 
