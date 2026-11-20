@@ -416,7 +416,13 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // of three cycles or more, and those of two cycles as long as the warm-started solves
   // after them converge in a single cycle.
   auto WarmStartNext = [this]()
-  { return last_cold_its >= 3 || (last_cold_its == 2 && warm_after_two_cycles); };
+  {
+    if (iodata.solver.eigenmode.test_min_cold_its >= 0)
+    {
+      return last_cold_its >= iodata.solver.eigenmode.test_min_cold_its;
+    }
+    return last_cold_its >= 3 || (last_cold_its == 2 && warm_after_two_cycles);
+  };
   const auto &eigenmode = iodata.solver.eigenmode;
   const auto &refinement = iodata.model.refinement;
   const int adapt_it = num_solves++;

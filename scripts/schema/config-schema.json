@@ -2496,6 +2496,12 @@
           "default": false,
           "x-palace-advanced": true
         },
+        "TestMinColdIts": {
+          "type": "integer",
+          "description": "Test only: if nonnegative, a warm start follows the cold solves of at least this many Krylov cycles, and every warm-started solve.",
+          "default": -1,
+          "x-palace-advanced": true
+        },
         "MinQ": {
           "type": "number",
           "description": "Minimum quality factor `|Q| = |\u03c9| / (2 |Im{\u03c9}|)` of the eigenmodes searched for in problems with damping: strongly damped or growing modes with lower `|Q|` are excluded from the search, so that their slowly converging Ritz values cannot stall the others. Values \u2264 0.5 disable the restriction (every damped mode has `Q` \u2265 0.5). With the restriction, a warm-started solve of adaptive mesh refinement accepts an eigenpair at its first Krylov restart only if its error estimate is below a tenth of the tolerance. Only used by the SLEPc solver, except with the `\"SLP\"` nonlinear solver, and with `\"Hybrid\"` only for its initial guess. Structures whose wanted modes have lower `Q` need a lower value.",

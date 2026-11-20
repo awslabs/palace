@@ -977,6 +977,10 @@ public:
   // only, values <= 0.5 disable the restriction).
   double min_q = 0.54;
 
+  // Test only: if nonnegative, a warm start follows the cold solves of at least this many
+  // Krylov cycles, and every warm-started solve.
+  int test_min_cold_its = -1;
+
   // Orthogonalize basis vectors using a mass matrix inner product, instead of generating
   // using a standard ℓ² (Euclidean) norm.
   bool mass_orthog = false;
