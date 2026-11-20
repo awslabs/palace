@@ -8,6 +8,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -19,6 +20,7 @@
 #include <tuple>
 #include <utility>
 #include <vector>
+#include <unistd.h>
 #include <fmt/format.h>
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -43,6 +45,25 @@ using namespace Catch::Matchers;
 
 namespace
 {
+
+// The text a callable writes to the process's standard output (the root's log; the form of
+// test-lawcausedmissing.cpp).
+template <typename F>
+std::string CaptureStdout(const fs::path &file, F &&run)
+{
+  std::fflush(stdout);
+  const int saved = dup(fileno(stdout));
+  std::FILE *target = std::fopen(file.c_str(), "w");
+  REQUIRE(target);
+  dup2(fileno(target), fileno(stdout));
+  run();
+  std::fflush(stdout);
+  dup2(saved, fileno(stdout));
+  close(saved);
+  std::fclose(target);
+  std::ifstream input(file);
+  return {std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
+}
 
 // A two-conductor spatial coupon hand-placed across the gap between the two islands of
 // MakeIslandMesh(neighboring_island): island 1 (attribute 9, terminal 1) occupies x in
@@ -1180,7 +1201,43 @@ TEST_CASE_METHOD(
   {
     test::GeometryCacheEnvGuard cache_env(inconsistent.cache.string(), false);
     config["Problem"]["Output"] = excluded_dir.string();
-    test::RunElectrostatic(config);
+    // Decision 2231 (lane ccpx): the LOW-CONFIDENCE banner prints at the end of a run with
+    // an exclusion, on both rules (it was formed after the record had moved into
+    // palace.json and never printed).
+    const auto log = CaptureStdout(
+        temp.temp_dir / fmt::format("cc-excluded-{}.log", Mpi::Rank(Mpi::World())),
+        [&]() { test::RunElectrostatic(config); });
+    if (Mpi::Root(Mpi::World()))
+    {
+      CHECK_THAT(log,
+                 ContainsSubstring("*** LOW CONFIDENCE: the conductor-consistency gate"));
+      CHECK_THAT(log, ContainsSubstring(sticky ? "EXCLUDED 1 patch(es) of 1 tested"
+                                               : "EXCLUDED 2 (patch, excitation) "
+                                                 "verdict(s) on 1 distinct patch(es) at 2 "
+                                                 "excitation(s)"));
+      CHECK_THAT(log, !ContainsSubstring("*** DIAGNOSTIC: SurfaceResponseCorrection"));
+    }
+  }
+  if (!sticky && crack_policy == test::CrackPolicy::Default)
+  {
+    // ... and RecordOnly prints the DIAGNOSTIC banner (2 verdicts: one per source), no
+    // LOW-CONFIDENCE banner (nothing excluded).
+    json record_only = config;
+    record_only["Solver"]["Electrostatic"]["ResponseCorrection"]["ConductorConsistency"] = {
+        {"RecordOnly", true}};
+    record_only["Problem"]["Output"] = (temp.temp_dir / "cc-record-only").string();
+    test::GeometryCacheEnvGuard cache_env(inconsistent.cache.string(), false);
+    const auto log = CaptureStdout(
+        temp.temp_dir / fmt::format("cc-record-only-{}.log", Mpi::Rank(Mpi::World())),
+        [&]() { test::RunElectrostatic(record_only); });
+    if (Mpi::Root(Mpi::World()))
+    {
+      CHECK_THAT(log, ContainsSubstring("*** DIAGNOSTIC: "
+                                        "SurfaceResponseCorrection.ConductorConsistency."
+                                        "RecordOnly was set: the gate recorded 2 "
+                                        "verdict(s) and EXCLUDED NOTHING"));
+      CHECK_THAT(log, !ContainsSubstring("*** LOW CONFIDENCE: the conductor-consistency"));
+    }
   }
   {
     test::GeometryCacheEnvGuard cache_env(consistent.cache.string(), false);
