@@ -1219,6 +1219,28 @@ public:
     return surf_post_op.GetInterfaceCoveragePartition(
         response_targets, *E, D_recovered.get(), kept_classes, served, remainder_classes);
   }
+  // Ruling 2251: the applied patches' footprints on the targets with a Region, of the same
+  // field (SurfacePostOperator::GetInterfaceRegionPatchFootprints).
+  template <ProblemType U = solver_t>
+  auto GetElectrostaticRegionPatchFootprints(
+      const std::set<int> &region_targets,
+      const std::vector<SurfacePostOperator::CoveragePartitionClass> &kept_classes,
+      const std::vector<SurfacePostOperator::UncoveredPerimeterPortion> &claims,
+      const std::vector<std::vector<std::size_t>> &claim_patches,
+      const std::vector<std::array<double, 3>> &reference_points) const
+      -> std::enable_if_t<
+          U == ProblemType::ELECTROSTATIC,
+          std::map<int, std::vector<SurfacePostOperator::RegionPatchFootprint>>>
+  {
+    return surf_post_op.GetInterfaceRegionPatchFootprints(
+        region_targets, *E, D_recovered.get(), kept_classes, claims, claim_patches,
+        reference_points);
+  }
+  // Ruling 2251: the entries of `indices` that carry a Region.
+  std::set<int> GetRegionInterfaces(const std::set<int> &indices) const
+  {
+    return surf_post_op.GetRegionInterfaces(indices);
+  }
 
   // Evaluate localized interface energies for an electrostatic field without producing
   // ordinary measurement output. Volume-annulus diagnostics are omitted because response

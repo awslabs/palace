@@ -1535,6 +1535,9 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // model set (empty without PatchEnergy) and, per source, the raw field's within-R energy
   // partitioned over them.
   SurfacePostOperator::CompactPerimeterPortions model_raw_portions;
+  // Ruling 2251 (OI-REGION-TARGET-CORRECTED-NOT-FILTERED): the targets with a Region; their
+  // corrected columns count each patch's share inside the region.
+  std::set<int> region_targets;
   std::vector<std::pair<int, std::map<int, std::map<std::string, double>>>>
       raw_model_partitions;
   // Lane L1 (decision 1634 (1)): per source, the closed coverage partition of its raw
@@ -1568,6 +1571,11 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     // same order; the operator reads them nowhere after the construction), held once, in
     // the compact exact form (lane L1, ruling 1682).
     model_raw_portions = response_correction->ReleaseModelRawClaimPortionList();
+    if (response_correction->HasRegionClaims())
+    {
+      region_targets =
+          post_op.GetRegionInterfaces(response_correction->GetTargetInterfaces());
+    }
     // Ruling 1688 (lane L1): the stage-0 Missing LENGTH line (root; log only).
     if (!response_correction->IsRawFallback())
     {
@@ -2294,13 +2302,72 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       // response of the raw field).
       ResolutionAccumulator resolution_sums =
           response_correction->NewResolutionAccumulator();
+      // Ruling 2251: the shares of the targets with a Region, from the footprints of the
+      // field the post operator holds (the kept classes of the coverage partition first);
+      // every row of surface-response-region-share.csv with PatchEnergy.
+      auto RegionShares = [&](int evaluation)
+      {
+        const auto missing_by_feature =
+            SurfacePostOperator::CoverageMissingByFeature(uncovered_portions);
+        const std::vector<SurfacePostOperator::CoveragePartitionClass> kept_classes = {
+            {"Missing", &missing_by_feature},
+            {"DomainBoundary", &domain_boundary_portions},
+            {"SpatialClusterPriority", &spatial_cluster_priority_portions},
+            {"ConductorConsistency", &conductor_consistency_portions}};
+        const auto footprints = post_op.GetElectrostaticRegionPatchFootprints(
+            region_targets, kept_classes, response_correction->GetRegionClaimPortions(),
+            response_correction->GetRegionClaimPatches(),
+            response_correction->GetRegionReferencePoints());
+        auto shares = SurfaceResponseOperator::ComputeRegionPatchShares(footprints);
+        if (patch_energy_response)
+        {
+          response_correction->WriteRegionShareRows(post_dir, idx, evaluation, footprints,
+                                                    shares, iodata.units);
+        }
+        return shares;
+      };
+      // Ruling 2251: the fabricated energies the corrected columns and the coverage read:
+      // a Region target's box value in place of its window-wide sum.
+      auto RegionFabricated =
+          [](std::map<int, double> fabricated,
+             const std::map<int, SurfaceResponseOperator::RegionTargetResponse> &targets,
+             bool fixed_flux)
+      {
+        for (const auto &[target, box] : targets)
+        {
+          const auto it = fabricated.find(target);
+          if (it != fabricated.end())
+          {
+            it->second = fixed_flux ? box.fabricated_surface_energy_fixed_flux
+                                    : box.fabricated_surface_energy;
+          }
+        }
+        return fabricated;
+      };
       if (postprocess_response)
       {
         BlockTimer coupon_timer(Timer::POSTPRO_RESPONSE_COUPON);
-        response = response_correction->GetElectrostaticResponse(
-            V[step], true, patch_energy_response, &resolution_sums);
+        if (region_targets.empty())
+        {
+          response = response_correction->GetElectrostaticResponse(
+              V[step], true, patch_energy_response, &resolution_sums);
+        }
+        else
+        {
+          const auto region_shares = RegionShares(0);
+          response = response_correction->GetElectrostaticResponse(
+              V[step], true, patch_energy_response, &resolution_sums, &region_shares);
+          response_correction->RecordRegionResponse(
+              idx, "Raw", response.region_targets, response.fabricated_surface_energy,
+              response.fabricated_surface_energy_fixed_flux,
+              iodata.units.Dimensionalize<Units::ValueType::ENERGY>(1.0));
+        }
         WriteSpatialPatchTraces(idx, response_correction->GetSpatialPatchTraces(V[step]));
       }
+      const auto region_fabricated = RegionFabricated(response.fabricated_surface_energy,
+                                                      response.region_targets, false);
+      const auto region_fabricated_fixed_flux = RegionFabricated(
+          response.fabricated_surface_energy_fixed_flux, response.region_targets, true);
       auto ApplyResponse =
           [&](EnergyData energies, double domain_correction,
               const std::map<int, double> &fabricated_surface,
@@ -2374,15 +2441,14 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       };
       auto postprocessed_fixed_trace =
           postprocess_response
-              ? ApplyResponse(raw_energies, response.domain_correction,
-                              response.fabricated_surface_energy, raw_uncovered,
-                              raw_domain_boundary, raw_spatial_cluster_priority,
-                              raw_conductor_consistency)
+              ? ApplyResponse(raw_energies, response.domain_correction, region_fabricated,
+                              raw_uncovered, raw_domain_boundary,
+                              raw_spatial_cluster_priority, raw_conductor_consistency)
               : Unavailable(raw_energies);
       auto postprocessed_fixed_flux =
           postprocess_response
               ? ApplyResponse(raw_energies, response.domain_correction_fixed_flux,
-                              response.fabricated_surface_energy_fixed_flux, raw_uncovered,
+                              region_fabricated_fixed_flux, raw_uncovered,
                               raw_domain_boundary, raw_spatial_cluster_priority,
                               raw_conductor_consistency)
               : Unavailable(raw_energies);
@@ -2513,14 +2579,31 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
           SurfaceResponseOperator::ElectrostaticResponse corrected_response;
           {
             BlockTimer coupon_timer(Timer::POSTPRO_RESPONSE_COUPON);
-            corrected_response = response_correction->GetElectrostaticResponse(
-                V_corrected[step], false, patch_energy_response);
+            if (region_targets.empty())
+            {
+              corrected_response = response_correction->GetElectrostaticResponse(
+                  V_corrected[step], false, patch_energy_response);
+            }
+            else
+            {
+              // Ruling 2251: the shares of the corrected field (the post operator holds
+              // it: the field of this column's kept raw terms).
+              const auto region_shares = RegionShares(2);
+              corrected_response = response_correction->GetElectrostaticResponse(
+                  V_corrected[step], false, patch_energy_response, nullptr, &region_shares);
+              response_correction->RecordRegionResponse(
+                  idx, "SelfConsistent", corrected_response.region_targets,
+                  corrected_response.fabricated_surface_energy,
+                  corrected_response.fabricated_surface_energy_fixed_flux,
+                  iodata.units.Dimensionalize<Units::ValueType::ENERGY>(1.0));
+            }
           }
           corrected_energies = ApplyResponse(
               std::move(corrected_energies), corrected_response.domain_correction,
-              corrected_response.fabricated_surface_energy, corrected_uncovered,
-              corrected_domain_boundary, corrected_spatial_cluster_priority,
-              corrected_conductor_consistency);
+              RegionFabricated(corrected_response.fabricated_surface_energy,
+                               corrected_response.region_targets, false),
+              corrected_uncovered, corrected_domain_boundary,
+              corrected_spatial_cluster_priority, corrected_conductor_consistency);
           corrected_contributions = std::move(corrected_response.model_contributions);
           corrected_patch_contributions = std::move(corrected_response.patch_contributions);
         }
@@ -2603,10 +2686,9 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         if (root)
         {
           coverage_measurements.emplace_back(
-              idx,
-              MeasureSourceCoverage(
-                  coverage_partitions.back().second, corrected_results.back().raw,
-                  postprocess_response ? &response.fabricated_surface_energy : nullptr));
+              idx, MeasureSourceCoverage(
+                       coverage_partitions.back().second, corrected_results.back().raw,
+                       postprocess_response ? &region_fabricated : nullptr));
           WriteSourceCoverage(idx, coverage_measurements.back().second);
         }
         // Lane rescensus-product (decision 1817): this source's census cells (collective;

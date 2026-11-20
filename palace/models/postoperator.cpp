@@ -2775,11 +2775,55 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
     // Lane rescensus-product (decision 1817): this measurement's census sums (the
     // postprocessed response of the raw field = evaluation 0).
     ResolutionAccumulator resolution_sums = surface_response_op->NewResolutionAccumulator();
-    if (surface_response_postprocess_enabled)
+    // Ruling 2251 (OI-REGION-TARGET-CORRECTED-NOT-FILTERED): the targets with a Region; a
+    // field's footprints of the applied patches on them (the coverage partition's kept
+    // classes first) and their shares.
+    const std::set<int> region_targets =
+        surface_response_op->HasRegionClaims()
+            ? surf_post_op.GetRegionInterfaces(surface_response_op->GetTargetInterfaces())
+            : std::set<int>{};
+    auto RegionFootprints = [&](const GridFunction &field, const GridFunction *flux)
+    {
+      const auto missing_by_feature =
+          SurfacePostOperator::CoverageMissingByFeature(surface_response_uncovered);
+      const std::vector<SurfacePostOperator::CoveragePartitionClass> kept_classes = {
+          {"Missing", &missing_by_feature},
+          {"DomainBoundary", &surface_response_domain_boundary},
+          {"SpatialClusterPriority", &surface_response_spatial_cluster_priority},
+          {"ConductorConsistency", &conductor_consistency_portions}};
+      return surf_post_op.GetInterfaceRegionPatchFootprints(
+          region_targets, field, flux, kept_classes,
+          surface_response_op->GetRegionClaimPortions(),
+          surface_response_op->GetRegionClaimPatches(),
+          surface_response_op->GetRegionReferencePoints());
+    };
+    if (surface_response_postprocess_enabled && region_targets.empty())
     {
       result.confidence = surface_response_op->GetMaxwellResponse(
           *E, measurement_cache.freq, surface_response_patch_energy_enabled,
           &resolution_sums);
+    }
+    else if (surface_response_postprocess_enabled)
+    {
+      const auto footprints = RegionFootprints(*E, D_recovered.get());
+      const auto region_shares =
+          SurfaceResponseOperator::ComputeRegionPatchShares(footprints);
+      result.confidence = surface_response_op->GetMaxwellResponse(
+          *E, measurement_cache.freq, surface_response_patch_energy_enabled,
+          &resolution_sums, &region_shares);
+      surface_response_op->RecordRegionResponse(
+          -1, "Raw", result.confidence.region_targets,
+          result.confidence.fabricated_surface_energy,
+          result.confidence.fabricated_surface_energy_fixed_flux,
+          units.Dimensionalize<Units::ValueType::ENERGY>(1.0));
+      if (surface_response_patch_energy_enabled)
+      {
+        surface_response_op->WriteRegionShareRows(post_dir, -1, 0, footprints,
+                                                  region_shares, units);
+      }
+    }
+    if (surface_response_postprocess_enabled)
+    {
       result.corrected_normalization_energy =
           result.raw_normalization_energy + result.confidence.domain_correction;
       result.corrected_normalization_energy_fixed_flux =
@@ -3096,15 +3140,24 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
                                 PortionEnergy(result.spatial_cluster_priority, target) +
                                 PortionEnergy(result.conductor_consistency, target) +
                                 RemainderEnergy(result.loop_remainder, target);
+        // Ruling 2251: a Region target's box value in place of its window-wide sum (the
+        // corrected columns and the coverage; its closure spread stays window-wide).
+        const auto box = result.confidence.region_targets.find(target);
+        const bool region = box != result.confidence.region_targets.end();
+        const double fabricated_energy =
+            region ? box->second.fabricated_surface_energy : fabricated->second;
+        const double fabricated_energy_fixed_flux =
+            region ? box->second.fabricated_surface_energy_fixed_flux
+                   : fabricated_fixed_flux->second;
         interface->second.corrected_energy =
-            outside->energy_outside + fabricated->second + kept_raw;
+            outside->energy_outside + fabricated_energy + kept_raw;
         interface->second.corrected_energy_fixed_flux =
-            outside->energy_outside + fabricated_fixed_flux->second + kept_raw;
+            outside->energy_outside + fabricated_energy_fixed_flux + kept_raw;
         shift_coverage_within_radius +=
             interface->second.raw_energy - outside->energy_outside;
         shift_coverage_kept_raw += kept_raw;
         coverage_within[target] = interface->second.raw_energy - outside->energy_outside;
-        coverage_fabricated[target] = fabricated->second;
+        coverage_fabricated[target] = fabricated_energy;
         const double closure_scale =
             std::max(std::abs(fabricated->second), std::abs(fabricated_fixed_flux->second));
         if (closure_scale > 0.0)
@@ -3190,8 +3243,33 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
         }
         const auto corrected_frequency =
             surface_response_corrected_frequency.value_or(measurement_cache.freq);
-        const auto corrected_response = surface_response_op->GetMaxwellResponse(
-            corrected_field, corrected_frequency, surface_response_patch_energy_enabled);
+        SurfaceResponseOperator::MaxwellResponse corrected_response;
+        if (region_targets.empty())
+        {
+          corrected_response = surface_response_op->GetMaxwellResponse(
+              corrected_field, corrected_frequency, surface_response_patch_energy_enabled);
+        }
+        else
+        {
+          // Ruling 2251: the shares of the corrected field (this column's kept raw terms'
+          // field).
+          const auto footprints = RegionFootprints(corrected_field, corrected_flux);
+          const auto region_shares =
+              SurfaceResponseOperator::ComputeRegionPatchShares(footprints);
+          corrected_response = surface_response_op->GetMaxwellResponse(
+              corrected_field, corrected_frequency, surface_response_patch_energy_enabled,
+              nullptr, &region_shares);
+          surface_response_op->RecordRegionResponse(
+              -1, "SelfConsistent", corrected_response.region_targets,
+              corrected_response.fabricated_surface_energy,
+              corrected_response.fabricated_surface_energy_fixed_flux,
+              units.Dimensionalize<Units::ValueType::ENERGY>(1.0));
+          if (surface_response_patch_energy_enabled)
+          {
+            surface_response_op->WriteRegionShareRows(post_dir, -1, 2, footprints,
+                                                      region_shares, units);
+          }
+        }
         result.self_consistent_confidence = corrected_response;
         result.self_consistent_frequency = corrected_frequency;
         result.self_consistent_mode_overlap =
@@ -3269,8 +3347,13 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
                           << target
                           << " requires EdgeDistances containing the coupon matching "
                              "radius!");
+          // Ruling 2251: a Region target's box value in place of its window-wide sum.
+          const auto box = corrected_response.region_targets.find(target);
           result.interfaces.at(target).self_consistent_energy =
-              outside->energy_outside + fabricated->second +
+              outside->energy_outside +
+              (box != corrected_response.region_targets.end()
+                   ? box->second.fabricated_surface_energy
+                   : fabricated->second) +
               PortionEnergy(result.self_consistent_uncovered, target) +
               PortionEnergy(result.self_consistent_domain_boundary, target) +
               PortionEnergy(result.self_consistent_spatial_cluster_priority, target) +
@@ -6329,12 +6412,42 @@ void PostOperator<solver_t>::MeasureAndPrintImpedanceRuleCandidate(
       {
         op.ApplyConductorConsistencyGate(e, source, frequency, false);
       }
-      const auto confidence = op.GetMaxwellResponse(*E, measurement_cache.freq, false);
       std::vector<SurfacePostOperator::UncoveredPerimeterPortion> conductor_consistency;
       for (const auto &portion : op.GetConductorConsistencyPortions())
       {
         conductor_consistency.push_back(
             {portion.p0, portion.p1, portion.topology, portion.feature});
+      }
+      // Ruling 2251: the candidate's targets with a Region count each patch's share inside
+      // the region (the same rule as the operator of record; record-only).
+      const std::set<int> region_targets =
+          op.HasRegionClaims() ? surf_post_op.GetRegionInterfaces(op.GetTargetInterfaces())
+                               : std::set<int>{};
+      SurfaceResponseOperator::MaxwellResponse confidence;
+      if (region_targets.empty())
+      {
+        confidence = op.GetMaxwellResponse(*E, measurement_cache.freq, false);
+      }
+      else
+      {
+        const auto missing_by_feature =
+            SurfacePostOperator::CoverageMissingByFeature(impedance_candidate_uncovered);
+        const std::vector<SurfacePostOperator::CoveragePartitionClass> kept_classes = {
+            {"Missing", &missing_by_feature},
+            {"DomainBoundary", &impedance_candidate_domain_boundary},
+            {"SpatialClusterPriority", &impedance_candidate_spatial_cluster_priority},
+            {"ConductorConsistency", &conductor_consistency}};
+        const auto region_shares = SurfaceResponseOperator::ComputeRegionPatchShares(
+            surf_post_op.GetInterfaceRegionPatchFootprints(
+                region_targets, *E, D_recovered.get(), kept_classes,
+                op.GetRegionClaimPortions(), op.GetRegionClaimPatches(),
+                op.GetRegionReferencePoints()));
+        confidence = op.GetMaxwellResponse(*E, measurement_cache.freq, false, nullptr,
+                                           &region_shares);
+        op.RecordRegionResponse(source, "Raw", confidence.region_targets,
+                                confidence.fabricated_surface_energy,
+                                confidence.fabricated_surface_energy_fixed_flux,
+                                units.Dimensionalize<Units::ValueType::ENERGY>(1.0));
       }
       const auto targets = op.GetTargetInterfaces();
       auto Energy =
@@ -6406,9 +6519,13 @@ void PostOperator<solver_t>::MeasureAndPrintImpedanceRuleCandidate(
         const double kept = At(uncovered, raw.idx) + At(domain_boundary, raw.idx) +
                             At(priority, raw.idx) + At(excluded, raw.idx) +
                             At(remainder, raw.idx);
-        candidate_fabricated[raw.idx] = fabricated->second;
+        const auto box = confidence.region_targets.find(raw.idx);
+        const double fabricated_energy = box != confidence.region_targets.end()
+                                             ? box->second.fabricated_surface_energy
+                                             : fabricated->second;
+        candidate_fabricated[raw.idx] = fabricated_energy;
         candidate_kept[raw.idx] = kept;
-        candidate_corrected[raw.idx] = outside->energy_outside + fabricated->second + kept;
+        candidate_corrected[raw.idx] = outside->energy_outside + fabricated_energy + kept;
       }
       candidate_normalization = raw_normalization + confidence.domain_correction;
       candidate_applied = true;
