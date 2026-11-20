@@ -1325,11 +1325,14 @@ void SpaceOperator::AssemblePreconditioner(
                   (dfi.empty() && fi.empty() && dfbi.empty() && fbi.empty() &&
                    fpi.empty() && frbi.empty() && fpbi.empty())};
   Mpi::GlobalMin(2, empty, GetComm());
+  // With an environment, the region's solver factors the complex-valued matrix of the only
+  // level (see RegionSolver), so the second-order absorbing BC term keeps its sign there.
+  const bool flip_coarse_dfb = pc_coarse_real && !environment;
   if (!empty[0])
   {
     br_vec =
         AssembleOperators(assembly_domains, GetNDSpaces(), &dfr, &fr, &dfbr, &fbr, &fpr,
-                          &frbr, &fpbr, skip_zeros, assemble_q_data, pc_coarse_real);
+                          &frbr, &fpbr, skip_zeros, assemble_q_data, flip_coarse_dfb);
     if (!environment)
     {
       br_aux_vec = AssembleAuxOperators(assembly_domains, GetH1Spaces(), &fr, &fbr, &frbr,
@@ -1340,7 +1343,7 @@ void SpaceOperator::AssemblePreconditioner(
   {
     bi_vec =
         AssembleOperators(assembly_domains, GetNDSpaces(), &dfi, &fi, &dfbi, &fbi, &fpi,
-                          &frbi, &fpbi, skip_zeros, assemble_q_data, pc_coarse_real);
+                          &frbi, &fpbi, skip_zeros, assemble_q_data, flip_coarse_dfb);
     if (!environment)
     {
       bi_aux_vec = AssembleAuxOperators(assembly_domains, GetH1Spaces(), &fi, &fbi, &frbi,
