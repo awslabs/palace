@@ -274,9 +274,15 @@ voltage of a lumped port, would depend on both sides.
     Schur complement onto the interface directly (STRUMPACK with the Schur complement interface
     that the superbuild and the Spack package patch in, else with one solve per interface
     unknown). SuperLU_DIST, whose condensation goes wrong through a resonance, is not used
-    offline. Offline and online, the region is factored with the Schur complement of the
+    offline. An offline exact sweep factors the region with the Schur complement of the
     environment as one sparse system, by STRUMPACK, MUMPS or SuperLU_DIST (preferred in this
-    order). A sparse direct solver that
+    order). Online, and once an offline adaptive sweep has sampled the environment, GMRES
+    solves the region, preconditioned by the region's own Schur complement onto the interface
+    with the environment's added, a dense matrix factored across the processes by ScaLAPACK
+    (which MUMPS and STRUMPACK build with; without it, on one process). The region's Schur
+    complement is MUMPS's, distributed, or else STRUMPACK's or SuperLU_DIST's, on one process.
+    Near a resonance of the region with the interface held fixed, GMRES takes a few more
+    iterations. A sparse direct solver that
     [`config["Solver"]["Linear"]["Type"]`](../config/reference.md#config-solver-linear-type) names
     is used for all of them instead.
     Floquet ports and periodic boundaries (which make the system non-symmetric),

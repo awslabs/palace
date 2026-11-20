@@ -10,10 +10,12 @@
 #include <limits>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 #include <mfem.hpp>
 #include "fem/substructure.hpp"
+#include "linalg/blockcyclic.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
 #include "models/drivensubstructure.hpp"
@@ -48,8 +50,10 @@ public:
   // Read the model and check it against the run: the environment (its record and, on the
   // full mesh, the fingerprint of its operator), the interface, the environment's ports,
   // the sources of the excitations and the frequencies of the sweep. Call before the
-  // region is set up, on the operators of the full problem. Collective.
-  EnvironmentOperator(const IoData &iodata, SpaceOperator &space_op);
+  // region is set up, on the operators of the full problem. grid_procs: the number of
+  // processes of the grid of the dense matrices on Γ (by default, see BlockCyclicGrid).
+  // Collective.
+  EnvironmentOperator(const IoData &iodata, SpaceOperator &space_op, int grid_procs = 0);
 
   // The rational model of this run's environment, sampled offline on the full mesh, with
   // its records. Collective.
@@ -80,8 +84,24 @@ public:
   // y += R_Γᵀ S_E(ω) R_Γ x.
   void AddMult(double omega, const ComplexVector &x, ComplexVector &y);
 
-  // The real and imaginary parts of R_Γᵀ S_E(ω) R_Γ, assembled on the true DOFs.
-  std::array<std::unique_ptr<mfem::HypreParMatrix>, 2> Assemble(double omega);
+  // The dense matrices on Γ (S_E and its records) are 2D block cyclic on this grid, that of
+  // the Schur complement of the region (see RegionSolver).
+  const BlockCyclicGrid &Grid() const { return *grid; }
+
+  // C += S_E(ω) for the local part C of a matrix on Grid().
+  void AddSchurBlocks(double omega, std::vector<std::complex<double>> &C);
+
+  // The true DOFs of Γ on this process, a block of the interface order: its first index is
+  // InterfaceOffsets()[rank], and the counts of all processes are InterfaceCounts().
+  const std::vector<int> &InterfaceTrueDofs() const { return gamma_local; }
+  const std::vector<int> &InterfaceCounts() const { return gamma_cnt; }
+  const std::vector<int> &InterfaceOffsets() const { return gamma_disp; }
+
+  // The frequency of the last preconditioner matrix of the region, which leaves S_E out
+  // (see SpaceOperator::GetPreconditionerMatrix): the RegionSolver factoring it adds S_E at
+  // that frequency.
+  void SetPreconditionerFrequency(double omega) { pc_omega = omega; }
+  double PreconditionerFrequency() const { return pc_omega; }
 
   // RHS += R_Γᵀ g_E(ω) of an excitation; false if it has no sources in the environment.
   bool AddExcitation(int excitation_idx, double omega, ComplexVector &RHS);
@@ -110,7 +130,8 @@ public:
 
 private:
   EnvironmentOperator(const IoData &iodata, SpaceOperator &space_op,
-                      const DrivenSubstructureModel *sampled, const RecordFunction &record);
+                      const DrivenSubstructureModel *sampled, const RecordFunction &record,
+                      int grid_procs);
 
   SpaceOperator &space_op;
   MPI_Comm comm;
@@ -132,9 +153,9 @@ private:
   std::vector<int> gamma_local;
   std::vector<int> gamma_cnt, gamma_disp;
 
-  // A record on the current interface, as the rows of Γ of this process: of S_E (x nG,
-  // row-major), of the condensed sources g (per model column) and of the port functionals h
-  // (per port), with c (ports x model columns, column-major) on every process.
+  // A record on the current interface: the local part of S_E on the grid, the rows of Γ of
+  // this process of the condensed sources g (per model column) and of the port functionals
+  // h (per port), and c (ports x model columns, column-major) on every process.
   struct Rows
   {
     std::vector<std::complex<double>> S;
@@ -147,18 +168,33 @@ private:
   double omega_cur = std::numeric_limits<double>::quiet_NaN();
   Rows cur;
 
+  // The grid of the dense matrices on Γ, and the global rows and columns of the local part.
+  std::optional<BlockCyclicGrid> grid;
+  std::vector<int> grid_rows, grid_cols;
+  double pc_omega = std::numeric_limits<double>::quiet_NaN();
+
   // The rows of a flat record of the model (on root, in the saved basis). Collective.
   Rows Distribute(const std::vector<std::complex<double>> &flat) const;
 
   // Form the terms at ω, unless they are held.
   void Prepare(double omega);
 
-  // The values of Γ of a vector on this process, in interface order, and the product of
-  // the rows of a dense block with the interface values of x (all of Γ) added to y.
+  // The values of Γ of a vector on this process, in interface order, and those of all of
+  // Γ (on every process).
   std::vector<std::complex<double>> LocalInterfaceValues(const ComplexVector &x) const;
-  void AddRows(const std::vector<std::complex<double>> &rows, const ComplexVector &x,
-               ComplexVector &y) const;
-  std::vector<std::complex<double>> AllInterfaceValues(const Vector &x) const;
+  std::vector<std::complex<double>> AllInterfaceValues(const ComplexVector &x) const;
+  std::vector<double> AllInterfaceValues(const Vector &x) const;
+
+  // y = S x on all of Γ (on every process), for a matrix S on the grid (its local part), or
+  // its real or imaginary part (for a real x). Collective.
+  std::vector<std::complex<double>>
+  Product(const std::vector<std::complex<double>> &S,
+          const std::vector<std::complex<double>> &x) const;
+  std::vector<double> ProductPart(const std::vector<std::complex<double>> &S, bool imag,
+                                  const std::vector<double> &x) const;
+  // y += R_Γᵀ S R_Γ x for a matrix S on the grid (its local part).
+  void RecordProduct(const std::vector<std::complex<double>> &S, const ComplexVector &x,
+                     ComplexVector &y) const;
 };
 
 }  // namespace palace

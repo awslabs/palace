@@ -28,6 +28,7 @@
 #include "models/lumpedportoperator.hpp"
 #include "models/portexcitations.hpp"
 #include "models/postoperator.hpp"
+#include "models/regionsolver.hpp"
 #include "models/romoperator.hpp"
 #include "models/spaceoperator.hpp"
 #include "models/surfacecurrentoperator.hpp"
@@ -188,8 +189,7 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
 
   // Set up the linear solver.
   // The operators are constructed for each frequency step and used to initialize the ksp.
-  auto ksp = std::make_unique<ComplexKspSolver>(iodata, space_op.GetNDSpaces(),
-                                                &space_op.GetH1Spaces());
+  auto ksp = MakeDrivenKspSolver(iodata, space_op);
 
   // Set up RHS vector for the incident field at port boundaries, and the vector for the
   // first frequency step.

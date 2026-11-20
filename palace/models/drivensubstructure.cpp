@@ -18,6 +18,7 @@
 #include "fem/interpolator.hpp"
 #include "fem/substructure.hpp"
 #include "fem/substructuremodel.hpp"
+#include "linalg/blockcyclic.hpp"
 #include "linalg/directschur.hpp"
 #include "linalg/lowertriangle.hpp"
 #include "linalg/mumpsschur.hpp"
@@ -55,24 +56,7 @@ constexpr double kBlrTol = 1.0e-14;
 
 using Factorization = SchurFactorization<std::complex<double>>;
 
-// The sparse direct solvers of DrivenSubstructure: that given, or the preferences of the
-// sides and of the coupled system.
-LinearSolver SideSolver(LinearSolver type)
-{
-  if (type == LinearSolver::STRUMPACK || type == LinearSolver::MUMPS ||
-      type == LinearSolver::SUPERLU)
-  {
-    return type;
-  }
-#if defined(MFEM_USE_MUMPS)
-  return LinearSolver::MUMPS;
-#elif defined(MFEM_USE_STRUMPACK)
-  return LinearSolver::STRUMPACK;
-#else
-  return LinearSolver::SUPERLU;
-#endif
-}
-
+// The sparse direct solver of the coupled system: that given, or the preferences.
 LinearSolver CoupledSolver(LinearSolver type)
 {
   if (type == LinearSolver::STRUMPACK || type == LinearSolver::MUMPS ||
@@ -87,26 +71,6 @@ LinearSolver CoupledSolver(LinearSolver type)
 #else
   return LinearSolver::SUPERLU;
 #endif
-}
-
-// The factorization of a system by type and fill-reducing ordering, with its Schur
-// complement onto schur_vars.
-std::unique_ptr<Factorization>
-MakeFactorization(LinearSolver type, SymbolicFactorization ordering, MPI_Comm comm,
-                  HYPRE_BigInt n_glob, Factorization::Coo &&coo,
-                  const std::vector<HYPRE_BigInt> &schur_vars, const std::vector<int> &rows)
-{
-  const int n_loc = static_cast<int>(rows.size());
-#if defined(MFEM_USE_MUMPS)
-  if (type == LinearSolver::MUMPS)
-  {
-    return std::make_unique<MumpsSchurSolverT<std::complex<double>>>(
-        comm, n_glob, n_loc, std::move(coo), schur_vars, kBlrTol, true, false, rows,
-        ordering);
-  }
-#endif
-  return std::make_unique<DirectSchurSolver>(comm, n_glob, n_loc, std::move(coo),
-                                             schur_vars, rows, type, ordering);
 }
 
 // Free a vector's storage (v = {} empties it but keeps its capacity).
@@ -125,6 +89,48 @@ std::unique_ptr<mfem::HypreParMatrix> StealPart(const ComplexOperator *A, bool i
 }
 
 }  // namespace
+
+LinearSolver SchurSolverType(LinearSolver type)
+{
+  if (type == LinearSolver::STRUMPACK || type == LinearSolver::MUMPS ||
+      type == LinearSolver::SUPERLU)
+  {
+    return type;
+  }
+#if defined(MFEM_USE_MUMPS)
+  return LinearSolver::MUMPS;
+#elif defined(MFEM_USE_STRUMPACK)
+  return LinearSolver::STRUMPACK;
+#else
+  return LinearSolver::SUPERLU;
+#endif
+}
+
+std::unique_ptr<SchurFactorization<std::complex<double>>>
+MakeSchurFactorization(LinearSolver type, SymbolicFactorization ordering, MPI_Comm comm,
+                       HYPRE_BigInt n_glob,
+                       SchurFactorization<std::complex<double>>::Coo &&coo,
+                       const std::vector<HYPRE_BigInt> &schur_vars,
+                       const std::vector<int> &rows, const BlockCyclicGrid *grid)
+{
+  const int n_loc = static_cast<int>(rows.size());
+#if defined(MFEM_USE_MUMPS)
+  if (type == LinearSolver::MUMPS)
+  {
+    return grid ? std::make_unique<MumpsSchurSolverT<std::complex<double>>>(
+                      comm, n_glob, n_loc, std::move(coo), schur_vars, kBlrTol, true, false,
+                      rows, ordering, grid->BlockSize(), grid->NumProcessRows(),
+                      grid->NumProcessCols())
+                : std::make_unique<MumpsSchurSolverT<std::complex<double>>>(
+                      comm, n_glob, n_loc, std::move(coo), schur_vars, kBlrTol, true, false,
+                      rows, ordering);
+  }
+#else
+  MFEM_CONTRACT_VAR(grid);
+#endif
+  return std::make_unique<DirectSchurSolver>(comm, n_glob, n_loc, std::move(coo),
+                                             schur_vars, rows, type, ordering);
+}
 
 DrivenSubstructure::DrivenSubstructure(SpaceOperator &space_op,
                                        const std::vector<int> &region_attributes,
@@ -308,11 +314,6 @@ DrivenSubstructure::ExtraParts(const Side &side, double omega)
   return X;
 }
 
-namespace
-{
-
-// For each global column (1-based) of cols, the value of sys at that true DOF on its owner:
-// a request to each owner for its distinct columns.
 std::vector<HYPRE_BigInt> OwnerValues(MPI_Comm comm, HYPRE_BigInt tstart,
                                       const std::vector<HYPRE_BigInt> &sys,
                                       const std::vector<int> &cols)
@@ -378,6 +379,9 @@ std::vector<HYPRE_BigInt> OwnerValues(MPI_Comm comm, HYPRE_BigInt tstart,
   }
   return v;
 }
+
+namespace
+{
 
 // A(ω) = K + iω C - ω² M + A2(ω): the coefficients of the parts Kr, Ki, Cr, Ci, Mr, Mi, and
 // of A2r, A2i.
@@ -613,8 +617,8 @@ void DrivenSubstructure::Factor(Side &side, double omega)
 {
   if (!side.schur)
   {
-    side.schur = MakeFactorization(
-        SideSolver(solver), ordering, space_op.GetComm(), side.n_sys,
+    side.schur = MakeSchurFactorization(
+        SchurSolverType(solver), ordering, space_op.GetComm(), side.n_sys,
         {std::move(side.irn_sys), std::move(side.jcn_sys), std::move(side.val)},
         side.gamma_sys, side.rows);
     return;
@@ -724,8 +728,8 @@ void DrivenSubstructure::FactorCoupled(double omega,
     {
       Release(S_env);
     }
-    coupled = MakeFactorization(CoupledSolver(solver), ordering, comm, region.n_sys,
-                                std::move(coo), {}, region.rows);
+    coupled = MakeSchurFactorization(CoupledSolver(solver), ordering, comm, region.n_sys,
+                                     std::move(coo), {}, region.rows);
   }
   else
   {

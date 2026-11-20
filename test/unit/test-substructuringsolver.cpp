@@ -29,6 +29,7 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 #include "driver.hpp"
+#include "drivers/drivensolver.hpp"
 #include "fem/bilinearform.hpp"
 #include "fem/errorindicator.hpp"
 #include "fem/fespace.hpp"
@@ -45,7 +46,9 @@
 #include "linalg/rap.hpp"
 #include "models/curlcurloperator.hpp"
 #include "models/drivensubstructure.hpp"
+#include "models/environmentoperator.hpp"
 #include "models/materialoperator.hpp"
+#include "models/regionsolver.hpp"
 #include "models/spaceoperator.hpp"
 #include "models/substructuringsolver.hpp"
 #include "models/substructuringsolverimpl.hpp"
@@ -4121,11 +4124,11 @@ ReadCsv(const std::filesystem::path &path)
   return {header, rows};
 }
 
-// A driven sweep of the box of MakeInteriorBoundaryBox (Γ the interior boundary x = 1
-// between the region x < 1 and the environment, lumped port 1 on the face x = 0 and the
-// face x = 2 absorbing), run in process. Collective.
-void RunDrivenBox(const std::filesystem::path &dir, const std::string &mode,
-                  const std::function<void(json &)> &edit = {})
+// The configuration of a driven sweep of the box of MakeInteriorBoundaryBox (Γ the interior
+// boundary x = 1 between the region x < 1 and the environment, lumped port 1 on the face
+// x = 0 and the face x = 2 absorbing), whose mesh it writes. Collective.
+json DrivenBoxConfig(const std::filesystem::path &dir, const std::string &mode,
+                     const std::function<void(json &)> &edit = {})
 {
   const auto mesh = dir / "box.mesh";
   if (Mpi::Root(Mpi::World()))
@@ -4162,7 +4165,14 @@ void RunDrivenBox(const std::filesystem::path &dir, const std::string &mode,
   {
     edit(config);
   }
-  IoData iodata(config, false);
+  return config;
+}
+
+// The sweep of DrivenBoxConfig, run in process. Collective.
+void RunDrivenBox(const std::filesystem::path &dir, const std::string &mode,
+                  const std::function<void(json &)> &edit = {})
+{
+  IoData iodata(DrivenBoxConfig(dir, mode, edit), false);
   MPI_Comm comm = Mpi::World();
   MakeOutputFolder(iodata, comm);
   BlockTimer::Reset();
@@ -4170,6 +4180,62 @@ void RunDrivenBox(const std::filesystem::path &dir, const std::string &mode,
 }
 
 }  // namespace
+
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "Driven substructuring region solver inverts the region's system",
+                 "[substructure][Serial][Parallel]")
+{
+  // Online, the RegionSolver of the region of the box (a lumped port, so that the
+  // preconditioner matrix is the system's but for S_E) solves the system of the sweep, with
+  // S_E, to rounding, also after a refactorization: with the dense matrices on Γ on the
+  // grid of their size, and on a grid of all the processes, and with MUMPS's distributed
+  // Schur complement (by default) or SuperLU_DIST's from back-solves, on rank 0.
+  RunDrivenBox(temp_dir, "Offline");
+  MPI_Comm comm = Mpi::World();
+  const int grid_procs = GENERATE_COPY(0, Mpi::Size(comm));
+  const std::string type = GENERATE("Default", "SuperLU");
+  IoData iodata(DrivenBoxConfig(temp_dir, "Online", [&](json &config)
+                                { config["Solver"]["Linear"]["Type"] = type; }),
+                false);
+  MakeOutputFolder(iodata, comm);
+  DrivenSolver driven(iodata, Mpi::Root(comm), Mpi::Size(comm), 1, nullptr);
+  auto smesh = mesh::Load(iodata, comm);
+  driven.Preprocess(iodata, smesh, comm);
+  std::vector<std::unique_ptr<mfem::ParMesh>> pmesh;
+  pmesh.push_back(mesh::Partition(iodata, std::move(smesh), comm));
+  mesh::RefineMesh(iodata, pmesh);
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  mesh.push_back(std::make_unique<Mesh>(std::move(pmesh[0])));
+  SpaceOperator space_op(iodata, mesh);
+  EnvironmentOperator env(iodata, space_op, grid_procs);
+  space_op.SetEnvironment(env);
+
+  const double omega = iodata.solver.driven.sample_f[0];
+  const std::complex<double> a0(1.0, 0.0), a1(0.0, omega), a2(-omega * omega, 0.0);
+  auto K = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
+  auto C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+  auto M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+  auto A2 = space_op.GetExtraSystemOperator(omega, Operator::DIAG_ZERO);
+  auto A = space_op.GetSystemMatrix(a0, a1, a2, K.get(), C.get(), M.get(), A2.get());
+  auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(a0, a1, a2, omega);
+  RegionSolver solver(iodata, space_op, env);
+  const int n = A->Height();
+  ComplexVector x(n), y(n), r(n);
+  x.UseDevice(true);
+  y.UseDevice(true);
+  r.UseDevice(true);
+  x.Real().Randomize(1);
+  x.Imag().Randomize(2);
+  for (int factorization = 0; factorization < 2; factorization++)
+  {
+    solver.SetOperator(dynamic_cast<const BaseMultigridOperator<ComplexOperator> &>(*P)
+                           .GetFinestOperator());
+    solver.Mult(x, y);
+    A->Mult(y, r);
+    linalg::AXPY(-1.0, x, r);
+    CHECK(linalg::Norml2(comm, r) <= 1.0e-10 * linalg::Norml2(comm, x));
+  }
+}
 
 TEST_CASE_METHOD(palace::test::SharedTempDir,
                  "Driven substructuring online with a process holding no region element",

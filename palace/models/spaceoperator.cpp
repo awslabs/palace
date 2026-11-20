@@ -1356,15 +1356,21 @@ void SpaceOperator::AssemblePreconditioner(
   {
     br_vec = AssembleOperators(assembly_domains, GetNDSpaces(), &dfr, &fr, &dfbr, &fbr,
                                &fpr, &frbr, &fpbr, skip_zeros, assemble_q_data);
-    br_aux_vec = AssembleAuxOperators(assembly_domains, GetH1Spaces(), &fr, &fbr, &frbr,
-                                      skip_zeros, assemble_q_data);
+    if (!environment)
+    {
+      br_aux_vec = AssembleAuxOperators(assembly_domains, GetH1Spaces(), &fr, &fbr, &frbr,
+                                        skip_zeros, assemble_q_data);
+    }
   }
   if (!empty[1])
   {
     bi_vec = AssembleOperators(assembly_domains, GetNDSpaces(), &dfi, &fi, &dfbi, &fbi,
                                &fpi, &frbi, &fpbi, skip_zeros, assemble_q_data);
-    bi_aux_vec = AssembleAuxOperators(assembly_domains, GetH1Spaces(), &fi, &fbi, &frbi,
-                                      skip_zeros, assemble_q_data);
+    if (!environment)
+    {
+      bi_aux_vec = AssembleAuxOperators(assembly_domains, GetH1Spaces(), &fi, &fbi, &frbi,
+                                        skip_zeros, assemble_q_data);
+    }
   }
 }
 
@@ -1406,8 +1412,11 @@ void SpaceOperator::AssemblePreconditioner(
   {
     br_vec = AssembleOperators(assembly_domains, GetNDSpaces(), &dfr, &fr, &dfbr, &fbr,
                                nullptr, &frbr, nullptr, skip_zeros, assemble_q_data);
-    br_aux_vec = AssembleAuxOperators(assembly_domains, GetH1Spaces(), &fr, &fbr, &frbr,
-                                      skip_zeros, assemble_q_data);
+    if (!environment)
+    {
+      br_aux_vec = AssembleAuxOperators(assembly_domains, GetH1Spaces(), &fr, &fbr, &frbr,
+                                        skip_zeros, assemble_q_data);
+    }
   }
 }
 
@@ -1443,8 +1452,11 @@ void SpaceOperator::AssemblePreconditioner(
   {
     br_vec = AssembleOperators(assembly_domains, GetNDSpaces(), &dfr, &fr, &dfbr, &fbr,
                                nullptr, &frbr, nullptr, skip_zeros, assemble_q_data);
-    br_aux_vec = AssembleAuxOperators(assembly_domains, GetH1Spaces(), &fr, &fbr, &frbr,
-                                      skip_zeros, assemble_q_data);
+    if (!environment)
+    {
+      br_aux_vec = AssembleAuxOperators(assembly_domains, GetH1Spaces(), &fr, &fbr, &frbr,
+                                        skip_zeros, assemble_q_data);
+    }
   }
 }
 
@@ -1485,6 +1497,10 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(ScalarType a0,
   auto B = std::make_unique<BaseMultigridOperator<OperType>>(n_levels);
   for (bool aux : {false, true})
   {
+    if (aux && environment)
+    {
+      continue;  // the RegionSolver has no auxiliary space
+    }
     for (std::size_t l = 0; l < n_levels; l++)
     {
       const auto &fespace_l =
@@ -1518,29 +1534,11 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(ScalarType a0,
       if constexpr (std::is_same_v<OperType, ComplexOperator> &&
                     std::is_same_v<A3Type, double>)
       {
-        if (environment && !aux)
+        if (environment)
         {
-          // The region's single level, assembled with the environment's S_E(ω) on Γ, which
-          // the sparse direct solver factors with it.
-          auto S = environment->Assemble(a3);
-          auto add = [&S](const Operator *part, int p)
-          {
-            if (!part)
-            {
-              return std::move(S[p]);
-            }
-            const auto &A = dynamic_cast<const ParOperator &>(*part).ParallelAssemble();
-            return std::unique_ptr<mfem::HypreParMatrix>(mfem::Add(1.0, A, 1.0, *S[p]));
-          };
-          auto Ar = add(B_l->Real(), 0);
-          auto Ai = add(B_l->Imag(), 1);
-          // A process without region elements assembles no entry of its rows, so the
-          // eliminated DOFs get their identity rows from S_E's diagonal entries.
-          Ar->EliminateBC(dbc_tdof_lists_l, Operator::DiagonalPolicy::DIAG_ONE);
-          Ai->EliminateBC(dbc_tdof_lists_l, Operator::DiagonalPolicy::DIAG_ZERO);
-          B->AddOperator(
-              std::make_unique<ComplexWrapperOperator>(std::move(Ar), std::move(Ai)));
-          continue;
+          // The region's single level leaves S_E(ω) out: the RegionSolver adds it to the
+          // region's Schur complement onto Γ at the frequency of the matrix.
+          environment->SetPreconditionerFrequency(a3);
         }
       }
       if (aux)

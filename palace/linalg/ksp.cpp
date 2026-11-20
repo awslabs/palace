@@ -387,6 +387,15 @@ BaseKspSolver<OperType>::BaseKspSolver(const IoData &iodata,
 }
 
 template <OperatorType OperType>
+BaseKspSolver<OperType>::BaseKspSolver(const config::LinearSolverData &linear, int verbose,
+                                       MPI_Comm comm,
+                                       std::unique_ptr<Solver<OperType>> &&pc)
+  : BaseKspSolver(ConfigureKrylovSolver<OperType>(linear, verbose, comm), std::move(pc))
+{
+  use_timer = true;
+}
+
+template <OperatorType OperType>
 BaseKspSolver<OperType>::BaseKspSolver(std::unique_ptr<IterativeSolver<OperType>> &&ksp,
                                        std::unique_ptr<Solver<OperType>> &&pc)
   : ksp(std::move(ksp)), pc(std::move(pc)), ksp_mult(0), ksp_mult_it(0), use_timer(false)

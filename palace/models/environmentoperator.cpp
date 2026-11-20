@@ -4,7 +4,6 @@
 #include "environmentoperator.hpp"
 
 #include <algorithm>
-#include <climits>
 #include <cstddef>
 #include <numbers>
 #include <fmt/format.h>
@@ -17,21 +16,22 @@
 namespace palace
 {
 
-EnvironmentOperator::EnvironmentOperator(const IoData &iodata, SpaceOperator &space_op)
-  : EnvironmentOperator(iodata, space_op, nullptr, {})
+EnvironmentOperator::EnvironmentOperator(const IoData &iodata, SpaceOperator &space_op,
+                                         int grid_procs)
+  : EnvironmentOperator(iodata, space_op, nullptr, {}, grid_procs)
 {
 }
 
 EnvironmentOperator::EnvironmentOperator(const IoData &iodata, SpaceOperator &space_op,
                                          const DrivenSubstructureModel &sampled,
                                          const RecordFunction &record)
-  : EnvironmentOperator(iodata, space_op, &sampled, record)
+  : EnvironmentOperator(iodata, space_op, &sampled, record, 0)
 {
 }
 
 EnvironmentOperator::EnvironmentOperator(const IoData &iodata, SpaceOperator &space_op,
                                          const DrivenSubstructureModel *sampled,
-                                         const RecordFunction &record)
+                                         const RecordFunction &record, int grid_procs)
   : space_op(space_op), comm(space_op.GetComm()), root(Mpi::Root(comm)),
     model_path(iodata.solver.substructuring->model_file),
     region_attrs(iodata.solver.substructuring->region_attributes)
@@ -121,8 +121,15 @@ EnvironmentOperator::EnvironmentOperator(const IoData &iodata, SpaceOperator &sp
   {
     gamma_disp[r] = gamma_disp[r - 1] + gamma_cnt[r - 1];
   }
-  MFEM_VERIFY(static_cast<long long>(nG) * nG <= INT_MAX,
-              "The substructuring interface is too large to distribute its rows!");
+  grid.emplace(comm, nG, grid_procs);
+  for (int l = 0; l < grid->LocalRows(); l++)
+  {
+    grid_rows.push_back(grid->GlobalRow(l));
+  }
+  for (int l = 0; l < grid->LocalCols(); l++)
+  {
+    grid_cols.push_back(grid->GlobalCol(l));
+  }
 
   np = static_cast<int>(env_ports.size());
   ne = static_cast<int>(model.excitations.size());
@@ -272,7 +279,9 @@ EnvironmentOperator::Distribute(const std::vector<std::complex<double>> &flat) c
     c.assign(cp, cp + sz[3]);
   }
 
-  // The rows of Γ of each process.
+  // The local part of S_E on the grid of each process, and the rows of Γ of each process.
+  Rows rows;
+  rows.S = grid->ScatterFromRoot(S, true);
   const auto type = mpi::DataType<std::complex<double>>();
   const int m = gamma_cnt[Mpi::Rank(comm)];
   auto scatter = [&](const std::complex<double> *x, int width)
@@ -287,8 +296,6 @@ EnvironmentOperator::Distribute(const std::vector<std::complex<double>> &flat) c
     MPI_Scatterv(x, cnt.data(), disp.data(), type, y.data(), m * width, type, 0, comm);
     return y;
   };
-  Rows rows;
-  rows.S = scatter(S.data(), nG);
   for (int e = 0; e < ne; e++)
   {
     rows.g.push_back(
@@ -369,88 +376,102 @@ EnvironmentOperator::LocalInterfaceValues(const ComplexVector &x) const
   return v;
 }
 
-void EnvironmentOperator::AddRows(const std::vector<std::complex<double>> &rows,
-                                  const ComplexVector &x, ComplexVector &y) const
+std::vector<std::complex<double>>
+EnvironmentOperator::AllInterfaceValues(const ComplexVector &x) const
 {
   const auto type = mpi::DataType<std::complex<double>>();
   const auto x_loc = LocalInterfaceValues(x);
   std::vector<std::complex<double>> xG(nG);
   MPI_Allgatherv(x_loc.data(), static_cast<int>(x_loc.size()), type, xG.data(),
                  gamma_cnt.data(), gamma_disp.data(), type, comm);
-  double *yr = y.Real().HostReadWrite(), *yi = y.Imag().HostReadWrite();
+  return xG;
+}
+
+std::vector<double> EnvironmentOperator::AllInterfaceValues(const Vector &x) const
+{
+  const double *px = x.HostRead();
+  std::vector<double> x_loc(gamma_local.size()), xG(nG);
   for (std::size_t a = 0; a < gamma_local.size(); a++)
   {
-    const auto *row = rows.data() + a * nG;
-    std::complex<double> v = 0.0;
-    for (int b = 0; b < nG; b++)
-    {
-      v += row[b] * xG[b];
-    }
-    yr[gamma_local[a]] += v.real();
-    yi[gamma_local[a]] += v.imag();
+    x_loc[a] = px[gamma_local[a]];
   }
+  MPI_Allgatherv(x_loc.data(), static_cast<int>(x_loc.size()), MPI_DOUBLE, xG.data(),
+                 gamma_cnt.data(), gamma_disp.data(), MPI_DOUBLE, comm);
+  return xG;
+}
+
+std::vector<std::complex<double>>
+EnvironmentOperator::Product(const std::vector<std::complex<double>> &S,
+                             const std::vector<std::complex<double>> &x) const
+{
+  // The products of the local parts, summed over the grid.
+  std::vector<std::complex<double>> y(nG, 0.0);
+  const std::size_t lld = grid->LeadingDim();
+  for (std::size_t jl = 0; jl < grid_cols.size(); jl++)
+  {
+    const auto xj = x[grid_cols[jl]];
+    const auto *col = S.data() + lld * jl;
+    for (std::size_t il = 0; il < grid_rows.size(); il++)
+    {
+      y[grid_rows[il]] += col[il] * xj;
+    }
+  }
+  Mpi::GlobalSum(nG, y.data(), comm);
+  return y;
+}
+
+std::vector<double>
+EnvironmentOperator::ProductPart(const std::vector<std::complex<double>> &S, bool imag,
+                                 const std::vector<double> &x) const
+{
+  std::vector<double> y(nG, 0.0);
+  const std::size_t lld = grid->LeadingDim();
+  for (std::size_t jl = 0; jl < grid_cols.size(); jl++)
+  {
+    const double xj = x[grid_cols[jl]];
+    const auto *col = S.data() + lld * jl;
+    for (std::size_t il = 0; il < grid_rows.size(); il++)
+    {
+      y[grid_rows[il]] += (imag ? col[il].imag() : col[il].real()) * xj;
+    }
+  }
+  Mpi::GlobalSum(nG, y.data(), comm);
+  return y;
 }
 
 void EnvironmentOperator::AddMult(double omega, const ComplexVector &x, ComplexVector &y)
 {
   Prepare(omega);
-  AddRows(cur.S, x, y);
+  RecordProduct(cur.S, x, y);
 }
 
 void EnvironmentOperator::RecordAddMult(std::size_t k, const ComplexVector &x,
                                         ComplexVector &y) const
 {
-  AddRows(records[k].S, x, y);
+  RecordProduct(records[k].S, x, y);
 }
 
-std::array<std::unique_ptr<mfem::HypreParMatrix>, 2>
-EnvironmentOperator::Assemble(double omega)
+void EnvironmentOperator::RecordProduct(const std::vector<std::complex<double>> &S,
+                                        const ComplexVector &x, ComplexVector &y) const
 {
-  Prepare(omega);
-  const auto &fes = space_op.GetNDSpace().Get();
-  const int nt = fes.GetTrueVSize();
-  const auto &cols = ds->InterfaceTrueDofs();
-  // The rows of Γ, and a zero diagonal entry in every other row, so that the eliminated
-  // rows of a sum with this matrix can hold their diagonal.
-  std::vector<int> I(nt + 1, 1);
-  I[0] = 0;
-  for (int i : gamma_local)
-  {
-    I[i + 1] = nG;
-  }
-  for (int i = 0; i < nt; i++)
-  {
-    I[i + 1] += I[i];
-  }
-  std::vector<HYPRE_BigInt> J(static_cast<std::size_t>(I[nt]));
-  std::vector<double> data[2] = {std::vector<double>(J.size(), 0.0),
-                                 std::vector<double>(J.size(), 0.0)};
-  const HYPRE_BigInt tstart = fes.GetMyTDofOffset();
-  for (int i = 0; i < nt; i++)
-  {
-    J[I[i]] = tstart + i;
-  }
+  const auto yG = Product(S, AllInterfaceValues(x));
+  const int off = gamma_disp[Mpi::Rank(comm)];
+  double *yr = y.Real().HostReadWrite(), *yi = y.Imag().HostReadWrite();
   for (std::size_t a = 0; a < gamma_local.size(); a++)
   {
-    const auto *row = cur.S.data() + a * nG;
-    const std::size_t at = I[gamma_local[a]];
-    for (int b = 0; b < nG; b++)
-    {
-      J[at + b] = cols[b];
-      data[0][at + b] = row[b].real();
-      data[1][at + b] = row[b].imag();
-    }
+    yr[gamma_local[a]] += yG[off + a].real();
+    yi[gamma_local[a]] += yG[off + a].imag();
   }
-  HYPRE_BigInt *offsets =
-      const_cast<mfem::ParFiniteElementSpace &>(fes).GetTrueDofOffsets();
-  std::array<std::unique_ptr<mfem::HypreParMatrix>, 2> parts;
-  for (int q = 0; q < 2; q++)
+}
+
+void EnvironmentOperator::AddSchurBlocks(double omega, std::vector<std::complex<double>> &C)
+{
+  Prepare(omega);
+  MFEM_VERIFY(C.size() == cur.S.size(), "Wrong size of a matrix on the grid of S_E!");
+  for (std::size_t q = 0; q < C.size(); q++)
   {
-    parts[q] = std::make_unique<mfem::HypreParMatrix>(
-        comm, nt, fes.GlobalTrueVSize(), fes.GlobalTrueVSize(), I.data(), J.data(),
-        data[q].data(), offsets, offsets);
+    C[q] += cur.S[q];
   }
-  return parts;
 }
 
 bool EnvironmentOperator::AddExcitation(int excitation_idx, double omega,
@@ -472,34 +493,15 @@ bool EnvironmentOperator::AddExcitation(int excitation_idx, double omega,
   return true;
 }
 
-std::vector<std::complex<double>>
-EnvironmentOperator::AllInterfaceValues(const Vector &x) const
-{
-  const double *px = x.HostRead();
-  std::vector<double> x_loc(gamma_local.size()), xG(nG);
-  for (std::size_t a = 0; a < gamma_local.size(); a++)
-  {
-    x_loc[a] = px[gamma_local[a]];
-  }
-  MPI_Allgatherv(x_loc.data(), static_cast<int>(x_loc.size()), MPI_DOUBLE, xG.data(),
-                 gamma_cnt.data(), gamma_disp.data(), MPI_DOUBLE, comm);
-  return {xG.begin(), xG.end()};
-}
-
 void EnvironmentOperator::RecordAddMultPart(std::size_t k, bool imag, const Vector &x,
                                             Vector &y) const
 {
-  const auto xG = AllInterfaceValues(x);
+  const auto yG = ProductPart(records[k].S, imag, AllInterfaceValues(x));
+  const int off = gamma_disp[Mpi::Rank(comm)];
   double *py = y.HostReadWrite();
   for (std::size_t a = 0; a < gamma_local.size(); a++)
   {
-    const auto *row = records[k].S.data() + a * nG;
-    double v = 0.0;
-    for (int b = 0; b < nG; b++)
-    {
-      v += (imag ? row[b].imag() : row[b].real()) * xG[b].real();
-    }
-    py[gamma_local[a]] += v;
+    py[gamma_local[a]] += yG[off + a];
   }
 }
 

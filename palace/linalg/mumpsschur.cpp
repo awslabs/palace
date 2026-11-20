@@ -79,11 +79,12 @@ MumpsSchurSolverT<T>::MumpsSchurSolverT(MPI_Comm comm, HYPRE_BigInt n_glob, int 
                                         const std::vector<HYPRE_BigInt> &schur_vars,
                                         double blr_tol, bool refactor, bool spd,
                                         std::vector<int> rows,
-                                        SymbolicFactorization ordering, int block)
+                                        SymbolicFactorization ordering, int block,
+                                        int grid_rows, int grid_cols)
   : comm(comm), refactor(refactor), spd(spd), ordering(ordering), n_glob(n_glob),
-    n_loc(n_loc), n_schur(static_cast<int>(schur_vars.size())), mb(block),
-    gather(comm, n_loc, schur_vars), rows(std::move(rows)), irn(std::move(A.irn)),
-    jcn(std::move(A.jcn)), val(std::move(A.val)), blr_tol(blr_tol)
+    n_loc(n_loc), n_schur(static_cast<int>(schur_vars.size())), nprow(grid_rows),
+    npcol(grid_cols), mb(block), gather(comm, n_loc, schur_vars), rows(std::move(rows)),
+    irn(std::move(A.irn)), jcn(std::move(A.jcn)), val(std::move(A.val)), blr_tol(blr_tol)
 {
   // Parent vectors if any rank gives rows (a rank with no local rows gives none).
   int mine = !this->rows.empty();
@@ -99,8 +100,12 @@ void MumpsSchurSolverT<T>::Init(const std::vector<HYPRE_BigInt> &schur_vars)
   MPI_Comm_rank(comm, &rank);
   int nranks;
   MPI_Comm_size(comm, &nranks);
-  nprow = static_cast<int>(std::sqrt(static_cast<double>(nranks)));
-  npcol = nranks / nprow;
+  if (nprow <= 0 || npcol <= 0)
+  {
+    nprow = static_cast<int>(std::sqrt(static_cast<double>(nranks)));
+    npcol = nranks / nprow;
+  }
+  MFEM_VERIFY(nprow * npcol <= nranks, "MumpsSchurSolver: grid larger than the ranks!");
   row_cnt.assign(nranks, 0);
   row_disp.assign(nranks, 0);
   MPI_Allgather(&n_loc, 1, MPI_INT, row_cnt.data(), 1, MPI_INT, comm);

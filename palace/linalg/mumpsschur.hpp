@@ -49,7 +49,9 @@ public:
   // definite, so it is factored without numerical pivoting. ordering is the fill-reducing
   // ordering ("Default": METIS); MUMPS computes a Schur complement only after a sequential
   // analysis, so with Schur variables a parallel ordering is replaced by its sequential
-  // counterpart. block: the block size of the distribution of the Schur complement.
+  // counterpart. block: the block size of the distribution of the Schur complement, on a
+  // grid of grid_rows x grid_cols processes (by default, as square as the number of ranks
+  // allows).
   MumpsSchurSolverT(const mfem::HypreParMatrix &A,
                     const std::vector<HYPRE_BigInt> &schur_vars, double blr_tol = 0.0,
                     bool refactor = false, bool spd = true,
@@ -64,7 +66,7 @@ public:
                     const std::vector<HYPRE_BigInt> &schur_vars, double blr_tol = 0.0,
                     bool refactor = false, bool spd = true, std::vector<int> rows = {},
                     SymbolicFactorization ordering = SymbolicFactorization::DEFAULT,
-                    int block = 64);
+                    int block = 64, int grid_rows = 0, int grid_cols = 0);
 
   ~MumpsSchurSolverT() override;
 
@@ -77,6 +79,11 @@ public:
   std::vector<T> ReleaseSchurRows() override;
 
   std::vector<T> ReleaseSchur() override { return gather.GatherSchur(ReleaseSchurRows()); }
+
+  // The local part of the Schur complement of the last factorization, 2D block cyclic as
+  // BlockCyclicGrid lays it out (of the given grid and block size), which the caller may
+  // overwrite: the next factorization writes the Schur complement in it again.
+  std::vector<T> &SchurBlocks() { return schur; }
 
   void SolveInternal(const std::vector<const VecType *> &X,
                      const std::vector<VecType *> &Y) override;
