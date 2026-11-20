@@ -448,3 +448,7 @@ linear solver tolerance and 4 times at Palace's default, and about 8 and 5 times
 the region. The mesh has about 1.3 million unknowns, so the runs are best on a cluster node. The
 mesh, and so these frequencies, depend on the versions of DeviceLayout.jl and Gmsh, which
 `examples/Manifest.toml` pins.
+
+`cpw_resonator_grid_offline_adaptive.json` and `cpw_resonator_grid_online_adaptive.json` sample a
+rational model of the environment over 15–21.5 GHz, and sweep 1301 frequencies from it online,
+with the region reduced as in the adaptive fast frequency sweep.
