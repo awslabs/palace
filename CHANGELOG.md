@@ -342,6 +342,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     matrix was inaccurate whatever the tolerance, so the linear solves needed more
     iterations and could return wrong solutions with `"ComplexCoarseSolve"`.
     [PR 1222](https://github.com/awslabs/palace/pull/1222).
+  - Fixed adaptive frequency sweeps which could keep sampling up to `"AdaptiveMaxSamples"`,
+    with spurious resonances in the band, when `"AdaptiveTol"` is close to the accuracy of
+    the HDM solutions. *Palace* now refines the samples which the PROM does not reproduce to
+    `"AdaptiveTol"`, no longer aborts on a sample in the span of the basis, and warns when
+    the sampling reaches `"AdaptiveMaxSamples"` before converging.
+    [PR 1218](https://github.com/awslabs/palace/pull/1218).
   - Fixed the flux recovery in the error estimators to use the projection which minimizes the
     error it is measured in (ε⁻¹-weighted for the electric flux, μ-weighted for the magnetic
     field). The unweighted projection overestimated the error in the low-permittivity
