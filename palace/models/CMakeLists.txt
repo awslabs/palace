@@ -32,6 +32,7 @@ target_sources(${LIB_TARGET_NAME}
   ${CMAKE_CURRENT_SOURCE_DIR}/surfaceimpedanceoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/surfacepostoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/surfaceresponsecoverage.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/surfaceresponsefilmrule.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/surfaceresponseresolution.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/surfaceresponseidentification.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/surfaceresponsemirror.cpp

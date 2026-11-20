@@ -2485,6 +2485,80 @@ the key; the log says in one line that no field solve is run. Remove the key (de
 `false`) to solve. The key requires `Library`, and like the option it cannot be combined
 with `--mesh-statistics`.
 
+**Impedance metals: the measuring-only mode (EXPERIMENTAL).** Library models are perfect
+conductor coupons of one fabricated film, so a device metal with an `Impedance`,
+`Conductivity` or `RationalImpedance` boundary law matches no model and stays raw (its
+features are `Missing`). `"ImpedanceMetalRule": "Record"` in `Solver.SurfaceResponseCorrection`
+(three-dimensional driven or eigenmode runs, `PatchConstruction` `"Features"`) measures what
+serving such metals would give, without changing any value of record: every corrected value,
+table and `palace.json` block of record is computed and written exactly as with `"Off"` (the
+default). Beside them a CANDIDATE is written, marked `CANDIDATE: NOT OF RECORD`:
+`surface-response-impedance-candidate.csv` (per mode or frequency and interface: the
+participation of record, the coverage status the record printed for it, and the
+candidate's), `surface-response-impedance-features.csv` (per
+candidate feature: device law, law status, both key hashes) and
+`surface-response-impedance-law.csv` (per corrected patch and source: the on-metal law reading
+L of the conductor-consistency probes) and the candidate's conductor-consistency records
+`surface-response-impedance-conductor-consistency-records.json`, always in the diagnostics
+directory (`Diagnostics.Directory`, or `impedance-rule-candidate` when it is unset), and the
+`palace.json` block `SurfaceResponse.ImpedanceRuleCandidate` (including the measured setup
+cost); a preflight writes `surface-response-impedance-candidate-requirements.json` when the
+rule acts on a feature (a substitution or a refusal). The candidate
+treats a metal as the library's film iff it is a perfect conductor or a purely inductive
+`Impedance` sheet (`Rs` = 0 and `Cs` = 0, any `Ls`), an assumption printed on every run; other
+laws are not served (one line names each). `"ImpedanceMetalFilmOverrides": [{"Attributes":
+[...], "Serve": true | false}]` serves or un-serves an attribute whatever its law; every
+override is printed and a served non-inductive law is named on every candidate row. Law
+statuses: `PEC`, `SUBSTITUTED`, `EXACT` (a verified library model of the device law matches),
+`MIXED-LAW` (film metals of different laws on different conductors), `LAW-JOINT` (a law change
+along one conductor or a corner at one: `Missing`), `NOT-DECLARED`, `SERVED-BY-OVERRIDE`,
+`NOT-SERVED-BY-OVERRIDE`. The candidate is postprocessing-only (no self-consistent candidate,
+no magnetic term); two-dimensional boundary-mode runs, `PatchConstruction` `"Legacy"` and
+electrostatic runs are not served. The candidate is always a second operator built beside
+the operator of record (its setup time and memory are printed); when the rule acts on no
+feature (nothing substituted, nothing refused) it is a twin of the operator of record, and
+every measurement checks that the candidate equals the record cell for cell (a mismatch
+ends the run with an error). `"Record"` runs
+only with `Coverage.Policy` `"Warn"`: with `"MarkNotApplied"` (set by the key or by
+default) it is refused at load, since the candidate tables would print values for cells
+the tables of record withhold.
+
+`"ImpedanceMetalRule": "Apply"` (EXPERIMENTAL, off by default): corrected values on impedance
+sheets are experimental and not validated, and every run with `"Apply"` prints one line that
+says so. On the same runs as `"Record"`, the operator of record itself treats a perfect
+conductor and a purely inductive `Impedance` sheet (`Rs` = 0, `Cs` = 0, 0 < `Ls` <=
+`"ImpedanceMetalMaxInductance"`, cracked or not) as the library's film: its features are
+identified, keyed, matched and placed as a perfect conductor's and corrected by the
+perfect-conductor models, while the solve keeps the impedance law. No candidate is built
+and no law reading is taken. One printed line names what was treated as metal, each sheet's
+form and the `Ls` values met: an uncracked sheet is one sheet of total `Ls` (each boundary
+element carries `1/Ls` once); a cracked sheet (`"Crack": true`) is two faces of `Ls` each; the
+deprecated global crack key splits it into two faces of `2 Ls` each. The range check
+compares the CONFIGURED `Ls` (the number of the `Impedance` boundary) with
+`"ImpedanceMetalMaxInductance"` (H/sq; default `9e-14`, twice the common design value
+`4.5e-14`) in every form; a sheet above it is not served (`ABOVE-RANGE`: raw, named), and an
+`Impedance` boundary with `Rs`, `Ls` and `Cs` all 0 is no sheet (not served, named; the
+solve refuses it). The
+tables of record keep their columns and status words; `palace.json`
+`SurfaceResponse.ImpedanceMetalRule` records the mode, the printed lines, the bound, the `Ls`
+met, the law-status counts and the count of the features on impedance sheets:
+`ImpedanceSheetFeatures` (n: the features whose device law is an `Impedance` sheet, served
+or not), `SubstitutedImpedanceFeatures` (s: those whose law status serves the sheet),
+`ServedImpedanceFeatures` (k: those of s corrected by a perfect-conductor model, matched and
+placed), `MissingImpedanceFeatures` (m = s - k: no model, Missing as for a perfect
+conductor) and `ServedImpedanceLength` (the k features' length in metres). The run prints
+"k of n feature(s) on impedance sheets are corrected by perfect-conductor models (m Missing,
+as for a perfect conductor)", and its coverage banner adds that line when k > 0; and
+`surface-response-impedance-rule-features.csv` (per feature: device law, law status, both key
+hashes, the model that corrects it or `-`) is written in the diagnostics directory
+(`Diagnostics.Directory`, or `impedance-rule` when it is unset). A preflight's manifest of
+record is the served identification, with an `ImpedanceMetalRule` block. Under `"Apply"` an
+override may un-serve any metal and may serve only what the rule serves by default (any
+other `Serve` true is refused before the solve). `"Apply"` runs under either coverage policy
+(it prints no candidate value). Electrostatic runs solve no impedance boundary: there
+`"Apply"` serves nothing (one line; every value as with `"Off"`); two-dimensional
+boundary-mode runs and `PatchConstruction` `"Legacy"` have no seam (one line; as `"Off"`).
+
 Exit status of a preflight: `0` when it completed; `3` when it wrote its manifest and patch
 dry run (3D) in full and then ended because `GeometryFailurePolicy` is `FailClosed` (the
 preflight's default) and geometry fallbacks were recorded: the last log line names their

@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:4-5-2",
+  "$id": "urn:palace:schema:4-5-3",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -3521,6 +3521,46 @@
               "description": "Run the surface-response preflight instead of a solve: exactly what the command-line option `--surface-response-preflight` does (the same code path and exit status; the same outputs except that the resolved configuration records the key), for front ends that start Palace without command-line options. The block of the configured `Problem.Type` is read (`Solver.Electrostatic.ResponseCorrection` for an electrostatic problem, `Solver.SurfaceResponseCorrection` otherwise); the log says in one line that no field solve is run. Requires `Library`; cannot be combined with `--mesh-statistics`. Remove the key to solve.",
               "default": false
             },
+            "ImpedanceMetalRule": {
+              "type": "string",
+              "enum": [
+                "Off",
+                "Record",
+                "Apply"
+              ],
+              "description": "EXPERIMENTAL. `\"Off\"` (default): today's behaviour, unchanged. `\"Record\"`: the measuring-only mode on a three-dimensional Maxwell (driven / eigenmode) run with `PatchConstruction` `\"Features\"`: every corrected value of record is computed and written exactly as under `\"Off\"`, and a CANDIDATE (what serving the library's film metals as perfect conductors would give) is written to separate files marked `CANDIDATE: NOT OF RECORD` (`surface-response-impedance-candidate.csv`; in the diagnostics directory `surface-response-impedance-features.csv` and `surface-response-impedance-law.csv`; palace.json `SurfaceResponse.ImpedanceRuleCandidate`; a preflight writes `surface-response-impedance-candidate-requirements.json`). By default a metal boundary is the library's film iff it is a perfect conductor or a purely inductive `Impedance` sheet (`Rs` = 0 and `Cs` = 0, any `Ls`): an assumption, printed on every run. `\"Apply\"` (EXPERIMENTAL, off by default; corrected values on impedance sheets are experimental and not validated, and every run says so in one line): on a three-dimensional Maxwell (driven / eigenmode) run with `PatchConstruction` `\"Features\"` the operator of record treats perfect conductors and purely inductive `Impedance` sheets (`Rs` = 0, `Cs` = 0, 0 < the configured `Ls` <= `ImpedanceMetalMaxInductance`, cracked or not) as the library's film and corrects them with the perfect-conductor models; the solve keeps the impedance law; a sheet above the bound, or with `Rs` or `Cs`, is not served (raw) and the run says so; no candidate is built. One printed line names what was treated as metal, each sheet's form and the `Ls` values met; palace.json `SurfaceResponse.ImpedanceMetalRule` records it. Electrostatic runs solve no impedance boundary: there `\"Apply\"` serves nothing and prints one line."
+            },
+            "ImpedanceMetalMaxInductance": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "description": "EXPERIMENTAL; only with `ImpedanceMetalRule` `\"Apply\"`. The upper end (H/sq) of the `Ls` range of purely inductive `Impedance` sheets served by the perfect-conductor models, compared with the CONFIGURED `Ls` (the number of the `Impedance` boundary) in every crack form; a sheet above it is not served (raw) and the run says so. Default 9e-14 H/sq (twice the common design value 4.5e-14 H/sq), printed on every run.",
+              "default": 9e-14
+            },
+            "ImpedanceMetalFilmOverrides": {
+              "type": "array",
+              "description": "EXPERIMENTAL; only with `ImpedanceMetalRule` `\"Record\"` or `\"Apply\"`. Under `\"Apply\"` an override may un-serve any metal, and may serve only what the rule serves by default (any other `Serve` true is refused before the solve). Per metal boundary attribute, serve (`Serve` true) or do not serve (`Serve` false) it as the library's film in the candidate (`\"Record\"`, whatever its law) or in the values of record (`\"Apply\"`); every override is printed, and a served boundary that is not a perfect conductor or a purely inductive sheet is named on every candidate row (`SERVED-BY-OVERRIDE`).",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "Attributes",
+                  "Serve"
+                ],
+                "properties": {
+                  "Attributes": {
+                    "type": "array",
+                    "items": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0
+                    },
+                    "minItems": 1
+                  },
+                  "Serve": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            },
             "GeometryFailurePolicy": {
               "type": "string",
               "enum": [
@@ -3983,6 +4023,15 @@
             ],
             "PreflightOnly": [
               "Library"
+            ],
+            "ImpedanceMetalRule": [
+              "Library"
+            ],
+            "ImpedanceMetalFilmOverrides": [
+              "ImpedanceMetalRule"
+            ],
+            "ImpedanceMetalMaxInductance": [
+              "ImpedanceMetalRule"
             ],
             "PatchConstruction": [
               "Library"

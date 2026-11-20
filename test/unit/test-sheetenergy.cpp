@@ -36,6 +36,7 @@
 #include "models/romoperator.hpp"
 #include "models/spaceoperator.hpp"
 #include "models/surfacepostoperator.hpp"
+#include "models/surfaceresponsefilmrule.hpp"
 #include "models/surfaceresponseoperator.hpp"
 #include "surfaceresponse-fixtures.hpp"
 #include "utils/communication.hpp"
@@ -858,6 +859,199 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
       CHECK_THAT(result.domain_correction, WithinRel(*metal_oblique_correction, 1.0e-10));
       CHECK_THAT(result.fabricated_surface_energy.at(4),
                  WithinRel(*metal_oblique_surface_energy, 1.0e-10));
+    }
+  }
+#endif
+}
+
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "Impedance-metal rule Apply serves a purely inductive sheet by the "
+                 "perfect-conductor models in every crack form",
+                 "[surfaceresponsefilmrule][impedancemetalrule][sheetenergy][maxwell]"
+                 "[Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  // Decision 2206 (a) (DESIGN-APPLY s3): the island metal of the Maxwell island problem as
+  // a purely inductive Impedance sheet, cracked by the legacy key (the impedance split),
+  // cracked by "Crack" true and uncracked ("Crack" false), loaded by mesh::ReadMesh, with
+  // the PEC library of record unchanged. Under "Apply" every form is keyed, matched and
+  // placed as the perfect-conductor island (the same patches order-free, every edge
+  // matched, the law verified, every feature SUBSTITUTED); under "Off" nothing matches
+  // (raw); above the Ls range "Apply" serves nothing (raw) and says so.
+  constexpr int metal_attr = 9;  // the island of MakeSerialIslandMesh
+  const auto mesh_path =
+      WriteSheetMesh(temp.temp_dir, MakeSerialIslandMesh(), "island-apply.mesh");
+  // The Features construction (the seam's path; the candidate test's form): the convex
+  // library with every model on the island's one target interface (SA).
+  const fs::path sa_library_path = temp.temp_dir / "impedance-apply-convex-sa-3d.json";
+  const fs::path no_corner_library_path =
+      temp.temp_dir / "impedance-apply-convex-sa-3d-no-corner.json";
+  if (Mpi::Root(Mpi::World()))
+  {
+    json library = json::parse(std::ifstream(convex_library_3d_path));
+    library["Name"] = "unit-test-process-impedance-apply-convex-sa-3d";
+    for (auto &model : library["Models"])
+    {
+      model["Interfaces"] = {{{"Type", "SA"}, {"Coupon", 1}}};
+    }
+    std::ofstream(sa_library_path) << library.dump(2) << "\n";
+    json no_corner = library;
+    no_corner["Name"] = "unit-test-process-impedance-apply-convex-sa-3d-no-corner";
+    no_corner["Models"] = json::array();
+    for (const auto &model : library["Models"])
+    {
+      if (model.value("Topology", std::string()) != "ConvexCorner")
+      {
+        no_corner["Models"].push_back(model);
+      }
+    }
+    REQUIRE(no_corner["Models"].size() + 1 == library["Models"].size());
+    std::ofstream(no_corner_library_path) << no_corner.dump(2) << "\n";
+  }
+  Mpi::Barrier(Mpi::World());
+  auto IslandConfig = [&](bool legacy_key)
+  {
+    json config = ConvexMaxwellIslandConfig();
+    auto &correction = config["Solver"]["SurfaceResponseCorrection"];
+    correction.erase("PatchConstruction");
+    correction["Library"] = sa_library_path.string();
+    correction["UnmatchedPolicy"] = "Warn";
+    correction["GeometryFailurePolicy"] = "RecordRaw";
+    correction["TraceCoupling"] = "Collocated";
+    correction["CorrectionMode"] = "PostprocessOnly";
+    config["Model"]["Mesh"] = mesh_path.string();
+    if (legacy_key)
+    {
+      config["Model"]["CrackInternalBoundaryElements"] = true;
+    }
+    else
+    {
+      config["Model"].erase("CrackInternalBoundaryElements");
+    }
+    return config;
+  };
+  MaxwellIslandResponse pec(IslandConfig(false));
+  REQUIRE(pec.response->GetPatchCount() > 0);
+  CHECK(pec.response->GetImpedanceApplyRule() == nullptr);
+  const auto pec_patches = PatchSignatures(*pec.response);
+  mfem::Vector normal_value(3);
+  normal_value = 0.0;
+  normal_value[1] = -0.4;
+  mfem::VectorConstantCoefficient normal_coefficient(normal_value);
+  const auto pec_normal = pec.ConstantFieldResponse(normal_coefficient);
+
+  for (const auto form :
+       {MetalCrackForm::LegacyKey, MetalCrackForm::CrackTrue, MetalCrackForm::CrackFalse})
+  {
+    INFO(MetalCrackFormName(form));
+    auto SheetConfig = [&](const std::string &rule, double ls)
+    {
+      json config = IslandConfig(form == MetalCrackForm::LegacyKey);
+      config["Boundaries"]["Ground"]["Attributes"] = {1, 2, 3, 4, 5, 6};
+      json entry = {{"Attributes", {metal_attr}}, {"Ls", ls}};
+      if (form != MetalCrackForm::LegacyKey)
+      {
+        entry["Crack"] = (form == MetalCrackForm::CrackTrue);
+      }
+      config["Boundaries"]["Impedance"] = json::array({entry});
+      config["Boundaries"]["Postprocessing"]["Dielectric"][0]["Attributes"] = {metal_attr};
+      config["Solver"]["SurfaceResponseCorrection"]["ImpedanceMetalRule"] = rule;
+      return config;
+    };
+    const std::string form_text =
+        form == MetalCrackForm::LegacyKey
+            ? "cracked, legacy split (two faces of 2 Ls each)"
+            : (form == MetalCrackForm::CrackTrue ? "cracked (two faces of Ls each)"
+                                                 : "uncracked (one sheet of total Ls)");
+
+    // Apply at the designers' Ls: the perfect-conductor island's identification.
+    MaxwellIslandResponse sheet(SheetConfig("Apply", 4.5e-14));
+    CHECK(sheet.iodata.boundaries.cracked_attributes.contains(metal_attr) ==
+          (form != MetalCrackForm::CrackFalse));
+    const auto *film = sheet.response->GetImpedanceApplyRule();
+    REQUIRE(film != nullptr);
+    CHECK(film->attributes.at(metal_attr).service == FilmService::FILM_INDUCTIVE);
+    CHECK(film->attributes.at(metal_attr).form == form_text);
+    CHECK_THAT(film->lines.front(), ContainsSubstring(form_text + " [9]"));
+    CHECK(PatchSignatures(*sheet.response) == pec_patches);
+    const auto normal = sheet.ConstantFieldResponse(normal_coefficient);
+    CHECK_THAT(normal.matched_length_fraction, WithinAbs(1.0, 1.0e-12));
+    CHECK(normal.boundary_law_verified);
+    CHECK_THAT(normal.domain_correction, WithinRel(pec_normal.domain_correction, 1.0e-10));
+    REQUIRE(normal.fabricated_surface_energy.size() ==
+            pec_normal.fabricated_surface_energy.size());
+    for (const auto &[interface, energy] : pec_normal.fabricated_surface_energy)
+    {
+      CHECK_THAT(normal.fabricated_surface_energy.at(interface),
+                 WithinRel(energy, 1.0e-10));
+    }
+    if (Mpi::Root(Mpi::World()))
+    {
+      const auto &features = sheet.response->GetImpedanceLawFeatures();
+      REQUIRE(!features.empty());
+      for (const auto &feature : features)
+      {
+        CHECK(feature.status == "SUBSTITUTED");
+        CHECK(feature.impedance_sheet);
+        CHECK(!feature.model.empty());
+      }
+      const auto counts = CountImpedanceApplyFeatures(features);
+      CHECK(counts.sheet == static_cast<int>(features.size()));
+      CHECK(counts.substituted == counts.sheet);
+      CHECK(counts.corrected == counts.sheet);
+      CHECK(counts.missing == 0);
+    }
+
+    // Apply with a library without the corner model: the corners keep their law status
+    // (SUBSTITUTED) and have no model: Missing, as for a perfect conductor (k < s).
+    {
+      json config = SheetConfig("Apply", 4.5e-14);
+      config["Solver"]["SurfaceResponseCorrection"]["Library"] =
+          no_corner_library_path.string();
+      MaxwellIslandResponse cornerless(config);
+      REQUIRE(cornerless.response->GetImpedanceApplyRule() != nullptr);
+      if (Mpi::Root(Mpi::World()))
+      {
+        const auto &features = cornerless.response->GetImpedanceLawFeatures();
+        const auto counts = CountImpedanceApplyFeatures(features);
+        CHECK(counts.sheet == static_cast<int>(features.size()));
+        CHECK(counts.substituted == counts.sheet);
+        CHECK(counts.missing > 0);
+        CHECK(counts.corrected > 0);
+        CHECK(counts.corrected + counts.missing == counts.substituted);
+        for (const auto &feature : features)
+        {
+          CHECK(feature.status == "SUBSTITUTED");
+          CHECK(feature.model.empty() == (feature.type == "ConvexCorner"));
+        }
+      }
+    }
+
+    // Off: the law is part of the key and no model of the library carries it (raw).
+    MaxwellIslandResponse off(SheetConfig("Off", 4.5e-14));
+    CHECK(off.response->GetImpedanceApplyRule() == nullptr);
+    CHECK(off.response->GetPatchCount() == 0);
+
+    // Apply above the Ls range (100 x the designers' value): not served, named.
+    MaxwellIslandResponse above(SheetConfig("Apply", 4.5e-12));
+    REQUIRE(above.response->GetImpedanceApplyRule() != nullptr);
+    CHECK(above.response->GetImpedanceApplyRule()->attributes.at(metal_attr).service ==
+          FilmService::INDUCTIVE_ABOVE_RANGE);
+    CHECK_THAT(above.response->GetImpedanceApplyRule()->lines.back(),
+               ContainsSubstring("ABOVE the Ls range <= 9e-14 H/sq): attributes [9]"));
+    CHECK(above.response->GetPatchCount() == 0);
+    if (Mpi::Root(Mpi::World()))
+    {
+      // n > 0 and s = k = m = 0: the features lie on an impedance sheet that is not served.
+      const auto &features = above.response->GetImpedanceLawFeatures();
+      REQUIRE(!features.empty());
+      const auto counts = CountImpedanceApplyFeatures(features);
+      CHECK(counts.sheet == static_cast<int>(features.size()));
+      CHECK(counts.substituted == 0);
+      CHECK(counts.corrected == 0);
+      CHECK(counts.missing == 0);
     }
   }
 #endif

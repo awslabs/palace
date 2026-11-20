@@ -55,6 +55,9 @@ class DrivenSolver : public BaseSolver
 private:
   mutable std::shared_ptr<const SurfacePostGeometry> surface_post_geometry;
   mutable std::shared_ptr<const SurfaceResponseGeometry> response_geometry;
+  // The impedance-metal rule candidate's own geometry cache (RECORD only; unused under
+  // Off).
+  mutable std::shared_ptr<const SurfaceResponseGeometry> impedance_candidate_geometry;
 
   ErrorIndicator SweepUniform(SpaceOperator &space_op) const;
 

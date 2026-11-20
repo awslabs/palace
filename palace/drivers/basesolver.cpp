@@ -6,6 +6,7 @@
 #include <array>
 #include <cmath>
 #include <utility>
+#include <fmt/ranges.h>
 #include <mfem.hpp>
 #include <nlohmann/json.hpp>
 #include "drivers/transientsolver.hpp"
@@ -17,6 +18,7 @@
 #include "models/portexcitations.hpp"
 #include "models/postoperator.hpp"
 #include "models/surfacepostoperator.hpp"
+#include "models/surfaceresponsefilmrule.hpp"
 #include "models/surfaceresponseoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/dorfler.hpp"
@@ -726,6 +728,13 @@ void BaseSolver::SaveMetadata(const Timer &timer) const
     json meta = LoadMetadata(post_dir);
     for (int i = Timer::INIT; i < Timer::NUM_TIMINGS; i++)
     {
+      // The impedance-metal rule's categories (Record only) are written when counted: a
+      // run without the rule keeps today's key set.
+      if ((i == Timer::CONSTRUCT_IMPEDANCE_RULE || i == Timer::POSTPRO_IMPEDANCE_RULE) &&
+          timer.Counts(static_cast<Timer::Index>(i)) == 0)
+      {
+        continue;
+      }
       std::string key(Timer::descriptions[i]);
       std::erase_if(key, isspace);
       meta["ElapsedTime"]["Durations"][key] = timer.Data(static_cast<Timer::Index>(i));
@@ -782,6 +791,16 @@ void BaseSolver::SaveMetadata(const PortExcitations &excitation_helper) const
   {
     nlohmann::json meta = LoadMetadata(post_dir);
     meta["Excitations"] = excitation_helper;
+    WriteMetadata(post_dir, meta);
+  }
+}
+
+void BaseSolver::SaveImpedanceRuleCandidateMetadata(const nlohmann::json &block) const
+{
+  if (root)
+  {
+    nlohmann::json meta = LoadMetadata(post_dir);
+    meta["SurfaceResponse"]["ImpedanceRuleCandidate"] = block;
     WriteMetadata(post_dir, meta);
   }
 }
@@ -848,6 +867,27 @@ void BaseSolver::SaveMetadata(SurfaceResponseOperator &response) const
     meta["SurfaceResponse"]["Resolution"] =
         ResolutionRunMetadata(response.GetResolutionRunRecord(), solve_level, solve_levels);
     resolution_banner = ResolutionRunBanner(meta["SurfaceResponse"]["Resolution"]);
+    // The impedance-metal rule's "Apply" (decision 2206 (a); DESIGN-APPLY s6): its record
+    // beside the coverage block, and one banner line when it served a feature on an
+    // impedance sheet (the tables of record keep their headers and status words).
+    if (const auto *film = response.GetImpedanceApplyRule())
+    {
+      auto &record = meta["SurfaceResponse"]["ImpedanceMetalRule"];
+      const auto &features = response.GetImpedanceLawFeatures();
+      record = ImpedanceApplyRecord(*film, features, iodata.units, false);
+      const auto counts = CountImpedanceApplyFeatures(features);
+      if (counts.corrected > 0)
+      {
+        std::vector<std::string> inductances;
+        for (const double inductance : film->served_inductances)
+        {
+          inductances.push_back(fmt::format("{:.6g}", inductance));
+        }
+        coverage_banner +=
+            fmt::format("*** IMPEDANCE-METAL RULE (APPLY): {}; served Ls: {} H/sq ***\n",
+                        ImpedanceApplyCountText(counts), fmt::join(inductances, ", "));
+      }
+    }
     // Round 2a R2 (decision 1475 (1)): the Records spilled by the root are spliced in place
     // of the empty in-memory array (the same bytes), then the scratch file is removed.
     auto *spill = response.GetConductorConsistencyRecordsSpill();

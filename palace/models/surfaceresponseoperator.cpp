@@ -41,6 +41,7 @@
 #include "models/laplaceoperator.hpp"
 #include "models/materialoperator.hpp"
 #include "models/spaceoperator.hpp"
+#include "models/surfaceresponsefilmrule.hpp"
 #include "models/surfaceresponseidentification.hpp"
 #include "models/surfaceresponsemirror.hpp"
 #include "models/surfaceresponsesegmentindex.hpp"
@@ -2667,6 +2668,58 @@ bool IsBoundaryLawVerified(const LibraryModel &model)
   }
   return model.boundary_condition.parameters_verified;
 }
+
+// The impedance-metal rule's CANDIDATE seam (decisions 2006 / 2012; ImpedanceMetalRule
+// Record; null on every operator of record): per geometry segment the device law (index
+// into `laws`) and the film service of its metal attributes. A served segment carries the
+// PEC law in its EdgeSegment3D (identification, keys, matching and placement proceed as for
+// a perfect conductor); the device law is kept here for the law statuses and for the EXACT
+// features, whose placement reads it. Compact (5 bytes a segment): a candidate is built
+// beside the operator of record.
+struct CandidateSegmentLaws
+{
+  const FilmRuleResolution *film_rule = nullptr;
+  std::vector<signed char> service;  // FilmService per geometry segment; -1 = not framed
+  std::vector<int> device_law;       // index into laws per geometry segment; -1
+  std::vector<MetalBoundaryLaw> laws;
+
+  void Record(std::size_t geometry_index, const MetalBoundaryLaw &law, FilmService kind)
+  {
+    if (service.size() <= geometry_index)
+    {
+      service.resize(geometry_index + 1, -1);
+      device_law.resize(geometry_index + 1, -1);
+    }
+    int index = -1;
+    for (std::size_t i = 0; i < laws.size(); i++)
+    {
+      if (SameBoundaryLaw(laws[i], law))
+      {
+        index = static_cast<int>(i);
+        break;
+      }
+    }
+    if (index < 0)
+    {
+      laws.push_back(law);
+      index = static_cast<int>(laws.size()) - 1;
+    }
+    service[geometry_index] = static_cast<signed char>(kind);
+    device_law[geometry_index] = index;
+  }
+  bool Framed(std::size_t geometry_index) const
+  {
+    return geometry_index < service.size() && service[geometry_index] >= 0;
+  }
+  FilmService Service(std::size_t geometry_index) const
+  {
+    return static_cast<FilmService>(service[geometry_index]);
+  }
+  const MetalBoundaryLaw &DeviceLaw(std::size_t geometry_index) const
+  {
+    return laws[device_law[geometry_index]];
+  }
+};
 
 std::string TopologyIdentifier(LibraryTopology topology);
 void VerifySpatialEdgesInSignatureFrame(LibraryModel &model, double radius);
@@ -10112,6 +10165,330 @@ struct MirrorBandResult
   std::vector<EdgeSegment3D> image_frames;
 };
 
+// The impedance-metal rule's CANDIDATE (decisions 2006 / 2012; ImpedanceMetalRule Record;
+// STAGEA-NOTE s3): the law status of every feature of a candidate identification, from the
+// DEVICE laws of its own segments and of the segments sharing a vertex with them (the
+// candidate's identification is formed by the film rule at the seam: DESIGN-IMPK-v3 s3's
+// form (2), ruling 2012 Q2). A conductor carrying two device laws (or a served and an
+// unserved metal) there = LAW-JOINT: a law change along one conductor, a corner / vertex
+// site at one (ERRATUM-1974 E-2): the feature is unmatched (Missing whole, fail-closed); a
+// metal un-served by an override = NOT-SERVED-BY-OVERRIDE (unmatched); a single-law film
+// feature (no Context) whose DEVICE key matches a verified library model of that law =
+// EXACT (its signature, key and match swapped to that model; `exact_features` lists it for
+// the placement's law reads). Fills the per-feature status (every rank) and the table rows
+// (root) of `candidate_result`.
+void ClassifyCandidateFeatureLaws(IdentificationResult &result,
+                                  const IdentificationInput &input,
+                                  const CandidateSegmentLaws &laws,
+                                  const ProcessLibrary &library,
+                                  const LibrarySignatureIndex &library_keys,
+                                  const AutomaticResponseRequirements &describer,
+                                  std::map<int, FeatureCurvatureMatch> *curved_matches,
+                                  std::map<int, FeatureCornerMatch> *corner_matches,
+                                  bool root, ResponseCorrectionData *candidate_result,
+                                  std::set<int> *exact_features)
+{
+  // Apply (decision 2206 (a)): the same statuses on the operator of record.
+  const bool apply = laws.film_rule && laws.film_rule->apply;
+  std::vector<std::string> law_texts;
+  for (const auto &law : laws.laws)
+  {
+    law_texts.push_back(describer.DescribeBoundaryCondition(law).dump());
+  }
+  std::map<std::string, std::size_t> model_by_name;
+  for (std::size_t i = 0; i < library.models.size(); i++)
+  {
+    model_by_name.emplace(library.models[i].name, i);
+  }
+  auto ReplaceLaws = [](auto &self, nlohmann::json &node, const std::string &law) -> void
+  {
+    if (node.is_object())
+    {
+      for (auto it = node.begin(); it != node.end(); ++it)
+      {
+        if (it.key() == "Law" && it.value().is_string())
+        {
+          it.value() = law;
+        }
+        else
+        {
+          self(self, it.value(), law);
+        }
+      }
+    }
+    else if (node.is_array())
+    {
+      for (auto &entry : node)
+      {
+        self(self, entry, law);
+      }
+    }
+  };
+  int max_id = -1;
+  for (const auto &feature : result.features)
+  {
+    max_id = std::max(max_id, feature.id);
+  }
+  std::vector<signed char> status_by_feature(
+      static_cast<std::size_t>(max_id + 1),
+      static_cast<signed char>(ImpedanceLawStatus::NOT_DECLARED));
+  std::map<ImpedanceLawStatus, int> counts;
+  std::vector<std::string> joint_examples;
+  const std::size_t real_segments = input.segments.size();
+  auto Usable = [&](std::size_t s)
+  { return s < real_segments && laws.Framed(s) && !input.segments[s].exclusion; };
+  for (auto &feature : result.features)
+  {
+    std::set<std::size_t> own;
+    for (const auto &portion : feature.portions)
+    {
+      own.insert(portion.segment);
+    }
+    for (const auto vertex : feature.vertices)
+    {
+      if (vertex < input.vertices.size())
+      {
+        own.insert(input.vertices[vertex].segments.begin(),
+                   input.vertices[vertex].segments.end());
+      }
+    }
+    std::set<std::size_t> neighbours = own;
+    for (const auto segment : own)
+    {
+      if (segment >= real_segments)
+      {
+        continue;
+      }
+      for (const auto vertex : input.segments[segment].vertices)
+      {
+        if (vertex < input.vertices.size())
+        {
+          neighbours.insert(input.vertices[vertex].segments.begin(),
+                            input.vertices[vertex].segments.end());
+        }
+      }
+    }
+    std::set<int> own_laws, own_conductors;
+    bool any_refused = false, any_not_declared = false, any_override = false;
+    for (const auto segment : own)
+    {
+      if (!Usable(segment))
+      {
+        continue;
+      }
+      own_laws.insert(laws.device_law[segment]);
+      own_conductors.insert(input.segments[segment].conductor);
+      const auto service = laws.Service(segment);
+      any_refused = any_refused || service == FilmService::NOT_SERVED_BY_OVERRIDE;
+      any_not_declared = any_not_declared || service == FilmService::NOT_DECLARED;
+      any_override = any_override || service == FilmService::SERVED_BY_OVERRIDE;
+    }
+    // A conductor of the feature carrying two (device law, served) pairs in its own or
+    // vertex-sharing segments.
+    std::map<int, std::set<std::pair<int, bool>>> conductor_laws;
+    for (const auto segment : neighbours)
+    {
+      if (!Usable(segment) || !own_conductors.count(input.segments[segment].conductor))
+      {
+        continue;
+      }
+      conductor_laws[input.segments[segment].conductor].emplace(
+          laws.device_law[segment], FilmServiceServes(laws.Service(segment)));
+    }
+    std::set<int> joint_laws;
+    for (const auto &[conductor, pairs] : conductor_laws)
+    {
+      (void)conductor;
+      if (pairs.size() > 1)
+      {
+        for (const auto &[law, served] : pairs)
+        {
+          (void)served;
+          joint_laws.insert(law);
+        }
+      }
+    }
+    const std::string served_hash = feature.hash;
+    std::string device_hash = feature.hash;
+    auto DeviceHashOfSingleLaw = [&](int law)
+    {
+      auto signature = feature.signature;
+      ReplaceLaws(ReplaceLaws, signature, law_texts[law]);
+      return SignatureKeyAndHash(signature, feature.type).second;
+    };
+    ImpedanceLawStatus status = ImpedanceLawStatus::NOT_DECLARED;
+    std::string reason;
+    auto Unmatch = [&](const std::string &why)
+    {
+      feature.matched_model.reset();
+      feature.match_deviation.reset();
+      feature.quantum_near_match = nullptr;
+      feature.near_match = nullptr;
+      feature.geometric_near_match = nullptr;
+      feature.legacy_contract = nullptr;
+      if (curved_matches)
+      {
+        curved_matches->erase(feature.id);
+      }
+      if (corner_matches)
+      {
+        corner_matches->erase(feature.id);
+      }
+      feature.match_note = std::string(apply ? "impedance-metal rule (Apply): "
+                                             : "impedance-metal rule (candidate): ") +
+                           why;
+    };
+    std::string joint_text;
+    for (const int law : joint_laws)
+    {
+      joint_text += (joint_text.empty() ? "" : " | ") + law_texts[law];
+    }
+    if (own_laws.empty())
+    {
+      status = ImpedanceLawStatus::NOT_DECLARED;
+    }
+    else if (any_refused)
+    {
+      status = ImpedanceLawStatus::NOT_SERVED_BY_OVERRIDE;
+      device_hash =
+          own_laws.size() == 1 ? DeviceHashOfSingleLaw(*own_laws.begin()) : "MIXED";
+      Unmatch(
+          "NOT-SERVED-BY-OVERRIDE: a metal of this feature is marked by the designer as "
+          "not the library's film; Missing");
+    }
+    else if (!joint_laws.empty())
+    {
+      status = ImpedanceLawStatus::LAW_JOINT;
+      device_hash = "MIXED";
+      Unmatch("LAW-JOINT {" + joint_text +
+              "}: one conductor changes metal law at this feature (a law change along the "
+              "conductor or a corner at one); Missing");
+      if (joint_examples.size() < 5)
+      {
+        joint_examples.push_back(
+            fmt::format("feature {:d} ({}) {{{}}}", feature.id, feature.type, joint_text));
+      }
+    }
+    else if (any_not_declared)
+    {
+      status = feature.matched_model ? ImpedanceLawStatus::EXACT
+                                     : ImpedanceLawStatus::NOT_DECLARED;
+    }
+    else
+    {
+      bool all_pec = true;
+      for (const int law : own_laws)
+      {
+        all_pec = all_pec && laws.laws[law].type == MetalBoundaryConditionType::PEC;
+      }
+      if (all_pec)
+      {
+        status = ImpedanceLawStatus::PEC;
+      }
+      else if (own_laws.size() > 1)
+      {
+        status = any_override ? ImpedanceLawStatus::SERVED_BY_OVERRIDE
+                              : ImpedanceLawStatus::MIXED_LAW;
+        device_hash = "MIXED";
+      }
+      else
+      {
+        const int law = *own_laws.begin();
+        status = any_override ? ImpedanceLawStatus::SERVED_BY_OVERRIDE
+                              : ImpedanceLawStatus::SUBSTITUTED;
+        auto device_signature = feature.signature;
+        ReplaceLaws(ReplaceLaws, device_signature, law_texts[law]);
+        const auto [device_key, hash] = SignatureKeyAndHash(device_signature, feature.type);
+        device_hash = hash;
+        if (!feature.signature.contains("Context"))
+        {
+          if (const auto match = library_keys.Match(device_signature))
+          {
+            const auto model = model_by_name.find(match->name);
+            if (model != model_by_name.end() &&
+                SameBoundaryLaw(library.models[model->second].boundary_condition,
+                                laws.laws[law]) &&
+                IsBoundaryLawVerified(library.models[model->second]))
+            {
+              // EXACT: the verified model of the device law (DESIGN-IMPK-v3 s3.6 (1)).
+              status = ImpedanceLawStatus::EXACT;
+              feature.signature = device_signature;
+              feature.signature_key = device_key;
+              feature.hash = hash;
+              feature.matched_model = match->name;
+              feature.match_deviation = match->deviation;
+              feature.quantum_near_match = nullptr;
+              feature.near_match = nullptr;
+              feature.geometric_near_match = nullptr;
+              feature.legacy_contract = nullptr;
+              if (curved_matches)
+              {
+                curved_matches->erase(feature.id);
+              }
+              if (corner_matches)
+              {
+                corner_matches->erase(feature.id);
+              }
+              if (exact_features)
+              {
+                exact_features->insert(feature.id);
+              }
+            }
+          }
+        }
+      }
+    }
+    counts[status]++;
+    if (feature.id >= 0)
+    {
+      status_by_feature[feature.id] = static_cast<signed char>(status);
+    }
+    if (candidate_result && root)
+    {
+      ResponseCorrectionData::ImpedanceLawFeatureData record;
+      record.feature = feature.id;
+      record.type = feature.type;
+      // A LAW-JOINT feature names the laws that make it one (its own and vertex-sharing
+      // segments' on one conductor); every other feature its own segments' laws.
+      for (const int law : status == ImpedanceLawStatus::LAW_JOINT ? joint_laws : own_laws)
+      {
+        record.device_law += (record.device_law.empty() ? "" : " | ") + law_texts[law];
+        record.impedance_sheet =
+            record.impedance_sheet ||
+            laws.laws[law].type == MetalBoundaryConditionType::IMPEDANCE;
+      }
+      record.status = ImpedanceLawStatusName(status);
+      record.override_status =
+          any_refused ? "NOT-SERVED-BY-OVERRIDE"
+                      : (any_override ? "SERVED-BY-OVERRIDE (not a purely inductive sheet)"
+                                      : "none");
+      record.device_hash = device_hash;
+      record.served_hash = served_hash;
+      record.model = feature.matched_model ? *feature.matched_model : std::string();
+      record.length = feature.length;
+      candidate_result->impedance_law_features.push_back(std::move(record));
+    }
+  }
+  if (candidate_result)
+  {
+    candidate_result->impedance_law_feature_status = std::move(status_by_feature);
+  }
+  std::string summary;
+  for (const auto &[status, count] : counts)
+  {
+    summary += fmt::format("{}{} {:d}", summary.empty() ? "" : ", ",
+                           ImpedanceLawStatusName(status), count);
+  }
+  Mpi::Print("  Impedance-metal rule ({}): feature law statuses: {}\n",
+             apply ? "APPLY" : "CANDIDATE: NOT OF RECORD",
+             summary.empty() ? "none" : summary);
+  for (const auto &example : joint_examples)
+  {
+    Mpi::Print("  Impedance-metal rule ({}): LAW-JOINT, Missing: {}\n",
+               apply ? "APPLY" : "candidate", example);
+  }
+}
+
 IdentificationResult RunGeometryIdentification(
     MPI_Comm comm, const MetalEdgeGeometry &geometry,
     const std::vector<EdgeSegment3D> &framed_segments, const ProcessLibrary &library,
@@ -10122,7 +10499,10 @@ IdentificationResult RunGeometryIdentification(
     std::map<int, FeatureCornerMatch> *corner_matches = nullptr,
     const mfem::ParMesh *mesh = nullptr, const ResponseCorrectionData *request = nullptr,
     MirrorBandResult *mirror = nullptr, GeometryFallbackLedger *geometry_ledger = nullptr,
-    const std::set<std::size_t> *unoriented_segments = nullptr)
+    const std::set<std::size_t> *unoriented_segments = nullptr,
+    const CandidateSegmentLaws *candidate_laws = nullptr,
+    ResponseCorrectionData *candidate_result = nullptr,
+    std::set<int> *exact_features = nullptr)
 {
   const bool root = Mpi::Root(comm);
   // A one-sided edge whose face is not parallel to the process plane (the area-weighted
@@ -10224,8 +10604,20 @@ IdentificationResult RunGeometryIdentification(
       segment.targets = it->second->targets;
       segment.gap_direction = it->second->axis_u;
       segment.process_normal = it->second->axis_v;
-      segment.boundary_law =
-          describer.DescribeBoundaryCondition(it->second->boundary_condition).dump();
+      if (candidate_laws && candidate_laws->Framed(i) &&
+          candidate_laws->Service(i) == FilmService::NOT_SERVED_BY_OVERRIDE)
+      {
+        // The impedance-metal rule's candidate: a metal the designer marked "not the
+        // library's film" carries a law no library model has (never matched).
+        auto law = describer.DescribeBoundaryCondition(it->second->boundary_condition);
+        law["ImpedanceMetalRule"] = "NotServedByOverride";
+        segment.boundary_law = law.dump();
+      }
+      else
+      {
+        segment.boundary_law =
+            describer.DescribeBoundaryCondition(it->second->boundary_condition).dump();
+      }
       if (it->second->ambiguous_process_side)
       {
         segment.exclusion = std::make_pair(
@@ -10900,6 +11292,12 @@ IdentificationResult RunGeometryIdentification(
                grown_hash.substr(0, 12), feature.hash.substr(0, 12), *feature.matched_model,
                grown_unboxable ? "UNBOXABLE (OI-T5-UNBOXABLE: no requirement listed)"
                                : "a FallbackPlaced requirement");
+  }
+  if (candidate_laws)
+  {
+    ClassifyCandidateFeatureLaws(result, input, *candidate_laws, library, library_keys,
+                                 describer, curved_matches, corner_matches, root,
+                                 candidate_result, exact_features);
   }
   // Mirror-formed features (DESIGN 2.2.2 / 2.2.5): Status Modelled when the library has the
   // model, Missing otherwise (its real portions then keep their raw energy as uncovered
@@ -12999,7 +13397,9 @@ FeaturePatchSummary BuildFeaturePatches(
     const std::map<int, FeatureCornerMatch> &corner_matches = {},
     const std::vector<EdgeSegment3D> &image_segments = {},
     const std::vector<MirrorPlane> &mirror_planes = {},
-    GeometryFallbackLedger *geometry_ledger = nullptr, MPI_Comm census_comm = MPI_COMM_NULL)
+    GeometryFallbackLedger *geometry_ledger = nullptr, MPI_Comm census_comm = MPI_COMM_NULL,
+    const CandidateSegmentLaws *candidate_laws = nullptr,
+    const std::set<int> *exact_features = nullptr)
 {
   FeaturePatchSummary summary;
   const double R = library.matching_radius;
@@ -13069,8 +13469,21 @@ FeaturePatchSummary BuildFeaturePatches(
     fp.stretch = portion.stretch;
     return fp;
   };
-  auto IsPec = [](const EdgeSegment3D &segment)
-  { return segment.boundary_condition.type == MetalBoundaryConditionType::PEC; };
+  // The impedance-metal rule's candidate (ruling 2012 Q3): an EXACT feature's placement
+  // reads its DEVICE law (the candidate seam gave its segments the PEC law); every other
+  // placement reads the segment's law (on an operator of record always).
+  auto SegmentLaw = [&](const EdgeSegment3D &segment,
+                        int feature) -> const MetalBoundaryLaw &
+  {
+    if (exact_features && candidate_laws && exact_features->count(feature) &&
+        candidate_laws->Framed(segment.geometry_index))
+    {
+      return candidate_laws->DeviceLaw(segment.geometry_index);
+    }
+    return segment.boundary_condition;
+  };
+  auto IsPec = [&](const EdgeSegment3D &segment, int feature)
+  { return SegmentLaw(segment, feature).type == MetalBoundaryConditionType::PEC; };
 
   // One runtime model per (library model, target interfaces by slot); a family blend
   // (curvature family, corner family) is one runtime model per (blend name, slots): the
@@ -13694,8 +14107,8 @@ FeaturePatchSummary BuildFeaturePatches(
           record.cells++;
           record.min_separation_over_R = std::min(record.min_separation_over_R, d / R);
           record.max_separation_over_R = std::max(record.max_separation_over_R, d / R);
-          const auto selection =
-              FindLibraryModel(library, model.topology, d, fp.segment->boundary_condition);
+          const auto selection = FindLibraryModel(library, model.topology, d,
+                                                  SegmentLaw(*fp.segment, feature.id));
           bool ok = selection.has_value();
           for (std::size_t m = 0; ok && m < selection->models.size(); m++)
           {
@@ -13754,7 +14167,8 @@ FeaturePatchSummary BuildFeaturePatches(
           patch.axis_u = Normalize(Subtract(e2, e1));
           patch.axis_v = Normalize(Add(first.axis_v, second.axis_v));
           patch.axis_w = Normalize(Cross(patch.axis_u, patch.axis_v));
-          patch.maxwell_reference_is_pec = IsPec(first) && IsPec(second);
+          patch.maxwell_reference_is_pec =
+              IsPec(first, feature.id) && IsPec(second, feature.id);
           if (!patch.maxwell_reference_is_pec)
           {
             patch.maxwell_conductor_anchors = {e1};
@@ -14165,7 +14579,7 @@ FeaturePatchSummary BuildFeaturePatches(
     {
       portions.push_back(Frame(portion));
       target_maps.insert(portions.back().segment->targets);
-      all_pec = all_pec && IsPec(*portions.back().segment);
+      all_pec = all_pec && IsPec(*portions.back().segment, feature.id);
       if (diagnostics && !portions.back().image)
       {
         const double length = portion.s1 - portion.s0;
@@ -14377,7 +14791,7 @@ FeaturePatchSummary BuildFeaturePatches(
               patch.axis_u = segment.axis_u;
               patch.axis_v = segment.axis_v;
               patch.axis_w = Normalize(Cross(segment.axis_u, segment.axis_v));
-              patch.maxwell_reference_is_pec = IsPec(segment);
+              patch.maxwell_reference_is_pec = IsPec(segment, feature.id);
               patch.maxwell_conductor_anchors = {patch.maxwell_reference_is_pec
                                                      ? Add(point, Scale(-R, segment.axis_u))
                                                      : point};
@@ -14515,7 +14929,7 @@ FeaturePatchSummary BuildFeaturePatches(
             if (candidate.topology == model.topology &&
                 CompatibleBoundaryLaw(
                     candidate.boundary_condition,
-                    ordered[0].second->front().segment->boundary_condition))
+                    SegmentLaw(*ordered[0].second->front().segment, feature.id)))
             {
               family_keys.push_back(candidate.name);
             }
@@ -14613,7 +15027,8 @@ FeaturePatchSummary BuildFeaturePatches(
                 patch.axis_u = Normalize(Subtract(e2, e1));
                 patch.axis_v = Normalize(Add(first.axis_v, second.axis_v));
                 patch.axis_w = Normalize(Cross(patch.axis_u, patch.axis_v));
-                patch.maxwell_reference_is_pec = IsPec(first) && IsPec(second);
+                patch.maxwell_reference_is_pec =
+                    IsPec(first, feature.id) && IsPec(second, feature.id);
                 if (!patch.maxwell_reference_is_pec)
                 {
                   patch.maxwell_conductor_anchors = {e1};
@@ -15313,6 +15728,26 @@ FeaturePatchSummary BuildFeaturePatches(
     geometry_ledger->Record(std::move(record));
   }
 
+  // The impedance-metal rule's law records (the root's): a record names a model only when
+  // its feature is corrected (matched and placed here); a served feature without one is
+  // Missing, as for a perfect conductor.
+  if (!result.impedance_law_features.empty())
+  {
+    std::map<int, const std::string *> corrected_models;
+    for (const auto &feature : identification.features)
+    {
+      if (feature.matched_model && !placement_rejected.count(feature.id))
+      {
+        corrected_models.emplace(feature.id, &*feature.matched_model);
+      }
+    }
+    for (auto &record : result.impedance_law_features)
+    {
+      const auto it = corrected_models.find(record.feature);
+      record.model = it != corrected_models.end() ? *it->second : std::string();
+    }
+  }
+
   // Uncovered requirements (decision 394, F2): the portions of every unmatched feature as
   // global sub-segments of the perimeter, in the order of the feature list.
   result.uncovered_portions.clear();
@@ -15593,7 +16028,8 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                              const ResponseCorrectionData &request, bool maxwell,
                              AutomaticResponseDiagnostics *diagnostics = nullptr,
                              AutomaticResponseRequirements *requirements = nullptr,
-                             AutomaticResponseStatistics *statistics = nullptr)
+                             AutomaticResponseStatistics *statistics = nullptr,
+                             const FilmRuleResolution *candidate_film_rule = nullptr)
 {
   MFEM_VERIFY(mesh.Dimension() == 3 && mesh.SpaceDimension() == 3,
               "Automatic three-dimensional fabrication-process response matching "
@@ -15894,6 +16330,20 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
   int matched_spatial_cluster_patches = 0;
   int matched_nonregular_vertices = 0;
 
+  // The impedance-metal rule's candidate seam (decisions 2006 / 2012): null on every
+  // operator of record.
+  std::optional<CandidateSegmentLaws> candidate_law_storage;
+  CandidateSegmentLaws *candidate_laws = nullptr;
+  if (candidate_film_rule)
+  {
+    MFEM_VERIFY(maxwell && request.patch_construction ==
+                               ResponseCorrectionData::PatchConstruction::FEATURES,
+                "The impedance-metal rule's candidate is built on the Maxwell Features "
+                "path only!");
+    candidate_law_storage.emplace();
+    candidate_law_storage->film_rule = candidate_film_rule;
+    candidate_laws = &*candidate_law_storage;
+  }
   std::map<std::size_t, EdgeSegment3D> segment_cache;
   // H11a / H11b (hardening-2 DESIGN): the segments whose frame could not be inferred
   // (UnorientedEdge): never cached, excluded by the identification first in its chain.
@@ -15965,6 +16415,19 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                           }),
               "A Maxwell target edge cannot mix distinct metal boundary conditions!");
           segment.boundary_condition = boundary_condition;
+          if (candidate_laws)
+          {
+            // The impedance-metal rule's CANDIDATE seam (decisions 2006 / 2012): a segment
+            // whose metal is served as the library's film carries the PEC law from here
+            // on; its device law and service are kept for the law statuses.
+            const FilmService service =
+                candidate_laws->film_rule->SegmentService(source.metal_attributes);
+            candidate_laws->Record(geometry_index, boundary_condition, service);
+            if (FilmServiceServes(service))
+            {
+              segment.boundary_condition = MetalBoundaryLaw{};
+            }
+          }
         }
         else
         {
@@ -16710,11 +17173,15 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
   std::map<int, FeatureCurvatureMatch> curved_matches;
   std::map<int, FeatureCornerMatch> corner_matches;
   MirrorBandResult mirror_band;
+  // The candidate's EXACT features (their placement reads the device law).
+  std::set<int> candidate_exact_features;
   const auto identification = RunGeometryIdentification(
       mesh.GetComm(), geometry, global_segments, library,
       requirements ? *requirements : law_describer, requirements, frame_normal_configured,
       request.span_cap_allowances, &curved_matches, &corner_matches, &mesh,
-      maxwell ? nullptr : &request, &mirror_band, &geometry_ledger, &unoriented_segments);
+      maxwell ? nullptr : &request, &mirror_band, &geometry_ledger, &unoriented_segments,
+      candidate_laws, candidate_laws ? &result : nullptr,
+      candidate_laws ? &candidate_exact_features : nullptr);
   GeometryStageLine("identified and matched: " +
                     std::to_string(identification.features.size()) + " features");
   if (statistics)
@@ -16792,7 +17259,8 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
         library, identification, global_segments, quadrature,
         requirements ? *requirements : law_describer, diagnostics, result, coordinate_scale,
         curved_matches, corner_matches, mirror_band.image_frames, mirror_band.planes,
-        &geometry_ledger, mesh.GetComm());
+        &geometry_ledger, mesh.GetComm(), candidate_laws,
+        candidate_laws ? &candidate_exact_features : nullptr);
     GeometryStageLine("patches built: " + std::to_string(result.patches.size()));
     result.identification_matched_length = summary.matched_length;
     result.identification_unmatched_length = summary.unmatched_length;
@@ -17680,6 +18148,8 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
             }
             slot++;
           }
+          // The device law is the law of the run here: the Legacy path has no film seam
+          // (Apply runs as Off on it and the Record candidate is refused on it).
           const auto boundary_condition =
               maxwell && !source.conditions.empty()
                   ? GetBoundaryConditionLaw(iodata.boundaries, source.conditions.front())
@@ -23557,6 +24027,122 @@ nlohmann::json DescribeMagneticLeaves(const std::string &library_path, const Uni
   return result;
 }
 
+// The impedance-metal rule's candidate preflight (ImpedanceMetalRule "Record"; decisions
+// 2006 / 2012 / 2063; STAGEA-NOTE s3): the identification, keys and matching of the
+// CANDIDATE (the film rule at the seam) are always built; they are written as
+// surface-response-impedance-candidate-requirements.json beside the manifest of record,
+// marked "CANDIDATE: NOT OF RECORD", with the law status of every feature, exactly when the
+// rule acts on a candidate feature (a status other than PEC, NOT-DECLARED or EXACT: a
+// substitution OR a refusal such as LAW-JOINT); when it acts on none, the candidate's
+// identification is the record's and nothing is written. Nothing under PatchConstruction
+// Legacy (no law service).
+static std::optional<std::string> WriteImpedanceRuleCandidateRequirements(
+    const IoData &iodata, const mfem::ParMesh &mesh, const MaterialOperator &mat_op,
+    const ResponseCorrectionData &request, const std::string &record_path)
+{
+  const MPI_Comm comm = mesh.GetComm();
+  if (request.patch_construction == ResponseCorrectionData::PatchConstruction::LEGACY)
+  {
+    Mpi::Print(comm, "\nImpedance-metal rule (RECORD): PatchConstruction Legacy: no law "
+                     "service (no candidate)\n");
+    return std::nullopt;
+  }
+  const FilmRuleResolution film = ResolveImpedanceMetalFilm(
+      iodata.boundaries, request, iodata.units, iodata.InputsNondimensionalized());
+  Mpi::Print(comm, "\n");
+  for (const auto &line : film.lines)
+  {
+    Mpi::Print(comm, "{}\n", line);
+  }
+  Mpi::Print(comm, "Impedance-metal rule (RECORD): the CANDIDATE identification (NOT OF "
+                   "RECORD; the film rule at the seam)\n");
+  ResponseCorrectionData candidate_request = request;
+  candidate_request.unmatched_policy = ResponseCorrectionData::UnmatchedPolicy::WARN;
+  candidate_request.geometry_failure_policy = GeometryFailurePolicy::RECORD_RAW;
+  candidate_request.knife_edge_census = false;
+  AutomaticResponseRequirements requirements(iodata.units,
+                                             iodata.InputsNondimensionalized());
+  AutomaticResponseStatistics statistics;
+  const auto patches =
+      BuildAutomaticResponseData3D(iodata, mesh, mat_op, candidate_request, true, nullptr,
+                                   &requirements, &statistics, &film);
+  // Decided on the BUILT candidate's statuses (decision 2063, MINOR-1): the film rule alone
+  // cannot tell, since a perfect conductor beside a non-film law on one conductor
+  // substitutes nothing but refuses the features at the law change (LAW-JOINT).
+  int substituted = 0, refused = 0;
+  for (const signed char code : patches.impedance_law_feature_status)
+  {
+    switch (static_cast<ImpedanceLawStatus>(code))
+    {
+      case ImpedanceLawStatus::PEC:
+      case ImpedanceLawStatus::NOT_DECLARED:
+      case ImpedanceLawStatus::EXACT:
+        break;
+      case ImpedanceLawStatus::SUBSTITUTED:
+      case ImpedanceLawStatus::MIXED_LAW:
+      case ImpedanceLawStatus::SERVED_BY_OVERRIDE:
+        substituted++;
+        break;
+      case ImpedanceLawStatus::LAW_JOINT:
+      case ImpedanceLawStatus::NOT_SERVED_BY_OVERRIDE:
+        refused++;
+        break;
+    }
+  }
+  if (substituted + refused == 0)
+  {
+    Mpi::Print(comm, "Impedance-metal rule (RECORD): nothing substituted and nothing "
+                     "refused (every candidate feature PEC, NOT-DECLARED or EXACT): the "
+                     "candidate's identification is the manifest of record\n");
+    return std::nullopt;
+  }
+  Mpi::Print(comm,
+             "Impedance-metal rule (RECORD): the rule acts on {:d} candidate feature(s): "
+             "{:d} served by substitution, {:d} refused (LAW-JOINT or "
+             "NOT-SERVED-BY-OVERRIDE: Missing in the candidate)\n",
+             substituted + refused, substituted, refused);
+  requirements.SetStatistics(BuildAutomaticStatistics(comm, statistics));
+  auto manifest = requirements.Build();
+  manifest["Candidate"] = "CANDIDATE: NOT OF RECORD";
+  manifest["MeshDimension"] = mesh.Dimension();
+  manifest["Maxwell"] = true;
+  nlohmann::json features = nlohmann::json::array();
+  std::map<std::string, int> counts;
+  for (const auto &feature : patches.impedance_law_features)
+  {
+    counts[feature.status]++;
+    features.push_back({{"Id", feature.feature},
+                        {"Type", feature.type},
+                        {"DeviceLaw", feature.device_law},
+                        {"LawStatus", feature.status},
+                        {"Override", feature.override_status},
+                        {"DeviceKeyHash", feature.device_hash},
+                        {"ServedKeyHash", feature.served_hash},
+                        {"Model", feature.model}});
+  }
+  manifest["ImpedanceRuleCandidate"] = {
+      {"Record", "CANDIDATE: NOT OF RECORD"},
+      {"Lines", film.lines},
+      {"LawStatusCounts", counts},
+      {"RuleActs", {{"Substituted", substituted}, {"Refused", refused}}},
+      {"Features", std::move(features)},
+      {"Patches", static_cast<int>(patches.patches.size())}};
+  const auto candidate_path = (std::filesystem::path(record_path).parent_path() /
+                               "surface-response-impedance-candidate-requirements.json")
+                                  .string();
+  if (Mpi::Root(comm))
+  {
+    std::ofstream output(candidate_path);
+    MFEM_VERIFY(output, "Unable to open the impedance-metal rule's candidate manifest \""
+                            << candidate_path << "\"!");
+    output << manifest.dump(2) << '\n';
+  }
+  Mpi::Barrier(comm);
+  Mpi::Print(comm, " Candidate manifest (NOT OF RECORD): {} ({:d} patches)\n",
+             candidate_path, static_cast<int>(patches.patches.size()));
+  return candidate_path;
+}
+
 SurfaceResponsePreflightOutcome WriteSurfaceResponseRequirements(const IoData &iodata,
                                                                  const Mesh &mesh,
                                                                  const std::string &path)
@@ -23576,6 +24162,7 @@ SurfaceResponsePreflightOutcome WriteSurfaceResponseRequirements(const IoData &i
   const auto &parallel_mesh = mesh.Get();
   const bool maxwell = iodata.problem.type != ProblemType::ELECTROSTATIC;
   ResponseCorrectionData patches;
+  std::optional<FilmRuleResolution> apply_film;
   if (parallel_mesh.Dimension() == 2 && parallel_mesh.SpaceDimension() == 2)
   {
     BuildAutomaticResponseData2D(iodata, parallel_mesh, mat_op, request, maxwell, nullptr,
@@ -23583,12 +24170,38 @@ SurfaceResponsePreflightOutcome WriteSurfaceResponseRequirements(const IoData &i
   }
   else if (parallel_mesh.Dimension() == 3 && parallel_mesh.SpaceDimension() == 3)
   {
+    // The impedance-metal rule's "Apply" (decision 2206 (a)): the manifest of record is the
+    // identification through the film rule's seam (what the run serves), as in the
+    // operator.
+    if (maxwell &&
+        request.impedance_metal_rule == ResponseCorrectionData::ImpedanceMetalRule::APPLY &&
+        request.patch_construction == ResponseCorrectionData::PatchConstruction::FEATURES)
+    {
+      apply_film.emplace(ResolveImpedanceMetalFilm(iodata.boundaries, request, iodata.units,
+                                                   iodata.InputsNondimensionalized()));
+      Mpi::Print(parallel_mesh.GetComm(), "\n");
+      for (const auto &line : apply_film->lines)
+      {
+        Mpi::Print(parallel_mesh.GetComm(), "{}\n", line);
+      }
+    }
     patches = BuildAutomaticResponseData3D(iodata, parallel_mesh, mat_op, request, maxwell,
-                                           nullptr, &requirements, &statistics);
+                                           nullptr, &requirements, &statistics,
+                                           apply_film ? &*apply_film : nullptr);
   }
   else
   {
     MFEM_ABORT("Surface-response preflight requires a 2D or 3D solve mesh!");
+  }
+  if (request.impedance_metal_rule == ResponseCorrectionData::ImpedanceMetalRule::APPLY &&
+      !apply_film)
+  {
+    Mpi::Print(parallel_mesh.GetComm(),
+               "\nImpedance-metal rule (APPLY): no seam on this path ({}): as \"Off\"\n",
+               !maxwell ? "an electrostatic run solves no impedance boundary: every metal "
+                          "is a perfect conductor there"
+                        : (parallel_mesh.Dimension() != 3 ? "a two-dimensional mesh"
+                                                          : "PatchConstruction Legacy"));
   }
 
   requirements.SetStatistics(BuildAutomaticStatistics(parallel_mesh.GetComm(), statistics));
@@ -23597,6 +24210,11 @@ SurfaceResponsePreflightOutcome WriteSurfaceResponseRequirements(const IoData &i
   auto manifest = requirements.Build();
   manifest["MeshDimension"] = parallel_mesh.Dimension();
   manifest["Maxwell"] = maxwell;
+  if (apply_film)
+  {
+    manifest["ImpedanceMetalRule"] = ImpedanceApplyRecord(
+        *apply_film, patches.impedance_law_features, iodata.units, true);
+  }
   // The magnetic (inductive) leaves (DESIGN-v2 section 3; decision 1229 Q4): the library's
   // rules and every model's leaf verdict (r1-r4, on the model data; the same evaluation the
   // operator runs), and Summary.MagneticElectricOnly = the applied patches whose model
@@ -24152,6 +24770,17 @@ SurfaceResponsePreflightOutcome WriteSurfaceResponseRequirements(const IoData &i
   {
     outcome.written.push_back(patches_path);
   }
+  if (maxwell && parallel_mesh.Dimension() == 3 &&
+      request.impedance_metal_rule == ResponseCorrectionData::ImpedanceMetalRule::RECORD)
+  {
+    // The impedance-metal rule (RECORD): the candidate's identification beside the record's
+    // (a separate manifest, never of record).
+    if (const auto candidate_path = WriteImpedanceRuleCandidateRequirements(
+            iodata, parallel_mesh, mat_op, request, path))
+    {
+      outcome.written.push_back(*candidate_path);
+    }
+  }
   if (!geometry_fallbacks.is_null())
   {
     Mpi::Print(
@@ -24197,6 +24826,10 @@ struct SurfaceResponseGeometry::Impl
   nlohmann::json statistics;
   bool maxwell = false;
   int dimension = 0;
+  // Built by an impedance-metal-rule candidate (its cache is never the record's), or by an
+  // operator of record with the rule's "Apply" seam.
+  bool impedance_rule_candidate = false;
+  bool impedance_rule_apply = false;
   // Written by the electrostatic constructor through the shared const geometry: the cache
   // is a derived record of this configuration, not a change to it.
   mutable std::optional<DomainBoundaryContainmentCache> containment;
@@ -30391,6 +31024,27 @@ SurfaceResponseOperator::DiagnosticsPath(const std::filesystem::path &post_dir,
 }
 
 std::filesystem::path
+SurfaceResponseOperator::DiagnosticsPath(const std::filesystem::path &post_dir,
+                                         const std::string &name,
+                                         const std::string &default_directory) const
+{
+  // DiagnosticsPath's rule with `default_directory` for an unset key: the filesystem work
+  // on the root only, as above (decision 2195).
+  const auto &directory_name =
+      diagnostics_directory.empty() ? default_directory : diagnostics_directory;
+  if (directory_name.empty())
+  {
+    return post_dir / name;
+  }
+  const auto directory = post_dir / directory_name;
+  if (Mpi::Root(fespace.GetComm()))
+  {
+    PrepareDiagnosticsDirectory(directory);
+  }
+  return directory / name;
+}
+
+std::filesystem::path
 SurfaceResponseOperator::CollectiveDiagnosticsPath(const std::filesystem::path &post_dir,
                                                    const std::string &name) const
 {
@@ -30406,15 +31060,15 @@ SurfaceResponseOperator::CollectiveDiagnosticsPath(const std::filesystem::path &
   return directory / name;
 }
 
-void SurfaceResponseOperator::SpillConductorConsistencyRecords(const std::string &directory)
+void SurfaceResponseOperator::SpillConductorConsistencyRecords(const std::string &directory,
+                                                               const std::string &file_name)
 {
   MFEM_VERIFY(patch_record_residency == PatchRecordResidency::ROOT_ONLY,
               "The conductor-consistency Records spill requires the ROOT_ONLY residency!");
   if (Mpi::Root(fespace.GetComm()))
   {
     records_spill = std::make_unique<JsonArraySpill>(
-        (std::filesystem::path(directory) / ".palace-conductor-consistency-records.spill")
-            .string(),
+        (std::filesystem::path(directory) / file_name).string(),
         std::vector<std::string>{"SurfaceResponse", "Diagnostics", "ConductorConsistency",
                                  "Records"});
   }
@@ -30760,6 +31414,12 @@ SurfaceResponseOperator::ApplyConductorConsistencyGate(const ComplexVector &E, i
   Mpi::GlobalMax(1, &largest_applied_amplitude, fespace.GetComm());
   const double amplitude_floor =
       kConductorConsistencyAmplitudeFloor * largest_applied_amplitude;
+  if (law_reading_enabled)
+  {
+    // The impedance-metal rule's on-metal law reading of the patches applied at this call
+    // (before this gate's verdicts; it refuses nothing).
+    ReadImpedanceLaw(line_real, line_imag, amplitudes, amplitude_floor, source, frequency);
+  }
   std::vector<ConductorConsistencyRecord> local_records;
   for (std::size_t patch_index = 0; patch_index < patches.size(); patch_index++)
   {
@@ -30839,6 +31499,189 @@ SurfaceResponseOperator::ApplyConductorConsistencyGate(const ComplexVector &E, i
   }
   return FinishConductorConsistencyGate(std::move(local_records), source,
                                         largest_applied_amplitude);
+}
+
+const char *SurfaceResponseOperator::LawLegClassName(LawLegClass leg_class)
+{
+  switch (leg_class)
+  {
+    case LawLegClass::LEG:
+      return "LEG";
+    case LawLegClass::NO_LEG:
+      return "LAW-NO-LEG";
+    case LawLegClass::UNPROBED:
+      return "LAW-UNPROBED";
+    case LawLegClass::CONDITIONAL_UNTESTED:
+      return "CONDITIONAL-UNTESTED";
+    case LawLegClass::LEG_DERIVED:
+      return "LEG-DERIVED";
+  }
+  return "LAW-UNPROBED";
+}
+
+SurfaceResponseOperator::LawLegClass
+SurfaceResponseOperator::LawLegClassOfTopology(const std::string &topology, bool has_probes,
+                                               bool has_on_metal_leg, bool *known)
+{
+  const bool translational = IsTranslationalTopology(topology);
+  const bool convex = topology == TopologyName(LibraryTopology::CONVEX_CORNER) ||
+                      topology == "ConvexCorner";
+  const bool conditional =
+      topology == TopologyName(LibraryTopology::CONCAVE_CORNER) ||
+      topology == "ConcaveCorner" ||
+      topology == TopologyName(LibraryTopology::SPATIAL_EDGE_CLUSTER) ||
+      topology == TopologyName(LibraryTopology::ENDPOINT) ||
+      topology == TopologyName(LibraryTopology::JUNCTION);
+  if (known)
+  {
+    *known = translational || convex || conditional;
+  }
+  if (!has_probes)
+  {
+    return LawLegClass::UNPROBED;
+  }
+  if (translational)
+  {
+    return has_on_metal_leg ? LawLegClass::LEG : LawLegClass::NO_LEG;
+  }
+  return convex ? LawLegClass::LEG_DERIVED : LawLegClass::CONDITIONAL_UNTESTED;
+}
+
+std::vector<std::string> SurfaceResponseOperator::LawReadingTopologyNames()
+{
+  std::vector<std::string> names;
+  for (const auto topology :
+       {LibraryTopology::ISOLATED_EDGE, LibraryTopology::SAME_CONDUCTOR_GAP,
+        LibraryTopology::DIFFERENT_CONDUCTOR_GAP, LibraryTopology::SAME_CONDUCTOR_STRIP,
+        LibraryTopology::PARALLEL_EDGE_CLUSTER, LibraryTopology::SPATIAL_EDGE_CLUSTER,
+        LibraryTopology::CONVEX_CORNER, LibraryTopology::CONCAVE_CORNER,
+        LibraryTopology::ENDPOINT, LibraryTopology::JUNCTION, LibraryTopology::CURVED_EDGE,
+        LibraryTopology::CURVED_SAME_CONDUCTOR_GAP,
+        LibraryTopology::CURVED_DIFFERENT_CONDUCTOR_GAP,
+        LibraryTopology::CURVED_SAME_CONDUCTOR_STRIP})
+  {
+    names.push_back(TopologyName(topology));
+  }
+  // The corner-family blends' runtime topology = the identification feature type.
+  names.push_back("ConvexCorner");
+  names.push_back("ConcaveCorner");
+  return names;
+}
+
+bool SurfaceResponseOperator::ImpedanceRuleActs() const
+{
+  return std::any_of(impedance_law_feature_status.begin(),
+                     impedance_law_feature_status.end(),
+                     [](signed char status)
+                     {
+                       const auto law = static_cast<ImpedanceLawStatus>(status);
+                       return law != ImpedanceLawStatus::PEC &&
+                              law != ImpedanceLawStatus::NOT_DECLARED &&
+                              law != ImpedanceLawStatus::EXACT;
+                     });
+}
+
+int SurfaceResponseOperator::ImpedanceLawStatusOfFeature(int feature) const
+{
+  if ((!impedance_rule_candidate && !impedance_apply_rule) || feature < 0 ||
+      feature >= static_cast<int>(impedance_law_feature_status.size()))
+  {
+    return -1;
+  }
+  return impedance_law_feature_status[feature];
+}
+
+const std::string &SurfaceResponseOperator::ModelTopology(int model_index) const
+{
+  static const std::string unknown = "Unknown";
+  for (const auto &model : models)
+  {
+    if (model.idx == model_index)
+    {
+      return model.topology;
+    }
+  }
+  return unknown;
+}
+
+void SurfaceResponseOperator::ReadImpedanceLaw(const Vector &line_real,
+                                               const Vector &line_imag,
+                                               const std::vector<double> &amplitudes,
+                                               double amplitude_floor, int source,
+                                               double frequency)
+{
+  constexpr std::size_t kFields = 11;
+  std::vector<double> local;
+  local.reserve(kFields * patches.size());
+  for (std::size_t p = 0; p < patches.size(); p++)
+  {
+    const auto &patch = patches[p];
+    if (patch.weight <= 0.0)
+    {
+      continue;
+    }
+    const auto &probes = maxwell_probes[p];
+    const LawLegClass leg_class = law_patch_class[p];
+    const double normalization = std::max(amplitudes[p], amplitude_floor);
+    int legs = 0;
+    double max_leg = 0.0;
+    if (leg_class == LawLegClass::LEG)
+    {
+      for (const auto &probe_legs : law_patch_legs[p])
+      {
+        for (const int line : probe_legs)
+        {
+          max_leg = std::max(max_leg, std::hypot(line_real[line], line_imag[line]));
+          legs++;
+        }
+      }
+    }
+    else if (leg_class == LawLegClass::CONDITIONAL_UNTESTED ||
+             leg_class == LawLegClass::LEG_DERIVED)
+    {
+      for (const auto &probe : probes)
+      {
+        std::complex<double> reading = 0.0;
+        for (const auto &[line, sign] : probe.legs)
+        {
+          reading += sign * std::complex<double>(line_real[line], line_imag[line]);
+        }
+        max_leg = std::max(max_leg, std::abs(reading));
+        legs++;
+      }
+    }
+    const double ratio =
+        legs == 0 ? std::numeric_limits<double>::quiet_NaN()
+                  : (normalization > 0.0 ? max_leg / normalization
+                                         : (max_leg == 0.0 ? 0.0 : mfem::infinity()));
+    local.insert(local.end(),
+                 {static_cast<double>(patch.global_index),
+                  static_cast<double>(models[patch.model].idx),
+                  static_cast<double>(patch.feature), static_cast<double>(source),
+                  frequency, static_cast<double>(static_cast<int>(leg_class)),
+                  static_cast<double>(legs), static_cast<double>(law_patch_dropped[p]),
+                  normalization, max_leg, ratio});
+  }
+  const std::vector<double> gathered = Mpi::GatherLarge(local, 0, fespace.GetComm());
+  law_readings.clear();
+  for (std::size_t offset = 0; offset + kFields <= gathered.size(); offset += kFields)
+  {
+    LawReadingRecord record;
+    record.patch = static_cast<int>(std::llround(gathered[offset]));
+    record.model = static_cast<int>(std::llround(gathered[offset + 1]));
+    record.feature = static_cast<int>(std::llround(gathered[offset + 2]));
+    record.source = static_cast<int>(std::llround(gathered[offset + 3]));
+    record.frequency = gathered[offset + 4];
+    record.leg_class = static_cast<LawLegClass>(std::llround(gathered[offset + 5]));
+    record.legs = static_cast<int>(std::llround(gathered[offset + 6]));
+    record.dropped_legs = static_cast<int>(std::llround(gathered[offset + 7]));
+    record.normalization = gathered[offset + 8];
+    record.max_leg = gathered[offset + 9];
+    record.ratio = gathered[offset + 10];
+    law_readings.push_back(record);
+  }
+  std::sort(law_readings.begin(), law_readings.end(),
+            [](const auto &a, const auto &b) { return a.patch < b.patch; });
 }
 
 void SurfaceResponseOperator::ApplyMagneticConductorConsistencyGate(const ComplexVector &E,
@@ -34747,12 +35590,14 @@ std::unique_ptr<SurfaceResponseOperator> SurfaceResponseOperator::ConstructElect
 
 SurfaceResponseOperator::SurfaceResponseOperator(
     const IoData &iodata, const SpaceOperator &space_op,
-    std::shared_ptr<const SurfaceResponseGeometry> *automatic_geometry)
+    std::shared_ptr<const SurfaceResponseGeometry> *automatic_geometry,
+    const FilmRuleResolution *candidate_film_rule, bool law_reading)
   : Operator(space_op.GetNDSpace().GetTrueVSize()), fespace(space_op.GetNDSpace()),
     basis_size(0)
 {
   ConfigureMaxwellResponse(iodata, space_op.GetMaterialOp(),
-                           space_op.GetNDDbcTDofLists().back(), automatic_geometry);
+                           space_op.GetNDDbcTDofLists().back(), automatic_geometry,
+                           candidate_film_rule, law_reading);
 }
 
 SurfaceResponseOperator::SurfaceResponseOperator(
@@ -34768,10 +35613,28 @@ SurfaceResponseOperator::SurfaceResponseOperator(
 void SurfaceResponseOperator::ConfigureMaxwellResponse(
     const IoData &iodata, const MaterialOperator &mat_op,
     const mfem::Array<int> &essential_tdofs,
-    std::shared_ptr<const SurfaceResponseGeometry> *automatic_geometry)
+    std::shared_ptr<const SurfaceResponseGeometry> *automatic_geometry,
+    const FilmRuleResolution *candidate_film_rule, bool law_reading)
 {
   BlockTimer setup_timer(Timer::CONSTRUCT_RESPONSE);
-  const auto &request = iodata.solver.surface_response_correction;
+  // The impedance-metal rule (decisions 2006 / 2012): a candidate is never cached or
+  // shared (its geometry is built from the film rule's seam), and its law statuses come
+  // with its own construction.
+  impedance_rule_candidate = candidate_film_rule != nullptr;
+  law_reading_enabled = law_reading;
+  // A candidate's cache is its own (built by a candidate): checked at the reuse below.
+  // A candidate never ends the run: it records its geometry fallbacks (RecordRaw) and its
+  // Missing features (UnmatchedPolicy Warn) whatever the request says for the record.
+  std::optional<ResponseCorrectionData> candidate_request;
+  if (impedance_rule_candidate && iodata.solver.surface_response_correction)
+  {
+    candidate_request = *iodata.solver.surface_response_correction;
+    candidate_request->unmatched_policy = ResponseCorrectionData::UnmatchedPolicy::WARN;
+    candidate_request->geometry_failure_policy = GeometryFailurePolicy::RECORD_RAW;
+  }
+  const auto &request = impedance_rule_candidate
+                            ? candidate_request
+                            : iodata.solver.surface_response_correction;
   MFEM_VERIFY(request, "Missing Maxwell surface response correction configuration!");
   MFEM_VERIFY(request->IsAutomatic(),
               "Maxwell surface response correction requires automatic fabrication-"
@@ -34792,6 +35655,35 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
               "\"PatchEnergy\" is a three-dimensional export: the Maxwell surface response "
               "of a two-dimensional mesh does not support it!");
 
+  // The impedance-metal rule's APPLY (decision 2206 (a); DESIGN-APPLY s3): THIS operator
+  // of record is built with the film rule at its seam (no candidate, no law reading); the
+  // seam exists on the three-dimensional Features path only, other paths run as "Off".
+  const FilmRuleResolution *film_seam = candidate_film_rule;
+  if (!impedance_rule_candidate &&
+      request->impedance_metal_rule == ResponseCorrectionData::ImpedanceMetalRule::APPLY)
+  {
+    if (dimension == 3 &&
+        request->patch_construction == ResponseCorrectionData::PatchConstruction::FEATURES)
+    {
+      impedance_apply_rule = std::make_shared<const FilmRuleResolution>(
+          ResolveImpedanceMetalFilm(iodata.boundaries, *request, iodata.units,
+                                    iodata.InputsNondimensionalized()));
+      film_seam = impedance_apply_rule.get();
+      Mpi::Print(fespace.GetComm(), "\n");
+      for (const auto &line : impedance_apply_rule->lines)
+      {
+        Mpi::Print(fespace.GetComm(), "{}\n", line);
+      }
+    }
+    else
+    {
+      Mpi::Print(fespace.GetComm(),
+                 "\nImpedance-metal rule (APPLY): no seam on this path ({}): as \"Off\" "
+                 "(impedance-sheet features are not served)\n",
+                 dimension != 3 ? "a two-dimensional mesh" : "PatchConstruction Legacy");
+    }
+  }
+
 #if defined(MFEM_USE_GSLIB)
   maxwell = true;
   maxwell_loop_remainder_measured = dimension == 3;
@@ -34811,6 +35703,13 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
                     cached_geometry->impl->diagnostics.has_value() &&
                     cached_geometry->impl->dimension == dimension,
                 "Cannot reuse incompatible surface-response geometry for Maxwell!");
+    MFEM_VERIFY(cached_geometry->impl->impedance_rule_candidate == impedance_rule_candidate,
+                "A cached surface-response geometry is reused across the impedance-metal "
+                "rule's candidate and the operator of record!");
+    MFEM_VERIFY(cached_geometry->impl->impedance_rule_apply ==
+                    (impedance_apply_rule != nullptr),
+                "A cached surface-response geometry is reused across the impedance-metal "
+                "rule's \"Apply\" seam and an operator without it!");
     // C6: the full placed-patch list again (released after the previous construction).
     cached_geometry->RestoreReplicatedPatches(fespace.GetComm());
     config_ptr = movable_config = &cached_geometry->impl->config;
@@ -34828,10 +35727,13 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
     }
     else
     {
-      local_config =
-          BuildAutomaticResponseData3D(iodata, fespace.GetParMesh(), mat_op, *request, true,
-                                       &local_diagnostics, nullptr, &local_statistics);
+      local_config = BuildAutomaticResponseData3D(iodata, fespace.GetParMesh(), mat_op,
+                                                  *request, true, &local_diagnostics,
+                                                  nullptr, &local_statistics, film_seam);
     }
+    MFEM_VERIFY(!impedance_rule_candidate || dimension == 3,
+                "The impedance-metal rule's candidate is built on three-dimensional meshes "
+                "only!");
 #if defined(__GLIBC__)
     // Round 2a F-D (decision 1475 (1); glibc only; a memory hint, no result path): the
     // identification's freed transients go back to the system.
@@ -34846,6 +35748,8 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
       impl->statistics = automatic_statistics;
       impl->maxwell = true;
       impl->dimension = dimension;
+      impl->impedance_rule_candidate = impedance_rule_candidate;
+      impl->impedance_rule_apply = impedance_apply_rule != nullptr;
       cached_geometry = std::shared_ptr<const SurfaceResponseGeometry>(
           new SurfaceResponseGeometry(std::move(impl)));
       *automatic_geometry = cached_geometry;
@@ -34859,6 +35763,13 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
     }
   }
   const auto &config = *config_ptr;
+  if (film_seam)
+  {
+    // The candidate's law statuses (copied: a cached candidate geometry keeps them for the
+    // next AMR iteration's construction).
+    impedance_law_feature_status = config.impedance_law_feature_status;
+    impedance_law_features = config.impedance_law_features;
+  }
   // Geometry fallbacks (USER decision 1000 (b) / 1001), the Maxwell path: as the
   // electrostatic constructor (a whole-run raw fallback leaves HasSurfaceResponse() false
   // with the record; the deferred FailClosed abort at the end of the configuration).
@@ -35540,6 +36451,14 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
     return delta.Norml2() > 1.0e-14 * std::max(1.0, matching_radius) ? AppendLine(p0, p1)
                                                                      : -1;
   };
+  // The impedance-metal rule's law legs (law_reading_enabled only), appended as lines
+  // after every line of the operator once all patches are built.
+  struct PendingLawLeg
+  {
+    int patch = -1, probe = -1;
+    mfem::Vector p0, p1;
+  };
+  std::vector<PendingLawLeg> pending_law_legs;
 
   for (std::size_t patch_index = 0; patch_index < patches.size(); patch_index++)
   {
@@ -36145,6 +37064,52 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
           AppendLeg(probe.legs, previous, next);
           previous = next;
         }
+        if (law_reading_enabled)
+        {
+          // The impedance-metal rule's on-metal law legs of this probe (ruling 2012 Q4):
+          // the chain's legs whose middle lies on metal (LocalPieceOfOffset), both ends set
+          // back into that piece by the magnetic gate's generic rule; appended as lines
+          // after every line of the operator (below), read by the reading only.
+          std::vector<mfem::Vector> chain_points = {face_anchor};
+          std::vector<double> chain_offsets = {anchor_offset};
+          for (const int edge_index : chain)
+          {
+            chain_points.push_back(ProbePoint(edge_index));
+            chain_offsets.push_back(edges[edge_index].offset);
+          }
+          const double law_setback = rules.probe_setback_over_r * R;
+          for (std::size_t k = 0; k + 1 < chain_points.size(); k++)
+          {
+            const double u0 = chain_offsets[k], u1 = chain_offsets[k + 1];
+            const int piece =
+                LocalPieceOfOffset(offsets, gap_directions, pieces, 0.5 * (u0 + u1));
+            if (piece <= 0)
+            {
+              continue;  // the leg crosses a gap: never part of L
+            }
+            const double m0 =
+                LateralSetbackMove(offsets, gap_directions, pieces, u0, piece, law_setback,
+                                   rules.probe_setback_width_fraction);
+            const double m1 =
+                LateralSetbackMove(offsets, gap_directions, pieces, u1, piece, law_setback,
+                                   rules.probe_setback_width_fraction);
+            if (std::abs((u1 + m1) - (u0 + m0)) <= 1.0e-12 * std::max(1.0, R))
+            {
+              continue;
+            }
+            PendingLawLeg leg;
+            leg.patch = static_cast<int>(patch_index);
+            leg.probe = static_cast<int>(probes.size());
+            leg.p0 = chain_points[k];
+            leg.p1 = chain_points[k + 1];
+            for (int d = 0; d < dimension; d++)
+            {
+              leg.p0[d] += m0 * lateral[d];
+              leg.p1[d] += m1 * lateral[d];
+            }
+            pending_law_legs.push_back(std::move(leg));
+          }
+        }
         if (model.magnetic)
         {
           BuildMagneticLegs(probe, face_anchor, anchor_move);
@@ -36209,6 +37174,65 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
     provenance.origin = patch_config.origin;
   }
 
+  if (law_reading_enabled)
+  {
+    // The impedance-metal rule's law lines: after EVERY line of the operator (each line of
+    // a path, a fit or a gate keeps its index and points), in no path and no fit; a law
+    // line that leaves the mesh is dropped alone (never a patch exclusion).
+    law_line_begin = static_cast<int>(maxwell_lines.size());
+    law_patch_legs.assign(patches.size(), {});
+    law_patch_dropped.assign(patches.size(), 0);
+    for (std::size_t p = 0; p < patches.size(); p++)
+    {
+      law_patch_legs[p].resize(maxwell_probes[p].size());
+    }
+    for (const auto &leg : pending_law_legs)
+    {
+      const int line = AppendLineIfDistinct(leg.p0, leg.p1);
+      if (line < 0)
+      {
+        continue;
+      }
+      line_patches.push_back(leg.patch);
+      law_patch_legs[leg.patch][leg.probe].push_back(line);
+      law_line_count++;
+    }
+    std::vector<PendingLawLeg>().swap(pending_law_legs);
+    law_patch_class.assign(patches.size(), LawLegClass::UNPROBED);
+    std::map<std::string, int> unknown_names;
+    for (std::size_t p = 0; p < patches.size(); p++)
+    {
+      bool any = false;
+      for (const auto &legs : law_patch_legs[p])
+      {
+        any = any || !legs.empty();
+      }
+      bool known = true;
+      const auto &topology = models[patches[p].model].topology;
+      law_patch_class[p] =
+          LawLegClassOfTopology(topology, !maxwell_probes[p].empty(), any, &known);
+      if (!known)
+      {
+        unknown_names[topology]++;
+      }
+    }
+    // An unknown runtime topology name fails closed as CONDITIONAL-UNTESTED, counted
+    // (ruling 2024 (4)).
+    int unknown = 0;
+    std::string names;
+    for (const auto &[name, count] : unknown_names)
+    {
+      unknown += count;
+      names += (names.empty() ? "" : ", ") + name;
+    }
+    Mpi::GlobalSum(1, &unknown, fespace.GetComm());
+    if (unknown > 0)
+    {
+      Mpi::Print(" Impedance-metal rule law reading: {:d} patch(es) of a topology name the "
+                 "reading does not know (on the root: {}) read CONDITIONAL-UNTESTED\n",
+                 unknown, names.empty() ? "none" : names);
+    }
+  }
   {
     // Section 8 / decision 1064 (2): the unprobed applied patches (no probe of any kind:
     // the gate skips them) by their raw claims, gathered to every rank (the claims are
@@ -36291,7 +37315,8 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
   }
   ConfigureMaxwellLoopFit();
   dbc_tdof_list = essential_tdofs;
-  contour_line_count = static_cast<long long int>(maxwell_lines.size()) - probe_line_count;
+  contour_line_count =
+      static_cast<long long int>(maxwell_lines.size()) - probe_line_count - law_line_count;
   int global_line_count = static_cast<int>(contour_line_count);
   Mpi::GlobalSum(1, &global_line_count, fespace.GetComm());
   int global_probe_line_count = static_cast<int>(probe_line_count);
@@ -36347,6 +37372,15 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
              global_line_count, global_probe_line_count, matched_length_fraction,
              corner_neighborhood_fraction, maximum_curvature_ratio,
              maximum_library_distance);
+  if (law_reading_enabled)
+  {
+    long long int global_law_lines = law_line_count;
+    Mpi::GlobalSum(1, &global_law_lines, fespace.GetComm());
+    Mpi::Print(" Impedance-metal rule law reading{}: {:d} on-metal law lines (after every "
+               "line above; in no path, no fit; read only for the law reading)\n",
+               impedance_rule_candidate ? " (CANDIDATE: NOT OF RECORD)" : "",
+               global_law_lines);
+  }
   Mpi::Print(" Interface-resolved geometric coverage:\n");
   for (const auto &[interface, matched_fraction] : matched_length_fraction_by_interface)
   {
@@ -37238,6 +38272,20 @@ void SurfaceResponseOperator::ConfigureMaxwellLines(
           static_cast<int>(line_index), line.begin, line.end,
           line_interval_diameters[line_index], line_in_face_diameters[line_index],
           &uncovered);
+      if (uncovered.Reported() && law_line_begin >= 0 &&
+          static_cast<int>(line_index) >= law_line_begin)
+      {
+        // An impedance-metal-rule law line that leaves the mesh: dropped alone (no point,
+        // not read; counted for its patch), never a patch exclusion.
+        const int patch = line_patches[line_index];
+        law_patch_dropped[patch]++;
+        for (auto &legs : law_patch_legs[patch])
+        {
+          legs.erase(std::remove(legs.begin(), legs.end(), static_cast<int>(line_index)),
+                     legs.end());
+        }
+        continue;
+      }
       if (uncovered.Reported())
       {
         uncovered_lines.push_back(

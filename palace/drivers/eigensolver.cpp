@@ -442,7 +442,8 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
   // Configure objects for postprocessing.
   PostOperator<ProblemType::EIGENMODE> post_op(iodata, space_op, &response_geometry,
-                                               &surface_post_geometry);
+                                               &surface_post_geometry,
+                                               &impedance_candidate_geometry);
   ComplexVector B(Curl.Height());
   B.UseDevice(true);
 
@@ -1353,6 +1354,13 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   if (response_correction)
   {
     SaveMetadata(*response_correction);
+  }
+  if (const auto *candidate = post_op.GetImpedanceRuleCandidateRecord())
+  {
+    // The impedance-metal rule (RECORD): the candidate block and the candidate's
+    // conductor-consistency records, never of record.
+    SaveImpedanceRuleCandidateMetadata(*candidate);
+    post_op.WriteImpedanceRuleCandidateRecords();
   }
   if (corrected_unconverged_solves > 0)
   {
