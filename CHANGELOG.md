@@ -28,6 +28,24 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     their interface once and saved, and later runs solve only the region, also after a
     redesign or re-meshing of it, for the capacitance and inductance matrices. SchemaVer
     5-3-0. [PR 995](https://github.com/awslabs/palace/pull/995).
+  - Added driven substructuring (`config["Solver"]["Substructuring"]` for driven problems):
+    uniform frequency sweeps condense the environment exactly at each frequency, with lumped
+    ports, wave ports and lossy boundaries and materials on either side, and an online sweep
+    at saved frequencies solves a redesigned region against the saved environment. Adaptive
+    sweeps condense it at frequencies chosen greedily for a rational model, checked for
+    passivity, which online sweeps evaluate anywhere in its band, with the region reduced by
+    the adaptive fast frequency sweep. The offline sweep also writes a mesh of the
+    region, on which online sweeps read and partition the region only. Runs on CPUs and
+    GPUs, with the factorizations on the CPU. Offline, the partial factorization of MUMPS
+    or, without it, of STRUMPACK gives the condensed environment (SuperLU_DIST, whose
+    condensation goes wrong through a resonance, is not used offline). An offline exact
+    sweep factors the region with the condensed environment as one system, by STRUMPACK,
+    MUMPS or SuperLU_DIST; online and adaptive sweeps solve it by GMRES, preconditioned by
+    its Schur complement onto the interface with the condensed environment added, factored
+    as a dense matrix across the processes (ScaLAPACK). A sparse direct solver that
+    `config["Solver"]["Linear"]["Type"]` names factors both instead. Adds a driven example
+    in `examples/substructuring` (a 3 x 4 grid of CPW resonators). SchemaVer 5-3-1.
+    [PR 1044](https://github.com/awslabs/palace/pull/1044).
   - `validate-config` accepts several configuration files and validates them in one Julia
     session. [PR 1180](https://github.com/awslabs/palace/pull/1180).
   - Added `Boundaries.LumpedPort[].ExcitationAmplitude` and `ExcitationPhase` (degrees),
@@ -666,6 +684,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     (Nédélec of order 2 and above, H1 of order 4 and above) were wrong across processes, and
     so were the region error indicators of substructuring.
     [PR 995](https://github.com/awslabs/palace/pull/995).
+  - Builds with MUMPS now also need its complex double precision library (ZMUMPS), used by
+    driven substructuring; the superbuild and the Spack recipe build it.
+    [PR 1044](https://github.com/awslabs/palace/pull/1044).
   - The superbuild's sub-makes (the unit tests, GSLIB, LIBXSMM, libCEED, SLEPc, and MFEM's
     test step) now inherit the make jobserver, so GNU make 4.3 and later build them in
     parallel instead of serially. The superbuild also skips Eigen's BLAS, LAPACK, and demos,

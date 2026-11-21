@@ -404,10 +404,10 @@ fs::path PostOperator<solver_t>::ExcitationSubFolder(int ex_idx) const
 }
 
 template <ProblemType solver_t>
-void PostOperator<solver_t>::InitializeParaviewDataCollection(int ex_idx)
+void PostOperator<solver_t>::InitializeParaviewDataCollection(int ex_idx, bool restart)
   requires(solver_t == ProblemType::DRIVEN)
 {
-  InitializeParaviewDataCollection(ExcitationSubFolder(ex_idx));
+  InitializeParaviewDataCollection(ExcitationSubFolder(ex_idx), restart);
 }
 
 template <ProblemType solver_t>
@@ -826,7 +826,7 @@ void PostOperator<solver_t>::EnsureParaviewDataCollection()
 
 template <ProblemType solver_t>
 void PostOperator<solver_t>::InitializeParaviewDataCollection(
-    const fs::path &sub_folder_name)
+    const fs::path &sub_folder_name, bool restart)
 {
   EnsureFieldCoefficientsSetup();
   if (!ShouldWriteParaviewFields())
@@ -849,6 +849,8 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
   // Set up postprocessing for output to disk.
   paraview = {paraview_dir_v, &fem_op->GetNDSpace().GetParMesh()};
   paraview_bdr = {paraview_dir_b, &fem_op->GetNDSpace().GetParMesh()};
+  paraview->UseRestartMode(restart);
+  paraview_bdr->UseRestartMode(restart);
 
   const mfem::VTKFormat format = mfem::VTKFormat::BINARY32;
   const bool use_ho = true;
@@ -1776,6 +1778,10 @@ void PostOperator<solver_t>::MeasureDomainFieldEnergy() const
   }
 
   // Log Domain Energy.
+  if (dom_post_op.partial)
+  {
+    return;
+  }
   const auto &E_all = measurement_cache.domain_E_field_energy_all;
   const auto domain_H = units.Dimensionalize<Units::ValueType::ENERGY>(
       measurement_cache.domain_H_field_energy_all);
@@ -1813,7 +1819,13 @@ void PostOperator<solver_t>::MeasureLumpedPorts() const
   if constexpr (solver_t == ProblemType::EIGENMODE || solver_t == ProblemType::DRIVEN ||
                 solver_t == ProblemType::TRANSIENT)
   {
-    MeasureLumpedPorts(fem_op->GetLumpedPortOp().GetVoltages(*E));
+    // The voltages given by SetLumpedPortVoltages replace those of the field.
+    auto voltages = fem_op->GetLumpedPortOp().GetVoltages(*E);
+    for (const auto &[idx, given] : lumped_port_voltages)
+    {
+      voltages[idx] = given;
+    }
+    MeasureLumpedPorts(voltages);
   }
   else
   {
@@ -1968,11 +1980,17 @@ void PostOperator<solver_t>::MeasureWavePorts() const
       MFEM_VERIFY(freq_re > 0.0,
                   "Frequency domain wave port postprocessing requires nonzero frequency!");
       auto &vi = measurement_cache.wave_port_vi[idx];
-      vi.S = data.GetSParameter(*E);
+      const auto given = wave_port_overlaps.find(idx);
+      vi.S = (given != wave_port_overlaps.end()) ? given->second : data.GetSParameter(*E);
       if (data.HasVoltageCoords())
       {
-        vi.P = data.GetPower(*E, *B);
-        vi.V = data.GetVoltage(*E);
+        // The power and the voltage need the field at the port, which a port with a given
+        // overlap (of the environment of a substructuring model) has not: NaN, not 0.
+        constexpr double nan = std::numeric_limits<double>::quiet_NaN();
+        vi.P = (given != wave_port_overlaps.end()) ? std::complex<double>(nan, nan)
+                                                   : data.GetPower(*E, *B);
+        vi.V = (given != wave_port_overlaps.end()) ? std::complex<double>(nan, nan)
+                                                   : data.GetVoltage(*E);
         vi.Z_PV = data.GetCharacteristicImpedance();
       }
     }

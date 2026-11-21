@@ -10,6 +10,7 @@
 #include <cstring>
 #include <filesystem>
 #include <initializer_list>
+#include <iterator>
 #include <limits>
 #include <set>
 #include <nlohmann/json.hpp>
@@ -799,7 +800,7 @@ void ForEachBoundaryElementNextTo(mfem::ParMesh &mesh, const std::vector<int> &a
 // An entry of the configuration cut to the given sorted attributes (see
 // EnvironmentConfigHash), or for an array its entries listing one of them, sorted, and for
 // a group of entries those of its values; null if none. Without the excitations, the
-// indices are left out.
+// indices and the excitations of ports (with their amplitudes and phases) are left out.
 json CutToAttributes(const json &node, const std::vector<int> &attrs, bool excitations)
 {
   if (node.is_array())
@@ -842,6 +843,10 @@ json CutToAttributes(const json &node, const std::vector<int> &attrs, bool excit
   if (!excitations)
   {
     entry.erase("Index");
+    for (auto it = entry.begin(); it != entry.end();)
+    {
+      it = it.key().starts_with("Excitation") ? entry.erase(it) : std::next(it);
+    }
   }
   bool listed = false;
   for (auto &[key, value] : entry.items())
@@ -1138,10 +1143,8 @@ bool EnvironmentRecord::CheckConfig(const nlohmann::json &config,
                   EnvironmentConfigHash(config, attributes, bdr_attributes, false) ==
                       config_hash,
               kEnvironmentConfigDiffers);
-  const bool excitations =
-      EnvironmentConfigHash(config, attributes, bdr_attributes, true) == excitations_hash;
-  MFEM_VERIFY(!region_mesh || excitations, kEnvironmentExcitationsDiffer);
-  return excitations;
+  return EnvironmentConfigHash(config, attributes, bdr_attributes, true) ==
+         excitations_hash;
 }
 
 bool MomentsMatch(const std::array<double, 6> &a, const std::array<double, 6> &b,

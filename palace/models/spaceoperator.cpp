@@ -18,6 +18,7 @@
 #include "linalg/jacobi.hpp"
 #include "linalg/ksp.hpp"
 #include "linalg/rap.hpp"
+#include "models/environmentoperator.hpp"
 #include "models/floquetportoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
@@ -616,12 +617,15 @@ void AddAuxIntegrators(BilinearForm &a, const MaterialPropertyCoefficient *f,
                               ActiveCoefficient(frb), assemble_q_data);
 }
 
-auto AssembleOperator(
-    const FiniteElementSpace &fespace, const MaterialPropertyCoefficient *df,
-    const MaterialPropertyCoefficient *f, const MaterialPropertyCoefficient *dfb,
-    const MaterialPropertyCoefficient *fb, const MaterialPropertyCoefficient *fp,
-    const MaterialPropertyCoefficient *frb, const MaterialPropertyCoefficient *fpb,
-    bool skip_zeros = false, bool assemble_q_data = false)
+auto AssembleOperator(const AssemblyDomains &domains, const FiniteElementSpace &fespace,
+                      const MaterialPropertyCoefficient *df,
+                      const MaterialPropertyCoefficient *f,
+                      const MaterialPropertyCoefficient *dfb,
+                      const MaterialPropertyCoefficient *fb,
+                      const MaterialPropertyCoefficient *fp,
+                      const MaterialPropertyCoefficient *frb,
+                      const MaterialPropertyCoefficient *fpb, bool skip_zeros = false,
+                      bool assemble_q_data = false)
 {
   BilinearForm a(fespace);
   // System matrices are only ever applied matrix-free (their sums are assembled into
@@ -629,15 +633,53 @@ auto AssembleOperator(
   // exactly zero can be left out of the partially assembled operator.
   a.SkipZeroCoefficientElements();
   AddIntegrators(a, df, f, dfb, fb, fp, frb, fpb, assemble_q_data);
+  domains.Restrict(a);
   return a.Assemble(skip_zeros);
 }
 
+// The environment's term R_Γᵀ S_E(ω) R_Γ of the operator of a substructured region,
+// complex symmetric (see EnvironmentOperator).
+class EnvironmentTermOperator : public ComplexOperator
+{
+private:
+  EnvironmentOperator &env;
+  const double omega;
+
+public:
+  EnvironmentTermOperator(EnvironmentOperator &env, double omega, int n)
+    : ComplexOperator(n), env(env), omega(omega)
+  {
+  }
+
+  void Mult(const ComplexVector &x, ComplexVector &y) const override
+  {
+    y = 0.0;
+    env.AddMult(omega, x, y);
+  }
+
+  void AddMult(const ComplexVector &x, ComplexVector &y,
+               const std::complex<double> a) const override
+  {
+    if (a == 1.0)
+    {
+      env.AddMult(omega, x, y);
+      return;
+    }
+    ComplexVector t(y.Size());
+    t.UseDevice(true);
+    t = 0.0;
+    env.AddMult(omega, x, t);
+    y.AXPY(a, t);
+  }
+};
+
 auto AssembleOperators(
-    const FiniteElementSpaceHierarchy &fespaces, const MaterialPropertyCoefficient *df,
-    const MaterialPropertyCoefficient *f, const MaterialPropertyCoefficient *dfb,
-    const MaterialPropertyCoefficient *fb, const MaterialPropertyCoefficient *fp,
-    const MaterialPropertyCoefficient *frb, const MaterialPropertyCoefficient *fpb,
-    bool skip_zeros = false, bool assemble_q_data = false, bool flip_coarse_dfb = false,
+    const AssemblyDomains &domains, const FiniteElementSpaceHierarchy &fespaces,
+    const MaterialPropertyCoefficient *df, const MaterialPropertyCoefficient *f,
+    const MaterialPropertyCoefficient *dfb, const MaterialPropertyCoefficient *fb,
+    const MaterialPropertyCoefficient *fp, const MaterialPropertyCoefficient *frb,
+    const MaterialPropertyCoefficient *fpb, bool skip_zeros = false,
+    bool assemble_q_data = false, bool flip_coarse_dfb = false,
     const MaterialPropertyCoefficient *dfb_flip_add = nullptr)
 {
   // Optionally flip the sign of dfb on the coarse level only (see AssemblePreconditioner),
@@ -666,6 +708,7 @@ auto AssembleOperators(
   // have no symbolic structure to preserve, so exact-zero terms are omitted there.
   BilinearForm coarse(fespaces.GetFESpaceAtLevel(0));
   AddConfiguredIntegrators(coarse, df, f, dfb_coarse, fb, fp, frb, fpb);
+  domains.Restrict(coarse);
   std::vector<std::unique_ptr<Operator>> ops;
   ops.reserve(fespaces.GetNumLevels());
   ops.push_back(coarse.Assemble(skip_zeros));
@@ -677,6 +720,7 @@ auto AssembleOperators(
     // can be left out.
     fine.SkipZeroCoefficientElements();
     AddIntegrators(fine, df, f, dfb, fb, fp, frb, fpb, assemble_q_data);
+    domains.Restrict(fine);
     auto fine_ops = fine.Assemble(fespaces, skip_zeros, 1);
     for (auto &op : fine_ops)
     {
@@ -686,7 +730,8 @@ auto AssembleOperators(
   return ops;
 }
 
-auto AssembleAuxOperators(const FiniteElementSpaceHierarchy &fespaces,
+auto AssembleAuxOperators(const AssemblyDomains &domains,
+                          const FiniteElementSpaceHierarchy &fespaces,
                           const MaterialPropertyCoefficient *f,
                           const MaterialPropertyCoefficient *fb,
                           const MaterialPropertyCoefficient *frb, bool skip_zeros = false,
@@ -695,6 +740,7 @@ auto AssembleAuxOperators(const FiniteElementSpaceHierarchy &fespaces,
   // Match the configured coarse-support policy of the primary hierarchy above.
   BilinearForm coarse(fespaces.GetFESpaceAtLevel(0));
   AddConfiguredAuxIntegrators(coarse, f, fb, frb);
+  domains.Restrict(coarse);
   std::vector<std::unique_ptr<Operator>> ops;
   ops.reserve(fespaces.GetNumLevels());
   ops.push_back(coarse.Assemble(skip_zeros));
@@ -703,6 +749,7 @@ auto AssembleAuxOperators(const FiniteElementSpaceHierarchy &fespaces,
     BilinearForm fine(fespaces.GetFinestFESpace());
     fine.SkipZeroCoefficientElements();
     AddAuxIntegrators(fine, f, fb, frb, assemble_q_data);
+    domains.Restrict(fine);
     auto fine_ops = fine.Assemble(fespaces, skip_zeros, 1);
     for (auto &op : fine_ops)
     {
@@ -732,13 +779,13 @@ void SpaceOperator::AssembleFrequencyDependentPermittivityA2Operators(
     constexpr bool skip_zeros = false;
     if (!empty[0])
     {
-      ar = AssembleOperator(GetNDSpace(), nullptr, nullptr, &dfbr, &fbr, nullptr, &frbr,
-                            &fpbr, skip_zeros);
+      ar = AssembleOperator(assembly_domains, GetNDSpace(), nullptr, nullptr, &dfbr, &fbr,
+                            nullptr, &frbr, &fpbr, skip_zeros);
     }
     if (!empty[1])
     {
-      ai = AssembleOperator(GetNDSpace(), nullptr, nullptr, &dfbi, &fbi, nullptr, &frbi,
-                            &fpbi, skip_zeros);
+      ai = AssembleOperator(assembly_domains, GetNDSpace(), nullptr, nullptr, &dfbi, &fbi,
+                            nullptr, &frbi, &fpbi, skip_zeros);
     }
     return;
   }
@@ -753,13 +800,13 @@ void SpaceOperator::AssembleFrequencyDependentPermittivityA2Operators(
   std::unique_ptr<Operator> base_r, base_i;
   if (!AreExactlyZero(dfbr, fbr, frbr, fpbr))
   {
-    base_r = AssembleOperator(GetNDSpace(), nullptr, nullptr, &dfbr, &fbr, nullptr, &frbr,
-                              &fpbr, skip_zeros);
+    base_r = AssembleOperator(assembly_domains, GetNDSpace(), nullptr, nullptr, &dfbr, &fbr,
+                              nullptr, &frbr, &fpbr, skip_zeros);
   }
   if (!AreExactlyZero(dfbi, fbi, frbi, fpbi))
   {
-    base_i = AssembleOperator(GetNDSpace(), nullptr, nullptr, &dfbi, &fbi, nullptr, &frbi,
-                              &fpbi, skip_zeros);
+    base_i = AssembleOperator(assembly_domains, GetNDSpace(), nullptr, nullptr, &dfbi, &fbi,
+                              nullptr, &frbi, &fpbi, skip_zeros);
   }
   ar = BuildFrequencyDependentPermittivityA2Operator(std::move(base_r), model_A2_real);
   ai = BuildFrequencyDependentPermittivityA2Operator(std::move(base_i), model_A2_imag);
@@ -795,6 +842,7 @@ SpaceOperator::GetStiffnessMatrix(Operator::DiagonalPolicy diag_policy)
   {
     AddStiffnessPeriodicBdrCoefficients(1.0, fpb);
   }
+  RestrictToAssemblyDomains({&df, &f, &fc}, {&fb, &fpb});
   int empty[2] = {AreExactlyZero(df, f, fb, fpb), fc.IsExactlyZero()};
   Mpi::GlobalMin(2, empty, GetComm());
   if (empty[0] && empty[1])
@@ -805,13 +853,13 @@ SpaceOperator::GetStiffnessMatrix(Operator::DiagonalPolicy diag_policy)
   std::unique_ptr<Operator> kr, ki;
   if (!empty[0])
   {
-    kr = AssembleOperator(GetNDSpace(), &df, &f, nullptr, &fb, nullptr, nullptr, &fpb,
-                          skip_zeros);
+    kr = AssembleOperator(assembly_domains, GetNDSpace(), &df, &f, nullptr, &fb, nullptr,
+                          nullptr, &fpb, skip_zeros);
   }
   if (!empty[1])
   {
-    ki = AssembleOperator(GetNDSpace(), nullptr, nullptr, nullptr, nullptr, &fc, nullptr,
-                          nullptr, skip_zeros);
+    ki = AssembleOperator(assembly_domains, GetNDSpace(), nullptr, nullptr, nullptr,
+                          nullptr, &fc, nullptr, nullptr, skip_zeros);
   }
   if constexpr (std::is_same_v<OperType, ComplexOperator>)
   {
@@ -845,6 +893,7 @@ SpaceOperator::GetDampingMatrix(Operator::DiagonalPolicy diag_policy)
     AddImagPeriodicCoefficients(1.0, fp);
     AddDampingPeriodicBdrCoefficients(1.0, frb);
   }
+  RestrictToAssemblyDomains({&f, &fp}, {&fb, &frb});
   int empty = AreExactlyZero(f, fb, fp, frb);
   Mpi::GlobalMin(1, &empty, GetComm());
   if (empty)
@@ -852,8 +901,8 @@ SpaceOperator::GetDampingMatrix(Operator::DiagonalPolicy diag_policy)
     return {};
   }
   constexpr bool skip_zeros = false;
-  auto c = AssembleOperator(GetNDSpace(), nullptr, &f, nullptr, &fb, &fp, &frb, nullptr,
-                            skip_zeros);
+  auto c = AssembleOperator(assembly_domains, GetNDSpace(), nullptr, &f, nullptr, &fb, &fp,
+                            &frb, nullptr, skip_zeros);
   if constexpr (std::is_same_v<OperType, ComplexOperator>)
   {
     auto C = std::make_unique<ComplexParOperator>(std::move(c), nullptr, GetNDSpace());
@@ -884,6 +933,7 @@ std::unique_ptr<OperType> SpaceOperator::GetMassMatrix(Operator::DiagonalPolicy 
   {
     AddImagMassCoefficients(1.0, fi);
   }
+  RestrictToAssemblyDomains({&fr, &fi}, {&fbr, &fbi});
   int empty[2] = {AreExactlyZero(fr, fbr), AreExactlyZero(fi, fbi)};
   Mpi::GlobalMin(2, empty, GetComm());
   if (empty[0] && empty[1])
@@ -894,13 +944,13 @@ std::unique_ptr<OperType> SpaceOperator::GetMassMatrix(Operator::DiagonalPolicy 
   std::unique_ptr<Operator> mr, mi;
   if (!empty[0])
   {
-    mr = AssembleOperator(GetNDSpace(), nullptr, &fr, nullptr, &fbr, nullptr, nullptr,
-                          nullptr, skip_zeros);
+    mr = AssembleOperator(assembly_domains, GetNDSpace(), nullptr, &fr, nullptr, &fbr,
+                          nullptr, nullptr, nullptr, skip_zeros);
   }
   if (!empty[1])
   {
-    mi = AssembleOperator(GetNDSpace(), nullptr, &fi, nullptr, &fbi, nullptr, nullptr,
-                          nullptr, skip_zeros);
+    mi = AssembleOperator(assembly_domains, GetNDSpace(), nullptr, &fi, nullptr, &fbi,
+                          nullptr, nullptr, nullptr, skip_zeros);
   }
   if constexpr (std::is_same_v<OperType, ComplexOperator>)
   {
@@ -937,6 +987,7 @@ SpaceOperator::GetExtraSystemMatrix(double omega, Operator::DiagonalPolicy diag_
       fpbi(mat_op.MaxCeedBdrAttribute());
   AddExtraSystemBdrCoefficients(omega, dfbr, dfbi, fbr, fbi, frbr, frbi, &fpbr, &fpbi,
                                 include_wave_ports);
+  RestrictToAssemblyDomains({}, {&dfbr, &dfbi, &fbr, &fbi, &frbr, &frbi, &fpbr, &fpbi});
   std::unique_ptr<Operator> ar, ai;
   AssembleFrequencyDependentPermittivityA2Operators(omega, dfbr, dfbi, fbr, fbi, frbr, frbi,
                                                     fpbr, fpbi, ar, ai);
@@ -993,6 +1044,7 @@ std::unique_ptr<ComplexOperator> SpaceOperator::BuildExtraSystemMatrix(
       fpbi(mat_op.MaxCeedBdrAttribute());
   AddExtraSystemBdrCoefficients(omega, port_kn, dfbr, dfbi, fbr, fbi, frbr, frbi, &fpbr,
                                 &fpbi);
+  RestrictToAssemblyDomains({}, {&dfbr, &dfbi, &fbr, &fbi, &frbr, &frbi, &fpbr, &fpbi});
   std::unique_ptr<Operator> ar, ai;
   AssembleFrequencyDependentPermittivityA2Operators(omega, dfbr, dfbi, fbr, fbi, frbr, frbi,
                                                     fpbr, fpbi, ar, ai,
@@ -1024,8 +1076,8 @@ SpaceOperator::GetWavePortBoundaryMassMatrix(int port_idx,
     return {};
   }
   constexpr bool skip_zeros = false;
-  auto m = AssembleOperator(GetNDSpace(), nullptr, nullptr, nullptr, &fb, nullptr, nullptr,
-                            nullptr, skip_zeros);
+  auto m = AssembleOperator(assembly_domains, GetNDSpace(), nullptr, nullptr, nullptr, &fb,
+                            nullptr, nullptr, nullptr, skip_zeros);
   if constexpr (std::is_same_v<OperType, ComplexOperator>)
   {
     auto M_op = std::make_unique<ComplexParOperator>(nullptr, std::move(m), GetNDSpace());
@@ -1075,13 +1127,13 @@ SpaceOperator::GetFarfieldBoundaryCurlCurlMatrix(Operator::DiagonalPolicy diag_p
   std::unique_ptr<Operator> mr, mi;
   if (!empty[0])
   {
-    mr = AssembleOperator(GetNDSpace(), nullptr, nullptr, &dfr, nullptr, nullptr, &frr,
-                          &fpr, skip_zeros);
+    mr = AssembleOperator(assembly_domains, GetNDSpace(), nullptr, nullptr, &dfr, nullptr,
+                          nullptr, &frr, &fpr, skip_zeros);
   }
   if (!empty[1])
   {
-    mi = AssembleOperator(GetNDSpace(), nullptr, nullptr, &dfi, nullptr, nullptr, &fri,
-                          &fpi, skip_zeros);
+    mi = AssembleOperator(assembly_domains, GetNDSpace(), nullptr, nullptr, &dfi, nullptr,
+                          nullptr, &fri, &fpi, skip_zeros);
   }
   if constexpr (std::is_same_v<OperType, ComplexOperator>)
   {
@@ -1128,8 +1180,8 @@ SpaceOperator::GetExtraSystemBdrMassTermMatrix(int i, Operator::DiagonalPolicy d
     return {};
   }
   constexpr bool skip_zeros = false;
-  auto m = AssembleOperator(GetNDSpace(), nullptr, nullptr, nullptr, &fb, nullptr, nullptr,
-                            nullptr, skip_zeros);
+  auto m = AssembleOperator(assembly_domains, GetNDSpace(), nullptr, nullptr, nullptr, &fb,
+                            nullptr, nullptr, nullptr, skip_zeros);
   if constexpr (std::is_same_v<OperType, ComplexOperator>)
   {
     auto M_op =
@@ -1172,13 +1224,13 @@ SpaceOperator::GetFarfieldDispersiveCurlCurlMatrix(std::size_t k,
   std::unique_ptr<Operator> mr, mi;
   if (!empty[0])
   {
-    mr = AssembleOperator(GetNDSpace(), nullptr, nullptr, &dfr, nullptr, nullptr, &frr,
-                          &fpr, skip_zeros);
+    mr = AssembleOperator(assembly_domains, GetNDSpace(), nullptr, nullptr, &dfr, nullptr,
+                          nullptr, &frr, &fpr, skip_zeros);
   }
   if (!empty[1])
   {
-    mi = AssembleOperator(GetNDSpace(), nullptr, nullptr, &dfi, nullptr, nullptr, &fri,
-                          &fpi, skip_zeros);
+    mi = AssembleOperator(assembly_domains, GetNDSpace(), nullptr, nullptr, &dfi, nullptr,
+                          nullptr, &fri, &fpi, skip_zeros);
   }
   auto M_op =
       std::make_unique<ComplexParOperator>(std::move(mr), std::move(mi), GetNDSpace());
@@ -1198,8 +1250,8 @@ std::unique_ptr<ComplexOperator> SpaceOperator::GetFarfieldDispersiveDampingFloq
   {
     return {};
   }
-  auto m = AssembleOperator(GetNDSpace(), nullptr, nullptr, nullptr, nullptr, nullptr, &fr,
-                            nullptr, false);
+  auto m = AssembleOperator(assembly_domains, GetNDSpace(), nullptr, nullptr, nullptr,
+                            nullptr, nullptr, &fr, nullptr, false);
   auto M = std::make_unique<ComplexParOperator>(nullptr, std::move(m), GetNDSpace());
   M->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
   return M;
@@ -1217,8 +1269,8 @@ std::unique_ptr<ComplexOperator> SpaceOperator::GetFarfieldDispersiveStiffnessFl
   {
     return {};
   }
-  auto m = AssembleOperator(GetNDSpace(), nullptr, nullptr, nullptr, nullptr, nullptr,
-                            nullptr, &fp, false);
+  auto m = AssembleOperator(assembly_domains, GetNDSpace(), nullptr, nullptr, nullptr,
+                            nullptr, nullptr, nullptr, &fp, false);
   auto M = std::make_unique<ComplexParOperator>(std::move(m), nullptr, GetNDSpace());
   M->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
   return M;
@@ -1293,8 +1345,8 @@ SpaceOperator::GetFloquetRobinBoundaryMassMatrix(int port_idx,
     return {};
   }
   constexpr bool skip_zeros = false;
-  auto m = AssembleOperator(GetNDSpace(), nullptr, nullptr, nullptr, &fb, nullptr, nullptr,
-                            nullptr, skip_zeros);
+  auto m = AssembleOperator(assembly_domains, GetNDSpace(), nullptr, nullptr, nullptr, &fb,
+                            nullptr, nullptr, nullptr, skip_zeros);
   if constexpr (std::is_same_v<OperType, ComplexOperator>)
   {
     auto M_op = std::make_unique<ComplexParOperator>(nullptr, std::move(m), GetNDSpace());
@@ -1357,6 +1409,11 @@ SpaceOperator::GetExtraSystemOperator(double omega, Operator::DiagonalPolicy dia
   add(std::move(A2));
   add(std::move(W));
   add(std::move(F));
+  if (environment)
+  {
+    add(std::make_unique<EnvironmentTermOperator>(*environment, omega,
+                                                  GetNDSpace().GetTrueVSize()));
+  }
   return op;
 }
 
@@ -1639,19 +1696,30 @@ void SpaceOperator::AssemblePreconditioner(
                   (dfi.empty() && fi.empty() && dfbi.empty() && fbi.empty() &&
                    fpi.empty() && frbi.empty() && fpbi.empty() && dfbi_flip_add.empty())};
   Mpi::GlobalMin(2, empty, GetComm());
+  // With an environment, the region's solver factors the complex-valued matrix of the only
+  // level (see RegionSolver), so the second-order absorbing BC term keeps its sign there.
+  const bool flip_coarse_dfb = pc_coarse_real && !environment;
   if (!empty[0])
   {
-    br_vec = AssembleOperators(GetNDSpaces(), &dfr, &fr, &dfbr, &fbr, &fpr, &frbr, &fpbr,
-                               skip_zeros, assemble_q_data, pc_coarse_real, &dfbr_flip_add);
-    br_aux_vec =
-        AssembleAuxOperators(GetH1Spaces(), &fr, &fbr, &frbr, skip_zeros, assemble_q_data);
+    br_vec = AssembleOperators(assembly_domains, GetNDSpaces(), &dfr, &fr, &dfbr, &fbr,
+                               &fpr, &frbr, &fpbr, skip_zeros, assemble_q_data,
+                               flip_coarse_dfb, &dfbr_flip_add);
+    if (!environment)
+    {
+      br_aux_vec = AssembleAuxOperators(assembly_domains, GetH1Spaces(), &fr, &fbr, &frbr,
+                                        skip_zeros, assemble_q_data);
+    }
   }
   if (!empty[1])
   {
-    bi_vec = AssembleOperators(GetNDSpaces(), &dfi, &fi, &dfbi, &fbi, &fpi, &frbi, &fpbi,
-                               skip_zeros, assemble_q_data, pc_coarse_real, &dfbi_flip_add);
-    bi_aux_vec =
-        AssembleAuxOperators(GetH1Spaces(), &fi, &fbi, &frbi, skip_zeros, assemble_q_data);
+    bi_vec = AssembleOperators(assembly_domains, GetNDSpaces(), &dfi, &fi, &dfbi, &fbi,
+                               &fpi, &frbi, &fpbi, skip_zeros, assemble_q_data,
+                               flip_coarse_dfb, &dfbi_flip_add);
+    if (!environment)
+    {
+      bi_aux_vec = AssembleAuxOperators(assembly_domains, GetH1Spaces(), &fi, &fbi, &frbi,
+                                        skip_zeros, assemble_q_data);
+    }
   }
 }
 
@@ -1688,10 +1756,13 @@ void SpaceOperator::AssemblePreconditioner(
   Mpi::GlobalMin(1, &empty, GetComm());
   if (!empty)
   {
-    br_vec = AssembleOperators(GetNDSpaces(), &dfr, &fr, &dfbr, &fbr, nullptr, &frbr,
-                               nullptr, skip_zeros, assemble_q_data);
-    br_aux_vec =
-        AssembleAuxOperators(GetH1Spaces(), &fr, &fbr, &frbr, skip_zeros, assemble_q_data);
+    br_vec = AssembleOperators(assembly_domains, GetNDSpaces(), &dfr, &fr, &dfbr, &fbr,
+                               nullptr, &frbr, nullptr, skip_zeros, assemble_q_data);
+    if (!environment)
+    {
+      br_aux_vec = AssembleAuxOperators(assembly_domains, GetH1Spaces(), &fr, &fbr, &frbr,
+                                        skip_zeros, assemble_q_data);
+    }
   }
 }
 
@@ -1727,10 +1798,13 @@ void SpaceOperator::AssemblePreconditioner(
   Mpi::GlobalMin(1, &empty, GetComm());
   if (!empty)
   {
-    br_vec = AssembleOperators(GetNDSpaces(), &dfr, &fr, &dfbr, &fbr, nullptr, &frbr,
-                               nullptr, skip_zeros, assemble_q_data);
-    br_aux_vec =
-        AssembleAuxOperators(GetH1Spaces(), &fr, &fbr, &frbr, skip_zeros, assemble_q_data);
+    br_vec = AssembleOperators(assembly_domains, GetNDSpaces(), &dfr, &fr, &dfbr, &fbr,
+                               nullptr, &frbr, nullptr, skip_zeros, assemble_q_data);
+    if (!environment)
+    {
+      br_aux_vec = AssembleAuxOperators(assembly_domains, GetH1Spaces(), &fr, &fbr, &frbr,
+                                        skip_zeros, assemble_q_data);
+    }
   }
 }
 
@@ -1771,6 +1845,10 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(ScalarType a0,
   auto B = std::make_unique<BaseMultigridOperator<OperType>>(n_levels);
   for (bool aux : {false, true})
   {
+    if (aux && environment)
+    {
+      continue;  // the RegionSolver has no auxiliary space
+    }
     for (std::size_t l = 0; l < n_levels; l++)
     {
       const auto &fespace_l =
@@ -1801,6 +1879,16 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(ScalarType a0,
       auto B_l =
           BuildLevelParOperator<OperType>(std::move(br_l), std::move(bi_l), fespace_l);
       B_l->SetEssentialTrueDofs(dbc_tdof_lists_l, Operator::DiagonalPolicy::DIAG_ONE);
+      if constexpr (std::is_same_v<OperType, ComplexOperator> &&
+                    std::is_same_v<A3Type, double>)
+      {
+        if (environment)
+        {
+          // The region's single level leaves S_E(ω) out: the RegionSolver adds it to the
+          // region's Schur complement onto Γ at the frequency of the matrix.
+          environment->SetPreconditionerFrequency(a3);
+        }
+      }
       if (aux)
       {
         B->AddAuxiliaryOperator(std::move(B_l));
@@ -1814,6 +1902,22 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(ScalarType a0,
 
   print_prec_hdr = false;
   return B;
+}
+
+void SpaceOperator::SetEnvironment(EnvironmentOperator &env)
+{
+  MFEM_VERIFY(!environment && GetNDSpaces().GetNumLevels() == 1,
+              "The region of a driven substructuring is set up once, on one level!");
+  environment = &env;
+  region_restriction.emplace(assembly_domains, env.RegionAttributes());
+  auto &dbc = nd_dbc_tdof_lists.back();
+  const auto &pinned = env.PinnedTrueDofs();
+  std::vector<int> merged(dbc.HostRead(), dbc.HostRead() + dbc.Size());
+  merged.insert(merged.end(), pinned.HostRead(), pinned.HostRead() + pinned.Size());
+  std::ranges::sort(merged);
+  merged.erase(std::unique(merged.begin(), merged.end()), merged.end());
+  dbc.SetSize(static_cast<int>(merged.size()));
+  std::copy(merged.begin(), merged.end(), dbc.HostWrite());
 }
 
 std::unique_ptr<ComplexOperator> SpaceOperator::GetSystemOperator(double omega,
@@ -1840,6 +1944,27 @@ std::unique_ptr<ComplexOperator> SpaceOperator::GetSystemOperator(double omega,
     A->AddOperator(std::move(F));
   }
   return A;
+}
+
+void SpaceOperator::RestrictToAssemblyDomains(
+    std::initializer_list<MaterialPropertyCoefficient *> f,
+    std::initializer_list<MaterialPropertyCoefficient *> fb)
+{
+  const auto *attrs = assembly_domains.Get();
+  if (!attrs)
+  {
+    return;
+  }
+  const auto loc_attr = GetMesh().GetCeedAttributes(*attrs);
+  const auto loc_bdr_attr = GetMesh().GetCeedBdrAttributesByNeighbor(*attrs);
+  for (auto *c : f)
+  {
+    c->RestrictCoefficient(loc_attr);
+  }
+  for (auto *c : fb)
+  {
+    c->RestrictCoefficient(loc_bdr_attr);
+  }
 }
 
 void SpaceOperator::AddStiffnessCoefficients(double coeff, MaterialPropertyCoefficient &df,
@@ -2038,7 +2163,10 @@ bool SpaceOperator::GetExcitationVector(int excitation_idx, double omega,
   RHS *= 1i * omega;
   bool nnz2 = AddExcitationVector2Internal(excitation_idx, omega, RHS);
   linalg::SetSubVector(RHS, nd_dbc_tdof_lists.back(), 0.0);
-  return nnz1 || nnz2;
+  // The sources of the environment, condensed on Γ (their own entries are eliminated).
+  const bool nnz_env =
+      environment && environment->AddExcitation(excitation_idx, omega, RHS);
+  return nnz1 || nnz2 || nnz_env;
 }
 
 void SpaceOperator::GetLumpedPortExcitationVectorPrimaryEt(int port_idx,
@@ -2169,7 +2297,9 @@ bool SpaceOperator::GetExcitationVector2(int excitation_idx, double omega,
   RHS2 = 0.0;
   bool nnz2 = AddExcitationVector2Internal(excitation_idx, omega, RHS2);
   linalg::SetSubVector(RHS2, nd_dbc_tdof_lists.back(), 0.0);
-  return nnz2;
+  const bool nnz_env =
+      environment && environment->AddExcitation(excitation_idx, omega, RHS2);
+  return nnz2 || nnz_env;
 }
 
 bool SpaceOperator::AddExcitationVector1Internal(int excitation_idx, Vector &RHS1r,

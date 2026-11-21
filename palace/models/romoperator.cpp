@@ -25,8 +25,10 @@
 #include "linalg/operator.hpp"
 #include "linalg/orthog.hpp"
 #include "linalg/rap.hpp"
+#include "models/environmentoperator.hpp"
 #include "models/floquetportoperator.hpp"
 #include "models/materialoperator.hpp"
+#include "models/regionsolver.hpp"
 #include "models/spaceoperator.hpp"
 #include "utils/aaa.hpp"
 #include "utils/communication.hpp"
@@ -49,6 +51,62 @@ namespace palace
 {
 
 using namespace std::complex_literals;
+
+namespace
+{
+
+// A record of the rational model of a substructured region's environment as a boundary term
+// of the PROM, R_Γᵀ S_k R_Γ, applied matrix-free by its real and imaginary parts (see
+// EnvironmentOperator).
+class EnvironmentRecordOperator : public ComplexOperator
+{
+private:
+  class Part : public Operator
+  {
+  private:
+    const EnvironmentOperator &env;
+    const std::size_t k;
+    const bool imag;
+
+  public:
+    Part(const EnvironmentOperator &env, std::size_t k, bool imag, int n)
+      : Operator(n), env(env), k(k), imag(imag)
+    {
+    }
+    void Mult(const Vector &x, Vector &y) const override
+    {
+      y = 0.0;
+      env.RecordAddMultPart(k, imag, x, y);
+    }
+  };
+  const EnvironmentOperator &env;
+  const std::size_t k;
+  const Part re, im;
+
+public:
+  EnvironmentRecordOperator(const EnvironmentOperator &env, std::size_t k, int n)
+    : ComplexOperator(n), env(env), k(k), re(env, k, false, n), im(env, k, true, n)
+  {
+  }
+  const Operator *Real() const override { return &re; }
+  const Operator *Imag() const override { return &im; }
+  void Mult(const ComplexVector &x, ComplexVector &y) const override
+  {
+    y = 0.0;
+    env.RecordAddMult(k, x, y);
+  }
+  void AddMult(const ComplexVector &x, ComplexVector &y,
+               const std::complex<double> a) const override
+  {
+    ComplexVector t(y.Size());
+    t.UseDevice(true);
+    t = 0.0;
+    env.RecordAddMult(k, x, t);
+    y.AXPY(a, t);
+  }
+};
+
+}  // namespace
 
 namespace
 {
@@ -471,18 +529,15 @@ void MinimalRationalInterpolation::AddSolutionSample(double omega,
   z.push_back(omega);
 }
 
-double MinimalRationalInterpolation::FindMaxError(MPI_Comm comm) const
+double MinimizeBarycentricDenominator(const std::vector<double> &z,
+                                      const std::complex<double> *q, MPI_Comm comm)
 {
-  // Return an estimate for argmax_z ||u(z) - V y(z)|| as argmin_z |Q(z)| with Q(z) =
-  // sum_i q_z / (z - z_i) (denominator of the barycentric interpolation of u), on a uniform
-  // grid over the sampled range. |Q| is taken as infinite where it is not finite (at the
-  // support points), and ties go to the smaller z.
-  BlockTimer bt(Timer::CONSTRUCT_PROM);
   MFEM_VERIFY(z.size() >= 2, "Maximum error can only be found once two sample points have "
                              "been added to the PROM to define the parameter domain!");
   const double start = *std::ranges::min_element(z);
   const double end = *std::ranges::max_element(z);
   Eigen::Map<const Eigen::VectorXd> z_map(z.data(), z.size());
+  Eigen::Map<const Eigen::VectorXcd> q_map(q, z.size());
 
   // Number of uniformly spaced sample points for brute-force minimization of |Q(z)|. TODO:
   // Consider making configurable or scaling with the parameter range, so that it is e.g.
@@ -504,7 +559,8 @@ double MinimalRationalInterpolation::FindMaxError(MPI_Comm comm) const
   {
     // Index the points rather than accumulate delta, which can be below the spacing of
     // doubles near z. A value which is not finite is never smaller.
-    const double v = std::abs((q.array() / (z_map.array() - (start + i * delta))).sum());
+    const double v =
+        std::abs((q_map.array() / (z_map.array() - (start + i * delta))).sum());
     if (v < best_v)
     {
       best_v = v;
@@ -516,6 +572,14 @@ double MinimalRationalInterpolation::FindMaxError(MPI_Comm comm) const
     Mpi::GlobalMinLoc(1, &best_v, &best_i, comm);
   }
   return start + best_i * delta;
+}
+
+double MinimalRationalInterpolation::FindMaxError(MPI_Comm comm) const
+{
+  // Return an estimate for argmax_z ||u(z) - V y(z)|| as argmin_z |Q(z)| with Q(z) =
+  // sum_i q_z / (z - z_i) (denominator of the barycentric interpolation of u).
+  BlockTimer bt(Timer::CONSTRUCT_PROM);
+  return MinimizeBarycentricDenominator(z, q.data(), comm);
 }
 
 // Hybrid inner-product matrix. This is made from MassIntegrator of the domain and port
@@ -679,6 +743,14 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
                  i, Operator::DIAG_ZERO, /*imag_slot=*/true),
              true);
   }
+  if (const auto *env = space_op.GetEnvironment())
+  {
+    for (std::size_t k = 0; k < env->NumRecords(); k++)
+    {
+      add_term(BoundaryTermKind::Environment, static_cast<int>(k),
+               std::make_unique<EnvironmentRecordOperator>(*env, k, K->Height()), true);
+    }
+  }
   for (const auto &[idx, port] : space_op.GetFloquetPortOp())
   {
     add_term(BoundaryTermKind::FloquetPort, idx,
@@ -745,7 +817,8 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
       }
       for (const auto &term : bdr_terms)
       {
-        if (term.kind != BoundaryTermKind::WavePort)
+        if (term.kind != BoundaryTermKind::WavePort &&
+            term.kind != BoundaryTermKind::Environment)
         {
           const auto f = GetBoundaryTermCoefficient(term, omega);
           term.op->Mult(x, z);
@@ -845,9 +918,7 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
   // be done during an HDM solve at a given parameter point). The preconditioner for the
   // complex linear system is constructed from a real approximation to the complex system
   // matrix.
-  ksp = std::make_unique<ComplexKspSolver>(
-      iodata.solver.linear, GetPreconditionerMatrixSymmetry(iodata), iodata.problem.verbose,
-      space_op.GetNDSpaces(), &space_op.GetH1Spaces());
+  ksp = MakeDrivenKspSolver(iodata, space_op);
 
   MFEM_VERIFY(max_size_per_excitation > 0, "Reduced order basis must have > 0 size!");
 
@@ -912,6 +983,13 @@ std::complex<double> RomOperator::GetBoundaryTermCoefficient(const BoundaryTerm 
       return space_op.GetMaterialOp().EvaluateFrequencyDependentPermittivityA2(term.idx,
                                                                                1i * omega) /
              1i;
+    case BoundaryTermKind::Environment:
+      if (omega != env_omega)
+      {
+        env_coeffs = space_op.GetEnvironment()->Coefficients(omega);
+        env_omega = omega;
+      }
+      return env_coeffs[term.idx];
   }
   return 0.0;
 }
@@ -1390,6 +1468,26 @@ Eigen::VectorXcd RomOperator::UpdatePROM(const ComplexVector &u,
       proj.AddVector(RHS1[k], &RHS1r(n0, k));
     }
   }
+  if (const auto *env = space_op.GetEnvironment())
+  {
+    env_RHSr.resize(RHS1.size());
+    for (std::size_t k = 0;
+         const auto &[excitation_idx, data] : space_op.GetPortExcitations())
+    {
+      for (int j = n0; j < n; j++)
+      {
+        const auto p = env->RecordExcitationPairings(excitation_idx, V[j]);
+        if (!p.empty())
+        {
+          env_RHSr[k].conservativeResizeLike(
+              Eigen::MatrixXcd::Zero(n, static_cast<Eigen::Index>(p.size())));
+          env_RHSr[k].row(j) = Eigen::Map<const Eigen::RowVectorXcd>(
+              p.data(), static_cast<Eigen::Index>(p.size()));
+        }
+      }
+      k++;
+    }
+  }
   floquet_comp_V.conservativeResize(n, 3 * floquet_orders.size());
   for (std::size_t k = 0; k < floquet_orders.size(); k++)
   {
@@ -1460,6 +1558,13 @@ void RomOperator::TruncatePROM(std::size_t n)
     term.Ar.conservativeResize(ne, ne);
   }
   RHS1r.conservativeResize(ne, Eigen::NoChange);
+  for (auto &pairings : env_RHSr)
+  {
+    if (pairings.rows() > ne)
+    {
+      pairings.conservativeResize(ne, Eigen::NoChange);
+    }
+  }
   floquet_comp_V.conservativeResize(ne, Eigen::NoChange);
   if (weight_op_W)
   {
@@ -1636,6 +1741,13 @@ void RomOperator::SolvePROM(double omega)
     // excitation index (see WavePortOperator::AddExcitationBdrCoefficients), from the
     // pairings Vᵀs_full,p at this frequency.
     Eigen::VectorXcd b = (1i * omega) * RHS1r.col(k);
+    // The sources of a substructured region's environment, Σ_k c_k(ω) Vᵀ g_k.
+    if (k < static_cast<Eigen::Index>(env_RHSr.size()) && env_RHSr[k].cols() > 0)
+    {
+      const auto &a = space_op.GetEnvironment()->Coefficients(omega);
+      b += env_RHSr[k] * Eigen::Map<const Eigen::VectorXcd>(
+                             a.data(), static_cast<Eigen::Index>(a.size()));
+    }
     for (const auto &[port_idx, port_data] : space_op.GetWavePortOp())
     {
       if (port_data.excitation == excitation_idx)
@@ -2851,9 +2963,10 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
         case BoundaryTermKind::FarfieldPermittivityRotatedTrace:
         case BoundaryTermKind::FarfieldPermittivityMixedCurl:
         case BoundaryTermKind::Permittivity:
+        case BoundaryTermKind::Environment:
           // Wave ports are synthesized above and frequency-dependent permittivity below.
           // Floquet ports and a Floquet wave vector, which the rotated trace and mixed curl
-          // terms require, are rejected with circuit synthesis.
+          // terms require, are rejected with circuit synthesis, as is substructuring.
           break;
       }
       if (fit)

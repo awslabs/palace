@@ -595,6 +595,9 @@ if(PALACE_WITH_STRUMPACK OR PALACE_WITH_MUMPS)
   else()
     message(STATUS "Found ScaLAPACK: SCALAPACK::SCALAPACK target")
   endif()
+  # The dense factorization of the interface system of driven substructuring.
+  target_link_libraries(${LIB_TARGET_NAME} PUBLIC SCALAPACK::SCALAPACK)
+  target_compile_definitions(${LIB_TARGET_NAME} PUBLIC PALACE_WITH_SCALAPACK)
 endif()
 
 # Link ZLIB

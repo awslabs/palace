@@ -9,6 +9,7 @@
 #include <vector>
 #include <mfem.hpp>
 #include "linalg/vector.hpp"
+#include "utils/communication.hpp"
 
 namespace palace
 {
@@ -48,27 +49,30 @@ public:
 };
 
 //
-// A row of w doubles, so that the counts of a row exchange are rows (n w doubles can
-// overflow an int).
+// A row of w entries (double or std::complex<double>), so that the counts of a row exchange
+// are rows (n w entries can overflow an int).
 //
-class RowType
+template <typename T>
+class RowTypeT
 {
 public:
-  explicit RowType(int w)
+  explicit RowTypeT(int w)
   {
-    MPI_Type_contiguous(w, MPI_DOUBLE, &type);
+    MPI_Type_contiguous(w, mpi::DataType<T>(), &type);
     MPI_Type_commit(&type);
   }
-  ~RowType() { MPI_Type_free(&type); }
-  RowType(const RowType &) = delete;
-  RowType &operator=(const RowType &) = delete;
+  ~RowTypeT() { MPI_Type_free(&type); }
+  RowTypeT(const RowTypeT &) = delete;
+  RowTypeT &operator=(const RowTypeT &) = delete;
   MPI_Datatype type;
 };
 
+using RowType = RowTypeT<double>;
+
 //
 // The rows of the Schur variables that each rank holds, to gather their entries of a batch
-// of vectors on rank 0 in the order of the Schur variables, and to send them the rows of a
-// Schur complement from rank 0.
+// of vectors on rank 0 in the order of the Schur variables, and to move the rows of a Schur
+// complement between rank 0 and the ranks holding them.
 //
 class SchurRowGather
 {
@@ -78,6 +82,9 @@ public:
   SchurRowGather(MPI_Comm comm, HYPRE_BigInt row0, int n_loc,
                  const std::vector<HYPRE_BigInt> &schur_vars);
 
+  // With the rows numbered by rank, n_loc on this one. Collective.
+  SchurRowGather(MPI_Comm comm, int n_loc, const std::vector<HYPRE_BigInt> &schur_vars);
+
   // The local rows of the Schur variables on this rank, and their positions among them.
   const std::vector<int> &Rows() const { return row; }
   const std::vector<int> &Positions() const { return pos; }
@@ -86,9 +93,16 @@ public:
   // into g (n_schur x nb, column-major; not used on the other ranks). Collective.
   void Gather(const std::vector<double> &loc, int nb, double *g) const;
 
+  // The matrix on rank 0 (n_schur x n_schur, column-major; empty on the other ranks) from
+  // its rows on the ranks holding them (|Rows()| x n_schur, row-major), which it receives
+  // one rank at a time. Collective.
+  template <typename T>
+  std::vector<T> GatherSchur(const std::vector<T> &rows) const;
+
   // The rows on each rank (|Rows()| x n_schur, row-major) of a matrix on rank 0 (n_schur x
   // n_schur, column-major), which it sends one rank at a time. Collective.
-  std::vector<double> ScatterSchur(const std::vector<double> &full) const;
+  template <typename T>
+  std::vector<T> ScatterSchur(const std::vector<T> &full) const;
 
 private:
   MPI_Comm comm;
@@ -96,6 +110,45 @@ private:
   // On rank 0, the positions of the Schur rows of every rank (in rank order), with their
   // counts and offsets.
   std::vector<int> row, pos, all_pos, pos_cnt, pos_dsp;
+};
+
+//
+// A SchurSolver from the entries of the matrix, which it factors again with new values of
+// the same pattern, and which condenses right-hand sides onto the Schur variables and
+// expands their solutions.
+//
+template <typename T>
+class SchurFactorization : public SchurSolver<T>
+{
+public:
+  using typename SchurSolver<T>::VecType;
+
+  // Lower-triangle COO entries (1-based global indices) of the matrix.
+  struct Coo
+  {
+    std::vector<int> irn, jcn;
+    std::vector<T> val;
+  };
+
+  // The entries of the next Refactor, in the order of the input (to be overwritten).
+  virtual std::vector<T> &Values() = 0;
+
+  // The dense Schur complement on rank 0 (n_schur x n_schur, column-major, symmetric up to
+  // rounding), handed over instead of its rows (collective).
+  virtual std::vector<T> ReleaseSchur() = 0;
+
+  // Factor the entries in Values() (collective).
+  virtual void Refactor() = 0;
+
+  // Condensation of a batch of right-hand sides onto the Schur variables (collective):
+  // red = b_S - A_SI A_II^-1 b_I on rank 0 (n_schur x |B|, column-major). The next call
+  // must be Expand of the same batch.
+  virtual void Reduce(const std::vector<const VecType *> &B, std::vector<T> &red) = 0;
+
+  // Expansion of the batch of the last Reduce from the Schur part of its solution, u_S on
+  // rank 0 (n_schur x |X|, column-major): x_I = A_II^-1 (b_I - A_IS u_S) and x_S = u_S
+  // (collective).
+  virtual void Expand(const std::vector<T> &u, const std::vector<VecType *> &X) = 0;
 };
 
 //

@@ -123,6 +123,15 @@ struct HybridBulkBoundaryOperator
   }
 };
 
+// The point of the range of the samples z where the barycentric denominator
+// Q(z) = sum_i q_i / (z - z_i) of the weights q is least in magnitude, on a uniform grid:
+// where the rational interpolant with these samples and weights is estimated to err most.
+// |Q| is taken as infinite where it is not finite (at the samples), and ties go to the
+// smaller z. With a communicator, the search is split over its processes (same result).
+double MinimizeBarycentricDenominator(const std::vector<double> &z,
+                                      const std::complex<double> *q,
+                                      MPI_Comm comm = MPI_COMM_NULL);
+
 // Class for handling minimal-rational interpolation of solutions in frequency space. Used
 // as an error indicator and for selecting the next frequency sample points in PROM
 // construction. Each excitation gets a separate MRI, so sample frequencies are not shared.
@@ -214,6 +223,8 @@ protected:
   //     f = 0.5/(ω r_k), and with a frequency-scaled Floquet wave vector the rotated trace
   //     with f = ω/r_k and the nonsymmetric mixed curl with f = 1/r_k. The signs and
   //     factors of i are in the forms.
+  //   - The environment of a substructured region, per record k of its rational model:
+  //     f = c_k(ω), its barycentric coefficient, and the record's S_E on Γ.
   enum class BoundaryTermKind
   {
     WavePort,
@@ -223,7 +234,8 @@ protected:
     FarfieldPermittivityCurlCurl,
     FarfieldPermittivityRotatedTrace,
     FarfieldPermittivityMixedCurl,
-    Permittivity
+    Permittivity,
+    Environment
   };
   struct BoundaryTerm
   {
@@ -296,6 +308,14 @@ protected:
   // order basis defined below.
   Eigen::MatrixXcd Kr, Mr, Cr;  // Extend during UpdatePROM as modes are added
   Eigen::MatrixXcd RHS1r;       // Vᴴ RHS1, one column per excitation
+
+  // For a substructured region (see SpaceOperator::SetEnvironment): per excitation, the
+  // pairings Vᵀ g_k of the basis with the condensed sources of each record of the
+  // environment (r x records, empty without sources in the environment), which RHS2ᵣ(ω)
+  // combines with the coefficients c_k(ω); the coefficients at the last frequency.
+  std::vector<Eigen::MatrixXcd> env_RHSr;
+  mutable double env_omega = std::numeric_limits<double>::quiet_NaN();
+  mutable std::vector<std::complex<double>> env_coeffs;
 
   // Projections onto the basis of the Floquet port modes, for the DtN correction
   // F(ω) = Σ_k g_k(ω) v_k v_kᴴ and the excitation of the (0,0) modes (see FloquetPortData).

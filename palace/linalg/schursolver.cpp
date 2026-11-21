@@ -4,11 +4,24 @@
 #include "schursolver.hpp"
 
 #include <algorithm>
+#include <complex>
 #include <utility>
 #include "utils/communication.hpp"
 
 namespace palace
 {
+
+namespace
+{
+
+HYPRE_BigInt FirstRow(MPI_Comm comm, int n_loc)
+{
+  HYPRE_BigInt n = n_loc, first = 0;
+  MPI_Exscan(&n, &first, 1, HYPRE_MPI_BIG_INT, MPI_SUM, comm);
+  return Mpi::Root(comm) ? 0 : first;
+}
+
+}  // namespace
 
 SchurRowGather::SchurRowGather(MPI_Comm comm, HYPRE_BigInt row0, int n_loc,
                                const std::vector<HYPRE_BigInt> &schur_vars)
@@ -62,28 +75,75 @@ void SchurRowGather::Gather(const std::vector<double> &loc, int nb, double *g) c
   }
 }
 
-std::vector<double> SchurRowGather::ScatterSchur(const std::vector<double> &full) const
+SchurRowGather::SchurRowGather(MPI_Comm comm, int n_loc,
+                               const std::vector<HYPRE_BigInt> &schur_vars)
+  : SchurRowGather(comm, FirstRow(comm, n_loc), n_loc, schur_vars)
+{
+}
+
+template <typename T>
+std::vector<T> SchurRowGather::GatherSchur(const std::vector<T> &rows) const
 {
   const int m = static_cast<int>(row.size());
-  std::vector<double> rows(static_cast<std::size_t>(m) * n_schur);
+  std::vector<T> full;
+  if (n_schur == 0)
+  {
+    return full;
+  }
+  const RowTypeT<T> type(n_schur);
+  if (!Mpi::Root(comm))
+  {
+    MPI_Send(rows.data(), m, type.type, 0, 0, comm);
+    return full;
+  }
+  full.resize(static_cast<std::size_t>(n_schur) * n_schur);
+  std::vector<T> buf;
+  for (std::size_t q = 0; q < pos_cnt.size(); q++)
+  {
+    const T *x = rows.data();
+    if (q > 0)
+    {
+      buf.resize(static_cast<std::size_t>(pos_cnt[q]) * n_schur);
+      MPI_Recv(buf.data(), pos_cnt[q], type.type, static_cast<int>(q), 0, comm,
+               MPI_STATUS_IGNORE);
+      x = buf.data();
+    }
+    for (int r = 0; r < pos_cnt[q]; r++)
+    {
+      const std::size_t p = all_pos[pos_dsp[q] + r];
+      for (int c = 0; c < n_schur; c++)
+      {
+        full[p + static_cast<std::size_t>(n_schur) * c] =
+            x[static_cast<std::size_t>(r) * n_schur + c];
+      }
+    }
+  }
+  return full;
+}
+
+template <typename T>
+std::vector<T> SchurRowGather::ScatterSchur(const std::vector<T> &full) const
+{
+  const int m = static_cast<int>(row.size());
+  std::vector<T> rows(static_cast<std::size_t>(m) * n_schur);
   if (n_schur == 0)
   {
     return rows;
   }
-  const RowType type(n_schur);
+  const RowTypeT<T> type(n_schur);
   if (!Mpi::Root(comm))
   {
     MPI_Recv(rows.data(), m, type.type, 0, 0, comm, MPI_STATUS_IGNORE);
     return rows;
   }
-  std::vector<double> buf;
+  std::vector<T> buf;
   for (std::size_t q = 0; q < pos_cnt.size(); q++)
   {
     if (q > 0)
     {
       buf.resize(static_cast<std::size_t>(pos_cnt[q]) * n_schur);
     }
-    double *x = (q > 0) ? buf.data() : rows.data();
+    T *x = (q > 0) ? buf.data() : rows.data();
     for (int r = 0; r < pos_cnt[q]; r++)
     {
       const std::size_t p = all_pos[pos_dsp[q] + r];
@@ -100,6 +160,14 @@ std::vector<double> SchurRowGather::ScatterSchur(const std::vector<double> &full
   }
   return rows;
 }
+
+template std::vector<double> SchurRowGather::GatherSchur(const std::vector<double> &) const;
+template std::vector<std::complex<double>>
+SchurRowGather::GatherSchur(const std::vector<std::complex<double>> &) const;
+template std::vector<double>
+SchurRowGather::ScatterSchur(const std::vector<double> &) const;
+template std::vector<std::complex<double>>
+SchurRowGather::ScatterSchur(const std::vector<std::complex<double>> &) const;
 
 BackSolveSchurSolver::BackSolveSchurSolver(const mfem::HypreParMatrix &A,
                                            const std::vector<HYPRE_BigInt> &schur_vars,

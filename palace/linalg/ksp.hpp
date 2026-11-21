@@ -65,6 +65,9 @@ public:
                 FiniteElementSpaceHierarchy *aux_fespaces = nullptr);
   BaseKspSolver(std::unique_ptr<IterativeSolver<OperType>> &&ksp,
                 std::unique_ptr<Solver<OperType>> &&pc);
+  // The Krylov solver of the configuration, with the given preconditioner.
+  BaseKspSolver(const config::LinearSolverData &linear, int verbose, MPI_Comm comm,
+                std::unique_ptr<Solver<OperType>> &&pc);
 
   int NumTotalMult() const { return ksp_mult; }
   int NumTotalMultIterations() const { return ksp_mult_it; }

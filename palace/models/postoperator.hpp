@@ -259,8 +259,10 @@ protected:
   void SetupFieldCoefficients();
   void EnsureFieldCoefficientsSetup();
 
-  // Initialize Paraview, register all fields to write.
-  void InitializeParaviewDataCollection(const fs::path &sub_folder_name = "");
+  // Initialize Paraview, register all fields to write. With restart, the collection
+  // continues the one in its folder, whose cycles before the next write are kept.
+  void InitializeParaviewDataCollection(const fs::path &sub_folder_name = "",
+                                        bool restart = false);
   void EnsureParaviewDataCollection();
 
   // Subfolder for the field output of a driven excitation, the same for ParaView and grid
@@ -271,7 +273,7 @@ protected:
 public:
   // Public overload for the driven solver only, that takes in an excitation index and
   // sets the correct sub_folder_name path for the primary function above.
-  void InitializeParaviewDataCollection(int ex_idx)
+  void InitializeParaviewDataCollection(int ex_idx, bool restart = false)
     requires(solver_t == ProblemType::DRIVEN);
 
   // Whether this solve requests any field output. Drivers use this to release solver
@@ -313,7 +315,9 @@ protected:
   mutable InterpolationOperator interp_op;  // E & B fields: mutates during measure
 
   mutable Measurement measurement_cache;
-  std::optional<double> total_field_energy;  // see SetTotalFieldEnergy
+  std::map<int, std::complex<double>> lumped_port_voltages;  // see SetLumpedPortVoltages
+  std::map<int, std::complex<double>> wave_port_overlaps;    // see SetWavePortOverlaps
+  std::optional<double> total_field_energy;                  // see SetTotalFieldEnergy
 
   // Reduced-coordinate outputs for adaptive online postprocessing: the electric energy
   // form, the factor R of the curls of the basis vectors (the magnetic energy is
@@ -490,6 +494,24 @@ public:
                                            const ComplexVector &b,
                                            std::complex<double> omega)
     requires(solver_t == ProblemType::DRIVEN);
+
+  // Lumped port voltages given instead of measured from the field (where the field is not
+  // known: substructuring from a model), used by the next measurements; their power is not
+  // available (zero).
+  void SetLumpedPortVoltages(std::map<int, std::complex<double>> voltages)
+    requires(solver_t == ProblemType::DRIVEN)
+  {
+    lumped_port_voltages = std::move(voltages);
+  }
+
+  // Wave port overlaps of the field with the port mode (the S-parameter before its
+  // incident part is removed) given in the same way; their power and voltage are not
+  // available (zero).
+  void SetWavePortOverlaps(std::map<int, std::complex<double>> overlaps)
+    requires(solver_t == ProblemType::DRIVEN)
+  {
+    wave_port_overlaps = std::move(overlaps);
+  }
 
   // Configure and evaluate the exact reduced-coordinate default output path (domain
   // energies plus port S-parameters). Unsupported configured measurements leave the path

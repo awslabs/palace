@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:5-3-0",
+  "$id": "urn:palace:schema:5-3-1",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -2813,7 +2813,7 @@
         },
         "Restart": {
           "type": "integer",
-          "description": "1-based sample index from which to restart a partial frequency sweep (i.e. `\"Restart\": x` starts from the *x*-th sample of the combined sample set). Not valid for adaptive sweep.",
+          "description": "1-based sample index from which to restart a partial frequency sweep (i.e. `\"Restart\": x` starts from the *x*-th sample of the combined sample set). Not valid for adaptive sweep. With several excitations, the solves are counted all frequencies of an excitation before the next one, and in a substructured sweep all excitations at a frequency before the next one.",
           "exclusiveMinimum": 0,
           "default": 1
         },
@@ -3151,7 +3151,7 @@
     "Substructuring": {
       "type": "object",
       "title": "Substructuring",
-      "description": "Substructuring for electrostatic and magnetostatic simulations: the environment (the rest of the domain) is condensed onto its interface with the region of interest, and the region is solved against the condensed environment. With a saved model, repeated region redesigns reuse it without solving the environment again. Magnetostatic substructuring supports \"FluxLoop\" and \"SurfaceCurrent\" excitations, alone or together.",
+      "description": "Substructuring for electrostatic, magnetostatic and driven simulations: the environment (the rest of the domain) is condensed onto its interface with the region of interest, and the region is solved against the condensed environment. With a saved model, repeated region redesigns reuse it without solving the environment again. Magnetostatic substructuring supports \"FluxLoop\" and \"SurfaceCurrent\" excitations, alone or together; driven substructuring, uniform and adaptive frequency sweeps.",
       "additionalProperties": false,
       "required": ["Region"],
       "properties": {

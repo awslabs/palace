@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <exception>
 #include <filesystem>
 #include <optional>
 #include <set>
@@ -519,12 +520,36 @@ void RunRegressionCase(std::string_view case_dir, std::string_view config_json,
     BlockTimer::Reset();
     palace::Run(setup, comm, omp_threads, /*git_tag=*/nullptr);
     require_mesh(config, stage.path());
+    if (effective_opts.after_setup)
+    {
+      // A step that fails on some ranks (it may run on rank 0 only) fails the case on all.
+      std::exception_ptr error;
+      try
+      {
+        effective_opts.after_setup(stage.path());
+      }
+      catch (...)
+      {
+        error = std::current_exception();
+      }
+      int ok = !error;
+      Mpi::GlobalMin(1, &ok, comm);
+      if (error)
+      {
+        std::rethrow_exception(error);
+      }
+      REQUIRE(ok);
+    }
   }
   IoData iodata = LoadCaseIoData(std::move(config), effective_opts);
   MakeOutputFolder(iodata, comm);
   // Wipe BlockTimer state so timings/peak-memory don't accumulate across cases.
   BlockTimer::Reset();
   palace::Run(iodata, comm, omp_threads, /*git_tag=*/nullptr);
+  if (effective_opts.after_run)
+  {
+    effective_opts.after_run(stage.path());
+  }
 
   // palace::Run ends with a collective metadata write, so rank 0 can read
   // without a barrier. Use CHECK (non-throwing) so a mismatch on rank 0

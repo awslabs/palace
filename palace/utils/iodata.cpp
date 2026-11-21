@@ -723,6 +723,31 @@ void IoData::CheckConfiguration()
                    "\"Solver.Linear.SuperLU3DCommunicator\" is not used!\n");
     }
     solver.substructuring->direct_solver = solver.linear.type;
+
+    // An online driven sweep, and an offline adaptive one once it has sampled the
+    // environment, solve the region as a driven problem with the dense S_E of the
+    // environment on Γ (see SpaceOperator::SetEnvironment), preconditioned by the
+    // RegionSolver: from the region's exact complex matrix on one level, factored for its
+    // Schur complement onto Γ by a sparse direct solver (see RegionSolver). An offline
+    // exact sweep factors with its own solvers.
+    if (problem.type == ProblemType::DRIVEN)
+    {
+      auto &linear = solver.linear;
+      if (linear.type != LinearSolver::STRUMPACK && linear.type != LinearSolver::MUMPS &&
+          linear.type != LinearSolver::SUPERLU)
+      {
+#if defined(MFEM_USE_STRUMPACK)
+        linear.type = LinearSolver::STRUMPACK;
+#elif defined(MFEM_USE_MUMPS)
+        linear.type = LinearSolver::MUMPS;
+#elif defined(MFEM_USE_SUPERLU)
+        linear.type = LinearSolver::SUPERLU;
+#endif
+      }
+      linear.mg_max_levels = 1;
+      linear.pc_mat_real = false;
+      linear.pc_mat_shifted = 0;
+    }
   }
 
   // Resolve default values in configuration file.
@@ -1028,9 +1053,10 @@ void IoData::CheckConfiguration()
   {
     const auto &sub = *solver.substructuring;
     MFEM_VERIFY(problem.type == ProblemType::ELECTROSTATIC ||
-                    problem.type == ProblemType::MAGNETOSTATIC,
-                "Substructuring is only supported for electrostatic and magnetostatic "
-                "problem types!");
+                    problem.type == ProblemType::MAGNETOSTATIC ||
+                    problem.type == ProblemType::DRIVEN,
+                "Substructuring is only supported for electrostatic, magnetostatic and "
+                "driven problem types!");
 #if !defined(MFEM_USE_STRUMPACK) && !defined(MFEM_USE_MUMPS) && !defined(MFEM_USE_SUPERLU)
     MFEM_ABORT("Substructuring factors the environment and the region with a sparse direct "
                "solver: build Palace with STRUMPACK, MUMPS or SuperLU_DIST!");
@@ -1043,6 +1069,10 @@ void IoData::CheckConfiguration()
     // seam depend on the partition.
     MFEM_VERIFY(boundaries.periodic.boundary_pairs.empty(),
                 "Substructuring does not support \"Periodic\" boundaries!");
+    MFEM_VERIFY(problem.type != ProblemType::DRIVEN || model.refinement.max_it == 0,
+                "Adaptive mesh refinement with driven substructuring refines the full "
+                "model: run the adaptation without \"Solver.Substructuring\" (with "
+                "\"SaveAdaptMesh\") and condense the saved mesh offline!");
     // Adaptive refinement refines the region of an online run only: the environment was
     // condensed on its final mesh, and nonconforming refinement without a level constraint
     // does not spread into it.
@@ -1058,11 +1088,52 @@ void IoData::CheckConfiguration()
                   "refinement (\"Nonconformal\": true) without a level constraint "
                   "(\"MaxNCLevels\": 0), so it does not spread into the environment!");
     }
-    // The substructured solves postprocess the field of the region (see
-    // SubstructuringSolver::RegionPostprocessing), which gives no far field.
-    MFEM_VERIFY(boundaries.postpro.farfield.empty(),
-                "Substructuring does not compute \"Boundaries.Postprocessing.FarField\": "
-                "remove it, or run without \"Solver.Substructuring\"!");
+    if (problem.type == ProblemType::DRIVEN)
+    {
+      MFEM_VERIFY(!solver.driven.adaptive_circuit_synthesis,
+                  "Driven substructuring does not support \"AdaptiveCircuitSynthesis\"!");
+      // SuperLU_DIST would condense by solves in the real equivalent form, which go wrong
+      // through a resonance without a message: the condensation is by MUMPS or STRUMPACK
+      // (preferred in this order), SuperLU_DIST factors the region online only.
+#if defined(MFEM_USE_MUMPS) || defined(MFEM_USE_STRUMPACK)
+      constexpr bool condenser = true;
+#else
+      constexpr bool condenser = false;
+#endif
+      MFEM_VERIFY(
+          sub.mode == SubstructuringMode::ONLINE ||
+              (condenser && sub.direct_solver != LinearSolver::SUPERLU),
+          "Driven substructuring condenses the environment with MUMPS or STRUMPACK, "
+          "not SuperLU_DIST, whose condensation goes wrong through a resonance: "
+          "build Palace with one of them, and do not name SuperLU in "
+          "\"Solver\"/\"Linear\"/\"Type\" offline!");
+      // Floquet ports make the system non-symmetric.
+      MFEM_VERIFY(boundaries.floquetport.empty(),
+                  "Driven substructuring does not support Floquet ports!");
+      // The unit masses of frequency-dependent permittivity are assembled on the whole mesh
+      // (SpaceOperator), not on each side of Γ.
+      MFEM_VERIFY(std::none_of(domains.materials.begin(), domains.materials.end(),
+                               [](const auto &material)
+                               { return material.HasFrequencyDependentPermittivity(); }),
+                  "Driven substructuring does not support frequency-dependent material "
+                  "Permittivity yet!");
+      // From a model (online, or after an adaptive sweep's samples), the field is known in
+      // the region and on Γ only.
+      MFEM_VERIFY(
+          (sub.mode != SubstructuringMode::ONLINE && solver.driven.adaptive_tol <= 0.0) ||
+              (boundaries.postpro.dielectric.empty() &&
+               boundaries.postpro.farfield.attributes.empty()),
+          "Online or adaptive driven substructuring does not compute interface dielectric "
+          "or far-field postprocessing yet!");
+    }
+    else
+    {
+      // The substructured static solves postprocess the field of the region (see
+      // SubstructuringSolver::RegionPostprocessing), which gives no far field.
+      MFEM_VERIFY(boundaries.postpro.farfield.empty(),
+                  "Substructuring does not compute \"Boundaries.Postprocessing.FarField\": "
+                  "remove it, or run without \"Solver.Substructuring\"!");
+    }
     if (problem.type == ProblemType::MAGNETOSTATIC)
     {
       // One condensed environment serves every excitation, so inactive surface-current
