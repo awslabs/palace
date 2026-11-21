@@ -842,6 +842,51 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
     }
   }
 
+  // Incident plane waves: their PROM excitation only takes the coupling of K, C, and M
+  // between the dofs of the closure of the total-field region and the others, so the
+  // frequency-dependent terms of A(ω) must not couple them, as for a boundary with a
+  // frequency-dependent condition across the boundary of the region. Each term is checked
+  // on an arbitrary vector.
+  for (const auto &[idx, src] : space_op.GetPlaneWaveOp())
+  {
+    const auto &plane_wave_op = space_op.GetPlaneWaveOp();
+    const auto &nd_fespace = space_op.GetNDSpace();
+    auto &pw = plane_wave_terms.emplace_back();
+    pw.excitation_idx = idx;
+    pw.tf_marker = &plane_wave_op.GetTotalFieldMarker(idx, nd_fespace);
+    plane_wave_op.GetLayer(idx, nd_fespace, pw.tdofs, pw.elements);
+    ComplexVector z(r.Size()), y(r.Size());
+    z.UseDevice(true);
+    y.UseDevice(true);
+    {
+      auto *zr = z.Real().HostWrite();
+      auto *zi = z.Imag().HostWrite();
+      for (int i = 0; i < z.Size(); i++)
+      {
+        zr[i] = 1.0 + std::sin(1.0 + i);
+        zi[i] = std::cos(2.0 * i);
+      }
+    }
+    for (const auto &term : bdr_terms)
+    {
+      term.op->Mult(z, y);
+      const double norm = linalg::Norml2(space_op.GetComm(), y);
+      ApplyPlaneWaveCoupling(*term.op, *pw.tf_marker, z, y, false);
+      const double coupling = linalg::Norml2(space_op.GetComm(), y);
+      MFEM_VERIFY(coupling <= 1.0e-12 * norm,
+                  "Plane wave " << idx
+                                << ": a frequency-dependent boundary condition or "
+                                   "material term couples the total-field region and the "
+                                   "rest of the domain, which the adaptive frequency sweep "
+                                   "does not support (relative coupling "
+                                << coupling / norm
+                                << "). Boundaries with a frequency-dependent condition "
+                                   "(wave and Floquet ports, conductivity, rational "
+                                   "impedance, second-order absorbing) must not cross the "
+                                   "boundary of the total-field region!");
+    }
+  }
+
   // Set up the linear solver and set operators but don't set the operators yet (this will
   // be done during an HDM solve at a given parameter point). The preconditioner for the
   // complex linear system is constructed from a real approximation to the complex system
@@ -1055,6 +1100,53 @@ void RomOperator::CheckWavePortModePairings(double omega, const Eigen::MatrixXcd
   }
 }
 
+void RomOperator::ApplyPlaneWaveCoupling(const ComplexOperator &X, const Vector &tf_marker,
+                                         const ComplexVector &x, ComplexVector &y,
+                                         bool transpose) const
+{
+  // D x = P_O X P_T x - P_T X P_O x and Dᵀ x = P_T Xᵀ P_O x - P_O Xᵀ P_T x.
+  const int n = x.Size();
+  ComplexVector t(n), u(n);
+  t.UseDevice(true);
+  u.UseDevice(true);
+  y.SetSize(n);
+  y.UseDevice(true);
+  const auto *m = tf_marker.HostRead();
+  auto Mask = [&](const ComplexVector &in, ComplexVector &out, bool tf)
+  {
+    const auto *ir = in.Real().HostRead();
+    const auto *ii = in.Imag().HostRead();
+    auto *or_ = out.Real().HostWrite();
+    auto *oi = out.Imag().HostWrite();
+    for (int i = 0; i < n; i++)
+    {
+      const double w = tf ? m[i] : 1.0 - m[i];
+      or_[i] = w * ir[i];
+      oi[i] = w * ii[i];
+    }
+  };
+  auto Apply = [&](const ComplexVector &in, ComplexVector &out)
+  {
+    if (transpose)
+    {
+      X.MultTranspose(in, out);
+    }
+    else
+    {
+      X.Mult(in, out);
+    }
+  };
+  // First term P_a X P_b x, with (a, b) = (O, T) for D and (T, O) for Dᵀ.
+  Mask(x, t, !transpose);
+  Apply(t, u);
+  Mask(u, y, transpose);
+  // Second term -P_b X P_a x.
+  Mask(x, t, transpose);
+  Apply(t, u);
+  Mask(u, t, !transpose);
+  linalg::AXPY(-1.0, t, y);
+}
+
 bool RomOperator::SolveHDM(int excitation_idx, double omega, ComplexVector &u,
                            bool initial_guess, double max_rel_correction)
 {
@@ -1088,6 +1180,7 @@ bool RomOperator::SolveHDM(int excitation_idx, double omega, ComplexVector &u,
   {
     r.Add(1i * omega, RHS1[k]);
   }
+  space_op.AddPlaneWaveExcitationVector(excitation_idx, omega, *hdm_A, r);
 
   // Solve the linear system. A solve started from u with a correction limit (to certify u)
   // uses the tighter of the linear solver tolerance and the limit: with a looser solver
@@ -1391,6 +1484,34 @@ Eigen::VectorXcd RomOperator::UpdatePROM(const ComplexVector &u,
       proj.AddVector(RHS1[k], &RHS1r(n0, k));
     }
   }
+  for (auto &pw : plane_wave_terms)
+  {
+    // Rows of U_X = D_Xᵀ V on the layer dofs, for the new basis vectors.
+    const std::array<const ComplexOperator *, 3> X = {K.get(), C.get(), M.get()};
+    ComplexVector v(r.Size()), y(r.Size());
+    v.UseDevice(true);
+    y.UseDevice(true);
+    for (std::size_t x = 0; x < X.size(); x++)
+    {
+      if (!X[x])
+      {
+        continue;
+      }
+      pw.U[x].conservativeResize(pw.tdofs.Size(), n);
+      for (int j = n0; j < n; j++)
+      {
+        v.Real() = V[j];
+        v.Imag() = 0.0;
+        ApplyPlaneWaveCoupling(*X[x], *pw.tf_marker, v, y, true);
+        const auto *yr = y.Real().HostRead();
+        const auto *yi = y.Imag().HostRead();
+        for (int i = 0; i < pw.tdofs.Size(); i++)
+        {
+          pw.U[x](i, j) = std::complex<double>(yr[pw.tdofs[i]], yi[pw.tdofs[i]]);
+        }
+      }
+    }
+  }
   floquet_comp_V.conservativeResize(n, 3 * floquet_orders.size());
   for (std::size_t k = 0; k < floquet_orders.size(); k++)
   {
@@ -1461,6 +1582,16 @@ void RomOperator::TruncatePROM(std::size_t n)
     term.Ar.conservativeResize(ne, ne);
   }
   RHS1r.conservativeResize(ne, Eigen::NoChange);
+  for (auto &pw : plane_wave_terms)
+  {
+    for (auto &U : pw.U)
+    {
+      if (U.size() > 0)
+      {
+        U.conservativeResize(Eigen::NoChange, ne);
+      }
+    }
+  }
   floquet_comp_V.conservativeResize(ne, Eigen::NoChange);
   if (weight_op_W)
   {
@@ -1495,7 +1626,7 @@ RomOperator::SampleUpdate RomOperator::AddSamplePROM(int excitation_idx, double 
 
   // PROM solution at ω before the update. TruncatePROM restores this PROM exactly, so only
   // the sample changes between the attempts below.
-  SolvePROM(omega);
+  SolvePROM(omega, excitation_idx);
   const Eigen::VectorXcd x0 = GetReducedSolution(excitation_idx);
   while (true)
   {
@@ -1515,7 +1646,7 @@ RomOperator::SampleUpdate RomOperator::AddSamplePROM(int excitation_idx, double 
     double error_full = update.error;
     if (V.size() > n0)
     {
-      SolvePROM(omega);
+      SolvePROM(omega, excitation_idx);
       const Eigen::VectorXcd y = GetReducedSolution(excitation_idx);
       error_full = BasisNorm(update.c - y) / BasisNorm(update.c);
       Mpi::GlobalMax(1, &error_full, comm);
@@ -1561,15 +1692,17 @@ double RomOperator::BasisNorm(const Eigen::VectorXcd &c) const
   return weight_op_W ? (gram_L.topRows(c.size()).transpose() * c).norm() : c.norm();
 }
 
-void RomOperator::SolvePROM(double omega)
+void RomOperator::SolvePROM(double omega, std::optional<int> only_excitation)
 {
   BlockTimer bt(Timer::SOLVE_PROM);
 
   // Assemble the PROM linear system at the given frequency. The PROM system is defined by
   // the matrix Aᵣ(ω) = Kᵣ + iω Cᵣ - ω² Mᵣ + Vᴴ (A2(ω) + F(ω)) V and source vectors
-  // RHSᵣ(ω) = iω RHS1ᵣ + Vᴴ RHS2(ω), all from reduced quantities (no HDM-size work). It is
-  // factored once and solved for every excitation. The PROM is solved on every process so
-  // the matrix-vector product for vector expansion does not require communication.
+  // RHSᵣ(ω) = iω RHS1ᵣ + Vᴴ RHS2(ω), all from reduced quantities (no HDM-size work), except
+  // for the incident field of plane waves, which is interpolated on the layer of elements
+  // around their total-field region. It is factored once and solved for every excitation.
+  // The PROM is solved on every process so the matrix-vector product for vector expansion
+  // does not require communication.
   const auto &excitations = space_op.GetPortExcitations();
   Y.resize(V.size(), excitations.Size());
   if (V.empty())
@@ -1631,8 +1764,15 @@ void RomOperator::SolvePROM(double omega)
     }
   }
 
-  for (Eigen::Index k = 0; const auto &[excitation_idx, data] : excitations)
+  for (Eigen::Index k = 0; const auto &[idx, data] : excitations)
   {
+    if (only_excitation && *only_excitation != idx)
+    {
+      Y.col(k++).setZero();
+      continue;
+    }
+    const int excitation_idx = idx;
+
     // Wave-port excitation RHS2(ω) = −2iω sqrt(2) Σ_p s_full,p over the ports excited by
     // this excitation index (see WavePortOperator::AddExcitationBdrCoefficients), from the
     // pairings Vᵀs_full,p at this frequency.
@@ -1664,6 +1804,37 @@ void RomOperator::SolvePROM(double omega)
           b += s[is_te ? 0 : 1] * GetFloquetModeProjection(l, is_te).conjugate();
         }
       }
+    }
+    // Plane wave excitation Σ_X c_X U_Xᵀ g(ω), with the incident field on the layer dofs
+    // only, summed over the processes.
+    for (const auto &pw : plane_wave_terms)
+    {
+      if (pw.excitation_idx != excitation_idx)
+      {
+        continue;
+      }
+      ComplexVector g;
+      space_op.GetPlaneWaveOp().GetIncidentField(excitation_idx, omega,
+                                                 space_op.GetNDSpace(), pw.elements, g);
+      Eigen::VectorXcd gl(pw.tdofs.Size());
+      const auto *gr = g.Real().HostRead();
+      const auto *gi = g.Imag().HostRead();
+      for (int i = 0; i < pw.tdofs.Size(); i++)
+      {
+        gl(i) = std::complex<double>(gr[pw.tdofs[i]], gi[pw.tdofs[i]]);
+      }
+      const std::array<std::complex<double>, 3> c_X = {1.0, 1i * omega, -omega * omega};
+      Eigen::VectorXcd bl = Eigen::VectorXcd::Zero(b.size());
+      for (std::size_t x = 0; x < c_X.size(); x++)
+      {
+        if (pw.U[x].size() > 0)
+        {
+          bl.noalias() += c_X[x] * (pw.U[x].transpose() * gl);
+        }
+      }
+      Mpi::GlobalSum(2 * static_cast<int>(bl.size()), reinterpret_cast<double *>(bl.data()),
+                     space_op.GetComm());
+      b += bl;
     }
     Y.col(k++) = b;
   }

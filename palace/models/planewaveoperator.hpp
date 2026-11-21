@@ -88,6 +88,18 @@ public:
   bool GetIncidentField(int idx, double omega, const FiniteElementSpace &nd_fespace,
                         ComplexVector &g) const;
 
+  // The same, only on the true dofs of the given local elements (zero elsewhere), without
+  // the check of the quasi-periodicity. Every true dof of these elements is set on its
+  // owning process if one of its local elements is in the list.
+  void GetIncidentField(int idx, double omega, const FiniteElementSpace &nd_fespace,
+                        const mfem::Array<int> &elements, ComplexVector &g) const;
+
+  // The local true dofs which enter the right-hand side of the plane wave with the given
+  // index (the dofs of the elements outside of the total-field region which touch its
+  // boundary), and the local elements which contain any of them, on every process.
+  void GetLayer(int idx, const FiniteElementSpace &nd_fespace, mfem::Array<int> &tdofs,
+                mfem::Array<int> &elements) const;
+
   PlaneWaveOperator(const std::map<int, config::PlaneWaveData> &plane_wave,
                     const Units &units, const mfem::ParMesh &mesh);
 
