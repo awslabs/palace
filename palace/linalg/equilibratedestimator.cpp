@@ -7,6 +7,7 @@
 #include <cmath>
 #include <limits>
 #include <set>
+#include <vector>
 #include "fem/bilinearform.hpp"
 #include "fem/errorindicator.hpp"
 #include "fem/integrator.hpp"
@@ -342,9 +343,21 @@ CurlCorrectionSolver::CurlCorrectionSolver(const MaterialOperator &mat_op,
   // with the stopping tests of the estimator.
   auto &h1_hierarchy = broken ? h1_broken : h1_spaces;
   const bool multigrid = (nd_hierarchy.GetNumLevels() > 1);
+  int smooth_it = linear.mg_smooth_it;
+  if (multigrid)
+  {
+    // As the coarse solver of a singular operator, AMS takes the smoothing sweeps of the
+    // magnetostatic solve for that case.
+    std::vector<HYPRE_BigInt> level_sizes(nd_hierarchy.GetNumLevels());
+    for (std::size_t l = 0; l < level_sizes.size(); l++)
+    {
+      level_sizes[l] = nd_hierarchy.GetFESpaceAtLevel(l).GlobalTrueVSize();
+    }
+    smooth_it = GetAmsSingularCoarseSmoothIts(level_sizes, linear.mg_smooth_it);
+  }
   auto ams = std::make_unique<MfemWrapperSolver<Operator>>(std::make_unique<HypreAmsSolver>(
       nd_hierarchy.GetFESpaceAtLevel(0), h1_hierarchy.GetFESpaceAtLevel(0),
-      multigrid ? linear.ams_max_it : linear.mg_cycle_it, linear.mg_smooth_it,
+      multigrid ? linear.ams_max_it : linear.mg_cycle_it, smooth_it,
       linear.ams_vector_interp, true, linear.amg_agg_coarsen,
       linear.ams_agglomeration_target, 0));
   std::unique_ptr<Solver<Operator>> pc;
