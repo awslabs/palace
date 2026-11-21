@@ -58,6 +58,9 @@ public:
     return IsCurrent(mesh) && marking == markings;
   }
 
+  // A stored field, in the L2 space of the transfer.
+  const mfem::ParGridFunction &GetL2Field(std::size_t i) const { return *fields[i]; }
+
   // Number of stored fields.
   auto Size() const { return fields.size(); }
 
