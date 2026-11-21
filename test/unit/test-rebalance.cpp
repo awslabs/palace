@@ -257,7 +257,14 @@ bool SameOnAllProcesses(const mesh::RebalanceResult &result, MPI_Comm comm)
   double vmin[3] = {v[0], v[1], v[2]}, vmax[3] = {v[0], v[1], v[2]};
   Mpi::GlobalMin(3, vmin, comm);
   Mpi::GlobalMax(3, vmax, comm);
-  return std::equal(vmin, vmin + 3, vmax);
+  std::string root = result.reason;
+  int n = static_cast<int>(root.size());
+  Mpi::Broadcast(1, &n, 0, comm);
+  root.resize(n);
+  MPI_Bcast(root.data(), n, MPI_CHAR, 0, comm);
+  int same = (root == result.reason);
+  Mpi::GlobalMin(1, &same, comm);
+  return std::equal(vmin, vmin + 3, vmax) && same;
 }
 
 IoData MakeIoData()
@@ -465,8 +472,8 @@ TEST_CASE("RebalanceMesh conformal", "[rebalance][Serial][Parallel]")
 TEST_CASE("RebalanceMesh conformal without a partition", "[rebalance][Serial][Parallel]")
 {
   // One tetrahedron, on the first process: no partition gives every process an element, so
-  // none comes back. The mesh keeps its distribution, and the result says so, the same on
-  // all processes. Only the gather and the partition run, not the move.
+  // none comes back. The mesh keeps its distribution, and the result says so and why, the
+  // same on all processes. Only the gather and the partition run, not the move.
   MPI_Comm comm = Mpi::World();
   const int size = Mpi::Size(comm);
   mfem::Mesh serial(3, 4, 1, 4);
@@ -505,6 +512,8 @@ TEST_CASE("RebalanceMesh conformal without a partition", "[rebalance][Serial][Pa
     const auto message = mesh::RebalanceMessage(result, 1.0);
     CHECK(message.starts_with("Mesh not rebalanced:"));
     CHECK(message.find("the distribution is kept") != std::string::npos);
+    CHECK(result.reason == "the mesh has fewer elements than processes");
+    CHECK(message.find(result.reason) != std::string::npos);
   }
   else
   {

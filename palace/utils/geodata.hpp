@@ -376,6 +376,8 @@ struct RebalanceResult
 {
   double ratio_before = 1.0, ratio_after = 1.0;
   bool moved = false;
+  // Why no partition came back, when a conformal mesh keeps its distribution.
+  std::string reason;
 };
 
 // The line reporting a rebalance which the tolerance `tol` called for, without its
