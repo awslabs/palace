@@ -71,10 +71,12 @@ SweepPostprocessing(const IoData &iodata, const SpaceOperator &space_op)
 }
 
 // For a substructured region, the values of the environment's ports from the model at a
-// solution E (on Γ) of an excitation, for the next measurements.
+// solution E of an excitation, or its values on Γ on this process, for the next
+// measurements.
+template <typename T>
 void SetEnvironmentPorts(SpaceOperator &space_op,
                          PostOperator<ProblemType::DRIVEN> &post_op, int excitation_idx,
-                         double omega, const ComplexVector &E)
+                         double omega, const T &E)
 {
   if (auto *env = space_op.GetEnvironment())
   {
@@ -691,11 +693,17 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
   // for the online output sweep; failed residual checks transparently fall back to the
   // exact port eigensolver and enrich the basis.
   space_op.GetWavePortOp().EnableReducedModel(iodata.solver.driven.adaptive_tol);
-  // The reduced postprocessing has no environment's ports, nor partial energies, for a
-  // substructured region, which is postprocessed in full.
-  if (!env)
+  // For a substructured region, the reduced postprocessing takes the environment's port
+  // values from the values on Γ of the reduced solution, those of the basis vectors
+  // combined.
+  post_op.ConfigureReducedPostprocessing(prom_op, iodata.solver.driven.adaptive_tol);
+  std::vector<std::vector<double>> basis_gamma;
+  if (env && post_op.HasReducedPostprocessing())
   {
-    post_op.ConfigureReducedPostprocessing(prom_op, iodata.solver.driven.adaptive_tol);
+    for (const auto &v : prom_op.GetBasis())
+    {
+      basis_gamma.push_back(env->LocalInterfaceValues(v));
+    }
   }
 
   // Main fast frequency sweep loop (online phase).
@@ -731,6 +739,19 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
 
     if (reduced)
     {
+      if (env)
+      {
+        std::vector<std::complex<double>> e_gamma(
+            basis_gamma.empty() ? 0 : basis_gamma.front().size(), 0.0);
+        for (std::size_t i = 0; i < basis_gamma.size(); i++)
+        {
+          for (std::size_t a = 0; a < e_gamma.size(); a++)
+          {
+            e_gamma[a] += y(static_cast<Eigen::Index>(i)) * basis_gamma[i][a];
+          }
+        }
+        SetEnvironmentPorts(space_op, post_op, excitation_idx, omega, e_gamma);
+      }
       post_op.MeasureAndPrintReduced(excitation_idx, int(omega_i), expand ? &E : nullptr,
                                      omega, y, prom_op);
       return;

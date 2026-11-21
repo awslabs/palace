@@ -107,10 +107,18 @@ public:
   bool AddExcitation(int excitation_idx, double omega, ComplexVector &RHS);
 
   // The environment's lumped port voltages (V) and wave port overlaps (S) for a solution E
-  // of an excitation at ω.
+  // of an excitation at ω, or for its values on Γ on this process (in interface order, as
+  // LocalInterfaceValues gives them).
   void PortValues(int excitation_idx, double omega, const ComplexVector &E,
                   std::map<int, std::complex<double>> &V,
                   std::map<int, std::complex<double>> &S);
+  void PortValues(int excitation_idx, double omega,
+                  const std::vector<std::complex<double>> &e_gamma,
+                  std::map<int, std::complex<double>> &V,
+                  std::map<int, std::complex<double>> &S);
+
+  // The values of a real vector on Γ on this process, in interface order.
+  std::vector<double> LocalInterfaceValues(const Vector &x) const;
 
   // A rational model: its number of records, their coefficients c_k(ω), y += R_Γᵀ S_k R_Γ x
   // for record k, and v = R_Γᵀ g_k of an excitation (false if it has no sources in the

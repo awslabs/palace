@@ -2585,6 +2585,9 @@ void PostOperator<solver_t>::MeasureAndPrintReduced(int ex_idx, int step,
   // port S-parameter is sᵀe / R for the port mode s and its reaction R
   // (WavePortData::GetSParameter), and every PROM solve caches the pairings sᵀv of the
   // basis vectors with the modes of all wave ports for its wave-port terms.
+  // The voltages and overlaps given by SetLumpedPortVoltages and SetWavePortOverlaps (of
+  // the environment of a substructured region) replace those of the solution, as in the
+  // full measurement.
   const Eigen::MatrixX2d port_V = reduced_port_V * Y;
   std::map<int, std::complex<double>> port_voltages;
   for (Eigen::Index i = 0; const auto &[idx, data] : fem_op->GetLumpedPortOp())
@@ -2592,9 +2595,18 @@ void PostOperator<solver_t>::MeasureAndPrintReduced(int ex_idx, int step,
     port_voltages[idx] = {port_V(i, 0), port_V(i, 1)};
     i++;
   }
+  for (const auto &[idx, given] : lumped_port_voltages)
+  {
+    port_voltages[idx] = given;
+  }
   MeasureLumpedPorts(port_voltages);
   for (const auto &[idx, data] : fem_op->GetWavePortOp())
   {
+    if (const auto given = wave_port_overlaps.find(idx); given != wave_port_overlaps.end())
+    {
+      measurement_cache.wave_port_vi[idx].S = given->second;
+      continue;
+    }
     const auto *sV = rom_op.GetWavePortModePairing(idx);
     MFEM_VERIFY(sV && sV->size() == y.size(),
                 "Missing or stale PROM mode pairing for wave port " << idx << "!");

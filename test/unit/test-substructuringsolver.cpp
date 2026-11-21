@@ -48,6 +48,7 @@
 #include "models/drivensubstructure.hpp"
 #include "models/environmentoperator.hpp"
 #include "models/materialoperator.hpp"
+#include "models/postoperator.hpp"
 #include "models/regionsolver.hpp"
 #include "models/romoperator.hpp"
 #include "models/spaceoperator.hpp"
@@ -4287,6 +4288,64 @@ public:
   }
 };
 
+// A driven PostOperator which exposes its last measurement.
+class RegionPostOperator : public PostOperator<ProblemType::DRIVEN>
+{
+public:
+  using PostOperator<ProblemType::DRIVEN>::PostOperator;
+  const Measurement &GetMeasurement() const { return measurement_cache; }
+};
+
+// The box of DrivenBoxConfig with a lumped port in the environment (excitation 2), swept
+// adaptively over 10 to 30 GHz.
+void EnvironmentPort(json &config)
+{
+  config["Boundaries"]["LumpedPort"].push_back({{"Index", 2},
+                                                {"R", 50.0},
+                                                {"Attributes", {5}},
+                                                {"Direction", "+Y"},
+                                                {"Excitation", 2}});
+  config["Solver"]["Driven"] = {
+      {"MinFreq", 10.0}, {"MaxFreq", 30.0}, {"FreqStep", 10.0}, {"AdaptiveTol", 1.0e-6}};
+}
+
+// The region of an online configuration with its environment, from the saved model.
+// Collective.
+struct OnlineRegion
+{
+  IoData iodata;
+  std::vector<std::unique_ptr<Mesh>> meshes;
+  std::unique_ptr<SpaceOperator> space_op;
+  std::unique_ptr<EnvironmentOperator> env;
+
+  explicit OnlineRegion(const json &config) : iodata(config, false)
+  {
+    MPI_Comm comm = Mpi::World();
+    MakeOutputFolder(iodata, comm);
+    DrivenSolver driven(iodata, Mpi::Root(comm), Mpi::Size(comm), 1, nullptr);
+    auto smesh = mesh::Load(iodata, comm);
+    driven.Preprocess(iodata, smesh, comm);
+    std::vector<std::unique_ptr<mfem::ParMesh>> pmesh;
+    pmesh.push_back(mesh::Partition(iodata, std::move(smesh), comm));
+    mesh::RefineMesh(iodata, pmesh);
+    meshes.push_back(std::make_unique<Mesh>(std::move(pmesh[0])));
+    space_op = std::make_unique<SpaceOperator>(iodata, meshes);
+    env = std::make_unique<EnvironmentOperator>(iodata, *space_op);
+    space_op->SetEnvironment(*env);
+  }
+};
+
+// A random field, zero on the Dirichlet DOFs.
+ComplexVector RandomField(SpaceOperator &space_op, int seed)
+{
+  ComplexVector u(space_op.GetNDSpace().GetTrueVSize());
+  u.UseDevice(true);
+  linalg::SetRandom(space_op.GetComm(), u.Real(), seed);
+  linalg::SetRandom(space_op.GetComm(), u.Imag(), seed + 1);
+  linalg::SetSubVector(u, space_op.GetNDDbcTDofLists().back(), 0.0);
+  return u;
+}
+
 }  // namespace
 
 TEST_CASE_METHOD(palace::test::SharedTempDir,
@@ -4299,42 +4358,9 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   // environment of a model saved by an adaptive sweep, the pairings of the basis with its
   // sources lose the rows of the removed vectors, and the reduced solution is that before
   // the sample was added.
-  auto edit = [](json &config)
-  {
-    config["Boundaries"]["LumpedPort"].push_back({{"Index", 2},
-                                                  {"R", 50.0},
-                                                  {"Attributes", {5}},
-                                                  {"Direction", "+Y"},
-                                                  {"Excitation", 2}});
-    config["Solver"]["Driven"] = {
-        {"MinFreq", 10.0}, {"MaxFreq", 30.0}, {"FreqStep", 10.0}, {"AdaptiveTol", 1.0e-6}};
-  };
-  RunDrivenBox(temp_dir, "Offline", edit);
-  MPI_Comm comm = Mpi::World();
-  IoData iodata(DrivenBoxConfig(temp_dir, "Online", edit), false);
-  MakeOutputFolder(iodata, comm);
-  DrivenSolver driven(iodata, Mpi::Root(comm), Mpi::Size(comm), 1, nullptr);
-  auto smesh = mesh::Load(iodata, comm);
-  driven.Preprocess(iodata, smesh, comm);
-  std::vector<std::unique_ptr<mfem::ParMesh>> pmesh;
-  pmesh.push_back(mesh::Partition(iodata, std::move(smesh), comm));
-  mesh::RefineMesh(iodata, pmesh);
-  std::vector<std::unique_ptr<Mesh>> mesh;
-  mesh.push_back(std::make_unique<Mesh>(std::move(pmesh[0])));
-  SpaceOperator space_op(iodata, mesh);
-  EnvironmentOperator env(iodata, space_op);
-  space_op.SetEnvironment(env);
-  RegionRomOperator prom_op(iodata, space_op, 4);
-
-  auto sample = [&](int seed)
-  {
-    ComplexVector u(space_op.GetNDSpace().GetTrueVSize());
-    u.UseDevice(true);
-    linalg::SetRandom(comm, u.Real(), seed);
-    linalg::SetRandom(comm, u.Imag(), seed + 1);
-    linalg::SetSubVector(u, space_op.GetNDDbcTDofLists().back(), 0.0);
-    return u;
-  };
+  RunDrivenBox(temp_dir, "Offline", EnvironmentPort);
+  OnlineRegion region(DrivenBoxConfig(temp_dir, "Online", EnvironmentPort));
+  RegionRomOperator prom_op(region.iodata, *region.space_op, 4);
   auto pairing_rows = [&](Eigen::Index n)
   {
     const auto rows = prom_op.EnvironmentPairingRows();
@@ -4345,15 +4371,15 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
       REQUIRE((r == 0 || r == n));
     }
   };
-  const double omega = iodata.solver.driven.sample_f[0];
-  prom_op.UpdatePROM(sample(71), "s1");
+  const double omega = region.iodata.solver.driven.sample_f[0];
+  prom_op.UpdatePROM(RandomField(*region.space_op, 71), "s1");
   const auto n = static_cast<Eigen::Index>(prom_op.GetReducedDimension());
   pairing_rows(n);
   prom_op.SolvePROM(omega);
   const Eigen::VectorXcd x_n = prom_op.GetReducedSolution(2);
   REQUIRE(x_n.norm() > 0.0);
 
-  prom_op.UpdatePROM(sample(73), "s2");
+  prom_op.UpdatePROM(RandomField(*region.space_op, 73), "s2");
   REQUIRE(static_cast<Eigen::Index>(prom_op.GetReducedDimension()) == n + 2);
   pairing_rows(n + 2);
   prom_op.TruncatePROM(n);
@@ -4363,27 +4389,136 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   CHECK((prom_op.GetReducedSolution(2) - x_n).norm() <= 1.0e-12 * x_n.norm());
 }
 
-#if defined(MFEM_USE_EXCEPTIONS)
 TEST_CASE_METHOD(palace::test::SharedTempDir,
-                 "Driven substructuring rejects frequency-dependent permittivity",
+                 "Driven substructuring reduced postprocessing matches the full evaluation",
                  "[substructure][Serial][Parallel]")
 {
-  // A frequency-dependent material, in the region or in the environment, is rejected: its
-  // unit mass is assembled on the whole mesh, not on each side of Γ.
-  const int material = GENERATE(0, 1);
-  auto config = DrivenBoxConfig(temp_dir, "Offline");
-  config["Domains"]["Materials"][material]["Permittivity"] = {
-      {"HighFrequencyLimit", 2.0},
-      {"Terms",
-       {{{"Type", "Lorentz"},
-         {"DeltaPermittivity", 0.5},
-         {"ResonanceFrequency", 30.0},
-         {"DampingFrequency", 0.1}}}}};
-  CHECK_THROWS_WITH(IoData(config, false),
-                    Catch::Matchers::ContainsSubstring(
-                        "does not support frequency-dependent material Permittivity"));
+  // Online, the reduced postprocessing of the adaptive sweep takes the values of the
+  // environment's ports (a lumped port in it, and with a wave port at its end, above the
+  // cutoff of the box, an inactive wave port) from the values on Γ of the reduced
+  // solution: they are those of the expanded solution for both excitations, and with them
+  // the reduced measurements, the first of which the full evaluation checks, are the full
+  // ones. An online adaptive sweep then postprocesses every frequency in reduced form.
+  const bool wave = GENERATE(false, true);
+  CAPTURE(wave);
+  auto edit = [wave](json &config)
+  {
+    EnvironmentPort(config);
+    if (wave)
+    {
+      config["Boundaries"].erase("Absorbing");
+      config["Boundaries"]["WavePort"] = {
+          {{"Index", 3}, {"Attributes", {2}}, {"Mode", 1}, {"Offset", 0.0}}};
+      config["Solver"]["Driven"]["MinFreq"] = 150.0;
+      config["Solver"]["Driven"]["MaxFreq"] = 250.0;
+      config["Solver"]["Driven"]["FreqStep"] = 50.0;
+    }
+  };
+  RunDrivenBox(temp_dir, "Offline", edit);
+  {
+    OnlineRegion region(DrivenBoxConfig(temp_dir, "Online", edit));
+    auto &space_op = *region.space_op;
+    auto &env = *region.env;
+    RomOperator prom_op(region.iodata, space_op, 4);
+    RegionPostOperator post_op(region.iodata, space_op);
+    prom_op.UpdatePROM(RandomField(space_op, 81), "s1");
+    post_op.ConfigureReducedPostprocessing(prom_op,
+                                           region.iodata.solver.driven.adaptive_tol);
+    REQUIRE(post_op.HasReducedPostprocessing());
+
+    // A reduced solution y, its expansion E = V y, and its values on Γ from those of the
+    // basis vectors.
+    const auto &basis = prom_op.GetBasis();
+    Eigen::VectorXcd y(static_cast<Eigen::Index>(basis.size()));
+    for (Eigen::Index i = 0; i < y.size(); i++)
+    {
+      y(i) = std::complex<double>(1.0 / (i + 1.0), -0.25 / (i + 1.0));
+    }
+    ComplexVector E(space_op.GetNDSpace().GetTrueVSize());
+    E.UseDevice(true);
+    E = 0.0;
+    std::vector<std::complex<double>> e_gamma;
+    for (std::size_t i = 0; i < basis.size(); i++)
+    {
+      const auto yi = y(static_cast<Eigen::Index>(i));
+      linalg::AXPY(yi.real(), basis[i], E.Real());
+      linalg::AXPY(yi.imag(), basis[i], E.Imag());
+      const auto v_gamma = env.LocalInterfaceValues(basis[i]);
+      e_gamma.resize(v_gamma.size(), 0.0);
+      for (std::size_t a = 0; a < v_gamma.size(); a++)
+      {
+        e_gamma[a] += yi * v_gamma[a];
+      }
+    }
+    const double omega = region.iodata.solver.driven.sample_f[0];
+    ComplexVector B(space_op.GetCurlMatrix().Height());
+    B.UseDevice(true);
+    space_op.GetCurlMatrix().Mult(E.Real(), B.Real());
+    space_op.GetCurlMatrix().Mult(E.Imag(), B.Imag());
+    B *= -1.0 / (std::complex<double>(0.0, 1.0) * omega);
+
+    auto close = [](std::complex<double> x, std::complex<double> ref, double tol)
+    { return std::abs(x - ref) <= tol * std::max(std::abs(ref), 1.0e-300); };
+    for (const int excitation_idx : {1, 2})
+    {
+      CAPTURE(excitation_idx);
+      std::map<int, std::complex<double>> V, S, V_gamma, S_gamma;
+      env.PortValues(excitation_idx, omega, E, V, S);
+      env.PortValues(excitation_idx, omega, e_gamma, V_gamma, S_gamma);
+      REQUIRE(V.size() == 1);
+      REQUIRE(V_gamma.size() == 1);
+      REQUIRE(std::abs(V.at(2)) > 0.0);
+      CHECK(close(V_gamma.at(2), V.at(2), 1.0e-12));
+      REQUIRE(S.size() == (wave ? 1 : 0));
+      REQUIRE(S_gamma.size() == S.size());
+      if (wave)
+      {
+        REQUIRE(std::abs(S.at(3)) > 0.0);
+        CHECK(close(S_gamma.at(3), S.at(3), 1.0e-12));
+      }
+
+      post_op.SetLumpedPortVoltages(V);
+      post_op.SetWavePortOverlaps(S);
+      post_op.MeasureAndPrintAll(excitation_idx, 0, E, B, omega);
+      const Measurement full = post_op.GetMeasurement();
+      post_op.SetLumpedPortVoltages(V_gamma);
+      post_op.SetWavePortOverlaps(S_gamma);
+      post_op.MeasureAndPrintReduced(excitation_idx, 1, &E, omega, y, prom_op);
+      REQUIRE(post_op.HasReducedPostprocessing());
+      post_op.MeasureAndPrintReduced(excitation_idx, 2, nullptr, omega, y, prom_op);
+      const Measurement reduced = post_op.GetMeasurement();
+      REQUIRE(reduced.lumped_port_vi.size() == full.lumped_port_vi.size());
+      for (const auto &[idx, vi] : full.lumped_port_vi)
+      {
+        CAPTURE(idx);
+        CHECK(close(reduced.lumped_port_vi.at(idx).V, vi.V, 1.0e-10));
+        CHECK(close(reduced.lumped_port_vi.at(idx).S, vi.S, 1.0e-10));
+      }
+      REQUIRE(reduced.wave_port_vi.size() == full.wave_port_vi.size());
+      for (const auto &[idx, vi] : full.wave_port_vi)
+      {
+        CAPTURE(idx);
+        CHECK(close(reduced.wave_port_vi.at(idx).S, vi.S, 1.0e-10));
+      }
+      REQUIRE(reduced.domain_E_field_energy_i.size() ==
+              full.domain_E_field_energy_i.size());
+      for (std::size_t i = 0; i < full.domain_E_field_energy_i.size(); i++)
+      {
+        CHECK(close(*reduced.domain_E_field_energy_i[i].energy,
+                    *full.domain_E_field_energy_i[i].energy, 1.0e-10));
+      }
+    }
+  }
+  // The full online postprocessing prints the norm of the expanded solution at each
+  // frequency, which the reduced one does not compute.
+  const auto out = CaptureStdout([&]() { RunDrivenBox(temp_dir, "Online", edit); });
+  CHECK(out.find("Sol. ||E|| = ") == std::string::npos);
+  CHECK(out.find("Reduced postprocessing disagrees") == std::string::npos);
+  if (Mpi::Root(Mpi::World()))
+  {
+    CHECK(out.find("Beginning fast frequency sweep online phase") != std::string::npos);
+  }
 }
-#endif
 
 TEST_CASE_METHOD(palace::test::SharedTempDir,
                  "Driven substructuring online with a process holding no region element",

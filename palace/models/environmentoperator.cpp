@@ -538,6 +538,17 @@ EnvironmentOperator::LocalInterfaceValues(const ComplexVector &x) const
   return v;
 }
 
+std::vector<double> EnvironmentOperator::LocalInterfaceValues(const Vector &x) const
+{
+  const double *px = x.HostRead();
+  std::vector<double> v(gamma_local.size());
+  for (std::size_t a = 0; a < gamma_local.size(); a++)
+  {
+    v[a] = px[gamma_local[a]];
+  }
+  return v;
+}
+
 std::vector<std::complex<double>>
 EnvironmentOperator::AllInterfaceValues(const ComplexVector &x) const
 {
@@ -694,6 +705,14 @@ void EnvironmentOperator::PortValues(int excitation_idx, double omega,
                                      std::map<int, std::complex<double>> &V,
                                      std::map<int, std::complex<double>> &S)
 {
+  PortValues(excitation_idx, omega, LocalInterfaceValues(E), V, S);
+}
+
+void EnvironmentOperator::PortValues(int excitation_idx, double omega,
+                                     const std::vector<std::complex<double>> &e_gamma,
+                                     std::map<int, std::complex<double>> &V,
+                                     std::map<int, std::complex<double>> &S)
+{
   V.clear();
   S.clear();
   if (np == 0)
@@ -702,13 +721,14 @@ void EnvironmentOperator::PortValues(int excitation_idx, double omega,
   }
   Prepare(omega);
   // V_j = c_jk + h_j^T u_Γ, from the rows of Γ of each process.
-  const auto e_loc = LocalInterfaceValues(E);
+  MFEM_VERIFY(e_gamma.size() == gamma_local.size(),
+              "The values on the interface do not match its DOFs on this process!");
   std::vector<std::complex<double>> values(np, 0.0);
   for (int j = 0; j < np; j++)
   {
-    for (std::size_t a = 0; a < e_loc.size(); a++)
+    for (std::size_t a = 0; a < e_gamma.size(); a++)
     {
-      values[j] += cur.h[j][a] * e_loc[a];
+      values[j] += cur.h[j][a] * e_gamma[a];
     }
   }
   Mpi::GlobalSum(np, values.data(), comm);
