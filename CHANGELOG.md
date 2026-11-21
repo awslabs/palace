@@ -120,6 +120,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Performance Improvements
 
+  - Added a hypre patch, a prototype for
+    [hypre-space/hypre#1654](https://github.com/hypre-space/hypre/issues/1654), with which
+    AMS gathers the coarse levels of its auxiliary space BoomerAMG hierarchies onto fewer
+    processes during the solve and runs the additive Pi-space corrections concurrently.
+    `config["Solver"]["Linear"]["AMSAgglomerationTarget"]` sets the target number of rows
+    per process (`0` disables it). Results agree up to the summation order. SchemaVer 5-2-0
+    [PR 1154](https://github.com/awslabs/palace/pull/1154).
   - When AMS is the coarse solver of geometric multigrid for a singular operator (see
     [`"AMSSingularOperator"`](https://awslabs.github.io/palace/dev/config/reference/#config-solver-linear-amssingularoperator)),
     each AMS iteration now applies 8 to 32 smoothing sweeps before and after its auxiliary
