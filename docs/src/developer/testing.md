@@ -648,6 +648,9 @@ at once, as the old `baseline` script did.
     is too slow for the always-on regression job. Set `rtol`, `atol`,
     `excluded_columns`, `abs_columns`, `skip_rowcount`, expected
     output-directory flags, solver policies, and any `custom_checks`
-    callbacks.
+    callbacks. The `Minimum`, `Maximum`, and `Mean` columns of
+    `error-indicators.csv` are also compared with the absolute tolerance
+    which `config["Solver"]["Linear"]["EstimatorErrorTol"]` implies for the
+    element indicators (see `CompareErrorIndicatorFiles`).
  3. Build `unit-tests`, then run
     `mpirun -n $NUM_PROC_TEST ./palace-unit-tests "<name>"` to validate.

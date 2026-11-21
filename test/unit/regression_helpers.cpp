@@ -265,11 +265,16 @@ bool SkipNumericComparison(const RegressionOptions &opts)
 
 }  // namespace
 
+namespace
+{
+
 // Column-wise diff using Catch2's WithinRel + WithinAbs matchers.
 //   |a - b| <= max(atol, rtol * max(|a|, |b|))
-// is the "either condition" form: WithinRel(ref, rtol) || WithinAbs(ref, atol).
-// Declared in the header so custom checks can run it before their own assertions.
-void CompareCSVFiles(Table &actual, Table &reference, const RegressionOptions &opts)
+// is the "either condition" form: WithinRel(ref, rtol) || WithinAbs(ref, atol), with the
+// absolute tolerance atol(column, row) of each entry.
+template <typename AbsTol>
+void CompareCSVColumns(Table &actual, Table &reference, const RegressionOptions &opts,
+                       AbsTol &&atol)
 {
   if (!ValidateCSVTables(actual, reference, opts) || SkipNumericComparison(opts))
   {
@@ -310,9 +315,57 @@ void CompareCSVFiles(Table &actual, Table &reference, const RegressionOptions &o
       }
       INFO("row " << r + 1 << " column '" << r_col.header_text << "'");
       CHECK_THAT(av, Catch::Matchers::WithinRel(rv, opts.rtol) ||
-                         Catch::Matchers::WithinAbs(rv, opts.atol));
+                         Catch::Matchers::WithinAbs(rv, atol(c, r)));
     }
   }
+}
+
+// error-indicators.csv: the norm, minimum, maximum, and mean of the element indicators,
+// one row per estimate. The flux projection of the error estimator stops once its error is
+// below EstimatorErrorTol = τ times the estimate, ‖G - G*‖ ≤ τ ‖G - D‖ (to the accuracy of
+// its stopping test; see CgSolver::SetLeastSquaresTol). By the triangle inequality on each
+// element, the element indicators η_K then differ from those of the converged projection
+// by ‖η - η*‖_ℓ² ≤ ‖G - G*‖ ≤ τ ‖η‖_ℓ², also for the sums of squares of several
+// estimators and estimates which an ErrorIndicator combines. So each element indicator,
+// and with it the minimum, the maximum, and the mean, is within τ Norm of its converged
+// value, and an actual and a reference value differ by at most τ (Norm_a + Norm_r): an
+// absolute tolerance, which a relative one cannot replace for the small minimum. A
+// reference computed with the residual test alone is at least as accurate (it takes at
+// least as many conjugate gradient iterations, whose error decreases monotonically). The
+// norm itself changes by at most τ² / 2 relative, and keeps the case tolerance, as do all
+// columns for τ = 0 (the residual test alone).
+void CompareErrorIndicatorFiles(Table &actual, Table &reference,
+                                const RegressionOptions &opts, double error_tol)
+{
+  std::optional<std::size_t> norm_col;
+  for (std::size_t c = 0; c < std::min(actual.n_cols(), reference.n_cols()); ++c)
+  {
+    if (reference[c].header_text.find("Norm") != std::string::npos &&
+        actual[c].header_text.find("Norm") != std::string::npos)
+    {
+      norm_col = c;
+    }
+  }
+  CompareCSVColumns(actual, reference, opts,
+                    [&](std::size_t c, std::size_t r)
+                    {
+                      if (error_tol <= 0.0 || !norm_col || c == *norm_col)
+                      {
+                        return opts.atol;
+                      }
+                      return std::max(opts.atol,
+                                      error_tol * (std::abs(actual[*norm_col].data[r]) +
+                                                   std::abs(reference[*norm_col].data[r])));
+                    });
+}
+
+}  // namespace
+
+// Declared in the header so custom checks can run it before their own assertions.
+void CompareCSVFiles(Table &actual, Table &reference, const RegressionOptions &opts)
+{
+  CompareCSVColumns(actual, reference, opts,
+                    [&opts](std::size_t, std::size_t) { return opts.atol; });
 }
 
 namespace
@@ -497,6 +550,9 @@ void RunRegressionCase(std::string_view case_dir, std::string_view config_json,
   }
 
   IoData iodata = LoadCaseIoData(std::move(config), effective_opts);
+  // The tolerance of the error estimator's flux projection, relative to the estimate, sets
+  // that of the element indicators (see CompareErrorIndicatorFiles).
+  const double error_indicator_tol = iodata.solver.linear.estimator_error_tol;
   MakeOutputFolder(iodata, comm);
   const int omp_threads = palace::utils::ConfigureOmp();
   // Wipe BlockTimer state so timings/peak-memory don't accumulate across cases.
@@ -573,7 +629,14 @@ void RunRegressionCase(std::string_view case_dir, std::string_view config_json,
         continue;
       }
 
-      CompareCSVFiles(a, r, effective_opts);
+      if (std::filesystem::path(rel).filename() == "error-indicators.csv")
+      {
+        CompareErrorIndicatorFiles(a, r, effective_opts, error_indicator_tol);
+      }
+      else
+      {
+        CompareCSVFiles(a, r, effective_opts);
+      }
     }
   }
 }
