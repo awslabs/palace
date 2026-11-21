@@ -88,10 +88,12 @@
     {
       "Type": "BoomerAMG",
       "KSPType": "CG",
-      "Tol": 1.0e-12,
+      "Tol": 1.0e-14,
       "MaxIts": 100,
       "EstimatorType": "Equilibrated",
-      "EstimatorErrorTol": 1.0e-6
+      "EstimatorErrorTol": 0.0,
+      "EstimatorTol": 1.0e-12,
+      "EstimatorMaxIts": 100
     }
   }
 }
