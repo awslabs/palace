@@ -10,12 +10,13 @@ SPDX-License-Identifier: Apache-2.0
 Scattering problems, such as the radar cross section of an object, are driven by an
 incident plane wave that comes from infinity. *Palace* excites such a wave inside a
 bounded domain with the total-field/scattered-field (TF/SF) formulation
-[[1]](#References): a closed surface ``S`` encloses the scatterer, the solution is the
+[[1]](#References): a closed surface ``S`` encloses the scatterer, the unknown is the
 total field ``\mathbf{E}`` inside ``S`` and the scattered field
 ``\mathbf{E}_s = \mathbf{E} - \mathbf{E}_\text{inc}`` outside, and the incident field
 enters only on ``S``. The truncation of the domain (an absorbing boundary or a perfectly
-matched layer) therefore only sees the outgoing scattered field, and the far field
-computed outside of ``S`` is the far field of the scattered field.
+matched layer) therefore only sees the outgoing scattered field. From the solution,
+*Palace* reconstructs the total and the scattered fields everywhere, for the outputs and
+the far field.
 
 ## Formulation
 
@@ -79,10 +80,11 @@ The mesh needs:
 
   - a total-field region ``T`` containing the scatterer, separated from the truncation of
     the domain by at least one layer of elements of the background;
-  - for the far field and the radar cross section, an interior closed surface
+  - for the far field and the radar cross section, a closed surface
     ([`config["Boundaries"]["Postprocessing"]["FarField"]`](../config/reference.md#config-boundaries))
-    in the scattered-field region, outside of the elements which touch ``S``. *Palace* stops with an error if the far-field surface touches the total-field
-    region, where the far field would include the incident wave.
+    around the scatterer, in the background material. It is usually an interior surface
+    between ``S`` and the truncation, but, since the far field is computed from the
+    scattered field everywhere, it may also lie inside ``T`` or cross ``S``.
 
 Plane wave excitations are supported for driven simulations with a uniform frequency sweep.
 
@@ -118,6 +120,18 @@ of interest. This matters most for weak scattered fields, such as the backscatte
 of a scatterer whose forward scattering is much stronger.
 
 ## Output
+
+The discrete solution ``\mathbf{x}`` is the total field on the degrees of freedom of the
+closure of ``T``, where ``M = 1``, and the scattered field elsewhere. *Palace* reconstructs
+the total field ``\mathbf{E} = \mathbf{x} + (1 - M)\,\mathbf{g}`` and the scattered
+field ``\mathbf{E}_s = \mathbf{x} - M\,\mathbf{g}`` everywhere, and the magnetic flux
+densities from them. All the outputs (fields, energies, ports, probes, surface fluxes) use
+the total field, as for any other excitation; in the ParaView and grid function outputs,
+the scattered fields are also written as `Es_real`, `Es_imag`, `Bs_real` and `Bs_imag`.
+The error estimates take the total field in ``T``, where the mesh must resolve it, and the
+scattered field outside, where only the scattered field propagates, both normalized by the
+energy of the same fields; adaptive mesh refinement therefore does not refine the
+scattered-field region to resolve the incident wave.
 
 The far field in `farfield-rE.csv` is the far field of the scattered field. When all the
 excitations are plane waves, *Palace* also writes the bistatic radar cross section in

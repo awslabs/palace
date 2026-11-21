@@ -198,25 +198,22 @@ PostOperator<solver_t>::PostOperator(const config::ProblemData &problem,
     }
   }
 
-  // Radar cross section of the plane wave excitations: the far-field surface must lie in
-  // the scattered-field region, and the far field is also evaluated in the backscattering
-  // direction -k̂ of each plane wave.
+  // With plane wave excitations, the fields of all the outputs are the total field, and the
+  // scattered field is kept for the far field (and its visualization). The radar cross
+  // section also needs the far field in the backscattering direction -k̂ of each plane
+  // wave.
   if constexpr (solver_t == ProblemType::DRIVEN)
   {
     const auto &plane_wave_op = fem_op->GetPlaneWaveOp();
-    const auto &farfield_attrs = surf_post_op.farfield.attr_list;
-    if (!plane_wave_op.Empty() && farfield_attrs.Size() > 0)
+    if (!plane_wave_op.Empty())
     {
-      const auto &mesh = *fem_op->GetNDSpace().Get().GetParMesh();
-      const int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
-      const auto marker = mesh::AttrToMarker(bdr_attr_max, farfield_attrs);
+      Es = std::make_unique<GridFunction>(fem_op->GetNDSpace(), true);
+      Bs = std::make_unique<GridFunction>(fem_op_.GetCurlSpace(), true);
+    }
+    if (!plane_wave_op.Empty() && surf_post_op.farfield.attr_list.Size() > 0)
+    {
       for (const auto &[idx, src] : plane_wave_op)
       {
-        MFEM_VERIFY(!plane_wave_op.TouchesTotalField(idx, fem_op->GetNDSpace(), marker),
-                    "The far-field surface touches the total-field region of plane wave "
-                        << idx
-                        << ": it must lie entirely in the scattered-field region, outside "
-                           "of the elements of the total-field attributes!");
         const double theta = std::acos(std::clamp(-src.direction(2), -1.0, 1.0));
         double phi = std::atan2(-src.direction(1), -src.direction(0));
         if (phi < 0.0)
@@ -1088,6 +1085,14 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
       }
     }
   }
+  // Scattered fields of plane wave excitations (domain only).
+  if (Es)
+  {
+    RegisterDomainBaseEvalField("Es_real", E_domain_eval, Es->Real());
+    RegisterDomainBaseEvalField("Es_imag", E_domain_eval, Es->Imag());
+    RegisterDomainBaseEvalField("Bs_real", B_domain_eval, Bs->Real());
+    RegisterDomainBaseEvalField("Bs_imag", B_domain_eval, Bs->Imag());
+  }
   // In-plane B field for mode analysis (2D vector on ND space).
   if (Bt_inplane)
   {
@@ -1357,9 +1362,14 @@ void PostOperator<solver_t>::WriteParaviewFields(double time, int step)
   // visualization. Write the mesh coordinates in the same units as originally input.
   mfem::ParMesh &mesh = E ? *E->ParFESpace()->GetParMesh() : *B->ParFESpace()->GetParMesh();
   mesh::DimensionalizeMesh(mesh, mesh_Lc0);
-  ScaleGridFunctions(mesh_Lc0,
-                     {E.get(), B.get(), V.get(), A.get(), En.get(), Bt_inplane.get()});
+  ScaleGridFunctions(mesh_Lc0, {E.get(), B.get(), V.get(), A.get(), En.get(),
+                                Bt_inplane.get(), Es.get(), Bs.get()});
   DimensionalizeGridFunctions(units, E, B, V, A);
+  if (Es)
+  {
+    units.DimensionalizeInPlace<Units::ValueType::FIELD_E>(*Es);
+    units.DimensionalizeInPlace<Units::ValueType::FIELD_B>(*Bs);
+  }
   if (En)
   {
     units.DimensionalizeInPlace<Units::ValueType::FIELD_E>(*En);
@@ -1394,9 +1404,14 @@ void PostOperator<solver_t>::WriteParaviewFields(double time, int step)
   paraview->Save();
   paraview_bdr->Save();
   mesh::NondimensionalizeMesh(mesh, mesh_Lc0);
-  ScaleGridFunctions(1.0 / mesh_Lc0,
-                     {E.get(), B.get(), V.get(), A.get(), En.get(), Bt_inplane.get()});
+  ScaleGridFunctions(1.0 / mesh_Lc0, {E.get(), B.get(), V.get(), A.get(), En.get(),
+                                      Bt_inplane.get(), Es.get(), Bs.get()});
   NondimensionalizeGridFunctions(units, E, B, V, A);
+  if (Es)
+  {
+    units.NondimensionalizeInPlace<Units::ValueType::FIELD_E>(*Es);
+    units.NondimensionalizeInPlace<Units::ValueType::FIELD_B>(*Bs);
+  }
   if (En)
   {
     units.NondimensionalizeInPlace<Units::ValueType::FIELD_E>(*En);
@@ -1501,9 +1516,14 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step,
   // visualization. Write the mesh coordinates in the same units as originally input.
   mfem::ParMesh &mesh = E ? *E->ParFESpace()->GetParMesh() : *B->ParFESpace()->GetParMesh();
   mesh::DimensionalizeMesh(mesh, mesh_Lc0);
-  ScaleGridFunctions(mesh_Lc0,
-                     {E.get(), B.get(), V.get(), A.get(), En.get(), Bt_inplane.get()});
+  ScaleGridFunctions(mesh_Lc0, {E.get(), B.get(), V.get(), A.get(), En.get(),
+                                Bt_inplane.get(), Es.get(), Bs.get()});
   DimensionalizeGridFunctions(units, E, B, V, A);
+  if (Es)
+  {
+    units.DimensionalizeInPlace<Units::ValueType::FIELD_E>(*Es);
+    units.DimensionalizeInPlace<Units::ValueType::FIELD_B>(*Bs);
+  }
   if (En)
   {
     units.DimensionalizeInPlace<Units::ValueType::FIELD_E>(*En);
@@ -1550,6 +1570,14 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step,
         write_grid_function(E->Real(), "E");
       }
     }
+  }
+
+  if (Es)
+  {
+    write_grid_function(Es->Real(), "Es_real");
+    write_grid_function(Es->Imag(), "Es_imag");
+    write_grid_function(Bs->Real(), "Bs_real");
+    write_grid_function(Bs->Imag(), "Bs_imag");
   }
 
   if (En)
@@ -1664,9 +1692,14 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step,
   }
 
   mesh::NondimensionalizeMesh(mesh, mesh_Lc0);
-  ScaleGridFunctions(1.0 / mesh_Lc0,
-                     {E.get(), B.get(), V.get(), A.get(), En.get(), Bt_inplane.get()});
+  ScaleGridFunctions(1.0 / mesh_Lc0, {E.get(), B.get(), V.get(), A.get(), En.get(),
+                                      Bt_inplane.get(), Es.get(), Bs.get()});
   NondimensionalizeGridFunctions(units, E, B, V, A);
+  if (Es)
+  {
+    units.NondimensionalizeInPlace<Units::ValueType::FIELD_E>(*Es);
+    units.NondimensionalizeInPlace<Units::ValueType::FIELD_B>(*Bs);
+  }
   if (En)
   {
     units.NondimensionalizeInPlace<Units::ValueType::FIELD_E>(*En);
@@ -2243,8 +2276,9 @@ void PostOperator<solver_t>::MeasureFarField() const
     if (farfield_back.empty())
     {
       // NOTE: measurement_cache.freq is omega (it has a factor of 2pi).
-      measurement_cache.farfield.E_field = surf_post_op.GetFarFieldrE(
-          measurement_cache.farfield.thetaphis, *E, *B, measurement_cache.freq);
+      measurement_cache.farfield.E_field =
+          surf_post_op.GetFarFieldrE(measurement_cache.farfield.thetaphis, Es ? *Es : *E,
+                                     Es ? *Bs : *B, measurement_cache.freq);
       return;
     }
 
@@ -2257,7 +2291,7 @@ void PostOperator<solver_t>::MeasureFarField() const
     {
       thetaphis.push_back(thetaphi);
     }
-    auto rE = surf_post_op.GetFarFieldrE(thetaphis, *E, *B, measurement_cache.freq);
+    auto rE = surf_post_op.GetFarFieldrE(thetaphis, *Es, *Bs, measurement_cache.freq);
     std::size_t i = n;
     for (const auto &[idx, thetaphi] : farfield_back)
     {
@@ -2356,15 +2390,29 @@ void PostOperator<solver_t>::MeasureProbes() const
 using fmt::format;
 
 template <ProblemType solver_t>
-std::optional<double> PostOperator<solver_t>::MeasureAndPrintAll(int ex_idx, int step,
-                                                                 const ComplexVector &e,
-                                                                 const ComplexVector &b,
-                                                                 std::complex<double> omega)
+std::optional<double> PostOperator<solver_t>::MeasureAndPrintAll(
+    int ex_idx, int step, const ComplexVector &e, const ComplexVector &b,
+    std::complex<double> omega, const ComplexVector *e_s, const ComplexVector *b_s)
   requires(solver_t == ProblemType::DRIVEN)
 {
   BlockTimer bt0(Timer::POSTPRO);
   SetEGridFunction(e);
   SetBGridFunction(b);
+  MFEM_VERIFY(!e_s == !b_s, "The scattered E and B fields must be given together!");
+  MFEM_VERIFY(!e_s || Es, "Scattered fields are only given with plane wave excitations!");
+  if (Es)
+  {
+    // Without a plane wave on this excitation, the scattered field is the total field.
+    const ComplexVector &es = e_s ? *e_s : e, &bs = b_s ? *b_s : b;
+    Es->Real().SetFromTrueDofs(es.Real());
+    Es->Imag().SetFromTrueDofs(es.Imag());
+    Bs->Real().SetFromTrueDofs(bs.Real());
+    Bs->Imag().SetFromTrueDofs(bs.Imag());
+    Es->Real().ExchangeFaceNbrData();
+    Es->Imag().ExchangeFaceNbrData();
+    Bs->Real().ExchangeFaceNbrData();
+    Bs->Imag().ExchangeFaceNbrData();
+  }
 
   measurement_cache = {};
   measurement_cache.freq = omega;
