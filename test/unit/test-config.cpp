@@ -1597,6 +1597,35 @@ TEST_CASE("FarField", "[config][Serial]")
       CHECK(data.thetaphis.size() == 2);
     }
   }
+
+  SECTION("Periodic boundaries reject far-field extraction")
+  {
+    auto MakeConfig = [](int nsample, bool periodic)
+    {
+      json config = {
+          {"Problem", {{"Type", "Driven"}, {"Output", "test_output"}}},
+          {"Model", {{"Mesh", "test.msh"}}},
+          {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+          {"Boundaries",
+           {{"Absorbing", {{"Attributes", {3}}}},
+            {"Postprocessing",
+             {{"FarField", {{"Attributes", {3}}, {"NSample", nsample}}}}}}},
+          {"Solver", {{"Driven", {{"Samples", {{{"Type", "Point"}, {"Freq", {1.0}}}}}}}}}};
+      if (periodic)
+      {
+        config["Boundaries"]["Periodic"] = {{"BoundaryPairs",
+                                             {{{"DonorAttributes", {1}},
+                                               {"ReceiverAttributes", {2}},
+                                               {"Translation", {1.0, 0.0, 0.0}}}}}};
+      }
+      return config;
+    };
+    CHECK_NOTHROW(IoData(MakeConfig(10, false), false));
+    CHECK_NOTHROW(IoData(MakeConfig(0, true), false));
+    CHECK_THROWS_WITH(
+        IoData(MakeConfig(10, true), false),
+        Catch::Matchers::ContainsSubstring("not available with periodic boundaries"));
+  }
 }
 
 TEST_CASE("ParseStringAsDirection", "[config][Serial]")

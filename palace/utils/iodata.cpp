@@ -677,6 +677,15 @@ void IoData::CheckConfiguration()
     }
   }
 
+  // The Stratton-Chu integral of the far field is over the surface of a bounded radiator.
+  // On a periodic domain, the surface of one cell gives only the element factor of an
+  // infinite array, whose far field is concentrated on the directions of its Floquet
+  // orders, and the fields are integrated without their Floquet phase.
+  MFEM_VERIFY(boundaries.postpro.farfield.empty() ||
+                  boundaries.periodic.boundary_pairs.empty(),
+              "Far-field extraction (Postprocessing.FarField) is not available with "
+              "periodic boundaries: the domain is not a bounded radiator!");
+
   // Superconductor sheet boundaries (kinetic inductance) are only meaningful for the
   // magnetostatic total-inductance extraction.
   if (!boundaries.superconductor.empty() && problem.type != ProblemType::MAGNETOSTATIC)

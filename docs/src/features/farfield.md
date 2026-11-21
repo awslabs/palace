@@ -98,6 +98,12 @@ print(json.dumps({"ThetaPhis": [[90.0, p] for p in range(0, 361, dphi)]}))
 Both `"NSample"` and `"ThetaPhis"` can be specified simultaneously and the
 results will be combined and duplicates removed.
 
+Far-field extraction requires a bounded radiator, and is not available with
+[periodic boundaries](../config/reference.md#config-boundaries-periodic): the
+integral over the surface of one cell would only give the element factor of an
+infinite array, whose far field is concentrated on the directions of its Floquet
+orders.
+
 ## Output
 
 Once a simulation is run, *Palace* generates a CSV file named `farfield-rE.csv`

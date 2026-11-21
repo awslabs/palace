@@ -104,7 +104,9 @@ oblique plane wave only at isolated frequencies; with
 it scales with the frequency, as the wave vector of the plane wave does, and must then
 match it exactly, so a frequency sweep at a fixed angle of incidence stays consistent.
 Floquet port S-parameters (`port-floquet-S.csv`) are normalized to an incident Floquet
-mode, and are not written for excitations with a plane wave.
+mode, and are not written for excitations with a plane wave. The far field, and thus the
+radar cross section, is not available on a periodic cell (see
+[far-field extraction](farfield.md#Setup)).
 
 ## Accuracy
 

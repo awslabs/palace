@@ -127,6 +127,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     and the results of adaptive sweeps change by about the accuracy of the PROM. Set
     `"InitialGuess": false` to restore the previous default behavior. SchemaVer 5-0-0
     [PR 1126](https://github.com/awslabs/palace/pull/1126).
+  - Far-field extraction (`Boundaries.Postprocessing.FarField`) is now an error with
+    periodic boundaries (`Boundaries.Periodic`): the surface of one cell does not enclose a
+    bounded radiator, and the fields were integrated without their Floquet phase.
+    [PR 1212](https://github.com/awslabs/palace/pull/1212).
 
 #### Performance Improvements
 
