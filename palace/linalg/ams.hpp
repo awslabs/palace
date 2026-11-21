@@ -5,6 +5,7 @@
 #define PALACE_LINALG_AMS_HPP
 
 #include <memory>
+#include <vector>
 #include <mfem.hpp>
 #include "linalg/operator.hpp"
 #include "utils/iodata.hpp"
@@ -81,6 +82,18 @@ public:
     return (HYPRE_PtrToParSolverFcn)HYPRE_AMSSolve;
   }
 };
+
+// Number of smoothing sweeps on the Nedelec space in each AMS iteration, applied before and
+// after the auxiliary space corrections, when AMS is the coarse solver of geometric
+// multigrid for a singular operator. Takes the global numbers of true dofs of the
+// multigrid levels, coarsest first, and the number of smoothing sweeps of the multigrid
+// levels (MGSmoothIts), which is a lower bound. For a singular curl-curl operator, the
+// number of outer iterations depends strongly on this smoothing, which is cheap next to
+// the auxiliary space corrections. More sweeps pay off as long as the coarse solve costs
+// little next to the work on the finer levels, so their number grows with the ratio of the
+// sizes of the finer levels to the size of the coarsest one, between 8 and 32.
+int GetAmsSingularCoarseSmoothIts(const std::vector<HYPRE_BigInt> &level_sizes,
+                                  int mg_smooth_it);
 
 }  // namespace palace
 

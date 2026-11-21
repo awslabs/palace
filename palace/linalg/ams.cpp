@@ -3,6 +3,7 @@
 
 #include "ams.hpp"
 
+#include <algorithm>
 #include "fem/bilinearform.hpp"
 #include "fem/fespace.hpp"
 #include "fem/integrator.hpp"
@@ -276,6 +277,22 @@ void HypreAmsSolver::SetOperator(const Operator &op)
   auxB.Reset();
   auxX.Delete();
   auxX.Reset();
+}
+
+int GetAmsSingularCoarseSmoothIts(const std::vector<HYPRE_BigInt> &level_sizes,
+                                  int mg_smooth_it)
+{
+  MFEM_VERIFY(!level_sizes.empty() && level_sizes[0] > 0,
+              "The number of AMS smoothing sweeps requires a nonempty coarsest level!");
+  double ratio = 0.0;
+  for (std::size_t l = 1; l < level_sizes.size(); l++)
+  {
+    ratio += static_cast<double>(level_sizes[l]);
+  }
+  ratio /= static_cast<double>(level_sizes[0]);
+  // Round 1.5 times the ratio to the nearest integer within [8, 32] (clamped before the
+  // conversion, which is only defined for values that an int can hold).
+  return std::max(mg_smooth_it, static_cast<int>(std::clamp(1.5 * ratio + 0.5, 8.0, 32.0)));
 }
 
 }  // namespace palace
