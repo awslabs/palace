@@ -37,6 +37,9 @@ private:
 
   void UpdateAfterMeshChange(Mesh &mesh) const override;
 
+  void RemarkAfterMeshChange(const std::vector<int> &old_vertices) const override;
+  bool CarriesFields() const override { return prev_eigenvectors != nullptr; }
+
 public:
   EigenSolver(const IoData &iodata, bool root, int size = 0, int num_thread = 0,
               const char *git_tag = nullptr);

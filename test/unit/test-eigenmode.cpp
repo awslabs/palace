@@ -5,6 +5,8 @@
 #include <cmath>
 #include <complex>
 #include <memory>
+#include <numeric>
+#include <set>
 #include <vector>
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -104,6 +106,270 @@ TEST_CASE("Vector field transfer through refinement and rebalancing",
     tv -= ref;
     const double err = linalg::Norml2(comm, tv), norm = linalg::Norml2(comm, ref);
     CHECK(err <= 1.0e-12 * norm);
+  }
+}
+
+TEST_CASE("Vector field transfer through conformal refinement, new marks and a move",
+          "[eigenmode][Serial][Parallel]")
+{
+  // H(curl) fields of a space of order p, linear in the coordinates, are kept exactly
+  // through a conformal refinement of tetrahedra, a new marking of the mesh, which reorders
+  // the vertices of elements, and a parallel move of the elements. Without putting each
+  // element's values back through its new vertex order, they are not. Also on triangles,
+  // and on tetrahedra with curved (order 2) nodes, where the values at the element centers
+  // are compared before and after the marking, as the space does not hold linear fields.
+  const int order = GENERATE(1, 2);
+  const bool remark = GENERATE(true, false);
+  const int kind = GENERATE(0, 1, 2);  // Straight tetrahedra, triangles, curved tetrahedra
+  CAPTURE(order, remark, kind);
+  const int dim = (kind == 1) ? 2 : 3;
+  MPI_Comm comm = Mpi::World();
+  const int size = Mpi::Size(comm);
+  auto smesh =
+      (dim == 3)
+          ? mfem::Mesh::MakeCartesian3D(3, 3, 3, mfem::Element::TETRAHEDRON, 1.0, 1.0, 1.0)
+          : mfem::Mesh::MakeCartesian2D(4, 4, mfem::Element::TRIANGLE, true, 1.0, 1.0);
+  if (kind == 2)
+  {
+    smesh.SetCurvature(2);
+  }
+  smesh.Transform(  // Unequal edge lengths, so that new marks reorder vertices
+      [dim](const mfem::Vector &x, mfem::Vector &y)
+      {
+        y = x;
+        const double z = (dim == 3) ? x(2) : 0.0;
+        // Irregular, so that the new marks give many vertex orders.
+        y(0) += 0.08 * std::sin(17.0 * x(1) + 13.0 * z + 5.0 * x(0));
+        y(1) += 0.08 * std::sin(15.0 * z + 12.0 * x(0) + 3.0 * x(1));
+        if (dim == 3)
+        {
+          y(2) += 0.08 * std::sin(13.0 * x(0) + 14.0 * x(1) + 7.0 * x(2));
+        }
+        else
+        {
+          y(1) *= 1.7;  // Stretched, so that the new marks of the bisected triangles differ
+        }
+      });
+  smesh.Finalize(true);
+  std::vector<int> part(smesh.GetNE(), 0);
+  for (int e = 0; e < smesh.GetNE(); e++)
+  {
+    part[e] = (e % 5 == 0) ? (e / 5) % size : 0;
+  }
+  mfem::ParMesh pmesh(comm, smesh, part.data());
+  mfem::ND_FECollection nd_fec(order, pmesh.Dimension());
+  auto Field = [order, dim](const mfem::Vector &x, int k, mfem::Vector &E)
+  {
+    E.SetSize(dim);
+    const double z = (dim == 3) ? x(2) : 0.0;
+    // A rotation, which the lowest order holds, and at order 2 any linear field.
+    E(0) = 1.0 + 0.5 * z - 0.3 * x(1) + ((order > 1) ? 2.0 * x(1) - z : 0.0);
+    E(1) = -0.5 + 0.3 * x(0) - 0.2 * z + ((order > 1) ? 3.0 * x(0) + z : 0.0);
+    if (dim == 3)
+    {
+      E(2) = 2.0 + 0.2 * x(1) - 0.5 * x(0) + ((order > 1) ? x(0) - 4.0 * x(1) : 0.0);
+    }
+    if (k == 1)
+    {
+      E *= -0.25;
+      E(0) += 1.0;
+    }
+  };
+  auto TrueDofs = [&](mfem::ParFiniteElementSpace &fespace, int k)
+  {
+    mfem::VectorFunctionCoefficient coeff(
+        dim, [&Field, k](const mfem::Vector &x, mfem::Vector &E) { Field(x, k, E); });
+    mfem::ParGridFunction gf(&fespace);
+    gf.ProjectCoefficient(coeff);
+    Vector tv(fespace.GetTrueVSize());
+    gf.GetTrueDofs(tv);
+    return tv;
+  };
+  VectorFieldTransfer transfer(pmesh, order);
+  {
+    mfem::ParFiniteElementSpace nd_fespace(&pmesh, &nd_fec);
+    for (int k = 0; k < 2; k++)
+    {
+      transfer.AddField(nd_fespace, TrueDofs(nd_fespace, k));
+    }
+  }
+
+  // Refine the elements in a corner, conformally; mark the mesh again; move the elements to
+  // a balanced partition in the order of their global numbers.
+  mfem::Array<int> marked;
+  for (int e = 0; e < pmesh.GetNE(); e++)
+  {
+    mfem::Vector c;
+    pmesh.GetElementCenter(e, c);
+    if (c(0) < 0.5 && c(1) < 0.5)
+    {
+      marked.Append(e);
+    }
+  }
+  pmesh.GeneralRefinement(marked, 0, 0);
+  REQUIRE(pmesh.Conforming());
+  transfer.Update();
+  auto VertexLists = [&pmesh]()
+  {
+    std::vector<int> v;
+    for (int e = 0; e < pmesh.GetNE(); e++)
+    {
+      const auto *el = pmesh.GetElement(e);
+      v.insert(v.end(), el->GetVertices(), el->GetVertices() + el->GetNVertices());
+    }
+    return v;
+  };
+  // The values of the fields at the element centers, which a marking does not move.
+  auto CenterValues = [&]()
+  {
+    mfem::ParFiniteElementSpace nd_fespace(&pmesh, &nd_fec);
+    std::vector<double> values;
+    for (int k = 0; k < 2; k++)
+    {
+      Vector tv;
+      transfer.GetField(k, nd_fespace, tv);
+      mfem::ParGridFunction gf(&nd_fespace);
+      gf.SetFromTrueDofs(tv);
+      gf.HostRead();
+      mfem::Vector v;
+      for (int e = 0; e < pmesh.GetNE(); e++)
+      {
+        gf.GetVectorValue(e, mfem::Geometries.GetCenter(pmesh.GetElementBaseGeometry(e)),
+                          v);
+        values.insert(values.end(), v.begin(), v.end());
+      }
+    }
+    return values;
+  };
+  // The L2 fields of the transfer at a point of each element given by barycentric
+  // coordinates on its vertices in the order of `verts`, which is the same physical point
+  // before and after the marking (the weights follow the vertices, not their order).
+  const double bary[4] = {0.1, 0.2, 0.3, 0.4};
+  auto L2Values = [&](const std::vector<int> &verts, const std::vector<int> &ref)
+  {
+    const int nv = dim + 1;
+    std::vector<double> values;
+    for (int k = 0; k < 2; k++)
+    {
+      const auto &gf = transfer.GetL2Field(k);
+      gf.HostRead();
+      mfem::Vector v;
+      for (int e = 0; e < pmesh.GetNE(); e++)
+      {
+        double w[4] = {0.0, 0.0, 0.0, 0.0};
+        for (int j = 0; j < nv; j++)
+        {
+          for (int i = 0; i < nv; i++)
+          {
+            w[j] += (verts[nv * e + j] == ref[nv * e + i])
+                        ? bary[i] / (dim == 3 ? 1.0 : 0.6)
+                        : 0.0;
+          }
+        }
+        mfem::IntegrationPoint ip;
+        ip.Set3(w[1], w[2], (dim == 3) ? w[3] : 0.0);
+        gf.GetVectorValue(e, ip, v);
+        values.insert(values.end(), v.begin(), v.end());
+      }
+    }
+    return values;
+  };
+  const auto old_vertices = VertexLists();
+  const auto old_values = CenterValues();
+  const auto old_l2 = L2Values(old_vertices, old_vertices);
+  pmesh.Finalize(true);
+  const auto new_vertices = VertexLists();
+  int reordered = 0;
+  for (std::size_t i = 0; i < old_vertices.size(); i++)
+  {
+    reordered += (old_vertices[i] != new_vertices[i]);
+  }
+  Mpi::GlobalSum(1, &reordered, comm);
+  CHECK(reordered > 0);
+  // The orders of the vertices which the marking gave the elements.
+  {
+    const int nv = dim + 1;
+    std::vector<int> seen(256, 0);  // Over all processes, by the code of the permutation
+    for (int e = 0; e < pmesh.GetNE(); e++)
+    {
+      int code = 0;
+      for (int j = 0; j < nv; j++)
+      {
+        code = 4 * code + static_cast<int>(std::find(old_vertices.begin() + nv * e,
+                                                     old_vertices.begin() + nv * (e + 1),
+                                                     new_vertices[nv * e + j]) -
+                                           (old_vertices.begin() + nv * e));
+      }
+      seen[code] = 1;
+    }
+    Mpi::GlobalMax(static_cast<int>(seen.size()), seen.data(), comm);
+    const int orders = std::accumulate(seen.begin(), seen.end(), 0);
+    CHECK(orders == ((dim == 3) ? 12 : 3));  // Every order a marking can give
+  }
+  transfer.Remark(remark ? old_vertices : new_vertices, 1);
+  CHECK(transfer.IsCurrent(pmesh, 1));
+  CHECK_FALSE(transfer.IsCurrent(pmesh, 0));
+  {
+    const auto new_l2 = L2Values(new_vertices, old_vertices);
+    double diff = 0.0, norm = 0.0;
+    for (std::size_t i = 0; i < new_l2.size(); i++)
+    {
+      diff = std::max(diff, std::abs(new_l2[i] - old_l2[i]));
+      norm = std::max(norm, std::abs(old_l2[i]));
+    }
+    Mpi::GlobalMax(1, &diff, comm);
+    Mpi::GlobalMax(1, &norm, comm);
+    CHECK((remark ? (diff <= 1.0e-12 * norm) : (diff > 1.0e-3 * norm)));
+  }
+  {
+    const auto new_values = CenterValues();
+    REQUIRE(new_values.size() == old_values.size());
+    double diff = 0.0, norm = 0.0;
+    for (std::size_t i = 0; i < new_values.size(); i++)
+    {
+      diff = std::max(diff, std::abs(new_values[i] - old_values[i]));
+      norm = std::max(norm, std::abs(old_values[i]));
+    }
+    Mpi::GlobalMax(1, &diff, comm);
+    Mpi::GlobalMax(1, &norm, comm);
+    if (remark)
+    {
+      CHECK(diff <= 1.0e-12 * norm);
+    }
+    else if (order > 1 && dim == 3)  // At the center of a triangle, the values do not tell
+    {
+      CHECK(diff > 1.0e-3 * norm);
+    }
+  }
+  {
+    const long long ne = pmesh.GetGlobalNE(), offset = pmesh.GetGlobalElementNum(0);
+    mfem::Array<int> partition(pmesh.GetNE());
+    for (int e = 0; e < pmesh.GetNE(); e++)
+    {
+      partition[e] = static_cast<int>(((offset + e) * size) / ne);
+    }
+    pmesh.Rebalance(partition);
+  }
+  transfer.Update();
+  CHECK(transfer.IsCurrent(pmesh));
+
+  mfem::ParFiniteElementSpace nd_fespace(&pmesh, &nd_fec);
+  for (int k = 0; k < 2; k++)
+  {
+    const auto ref = TrueDofs(nd_fespace, k);
+    Vector tv;
+    transfer.GetField(k, nd_fespace, tv);
+    REQUIRE(tv.Size() == ref.Size());
+    tv -= ref;
+    const double err = linalg::Norml2(comm, tv), norm = linalg::Norml2(comm, ref);
+    if (remark && kind != 2)  // The curved space does not hold the linear fields
+    {
+      CHECK(err <= 1.0e-12 * norm);
+    }
+    else if (!remark)
+    {
+      CHECK(err > 1.0e-3 * norm);  // The new marks move the values of the linear fields
+    }
   }
 }
 

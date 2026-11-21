@@ -96,6 +96,14 @@ EigenSolver::EigenSolver(const IoData &iodata, bool root, int size, int num_thre
 
 EigenSolver::~EigenSolver() = default;
 
+void EigenSolver::RemarkAfterMeshChange(const std::vector<int> &old_vertices) const
+{
+  if (prev_eigenvectors)
+  {
+    prev_eigenvectors->Remark(old_vertices, markings);
+  }
+}
+
 void EigenSolver::UpdateAfterMeshChange(Mesh &mesh) const
 {
   if (!prev_eigenvectors)
@@ -595,12 +603,11 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   const auto &refinement = iodata.model.refinement;
   const int adapt_it = num_solves++;
   const bool blocks = (C || has_A2);  // The linearization also takes the block λ x
-  // Nonconforming meshes only: a conformal refinement marks the mesh again
-  // (BaseSolver::SolveEstimateMarkRefine), which the eigenvectors are not carried through.
+  // Also on conformal meshes: the eigenvectors follow the new marks
+  // (RemarkAfterMeshChange).
   const bool can_warm_start = eigenmode.init_v0 && type == EigenSolverBackend::SLEPC &&
                               nonlinear_type != NonlinearEigenSolver::SLP &&
-                              (!blocks || eigenmode.pep_linear) &&
-                              space_op.GetNDSpace().GetParMesh().Nonconforming();
+                              (!blocks || eigenmode.pep_linear);
 
   // Set up the initial space for the eigenvalue solve. Satisfies boundary conditions and is
   // projected appropriately.
@@ -617,7 +624,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       space_op.GetRandomInitialVector(v0);
     }
     if (prev_eigenvectors &&
-        prev_eigenvectors->IsCurrent(space_op.GetNDSpace().GetParMesh()))
+        prev_eigenvectors->IsCurrent(space_op.GetNDSpace().GetParMesh(), markings))
     {
       num_warm = prev_num_eigenvectors;
       Mpi::Print(" Using starting vector from {:d} eigenvectors of the previous adaptation "

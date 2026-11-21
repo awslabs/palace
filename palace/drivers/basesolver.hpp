@@ -58,6 +58,16 @@ protected:
   // adaptation, for example to transfer solution data to the modified mesh.
   virtual void UpdateAfterMeshChange(Mesh &mesh) const {}
 
+  // Called after a new marking of the finest mesh, which reordered the vertices of its
+  // elements; old_vertices holds those of each element before it.
+  virtual void RemarkAfterMeshChange(const std::vector<int> &old_vertices) const {}
+
+  // Whether a field lives on the mesh across a new marking (then RemarkAfterMeshChange).
+  virtual bool CarriesFields() const { return false; }
+
+  // Number of new markings of the finest mesh so far, which a carried field must follow.
+  mutable int markings = 0;
+
   // Whether the adaptive mesh refinement goes on after the solve of adaptation iteration it
   // (0 for the initial solve), with ntdof unknowns and the error estimate err.
   bool ContinueAdaptation(int it, long long int ntdof, double err) const;
