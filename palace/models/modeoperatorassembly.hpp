@@ -31,7 +31,10 @@ enum class CoefficientType
   OMEGA,
   OMEGA_SQUARED,
   SHIFT,
-  SURFACE_TERM  // Scale of the frequency-dependent boundary mass term index of SurfaceTerms
+  // Scale of the frequency-dependent boundary mass term index of SurfaceTerms.
+  SURFACE_TERM,
+  // Nonlinear system coefficient g(iω) = s²χ(s) of the frequency-dependent material index.
+  FREQUENCY_DEPENDENT_PERMITTIVITY
 };
 
 // One complete, BC-eliminated component of the mode eigenproblem matrix A. Exact assembly
@@ -57,6 +60,7 @@ struct OperatorComponent
 class ModeOperatorModel
 {
 private:
+  const MaterialOperator &mat_op;
   const SurfaceTerms &surface_terms;
   std::vector<OperatorComponent> components;
 

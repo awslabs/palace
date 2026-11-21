@@ -804,11 +804,30 @@ ModeEigenSolver::AssembleAttPreconditioner(double omega, double sigma) const
   {
     fi.AddCoefficient(attr_to_mat, mat_op.GetPermittivityImag(), -omega * omega);
   }
+  // Frequency-dependent permittivity beyond ε∞: Re g is mass-like, shifted like the
+  // ε∞ mass; Im g is loss-like, treated as the other imaginary terms above.
+  for (std::size_t i = 0; i < mat_op.NumFrequencyDependentPermittivityMaterials(); i++)
+  {
+    if (mat_op.HasFrequencyDependentPermittivityA2(i) &&
+        mat_op.HasFrequencyDependentPermittivitySupport(i))
+    {
+      const auto g = mat_op.EvaluateFrequencyDependentPermittivityA2(
+          i, std::complex<double>(0.0, omega));
+      const auto attrs =
+          mat_op.GetCeedAttributes(mat_op.GetFrequencyDependentPermittivityAttributes(i));
+      fr.AddMaterialProperty(attrs, shifted ? std::abs(g.real()) : g.real());
+      if (g.imag() != 0.0)
+      {
+        (real_pc ? fr : fi).AddMaterialProperty(attrs, g.imag());
+      }
+    }
+  }
 
   // Boundary coefficients, with the losses of the resistive surface impedance, absorbing,
   // surface conductivity, and rational impedance boundaries in the same way (with the real
   // and imaginary parts of the complex coefficients summed for pc_mat_real, like in
-  // SpaceOperator).
+  // SpaceOperator, and the magnitude of those of absorbing boundaries next to a
+  // frequency-dependent material, see SurfaceTerms).
   const int max_bdr_attr = mat_op.MaxCeedBdrAttribute();
   MaterialPropertyCoefficient fbr(max_bdr_attr), fbi(max_bdr_attr);
   auto &fb_loss = real_pc ? fbr : fbi;
@@ -816,7 +835,7 @@ ModeEigenSolver::AssembleAttPreconditioner(double omega, double sigma) const
   surface_terms.AddStiffnessBdrCoefficients(1.0, fbr);
   surface_terms.AddMassBdrCoefficients(mass_coeff, fbr);
   surface_terms.AddDampingBdrCoefficients(damp_coeff, fb_loss);
-  surface_terms.AddExtraSystemBdrMassCoefficients(omega, fbr, fb_loss);
+  surface_terms.AddPreconditionerExtraSystemBdrMassCoefficients(omega, fbr, fb_loss);
   const bool has_imag = AnyNonEmpty(solver_comm, {&fi, &fbi});
 
   // Assemble ND operators at all levels, and the auxiliary H1 operators for Hiptmair
@@ -924,6 +943,24 @@ ModeEigenSolver::AssembleAnnPreconditioner(double omega) const
   {
     fi.AddCoefficient(attr_to_mat, mat_op.GetPermittivityImagScalar(), omega * omega);
   }
+  // Frequency-dependent permittivity beyond ε∞: -g, with the opposite sign of the ND
+  // block in both real and imaginary slots.
+  for (std::size_t i = 0; i < mat_op.NumFrequencyDependentPermittivityMaterials(); i++)
+  {
+    if (mat_op.HasFrequencyDependentPermittivityA2(i) &&
+        mat_op.HasFrequencyDependentPermittivitySupport(i))
+    {
+      const auto g = mat_op.EvaluateFrequencyDependentPermittivityA2(
+          i, std::complex<double>(0.0, omega));
+      const auto attrs =
+          mat_op.GetCeedAttributes(mat_op.GetFrequencyDependentPermittivityAttributes(i));
+      fr.AddMaterialProperty(attrs, -g.real());
+      if (g.imag() != 0.0)
+      {
+        (real_pc ? fr : fi).AddMaterialProperty(attrs, -g.imag());
+      }
+    }
+  }
 
   // Boundary coefficients, with the opposite sign of those of the ND block.
   const int max_bdr_attr = mat_op.MaxCeedBdrAttribute();
@@ -936,7 +973,8 @@ ModeEigenSolver::AssembleAnnPreconditioner(double omega) const
   {
     MaterialPropertyCoefficient robin_r(max_bdr_attr), robin_i(max_bdr_attr);
     auto &robin_loss = real_pc ? robin_r : robin_i;
-    surface_terms.AddScalarExtraSystemBdrMassCoefficients(omega, robin_r, robin_loss);
+    surface_terms.AddScalarPreconditionerExtraSystemBdrMassCoefficients(omega, robin_r,
+                                                                        robin_loss);
     for (auto [robin, fb] : {std::pair{&robin_r, &fbr}, std::pair{&robin_i, &fbi}})
     {
       if (!robin->empty())

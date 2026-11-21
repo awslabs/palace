@@ -42,8 +42,10 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-domainpostoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-domainsubmesh.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-eigenmode.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-eigenmodedriver.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-errorestimator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-floquetport.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-frequencydependentpostpro.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-geodata.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-helpers.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-initialguess.cpp
@@ -57,9 +59,11 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-meshio.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-mms-electrostatic.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-mms-electrostatic-analytic.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-nleps.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-nondimensionalize.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-orthog.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-outputdir.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-permittivitymodel.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-postoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-postoperatorcsv.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-rap.cpp
@@ -121,6 +125,16 @@ target_link_libraries(unit-tests
           $<$<BOOL:${PALACE_BUILD_WITH_SANITIZERS}>:sanitizer_flags>
           $<IF:$<BOOL:${PALACE_BUILD_WITH_COVERAGE}>,$<LINK_LIBRARY:WHOLE_ARCHIVE,${LIB_TARGET_NAME}>,${LIB_TARGET_NAME}>
           )
+
+# ARPACK and ScaLAPACK both define zzdotc_, with different interfaces. The tests which use
+# STRUMPACK or MUMPS directly make it, and with it ScaLAPACK, a direct dependency of this
+# executable, while the linker drops libarpack, which the executable does not call. PARPACK
+# then finds the routine of ScaLAPACK first and crashes when it extracts eigenvectors. Keep
+# every linked library a direct dependency, so that libarpack stays ahead of them as on the
+# link line. Not needed on macOS, where a symbol is bound to the library it was linked from.
+if(PALACE_WITH_ARPACK AND NOT APPLE)
+  target_link_options(unit-tests PRIVATE "LINKER:--no-as-needed")
+endif()
 
 # The PostOperator boundary-viz regression decodes MFEM's compressed binary VTU output
 # when MFEM is built with zlib support.

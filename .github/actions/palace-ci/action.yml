@@ -390,7 +390,8 @@ runs:
         # [Regression] and [Long] cases (labels "regression" / "long")
         # run separately via ./.github/actions/run-regression-tests at
         # NUM_PROC_TEST; exclude them here so they don't run twice.
-        ctest -j $NUM_PROC_TEST --output-on-failure -LE "^(regression|long)$"
+        # A hung test fails after 15 min instead of holding the runner to the job limit.
+        ctest -j $NUM_PROC_TEST --output-on-failure --timeout 900 -LE "^(regression|long)$"
 
         end_timer "Run Unit Tests"
 

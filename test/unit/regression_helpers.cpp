@@ -513,7 +513,13 @@ void RunRegressionCase(std::string_view case_dir, std::string_view config_json,
     const FileListing want = ListRegressionFiles(ref_postpro, skip_dirs);
 
     // Drop intentionally-unstored outputs (large files no check consumes) from the live
-    // listing so their absence in the reference tree is not flagged as a missing file.
+    // listing so their absence in the reference tree is not flagged as a missing file,
+    // after checking that those which must be written are.
+    for (const auto &rel : effective_opts.required_unstored_files)
+    {
+      INFO("unstored CSV which must be written: " << rel);
+      CHECK(got.csv_files.contains(rel));
+    }
     for (auto it = got.csv_files.begin(); it != got.csv_files.end();)
     {
       const bool unstored =

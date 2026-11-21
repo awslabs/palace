@@ -619,8 +619,9 @@ BoundaryPhysicalTraceCache::Get(const mfem::ParFiniteElementSpace &fespace, cons
   values.side_b.SetSize(sampling_plan->NumPoints() * entry.num_comp);
   values.side_a.UseDevice(true);
   values.side_b.UseDevice(true);
-  entry.side_a_eval->EvalBuffer(u, values.side_a);
-  entry.side_b_eval->EvalBuffer(u, values.side_b);
+  // The physical traces have no material data, nor a frequency.
+  entry.side_a_eval->EvalBuffer(u, 0.0, values.side_a);
+  entry.side_b_eval->EvalBuffer(u, 0.0, values.side_b);
   ApplyUnionRoutes(entry, u, values);
   values.generation = generation;
   operator_applies += static_cast<long long>(
