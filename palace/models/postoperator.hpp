@@ -604,6 +604,21 @@ public:
             measurement_cache.domain_H_field_energy_all};
   }
 
+  // Release the domain energy operators (with the memory of their partial assembly), once
+  // no more fields are measured.
+  void ReleaseDomainEnergyOperators()
+  {
+    dom_post_op.M_elec.reset();
+    dom_post_op.M_mag.reset();
+    dom_post_op.M_i.clear();
+    dom_post_op.M_london.reset();
+    dom_post_op.M_elec_fd.clear();
+    dom_post_op.M_elec_fd_i.clear();
+    dom_post_op.M_elec_fd_owned.clear();
+    dom_post_op.D.Destroy();
+    dom_post_op.H.Destroy();
+  }
+
   // The L-vector of a magnetostatic solution, on the space of the domain energy operators
   // (broken across two-sided superconductor films, if any).
   void GetSolutionLVector(const Vector &a, Vector &a_l_out) const

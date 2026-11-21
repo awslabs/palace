@@ -139,6 +139,23 @@ enum class KrylovSolver : char
   BICGSTAB
 };
 
+// Spatial error estimator: the recovery of a smooth flux by a global L2 projection (L2ZZ),
+// or the recovery in the same space of a flux which satisfies the divergence constraint of
+// the exact flux, which gives a guaranteed bound (electrostatics).
+enum class ErrorEstimator : char
+{
+  L2ZZ,
+  EQUILIBRATED
+};
+
+// Raviart-Thomas space of the equilibrated flux for solution order p: that of the L2ZZ
+// recovered flux, RT(p - 1) (MFEM orders), or RT(p).
+enum class EstimatorFluxOrder : char
+{
+  REDUCED,
+  PRIMAL
+};
+
 // Method of coarsening for p-multigrid.
 enum class MultigridCoarsening : char
 {

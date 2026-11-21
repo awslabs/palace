@@ -112,6 +112,12 @@ PALACE_ENUM_STRING_DEFINE(MultigridCoarsening,
                           {{MultigridCoarsening::LINEAR, "Linear"},
                            {MultigridCoarsening::LOGARITHMIC, "Logarithmic"}})
 
+PALACE_ENUM_STRING_DEFINE(ErrorEstimator, {{ErrorEstimator::L2ZZ, "L2ZZ"},
+                                           {ErrorEstimator::EQUILIBRATED, "Equilibrated"}})
+
+PALACE_ENUM_STRING_DEFINE(EstimatorFluxOrder, {{EstimatorFluxOrder::REDUCED, "Reduced"},
+                                               {EstimatorFluxOrder::PRIMAL, "Primal"}})
+
 PALACE_ENUM_STRING_DEFINE(PreconditionerSide, {{PreconditionerSide::DEFAULT, "Default"},
                                                {PreconditionerSide::RIGHT, "Right"},
                                                {PreconditionerSide::LEFT, "Left"}})

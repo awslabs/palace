@@ -25,6 +25,7 @@
 #include "fem/mesh.hpp"
 #include "fem/output_functionals.hpp"
 #include "linalg/errorestimator.hpp"
+#include "linalg/rap.hpp"
 #include "linalg/vector.hpp"
 #include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
@@ -1290,14 +1291,17 @@ TEST_CASE("Broken space boundary DOFs", "[brokenspace][Serial][Parallel]")
 TEST_CASE("Broken space interpolators", "[brokenspace][Serial][Parallel]")
 {
   // The discrete gradient, curl, and p-prolongation between spaces broken with the same
-  // sides, which are assembled from the interpolators between the underlying spaces (see
-  // FiniteElementSpace::BuildBrokenInterpolator), including on a mesh with hanging
-  // entities on the interior boundary, where some copies are read only through the
-  // constraints.
+  // sides, partially assembled, against the ones assembled from the interpolators between
+  // the underlying spaces (see FiniteElementSpace::BuildBrokenInterpolator), including on
+  // a mesh with hanging entities on the interior boundary, where some copies are read only
+  // through the constraints (at order 3 for ND, 2 for RT: rows with three masters, which
+  // the restriction recovers from the constraint rows of their hanging entities).
   const auto comm = MPI_COMM_WORLD;
-  const int order = GENERATE(1, 2);
+  const int order = GENERATE(1, 2, 3);
   const bool nonconforming = GENERATE(false, true);
   const bool free_edge = GENERATE(false, true);
+  INFO("order " << order << ", nonconforming " << nonconforming << ", free edge "
+                << free_edge);
   fem::DefaultIntegrationOrder::p_trial = order;
   auto smesh = MakeCrackedCubeMesh(4, mfem::Element::TETRAHEDRON, free_edge ? 0.5 : 1.0);
   if (nonconforming)
@@ -1335,7 +1339,33 @@ TEST_CASE("Broken space interpolators", "[brokenspace][Serial][Parallel]")
   const Operator &P_rt = rt_hierarchy.GetProlongationAtLevel(0);
   const Operator &C_coarse = rt_hierarchy.GetFESpaceAtLevel(0).GetDiscreteInterpolator(
       nd_hierarchy.GetFESpaceAtLevel(0));
-  CHECK(dynamic_cast<const mfem::HypreParMatrix *>(&G));
+  // Partially assembled (no matrix), also through the hanging entities of the interior
+  // boundary (the constrained DOFs of the hanging edges and faces determine the copies read
+  // only through them: single rows and pairs, then the constraint rows with several masters
+  // of each cluster of hanging entities).
+  {
+    Vector w;
+    const bool nd_weights = nd_broken.GetRestrictionWeights(w),
+               rt_weights = rt_broken.GetRestrictionWeights(w);
+    INFO("hanging copies recovered ND / RT: " << nd_broken.GetHangingRestrictionDofs()
+                                              << " / "
+                                              << rt_broken.GetHangingRestrictionDofs());
+    CHECK(nd_broken.GetUndeterminedRestrictionDofs() == 0);
+    CHECK(rt_broken.GetUndeterminedRestrictionDofs() == 0);
+    CHECK(nd_weights);
+    CHECK(rt_weights);
+    if (nonconforming)
+    {
+      // The cases with copies read only through constraint rows with several masters.
+      CHECK((nd_broken.GetHangingRestrictionDofs() > 0) == (order >= 3));
+      CHECK((rt_broken.GetHangingRestrictionDofs() > 0) == (order >= 2));
+    }
+    CHECK((dynamic_cast<const ParOperator *>(&G) != nullptr) == nd_weights);
+    CHECK((dynamic_cast<const ParOperator *>(&P_nd) != nullptr) == nd_weights);
+    CHECK((dynamic_cast<const ParOperator *>(&C) != nullptr) == rt_weights);
+    CHECK((dynamic_cast<const ParOperator *>(&P_rt) != nullptr) == rt_weights);
+    INFO("matrix-free ND / RT: " << nd_weights << " / " << rt_weights);
+  }
   CHECK(G.Height() == nd_broken.GetTrueVSize());
   CHECK(G.Width() == h1_broken.GetTrueVSize());
 
@@ -1380,6 +1410,54 @@ TEST_CASE("Broken space interpolators", "[brokenspace][Serial][Parallel]")
   CheckCopies(nd_broken, rt_broken, rt_fespace.GetDiscreteInterpolator(nd_fespace), C);
   CheckCopies(nd_hierarchy.GetFESpaceAtLevel(0), nd_broken,
               nd_hierarchy_u.GetProlongationAtLevel(0), P_nd);
+
+  // The partially assembled broken interpolators equal the ones assembled from the
+  // interpolators between the underlying spaces (FiniteElementSpace::
+  // BuildBrokenInterpolator) on any broken field (different values on the two sides), also
+  // transposed, and their parallel assembly (used by AMS for the discrete gradient) too.
+  auto Assembled = [&](const FiniteElementSpace &trial, const FiniteElementSpace &test,
+                       const Operator &G_u)
+  {
+    const auto *PtGP = dynamic_cast<const ParOperator *>(&G_u);
+    REQUIRE(PtGP);
+    return FiniteElementSpace::BuildBrokenInterpolator(PtGP->ParallelAssemble(), trial,
+                                                       test);
+  };
+  auto CheckAssembled = [&](const Operator &G_b, const mfem::HypreParMatrix &G_ref)
+  {
+    Vector x = Random(G_b.Width()), y(G_b.Height()), z(G_b.Height());
+    G_b.Mult(x, y);
+    G_ref.Mult(x, z);
+    z -= y;
+    CHECK(MaxAbs(z) <= 1.0e-12 * MaxAbs(y));
+    Vector u = Random(G_b.Height()), v(G_b.Width()), r(G_b.Width());
+    G_b.MultTranspose(u, v);
+    G_ref.MultTranspose(u, r);
+    r -= v;
+    CHECK(MaxAbs(r) <= 1.0e-12 * MaxAbs(v));
+    if (const auto *PtGP = dynamic_cast<const ParOperator *>(&G_b))
+    {
+      Vector a(G_b.Height());
+      PtGP->ParallelAssemble().Mult(x, a);
+      a -= y;
+      CHECK(MaxAbs(a) <= 1.0e-12 * MaxAbs(y));
+    }
+  };
+  {
+    FiniteElementSpaceHierarchy rt_hierarchy_ref;
+    rt_hierarchy_ref.AddLevel(std::make_unique<FiniteElementSpace>(mesh, &rt_fec_coarse));
+    rt_hierarchy_ref.AddLevel(std::make_unique<FiniteElementSpace>(mesh, &rt_fec));
+    CheckAssembled(G, *Assembled(h1_broken, nd_broken,
+                                 nd_fespace.GetDiscreteInterpolator(h1_fespace)));
+    CheckAssembled(C, *Assembled(nd_broken, rt_broken,
+                                 rt_fespace.GetDiscreteInterpolator(nd_fespace)));
+    CheckAssembled(P_nd, *Assembled(nd_hierarchy.GetFESpaceAtLevel(0),
+                                    nd_hierarchy.GetFESpaceAtLevel(1),
+                                    nd_hierarchy_u.GetProlongationAtLevel(0)));
+    CheckAssembled(P_rt, *Assembled(rt_hierarchy.GetFESpaceAtLevel(0),
+                                    rt_hierarchy.GetFESpaceAtLevel(1),
+                                    rt_hierarchy_ref.GetProlongationAtLevel(0)));
+  }
 
   // The de Rham complex of the broken spaces: the curl of a gradient of any broken field
   // (with different values on the two sides) is zero, and the curl of the p-prolongation

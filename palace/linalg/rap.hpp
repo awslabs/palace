@@ -46,7 +46,7 @@ private:
   std::unique_ptr<mfem::HypreParMatrix> B;
 
   // Helper methods for operator application.
-  void RestrictionMatrixMult(const Vector &ly, Vector &ty) const;
+  void RestrictionMatrixMult(Vector &ly, Vector &ty) const;
   void RestrictionMatrixMultTranspose(const Vector &ty, Vector &ly) const;
   Vector &GetTestLVector() const;
 
@@ -72,7 +72,16 @@ public:
   }
 
   // Get access to the underlying local (L-vector) operator.
-  const Operator &LocalOperator() const { return *A; }
+  const Operator &LocalOperator() const
+  {
+    MFEM_VERIFY(A, "The local operator of the ParOperator was released!");
+    return *A;
+  }
+
+  // Release the owned local operator once the parallel matrix is assembled (the operator
+  // then applies the matrix only), with the memory its partial assembly holds (for
+  // libCEED, the work vectors of its backend). Returns whether it was released.
+  bool ReleaseLocalOperator();
 
   // Get the associated MPI communicator.
   MPI_Comm GetComm() const { return trial_fespace.GetComm(); }

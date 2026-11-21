@@ -80,6 +80,9 @@ public:
   // Access source attribute lists.
   const auto &GetSources() const { return source_attr_lists; }
 
+  // Access the Dirichlet boundary attributes (grounds and terminals).
+  const auto &GetDirichletAttributes() const { return dbc_attr; }
+
   // Return the parallel finite element space objects.
   auto &GetH1Spaces() { return h1_fespaces; }
   const auto &GetH1Spaces() const { return h1_fespaces; }

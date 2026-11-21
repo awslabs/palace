@@ -458,11 +458,28 @@ bool BaseKspSolver<OperType>::GetCorrectionExceeded() const
 }
 
 template <OperatorType OperType>
+void BaseKspSolver<OperType>::SetLeastSquaresTol(double tol)
+{
+  auto *cg = dynamic_cast<CgSolver<OperType> *>(ksp.get());
+  MFEM_VERIFY(cg, "The least-squares convergence test requires a CG solver!");
+  cg->SetLeastSquaresTol(tol);
+}
+
+template <OperatorType OperType>
 void BaseKspSolver<OperType>::SetLeastSquaresNorm(double norm2)
 {
   auto *cg = dynamic_cast<CgSolver<OperType> *>(ksp.get());
   MFEM_VERIFY(cg, "The least-squares convergence test requires a CG solver!");
   cg->SetLeastSquaresNorm(norm2);
+}
+
+template <OperatorType OperType>
+std::vector<double> BaseKspSolver<OperType>::GetLeastSquaresDecrease() const
+{
+  const auto *cg = dynamic_cast<const CgSolver<OperType> *>(ksp.get());
+  MFEM_VERIFY(cg, "The least-squares convergence test requires a CG solver!");
+  const auto &decrease = cg->GetLeastSquaresDecrease();
+  return {decrease.begin(), decrease.end()};
 }
 
 template <OperatorType OperType>
