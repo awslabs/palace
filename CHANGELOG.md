@@ -188,6 +188,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Nonconforming adapted meshes are now rebalanced with a METIS partition of their element
     graph instead of MFEM's default partition, which fragments the subdomains. This speeds
     up adaptive simulations. [PR 1130](https://github.com/awslabs/palace/pull/1130).
+  - Conformal adapted meshes are now rebalanced with the same METIS partitioning routine,
+    and their elements move in parallel, instead of the mesh being gathered on the root.
+    [PR 1254](https://github.com/awslabs/palace/pull/1254).
   - Added a STRUMPACK patch for
     [pghysels/STRUMPACK#174](https://github.com/pghysels/STRUMPACK/pull/174), which *Palace*
     always enables: the STRUMPACK solvers store their fill-reducing permutation once per
