@@ -5,8 +5,8 @@
 #define PALACE_FEM_SUBSTRUCTURE_MODEL_HPP
 
 #include <cstdint>
-#include <fstream>
 #include <functional>
+#include <ostream>
 #include <string>
 #include <vector>
 #include <mpi.h>
@@ -70,7 +70,7 @@ struct ModelFile
   // them. Stops every rank if rank 0 cannot write the record or write does not write size
   // bytes. Collective.
   static void Append(const std::string &path, MPI_Comm comm, std::uint32_t tag,
-                     long long size, const std::function<void(std::ofstream &)> &write,
+                     long long size, const std::function<void(std::ostream &)> &write,
                      const std::function<void()> &others = {});
 };
 

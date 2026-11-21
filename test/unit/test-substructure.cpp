@@ -757,7 +757,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "Records of a substructuring model
   {
     ModelFile::Append(
         path, comm, tag, static_cast<long long>(sizeof(double) * x.size()),
-        [&](std::ofstream &f)
+        [&](std::ostream &f)
         { f.write(reinterpret_cast<const char *>(x.data()), sizeof(double) * x.size()); });
   };
   auto values = [&](const ModelFile &file, std::uint32_t tag)
@@ -794,7 +794,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "Records of a substructuring model
 
   // A record of another size than announced stops every rank.
 #if defined(MFEM_USE_EXCEPTIONS)
-  CHECK_THROWS_WITH(ModelFile::Append(path, comm, A, 8, [](std::ofstream &) {}),
+  CHECK_THROWS_WITH(ModelFile::Append(path, comm, A, 8, [](std::ostream &) {}),
                     Catch::Matchers::ContainsSubstring("instead of 8"));
 #endif
 

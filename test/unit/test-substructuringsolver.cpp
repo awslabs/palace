@@ -2137,7 +2137,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "SubstructuringSolver boundaries o
   ModelFile::Create(model, Mpi::World());
   const int env_loop = 2;
   ModelFile::Append(model, Mpi::World(), ModelFile::Tag("ELPS"), sizeof(int),
-                    [&](std::ofstream &f)
+                    [&](std::ostream &f)
                     { f.write(reinterpret_cast<const char *>(&env_loop), sizeof(int)); });
   auto boundaries = [&](const std::string &type, const json &bdr, bool region_mesh)
   {

@@ -8,11 +8,11 @@
 
 #include <algorithm>
 #include <array>
-#include <fstream>
 #include <functional>
 #include <map>
 #include <memory>
 #include <optional>
+#include <ostream>
 #include <set>
 #include <string>
 #include <vector>
@@ -605,7 +605,7 @@ struct SubstructuringSolver::Impl
   // Append a record of size bytes to the model file, whose payload rank 0 writes with
   // write (see substructuring::ModelFile::Append). Collective.
   void AppendRecord(const std::string &path, std::uint32_t tag, long long size,
-                    const std::function<void(std::ofstream &)> &write) const;
+                    const std::function<void(std::ostream &)> &write) const;
 
   void AppendSourceModes(const std::string &path);
 

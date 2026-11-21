@@ -6,7 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
-#include <system_error>
+#include <fstream>
 #include <utility>
 #include "utils/outputdir.hpp"
 #include "utils/timer.hpp"
@@ -41,7 +41,7 @@ struct Modes
 
 void SubstructuringSolver::Impl::AppendRecord(
     const std::string &path, std::uint32_t tag, long long size,
-    const std::function<void(std::ofstream &)> &write) const
+    const std::function<void(std::ostream &)> &write) const
 {
   ModelFile::Append(path, parent_fes.GetComm(), tag, size, write);
 }
@@ -136,14 +136,14 @@ void SubstructuringSolver::Impl::AppendRows(const std::string &path, std::uint32
   const long long size = static_cast<long long>(sizeof(double)) * nG * nG;
   if (nG == 0)
   {
-    ModelFile::Append(path, comm, tag, size, [](std::ofstream &) {});
+    ModelFile::Append(path, comm, tag, size, [](std::ostream &) {});
     return;
   }
   std::vector<int> cnt, disp;
   RowLayout(cnt, disp);
   ModelFile::Append(
       path, comm, tag, size,
-      [&](std::ofstream &f)
+      [&](std::ostream &f)
       {
         substructuring::RowsToRoot(
             comm, rows, nG, cnt, kIoChunk, [&](const double *x, int n)
@@ -205,7 +205,7 @@ void SubstructuringSolver::Impl::AppendSourceModes(const std::string &path)
           (2 * k + 2 * n * k + 2 * k * k + (have_skin ? n * k + k * k : 0));
   AppendRecord(
       path, kSourceModesTag, size,
-      [&](std::ofstream &f)
+      [&](std::ostream &f)
       {
         f.write(reinterpret_cast<const char *>(&K), sizeof(int));
         f.write(reinterpret_cast<const char *>(src_ids.data()), sizeof(int) * K);
@@ -373,7 +373,7 @@ void SubstructuringSolver::Impl::AppendEnvRecord(const std::string &path,
       EnvironmentRecord::Make(parent, env_attributes, *iodata.resolved_config, written)
           .Serialize();  // collective
   AppendRecord(path, kEnvRecordTag, static_cast<long long>(record.size()),
-               [&](std::ofstream &f) { f.write(record.data(), record.size()); });
+               [&](std::ostream &f) { f.write(record.data(), record.size()); });
 }
 
 void SubstructuringSolver::Impl::AppendEnvFingerprint(const std::string &path)
@@ -381,14 +381,14 @@ void SubstructuringSolver::Impl::AppendEnvFingerprint(const std::string &path)
   const std::array<double, kEnvFpSize> fp = EnvironmentFingerprint();  // collective
   BlockTimer bt(Timer::IO);
   AppendRecord(
-      path, kEnvFpTag, sizeof(double) * fp.size(), [&](std::ofstream &f)
+      path, kEnvFpTag, sizeof(double) * fp.size(), [&](std::ostream &f)
       { f.write(reinterpret_cast<const char *>(fp.data()), sizeof(double) * fp.size()); });
   if (magnetostatic)
   {
-    AppendRecord(path, kEpsTag, sizeof(double), [&](std::ofstream &f)
+    AppendRecord(path, kEpsTag, sizeof(double), [&](std::ostream &f)
                  { f.write(reinterpret_cast<const char *>(&mag_eps), sizeof(double)); });
     AppendRecord(path, kSheetSidesTag, sizeof(double) * gamma_sheet_sides.size(),
-                 [&](std::ofstream &f)
+                 [&](std::ostream &f)
                  {
                    f.write(reinterpret_cast<const char *>(gamma_sheet_sides.data()),
                            sizeof(double) * gamma_sheet_sides.size());
@@ -678,7 +678,7 @@ void SubstructuringSolver::Impl::AppendFluxoids(const std::string &path,
   const long long size = static_cast<long long>(sizeof(int)) * (2 + KL[0] + KL[1]) +
                          static_cast<long long>(sizeof(double)) * values.size();
   AppendRecord(path, kFluxoidsTag, size,
-               [&](std::ofstream &f)
+               [&](std::ostream &f)
                {
                  f.write(reinterpret_cast<const char *>(KL), sizeof(KL));
                  f.write(reinterpret_cast<const char *>(ids.data()), sizeof(int) * KL[0]);
@@ -707,7 +707,7 @@ void SubstructuringSolver::Impl::AppendModes(const std::string &path)
   AppendRecord(path, kModesTag,
                static_cast<long long>(sizeof(int)) * (1 + k) +
                    static_cast<long long>(sizeof(double)) * (2 * k + n * k + k * k),
-               [&](std::ofstream &f)
+               [&](std::ostream &f)
                {
                  f.write(reinterpret_cast<const char *>(&K), sizeof(int));
                  f.write(reinterpret_cast<const char *>(mode_ids.data()), sizeof(int) * K);
@@ -847,7 +847,7 @@ void SubstructuringSolver::Impl::SaveModel(const std::string &model_path, int si
     BlockTimer bt_io(Timer::IO);
     ModelFile::Create(model_path, parent_fes.GetComm());
     const int head[4] = {kModelVersion, iodata.solver.order, nG, sig_type};
-    AppendRecord(model_path, kHeadTag, sizeof(head), [&](std::ofstream &f)
+    AppendRecord(model_path, kHeadTag, sizeof(head), [&](std::ostream &f)
                  { f.write(reinterpret_cast<const char *>(head), sizeof(head)); });
     substructuring::InterfaceRecords{nG, sig_w, sig, iodata.model.Lc}.Append(
         model_path, parent_fes.GetComm());
@@ -857,7 +857,7 @@ void SubstructuringSolver::Impl::SaveModel(const std::string &model_path, int si
   AppendEnvRecord(model_path, WriteRegionMesh(RegionMeshPath(model_path)));
   AppendRecord(model_path, kEnvLoopsTag,
                static_cast<long long>(sizeof(int) * env_loops.size()),
-               [&](std::ofstream &f)
+               [&](std::ostream &f)
                {
                  f.write(reinterpret_cast<const char *>(env_loops.data()),
                          sizeof(int) * env_loops.size());
