@@ -26,6 +26,7 @@ namespace palace
 class IoData;
 class Mesh;
 class ShapeDerivativeOperator;
+class SumVectorCoefficient;
 class Units;
 template <ProblemType T>
 class PostOperator;
@@ -150,6 +151,9 @@ private:
 
   // Assemble the London sheet mass M_sheet = ∫_Σ (1/L_ksq) A_t·v_t on first use.
   void EnsureSheetMass();
+
+  // Assemble the excitation +J of the surface current coefficient -J.
+  void AssembleCurrentExcitation(SumVectorCoefficient &fb, Vector &RHS);
 
   // Assemble the stiffness matrix on every level of the solution space: curl-curl (μ⁻¹),
   // London domains ((μλ²)⁻¹), the kinetic sheet term (1/L_ksq, unbroken spaces only), and
@@ -307,6 +311,9 @@ public:
   // Assemble the right-hand side source term vector for a current source applied on
   // specified excited boundaries.
   void GetCurrentExcitationVector(int idx, Vector &RHS);
+
+  // The share of the excitation vector of element elem of current source idx.
+  void GetCurrentExcitationVector(int idx, int elem, Vector &RHS);
 
   // The stiffness operator of the elements with the given domain attributes, without
   // boundary conditions, on L-vectors of the finest ND space, and its London mass term.

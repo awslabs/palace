@@ -1,19 +1,25 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <array>
 #include <cmath>
 #include <cstdint>
+#include <filesystem>
 #include <fstream>
 #include <functional>
 #include <memory>
 #include <random>
 #include <set>
+#include <sstream>
+#include <string>
 #include <tuple>
 #include <vector>
+#include <fmt/format.h>
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
 #include <catch2/generators/catch_generators_all.hpp>
+#include "driver.hpp"
 #include "fem/fespace.hpp"
 #include "fem/mesh.hpp"
 #include "fem/shapederivativeform.hpp"
@@ -25,10 +31,14 @@
 #include "linalg/vector.hpp"
 #include "models/curlcurloperator.hpp"
 #include "models/laplaceoperator.hpp"
-#include "models/sensitivityexport.hpp"
+#include "models/sensitivity.hpp"
 #include "models/spaceoperator.hpp"
 #include "utils/communication.hpp"
+#include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
+#include "utils/outputdir.hpp"
+#include "utils/tablecsv.hpp"
+#include "utils/timer.hpp"
 #include "utils/units.hpp"
 
 namespace palace
@@ -304,6 +314,112 @@ void MoveNodes(Mesh &mesh, const mfem::ParFiniteElementSpace &nodal_fespace,
   mesh.ResetCeedObjects();
 }
 
+// A velocity field, at a point in mesh length units.
+using VelocityField = std::function<std::array<double, 3>(const std::array<double, 3> &)>;
+
+// A velocity field at the nodes of a serial mesh with nodes.
+mfem::Vector NodalVelocity(const mfem::Mesh &mesh, const VelocityField &V)
+{
+  const auto &nodes = *mesh.GetNodes();
+  const auto &fespace = *nodes.FESpace();
+  mfem::Vector v(nodes.Size());
+  for (int i = 0; i < fespace.GetNDofs(); i++)
+  {
+    std::array<double, 3> x;
+    for (int d = 0; d < 3; d++)
+    {
+      x[d] = nodes(fespace.DofToVDof(i, d));
+    }
+    const auto vi = V(x);
+    for (int d = 0; d < 3; d++)
+    {
+      v(fespace.DofToVDof(i, d)) = vi[d];
+    }
+  }
+  return v;
+}
+
+// Write a serial mesh with nodes moved by t v, and the table of the velocity v at its
+// nodes, from the root process.
+void WriteMesh(mfem::Mesh &mesh, const mfem::Vector &v, double t,
+               const std::filesystem::path &path)
+{
+  if (Mpi::Root(Mpi::World()))
+  {
+    auto &nodes = *mesh.GetNodes();
+    const mfem::Vector X(nodes);
+    nodes.Add(t, v);
+    std::ofstream fo(path);
+    fo.precision(17);
+    mesh.Print(fo);
+    nodes = X;
+  }
+  Mpi::Barrier(Mpi::World());
+}
+
+void WriteVelocityTable(const mfem::Mesh &mesh, const std::string &name,
+                        const mfem::Vector &v, const std::filesystem::path &path)
+{
+  if (Mpi::Root(Mpi::World()))
+  {
+    const auto &nodes = *mesh.GetNodes();
+    const auto &fespace = *nodes.FESpace();
+    std::ofstream fo(path);
+    fo.precision(17);
+    fo << fmt::format("x, y, z, {0}.x, {0}.y, {0}.z\n", name);
+    for (int i = 0; i < fespace.GetNDofs(); i++)
+    {
+      for (int d = 0; d < 3; d++)
+      {
+        fo << nodes(fespace.DofToVDof(i, d)) << ", ";
+      }
+      for (int d = 0; d < 3; d++)
+      {
+        fo << v(fespace.DofToVDof(i, d)) << ((d < 2) ? ", " : "\n");
+      }
+    }
+  }
+  Mpi::Barrier(Mpi::World());
+}
+
+// Run Palace, returning its output folder.
+std::filesystem::path RunPalace(const nlohmann::json &config)
+{
+  IoData iodata(config, false);
+  MPI_Comm comm = Mpi::World();
+  MakeOutputFolder(iodata, comm);
+  BlockTimer::Reset();
+  palace::Run(iodata, comm, 1);
+  return iodata.problem.output;
+}
+
+// A column of an output CSV file.
+std::vector<double> ReadColumn(const std::filesystem::path &file, const std::string &column)
+{
+  std::ifstream fi(file);
+  REQUIRE(fi.is_open());
+  std::stringstream buffer;
+  buffer << fi.rdbuf();
+  Table table(buffer.str());
+  for (std::size_t j = 0; j < table.n_cols(); j++)
+  {
+    if (table[j].header_text == column)
+    {
+      return table[j].data;
+    }
+  }
+  FAIL("No column \"" << column << "\" in " << file);
+  return {};
+}
+
+// The sensitivities of a Palace run.
+nlohmann::json ReadSensitivities(const std::filesystem::path &output)
+{
+  std::ifstream fi(output / "sensitivity.json");
+  REQUIRE(fi.is_open());
+  return nlohmann::json::parse(fi);
+}
+
 }  // namespace
 
 TEST_CASE("Electrostatic capacitance sensitivities", "[sensitivity][Serial][Parallel]")
@@ -529,7 +645,7 @@ TEST_CASE("Eigenmode system material and lumped port derivatives",
   }
 
   // The resistance, inductance and capacitance of the lumped port.
-  const auto dT = space_op.GetLumpedPortDerivatives(1, 1.0, lambda, lambda * lambda);
+  const auto dT = space_op.GetLumpedPortDerivatives(1, -1, 1.0, lambda, lambda * lambda);
   for (int e = 0; e < 3; e++)
   {
     INFO("Lumped port element " << e);
@@ -755,93 +871,366 @@ TEST_CASE("Magnetostatic material derivatives", "[sensitivity][Serial][Parallel]
   }
 }
 
-TEST_CASE_METHOD(palace::test::SharedTempDir, "Sensitivity export",
+TEST_CASE_METHOD(palace::test::SharedTempDir, "Eigenmode sensitivities of a lossy cavity",
                  "[sensitivity][Serial][Parallel]")
 {
-  // The exported gradients of the capacitances satisfy the exact discrete identities: zero
-  // for translations, and C for a dilation, since C scales with length. So does the sum of
-  // the derivatives with respect to the permittivities.
-  auto amr = GENERATE(false, true);
-  INFO("AMR: " << amr);
-  Problem problem(mfem::Element::HEXAHEDRON, 2, amr);
-  problem.iodata.sensitivity.shape.emplace().boundary_tags = true;
-  LaplaceOperator laplace_op(problem.iodata, problem.mesh);
-  const auto V = SolveTerminals(problem.iodata, laplace_op);
-  const auto dK = laplace_op.GetStiffnessShapeDerivative();
-
-  SensitivityExport output(problem.iodata, *problem.mesh[0]);
-  REQUIRE(output.HasShape());
-  std::vector<double> C;
-  Vector g;
-  for (int i = 0; i < 2; i++)
+  // f and Q of a cavity with two dielectrics of different loss tangents and a lumped port
+  // given by R, L and C, against finite differences of Palace on morphed meshes. The
+  // velocity stretches the port and moves the interface of the dielectrics, which changes Q
+  // through the irrotational part of the eigenvectors.
+  auto smesh =
+      mfem::Mesh::MakeCartesian3D(4, 3, 4, mfem::Element::HEXAHEDRON, 1.0, 0.8, 0.6);
+  for (int e = 0; e < smesh.GetNE(); e++)
   {
-    C.push_back(Capacitance(laplace_op, {1, 2}, V[i], V[1]));
-    dK->Mult(V[i], V[1], g);
-    output.AddObjective({{"Index", i + 1},
-                         {"Type", "Capacitance"},
-                         {"Terminals", {i + 1, 2}},
-                         {"Value", C.back()},
-                         {"Unit", "F"}},
-                        &g, 1.0);
+    mfem::Vector center;
+    smesh.GetElementCenter(e, center);
+    smesh.SetAttribute(e, (center(2) < 0.3) ? 1 : 2);
   }
-  const auto dir = temp_dir / "sensitivity";
-  output.Write(dir);
-  const auto num_nodes = dK->GetNodalSpace().GlobalTrueVSize() / 3;  // Collective
-  Mpi::Barrier(Mpi::World());
-  if (!Mpi::Root(Mpi::World()))
-  {
-    return;
-  }
+  smesh.SetAttributes();
+  smesh.EnsureNodes();
+  // The port is the face x = 1 along y, which stays planar.
+  const auto v = NodalVelocity(
+      smesh,
+      [](const std::array<double, 3> &x) -> std::array<double, 3>
+      {
+        return {0.3 * x[0] * (1.0 - x[0]) * std::sin(2.0 * x[1] + x[2]),
+                0.2 * x[1] * (1.0 + x[2]),
+                0.15 * x[2] * (1.0 - x[2] / 0.6) * std::cos(x[0] + x[1]) + 0.1 * x[2]};
+      });
+  WriteVelocityTable(smesh, "p", v, temp_dir / "velocities.csv");
 
-  std::ifstream fj(dir / "sensitivity.json");
-  const auto meta = nlohmann::json::parse(fj);
-  const std::size_t n = meta.at("NumPoints");
-  CHECK(n == static_cast<std::size_t>(num_nodes));
-  auto ReadBinary = [&](const std::string &file, auto value)
+  int count = 0;
+  auto Config = [&](double t, bool sensitivity)
   {
-    std::ifstream fi(dir / file, std::ios::binary);
-    std::vector<decltype(value)> data(std::filesystem::file_size(dir / file) /
-                                      sizeof(value));
-    fi.read(reinterpret_cast<char *>(data.data()), data.size() * sizeof(value));
-    return data;
+    const auto path = temp_dir / fmt::format("cavity-{:d}.mesh", count);
+    WriteMesh(smesh, v, t, path);
+    nlohmann::json config = {
+        {"Problem",
+         {{"Type", "Eigenmode"},
+          {"Output", (temp_dir / fmt::format("out-{:d}", count++)).string()}}},
+        {"Model", {{"Mesh", path.string()}, {"L0", 1.0e-2}, {"Lc", 1.0}}},
+        {"Domains",
+         {{"Materials",
+           {{{"Attributes", {1}}, {"Permittivity", 2.0}, {"LossTan", 0.01}},
+            {{"Attributes", {2}}, {"Permittivity", 4.0}, {"LossTan", 0.002}}}}}},
+        {"Boundaries",
+         {{"PEC", {{"Attributes", {1, 2, 4, 5, 6}}}},
+          {"LumpedPort",
+           {{{"Index", 1},
+             {"R", 2000.0},
+             {"L", 1.0e-9},
+             {"C", 1.0e-13},
+             {"Attributes", {3}},
+             {"Direction", "+Y"}}}}}},
+        {"Solver",
+         {{"Order", 2},
+          {"Eigenmode", {{"N", 2}, {"Target", 10.0}, {"Tol", 1.0e-11}}},
+          {"Linear", {{"Tol", 1.0e-12}, {"MaxIts", 1000}}}}}};
+    if (sensitivity)
+    {
+      config["Sensitivity"] = {{"Velocities", (temp_dir / "velocities.csv").string()}};
+    }
+    return config;
   };
-  const auto points = ReadBinary(meta.at("Points"), 0.0);
-  REQUIRE(points.size() == 3 * n);
-  for (std::size_t k = 0; k < 2; k++)
+  const auto output = RunPalace(Config(0.0, true));
+  const std::array<const char *, 2> quantities = {"Frequency", "QualityFactor"},
+                                    columns = {"Re{f} (GHz)", "Q"};
+  const auto sensitivities = ReadSensitivities(output);
+
+  // The derivatives of f and Q of each mode, by Richardson extrapolation of central
+  // differences.
+  auto CentralDifference = [&](double h)
   {
-    const auto &objective = meta.at("Objectives")[k];
-    const auto gradient = ReadBinary(objective.at("Gradient"), 0.0);
-    REQUIRE(gradient.size() == 3 * n);
-    double dilation = 0.0, scale = 0.0;
-    std::array<double, 3> translation = {0.0, 0.0, 0.0};
-    for (std::size_t p = 0; p < 3 * n; p++)
+    const auto output_p = RunPalace(Config(h, false)),
+               output_m = RunPalace(Config(-h, false));
+    std::array<std::vector<double>, 2> d;
+    for (int k = 0; k < 2; k++)
     {
-      dilation += gradient[p] * points[p];
-      translation[p % 3] += gradient[p];
-      scale += std::abs(gradient[p]);
+      const auto Jp = ReadColumn(output_p / "eig.csv", columns[k]),
+                 Jm = ReadColumn(output_m / "eig.csv", columns[k]);
+      for (int m = 0; m < 2; m++)
+      {
+        d[k].push_back((Jp[m] - Jm[m]) / (2.0 * h));
+      }
     }
-    CHECK(std::abs(dilation - C[k]) <= 1.0e-10 * std::abs(C[k]));
-    for (auto t : translation)
+    return d;
+  };
+  const double h = 1.0e-3;
+  const auto d1 = CentralDifference(h), d2 = CentralDifference(0.5 * h);
+  for (int k = 0; k < 2; k++)
+  {
+    const auto J = ReadColumn(output / "eig.csv", columns[k]);
+    for (int m = 0; m < 2; m++)
     {
-      CHECK(std::abs(t) <= 1.0e-12 * scale);
+      const double fd = (4.0 * d2[k][m] - d1[k][m]) / 3.0;
+      const double d = sensitivities.at(quantities[k]).at("Derivatives").at("p")[m];
+      INFO(quantities[k] << " of mode " << m + 1 << ": " << J[m] << ", derivative " << d
+                         << ", finite difference " << fd);
+      CHECK(std::abs(d - fd) <= 1.0e-6 * std::abs(J[m]));
     }
-    CHECK(objective.at("Value") == C[k]);
+  }
+}
+
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "Magnetostatic sensitivities at fixed currents",
+                 "[sensitivity][Serial][Parallel]")
+{
+  // The inductances at fixed currents against finite differences of Palace on morphed
+  // meshes, for a velocity which widens both sources, the faces z = 1 and y = 0 along x
+  // between the PEC faces x = 0 and x = 1, and keeps them planar.
+  auto smesh =
+      mfem::Mesh::MakeCartesian3D(4, 4, 4, mfem::Element::HEXAHEDRON, 1.0, 1.0, 1.0);
+  for (int e = 0; e < smesh.GetNE(); e++)
+  {
+    mfem::Vector center;
+    smesh.GetElementCenter(e, center);
+    smesh.SetAttribute(e, (center(2) < 0.5) ? 1 : 2);
+  }
+  smesh.SetAttributes();
+  smesh.EnsureNodes();
+  const auto v =
+      NodalVelocity(smesh,
+                    [](const std::array<double, 3> &x) -> std::array<double, 3>
+                    {
+                      const double bubble =
+                          x[0] * (1.0 - x[0]) * x[1] * (1.0 - x[1]) * x[2] * (1.0 - x[2]);
+                      return {0.3 * x[0] * (1.0 - x[0]) * std::sin(2.0 * x[1] + x[2]),
+                              0.3 * x[1] + 0.5 * bubble,
+                              0.2 * x[2] + 0.5 * bubble * std::cos(x[0] + x[1])};
+                    });
+  WriteVelocityTable(smesh, "p", v, temp_dir / "velocities.csv");
+
+  int count = 0;
+  auto Config = [&](double t, bool sensitivity)
+  {
+    const auto path = temp_dir / fmt::format("cube-{:d}.mesh", count);
+    WriteMesh(smesh, v, t, path);
+    nlohmann::json config = {
+        {"Problem",
+         {{"Type", "Magnetostatic"},
+          {"Output", (temp_dir / fmt::format("out-{:d}", count++)).string()}}},
+        {"Model", {{"Mesh", path.string()}, {"L0", 1.0e-3}, {"Lc", 1.0}}},
+        {"Domains",
+         {{"Materials",
+           {{{"Attributes", {1}}}, {{"Attributes", {2}}, {"Permeability", 2.0}}}}}},
+        {"Boundaries",
+         {{"PEC", {{"Attributes", {1, 3, 5}}}},
+          {"SurfaceCurrent",
+           {{{"Index", 1}, {"Attributes", {6}}, {"Direction", "+X"}},
+            {{"Index", 2}, {"Attributes", {2}}, {"Direction", "+X"}}}}}},
+        {"Solver", {{"Order", 2}, {"Linear", {{"Tol", 1.0e-12}, {"MaxIts", 1000}}}}}};
+    if (sensitivity)
+    {
+      config["Sensitivity"] = {{"Velocities", (temp_dir / "velocities.csv").string()}};
+    }
+    return config;
+  };
+  const auto output = RunPalace(Config(0.0, true));
+  const auto dM = ReadSensitivities(output).at("Inductance").at("Derivatives").at("p");
+
+  // The derivatives of the columns M[i][j], by Richardson extrapolation of central
+  // differences.
+  auto Column = [](int j) { return fmt::format("M[i][{:d}] (H)", j + 1); };
+  auto CentralDifference = [&](double h)
+  {
+    const auto output_p = RunPalace(Config(h, false)),
+               output_m = RunPalace(Config(-h, false));
+    std::array<std::vector<double>, 2> d;
+    for (int j = 0; j < 2; j++)
+    {
+      const auto Mp = ReadColumn(output_p / "terminal-M.csv", Column(j)),
+                 Mm = ReadColumn(output_m / "terminal-M.csv", Column(j));
+      d[j] = {(Mp[0] - Mm[0]) / (2.0 * h), (Mp[1] - Mm[1]) / (2.0 * h)};
+    }
+    return d;
+  };
+  const double h = 1.0e-3;
+  const auto d1 = CentralDifference(h), d2 = CentralDifference(0.5 * h);
+  for (int j = 0; j < 2; j++)
+  {
+    const auto M = ReadColumn(output / "terminal-M.csv", Column(j));
+    for (int i = 0; i < 2; i++)
+    {
+      const double fd = (4.0 * d2[j][i] - d1[j][i]) / 3.0;
+      const double d = dM[i][j];
+      INFO("M[" << i + 1 << "][" << j + 1 << "] = " << M[i] << " H, derivative " << d
+                << " H, finite difference " << fd << " H");
+      CHECK(std::abs(d - fd) <= 1.0e-6 * std::abs(M[i]));
+    }
+  }
+}
+
+TEST_CASE_METHOD(palace::test::SharedTempDir, "Design velocities",
+                 "[sensitivity][Serial][Parallel]")
+{
+  // The velocities at the mesh nodes are the derivatives of the node positions for input
+  // meshes morphed by the table, through the mesh pipeline with uniform and nonconformal
+  // refinement of curved meshes. So are the derivatives of the geometry.
+  auto type = GENERATE(mfem::Element::HEXAHEDRON, mfem::Element::TETRAHEDRON);
+  auto amr = GENERATE(false, true);
+  INFO("Element type: " << type << ", AMR: " << amr);
+  auto smesh = mfem::Mesh::MakeCartesian3D(3, 3, 3, type, 1.0, 1.0, 1.0);
+  for (int e = 0; e < smesh.GetNE(); e++)
+  {
+    mfem::Vector center;
+    smesh.GetElementCenter(e, center);
+    smesh.SetAttribute(e, (center(2) < 0.5) ? 1 : 2);
+  }
+  smesh.SetAttributes();
+  smesh.SetCurvature(2);
+  auto &nodes = *smesh.GetNodes();
+  const auto &fespace = *nodes.FESpace();
+  auto Position = [&](int i)
+  {
+    std::array<double, 3> x;
+    for (int d = 0; d < 3; d++)
+    {
+      x[d] = nodes(fespace.DofToVDof(i, d));
+    }
+    return x;
+  };
+  for (int i = 0; i < fespace.GetNDofs(); i++)
+  {
+    const auto x = Position(i);
+    for (int d = 0; d < 3; d++)
+    {
+      nodes(fespace.DofToVDof(i, d)) +=
+          0.12 * x[d] * (1.0 - x[d]) * std::sin(2.0 * x[(d + 1) % 3] + x[(d + 2) % 3] + d);
+    }
   }
 
-  // The nodes of every face of the cube are tagged with its boundary attribute.
-  std::ifstream fb(dir / meta.at("Boundary").get<std::string>(), std::ios::binary);
-  std::vector<std::int64_t> offsets(n + 1);
-  fb.read(reinterpret_cast<char *>(offsets.data()), offsets.size() * sizeof(std::int64_t));
-  REQUIRE(fb.good());
-  CHECK(offsets.front() == 0);
-  CHECK(std::is_sorted(offsets.begin(), offsets.end()));
-  std::vector<std::int32_t> attributes(offsets.back());
-  fb.read(reinterpret_cast<char *>(attributes.data()),
-          attributes.size() * sizeof(std::int32_t));
-  CHECK(fb.good());
-  CHECK(fb.peek() == std::char_traits<char>::eof());
-  CHECK(std::set<int>(attributes.begin(), attributes.end()) ==
-        std::set<int>{1, 2, 3, 4, 5, 6});
+  // A smooth velocity and a translation along x at the nodes with x < 0.6, the others
+  // fixed.
+  mfem::Vector W(nodes.Size()), T(nodes.Size());
+  W = 0.0;
+  T = 0.0;
+  std::ofstream table(temp_dir / "velocities.csv");
+  table.precision(17);
+  table << "x, y, z, w.x, w.y, w.z, t.x, t.y, t.z\n";
+  for (int i = 0; i < fespace.GetNDofs(); i++)
+  {
+    const auto x = Position(i);
+    if (x[0] >= 0.6)
+    {
+      continue;
+    }
+    T(fespace.DofToVDof(i, 0)) = 1.0;
+    const std::array<double, 3> w = {std::sin(2.0 * x[1] + x[2]),
+                                     x[1] * (1.0 - x[1]) * std::cos(x[0] + 2.0 * x[2]),
+                                     (1.0 - x[2]) * std::sin(x[0] - x[1])};
+    for (int d = 0; d < 3; d++)
+    {
+      W(fespace.DofToVDof(i, d)) = w[d];
+    }
+    table << x[0] << ", " << x[1] << ", " << x[2] << ", " << w[0] << ", " << w[1] << ", "
+          << w[2] << ", 1, 0, 0\n";
+  }
+  table.close();
+
+  // The input mesh moved by t times a velocity, through the mesh pipeline.
+  const mfem::Vector X(nodes);
+  int count = 0;
+  auto Read = [&](const mfem::Vector *V, double t)
+  {
+    nodes = X;
+    if (V)
+    {
+      nodes.Add(t, *V);
+    }
+    const auto path = temp_dir / fmt::format("cube-{:d}.mesh", count++);
+    if (Mpi::Root(Mpi::World()))
+    {
+      std::ofstream fo(path);
+      fo.precision(17);
+      smesh.Print(fo);
+    }
+    Mpi::Barrier(Mpi::World());
+    nlohmann::json config = {
+        {"Problem", {{"Type", "Electrostatic"}, {"Output", (temp_dir / "out").string()}}},
+        {"Model",
+         {{"Mesh", path.string()},
+          {"L0", 1.0e-3},
+          {"Lc", 2.0},
+          {"Refinement", {{"UniformLevels", 1}}}}},
+        {"Domains", {{"Materials", {{{"Attributes", {1}}}, {{"Attributes", {2}}}}}}},
+        {"Boundaries",
+         {{"Ground", {{"Attributes", {2, 4}}}},
+          {"Terminal", {{{"Index", 1}, {"Attributes", {1}}}}}}},
+        {"Solver", {{"Order", 1}}},
+        {"Sensitivity", {{"Velocities", (temp_dir / "velocities.csv").string()}}}};
+    if (amr)
+    {
+      config["Model"]["Refinement"]["Nonconformal"] = true;
+      config["Model"]["Refinement"]["MaxIts"] = 1;
+    }
+    auto iodata = std::make_unique<IoData>(config, false);
+    auto smesh = mesh::Load(*iodata, Mpi::World());
+    iodata->NondimensionalizeInputs(smesh);
+    std::vector<std::unique_ptr<mfem::ParMesh>> mfem_mesh;
+    mfem_mesh.push_back(mesh::Partition(*iodata, std::move(smesh), Mpi::World()));
+    mesh::RefineMesh(*iodata, mfem_mesh);
+    if (amr)
+    {
+      auto &pmesh = *mfem_mesh.back();
+      mfem::Array<int> marked;
+      for (int e = 0; e < pmesh.GetNE(); e += 3)
+      {
+        marked.Append(e);
+      }
+      pmesh.GeneralRefinement(marked, 1, 0);
+    }
+    return std::pair{std::move(iodata),
+                     std::make_unique<Mesh>(std::move(mfem_mesh.back()))};
+  };
+  auto Nodes = [](const Mesh &mesh)
+  {
+    const auto &nodes = *mesh.Get().GetNodes();
+    const auto &nodal_fespace =
+        dynamic_cast<const mfem::ParFiniteElementSpace &>(*nodes.FESpace());
+    Vector X(nodal_fespace.GetTrueVSize());
+    nodal_fespace.GetRestrictionMatrix()->Mult(nodes, X);
+    return X;
+  };
+  auto Volume = [](const mfem::ParMesh &mesh)
+  {
+    double volume = 0.0;
+    for (int e = 0; e < mesh.GetNE(); e++)
+    {
+      volume += const_cast<mfem::ParMesh &>(mesh).GetElementVolume(e);
+    }
+    Mpi::GlobalSum(1, &volume, mesh.GetComm());
+    return std::vector<double>{volume};
+  };
+
+  const auto [iodata, mesh] = Read(nullptr, 0.0);
+  const DesignVelocities velocities(*iodata, *mesh);
+  REQUIRE(velocities.GetNames() == std::vector<std::string>{"w", "t"});
+  const auto dvolume = velocities.Differentiate(Volume);
+  const double h = 1.0e-3;
+  for (const auto &[p, V] : {std::pair{0, &W}, std::pair{1, &T}})
+  {
+    const auto [iodata_p, mesh_p] = Read(V, h);
+    const auto [iodata_m, mesh_m] = Read(V, -h);
+    auto dX = Nodes(*mesh_p);
+    dX -= Nodes(*mesh_m);
+    dX *= 1.0 / (2.0 * h);
+    const auto &v = velocities.GetVelocity(p);
+    REQUIRE(v.Size() == dX.Size());
+    Vector error(v);
+    error -= dX;
+    INFO("Parameter " << velocities.GetNames()[p]);
+    CHECK(linalg::Norml2(Mpi::World(), error) <= 1.0e-9 * linalg::Norml2(Mpi::World(), dX));
+
+    // The volume is cubic in the positions of the nodes: Richardson extrapolation of the
+    // central differences is exact.
+    const auto [iodata_p2, mesh_p2] = Read(V, 0.5 * h);
+    const auto [iodata_m2, mesh_m2] = Read(V, -0.5 * h);
+    const double d1 = (Volume(mesh_p->Get())[0] - Volume(mesh_m->Get())[0]) / (2.0 * h),
+                 d2 = (Volume(mesh_p2->Get())[0] - Volume(mesh_m2->Get())[0]) / h;
+    const double fd = (4.0 * d2 - d1) / 3.0;
+    INFO("Volume derivative " << dvolume[p][0] << ", finite difference " << fd);
+    CHECK(std::abs(dvolume[p][0] - fd) <= 1.0e-8 * Volume(mesh->Get())[0]);
+  }
 }
 
 }  // namespace palace

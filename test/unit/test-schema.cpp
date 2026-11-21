@@ -476,31 +476,14 @@ TEST_CASE("Schema Validation - Sub-schema by Key", "[schema][Serial]")
 
   SECTION("Sensitivity")
   {
-    const json objective = {{"Index", 1}, {"Type", "Capacitance"}, {"Terminals", {1, 2}}};
     json sensitivity = {
-        {"Objectives", {objective}},
-        {"Shape", {{"BoundingBoxMin", {0, 0, 0}}, {"BoundingBoxMax", {1, 1, 1}}}},
-        {"MaterialProperties", true},
-        {"LumpedPorts", true}};
+        {"Velocities", "velocities.csv"}, {"MaterialProperties", true}, {"LumpedPorts", true}};
     CHECK(ValidateConfig(sensitivity, "Sensitivity").empty());
+    CHECK(ValidateConfig(json::object(), "Sensitivity").empty());
 
-    // A capacitance needs its terminals, an eigenmode objective its mode, and a box both
-    // of its corners.
-    json missing_terminals = {{"Objectives", {{{"Index", 1}, {"Type", "Capacitance"}}}}};
-    CHECK(!ValidateConfig(missing_terminals, "Sensitivity").empty());
-    json eigenmode = {{"Objectives",
-                       {{{"Index", 1}, {"Type", "Frequency"}, {"Mode", 1}},
-                        {{"Index", 2}, {"Type", "QualityFactor"}, {"Mode", 2}}}}};
-    CHECK(ValidateConfig(eigenmode, "Sensitivity").empty());
-    eigenmode["Objectives"][1].erase("Mode");
-    CHECK(!ValidateConfig(eigenmode, "Sensitivity").empty());
-    json inductance = {
-        {"Objectives", {{{"Index", 1}, {"Type", "Inductance"}, {"Terminals", {1, 1}}}}}};
-    CHECK(ValidateConfig(inductance, "Sensitivity").empty());
-    inductance["Objectives"][0].erase("Terminals");
-    CHECK(!ValidateConfig(inductance, "Sensitivity").empty());
-    sensitivity["Shape"].erase("BoundingBoxMax");
-    CHECK(!ValidateConfig(sensitivity, "Sensitivity").empty());
+    // The velocities are the path of a table, and there are no other keys.
+    CHECK(!ValidateConfig({{"Velocities", 1}}, "Sensitivity").empty());
+    CHECK(!ValidateConfig({{"Objectives", json::array()}}, "Sensitivity").empty());
   }
 
   SECTION("Valid Material")

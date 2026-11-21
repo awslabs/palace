@@ -3412,6 +3412,11 @@ void SplitMeshElements(std::unique_ptr<mfem::Mesh> &orig_mesh, bool make_simplex
 namespace mesh
 {
 
+std::unique_ptr<mfem::Mesh> ReadInputMesh(const IoData &iodata)
+{
+  return LoadMesh(iodata.model.mesh, iodata.model.remove_curvature, iodata.boundaries);
+}
+
 // Conformally bisect a set of mesh edges by inserting a midpoint on each and splitting
 // every tetrahedron and boundary element incident on a split edge into two. Unlike
 // mfem::Mesh::GeneralRefinement, this performs a purely local edge-fan split with no

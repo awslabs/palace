@@ -381,15 +381,15 @@ public:
 
   // Construct the derivative of the same form with respect to a relative change of a
   // property of the material of the given domain attributes, and those with respect to
-  // relative changes of the resistance, inductance and capacitance of lumped port idx (null
-  // for the elements it does not have).
+  // relative changes of the R, L and C of element elem of lumped port idx, or of all its
+  // elements if elem < 0 (null for those of R, L and C it does not have).
   std::unique_ptr<ComplexOperator>
   GetSystemMaterialDerivative(MaterialProperty property, const std::vector<int> &attributes,
                               std::complex<double> a0, std::complex<double> a1,
                               std::complex<double> a2, std::complex<double> omega);
   std::array<std::unique_ptr<ComplexOperator>, 3>
-  GetLumpedPortDerivatives(int idx, std::complex<double> a0, std::complex<double> a1,
-                           std::complex<double> a2);
+  GetLumpedPortDerivatives(int idx, int elem, std::complex<double> a0,
+                           std::complex<double> a1, std::complex<double> a2);
 
   // Construct and return the discrete curl or gradient matrices.
   const Operator &GetGradMatrix() const

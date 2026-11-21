@@ -1292,53 +1292,18 @@ public:
   SolverData(const json &solver);
 };
 
-struct SensitivityObjectiveData
-{
-public:
-  // Type of objective.
-  SensitivityObjective type = SensitivityObjective::CAPACITANCE;
-
-  // Terminal (capacitance) or surface current source (inductance) indices (i, j) of a
-  // matrix entry.
-  std::array<int, 2> terminals = {{0, 0}};
-
-  // Index (1-based) of the mode of an eigenmode objective.
-  int mode = 0;
-
-  SensitivityObjectiveData() = default;
-  SensitivityObjectiveData(const json &objective);
-};
-
-struct SensitivityShapeData
-{
-public:
-  // Export region: the nodes in an axis-aligned box, if given, and of the elements with
-  // the given domain attributes, if any.
-  std::optional<std::array<double, 3>> bbmin, bbmax;
-  std::vector<int> attributes = {};
-
-  // Write the boundary attributes of each exported node.
-  bool boundary_tags = false;
-
-  SensitivityShapeData() = default;
-  SensitivityShapeData(const json &shape);
-};
-
 struct SensitivityData
 {
 public:
-  // Objectives, by index.
-  std::map<int, SensitivityObjectiveData> objectives = {};
-
-  // Export of the gradients with respect to the positions of the mesh nodes, if requested.
-  std::optional<SensitivityShapeData> shape;
+  // Table of the velocities of the design parameters at the nodes of the input mesh.
+  std::string velocities = "";
 
   // Compute the derivatives with respect to the properties of each material, and to the
   // resistance, inductance and capacitance of each lumped port.
   bool material_properties = false;
   bool lumped_ports = false;
 
-  bool empty() const { return objectives.empty(); }
+  bool empty() const { return velocities.empty() && !material_properties && !lumped_ports; }
 
   SensitivityData() = default;
   SensitivityData(const json &sensitivity);
@@ -1376,7 +1341,6 @@ void Nondimensionalize(const Units &units, CurrentDipoleData &data);
 void Nondimensionalize(const Units &units, ConductivityData &data);
 void Nondimensionalize(const Units &units, ImpedanceData &data);
 void Nondimensionalize(const Units &units, SuperconductorData &data);
-void Nondimensionalize(const Units &units, SensitivityShapeData &data);
 void Nondimensionalize(const Units &units, LumpedPortData &data);
 void Nondimensionalize(const Units &units, PeriodicBoundaryData &data);
 void Nondimensionalize(const Units &units, WavePortData &data);

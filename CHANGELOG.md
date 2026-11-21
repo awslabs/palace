@@ -33,15 +33,15 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     imaginary parts of the incident voltage and current. A phase that is not a multiple of
     180 degrees is an error for transient simulations. SchemaVer 4-3-0
     [PR 1169](https://github.com/awslabs/palace/pull/1169).
-  - Added shape and material sensitivities. The `"Sensitivity"` section requests the
-    derivatives of entries of the capacitance and inductance matrices (electrostatic and
-    magnetostatic simulations), and of the frequencies and quality factors of eigenmodes,
-    with respect to the positions of the mesh nodes in a region, to the material properties
-    and to the lumped port elements, written to the `sensitivity` folder of the output, with
-    no adjoint solve. Contracted with design velocities, for example from DeviceLayout.jl, the
-    node gradients give the derivatives with respect to design parameters. The Julia
-    package `scripts/julia/PalaceSensitivity` reads the export, and morphs MFEM meshes by
-    design velocities. SchemaVer 5-1-0.
+  - Added shape and material sensitivities. With the `"Sensitivity"` section, *Palace*
+    writes the derivatives of the capacitance and inductance matrices (electrostatic and
+    magnetostatic simulations), and of the frequencies and quality factors of the eigenmodes,
+    with respect to design parameters, the material properties and the lumped port elements
+    to `sensitivity.json`, with no adjoint solve. The design parameters are given by a table
+    of their velocities at the nodes of the input mesh, for example from DeviceLayout.jl,
+    which *Palace* carries through its refinement of the mesh, so that the derivatives are
+    those of simulations on morphed input meshes, at fixed lumped port elements and source
+    currents. SchemaVer 5-1-0.
     [PR 1127](https://github.com/awslabs/palace/pull/1127).
 
 #### Interface Changes

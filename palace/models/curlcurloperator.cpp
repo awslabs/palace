@@ -668,6 +668,21 @@ void CurlCurlOperator::GetCurrentExcitationVector(int idx, Vector &RHS)
   // retrieve +J).
   SumVectorCoefficient fb(GetMesh().SpaceDimension());
   surf_j_op.AddExcitationBdrCoefficients(idx, fb);
+  AssembleCurrentExcitation(fb, RHS);
+}
+
+void CurlCurlOperator::GetCurrentExcitationVector(int idx, int elem, Vector &RHS)
+{
+  // The share of element elem of the excitation, as SurfaceCurrentOperator assembles it.
+  const auto &element = surf_j_op.GetSource(idx).elements.at(elem);
+  SumVectorCoefficient fb(GetMesh().SpaceDimension());
+  fb.AddCoefficient(element.source->GetModeCoefficient(-element.current_fraction /
+                                                       element.source->GetGeometryWidth()));
+  AssembleCurrentExcitation(fb, RHS);
+}
+
+void CurlCurlOperator::AssembleCurrentExcitation(SumVectorCoefficient &fb, Vector &RHS)
+{
   RHS.SetSize(GetSolutionNDSpace().GetTrueVSize());
   RHS.UseDevice(true);
   RHS = 0.0;

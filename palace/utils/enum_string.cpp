@@ -158,11 +158,6 @@ PALACE_ENUM_STRING_DEFINE(MaterialProperty,
                            {MaterialProperty::CONDUCTIVITY, "Conductivity"},
                            {MaterialProperty::PERMEABILITY, "Permeability"},
                            {MaterialProperty::LONDON_DEPTH, "LondonDepth"}})
-PALACE_ENUM_STRING_DEFINE(SensitivityObjective,
-                          {{SensitivityObjective::CAPACITANCE, "Capacitance"},
-                           {SensitivityObjective::INDUCTANCE, "Inductance"},
-                           {SensitivityObjective::FREQUENCY, "Frequency"},
-                           {SensitivityObjective::QUALITY_FACTOR, "QualityFactor"}})
 
 #undef PALACE_ENUM_STRING_DEFINE
 

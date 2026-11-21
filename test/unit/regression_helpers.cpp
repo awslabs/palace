@@ -126,10 +126,6 @@ void CheckSetEqual(const char *label, const std::set<std::string> &actual,
 std::set<std::string> ExpectedDirectories(int max_its, const RegressionOptions &opts)
 {
   std::set<std::string> expected;
-  if (opts.sensitivity)
-  {
-    expected.insert("sensitivity");
-  }
   if (opts.gridfunction_fields)
   {
     expected.insert("gridfunction");
@@ -154,9 +150,13 @@ std::set<std::string> ExpectedDirectories(int max_its, const RegressionOptions &
   return expected;
 }
 
-std::set<std::string> ExpectedMetadataFiles(int max_its)
+std::set<std::string> ExpectedMetadataFiles(int max_its, const RegressionOptions &opts)
 {
   std::set<std::string> expected{"palace.json"};
+  if (opts.sensitivity)
+  {
+    expected.insert("sensitivity.json");
+  }
   for (int i = 1; i <= max_its; ++i)
   {
     expected.insert("iteration" + std::to_string(i) + "/palace.json");
@@ -505,6 +505,10 @@ void RunRegressionCase(std::string_view case_dir, std::string_view config_json,
   const int omp_threads = palace::utils::ConfigureOmp();
   // Wipe BlockTimer state so timings/peak-memory don't accumulate across cases.
   BlockTimer::Reset();
+  if (effective_opts.prepare)
+  {
+    effective_opts.prepare(iodata);
+  }
   palace::Run(iodata, comm, omp_threads, /*git_tag=*/nullptr);
 
   // palace::Run ends with a collective metadata write, so rank 0 can read
@@ -512,7 +516,7 @@ void RunRegressionCase(std::string_view case_dir, std::string_view config_json,
   // doesn't strand the other ranks.
   if (Mpi::Root(comm))
   {
-    const std::set<std::string> skip_dirs{"paraview", "gridfunction", "sensitivity"};
+    const std::set<std::string> skip_dirs{"paraview", "gridfunction"};
     FileListing got = ListRegressionFiles(postpro_path, skip_dirs);
     const FileListing want = ListRegressionFiles(ref_postpro, skip_dirs);
 
@@ -530,7 +534,7 @@ void RunRegressionCase(std::string_view case_dir, std::string_view config_json,
                   ExpectedDirectories(max_refinement_iterations, effective_opts));
     CheckSetEqual("regression CSV files", got.csv_files, want.csv_files);
     CheckSetEqual("regression metadata files", got.meta_files,
-                  ExpectedMetadataFiles(max_refinement_iterations));
+                  ExpectedMetadataFiles(max_refinement_iterations, effective_opts));
 
     for (const auto &rel : want.csv_files)
     {

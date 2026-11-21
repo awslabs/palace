@@ -4,6 +4,7 @@
 #include "basesolver.hpp"
 
 #include <array>
+#include <filesystem>
 #include <mfem.hpp>
 #include <nlohmann/json.hpp>
 #include "drivers/transientsolver.hpp"
@@ -184,6 +185,11 @@ BaseSolver::BaseSolver(const IoData &iodata, bool root, int size, int num_thread
                        const char *git_tag)
   : iodata(iodata), post_dir(iodata.problem.output), root(root)
 {
+  // The table of design velocities is read after the solves: check for it first.
+  const auto &velocities = iodata.sensitivity.velocities;
+  MFEM_VERIFY(!root || velocities.empty() || std::filesystem::exists(velocities),
+              "The design velocity table " << velocities << " does not exist!");
+
   // Initialize simulation metadata for this simulation.
   if (root)
   {

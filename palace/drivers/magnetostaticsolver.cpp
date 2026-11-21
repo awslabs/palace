@@ -13,6 +13,7 @@
 #include <mfem.hpp>
 #include <nlohmann/json.hpp>
 #include "fem/errorindicator.hpp"
+#include "fem/lumpedelement.hpp"
 #include "fem/mesh.hpp"
 #include "fem/shapederivativeform.hpp"
 #include "linalg/errorestimator.hpp"
@@ -20,7 +21,7 @@
 #include "linalg/operator.hpp"
 #include "models/curlcurloperator.hpp"
 #include "models/postoperator.hpp"
-#include "models/sensitivityexport.hpp"
+#include "models/sensitivity.hpp"
 #include "models/surfacecurlsolver.hpp"
 #include "models/surfacecurrentoperator.hpp"
 #include "utils/communication.hpp"
@@ -1000,104 +1001,127 @@ mfem::DenseMatrix MagnetostaticSolver::PostprocessTerminals(
   return M;
 }
 
-void MagnetostaticSolver::PostprocessSensitivities(const CurlCurlOperator &curlcurl_op,
+void MagnetostaticSolver::PostprocessSensitivities(CurlCurlOperator &curlcurl_op,
                                                    const std::vector<Vector> &A,
                                                    const std::vector<double> &I_inc,
                                                    const mfem::DenseMatrix &M) const
 {
-  // Each M_ij = A_jᵀ K A_i / (I_i I_j) with K A_i = b_i, so
-  // dM_ij = (b_i'(A_j) + b_j'(A_i) - K'(A_i, A_j)) / (I_i I_j): no adjoint solve is
-  // needed. The derivatives b' of the excitations are at fixed current densities.
-  const auto &sensitivity = iodata.sensitivity;
-  Mpi::Print("\nComputing the sensitivities of {:d} objective{}\n",
-             sensitivity.objectives.size(), (sensitivity.objectives.size() > 1) ? "s" : "");
-  std::map<int, int> step;
-  for (const auto &[idx, data] : curlcurl_op.GetSurfaceCurrentOp())
-  {
-    step.emplace(idx, static_cast<int>(step.size()));
-  }
-  SensitivityExport output(iodata, curlcurl_op.GetMesh());
-  std::unique_ptr<ShapeDerivativeOperator> dK;
-  std::map<int, std::unique_ptr<ShapeDerivativeOperator>> db;
-  if (output.HasShape())
-  {
-    dK = curlcurl_op.GetStiffnessShapeDerivative();
-  }
-  std::vector<std::unique_ptr<Operator>> K_mat, L_mat;
-  if (sensitivity.material_properties)
-  {
-    for (const auto &material : iodata.domains.materials)
-    {
-      K_mat.push_back(curlcurl_op.GetStiffness(material.attributes));
-      L_mat.push_back((material.lambda_L > 0.0)
-                          ? curlcurl_op.GetLondonMass(material.attributes)
-                          : nullptr);
-    }
-  }
-
-  const auto &nd_fespace = curlcurl_op.GetNDSpace();
-  Vector u_l(nd_fespace.GetVSize()), w_l(nd_fespace.GetVSize()), y_l(nd_fespace.GetVSize());
-  u_l.UseDevice(true);
-  w_l.UseDevice(true);
-  y_l.UseDevice(true);
+  // Each M_ij = A_jᵀ K A_i / (I_i I_j) with K A_i = b_i, so with no adjoint solve,
+  // dM_ij = (b_i'(A_j) + b_j'(A_i) - K'(A_i, A_j) - T_ij - T_ji) / (I_i I_j). b' is at
+  // fixed current densities: at fixed currents, the share b_ie of element e of source i
+  // scales with the inverse of its width w_e, which gives T_ij = Σₑ b_ieᵀ A_j ∂log w_e.
+  const DesignVelocities velocities(iodata, curlcurl_op.GetMesh());
+  Mpi::Print("\nComputing the sensitivities of the inductance matrix\n");
+  const auto comm = curlcurl_op.GetComm();
   const double H = iodata.units.GetScaleFactor<Units::ValueType::INDUCTANCE>();
-  Vector g, t;
-  for (const auto &[idx, data] : sensitivity.objectives)
+  const auto &surf_j_op = curlcurl_op.GetSurfaceCurrentOp();
+  const int n = M.Height();
+  auto derivatives = nlohmann::json::object();
+  if (velocities.Size() > 0)
   {
-    const int i = step.at(data.terminals[0]), j = step.at(data.terminals[1]);
-    nlohmann::json entry = {{"Index", idx},
-                            {"Type", ToString(data.type)},
-                            {"Terminals", data.terminals},
-                            {"Value", M(i, j) * H},
-                            {"Unit", "H"}};
-    if (!K_mat.empty())
-    {
-      // K scales with the inverse permeability of each material, and its London mass L_m
-      // with the inverse square of the London depth, and the excitations depend on neither,
-      // so μ ∂M_ij/∂μ = A_jᵀ K_m A_i / (I_i I_j) and λ ∂M_ij/∂λ = 2 A_jᵀ L_m A_i / (I_i
-      // I_j).
-      nd_fespace.GetProlongationMatrix()->Mult(A[i], u_l);
-      nd_fespace.GetProlongationMatrix()->Mult(A[j], w_l);
-      auto materials = nlohmann::json::array();
-      for (std::size_t m = 0; m < K_mat.size(); m++)
-      {
-        K_mat[m]->Mult(u_l, y_l);
-        const double dM =
-            linalg::Dot<Vector>(curlcurl_op.GetComm(), w_l, y_l) / (I_inc[i] * I_inc[j]);
-        auto &material = materials.emplace_back(
-            nlohmann::json{{"Index", m + 1},
-                           {"Attributes", iodata.domains.materials[m].attributes},
-                           {"Permeability", dM * H}});
-        if (L_mat[m])
+    const auto dlogw = velocities.Differentiate(
+        [&](const mfem::ParMesh &moved)
         {
-          L_mat[m]->Mult(u_l, y_l);
-          material["LondonDepth"] = 2.0 *
-                                    linalg::Dot<Vector>(curlcurl_op.GetComm(), w_l, y_l) /
-                                    (I_inc[i] * I_inc[j]) * H;
+          std::vector<double> logw;
+          for (const auto &[idx, data] : surf_j_op)
+          {
+            for (const auto &elem : iodata.boundaries.current.at(idx).elements)
+            {
+              mfem::Array<int> attr_list;
+              attr_list.Append(elem.attributes.data(), elem.attributes.size());
+              logw.push_back(std::log(
+                  UniformElementData(elem.direction, attr_list, moved).GetGeometryWidth()));
+            }
+          }
+          return logw;
+        });
+    std::vector<std::unique_ptr<ShapeDerivativeOperator>> db;
+    std::vector<int> source;
+    std::vector<double> bA;
+    Vector b;
+    for (const auto &[idx, data] : surf_j_op)
+    {
+      db.push_back(curlcurl_op.GetCurrentExcitationShapeDerivative(idx));
+      for (std::size_t e = 0; e < data.elements.size(); e++)
+      {
+        curlcurl_op.GetCurrentExcitationVector(idx, static_cast<int>(e), b);
+        for (int j = 0; j < n; j++)
+        {
+          bA.push_back(linalg::LocalDot(b, A[j]));
         }
+        source.push_back(static_cast<int>(db.size()) - 1);
       }
-      entry["MaterialProperties"] = materials;
     }
-    if (dK)
+    Mpi::GlobalSum(static_cast<int>(bA.size()), bA.data(), comm);
+
+    const auto dK = curlcurl_op.GetStiffnessShapeDerivative();
+    std::vector<mfem::DenseMatrix> dM(velocities.Size(), mfem::DenseMatrix(n));
+    Vector g, t;
+    for (int i = 0; i < n; i++)
     {
-      dK->Mult(A[i], A[j], g);
-      g *= -1.0;
-      for (const auto &[source, w] :
-           {std::pair{data.terminals[0], &A[j]}, std::pair{data.terminals[1], &A[i]}})
+      for (int j = i; j < n; j++)
       {
-        auto &op = db[source];
-        if (!op)
-        {
-          op = curlcurl_op.GetCurrentExcitationShapeDerivative(source);
-        }
-        op->Mult(*w, *w, t);
+        dK->Mult(A[i], A[j], g);
+        g *= -1.0;
+        db[i]->Mult(A[j], A[j], t);
         g += t;
+        db[j]->Mult(A[i], A[i], t);
+        g += t;
+        const auto d = velocities.Contract(g);
+        for (std::size_t p = 0; p < d.size(); p++)
+        {
+          double T = 0.0;
+          for (std::size_t k = 0; k < source.size(); k++)
+          {
+            T += ((source[k] == i) ? bA[k * n + j] : 0.0) * dlogw[p][k] +
+                 ((source[k] == j) ? bA[k * n + i] : 0.0) * dlogw[p][k];
+          }
+          dM[p](i, j) = dM[p](j, i) = (d[p] - T) / (I_inc[i] * I_inc[j]);
+        }
       }
-      g *= 1.0 / (I_inc[i] * I_inc[j]);
     }
-    output.AddObjective(std::move(entry), dK ? &g : nullptr, H);
+    for (std::size_t p = 0; p < dM.size(); p++)
+    {
+      derivatives[velocities.GetNames()[p]] = ToJson(dM[p], H);
+    }
   }
-  output.Write(post_dir / "sensitivity");
+  if (iodata.sensitivity.material_properties)
+  {
+    // K scales with the inverse permeability and its London mass L_m with the inverse
+    // square of the London depth, and the excitations with neither, so μ ∂M_ij/∂μ = A_jᵀ
+    // K_m A_i / (I_i I_j) and λ ∂M_ij/∂λ = 2 A_jᵀ L_m A_i / (I_i I_j).
+    const auto &nd_fespace = curlcurl_op.GetNDSpace();
+    std::vector<Vector> u(n);
+    for (int i = 0; i < n; i++)
+    {
+      u[i].SetSize(nd_fespace.GetVSize());
+      u[i].UseDevice(true);
+      nd_fespace.GetProlongationMatrix()->Mult(A[i], u[i]);
+      u[i] *= 1.0 / I_inc[i];
+    }
+    for (std::size_t m = 0; m < iodata.domains.materials.size(); m++)
+    {
+      const auto &material = iodata.domains.materials[m];
+      derivatives[MaterialDerivativeName(m, "Permeability")] =
+          ToJson(GramMatrix(*curlcurl_op.GetStiffness(material.attributes), u, comm), H);
+      if (material.lambda_L > 0.0)
+      {
+        derivatives[MaterialDerivativeName(m, "LondonDepth")] = ToJson(
+            GramMatrix(*curlcurl_op.GetLondonMass(material.attributes), u, comm), 2.0 * H);
+      }
+    }
+  }
+  std::vector<int> terminals;
+  for (const auto &[idx, data] : surf_j_op)
+  {
+    terminals.push_back(idx);
+  }
+  const nlohmann::json sensitivities = {{"Inductance",
+                                         {{"Unit", "H"},
+                                          {"Terminals", terminals},
+                                          {"Value", ToJson(M, H)},
+                                          {"Derivatives", std::move(derivatives)}}}};
+  WriteSensitivities(sensitivities, post_dir, comm);
 }
 
 }  // namespace palace

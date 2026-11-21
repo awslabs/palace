@@ -42,8 +42,8 @@ private:
   std::pair<ErrorIndicator, long long int>
   Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const override;
 
-  // Compute and write the derivatives of the frequencies and quality factors of the
-  // configured objectives, for the modes of angular frequencies omega.
+  // Compute and write the derivatives of the frequencies and quality factors of the modes
+  // of angular frequencies omega.
   void PostprocessSensitivities(SpaceOperator &space_op, const EigenvalueSolver &eigen,
                                 const ComplexOperator *C, const ComplexOperator &M,
                                 bool has_A2, const DivFreeSolver<ComplexVector> *divfree,

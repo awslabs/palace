@@ -1281,14 +1281,18 @@ std::unique_ptr<ComplexOperator> SpaceOperator::GetSystemMaterialDerivative(
 }
 
 std::array<std::unique_ptr<ComplexOperator>, 3>
-SpaceOperator::GetLumpedPortDerivatives(int idx, std::complex<double> a0,
+SpaceOperator::GetLumpedPortDerivatives(int idx, int elem, std::complex<double> a0,
                                         std::complex<double> a1, std::complex<double> a2)
 {
   // The terms of the port are 1/Rs in C, 1/Ls in K and Cs in M.
+  const auto &elems = lumped_port_op.GetPort(idx).elems;
   mfem::Array<int> port_attr;
-  for (const auto &elem : lumped_port_op.GetPort(idx).elems)
+  for (std::size_t e = 0; e < elems.size(); e++)
   {
-    port_attr.Append(mat_op.GetCeedBdrAttributes(elem->GetAttrList()));
+    if (elem < 0 || static_cast<std::size_t>(elem) == e)
+    {
+      port_attr.Append(mat_op.GetCeedBdrAttributes(elems[e]->GetAttrList()));
+    }
   }
   auto Derivative = [&](void (LumpedPortOperator::*AddBdrCoefficients)(
                             double, MaterialPropertyCoefficient &),

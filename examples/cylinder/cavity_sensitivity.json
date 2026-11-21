@@ -62,25 +62,7 @@
   },
   "Sensitivity":
   {
-    "Objectives":
-    [
-      {
-        "Index": 1,
-        "Type": "Frequency",
-        "Mode": 1  // TM010
-      },
-      {
-        "Index": 2,
-        "Type": "Frequency",
-        "Mode": 4  // TM011
-      },
-      {
-        "Index": 3,
-        "Type": "QualityFactor",
-        "Mode": 1
-      }
-    ],
-    "Shape": {},
+    "Velocities": "velocities.csv",
     "MaterialProperties": true
   }
 }

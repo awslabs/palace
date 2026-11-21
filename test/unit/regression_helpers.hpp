@@ -14,6 +14,7 @@
 
 namespace palace
 {
+class IoData;
 class Table;
 }  // namespace palace
 
@@ -75,9 +76,11 @@ struct RegressionOptions
   // Expected volumetric-output directories.
   bool paraview_fields = true;
   bool gridfunction_fields = false;
-  // Expect a sensitivity export, which custom checks can read from the "sensitivity"
-  // folder next to the output CSVs.
+  // Expect sensitivity.json, which custom checks can read next to the output CSVs.
   bool sensitivity = false;
+  // Called on every process in the staged input folder before the solve, for example to
+  // write the design velocities of a sensitivity case.
+  std::function<void(const IoData &)> prepare;
   SolverOverridePolicy linear_solver_policy = SolverOverridePolicy::UseGlobalOverride;
   SolverOverridePolicy eigen_solver_policy = SolverOverridePolicy::UseGlobalOverride;
   // Custom per-file checks keyed by relative path under postpro/ (e.g.

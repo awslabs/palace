@@ -34,9 +34,8 @@ private:
                        const std::vector<Vector> &london_ah,
                        const std::vector<Vector> &london_ms_shifted) const;
 
-  // Compute and write the derivatives of the inductances of the configured objectives.
-  void PostprocessSensitivities(const CurlCurlOperator &curlcurl_op,
-                                const std::vector<Vector> &A,
+  // Compute and write the derivatives of the inductance matrix.
+  void PostprocessSensitivities(CurlCurlOperator &curlcurl_op, const std::vector<Vector> &A,
                                 const std::vector<double> &I_inc,
                                 const mfem::DenseMatrix &M) const;
 

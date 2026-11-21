@@ -41,7 +41,7 @@ private:
                        const std::map<int, mfem::Array<int>> &terminal_sources,
                        const std::vector<Vector> &V) const;
 
-  // Compute and write the derivatives of the capacitances of the configured objectives.
+  // Compute and write the derivatives of the capacitance matrix.
   void PostprocessSensitivities(const LaplaceOperator &laplace_op,
                                 const std::map<int, mfem::Array<int>> &terminal_sources,
                                 const std::vector<Vector> &V,

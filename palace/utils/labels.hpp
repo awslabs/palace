@@ -231,15 +231,6 @@ enum class MaterialProperty : char
   LONDON_DEPTH
 };
 
-// Objectives of sensitivities.
-enum class SensitivityObjective : char
-{
-  CAPACITANCE,
-  INDUCTANCE,
-  FREQUENCY,
-  QUALITY_FACTOR
-};
-
 }  // namespace palace
 
 #endif  // PALACE_UTILS_LABELS_HPP

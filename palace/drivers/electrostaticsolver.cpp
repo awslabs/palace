@@ -13,7 +13,7 @@
 #include "linalg/operator.hpp"
 #include "models/laplaceoperator.hpp"
 #include "models/postoperator.hpp"
-#include "models/sensitivityexport.hpp"
+#include "models/sensitivity.hpp"
 #include "utils/communication.hpp"
 #include "utils/enum_string.hpp"
 #include "utils/iodata.hpp"
@@ -204,71 +204,66 @@ void ElectrostaticSolver::PostprocessSensitivities(
     const std::map<int, mfem::Array<int>> &terminal_sources, const std::vector<Vector> &V,
     const mfem::DenseMatrix &C) const
 {
-  // Each C_ij = V_jᵀ K V_i is stationary with respect to the free DOFs of the solutions,
-  // which solve K V = 0 there, so its derivatives are those of the form at fixed V_i and
-  // V_j: no adjoint solve is needed.
-  const auto &sensitivity = iodata.sensitivity;
-  Mpi::Print("\nComputing the sensitivities of {:d} objective{}\n",
-             sensitivity.objectives.size(), (sensitivity.objectives.size() > 1) ? "s" : "");
-  std::map<int, int> step;
+  // Each C_ij = V_jᵀ K V_i is stationary with respect to the free DOFs of the solutions, so
+  // its derivatives are those of the form at fixed V_i and V_j, with no adjoint solve. With
+  // respect to a relative change of the permittivity of a material, it is its share of the
+  // form.
+  const DesignVelocities velocities(iodata, laplace_op.GetMesh());
+  Mpi::Print("\nComputing the sensitivities of the capacitance matrix\n");
+  const auto comm = laplace_op.GetComm();
+  const double F = iodata.units.Dimensionalize<Units::ValueType::CAPACITANCE>(1.0);
+  const int n = C.Height();
+  auto derivatives = nlohmann::json::object();
+  if (velocities.Size() > 0)
+  {
+    const auto dK = laplace_op.GetStiffnessShapeDerivative();
+    std::vector<mfem::DenseMatrix> dC(velocities.Size(), mfem::DenseMatrix(n));
+    Vector g;
+    for (int i = 0; i < n; i++)
+    {
+      for (int j = i; j < n; j++)
+      {
+        dK->Mult(V[i], V[j], g);
+        const auto d = velocities.Contract(g);
+        for (std::size_t p = 0; p < d.size(); p++)
+        {
+          dC[p](i, j) = dC[p](j, i) = d[p];
+        }
+      }
+    }
+    for (std::size_t p = 0; p < dC.size(); p++)
+    {
+      derivatives[velocities.GetNames()[p]] = ToJson(dC[p], F);
+    }
+  }
+  if (iodata.sensitivity.material_properties)
+  {
+    const auto &h1_fespace = laplace_op.GetH1Space();
+    std::vector<Vector> u(n);
+    for (int i = 0; i < n; i++)
+    {
+      u[i].SetSize(h1_fespace.GetVSize());
+      u[i].UseDevice(true);
+      h1_fespace.GetProlongationMatrix()->Mult(V[i], u[i]);
+    }
+    for (std::size_t m = 0; m < iodata.domains.materials.size(); m++)
+    {
+      const auto K_m = laplace_op.GetStiffness(iodata.domains.materials[m].attributes);
+      derivatives[MaterialDerivativeName(m, "Permittivity")] =
+          ToJson(GramMatrix(*K_m, u, comm), F);
+    }
+  }
+  std::vector<int> terminals;
   for (const auto &[idx, data] : terminal_sources)
   {
-    step.emplace(idx, static_cast<int>(step.size()));
+    terminals.push_back(idx);
   }
-  SensitivityExport output(iodata, laplace_op.GetMesh());
-  std::unique_ptr<ShapeDerivativeOperator> dK;
-  if (output.HasShape())
-  {
-    dK = laplace_op.GetStiffnessShapeDerivative();
-  }
-  std::vector<std::unique_ptr<Operator>> K_mat;
-  if (sensitivity.material_properties)
-  {
-    for (const auto &material : iodata.domains.materials)
-    {
-      K_mat.push_back(laplace_op.GetStiffness(material.attributes));
-    }
-  }
-
-  const auto &h1_fespace = laplace_op.GetH1Space();
-  Vector u_l(h1_fespace.GetVSize()), w_l(h1_fespace.GetVSize()), y_l(h1_fespace.GetVSize()),
-      g;
-  u_l.UseDevice(true);
-  w_l.UseDevice(true);
-  y_l.UseDevice(true);
-  const double F = iodata.units.Dimensionalize<Units::ValueType::CAPACITANCE>(1.0);
-  for (const auto &[idx, data] : sensitivity.objectives)
-  {
-    const int i = step.at(data.terminals[0]), j = step.at(data.terminals[1]);
-    nlohmann::json entry = {{"Index", idx},
-                            {"Type", ToString(data.type)},
-                            {"Terminals", data.terminals},
-                            {"Value", C(i, j) * F},
-                            {"Unit", "F"}};
-    if (!K_mat.empty())
-    {
-      // The derivative with respect to a relative change of the permittivity of a material
-      // is its share of the form.
-      h1_fespace.GetProlongationMatrix()->Mult(V[i], u_l);
-      h1_fespace.GetProlongationMatrix()->Mult(V[j], w_l);
-      auto materials = nlohmann::json::array();
-      for (std::size_t m = 0; m < K_mat.size(); m++)
-      {
-        K_mat[m]->Mult(u_l, y_l);
-        materials.push_back(
-            {{"Index", m + 1},
-             {"Attributes", iodata.domains.materials[m].attributes},
-             {"Permittivity", linalg::Dot<Vector>(laplace_op.GetComm(), w_l, y_l) * F}});
-      }
-      entry["MaterialProperties"] = materials;
-    }
-    if (dK)
-    {
-      dK->Mult(V[i], V[j], g);
-    }
-    output.AddObjective(std::move(entry), dK ? &g : nullptr, F);
-  }
-  output.Write(post_dir / "sensitivity");
+  const nlohmann::json sensitivities = {{"Capacitance",
+                                         {{"Unit", "F"},
+                                          {"Terminals", terminals},
+                                          {"Value", ToJson(C, F)},
+                                          {"Derivatives", std::move(derivatives)}}}};
+  WriteSensitivities(sensitivities, post_dir, comm);
 }
 
 }  // namespace palace

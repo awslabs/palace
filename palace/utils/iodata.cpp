@@ -890,45 +890,11 @@ void IoData::CheckConfiguration()
   // problems.
   if (!sensitivity.empty())
   {
-    for (const auto &[idx, data] : sensitivity.objectives)
-    {
-      switch (data.type)
-      {
-        case SensitivityObjective::CAPACITANCE:
-          MFEM_VERIFY(problem.type == ProblemType::ELECTROSTATIC,
-                      "\"Sensitivity\" objective "
-                          << idx << " requires an electrostatic problem!");
-          for (auto i : data.terminals)
-          {
-            MFEM_VERIFY(boundaries.terminal.contains(i),
-                        "\"Sensitivity\" objective " << idx << " refers to terminal " << i
-                                                     << ", which is not a \"Terminal\"!");
-          }
-          break;
-        case SensitivityObjective::INDUCTANCE:
-          MFEM_VERIFY(problem.type == ProblemType::MAGNETOSTATIC,
-                      "\"Sensitivity\" objective " << idx
-                                                   << " requires a magnetostatic problem!");
-          for (auto i : data.terminals)
-          {
-            MFEM_VERIFY(boundaries.current.contains(i),
-                        "\"Sensitivity\" objective "
-                            << idx << " refers to terminal " << i
-                            << ", which is not a \"SurfaceCurrent\"!");
-          }
-          break;
-        case SensitivityObjective::FREQUENCY:
-        case SensitivityObjective::QUALITY_FACTOR:
-          MFEM_VERIFY(problem.type == ProblemType::EIGENMODE,
-                      "\"Sensitivity\" objective " << idx
-                                                   << " requires an eigenmode problem!");
-          MFEM_VERIFY(data.mode >= 1 && data.mode <= solver.eigenmode.n,
-                      "\"Sensitivity\" objective " << idx << " refers to mode " << data.mode
-                                                   << ", but only " << solver.eigenmode.n
-                                                   << " modes are computed!");
-          break;
-      }
-    }
+    MFEM_VERIFY(problem.type == ProblemType::ELECTROSTATIC ||
+                    problem.type == ProblemType::MAGNETOSTATIC ||
+                    problem.type == ProblemType::EIGENMODE,
+                "\"Sensitivity\" is only available for electrostatic, magnetostatic and "
+                "eigenmode problems!");
     MFEM_VERIFY(
         problem.type != ProblemType::EIGENMODE ||
             (boundaries.waveport.empty() && boundaries.floquetport.empty() &&
@@ -959,15 +925,17 @@ void IoData::CheckConfiguration()
                 source.second.elements, [](const auto &element)
                 { return element.coordinate_system == CoordinateSystem::CYLINDRICAL; });
           });
-      MFEM_VERIFY(!sensitivity.shape || !coaxial_sources,
-                  "\"Sensitivity\" \"Shape\" is not available with coaxial surface "
+      MFEM_VERIFY(sensitivity.velocities.empty() || !coaxial_sources,
+                  "\"Sensitivity\" \"Velocities\" is not available with coaxial surface "
                   "current sources!");
     }
     MFEM_VERIFY(!sensitivity.lumped_ports || problem.type == ProblemType::EIGENMODE,
                 "\"Sensitivity\" \"LumpedPorts\" is only available for eigenmode "
                 "problems!");
-    MFEM_VERIFY(!sensitivity.shape || boundaries.periodic.boundary_pairs.empty(),
-                "\"Sensitivity\" \"Shape\" is not available with periodic boundaries!");
+    MFEM_VERIFY(sensitivity.velocities.empty() ||
+                    boundaries.periodic.boundary_pairs.empty(),
+                "\"Sensitivity\" \"Velocities\" is not available with periodic "
+                "boundaries!");
   }
 
   // Configure settings for quadrature rules and partial assembly.
@@ -999,12 +967,6 @@ void IoData::NondimensionalizeInputs(std::unique_ptr<mfem::Mesh> &mesh)
   for (auto &data : domains.materials)
   {
     config::Nondimensionalize(units, data);
-  }
-
-  // Export region of the sensitivities.
-  if (sensitivity.shape)
-  {
-    config::Nondimensionalize(units, *sensitivity.shape);
   }
 
   // Probe location coordinates.

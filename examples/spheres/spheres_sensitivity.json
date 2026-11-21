@@ -61,28 +61,7 @@
   },
   "Sensitivity":
   {
-    "Objectives":
-    [
-      {
-        "Index": 1,
-        "Type": "Capacitance",
-        "Terminals": [1, 1]
-      },
-      {
-        "Index": 2,
-        "Type": "Capacitance",
-        "Terminals": [1, 2]
-      },
-      {
-        "Index": 3,
-        "Type": "Capacitance",
-        "Terminals": [2, 2]
-      }
-    ],
-    "Shape":
-    {
-      "BoundaryTags": true
-    },
+    "Velocities": "velocities.csv",
     "MaterialProperties": true
   }
 }
