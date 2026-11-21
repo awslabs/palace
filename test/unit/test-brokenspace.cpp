@@ -1342,7 +1342,7 @@ void TestBrokenInterpolators(int order, bool nonconforming, bool free_edge)
   // Partially assembled (no matrix), also through the hanging entities of the interior
   // boundary (the constrained DOFs of the hanging edges and faces determine the copies read
   // only through them: single rows and pairs, then the constraint rows with several masters
-  // of each cluster of hanging entities).
+  // of the hanging entities of each master entity).
   {
     Vector w;
     const bool nd_weights = nd_broken.GetRestrictionWeights(w),
@@ -1447,13 +1447,23 @@ void TestBrokenInterpolators(int order, bool nonconforming, bool free_edge)
     FiniteElementSpaceHierarchy rt_hierarchy_ref;
     rt_hierarchy_ref.AddLevel(std::make_unique<FiniteElementSpace>(mesh, &rt_fec_coarse));
     rt_hierarchy_ref.AddLevel(std::make_unique<FiniteElementSpace>(mesh, &rt_fec));
-    CheckAssembled(G, *Assembled(h1_broken, nd_broken,
-                                 nd_fespace.GetDiscreteInterpolator(h1_fespace)));
-    CheckAssembled(C, *Assembled(nd_broken, rt_broken,
-                                 rt_fespace.GetDiscreteInterpolator(nd_fespace)));
-    CheckAssembled(P_nd, *Assembled(nd_hierarchy.GetFESpaceAtLevel(0),
-                                    nd_hierarchy.GetFESpaceAtLevel(1),
-                                    nd_hierarchy_u.GetProlongationAtLevel(0)));
+    // The assembled interpolators are those which a broken test space takes when its
+    // restriction has no weights (a copy which no group of constraint rows determines, see
+    // FiniteElementSpace::GetRestrictionWeights): exact on their own, too.
+    const auto G_a =
+        Assembled(h1_broken, nd_broken, nd_fespace.GetDiscreteInterpolator(h1_fespace));
+    const auto C_a =
+        Assembled(nd_broken, rt_broken, rt_fespace.GetDiscreteInterpolator(nd_fespace));
+    const auto P_a =
+        Assembled(nd_hierarchy.GetFESpaceAtLevel(0), nd_hierarchy.GetFESpaceAtLevel(1),
+                  nd_hierarchy_u.GetProlongationAtLevel(0));
+    CheckCopies(h1_broken, nd_broken, nd_fespace.GetDiscreteInterpolator(h1_fespace), *G_a);
+    CheckCopies(nd_broken, rt_broken, rt_fespace.GetDiscreteInterpolator(nd_fespace), *C_a);
+    CheckCopies(nd_hierarchy.GetFESpaceAtLevel(0), nd_broken,
+                nd_hierarchy_u.GetProlongationAtLevel(0), *P_a);
+    CheckAssembled(G, *G_a);
+    CheckAssembled(C, *C_a);
+    CheckAssembled(P_nd, *P_a);
     CheckAssembled(P_rt, *Assembled(rt_hierarchy.GetFESpaceAtLevel(0),
                                     rt_hierarchy.GetFESpaceAtLevel(1),
                                     rt_hierarchy_ref.GetProlongationAtLevel(0)));

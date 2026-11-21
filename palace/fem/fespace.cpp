@@ -7,8 +7,11 @@
 #include <array>
 #include <cmath>
 #include <functional>
+#include <limits>
 #include <map>
+#include <numeric>
 #include <string>
+#include <tuple>
 #include <unordered_map>
 #include <Eigen/Dense>
 #include "fem/bilinearform.hpp"
@@ -517,6 +520,8 @@ void FiniteElementSpace::ApplyRestrictionPairs(Vector &lx) const
 namespace
 {
 
+using mpi::ExchangeAll;
+
 // The partition array of a distributed set with n local entries, as for MFEM's
 // HypreParMatrix (2 entries with HYPRE's assumed partition, the offsets of all processes
 // otherwise), and the global size.
@@ -567,25 +572,26 @@ void FiniteElementSpace::BuildHangingRestriction(const std::vector<char> &read,
   // y_i = sum_j P_ij t_j. The true DOFs which no single row or pair of rows determines
   // (u: c < 1/2) are the copies of master DOFs which the elements of their side read only
   // through such rows: with the others (d) known, y_c - P_cd t_d = P_cu t_u on the rows
-  // with an entry on u, and P_cu has full column rank on each cluster of u (connected by
-  // the rows), since the constraints embed the parent space into the children's space.
-  // The rows of all processes are gathered on the first process, which solves each
-  // cluster's least-squares problem (SVD; columns not in the row space of their cluster's
-  // rows remain unresolved) and returns the coefficients of the pseudo-inverse on each
-  // process's rows (setup only: the clusters are the hanging entities of the interior
-  // boundaries, a few thousand DOFs).
+  // with an entry on u, and P_cu has full column rank, since the constraints embed the
+  // parent space into the children's space. The columns are recovered from the
+  // least-squares problems of small groups of these rows, each solved by a process owning
+  // one of its columns (see below), so that the setup is distributed as the hanging
+  // entities of the interior boundaries are, with a cost per process bounded by its share
+  // of them.
   MFEM_VERIFY(broken, "Hanging restriction requires a broken space!");
   auto &H = *(broken->hanging = std::make_unique<BrokenData::HangingRestriction>());
   const MPI_Comm comm = GetComm();
-  const int rank = Mpi::Rank(comm), nprocs = Mpi::Size(comm);
+  const int nprocs = Mpi::Size(comm);
   const auto &P = broken->P.Matrix();
-  const HostCSR csr(P);
-  const HYPRE_Int *di = csr.dI.data(), *dj = csr.dJ.data(), *oi = csr.oI.data(),
-                  *oj = csr.oJ.data();
-  const HYPRE_Real *dv = csr.dV.data(), *ov = csr.oV.data();
-  const HYPRE_BigInt *cmap = csr.cmap.data();
-  const int num_cols_offd = csr.num_cols_offd;
-  const HYPRE_BigInt col0 = csr.col0;
+  // The setup frees its data as soon as it is done with them (the host copy of P, the
+  // rows), as it runs with the hierarchy of the space set up around it.
+  auto csr = std::make_unique<HostCSR>(P);
+  const HYPRE_Int *di = csr->dI.data(), *dj = csr->dJ.data(), *oi = csr->oI.data(),
+                  *oj = csr->oJ.data();
+  const HYPRE_Real *dv = csr->dV.data(), *ov = csr->oV.data();
+  const HYPRE_BigInt *cmap = csr->cmap.data();
+  const int num_cols_offd = csr->num_cols_offd;
+  const HYPRE_BigInt col0 = csr->col0;
   hypre_ParCSRMatrix *hP = const_cast<mfem::HypreParMatrix &>(P);  // Its comm package.
   const int n = broken->vsize, tsize = broken->tsize;
 
@@ -653,176 +659,227 @@ void FiniteElementSpace::BuildHangingRestriction(const std::vector<char> &read,
     }
   }
 
-  // Gather the rows on the first process.
-  auto Gather =
-      [&](const auto &local, auto &all, MPI_Datatype type, std::vector<int> &counts)
+  // Each true DOF of u is recovered from a group of rows: the rows whose undetermined
+  // columns are the same set (the constraint rows of the DOFs of the hanging entities of a
+  // master entity, on the columns of the undetermined DOFs of its closure). The DOFs of
+  // those hanging entities determine the trace of the master entity, since the constraints
+  // embed the parent space into the children's space, so the least-squares problem of a
+  // group (SVD; at most the DOFs of the hanging entities of one master by the DOFs of its
+  // closure) determines its columns. The groups are solved by the processes owning their
+  // smallest columns. The owner of each column chooses, among the groups which determine
+  // it, the one with the fewest columns (then the lowest process and position), which
+  // returns its coefficients of the pseudo-inverse to the processes of its rows. The cost
+  // per process is thus bounded by its share of the hanging entities, however the
+  // groups connect (a column is in the groups of all the master entities whose closure
+  // holds it). A column which no group determines (none on the meshes measured) is left
+  // unresolved: without the restriction, the interpolators into the space are assembled
+  // (see GetRestrictionWeights).
+  std::vector<HYPRE_BigInt> col_starts(nprocs + 1);
+  MPI_Allgather(&col0, 1, HYPRE_MPI_BIG_INT, col_starts.data(), 1, HYPRE_MPI_BIG_INT, comm);
+  col_starts[nprocs] = hypre_ParCSRMatrixGlobalNumCols(hP);
+  auto Owner = [&](std::int64_t g)
   {
-    int count = static_cast<int>(local.size());
-    counts.assign(nprocs, 0);
-    MPI_Gather(&count, 1, MPI_INT, counts.data(), 1, MPI_INT, 0, comm);
-    std::vector<int> displs(nprocs, 0);
-    for (int p = 1; p < nprocs; p++)
-    {
-      displs[p] = displs[p - 1] + counts[p - 1];
-    }
-    if (rank == 0)
-    {
-      all.resize(displs[nprocs - 1] + counts[nprocs - 1]);
-    }
-    MPI_Gatherv(local.data(), count, type, all.data(), counts.data(), displs.data(), type,
-                0, comm);
+    return static_cast<int>(std::upper_bound(col_starts.begin(), col_starts.end(),
+                                             static_cast<HYPRE_BigInt>(g)) -
+                            col_starts.begin()) -
+           1;
   };
-  std::vector<int> all_nnz, row_counts, entry_counts;
-  std::vector<std::int64_t> all_cols;
-  std::vector<double> all_vals;
-  Gather(row_nnz, all_nnz, MPI_INT, row_counts);
-  Gather(cols, all_cols, MPI_INT64_T, entry_counts);
-  Gather(vals, all_vals, MPI_DOUBLE, entry_counts);
-
-  // On the first process: the clusters (rows connected by their undetermined columns),
-  // their pseudo-inverses, and the coefficients per process (compact local row, global
-  // column, coefficient).
+  const int nr = static_cast<int>(rows.size());
+  std::vector<int> row_start(nr + 1, 0);
+  for (int r = 0; r < nr; r++)
+  {
+    row_start[r + 1] = row_start[r] + row_nnz[r];
+    // The entries of a row in increasing column order (its group is that of its columns).
+    std::vector<std::pair<std::int64_t, double>> entries;
+    for (int e = row_start[r]; e < row_start[r + 1]; e++)
+    {
+      entries.emplace_back(cols[e], vals[e]);
+    }
+    std::sort(entries.begin(), entries.end());
+    for (int e = row_start[r]; e < row_start[r + 1]; e++)
+    {
+      cols[e] = entries[e - row_start[r]].first;
+      vals[e] = entries[e - row_start[r]].second;
+    }
+  }
+  // Route the rows to the owners of their smallest columns: (local row, number of entries,
+  // columns), and the values.
+  std::vector<std::vector<std::int64_t>> send_rows(nprocs);
+  std::vector<std::vector<double>> send_vals(nprocs);
+  for (int r = 0; r < nr; r++)
+  {
+    const int p = Owner(cols[row_start[r]]);
+    send_rows[p].insert(send_rows[p].end(), {r, row_nnz[r]});
+    send_rows[p].insert(send_rows[p].end(), cols.begin() + row_start[r],
+                        cols.begin() + row_start[r + 1]);
+    send_vals[p].insert(send_vals[p].end(), vals.begin() + row_start[r],
+                        vals.begin() + row_start[r + 1]);
+  }
+  std::vector<int> row_counts, recv_counts;
+  auto recv_rows = ExchangeAll(comm, send_rows, row_counts);
+  auto recv_vals = ExchangeAll(comm, send_vals, recv_counts);
+  decltype(send_rows)().swap(send_rows);
+  decltype(send_vals)().swap(send_vals);
+  struct ReceivedRow
+  {
+    int rank, local, cols, vals, nnz;
+  };
+  std::vector<ReceivedRow> grows;
+  for (int p = 0, pos = 0, v = 0; p < nprocs; p++)
+  {
+    for (const int end = pos + row_counts[p]; pos < end;)
+    {
+      const int nnz = static_cast<int>(recv_rows[pos + 1]);
+      grows.push_back({p, static_cast<int>(recv_rows[pos]), pos + 2, v, nnz});
+      pos += 2 + nnz;
+      v += nnz;
+    }
+  }
+  // The groups (by their columns, rows in the order of their processes and local
+  // indices), their pseudo-inverses X = V_r Σ_r⁻¹ U_rᵀ and the columns they determine
+  // (e_j in the row space of the group, (V_r V_rᵀ)_jj = 1: then x_j = (X y)_j exactly for
+  // y = A x).
+  std::map<std::vector<std::int64_t>, std::vector<int>> group_rows;
+  for (int g = 0; g < static_cast<int>(grows.size()); g++)
+  {
+    const auto *c = &recv_rows[grows[g].cols];
+    group_rows[std::vector<std::int64_t>(c, c + grows[g].nnz)].push_back(g);
+  }
+  struct Group
+  {
+    const std::vector<std::int64_t> *cols;
+    const std::vector<int> *rows;
+    Eigen::MatrixXd X;
+    std::vector<char> determined;
+  };
+  std::vector<Group> groups;
+  groups.reserve(group_rows.size());
+  for (const auto &[gcols, grs] : group_rows)
+  {
+    const int m = static_cast<int>(grs.size()), k = static_cast<int>(gcols.size());
+    Eigen::MatrixXd A(m, k);
+    for (int r = 0; r < m; r++)
+    {
+      for (int j = 0; j < k; j++)
+      {
+        A(r, j) = recv_vals[grows[grs[r]].vals + j];
+      }
+    }
+    Eigen::JacobiSVD<Eigen::MatrixXd, Eigen::ComputeThinU | Eigen::ComputeThinV> svd(A);
+    const auto &sv = svd.singularValues();
+    int rk = 0;
+    while (rk < sv.size() && sv(rk) > 1.0e-10 * sv(0))
+    {
+      rk++;
+    }
+    const Eigen::MatrixXd Vr = svd.matrixV().leftCols(rk);
+    Group group{&gcols, &grs,
+                Vr * sv.head(rk).cwiseInverse().asDiagonal() *
+                    svd.matrixU().leftCols(rk).transpose(),
+                std::vector<char>(k)};
+    for (int j = 0; j < k; j++)
+    {
+      group.determined[j] = (Vr.row(j).squaredNorm() >= 1.0 - 1.0e-8);
+    }
+    groups.push_back(std::move(group));
+  }
+  // Offers to the owners of the columns: (column, number of columns of the group,
+  // determined), with the group and column of each offer kept in the order sent.
+  std::vector<std::vector<std::int64_t>> offer(nprocs);
+  std::vector<std::vector<std::pair<int, int>>> offered(nprocs);
+  for (int g = 0; g < static_cast<int>(groups.size()); g++)
+  {
+    const auto &gcols = *groups[g].cols;
+    for (int j = 0; j < static_cast<int>(gcols.size()); j++)
+    {
+      const int p = Owner(gcols[j]);
+      offer[p].insert(offer[p].end(), {gcols[j], static_cast<std::int64_t>(gcols.size()),
+                                       groups[g].determined[j]});
+      offered[p].emplace_back(g, j);
+    }
+  }
+  std::vector<int> offer_counts;
+  const auto offers = ExchangeAll(comm, offer, offer_counts);
+  offer.clear();
+  // The chosen offer of each local column (its position among the offers received), and
+  // whether some row references it.
+  std::vector<int> chosen(tsize, -1);
+  std::vector<char> referenced(tsize, 0);
+  for (std::size_t o = 0; o < offers.size(); o += 3)
+  {
+    const auto t = static_cast<int>(offers[o] - col0);
+    referenced[t] = 1;
+    if (offers[o + 2] && (chosen[t] < 0 || offers[o + 1] < offers[chosen[t] + 1]))
+    {
+      chosen[t] = static_cast<int>(o);
+    }
+  }
+  std::vector<std::vector<char>> accept(nprocs);
+  for (int p = 0, o = 0; p < nprocs; p++)
+  {
+    for (int i = 0; i < offer_counts[p] / 3; i++, o += 3)
+    {
+      accept[p].push_back(chosen[offers[o] - col0] == o);
+    }
+  }
+  const auto accepted = ExchangeAll(comm, accept, recv_counts);
+  accept.clear();
   std::vector<std::vector<std::int64_t>> send_idx(nprocs);
   std::vector<std::vector<double>> send_coef(nprocs);
-  int counts[2] = {0, 0};  // Recovered, unresolved.
-  if (rank == 0)
+  for (int p = 0, a = 0; p < nprocs; p++)
   {
-    const int nr = static_cast<int>(all_nnz.size());
-    std::vector<int> row_rank(nr), row_local(nr), row_start(nr + 1, 0);
-    for (int p = 0, r = 0; p < nprocs; p++)
+    for (const auto &[g, j] : offered[p])
     {
-      for (int k = 0; k < row_counts[p]; k++, r++)
+      if (!accepted[a++])
       {
-        row_rank[r] = p;
-        row_local[r] = k;
+        continue;
       }
-    }
-    for (int r = 0; r < nr; r++)
-    {
-      row_start[r + 1] = row_start[r] + all_nnz[r];
-    }
-    std::vector<std::int64_t> ucols(all_cols);
-    std::sort(ucols.begin(), ucols.end());
-    ucols.erase(std::unique(ucols.begin(), ucols.end()), ucols.end());
-    auto Index = [&](std::int64_t g)
-    {
-      return static_cast<int>(std::lower_bound(ucols.begin(), ucols.end(), g) -
-                              ucols.begin());
-    };
-    std::vector<int> parent(ucols.size());
-    for (std::size_t k = 0; k < parent.size(); k++)
-    {
-      parent[k] = static_cast<int>(k);
-    }
-    std::function<int(int)> Find = [&](int k)
-    { return (parent[k] == k) ? k : (parent[k] = Find(parent[k])); };
-    for (int r = 0; r < nr; r++)
-    {
-      const int a = Find(Index(all_cols[row_start[r]]));
-      for (int k = row_start[r] + 1; k < row_start[r + 1]; k++)
+      const auto &group = groups[g];
+      for (int r = 0; r < static_cast<int>(group.rows->size()); r++)
       {
-        const int b = Find(Index(all_cols[k]));
-        if (a != b)
+        const double x = group.X(j, r);
+        if (x == 0.0)
         {
-          parent[b] = a;
-        }
-      }
-    }
-    std::map<int, std::vector<int>> cluster_rows, cluster_cols;
-    for (int r = 0; r < nr; r++)
-    {
-      cluster_rows[Find(Index(all_cols[row_start[r]]))].push_back(r);
-    }
-    for (std::size_t k = 0; k < ucols.size(); k++)
-    {
-      cluster_cols[Find(static_cast<int>(k))].push_back(static_cast<int>(k));
-    }
-    for (const auto &[root, crows] : cluster_rows)
-    {
-      const auto &ccols = cluster_cols[root];
-      const int m = static_cast<int>(crows.size()), k = static_cast<int>(ccols.size());
-      std::unordered_map<int, int> local_col;
-      for (int j = 0; j < k; j++)
-      {
-        local_col[ccols[j]] = j;
-      }
-      Eigen::MatrixXd A = Eigen::MatrixXd::Zero(m, k);
-      for (int r = 0; r < m; r++)
-      {
-        for (int e = row_start[crows[r]]; e < row_start[crows[r] + 1]; e++)
-        {
-          A(r, local_col[Index(all_cols[e])]) += all_vals[e];
-        }
-      }
-      Eigen::JacobiSVD<Eigen::MatrixXd, Eigen::ComputeThinU | Eigen::ComputeThinV> svd(A);
-      const auto &s = svd.singularValues();
-      int rk = 0;
-      while (rk < s.size() && s(rk) > 1.0e-10 * s(0))
-      {
-        rk++;
-      }
-      // X = V_r Σ_r⁻¹ U_rᵀ (k x m); column j is resolved when e_j is in the row space of A
-      // ((V_r V_rᵀ)_jj = 1), then x_j = (X y)_j exactly for y = A x.
-      const Eigen::MatrixXd Vr = svd.matrixV().leftCols(rk);
-      const Eigen::MatrixXd X = Vr * s.head(rk).cwiseInverse().asDiagonal() *
-                                svd.matrixU().leftCols(rk).transpose();
-      for (int j = 0; j < k; j++)
-      {
-        if (Vr.row(j).squaredNorm() < 1.0 - 1.0e-8)
-        {
-          counts[1]++;
           continue;
         }
-        counts[0]++;
-        for (int r = 0; r < m; r++)
-        {
-          const double x = X(j, r);
-          if (x == 0.0)
-          {
-            continue;
-          }
-          const int p = row_rank[crows[r]];
-          send_idx[p].push_back(row_local[crows[r]]);
-          send_idx[p].push_back(ucols[ccols[j]]);
-          send_coef[p].push_back(x);
-        }
+        const auto &row = grows[(*group.rows)[r]];
+        send_idx[row.rank].insert(send_idx[row.rank].end(), {row.local, (*group.cols)[j]});
+        send_coef[row.rank].push_back(x);
       }
     }
   }
-  Mpi::Broadcast(2, counts, 0, comm);
+  decltype(groups)().swap(groups);
+  decltype(group_rows)().swap(group_rows);
+  decltype(offered)().swap(offered);
+  decltype(grows)().swap(grows);
+  decltype(recv_rows)().swap(recv_rows);
+  decltype(recv_vals)().swap(recv_vals);
+  // Recovered, unresolved (referenced but determined by no group).
+  int counts[2] = {0, 0};
+  for (int t = 0; t < tsize; t++)
+  {
+    counts[0] += (chosen[t] >= 0);
+    counts[1] += (referenced[t] && chosen[t] < 0);
+  }
+  decltype(cols)().swap(cols);
+  decltype(vals)().swap(vals);
+  decltype(row_start)().swap(row_start);
+  decltype(row_nnz)().swap(row_nnz);
+  Mpi::GlobalSum(2, counts, comm);
   H.recovered = counts[0];
   H.unresolved = counts[1];
-
-  // Return the coefficients of each process's rows.
-  auto Scatter = [&](const auto &send, auto &recv, MPI_Datatype type)
-  {
-    std::vector<int> scounts(nprocs, 0), displs(nprocs, 0);
-    std::vector<typename std::decay_t<decltype(recv)>::value_type> buf;
-    if (rank == 0)
-    {
-      for (int p = 0; p < nprocs; p++)
-      {
-        scounts[p] = static_cast<int>(send[p].size());
-        displs[p] = (p > 0) ? displs[p - 1] + scounts[p - 1] : 0;
-        buf.insert(buf.end(), send[p].begin(), send[p].end());
-      }
-    }
-    int count = 0;
-    MPI_Scatter(scounts.data(), 1, MPI_INT, &count, 1, MPI_INT, 0, comm);
-    recv.resize(count);
-    MPI_Scatterv(buf.data(), scounts.data(), displs.data(), type, recv.data(), count, type,
-                 0, comm);
-  };
-  std::vector<std::int64_t> idx;
-  std::vector<double> coef;
-  Scatter(send_idx, idx, MPI_INT64_T);
-  Scatter(send_coef, coef, MPI_DOUBLE);
-
-  // The compact rows: the rows with coefficients, in increasing order.
   std::vector<std::vector<std::pair<HYPRE_BigInt, double>>> row_coef(rows.size());
-  for (std::size_t e = 0; e < coef.size(); e++)
   {
-    row_coef[idx[2 * e]].emplace_back(idx[2 * e + 1], coef[e]);
+    const auto idx = ExchangeAll(comm, send_idx, recv_counts);
+    const auto coef = ExchangeAll(comm, send_coef, recv_counts);
+    decltype(send_idx)().swap(send_idx);
+    decltype(send_coef)().swap(send_coef);
+
+    // The compact rows: the rows with coefficients, in increasing order.
+    for (std::size_t e = 0; e < coef.size(); e++)
+    {
+      row_coef[idx[2 * e]].emplace_back(idx[2 * e + 1], coef[e]);
+    }
   }
   std::vector<int> CtI(1, 0), PcI(1, 0);
   std::vector<HYPRE_BigInt> CtJ, PcJ;
@@ -859,6 +916,8 @@ void FiniteElementSpace::BuildHangingRestriction(const std::vector<char> &read,
     }
     PcI.push_back(static_cast<int>(PcJ.size()));
   }
+  csr.reset();
+  decltype(row_coef)().swap(row_coef);
   HYPRE_BigInt global_rows;
   const auto row_part = CompactOffsets(comm, static_cast<int>(H.rows.size()), global_rows);
   const HYPRE_BigInt *col_part = broken->P.col_offsets.GetData();
@@ -1028,43 +1087,6 @@ FiniteElementSpace::FiniteElementSpace(FiniteElementSpace &fespace, const CrackS
   broken->unbroken = &fespace;
   broken->sides = &sides;
 }
-
-namespace
-{
-
-// Exchange arrays of 64-bit integers between all processes (send[p] is sent to process p),
-// returning the concatenation of the arrays received, in the order of the sending
-// processes, with their sizes. Collective.
-std::vector<std::int64_t> ExchangeAll(MPI_Comm comm,
-                                      const std::vector<std::vector<std::int64_t>> &send,
-                                      std::vector<int> &recv_counts)
-{
-  const int nprocs = Mpi::Size(comm);
-  std::vector<int> send_counts(nprocs), send_displs(nprocs, 0), recv_displs(nprocs, 0);
-  recv_counts.assign(nprocs, 0);
-  for (int p = 0; p < nprocs; p++)
-  {
-    send_counts[p] = static_cast<int>(send[p].size());
-  }
-  MPI_Alltoall(send_counts.data(), 1, MPI_INT, recv_counts.data(), 1, MPI_INT, comm);
-  for (int p = 1; p < nprocs; p++)
-  {
-    send_displs[p] = send_displs[p - 1] + send_counts[p - 1];
-    recv_displs[p] = recv_displs[p - 1] + recv_counts[p - 1];
-  }
-  std::vector<std::int64_t> send_buf,
-      recv_buf(recv_displs[nprocs - 1] + recv_counts[nprocs - 1]);
-  send_buf.reserve(send_displs[nprocs - 1] + send_counts[nprocs - 1]);
-  for (int p = 0; p < nprocs; p++)
-  {
-    send_buf.insert(send_buf.end(), send[p].begin(), send[p].end());
-  }
-  MPI_Alltoallv(send_buf.data(), send_counts.data(), send_displs.data(), MPI_INT64_T,
-                recv_buf.data(), recv_counts.data(), recv_displs.data(), MPI_INT64_T, comm);
-  return recv_buf;
-}
-
-}  // namespace
 
 void FiniteElementSpace::InitBroken(const CrackSides &sides)
 {

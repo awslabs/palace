@@ -75,13 +75,14 @@ private:
     // The restriction of the true DOFs which no single row or pair of rows of P determines
     // (copies of master DOFs which the elements of a side read only through the constraints
     // of hanging entities with several masters), see GetRestrictionWeights: for an
-    // interpolated field y = P t, the values y_c at the constraint rows of the clusters of
+    // interpolated field y = P t, the values y_c at the constraint rows with entries on
     // such DOFs (rows), less P_c t_d (the entries of these rows on the determined true DOFs
-    // t_d), are A_c t_u, with A_c of full column rank, and t_u = A_c⁺ (y_c - P_c t_d).
-    // The local least-squares problems are solved on one process (setup only); Ct holds
-    // the coefficients of A_c⁺ (transposed) on the rows of each process, Pc the entries of
-    // P on the determined columns, both with the compact rows (one per entry of rows) as
-    // their rows. For the transpose, M = (P Pcᵀ) on the L-DOFs affected, with their rows.
+    // t_d), are A_c t_u, with A_c of full column rank, and t_u = X (y_c - P_c t_d) for a
+    // left inverse X of A_c: for each DOF, the pseudo-inverse of the small group of rows
+    // which determines it (see BuildHangingRestriction, setup only). Ct holds the
+    // coefficients of X (transposed) on the rows of each process, Pc the entries of P on
+    // the determined columns, both with the compact rows (one per entry of rows) as their
+    // rows. For the transpose, M = (P Pcᵀ) on the L-DOFs affected, with their rows.
     struct HangingRestriction
     {
       std::vector<int> rows, affected;
