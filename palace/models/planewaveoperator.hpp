@@ -102,11 +102,16 @@ public:
   bool AddExcitationVector(int idx, double omega, const ComplexOperator &A,
                            const FiniteElementSpace &nd_fespace, ComplexVector &RHS) const;
 
-  // Whether the boundary elements with the given attributes (marker) carry any dof of the
-  // closure of the total-field region of the plane wave with the given index, on any
-  // process. There the solution is the total field, not the scattered field.
-  bool TouchesTotalField(int idx, const FiniteElementSpace &nd_fespace,
-                         const mfem::Array<int> &bdr_attr_marker) const;
+  // The total field E_t = x + (1 - M) g and the scattered field E_s = x - M g everywhere,
+  // from the solution x of the plane wave with the given excitation index at the angular
+  // frequency omega (total field on the dofs of the closure of the total-field region,
+  // M = 1, and scattered field elsewhere), with the incident field g as for the
+  // right-hand side. Returns false, and leaves E_t and E_s unchanged, if there is no such
+  // plane wave.
+  bool GetTotalAndScatteredField(int idx, double omega,
+                                 const FiniteElementSpace &nd_fespace,
+                                 const ComplexVector &x, ComplexVector &E_t,
+                                 ComplexVector &E_s) const;
 
   // Set the background material of each plane wave from the elements outside of its
   // total-field region which touch its boundary, where the incident field is evaluated,

@@ -1071,6 +1071,46 @@ void TimeDependentFluxErrorEstimator<VecType>::AddErrorIndicator(
 }
 
 template <typename VecType>
+void TimeDependentFluxErrorEstimator<VecType>::AddErrorIndicator(
+    const VecType &E_t, const VecType &B_t, const VecType &E_s, const VecType &B_s,
+    const mfem::Array<int> &tf_attr_marker, double omega, ErrorIndicator &indicator) const
+  requires std::is_same_v<VecType, ComplexVector>
+{
+  // The recovered flux norms are those of the last estimates, so they are taken right after
+  // each of them.
+  auto estimates = grad_estimator.ComputeEstimates(E_t, omega);
+  auto norms = grad_estimator.RecoveredFluxNorms();
+  estimates += curl_estimator.ComputeEstimates(B_t);
+  norms += curl_estimator.RecoveredFluxNorms();
+  auto estimates_s = grad_estimator.ComputeEstimates(E_s, omega);
+  auto norms_s = grad_estimator.RecoveredFluxNorms();
+  estimates_s += curl_estimator.ComputeEstimates(B_s);
+  norms_s += curl_estimator.RecoveredFluxNorms();
+  const auto &mesh = grad_estimator.nd_fespace.GetMesh().Get();
+  MFEM_ASSERT(estimates.Size() == mesh.GetNE(),
+              "Unexpected size of the error estimates of the total-field/scattered-field "
+              "solution!");
+  {
+    auto *est = estimates.HostReadWrite();
+    auto *nrm = norms.HostReadWrite();
+    const auto *est_s = estimates_s.HostRead();
+    const auto *nrm_s = norms_s.HostRead();
+    for (int e = 0; e < mesh.GetNE(); e++)
+    {
+      const int attr = mesh.GetAttribute(e);
+      if (attr > tf_attr_marker.Size() || !tf_attr_marker[attr - 1])
+      {
+        est[e] = est_s[e];
+        nrm[e] = nrm_s[e];
+      }
+    }
+  }
+  const double Er = 0.5 * linalg::Sum(grad_estimator.nd_fespace.GetComm(), norms);
+  linalg::Sqrt(estimates, (Er > 0.0) ? 0.5 / Er : 1.0);  // Correct factor of 1/2 in energy
+  indicator.AddIndicator(estimates);
+}
+
+template <typename VecType>
 BoundaryModeFluxErrorEstimator<VecType>::BoundaryModeFluxErrorEstimator(
     const MaterialOperator &mat_op, FiniteElementSpaceHierarchy &nd_fespaces,
     FiniteElementSpaceHierarchy &rt_fespaces, FiniteElementSpace &curl_fespace,

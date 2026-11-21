@@ -40,10 +40,10 @@ The domain is made of three nested cubes centered on the sphere (all lengths are
 half-sides):
 
   - the total-field cube (``0.1\text{ m}``), whose surface ``S`` (the Huygens surface)
-    injects the incident wave: the solution is the total field inside ``S`` and the
+    injects the incident wave: the unknown is the total field inside ``S`` and the
     scattered field outside;
   - the far-field cube (``0.18\text{ m}``), an interior surface outside of ``S`` on which
-    the far field of the scattered field is computed;
+    the far field of the scattered field is computed (it could also lie inside ``S``);
   - the outer box (``0.3\text{ m}``), terminated by a first-order absorbing boundary.
 
 The PEC core is a hole in the mesh, with a PEC boundary condition on its surface. The mesh

@@ -123,6 +123,40 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
         iodata.solver.linear.tol, iodata.solver.linear.max_it, 0);
   }
 
+  // Compute B = -1/(iω) ∇ x E on the true dofs.
+  auto CurlE = [&](const ComplexVector &E, ComplexVector &B, double omega)
+  {
+    Curl.Mult(E.Real(), B.Real());
+    Curl.Mult(E.Imag(), B.Imag());
+    B *= -1.0 / (1i * omega);
+    if (space_op.GetMaterialOp().HasWaveVector())
+    {
+      // Calculate B field correction for Floquet BCs: B += k_F(ω)/ω × E.
+      // With k₀ = k_F_ref/ω_ref stored, k_F(ω)/ω = k_F_ref/ω_ref = k₀, so scale = 1.
+      floquet_corr->AddMult(
+          E, B, space_op.GetMaterialOp().HasFloquetFrequencyScaling() ? 1.0 : 1.0 / omega);
+    }
+  };
+
+  // With a plane wave, the solution is the total field on its total-field region and the
+  // scattered field elsewhere. The outputs take the total field everywhere, and the far
+  // field and the error estimates outside of the total-field region the scattered field.
+  const auto &plane_wave_op = space_op.GetPlaneWaveOp();
+  ComplexVector E_t, B_t, E_s, B_s;
+  if (!plane_wave_op.Empty())
+  {
+    for (auto *v : {&E_t, &E_s})
+    {
+      v->SetSize(Curl.Width());
+      v->UseDevice(true);
+    }
+    for (auto *v : {&B_t, &B_s})
+    {
+      v->SetSize(Curl.Height());
+      v->UseDevice(true);
+    }
+  }
+
   // Main excitation and frequency loop.
   auto t0 = Timer::Now();
   std::size_t excitation_counter = 0;
@@ -238,24 +272,25 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
                  linalg::Norml2(space_op.GetComm(), E),
                  linalg::Norml2(space_op.GetComm(), RHS));
 
-      // Compute B = -1/(iω) ∇ x E on the true dofs.
-      Curl.Mult(E.Real(), B.Real());
-      Curl.Mult(E.Imag(), B.Imag());
-      B *= -1.0 / (1i * omega);
-      if (space_op.GetMaterialOp().HasWaveVector())
-      {
-        // Calculate B field correction for Floquet BCs: B += k_F(ω)/ω × E.
-        // With k₀ = k_F_ref/ω_ref stored, k_F(ω)/ω = k_F_ref/ω_ref = k₀, so scale = 1.
-        floquet_corr->AddMult(
-            E, B,
-            space_op.GetMaterialOp().HasFloquetFrequencyScaling() ? 1.0 : 1.0 / omega);
-      }
-
       if (omega_i == omega_start)
       {
         // Switch ParaView subfolders once per excitation, after the first solve.
         post_op.InitializeParaviewDataCollection(excitation_idx);
       }
+      if (plane_wave_op.GetTotalAndScatteredField(excitation_idx, omega,
+                                                  space_op.GetNDSpace(), E, E_t, E_s))
+      {
+        CurlE(E_t, B_t, omega);
+        CurlE(E_s, B_s, omega);
+        post_op.MeasureAndPrintAll(excitation_idx, int(omega_i), E_t, B_t, omega, &E_s,
+                                   &B_s);
+        Mpi::Print(" Updating solution error estimates\n");
+        estimator.AddErrorIndicator(E_t, B_t, E_s, B_s,
+                                    plane_wave_op.GetSource(excitation_idx).attr_marker,
+                                    omega, indicator);
+        continue;
+      }
+      CurlE(E, B, omega);
       auto total_domain_energy =
           post_op.MeasureAndPrintAll(excitation_idx, int(omega_i), E, B, omega);
 
