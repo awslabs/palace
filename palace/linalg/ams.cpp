@@ -206,7 +206,14 @@ void HypreAmsSolver::InitializeSolver()
   HYPRE_AMSSetBetaAMGOptions(ams, coarsen_type, amg_agg_levels, amg_relax_type, theta,
                              interp_type, Pmax);
 
-  int coarse_relax_type = 9;  // Default, l1-symm. GS, 9 = Gaussian elimination
+  // Coarsest-level solve of the auxiliary space AMG: Gaussian elimination (9), which in
+  // hypre does not pivot, or l1-Jacobi (18), which hypre also uses when the coarsest level
+  // has more than 9 rows and which keeps the cycle independent of the partition. For a
+  // singular operator (no mass term), Πᵀ A Π is singular when a constant vector field
+  // satisfies the essential boundary conditions (Π c is then a gradient). Elimination
+  // without pivoting then divides by a rounding-level pivot and turns the rounding in every
+  // residual into large gradients, which stall the Krylov solver.
+  const int coarse_relax_type = ams_singular ? 18 : 9;
   HYPRE_AMSSetAlphaAMGCoarseRelaxType(ams, coarse_relax_type);
   HYPRE_AMSSetBetaAMGCoarseRelaxType(ams, coarse_relax_type);
 

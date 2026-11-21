@@ -336,6 +336,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     backend, as with `"Device": "Debug"` or a GPU run with a CPU `"Backend"`, which kept
     adaptive mesh refinement from refining. Default GPU runs were not affected.
     [PR 1241](https://github.com/awslabs/palace/pull/1241).
+  - Fixed magnetostatic solves that did not converge, and gave wrong inductances, when the
+    PEC boundaries allow a constant vector potential: no PEC at all, or PEC only on planes
+    normal to one axis, such as planar films with a natural far field. For singular
+    operators, AMS now relaxes the coarsest level of its auxiliary space solves instead of
+    using Gaussian elimination. [PR 1244](https://github.com/awslabs/palace/pull/1244).
   - Fixed the pivoting of distributed BLR fronts in STRUMPACK with a patch from upstream.
     With BLR compression (`"STRUMPACKCompressionType"` `"BLR"`, `"BLR-HODLR"` or
     `"ZFP-BLR-HODLR"`) on two or more MPI processes, the factorization of an indefinite
