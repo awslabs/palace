@@ -483,9 +483,11 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             ),
         ],
     )
+    # The marking of tetrahedra for conforming refinement, first: the patches below apply
+    # after it. Palace 0.19 uses the interface of mfem/mfem#3847.
     depends_on(
-        "mfem+mpi+metis+lapack@4.10:",
-        when="@0.19:",
+        "mfem@4.10:",
+        when="@0.19",
         patches=[
             # https://github.com/mfem/mfem/pull/3847
             patch(
@@ -494,6 +496,26 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 "50ead1a9a785e3273b2a72ff59ac8ed8a496b498.diff",
                 sha256="e9be1a0d4b2642ed1b72f31c36065cf0aacbe342b6594d5d943782c73a6177f4",
             ),
+        ],
+    )
+    depends_on(
+        "mfem@4.10:",
+        when="@0.20:",
+        patches=[
+            # https://github.com/mfem/mfem/pull/5761 (consistent marking of tetrahedra, the
+            # same for any partition)
+            patch(
+                "https://raw.githubusercontent.com/awslabs/palace/"
+                "9fac1daf449d530e7873dd7800c9ddd97469c5f8/extern/patch/mfem/"
+                "mfem_pr5761.diff",
+                sha256="b84c5b1f7dd6ca47d5635c45233428c81dfa0f56f8eff9bd198f77e226e61348",
+            ),
+        ],
+    )
+    depends_on(
+        "mfem+mpi+metis+lapack@4.10:",
+        when="@0.19:",
+        patches=[
             # https://github.com/mfem/mfem/pull/5353
             patch(
                 "https://raw.githubusercontent.com/awslabs/palace/"
@@ -602,6 +624,23 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 "5bee0d22ad3a88626bf577778aa7b31b28e87db0.diff",
                 sha256="da325c815dc513f0bc9fc32c17757e82144eaeee5ad734d8b537e816e630c856",
                 when="@4.10.0",
+            ),
+        ],
+    )
+    # Palace 0.20 and later: MFEM patches applied after the ones above.
+    depends_on(
+        "mfem",
+        when="@0.20:",
+        patches=[
+            # https://github.com/mfem/mfem/pull/5754 (narrow to @4.10.0 once merged upstream and
+            # Lookahead flags it): a conforming parallel space builds its prolongation again on
+            # all processes when it is updated
+            patch(
+                "https://raw.githubusercontent.com/awslabs/palace/"
+                "74cf0f4d2e2520923cc102091208b9fbf08a640f/extern/patch/mfem/"
+                "mfem_pr5754.diff",
+                sha256="8a5cfeaf4fa4d7f9e9fe656413096beb8bad0d6ac46558c3484a368e1695577a",
+                when="@4.10:",
             ),
         ],
     )

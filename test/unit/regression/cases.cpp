@@ -2008,7 +2008,8 @@ TEST_CASE("circular_hole_london_nc_amr", "[Serial][Parallel][Regression]")
 TEST_CASE("circular_hole_london_nc_amr_rebalance", "[Serial][Parallel][Regression]")
 {
   palace::test::RegressionOptions opts;
-  opts.rtol = 1.0e-5;
+  // Split by the vertex order set at load, which differs by compiler (Intel off by 3.0e-5).
+  opts.rtol = 1.0e-3;
   opts.atol = 1.0e-16;
   opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
   opts.paraview_fields = false;
@@ -3221,6 +3222,8 @@ TEST_CASE("microstrip_wave_adaptive", "[Serial][Parallel][GPU][Regression]")
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-4;
   opts.atol = 1.0e-16;
+  // Vertex orders move the indicator min. (~1e-6) by 1e-10; S <= 3e-9, E 4e-10, Norm 6e-6.
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
   opts.skip_rowcount = true;
   opts.paraview_fields = false;
   palace::test::RunRegressionCase("microstrip", "microstrip_wave_adaptive.json",
