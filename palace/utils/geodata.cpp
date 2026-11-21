@@ -2981,6 +2981,10 @@ std::string RebalanceMessage(const RebalanceResult &result, double tol)
                      (result.ratio_after < result.ratio_before) ? "" : ", not improved");
 }
 
+// An MFEM without the patch of mfem#5755 fails the build here, not the first rebalance.
+[[maybe_unused]] constexpr auto requires_mfem_pr5755 =
+    &mfem::ParMesh::GetRebalanceOldElements;
+
 RebalanceResult RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh,
                               MeshEntityCounts *out_counts)
 {
