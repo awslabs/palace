@@ -1,0 +1,260 @@
+diff --git a/src/sparse/CSRMatrixMPI.cpp b/src/sparse/CSRMatrixMPI.cpp
+index 2d24458d..931d0522 100644
+--- a/src/sparse/CSRMatrixMPI.cpp
++++ b/src/sparse/CSRMatrixMPI.cpp
+@@ -794,7 +794,7 @@ namespace strumpack {
+ 
+   template<typename scalar_t,typename integer_t> Equilibration<scalar_t>
+   CSRMatrixMPI<scalar_t,integer_t>::equilibration() const {
+-    Equil_t eq(lrows_, n_);
++    Equil_t eq(lrows_, 0); // C (global size) is allocated only if used
+     if (!n_) return eq;
+     real_t small = blas::lamch<real_t>('S');
+     real_t big = 1. / small;
+@@ -821,31 +821,92 @@ namespace strumpack {
+     for (integer_t r=0; r<lrows_; r++)
+       eq.R[r] = 1. / std::min(std::max(eq.R[r], small), big);
+     eq.rcond = std::max(rmin, small) / std::min(rmax, big);
+-    // cannot use openmp here
+-    for (integer_t r=0; r<lrows_; r++) {
+-      for (integer_t j=ptr_[r]; j<ptr_[r+1]; j++) {
+-        auto indj = ind_[j];
+-        eq.C[indj] = std::max(eq.C[indj], std::abs(val_[j]) * eq.R[r]);
++    // Column maxima: every process reduces the columns it owns (the
++    // columns of its rows in the block-row distribution dist_). The
++    // other columns of its rows are first reduced locally, then one
++    // (column, maximum) pair per distinct column is sent to its
++    // owner, instead of reducing a vector of the global size on every
++    // process.
++    auto P = comm_.size();
++    auto lo = brow_, hi = brow_ + lrows_;
++    std::vector<real_t> Cloc(lrows_, 0.);
++    {
++      using IdxVal_t = IdxVal<real_t,integer_t>;
++      std::vector<std::vector<IdxVal_t>> sbuf(P);
++      {
++        // distinct off-process columns, sorted, hence grouped by owner
++        std::vector<integer_t> hcol;
++        {
++          std::size_t noff = 0;
++          for (integer_t r=0; r<lrows_; r++)
++            for (integer_t j=ptr_[r]; j<ptr_[r+1]; j++)
++              if (ind_[j] < lo || ind_[j] >= hi) noff++;
++          hcol.reserve(noff);
++        }
++        for (integer_t r=0; r<lrows_; r++)
++          for (integer_t j=ptr_[r]; j<ptr_[r+1]; j++)
++            if (ind_[j] < lo || ind_[j] >= hi) hcol.push_back(ind_[j]);
++        std::sort(hcol.begin(), hcol.end());
++        hcol.erase(std::unique(hcol.begin(), hcol.end()), hcol.end());
++        hcol.shrink_to_fit();
++        std::vector<real_t> hval(hcol.size(), 0.);
++        // cannot use openmp here
++        for (integer_t r=0; r<lrows_; r++)
++          for (integer_t j=ptr_[r]; j<ptr_[r+1]; j++) {
++            auto c = ind_[j];
++            auto v = std::abs(val_[j]) * eq.R[r];
++            auto& m = (c >= lo && c < hi) ? Cloc[c-lo] :
++              hval[std::lower_bound(hcol.begin(), hcol.end(), c)
++                   - hcol.begin()];
++            m = std::max(m, v);
++          }
++        for (std::size_t k=0, p=0; k<hcol.size(); ) {
++          auto k1 = std::lower_bound
++            (hcol.begin()+k, hcol.end(), dist_[p+1]) - hcol.begin();
++          sbuf[p].reserve(k1 - k);
++          for (; k<std::size_t(k1); k++)
++            sbuf[p].emplace_back(hcol[k], hval[k]);
++          p++;
++        }
++      }
++      for (const auto& iv : comm_.all_to_all_v(sbuf)) {
++        auto& m = Cloc[iv.i-lo];
++        m = std::max(m, iv.v);
+       }
+     }
+-    comm_.all_reduce(eq.C, MPI_MAX);
+-    mM = std::minmax_element(eq.C.begin(), eq.C.end());
++    mM = std::minmax_element(Cloc.begin(), Cloc.end());
+     real_t cmin = lrows_ ? *(mM.first) : std::numeric_limits<real_t>::max();
+     real_t cmax = lrows_ ? *(mM.second) : 0;
+     cmin = comm_.all_reduce(cmin, MPI_MIN);
+     cmax = comm_.all_reduce(cmax, MPI_MAX);
+     if (cmin == 0.) {
+-      for (integer_t i=0; i<n_; i++)
+-        if (eq.C[i] == 0.) {
+-          eq.info = n_+i+1;
+-          return eq;
++      integer_t first = n_;
++      for (integer_t i=0; i<lrows_; i++)
++        if (Cloc[i] == 0.) {
++          first = brow_ + i;
++          break;
+         }
++      eq.info = n_ + comm_.all_reduce(first, MPI_MIN) + 1;
++      return eq;
+     }
+ #pragma omp parallel for
+-    for (integer_t i=0; i<n_; i++)
+-      eq.C[i] = 1. / std::min(std::max(eq.C[i], small), big);
++    for (integer_t i=0; i<lrows_; i++)
++      Cloc[i] = 1. / std::min(std::max(Cloc[i], small), big);
+     eq.ccond = std::max(cmin, small) / std::min(cmax, big);
+     eq.set_type();
++    // the global column scaling is only used for COLUMN and BOTH
++    if (eq.type == EquilibrationType::COLUMN ||
++        eq.type == EquilibrationType::BOTH) {
++      std::vector<int> cnts(P), displs(P);
++      for (int p=0; p<P; p++) {
++        cnts[p] = dist_[p+1] - dist_[p];
++        displs[p] = dist_[p];
++      }
++      eq.C.resize(n_);
++      MPI_Allgatherv
++        (Cloc.data(), lrows_, mpi_type<real_t>(), eq.C.data(),
++         cnts.data(), displs.data(), mpi_type<real_t>(), comm_.comm());
++    }
+     return eq;
+   }
+ 
+diff --git a/src/sparse/EliminationTreeMPIDist.cpp b/src/sparse/EliminationTreeMPIDist.cpp
+index 67cfd5b3..ee30c5b9 100644
+--- a/src/sparse/EliminationTreeMPIDist.cpp
++++ b/src/sparse/EliminationTreeMPIDist.cpp
+@@ -27,6 +27,8 @@
+  *
+  */
+ #include <stack>
++#include <cassert>
++#include <tuple>
+ 
+ #include "EliminationTreeMPIDist.hpp"
+ #include "Redistribute.hpp"
+@@ -132,9 +134,9 @@ namespace strumpack {
+   EliminationTreeMPIDist<scalar_t,integer_t>::get_sparse_mapped_destination
+   (const CSRMPI_t& A, integer_t oi, integer_t oj,
+    integer_t i, integer_t j, bool duplicate_fronts) const {
+-    auto fi = row_pfront_[i];
++    auto fi = row_pfront(i);
+     if (fi < 0) return std::make_tuple(-fi-1, 1, 1);
+-    auto fj = row_pfront_[j];
++    auto fj = row_pfront(j);
+     if (fj < 0) return std::make_tuple(-fj-1, 1, 1);
+     constexpr auto B = DistM_t::default_MB;
+     int pfront =
+@@ -210,7 +212,7 @@ namespace strumpack {
+ #pragma omp parallel for
+     for (std::size_t r=0; r<n_loc; r++) {
+       std::size_t pr = nd_.perm()[r+lo];
+-      auto rf = row_pfront_[pr];
++      auto rf = row_pfront(pr);
+       if (rf < 0)
+         row_owner_[r] = -rf-1;
+       else {
+@@ -223,15 +225,35 @@ namespace strumpack {
+   template<typename scalar_t,typename integer_t> void
+   EliminationTreeMPIDist<scalar_t,integer_t>::find_row_front
+   (const CSRMPI_t& A) {
+-    row_pfront_.resize(A.size());
++    // the local subtrees and the separators of the distributed fronts
++    // are disjoint ranges; rows in none of them map to 0
++    std::vector<std::tuple<integer_t,integer_t,int>> iv;
+     for (int p=0; p<P_; p++) // local separators
+-      for (integer_t r=subtree_ranges_[p].first;
+-           r<subtree_ranges_[p].second; r++)
+-        row_pfront_[r] = -p-1;
++      if (subtree_ranges_[p].first < subtree_ranges_[p].second)
++        iv.emplace_back
++          (subtree_ranges_[p].first, subtree_ranges_[p].second, -p-1);
+     for (std::size_t i=0; i<all_pfronts_.size(); i++) {
+       auto& f = all_pfronts_[i];
+-      for (integer_t r=f.sep_begin; r<f.sep_end; r++)
+-        row_pfront_[r] = i;
++      if (f.sep_begin < f.sep_end)
++        iv.emplace_back(f.sep_begin, f.sep_end, int(i));
++    }
++    std::sort(iv.begin(), iv.end());
++    rpf_lo_.clear();
++    rpf_val_.clear();
++    integer_t end = 0;
++    for (auto& t : iv) {
++      assert(std::get<0>(t) >= end);
++      if (std::get<0>(t) > end) {
++        rpf_lo_.push_back(end);
++        rpf_val_.push_back(0);
++      }
++      rpf_lo_.push_back(std::get<0>(t));
++      rpf_val_.push_back(std::get<2>(t));
++      end = std::get<1>(t);
++    }
++    if (end < A.size() || rpf_lo_.empty()) {
++      rpf_lo_.push_back(end);
++      rpf_val_.push_back(0);
+     }
+   }
+ 
+@@ -280,7 +302,7 @@ namespace strumpack {
+         scnts[row_owner_[r]]++;
+     else {
+       for (integer_t r=0; r<m; r++) {
+-        int pf = row_pfront_[nd_.perm()[r+lo]];
++        int pf = row_pfront(nd_.perm()[r+lo]);
+         if (pf < 0) scnts[row_owner_[r]] += n;
+         else {
+           auto& f = all_pfronts_[pf];
+@@ -306,7 +328,7 @@ namespace strumpack {
+       for (integer_t r=0; r<m; r++) {
+         auto destr = row_owner_[r];
+         auto permr = nd_.perm()[r+lo];
+-        int pf = row_pfront_[permr];
++        int pf = row_pfront(permr);
+         if (pf < 0)
+           for (integer_t c=0; c<n; c++) {
+             auto k = pp[destr]++;
+diff --git a/src/sparse/EliminationTreeMPIDist.hpp b/src/sparse/EliminationTreeMPIDist.hpp
+index 6fb3d086..2c46a33f 100644
+--- a/src/sparse/EliminationTreeMPIDist.hpp
++++ b/src/sparse/EliminationTreeMPIDist.hpp
+@@ -29,6 +29,7 @@
+ #ifndef ELIMINATION_TREE_MPI_DIST_HPP
+ #define ELIMINATION_TREE_MPI_DIST_HPP
+ 
++#include <algorithm>
+ #include <cstddef>
+ #include <map>
+ 
+@@ -99,10 +100,18 @@ namespace strumpack {
+     void find_row_owner(const CSRMPI_t& A);
+ 
+     /**
+-     * vector of size A.size(), storing for each row, to which front
+-     * it belongs.
++     * For each (permuted) row, the front it belongs to: -p-1 for the
++     * local subtree of process p, else the index in all_pfronts_.
++     * Stored as sorted intervals, rows [rpf_lo_[k], rpf_lo_[k+1])
++     * belong to front rpf_val_[k], instead of one int per row.
+      */
+-    std::vector<int> row_pfront_;
++    std::vector<integer_t> rpf_lo_;
++    std::vector<int> rpf_val_;
++    int row_pfront(integer_t r) const {
++      auto k = std::upper_bound(rpf_lo_.begin(), rpf_lo_.end(), r)
++        - rpf_lo_.begin() - 1;
++      return rpf_val_[k];
++    }
+     void find_row_front(const CSRMPI_t& A);
+ 
+     /**
+diff --git a/src/sparse/PropMapSparseMatrix.cpp b/src/sparse/PropMapSparseMatrix.cpp
+index 7e6effdd..91acc9d5 100644
+--- a/src/sparse/PropMapSparseMatrix.cpp
++++ b/src/sparse/PropMapSparseMatrix.cpp
+@@ -60,7 +60,7 @@ namespace strumpack {
+     std::vector<std::tuple<int,int,int>> dest(Ampi.local_nnz());
+     std::vector<std::size_t> scnts(P);
+     integer_t lrows = Ampi.local_rows();
+-    auto perm = nd.perm();
++    const auto& perm = nd.perm();
+     auto Aptr = Ampi.ptr();
+     auto Aind = Ampi.ind();
+     auto Aval = Ampi.val();

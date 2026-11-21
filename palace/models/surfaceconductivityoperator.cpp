@@ -186,8 +186,8 @@ mfem::Array<int> SurfaceConductivityOperator::GetAttrList() const
 }
 
 std::complex<double>
-SurfaceConductivityOperator::EvaluateScalarImpl(std::size_t group_idx,
-                                                std::complex<double> omega) const
+SurfaceConductivityOperator::EvaluateScalar(std::size_t group_idx,
+                                            std::complex<double> omega) const
 {
   // If the provided conductor thickness is empty (zero), prescribe a surface impedance
   // (1+i)/σδ, where δ is the skin depth. If it is nonzero, use a finite thickness
@@ -222,58 +222,18 @@ SurfaceConductivityOperator::EvaluateScalarImpl(std::size_t group_idx,
   return 1i * omega / Z;
 }
 
-void SurfaceConductivityOperator::AddExtraSystemBdrCoefficients(
-    double omega, MaterialPropertyCoefficient &fbr, MaterialPropertyCoefficient &fbi)
-{
-  // Real-ω stamping: per-group coefficient i·ω/Z(ω) split into (fbr, fbi).
-  for (std::size_t g = 0; g < boundaries.size(); g++)
-  {
-    if (std::abs(boundaries[g].sigma) > 0.0)
-    {
-      const std::complex<double> s =
-          EvaluateScalarImpl(g, std::complex<double>(omega, 0.0));
-      AddCoefficient(g, s.real(), fbr);
-      AddCoefficient(g, s.imag(), fbi);
-    }
-  }
-}
-
-void SurfaceConductivityOperator::AddExtraSystemBdrCoefficients(
-    std::complex<double> omega, MaterialPropertyCoefficient &fbr,
-    MaterialPropertyCoefficient &fbi)
-{
-  // Complex-ω stamping: identical to the real-ω overload but evaluates i·ω/Z(ω) at a
-  // genuinely complex ω (analytic continuation, ω = -i·λ).
-  for (std::size_t g = 0; g < boundaries.size(); g++)
-  {
-    if (std::abs(boundaries[g].sigma) > 0.0)
-    {
-      const std::complex<double> s = EvaluateScalarImpl(g, omega);
-      AddCoefficient(g, s.real(), fbr);
-      AddCoefficient(g, s.imag(), fbi);
-    }
-  }
-}
-
 void SurfaceConductivityOperator::AddBoundaryMassBdrCoefficients(
-    std::size_t g, MaterialPropertyCoefficient &fb) const
+    std::size_t g, MaterialPropertyCoefficient &fb, double coeff) const
 {
   // ω-independent unit-coefficient boundary mass for group g (the operator that the scalar
-  // i·ω/Z_g(ω) multiplies). Factored out so circuit synthesis can project it once and apply
-  // the frequency dependence as a fitted scalar. No contribution for an inactive group.
-  if (g < boundaries.size() && std::abs(boundaries[g].sigma) > 0.0)
+  // i·ω/Z_g(ω) multiplies), times coeff. Interior conducting sheets have two surfaces, each
+  // with surface admittance 1/Z. No contribution for an inactive group.
+  if (IsActive(g))
   {
-    AddCoefficient(g, 1.0, fb);
+    const auto &bdr = boundaries[g];
+    fb.AddMaterialProperty(mat_op.GetCeedBdrAttributes(bdr.ext_attr_list), coeff);
+    fb.AddMaterialProperty(mat_op.GetCeedBdrAttributes(bdr.int_attr_list), 2.0 * coeff);
   }
-}
-
-void SurfaceConductivityOperator::AddCoefficient(std::size_t g, double coeff,
-                                                 MaterialPropertyCoefficient &fb) const
-{
-  // Interior conducting sheets have two surfaces, each with surface admittance 1/Z.
-  const auto &bdr = boundaries[g];
-  fb.AddMaterialProperty(mat_op.GetCeedBdrAttributes(bdr.ext_attr_list), coeff);
-  fb.AddMaterialProperty(mat_op.GetCeedBdrAttributes(bdr.int_attr_list), 2.0 * coeff);
 }
 
 }  // namespace palace

@@ -1,0 +1,70 @@
+{
+  "Problem":
+  {
+    "Type": "Driven",
+    "Verbose": 2,
+    "Output": "postpro/driven_wave_te11_sweep"
+  },
+  "Model":
+  {
+    "Mesh": "mesh/cylinder_hex.msh",
+    "L0": 1.0e-2  // cm
+  },
+  "Domains":
+  {
+    "Materials":
+    [
+      {
+        "Attributes": [1],
+        "Permittivity": 3.2
+      }
+    ],
+    "Postprocessing":
+    {
+      "Probe":
+      [
+        {
+          "Index": 1,  // Off the axis, where the field depends on the polarization
+          "Center": [1.0, 0.5, 2.0]
+        }
+      ]
+    }
+  },
+  "Boundaries":
+  {
+    "WavePort":
+    [
+      {
+        "Index": 1,
+        "Attributes": [2],
+        "Mode": 1,  // TE11, a degenerate pair
+        "Excitation": true,
+        "KSPTol": 1e-8,
+        "EigenTol": 1e-6
+      }
+    ],
+    "PEC":
+    {
+      "Attributes": [3, 4]
+    }
+  },
+  "Solver":
+  {
+    "Order": 2,
+    "Device": "CPU",
+    "Driven":
+    {
+      "MinFreq": 3.0,  // GHz
+      "MaxFreq": 3.8,  // GHz
+      "FreqStep": 0.1,  // GHz
+      "SaveStep": 0
+    },
+    "Linear":
+    {
+      "Type": "Default",
+      "KSPType": "GMRES",
+      "Tol": 1.0e-9,
+      "MaxIts": 100
+    }
+  }
+}

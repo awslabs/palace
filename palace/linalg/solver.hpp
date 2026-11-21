@@ -4,6 +4,7 @@
 #ifndef PALACE_LINALG_SOLVER_HPP
 #define PALACE_LINALG_SOLVER_HPP
 
+#include <limits>
 #include <type_traits>
 #include <mfem.hpp>
 #include "linalg/operator.hpp"
@@ -11,6 +12,14 @@
 
 namespace palace
 {
+
+// Tolerance of Solver.Linear.DropSmallEntries: the entries of a matrix row which are
+// smaller in magnitude than this tolerance times the 2-norm of the row are dropped, except
+// on the diagonal (the rule of mfem::HypreParMatrix::DropSmallEntries). Used by
+// MfemWrapperSolver, and by the sparse direct solvers in complex arithmetic (see
+// ComplexLocalCSR).
+inline constexpr double drop_small_entries_tol =
+    std::numeric_limits<double>::epsilon() * std::numeric_limits<double>::epsilon();
 
 //
 // The base Solver<OperType> class is a templated version of mfem::Solver for operation with

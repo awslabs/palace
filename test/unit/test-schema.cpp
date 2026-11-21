@@ -996,10 +996,123 @@ TEST_CASE("Schema Validator Smoke Tests", "[schema][Serial]")
     CHECK(ValidateConfig(json{{"MaxIts", 1}}, "Linear").empty());
   }
 
+  SECTION("Material permittivity forms and tagged terms")
+  {
+    auto ValidateMaterial = [](const json &permittivity)
+    {
+      json config;
+      config["Problem"] = {{"Type", "Driven"}};
+      config["Model"] = {{"Mesh", "test.msh"}};
+      config["Domains"]["Materials"] = {
+          {{"Attributes", {1}}, {"Permittivity", permittivity}}};
+      config["Boundaries"] = json::object();
+      config["Solver"]["Driven"]["Samples"] = {
+          {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 1.0}}};
+      return ValidateConfig(config);
+    };
+
+    const std::vector<json> valid_terms = {
+        {{"Type", "Drude"}, {"PlasmaFrequency", 1.0}, {"CollisionFrequency", 0.1}},
+        {{"Type", "Debye"}, {"DeltaPermittivity", 1.5}, {"RelaxationTime", 0.02}},
+        {{"Type", "Lorentz"},
+         {"DeltaPermittivity", 0.8},
+         {"ResonanceFrequency", 6.0},
+         {"DampingFrequency", 0.2}},
+        {{"Type", "PoleResidue"},
+         {"Pole", {-2.0e12, 5.0e12}},
+         {"Residue", {1.2e12, -0.4e12}}},
+        {{"Type", "DjordjevicSarkar"},
+         {"Strength", 0.0575258},
+         {"LowerFrequency", 9.07157e-5},
+         {"UpperFrequency", 159.154956}}};
+    for (const auto &term : valid_terms)
+    {
+      CHECK(ValidateMaterial({{"HighFrequencyLimit", 2.08}, {"Terms", {term}}}).empty());
+    }
+    CHECK(ValidateMaterial(2.08).empty());
+    CHECK(ValidateMaterial({2.0, 3.0, 4.0}).empty());
+
+    auto CheckInvalid = [&ValidateMaterial](const json &permittivity)
+    { CHECK_FALSE(ValidateMaterial(permittivity).empty()); };
+    CheckInvalid({{"HighFrequencyLimit", 2.0}, {"Terms", json::array()}});
+    CheckInvalid({{"HighFrequencyLimit", 2.0},
+                  {"Terms",
+                   {{{"Type", "Drude"},
+                     {"PlasmaFrequency", 1.0},
+                     {"CollisionFrequency", 0.1},
+                     {"Unknown", 1}}}}});
+    CheckInvalid({{"HighFrequencyLimit", 2.0}, {"Terms", {{{"Type", "Unknown"}}}}});
+    CheckInvalid(
+        {{"HighFrequencyLimit", 2.0},
+         {"Terms", {{{"Type", "PoleResidue"}, {"Pole", {-1.0}}, {"Residue", 2.0}}}}});
+    CheckInvalid({{"HighFrequencyLimit", 2.0},
+                  {"Terms", {{{"Type", "Debye"}, {"RelaxationTime", 0.02}}}}});
+
+    // A typed term with a nonpositive strength, or a nonpositive high-frequency value, is
+    // not passive (it has gain or a negative stored energy at every frequency).
+    for (const double value : {0.0, -0.5})
+    {
+      CAPTURE(value);
+      CheckInvalid({{"HighFrequencyLimit", value}, {"Terms", {valid_terms[0]}}});
+      for (const auto &[index, key] :
+           {std::pair{1, "DeltaPermittivity"}, std::pair{2, "DeltaPermittivity"},
+            std::pair{4, "Strength"}})
+      {
+        CAPTURE(index, key);
+        json term = valid_terms[index];
+        term[key] = value;
+        CheckInvalid({{"HighFrequencyLimit", 2.08}, {"Terms", {term}}});
+      }
+    }
+  }
+
   SECTION("Excitation integer minimum - LumpedPort")
   {
     json port = {{"Index", 1}, {"Attributes", {1}}, {"Excitation", -1}};
     CHECK(!ValidateConfig(port, "LumpedPort").empty());
+  }
+
+  SECTION("Excitation weight - LumpedPort")
+  {
+    json port = {{"Index", 1},
+                 {"Attributes", {1}},
+                 {"Excitation", true},
+                 {"ExcitationAmplitude", 2.5},
+                 {"ExcitationPhase", -45.0}};
+    std::string err = ValidateConfig(port, "LumpedPort");
+    INFO("Error: " << err);
+    CHECK(err.empty());
+
+    // The same keys on a multielement port.
+    json elements = {
+        {"Index", 2},
+        {"Elements", json::array({json{{"Attributes", {1}}, {"Direction", "+X"}}})},
+        {"Excitation", 2},
+        {"ExcitationAmplitude", 0.5},
+        {"ExcitationPhase", 720}};
+    err = ValidateConfig(elements, "LumpedPort");
+    INFO("Error: " << err);
+    CHECK(err.empty());
+
+    json zero_amplitude = port;
+    zero_amplitude["ExcitationAmplitude"] = 0.0;
+    CHECK(!ValidateConfig(zero_amplitude, "LumpedPort").empty());
+
+    json negative_amplitude = port;
+    negative_amplitude["ExcitationAmplitude"] = -1.0;
+    CHECK(!ValidateConfig(negative_amplitude, "LumpedPort").empty());
+
+    json string_phase = port;
+    string_phase["ExcitationPhase"] = "30";
+    CHECK(!ValidateConfig(string_phase, "LumpedPort").empty());
+  }
+
+  SECTION("Excitation weight is not available on WavePort")
+  {
+    json port = {{"Index", 1}, {"Attributes", {1}}, {"ExcitationAmplitude", 2.0}};
+    CHECK(!ValidateConfig(port, "WavePort").empty());
+    json phase = {{"Index", 1}, {"Attributes", {1}}, {"ExcitationPhase", 30.0}};
+    CHECK(!ValidateConfig(phase, "WavePort").empty());
   }
 
   SECTION("Log exclusiveMinimum - Driven Samples")

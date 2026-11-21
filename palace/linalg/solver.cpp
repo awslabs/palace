@@ -101,6 +101,10 @@ void MfemWrapperSolver<ComplexOperator>::SetOperator(const ComplexOperator &op)
       A = std::make_unique<mfem::HypreParMatrix>(*hAr);
       DropSmallEntries();
       pc->SetOperator(*A);
+      if (!save_assembled)
+      {
+        A.reset();
+      }
     }
     else
     {
@@ -118,6 +122,10 @@ void MfemWrapperSolver<ComplexOperator>::SetOperator(const ComplexOperator &op)
       A = std::make_unique<mfem::HypreParMatrix>(*hAi);
       DropSmallEntries();
       pc->SetOperator(*A);
+      if (!save_assembled)
+      {
+        A.reset();
+      }
     }
     else
     {
@@ -185,7 +193,7 @@ template <OperatorType OperType>
 void MfemWrapperSolver<OperType>::DropSmallEntries()
 {
   const auto nnz_before = A->NNZ();
-  A->DropSmallEntries(std::pow(std::numeric_limits<double>::epsilon(), 2));
+  A->DropSmallEntries(drop_small_entries_tol);
   const auto nnz_after = A->NNZ();
 #if defined(MFEM_USE_MUMPS)
   if (auto *mumps = dynamic_cast<MumpsSolver *>(pc.get()))

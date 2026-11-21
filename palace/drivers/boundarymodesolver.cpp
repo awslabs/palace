@@ -269,29 +269,12 @@ void BoundaryModeSolver::Preprocess(IoData &iodata, std::unique_ptr<mfem::Mesh> 
     mfem::Array<int> attr_list;
     attr_list.Append(bm.attributes.data(), bm.attributes.size());
 
-    // Parent boundary face types whose intersection with the cross-section should
-    // become 2D boundary edges: BCs that pin the tangential E-field (PEC, auxpec,
-    // impedance, conductivity, rational impedance, farfield) plus other-waveports
-    // (relabeled to PEC below).
-    std::vector<int> internal_bdr_attrs;
+    // Parent boundary faces whose intersection with the cross-section should become 2D
+    // boundary edges: the boundary conditions of the 2D solve (see
+    // config::BoundaryData::GetCrossSectionEdgeAttributes) plus other-waveports (relabeled
+    // to PEC below).
     const auto &bdr = iodata.boundaries;
-    auto append = [&](const auto &src)
-    { internal_bdr_attrs.insert(internal_bdr_attrs.end(), src.begin(), src.end()); };
-    append(bdr.pec.attributes);
-    append(bdr.auxpec.attributes);
-    for (const auto &d : bdr.impedance)
-    {
-      append(d.attributes);
-    }
-    for (const auto &d : bdr.conductivity)
-    {
-      append(d.attributes);
-    }
-    for (const auto &d : bdr.rational_impedance)
-    {
-      append(d.attributes);
-    }
-    append(bdr.farfield.attributes);
+    std::vector<int> internal_bdr_attrs = bdr.GetCrossSectionEdgeAttributes();
 
     std::unordered_set<int> other_waveport_attrs;
     for (const auto &[idx, data] : bdr.waveport)
@@ -463,7 +446,11 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   }
   else
   {
-    const double mu_eps_max = mode_op.GetMaterialOp().GetMaxMuEpsilon();
+    // A frequency-dependent permittivity exceeds its high-frequency value below its
+    // resonances, so the bound is taken at the solve frequency.
+    const double mu_eps_max =
+        std::max(mode_op.GetMaterialOp().GetMaxMuEpsilon(),
+                 mode_op.GetMaterialOp().GetFrequencyDependentMaxMuEpsilon(omega));
     kn_target = omega * std::sqrt(1.1 * mu_eps_max);
     Mpi::Print(" Auto kn_target = {:.6e} (from max(mu_r) * max(epsilon_r) = {:.6e})\n",
                kn_target, mu_eps_max);
@@ -537,7 +524,7 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       bz.Real() *= 1.0 / omega;
       bz.Imag() = curl_etr;
       bz.Imag() *= -1.0 / omega;
-      estimator.AddErrorIndicator(et, bz, total_domain_energy, indicator);
+      estimator.AddErrorIndicator(et, bz, total_domain_energy, omega, indicator);
     }
   }
   Mpi::Print("\n");

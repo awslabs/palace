@@ -172,12 +172,26 @@ jobs:
 
         # We have to upgrade CMake because the bundled one has a bug with
         # FindMPI that prevents it from finding MPI when compiling with GNU
-        # compilers.
+        # compilers. Install it from PyPI, where pip retries failed downloads.
       - name: Setup cmake
         if: needs.filter.outputs.test == 'true'
-        uses: jwlawson/actions-setup-cmake@0d6a7d60b009d01c9e7523be22153ff8f19460d3 # v2.2.0
+        run: |
+          pipx install cmake==3.31.10
+          PIPX_BIN_DIR=$(pipx environment --value PIPX_BIN_DIR)
+          echo "$PIPX_BIN_DIR" >> "$GITHUB_PATH"
+          "$PIPX_BIN_DIR/cmake" --version
+
+      # Configure downloads dependency patches from GitHub, and skips any file
+      # already present with the expected hash. Restoring them from a cache keeps
+      # configure off the network. This restores the most recent entry.
+      - name: Restore dependency patches
+        id: patch-cache
+        if: needs.filter.outputs.test == 'true'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          cmake-version: '3.31.8'
+          path: palace-build/extern/*-patches
+          key: patches-${{ runner.os }}
+          restore-keys: patches-${{ runner.os }}-
 
       - name: Build Palace
         if: needs.filter.outputs.test == 'true'
@@ -236,7 +250,7 @@ jobs:
           if [[ "$REGRESSION_NUMPROC" -lt 1 ]]; then
             REGRESSION_NUMPROC=1
           fi
-          mkdir palace-build && cd palace-build
+          mkdir -p palace-build && cd palace-build
           cmake .. \
             -DCMAKE_INSTALL_PREFIX=$(pwd)/../palace-install \
             -DPALACE_TESTS_NUMPROC=2 \
@@ -253,9 +267,22 @@ jobs:
             -DPALACE_MFEM_USE_EXCEPTIONS=ON
           make -j$NUM_PROC_BUILD palace-tests
 
+      # Save a new entry when configure succeeded (palace-build/Makefile exists),
+      # even if the build failed, and downloaded patches that the restored entry
+      # did not have. The key starts with the hash of the patches to tell.
+      - name: Save dependency patches
+        if: |
+          !cancelled() && needs.filter.outputs.test == 'true' &&
+          hashFiles('palace-build/Makefile') != '' &&
+          !startsWith(steps.patch-cache.outputs.cache-matched-key, format('patches-{0}-{1}-', runner.os, hashFiles('palace-build/extern/*-patches/*')))
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: palace-build/extern/*-patches
+          key: patches-${{ runner.os }}-${{ hashFiles('palace-build/extern/*-patches/*') }}-${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}
+
       - name: Run unit tests
         if: needs.filter.outputs.test == 'true'
-        timeout-minutes: 5
+        timeout-minutes: 8
         run: |
           # Configure environment
           export DYLD_LIBRARY_PATH="$(pwd)/palace-install/lib:$DYLD_LIBRARY_PATH"
@@ -264,7 +291,7 @@ jobs:
           # Skip [Regression] and [Long] cases here; they have their
           # own slower steps further down. CTest pins OMP_NUM_THREADS and
           # reserves PROCESSORS per case, so -j just bounds concurrency.
-          ctest -j "$(nproc 2> /dev/null || sysctl -n hw.ncpu)" --output-on-failure -LE "^(regression|long)$"
+          ctest -j "$(nproc 2> /dev/null || sysctl -n hw.ncpu)" --output-on-failure --timeout 900 -LE "^(regression|long)$"
 
       - name: Run regression tests
         if: needs.filter.outputs.test == 'true'
@@ -277,4 +304,4 @@ jobs:
           export PATH=$(pwd)/palace-install/bin:$PATH
 
           cd palace-build/palace-build/test/unit
-          ctest -j "$(nproc 2> /dev/null || sysctl -n hw.ncpu)" --output-on-failure -L "^regression$"
+          ctest -j "$(nproc 2> /dev/null || sysctl -n hw.ncpu)" --output-on-failure --timeout 900 -L "^regression$"

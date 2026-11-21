@@ -92,8 +92,24 @@ jobs:
       - name: Check test tags
         run: ./scripts/check-test-tags test/unit
 
+      - name: Check output writes
+        run: ./scripts/check-output-writes palace
+
       - name: Test CMake architecture helpers
         run: cmake -P cmake/tests/MultiArchitecture.cmake
+
+  # The superbuild jobs restore the dependency patches from a cache, CMake skips downloading
+  # a patch that is already present with the expected hash, and the Spack jobs mostly use a
+  # buildcache, so the builds would not notice a patch URL that changed. This checks the
+  # patches of the superbuild and of the Spack package: a different hash fails the job, and
+  # a failed download only warns.
+  check-patches:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Check dependency patch URLs
+        run: ./scripts/check-patches
 
   check-license:
     runs-on: ubuntu-latest

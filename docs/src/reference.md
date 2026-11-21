@@ -241,7 +241,10 @@ Lumped ports in *Palace* can be composed of two types of elements:
  1. *Rectangular*: The incident field is ``\bm{E}^{inc} = E_0 \, \hat{\bm{l}}``. Here ``E_0`` is a
     normalization constant and ``\hat{\bm{l}}`` is the user-defined polarization direction, which
     should point between two conductors. We denote the length of the port along the polarization as
-    ``l`` and the perpendicular width as ``w``.
+    ``l`` and the perpendicular width as ``w``. The port must be a strip along ``\hat{\bm{l}}``,
+    which may be folded or bent about ``\hat{\bm{l}}``: ``w`` is the length of its cross-section
+    normal to ``\hat{\bm{l}}`` (for a flat port, to its principal axis closest to ``\hat{\bm{l}}``)
+    half way along it, and ``l`` is its area divided by ``w``.
 
  2. *Coaxial*: ``\bm{E}^{inc} = {E_0 r_0} \hat{\bm{r}} / {r}``, where ``E_0 r_0`` is a
     normalization constant, ``r`` is the distance from the port center, and ``\hat{\bm{r}}`` is the
@@ -290,7 +293,7 @@ The source term ``\bm{U}^{inc}`` in a driven frequency-response problem is relat
 tangential component of the incident field at an excited port boundary by
 
 ```math
-\bm{U}^{inc} = -2\gamma_{exc}(\bm{n}\times\bm{E}^{inc})\times\bm{n} \,, \qquad
+\bm{U}^{inc} = -2a\gamma_{exc}(\bm{n}\times\bm{E}^{inc})\times\bm{n} \,, \qquad
 \gamma_{exc} = \frac{i\omega}{R_{ref}}
 ```
 
@@ -300,15 +303,24 @@ excited port: the port resistance ``R`` when ``R > 0``, or the impedance of free
 ``Z_0`` for a purely reactive port with ``R = 0`` (see the discussion of reactive port
 excitation below). The excitation coefficient ``\gamma_{exc}`` is in general distinct from
 the termination coefficient ``\gamma = i\omega/Z_s`` appearing in the Robin boundary
-condition, and the two coincide for a purely resistive port. The excitation amplitude is
-fixed at the unit-power mode normalization described above, ``1~\mathrm{W}``.
+condition, and the two coincide for a purely resistive port. The field ``\bm{E}^{inc}`` is
+the unit-power mode normalized as described above, ``1~\mathrm{W}``, and ``a = A e^{i\varphi}``
+is the complex excitation weight of the port, set by the port's
+[`"ExcitationAmplitude"`](config/reference.md#config-boundaries-lumpedport) ``A`` and
+`"ExcitationPhase"` ``\varphi`` (``a = 1`` by default). The weight scales the source term
+``\bm{U}^{inc}`` by ``a``, so the incident power of the excited port is ``A^2`` times that of
+the unit-power excitation.
 
 In the time-domain formulation, the source term ``\bm{U}^{inc}`` appears as
 
 ```math
-\bm{U}^{inc} = -2 R_{ref}^{-1}\left(\bm{n}\times\frac{\partial\bm{E}^{inc}}{\partial t}\right)
+\bm{U}^{inc} = -2 A R_{ref}^{-1}\left(\bm{n}\times\frac{\partial\bm{E}^{inc}}{\partial t}\right)
     \times\bm{n} \,.
 ```
+
+where the source is scaled by the amplitude ``A``. The time-domain excitation is real, so the
+weight must be real in that case (``\varphi`` a multiple of 180 degrees); for ``\varphi = 180``
+degrees, ``A`` is replaced by ``-A``.
 
 The incident field ``\bm{E}^{inc}(\bm{x},t)`` is
 
@@ -550,7 +562,32 @@ orthogonalized real and imaginary components, ``\mathrm{Re}(\bm{x}^*)`` and
 ``\mathrm{Im}(\bm{x}^*)``, as separate real basis vectors. The Gram-Schmidt
 orthogonalization variant is controlled by
 [`config["Solver"]["Driven"]["AdaptiveGSOrthogonalization"]`](config/reference.md#config-solver-driven),
-though most users should not need to change it.
+though most users should not need to change it. `"MGS"` is applied as `"CGS2"`, classical
+Gram-Schmidt with reorthogonalization, which is as stable with three reductions per vector
+(one per pass and one for the norm) instead of one per basis vector.
+
+An HDM solution is only as accurate as its linear solve:
+[`config["Solver"]["Linear"]["Tol"]`](config/reference.md#config-solver-linear) bounds a
+residual (for GMRES, that of the preconditioned system), not the error, which can be much
+larger, and for an ill-conditioned system the factorization of a direct solver can be
+inaccurate as well. Late in the sampling, the new direction which the real or the imaginary part
+of a sample adds to the basis can be as small as this error, and then consists largely of
+it. The Galerkin projection can amplify the error carried by such a direction, so that the
+PROM with it is farther from the sample, and from the exact solution, than without it. With
+an accurate sample in its basis, the Galerkin PROM reproduces the sample, so after adding a
+sample, *Palace* evaluates the error ``\varepsilon`` defined below at this sample, with the
+sample in the basis. If it is not below
+[`config["Solver"]["Driven"]["AdaptiveTol"]`](config/reference.md#config-solver-driven), the
+sample is removed, refined and added again, up to four times: a step of iterative refinement adds
+to it a correction for its true residual, solved with the same linear solver to a relative
+tolerance of `1e-2` (or `config["Solver"]["Linear"]["Tol"]`, if looser). A part of a sample
+in the span of the basis, to the orthogonalization tolerance, carries no new information and
+adds no direction. If the sampling of an excitation reaches
+[`config["Solver"]["Driven"]["AdaptiveMaxSamples"]`](config/reference.md#config-solver-driven)
+before converging, *Palace* warns. It also warns if the PROM does not reproduce some of the
+samples even after their refinement: `"AdaptiveTol"` is then likely below the accuracy
+which the HDM solutions can reach, for example because of the conditioning of the system,
+which refinement does not improve, and has to be looser.
 
 ### Internal sample selection
 
@@ -577,6 +614,23 @@ that, the interpolation suggests the next sample from an error indicator that ca
 evaluated without another HDM solve. The selected HDM solution is then added to the shared
 PROM basis.
 
+HDM solutions are solved from zero. When
+[`config["Solver"]["Linear"]["InitialGuess"]`](config/reference.md#config-solver-linear) is
+enabled (the default), the sample which would complete the convergence memory (see below) is
+solved from the PROM solution there instead, to certify the PROM: if the linear solver
+converges, to the tighter of its tolerance and `"AdaptiveTol"`, and changes the PROM
+solution by less than `"AdaptiveTol"`, the sweep of this excitation has converged, and this
+solution is added to the basis as the last sample, unless it is already in the span of the
+basis to round-off (for example when the PROM solution already meets this tolerance, so
+that the solve takes no iteration). Otherwise, the solve is stopped as soon as the change
+exceeds `"AdaptiveTol"` (with GMRES and left preconditioning, the defaults; FGMRES or right
+preconditioning solve to convergence), and the sample is solved again from zero, reusing
+the assembled operators and preconditioner. The other samples are not started from the
+PROM solution: the linear solver controls the residual of the preconditioned system, and
+while the PROM is still inaccurate, a solution started from it can keep errors of the PROM
+which barely affect this residual, for example in weakly excited, high-Q modes, and which
+would then degrade the PROM.
+
 ### Convergence criterion
 
 At a proposed sample frequency ``f^*``, *Palace* compares the HDM solution against the PROM
@@ -591,11 +645,21 @@ solution using
 Convergence is declared when this quantity is below
 [`config["Solver"]["Driven"]["AdaptiveTol"]`](config/reference.md#config-solver-driven) for
 [`config["Solver"]["Driven"]["AdaptiveConvergenceMemory"]`](config/reference.md#config-solver-driven)
-consecutive samples. The norm here is the finite-element coefficient-space L2 norm. It is
-related to, but not the same as, a physical energy norm such as
+consecutive samples. Since ``\varepsilon`` is measured against HDM solutions, it is in
+general not smaller than their error: if they are less accurate than `"AdaptiveTol"`, even
+after their refinement, the sampling may not converge. The norm here is the
+finite-element coefficient-space L2 norm. It is related to, but not the same as, a physical
+energy norm such as
 ``\int \bm{E}^*(\bm{r})\cdot\bm{E}(\bm{r})\,d^3r``. Consequently, the adaptive tolerance is
 not a strict relative-error bound for every derived quantity, such as S-parameters or domain
 energies.
+
+The tolerance of the linear solver
+([`config["Solver"]["Linear"]["Tol"]`](config/reference.md#config-solver-linear)) bounds the
+relative residual of the preconditioned system (with the default left preconditioning), not
+the error of the HDM solution, which can be much larger. Near the accuracy of the HDM
+solves, ``\varepsilon`` no longer measures the PROM error alone, and an `"AdaptiveTol"`
+tighter than this accuracy may not be reached before `"AdaptiveMaxSamples"`.
 
 The indicator is also not a mathematical certificate of the maximum error over the entire
 frequency interval. The convergence memory mitigates accidental early termination when one
@@ -767,14 +831,25 @@ The EPR can also be used to estimate mode quality factors due to input-output (I
 coupling. The mode coupling quality factor due to the ``j``-th I-O port is given by
 
 ```math
-Q_{mj} = \frac{\omega_m}{\kappa_{mj}}
+Q_{mj} = \frac{\text{Re}\{\omega_m\}}{|\kappa_{mj}|}
 ```
 
-where the port coupling rate ``\kappa_{mj}`` is calculated as
+The magnitude of the port coupling rate ``\kappa_{mj}`` is the power dissipated in the
+resistive boundary of port ``j`` divided by the electric energy of mode ``m``, and its sign
+is the sign of the real part of the port current ``I_{mj} = \overline{V}_{mj}/R_j``:
 
 ```math
-\kappa_{mj} = \frac{1}{\mathcal{E}^{elec}_m} \, \frac{1}{2}\,R_j I_{mj}^2 \,.
+\kappa_{mj} = \text{sign}(\text{Re}\{I_{mj}\}) \, \frac{1}{\mathcal{E}^{elec}_m} \,
+    \frac{1}{2} \sum_e \int_{\Gamma_e} \frac{|\bm{E}_{m,t}|^2}{R_{s,e}} \, dS \,,
 ```
+
+where ``\bm{E}_{m,t}`` is the tangential electric field of mode ``m`` on element ``e`` of
+the port and ``R_{s,e}`` is the sheet resistance of that element.
+
+When the active resistive ports are the only loss,
+``\sum_j |\kappa_{mj}| = 2\,\text{Im}\{\omega_m\}``, so ``\sum_j 1/Q_{mj}`` is
+``|\omega_m|/\text{Re}\{\omega_m\}`` times the ``1/Q`` of the eigenvalue above, and close
+to it only when ``Q \gg 1``.
 
 ## Bulk and interface dielectric loss
 
@@ -894,8 +969,27 @@ specified surfaces of the model. The magnetic field energy associated with any s
 \mathcal{E}(\bm{A}_i) = \frac{1}{2}\int_\Omega\mu_r^{-1}\bm{B}_i\cdot\bm{B}_i\,dV
 ```
 
-where ``\bm{B}_i = \nabla\times\bm{A}_i`` is the magnetic flux density. Then, the entries of
-the inductance matrix, ``\bm{M}``, are given by
+where ``\bm{B}_i = \nabla\times\bm{A}_i`` is the magnetic flux density.
+
+In a superconducting domain ``\Omega_L``, with London penetration depth ``\lambda_L``, the
+static London equations relate the supercurrent to the vector potential, in the London
+gauge, as ``\bm{J} = -(\mu_r\lambda_L^2)^{-1}\bm{A}``. The first equation then becomes
+
+```math
+\nabla\times(\mu_r^{-1}\nabla\times\bm{A}_i) + (\mu_r\lambda_L^2)^{-1}\bm{A}_i = 0 \,,\;
+    \bm{x}\in\Omega_L
+```
+
+and the energy includes the kinetic energy of the supercurrent:
+
+```math
+\mathcal{E}(\bm{A}_i) = \frac{1}{2}\int_\Omega\mu_r^{-1}\bm{B}_i\cdot\bm{B}_i\,dV
+    + \frac{1}{2}\int_{\Omega_L}(\mu_r\lambda_L^2)^{-1}\bm{A}_i\cdot\bm{A}_i\,dV \,.
+```
+
+With the vector potential in the London gauge, every closed loop within a superconducting
+domain has zero fluxoid: a superconducting ring screens the flux of the sources rather than
+trapping flux. Then, the entries of the inductance matrix, ``\bm{M}``, are given by
 
 ```math
 \bm{M}_{ij} = \frac{1}{I_i I_j}\mathcal{E}(\bm{A}_i+\bm{A}_j)
@@ -922,8 +1016,10 @@ density. On element ``K``, we have
 ```
 
 where ``\bm{R}_{ND}`` and ``\bm{R}_{RT}`` are the smooth-space recovery operators which
-orthogonally project their argument onto ``H(\text{curl})`` and ``H(\text{div})``,
-discretized by Nédélec and Raviart-Thomas elements, respectively.
+project their argument onto ``H(\text{curl})`` and ``H(\text{div})``, discretized by Nédélec
+and Raviart-Thomas elements, respectively. Each projection is orthogonal in the weighted
+``L^2`` inner product of the norm it is measured in (``\mu_r`` for ``\bm{R}_{ND}``,
+``\varepsilon_r^{-1}`` for ``\bm{R}_{RT}``), so the recovered field minimizes the estimate.
 
 ## Far-field extraction
 
@@ -1042,4 +1138,5 @@ problems lacking uniform inf-sup stability, _SIAM Journal on Numerical
 Analysis_ 58 (2020) 2265-2293. doi:
 [10.1137/19M1269695](https://doi.org/10.1137/19M1269695).\
 [11] R. B. Marks and D. F. Williams, A general waveguide circuit theory, *J. Res. Natl. Inst. Stan.* 97, 533 (1992).\
-[12] D. M. Pozar, *Microwave engineering*, Fourth edition. John Wiley & Sons, Hoboken, NJ, 2012.
+[12] D. M. Pozar, *Microwave engineering*, Fourth edition. John Wiley & Sons, Hoboken, NJ, 2012.\
+[13] Y. Su and Z. Bai, Solving rational eigenvalue problems via linearization, *SIAM Journal on Matrix Analysis and Applications* 32 (2011) 201-216.

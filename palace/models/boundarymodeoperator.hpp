@@ -17,10 +17,7 @@
 namespace palace
 {
 
-class FarfieldBoundaryOperator;
-class SurfaceConductivityOperator;
-class SurfaceRationalImpedanceOperator;
-class SurfaceImpedanceOperator;
+class SurfaceTerms;
 
 //
 // Top-level operator for 2D boundary mode analysis, analogous to SpaceOperator for 3D
@@ -64,10 +61,7 @@ public:
 
   // Access material and boundary operators.
   const MaterialOperator &GetMaterialOp() const { return mat_op; }
-  SurfaceImpedanceOperator &GetSurfZOp() { return *surf_z_op; }
-  FarfieldBoundaryOperator &GetFarfieldOp() { return *farfield_op; }
-  SurfaceConductivityOperator &GetSurfSigmaOp() { return *surf_sigma_op; }
-  SurfaceRationalImpedanceOperator &GetSurfRZOp() { return *surf_rz_op; }
+  SurfaceTerms &GetSurfaceTerms() { return *surface_terms; }
 
   // Frequency-independent block matrices, assembled in the constructor.
   //   Atn = -(mu^{-1} grad_t u, v)           (ND / H1 gradient coupling)
@@ -125,10 +119,7 @@ private:
   // Material and boundary operators. mat_op is caller-owned; the rest are constructed
   // from mat_op + the solve mesh at construction time.
   const MaterialOperator &mat_op;
-  std::unique_ptr<SurfaceImpedanceOperator> surf_z_op;
-  std::unique_ptr<FarfieldBoundaryOperator> farfield_op;
-  std::unique_ptr<SurfaceConductivityOperator> surf_sigma_op;
-  std::unique_ptr<SurfaceRationalImpedanceOperator> surf_rz_op;
+  std::unique_ptr<SurfaceTerms> surface_terms;
 
   // Frequency-independent block matrices.
   std::unique_ptr<mfem::HypreParMatrix> Atnr, Atni, Btnr, Btni, Bttr;
