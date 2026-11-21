@@ -1015,6 +1015,12 @@ void IoData::CheckConfiguration()
                                  [](double k) { return k == 0.0; })),
         "\"Sensitivity\" is not available for eigenmode problems with wave ports or "
         "Floquet periodicity!");
+    MFEM_VERIFY(
+        problem.type != ProblemType::EIGENMODE ||
+            std::ranges::none_of(domains.materials, [](const auto &material)
+                                 { return material.HasFrequencyDependentPermittivity(); }),
+        "\"Sensitivity\" is not available for eigenmode problems with "
+        "frequency-dependent permittivities!");
     if (problem.type == ProblemType::MAGNETOSTATIC)
     {
       const bool short_ports =

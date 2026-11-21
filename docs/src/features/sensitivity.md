@@ -152,9 +152,9 @@ gmsh.finalize()
 ## Limitations
 
   - Velocities are not available with periodic boundaries or coaxial surface current
-    sources, eigenmode sensitivities not with wave ports, Floquet ports or a Floquet wave
-    vector, and magnetostatic ones not with flux loops, superconductors or shorted inactive
-    ports.
+    sources, eigenmode sensitivities not with wave ports, Floquet ports, a Floquet wave
+    vector or frequency-dependent permittivities, and magnetostatic ones not with flux
+    loops, superconductors or shorted inactive ports.
   - The derivatives of an eigenvalue are defined only if it is simple. For a degenerate
     mode, *Palace* warns, and the result is for the eigenvector it computed. The quality
     factor of a lossless mode is not defined.

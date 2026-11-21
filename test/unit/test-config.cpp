@@ -1327,6 +1327,14 @@ TEST_CASE("Config Sensitivity", "[config][Serial]")
     CHECK(iodata.sensitivity.material_properties);
     CHECK(iodata.sensitivity.lumped_ports);
 
+    auto dispersive = config;
+    dispersive["Domains"]["Materials"][0]["Permittivity"] = {
+        {"HighFrequencyLimit", 2.0},
+        {"Terms",
+         {{{"Type", "Debye"}, {"DeltaPermittivity", 1.5}, {"RelaxationTime", 0.02}}}}};
+    CHECK_THROWS_WITH(IoData(dispersive, false),
+                      ContainsSubstring("frequency-dependent permittivities"));
+
     config["Problem"]["Type"] = "Electrostatic";
     config["Boundaries"] = {{"Ground", {{"Attributes", {1}}}},
                             {"Terminal", {{{"Index", 1}, {"Attributes", {2}}}}}};
