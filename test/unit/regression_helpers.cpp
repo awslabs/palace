@@ -528,11 +528,22 @@ void RunRegressionCase(std::string_view case_dir, std::string_view config_json,
       it = unstored ? got.csv_files.erase(it) : std::next(it);
     }
 
+    // The adaptation iterations the run archived, from its own palace.json: AMR stops at
+    // its tolerance, possibly before MaxIts. The index recorded there is that of the final
+    // solve, one more than the iterations before it.
+    const auto meta_path = postpro_path / "palace.json";
+    const nlohmann::json meta = std::filesystem::is_regular_file(meta_path)
+                                    ? LoadConfigJson(meta_path)
+                                    : nlohmann::json::object();
+    const int adapt_iterations =
+        meta.value("Problem", nlohmann::json::object()).value("Iteration", 1) - 1;
+    CHECK(adapt_iterations <= max_refinement_iterations);
+
     CheckSetEqual("regression output directories", got.dirs,
-                  ExpectedDirectories(max_refinement_iterations, effective_opts));
+                  ExpectedDirectories(adapt_iterations, effective_opts));
     CheckSetEqual("regression CSV files", got.csv_files, want.csv_files);
     CheckSetEqual("regression metadata files", got.meta_files,
-                  ExpectedMetadataFiles(max_refinement_iterations));
+                  ExpectedMetadataFiles(adapt_iterations));
 
     for (const auto &rel : want.csv_files)
     {
