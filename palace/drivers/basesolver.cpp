@@ -315,7 +315,15 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
       const auto result = mesh::RebalanceMesh(iodata, *mesh.back(), &mesh_counts);
       if (result.ratio_before > refinement.maximum_imbalance)
       {
-        Mpi::Print(" {}\n", mesh::RebalanceMessage(result, refinement.maximum_imbalance));
+        const auto message = mesh::RebalanceMessage(result, refinement.maximum_imbalance);
+        if (result.moved)
+        {
+          Mpi::Print(" {}\n", message);
+        }
+        else
+        {
+          Mpi::Warning(comm, "{}\n", message);
+        }
       }
       mesh.back()->Update();
       UpdateAfterMeshChange(*mesh.back());

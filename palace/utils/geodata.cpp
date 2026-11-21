@@ -2900,8 +2900,12 @@ void FillMeshEntityCounts(mfem::Mesh &smesh, MeshEntityCounts &counts)
 // processes, so that neighboring subdomains share a node. For a nonconforming mesh, MFEM's
 // default partition splits the sequence of refinement tree leaves into equal chunks, which
 // fragments the subdomains as the mesh is refined. Only the graph is gathered, never the
-// mesh. Returns false, on all processes, if the partition fails.
-bool GetRebalancePartitioning(mfem::ParMesh &mesh, mfem::Array<int> &partitioning)
+// mesh. Returns false, on all processes, if the partition fails, with why in `reason`: the
+// graph is too large for the int counts of MPI, the mesh has fewer elements than
+// processes, or METIS failed or left a process without elements (PartitionGraphOnNodes
+// does not tell these two apart).
+bool GetRebalancePartitioning(mfem::ParMesh &mesh, mfem::Array<int> &partitioning,
+                              std::string *reason = nullptr)
 {
   MPI_Comm comm = mesh.GetComm();
   std::vector<idx_t> xadj, adjncy;
@@ -2910,6 +2914,10 @@ bool GetRebalancePartitioning(mfem::ParMesh &mesh, mfem::Array<int> &partitionin
     BlockTimer bt(Timer::REBALANCE_GATHER);
     if (!GatherElementGraph(mesh, xadj, adjncy, rank_ne, rank_node))
     {
+      if (reason)
+      {
+        *reason = "the element graph is too large for the int counts of MPI";
+      }
       return false;
     }
   }
@@ -2923,6 +2931,12 @@ bool GetRebalancePartitioning(mfem::ParMesh &mesh, mfem::Array<int> &partitionin
   Mpi::Broadcast(1, &ok, 0, comm);
   if (!ok)
   {
+    if (reason)
+    {
+      *reason = (mesh.GetGlobalNE() < Mpi::Size(comm))
+                    ? "the mesh has fewer elements than processes"
+                    : "METIS failed or left a process without elements";
+    }
     return false;
   }
   std::vector<int> displs(rank_ne.size());
@@ -2972,8 +2986,8 @@ std::string RebalanceMessage(const RebalanceResult &result, double tol)
   {
     return fmt::format(
         "Mesh not rebalanced: ratio {:.3f} exceeds max. allowed value {:.3f}, "
-        "but no partition was found; the distribution is kept",
-        result.ratio_before, tol);
+        "but no partition was found ({}); the distribution is kept",
+        result.ratio_before, tol, result.reason);
   }
   return fmt::format("Rebalanced mesh: Ratio {:.3f} exceeded max. allowed value {:.3f} "
                      "(new ratio = {:.3f}{})",
@@ -3103,9 +3117,9 @@ RebalanceResult RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMes
     // aborts, on all processes and before anything moves, on a mesh it cannot rebalance.
     // Without a partition (the graph is too large for MPI's int counts, METIS fails, or a
     // process would get no element), the distribution is kept, the same on all processes,
-    // and the caller reports it.
+    // and the caller warns with the reason.
     mfem::Array<int> partitioning;
-    if (GetRebalancePartitioning(*mesh, partitioning))
+    if (GetRebalancePartitioning(*mesh, partitioning, &result.reason))
     {
       BlockTimer bt(Timer::REBALANCE_MOVE);
       mesh->Rebalance(partitioning);
