@@ -540,10 +540,14 @@ smaller endpoint.
      outside every contribution carries no turn and no bend annotation whatever round-off
      the chain's earlier contributions leave (two abutting half-chord windows can overlap by
      an ulp); a joint between collinear runs (a straight edge cut into runs where its frame
-     changes) carries no turn either: a joint's turn is atan2(|a x b|, a . b) of the two run
-     tangents (`JointTurnMagnitude`, operands in a fixed order; decision 2286), zero to
-     round-off where the arc-cosine of the dot product read 1.49e-8 sqrt(k) rad for unit
-     tangents k units in the last place apart (OI-FIRST-ORDER-COLLINEAR-JOINT-TURN);
+     changes) carries a turn of round-off size only (exactly 0 for runs along an axis; off
+     the axes its portions keep turns of about 1e-18 rad and the feature a BendRadiusOverR
+     of about 1e17, and every such first-order fraction, at most ten times the turn, falls
+     below kFirstOrderSplitFloor and is counted in Summary.FirstOrderBelowFloor): a joint's
+     turn is atan2(|a x b|, a . b) of the two run tangents (`JointTurnMagnitude`, operands
+     in a fixed order; decision 2286), zero to round-off where the arc-cosine of the dot
+     product read 1.49e-8 sqrt(k) rad for unit tangents k units in the last place apart
+     (OI-FIRST-ORDER-COLLINEAR-JOINT-TURN);
    * an unpaired curved portion is a `CurvedEdge` feature (one per curved chain section)
      with `RadiusOverR` = the section's tightest windowed radius and `Convexity` in the
      signature: `Convex` when the signed windowed curvature over the section bends around

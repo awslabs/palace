@@ -1584,8 +1584,9 @@ circle, `"Convexity": "Convex"`, or outside, `"Concave"`). Their records carry
 matrices are full-revolution energies, so `CouponDepth` must be the edge length
 $2 \pi \rho$. The straight model of the analogous topology is the $\kappa = 0$ anchor. A
 curved feature of curvature $\kappa$ is corrected by a runtime model interpolated in
-$\kappa$: the exact coupon at a node, the linear combination of the anchor and the smallest
-node for $\kappa$ at or below it (the first-order correction of straight-like features),
+$\kappa$: the exact coupon at a node, the linear combination of the anchor and the node at
+$\kappa = 0.1$ for $\kappa$ at or below $0.1$ (reported unmatched when the family has no
+node there) (the first-order correction of straight-like features),
 otherwise the cubic Lagrange interpolant on the four nearest nodes, formed on the matrices
 (negative weights never reach a patch). A portion of a straight-like feature whose
 first-order split fraction (its $\kappa$ over $0.1$, the $\kappa$ of the node the split goes

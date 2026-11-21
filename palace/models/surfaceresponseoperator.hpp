@@ -3802,11 +3802,11 @@ void ForEachMaxwellPatchEnergyRow(
 }
 
 // The noise floor of the first-order split fraction (decision 2268): a fraction at or below
-// it is a turn of round-off size (largest seen 2.2e-15; smallest real 1.4e-7) and the
-// portion is treated as straight. Dropping a split of fraction a moves the cell's
-// fabricated values by at most a relative (they are linear in a); 1e-12 is the floor below
-// which comparisons across builds already drop splits. A ratio of lengths: independent of
-// the build, the rank count and the mesh units.
+// it is a turn of round-off size (largest seen 2.2e-15; smallest real 1.9e-8 (the chip,
+// decision 2286)) and the portion is treated as straight. Dropping a split of fraction a
+// moves the cell's fabricated values by at most a relative (they are linear in a); 1e-12 is
+// the floor below which comparisons across builds already drop splits. A ratio of lengths:
+// independent of the build, the rank count and the mesh units.
 constexpr double kFirstOrderSplitFloor = 1.0e-12;
 
 // The first-order split fraction of a portion of a straight-like feature (design (b)7):

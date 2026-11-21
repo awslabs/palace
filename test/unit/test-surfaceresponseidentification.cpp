@@ -1330,6 +1330,48 @@ TEST_CASE("SurfaceResponseIdentificationCollinearRunsAtAFrameChange",
     INFO("long edge y = " << y);
     CHECK(turn == 0.0);
   }
+  // Review ros-fix2-r2286 MINOR-2: the same bar rotated off the axes. The runs' tangents
+  // are collinear to round-off only: every portion keeps a turn of round-off size at most
+  // and no portion has a first-order split fraction (the floor removes them).
+  for (const double phi : {0.3, 1.1})
+  {
+    INFO("phi = " << phi);
+    const double c = std::cos(phi), s = std::sin(phi);
+    auto Rotate = [&](const Point2 &p) -> Point2
+    { return {c * p[0] - s * p[1], s * p[0] + c * p[1]}; };
+    auto rotated = MakeInput({{{Rotate({0.0, 0.0}), Rotate({81.0, 0.0}),
+                                Rotate({81.0, 6.0}), Rotate({0.0, 6.0})},
+                               0,
+                               1.0}},
+                             R);
+    int rotated_changed = 0;
+    for (auto &segment : rotated.segments)
+    {
+      // The target segments by their rotated-back midpoint: x >= 49 on y = 0 or y = 6.
+      const double mx = 0.5 * (segment.p0[0] + segment.p1[0]),
+                   my = 0.5 * (segment.p0[1] + segment.p1[1]);
+      const double x = c * mx + s * my, y = -s * mx + c * my;
+      if (x >= 49.0 && (std::abs(y) < 1.0e-9 || std::abs(y - 6.0) < 1.0e-9))
+      {
+        segment.targets = {{InterfaceDielectric::MS, 2}};
+        rotated_changed++;
+      }
+    }
+    REQUIRE(rotated_changed == 64);
+    const auto rotated_result = IdentifyMetalPerimeter(rotated);
+    CheckPartition(rotated, rotated_result);
+    for (const auto &feature : rotated_result.features)
+    {
+      for (const auto &portion : feature.portions)
+      {
+        CHECK(std::abs(portion.turn) <= 1.0e-15);
+        double suppressed = -1.0;
+        CHECK_FALSE(FirstOrderSplitFraction(portion.turn, portion.s1 - portion.s0, R, 0.0,
+                                            true, &suppressed)
+                        .has_value());
+      }
+    }
+  }
 }
 
 TEST_CASE("SurfaceResponseIdentificationRealJointTurnAndClass",
