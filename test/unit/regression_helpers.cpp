@@ -64,7 +64,7 @@ FileListing ListRegressionFiles(const std::filesystem::path &root,
   {
     if (it->is_directory())
     {
-      out.dirs.insert(std::filesystem::relative(it->path(), root).generic_string());
+      out.dirs.insert(it->path().lexically_relative(root).generic_string());
       if (skip_dirs.contains(it->path().filename().string()))
       {
         it.disable_recursion_pending();
@@ -75,7 +75,8 @@ FileListing ListRegressionFiles(const std::filesystem::path &root,
     {
       continue;
     }
-    const auto rel = std::filesystem::relative(it->path(), root).generic_string();
+    // Lexically, so that a reference file which is a link to another one keeps its name.
+    const auto rel = it->path().lexically_relative(root).generic_string();
     if (it->path().extension() == ".csv")
     {
       out.csv_files.insert(rel);

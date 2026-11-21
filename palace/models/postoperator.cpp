@@ -2450,11 +2450,13 @@ void PostOperator<solver_t>::ConfigureReducedPostprocessing(const RomOperator &r
   reduced_postprocessing_tol =
       std::max(0.1 * tol, 1.0e7 * std::numeric_limits<double>::epsilon());
   // The reduced magnetic form contains curl(E) only, while a Floquet wave vector adds a
-  // frequency-dependent k × E correction to the full magnetic flux density.
+  // frequency-dependent k × E correction to the full magnetic flux density. The outputs of
+  // plane waves are those of the total field, which is not in the span of the basis.
   if (fem_op->GetMaterialOp().HasWaveVector() || !fem_op->GetFloquetPortOp().Empty() ||
-      fem_op->GetSurfaceCurrentOp().Size() > 0 || !surf_post_op.flux_surfs.empty() ||
-      !surf_post_op.eps_surfs.empty() || surf_post_op.farfield.size() > 0 ||
-      !interp_op.GetProbes().empty() || !fem_op->GetPortExcitations().IsMultipleSimple())
+      !fem_op->GetPlaneWaveOp().Empty() || fem_op->GetSurfaceCurrentOp().Size() > 0 ||
+      !surf_post_op.flux_surfs.empty() || !surf_post_op.eps_surfs.empty() ||
+      surf_post_op.farfield.size() > 0 || !interp_op.GetProbes().empty() ||
+      !fem_op->GetPortExcitations().IsMultipleSimple())
   {
     return;
   }

@@ -586,6 +586,8 @@ void PostOperatorCSV<solver_t>::FlushDeferredTables()
   WriteTable(port_Z);
   WriteTable(floquet_port_S);
   WriteTable(farfield_E);
+  WriteTable(farfield_rcs);
+  WriteTable(rcs_monostatic);
   WriteTable(eig);
   WriteTable(mode_kn);
   WriteTable(mode_Z);

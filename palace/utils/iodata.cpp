@@ -526,6 +526,11 @@ void IoData::CheckConfiguration()
                 "yet support Floquet port boundaries. The Floquet Robin dispersion is "
                 "handled in the online PROM sweep but has not been folded into the "
                 "synthesised circuit pencil.\n");
+    // A plane wave is not a port of the synthesized circuit, and its excitation is not
+    // linear in the frequency.
+    MFEM_VERIFY(!solver.driven.adaptive_circuit_synthesis || domains.plane_wave.empty(),
+                "Driven system with circuit synthesis (AdaptiveCircuitSynthesis) does not "
+                "support plane wave excitations (PlaneWave)!\n");
     // The Floquet terms of a wave vector k make the system matrices Hermitian rather than
     // complex symmetric (the transpose of the problem for k is the one for -k), so that the
     // synthesized inverse inductance, inverse resistance, and capacitance matrices would

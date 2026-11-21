@@ -318,8 +318,10 @@ palace::test::CustomCheck TestFarfieldLeakage(double tol)
 // sigma_theta = 4 pi |r E . theta_hat|^2 / E0^2, sigma_phi likewise, and sigma their sum;
 // in rcs-monostatic.csv (single plane wave along direction khat with polarization phat),
 // sigma_co and sigma_cross from the far field along phat and khat x phat in the
-// backscattering direction -khat. The tolerance is relative to the largest value. With
-// compare_ref, the table is also compared with the reference data (as for the other CSVs).
+// backscattering direction -khat, at each frequency (the far field has the same directions
+// at every frequency, in consecutive blocks). The tolerance is relative to the largest
+// value. With compare_ref, the table is also compared with the reference data (as for the
+// other CSVs).
 palace::test::CustomCheck TestRCS(double tol, double E0, std::array<double, 3> khat,
                                   std::array<double, 3> phat, bool compare_ref,
                                   palace::test::RegressionOptions opts)
@@ -373,8 +375,11 @@ palace::test::CustomCheck TestRCS(double tol, double E0, std::array<double, 3> k
       const double theta_b =
           std::acos(std::clamp(-khat[2], -1.0, 1.0)) * 180.0 / std::numbers::pi;
       double phi_b = std::atan2(-khat[1], -khat[0]) * 180.0 / std::numbers::pi;
-      std::size_t ib = ff.n_rows();
-      for (std::size_t i = 0; i < ff.n_rows(); ++i)
+      REQUIRE(a.n_rows() > 0);
+      REQUIRE(ff.n_rows() % a.n_rows() == 0);
+      const std::size_t n_dir = ff.n_rows() / a.n_rows();
+      std::size_t ib = n_dir;
+      for (std::size_t i = 0; i < n_dir; ++i)
       {
         if (std::abs(ff[it].data[i] - theta_b) < 1.0e-6 &&
             (std::abs(std::sin(theta_b * std::numbers::pi / 180.0)) < 1.0e-12 ||
@@ -385,18 +390,23 @@ palace::test::CustomCheck TestRCS(double tol, double E0, std::array<double, 3> k
         }
       }
       INFO("backscattering direction theta = " << theta_b << ", phi = " << phi_b);
-      REQUIRE(ib < ff.n_rows());
+      REQUIRE(ib < n_dir);
+      REQUIRE(a.n_cols() == 4);  // f, sigma, sigma_co, sigma_cross
       const double p[3] = {phat[0], phat[1], phat[2]};
       const double q[3] = {khat[1] * phat[2] - khat[2] * phat[1],
                            khat[2] * phat[0] - khat[0] * phat[2],
                            khat[0] * phat[1] - khat[1] * phat[0]};
-      const double s_co = sigma(ib, p), s_cross = sigma(ib, q);
-      REQUIRE(a.n_rows() == 1);
-      REQUIRE(a.n_cols() == 4);  // f, sigma, sigma_co, sigma_cross
-      INFO("sigma = " << a[1].data[0] << ", from r E = " << s_co + s_cross);
-      CHECK(std::abs(a[1].data[0] - (s_co + s_cross)) <= tol * (s_co + s_cross));
-      CHECK(std::abs(a[2].data[0] - s_co) <= tol * (s_co + s_cross));
-      CHECK(std::abs(a[3].data[0] - s_cross) <= tol * (s_co + s_cross));
+      for (std::size_t k = 0; k < a.n_rows(); ++k)
+      {
+        const std::size_t i = ib + k * n_dir;
+        REQUIRE(std::abs(ff[0].data[i] - a[0].data[k]) <= 1.0e-9 * a[0].data[k]);
+        const double s_co = sigma(i, p), s_cross = sigma(i, q);
+        INFO("row " << k + 1 << ": sigma = " << a[1].data[k]
+                    << ", from r E = " << s_co + s_cross);
+        CHECK(std::abs(a[1].data[k] - (s_co + s_cross)) <= tol * (s_co + s_cross));
+        CHECK(std::abs(a[2].data[k] - s_co) <= tol * (s_co + s_cross));
+        CHECK(std::abs(a[3].data[k] - s_cross) <= tol * (s_co + s_cross));
+      }
     }
   };
 }
@@ -3007,6 +3017,37 @@ TEST_CASE("rcs_empty", "[Serial][Parallel][GPU][Regression]")
   opts.custom_checks["rcs-monostatic.csv"] =
       TestRCS(1.0e-8, 1.0, {0.0, 0.0, 1.0}, {1.0, 0.0, 0.0}, false, opts);
   palace::test::RunRegressionCase("rcs_coated_sphere", "rcs_empty.json", "rcs_empty", opts);
+}
+
+// A uniform frequency sweep of the coated sphere at second order, from 500 to 700 MHz, and
+// the same with an adaptive sweep, which is checked against the reference data of the
+// uniform sweep (its reference files link to those of rcs_sweep, so that the two cases run
+// in separate directories): the plane wave excitation of the reduced-order model is exact
+// at each frequency, so the outputs agree to AdaptiveTol = 1e-5 (the radar cross section,
+// as the square of the far field, to twice that). The error indicators of the two sweeps
+// differ.
+TEST_CASE("rcs_sweep", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 2.0e-2;
+  opts.atol = 1.0e-10;
+  opts.paraview_fields = false;  // "SaveStep": 0
+  opts.custom_checks["farfield-rcs.csv"] =
+      TestRCS(1.0e-8, 1.0, {0.0, 0.0, 1.0}, {1.0, 0.0, 0.0}, true, opts);
+  opts.custom_checks["rcs-monostatic.csv"] =
+      TestRCS(1.0e-8, 1.0, {0.0, 0.0, 1.0}, {1.0, 0.0, 0.0}, true, opts);
+  palace::test::RunRegressionCase("rcs_coated_sphere", "rcs_sweep.json", "rcs_sweep", opts);
+}
+
+TEST_CASE("rcs_sweep_adaptive", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-7;
+  opts.paraview_fields = false;  // "SaveStep": 0
+  opts.excluded_files = {"error-indicators.csv"};
+  palace::test::RunRegressionCase("rcs_coated_sphere", "rcs_sweep_adaptive.json",
+                                  "rcs_sweep_adaptive", opts);
 }
 
 // --- coaxial + cpw non-adaptive + cpw eigen: reltol still 2e-2 (from  ---

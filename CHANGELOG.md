@@ -62,8 +62,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     the monostatic one in the backscattering direction of each plane wave
     (`rcs-monostatic.csv`). On periodic cells, the envelope of the incident field is used
     with a Floquet wave vector, which is checked at setup against the wave vector of the
-    plane wave over the lattice translations, for all the frequencies of the sweep. See the
-    new example `examples/rcs_coated_sphere`. SchemaVer 5-3-0.
+    plane wave over the lattice translations, for all the frequencies of the sweep. The
+    adaptive frequency sweep supports plane waves, with the exact projection of their
+    excitation at each frequency. See the new example `examples/rcs_coated_sphere`.
+    SchemaVer 5-3-0.
     [PR 1212](https://github.com/awslabs/palace/pull/1212).
 
 #### Interface Changes
