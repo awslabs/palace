@@ -302,14 +302,26 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
       mfem::ParMesh &fine_mesh = *mesh.back();
       const auto initial_elem_count = fine_mesh.GetGlobalNE();
       fine_mesh.GeneralRefinement(marked_elements, -1, refinement.max_nc_levels);
+      UpdateAfterMeshChange(*mesh.back());
       if (fine_mesh.Conforming())
       {
-        // Marked from scratch, so the marks are the same with any rebalance and number of
-        // processes. The marking reorders the nodes: nothing may live on the mesh across
-        // this call, so the eigenvalue warm start is limited to nonconforming meshes.
+        // New marks, the same for any number of processes. The fields kept on the mesh
+        // follow the reordered vertices of its elements.
+        std::vector<int> old_vertices;
+        const bool carried = CarriesFields();
+        for (int e = 0; carried && e < fine_mesh.GetNE(); e++)
+        {
+          const auto *el = fine_mesh.GetElement(e);
+          old_vertices.insert(old_vertices.end(), el->GetVertices(),
+                              el->GetVertices() + el->GetNVertices());
+        }
         fine_mesh.Finalize(/*refine=*/true);
+        markings++;
+        if (carried)
+        {
+          RemarkAfterMeshChange(old_vertices);
+        }
       }
-      UpdateAfterMeshChange(*mesh.back());
       const auto final_elem_count = fine_mesh.GetGlobalNE();
       Mpi::Print(" {} mesh refinement added {:d} elements (initial = {:d}, final = {:d})\n",
                  fine_mesh.Nonconforming() ? "Nonconforming" : "Conforming",

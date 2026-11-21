@@ -26,6 +26,9 @@ private:
   mfem::ParFiniteElementSpace fespace;
   std::vector<std::unique_ptr<mfem::ParGridFunction>> fields;
 
+  // Number of the last marking the fields were put back in place for (Remark).
+  int markings = 0;
+
   // Sequence number of the mesh followed by the fields.
   long mesh_sequence;
 
@@ -39,11 +42,21 @@ public:
   // one.
   void Update();
 
+  // Follow a new marking of a conforming simplex mesh, which reordered the vertices of its
+  // elements: old_vertices holds the vertices of each element before it (dim + 1 each), and
+  // marking counts the markings, which IsCurrent checks, so that a missed one is not
+  // silent.
+  void Remark(const std::vector<int> &old_vertices, int marking = 0);
+
   // Mesh of the fields (not owned).
   const mfem::ParMesh *GetParMesh() const { return fespace.GetParMesh(); }
 
   // Whether the fields follow the current state of the given mesh object.
   bool IsCurrent(const mfem::ParMesh &mesh) const;
+  bool IsCurrent(const mfem::ParMesh &mesh, int marking) const
+  {
+    return IsCurrent(mesh) && marking == markings;
+  }
 
   // Number of stored fields.
   auto Size() const { return fields.size(); }

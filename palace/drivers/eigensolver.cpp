@@ -96,6 +96,14 @@ EigenSolver::EigenSolver(const IoData &iodata, bool root, int size, int num_thre
 
 EigenSolver::~EigenSolver() = default;
 
+void EigenSolver::RemarkAfterMeshChange(const std::vector<int> &old_vertices) const
+{
+  if (prev_eigenvectors)
+  {
+    prev_eigenvectors->Remark(old_vertices, markings);
+  }
+}
+
 void EigenSolver::UpdateAfterMeshChange(Mesh &mesh) const
 {
   if (!prev_eigenvectors)
@@ -617,7 +625,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       space_op.GetRandomInitialVector(v0);
     }
     if (prev_eigenvectors &&
-        prev_eigenvectors->IsCurrent(space_op.GetNDSpace().GetParMesh()))
+        prev_eigenvectors->IsCurrent(space_op.GetNDSpace().GetParMesh(), markings))
     {
       num_warm = prev_num_eigenvectors;
       Mpi::Print(" Using starting vector from {:d} eigenvectors of the previous adaptation "
