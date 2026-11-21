@@ -1295,6 +1295,10 @@ public:
   // Maximum number of iterations of the AMS solver.
   int ams_max_it = -1;
 
+  // Target number of rows per process for the agglomeration of the coarse levels of the
+  // auxiliary space AMG hierarchies of the AMS solver during the solve (0: disabled).
+  int ams_agglomeration_target = 2048;
+
   // Relative tolerance for solving linear systems in divergence-free projector.
   double divfree_tol = 1.0e-12;
 
