@@ -431,11 +431,15 @@ include(PatchHelpers)
 set(MFEM_PATCH_DIR "${CMAKE_BINARY_DIR}/extern/mfem-patches")
 set(MFEM_PATCH_FILES)
 
-# https://github.com/mfem/mfem/pull/3847
+# https://github.com/mfem/mfem/pull/5761
+# Consistent marking of tetrahedra for conforming refinement, the same for any partition
+# (shared order of edges across processes, exact comparison of lengths, face neighbor data
+# after a new marking, point matrices of uniform refinement), for MFEM 4.10. First: the
+# patches below apply after it.
 download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
-  mfem_pr3847.diff
-  "https://github.com/mfem/mfem/compare/2d574015756711029556c14d096ca52c15d5b663...50ead1a9a785e3273b2a72ff59ac8ed8a496b498.diff"
-  e9be1a0d4b2642ed1b72f31c36065cf0aacbe342b6594d5d943782c73a6177f4
+  mfem_pr5761.diff
+  "https://raw.githubusercontent.com/awslabs/palace/9fac1daf449d530e7873dd7800c9ddd97469c5f8/extern/patch/mfem/mfem_pr5761.diff"
+  b84c5b1f7dd6ca47d5635c45233428c81dfa0f56f8eff9bd198f77e226e61348
 )
 # https://github.com/mfem/mfem/pull/5353
 download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
@@ -556,6 +560,16 @@ if(PALACE_WITH_CUDSS)
     d8a68635d2694311abc6241e97eea059d4bdc7945d19b5d7852bbd6640ea78f5
   )
 endif()
+
+# https://github.com/mfem/mfem/pull/5754
+# A conforming parallel space that had a prolongation builds it again on all processes when
+# it is updated, so that the cached true vectors of its grid functions stay valid, for MFEM
+# 4.10.
+download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
+  mfem_pr5754.diff
+  "https://raw.githubusercontent.com/awslabs/palace/74cf0f4d2e2520923cc102091208b9fbf08a640f/extern/patch/mfem/mfem_pr5754.diff"
+  8a5cfeaf4fa4d7f9e9fe656413096beb8bad0d6ac46558c3484a368e1695577a
+)
 
 include(ExternalProject)
 ExternalProject_Add(mfem

@@ -3825,7 +3825,8 @@ private:
     // after the marked elements are refined. Marking will then discover only the longest
     // edges, which are those within the boundary to be cracked.
     mfem::Array<mfem::real_t> lengths;
-    GetEdgeLengths2(v_to_v, lengths);
+    mfem::Array<std::array<mfem::real_t, 6>> keys;
+    GetEdgeLengths2(v_to_v, lengths, keys);
     const auto min_length = 0.01 * lengths.Min();
     for (int i = 0; i < v_to_v.NumberOfRows(); i++)
     {
@@ -3841,16 +3842,15 @@ private:
       }
     }
 
-    // Finish marking (see mfem::Mesh::MarkTetMeshForRefinement).
-    mfem::Array<int> indices(NumOfEdges);
-    std::iota(indices.begin(), indices.end(), 0);
+    // Finish marking (see mfem::Mesh::MarkTetMeshForRefinement): edges of equal length are
+    // ordered by their keys (vector, then smaller vertex).
     for (int i = 0; i < NumOfElements; i++)
     {
       if (elements[i]->GetType() == mfem::Element::TETRAHEDRON)
       {
         MFEM_ASSERT(dynamic_cast<mfem::Tetrahedron *>(elements[i]),
                     "Unexpected non-Tetrahedron element type!");
-        static_cast<mfem::Tetrahedron *>(elements[i])->MarkEdge(v_to_v, lengths, indices);
+        static_cast<mfem::Tetrahedron *>(elements[i])->MarkEdge(v_to_v, lengths, keys);
       }
     }
     for (int i = 0; i < NumOfBdrElements; i++)
@@ -3859,7 +3859,7 @@ private:
       {
         MFEM_ASSERT(dynamic_cast<mfem::Triangle *>(boundary[i]),
                     "Unexpected non-Triangle element type!");
-        static_cast<mfem::Triangle *>(boundary[i])->MarkEdge(v_to_v, lengths, indices);
+        static_cast<mfem::Triangle *>(boundary[i])->MarkEdge(v_to_v, lengths, keys);
       }
     }
   }
