@@ -75,13 +75,17 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     electric energy, eigenmode scales, COMSOL's quality factor) are listed under
     [Comparing with other tools](https://awslabs.github.io/palace/dev/reference/#Lumped-ports-and-wave-ports).
 
-  - With adaptive mesh refinement on nonconforming meshes, the SLEPc Krylov-Schur eigenvalue
+  - With adaptive mesh refinement, the SLEPc Krylov-Schur eigenvalue
     solves of later adaptation iterations can start from the eigenvectors of the previous
     one, transferred to the refined mesh, instead of the start vector of
     `config["Solver"]["Eigenmode"]["StartVector"]`, and then need fewer Krylov restarts. The
     eigenvalues of adaptive simulations change at the level of the solver tolerances, and
     fewer converged eigenpairs beyond the requested ones can be reported. SchemaVer 4-4-2.
     [PR 1203](https://github.com/awslabs/palace/pull/1203).
+
+  - The warm start of the eigenvalue solves of adaptive mesh refinement also works on
+    conformal meshes: the eigenvectors follow each new marking of the mesh and its rebalance.
+    [PR 1268](https://github.com/awslabs/palace/pull/1268).
 
   - Rebalancing a nonconforming mesh during adaptive refinement now keeps each root of its
     refinement tree on one process, when the load stays within half of
