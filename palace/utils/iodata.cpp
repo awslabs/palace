@@ -1110,6 +1110,13 @@ void IoData::CheckConfiguration()
       // Floquet ports make the system non-symmetric.
       MFEM_VERIFY(boundaries.floquetport.empty(),
                   "Driven substructuring does not support Floquet ports!");
+      // The unit masses of frequency-dependent permittivity are assembled on the whole mesh
+      // (SpaceOperator), not on each side of Γ.
+      MFEM_VERIFY(std::none_of(domains.materials.begin(), domains.materials.end(),
+                               [](const auto &material)
+                               { return material.HasFrequencyDependentPermittivity(); }),
+                  "Driven substructuring does not support frequency-dependent material "
+                  "Permittivity yet!");
       // From a model (online, or after an adaptive sweep's samples), the field is known in
       // the region and on Γ only.
       MFEM_VERIFY(

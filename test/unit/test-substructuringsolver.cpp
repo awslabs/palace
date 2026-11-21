@@ -4363,6 +4363,28 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   CHECK((prom_op.GetReducedSolution(2) - x_n).norm() <= 1.0e-12 * x_n.norm());
 }
 
+#if defined(MFEM_USE_EXCEPTIONS)
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "Driven substructuring rejects frequency-dependent permittivity",
+                 "[substructure][Serial][Parallel]")
+{
+  // A frequency-dependent material, in the region or in the environment, is rejected: its
+  // unit mass is assembled on the whole mesh, not on each side of Γ.
+  const int material = GENERATE(0, 1);
+  auto config = DrivenBoxConfig(temp_dir, "Offline");
+  config["Domains"]["Materials"][material]["Permittivity"] = {
+      {"HighFrequencyLimit", 2.0},
+      {"Terms",
+       {{{"Type", "Lorentz"},
+         {"DeltaPermittivity", 0.5},
+         {"ResonanceFrequency", 30.0},
+         {"DampingFrequency", 0.1}}}}};
+  CHECK_THROWS_WITH(IoData(config, false),
+                    Catch::Matchers::ContainsSubstring(
+                        "does not support frequency-dependent material Permittivity"));
+}
+#endif
+
 TEST_CASE_METHOD(palace::test::SharedTempDir,
                  "Driven substructuring online with a process holding no region element",
                  "[substructure][Parallel]")
