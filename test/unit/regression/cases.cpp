@@ -1722,6 +1722,19 @@ TEST_CASE("spheres", "[Serial][Parallel][GPU][Regression]")
   palace::test::RunRegressionCase("spheres", "spheres.json", "", opts);
 }
 
+TEST_CASE("spheres_equilibrated", "[Serial][Parallel][Regression]")
+{
+  // The equilibrated error estimator (CPU only): guaranteed bounds of the relative errors
+  // (error-indicators.csv) and of the capacitance matrix (terminal-C-lower.csv).
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum"};
+  opts.gridfunction_fields = true;
+  palace::test::RunRegressionCase("spheres_equilibrated", "spheres_equilibrated.json", "",
+                                  opts);
+}
+
 TEST_CASE("rings", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
