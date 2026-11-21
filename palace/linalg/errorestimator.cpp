@@ -4,6 +4,8 @@
 #include "errorestimator.hpp"
 
 #include <algorithm>
+#include <cstdio>
+#include <cstdlib>
 #include <limits>
 #include "fem/bilinearform.hpp"
 #include "fem/integrator.hpp"
@@ -345,7 +347,27 @@ Vector ComputeErrorEstimates(const VecType &F, VecType &F_gf, VecType &G, VecTyp
   {
     smooth_fespace.GetProlongationMatrix()->Mult(G, G_gf);
   }
-  return IntegrateErrorEstimates(fespace, F_gf, G_gf, integ_op);
+  auto estimates = IntegrateErrorEstimates(fespace, F_gf, G_gf, integ_op);
+  // [review trace] The estimate of the projection, integrated (to check the identity).
+  static const char *trace_path =
+      std::getenv("PALACE_CG_TRACE") ? std::getenv("PALACE_CG_TRACE") : "cg-trace.jsonl";
+  if (trace_path)
+  {
+    const double phi_true = linalg::Sum(fespace.GetComm(), estimates);
+    const long long ne_glob = fespace.GetMesh().Get().GetGlobalNE();  // Collective
+    if (Mpi::Root(fespace.GetComm()))
+    {
+      if (FILE *fp = std::fopen(trace_path, "a"))
+      {
+        std::fprintf(fp,
+                     "{\"type\": \"est\", \"norm2\": %.17e, \"phi_true\": %.17e, "
+                     "\"ne\": %lld}\n",
+                     flux_norm2, phi_true, ne_glob);
+        std::fclose(fp);
+      }
+    }
+  }
+  return estimates;
 }
 
 }  // namespace

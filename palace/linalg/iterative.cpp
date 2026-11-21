@@ -7,10 +7,13 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <cstdio>
+#include <cstdlib>
 #include <limits>
 #include <span>
 #include <string>
 #include <typeinfo>
+#include <vector>
 #include "linalg/jacobi.hpp"
 #include "linalg/orthog.hpp"
 #include "utils/communication.hpp"
@@ -535,6 +538,15 @@ void CgSolver<OperType>::Mult(const VecType &b, VecType &x) const
                 "The least-squares convergence test of PCG requires a zero initial guess!");
     ls_decrease.assign(1, 0.0);
   }
+  // [review trace] Record the decreases and residuals of the projections (ls_norm2 > 0).
+  static const char *trace_path =
+      std::getenv("PALACE_CG_TRACE") ? std::getenv("PALACE_CG_TRACE") : "cg-trace.jsonl";
+  const bool trace = trace_path && ls_norm2 > 0.0;
+  std::vector<double> tr_delta, tr_res;
+  if (trace)
+  {
+    tr_res.push_back(res);
+  }
 
   // Begin iterations. x is updated with each search direction in the same pass as the next
   // one is computed, and with the last one after the iterations.
@@ -591,6 +603,11 @@ void CgSolver<OperType>::Mult(const VecType &b, VecType &x) const
     CheckDot(beta, "PCG preconditioner is not positive definite: (Br, r) = ");
     res = std::sqrt(std::abs(beta));
     converged = (res <= eps);
+    if (trace)
+    {
+      tr_delta.push_back(std::abs(beta_prev) * std::abs(beta_prev) / std::abs(denom));
+      tr_res.push_back(res);
+    }
     if (ls_test)
     {
       // The objective decreases by αₖ (rₖ, zₖ) = |(rₖ, zₖ)|² / (pₖ, A pₖ) in iteration k.
@@ -643,6 +660,33 @@ void CgSolver<OperType>::Mult(const VecType &b, VecType &x) const
   }
   final_res = res;
   final_it = it;
+  if (trace)
+  {
+    long long n_glob = A->Height();
+    Mpi::GlobalSum(1, &n_glob, comm);
+    if (Mpi::Root(comm))
+    {
+      if (FILE *fp = std::fopen(trace_path, "a"))
+      {
+        std::fprintf(fp,
+                     "{\"type\": \"cg\", \"n\": %lld, \"norm2\": %.17e, \"res0\": %.17e, "
+                     "\"its\": %d, \"conv\": %d, \"ls_tol\": %.6e, \"rel_tol\": %.6e, "
+                     "\"delta\": [",
+                     n_glob, ls_norm2, initial_res, it, int(converged), ls_tol, rel_tol);
+        for (std::size_t i = 0; i < tr_delta.size(); i++)
+        {
+          std::fprintf(fp, "%s%.17e", i ? ", " : "", tr_delta[i]);
+        }
+        std::fprintf(fp, "], \"res\": [");
+        for (std::size_t i = 0; i < tr_res.size(); i++)
+        {
+          std::fprintf(fp, "%s%.17e", i ? ", " : "", tr_res[i]);
+        }
+        std::fprintf(fp, "]}\n");
+        std::fclose(fp);
+      }
+    }
+  }
 }
 
 template <OperatorType OperType>
