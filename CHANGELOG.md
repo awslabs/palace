@@ -33,6 +33,18 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     imaginary parts of the incident voltage and current. A phase that is not a multiple of
     180 degrees is an error for transient simulations. SchemaVer 4-3-0
     [PR 1169](https://github.com/awslabs/palace/pull/1169).
+  - Added scalar frequency-dependent `Permittivity` objects, with a `HighFrequencyLimit`
+    and additive Drude, Debye, Lorentz, PoleResidue, and native Djordjevic-Sarkar terms.
+    Frequency-domain operators, ports, postprocessing, energy/error estimates, adaptive
+    sweeps, and circuit synthesis use the material model at the solution frequency.
+    Compatible static limits are supported; transient problems are not. With the default
+    solver settings, eigenmode problems whose only frequency-dependent terms are Drude,
+    Debye, Lorentz, or PoleResidue terms are solved as linear eigenvalue problems, with
+    SLEPc and ARPACK; with other frequency-dependent terms, the initial guesses of the
+    nonlinear eigensolver take these pole terms exactly. General PoleResidue models remain
+    usable with gain warnings; a PoleResidue term with a nonzero pole specifies no stored
+    electric energy, so the electric energy outputs of a material with one are omitted.
+    SchemaVer 5-1-0 [PR 877](https://github.com/awslabs/palace/pull/877).
 
 #### Interface Changes
 
@@ -108,6 +120,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Performance Improvements
 
+  - When AMS is the coarse solver of geometric multigrid for a singular operator (see
+    [`"AMSSingularOperator"`](https://awslabs.github.io/palace/dev/config/reference/#config-solver-linear-amssingularoperator)),
+    each AMS iteration now applies 8 to 32 smoothing sweeps before and after its auxiliary
+    space corrections, instead of `"MGSmoothIts"`: the more, the larger the finer multigrid
+    levels are next to the coarsest one. This lowers the number of linear solver iterations.
+    [PR 1159](https://github.com/awslabs/palace/pull/1159).
   - The AMS solver, used with a fixed number of iterations, now has a tolerance of zero and
     flags its zero initial guess. With a hypre patch, it then computes no residual norms,
     each a fine-level matrix-vector product and a reduction over all processes, and the
@@ -311,6 +329,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Bug Fixes
 
+  - Fixed slow and failing linear solves with the second-order absorbing boundary condition
+    (`"Absorbing"` with `"Order": 2`) without `"ComplexCoarseSolve"`: the sign of its term
+    is now flipped in the real-valued coarse solve, as it already was for AMS and BoomerAMG,
+    which now flip it only there. [PR 1252](https://github.com/awslabs/palace/pull/1252).
+  - A failed write of an output file, for example on a full disk, aborts the run instead
+    of leaving the file empty or truncated, and a failed rewrite keeps the previous file.
+    [PR 1256](https://github.com/awslabs/palace/pull/1256).
   - Fixed boundary terms that could take the anisotropic material tensor of another
     boundary. The scalar coefficient of an `"Impedance"`, `"Conductivity"` or
     `"RationalImpedance"` boundary or a lumped port could be replaced by the tensor of an
@@ -332,12 +357,23 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     backend, as with `"Device": "Debug"` or a GPU run with a CPU `"Backend"`, which kept
     adaptive mesh refinement from refining. Default GPU runs were not affected.
     [PR 1241](https://github.com/awslabs/palace/pull/1241).
+  - Fixed magnetostatic solves that did not converge, and gave wrong inductances, when the
+    PEC boundaries allow a constant vector potential: no PEC at all, or PEC only on planes
+    normal to one axis, such as planar films with a natural far field. For singular
+    operators, AMS now relaxes the coarsest level of its auxiliary space solves instead of
+    using Gaussian elimination. [PR 1244](https://github.com/awslabs/palace/pull/1244).
   - Fixed the pivoting of distributed BLR fronts in STRUMPACK with a patch from upstream.
     With BLR compression (`"STRUMPACKCompressionType"` `"BLR"`, `"BLR-HODLR"` or
     `"ZFP-BLR-HODLR"`) on two or more MPI processes, the factorization of an indefinite
     matrix was inaccurate whatever the tolerance, so the linear solves needed more
     iterations and could return wrong solutions with `"ComplexCoarseSolve"`.
     [PR 1222](https://github.com/awslabs/palace/pull/1222).
+  - Fixed adaptive frequency sweeps which could keep sampling up to `"AdaptiveMaxSamples"`,
+    with spurious resonances in the band, when `"AdaptiveTol"` is close to the accuracy of
+    the HDM solutions. *Palace* now refines the samples which the PROM does not reproduce to
+    `"AdaptiveTol"`, no longer aborts on a sample in the span of the basis, and warns when
+    the sampling reaches `"AdaptiveMaxSamples"` before converging.
+    [PR 1218](https://github.com/awslabs/palace/pull/1218).
   - Fixed the flux recovery in the error estimators to use the projection which minimizes the
     error it is measured in (ε⁻¹-weighted for the electric flux, μ-weighted for the magnetic
     field). The unweighted projection overestimated the error in the low-permittivity
@@ -350,6 +386,14 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     refinement tree, so that its saved adapted mesh and restarts from it have the right
     length unit.
     [PR 1214](https://github.com/awslabs/palace/pull/1214).
+  - Fixed wave port sweeps with a degenerate pair of port modes, where the polarization
+    selected within the pair could jump between frequencies: the fields of the sweep were
+    then not those of one excitation, and an adaptive sweep could excite another
+    polarization than it was trained with. Every port mode solve now starts from the same
+    vector, so that its result, and with it the polarization, depends on the frequency
+    only, also in `BoundaryMode` simulations. The index of a mode above an exactly
+    degenerate pair can still depend on roundoff.
+    [PR 1208](https://github.com/awslabs/palace/pull/1208).
   - Fixed the marking of tetrahedra for conformal refinement, which could differ between the
     processes from 3 processes on and leave a mesh that was not conforming across them. The
     MFEM patch of [mfem/mfem#3847](https://github.com/mfem/mfem/pull/3847) is replaced by
@@ -372,6 +416,62 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     postprocessing with a warning if they differ by more than a tenth of `"AdaptiveTol"`
     (or about 10⁻⁹ for tighter tolerances).
     [PR 1188](https://github.com/awslabs/palace/pull/1188).
+  - Fixed the coupling of a lumped port in the circuit of adaptive circuit synthesis
+    (`rom-coupled-G.csv`, `rom-coupled-H.csv`, and `rom-coupled-S.csv`). The port was
+    coupled through a unit selector on its terminal row, but the basis vector of that row,
+    the projection of the port mode normalized in the W norm, does not have a unit voltage,
+    and the other basis vectors carry small voltages. It is now coupled through its voltage
+    on every basis vector. The S-parameters of the circuit of a shorted coaxial line driven
+    by a lumped port match those of the reduced-order model to 1e-6 instead of 2e-2, and
+    those of the `coaxial_lumped_wave_synth` regression case to 7e-13 instead of about
+    6e-4. These files change for every circuit synthesis with lumped ports.
+    [PR 877](https://github.com/awslabs/palace/pull/877).
+  - Fixed circuit synthesis with wave ports aborting, without writing `port-S.csv` or the
+    `rom-*` files, when a wave port mode did not converge at the complex frequency of a
+    synthesized eigenvalue estimate. The HDM errors of such estimates are now written as
+    NaN, with a warning, and the other outputs are written as before. For this, an ARPACK
+    eigenvalue solve which reaches its iteration limit now returns the eigenpairs which have
+    converged, as SLEPc does, instead of aborting.
+    [PR 877](https://github.com/awslabs/palace/pull/877).
+  - Fixed errors of up to 1e-4 in the S-parameters of a synthesized circuit with wave ports
+    in a lossy or frequency-dependent material, relative to the reduced-order model the
+    circuit is made from, while the reported fit residuals were below `AdaptiveTol`. The two
+    parts of a wave port fit were realized on different sets of port directions, and the
+    rounding-level imaginary part of a real wave port mode was kept as a circuit node.
+    The circuits of existing inputs change: of a wave port with poles in its fit also in
+    vacuum (the S-parameters of the circuit of the `adapter_driven_synth` regression case
+    by 5e-8), and of a wave port with a real mode, which loses its `waveport_<n>_im` node
+    and one auxiliary direction for each pole of its fit (in the
+    `cylinder_driven_wave_tm_lossy_synth` regression case, also its exported reference
+    impedance by 5e-4).
+    [PR 877](https://github.com/awslabs/palace/pull/877).
+  - Changed the fits of circuit synthesis for surface conductivity boundaries, and for
+    rational impedance boundaries which are not split exactly, to bound their error relative
+    to the fitted response at each frequency instead of relative to its largest value over
+    the band, which did not bound the error where the response is small. The polynomial
+    part of a fit with poles, of a surface conductivity or a rational impedance boundary
+    (split exactly or not), is now realized on the directions of its poles only, as for the
+    frequency-dependent materials: on the full mass, a direction below the rank cutoff kept
+    the polynomial part alone, which for a series RLC sheet below its resonance left the
+    term in the circuit 3e-5 from that of the reduced model where the fit residual was
+    1e-13. The circuits of existing inputs with these boundaries change, including the
+    support points of their AAA fits: the S-parameters of the circuit of the
+    `coaxial_wave_conductivity_synth` regression case differ from those of its reduced-order
+    model by 5e-6 instead of 9e-6.
+    [PR 877](https://github.com/awslabs/palace/pull/877).
+  - Added a warning when eigenvalue estimates of a synthesized circuit
+    (`rom-eigenvalues.csv`) have Im{f} < 0. These roots grow in time, which their Q does not
+    show. They come from the poles of the AAA fits of frequency-dependent boundaries, such
+    as wave ports in lossy or frequency-dependent media, which are not constrained to the
+    stable half-plane: the circuit can match the reduced-order model on the band and not be
+    stable, for example in a transient circuit simulation.
+    [PR 877](https://github.com/awslabs/palace/pull/877).
+  - Fixed the quasi-Newton nonlinear eigenvalue solver stalling below
+    `config["Solver"]["Eigenmode"]["PreconditionerLagTol"]`, where it kept a stale
+    preconditioner and could stop without the requested modes. Below that residual, the
+    preconditioner is now updated when the tolerance would otherwise not be reached within
+    the next `"PreconditionerLag"` iterations.
+    [PR 877](https://github.com/awslabs/palace/pull/877).
   - Added a STRUMPACK patch for
     [pghysels/STRUMPACK#164](https://github.com/pghysels/STRUMPACK/pull/164), which fixes
     the solves after the matrix values change when STRUMPACK compression is enabled
@@ -511,6 +611,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Documentation
 
+  - The `microstrip` regression cases use the mesh of the new dispersive microstrip example,
+    which also has the side walls and the ends of the line as boundaries: the inductance of
+    `microstrip_pec` increases by 0.5%, from 5.641 to 5.669 pH, and that of
+    `microstrip_superconductor` by 0.05%.
+    [PR 877](https://github.com/awslabs/palace/pull/877).
   - Updated the configuration schema descriptions of `"AdaptiveCircuitSynthesis"`, which
     listed frequency-dependent boundary conditions it supports as unsupported, and of the
     absorbing boundary `"Order"`, and documented the limitations of the second-order

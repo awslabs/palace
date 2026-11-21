@@ -566,6 +566,29 @@ though most users should not need to change it. `"MGS"` is applied as `"CGS2"`, 
 Gram-Schmidt with reorthogonalization, which is as stable with three reductions per vector
 (one per pass and one for the norm) instead of one per basis vector.
 
+An HDM solution is only as accurate as its linear solve:
+[`config["Solver"]["Linear"]["Tol"]`](config/reference.md#config-solver-linear) bounds a
+residual (for GMRES, that of the preconditioned system), not the error, which can be much
+larger, and for an ill-conditioned system the factorization of a direct solver can be
+inaccurate as well. Late in the sampling, the new direction which the real or the imaginary part
+of a sample adds to the basis can be as small as this error, and then consists largely of
+it. The Galerkin projection can amplify the error carried by such a direction, so that the
+PROM with it is farther from the sample, and from the exact solution, than without it. With
+an accurate sample in its basis, the Galerkin PROM reproduces the sample, so after adding a
+sample, *Palace* evaluates the error ``\varepsilon`` defined below at this sample, with the
+sample in the basis. If it is not below
+[`config["Solver"]["Driven"]["AdaptiveTol"]`](config/reference.md#config-solver-driven), the
+sample is removed, refined and added again, up to four times: a step of iterative refinement adds
+to it a correction for its true residual, solved with the same linear solver to a relative
+tolerance of `1e-2` (or `config["Solver"]["Linear"]["Tol"]`, if looser). A part of a sample
+in the span of the basis, to the orthogonalization tolerance, carries no new information and
+adds no direction. If the sampling of an excitation reaches
+[`config["Solver"]["Driven"]["AdaptiveMaxSamples"]`](config/reference.md#config-solver-driven)
+before converging, *Palace* warns. It also warns if the PROM does not reproduce some of the
+samples even after their refinement: `"AdaptiveTol"` is then likely below the accuracy
+which the HDM solutions can reach, for example because of the conditioning of the system,
+which refinement does not improve, and has to be looser.
+
 ### Internal sample selection
 
 The remaining question is how to choose the internal sample frequencies. *Palace* uses a
@@ -622,8 +645,11 @@ solution using
 Convergence is declared when this quantity is below
 [`config["Solver"]["Driven"]["AdaptiveTol"]`](config/reference.md#config-solver-driven) for
 [`config["Solver"]["Driven"]["AdaptiveConvergenceMemory"]`](config/reference.md#config-solver-driven)
-consecutive samples. The norm here is the finite-element coefficient-space L2 norm. It is
-related to, but not the same as, a physical energy norm such as
+consecutive samples. Since ``\varepsilon`` is measured against HDM solutions, it is in
+general not smaller than their error: if they are less accurate than `"AdaptiveTol"`, even
+after their refinement, the sampling may not converge. The norm here is the
+finite-element coefficient-space L2 norm. It is related to, but not the same as, a physical
+energy norm such as
 ``\int \bm{E}^*(\bm{r})\cdot\bm{E}(\bm{r})\,d^3r``. Consequently, the adaptive tolerance is
 not a strict relative-error bound for every derived quantity, such as S-parameters or domain
 energies.
@@ -1112,4 +1138,5 @@ problems lacking uniform inf-sup stability, _SIAM Journal on Numerical
 Analysis_ 58 (2020) 2265-2293. doi:
 [10.1137/19M1269695](https://doi.org/10.1137/19M1269695).\
 [11] R. B. Marks and D. F. Williams, A general waveguide circuit theory, *J. Res. Natl. Inst. Stan.* 97, 533 (1992).\
-[12] D. M. Pozar, *Microwave engineering*, Fourth edition. John Wiley & Sons, Hoboken, NJ, 2012.
+[12] D. M. Pozar, *Microwave engineering*, Fourth edition. John Wiley & Sons, Hoboken, NJ, 2012.\
+[13] Y. Su and Z. Bai, Solving rational eigenvalue problems via linearization, *SIAM Journal on Matrix Analysis and Applications* 32 (2011) 201-216.

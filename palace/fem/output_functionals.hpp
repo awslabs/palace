@@ -53,6 +53,13 @@ struct SurfaceModeCoefficient
   std::array<double, 3> origin = {0.0, 0.0, 0.0};
 };
 
+// Substrate permittivity table of a metal-substrate interface (layout of
+// MaterialOperator::GetPermittivityReal()) at the real angular frequency ω > 0, for
+// |D_n|² = |ε|² |E_n|² applied to each phase of E: |ε(iω)| for a frequency-dependent
+// (scalar) material, where Re{ε}² would drop its loss, and Re{ε} for a constant material
+// (the established approximation, without its loss tangent).
+mfem::DenseTensor MetalSubstratePermittivity(const MaterialOperator &mat_op, double omega);
+
 //
 // Class to compute reducing output functionals (integrals of functions of solution
 // fields) over boundary element sets using libCEED, supporting full (non-trace)
@@ -158,6 +165,15 @@ private:
   int farfield_batch_size = 0;
   std::map<int, SurfaceModeCoefficient> mode_coeff_by_attr;
 
+  // Frequency-dependent material table: the offset and coefficient dimension of the
+  // permittivity (or light speed) table in the retained group contexts, or -1 if the
+  // table of this functional does not depend on frequency (UpdateMaterialTable).
+  // The far field evaluates the wave speed only for the frequency-dependent materials next
+  // to its boundaries (on any process).
+  mutable std::ptrdiff_t material_ctx_offset = -1;
+  mutable int material_ctx_dim = 0;
+  std::vector<std::size_t> farfield_models;
+
   // Boundary visualization field kinds: lattice refinement level, output scaling,
   // total output buffer size, and per-boundary-element point-base offsets into the
   // component-major buffer.
@@ -219,6 +235,10 @@ private:
 
   void Assemble(const Mesh &mesh, const mfem::Array<int> &bdr_attr_marker);
   std::vector<CeedIntScalar> BuildBaseContext(int dim, bool is_2d) const;
+  bool HasFrequencyDependentMaterialTable() const;
+  mfem::DenseTensor MaterialTable(double omega) const;
+  void AppendMaterialTable(int dim, std::vector<CeedIntScalar> &base_ctx) const;
+  void UpdateMaterialTable(double omega) const;
   void ConfigureGroupQFunction(bool is_2d, bool has_b, double side_scale,
                                double normal_scale, int bdr_attr,
                                const std::vector<CeedIntScalar> &base_ctx,
@@ -264,15 +284,15 @@ private:
 
   // Fill boundary visualization buffers. Friend-only; non-reducing callers use
   // PointFieldEvaluator.
-  void EvalBuffer(const Vector &u, Vector &buffer) const;
-  void EvalBuffer(const GridFunction &u, Vector &buffer) const;
+  void EvalBuffer(const Vector &u, double omega, Vector &buffer) const;
+  void EvalBuffer(const GridFunction &u, double omega, Vector &buffer) const;
   void EvalBuffer(const GridFunction &E, const GridFunction &B, Vector &buffer) const;
 
   // The trace overload receives canonical, component-major physical side buffers.
   // It is private because PointFieldEvaluator controls source identity and cache
   // generation.
-  void EvalBufferTrace(const std::array<const Vector *, 4> &traces, Vector &buffer,
-                       bool zero = true) const;
+  void EvalBufferTrace(const std::array<const Vector *, 4> &traces, double omega,
+                       Vector &buffer, bool zero = true) const;
   std::size_t TraceGroupCount() const { return groups.size(); }
 
 public:
@@ -327,21 +347,30 @@ public:
   // different implementation.
   bool IsValid() const { return valid; }
 
+  // The evaluations which use material data take the real angular frequency ω of the
+  // fields: a frequency-dependent material uses its complete permittivity ε(iω) in the
+  // electric flux and surface charge, its stored-energy permittivity in the electric energy
+  // density, |ε(iω)| for a metal-substrate interface, and the wave speed at Re ε(iω) in
+  // the far field. Only the retained context values change, without reassembly. ω must be
+  // positive when such a material exists, and is unused otherwise.
+
   // Evaluate the functional for the given field (L-vector, e.g. the local vector of a
-  // GridFunction on the field space). Collective on the mesh communicator. For
+  // GridFunction on the field space), without a frequency: not for a functional with
+  // frequency-dependent material data. Collective on the mesh communicator. For
   // field-less functionals, u is ignored and may be nullptr.
   double Eval(const Vector *u = nullptr) const;
 
   // Evaluate the functional for the given (possibly complex-valued) grid function. For
   // complex fields, the real and imaginary part contributions add (the implemented
   // integrands are quadratic in the field). Collective on the mesh communicator.
-  double Eval(const GridFunction &u) const;
+  double Eval(const GridFunction &u, double omega) const;
 
   // Evaluate a surface flux functional for the given fields (either of which may be
   // nullptr if not required by the flux type). For complex-valued fields, returns the
   // real and imaginary parts of the flux (ELECTRIC, MAGNETIC), or the stationary real
   // power (POWER). Collective on the mesh communicator.
-  std::complex<double> EvalFlux(const GridFunction *E, const GridFunction *B) const;
+  std::complex<double> EvalFlux(const GridFunction *E, const GridFunction *B,
+                                double omega) const;
 
   // Evaluate the complex power P = ∫ (E x H*) ⋅ n dS = -∫ E ⋅ (n x H*) dS following
   // the conventions of LumpedPortData::GetPower (two-sided POWER flux functionals only).

@@ -545,35 +545,6 @@ std::unique_ptr<mfem::ParMesh> Partition(IoData &iodata, std::unique_ptr<mfem::M
     smesh.reset();
   }
 
-  // Debug: optionally write the partitioned and final meshes to tmp/ for inspection.
-  if constexpr (false)
-  {
-    auto tmp = fs::path(iodata.problem.output) / "tmp";
-    if (Mpi::Root(comm) && !fs::exists(tmp))
-    {
-      fs::create_directories(tmp);
-    }
-    int width = 1 + static_cast<int>(std::log10(Mpi::Size(comm) - 1));
-    std::unique_ptr<mfem::Mesh> gsmesh =
-        LoadMesh(iodata.model.mesh, iodata.model.remove_curvature, iodata.boundaries);
-    std::unique_ptr<int[]> gpartitioning = GetMeshPartitioning(*gsmesh, Mpi::Size(comm));
-    mfem::ParMesh gpmesh(comm, *gsmesh, gpartitioning.get(), 0);
-    {
-      std::string pfile =
-          mfem::MakeParFilename(tmp.string() + "part.", Mpi::Rank(comm), ".mesh", width);
-      std::ofstream fo(pfile);
-      fo.precision(MSH_FLT_PRECISION);
-      gpmesh.ParPrint(fo);
-    }
-    {
-      std::string pfile =
-          mfem::MakeParFilename(tmp.string() + "final.", Mpi::Rank(comm), ".mesh", width);
-      std::ofstream fo(pfile);
-      fo.precision(MSH_FLT_PRECISION);
-      pmesh->ParPrint(fo);
-    }
-  }
-
   return pmesh;
 }
 
@@ -3015,6 +2986,7 @@ double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh,
       {
         FillMeshEntityCounts(smesh, *out_counts);
       }
+      BlockTimer bt(Timer::IO);
       WriteRootOutputFile(
           sfile, comm,
           [&](std::ostream &stream)
@@ -4291,11 +4263,14 @@ int AddInterfaceBdrElements(IoData &iodata, std::unique_ptr<mfem::Mesh> &orig_me
   // Export mesh after pre-processing, before cracking boundary elements.
   if (iodata.model.export_prerefined_mesh && Mpi::Root(comm))
   {
-    auto pos = iodata.model.mesh.find_last_of(".");
-    std::string meshfile = iodata.model.mesh.substr(0, pos) + "_preprocessed.mesh";
-    std::ofstream fo(meshfile);
-    fo.precision(MSH_FLT_PRECISION);
-    orig_mesh->Print(fo);
+    auto meshfile =
+        fs::path(iodata.model.mesh).replace_extension().string() + "_preprocessed.mesh";
+    WriteOutputFile(meshfile,
+                    [&](std::ostream &fo)
+                    {
+                      fo.precision(MSH_FLT_PRECISION);
+                      orig_mesh->Print(fo);
+                    });
   }
 
   // Create the new mesh. We can't just add the new vertices and boundary elements to the

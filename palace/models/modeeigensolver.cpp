@@ -148,6 +148,13 @@ void ModeEigenSolver::Init(MPI_Comm solver_comm)
   auto [Br, Bi] = BuildSystemMatrixB(Bttr, nullptr, Btnr, Btni, Dnn.get());
   opB = std::make_unique<ComplexWrapperOperator>(std::move(Br), std::move(Bi));
 
+  // Initial space which satisfies the Dirichlet BCs.
+  v0.SetSize(nd_size + h1_size);
+  v0.UseDevice(true);
+  v0 = std::complex<double>(1.0, 0.0);
+  linalg::SetSubVector(v0, nd_size, nd_size + h1_size, 0.0);
+  linalg::SetSubVector(v0, dbc_tdof_list, 0.0);
+
   // Pick a communicator for the solvers: `solver_comm` if non-null (WavePort sub-
   // communicator), else the FE space comm. Ranks with no DOFs and no solver_comm
   // (WavePort non-port ranks) skip solver setup entirely.
@@ -180,8 +187,7 @@ void ModeEigenSolver::AssembleFrequencyDependent(std::complex<double> omega, dou
 }
 
 ModeEigenSolver::SolveResult ModeEigenSolver::Solve(std::complex<double> omega,
-                                                    double sigma,
-                                                    const ComplexVector *initial_space)
+                                                    double sigma)
 {
   sigma_cached = sigma;
   omega_cached = omega;
@@ -327,14 +333,18 @@ ModeEigenSolver::SolveResult ModeEigenSolver::Solve(std::complex<double> omega,
   }
   eigen->SetOperators(*opB, *opA, EigenvalueSolver::ScaleType::NONE);
 
-  if (real_frequency && warm_start.Size() > 0)
-  {
-    eigen->SetInitialSpace(warm_start);
-  }
-  else if (initial_space)
-  {
-    eigen->SetInitialSpace(*initial_space);
-  }
+  // Every exact solve starts from the same vector, so that its result depends on the
+  // frequency and the shift only, not on the solves before it. Within a degenerate pair of
+  // modes (TE11 of a circular guide), the solver selects the projection of the start onto
+  // the pair, a polarization which depends on the frequency only: it is the same at every
+  // frequency in a homogeneous guide, and where the fields of the pair change with
+  // frequency, it turns continuously. The mode of the previous frequency is a poor start in
+  // a homogeneous guide: it is already a mode at the next frequency, with only roundoff
+  // along the other wanted modes, the second vector of its own pair among them, so roundoff
+  // decides which of them converge. From any single start, the second vector of an exactly
+  // degenerate pair still grows from roundoff only, so the index of a mode above such a
+  // pair is not reliable.
+  eigen->SetInitialSpace(v0);
 
   int num_conv = eigen->Solve();
   if (real_frequency)
@@ -365,11 +375,6 @@ ModeEigenSolver::SolveResult ModeEigenSolver::Solve(std::complex<double> omega,
 
   if (real_frequency && num_conv > 0)
   {
-    const int selected = std::min(num_modes - 1, num_conv - 1);
-    warm_start.SetSize(nd_size + h1_size);
-    warm_start.UseDevice(true);
-    eigen->GetEigenvector(mode_perm[selected], warm_start);
-    linalg::Normalize(solver_comm, warm_start);
     reduced_model->ObserveExactEigenvectors(num_conv, *eigen, mode_perm);
   }
   return {num_conv, sigma};
@@ -799,11 +804,30 @@ ModeEigenSolver::AssembleAttPreconditioner(double omega, double sigma) const
   {
     fi.AddCoefficient(attr_to_mat, mat_op.GetPermittivityImag(), -omega * omega);
   }
+  // Frequency-dependent permittivity beyond ε∞: Re g is mass-like, shifted like the
+  // ε∞ mass; Im g is loss-like, treated as the other imaginary terms above.
+  for (std::size_t i = 0; i < mat_op.NumFrequencyDependentPermittivityMaterials(); i++)
+  {
+    if (mat_op.HasFrequencyDependentPermittivityA2(i) &&
+        mat_op.HasFrequencyDependentPermittivitySupport(i))
+    {
+      const auto g = mat_op.EvaluateFrequencyDependentPermittivityA2(
+          i, std::complex<double>(0.0, omega));
+      const auto attrs =
+          mat_op.GetCeedAttributes(mat_op.GetFrequencyDependentPermittivityAttributes(i));
+      fr.AddMaterialProperty(attrs, shifted ? std::abs(g.real()) : g.real());
+      if (g.imag() != 0.0)
+      {
+        (real_pc ? fr : fi).AddMaterialProperty(attrs, g.imag());
+      }
+    }
+  }
 
   // Boundary coefficients, with the losses of the resistive surface impedance, absorbing,
   // surface conductivity, and rational impedance boundaries in the same way (with the real
   // and imaginary parts of the complex coefficients summed for pc_mat_real, like in
-  // SpaceOperator).
+  // SpaceOperator, and the magnitude of those of absorbing boundaries next to a
+  // frequency-dependent material, see SurfaceTerms).
   const int max_bdr_attr = mat_op.MaxCeedBdrAttribute();
   MaterialPropertyCoefficient fbr(max_bdr_attr), fbi(max_bdr_attr);
   auto &fb_loss = real_pc ? fbr : fbi;
@@ -811,7 +835,7 @@ ModeEigenSolver::AssembleAttPreconditioner(double omega, double sigma) const
   surface_terms.AddStiffnessBdrCoefficients(1.0, fbr);
   surface_terms.AddMassBdrCoefficients(mass_coeff, fbr);
   surface_terms.AddDampingBdrCoefficients(damp_coeff, fb_loss);
-  surface_terms.AddExtraSystemBdrMassCoefficients(omega, fbr, fb_loss);
+  surface_terms.AddPreconditionerExtraSystemBdrMassCoefficients(omega, fbr, fb_loss);
   const bool has_imag = AnyNonEmpty(solver_comm, {&fi, &fbi});
 
   // Assemble ND operators at all levels, and the auxiliary H1 operators for Hiptmair
@@ -919,6 +943,24 @@ ModeEigenSolver::AssembleAnnPreconditioner(double omega) const
   {
     fi.AddCoefficient(attr_to_mat, mat_op.GetPermittivityImagScalar(), omega * omega);
   }
+  // Frequency-dependent permittivity beyond ε∞: -g, with the opposite sign of the ND
+  // block in both real and imaginary slots.
+  for (std::size_t i = 0; i < mat_op.NumFrequencyDependentPermittivityMaterials(); i++)
+  {
+    if (mat_op.HasFrequencyDependentPermittivityA2(i) &&
+        mat_op.HasFrequencyDependentPermittivitySupport(i))
+    {
+      const auto g = mat_op.EvaluateFrequencyDependentPermittivityA2(
+          i, std::complex<double>(0.0, omega));
+      const auto attrs =
+          mat_op.GetCeedAttributes(mat_op.GetFrequencyDependentPermittivityAttributes(i));
+      fr.AddMaterialProperty(attrs, -g.real());
+      if (g.imag() != 0.0)
+      {
+        (real_pc ? fr : fi).AddMaterialProperty(attrs, -g.imag());
+      }
+    }
+  }
 
   // Boundary coefficients, with the opposite sign of those of the ND block.
   const int max_bdr_attr = mat_op.MaxCeedBdrAttribute();
@@ -931,7 +973,8 @@ ModeEigenSolver::AssembleAnnPreconditioner(double omega) const
   {
     MaterialPropertyCoefficient robin_r(max_bdr_attr), robin_i(max_bdr_attr);
     auto &robin_loss = real_pc ? robin_r : robin_i;
-    surface_terms.AddScalarExtraSystemBdrMassCoefficients(omega, robin_r, robin_loss);
+    surface_terms.AddScalarPreconditionerExtraSystemBdrMassCoefficients(omega, robin_r,
+                                                                        robin_loss);
     for (auto [robin, fb] : {std::pair{&robin_r, &fbr}, std::pair{&robin_i, &fbi}})
     {
       if (!robin->empty())

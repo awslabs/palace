@@ -49,6 +49,15 @@ private:
   // Whether the evaluator could be assembled.
   bool valid = true;
 
+  // Material operator (not owned), and the frequency-dependent material table of ENERGY_E:
+  // its offset in the retained group contexts (-1 without a frequency-dependent material)
+  // and coefficient dimension, written at the frequency of each evaluation.
+  const MaterialOperator *mat_op;
+  std::ptrdiff_t material_ctx_offset = -1;
+  int material_ctx_dim = 0;
+  void UpdateMaterialTable(const std::vector<fem::CeedGroupOperator> &op_groups,
+                           double omega) const;
+
   // Per-geometry assembled libCEED operators, evaluating at the target space nodal
   // points and scattering directly into the output grid function or into a point-major
   // ParaView point buffer. The element attribute vectors are operator inputs and must
@@ -95,16 +104,19 @@ public:
 
   // Fill the output vector (L-vector of the target space, e.g. a GridFunction) with
   // the pointwise quantity. Real and imaginary field contributions add. Local
-  // operation (no MPI communication).
-  void Eval(const GridFunction *E, const GridFunction *B, Vector &out) const;
+  // operation (no MPI communication). ENERGY_E of a frequency-dependent material uses its
+  // stored-energy permittivity at the real angular frequency ω > 0 of the fields; ω is
+  // unused otherwise (and for other kinds).
+  void Eval(const GridFunction *E, const GridFunction *B, double omega, Vector &out) const;
 
   // Fill the point-major domain visualization point buffer for a single linear field.
   // Local operation (no MPI communication).
   void EvalBuffer(const Vector &u, Vector &buffer) const;
 
   // Fill the point-major domain visualization point buffer. Real and imaginary field
-  // contributions add. Local operation (no MPI communication).
-  void EvalBuffer(const GridFunction *E, const GridFunction *B, Vector &buffer) const;
+  // contributions add, and ω is that of Eval. Local operation (no MPI communication).
+  void EvalBuffer(const GridFunction *E, const GridFunction *B, double omega,
+                  Vector &buffer) const;
 };
 
 }  // namespace palace
