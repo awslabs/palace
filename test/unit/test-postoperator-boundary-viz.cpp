@@ -1055,9 +1055,15 @@ TEST_CASE_METHOD(test::SharedTempDir,
   CheckStats("J_s_imag", CompareVectorField(ReadBoundaryChecked("J_s_imag", 3), pmesh, lod,
                                             J_imag_legacy, rtol, atol));
 
-  EnergyDensityCoefficient<EnergyDensityType::ELECTRIC> Ue_legacy(E, mat_op, eps_scaling);
-  EnergyDensityCoefficient<EnergyDensityType::MAGNETIC> Um_legacy(B, mat_op, invmu_scaling);
-  PoyntingVectorCoefficient S_legacy(E, B, mat_op, invmu_scaling);
+  // The written energy densities and Poynting vector are the time averages for the complex
+  // eigenmode fields: 1/2 of the raw same-phase coefficient sums, on top of the unit
+  // scaling.
+  constexpr double time_average = 0.5;
+  EnergyDensityCoefficient<EnergyDensityType::ELECTRIC> Ue_legacy(
+      E, mat_op, time_average * eps_scaling);
+  EnergyDensityCoefficient<EnergyDensityType::MAGNETIC> Um_legacy(
+      B, mat_op, time_average * invmu_scaling);
+  PoyntingVectorCoefficient S_legacy(E, B, mat_op, time_average * invmu_scaling);
   CheckStats("U_e boundary", CompareScalarField(ReadBoundaryChecked("U_e", 1), pmesh, lod,
                                                 Ue_legacy, rtol, atol));
   CheckStats("U_m boundary", CompareScalarField(ReadBoundaryChecked("U_m", 1), pmesh, lod,
@@ -1210,9 +1216,15 @@ TEST_CASE_METHOD(test::SharedTempDir,
              CompareVectorField(ReadBoundaryChecked("J_s_imag", 2), pmesh, lod,
                                 J_imag_legacy, rtol, atol));
 
-  EnergyDensityCoefficient<EnergyDensityType::ELECTRIC> Ue_legacy(E, mat_op, eps_scaling);
-  EnergyDensityCoefficient<EnergyDensityType::MAGNETIC> Um_legacy(B, mat_op, invmu_scaling);
-  PoyntingVectorCoefficient S_legacy(E, B, mat_op, invmu_scaling);
+  // The written energy densities and Poynting vector are the time averages for the complex
+  // eigenmode fields: 1/2 of the raw same-phase coefficient sums, on top of the unit
+  // scaling.
+  constexpr double time_average = 0.5;
+  EnergyDensityCoefficient<EnergyDensityType::ELECTRIC> Ue_legacy(
+      E, mat_op, time_average * eps_scaling);
+  EnergyDensityCoefficient<EnergyDensityType::MAGNETIC> Um_legacy(
+      B, mat_op, time_average * invmu_scaling);
+  PoyntingVectorCoefficient S_legacy(E, B, mat_op, time_average * invmu_scaling);
   CheckStats("U_e boundary 2D", CompareScalarField(ReadBoundaryChecked("U_e", 1), pmesh,
                                                    lod, Ue_legacy, rtol, atol));
   CheckStats("U_m boundary 2D", CompareScalarField(ReadBoundaryChecked("U_m", 1), pmesh,
@@ -1456,8 +1468,11 @@ TEST_CASE_METHOD(test::SharedTempDir,
     }
     else
     {
-      EnergyDensityCoefficient<EnergyDensityType::ELECTRIC> Ue_legacy(E, mat_op,
-                                                                      eps_scaling);
+      // The written energy density is the time average for the complex eigenmode fields:
+      // 1/2 of the raw coefficient, on top of the unit scaling.
+      constexpr double time_average = 0.5;
+      EnergyDensityCoefficient<EnergyDensityType::ELECTRIC> Ue_legacy(
+          E, mat_op, time_average * eps_scaling);
       Ue_legacy.SetStoredEnergyPermittivity(mat_op.EvaluateStoredEnergyPermittivity(w));
       CheckStats("U_e boundary", CompareScalarField(ReadFloatDataArray(boundary_vtu, "U_e"),
                                                     pmesh, lod, Ue_legacy, rtol, atol));
@@ -1473,9 +1488,12 @@ TEST_CASE_METHOD(test::SharedTempDir,
         mfem::GridFunction Ue_ref(Ue_gf.FESpace());
         Ue_ref.ProjectCoefficient(Ue_legacy);
         ErrorStats stats;
+        const double ref_atol = rtol * Ue_ref.Normlinf();
+        const auto *gf = Ue_gf.HostRead();
+        const auto *ref = Ue_ref.HostRead();
         for (int i = 0; i < Ue_gf.Size(); i++)
         {
-          stats.Add(Ue_gf(i), Ue_ref(i), rtol, rtol * Ue_ref.Normlinf());
+          stats.Add(gf[i], ref[i], rtol, ref_atol);
         }
         CheckStats("U_e grid function", stats);
       }

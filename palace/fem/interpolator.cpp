@@ -130,29 +130,14 @@ std::vector<double> InterpolationOperator::ProbeField(const mfem::ParGridFunctio
     s.transfer->Transfer(U, *s.field);
     V = s.field.get();
   }
-  // Interpolated vector values are returned from GSLIB interpolator with the same ordering
-  // as the source grid function, which we transform to byVDIM for output.
+  // Interpolate with byVDIM output ordering. GSLIB moves the result to the device when the
+  // field is on the device, so read it back on the host.
   const int npts = op.GetCode().Size();
   const int vdim = V->VectorDim();
-  std::vector<double> vals(npts * vdim);
-  if (V->FESpace()->GetOrdering() == mfem::Ordering::byVDIM)
-  {
-    mfem::Vector v(vals.data(), npts * vdim);
-    op.Interpolate(*V, v);
-  }
-  else
-  {
-    mfem::Vector v(npts * vdim);
-    op.Interpolate(*V, v);
-    for (int d = 0; d < vdim; d++)
-    {
-      for (int i = 0; i < npts; i++)
-      {
-        vals[i * vdim + d] = v(d * npts + i);
-      }
-    }
-  }
-  return vals;
+  mfem::Vector v(npts * vdim);
+  op.Interpolate(*V, v, mfem::Ordering::byVDIM);
+  const double *h_v = v.HostRead();
+  return {h_v, h_v + npts * vdim};
 #else
   MFEM_ABORT("InterpolationOperator class requires MFEM_USE_GSLIB!");
   return {};

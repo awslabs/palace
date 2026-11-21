@@ -316,8 +316,8 @@ protected:
   std::optional<double> total_field_energy;  // see SetTotalFieldEnergy
 
   // Reduced-coordinate outputs for adaptive online postprocessing: the electric energy
-  // form, the factor R of the curls of the basis vectors (the magnetic energy is
-  // 1/2 |R y|² / ω²), the domain energy forms (electric in the basis, magnetic in the
+  // form, the factor R of the curls of the basis vectors (the time-averaged magnetic energy
+  // is 1/4 |R y|² / ω²), the domain energy forms (electric in the basis, magnetic in the
   // coordinates R y), and the lumped-port voltages of the basis vectors (one row per port).
   bool reduced_postprocessing_ready = false;
   std::set<int> reduced_postprocessing_checked;  // Excitations checked
