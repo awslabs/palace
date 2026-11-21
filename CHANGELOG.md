@@ -85,7 +85,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
   - The warm start of the eigenvalue solves of adaptive mesh refinement also works on
     conformal meshes: the eigenvectors follow each new marking of the mesh and its rebalance.
-    [PR 1268](https://github.com/awslabs/palace/pull/1268).
+    SchemaVer 6-0-1. [PR 1268](https://github.com/awslabs/palace/pull/1268).
 
   - Rebalancing a nonconforming mesh during adaptive refinement now keeps each root of its
     refinement tree on one process, when the load stays within half of
