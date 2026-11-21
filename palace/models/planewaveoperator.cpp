@@ -253,6 +253,123 @@ bool PlaneWaveOperator::GetIncidentField(int idx, double omega,
   return true;
 }
 
+void PlaneWaveOperator::GetIncidentField(int idx, double omega,
+                                         const FiniteElementSpace &nd_fespace,
+                                         const mfem::Array<int> &elements,
+                                         ComplexVector &g) const
+{
+  const auto &src = sources.at(idx);
+  auto &fes = const_cast<mfem::ParFiniteElementSpace &>(nd_fespace.Get());
+  mfem::Vector kf(3);
+  kf = 0.0;
+  if (src.kf.Size() == 3)
+  {
+    kf = src.kf;
+    if (src.kf_scaled)
+    {
+      kf *= omega;
+    }
+  }
+  g.SetSize(fes.GetTrueVSize());
+  g.UseDevice(true);
+  mfem::Array<int> vdofs;
+  mfem::DofTransformation doftrans;
+  mfem::Vector elvect;
+  mfem::ParGridFunction gf(&fes);
+  for (int part = 0; part < 2; part++)
+  {
+    // The same interpolation as ParGridFunction::ProjectCoefficient, on the given elements.
+    mfem::VectorFunctionCoefficient coef(
+        3,
+        [&src, &kf, omega, part](const mfem::Vector &x, mfem::Vector &E)
+        {
+          double phase = 0.0, phase_f = 0.0;
+          for (int d = 0; d < 3; d++)
+          {
+            phase += src.direction(d) * (x(d) - src.origin(d));
+            phase_f += kf(d) * x(d);
+          }
+          phase = phase * omega / src.c - phase_f;
+          const double f =
+              src.amplitude * ((part == 0) ? std::cos(phase) : -std::sin(phase));
+          E.SetSize(3);
+          for (int d = 0; d < 3; d++)
+          {
+            E(d) = f * src.polarization(d);
+          }
+        });
+    gf = 0.0;
+    for (int e : elements)
+    {
+      fes.GetElementVDofs(e, vdofs, doftrans);
+      elvect.SetSize(vdofs.Size());
+      fes.GetFE(e)->Project(coef, *fes.GetElementTransformation(e), elvect);
+      doftrans.TransformPrimal(elvect);
+      gf.SetSubVector(vdofs, elvect);
+    }
+    gf.ParallelProject((part == 0) ? g.Real() : g.Imag());
+  }
+}
+
+void PlaneWaveOperator::GetLayer(int idx, const FiniteElementSpace &nd_fespace,
+                                 mfem::Array<int> &tdofs, mfem::Array<int> &elements) const
+{
+  // Mark the local dofs of the elements outside of the total-field region with a dof of
+  // its closure, combine the marks of all processes, and restrict them to the true dofs.
+  const auto &src = sources.at(idx);
+  const mfem::ParFiniteElementSpace &fes = nd_fespace.Get();
+  const mfem::ParMesh &mesh = *fes.GetParMesh();
+  mfem::Array<int> tf_mark, layer_mark, vdofs, tmark_bool;
+  GetLocalTotalFieldMarker(idx, fes, tf_mark);
+  layer_mark.SetSize(fes.GetVSize());
+  layer_mark = 0;
+  auto Dof = [](int d) { return (d >= 0) ? d : -1 - d; };
+  for (int e = 0; e < mesh.GetNE(); e++)
+  {
+    if (src.attr_marker[mesh.GetAttribute(e) - 1])
+    {
+      continue;
+    }
+    fes.GetElementVDofs(e, vdofs);
+    bool touches = false;
+    for (int d : vdofs)
+    {
+      touches = touches || tf_mark[Dof(d)];
+    }
+    if (touches)
+    {
+      for (int d : vdofs)
+      {
+        layer_mark[Dof(d)] = 1;
+      }
+    }
+  }
+  fes.Synchronize(layer_mark);
+  elements.SetSize(0);
+  for (int e = 0; e < mesh.GetNE(); e++)
+  {
+    fes.GetElementVDofs(e, vdofs);
+    for (int d : vdofs)
+    {
+      if (layer_mark[Dof(d)])
+      {
+        elements.Append(e);
+        break;
+      }
+    }
+  }
+  fes.GetRestrictionMatrix()->BooleanMult(layer_mark, tmark_bool);
+  tdofs.SetSize(0);
+  const int *tb = tmark_bool.HostRead();
+  for (int i = 0; i < tmark_bool.Size(); i++)
+  {
+    if (tb[i])
+    {
+      tdofs.Append(i);
+    }
+  }
+}
+
 bool PlaneWaveOperator::AddExcitationVector(int idx, double omega, const ComplexOperator &A,
                                             const FiniteElementSpace &nd_fespace,
                                             ComplexVector &RHS) const

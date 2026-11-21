@@ -86,7 +86,17 @@ The mesh needs:
     between ``S`` and the truncation, but, since the far field is computed from the
     scattered field everywhere, it may also lie inside ``T`` or cross ``S``.
 
-Plane wave excitations are supported for driven simulations with a uniform frequency sweep.
+Plane wave excitations are supported for driven simulations, with a uniform or an
+[adaptive](adaptive_driven_solver.md) frequency sweep. The excitation
+depends on the frequency through the phase of the incident field, which is not linear in
+the frequency: the reduced-order model of the adaptive sweep takes its exact projection at
+each frequency, from the incident field interpolated on the layer of elements around
+``S`` only. This requires that the frequency-dependent terms of the system matrix (wave
+and Floquet ports, `"Conductivity"` and rational `"Impedance"` boundaries, second-order
+`"Absorbing"` boundaries) do not couple ``T`` and the rest of the domain, that is, that
+these boundaries do not cross ``S``, which *Palace* checks at setup. The outputs of plane
+waves are computed from the full solution at every frequency of the online sweep, and
+circuit synthesis (`"AdaptiveCircuitSynthesis"`) does not support them.
 
 On a periodic cell, the incident field must be quasi-periodic: with a
 [Floquet wave vector](../config/reference.md#config-boundaries-periodic-floquetwavevector)

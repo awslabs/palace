@@ -4,6 +4,7 @@
 #ifndef PALACE_MODELS_ROM_OPERATOR_HPP
 #define PALACE_MODELS_ROM_OPERATOR_HPP
 
+#include <array>
 #include <complex>
 #include <cstddef>
 #include <limits>
@@ -312,6 +313,28 @@ protected:
 
   // Return Vᵀv of the TE or TM mode of order k at the current frequency.
   Eigen::VectorXcd GetFloquetModeProjection(std::size_t k, bool is_te) const;
+
+  // Incident plane waves (total-field/scattered-field): the excitation is
+  // b(ω) = Σ_X c_X(ω) D_X g(ω) for X = K, C, M with c_X = 1, iω, -ω², where
+  // D_X = P_O X P_T - P_T X P_O couples the dofs of the closure of the total-field region
+  // (P_T) and the others (P_O), and g(ω) is the incident field (see PlaneWaveOperator). The
+  // frequency-dependent terms of A(ω) must not couple them. Only the dofs of the layer of
+  // elements around the region enter, so Vᵀ D_X g = U_Xᵀ g is evaluated from the rows of
+  // U_X = D_Xᵀ V of the local layer true dofs, extended as the basis grows, and the
+  // incident field interpolated on the layer only.
+  struct PlaneWaveTerm
+  {
+    int excitation_idx;
+    const Vector *tf_marker;            // True-dof marker of P_T (not owned)
+    mfem::Array<int> tdofs, elements;   // Local layer true dofs and elements
+    std::array<Eigen::MatrixXcd, 3> U;  // Rows of U_X on tdofs, for X = K, C, M
+  };
+  std::vector<PlaneWaveTerm> plane_wave_terms;
+
+  // y = D_Xᵀ x = P_T Xᵀ P_O x - P_O Xᵀ P_T x, or D_X x with transpose false.
+  void ApplyPlaneWaveCoupling(const ComplexOperator &X, const Vector &tf_marker,
+                              const ComplexVector &x, ComplexVector &y,
+                              bool transpose) const;
 
   // PROM matrix Ar at the frequency of the last SolvePROM, and the reduced solutions of all
   // excitations, one column per excitation.
@@ -704,9 +727,10 @@ public:
   // sweep has more frequencies than the fit samples.
   void PrepareOnlinePhase();
 
-  // Assemble and solve the PROM at the specified frequency, for every excitation. The
-  // reduced solutions are available from GetReducedSolution(excitation_idx).
-  void SolvePROM(double omega);
+  // Assemble and solve the PROM at the specified frequency, for every excitation, or only
+  // for the given one (the solutions of the others are then zero). The reduced solutions
+  // are available from GetReducedSolution(excitation_idx).
+  void SolvePROM(double omega, std::optional<int> only_excitation = std::nullopt);
 
   // Expand the reduced solution of an excitation into the high-dimensional space.
   void ExpandPROMSolution(int excitation_idx, ComplexVector &u) const;
