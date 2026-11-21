@@ -23,6 +23,7 @@ namespace palace
 {
 
 class ErrorIndicator;
+class LaplaceOperator;
 class Mesh;
 template <ProblemType>
 class PostOperator;
@@ -36,6 +37,14 @@ private:
   void PostprocessTerminals(PostOperator<ProblemType::ELECTROSTATIC> &post_op,
                             const std::map<int, mfem::Array<int>> &terminal_sources,
                             const std::vector<Vector> &V) const;
+
+  // The equilibrated error estimate of the terminal solves (see
+  // EquilibratedFluxErrorEstimator), its guaranteed bounds of the relative errors and of
+  // the capacitance matrix (log, and terminal-C-lower.csv).
+  void EstimateEquilibrated(LaplaceOperator &laplace_op, const std::vector<Vector> &V,
+                            const std::vector<Vector> &G,
+                            const std::vector<double> &energies,
+                            ErrorIndicator &indicator) const;
 
   std::pair<ErrorIndicator, long long int>
   Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const override;

@@ -1313,6 +1313,10 @@ public:
   // Maximum number of iterations for solving linear systems in divergence-free projector.
   int divfree_max_it = 1000;
 
+  // Spatial error estimator, and the flux space of the equilibrated one.
+  ErrorEstimator estimator_type = ErrorEstimator::L2ZZ;
+  EstimatorFluxOrder estimator_flux_order = EstimatorFluxOrder::REDUCED;
+
   // Relative tolerance for solving linear systems in the error estimator.
   double estimator_tol = 1.0e-6;
 

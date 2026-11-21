@@ -488,6 +488,33 @@ public:
     P.push_back(nullptr);
   }
 
+  // Release the levels but the finest, and the prolongations, once only the finest space
+  // is needed.
+  void ReleaseCoarseLevels()
+  {
+    if (GetNumLevels() < 2)
+    {
+      return;
+    }
+    FiniteElementSpace *finest = fespaces.back();
+    std::unique_ptr<FiniteElementSpace> keep;
+    for (auto &fespace : owned_fespaces)
+    {
+      if (fespace.get() == finest)
+      {
+        keep = std::move(fespace);
+      }
+    }
+    P.clear();
+    owned_fespaces.clear();
+    if (keep)
+    {
+      owned_fespaces.push_back(std::move(keep));
+    }
+    fespaces.assign(1, finest);
+    P.push_back(nullptr);
+  }
+
   auto &GetFESpaceAtLevel(std::size_t l)
   {
     MFEM_ASSERT(l < GetNumLevels(),

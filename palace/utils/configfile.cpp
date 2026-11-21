@@ -56,6 +56,8 @@ PALACE_JSON_SERIALIZE_ENUM(Excitation)
 PALACE_JSON_SERIALIZE_ENUM(LinearSolver)
 PALACE_JSON_SERIALIZE_ENUM(KrylovSolver)
 PALACE_JSON_SERIALIZE_ENUM(MultigridCoarsening)
+PALACE_JSON_SERIALIZE_ENUM(ErrorEstimator)
+PALACE_JSON_SERIALIZE_ENUM(EstimatorFluxOrder)
 PALACE_JSON_SERIALIZE_ENUM(PreconditionerSide)
 PALACE_JSON_SERIALIZE_ENUM(SymbolicFactorization)
 PALACE_JSON_SERIALIZE_ENUM(SparseCompression)
@@ -1788,6 +1790,8 @@ LinearSolverData::LinearSolverData(const json &linear)
   // Other linear solver options.
   divfree_tol = linear.value("DivFreeTol", divfree_tol);
   divfree_max_it = linear.value("DivFreeMaxIts", divfree_max_it);
+  estimator_type = linear.value("EstimatorType", estimator_type);
+  estimator_flux_order = linear.value("EstimatorFluxOrder", estimator_flux_order);
   estimator_tol = linear.value("EstimatorTol", estimator_tol);
   estimator_error_tol = linear.value("EstimatorErrorTol", estimator_error_tol);
   estimator_max_it = linear.value("EstimatorMaxIts", estimator_max_it);
