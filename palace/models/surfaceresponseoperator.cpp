@@ -7367,6 +7367,10 @@ private:
   nlohmann::json identification;
   nlohmann::json unpatched_pairs = nlohmann::json::array();
   nlohmann::json placed_local_deviation = nlohmann::json::array();
+  // Portions whose first-order split fraction lies at or below kFirstOrderSplitFloor, and
+  // the largest such fraction (SetFirstOrderBelowFloor).
+  int first_order_below_floor = 0;
+  double first_order_below_floor_max = 0.0;
   // R-9 (fix round P2): the refused straight pairs placed cell by cell at their local
   // separation, per feature; the manifest's
   // Identification.Diagnostics.PlacedByLocalSeparation
@@ -7547,6 +7551,12 @@ public:
   void SetPlacedLocalDeviation(nlohmann::json value)
   {
     placed_local_deviation = std::move(value);
+  }
+  // Decision 2268: Summary.FirstOrderBelowFloor (only when any: otherwise no leaf).
+  void SetFirstOrderBelowFloor(int count, double largest)
+  {
+    first_order_below_floor = count;
+    first_order_below_floor_max = largest;
   }
   void SetPlacedByLocalSeparation(nlohmann::json value,
                                   nlohmann::json not_eligible = nlohmann::json::array())
@@ -7972,6 +7982,17 @@ public:
                    "clusters placed on their ungrown key (SpatialSupport.CornerContainment."
                    "Fallback); Missing-class requirements the discovery plans, excluded "
                    "from Counts.Missing and Complete"}};
+    }
+    if (first_order_below_floor > 0)
+    {
+      result["Summary"]["FirstOrderBelowFloor"] = {
+          {"Count", first_order_below_floor},
+          {"LargestFraction", first_order_below_floor_max},
+          {"Floor", kFirstOrderSplitFloor},
+          {"Rule",
+           "decision 2268: portions of straight-like features whose first-order split "
+           "fraction lies at or below the floor (a turn of round-off size) are "
+           "treated as straight: the anchor alone, no split"}};
     }
     if (!statistics.is_null())
     {
@@ -12131,6 +12152,10 @@ struct FeaturePatchSummary
   int first_order_missing_features = 0;
   double first_order_missing_turn = 0.0;  // |turn| (radians) left uncorrected
   std::set<std::string> first_order_missing_nodes;
+  // Decision 2268: portions whose split fraction lies at or below kFirstOrderSplitFloor (a
+  // turn of round-off size), left at the anchor alone; the largest such fraction.
+  int first_order_below_floor = 0;
+  double first_order_below_floor_max = 0.0;
   // A10 extended to the context (decision 282 section 3): context piece ends of the placed
   // contract-3 models verified to lie on device edges.
   std::size_t context_points_checked = 0;
@@ -12155,6 +12180,34 @@ struct FeaturePatchSummary
 };
 
 }  // namespace
+
+std::optional<double> FirstOrderSplitFraction(double turn, double length, double R,
+                                              double separation, bool inner,
+                                              double *suppressed)
+{
+  if (std::abs(turn) <= 0.0 || length <= 0.0)
+  {
+    return std::nullopt;
+  }
+  const double rho_side = length / std::abs(turn);
+  const double rho_inner = inner ? rho_side : rho_side - separation;
+  if (rho_inner <= 0.0)
+  {
+    return std::nullopt;  // an outer edge tighter than the separation: not a pair bend
+  }
+  const double first_order_kappa = 1.0 / kStraightBendRadiusOverRadius;
+  const double kappa = R / rho_inner;
+  const double a = kappa / first_order_kappa;
+  if (a <= kFirstOrderSplitFloor)
+  {
+    if (suppressed)
+    {
+      *suppressed = a;
+    }
+    return std::nullopt;
+  }
+  return a;
+}
 
 // Distance from a point to a straight segment a-b.
 double SegmentDistance(const std::array<double, 3> &q, const std::array<double, 3> &a,
@@ -13844,28 +13897,30 @@ FeaturePatchSummary BuildFeaturePatches(
   // convexity (for a pair: of the edge the model's first edge e1 lands on — the far side
   // turns in the opposite sense) at a = kappa_inner / FirstOrderKappa, clamped to [0, 1]
   // (roundoff at the straight-like boundary); nullopt (anchor only, recorded) when the node
-  // is missing or the portion carries no turn.
-  const double first_order_kappa = 1.0 / kStraightBendRadiusOverRadius;
+  // is missing or the portion carries no turn, or a turn whose fraction lies at or below
+  // kFirstOrderSplitFloor (round-off: counted, read before the node).
   auto SplitOf = [&](const FramedPortion &fp, const FirstOrderNodes &nodes,
                      const std::map<int, std::map<InterfaceDielectric, int>> &slots,
                      bool e1_side, bool strip, double separation,
                      std::size_t anchor_index) -> std::optional<FirstOrderSplit>
   {
     const double length = fp.b - fp.a;
-    if (std::abs(fp.turn) <= 0.0 || length <= 0.0)
-    {
-      return std::nullopt;
-    }
     const bool convex_e1 = e1_side ? fp.turn > 0.0 : fp.turn < 0.0;
     // Inner edge of a pair: the convex edge of a gap, the concave edge of a strip.
     const bool inner = separation <= 0.0 || ((fp.turn > 0.0) != strip);
-    const double rho_side = length / std::abs(fp.turn);
-    const double rho_inner = inner ? rho_side : rho_side - separation;
-    if (rho_inner <= 0.0)
+    double suppressed = -1.0;
+    const auto a =
+        FirstOrderSplitFraction(fp.turn, length, R, separation, inner, &suppressed);
+    if (!a)
     {
-      return std::nullopt;  // an outer edge tighter than the separation: not a pair bend
+      if (suppressed >= 0.0)
+      {
+        summary.first_order_below_floor++;
+        summary.first_order_below_floor_max =
+            std::max(summary.first_order_below_floor_max, suppressed);
+      }
+      return std::nullopt;
     }
-    const double kappa = R / rho_inner;
     const auto node = convex_e1 ? nodes.convex : nodes.concave;
     if (!node)
     {
@@ -13878,7 +13933,7 @@ FeaturePatchSummary BuildFeaturePatches(
     FirstOrderSplit split;
     split.node = *node;
     split.runtime = RuntimeModel(*node, slots);
-    split.a = std::clamp(kappa / first_order_kappa, 0.0, 1.0);
+    split.a = std::clamp(*a, 0.0, 1.0);
     return split;
   };
 
@@ -17351,6 +17406,11 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
         requirements->SetPlacedLocalDeviation(std::move(records));
       }
     }
+    if (requirements && summary.first_order_below_floor > 0)
+    {
+      requirements->SetFirstOrderBelowFloor(summary.first_order_below_floor,
+                                            summary.first_order_below_floor_max);
+    }
     if (statistics)
     {
       statistics->context_near_match_verifications =
@@ -17462,6 +17522,14 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                static_cast<int>(result.models.size()), summary.curved_family_features,
                summary.first_order_features, summary.corner_family_features,
                static_cast<int>(summary.context_points_checked));
+    if (summary.first_order_below_floor > 0)
+    {
+      Mpi::Print(" Curvature: {:d} portion(s) of straight-like features with a first-order "
+                 "split fraction at or below the floor {:.0e} left at the anchor alone "
+                 "(round-off turns; largest fraction {:.3e})\n",
+                 summary.first_order_below_floor, kFirstOrderSplitFloor,
+                 summary.first_order_below_floor_max);
+    }
     if (summary.context_near_match_verifications > 0)
     {
       Mpi::Print(" Context: {:d} contract-3 placement(s) verified within the "

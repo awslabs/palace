@@ -3801,6 +3801,24 @@ void ForEachMaxwellPatchEnergyRow(
   }
 }
 
+// The noise floor of the first-order split fraction (decision 2268): a fraction at or below
+// it is a turn of round-off size (largest seen 2.2e-15; smallest real 1.4e-7) and the
+// portion is treated as straight. Dropping a split of fraction a moves the cell's
+// fabricated values by at most a relative (they are linear in a); 1e-12 is the floor below
+// which comparisons across builds already drop splits. A ratio of lengths: independent of
+// the build, the rank count and the mesh units.
+constexpr double kFirstOrderSplitFloor = 1.0e-12;
+
+// The first-order split fraction of a portion of a straight-like feature (design (b)7):
+// a = (R / rho_inner) / (1 / kStraightBendRadiusOverRadius), rho_inner = length / |turn|
+// on an inner edge and that minus `separation` on the outer edge of a pair, before the
+// clamp to [0, 1]. nullopt when the portion carries no turn or no length, or its outer edge
+// is tighter than the separation; nullopt with *suppressed = a when a <=
+// kFirstOrderSplitFloor (the anchor alone, weight 1). Exposed for the unit tests.
+std::optional<double> FirstOrderSplitFraction(double turn, double length, double R,
+                                              double separation, bool inner,
+                                              double *suppressed);
+
 }  // namespace palace
 
 #endif  // PALACE_MODELS_SURFACE_RESPONSE_OPERATOR_HPP

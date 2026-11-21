@@ -1120,6 +1120,273 @@ TEST_CASE("SurfaceResponseIdentificationConvexity",
   }
 }
 
+TEST_CASE("SurfaceResponseIdentificationRoundoffTurnOnStraightStretch",
+          "[surfaceresponseidentification][Serial]")
+{
+  // Decision 2268 (round-off splits): ComputeCurvature sweeps the ends of a chain's density
+  // contributions with running sums. A stretch where no contribution is open carries a
+  // signed turn of exactly zero, whatever round-off the earlier contributions leave in
+  // those sums (two joint windows that abut, x_k + c_k / 2 and x_(k+1) - c_k / 2, may
+  // overlap by an ulp): a nonzero turn there would make the first-order term place a split
+  // of round-off weight on a straight edge, its convexity the round-off's sign. Bars (3 R
+  // wide) along a straight-like zig-zag polyline (joints of unequal turns of both senses,
+  // net +3 deg; no fitted arc) between two long straight leads, at three chord scalings:
+  // every portion on the far half of a lead (beyond the end joint's half chord and the
+  // window) has a turn of exactly 0.0, no feature there carries a bend, and each side keeps
+  // the net signed turn (the inner side around the gap, as in the Convexity case).
+  const double R = 2.0, lead = 60.0, width = 6.0;
+  const double degree = std::acos(-1.0) / 180.0;
+  const double reach = 0.5 * lead + 2.0 * R + width;
+  const std::vector<double> turns = {1.3, -2.9, 0.7, -3.7, 1.9, -2.3, 3.1,  -0.9,
+                                     2.6, -1.7, 0.4, -2.2, 3.4, 1.1,  -0.6, 2.8};
+  const std::vector<double> chords = {1.7, 2.3, 1.1, 2.9, 1.3, 2.1, 0.9, 1.9,
+                                      2.7, 1.4, 2.2, 1.6, 0.8, 2.4, 1.2};
+  for (const double scale : {1.0, 1.37, 0.73})
+  {
+    std::vector<Point2> centreline = {{-lead, 0.0}, {0.0, 0.0}};
+    double angle = 0.0;
+    for (std::size_t k = 0; k < turns.size(); k++)
+    {
+      angle += turns[k] * degree;
+      const double chord = k < chords.size() ? scale * chords[k] : lead;
+      const Point2 p = centreline.back();
+      centreline.push_back(
+          {p[0] + chord * std::cos(angle), p[1] + chord * std::sin(angle)});
+    }
+    const double sweep = angle;
+    const Point2 end = centreline[centreline.size() - 2];
+    const Point2 d_end = {std::cos(angle), std::sin(angle)};
+    const auto input = MakeInput({{BarAroundCentreline(centreline, width), 0, 1.0}}, R);
+    const auto result = IdentifyMetalPerimeter(input);
+    CheckPartition(input, result);
+    // Lead 1 runs along -x from the origin, the trailing lead along d_end from `end`; the
+    // side of a segment by its gap direction against the nearest lead's left normal.
+    int far_portions = 0;
+    double left_turn = 0.0, right_turn = 0.0;
+    for (const auto &feature : result.features)
+    {
+      bool all_far = !feature.portions.empty();
+      for (const auto &portion : feature.portions)
+      {
+        const auto &segment = input.segments[portion.segment];
+        const Point2 m = {0.5 * (segment.p0[0] + segment.p1[0]),
+                          0.5 * (segment.p0[1] + segment.p1[1])};
+        const double along = (m[0] - end[0]) * d_end[0] + (m[1] - end[1]) * d_end[1];
+        const bool left = m[0] < 0.0 ? segment.gap_direction[1] > 0.0
+                                     : segment.gap_direction[1] * d_end[0] -
+                                               segment.gap_direction[0] * d_end[1] >
+                                           0.0;
+        if (-m[0] > reach || along > reach)
+        {
+          far_portions++;
+          CHECK(portion.turn == 0.0);
+        }
+        else
+        {
+          all_far = false;
+        }
+        (left ? left_turn : right_turn) += portion.turn;
+      }
+      if (all_far)
+      {
+        CHECK_FALSE(feature.bend_radius_over_R.has_value());
+      }
+    }
+    CHECK(far_portions > 0);
+    CHECK_THAT(left_turn, WithinRel(-sweep, 0.10));
+    CHECK_THAT(right_turn, WithinRel(sweep, 0.10));
+  }
+}
+
+TEST_CASE("SurfaceResponseIdentificationJointTurnMagnitude",
+          "[surfaceresponseidentification][Serial]")
+{
+  // Decision 2286: the magnitude of a joint's turn between two runs is atan2(|a x b|, a .
+  // b) of their unit tangents. A run tangent is a normalised difference, so two collinear
+  // runs can read tangents that differ in the last place (49 x (1 / 49) = 1 - 2^-53): their
+  // turn is zero to round-off, where the arc-cosine of the dot product reads 1.49e-8 rad. A
+  // real joint keeps its angle to round-off, and the result does not depend on the order of
+  // the two tangents (bit for bit).
+  using Vec = std::array<double, 3>;
+  auto Unit = [](const Vec &d)
+  {
+    const double n = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+    return Vec{(1.0 / n) * d[0], (1.0 / n) * d[1], (1.0 / n) * d[2]};
+  };
+  auto ArcCosineTurn = [](const Vec &a, const Vec &b)
+  { return std::acos(std::clamp(a[0] * b[0] + a[1] * b[1] + a[2] * b[2], -1.0, 1.0)); };
+  int asymmetric = 0;
+  auto Symmetric = [&](const Vec &a, const Vec &b)
+  { asymmetric += JointTurnMagnitude(a, b) != JointTurnMagnitude(b, a); };
+  // Collinear along an axis: the 49-long run's tangent is 1 - 2^-53, the 32-long one's 1.
+  const Vec t49 = Unit({49.0, 0.0, 0.0}), t32 = Unit({32.0, 0.0, 0.0});
+  REQUIRE(t49[0] < 1.0);
+  CHECK(ArcCosineTurn(t49, t32) > 1.0e-8);
+  CHECK(JointTurnMagnitude(t49, t32) == 0.0);
+  CHECK(JointTurnMagnitude(t32, t49) == 0.0);
+  CHECK(JointTurnMagnitude(Unit({0.0, -49.0, 0.0}), Unit({0.0, -32.0, 0.0})) == 0.0);
+  // Collinear off the axes (runs of other lengths along one direction, in and out of the
+  // plane z = 0): zero to round-off.
+  int arc_cosine_noise = 0;
+  for (const Vec &direction :
+       {Vec{3.0, 4.0, 0.0}, Vec{-5.0, 12.0, 0.0}, Vec{1.0, 2.0, 2.0}})
+  {
+    for (int k = 1; k <= 60; k++)
+    {
+      const Vec a = Unit({k * direction[0], k * direction[1], k * direction[2]});
+      const Vec b =
+          Unit({(k + 7) * direction[0], (k + 7) * direction[1], (k + 7) * direction[2]});
+      CHECK(JointTurnMagnitude(a, b) <= 1.0e-15);
+      arc_cosine_noise += ArcCosineTurn(a, b) > 1.0e-9;
+      Symmetric(a, b);
+    }
+  }
+  CHECK(arc_cosine_noise > 0);
+  // Real joints of a known angle, in the plane z = 0 and in a tilted plane, at several
+  // headings: the angle to 1e-12 relative, both orders.
+  const Vec e1 = {1.0 / 3.0, 2.0 / 3.0, 2.0 / 3.0}, e2 = {2.0 / 3.0, 1.0 / 3.0, -2.0 / 3.0};
+  for (const double angle : {1.0e-3, 0.5, 0.5 * M_PI})
+  {
+    for (const double heading : {0.0, 0.3, 2.0, -2.9})
+    {
+      const Vec a = {std::cos(heading), std::sin(heading), 0.0};
+      const Vec b = {std::cos(heading + angle), std::sin(heading + angle), 0.0};
+      CHECK_THAT(JointTurnMagnitude(a, b), WithinRel(angle, 1.0e-12));
+      CHECK_THAT(JointTurnMagnitude(b, a), WithinRel(angle, 1.0e-12));
+      Vec p{}, q{};
+      for (int i = 0; i < 3; i++)
+      {
+        p[i] = std::cos(heading) * e1[i] + std::sin(heading) * e2[i];
+        q[i] = std::cos(heading + angle) * e1[i] + std::sin(heading + angle) * e2[i];
+      }
+      CHECK_THAT(JointTurnMagnitude(p, q), WithinRel(angle, 1.0e-12));
+      Symmetric(a, b);
+      Symmetric(p, q);
+    }
+  }
+  CHECK(JointTurnMagnitude({1.0, 0.0, 0.0}, {-1.0, 0.0, 0.0}) == M_PI);
+  // Order independence on tangents of many headings and turns (a contracted multiply-add
+  // makes the two orders of the cross product differ in the last bits).
+  for (int k = 0; k < 2000; k++)
+  {
+    const double heading = 2.399963229728653 * k, turn = 1.0e-9 * std::pow(1.02, k % 1000);
+    Symmetric(Unit({std::cos(heading), std::sin(heading), 0.0}),
+              Unit({std::cos(heading + turn), std::sin(heading + turn), 0.0}));
+  }
+  CHECK(asymmetric == 0);
+}
+
+TEST_CASE("SurfaceResponseIdentificationCollinearRunsAtAFrameChange",
+          "[surfaceresponseidentification][Serial]")
+{
+  // Decision 2286 (OI-FIRST-ORDER-COLLINEAR-JOINT-TURN): a straight edge is cut into runs
+  // where its frame changes (here the target interface), and the two runs' tangents can
+  // differ in the last place. A bar 81 x 6 (3 R wide) whose long edges change target at
+  // x = 49: each long edge is two collinear runs, 49 and 32 long, with tangents 1 - 2^-53
+  // and 1 along x, whose arc-cosine turn was 1.49e-8 rad (a first-order 'bend' of fraction
+  // about 1e-9 on an edge straight by the mesh). The joint carries no turn: every portion
+  // has a turn of exactly 0.0, no feature has a bend, and no portion has a first-order
+  // split fraction (nothing placed, nothing counted below the floor).
+  const double R = 2.0;
+  auto input = MakeInput({{{{0.0, 0.0}, {81.0, 0.0}, {81.0, 6.0}, {0.0, 6.0}}, 0, 1.0}}, R);
+  int changed = 0;
+  for (auto &segment : input.segments)
+  {
+    if (segment.p0[1] == segment.p1[1] && std::min(segment.p0[0], segment.p1[0]) >= 49.0)
+    {
+      segment.targets = {{InterfaceDielectric::MS, 2}};
+      changed++;
+    }
+  }
+  REQUIRE(changed == 64);
+  const auto result = IdentifyMetalPerimeter(input);
+  CheckPartition(input, result);
+  // The summed turn of each long edge (y = 0, y = 6): exactly zero.
+  std::map<double, double> edge_turn;
+  int long_edge_portions = 0;
+  for (const auto &feature : result.features)
+  {
+    CHECK_FALSE(feature.bend_radius_over_R.has_value());
+    for (const auto &portion : feature.portions)
+    {
+      const auto &segment = input.segments[portion.segment];
+      CHECK(portion.turn == 0.0);
+      if (segment.p0[1] == segment.p1[1])
+      {
+        edge_turn[segment.p0[1]] += portion.turn;
+        long_edge_portions++;
+      }
+      double suppressed = -1.0;
+      CHECK_FALSE(FirstOrderSplitFraction(portion.turn, portion.s1 - portion.s0, R, 0.0,
+                                          true, &suppressed)
+                      .has_value());
+      CHECK(suppressed == -1.0);
+    }
+  }
+  CHECK(long_edge_portions >= 162);
+  REQUIRE(edge_turn.size() == 2);
+  for (const auto &[y, turn] : edge_turn)
+  {
+    INFO("long edge y = " << y);
+    CHECK(turn == 0.0);
+  }
+}
+
+TEST_CASE("SurfaceResponseIdentificationRealJointTurnAndClass",
+          "[surfaceresponseidentification][Serial]")
+{
+  // Decision 2286: a real joint keeps its turn and its class. The top edge of a bar runs
+  // from (40, 0) to the origin, jogs by `angle` toward the metal over a chord c = 0.2
+  // (0.1 R: both joints of the jog are noise under the geometric rule, so the edge stays
+  // one chain) and runs on at y = -c sin(angle) to x = -40. Each joint spreads its turn
+  // over its window (half of each adjacent run) and a portion's turn integrates the
+  // windowed curvature (the mean density over a window of length R), so on the half of a
+  // lead next to its joint, at least R from both ends of that half, the portions' signed
+  // turn per length times the window is the joint's signed turn: +angle (convex) at the
+  // origin, -angle (concave) at the jog's end, to 1e-12 relative.
+  const double R = 2.0, c = 0.2;
+  for (const double angle : {1.0e-3, 0.5, 0.5 * M_PI})
+  {
+    INFO("joint angle " << angle);
+    const Point2 jog = {-c * std::cos(angle), -c * std::sin(angle)};
+    const auto input = MakeInput(
+        {{{{-40.0, -6.0}, {40.0, -6.0}, {40.0, 0.0}, {0.0, 0.0}, jog, {-40.0, jog[1]}},
+          0,
+          1.0}},
+        R);
+    const auto result = IdentifyMetalPerimeter(input);
+    CheckPartition(input, result);
+    const double chord = std::hypot(jog[0], jog[1]), lead = 40.0 + jog[0];
+    const double window_origin = 20.0 + 0.5 * chord, window_jog = 0.5 * (lead + chord);
+    double turn_origin = 0.0, length_origin = 0.0, turn_jog = 0.0, length_jog = 0.0;
+    for (const auto &feature : result.features)
+    {
+      for (const auto &portion : feature.portions)
+      {
+        const auto &segment = input.segments[portion.segment];
+        const double x0 = std::min(segment.p0[0], segment.p1[0]);
+        const double x1 = std::max(segment.p0[0], segment.p1[0]);
+        // At least R from both ends of each half-window.
+        if (segment.p0[1] == 0.0 && segment.p1[1] == 0.0 && x0 >= R && x1 <= 20.0 - R)
+        {
+          turn_origin += portion.turn;
+          length_origin += portion.s1 - portion.s0;
+        }
+        else if (segment.p0[1] == jog[1] && segment.p1[1] == jog[1] && x1 <= jog[0] - R &&
+                 x0 >= jog[0] - 0.5 * lead + R)
+        {
+          turn_jog += portion.turn;
+          length_jog += portion.s1 - portion.s0;
+        }
+      }
+    }
+    REQUIRE(length_origin > 15.0);
+    REQUIRE(length_jog > 13.0);
+    CHECK_THAT(turn_origin / length_origin * window_origin, WithinRel(angle, 1.0e-12));
+    CHECK_THAT(turn_jog / length_jog * window_jog, WithinRel(-angle, 1.0e-12));
+  }
+}
+
 TEST_CASE("SurfaceResponseIdentificationPairsAtTheThreshold",
           "[surfaceresponseidentification][Serial]")
 {
