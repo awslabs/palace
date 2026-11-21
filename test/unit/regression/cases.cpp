@@ -1725,7 +1725,9 @@ TEST_CASE("spheres", "[Serial][Parallel][GPU][Regression]")
 TEST_CASE("spheres_equilibrated", "[Serial][Parallel][Regression]")
 {
   // The equilibrated error estimator (CPU only): guaranteed bounds of the relative errors
-  // (error-indicators.csv) and of the capacitance matrix (terminal-C-lower.csv).
+  // (error-indicators.csv) and of the capacitance matrix (terminal-C-lower.csv). The field
+  // solves and the curl correction are converged, so that the bounds do not depend on where
+  // the iterations stop (the platform, the number of processes) beyond rounding.
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-4;
   opts.atol = 1.0e-16;
