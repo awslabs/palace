@@ -63,11 +63,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     capacitance matrix, written to `terminal-C-lower.csv`.
     `config["Solver"]["Linear"]["EstimatorFluxOrder"]` selects the flux space of order p - 1
     (`"Reduced"`, default) or p (`"Primal"`). SchemaVer 5-4-0
-    [PR NNNN](https://github.com/awslabs/palace/pull/NNNN).
+    [PR 1262](https://github.com/awslabs/palace/pull/1262).
   - The p-multigrid prolongations and discrete interpolators between finite element spaces
     broken across interior boundaries (two-sided superconducting films, the equilibrated
     error estimator) are partially assembled instead of assembled matrices, which at high
-    order had a large memory transient. [PR NNNN](https://github.com/awslabs/palace/pull/NNNN).
+    order had a large memory transient. [PR 1262](https://github.com/awslabs/palace/pull/1262).
 
 #### Interface Changes
 
