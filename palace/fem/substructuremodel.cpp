@@ -5,13 +5,13 @@
 
 #include <algorithm>
 #include <cstring>
-#include <filesystem>
+#include <fstream>
 #include <limits>
 #include <stdexcept>
-#include <system_error>
 #include <fmt/format.h>
 #include "utils/communication.hpp"
 #include "utils/outputdir.hpp"
+#include "utils/outputfile.hpp"
 
 namespace palace::substructuring
 {
@@ -115,36 +115,25 @@ void ModelFile::Create(const std::string &path, MPI_Comm comm)
   ApplyOnRootFilesystem(comm, fmt::format("Writing the substructuring model \"{}\"", path),
                         [&]()
                         {
-                          std::ofstream f(path, std::ios::binary | std::ios::trunc);
-                          const std::uint32_t mv[2] = {kMagic, kVersion};
-                          f.write(reinterpret_cast<const char *>(mv), sizeof(mv));
-                          f.close();
-                          if (f.fail())
-                          {
-                            throw std::filesystem::filesystem_error(
-                                "Could not write the model file", path,
-                                std::make_error_code(std::errc::io_error));
-                          }
+                          internal::WriteFile(
+                              path,
+                              [](std::ostream &f)
+                              {
+                                const std::uint32_t mv[2] = {kMagic, kVersion};
+                                f.write(reinterpret_cast<const char *>(mv), sizeof(mv));
+                              });
                         });
 }
 
 void ModelFile::CheckWritable(const std::string &path, MPI_Comm comm)
 {
-  ApplyOnRootFilesystem(comm, fmt::format("Writing the substructuring model \"{}\"", path),
-                        [&]()
-                        {
-                          std::ofstream f(path, std::ios::binary | std::ios::app);
-                          if (!f)
-                          {
-                            throw std::filesystem::filesystem_error(
-                                "Could not open the model file", path,
-                                std::make_error_code(std::errc::io_error));
-                          }
-                        });
+  ApplyOnRootFilesystem(
+      comm, fmt::format("Writing the substructuring model \"{}\"", path),
+      [&]() { internal::WriteFile(path, [](std::ostream &) {}, std::ios::app); });
 }
 
 void ModelFile::Append(const std::string &path, MPI_Comm comm, std::uint32_t tag,
-                       long long size, const std::function<void(std::ofstream &)> &write,
+                       long long size, const std::function<void(std::ostream &)> &write,
                        const std::function<void()> &others)
 {
   if (!Mpi::Root(comm) && others)
@@ -155,19 +144,18 @@ void ModelFile::Append(const std::string &path, MPI_Comm comm, std::uint32_t tag
       comm, fmt::format("Writing the substructuring model \"{}\"", path),
       [&]()
       {
-        std::ofstream f(path, std::ios::binary | std::ios::app);
-        f.write(reinterpret_cast<const char *>(&tag), sizeof(tag));
-        f.write(reinterpret_cast<const char *>(&size), sizeof(size));
-        const long long start = static_cast<long long>(f.tellp());
-        write(f);
-        const long long written = static_cast<long long>(f.tellp()) - start;
-        f.close();
-        if (f.fail())
-        {
-          throw std::filesystem::filesystem_error(
-              "Could not write the model file", path,
-              std::make_error_code(std::errc::io_error));
-        }
+        long long written = 0;
+        internal::WriteFile(
+            path,
+            [&](std::ostream &f)
+            {
+              f.write(reinterpret_cast<const char *>(&tag), sizeof(tag));
+              f.write(reinterpret_cast<const char *>(&size), sizeof(size));
+              const long long start = static_cast<long long>(f.tellp());
+              write(f);
+              written = static_cast<long long>(f.tellp()) - start;
+            },
+            std::ios::app);
         if (written != size)
         {
           throw std::runtime_error(fmt::format(
@@ -184,13 +172,13 @@ void InterfaceRecords::Append(const std::string &path, MPI_Comm comm) const
   ModelFile::Append(
       path, comm, kSignaturesTag,
       static_cast<long long>(sizeof(head) + sizeof(double) * signatures.size()),
-      [&](std::ofstream &f)
+      [&](std::ostream &f)
       {
         f.write(reinterpret_cast<const char *>(head), sizeof(head));
         f.write(reinterpret_cast<const char *>(signatures.data()),
                 static_cast<std::streamsize>(sizeof(double) * signatures.size()));
       });
-  ModelFile::Append(path, comm, kLengthTag, sizeof(double), [&](std::ofstream &f)
+  ModelFile::Append(path, comm, kLengthTag, sizeof(double), [&](std::ostream &f)
                     { f.write(reinterpret_cast<const char *>(&length), sizeof(double)); });
 }
 

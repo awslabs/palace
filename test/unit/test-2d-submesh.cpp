@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <numbers>
+#include <vector>
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
@@ -11,6 +12,7 @@
 
 #include "fem/mesh.hpp"
 #include "models/materialoperator.hpp"
+#include "test-helpers.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
@@ -103,6 +105,84 @@ TEST_CASE("RotateMaterialDefinitions", "[materialoperator][Serial]")
 
     // Scalar (out-of-plane) = eps_zz = 5.0.
     CHECK_THAT(mat_op.GetPermittivityScalar()(0, 0, 0), WithinAbs(5.0, 1e-12));
+  }
+}
+
+TEST_CASE("RotateMaterialDefinitions keeps scalar materials scalar in oblique frames",
+          "[materialoperator][Serial][Parallel]")
+{
+  // A frequency-dependent material requires a scalar ε∞, and its wave permittivity at an
+  // absorbing boundary or Floquet port a scalar conductivity. Rotated into the frame of an
+  // oblique cross-section, a scalar tensor must stay exactly scalar: the rotation of a
+  // scalar tensor gives it only roundoff anisotropy. A tensor which is anisotropic, by any
+  // amount, must still be rejected.
+  auto serial_mesh = std::make_unique<mfem::Mesh>(
+      mfem::Mesh::MakeCartesian2D(2, 2, mfem::Element::TRIANGLE, false, 1.0, 1.0));
+  Mesh mesh(std::make_unique<mfem::ParMesh>(Mpi::World(), *serial_mesh));
+  config::PeriodicBoundaryData periodic;
+
+  config::MaterialData material;
+  material.attributes = {1};
+  material.epsilon_r.s = {2.5, 2.5, 2.5};
+  material.mu_r.s = {1.3, 1.3, 1.3};
+  material.sigma.s = {0.3, 0.3, 0.3};
+  material.permittivity_terms.push_back(config::DrudeData{1.2, 0.1});
+  material.permittivity_terms.push_back(config::DebyeData{0.8, 0.5});
+  const std::complex<double> s(0.05, 1.3);
+  const MaterialOperator ref({material}, periodic, ProblemType::DRIVEN, mesh);
+  const auto eps_ref = ref.EvaluateFrequencyDependentWavePermittivity(0, s);
+
+  const auto frames = test::ObliqueFrames(8);
+  SECTION("Scalar material")
+  {
+    for (const auto &[e1, e2, normal] : frames)
+    {
+      std::vector<config::MaterialData> materials = {material};
+      RotateMaterialDefinitions(materials, e1, e2, normal);
+      CHECK(internal::mat::IsIsotropic(materials[0].epsilon_r));
+      CHECK(internal::mat::IsIsotropic(materials[0].mu_r));
+      CHECK(internal::mat::IsIsotropic(materials[0].tandelta));
+      CHECK(internal::mat::IsIsotropic(materials[0].sigma));
+      const MaterialOperator mat_op(materials, periodic, ProblemType::DRIVEN, mesh);
+      CHECK(mat_op.EvaluateFrequencyDependentWavePermittivity(0, s) == eps_ref);
+      CHECK(mat_op.GetPermittivityScalar()(0, 0, 0) ==
+            ref.GetPermittivityScalar()(0, 0, 0));
+      for (int i = 0; i < 2; i++)
+      {
+        for (int j = 0; j < 2; j++)
+        {
+          CHECK(mat_op.GetPermittivityReal()(i, j, 0) ==
+                ref.GetPermittivityReal()(i, j, 0));
+          CHECK(mat_op.GetInvPermeability()(i, j, 0) == ref.GetInvPermeability()(i, j, 0));
+        }
+      }
+    }
+  }
+
+  SECTION("Anisotropic high-frequency permittivity")
+  {
+    for (const auto &[e1, e2, normal] : frames)
+    {
+      for (double eps_zz : {2.6, 2.5 * (1.0 + 1.0e-12)})
+      {
+        std::vector<config::MaterialData> materials = {material};
+        materials[0].epsilon_r.s[2] = eps_zz;
+        RotateMaterialDefinitions(materials, e1, e2, normal);
+        CHECK_THROWS(MaterialOperator(materials, periodic, ProblemType::DRIVEN, mesh));
+      }
+    }
+  }
+
+  SECTION("Anisotropic conductivity")
+  {
+    for (const auto &[e1, e2, normal] : frames)
+    {
+      std::vector<config::MaterialData> materials = {material};
+      materials[0].sigma.s[2] = 0.4;
+      RotateMaterialDefinitions(materials, e1, e2, normal);
+      const MaterialOperator mat_op(materials, periodic, ProblemType::DRIVEN, mesh);
+      CHECK_THROWS(mat_op.EvaluateFrequencyDependentWavePermittivity(0, s));
+    }
   }
 }
 

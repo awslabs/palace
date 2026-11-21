@@ -373,7 +373,7 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
     if (estimator)
     {
       Mpi::Print(" Updating solution error estimates\n");
-      estimator->AddErrorIndicator(E, B, total_domain_energy, indicator);
+      estimator->AddErrorIndicator(E, B, total_domain_energy, omega, indicator);
     }
 
     // Final postprocessing & printing of an excitation. After the last solve, the solver
@@ -510,8 +510,8 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
     // unless printing paraview fields.
     if (estimator)
     {
-      auto total_domain_energy = post_op.MeasureDomainFieldEnergyOnly(E, B);
-      estimator->AddErrorIndicator(E, B, total_domain_energy, indicator);
+      auto total_domain_energy = post_op.MeasureDomainFieldEnergyOnly(E, B, omega);
+      estimator->AddErrorIndicator(E, B, total_domain_energy, omega, indicator);
     }
     return update.error;
   };

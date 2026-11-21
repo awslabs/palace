@@ -3,6 +3,7 @@
 
 #include "ksp.hpp"
 
+#include <vector>
 #include <mfem.hpp>
 #include "fem/fespace.hpp"
 #include "linalg/amg.hpp"
@@ -156,14 +157,29 @@ ConfigurePreconditionerSolver(const config::LinearSolverData &linear,
   switch (type)
   {
     case LinearSolver::AMS:
-      // Can either be the coarse solve for geometric multigrid or the solver at the finest
-      // space (in which case fespaces.GetNumLevels() == 1).
-      MFEM_VERIFY(aux_fespaces, "AMS solver relies on both primary space "
-                                "and auxiliary spaces for construction!");
-      pc = MakeWrapperSolver<OperType, HypreAmsSolver>(
-          linear, fespaces.GetFESpaceAtLevel(0), aux_fespaces->GetFESpaceAtLevel(0),
-          coarse_solver ? linear.ams_max_it : linear.mg_cycle_it, linear.mg_smooth_it,
-          linear.ams_vector_interp, linear.ams_singular_op, linear.amg_agg_coarsen, print);
+      {
+        // Can either be the coarse solve for geometric multigrid or the solver at the
+        // finest space (in which case fespaces.GetNumLevels() == 1).
+        MFEM_VERIFY(aux_fespaces, "AMS solver relies on both primary space "
+                                  "and auxiliary spaces for construction!");
+        int smooth_it = linear.mg_smooth_it;
+        if (coarse_solver && linear.ams_singular_op)
+        {
+          // The coarse solve of a singular operator takes more smoothing sweeps, chosen
+          // from the sizes of the multigrid levels.
+          std::vector<HYPRE_BigInt> level_sizes(fespaces.GetNumLevels());
+          for (std::size_t l = 0; l < level_sizes.size(); l++)
+          {
+            level_sizes[l] = fespaces.GetFESpaceAtLevel(l).GlobalTrueVSize();
+          }
+          smooth_it = GetAmsSingularCoarseSmoothIts(level_sizes, linear.mg_smooth_it);
+        }
+        pc = MakeWrapperSolver<OperType, HypreAmsSolver>(
+            linear, fespaces.GetFESpaceAtLevel(0), aux_fespaces->GetFESpaceAtLevel(0),
+            coarse_solver ? linear.ams_max_it : linear.mg_cycle_it, smooth_it,
+            linear.ams_vector_interp, linear.ams_singular_op, linear.amg_agg_coarsen,
+            print);
+      }
       break;
     case LinearSolver::BOOMER_AMG:
       pc = MakeWrapperSolver<OperType, BoomerAmgSolver>(

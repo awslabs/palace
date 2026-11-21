@@ -41,6 +41,7 @@ jobs:
         github.event.label.name == 'trigger-long-tests'
       )
     runs-on: [self-hosted, x64]
+    timeout-minutes: 180
     steps:
       - name: Check out authorized revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

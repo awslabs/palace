@@ -328,6 +328,12 @@ protected:
   double reduced_postprocessing_tol = 0.0;
   Eigen::MatrixXd reduced_energy_E, reduced_curl_R, reduced_port_V;
   std::map<int, std::pair<Eigen::MatrixXd, Eigen::MatrixXd>> reduced_domain_energy;
+  // Projections of the unit mass forms of the frequency-dependent materials, weighted at
+  // each frequency by their stored-energy susceptibility.
+  using ReducedFrequencyDependentForms =
+      std::vector<std::pair<std::size_t, Eigen::MatrixXd>>;
+  ReducedFrequencyDependentForms reduced_energy_E_fd;
+  std::map<int, ReducedFrequencyDependentForms> reduced_domain_energy_E_fd;
 
   // Per-entry impedance postprocessing configuration (keyed by config index).
   struct ImpedancePostproConfig
@@ -478,13 +484,15 @@ public:
   // 4) Trigger ParaView field computation and save.
   //
   // The functions return the total domain energy which is the only thing needed in the
-  // solver to normalize the error indicator. If more measurements were needed by the solver
-  // loop, we could imagine passing a small struct (like Measurement above or some sub-set
-  // therefore).
+  // solver to normalize the error indicator, empty for the frequency-domain solvers without
+  // a stored electric energy (Measurement::TotalFieldEnergy). If more measurements were
+  // needed by the solver loop, we could imagine passing a small struct (like Measurement
+  // above or some sub-set therefore).
   //
   // The measure functions will also do logging of (some) measurements to stdout.
-  double MeasureAndPrintAll(int ex_idx, int step, const ComplexVector &e,
-                            const ComplexVector &b, std::complex<double> omega)
+  std::optional<double> MeasureAndPrintAll(int ex_idx, int step, const ComplexVector &e,
+                                           const ComplexVector &b,
+                                           std::complex<double> omega)
     requires(solver_t == ProblemType::DRIVEN);
 
   // Lumped port voltages given instead of measured from the field (where the field is not
@@ -521,9 +529,10 @@ public:
     requires(solver_t == ProblemType::DRIVEN);
   bool HasReducedPostprocessing() const { return reduced_postprocessing_ready; }
 
-  double MeasureAndPrintAll(int step, const ComplexVector &e, const ComplexVector &b,
-                            std::complex<double> omega, double error_abs, double error_bkwd,
-                            int num_conv)
+  std::optional<double> MeasureAndPrintAll(int step, const ComplexVector &e,
+                                           const ComplexVector &b,
+                                           std::complex<double> omega, double error_abs,
+                                           double error_bkwd, int num_conv)
     requires(solver_t == ProblemType::EIGENMODE);
 
   double MeasureAndPrintAll(int step, const Vector &v, const Vector &e, int idx)
@@ -549,9 +558,10 @@ public:
   // Mode analysis: complex E-field tangential (ND) and normal (H1) eigenvectors,
   // propagation constant kn, and eigensolver error estimates. The Poynting power is
   // computed internally via fem_op->ComputePoyntingPower.
-  double MeasureAndPrintAll(int step, const ComplexVector &et, const ComplexVector &en,
-                            std::complex<double> kn, double omega, double error_abs,
-                            double error_bkwd, int num_conv)
+  std::optional<double> MeasureAndPrintAll(int step, const ComplexVector &et,
+                                           const ComplexVector &en, std::complex<double> kn,
+                                           double omega, double error_abs,
+                                           double error_bkwd, int num_conv)
     requires(solver_t == ProblemType::BOUNDARYMODE);
 
   // Write error indicator into ParaView file and print summary statistics to csv. Should be
@@ -562,7 +572,8 @@ public:
   // simulation with PROM. There samples are taken and we need the total domain energy for
   // the error indicator, but no other measurement / printing should be done.
 
-  double MeasureDomainFieldEnergyOnly(const ComplexVector &e, const ComplexVector &b)
+  std::optional<double> MeasureDomainFieldEnergyOnly(const ComplexVector &e,
+                                                     const ComplexVector &b, double omega)
     requires(solver_t == ProblemType::DRIVEN);
 
   // Access grid functions for field solutions. Note that these are NOT const functions. The
@@ -612,6 +623,19 @@ public:
   // Access to domain postprocessing objects. Use in electrostatic & magnetostatic matrix
   // measurement (see above).
   const auto &GetDomainPostOp() const { return dom_post_op; }
+
+  // The electric and magnetic field energies of the last measurement, nondimensional: the
+  // electric field energy with the high-frequency permittivity ε∞ of the
+  // frequency-dependent materials
+  // (DomainPostOperator::GetHighFrequencyElectricFieldEnergy), which, unlike the stored and
+  // the material electric energies, is available for every material and does not vanish at
+  // a zero of the permittivity, and the magnetic energy.
+  std::pair<double, double> GetDomainFieldEnergies() const
+    requires(HasEGridFunction<solver_t>())
+  {
+    return {dom_post_op.GetHighFrequencyElectricFieldEnergy(*E),
+            measurement_cache.domain_H_field_energy_all};
+  }
 
   // The L-vector of a magnetostatic solution, on the space of the domain energy operators
   // (broken across two-sided superconductor films, if any).

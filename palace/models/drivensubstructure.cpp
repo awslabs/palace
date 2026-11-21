@@ -1443,7 +1443,7 @@ void DrivenSubstructureModel::WriteHeader(const std::string &path, bool create) 
       sizeof(int) * (excitations.size() + ports.size() + region_bdr_attributes.size()) +
       sizeof(std::complex<double>) * weights.size();
   ModelFile::Append(path, MPI_COMM_SELF, kHeaderTag, size,
-                    [&](std::ofstream &f)
+                    [&](std::ostream &f)
                     {
                       auto write = [&f](const auto *x, std::size_t n)
                       {
@@ -1467,7 +1467,7 @@ void DrivenSubstructureModel::WriteHeader(const std::string &path, bool create) 
   const std::vector<char> record = environment.Serialize();
   ModelFile::Append(
       path, MPI_COMM_SELF, kEnvRecordTag, static_cast<long long>(record.size()),
-      [&](std::ofstream &f)
+      [&](std::ostream &f)
       { f.write(record.data(), static_cast<std::streamsize>(record.size())); });
 }
 
@@ -1477,7 +1477,7 @@ void DrivenSubstructureModel::AppendRecord(const std::string &path, const Record
   ModelFile::Append(
       path, MPI_COMM_SELF, kRecordTag,
       static_cast<long long>(sizeof(std::complex<double>) * x.size()),
-      [&](std::ofstream &f)
+      [&](std::ostream &f)
       {
         f.write(reinterpret_cast<const char *>(x.data()),
                 static_cast<std::streamsize>(sizeof(std::complex<double>) * x.size()));

@@ -1,6 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <cmath>
 #include <complex>
 #include <memory>
 #include <string>
@@ -22,6 +23,36 @@ using namespace Catch::Matchers;
 
 namespace
 {
+
+// Whether boundary attribute attr has an entry in the coefficient; the attributes are not
+// on all processes.
+bool HasCoefficient(const Mesh &mesh, const MaterialPropertyCoefficient &fb, int attr)
+{
+  bool has = false;
+  auto ceed_attrs = mesh.GetCeedBdrAttributes(attr);
+  if (ceed_attrs.Size() > 0)
+  {
+    has = (fb.GetAttributeToMaterial()[ceed_attrs[0] - 1] >= 0);
+  }
+  Mpi::GlobalOr(1, &has, Mpi::World());
+  return has;
+}
+
+// Coefficient of boundary attribute attr, or 0 when it has none; the attributes are not on
+// all processes.
+double CoefficientValue(const Mesh &mesh, const MaterialPropertyCoefficient &fb, int attr)
+{
+  double value = 0.0;
+  auto ceed_attrs = mesh.GetCeedBdrAttributes(attr);
+  if (ceed_attrs.Size() > 0)
+  {
+    const int k = fb.GetAttributeToMaterial()[ceed_attrs[0] - 1];
+    value = (k < 0) ? 0.0 : fb.GetMaterialProperties()(0, 0, k);
+  }
+  double values[2] = {value, -value};
+  Mpi::GlobalMax(2, values, Mpi::World());
+  return (values[0] != 0.0) ? values[0] : -values[1];
+}
 
 // The frequency-dependent boundary mass terms of a unit cube (boundary attributes 1 to 6):
 // a finite conductivity boundary (attributes 1, 2), a series RL rational impedance boundary
@@ -66,34 +97,13 @@ public:
     return MaterialPropertyCoefficient(mat_op->MaxCeedBdrAttribute());
   }
 
-  // Whether boundary attribute attr has an entry in the coefficient; the attributes are not
-  // on all processes.
   bool Has(const MaterialPropertyCoefficient &fb, int attr) const
   {
-    bool has = false;
-    auto ceed_attrs = mesh->GetCeedBdrAttributes(attr);
-    if (ceed_attrs.Size() > 0)
-    {
-      has = (fb.GetAttributeToMaterial()[ceed_attrs[0] - 1] >= 0);
-    }
-    Mpi::GlobalOr(1, &has, Mpi::World());
-    return has;
+    return HasCoefficient(*mesh, fb, attr);
   }
-
-  // Coefficient of boundary attribute attr, or 0 when it has none; the attributes are not
-  // on all processes.
   double Value(const MaterialPropertyCoefficient &fb, int attr) const
   {
-    double value = 0.0;
-    auto ceed_attrs = mesh->GetCeedBdrAttributes(attr);
-    if (ceed_attrs.Size() > 0)
-    {
-      const int k = fb.GetAttributeToMaterial()[ceed_attrs[0] - 1];
-      value = (k < 0) ? 0.0 : fb.GetMaterialProperties()(0, 0, k);
-    }
-    double values[2] = {value, -value};
-    Mpi::GlobalMax(2, values, Mpi::World());
-    return (values[0] != 0.0) ? values[0] : -values[1];
+    return CoefficientValue(*mesh, fb, attr);
   }
 };
 
@@ -316,6 +326,139 @@ TEST_CASE("SurfaceTerms passivity check of a rational impedance",
       CAPTURE(b);
       CHECK(rz_op.CheckPassivity(b, 0.7));
     }
+  }
+}
+
+TEST_CASE("SurfaceTerms absorbing boundary next to a frequency-dependent material",
+          "[surfaceterms][Serial][Parallel]")
+{
+  // A damped Lorentz medium (ε∞ = 2) at x < 1/2 next to vacuum in the unit cube, with
+  // absorbing faces at x = 0 (attribute 5, next to the medium) and x = 1 (attribute 3, next
+  // to the vacuum). The first-order term next to the medium is the frequency-dependent
+  // boundary mass term of the absorbing boundaries: its scale is iω r(ω), with
+  // r = √(ε(iω)/ε∞), and its unit coefficient is the inverse impedance √ε∞ of the medium,
+  // for both fields, on the attribute 5 only, which the damping terms leave out. The summed
+  // methods of the system add the real and imaginary parts of the scale, and those of the
+  // preconditioners its magnitude as a loss.
+  auto serial_mesh = std::make_unique<mfem::Mesh>(
+      mfem::Mesh::MakeCartesian3D(2, 2, 2, mfem::Element::TETRAHEDRON));
+  REQUIRE(Mpi::Size(Mpi::World()) <= serial_mesh->GetNE());
+  for (int e = 0; e < serial_mesh->GetNE(); e++)
+  {
+    mfem::Vector center;
+    serial_mesh->GetElementCenter(e, center);
+    serial_mesh->SetAttribute(e, center(0) < 0.5 ? 1 : 2);
+  }
+  serial_mesh->SetAttributes();
+  Mesh mesh(std::make_unique<mfem::ParMesh>(Mpi::World(), *serial_mesh));
+  const double eps_inf = 2.0, delta = 0.7, w0 = 3.0, gamma = 0.4;
+  config::MaterialData medium, vacuum;
+  medium.attributes = {1};
+  medium.epsilon_r.s = {eps_inf, eps_inf, eps_inf};
+  medium.permittivity_terms.push_back(config::LorentzData{delta, w0, gamma});
+  vacuum.attributes = {2};
+  config::PeriodicBoundaryData periodic;
+  MaterialOperator mat_op({medium, vacuum}, periodic, ProblemType::DRIVEN, mesh);
+  config::BoundaryData boundaries;
+  boundaries.farfield.attributes = {3, 5};
+  boundaries.farfield.order = 1;
+  Units units(1.0, 1.0);
+  SurfaceTerms terms(boundaries, ProblemType::DRIVEN, units, mat_op, mesh.Get());
+  auto Coefficient = [&mat_op]()
+  { return MaterialPropertyCoefficient(mat_op.MaxCeedBdrAttribute()); };
+  auto Has = [&mesh](const MaterialPropertyCoefficient &fb, int attr)
+  { return HasCoefficient(mesh, fb, attr); };
+  auto Value = [&mesh](const MaterialPropertyCoefficient &fb, int attr)
+  { return CoefficientValue(mesh, fb, attr); };
+
+  REQUIRE(terms.GetNumExtraSystemBdrMassTerms() == 1);
+  CHECK(terms.GetExtraSystemBdrMassTermLabel(0) == "farfield_permittivity_0");
+  CHECK_FALSE(terms.GetExtraSystemBdrMassTermSplit(0));
+  const double u = std::sqrt(eps_inf);
+  {
+    auto unit = Coefficient(), unit_n = Coefficient(), damp = Coefficient(),
+         damp_n = Coefficient();
+    terms.AddExtraSystemBdrMassTermCoefficients(0, unit);
+    terms.AddScalarExtraSystemBdrMassTermCoefficients(0, unit_n);
+    terms.AddDampingBdrCoefficients(1.0, damp);
+    terms.AddScalarDampingBdrCoefficients(1.0, damp_n);
+    for (const auto *fb : {&unit, &unit_n})
+    {
+      REQUIRE(Has(*fb, 5));
+      CHECK_THAT(Value(*fb, 5), WithinRel(u, 1.0e-14));
+      CHECK_FALSE(Has(*fb, 3));
+    }
+    for (const auto *fb : {&damp, &damp_n})
+    {
+      REQUIRE(Has(*fb, 3));
+      CHECK_THAT(Value(*fb, 3), WithinRel(1.0, 1.0e-14));
+      CHECK_FALSE(Has(*fb, 5));
+    }
+  }
+
+  for (std::complex<double> omega :
+       {std::complex<double>(1.3, 0.0), std::complex<double>(1.3, 0.2)})
+  {
+    CAPTURE(omega);
+    const bool real = (omega.imag() == 0.0);
+    const std::complex<double> s = std::complex<double>(0.0, 1.0) * omega;
+    const std::complex<double> eps =
+        eps_inf + delta * w0 * w0 / (s * s + gamma * s + w0 * w0);
+    const std::complex<double> scale = s * std::sqrt(eps / eps_inf);
+    CHECK(std::abs(terms.GetExtraSystemBdrMassTermScale(0, omega) - scale) <=
+          1.0e-14 * std::abs(scale));
+    REQUIRE(std::abs(scale.real()) > 0.0);
+    REQUIRE(std::abs(scale.imag()) > 0.0);
+
+    // The coefficients of the system, with the real and imaginary parts of the scale, and
+    // of the preconditioners, with its magnitude as a loss, on the attribute 5 only.
+    auto CheckSystem =
+        [&](const MaterialPropertyCoefficient &fbr, const MaterialPropertyCoefficient &fbi)
+    {
+      CHECK_THAT(Value(fbr, 5), WithinRel(scale.real() * u, 1.0e-12));
+      CHECK_THAT(Value(fbi, 5), WithinRel(scale.imag() * u, 1.0e-12));
+      CHECK_FALSE(Has(fbr, 3));
+      CHECK_FALSE(Has(fbi, 3));
+    };
+    auto CheckPreconditioner =
+        [&](const MaterialPropertyCoefficient &fbr, const MaterialPropertyCoefficient &fbi)
+    {
+      CHECK_FALSE(Has(fbr, 5));
+      CHECK_THAT(Value(fbi, 5), WithinRel(std::abs(scale) * u, 1.0e-12));
+      CHECK_FALSE(Has(fbi, 3));
+    };
+    if (real)
+    {
+      for (bool scalar : {false, true})
+      {
+        CAPTURE(scalar);
+        auto fbr = Coefficient(), fbi = Coefficient(), pr = Coefficient(),
+             pi = Coefficient();
+        if (scalar)
+        {
+          terms.AddScalarExtraSystemBdrMassCoefficients(omega.real(), fbr, fbi);
+          terms.AddScalarPreconditionerExtraSystemBdrMassCoefficients(omega.real(), pr, pi);
+        }
+        else
+        {
+          terms.AddExtraSystemBdrMassCoefficients(omega.real(), fbr, fbi);
+          terms.AddPreconditionerExtraSystemBdrMassCoefficients(omega.real(), pr, pi);
+        }
+        CheckSystem(fbr, fbi);
+        CheckPreconditioner(pr, pi);
+      }
+    }
+    auto dfbr = Coefficient(), dfbi = Coefficient(), fbr = Coefficient(),
+         fbi = Coefficient(), frbr = Coefficient(), frbi = Coefficient();
+    terms.AddExtraSystemBdrCoefficients(omega, dfbr, dfbi, fbr, fbi, frbr, frbi, nullptr,
+                                        nullptr);
+    CheckSystem(fbr, fbi);
+
+    // A real-valued preconditioner of the 3D solve has one coefficient.
+    auto dfb = Coefficient(), fb = Coefficient(), frb = Coefficient(),
+         empty = Coefficient();
+    terms.AddRealPreconditionerExtraSystemBdrCoefficients(omega, dfb, fb, frb);
+    CheckPreconditioner(empty, fb);
   }
 }
 
