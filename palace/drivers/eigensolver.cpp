@@ -595,6 +595,8 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   const auto &refinement = iodata.model.refinement;
   const int adapt_it = num_solves++;
   const bool blocks = (C || has_A2);  // The linearization also takes the block λ x
+  // Nonconforming meshes only: a conformal refinement marks the mesh again
+  // (BaseSolver::SolveEstimateMarkRefine), which the eigenvectors are not carried through.
   const bool can_warm_start = eigenmode.init_v0 && type == EigenSolverBackend::SLEPC &&
                               nonlinear_type != NonlinearEigenSolver::SLP &&
                               (!blocks || eigenmode.pep_linear) &&

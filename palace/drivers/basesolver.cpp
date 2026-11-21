@@ -302,6 +302,13 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
       mfem::ParMesh &fine_mesh = *mesh.back();
       const auto initial_elem_count = fine_mesh.GetGlobalNE();
       fine_mesh.GeneralRefinement(marked_elements, -1, refinement.max_nc_levels);
+      if (fine_mesh.Conforming())
+      {
+        // Marked from scratch, so the marks are the same with any rebalance and number of
+        // processes. The marking reorders the nodes: nothing may live on the mesh across
+        // this call, so the eigenvalue warm start is limited to nonconforming meshes.
+        fine_mesh.Finalize(/*refine=*/true);
+      }
       UpdateAfterMeshChange(*mesh.back());
       const auto final_elem_count = fine_mesh.GetGlobalNE();
       Mpi::Print(" {} mesh refinement added {:d} elements (initial = {:d}, final = {:d})\n",
