@@ -18,6 +18,7 @@
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
+#include "utils/outputdir.hpp"
 #include "utils/tablecsv.hpp"
 
 namespace palace
@@ -634,15 +635,8 @@ std::string LumpedPortDerivativeName(int idx, const std::string &element)
 void WriteSensitivities(const nlohmann::json &sensitivities,
                         const std::filesystem::path &post_dir, MPI_Comm comm)
 {
-  if (!Mpi::Root(comm))
-  {
-    return;
-  }
-  const auto path = post_dir / "sensitivity.json";
-  std::ofstream fo(path);
-  MFEM_VERIFY(fo.is_open(), "Unable to open sensitivity file " << path << "!");
-  fo << sensitivities.dump(2) << '\n';
-  MFEM_VERIFY(fo.good(), "Failed to write sensitivity file " << path << "!");
+  WriteRootOutputFile(post_dir / "sensitivity.json", comm,
+                      [&](std::ostream &os) { os << sensitivities.dump(2) << '\n'; });
 }
 
 }  // namespace palace

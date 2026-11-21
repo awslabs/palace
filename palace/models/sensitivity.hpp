@@ -67,8 +67,8 @@ nlohmann::json ToJson(const mfem::DenseMatrix &A, double scale);
 std::string MaterialDerivativeName(int m, const std::string &property);
 std::string LumpedPortDerivativeName(int idx, const std::string &element);
 
-// Write the sensitivities to sensitivity.json in the given directory, from the root
-// process.
+// Write the sensitivities to sensitivity.json in the given directory, from the root.
+// Collective.
 void WriteSensitivities(const nlohmann::json &sensitivities,
                         const std::filesystem::path &post_dir, MPI_Comm comm);
 
