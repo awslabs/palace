@@ -646,6 +646,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     on some Intel processors. All processes now use the first process's solution of the
     small dense problems of SLEPc's solvers.
     [PR 1251](https://github.com/awslabs/palace/pull/1251).
+  - Fixed probe postprocessing aborting with "invalid host pointer access" in Debug builds
+    on GPUs, and with MFEM's debug device.
+    [PR 1042](https://github.com/awslabs/palace/pull/1042).
 
 #### Documentation
 
