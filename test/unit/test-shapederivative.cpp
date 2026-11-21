@@ -24,6 +24,30 @@ namespace palace
 namespace
 {
 
+// Refine about half of the elements, chosen by their centers rather than at random, so
+// that the refinement depends neither on the partition nor on earlier tests.
+void RefineHalf(mfem::ParMesh &pmesh)
+{
+  constexpr double w[3] = {12.9898, 78.233, 37.719};
+  mfem::Array<int> marked;
+  mfem::Vector center;
+  for (int e = 0; e < pmesh.GetNE(); e++)
+  {
+    pmesh.GetElementCenter(e, center);
+    double s = 0.0;
+    for (int d = 0; d < center.Size(); d++)
+    {
+      s += w[d] * center(d);
+    }
+    const double r = std::sin(s) * 43758.5453;
+    if (r - std::floor(r) < 0.5)
+    {
+      marked.Append(e);
+    }
+  }
+  pmesh.GeneralRefinement(marked);
+}
+
 // Load a test mesh with alternating domain and boundary attributes. Its nodes are moved by
 // a smooth map, so that the elements are not affine (and are curved for high-order nodes).
 // With amr, it is refined nonconformally, with hanging nodes.
@@ -67,7 +91,7 @@ std::unique_ptr<Mesh> LoadMesh(MPI_Comm comm, const std::string &name, bool amr)
   auto pmesh = std::make_unique<mfem::ParMesh>(comm, smesh);
   if (amr)
   {
-    pmesh->RandomRefinement(0.5);
+    RefineHalf(*pmesh);
   }
   return std::make_unique<Mesh>(std::move(pmesh));
 }

@@ -47,6 +47,30 @@ namespace palace
 namespace
 {
 
+// Refine about half of the elements, chosen by their centers rather than at random, so
+// that the refinement depends neither on the partition nor on earlier tests.
+void RefineHalf(mfem::ParMesh &pmesh)
+{
+  constexpr double w[3] = {12.9898, 78.233, 37.719};
+  mfem::Array<int> marked;
+  mfem::Vector center;
+  for (int e = 0; e < pmesh.GetNE(); e++)
+  {
+    pmesh.GetElementCenter(e, center);
+    double s = 0.0;
+    for (int d = 0; d < center.Size(); d++)
+    {
+      s += w[d] * center(d);
+    }
+    const double r = std::sin(s) * 43758.5453;
+    if (r - std::floor(r) < 0.5)
+    {
+      marked.Append(e);
+    }
+  }
+  pmesh.GeneralRefinement(marked);
+}
+
 // A unit cube of two halves, with attribute 1 below z = 0.5 and 2 above, and the boundary
 // attributes of mfem::Mesh::MakeCartesian3D. The nodes are moved by a smooth map which
 // keeps the faces planar, so the elements are curved. With amr, the mesh is refined
@@ -92,7 +116,7 @@ std::vector<std::unique_ptr<Mesh>> CubeMesh(IoData &iodata, mfem::Element::Type 
   auto pmesh = std::make_unique<mfem::ParMesh>(Mpi::World(), *smesh);
   if (amr)
   {
-    pmesh->RandomRefinement(0.5);
+    RefineHalf(*pmesh);
   }
   std::vector<std::unique_ptr<Mesh>> mesh;
   mesh.push_back(std::make_unique<Mesh>(std::move(pmesh)));
