@@ -1283,6 +1283,86 @@ TEST_CASE("Config Eigenmode iteration limits", "[config][Serial]")
   CHECK(nonlinear.nonlinear_max_it == 500);
 }
 
+TEST_CASE("Config Sensitivity", "[config][Serial]")
+{
+  auto Config = [](const json &sensitivity)
+  {
+    return json{
+        {"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+        {"Boundaries",
+         {{"Ground", {{"Attributes", {1}}}},
+          {"Terminal",
+           {{{"Index", 1}, {"Attributes", {2}}}, {{"Index", 2}, {"Attributes", {3}}}}}}},
+        {"Solver", json::object()},
+        {"Sensitivity", sensitivity}};
+  };
+  using Catch::Matchers::ContainsSubstring;
+
+  SECTION("Velocities and defaults")
+  {
+    const auto config = Config({{"Velocities", "velocities.csv"}});
+    IoData iodata(config, false);
+    const auto &sensitivity = iodata.sensitivity;
+    CHECK(sensitivity.velocities == "velocities.csv");
+    CHECK(!sensitivity.material_properties);
+    CHECK(!sensitivity.lumped_ports);
+    CHECK(!sensitivity.empty());
+    CHECK(IoData(Config(json::object()), false).sensitivity.empty());
+
+    const auto resolved = IoData::ConcretizeDefaults(iodata, config);
+    CHECK(resolved["Sensitivity"]["Velocities"] == "velocities.csv");
+    CHECK(resolved["Sensitivity"]["MaterialProperties"] == false);
+    CHECK(resolved["Sensitivity"]["LumpedPorts"] == false);
+  }
+
+  SECTION("Eigenmode problems")
+  {
+    auto config = Config({{"MaterialProperties", true}, {"LumpedPorts", true}});
+    config["Problem"]["Type"] = "Eigenmode";
+    config["Boundaries"] = {{"PEC", {{"Attributes", {1}}}}};
+    config["Solver"] = {{"Eigenmode", {{"N", 2}, {"Target", 1.0}}}};
+    IoData iodata(config, false);
+    CHECK(iodata.sensitivity.material_properties);
+    CHECK(iodata.sensitivity.lumped_ports);
+
+    auto dispersive = config;
+    dispersive["Domains"]["Materials"][0]["Permittivity"] = {
+        {"HighFrequencyLimit", 2.0},
+        {"Terms",
+         {{{"Type", "Debye"}, {"DeltaPermittivity", 1.5}, {"RelaxationTime", 0.02}}}}};
+    CHECK_THROWS_WITH(IoData(dispersive, false),
+                      ContainsSubstring("frequency-dependent permittivities"));
+
+    config["Problem"]["Type"] = "Electrostatic";
+    config["Boundaries"] = {{"Ground", {{"Attributes", {1}}}},
+                            {"Terminal", {{{"Index", 1}, {"Attributes", {2}}}}}};
+    CHECK_THROWS_WITH(IoData(config, false),
+                      ContainsSubstring("\"LumpedPorts\" is only available"));
+  }
+
+  SECTION("Magnetostatic problems")
+  {
+    auto config = Config({{"Velocities", "velocities.csv"}});
+    config["Problem"]["Type"] = "Magnetostatic";
+    config["Boundaries"] = {{"PEC", {{"Attributes", {1}}}},
+                            {"SurfaceCurrent",
+                             {{{"Index", 1}, {"Attributes", {2}}, {"Direction", "+X"}},
+                              {{"Index", 2}, {"Attributes", {3}}, {"Direction", "+X"}}}}};
+    IoData iodata(config, false);
+    CHECK(iodata.sensitivity.velocities == "velocities.csv");
+
+    auto shorted = config;
+    shorted["Solver"] = {{"Magnetostatic", {{"InactivePorts", "Short"}}}};
+    CHECK_THROWS_WITH(IoData(shorted, false), ContainsSubstring("shorted inactive ports"));
+    auto coaxial = config;
+    coaxial["Boundaries"]["SurfaceCurrent"][1]["Direction"] = "+R";
+    CHECK_THROWS_WITH(IoData(coaxial, false),
+                      ContainsSubstring("coaxial surface current sources"));
+  }
+}
+
 TEST_CASE("Config Magnetostatic InactivePorts", "[config][Serial]")
 {
   auto MixedConfig = []()

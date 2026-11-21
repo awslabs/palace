@@ -474,6 +474,19 @@ TEST_CASE("Schema Validation - Sub-schema by Key", "[schema][Serial]")
     CHECK(err.empty());
   }
 
+  SECTION("Sensitivity")
+  {
+    json sensitivity = {{"Velocities", "velocities.csv"},
+                        {"MaterialProperties", true},
+                        {"LumpedPorts", true}};
+    CHECK(ValidateConfig(sensitivity, "Sensitivity").empty());
+    CHECK(ValidateConfig(json::object(), "Sensitivity").empty());
+
+    // The velocities are the path of a table, and there are no other keys.
+    CHECK(!ValidateConfig({{"Velocities", 1}}, "Sensitivity").empty());
+    CHECK(!ValidateConfig({{"Objectives", json::array()}}, "Sensitivity").empty());
+  }
+
   SECTION("Valid Material")
   {
     json mat = {{"Attributes", {1}}, {"Permittivity", 2.0}};

@@ -3384,6 +3384,29 @@ void SplitMeshElements(std::unique_ptr<mfem::Mesh> &orig_mesh, bool make_simplex
 namespace mesh
 {
 
+std::unique_ptr<mfem::Mesh> ReadInputMesh(const IoData &iodata)
+{
+  auto mesh = LoadMesh(iodata.model.mesh, iodata.model.remove_curvature, iodata.boundaries);
+  // MFEM's reader moves the uniformly spaced nodes of a Gmsh mesh to the points of its
+  // default basis (from the third order): restore those of the file.
+  mfem::named_ifgzstream fi(iodata.model.mesh);
+  std::string header;
+  fi >> header;
+  if (header == "$MeshFormat" && !iodata.model.remove_curvature)
+  {
+    const auto &nodes = *mesh->GetNodes();
+    auto *fec =
+        new mfem::H1_FECollection(nodes.FESpace()->GetMaxElementOrder(), mesh->Dimension(),
+                                  mfem::BasisType::ClosedUniform);
+    auto *fes = new mfem::FiniteElementSpace(mesh.get(), fec, mesh->SpaceDimension(),
+                                             nodes.FESpace()->GetOrdering());
+    auto *uniform = new mfem::GridFunction(fes);
+    uniform->MakeOwner(fec);
+    mesh->SetNodalGridFunction(uniform, true);
+  }
+  return mesh;
+}
+
 // Conformally bisect a set of mesh edges by inserting a midpoint on each and splitting
 // every tetrahedron and boundary element incident on a split edge into two. Unlike
 // mfem::Mesh::GeneralRefinement, this performs a purely local edge-fan split with no

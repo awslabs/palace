@@ -1037,24 +1037,6 @@ RootFacet GetRootFacet(const mfem::Mesh &mesh, const mfem::CoarseFineTransformat
   return {emb.parent, facet, Measure(x) / Measure(y)};
 }
 
-// Gather lists of values of all processes on the root process.
-template <typename T>
-std::vector<T> GatherOnRoot(MPI_Comm comm, const std::vector<T> &local)
-{
-  const int num_procs = Mpi::Size(comm);
-  int count = static_cast<int>(local.size());
-  std::vector<int> counts(Mpi::Root(comm) ? num_procs : 0), displs(counts.size(), 0);
-  MPI_Gather(&count, 1, MPI_INT, counts.data(), 1, MPI_INT, 0, comm);
-  for (std::size_t p = 1; p < counts.size(); p++)
-  {
-    displs[p] = displs[p - 1] + counts[p - 1];
-  }
-  std::vector<T> global(counts.empty() ? 0 : displs.back() + counts.back());
-  MPI_Gatherv(local.data(), count, mpi::DataType<T>(), global.data(), counts.data(),
-              displs.data(), mpi::DataType<T>(), 0, comm);
-  return global;
-}
-
 // The sides of a coarse element (split entities, versions, carriers, and side label), as
 // integers for communication.
 constexpr int sides_stride = 7;
@@ -1137,9 +1119,9 @@ bool ComputeRootCrackSides(const mfem::ParMesh &cmesh,
   {
     return false;
   }
-  const auto global_sheet = GatherOnRoot(comm, sheet);
-  const auto global_sheet_fraction = GatherOnRoot(comm, sheet_fraction);
-  const auto global_exterior = GatherOnRoot(comm, exterior);
+  const auto global_sheet = Mpi::GatherOnRoot(sheet, comm);
+  const auto global_sheet_fraction = Mpi::GatherOnRoot(sheet_fraction, comm);
+  const auto global_exterior = Mpi::GatherOnRoot(exterior, comm);
 
   // Rebuild the coarsest mesh on the root process, topologically (the sides do not depend
   // on the vertex coordinates), with the root elements in order and boundary elements for

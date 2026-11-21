@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:5-2-0",
+  "$id": "urn:palace:schema:5-3-0",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -411,6 +411,28 @@
           "$ref": "#/$defs/Linear",
           "title": "Linear Solver",
           "description": "Configuration for the linear solver used by all simulation types."
+        }
+      }
+    },
+    "Sensitivity": {
+      "type": "object",
+      "title": "Sensitivity",
+      "description": "Derivatives of the capacitances, the inductances, or the frequencies and quality factors of the eigenmodes, with respect to design parameters and to material and lumped port properties, written to `sensitivity.json` in [`/Problem/Output`](@ref config-problem-output). Available when [`/Problem/Type`](@ref config-problem-type) is `\"Electrostatic\"`, `\"Magnetostatic\"` or `\"Eigenmode\"`.",
+      "additionalProperties": false,
+      "properties": {
+        "Velocities": {
+          "type": "string",
+          "description": "Path to a CSV table of the velocities of the design parameters at nodes of the input mesh: the columns `x`, `y` and `z` of the coordinates of each node, in mesh length units, then the columns `<name>.x`, `<name>.y` and `<name>.z` of the velocity of each parameter, in mesh length units per unit of the parameter. The velocity is zero at the nodes the table does not list."
+        },
+        "MaterialProperties": {
+          "type": "boolean",
+          "description": "When `true`, computes the derivatives with respect to relative changes of the properties of each material of [`/Domains/Materials`](@ref config-domains-materials): its permittivity (electrostatic and eigenmode problems), its permeability and London depth (magnetostatic and eigenmode problems), and its loss tangent and conductivity (eigenmode problems), where nonzero.",
+          "default": false
+        },
+        "LumpedPorts": {
+          "type": "boolean",
+          "description": "When `true`, computes the derivatives of an eigenmode problem with respect to relative changes of the resistance, inductance and capacitance of each [`/Boundaries/LumpedPort`](@ref config-boundaries-lumpedport).",
+          "default": false
         }
       }
     }

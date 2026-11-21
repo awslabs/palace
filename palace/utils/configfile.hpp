@@ -1358,6 +1358,23 @@ public:
   SolverData(const json &solver);
 };
 
+struct SensitivityData
+{
+public:
+  // Table of the velocities of the design parameters at the nodes of the input mesh.
+  std::string velocities = "";
+
+  // Compute the derivatives with respect to the properties of each material, and to the
+  // resistance, inductance and capacitance of each lumped port.
+  bool material_properties = false;
+  bool lumped_ports = false;
+
+  bool empty() const { return velocities.empty() && !material_properties && !lumped_ports; }
+
+  SensitivityData() = default;
+  SensitivityData(const json &sensitivity);
+};
+
 // Calculate the number of steps from [start, end) in increments of delta > 0, for end >=
 // start. Will only include end if it is a multiple of delta beyond start.
 int GetNumSteps(double start, double end, double delta);

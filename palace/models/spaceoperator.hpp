@@ -29,6 +29,7 @@ namespace palace
 
 class IoData;
 class Mesh;
+class ShapeDerivativeOperator;
 
 namespace config
 {
@@ -40,6 +41,7 @@ struct SolverData;
 
 }  // namespace config
 
+enum class MaterialProperty : char;
 enum class ProblemType : char;
 
 //
@@ -515,6 +517,25 @@ public:
   // shifted) or is the assembled coarse matrix (a single level). Then use GetSystemMatrix.
   std::unique_ptr<ComplexOperator> GetSystemOperator(double omega,
                                                      const ComplexOperator &P);
+
+  // Construct the derivatives with respect to the positions of the mesh nodes of the real
+  // and imaginary parts of the form a0 K + a1 C + a2 M + A2(ω), with A2 at complex ω as for
+  // the eigenmode solve. Not available with Floquet periodicity or wave ports.
+  std::array<std::unique_ptr<ShapeDerivativeOperator>, 2>
+  GetSystemShapeDerivative(std::complex<double> a0, std::complex<double> a1,
+                           std::complex<double> a2, std::complex<double> omega);
+
+  // Construct the derivative of the same form with respect to a relative change of a
+  // property of the material of the given domain attributes, and those with respect to
+  // relative changes of the R, L and C of element elem of lumped port idx, or of all its
+  // elements if elem < 0 (null for those of R, L and C it does not have).
+  std::unique_ptr<ComplexOperator>
+  GetSystemMaterialDerivative(MaterialProperty property, const std::vector<int> &attributes,
+                              std::complex<double> a0, std::complex<double> a1,
+                              std::complex<double> a2, std::complex<double> omega);
+  std::array<std::unique_ptr<ComplexOperator>, 3>
+  GetLumpedPortDerivatives(int idx, int elem, std::complex<double> a0,
+                           std::complex<double> a1, std::complex<double> a2);
 
   // Construct and return the discrete curl or gradient matrices.
   const Operator &GetGradMatrix() const
