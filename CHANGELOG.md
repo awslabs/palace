@@ -649,6 +649,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Fixed probe postprocessing aborting with "invalid host pointer access" in Debug builds
     on GPUs, and with MFEM's debug device.
     [PR 1042](https://github.com/awslabs/palace/pull/1042).
+  - Added an MFEM patch for [mfem/mfem#5780](https://github.com/mfem/mfem/pull/5780),
+    which fixes the unit tests on MFEM's debug device that could segfault at random in the
+    AMS setup, as seen on 2 processes: with hypre built without GPU support, the debug
+    device could protect a heap page of hypre with unrelated data on it.
+    [PR 1266](https://github.com/awslabs/palace/pull/1266).
 
 #### Documentation
 
