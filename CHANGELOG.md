@@ -125,7 +125,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     AMS gathers the coarse levels of its auxiliary space BoomerAMG hierarchies onto fewer
     processes during the solve and runs the additive Pi-space corrections concurrently.
     `config["Solver"]["Linear"]["AMSAgglomerationTarget"]` sets the target number of rows
-    per process (`0` disables it). Results agree up to the summation order. SchemaVer 5-1-0
+    per process (`0` disables it). Results agree up to the summation order. SchemaVer 5-2-0
     [PR 1154](https://github.com/awslabs/palace/pull/1154).
   - When AMS is the coarse solver of geometric multigrid for a singular operator (see
     [`"AMSSingularOperator"`](https://awslabs.github.io/palace/dev/config/reference/#config-solver-linear-amssingularoperator)),
