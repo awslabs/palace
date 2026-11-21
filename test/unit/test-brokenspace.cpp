@@ -2264,8 +2264,10 @@ TEST_CASE("Interface dielectric energy on interior boundaries separating fields"
                               t_i, epsilon_i);
     REQUIRE(sum_sides.IsValid());
     REQUIRE(cut_ref.IsValid());
-    const double val = sum_sides.Eval(*E), ref = cut_ref.Eval(*cut_E),
-                 avg = average.Eval(*E);
+    // The constant materials do not depend on the frequency of the fields.
+    constexpr double omega = 1.0;
+    const double val = sum_sides.Eval(*E, omega), ref = cut_ref.Eval(*cut_E, omega),
+                 avg = average.Eval(*E, omega);
     const bool qualifies = (epr_type == InterfaceDielectric::DEFAULT) ||
                            ((epr_type == InterfaceDielectric::MA) != dielectric);
     CAPTURE(val, ref, avg);

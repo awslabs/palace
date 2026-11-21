@@ -7,7 +7,6 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
-#include <fstream>
 #include <functional>
 #include <map>
 #include <memory>
@@ -63,7 +62,7 @@ private:
     int num_comp = 0;
   };
 
-  std::fstream pvd_stream;
+  std::string pvd_datasets;  // the <DataSet> lines of the collection file
   std::map<std::string, PointField> boundary_point_fields;
   std::map<std::string, PointField> domain_point_fields;
   std::map<std::string, CellField> domain_cell_fields;

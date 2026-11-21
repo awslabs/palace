@@ -11,6 +11,8 @@
 #include "fem/libceed/ceed.hpp"
 #include "linalg/vector.hpp"
 
+union CeedIntScalar;
+
 namespace palace
 {
 
@@ -71,6 +73,15 @@ void ApplyAddGroupOperators(const std::vector<CeedGroupOperator> &groups,
 void ApplyAddComplexGroupOperators(const std::vector<CeedGroupOperator> &groups,
                                    const std::array<const Vector *, 8> &srcs,
                                    const Vector &out);
+
+// Overwrite the values data[0..n) at the given offset (in CeedIntScalar entries) of the
+// retained QFunction context of each group operator, for example a material property
+// table at a new frequency with the layout the operators were assembled with. Every group
+// must have a retained context of sufficient size. No reassembly is needed: libCEED copies
+// the updated host data to the device on the next apply.
+void UpdateGroupOperatorContexts(const std::vector<CeedGroupOperator> &groups,
+                                 std::size_t offset,
+                                 const std::vector<CeedIntScalar> &data);
 
 // Destroy the libCEED references owned by a group-operator vector and clear it. The Ceed
 // context itself is borrowed and is not destroyed here.

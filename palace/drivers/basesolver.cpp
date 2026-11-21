@@ -127,19 +127,10 @@ json LoadMetadata(const fs::path &post_dir)
 
 void WriteMetadata(const fs::path &post_dir, const json &meta)
 {
-  // Write to a temporary file and atomically rename it into place so a concurrent reader
-  // (e.g. an external monitor polling palace.json mid-run) never observes a partial file.
-  std::string path = post_dir / "palace.json";
-  std::string tmp_path = post_dir / "palace.json.tmp";
-  {
-    std::ofstream fo(tmp_path);
-    if (!fo.is_open())
-    {
-      MFEM_ABORT("Unable to open metadata file \"" << tmp_path << "\"!");
-    }
-    fo << meta.dump(2) << '\n';
-  }
-  fs::rename(tmp_path, path);
+  // Replaced through a temporary file, so a concurrent reader (e.g. an external monitor
+  // polling palace.json mid-run) never observes a partial file.
+  WriteOutputFile(post_dir / "palace.json",
+                  [&](std::ostream &fo) { fo << meta.dump(2) << '\n'; });
 }
 
 // Map an MFEM geometry type to its lowercase JSON key used in the SavedAdaptedMesh block.

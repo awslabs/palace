@@ -123,19 +123,22 @@ runs:
           ctest --test-dir "$TEST_DIR" --output-on-failure -j "$JOBS" "$@"
         }
 
+        # Each selection has a timeout per test, so that a hung case fails instead of
+        # holding the runner to the job limit: 15 min for the regression cases (the
+        # slowest takes under 4 min), 1 h for the long ones (under 30 min).
         # Map the action's `test-cases` input onto a ctest selection. "default"
         # is the always-on regression label; "long" the heavy [Long] cases;
         # anything else is a space-separated list of explicit case names.
         run_cases() {
           local raw="$1"
           if [[ -z "$raw" || "$raw" == "default" ]]; then
-            run_ctest -L "^regression$"
+            run_ctest --timeout 900 -L "^regression$"
           elif [[ "$raw" == "long" ]]; then
-            run_ctest -L "^long$"
+            run_ctest --timeout 3600 -L "^long$"
           else
             local regex
             regex="$(echo "$raw" | tr ' ' '|')"
-            run_ctest -R "^(regression|long)-(${regex})$"
+            run_ctest --timeout 3600 -R "^(regression|long)-(${regex})$"
           fi
         }
 
