@@ -331,13 +331,15 @@ TEST_CASE("PlaneWaveOperator background around the total field",
     op.SetUpBackground(mat_op, nd_fespace);
     return op.GetSource(1).c;
   };
-  config::MaterialData dielectric, magnetic, lossy, conductor, anisotropic;
+  config::MaterialData dielectric, magnetic, lossy, conductor, anisotropic, dispersive;
   dielectric.epsilon_r = 4.0;
   magnetic.mu_r = 4.0;
   lossy.epsilon_r = 4.0;
   lossy.tandelta = 1.0e-2;
   conductor.sigma = 1.0;
   anisotropic.epsilon_r.s[0] = 2.0;
+  dispersive.epsilon_r = 4.0;
+  dispersive.permittivity_terms = {config::LorentzData{1.0, 1.0, 0.0}};
 
   // Vacuum, any material inside the total-field region, or one homogeneous isotropic
   // material around it, whose speed of light is used.
@@ -348,9 +350,9 @@ TEST_CASE("PlaneWaveOperator background around the total field",
   CHECK(Background({1, 2}, {{1, anisotropic}, {2, lossy}, {3, dielectric}}) ==
         Catch::Approx(0.5));
 
-  // A lossy or anisotropic material, two materials, even with the same speed of light, or
-  // no scattered-field region around the total-field region.
-  for (const auto &material : {lossy, conductor, anisotropic})
+  // A lossy, anisotropic or frequency-dependent material, two materials, even with the same
+  // speed of light, or no scattered-field region around the total-field region.
+  for (const auto &material : {lossy, conductor, anisotropic, dispersive})
   {
     CHECK_THROWS(Background({1}, {{2, material}, {3, material}}));
   }
