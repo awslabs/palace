@@ -426,8 +426,8 @@ Estimation                      // < Time spent computing element-wise error est
 Adaptation                      // < Time spent performing adaptive mesh refinement (AMR)
   Rebalancing                   // < Rebalancing time for AMR simulations with rebalancing,
                                 //   not counting the three entries below: the balance
-                                //   checks and the save of the adapted mesh, which can
-                                //   dominate
+                                //   checks and the gather of the adapted mesh to save it,
+                                //   which can dominate; its write is timed under Disk IO
     Graph Gather                // < Gathering the graph of the mesh elements on the root
     Graph Partition             // < Partitioning that graph with METIS on the root, with
                                 //   the broadcast of its outcome and the scatter of the
