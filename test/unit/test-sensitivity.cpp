@@ -1084,6 +1084,89 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   }
 }
 
+TEST_CASE_METHOD(palace::test::SharedTempDir, "Input mesh nodes of a Gmsh file",
+                 "[sensitivity][Serial]")
+{
+  // A third-order tetrahedron, whose nodes MFEM's reader moves from the uniformly spaced
+  // points of the file to the Gauss-Lobatto points of its basis, and ReadInputMesh back.
+  using Point = std::array<double, 3>;
+  const std::array<Point, 4> v = {
+      {{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}, {0.0, 1.0, 0.0}, {0.0, 0.0, 1.0}}};
+  std::vector<Point> x(v.begin(), v.end());
+  for (const auto &[a, b] : {std::pair{0, 1}, std::pair{1, 2}, std::pair{2, 0},
+                             std::pair{3, 0}, std::pair{3, 2}, std::pair{3, 1}})
+  {
+    for (const double t : {1.0 / 3.0, 2.0 / 3.0})
+    {
+      x.push_back({v[a][0] + t * (v[b][0] - v[a][0]), v[a][1] + t * (v[b][1] - v[a][1]),
+                   v[a][2] + t * (v[b][2] - v[a][2])});
+    }
+  }
+  for (const auto &f :
+       {std::array{0, 2, 1}, std::array{0, 1, 3}, std::array{0, 3, 2}, std::array{3, 1, 2}})
+  {
+    Point c = {0.0, 0.0, 0.0};
+    for (const int k : f)
+    {
+      for (int d = 0; d < 3; d++)
+      {
+        c[d] += v[k][d] / 3.0;
+      }
+    }
+    x.push_back(c);
+  }
+  const auto path = temp_dir / "tet20.msh";
+  {
+    std::ofstream fo(path);
+    fo.precision(17);
+    fo << "$MeshFormat\n2.2 0 8\n$EndMeshFormat\n$Nodes\n" << x.size() << "\n";
+    for (std::size_t k = 0; k < x.size(); k++)
+    {
+      fo << k + 1 << " " << x[k][0] << " " << x[k][1] << " " << x[k][2] << "\n";
+    }
+    fo << "$EndNodes\n$Elements\n1\n1 29 2 1 1";
+    for (std::size_t k = 0; k < x.size(); k++)
+    {
+      fo << " " << k + 1;
+    }
+    fo << "\n$EndElements\n";
+  }
+  auto NodePoints = [](const mfem::Mesh &mesh)
+  {
+    const auto &nodes = *mesh.GetNodes();
+    const auto &fespace = *nodes.FESpace();
+    std::vector<Point> points;
+    for (int i = 0; i < fespace.GetNDofs(); i++)
+    {
+      points.push_back({nodes(fespace.DofToVDof(i, 0)), nodes(fespace.DofToVDof(i, 1)),
+                        nodes(fespace.DofToVDof(i, 2))});
+    }
+    return points;
+  };
+  auto Same = [&](std::vector<Point> points)
+  {
+    return std::ranges::all_of(points,
+                               [&](const Point &p)
+                               {
+                                 return std::ranges::any_of(
+                                     x,
+                                     [&](const Point &q)
+                                     {
+                                       return std::abs(p[0] - q[0]) +
+                                                  std::abs(p[1] - q[1]) +
+                                                  std::abs(p[2] - q[2]) <
+                                              1.0e-14;
+                                     });
+                               });
+  };
+  IoData iodata(Units(1.0, 1.0));
+  iodata.model.mesh = path.string();
+  const auto mesh = mesh::ReadInputMesh(iodata);
+  REQUIRE(mesh->GetNodes()->FESpace()->GetNDofs() == static_cast<int>(x.size()));
+  CHECK(Same(NodePoints(*mesh)));
+  CHECK(!Same(NodePoints(mfem::Mesh(path.string()))));
+}
+
 TEST_CASE_METHOD(palace::test::SharedTempDir, "Design velocities",
                  "[sensitivity][Serial][Parallel]")
 {
