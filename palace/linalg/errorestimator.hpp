@@ -261,6 +261,16 @@ public:
   void AddErrorIndicator(const VecType &E, const VecType &B, std::optional<double> Et,
                          double omega, ErrorIndicator &indicator) const
     requires std::is_same_v<VecType, ComplexVector>;
+
+  // The same for a total-field/scattered-field solution: the indicators of the total field
+  // E_t, B_t on the elements with an attribute of tf_attr_marker (the total-field region),
+  // where the discrete solution is the total field, and of the scattered field E_s, B_s on
+  // all other elements, where it is the scattered field. They are normalized by the energy
+  // norm of the recovered fluxes of the same fields, element by element.
+  void AddErrorIndicator(const VecType &E_t, const VecType &B_t, const VecType &E_s,
+                         const VecType &B_s, const mfem::Array<int> &tf_attr_marker,
+                         double omega, ErrorIndicator &indicator) const
+    requires std::is_same_v<VecType, ComplexVector>;
 };
 
 // 2D boundary mode error estimator. Owns its own single-level FE spaces for flux

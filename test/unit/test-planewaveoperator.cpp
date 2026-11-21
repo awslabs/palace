@@ -234,69 +234,67 @@ TEST_CASE("PlaneWaveOperator right-hand side", "[planewaveoperator][Serial][Para
   CHECK(err[1] <= 1.0e-12 * err[2]);
 }
 
-TEST_CASE("PlaneWaveOperator boundary touching the total field",
+TEST_CASE("PlaneWaveOperator total and scattered fields",
           "[planewaveoperator][Serial][Parallel]")
 {
+  // The TF/SF solution x is the total field on the dofs of the closure of the total-field
+  // region and the scattered field elsewhere: E_t = x + (1 - M) g and E_s = x - M g, so
+  // that E_t - E_s = g everywhere, E_t = x on the marked dofs and E_s = x on the others.
+  // Without a scatterer, x = M g gives E_t = g and E_s = 0.
   const int order = GENERATE(1, 2);
-  Mesh mesh(MakeMesh(3));
+  Mesh mesh(MakeMesh(6));
   mfem::ND_FECollection nd_fec(order, 3);
   FiniteElementSpace nd_fespace(mesh, &nd_fec);
   Units units(1.0, 1.0);
+  const double omega = 2.0 * std::numbers::pi;
   std::map<int, config::PlaneWaveData> plane_wave = {
-      {1, MakePlaneWave({1}, {0.0, 0.0, 1.0}, {1.0, 0.0, 0.0})},
-      {2, MakePlaneWave({2}, {0.0, 0.0, 1.0}, {1.0, 0.0, 0.0})},
-      {3, MakePlaneWave({1, 2, 3}, {0.0, 0.0, 1.0}, {1.0, 0.0, 0.0})}};
+      {1, MakePlaneWave({1}, {1.0, 2.0, 2.0}, {0.0, 1.0, 0.0}, 1.5)}};
   PlaneWaveOperator op(plane_wave, units, mesh.Get());
 
-  // Boundary attributes of the faces x = 0 and x = 1 of the cube.
-  const auto &pmesh = mesh.Get();
-  int attr_x[2] = {0, 0};
-  mfem::Array<int> v;
-  for (int i = 0; i < pmesh.GetNBE(); i++)
+  const int n = nd_fespace.GetTrueVSize();
+  ComplexVector g(n), x(n), E_t, E_s;
+  REQUIRE(op.GetIncidentField(1, omega, nd_fespace, g));
+  CHECK_FALSE(op.GetTotalAndScatteredField(2, omega, nd_fespace, x, E_t, E_s));
+  const Vector &marker = op.GetTotalFieldMarker(1, nd_fespace);
+  for (int i = 0; i < n; i++)
   {
-    pmesh.GetBdrElementVertices(i, v);
-    double xc = 0.0;
-    for (int j : v)
+    // An arbitrary solution, then the one without a scatterer.
+    x.Real()(i) = std::sin(1.0 + i);
+    x.Imag()(i) = std::cos(2.0 * i);
+  }
+  for (bool empty : {false, true})
+  {
+    if (empty)
     {
-      xc += pmesh.GetVertex(j)[0] / v.Size();
+      for (int i = 0; i < n; i++)
+      {
+        x.Real()(i) = marker(i) * g.Real()(i);
+        x.Imag()(i) = marker(i) * g.Imag()(i);
+      }
     }
-    if (std::abs(xc) < 1.0e-12)
+    REQUIRE(op.GetTotalAndScatteredField(1, omega, nd_fespace, x, E_t, E_s));
+    REQUIRE(E_t.Size() == n);
+    REQUIRE(E_s.Size() == n);
+    double err[4] = {0.0, 0.0, 0.0, 0.0};  // E_t - E_s - g, E_t or E_s - x, E_t - g, E_s
+    for (int i = 0; i < n; i++)
     {
-      attr_x[0] = pmesh.GetBdrAttribute(i);
+      const std::complex<double> et(E_t.Real()(i), E_t.Imag()(i)),
+          es(E_s.Real()(i), E_s.Imag()(i)), gi(g.Real()(i), g.Imag()(i)),
+          xi(x.Real()(i), x.Imag()(i));
+      err[0] = std::max(err[0], std::abs(et - es - gi));
+      err[1] = std::max(err[1], std::abs(((marker(i) == 1.0) ? et : es) - xi));
+      err[2] = std::max(err[2], std::abs(et - gi));
+      err[3] = std::max(err[3], std::abs(es));
     }
-    else if (std::abs(xc - 1.0) < 1.0e-12)
+    Mpi::GlobalMax(4, err, nd_fespace.GetComm());
+    CHECK(err[0] <= 1.0e-14);
+    CHECK(err[1] == 0.0);
+    if (empty)
     {
-      attr_x[1] = pmesh.GetBdrAttribute(i);
+      CHECK(err[2] <= 1.0e-14);
+      CHECK(err[3] <= 1.0e-14);
     }
   }
-  Mpi::GlobalMax(2, attr_x, nd_fespace.GetComm());
-  REQUIRE(attr_x[0] > 0);
-  REQUIRE(attr_x[1] > 0);
-  auto Marker = [&](const std::vector<int> &attributes)
-  {
-    mfem::Array<int> marker(pmesh.bdr_attributes.Max());
-    marker = 0;
-    for (auto attr : attributes)
-    {
-      marker[attr - 1] = 1;
-    }
-    return marker;
-  };
-  std::vector<int> all_attributes;
-  for (int attr : pmesh.bdr_attributes)
-  {
-    all_attributes.push_back(attr);
-  }
-
-  // The inner cube is separated from the boundary by a layer of elements.
-  CHECK_FALSE(op.TouchesTotalField(1, nd_fespace, Marker(all_attributes)));
-
-  // The slab x < 1/3 touches the face x = 0, not the face x = 1.
-  CHECK(op.TouchesTotalField(2, nd_fespace, Marker({attr_x[0]})));
-  CHECK_FALSE(op.TouchesTotalField(2, nd_fespace, Marker({attr_x[1]})));
-
-  // The whole cube touches every face.
-  CHECK(op.TouchesTotalField(3, nd_fespace, Marker({attr_x[1]})));
 }
 
 TEST_CASE("PlaneWaveOperator background around the total field",

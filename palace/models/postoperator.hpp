@@ -143,6 +143,11 @@ protected:
   //   Bt = -(kn/omega)(z_hat x Et) + (1/(i*omega))(grad_t(Ez) x z_hat)
   std::unique_ptr<GridFunction> En, Bt_inplane;
 
+  // Driven problems with plane wave excitations: the scattered fields E_s = E - E_inc and
+  // B_s, used for the far field and written for visualization. E and B are the total
+  // field.
+  std::unique_ptr<GridFunction> Es, Bs;
+
   // Field output format control flags.
   bool enable_paraview_output = false;
   bool enable_gridfunction_output = false;
@@ -489,9 +494,14 @@ public:
   // above or some sub-set therefore).
   //
   // The measure functions will also do logging of (some) measurements to stdout.
-  std::optional<double> MeasureAndPrintAll(int ex_idx, int step, const ComplexVector &e,
-                                           const ComplexVector &b,
-                                           std::complex<double> omega)
+  //
+  // For driven problems, e and b are the total field. With a plane wave excitation, e_s and
+  // b_s are the scattered field, for the far field: without them, it is taken to be the
+  // total field.
+  std::optional<double>
+  MeasureAndPrintAll(int ex_idx, int step, const ComplexVector &e, const ComplexVector &b,
+                     std::complex<double> omega, const ComplexVector *e_s = nullptr,
+                     const ComplexVector *b_s = nullptr)
     requires(solver_t == ProblemType::DRIVEN);
 
   // Configure and evaluate the exact reduced-coordinate default output path (domain

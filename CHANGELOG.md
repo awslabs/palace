@@ -52,16 +52,18 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     [PR 1110](https://github.com/awslabs/palace/pull/1110).
   - Incident plane wave excitations (`Domains.PlaneWave`) for driven simulations, with the
     total-field/scattered-field formulation: the plane wave is injected on the boundary of a
-    total-field region given by volume attributes, the solution is the total field inside
-    and the scattered field outside, and the truncation of the domain only sees the
-    scattered field. With a far-field surface (`Boundaries.Postprocessing.FarField`) in the
-    scattered-field region, the bistatic radar cross section is written in the far-field
-    directions (`farfield-rcs.csv`), and the monostatic one in the backscattering direction
-    of each plane wave (`rcs-monostatic.csv`). On periodic cells, the envelope of the
-    incident field is used with a Floquet wave vector, which is checked at setup against
-    the wave vector of the plane wave over the lattice translations, for all the
-    frequencies of the sweep. See the new example `examples/rcs_coated_sphere`. SchemaVer
-    5-3-0.
+    total-field region given by volume attributes, the unknown is the total field inside and
+    the scattered field outside, and the truncation of the domain only sees the scattered
+    field. The outputs are the total field everywhere, the scattered field is also written
+    for visualization, and the error estimates take the total field inside the region and
+    the scattered field outside. With a far-field surface
+    (`Boundaries.Postprocessing.FarField`), computed from the scattered field, the bistatic
+    radar cross section is written in the far-field directions (`farfield-rcs.csv`), and
+    the monostatic one in the backscattering direction of each plane wave
+    (`rcs-monostatic.csv`). On periodic cells, the envelope of the incident field is used
+    with a Floquet wave vector, which is checked at setup against the wave vector of the
+    plane wave over the lattice translations, for all the frequencies of the sweep. See the
+    new example `examples/rcs_coated_sphere`. SchemaVer 5-3-0.
     [PR 1212](https://github.com/awslabs/palace/pull/1212).
 
 #### Interface Changes

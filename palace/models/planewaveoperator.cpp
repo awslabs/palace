@@ -518,33 +518,40 @@ void PlaneWaveOperator::CheckPeriodicity(const config::PeriodicBoundaryData &per
   }
 }
 
-bool PlaneWaveOperator::TouchesTotalField(int idx, const FiniteElementSpace &nd_fespace,
-                                          const mfem::Array<int> &bdr_attr_marker) const
+bool PlaneWaveOperator::GetTotalAndScatteredField(int idx, double omega,
+                                                  const FiniteElementSpace &nd_fespace,
+                                                  const ComplexVector &x,
+                                                  ComplexVector &E_t,
+                                                  ComplexVector &E_s) const
 {
-  const mfem::ParFiniteElementSpace &fes = nd_fespace.Get();
-  const mfem::ParMesh &mesh = *fes.GetParMesh();
-  mfem::Array<int> lmark, vdofs;
-  GetLocalTotalFieldMarker(idx, fes, lmark);
-  bool touches = false;
-  for (int i = 0; i < mesh.GetNBE() && !touches; i++)
+  if (sources.find(idx) == sources.end())
   {
-    const int attr = mesh.GetBdrAttribute(i);
-    if (attr > bdr_attr_marker.Size() || !bdr_attr_marker[attr - 1])
-    {
-      continue;
-    }
-    fes.GetBdrElementVDofs(i, vdofs);
-    for (int d : vdofs)
-    {
-      if (lmark[d >= 0 ? d : -1 - d])
-      {
-        touches = true;
-        break;
-      }
-    }
+    return false;
   }
-  Mpi::GlobalOr(1, &touches, fes.GetComm());
-  return touches;
+  const Vector &tmark = GetTotalFieldMarker(idx, nd_fespace);
+  const int n = nd_fespace.GetTrueVSize();
+  ComplexVector g(n);
+  g.UseDevice(true);
+  GetIncidentField(idx, omega, nd_fespace, g);
+  E_t.SetSize(n);
+  E_s.SetSize(n);
+  const auto *m = tmark.HostRead();
+  const auto *xr = x.Real().HostRead();
+  const auto *xi = x.Imag().HostRead();
+  const auto *gr = g.Real().HostRead();
+  const auto *gi = g.Imag().HostRead();
+  auto *tr = E_t.Real().HostWrite();
+  auto *ti = E_t.Imag().HostWrite();
+  auto *sr = E_s.Real().HostWrite();
+  auto *si = E_s.Imag().HostWrite();
+  for (int i = 0; i < n; i++)
+  {
+    tr[i] = xr[i] + (1.0 - m[i]) * gr[i];
+    ti[i] = xi[i] + (1.0 - m[i]) * gi[i];
+    sr[i] = xr[i] - m[i] * gr[i];
+    si[i] = xi[i] - m[i] * gi[i];
+  }
+  return true;
 }
 
 }  // namespace palace

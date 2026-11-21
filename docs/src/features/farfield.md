@@ -155,11 +155,11 @@ its radar cross section
 \sigma(\theta, \phi) = 4 \pi \frac{|r \mathbf{E}_s(\mathbf{r}_0)|^2}{|E_0|^2}
 ```
 
-where ``E_0`` is the amplitude of the incident electric field. The far-field
-surface must lie in the scattered-field region, outside of the elements of the
-total-field attributes of every plane wave: *Palace* stops with an error
-otherwise. See [Plane Wave Excitation and Radar Cross Section](planewave.md) for
-the setup and the [coated sphere example](../examples/rcs_coated_sphere.md).
+where ``E_0`` is the amplitude of the incident electric field. The far field is
+computed from the scattered field, which *Palace* reconstructs everywhere, so the
+far-field surface may lie anywhere in the background material around the scatterer.
+See [Plane Wave Excitation and Radar Cross Section](planewave.md) for the setup and
+the [coated sphere example](../examples/rcs_coated_sphere.md).
 
 `farfield-rcs.csv` has the same rows as `farfield-rE.csv` (when
 `"ThetaPhis"` or `"NSample"` give any direction), with the columns:
