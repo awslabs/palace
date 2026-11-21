@@ -153,47 +153,67 @@ Counts GetCounts(mfem::Mesh &mesh)
   return c;
 }
 
-// All the elements of a parallel mesh, on the root process, sorted: attribute, refinement
-// flag (tetrahedra) and vertex coordinates in the vertex order of the element, which gives
-// its refinement edge.
-std::vector<std::vector<double>> GatherElements(mfem::ParMesh &mesh)
+// The rows of a mesh, sorted, on the root process of a parallel mesh (empty elsewhere): for
+// each element, its attribute, its refinement flag (tetrahedra) and its vertex coordinates
+// in its vertex order, which gives its refinement edge; for each boundary element, its
+// attribute and its vertex coordinates in its vertex order.
+template <bool boundary>
+std::vector<std::vector<double>> SortedRows(const mfem::Mesh &mesh)
 {
   std::vector<double> local;
-  const int nv = mesh.Dimension() + 1, sdim = mesh.SpaceDimension();
-  for (int e = 0; e < mesh.GetNE(); e++)
+  const int sdim = mesh.SpaceDimension();
+  const int n = boundary ? mesh.GetNBE() : mesh.GetNE();
+  std::size_t m = 0;
+  for (int e = 0; e < n; e++)
   {
-    const mfem::Element *el = mesh.GetElement(e);
+    const mfem::Element *el = boundary ? mesh.GetBdrElement(e) : mesh.GetElement(e);
+    const std::size_t size = local.size();
     local.push_back(el->GetAttribute());
-    local.push_back((el->GetType() == mfem::Element::TETRAHEDRON)
-                        ? static_cast<const mfem::Tetrahedron *>(el)->GetRefinementFlag()
-                        : 0);
-    for (int j = 0; j < nv; j++)
+    if (!boundary)
+    {
+      local.push_back((el->GetType() == mfem::Element::TETRAHEDRON)
+                          ? static_cast<const mfem::Tetrahedron *>(el)->GetRefinementFlag()
+                          : 0);
+    }
+    for (int j = 0; j < el->GetNVertices(); j++)
     {
       for (int d = 0; d < sdim; d++)
       {
         local.push_back(std::round(mesh.GetVertex(el->GetVertices()[j])[d] * 1.0e9));
       }
     }
+    m = local.size() - size;
   }
-  MPI_Comm comm = mesh.GetComm();
-  const int size = Mpi::Size(comm), n = static_cast<int>(local.size());
-  std::vector<int> counts(size), displs(size + 1, 0);
-  MPI_Gather(&n, 1, MPI_INT, counts.data(), 1, MPI_INT, 0, comm);
-  for (int i = 0; i < size; i++)
+  std::vector<double> all = local;
+  if (const auto *pmesh = dynamic_cast<const mfem::ParMesh *>(&mesh))
   {
-    displs[i + 1] = displs[i] + counts[i];
+    MPI_Comm comm = pmesh->GetComm();
+    const int size = Mpi::Size(comm), count = static_cast<int>(local.size());
+    int row = static_cast<int>(m);
+    Mpi::GlobalMax(1, &row, comm);
+    m = row;
+    std::vector<int> counts(size), displs(size + 1, 0);
+    MPI_Gather(&count, 1, MPI_INT, counts.data(), 1, MPI_INT, 0, comm);
+    for (int i = 0; i < size; i++)
+    {
+      displs[i + 1] = displs[i] + counts[i];
+    }
+    all.assign(Mpi::Root(comm) ? displs[size] : 0, 0.0);
+    MPI_Gatherv(local.data(), count, MPI_DOUBLE, all.data(), counts.data(), displs.data(),
+                MPI_DOUBLE, 0, comm);
   }
-  std::vector<double> all(Mpi::Root(comm) ? displs[size] : 0);
-  MPI_Gatherv(local.data(), n, MPI_DOUBLE, all.data(), counts.data(), displs.data(),
-              MPI_DOUBLE, 0, comm);
-  const std::size_t m = 2 + nv * sdim;
-  std::vector<std::vector<double>> elems;
-  for (std::size_t i = 0; i < all.size(); i += m)
+  std::vector<std::vector<double>> rows;
+  for (std::size_t i = 0; m > 0 && i < all.size(); i += m)
   {
-    elems.emplace_back(all.begin() + i, all.begin() + i + m);
+    rows.emplace_back(all.begin() + i, all.begin() + i + m);
   }
-  std::sort(elems.begin(), elems.end());
-  return elems;
+  std::sort(rows.begin(), rows.end());
+  return rows;
+}
+
+std::vector<std::vector<double>> GatherElements(mfem::ParMesh &mesh)
+{
+  return SortedRows<false>(mesh);
 }
 
 // The same elements, with the vertex order and the refinement flag forgotten.
@@ -424,7 +444,8 @@ TEST_CASE("RebalanceMesh conformal", "[rebalance][Serial][Parallel]")
   // rebalanced in place: the same mesh object and the same mesh (counts, boundary elements
   // of each attribute, volume), balanced. The elements move with their vertex orders and
   // refinement flags, so a later refinement gives the mesh of the same refinement of the
-  // serial mesh. Each of the three timers of the rebalance runs once. On one process
+  // serial mesh, element by element. The boundary elements move with their attributes and
+  // vertex orders. Each of the three timers of the rebalance runs once. On one process
   // nothing moves.
   MPI_Comm comm = Mpi::World();
   const int size = Mpi::Size(comm);
@@ -438,12 +459,14 @@ TEST_CASE("RebalanceMesh conformal", "[rebalance][Serial][Parallel]")
     auto pmesh = std::make_unique<mfem::ParMesh>(comm, serial, part.data());
     const mfem::ParMesh *object = pmesh.get();
     const auto before = GatherElements(*pmesh);
+    const auto boundary_before = SortedRows<true>(*pmesh);
     const auto timers = RebalanceTimerCounts();
     const auto result = mesh::RebalanceMesh(MakeIoData(), pmesh);
     CHECK(pmesh.get() == object);
     CHECK(GetCounts(*pmesh) == counts);
     const auto after = GatherElements(*pmesh);
     CHECK(after == before);
+    CHECK(SortedRows<true>(*pmesh) == boundary_before);
     CHECK(SameOnAllProcesses(result, comm));
     CHECK(result.moved == (size > 1));
     if (size > 1)
@@ -466,6 +489,11 @@ TEST_CASE("RebalanceMesh conformal", "[rebalance][Serial][Parallel]")
     const Counts refined = GetCounts(*pmesh), serial_counts = GetCounts(serial);
     CHECK(refined == serial_counts);
     CHECK(std::abs(refined.volume - serial_counts.volume) <= 1.0e-12);
+    const auto refined_elements = WithoutOrder(GatherElements(*pmesh), dim);
+    if (Mpi::Root(comm))
+    {
+      CHECK(refined_elements == WithoutOrder(SortedRows<false>(serial), dim));
+    }
   }
 }
 

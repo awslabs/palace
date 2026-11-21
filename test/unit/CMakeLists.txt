@@ -309,6 +309,20 @@ if(NOT (PALACE_WITH_CUDA OR PALACE_WITH_HIP))
   )
 endif()
 
+# The rebalancing tests also on 4 processes: on 2, every shared entity belongs to the one
+# group of both processes.
+math(EXPR PALACE_TESTS_PROCESSORS_NP4 "4 * ${PALACE_TESTS_OMP_THREADS}")
+catch_discover_tests(unit-tests
+  TEST_PREFIX "mpi-np4-"
+  TEST_SPEC "[rebalance][Parallel]"
+  TEST_EXECUTOR ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 4 ${MPIEXEC_PREFLAGS}
+  EXTRA_ARGS ${MPIEXEC_POSTFLAGS} --skip-benchmarks
+  PROPERTIES
+    PROCESSORS ${PALACE_TESTS_PROCESSORS_NP4}
+    SKIP_RETURN_CODE 4
+    ENVIRONMENT "${PALACE_TESTS_OMP_ENV};$<${SHOULD_SET_LLVM_PROFILE_FILE}:LLVM_PROFILE_FILE=${CMAKE_BINARY_DIR}/coverage/mpi/coverage-%p.profraw>"
+)
+
 # Regression tests: full-mesh Palace solves diffed against reference CSVs under
 # PALACE_TEST_DATA_DIR/regression/ref. Slow enough to deserve their own ctest
 # prefix (`ctest -L "^regression$"` to select, `-LE "^(regression|long)$"` to
