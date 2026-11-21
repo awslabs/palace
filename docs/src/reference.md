@@ -3298,7 +3298,8 @@ value does not exist):
     "At a claim end": the point's foot on its segment lies within ``0.05 R`` of an end of a
     piece of a kept class, a claim or the excluded remainder there. `spatial-cluster
     priority inside a box (part of its class; not in the sum)` = the points of the kept
-    outside part that lie inside a matched box (kept raw AND inside a coupon's model).
+    outside part that lie inside a matched box (kept raw AND inside a matched box; the
+    mirror does not ask whether that box's model is excluded at the excitation).
     `context on a pending model` and `context on a no-status model` (parts of the two
     context bins; not in the sum) = the context the coverage counts in its pending and
     no-status shares, so that those shares without the context rule are the coverage's
