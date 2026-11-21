@@ -1,0 +1,318 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - Palace Coverage Report - linalg/orthog.hpp</title>
+  <link rel="stylesheet" type="text/css" href="../gcov.css">
+</head>
+
+<body>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="title">LCOV - code coverage report</td></tr>
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+
+            <tr>
+              <td width="100%">
+                <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="10%" class="headerValue"><a href="../index.html">top level</a> - <a href="index.html">linalg</a> - orthog.hpp<span style="font-size: 80%;"> (source / <a href="orthog.hpp.func-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="5%"></td>
+            <td width="5%" class="headerCovTableHead">Coverage</td>
+            <td width="5%" class="headerCovTableHead" title="Covered + Uncovered code">Total</td>
+            <td width="5%" class="headerCovTableHead" title="Exercised code only">Hit</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">Palace Coverage Report</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntryHi">100.0&nbsp;%</td>
+            <td class="headerCovTableEntry">84</td>
+            <td class="headerCovTableEntry">84</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test Date:</td>
+            <td class="headerValue">2026-11-19 22:56:04</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntryHi">100.0&nbsp;%</td>
+            <td class="headerCovTableEntry">21</td>
+            <td class="headerCovTableEntry">21</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+                  <tr><td><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+                </table>
+              </td>
+            </tr>
+
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+          </table>
+
+          <table cellpadding=0 cellspacing=0 border=0>
+            <tr>
+              <td><br></td>
+            </tr>
+            <tr>
+              <td>
+<pre class="sourceHeading">            Line data    Source code</pre>
+<pre class="source">
+<span id="L1"><span class="lineNum">       1</span>              : // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.</span>
+<span id="L2"><span class="lineNum">       2</span>              : // SPDX-License-Identifier: Apache-2.0</span>
+<span id="L3"><span class="lineNum">       3</span>              : </span>
+<span id="L4"><span class="lineNum">       4</span>              : #ifndef PALACE_LINALG_ORTHOG_HPP</span>
+<span id="L5"><span class="lineNum">       5</span>              : #define PALACE_LINALG_ORTHOG_HPP</span>
+<span id="L6"><span class="lineNum">       6</span>              : </span>
+<span id="L7"><span class="lineNum">       7</span>              : #include &lt;algorithm&gt;</span>
+<span id="L8"><span class="lineNum">       8</span>              : #include &lt;array&gt;</span>
+<span id="L9"><span class="lineNum">       9</span>              : #include &lt;cmath&gt;</span>
+<span id="L10"><span class="lineNum">      10</span>              : #include &lt;complex&gt;</span>
+<span id="L11"><span class="lineNum">      11</span>              : #include &lt;cstddef&gt;</span>
+<span id="L12"><span class="lineNum">      12</span>              : #include &lt;initializer_list&gt;</span>
+<span id="L13"><span class="lineNum">      13</span>              : #include &lt;span&gt;</span>
+<span id="L14"><span class="lineNum">      14</span>              : #include &lt;type_traits&gt;</span>
+<span id="L15"><span class="lineNum">      15</span>              : #include &lt;vector&gt;</span>
+<span id="L16"><span class="lineNum">      16</span>              : #include &quot;linalg/operator.hpp&quot;</span>
+<span id="L17"><span class="lineNum">      17</span>              : #include &quot;linalg/vector.hpp&quot;</span>
+<span id="L18"><span class="lineNum">      18</span>              : #include &quot;utils/communication.hpp&quot;</span>
+<span id="L19"><span class="lineNum">      19</span>              : #include &quot;utils/labels.hpp&quot;</span>
+<span id="L20"><span class="lineNum">      20</span>              : </span>
+<span id="L21"><span class="lineNum">      21</span>              : namespace palace::linalg</span>
+<span id="L22"><span class="lineNum">      22</span>              : {</span>
+<span id="L23"><span class="lineNum">      23</span>              : </span>
+<span id="L24"><span class="lineNum">      24</span>              : //</span>
+<span id="L25"><span class="lineNum">      25</span>              : // Gram-Schmidt orthogonalization of the last vector w of V against the others, which are</span>
+<span id="L26"><span class="lineNum">      26</span>              : // orthonormal. The projections are stored in H, and w is not normalized.</span>
+<span id="L27"><span class="lineNum">      27</span>              : //</span>
+<span id="L28"><span class="lineNum">      28</span>              : </span>
+<span id="L29"><span class="lineNum">      29</span>              : // Modified Gram-Schmidt, with one reduction per basis vector. Returns the norm of w after.</span>
+<span id="L30"><span class="lineNum">      30</span>              : template &lt;typename VecType, typename ScalarType&gt;</span>
+<span id="L31"><span class="lineNum">      31</span> <span class="tlaGNC tlaBgGNC">       36113 : inline double OrthogonalizeColumnMGS(MPI_Comm comm, std::span&lt;VecType&gt; V, ScalarType *H)</span></span>
+<span id="L32"><span class="lineNum">      32</span>              : {</span>
+<span id="L33"><span class="lineNum">      33</span>              :   MFEM_ASSERT(!V.empty(), &quot;Missing vector for MGS orthogonalization!&quot;);</span>
+<span id="L34"><span class="lineNum">      34</span>              :   auto &amp;w = V.back();</span>
+<span id="L35"><span class="lineNum">      35</span> <span class="tlaGNC">      580650 :   for (std::size_t j = 0; j + 1 &lt; V.size(); j++)</span></span>
+<span id="L36"><span class="lineNum">      36</span>              :   {</span>
+<span id="L37"><span class="lineNum">      37</span>              :     // Note the order is important for complex vectors.</span>
+<span id="L38"><span class="lineNum">      38</span> <span class="tlaGNC">      544537 :     H[j] = Dot(comm, w, V[j]);</span></span>
+<span id="L39"><span class="lineNum">      39</span> <span class="tlaGNC">      544537 :     w.Add(-H[j], V[j]);</span></span>
+<span id="L40"><span class="lineNum">      40</span>              :   }</span>
+<span id="L41"><span class="lineNum">      41</span> <span class="tlaGNC">       36113 :   return Norml2(comm, w);</span></span>
+<span id="L42"><span class="lineNum">      42</span>              : }</span>
+<span id="L43"><span class="lineNum">      43</span>              : </span>
+<span id="L44"><span class="lineNum">      44</span>              : namespace internal</span>
+<span id="L45"><span class="lineNum">      45</span>              : {</span>
+<span id="L46"><span class="lineNum">      46</span>              : </span>
+<span id="L47"><span class="lineNum">      47</span>              : // Views of the real and imaginary parts of complex vectors.</span>
+<span id="L48"><span class="lineNum">      48</span>              : inline std::span&lt;const Vector&gt; RealParts(std::span&lt;Vector&gt; V, std::vector&lt;Vector&gt; &amp;)</span>
+<span id="L49"><span class="lineNum">      49</span>              : {</span>
+<span id="L50"><span class="lineNum">      50</span>              :   return V;</span>
+<span id="L51"><span class="lineNum">      51</span>              : }</span>
+<span id="L52"><span class="lineNum">      52</span>              : </span>
+<span id="L53"><span class="lineNum">      53</span> <span class="tlaGNC">        4295 : inline std::span&lt;const Vector&gt; RealParts(std::span&lt;ComplexVector&gt; V,</span></span>
+<span id="L54"><span class="lineNum">      54</span>              :                                          std::vector&lt;Vector&gt; &amp;parts)</span>
+<span id="L55"><span class="lineNum">      55</span>              : {</span>
+<span id="L56"><span class="lineNum">      56</span> <span class="tlaGNC">        4295 :   parts.resize(2 * V.size());</span></span>
+<span id="L57"><span class="lineNum">      57</span> <span class="tlaGNC">      177185 :   for (std::size_t j = 0; j &lt; V.size(); j++)</span></span>
+<span id="L58"><span class="lineNum">      58</span>              :   {</span>
+<span id="L59"><span class="lineNum">      59</span>              :     parts[2 * j].MakeRef(V[j].Real(), 0, V[j].Size());</span>
+<span id="L60"><span class="lineNum">      60</span>              :     parts[2 * j + 1].MakeRef(V[j].Imag(), 0, V[j].Size());</span>
+<span id="L61"><span class="lineNum">      61</span>              :   }</span>
+<span id="L62"><span class="lineNum">      62</span> <span class="tlaGNC">        4295 :   return parts;</span></span>
+<span id="L63"><span class="lineNum">      63</span>              : }</span>
+<span id="L64"><span class="lineNum">      64</span>              : </span>
+<span id="L65"><span class="lineNum">      65</span>              : // The inner products G[i + n k] = Xᵢᴴ Yₖ of the n vectors Xᵢ with the vectors Yₖ, given by</span>
+<span id="L66"><span class="lineNum">      66</span>              : // their parts X and Y (see RealParts), with one LocalDots and one reduction.</span>
+<span id="L67"><span class="lineNum">      67</span>              : template &lt;typename VecType&gt;</span>
+<span id="L68"><span class="lineNum">      68</span> <span class="tlaGNC">        7641 : inline auto InnerProducts(MPI_Comm comm, std::span&lt;const Vector&gt; X,</span></span>
+<span id="L69"><span class="lineNum">      69</span>              :                           std::span&lt;const Vector *const&gt; Y)</span>
+<span id="L70"><span class="lineNum">      70</span>              : {</span>
+<span id="L71"><span class="lineNum">      71</span> <span class="tlaGNC">        7641 :   std::vector&lt;double&gt; dots(X.size() * Y.size());</span></span>
+<span id="L72"><span class="lineNum">      72</span> <span class="tlaGNC">        7641 :   LocalDots(X, Y, dots.data());</span></span>
+<span id="L73"><span class="lineNum">      73</span> <span class="tlaGNC">        7641 :   Mpi::GlobalSum(static_cast&lt;int&gt;(dots.size()), dots.data(), comm);</span></span>
+<span id="L74"><span class="lineNum">      74</span>              :   if constexpr (std::is_same_v&lt;VecType, Vector&gt;)</span>
+<span id="L75"><span class="lineNum">      75</span>              :   {</span>
+<span id="L76"><span class="lineNum">      76</span> <span class="tlaGNC">        3318 :     return dots;</span></span>
+<span id="L77"><span class="lineNum">      77</span>              :   }</span>
+<span id="L78"><span class="lineNum">      78</span>              :   else</span>
+<span id="L79"><span class="lineNum">      79</span>              :   {</span>
+<span id="L80"><span class="lineNum">      80</span>              :     // (xᵣ + i xᵢ)ᴴ (yᵣ + i yᵢ) = xᵣ · yᵣ + xᵢ · yᵢ + i (xᵣ · yᵢ - xᵢ · yᵣ).</span>
+<span id="L81"><span class="lineNum">      81</span> <span class="tlaGNC">        4323 :     const std::size_t n = X.size() / 2;</span></span>
+<span id="L82"><span class="lineNum">      82</span> <span class="tlaGNC">        4323 :     std::vector&lt;std::complex&lt;double&gt;&gt; G(n * (Y.size() / 2));</span></span>
+<span id="L83"><span class="lineNum">      83</span> <span class="tlaGNC">      348786 :     for (std::size_t q = 0; q &lt; G.size(); q++)</span></span>
+<span id="L84"><span class="lineNum">      84</span>              :     {</span>
+<span id="L85"><span class="lineNum">      85</span>              :       const auto d = [&amp;](std::size_t a, std::size_t b)</span>
+<span id="L86"><span class="lineNum">      86</span> <span class="tlaGNC">      344463 :       { return dots[2 * (q % n) + a + (2 * (q / n) + b) * 2 * n]; };</span></span>
+<span id="L87"><span class="lineNum">      87</span> <span class="tlaGNC">      344463 :       G[q] = {d(0, 0) + d(1, 1), d(0, 1) - d(1, 0)};</span></span>
+<span id="L88"><span class="lineNum">      88</span>              :     }</span>
+<span id="L89"><span class="lineNum">      89</span> <span class="tlaGNC">        4323 :     return G;</span></span>
+<span id="L90"><span class="lineNum">      90</span>              :   }</span>
+<span id="L91"><span class="lineNum">      91</span>              : }</span>
+<span id="L92"><span class="lineNum">      92</span>              : </span>
+<span id="L93"><span class="lineNum">      93</span>              : // w[k] = s[k] (w[k] + Σⱼ c[j + n k] vⱼ), with s[k] = 1 without s, for the n = c.size() /</span>
+<span id="L94"><span class="lineNum">      94</span>              : // w.size() vectors vⱼ given by their parts X (see RealParts), in one pass over all of them.</span>
+<span id="L95"><span class="lineNum">      95</span>              : // A vⱼ may also be one of the w[k], for its value before the update.</span>
+<span id="L96"><span class="lineNum">      96</span>              : template &lt;typename VecType, typename ScalarType&gt;</span>
+<span id="L97"><span class="lineNum">      97</span> <span class="tlaGNC">        7484 : inline void AddCombination(std::span&lt;const Vector&gt; X, const std::vector&lt;ScalarType&gt; &amp;c,</span></span>
+<span id="L98"><span class="lineNum">      98</span>              :                            std::initializer_list&lt;VecType *&gt; w,</span>
+<span id="L99"><span class="lineNum">      99</span>              :                            std::initializer_list&lt;double&gt; s = {})</span>
+<span id="L100"><span class="lineNum">     100</span>              : {</span>
+<span id="L101"><span class="lineNum">     101</span>              :   constexpr std::size_t p = std::is_same_v&lt;VecType, ComplexVector&gt; ? 2 : 1;</span>
+<span id="L102"><span class="lineNum">     102</span> <span class="tlaGNC">        7484 :   const std::size_t K = p * w.size(), n = c.size() / w.size();</span></span>
+<span id="L103"><span class="lineNum">     103</span> <span class="tlaGNC">        7484 :   std::vector&lt;Vector *&gt; Y(K);</span></span>
+<span id="L104"><span class="lineNum">     104</span> <span class="tlaGNC">        7484 :   std::vector&lt;double&gt; C(K * p * n), S(K, 1.0);</span></span>
+<span id="L105"><span class="lineNum">     105</span> <span class="tlaGNC">       20824 :   for (std::size_t k = 0; k &lt; w.size(); k++)</span></span>
+<span id="L106"><span class="lineNum">     106</span>              :   {</span>
+<span id="L107"><span class="lineNum">     107</span> <span class="tlaGNC">       13340 :     VecType &amp;wk = *w.begin()[k];</span></span>
+<span id="L108"><span class="lineNum">     108</span> <span class="tlaGNC">       13340 :     const ScalarType *ck = c.data() + n * k;</span></span>
+<span id="L109"><span class="lineNum">     109</span> <span class="tlaGNC">       13340 :     if (s.size() &gt; 0)</span></span>
+<span id="L110"><span class="lineNum">     110</span>              :     {</span>
+<span id="L111"><span class="lineNum">     111</span> <span class="tlaGNC">       11712 :       std::fill_n(S.begin() + p * k, p, s.begin()[k]);</span></span>
+<span id="L112"><span class="lineNum">     112</span>              :     }</span>
+<span id="L113"><span class="lineNum">     113</span>              :     if constexpr (p == 1)</span>
+<span id="L114"><span class="lineNum">     114</span>              :     {</span>
+<span id="L115"><span class="lineNum">     115</span> <span class="tlaGNC">        4937 :       Y[k] = &amp;wk;</span></span>
+<span id="L116"><span class="lineNum">     116</span> <span class="tlaGNC">       62107 :       for (std::size_t j = 0; j &lt; n; j++)</span></span>
+<span id="L117"><span class="lineNum">     117</span>              :       {</span>
+<span id="L118"><span class="lineNum">     118</span> <span class="tlaGNC">       57170 :         C[k + K * j] = ck[j];</span></span>
+<span id="L119"><span class="lineNum">     119</span>              :       }</span>
+<span id="L120"><span class="lineNum">     120</span>              :     }</span>
+<span id="L121"><span class="lineNum">     121</span>              :     else</span>
+<span id="L122"><span class="lineNum">     122</span>              :     {</span>
+<span id="L123"><span class="lineNum">     123</span> <span class="tlaGNC">        8403 :       Y[2 * k] = &amp;wk.Real();</span></span>
+<span id="L124"><span class="lineNum">     124</span> <span class="tlaGNC">        8403 :       Y[2 * k + 1] = &amp;wk.Imag();</span></span>
+<span id="L125"><span class="lineNum">     125</span> <span class="tlaGNC">      344439 :       for (std::size_t j = 0; j &lt; n; j++)</span></span>
+<span id="L126"><span class="lineNum">     126</span>              :       {</span>
+<span id="L127"><span class="lineNum">     127</span>              :         // c (xᵣ + i xᵢ) = Re(c) xᵣ - Im(c) xᵢ + i (Im(c) xᵣ + Re(c) xᵢ).</span>
+<span id="L128"><span class="lineNum">     128</span> <span class="tlaGNC">      336036 :         double *Cr = C.data() + 2 * k + K * 2 * j, *Ci = Cr + K;  // Terms of xᵣ, xᵢ</span></span>
+<span id="L129"><span class="lineNum">     129</span> <span class="tlaGNC">      336036 :         Cr[0] = std::real(ck[j]);</span></span>
+<span id="L130"><span class="lineNum">     130</span> <span class="tlaGNC">      336036 :         Cr[1] = std::imag(ck[j]);</span></span>
+<span id="L131"><span class="lineNum">     131</span> <span class="tlaGNC">      336036 :         Ci[0] = -std::imag(ck[j]);</span></span>
+<span id="L132"><span class="lineNum">     132</span> <span class="tlaGNC">      336036 :         Ci[1] = std::real(ck[j]);</span></span>
+<span id="L133"><span class="lineNum">     133</span>              :       }</span>
+<span id="L134"><span class="lineNum">     134</span>              :     }</span>
+<span id="L135"><span class="lineNum">     135</span>              :   }</span>
+<span id="L136"><span class="lineNum">     136</span> <span class="tlaGNC">        7484 :   LinearCombination(X.first(p * n), C.data(), Y, S.data(), true);</span></span>
+<span id="L137"><span class="lineNum">     137</span> <span class="tlaGNC">        7484 : }</span></span>
+<span id="L138"><span class="lineNum">     138</span>              : </span>
+<span id="L139"><span class="lineNum">     139</span>              : }  // namespace internal</span>
+<span id="L140"><span class="lineNum">     140</span>              : </span>
+<span id="L141"><span class="lineNum">     141</span>              : // Classical Gram-Schmidt, reorthogonalized if refine, in the inner product of the real</span>
+<span id="L142"><span class="lineNum">     142</span>              : // weight operator W (Euclidean without W). Returns the norms of w before and after. Each</span>
+<span id="L143"><span class="lineNum">     143</span>              : // pass applies W once and computes all inner products, including the squared norm of w, in</span>
+<span id="L144"><span class="lineNum">     144</span>              : // one pass over the real and imaginary parts of V with one reduction, then updates w in one</span>
+<span id="L145"><span class="lineNum">     145</span>              : // pass. With refine, V is orthonormal to round-off, so the squared norm after the second</span>
+<span id="L146"><span class="lineNum">     146</span>              : // pass is the one before it minus those of the projections, which is accurate unless the</span>
+<span id="L147"><span class="lineNum">     147</span>              : // pass removes most of w: only then, or without refine, does the norm after take one more</span>
+<span id="L148"><span class="lineNum">     148</span>              : // reduction (and W application). With W, the workspace is required and must not alias any</span>
+<span id="L149"><span class="lineNum">     149</span>              : // vector of V.</span>
+<span id="L150"><span class="lineNum">     150</span>              : template &lt;typename VecType, typename ScalarType, typename WeightOperator = Operator&gt;</span>
+<span id="L151"><span class="lineNum">     151</span>              : inline std::array&lt;double, 2&gt;</span>
+<span id="L152"><span class="lineNum">     152</span> <span class="tlaGNC">        1104 : OrthogonalizeColumnCGS(MPI_Comm comm, std::span&lt;VecType&gt; V, ScalarType *H, bool refine,</span></span>
+<span id="L153"><span class="lineNum">     153</span>              :                        const WeightOperator *W = nullptr, ComplexVector *work = nullptr)</span>
+<span id="L154"><span class="lineNum">     154</span>              : {</span>
+<span id="L155"><span class="lineNum">     155</span>              :   MFEM_ASSERT(!V.empty(), &quot;Missing vector for CGS orthogonalization!&quot;);</span>
+<span id="L156"><span class="lineNum">     156</span>              :   MFEM_ASSERT(!W || work, &quot;Missing workspace for weighted CGS orthogonalization!&quot;);</span>
+<span id="L157"><span class="lineNum">     157</span>              :   constexpr std::size_t p = std::is_same_v&lt;VecType, ComplexVector&gt; ? 2 : 1;</span>
+<span id="L158"><span class="lineNum">     158</span> <span class="tlaGNC">        1104 :   const std::size_t m = V.size() - 1;</span></span>
+<span id="L159"><span class="lineNum">     159</span> <span class="tlaGNC">        1104 :   std::vector&lt;Vector&gt; parts;</span></span>
+<span id="L160"><span class="lineNum">     160</span> <span class="tlaGNC">        1104 :   const auto X = internal::RealParts(V, parts);  // vⱼ = Σₐ iᵃ X[p j + a]</span></span>
+<span id="L161"><span class="lineNum">     161</span>              :   auto &amp;w = V.back();</span>
+<span id="L162"><span class="lineNum">     162</span> <span class="tlaGNC">        1104 :   if (W)</span></span>
+<span id="L163"><span class="lineNum">     163</span>              :   {</span>
+<span id="L164"><span class="lineNum">     164</span> <span class="tlaGNC">         573 :     work-&gt;SetSize(w.Size());</span></span>
+<span id="L165"><span class="lineNum">     165</span> <span class="tlaGNC">         573 :     work-&gt;UseDevice(w.UseDevice());</span></span>
+<span id="L166"><span class="lineNum">     166</span>              :   }</span>
+<span id="L167"><span class="lineNum">     167</span> <span class="tlaGNC">        3167 :   auto apply = [&amp;]()  // Parts of W w</span></span>
+<span id="L168"><span class="lineNum">     168</span>              :   {</span>
+<span id="L169"><span class="lineNum">     169</span>              :     std::array&lt;const Vector *, p&gt; Ww;</span>
+<span id="L170"><span class="lineNum">     170</span> <span class="tlaGNC">        6189 :     for (std::size_t a = 0; a &lt; p; a++)</span></span>
+<span id="L171"><span class="lineNum">     171</span>              :     {</span>
+<span id="L172"><span class="lineNum">     172</span> <span class="tlaGNC">        2421 :       Ww[a] = &amp;X[p * m + a];</span></span>
+<span id="L173"><span class="lineNum">     173</span> <span class="tlaGNC">        2421 :       if (W)</span></span>
+<span id="L174"><span class="lineNum">     174</span>              :       {</span>
+<span id="L175"><span class="lineNum">     175</span> <span class="tlaGNC">        1134 :         W-&gt;Mult(*Ww[a], a ? work-&gt;Imag() : work-&gt;Real());</span></span>
+<span id="L176"><span class="lineNum">     176</span> <span class="tlaGNC">        1134 :         Ww[a] = a ? &amp;work-&gt;Imag() : &amp;work-&gt;Real();</span></span>
+<span id="L177"><span class="lineNum">     177</span>              :       }</span>
+<span id="L178"><span class="lineNum">     178</span>              :     }</span>
+<span id="L179"><span class="lineNum">     179</span> <span class="tlaGNC">        2063 :     return Ww;</span></span>
+<span id="L180"><span class="lineNum">     180</span>              :   };</span>
+<span id="L181"><span class="lineNum">     181</span> <span class="tlaGNC">        1104 :   std::vector&lt;std::conditional_t&lt;p == 1, double, std::complex&lt;double&gt;&gt;&gt; c(m);</span></span>
+<span id="L182"><span class="lineNum">     182</span> <span class="tlaGNC">        1104 :   std::fill_n(H, m, ScalarType(0.0));</span></span>
+<span id="L183"><span class="lineNum">     183</span> <span class="tlaGNC">        1104 :   double pre_norm_sq = 0.0, norm_sq = 0.0;</span></span>
+<span id="L184"><span class="lineNum">     184</span>              :   bool accurate = false;</span>
+<span id="L185"><span class="lineNum">     185</span> <span class="tlaGNC">        3421 :   for (int pass = 0; pass &lt; ((refine &amp;&amp; m &gt; 0) ? 2 : 1); pass++)</span></span>
+<span id="L186"><span class="lineNum">     186</span>              :   {</span>
+<span id="L187"><span class="lineNum">     187</span> <span class="tlaGNC">        1785 :     const auto h = internal::InnerProducts&lt;VecType&gt;(comm, X, apply());  // vⱼᴴ W w</span></span>
+<span id="L188"><span class="lineNum">     188</span> <span class="tlaGNC">        1785 :     if (pass == 0)</span></span>
+<span id="L189"><span class="lineNum">     189</span>              :     {</span>
+<span id="L190"><span class="lineNum">     190</span> <span class="tlaGNC">        1104 :       pre_norm_sq = std::real(h[m]);</span></span>
+<span id="L191"><span class="lineNum">     191</span>              :     }</span>
+<span id="L192"><span class="lineNum">     192</span> <span class="tlaGNC">        1785 :     if (m == 0)</span></span>
+<span id="L193"><span class="lineNum">     193</span>              :     {</span>
+<span id="L194"><span class="lineNum">     194</span> <span class="tlaGNC">         157 :       const double norm = std::sqrt(std::abs(pre_norm_sq));</span></span>
+<span id="L195"><span class="lineNum">     195</span> <span class="tlaGNC">         157 :       return {norm, norm};</span></span>
+<span id="L196"><span class="lineNum">     196</span>              :     }</span>
+<span id="L197"><span class="lineNum">     197</span>              :     double proj_sq = 0.0;</span>
+<span id="L198"><span class="lineNum">     198</span> <span class="tlaGNC">       14128 :     for (std::size_t j = 0; j &lt; m; j++)</span></span>
+<span id="L199"><span class="lineNum">     199</span>              :     {</span>
+<span id="L200"><span class="lineNum">     200</span> <span class="tlaGNC">       12500 :       H[j] += h[j];</span></span>
+<span id="L201"><span class="lineNum">     201</span> <span class="tlaGNC">       12500 :       c[j] = -h[j];</span></span>
+<span id="L202"><span class="lineNum">     202</span> <span class="tlaGNC">       12500 :       proj_sq += std::norm(h[j]);</span></span>
+<span id="L203"><span class="lineNum">     203</span>              :     }</span>
+<span id="L204"><span class="lineNum">     204</span> <span class="tlaGNC">        1628 :     norm_sq = std::real(h[m]) - proj_sq;</span></span>
+<span id="L205"><span class="lineNum">     205</span> <span class="tlaGNC">        1628 :     accurate = refine &amp;&amp; (norm_sq &gt;= 0.5 * std::real(h[m]));</span></span>
+<span id="L206"><span class="lineNum">     206</span> <span class="tlaGNC">        1628 :     internal::AddCombination(X, c, {&amp;w});</span></span>
+<span id="L207"><span class="lineNum">     207</span>              :   }</span>
+<span id="L208"><span class="lineNum">     208</span> <span class="tlaGNC">         947 :   if (!accurate)</span></span>
+<span id="L209"><span class="lineNum">     209</span>              :   {</span>
+<span id="L210"><span class="lineNum">     210</span> <span class="tlaGNC">         278 :     norm_sq = 0.0;</span></span>
+<span id="L211"><span class="lineNum">     211</span> <span class="tlaGNC">         278 :     const auto Ww = apply();</span></span>
+<span id="L212"><span class="lineNum">     212</span> <span class="tlaGNC">         695 :     for (std::size_t a = 0; a &lt; p; a++)</span></span>
+<span id="L213"><span class="lineNum">     213</span>              :     {</span>
+<span id="L214"><span class="lineNum">     214</span> <span class="tlaGNC">         417 :       norm_sq += LocalDot(X[p * m + a], *Ww[a]);</span></span>
+<span id="L215"><span class="lineNum">     215</span>              :     }</span>
+<span id="L216"><span class="lineNum">     216</span>              :     Mpi::GlobalSum(1, &amp;norm_sq, comm);</span>
+<span id="L217"><span class="lineNum">     217</span>              :   }</span>
+<span id="L218"><span class="lineNum">     218</span> <span class="tlaGNC">         947 :   return {std::sqrt(std::abs(pre_norm_sq)), std::sqrt(std::abs(norm_sq))};</span></span>
+<span id="L219"><span class="lineNum">     219</span> <span class="tlaGNC">        1104 : }</span></span>
+<span id="L220"><span class="lineNum">     220</span>              : </span>
+<span id="L221"><span class="lineNum">     221</span>              : // Gram-Schmidt of the given type, Euclidean. Returns the norm of w after.</span>
+<span id="L222"><span class="lineNum">     222</span>              : template &lt;typename VecType, typename ScalarType&gt;</span>
+<span id="L223"><span class="lineNum">     223</span> <span class="tlaGNC">       36347 : inline double OrthogonalizeColumn(Orthogonalization type, MPI_Comm comm,</span></span>
+<span id="L224"><span class="lineNum">     224</span>              :                                   std::span&lt;VecType&gt; V, ScalarType *H)</span>
+<span id="L225"><span class="lineNum">     225</span>              : {</span>
+<span id="L226"><span class="lineNum">     226</span> <span class="tlaGNC">       36347 :   MFEM_VERIFY(type != Orthogonalization::DEFAULT, &quot;Unresolved default orthogonalization!&quot;);</span></span>
+<span id="L227"><span class="lineNum">     227</span>              :   return (type == Orthogonalization::MGS)</span>
+<span id="L228"><span class="lineNum">     228</span> <span class="tlaGNC">       36581 :              ? OrthogonalizeColumnMGS(comm, V, H)</span></span>
+<span id="L229"><span class="lineNum">     229</span> <span class="tlaGNC">       36581 :              : OrthogonalizeColumnCGS(comm, V, H, type == Orthogonalization::CGS2)[1];</span></span>
+<span id="L230"><span class="lineNum">     230</span>              : }</span>
+<span id="L231"><span class="lineNum">     231</span>              : </span>
+<span id="L232"><span class="lineNum">     232</span>              : }  // namespace palace::linalg</span>
+<span id="L233"><span class="lineNum">     233</span>              : </span>
+<span id="L234"><span class="lineNum">     234</span>              : #endif  // PALACE_LINALG_ORTHOG_HPP</span>
+        </pre>
+              </td>
+            </tr>
+          </table>
+          <br>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+            <tr><td class="versionInfo">Generated by: <a href="https://github.com//linux-test-project/lcov" target="_parent">LCOV version 2.0-1</a></td></tr>
+          </table>
+          <br>
+
+</body>
+</html>

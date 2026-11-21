@@ -1,0 +1,933 @@
+{
+  "Cumulative": {
+    "ElapsedTime": {
+      "CONSTRUCT": {
+        "Avg": 4.082170089000002,
+        "Count": 1,
+        "Max": 4.082170089000002,
+        "MaxRank": 0,
+        "Min": 4.082170089000002,
+        "Ranks": 1,
+        "Sum": 4.082170089000002
+      },
+      "CONSTRUCT_ESTIMATOR": {
+        "Avg": 0.171745178,
+        "Count": 1,
+        "Max": 0.171745178,
+        "MaxRank": 0,
+        "Min": 0.171745178,
+        "Ranks": 1,
+        "Sum": 0.171745178
+      },
+      "ESTIMATION": {
+        "Avg": 0.044443413,
+        "Count": 2,
+        "Max": 0.044443413,
+        "MaxRank": 0,
+        "Min": 0.044443413,
+        "Ranks": 1,
+        "Sum": 0.044443413
+      },
+      "INIT": {
+        "Avg": 0.21889555,
+        "Count": 2,
+        "Max": 0.21889555,
+        "MaxRank": 0,
+        "Min": 0.21889555,
+        "Ranks": 1,
+        "Sum": 0.21889555
+      },
+      "IO": {
+        "Avg": 0.250746482,
+        "Count": 9,
+        "Max": 0.250746482,
+        "MaxRank": 0,
+        "Min": 0.250746482,
+        "Ranks": 1,
+        "Sum": 0.250746482
+      },
+      "KSP": {
+        "Avg": 0.09821945199999997,
+        "Count": 2,
+        "Max": 0.09821945199999997,
+        "MaxRank": 0,
+        "Min": 0.09821945199999997,
+        "Ranks": 1,
+        "Sum": 0.09821945199999997
+      },
+      "KSP_COARSE_SETUP": {
+        "Avg": 0.003232528,
+        "Count": 1,
+        "Max": 0.003232528,
+        "MaxRank": 0,
+        "Min": 0.003232528,
+        "Ranks": 1,
+        "Sum": 0.003232528
+      },
+      "KSP_COARSE_SOLVE": {
+        "Avg": 0.005799665,
+        "Count": 21,
+        "Max": 0.005799665,
+        "MaxRank": 0,
+        "Min": 0.005799665,
+        "Ranks": 1,
+        "Sum": 0.005799665
+      },
+      "KSP_PRECONDITIONER": {
+        "Avg": 2.3285682789999997,
+        "Count": 21,
+        "Max": 2.3285682789999997,
+        "MaxRank": 0,
+        "Min": 2.3285682789999997,
+        "Ranks": 1,
+        "Sum": 2.3285682789999997
+      },
+      "KSP_SETUP": {
+        "Avg": 0.402243789,
+        "Count": 1,
+        "Max": 0.402243789,
+        "MaxRank": 0,
+        "Min": 0.402243789,
+        "Ranks": 1,
+        "Sum": 0.402243789
+      },
+      "MESH_PREPROCESS": {
+        "Avg": 0.37083300999999996,
+        "Count": 2,
+        "Max": 0.37083300999999996,
+        "MaxRank": 0,
+        "Min": 0.37083300999999996,
+        "Ranks": 1,
+        "Sum": 0.37083300999999996
+      },
+      "POSTPRO": {
+        "Avg": 0.10089392000000003,
+        "Count": 6,
+        "Max": 0.10089392000000003,
+        "MaxRank": 0,
+        "Min": 0.10089392000000003,
+        "Ranks": 1,
+        "Sum": 0.10089392000000003
+      },
+      "POSTPRO_GRIDFUNCTION": {
+        "Avg": 0.33705992100000004,
+        "Count": 3,
+        "Max": 0.33705992100000004,
+        "MaxRank": 0,
+        "Min": 0.33705992100000004,
+        "Ranks": 1,
+        "Sum": 0.33705992100000004
+      },
+      "POSTPRO_PARAVIEW": {
+        "Avg": 0.8207280739999999,
+        "Count": 3,
+        "Max": 0.8207280739999999,
+        "MaxRank": 0,
+        "Min": 0.8207280739999999,
+        "Ranks": 1,
+        "Sum": 0.8207280739999999
+      },
+      "SOLVE_ESTIMATOR": {
+        "Avg": 1.6076598469999999,
+        "Count": 2,
+        "Max": 1.6076598469999999,
+        "MaxRank": 0,
+        "Min": 1.6076598469999999,
+        "Ranks": 1,
+        "Sum": 1.6076598469999999
+      },
+      "STARTUP": {
+        "Avg": 0.017524653,
+        "Count": 1,
+        "Max": 0.017524653,
+        "MaxRank": 0,
+        "Min": 0.017524653,
+        "Ranks": 1,
+        "Sum": 0.017524653
+      },
+      "TOTAL": {
+        "Avg": 10.861359984,
+        "Count": 1,
+        "Max": 10.861359984,
+        "MaxRank": 0,
+        "Min": 10.861359984,
+        "Ranks": 1,
+        "Sum": 10.861359984
+      }
+    },
+    "LinearSolver": {
+      "Estimator": {
+        "Its": 199,
+        "MaxIts": 100,
+        "Setups": 1,
+        "Solves": 2
+      },
+      "Main": {
+        "Its": 17,
+        "MaxIts": 9,
+        "Setups": 1,
+        "Solves": 2
+      }
+    },
+    "PeakMemoryGrowthMegabytes": {
+      "Baseline": {
+        "Avg": 0,
+        "Max": 0,
+        "MaxRank": 0,
+        "Min": 0,
+        "Ranks": 1,
+        "Sum": 0
+      },
+      "CONSTRUCT": {
+        "Avg": 247.6796875,
+        "Max": 247.6796875,
+        "MaxRank": 0,
+        "Min": 247.6796875,
+        "Ranks": 1,
+        "Sum": 247.6796875
+      },
+      "CONSTRUCT_ESTIMATOR": {
+        "Avg": 59.25,
+        "Max": 59.25,
+        "MaxRank": 0,
+        "Min": 59.25,
+        "Ranks": 1,
+        "Sum": 59.25
+      },
+      "ESTIMATION": {
+        "Avg": 38,
+        "Max": 38,
+        "MaxRank": 0,
+        "Min": 38,
+        "Ranks": 1,
+        "Sum": 38
+      },
+      "INIT": {
+        "Avg": 2.24609375,
+        "Max": 2.24609375,
+        "MaxRank": 0,
+        "Min": 2.24609375,
+        "Ranks": 1,
+        "Sum": 2.24609375
+      },
+      "IO": {
+        "Avg": 21.79296875,
+        "Max": 21.79296875,
+        "MaxRank": 0,
+        "Min": 21.79296875,
+        "Ranks": 1,
+        "Sum": 21.79296875
+      },
+      "KSP": {
+        "Avg": 0,
+        "Max": 0,
+        "MaxRank": 0,
+        "Min": 0,
+        "Ranks": 1,
+        "Sum": 0
+      },
+      "KSP_COARSE_SETUP": {
+        "Avg": 1,
+        "Max": 1,
+        "MaxRank": 0,
+        "Min": 1,
+        "Ranks": 1,
+        "Sum": 1
+      },
+      "KSP_COARSE_SOLVE": {
+        "Avg": 0,
+        "Max": 0,
+        "MaxRank": 0,
+        "Min": 0,
+        "Ranks": 1,
+        "Sum": 0
+      },
+      "KSP_PRECONDITIONER": {
+        "Avg": 0,
+        "Max": 0,
+        "MaxRank": 0,
+        "Min": 0,
+        "Ranks": 1,
+        "Sum": 0
+      },
+      "KSP_SETUP": {
+        "Avg": 116.234375,
+        "Max": 116.234375,
+        "MaxRank": 0,
+        "Min": 116.234375,
+        "Ranks": 1,
+        "Sum": 116.234375
+      },
+      "MESH_PREPROCESS": {
+        "Avg": 11.3828125,
+        "Max": 11.3828125,
+        "MaxRank": 0,
+        "Min": 11.3828125,
+        "Ranks": 1,
+        "Sum": 11.3828125
+      },
+      "POSTPRO": {
+        "Avg": 59.375,
+        "Max": 59.375,
+        "MaxRank": 0,
+        "Min": 59.375,
+        "Ranks": 1,
+        "Sum": 59.375
+      },
+      "POSTPRO_GRIDFUNCTION": {
+        "Avg": 20.25,
+        "Max": 20.25,
+        "MaxRank": 0,
+        "Min": 20.25,
+        "Ranks": 1,
+        "Sum": 20.25
+      },
+      "POSTPRO_PARAVIEW": {
+        "Avg": 123,
+        "Max": 123,
+        "MaxRank": 0,
+        "Min": 123,
+        "Ranks": 1,
+        "Sum": 123
+      },
+      "SOLVE_ESTIMATOR": {
+        "Avg": 41.5,
+        "Max": 41.5,
+        "MaxRank": 0,
+        "Min": 41.5,
+        "Ranks": 1,
+        "Sum": 41.5
+      },
+      "STARTUP": {
+        "Avg": 10.65234375,
+        "Max": 10.65234375,
+        "MaxRank": 0,
+        "Min": 10.65234375,
+        "Ranks": 1,
+        "Sum": 10.65234375
+      },
+      "Unattributed": {
+        "Avg": 24.71484375,
+        "Max": 24.71484375,
+        "MaxRank": 0,
+        "Min": 24.71484375,
+        "Ranks": 1,
+        "Sum": 24.71484375
+      }
+    },
+    "PeakMemoryMegabytes": {
+      "Avg": 777.078125,
+      "Max": 777.078125,
+      "MaxRank": 0,
+      "Min": 777.078125,
+      "Ranks": 1,
+      "Sum": 777.078125
+    },
+    "PeakNodeMemoryGrowthMegabytes": {
+      "Baseline": {
+        "Avg": 0,
+        "Max": 0,
+        "Min": 0,
+        "Nodes": 1,
+        "Sum": 0
+      },
+      "CONSTRUCT": {
+        "Avg": 247.6796875,
+        "Max": 247.6796875,
+        "Min": 247.6796875,
+        "Nodes": 1,
+        "Sum": 247.6796875
+      },
+      "CONSTRUCT_ESTIMATOR": {
+        "Avg": 59.25,
+        "Max": 59.25,
+        "Min": 59.25,
+        "Nodes": 1,
+        "Sum": 59.25
+      },
+      "ESTIMATION": {
+        "Avg": 38,
+        "Max": 38,
+        "Min": 38,
+        "Nodes": 1,
+        "Sum": 38
+      },
+      "INIT": {
+        "Avg": 2.24609375,
+        "Max": 2.24609375,
+        "Min": 2.24609375,
+        "Nodes": 1,
+        "Sum": 2.24609375
+      },
+      "IO": {
+        "Avg": 21.79296875,
+        "Max": 21.79296875,
+        "Min": 21.79296875,
+        "Nodes": 1,
+        "Sum": 21.79296875
+      },
+      "KSP": {
+        "Avg": 0,
+        "Max": 0,
+        "Min": 0,
+        "Nodes": 1,
+        "Sum": 0
+      },
+      "KSP_COARSE_SETUP": {
+        "Avg": 1,
+        "Max": 1,
+        "Min": 1,
+        "Nodes": 1,
+        "Sum": 1
+      },
+      "KSP_COARSE_SOLVE": {
+        "Avg": 0,
+        "Max": 0,
+        "Min": 0,
+        "Nodes": 1,
+        "Sum": 0
+      },
+      "KSP_PRECONDITIONER": {
+        "Avg": 0,
+        "Max": 0,
+        "Min": 0,
+        "Nodes": 1,
+        "Sum": 0
+      },
+      "KSP_SETUP": {
+        "Avg": 116.234375,
+        "Max": 116.234375,
+        "Min": 116.234375,
+        "Nodes": 1,
+        "Sum": 116.234375
+      },
+      "MESH_PREPROCESS": {
+        "Avg": 11.3828125,
+        "Max": 11.3828125,
+        "Min": 11.3828125,
+        "Nodes": 1,
+        "Sum": 11.3828125
+      },
+      "POSTPRO": {
+        "Avg": 59.375,
+        "Max": 59.375,
+        "Min": 59.375,
+        "Nodes": 1,
+        "Sum": 59.375
+      },
+      "POSTPRO_GRIDFUNCTION": {
+        "Avg": 20.25,
+        "Max": 20.25,
+        "Min": 20.25,
+        "Nodes": 1,
+        "Sum": 20.25
+      },
+      "POSTPRO_PARAVIEW": {
+        "Avg": 123,
+        "Max": 123,
+        "Min": 123,
+        "Nodes": 1,
+        "Sum": 123
+      },
+      "SOLVE_ESTIMATOR": {
+        "Avg": 41.5,
+        "Max": 41.5,
+        "Min": 41.5,
+        "Nodes": 1,
+        "Sum": 41.5
+      },
+      "STARTUP": {
+        "Avg": 10.65234375,
+        "Max": 10.65234375,
+        "Min": 10.65234375,
+        "Nodes": 1,
+        "Sum": 10.65234375
+      },
+      "Unattributed": {
+        "Avg": 24.71484375,
+        "Max": 24.71484375,
+        "Min": 24.71484375,
+        "Nodes": 1,
+        "Sum": 24.71484375
+      }
+    },
+    "PeakNodeMemoryMegabytes": {
+      "Avg": 777.078125,
+      "Max": 777.078125,
+      "Min": 777.078125,
+      "Nodes": 1,
+      "Sum": 777.078125
+    }
+  },
+  "ElapsedTime": {
+    "CONSTRUCT": {
+      "Avg": 4.082170089000002,
+      "Count": 1,
+      "Max": 4.082170089000002,
+      "MaxRank": 0,
+      "Min": 4.082170089000002,
+      "Ranks": 1,
+      "Sum": 4.082170089000002
+    },
+    "CONSTRUCT_ESTIMATOR": {
+      "Avg": 0.171745178,
+      "Count": 1,
+      "Max": 0.171745178,
+      "MaxRank": 0,
+      "Min": 0.171745178,
+      "Ranks": 1,
+      "Sum": 0.171745178
+    },
+    "ESTIMATION": {
+      "Avg": 0.044443413,
+      "Count": 2,
+      "Max": 0.044443413,
+      "MaxRank": 0,
+      "Min": 0.044443413,
+      "Ranks": 1,
+      "Sum": 0.044443413
+    },
+    "INIT": {
+      "Avg": 0.21889555,
+      "Count": 2,
+      "Max": 0.21889555,
+      "MaxRank": 0,
+      "Min": 0.21889555,
+      "Ranks": 1,
+      "Sum": 0.21889555
+    },
+    "IO": {
+      "Avg": 0.250746482,
+      "Count": 9,
+      "Max": 0.250746482,
+      "MaxRank": 0,
+      "Min": 0.250746482,
+      "Ranks": 1,
+      "Sum": 0.250746482
+    },
+    "KSP": {
+      "Avg": 0.09821945199999997,
+      "Count": 2,
+      "Max": 0.09821945199999997,
+      "MaxRank": 0,
+      "Min": 0.09821945199999997,
+      "Ranks": 1,
+      "Sum": 0.09821945199999997
+    },
+    "KSP_COARSE_SETUP": {
+      "Avg": 0.003232528,
+      "Count": 1,
+      "Max": 0.003232528,
+      "MaxRank": 0,
+      "Min": 0.003232528,
+      "Ranks": 1,
+      "Sum": 0.003232528
+    },
+    "KSP_COARSE_SOLVE": {
+      "Avg": 0.005799665,
+      "Count": 21,
+      "Max": 0.005799665,
+      "MaxRank": 0,
+      "Min": 0.005799665,
+      "Ranks": 1,
+      "Sum": 0.005799665
+    },
+    "KSP_PRECONDITIONER": {
+      "Avg": 2.3285682789999997,
+      "Count": 21,
+      "Max": 2.3285682789999997,
+      "MaxRank": 0,
+      "Min": 2.3285682789999997,
+      "Ranks": 1,
+      "Sum": 2.3285682789999997
+    },
+    "KSP_SETUP": {
+      "Avg": 0.402243789,
+      "Count": 1,
+      "Max": 0.402243789,
+      "MaxRank": 0,
+      "Min": 0.402243789,
+      "Ranks": 1,
+      "Sum": 0.402243789
+    },
+    "MESH_PREPROCESS": {
+      "Avg": 0.37083300999999996,
+      "Count": 2,
+      "Max": 0.37083300999999996,
+      "MaxRank": 0,
+      "Min": 0.37083300999999996,
+      "Ranks": 1,
+      "Sum": 0.37083300999999996
+    },
+    "POSTPRO": {
+      "Avg": 0.10089392000000003,
+      "Count": 6,
+      "Max": 0.10089392000000003,
+      "MaxRank": 0,
+      "Min": 0.10089392000000003,
+      "Ranks": 1,
+      "Sum": 0.10089392000000003
+    },
+    "POSTPRO_GRIDFUNCTION": {
+      "Avg": 0.33705992100000004,
+      "Count": 3,
+      "Max": 0.33705992100000004,
+      "MaxRank": 0,
+      "Min": 0.33705992100000004,
+      "Ranks": 1,
+      "Sum": 0.33705992100000004
+    },
+    "POSTPRO_PARAVIEW": {
+      "Avg": 0.8207280739999999,
+      "Count": 3,
+      "Max": 0.8207280739999999,
+      "MaxRank": 0,
+      "Min": 0.8207280739999999,
+      "Ranks": 1,
+      "Sum": 0.8207280739999999
+    },
+    "SOLVE_ESTIMATOR": {
+      "Avg": 1.6076598469999999,
+      "Count": 2,
+      "Max": 1.6076598469999999,
+      "MaxRank": 0,
+      "Min": 1.6076598469999999,
+      "Ranks": 1,
+      "Sum": 1.6076598469999999
+    },
+    "STARTUP": {
+      "Avg": 0.017524653,
+      "Count": 1,
+      "Max": 0.017524653,
+      "MaxRank": 0,
+      "Min": 0.017524653,
+      "Ranks": 1,
+      "Sum": 0.017524653
+    },
+    "TOTAL": {
+      "Avg": 10.861359984,
+      "Count": 1,
+      "Max": 10.861359984,
+      "MaxRank": 0,
+      "Min": 10.861359984,
+      "Ranks": 1,
+      "Sum": 10.861359984
+    }
+  },
+  "GitTag": "215edff",
+  "LinearSolver": {
+    "Estimator": {
+      "Its": 199,
+      "MaxIts": 100,
+      "Setups": 1,
+      "Solves": 2
+    },
+    "Main": {
+      "Its": 17,
+      "MaxIts": 9,
+      "Setups": 1,
+      "Solves": 2
+    }
+  },
+  "MetadataVersion": 2,
+  "PeakMemoryGrowthMegabytes": {
+    "Baseline": {
+      "Avg": 0,
+      "Max": 0,
+      "MaxRank": 0,
+      "Min": 0,
+      "Ranks": 1,
+      "Sum": 0
+    },
+    "CONSTRUCT": {
+      "Avg": 247.6796875,
+      "Max": 247.6796875,
+      "MaxRank": 0,
+      "Min": 247.6796875,
+      "Ranks": 1,
+      "Sum": 247.6796875
+    },
+    "CONSTRUCT_ESTIMATOR": {
+      "Avg": 59.25,
+      "Max": 59.25,
+      "MaxRank": 0,
+      "Min": 59.25,
+      "Ranks": 1,
+      "Sum": 59.25
+    },
+    "ESTIMATION": {
+      "Avg": 38,
+      "Max": 38,
+      "MaxRank": 0,
+      "Min": 38,
+      "Ranks": 1,
+      "Sum": 38
+    },
+    "INIT": {
+      "Avg": 2.24609375,
+      "Max": 2.24609375,
+      "MaxRank": 0,
+      "Min": 2.24609375,
+      "Ranks": 1,
+      "Sum": 2.24609375
+    },
+    "IO": {
+      "Avg": 21.79296875,
+      "Max": 21.79296875,
+      "MaxRank": 0,
+      "Min": 21.79296875,
+      "Ranks": 1,
+      "Sum": 21.79296875
+    },
+    "KSP": {
+      "Avg": 0,
+      "Max": 0,
+      "MaxRank": 0,
+      "Min": 0,
+      "Ranks": 1,
+      "Sum": 0
+    },
+    "KSP_COARSE_SETUP": {
+      "Avg": 1,
+      "Max": 1,
+      "MaxRank": 0,
+      "Min": 1,
+      "Ranks": 1,
+      "Sum": 1
+    },
+    "KSP_COARSE_SOLVE": {
+      "Avg": 0,
+      "Max": 0,
+      "MaxRank": 0,
+      "Min": 0,
+      "Ranks": 1,
+      "Sum": 0
+    },
+    "KSP_PRECONDITIONER": {
+      "Avg": 0,
+      "Max": 0,
+      "MaxRank": 0,
+      "Min": 0,
+      "Ranks": 1,
+      "Sum": 0
+    },
+    "KSP_SETUP": {
+      "Avg": 116.234375,
+      "Max": 116.234375,
+      "MaxRank": 0,
+      "Min": 116.234375,
+      "Ranks": 1,
+      "Sum": 116.234375
+    },
+    "MESH_PREPROCESS": {
+      "Avg": 11.3828125,
+      "Max": 11.3828125,
+      "MaxRank": 0,
+      "Min": 11.3828125,
+      "Ranks": 1,
+      "Sum": 11.3828125
+    },
+    "POSTPRO": {
+      "Avg": 59.375,
+      "Max": 59.375,
+      "MaxRank": 0,
+      "Min": 59.375,
+      "Ranks": 1,
+      "Sum": 59.375
+    },
+    "POSTPRO_GRIDFUNCTION": {
+      "Avg": 20.25,
+      "Max": 20.25,
+      "MaxRank": 0,
+      "Min": 20.25,
+      "Ranks": 1,
+      "Sum": 20.25
+    },
+    "POSTPRO_PARAVIEW": {
+      "Avg": 123,
+      "Max": 123,
+      "MaxRank": 0,
+      "Min": 123,
+      "Ranks": 1,
+      "Sum": 123
+    },
+    "SOLVE_ESTIMATOR": {
+      "Avg": 41.5,
+      "Max": 41.5,
+      "MaxRank": 0,
+      "Min": 41.5,
+      "Ranks": 1,
+      "Sum": 41.5
+    },
+    "STARTUP": {
+      "Avg": 10.65234375,
+      "Max": 10.65234375,
+      "MaxRank": 0,
+      "Min": 10.65234375,
+      "Ranks": 1,
+      "Sum": 10.65234375
+    },
+    "Unattributed": {
+      "Avg": 24.71484375,
+      "Max": 24.71484375,
+      "MaxRank": 0,
+      "Min": 24.71484375,
+      "Ranks": 1,
+      "Sum": 24.71484375
+    }
+  },
+  "PeakMemoryMegabytes": {
+    "Avg": 777.078125,
+    "Max": 777.078125,
+    "MaxRank": 0,
+    "Min": 777.078125,
+    "Ranks": 1,
+    "Sum": 777.078125
+  },
+  "PeakNodeMemoryGrowthMegabytes": {
+    "Baseline": {
+      "Avg": 0,
+      "Max": 0,
+      "Min": 0,
+      "Nodes": 1,
+      "Sum": 0
+    },
+    "CONSTRUCT": {
+      "Avg": 247.6796875,
+      "Max": 247.6796875,
+      "Min": 247.6796875,
+      "Nodes": 1,
+      "Sum": 247.6796875
+    },
+    "CONSTRUCT_ESTIMATOR": {
+      "Avg": 59.25,
+      "Max": 59.25,
+      "Min": 59.25,
+      "Nodes": 1,
+      "Sum": 59.25
+    },
+    "ESTIMATION": {
+      "Avg": 38,
+      "Max": 38,
+      "Min": 38,
+      "Nodes": 1,
+      "Sum": 38
+    },
+    "INIT": {
+      "Avg": 2.24609375,
+      "Max": 2.24609375,
+      "Min": 2.24609375,
+      "Nodes": 1,
+      "Sum": 2.24609375
+    },
+    "IO": {
+      "Avg": 21.79296875,
+      "Max": 21.79296875,
+      "Min": 21.79296875,
+      "Nodes": 1,
+      "Sum": 21.79296875
+    },
+    "KSP": {
+      "Avg": 0,
+      "Max": 0,
+      "Min": 0,
+      "Nodes": 1,
+      "Sum": 0
+    },
+    "KSP_COARSE_SETUP": {
+      "Avg": 1,
+      "Max": 1,
+      "Min": 1,
+      "Nodes": 1,
+      "Sum": 1
+    },
+    "KSP_COARSE_SOLVE": {
+      "Avg": 0,
+      "Max": 0,
+      "Min": 0,
+      "Nodes": 1,
+      "Sum": 0
+    },
+    "KSP_PRECONDITIONER": {
+      "Avg": 0,
+      "Max": 0,
+      "Min": 0,
+      "Nodes": 1,
+      "Sum": 0
+    },
+    "KSP_SETUP": {
+      "Avg": 116.234375,
+      "Max": 116.234375,
+      "Min": 116.234375,
+      "Nodes": 1,
+      "Sum": 116.234375
+    },
+    "MESH_PREPROCESS": {
+      "Avg": 11.3828125,
+      "Max": 11.3828125,
+      "Min": 11.3828125,
+      "Nodes": 1,
+      "Sum": 11.3828125
+    },
+    "POSTPRO": {
+      "Avg": 59.375,
+      "Max": 59.375,
+      "Min": 59.375,
+      "Nodes": 1,
+      "Sum": 59.375
+    },
+    "POSTPRO_GRIDFUNCTION": {
+      "Avg": 20.25,
+      "Max": 20.25,
+      "Min": 20.25,
+      "Nodes": 1,
+      "Sum": 20.25
+    },
+    "POSTPRO_PARAVIEW": {
+      "Avg": 123,
+      "Max": 123,
+      "Min": 123,
+      "Nodes": 1,
+      "Sum": 123
+    },
+    "SOLVE_ESTIMATOR": {
+      "Avg": 41.5,
+      "Max": 41.5,
+      "Min": 41.5,
+      "Nodes": 1,
+      "Sum": 41.5
+    },
+    "STARTUP": {
+      "Avg": 10.65234375,
+      "Max": 10.65234375,
+      "Min": 10.65234375,
+      "Nodes": 1,
+      "Sum": 10.65234375
+    },
+    "Unattributed": {
+      "Avg": 24.71484375,
+      "Max": 24.71484375,
+      "Min": 24.71484375,
+      "Nodes": 1,
+      "Sum": 24.71484375
+    }
+  },
+  "PeakNodeMemoryMegabytes": {
+    "Avg": 777.078125,
+    "Max": 777.078125,
+    "Min": 777.078125,
+    "Nodes": 1,
+    "Sum": 777.078125
+  },
+  "Problem": {
+    "DegreesOfFreedom": 66328,
+    "Iteration": 1,
+    "MPISize": 1,
+    "MeshElements": 14362,
+    "MultigridDegreesOfFreedom": [
+      2536,
+      19857,
+      66328
+    ]
+  }
+}
