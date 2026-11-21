@@ -92,15 +92,15 @@ In particular, lumped ports with nonzero resistance in the model will trigger co
 and quality factor calculations based on input-output (I-O) line coupling loss: By
 specifying resistive lumped ports in the model, the mode coupling quality factors will be
 computed as ``Q_{ml} = \mathrm{Re}\{\omega_m\}/|\kappa_{ml}|``. The magnitude of the coupling
-rate ``\kappa_{ml}`` is the power dissipated in the resistive boundary of port ``l`` divided
-by the electric-side normalization ``U`` of mode ``m`` (see
-[Energy and postprocessing](model.md#Energy-and-postprocessing)), and its sign is the sign
-of the real part of the port current. For a mode whose voltage across the port cancels, this
-current is at the level of round-off and the sign has no meaning: only the magnitude does.
-This power includes field that does not match the voltage mode of the port, so when the port
-does not match the field it can be much larger than the I-O line coupling loss
-``|V_{ml}|^2/(2R_l)``. The output file `port-Q.csv` will be created in the output directory
-containing these mode quality factor contributions. For bulk and
+rate ``\kappa_{ml}`` is the time-averaged power dissipated in the resistive boundary of port
+``l`` divided by the total stored energy of mode ``m``, twice its time-averaged electric-side
+energy ``U`` (see [Energy and postprocessing](model.md#Energy-and-postprocessing)), and its
+sign is the sign of the real part of the port current. For a mode whose voltage across the
+port cancels, this current is at the level of round-off and the sign has no meaning: only
+the magnitude does. This power includes field that does not match the voltage mode of the
+port, so when the port does not match the field it can be much larger than the I-O line
+coupling loss ``|V_{ml}|^2/(2R_l)``. The output file `port-Q.csv` will be created in the
+output directory containing these mode quality factor contributions. For bulk and
 interface dielectric loss calculations, which are not unique to the eigenmode simulation
 type, see the sections [Domain postprocessing](postprocessing.md#Domain-postprocessing) and
 [Boundary postprocessing](postprocessing.md#Boundary-postprocessing) of this guide.
@@ -351,9 +351,10 @@ direction of propagation.
 When impedance postprocessing boundaries are specified under
 [`config["Boundaries"]["Postprocessing"]["Impedance"]`](../config/reference.md#config-boundaries-postprocessing-impedance),
 the complex characteristic impedance is computed using the power-voltage definition
-``Z_\text{PV} = |V|^2 / P^*`` and, when a current path is also specified, the voltage-current
-definition ``Z_\text{VI} = V / I`` (see the [reference](../reference.md) for details). The
-per-unit-length inductance ``L = \text{Re}\{n_\text{eff} Z\} / c_0`` and capacitance
+``Z_\text{PV} = |V|^2 / (2P^*)``, with the complex time-averaged power ``P`` of the mode, and,
+when a current path is also specified, the voltage-current definition ``Z_\text{VI} = V / I``
+(see the [reference](../reference.md) for details). The per-unit-length inductance
+``L = \text{Re}\{n_\text{eff} Z\} / c_0`` and capacitance
 ``C = \text{Re}\{n_\text{eff} / Z\} / c_0`` are derived from each impedance ``Z``, from the
 series impedance ``i k_n Z = R + i\omega L`` and shunt admittance ``i k_n / Z = G + i\omega C``
 per unit length of the line. The results are written to `mode-Z.csv`. Similarly, when voltage
