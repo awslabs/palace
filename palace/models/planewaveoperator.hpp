@@ -38,9 +38,9 @@ struct PlaneWaveData;
 // where g is the interpolant of the incident field and g_T, g_O its restrictions to T and
 // O. Only the elements outside of T which touch S couple T and O dofs, so b is the
 // discrete counterpart of the equivalent (Love) currents on S, and the incident field is
-// only evaluated in that layer of elements. These must be one homogeneous, isotropic and
-// lossless material (the background), whose speed of light sets the wavenumber of the
-// incident field. The spaces, the mesh, and the operator are unchanged.
+// only evaluated in that layer of elements. These must be one homogeneous, isotropic,
+// lossless and non-dispersive material (the background), whose speed of light sets the
+// wavenumber of the incident field. The spaces, the mesh, and the operator are unchanged.
 //
 class PlaneWaveOperator
 {
@@ -111,7 +111,7 @@ public:
   // Set the background material of each plane wave from the elements outside of its
   // total-field region which touch its boundary, where the incident field is evaluated,
   // and the Floquet wave vector of the solution, if any. Aborts if these elements are not
-  // one homogeneous, isotropic and lossless material.
+  // one homogeneous, isotropic, lossless and non-dispersive material.
   void SetUpBackground(const MaterialOperator &mat_op,
                        const FiniteElementSpace &nd_fespace);
 
