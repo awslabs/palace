@@ -260,7 +260,7 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
 
       // Calculate and record the error indicators.
       Mpi::Print(" Updating solution error estimates\n");
-      estimator.AddErrorIndicator(E, B, total_domain_energy, indicator);
+      estimator.AddErrorIndicator(E, B, total_domain_energy, omega, indicator);
     }
 
     // Final postprocessing & printing. After the last excitation, the solver totals were
@@ -387,8 +387,8 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
 
     // Measure domain energies for the error indicator only. Don't exchange face_nbr_data,
     // unless printing paraview fields.
-    auto total_domain_energy = post_op.MeasureDomainFieldEnergyOnly(E, B);
-    estimator.AddErrorIndicator(E, B, total_domain_energy, indicator);
+    auto total_domain_energy = post_op.MeasureDomainFieldEnergyOnly(E, B, omega);
+    estimator.AddErrorIndicator(E, B, total_domain_energy, omega, indicator);
     return update.error;
   };
 

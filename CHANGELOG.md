@@ -33,6 +33,18 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     imaginary parts of the incident voltage and current. A phase that is not a multiple of
     180 degrees is an error for transient simulations. SchemaVer 4-3-0
     [PR 1169](https://github.com/awslabs/palace/pull/1169).
+  - Added scalar frequency-dependent `Permittivity` objects, with a `HighFrequencyLimit`
+    and additive Drude, Debye, Lorentz, PoleResidue, and native Djordjevic-Sarkar terms.
+    Frequency-domain operators, ports, postprocessing, energy/error estimates, adaptive
+    sweeps, and circuit synthesis use the material model at the solution frequency.
+    Compatible static limits are supported; transient problems are not. With the default
+    solver settings, eigenmode problems whose only frequency-dependent terms are Drude,
+    Debye, Lorentz, or PoleResidue terms are solved as linear eigenvalue problems, with
+    SLEPc and ARPACK; with other frequency-dependent terms, the initial guesses of the
+    nonlinear eigensolver take these pole terms exactly. General PoleResidue models remain
+    usable with gain warnings; a PoleResidue term with a nonzero pole specifies no stored
+    electric energy, so the electric energy outputs of a material with one are omitted.
+    SchemaVer 5-1-0 [PR 877](https://github.com/awslabs/palace/pull/877).
 
 #### Interface Changes
 
@@ -391,6 +403,62 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     postprocessing with a warning if they differ by more than a tenth of `"AdaptiveTol"`
     (or about 10⁻⁹ for tighter tolerances).
     [PR 1188](https://github.com/awslabs/palace/pull/1188).
+  - Fixed the coupling of a lumped port in the circuit of adaptive circuit synthesis
+    (`rom-coupled-G.csv`, `rom-coupled-H.csv`, and `rom-coupled-S.csv`). The port was
+    coupled through a unit selector on its terminal row, but the basis vector of that row,
+    the projection of the port mode normalized in the W norm, does not have a unit voltage,
+    and the other basis vectors carry small voltages. It is now coupled through its voltage
+    on every basis vector. The S-parameters of the circuit of a shorted coaxial line driven
+    by a lumped port match those of the reduced-order model to 1e-6 instead of 2e-2, and
+    those of the `coaxial_lumped_wave_synth` regression case to 7e-13 instead of about
+    6e-4. These files change for every circuit synthesis with lumped ports.
+    [PR 877](https://github.com/awslabs/palace/pull/877).
+  - Fixed circuit synthesis with wave ports aborting, without writing `port-S.csv` or the
+    `rom-*` files, when a wave port mode did not converge at the complex frequency of a
+    synthesized eigenvalue estimate. The HDM errors of such estimates are now written as
+    NaN, with a warning, and the other outputs are written as before. For this, an ARPACK
+    eigenvalue solve which reaches its iteration limit now returns the eigenpairs which have
+    converged, as SLEPc does, instead of aborting.
+    [PR 877](https://github.com/awslabs/palace/pull/877).
+  - Fixed errors of up to 1e-4 in the S-parameters of a synthesized circuit with wave ports
+    in a lossy or frequency-dependent material, relative to the reduced-order model the
+    circuit is made from, while the reported fit residuals were below `AdaptiveTol`. The two
+    parts of a wave port fit were realized on different sets of port directions, and the
+    rounding-level imaginary part of a real wave port mode was kept as a circuit node.
+    The circuits of existing inputs change: of a wave port with poles in its fit also in
+    vacuum (the S-parameters of the circuit of the `adapter_driven_synth` regression case
+    by 5e-8), and of a wave port with a real mode, which loses its `waveport_<n>_im` node
+    and one auxiliary direction for each pole of its fit (in the
+    `cylinder_driven_wave_tm_lossy_synth` regression case, also its exported reference
+    impedance by 5e-4).
+    [PR 877](https://github.com/awslabs/palace/pull/877).
+  - Changed the fits of circuit synthesis for surface conductivity boundaries, and for
+    rational impedance boundaries which are not split exactly, to bound their error relative
+    to the fitted response at each frequency instead of relative to its largest value over
+    the band, which did not bound the error where the response is small. The polynomial
+    part of a fit with poles, of a surface conductivity or a rational impedance boundary
+    (split exactly or not), is now realized on the directions of its poles only, as for the
+    frequency-dependent materials: on the full mass, a direction below the rank cutoff kept
+    the polynomial part alone, which for a series RLC sheet below its resonance left the
+    term in the circuit 3e-5 from that of the reduced model where the fit residual was
+    1e-13. The circuits of existing inputs with these boundaries change, including the
+    support points of their AAA fits: the S-parameters of the circuit of the
+    `coaxial_wave_conductivity_synth` regression case differ from those of its reduced-order
+    model by 5e-6 instead of 9e-6.
+    [PR 877](https://github.com/awslabs/palace/pull/877).
+  - Added a warning when eigenvalue estimates of a synthesized circuit
+    (`rom-eigenvalues.csv`) have Im{f} < 0. These roots grow in time, which their Q does not
+    show. They come from the poles of the AAA fits of frequency-dependent boundaries, such
+    as wave ports in lossy or frequency-dependent media, which are not constrained to the
+    stable half-plane: the circuit can match the reduced-order model on the band and not be
+    stable, for example in a transient circuit simulation.
+    [PR 877](https://github.com/awslabs/palace/pull/877).
+  - Fixed the quasi-Newton nonlinear eigenvalue solver stalling below
+    `config["Solver"]["Eigenmode"]["PreconditionerLagTol"]`, where it kept a stale
+    preconditioner and could stop without the requested modes. Below that residual, the
+    preconditioner is now updated when the tolerance would otherwise not be reached within
+    the next `"PreconditionerLag"` iterations.
+    [PR 877](https://github.com/awslabs/palace/pull/877).
   - Added a STRUMPACK patch for
     [pghysels/STRUMPACK#164](https://github.com/pghysels/STRUMPACK/pull/164), which fixes
     the solves after the matrix values change when STRUMPACK compression is enabled
@@ -530,6 +598,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Documentation
 
+  - The `microstrip` regression cases use the mesh of the new dispersive microstrip example,
+    which also has the side walls and the ends of the line as boundaries: the inductance of
+    `microstrip_pec` increases by 0.5%, from 5.641 to 5.669 pH, and that of
+    `microstrip_superconductor` by 0.05%.
+    [PR 877](https://github.com/awslabs/palace/pull/877).
   - Updated the configuration schema descriptions of `"AdaptiveCircuitSynthesis"`, which
     listed frequency-dependent boundary conditions it supports as unsupported, and of the
     absorbing boundary `"Order"`, and documented the limitations of the second-order

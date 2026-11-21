@@ -62,6 +62,9 @@ struct RegressionOptions
   // rom-Linv/Rinv/C pencil matrices): not stored in the reference tree, so they are dropped
   // from the file-presence check, not just the comparison.
   std::vector<std::string> unstored_files;
+  // Paths relative to postpro/ of unstored outputs which must still be written: the
+  // file-presence check without a reference, as excluded_files keeps it for stored ones.
+  std::vector<std::string> required_unstored_files;
   // Allow row-count mismatch (eigen / adaptive cases).
   bool skip_rowcount = false;
   // Compare at most this many leading rows. If unset for an Eigenmode case,
