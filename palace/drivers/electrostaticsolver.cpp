@@ -1531,6 +1531,8 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // The SpatialClusterPriority raw remainders (decision 922) likewise.
   std::vector<SurfacePostOperator::UncoveredPerimeterPortion>
       spatial_cluster_priority_portions;
+  // Ruling 2276: the dropped coupons' windows for the coverage partition (null: none).
+  const SurfacePostOperator::CoverageDroppedWindows *dropped_windows = nullptr;
   // PatchEnergy (decision 922 B-1; the 851 (C) export): the applied patches' raw claims by
   // model set (empty without PatchEnergy) and, per source, the raw field's within-R energy
   // partitioned over them.
@@ -1566,6 +1568,12 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     {
       spatial_cluster_priority_portions.push_back(
           {portion.p0, portion.p1, portion.topology, portion.feature});
+    }
+    if (const auto &windows =
+            response_correction->GetSpatialClusterPriorityExclusions().coverage_windows;
+        !windows.Empty())
+    {
+      dropped_windows = &windows;
     }
     // Round 2b B1 (decision 1484): moved out of the operator (the same portions in the
     // same order; the operator reads them nowhere after the construction), held once, in
@@ -1898,6 +1906,8 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   const auto coverage_path = post_dir / "surface-response-coverage.csv";
   const auto coverage_by_key_path =
       post_dir / "surface-response-uncovered-energy-by-key.csv";
+  // Ruling 2277: the near-edge energy budget beside them (top level).
+  const auto budget_path = post_dir / kNearEdgeBudgetTableName;
   // Lane rescensus-product (decision 1817): the census table (top level: small, one row per
   // source x Type x (planes + 1)), written as each source completes.
   const auto resolution_path = post_dir / "surface-response-resolution.csv";
@@ -1905,6 +1915,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   {
     fs::remove(coverage_path);
     fs::remove(coverage_by_key_path);
+    fs::remove(budget_path);
     fs::remove(post_dir / "terminal-C-corrected-coverage.csv");
     fs::remove(resolution_path);
   }
@@ -1967,7 +1978,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   {
     const auto targets = response_correction->GetCoverageInterfaces();
     const bool first = coverage_measurements.size() == 1;
-    for (const auto &path : {coverage_path, coverage_by_key_path})
+    for (const auto &path : {coverage_path, coverage_by_key_path, budget_path})
     {
       std::ofstream output(path, first ? std::ios::out | std::ios::trunc
                                        : std::ios::out | std::ios::app);
@@ -1976,6 +1987,11 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       {
         output << (first ? CoverageTableHeader("i") : "");
         WriteCoverageRows(output, std::to_string(source), measurement, iodata.units);
+      }
+      else if (path == budget_path)
+      {
+        output << (first ? NearEdgeBudgetTableHeader("i") : "");
+        WriteNearEdgeBudgetRows(output, std::to_string(source), measurement, iodata.units);
       }
       else
       {
@@ -2285,9 +2301,12 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         {
           remainder_classes.push_back({"Excluded", &exclusion_energy_portions});
         }
+        // Ruling 2295 (A): a box whose patch this source's gate pass excludes (the portion
+        // record in force) holds nothing.
         auto partition = post_op.GetElectrostaticCoveragePartition(
             response_correction->GetCoverageInterfaces(), kept_classes, model_raw_portions,
-            remainder_classes);
+            remainder_classes, dropped_windows,
+            response_correction->GetConductorConsistencyPortionRecord().PatchSet());
         SurfacePostOperator::MoveCoverageServedLabel(partition, "unpatched",
                                                      "UnpatchedPairs");
         coverage_partitions.emplace_back(idx, std::move(partition));
@@ -2812,9 +2831,10 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         {
           remainder_classes.push_back({"Excluded", &exclusion_energy_portions});
         }
+        // Ruling 2295 (A): a box whose patch is in the FINAL set holds nothing.
         auto partition = post_op.GetElectrostaticCoveragePartition(
             response_correction->GetCoverageInterfaces(), kept_classes, model_raw_portions,
-            remainder_classes);
+            remainder_classes, dropped_windows, final_record.PatchSet());
         SurfacePostOperator::MoveCoverageServedLabel(partition, "unpatched",
                                                      "UnpatchedPairs");
         if (root)

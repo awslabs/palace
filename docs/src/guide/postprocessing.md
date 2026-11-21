@@ -180,7 +180,10 @@ file. These include:
     the method gap, the pending-model and no-status-model shares, the covered correction
     factor, an interim coverage status and a regime status;
     `surface-response-uncovered-energy-by-key.csv` lists the uncovered energy per missing
-    key, and `terminal-C-corrected-coverage.csv` the status of each corrected capacitance
+    key, `surface-response-near-edge-energy-budget.csv` gives per cell where every part of
+    ``W`` went (each bin of the coverage partition once: replaced by a model, kept raw, or
+    dropped by the corrected total: uncovered is not the same as kept raw), and
+    `terminal-C-corrected-coverage.csv` the status of each corrected capacitance
     entry. The same columns are appended to `surface-Q-corrected.csv` and
     `surface-response-confidence.csv`, and every cell that is not `OK`, or whose regime
     status is not `IN` (computed, NOT VALIDATED in this regime), is named by the end-of-run

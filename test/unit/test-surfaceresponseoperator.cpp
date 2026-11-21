@@ -13518,9 +13518,23 @@ TEST_CASE("SurfaceResponseOperatorSpatialClusterPriorityRawRemainder",
   const auto owned = AddPatch(2, 37, {-12.0, 12.0, 0.0});
   CornerArms(owned, {1.0, 0.0, 0.0}, {0.0, 1.0, 0.0});
   data.patches[owned].weight = 0.0;
-  std::vector<SpatialSupportBounds> supports = {cluster, CornerSupport(straddling),
-                                                CornerSupport(inside), CornerSupport(clear),
-                                                CornerSupport(owned)};
+  // A second cluster (patch 5) whose box (x in [30, 51.8]) clears every corner's window: a
+  // matched box of the coverage feed that removes none of the windows' pieces.
+  const auto far_cluster_patch = AddPatch(1, 13, {40.9, 6.0, 0.0});
+  data.patches[far_cluster_patch].provenance.claims = {
+      Claim{3, {30.0, 12.0, 0.0}, {51.8, 12.0, 0.0}},
+      Claim{4, {30.0, 0.0, 0.0}, {51.8, 0.0, 0.0}}};
+  SpatialSupportBounds far_cluster;
+  far_cluster.patch = far_cluster_patch;
+  far_cluster.SetMeshAlignedBox({30.0, -5.7, -1.95}, {51.8, 17.7, 2.0});
+  far_cluster.claims = data.patches[far_cluster_patch].provenance.claims;
+  far_cluster.matching_radius = R;
+  std::vector<SpatialSupportBounds> supports = {cluster,
+                                                CornerSupport(straddling),
+                                                CornerSupport(inside),
+                                                CornerSupport(clear),
+                                                CornerSupport(owned),
+                                                far_cluster};
 
   const auto exclusions = FindSpatialClusterPriorityExclusions(supports, data, {owned}, 3);
   REQUIRE(exclusions.size() == 2);
@@ -13552,6 +13566,36 @@ TEST_CASE("SurfaceResponseOperatorSpatialClusterPriorityRawRemainder",
   CHECK_THAT(record.portions.portions[1].p1[1], WithinAbs(12.0 + R, 1.0e-12));
   CHECK(record.portions.translational == std::vector<bool>{false, false});
   CHECK_THAT(record.portions.length, WithinAbs(1.1 + R, 1.0e-9));
+  // Ruling 2276 (review dropcover-r2271 MAJOR-1): the coverage partition's feed. The boxes
+  // = the supports with claims (the cluster: token m1, its patch; the far cluster); the
+  // inside pieces = what the clip removed (the straddling corner's first arm over [10.1,
+  // 10.9], both arms of the corner inside the box), labelled by the dropped patch; the
+  // holders per window: the clipping box only, never the far cluster's box (review
+  // dropcover-fix-r2295 MINOR-1).
+  const auto &windows = record.coverage_windows;
+  REQUIRE(windows.boxes.size() == 2);
+  CHECK(windows.boxes[0].token == "m1");
+  CHECK(windows.boxes[0].model == 1);
+  CHECK(windows.boxes[0].patch == static_cast<int>(cluster_patch));
+  CHECK(windows.boxes[1].patch == static_cast<int>(far_cluster_patch));
+  std::map<std::string, double> inside_length;
+  std::map<std::string, int> inside_feature;
+  for (const auto &piece : windows.inside)
+  {
+    inside_length[piece.type] += std::hypot(
+        piece.p1[0] - piece.p0[0], piece.p1[1] - piece.p0[1], piece.p1[2] - piece.p0[2]);
+    inside_feature[piece.type] = piece.feature;
+  }
+  const std::string straddling_label = "p" + std::to_string(straddling),
+                    inside_label = "p" + std::to_string(inside);
+  REQUIRE(inside_length.size() == 2);
+  CHECK_THAT(inside_length.at(straddling_label), WithinAbs(R - 1.1, 1.0e-9));
+  CHECK_THAT(inside_length.at(inside_label), WithinAbs(2.0 * R, 1.0e-12));
+  CHECK(inside_feature.at(straddling_label) == 34);
+  CHECK(inside_feature.at(inside_label) == 35);
+  CHECK(windows.holders.size() == 2);
+  CHECK(windows.holders.at(straddling_label) == std::vector<std::size_t>{0});
+  CHECK(windows.holders.at(inside_label) == std::vector<std::size_t>{0});
 
   const auto description =
       DescribeSpatialClusterPriorityExclusions(record, data.patches, data, supports, 1.0);

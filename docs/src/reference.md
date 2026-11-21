@@ -1584,8 +1584,9 @@ circle, `"Convexity": "Convex"`, or outside, `"Concave"`). Their records carry
 matrices are full-revolution energies, so `CouponDepth` must be the edge length
 $2 \pi \rho$. The straight model of the analogous topology is the $\kappa = 0$ anchor. A
 curved feature of curvature $\kappa$ is corrected by a runtime model interpolated in
-$\kappa$: the exact coupon at a node, the linear combination of the anchor and the smallest
-node for $\kappa$ at or below it (the first-order correction of straight-like features),
+$\kappa$: the exact coupon at a node, the linear combination of the anchor and the node at
+$\kappa = 0.1$ for $\kappa$ at or below $0.1$ (reported unmatched when the family has no
+node there) (the first-order correction of straight-like features),
 otherwise the cubic Lagrange interpolant on the four nearest nodes, formed on the matrices
 (negative weights never reach a patch). A portion of a straight-like feature whose
 first-order split fraction (its $\kappa$ over $0.1$, the $\kappa$ of the node the split goes
@@ -3171,13 +3172,42 @@ correction actually covers. The definitions are energies of the RAW field:
     whatever is not served by an applied patch is uncovered, whatever diagnostic switch is
     on or off). ``U`` = missing + method gap: the missing share lies on uncovered features
     whose key the identification reports `Missing` (a library could hold a model for it);
-    the method gap is everything else left raw (DomainBoundary, SpatialClusterPriority and
-    conductor-consistency-excluded claims, the circulating loop remainder, unpatched pairs,
-    the Unboxable and placement-rejected keys, the unclaimed remainder). The method gap is a
-    LOWER BOUND of what no library can cover today, so `NOT-ACHIEVABLE` is conservative.
-    One named part of the unclaimed remainder: the window of a corner coupon dropped by
-    `SpatialClusterPriority` that lies INSIDE the owner cluster's box is given to the owner
-    by the corrected total (not kept raw) but no applied claim holds it.
+    the method gap is the rest of ``U``. UNCOVERED IS NOT THE SAME AS KEPT RAW: of ``U``,
+    the corrected total KEEPS the raw energy of the Missing class (the Unboxable and
+    placement-rejected keys included), the DomainBoundary claims, the part of a
+    `SpatialClusterPriority`-dropped window outside every matched cluster box, the
+    conductor-consistency-excluded claims and the circulating loop remainder, and it DROPS
+    the rest (neither a model's energy nor the raw energy is in the corrected total): the
+    unpatched pairs, the excluded remainder, the unclaimed remainder and the part of a
+    dropped window beyond every box or inside a box whose model is excluded at the
+    excitation (the energy budget below lists every class). The
+    method gap is a LOWER BOUND of what no library can cover today, so `NOT-ACHIEVABLE` is
+    conservative.
+  - HELD BY A BOX AS CONTEXT: a within-``R`` point that no kept class and no claim holds,
+    whose foot lies on a piece of a `SpatialClusterPriority`-dropped coupon's window that
+    the clip by the matched cluster boxes removed, is held AS CONTEXT by the boxes of that
+    clip that contain the point. The coverage counts it as SERVED (out of ``U``; in the
+    pending and no-status shares by the holders' models; in the denominator of the covered
+    correction factor), because the coupon of such a box is taken to model its whole box
+    (the code tests the point against the box only, never against the coupon's geometry).
+    Served by context is a statement of bookkeeping, not of accuracy: the coupon's model is
+    taken to include those edges, but no qualification of a coupon covers the energy at its
+    context corners. CONTEXT IS SERVED ONLY BY A HOLDER THAT SERVES AT THAT EXCITATION: a box
+    whose patch the conductor-consistency test excludes at the excitation (per excitation;
+    from the excitation of the exclusion on under `"Exclusion": "Sticky"`; in the final
+    electrostatic measurement of the corrected matrix, a patch excluded at any terminal)
+    holds nothing. In an overlap with one holder excluded the point is held by the serving
+    holder alone (labelled by it); a point that only excluded holders contain is INSIDE A
+    BOX WHOSE MODEL IS EXCLUDED AT THIS EXCITATION: no model serves it and it is not kept
+    raw, so it stays in ``U`` and is dropped (a bin of its own: its cause and remedy differ
+    from those of a point beyond every box). A point held by two or more boxes lies in a BOX
+    OVERLAP: its share is
+    printed on its own, and a warning names the holders (the fabricated energy of that
+    region may be counted by each holder; not measured). A point on such a piece that no
+    such box contains is BEYOND EVERY BOX: no coupon models it and it is not kept raw, so
+    it stays in ``U`` (reported only). No corrected value changes through this rule (under
+    `MarkNotApplied` the mark follows the coverage, below): the
+    claims, the Region apportionment and the corrected tables read the claims alone.
   - A served claim whose end point differs from the end point of the perimeter segment it
     lies on by arithmetic round-off only (at most 16 units in the last place per coordinate)
     is taken to end exactly there, so ``U`` no longer counts a convex vertex's exterior
@@ -3210,8 +3240,10 @@ correction actually covers. The definitions are energies of the RAW field:
     raw energy of every model claim, excluded ones included) is smaller than this factor by
     the factor ``1 + E_{CC} / (W - U)`` (``E_{CC}`` the excluded claims' raw energy)
     where such an exclusion is the only one of these terms that acts (a moved loop
-    remainder, an end snap or an owner credit also separates the two), and equal to it
-    where no exclusion, moved loop remainder, end snap or owner credit acts.
+    remainder, an end snap, an owner credit or the context held by a box also separates the
+    two: the context's raw energy is in ``W - U``, so a range derived before the context
+    rule on a cell with a dropped window inside a box is on the former basis), and equal to
+    it where no exclusion, moved loop remainder, end snap, owner credit or context acts.
 
 The files (plain text, the cell keys of the run's other tables; written as each mode,
 frequency or source completes; under AMR in every iteration's directory; `nan` where a
@@ -3241,6 +3273,45 @@ value does not exist):
     PlacementRejected key has a model whose placement the geometry refused (its reason says
     why: the model or the layout must change); an Unboxable key has a signature no coupon box
     can hold (the chain cannot build it today).
+  - `surface-response-near-edge-energy-budget.csv` (every corrected run): the NEAR-EDGE
+    ENERGY BUDGET, one row per cell and `Type`: `W within-R raw (J)`, then every bin of the
+    coverage partition as a raw share of ``W``, each within-``R`` point counted ONCE by the
+    partition's first-list rule (the kept classes' own tables, such as
+    `surface-response-uncovered-energy.csv`, integrate each class alone and can count a
+    point that lies in two windows twice; the budget never does), then the mirror and the
+    closure. What the corrected total does with each bin's raw energy:
+
+    | Column (`... raw share of W`) | Corrected total |
+    |:----------------------------- |:--------------- |
+    | `served` (by a claim) | replaced by the model's fabricated energy |
+    | `held by one box as context`, `held by a box overlap as context` | replaced by the holding coupon's model (bookkeeping; see above: only a holder that serves at that excitation holds context) |
+    | `missing`, `missing on method-gap keys` | kept raw |
+    | `domain boundary` | kept raw |
+    | `spatial-cluster priority outside every box` | kept raw |
+    | `conductor-consistency` | kept raw |
+    | `loop remainder` (the part the partition moved out of the claims) | kept raw |
+    | `unpatched pairs` | dropped |
+    | `excluded remainder` (with `Diagnostics.ExclusionEnergy` only) | dropped |
+    | `beyond every box` | dropped |
+    | `inside a box whose model is excluded at this excitation` | dropped |
+    | `unclaimed at a claim end`, `unclaimed on an edge without claims`, `unclaimed elsewhere on a claimed edge` | dropped |
+
+    "At a claim end": the point's foot on its segment lies within ``0.05 R`` of an end of a
+    piece of a kept class, a claim or the excluded remainder there. `spatial-cluster
+    priority inside a box (part of its class; not in the sum)` = the points of the kept
+    outside part that lie inside a matched box (kept raw AND inside a matched box; the
+    mirror does not ask whether that box's model is excluded at the excitation).
+    `context on a pending model` and `context on a no-status model` (parts of the two
+    context bins; not in the sum) = the context the coverage counts in its pending and
+    no-status shares, so that those shares without the context rule are the coverage's
+    shares minus these. `closure (W minus the bins) share of W` = ``(W - \sum \text{bins}) /
+    W``: 0 up to about ``\epsilon \cdot (E_{raw} / W)`` (``W`` = ``E_{raw}`` minus the raw
+    energy beyond ``R``, ``E_{raw}`` the interface's raw energy, ``\epsilon`` the machine
+    epsilon), never clamped; a value beyond that is a defect to report. The
+    coverage's ``U`` = ``W`` minus the served and context bins; its missing part = the
+    `missing` bin. A warning at the end of each adaptive level (a run without AMR: once, at
+    its end) names the largest share held in a box overlap (with its holders) and the
+    largest dropped share (with its parts).
   - `terminal-C-corrected-coverage.csv` (electrostatic terminals): entry (i, j) is the worse
     coverage status of sources i and j. The corrected matrix is formed with the FINAL patch
     weights, so a source measured before a later conductor-consistency exclusion is
@@ -3293,7 +3364,12 @@ beyond the banner's 40 lines), the counts of served pending and status-less mode
 `ConfiguredTargetsNotServed` (each such interface with its `Type` and the reason),
 `CellSet` (the kind of cell key, the number of measurements, the `Type`s and the number of
 cells: the rows of `surface-response-coverage.csv`), `"Complete": true`, `Level` and
-`Levels`. That block is written at the END of each solve (also when no cell was measured:
+`Levels`, and `DroppedWindows` (only when a cell holds context, a box overlap, a dropped
+window's part beyond every box or inside a box whose model is excluded, or the mirror:
+`Rule` the context rule's text, `Table` the near-edge energy budget's file name, and
+`Overlaps` one entry per cell, `Type` and set of holders in a box overlap: `Cell`, `Type`,
+`Holders` and its `raw share of W`). That block is written at the END of each solve (also
+when no cell was measured:
 `Cells` 0, `NoCellsReason` naming why, e.g. `RawFallback: NoMatchedFeature: no correction
 applied`, and a banner line; with no cell and no reason `"Complete"` is false): `Level` is
 the solve of the adaptive sequence that wrote it (1 = the initial mesh) and `Levels` the
@@ -3348,8 +3424,12 @@ measurement without any coverage cell marks its whole values, and a coverage int
 `Type` has no cell marks that interface's values (both counted in `MarkedMeasurements` and
 listed in `MarkedWithoutCell` with the reason). A marked cell prints the bare token `nan` and its value
 moves to an appended column with the same header and the suffix ` partial (uncovered part
-raw)` (nan where the cell is not marked): the value is the covered part corrected plus the
-uncovered within-`R` part raw. Per interface of `surface-Q-corrected.csv` the `E` / `p` /
+raw)` (nan where the cell is not marked): the value is the corrected value itself, the
+covered part corrected plus, of the uncovered part, the kept-raw classes raw (the dropped
+bins of the near-edge energy budget are in neither part, despite the suffix's words). The
+mark follows the coverage it reads: what the coverage counts as served (a dropped window
+held by a box as context included) sets the status, and so whether a value is withheld; the
+value itself does not depend on it. Per interface of `surface-Q-corrected.csv` the `E` / `p` /
 `Q` corrected, corrected fixed-flux and self-consistent columns follow the interface's `Type`
 cell (the electrostatic `E` / `p` / `Q` postprocessed fixed-trace, fixed-flux and corrected
 columns the same); the corrected normalizations (`E_norm` / `E_elec` corrected, fixed-flux,

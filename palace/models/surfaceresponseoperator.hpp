@@ -129,6 +129,20 @@ struct ExcludedPatchPortions
   // lazily to `portions.size()` at every append, so portions pushed directly stay found.
   std::unordered_map<int, std::vector<std::size_t>> feature_portions;
   std::size_t indexed_portions = 0;
+  // Ruling 2295 (A): every portion's excluded patches (global indices), as the coverage
+  // partition's context test reads them: a matched box whose patch is here holds nothing.
+  std::set<int> PatchSet() const
+  {
+    std::set<int> set;
+    for (const auto &list : patches)
+    {
+      for (const std::size_t patch : list)
+      {
+        set.insert(static_cast<int>(patch));
+      }
+    }
+    return set;
+  }
 };
 
 // H14a (hardening-2 DESIGN; idfix DESIGN section 7; decision 1074): a Maxwell contour or
@@ -171,6 +185,11 @@ struct SpatialClusterPriorityExclusions
   };
   std::vector<Entry> entries;
   ExcludedPatchPortions portions;
+  // Ruling 2276 (OI-COVERAGE-INSIDE-BOX-DROP-COUNTED-UNCOVERED): the coverage partition's
+  // view of the windows: their INSIDE pieces (the pieces the clip removed, labelled
+  // PatchLabel), per window the matched boxes that removed them, and every matched cluster
+  // box (the clip's supports with claims). Empty when no coupon is dropped.
+  SurfacePostOperator::CoverageDroppedWindows coverage_windows;
   // The per-patch raw-energy label of an entry (`topology` of its window_portions /
   // outside_portions).
   static std::string PatchLabel(std::size_t patch) { return "p" + std::to_string(patch); }
@@ -3783,11 +3802,11 @@ void ForEachMaxwellPatchEnergyRow(
 }
 
 // The noise floor of the first-order split fraction (decision 2268): a fraction at or below
-// it is a turn of round-off size (largest seen 2.2e-15; smallest real 1.4e-7) and the
-// portion is treated as straight. Dropping a split of fraction a moves the cell's
-// fabricated values by at most a relative (they are linear in a); 1e-12 is the floor below
-// which comparisons across builds already drop splits. A ratio of lengths: independent of
-// the build, the rank count and the mesh units.
+// it is a turn of round-off size (largest seen 2.2e-15; smallest real 1.9e-8 (the chip,
+// decision 2286)) and the portion is treated as straight. Dropping a split of fraction a
+// moves the cell's fabricated values by at most a relative (they are linear in a); 1e-12 is
+// the floor below which comparisons across builds already drop splits. A ratio of lengths:
+// independent of the build, the rank count and the mesh units.
 constexpr double kFirstOrderSplitFloor = 1.0e-12;
 
 // The first-order split fraction of a portion of a straight-like feature (design (b)7):

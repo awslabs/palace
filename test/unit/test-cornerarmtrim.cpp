@@ -3118,6 +3118,347 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 #endif
 }
 
+// Rulings 2276 / 2277 (lane dropcover; OI-COVERAGE-INSIDE-BOX-DROP-COUNTED-UNCOVERED): the
+// dropped windows' context list on the lead fixture. A served claim "m7" over the first
+// feature; the second feature's perimeter portions stand for the inside pieces of one
+// dropped window "p1"; the boxes are built by hand. (a) Empty windows: every bin as the
+// call without them, bitwise; the unclaimed kinds add up to the unclaimed bin. (b) One box
+// around the lead: the window's points are context of that box ("m4"), as much as the same
+// pieces hold as a served claim; the served bins are bitwise those of (a). (c) Two boxes: a
+// box overlap "m4+m5". (d) A box
+// holding part of the lead: the rest is beyond every box. (e) The same portions as the
+// windows' kept class: the mirror (kept raw inside a box) is a part of that class. (f) A
+// box that is no holder (its clip removed none of the window's pieces) holds nothing. (g)
+// Ruling 2295 (A): a holder whose patch is excluded at the measurement holds nothing.
+TEST_CASE_METHOD(
+    test::SurfaceResponseFiles,
+    "Coverage partition holds a dropped window inside a matched box as context",
+    "[postoperator][surfaceresponseoperator][cornerarmtrim][3d][maxwell]"
+    "[Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  const auto crack_policy = GENERATE(test::CrackPolicy::Legacy, test::CrackPolicy::Default);
+  INFO("crack policy: " << test::CrackPolicyName(crack_policy));
+  const fs::path mesh_path = temp.temp_dir / "coverage-context-lead.mesh";
+  const auto basis_path = temp.temp_dir / "coverage-context-basis-points.csv";
+  const auto edge_library_path =
+      temp.temp_dir / "fabrication-process-coverage-context-edges.json";
+  int inputs_ok[2] = {1, 1};
+  if (Mpi::Root(Mpi::World()))
+  {
+    {
+      mfem::Mesh serial = MakeSerialLeadMesh(0.0, 0.75);
+      std::ofstream output(mesh_path);
+      serial.Print(output);
+    }
+    {
+      std::ofstream output(basis_path);
+      output << "x,y,z\n"
+             << "-0.2,-0.2,0.0\n"
+             << "0.2,-0.2,0.0\n"
+             << "0.2,0.2,0.0\n"
+             << "-0.2,0.2,0.0\n";
+    }
+    std::ifstream input(convex_library_3d_path);
+    inputs_ok[0] = input ? 1 : 0;
+    if (inputs_ok[0])
+    {
+      json library = json::parse(input);
+      library["Name"] = "unit-test-process-coverage-context-edges";
+      json models = json::array();
+      for (auto &model : library["Models"])
+      {
+        if (model["Topology"] == "IsolatedEdge")
+        {
+          model["Interfaces"] = {{{"Type", "SA"}, {"Coupon", 1}}};
+          model["BasisPoints"] = basis_path.string();
+          models.push_back(model);
+        }
+      }
+      inputs_ok[1] = models.size() == 1 ? 1 : 0;
+      library["Models"] = std::move(models);
+      std::ofstream output(edge_library_path);
+      output << library.dump(2) << "\n";
+    }
+  }
+  Mpi::Barrier(Mpi::World());
+  Mpi::Broadcast(2, inputs_ok, 0, Mpi::World());
+  REQUIRE(inputs_ok[0] == 1);
+  REQUIRE(inputs_ok[1] == 1);
+  const fs::path output_dir = temp.temp_dir / "coverage-context";
+  json config = IslandConfig(crack_policy);
+  config["Model"]["Mesh"] = mesh_path.string();
+  config["Model"]["L0"] = 1.0;
+  config["Problem"]["Type"] = "Eigenmode";
+  config["Problem"]["Output"] = output_dir.string();
+  config["Boundaries"]["Ground"]["Attributes"] = {4, 9};
+  config["Boundaries"].erase("Terminal");
+  config["Solver"] = {{"Order", 1},
+                      {"Eigenmode", {{"Target", 1.0}}},
+                      {"SurfaceResponseCorrection",
+                       {{"Library", edge_library_path.string()},
+                        {"TargetInterfaces", {4}},
+                        {"UnmatchedPolicy", "Warn"},
+                        {"CorrectionMode", "Both"}}}};
+  IoData iodata(config, false);
+  iodata.boundaries.cracked_attributes.insert(9);
+  MPI_Comm comm = Mpi::World();
+  MakeOutputFolder(iodata, comm);
+  std::vector<std::unique_ptr<Mesh>> meshes;
+  meshes.push_back(std::make_unique<Mesh>(MakeLeadMesh(0.0, 0.75)));
+  SpaceOperator space_op(iodata, meshes);
+  PostOperator<ProblemType::EIGENMODE> post_op(iodata, space_op);
+  auto *response = ReplicatedRecords(post_op.GetSurfaceResponseOperator());
+  REQUIRE(response);
+  std::vector<SurfacePostOperator::UncoveredPerimeterPortion> perimeter;
+  for (const auto &portion : response->GetUncoveredPortions())
+  {
+    perimeter.push_back({portion.p0, portion.p1, portion.topology, portion.feature});
+  }
+  REQUIRE(perimeter.size() == 8);
+  std::set<int> features;
+  for (const auto &portion : perimeter)
+  {
+    features.insert(portion.feature);
+  }
+  REQUIRE(features.size() == 2);
+  const int first = *features.begin();
+  // The served claim over the first feature; the second feature's portions as the window
+  // (and, in (e), as the windows' kept class); the lead's extent along x.
+  std::vector<SurfacePostOperator::UncoveredPerimeterPortion> claim, window;
+  double x_lo = std::numeric_limits<double>::infinity(), x_hi = -x_lo;
+  for (const auto &portion : perimeter)
+  {
+    if (portion.feature == first)
+    {
+      claim.push_back({portion.p0, portion.p1, "m7", -1});
+    }
+    else
+    {
+      window.push_back({portion.p0, portion.p1, "p1", portion.feature});
+      x_lo = std::min({x_lo, portion.p0[0], portion.p1[0]});
+      x_hi = std::max({x_hi, portion.p0[0], portion.p1[0]});
+    }
+  }
+  REQUIRE(x_hi > x_lo);
+
+  mfem::ParGridFunction potential(&space_op.GetH1Space().Get());
+  mfem::FunctionCoefficient potential_coefficient(
+      [](const mfem::Vector &x)
+      { return std::sin(1.3 * x[0] + 0.4) * std::cosh(0.7 * x[1]) + 0.3 * x[2] * x[2]; });
+  potential.ProjectCoefficient(potential_coefficient);
+  mfem::ParDiscreteLinearOperator gradient(&space_op.GetH1Space().Get(),
+                                           &space_op.GetNDSpace().Get());
+  gradient.AddDomainInterpolator(new mfem::GradientInterpolator());
+  gradient.Assemble();
+  GridFunction field(space_op.GetNDSpace(), true);
+  gradient.Mult(potential, field.Real());
+  field.Real() *= -1.0;
+  ComplexVector e(space_op.GetNDSpace().GetTrueVSize());
+  field.Real().GetTrueDofs(e.Real());
+  field.Real().SetFromTrueDofs(e.Real());
+  field.Imag() = 0.0;
+  field.Real().ExchangeFaceNbrData();
+  field.Imag().ExchangeFaceNbrData();
+  const auto &surf_post_op = post_op.GetSurfacePostOp();
+  using Windows = SurfacePostOperator::CoverageDroppedWindows;
+  auto Box = [](int model, double x_max)
+  {
+    SurfacePostOperator::CoverageContextBox box;
+    box.token = "m" + std::to_string(model);
+    box.model = model;
+    box.patch = 100 + model;
+    box.axes = {{{1.0, 0.0, 0.0}, {0.0, 1.0, 0.0}, {0.0, 0.0, 1.0}}};
+    box.frame_min = box.min = {-1.0e3, -1.0e3, -1.0e3};
+    box.frame_max = box.max = {x_max, 1.0e3, 1.0e3};
+    return box;
+  };
+  auto WithBoxes = [&](std::vector<SurfacePostOperator::CoverageContextBox> boxes)
+  {
+    Windows windows;
+    windows.inside = window;
+    windows.boxes = std::move(boxes);
+    for (std::size_t b = 0; b < windows.boxes.size(); b++)
+    {
+      windows.holders["p1"].push_back(b);
+    }
+    return windows;
+  };
+  // Every exclusive bin (the mirror is a part of a class, not a bin).
+  auto BinSum = [](const SurfacePostOperator::InterfaceCoveragePartition &p)
+  {
+    double sum = p.unclaimed + p.context_beyond + p.inside_excluded_box;
+    for (const auto *bins : {&p.served, &p.context, &p.context_overlap})
+    {
+      for (const auto &[label, energy] : *bins)
+      {
+        sum += energy;
+      }
+    }
+    for (const auto &[key, energy] : p.classes)
+    {
+      sum += energy;
+    }
+    return sum;
+  };
+  const double x_mid = 0.5 * (x_lo + x_hi);
+
+  // (a) Empty windows: the bins of the call without them, bitwise; the kinds add up.
+  const auto plain =
+      surf_post_op.GetInterfaceCoveragePartition({4}, field, nullptr, {}, claim).at(4);
+  const Windows empty;
+  const auto none =
+      surf_post_op.GetInterfaceCoveragePartition({4}, field, nullptr, {}, claim, {}, &empty)
+          .at(4);
+  CHECK(none.served == plain.served);
+  CHECK(none.classes == plain.classes);
+  CHECK(none.unclaimed == plain.unclaimed);
+  CHECK(none.within == plain.within);
+  CHECK((none.context.empty() && none.context_overlap.empty()));
+  CHECK((none.context_beyond == 0.0 && none.kept_inside_box == 0.0));
+  REQUIRE(plain.unclaimed > 0.0);
+  CHECK_THAT(plain.unclaimed_claim_end + plain.unclaimed_no_claims +
+                 plain.unclaimed_elsewhere,
+             WithinRel(plain.unclaimed, 1.0e-12));
+  CHECK_THAT(BinSum(plain), WithinRel(plain.within, 1.0e-12));
+
+  // (b) One box around the lead: the window is its context; the served bins unchanged.
+  const auto one_box = WithBoxes({Box(4, 1.0e3)});
+  const auto b =
+      surf_post_op
+          .GetInterfaceCoveragePartition({4}, field, nullptr, {}, claim, {}, &one_box)
+          .at(4);
+  CHECK(b.served == plain.served);
+  CHECK(b.within == plain.within);
+  REQUIRE(b.context.count("m4") == 1);
+  CHECK(b.context.size() == 1);
+  CHECK_THAT(b.context.at("m4") + b.unclaimed, WithinRel(plain.unclaimed, 1.0e-12));
+  // The window's energy = what the same pieces hold as a served claim beside "m7".
+  auto both = claim;
+  for (const auto &portion : window)
+  {
+    both.push_back({portion.p0, portion.p1, "m9", -1});
+  }
+  const auto as_claim =
+      surf_post_op.GetInterfaceCoveragePartition({4}, field, nullptr, {}, both).at(4);
+  REQUIRE(as_claim.served.count("m9") == 1);
+  CHECK(as_claim.served.at("m9") > 0.0);
+  CHECK_THAT(b.context.at("m4"), WithinRel(as_claim.served.at("m9"), 1.0e-12));
+  CHECK_THAT(b.unclaimed, WithinRel(as_claim.unclaimed, 1.0e-10));
+  CHECK((b.context_overlap.empty() && b.context_beyond == 0.0));
+  CHECK_THAT(BinSum(b), WithinRel(b.within, 1.0e-12));
+
+  // (c) Two boxes around the lead: a box overlap, labelled by both holders' models.
+  const auto two_boxes = WithBoxes({Box(5, 1.0e3), Box(4, 1.0e3)});
+  const auto c =
+      surf_post_op
+          .GetInterfaceCoveragePartition({4}, field, nullptr, {}, claim, {}, &two_boxes)
+          .at(4);
+  CHECK(c.context.empty());
+  REQUIRE(c.context_overlap.count("m4+m5") == 1);
+  CHECK_THAT(c.context_overlap.at("m4+m5"), WithinRel(b.context.at("m4"), 1.0e-12));
+  CHECK_THAT(BinSum(c), WithinRel(c.within, 1.0e-12));
+  // (d) A box holding part of the lead: the rest of the window is beyond every box.
+  const auto part_box = WithBoxes({Box(4, x_mid)});
+  const auto d =
+      surf_post_op
+          .GetInterfaceCoveragePartition({4}, field, nullptr, {}, claim, {}, &part_box)
+          .at(4);
+  REQUIRE(d.context.count("m4") == 1);
+  CHECK(d.context.at("m4") > 0.0);
+  CHECK(d.context_beyond > 0.0);
+  CHECK_THAT(d.context.at("m4") + d.context_beyond + d.unclaimed,
+             WithinRel(plain.unclaimed, 1.0e-12));
+  CHECK_THAT(BinSum(d), WithinRel(d.within, 1.0e-12));
+
+  // (f) Ruling 2276 R3: a box that contains the window's points but whose clip removed
+  // none of its pieces is no holder: no context, all beyond every box; beside a holder it
+  // makes no overlap.
+  auto not_holder = WithBoxes({Box(4, 1.0e3)});
+  not_holder.holders.clear();
+  const auto f =
+      surf_post_op
+          .GetInterfaceCoveragePartition({4}, field, nullptr, {}, claim, {}, &not_holder)
+          .at(4);
+  CHECK((f.context.empty() && f.context_overlap.empty()));
+  CHECK_THAT(f.context_beyond, WithinRel(b.context.at("m4"), 1.0e-12));
+  CHECK(f.unclaimed == b.unclaimed);
+  auto one_holder = WithBoxes({Box(5, 1.0e3), Box(4, 1.0e3)});
+  one_holder.holders["p1"] = {0};  // the box of m5 only
+  const auto f_one =
+      surf_post_op
+          .GetInterfaceCoveragePartition({4}, field, nullptr, {}, claim, {}, &one_holder)
+          .at(4);
+  CHECK(f_one.context_overlap.empty());
+  REQUIRE(f_one.context.count("m5") == 1);
+  CHECK(f_one.context.size() == 1);
+  CHECK_THAT(f_one.context.at("m5"), WithinRel(b.context.at("m4"), 1.0e-12));
+  CHECK(f_one.context_beyond == 0.0);
+
+  // (g) Ruling 2295 (A): a holder whose patch is excluded at this measurement holds
+  // nothing. One box, its patch excluded: no context, the window is inside a box whose
+  // model is excluded (not beyond every box); the claims' bins unchanged.
+  const auto g = surf_post_op
+                     .GetInterfaceCoveragePartition({4}, field, nullptr, {}, claim, {},
+                                                    &one_box, {104})
+                     .at(4);
+  CHECK((g.context.empty() && g.context_overlap.empty()));
+  CHECK(g.context_beyond == 0.0);
+  CHECK_THAT(g.inside_excluded_box, WithinRel(b.context.at("m4"), 1.0e-12));
+  CHECK((g.served == plain.served && g.unclaimed == b.unclaimed));
+  CHECK_THAT(BinSum(g), WithinRel(g.within, 1.0e-12));
+  // An overlap with one holder excluded: the serving holder's alone, labelled by it.
+  const auto g_overlap = surf_post_op
+                             .GetInterfaceCoveragePartition({4}, field, nullptr, {}, claim,
+                                                            {}, &two_boxes, {104})
+                             .at(4);
+  CHECK(g_overlap.context_overlap.empty());
+  REQUIRE(g_overlap.context.count("m5") == 1);
+  CHECK(g_overlap.context.size() == 1);
+  CHECK_THAT(g_overlap.context.at("m5"), WithinRel(c.context_overlap.at("m4+m5"), 1.0e-12));
+  CHECK(g_overlap.inside_excluded_box == 0.0);
+  // The part box excluded: what it held moves to that bin; the rest stays beyond.
+  const auto g_part = surf_post_op
+                          .GetInterfaceCoveragePartition({4}, field, nullptr, {}, claim, {},
+                                                         &part_box, {104})
+                          .at(4);
+  CHECK(g_part.context.empty());
+  CHECK_THAT(g_part.inside_excluded_box, WithinRel(d.context.at("m4"), 1.0e-12));
+  CHECK_THAT(g_part.context_beyond, WithinRel(d.context_beyond, 1.0e-12));
+  // A patch excluded that holds no box changes nothing.
+  const auto g_other = surf_post_op
+                           .GetInterfaceCoveragePartition({4}, field, nullptr, {}, claim,
+                                                          {}, &one_box, {105})
+                           .at(4);
+  CHECK(g_other.context == b.context);
+  CHECK(g_other.inside_excluded_box == 0.0);
+
+  // (e) The window as the windows' kept class: its points inside the box are the mirror,
+  // a part of that class (the class's bin itself is that of the call without windows).
+  auto kept_windows = WithBoxes({Box(4, x_mid)});
+  kept_windows.inside.clear();
+  kept_windows.holders.clear();
+  const std::vector<SurfacePostOperator::CoveragePartitionClass> kept = {
+      {"SpatialClusterPriority", &window}};
+  const auto kept_plain =
+      surf_post_op.GetInterfaceCoveragePartition({4}, field, nullptr, kept, claim).at(4);
+  const auto mirror = surf_post_op
+                          .GetInterfaceCoveragePartition({4}, field, nullptr, kept, claim,
+                                                         {}, &kept_windows)
+                          .at(4);
+  CHECK(mirror.classes == kept_plain.classes);
+  CHECK(mirror.served == kept_plain.served);
+  const double kept_class = mirror.classes.at({"SpatialClusterPriority", "p1"});
+  CHECK(mirror.kept_inside_box > 0.0);
+  CHECK(mirror.kept_inside_box < kept_class);
+  CHECK((mirror.context.empty() && mirror.context_overlap.empty() &&
+         mirror.context_beyond == 0.0));
+  CHECK(kept_plain.kept_inside_box == 0.0);
+#endif
+}
+
 // Lane L1 (ruling 1649 Q3): the coverage partition's bookkeeping helpers. (a) A served
 // `unpatched` label alone moves to the class UnpatchedPairs; a joined label stays served.
 // (b) A loop-remainder row is taken from the served labels holding its model token in
