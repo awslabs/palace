@@ -191,8 +191,12 @@ private:
   // Helper functions for excitation vector assembly. The first adds the real part of the
   // frequency independent excitation to RHS1r, and its imaginary part (nonzero for a
   // lumped port with a complex excitation weight) to RHS1i, which must be provided unless
-  // the excitation is real.
-  bool AddExcitationVector1Internal(int excitation_idx, Vector &RHS1r, Vector *RHS1i);
+  // the excitation is real. Lumped port excitations carry unit time-averaged incident
+  // power in the time-harmonic RHS and unit instantaneous power in the time domain one,
+  // times the squared amplitude of the excitation weight (see LumpedPortOperator::
+  // AddExcitationBdrCoefficients). Impressed current sources carry unit current.
+  bool AddExcitationVector1Internal(int excitation_idx, Vector &RHS1r, Vector *RHS1i,
+                                    bool time_harmonic);
   bool AddExcitationVector2Internal(int excitation_idx, double omega, ComplexVector &RHS);
 
   // Helper functions to build the preconditioner matrix. The type of a3 selects the

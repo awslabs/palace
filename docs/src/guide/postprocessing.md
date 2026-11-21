@@ -70,7 +70,10 @@ Additionally, when surface current excitations are present, the excitations are 
 `surface-I.csv`.
 
 For frequency domain problems, the values output are the complex-valued peak voltages and
-currents, computed from the field phasors.
+currents, computed from the field phasors. The current of a lumped port is ``V/Z``, the current
+through its own `"R"`, `"L"`, and `"C"`, and not the current delivered to the model. Quadratic
+quantities (powers, energies, Poynting vectors) are time averages over one period, and each
+excited port delivers 1 W of time-averaged incident power.
 
 ## Domain postprocessing
 
@@ -91,6 +94,18 @@ These include:
     only ``\bm{B}`` is output and ``\bm{E}`` is not computed, whereas the inverse is true
     for electrostatics). For each computed field, the postprocessed values are written to
     `probe-E.csv` and `probe-B.csv` in the specified output directory.
+
+### Limits of stored-energy accounting
+
+Boundary-mode energies contain only the transverse electric and longitudinal magnetic
+components, not the full modal energy. The electric energy includes the polarization
+energy of a frequency-dependent material that has a stored energy; for a material without
+one, it is not reported (see [Energy and postprocessing](model.md#Energy-and-postprocessing)).
+Lumped L/C energies use the circuit voltage and branch current, which can differ from the
+energy stored in the boundary sheet when the port field is not uniform. The energy stored
+in `"Impedance"`, `"RationalImpedance"` and `"Conductivity"` boundaries and, in the
+frequency domain, the kinetic energy of London superconductors are not included. These
+columns therefore do not give a complete energy balance.
 
 ## Boundary postprocessing
 
@@ -173,11 +188,16 @@ interface. In addition, the constitutive parameters can be discontinuous between
 For example,
 
 ```math
-U_e = \frac{1}{2} \bm{E}^{*} \bm{W} \bm{E}, \qquad
-U_m = \frac{1}{2} \bm{B}^{*} \bm{\mu}^{-1} \bm{B}, \qquad
-\bm{S} = \operatorname{Re}\!\left\{\bm{E} \times
-\left(\bm{\mu}^{-1}\bm{B}\right)^{*}\right\}.
+U_e = \frac{1}{4} \bm{E}^{*} \bm{W} \bm{E}, \qquad
+U_m = \frac{1}{4} \bm{B}^{*} \bm{\mu}^{-1} \bm{B}, \qquad
+\bm{S} = \frac{1}{2} \operatorname{Re}\!\left\{\bm{E} \times
+\left(\bm{\mu}^{-1}\bm{B}\right)^{*}\right\}
 ```
+
+for the complex peak phasors of a frequency domain solution (time-averaged quantities), or
+``U_e = \frac{1}{2} \bm{E}\cdot\bm{\epsilon}\bm{E}``, ``U_m = \frac{1}{2} \bm{B}\cdot\bm{\mu}^{-1}\bm{B}``,
+and ``\bm{S} = \bm{E}\times\bm{\mu}^{-1}\bm{B}`` for the real-valued instantaneous fields of a
+time domain or static solution.
 
 Here ``\bm{W}=\operatorname{Re}\bm{\epsilon}`` for constant materials, while a
 frequency-dependent model supplies its stored-energy weight, which includes polarization.
@@ -234,7 +254,9 @@ well as:
 
   - Surface charge density: `Q_s`, `Q_s_real`, `Q_s_imag` (C/m²)
   - Surface current density: `J_s`, `J_s_real`, `J_s_imag` (A/m)
-  - Wave port boundary mode electric field: `E0_real`, `E0_imag` (V/m)
+  - Wave port boundary mode electric field: `E0_<i>_real`, `E0_<i>_imag` for wave port `i`
+    (V/m), the port mode normalized to 1 W of time-averaged power, which is the incident
+    field of an excitation of the port
 
 ## Adaptive mesh refinement
 
