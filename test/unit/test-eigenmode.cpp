@@ -19,6 +19,10 @@
 #include "linalg/vector.hpp"
 #include "utils/communication.hpp"
 
+#if defined(PALACE_WITH_SLEPC)
+#include <slepc.h>
+#endif
+
 namespace palace
 {
 
@@ -177,6 +181,59 @@ public:
   }
 };
 
+// Diagonal (complex) operator on a single process.
+class DiagonalEigenTestOperator : public ComplexOperator
+{
+private:
+  const std::vector<std::complex<double>> d;
+
+public:
+  DiagonalEigenTestOperator(const std::vector<std::complex<double>> &d)
+    : ComplexOperator(static_cast<int>(d.size())), d(d)
+  {
+  }
+
+  bool IsReal() const override
+  {
+    return std::ranges::all_of(d, [](std::complex<double> x) { return x.imag() == 0.0; });
+  }
+
+  void AssembleDiagonal(ComplexVector &diag) const override
+  {
+    diag.SetSize(height);
+    auto *DR = diag.Real().HostWrite();
+    auto *DI = diag.Imag().HostWrite();
+    for (int i = 0; i < height; i++)
+    {
+      DR[i] = d[i].real();
+      DI[i] = d[i].imag();
+    }
+  }
+
+  void Mult(const ComplexVector &x, ComplexVector &y) const override
+  {
+    y.SetSize(height);
+    const auto *XR = x.Real().HostRead();
+    const auto *XI = x.Imag().HostRead();
+    auto *YR = y.Real().HostWrite();
+    auto *YI = y.Imag().HostWrite();
+    for (int i = 0; i < height; i++)
+    {
+      const std::complex<double> v = d[i] * std::complex<double>(XR[i], XI[i]);
+      YR[i] = v.real();
+      YI[i] = v.imag();
+    }
+  }
+
+  void AddMult(const ComplexVector &x, ComplexVector &y,
+               const std::complex<double> a = 1.0) const override
+  {
+    ComplexVector t;
+    Mult(x, t);
+    y.Add(a, t);
+  }
+};
+
 struct TridiagonalEigenTestResult
 {
   std::vector<std::complex<double>> lambda;
@@ -229,6 +286,87 @@ TridiagonalEigenTestResult SolveTridiagonalEigenTest(int n, double s, int nev, i
   return result;
 }
 
+// Quadratic problem K + λ C + λ² M with diagonal K and C and M = I, scaled, with
+// eigenvalues λ = iω, Re{ω} = ω_r and Q = |ω| / (2 Im{ω}) for c = ω_r / (Q² - 1/4)^½ and
+// k = Q² c², for the target λ = i. The mode closest to the target in Re{ω} has Q = 0.52,
+// the next one Q = 100.
+struct DampedEigenTestProblem
+{
+  static constexpr int n = 20;
+  const std::complex<double> lambda_s = {0.0, 1.0};  // λ = iσ
+  std::vector<double> omega_r = {1.05, 1.3}, q = {0.52, 100.0};
+  std::vector<std::complex<double>> k, c, m, a;
+
+  DampedEigenTestProblem() : k(n), c(n), m(n, 1.0), a(n)
+  {
+    for (int i = 2; i < n; i++)
+    {
+      omega_r.push_back(1.5 + 0.5 * i);
+      q.push_back(50.0);
+    }
+    for (int i = 0; i < n; i++)
+    {
+      c[i] = omega_r[i] / std::sqrt(q[i] * q[i] - 0.25);
+      k[i] = q[i] * q[i] * c[i] * c[i];
+      a[i] = k[i] + lambda_s * c[i] + lambda_s * lambda_s * m[i];
+    }
+  }
+
+  // Eigenvalue ω = λ / i of mode i.
+  std::complex<double> Omega(int i) const { return {omega_r[i], 0.5 * c[i].real()}; }
+
+  struct Result
+  {
+    std::complex<double> omega;  // First eigenvalue ω = λ / i
+    int its;                     // Number of restarts
+    double errest;               // SLEPc's relative error estimate of the first eigenpair
+  };
+
+  // Solve for one mode with SLEPc's Krylov-Schur solver for the linearization, for the
+  // minimum quality factor q_min and tolerance tol, with ncv Krylov vectors, from a random
+  // start vector or, if start >= 0, from the eigenvector of mode start plus noise times a
+  // random vector (a warm start if warm).
+  Result Solve(double q_min, int start = -1, bool warm = false, double tol = 1.0e-10,
+               double noise = 1.0e-12, int ncv = 16) const
+  {
+    MPI_Comm comm = Mpi::World();
+    DiagonalEigenTestOperator K(k), C(c), M(m), A(a);
+    auto gmres = std::make_unique<GmresSolver<ComplexOperator>>(comm, 0);
+    gmres->SetRelTol(1.0e-12);
+    gmres->SetMaxIter(100);
+    ComplexKspSolver ksp(std::move(gmres),
+                         std::make_unique<JacobiSmoother<ComplexOperator>>(comm));
+    ksp.SetOperators(A, A);
+    slepc::SlepcPEPLinearSolver eps(comm, 0);
+    eps.SetType(slepc::SlepcEigenvalueSolver::Type::KRYLOVSCHUR);
+    eps.SetProblemType(slepc::SlepcEigenvalueSolver::ProblemType::GEN_NON_HERMITIAN);
+    eps.SetOperators(K, C, M, EigenvalueSolver::ScaleType::NORM_2);
+    eps.SetNumModes(1, ncv);
+    eps.SetTol(tol);
+    eps.SetLinearSolver(ksp);
+    eps.SetShiftInvert(lambda_s);
+    eps.SetWhichEigenpairs(EigenvalueSolver::WhichType::TARGET_IMAGINARY);
+    eps.SetMinQualityFactor(q_min);
+    if (start >= 0)
+    {
+      ComplexVector v(n), v_lambda(n), r(n);
+      linalg::SetRandom(comm, r);
+      v = 0.0;
+      v.Real().HostReadWrite()[start] = 1.0;
+      v.Add(noise / std::sqrt(static_cast<double>(n)), r);
+      v_lambda = v;
+      v_lambda *= std::complex<double>(-0.5 * c[start].real(), omega_r[start]);
+      eps.SetInitialSpaceBlocks(v, v_lambda);
+      eps.SetWarmStart(warm);
+    }
+    REQUIRE(eps.Solve() >= 1);
+    PetscReal errest;
+    PalacePetscCall(EPSGetErrorEstimate(eps, 0, &errest));
+    return {eps.GetEigenvalue(0) / std::complex<double>(0.0, 1.0), eps.GetNumIterations(),
+            errest};
+  }
+};
+
 }  // namespace
 
 TEST_CASE("Eigenmode warm start", "[eigenmode][Serial]")
@@ -272,6 +410,99 @@ TEST_CASE("Eigenmode warm start", "[eigenmode][Serial]")
       SolveTridiagonalEigenTest(n, s, nev, ncv, tol, lin_tol, v0, exact_tol);
   CHECK(cold_tight.lin_its > cold.lin_its);
   CHECK(cold_tight.lin_its < exact.lin_its);
+}
+
+TEST_CASE("Eigenmode quality factor region", "[eigenmode][Serial]")
+{
+  // Region for eigenvalues λ = iω above the target λ = i s, with Q = |ω| / (2 Im{ω}).
+  const double s = 0.5, q_min = 0.54;
+  RG rg;
+  PalacePetscCall(RGCreate(PETSC_COMM_SELF, &rg));
+  slepc::ConfigureQualityFactorRegion(rg, s, q_min);
+  auto Inside = [&rg](std::complex<double> omega)
+  {
+    PetscScalar lambda = std::complex<double>(0.0, 1.0) * omega;
+    PetscInt inside;
+    PalacePetscCall(RGCheckInside(rg, 1, &lambda, nullptr, &inside));
+    return inside > 0;
+  };
+  auto Damped = [](double re, double q)
+  { return std::complex<double>(re, re / std::sqrt(4.0 * q * q - 1.0)); };
+
+  // Damped modes above the target.
+  CHECK(Inside({1.0, 0.0}));
+  CHECK(Inside(Damped(1.0, 1.0e6)));
+  CHECK(Inside(Damped(1.0, 0.6)));
+  CHECK(Inside(Damped(1.0, 0.55)));
+  CHECK(Inside(Damped(100.0, 0.55)));
+  CHECK(!Inside(Damped(1.0, 0.53)));
+  CHECK(!Inside(Damped(1.0, 0.501)));
+  CHECK(!Inside(Damped(100.0, 0.53)));
+
+  // Modes below the target.
+  CHECK(!Inside({0.4, 0.0}));
+  CHECK(!Inside(Damped(0.4, 10.0)));
+
+  // Growing modes with the same bound on |Q|.
+  CHECK(Inside(std::conj(Damped(1.0, 1.0e6))));
+  CHECK(Inside(std::conj(Damped(1.0, 0.55))));
+  CHECK(!Inside(std::conj(Damped(1.0, 0.53))));
+  CHECK(!Inside(std::conj(Damped(100.0, 0.53))));
+  PalacePetscCall(RGDestroy(&rg));
+}
+
+TEST_CASE("Eigenmode quality factor region in a damped solve", "[eigenmode][Serial]")
+{
+  // The solve for one mode returns the second mode of the damped test problem, with
+  // Q = 100, with MinQ = 0.54, and the first one, with Q = 0.52, without.
+  const DampedEigenTestProblem p;
+  for (double q_min : {0.0, 0.54})
+  {
+    const int i = (q_min > 0.5) ? 1 : 0;
+    const auto result = p.Solve(q_min);
+    CHECK(std::abs(result.omega - p.Omega(i)) <= 1.0e-8 * p.omega_r[i]);
+  }
+}
+
+TEST_CASE("Eigenmode first restart of a warm start in the quality factor region",
+          "[eigenmode][Serial]")
+{
+  // With the quality factor region, a warm-started solve accepts an eigenpair at its first
+  // restart only if its error estimate is below a tenth of the tolerance. The start vector
+  // is the wanted eigenvector plus noise, which sets the error estimate at the first
+  // restart, measured by a cold solve which converges there. The warm-started solve takes
+  // one more restart when this estimate is 0.3 times the tolerance, but not when it is 0.05
+  // times the tolerance, nor without the region.
+  const DampedEigenTestProblem p;
+  constexpr double noise = 1.0e-4;
+  constexpr int ncv = 6;
+  for (double q_min : {0.54, 0.0})
+  {
+    const int i = (q_min > 0.5) ? 1 : 0;
+    const auto first = p.Solve(q_min, i, false, 1.0e-3, noise, ncv);
+    REQUIRE(first.its == 1);
+    REQUIRE(first.errest > 1.0e-12);
+    for (double ratio : {0.3, 0.05})
+    {
+      const double tol = first.errest / ratio;
+      const auto cold = p.Solve(q_min, i, false, tol, noise, ncv);
+      const auto warm = p.Solve(q_min, i, true, tol, noise, ncv);
+      CHECK(cold.its == 1);
+      CHECK(warm.its == ((q_min > 0.5 && ratio > 0.1) ? 2 : 1));
+      CHECK(std::abs(warm.omega - p.Omega(i)) <= 1.0e-6 * p.omega_r[i]);
+    }
+  }
+
+  // The margin applies to the first restart only: a solve which accepts the eigenpair at
+  // its second restart with an estimate of 0.3 times the tolerance takes two restarts
+  // whether warm-started or not.
+  const auto first = p.Solve(0.54, 1, false, 1.0e-3, 100.0 * noise, ncv / 2);
+  REQUIRE(first.its == 1);
+  const auto second = p.Solve(0.54, 1, false, 0.5 * first.errest, 100.0 * noise, ncv / 2);
+  REQUIRE(second.its == 2);
+  const double tol = second.errest / 0.3;
+  REQUIRE(tol < first.errest);
+  CHECK(p.Solve(0.54, 1, true, tol, 100.0 * noise, ncv / 2).its == 2);
 }
 
 #endif

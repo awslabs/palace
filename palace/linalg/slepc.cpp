@@ -6,6 +6,7 @@
 #if defined(PALACE_WITH_SLEPC)
 
 #include <algorithm>
+#include <cmath>
 #include <petsc.h>
 #include <slepc.h>
 #include <mfem.hpp>
@@ -203,7 +204,39 @@ PetscErrorCode __eps_first_cycle_monitor(EPS eps, PetscInt its, PetscInt nconv,
   PetscFunctionReturn(PETSC_SUCCESS);
 }
 
+PetscErrorCode __eps_first_restart_test(EPS eps, PetscScalar eigr, PetscScalar eigi,
+                                        PetscReal res, PetscReal *errest, void *ctx)
+{
+  // The error estimate relative to the eigenvalue (as EPS_CONV_REL), with a margin at the
+  // first restart (see SlepcEPSSolverBase::Solve).
+  constexpr PetscReal first_restart_margin = 0.1;
+  PetscFunctionBeginUser;
+  PetscInt its;
+  PetscCall(EPSConvergedRelative(eps, eigr, eigi, res, errest, nullptr));
+  PetscCall(EPSGetIterationNumber(eps, &its));
+  if (its == 1)
+  {
+    *errest /= first_restart_margin;
+  }
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
 }  // namespace
+
+void ConfigureQualityFactorRegion(RG rg, PetscReal s, double q_min)
+{
+  // For λ = iω, |Q| = |ω| / (2 |Im{ω}|) >= q_min if |Re{ω}| / (2 |Im{ω}|) =
+  // Im{λ} / (2 |Re{λ}|) >= (q_min² - 1/4)^½, for damped (Re{λ} < 0) and growing modes. The
+  // region is a trapezoid from Im{λ} = s up to far above any eigenvalue near the target.
+  MFEM_VERIFY(s > 0.0 && q_min > 0.5,
+              "Invalid target or minimum quality factor for the eigenvalue region!");
+  const PetscReal a = 0.5 / std::sqrt(q_min * q_min - 0.25);
+  const PetscReal h = 1.0e3 * std::max(PetscReal(1.0), s);
+  PetscScalar v[4] = {PetscScalar(-a * s, s), PetscScalar(a * s, s), PetscScalar(a * h, h),
+                      PetscScalar(-a * h, h)};
+  PalacePetscCall(RGSetType(rg, RGPOLYGON));
+  PalacePetscCall(RGPolygonSetVertices(rg, 4, v, nullptr));
+}
 
 void Initialize(int &argc, char **&argv, const char rc_file[], const char help[])
 {
@@ -247,6 +280,8 @@ SlepcEigenvalueSolver::SlepcEigenvalueSolver(int print) : print(print)
   v0 = nullptr;
 
   cl_custom = false;
+  q_min = 0.0;
+  q_region = warm_start = first_restart_test = false;
 
   // SLEPc passes device arrays to the shell callbacks when the device is in use. SetSize
   // keeps the device flag, so the derived classes only need to size the workspace.
@@ -347,6 +382,7 @@ void SlepcEigenvalueSolver::Customize()
   }
 
   // Configure the region based on the given target if necessary.
+  q_region = false;
   if (sinvert && region)
   {
     if (PetscImaginaryPart(sigma) == 0.0)
@@ -366,7 +402,12 @@ void SlepcEigenvalueSolver::Customize()
     else if (PetscRealPart(sigma) == 0.0)
     {
       PetscReal si = PetscImaginaryPart(sigma);
-      if (si > 0.0)
+      if (si > 0.0 && q_min > 0.5)
+      {
+        ConfigureQualityFactorRegion(GetRG(), si / gamma, q_min);
+        q_region = true;
+      }
+      else if (si > 0.0)
       {
         ConfigureRG(GetRG(), -mfem::infinity(), mfem::infinity(), si / gamma,
                     mfem::infinity());
@@ -636,9 +677,26 @@ int SlepcEPSSolverBase::Solve()
     }
   }
 
-  // Solve the eigenvalue problem.
+  // Solve the eigenvalue problem. For damped modes, the eigenvalue error can be 10 to 40
+  // times SLEPc's error estimate when the estimate is close to the tolerance. A
+  // warm-started solve can accept eigenpairs at its first restart, without the history of
+  // decreasing estimates which a cold solve has, and the quality factor region removes the
+  // strongly damped Ritz values which otherwise often delay it: with the region, a
+  // warm-started solve accepts an eigenpair at its first restart only if its error
+  // estimate is below a tenth of the tolerance.
   PetscInt num_conv;
   Customize();
+  const bool test = q_region && warm_start;
+  if (test)
+  {
+    PalacePetscCall(
+        EPSSetConvergenceTestFunction(eps, __eps_first_restart_test, nullptr, nullptr));
+  }
+  else if (first_restart_test)
+  {
+    PalacePetscCall(EPSSetConvergenceTest(eps, EPS_CONV_REL));
+  }
+  first_restart_test = test;
   PalacePetscCall(EPSSolve(eps));
   EndFirstCycle();
   PalacePetscCall(EPSGetConverged(eps, &num_conv));

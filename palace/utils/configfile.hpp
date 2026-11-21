@@ -1041,6 +1041,10 @@ public:
   bool init_v0 = true;
   bool init_v0_const = false;
 
+  // Minimum quality factor of the eigenmodes searched for in problems with damping (SLEPc
+  // only, values <= 0.5 disable the restriction).
+  double min_q = 0.54;
+
   // Orthogonalize basis vectors using a mass matrix inner product, instead of generating
   // using a standard ℓ² (Euclidean) norm.
   bool mass_orthog = false;

@@ -541,6 +541,18 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   Mpi::Print(" Scaling γ = {:.3e}, δ = {:.3e}\n", eigen->GetScalingGamma(),
              eigen->GetScalingDelta());
 
+  // For problems with damping, exclude the strongly damped and growing modes from the
+  // search, whose slow convergence can stall the others.
+  const bool q_region = type == EigenSolverBackend::SLEPC &&
+                        nonlinear_type != NonlinearEigenSolver::SLP && (C || has_A2) &&
+                        iodata.solver.eigenmode.min_q > 0.5;
+  if (q_region)
+  {
+    Mpi::Print(" Eigenvalue search excludes modes with |Q| < {:.3g}\n",
+               iodata.solver.eigenmode.min_q);
+    eigen->SetMinQualityFactor(iodata.solver.eigenmode.min_q);
+  }
+
   // If desired, use an M-inner product for orthogonalizing the eigenvalue subspace. The
   // constructed matrix just references the real SPD part of the mass matrix (no copy is
   // performed). Boundary conditions don't need to be eliminated here.
@@ -590,11 +602,13 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   }
 
   // With adaptive mesh refinement, the SLEPc Krylov-Schur solver can start from the
-  // eigenvectors of the previous solve (warm start). Its more accurate first Krylov cycle
-  // can cost more than a warm start saves on solves of two cycles: the eigenvectors are
-  // kept only if the last solve without a warm start took three cycles or more, and only if
-  // the adaptation goes on.
-  constexpr int min_cold_its = 3;
+  // eigenvectors of the previous solve (warm start), if the adaptation goes on. Its more
+  // accurate first Krylov cycle can cost more than a warm start saves on a solve of two
+  // cycles, which it shortens by one cycle at most: the warm start follows the cold solves
+  // of three cycles or more, and those of two cycles as long as the warm-started solves
+  // after them converge in a single cycle.
+  auto WarmStartNext = [this]()
+  { return last_cold_its >= 3 || (last_cold_its == 2 && warm_after_two_cycles); };
   const auto &eigenmode = iodata.solver.eigenmode;
   const auto &refinement = iodata.model.refinement;
   const int adapt_it = num_solves++;
@@ -645,6 +659,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       {
         eigen->SetInitialSpace(v);  // Copies the vector
       }
+      eigen->SetWarmStart(true);
 
       // A warm-started solve converges after few linear solves, and their error, kept in
       // the Krylov vectors through the restarts, is not seen by the error estimate of the
@@ -656,10 +671,12 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     }
     else
     {
-      if (adapt_it > 0 && can_warm_start && last_cold_its < min_cold_its)
+      if (adapt_it > 0 && can_warm_start && !WarmStartNext())
       {
-        Mpi::Print(" No warm start: the last solve without one took {:d} Krylov cycle{}\n",
-                   last_cold_its, (last_cold_its > 1) ? "s" : "");
+        Mpi::Print(
+            " No warm start: the last solve without one took {:d} Krylov cycle{}{}\n",
+            last_cold_its, (last_cold_its > 1) ? "s" : "",
+            (last_cold_its == 2) ? ", and a warm start after it took two or more" : "");
       }
       Mpi::Print(" Using {} starting vector\n",
                  eigenmode.init_v0_const ? "constant" : "random");
@@ -770,6 +787,11 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   {
     last_cold_its = eigen->GetNumIterations();
   }
+  else if (last_cold_its < 3 && eigen->GetNumIterations() > 1)
+  {
+    // The warm start after a cold solve of two cycles saved no cycle.
+    warm_after_two_cycles = false;
+  }
   {
     std::complex<double> lambda = (num_conv > 0) ? eigen->GetEigenvalue(0) : 0.0;
     Mpi::Print(" Found {:d} converged eigenvalue{}{}\n", num_conv,
@@ -835,7 +857,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // Combine the converged eigenvectors to start the next adaptation iteration: only the
   // combinations follow the refinement and rebalancing of the mesh.
   const bool combine_eigenvectors =
-      can_warm_start && last_cold_its >= min_cold_its && adapt_it < refinement.max_it;
+      can_warm_start && WarmStartNext() && adapt_it < refinement.max_it;
   ComplexVector v_comb, v_comb_lambda;
   int num_combined = 0;
   if (combine_eigenvectors)

@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:5-1-0",
+  "$id": "urn:palace:schema:5-2-0",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -2687,6 +2687,13 @@
           "type": "boolean",
           "description": "Use a constant start vector instead of a random one.",
           "default": false,
+          "x-palace-advanced": true
+        },
+        "MinQ": {
+          "type": "number",
+          "description": "Minimum quality factor `|Q| = |\u03c9| / (2 |Im{\u03c9}|)` of the eigenmodes searched for in problems with damping: strongly damped or growing modes with lower `|Q|` are excluded from the search, so that their slowly converging Ritz values cannot stall the others. Values \u2264 0.5 disable the restriction (every damped mode has `Q` \u2265 0.5). With the restriction, a warm-started solve of adaptive mesh refinement accepts an eigenpair at its first Krylov restart only if its error estimate is below a tenth of the tolerance. Only used by the SLEPc solver, except with the `\"SLP\"` nonlinear solver, and with `\"Hybrid\"` only for its initial guess. Structures whose wanted modes have lower `Q` need a lower value.",
+          "minimum": 0.0,
+          "default": 0.54,
           "x-palace-advanced": true
         },
         "MassOrthogonal": {
