@@ -15,13 +15,9 @@
 namespace palace
 {
 
-class FarfieldBoundaryOperator;
 class FiniteElementSpace;
 class MaterialOperator;
-class MaterialPropertyCoefficient;
-class SurfaceConductivityOperator;
-class SurfaceImpedanceOperator;
-class SurfaceRationalImpedanceOperator;
+class SurfaceTerms;
 
 namespace mode_assembly
 {
@@ -35,8 +31,10 @@ enum class CoefficientType
   OMEGA,
   OMEGA_SQUARED,
   SHIFT,
-  SURFACE_CONDUCTIVITY,
-  RATIONAL_IMPEDANCE
+  // Scale of the frequency-dependent boundary mass term index of SurfaceTerms.
+  SURFACE_TERM,
+  // Nonlinear system coefficient g(iω) = s²χ(s) of the frequency-dependent material index.
+  FREQUENCY_DEPENDENT_PERMITTIVITY
 };
 
 // One complete, BC-eliminated component of the mode eigenproblem matrix A. Exact assembly
@@ -62,17 +60,14 @@ struct OperatorComponent
 class ModeOperatorModel
 {
 private:
-  SurfaceConductivityOperator &surf_sigma_op;
-  SurfaceRationalImpedanceOperator &surf_rz_op;
+  const MaterialOperator &mat_op;
+  const SurfaceTerms &surface_terms;
   std::vector<OperatorComponent> components;
 
 public:
   ModeOperatorModel(const FiniteElementSpace &nd_fespace,
                     const FiniteElementSpace &h1_fespace, const MaterialOperator &mat_op,
-                    const mfem::Vector *normal, SurfaceImpedanceOperator &surf_z_op,
-                    FarfieldBoundaryOperator &farfield_op,
-                    SurfaceConductivityOperator &surf_sigma_op,
-                    SurfaceRationalImpedanceOperator &surf_rz_op,
+                    const mfem::Vector *normal, SurfaceTerms &surface_terms,
                     const mfem::HypreParMatrix &Bttr, const mfem::HypreParMatrix *Atnr,
                     const mfem::HypreParMatrix *Atni, const mfem::HypreParMatrix *Btnr,
                     const mfem::Array<int> &dbc_tdof_list);
@@ -99,14 +94,6 @@ ComplexHypreParMatrix BuildSystemMatrixA(
 
 void ApplyVDBackTransform(ComplexVector &e0, std::complex<double> kn, int nd_size,
                           int h1_size, ComplexVector &et, ComplexVector &en);
-
-// Add coeff times the scalar inverse impedance of the domain material adjacent to each
-// farfield (first-order absorbing) boundary element to fb, the boundary coefficient of the
-// out-of-plane field component (H1 block) for the damping of the absorbing boundaries.
-// Assumes an isotropic material at the absorbing boundaries.
-void AddFarfieldScalarDampingBdrCoefficients(const MaterialOperator &mat_op,
-                                             const FarfieldBoundaryOperator &farfield_op,
-                                             double coeff, MaterialPropertyCoefficient &fb);
 
 // Propagation constant kₙ of a boundary mode from kₙ² = −σ − 1/λ at the frequency ω. At a
 // real frequency, kₙ is the principal root, with Re{kₙ} ≥ 0, when Re{kₙ²} ≥ 0, and

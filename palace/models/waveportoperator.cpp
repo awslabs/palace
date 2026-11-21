@@ -24,11 +24,8 @@
 #include "linalg/solver.hpp"
 #include "linalg/strumpack.hpp"
 #include "linalg/superlu.hpp"
-#include "models/farfieldboundaryoperator.hpp"
 #include "models/materialoperator.hpp"
-#include "models/surfaceconductivityoperator.hpp"
-#include "models/surfaceimpedanceoperator.hpp"
-#include "models/surfacerationalimpedanceoperator.hpp"
+#include "models/surfaceterms.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
@@ -134,20 +131,6 @@ void GetEssentialTrueDofs(mfem::ParFiniteElementSpace &port_nd_fespace,
   mesh::AttrToMarker(max_bdr_attr, dbc_attr, dbc_marker);
   GetEssentialTrueDofs(port_nd_fespace, dbc_marker, port_nd_dbc_tdof_list);
   GetEssentialTrueDofs(port_h1_fespace, dbc_marker, port_h1_dbc_tdof_list);
-}
-
-void GetInitialSpace(const mfem::ParFiniteElementSpace &nd_fespace,
-                     const mfem::ParFiniteElementSpace &h1_fespace,
-                     const mfem::Array<int> &dbc_tdof_list, ComplexVector &v)
-{
-  // Initial space which satisfies Dirichlet BCs.
-  const int nd_size = nd_fespace.GetTrueVSize(), h1_size = h1_fespace.GetTrueVSize();
-  v.SetSize(nd_size + h1_size);
-  v.UseDevice(true);
-  v = std::complex<double>(1.0, 0.0);
-  // linalg::SetRandomReal(nd_fespace.GetComm(), v);
-  linalg::SetSubVector(v, nd_size, nd_size + h1_size, 0.0);
-  linalg::SetSubVector(v, dbc_tdof_list, 0.0);
 }
 
 std::complex<double> Normalize(const GridFunction &S0t, GridFunction &E0t,
@@ -685,48 +668,12 @@ WavePortData::WavePortData(const config::WavePortData &data,
       mfem::ParSubMesh::CreateFromBoundary(mesh, attr_list));
 
   // Add internal boundary elements for edges where the port face intersects other boundary
-  // faces (PEC, impedance, conductivity, rational impedance, absorbing).
+  // faces (see config::BoundaryData::GetCrossSectionEdgeAttributes).
   // ParSubMesh::CreateFromBoundary only creates boundary elements at the geometric boundary
   // of the selected face region, but internal intersections need boundary elements for the
   // 2D eigenvalue problem BCs.
-  {
-    std::vector<int> internal_bdr_attrs;
-    for (auto a : boundaries.pec.attributes)
-    {
-      internal_bdr_attrs.push_back(a);
-    }
-    for (auto a : boundaries.auxpec.attributes)
-    {
-      internal_bdr_attrs.push_back(a);
-    }
-    for (const auto &d : boundaries.impedance)
-    {
-      for (auto a : d.attributes)
-      {
-        internal_bdr_attrs.push_back(a);
-      }
-    }
-    for (const auto &d : boundaries.conductivity)
-    {
-      for (auto a : d.attributes)
-      {
-        internal_bdr_attrs.push_back(a);
-      }
-    }
-    for (const auto &d : boundaries.rational_impedance)
-    {
-      for (auto a : d.attributes)
-      {
-        internal_bdr_attrs.push_back(a);
-      }
-    }
-    for (auto a : boundaries.farfield.attributes)
-    {
-      internal_bdr_attrs.push_back(a);
-    }
-    mesh::AddSubMeshInternalBoundaryElements(*port_submesh_ptr, attr_list,
-                                             internal_bdr_attrs);
-  }
+  mesh::AddSubMeshInternalBoundaryElements(*port_submesh_ptr, attr_list,
+                                           boundaries.GetCrossSectionEdgeAttributes());
 
   port_mesh = std::make_unique<Mesh>(std::move(port_submesh_ptr));
   port_normal = mesh::GetSurfaceNormal(*port_mesh);
@@ -742,10 +689,6 @@ WavePortData::WavePortData(const config::WavePortData &data,
   port_E0t = std::make_unique<GridFunction>(*port_nd_fespace, true);
   port_E0n = std::make_unique<GridFunction>(*port_h1_fespace, true);
   port_E = std::make_unique<GridFunction>(*port_nd_fespace, true);
-  // ω-fields (ComputeComplexReactions): alloc on all ranks; W assembly runs on the full
-  // comm.
-  port_Et_omega = std::make_unique<GridFunction>(*port_nd_fespace, true);
-  port_En_omega = std::make_unique<GridFunction>(*port_h1_fespace, true);
 
   port_nd_transfer = std::make_unique<mfem::ParTransferMap>(
       mfem::ParSubMesh::CreateTransferMap(E0t.Real(), port_E0t->Real()));
@@ -769,16 +712,8 @@ WavePortData::WavePortData(const config::WavePortData &data,
   // attribute lookups which correctly reference the remapped submesh.
   port_mat_op = std::make_unique<MaterialOperator>(domains.materials, boundaries.periodic,
                                                    problem_type, *port_mesh);
-  port_surf_z_op = std::make_unique<SurfaceImpedanceOperator>(
-      boundaries.impedance, boundaries.split_impedance_attributes, units, *port_mat_op,
-      mesh);
-  port_farfield_op = std::make_unique<FarfieldBoundaryOperator>(
-      boundaries.farfield, problem_type, *port_mat_op, mesh);
-  port_surf_sigma_op = std::make_unique<SurfaceConductivityOperator>(
-      boundaries.conductivity, problem_type, units, *port_mat_op, mesh);
-  port_surf_rz_op = std::make_unique<SurfaceRationalImpedanceOperator>(
-      boundaries.rational_impedance, boundaries.split_impedance_attributes, problem_type,
-      units, *port_mat_op, mesh);
+  port_surface_terms =
+      std::make_unique<SurfaceTerms>(boundaries, problem_type, units, *port_mat_op, mesh);
 
   // Construct mapping from parent (boundary) element indices to submesh (domain)
   // elements.
@@ -808,8 +743,7 @@ WavePortData::WavePortData(const config::WavePortData &data,
     }
   }
 
-  // Create vector for initial space for eigenvalue solves and eigenmode solution.
-  GetInitialSpace(*port_nd_fespace, *port_h1_fespace, port_dbc_tdof_list, v0);
+  // Create vector for the eigenmode solution.
   e0.SetSize(port_nd_fespace->GetTrueVSize() + port_h1_fespace->GetTrueVSize());
   e0.UseDevice(true);
 
@@ -819,8 +753,9 @@ WavePortData::WavePortData(const config::WavePortData &data,
   // epsilon_r) is not a safe bound; use max(mu_r) * max(epsilon_r) instead. The bound does
   // not hold for the slow-wave modes of superconducting lines (kinetic inductance), so the
   // modes are sought on both sides of the shift (LARGEST_MAGNITUDE).
-  n_target_sq = (data.target > 0.0) ? data.target * data.target
-                                    : port_mat_op->GetMaxMuEpsilon() * 1.1;
+  has_target = (data.target > 0.0);
+  n_target_sq =
+      has_target ? data.target * data.target : port_mat_op->GetMaxMuEpsilon() * 1.1;
 
   // Configure a communicator for the processes which have elements for this port.
   MPI_Comm comm = nd_fespace.GetComm();
@@ -840,10 +775,10 @@ WavePortData::WavePortData(const config::WavePortData &data,
   // processes. The solver_comm (port_comm) restricts solver setup to port processes only.
   {
     mode_solver = std::make_unique<ModeEigenSolver>(
-        *port_mat_op, &port_normal, *port_surf_z_op, *port_farfield_op, *port_surf_sigma_op,
-        *port_surf_rz_op, *port_nd_fespace, *port_h1_fespace, port_dbc_tdof_list, mode_idx,
-        data.max_size, data.eig_tol, EigenvalueSolver::WhichType::LARGEST_MAGNITUDE,
-        port_linear, data.eigen_solver, data.verbose, port_comm);
+        *port_mat_op, &port_normal, *port_surface_terms, *port_nd_fespace, *port_h1_fespace,
+        port_dbc_tdof_list, mode_idx, data.max_size, data.eig_tol,
+        EigenvalueSolver::WhichType::LARGEST_MAGNITUDE, port_linear, data.eigen_solver,
+        data.verbose, port_comm);
   }
 
   // Configure port mode sign convention: 1ᵀ Re{-n x H} >= 0 on the "upper-right quadrant"
@@ -936,7 +871,7 @@ void WavePortData::SetSynthesisEigTol(double eig_tol, double ksp_tol)
   // complex mode cache so the next solve re-runs the cross-section EVP at the tightened
   // tolerance instead of reusing a result computed at the old one.
   omega0 = -1.0;
-  mode_cache.valid = false;
+  mode_cache.converged = false;
 }
 
 void WavePortData::SetUpExcitationVoltagePath(const std::vector<mfem::Vector> &voltage_path)
@@ -994,6 +929,21 @@ void WavePortData::SetUpExcitationVoltagePath(const std::vector<mfem::Vector> &v
   }
 }
 
+double WavePortData::ModeShift(std::complex<double> omega) const
+{
+  // A dispersive material on the port exceeds its high-frequency permittivity below its
+  // resonances, so the default bound on k_n²/ω² is taken at ω. At a complex ω it bounds
+  // Re(ω² μ ε(ω)), which near a resonance can exceed (Re ω)² μ Re ε(Re ω) by far more than
+  // the margin. A given Target is kept.
+  const double w = omega.real();
+  if (has_target)
+  {
+    return -w * w * n_target_sq;
+  }
+  return -w * w *
+         std::max(n_target_sq, 1.1 * port_mat_op->GetFrequencyDependentMaxMuEpsilon(omega));
+}
+
 void WavePortData::Initialize(double omega)
 {
   if (omega == omega0)
@@ -1003,12 +953,12 @@ void WavePortData::Initialize(double omega)
 
   // Solve the generalized eigenvalue problem for the desired wave port mode using the
   // ModeEigenSolver. Frequency-independent matrices were assembled in the constructor.
-  const double sigma = -omega * omega * n_target_sq;
+  const double sigma = ModeShift(omega);
   std::complex<double> lambda;
   {
     BlockTimer bt(Timer::WAVE_PORT_SOLVE);
     const bool has_solver = (port_comm != MPI_COMM_NULL);
-    auto result = mode_solver->Solve(omega, sigma, has_solver ? &v0 : nullptr);
+    auto result = mode_solver->Solve(omega, sigma);
     if (has_solver)
     {
       MFEM_VERIFY(result.num_converged >= mode_idx,
@@ -1180,7 +1130,7 @@ ModeEigenSolver::ReducedModelStats WavePortData::GetReducedModelStats() const
   auto stats = mode_solver->GetReducedModelStats();
   unsigned long long counts[] = {
       stats.exact_solves,       stats.reduced_solves,   stats.fallbacks,
-      stats.offline_basis_rank, stats.online_basis_cap,
+      stats.offline_basis_rank, stats.online_basis_cap, stats.basis_limit,
   };
   Mpi::Broadcast(static_cast<int>(std::size(counts)), counts, port_root,
                  port_mesh->GetComm());
@@ -1190,6 +1140,8 @@ ModeEigenSolver::ReducedModelStats WavePortData::GetReducedModelStats() const
   stats.fallbacks = counts[2];
   stats.offline_basis_rank = counts[3];
   stats.online_basis_cap = counts[4];
+  stats.basis_limit = counts[5];
+  Mpi::Broadcast(1, &stats.over_basis_limit, port_root, port_mesh->GetComm());
   return stats;
 }
 
@@ -1207,45 +1159,55 @@ double WavePortData::GetReducedTolerance() const
   return tol;
 }
 
-const WavePortData::ModeSolveCache &WavePortData::EvalModeSolve(std::complex<double> omega)
+WavePortData::ModeSolve WavePortData::SolveComplexMode(std::complex<double> omega)
 {
-  // Solve the cross-section EVP once at complex ω and cache (kₙ, eigenvector), reusing the
-  // cached result on a repeat call at the same ω. Mirrors the EVP solve + recovery in
+  // Solve the cross-section EVP at complex ω. Mirrors the EVP solve + recovery in
   // Initialize() but skips field reconstruction / normalization and does NOT touch the
   // cached real-ω state (omega0, kn0, port_E0t/E0n). The spectral shift sigma stays REAL —
-  // it is a pure algebraic centering of the linearization (exact for any real sigma), so we
-  // derive it from the real part of the requested frequency; the cross-section EVP carries
-  // the full complex ω.
-  if (mode_cache.valid && mode_cache.omega == omega)
+  // it is a pure algebraic centering of the linearization (exact for any real sigma), but
+  // it selects and converges the mode, so its bound uses the material at the complex ω
+  // (ModeShift); the cross-section EVP carries the full complex ω.
+  if (mode_cache.converged && mode_cache.omega == omega)
   {
     return mode_cache;
   }
-  const double omega_ref = omega.real();
-  const double sigma = -omega_ref * omega_ref * n_target_sq;
+  const double sigma = ModeShift(omega);
   const bool has_solver = (port_comm != MPI_COMM_NULL);
-  std::complex<double> lambda;
-  ComplexVector e_tmp;
+  const auto result = mode_solver->Solve(omega, sigma);
+  // Agree on every rank whether the mode converged, before the eigenpair is read. Ranks
+  // without the port solver return no modes and do not vote.
+  ModeSolve mode;
+  mode.omega = omega;
+  int converged = has_solver ? (result.num_converged >= mode_idx) : 1;
+  Mpi::GlobalMin(1, &converged, port_mesh->GetComm());
+  mode.num_converged = has_solver ? result.num_converged : 0;
+  Mpi::Broadcast(1, &mode.num_converged, port_root, port_mesh->GetComm());
+  if (!converged)
   {
-    auto result = mode_solver->Solve(omega, sigma, has_solver ? &v0 : nullptr);
-    if (has_solver)
-    {
-      MFEM_VERIFY(result.num_converged >= mode_idx,
-                  "Wave port eigensolver did not converge in EvalModeSolve!");
-      lambda = mode_solver->GetEigenvalue(mode_idx - 1);
-      e_tmp.SetSize(port_nd_fespace->GetTrueVSize() + port_h1_fespace->GetTrueVSize());
-      e_tmp.UseDevice(true);
-      mode_solver->GetEigenvector(mode_idx - 1, e_tmp);
-    }
+    return mode;
+  }
+  std::complex<double> lambda;
+  if (has_solver)
+  {
+    lambda = mode_solver->GetEigenvalue(mode_idx - 1);
+    mode.e.SetSize(port_nd_fespace->GetTrueVSize() + port_h1_fespace->GetTrueVSize());
+    mode.e.UseDevice(true);
+    mode_solver->GetEigenvector(mode_idx - 1, mode.e);
   }
   Mpi::Broadcast(1, &lambda, port_root, port_mesh->GetComm());
-  // k_n = √(−σ − 1/λ_evp), on the same branch as in Initialize() at real ω, and its
-  // analytic continuation at complex ω.
-  mode_cache.kn = mode_assembly::PropagationConstant(-sigma - 1.0 / lambda, omega);
-  mode_cache.e = std::move(e_tmp);
+  // Use the same decaying branch as Initialize() at real ω and its complex continuation.
+  mode.kn = mode_assembly::PropagationConstant(-sigma - 1.0 / lambda, omega);
+  mode.converged = true;
+  WarnEvanescent(mode.kn, omega);
+  // Kept for reuse (a copy: ComplexVector assignment does not resize).
+  mode_cache.converged = true;
+  mode_cache.num_converged = mode.num_converged;
   mode_cache.omega = omega;
-  mode_cache.valid = true;
-  WarnEvanescent(mode_cache.kn, omega);
-  return mode_cache;
+  mode_cache.kn = mode.kn;
+  mode_cache.e.SetSize(mode.e.Size());
+  mode_cache.e.UseDevice(true);
+  mode_cache.e = mode.e;
+  return mode;
 }
 
 void WavePortData::WarnEvanescent(std::complex<double> kn, std::complex<double> omega)
@@ -1284,89 +1246,13 @@ void WavePortData::WarnReaction()
 
 std::complex<double> WavePortData::SolveKnComplex(std::complex<double> omega)
 {
-  // Complex-frequency propagation constant, from the shared cached EVP solve. Used by the
-  // eigenmode nonlinear solver to evaluate the wave-port BC at the genuinely complex
-  // eigenvalue. For real ω this returns the same k_n as Initialize(ω).
-  return EvalModeSolve(omega).kn;
-}
-
-WavePortData::ComplexReactions
-WavePortData::ComputeComplexReactions(std::complex<double> omega)
-{
-  // Recover kₙ and the eigenvector from the shared cached EVP solve at ω (so kₙ and the
-  // reactions come from the same eigenbranch as SolveKnComplex), then on the port ranks
-  // recompute the complete mode, scale-lock it to the frozen reference e0, and transport
-  // the frozen unit-power reactions by the reaction ratio. Broadcast (kn, R_full, R_scalar)
-  // from the port root; falls back to the frozen reactions on ranks/paths without a solver.
-  const bool has_solver = (port_comm != MPI_COMM_NULL);
-  const auto &solve = EvalModeSolve(omega);
-  const std::complex<double> kn = solve.kn;
-  // Copy the cached eigenvector: the back-transform below mutates it in place, and the
-  // cache must stay pristine for a later SolveKnComplex / ComputeComplexReactions at the
-  // same ω.
-  ComplexVector e_tmp(solve.e);
-
-  std::complex<double> results[5] = {kn, modal_reaction, modal_reaction_scalar, 0.0, 0.0};
-  if (has_solver)
-  {
-    const int nd = port_nd_fespace->GetTrueVSize();
-    const int h1 = port_h1_fespace->GetTrueVSize();
-    const auto &submesh = static_cast<const mfem::ParSubMesh &>(port_mesh->Get());
-
-    // Raw-gauge reference reactions of the frozen field e0 at (kn0, ω0). modal_reaction =
-    // scale²·R_full_ref with the frozen unit-power scale, so R_full(ω)/R_full_ref
-    // transported by modal_reaction stays unit-power. Recomputed only when the reference
-    // (ω0) changes.
-    if (ref_reaction_omega0 != omega0)
-    {
-      GridFunction Et0(*port_nd_fespace, true), En0(*port_h1_fespace, true);
-      DistributeModeField(e0, nd, h1, Et0, En0);
-      R_full_ref = AssembleReaction<true>(Et0, En0, mat_op, submesh, submesh_parent_elems,
-                                          kn0, omega0, port_nd_fespace->Get(), port_comm);
-      R_scalar_ref =
-          AssembleReaction<false>(Et0, En0, mat_op, submesh, submesh_parent_elems, kn0,
-                                  omega0, port_nd_fespace->Get(), port_comm);
-      ref_reaction_omega0 = omega0;
-    }
-
-    // Back-transform the complex mode (Eₙ = ẽₙ/(i·kₙ)) and scale-lock it to e0 via the
-    // least- squares factor α (α·e_tmp ≈ e0): α = ⟨e_tmp, e0⟩ / ⟨e_tmp, e_tmp⟩. Reactions
-    // are quadratic in the field, so the locked reaction α²·R_raw is invariant to the EVP's
-    // arbitrary per-solve scale/phase and continuously connected to the ω0 gauge.
-    ComplexVector et_view, en_view;
-    mode_assembly::ApplyVDBackTransform(e_tmp, kn, nd, h1, et_view, en_view);
-    const std::complex<double> num = linalg::Dot(port_comm, e0, e_tmp);  // e_tmpᴴ e0
-    const double den = linalg::Dot(port_comm, e_tmp, e_tmp).real();
-    const std::complex<double> a2 =
-        (den > 0.0) ? (num / den) * (num / den) : std::complex<double>(0.0);
-
-    // Stash the recomputed field (at kn, omega) for the eigenmode full-mode correction. The
-    // raw reactions are paired with shape vectors from this same field, so the arbitrary
-    // EVP scale/phase cancels in W = (−iω/R) s sᵀ (no gauge-lock needed here, unlike the
-    // transported reactions below which feed the frozen-shape synthesis pencil).
-    DistributeModeField(e_tmp, nd, h1, *port_Et_omega, *port_En_omega);
-    kn_recompute = kn;
-    omega_recompute = omega;
-    const std::complex<double> R_full_raw = AssembleReaction<true>(
-        *port_Et_omega, *port_En_omega, mat_op, submesh, submesh_parent_elems, kn, omega,
-        port_nd_fespace->Get(), port_comm);
-    const std::complex<double> R_scalar_raw = AssembleReaction<false>(
-        *port_Et_omega, *port_En_omega, mat_op, submesh, submesh_parent_elems, kn, omega,
-        port_nd_fespace->Get(), port_comm);
-    results[3] = R_full_raw;
-    results[4] = R_scalar_raw;
-
-    if (std::abs(R_full_ref) > 0.0)
-    {
-      results[1] = modal_reaction * (a2 * R_full_raw) / R_full_ref;
-    }
-    if (std::abs(R_scalar_ref) > 0.0)
-    {
-      results[2] = modal_reaction_scalar * (a2 * R_scalar_raw) / R_scalar_ref;
-    }
-  }
-  Mpi::Broadcast(5, results, port_root, port_mesh->GetComm());
-  return {results[0], results[1], results[2], results[3], results[4]};
+  // Complex-frequency propagation constant. For real ω this returns the same k_n as
+  // Initialize(ω).
+  const auto mode = SolveComplexMode(omega);
+  MFEM_VERIFY(mode.converged, "Wave port eigensolver did not converge at complex ω = "
+                                  << omega << " (" << mode.num_converged << " of "
+                                  << mode_idx << " modes)!");
+  return mode.kn;
 }
 
 std::unique_ptr<mfem::VectorCoefficient>
@@ -1385,24 +1271,6 @@ WavePortData::GetModeExcitationCoefficientImag(bool include_gradient) const
   return MakeModeHCoefficient<ValueType::IMAG>(include_gradient, attr_list, *port_E0t,
                                                *port_E0n, mat_op, port_submesh,
                                                submesh_parent_elems, kn0, omega0);
-}
-
-std::unique_ptr<mfem::VectorCoefficient>
-WavePortData::GetOmegaModeExcitationCoefficientReal(bool include_gradient) const
-{
-  const auto &port_submesh = static_cast<const mfem::ParSubMesh &>(port_mesh->Get());
-  return MakeModeHCoefficient<ValueType::REAL>(
-      include_gradient, attr_list, *port_Et_omega, *port_En_omega, mat_op, port_submesh,
-      submesh_parent_elems, kn_recompute, omega_recompute);
-}
-
-std::unique_ptr<mfem::VectorCoefficient>
-WavePortData::GetOmegaModeExcitationCoefficientImag(bool include_gradient) const
-{
-  const auto &port_submesh = static_cast<const mfem::ParSubMesh &>(port_mesh->Get());
-  return MakeModeHCoefficient<ValueType::IMAG>(
-      include_gradient, attr_list, *port_Et_omega, *port_En_omega, mat_op, port_submesh,
-      submesh_parent_elems, kn_recompute, omega_recompute);
 }
 
 std::unique_ptr<mfem::VectorCoefficient>
@@ -2009,7 +1877,7 @@ void WavePortOperator::AddExtraSystemBdrCoefficients(std::complex<double> omega,
   // solved at the genuinely complex eigenvalue (ω = -i·λ). For k_n = β + iα, expanding
   // i·(β + iα) = −α + iβ puts the line-attenuation term −α·M on the real slot (fbr) and
   // the propagating term β·M on the imaginary slot (fbi). SolveKnComplex is
-  // side-effect-free (does NOT cache, leaving omega0/kn0/port_E0t untouched), so the real-ω
+  // independent of the cached real-ω state (omega0/kn0/port_E0t), so the real-ω
   // driven/postpro state is preserved. For real ω (imag = 0, α from cross-section loss)
   // this matches the double overload.
   for (auto &[idx, data] : ports)
@@ -2019,6 +1887,18 @@ void WavePortOperator::AddExtraSystemBdrCoefficients(std::complex<double> omega,
       continue;
     }
     const std::complex<double> kn = data.SolveKnComplex(omega);
+    AddBoundaryMassBdrCoefficients(idx, fbr, -kn.imag());
+    AddBoundaryMassBdrCoefficients(idx, fbi, kn.real());
+  }
+}
+
+void WavePortOperator::AddExtraSystemBdrCoefficients(
+    const std::vector<std::pair<int, std::complex<double>>> &port_kn,
+    MaterialPropertyCoefficient &fbr, MaterialPropertyCoefficient &fbi) const
+{
+  // As the overload above, with the given k_n(ω) of each port.
+  for (const auto &[idx, kn] : port_kn)
+  {
     AddBoundaryMassBdrCoefficients(idx, fbr, -kn.imag());
     AddBoundaryMassBdrCoefficients(idx, fbi, kn.real());
   }
@@ -2233,83 +2113,120 @@ WavePortOperator::GetModeExcitationVector(int port_idx, double omega,
                            *ci);
 }
 
-std::vector<WavePortOperator::ModalCorrectionTerm>
-WavePortOperator::GetModalCorrectionTerms(std::complex<double> omega,
-                                          FiniteElementSpace &nd_fespace,
-                                          const mfem::Array<int> &nd_dbc_tdof_list)
+WavePortData::ModalShape
+WavePortData::AssembleModalShape(const ModeSolve &mode, FiniteElementSpace &nd_fespace,
+                                 const mfem::Array<int> &nd_dbc_tdof_list)
 {
-  // Complex-ω modal correction for the eigenmode path. Does not call Initialize (ω is
-  // complex): recompute the mode at ω (ComputeComplexReactions), then assemble the full n×H
-  // and scalar- admittance n×H shape vectors from that recomputed field. The two rank-1
-  // terms of W_full − W_scalar are (−iω/R_full) s_full s_fullᵀ and −(−iω/R_scalar) s_scalar
-  // s_scalarᵀ, exactly as the real-ω baseline but at complex ω. Pairing each s with the raw
-  // reaction of the same field makes W = (−iω/R) s sᵀ invariant to the mode's arbitrary EVP
-  // scale/phase, so W tracks the true mode shape at ω (frequency-independent) instead of
+  // The field of the mode, back-transformed from its eigenvector (Eₙ = ẽₙ/(i·kₙ)) on the
+  // port ranks; zero size elsewhere, where the n×H assembly below still takes part. The
+  // raw reactions are paired with the n×H vectors of this same field, so the arbitrary
+  // EVP scale/phase of the mode cancels in W = (−iω/R) s sᵀ.
+  MFEM_ASSERT(mode.converged, "The modal shape needs a converged mode!");
+  ModalShape shape;
+  GridFunction Et(*port_nd_fespace, true), En(*port_h1_fespace, true);
+  std::complex<double> R[2] = {0.0, 0.0};
+  if (port_comm != MPI_COMM_NULL)
+  {
+    const int nd = port_nd_fespace->GetTrueVSize();
+    const int h1 = port_h1_fespace->GetTrueVSize();
+    const auto &submesh = static_cast<const mfem::ParSubMesh &>(port_mesh->Get());
+    ComplexVector e(mode.e), et_view, en_view;
+    mode_assembly::ApplyVDBackTransform(e, mode.kn, nd, h1, et_view, en_view);
+    DistributeModeField(e, nd, h1, Et, En);
+    R[0] = AssembleReaction<true>(Et, En, mat_op, submesh, submesh_parent_elems, mode.kn,
+                                  mode.omega, port_nd_fespace->Get(), port_comm);
+    R[1] = AssembleReaction<false>(Et, En, mat_op, submesh, submesh_parent_elems, mode.kn,
+                                   mode.omega, port_nd_fespace->Get(), port_comm);
+  }
+  Mpi::Broadcast(2, R, port_root, port_mesh->GetComm());
+  shape.R_full = R[0];
+  shape.R_scalar = R[1];
+  if (!(std::abs(R[0]) > 0.0) || !(std::abs(R[1]) > 0.0))
+  {
+    return shape;
+  }
+  const auto &port_submesh = static_cast<const mfem::ParSubMesh &>(port_mesh->Get());
+  for (const bool full : {true, false})
+  {
+    auto cr =
+        MakeModeHCoefficient<ValueType::REAL>(full, attr_list, Et, En, mat_op, port_submesh,
+                                              submesh_parent_elems, mode.kn, mode.omega);
+    auto ci =
+        MakeModeHCoefficient<ValueType::IMAG>(full, attr_list, Et, En, mat_op, port_submesh,
+                                              submesh_parent_elems, mode.kn, mode.omega);
+    (full ? shape.s_full : shape.s_scalar) =
+        AssembleNxHVector(nd_fespace, nd_dbc_tdof_list, attr_marker, *cr, *ci);
+  }
+  return shape;
+}
+
+WavePortOperator::ComplexPortContribution
+WavePortOperator::EvaluateComplex(std::complex<double> omega, bool modal,
+                                  FiniteElementSpace &nd_fespace,
+                                  const mfem::Array<int> &nd_dbc_tdof_list)
+{
+  // Complex-ω contribution for the eigenmode path. Does not call Initialize (ω is
+  // complex): the mode of each port is recomputed at ω, and both its k_n and its modal
+  // correction come from that one solve. The two rank-1 terms of W_full − W_scalar are
+  // (−iω/R_full) s_full s_fullᵀ and −(−iω/R_scalar) s_scalar s_scalarᵀ, exactly as the
+  // real-ω baseline but at complex ω, so W tracks the true mode shape at ω instead of
   // freezing it at ω0.
+  ComplexPortContribution contribution;
   std::vector<ModalCorrectionTerm> terms;
-  for (auto &[idx, data] : ports)  // non-const: ComputeComplexReactions re-solves the EVP
+  for (auto &[idx, data] : ports)
   {
     if (!data.active)
     {
       continue;
     }
-    // Activity is decided inside SamplePortModalCorrection from the recomputed complex
-    // reactions, not the frozen real-ω reference state.
-    auto smp = SamplePortModalCorrection(data, omega, nd_fespace, nd_dbc_tdof_list);
-    if (!smp.active)
+    const auto mode = data.SolveComplexMode(omega);
+    if (!mode.converged)
+    {
+      return {false, idx, mode.num_converged, data.mode_idx, {}, nullptr};
+    }
+    contribution.kn.emplace_back(idx, mode.kn);
+    if (!modal)
     {
       continue;
     }
-    terms.push_back({std::move(smp.s_full), smp.g_full, idx});
-    terms.push_back({std::move(smp.s_scalar), smp.g_scalar, idx});
+    // Activity is decided from the recomputed complex reactions, not the frozen real-ω
+    // reference state.
+    auto smp = SamplePortModalCorrection(data, mode, nd_fespace, nd_dbc_tdof_list);
+    if (smp.active)
+    {
+      terms.push_back({std::move(smp.s_full), smp.g_full, idx});
+      terms.push_back({std::move(smp.s_scalar), smp.g_scalar, idx});
+    }
   }
-  return terms;
+  contribution.W = BuildModalCorrectionOperator(terms, nd_fespace);
+  return contribution;
 }
 
-WavePortOperator::ModalCorrectionSample
-WavePortOperator::SamplePortModalCorrection(WavePortData &data, std::complex<double> omega,
-                                            FiniteElementSpace &nd_fespace,
-                                            const mfem::Array<int> &nd_dbc_tdof_list)
+WavePortOperator::ModalCorrectionSample WavePortOperator::SamplePortModalCorrection(
+    WavePortData &data, const WavePortData::ModeSolve &mode, FiniteElementSpace &nd_fespace,
+    const mfem::Array<int> &nd_dbc_tdof_list)
 {
-  // Recompute the mode at ω (ComputeComplexReactions stashes the ω-field), then assemble
-  // the full n×H and scalar-admittance n×H shape vectors from that recomputed field. The
-  // two rank-1 terms of W_full − W_scalar are (−iω/R_full) s_full s_fullᵀ and
-  // +(iω/R_scalar) s_scalar s_scalarᵀ. Pairing each s with the raw reaction of the same
-  // field makes W = (−iω/R) s sᵀ invariant to the mode's arbitrary EVP scale/phase, so W
-  // tracks the true mode shape at ω instead of freezing it at ω0.
-  // Gate on the freshly recomputed complex reactions, not the frozen real-ω reference
-  // members (which can spuriously disable the correction at a cutoff/degenerate reference).
+  // The two rank-1 terms of W_full − W_scalar are (−iω/R_full) s_full s_fullᵀ and
+  // +(iω/R_scalar) s_scalar s_scalarᵀ, from the full and scalar-admittance n×H of the mode
+  // at ω and the raw reactions of the same field. Gate on these recomputed reactions, not
+  // the frozen real-ω reference members (which can spuriously disable the correction at a
+  // cutoff/degenerate reference).
   ModalCorrectionSample smp;
-  const auto react = data.ComputeComplexReactions(omega);
-  if (!(std::abs(react.R_full_raw) > 0.0) || !(std::abs(react.R_scalar_raw) > 0.0))
+  auto shape = data.AssembleModalShape(mode, nd_fespace, nd_dbc_tdof_list);
+  if (!shape.s_full)
   {
     return smp;
   }
-  auto cr = data.GetOmegaModeExcitationCoefficientReal(/*include_gradient=*/true);
-  auto ci = data.GetOmegaModeExcitationCoefficientImag(/*include_gradient=*/true);
-  smp.s_full =
-      AssembleNxHVector(nd_fespace, nd_dbc_tdof_list, data.GetAttrMarker(), *cr, *ci);
-  auto cr_s = data.GetOmegaModeExcitationCoefficientReal(/*include_gradient=*/false);
-  auto ci_s = data.GetOmegaModeExcitationCoefficientImag(/*include_gradient=*/false);
-  smp.s_scalar =
-      AssembleNxHVector(nd_fespace, nd_dbc_tdof_list, data.GetAttrMarker(), *cr_s, *ci_s);
-  smp.g_full = std::complex<double>(0.0, -1.0) * omega / react.R_full_raw;
-  smp.g_scalar = std::complex<double>(0.0, 1.0) * omega / react.R_scalar_raw;
+  smp.s_full = std::move(shape.s_full);
+  smp.s_scalar = std::move(shape.s_scalar);
+  smp.g_full = std::complex<double>(0.0, -1.0) * mode.omega / shape.R_full;
+  smp.g_scalar = std::complex<double>(0.0, 1.0) * mode.omega / shape.R_scalar;
   smp.active = true;
   return smp;
 }
 
 std::unique_ptr<ComplexOperator>
 WavePortOperator::GetModalCorrectionOperator(double omega, FiniteElementSpace &nd_fespace,
-                                             const mfem::Array<int> &nd_dbc_tdof_list)
-{
-  auto terms = GetModalCorrectionTerms(omega, nd_fespace, nd_dbc_tdof_list);
-  return BuildModalCorrectionOperator(terms, nd_fespace);
-}
-
-std::unique_ptr<ComplexOperator>
-WavePortOperator::GetModalCorrectionOperator(std::complex<double> omega,
-                                             FiniteElementSpace &nd_fespace,
                                              const mfem::Array<int> &nd_dbc_tdof_list)
 {
   auto terms = GetModalCorrectionTerms(omega, nd_fespace, nd_dbc_tdof_list);
@@ -2371,7 +2288,11 @@ WavePortOperator::SampleModalCorrectionVectors(int port_idx, std::complex<double
   MFEM_VERIFY(it != ports.end(),
               "SampleModalCorrectionVectors called with unknown port index " << port_idx
                                                                              << "!");
-  return SamplePortModalCorrection(it->second, omega, nd_fespace, nd_dbc_tdof_list);
+  const auto mode = it->second.SolveComplexMode(omega);
+  MFEM_VERIFY(mode.converged, "Wave port eigensolver did not converge at complex ω = "
+                                  << omega << " (" << mode.num_converged << " of "
+                                  << it->second.mode_idx << " modes)!");
+  return SamplePortModalCorrection(it->second, mode, nd_fespace, nd_dbc_tdof_list);
 }
 
 }  // namespace palace

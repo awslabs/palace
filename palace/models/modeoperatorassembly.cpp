@@ -10,11 +10,8 @@
 #include "fem/fespace.hpp"
 #include "fem/integrator.hpp"
 #include "linalg/rap.hpp"
-#include "models/farfieldboundaryoperator.hpp"
 #include "models/materialoperator.hpp"
-#include "models/surfaceconductivityoperator.hpp"
-#include "models/surfaceimpedanceoperator.hpp"
-#include "models/surfacerationalimpedanceoperator.hpp"
+#include "models/surfaceterms.hpp"
 
 namespace palace::mode_assembly
 {
@@ -102,13 +99,11 @@ OperatorComponent::OperatorComponent(CoefficientType type, int index,
 
 ModeOperatorModel::ModeOperatorModel(
     const FiniteElementSpace &nd_fespace, const FiniteElementSpace &h1_fespace,
-    const MaterialOperator &mat_op, const mfem::Vector *normal,
-    SurfaceImpedanceOperator &surf_z_op, FarfieldBoundaryOperator &farfield_op,
-    SurfaceConductivityOperator &surf_sigma_op,
-    SurfaceRationalImpedanceOperator &surf_rz_op, const mfem::HypreParMatrix &Bttr,
-    const mfem::HypreParMatrix *Atnr, const mfem::HypreParMatrix *Atni,
-    const mfem::HypreParMatrix *Btnr, const mfem::Array<int> &dbc_tdof_list)
-  : surf_sigma_op(surf_sigma_op), surf_rz_op(surf_rz_op)
+    const MaterialOperator &mat_op, const mfem::Vector *normal, SurfaceTerms &surface_terms,
+    const mfem::HypreParMatrix &Bttr, const mfem::HypreParMatrix *Atnr,
+    const mfem::HypreParMatrix *Atni, const mfem::HypreParMatrix *Btnr,
+    const mfem::Array<int> &dbc_tdof_list)
+  : mat_op(mat_op), surface_terms(surface_terms)
 {
   auto assemble_nd = [&](BilinearForm &form)
   {
@@ -164,7 +159,7 @@ ModeOperatorModel::ModeOperatorModel(
       att.AddDomainIntegrator<VectorFEMassIntegrator>(london_t);
     }
     MaterialPropertyCoefficient surf_k_t(max_bdr_attr);
-    surf_z_op.AddStiffnessBdrCoefficients(1.0, surf_k_t);
+    surface_terms.AddStiffnessBdrCoefficients(1.0, surf_k_t);
     if (!surf_k_t.empty())
     {
       att.AddBoundaryIntegrator<VectorFEMassIntegrator>(surf_k_t);
@@ -195,7 +190,7 @@ ModeOperatorModel::ModeOperatorModel(
       ann.AddDomainIntegrator<MassIntegrator>(london_n);
     }
     MaterialPropertyCoefficient surf_k_n(max_bdr_attr);
-    surf_z_op.AddStiffnessBdrCoefficients(-1.0, surf_k_n);
+    surface_terms.AddStiffnessBdrCoefficients(-1.0, surf_k_n);
     if (!surf_k_n.empty())
     {
       ann.AddBoundaryIntegrator<MassIntegrator>(surf_k_n);
@@ -205,8 +200,7 @@ ModeOperatorModel::ModeOperatorModel(
   }
 
   // Linear omega: i times bulk conductivity and resistive/farfield damping.
-  if (mat_op.HasConductivity() || surf_z_op.GetRsAttrList().Size() > 0 ||
-      farfield_op.GetAttrList().Size() > 0)
+  if (mat_op.HasConductivity() || surface_terms.HasDamping())
   {
     BilinearForm atti(nd_fespace);
     MaterialPropertyCoefficient cond_t(n_attr);
@@ -216,8 +210,7 @@ ModeOperatorModel::ModeOperatorModel(
       atti.AddDomainIntegrator<VectorFEMassIntegrator>(cond_t);
     }
     MaterialPropertyCoefficient damp_t(max_bdr_attr);
-    surf_z_op.AddDampingBdrCoefficients(1.0, damp_t);
-    farfield_op.AddDampingBdrCoefficients(1.0, damp_t);
+    surface_terms.AddDampingBdrCoefficients(1.0, damp_t);
     if (!damp_t.empty())
     {
       atti.AddBoundaryIntegrator<VectorFEMassIntegrator>(damp_t);
@@ -237,8 +230,7 @@ ModeOperatorModel::ModeOperatorModel(
       anni.AddDomainIntegrator<MassIntegrator>(cond_n);
     }
     MaterialPropertyCoefficient damp_n(max_bdr_attr);
-    surf_z_op.AddDampingBdrCoefficients(-1.0, damp_n);
-    AddFarfieldScalarDampingBdrCoefficients(mat_op, farfield_op, -1.0, damp_n);
+    surface_terms.AddScalarDampingBdrCoefficients(-1.0, damp_n);
     if (!damp_n.empty())
     {
       anni.AddBoundaryIntegrator<MassIntegrator>(damp_n);
@@ -253,7 +245,7 @@ ModeOperatorModel::ModeOperatorModel(
     MaterialPropertyCoefficient neg_eps(attr_to_mat, mat_op.GetPermittivityReal(), -1.0);
     attr.AddDomainIntegrator<VectorFEMassIntegrator>(neg_eps);
     MaterialPropertyCoefficient surf_m_t(max_bdr_attr);
-    surf_z_op.AddMassBdrCoefficients(-1.0, surf_m_t);
+    surface_terms.AddMassBdrCoefficients(-1.0, surf_m_t);
     if (!surf_m_t.empty())
     {
       attr.AddBoundaryIntegrator<VectorFEMassIntegrator>(surf_m_t);
@@ -276,7 +268,7 @@ ModeOperatorModel::ModeOperatorModel(
     }
     annr.AddDomainIntegrator<MassIntegrator>(eps_n);
     MaterialPropertyCoefficient surf_m_n(max_bdr_attr);
-    surf_z_op.AddMassBdrCoefficients(1.0, surf_m_n);
+    surface_terms.AddMassBdrCoefficients(1.0, surf_m_n);
     if (!surf_m_n.empty())
     {
       annr.AddBoundaryIntegrator<MassIntegrator>(surf_m_n);
@@ -298,43 +290,61 @@ ModeOperatorModel::ModeOperatorModel(
                   assemble_h1(annr), std::move(Anni));
   }
 
+  // Frequency-dependent permittivity beyond ε∞: the ω² ε terms above gain ω² χ(iω) = −g(iω)
+  // on each dispersive material, with g = s² χ(s) the nonlinear 3D system coefficient. One
+  // unit mass per material, like the 3D A2, since its terms share one coefficient. The
+  // material is isotropic, so the normal projection of χ in the H1 block is χ itself.
+  for (std::size_t i = 0; i < mat_op.NumFrequencyDependentPermittivityMaterials(); i++)
+  {
+    if (!mat_op.HasFrequencyDependentPermittivityA2(i) ||
+        !mat_op.HasFrequencyDependentPermittivitySupport(i))
+    {
+      continue;
+    }
+    const auto attrs =
+        mat_op.GetCeedAttributes(mat_op.GetFrequencyDependentPermittivityAttributes(i));
+    MaterialPropertyCoefficient unit_t(n_attr), unit_n(n_attr);
+    unit_t.AddMaterialProperty(attrs, 1.0);
+    unit_n.AddMaterialProperty(attrs, -1.0);
+    BilinearForm att(nd_fespace), ann(h1_fespace);
+    if (!unit_t.empty())
+    {
+      att.AddDomainIntegrator<VectorFEMassIntegrator>(unit_t);
+      ann.AddDomainIntegrator<MassIntegrator>(unit_n);
+    }
+    add_component(CoefficientType::FREQUENCY_DEPENDENT_PERMITTIVITY, static_cast<int>(i),
+                  assemble_nd(att), nullptr, assemble_h1(ann), nullptr);
+  }
+
   auto shift = std::make_unique<mfem::HypreParMatrix>(Bttr);
   *shift *= -1.0;
   add_component(CoefficientType::SHIFT, -1, std::move(shift), nullptr, nullptr, nullptr);
 
-  auto add_boundary_component =
-      [&](CoefficientType type, int index, MaterialPropertyCoefficient &unit)
+  auto add_boundary_component = [&](CoefficientType type, int index,
+                                    MaterialPropertyCoefficient &unit_t,
+                                    MaterialPropertyCoefficient &unit_n)
   {
     // Processes without elements on the boundary have an empty coefficient and assemble
     // their (zero) part of the component without the integrators.
     BilinearForm att(nd_fespace), ann(h1_fespace);
-    if (!unit.empty())
+    if (!unit_t.empty())
     {
-      att.AddBoundaryIntegrator<VectorFEMassIntegrator>(unit);
+      att.AddBoundaryIntegrator<VectorFEMassIntegrator>(unit_t);
     }
     auto Attr = assemble_nd(att);
-    unit *= -1.0;
-    if (!unit.empty())
+    unit_n *= -1.0;
+    if (!unit_n.empty())
     {
-      ann.AddBoundaryIntegrator<MassIntegrator>(unit);
+      ann.AddBoundaryIntegrator<MassIntegrator>(unit_n);
     }
     add_component(type, index, std::move(Attr), nullptr, assemble_h1(ann), nullptr);
   };
-  for (std::size_t g = 0; g < surf_sigma_op.Size(); g++)
+  for (int i = 0; i < surface_terms.GetNumExtraSystemBdrMassTerms(); i++)
   {
-    if (surf_sigma_op.IsActive(g))
-    {
-      MaterialPropertyCoefficient unit(max_bdr_attr);
-      surf_sigma_op.AddBoundaryMassBdrCoefficients(g, unit);
-      add_boundary_component(CoefficientType::SURFACE_CONDUCTIVITY, static_cast<int>(g),
-                             unit);
-    }
-  }
-  for (int b = 0; b < surf_rz_op.GetNumBoundaries(); b++)
-  {
-    MaterialPropertyCoefficient unit(max_bdr_attr);
-    surf_rz_op.AddUnitBdrCoefficients(b, unit);
-    add_boundary_component(CoefficientType::RATIONAL_IMPEDANCE, b, unit);
+    MaterialPropertyCoefficient unit_t(max_bdr_attr), unit_n(max_bdr_attr);
+    surface_terms.AddExtraSystemBdrMassTermCoefficients(i, unit_t);
+    surface_terms.AddScalarExtraSystemBdrMassTermCoefficients(i, unit_n);
+    add_boundary_component(CoefficientType::SURFACE_TERM, i, unit_t, unit_n);
   }
 }
 
@@ -352,11 +362,12 @@ ModeOperatorModel::EvaluateCoefficient(const OperatorComponent &component,
       return omega * omega;
     case CoefficientType::SHIFT:
       return sigma;
-    case CoefficientType::SURFACE_CONDUCTIVITY:
-      return surf_sigma_op.EvaluateScalar(static_cast<std::size_t>(component.index), omega);
-    case CoefficientType::RATIONAL_IMPEDANCE:
-      return surf_rz_op.EvalRobinCoefficient(component.index,
-                                             std::complex<double>(0.0, 1.0) * omega);
+    case CoefficientType::SURFACE_TERM:
+      return surface_terms.GetExtraSystemBdrMassTermScale(component.index, omega);
+    case CoefficientType::FREQUENCY_DEPENDENT_PERMITTIVITY:
+      return mat_op.EvaluateFrequencyDependentPermittivityA2(
+          static_cast<std::size_t>(component.index),
+          std::complex<double>(0.0, 1.0) * omega);
   }
   MFEM_ABORT("Unknown mode-operator coefficient type!");
   return 0.0;
@@ -447,28 +458,6 @@ std::complex<double> PropagationConstant(std::complex<double> kn2,
                               : kn2.real();
   return (kn2_real < 0.0) ? std::complex<double>(0.0, -1.0) * std::sqrt(-kn2)
                           : std::sqrt(kn2);
-}
-
-void AddFarfieldScalarDampingBdrCoefficients(const MaterialOperator &mat_op,
-                                             const FarfieldBoundaryOperator &farfield_op,
-                                             double coeff, MaterialPropertyCoefficient &fb)
-{
-  if (farfield_op.GetAttrList().Size() == 0)
-  {
-    return;
-  }
-  // Scalar inverse impedance of the domain material adjacent to each farfield boundary
-  // element, like for the in-plane term. The boundary attribute to material map is indexed
-  // by libCEED boundary attribute: a mesh boundary attribute maps to one of these per
-  // neighboring domain attribute.
-  const auto &inv_z = mat_op.GetInvImpedance();
-  const auto bdr_attr_to_mat = mat_op.GetBdrAttributeToMaterial();
-  for (auto ceed_attr : mat_op.GetCeedBdrAttributes(farfield_op.GetAttrList()))
-  {
-    const int mat_idx = bdr_attr_to_mat[ceed_attr - 1];
-    MFEM_ASSERT(mat_idx >= 0, "Missing material for farfield boundary attribute!");
-    fb.AddMaterialProperty(ceed_attr, inv_z(0, 0, mat_idx), coeff);
-  }
 }
 
 double TargetDistance(std::complex<double> kn, double kn_target)

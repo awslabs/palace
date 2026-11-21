@@ -4,9 +4,13 @@
 #include <array>
 #include <cmath>
 #include <complex>
+#include <fstream>
 #include <functional>
 #include <map>
 #include <numbers>
+#include <optional>
+#include <span>
+#include <string>
 #include <Eigen/Dense>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
@@ -525,7 +529,6 @@ TEST_CASE("LumpedPort_BasicTests_1ElementPort_Cube321", "[lumped_port][Serial][P
 
   // Port mode is in y direction, so filter in x.
   StaticVector<3> x_dir;
-  x_dir.UseDevice(true);
   x_dir = 0.0;
   x_dir(0) = 1.0;
   fb_perp.AddCoefficient(
@@ -695,6 +698,7 @@ TEST_CASE("LumpedPort_BasicTests_1ElementPort_Cube321", "[lumped_port][Serial][P
   // In the case where there is a neighbouring PEC condition, RHS and VecFormS are no
   // longer equal — the DoF on the shared edge with the PEC neighbours are zeroed.
   const auto &nd_dbc_tdof = space_op.GetNDDbcTDofLists().back();
+  const std::span<const int> dbc_tdof(nd_dbc_tdof.HostRead(), nd_dbc_tdof.Size());
   if (boundary_pec_type != PEC::NONE)
   {
     // If more than 1 MPI rank only know that total tdof is non-zero.
@@ -704,6 +708,8 @@ TEST_CASE("LumpedPort_BasicTests_1ElementPort_Cube321", "[lumped_port][Serial][P
   }
 
   REQUIRE(RHS.Real().Size() == VecFormS.Real().Size());
+  const auto *rhs = RHS.Real().HostRead();
+  const auto *vec_s = VecFormS.Real().HostRead();
   // This should true up to normalization, but is not currently due to non-subtracted metal.
   for (int i = 0; i < RHS.Real().Size(); i++)
   {
@@ -711,26 +717,24 @@ TEST_CASE("LumpedPort_BasicTests_1ElementPort_Cube321", "[lumped_port][Serial][P
     // dofs if PEC is at the end of the port.
     if (boundary_pec_type == PEC::SIDE || (!mesh_is_hex && boundary_pec_type == PEC::ENDS))
     {
-      const auto *find_pec = std::ranges::find(nd_dbc_tdof, i);
-      if (find_pec != nd_dbc_tdof.end())
+      if (std::ranges::find(dbc_tdof, i) != dbc_tdof.end())
       {
-        CHECK(RHS.Real()[i] == 0.0);
+        CHECK(rhs[i] == 0.0);
         continue;
       }
     }
-    CHECK_THAT(RHS.Real()[i], WithinAbs(VecFormS.Real()[i], 1e-12));
+    CHECK_THAT(rhs[i], WithinAbs(vec_s[i], 1e-12));
   }
 
   // Check that form_s and form_v are the same apart from the factor 1 / sqrt(R). In actual
   // fact, this should only true in the ideal case, without any metal subtraction. Here it
   // is always true because of the form definitions.
   REQUIRE(VecFormS.Real().Size() == VecFormV.Real().Size());
+  const auto *vec_v = VecFormV.Real().HostRead();
+  const double sqrt_r = iodata.units.Nondimensionalize<VT::VOLTAGE>(std::sqrt(50.));
   for (int i = 0; i < VecFormS.Real().Size(); i++)
   {
-    CHECK_THAT(VecFormV.Real()[i],
-               WithinAbs(VecFormS.Real()[i] *
-                             iodata.units.Nondimensionalize<VT::VOLTAGE>(std::sqrt(50.)),
-                         1e-12));
+    CHECK_THAT(vec_v[i], WithinAbs(vec_s[i] * sqrt_r, 1e-12));
   }
 }
 
@@ -1048,6 +1052,7 @@ TEST_CASE("LumpedPort_BasicTests_3ElementPort_Cube321", "[lumped_port][Serial][P
   // In the case where there is a neighbouring PEC condition, RHS and VecFormS are no
   // longer equal — the DoF on the shared edge with the PEC neighbours are zeroed.
   const auto &nd_dbc_tdof = space_op.GetNDDbcTDofLists().back();
+  const std::span<const int> dbc_tdof(nd_dbc_tdof.HostRead(), nd_dbc_tdof.Size());
   if (boundary_pec_type != PEC::NONE)
   {
     auto nd_dbc_tdof_size = nd_dbc_tdof.Size();
@@ -1056,6 +1061,8 @@ TEST_CASE("LumpedPort_BasicTests_3ElementPort_Cube321", "[lumped_port][Serial][P
   }
 
   REQUIRE(RHS.Real().Size() == VecFormS.Real().Size());
+  const auto *rhs = RHS.Real().HostRead();
+  const auto *vec_s = VecFormS.Real().HostRead();
   // This should true up to normalization, but is not currently due to non-subtracted metal.
   for (int i = 0; i < RHS.Real().Size(); i++)
   {
@@ -1063,26 +1070,24 @@ TEST_CASE("LumpedPort_BasicTests_3ElementPort_Cube321", "[lumped_port][Serial][P
     // dofs if PEC is at the end of the port.
     if (boundary_pec_type == PEC::SIDE || (!mesh_is_hex && boundary_pec_type == PEC::ENDS))
     {
-      const auto *find_pec = std::ranges::find(nd_dbc_tdof, i);
-      if (find_pec != nd_dbc_tdof.end())
+      if (std::ranges::find(dbc_tdof, i) != dbc_tdof.end())
       {
-        CHECK(RHS.Real()[i] == 0.0);
+        CHECK(rhs[i] == 0.0);
         continue;
       }
     }
-    CHECK_THAT(RHS.Real()[i], WithinAbs(VecFormS.Real()[i], 1e-12));
+    CHECK_THAT(rhs[i], WithinAbs(vec_s[i], 1e-12));
   }
 
   // Check that form_s and form_v are the same apart from the factor 1 / sqrt(R). In actual
   // fact, this should only true in the ideal case, without any metal subtraction. Here it
   // is always true because of the form definitions.
   REQUIRE(VecFormS.Real().Size() == VecFormV.Real().Size());
+  const auto *vec_v = VecFormV.Real().HostRead();
+  const double sqrt_r = iodata.units.Nondimensionalize<VT::VOLTAGE>(std::sqrt(50.));
   for (int i = 0; i < VecFormS.Real().Size(); i++)
   {
-    CHECK_THAT(VecFormV.Real()[i],
-               WithinAbs(VecFormS.Real()[i] *
-                             iodata.units.Nondimensionalize<VT::VOLTAGE>(std::sqrt(50.)),
-                         1e-12));
+    CHECK_THAT(vec_v[i], WithinAbs(vec_s[i] * sqrt_r, 1e-12));
   }
 }
 
@@ -1195,10 +1200,11 @@ TEST_CASE("LumpedPort_ReactiveExcitation_Cube321", "[lumped_port][Serial][Parall
   ComplexVector RHS;
   space_op.GetExcitationVector1(1, RHS);
   double max_abs = 0.0;
+  const auto *rhs = RHS.Real().HostRead();
   for (int i = 0; i < RHS.Real().Size(); i++)
   {
-    CHECK(std::isfinite(RHS.Real()[i]));
-    max_abs = std::max(max_abs, std::abs(RHS.Real()[i]));
+    CHECK(std::isfinite(rhs[i]));
+    max_abs = std::max(max_abs, std::abs(rhs[i]));
   }
   Mpi::GlobalMax(1, &max_abs, world_comm);
   // The drive is nonzero (a genuine incident field was assembled).
@@ -1464,13 +1470,15 @@ struct ResistorLossResult
 {
   std::map<int, double> R;  // Nondimensional port resistance
   std::map<int, Measurement::PortPostData> vi;
-  double energy_electric;  // Measured E_elec
-  double damping_ratio;    // Eᴴ C E / Eᴴ M E of the system matrices
+  std::optional<double> energy_electric;  // Measured E_elec, empty if not available
+  double damping_ratio;                   // Eᴴ C E / Eᴴ M E of the system matrices
 };
 
 // Measure the eigenmode lumped port outputs for a manufactured field E through the
-// PostOperator, with unit internal units and relative permittivity 2.
-ResistorLossResult MeasureResistorLoss(ResistorLossCase &c, const fs::path &output)
+// PostOperator, with unit internal units and relative permittivity 2 (or the given
+// configured permittivity).
+ResistorLossResult MeasureResistorLoss(ResistorLossCase &c, const fs::path &output,
+                                       const json &permittivity = 2.0)
 {
   IoData iodata{Units(1.0, 1.0)};
   iodata.model.L0 = 1.0;
@@ -1480,7 +1488,7 @@ ResistorLossResult MeasureResistorLoss(ResistorLossCase &c, const fs::path &outp
   iodata.solver.order = 2;
   iodata.domains = config::DomainData(
       json{{"Materials", json::array({json::object({{"Attributes", json::array({1})},
-                                                    {"Permittivity", 2.0}})})}});
+                                                    {"Permittivity", permittivity}})})}});
   iodata.boundaries = config::BoundaryData(c.boundaries);
   iodata.CheckConfiguration();
   iodata.NondimensionalizeInputs(c.mesh);
@@ -1495,6 +1503,7 @@ ResistorLossResult MeasureResistorLoss(ResistorLossCase &c, const fs::path &outp
   mfem::VectorFunctionCoefficient Er(dim, c.Er), Ei(dim, c.Ei);
   E.Real().ProjectCoefficient(Er);
   E.Imag().ProjectCoefficient(Ei);
+  // B is in the curl space: the scalar L2 space in 2D, not the RT space.
   ComplexVector e(space_op.GetNDSpace().GetTrueVSize()),
       b(space_op.GetCurlSpace().GetTrueVSize());
   e.UseDevice(true);
@@ -1606,18 +1615,19 @@ TEST_CASE_METHOD(test::SharedTempDir, "LumpedPort eigenmode resistor loss",
     const auto &vi = result.vi.at(1);
     const double R = result.R.at(1);
     const double P = 0.5 * port_int / R, energy = 0.5 * eps * domain_int;
-    CHECK_THAT(result.energy_electric, WithinRel(energy, 1.0e-12));
+    CHECK_THAT(result.energy_electric.value(), WithinRel(energy, 1.0e-12));
     CHECK_THAT(std::abs(vi.V - V), WithinAbs(0.0, 1.0e-12));
-    CHECK_THAT(std::abs(vi.mode_port_kappa), WithinRel(P / energy, 1.0e-10));
-    CHECK_THAT(vi.quality_factor, WithinRel(energy / P, 1.0e-10));
-    CHECK_THAT(std::abs(vi.mode_port_kappa), WithinRel(result.damping_ratio, 1.0e-10));
+    CHECK_THAT(std::abs(vi.mode_port_kappa.value()), WithinRel(P / energy, 1.0e-10));
+    CHECK_THAT(vi.quality_factor.value(), WithinRel(energy / P, 1.0e-10));
+    CHECK_THAT(std::abs(vi.mode_port_kappa.value()),
+               WithinRel(result.damping_ratio, 1.0e-10));
     if (field != 0)
     {
-      CHECK(vi.mode_port_kappa > 0.0);  // V = 1, so Re{I} > 0
+      CHECK(vi.mode_port_kappa.value() > 0.0);  // V = 1, so Re{I} > 0
     }
     if (field == 1)
     {
-      CHECK_THAT(std::abs(vi.mode_port_kappa),
+      CHECK_THAT(std::abs(vi.mode_port_kappa.value()),
                  WithinRel(std::norm(vi.V) / (2.0 * R * energy), 1.0e-10));
     }
   }
@@ -1676,7 +1686,7 @@ TEST_CASE_METHOD(test::SharedTempDir, "LumpedPort eigenmode resistor loss",
     };
     auto result = MeasureResistorLoss(c, temp_dir);
     const double energy = 0.5 * eps * (1.0 / 6.0 + 1.0 / 3.0);
-    CHECK_THAT(result.energy_electric, WithinRel(energy, 1.0e-12));
+    CHECK_THAT(result.energy_electric.value(), WithinRel(energy, 1.0e-12));
 
     // Port 1: zero voltage, ∫ |E_t|² = 1/6 on each element, with R_s = 2 R.
     // Port 2: uniform E_t = -1/2 ŷ, so the voltage estimate is exact.
@@ -1691,17 +1701,102 @@ TEST_CASE_METHOD(test::SharedTempDir, "LumpedPort eigenmode resistor loss",
       CAPTURE(idx);
       const auto &vi = result.vi.at(idx);
       CHECK_THAT(std::abs(vi.V - V.at(idx)), WithinAbs(0.0, 1.0e-12));
-      CHECK_THAT(std::abs(vi.mode_port_kappa), WithinRel(P_idx / energy, 1.0e-10));
-      CHECK_THAT(vi.quality_factor, WithinRel(energy / P_idx, 1.0e-10));
+      CHECK_THAT(std::abs(vi.mode_port_kappa.value()), WithinRel(P_idx / energy, 1.0e-10));
+      CHECK_THAT(vi.quality_factor.value(), WithinRel(energy / P_idx, 1.0e-10));
     }
-    CHECK_THAT(std::abs(result.vi.at(2).mode_port_kappa),
+    CHECK_THAT(std::abs(result.vi.at(2).mode_port_kappa.value()),
                WithinRel(std::norm(V.at(2)) / (2.0 * result.R.at(2) * energy), 1.0e-10));
     // Re{I} is only well defined for port 2 (V = -1/2), where κ is negative.
-    CHECK(result.vi.at(2).mode_port_kappa < 0.0);
+    CHECK(result.vi.at(2).mode_port_kappa.value() < 0.0);
 
     // Only the active ports 1 and 3 are in the damping matrix.
-    CHECK_THAT(std::abs(result.vi.at(1).mode_port_kappa) +
-                   std::abs(result.vi.at(3).mode_port_kappa),
+    CHECK_THAT(std::abs(result.vi.at(1).mode_port_kappa.value()) +
+                   std::abs(result.vi.at(3).mode_port_kappa.value()),
                WithinRel(result.damping_ratio, 1.0e-10));
+  }
+}
+
+TEST_CASE_METHOD(test::SharedTempDir,
+                 "LumpedPort eigenmode outputs without a stored electric energy",
+                 "[lumped_port][frequencydependent][Serial][Parallel]")
+{
+  // PoleResidue terms specify no stored electric energy, also for a RAW Debye
+  // 0.5/(s + 1/τ) or a RAW −0.5/(s + 1/τ) compensated by a typed Debye 1/(1 + sτ), so no
+  // total energy normalizes the coupling rate κ, Q, or the participation of the port: they
+  // are omitted (not zero), with port-Q.csv and port-EPR.csv and the electric energy
+  // columns of domain-E.csv, while the port voltage and the magnetic and port energies are
+  // reported. A typed Debye with the same response is the positive control.
+  ResistorLossCase c;
+  c.mesh = std::make_unique<mfem::Mesh>(
+      mfem::Mesh::MakeCartesian2D(3, 1, mfem::Element::QUADRILATERAL, false, 1.0, 0.5));
+  for (int i = 0; i < c.mesh->GetNBE(); i++)
+  {
+    mfem::Vector center;
+    auto *T = c.mesh->GetBdrElementTransformation(i);
+    T->Transform(mfem::Geometries.GetCenter(c.mesh->GetBdrElementGeometry(i)), center);
+    c.mesh->SetBdrAttribute(i, (center(1) == 0.0) ? 2 : 3);
+  }
+  c.mesh->SetAttributes();
+  c.boundaries = {
+      {"LumpedPort", json::array({json::object({{"Index", 1},
+                                                {"Attributes", json::array({2})},
+                                                {"Direction", "+X"},
+                                                {"R", 50.0},
+                                                {"L", 1.0e-9}})})}};
+  c.Er = [](const mfem::Vector &x, mfem::Vector &v)
+  {
+    v(0) = 1.0;
+    v(1) = 0.0;
+  };
+  c.Ei = [](const mfem::Vector &x, mfem::Vector &v) { v = 0.0; };
+  const json debye = {
+      {"Type", "Debye"}, {"DeltaPermittivity", 1.0}, {"RelaxationTime", 1.0}};
+  const json raw = {{"Type", "PoleResidue"}, {"Pole", -1.0e9}, {"Residue", -0.5e9}};
+  json half = debye, raw_half = raw;
+  half["DeltaPermittivity"] = 0.5;
+  raw_half["Residue"] = 0.5e9;
+  const std::string model = GENERATE("typed_debye", "raw_debye", "compensated_debye");
+  CAPTURE(model);
+  const bool stored = (model == "typed_debye");
+  const json permittivity = {{"HighFrequencyLimit", 2.0},
+                             {"Terms", (model == "typed_debye") ? json::array({half})
+                                       : (model == "raw_debye")
+                                           ? json::array({raw_half})
+                                           : json::array({debye, raw})}};
+  const auto output = temp_dir / model;
+  MPI_Comm comm = Mpi::World();
+  if (Mpi::Root(comm))
+  {
+    fs::remove_all(output);
+    fs::create_directories(output);
+  }
+  Mpi::Barrier(comm);
+  auto result = MeasureResistorLoss(c, output, permittivity);
+  const auto &vi = result.vi.at(1);
+  CHECK(std::abs(vi.V - 1.0) < 1.0e-12);
+  CHECK(result.energy_electric.has_value() == stored);
+  CHECK(vi.mode_port_kappa.has_value() == stored);
+  CHECK(vi.quality_factor.has_value() == stored);
+  CHECK(vi.inductive_energy_participation.has_value() == stored);
+  if (stored)
+  {
+    CHECK(*result.energy_electric > 0.0);
+    CHECK(std::isfinite(*vi.mode_port_kappa));
+    CHECK(*vi.inductive_energy_participation != 0.0);
+  }
+  if (Mpi::Root(comm))
+  {
+    CHECK(fs::exists(output / "port-Q.csv") == stored);
+    CHECK(fs::exists(output / "port-EPR.csv") == stored);
+    std::ifstream file(output / "domain-E.csv");
+    REQUIRE(file.good());
+    std::string header, row;
+    std::getline(file, header);
+    std::getline(file, row);
+    CAPTURE(header, row);
+    CHECK((header.find("E_elec") != std::string::npos) == stored);
+    CHECK(header.find("E_mag") != std::string::npos);
+    CHECK(header.find("E_cap") != std::string::npos);
+    CHECK(row.find("nan") == std::string::npos);
   }
 }

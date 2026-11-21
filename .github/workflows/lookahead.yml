@@ -52,6 +52,7 @@ jobs:
     needs: filter
     if: needs.filter.outputs.test == 'true'
     runs-on: [self-hosted, x64]
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/palace-ci
@@ -64,6 +65,7 @@ jobs:
     needs: filter
     if: needs.filter.outputs.test == 'true'
     runs-on: [self-hosted, gpu]
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/palace-ci
@@ -82,6 +84,7 @@ jobs:
     needs: filter
     if: needs.filter.outputs.test == 'true'
     runs-on: [self-hosted, x64]
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/palace-ci

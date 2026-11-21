@@ -99,17 +99,23 @@ public:
   const FaceSamplingPlan *SamplingPlan() const;
   const BoundaryPhysicalTraceCache *TraceCache() const { return trace_cache.get(); }
 
+  // The evaluations take the real angular frequency ω of the fields, which the surface
+  // charge and electric energy density of a frequency-dependent material need (ω > 0), also
+  // through a shared fused bundle (see SurfaceFunctional, DomainPointFieldEvaluator and
+  // BoundaryDerivedFieldBundle). ω is unused otherwise.
+
   // Domain-only compatibility path for grid-function output.
-  void Eval(const GridFunction *E, const GridFunction *B, Vector &out) const;
+  void Eval(const GridFunction *E, const GridFunction *B, double omega, Vector &out) const;
 
   // Fill the visualization buffer. Domain buffers are point-major for direct VTU output;
   // boundary buffers are component-major. The Vector overload is for already split
   // real/imaginary fields; the GridFunction overload accumulates real and imaginary
   // contributions for quadratic single-field quantities. For POYNTING pass E and B to
   // the two-field overload.
-  void EvalBuffer(const Vector &u, Vector &buffer) const;
-  void EvalBuffer(const GridFunction &u, Vector &buffer) const;
-  void EvalBuffer(const GridFunction *E, const GridFunction *B, Vector &buffer) const;
+  void EvalBuffer(const Vector &u, double omega, Vector &buffer) const;
+  void EvalBuffer(const GridFunction &u, double omega, Vector &buffer) const;
+  void EvalBuffer(const GridFunction *E, const GridFunction *B, double omega,
+                  Vector &buffer) const;
 };
 
 }  // namespace palace

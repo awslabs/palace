@@ -27,11 +27,8 @@
 #include "linalg/strumpack.hpp"
 #include "linalg/superlu.hpp"
 #include "models/boundarymodeoperator.hpp"
-#include "models/farfieldboundaryoperator.hpp"
 #include "models/materialoperator.hpp"
-#include "models/surfaceconductivityoperator.hpp"
-#include "models/surfaceimpedanceoperator.hpp"
-#include "models/surfacerationalimpedanceoperator.hpp"
+#include "models/surfaceterms.hpp"
 #include "utils/communication.hpp"
 #include "utils/configfile.hpp"
 #include "utils/iodata.hpp"
@@ -74,18 +71,14 @@ double GetMumpsBLRTol(const config::LinearSolverData &linear)
 }  // namespace
 
 ModeEigenSolver::ModeEigenSolver(
-    const MaterialOperator &mat_op, const mfem::Vector *normal,
-    SurfaceImpedanceOperator &surf_z_op, FarfieldBoundaryOperator &farfield_op,
-    SurfaceConductivityOperator &surf_sigma_op,
-    SurfaceRationalImpedanceOperator &surf_rz_op, const FiniteElementSpace &nd_fespace,
-    const FiniteElementSpace &h1_fespace, const mfem::Array<int> &dbc_tdof_list,
-    int num_modes, int num_vec, double eig_tol, EigenvalueSolver::WhichType which_eig,
-    const config::LinearSolverData &linear, EigenSolverBackend eigen_backend, int verbose,
-    MPI_Comm solver_comm)
+    const MaterialOperator &mat_op, const mfem::Vector *normal, SurfaceTerms &surface_terms,
+    const FiniteElementSpace &nd_fespace, const FiniteElementSpace &h1_fespace,
+    const mfem::Array<int> &dbc_tdof_list, int num_modes, int num_vec, double eig_tol,
+    EigenvalueSolver::WhichType which_eig, const config::LinearSolverData &linear,
+    EigenSolverBackend eigen_backend, int verbose, MPI_Comm solver_comm)
   : num_modes(num_modes), num_vec(num_vec), eig_tol(eig_tol), which_eig(which_eig),
     linear(linear), eigen_backend(eigen_backend), verbose(verbose), mat_op(mat_op),
-    normal(normal), surf_z_op(surf_z_op), farfield_op(farfield_op),
-    surf_sigma_op(surf_sigma_op), surf_rz_op(surf_rz_op), nd_fespace(nd_fespace),
+    normal(normal), surface_terms(surface_terms), nd_fespace(nd_fespace),
     h1_fespace(h1_fespace), dbc_tdof_list(dbc_tdof_list)
 {
   // Assemble Atn, Btn = -Atn^T, Btt locally (no BMO available on this path).
@@ -107,8 +100,8 @@ ModeEigenSolver::ModeEigenSolver(
   Btni = owned_Btni.get();
   Bttr = owned_Bttr.get();
   mode_op_model = std::make_unique<mode_assembly::ModeOperatorModel>(
-      nd_fespace, h1_fespace, mat_op, normal, surf_z_op, farfield_op, surf_sigma_op,
-      surf_rz_op, *Bttr, Atnr, Atni, Btnr, dbc_tdof_list);
+      nd_fespace, h1_fespace, mat_op, normal, surface_terms, *Bttr, Atnr, Atni, Btnr,
+      dbc_tdof_list);
 
   Init(solver_comm);
 }
@@ -121,10 +114,9 @@ ModeEigenSolver::ModeEigenSolver(BoundaryModeOperator &bmo,
                                  EigenSolverBackend eigen_backend, int verbose)
   : num_modes(num_modes), num_vec(num_vec), eig_tol(eig_tol), which_eig(which_eig),
     linear(linear), eigen_backend(eigen_backend), verbose(verbose),
-    mat_op(bmo.GetMaterialOp()), normal(nullptr), surf_z_op(bmo.GetSurfZOp()),
-    farfield_op(bmo.GetFarfieldOp()), surf_sigma_op(bmo.GetSurfSigmaOp()),
-    surf_rz_op(bmo.GetSurfRZOp()), nd_fespace(bmo.GetNDSpace()),
-    h1_fespace(bmo.GetH1Space()), bmo(&bmo), dbc_tdof_list(dbc_tdof_list)
+    mat_op(bmo.GetMaterialOp()), normal(nullptr), surface_terms(bmo.GetSurfaceTerms()),
+    nd_fespace(bmo.GetNDSpace()), h1_fespace(bmo.GetH1Space()), bmo(&bmo),
+    dbc_tdof_list(dbc_tdof_list)
 {
   // Alias BMO-owned frequency-independent matrices; no local assembly.
   Atnr = bmo.GetAtnr();
@@ -133,8 +125,8 @@ ModeEigenSolver::ModeEigenSolver(BoundaryModeOperator &bmo,
   Btni = bmo.GetBtni();
   Bttr = bmo.GetBtt();
   mode_op_model = std::make_unique<mode_assembly::ModeOperatorModel>(
-      nd_fespace, h1_fespace, mat_op, nullptr, surf_z_op, farfield_op, surf_sigma_op,
-      surf_rz_op, *Bttr, Atnr, Atni, Btnr, dbc_tdof_list);
+      nd_fespace, h1_fespace, mat_op, nullptr, surface_terms, *Bttr, Atnr, Atni, Btnr,
+      dbc_tdof_list);
 
   Init(nd_fespace.GetComm());
 }
@@ -155,6 +147,13 @@ void ModeEigenSolver::Init(MPI_Comm solver_comm)
       h1_fespace.Get().GetTrueDofOffsets(), &diag);
   auto [Br, Bi] = BuildSystemMatrixB(Bttr, nullptr, Btnr, Btni, Dnn.get());
   opB = std::make_unique<ComplexWrapperOperator>(std::move(Br), std::move(Bi));
+
+  // Initial space which satisfies the Dirichlet BCs.
+  v0.SetSize(nd_size + h1_size);
+  v0.UseDevice(true);
+  v0 = std::complex<double>(1.0, 0.0);
+  linalg::SetSubVector(v0, nd_size, nd_size + h1_size, 0.0);
+  linalg::SetSubVector(v0, dbc_tdof_list, 0.0);
 
   // Pick a communicator for the solvers: `solver_comm` if non-null (WavePort sub-
   // communicator), else the FE space comm. Ranks with no DOFs and no solver_comm
@@ -188,8 +187,7 @@ void ModeEigenSolver::AssembleFrequencyDependent(std::complex<double> omega, dou
 }
 
 ModeEigenSolver::SolveResult ModeEigenSolver::Solve(std::complex<double> omega,
-                                                    double sigma,
-                                                    const ComplexVector *initial_space)
+                                                    double sigma)
 {
   sigma_cached = sigma;
   omega_cached = omega;
@@ -335,14 +333,18 @@ ModeEigenSolver::SolveResult ModeEigenSolver::Solve(std::complex<double> omega,
   }
   eigen->SetOperators(*opB, *opA, EigenvalueSolver::ScaleType::NONE);
 
-  if (real_frequency && warm_start.Size() > 0)
-  {
-    eigen->SetInitialSpace(warm_start);
-  }
-  else if (initial_space)
-  {
-    eigen->SetInitialSpace(*initial_space);
-  }
+  // Every exact solve starts from the same vector, so that its result depends on the
+  // frequency and the shift only, not on the solves before it. Within a degenerate pair of
+  // modes (TE11 of a circular guide), the solver selects the projection of the start onto
+  // the pair, a polarization which depends on the frequency only: it is the same at every
+  // frequency in a homogeneous guide, and where the fields of the pair change with
+  // frequency, it turns continuously. The mode of the previous frequency is a poor start in
+  // a homogeneous guide: it is already a mode at the next frequency, with only roundoff
+  // along the other wanted modes, the second vector of its own pair among them, so roundoff
+  // decides which of them converge. From any single start, the second vector of an exactly
+  // degenerate pair still grows from roundoff only, so the index of a mode above such a
+  // pair is not reliable.
+  eigen->SetInitialSpace(v0);
 
   int num_conv = eigen->Solve();
   if (real_frequency)
@@ -373,11 +375,6 @@ ModeEigenSolver::SolveResult ModeEigenSolver::Solve(std::complex<double> omega,
 
   if (real_frequency && num_conv > 0)
   {
-    const int selected = std::min(num_modes - 1, num_conv - 1);
-    warm_start.SetSize(nd_size + h1_size);
-    warm_start.UseDevice(true);
-    eigen->GetEigenvector(mode_perm[selected], warm_start);
-    linalg::Normalize(solver_comm, warm_start);
     reduced_model->ObserveExactEigenvectors(num_conv, *eigen, mode_perm);
   }
   return {num_conv, sigma};
@@ -807,21 +804,38 @@ ModeEigenSolver::AssembleAttPreconditioner(double omega, double sigma) const
   {
     fi.AddCoefficient(attr_to_mat, mat_op.GetPermittivityImag(), -omega * omega);
   }
+  // Frequency-dependent permittivity beyond ε∞: Re g is mass-like, shifted like the
+  // ε∞ mass; Im g is loss-like, treated as the other imaginary terms above.
+  for (std::size_t i = 0; i < mat_op.NumFrequencyDependentPermittivityMaterials(); i++)
+  {
+    if (mat_op.HasFrequencyDependentPermittivityA2(i) &&
+        mat_op.HasFrequencyDependentPermittivitySupport(i))
+    {
+      const auto g = mat_op.EvaluateFrequencyDependentPermittivityA2(
+          i, std::complex<double>(0.0, omega));
+      const auto attrs =
+          mat_op.GetCeedAttributes(mat_op.GetFrequencyDependentPermittivityAttributes(i));
+      fr.AddMaterialProperty(attrs, shifted ? std::abs(g.real()) : g.real());
+      if (g.imag() != 0.0)
+      {
+        (real_pc ? fr : fi).AddMaterialProperty(attrs, g.imag());
+      }
+    }
+  }
 
   // Boundary coefficients, with the losses of the resistive surface impedance, absorbing,
   // surface conductivity, and rational impedance boundaries in the same way (with the real
   // and imaginary parts of the complex coefficients summed for pc_mat_real, like in
-  // SpaceOperator).
+  // SpaceOperator, and the magnitude of those of absorbing boundaries next to a
+  // frequency-dependent material, see SurfaceTerms).
   const int max_bdr_attr = mat_op.MaxCeedBdrAttribute();
   MaterialPropertyCoefficient fbr(max_bdr_attr), fbi(max_bdr_attr);
   auto &fb_loss = real_pc ? fbr : fbi;
   const double damp_coeff = real_pc ? std::abs(omega) : omega;
-  surf_z_op.AddStiffnessBdrCoefficients(1.0, fbr);
-  surf_z_op.AddMassBdrCoefficients(mass_coeff, fbr);
-  surf_z_op.AddDampingBdrCoefficients(damp_coeff, fb_loss);
-  farfield_op.AddDampingBdrCoefficients(damp_coeff, fb_loss);
-  surf_sigma_op.AddExtraSystemBdrCoefficients(omega, fbr, fb_loss);
-  surf_rz_op.AddExtraSystemBdrCoefficients(omega, fbr, fb_loss);
+  surface_terms.AddStiffnessBdrCoefficients(1.0, fbr);
+  surface_terms.AddMassBdrCoefficients(mass_coeff, fbr);
+  surface_terms.AddDampingBdrCoefficients(damp_coeff, fb_loss);
+  surface_terms.AddPreconditionerExtraSystemBdrMassCoefficients(omega, fbr, fb_loss);
   const bool has_imag = AnyNonEmpty(solver_comm, {&fi, &fbi});
 
   // Assemble ND operators at all levels, and the auxiliary H1 operators for Hiptmair
@@ -929,22 +943,38 @@ ModeEigenSolver::AssembleAnnPreconditioner(double omega) const
   {
     fi.AddCoefficient(attr_to_mat, mat_op.GetPermittivityImagScalar(), omega * omega);
   }
+  // Frequency-dependent permittivity beyond ε∞: -g, with the opposite sign of the ND
+  // block in both real and imaginary slots.
+  for (std::size_t i = 0; i < mat_op.NumFrequencyDependentPermittivityMaterials(); i++)
+  {
+    if (mat_op.HasFrequencyDependentPermittivityA2(i) &&
+        mat_op.HasFrequencyDependentPermittivitySupport(i))
+    {
+      const auto g = mat_op.EvaluateFrequencyDependentPermittivityA2(
+          i, std::complex<double>(0.0, omega));
+      const auto attrs =
+          mat_op.GetCeedAttributes(mat_op.GetFrequencyDependentPermittivityAttributes(i));
+      fr.AddMaterialProperty(attrs, -g.real());
+      if (g.imag() != 0.0)
+      {
+        (real_pc ? fr : fi).AddMaterialProperty(attrs, -g.imag());
+      }
+    }
+  }
 
   // Boundary coefficients, with the opposite sign of those of the ND block.
   const int max_bdr_attr = mat_op.MaxCeedBdrAttribute();
   MaterialPropertyCoefficient fbr(max_bdr_attr), fbi(max_bdr_attr);
   auto &fb_loss = real_pc ? fbr : fbi;
   const double damp_coeff = real_pc ? std::abs(omega) : omega;
-  surf_z_op.AddStiffnessBdrCoefficients(-1.0, fbr);
-  surf_z_op.AddMassBdrCoefficients(omega * omega, fbr);
-  surf_z_op.AddDampingBdrCoefficients(-damp_coeff, fb_loss);
-  mode_assembly::AddFarfieldScalarDampingBdrCoefficients(mat_op, farfield_op, -damp_coeff,
-                                                         fb_loss);
+  surface_terms.AddStiffnessBdrCoefficients(-1.0, fbr);
+  surface_terms.AddMassBdrCoefficients(omega * omega, fbr);
+  surface_terms.AddScalarDampingBdrCoefficients(-damp_coeff, fb_loss);
   {
     MaterialPropertyCoefficient robin_r(max_bdr_attr), robin_i(max_bdr_attr);
     auto &robin_loss = real_pc ? robin_r : robin_i;
-    surf_sigma_op.AddExtraSystemBdrCoefficients(omega, robin_r, robin_loss);
-    surf_rz_op.AddExtraSystemBdrCoefficients(omega, robin_r, robin_loss);
+    surface_terms.AddScalarPreconditionerExtraSystemBdrMassCoefficients(omega, robin_r,
+                                                                        robin_loss);
     for (auto [robin, fb] : {std::pair{&robin_r, &fbr}, std::pair{&robin_i, &fbi}})
     {
       if (!robin->empty())

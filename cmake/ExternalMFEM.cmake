@@ -545,6 +545,18 @@ download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
   da325c815dc513f0bc9fc32c17757e82144eaeee5ad734d8b537e816e630c856
 )
 
+# https://github.com/mfem/mfem/pull/5758
+# The parallel CuDSSSolver also sets the communicator for device buffers, which cuDSS 0.8
+# needs in its multi-GPU mode: without it, cuDSS crashes in the analysis phase. The change
+# only affects builds with cuDSS 0.8 or later. The Spack build applies the same patch.
+if(PALACE_WITH_CUDSS)
+  download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
+    mfem_pr5758.diff
+    "https://github.com/mfem/mfem/pull/5758.diff?full_index=1"
+    d8a68635d2694311abc6241e97eea059d4bdc7945d19b5d7852bbd6640ea78f5
+  )
+endif()
+
 include(ExternalProject)
 ExternalProject_Add(mfem
   DEPENDS           ${MFEM_DEPENDENCIES}
