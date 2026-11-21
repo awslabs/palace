@@ -27,7 +27,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     (`config["Solver"]["Substructuring"]`): the environment of a region is condensed onto
     their interface once and saved, and later runs solve only the region, also after a
     redesign or re-meshing of it, for the capacitance and inductance matrices. SchemaVer
-    5-2-0. [PR 995](https://github.com/awslabs/palace/pull/995).
+    5-3-0. [PR 995](https://github.com/awslabs/palace/pull/995).
   - Added driven substructuring (`config["Solver"]["Substructuring"]` for driven problems):
     uniform frequency sweeps condense the environment exactly at each frequency, with lumped
     ports, wave ports and lossy boundaries and materials on either side, and an online sweep
@@ -44,7 +44,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     its Schur complement onto the interface with the condensed environment added, factored
     as a dense matrix across the processes (ScaLAPACK). A sparse direct solver that
     `config["Solver"]["Linear"]["Type"]` names factors both instead. Adds a driven example
-    in `examples/substructuring` (a 3 x 4 grid of CPW resonators). SchemaVer 5-2-1.
+    in `examples/substructuring` (a 3 x 4 grid of CPW resonators). SchemaVer 5-3-1.
     [PR 1044](https://github.com/awslabs/palace/pull/1044).
   - `validate-config` accepts several configuration files and validates them in one Julia
     session. [PR 1180](https://github.com/awslabs/palace/pull/1180).
@@ -143,6 +143,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Performance Improvements
 
+  - Added a hypre patch, a prototype for
+    [hypre-space/hypre#1654](https://github.com/hypre-space/hypre/issues/1654), with which
+    AMS gathers the coarse levels of its auxiliary space BoomerAMG hierarchies onto fewer
+    processes during the solve and runs the additive Pi-space corrections concurrently.
+    `config["Solver"]["Linear"]["AMSAgglomerationTarget"]` sets the target number of rows
+    per process (`0` disables it). Results agree up to the summation order. SchemaVer 5-2-0
+    [PR 1154](https://github.com/awslabs/palace/pull/1154).
   - When AMS is the coarse solver of geometric multigrid for a singular operator (see
     [`"AMSSingularOperator"`](https://awslabs.github.io/palace/dev/config/reference/#config-solver-linear-amssingularoperator)),
     each AMS iteration now applies 8 to 32 smoothing sweeps before and after its auxiliary

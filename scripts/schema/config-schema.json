@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:5-2-1",
+  "$id": "urn:palace:schema:5-3-1",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -3405,6 +3405,13 @@
           "type": "integer",
           "description": "Number of AMS iterations per preconditioner application when geometric multigrid is enabled (`\"MGMaxLevels\"` > 1). If omitted, Palace uses [`/Solver/Order`](@ref config-solver-order).",
           "exclusiveMinimum": 0
+        },
+        "AMSAgglomerationTarget": {
+          "type": "integer",
+          "description": "Target number of rows per process for the coarse levels of the auxiliary space AMG hierarchies of AMS. During the solve, the levels with much fewer rows per process are gathered onto fewer processes, so that they are not dominated by message latency at high process counts. The hierarchies are unchanged and the results agree up to the summation order. `0` disables the agglomeration. Requires a patch to hypre, which the superbuild and the Spack package apply, and is ignored without it.",
+          "minimum": 0,
+          "default": 2048,
+          "x-palace-advanced": true
         },
         "DivFreeTol": {
           "type": "number",
