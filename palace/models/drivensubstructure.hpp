@@ -97,7 +97,7 @@ private:
 //
 struct DrivenSubstructureModel
 {
-  static constexpr int kVersion = 11;  // of the header
+  static constexpr int kVersion = 12;  // of the header
   static constexpr int kSourceFp = 7;  // see DrivenSubstructure::SourceFingerprint
   // Relative tolerance of the comparisons of the environment with that of a saved model:
   // its fingerprint and element moments are sums over elements, which the partition changes

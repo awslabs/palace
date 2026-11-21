@@ -47,7 +47,6 @@ public:
   {
     InitializeLinearForms(nd_fespace);
   }
-  mfem::LinearForm *GetLinearFormS() const { return s.get(); }
   mfem::LinearForm *GetLinearFormV() const { return v.get(); }
 };
 
@@ -468,12 +467,26 @@ TEST_CASE("LumpedPort_BasicTests_1ElementPort_Cube321", "[lumped_port][Serial][P
   CHECK(port_1.HasExcitation());
   CHECK(port_1.elems.size() == 1);
 
-  // Power normalization and corresponding excitation voltage.
-  // These analytic values are actually not valid for PEC::SIDE see below.
+  // Power normalization and corresponding excitation voltage and current: unit time-
+  // averaged incident power for the time-harmonic excitation (peak V_inc = sqrt(2 R) = 10
+  // V, I_inc = sqrt(2 / R) = 0.2 A for R = 50 Ω), unit instantaneous power for the time
+  // domain one (V_inc = sqrt(R), I_inc = 1 / sqrt(R)). These analytic values are actually
+  // not valid for PEC::SIDE see below.
   CHECK_THAT(port_1.GetExcitationPower(),
              WithinRel(iodata.units.Nondimensionalize<VT::POWER>(1.0)));
-  CHECK_THAT(port_1.GetExcitationVoltage(),
+  CHECK_THAT(port_1.GetExcitationVoltage(true),
+             WithinRel(iodata.units.Nondimensionalize<VT::VOLTAGE>(10.0)));
+  CHECK_THAT(port_1.GetExcitationCurrent(true),
+             WithinRel(iodata.units.Nondimensionalize<VT::CURRENT>(0.2)));
+  CHECK_THAT(0.5 * port_1.GetExcitationVoltage(true) * port_1.GetExcitationCurrent(true),
+             WithinRel(port_1.GetExcitationPower()));
+  CHECK_THAT(port_1.GetExcitationVoltage(false),
              WithinRel(iodata.units.Nondimensionalize<VT::VOLTAGE>(std::sqrt(50.))));
+  CHECK_THAT(port_1.GetExcitationCurrent(false),
+             WithinRel(iodata.units.Nondimensionalize<VT::CURRENT>(1.0 / std::sqrt(50.))));
+  CHECK_THAT(port_1.GetExcitationVoltage(false) * port_1.GetExcitationCurrent(false),
+             WithinRel(port_1.GetExcitationPower()));
+  CHECK_THAT(port_1.GetReferenceVoltage(), WithinRel(port_1.GetExcitationVoltage(true)));
 
   // Properties of single rectangular element in port.
   const UniformElementData *el_ptr =
@@ -657,8 +670,8 @@ TEST_CASE("LumpedPort_BasicTests_1ElementPort_Cube321", "[lumped_port][Serial][P
     CHECK_THAT(port_normalization_beta, WithinRel(1.0));
   }
 
-  // Now "s" form in LumpedPortData is just e_t / eta (with Z_R = R). So check inner
-  // product.
+  // Check the voltage-based S projection. The S-parameter is referenced to the peak
+  // incident voltage of the unit time-averaged power wave, V_ref = sqrt(2 R).
   //
   // Note: s should not change during change of field normalization alpha, but formula
   // assumes 1.0 and does not normalized. Also, the integral seems wrong with metal, as the
@@ -667,27 +680,22 @@ TEST_CASE("LumpedPort_BasicTests_1ElementPort_Cube321", "[lumped_port][Serial][P
   {
     std::complex<double> s_param = port_1.GetSParameter(port_primary_gf_ht_cn);
     CHECK_THAT(s_param.real(),
-               WithinRel(ht_cn_norm_expected /
-                         iodata.units.Nondimensionalize<VT::VOLTAGE>(std::sqrt(50.))));
+               WithinRel(ht_cn_norm_expected / iodata.units.Nondimensionalize<VT::VOLTAGE>(
+                                                   std::sqrt(2.0 * 50.))));
     CHECK_THAT(s_param.imag(), WithinAbs(0.0, 1e-12));
   }
 
-  // Extract s and v linear forms to check equality. Use reinterpret cast to identical
-  // layout Test structure from original structure. Done not to populate code with friend
-  // functions, but still access private members for testing.
+  // The source is twice the incident H overlap, derived from the voltage functional.
   const auto &port_1_test_cast = reinterpret_cast<const LumpedPortDataTest &>(port_1);
   port_1_test_cast.InitializeLinearFormsForTest(space_op.GetNDSpace().Get());
-  auto *form_s = port_1_test_cast.GetLinearFormS();
-  ComplexVector VecFormS;
-  VecFormS.SetSize(space_op.GetNDSpace().GetTrueVSize());
-  VecFormS.UseDevice(true);
-  space_op.GetNDSpace().GetProlongationMatrix()->MultTranspose(*form_s, VecFormS.Real());
-
   auto *form_v = port_1_test_cast.GetLinearFormV();
   ComplexVector VecFormV;
   VecFormV.SetSize(space_op.GetNDSpace().GetTrueVSize());
   VecFormV.UseDevice(true);
   space_op.GetNDSpace().GetProlongationMatrix()->MultTranspose(*form_v, VecFormV.Real());
+  ComplexVector VecFormS(VecFormV);
+  VecFormS.Real() *=
+      std::sqrt(2.0) / iodata.units.Nondimensionalize<VT::VOLTAGE>(std::sqrt(50.0));
 
   // Now GetExcitationVector1 in space op, returns the dual of 2 e_t / eta (with Z_R = R).
   ComplexVector RHS;
@@ -724,17 +732,6 @@ TEST_CASE("LumpedPort_BasicTests_1ElementPort_Cube321", "[lumped_port][Serial][P
       }
     }
     CHECK_THAT(rhs[i], WithinAbs(vec_s[i], 1e-12));
-  }
-
-  // Check that form_s and form_v are the same apart from the factor 1 / sqrt(R). In actual
-  // fact, this should only true in the ideal case, without any metal subtraction. Here it
-  // is always true because of the form definitions.
-  REQUIRE(VecFormS.Real().Size() == VecFormV.Real().Size());
-  const auto *vec_v = VecFormV.Real().HostRead();
-  const double sqrt_r = iodata.units.Nondimensionalize<VT::VOLTAGE>(std::sqrt(50.));
-  for (int i = 0; i < VecFormS.Real().Size(); i++)
-  {
-    CHECK_THAT(vec_v[i], WithinAbs(vec_s[i] * sqrt_r, 1e-12));
   }
 }
 
@@ -816,12 +813,26 @@ TEST_CASE("LumpedPort_BasicTests_3ElementPort_Cube321", "[lumped_port][Serial][P
   CHECK(port_1.HasExcitation());
   CHECK(port_1.elems.size() == 3);
 
-  // Power normalization and corresponding excitation voltage.
-  // These analytic values are actually not valid for PEC::SIDE see below.
+  // Power normalization and corresponding excitation voltage and current: unit time-
+  // averaged incident power for the time-harmonic excitation (peak V_inc = sqrt(2 R) = 10
+  // V, I_inc = sqrt(2 / R) = 0.2 A for R = 50 Ω), unit instantaneous power for the time
+  // domain one (V_inc = sqrt(R), I_inc = 1 / sqrt(R)). These analytic values are actually
+  // not valid for PEC::SIDE see below.
   CHECK_THAT(port_1.GetExcitationPower(),
              WithinRel(iodata.units.Nondimensionalize<VT::POWER>(1.0)));
-  CHECK_THAT(port_1.GetExcitationVoltage(),
+  CHECK_THAT(port_1.GetExcitationVoltage(true),
+             WithinRel(iodata.units.Nondimensionalize<VT::VOLTAGE>(10.0)));
+  CHECK_THAT(port_1.GetExcitationCurrent(true),
+             WithinRel(iodata.units.Nondimensionalize<VT::CURRENT>(0.2)));
+  CHECK_THAT(0.5 * port_1.GetExcitationVoltage(true) * port_1.GetExcitationCurrent(true),
+             WithinRel(port_1.GetExcitationPower()));
+  CHECK_THAT(port_1.GetExcitationVoltage(false),
              WithinRel(iodata.units.Nondimensionalize<VT::VOLTAGE>(std::sqrt(50.))));
+  CHECK_THAT(port_1.GetExcitationCurrent(false),
+             WithinRel(iodata.units.Nondimensionalize<VT::CURRENT>(1.0 / std::sqrt(50.))));
+  CHECK_THAT(port_1.GetExcitationVoltage(false) * port_1.GetExcitationCurrent(false),
+             WithinRel(port_1.GetExcitationPower()));
+  CHECK_THAT(port_1.GetReferenceVoltage(), WithinRel(port_1.GetExcitationVoltage(true)));
 
   double length_dx_m = iodata.units.Nondimensionalize<VT::LENGTH>(1.0 * L0);  // in [m]
 
@@ -1012,8 +1023,8 @@ TEST_CASE("LumpedPort_BasicTests_3ElementPort_Cube321", "[lumped_port][Serial][P
     CHECK_THAT(port_normalization_beta, WithinRel(1.0));
   }
 
-  // Now "s" form in LumpedPortData is just e_t / eta (with Z_R = R). So check inner
-  // product.
+  // Check the voltage-based S projection. The S-parameter is referenced to the peak
+  // incident voltage of the unit time-averaged power wave, V_ref = sqrt(2 R).
   //
   // Note: s should not change during change of field normalization alpha, but formula
   // assumes 1.0 and does not normalized. Also, the integral seems wrong with metal, as the
@@ -1022,27 +1033,22 @@ TEST_CASE("LumpedPort_BasicTests_3ElementPort_Cube321", "[lumped_port][Serial][P
   {
     std::complex<double> s_param = port_1.GetSParameter(port_primary_gf_ht_cn);
     CHECK_THAT(s_param.real(),
-               WithinRel(ht_cn_norm_expected /
-                         iodata.units.Nondimensionalize<VT::VOLTAGE>(std::sqrt(50.))));
+               WithinRel(ht_cn_norm_expected / iodata.units.Nondimensionalize<VT::VOLTAGE>(
+                                                   std::sqrt(2.0 * 50.))));
     CHECK_THAT(s_param.imag(), WithinAbs(0.0, 1e-12));
   }
 
-  // Extract s and v linear forms to check equality. Use reinterpret cast to identical
-  // layout Test structure from original structure. Done not to populate code with friend
-  // functions, but still access private members for testing.
+  // The source is twice the incident H overlap, derived from the voltage functional.
   const auto &port_1_test_cast = reinterpret_cast<const LumpedPortDataTest &>(port_1);
   port_1_test_cast.InitializeLinearFormsForTest(space_op.GetNDSpace().Get());
-  auto *form_s = port_1_test_cast.GetLinearFormS();
-  ComplexVector VecFormS;
-  VecFormS.SetSize(space_op.GetNDSpace().GetTrueVSize());
-  VecFormS.UseDevice(true);
-  space_op.GetNDSpace().GetProlongationMatrix()->MultTranspose(*form_s, VecFormS.Real());
-
   auto *form_v = port_1_test_cast.GetLinearFormV();
   ComplexVector VecFormV;
   VecFormV.SetSize(space_op.GetNDSpace().GetTrueVSize());
   VecFormV.UseDevice(true);
   space_op.GetNDSpace().GetProlongationMatrix()->MultTranspose(*form_v, VecFormV.Real());
+  ComplexVector VecFormS(VecFormV);
+  VecFormS.Real() *=
+      std::sqrt(2.0) / iodata.units.Nondimensionalize<VT::VOLTAGE>(std::sqrt(50.0));
 
   // Now GetExcitationVector1 in space op, returns the dual of 2 e_t / eta (with Z_R = R).
   ComplexVector RHS;
@@ -1077,17 +1083,6 @@ TEST_CASE("LumpedPort_BasicTests_3ElementPort_Cube321", "[lumped_port][Serial][P
       }
     }
     CHECK_THAT(rhs[i], WithinAbs(vec_s[i], 1e-12));
-  }
-
-  // Check that form_s and form_v are the same apart from the factor 1 / sqrt(R). In actual
-  // fact, this should only true in the ideal case, without any metal subtraction. Here it
-  // is always true because of the form definitions.
-  REQUIRE(VecFormS.Real().Size() == VecFormV.Real().Size());
-  const auto *vec_v = VecFormV.Real().HostRead();
-  const double sqrt_r = iodata.units.Nondimensionalize<VT::VOLTAGE>(std::sqrt(50.));
-  for (int i = 0; i < VecFormS.Real().Size(); i++)
-  {
-    CHECK_THAT(vec_v[i], WithinAbs(vec_s[i] * sqrt_r, 1e-12));
   }
 }
 
@@ -1214,7 +1209,7 @@ TEST_CASE("LumpedPort_ReactiveExcitation_Cube321", "[lumped_port][Serial][Parall
   // finite and nonzero for R = 0 (it references GetExcitationRefResistance(), not R), and
   // the S-parameter projection linear form must produce a finite, nonzero projection for
   // a nonzero field (its normalization also references the real reference resistance).
-  const double V_inc = port_1.GetExcitationVoltage();
+  const double V_inc = port_1.GetExcitationVoltage(true);
   CHECK(std::isfinite(V_inc));
   CHECK(V_inc > 0.0);
 
@@ -1336,9 +1331,9 @@ TEST_CASE("LumpedPort weighted excitation vector", "[lumped_port][Serial][Parall
     {
       const auto &port = space_op.GetLumpedPortOp().GetPort(i + 1);
       out.weight[i] = port.GetExcitationWeight();
-      out.v_inc[i] = port.GetIncidentVoltage();
-      out.i_inc[i] = port.GetIncidentCurrent();
-      out.v_exc[i] = port.GetExcitationVoltage();
+      out.v_inc[i] = port.GetIncidentVoltage(true);
+      out.i_inc[i] = port.GetIncidentCurrent(true);
+      out.v_exc[i] = port.GetExcitationVoltage(true);
       out.p_exc[i] = port.GetExcitationPower();
     }
     return out;
@@ -1396,8 +1391,9 @@ TEST_CASE("LumpedPort weighted excitation vector", "[lumped_port][Serial][Parall
       REQUIRE(drive_w.v_exc[i] > 0.0);
       CHECK(std::abs(drive_w.v_inc[i] - a[i] * drive_w.v_exc[i]) <=
             1.0e-14 * std::abs(a[i]) * drive_w.v_exc[i]);
-      CHECK(std::abs(drive_w.i_inc[i] - a[i] / drive_w.v_exc[i]) <=
-            1.0e-14 * std::abs(a[i]) / drive_w.v_exc[i]);
+      // The unit-power wave carries unit time-averaged power, 1/2 V_inc,0 I_inc,0 = 1.
+      CHECK(std::abs(drive_w.i_inc[i] - 2.0 * a[i] / drive_w.v_exc[i]) <=
+            1.0e-14 * 2.0 * std::abs(a[i]) / drive_w.v_exc[i]);
     }
   }
 
@@ -1438,12 +1434,15 @@ TEST_CASE("LumpedPort weighted excitation vector", "[lumped_port][Serial][Parall
     diff.AXPY(-3.0, drive_1.rhs1);
     CHECK(linalg::Norml2(comm, diff) <= 1.0e-12 * norm_1);
 
-    // Time domain vector, which also equals the real part of RHS1.
+    // Time domain vector. The real part of RHS1 is sqrt(2) times it: unit time-averaged
+    // incident power for the frequency domain, unit instantaneous power for the time
+    // domain.
     REQUIRE(drive_3.rhs_time.Size() == drive_1.rhs_time.Size());
     Vector diff_time(drive_3.rhs_time);
     diff_time.Add(-3.0, drive_1.rhs_time);
     CHECK(linalg::Norml2(comm, diff_time) <= 1.0e-12 * norm_1);
     Vector diff_real(drive_3.rhs_time);
+    diff_real *= std::numbers::sqrt2;
     diff_real -= drive_3.rhs1.Real();
     CHECK(linalg::Norml2(comm, diff_real) <= 1.0e-12 * norm_1);
   }
@@ -1542,11 +1541,12 @@ ResistorLossResult MeasureResistorLoss(ResistorLossCase &c, const fs::path &outp
 TEST_CASE_METHOD(test::SharedTempDir, "LumpedPort eigenmode resistor loss",
                  "[lumped_port][Serial][Parallel]")
 {
-  // The |κ| of a resistive port is its dissipated power over the electric energy,
-  // |κ| = P / E. The power P = 1/2 ∫ |E_t|² / R_s dS is the port term of the damping matrix
-  // C, so κ must include the field components which do not change the port voltage. The
-  // sum of |κ| over the active ports is Eᴴ C E / Eᴴ M E, which is 2 Im{ω} for an eigenpair
-  // when the ports are the only loss. All quantities are nondimensional, and ε_r = 2.
+  // The |κ| of a resistive port is its time-averaged dissipated power over the total stored
+  // energy, |κ| = P / (2 E), with E = 1/4 ∫ ε |E|² dV the time-averaged electric energy.
+  // The power P = 1/2 ∫ |E_t|² / R_s dS is the port term of the damping matrix C, so κ must
+  // include the field components which do not change the port voltage. The sum of |κ| over
+  // the active ports is Eᴴ C E / Eᴴ M E, which is 2 Im{ω} for an eigenpair when the ports
+  // are the only loss. All quantities are nondimensional, and ε_r = 2.
   constexpr double eps = 2.0;
   SECTION("2D port")
   {
@@ -1614,11 +1614,12 @@ TEST_CASE_METHOD(test::SharedTempDir, "LumpedPort eigenmode resistor loss",
     auto result = MeasureResistorLoss(c, temp_dir);
     const auto &vi = result.vi.at(1);
     const double R = result.R.at(1);
-    const double P = 0.5 * port_int / R, energy = 0.5 * eps * domain_int;
+    const double P = 0.5 * port_int / R, energy = 0.25 * eps * domain_int;
     CHECK_THAT(result.energy_electric.value(), WithinRel(energy, 1.0e-12));
     CHECK_THAT(std::abs(vi.V - V), WithinAbs(0.0, 1.0e-12));
-    CHECK_THAT(std::abs(vi.mode_port_kappa.value()), WithinRel(P / energy, 1.0e-10));
-    CHECK_THAT(vi.quality_factor.value(), WithinRel(energy / P, 1.0e-10));
+    CHECK_THAT(std::abs(vi.mode_port_kappa.value()),
+               WithinRel(P / (2.0 * energy), 1.0e-10));
+    CHECK_THAT(vi.quality_factor.value(), WithinRel(2.0 * energy / P, 1.0e-10));
     CHECK_THAT(std::abs(vi.mode_port_kappa.value()),
                WithinRel(result.damping_ratio, 1.0e-10));
     if (field != 0)
@@ -1628,7 +1629,7 @@ TEST_CASE_METHOD(test::SharedTempDir, "LumpedPort eigenmode resistor loss",
     if (field == 1)
     {
       CHECK_THAT(std::abs(vi.mode_port_kappa.value()),
-                 WithinRel(std::norm(vi.V) / (2.0 * R * energy), 1.0e-10));
+                 WithinRel(std::norm(vi.V) / (4.0 * R * energy), 1.0e-10));
     }
   }
 
@@ -1685,7 +1686,7 @@ TEST_CASE_METHOD(test::SharedTempDir, "LumpedPort eigenmode resistor loss",
       v(2) = x(0);
     };
     auto result = MeasureResistorLoss(c, temp_dir);
-    const double energy = 0.5 * eps * (1.0 / 6.0 + 1.0 / 3.0);
+    const double energy = 0.25 * eps * (1.0 / 6.0 + 1.0 / 3.0);
     CHECK_THAT(result.energy_electric.value(), WithinRel(energy, 1.0e-12));
 
     // Port 1: zero voltage, ∫ |E_t|² = 1/6 on each element, with R_s = 2 R.
@@ -1701,11 +1702,12 @@ TEST_CASE_METHOD(test::SharedTempDir, "LumpedPort eigenmode resistor loss",
       CAPTURE(idx);
       const auto &vi = result.vi.at(idx);
       CHECK_THAT(std::abs(vi.V - V.at(idx)), WithinAbs(0.0, 1.0e-12));
-      CHECK_THAT(std::abs(vi.mode_port_kappa.value()), WithinRel(P_idx / energy, 1.0e-10));
-      CHECK_THAT(vi.quality_factor.value(), WithinRel(energy / P_idx, 1.0e-10));
+      CHECK_THAT(std::abs(vi.mode_port_kappa.value()),
+                 WithinRel(P_idx / (2.0 * energy), 1.0e-10));
+      CHECK_THAT(vi.quality_factor.value(), WithinRel(2.0 * energy / P_idx, 1.0e-10));
     }
     CHECK_THAT(std::abs(result.vi.at(2).mode_port_kappa.value()),
-               WithinRel(std::norm(V.at(2)) / (2.0 * result.R.at(2) * energy), 1.0e-10));
+               WithinRel(std::norm(V.at(2)) / (4.0 * result.R.at(2) * energy), 1.0e-10));
     // Re{I} is only well defined for port 2 (V = -1/2), where κ is negative.
     CHECK(result.vi.at(2).mode_port_kappa.value() < 0.0);
 

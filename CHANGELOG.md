@@ -27,7 +27,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     (`config["Solver"]["Substructuring"]`): the environment of a region is condensed onto
     their interface once and saved, and later runs solve only the region, also after a
     redesign or re-meshing of it, for the capacitance and inductance matrices. SchemaVer
-    5-3-0. [PR 995](https://github.com/awslabs/palace/pull/995).
+    6-1-0. [PR 995](https://github.com/awslabs/palace/pull/995).
   - Added driven substructuring (`config["Solver"]["Substructuring"]` for driven problems):
     uniform frequency sweeps condense the environment exactly at each frequency, with lumped
     ports, wave ports and lossy boundaries and materials on either side, and an online sweep
@@ -44,7 +44,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     its Schur complement onto the interface with the condensed environment added, factored
     as a dense matrix across the processes (ScaLAPACK). A sparse direct solver that
     `config["Solver"]["Linear"]["Type"]` names factors both instead. Adds a driven example
-    in `examples/substructuring` (a 3 x 4 grid of CPW resonators). SchemaVer 5-3-1.
+    in `examples/substructuring` (a 3 x 4 grid of CPW resonators). SchemaVer 6-1-1.
     [PR 1044](https://github.com/awslabs/palace/pull/1044).
   - `validate-config` accepts several configuration files and validates them in one Julia
     session. [PR 1180](https://github.com/awslabs/palace/pull/1180).
@@ -71,6 +71,33 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Interface Changes
 
+  - **Breaking:** Frequency-domain energies and powers are time averages of the peak
+    phasors: energies carry a factor 1/4 and powers 1/2. Lumped, wave and Floquet port
+    excitations carry 1 W of time-averaged incident power; a 50 Ω lumped port has 10 V and
+    0.2 A peak. Impressed current sources are unchanged: a surface current source drives
+    1/√Z₀ A ≈ 51.5 mA peak (the `I_inc` of `surface-I.csv`), and a current dipole its
+    `"Moment"` in A·m. SchemaVer 6-0-0
+    [PR 937](https://github.com/awslabs/palace/pull/937).
+
+    To compare with results from 0.19 or earlier, for the same configuration:
+
+    | Solver / excitation                 | Fields, V/I, probes, `rE`, electric/magnetic flux | Energies and power flux |
+    |:----------------------------------- |:------------------------------------------------- |:----------------------- |
+    | Driven lumped or wave port          | ×√2                                               | same                    |
+    | Driven Floquet or impressed current | same                                              | ×1/2                    |
+    | Eigenmode or boundary mode          | same                                              | ×1/2                    |
+    | Transient or static                 | same                                              | same                    |
+
+    S-parameters, impedances, eigenfrequencies, Q, κ, EPR, participation ratios and error
+    indicators are not rescaled. The wave port mode field `E0_<i>` of the boundary output is
+    the 1 W mode, ×√2 in eigenmode simulations too. In a mixed-port sweep, use the row for
+    each excitation; a drive that combines current and port sources has no single factor.
+    Write results to a new output directory rather than appending to restart CSVs from an
+    earlier version: the headers and units match, but the values do not. The factors that
+    remain against COMSOL and HFSS (time domain port drives, current sources, the HFSS peak
+    electric energy, eigenmode scales, COMSOL's quality factor) are listed under
+    [Comparing with other tools](https://awslabs.github.io/palace/dev/reference/#Lumped-ports-and-wave-ports).
+
   - With adaptive mesh refinement on nonconforming meshes, the SLEPc Krylov-Schur eigenvalue
     solves of later adaptation iterations can start from the eigenvectors of the previous
     one, transferred to the refined mesh, instead of the start vector of
@@ -78,16 +105,19 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     eigenvalues of adaptive simulations change at the level of the solver tolerances, and
     fewer converged eigenpairs beyond the requested ones can be reported. SchemaVer 4-4-2.
     [PR 1203](https://github.com/awslabs/palace/pull/1203).
+
   - Rebalancing a nonconforming mesh during adaptive refinement now keeps each root of its
     refinement tree on one process, when the load stays within half of
     `Model.Refinement.MaximumImbalance`, so that saving the adapted mesh needs no
     redistribution; the partition, and so round-off, can differ from before.
     [PR 1214](https://github.com/awslabs/palace/pull/1214).
+
   - When `Solver.Linear.Type` is `"Default"` (or omitted) for frequency domain problems,
     and for the wave port and boundary mode eigenvalue solves, *Palace* now prefers
     STRUMPACK over SuperLU_DIST, then MUMPS, as the sparse direct solver when built with
     several of them. Set `"Type": "SuperLU"` to keep using SuperLU_DIST. SchemaVer 4-2-0
     [PR 1148](https://github.com/awslabs/palace/pull/1148).
+
   - The `mode-Z.csv` output of boundary-mode solves now reports the complex characteristic
     impedances, `Re{Z_PV}` and `Im{Z_PV}` with `Z_PV = |V|² / 2P*` as for wave ports, and
     `Re{Z_VI}` and `Im{Z_VI}` with `Z_VI = V / I` (oriented with the mode power) instead of
@@ -95,21 +125,25 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     `L = Re{n_eff Z} / c0` and `C = Re{n_eff / Z} / c0`, which are unchanged for lossless
     modes.
     [PR 1119](https://github.com/awslabs/palace/pull/1119).
+
   - Circuit synthesis (`"AdaptiveCircuitSynthesis"`) now rejects a nonzero Floquet wave
     vector (`"FloquetWaveVector"`), as it already did Floquet ports, instead of synthesizing
     L⁻¹, R⁻¹, and C matrices which are not symmetric: the Floquet terms make the system
     matrices Hermitian rather than complex symmetric. Such configurations must be updated.
     [PR 1112](https://github.com/awslabs/palace/pull/1112).
+
   - `"AdaptiveGSOrthogonalization": "MGS"` now orthogonalizes the reduced-order basis of
     adaptive driven sweeps with `"CGS2"`, which is as stable with fewer reductions. The
     minimal rational interpolation of the error estimate always uses `"CGS2"`. SchemaVer
     4-3-1 [PR 1187](https://github.com/awslabs/palace/pull/1187).
+
   - Added a warning for interior `"Conductivity"` boundaries without `"Crack"`, such as the
     surface of a conductor meshed as a dielectric volume. Since
     [PR 994](https://github.com/awslabs/palace/pull/994) these are uncracked sheets with the
     admittance of both faces, which lowers the conductor loss compared to previous versions:
     set `"Crack": true` to restore the previous results, or `"Crack": false` to silence the
     warning. [PR 1168](https://github.com/awslabs/palace/pull/1168).
+
   - Uniform lumped ports and surface current sources now take their width from a
     cross-section across the port, and their length as their area over their width (in 2D,
     the width counts the edges crossing it). This fixes setup aborting for ports with curved
@@ -117,6 +151,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     `"Direction"`, such as L-shaped ports, and 2D ports with `"Direction"` normal to their
     edge, now abort.
     [PR 1194](https://github.com/awslabs/palace/pull/1194).
+
   - `config["Solver"]["Linear"]["InitialGuess"]` now defaults to `true` for adaptive
     frequency sweeps too. There, the HDM solve of the sample which would complete the
     convergence memory starts from the PROM solution, to certify the PROM: if the linear
@@ -364,6 +399,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Bug Fixes
 
+  - Fixed the boundary-mode `Sn` output, which lacked the 1/μ₀ that converts B to H.
+    [PR 937](https://github.com/awslabs/palace/pull/937).
+  - Fixed S-parameter CSVs being written for driven excitations that are not a single
+    power-normalized port, such as an impressed current. Their port overlaps are not
+    S-parameters, and a fresh run removes the S-parameter CSVs of an earlier run.
+    [PR 937](https://github.com/awslabs/palace/pull/937).
   - Fixed slow and failing linear solves with the second-order absorbing boundary condition
     (`"Absorbing"` with `"Order": 2`) without `"ComplexCoarseSolve"`: the sign of its term
     is now flipped in the real-valued coarse solve, as it already was for AMS and BoomerAMG,
@@ -633,6 +674,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     on some Intel processors. All processes now use the first process's solution of the
     small dense problems of SLEPc's solvers.
     [PR 1251](https://github.com/awslabs/palace/pull/1251).
+  - Fixed probe postprocessing aborting with "invalid host pointer access" in Debug builds
+    on GPUs, and with MFEM's debug device.
+    [PR 1042](https://github.com/awslabs/palace/pull/1042).
 
 #### Documentation
 

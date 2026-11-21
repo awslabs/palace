@@ -96,9 +96,9 @@ public:
   };
 
 private:
-  // Complex power P = ∫_Γ (E_mode x H_mode⋆)·n of the normalized mode (|P| = 1), recomputed
-  // each Initialize(): unity for a lossless propagating mode, complex for a lossy one. Zero
-  // until the first Initialize().
+  // Complex power overlap P = ∫_Γ (E_mode x H_mode⋆)·n of the normalized mode (|P| = 1),
+  // twice its complex time-averaged power, recomputed each Initialize(): unity for a
+  // lossless propagating mode, complex for a lossy one. Zero until the first Initialize().
   std::complex<double> modal_power = 0.0;
 
   // List of all boundary attributes making up this port boundary, and the corresponding
@@ -282,15 +282,22 @@ public:
   std::unique_ptr<mfem::VectorCoefficient>
   GetModeFieldCoefficientImag(double scaling = 1.0) const;
 
-  // Characteristic impedance Z_PV = |V|² / P* from the port mode voltage and complex power
-  // (unity for a lossless propagating mode). Requires voltage coordinates to be configured.
+  // Characteristic impedance Z_PV = |V|² / (2 P_avg*) from the port mode voltage and the
+  // mode's complex time-averaged power P_avg (1/2 for the unit-overlap mode of a lossless
+  // propagating port). Requires voltage coordinates to be configured.
   std::complex<double> GetCharacteristicImpedance() const;
 
+  // The port mode is normalized to unit power overlap, |∫ (E_mode x H_mode⋆) ⋅ n dS| = 1
+  // (see Normalize). The physical incident wave is sqrt(2) times this mode and carries unit
+  // time-averaged power, GetExcitationPower() = 1.
   double GetExcitationPower() const;
 
-  // Excitation voltage from the normalized port mode field.
+  // Voltage of the normalized (unit-overlap) port mode field.
   std::complex<double> GetExcitationVoltage() const;
 
+  // Complex time-averaged port power 1/2 ∫ (E x H⋆) ⋅ n dS for the (complex) solution
+  // fields, and the S-parameter (Kurokawa b-amplitude) from the unconjugated reaction with
+  // the unit-overlap port mode, relative to that of the incident wave.
   std::complex<double> GetPower(GridFunction &E, GridFunction &B) const;
   std::complex<double> GetSParameter(GridFunction &E) const;
 

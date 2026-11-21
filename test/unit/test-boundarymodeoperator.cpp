@@ -2170,4 +2170,45 @@ TEST_CASE("ModeEigenSolver ranks lossy modes by complex target distance",
   }
 }
 
+// The Poynting power of a boundary mode is the time average of its peak phasors,
+// P = 1/2 ∫ (Eₜ x Hₜ⋆) ⋅ ẑ with Hₜ = μ⁻¹ kₙ ẑ x Eₜ / ω for Eₙ = 0: a uniform field Eₜ = e x̂
+// in vacuum on the unit square carries P = 1/2 (kₙ⋆ / ω) |e|² (nondimensional, μ = 1). The
+// boundary mode solver normalizes its modes to |P| = 1, so this weight makes them carry 1
+// W.
+TEST_CASE("Boundary mode Poynting power is the time average",
+          "[boundarymodeoperator][Serial][Parallel]")
+{
+  const auto comm = Mpi::World();
+  IoData iodata(Units(0.013, 0.43));
+  iodata.problem.type = ProblemType::BOUNDARYMODE;
+  iodata.solver.order = 1;
+  iodata.solver.boundary_mode.freq = 2.0;
+  iodata.solver.boundary_mode.n = 1;
+  iodata.domains.materials.emplace_back().attributes = {1};
+  iodata.CheckConfiguration();
+  auto serial = mfem::Mesh::MakeCartesian2D(2, 2, mfem::Element::QUADRILATERAL);
+  serial.EnsureNodes();
+  std::vector<std::unique_ptr<Mesh>> meshes;
+  meshes.push_back(std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(comm, serial)));
+  MaterialOperator mat_op(iodata, *meshes.back());
+  BoundaryModeOperator mode_op(iodata, meshes, mat_op);
+  constexpr double e = 0.7, omega = 2.0;
+  const std::complex<double> kn(1.5, -0.2);
+  mfem::Vector field(2);
+  field = 0.0;
+  field(0) = e;
+  mfem::VectorConstantCoefficient coeff(field);
+  GridFunction E(mode_op.GetNDSpace(), true);
+  E.Real().ProjectCoefficient(coeff);
+  E.Imag() = 0.0;
+  ComplexVector et(mode_op.GetNDTrueVSize()), en(mode_op.GetH1TrueVSize());
+  E.Real().GetTrueDofs(et.Real());
+  et.Imag() = 0.0;
+  en = 0.0;
+  const std::complex<double> P = mode_op.ComputePoyntingPower(omega, kn, et, en);
+  const std::complex<double> expected = 0.5 * std::conj(kn) / omega * e * e;
+  CHECK_THAT(P.real(), WithinRel(expected.real(), 1.0e-12));
+  CHECK_THAT(P.imag(), WithinRel(expected.imag(), 1.0e-12));
+}
+
 }  // namespace palace

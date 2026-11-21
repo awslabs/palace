@@ -26,6 +26,7 @@
 #include "models/spaceoperator.hpp"
 #include "models/waveportoperator.hpp"
 #include "utils/communication.hpp"
+#include "utils/constants.hpp"
 #include "utils/iodata.hpp"
 #include "utils/prettyprint.hpp"
 #include "utils/timer.hpp"
@@ -39,8 +40,9 @@ namespace
 {
 
 // The functional of a wave port's S-parameter at ω as a true-DOF vector l (S = l^T E), as
-// in WavePortData::GetSParameter: s / R, the unconjugated reaction of the field with the
-// port's n×H mode vector s relative to that of the mode itself, R.
+// in WavePortData::GetSParameter: s / (sqrt(2) R), the unconjugated reaction of the field
+// with the port's n×H mode vector s relative to that of the incident wave, sqrt(2) times
+// the mode (reaction R of the mode itself).
 ComplexVector WaveOverlapFunctional(SpaceOperator &space_op, int idx, double omega)
 {
   auto &wp_op = space_op.GetWavePortOp();
@@ -49,7 +51,8 @@ ComplexVector WaveOverlapFunctional(SpaceOperator &space_op, int idx, double ome
   ComplexVector l(s->Size());
   l.Real() = s->Real();
   l.Imag() = s->Imag();
-  l *= 1.0 / wp_op.GetPort(idx).modal_reaction;
+  l *= 1.0 /
+       (electromagnetics::UnitPowerAmplitude(true) * wp_op.GetPort(idx).modal_reaction);
   return l;
 }
 

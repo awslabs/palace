@@ -22,6 +22,7 @@
 #include "linalg/rap.hpp"
 #include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
+#include "utils/constants.hpp"
 #include "utils/diagnostic.hpp"
 #include "utils/omp.hpp"
 #include "utils/timer.hpp"
@@ -458,12 +459,26 @@ Vector RecoveredNorms(const Mesh &mesh, const ceed::Operator &integ_op, VecType 
   return IntegrateRealErrors(mesh, integ_op, F_gf, G_gf);
 }
 
-// The scale of the squared indicators normalized by the total energy Et, with the factor
-// of 1/2 in the energy, or 1 for a zero field. Without a physical total energy (a
+// Normalization of the squared element error estimates by the total field energy Et, so the
+// indicators are relative to the energy norm of the fields, ||e_K|| / ||F||. Et is the
+// physical stored energy of the solution: 1/2 ||F||² for a real-valued field and the time
+// average 1/4 ||F||² for a complex peak phasor (see electromagnetics::TimeAverageWeight),
+// so the matching factor keeps the same relative indicator for both.
+template <typename VecType>
+double ErrorEstimateNormalization(double Et)
+{
+  constexpr double weight =
+      0.5 * electromagnetics::TimeAverageWeight(std::is_same_v<VecType, ComplexVector>);
+  return (Et > 0.0) ? weight / Et : 1.0;
+}
+
+// The scale of the squared indicators of a complex field normalized by the total energy Et
+// (ErrorEstimateNormalization), or 1 for a zero field. Without a physical total energy (a
 // frequency-dependent material without a stored electric energy,
 // MaterialOperator::HasStoredElectricEnergy), the indicators are normalized by the energy
 // norm of the recovered fluxes instead: a numerical norm, not a physical energy, which
-// keeps them positive and comparable across samples.
+// keeps them positive and comparable across samples. That norm Er carries the factor of
+// 1/2 of its own definition, which its scale removes, and no time average.
 double IndicatorScale(const std::optional<double> &Et, const MaterialOperator &mat_op,
                       const std::function<double()> &recovered_energy)
 {
@@ -472,7 +487,7 @@ double IndicatorScale(const std::optional<double> &Et, const MaterialOperator &m
               "when it is available (MaterialOperator::HasStoredElectricEnergy)!");
   if (Et)
   {
-    return (*Et > 0.0) ? 0.5 / *Et : 1.0;
+    return ErrorEstimateNormalization<ComplexVector>(*Et);
   }
   const double Er = recovered_energy();
   return (Er > 0.0) ? 0.5 / Er : 1.0;
@@ -825,7 +840,7 @@ void GradFluxErrorEstimator<VecType>::AddErrorIndicator(const VecType &E, double
   requires(!std::is_same_v<VecType, ComplexVector>)
 {
   auto estimates = ComputeEstimates(E);
-  linalg::Sqrt(estimates, (Et > 0.0) ? 0.5 / Et : 1.0);  // Correct factor of 1/2 in energy
+  linalg::Sqrt(estimates, ErrorEstimateNormalization<VecType>(Et));
   indicator.AddIndicator(estimates);
 }
 
@@ -989,7 +1004,7 @@ void CurlFluxErrorEstimator<VecType>::AddErrorIndicator(const VecType &B, double
                                                         ErrorIndicator &indicator) const
 {
   auto estimates = ComputeEstimates(B);
-  linalg::Sqrt(estimates, (Et > 0.0) ? 0.5 / Et : 1.0);  // Correct factor of 1/2 in energy
+  linalg::Sqrt(estimates, ErrorEstimateNormalization<VecType>(Et));
   indicator.AddIndicator(estimates);
 }
 
@@ -1001,7 +1016,7 @@ void AddFluxErrorIndicator(Vector grad_estimates, const Vector &curl_estimates,
                            double scale, ErrorIndicator &indicator)
 {
   grad_estimates += curl_estimates;
-  linalg::Sqrt(grad_estimates, scale);  // Correct factor of 1/2 in energy
+  linalg::Sqrt(grad_estimates, scale);
   indicator.AddIndicator(grad_estimates);
 }
 
@@ -1025,8 +1040,8 @@ void TimeDependentFluxErrorEstimator<VecType>::AddErrorIndicator(
   requires(!std::is_same_v<VecType, ComplexVector>)
 {
   AddFluxErrorIndicator(grad_estimator.ComputeEstimates(E),
-                        curl_estimator.ComputeEstimates(B), (Et > 0.0) ? 0.5 / Et : 1.0,
-                        indicator);
+                        curl_estimator.ComputeEstimates(B),
+                        ErrorEstimateNormalization<VecType>(Et), indicator);
 }
 
 template <typename VecType>
@@ -1067,8 +1082,8 @@ void BoundaryModeFluxErrorEstimator<VecType>::AddErrorIndicator(
   requires(!std::is_same_v<VecType, ComplexVector>)
 {
   AddFluxErrorIndicator(grad_estimator.ComputeEstimates(E),
-                        curl_estimator.ComputeEstimates(B), (Et > 0.0) ? 0.5 / Et : 1.0,
-                        indicator);
+                        curl_estimator.ComputeEstimates(B),
+                        ErrorEstimateNormalization<VecType>(Et), indicator);
 }
 
 template <typename VecType>

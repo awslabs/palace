@@ -188,8 +188,10 @@ PostOperator<solver_t>::PostOperator(const config::ProblemData &problem,
   // Add wave port boundary mode postprocessing, if available.
   if constexpr (std::is_same_v<fem_op_t<solver_t>, SpaceOperator>)
   {
-    // Add scaling factor to output dimensional wave port electric fields.
-    const double scaling = units.Dimensionalize<Units::ValueType::FIELD_E>(1.0);
+    // Add scaling factor to output dimensional wave port electric fields: the field of the
+    // incident wave of 1 W time-averaged power, sqrt(2) times the unit-overlap mode.
+    const double scaling = electromagnetics::UnitPowerAmplitude(true) *
+                           units.Dimensionalize<Units::ValueType::FIELD_E>(1.0);
     for (const auto &[idx, data] : fem_op->GetWavePortOp())
     {
       auto ret = port_E0.emplace(idx, WavePortFieldData());
@@ -367,7 +369,7 @@ PostOperator<solver_t>::PostOperator(const config::ProblemData &problem,
           "PoleResidue terms specify none)!\nOmitted outputs: the total electric "
           "energy E_elec and the electric participations p_elec, the electric energy "
           "density U_e, the "
-          "outputs normalized by the total energy (surface-Q.csv, port-Q.csv, "
+          "outputs normalized by the electric energy (surface-Q.csv, port-Q.csv, "
           "port-EPR.csv){}. The field solution, S-parameters, port voltages, "
           "currents, and powers, fluxes, eigenvalues and their Q, and magnetic "
           "energies are reported.\n",
@@ -466,6 +468,15 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
       ShouldWriteGridFunctionFields() || use_ceed_domain_paraview_fields;
   const bool use_ceed_boundary_fields =
       ShouldWriteParaviewFields() && UseCeedBoundaryParaviewPointFields(output_mesh);
+
+  // Quadratic field outputs (energy densities, Poynting vectors) are physical time averages
+  // for the complex peak phasors of frequency domain solvers and instantaneous values for
+  // real-valued fields. The coefficient and libCEED kernels evaluate the raw same-phase
+  // sums (1/2 DᴴE, E x H⋆, ...) and the owner applies the time-average weight through their
+  // output scaling, consistently across the CPU coefficient, libCEED domain, boundary, and
+  // fused boundary bundle paths. Linear field outputs (E, B, D ⋅ n, n x H) are unaffected.
+  constexpr double quadratic_weight =
+      electromagnetics::TimeAverageWeight(HasComplexGridFunction<solver_t>());
 
   auto MakeFieldEvaluator = [&](PointFieldEvaluator::Kind kind,
                                 mfem::ParFiniteElementSpace *e_fespace,
@@ -618,7 +629,8 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
         marker = 1;
         bdr_derived_bundle = std::make_shared<BoundaryDerivedFieldBundle>(
             mesh, marker, fem_op->GetMaterialOp(), *E->ParFESpace(), *B->ParFESpace(),
-            bdr_sampling_plan, bdr_trace_cache, *E, *B, electric_scaling, magnetic_scaling);
+            bdr_sampling_plan, bdr_trace_cache, *E, *B, electric_scaling, magnetic_scaling,
+            quadratic_weight);
         if (!bdr_derived_bundle->IsValid())
         {
           bdr_derived_bundle.reset();
@@ -642,8 +654,13 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
 
   if (E && Bt_inplane && use_ceed_domain_fields)
   {
-    MakeFieldEvaluator(PointFieldEvaluator::Kind::MODE_SN, E->ParFESpace(),
-                       Bt_inplane->ParFESpace(), 1.0, Sn_eval, Sn_gf);
+    // Boundary mode longitudinal power density Sn = 1/2 Re{Et · (ẑ × Ht⋆)} for
+    // complex peak phasors; also convert the dimensional B input to H.
+    MakeFieldEvaluator(
+        PointFieldEvaluator::Kind::MODE_SN, E->ParFESpace(), Bt_inplane->ParFESpace(),
+        quadratic_weight * units.Dimensionalize<Units::ValueType::FIELD_H>(1.0) /
+            units.Dimensionalize<Units::ValueType::FIELD_B>(1.0),
+        Sn_eval, Sn_gf);
   }
 
   if constexpr (HasVGridFunction<solver_t>())
@@ -680,21 +697,22 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
                            units.Dimensionalize<Units::ValueType::FIELD_E>(1.0);
 
     // Electric Energy Density.
-    // U_e = 1/2 Dᴴ E = 1/2 ε_0 Eᴴ E. Omitted without the stored electric energy of every
-    // frequency-dependent material, the same on every process.
+    // U_e = 1/2 Dᴴ E = 1/2 ε_0 Eᴴ E (time-averaged, 1/4 ε_0 Eᴴ E, for complex peak
+    // phasors). Omitted without the stored electric energy of every frequency-dependent
+    // material, the same on every process.
     if (fem_op->GetMaterialOp().HasStoredElectricEnergy())
     {
       U_e = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::ELECTRIC>>(
-          *E, fem_op->GetMaterialOp(), scaling);
+          *E, fem_op->GetMaterialOp(), quadratic_weight * scaling);
       if (use_ceed_domain_fields)
       {
         MakeFieldEvaluator(PointFieldEvaluator::Kind::ENERGY_E, E->ParFESpace(), nullptr,
-                           scaling, U_e_eval, U_e_gf);
+                           quadratic_weight * scaling, U_e_eval, U_e_gf);
       }
       if (use_ceed_boundary_fields)
       {
         MakeBdrCoeffEvaluator(PointFieldEvaluator::Kind::ENERGY_E, *E->ParFESpace(),
-                              scaling, Ue_bdr_eval);
+                              quadratic_weight * scaling, Ue_bdr_eval);
       }
     }
 
@@ -746,18 +764,19 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
                            units.Dimensionalize<Units::ValueType::FIELD_B>(1.0);
 
     // Magnetic Energy Density.
-    // U_m = 1/2 Hᴴ B = 1/2 μ⁻¹ Bᴴ B.
+    // U_m = 1/2 Hᴴ B = 1/2 μ⁻¹ Bᴴ B (time-averaged, 1/4 μ⁻¹ Bᴴ B, for complex peak
+    // phasors).
     U_m = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::MAGNETIC>>(
-        *B, fem_op->GetMaterialOp(), scaling);
+        *B, fem_op->GetMaterialOp(), quadratic_weight * scaling);
     if (use_ceed_domain_fields)
     {
       MakeFieldEvaluator(PointFieldEvaluator::Kind::ENERGY_M, nullptr, B->ParFESpace(),
-                         scaling, U_m_eval, U_m_gf);
+                         quadratic_weight * scaling, U_m_eval, U_m_gf);
     }
     if (use_ceed_boundary_fields)
     {
-      MakeBdrCoeffEvaluator(PointFieldEvaluator::Kind::ENERGY_M, *B->ParFESpace(), scaling,
-                            Um_bdr_eval);
+      MakeBdrCoeffEvaluator(PointFieldEvaluator::Kind::ENERGY_M, *B->ParFESpace(),
+                            quadratic_weight * scaling, Um_bdr_eval);
     }
 
     // Magnetic Field, Boundary Field & Surface Current. In 2D, B is scalar (L2), so the
@@ -781,12 +800,14 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
   {
     if constexpr (solver_t != ProblemType::BOUNDARYMODE)
     {
-      // 3D Poynting Vector: S = Re{E x H⋆} = Re{E x μ⁻¹B⋆}.
+      // 3D Poynting Vector: S = Re{E x H⋆} = Re{E x μ⁻¹B⋆} (time-averaged, 1/2 Re{E x H⋆},
+      // for complex peak phasors).
       // E and B will be dimensionalized when the coefficient is evaluated, so the scaling
       // only needs to account for the remaining μ⁻¹ = H / B. As mentioned above,
       // ProjectCoefficient(*S.get()) or paraview->Save() should always be called after
       // E and B have been dimensionalized.
-      const double scaling = units.Dimensionalize<Units::ValueType::FIELD_H>(1.0) /
+      const double scaling = quadratic_weight *
+                             units.Dimensionalize<Units::ValueType::FIELD_H>(1.0) /
                              units.Dimensionalize<Units::ValueType::FIELD_B>(1.0);
       S = std::make_unique<PoyntingVectorCoefficient>(*E, *B, fem_op->GetMaterialOp(),
                                                       scaling);
@@ -800,7 +821,7 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
         MakeBdrPoyntingEvaluator(*E->ParFESpace(), *B->ParFESpace(), scaling, S_bdr_eval);
       }
     }
-    // For boundary mode, Sn = Re{Et · (ẑ × Ht*)} uses the in-plane B field and is
+    // For boundary mode, Sn = 1/2 Re{Et · (ẑ × Ht*)} uses the in-plane B field and is
     // registered below through a domain point evaluator.
   }
 }
@@ -1061,7 +1082,9 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
   }
 
   // Extract energy density field for electric field energy 1/2 Dᴴ E or magnetic field
-  // energy 1/2 Hᴴ B. Also Poynting vector S = E x H⋆.
+  // energy 1/2 Hᴴ B, and Poynting vector S = E x H⋆, as instantaneous values for real
+  // fields and time averages (1/4 Dᴴ E, 1/4 Hᴴ B, 1/2 Re{E x H⋆}) for complex peak phasors
+  // (see SetupFieldCoefficients).
   if (U_e)
   {
     RequireCeedPointFieldEvaluator(U_e_eval.get(), "domain electric energy visualization");
@@ -1869,21 +1892,25 @@ void PostOperator<solver_t>::MeasureLumpedPorts(
       }
       vi.I =
           std::accumulate(vi.I_RLC.begin(), vi.I_RLC.end(), std::complex<double>{0.0, 0.0});
-      vi.S = vi.V / std::sqrt(data.GetExcitationRefResistance());
+      vi.S = vi.V / data.GetReferenceVoltage();
 
-      // Add contribution due to all inductive lumped boundaries in the model:
-      //                      E_ind = ∑_j 1/2 L_j I_mj².
+      // Add contribution due to all inductive lumped boundaries in the model, as the
+      // time-averaged stored energy for the peak phasor branch current:
+      //                      E_ind = ∑_j 1/2 L_j <i_j(t)²> = ∑_j 1/4 L_j |I_mj|².
       if (std::abs(data.L) > 0.0)
       {
-        vi.inductor_energy = 0.5 * std::abs(data.L) * std::norm(vi.I_RLC[1]);
+        vi.inductor_energy = 0.5 * electromagnetics::TimeAverageWeight(true) *
+                             std::abs(data.L) * std::norm(vi.I_RLC[1]);
         measurement_cache.lumped_port_inductor_energy += vi.inductor_energy;
       }
 
-      // Add contribution due to all capacitive lumped boundaries in the model:
-      //                      E_cap = ∑_j 1/2 C_j V_mj².
+      // Add contribution due to all capacitive lumped boundaries in the model, as the
+      // time-averaged stored energy for the peak phasor port voltage:
+      //                      E_cap = ∑_j 1/2 C_j <v_j(t)²> = ∑_j 1/4 C_j |V_mj|².
       if (std::abs(data.C) > 0.0)
       {
-        vi.capacitor_energy = 0.5 * std::abs(data.C) * std::norm(vi.V);
+        vi.capacitor_energy = 0.5 * electromagnetics::TimeAverageWeight(true) *
+                              std::abs(data.C) * std::norm(vi.V);
         measurement_cache.lumped_port_capacitor_energy += vi.capacitor_energy;
       }
     }
@@ -1909,13 +1936,17 @@ void PostOperator<solver_t>::MeasureLumpedPortsEig() const
   // Depends on MeasureLumpedPorts.
   if constexpr (solver_t == ProblemType::EIGENMODE)
   {
-    // The coupling rates and participations are normalized by the total energy, and are
-    // left empty without one.
-    const auto energy_total = measurement_cache.TotalEnergyNormalization();
-    if (!energy_total)
+    // The coupling rates and participations are normalized by the time-averaged
+    // electric-side energy U (Measurement::ElectricEnergyNormalization), which is
+    // E_elec + E_cap for constant materials, and are left empty without one. The total
+    // stored energy uses the weak-loss equipartition 2 U (E_elec + E_cap = E_mag + E_ind),
+    // which leaves out distributed sheet storage.
+    const auto energy_electric_all = measurement_cache.ElectricEnergyNormalization();
+    if (!energy_electric_all)
     {
       return;
     }
+    const double energy_total = 2.0 * *energy_electric_all;
     auto freq_re = measurement_cache.freq.real();
     for (const auto &[idx, data] : fem_op->GetLumpedPortOp())
     {
@@ -1925,9 +1956,10 @@ void PostOperator<solver_t>::MeasureLumpedPortsEig() const
       // Resistive Lumped Ports:
       // Compute participation ratio of external ports (given as any port boundary with
       // nonzero resistance). Currently no reactance of the ports is supported. The
-      // magnitude of the κ of the port is the decay rate due to the power P_mj dissipated
-      // in the resistive sheet, and its sign is the sign of Re{I_mj}, which is not
-      // meaningful when Re{I_mj} ≈ 0, for example when V_mj ≈ 0:
+      // magnitude of the κ of the port is the decay rate due to the time-averaged power
+      // P_mj dissipated in the resistive sheet, relative to the total stored energy E_m of
+      // the mode, and its sign is the sign of Re{I_mj}, which is not meaningful when
+      // Re{I_mj} ≈ 0, for example when V_mj ≈ 0:
       //                   κ_mj = sign(Re{I_mj}) P_mj / E_m,
       // from which the mode coupling quality factor is computed as:
       //                         Q_mj = Re{ω_m} / |κ_mj|.
@@ -1941,7 +1973,7 @@ void PostOperator<solver_t>::MeasureLumpedPortsEig() const
       {
         std::complex<double> I_mj = vi.I_RLC[0];
         const double resistor_power = data.GetResistorPower(fem_op->GetNDSpace(), *E);
-        const double kappa = std::copysign(resistor_power / *energy_total, I_mj.real());
+        const double kappa = std::copysign(resistor_power / energy_total, I_mj.real());
         vi.mode_port_kappa = kappa;
         vi.quality_factor = (kappa == 0.0) ? mfem::infinity() : freq_re / std::abs(kappa);
       }
@@ -1949,18 +1981,18 @@ void PostOperator<solver_t>::MeasureLumpedPortsEig() const
       // Inductive Lumped Ports:
       // Compute energy-participation ratio of junction given by index idx for the field
       // mode. We first get the port line voltage, and use lumped port circuit impedance to
-      // get peak current through the inductor: I_mj = V_mj / Z_mj,  Z_mj = i ω_m L_j. E_m
-      // is the total energy in mode m (Measurement::TotalEnergyNormalization), which is
-      // E_elec + E_cap = E_mag + E_ind for constant materials. The signed EPR for a lumped
-      // inductive element is computed as:
-      //                            p_mj = 1/2 L_j I_mj² / E_m.
+      // get peak current through the inductor: I_mj = V_mj / Z_mj,  Z_mj = i ω_m L_j. The
+      // signed EPR for a lumped inductive element is the ratio of the time-averaged
+      // inductor energy to the time-averaged electric-side energy U of the mode
+      // (Measurement::ElectricEnergyNormalization), E_elec + E_cap for constant materials:
+      //                            p_mj = 1/4 L_j |I_mj|² / U.
       // An element with no assigned inductance will be treated as having zero admittance
       // and thus zero current.
       if (std::abs(data.L) > 0.0)
       {
         std::complex<double> I_mj = vi.I_RLC[1];
         vi.inductive_energy_participation =
-            std::copysign(vi.inductor_energy / *energy_total, I_mj.real());
+            std::copysign(vi.inductor_energy / *energy_electric_all, I_mj.real());
       }
     }
   }
@@ -2061,12 +2093,10 @@ void PostOperator<solver_t>::MeasureSParameter() const
     using fmt::format;
     using std::complex_literals::operator""i;
 
-    // Don't measure S-Matrix unless there is only one excitation per port. Mixed
-    // lumped/wave/Floquet S-parameters are supported with a power normalization bridge:
-    // lumped/wave ports normalize to unit peak power (∫E×H*·n dS = 1), while Floquet ports
-    // normalize to unit time-averaged power (½Re{∫E×H*·n dS} = 1). The √2 bridge factor
-    // accounts for this 2× difference in incident power convention.
-    if (!fem_op->GetPortExcitations().IsMultipleSimple())
+    // Don't measure S-Matrix unless there is only one excitation per port. All port
+    // families (lumped, wave, Floquet) normalize their incident waves to unit time-averaged
+    // power, so mixed lumped/wave/Floquet S-parameters need no cross-family scaling.
+    if (!fem_op->GetPortExcitations().HasSParameters())
     {
       return;
     }
@@ -2078,14 +2108,18 @@ void PostOperator<solver_t>::MeasureSParameter() const
     // GetExcitationRefResistance() (the user-specified R, or the unit internal reference
     // for a purely reactive R == 0 port — any port reactance acts through the
     // system-matrix termination, not this normalization); wave ports implicitly use the
-    // line's characteristic impedance encoded in the unit-power normalization of the
-    // boundary mode (∫|E_mode×H_mode⋆|·n dS = 1).
+    // line's characteristic impedance encoded in the stored unit-overlap mode:
+    // |∫ E_mode×H_mode⋆ ⋅ n dS| = 1. The incident wave is sqrt(2) times this mode,
+    // carrying 1 W of time-averaged power for a lossless propagating mode.
     //
     // GetSParameter() returns the b-amplitude in Kurokawa convention for both port types:
-    //   - Lumped: ∫E·(E_inc/R_ref) dS = V/V_inc, where V_inc encodes R_ref
-    //   - Wave:   ∫(E×H_mode)·n dS / ∫(E_mode×H_mode)·n dS, the modal reaction overlap,
-    //             which separates the incident and reflected modal amplitudes also for a
-    //             lossy port mode, and is the power overlap ∫(E×H_mode⋆)·n dS for a
+    //   - Lumped: V / V_ref with V_ref = sqrt(2 R_ref) the peak incident voltage of the
+    //     unit-power wave (see LumpedPortData::GetReferenceVoltage)
+    //   - Wave:   ∫(E×H_mode)·n dS / (sqrt(2) ∫(E_mode×H_mode)·n dS), the modal reaction
+    //             overlap divided by the amplitude of the incident wave relative to the
+    //             mode, so that the incident wave itself projects to 1. The reaction
+    //             separates the incident and reflected modal amplitudes also for a lossy
+    //             port mode, and is the power overlap ∫(E×H_mode⋆)·n dS / sqrt(2) for a
     //             lossless one
     // Both are directly the Kurokawa b/a ratio, so no impedance scaling is needed.
     //
@@ -2100,19 +2134,12 @@ void PostOperator<solver_t>::MeasureSParameter() const
     auto [drive_is_simple, drive_port_type, drive_port_idx] =
         fem_op->GetPortExcitations().excitations.at(measurement_cache.ex_idx).IsSimple();
 
-    if (drive_port_type != PortType::LumpedPort && drive_port_type != PortType::WavePort &&
-        drive_port_type != PortType::FloquetPort)
-    {
-      return;
-    }
-
     // Drive weight a = A exp(iφ) of the excited port (1 for wave and Floquet ports, which
     // do not carry a weight in this version).
     const std::complex<double> drive_weight =
         (drive_port_type == PortType::LumpedPort)
             ? fem_op->GetLumpedPortOp().GetPort(drive_port_idx).GetExcitationWeight()
             : std::complex<double>{1.0, 0.0};
-
     // Per-side wave-port de-embedding factor: exp(i·kₙ·d_offset) when the port is a
     // wave port with a non-zero offset; 1 otherwise (lumped ports have no offset).
     // Applied independently on the source and observation sides, so cross-type S
@@ -2122,17 +2149,6 @@ void PostOperator<solver_t>::MeasureSParameter() const
             ? std::exp(1i * fem_op->GetWavePortOp().GetPort(drive_port_idx).kn0 *
                        fem_op->GetWavePortOp().GetPort(drive_port_idx).d_offset)
             : std::complex<double>{1.0, 0.0};
-
-    // Power normalization bridge factor for mixed Floquet + lumped/wave configurations.
-    // Floquet ports normalize incident waves to unit time-averaged power (P_avg = 1),
-    // while lumped/wave ports normalize to unit peak power (∫E×H*·n dS = 1, P_avg = ½).
-    // Cross-type observations require a √2 correction:
-    //   - Floquet drives, lumped/wave observes: lumped |b|² = 2×P_avg, divide by √2
-    //   - Lumped/wave drives, Floquet observes: Floquet |S|² = P_avg, multiply by √2
-    const double inv_sqrt2 = 1.0 / std::numbers::sqrt2;
-    const bool floquet_drives = (drive_port_type == PortType::FloquetPort);
-    const bool lumped_or_wave_drives =
-        (drive_port_type == PortType::LumpedPort || drive_port_type == PortType::WavePort);
 
     // Iterate over observation lumped ports.
     for (const auto &[idx, data] : fem_op->GetLumpedPortOp())
@@ -2145,10 +2161,6 @@ void PostOperator<solver_t>::MeasureSParameter() const
       }
       // Lumped observation has no d_offset — only the source-side factor applies.
       vi.S *= src_deembed;
-      if (floquet_drives)
-      {
-        vi.S *= inv_sqrt2;
-      }
 
       Mpi::Print(" {0} = {1:+.3e}{2:+.3e}i, |{0}| = {3:+.3e}, arg({0}) = {4:+.3e}\n",
                  format("S[{}][{}]", idx, drive_port_idx), vi.S.real(), vi.S.imag(),
@@ -2167,27 +2179,18 @@ void PostOperator<solver_t>::MeasureSParameter() const
       // Apply both source and observation de-embedding factors.
       vi.S *= src_deembed;
       vi.S *= std::exp(1i * data.kn0 * data.d_offset);
-      if (floquet_drives)
-      {
-        vi.S *= inv_sqrt2;
-      }
 
       Mpi::Print(" {0} = {1:+.3e}{2:+.3e}i, |{0}| = {3:+.3e}, arg({0}) = {4:+.3e}\n",
                  format("S[{}][{}]", idx, drive_port_idx), vi.S.real(), vi.S.imag(),
                  Measurement::Magnitude(vi.S), Measurement::Phase(vi.S));
     }
 
-    // Floquet port S-parameters (already post-processed in MeasureFloquetPorts). Apply
-    // the reciprocal bridge factor when lumped/wave ports are driving.
+    // Floquet port S-parameters (already post-processed in MeasureFloquetPorts).
     for (auto &[port_idx, S_map] : measurement_cache.floquet_port_s)
     {
       for (auto &[key, S] : S_map)
       {
         S /= drive_weight;
-        if (lumped_or_wave_drives)
-        {
-          S *= std::numbers::sqrt2;
-        }
         auto [m, n, is_te] = key;
         auto pol = measurement_cache.floquet_circular_output ? (is_te ? "RHC" : "LHC")
                                                              : (is_te ? "TE" : "TM");
@@ -2238,10 +2241,10 @@ void PostOperator<solver_t>::MeasureInterfaceEFieldEnergy() const
   // Compute the surface dielectric participation ratio and associated quality factor for
   // the material interface given by index idx. We have:
   //                            1/Q_mj = p_mj tan(δ)_j
-  // with:
-  //          p_mj = 1/2 t_j Re{∫_{Γ_j} (ε_j E_m)ᴴ E_m dS} / E_m,
-  // with E_m = E_elec + E_cap for constant materials
-  // (Measurement::TotalEnergyNormalization).
+  // with the ratio of the time-averaged interface energy to the time-averaged
+  // electric-side energy U of the mode (Measurement::ElectricEnergyNormalization):
+  //          p_mj = 1/4 t_j Re{∫_{Γ_j} (ε_j E_m)ᴴ E_m dS} / U,
+  // with U = E_elec + E_cap for constant materials.
   measurement_cache.interface_eps_i.clear();
   if constexpr (HasEGridFunction<solver_t>())
   {
@@ -2249,9 +2252,9 @@ void PostOperator<solver_t>::MeasureInterfaceEFieldEnergy() const
     // solver does not support lumped ports.
     //
     // TODO: Should this not include other types of energy too (surface impedance case)?
-    // Without a total energy, the participations are not measured.
-    const auto energy_total = measurement_cache.TotalEnergyNormalization();
-    if (!energy_total)
+    // Without U, the participations are not measured.
+    const auto energy_electric_all = measurement_cache.ElectricEnergyNormalization();
+    if (!energy_electric_all)
     {
       return;
     }
@@ -2262,7 +2265,7 @@ void PostOperator<solver_t>::MeasureInterfaceEFieldEnergy() const
       auto energy = surf_post_op.GetInterfaceElectricFieldEnergy(
           idx, *E, measurement_cache.freq.real());
 
-      auto energy_participation_p = energy / *energy_total;
+      auto energy_participation_p = energy / *energy_electric_all;
       auto loss_tangent_delta = surf_post_op.GetInterfaceLossTangent(idx);
       auto quality_factor_Q = (energy_participation_p == 0.0 || loss_tangent_delta == 0.0)
                                   ? mfem::infinity()
@@ -2364,7 +2367,7 @@ void PostOperator<solver_t>::ConfigureReducedPostprocessing(const RomOperator &r
   if (fem_op->GetMaterialOp().HasWaveVector() || !fem_op->GetFloquetPortOp().Empty() ||
       fem_op->GetSurfaceCurrentOp().Size() > 0 || !surf_post_op.flux_surfs.empty() ||
       !surf_post_op.eps_surfs.empty() || surf_post_op.farfield.size() > 0 ||
-      !interp_op.GetProbes().empty() || !fem_op->GetPortExcitations().IsMultipleSimple())
+      !interp_op.GetProbes().empty() || !fem_op->GetPortExcitations().HasSParameters())
   {
     return;
   }
@@ -2528,12 +2531,16 @@ void PostOperator<solver_t>::MeasureAndPrintReduced(int ex_idx, int step,
     SetEGridFunction(*e);
   }
 
-  // The quadratic forms in real arithmetic, on the columns [Re{y}, Im{y}].
+  // The quadratic forms in real arithmetic, on the columns [Re{y}, Im{y}], with the
+  // field-energy weight of the full evaluation.
   Eigen::MatrixX2d Y(y.size(), 2);
   Y << y.real(), y.imag();
   const Eigen::MatrixX2d RY = reduced_curl_R * Y;
   auto quadratic = [](const Eigen::MatrixXd &A, const Eigen::MatrixX2d &X)
-  { return 0.5 * (X.array() * (A.selfadjointView<Eigen::Lower>() * X).array()).sum(); };
+  {
+    return DomainPostOperator::EnergyWeight(true) *
+           (X.array() * (A.selfadjointView<Eigen::Lower>() * X).array()).sum();
+  };
   auto quadratic_E = [&](const Eigen::MatrixXd &A, const ReducedFrequencyDependentForms &fd,
                          DomainPostOperator::ElectricEnergy type)
   {
@@ -2560,7 +2567,8 @@ void PostOperator<solver_t>::MeasureAndPrintReduced(int ex_idx, int step,
   }
   measurement_cache.domain_E_field_energy_material = quadratic_E(
       reduced_energy_E, reduced_energy_E_fd, DomainPostOperator::ElectricEnergy::MATERIAL);
-  measurement_cache.domain_H_field_energy_all = 0.5 * RY.squaredNorm() * scale_H;
+  measurement_cache.domain_H_field_energy_all =
+      DomainPostOperator::EnergyWeight(true) * RY.squaredNorm() * scale_H;
   for (const auto &[idx, forms] : reduced_domain_energy)
   {
     auto &d = measurement_cache.domain_E_field_energy_i.emplace_back(
@@ -2582,9 +2590,10 @@ void PostOperator<solver_t>::MeasureAndPrintReduced(int ex_idx, int step,
   }
 
   // Lumped-port voltages and wave-port S-parameters are linear in the solution. The wave
-  // port S-parameter is sᵀe / R for the port mode s and its reaction R
-  // (WavePortData::GetSParameter), and every PROM solve caches the pairings sᵀv of the
-  // basis vectors with the modes of all wave ports for its wave-port terms.
+  // port S-parameter is sᵀe / (sqrt(2) R) for the port mode s and its reaction R, relative
+  // to the incident wave of sqrt(2) times the mode (WavePortData::GetSParameter), and every
+  // PROM solve caches the pairings sᵀv of the basis vectors with the modes of all wave
+  // ports for its wave-port terms.
   // The voltages and overlaps given by SetLumpedPortVoltages and SetWavePortOverlaps (of
   // the environment of a substructured region) replace those of the solution, as in the
   // full measurement.
@@ -2610,7 +2619,9 @@ void PostOperator<solver_t>::MeasureAndPrintReduced(int ex_idx, int step,
     const auto *sV = rom_op.GetWavePortModePairing(idx);
     MFEM_VERIFY(sV && sV->size() == y.size(),
                 "Missing or stale PROM mode pairing for wave port " << idx << "!");
-    measurement_cache.wave_port_vi[idx].S = sV->cwiseProduct(y).sum() / data.modal_reaction;
+    measurement_cache.wave_port_vi[idx].S =
+        sV->cwiseProduct(y).sum() /
+        (electromagnetics::UnitPowerAmplitude(true) * data.modal_reaction);
   }
   MeasureSParameter();
 
