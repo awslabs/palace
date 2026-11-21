@@ -499,6 +499,19 @@ palace::test::CustomCheck TestErrorIndicatorBounds(double upper, bool nonzero)
   };
 }
 
+// The last value of the column `header` is below `bound`, with no reference diff.
+palace::test::CustomCheck TestColumnBelow(std::string header, double bound)
+{
+  return [header = std::move(header), bound](palace::Table &actual, palace::Table &,
+                                             const std::filesystem::path &)
+  {
+    const auto col = std::ranges::find(actual, header, &palace::Column::header_text);
+    REQUIRE(col != actual.end());
+    INFO("column '" << header << "'");
+    CHECK(col->data.back() < bound);
+  };
+}
+
 // S-parameter check for a driven wave-port run on a lossless structure. Two guards:
 //   (1) Reference-free power conservation: for each excitation j, Sum_i |S_ij|^2 == 1
 //       within rtol. Insensitive to MPI partitioning; catches the wave-port n x H fix
@@ -2017,6 +2030,27 @@ TEST_CASE("circular_hole_london_nc_amr_rebalance", "[Serial][Parallel][Regressio
   palace::test::RunRegressionCase("circular_hole_london",
                                   "circular_hole_nc_amr_rebalance.json", "nc_amr_rebalance",
                                   opts);
+}
+
+// London flux film under conformal AMR with Palace's default tolerance and update fraction;
+// on more than one process each refinement is followed by a forced rebalance. The case runs
+// to the tolerance, checks that the final estimate is below it, and compares only the final
+// outputs, so that marks which differ between compilers do not fail it. It stops after two
+// refinements at 9.8e-3; one reference serves 1 to 8 processes (outputs within 4e-8).
+// Omits [GPU]: adaptive cases skip GPU CI.
+TEST_CASE("circular_hole_london_conformal_amr_rebalance", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-2;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.unstored_files = {"iteration"};
+  opts.custom_checks["error-indicators.csv"] = TestColumnBelow("Norm", 1.0e-2);
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = force_default_solver;
+  palace::test::RunRegressionCase("circular_hole_london",
+                                  "circular_hole_conformal_amr_rebalance.json",
+                                  "conformal_amr_rebalance", opts);
 }
 
 // Mixed current-flux excitation. The current-flux mutual M[1][2] is measured from a surface
