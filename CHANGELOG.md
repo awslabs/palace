@@ -201,6 +201,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     and their elements move in parallel; the mesh is gathered on the root only to save it
     (`"SaveAdaptMesh"`). Partitions, and so results to round-off, differ from before.
     [PR 1254](https://github.com/awslabs/palace/pull/1254).
+  - Conformal AMR marks the mesh again after each refinement, so results of conformal AMR
+    change: the marks follow the geometry only.
+    [PR 1267](https://github.com/awslabs/palace/pull/1267).
   - Added an MFEM patch for [mfem/mfem#5755](https://github.com/mfem/mfem/pull/5755):
     `ParMesh::Rebalance` with a partition for conforming meshes of triangles and
     tetrahedra, which the parallel move needs; it also fixes the MPI requests of the 2D
