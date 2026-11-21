@@ -18,6 +18,67 @@ the directory specified by
 this file are the mode quality factors and errors (absolute and backward) computed for each
 eigenpair.
 
+With adaptive mesh refinement, the eigenvalue solves of later adaptation iterations can
+start from the eigenmodes of the previous one, transferred to the refined mesh, and then
+need fewer Krylov restarts. Setting
+[`config["Solver"]["Eigenmode"]["StartVector"]`](../config/reference.md#config-solver-eigenmode-startvector)
+to `false` turns this off.
+
+With a [frequency-dependent permittivity](model.md#Frequency-dependent-permittivity), the
+eigenvalue problem is nonlinear in the frequency. When the `Drude`, `Debye`, `Lorentz`, and
+`PoleResidue` terms of the materials are its only frequency-dependent terms, the default
+`"Hybrid"` setting of
+[`config["Solver"]["Eigenmode"]["NonlinearType"]`](../config/reference.md#config-solver-eigenmode)
+solves it as a linear eigenvalue problem, with SLEPc or ARPACK. The linearization that is
+used for problems with losses gets one more unknown for each pole of a material, on the
+region of that material [[13]](../reference.md#References). Each of these unknowns is
+stored as a vector of the size of the whole problem, however small the material: each pole
+adds the memory of one such vector to every basis vector of the eigenvalue solver. With
+SLEPc, the modes are then those nearest above `Target`, as for constant materials, on both
+sides of a material resonance and where they accumulate at it. ARPACK selects the
+eigenvalues ``\theta = 1/(\lambda-\sigma)`` of the shift-and-invert problem
+(``\lambda = i\omega``, ``\sigma`` at `Target`) with the smallest imaginary part, which ranks
+a mode by ``\Delta\omega/|\lambda-\sigma|^2``, with ``\Delta\omega`` its angular frequency
+above `Target`: a strongly damped mode, as in a strongly lossy `Drude` or `Debye` material,
+can be passed over for a mode farther above `Target` with less loss. Each step of the
+eigenvalue solver solves one linear system at the target, so the errors in `eig.csv`
+cannot be smaller than the accuracy of these solves: with a small
+[`config["Solver"]["Eigenmode"]["Tol"]`](../config/reference.md#config-solver-eigenmode),
+reduce [`config["Solver"]["Linear"]["Tol"]`](../config/reference.md#config-solver-linear)
+too. With `"NonlinearType": "SLP"`, or with SLEPc and `"PEPLinear": false`, the nonlinear
+eigensolver described next is used instead.
+
+Other frequency-dependent terms are not solved in this way: wave ports, second-order
+absorbing boundaries, finite conductivity and rational impedance boundaries, absorbing
+boundaries next to a frequency-dependent material, and `DjordjevicSarkar` terms.
+With any of them, for constant and frequency-dependent materials alike, the nonlinear
+eigensolver of `"NonlinearType"` is used. With `"Hybrid"`, its starting values come from the
+same linearization of the pole terms of the materials, with only the other
+frequency-dependent terms interpolated between `Target` and `TargetUpper`. It returns
+converged modes, but not always the ones nearest the target: a small error for a returned
+mode does not show that no lower mode was missed. Changing `Target`, `TargetUpper`, or the
+number of modes changes its starting values. It can also converge fewer modes than were
+requested, for example near a material resonance with a wave port or an absorbing boundary
+next to the material, or with `"SLP"` or `"PEPLinear": false`, which do not linearize the
+pole terms; the solve then stops with an error. A wave port or an absorbing boundary next
+to a frequency-dependent material can make it miss modes nearest the target also without a
+resonance, as with a `Debye` or `Drude` material, and *Palace* warns of such a boundary on
+this route. A wave port mode solve at a complex frequency that does not converge is fatal.
+
+The divergence-free projection is disabled for frequency-dependent permittivity: a fixed
+high-frequency projector does not impose the frequency-dependent interface condition, and
+longitudinal modes at a permittivity zero can be physical. In a material with no
+conductivity and no London penetration depth, at the complex frequency where its
+permittivity is zero, every gradient field which vanishes outside that material solves the
+equations, with no magnetic field. (With a conductivity or a London response, the complete
+coefficient of the field in the material must vanish, not the permittivity alone.) This
+eigenvalue is infinitely degenerate in the continuous problem, and its multiplicity in the
+discrete problem grows with the mesh. A request for modes near it returns these fields, not
+the electromagnetic modes above them: place `Target` above the frequency of the zero to
+pass it. *Palace* warns which of the computed modes have a magnetic energy below
+``10^{-8}`` of their electric field energy with ``\epsilon_\infty`` (with the permittivity
+of the constant materials), as these fields do, and keeps them in `eig.csv`.
+
 Calculations related to
 [energy-participation ratio (EPR) quantization](https://www.nature.com/articles/s41534-021-00461-8)
 can be performed with *Palace* when the user specifies lumped ports corresponding to the
@@ -30,8 +91,16 @@ The EPR framework can be used to characterize the dissipative elements in the mo
 In particular, lumped ports with nonzero resistance in the model will trigger coupling rate
 and quality factor calculations based on input-output (I-O) line coupling loss: By
 specifying resistive lumped ports in the model, the mode coupling quality factors will be
-computed as ``Q_{ml} = \omega_m/\kappa_{ml}``. The output file `port-Q.csv` will be created
-in the output directory containing these mode quality factor contributions. For bulk and
+computed as ``Q_{ml} = \mathrm{Re}\{\omega_m\}/|\kappa_{ml}|``. The magnitude of the coupling
+rate ``\kappa_{ml}`` is the time-averaged power dissipated in the resistive boundary of port
+``l`` divided by the total stored energy of mode ``m``, twice its time-averaged electric-side
+energy ``U`` (see [Energy and postprocessing](model.md#Energy-and-postprocessing)), and its
+sign is the sign of the real part of the port current. For a mode whose voltage across the
+port cancels, this current is at the level of round-off and the sign has no meaning: only
+the magnitude does. This power includes field that does not match the voltage mode of the
+port, so when the port does not match the field it can be much larger than the I-O line
+coupling loss ``|V_{ml}|^2/(2R_l)``. The output file `port-Q.csv` will be created in the
+output directory containing these mode quality factor contributions. For bulk and
 interface dielectric loss calculations, which are not unique to the eigenmode simulation
 type, see the sections [Domain postprocessing](postprocessing.md#Domain-postprocessing) and
 [Boundary postprocessing](postprocessing.md#Boundary-postprocessing) of this guide.
@@ -225,6 +294,18 @@ current port's effective `"InactiveMode"` to be `"Open"`. Invalid or incomplete 
 are rejected rather than producing a matrix containing a mixture of bare, screened, and
 unknown entries.
 
+**Superconductors**: A superconducting conductor is modeled either as a
+[`"Superconductor"`](../config/reference.md#config-boundaries-superconductor) boundary, a
+sheet with the kinetic sheet inductance of a film, or as a domain whose material has a
+[`"LondonDepth"`](../config/reference.md#config-domains-materials-londondepth), in which the
+London supercurrent flows (see the [reference](../reference.md#Magnetostatic-Simulations)).
+The domain model resolves the current through the conductor, so it holds for any thickness
+and width, including strips a few penetration depths thick and wide where the sheet models
+do not apply, but its elements must resolve the penetration depth at the conductor surfaces.
+In both, the inductance includes the kinetic energy of the supercurrent, which the magnetic
+field energies in `domain-E.csv` do not. Superconducting loops hold zero fluxoid, except the
+holes of films driven by a flux loop, which therefore must not touch a London domain.
+
 When running on GPU, the 2D surface curl solve for flux loop
 boundary conditions is performed on the host while the main 3D magnetostatic solve uses
 GPU acceleration.
@@ -263,14 +344,20 @@ The computed propagation constants ``k_n`` and effective indices
 ``n_\text{eff} = k_n / k_0`` (where ``k_0 = \omega / c_0`` is the free-space wavenumber)
 are written to an ASCII file named `mode-kn.csv`, in the directory specified by
 [`config["Problem"]["Output"]`](../config/reference.md#config-problem-output). Both
-backward and absolute error estimates are included for each eigenvalue.
+backward and absolute error estimates are included for each eigenvalue. For a mode below
+cutoff, ``k_n`` is the root with ``\text{Im}\{k_n\} < 0``, for which the mode decays in the
+direction of propagation.
 
 When impedance postprocessing boundaries are specified under
 [`config["Boundaries"]["Postprocessing"]["Impedance"]`](../config/reference.md#config-boundaries-postprocessing-impedance),
-the characteristic impedance is computed using the power-voltage definition
-``Z_\text{PV} = |V|^2 / P`` and, when a current path is also specified, the voltage-current
-definition ``Z_\text{VI} = V / I``. Per-unit-length inductance and capacitance are derived
-from these quantities. The results are written to `mode-Z.csv`. Similarly, when voltage
+the complex characteristic impedance is computed using the power-voltage definition
+``Z_\text{PV} = |V|^2 / (2P^*)``, with the complex time-averaged power ``P`` of the mode, and,
+when a current path is also specified, the voltage-current definition ``Z_\text{VI} = V / I``
+(see the [reference](../reference.md) for details). The per-unit-length inductance
+``L = \text{Re}\{n_\text{eff} Z\} / c_0`` and capacitance
+``C = \text{Re}\{n_\text{eff} / Z\} / c_0`` are derived from each impedance ``Z``, from the
+series impedance ``i k_n Z = R + i\omega L`` and shunt admittance ``i k_n / Z = G + i\omega C``
+per unit length of the line. The results are written to `mode-Z.csv`. Similarly, when voltage
 postprocessing boundaries are specified under
 [`config["Boundaries"]["Postprocessing"]["Voltage"]`](../config/reference.md#config-boundaries-postprocessing-voltage),
 the complex mode voltages are written to `mode-V.csv`.

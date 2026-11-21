@@ -67,7 +67,26 @@ boundary conditions, can be applied using the `"Absorbing"` boundary keyword und
 first-order absorbing boundary condition is a special case of the above impedance boundary
 and is available for eigenmode or frequency or time domain driven simulation types. The
 second-order absorbing boundary condition is only available for frequency domain
-simulations.
+simulations; its boundary curl operator requires a 3D mesh. It neglects the term depending
+on the divergence of the tangential field (see
+[Other boundary conditions](../reference.md#Other-boundary-conditions)), so that it only
+improves on the first-order condition for TE fields, with the electric field tangential to
+the boundary: for TM plane waves, the two conditions are the same. It is also not passive for
+fields whose tangential wavenumber on the boundary exceeds ``\sqrt{2}`` times the
+wavenumber in the material, like evanescent fields of guided modes below the light line or
+of Floquet periodic structures. *Palace* warns when the part of the
+[Floquet wave vector](../config/reference.md#config-boundaries-periodic-floquetwavevector)
+tangential to an absorbing boundary exceeds this limit at the lowest frequency of the
+simulation.
+
+Next to a frequency-dependent material, the wave impedance and both orders' coefficients use
+``\epsilon_{r,\mathrm{wave}}(s)=\epsilon_r(s)+\sigma_\mathrm{user}/(\epsilon_0 s)``
+at the current frequency, where ``\epsilon_0`` is the vacuum permittivity.
+The additive user `Conductivity` must be isotropic on such a boundary; the analytic
+impedance does not model a tensor conductivity. Constant-material boundaries retain their
+existing lossless-material approximation. In eigenmode simulations, this frequency
+dependence can make the existing nonlinear solver fail or omit lower modes near a material
+pole or permittivity zero; see [Eigenmode problems](problem.md#Eigenmode-problems).
 
 [Perfectly matched layer (PML)](https://en.wikipedia.org/wiki/Perfectly_matched_layer)
 boundaries for frequency and time domain electromagnetic formulations are not yet
@@ -153,6 +172,16 @@ charge:
     for a conductor much thicker than its skin depth with fields on one side only, for
     example, the uncracked sheet shares the current equally between its two faces,
     which halves the conductor loss. Use `"Crack": true` for such conductors.
+
+    Since *Palace* 0.19.0, the default `"Crack": false` also applies to conductivity
+    boundaries which enclose a conductor meshed as a dielectric volume (a shell), where the
+    mesh was previously cracked. The conductor loss is then lower than with previous
+    versions. A warning lists the interior conductivity boundaries without `"Crack"`: set
+    `"Crack": true` to restore the previous model, or `"Crack": false` to keep the sheet
+    model and silence the warning. Leaving the conductor volume of a shell out of
+    [`config["Domains"]["Materials"]`](../config/reference.md#config-domains-materials)
+    removes it from the mesh, which gives the same result as `"Crack": true` with fewer
+    unknowns.
 
 The mesh can only be cracked where it is conformal. Interior boundaries which are to be
 cracked are an error on a mesh with hexahedra, prisms, or pyramids with
@@ -303,7 +332,10 @@ for implementation details.
     wave vector is defined. The wave vector then scales linearly with frequency according
     to ``\bm{k}_F(f) = \bm{k}_{F,\mathrm{ref}} f / f_\mathrm{ref}``, where
     ``\bm{k}_{F,\mathrm{ref}}`` is `"FloquetWaveVector"` and ``f_\mathrm{ref}`` is
-    `"FloquetReferenceFrequency"`, maintaining a constant incidence angle across the sweep.
+    `"FloquetReferenceFrequency"`. This maintains a constant incidence angle across the
+    sweep when the medium of incidence does not depend on frequency. In a
+    frequency-dependent medium it keeps ``\bm{k}_F/\omega`` fixed, and the angle changes
+    with the refractive index.
 
     The incident field is a plane wave in the specular (0,0) diffraction order with
     user-specified polarization (TE, TM, or circular RHC/LHC). S-parameters are extracted
@@ -315,10 +347,19 @@ for implementation details.
     modes.
 
     The port boundary must be planar and on the true boundary of the computational domain.
-    The medium adjacent to the port must be homogeneous and isotropic.
+    The medium adjacent to the port must be homogeneous and isotropic. For a
+    frequency-dependent material, the port uses the complete complex wave response
+    ``\epsilon_r(s)+\sigma_\mathrm{user}/(\epsilon_0 s)`` and real-power normalization, including lossy
+    diffraction orders. Its additive user `Conductivity` must also be isotropic. Constant
+    materials retain the existing lossless-port approximation: their `LossTan` and
+    `Conductivity` are not used in the port coefficients.
 
-For each port, the excitation is normalized to have unit incident power over the port boundary
-surface. Lumped ports with reactive elements (`"L"` and/or `"C"`, or the surface-parameter
+In the frequency domain, the excitation of each port is normalized to have unit
+time-averaged incident power over the port boundary surface (see the
+[mathematical reference](../reference.md#Lumped-ports-and-wave-ports), which also compares
+the excitation with those of COMSOL and HFSS under "Comparing with other tools"); transient
+excitations carry unit instantaneous power at unit pulse amplitude. Lumped ports with
+reactive elements (`"L"` and/or `"C"`, or the surface-parameter
 equivalents `"Ls"` and/or `"Cs"`) may also be excited, including purely reactive ports with
 `"R": 0` (`"Rs": 0`). For a purely reactive port (`R = 0`) the power normalization
 references an internal unit impedance; see the [mathematical reference](../reference.md#Lumped-ports-and-wave-ports)
@@ -345,8 +386,46 @@ simulated consecutively during the Palace run. The results are printed to shared
 there are multiple excitations, the columns of the csv files are post-indexed by the excitation
 index (e.g. `Φ_elec[1][5] (C)` denoting the flux through surface 1 of excitation 5). The far-field
 file (`farfield-rE.csv`) is the exception: it has one row per (frequency, angle) pair so the
-excitation index is encoded as a row column (`exc`) rather than a column suffix. Note that a port
-can only be part of one excitation.
+excitation index is encoded as a row column (`exc`) rather than a column suffix. The saved fields
+of excitation `i` are written to a subfolder `excitation_i` (with leading zeros when there are ten
+or more excitations) of each field output folder, for example `paraview/driven/excitation_1/`
+and `gridfunction/driven/excitation_1/`. The grid function files of the mesh (`mesh`), its
+partitioning (`rank`), and the error indicator (`indicator`) are shared by all excitations and
+written once to `gridfunction/driven/`. Note that a port can only be part of one excitation.
+
+Each excited lumped port can be given a complex weight on its incident wave with the
+optional settings `"ExcitationAmplitude"` ``A`` (greater than 0, default 1) and
+`"ExcitationPhase"` ``\varphi`` (in degrees, default 0) of
+[`config["Boundaries"]["LumpedPort"][]`](../config/reference.md#config-boundaries-lumpedport).
+The incident field, voltage, and current of the port are those of the unit-power excitation
+multiplied by the weight ``a = A e^{i\varphi}``, so that the incident power is scaled by
+``A^2``. The weight is dimensionless and independent of frequency, and the phase follows the
+``e^{i\omega t}`` time convention of the frequency domain solver. This allows ports that
+share an excitation index to be driven together with different amplitudes and phases, for
+example to drive a pair of ports differentially. By linearity, the solution is the weighted
+sum of the solutions with each port excited alone. A phase of 180 degrees gives the same
+fields as reversing `"Direction"`. With the phase, the voltage, current, incident voltage
+and incident current of the port change sign, and its S-parameters do not. Reversing
+`"Direction"` also reverses the voltage reference of the port, so these keep their sign, and
+the S-parameters between this port and the others change sign. Both settings require a
+nonzero `"Excitation"` on the same port, and are an error otherwise. They are only
+available for lumped ports.
+
+  - *Scattering parameters*: When every excitation drives a single port, the S-parameters
+    are normalized by the weight of the driven port, so they do not depend on
+    `"ExcitationAmplitude"` or `"ExcitationPhase"`. As before, no S-parameters are written
+    when an excitation drives more than one port.
+  - *Incident voltage and current*: The incident voltage and current of an excited port
+    written to `port-V.csv` and `port-I.csv` include the weight. Without a phase, the
+    columns are the same as without a weight and hold the real weighted values. When the
+    weight of any excited lumped port is not real, that is, its phase is not a multiple of
+    180 degrees, the incident columns of the simulation are written as real and imaginary
+    parts instead (`Re{V_inc[...]}`, `Im{V_inc[...]}`, `Re{I_inc[...]}`,
+    `Im{I_inc[...]}`), so such a phase must not be changed between a simulation and its
+    restart. At 180 degrees the columns stay real, with a negative value.
+  - *Transient simulations*: The amplitude scales the excitation. The time domain
+    excitation is real, so a phase that is not a multiple of 180 degrees is an error. A
+    phase of 180 degrees is allowed and reverses the sign of the excitation.
 
 !!! warning "Indexing"
 

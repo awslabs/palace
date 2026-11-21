@@ -1483,6 +1483,39 @@ void RunCeedIntegratorTests(MPI_Comm comm, const std::string &input, int ref_lev
     }
   }
 
+  // Tests on vector (L2)ᵈ spaces with INTEGRAL map type (u = 1 / det(J) ̂u), at the default
+  // integration order. Boundary integrators do not apply.
+  SECTION("Vector L2 Integrators")
+  {
+    mfem::L2_FECollection l2_fec(order, dim, mfem::BasisType::GaussLegendre,
+                                 mfem::FiniteElement::INTEGRAL);
+    FiniteElementSpace l2d_fespace(mesh, &l2_fec, dim);
+    SECTION("Vector L2 Mass Integrator")
+    {
+      BilinearForm a_test(l2d_fespace);
+      mfem::BilinearForm a_ref(&l2d_fespace.Get());
+      if (!bdr_integ)
+      {
+        switch (coeff_type)
+        {
+          case CoeffType::Const:
+            AddIntegrators<MassIntegrator, mfem::VectorMassIntegrator>(bdr_integ, a_test,
+                                                                       a_ref);
+            break;
+          case CoeffType::Scalar:
+            AddIntegrators<MassIntegrator, mfem::VectorMassIntegrator>(
+                bdr_integ, a_test, a_ref, Q, (mfem::Coefficient &)Q_ref);
+            break;
+          case CoeffType::Matrix:
+            AddIntegrators<MassIntegrator, mfem::VectorMassIntegrator>(
+                bdr_integ, a_test, a_ref, Q, (mfem::MatrixCoefficient &)Q_ref);
+            break;
+        }
+      }
+      TestCeedOperator(a_test, a_ref);
+    }
+  }
+
   // Tests on mixed H1-(H1)ᵈ spaces.
   SECTION("Mixed H1-Vector H1 Integrators")
   {
@@ -1976,6 +2009,228 @@ TEST_CASE("2D-in-3D libCEED Boundary Operators", "[libCEED][Serial][Parallel]")
   RunCeedIntegratorTests(MPI_COMM_WORLD, TestMeshPath(mesh), 0, false, order, true);
 }
 
+namespace
+{
+
+// Reference integrators for the boundary integrators on 2D elements in 3D which use the
+// boundary normal. The normal n = (J₁ x J₂) / |J₁ x J₂| of each element has the orientation
+// of its scalar curl, so that (n·curl u) n does not depend on the element orientation.
+void BoundaryNormal(mfem::ElementTransformation &T, mfem::Vector &n)
+{
+  n.SetSize(3);
+  mfem::CalcOrtho(T.Jacobian(), n);
+  n /= n.Norml2();
+}
+
+// a(u, v) = (Q (n·curl u) n, v), or a(u, v) = -(Q u, (n·curl v) n) when weak is true, for
+// Nedelec elements.
+class BoundaryMixedCurlRefIntegrator : public mfem::BilinearFormIntegrator
+{
+private:
+  mfem::MatrixCoefficient &Q;
+  bool weak, transpose;
+
+public:
+  BoundaryMixedCurlRefIntegrator(mfem::MatrixCoefficient &Q, bool weak, bool transpose)
+    : Q(Q), weak(weak), transpose(transpose)
+  {
+  }
+
+  void AssembleElementMatrix(const mfem::FiniteElement &fe, mfem::ElementTransformation &T,
+                             mfem::DenseMatrix &elmat) override
+  {
+    const int ndof = fe.GetDof();
+    mfem::DenseMatrix vshape(ndof, 3), curl_shape(ndof, 1), K(3), Kt(3);
+    mfem::Vector n(3), Kn(3), vKn(ndof), curl(ndof);
+    elmat.SetSize(ndof);
+    elmat = 0.0;
+    const auto &ir =
+        mfem::IntRules.Get(fe.GetGeomType(), fem::DefaultIntegrationOrder::Get(T));
+    for (int q = 0; q < ir.GetNPoints(); q++)
+    {
+      const auto &ip = ir.IntPoint(q);
+      T.SetIntPoint(&ip);
+      fe.CalcVShape(T, vshape);
+      fe.CalcPhysCurlShape(T, curl_shape);
+      BoundaryNormal(T, n);
+      Q.Eval(K, T, ip);
+      if (transpose)
+      {
+        Kt.Transpose(K);
+        K = Kt;
+      }
+      if (!weak)
+      {
+        // elmat(i, j) = (K n)·φ_i curl φ_j.
+        K.Mult(n, Kn);
+        vshape.Mult(Kn, vKn);
+        curl_shape.GetColumn(0, curl);
+        mfem::AddMult_a_VWt(ip.weight * T.Weight(), vKn, curl, elmat);
+      }
+      else
+      {
+        // elmat(i, j) = -curl φ_i (Kᵀ n)·φ_j.
+        K.MultTranspose(n, Kn);
+        vshape.Mult(Kn, vKn);
+        curl_shape.GetColumn(0, curl);
+        mfem::AddMult_a_VWt(-ip.weight * T.Weight(), curl, vKn, elmat);
+      }
+    }
+  }
+};
+
+// a(u, v) = (Q n x u, n x v) for Nedelec elements, or (Q n x grad u, n x grad v) for H1
+// elements.
+class BoundaryRotatedMassRefIntegrator : public mfem::BilinearFormIntegrator
+{
+private:
+  mfem::MatrixCoefficient &Q;
+
+public:
+  BoundaryRotatedMassRefIntegrator(mfem::MatrixCoefficient &Q) : Q(Q) {}
+
+  void AssembleElementMatrix(const mfem::FiniteElement &fe, mfem::ElementTransformation &T,
+                             mfem::DenseMatrix &elmat) override
+  {
+    const int ndof = fe.GetDof();
+    const bool h1 = (fe.GetRangeType() == mfem::FiniteElement::SCALAR);
+    mfem::DenseMatrix vshape(ndof, 3), rshape(ndof, 3), K(3), rK(ndof, 3);
+    mfem::Vector n(3), v(3), nxv(3);
+    elmat.SetSize(ndof);
+    elmat = 0.0;
+    const auto &ir =
+        mfem::IntRules.Get(fe.GetGeomType(), fem::DefaultIntegrationOrder::Get(T));
+    for (int q = 0; q < ir.GetNPoints(); q++)
+    {
+      const auto &ip = ir.IntPoint(q);
+      T.SetIntPoint(&ip);
+      if (h1)
+      {
+        fe.CalcPhysDShape(T, vshape);
+      }
+      else
+      {
+        fe.CalcVShape(T, vshape);
+      }
+      BoundaryNormal(T, n);
+      for (int i = 0; i < ndof; i++)
+      {
+        vshape.GetRow(i, v);
+        n.cross3D(v, nxv);
+        rshape.SetRow(i, nxv);
+      }
+      Q.Eval(K, T, ip);
+      mfem::MultABt(rshape, K, rK);  // rK = rshape Kᵀ, (rK)_i = K (n x φ_i)
+      mfem::AddMult_a_ABt(ip.weight * T.Weight(), rshape, rK, elmat);
+    }
+  }
+};
+
+// General (not symmetric) 3 x 3 boundary coefficient for the tests below, with a
+// different value for every material.
+void BuildGeneralBoundaryCoefficient(const Mesh &mesh, MaterialPropertyCoefficient &Q,
+                                     mfem::DenseTensor &C)
+{
+  mfem::Array<int> attr_mat;
+  mfem::DenseTensor mat_coeff;
+  BuildCoefficientHelper(mesh, true, CoeffType::Matrix, attr_mat, mat_coeff);
+  for (int k = 0; k < mat_coeff.SizeK(); k++)
+  {
+    for (int j = 0; j < 3; j++)
+    {
+      for (int i = 0; i < 3; i++)
+      {
+        mat_coeff(i, j, k) += 0.3 * (i - 2.0 * j) + 0.05 * k;
+      }
+    }
+  }
+  mfem::Array<int> loc_attr_mat(mesh.MaxCeedBdrAttribute());
+  loc_attr_mat = -1;
+  for (int i = 0; i < attr_mat.Size(); i++)
+  {
+    for (auto attr : mesh.GetCeedBdrAttributes(i + 1))
+    {
+      loc_attr_mat[attr - 1] = attr_mat[i];
+    }
+  }
+  Q = MaterialPropertyCoefficient(loc_attr_mat, mat_coeff);
+  C.SetSize(3, 3, attr_mat.Size());
+  for (int i = 0; i < attr_mat.Size(); i++)
+  {
+    C(i) = mat_coeff(attr_mat[i]);
+  }
+}
+
+}  // namespace
+
+// The boundary integrators for the Floquet terms of the second-order absorbing boundary
+// condition (boundary curl of the tangential trace along the normal, and rotated tangential
+// trace), against reference element matrices built with the normal computed by MFEM.
+TEMPLATE_TEST_CASE_SIG("3D libCEED Boundary Normal Operators",
+                       "[libCEED][Serial][Parallel]", ((const char *Mesh), Mesh),
+                       FicheraHex, FicheraTet, FicheraMixedP2)
+{
+  auto amr = GENERATE(false, true);
+  auto order = GENERATE(1, 2, 3);
+  const auto comm = MPI_COMM_WORLD;
+  auto mesh = Initialize(comm, TestMeshPath(Mesh), 0, amr);
+
+  // Match MFEM's default integration orders.
+  fem::DefaultIntegrationOrder::p_trial = order;
+  fem::DefaultIntegrationOrder::q_order_jac = true;
+  fem::DefaultIntegrationOrder::q_order_extra_pk = 0;
+  fem::DefaultIntegrationOrder::q_order_extra_qk = 0;
+  INFO("Mesh: " << Mesh << "\nAMR: " << amr << "\nOrder: " << order);
+
+  MaterialPropertyCoefficient Q(0);
+  mfem::DenseTensor C;
+  BuildGeneralBoundaryCoefficient(mesh, Q, C);
+  PWCoefficient Q_ref(C);
+
+  mfem::ND_FECollection nd_fec(order, mesh.Dimension());
+  mfem::H1_FECollection h1_fec(order, mesh.Dimension());
+  FiniteElementSpace nd_fespace(mesh, &nd_fec), h1_fespace(mesh, &h1_fec);
+  auto transpose = GENERATE(false, true);
+  INFO("Transpose: " << transpose);
+  mfem::TransposeMatrixCoefficient Qt_ref(Q_ref);
+  mfem::MatrixCoefficient &Q_rot_ref = transpose
+                                           ? static_cast<mfem::MatrixCoefficient &>(Qt_ref)
+                                           : static_cast<mfem::MatrixCoefficient &>(Q_ref);
+  SECTION("Boundary Mixed Vector Curl Integrator")
+  {
+    BilinearForm a_test(nd_fespace);
+    mfem::BilinearForm a_ref(&nd_fespace.Get());
+    a_test.AddBoundaryIntegrator<MixedVectorCurlIntegrator>(Q, transpose);
+    a_ref.AddBoundaryIntegrator(
+        new BoundaryMixedCurlRefIntegrator(Q_ref, false, transpose));
+    TestCeedOperator(a_test, a_ref);
+  }
+  SECTION("Boundary Mixed Vector Weak Curl Integrator")
+  {
+    BilinearForm a_test(nd_fespace);
+    mfem::BilinearForm a_ref(&nd_fespace.Get());
+    a_test.AddBoundaryIntegrator<MixedVectorWeakCurlIntegrator>(Q, transpose);
+    a_ref.AddBoundaryIntegrator(new BoundaryMixedCurlRefIntegrator(Q_ref, true, transpose));
+    TestCeedOperator(a_test, a_ref);
+  }
+  SECTION("Boundary Rotated Vector FE Mass Integrator")
+  {
+    BilinearForm a_test(nd_fespace);
+    mfem::BilinearForm a_ref(&nd_fespace.Get());
+    a_test.AddBoundaryIntegrator<RotatedVectorFEMassIntegrator>(Q, transpose);
+    a_ref.AddBoundaryIntegrator(new BoundaryRotatedMassRefIntegrator(Q_rot_ref));
+    TestCeedOperator(a_test, a_ref);
+  }
+  SECTION("Boundary Rotated Diffusion Integrator")
+  {
+    BilinearForm a_test(h1_fespace);
+    mfem::BilinearForm a_ref(&h1_fespace.Get());
+    a_test.AddBoundaryIntegrator<RotatedVectorFEMassIntegrator>(Q, transpose);
+    a_ref.AddBoundaryIntegrator(new BoundaryRotatedMassRefIntegrator(Q_rot_ref));
+    TestCeedOperator(a_test, a_ref);
+  }
+}
+
 // SpaceOperator::AssemblePreconditioner assembles quadrature data for every integrator it
 // configures when running on CPU, including the boundary terms contributed by absorbing and
 // impedance boundaries. Cover each (SpaceDim, Dim) combination those integrators reach; in
@@ -2041,6 +2296,34 @@ TEST_CASE("libCEED Quadrature Data Assembly", "[libCEED][Serial][Parallel]")
   {
     TestCeedQuadratureData(comm, nd_fespace, [&](BilinearForm &a)
                            { a.AddBoundaryIntegrator<VectorFEMassIntegrator>(MQ_bdr); });
+  }
+  if (dim == 3)
+  {
+    // A second-order absorbing boundary with a Floquet wave vector adds the rotated
+    // boundary mass and mixed boundary curl terms. The mixed terms are always applied
+    // without quadrature data.
+    SECTION("Boundary Rotated Mass")
+    {
+      TestCeedQuadratureData(
+          comm, nd_fespace, [&](BilinearForm &a)
+          { a.AddBoundaryIntegrator<RotatedVectorFEMassIntegrator>(MQ_bdr); });
+    }
+    SECTION("Boundary Mixed Curl")
+    {
+      TestCeedQuadratureData(
+          comm, nd_fespace,
+          [&](BilinearForm &a)
+          {
+            a.AddBoundaryIntegrator<MixedVectorWeakCurlIntegrator>(MQ_bdr);
+            a.AddBoundaryIntegrator<MixedVectorCurlIntegrator>(MQ_bdr, true);
+          });
+    }
+    SECTION("Auxiliary Boundary Rotated Diffusion")
+    {
+      TestCeedQuadratureData(
+          comm, h1_fespace, [&](BilinearForm &a)
+          { a.AddBoundaryIntegrator<RotatedVectorFEMassIntegrator>(MQ_bdr); });
+    }
   }
   SECTION("Auxiliary Diffusion")
   {
@@ -2304,26 +2587,35 @@ TEST_CASE("libCEED packed complex QData application",
   {
     SKIP("Packed application requires one CPU CEED context and one thread");
   }
-  const auto [name, mesh_file, order, curl, boundary, nested, nonsymmetric, subset] =
-      GENERATE(table<const char *, const char *, int, bool, bool, bool, bool, bool>(
-          {{"H(div) mass/mass and shared QData", "fichera-tet.mesh", 1, false, false, false,
-            false, false},
-           {"Curlmass/mass and p3 face orientations", "fichera-tet.mesh", 3, true, false,
-            false, false, false},
-           {"Hexahedron and unmatched boundary terms", "fichera-hex.mesh", 3, true, true,
-            false, false, false},
-           {"Direct volume pair and nested remainder", "fichera-tet.mesh", 2, true, false,
-            true, false, false},
-           {"Mixed H(curl) pairs and nonsymmetric tensors", "fichera-mixed-p2.mesh", 2,
-            true, false, false, true, false},
-           {"Mixed H(div) pairs", "fichera-mixed-p2.mesh", 1, false, false, false, false,
-            false},
-           {"Pyramid H(curl) pair", nullptr, 1, true, false, false, false, false},
-           {"Pyramid H(div) pair", nullptr, 1, false, false, false, false, false},
-           {"H(div) pair over a subset", "fichera-tet.mesh", 1, false, false, false, false,
-            true},
-           {"H(curl) hexahedra, subset and boundary remainder", "fichera-hex.mesh", 2, true,
-            true, false, false, true}}));
+  const auto [name, mesh_file, order, curl, boundary, nested, nonsymmetric, subset, extra,
+              extra_imag] = GENERATE(table<const char *, const char *, int, bool, bool,
+                                           bool, bool, bool, bool, bool>(
+      {{"H(div) mass/mass and shared QData", "fichera-tet.mesh", 1, false, false, false,
+        false, false, false, false},
+       {"Curlmass/mass and p3 face orientations", "fichera-tet.mesh", 3, true, false, false,
+        false, false, false, false},
+       {"Hexahedron and unmatched boundary terms", "fichera-hex.mesh", 3, true, true, false,
+        false, false, false, false},
+       {"Direct volume pair and nested remainder", "fichera-tet.mesh", 2, true, false, true,
+        false, false, false, false},
+       {"Mixed H(curl) pairs and nonsymmetric tensors", "fichera-mixed-p2.mesh", 2, true,
+        false, false, true, false, false, false},
+       {"Mixed H(div) pairs", "fichera-mixed-p2.mesh", 1, false, false, false, false, false,
+        false, false},
+       {"Pyramid H(curl) pair", nullptr, 1, true, false, false, false, false, false, false},
+       {"Pyramid H(div) pair", nullptr, 1, false, false, false, false, false, false, false},
+       {"H(div) pair over a subset", "fichera-tet.mesh", 1, false, false, false, false,
+        true, false, false},
+       {"H(curl) hexahedra, subset and boundary remainder", "fichera-hex.mesh", 2, true,
+        true, false, false, true, false, false},
+       {"Curlmass/mass pair and a real curlmass term without a partner", "fichera-tet.mesh",
+        2, true, false, false, false, false, true, false},
+       {"H(div) pair over a subset and a real term without a partner", "fichera-tet.mesh",
+        1, false, false, false, false, true, true, false},
+       {"Curlmass/mass pair and a second imaginary mass term", "fichera-tet.mesh", 2, true,
+        false, false, false, false, false, true},
+       {"H(div) pair over a subset and a second imaginary mass term", "fichera-tet.mesh", 1,
+        false, false, false, false, true, false, true}}));
   CAPTURE(name);
   // BilinearForm labels square operators symmetric; the nonsymmetric coefficient case
   // therefore exercises forward application only.
@@ -2357,6 +2649,9 @@ TEST_CASE("libCEED packed complex QData application",
   auto real_curl = BuildCoefficient(mesh, false, CoeffType::Matrix);
   auto bdr_mass = BuildCoefficient(mesh, true, CoeffType::Matrix);
   auto bdr_curl = BuildCoefficient(mesh, true, CoeffType::Scalar);
+  auto extra_mass = BuildCoefficient(mesh, false, CoeffType::Matrix);
+  auto extra_curl = BuildCoefficient(mesh, false, CoeffType::Matrix);
+  auto extra_imag_mass = BuildCoefficient(mesh, false, CoeffType::Matrix);
   if (nonsymmetric)
   {
     // Unequal off-diagonal entries expose tensor-index transposition in both the
@@ -2380,6 +2675,9 @@ TEST_CASE("libCEED packed complex QData application",
   imag_mass *= 0.19;
   real_curl *= 1.37;
   bdr_mass *= -0.23;
+  extra_mass *= 0.43;
+  extra_curl *= -0.61;
+  extra_imag_mass *= 0.29;
   if (subset)
   {
     std::vector<int> lossy_attr;
@@ -2401,6 +2699,26 @@ TEST_CASE("libCEED packed complex QData application",
     ar.AddDomainIntegrator<VectorFEMassIntegrator>(real_mass);
   }
   ai.AddDomainIntegrator<VectorFEMassIntegrator>(imag_mass);
+  if (extra_imag)
+  {
+    // A second imaginary volume term on all elements finds no real partner left, and
+    // stays in the remainder. Over a subset, the first term pairs on the processes that
+    // hold subset elements and the second one on the others.
+    ai.AddDomainIntegrator<VectorFEMassIntegrator>(extra_imag_mass);
+  }
+  if (extra)
+  {
+    // A second real volume term on all elements has no imaginary partner left, and is
+    // packed on its own along with the pair.
+    if (curl)
+    {
+      ar.AddDomainIntegrator<CurlCurlMassIntegrator>(extra_curl, extra_mass);
+    }
+    else
+    {
+      ar.AddDomainIntegrator<VectorFEMassIntegrator>(extra_mass);
+    }
+  }
   if (boundary)
   {
     // Deliberately unmatched real/imaginary boundary field layouts.
@@ -2529,13 +2847,32 @@ TEST_CASE("Ordinary driven fine preconditioner activates packed complex QData",
   REQUIRE(coarse);
   REQUIRE(dynamic_cast<const hypre::HypreCSRMatrix *>(coarse->LocalOperator().Real()));
   REQUIRE(IsOriginalComplexWrapper(coarse->LocalOperator()));
+  // The fine and H1 auxiliary operators are packed when they have a pair of real and
+  // imaginary volume leaves, together with their real volume leaves without a partner.
+  // Without any pair (lossless volume or real-valued preconditioner), they keep the
+  // original action.
+  const bool pairs = lossy && !real_pc;
   const auto &aux =
       dynamic_cast<const ComplexParOperator &>(mg->GetFinestAuxiliaryOperator());
-  REQUIRE(IsOriginalComplexWrapper(aux.LocalOperator()));
   const auto &local = fine->LocalOperator();
-  if (!partial_lossy)
+  for (const ComplexOperator *op : {&aux.LocalOperator(), &local})
   {
-    REQUIRE(!IsOriginalComplexWrapper(local) == (lossy && !real_pc));
+    // A rank with no lossy element has no pair: count the packed operators over all ranks,
+    // so that every rank checks the same.
+    long long num_packed = !IsOriginalComplexWrapper(*op);
+    Mpi::GlobalSum(1, &num_packed, Mpi::World());
+    if (!pairs)
+    {
+      REQUIRE(num_packed == 0);
+    }
+    else if (partial_lossy)
+    {
+      REQUIRE(num_packed > 0);
+    }
+    else
+    {
+      REQUIRE(num_packed == Mpi::Size(Mpi::World()));
+    }
   }
   // Assemble independent reference operators and exercise the unchanged borrowed RAP
   // constructor. Numerical agreement is checked against separate real ParOperators below.
@@ -2545,6 +2882,20 @@ TEST_CASE("Ordinary driven fine preconditioner activates packed complex QData",
       dynamic_cast<const ComplexParOperator &>(ref_mg.GetFinestOperator()).LocalOperator();
   ComplexWrapperOperator local_reference(ref_local.Real(), ref_local.Imag());
   CheckPackedActions(local, local_reference);
+  REQUIRE(mg->GetNumAuxiliaryLevels() == ref_mg.GetNumAuxiliaryLevels());
+  for (std::size_t l = 0; l < mg->GetNumAuxiliaryLevels(); l++)
+  {
+    // The H1 diffusion leaves of the auxiliary operators, including the subset pairs with
+    // their complement on partially lossy levels.
+    const auto &aux_level =
+        dynamic_cast<const ComplexParOperator &>(mg->GetAuxiliaryOperatorAtLevel(l))
+            .LocalOperator();
+    const auto &aux_level_ref =
+        dynamic_cast<const ComplexParOperator &>(ref_mg.GetAuxiliaryOperatorAtLevel(l))
+            .LocalOperator();
+    ComplexWrapperOperator aux_reference(aux_level_ref.Real(), aux_level_ref.Imag());
+    CheckPackedActions(aux_level, aux_reference);
+  }
   if (partial_lossy)
   {
     long long num_subsets = 0;
@@ -2617,20 +2968,24 @@ TEST_CASE("Ordinary driven fine preconditioner activates packed complex QData",
   }
 }
 
-TEST_CASE("libCEED packed complex unsupported input fallbacks",
+TEST_CASE("libCEED packed complex input fallbacks",
           "[libCEED][ComplexPacked][Serial][Parallel]")
 {
   if (!PackedTestBackend())
   {
     SKIP("Packed application requires one CPU CEED context and one thread");
   }
-  const auto [name, qdata, h1_space, tensor, scaled, real_only] =
-      GENERATE(table<const char *, bool, bool, bool, bool, bool>(
-          {{"Unassembled quadrature data", false, false, false, false, false},
-           {"Tensor H1 basis", true, true, true, false, false},
-           {"Non-tensor H1 basis", true, true, false, false, false},
-           {"Input with dof multiplicity", true, false, false, true, false},
-           {"Real-only input", true, false, false, false, true}}));
+  const auto [name, qdata, h1_space, tensor, scaled, real_only, extra, extra_imag] =
+      GENERATE(table<const char *, bool, bool, bool, bool, bool, bool, bool>(
+          {{"Unassembled quadrature data", false, false, false, false, false, false, false},
+           {"Tensor H1 basis", true, true, true, false, false, false, false},
+           {"Non-tensor H1 basis", true, true, false, false, false, false, false},
+           {"Non-tensor H1 basis and a real term without a partner", true, true, false,
+            false, false, true, false},
+           {"Non-tensor H1 basis and a second imaginary term", true, true, false, false,
+            false, false, true},
+           {"Input with dof multiplicity", true, false, false, true, false, false, false},
+           {"Real-only input", true, false, false, false, true, false, false}}));
   CAPTURE(name);
   PackedIntegrationSettings settings(3);
   const char *file = tensor ? "fichera-hex.mesh" : "fichera-tet.mesh";
@@ -2642,10 +2997,21 @@ TEST_CASE("libCEED packed complex unsupported input fallbacks",
                                        : static_cast<mfem::FiniteElementCollection *>(&nd));
   auto coeff = BuildCoefficient(mesh, false, CoeffType::Matrix);
   BilinearForm ar(fespace), ai(fespace);
+  auto extra_coeff = BuildCoefficient(mesh, false, CoeffType::Matrix);
+  extra_coeff *= 0.57;
   if (h1_space)
   {
     ar.AddDomainIntegrator<DiffusionIntegrator>(coeff);
     ai.AddDomainIntegrator<DiffusionIntegrator>(coeff);
+    if (extra)
+    {
+      ar.AddDomainIntegrator<DiffusionIntegrator>(extra_coeff);
+    }
+    if (extra_imag)
+    {
+      // The second imaginary term finds no real partner left, and stays in the remainder.
+      ai.AddDomainIntegrator<DiffusionIntegrator>(extra_coeff);
+    }
   }
   else
   {
@@ -2674,7 +3040,10 @@ TEST_CASE("libCEED packed complex unsupported input fallbacks",
     ref_imag.reset();
   }
   auto actual = ceed::CreateComplexOperator(std::move(real), std::move(imag), fespace);
-  REQUIRE(IsOriginalComplexWrapper(*actual));
+  // Non-tensor H1 bases are packed; tensor-product bases, dof multiplicity, unassembled
+  // vector quadrature data, and real-only inputs (no pair to pack) keep the original
+  // action.
+  REQUIRE(IsOriginalComplexWrapper(*actual) == (tensor || scaled || !qdata || real_only));
   ComplexWrapperOperator reference(ref_real.get(), ref_imag.get());
   CheckPackedActions(*actual, reference);
 }

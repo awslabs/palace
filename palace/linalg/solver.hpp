@@ -4,6 +4,7 @@
 #ifndef PALACE_LINALG_SOLVER_HPP
 #define PALACE_LINALG_SOLVER_HPP
 
+#include <limits>
 #include <type_traits>
 #include <mfem.hpp>
 #include "linalg/operator.hpp"
@@ -11,6 +12,14 @@
 
 namespace palace
 {
+
+// Tolerance of Solver.Linear.DropSmallEntries: the entries of a matrix row which are
+// smaller in magnitude than this tolerance times the 2-norm of the row are dropped, except
+// on the diagonal (the rule of mfem::HypreParMatrix::DropSmallEntries). Used by
+// MfemWrapperSolver, and by the sparse direct solvers in complex arithmetic (see
+// ComplexLocalCSR).
+inline constexpr double drop_small_entries_tol =
+    std::numeric_limits<double>::epsilon() * std::numeric_limits<double>::epsilon();
 
 //
 // The base Solver<OperType> class is a templated version of mfem::Solver for operation with
@@ -83,6 +92,14 @@ private:
   // approximation A = Ar + Ai.
   bool complex_matrix = true;
 
+  // Whether the solver is applied to the real-valued block form of a complex-valued system
+  // matrix, of twice the size of the vectors: assembled by SetOperator, or by the caller.
+  bool block_form = false;
+
+  // Whether the real part of the next operator given to SetOperator is the block form,
+  // assembled by the caller.
+  bool caller_block_form = false;
+
   // Whether to drop small entries (< ε) in the sparse system matrix.
   bool drop_small_entries = true;
 
@@ -117,6 +134,10 @@ public:
   // Configure whether or not to use the exact complex-valued system matrix
   // or the real-valued approximation.
   void SetComplexMatrix(bool use_complex) { complex_matrix = use_complex; }
+
+  // Configure whether the operator given to SetOperator is the real-valued block form
+  // [Ar, Ai; Ai, -Ar] of a complex-valued matrix, assembled by the caller as its real part.
+  void SetCallerBlockForm(bool block) { caller_block_form = block; }
 
   void SetInitialGuess(bool guess) override
   {

@@ -13,6 +13,7 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators_all.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 #include "fem/boundary_derived_field_bundle.hpp"
 #include "fem/boundary_physical_trace.hpp"
 #include "fem/coefficient.hpp"
@@ -30,6 +31,7 @@
 #include "models/materialoperator.hpp"
 #include "models/postoperator.hpp"
 #include "models/strattonchu.hpp"
+#include "models/surfacepostoperator.hpp"
 #include "test-helpers.hpp"
 #include "utils/communication.hpp"
 #include "utils/configfile.hpp"
@@ -42,6 +44,10 @@ namespace palace
 
 namespace
 {
+
+// Frequency of the fields for the evaluations of constant materials, which do not depend
+// on it.
+constexpr double fixture_omega = 1.0;
 
 std::unique_ptr<Mesh> LoadTestMesh(MPI_Comm comm, const std::string &file)
 {
@@ -240,15 +246,22 @@ public:
 
 // Build a 3D mesh with two material regions (attribute 1: z < 0.5, vacuum; attribute
 // 2: z >= 0.5, dielectric) and interior boundary elements (attribute 7) added on the
-// material interface at z = 0.5.
-std::unique_ptr<Mesh> MakeInterfaceMesh(MPI_Comm comm, mfem::Element::Type elem_type)
+// material interface at z = 0.5. When enclosed, the mesh has 5 x 5 x 5 elements and
+// attribute 2 is the middle one, so that the interface is closed.
+std::unique_ptr<Mesh> MakeInterfaceMesh(MPI_Comm comm, mfem::Element::Type elem_type,
+                                        bool enclosed = false)
 {
-  mfem::Mesh smesh = mfem::Mesh::MakeCartesian3D(2, 2, 2, elem_type);
+  const int n = enclosed ? 5 : 2;
+  mfem::Mesh smesh = mfem::Mesh::MakeCartesian3D(n, n, n, elem_type);
   for (int e = 0; e < smesh.GetNE(); e++)
   {
     mfem::Vector center(3);
     smesh.GetElementCenter(e, center);
-    smesh.SetAttribute(e, (center(2) < 0.5) ? 1 : 2);
+    const bool inside =
+        enclosed ? (std::max({std::abs(center(0) - 0.5), std::abs(center(1) - 0.5),
+                              std::abs(center(2) - 0.5)}) < 0.1)
+                 : (center(2) >= 0.5);
+    smesh.SetAttribute(e, inside ? 2 : 1);
   }
   // Add interior boundary elements on the material interface.
   for (int f = 0; f < smesh.GetNumFaces(); f++)
@@ -672,8 +685,8 @@ void CheckBoundaryTraceNCUnion(
   Vector expected(legacy.BufferSize()), actual(traced.BufferSize());
   expected.UseDevice(true);
   actual.UseDevice(true);
-  legacy.EvalBuffer(E.Real(), expected);
-  traced.EvalBuffer(E.Real(), actual);
+  legacy.EvalBuffer(E.Real(), fixture_omega, expected);
+  traced.EvalBuffer(E.Real(), fixture_omega, actual);
   REQUIRE(expected.Size() == actual.Size());
   const double *expected_values = expected.HostRead();
   const double *actual_values = actual.HostRead();
@@ -949,7 +962,7 @@ TEST_CASE("SurfaceFunctional Interface Dielectric", "[surfacefunctional][Serial]
     };
     auto legacy = MakeLegacy();
     const double ref = RefSurfaceCoefficientIntegral(pmesh, *legacy, marker);
-    const double val = epr.Eval(E);
+    const double val = epr.Eval(E, fixture_omega);
     CAPTURE(ref, val);
     if (std::abs(ref) > 0.0)
     {
@@ -1073,7 +1086,7 @@ TEST_CASE("SurfaceFunctional Interface Dielectric 2D", "[surfacefunctional][Seri
     };
     auto legacy = MakeLegacy();
     const double ref = RefSurfaceCoefficientIntegral(pmesh, *legacy, marker);
-    const double val = epr.Eval(E);
+    const double val = epr.Eval(E, fixture_omega);
     CAPTURE(ref, val);
     if (std::abs(ref) > 0.0)
     {
@@ -1115,6 +1128,54 @@ TEST_CASE("SurfaceFunctional Interface Dielectric 2D", "[surfacefunctional][Seri
       TestType(type, marker);
     }
   }
+}
+
+TEST_CASE("InterfaceDielectricCoefficient sides of a frequency-dependent material",
+          "[surfacefunctional][Serial]")
+{
+  // A Debye material with ε∞ = μ = 1 above the interface has the light speed of vacuum,
+  // but is not vacuum. The interface with the vacuum below has one vacuum side, also where
+  // the energies of the two sides of an interface are summed: the metal-air energy of the
+  // summed sides is that of the vacuum side alone, as without summing.
+  MPI_Comm comm = MPI_COMM_WORLD;
+  constexpr int order = 2;
+  fem::DefaultIntegrationOrder::p_trial = order;
+  fem::DefaultIntegrationOrder::q_order_jac = true;
+  fem::DefaultIntegrationOrder::q_order_extra_pk = 0;
+  fem::DefaultIntegrationOrder::q_order_extra_qk = 0;
+  auto mesh = MakeInterfaceMesh2D(comm, mfem::Element::QUADRILATERAL);
+  auto &pmesh = mesh->Get();
+  config::MaterialData vacuum, debye;
+  vacuum.attributes = {1};
+  debye.attributes = {2};
+  debye.permittivity_terms.push_back(config::DebyeData{1.0, 0.1});
+  config::PeriodicBoundaryData periodic;
+  MaterialOperator mat_op({vacuum, debye}, periodic, ProblemType::DRIVEN, *mesh);
+  REQUIRE(mat_op.IsVacuum(1));
+  REQUIRE(!mat_op.IsVacuum(2));
+  REQUIRE(mat_op.GetLightSpeedMax(2) >= 1.0 - 1.0e-6);
+
+  mfem::ND_FECollection nd_fec(order, pmesh.Dimension());
+  FiniteElementSpace nd_fespace(*mesh, &nd_fec);
+  GridFunction E(nd_fespace, false);
+  mfem::VectorFunctionCoefficient fr(2,
+                                     [](const mfem::Vector &x, mfem::Vector &v)
+                                     {
+                                       v(0) = std::sin(1.7 * x(1)) + 0.25 * x(0);
+                                       v(1) = std::cos(0.3 + x(0)) + x(1) * x(1);
+                                     });
+  E.Real().ProjectCoefficient(fr);
+  mfem::Array<int> marker(pmesh.bdr_attributes.Max());
+  marker = 0;
+  marker[7 - 1] = 1;
+  const double t_i = 2.0e-3, epsilon_i = 10.0;
+  InterfaceDielectricCoefficient<InterfaceDielectric::MA> summed(E, mat_op, t_i, epsilon_i,
+                                                                 &marker),
+      single(E, mat_op, t_i, epsilon_i);
+  const double energy = RefSurfaceCoefficientIntegral(pmesh, single, marker);
+  REQUIRE(energy > 0.0);
+  CHECK(RefSurfaceCoefficientIntegral(pmesh, summed, marker) ==
+        Catch::Approx(energy).epsilon(1.0e-14));
 }
 
 TEST_CASE("SurfaceFunctional 2D nonconformal mapped subfaces",
@@ -1164,7 +1225,7 @@ TEST_CASE("SurfaceFunctional 2D nonconformal mapped subfaces",
   InterfaceDielectricCoefficient<InterfaceDielectric::DEFAULT> legacy(E, mat_op, t_i,
                                                                       epsilon_i);
   const double ref = RefSurfaceCoefficientIntegral(pmesh, legacy, marker);
-  CHECK(epr.Eval(E) == Catch::Approx(ref).epsilon(1.0e-10));
+  CHECK(epr.Eval(E, fixture_omega) == Catch::Approx(ref).epsilon(1.0e-10));
 }
 
 TEST_CASE_METHOD(test::SharedTempDir,
@@ -1255,12 +1316,15 @@ TEST_CASE_METHOD(test::SharedTempDir,
   mfem::Array<int> marker(pmesh.bdr_attributes.Max());
   marker = 0;
   marker[7 - 1] = 1;
+  // The measured interface energy is the time average of the raw 1/2 t ε |E|² integrand
+  // for the complex mode fields (the domain energy below is likewise time-averaged).
   InterfaceDielectricCoefficient<InterfaceDielectric::SA> legacy(E, mat_op, interface.t,
                                                                  interface.epsilon_r);
-  const double interface_energy = RefSurfaceCoefficientIntegral(pmesh, legacy, marker);
+  const double interface_energy =
+      0.5 * RefSurfaceCoefficientIntegral(pmesh, legacy, marker);
   DomainPostOperator domain_post(iodata.domains.postpro, mat_op, fem_op.GetNDSpace(),
                                  fem_op.GetCurlSpace());
-  const double domain_energy = domain_post.GetElectricFieldEnergy(E);
+  const double domain_energy = domain_post.GetElectricFieldEnergy(E, 0.0);
   const double participation = interface_energy / domain_energy;
 
   const auto &cache = post_op.Cache();
@@ -1394,7 +1458,7 @@ TEST_CASE("SurfaceFunctional Surface Flux", "[surfacefunctional][Serial][GPU]")
       }
     }
 
-    const std::complex<double> val = flux.EvalFlux(E_use, B_use);
+    const std::complex<double> val = flux.EvalFlux(E_use, B_use, fixture_omega);
     CAPTURE(ref.real(), ref.imag(), val.real(), val.imag());
     auto CheckPart = [](double v, double r)
     {
@@ -1756,12 +1820,12 @@ TEST_CASE("SurfaceFunctional Benchmark", "[.][surfacefunctional-bench][Serial][G
                           epsilon_i);
     auto t1 = std::chrono::steady_clock::now();
     const double t_constr = std::chrono::duration<double, std::milli>(t1 - t0).count();
-    auto ceed_path = [&]() { sink = epr.Eval(E); };
+    auto ceed_path = [&]() { sink = epr.Eval(E, fixture_omega); };
 
     // Verify agreement before timing.
     InterfaceDielectricCoefficient<InterfaceDielectric::MA> f(E, mat_op, t_i, epsilon_i);
     const double ref = RefSurfaceCoefficientIntegral(pmesh, f, marker);
-    const double val = epr.Eval(E);
+    const double val = epr.Eval(E, fixture_omega);
     REQUIRE(val == Catch::Approx(ref).epsilon(1.0e-10));
 
     auto [legacy_min, legacy_avg] = TimeIt(legacy, n_reps);
@@ -1993,7 +2057,7 @@ TEST_CASE("SurfaceFunctional Nonconformal Mesh", "[surfacefunctional][Serial][GP
       };
       auto legacy = MakeLegacy();
       const double ref = RefSurfaceCoefficientIntegral(pmesh, *legacy, marker);
-      const double val = epr.Eval(E);
+      const double val = epr.Eval(E, fixture_omega);
       CAPTURE(ref, val);
       CheckPart(val, ref);
     }
@@ -2045,7 +2109,7 @@ TEST_CASE("SurfaceFunctional Nonconformal Mesh", "[surfacefunctional][Serial][GP
         {
           ref.imag(ref_im);
         }
-        const std::complex<double> val = flux.EvalFlux(E_use, B_use);
+        const std::complex<double> val = flux.EvalFlux(E_use, B_use, fixture_omega);
         CAPTURE(ref.real(), ref.imag(), val.real(), val.imag());
         CheckPart(val.real(), ref.real());
         CheckPart(val.imag(), ref.imag());
@@ -2173,7 +2237,7 @@ TEST_CASE("SurfaceFunctional Nonconformal Parallel", "[surfacefunctional][Parall
       };
       auto legacy = MakeLegacy();
       const double ref = RefSurfaceCoefficientIntegral(pmesh, *legacy, marker);
-      const double val = epr.Eval(E);
+      const double val = epr.Eval(E, fixture_omega);
       CAPTURE(ref, val);
       CheckPart(val, ref);
     }
@@ -2198,7 +2262,7 @@ TEST_CASE("SurfaceFunctional Nonconformal Parallel", "[surfacefunctional][Parall
     };
     const std::complex<double> ref(
         MakePowerLegacy(E.Real(), B.Real()) + MakePowerLegacy(E.Imag(), B.Imag()), 0.0);
-    const std::complex<double> val = power.EvalFlux(&E, &B);
+    const std::complex<double> val = power.EvalFlux(&E, &B, fixture_omega);
     CAPTURE(ref.real(), val.real(), val.imag());
     CheckPart(val.real(), ref.real());
     CheckPart(val.imag(), 0.0);
@@ -2303,7 +2367,7 @@ TEST_CASE("PointFieldEvaluator Domain Fields", "[surfacefunctional][Serial][Para
                              E.ParFESpace(), nullptr, viz_scalar, scaling);
     REQUIRE(eval.IsValid());
     mfem::ParGridFunction val(&viz_scalar), ref(&viz_scalar);
-    eval.Eval(&E, nullptr, val);
+    eval.Eval(&E, nullptr, fixture_omega, val);
     EnergyDensityCoefficient<EnergyDensityType::ELECTRIC> legacy(E, mat_op, scaling);
     ref.ProjectCoefficient(legacy);
     CheckField(val, ref);
@@ -2315,7 +2379,7 @@ TEST_CASE("PointFieldEvaluator Domain Fields", "[surfacefunctional][Serial][Para
                              B.ParFESpace(), viz_scalar, scaling);
     REQUIRE(eval.IsValid());
     mfem::ParGridFunction val(&viz_scalar), ref(&viz_scalar);
-    eval.Eval(nullptr, &B, val);
+    eval.Eval(nullptr, &B, fixture_omega, val);
     EnergyDensityCoefficient<EnergyDensityType::MAGNETIC> legacy(B, mat_op, scaling);
     ref.ProjectCoefficient(legacy);
     CheckField(val, ref);
@@ -2327,7 +2391,7 @@ TEST_CASE("PointFieldEvaluator Domain Fields", "[surfacefunctional][Serial][Para
                              E.ParFESpace(), B.ParFESpace(), viz_vector, scaling);
     REQUIRE(eval.IsValid());
     mfem::ParGridFunction val(&viz_vector), ref(&viz_vector);
-    eval.Eval(&E, &B, val);
+    eval.Eval(&E, &B, fixture_omega, val);
     PoyntingVectorCoefficient legacy(E, B, mat_op, scaling);
     ref.ProjectCoefficient(legacy);
     CheckField(val, ref);
@@ -2423,7 +2487,7 @@ TEST_CASE("PointFieldEvaluator Domain Fields 2D",
                              E.ParFESpace(), nullptr, viz_scalar, scaling);
     REQUIRE(eval.IsValid());
     mfem::ParGridFunction val(&viz_scalar), ref(&viz_scalar);
-    eval.Eval(&E, nullptr, val);
+    eval.Eval(&E, nullptr, fixture_omega, val);
     EnergyDensityCoefficient<EnergyDensityType::ELECTRIC> legacy(E, mat_op, scaling);
     ref.ProjectCoefficient(legacy);
     CheckField(val, ref);
@@ -2435,7 +2499,7 @@ TEST_CASE("PointFieldEvaluator Domain Fields 2D",
                              B.ParFESpace(), viz_scalar, 1.0);
     REQUIRE(eval.IsValid());
     mfem::ParGridFunction val(&viz_scalar), ref(&viz_scalar);
-    eval.Eval(nullptr, &B, val);
+    eval.Eval(nullptr, &B, fixture_omega, val);
     mfem::GridFunctionCoefficient legacy_real(&B.Real());
     ref.ProjectCoefficient(legacy_real);
     if (complex)
@@ -2454,7 +2518,7 @@ TEST_CASE("PointFieldEvaluator Domain Fields 2D",
                              B.ParFESpace(), viz_scalar, scaling);
     REQUIRE(eval.IsValid());
     mfem::ParGridFunction val(&viz_scalar), ref(&viz_scalar);
-    eval.Eval(nullptr, &B, val);
+    eval.Eval(nullptr, &B, fixture_omega, val);
     EnergyDensityCoefficient<EnergyDensityType::MAGNETIC> legacy(B, mat_op, scaling);
     ref.ProjectCoefficient(legacy);
     CheckField(val, ref);
@@ -2466,7 +2530,7 @@ TEST_CASE("PointFieldEvaluator Domain Fields 2D",
                              E.ParFESpace(), B.ParFESpace(), viz_vector, scaling);
     REQUIRE(eval.IsValid());
     mfem::ParGridFunction val(&viz_vector), ref(&viz_vector);
-    eval.Eval(&E, &B, val);
+    eval.Eval(&E, &B, fixture_omega, val);
     PoyntingVectorCoefficient legacy(E, B, mat_op, scaling);
     ref.ProjectCoefficient(legacy);
     CheckField(val, ref);
@@ -2571,8 +2635,9 @@ TEST_CASE("SurfaceFunctional FarField", "[surfacefunctional][Serial][Parallel][G
     const auto *fe = nd_fespace.Get().GetBE(i);
     const auto *ir =
         &mfem::IntRules.Get(fe->GetGeomType(), fem::DefaultIntegrationOrder::Get(*T));
-    AddStrattonChuIntegrandAtElement(E, B, mat_op, omega_re, omega_im, r_naughts, *T, *ir,
-                                     integrals_r, integrals_i);
+    AddStrattonChuIntegrandAtElement(E, B, mat_op, mat_op.GetLightSpeed(), omega_re,
+                                     omega_im, r_naughts, *T, *ir, integrals_r,
+                                     integrals_i);
   }
   Mpi::GlobalSum(3 * r_naughts.size(), integrals_r.data()->data(), comm);
   Mpi::GlobalSum(3 * r_naughts.size(), integrals_i.data()->data(), comm);
@@ -2625,13 +2690,155 @@ TEST_CASE("SurfaceFunctional FarField", "[surfacefunctional][Serial][Parallel][G
     }
   }
 
-  // Interior far-field surfaces are invalid. Construction must make that decision
-  // collectively even when only some ranks own elements of the marked interface.
-  marker = 0;
-  marker[7 - 1] = 1;
-  SurfaceFunctional interior_farfield(*mesh, marker, nd_fespace, rt_fespace, mat_op,
-                                      r_naughts);
-  REQUIRE_FALSE(interior_farfield.IsValid());
+  auto CheckScaled = [&](const std::vector<std::array<std::complex<double>, 3>> &a,
+                         const std::vector<std::array<std::complex<double>, 3>> &b,
+                         double scale)
+  {
+    REQUIRE(a.size() == b.size());
+    for (std::size_t d = 0; d < a.size(); d++)
+    {
+      for (int c = 0; c < 3; c++)
+      {
+        CAPTURE(d, c, scale);
+        CHECK(a[d][c].real() ==
+              Catch::Approx(scale * b[d][c].real()).epsilon(1.0e-12).margin(1.0e-14));
+        CHECK(a[d][c].imag() ==
+              Catch::Approx(scale * b[d][c].imag()).epsilon(1.0e-12).margin(1.0e-14));
+      }
+    }
+  };
+
+  // The interior surface z = 1/2 is traced from the side facing the center of the bounding
+  // box of the marked boundary elements, with the normal into it: below the surface with
+  // the face z = 0 (attribute 1) also marked, above with the face z = 1 (attribute 6). The
+  // far fields of the faces add, so removing that of the external face alone leaves the
+  // interior surface. The tangential E is continuous, so with B = 0 the two sides give
+  // opposite far fields.
+  auto Interior = [&](int attr, const GridFunction &E_, const GridFunction &B_)
+  {
+    auto FarField = [&](std::initializer_list<int> attrs)
+    {
+      marker = 0;
+      for (int a : attrs)
+      {
+        marker[a - 1] = 1;
+      }
+      SurfaceFunctional farfield(*mesh, marker, nd_fespace, rt_fespace, mat_op, r_naughts);
+      REQUIRE(farfield.IsValid());
+      return farfield.EvalFarField(E_, B_, {omega_re, omega_im});
+    };
+    auto result = FarField({7, attr});
+    const auto external = FarField({attr});
+    for (std::size_t d = 0; d < result.size(); d++)
+    {
+      for (int c = 0; c < 3; c++)
+      {
+        result[d][c] -= external[d][c];
+      }
+    }
+    return result;
+  };
+  GridFunction E0(nd_fespace, true), B0(rt_fespace, true), B1(rt_fespace, true);
+  E0 = 0.0;
+  B0 = 0.0;
+  const auto result_below = Interior(1, E, B0);
+  CheckScaled(Interior(6, E, B0), result_below, -1.0);
+
+  // With E = 0 and B = x_hat for z < 1/2 only (exact in the RT space, B . n = 0 on the
+  // surface), only the lower side (attribute 1) gives a nonzero far field: the traced
+  // side faces the center.
+  mfem::VectorFunctionCoefficient fb1(3,
+                                      [](const mfem::Vector &x, mfem::Vector &v)
+                                      {
+                                        v = 0.0;
+                                        v(0) = (x(2) < 0.5) ? 1.0 : 0.0;
+                                      });
+  B1.Real().ProjectCoefficient(fb1);
+  B1.Imag() = 0.0;
+  auto Norm = [](const std::vector<std::array<std::complex<double>, 3>> &v)
+  {
+    double norm2 = 0.0;
+    for (const auto &w : v)
+    {
+      for (const auto &c : w)
+      {
+        norm2 += std::norm(c);
+      }
+    }
+    return std::sqrt(norm2);
+  };
+  const double lower = Norm(Interior(1, E0, B1));
+  CHECK(lower > 0.0);
+  CHECK(Norm(Interior(6, E0, B1)) <= 1.0e-12 * lower);
+
+  // The materials are checked at setup: both sides need the same isotropic material, with
+  // the same speed of light.
+  config::BoundaryPostData postpro;
+  postpro.farfield.attributes = {7};
+  postpro.farfield.thetaphis.emplace_back();
+  CHECK_NOTHROW(
+      SurfacePostOperator(postpro, ProblemType::DRIVEN, mat_op, nd_fespace, nd_fespace));
+  for (int side : {1, 2})
+  {
+    CAPTURE(side);
+    auto Check = [&](void (*modify)(config::MaterialData &))
+    {
+      std::vector<config::MaterialData> materials = {vacuum, dielectric};
+      modify(materials[side - 1]);
+      MaterialOperator op(materials, periodic, ProblemType::DRIVEN, *mesh);
+      SurfacePostOperator(postpro, ProblemType::DRIVEN, op, nd_fespace, nd_fespace);
+    };
+    CHECK_THROWS_WITH(Check([](config::MaterialData &m) { m.mu_r.s[0] = 2.0; }),
+                      Catch::Matchers::ContainsSubstring("attribute " +
+                                                         std::to_string(side) + " is not"));
+    CHECK_THROWS_WITH(Check([](config::MaterialData &m) { m.epsilon_r = 4.0; }),
+                      Catch::Matchers::ContainsSubstring(
+                          "attributes 1 and 2 have a different speed of light"));
+    // The same ε∞ and speed of light there, but a permittivity which depends on frequency
+    // on one side only.
+    CHECK_THROWS_WITH(Check(
+                          [](config::MaterialData &m)
+                          {
+                            m.permittivity_terms.push_back(
+                                config::PermittivityPoleData{{-2.0, 5.0}, {1.2, -0.4}});
+                          }),
+                      Catch::Matchers::ContainsSubstring(
+                          "attributes 1 and 2 have a different speed of light or "
+                          "frequency-dependent permittivity"));
+  }
+}
+
+TEST_CASE("SurfacePostOperator FarField materials on some processes",
+          "[surfacefunctional][Serial][Parallel]")
+{
+  // The interior surface bounds the middle element (attribute 2), which only some processes
+  // hold as an element or a face neighbor: all processes must agree on the material check.
+  MPI_Comm comm = MPI_COMM_WORLD;
+  auto elem_type = GENERATE(mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON);
+  CAPTURE(elem_type);
+  auto mesh = MakeInterfaceMesh(comm, elem_type, true);
+  config::MaterialData vacuum, dielectric;
+  vacuum.attributes = {1};
+  dielectric.attributes = {2};
+  config::PeriodicBoundaryData periodic;
+  mfem::ND_FECollection nd_fec(1, 3);
+  FiniteElementSpace nd_fespace(*mesh, &nd_fec);
+  config::BoundaryPostData postpro;
+  postpro.farfield.attributes = {7};
+  postpro.farfield.thetaphis.emplace_back();
+  auto Check = [&](const config::MaterialData &inside)
+  {
+    MaterialOperator mat_op({vacuum, inside}, periodic, ProblemType::DRIVEN, *mesh);
+    SurfacePostOperator(postpro, ProblemType::DRIVEN, mat_op, nd_fespace, nd_fespace);
+  };
+  config::MaterialData anisotropic = dielectric, slow = dielectric;
+  anisotropic.mu_r.s[0] = 2.0;
+  slow.epsilon_r = 4.0;
+  CHECK_NOTHROW(Check(dielectric));
+  CHECK_THROWS_WITH(Check(anisotropic),
+                    Catch::Matchers::ContainsSubstring("attribute 2 is not"));
+  CHECK_THROWS_WITH(Check(slow), Catch::Matchers::ContainsSubstring(
+                                     "attributes 1 and 2 have a different speed of light"));
 }
 
 TEST_CASE("FaceSamplingPlan retains unmatched boundary slots",
@@ -2735,8 +2942,8 @@ TEST_CASE("PointFieldEvaluator Boundary Viz Fields",
     // Constructor warm-up releases its source storage. Two evaluations exercise both
     // the first direct reattachment and the later take-and-repoint path, including MPI
     // face-neighbor exporters on partition interfaces.
-    viz.EvalBuffer(U, buffer);
-    viz.EvalBuffer(U, buffer);
+    viz.EvalBuffer(U, fixture_omega, buffer);
+    viz.EvalBuffer(U, fixture_omega, buffer);
     const double *buf = buffer.HostRead();
     const auto &bases = viz.BufferBases();
     const int component_stride = viz.BufferSize() / 3;
@@ -2788,8 +2995,8 @@ TEST_CASE("PointFieldEvaluator Boundary Viz Fields",
                             kind == PointFieldEvaluator::Kind::ENERGY_M
                         ? B.Real()
                         : E.Real();
-    viz.EvalBuffer(u, buffer);
-    viz.EvalBuffer(u, buffer);
+    viz.EvalBuffer(u, fixture_omega, buffer);
+    viz.EvalBuffer(u, fixture_omega, buffer);
     const double *buf = buffer.HostRead();
     const auto &bases = viz.BufferBases();
     const int component_stride = viz.BufferSize() / nc;
@@ -2848,7 +3055,7 @@ TEST_CASE("PointFieldEvaluator Boundary Viz Fields",
     REQUIRE(poynting.IsValid());
     Vector buffer(poynting.BufferSize());
     buffer.UseDevice(true);
-    poynting.EvalBuffer(&E, &B, buffer);
+    poynting.EvalBuffer(&E, &B, fixture_omega, buffer);
   }
 
   // Trace-backed evaluators consume canonical, side-separated physical ND/RT traces
@@ -2863,8 +3070,8 @@ TEST_CASE("PointFieldEvaluator Boundary Viz Fields",
     Vector expected(legacy.BufferSize()), actual(traced.BufferSize());
     expected.UseDevice(true);
     actual.UseDevice(true);
-    legacy.EvalBuffer(u, expected);
-    traced.EvalBuffer(u, actual);
+    legacy.EvalBuffer(u, fixture_omega, expected);
+    traced.EvalBuffer(u, fixture_omega, actual);
     REQUIRE(expected.Size() == actual.Size());
     const double *expected_values = expected.HostRead();
     const double *actual_values = actual.HostRead();
@@ -2918,9 +3125,10 @@ TEST_CASE("PointFieldEvaluator Boundary Viz Fields",
   // routes exercised by this fixture.
   const long long bundle_count_before = BoundaryDerivedFieldBundle::BundleCount();
   const long long bundle_applies_before = BoundaryDerivedFieldBundle::QFunctionApplyCount();
+  // The independent evaluators apply no time-average weight, so neither does the bundle.
   auto derived_bundle = std::make_shared<BoundaryDerivedFieldBundle>(
       *mesh, marker, mat_op, nd_fespace, rt_fespace, sampling_plan, trace_cache, E, B,
-      scaling, scaling);
+      scaling, scaling, 1.0);
   REQUIRE(derived_bundle->IsValid());
   REQUIRE(BoundaryDerivedFieldBundle::BundleCount() == bundle_count_before + 1);
   PointFieldEvaluator e_bundle(PointFieldEvaluator::Kind::FIELD_E, *mesh, marker,
@@ -2954,8 +3162,8 @@ TEST_CASE("PointFieldEvaluator Boundary Viz Fields",
     Vector expected(s_traced_eval.BufferSize()), actual(s_bundle.BufferSize());
     expected.UseDevice(true);
     actual.UseDevice(true);
-    s_traced_eval.EvalBuffer(&E, &B, expected);
-    s_bundle.EvalBuffer(&E, &B, actual);
+    s_traced_eval.EvalBuffer(&E, &B, fixture_omega, expected);
+    s_bundle.EvalBuffer(&E, &B, fixture_omega, actual);
     const double *expected_values = expected.HostRead();
     const double *actual_values = actual.HostRead();
     REQUIRE(expected.Size() == actual.Size());
@@ -2972,7 +3180,7 @@ TEST_CASE("PointFieldEvaluator Boundary Viz Fields",
   const long long bundle_applies_cached = BoundaryDerivedFieldBundle::QFunctionApplyCount();
   Vector cached(e_bundle.BufferSize());
   cached.UseDevice(true);
-  e_bundle.EvalBuffer(E.Real(), cached);
+  e_bundle.EvalBuffer(E.Real(), fixture_omega, cached);
   REQUIRE(BoundaryDerivedFieldBundle::QFunctionApplyCount() == bundle_applies_cached);
 
   // The complex bundle consumes the separately materialized real/imaginary physical
@@ -3009,9 +3217,10 @@ TEST_CASE("PointFieldEvaluator Boundary Viz Fields",
   const long long complex_phases_before = BoundaryDerivedFieldBundle::PhaseCount();
   const long long complex_phase_avoided_before =
       BoundaryDerivedFieldBundle::AvoidedPhaseOperatorApplyCount();
+  // The independent evaluators apply no time-average weight, so neither does the bundle.
   auto complex_bundle = std::make_shared<BoundaryDerivedFieldBundle>(
       *mesh, marker, mat_op, nd_fespace, rt_fespace, sampling_plan, complex_trace_cache,
-      E_complex, B_complex, scaling, scaling);
+      E_complex, B_complex, scaling, scaling, 1.0);
   REQUIRE(complex_bundle->IsValid());
   REQUIRE(complex_bundle->BatchesComplexPhases(E_complex.Real(), B_complex.Real()));
   REQUIRE(complex_bundle->BatchesComplexPhases(E_complex.Imag(), B_complex.Imag()));
@@ -3082,13 +3291,13 @@ TEST_CASE("PointFieldEvaluator Boundary Viz Fields",
     actual.UseDevice(true);
     if (single_source)
     {
-      traced.EvalBuffer(*single_source, expected);
-      bundled.EvalBuffer(*single_source, actual);
+      traced.EvalBuffer(*single_source, fixture_omega, expected);
+      bundled.EvalBuffer(*single_source, fixture_omega, actual);
     }
     else
     {
-      traced.EvalBuffer(&E_complex, &B_complex, expected);
-      bundled.EvalBuffer(&E_complex, &B_complex, actual);
+      traced.EvalBuffer(&E_complex, &B_complex, fixture_omega, expected);
+      bundled.EvalBuffer(&E_complex, &B_complex, fixture_omega, actual);
     }
     REQUIRE(expected.Size() == actual.Size());
     const double *expected_values = expected.HostRead();
@@ -3127,8 +3336,8 @@ TEST_CASE("PointFieldEvaluator Boundary Viz Fields",
     Vector expected(s_legacy_eval.BufferSize()), actual(s_traced_eval.BufferSize());
     expected.UseDevice(true);
     actual.UseDevice(true);
-    s_legacy_eval.EvalBuffer(&E, &B, expected);
-    s_traced_eval.EvalBuffer(&E, &B, actual);
+    s_legacy_eval.EvalBuffer(&E, &B, fixture_omega, expected);
+    s_traced_eval.EvalBuffer(&E, &B, fixture_omega, actual);
     const double *expected_values = expected.HostRead();
     const double *actual_values = actual.HostRead();
     for (int i = 0; i < expected.Size(); i++)
@@ -3147,7 +3356,7 @@ TEST_CASE("PointFieldEvaluator Boundary Viz Fields",
   trace_cache->Invalidate();
   Vector regenerated(e_traced.BufferSize());
   regenerated.UseDevice(true);
-  e_traced.EvalBuffer(E.Real(), regenerated);
+  e_traced.EvalBuffer(E.Real(), fixture_omega, regenerated);
   REQUIRE(BoundaryPhysicalTraceCache::OperatorApplyCount() > applies_before_invalidate);
 
   // A direct boundary evaluator retains the existing API and constructs a private plan.
@@ -3166,8 +3375,8 @@ TEST_CASE("PointFieldEvaluator Boundary Viz Fields",
   Vector private_buffer(private_eval.BufferSize()), shared_buffer(shared_eval.BufferSize());
   private_buffer.UseDevice(true);
   shared_buffer.UseDevice(true);
-  private_eval.EvalBuffer(E.Real(), private_buffer);
-  shared_eval.EvalBuffer(E.Real(), shared_buffer);
+  private_eval.EvalBuffer(E.Real(), fixture_omega, private_buffer);
+  shared_eval.EvalBuffer(E.Real(), fixture_omega, shared_buffer);
   REQUIRE(private_buffer.Size() == shared_buffer.Size());
   const double *private_values = private_buffer.HostRead();
   const double *shared_values = shared_buffer.HostRead();
@@ -3444,6 +3653,403 @@ TEST_CASE("FaceNbrFieldExchange", "[surfacefunctional][Serial][Parallel][GPU]")
       }
     }
   }
+}
+
+TEST_CASE("Boundary outputs of a frequency-dependent dielectric",
+          "[surfacefunctional][frequencydependent][Serial][Parallel][GPU]")
+{
+  // The surface charge and electric energy density of a frequency-dependent dielectric
+  // (damped Lorentz: lossy, and an oscillator whose stored energy W differs from Re ε) at
+  // each frequency equal those of the constant material with the same
+  // complex permittivity ε(iω) (Re{ε}, tan δ = −Im{ε}/Re{ε}) and of the constant material
+  // with the stored-energy permittivity W(ω), respectively: from the fused bundle, which
+  // keeps the charge and energy tables separate, and from the independent trace-backed
+  // evaluators. Frequencies change and return, with retained traces and packed results.
+  MPI_Comm comm = MPI_COMM_WORLD;
+  auto elem_type = GENERATE(mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON);
+  constexpr int order = 1;
+  CAPTURE(elem_type);
+  fem::DefaultIntegrationOrder::p_trial = order;
+  fem::DefaultIntegrationOrder::q_order_jac = true;
+  fem::DefaultIntegrationOrder::q_order_extra_pk = 0;
+  fem::DefaultIntegrationOrder::q_order_extra_qk = 0;
+  auto mesh = MakeInterfaceMesh(comm, elem_type);
+  auto &pmesh = mesh->Get();
+
+  constexpr double eps_inf = 2.5, delta = 1.5, w0 = 1.0, gamma = 0.2;
+  auto chi = [=](double w)
+  {
+    const std::complex<double> s(0.0, w);
+    return delta * w0 * w0 / (s * s + gamma * s + w0 * w0);
+  };
+  // The kinetic energy of the oscillator adds to Re χ (permittivitymodel.hpp).
+  auto w_stored = [=](double w)
+  {
+    return delta * w0 * w0 * (w * w + w0 * w0) /
+           ((w0 * w0 - w * w) * (w0 * w0 - w * w) + gamma * gamma * w * w);
+  };
+  config::MaterialData vacuum, dielectric;
+  vacuum.attributes = {1};
+  dielectric.attributes = {2};
+  dielectric.epsilon_r.s = {eps_inf, eps_inf, eps_inf};
+  dielectric.mu_r.s = {1.4, 1.4, 1.4};
+  dielectric.permittivity_terms = {config::LorentzData{delta, w0, gamma}};
+  config::PeriodicBoundaryData periodic;
+  MaterialOperator mat_op({vacuum, dielectric}, periodic, ProblemType::DRIVEN, *mesh);
+  auto ConstantOp = [&](double eps_r, double tandelta)
+  {
+    auto constant = dielectric;
+    constant.permittivity_terms.clear();
+    constant.epsilon_r.s = {eps_r, eps_r, eps_r};
+    constant.tandelta.s = {tandelta, tandelta, tandelta};
+    return std::make_unique<MaterialOperator>(std::vector{vacuum, constant}, periodic,
+                                              ProblemType::DRIVEN, *mesh);
+  };
+
+  mfem::ND_FECollection nd_fec(order, 3);
+  mfem::RT_FECollection rt_fec(order - 1, 3);
+  FiniteElementSpace nd_fespace(*mesh, &nd_fec), rt_fespace(*mesh, &rt_fec);
+  GridFunction E(nd_fespace, true), B(rt_fespace, true);
+  mfem::VectorFunctionCoefficient fer(3,
+                                      [](const mfem::Vector &x, mfem::Vector &v)
+                                      {
+                                        const double vals[3] = {std::sin(x(1)) + x(2), x(0),
+                                                                1.0 + x(1)};
+                                        v.SetSize(3);
+                                        for (int d = 0; d < 3; d++)
+                                        {
+                                          v(d) = vals[d];
+                                        }
+                                      });
+  mfem::VectorFunctionCoefficient fei(3,
+                                      [](const mfem::Vector &x, mfem::Vector &v)
+                                      {
+                                        const double vals[3] = {x(2) - 0.4, std::cos(x(0)),
+                                                                0.3 * x(1)};
+                                        v.SetSize(3);
+                                        for (int d = 0; d < 3; d++)
+                                        {
+                                          v(d) = vals[d];
+                                        }
+                                      });
+  mfem::VectorFunctionCoefficient fb(3,
+                                     [](const mfem::Vector &x, mfem::Vector &v)
+                                     {
+                                       const double vals[3] = {x(1), 0.5, -x(0)};
+                                       v.SetSize(3);
+                                       for (int d = 0; d < 3; d++)
+                                       {
+                                         v(d) = vals[d];
+                                       }
+                                     });
+  E.Real().ProjectCoefficient(fer);
+  E.Imag().ProjectCoefficient(fei);
+  B.Real().ProjectCoefficient(fb);
+  B.Imag().ProjectCoefficient(fb);
+  for (auto *u : {&E.Real(), &E.Imag(), &B.Real(), &B.Imag()})
+  {
+    u->ExchangeFaceNbrData();
+  }
+  const int bdr_attr_max = pmesh.bdr_attributes.Size() ? pmesh.bdr_attributes.Max() : 0;
+  mfem::Array<int> marker(bdr_attr_max);
+  marker = 1;
+  const int lod = order;
+  const double scaling = 1.3;
+  auto plan = std::make_shared<FaceSamplingPlan>(*mesh, marker, lod);
+
+  struct Outputs
+  {
+    std::shared_ptr<BoundaryPhysicalTraceCache> traces;
+    std::shared_ptr<BoundaryDerivedFieldBundle> bundle;
+    std::unique_ptr<PointFieldEvaluator> q_bundle, ue_bundle, q, q_imag, ue;
+  };
+  auto Make = [&](const MaterialOperator &op)
+  {
+    Outputs out;
+    out.traces = std::make_shared<BoundaryPhysicalTraceCache>(*mesh, marker, plan);
+    // The independent evaluators apply no time-average weight, so neither does the bundle.
+    out.bundle = std::make_shared<BoundaryDerivedFieldBundle>(*mesh, marker, op, nd_fespace,
+                                                              rt_fespace, plan, out.traces,
+                                                              E, B, scaling, scaling, 1.0);
+    REQUIRE(out.bundle->IsValid());
+    out.q_bundle = std::make_unique<PointFieldEvaluator>(
+        PointFieldEvaluator::Kind::FLUX_Q, *mesh, marker, nd_fespace, op, lod, scaling,
+        plan, out.traces, out.bundle);
+    out.ue_bundle = std::make_unique<PointFieldEvaluator>(
+        PointFieldEvaluator::Kind::ENERGY_E, *mesh, marker, nd_fespace, op, lod, scaling,
+        plan, out.traces, out.bundle);
+    out.q = std::make_unique<PointFieldEvaluator>(PointFieldEvaluator::Kind::FLUX_Q, *mesh,
+                                                  marker, nd_fespace, op, lod, scaling,
+                                                  plan, out.traces);
+    out.q_imag = std::make_unique<PointFieldEvaluator>(
+        PointFieldEvaluator::Kind::FLUX_Q, *mesh, marker, nd_fespace, op, lod, scaling,
+        plan, out.traces, nullptr, true);
+    out.ue = std::make_unique<PointFieldEvaluator>(PointFieldEvaluator::Kind::ENERGY_E,
+                                                   *mesh, marker, nd_fespace, op, lod,
+                                                   scaling, plan, out.traces);
+    return out;
+  };
+  auto Compare = [](const Vector &actual, const Vector &expected)
+  {
+    REQUIRE(actual.Size() == expected.Size());
+    const double *a = actual.HostRead(), *e = expected.HostRead();
+    double max_e = 0.0;
+    for (int i = 0; i < actual.Size(); i++)
+    {
+      CAPTURE(i, a[i], e[i]);
+      CHECK(a[i] == Catch::Approx(e[i]).epsilon(1.0e-10).margin(1.0e-12));
+      max_e = std::max(max_e, std::abs(e[i]));
+    }
+    return max_e;
+  };
+  // Q_s_real and Q_s_imag from the independent evaluators, as written by PostOperator.
+  auto Charge = [&](Outputs &out, bool imaginary_phase, double omega, Vector &buffer)
+  {
+    Vector cross(out.q->BufferSize());
+    cross.UseDevice(true);
+    out.q->EvalBuffer(imaginary_phase ? E.Imag() : E.Real(), omega, buffer);
+    out.q_imag->EvalBuffer(imaginary_phase ? E.Real() : E.Imag(), omega, cross);
+    buffer.Add(imaginary_phase ? 1.0 : -1.0, cross);
+  };
+
+  auto fd = Make(mat_op);
+  for (double omega : {0.4, 3.0, 0.4})
+  {
+    CAPTURE(omega);
+    const std::complex<double> eps = eps_inf + chi(omega);
+    const double W = eps_inf + w_stored(omega);
+    REQUIRE(std::abs(W - eps.real()) > 0.1 * W);  // Distinguishes W from Re ε
+    auto charge_op = ConstantOp(eps.real(), -eps.imag() / eps.real());
+    auto energy_op = ConstantOp(W, 0.0);
+    auto charge = Make(*charge_op);
+    auto energy = Make(*energy_op);
+    // No invalidation: the fields keep their addresses and values, so the traces and the
+    // bundle's packed results stay cached, and the frequency alone must refresh the
+    // material-dependent results.
+    const int n = fd.q_bundle->BufferSize();
+    Vector actual(n), expected(n);
+    actual.UseDevice(true);
+    expected.UseDevice(true);
+    for (bool imaginary_phase : {false, true})
+    {
+      const auto &e = imaginary_phase ? E.Imag() : E.Real();
+      charge.q_bundle->EvalBuffer(e, omega, expected);
+      fd.q_bundle->EvalBuffer(e, omega, actual);
+      CHECK(Compare(actual, expected) > 0.0);
+      Charge(fd, imaginary_phase, omega, actual);
+      Compare(actual, expected);
+    }
+    energy.ue_bundle->EvalBuffer(E, omega, expected);
+    fd.ue_bundle->EvalBuffer(E, omega, actual);
+    CHECK(Compare(actual, expected) > 0.0);
+    fd.ue->EvalBuffer(E, omega, actual);
+    Compare(actual, expected);
+    // The same frequency keeps the cached packed results of the bundle.
+    const auto applies = BoundaryDerivedFieldBundle::QFunctionApplyCount();
+    fd.ue_bundle->EvalBuffer(E, omega, actual);
+    CHECK(BoundaryDerivedFieldBundle::QFunctionApplyCount() == applies);
+  }
+  CHECK(fd.bundle->Supports(PointFieldKind::ENERGY_E, &nd_fespace.Get()));
+
+  // A dielectric without a stored electric energy (a RAW −0.5/(s + 1) compensated by a
+  // typed Debye 1/(1 + s)): the bundle does not support U_e, and neither its direct copy
+  // nor its registered slice exposes the packed placeholder. A boundary U_e evaluator
+  // given the bundle falls back to the independent one, which errors for the stored
+  // energy. The surface charge, U_m, and S of the bundle are unaffected.
+  auto compensated = dielectric;
+  compensated.permittivity_terms = {config::DebyeData{1.0, 1.0},
+                                    config::PermittivityPoleData{-1.0, -0.5}};
+  MaterialOperator unavailable_op({vacuum, compensated}, periodic, ProblemType::DRIVEN,
+                                  *mesh);
+  REQUIRE_FALSE(unavailable_op.HasStoredElectricEnergy());
+  auto none = Make(unavailable_op);
+  CHECK_FALSE(none.bundle->Supports(PointFieldKind::ENERGY_E, &nd_fespace.Get()));
+  CHECK(none.bundle->Supports(PointFieldKind::FLUX_Q, &nd_fespace.Get()));
+  CHECK(none.bundle->Supports(PointFieldKind::ENERGY_M, &rt_fespace.Get()));
+  CHECK(none.bundle->Supports(PointFieldKind::POYNTING, &nd_fespace.Get(),
+                              &rt_fespace.Get()));
+  PointFieldEvaluator um_bundle(PointFieldEvaluator::Kind::ENERGY_M, *mesh, marker,
+                                rt_fespace, unavailable_op, lod, scaling, plan, none.traces,
+                                none.bundle),
+      um(PointFieldEvaluator::Kind::ENERGY_M, *mesh, marker, rt_fespace, unavailable_op,
+         lod, scaling, plan, none.traces),
+      s_bundle(PointFieldEvaluator::Kind::POYNTING, *mesh, marker, nd_fespace, rt_fespace,
+               unavailable_op, lod, scaling, plan, none.traces, none.bundle),
+      s_eval(PointFieldEvaluator::Kind::POYNTING, *mesh, marker, nd_fespace, rt_fespace,
+             unavailable_op, lod, scaling, plan, none.traces);
+  const double omega = 0.4;
+  {
+    Vector buffer(none.bundle->BufferSize(PointFieldKind::ENERGY_E));
+    buffer.UseDevice(true);
+    // Constant sources: a Vector source also converts to the flag of the other overload.
+    const Vector &Er = E.Real(), &Br = B.Real();
+    CHECK_THROWS(none.bundle->Copy(PointFieldKind::ENERGY_E, Er, omega, buffer));
+    CHECK_THROWS(none.bundle->Copy(PointFieldKind::ENERGY_E, Er, Br, omega, buffer));
+    CHECK_THROWS(none.bundle->RegisteredSlice(PointFieldKind::ENERGY_E));
+    // The fallback U_e evaluator requires the stored energy at the frequency, and has no
+    // value without it.
+    CHECK_THROWS(none.ue_bundle->EvalBuffer(E, omega, buffer));
+    CHECK_THROWS(none.ue->EvalBuffer(E, omega, buffer));
+  }
+  {
+    const std::complex<double> eps = eps_inf +
+                                     1.0 / (1.0 + std::complex<double>(0.0, omega)) -
+                                     0.5 / (std::complex<double>(0.0, omega) + 1.0);
+    auto charge_op = ConstantOp(eps.real(), -eps.imag() / eps.real());
+    auto charge = Make(*charge_op);
+    const int n = none.q_bundle->BufferSize();
+    Vector actual(n), expected(n);
+    actual.UseDevice(true);
+    expected.UseDevice(true);
+    for (bool imaginary_phase : {false, true})
+    {
+      const auto &e = imaginary_phase ? E.Imag() : E.Real();
+      charge.q_bundle->EvalBuffer(e, omega, expected);
+      none.q_bundle->EvalBuffer(e, omega, actual);
+      CHECK(Compare(actual, expected) > 0.0);
+      Charge(none, imaginary_phase, omega, actual);
+      Compare(actual, expected);
+    }
+  }
+  {
+    Vector actual(um.BufferSize()), expected(um.BufferSize());
+    actual.UseDevice(true);
+    expected.UseDevice(true);
+    um.EvalBuffer(B, omega, expected);
+    um_bundle.EvalBuffer(B, omega, actual);
+    CHECK(Compare(actual, expected) > 0.0);
+  }
+  {
+    Vector actual(s_eval.BufferSize()), expected(s_eval.BufferSize());
+    actual.UseDevice(true);
+    expected.UseDevice(true);
+    s_eval.EvalBuffer(&E, &B, omega, expected);
+    s_bundle.EvalBuffer(&E, &B, omega, actual);
+    CHECK(Compare(actual, expected) > 0.0);
+  }
+}
+
+TEST_CASE("Far field of a frequency-dependent exterior medium",
+          "[surfacefunctional][frequencydependent][Serial][Parallel][GPU]")
+{
+  // The far field of a homogeneous, isotropic, lossless exterior uses its wave speed at
+  // Re ε(i Re ω): equal to that of the constant material Re ε at each frequency, with the
+  // complex ω in k, in the libCEED functional and the legacy integrand. A medium with
+  // Re ε ≤ 0 has no propagating far field and is an error.
+  MPI_Comm comm = MPI_COMM_WORLD;
+  constexpr int order = 1;
+  fem::DefaultIntegrationOrder::p_trial = order;
+  fem::DefaultIntegrationOrder::q_order_jac = true;
+  fem::DefaultIntegrationOrder::q_order_extra_pk = 0;
+  fem::DefaultIntegrationOrder::q_order_extra_qk = 0;
+  auto mesh = MakeInterfaceMesh(comm, mfem::Element::TETRAHEDRON);
+  auto &pmesh = mesh->Get();
+  constexpr double eps_inf = 2.0, wp = 3.0, gamma = 0.5;  // Drude
+  config::MaterialData medium;
+  medium.attributes = {1, 2};
+  medium.epsilon_r.s = {eps_inf, eps_inf, eps_inf};
+  medium.permittivity_terms = {config::DrudeData{wp, gamma}};
+  config::PeriodicBoundaryData periodic;
+  MaterialOperator mat_op({medium}, periodic, ProblemType::DRIVEN, *mesh);
+
+  mfem::ND_FECollection nd_fec(order, 3);
+  mfem::RT_FECollection rt_fec(order - 1, 3);
+  FiniteElementSpace nd_fespace(*mesh, &nd_fec), rt_fespace(*mesh, &rt_fec);
+  GridFunction E(nd_fespace, true), B(rt_fespace, true);
+  mfem::VectorFunctionCoefficient fe(3,
+                                     [](const mfem::Vector &x, mfem::Vector &v)
+                                     {
+                                       const double vals[3] = {std::sin(x(1)), x(0) + 0.2,
+                                                               1.0 - x(2)};
+                                       v.SetSize(3);
+                                       for (int d = 0; d < 3; d++)
+                                       {
+                                         v(d) = vals[d];
+                                       }
+                                     });
+  mfem::VectorFunctionCoefficient fb(3,
+                                     [](const mfem::Vector &x, mfem::Vector &v)
+                                     {
+                                       const double vals[3] = {x(1) - 0.3, 0.5,
+                                                               std::cos(x(0))};
+                                       v.SetSize(3);
+                                       for (int d = 0; d < 3; d++)
+                                       {
+                                         v(d) = vals[d];
+                                       }
+                                     });
+  E.Real().ProjectCoefficient(fe);
+  E.Imag().ProjectCoefficient(fb);
+  B.Real().ProjectCoefficient(fb);
+  B.Imag().ProjectCoefficient(fe);
+  const int bdr_attr_max = pmesh.bdr_attributes.Size() ? pmesh.bdr_attributes.Max() : 0;
+  mfem::Array<int> marker(bdr_attr_max);
+  marker = 0;
+  marker[1 - 1] = 1;  // Exterior boundary (z = 0)
+  std::vector<std::array<double, 3>> r_naughts = {{0.0, 0.6, 0.8}, {0.6, 0.0, -0.8}};
+  SurfaceFunctional farfield(*mesh, marker, nd_fespace, rt_fespace, mat_op, r_naughts);
+  REQUIRE(farfield.IsValid());
+  for (std::complex<double> omega :
+       {std::complex<double>(4.0, 0.1), {6.0, 0.0}, {4.0, 0.1}})
+  {
+    CAPTURE(omega);
+    const double eps = (eps_inf + wp * wp /
+                                      (std::complex<double>(0.0, omega.real()) *
+                                       (std::complex<double>(0.0, omega.real()) + gamma)))
+                           .real();
+    REQUIRE(eps > 0.0);
+    auto constant = medium;
+    constant.permittivity_terms.clear();
+    constant.epsilon_r.s = {eps, eps, eps};
+    MaterialOperator constant_op({constant}, periodic, ProblemType::DRIVEN, *mesh);
+    SurfaceFunctional reference(*mesh, marker, nd_fespace, rt_fespace, constant_op,
+                                r_naughts);
+    const auto expected = reference.EvalFarField(E, B, omega);
+    const auto actual = farfield.EvalFarField(E, B, omega);
+    // The legacy integrand with the evaluated light speed of the exterior.
+    std::vector<std::array<double, 3>> legacy_r(r_naughts.size()),
+        legacy_i(r_naughts.size());
+    const auto c0 = mat_op.EvaluateLightSpeed(omega.real(), {0});
+    for (int i = 0; i < pmesh.GetNBE(); i++)
+    {
+      if (!marker[pmesh.GetBdrAttribute(i) - 1])
+      {
+        continue;
+      }
+      auto *T = const_cast<mfem::ParMesh &>(pmesh).GetBdrElementTransformation(i);
+      const auto *ir = &mfem::IntRules.Get(nd_fespace.Get().GetBE(i)->GetGeomType(),
+                                           fem::DefaultIntegrationOrder::Get(*T));
+      AddStrattonChuIntegrandAtElement(E, B, mat_op, c0, omega.real(), omega.imag(),
+                                       r_naughts, *T, *ir, legacy_r, legacy_i);
+    }
+    Mpi::GlobalSum(3 * r_naughts.size(), legacy_r.data()->data(), comm);
+    Mpi::GlobalSum(3 * r_naughts.size(), legacy_i.data()->data(), comm);
+    for (std::size_t d = 0; d < r_naughts.size(); d++)
+    {
+      const auto &r = r_naughts[d];
+      const auto &Ir = legacy_r[d];
+      const auto &Ii = legacy_i[d];
+      const std::array<double, 3> cr = {r[1] * Ir[2] - r[2] * Ir[1],
+                                        r[2] * Ir[0] - r[0] * Ir[2],
+                                        r[0] * Ir[1] - r[1] * Ir[0]};
+      const std::array<double, 3> ci = {r[1] * Ii[2] - r[2] * Ii[1],
+                                        r[2] * Ii[0] - r[0] * Ii[2],
+                                        r[0] * Ii[1] - r[1] * Ii[0]};
+      for (int c = 0; c < 3; c++)
+      {
+        CAPTURE(d, c);
+        CHECK(actual[d][c].real() ==
+              Catch::Approx(expected[d][c].real()).epsilon(1.0e-12).margin(1.0e-14));
+        CHECK(actual[d][c].imag() ==
+              Catch::Approx(expected[d][c].imag()).epsilon(1.0e-12).margin(1.0e-14));
+        CHECK(cr[c] ==
+              Catch::Approx(expected[d][c].real()).epsilon(1.0e-10).margin(1.0e-14));
+        CHECK(ci[c] ==
+              Catch::Approx(expected[d][c].imag()).epsilon(1.0e-10).margin(1.0e-14));
+      }
+    }
+  }
+  CHECK_THROWS(farfield.EvalFarField(E, B, {1.0, 0.0}));  // Re ε(i) < 0
 }
 
 }  // namespace palace

@@ -12,6 +12,7 @@
 #include "linalg/eps.hpp"
 #include "linalg/ksp.hpp"
 #include "linalg/operator.hpp"
+#include "linalg/solver.hpp"
 #include "linalg/vector.hpp"
 #include "models/modeoperatorassembly.hpp"
 #include "models/waveportreducedmodel.hpp"
@@ -21,13 +22,10 @@ namespace palace
 {
 
 class BoundaryModeOperator;
-class FarfieldBoundaryOperator;
 class FiniteElementSpace;
 class FiniteElementSpaceHierarchy;
 class MaterialOperator;
-class SurfaceConductivityOperator;
-class SurfaceImpedanceOperator;
-class SurfaceRationalImpedanceOperator;
+class SurfaceTerms;
 
 template <OperatorType OperType>
 class BlockDiagonalPreconditioner;
@@ -68,11 +66,7 @@ public:
   // port ranks; pass MPI_COMM_NULL to fall back to the FE space comm. For 3D wave port
   // submeshes `normal` is the outward surface normal.
   ModeEigenSolver(const MaterialOperator &mat_op, const mfem::Vector *normal,
-                  SurfaceImpedanceOperator &surf_z_op,
-                  FarfieldBoundaryOperator &farfield_op,
-                  SurfaceConductivityOperator &surf_sigma_op,
-                  SurfaceRationalImpedanceOperator &surf_rz_op,
-                  const FiniteElementSpace &nd_fespace,
+                  SurfaceTerms &surface_terms, const FiniteElementSpace &nd_fespace,
                   const FiniteElementSpace &h1_fespace,
                   const mfem::Array<int> &dbc_tdof_list, int num_modes, int num_vec,
                   double eig_tol, EigenvalueSolver::WhichType which_eig,
@@ -97,9 +91,10 @@ public:
   // and return num_converged = 0. omega may be complex (eigenmode nonlinear solve, where
   // the cross-section EVP is solved at the genuinely complex eigenvalue ω = -i·λ); the
   // shift sigma stays real (a pure algebraic centering). For real omega (imag = 0) the
-  // assembly and solve reduce bit-for-bit to the real-frequency form.
-  SolveResult Solve(std::complex<double> omega, double sigma,
-                    const ComplexVector *initial_space = nullptr);
+  // assembly and solve reduce bit-for-bit to the real-frequency form. Every exact solve
+  // starts from the same vector, so its result depends on omega and sigma only, not on the
+  // solves before it.
+  SolveResult Solve(std::complex<double> omega, double sigma);
 
   // Collect exact real-frequency eigenvectors for a per-port reduced model. Reduced
   // evaluation remains disabled until EnableReducedModel is called, so adaptive offline
@@ -109,7 +104,10 @@ public:
   // Enable guarded Rayleigh-Ritz evaluation for subsequent real-frequency solves. The
   // reduced tolerance is derived conservatively from the adaptive driven tolerance and
   // the configured eigensolver tolerance. Complex-frequency solves always remain exact.
-  void EnableReducedModel(double adaptive_tol);
+  // With basis_limit_factor > 0, the reduced model is only used with a basis of at most
+  // basis_limit_factor·√N vectors for N unknowns, which also caps its online enrichment:
+  // otherwise, all solves are exact.
+  void EnableReducedModel(double adaptive_tol, double basis_limit_factor = 0.0);
 
   const ReducedModelStats &GetReducedModelStats() const
   {
@@ -122,7 +120,8 @@ public:
   void GetEigenvector(int i, ComplexVector &x) const;
   double GetError(int i, EigenvalueSolver::ErrorType type) const;
 
-  // Propagation constant kn for mode i, recovered from the shift of the most recent Solve.
+  // Propagation constant kn for mode i, recovered from the shift of the most recent Solve,
+  // on the branch of mode_assembly::PropagationConstant (decaying below cutoff).
   std::complex<double> GetPropagationConstant(int i) const;
 
   // Heuristic classifier: |Im kn| < 0.1*|Re kn| and Re kn > 0.
@@ -155,10 +154,7 @@ private:
   // Outward surface normal for the WavePort submesh path (null for BoundaryMode). Only the
   // operator model uses its value; the solver uses it to distinguish the two paths.
   const mfem::Vector *normal;
-  SurfaceImpedanceOperator &surf_z_op;
-  FarfieldBoundaryOperator &farfield_op;
-  SurfaceConductivityOperator &surf_sigma_op;
-  SurfaceRationalImpedanceOperator &surf_rz_op;
+  SurfaceTerms &surface_terms;
 
   // References to FE spaces (not owned). Finest level of bmo's hierarchies when set.
   const FiniteElementSpace &nd_fespace;
@@ -177,8 +173,15 @@ private:
   // Cached FE space sizes.
   int nd_size, h1_size;
 
-  // Parameters from the latest exact assembly (also used for one-time ROM validation).
+  // Initial space of every exact solve: ones on the unknowns of the tangential field which
+  // are not essential.
+  ComplexVector v0;
+
+  // Shift and frequency of the most recent Solve.
   double sigma_cached = 0.0;
+  std::complex<double> omega_cached = 0.0;
+
+  // Parameters from the latest exact assembly (also used for one-time ROM validation).
   std::complex<double> last_assembled_omega = 0.0;
   double last_assembled_sigma = 0.0;
 
@@ -206,15 +209,16 @@ private:
   std::unique_ptr<EigenvalueSolver> eigen;
   std::unique_ptr<ComplexKspSolver> ksp;
 
+  // The sparse direct preconditioner of ksp without multigrid, which is given direct_pc_op.
+  MfemWrapperSolver<ComplexOperator> *direct_pc = nullptr;
+  bool direct_pc_block_form = false;
+
   // Communicator used by the eigensolver. For wave ports this is the sub-communicator of
   // ranks owning port unknowns, not the parent FE-space communicator.
   MPI_Comm solver_comm = MPI_COMM_NULL;
 
   // Wave-port-only projection/training state is isolated from the exact eigensolver.
   std::unique_ptr<WavePortReducedModel> reduced_model;
-
-  // Best portable single-vector initial space for subsequent exact solves.
-  ComplexVector warm_start;
 
   // Permutation that maps external mode index to eigensolver index, sorted by ascending
   // |kn - kn_target| (see mode_assembly::TargetDistance). This ensures consistent mode

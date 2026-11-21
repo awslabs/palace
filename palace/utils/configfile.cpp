@@ -10,11 +10,14 @@
 #include <numbers>
 #include <sstream>
 #include <string_view>
+#include <type_traits>
+#include <variant>
 #include <fmt/format.h>
 #include <fmt/ranges.h>
 #include <mfem.hpp>
 #include <nlohmann/json.hpp>
 
+#include "permittivitymodel.hpp"
 #include "units.hpp"
 #include "utils/constants.hpp"
 #include "utils/enum_string.hpp"
@@ -97,6 +100,34 @@ void ParseSymmetricMatrixData(const json &mat, const std::string &name,
     data.s.fill(s);
   }
   data.v = mat.value("MaterialAxes", data.v);
+}
+
+std::complex<double> ParseComplexNumber(const json &data, const char *name)
+{
+  double real = 0.0, imag = 0.0;
+  if (data.is_number())
+  {
+    real = data.get<double>();
+  }
+  else
+  {
+    MFEM_VERIFY(
+        data.is_array() && data.size() == 2 && data[0].is_number() && data[1].is_number(),
+        "Material PoleResidue \"" << name << "\" must be a number or [real, imag]!");
+    real = data[0].get<double>();
+    imag = data[1].get<double>();
+  }
+  MFEM_VERIFY(std::isfinite(real) && std::isfinite(imag),
+              "Material PoleResidue \"" << name << "\" must be finite!");
+  return {real, imag};
+}
+
+double ParseFiniteNumber(const json &data, const char *name)
+{
+  const double value = data.at(name).get<double>();
+  MFEM_VERIFY(std::isfinite(value),
+              "Material permittivity parameter \"" << name << "\" must be finite!");
+  return value;
 }
 
 // Helper function for extracting element data from the configuration file, either from a
@@ -292,10 +323,64 @@ MaterialData::MaterialData(const json &domain)
   attributes = domain.at("Attributes").get<std::vector<int>>();  // Required
   std::ranges::sort(attributes);
   ParseSymmetricMatrixData(domain, "Permeability", mu_r);
-  ParseSymmetricMatrixData(domain, "Permittivity", epsilon_r);
   ParseSymmetricMatrixData(domain, "LossTan", tandelta);
   ParseSymmetricMatrixData(domain, "Conductivity", sigma);
   lambda_L = domain.value("LondonDepth", lambda_L);
+
+  const auto permittivity = domain.find("Permittivity");
+  if (permittivity == domain.end() || !permittivity->is_object())
+  {
+    ParseSymmetricMatrixData(domain, "Permittivity", epsilon_r);
+    return;
+  }
+
+  epsilon_r =
+      SymmetricMatrixData<3>(ParseFiniteNumber(*permittivity, "HighFrequencyLimit"));
+  const auto &terms = permittivity->at("Terms");
+  MFEM_VERIFY(terms.is_array() && !terms.empty(),
+              "Material permittivity \"Terms\" must be a nonempty array!");
+  constexpr double ghz_to_angular_si = 2.0 * std::numbers::pi * 1.0e9;
+  for (const auto &term : terms)
+  {
+    const std::string type = term.at("Type").get<std::string>();
+    if (type == "Drude")
+    {
+      permittivity_terms.push_back(
+          DrudeData{ghz_to_angular_si * ParseFiniteNumber(term, "PlasmaFrequency"),
+                    ghz_to_angular_si * ParseFiniteNumber(term, "CollisionFrequency")});
+    }
+    else if (type == "Debye")
+    {
+      permittivity_terms.push_back(
+          DebyeData{ParseFiniteNumber(term, "DeltaPermittivity"),
+                    ParseFiniteNumber(term, "RelaxationTime") * 1.0e-9});
+    }
+    else if (type == "Lorentz")
+    {
+      permittivity_terms.push_back(
+          LorentzData{ParseFiniteNumber(term, "DeltaPermittivity"),
+                      ghz_to_angular_si * ParseFiniteNumber(term, "ResonanceFrequency"),
+                      ghz_to_angular_si * ParseFiniteNumber(term, "DampingFrequency")});
+    }
+    else if (type == "PoleResidue")
+    {
+      permittivity_terms.push_back(
+          PermittivityPoleData{ParseComplexNumber(term.at("Pole"), "Pole"),
+                               ParseComplexNumber(term.at("Residue"), "Residue")});
+    }
+    else if (type == "DjordjevicSarkar")
+    {
+      permittivity_terms.push_back(DjordjevicSarkarData{
+          ParseFiniteNumber(term, "Strength"),
+          ghz_to_angular_si * ParseFiniteNumber(term, "LowerFrequency"),
+          ghz_to_angular_si * ParseFiniteNumber(term, "UpperFrequency")});
+    }
+    else
+    {
+      MFEM_ABORT("Unknown material permittivity term Type \"" << type << "\"!");
+    }
+  }
+  permittivity::CheckTerms(epsilon_r.s[0], permittivity_terms);
 }
 
 DomainEnergyData::DomainEnergyData(const json &domain)
@@ -408,6 +493,7 @@ ConductivityData::ConductivityData(const json &boundary)
   h = boundary.value("Thickness", h);
   external = boundary.value("External", external);
   crack = boundary.value("Crack", crack);
+  crack_given = boundary.contains("Crack");
 }
 
 ImpedanceData::ImpedanceData(const json &boundary)
@@ -564,6 +650,21 @@ LumpedPortData::LumpedPortData(const json &port)
   Cs = port.value("Cs", Cs);
 
   excitation = ParsePortExcitation(port, index);
+  excitation_amplitude = port.value("ExcitationAmplitude", excitation_amplitude);
+  excitation_phase = port.value("ExcitationPhase", excitation_phase);
+  MFEM_VERIFY(excitation != 0 || (!port.contains("ExcitationAmplitude") &&
+                                  !port.contains("ExcitationPhase")),
+              fmt::format("\"ExcitationAmplitude\" and \"ExcitationPhase\" on lumped port "
+                          "index {:d} require a nonzero \"Excitation\"",
+                          index));
+  MFEM_VERIFY(excitation_amplitude > 0.0 && std::isfinite(excitation_amplitude),
+              fmt::format("\"ExcitationAmplitude\" on lumped port index {:d} must be "
+                          "positive and finite; got {:.6e}",
+                          index, excitation_amplitude));
+  MFEM_VERIFY(std::isfinite(excitation_phase),
+              fmt::format("\"ExcitationPhase\" on lumped port index {:d} must be finite; "
+                          "got {:.6e}",
+                          index, excitation_phase));
   active = port.value("Active", active);
   include_in_synthesis = port.value("IncludeInSynthesis", include_in_synthesis);
   MFEM_VERIFY(!(excitation != 0 && !include_in_synthesis),
@@ -1219,6 +1320,29 @@ std::vector<int> BoundaryData::GetSheetAttributes() const
   return attr_list;
 }
 
+std::vector<int> BoundaryData::GetCrossSectionEdgeAttributes() const
+{
+  std::vector<int> attr_list;
+  auto Append = [&attr_list](const std::vector<int> &attrs)
+  { attr_list.insert(attr_list.end(), attrs.begin(), attrs.end()); };
+  Append(pec.attributes);
+  Append(auxpec.attributes);
+  for (const auto &data : impedance)
+  {
+    Append(data.attributes);
+  }
+  for (const auto &data : conductivity)
+  {
+    Append(data.attributes);
+  }
+  for (const auto &data : rational_impedance)
+  {
+    Append(data.attributes);
+  }
+  Append(farfield.attributes);
+  return attr_list;
+}
+
 std::vector<int>
 BoundaryData::GetMeshCrackAttributes(std::optional<bool> crack_bdr_elements) const
 {
@@ -1452,6 +1576,20 @@ DrivenSolverData::DrivenSolverData(const json &driven)
     f = *it;
   }
   save_f.insert(save_f.end(), explicit_save_f.begin(), explicit_save_f.end());
+
+  // Snap save and PROM frequencies to the sample frequencies, which they can differ from by
+  // rounding: the index scans below compare exactly.
+  auto match_samples = [&](std::vector<double> &f)
+  {
+    for (auto &x : f)
+    {
+      auto it = FindNearestValue(sample_f, x, delta_eps);
+      MFEM_VERIFY(it != sample_f.end(), "Frequency " << x << " is not a sample frequency!");
+      x = *it;
+    }
+  };
+  match_samples(save_f);
+  match_samples(prom_f);
   deduplicate(save_f);
   deduplicate(prom_f);
 
@@ -1644,6 +1782,8 @@ LinearSolverData::LinearSolverData(const json &linear)
   london_pc_shift = linear.value("LondonPCShift", london_pc_shift);
   amg_agg_coarsen = linear.value("AMGAggressiveCoarsening", amg_agg_coarsen);
   ams_max_it = linear.value("AMSMaxIts", ams_max_it);
+  ams_agglomeration_target =
+      linear.value("AMSAgglomerationTarget", ams_agglomeration_target);
 
   // Other linear solver options.
   divfree_tol = linear.value("DivFreeTol", divfree_tol);
@@ -1850,10 +1990,49 @@ void Nondimensionalize(const Units &units, RefinementData &data)
   }
 }
 
+double MaterialData::StaticPermittivity() const
+{
+  return epsilon_r.s[0] + permittivity::StaticSusceptibility(permittivity_terms);
+}
+
 void Nondimensionalize(const Units &units, MaterialData &data)
 {
   data.sigma /= units.GetScaleFactor<Units::ValueType::CONDUCTIVITY>();
   data.lambda_L /= units.GetMeshLengthRelativeScale();
+  const double tc_seconds = 1.0e-9 * units.GetScaleFactor<Units::ValueType::TIME>();
+  for (auto &term : data.permittivity_terms)
+  {
+    std::visit(
+        [tc_seconds](auto &t)
+        {
+          using T = std::decay_t<decltype(t)>;
+          if constexpr (std::is_same_v<T, DrudeData>)
+          {
+            t.omega_p *= tc_seconds;
+            t.gamma *= tc_seconds;
+          }
+          else if constexpr (std::is_same_v<T, DebyeData>)
+          {
+            t.tau /= tc_seconds;
+          }
+          else if constexpr (std::is_same_v<T, LorentzData>)
+          {
+            t.omega_0 *= tc_seconds;
+            t.gamma *= tc_seconds;
+          }
+          else if constexpr (std::is_same_v<T, PermittivityPoleData>)
+          {
+            t.pole *= tc_seconds;
+            t.residue *= tc_seconds;
+          }
+          else
+          {
+            t.omega_lower *= tc_seconds;
+            t.omega_upper *= tc_seconds;
+          }
+        },
+        term);
+  }
 }
 
 void Nondimensionalize(const Units &units, ProbeData &data)
@@ -1891,6 +2070,7 @@ void Nondimensionalize(const Units &units, SuperconductorData &data)
 
 void Nondimensionalize(const Units &units, LumpedPortData &data)
 {
+  // The excitation amplitude and phase are dimensionless and need no scaling.
   data.R /= units.GetScaleFactor<Units::ValueType::IMPEDANCE>();
   data.L /= units.GetScaleFactor<Units::ValueType::INDUCTANCE>();
   data.C /= units.GetScaleFactor<Units::ValueType::CAPACITANCE>();

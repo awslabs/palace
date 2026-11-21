@@ -2,8 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <fstream>
+#include <iterator>
+#include <stdexcept>
 #include <string>
+#include <vector>
+#include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 #include "fixtures.hpp"
 #include "utils/communication.hpp"
 #include "utils/filesystem.hpp"
@@ -181,4 +186,150 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   RemovePreviousOutput(dir, comm);
 
   CHECK(!fs::exists(dir));
+}
+
+namespace
+{
+
+std::string ReadFile(const fs::path &path)
+{
+  std::ifstream f(path, std::ios::binary);
+  return {std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>()};
+}
+
+// A device on which every write fails, as on a full disk, while the open succeeds. Only
+// write it in place (internal::WriteFile, or appending): a writer which replaces the file
+// would rename a temporary file over the device when run as root.
+const fs::path full_device = "/dev/full";
+
+}  // namespace
+
+TEST_CASE("Output files report failed writes", "[outputdir][Serial]")
+{
+  using Catch::Matchers::ContainsSubstring;
+  if (!fs::is_character_file(full_device))
+  {
+    SKIP("No " << full_device << " to test a failed write");
+  }
+  // The data are buffered, so the write fails when the file is closed, with the reason.
+  CHECK_THROWS_WITH(internal::WriteFile(full_device, [](std::ostream &os) { os << "x"; }),
+                    ContainsSubstring("Could not write output file") &&
+                        ContainsSubstring("No space left on device"));
+  // A write larger than the buffer fails before the close.
+  const std::string data(1 << 20, 'x');
+  CHECK_THROWS_WITH(internal::WriteFile(full_device, [&](std::ostream &os) { os << data; }),
+                    ContainsSubstring("Could not write output file"));
+  CHECK_THROWS_WITH(WriteOutputFile(
+                        full_device, [](std::ostream &os) { os << "x"; }, std::ios::app),
+                    ContainsSubstring("No space left on device"));
+}
+
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "WriteOutputFile replaces or appends to a file, and aborts on a failure",
+                 "[outputdir][Serial]")
+{
+  using Catch::Matchers::ContainsSubstring;
+  auto path = temp_dir / "file.txt", target = temp_dir / "target.txt";
+  WriteOutputFile(path, [](std::ostream &os) { os << "a\n"; });
+  WriteOutputFile(path, [](std::ostream &os) { os << "b\n"; }, std::ios::app);
+  CHECK(ReadFile(path) == "a\nb\n");
+
+  // A failed write keeps the previous file, and leaves no temporary file.
+  CHECK_THROWS_WITH(WriteOutputFile(path,
+                                    [](std::ostream &os)
+                                    {
+                                      os << "c\n";
+                                      throw std::runtime_error("write_func failed");
+                                    }),
+                    ContainsSubstring("Could not write output file \"" + path.string() +
+                                      "\": write_func failed"));
+  CHECK(ReadFile(path) == "a\nb\n");
+  std::vector<std::string> files;
+  for (const auto &entry : fs::directory_iterator(temp_dir))
+  {
+    files.push_back(entry.path().filename().string());
+  }
+  CHECK(files == std::vector<std::string>{"file.txt"});
+
+  // A symlink, like those SaveIteration leaves, is replaced rather than followed.
+  WriteOutputFile(target, [](std::ostream &os) { os << "keep\n"; });
+  fs::remove(path);
+  fs::create_symlink(target, path);
+  WriteOutputFile(path, [](std::ostream &os) { os << "d\n"; });
+  CHECK(!fs::is_symlink(path));
+  CHECK(ReadFile(path) == "d\n");
+  CHECK(ReadFile(target) == "keep\n");
+
+  CHECK_THROWS_WITH(WriteOutputFile(temp_dir / "missing" / "file.txt",
+                                    [](std::ostream &os) { os << "x"; }),
+                    ContainsSubstring("Could not open output file \"" +
+                                      (temp_dir / "missing" / "file.txt").string() +
+                                      "\"") &&
+                        ContainsSubstring("No such file or directory"));
+}
+
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "WriteRootOutputFile writes compressed files, and aborts on every rank",
+                 "[outputdir][Serial][Parallel]")
+{
+  using Catch::Matchers::ContainsSubstring;
+  MPI_Comm comm = MPI_COMM_WORLD;
+  auto path = temp_dir / "file.gz";
+  // More than the zlib stream buffers, and a flush within, which ends a gzip member.
+  const std::string data(3 << 20, 'z');
+  WriteRootOutputFile(
+      path, comm, [&](std::ostream &os) { os << data << std::flush << "end"; }, true);
+  {
+    mfem::ifgzstream f(path.string());
+    std::string read{std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>()};
+    CHECK(read == data + "end");
+  }
+#if defined(MFEM_USE_ZLIB)
+  CHECK(fs::file_size(path) < data.size());
+#endif
+
+  CHECK_THROWS_WITH(WriteRootOutputFile(temp_dir / "missing" / "file.txt", comm,
+                                        [](std::ostream &os) { os << "x"; }),
+                    ContainsSubstring("Writing output files failed on MPI rank 0") &&
+                        ContainsSubstring("Could not open output file"));
+}
+
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "WriteRankOutputFile failures abort on every rank when one rank fails",
+                 "[outputdir][Serial][Parallel]")
+{
+  using Catch::Matchers::ContainsSubstring;
+  MPI_Comm comm = MPI_COMM_WORLD;
+  const int rank = Mpi::Rank(comm), last = Mpi::Size(comm) - 1;
+  auto path = temp_dir / ("file_" + std::to_string(rank) + ".txt");
+  std::string error;
+  WriteRankOutputFile(path, [&](std::ostream &os) { os << rank; }, error);
+  CHECK(error.empty());
+  AbortOnOutputFileErrors(comm, error);
+  CHECK(ReadFile(path) == std::to_string(rank));
+
+  // Errors of write_func itself are not caught.
+  CHECK_THROWS_AS(
+      WriteRankOutputFile(
+          path, [](std::ostream &) { throw std::runtime_error("write_func"); }, error),
+      std::runtime_error);
+  CHECK(error.empty());
+
+  // The last rank cannot open its file. write_func still runs on it, so a write_func which
+  // communicates does not deadlock the other ranks.
+  auto bad_path = rank == last ? temp_dir / "missing" / "file.txt" : path;
+  WriteRankOutputFile(
+      bad_path,
+      [&](std::ostream &os)
+      {
+        int one = 1;
+        Mpi::GlobalSum(1, &one, comm);
+        os << one;
+      },
+      error);
+  CHECK(error.empty() == (rank != last));
+  CHECK_THROWS_WITH(AbortOnOutputFileErrors(comm, error),
+                    ContainsSubstring("Writing output files failed on MPI rank " +
+                                      std::to_string(last)) &&
+                        ContainsSubstring("Could not open output file"));
 }

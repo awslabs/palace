@@ -3,13 +3,34 @@
 
 #include "fem/ceed_group_operator.hpp"
 
+#include <algorithm>
 #include <mfem.hpp>
+
+#include "fem/qfunctions/coeff/coeff_qf.h"
 
 namespace palace
 {
 
 namespace fem
 {
+
+void UpdateGroupOperatorContexts(const std::vector<CeedGroupOperator> &groups,
+                                 std::size_t offset, const std::vector<CeedIntScalar> &data)
+{
+  for (const auto &group : groups)
+  {
+    MFEM_VERIFY(group.ctx, "Missing retained QFunction context for a context update!");
+    std::size_t size;
+    PalaceCeedCall(group.ceed, CeedQFunctionContextGetContextSize(group.ctx, &size));
+    MFEM_VERIFY(size >= (offset + data.size()) * sizeof(CeedIntScalar),
+                "QFunction context update exceeds the retained context size!");
+    CeedIntScalar *ctx_data;
+    PalaceCeedCall(group.ceed,
+                   CeedQFunctionContextGetData(group.ctx, CEED_MEM_HOST, &ctx_data));
+    std::copy(data.begin(), data.end(), ctx_data + offset);
+    PalaceCeedCall(group.ceed, CeedQFunctionContextRestoreData(group.ctx, &ctx_data));
+  }
+}
 
 void DestroyGroupOperators(std::vector<CeedGroupOperator> &groups)
 {

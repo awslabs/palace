@@ -120,7 +120,9 @@ poles).
     preserves the coupling between real and imaginary parts which can be significant
     for problems with strong imaginary components. For this particular problem, this
     approach accelerates convergence by several factors, though at the cost of increased
-    memory usage.
+    memory usage. SuperLU_DIST, STRUMPACK, and MUMPS factor the complex-valued matrix
+    `Ar + i Ai` in complex arithmetic, which needs less memory than the equivalent
+    real-valued system.
 
 ## Analysis and Results
 

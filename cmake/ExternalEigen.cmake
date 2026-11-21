@@ -11,6 +11,9 @@ list(APPEND EIGEN_OPTIONS
   "-DCMAKE_CXX_FLAGS=${CMAKE_CXX_FLAGS}"
   "-DEIGEN_BUILD_DOC=OFF"
   "-DBUILD_TESTING=OFF"
+  "-DEIGEN_BUILD_BLAS=OFF" # Built by default at top level; Palace uses headers only
+  "-DEIGEN_BUILD_LAPACK=OFF"
+  "-DEIGEN_BUILD_DEMOS=OFF"
   "-DEIGEN_PRERELEASE_VERSION=" # Release tarballs otherwise report "-dev"
   "-DCMAKE_Fortran_COMPILER=" # Unneeded
 )

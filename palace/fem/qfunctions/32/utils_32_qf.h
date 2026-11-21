@@ -144,4 +144,36 @@ CEED_QFUNCTION_HELPER void MultBA32(const CeedScalar A[6], const CeedScalar B[9]
   C[5] = B[2] * A[3] + B[5] * A[4] + B[8] * A[5];
 }
 
+CEED_QFUNCTION_HELPER void CrossCols32(const CeedScalar A[6], CeedScalar c[3])
+{
+  // Cross product of the two columns of A.
+  // A: 0 3
+  //    1 4
+  //    2 5
+  c[0] = A[1] * A[5] - A[2] * A[4];
+  c[1] = A[2] * A[3] - A[0] * A[5];
+  c[2] = A[0] * A[4] - A[1] * A[3];
+}
+
+CEED_QFUNCTION_HELPER void MultBx32(const CeedScalar B[9], const CeedScalar x[3],
+                                    CeedScalar y[3])
+{
+  // B: 0 3 6
+  //    1 4 7
+  //    2 5 8
+  y[0] = B[0] * x[0] + B[3] * x[1] + B[6] * x[2];
+  y[1] = B[1] * x[0] + B[4] * x[1] + B[7] * x[2];
+  y[2] = B[2] * x[0] + B[5] * x[1] + B[8] * x[2];
+}
+
+CEED_QFUNCTION_HELPER void MultAtx32(const CeedScalar A[6], const CeedScalar x[3],
+                                     CeedScalar y[2])
+{
+  // A: 0 3
+  //    1 4
+  //    2 5
+  y[0] = A[0] * x[0] + A[1] * x[1] + A[2] * x[2];
+  y[1] = A[3] * x[0] + A[4] * x[1] + A[5] * x[2];
+}
+
 #endif  // PALACE_LIBCEED_UTILS_32_QF_H

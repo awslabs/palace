@@ -51,6 +51,7 @@ void MfemWrapperSolver<ComplexOperator>::SetOperator(const ComplexOperator &op)
                 "MfemWrapperSolver must be able to construct a HypreParMatrix operator!");
     hAi = &PtAPi->ParallelAssemble();
   }
+  block_form = (hAr && hAi) ? complex_matrix : caller_block_form;
   if (hAr && hAi)
   {
     if (complex_matrix)
@@ -100,6 +101,10 @@ void MfemWrapperSolver<ComplexOperator>::SetOperator(const ComplexOperator &op)
       A = std::make_unique<mfem::HypreParMatrix>(*hAr);
       DropSmallEntries();
       pc->SetOperator(*A);
+      if (!save_assembled)
+      {
+        A.reset();
+      }
     }
     else
     {
@@ -117,6 +122,10 @@ void MfemWrapperSolver<ComplexOperator>::SetOperator(const ComplexOperator &op)
       A = std::make_unique<mfem::HypreParMatrix>(*hAi);
       DropSmallEntries();
       pc->SetOperator(*A);
+      if (!save_assembled)
+      {
+        A.reset();
+      }
     }
     else
     {
@@ -145,7 +154,11 @@ template <>
 void MfemWrapperSolver<ComplexOperator>::Mult(const ComplexVector &x,
                                               ComplexVector &y) const
 {
-  if (pc->Height() == x.Size())
+  // Not told by the sizes: on a process without unknowns both forms have size zero, and all
+  // processes must make the same calls to a parallel solver.
+  MFEM_ASSERT(pc->Height() == (block_form ? 2 : 1) * x.Size(),
+              "Unexpected size of the operator of MfemWrapperSolver!");
+  if (!block_form)
   {
     mfem::Array<const Vector *> X(2);
     mfem::Array<Vector *> Y(2);
@@ -180,7 +193,7 @@ template <OperatorType OperType>
 void MfemWrapperSolver<OperType>::DropSmallEntries()
 {
   const auto nnz_before = A->NNZ();
-  A->DropSmallEntries(std::pow(std::numeric_limits<double>::epsilon(), 2));
+  A->DropSmallEntries(drop_small_entries_tol);
   const auto nnz_after = A->NNZ();
 #if defined(MFEM_USE_MUMPS)
   if (auto *mumps = dynamic_cast<MumpsSolver *>(pc.get()))

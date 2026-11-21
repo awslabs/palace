@@ -29,8 +29,8 @@ private:
   mutable std::unique_ptr<hypre_ParVector, ParVectorDeleter> B_mv, X_mv;
 
 public:
-  BoomerAmgSolver(int cycle_it = 1, int smooth_it = 1, bool agg_coarsen = true,
-                  int print = 0);
+  // Use agg_levels levels of aggressive coarsening (0 to disable).
+  BoomerAmgSolver(int cycle_it = 1, int smooth_it = 1, int agg_levels = 1, int print = 0);
   BoomerAmgSolver(const IoData &iodata, bool coarse_solver, int print)
     : BoomerAmgSolver(coarse_solver ? 1 : iodata.solver.linear.mg_cycle_it,
                       iodata.solver.linear.mg_smooth_it,

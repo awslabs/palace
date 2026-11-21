@@ -1,0 +1,83 @@
+{
+  "Problem":
+  {
+    "Type": "Driven",
+    "Verbose": 2,
+    "Output": "postpro/wave_losstan"
+  },
+  "Model":
+  {
+    "Mesh": "mesh/coaxial.msh",
+    "L0": 1.0e-3  // mm
+  },
+  "Domains":
+  {
+    "Materials":
+    [
+      {
+        // Lossy dielectric, so the TEM port modes at both ends of the uniform line are
+        // lossy, with the analytic kₙ = (ω / c₀) √(εᵣ (1 - i tanδ)) (|Im{kₙ}| / Re{kₙ} =
+        // 0.05), and the line the analytic characteristic impedance Z₀ = η₀ ln(b/a) /
+        // (2π √(εᵣ (1 - i tanδ))), with a = 0.81915 mm and b = 2.7305 mm.
+        "Attributes": [1],
+        "Permeability": 1.0,
+        "Permittivity": 2.08,
+        "LossTan": 0.1
+      }
+    ]
+  },
+  "Boundaries":
+  {
+    "PEC":
+    {
+      "Attributes": [2]
+    },
+    "WavePort":
+    [
+      {
+        "Index": 1,
+        "Attributes": [3],
+        "Mode": 1,
+        "Excitation": 1,
+        "MaxIts": 30,
+        "KSPTol": 1e-8,
+        "EigenTol": 1e-6,
+        "VoltagePath": [[0.8192, 0.0, 0.0], [2.7305, 0.0, 0.0]]
+      },
+      {
+        "Index": 2,
+        "Attributes": [4],
+        "Mode": 1,
+        "Excitation": 2,
+        "MaxIts": 30,
+        "KSPTol": 1e-8,
+        "EigenTol": 1e-6,
+        "VoltagePath": [[0.8192, 0.0, 40.0], [2.7305, 0.0, 40.0]]
+      }
+    ]
+  },
+  "Solver":
+  {
+    "Order": 3,
+    "Device": "CPU",
+    "Driven":
+    {
+      "Samples":
+      [
+        {
+          "Type": "Linear",
+          "MinFreq": 5.0,  // GHz
+          "MaxFreq": 15.0,  // GHz
+          "FreqStep": 5.0  // GHz
+        }
+      ]
+    },
+    "Linear":
+    {
+      "Type": "Default",
+      "KSPType": "GMRES",
+      "Tol": 1.0e-8,
+      "MaxIts": 200
+    }
+  }
+}

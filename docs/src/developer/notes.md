@@ -100,6 +100,46 @@ impedance of free space. Similarly, the non-dimensional electric field `E` is
     dimension ``d``. See `ScaleGridFunction` in `palace/models/postoperator.cpp` for
     details.
 
+## Phasor and power conventions
+
+Frequency domain solutions (driven, eigenmode, boundary mode) are complex peak phasors: the
+physical field is ``\text{Re}\{\bm{E}\,e^{i\omega t}\}``. Fields, voltages and currents are reported as peak phasors; S and Z are ratios. Every quadratic physical output
+(stored energies, powers, Poynting vectors, dissipation) is reported as the time average over
+one period, which carries a factor of ``1/2`` relative to the same product of the phasors,
+while real-valued (time domain, static) fields are instantaneous and carry no such factor. All
+port excitations (lumped, wave, Floquet) carry unit *time-averaged* incident power (for a
+``50\,\Omega`` lumped port, ``V^{inc} = 10`` V and ``I^{inc} = 0.2`` A peak); time domain
+excitations carry unit instantaneous power at unit pulse amplitude. Stored wave-port modes
+have unit raw overlap ``\vert\int (\bm{E}\times\bm{H}^*)\cdot\bm{n}\,dS\vert=1``:
+0.5 W time-averaged for lossless propagating modes. The incident wave is ``\sqrt{2}``
+times the stored mode. With a lossy cross section, this normalizes the magnitude of
+complex power, not its transported real part (see issue #960).
+
+The convention is defined in exactly one place, `electromagnetics::TimeAverageWeight` and
+`electromagnetics::UnitPowerAmplitude` in `palace/utils/constants.hpp`, and is applied by the
+*owners* of the physical quantities — `DomainPostOperator` (field energies),
+`SurfacePostOperator` (power flux, interface energies), `LumpedPortData`/`WavePortData`
+(port power, incident amplitudes, S-parameter normalization), `PostOperator` (lumped C/L
+energies, `U_e`/`U_m`/`S` visualization densities), `BoundaryModeOperator` (the Poynting
+power of boundary modes) and `linalg/errorestimator.cpp` (energy normalization of the error
+indicators). It is never applied inside generic norms, mass matrices, or mode-overlap
+functionals, which keep their mathematical definitions.
+
+Normalization mistakes of this kind are easy to introduce and hard to notice, because
+ratios (Q, EPR, participation, S) stay correct while absolute values drift. When adding or
+modifying a quadratic output or a port normalization:
+
+ 1. Apply the weight once, at the owner of the physical quantity, using the named helpers
+    (never a literal `0.5` or `sqrt(2)`), and make the header comment state the convention.
+ 2. Add an analytic case to `test/unit/test-timeaverage.cpp`. That test pins the absolute
+    scale of the domain, surface and lumped-port outputs it exercises against values written directly from the physical
+    definitions (uniform ``\bm{E} = (1+i, 0, 0)`` V/m and ``\bm{H} = (0, 2+3i, 0)`` A/m in
+    vacuum) and checks the invariant that a purely real complex phasor gives exactly half of
+    the real instantaneous result. Extend these checks when adding a new output; untested outputs are not covered automatically.
+ 3. Do not regenerate regression references to make the suite pass: the reference CSVs
+    store absolute energies, powers, voltages and currents and are the second line of
+    defense against convention drift.
+
 ## Style guide
 
 Automated source code formatting is performed using
@@ -351,8 +391,12 @@ The (average) rows in the table should add up to the Total line at the bottom.
 The categories for breaking down the total simulation time are:
 
 ```
-Initialization                  // < Time spent parsing the configuration file,
-                                //   preprocessing and partitioning the mesh
+Initialization                  // < Time spent initializing the device, parsing the
+                                //   configuration file, and preprocessing and
+                                //   partitioning the mesh
+  MPI Startup                   // < Time spent initializing MPI, which includes waiting
+                                //   for all processes to start (on runs over many
+                                //   nodes, this can dominate Initialization)
 Operator Construction           // < Time spent constructing finite element spaces and
                                 //   setting up linear and bilinear forms on those spaces
   Wave Ports                    // < Time spent configuring and computing the modes
@@ -362,6 +406,8 @@ Linear Solve                    // < Linear solver time
   Preconditioner                // < Preconditioner application time for linear solve
   Coarse Solve                  // < Coarse solve time for geometric multigrid
                                 //   preconditioners
+  Initial Guess                 // < Time spent computing initial guesses from previous
+                                //   solutions (uniform driven frequency sweeps)
 Time Stepping                   // < Time spent in the time integrator for transient
                                 //   simulation types
 Eigenvalue Solve                // < Time spent in the eigenvalue solver (not including
@@ -552,7 +598,7 @@ Release tags (`vX.Y.Z`) build the full microarchitecture matrix instead, so
 a release publishes a tuned image for each target:
 
   - `x86_64_v3`, `x86_64_v4`, `sapphirerapids` (x64)
-  - `aarch64`, `neoverse_v1`, `neoverse_v2` (arm64)
+  - `aarch64`, `neoverse_v1`, `neoverse_v2`, `neoverse_v3` (arm64)
 
 ### Publishing a `dev-<branch>` prototype from a branch
 

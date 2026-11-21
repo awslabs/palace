@@ -5,10 +5,12 @@
 #define PALACE_UTILS_CONFIG_FILE_HPP
 
 #include <array>
+#include <complex>
 #include <map>
 #include <optional>
 #include <string>
 #include <unordered_set>
+#include <variant>
 #include <vector>
 #include <nlohmann/json_fwd.hpp>
 #include "labels.hpp"
@@ -240,6 +242,56 @@ public:
   }
 };
 
+// Terms of a frequency-dependent relative permittivity ε(s) = ε∞ + Σₖ χₖ(s), s = iω.
+// Angular rates are in rad/s and times in s until inputs are nondimensionalized. The typed
+// terms are passive polarization models whose parameters are positive by construction;
+// PoleResidue is a general rational term, whose passivity is checked with a warning (see
+// utils/permittivitymodel.hpp).
+struct DrudeData
+{
+public:
+  // Free carriers: χ(s) = ω_p²/(s(s + γ)).
+  double omega_p = 0.0;
+  double gamma = 0.0;
+};
+
+struct DebyeData
+{
+public:
+  // Relaxation: χ(s) = Δε/(1 + sτ).
+  double delta = 0.0;
+  double tau = 0.0;
+};
+
+struct LorentzData
+{
+public:
+  // Bound oscillator: χ(s) = Δε ω₀²/(s² + γs + ω₀²).
+  double delta = 0.0;
+  double omega_0 = 0.0;
+  double gamma = 0.0;
+};
+
+struct PermittivityPoleData
+{
+public:
+  // General term r/(s - p), with its conjugate for an upper-half-plane pole.
+  std::complex<double> pole = 0.0;
+  std::complex<double> residue = 0.0;
+};
+
+struct DjordjevicSarkarData
+{
+public:
+  // Continuum of Debye relaxations: χ(s) = Strength log((s + ω_hi)/(s + ω_lo)).
+  double strength = 0.0;
+  double omega_lower = 0.0;
+  double omega_upper = 0.0;
+};
+
+using PermittivityTermData = std::variant<DrudeData, DebyeData, LorentzData,
+                                          PermittivityPoleData, DjordjevicSarkarData>;
+
 struct MaterialData
 {
 public:
@@ -257,6 +309,16 @@ public:
 
   // London penetration depth [m].
   double lambda_L = 0.0;
+
+  // Additive terms of a frequency-dependent relative permittivity, with ε∞ the scalar
+  // epsilon_r.
+  std::vector<PermittivityTermData> permittivity_terms = {};
+
+  bool HasFrequencyDependentPermittivity() const { return !permittivity_terms.empty(); }
+
+  // The scalar relative permittivity at zero frequency, ε∞ + χ(0), for a
+  // frequency-dependent permittivity. Infinite for a pole at zero (Drude).
+  double StaticPermittivity() const;
 
   // List of domain attributes for this material.
   std::vector<int> attributes = {};
@@ -406,6 +468,10 @@ public:
   // (a film thinner than the skin depth).
   bool crack = false;
 
+  // Whether "Crack" is given in the configuration, to warn about the default sheet model
+  // of interior boundaries (see mesh::Load).
+  bool crack_given = false;
+
   // List of boundary attributes for this surface conductivity boundary condition.
   std::vector<int> attributes = {};
 
@@ -505,6 +571,12 @@ public:
   // - Wave/Lumped ports with same index are excited together.
   // - 1-based index if excited; 0 if not excited.
   int excitation = 0;
+
+  // Complex weight a = A exp(i phi) on the unit-power incident wave of this port,
+  // A = "ExcitationAmplitude" (> 0), phi = "ExcitationPhase" in degrees. Dimensionless,
+  // frequency independent. Only valid for excited ports.
+  double excitation_amplitude = 1.0;
+  double excitation_phase = 0.0;  // [deg]
 
   // Flag for boundary damping term in driven and transient simulations.
   bool active = true;
@@ -884,6 +956,12 @@ public:
   // (when cracked, the faces are exterior boundaries anyway).
   std::vector<int> GetSheetAttributes() const;
 
+  // Return the boundary attributes of boundary conditions whose faces, where they meet a 2D
+  // cross-section of the mesh (the face of a wave port, or the cross-section of a boundary
+  // mode problem), become boundary edges of the 2D mesh with their boundary condition (PEC,
+  // wave port PEC, impedance, conductivity, rational impedance, and absorbing boundaries).
+  std::vector<int> GetCrossSectionEdgeAttributes() const;
+
   // Return the boundary attributes for which the mesh is cracked when interior, given the
   // value of config::ModelData::crack_bdr_elements.
   std::vector<int> GetMeshCrackAttributes(std::optional<bool> crack_bdr_elements) const;
@@ -1204,10 +1282,10 @@ public:
   int ams_singular_op = -1;
 
   // Preconditioner-only gauge shift for the London magnetostatic operator: adds
-  // london_pc_shift · (1/µ) ∫|A|² to the preconditioner matrix only (operator, solution and
-  // extracted inductance unchanged) to lift the shifted-penalty operator's residual
-  // gradient null space so AMS is SPD-solvable in parallel. Ignored when no London sheet is
-  // present.
+  // london_pc_shift · (1/µ) ∫|A|² outside the London domains to the preconditioner matrix
+  // only (operator, solution and extracted inductance unchanged) to lift the residual
+  // gradient null space so AMS is SPD-solvable in parallel. Ignored without superconductor
+  // sheets, London domains, or the auxiliary smoother.
   double london_pc_shift = 1.0e-1;
 
   // Option to use aggressive coarsening for Hypre AMG solves (with BoomerAMG or AMS).
@@ -1216,6 +1294,10 @@ public:
 
   // Maximum number of iterations of the AMS solver.
   int ams_max_it = -1;
+
+  // Target number of rows per process for the agglomeration of the coarse levels of the
+  // auxiliary space AMG hierarchies of the AMS solver during the solve (0: disabled).
+  int ams_agglomeration_target = 2048;
 
   // Relative tolerance for solving linear systems in divergence-free projector.
   double divfree_tol = 1.0e-12;
