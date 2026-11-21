@@ -81,6 +81,26 @@ void AssembleCeedElementErrorIntegrator(
     CeedElemRestriction mesh_elem_restr, CeedVector geom_data,
     CeedElemRestriction geom_data_restr, CeedOperator *op);
 
+// Construct a libCEED operator which integrates a function of several fields, each a
+// passive input named u_1, u_2, ... with its own restriction and basis, over every element
+// (for example a complex flux error from the real and imaginary parts of two fields). The
+// evaluation modes of every input are info.trial_ops. If ctx_out is non-null, the
+// QFunction context handle is returned (ownership transferred to the caller, which must
+// destroy it) for in-place runtime updates of its values.
+struct CeedErrorIntegratorInput
+{
+  CeedVector vec;
+  CeedElemRestriction restr;
+  CeedBasis basis;
+};
+void AssembleCeedElementErrorIntegrator(const CeedQFunctionInfo &info, void *ctx,
+                                        std::size_t ctx_size, Ceed ceed,
+                                        const std::vector<CeedErrorIntegratorInput> &inputs,
+                                        CeedElemRestriction mesh_elem_restr,
+                                        CeedVector geom_data,
+                                        CeedElemRestriction geom_data_restr,
+                                        CeedOperator *op, CeedQFunctionContext *ctx_out);
+
 }  // namespace palace::ceed
 
 #endif  // PALACE_LIBCEED_INTEGRATOR_HPP

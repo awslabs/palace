@@ -312,4 +312,35 @@ TEST_CASE("AMS zero initial guess", "[amg][Serial][Parallel]")
   }
 }
 
+// The number of smoothing sweeps of AMS as the coarse solver of a singular operator is 1.5
+// times the ratio of the sizes of the finer multigrid levels to the size of the coarsest
+// one, rounded to the nearest integer, between 8 and 32, and at least MGSmoothIts.
+TEST_CASE("AMS smoothing sweeps for singular coarse operators", "[amg][Serial]")
+{
+  // Level sizes of p-multigrid on a tetrahedral mesh (the one of examples/rings): orders 1
+  // and 2 for a solution of order 2, orders 1, 2, 3 for order 3, orders 1, 2, 4 for
+  // order 4.
+  CHECK(GetAmsSingularCoarseSmoothIts({85127, 460730}, 1) == 8);
+  CHECK(GetAmsSingularCoarseSmoothIts({85127, 460730, 1343568}, 1) == 32);
+  CHECK(GetAmsSingularCoarseSmoothIts({85127, 460730, 2950400}, 1) == 32);
+
+  // Rounding to the nearest integer, and the sum over all the finer levels.
+  CHECK(GetAmsSingularCoarseSmoothIts({1000, 5666}, 1) == 8);
+  CHECK(GetAmsSingularCoarseSmoothIts({1000, 5667}, 1) == 9);
+  CHECK(GetAmsSingularCoarseSmoothIts({1000, 4000, 8000}, 1) == 18);
+
+  // At least 8 sweeps, also without finer levels, and at most 32, also for a ratio beyond
+  // the range of an integer.
+  CHECK(GetAmsSingularCoarseSmoothIts({1000}, 1) == 8);
+  CHECK(GetAmsSingularCoarseSmoothIts({1000, 1000}, 1) == 8);
+  CHECK(GetAmsSingularCoarseSmoothIts({1000, 21000}, 1) == 32);
+  CHECK(GetAmsSingularCoarseSmoothIts({1000, 22000}, 1) == 32);
+  CHECK(GetAmsSingularCoarseSmoothIts({1, 2000000000}, 1) == 32);
+
+  // MGSmoothIts is a lower bound.
+  CHECK(GetAmsSingularCoarseSmoothIts({1000, 6000}, 9) == 9);
+  CHECK(GetAmsSingularCoarseSmoothIts({1000, 6000}, 10) == 10);
+  CHECK(GetAmsSingularCoarseSmoothIts({1000, 22000}, 40) == 40);
+}
+
 }  // namespace palace
