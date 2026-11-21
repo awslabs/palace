@@ -333,6 +333,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     (`"Absorbing"` with `"Order": 2`) without `"ComplexCoarseSolve"`: the sign of its term
     is now flipped in the real-valued coarse solve, as it already was for AMS and BoomerAMG,
     which now flip it only there. [PR 1252](https://github.com/awslabs/palace/pull/1252).
+  - A failed write of an output file, for example on a full disk, aborts the run instead
+    of leaving the file empty or truncated, and a failed rewrite keeps the previous file.
+    [PR 1256](https://github.com/awslabs/palace/pull/1256).
   - Fixed boundary terms that could take the anisotropic material tensor of another
     boundary. The scalar coefficient of an `"Impedance"`, `"Conductivity"` or
     `"RationalImpedance"` boundary or a lumped port could be replaced by the tensor of an

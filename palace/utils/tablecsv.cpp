@@ -3,13 +3,13 @@
 
 #include "tablecsv.hpp"
 #include "utils/filesystem.hpp"
+#include "utils/outputfile.hpp"
 
 #include <algorithm>
 #include <fstream>
 #include <iterator>
 #include <utility>
 #include <fmt/format.h>
-#include <fmt/os.h>
 #include <scn/scan.h>
 #include <mfem/general/error.hpp>
 
@@ -321,11 +321,8 @@ TableWithCSVFile::TableWithCSVFile(std::string csv_file_fullpath, bool load_exis
 
 void TableWithCSVFile::WriteFullTableTrunc()
 {
-  // Remove previous file/symlink before writing.
-  fs::remove(csv_file_fullpath_);
-  auto file_buffer = fmt::output_file(
-      csv_file_fullpath_, fmt::file::WRONLY | fmt::file::CREATE | fmt::file::TRUNC);
-  file_buffer.print("{}", table.format_table());
+  WriteOutputFile(csv_file_fullpath_,
+                  [&](std::ostream &os) { os << table.format_table(); });
   rows_on_disk_ = table.n_rows();
 }
 
@@ -356,14 +353,15 @@ void TableWithCSVFile::WriteTableIncremental()
   {
     // Start a fresh file, so a previous run's output is never read as this run's. The
     // header goes in even with no rows yet, matching a whole-file write of an empty table.
-    fs::remove(csv_file_fullpath_);
-    auto file_buffer = fmt::output_file(
-        csv_file_fullpath_, fmt::file::WRONLY | fmt::file::CREATE | fmt::file::TRUNC);
-    file_buffer.print("{}", table.format_header());
-    for (std::size_t j = 0; j < n_complete; j++)
-    {
-      file_buffer.print("{}", table.format_row(j));
-    }
+    WriteOutputFile(csv_file_fullpath_,
+                    [&](std::ostream &os)
+                    {
+                      os << table.format_header();
+                      for (std::size_t j = 0; j < n_complete; j++)
+                      {
+                        os << table.format_row(j);
+                      }
+                    });
     rows_on_disk_ = n_complete;
     return;
   }
@@ -371,12 +369,16 @@ void TableWithCSVFile::WriteTableIncremental()
   {
     return;
   }
-  auto file_buffer = fmt::output_file(
-      csv_file_fullpath_, fmt::file::WRONLY | fmt::file::CREATE | fmt::file::APPEND);
-  for (std::size_t j = rows_on_disk_; j < n_complete; j++)
-  {
-    file_buffer.print("{}", table.format_row(j));
-  }
+  WriteOutputFile(
+      csv_file_fullpath_,
+      [&](std::ostream &os)
+      {
+        for (std::size_t j = rows_on_disk_; j < n_complete; j++)
+        {
+          os << table.format_row(j);
+        }
+      },
+      std::ios::app);
   rows_on_disk_ = n_complete;
 }
 
