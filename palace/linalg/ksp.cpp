@@ -178,7 +178,7 @@ ConfigurePreconditionerSolver(const config::LinearSolverData &linear,
             linear, fespaces.GetFESpaceAtLevel(0), aux_fespaces->GetFESpaceAtLevel(0),
             coarse_solver ? linear.ams_max_it : linear.mg_cycle_it, smooth_it,
             linear.ams_vector_interp, linear.ams_singular_op, linear.amg_agg_coarsen,
-            print);
+            linear.ams_agglomeration_target, print);
       }
       break;
     case LinearSolver::BOOMER_AMG:
