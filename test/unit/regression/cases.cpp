@@ -3158,6 +3158,21 @@ TEST_CASE("cpw_lumped_conductivity_crack", "[Serial][Parallel][GPU][Regression]"
                                   "lumped_conductivity_crack", opts);
 }
 
+// The cracked CPW with lumped ports under one conformal refinement with Palace's default
+// update fraction, then, on more than one process, a forced rebalance. One reference serves
+// 1 to 8 processes (outputs within 2e-10). Omits [GPU]: adaptive cases skip GPU CI.
+TEST_CASE("cpw_lumped_conformal_amr_rebalance", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-11;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = force_default_solver;
+  palace::test::RunRegressionCase("cpw", "cpw_lumped_conformal_amr_rebalance.json",
+                                  "lumped_conformal_amr_rebalance", opts);
+}
+
 TEST_CASE("cpw_wave_uniform", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
