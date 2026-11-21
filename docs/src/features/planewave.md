@@ -38,8 +38,9 @@ electric and magnetic currents ``\mathbf{J} = \mathbf{n} \times \mathbf{H}_\text
 and ``\mathbf{M} = -\mathbf{n} \times \mathbf{E}_\text{inc}`` on ``S``, which radiate the
 incident field inside ``S`` and nothing outside. The incident field is known in closed
 form only in a homogeneous medium, so these elements must have one isotropic, lossless
-material, the background, which *Palace* checks at setup; inside ``S``, the materials and
-boundary conditions are arbitrary (conductors, lossy, magnetic or anisotropic materials).
+material without a frequency-dependent permittivity, the background, which *Palace*
+checks at setup; inside ``S``, the materials and boundary conditions are arbitrary
+(conductors, lossy, dispersive, magnetic or anisotropic materials).
 
 The incident field is
 

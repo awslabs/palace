@@ -328,7 +328,8 @@ void PlaneWaveOperator::SetUpBackground(const MaterialOperator &mat_op,
 {
   // The incident field only enters the right-hand side through the elements outside of the
   // total-field region with a dof on its boundary, and it is the plane wave of a
-  // homogeneous medium: these elements must have one isotropic, lossless material. Each
+  // homogeneous medium: these elements must have one isotropic, lossless, non-dispersive
+  // material. Each
   // process checks the attributes of its own elements, since the material operator only
   // knows the local attributes, and the results are reduced before any process aborts.
   constexpr double tol = 1.0e-12;
@@ -383,7 +384,8 @@ void PlaneWaveOperator::SetUpBackground(const MaterialOperator &mat_op,
           !IsScalar(mat_op.GetInvPermeability(attr), muinv) ||
           !IsScalar(mat_op.GetPermittivityImag(attr), 0.0) ||
           !IsScalar(mat_op.GetConductivity(attr), 0.0) ||
-          !IsScalar(mat_op.GetInvLondonDepth(attr), 0.0))
+          !IsScalar(mat_op.GetInvLondonDepth(attr), 0.0) ||
+          mat_op.GetFrequencyDependentPermittivityModelMaterial(attr) >= 0)
       {
         bad_attr = std::max(bad_attr, attr);
       }
@@ -404,7 +406,8 @@ void PlaneWaveOperator::SetUpBackground(const MaterialOperator &mat_op,
     MFEM_VERIFY(bad_attr == 0,
                 "Plane wave " << idx
                               << ": the boundary of the total-field region must be "
-                                 "surrounded by an isotropic, lossless material, but it "
+                                 "surrounded by an isotropic, lossless, non-dispersive "
+                                 "material, but it "
                                  "touches domain attribute "
                               << bad_attr << " outside of the region!");
     MFEM_VERIFY(eps_max - eps_min <= tol * eps_max &&
