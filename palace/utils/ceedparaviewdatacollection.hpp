@@ -63,6 +63,8 @@ private:
   };
 
   std::string pvd_datasets;  // the <DataSet> lines of the collection file
+  // Whether the data sets of an existing collection file were read, in restart mode.
+  bool pvd_restarted = false;
   std::map<std::string, PointField> boundary_point_fields;
   std::map<std::string, PointField> domain_point_fields;
   std::map<std::string, CellField> domain_cell_fields;
