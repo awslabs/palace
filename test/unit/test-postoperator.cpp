@@ -7,6 +7,8 @@
 #include <fstream>
 #include <iterator>
 #include <numbers>
+#include <string>
+#include <vector>
 #include <fmt/format.h>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
@@ -14,10 +16,12 @@
 #include <catch2/generators/catch_generators_all.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <catch2/matchers/catch_matchers_vector.hpp>
+#include "fem/errorindicator.hpp"
 #include "fem/gridfunction.hpp"
 #include "fem/integrator.hpp"
 #include "fixtures.hpp"
 #include "models/postoperator.hpp"
+#include "models/spaceoperator.hpp"
 #include "utils/iodata.hpp"
 #include "utils/units.hpp"
 
@@ -43,6 +47,22 @@ public:
   }
 };
 
+class EigenPostOperatorTest : public PostOperator<ProblemType::EIGENMODE>
+{
+public:
+  using PostOperator<ProblemType::EIGENMODE>::PostOperator;
+
+  Measurement MeasureForTest(const ComplexVector &e, const ComplexVector &b, double omega)
+  {
+    measurement_cache = {};
+    measurement_cache.freq = omega;
+    SetEGridFunction(e);
+    SetBGridFunction(b);
+    MeasureAllImpl();
+    return measurement_cache;
+  }
+};
+
 // random integer between 0 and n as a double.
 auto randd(int n)
 {
@@ -53,25 +73,28 @@ auto randd(int n)
 auto RandomMeasurement(int ndomain = 5)
 {
   Measurement cache;
-  cache.domain_E_field_energy_all = 0.0;
+  double E_all = 0.0;
   cache.domain_H_field_energy_all = 0.0;
   for (int i = 0; i < ndomain; i++)
   {
     cache.domain_H_field_energy_i.emplace_back(
         Measurement::DomainData{i, 1 + randd(100), 0});
-    cache.domain_H_field_energy_all += cache.domain_H_field_energy_i.back().energy;
+    cache.domain_H_field_energy_all += *cache.domain_H_field_energy_i.back().energy;
     cache.domain_E_field_energy_i.emplace_back(
         Measurement::DomainData{i, 1 + randd(100), 0});
-    cache.domain_E_field_energy_all += cache.domain_H_field_energy_i.back().energy;
+    E_all += *cache.domain_H_field_energy_i.back().energy;
   }
+  cache.domain_E_field_energy_all = E_all;
   for (auto &H : cache.domain_H_field_energy_i)
   {
-    H.participation_ratio = H.energy / cache.domain_H_field_energy_all;
+    H.participation_ratio = *H.energy / cache.domain_H_field_energy_all;
   }
   for (auto &E : cache.domain_E_field_energy_i)
   {
-    E.participation_ratio = E.energy / cache.domain_E_field_energy_all;
+    E.participation_ratio = *E.energy / E_all;
   }
+
+  cache.domain_E_field_energy_material = 1 + randd(100);
 
   cache.freq = std::complex(1 + randd(99), randd(100));
   cache.eigenmode_Q = 5e6 * (randd(99) + 1);
@@ -173,6 +196,19 @@ auto RandomMeasurement(int ndomain = 5)
          std::complex((1 + randd(99)) / 100, randd(100) / 100)});
   }
 
+  cache.mode_data.kn = std::complex((1 + randd(99)) / 100, randd(100) / 100);
+  cache.mode_data.n_eff = std::complex(1 + randd(100) / 100, randd(100) / 1000);
+  int nmode_postpro = 2;
+  for (int i = 0; i < nmode_postpro; i++)
+  {
+    // The first mode has no V/I impedance and the second no Z0, which must be left
+    // unscaled.
+    cache.mode_data.impedance[i] = {std::complex((1 + randd(99)) / 100, -randd(100) / 100),
+                                    std::complex((1 + randd(99)) / 100, -randd(100) / 100),
+                                    i == 0, i == 1};
+    cache.mode_data.voltage[i] = {std::complex((1 + randd(99)) / 100, randd(100) / 100)};
+  }
+
   return cache;
 }
 
@@ -182,14 +218,18 @@ TEST_CASE("PostOperator", "[idempotent][Serial]")
   Units units(1e-6, 152 * 1e-6);  // μm, 152μm
   auto dim_cache = Measurement::Dimensionalize(units, cache);
   auto non_dim_cache = Measurement::Nondimensionalize(units, dim_cache);
-  CHECK_THAT(cache.domain_E_field_energy_all,
-             Catch::Matchers::WithinRel(non_dim_cache.domain_E_field_energy_all));
-  CHECK_THAT(cache.domain_E_field_energy_all,
-             !Catch::Matchers::WithinRel(dim_cache.domain_E_field_energy_all));
+  CHECK_THAT(cache.domain_E_field_energy_all.value(),
+             Catch::Matchers::WithinRel(non_dim_cache.domain_E_field_energy_all.value()));
+  CHECK_THAT(cache.domain_E_field_energy_all.value(),
+             !Catch::Matchers::WithinRel(dim_cache.domain_E_field_energy_all.value()));
   CHECK_THAT(cache.domain_H_field_energy_all,
              Catch::Matchers::WithinRel(non_dim_cache.domain_H_field_energy_all));
   CHECK_THAT(cache.domain_H_field_energy_all,
              !Catch::Matchers::WithinRel(dim_cache.domain_H_field_energy_all));
+  CHECK_THAT(cache.domain_E_field_energy_material,
+             Catch::Matchers::WithinRel(non_dim_cache.domain_E_field_energy_material));
+  CHECK_THAT(cache.domain_E_field_energy_material,
+             !Catch::Matchers::WithinRel(dim_cache.domain_E_field_energy_material));
 
   for (std::size_t i = 0; i < cache.domain_E_field_energy_i.size(); i++)
   {
@@ -197,27 +237,50 @@ TEST_CASE("PostOperator", "[idempotent][Serial]")
       const auto &c = cache.domain_E_field_energy_i[i];
       const auto &ndc = non_dim_cache.domain_E_field_energy_i[i];
       CHECK(c.idx == ndc.idx);
-      CHECK_THAT(c.energy, Catch::Matchers::WithinRel(ndc.energy));
-      CHECK_THAT(c.participation_ratio,
-                 Catch::Matchers::WithinRel(ndc.participation_ratio));
+      CHECK_THAT(c.energy.value(), Catch::Matchers::WithinRel(ndc.energy.value()));
+      CHECK_THAT(c.participation_ratio.value(),
+                 Catch::Matchers::WithinRel(ndc.participation_ratio.value()));
 
       const auto &dc = dim_cache.domain_E_field_energy_i[i];
       CHECK(c.idx == dc.idx);
-      CHECK_THAT(c.energy, !Catch::Matchers::WithinRel(dc.energy));
-      CHECK_THAT(c.participation_ratio, Catch::Matchers::WithinRel(dc.participation_ratio));
+      CHECK_THAT(c.energy.value(), !Catch::Matchers::WithinRel(dc.energy.value()));
+      CHECK_THAT(c.participation_ratio.value(),
+                 Catch::Matchers::WithinRel(dc.participation_ratio.value()));
     }
     {
       const auto &c = cache.domain_H_field_energy_i[i];
       const auto &ndc = non_dim_cache.domain_H_field_energy_i[i];
       CHECK(c.idx == ndc.idx);
-      CHECK_THAT(c.energy, Catch::Matchers::WithinRel(ndc.energy));
-      CHECK_THAT(c.participation_ratio,
-                 Catch::Matchers::WithinRel(ndc.participation_ratio));
+      CHECK_THAT(c.energy.value(), Catch::Matchers::WithinRel(ndc.energy.value()));
+      CHECK_THAT(c.participation_ratio.value(),
+                 Catch::Matchers::WithinRel(ndc.participation_ratio.value()));
 
       const auto &dc = dim_cache.domain_H_field_energy_i[i];
       CHECK(c.idx == dc.idx);
-      CHECK_THAT(c.energy, !Catch::Matchers::WithinRel(dc.energy));
-      CHECK_THAT(c.participation_ratio, Catch::Matchers::WithinRel(dc.participation_ratio));
+      CHECK_THAT(c.energy.value(), !Catch::Matchers::WithinRel(dc.energy.value()));
+      CHECK_THAT(c.participation_ratio.value(),
+                 Catch::Matchers::WithinRel(dc.participation_ratio.value()));
+    }
+  }
+  // Omitted electric energies (no stored electric energy) stay omitted through the unit
+  // conversions, and so do the energies normalized by them.
+  {
+    Measurement omitted;
+    omitted.domain_E_field_energy_material = 1.0;
+    omitted.domain_E_field_energy_i.push_back({0, std::nullopt, std::nullopt});
+    omitted.lumped_port_vi[1];
+    const auto dim = Measurement::Dimensionalize(units, omitted);
+    const auto back = Measurement::Nondimensionalize(units, dim);
+    for (const auto *m : {&dim, &back})
+    {
+      CHECK_FALSE(m->domain_E_field_energy_all);
+      CHECK_FALSE(m->ElectricEnergyNormalization());
+      CHECK_FALSE(m->TotalFieldEnergy());
+      CHECK_FALSE(m->domain_E_field_energy_i.at(0).energy);
+      CHECK_FALSE(m->domain_E_field_energy_i.at(0).participation_ratio);
+      CHECK_FALSE(m->lumped_port_vi.at(1).mode_port_kappa);
+      CHECK_FALSE(m->lumped_port_vi.at(1).quality_factor);
+      CHECK_FALSE(m->lumped_port_vi.at(1).inductive_energy_participation);
     }
   }
   auto check_port_data = [&](const auto &c, const auto &dc, const auto &ndc)
@@ -247,9 +310,18 @@ TEST_CASE("PostOperator", "[idempotent][Serial]")
 
     CHECK_THAT(c.inductor_energy, Catch::Matchers::WithinRel(ndc.inductor_energy));
     CHECK_THAT(c.capacitor_energy, Catch::Matchers::WithinRel(ndc.capacitor_energy));
-    CHECK_THAT(c.mode_port_kappa, Catch::Matchers::WithinRel(ndc.mode_port_kappa));
-    CHECK_THAT(c.inductive_energy_participation,
-               Catch::Matchers::WithinRel(ndc.inductive_energy_participation));
+    // The energy-normalized port data are present together, in both unit systems.
+    REQUIRE(c.mode_port_kappa.has_value() == ndc.mode_port_kappa.has_value());
+    REQUIRE(c.mode_port_kappa.has_value() == dc.mode_port_kappa.has_value());
+    REQUIRE(c.quality_factor.has_value() == dc.quality_factor.has_value());
+    REQUIRE(c.inductive_energy_participation.has_value() ==
+            dc.inductive_energy_participation.has_value());
+    if (c.mode_port_kappa)
+    {
+      CHECK_THAT(*c.mode_port_kappa, Catch::Matchers::WithinRel(*ndc.mode_port_kappa));
+      CHECK_THAT(*c.inductive_energy_participation,
+                 Catch::Matchers::WithinRel(*ndc.inductive_energy_participation));
+    }
 
     // Dimensional
     REQUIRE_THAT(units.GetScaleFactor<Units::ValueType::POWER>(),
@@ -290,9 +362,9 @@ TEST_CASE("PostOperator", "[idempotent][Serial]")
 
       CHECK_THAT(c.inductor_energy, !Catch::Matchers::WithinRel(dc.inductor_energy));
       CHECK_THAT(c.capacitor_energy, !Catch::Matchers::WithinRel(dc.capacitor_energy));
-      CHECK_THAT(c.mode_port_kappa, !Catch::Matchers::WithinRel(dc.mode_port_kappa));
-      CHECK_THAT(c.inductive_energy_participation,
-                 Catch::Matchers::WithinRel(dc.inductive_energy_participation));
+      CHECK_THAT(*c.mode_port_kappa, !Catch::Matchers::WithinRel(*dc.mode_port_kappa));
+      CHECK_THAT(*c.inductive_energy_participation,
+                 Catch::Matchers::WithinRel(*dc.inductive_energy_participation));
     }
   };
   for (const auto &[k, v] : cache.lumped_port_vi)
@@ -397,6 +469,267 @@ TEST_CASE("PostOperator", "[idempotent][Serial]")
       CHECK_THAT(std::abs(dc), Catch::Matchers::WithinRel(std::abs(c) * e_scale * l_scale));
       CHECK_THAT(std::arg(dc), Catch::Matchers::WithinRel(std::arg(c)));
     }
+  }
+
+  // Mode analysis data: kn [1/m], V [V], and Z [Ω] dimensionalize; n_eff is dimensionless.
+  const auto l_scale = units.GetScaleFactor<Units::ValueType::LENGTH>();
+  const auto v_scale = units.GetScaleFactor<Units::ValueType::VOLTAGE>();
+  const auto z_scale = units.GetScaleFactor<Units::ValueType::IMPEDANCE>();
+  const auto &m = cache.mode_data;
+  const auto &dm = dim_cache.mode_data;
+  const auto &ndm = non_dim_cache.mode_data;
+  CHECK_THAT(std::abs(m.kn), Catch::Matchers::WithinRel(std::abs(ndm.kn)));
+  CHECK_THAT(std::arg(m.kn), Catch::Matchers::WithinRel(std::arg(ndm.kn)));
+  CHECK_THAT(std::abs(dm.kn), Catch::Matchers::WithinRel(std::abs(m.kn) / l_scale));
+  CHECK_THAT(std::arg(dm.kn), Catch::Matchers::WithinRel(std::arg(m.kn)));
+  CHECK(m.n_eff == ndm.n_eff);
+  CHECK(m.n_eff == dm.n_eff);
+  REQUIRE(ndm.voltage.size() == m.voltage.size());
+  for (const auto &[idx, v] : m.voltage)
+  {
+    CHECK_THAT(std::abs(v.V), Catch::Matchers::WithinRel(std::abs(ndm.voltage.at(idx).V)));
+    CHECK_THAT(std::arg(v.V), Catch::Matchers::WithinRel(std::arg(ndm.voltage.at(idx).V)));
+    CHECK_THAT(std::abs(dm.voltage.at(idx).V),
+               Catch::Matchers::WithinRel(std::abs(v.V) * v_scale));
+    CHECK_THAT(std::arg(dm.voltage.at(idx).V), Catch::Matchers::WithinRel(std::arg(v.V)));
+  }
+  REQUIRE(ndm.impedance.size() == m.impedance.size());
+  for (const auto &[idx, z] : m.impedance)
+  {
+    CHECK_THAT(std::abs(ndm.impedance.at(idx).Z0 - z.Z0),
+               Catch::Matchers::WithinAbs(0.0, 1.0e-12 * std::abs(z.Z0)));
+    CHECK_THAT(std::abs(ndm.impedance.at(idx).Z_VI - z.Z_VI),
+               Catch::Matchers::WithinAbs(0.0, 1.0e-12 * std::abs(z.Z_VI)));
+    const auto Z0 = z.has_impedance ? z.Z0 * z_scale : z.Z0;
+    const auto Z_VI = z.has_vi_impedance ? z.Z_VI * z_scale : z.Z_VI;
+    CHECK_THAT(std::abs(dm.impedance.at(idx).Z0 - Z0),
+               Catch::Matchers::WithinAbs(0.0, 1.0e-12 * std::abs(Z0)));
+    CHECK_THAT(std::abs(dm.impedance.at(idx).Z_VI - Z_VI),
+               Catch::Matchers::WithinAbs(0.0, 1.0e-12 * std::abs(Z_VI)));
+  }
+}
+
+TEST_CASE_METHOD(test::SharedTempDir, "Dispersive eigenmode participation normalization",
+                 "[postoperator][Serial][Parallel]")
+{
+  // Exercise the real measurement consumers, not only the normalization helper. The
+  // electric field is uniform, so its volume energies and the port voltage are analytic;
+  // B = 0 deliberately ensures that normalization uses only the electric-side forms. A
+  // material without a stored electric energy (a RAW −0.5/(s + 1) compensated by a typed
+  // Debye 1/(1 + s)) has no total energy: κ, the participations, and the interface
+  // outputs are omitted, and so are their CSV files, also when an earlier run left them
+  // in the output folder. The other files there are kept.
+  enum class Model
+  {
+    CONSTANT,
+    LORENTZ,
+    COMPENSATED
+  };
+  const auto model = GENERATE(Model::CONSTANT, Model::LORENTZ, Model::COMPENSATED);
+  CAPTURE(static_cast<int>(model));
+  const bool dispersive = (model == Model::LORENTZ);
+  const bool stored = (model != Model::COMPENSATED);
+  const auto output = temp_dir / fmt::format("participation_{}", static_cast<int>(model));
+  const std::vector<std::string> omitted = {"port-Q.csv", "port-EPR.csv", "surface-Q.csv"};
+  MPI_Comm comm = Mpi::World();
+  if (Mpi::Root(comm))
+  {
+    fs::remove_all(output);
+    fs::create_directories(output);
+    for (const auto &name : omitted)
+    {
+      std::ofstream(output / name) << "stale\n";
+    }
+    std::ofstream(output / "unrelated.txt") << "kept\n";
+  }
+  Mpi::Barrier(comm);
+  IoData iodata(Units(1.0, 1.0));
+  iodata.problem.type = ProblemType::EIGENMODE;
+  iodata.problem.output = output.string();
+  iodata.solver.order = 1;
+  iodata.solver.linear.mg_max_levels = 1;
+  config::MaterialData material;
+  material.attributes = {1};
+  material.epsilon_r = config::SymmetricMatrixData<3>(2.0);
+  if (dispersive)
+  {
+    material.permittivity_terms = {config::LorentzData{1.0, 3.0, 0.0}};
+  }
+  else if (!stored)
+  {
+    material.permittivity_terms = {config::DebyeData{1.0, 1.0},
+                                   config::PermittivityPoleData{-1.0, -0.5}};
+  }
+  iodata.domains.materials = {material};
+  json boundaries;
+  boundaries["LumpedPort"] = {{{"Index", 1},
+                               {"Attributes", {1}},
+                               {"Direction", "+X"},
+                               {"R", 3.0},
+                               {"L", 2.0},
+                               {"C", 0.4}}};
+  boundaries["Postprocessing"]["Dielectric"] = {{{"Index", 1},
+                                                 {"Attributes", {5}},
+                                                 {"Thickness", 0.01},
+                                                 {"Permittivity", 1.0},
+                                                 {"LossTan", 0.02}}};
+  iodata.boundaries = config::BoundaryData(boundaries);
+  iodata.CheckConfiguration();
+  auto serial_mesh = std::make_unique<mfem::Mesh>(
+      mfem::Mesh::MakeCartesian3D(2, 1, 1, mfem::Element::HEXAHEDRON));
+  std::vector<std::unique_ptr<Mesh>> meshes;
+  meshes.push_back(
+      std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(Mpi::World(), *serial_mesh)));
+  SpaceOperator space(iodata, meshes);
+  EigenPostOperatorTest post(iodata, space);
+
+  GridFunction E(space.GetNDSpace(), true);
+  mfem::Vector field({1.0, 0.0, 0.0});
+  mfem::VectorConstantCoefficient real_field(field);
+  E.Real().ProjectCoefficient(real_field);
+  field(0) = 0.5;
+  mfem::VectorConstantCoefficient imag_field(field);
+  E.Imag().ProjectCoefficient(imag_field);
+  ComplexVector e(space.GetNDSpace().GetTrueVSize()),
+      b(space.GetCurlSpace().GetTrueVSize());
+  e.UseDevice(true);
+  b.UseDevice(true);
+  E.Real().GetTrueDofs(e.Real());
+  E.Imag().GetTrueDofs(e.Imag());
+  b = 0.0;
+  const auto measured = post.MeasureForTest(e, b, 1.0);
+
+  // At ω = 1, χ = 9/8 and w = 90/64 for this lossless Lorentz oscillator, and
+  // Re χ = Re 0.5/(1 + i) = 1/4 for the compensated Debye. The energies of the complex
+  // mode fields are time averages, 1/4 ε |E|² and 1/4 C |V|².
+  constexpr double norm_E2 = 1.25;
+  const double re_chi = dispersive ? 9.0 / 8.0 : (stored ? 0.0 : 0.25);
+  const double at_material = 0.25 * norm_E2 * (2.0 + re_chi);
+  CHECK_THAT(measured.domain_E_field_energy_material, WithinRel(at_material, 1.0e-12));
+  const auto &port = measured.lumped_port_vi.at(1);
+  CHECK_THAT(std::norm(port.V), WithinRel(norm_E2, 1.0e-12));
+  if (Mpi::Root(comm))
+  {
+    for (const auto &name : omitted)
+    {
+      CAPTURE(name);
+      REQUIRE(fs::exists(output / name) == stored);
+      if (stored && name != "surface-Q.csv")
+      {
+        // Written by this run at setup, not left from the earlier one (surface-Q.csv is
+        // written at the first printed measurement, which this test does not make).
+        std::ifstream file(output / name);
+        std::string header;
+        std::getline(file, header);
+        CHECK(header != "stale");
+      }
+    }
+    CHECK(fs::exists(output / "unrelated.txt"));
+  }
+  if (!stored)
+  {
+    // No total energy, so no normalized output, and not a placeholder value.
+    CHECK_FALSE(measured.domain_E_field_energy_all);
+    CHECK_FALSE(measured.ElectricEnergyNormalization());
+    CHECK_FALSE(port.mode_port_kappa);
+    CHECK_FALSE(port.quality_factor);
+    CHECK_FALSE(port.inductive_energy_participation);
+    CHECK(measured.interface_eps_i.empty());
+    return;
+  }
+  const double stored_E = 0.25 * norm_E2 * (2.0 + (dispersive ? 90.0 / 64.0 : 0.0));
+  const double capacitor = 0.25 * 0.4 * norm_E2;
+  // The electric-side energy U of the mode, half its total stored energy 2 U.
+  const double total = 0.5 * (stored_E + at_material) + capacitor;
+  // The typed models have a stored electric energy, so every normalized output exists.
+  REQUIRE(measured.domain_E_field_energy_all);
+  REQUIRE(measured.ElectricEnergyNormalization());
+  CHECK_THAT(*measured.domain_E_field_energy_all, WithinRel(stored_E, 1.0e-12));
+  CHECK_THAT(*measured.ElectricEnergyNormalization(), WithinRel(total, 1.0e-12));
+  REQUIRE(port.mode_port_kappa);
+  REQUIRE(port.inductive_energy_participation);
+  // κ = P / (2 U) with the resistor power P = |V|² / (2 R), and the inductive EPR
+  // 1/4 L |I|² / U with |I| = |V| / (ω L).
+  CHECK_THAT(std::abs(*port.mode_port_kappa),
+             WithinRel(0.5 * norm_E2 / 3.0 / (2.0 * total), 1.0e-12));
+  CHECK_THAT(std::abs(*port.inductive_energy_participation),
+             WithinRel(0.25 * norm_E2 / 2.0 / total, 1.0e-12));
+  REQUIRE(measured.interface_eps_i.size() == 1);
+  const auto &interface = measured.interface_eps_i.front();
+  REQUIRE(interface.energy > 0.0);
+  CHECK_THAT(interface.energy_participation, WithinRel(interface.energy / total, 1.0e-12));
+  CHECK_THAT(interface.quality_factor,
+             WithinRel(total / (interface.energy * 0.02), 1.0e-12));
+}
+
+TEST_CASE_METHOD(test::SharedTempDir,
+                 "Driven excitation without S-parameters removes stale S files",
+                 "[postoperator][Serial][Parallel]")
+{
+  // A lumped port and a Floquet port excited together are not one power-normalized port
+  // source (PortExcitations::HasSParameters), so the run omits port-S.csv and
+  // port-floquet-S.csv. A fresh run removes those files of an earlier run from its output
+  // folder at setup, and keeps the other files there.
+  const auto output = temp_dir / "postpro";
+  const std::vector<std::string> omitted = {"port-S.csv", "port-floquet-S.csv"};
+  MPI_Comm comm = Mpi::World();
+  IoData iodata(Units(1.0e-3, 1.0e-3));
+  iodata.model.L0 = 1.0e-3;
+  iodata.model.Lc = 1.0;
+  iodata.model.mesh = (temp_dir / "floquet_box.mesh").string();
+  if (Mpi::Root(comm))
+  {
+    fs::create_directories(output);
+    for (const auto &name : omitted)
+    {
+      std::ofstream(output / name) << "stale\n";
+    }
+    std::ofstream(output / "unrelated.txt") << "kept\n";
+    auto box =
+        mfem::Mesh::MakeCartesian3D(3, 3, 2, mfem::Element::HEXAHEDRON, 0.5, 0.5, 0.25);
+    std::ofstream ofs(iodata.model.mesh);
+    box.Print(ofs);
+  }
+  Mpi::Barrier(comm);
+  iodata.problem.type = ProblemType::DRIVEN;
+  iodata.problem.output = output.string();
+  iodata.solver.order = 1;
+  iodata.solver.linear.mg_max_levels = 1;
+  iodata.solver.driven.sample_f = {100.0};
+  iodata.domains = config::DomainData(
+      json{{"Materials", json::array({{{"Attributes", json::array({1})}}})}});
+  // MakeCartesian3D boundary attributes: 1 (z = 0), 6 (z = L), 5 and 3 (x faces), 2 and
+  // 4 (y faces).
+  iodata.boundaries = config::BoundaryData(
+      json{{"Periodic",
+            {{"BoundaryPairs", json::array({{{"DonorAttributes", json::array({5})},
+                                             {"ReceiverAttributes", json::array({3})}},
+                                            {{"DonorAttributes", json::array({2})},
+                                             {"ReceiverAttributes", json::array({4})}}})}}},
+           {"FloquetPort",
+            json::array({{{"Index", 1}, {"Attributes", {1}}, {"Excitation", 1}}})},
+           {"LumpedPort", json::array({{{"Index", 2},
+                                        {"Attributes", {6}},
+                                        {"R", 50.0},
+                                        {"Direction", "+X"},
+                                        {"Excitation", 1}}})}});
+  iodata.CheckConfiguration();
+  auto smesh = mesh::Load(iodata, comm);
+  iodata.NondimensionalizeInputs(smesh);
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  mesh.push_back(std::make_unique<Mesh>(mesh::Partition(iodata, std::move(smesh), comm)));
+  SpaceOperator space_op(iodata, mesh);
+  REQUIRE_FALSE(space_op.GetPortExcitations().HasSParameters());
+  PostOperator<ProblemType::DRIVEN> post_op(iodata, space_op);
+  Mpi::Barrier(comm);
+  if (Mpi::Root(comm))
+  {
+    for (const auto &name : omitted)
+    {
+      CAPTURE(name);
+      CHECK_FALSE(fs::exists(output / name));
+    }
+    CHECK(fs::exists(output / "unrelated.txt"));
   }
 }
 
@@ -548,6 +881,30 @@ TEST_CASE_METHOD(test::SharedTempDir, "Field export",
     CHECK_THAT(pvd_time, Catch::Matchers::WithinRel(expected_freq, 1.0e-5));
   }
 
+  SECTION("Current source with passive port does not write S")
+  {
+    iodata.problem.type = ProblemType::DRIVEN;
+    iodata.solver.driven.sample_f = {1.0};
+    json boundaries = {
+        {"LumpedPort",
+         {{{"Index", 1}, {"Attributes", {2}}, {"R", 50.0}, {"Direction", "+X"}}}},
+        {"SurfaceCurrent", {{{"Index", 2}, {"Attributes", {3}}, {"Direction", "+Y"}}}}};
+    iodata.boundaries = config::BoundaryData(boundaries);
+    SpaceOperator space_op(iodata, mesh);
+    CHECK(space_op.GetPortExcitations().IsMultipleSimple());
+    CHECK_FALSE(space_op.GetPortExcitations().HasSParameters());
+    PostOperator<ProblemType::DRIVEN> post_op(iodata, space_op);
+    ComplexVector E(space_op.GetNDSpace().GetTrueVSize()),
+        B(space_op.GetRTSpace().GetTrueVSize());
+    E = 1.0;
+    B = 0.0;
+    post_op.MeasureAndPrintAll(1, 0, E, B, 1.0);
+    Mpi::Barrier(comm);
+    CHECK(fs::is_regular_file(fs::path(iodata.problem.output) / "port-V.csv"));
+    CHECK_FALSE(fs::exists(fs::path(iodata.problem.output) / "port-S.csv"));
+    CHECK_FALSE(fs::exists(fs::path(iodata.problem.output) / "port-floquet-S.csv"));
+  }
+
   SECTION("Driven multiple excitations")
   {
     // Create operator with two excitations.
@@ -570,14 +927,17 @@ TEST_CASE_METHOD(test::SharedTempDir, "Field export",
     SpaceOperator space_op(iodata, mesh);
     PostOperator<ProblemType::DRIVEN> post_op(iodata, space_op);
 
+    // Use different fields for the two excitations, to tell their output apart.
     ComplexVector E(space_op.GetNDSpace().GetTrueVSize()),
         B(space_op.GetRTSpace().GetTrueVSize());
     E = 0.0;
     B = 0.0;
     post_op.InitializeParaviewDataCollection(1);
     post_op.MeasureAndPrintAll(1, 0, E, B, 1.0);
+    E = 1.0;
     post_op.InitializeParaviewDataCollection(2);
     post_op.MeasureAndPrintAll(2, 0, E, B, 1.0);
+    post_op.MeasureFinalize(ErrorIndicator());
 
     // Switching excitations must preserve both collections.
     auto root = fs::path(iodata.problem.output) / "paraview";
@@ -586,6 +946,31 @@ TEST_CASE_METHOD(test::SharedTempDir, "Field export",
       auto folder = fmt::format("excitation_{}", excitation);
       CHECK(fs::is_regular_file(root / "driven" / folder / (folder + ".pvd")));
       CHECK(fs::is_regular_file(root / "driven_boundary" / folder / (folder + ".pvd")));
+    }
+
+    // Grid functions use the same excitation subfolders, while the mesh and the rank
+    // partitioning are written once for all excitations.
+    const int pad_digits = post_op.GetPadDigitsDefault();
+    const std::vector<std::string> fields = {"E_real", "E_imag", "B_real", "B_imag",
+                                             "S",      "U_e",    "U_m"};
+    check_files("driven/excitation_1", 1, pad_digits, fields);
+    check_files("driven/excitation_2", 1, pad_digits, fields);
+    auto gf_root = fs::path(iodata.problem.output) / "gridfunction" / "driven";
+    auto read_file = [](const fs::path &path)
+    {
+      std::ifstream file(path);
+      return std::string(std::istreambuf_iterator<char>(file), {});
+    };
+    for (int i = 0; i < size; i++)
+    {
+      const auto rank = fmt::format("{:0{}d}", i, pad_digits);
+      const auto E_real = fmt::format("E_real_{:0{}d}.gf.{}", 1, pad_digits, rank);
+      CHECK(read_file(gf_root / "excitation_1" / E_real) !=
+            read_file(gf_root / "excitation_2" / E_real));
+      CHECK_FALSE(fs::exists(gf_root / E_real));
+      CHECK(fs::is_regular_file(gf_root / ("mesh." + rank)));
+      CHECK(fs::is_regular_file(gf_root / ("rank.gf." + rank)));
+      CHECK_FALSE(fs::exists(gf_root / "excitation_1" / ("mesh." + rank)));
     }
   }
 
@@ -598,6 +983,7 @@ TEST_CASE_METHOD(test::SharedTempDir, "Field export",
                                  {{{"Attributes", {2}},
                                    {"Index", 1},
                                    {"L", 1.0},
+                                   {"C", 0.01},
                                    {"Direction", "+X"},
                                    {"Excitation", true}}}}};
     config::BoundaryData reactive_port(reactive_boundaries);
@@ -615,8 +1001,13 @@ TEST_CASE_METHOD(test::SharedTempDir, "Field export",
     const auto vi = post_op.MeasureLumpedPortForTest(1, E, B, 1.0);
     const auto &port = space_op.GetLumpedPortOp().GetPort(1);
     REQUIRE(std::abs(vi.V) > 0.0);
-    CHECK_THAT(std::abs(vi.S - vi.V / std::sqrt(port.GetExcitationRefResistance())),
+    // S = V / V_ref with V_ref = sqrt(2 R_ref) the peak incident voltage of the unit time-
+    // averaged power wave referenced to the port reference resistance.
+    CHECK_THAT(std::abs(vi.S - vi.V / port.GetReferenceVoltage()),
                Catch::Matchers::WithinAbs(0.0, 1.0e-12 * std::abs(vi.V)));
+    CHECK_THAT(port.GetReferenceVoltage(),
+               Catch::Matchers::WithinRel(
+                   std::sqrt(2.0 * port.GetExcitationRefResistance()), 1.0e-12));
 
     GridFunction E_gf(space_op.GetNDSpace(), true);
     E_gf.Real().SetFromTrueDofs(E.Real());
@@ -624,6 +1015,16 @@ TEST_CASE_METHOD(test::SharedTempDir, "Field export",
     const auto S_legacy = port.GetSParameter(E_gf);
     CHECK_THAT(std::abs(vi.S - S_legacy),
                Catch::Matchers::WithinAbs(0.0, 1.0e-12 * std::abs(S_legacy)));
+
+    REQUIRE(std::abs(port.C) > 0.0);
+    CHECK_THAT(vi.capacitor_energy, WithinRel(0.25 * port.C * std::norm(vi.V), 1.0e-12));
+
+    // The stored inductor energy is the time average 1/4 L |I_L|² for the peak phasor
+    // branch current I_L = V / (iωL) (the physical definition, written out explicitly).
+    REQUIRE(std::abs(vi.I_RLC[1]) > 0.0);
+    CHECK_THAT(vi.inductor_energy,
+               Catch::Matchers::WithinRel(0.25 * std::abs(port.L) * std::norm(vi.I_RLC[1]),
+                                          1.0e-12));
   }
 
   SECTION("Eigenmode")
@@ -665,30 +1066,22 @@ TEST_CASE_METHOD(test::SharedTempDir, "Field export",
   }
 }
 
-auto CompareGridFunctions(std::vector<mfem::ParGridFunction> &gf1,
-                          std::vector<mfem::ParGridFunction> &gf2,
-                          const std::vector<double> &expected_ratios, double rtol)
-{
-  CHECK(gf1.size() == gf2.size());
-  CHECK(gf1.size() == expected_ratios.size());
-  for (auto i = 0; i < gf1.size(); i++)
-  {
-    // Get the gridfunction data.
-    Vector v1 = gf1[i].GetTrueVector();
-    Vector v2 = gf2[i].GetTrueVector();
-    v2 /= v1;
-    // Get the min/max of the ratio.
-    double min = v2.Min();
-    double max = v2.Max();
-    // Check that min == max == expected_ratio.
-    CHECK_THAT(min, Catch::Matchers::WithinRel(max, rtol));
-    CHECK_THAT(min, Catch::Matchers::WithinRel(expected_ratios[i], rtol));
-  }
-}
-
 TEST_CASE("Dimensional field output", "[postoperator][Serial][Parallel]")
 {
-  constexpr double rtol = 1.0e-10;
+  // The output of the fields redimensionalizes the mesh, undoes the effect of the mesh
+  // scaling on the fields mapped from the reference element (ScaleGridFunctions), and
+  // scales the fields to SI units (DimensionalizeGridFunctions). The field values at fixed
+  // reference points, including in the face-neighbor elements owned by other processes,
+  // must then be the nondimensional ones times the unit scale factors, independent of the
+  // mesh length unit. The spaces are those of the PostOperator: E and A in H(curl), V in
+  // H1, and B in H(div) in 3D or the scalar out-of-plane field in L2 with INTEGRAL map type
+  // in 2D. The energy densities and Poynting vector projected from the dimensional
+  // coefficients are checked the same way.
+  constexpr double rtol = 1.0e-12;
+  constexpr int order = 2;
+  const int dim = GENERATE(2, 3);
+  const bool simplex = GENERATE(true, false);
+  CAPTURE(dim, simplex);
 
   // Create iodata.
   Units units(0.496, 1.453);
@@ -696,54 +1089,74 @@ TEST_CASE("Dimensional field output", "[postoperator][Serial][Parallel]")
   iodata.domains.materials.emplace_back().attributes = {1};
 
   // Create serial mesh.
-  int resolution = 3;
-  double length = 12.2;
-  std::unique_ptr<mfem::Mesh> serial_mesh = std::make_unique<mfem::Mesh>(
-      mfem::Mesh::MakeCartesian3D(resolution, resolution, resolution,
-                                  mfem::Element::TETRAHEDRON, length, length, length));
+  constexpr int resolution = 3;
+  constexpr double length = 12.2;
+  auto serial_mesh = std::make_unique<mfem::Mesh>(
+      (dim == 2) ? mfem::Mesh::MakeCartesian2D(resolution, resolution,
+                                               simplex ? mfem::Element::TRIANGLE
+                                                       : mfem::Element::QUADRILATERAL,
+                                               true, length, length)
+                 : mfem::Mesh::MakeCartesian3D(resolution, resolution, resolution,
+                                               simplex ? mfem::Element::TETRAHEDRON
+                                                       : mfem::Element::HEXAHEDRON,
+                                               length, length, length));
+  serial_mesh->EnsureNodes();
 
   // Create parallel mesh.
   auto comm = Mpi::World();
-  int size = Mpi::Size(comm);
+  if (Mpi::Size(comm) > serial_mesh->GetNE())
+  {
+    SKIP("Mesh has fewer elements than processes");
+  }
   iodata.model.Lc = mesh::ComputeReferenceLength(serial_mesh, comm);
   iodata.NondimensionalizeInputs(serial_mesh);
-  auto par_mesh = std::make_unique<mfem::ParMesh>(comm, *serial_mesh);
-  Mesh mesh(std::move(par_mesh));
+  Mesh mesh(std::make_unique<mfem::ParMesh>(comm, *serial_mesh));
+  auto &pmesh = mesh.Get();
+  const auto mesh_Lc0 = iodata.units.GetMeshLengthRelativeScale();
+  CAPTURE(mesh_Lc0);
+  REQUIRE(std::abs(mesh_Lc0 - 1.0) > 0.1);
+  if (Mpi::Size(comm) > 1)
+  {
+    // Each process has elements on other processes neighboring its own.
+    int num_face_nbr = pmesh.GetNFaceNeighborElements();
+    Mpi::GlobalMin(1, &num_face_nbr, comm);
+    REQUIRE(num_face_nbr > 0);
+  }
 
   // Create gridfunctions.
-  int order = 1;
-  mfem::H1_FECollection h1_fec(order, mesh.Dimension());
-  mfem::ParFiniteElementSpace h1_fespace(&mesh.Get(), &h1_fec);
-  mfem::ParGridFunction Ue_gf(&h1_fespace), Um_gf(&h1_fespace);
-
-  mfem::ND_FECollection nd_fec(order, mesh.Dimension());
-  mfem::ParFiniteElementSpace nd_fespace(&mesh.Get(), &nd_fec);
-
-  mfem::RT_FECollection rt_fec(order, mesh.Dimension());
-  mfem::ParFiniteElementSpace rt_fespace(&mesh.Get(), &rt_fec);
-  mfem::ParGridFunction S_gf(&rt_fespace);
+  mfem::H1_FECollection h1_fec(order, dim);
+  mfem::ND_FECollection nd_fec(order, dim);
+  mfem::RT_FECollection rt_fec(order - 1, dim);
+  std::unique_ptr<mfem::FiniteElementCollection> b_fec;
+  if (dim == 2)
+  {
+    b_fec = std::make_unique<mfem::L2_FECollection>(
+        order - 1, dim, mfem::BasisType::GaussLegendre, mfem::FiniteElement::INTEGRAL);
+  }
+  else
+  {
+    b_fec = std::make_unique<mfem::RT_FECollection>(order - 1, dim);
+  }
+  mfem::ParFiniteElementSpace h1_fespace(&pmesh, &h1_fec), nd_fespace(&pmesh, &nd_fec),
+      rt_fespace(&pmesh, &rt_fec), b_fespace(&pmesh, b_fec.get());
+  mfem::ParGridFunction Ue_gf(&h1_fespace), Um_gf(&h1_fespace), S_gf(&rt_fespace);
 
   std::unique_ptr<GridFunction> E, B, V, A;
   E = std::make_unique<GridFunction>(nd_fespace, true);
-  B = std::make_unique<GridFunction>(rt_fespace, true);
-  A = std::make_unique<GridFunction>(nd_fespace);
+  B = std::make_unique<GridFunction>(b_fespace, true);
   V = std::make_unique<GridFunction>(h1_fespace);
+  A = std::make_unique<GridFunction>(nd_fespace);
 
-  // Create fields, initialize them to random values, and set the corresponding
-  // gridfunctions.
-  ComplexVector e(nd_fespace.GetTrueVSize()), b(rt_fespace.GetTrueVSize());
-  Vector a(nd_fespace.GetTrueVSize()), v(h1_fespace.GetTrueVSize());
-  linalg::SetRandom(comm, e);
-  linalg::SetRandom(comm, b);
-  linalg::SetRandom(comm, a);
-  linalg::SetRandom(comm, v);
-
-  E->Real().SetFromTrueDofs(e.Real());
-  E->Imag().SetFromTrueDofs(e.Imag());
-  B->Real().SetFromTrueDofs(b.Real());
-  B->Imag().SetFromTrueDofs(b.Imag());
-  A->Real().SetFromTrueDofs(a);
-  V->Real().SetFromTrueDofs(v);
+  // Initialize the fields to random values, and make them ready for evaluation on shared
+  // faces as in PostOperator.
+  int seed = 1;
+  for (auto *gf : {&E->Real(), &E->Imag(), &B->Real(), &B->Imag(), &V->Real(), &A->Real()})
+  {
+    Vector x(gf->ParFESpace()->GetTrueVSize());
+    linalg::SetRandom(comm, x, seed++);
+    gf->SetFromTrueDofs(x);
+    gf->ExchangeFaceNbrData();
+  }
 
   // Create some coefficients.
   MaterialOperator mat_op(iodata, mesh);
@@ -768,79 +1181,225 @@ TEST_CASE("Dimensional field output", "[postoperator][Serial][Parallel]")
       *B, mat_op, scaling);
   S_dim = std::make_unique<PoyntingVectorCoefficient>(*E, *B, mat_op, scaling);
 
-  // Expected scalings (including both units dimensionalization and mesh scaling Lc0 =
-  // Lc/L0). See comment in ScaleGridFunctions() in postoperator.cpp for mesh scaling
-  // factor.
-  auto mesh_Lc0 = iodata.units.GetMeshLengthRelativeScale();
-  // E [V/m], H(curl) requires * L.
-  auto scaling_E = iodata.units.Dimensionalize<Units::ValueType::FIELD_E>(1.0) * mesh_Lc0;
-  // B [Wb/m²], H(div) requires * L^2.
-  auto scaling_B =
-      iodata.units.Dimensionalize<Units::ValueType::FIELD_B>(1.0) * mesh_Lc0 * mesh_Lc0;
-  // V [V], H1 requires no mesh scaling.
-  auto scaling_V = iodata.units.Dimensionalize<Units::ValueType::VOLTAGE>(1.0);
-  // A [A/m], H(curl) requires * L.
-  auto scaling_A = iodata.units.Dimensionalize<Units::ValueType::CURRENT>(1.0) * mesh_Lc0;
-  // U_e = 1/2 Dᴴ E, H1 requires no mesh scaling.
-  auto scaling_Ue = iodata.units.Dimensionalize<Units::ValueType::FIELD_D>(1.0) *
-                    iodata.units.Dimensionalize<Units::ValueType::FIELD_E>(1.0);
-  // U_m = 1/2 Hᴴ B, H1 requires no mesh scaling.
-  auto scaling_Um = iodata.units.Dimensionalize<Units::ValueType::FIELD_H>(1.0) *
-                    iodata.units.Dimensionalize<Units::ValueType::FIELD_B>(1.0);
-  // S = Re{E x H⋆}, H(div) requires * L^2.
-  auto scaling_S = iodata.units.Dimensionalize<Units::ValueType::FIELD_E>(1.0) *
-                   iodata.units.Dimensionalize<Units::ValueType::FIELD_H>(1.0) * mesh_Lc0 *
-                   mesh_Lc0;
-  std::vector<double> expected_scaling = {scaling_E,  scaling_E,  scaling_B,
-                                          scaling_B,  scaling_V,  scaling_A,
-                                          scaling_Ue, scaling_Um, scaling_S};
-
   auto update_coeff_gridfunctions = [&](bool dimensional)
   {
-    Ue_gf = 0.0;
-    Um_gf = 0.0;
-    S_gf = 0.0;
-    if (dimensional)
-    {
-      Ue_gf.ProjectCoefficient(*Ue_dim.get());
-      Um_gf.ProjectCoefficient(*Um_dim.get());
-      S_gf.ProjectCoefficient(*S_dim.get());
-    }
-    else
-    {
-      Ue_gf.ProjectCoefficient(*Ue_nondim.get());
-      Um_gf.ProjectCoefficient(*Um_nondim.get());
-      S_gf.ProjectCoefficient(*S_nondim.get());
-    }
+    Ue_gf.ProjectCoefficient(dimensional ? *Ue_dim : *Ue_nondim);
+    Um_gf.ProjectCoefficient(dimensional ? *Um_dim : *Um_nondim);
+    S_gf.ProjectCoefficient(dimensional ? *S_dim : *S_nondim);
   };
 
-  auto copy_gridfunctions = [&]()
+  // Fields with their units scale factors. The coefficient grid functions are only
+  // evaluated in local elements, since their face-neighbor data is not exchanged.
+  struct Field
   {
-    mfem::ParGridFunction Er_copy(E->Real()), Ei_copy(E->Imag()), Br_copy(B->Real()),
-        Bi_copy(B->Real()), V_copy(V->Real()), A_copy(A->Real()), Ue_copy(Ue_gf),
-        Um_copy(Um_gf), S_copy(S_gf);
-    return std::vector<mfem::ParGridFunction>(
-        {Er_copy, Ei_copy, Br_copy, Bi_copy, V_copy, A_copy, Ue_copy, Um_copy, S_copy});
+    std::string name;
+    const mfem::ParGridFunction *gf;
+    double scale;
+    bool face_nbr;
+  };
+  const auto scale_E = iodata.units.GetScaleFactor<Units::ValueType::FIELD_E>();
+  const auto scale_B = iodata.units.GetScaleFactor<Units::ValueType::FIELD_B>();
+  const auto scale_D = iodata.units.GetScaleFactor<Units::ValueType::FIELD_D>();
+  const auto scale_H = iodata.units.GetScaleFactor<Units::ValueType::FIELD_H>();
+  const std::vector<Field> fields = {
+      {"E_real", &E->Real(), scale_E, true},
+      {"E_imag", &E->Imag(), scale_E, true},
+      {"B_real", &B->Real(), scale_B, true},
+      {"B_imag", &B->Imag(), scale_B, true},
+      {"V", &V->Real(), iodata.units.GetScaleFactor<Units::ValueType::VOLTAGE>(), true},
+      {"A", &A->Real(), iodata.units.GetScaleFactor<Units::ValueType::CURRENT>(), true},
+      {"U_e", &Ue_gf, scale_D * scale_E, false},
+      {"U_m", &Um_gf, scale_H * scale_B, false},
+      {"S", &S_gf, scale_E * scale_H, false}};
+
+  // Evaluate the fields at a set of reference points in every local and face-neighbor
+  // element.
+  auto Sample = [&]()
+  {
+    std::vector<std::vector<double>> values(fields.size());
+    mfem::IsoparametricTransformation T_nbr;
+    mfem::Vector val;
+    auto SampleElement =
+        [&](mfem::ElementTransformation &T, mfem::Geometry::Type geom, bool face_nbr)
+    {
+      const auto &ir = mfem::IntRules.Get(geom, 2 * order);
+      for (int q = 0; q < ir.GetNPoints(); q++)
+      {
+        const auto &ip = ir.IntPoint(q);
+        T.SetIntPoint(&ip);
+        for (std::size_t i = 0; i < fields.size(); i++)
+        {
+          if (face_nbr && !fields[i].face_nbr)
+          {
+            continue;
+          }
+          fields[i].gf->GetVectorValue(T, ip, val);
+          values[i].insert(values[i].end(), val.begin(), val.end());
+        }
+      }
+    };
+    for (int e = 0; e < pmesh.GetNE(); e++)
+    {
+      SampleElement(*pmesh.GetElementTransformation(e), pmesh.GetElementGeometry(e), false);
+    }
+    for (int e = 0; e < pmesh.GetNFaceNeighborElements(); e++)
+    {
+      pmesh.GetFaceNbrElementTransformation(e, T_nbr);
+      SampleElement(T_nbr, pmesh.face_nbr_elements[e]->GetGeometryType(), true);
+    }
+    return values;
   };
 
-  // Copy gridfunctions before dimensionalizing.
+  // Check that values = scale * ref for each field, with scale its units scale factor if
+  // dimensional and one otherwise.
+  auto Compare = [&](const std::vector<std::vector<double>> &ref,
+                     const std::vector<std::vector<double>> &values, bool dimensional)
+  {
+    for (std::size_t i = 0; i < fields.size(); i++)
+    {
+      REQUIRE(ref[i].size() == values[i].size());
+      const double scale = dimensional ? fields[i].scale : 1.0;
+      double max_ref = 0.0, max_diff = 0.0;
+      for (std::size_t j = 0; j < ref[i].size(); j++)
+      {
+        max_ref = std::max(max_ref, std::abs(scale * ref[i][j]));
+        max_diff = std::max(max_diff, std::abs(values[i][j] - scale * ref[i][j]));
+      }
+      Mpi::GlobalMax(1, &max_ref, comm);
+      Mpi::GlobalMax(1, &max_diff, comm);
+      CAPTURE(fields[i].name, dimensional, max_ref, max_diff);
+      CHECK(max_ref > 0.0);
+      CHECK(max_diff <= rtol * max_ref);
+    }
+  };
+
+  // Sample the fields before dimensionalizing.
   update_coeff_gridfunctions(false);
-  std::vector<mfem::ParGridFunction> gf_before = copy_gridfunctions();
+  const auto values_before = Sample();
 
   // Dimensionalize.
-  mesh::DimensionalizeMesh(mesh, mesh_Lc0);
-  ScaleGridFunctions(mesh_Lc0, mesh.Dimension(), E, B, V, A);
+  mesh::DimensionalizeMesh(pmesh, mesh_Lc0);
+  ScaleGridFunctions(mesh_Lc0, {E.get(), B.get(), V.get(), A.get()});
   DimensionalizeGridFunctions(iodata.units, E, B, V, A);
   update_coeff_gridfunctions(true);
-  std::vector<mfem::ParGridFunction> gf_dim = copy_gridfunctions();
-  CompareGridFunctions(gf_before, gf_dim, expected_scaling, rtol);
+  Compare(values_before, Sample(), true);
 
   // Nondimensionalize.
-  mesh::NondimensionalizeMesh(mesh, mesh_Lc0);
-  ScaleGridFunctions(1.0 / mesh_Lc0, mesh.Dimension(), E, B, V, A);
+  mesh::NondimensionalizeMesh(pmesh, mesh_Lc0);
+  ScaleGridFunctions(1.0 / mesh_Lc0, {E.get(), B.get(), V.get(), A.get()});
   NondimensionalizeGridFunctions(iodata.units, E, B, V, A);
   update_coeff_gridfunctions(false);
-  std::vector<mfem::ParGridFunction> gf_after = copy_gridfunctions();
-  CompareGridFunctions(gf_before, gf_after, std::vector<double>(gf_after.size(), 1.0),
-                       rtol);
+  Compare(values_before, Sample(), false);
+}
+
+TEST_CASE("GridFunction scaling keeps face-neighbor data consistent",
+          "[postoperator][Parallel]")
+{
+  // In-place scaling of a GridFunction must scale its cached face-neighbor data together
+  // with the field, so the cache stays consistent with the field until the next
+  // ExchangeFaceNbrData. Check this for a real- and a complex-valued field, and for the
+  // Units in-place (non)dimensionalization round trip.
+  auto comm = Mpi::World();
+  Units units(1.0e-3, 2.0e-3);
+
+  // Mesh partitioned across ranks, so each rank caches face-neighbor data.
+  constexpr int resolution = 3;
+  auto serial_mesh = std::make_unique<mfem::Mesh>(mfem::Mesh::MakeCartesian3D(
+      resolution, resolution, resolution, mfem::Element::TETRAHEDRON, 1.0, 1.0, 1.0));
+  mfem::ParMesh mesh(comm, *serial_mesh);
+  mfem::ND_FECollection nd_fec(1, mesh.Dimension());
+  mfem::ParFiniteElementSpace nd_fespace(&mesh, &nd_fec);
+
+  // Check that values = scale * baseline, component-wise within relative tolerance.
+  constexpr double rtol = 1.0e-13;
+  auto CheckScaled =
+      [](const Vector &baseline, const Vector &values, double scale, double tolerance)
+  {
+    REQUIRE(baseline.Size() == values.Size());
+    const auto *B = baseline.HostRead();
+    const auto *V = values.HostRead();
+    double max_diff = 0.0, max_val = 0.0;
+    for (int i = 0; i < baseline.Size(); i++)
+    {
+      max_diff = std::max(max_diff, std::abs(scale * B[i] - V[i]));
+      max_val = std::max(max_val, std::abs(V[i]));
+    }
+    CHECK(max_diff <= tolerance * std::max(max_val, 1.0));
+  };
+
+  // Check that the cached face-neighbor data equals a fresh exchange of the current
+  // field values on the neighboring ranks.
+  auto CheckFaceNbrData = [&](GridFunction &gf)
+  {
+    Vector nbr_r = gf.Real().FaceNbrData();
+    Vector nbr_i;
+    if (gf.HasImag())
+    {
+      nbr_i = gf.Imag().FaceNbrData();
+    }
+    gf.Real().ExchangeFaceNbrData();
+    if (gf.HasImag())
+    {
+      gf.Imag().ExchangeFaceNbrData();
+    }
+    CheckScaled(nbr_r, gf.Real().FaceNbrData(), 1.0, rtol);
+    if (gf.HasImag())
+    {
+      CheckScaled(nbr_i, gf.Imag().FaceNbrData(), 1.0, rtol);
+    }
+  };
+
+  auto CheckScaling = [&](GridFunction &gf, double scale)
+  {
+    // Populate the field through the true-dof distribution, then cache the face-neighbor
+    // data and keep a baseline of the local field values.
+    Vector x(nd_fespace.GetTrueVSize());
+    linalg::SetRandom(comm, x, 1);
+    gf.Real().SetFromTrueDofs(x);
+    if (gf.HasImag())
+    {
+      linalg::SetRandom(comm, x, 2);
+      gf.Imag().SetFromTrueDofs(x);
+    }
+    gf.Real().ExchangeFaceNbrData();
+    if (gf.HasImag())
+    {
+      gf.Imag().ExchangeFaceNbrData();
+    }
+    REQUIRE(gf.Real().FaceNbrData().Size() > 0);
+    Vector base_r = gf.Real();
+    Vector base_i;
+    if (gf.HasImag())
+    {
+      REQUIRE(gf.Imag().FaceNbrData().Size() > 0);
+      base_i = gf.Imag();
+    }
+
+    // Scaling in place scales the cached face-neighbor data together with the field.
+    gf *= scale;
+    CheckScaled(base_r, gf.Real(), scale, rtol);
+    if (gf.HasImag())
+    {
+      CheckScaled(base_i, gf.Imag(), scale, rtol);
+    }
+    CheckFaceNbrData(gf);
+
+    // The Units in-place scaling round trip returns to the scaled baseline and also
+    // keeps the cached face-neighbor data consistent.
+    units.DimensionalizeInPlace<Units::ValueType::FIELD_E>(gf);
+    units.NondimensionalizeInPlace<Units::ValueType::FIELD_E>(gf);
+    CheckScaled(base_r, gf.Real(), scale, rtol);
+    if (gf.HasImag())
+    {
+      CheckScaled(base_i, gf.Imag(), scale, rtol);
+    }
+    CheckFaceNbrData(gf);
+  };
+
+  constexpr double scale = 2.5;
+  GridFunction gf_real(nd_fespace);
+  CheckScaling(gf_real, scale);
+
+  GridFunction gf_complex(nd_fespace, true);
+  CheckScaling(gf_complex, scale);
 }

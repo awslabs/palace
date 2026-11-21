@@ -3,6 +3,7 @@
 
 #include "ams.hpp"
 
+#include <algorithm>
 #include "fem/bilinearform.hpp"
 #include "fem/fespace.hpp"
 #include "fem/integrator.hpp"
@@ -16,7 +17,7 @@ namespace palace
 HypreAmsSolver::HypreAmsSolver(FiniteElementSpace &nd_fespace,
                                FiniteElementSpace &h1_fespace, int cycle_it, int smooth_it,
                                bool vector_interp, bool singular_op, bool agg_coarsen,
-                               int print)
+                               int agglomeration_target, int print)
   : mfem::HypreSolver(),
     // From the Hypre docs for AMS: cycles 1, 5, 8, 11, 13 are fastest, 7 yields fewest its
     // (MFEM default is 13). 14 is similar to 11/13 but is cheaper in that is uses additive
@@ -30,7 +31,8 @@ HypreAmsSolver::HypreAmsSolver(FiniteElementSpace &nd_fespace,
     ams_singular(singular_op),
     // For positive (SPD) operators, we will use aggressive coarsening but not for frequency
     // domain problems when the preconditioner matrix is not SPD.
-    agg_coarsen(agg_coarsen), print((print > 1) ? print - 1 : 0)
+    agg_coarsen(agg_coarsen), agglomeration_target(agglomeration_target),
+    print((print > 1) ? print - 1 : 0)
 {
   // From MFEM: The AMS preconditioner may sometimes require inverting singular matrices
   // with BoomerAMG, which are handled correctly in Hypre's Solve method, but can produce
@@ -57,12 +59,20 @@ void HypreAmsSolver::ConstructAuxiliaryMatrices(FiniteElementSpace &nd_fespace,
   // pattern of the parallel G^T A G matrix (computed by Hypre).
   const bool skip_zeros_interp = !mfem::Device::Allows(mfem::Backend::DEVICE_MASK);
   {
-    const auto *PtGP =
-        dynamic_cast<const ParOperator *>(&nd_fespace.GetDiscreteInterpolator(h1_fespace));
-    MFEM_VERIFY(
-        PtGP,
-        "HypreAmsSolver requires the discrete gradient matrix as a ParOperator operator!");
-    G = &PtGP->ParallelAssemble(skip_zeros_interp);
+    const auto &G_op = nd_fespace.GetDiscreteInterpolator(h1_fespace);
+    const auto *PtGP = dynamic_cast<const ParOperator *>(&G_op);
+    if (PtGP)
+    {
+      G = &PtGP->ParallelAssemble(skip_zeros_interp);
+    }
+    else
+    {
+      // The discrete gradient between broken spaces is an assembled matrix.
+      G = dynamic_cast<const mfem::HypreParMatrix *>(&G_op);
+      MFEM_VERIFY(G,
+                  "HypreAmsSolver requires the discrete gradient matrix as a ParOperator "
+                  "or an assembled HypreParMatrix!");
+    }
   }
 
   // Vertex coordinates for the lowest order case, or Nedelec interpolation matrix or
@@ -88,21 +98,41 @@ void HypreAmsSolver::ConstructAuxiliaryMatrices(FiniteElementSpace &nd_fespace,
         z_coord(i) = mesh.GetVertex(i)[2];
       }
     }
-    x.reset(x_coord.ParallelProject());
-    x->HypreReadWrite();
+    // On a broken space, the copies of the vertex DOFs have the coordinates of their
+    // original.
+    std::unique_ptr<mfem::HypreParMatrix> Y;
+    if (h1_fespace.IsBroken())
+    {
+      Y = h1_fespace.BuildVersionMap(FiniteElementSpace::VersionMap::ALL);
+    }
+    auto Project = [&](mfem::ParGridFunction &coord)
+    {
+      std::unique_ptr<mfem::HypreParVector> xu(coord.ParallelProject());
+      if (Y)
+      {
+        auto xb = std::make_unique<mfem::HypreParVector>(h1_fespace.GetComm(),
+                                                         h1_fespace.GlobalTrueVSize(),
+                                                         h1_fespace.GetTrueDofOffsets());
+        Y->MultTranspose(*xu, *xb);
+        xu = std::move(xb);
+      }
+      xu->HypreReadWrite();
+      return xu;
+    };
+    x = Project(x_coord);
     if (space_dim > 1)
     {
-      y.reset(y_coord.ParallelProject());
-      y->HypreReadWrite();
+      y = Project(y_coord);
     }
     if (space_dim > 2)
     {
-      z.reset(z_coord.ParallelProject());
-      z->HypreReadWrite();
+      z = Project(z_coord);
     }
   }
   else
   {
+    MFEM_VERIFY(!h1_fespace.IsBroken(),
+                "AMS on broken spaces is only supported for the lowest order!");
     // Fall back to MFEM legacy assembly for identity interpolator.
     FiniteElementSpace h1d_fespace(h1_fespace.GetMesh(), &h1_fespace.GetFEColl(), space_dim,
                                    mfem::Ordering::byVDIM);
@@ -143,7 +173,9 @@ void HypreAmsSolver::InitializeSolver()
   // Control printing and number of iterations for use as a preconditioner.
   HYPRE_AMSSetPrintLevel(ams, print);
   HYPRE_AMSSetMaxIter(ams, ams_it);
-  // HYPRE_AMSSetTol(ams, 1.0e-16);  // Avoid issues with zero RHS
+  // A fixed number of iterations: with a zero tolerance and no printing, hypre computes no
+  // residual norms (with the patch in extern/patch/hypre) and flags no convergence error.
+  HYPRE_AMSSetTol(ams, 0.0);
 
   // Set this option when solving a curl-curl problem with zero mass term.
   if (ams_singular)
@@ -171,12 +203,25 @@ void HypreAmsSolver::InitializeSolver()
   }
 
   HYPRE_AMSSetSmoothingOptions(ams, relax_type, ams_smooth_it, weight, omega);
+#if defined(HYPRE_AMS_AMG_REDIST)
+  // Gather the coarse levels of the auxiliary space AMG hierarchies with few rows per
+  // process onto fewer processes during the solve (same hierarchies and V-cycles, results
+  // agree up to the summation order): they are otherwise dominated by message latency.
+  HYPRE_AMSSetAMGRedistTarget(ams, agglomeration_target);
+#endif
   HYPRE_AMSSetAlphaAMGOptions(ams, coarsen_type, amg_agg_levels, amg_relax_type, theta,
                               interp_type, Pmax);
   HYPRE_AMSSetBetaAMGOptions(ams, coarsen_type, amg_agg_levels, amg_relax_type, theta,
                              interp_type, Pmax);
 
-  int coarse_relax_type = 9;  // Default, l1-symm. GS, 9 = Gaussian elimination
+  // Coarsest-level solve of the auxiliary space AMG: Gaussian elimination (9), which in
+  // hypre does not pivot, or l1-Jacobi (18), which hypre also uses when the coarsest level
+  // has more than 9 rows and which keeps the cycle independent of the partition. For a
+  // singular operator (no mass term), Πᵀ A Π is singular when a constant vector field
+  // satisfies the essential boundary conditions (Π c is then a gradient). Elimination
+  // without pivoting then divides by a rounding-level pivot and turns the rounding in every
+  // residual into large gradients, which stall the Krylov solver.
+  const int coarse_relax_type = ams_singular ? 18 : 9;
   HYPRE_AMSSetAlphaAMGCoarseRelaxType(ams, coarse_relax_type);
   HYPRE_AMSSetBetaAMGCoarseRelaxType(ams, coarse_relax_type);
 
@@ -189,11 +234,31 @@ void HypreAmsSolver::InitializeSolver()
   HYPRE_ParVector HY_Z = (z) ? (HYPRE_ParVector)*z : nullptr;
   HYPRE_AMSSetCoordinateVectors(ams, HY_X, HY_Y, HY_Z);
 
-  HYPRE_ParCSRMatrix HY_Pi = (Pi) ? (HYPRE_ParCSRMatrix)*Pi : nullptr;
-  HYPRE_ParCSRMatrix HY_Pix = (Pix) ? (HYPRE_ParCSRMatrix)*Pix : nullptr;
-  HYPRE_ParCSRMatrix HY_Piy = (Piy) ? (HYPRE_ParCSRMatrix)*Piy : nullptr;
-  HYPRE_ParCSRMatrix HY_Piz = (Piz) ? (HYPRE_ParCSRMatrix)*Piz : nullptr;
-  HYPRE_AMSSetInterpolations(ams, HY_Pi, HY_Pix, HY_Piy, HY_Piz);
+  // Only pass the interpolation matrices when they exist (order > 1): hypre marks them as
+  // not owned by AMS even when given null pointers, so at order 1 the matrices that hypre
+  // builds from the vertex coordinates in each setup would never be freed.
+  if (Pi || Pix)
+  {
+    HYPRE_ParCSRMatrix HY_Pi = (Pi) ? (HYPRE_ParCSRMatrix)*Pi : nullptr;
+    HYPRE_ParCSRMatrix HY_Pix = (Pix) ? (HYPRE_ParCSRMatrix)*Pix : nullptr;
+    HYPRE_ParCSRMatrix HY_Piy = (Piy) ? (HYPRE_ParCSRMatrix)*Piy : nullptr;
+    HYPRE_ParCSRMatrix HY_Piz = (Piz) ? (HYPRE_ParCSRMatrix)*Piz : nullptr;
+    HYPRE_AMSSetInterpolations(ams, HY_Pi, HY_Pix, HY_Piy, HY_Piz);
+  }
+}
+
+void HypreAmsSolver::Mult(const mfem::HypreParVector &b, mfem::HypreParVector &x) const
+{
+#if defined(HYPRE_AMS_ZERO_GUESS_FLAG)
+  // Only valid if hypre_AMSSolve maintains the flag: the relaxation skips the exchange of a
+  // vector flagged as zero.
+  if (!iterative_mode)
+  {
+    x.HypreWrite();
+    hypre_ParVectorSetZeros(x);
+  }
+#endif
+  mfem::HypreSolver::Mult(b, x);
 }
 
 void HypreAmsSolver::SetOperator(const Operator &op)
@@ -219,6 +284,22 @@ void HypreAmsSolver::SetOperator(const Operator &op)
   auxB.Reset();
   auxX.Delete();
   auxX.Reset();
+}
+
+int GetAmsSingularCoarseSmoothIts(const std::vector<HYPRE_BigInt> &level_sizes,
+                                  int mg_smooth_it)
+{
+  MFEM_VERIFY(!level_sizes.empty() && level_sizes[0] > 0,
+              "The number of AMS smoothing sweeps requires a nonempty coarsest level!");
+  double ratio = 0.0;
+  for (std::size_t l = 1; l < level_sizes.size(); l++)
+  {
+    ratio += static_cast<double>(level_sizes[l]);
+  }
+  ratio /= static_cast<double>(level_sizes[0]);
+  // Round 1.5 times the ratio to the nearest integer within [8, 32] (clamped before the
+  // conversion, which is only defined for values that an int can hold).
+  return std::max(mg_smooth_it, static_cast<int>(std::clamp(1.5 * ratio + 0.5, 8.0, 32.0)));
 }
 
 }  // namespace palace

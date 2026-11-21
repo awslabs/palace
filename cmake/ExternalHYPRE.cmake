@@ -67,12 +67,12 @@ endif()
 
 # Configure GPU support
 if(PALACE_WITH_CUDA OR PALACE_WITH_HIP)
-  list(APPEND HYPRE_OPTIONS -DHYPRE_ENABLE_UNIFIED_MEMORY=OFF)
-  if(PALACE_WITH_GPU_AWARE_MPI)
-    list(APPEND HYPRE_OPTIONS -DHYPRE_ENABLE_GPU_AWARE_MPI=ON)
-  else()
-    list(APPEND HYPRE_OPTIONS -DHYPRE_ENABLE_GPU_AWARE_MPI=OFF)
-  endif()
+  # Palace enables GPU-aware MPI at runtime when MPI supports it, this only sets hypre's
+  # default (and lets MFEM compile its GPU-aware hypre communication)
+  list(APPEND HYPRE_OPTIONS
+    -DHYPRE_ENABLE_UNIFIED_MEMORY=OFF
+    -DHYPRE_ENABLE_GPU_AWARE_MPI=ON
+  )
 endif()
 if(PALACE_WITH_CUDA)
   list(APPEND HYPRE_OPTIONS
@@ -94,6 +94,51 @@ endif()
 string(REPLACE ";" "; " HYPRE_OPTIONS_PRINT "${HYPRE_OPTIONS}")
 message(STATUS "HYPRE_OPTIONS: ${HYPRE_OPTIONS_PRINT}")
 
+# Sync compute stream before GPU-aware MPI in device matvec, using the patch from the Spack
+# build (https://github.com/hypre-space/hypre/pull/1629,
+# https://github.com/spack/spack-packages/pull/7198)
+include(PatchHelpers)
+set(HYPRE_PATCH_FILES)
+download_patch(HYPRE_PATCH_FILES "${CMAKE_BINARY_DIR}/extern/hypre-patches"
+  hypre_pr1629.patch
+  "https://github.com/hypre-space/hypre/commit/5d0282f44490f406ea532ea6778fe914df677346.patch?full_index=1"
+  8b11d35c29215d462b8e727775e8771d808806ced107e1675082ed80b9ba84fb
+)
+
+# Skip the halo exchange of a zero initial guess in hybrid Gauss-Seidel relaxation
+# (https://github.com/hypre-space/hypre/pull/1651)
+download_patch(HYPRE_PATCH_FILES "${CMAKE_BINARY_DIR}/extern/hypre-patches"
+  hypre_pr1651.patch
+  "https://github.com/hypre-space/hypre/commit/2f3d54fe8aa3169e4820eeafad4a672922ea77d6.patch?full_index=1"
+  bb064764fda6d2fcf853821cfad54415a5a234bf67420a0b6fd0c6c59dbe902f
+)
+
+# Multicomponent vectors in hybrid Gauss-Seidel relaxation and Gaussian elimination, for
+# BoomerAMG solves of several right-hand sides with one message per neighbor (the
+# implementation of https://github.com/hypre-space/hypre/pull/1652, with fixes, see
+# https://github.com/hypre-space/hypre/issues/1653), hosted in this repository until
+# hypre has a commit for it
+download_patch(HYPRE_PATCH_FILES "${CMAKE_BINARY_DIR}/extern/hypre-patches"
+  hypre_multicomponent_relax.diff
+  "https://raw.githubusercontent.com/awslabs/palace/3cc6475f2c247c8f35588b7bbf4f06e58e9fa499/extern/patch/hypre/hypre_multicomponent_relax.diff"
+  fb6f85c347503c9b1d5de7b10caaa542816c3b33bb2af4f73ba10651a7743e2a
+)
+
+# AMS with a fixed number of iterations: no residual norms with a zero tolerance and no
+# printing, and the zero flag of the initial guess used and maintained, so that the first
+# relaxation of the auxiliary space solves skips its exchange
+list(APPEND HYPRE_PATCH_FILES
+  "${CMAKE_SOURCE_DIR}/extern/patch/hypre/hypre_ams_fixed_iterations.diff"
+)
+
+# AMS: agglomerate the coarse levels of the auxiliary space BoomerAMG hierarchies onto
+# fewer processes during the solve (same hierarchies and V-cycles), and run the additive
+# Pi-space corrections concurrently (prototype for
+# https://github.com/hypre-space/hypre/issues/1654). Applies after the patch above.
+list(APPEND HYPRE_PATCH_FILES
+  "${CMAKE_SOURCE_DIR}/extern/patch/hypre/hypre_ams_coarse_agglomeration.diff"
+)
+
 include(ExternalProject)
 ExternalProject_Add(hypre
   DEPENDS           ${HYPRE_DEPENDENCIES}
@@ -105,6 +150,10 @@ ExternalProject_Add(hypre
   PREFIX            ${CMAKE_BINARY_DIR}/extern/hypre-cmake
   SOURCE_SUBDIR     src
   UPDATE_COMMAND    ""
+  PATCH_COMMAND
+    git reset --hard &&
+    git clean -fd &&
+    git apply "${HYPRE_PATCH_FILES}"
   CMAKE_ARGS        ${HYPRE_OPTIONS}
   TEST_COMMAND      ""
 )

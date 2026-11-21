@@ -27,6 +27,10 @@ if(PALACE_WITH_MAGMA)
   include(ExternalMAGMA)
 endif()
 
+# Add fmt (before Umpire, which uses it)
+message(STATUS "====================== Configuring fmt dependency ======================")
+include(ExternalFmt)
+
 # Add UMPIRE (for HYPRE)
 if(PALACE_WITH_UMPIRE)
   message(STATUS "==================== Configuring UMPIRE dependency =====================")
@@ -75,10 +79,6 @@ include(ExternalJSON)
 message(STATUS "========== Configuring nlohmann/json-schema-validator dependency ==========")
 include(ExternalJSONSchemaValidator)
 
-# Add fmt
-message(STATUS "====================== Configuring fmt dependency ======================")
-include(ExternalFmt)
-
 # Add scn
 message(STATUS "====================== Configuring scn dependency ======================")
 include(ExternalScn)
@@ -86,6 +86,12 @@ include(ExternalScn)
 # Add Eigen
 message(STATUS "===================== Configuring Eigen dependency =====================")
 include(ExternalEigen)
+
+# Add Enzyme
+if(PALACE_WITH_ENZYME AND "${ENZYME_DIR}" STREQUAL "")
+  message(STATUS "===================== Configuring Enzyme dependency ====================")
+  include(ExternalEnzyme)
+endif()
 
 # Add SUNDIALS
 if(PALACE_WITH_SUNDIALS)
@@ -106,4 +112,3 @@ include(ExternalLibCEED)
 # Add MFEM
 message(STATUS "====================== Configuring MFEM dependency =====================")
 include(ExternalMFEM)
-

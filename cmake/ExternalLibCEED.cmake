@@ -67,6 +67,7 @@ endif()
 if(PALACE_WITH_LIBXSMM)
   list(APPEND LIBCEED_OPTIONS
     "XSMM_DIR=${CMAKE_INSTALL_PREFIX}"
+    "PKGCONF=pkg-config"  # Not every system provides the pkgconf command
   )
   # LIBXSMM can require linkage with BLAS for fallback
   if(NOT "${BLAS_LAPACK_LIBRARIES}" STREQUAL "")
@@ -119,6 +120,6 @@ ExternalProject_Add(libCEED
   UPDATE_COMMAND    ""
   CONFIGURE_COMMAND ""
   BUILD_COMMAND     ""
-  INSTALL_COMMAND   ${CMAKE_MAKE_PROGRAM} ${LIBCEED_OPTIONS} install
+  INSTALL_COMMAND   ${PALACE_MAKE_COMMAND} ${LIBCEED_OPTIONS} install
   TEST_COMMAND      ""
 )

@@ -3,23 +3,32 @@
 
 #include "iodata.hpp"
 
+#include <algorithm>
 #include <charconv>
+#include <cmath>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <numbers>
+#include <optional>
 #include <regex>
 #include <set>
 #include <sstream>
 #include <stack>
 #include <string>
 #include <string_view>
+#include <fmt/format.h>
+#include <fmt/ranges.h>
 #include <mfem.hpp>
 #include <nlohmann/json.hpp>
 #include "fem/bilinearform.hpp"
 #include "fem/integrator.hpp"
+#include "models/portexcitations.hpp"
 #include "utils/communication.hpp"
+#include "utils/enum_string.hpp"
 #include "utils/geodata.hpp"
 #include "utils/jsonschema.hpp"
+#include "utils/permittivitymodel.hpp"
 
 namespace palace
 {
@@ -107,7 +116,24 @@ std::stringstream PreprocessFile(const char *filename)
     bool inside = false;
     for (auto it = start; it != file.end(); ++it)
     {
-      if (inside)
+      if (*it == '"')
+      {
+        // Skip string literals: brackets inside strings (e.g. file paths) are not arrays. A
+        // quote also ends any candidate array, which then passes through unexpanded.
+        inside = false;
+        while (++it != file.end() && *it != '"')
+        {
+          if (*it == '\\' && it + 1 != file.end())
+          {
+            ++it;
+          }
+        }
+        if (it == file.end())
+        {
+          break;
+        }
+      }
+      else if (inside)
       {
         if (*it == ']')
         {
@@ -270,8 +296,161 @@ IoData::IoData(const char *filename, bool print) : IoData(ParseAndValidate(filen
 {
 }
 
+void IoData::WarnPermittivityModelDefects() const
+{
+  // Typed permittivity terms are passive by construction. A PoleResidue term may not be,
+  // which is allowed (a fit may only be meant for the requested frequencies), but warned.
+  // Two separate conditions are stated: gain of the whole response of the material, and
+  // that its PoleResidue terms specify no stored energy (which is not gain).
+  // Magnetostatics does not use the permittivity, so there is nothing to warn about.
+  // Electrostatics uses the static permittivity, with no stored energy of the harmonic
+  // polarization.
+  if (problem.type == ProblemType::MAGNETOSTATIC)
+  {
+    return;
+  }
+  std::optional<std::pair<double, double>> band;  // GHz
+  switch (problem.type)
+  {
+    case ProblemType::DRIVEN:
+      if (!solver.driven.sample_f.empty())
+      {
+        const auto [lo, hi] = std::minmax_element(solver.driven.sample_f.begin(),
+                                                  solver.driven.sample_f.end());
+        band = {*lo, *hi};
+      }
+      break;
+    case ProblemType::EIGENMODE:
+      band = {solver.eigenmode.target, solver.eigenmode.target_upper};
+      break;
+    case ProblemType::BOUNDARYMODE:
+      band = {solver.boundary_mode.freq, solver.boundary_mode.freq};
+      break;
+    case ProblemType::ELECTROSTATIC:
+      band = {0.0, 0.0};
+      break;
+    default:
+      break;
+  }
+  constexpr double angular_to_ghz = 1.0 / (2.0 * std::numbers::pi * 1.0e9);
+  auto describe = [&](const std::vector<permittivity::FrequencyInterval> &intervals)
+  {
+    std::string str;
+    bool overlap = false;
+    for (const auto &interval : intervals)
+    {
+      const double lo = interval.lower * angular_to_ghz,
+                   hi = interval.upper * angular_to_ghz;
+      str += str.empty() ? "" : ", ";
+      str += (lo == 0.0 && std::isinf(hi)) ? "at every frequency"
+             : (lo == 0.0)                 ? fmt::format("below {:.6g} GHz", hi)
+             : std::isinf(hi)              ? fmt::format("above {:.6g} GHz", lo)
+                                           : fmt::format("{:.6g} to {:.6g} GHz", lo, hi);
+      overlap = overlap || (band && lo <= band->second && hi >= band->first);
+    }
+    if (band)
+    {
+      str += overlap ? fmt::format(", overlapping the requested {:.6g} to {:.6g} GHz",
+                                   band->first, band->second)
+                     : fmt::format(", outside the requested {:.6g} to {:.6g} GHz",
+                                   band->first, band->second);
+    }
+    return str;
+  };
+  for (std::size_t i = 0; i < domains.materials.size(); i++)
+  {
+    const auto &material = domains.materials[i];
+    if (permittivity::IsPassiveByConstruction(material.permittivity_terms))
+    {
+      continue;
+    }
+    const auto defects =
+        permittivity::FindDefects(material.epsilon_r.s[0], material.permittivity_terms);
+    if (!defects.gain.empty())
+    {
+      Mpi::Warning("The frequency-dependent Permittivity of material {:d} (attributes {}) "
+                   "has gain, a negative dissipated power, {}!\nThe field solve uses the "
+                   "model as given; a fit may only be meant for some frequencies.\n",
+                   i + 1, material.attributes, describe(defects.gain));
+    }
+    if (problem.type == ProblemType::ELECTROSTATIC)
+    {
+      continue;
+    }
+    // A property of the configured model. The solver decides the omitted outputs for the
+    // materials on its mesh and lists them; this diagnosis can only state the condition.
+    if (!permittivity::HasStoredEnergy(material.permittivity_terms))
+    {
+      Mpi::Warning("The PoleResidue terms of the frequency-dependent Permittivity of "
+                   "material {:d} (attributes {}) specify its susceptibility but no "
+                   "stored-energy realization. If this material is on the mesh, Palace "
+                   "does not report the electric energy of the regions with it, nor the "
+                   "outputs normalized by it; the runtime warning lists the actual "
+                   "omissions. The field solve is unaffected. Use Drude, Debye, or Lorentz "
+                   "terms where the stored energy is needed.\n",
+                   i + 1, material.attributes);
+    }
+  }
+}
+
 void IoData::CheckConfiguration()
 {
+  // Mesh cracking of interior boundaries is no longer required for error estimation, and is
+  // selected per boundary with the "Crack" option of impedance, rational impedance, and
+  // conductivity boundaries.
+  if (model.crack_bdr_elements.has_value())
+  {
+    Mpi::Warning(
+        "config[\"Model\"][\"CrackInternalBoundaryElements\"] is deprecated and "
+        "will be removed in a future release! By default, the mesh is only cracked "
+        "along interior boundaries with PMC or absorbing boundary conditions, and "
+        "along impedance, rational impedance, and conductivity boundaries with "
+        "\"Crack\": true.\n");
+    // The global option overrides the per-boundary choice. The legacy behavior also cracks
+    // impedance, rational impedance, and conductivity boundaries with the default "Crack":
+    // false, while disabling mesh cracking contradicts the boundaries which request it.
+    if (*model.crack_bdr_elements)
+    {
+      auto NotCracked = [](const auto &data) { return !data.crack; };
+      if (std::any_of(boundaries.conductivity.begin(), boundaries.conductivity.end(),
+                      NotCracked) ||
+          std::any_of(boundaries.impedance.begin(), boundaries.impedance.end(),
+                      NotCracked) ||
+          std::any_of(boundaries.rational_impedance.begin(),
+                      boundaries.rational_impedance.end(), NotCracked))
+      {
+        Mpi::Warning(
+            "config[\"Model\"][\"CrackInternalBoundaryElements\"] = true overrides "
+            "\"Crack\": false of impedance, rational impedance, and conductivity "
+            "boundaries, which are then modeled as two independent surfaces (cracked)!\n");
+      }
+    }
+    else
+    {
+      std::set<int> crack_attrs;
+      auto Append = [&crack_attrs](const auto &boundary_data)
+      {
+        for (const auto &data : boundary_data)
+        {
+          if (data.crack)
+          {
+            crack_attrs.insert(data.attributes.begin(), data.attributes.end());
+          }
+        }
+      };
+      Append(boundaries.conductivity);
+      Append(boundaries.impedance);
+      Append(boundaries.rational_impedance);
+      MFEM_VERIFY(crack_attrs.empty(),
+                  "\"Crack\": true on the boundaries with attributes "
+                      << fmt::format("{}", fmt::join(crack_attrs, ", "))
+                      << " conflicts with "
+                         "config[\"Model\"][\"CrackInternalBoundaryElements\"] = false, "
+                         "which disables mesh cracking! Remove the deprecated option to "
+                         "crack these boundaries, or set \"Crack\": false.");
+    }
+  }
+
   // Mixed current/flux inductance extraction has one complete-matrix contract: every
   // parallel current element supplies its oriented aperture, and every current port remains
   // open during the flux excitations. Reject partial or silently overridden configurations
@@ -308,6 +487,19 @@ void IoData::CheckConfiguration()
     }
   }
 
+  const bool has_frequency_dependent_permittivity = std::any_of(
+      domains.materials.begin(), domains.materials.end(),
+      [](const auto &material) { return material.HasFrequencyDependentPermittivity(); });
+  if (has_frequency_dependent_permittivity)
+  {
+    // Static problems use the zero-frequency limit (MaterialOperator). Transient problems
+    // would need the time-domain response of a model defined in frequency.
+    MFEM_VERIFY(problem.type != ProblemType::TRANSIENT,
+                "Frequency-dependent material Permittivity is not supported for Transient "
+                "simulations!");
+    WarnPermittivityModelDefects();
+  }
+
   // Check that the provided domain and boundary objects are all supported by the requested
   // problem type.
   if (problem.type == ProblemType::DRIVEN)
@@ -318,6 +510,13 @@ void IoData::CheckConfiguration()
                     solver.driven.adaptive_tol > 0.0,
                 "Driven system with circuit synthesis (AdaptiveCircuitSynthesis) requires "
                 "adaptive frequency sweep (AdaptiveTol > 0.0)!\n");
+    // DrivenSolver reverts an adaptive sweep with too few samples to a uniform sweep, but
+    // circuit synthesis has no such fallback: PROM initialization and the error indicator
+    // need two distinct samples (sample_f is deduplicated when parsed).
+    MFEM_VERIFY(!solver.driven.adaptive_circuit_synthesis ||
+                    solver.driven.sample_f.size() >= 2,
+                "Driven system with circuit synthesis (AdaptiveCircuitSynthesis) requires "
+                "at least two distinct frequency samples!\n");
     MFEM_VERIFY(!solver.driven.adaptive_circuit_synthesis ||
                     !boundaries.lumpedport.empty() || !boundaries.waveport.empty(),
                 "Driven system with circuit synthesis (AdaptiveCircuitSynthesis) requires "
@@ -327,10 +526,22 @@ void IoData::CheckConfiguration()
                 "yet support Floquet port boundaries. The Floquet Robin dispersion is "
                 "handled in the online PROM sweep but has not been folded into the "
                 "synthesised circuit pencil.\n");
+    // The Floquet terms of a wave vector k make the system matrices Hermitian rather than
+    // complex symmetric (the transpose of the problem for k is the one for -k), so that the
+    // synthesized inverse inductance, inverse resistance, and capacitance matrices would
+    // not be symmetric. The wave vector is nonzero as for MaterialOperator::HasWaveVector.
+    const auto &k = boundaries.periodic.wave_vector;
+    MFEM_VERIFY(!solver.driven.adaptive_circuit_synthesis ||
+                    std::hypot(k[0], k[1], k[2]) <= std::numeric_limits<double>::epsilon(),
+                "Driven system with circuit synthesis (AdaptiveCircuitSynthesis) does not "
+                "support a nonzero Floquet wave vector (FloquetWaveVector): its terms make "
+                "the system matrices Hermitian rather than complex symmetric, so the "
+                "synthesized circuit matrices would not be symmetric.\n");
     // Second-order absorbing (farfield), surface-conductivity, and rational surface
     // impedance boundaries are supported in circuit synthesis: their frequency-dependent
     // contributions are folded into the synthesised pencil via the same auxiliary-state
-    // path as the wave ports (the 2nd-order ABC's 0.5/ω as an exact pole at ω=0; surface
+    // path as the wave ports (the 2nd-order ABC's 0.5/ω as an exact pole at ω=0, with the
+    // sign of β inside the boundary matrix; surface
     // conductivity's iω/Z(ω) and the rational impedance's Robin coefficient s·D(s)/N(s)
     // by a polynomial + AAA fit). See RomOperator::CalculateNormalizedPROMMatrices.
     // Wave ports are supported via an automatic polynomial fit of the modal dispersion,
@@ -432,6 +643,18 @@ void IoData::CheckConfiguration()
       Mpi::Warning(
           "Transient problem type does not support wave port boundary conditions!\n");
     }
+    for (const auto &[idx, data] : boundaries.lumpedport)
+    {
+      // The excitation weight is frequency independent, so it can only be represented in
+      // the time domain when it is real, that is, when the phase is a multiple of 180
+      // degrees.
+      MFEM_VERIFY(
+          ExcitationWeight(data.excitation_amplitude, data.excitation_phase).imag() == 0.0,
+          fmt::format("Transient simulations require a real excitation: "
+                      "\"ExcitationPhase\" must be a multiple of 180 degrees on lumped "
+                      "port index {:d}",
+                      idx));
+    }
     if (!boundaries.farfield.empty() && boundaries.farfield.order > 1)
     {
       Mpi::Warning("Transient problem type does not support absorbing boundary conditions "
@@ -463,6 +686,16 @@ void IoData::CheckConfiguration()
         "conditions!\n");
   }
 
+  // A two-sided superconductor film is modeled on a solution space broken across its faces,
+  // which must stay interior faces: the deprecated global option would crack the mesh along
+  // the film.
+  MFEM_VERIFY(
+      !model.crack_bdr_elements.value_or(false) ||
+          std::none_of(boundaries.superconductor.begin(), boundaries.superconductor.end(),
+                       [](const auto &data) { return data.two_sided; }),
+      "Superconductor boundary \"TwoSided\" cannot be used with "
+      "\"CrackInternalBoundaryElements\": true, which cracks the mesh along the film!");
+
   // Resolve default values in configuration file.
   if (solver.linear.type == LinearSolver::DEFAULT)
   {
@@ -478,10 +711,10 @@ void IoData::CheckConfiguration()
     else
     {
       // Prefer sparse direct solver for frequency domain problems if available.
-#if defined(MFEM_USE_SUPERLU)
-      solver.linear.type = LinearSolver::SUPERLU;
-#elif defined(MFEM_USE_STRUMPACK)
+#if defined(MFEM_USE_STRUMPACK)
       solver.linear.type = LinearSolver::STRUMPACK;
+#elif defined(MFEM_USE_SUPERLU)
+      solver.linear.type = LinearSolver::SUPERLU;
 #elif defined(MFEM_USE_MUMPS)
       solver.linear.type = LinearSolver::MUMPS;
 #else
@@ -516,13 +749,12 @@ void IoData::CheckConfiguration()
   }
   if (solver.linear.initial_guess < 0)
   {
-    if ((problem.type == ProblemType::DRIVEN && solver.driven.adaptive_tol <= 0.0) ||
-        problem.type == ProblemType::TRANSIENT ||
+    if (problem.type == ProblemType::DRIVEN || problem.type == ProblemType::TRANSIENT ||
         problem.type == ProblemType::ELECTROSTATIC ||
         problem.type == ProblemType::MAGNETOSTATIC)
     {
-      // Default true only driven simulations without adaptive frequency sweep, transient
-      // simulations, electrostatics, or magnetostatics.
+      // Default true for driven (adaptive frequency sweeps certify convergence from the
+      // PROM solution), transient, electrostatic, and magnetostatic simulations.
       solver.linear.initial_guess = 1;
     }
     else
@@ -542,6 +774,35 @@ void IoData::CheckConfiguration()
       solver.linear.mg_max_levels = 100;
     }
   }
+  if (solver.linear.complex_coarse_solve &&
+      (problem.type == ProblemType::DRIVEN || problem.type == ProblemType::EIGENMODE ||
+       problem.type == ProblemType::BOUNDARYMODE) &&
+      (solver.linear.type == LinearSolver::AMS ||
+       solver.linear.type == LinearSolver::BOOMER_AMG) &&
+      !(problem.type == ProblemType::BOUNDARYMODE && solver.linear.mg_max_levels == 1))
+  {
+    // AMS and BoomerAMG are built for the real-valued matrix of the finite element space.
+    // With the equivalent real-valued system of twice the size of the complex-valued
+    // matrix, AMS aborts and BoomerAMG is not a preconditioner with which the solves
+    // converge, so they keep the real-valued approximation. A boundary mode problem
+    // without multigrid replaces them by a sparse direct solver, which supports the
+    // option, as the mode solver of wave ports does: the wave ports without their own
+    // "ComplexCoarseSolve" keep the inherited value (unless "PCMatReal" overrides it).
+    if (!solver.linear.pc_mat_real)
+    {
+      for (auto &[idx, port] : boundaries.waveport)
+      {
+        if (!port.complex_coarse_solve)
+        {
+          port.complex_coarse_solve = true;
+        }
+      }
+    }
+    Mpi::Warning("\"ComplexCoarseSolve\" is not supported with the {} linear solver and "
+                 "is disabled!\n",
+                 ToString(solver.linear.type));
+    solver.linear.complex_coarse_solve = false;
+  }
   if (solver.linear.pc_mat_shifted < 0)
   {
     if (problem.type == ProblemType::DRIVEN && solver.linear.type == LinearSolver::AMS)
@@ -559,13 +820,29 @@ void IoData::CheckConfiguration()
       solver.linear.pc_mat_shifted = 0;
     }
   }
+  // Magnetostatic superconducting domains, with a London depth.
+  const bool london_domains =
+      problem.type == ProblemType::MAGNETOSTATIC &&
+      std::any_of(domains.materials.begin(), domains.materials.end(),
+                  [](const auto &data) { return std::abs(data.lambda_L) > 0.0; });
   // The preconditioner matrix symmetry for sparse direct solvers is a derived runtime
   // property; it is computed at Ksp construction (see GetPreconditionerMatrixSymmetry)
   // rather than stored on LinearSolverData.
   if (solver.linear.mg_smooth_aux < 0)
   {
-    if (problem.type == ProblemType::ELECTROSTATIC ||
-        problem.type == ProblemType::MAGNETOSTATIC)
+    // A London sheet's or domain's shifted preconditioner lifts the gradients off the
+    // curl-curl kernel, so they need the distributive relaxation that the pure curl-curl
+    // problem does not.
+    const bool london_pc = problem.type == ProblemType::MAGNETOSTATIC &&
+                           solver.linear.london_pc_shift > 0.0 &&
+                           (!boundaries.superconductor.empty() ||
+                            !boundaries.fluxloop.empty() || london_domains);
+    if (london_pc)
+    {
+      solver.linear.mg_smooth_aux = 1;
+    }
+    else if (problem.type == ProblemType::ELECTROSTATIC ||
+             problem.type == ProblemType::MAGNETOSTATIC)
     {
       // Disable auxiliary space smoothing using distributive relaxation by default for
       // problems which don't need it.
@@ -576,6 +853,12 @@ void IoData::CheckConfiguration()
       solver.linear.mg_smooth_aux = 1;
     }
   }
+  // The magnetostatic auxiliary operators come with the gauge shift (see
+  // CurlCurlOperator::GetPreconditionerMatrix).
+  MFEM_VERIFY(problem.type != ProblemType::MAGNETOSTATIC ||
+                  solver.linear.mg_smooth_aux <= 0 || solver.linear.london_pc_shift > 0.0,
+              "Magnetostatic simulations with \"MGAuxiliarySmoother\" require a positive "
+              "\"LondonPCShift\"!");
   if (solver.linear.mg_smooth_order < 0)
   {
     solver.linear.mg_smooth_order = std::max(2 * solver.order, 4);
@@ -609,12 +892,12 @@ void IoData::CheckConfiguration()
   }
   if (solver.linear.ams_singular_op < 0)
   {
-    // A Superconductor sheet's (1/L_ksq) M_sheet penalty leaves a residual gradient null
-    // space, so K̃ is not the pure singular curl-curl operator; use full AMS (G-space
-    // corrections) rather than singular-AMS, which stalls in parallel.
+    // A Superconductor sheet's (1/L_ksq) M_sheet penalty, or a London domain's mass, leaves
+    // a residual gradient null space, so K̃ is not the pure singular curl-curl operator; use
+    // full AMS (G-space corrections) rather than singular-AMS, which stalls in parallel.
     const bool has_london_film = !boundaries.superconductor.empty();
     solver.linear.ams_singular_op =
-        (problem.type == ProblemType::MAGNETOSTATIC && !has_london_film);
+        (problem.type == ProblemType::MAGNETOSTATIC && !has_london_film && !london_domains);
   }
   if (solver.linear.amg_agg_coarsen < 0)
   {
@@ -700,6 +983,14 @@ void IoData::CheckConfiguration()
 #if !defined(MFEM_USE_CUDSS)
   MFEM_VERIFY(solver.linear.type != LinearSolver::CUDSS,
               "Linear solver cuDSS requested but Palace was not built with cuDSS support!");
+#endif
+#if !defined(PALACE_WITH_PARMETIS)
+  if (solver.linear.sym_factorization == SymbolicFactorization::PARMETIS)
+  {
+    Mpi::Warning("ParMETIS column ordering requested but Palace was not built with "
+                 "ParMETIS support, using METIS instead!\n");
+    solver.linear.sym_factorization = SymbolicFactorization::METIS;
+  }
 #endif
 
   // Configure settings for quadrature rules and partial assembly.

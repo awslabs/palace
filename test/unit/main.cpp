@@ -17,6 +17,13 @@
 #include <StrumpackConfig.hpp>
 #endif
 
+// Tests of error handling expect MFEM_VERIFY and MFEM_ABORT to throw. Without exceptions,
+// MFEM calls MPI_Abort instead, which ends the whole test run at the first such check.
+#if !defined(MFEM_USE_EXCEPTIONS)
+#error "Palace unit tests require MFEM built with MFEM_USE_EXCEPTIONS"
+#error "Configure with -DPALACE_MFEM_USE_EXCEPTIONS=ON, or use mfem+exceptions in Spack"
+#endif
+
 using namespace palace;
 
 // Global test options configurable from command line.
@@ -97,9 +104,11 @@ int main(int argc, char *argv[])
     device_str += ",omp";
 
   // Initialize the device and assign GPUs to MPI ranks.
-  mfem::Device device(
-      device_str.c_str(),
-      palace::utils::GetDeviceId(Mpi::World(), palace::utils::GetDeviceCount()));
+  const int device_id =
+      palace::utils::GetDeviceId(Mpi::World(), palace::utils::GetDeviceCount());
+  palace::utils::ConfigureMemory(device_str, device_id);
+  mfem::Device device(device_str.c_str(), device_id);
+  device.SetGPUAwareMPI(palace::utils::QueryGPUAwareMPI());
 
   // Initialize HYPRE with correct memory location based on device.
   // TODO: Create a palace::Device class that takes care of all of this.
@@ -164,6 +173,17 @@ int main(int argc, char *argv[])
   {
     cfg.testsOrTags.emplace_back("~[Regression]");
     cfg.testsOrTags.emplace_back("~[Long]");
+  }
+
+  // Catch2 >= 3.9.0 runs the tests in random order by default, with a seed drawn by each
+  // process: use the root's, so that all processes run the same tests in the same order.
+  Mpi::Broadcast(1, &cfg.rngSeed, 0, Mpi::World());
+
+  // Only the root process writes the --out file: catch_discover_tests (Catch2 >= 3.15.2)
+  // lists the tests through it, and concurrent writes from all ranks corrupt it.
+  if (!Mpi::Root(Mpi::World()))
+  {
+    cfg.defaultOutputFilename.clear();
   }
   session.useConfigData(cfg);
 

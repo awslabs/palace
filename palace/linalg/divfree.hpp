@@ -65,6 +65,9 @@ public:
   // ∇ x y = 0.
   void Mult(VecType &y) const;
 
+  // Same, with relative tolerance tol for the solve instead of the one set at construction.
+  void Mult(VecType &y, double tol) const;
+
   void Mult(const VecType &x, VecType &y) const
   {
     y = x;

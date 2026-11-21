@@ -27,26 +27,43 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/main.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-2d-submesh.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-aaa.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-amg.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-ams.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-basesolver.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-boundarymodeoperator.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-brokenspace.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-coefficient.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-communication.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-complexdirectsolver.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-config.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-constants.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-curlcurloperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-densematrix.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-domainpostoperator.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-domainsubmesh.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-eigenmode.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-eigenmodedriver.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-errorestimator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-floquetport.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-frequencydependentpostpro.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-geodata.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-helpers.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-initialguess.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-iterative.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-libceed.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-lineintegrator.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-lowrank.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-lumpedportintegration.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-materialoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-memoryreporting.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-meshio.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-mms-electrostatic.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-mms-electrostatic-analytic.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-nleps.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-nondimensionalize.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-orthog.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-outputdir.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-permittivitymodel.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-postoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-postoperatorcsv.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-rap.cpp
@@ -55,18 +72,45 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-smoother.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-spaceoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-strattonchu.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-strumpack.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-surfacecharge.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-surfacefunctional.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-postoperator-boundary-viz.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-superconductorsheetoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-surfaceimpedanceoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-surfacerationalimpedanceoperator.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-surfaceterms.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-tablecsv.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-timeaverage.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-vector.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-waveportimpedance.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-waveportoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/regression_helpers.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/regression/cases.cpp
 )
+
+if(PALACE_WITH_ENZYME)
+  # Enzyme-differentiated sources are compiled into their own object library so the Enzyme
+  # Clang plugin (ClangEnzymeFlags) applies only here, not to the rest of unit-tests.
+  add_library(enzyme-unit-tests OBJECT
+    ${CMAKE_CURRENT_SOURCE_DIR}/test-enzyme.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/test-mms-electrostatic-enzyme.cpp
+  )
+  target_link_libraries(enzyme-unit-tests
+    PRIVATE Catch2::Catch2
+            ${LIB_TARGET_NAME}
+            ClangEnzymeFlags
+  )
+
+  # ASan only, not the shared sanitizer_flags: its UBSan (-fsanitize=undefined) injects
+  # runtime-handler calls that Enzyme's autodiff pass cannot differentiate, breaking the
+  # compile. ASan is compatible; its runtime comes from unit-tests' sanitizer_flags.
+  if(PALACE_BUILD_WITH_SANITIZERS)
+    target_compile_options(enzyme-unit-tests PRIVATE -fsanitize=address -fno-omit-frame-pointer)
+  endif()
+
+  target_sources(unit-tests PRIVATE $<TARGET_OBJECTS:enzyme-unit-tests>)
+endif()
 
 # Set output name for installed binary
 set_target_properties(unit-tests PROPERTIES OUTPUT_NAME palace-unit-tests)
@@ -82,6 +126,16 @@ target_link_libraries(unit-tests
           $<$<BOOL:${PALACE_BUILD_WITH_SANITIZERS}>:sanitizer_flags>
           $<IF:$<BOOL:${PALACE_BUILD_WITH_COVERAGE}>,$<LINK_LIBRARY:WHOLE_ARCHIVE,${LIB_TARGET_NAME}>,${LIB_TARGET_NAME}>
           )
+
+# ARPACK and ScaLAPACK both define zzdotc_, with different interfaces. The tests which use
+# STRUMPACK or MUMPS directly make it, and with it ScaLAPACK, a direct dependency of this
+# executable, while the linker drops libarpack, which the executable does not call. PARPACK
+# then finds the routine of ScaLAPACK first and crashes when it extracts eigenvectors. Keep
+# every linked library a direct dependency, so that libarpack stays ahead of them as on the
+# link line. Not needed on macOS, where a symbol is bound to the library it was linked from.
+if(PALACE_WITH_ARPACK AND NOT APPLE)
+  target_link_options(unit-tests PRIVATE "LINKER:--no-as-needed")
+endif()
 
 # The PostOperator boundary-viz regression decodes MFEM's compressed binary VTU output
 # when MFEM is built with zlib support.
@@ -240,6 +294,20 @@ catch_discover_tests(unit-tests
     ENVIRONMENT "${PALACE_TESTS_OMP_ENV};$<${SHOULD_SET_LLVM_PROFILE_FILE}:LLVM_PROFILE_FILE=${CMAKE_BINARY_DIR}/coverage/mpi/coverage-%p.profraw>"
 )
 
+# Device code paths that MFEM's debug device runs on the host, so that CPU builds test them
+if(NOT (PALACE_WITH_CUDA OR PALACE_WITH_HIP))
+  catch_discover_tests(unit-tests
+    TEST_PREFIX "debug-"
+    TEST_SPEC "[lowrank][Parallel]"
+    TEST_EXECUTOR ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${PALACE_TESTS_NUMPROC} ${MPIEXEC_PREFLAGS}
+    EXTRA_ARGS ${MPIEXEC_POSTFLAGS} --device debug --skip-benchmarks
+    PROPERTIES
+      PROCESSORS ${PALACE_TESTS_PROCESSORS}
+      SKIP_RETURN_CODE 4
+      ENVIRONMENT "${PALACE_TESTS_OMP_ENV};$<${SHOULD_SET_LLVM_PROFILE_FILE}:LLVM_PROFILE_FILE=${CMAKE_BINARY_DIR}/coverage/mpi/coverage-%p.profraw>"
+  )
+endif()
+
 # Regression tests: full-mesh Palace solves diffed against reference CSVs under
 # PALACE_TEST_DATA_DIR/regression/ref. Slow enough to deserve their own ctest
 # prefix (`ctest -L "^regression$"` to select, `-LE "^(regression|long)$"` to
@@ -307,4 +375,3 @@ endif()
 
 # Enable testing
 enable_testing()
-

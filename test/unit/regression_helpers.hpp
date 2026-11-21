@@ -62,6 +62,9 @@ struct RegressionOptions
   // rom-Linv/Rinv/C pencil matrices): not stored in the reference tree, so they are dropped
   // from the file-presence check, not just the comparison.
   std::vector<std::string> unstored_files;
+  // Paths relative to postpro/ of unstored outputs which must still be written: the
+  // file-presence check without a reference, as excluded_files keeps it for stored ones.
+  std::vector<std::string> required_unstored_files;
   // Allow row-count mismatch (eigen / adaptive cases).
   bool skip_rowcount = false;
   // Compare at most this many leading rows. If unset for an Eigenmode case,
@@ -81,6 +84,10 @@ struct RegressionOptions
   // "farfield-rE.csv", "iteration1/port-S.csv").
   std::unordered_map<std::string, CustomCheck> custom_checks;
 };
+
+// Column-wise diff of one CSV at the case tolerances. Exposed so a custom check can keep
+// the default reference comparison and add a reference-free assertion on top of it.
+void CompareCSVFiles(Table &actual, Table &reference, const RegressionOptions &opts);
 
 // End-to-end case runner. Calls palace::Run on every rank; rank 0
 // diffs the live postpro/<subdir>/ tree against the reference tree.

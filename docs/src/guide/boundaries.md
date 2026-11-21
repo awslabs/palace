@@ -67,7 +67,26 @@ boundary conditions, can be applied using the `"Absorbing"` boundary keyword und
 first-order absorbing boundary condition is a special case of the above impedance boundary
 and is available for eigenmode or frequency or time domain driven simulation types. The
 second-order absorbing boundary condition is only available for frequency domain
-simulations.
+simulations; its boundary curl operator requires a 3D mesh. It neglects the term depending
+on the divergence of the tangential field (see
+[Other boundary conditions](../reference.md#Other-boundary-conditions)), so that it only
+improves on the first-order condition for TE fields, with the electric field tangential to
+the boundary: for TM plane waves, the two conditions are the same. It is also not passive for
+fields whose tangential wavenumber on the boundary exceeds ``\sqrt{2}`` times the
+wavenumber in the material, like evanescent fields of guided modes below the light line or
+of Floquet periodic structures. *Palace* warns when the part of the
+[Floquet wave vector](../config/reference.md#config-boundaries-periodic-floquetwavevector)
+tangential to an absorbing boundary exceeds this limit at the lowest frequency of the
+simulation.
+
+Next to a frequency-dependent material, the wave impedance and both orders' coefficients use
+``\epsilon_{r,\mathrm{wave}}(s)=\epsilon_r(s)+\sigma_\mathrm{user}/(\epsilon_0 s)``
+at the current frequency, where ``\epsilon_0`` is the vacuum permittivity.
+The additive user `Conductivity` must be isotropic on such a boundary; the analytic
+impedance does not model a tensor conductivity. Constant-material boundaries retain their
+existing lossless-material approximation. In eigenmode simulations, this frequency
+dependence can make the existing nonlinear solver fail or omit lower modes near a material
+pole or permittivity zero; see [Eigenmode problems](problem.md#Eigenmode-problems).
 
 [Perfectly matched layer (PML)](https://en.wikipedia.org/wiki/Perfectly_matched_layer)
 boundaries for frequency and time domain electromagnetic formulations are not yet
@@ -85,6 +104,124 @@ skin depth. It is available only for frequency domain driven and eigenmode simul
 information see the
 [Other boundary conditions](../reference.md#Other-boundary-conditions) section of the
 reference.
+
+On an interior boundary (a conducting sheet), the boundary condition represents the
+conductor surfaces on both sides of the sheet, each with the surface impedance of the
+conductor: as a single sheet by default, or as independent surfaces with `"Crack": true`
+(see [Interior boundaries](#Interior-boundaries)). For a sheet on the exterior of the
+computational domain (only one conductor surface), the
+[`"External"`](../config/reference.md#config-boundaries-conductivity) flag should be set
+for the thickness correction.
+
+## Interior boundaries
+
+Boundary conditions can also be specified on interior boundaries of the computational
+domain, that is, boundary elements with domain elements on both sides (wave ports and
+Floquet ports are always exterior boundaries). Boundary conditions which apply to each side
+separately, and would otherwise have no effect on an interior boundary, are imposed by
+duplicating the mesh vertices ("cracking" the mesh) along the boundary, such that the
+elements on the two sides are no longer coupled:
+[`"PMC"`](../config/reference.md#config-boundaries-pmc) (or
+[`"ZeroCharge"`](../config/reference.md#config-boundaries-zerocharge)) and
+[`"Absorbing"`](../config/reference.md#config-boundaries-absorbing) boundaries. Other
+boundary conditions on interior boundaries model sheets carrying a surface current or
+charge:
+
+  - [`"PEC"`](../config/reference.md#config-boundaries-pec) (or
+    [`"Ground"`](../config/reference.md#config-boundaries-ground)) and
+    [`"Terminal"`](../config/reference.md#config-boundaries-terminal) metal boundaries
+    are infinitely thin perfect conductors. The fields on the two sides are not coupled
+    through the sheet, since the tangential electric field vanishes on it. The mesh is not
+    cracked along them by default.
+
+  - [`"Superconductor"`](../config/reference.md#config-boundaries-superconductor)
+    boundaries, and the films of
+    [`"FluxLoop"`](../config/reference.md#config-boundaries-fluxloop) boundaries, are
+    thin superconducting films with a kinetic sheet inductance. The mesh is never cracked
+    along them: the sheet carries a single tangential vector potential, and the sheet
+    current is given by the jump in the tangential magnetic field across the sheet.
+
+  - [`"LumpedPort"`](../config/reference.md#config-boundaries-lumpedport) and
+    [`"SurfaceCurrent"`](../config/reference.md#config-boundaries-surfacecurrent)
+    boundaries are sheets carrying the port or source surface current. The mesh is not
+    cracked along them by default (and never along lumped ports).
+
+  - [`"Impedance"`](../config/reference.md#config-boundaries-impedance),
+    [`"RationalImpedance"`](../config/reference.md#config-boundaries-rationalimpedance),
+    and [`"Conductivity"`](../config/reference.md#config-boundaries-conductivity)
+    boundaries are sheets with a surface impedance. Their `"Crack"` option selects between
+    two physical models:
+
+      + `"Crack": false` models a film much thinner than its penetration depth (the London
+        penetration depth of a superconductor, or the skin depth of a normal metal). The
+        mesh is not modified, and the sheet carries a single tangential electric field,
+        with the surface current given by the jump in the tangential magnetic field across
+        the sheet. The film couples the fields on its two sides. The surface impedance of
+        an impedance boundary is that of the film, for example the kinetic inductance
+        ``\mu_0\lambda^2/d`` of a superconducting film of thickness ``d``.
+      + `"Crack": true` models a conductor much thicker than its penetration depth. The
+        mesh is cracked along the boundary, such that the two faces are independent
+        surfaces, each carrying its own current, with no coupling through the conductor.
+        Each face of an impedance boundary has the given surface impedance, as on an
+        exterior boundary, for example the surface inductance ``\mu_0\lambda`` of a
+        superconductor. Each face of a conductivity boundary has the surface impedance of
+        the conductor.
+
+    The default is `false`. For conductivity boundaries, the two models give the same result
+    when the currents on the two faces of the sheet are equal, and differ when they are not:
+    for a conductor much thicker than its skin depth with fields on one side only, for
+    example, the uncracked sheet shares the current equally between its two faces,
+    which halves the conductor loss. Use `"Crack": true` for such conductors.
+
+    Since *Palace* 0.19.0, the default `"Crack": false` also applies to conductivity
+    boundaries which enclose a conductor meshed as a dielectric volume (a shell), where the
+    mesh was previously cracked. The conductor loss is then lower than with previous
+    versions. A warning lists the interior conductivity boundaries without `"Crack"`: set
+    `"Crack": true` to restore the previous model, or `"Crack": false` to keep the sheet
+    model and silence the warning. Leaving the conductor volume of a shell out of
+    [`config["Domains"]["Materials"]`](../config/reference.md#config-domains-materials)
+    removes it from the mesh, which gives the same result as `"Crack": true` with fewer
+    unknowns.
+
+The mesh can only be cracked where it is conformal. Interior boundaries which are to be
+cracked are an error on a mesh with hexahedra, prisms, or pyramids with
+[refinement regions](model.md#Mesh-refinement), which make it nonconformal, and on a
+nonconformal input mesh which is not already cracked along them, as it is when it comes from
+a previous adaptive simulation with the same boundary conditions.
+
+The fields on the two sides of an uncracked sheet are generally discontinuous: the normal
+component of the electric flux density jumps by the surface charge and the tangential
+magnetic field by the surface current. The error estimate for
+[adaptive mesh refinement](model.md#Mesh-refinement) therefore allows the recovered fluxes
+to be discontinuous across these interior boundaries, as it does for a cracked mesh. One
+difference remains with nonconformal refinement: where the elements on only one side of a
+sheet are refined, the recovered fluxes on the refined side are limited along the sheet to
+the resolution of the other side, which makes the error estimate larger there than on a
+cracked mesh.
+
+For postprocessing on uncracked sheets:
+
+  - [Interface dielectric](postprocessing.md#Boundary-postprocessing) energies are the
+    same as on a cracked mesh. Types `"MA"` and `"MS"` use the fields on the air side and on
+    the substrate side of a metal sheet, respectively, and type `"Default"` sums the
+    contributions of both faces, each with its own dielectric layer. On a sheet with the
+    same material on both sides, such as an air bridge, the `"MA"` (or `"MS"`) energies of
+    both faces are summed as well. The `"MA"`, `"MS"`, and `"Default"` types model a metal
+    film: for a dielectric layer on a substrate-air interface, with or without a sheet
+    capacitance, use the `"SA"` type, which evaluates the fields on the substrate and air
+    sides separately.
+  - [Surface flux](postprocessing.md#Boundary-postprocessing) postprocessing with
+    `"TwoSided": true` gives the total flux through both faces of the sheet, as on a cracked
+    mesh, for example the charge on a metal sheet. With `"TwoSided": false`, it gives the
+    average of the fluxes on the two sides.
+
+The mesh cracking behavior of previous versions of *Palace*, where all interior boundaries
+with boundary conditions except for lumped ports are cracked, can be restored with the
+deprecated option
+[`config["Model"]["CrackInternalBoundaryElements"]`](../config/reference.md#config-model-crackinternalboundaryelements),
+which also splits the surface impedance of cracked impedance boundaries between their two
+faces (twice the given impedance on each face). Setting this option to `false` disables
+mesh cracking entirely, which is an error for boundaries with `"Crack": true`.
 
 ## Periodic boundary
 
@@ -143,6 +280,17 @@ for implementation details.
     wave port currently being considered, in the case wave ports are touching and share one
     or more edges, are also considered as PEC for the wave port boundary mode analysis.
 
+    The port modes are ranked by their distance to a target, by default just above the
+    bulk propagation constants of the port materials, which ranks the modes below it by
+    decreasing wave number. The kinetic inductance of superconducting lines makes their
+    modes slower than bulk waves, above the default target; they are found too, but on a
+    cross-section with several modes, set
+    [`"Target"`](../config/reference.md#config-boundaries-waveport-target) to an estimate
+    of the effective index of the desired mode.
+    The driven wave port boundary condition models a lossless port line: for a lossy line,
+    the reflection coefficient of a matched port is of the order of the ratio of the
+    attenuation to the phase constant.
+
     Unlike lumped ports, wave port boundaries cannot be defined internal to the
     computational domain and instead must exist only on the outer boundary of the domain
     (they are to be "one-sided" in the sense that mesh elements only exist on one side of
@@ -162,12 +310,12 @@ for implementation details.
       + [`"VoltagePath"`](../config/reference.md#config-boundaries-waveport-voltagepath): an
         ordered list of coordinate points across the port face, directed signal → ground.
         The mode is flipped so that `\int E_{\text{mode}} \cdot dl > 0` along this path.
-        Also enables ``Z_{PV}`` postprocessing. Requires GSLIB.
+        Also enables ``Z_{PV}`` postprocessing.
       + [`"PolarityAttributes"`](../config/reference.md#config-boundaries-waveport-polarityattributes):
         a pair of parent-mesh boundary attributes `[signal, ground]` (e.g. distinct PEC
         attributes for the two terminals). The mode is flipped so that the modal E-field
         points from the signal attribute toward the ground attribute. Lightweight
-        polarity-only alternative to `"VoltagePath"` (no GSLIB).
+        polarity-only alternative to `"VoltagePath"`.
 
   - [`config["Boundaries"]["FloquetPort"]`](../config/reference.md#config-boundaries-floquetport) :
     Floquet ports are available for frequency domain driven simulations on periodic
@@ -184,7 +332,10 @@ for implementation details.
     wave vector is defined. The wave vector then scales linearly with frequency according
     to ``\bm{k}_F(f) = \bm{k}_{F,\mathrm{ref}} f / f_\mathrm{ref}``, where
     ``\bm{k}_{F,\mathrm{ref}}`` is `"FloquetWaveVector"` and ``f_\mathrm{ref}`` is
-    `"FloquetReferenceFrequency"`, maintaining a constant incidence angle across the sweep.
+    `"FloquetReferenceFrequency"`. This maintains a constant incidence angle across the
+    sweep when the medium of incidence does not depend on frequency. In a
+    frequency-dependent medium it keeps ``\bm{k}_F/\omega`` fixed, and the angle changes
+    with the refractive index.
 
     The incident field is a plane wave in the specular (0,0) diffraction order with
     user-specified polarization (TE, TM, or circular RHC/LHC). S-parameters are extracted
@@ -196,10 +347,19 @@ for implementation details.
     modes.
 
     The port boundary must be planar and on the true boundary of the computational domain.
-    The medium adjacent to the port must be homogeneous and isotropic.
+    The medium adjacent to the port must be homogeneous and isotropic. For a
+    frequency-dependent material, the port uses the complete complex wave response
+    ``\epsilon_r(s)+\sigma_\mathrm{user}/(\epsilon_0 s)`` and real-power normalization, including lossy
+    diffraction orders. Its additive user `Conductivity` must also be isotropic. Constant
+    materials retain the existing lossless-port approximation: their `LossTan` and
+    `Conductivity` are not used in the port coefficients.
 
-For each port, the excitation is normalized to have unit incident power over the port boundary
-surface. Lumped ports with reactive elements (`"L"` and/or `"C"`, or the surface-parameter
+In the frequency domain, the excitation of each port is normalized to have unit
+time-averaged incident power over the port boundary surface (see the
+[mathematical reference](../reference.md#Lumped-ports-and-wave-ports), which also compares
+the excitation with those of COMSOL and HFSS under "Comparing with other tools"); transient
+excitations carry unit instantaneous power at unit pulse amplitude. Lumped ports with
+reactive elements (`"L"` and/or `"C"`, or the surface-parameter
 equivalents `"Ls"` and/or `"Cs"`) may also be excited, including purely reactive ports with
 `"R": 0` (`"Rs": 0`). For a purely reactive port (`R = 0`) the power normalization
 references an internal unit impedance; see the [mathematical reference](../reference.md#Lumped-ports-and-wave-ports)
@@ -226,8 +386,46 @@ simulated consecutively during the Palace run. The results are printed to shared
 there are multiple excitations, the columns of the csv files are post-indexed by the excitation
 index (e.g. `Φ_elec[1][5] (C)` denoting the flux through surface 1 of excitation 5). The far-field
 file (`farfield-rE.csv`) is the exception: it has one row per (frequency, angle) pair so the
-excitation index is encoded as a row column (`exc`) rather than a column suffix. Note that a port
-can only be part of one excitation.
+excitation index is encoded as a row column (`exc`) rather than a column suffix. The saved fields
+of excitation `i` are written to a subfolder `excitation_i` (with leading zeros when there are ten
+or more excitations) of each field output folder, for example `paraview/driven/excitation_1/`
+and `gridfunction/driven/excitation_1/`. The grid function files of the mesh (`mesh`), its
+partitioning (`rank`), and the error indicator (`indicator`) are shared by all excitations and
+written once to `gridfunction/driven/`. Note that a port can only be part of one excitation.
+
+Each excited lumped port can be given a complex weight on its incident wave with the
+optional settings `"ExcitationAmplitude"` ``A`` (greater than 0, default 1) and
+`"ExcitationPhase"` ``\varphi`` (in degrees, default 0) of
+[`config["Boundaries"]["LumpedPort"][]`](../config/reference.md#config-boundaries-lumpedport).
+The incident field, voltage, and current of the port are those of the unit-power excitation
+multiplied by the weight ``a = A e^{i\varphi}``, so that the incident power is scaled by
+``A^2``. The weight is dimensionless and independent of frequency, and the phase follows the
+``e^{i\omega t}`` time convention of the frequency domain solver. This allows ports that
+share an excitation index to be driven together with different amplitudes and phases, for
+example to drive a pair of ports differentially. By linearity, the solution is the weighted
+sum of the solutions with each port excited alone. A phase of 180 degrees gives the same
+fields as reversing `"Direction"`. With the phase, the voltage, current, incident voltage
+and incident current of the port change sign, and its S-parameters do not. Reversing
+`"Direction"` also reverses the voltage reference of the port, so these keep their sign, and
+the S-parameters between this port and the others change sign. Both settings require a
+nonzero `"Excitation"` on the same port, and are an error otherwise. They are only
+available for lumped ports.
+
+  - *Scattering parameters*: When every excitation drives a single port, the S-parameters
+    are normalized by the weight of the driven port, so they do not depend on
+    `"ExcitationAmplitude"` or `"ExcitationPhase"`. As before, no S-parameters are written
+    when an excitation drives more than one port.
+  - *Incident voltage and current*: The incident voltage and current of an excited port
+    written to `port-V.csv` and `port-I.csv` include the weight. Without a phase, the
+    columns are the same as without a weight and hold the real weighted values. When the
+    weight of any excited lumped port is not real, that is, its phase is not a multiple of
+    180 degrees, the incident columns of the simulation are written as real and imaginary
+    parts instead (`Re{V_inc[...]}`, `Im{V_inc[...]}`, `Re{I_inc[...]}`,
+    `Im{I_inc[...]}`), so such a phase must not be changed between a simulation and its
+    restart. At 180 degrees the columns stay real, with a negative value.
+  - *Transient simulations*: The amplitude scales the excitation. The time domain
+    excitation is real, so a phase that is not a multiple of 180 degrees is an error. A
+    phase of 180 degrees is allowed and reverses the sign of the excitation.
 
 !!! warning "Indexing"
 
@@ -275,6 +473,21 @@ inactive; see [Magnetostatic problems](problem.md#Magnetostatic-problems) for de
 `"FluxAmounts"` entries are nondimensional internal excitation amplitudes, analogous to
 unit-current excitations for current-driven magnetostatic solves. Palace reports
 `terminal-Phi.csv` in physical webers.
+
+Each `"FluxLoop"` is its own excitation by default, so the loops are driven one at a time to
+assemble the inductance matrix. The `"Excitation"` keyword takes the same boolean or
+non-negative integer values as for [ports](#Lumped-and-wave-port-excitation): loops sharing a
+positive excitation index are driven together in a single solve, each at its own
+`"FluxAmounts"`, and `0` holds a loop at zero fluxoid in every excitation. For example,
+`"Excitation": 2` on loop 1 with `"FluxAmounts": [1.0]` and on loop 3 with
+`"FluxAmounts": [-0.5]` gives the fluxoid state ``(\Phi_1, \Phi_3) = (1, -0.5)`` of the two
+holes from one solve, superposing their per-loop states. As for ports, a loop belongs to one
+excitation, and when every excitation is a single loop the two indices must agree. The
+inductance matrix is reported when every excitation is a single loop. Otherwise the outputs
+are indexed by excitation: `terminal-Phi.csv` lists for each excitation its total stored
+energy ``E = \frac{1}{2}\Phi^T M^{-1} \Phi`` (volume magnetic plus London kinetic) in joules
+and the fluxoid it imposes on each loop in webers, the other postprocessing files have one
+row per excitation, and the fields are saved per excitation under `"Save"`.
 
 !!! note "Flux loop requirements"
 

@@ -8,6 +8,7 @@
 target_sources(${LIB_TARGET_NAME}
   PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/bilinearform.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/brokenspace.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/boundary_derived_field_bundle.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/boundary_physical_trace.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/coefficient.cpp
@@ -17,9 +18,11 @@ target_sources(${LIB_TARGET_NAME}
   ${CMAKE_CURRENT_SOURCE_DIR}/face_sampling_plan.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/facenbrexchange.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/fespace.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/fieldtransfer.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/gridfunction.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/integrator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/interpolator.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/lineintegrator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/lumpedelement.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/mesh.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/output_functionals.cpp
@@ -34,6 +37,7 @@ target_sources(${LIB_TARGET_NAME}
   ${CMAKE_CURRENT_SOURCE_DIR}/integ/mass.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/integ/mixedveccurl.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/integ/mixedvecgrad.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/integ/rotatedmass.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/integ/vecfemass.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/libceed/basis.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/libceed/ceed.cpp

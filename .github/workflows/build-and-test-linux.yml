@@ -4,7 +4,7 @@
 name: Build and Test (Linux)
 
 permissions:
-  contents: write
+  contents: read
 
 on:
   push:
@@ -24,8 +24,8 @@ jobs:
     outputs:
       test: ${{ steps.filter.outputs.test }}
     steps:
-      - uses: actions/checkout@v6
-      - uses: dorny/paths-filter@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         id: filter
         with:
           filters: |
@@ -40,6 +40,9 @@ jobs:
 
   build-and-test-linux:
     needs: filter
+    permissions:
+      contents: read
+      id-token: write  # Codecov OIDC upload
     strategy:
       fail-fast: false
       matrix:
@@ -85,6 +88,7 @@ jobs:
           with-eigensolver: slepc
           with-solver: superlu
           with-sanitizers: true
+          with-enzyme: true
         # Coverage build, x86 GCC.
         - arch: x86
           compiler: gcc
@@ -101,7 +105,7 @@ jobs:
     # (See comment above matrix)
     runs-on: ${{ matrix.arch == 'x86' && 'palace_ubuntu-latest_16-core' || 'ubuntu-22.04-arm' }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: needs.filter.outputs.test == 'true'
         with:
           submodules: 'recursive'
@@ -147,14 +151,15 @@ jobs:
 
       - name: Configure Intel MPI
         if: needs.filter.outputs.test == 'true' && matrix.mpi == 'intelmpi'
-        uses: mpi4py/setup-mpi@v1
+        uses: mpi4py/setup-mpi@3417e34f1394a16723d7913c236642c24e95fd5a # v1.4.4
         with:
           mpi: ${{ matrix.mpi }}
 
       - name: Configure Clang compiler
         if: needs.filter.outputs.test == 'true' && matrix.compiler == 'clang'
         run: |
-          sudo apt-get install -y clang lld
+          sudo apt-get install -y \
+            clang lld llvm-dev libclang-dev
           if [[ "${{ matrix.with-openmp }}" == 'openmp' ]]; then
             sudo apt-get install -y libomp-dev
           fi
@@ -243,15 +248,38 @@ jobs:
           $MPICC mpi_test.c -o mpi_test
           mpirun -np 2 ./mpi_test
 
-      # Julia is needed for the antenna postprocessing example below; the
-      # regression sweep itself uses the Catch2 binary and doesn't need it.
-      - uses: julia-actions/setup-julia@v2
-        if: needs.filter.outputs.test == 'true'
+      # Julia is only needed for the antenna postprocessing example below (same
+      # gate); the regression sweep itself uses the Catch2 binary.
+      - uses: julia-actions/setup-julia@da908477b5db94c10ffce8cfea9f2b3b9d5db687 # v3.0.3
+        id: setup-julia
+        if: needs.filter.outputs.test == 'true' && matrix.arch == 'x86' && matrix.compiler == 'gcc' && matrix.math-libs == 'openblas' && !matrix.with-coverage
         with:
           version: '1'
 
-      - uses: julia-actions/cache@v3
+      # Restore the Julia depot on every run but save it only from main, and only
+      # when the resolved packages (examples/Manifest.toml) changed. A cache saved from a
+      # pull request is visible only to that pull request, and at several hundred
+      # MB each they used up the repository's 10 GB cache.
+      - name: Restore Julia depot
+        id: julia-cache
+        if: needs.filter.outputs.test == 'true' && matrix.arch == 'x86' && matrix.compiler == 'gcc' && matrix.math-libs == 'openblas' && !matrix.with-coverage
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.julia
+          key: julia-${{ github.job }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.setup-julia.outputs.julia-version }}
+          restore-keys: julia-${{ github.job }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.setup-julia.outputs.julia-version }}-
+
+      # Configure downloads dependency patches from GitHub, and skips any file
+      # already present with the expected hash. Restoring them from a cache keeps
+      # configure off the network. This restores the most recent entry.
+      - name: Restore dependency patches
+        id: patch-cache
         if: needs.filter.outputs.test == 'true'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: palace-build/extern/*-patches
+          key: patches-${{ runner.os }}
+          restore-keys: patches-${{ runner.os }}-
 
       - name: Build Palace
         if: needs.filter.outputs.test == 'true'
@@ -305,7 +333,12 @@ jobs:
           [[ "${{ matrix.with-sanitizers }}" == 'true' ]] && WITH_SANITIZERS='ON' || WITH_SANITIZERS='OFF'
           [[ "${{ matrix.with-coverage }}" == 'true' ]] && WITH_COVERAGE='ON' || WITH_COVERAGE='OFF'
           [[ "${{ matrix.with-butterflypack }}" == 'true' ]] && WITH_BUTTERFLYPACK='ON' || WITH_BUTTERFLYPACK='OFF'
-
+          [[ "${{ matrix.with-enzyme }}" == 'true' ]] && WITH_ENZYME='ON' || WITH_ENZYME='OFF'
+          if [[ "$WITH_ENZYME" == 'ON' ]]; then
+            LLVM_CMAKE_DIR=$(llvm-config --cmakedir)
+          else
+            LLVM_CMAKE_DIR=''
+          fi
 
           # Build and install (with unit tests)
           # Compile so that MFEM throws exceptions rather then aborts for unit-tests
@@ -327,7 +360,7 @@ jobs:
           if [[ "$REGRESSION_NUMPROC" -lt 1 ]]; then
             REGRESSION_NUMPROC=1
           fi
-          mkdir palace-build && cd palace-build
+          mkdir -p palace-build && cd palace-build
           cmake .. \
             -DCMAKE_INSTALL_PREFIX=$(pwd)/../palace-install \
             -DPALACE_TESTS_NUMPROC=2 \
@@ -344,9 +377,24 @@ jobs:
             -DPALACE_WITH_ARPACK=$WITH_ARPACK \
             -DPALACE_MFEM_USE_EXCEPTIONS=ON \
             -DPALACE_BUILD_WITH_SANITIZERS=$WITH_SANITIZERS \
-            -DPALACE_BUILD_WITH_COVERAGE=$WITH_COVERAGE
+            -DPALACE_BUILD_WITH_COVERAGE=$WITH_COVERAGE \
+            -DPALACE_WITH_ENZYME=$WITH_ENZYME \
+            -DLLVM_DIR="$LLVM_CMAKE_DIR"
 
           make -j$NUM_PROC_BUILD palace-tests
+
+      # Save a new entry when configure succeeded (palace-build/Makefile exists),
+      # even if the build failed, and downloaded patches that the restored entry
+      # did not have. The key starts with the hash of the patches to tell.
+      - name: Save dependency patches
+        if: |
+          !cancelled() && needs.filter.outputs.test == 'true' &&
+          hashFiles('palace-build/Makefile') != '' &&
+          !startsWith(steps.patch-cache.outputs.cache-matched-key, format('patches-{0}-{1}-', runner.os, hashFiles('palace-build/extern/*-patches/*')))
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: palace-build/extern/*-patches
+          key: patches-${{ runner.os }}-${{ hashFiles('palace-build/extern/*-patches/*') }}-${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}
 
       - name: Run unit tests
         if: needs.filter.outputs.test == 'true'
@@ -368,9 +416,9 @@ jobs:
           fi
 
           # Disable Open MPI's CPU binding (as in spack-macos.yml): with two ranks, each is
-          # bound to one core, shared by its OpenMP threads.
-          if [[ "${{ matrix.mpi }}" == 'openmpi' ]] && \
-             [[ "${{ matrix.with-openmp }}" == 'openmp' ]]; then
+          # bound to one core, so concurrent cases all pile onto the same two cores, and
+          # each rank's OpenMP threads share its core.
+          if [[ "${{ matrix.mpi }}" == 'openmpi' ]]; then
             export OMPI_MCA_hwloc_base_binding_policy=none
             export PRTE_MCA_hwloc_default_binding_policy=none
           fi
@@ -393,48 +441,24 @@ jobs:
             # Skip [Regression] and [Long] cases here; they have their
             # own slower steps further down. CTest pins OMP_NUM_THREADS and
             # reserves PROCESSORS per case, so -j just bounds concurrency.
-            ctest -j "$(nproc 2> /dev/null || sysctl -n hw.ncpu)" --output-on-failure -LE "^(regression|long)$"
+            ctest -j "$(nproc 2> /dev/null || sysctl -n hw.ncpu)" --output-on-failure --timeout 900 -LE "^(regression|long)$"
           fi
 
-      # NOTE: Fork PRs get a read-only GITHUB_TOKEN and cannot push to gh-pages;
-      # for those the coverage report is still available via the artifact below.
-      - name: Deploy coverage to gh-pages
-        if: |
-          needs.filter.outputs.test == 'true' && matrix.with-coverage &&
-          (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
-        uses: peaceiris/actions-gh-pages@v4
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: palace-build/coverage_html
-          destination_dir: ${{ github.event_name == 'pull_request' && format('previews/PR{0}/coverage', github.event.pull_request.number) || format('coverage/{0}', github.sha) }}
-          keep_files: true
-
-      - name: Add coverage link to summary
-        if: |
-          needs.filter.outputs.test == 'true' && matrix.with-coverage &&
-          (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          SHA: ${{ github.sha }}
-        run: |
-          if [[ "$EVENT_NAME" == "pull_request" ]]; then
-            COVERAGE_URL="https://awslabs.github.io/palace/previews/PR${PR_NUMBER}/coverage/"
-          else
-            COVERAGE_URL="https://awslabs.github.io/palace/coverage/${SHA}/"
-          fi
-          echo "### Coverage Report" >> "$GITHUB_STEP_SUMMARY"
-          echo "View the coverage report at: [Coverage Report](${COVERAGE_URL})" >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Upload coverage report
+      # Codecov comments on each pull request and shows the line-by-line coverage at
+      # https://app.codecov.io/gh/awslabs/palace. For a local HTML report, run
+      # scripts/measure-test-coverage report.
+      - name: Upload coverage to Codecov
         if: needs.filter.outputs.test == 'true' && matrix.with-coverage
-        uses: actions/upload-artifact@v7
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
-          name: coverage-${{ matrix.arch }}-${{ matrix.compiler }}-${{ matrix.mpi }}
-          path: palace-build/coverage_html/
+          files: palace-build/coverage_filtered.info
+          disable_search: true
+          use_oidc: ${{ !(github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) }}
+          fail_ci_if_error: false
 
+      # The coverage entry skips regression: its plain twin runs the same suite.
       - name: Run regression tests
-        if: needs.filter.outputs.test == 'true' && !matrix.with-sanitizers
+        if: needs.filter.outputs.test == 'true' && !matrix.with-sanitizers && !matrix.with-coverage
         # CTest owns per-case scheduling for the [Regression] cases (label
         # "regression"). The configured MPI rank count and PROCESSORS property
         # reserve matching ctest slots so -j can fan out safely.
@@ -457,7 +481,7 @@ jobs:
           cd palace-build/palace-build/test/unit
           # CTest pins OMP_NUM_THREADS and reserves PROCESSORS per case, so -j is
           # just an upper bound on concurrency and can safely be all cores.
-          ctest -j "$(nproc 2> /dev/null || sysctl -n hw.ncpu)" --output-on-failure -L "^regression$"
+          ctest -j "$(nproc 2> /dev/null || sysctl -n hw.ncpu)" --output-on-failure --timeout 900 -L "^regression$"
 
       - name: Check antenna postprocessing example
         # The Julia plot script that ships with the antenna example is
@@ -474,3 +498,12 @@ jobs:
           fi
           julia --project=examples -e 'using Pkg; Pkg.instantiate()'
           julia --project=examples examples/antenna/plot_farfield.jl --model short_dipole --file "$FARFIELD"
+
+      - name: Save Julia depot
+        if: >-
+          needs.filter.outputs.test == 'true' && matrix.arch == 'x86' && matrix.compiler == 'gcc' && matrix.math-libs == 'openblas' && !matrix.with-coverage && github.ref == 'refs/heads/main' &&
+          !startsWith(steps.julia-cache.outputs.cache-matched-key, format('{0}-{1}-', steps.julia-cache.outputs.cache-primary-key, hashFiles('examples/Manifest.toml')))
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.julia
+          key: ${{ steps.julia-cache.outputs.cache-primary-key }}-${{ hashFiles('examples/Manifest.toml') }}-${{ github.run_id }}

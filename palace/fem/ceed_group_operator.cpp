@@ -3,13 +3,34 @@
 
 #include "fem/ceed_group_operator.hpp"
 
+#include <algorithm>
 #include <mfem.hpp>
+
+#include "fem/qfunctions/coeff/coeff_qf.h"
 
 namespace palace
 {
 
 namespace fem
 {
+
+void UpdateGroupOperatorContexts(const std::vector<CeedGroupOperator> &groups,
+                                 std::size_t offset, const std::vector<CeedIntScalar> &data)
+{
+  for (const auto &group : groups)
+  {
+    MFEM_VERIFY(group.ctx, "Missing retained QFunction context for a context update!");
+    std::size_t size;
+    PalaceCeedCall(group.ceed, CeedQFunctionContextGetContextSize(group.ctx, &size));
+    MFEM_VERIFY(size >= (offset + data.size()) * sizeof(CeedIntScalar),
+                "QFunction context update exceeds the retained context size!");
+    CeedIntScalar *ctx_data;
+    PalaceCeedCall(group.ceed,
+                   CeedQFunctionContextGetData(group.ctx, CEED_MEM_HOST, &ctx_data));
+    std::copy(data.begin(), data.end(), ctx_data + offset);
+    PalaceCeedCall(group.ceed, CeedQFunctionContextRestoreData(group.ctx, &ctx_data));
+  }
+}
 
 void DestroyGroupOperators(std::vector<CeedGroupOperator> &groups)
 {
@@ -95,12 +116,7 @@ void DetachGroupOperatorFieldVectors(const std::vector<CeedGroupOperator> &group
     {
       continue;
     }
-    CeedMemType mem;
-    PalaceCeedCall(group.ceed, CeedGetPreferredMemType(group.ceed, &mem));
-    if (!mfem::Device::Allows(mfem::Backend::DEVICE_MASK) && mem == CEED_MEM_DEVICE)
-    {
-      mem = CEED_MEM_HOST;
-    }
+    const CeedMemType mem = ceed::GetUsableMemType(group.ceed);
     for (auto &[field_vec, source] : group.field_vec_sources)
     {
       (void)source;
@@ -123,13 +139,7 @@ void ApplyAddGroupOperatorsImpl(const std::vector<CeedGroupOperator> &groups,
     return;
   }
 
-  CeedMemType out_mem;
-  PalaceCeedCall(groups.front().ceed,
-                 CeedGetPreferredMemType(groups.front().ceed, &out_mem));
-  if (!mfem::Device::Allows(mfem::Backend::DEVICE_MASK) && out_mem == CEED_MEM_DEVICE)
-  {
-    out_mem = CEED_MEM_HOST;
-  }
+  const CeedMemType out_mem = ceed::GetUsableMemType(groups.front().ceed);
   auto *out_data = const_cast<Vector &>(out).ReadWrite(out_mem == CEED_MEM_DEVICE);
   const CeedSize out_size = out.Size();
 

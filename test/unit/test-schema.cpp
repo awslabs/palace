@@ -653,6 +653,30 @@ TEST_CASE_METHOD(palace::test::PerRankTempDir, "Schema Validation - Range Expans
   CHECK(err.empty());
 }
 
+TEST_CASE_METHOD(palace::test::PerRankTempDir,
+                 "Schema Validation - Range Expansion Strings", "[schema][Serial]")
+{
+  // Brackets inside strings (e.g. file paths) are not integer arrays and must pass through
+  // unchanged, including after an escaped quote, while real arrays still expand.
+  auto temp_path = temp_dir / "palace_test_range_strings.json";
+  {
+    std::ofstream f(temp_path);
+    f << R"({
+      "Problem": { "Type": "Eigenmode", "Output": "postpro/run[2024-09]\"[1-2]\"" },
+      "Model": { "Mesh": "mesh[1-3].msh" },
+      "Domains": { "Materials": [{ "Attributes": [1-3] }] },
+      "Boundaries": {},
+      "Solver": { "Eigenmode": { "Target": 1.0 } }
+    })";
+  }
+
+  std::stringstream buffer = PreprocessFile(temp_path.c_str());
+  json config = json::parse(buffer);
+  CHECK(config["Model"]["Mesh"] == "mesh[1-3].msh");
+  CHECK(config["Problem"]["Output"] == "postpro/run[2024-09]\"[1-2]\"");
+  CHECK(config["Domains"]["Materials"][0]["Attributes"] == json({1, 2, 3}));
+}
+
 TEST_CASE("Schema Validation - Required Field Checks", "[schema][Serial]")
 {
 
@@ -972,10 +996,123 @@ TEST_CASE("Schema Validator Smoke Tests", "[schema][Serial]")
     CHECK(ValidateConfig(json{{"MaxIts", 1}}, "Linear").empty());
   }
 
+  SECTION("Material permittivity forms and tagged terms")
+  {
+    auto ValidateMaterial = [](const json &permittivity)
+    {
+      json config;
+      config["Problem"] = {{"Type", "Driven"}};
+      config["Model"] = {{"Mesh", "test.msh"}};
+      config["Domains"]["Materials"] = {
+          {{"Attributes", {1}}, {"Permittivity", permittivity}}};
+      config["Boundaries"] = json::object();
+      config["Solver"]["Driven"]["Samples"] = {
+          {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 1.0}}};
+      return ValidateConfig(config);
+    };
+
+    const std::vector<json> valid_terms = {
+        {{"Type", "Drude"}, {"PlasmaFrequency", 1.0}, {"CollisionFrequency", 0.1}},
+        {{"Type", "Debye"}, {"DeltaPermittivity", 1.5}, {"RelaxationTime", 0.02}},
+        {{"Type", "Lorentz"},
+         {"DeltaPermittivity", 0.8},
+         {"ResonanceFrequency", 6.0},
+         {"DampingFrequency", 0.2}},
+        {{"Type", "PoleResidue"},
+         {"Pole", {-2.0e12, 5.0e12}},
+         {"Residue", {1.2e12, -0.4e12}}},
+        {{"Type", "DjordjevicSarkar"},
+         {"Strength", 0.0575258},
+         {"LowerFrequency", 9.07157e-5},
+         {"UpperFrequency", 159.154956}}};
+    for (const auto &term : valid_terms)
+    {
+      CHECK(ValidateMaterial({{"HighFrequencyLimit", 2.08}, {"Terms", {term}}}).empty());
+    }
+    CHECK(ValidateMaterial(2.08).empty());
+    CHECK(ValidateMaterial({2.0, 3.0, 4.0}).empty());
+
+    auto CheckInvalid = [&ValidateMaterial](const json &permittivity)
+    { CHECK_FALSE(ValidateMaterial(permittivity).empty()); };
+    CheckInvalid({{"HighFrequencyLimit", 2.0}, {"Terms", json::array()}});
+    CheckInvalid({{"HighFrequencyLimit", 2.0},
+                  {"Terms",
+                   {{{"Type", "Drude"},
+                     {"PlasmaFrequency", 1.0},
+                     {"CollisionFrequency", 0.1},
+                     {"Unknown", 1}}}}});
+    CheckInvalid({{"HighFrequencyLimit", 2.0}, {"Terms", {{{"Type", "Unknown"}}}}});
+    CheckInvalid(
+        {{"HighFrequencyLimit", 2.0},
+         {"Terms", {{{"Type", "PoleResidue"}, {"Pole", {-1.0}}, {"Residue", 2.0}}}}});
+    CheckInvalid({{"HighFrequencyLimit", 2.0},
+                  {"Terms", {{{"Type", "Debye"}, {"RelaxationTime", 0.02}}}}});
+
+    // A typed term with a nonpositive strength, or a nonpositive high-frequency value, is
+    // not passive (it has gain or a negative stored energy at every frequency).
+    for (const double value : {0.0, -0.5})
+    {
+      CAPTURE(value);
+      CheckInvalid({{"HighFrequencyLimit", value}, {"Terms", {valid_terms[0]}}});
+      for (const auto &[index, key] :
+           {std::pair{1, "DeltaPermittivity"}, std::pair{2, "DeltaPermittivity"},
+            std::pair{4, "Strength"}})
+      {
+        CAPTURE(index, key);
+        json term = valid_terms[index];
+        term[key] = value;
+        CheckInvalid({{"HighFrequencyLimit", 2.08}, {"Terms", {term}}});
+      }
+    }
+  }
+
   SECTION("Excitation integer minimum - LumpedPort")
   {
     json port = {{"Index", 1}, {"Attributes", {1}}, {"Excitation", -1}};
     CHECK(!ValidateConfig(port, "LumpedPort").empty());
+  }
+
+  SECTION("Excitation weight - LumpedPort")
+  {
+    json port = {{"Index", 1},
+                 {"Attributes", {1}},
+                 {"Excitation", true},
+                 {"ExcitationAmplitude", 2.5},
+                 {"ExcitationPhase", -45.0}};
+    std::string err = ValidateConfig(port, "LumpedPort");
+    INFO("Error: " << err);
+    CHECK(err.empty());
+
+    // The same keys on a multielement port.
+    json elements = {
+        {"Index", 2},
+        {"Elements", json::array({json{{"Attributes", {1}}, {"Direction", "+X"}}})},
+        {"Excitation", 2},
+        {"ExcitationAmplitude", 0.5},
+        {"ExcitationPhase", 720}};
+    err = ValidateConfig(elements, "LumpedPort");
+    INFO("Error: " << err);
+    CHECK(err.empty());
+
+    json zero_amplitude = port;
+    zero_amplitude["ExcitationAmplitude"] = 0.0;
+    CHECK(!ValidateConfig(zero_amplitude, "LumpedPort").empty());
+
+    json negative_amplitude = port;
+    negative_amplitude["ExcitationAmplitude"] = -1.0;
+    CHECK(!ValidateConfig(negative_amplitude, "LumpedPort").empty());
+
+    json string_phase = port;
+    string_phase["ExcitationPhase"] = "30";
+    CHECK(!ValidateConfig(string_phase, "LumpedPort").empty());
+  }
+
+  SECTION("Excitation weight is not available on WavePort")
+  {
+    json port = {{"Index", 1}, {"Attributes", {1}}, {"ExcitationAmplitude", 2.0}};
+    CHECK(!ValidateConfig(port, "WavePort").empty());
+    json phase = {{"Index", 1}, {"Attributes", {1}}, {"ExcitationPhase", 30.0}};
+    CHECK(!ValidateConfig(phase, "WavePort").empty());
   }
 
   SECTION("Log exclusiveMinimum - Driven Samples")
@@ -984,6 +1121,71 @@ TEST_CASE("Schema Validator Smoke Tests", "[schema][Serial]")
         {"Samples",
          {{{"Type", "Log"}, {"MinFreq", 0.0}, {"MaxFreq", 1.0}, {"NSample", 5}}}}};
     CHECK(!ValidateConfig(driven, "Driven").empty());
+  }
+
+  SECTION("Frequencies must be positive - Driven Samples")
+  {
+    // A driven solve at 0 GHz is singular, so no sample may be there.
+    for (const auto &[min_f, max_f] : {std::pair{0.0, 1.0}, std::pair{1.0, 0.0}})
+    {
+      json linear = {
+          {"Samples", {{{"MinFreq", min_f}, {"MaxFreq", max_f}, {"NSample", 3}}}}};
+      CHECK(!ValidateConfig(linear, "Driven").empty());
+    }
+    json point = {{"Samples", {{{"Freq", {0.0, 1.0}}}}}};
+    CHECK(!ValidateConfig(point, "Driven").empty());
+    json top_level = {{"MinFreq", 0.0}, {"MaxFreq", 1.0}, {"FreqStep", 0.5}};
+    CHECK(!ValidateConfig(top_level, "Driven").empty());
+    json positive = {
+        {"Samples",
+         {{{"MinFreq", 0.1}, {"MaxFreq", 1.0}, {"NSample", 3}}, {{"Freq", {2.0}}}}}};
+    CHECK(ValidateConfig(positive, "Driven").empty());
+  }
+
+  SECTION("Deprecated FreqStep must be positive when it is read - Driven")
+  {
+    json zero_step = {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 0.0}};
+    CHECK(!ValidateConfig(zero_step, "Driven").empty());
+    json negative_step = {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", -0.5}};
+    CHECK(!ValidateConfig(negative_step, "Driven").empty());
+    json positive_step = {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 0.5}};
+    CHECK(ValidateConfig(positive_step, "Driven").empty());
+    // Without "MinFreq" and "MaxFreq" the parser ignores "FreqStep".
+    json stray_step = {{"FreqStep", 0.0},
+                       {"Samples", {{{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"NSample", 5}}}}};
+    CHECK(ValidateConfig(stray_step, "Driven").empty());
+  }
+
+  SECTION("AdaptiveCircuitSynthesis requires positive AdaptiveTol for Driven problems")
+  {
+    auto Config = [](const std::string &type, const json &driven)
+    {
+      json config = {{"Problem", {{"Type", type}}},
+                     {"Model", {{"Mesh", "test.msh"}}},
+                     {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                     {"Boundaries", json::object()},
+                     {"Solver", {{"Driven", driven}}}};
+      if (type == "Eigenmode")
+      {
+        config["Solver"]["Eigenmode"] = {{"Target", 1.0}};
+      }
+      return config;
+    };
+    json base = {{"Samples", {{{"Freq", {1.0, 2.0}}}}}};
+    // Synthesis without AdaptiveTol, or with AdaptiveTol: 0, is invalid.
+    json missing_tol = base;
+    missing_tol["AdaptiveCircuitSynthesis"] = true;
+    CHECK(!ValidateConfig(Config("Driven", missing_tol)).empty());
+    json zero_tol = missing_tol;
+    zero_tol["AdaptiveTol"] = 0.0;
+    CHECK(!ValidateConfig(Config("Driven", zero_tol)).empty());
+    // Positive AdaptiveTol or no synthesis are valid.
+    json ok = missing_tol;
+    ok["AdaptiveTol"] = 1e-3;
+    CHECK(ValidateConfig(Config("Driven", ok)).empty());
+    CHECK(ValidateConfig(Config("Driven", base)).empty());
+    // An unused "Driven" block of another problem type is not checked.
+    CHECK(ValidateConfig(Config("Eigenmode", missing_tol)).empty());
   }
 
   SECTION("Required field - Model without Mesh")

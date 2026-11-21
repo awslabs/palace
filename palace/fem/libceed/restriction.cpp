@@ -110,9 +110,23 @@ mfem::Array<int> GetFaceDofsFromAdjacentElement(const mfem::FiniteElementSpace &
   return dofs;
 };
 
+// Apply an optional element DOF remap (broken spaces) to the signed DOFs of element e.
+inline void RemapElementDofs(const ElementDofRemap *remap, int e, mfem::Array<int> &dofs)
+{
+  if (!remap)
+  {
+    return;
+  }
+  for (int k = remap->offsets[e]; k < remap->offsets[e + 1]; k++)
+  {
+    const int j = remap->local[k];
+    dofs[j] = (dofs[j] >= 0) ? remap->ldof[k] : -1 - remap->ldof[k];
+  }
+}
+
 void InitLexicoRestr(const mfem::FiniteElementSpace &fespace,
                      const std::vector<int> &indices, bool use_bdr, Ceed ceed,
-                     CeedElemRestriction *restr)
+                     CeedElemRestriction *restr, const ElementDofRemap *remap)
 {
   const std::size_t num_elem = indices.size();
   const mfem::FiniteElement *fe;
@@ -131,6 +145,11 @@ void InitLexicoRestr(const mfem::FiniteElementSpace &fespace,
     }
   }
   const int P = fe->GetDof();
+  MFEM_VERIFY(!remap || (!use_bdr && fespace.GetVDim() == 1),
+              "Element DOF remapping is only supported for domain restrictions of "
+              "spaces with vdim = 1!");
+  const CeedSize l_size =
+      remap ? remap->l_size : CeedSize(fespace.GetVDim()) * fespace.GetNDofs();
   const mfem::TensorBasisElement *tfe = dynamic_cast<const mfem::TensorBasisElement *>(fe);
   const mfem::Array<int> &dof_map = tfe->GetDofMap();
   const bool dof_map_is_identity = dof_map.Size() == 0;
@@ -169,6 +188,7 @@ void InitLexicoRestr(const mfem::FiniteElementSpace &fespace,
       else
       {
         fespace.GetElementDofs(e, dofs, dof_trans);
+        RemapElementDofs(remap, e, dofs);
       }
       MFEM_VERIFY(!dof_trans.GetDofTransformation(),
                   "Unexpected DofTransformation for lexicographic element "
@@ -190,23 +210,21 @@ void InitLexicoRestr(const mfem::FiniteElementSpace &fespace,
   if (use_el_orients)
   {
     PalaceCeedCall(ceed, CeedElemRestrictionCreateOriented(
-                             ceed, num_elem, P, fespace.GetVDim(), comp_stride,
-                             fespace.GetVDim() * fespace.GetNDofs(), CEED_MEM_HOST,
-                             CEED_COPY_VALUES, tp_el_dof.GetData(), tp_el_orients.GetData(),
-                             restr));
+                             ceed, num_elem, P, fespace.GetVDim(), comp_stride, l_size,
+                             CEED_MEM_HOST, CEED_COPY_VALUES, tp_el_dof.GetData(),
+                             tp_el_orients.GetData(), restr));
   }
   else
   {
     PalaceCeedCall(ceed, CeedElemRestrictionCreate(
-                             ceed, num_elem, P, fespace.GetVDim(), comp_stride,
-                             fespace.GetVDim() * fespace.GetNDofs(), CEED_MEM_HOST,
-                             CEED_COPY_VALUES, tp_el_dof.GetData(), restr));
+                             ceed, num_elem, P, fespace.GetVDim(), comp_stride, l_size,
+                             CEED_MEM_HOST, CEED_COPY_VALUES, tp_el_dof.GetData(), restr));
   }
 }
 
 void InitNativeRestr(const mfem::FiniteElementSpace &fespace,
                      const std::vector<int> &indices, bool use_bdr, bool is_interp_range,
-                     Ceed ceed, CeedElemRestriction *restr)
+                     Ceed ceed, CeedElemRestriction *restr, const ElementDofRemap *remap)
 {
   const std::size_t num_elem = indices.size();
   const mfem::FiniteElement *fe;
@@ -225,6 +243,11 @@ void InitNativeRestr(const mfem::FiniteElementSpace &fespace,
     }
   }
   const int P = fe->GetDof();
+  MFEM_VERIFY(!remap || (!use_bdr && fespace.GetVDim() == 1),
+              "Element DOF remapping is only supported for domain restrictions of "
+              "spaces with vdim = 1!");
+  const CeedSize l_size =
+      remap ? remap->l_size : CeedSize(fespace.GetVDim()) * fespace.GetNDofs();
   const CeedInt comp_stride =
       (fespace.GetVDim() == 1 || fespace.GetOrdering() == mfem::Ordering::byVDIM)
           ? 1
@@ -284,6 +307,7 @@ void InitNativeRestr(const mfem::FiniteElementSpace &fespace,
       else
       {
         fespace.GetElementDofs(e, dofs, dof_trans);
+        RemapElementDofs(remap, e, dofs);
       }
       if (!has_dof_trans)
       {
@@ -362,25 +386,22 @@ void InitNativeRestr(const mfem::FiniteElementSpace &fespace,
   if (has_dof_trans)
   {
     PalaceCeedCall(ceed, CeedElemRestrictionCreateCurlOriented(
-                             ceed, num_elem, P, fespace.GetVDim(), comp_stride,
-                             fespace.GetVDim() * fespace.GetNDofs(), CEED_MEM_HOST,
-                             CEED_COPY_VALUES, tp_el_dof.GetData(),
+                             ceed, num_elem, P, fespace.GetVDim(), comp_stride, l_size,
+                             CEED_MEM_HOST, CEED_COPY_VALUES, tp_el_dof.GetData(),
                              tp_el_curl_orients.GetData(), restr));
   }
   else if (use_el_orients)
   {
     PalaceCeedCall(ceed, CeedElemRestrictionCreateOriented(
-                             ceed, num_elem, P, fespace.GetVDim(), comp_stride,
-                             fespace.GetVDim() * fespace.GetNDofs(), CEED_MEM_HOST,
-                             CEED_COPY_VALUES, tp_el_dof.GetData(), tp_el_orients.GetData(),
-                             restr));
+                             ceed, num_elem, P, fespace.GetVDim(), comp_stride, l_size,
+                             CEED_MEM_HOST, CEED_COPY_VALUES, tp_el_dof.GetData(),
+                             tp_el_orients.GetData(), restr));
   }
   else
   {
     PalaceCeedCall(ceed, CeedElemRestrictionCreate(
-                             ceed, num_elem, P, fespace.GetVDim(), comp_stride,
-                             fespace.GetVDim() * fespace.GetNDofs(), CEED_MEM_HOST,
-                             CEED_COPY_VALUES, tp_el_dof.GetData(), restr));
+                             ceed, num_elem, P, fespace.GetVDim(), comp_stride, l_size,
+                             CEED_MEM_HOST, CEED_COPY_VALUES, tp_el_dof.GetData(), restr));
   }
 }
 
@@ -388,7 +409,8 @@ void InitNativeRestr(const mfem::FiniteElementSpace &fespace,
 
 void InitRestriction(const mfem::FiniteElementSpace &fespace,
                      const std::vector<int> &indices, bool use_bdr, bool is_interp,
-                     bool is_interp_range, Ceed ceed, CeedElemRestriction *restr)
+                     bool is_interp_range, Ceed ceed, CeedElemRestriction *restr,
+                     const ElementDofRemap *remap)
 {
   MFEM_ASSERT(!indices.empty(), "Empty element index set for libCEED element restriction!");
   if constexpr (false)
@@ -416,12 +438,12 @@ void InitRestriction(const mfem::FiniteElementSpace &fespace,
   if (lexico)
   {
     // Lexicographic ordering using dof_map.
-    InitLexicoRestr(fespace, indices, use_bdr, ceed, restr);
+    InitLexicoRestr(fespace, indices, use_bdr, ceed, restr, remap);
   }
   else
   {
     // Native ordering.
-    InitNativeRestr(fespace, indices, use_bdr, is_interp_range, ceed, restr);
+    InitNativeRestr(fespace, indices, use_bdr, is_interp_range, ceed, restr, remap);
   }
 }
 

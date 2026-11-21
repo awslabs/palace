@@ -63,14 +63,14 @@ private:
   std::vector<RationalImpedanceData> boundaries;
 
   void SetUpBoundaryProperties(const std::vector<config::RationalImpedanceData> &impedance,
-                               const std::unordered_set<int> &cracked_attributes,
+                               const std::unordered_set<int> &split_attributes,
                                ProblemType problem_type, const mfem::ParMesh &mesh);
   void PrintBoundaryInfo(const Units &units, const mfem::ParMesh &mesh);
 
 public:
   SurfaceRationalImpedanceOperator(
       const std::vector<config::RationalImpedanceData> &impedance,
-      const std::unordered_set<int> &cracked_attributes, ProblemType problem_type,
+      const std::unordered_set<int> &split_attributes, ProblemType problem_type,
       const Units &units, const MaterialOperator &mat_op, const mfem::ParMesh &mesh);
   SurfaceRationalImpedanceOperator(const IoData &iodata, const MaterialOperator &mat_op,
                                    const mfem::ParMesh &mesh);
@@ -85,14 +85,23 @@ public:
   const mfem::Array<int> &GetAttrList(int idx) const { return boundaries[idx].attr_list; }
 
   // Stamp a unit coefficient (including the per-attribute crack scaling) for boundary
-  // index idx, so that the assembled boundary mass matrix M_b satisfies: contribution of
-  // boundary idx to A2(λ) = g(λ)·M_b with g = EvalRobinCoefficient(idx, ·). Used by the
-  // nonlinear eigensolver seed to fit or freeze the boundary's Robin coefficient.
-  void AddUnitBdrCoefficients(int idx, MaterialPropertyCoefficient &fb) const;
+  // index idx, times coeff, so that for coeff = 1 the assembled boundary mass matrix M_b
+  // satisfies: contribution of boundary idx to A2(λ) = g(λ)·M_b with
+  // g = EvalRobinCoefficient(idx, ·). Used for the frequency-dependent boundary mass terms
+  // of SurfaceTerms.
+  void AddUnitBdrCoefficients(int idx, MaterialPropertyCoefficient &fb,
+                              double coeff = 1.0) const;
 
   // Evaluate the scalar Robin coefficient g(s) = s·D(s)/N(s) of boundary idx at complex
-  // s = iω = λ (nondimensional).
+  // s = iω = λ (nondimensional): the term iω / Zs(iω) per square which the Robin BC adds
+  // to the frequency-dependent system matrix A2(ω), exactly as the parallel admittance Ys =
+  // 1/Rs + 1/(iωLs) + iωCs contributes iω·Ys to K + iωC - ω²M. Errors when the admittance
+  // is singular (Zs = 0) at s.
   std::complex<double> EvalRobinCoefficient(int idx, std::complex<double> s) const;
+
+  // Warn (once for each boundary) when the impedance of boundary idx is not passive at the
+  // real frequency ω: Re{Zs(iω)} < 0. Returns whether it warned.
+  bool CheckPassivity(int idx, double omega);
 
   // Evaluate the strictly proper (pole) part R(s)/N(s) of the Robin coefficient of
   // boundary idx, from the long division g = P + R/N. The polynomial part P = g - R/N is
@@ -109,21 +118,6 @@ public:
   {
     return boundaries[idx].robin_quotient;
   }
-
-  // Add contributions to the frequency-dependent system matrix A2(ω). The Robin BC term has
-  // coefficient iω / Zs(iω) per square, exactly as the parallel-RLC admittance contributes
-  // iω·Ys to K + iωC - ω²M.
-  void AddExtraSystemBdrCoefficients(double omega, MaterialPropertyCoefficient &fbr,
-                                     MaterialPropertyCoefficient &fbi);
-
-  // Complex-ω overload: evaluates the Robin coefficient s·D(s)/N(s) at genuinely complex
-  // s = iω (analytic continuation; rational functions continue trivially off the real-ω
-  // axis). Used by the 2D mode assembly when the wave-port cross-section EVP is solved at
-  // a complex frequency. For real ω this reduces bit-for-bit to the double overload. The
-  // passivity warning applies only on the real-ω axis and is skipped for Im(ω) != 0.
-  void AddExtraSystemBdrCoefficients(std::complex<double> omega,
-                                     MaterialPropertyCoefficient &fbr,
-                                     MaterialPropertyCoefficient &fbi);
 };
 
 }  // namespace palace

@@ -8,7 +8,7 @@ inputs:
   spack-packages-commit:
     description: 'spack-packages commit used by the builtin Spack repository'
     required: false
-    default: 'ef05700808eb32fe932a76de9254a3c4a5f94f2c'
+    default: '41fb89176c50aa111aec1038f43c26e80d5bf083'
   target:
     description: >-
       Spack microarchitecture to build for (e.g. x86_64_v3, neoverse_v2).
@@ -21,9 +21,17 @@ inputs:
 runs:
   using: composite
   steps:
+    # Spack v1.2 vendors archspec 0.2.6, which does not know neoverse_v3
+    # (Graviton5). Extend it with spack_repo/archspec until Spack ships an
+    # archspec that includes archspec/archspec-json#168. The container build sets
+    # the same variable in PalaceDockerfile.
+    - name: Extend archspec
+      shell: bash
+      run: echo "ARCHSPEC_EXTENSION_CPU_DIR=$GITHUB_WORKSPACE/spack_repo/archspec" >> "$GITHUB_ENV"
+
     # .git is excluded from the build context, so describe the version here and
-    # pass it to the build. Runs first: later steps edit tracked files (e.g. the
-    # target pin rewrites spack.yaml), which would mark the version -dirty.
+    # pass it to the build. Runs before any step that edits tracked files (e.g.
+    # the target pin rewrites spack.yaml), which would mark the version -dirty.
     - name: Describe Palace version
       shell: bash
       run: |
@@ -67,14 +75,39 @@ runs:
         source /tmp/timing_functions.sh
         start_timer
 
-        sudo add-apt-repository -y ppa:apptainer/ppa
-
-        sudo apt install -y podman apptainer
+        sudo apt-get -o Acquire::Retries=5 update
+        sudo apt-get -o Acquire::Retries=5 install -y podman
 
         # Configure podman to resolve short image names from Docker Hub
         echo 'unqualified-search-registries = ["docker.io"]' | sudo tee /etc/containers/registries.conf.d/docker.conf
 
-        end_timer "Setup podman and apptainer"
+        end_timer "Setup podman"
+
+    # The PPA signing keys in apt-keys/ are pinned. Warn, without failing, when
+    # Launchpad lists a different key for a PPA, so that the pin gets updated.
+    # Each PPA's page lists its signing key fingerprint (for example
+    # https://launchpad.net/~apptainer/+archive/ubuntu/ppa), and the key itself
+    # can be downloaded from the Ubuntu keyserver:
+    #   curl -fsS "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x<fingerprint>" \
+    #     > .github/actions/build-container/apt-keys/<owner>-<name>.asc
+    - name: Check pinned PPA keys
+      continue-on-error: true
+      shell: bash
+      run: |
+        for ppa in apptainer/ppa ubuntu-toolchain-r/test; do
+          key_file="$GITHUB_ACTION_PATH/apt-keys/${ppa/\//-}.asc"
+          pinned=$(gpg --show-keys --with-colons "$key_file" | awk -F: '/^fpr/ {print $10; exit}')
+          if ! current=$(curl -fsS --max-time 15 --retry 1 "https://api.launchpad.net/1.0/~${ppa%/*}/+archive/ubuntu/${ppa#*/}" |
+              python3 -c 'import json, sys; print(json.load(sys.stdin)["signing_key_fingerprint"])' 2>/dev/null); then
+            echo "::notice::Could not get the signing key of ppa:$ppa from Launchpad"
+          elif [[ "$current" != "$pinned" ]]; then
+            echo "::warning::ppa:$ppa is signed with key $current, but apt-keys/${ppa/\//-}.asc pins $pinned." \
+              "Update it with: curl -fsS 'https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x$current'" \
+              "> .github/actions/build-container/apt-keys/${ppa/\//-}.asc"
+          else
+            echo "ppa:$ppa: pinned key $pinned is current"
+          fi
+        done
 
     - name: Compute image metadata
       id: name
@@ -141,7 +174,7 @@ runs:
     - name: Check Dockerfile
       shell: bash
       run: |
-        podman run --rm -i ghcr.io/hadolint/hadolint hadolint --failure-threshold error - < "$GITHUB_WORKSPACE/Dockerfile"
+        podman run --rm -i ghcr.io/hadolint/hadolint:v2.15.1@sha256:32dac94127fd60b7b7e3fbfc65e1383b9b5e25c9bfd7b8536de7a539fe68a12d hadolint --failure-threshold error - < "$GITHUB_WORKSPACE/Dockerfile"
 
     - name: Authenticate to build cache
       shell: bash
@@ -157,6 +190,7 @@ runs:
         CACHE_REPOSITORY: ghcr.io/${{ github.repository_owner }}/palace-container-build-cache
         CACHE_WRITE_ENABLED: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
         IMAGE_NAME: ${{ steps.name.outputs.image_name }}
+        PALACE_TARGET: ${{ inputs.target }}
         SPACK_PACKAGES_COMMIT: ${{ inputs.spack-packages-commit }}
       run: |
         source /tmp/timing_functions.sh
@@ -177,8 +211,10 @@ runs:
             --secret "id=github_user,src=$GITHUB_USER_FILE" \
             --secret "id=github_token,src=$GITHUB_TOKEN_FILE" \
             --build-arg "PALACE_CUDA=$PALACE_CUDA" \
+            --build-arg "PALACE_TARGET=$PALACE_TARGET" \
             --build-arg "SPACK_PACKAGES_COMMIT=$SPACK_PACKAGES_COMMIT" \
             --build-arg "PALACE_GIT_COMMIT_ID=$PALACE_GIT_COMMIT_ID" \
+            --build-context "apt-keys=$GITHUB_ACTION_PATH/apt-keys" \
             -t "$IMAGE_NAME" .
         }
 
@@ -218,6 +254,29 @@ runs:
         sudo chmod a+r ${{ steps.name.outputs.image_name }}.tar
         end_timer "Save OCI image"
 
+    # Only the SIF conversion needs Apptainer. Its PPA is configured directly,
+    # with the signing key pinned in apt-keys/, instead of with
+    # add-apt-repository, which also needs the Launchpad API. apt checks the
+    # signed index against that key, so plain HTTP, which Launchpad serves more
+    # reliably than HTTPS, is safe.
+    - name: Install Apptainer
+      if: steps.name.outputs.publish_artifacts == 'true'
+      shell: bash
+      run: |
+        source /tmp/timing_functions.sh
+        start_timer
+        sudo install -D -m 644 "$GITHUB_ACTION_PATH/apt-keys/apptainer-ppa.asc" /etc/apt/keyrings/apptainer-ppa.asc
+        printf '%s\n' \
+          'Types: deb' \
+          'URIs: http://ppa.launchpadcontent.net/apptainer/ppa/ubuntu' \
+          "Suites: $(. /etc/os-release && echo "$VERSION_CODENAME")" \
+          'Components: main' \
+          'Signed-By: /etc/apt/keyrings/apptainer-ppa.asc' |
+          sudo tee /etc/apt/sources.list.d/apptainer-ppa.sources
+        sudo apt-get -o Acquire::Retries=5 update
+        sudo apt-get -o Acquire::Retries=5 install -y apptainer
+        end_timer "Install Apptainer"
+
     - name: Convert to SIF
       if: steps.name.outputs.publish_artifacts == 'true'
       shell: bash
@@ -230,7 +289,7 @@ runs:
 
     - name: Upload OCI image
       if: steps.name.outputs.publish_artifacts == 'true'
-      uses: actions/upload-artifact@v7
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: ${{ steps.name.outputs.image_name }}-oci
         path: ${{ steps.name.outputs.image_name }}.tar
@@ -241,7 +300,7 @@ runs:
 
     - name: Upload SIF image
       if: steps.name.outputs.publish_artifacts == 'true'
-      uses: actions/upload-artifact@v7
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: ${{ steps.name.outputs.image_name }}-sif
         path: ${{ steps.name.outputs.image_name }}.sif
@@ -257,7 +316,7 @@ runs:
       # matching the schema to the image's provenance (build-container has no AWS
       # access; publish.py does the upload). Arch-independent, but uploaded per
       # leg under a unique name so parallel matrix jobs don't collide.
-      uses: actions/upload-artifact@v7
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: ${{ steps.name.outputs.image_name }}-schema
         path: scripts/schema/config-schema.json

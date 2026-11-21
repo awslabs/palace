@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <array>
+#include <cmath>
+#include <fstream>
 #include <memory>
-#include <numbers>
 #include <sstream>
 #include <utility>
 #include <vector>
@@ -12,10 +13,12 @@
 #include <catch2/generators/catch_generators_all.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include "fixtures.hpp"
 #include "test-helpers.hpp"
 
 #include "utils/geodata.hpp"
 #include "utils/geodata_impl.hpp"
+#include "utils/iodata.hpp"
 
 #include "fem/interpolator.hpp"
 #include "models/materialoperator.hpp"
@@ -114,129 +117,6 @@ void CheckVertex(const mfem::Mesh &mesh, int v, const std::array<double, 3> &coo
 //     }
 //   }
 // }
-
-TEST_CASE("TwoDimensionalDiagonalSquarePort", "[geodata][Serial]")
-{
-  std::vector<Eigen::Vector3d> vertices{
-      {-0.19942181818181828, -0.5838274545454543, 0},
-      {-0.19926108900667502, -0.5836667480978528, 0},
-      {-0.19926061925486355, -0.5838279242308415, -8.56131891164518e-17},
-      {-0.19926014950305207, -0.5839891003638303, 0},
-      {-0.19910035983153176, -0.5835060416502512, 0},
-      {-0.1990998900797203, -0.5836672177832399, -8.56131891164518e-17},
-      {-0.1990994203279088, -0.5838283939162288, -1.3698110258632289e-16},
-      {-0.19909895057609733, -0.5839895700492176, -8.56131891164518e-17},
-      {-0.19909848082428586, -0.5841507461822064, 0},
-      {-0.1989396306563885, -0.5833453352026496, 0},
-      {-0.19893916090457703, -0.5835065113356385, -8.56131891164518e-17},
-      {-0.19893869115276555, -0.5836676874686273, -1.3698110258632289e-16},
-      {-0.19893822140095407, -0.583828863601616, -1.5410374040961326e-16},
-      {-0.1989377516491426, -0.583990039734605, -1.3698110258632289e-16},
-      {-0.19893728189733112, -0.5841512158675937, -8.56131891164518e-17},
-      {-0.19893681214551964, -0.5843123920005826, 0},
-      {-0.19877890148124525, -0.5831846287550482, 0},
-      {-0.19877843172943377, -0.5833458048880369, -8.56131891164518e-17},
-      {-0.1987779619776223, -0.5835069810210257, -1.3698110258632289e-16},
-      {-0.19877749222581081, -0.5836681571540145, -1.5410374040961326e-16},
-      {-0.19877702247399934, -0.5838293332870034, -1.3698110258632289e-16},
-      {-0.19877655272218786, -0.5839905094199922, -1.5410374040961326e-16},
-      {-0.19877608297037638, -0.584151685552981, -1.3698110258632289e-16},
-      {-0.1987756132185649, -0.5843128616859699, -8.56131891164518e-17},
-      {-0.19877514346675343, -0.5844740378189587, 0},
-      {-0.19861817611093396, -0.5830239261117406, 0},
-      {-0.1986153576000651, -0.5846338010914915, 0},
-      {-0.19845746797462832, -0.583506036157253, -8.56131891164518e-17},
-      {-0.19845745074062265, -0.582863223468433, 0},
-      {-0.19845699822281687, -0.5836672122902418, -1.3698110258632289e-16},
-      {-0.19845652969381722, -0.5831855725288573, -8.56131891164518e-17},
-      {-0.19845652847100537, -0.5838283884232307, -1.5410374040961326e-16},
-      {-0.1984560587191939, -0.5839895645562194, -1.3698110258632289e-16},
-      {-0.1984555889673824, -0.5841507406892084, -1.5410374040961326e-16},
-      {-0.19845557173337677, -0.5847935643640245, 0},
-      {-0.19845511921557096, -0.5843119168221971, -1.3698110258632289e-16},
-      {-0.19845464946375949, -0.5844730929551859, -8.56131891164518e-17},
-      {-0.19829672537031137, -0.5827025208251255, 0},
-      {-0.19829580432350594, -0.5830248698855497, -8.56131891164518e-17},
-      {-0.19829578586668845, -0.5849533276365575, 0},
-      {-0.19829486359707116, -0.5846328562277189, -8.56131891164518e-17},
-      {-0.1981360344680114, -0.583827443559458, -1.3698110258632289e-16},
-      {-0.1981360000000001, -0.5851130909090906, 0},
-      {-0.1981360000000001, -0.5825418181818179, 0},
-      {-0.19813556471619992, -0.5839886196924468, -1.5410374040961324e-16},
-      {-0.19813509618720032, -0.5835069799310624, -1.3698110258632289e-16},
-      {-0.19813509496438844, -0.5841497958254356, -1.3698110258632289e-16},
-      {-0.19813507895319465, -0.5828641672422421, -8.56131891164518e-17},
-      {-0.19813507773038283, -0.5847926195002519, -8.56131891164518e-17},
-      {-0.198134625212577, -0.5843109719584244, -1.5410374040961324e-16},
-      {-0.19813415790638922, -0.5831865163026665, -1.3698110258632289e-16},
-      {-0.19813415546076552, -0.5844721480914132, -1.3698110258632289e-16},
-      {-0.19797529186369447, -0.5849523827727849, -8.56131891164518e-17},
-      {-0.1979743695940772, -0.5846319113639462, -1.3698110258632289e-16},
-      {-0.19797435358288337, -0.5827034645989346, -8.56131891164518e-17},
-      {-0.19797343253607796, -0.5830258136593589, -1.3698110258632289e-16},
-      {-0.19781460096139447, -0.584148850961663, -1.5410374040961326e-16},
-      {-0.19781458372738883, -0.5847916746364793, -1.3698110258632289e-16},
-      {-0.197814131209583, -0.5843100270946517, -1.3698110258632289e-16},
-      {-0.19781366268058337, -0.5838283873332673, -1.5410374040961326e-16},
-      {-0.19781366145777152, -0.5844712032276406, -1.5410374040961326e-16},
-      {-0.19781272439977232, -0.5835079237048715, -1.5410374040961324e-16},
-      {-0.19781270716576665, -0.5828651110160513, -1.3698110258632289e-16},
-      {-0.19781178611896122, -0.5831874600764757, -1.5410374040961326e-16},
-      {-0.1976538755910832, -0.5846309665001737, -1.5410374040961326e-16},
-      {-0.1976510607486499, -0.583026757433168, -1.5410374040961326e-16},
-      {-0.19749316745477752, -0.584470258363868, -1.3698110258632289e-16},
-      {-0.19749222917396644, -0.5841497947354722, -1.3698110258632289e-16},
-      {-0.19749129089315537, -0.5838293311070765, -1.3698110258632289e-16},
-      {-0.19749035261234427, -0.5835088674786807, -1.3698110258632289e-16},
-      {-0.1974894143315332, -0.5831884038502848, -1.3698110258632289e-16},
-      {-0.1973324665001741, -0.5843095574092645, -1.3698110258632289e-16},
-      {-0.19733152821936303, -0.5839890937808687, -1.3698110258632289e-16},
-      {-0.19733058993855196, -0.583668630152473, 1.3698110258632289e-16},
-      {-0.19732965165774086, -0.5833481665240772, -1.3698110258632289e-16},
-      {-0.19717176554557067, -0.5841488564546611, -1.3698110258632289e-16},
-      {-0.1971708272647596, -0.5838283928262653, -1.3698110258632289e-16},
-      {-0.1971698889839485, -0.5835079291978695, -1.3698110258632289e-16},
-      {-0.1970110645909672, -0.5839881555000577, -1.3698110258632289e-16},
-      {-0.19701012631015613, -0.5836676918716619, -1.3698110258632289e-16},
-      {-0.19685036363636374, -0.5838274545454543, -1.3698110258632289e-16}};
-
-  auto comm = Mpi::World();
-  auto box = mesh::BoundingBoxFromPointCloud(comm, vertices, 0);
-
-  // True box at 45 degrees
-  auto invsqrt2 = 1.0 / std::numbers::sqrt2;
-  std::array<double, 3> ax0{invsqrt2, -invsqrt2, 0.0}, ax1{invsqrt2, invsqrt2, 0.0};
-
-  // Find the bounding points from knowing its at 45.
-  auto inf = std::numeric_limits<double>::infinity();
-  double min_x = inf, min_y = inf, max_x = -inf, max_y = -inf;
-  for (const auto &v : vertices)
-  {
-    min_x = min_x > v(0) ? v(0) : min_x;
-    min_y = min_y > v(1) ? v(1) : min_y;
-    max_x = max_x < v(0) ? v(0) : max_x;
-    max_y = max_y < v(1) ? v(1) : max_y;
-  }
-  auto length_x = (max_x - min_x) * invsqrt2;
-  auto length_y = (max_y - min_y) * invsqrt2;
-
-  CHECK_THAT(length_x, WithinAbs(length_y, 1e-6));
-
-  auto length = (length_x + length_y) / 2;
-  auto lengths = box.Lengths();
-  CHECK_THAT(lengths[0], WithinAbs(length, 1e-6));
-  CHECK_THAT(lengths[1], WithinAbs(length, 1e-6));
-  CHECK_THAT(lengths[2], WithinRel(0.0));
-
-  auto normals = box.Normals();
-  CHECK_THAT(normals(0, 0), WithinAbs(ax0[0], 1e-4));
-  CHECK_THAT(normals(1, 0), WithinAbs(ax0[1], 1e-4));
-  CHECK_THAT(normals(2, 0), WithinAbs(ax0[2], 1e-4));
-  CHECK_THAT(normals(0, 1), WithinAbs(ax1[0], 1e-4));
-  CHECK_THAT(normals(1, 1), WithinAbs(ax1[1], 1e-4));
-  CHECK_THAT(normals(2, 1), WithinAbs(ax1[2], 1e-4));
-  CHECK(box.planar);
-}
 
 TEST_CASE("TetToHex", "[geodata][Serial]")
 {
@@ -385,9 +265,11 @@ TEST_CASE("TetToHex", "[geodata][Serial]")
                              tet_FESpace->GetOrdering());
     fem::InterpolateFunction(xyz_samples, hex_nodes_on_linear_hex, hex_vals,
                              hex_FESpace->GetOrdering());
+    const auto *T = tet_vals.HostRead();
+    const auto *H = hex_vals.HostRead();
     for (int i = 0; i < tet_vals.Size(); i++)
     {
-      CHECK_THAT(tet_vals(i), WithinAbs(hex_vals(i), 1e-9));
+      CHECK_THAT(T[i], WithinAbs(H[i], 1e-9));
     }
   }
 #endif
@@ -434,6 +316,126 @@ TEST_CASE("LocalEdgeSplit", "[geodata][Serial]")
   CHECK(mesh->CheckBdrElementOrientation(false) == 0);
 }
 
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "Mesh loader removes boundary elements which are not faces of the mesh",
+                 "[geodata][Serial]")
+{
+  // Gmsh mesh of the unit square, with two triangles split along the diagonal from (0, 0)
+  // to (1, 1), and four boundary elements on its boundary. Three more boundary elements are
+  // not an edge of any triangle: the other diagonal of the square (attribute 2), the edge
+  // from (2, 0) to (2, 1) whose vertices are not vertices of any triangle (attribute 3),
+  // and the edge from (1, 0) to (2, 0) with the attribute 1 of the square boundary. A
+  // second order mesh has a curved edge from (0, 0) to (1, 0) through (0.5, -0.1), which
+  // adds 2/3 * 0.1 to the area of the square.
+  const int order = GENERATE(1, 2);
+  const bool clean_unused_elements = GENERATE(false, true);
+  CAPTURE(order, clean_unused_elements);
+  std::vector<std::array<double, 2>> nodes = {{0.0, 0.0}, {1.0, 0.0}, {1.0, 1.0},
+                                              {0.0, 1.0}, {2.0, 0.0}, {2.0, 1.0}};
+  std::vector<std::array<int, 3>> edge_nodes;  // Vertices and second order node of edges
+  auto EdgeNode = [&](int v0, int v1)
+  {
+    for (const auto &[w0, w1, node] : edge_nodes)
+    {
+      if ((w0 == v0 && w1 == v1) || (w0 == v1 && w1 == v0))
+      {
+        return node;
+      }
+    }
+    edge_nodes.push_back({v0, v1, static_cast<int>(nodes.size())});
+    nodes.push_back({0.5 * (nodes[v0][0] + nodes[v1][0]),
+                     0.5 * (nodes[v0][1] + nodes[v1][1]) - (v0 + v1 == 1 ? 0.1 : 0.0)});
+    return edge_nodes.back()[2];
+  };
+  struct GmshElement
+  {
+    int type, attr;
+    std::vector<int> nodes;
+  };
+  std::vector<GmshElement> elements;
+  for (auto [v0, v1, attr] : std::vector<std::array<int, 3>>{
+           {0, 1, 1}, {1, 2, 1}, {2, 3, 1}, {3, 0, 1}, {1, 3, 2}, {4, 5, 3}, {1, 4, 1}})
+  {
+    elements.push_back({order == 1 ? 1 : 8, attr,
+                        order == 1 ? std::vector<int>{v0, v1}
+                                   : std::vector<int>{v0, v1, EdgeNode(v0, v1)}});
+  }
+  for (auto [v0, v1, v2] : std::vector<std::array<int, 3>>{{0, 1, 2}, {0, 2, 3}})
+  {
+    elements.push_back({order == 1 ? 2 : 9, 1,
+                        order == 1 ? std::vector<int>{v0, v1, v2}
+                                   : std::vector<int>{v0, v1, v2, EdgeNode(v0, v1),
+                                                      EdgeNode(v1, v2), EdgeNode(v2, v0)}});
+  }
+  const auto mesh_file = temp_dir / "mesh.msh";
+  {
+    std::ofstream fo(mesh_file);
+    fo << "$MeshFormat\n2.2 0 8\n$EndMeshFormat\n$Nodes\n" << nodes.size() << "\n";
+    for (std::size_t i = 0; i < nodes.size(); i++)
+    {
+      fo << i + 1 << " " << nodes[i][0] << " " << nodes[i][1] << " 0\n";
+    }
+    fo << "$EndNodes\n$Elements\n" << elements.size() << "\n";
+    for (std::size_t i = 0; i < elements.size(); i++)
+    {
+      fo << i + 1 << " " << elements[i].type << " 2 " << elements[i].attr << " "
+         << elements[i].attr;
+      for (auto v : elements[i].nodes)
+      {
+        fo << " " << v + 1;
+      }
+      fo << "\n";
+    }
+    fo << "$EndElements\n";
+  }
+
+  Units units(1.0, 1.0);
+  IoData iodata(units);
+  iodata.model.mesh = mesh_file.string();
+  iodata.model.clean_unused_elements = clean_unused_elements;
+  iodata.domains.attributes = {1};
+  auto mesh = mesh::Load(iodata, Mpi::World());
+  REQUIRE(mesh);
+
+  // The boundary elements which are not edges of the mesh are removed, together with the
+  // vertices of only these boundary elements.
+  CHECK(mesh->GetNE() == 2);
+  CHECK(mesh->GetNV() == 4);
+  REQUIRE(mesh->GetNBE() == 4);
+  REQUIRE(mesh->bdr_attributes.Size() == 1);
+  CHECK(mesh->bdr_attributes[0] == 1);
+  double length = 0.0;
+  for (int be = 0; be < mesh->GetNBE(); be++)
+  {
+    CAPTURE(be);
+    int e1, e2;
+    REQUIRE(mesh->GetBdrElementFaceIndex(be) >= 0);
+    mesh->GetFaceElements(mesh->GetBdrElementFaceIndex(be), &e1, &e2);
+    CHECK(e1 >= 0);
+    CHECK(e2 < 0);
+    auto *T = mesh->GetBdrElementTransformation(be);
+    const auto &ir = mfem::IntRules.Get(T->GetGeometryType(), 10);
+    for (int q = 0; q < ir.GetNPoints(); q++)
+    {
+      T->SetIntPoint(&ir.IntPoint(q));
+      length += ir.IntPoint(q).weight * T->Weight();
+    }
+  }
+  CHECK(mesh->CheckBdrElementOrientation(false) == 0);
+
+  // The geometry of the mesh is unchanged.
+  REQUIRE(mesh->GetNodes());
+  CHECK(mesh->GetNodes()->FESpace()->GetMaxElementOrder() == order);
+  double area = 0.0;
+  for (int e = 0; e < mesh->GetNE(); e++)
+  {
+    area += mesh->GetElementVolume(e);
+  }
+  CHECK_THAT(area, WithinRel(order == 1 ? 1.0 : 1.0 + 0.2 / 3.0, 1.0e-12));
+  const double curved_length = 0.5 * std::sqrt(1.16) + std::asinh(0.4) / 0.8;
+  CHECK_THAT(length, WithinRel(order == 1 ? 4.0 : 3.0 + curved_length, 1.0e-8));
+}
+
 TEST_CASE("PeriodicGmsh", "[geodata][Serial]")
 {
   auto torus_path = fs::path(PALACE_TEST_DATA_DIR) / "mesh" / "periodic-torus-sector.msh";
@@ -464,6 +466,388 @@ TEST_CASE("PeriodicGmsh", "[geodata][Serial]")
   REQUIRE(mesh::DeterminePeriodicVertexMapping(
               mesh, boundary_torus.periodic.boundary_pairs.front())
               .empty());
+}
+
+TEST_CASE("Interior boundary mesh cracking", "[geodata][Serial]")
+{
+  // Unit cube hexahedral mesh with interior boundary elements (attribute 7) on z = 0.5,
+  // spanning the domain (exterior boundary attributes 1-6).
+  auto base = mfem::Mesh::MakeCartesian3D(2, 2, 2, mfem::Element::HEXAHEDRON);
+  std::vector<int> sheet_faces;
+  mfem::Array<int> fv;
+  for (int f = 0; f < base.GetNumFaces(); f++)
+  {
+    int e1, e2;
+    base.GetFaceElements(f, &e1, &e2);
+    base.GetFaceVertices(f, fv);
+    bool on_sheet = (e2 >= 0);
+    for (auto v : fv)
+    {
+      on_sheet = on_sheet && std::abs(base.GetVertex(v)[2] - 0.5) < 1.0e-12;
+    }
+    if (on_sheet)
+    {
+      sheet_faces.push_back(f);
+    }
+  }
+  REQUIRE(sheet_faces.size() == 4);
+  mfem::Mesh mesh(3, base.GetNV(), base.GetNE(),
+                  base.GetNBE() + static_cast<int>(sheet_faces.size()));
+  for (int v = 0; v < base.GetNV(); v++)
+  {
+    mesh.AddVertex(base.GetVertex(v));
+  }
+  for (int e = 0; e < base.GetNE(); e++)
+  {
+    mesh.AddElement(base.GetElement(e)->Duplicate(&mesh));
+  }
+  for (int be = 0; be < base.GetNBE(); be++)
+  {
+    mesh.AddBdrElement(base.GetBdrElement(be)->Duplicate(&mesh));
+  }
+  for (auto f : sheet_faces)
+  {
+    auto *el = base.GetFace(f)->Duplicate(&mesh);
+    el->SetAttribute(7);
+    mesh.AddBdrElement(el);
+  }
+  mesh.FinalizeTopology();
+  mesh.Finalize();
+  mesh.SetAttributes();
+  const auto mesh_path = fs::temp_directory_path() / "palace-test-interior-sheet.mesh";
+  {
+    std::ofstream fo(mesh_path);
+    mesh.Print(fo);
+  }
+  const int nv = mesh.GetNV(), nv_cut = nv + 9;  // 3 x 3 vertices on the sheet
+
+  auto LoadMesh = [&](const json &boundaries, const json &model, const fs::path &path)
+  {
+    json config = {{"Problem", {{"Type", "Eigenmode"}, {"Verbose", 0}}},
+                   {"Model", {{"Mesh", path.string()}}},
+                   {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                   {"Boundaries", boundaries},
+                   {"Solver", {{"Eigenmode", {{"Target", 1.0}}}}}};
+    config["Model"].update(model);
+    IoData iodata(config, false);
+    return mesh::Load(iodata, Mpi::World());
+  };
+  auto NumVertices = [&](const json &boundaries, const json &model)
+  { return LoadMesh(boundaries, model, mesh_path)->GetNV(); };
+  const json none = json::object();
+  const json legacy = {{"CrackInternalBoundaryElements", true}};
+  const json off = {{"CrackInternalBoundaryElements", false}};
+  auto Impedance = [](json crack)
+  {
+    json data = {{"Attributes", {7}}, {"Ls", 1.0e-12}};
+    if (!crack.is_null())
+    {
+      data["Crack"] = crack;
+    }
+    return json{{"Impedance", {data}}};
+  };
+  auto Conductivity = [](json crack)
+  {
+    json data = {{"Attributes", {7}}, {"Conductivity", 1.0e7}};
+    if (!crack.is_null())
+    {
+      data["Crack"] = crack;
+    }
+    return json{{"Conductivity", {data}}};
+  };
+  auto RationalImpedance = [](json crack)
+  {
+    json data = {{"Attributes", {7}}, {"Numerator", {1.0}}, {"Denominator", {1.0}}};
+    if (!crack.is_null())
+    {
+      data["Crack"] = crack;
+    }
+    return json{{"RationalImpedance", {data}}};
+  };
+
+  // Sheets with a surface impedance: thin film (not cracked) or thick conductor (cracked).
+  CHECK(NumVertices(Impedance(nullptr), none) == nv);
+  CHECK(NumVertices(Impedance(false), none) == nv);
+  CHECK(NumVertices(Impedance(true), none) == nv_cut);
+  CHECK(NumVertices(Conductivity(nullptr), none) == nv);
+  CHECK(NumVertices(Conductivity(true), none) == nv_cut);
+  CHECK(NumVertices(RationalImpedance(nullptr), none) == nv);
+  CHECK(NumVertices(RationalImpedance(true), none) == nv_cut);
+
+  // Perfect conductors are never cracked, one-sided boundary conditions always are.
+  CHECK(NumVertices({{"PEC", {{"Attributes", {7}}}}}, none) == nv);
+  CHECK(NumVertices({{"PMC", {{"Attributes", {7}}}}}, none) == nv_cut);
+
+  // Deprecated global option. Disabling mesh cracking contradicts boundaries which request
+  // it.
+  CHECK(NumVertices({{"PEC", {{"Attributes", {7}}}}}, legacy) == nv_cut);
+  CHECK(NumVertices(Impedance(false), legacy) == nv_cut);
+  CHECK(NumVertices(Impedance(true), legacy) == nv_cut);
+  CHECK(NumVertices(Conductivity(nullptr), off) == nv);
+  CHECK(NumVertices(Impedance(false), off) == nv);
+  CHECK(NumVertices({{"PMC", {{"Attributes", {7}}}}}, off) == nv);
+  CHECK_THROWS(NumVertices(Impedance(true), off));
+  CHECK_THROWS(NumVertices(Conductivity(true), off));
+  CHECK_THROWS(NumVertices(RationalImpedance(true), off));
+
+  // Each face of a cracked impedance boundary has the given surface impedance, except with
+  // the deprecated global option, which splits it between the two faces.
+  auto SplitAttributes = [&](const json &boundaries, const json &model)
+  {
+    json config = {{"Problem", {{"Type", "Eigenmode"}, {"Verbose", 0}}},
+                   {"Model", {{"Mesh", mesh_path.string()}}},
+                   {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                   {"Boundaries", boundaries},
+                   {"Solver", {{"Eigenmode", {{"Target", 1.0}}}}}};
+    config["Model"].update(model);
+    IoData iodata(config, false);
+    mesh::ReadMesh(iodata, Mpi::World());
+    REQUIRE(iodata.boundaries.cracked_attributes == std::unordered_set<int>{7});
+    return iodata.boundaries.split_impedance_attributes;
+  };
+  CHECK(SplitAttributes(Impedance(true), none).empty());
+  CHECK(SplitAttributes(RationalImpedance(true), none).empty());
+  CHECK(SplitAttributes(Impedance(false), legacy) == std::unordered_set<int>{7});
+  CHECK(SplitAttributes(Impedance(true), legacy) == std::unordered_set<int>{7});
+
+  // Refinement boxes make the hexahedral mesh nonconformal, which cannot be cracked.
+  const json box = {{"Refinement",
+                     {{"Boxes",
+                       {{{"Levels", 1},
+                         {"BoundingBoxMin", {0.0, 0.0, 0.0}},
+                         {"BoundingBoxMax", {0.5, 0.5, 1.0}}}}}}}};
+  CHECK_THROWS(NumVertices(Impedance(true), box));
+  CHECK_THROWS(NumVertices({{"PMC", {{"Attributes", {7}}}}}, box));
+  CHECK_NOTHROW(NumVertices(Impedance(false), box));
+  CHECK_NOTHROW(NumVertices(
+      {{"PMC", {{"Attributes", {7}}}}},
+      {{"CrackInternalBoundaryElements", false}, {"Refinement", box["Refinement"]}}));
+
+  // A nonconformal input mesh, for example from a previous adaptive simulation, cannot be
+  // cracked: it must already be cracked along the boundaries which are to be cracked.
+  // Refine the element below the sheet next to the origin, such that it has hanging faces.
+  auto WriteNonconformal = [](mfem::Mesh &&m, const fs::path &path)
+  {
+    m.EnsureNCMesh(true);
+    mfem::Array<int> marked;
+    mfem::Vector c;
+    for (int e = 0; e < m.GetNE(); e++)
+    {
+      m.GetElementCenter(e, c);
+      if (c(0) < 0.5 && c(1) < 0.5 && c(2) < 0.5)
+      {
+        marked.Append(e);
+      }
+    }
+    REQUIRE(marked.Size() == 1);
+    m.GeneralRefinement(marked, 1, 0);
+    std::ofstream fo(path);
+    fo.precision(17);
+    m.Print(fo);
+    return m.GetNV();
+  };
+  const auto nc_path = fs::temp_directory_path() / "palace-test-interior-sheet-nc.mesh";
+  const auto nc_cut_path =
+      fs::temp_directory_path() / "palace-test-interior-sheet-nc-cracked.mesh";
+  WriteNonconformal(mfem::Mesh(mesh), nc_path);
+  const int nv_nc_cut = WriteNonconformal(
+      std::move(*LoadMesh(Impedance(true), none, mesh_path)), nc_cut_path);
+  CHECK_THROWS(LoadMesh(Impedance(true), none, nc_path));
+  CHECK_THROWS(LoadMesh(Conductivity(true), none, nc_path));
+  CHECK_THROWS(LoadMesh({{"PMC", {{"Attributes", {7}}}}}, none, nc_path));
+  CHECK_THROWS(LoadMesh({{"PEC", {{"Attributes", {7}}}}}, legacy, nc_path));
+  CHECK_NOTHROW(LoadMesh(Impedance(false), none, nc_path));
+  CHECK_NOTHROW(LoadMesh({{"PEC", {{"Attributes", {7}}}}}, none, nc_path));
+  CHECK_NOTHROW(LoadMesh({{"PMC", {{"Attributes", {7}}}}}, off, nc_path));
+  CHECK(LoadMesh(Impedance(true), none, nc_cut_path)->GetNV() == nv_nc_cut);
+  CHECK(LoadMesh({{"PMC", {{"Attributes", {7}}}}}, none, nc_cut_path)->GetNV() ==
+        nv_nc_cut);
+  fs::remove(nc_path);
+  fs::remove(nc_cut_path);
+  fs::remove(mesh_path);
+}
+
+TEST_CASE("Default conductivity sheet warning", "[geodata][Serial]")
+{
+  // Unit cube hexahedral mesh with interior boundary elements (attribute 7) on z = 0.5,
+  // spanning the domain (exterior boundary attributes 1-6). One exterior element and one
+  // element on z = 0.5 have attribute 8, which is both exterior and interior.
+  auto base = mfem::Mesh::MakeCartesian3D(2, 2, 2, mfem::Element::HEXAHEDRON);
+  std::vector<int> sheet_faces;
+  mfem::Array<int> fv;
+  for (int f = 0; f < base.GetNumFaces(); f++)
+  {
+    int e1, e2;
+    base.GetFaceElements(f, &e1, &e2);
+    base.GetFaceVertices(f, fv);
+    bool on_sheet = (e2 >= 0);
+    for (auto v : fv)
+    {
+      on_sheet = on_sheet && std::abs(base.GetVertex(v)[2] - 0.5) < 1.0e-12;
+    }
+    if (on_sheet)
+    {
+      sheet_faces.push_back(f);
+    }
+  }
+  REQUIRE(sheet_faces.size() == 4);
+  mfem::Mesh mesh(3, base.GetNV(), base.GetNE(),
+                  base.GetNBE() + static_cast<int>(sheet_faces.size()));
+  for (int v = 0; v < base.GetNV(); v++)
+  {
+    mesh.AddVertex(base.GetVertex(v));
+  }
+  for (int e = 0; e < base.GetNE(); e++)
+  {
+    mesh.AddElement(base.GetElement(e)->Duplicate(&mesh));
+  }
+  for (int be = 0; be < base.GetNBE(); be++)
+  {
+    auto *el = base.GetBdrElement(be)->Duplicate(&mesh);
+    if (be == 0)
+    {
+      el->SetAttribute(8);
+    }
+    mesh.AddBdrElement(el);
+  }
+  for (auto f : sheet_faces)
+  {
+    auto *el = base.GetFace(f)->Duplicate(&mesh);
+    el->SetAttribute(f == sheet_faces.back() ? 8 : 7);
+    mesh.AddBdrElement(el);
+  }
+  mesh.FinalizeTopology();
+  mesh.Finalize();
+  mesh.SetAttributes();
+
+  config::ConductivityData cond;
+  cond.sigma = 5.8e7;
+  cond.attributes = {7};
+  auto Sheets = [&](const config::ConductivityData &data)
+  {
+    return mesh::GetDefaultConductivitySheetAttributes(
+        mesh, std::vector<config::ConductivityData>{data});
+  };
+
+  // Interior boundary without "Crack", also with a "Thickness".
+  CHECK(Sheets(cond) == std::vector<int>{7});
+  config::ConductivityData film = cond;
+  film.h = 1.0e-3;
+  CHECK(Sheets(film) == std::vector<int>{7});
+
+  // Exterior boundaries, and attributes with an exterior element, are not reported.
+  cond.attributes = {1};
+  CHECK(Sheets(cond).empty());
+  cond.attributes = {8};
+  CHECK(Sheets(cond).empty());
+  cond.attributes = {1, 7, 8};
+  CHECK(Sheets(cond) == std::vector<int>{7});
+  cond.attributes = {7, 12};  // No boundary elements with attribute 12.
+  CHECK(Sheets(cond) == std::vector<int>{7});
+  cond.attributes = {7};
+
+  // An explicit "Crack", either way, is an informed choice.
+  config::ConductivityData given = cond;
+  given.crack_given = true;
+  CHECK(Sheets(given).empty());
+  given.crack = true;
+  CHECK(Sheets(given).empty());
+
+  // Nothing is reported without conductivity boundaries.
+  CHECK(mesh::GetDefaultConductivitySheetAttributes(mesh,
+                                                    std::vector<config::ConductivityData>{})
+            .empty());
+}
+
+// MFEM identifies a face by its three smallest vertex numbers. A cracked quadrilateral with
+// three vertices on the crack front (at a corner of the crack) merges with its twin and the
+// crack closes there, unless the front vertices are numbered last.
+TEST_CASE("CrackQuadrilateralCorners", "[geodata][Serial]")
+{
+  // Hexahedral mesh with an interior boundary (attribute 7) made of the four quadrilaterals
+  // of z = 0.5 around the center of the domain: each has three vertices on the crack front
+  // and one (the center) in its interior.
+  auto base = mfem::Mesh::MakeCartesian3D(4, 4, 2, mfem::Element::HEXAHEDRON);
+  std::vector<int> sheet_faces;
+  mfem::Array<int> fv;
+  for (int f = 0; f < base.GetNumFaces(); f++)
+  {
+    int e1, e2;
+    base.GetFaceElements(f, &e1, &e2);
+    base.GetFaceVertices(f, fv);
+    bool on_sheet = (e2 >= 0);
+    for (auto v : fv)
+    {
+      const double *x = base.GetVertex(v);
+      on_sheet = on_sheet && std::abs(x[2] - 0.5) < 1.0e-12 && x[0] > 0.25 - 1.0e-12 &&
+                 x[0] < 0.75 + 1.0e-12 && x[1] > 0.25 - 1.0e-12 && x[1] < 0.75 + 1.0e-12;
+    }
+    if (on_sheet)
+    {
+      sheet_faces.push_back(f);
+    }
+  }
+  REQUIRE(sheet_faces.size() == 4);
+  mfem::Mesh mesh(3, base.GetNV(), base.GetNE(),
+                  base.GetNBE() + static_cast<int>(sheet_faces.size()));
+  for (int v = 0; v < base.GetNV(); v++)
+  {
+    mesh.AddVertex(base.GetVertex(v));
+  }
+  for (int e = 0; e < base.GetNE(); e++)
+  {
+    mesh.AddElement(base.GetElement(e)->Duplicate(&mesh));
+  }
+  for (int be = 0; be < base.GetNBE(); be++)
+  {
+    mesh.AddBdrElement(base.GetBdrElement(be)->Duplicate(&mesh));
+  }
+  for (auto f : sheet_faces)
+  {
+    auto *el = base.GetFace(f)->Duplicate(&mesh);
+    el->SetAttribute(7);
+    mesh.AddBdrElement(el);
+  }
+  mesh.FinalizeTopology();
+  mesh.Finalize();
+  mesh.SetAttributes();
+  const auto mesh_path = fs::temp_directory_path() / "palace-test-crack-quad-corners.mesh";
+  {
+    std::ofstream fo(mesh_path);
+    mesh.Print(fo);
+  }
+
+  // Crack the mesh along the interior boundary. Only the center vertex is duplicated.
+  json config = {
+      {"Problem", {{"Type", "Eigenmode"}, {"Verbose", 0}}},
+      {"Model", {{"Mesh", mesh_path.string()}}},
+      {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+      {"Boundaries",
+       {{"Impedance", {{{"Attributes", {7}}, {"Ls", 1.0e-12}, {"Crack", true}}}}}},
+      {"Solver", {{"Eigenmode", {{"Target", 1.0}}}}}};
+  IoData iodata(config, false);
+  auto cracked = mesh::Load(iodata, Mpi::World());
+  REQUIRE(cracked);
+  CHECK(cracked->GetNV() == mesh.GetNV() + 1);
+
+  // Every boundary element of the crack must border a single element, on its own side.
+  // Without the renumbering, the quadrilateral whose center vertex has the largest number
+  // of its four merges with its twin, and its 2 boundary elements lie on the same face.
+  int n_crack = 0, n_merged = 0;
+  for (int be = 0; be < cracked->GetNBE(); be++)
+  {
+    if (cracked->GetBdrAttribute(be) != 7)
+    {
+      continue;
+    }
+    int e1, e2;
+    cracked->GetFaceElements(cracked->GetBdrElementFaceIndex(be), &e1, &e2);
+    n_crack++;
+    n_merged += (e2 >= 0);
+  }
+  CHECK(n_crack == 8);
+  CHECK(n_merged == 0);
+  fs::remove(mesh_path);
 }
 
 TEST_CASE("Default IOData", "[iodata][Serial]")

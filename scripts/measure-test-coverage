@@ -263,17 +263,26 @@ generate_gcc_coverage() {
         error "No coverage.* directories found in $PALACE_BUILD_DIR"
     fi
 
-    # Iteratively merge coverage.* profiles (gcov-tool only merges two at a time).
-    local merged="${dirs[0]}"
-    for ((i=1; i<${#dirs[@]}; i++)); do
-        local tmp="coverage_tmp_$i"
-        local prev="$merged"
-        gcov-tool merge -o "$tmp" "$merged" "${dirs[$i]}"
-        merged="$tmp"
-        [[ "$prev" != "${dirs[0]}" && -d "$prev" ]] && rm -rf "$prev"
+    # gcov-tool only merges two profiles at a time: reduce them pairwise, running
+    # each round's merges in parallel.
+    local round=0
+    while [[ ${#dirs[@]} -gt 1 ]]; do
+        local next=() merges=()
+        for ((i=0; i+1<${#dirs[@]}; i+=2)); do
+            local out="coverage_merge_${round}_$i"
+            merges+=("${dirs[$i]}" "${dirs[$((i+1))]}" "$out")
+            next+=("$out")
+        done
+        if (( ${#dirs[@]} % 2 )); then
+            next+=("${dirs[${#dirs[@]}-1]}")
+        fi
+        printf '%s\0' "${merges[@]}" | xargs -0 -n3 -P "$NUM_PROC_TEST" \
+            sh -c 'gcov-tool merge -o "$3" "$1" "$2" && rm -rf "$1" "$2"' sh
+        dirs=("${next[@]}")
+        round=$((round + 1))
     done
 
-    mv "$merged" coverage_merged
+    mv "${dirs[0]}" coverage_merged
     rm -rf coverage.*
 
     # Unmangle filenames: GCC's -fprofile-dir encodes the absolute build-tree

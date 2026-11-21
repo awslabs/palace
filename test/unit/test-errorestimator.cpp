@@ -35,7 +35,10 @@ auto LoadMesh(MPI_Comm comm, const std::string &input)
     smesh.SetAttribute(i, 1);
   }
   smesh.SetAttributes();
-  REQUIRE(Mpi::Size(comm) <= smesh.GetNE());
+  if (Mpi::Size(comm) > smesh.GetNE())
+  {
+    SKIP("Mesh has fewer elements than processes");
+  }
   return Mesh(std::make_unique<mfem::ParMesh>(comm, smesh));
 }
 
@@ -49,6 +52,30 @@ void FillRandom(Vector &v, unsigned seed)
     h[i] = dist(gen);
   }
 }
+
+// Diagonal tensor coefficient, a^p on attribute 1 and b^p on attribute 2.
+struct PiecewiseDiagonal
+{
+  mfem::MatrixConstantCoefficient c1, c2;
+  mfem::PWMatrixCoefficient pw;
+
+  static mfem::DenseMatrix Diag(const double (&a)[3], double p)
+  {
+    mfem::DenseMatrix m(3);
+    m = 0.0;
+    for (int i = 0; i < 3; i++)
+    {
+      m(i, i) = std::pow(a[i], p);
+    }
+    return m;
+  }
+
+  PiecewiseDiagonal(const double (&a)[3], double b, double p)
+    : c1(Diag(a, p)), c2(Diag({b, b, b}, p)),
+      pw(3, mfem::Array<int>({1, 2}), mfem::Array<mfem::MatrixCoefficient *>({&c1, &c2}))
+  {
+  }
+};
 
 }  // namespace
 
@@ -149,7 +176,17 @@ TEST_CASE("Flux error estimators on mixed-geometry meshes",
     {
       auto estimator = MakeEstimator(ComplexVector());
       ErrorIndicator ind_c;
-      estimator.AddErrorIndicator(X, 1.0, ind_c);
+      // Complex electric fields require their frequency; this constant material does not
+      // depend on it, so any fixture frequency gives the same estimate.
+      constexpr double omega = 1.0;
+      if constexpr (requires { estimator.AddErrorIndicator(X, 1.0, omega, ind_c); })
+      {
+        estimator.AddErrorIndicator(X, 1.0, omega, ind_c);
+      }
+      else
+      {
+        estimator.AddErrorIndicator(X, 1.0, ind_c);  // Magnetic flux: no frequency
+      }
       Vector expected(ref_re.Local().Size());
       {
         const auto *hre = ref_re.Local().HostRead();
@@ -157,7 +194,9 @@ TEST_CASE("Flux error estimators on mixed-geometry meshes",
         auto *he = expected.HostWrite();
         for (int i = 0; i < expected.Size(); i++)
         {
-          he[i] = std::sqrt(hre[i] * hre[i] + him[i] * him[i]);
+          // At the same physical energy denominator, a peak phasor's squared
+          // error has half the weight of each instantaneous real-field result.
+          he[i] = std::sqrt(0.5 * (hre[i] * hre[i] + him[i] * him[i]));
         }
       }
       Compare(ind_c.Local(), expected, "complex estimate");
@@ -184,6 +223,194 @@ TEST_CASE("Flux error estimators on mixed-geometry meshes",
                                                             tol, max_it, print, use_mg);
         },
         nd_fespace);
+  }
+}
+
+// In 2D, B = ∇ × E is a scalar in an L2 space with INTEGRAL map type (B = 1 / det(J) ̂B).
+// Its smooth H1 reconstruction is exact for a uniform B, so the estimate vanishes,
+// including on a graded mesh where det(J) varies between elements.
+TEST_CASE("2D curl flux error estimator", "[errorestimator][Serial][Parallel][GPU]")
+{
+  const auto comm = MPI_COMM_WORLD;
+  const auto elem_type = GENERATE(mfem::Element::TRIANGLE, mfem::Element::QUADRILATERAL);
+  auto smesh = mfem::Mesh::MakeCartesian2D(4, 4, elem_type);
+  for (int i = 0; i < smesh.GetNV(); i++)
+  {
+    double *v = smesh.GetVertex(i);
+    v[0] = v[0] * v[0];
+    v[1] = 0.5 * v[1] * (1.0 + v[1]);
+  }
+  if (Mpi::Size(comm) > smesh.GetNE())
+  {
+    SKIP("Mesh has fewer elements than processes");
+  }
+  Mesh mesh(std::make_unique<mfem::ParMesh>(comm, smesh));
+  constexpr int order = 2;
+  fem::DefaultIntegrationOrder::p_trial = order;
+
+  config::MaterialData material;
+  material.attributes = {1};
+  material.mu_r.s = {2.0, 2.0, 2.0};
+  config::PeriodicBoundaryData periodic;
+  MaterialOperator mat_op({material}, periodic, ProblemType::EIGENMODE, mesh);
+
+  mfem::ND_FECollection nd_fec(order, 2);
+  mfem::H1_FECollection h1_fec(order, 2);
+  mfem::L2_FECollection l2_fec(order - 1, 2, mfem::BasisType::GaussLegendre,
+                               mfem::FiniteElement::INTEGRAL);
+  FiniteElementSpace nd_fespace(mesh, &nd_fec), l2_fespace(mesh, &l2_fec);
+  FiniteElementSpaceHierarchy h1_fespaces(
+      std::make_unique<FiniteElementSpace>(mesh, &h1_fec));
+
+  // B = ∇ × E = 1 for E = (-y, x) / 2.
+  mfem::ParGridFunction E(&nd_fespace.Get());
+  mfem::VectorFunctionCoefficient E_coeff(2,
+                                          [](const mfem::Vector &x, mfem::Vector &v)
+                                          {
+                                            v(0) = -0.5 * x(1);
+                                            v(1) = 0.5 * x(0);
+                                          });
+  E.ProjectCoefficient(E_coeff);
+  Vector e(nd_fespace.GetTrueVSize()), b(l2_fespace.GetTrueVSize());
+  e.UseDevice(true);
+  b.UseDevice(true);
+  E.GetTrueDofs(e);
+  l2_fespace.GetDiscreteInterpolator(nd_fespace).Mult(e, b);
+
+  CurlFluxErrorEstimator<Vector> estimator(mat_op, l2_fespace, h1_fespaces, 1.0e-14, 1000,
+                                           0, false);
+  ErrorIndicator indicator;
+  estimator.AddErrorIndicator(b, 1.0, indicator);
+  CHECK(indicator.Max(comm) < 1.0e-10);
+
+  // The error QFunction requires the INTEGRAL map type.
+  mfem::L2_FECollection l2_value_fec(order - 1, 2);
+  FiniteElementSpace l2_value_fespace(mesh, &l2_value_fec);
+  CHECK_THROWS(CurlFluxErrorEstimator<Vector>(mat_op, l2_value_fespace, h1_fespaces,
+                                              1.0e-14, 1000, 0, false));
+}
+
+// The flux error is measured in the energy norm, ‖ε^{-1/2} (D − ε E)‖ for the gradient flux
+// and ‖μ^{1/2} (H − μ⁻¹ B)‖ for the curl flux, so the recovered flux must be the projection
+// which minimizes it: (ψ, ε⁻¹ D) = (ψ, E) and (ψ, μ H) = (ψ, B) for every ψ in the smooth
+// space. Across a material interface this differs from the unweighted projection
+// (ψ, D) = (ψ, ε E), which is checked as well so that the test can tell the two apart.
+TEST_CASE("Flux recovery minimizes the energy-norm error across material interfaces",
+          "[errorestimator][Serial][Parallel]")
+{
+  const auto comm = MPI_COMM_WORLD;
+  mfem::Mesh smesh =
+      mfem::Mesh::MakeCartesian3D(2, 2, 2, mfem::Element::TETRAHEDRON, 1.0, 1.0, 1.0);
+  smesh.EnsureNodes();
+  for (int i = 0; i < smesh.GetNE(); i++)
+  {
+    mfem::Vector c;
+    smesh.GetElementCenter(i, c);
+    smesh.SetAttribute(i, (c(0) < 0.5) ? 1 : 2);
+  }
+  smesh.SetAttributes();
+  REQUIRE(Mpi::Size(comm) <= smesh.GetNE());
+  Mesh mesh(std::make_unique<mfem::ParMesh>(comm, smesh));
+  constexpr int order = 2;
+  fem::DefaultIntegrationOrder::p_trial = order;
+
+  // Material 1 is anisotropic so that the inverse of a full tensor coefficient is
+  // exercised.
+  const double eps1[3] = {2.0, 3.0, 4.0}, mu1[3] = {1.0, 1.5, 2.0};
+  constexpr double eps2 = 10.0, mu2 = 0.5;
+  std::vector<config::MaterialData> materials(2);
+  materials[0].attributes = {1};
+  materials[0].epsilon_r.s = {eps1[0], eps1[1], eps1[2]};
+  materials[0].mu_r.s = {mu1[0], mu1[1], mu1[2]};
+  materials[1].attributes = {2};
+  materials[1].epsilon_r.s.fill(eps2);
+  materials[1].mu_r.s.fill(mu2);
+  config::PeriodicBoundaryData periodic;
+  MaterialOperator mat_op(materials, periodic, ProblemType::EIGENMODE, mesh);
+
+  mfem::ND_FECollection nd_fec(order, 3);
+  mfem::RT_FECollection rt_fec(order - 1, 3);
+  FiniteElementSpaceHierarchy nd_fespaces(
+      std::make_unique<FiniteElementSpace>(mesh, &nd_fec));
+  FiniteElementSpaceHierarchy rt_fespaces(
+      std::make_unique<FiniteElementSpace>(mesh, &rt_fec));
+  auto &nd_fespace = nd_fespaces.GetFinestFESpace();
+  auto &rt_fespace = rt_fespaces.GetFinestFESpace();
+  constexpr double tol = 1.0e-14;
+  constexpr int max_it = 1000, print = 0;
+  constexpr bool use_mg = false;
+
+  // Relative residuals of the weighted and unweighted projection equations, assembled
+  // directly with MFEM, for the flux G recovered in smooth_fespace from F in rhs_fespace.
+  auto Residuals = [&](const FiniteElementSpace &smooth_fespace,
+                       const FiniteElementSpace &rhs_fespace, const Vector &F,
+                       const Vector &G, mfem::MatrixCoefficient &coeff,
+                       mfem::MatrixCoefficient &inv_coeff)
+  {
+    auto Mass = [&](mfem::MatrixCoefficient *Q)
+    {
+      mfem::ParBilinearForm m(
+          const_cast<mfem::ParFiniteElementSpace *>(&smooth_fespace.Get()));
+      m.AddDomainIntegrator(Q ? new mfem::VectorFEMassIntegrator(*Q)
+                              : new mfem::VectorFEMassIntegrator());
+      m.Assemble();
+      m.Finalize();
+      return std::unique_ptr<mfem::HypreParMatrix>(m.ParallelAssemble());
+    };
+    auto Mixed = [&](mfem::MatrixCoefficient *Q)
+    {
+      mfem::ParMixedBilinearForm b(
+          const_cast<mfem::ParFiniteElementSpace *>(&rhs_fespace.Get()),
+          const_cast<mfem::ParFiniteElementSpace *>(&smooth_fespace.Get()));
+      b.AddDomainIntegrator(Q ? new mfem::VectorFEMassIntegrator(*Q)
+                              : new mfem::VectorFEMassIntegrator());
+      b.Assemble();
+      b.Finalize();
+      return std::unique_ptr<mfem::HypreParMatrix>(b.ParallelAssemble());
+    };
+    auto Residual = [&](mfem::HypreParMatrix &M, mfem::HypreParMatrix &B)
+    {
+      mfem::Vector r(G.Size()), b(G.Size());
+      B.Mult(F, b);
+      M.Mult(G, r);
+      r -= b;
+      return std::sqrt(mfem::InnerProduct(comm, r, r) / mfem::InnerProduct(comm, b, b));
+    };
+    return std::pair{Residual(*Mass(&inv_coeff), *Mixed(nullptr)),
+                     Residual(*Mass(nullptr), *Mixed(&coeff))};
+  };
+
+  SECTION("Gradient flux")
+  {
+    PiecewiseDiagonal eps(eps1, eps2, 1.0), inv_eps(eps1, eps2, -1.0);
+    FluxProjector<Vector> projector(
+        MaterialPropertyCoefficient(mat_op.GetAttributeToMaterial(),
+                                    mat_op.GetPermittivityReal()),
+        rt_fespaces, nd_fespace, tol, max_it, print, use_mg);
+    Vector E(nd_fespace.GetTrueVSize()), D(rt_fespace.GetTrueVSize());
+    FillRandom(E, 7);
+    projector.Mult(E, D);
+    const auto [weighted, unweighted] =
+        Residuals(rt_fespace, nd_fespace, E, D, eps.pw, inv_eps.pw);
+    CHECK(weighted < 1.0e-10);
+    CHECK(unweighted > 1.0e-3);
+  }
+
+  SECTION("Curl flux")
+  {
+    PiecewiseDiagonal mu(mu1, mu2, 1.0), inv_mu(mu1, mu2, -1.0);
+    FluxProjector<Vector> projector(
+        MaterialPropertyCoefficient(mat_op.GetAttributeToMaterial(),
+                                    mat_op.GetCurlCurlInvPermeability()),
+        nd_fespaces, rt_fespace, tol, max_it, print, use_mg);
+    Vector B(rt_fespace.GetTrueVSize()), H(nd_fespace.GetTrueVSize());
+    FillRandom(B, 11);
+    projector.Mult(B, H);
+    // The projector's coefficient is μ⁻¹, so its inverse weighting is μ.
+    const auto [weighted, unweighted] =
+        Residuals(nd_fespace, rt_fespace, B, H, inv_mu.pw, mu.pw);
+    CHECK(weighted < 1.0e-10);
+    CHECK(unweighted > 1.0e-3);
   }
 }
 

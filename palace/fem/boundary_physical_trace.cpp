@@ -545,12 +545,7 @@ void BoundaryPhysicalTraceCache::ApplyUnionRoutes(Entry &entry, const Vector &u,
     // Routing vectors are created unbound. Detach after every apply below so the
     // next source (real/imaginary or a new save generation) can attach directly.
     ceed::InitCeedVector(input, route.ceed, &route.in_vec, false, false);
-    CeedMemType mem;
-    PalaceCeedCall(route.ceed, CeedGetPreferredMemType(route.ceed, &mem));
-    if (!mfem::Device::Allows(mfem::Backend::DEVICE_MASK) && mem == CEED_MEM_DEVICE)
-    {
-      mem = CEED_MEM_HOST;
-    }
+    const CeedMemType mem = ceed::GetUsableMemType(route.ceed);
     double *output_data = output.ReadWrite(mem == CEED_MEM_DEVICE);
     PalaceCeedCall(route.ceed,
                    CeedVectorSetArray(route.out_vec, mem, CEED_USE_POINTER, output_data));
@@ -624,8 +619,9 @@ BoundaryPhysicalTraceCache::Get(const mfem::ParFiniteElementSpace &fespace, cons
   values.side_b.SetSize(sampling_plan->NumPoints() * entry.num_comp);
   values.side_a.UseDevice(true);
   values.side_b.UseDevice(true);
-  entry.side_a_eval->EvalBuffer(u, values.side_a);
-  entry.side_b_eval->EvalBuffer(u, values.side_b);
+  // The physical traces have no material data, nor a frequency.
+  entry.side_a_eval->EvalBuffer(u, 0.0, values.side_a);
+  entry.side_b_eval->EvalBuffer(u, 0.0, values.side_b);
   ApplyUnionRoutes(entry, u, values);
   values.generation = generation;
   operator_applies += static_cast<long long>(

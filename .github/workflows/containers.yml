@@ -16,6 +16,7 @@ name: Containers
 # - x86_64_v3, x86_64_v4, sapphirerapids   on the x64 (sapphirerapids) host
 # - aarch64, neoverse_v2                   on the arm64-8g (neoverse_v2) host
 # - neoverse_v1                            on the arm64 (neoverse_v1) host
+# - neoverse_v3                            on the arm64-9g (neoverse_v3) host
 # - x86_64_v3_cuda                         on the gpu (x86_64_v3) host
 # Each target is at or below its host's native ISA, so build-time binaries run
 # on the host (no cross-compile-up). neoverse_v1 builds on its own native V1
@@ -56,8 +57,8 @@ jobs:
     outputs:
       test: ${{ steps.filter.outputs.test }}
     steps:
-      - uses: actions/checkout@v6
-      - uses: dorny/paths-filter@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         id: filter
         with:
           filters: |
@@ -102,7 +103,7 @@ jobs:
       #
       # (Release tags are handled by build-containers-release, which has no
       # filter.)
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: needs.filter.outputs.test == 'true' || github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
         with:
           # Full history and tags, so `git describe` can stamp the version.
@@ -128,10 +129,11 @@ jobs:
           - {runner: arm64-8g, target: aarch64}
           - {runner: arm64,    target: neoverse_v1}
           - {runner: arm64-8g, target: neoverse_v2}
+          - {runner: arm64-9g, target: neoverse_v3}
           - {runner: gpu,      target: x86_64_v3}
     runs-on: [self-hosted, '${{ matrix.runner }}']
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # Fetch tags so the release channel can derive the version from the ref.
           fetch-depth: 0

@@ -66,7 +66,7 @@ spack:
   definitions:
   - palace_base:
     - >-
-      palace@develop+libxsmm+superlu-dist+mumps+sundials+strumpack+slepc+arpack+int64
+      palace@develop+libxsmm+superlu-dist+mumps+sundials+strumpack+slepc+arpack+int64~parmetis
       %gcc@15 ^openblas ^openmpi schedulers=none fabrics=ofi
   - cuda_constraints:
     # Palace and its CUDA-capable dependencies receive the same multi-valued
@@ -76,7 +76,6 @@ spack:
       +cuda cuda_arch=80,86,89,90 ^cuda@13
       ^openmpi+cuda
       ^libfabric+cuda+cuda_dlopen
-      ^libceed@develop
   - when: not env.get("PALACE_CUDA")
     palace:
     - $palace_base

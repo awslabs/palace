@@ -62,13 +62,16 @@ public:
                       std::shared_ptr<BoundaryPhysicalTraceCache> trace_cache = nullptr,
                       std::shared_ptr<BoundaryDerivedFieldBundle> derived_bundle = nullptr);
 
-  // Boundary material-dependent evaluator for Q_s, J_s, U_e, or U_m.
+  // Boundary material-dependent evaluator for Q_s, J_s, U_e, or U_m. For Q_s,
+  // imag_permittivity evaluates Im{ε} E ⋅ n instead of Re{ε} E ⋅ n (never served by the
+  // fused bundle, which handles the complex permittivity itself).
   PointFieldEvaluator(Kind kind, const Mesh &mesh, const mfem::Array<int> &bdr_attr_marker,
                       const mfem::ParFiniteElementSpace &fespace,
                       const MaterialOperator &mat_op, int lod, double scaling,
                       std::shared_ptr<const FaceSamplingPlan> sampling_plan = nullptr,
                       std::shared_ptr<BoundaryPhysicalTraceCache> trace_cache = nullptr,
-                      std::shared_ptr<BoundaryDerivedFieldBundle> derived_bundle = nullptr);
+                      std::shared_ptr<BoundaryDerivedFieldBundle> derived_bundle = nullptr,
+                      bool imag_permittivity = false);
 
   // Boundary Poynting vector evaluator.
   PointFieldEvaluator(Kind kind, const Mesh &mesh, const mfem::Array<int> &bdr_attr_marker,
@@ -96,17 +99,23 @@ public:
   const FaceSamplingPlan *SamplingPlan() const;
   const BoundaryPhysicalTraceCache *TraceCache() const { return trace_cache.get(); }
 
+  // The evaluations take the real angular frequency ω of the fields, which the surface
+  // charge and electric energy density of a frequency-dependent material need (ω > 0), also
+  // through a shared fused bundle (see SurfaceFunctional, DomainPointFieldEvaluator and
+  // BoundaryDerivedFieldBundle). ω is unused otherwise.
+
   // Domain-only compatibility path for grid-function output.
-  void Eval(const GridFunction *E, const GridFunction *B, Vector &out) const;
+  void Eval(const GridFunction *E, const GridFunction *B, double omega, Vector &out) const;
 
   // Fill the visualization buffer. Domain buffers are point-major for direct VTU output;
   // boundary buffers are component-major. The Vector overload is for already split
   // real/imaginary fields; the GridFunction overload accumulates real and imaginary
   // contributions for quadratic single-field quantities. For POYNTING pass E and B to
   // the two-field overload.
-  void EvalBuffer(const Vector &u, Vector &buffer) const;
-  void EvalBuffer(const GridFunction &u, Vector &buffer) const;
-  void EvalBuffer(const GridFunction *E, const GridFunction *B, Vector &buffer) const;
+  void EvalBuffer(const Vector &u, double omega, Vector &buffer) const;
+  void EvalBuffer(const GridFunction &u, double omega, Vector &buffer) const;
+  void EvalBuffer(const GridFunction *E, const GridFunction *B, double omega,
+                  Vector &buffer) const;
 };
 
 }  // namespace palace

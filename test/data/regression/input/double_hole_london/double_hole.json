@@ -3,7 +3,7 @@
   {
     "Type": "Magnetostatic",
     "Verbose": 2,
-    "Output": "postpro"
+    "Output": "postpro/base"
   },
   "Model":
   {

@@ -22,19 +22,19 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  SPACK_PACKAGES_COMMIT: ef05700808eb32fe932a76de9254a3c4a5f94f2c
+  SPACK_PACKAGES_COMMIT: 41fb89176c50aa111aec1038f43c26e80d5bf083
   GITHUB_USER: ${{ github.actor }}
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
 jobs:
   # Filter to allow skipping the test if no relevant changes occurred.
   filter:
-    runs-on: macos-15
+    runs-on: ubuntu-latest
     outputs:
       test: ${{ steps.filter.outputs.test }}
     steps:
-      - uses: actions/checkout@v6
-      - uses: dorny/paths-filter@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         id: filter
         with:
           filters: |
@@ -53,17 +53,18 @@ jobs:
     needs: filter
     if: needs.filter.outputs.test == 'true'
     runs-on: macos-15-xlarge
+    timeout-minutes: 180
     env:
       # Catch2 discovery launches the MPI unit-test binary with 8 ranks, more
       # than the runner's slots. OpenMPI 5 delegates mapping to PRRTE.
       PRTE_MCA_rmaps_default_mapping_policy: ":oversubscribe"
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: 'recursive'
 
       - name: Setup Spack
-        uses: spack/setup-spack@v3
+        uses: spack/setup-spack@16b756799ede8b28951287f89bcd3fdb32ec1ca3 # v3.0.0
         with:
           spack_ref: releases/v1.2
           packages_ref: ${{ env.SPACK_PACKAGES_COMMIT }}
@@ -95,8 +96,6 @@ jobs:
               fi
             fi
           done
-          # Workaround for https://github.com/spack/spack/issues/51505
-          ln -sf "$(spack location --repo builtin)"/packages/mfem "$PALACE_DIR"/spack_repo/local/packages/
 
       - name: Prepare spack.yaml
         run: |
@@ -167,7 +166,8 @@ jobs:
 
       - name: Run Unit Tests
         run: |
-          eval "$(spack -e . load --sh palace)"
+          # Also load CMake for ctest: Palace only needs it to build
+          eval "$(spack -e . load --sh palace cmake)"
 
           # Apple Silicon has no SMT, so physical == logical cores.
           NUM_PROC_TEST=$(sysctl -n hw.physicalcpu)
@@ -181,7 +181,7 @@ jobs:
           export OMPI_MCA_hwloc_base_binding_policy=none
 
           # [Regression] and [Long] cases run elsewhere; skip them here.
-          ctest -j "$NUM_PROC_TEST" --output-on-failure -LE "^(regression|long)$"
+          ctest -j "$NUM_PROC_TEST" --output-on-failure --timeout 900 -LE "^(regression|long)$"
 
       - name: Push to GHCR cache
         if: always()

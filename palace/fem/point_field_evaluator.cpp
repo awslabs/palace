@@ -109,13 +109,15 @@ PointFieldEvaluator::PointFieldEvaluator(
     const mfem::ParFiniteElementSpace &fespace, const MaterialOperator &mat_op, int lod,
     double scaling, std::shared_ptr<const FaceSamplingPlan> sampling_plan,
     std::shared_ptr<BoundaryPhysicalTraceCache> trace_cache_,
-    std::shared_ptr<BoundaryDerivedFieldBundle> derived_bundle_)
+    std::shared_ptr<BoundaryDerivedFieldBundle> derived_bundle_, bool imag_permittivity)
   : location(MeshEntityType::Boundary), kind(kind), trace_cache(std::move(trace_cache_)),
-    derived_bundle(std::move(derived_bundle_))
+    derived_bundle(imag_permittivity ? nullptr : std::move(derived_bundle_))
 {
   MFEM_VERIFY(kind == Kind::FLUX_Q || kind == Kind::CURRENT_J || kind == Kind::ENERGY_E ||
                   kind == Kind::ENERGY_M,
               "Unsupported boundary material point field kind!");
+  MFEM_VERIFY(!imag_permittivity || kind == Kind::FLUX_Q,
+              "Imaginary permittivity is only meaningful for the surface charge kind!");
   if (!sampling_plan && SupportsBoundarySamplingPlan(mesh))
   {
     sampling_plan = std::make_shared<FaceSamplingPlan>(mesh, bdr_attr_marker, lod);
@@ -139,7 +141,7 @@ PointFieldEvaluator::PointFieldEvaluator(
   }
   boundary_eval.reset(new SurfaceFunctional(kind, mesh, bdr_attr_marker, fespace, mat_op,
                                             lod, scaling, std::move(sampling_plan),
-                                            trace_cache));
+                                            trace_cache, imag_permittivity));
   valid = boundary_eval->IsValid();
 }
 
@@ -228,15 +230,15 @@ const FaceSamplingPlan *PointFieldEvaluator::SamplingPlan() const
                         : boundary_eval->sampling_plan.get();
 }
 
-void PointFieldEvaluator::Eval(const GridFunction *E, const GridFunction *B,
+void PointFieldEvaluator::Eval(const GridFunction *E, const GridFunction *B, double omega,
                                Vector &out) const
 {
   MFEM_VERIFY(location == MeshEntityType::Domain && domain_eval,
               "GridFunction output is only supported for domain point fields!");
-  domain_eval->Eval(E, B, out);
+  domain_eval->Eval(E, B, omega, out);
 }
 
-void PointFieldEvaluator::EvalBuffer(const Vector &u, Vector &buffer) const
+void PointFieldEvaluator::EvalBuffer(const Vector &u, double omega, Vector &buffer) const
 {
   MFEM_VERIFY(IsValid() && kind != Kind::POYNTING,
               "Vector EvalBuffer is only valid for single-field point fields!");
@@ -246,63 +248,64 @@ void PointFieldEvaluator::EvalBuffer(const Vector &u, Vector &buffer) const
   }
   else if (derived_bundle)
   {
-    derived_bundle->Copy(kind, u, buffer);
+    derived_bundle->Copy(kind, u, omega, buffer);
   }
   else if (trace_cache)
   {
     MFEM_VERIFY(trace_fespace_a, "Missing source space for boundary physical trace!");
     const auto traces = trace_cache->Get(*trace_fespace_a, u);
-    boundary_eval->EvalBufferTrace({traces.side_a, traces.side_b, nullptr, nullptr},
+    boundary_eval->EvalBufferTrace({traces.side_a, traces.side_b, nullptr, nullptr}, omega,
                                    buffer);
   }
   else
   {
-    boundary_eval->EvalBuffer(u, buffer);
+    boundary_eval->EvalBuffer(u, omega, buffer);
   }
 }
 
-void PointFieldEvaluator::EvalBuffer(const GridFunction &u, Vector &buffer) const
+void PointFieldEvaluator::EvalBuffer(const GridFunction &u, double omega,
+                                     Vector &buffer) const
 {
   MFEM_VERIFY(IsValid() && location == MeshEntityType::Boundary && kind != Kind::POYNTING,
               "GridFunction EvalBuffer is only valid for single-field boundary point "
               "fields!");
   if (derived_bundle)
   {
-    derived_bundle->Copy(kind, u.Real(), buffer);
+    derived_bundle->Copy(kind, u.Real(), omega, buffer);
     const bool quadratic = kind == Kind::ENERGY_E || kind == Kind::ENERGY_M;
     // A registered complex bundle already stores U_e/U_m as the exact real-plus-imag
     // sum. Linear callers still select their individual source phase and retain the
     // established GridFunction accumulation behavior for external source fallbacks.
     if (u.HasImag() && !(quadratic && derived_bundle->BatchesComplexPhases(u.Real())))
     {
-      derived_bundle->Copy(kind, u.Imag(), buffer, false);
+      derived_bundle->Copy(kind, u.Imag(), omega, buffer, false);
     }
     return;
   }
   if (!trace_cache)
   {
-    boundary_eval->EvalBuffer(u, buffer);
+    boundary_eval->EvalBuffer(u, omega, buffer);
     return;
   }
   MFEM_VERIFY(trace_fespace_a, "Missing source space for boundary physical trace!");
   const auto real_traces = trace_cache->Get(*trace_fespace_a, u.Real());
   boundary_eval->EvalBufferTrace({real_traces.side_a, real_traces.side_b, nullptr, nullptr},
-                                 buffer);
+                                 omega, buffer);
   if (u.HasImag())
   {
     const auto imag_traces = trace_cache->Get(*trace_fespace_a, u.Imag());
     boundary_eval->EvalBufferTrace(
-        {imag_traces.side_a, imag_traces.side_b, nullptr, nullptr}, buffer, false);
+        {imag_traces.side_a, imag_traces.side_b, nullptr, nullptr}, omega, buffer, false);
   }
 }
 
 void PointFieldEvaluator::EvalBuffer(const GridFunction *E, const GridFunction *B,
-                                     Vector &buffer) const
+                                     double omega, Vector &buffer) const
 {
   MFEM_VERIFY(IsValid(), "EvalBuffer called on an invalid point field evaluator!");
   if (location == MeshEntityType::Domain)
   {
-    domain_eval->EvalBuffer(E, B, buffer);
+    domain_eval->EvalBuffer(E, B, omega, buffer);
     return;
   }
 
@@ -313,12 +316,12 @@ void PointFieldEvaluator::EvalBuffer(const GridFunction *E, const GridFunction *
     {
       MFEM_VERIFY(E->HasImag() == B->HasImag(),
                   "Mismatched complex E/B fields for boundary derived bundle!");
-      derived_bundle->Copy(kind, E->Real(), B->Real(), buffer);
+      derived_bundle->Copy(kind, E->Real(), B->Real(), omega, buffer);
       // The registered complex derived bundle emits the same-phase Poynting sum in one
       // packed slice. Retain two calls only for an arbitrary-source fallback pair.
       if (E->HasImag() && !derived_bundle->BatchesComplexPhases(E->Real(), B->Real()))
       {
-        derived_bundle->Copy(kind, E->Imag(), B->Imag(), buffer, false);
+        derived_bundle->Copy(kind, E->Imag(), B->Imag(), omega, buffer, false);
       }
       return;
     }
@@ -335,13 +338,14 @@ void PointFieldEvaluator::EvalBuffer(const GridFunction *E, const GridFunction *
     const auto e_real = trace_cache->Get(*trace_fespace_a, E->Real());
     const auto b_real = trace_cache->Get(*trace_fespace_b, B->Real());
     boundary_eval->EvalBufferTrace(
-        {e_real.side_a, e_real.side_b, b_real.side_a, b_real.side_b}, buffer);
+        {e_real.side_a, e_real.side_b, b_real.side_a, b_real.side_b}, omega, buffer);
     if (E->HasImag())
     {
       const auto e_imag = trace_cache->Get(*trace_fespace_a, E->Imag());
       const auto b_imag = trace_cache->Get(*trace_fespace_b, B->Imag());
       boundary_eval->EvalBufferTrace(
-          {e_imag.side_a, e_imag.side_b, b_imag.side_a, b_imag.side_b}, buffer, false);
+          {e_imag.side_a, e_imag.side_b, b_imag.side_a, b_imag.side_b}, omega, buffer,
+          false);
     }
   }
   else
@@ -349,7 +353,7 @@ void PointFieldEvaluator::EvalBuffer(const GridFunction *E, const GridFunction *
     MFEM_VERIFY(boundary_eval || derived_bundle, "Missing boundary point field evaluator!");
     const GridFunction *u = E ? E : B;
     MFEM_VERIFY(u, "Boundary point field requires a source field!");
-    EvalBuffer(*u, buffer);
+    EvalBuffer(*u, omega, buffer);
   }
 }
 

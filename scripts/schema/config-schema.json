@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:2-1-0",
+  "$id": "urn:palace:schema:6-0-0",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -97,9 +97,9 @@
         },
         "CrackInternalBoundaryElements": {
           "type": "boolean",
-          "description": "Duplicate nodes along internal boundary elements to create a crack.",
-          "default": true,
-          "x-palace-advanced": true
+          "description": "Duplicate nodes along interior boundaries to decouple the elements on either side (\"crack\" the mesh). If not specified, the mesh is cracked along interior boundaries with boundary conditions which apply to each side separately, [PMC](@ref config-boundaries-pmc) (or [ZeroCharge](@ref config-boundaries-zerocharge)) and [Absorbing](@ref config-boundaries-absorbing) boundaries, and along [Impedance](@ref config-boundaries-impedance), [RationalImpedance](@ref config-boundaries-rationalimpedance), and [Conductivity](@ref config-boundaries-conductivity) boundaries with `\"Crack\": true`. If `true`, the mesh is cracked along all interior boundaries with boundary conditions except for lumped ports, with the surface impedance of impedance boundaries split between their two faces (the behavior of previous versions). If `false`, the mesh is never cracked, which is an error for boundaries with `\"Crack\": true`. Deprecated: the error estimate for adaptive mesh refinement no longer requires cracking the mesh, and cracking is a per-boundary modeling choice for impedance, rational impedance, and conductivity boundaries.",
+          "x-palace-advanced": true,
+          "x-palace-deprecated": true
         },
         "RefineCrackElements": {
           "type": "boolean",
@@ -616,6 +616,192 @@
       "minItems": 3,
       "maxItems": 3
     },
+    "ComplexNumber": {
+      "description": "A real number or complex number represented by `[real, imag]`.",
+      "oneOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 2,
+          "maxItems": 2,
+          "additionalItems": false
+        }
+      ]
+    },
+    "PermittivityModel": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "HighFrequencyLimit",
+        "Terms"
+      ],
+      "properties": {
+        "HighFrequencyLimit": {
+          "type": "number",
+          "exclusiveMinimum": 0.0,
+          "description": "Scalar high-frequency limit ε∞ of the relative permittivity, positive for a positive field energy."
+        },
+        "Terms": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "oneOf": [
+              {
+                "$ref": "#/$defs/PermittivityDrude"
+              },
+              {
+                "$ref": "#/$defs/PermittivityDebye"
+              },
+              {
+                "$ref": "#/$defs/PermittivityLorentz"
+              },
+              {
+                "$ref": "#/$defs/PermittivityPoleResidue"
+              },
+              {
+                "$ref": "#/$defs/PermittivityDjordjevicSarkar"
+              }
+            ]
+          },
+          "description": "Nonempty array of additive scalar permittivity terms."
+        }
+      }
+    },
+    "PermittivityDrude": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "Type",
+        "PlasmaFrequency",
+        "CollisionFrequency"
+      ],
+      "properties": {
+        "Type": {
+          "const": "Drude"
+        },
+        "PlasmaFrequency": {
+          "type": "number",
+          "exclusiveMinimum": 0.0,
+          "description": "Plasma frequency in GHz."
+        },
+        "CollisionFrequency": {
+          "type": "number",
+          "exclusiveMinimum": 0.0,
+          "description": "Collision frequency in GHz."
+        }
+      }
+    },
+    "PermittivityDebye": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "Type",
+        "DeltaPermittivity",
+        "RelaxationTime"
+      ],
+      "properties": {
+        "Type": {
+          "const": "Debye"
+        },
+        "DeltaPermittivity": {
+          "type": "number",
+          "exclusiveMinimum": 0.0,
+          "description": "Relative-permittivity increment, positive for a passive material: a negative increment has gain at every frequency."
+        },
+        "RelaxationTime": {
+          "type": "number",
+          "exclusiveMinimum": 0.0,
+          "description": "Relaxation time in ns."
+        }
+      }
+    },
+    "PermittivityLorentz": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "Type",
+        "DeltaPermittivity",
+        "ResonanceFrequency",
+        "DampingFrequency"
+      ],
+      "properties": {
+        "Type": {
+          "const": "Lorentz"
+        },
+        "DeltaPermittivity": {
+          "type": "number",
+          "exclusiveMinimum": 0.0,
+          "description": "Relative-permittivity increment, positive for a passive material: a negative increment has gain at every frequency."
+        },
+        "ResonanceFrequency": {
+          "type": "number",
+          "exclusiveMinimum": 0.0,
+          "description": "Resonance frequency in GHz."
+        },
+        "DampingFrequency": {
+          "type": "number",
+          "minimum": 0.0,
+          "description": "Damping frequency in GHz. Critical damping, within a relative 1e-6 of twice the resonance frequency, is not supported."
+        }
+      }
+    },
+    "PermittivityPoleResidue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "Type",
+        "Pole",
+        "Residue"
+      ],
+      "properties": {
+        "Type": {
+          "const": "PoleResidue"
+        },
+        "Pole": {
+          "$ref": "#/$defs/ComplexNumber",
+          "description": "Pole angular rate in rad/s. Real part must be nonpositive; complex poles must be specified in the upper half-plane."
+        },
+        "Residue": {
+          "$ref": "#/$defs/ComplexNumber",
+          "description": "Scalar residue angular rate in rad/s. Must be nonzero. Real poles require real residues. Passivity is not guaranteed: frequencies where the model has gain are warned. PoleResidue terms specify no stored electric energy, except an exact zero pole with real residue, which has zero additional stored energy by convention (a non-reactive current, assembled in conductivity form but kept as polarization in the permittivity and D); the electric energy outputs of a material with them are omitted."
+        }
+      }
+    },
+    "PermittivityDjordjevicSarkar": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "Type",
+        "Strength",
+        "LowerFrequency",
+        "UpperFrequency"
+      ],
+      "properties": {
+        "Type": {
+          "const": "DjordjevicSarkar"
+        },
+        "Strength": {
+          "type": "number",
+          "exclusiveMinimum": 0.0,
+          "description": "Dimensionless logarithmic strength, positive for a passive material: a negative strength has gain at every frequency."
+        },
+        "LowerFrequency": {
+          "type": "number",
+          "exclusiveMinimum": 0.0,
+          "description": "Lower frequency bound in GHz."
+        },
+        "UpperFrequency": {
+          "type": "number",
+          "exclusiveMinimum": 0.0,
+          "description": "Upper frequency bound in GHz; must exceed LowerFrequency."
+        }
+      }
+    },
     "Material": {
       "type": "object",
       "additionalProperties": false,
@@ -633,8 +819,15 @@
           "default": 1.0
         },
         "Permittivity": {
-          "$ref": "#/$defs/ScalarOrVector3",
-          "description": "Relative permittivity for this material. Scalar or vector of 3 coefficients corresponding to each of `\"MaterialAxes\"`.",
+          "oneOf": [
+            {
+              "$ref": "#/$defs/ScalarOrVector3"
+            },
+            {
+              "$ref": "#/$defs/PermittivityModel"
+            }
+          ],
+          "description": "Relative permittivity for this material. A number or 3-vector specifies a frequency-independent value; the object form specifies its scalar high-frequency limit and additive frequency-dependent terms.",
           "default": 1.0
         },
         "LossTan": {
@@ -931,6 +1124,11 @@
           "type": "number",
           "description": "Surface capacitance for this impedance boundary, F/sq.",
           "default": 0.0
+        },
+        "Crack": {
+          "type": "boolean",
+          "description": "Crack the mesh along this boundary where it lies in the interior of the computational domain, duplicating the mesh vertices on it. If `true`, the two faces of the sheet are modeled as independent surfaces, each carrying its own current, with no coupling through the sheet: this models a conductor much thicker than its penetration depth, and each face has the given surface impedance, as on an exterior boundary. If `false`, the boundary is a thin sheet with a single tangential electric field on it, which couples the fields on its two sides: this models a film much thinner than its penetration depth, and the given surface impedance is that of the film. Only relevant for interior boundaries.",
+          "default": false
         }
       }
     },
@@ -959,6 +1157,11 @@
           "type": "number",
           "description": "Kinetic sheet inductance L_ksq, H/sq, specified directly as an alternative to (PenetrationDepth, Thickness). Mutually exclusive with those two.",
           "default": 0.0
+        },
+        "TwoSided": {
+          "type": "boolean",
+          "description": "Model the film as a two-port (transfer-matrix) sheet: two coupled coincident faces so the tangential field can jump across it, capturing two-sided screening for d >~ lambda. Requires (PenetrationDepth, Thickness), a 3D mesh, and an interior film. The magnetostatic solution is discontinuous across the film, which is not cracked.",
+          "default": false
         }
       }
     },
@@ -988,6 +1191,11 @@
           "minItems": 1,
           "contains": { "not": { "const": 0 } },
           "description": "Real polynomial coefficients of the denominator D(s), ordered from highest to lowest degree. At least one coefficient must be nonzero. The roots of D are the poles of Zs."
+        },
+        "Crack": {
+          "type": "boolean",
+          "description": "Crack the mesh along this boundary where it lies in the interior of the computational domain, duplicating the mesh vertices on it. If `true`, the two faces of the sheet are modeled as independent surfaces, each carrying its own current, with no coupling through the sheet: this models a conductor much thicker than its penetration depth, and each face has the given surface impedance, as on an exterior boundary. If `false`, the boundary is a thin sheet with a single tangential electric field on it, which couples the fields on its two sides: this models a film much thinner than its penetration depth, and the given surface impedance is that of the film. Only relevant for interior boundaries.",
+          "default": false
         }
       }
     },
@@ -1006,7 +1214,7 @@
         },
         "Order": {
           "type": "integer",
-          "description": "Specify a first- or second-order approximation for the absorbing boundary condition. Second-order is only available for frequency domain driven simulations.",
+          "description": "Specify a first- or second-order approximation for the absorbing boundary condition. Second-order is only available for frequency domain simulations. It omits the term in the divergence of the tangential field, so that it only improves on first order for TE fields, and it is not passive for fields whose tangential wavenumber on the boundary exceeds \u221a2 times the wavenumber in the medium, see [Other boundary conditions](../reference.md#Other-boundary-conditions).",
           "minimum": 1,
           "maximum": 2,
           "default": 1,
@@ -1042,7 +1250,12 @@
         },
         "External": {
           "type": "boolean",
-          "description": "Whether this boundary is on the exterior of the computational domain. Relevant for the thickness correction.",
+          "description": "Whether this boundary is on the exterior of the computational domain, with only one conductor surface. Relevant for the thickness correction, which otherwise assumes a conductor with a surface on either side (a cracked interior boundary, see `\"Crack\"`). Ignored for interior boundaries which are not cracked.",
+          "default": false
+        },
+        "Crack": {
+          "type": "boolean",
+          "description": "Crack the mesh along this boundary where it lies in the interior of the computational domain, duplicating the mesh vertices on it. If `true`, the two faces of the sheet are modeled as independent conductor surfaces, each carrying its own current with the surface impedance of the conductor, with no coupling through the sheet: this models a conductor much thicker than the skin depth. If `false`, the boundary is a thin sheet with a single tangential electric field on it and the admittance of both conductor surfaces, which couples the fields on its two sides: this models a film thinner than the skin depth. The two models give the same result when the currents on both faces are equal, and differ in the conductor loss (by up to a factor of two) when the current flows on one face only. Only relevant for interior boundaries.",
           "default": false
         }
       }
@@ -1111,7 +1324,7 @@
           "default": 0.0
         },
         "Excitation": {
-          "description": "Turns on or off port excitation for driven or transient simulations. Can be specified as a boolean or as a non-negative integer (excitation group index). See the [boundary conditions guide](../guide/boundaries.md#Lumped-and-wave-port-excitation) for details.",
+          "description": "Turns on or off port excitation for driven or transient simulations. Driven excitations carry 1 W of time-averaged incident power (peak phasors); transient excitations carry unit instantaneous power at unit pulse amplitude. Can be specified as a boolean or as a non-negative integer (excitation group index). See the [boundary conditions guide](../guide/boundaries.md#Lumped-and-wave-port-excitation) for details.",
           "default": false,
           "oneOf": [
             {
@@ -1121,6 +1334,12 @@
               "$ref": "#/$defs/ExcitationIndex"
             }
           ]
+        },
+        "ExcitationAmplitude": {
+          "$ref": "#/$defs/ExcitationAmplitude"
+        },
+        "ExcitationPhase": {
+          "$ref": "#/$defs/ExcitationPhase"
         },
         "Active": {
           "type": "boolean",
@@ -1203,7 +1422,7 @@
           "default": 0.0
         },
         "Excitation": {
-          "description": "Turns on or off port excitation for driven or transient simulations. Can be specified as a boolean or as a non-negative integer (excitation group index). See the [boundary conditions guide](../guide/boundaries.md#Lumped-and-wave-port-excitation) for details.",
+          "description": "Turns on or off port excitation for driven or transient simulations. Driven excitations carry 1 W of time-averaged incident power (peak phasors); transient excitations carry unit instantaneous power at unit pulse amplitude. Can be specified as a boolean or as a non-negative integer (excitation group index). See the [boundary conditions guide](../guide/boundaries.md#Lumped-and-wave-port-excitation) for details.",
           "default": false,
           "oneOf": [
             {
@@ -1213,6 +1432,12 @@
               "$ref": "#/$defs/ExcitationIndex"
             }
           ]
+        },
+        "ExcitationAmplitude": {
+          "$ref": "#/$defs/ExcitationAmplitude"
+        },
+        "ExcitationPhase": {
+          "$ref": "#/$defs/ExcitationPhase"
         },
         "Active": {
           "type": "boolean",
@@ -1335,7 +1560,7 @@
         },
         "Mode": {
           "type": "integer",
-          "description": "Mode index (1-based) for the characteristic port mode of this wave port, ranked in order of decreasing wave number.",
+          "description": "Mode index (1-based) for the characteristic port mode of this wave port, ranked by distance to the eigenvalue solver target: `\"Target\"` when given, otherwise just above the bulk propagation constants of the port materials (decreasing wave number for the modes below it).",
           "exclusiveMinimum": 0,
           "default": 1
         },
@@ -1344,6 +1569,11 @@
           "description": "Offset distance used for S-parameter de-embedding for this wave port, specified in mesh length units.",
           "minimum": 0.0,
           "default": 0.0
+        },
+        "Target": {
+          "type": "number",
+          "description": "Target effective index ``n_\\text{eff} = k_n / k_0`` for the boundary mode eigenvalue solver: the port modes are ranked by their distance to it, as for [`/Solver/BoundaryMode/Target`](@ref config-solver-boundarymode-target). If omitted, the target lies just above the bulk propagation constants of the port materials. Use it to select a mode far from that default, for example the slow-wave mode of a superconducting line on a cross-section with several modes.",
+          "exclusiveMinimum": 0.0
         },
         "SolverType": {
           "type": "string",
@@ -1364,7 +1594,7 @@
           ]
         },
         "Excitation": {
-          "description": "Turns on or off port excitation for driven simulations. Can be specified as a boolean or as a non-negative integer (excitation group index). See the [boundary conditions guide](../guide/boundaries.md#Lumped-and-wave-port-excitation) for details.",
+          "description": "Turns on or off port excitation for driven simulations, normalized to 1 W of time-averaged incident power for lossless propagating modes. Lossy wave ports normalize the magnitude of complex power. Can be specified as a boolean or as a non-negative integer (excitation group index). See the [boundary conditions guide](../guide/boundaries.md#Lumped-and-wave-port-excitation) for details.",
           "default": false,
           "oneOf": [
             {
@@ -1402,7 +1632,7 @@
         },
         "ComplexCoarseSolve": {
           "type": "boolean",
-          "description": "Use an exact doubled-real factorization for the wave port boundary mode linear solver. When omitted, inherits [`/Solver/Linear/ComplexCoarseSolve`](@ref config-solver-linear-complexcoarsesolve) and [`/Solver/Linear/PCMatReal`](@ref config-solver-linear-pcmatreal). An explicit value takes precedence over both: `true` uses the exact factorization and `false` includes the complex terms in the real-valued preconditioner. This override affects only this wave port and does not change the full 3D system preconditioner.",
+          "description": "Use an exact doubled-real factorization for the wave port boundary mode linear solver. When omitted, inherits [`/Solver/Linear/ComplexCoarseSolve`](@ref config-solver-linear-complexcoarsesolve) and [`/Solver/Linear/PCMatReal`](@ref config-solver-linear-pcmatreal). An explicit value takes precedence over both: `true` uses the exact factorization and `false` the real-valued approximation of the system matrix. This override affects only this wave port and does not change the full 3D system preconditioner.",
           "x-palace-advanced": true
         },
         "EigenTol": {
@@ -1427,7 +1657,7 @@
         },
         "VoltagePath": {
           "type": "array",
-          "description": "Open path of coordinate points across the port face, specified in mesh length units. Each entry is a floating point array of length equal to the spatial dimension. The path is **directed from the signal (high-potential) terminal to the ground (low-potential) terminal**, matching the lumped-port `\"Direction\"` convention. When specified, this: 1. Pins the wave-port mode polarity so that ``\\int E_{\\text{mode}} \\cdot dl`` along the path is real-positive (required for consistent S-parameter signs when mixing wave and lumped ports in a driven simulation; without it, cross-type S-parameters may be ``180^\\circ`` out of phase). 2. Enables voltage and characteristic impedance ``Z_{PV}`` postprocessing for the wave port. For example, in a coaxial wave port the first point is on the inner conductor (signal) and the last point is on the outer conductor (ground); for a CPW port, the first point is on the center trace and the last point in the gap. Uses GSLIB interpolation.",
+          "description": "Open path of coordinate points across the port face, specified in mesh length units. Each entry is a floating point array of length equal to the spatial dimension. The path is **directed from the signal (high-potential) terminal to the ground (low-potential) terminal**, matching the lumped-port `\"Direction\"` convention. When specified, this: 1. Pins the wave-port mode polarity so that ``\\int E_{\\text{mode}} \\cdot dl`` along the path is real-positive (required for consistent S-parameter signs when mixing wave and lumped ports in a driven simulation; without it, cross-type S-parameters may be ``180^\\circ`` out of phase). 2. Enables voltage and characteristic impedance ``Z_{PV}`` postprocessing for the wave port. For example, in a coaxial wave port the first point is on the inner conductor (signal) and the last point is on the outer conductor (ground); for a CPW port, the first point is on the center trace and the last point in the gap. The path is projected onto the port plane and split at the port mesh element boundaries, and each piece is integrated with a Gauss-Legendre rule exact for the finite element field on affine elements (triangles, parallelograms), so the voltage is the exact line integral of the discrete field however finely the mesh is refined along the path.",
           "items": {
             "type": "array",
             "minItems": 2,
@@ -1437,15 +1667,9 @@
             }
           }
         },
-        "NSamples": {
-          "type": "integer",
-          "description": "Number of uniformly spaced sample points for the coordinate-based voltage line integral.",
-          "minimum": 1,
-          "default": 100
-        },
         "PolarityAttributes": {
           "type": "array",
-          "description": "Pair of parent-mesh boundary attributes `[signal, ground]` (signal/high-potential terminal first, ground/low-potential terminal second). Same role as the polarity component of [VoltagePath](@ref config-boundaries-waveport-voltagepath): the mode is flipped so that the modal E-field points from the signal attribute toward the ground attribute. Ignored if `\"VoltagePath\"` is also specified. Lightweight alternative to `\"VoltagePath\"` when only polarity is needed (no ``Z_{PV}``, no GSLIB). Both attributes must be present as distinct boundary attributes in the input mesh, with edges that lie on the port face.",
+          "description": "Pair of parent-mesh boundary attributes `[signal, ground]` (signal/high-potential terminal first, ground/low-potential terminal second). Same role as the polarity component of [VoltagePath](@ref config-boundaries-waveport-voltagepath): the mode is flipped so that the modal E-field points from the signal attribute toward the ground attribute. Ignored if `\"VoltagePath\"` is also specified. Lightweight alternative to `\"VoltagePath\"` when only polarity is needed (no ``Z_{PV}``). Both attributes must be present as distinct boundary attributes in the input mesh, with edges that lie on the port face.",
           "minItems": 2,
           "maxItems": 2,
           "items": {
@@ -1474,7 +1698,7 @@
           "description": "Integer array of mesh boundary attributes for this Floquet port. The port face must be planar and lie on the true boundary of the computational domain; the adjacent medium must be homogeneous and isotropic."
         },
         "Excitation": {
-          "description": "Excitation flag or positive excitation index. When excited, injects a unit-power plane wave in the specular `(0, 0)` diffraction order.",
+          "description": "Excitation flag or positive excitation index. When excited, injects a 1 W time-averaged plane wave in the specular `(0, 0)` diffraction order.",
           "default": false,
           "oneOf": [
             {
@@ -1635,6 +1859,17 @@
           "description": "Effective sheet penetration depth λ⊥ [mesh length units] used to model a FilmAttributes film that is not declared a \"Superconductor\" as the λ→0 perfect-screening limit. Smaller values approach an ideal perfect conductor.",
           "exclusiveMinimum": 0.0,
           "default": 1.0e-4
+        },
+        "Excitation": {
+          "description": "Excitation index of this flux loop, as for ports: can be a boolean or a non-negative integer. Flux loops sharing a positive index are driven together in one magnetostatic solve, each at its own FluxAmounts; 0 (false) holds the loop at zero fluxoid in every excitation. Defaults to the loop Index, so that each loop is its own excitation and the inductance matrix is extracted; when every excitation is a single loop the two indices must agree. See the [boundary conditions guide](../guide/boundaries.md#Flux-boundary) for details.",
+          "oneOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "$ref": "#/$defs/ExcitationIndex"
+            }
+          ]
         }
       }
     },
@@ -1756,7 +1991,7 @@
         "FarField": {
           "$ref": "#/$defs/FarField",
           "title": "Far Field",
-          "description": "Far-field electric field extraction. The boundary attributes must enclose the system and be on an external boundary."
+          "description": "Far-field electric field extraction. The boundary attributes must form a closed surface enclosing all sources and scatterers, either an external boundary or an interior surface in a homogeneous, isotropic medium."
         }
       }
     },
@@ -1781,17 +2016,11 @@
         },
         "VoltagePath": {
           "$ref": "#/$defs/CoordinatePath",
-          "description": "Array of coordinate points defining an open path for computing the voltage line integral ``V = \\int \\mathbf{E} \\cdot d\\mathbf{l}``. Each element is a floating point array of length equal to the spatial dimension. At least two points are required. Specified in mesh length units. Uses uniformly weighted GSLIB interpolation, which is less accurate than the attribute-based method but does not require modifying the mesh to include integration boundaries."
+          "description": "Array of coordinate points defining an open path for computing the voltage line integral ``V = \\int \\mathbf{E} \\cdot d\\mathbf{l}``. Each element is a floating point array of length equal to the spatial dimension. At least two points are required. Specified in mesh length units. The path is split at element boundaries and each piece is integrated exactly for affine elements (triangles, parallelograms), so this is as accurate as the attribute-based method without requiring integration boundaries in the mesh."
         },
         "CurrentPath": {
           "$ref": "#/$defs/CoordinatePath",
           "description": "Array of coordinate points defining a closed loop for computing the current line integral ``I = \\oint \\mathbf{H}_t \\cdot d\\mathbf{l}``. Each element is a floating point array of length equal to the spatial dimension. The last point connects back to the first. Specified in mesh length units."
-        },
-        "NSamples": {
-          "type": "integer",
-          "description": "Number of uniformly spaced sample points for the coordinate-based line integrals (using GSLIB interpolation).",
-          "minimum": 1,
-          "default": 100
         }
       }
     },
@@ -1813,12 +2042,6 @@
         "VoltagePath": {
           "$ref": "#/$defs/CoordinatePath",
           "description": "Array of coordinate points defining an open path for computing the voltage line integral ``V = \\int \\mathbf{E} \\cdot d\\mathbf{l}``. Each element is a floating point array of length equal to the spatial dimension. At least two points are required. Specified in mesh length units."
-        },
-        "NSamples": {
-          "type": "integer",
-          "description": "Number of uniformly spaced sample points for the coordinate-based line integral (GSLIB interpolation).",
-          "minimum": 1,
-          "default": 100
         }
       }
     },
@@ -1897,7 +2120,7 @@
     "FarField": {
       "type": "object",
       "title": "Far Field",
-      "description": "Far-field electric field extraction. The boundary attributes must enclose the system and be on an external boundary.",
+      "description": "Far-field electric field extraction. The boundary attributes must form a closed surface enclosing all sources and scatterers, either an external boundary or an interior surface in a homogeneous, isotropic medium.",
       "additionalProperties": false,
       "required": [
         "Attributes"
@@ -1925,6 +2148,17 @@
     "ExcitationIndex": {
       "type": "integer",
       "minimum": 0
+    },
+    "ExcitationAmplitude": {
+      "type": "number",
+      "exclusiveMinimum": 0.0,
+      "default": 1.0,
+      "description": "Amplitude ``A`` of the complex weight ``a = A e^{i\u03c6}`` applied to the unit-power incident wave of this port, so the incident power is scaled by ``A^2``. Dimensionless and frequency independent. Requires `\"Excitation\"` to be nonzero. S-parameters are normalized by the weight and do not depend on it. See the [boundary conditions guide](../guide/boundaries.md#Lumped-and-wave-port-excitation) for details."
+    },
+    "ExcitationPhase": {
+      "type": "number",
+      "default": 0.0,
+      "description": "Phase ``\u03c6`` in degrees of the complex weight ``a = A e^{i\u03c6}`` applied to the unit-power incident wave of this port, using the ``e^{i\u03c9t}`` time convention. A phase of 180 gives the same fields as reversing `\"Direction\"`. With the phase, the voltage, current, incident voltage and incident current of the port change sign, and its S-parameters do not. Reversing `\"Direction\"` also reverses the voltage reference of the port, so these keep their sign, and the S-parameters between this port and the others change sign. Requires `\"Excitation\"` to be nonzero. S-parameters are normalized by the weight and do not depend on it. Must be a multiple of 180 for transient simulations. See the [boundary conditions guide](../guide/boundaries.md#Lumped-and-wave-port-excitation) for details."
     },
     "CoordinateSystem": {
       "type": "string",
@@ -2328,7 +2562,7 @@
         },
         {
           "const": "ParMETIS",
-          "description": "Use ParMETIS column ordering."
+          "description": "Use ParMETIS column ordering. Requires *Palace* built with ParMETIS (`PALACE_WITH_PARMETIS=ON`), otherwise METIS is used."
         },
         {
           "const": "Scotch",
@@ -2408,7 +2642,7 @@
         },
         "MaxIts": {
           "type": "integer",
-          "description": "Maximum number of iterations for the iterative eigenvalue solver. If omitted, Palace uses `1,000,000` iterations.",
+          "description": "Maximum number of iterations for the iterative eigenvalue solver. For nonlinear problems, applies to the linear or quadratic eigenvalue solver computing the initial guesses of the `\"Hybrid\"` solver (see `\"NonlinearMaxIts\"` for the quasi-Newton iterations), or to the `\"SLP\"` solver. If omitted, Palace uses `1,000,000` iterations.",
           "exclusiveMinimum": 0
         },
         "MaxSize": {
@@ -2445,7 +2679,7 @@
         },
         "StartVector": {
           "type": "boolean",
-          "description": "Use a random start vector for the eigensolver.",
+          "description": "Use a random start vector for the eigensolver. With adaptive mesh refinement on nonconforming meshes, the solve of each adaptation iteration after the first can start from the eigenvectors of the previous one instead, for the SLEPc Krylov-Schur solver (linear problems, and quadratic ones with [`\"PEPLinear\"`](@ref config-solver-eigenmode-peplinear)), except with the `\"SLP\"` nonlinear solver.",
           "default": true,
           "x-palace-advanced": true
         },
@@ -2493,7 +2727,7 @@
         },
         "PreconditionerLagTol": {
           "type": "number",
-          "description": "Residual tolerance below which preconditioner updates are skipped.",
+          "description": "Residual above which the quasi-Newton preconditioner is updated every `PreconditionerLag` iterations. Below it, the preconditioner is updated only when, at the rate of the residual since the previous update check, the eigenvalue tolerance would not be reached within the next `PreconditionerLag` iterations.",
           "minimum": 0.0,
           "default": 0.0001,
           "x-palace-advanced": true
@@ -2503,6 +2737,13 @@
           "description": "Maximum number of restarts for the eigensolver.",
           "minimum": 0,
           "default": 2,
+          "x-palace-advanced": true
+        },
+        "NonlinearMaxIts": {
+          "type": "integer",
+          "description": "Maximum number of quasi-Newton iterations of each attempt to converge an eigenpair in the `\"Hybrid\"` nonlinear eigenvalue solver, before restarting.",
+          "exclusiveMinimum": 0,
+          "default": 100,
           "x-palace-advanced": true
         }
       }
@@ -2591,13 +2832,13 @@
         },
         "AdaptiveGSOrthogonalization": {
           "$ref": "#/$defs/Orthogonalization",
-          "description": "Gram-Schmidt variant for orthogonalizing the adaptive reduced-order model basis. Same options as [`/Linear/GSOrthogonalization`](@ref config-solver-linear-gsorthogonalization).",
+          "description": "Gram-Schmidt variant for orthogonalizing the adaptive reduced-order model basis. Same options as [`/Linear/GSOrthogonalization`](@ref config-solver-linear-gsorthogonalization), with `\"MGS\"` applied as `\"CGS2\"`.",
           "default": "CGS2",
           "x-palace-advanced": true
         },
         "AdaptiveCircuitSynthesis": {
           "type": "boolean",
-          "description": "Use the adaptive reduced-order model to print synthesized circuit-like matrices (L\u207b\u00b9, R\u207b\u00b9, C). Requires adaptive sweep to be enabled, all `LumpedPort` fields to be orthogonal, and only LRC-type frequency dependence (no `WavePort`, `Conductivity`, `RationalImpedance`, or second-order farfield BCs).",
+          "description": "Use the adaptive reduced-order model to print synthesized circuit-like matrices (L\u207b\u00b9, R\u207b\u00b9, C). Requires an adaptive sweep ([AdaptiveTol](@ref config-solver-driven-adaptivetol) > 0) with at least two distinct frequency samples, and at least one [LumpedPort](@ref config-boundaries-lumpedport) or [WavePort](@ref config-boundaries-waveport). The fields of the lumped ports must not overlap, so lumped port attributes cannot share mesh edges. The frequency dependence of wave ports and of [Conductivity](@ref config-boundaries-conductivity), [RationalImpedance](@ref config-boundaries-rationalimpedance), and second-order [Absorbing](@ref config-boundaries-absorbing) boundaries is represented in the synthesized matrices, with auxiliary states where needed. Not available with [FloquetPort](@ref config-boundaries-floquetport) boundaries, or with a nonzero [FloquetWaveVector](@ref config-boundaries-periodic-floquetwavevector), whose terms make the system matrices Hermitian rather than complex symmetric.",
           "default": false
         },
         "AdaptiveCircuitSynthesisDomainOrthogonalization": {
@@ -2606,7 +2847,28 @@
           "default": "Energy",
           "x-palace-advanced": true
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "MinFreq",
+              "MaxFreq",
+              "FreqStep"
+            ]
+          },
+          "then": {
+            "properties": {
+              "MinFreq": {
+                "exclusiveMinimum": 0.0
+              },
+              "FreqStep": {
+                "exclusiveMinimum": 0.0
+              }
+            }
+          }
+        }
+      ]
     },
     "SamplesPoint": {
       "type": "object",
@@ -2625,7 +2887,8 @@
           "type": "array",
           "description": "Explicit frequencies to sample, GHz.",
           "items": {
-            "type": "number"
+            "type": "number",
+            "exclusiveMinimum": 0.0
           }
         },
         "SaveStep": {
@@ -2657,12 +2920,12 @@
         "MinFreq": {
           "type": "number",
           "description": "Lower bound, GHz.",
-          "minimum": 0.0
+          "exclusiveMinimum": 0.0
         },
         "MaxFreq": {
           "type": "number",
           "description": "Upper bound, GHz.",
-          "minimum": 0.0
+          "exclusiveMinimum": 0.0
         },
         "FreqStep": {
           "type": "number",
@@ -2671,7 +2934,7 @@
         },
         "NSample": {
           "type": "integer",
-          "description": "Number of samples. Mutually exclusive with `\"FreqStep\"`.",
+          "description": "Number of samples, the first at `\"MinFreq\"` (a single sample is `\"MinFreq\"`). Mutually exclusive with `\"FreqStep\"`.",
           "minimum": 0
         },
         "SaveStep": {
@@ -2714,7 +2977,7 @@
         },
         "NSample": {
           "type": "integer",
-          "description": "Number of samples.",
+          "description": "Number of samples, the first at `\"MinFreq\"` (a single sample is `\"MinFreq\"`).",
           "minimum": 1
         },
         "SaveStep": {
@@ -2876,7 +3139,7 @@
       "properties": {
         "Save": {
           "type": "integer",
-          "description": "Number of computed magnetic field solutions to save to disk for [visualization with ParaView](../guide/postprocessing.md#Visualization), ordered by the entries in the computed inductance matrix. Files are saved in the `paraview/` (and/or `gridfunction/`) directory under [`/Problem/Output`](@ref config-problem-output).",
+          "description": "Number of computed magnetic field solutions to save to disk for [visualization with ParaView](../guide/postprocessing.md#Visualization), ordered by excitation: the surface current sources in index order, then the flux loop excitations in excitation index order (the entries of the computed inductance matrix when each is a single source). Files are saved in the `paraview/` (and/or `gridfunction/`) directory under [`/Problem/Output`](@ref config-problem-output).",
           "minimum": 0,
           "default": 0
         },
@@ -2896,7 +3159,7 @@
       "properties": {
         "Type": {
           "$ref": "#/$defs/LinearSolverType",
-          "description": "Specifies the solver used for preconditioning the linear system. If omitted, Palace selects the solver based on the problem type and available sparse direct solvers."
+          "description": "Specifies the solver used for preconditioning the linear system. If omitted, Palace selects BoomerAMG for electrostatic problems, AMS for magnetostatic and transient problems, and otherwise the first available sparse direct solver among STRUMPACK, SuperLU_DIST, and MUMPS (AMS if none is available)."
         },
         "KSPType": {
           "$ref": "#/$defs/KrylovSolver",
@@ -2927,7 +3190,7 @@
         },
         "InitialGuess": {
           "type": "boolean",
-          "description": "Use the previous solution as an initial guess for the iterative solver. If omitted, Palace enables this for driven simulations without adaptive frequency sweep, transient simulations, electrostatics, and magnetostatics, and disables it otherwise.",
+          "description": "Use the previous solution as an initial guess for the iterative solver. For driven frequency sweeps without adaptive sampling, the initial guess is the combination of the solutions at up to four previous frequencies which minimizes the residual. For adaptive frequency sweeps, the reduced-order model solution is used as initial guess only at the sample which would complete the convergence memory, to certify convergence; the other samples are solved from zero. GMRES and FGMRES scale a nonzero initial guess to minimize the initial residual, except when certifying the reduced-order model solution. If omitted, Palace enables this for driven simulations, transient simulations, electrostatics, and magnetostatics, and disables it otherwise.",
           "x-palace-advanced": true
         },
         "MGMaxLevels": {
@@ -2947,7 +3210,7 @@
         },
         "MGAuxiliarySmoother": {
           "type": "boolean",
-          "description": "Use an auxiliary space smoother on multigrid levels. If omitted, Palace disables this by default for electrostatic and magnetostatic simulations and enables it otherwise.",
+          "description": "Use an auxiliary space smoother on multigrid levels. If omitted, Palace disables this for electrostatic and magnetostatic simulations and enables it otherwise. Magnetostatic simulations with superconductors (`\"Superconductor\"` or `\"FluxLoop\"` boundaries, or domains with a `\"LondonDepth\"`) enable it when `\"LondonPCShift\"` is positive. In magnetostatic simulations, it requires a positive `\"LondonPCShift\"`.",
           "x-palace-advanced": true
         },
         "MGCycleIts": {
@@ -2997,7 +3260,7 @@
         },
         "ComplexCoarseSolve": {
           "type": "boolean",
-          "description": "When `true`, uses the true complex-valued system matrix for the coarse-level solver. When `false`, uses the real-valued approximation.",
+          "description": "When `true`, uses the true complex-valued system matrix for the coarse-level solver (not supported with AMS or BoomerAMG). When `false`, uses the real-valued approximation.",
           "default": false
         },
         "DropSmallEntries": {
@@ -3060,12 +3323,12 @@
         },
         "AMSSingularOperator": {
           "type": "boolean",
-          "description": "Indicate to AMS that the operator is singular (e.g. magnetostatics with no essential boundary conditions). If omitted, Palace enables this for magnetostatic simulations and disables it otherwise.",
+          "description": "Indicate to AMS that the operator is singular (e.g. magnetostatics with no essential boundary conditions). If omitted, Palace enables this for magnetostatic simulations without superconductors (`\"Superconductor\"` or `\"FluxLoop\"` boundaries, or domains with a `\"LondonDepth\"`) and disables it otherwise.",
           "x-palace-advanced": true
         },
         "LondonPCShift": {
           "type": "number",
-          "description": "Preconditioner-only gauge shift for magnetostatic problems with a London (superconductor) sheet term. Adds this multiple of the reluctance-weighted volume mass to the preconditioner matrix only (leaving the operator, solution, and extracted inductance unchanged) to lift the residual gradient null space so AMS is SPD-solvable in parallel. Ignored when no London sheet term is present.",
+          "description": "Preconditioner-only gauge shift for magnetostatic problems with superconductors (`\"Superconductor\"` or `\"FluxLoop\"` boundaries, or domains with a `\"LondonDepth\"`) or the auxiliary smoother (`\"MGAuxiliarySmoother\"`). Adds this multiple of the reluctance-weighted volume mass outside the London domains to the preconditioner matrix only (leaving the operator, solution, and extracted inductance unchanged) to lift the residual gradient null space so AMS is SPD-solvable in parallel. Ignored otherwise.",
           "default": 0.1,
           "x-palace-advanced": true
         },
@@ -3078,6 +3341,13 @@
           "type": "integer",
           "description": "Number of AMS iterations per preconditioner application when geometric multigrid is enabled (`\"MGMaxLevels\"` > 1). If omitted, Palace uses [`/Solver/Order`](@ref config-solver-order).",
           "exclusiveMinimum": 0
+        },
+        "AMSAgglomerationTarget": {
+          "type": "integer",
+          "description": "Target number of rows per process for the coarse levels of the auxiliary space AMG hierarchies of AMS. During the solve, the levels with much fewer rows per process are gathered onto fewer processes, so that they are not dominated by message latency at high process counts. The hierarchies are unchanged and the results agree up to the summation order. `0` disables the agglomeration. Requires a patch to hypre, which the superbuild and the Spack package apply, and is ignored without it.",
+          "minimum": 0,
+          "default": 2048,
+          "x-palace-advanced": true
         },
         "DivFreeTol": {
           "type": "number",
@@ -3105,7 +3375,7 @@
         },
         "EstimatorMG": {
           "type": "boolean",
-          "description": "When `true`, uses a multigrid preconditioner with AMG coarse solve for the error estimator linear solver instead of Jacobi.",
+          "description": "When `true`, uses a multigrid preconditioner with AMG coarse solve for the error estimator linear solver instead of Jacobi. The flux recovery on meshes with uncracked interior boundaries with boundary conditions, which is discontinuous across them, always uses Jacobi.",
           "default": false
         },
         "GSOrthogonalization": {
@@ -3137,7 +3407,31 @@
           "Solver": {
             "required": [
               "Driven"
-            ]
+            ],
+            "properties": {
+              "Driven": {
+                "if": {
+                  "properties": {
+                    "AdaptiveCircuitSynthesis": {
+                      "const": true
+                    }
+                  },
+                  "required": [
+                    "AdaptiveCircuitSynthesis"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "AdaptiveTol": {
+                      "exclusiveMinimum": 0.0
+                    }
+                  },
+                  "required": [
+                    "AdaptiveTol"
+                  ]
+                }
+              }
+            }
           }
         }
       }

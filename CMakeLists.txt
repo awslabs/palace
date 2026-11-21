@@ -5,9 +5,8 @@
 # CMake superbuild for Palace and its dependencies
 #
 
-# CMake 3.21 was released in Jul. 2021 (required for HIP support)
-# Cmake 3.24 was released in Aug. 2022 (required for portable WHOLE_ARCHIVE linking of tests)
-cmake_minimum_required(VERSION 3.24)
+# CMake 3.27 was released in Jul. 2023 (required for AOCL in FindBLAS/FindLAPACK)
+cmake_minimum_required(VERSION 3.27)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
@@ -17,7 +16,7 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_BINARY_DIR)
 endif()
 
 # Initialize the project
-project(palace-superbuild LANGUAGES CXX C VERSION 0.18.1)
+project(palace-superbuild LANGUAGES CXX C VERSION 0.19.0)
 
 # Define build settings and defaults
 set(PALACE_WITH_64BIT_INT OFF CACHE BOOL "Use 64 bit integers")
@@ -25,13 +24,13 @@ set(PALACE_WITH_64BIT_BLAS_INT OFF CACHE BOOL "Use ILP64 BLAS/LAPACK interface i
 set(PALACE_WITH_OPENMP OFF CACHE BOOL "Use OpenMP for shared-memory parallelism")
 set(PALACE_WITH_CUDA OFF CACHE BOOL "Use CUDA for NVIDIA GPU support")
 set(PALACE_WITH_HIP OFF CACHE BOOL "Use HIP for AMD or NVIDIA GPU support")
-set(PALACE_WITH_GPU_AWARE_MPI OFF CACHE BOOL "Option to set if MPI distribution is GPU aware")
 
 set(PALACE_BUILD_EXTERNAL_DEPS ON CACHE BOOL "Build external third-party dependency libraries")
 set(PALACE_WITH_SUPERLU ON CACHE BOOL "Build with SuperLU_DIST sparse direct solver")
 set(PALACE_WITH_STRUMPACK OFF CACHE BOOL "Build with STRUMPACK sparse direct solver")
 set(PALACE_WITH_MUMPS OFF CACHE BOOL "Build with MUMPS sparse direct solver")
 set(PALACE_WITH_CUDSS OFF CACHE BOOL "Build with cuDSS sparse direct solver")
+set(PALACE_WITH_PARMETIS OFF CACHE BOOL "Build with ParMETIS column ordering for sparse direct solvers")
 set(PALACE_WITH_SLEPC ON CACHE BOOL "Build with SLEPc eigenvalue solver")
 set(PALACE_WITH_ARPACK OFF CACHE BOOL "Build with ARPACK eigenvalue solver")
 set(PALACE_WITH_LIBXSMM ON CACHE BOOL "Build with LIBXSMM backend for libCEED")
@@ -48,10 +47,16 @@ set(ANALYZE_SOURCES_CPPCHECK OFF CACHE BOOL "Run static analysis checks using cp
 
 set(PALACE_BUILD_WITH_COVERAGE OFF CACHE BOOL "Compile Palace with coverage flags (source-based for LLVM; gcov for GCC)")
 set(PALACE_BUILD_WITH_SANITIZERS OFF CACHE BOOL "Compile Palace with sanitizers (AddressSanitizer + UndefinedBehaviorSanitizer)")
+set(PALACE_WITH_ENZYME OFF CACHE BOOL "Build Enzyme support for Palace unit tests")
 set(PALACE_TESTS_NUMPROC 2 CACHE STRING "MPI ranks per [Parallel] unit-test case")
 set(PALACE_REGRESSION_NUMPROC 2 CACHE STRING "MPI ranks per [Regression]/[Long] case")
 set(PALACE_TESTS_OMP_THREADS 1 CACHE STRING "OpenMP threads per test process")
 set(PALACE_GIT_COMMIT_ID "" CACHE STRING "Version string to embed instead of git describe")
+set(PALACE_BUILD_ID "" CACHE STRING "Build identifier to embed (e.g. Spack DAG hash)")
+set(LLVM_DIR "" CACHE PATH "Path to the LLVM CMake package used to build Enzyme")
+set(ENZYME_DIR "" CACHE PATH
+  "Path to an existing Enzyme installation (build Enzyme when empty)"
+)
 
 # Enable Fortran if required
 if(PALACE_WITH_STRUMPACK OR PALACE_WITH_MUMPS OR PALACE_WITH_ARPACK)
@@ -89,12 +94,7 @@ if(PALACE_WITH_CUDA)
   endif()
   enable_language(CUDA)
   find_package(CUDAToolkit REQUIRED)
-  # Fail before building dependencies: Palace's C++20 device code needs nvcc 12.0, and
-  # CMake knows its -std=c++20 flag from 3.25.2
-  if(CMAKE_VERSION VERSION_LESS 3.25.2)
-    message(FATAL_ERROR
-      "PALACE_WITH_CUDA requires CMake 3.25.2 or later (found ${CMAKE_VERSION})")
-  endif()
+  # Fail before building dependencies: Palace's C++20 device code needs nvcc 12.0
   if(CMAKE_CUDA_COMPILER_ID STREQUAL "NVIDIA" AND
      CMAKE_CUDA_COMPILER_VERSION VERSION_LESS 12.0)
     message(FATAL_ERROR
@@ -230,11 +230,9 @@ if(NOT "${CMAKE_INSTALL_RPATH_USE_LINK_PATH}" STREQUAL "")
   )
 endif()
 
-include(ExternalGitTags)
-# Avoid DOWNLOAD_EXTRACT_TIMESTAMP warning
-if(POLICY CMP0135)
-  cmake_policy(SET CMP0135 NEW)
-endif()
+# Sub-make for the external project steps: $(MAKE) passes the parent make's jobserver, which
+# GNU make 4.3 and later otherwise drop (building at -j1)
+set(PALACE_MAKE_COMMAND "$(MAKE)")
 
 # Add other third-party dependency builds
 include(ExternalGitTags)

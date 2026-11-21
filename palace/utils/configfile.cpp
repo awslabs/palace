@@ -6,14 +6,18 @@
 #include <algorithm>
 #include <cmath>
 #include <iterator>
+#include <limits>
 #include <numbers>
 #include <sstream>
 #include <string_view>
+#include <type_traits>
+#include <variant>
 #include <fmt/format.h>
 #include <fmt/ranges.h>
 #include <mfem.hpp>
 #include <nlohmann/json.hpp>
 
+#include "permittivitymodel.hpp"
 #include "units.hpp"
 #include "utils/constants.hpp"
 #include "utils/enum_string.hpp"
@@ -96,6 +100,34 @@ void ParseSymmetricMatrixData(const json &mat, const std::string &name,
     data.s.fill(s);
   }
   data.v = mat.value("MaterialAxes", data.v);
+}
+
+std::complex<double> ParseComplexNumber(const json &data, const char *name)
+{
+  double real = 0.0, imag = 0.0;
+  if (data.is_number())
+  {
+    real = data.get<double>();
+  }
+  else
+  {
+    MFEM_VERIFY(
+        data.is_array() && data.size() == 2 && data[0].is_number() && data[1].is_number(),
+        "Material PoleResidue \"" << name << "\" must be a number or [real, imag]!");
+    real = data[0].get<double>();
+    imag = data[1].get<double>();
+  }
+  MFEM_VERIFY(std::isfinite(real) && std::isfinite(imag),
+              "Material PoleResidue \"" << name << "\" must be finite!");
+  return {real, imag};
+}
+
+double ParseFiniteNumber(const json &data, const char *name)
+{
+  const double value = data.at(name).get<double>();
+  MFEM_VERIFY(std::isfinite(value),
+              "Material permittivity parameter \"" << name << "\" must be finite!");
+  return value;
 }
 
 // Helper function for extracting element data from the configuration file, either from a
@@ -273,7 +305,10 @@ ModelData::ModelData(const json &model)
   make_hex = model.value("MakeHexahedral", make_hex);
   reorder_elements = model.value("ReorderElements", reorder_elements);
   clean_unused_elements = model.value("CleanUnusedElements", clean_unused_elements);
-  crack_bdr_elements = model.value("CrackInternalBoundaryElements", crack_bdr_elements);
+  if (auto it = model.find("CrackInternalBoundaryElements"); it != model.end())
+  {
+    crack_bdr_elements = it->get<bool>();
+  }
   refine_crack_elements = model.value("RefineCrackElements", refine_crack_elements);
   crack_displ_factor = model.value("CrackDisplacementFactor", crack_displ_factor);
   add_bdr_elements = model.value("AddInterfaceBoundaryElements", add_bdr_elements);
@@ -288,10 +323,64 @@ MaterialData::MaterialData(const json &domain)
   attributes = domain.at("Attributes").get<std::vector<int>>();  // Required
   std::ranges::sort(attributes);
   ParseSymmetricMatrixData(domain, "Permeability", mu_r);
-  ParseSymmetricMatrixData(domain, "Permittivity", epsilon_r);
   ParseSymmetricMatrixData(domain, "LossTan", tandelta);
   ParseSymmetricMatrixData(domain, "Conductivity", sigma);
   lambda_L = domain.value("LondonDepth", lambda_L);
+
+  const auto permittivity = domain.find("Permittivity");
+  if (permittivity == domain.end() || !permittivity->is_object())
+  {
+    ParseSymmetricMatrixData(domain, "Permittivity", epsilon_r);
+    return;
+  }
+
+  epsilon_r =
+      SymmetricMatrixData<3>(ParseFiniteNumber(*permittivity, "HighFrequencyLimit"));
+  const auto &terms = permittivity->at("Terms");
+  MFEM_VERIFY(terms.is_array() && !terms.empty(),
+              "Material permittivity \"Terms\" must be a nonempty array!");
+  constexpr double ghz_to_angular_si = 2.0 * std::numbers::pi * 1.0e9;
+  for (const auto &term : terms)
+  {
+    const std::string type = term.at("Type").get<std::string>();
+    if (type == "Drude")
+    {
+      permittivity_terms.push_back(
+          DrudeData{ghz_to_angular_si * ParseFiniteNumber(term, "PlasmaFrequency"),
+                    ghz_to_angular_si * ParseFiniteNumber(term, "CollisionFrequency")});
+    }
+    else if (type == "Debye")
+    {
+      permittivity_terms.push_back(
+          DebyeData{ParseFiniteNumber(term, "DeltaPermittivity"),
+                    ParseFiniteNumber(term, "RelaxationTime") * 1.0e-9});
+    }
+    else if (type == "Lorentz")
+    {
+      permittivity_terms.push_back(
+          LorentzData{ParseFiniteNumber(term, "DeltaPermittivity"),
+                      ghz_to_angular_si * ParseFiniteNumber(term, "ResonanceFrequency"),
+                      ghz_to_angular_si * ParseFiniteNumber(term, "DampingFrequency")});
+    }
+    else if (type == "PoleResidue")
+    {
+      permittivity_terms.push_back(
+          PermittivityPoleData{ParseComplexNumber(term.at("Pole"), "Pole"),
+                               ParseComplexNumber(term.at("Residue"), "Residue")});
+    }
+    else if (type == "DjordjevicSarkar")
+    {
+      permittivity_terms.push_back(DjordjevicSarkarData{
+          ParseFiniteNumber(term, "Strength"),
+          ghz_to_angular_si * ParseFiniteNumber(term, "LowerFrequency"),
+          ghz_to_angular_si * ParseFiniteNumber(term, "UpperFrequency")});
+    }
+    else
+    {
+      MFEM_ABORT("Unknown material permittivity term Type \"" << type << "\"!");
+    }
+  }
+  permittivity::CheckTerms(epsilon_r.s[0], permittivity_terms);
 }
 
 DomainEnergyData::DomainEnergyData(const json &domain)
@@ -403,6 +492,8 @@ ConductivityData::ConductivityData(const json &boundary)
   mu_r = boundary.value("Permeability", mu_r);
   h = boundary.value("Thickness", h);
   external = boundary.value("External", external);
+  crack = boundary.value("Crack", crack);
+  crack_given = boundary.contains("Crack");
 }
 
 ImpedanceData::ImpedanceData(const json &boundary)
@@ -412,6 +503,7 @@ ImpedanceData::ImpedanceData(const json &boundary)
   Rs = boundary.value("Rs", Rs);
   Ls = boundary.value("Ls", Ls);
   Cs = boundary.value("Cs", Cs);
+  crack = boundary.value("Crack", crack);
 }
 
 int ParsePortExcitation(const json &port, int index)
@@ -442,6 +534,62 @@ int ParsePortExcitation(const json &port, int index)
   }
 }
 
+// Group the excited sources (excitation != 0) of the given index-keyed source maps by
+// excitation index.
+template <typename... Sources>
+std::map<int, std::vector<int>> GroupByExcitation(const Sources &...sources)
+{
+  std::map<int, std::vector<int>> groups;
+  auto add = [&groups](const auto &map)
+  {
+    for (const auto &[idx, data] : map)
+    {
+      if (data.excitation != 0)
+      {
+        groups[data.excitation].emplace_back(idx);
+      }
+    }
+  };
+  (add(sources), ...);
+  return groups;
+}
+
+// Whether every excitation drives a single source (the S-parameter or inductance-matrix
+// case).
+bool SingleSourceExcitations(const std::map<int, std::vector<int>> &groups)
+{
+  return !groups.empty() &&
+         std::ranges::all_of(groups, [](const auto &x) { return x.second.size() == 1; });
+}
+
+// For single-source excitations the excitation index must equal the source index so a
+// matrix column is unambiguous; a lone "Excitation": true (1) is also accepted and upgraded
+// to the source index.
+bool SingleSourceExcitationsMatchIndices(const std::map<int, std::vector<int>> &groups)
+{
+  const auto &ext1 = *groups.begin();
+  return (groups.size() == 1 && (ext1.first == 1 || ext1.second[0] == ext1.first)) ||
+         std::ranges::all_of(groups, [](const auto &x) { return x.first == x.second[0]; });
+}
+
+// Upgrade excitation = 1 to the source index, once the excitations are known to be single
+// and consistent.
+template <typename... Sources>
+void UpgradeUnitExcitation(Sources &...sources)
+{
+  auto upgrade = [](auto &map)
+  {
+    for (auto &[idx, data] : map)
+    {
+      if (data.excitation == 1)
+      {
+        data.excitation = idx;
+      }
+    }
+  };
+  (upgrade(sources), ...);
+}
+
 RationalImpedanceData::RationalImpedanceData(const json &boundary)
 {
   attributes = boundary.at("Attributes").get<std::vector<int>>();  // Required
@@ -454,6 +602,7 @@ RationalImpedanceData::RationalImpedanceData(const json &boundary)
               "Rational impedance \"Denominator\" must have a nonzero coefficient!");
   MFEM_VERIFY(std::ranges::any_of(num, [](double c) { return c != 0.0; }),
               "Rational impedance \"Numerator\" must have a nonzero coefficient!");
+  crack = boundary.value("Crack", crack);
 }
 
 SuperconductorData::SuperconductorData(const json &boundary)
@@ -463,6 +612,7 @@ SuperconductorData::SuperconductorData(const json &boundary)
   lambda_L = boundary.value("PenetrationDepth", lambda_L);
   thickness = boundary.value("Thickness", thickness);
   Ls = boundary.value("KineticInductance", Ls);
+  two_sided = boundary.value("TwoSided", two_sided);
 
   // Require exactly one of {(PenetrationDepth, Thickness), KineticInductance}. The (λ, d)
   // form defines the kinetic sheet inductance as L_ksq = mu0 * lambda * coth(d/lambda); the
@@ -484,6 +634,9 @@ SuperconductorData::SuperconductorData(const json &boundary)
     MFEM_VERIFY(Ls > 0.0,
                 "Superconductor boundary \"KineticInductance\" must be positive!");
   }
+  MFEM_VERIFY(!two_sided || has_lambda_d,
+              "Superconductor boundary \"TwoSided\" requires the (\"PenetrationDepth\", "
+              "\"Thickness\") form!");
 }
 
 LumpedPortData::LumpedPortData(const json &port)
@@ -497,6 +650,21 @@ LumpedPortData::LumpedPortData(const json &port)
   Cs = port.value("Cs", Cs);
 
   excitation = ParsePortExcitation(port, index);
+  excitation_amplitude = port.value("ExcitationAmplitude", excitation_amplitude);
+  excitation_phase = port.value("ExcitationPhase", excitation_phase);
+  MFEM_VERIFY(excitation != 0 || (!port.contains("ExcitationAmplitude") &&
+                                  !port.contains("ExcitationPhase")),
+              fmt::format("\"ExcitationAmplitude\" and \"ExcitationPhase\" on lumped port "
+                          "index {:d} require a nonzero \"Excitation\"",
+                          index));
+  MFEM_VERIFY(excitation_amplitude > 0.0 && std::isfinite(excitation_amplitude),
+              fmt::format("\"ExcitationAmplitude\" on lumped port index {:d} must be "
+                          "positive and finite; got {:.6e}",
+                          index, excitation_amplitude));
+  MFEM_VERIFY(std::isfinite(excitation_phase),
+              fmt::format("\"ExcitationPhase\" on lumped port index {:d} must be finite; "
+                          "got {:.6e}",
+                          index, excitation_phase));
   active = port.value("Active", active);
   include_in_synthesis = port.value("IncludeInSynthesis", include_in_synthesis);
   MFEM_VERIFY(!(excitation != 0 && !include_in_synthesis),
@@ -572,6 +740,7 @@ WavePortData::WavePortData(const json &port)
   std::ranges::sort(attributes);
   mode_idx = port.value("Mode", mode_idx);
   d_offset = port.value("Offset", d_offset);
+  target = port.value("Target", target);
   eigen_solver = port.value("SolverType", eigen_solver);
   excitation = ParsePortExcitation(port, index);
   active = port.value("Active", active);
@@ -597,7 +766,6 @@ WavePortData::WavePortData(const json &port)
       voltage_path.push_back(pt.get<std::vector<double>>());
     }
   }
-  n_samples = port.value("NSamples", n_samples);
   if (auto it = port.find("PolarityAttributes"); it != port.end())
   {
     auto pa = it->get<std::vector<int>>();
@@ -732,7 +900,6 @@ ModeImpedanceData::ModeImpedanceData(const json &imp)
       current_path.push_back(pt.get<std::vector<double>>());
     }
   }
-  n_samples = imp.value("NSamples", n_samples);
   MFEM_VERIFY(voltage_attributes.empty() || voltage_path.empty(),
               "Impedance boundary should specify either \"VoltageAttributes\" or "
               "\"VoltagePath\", not both!");
@@ -758,7 +925,6 @@ ModeVoltageData::ModeVoltageData(const json &volt)
       voltage_path.push_back(pt.get<std::vector<double>>());
     }
   }
-  n_samples = volt.value("NSamples", n_samples);
   MFEM_VERIFY(voltage_attributes.empty() || voltage_path.empty(),
               "Voltage boundary should specify either \"VoltageAttributes\" or "
               "\"VoltagePath\", not both!");
@@ -915,6 +1081,7 @@ FarFieldPostData::FarFieldPostData(const json &farfield)
 }
 FluxLoopData::FluxLoopData(const json &fluxloop)
 {
+  int index = fluxloop.at("Index");  // Required
   MFEM_VERIFY(fluxloop.contains("FilmAttributes"),
               "Missing \"FilmAttributes\" for \"FluxLoop\" boundary!");
   film_attributes = fluxloop.at("FilmAttributes").get<std::vector<int>>();
@@ -934,6 +1101,15 @@ FluxLoopData::FluxLoopData(const json &fluxloop)
   pec_lperp = fluxloop.value("PecPenetrationDepth", pec_lperp);
   MFEM_VERIFY(pec_lperp > 0.0,
               "\"PecPenetrationDepth\" for \"FluxLoop\" boundary must be positive!");
+
+  // Each loop is its own excitation unless told otherwise. The drive is normalized to the
+  // loop's fluxoid, so an excited loop with a zero fluxoid would be a zero right-hand side.
+  excitation =
+      fluxloop.contains("Excitation") ? ParsePortExcitation(fluxloop, index) : index;
+  MFEM_VERIFY(excitation == 0 ||
+                  std::ranges::any_of(flux_amounts, [](double phi) { return phi != 0.0; }),
+              "\"FluxLoop\" boundary " << index
+                                       << " is excited but has zero \"FluxAmounts\"!");
 
   auto direction_it = fluxloop.find("Direction");
   if (direction_it != fluxloop.end())
@@ -1037,56 +1213,17 @@ BoundaryData::BoundaryData(const json &boundaries)
 
   // Normalize excitation indices: upgrade excitation=1 to excitation=port_idx when
   // calculating S-parameters (each port has a single excitation) and indices are valid.
+  // Flux loops (magnetostatic) form their own excitation space, normalized the same way for
+  // the inductance matrix.
+  if (auto groups = GroupByExcitation(lumpedport, waveport, floquetport);
+      SingleSourceExcitations(groups) && SingleSourceExcitationsMatchIndices(groups))
   {
-    std::map<int, std::vector<int>> excitation_map;
-    for (const auto &[idx, data] : lumpedport)
-    {
-      excitation_map[data.excitation].emplace_back(idx);
-    }
-    for (const auto &[idx, data] : waveport)
-    {
-      excitation_map[data.excitation].emplace_back(idx);
-    }
-    for (const auto &[idx, data] : floquetport)
-    {
-      excitation_map[data.excitation].emplace_back(idx);
-    }
-    excitation_map.erase(0);  // zeroth index is unexcited.
-    bool calc_s_params = std::ranges::all_of(excitation_map, [](const auto &x)
-                                             { return x.second.size() == 1; });
-    if (calc_s_params && !excitation_map.empty())
-    {
-      // Only normalize if excitation indices are valid (match port indices or are 1).
-      const auto &ext1 = *excitation_map.begin();
-      bool valid = (excitation_map.size() == 1 &&
-                    (ext1.first == 1 || ext1.second[0] == ext1.first)) ||
-                   std::ranges::all_of(excitation_map, [](const auto &x)
-                                       { return x.first == x.second[0]; });
-      if (valid)
-      {
-        for (auto &[port_idx, lp] : lumpedport)
-        {
-          if (lp.excitation == 1)
-          {
-            lp.excitation = port_idx;
-          }
-        }
-        for (auto &[port_idx, wp] : waveport)
-        {
-          if (wp.excitation == 1)
-          {
-            wp.excitation = port_idx;
-          }
-        }
-        for (auto &[port_idx, fp] : floquetport)
-        {
-          if (fp.excitation == 1)
-          {
-            fp.excitation = port_idx;
-          }
-        }
-      }
-    }
+    UpgradeUnitExcitation(lumpedport, waveport, floquetport);
+  }
+  if (auto groups = GroupByExcitation(fluxloop);
+      SingleSourceExcitations(groups) && SingleSourceExcitationsMatchIndices(groups))
+  {
+    UpgradeUnitExcitation(fluxloop);
   }
 
   // Store all unique boundary attributes.
@@ -1134,6 +1271,138 @@ BoundaryData::BoundaryData(const json &boundaries)
   attributes.shrink_to_fit();
 }
 
+std::vector<int> BoundaryData::GetSheetAttributes() const
+{
+  std::vector<int> attr_list;
+  auto Append = [&attr_list](const std::vector<int> &attrs)
+  { attr_list.insert(attr_list.end(), attrs.begin(), attrs.end()); };
+  Append(pec.attributes);
+  for (const auto &data : conductivity)
+  {
+    Append(data.attributes);
+  }
+  for (const auto &data : impedance)
+  {
+    Append(data.attributes);
+  }
+  for (const auto &data : rational_impedance)
+  {
+    Append(data.attributes);
+  }
+  for (const auto &data : superconductor)
+  {
+    Append(data.attributes);
+  }
+  for (const auto &[idx, data] : lumpedport)
+  {
+    for (const auto &elem : data.elements)
+    {
+      Append(elem.attributes);
+    }
+  }
+  for (const auto &[idx, data] : terminal)
+  {
+    Append(data.attributes);
+  }
+  for (const auto &[idx, data] : current)
+  {
+    for (const auto &elem : data.elements)
+    {
+      Append(elem.attributes);
+    }
+  }
+  for (const auto &[idx, data] : fluxloop)
+  {
+    Append(data.film_attributes);
+  }
+  std::sort(attr_list.begin(), attr_list.end());
+  attr_list.erase(std::unique(attr_list.begin(), attr_list.end()), attr_list.end());
+  return attr_list;
+}
+
+std::vector<int> BoundaryData::GetCrossSectionEdgeAttributes() const
+{
+  std::vector<int> attr_list;
+  auto Append = [&attr_list](const std::vector<int> &attrs)
+  { attr_list.insert(attr_list.end(), attrs.begin(), attrs.end()); };
+  Append(pec.attributes);
+  Append(auxpec.attributes);
+  for (const auto &data : impedance)
+  {
+    Append(data.attributes);
+  }
+  for (const auto &data : conductivity)
+  {
+    Append(data.attributes);
+  }
+  for (const auto &data : rational_impedance)
+  {
+    Append(data.attributes);
+  }
+  Append(farfield.attributes);
+  return attr_list;
+}
+
+std::vector<int>
+BoundaryData::GetMeshCrackAttributes(std::optional<bool> crack_bdr_elements) const
+{
+  std::vector<int> attr_list;
+  if (crack_bdr_elements.has_value() && !*crack_bdr_elements)
+  {
+    return attr_list;
+  }
+  if (crack_bdr_elements.has_value())
+  {
+    // Legacy behavior: all boundary condition attributes except for lumped ports.
+    attr_list = attributes;
+    for (const auto &[idx, data] : lumpedport)
+    {
+      for (const auto &elem : data.elements)
+      {
+        for (auto attr : elem.attributes)
+        {
+          attr_list.erase(std::remove(attr_list.begin(), attr_list.end(), attr),
+                          attr_list.end());
+        }
+      }
+    }
+    return attr_list;
+  }
+
+  // Default: boundary conditions which apply to each side of an interior boundary
+  // separately, and would otherwise have no effect there (wave and Floquet ports are
+  // always exterior boundaries), and sheets with a surface impedance which are modeled as
+  // two independent surfaces (a conductor much thicker than the penetration depth).
+  auto Append = [&attr_list](const std::vector<int> &attrs)
+  { attr_list.insert(attr_list.end(), attrs.begin(), attrs.end()); };
+  Append(pmc.attributes);
+  Append(farfield.attributes);
+  for (const auto &data : conductivity)
+  {
+    if (data.crack)
+    {
+      Append(data.attributes);
+    }
+  }
+  for (const auto &data : impedance)
+  {
+    if (data.crack)
+    {
+      Append(data.attributes);
+    }
+  }
+  for (const auto &data : rational_impedance)
+  {
+    if (data.crack)
+    {
+      Append(data.attributes);
+    }
+  }
+  std::sort(attr_list.begin(), attr_list.end());
+  attr_list.erase(std::unique(attr_list.begin(), attr_list.end()), attr_list.end());
+  return attr_list;
+}
+
 std::vector<double> ConstructLinearRange(double start, double end, double delta)
 {
   auto n_step = GetNumSteps(start, end, delta);
@@ -1144,15 +1413,21 @@ std::vector<double> ConstructLinearRange(double start, double end, double delta)
 }
 std::vector<double> ConstructLinearRange(double start, double end, int n_sample)
 {
+  // A single sample is the interval start (as in numpy.linspace).
   std::vector<double> f(n_sample);
   for (int i = 0; i < n_sample; i++)
   {
-    f[i] = start + (double(i) / (n_sample - 1)) * (end - start);
+    f[i] = start + (n_sample > 1 ? double(i) / (n_sample - 1) : 0.0) * (end - start);
   }
   return f;
 }
 std::vector<double> ConstructLogRange(double start, double end, int n_sample)
 {
+  MFEM_VERIFY(n_sample > 0, "Invalid number of samples for log frequency range!");
+  if (n_sample == 1)
+  {
+    return {start};
+  }
   std::vector<double> f(n_sample);
   double log_start = std::log10(start);
   double log_end = std::log10(end);
@@ -1301,6 +1576,20 @@ DrivenSolverData::DrivenSolverData(const json &driven)
     f = *it;
   }
   save_f.insert(save_f.end(), explicit_save_f.begin(), explicit_save_f.end());
+
+  // Snap save and PROM frequencies to the sample frequencies, which they can differ from by
+  // rounding: the index scans below compare exactly.
+  auto match_samples = [&](std::vector<double> &f)
+  {
+    for (auto &x : f)
+    {
+      auto it = FindNearestValue(sample_f, x, delta_eps);
+      MFEM_VERIFY(it != sample_f.end(), "Frequency " << x << " is not a sample frequency!");
+      x = *it;
+    }
+  };
+  match_samples(save_f);
+  match_samples(prom_f);
   deduplicate(save_f);
   deduplicate(prom_f);
 
@@ -1366,10 +1655,13 @@ EigenSolverData::EigenSolverData(const json &eigenmode)
   preconditioner_lag = eigenmode.value("PreconditionerLag", preconditioner_lag);
   preconditioner_lag_tol = eigenmode.value("PreconditionerLagTol", preconditioner_lag_tol);
   max_restart = eigenmode.value("MaxRestart", max_restart);
+  nonlinear_max_it = eigenmode.value("NonlinearMaxIts", nonlinear_max_it);
 
   // Resolve iteration / subspace sentinels to concrete values at parse time so nothing
   // downstream sees -1. max_it is a single large cap because it only bounds iteration
-  // count, with no buffers scaling with it.
+  // count, with no buffers scaling with it. It does not apply to the quasi-Newton
+  // iterations (nonlinear_max_it), for which it would let a stagnating Newton iteration
+  // run indefinitely.
   if (max_it <= 0)
   {
     max_it = 1'000'000;
@@ -1490,6 +1782,8 @@ LinearSolverData::LinearSolverData(const json &linear)
   london_pc_shift = linear.value("LondonPCShift", london_pc_shift);
   amg_agg_coarsen = linear.value("AMGAggressiveCoarsening", amg_agg_coarsen);
   ams_max_it = linear.value("AMSMaxIts", ams_max_it);
+  ams_agglomeration_target =
+      linear.value("AMSAgglomerationTarget", ams_agglomeration_target);
 
   // Other linear solver options.
   divfree_tol = linear.value("DivFreeTol", divfree_tol);
@@ -1520,16 +1814,18 @@ SolverData::SolverData(const json &solver)
 
 int GetNumSteps(double start, double end, double delta)
 {
-  if (end < start)
-  {
-    return 1;
-  }
+  MFEM_VERIFY(delta > 0.0 && end >= start,
+              "Invalid range from " << start << " to " << end << " in steps of " << delta
+                                    << ": the step must be positive and the end must not "
+                                       "be less than the start!");
   constexpr double delta_eps = 1.0e-9;  // 9 digits of precision comparing endpoint
-  double dn = std::abs(end - start) / std::abs(delta);
+  double dn = (end - start) / delta;
+  MFEM_VERIFY(dn < std::numeric_limits<int>::max() - 2,
+              "Step " << delta << " is too small for the range [" << start << ", " << end
+                      << "]: " << dn << " steps!");
   int n_step = 1 + static_cast<int>(dn);
   double dfinal = start + n_step * delta;
-  return n_step + ((delta < 0.0 && dfinal - end > -delta_eps * end) ||
-                   (delta > 0.0 && dfinal - end < delta_eps * end));
+  return n_step + (dfinal - end < delta_eps * end);
 }
 
 std::pair<std::array<double, 3>, CoordinateSystem> ParseStringAsDirection(std::string str,
@@ -1617,33 +1913,31 @@ std::optional<std::string> Validate(const BoundaryData &boundaries)
     }
   }
 
-  // Check excitation indices match port indices for S-parameter calculation.
-  std::map<int, std::vector<int>> excitation_map;
-  for (const auto &[idx, data] : boundaries.lumpedport)
+  // Check excitation indices match port indices for S-parameter calculation, and flux loop
+  // indices for the inductance matrix.
+  if (auto groups = GroupByExcitation(boundaries.lumpedport, boundaries.waveport,
+                                      boundaries.floquetport);
+      SingleSourceExcitations(groups) && !SingleSourceExcitationsMatchIndices(groups))
   {
-    excitation_map[data.excitation].emplace_back(idx);
+    errors << "\"Excitation\" must match \"Index\" for single ports to avoid ambiguity\n";
   }
-  for (const auto &[idx, data] : boundaries.waveport)
+  if (auto groups = GroupByExcitation(boundaries.fluxloop);
+      SingleSourceExcitations(groups) && !SingleSourceExcitationsMatchIndices(groups))
   {
-    excitation_map[data.excitation].emplace_back(idx);
+    errors << "\"Excitation\" must match \"Index\" for single flux loops to avoid "
+              "ambiguity\n";
   }
-  for (const auto &[idx, data] : boundaries.floquetport)
+  else
   {
-    excitation_map[data.excitation].emplace_back(idx);
-  }
-  excitation_map.erase(0);
-  bool calc_s_params = std::ranges::all_of(excitation_map, [](const auto &x)
-                                           { return x.second.size() == 1; });
-  if (calc_s_params && !excitation_map.empty())
-  {
-    const auto &ext1 = *excitation_map.begin();
-    bool valid =
-        (excitation_map.size() == 1 && (ext1.first == 1 || ext1.second[0] == ext1.first)) ||
-        std::ranges::all_of(excitation_map,
-                            [](const auto &x) { return x.first == x.second[0]; });
-    if (!valid)
+    // A flux loop excitation is a magnetostatic source under its own index, next to the
+    // surface current sources, so the two must not collide in the outputs.
+    for (const auto &[excitation, loops] : groups)
     {
-      errors << "\"Excitation\" must match \"Index\" for single ports to avoid ambiguity\n";
+      if (boundaries.current.contains(excitation))
+      {
+        errors << "FluxLoop \"Excitation\" " << excitation
+               << " collides with SurfaceCurrent \"Index\" " << excitation << "\n";
+      }
     }
   }
 
@@ -1696,10 +1990,49 @@ void Nondimensionalize(const Units &units, RefinementData &data)
   }
 }
 
+double MaterialData::StaticPermittivity() const
+{
+  return epsilon_r.s[0] + permittivity::StaticSusceptibility(permittivity_terms);
+}
+
 void Nondimensionalize(const Units &units, MaterialData &data)
 {
   data.sigma /= units.GetScaleFactor<Units::ValueType::CONDUCTIVITY>();
   data.lambda_L /= units.GetMeshLengthRelativeScale();
+  const double tc_seconds = 1.0e-9 * units.GetScaleFactor<Units::ValueType::TIME>();
+  for (auto &term : data.permittivity_terms)
+  {
+    std::visit(
+        [tc_seconds](auto &t)
+        {
+          using T = std::decay_t<decltype(t)>;
+          if constexpr (std::is_same_v<T, DrudeData>)
+          {
+            t.omega_p *= tc_seconds;
+            t.gamma *= tc_seconds;
+          }
+          else if constexpr (std::is_same_v<T, DebyeData>)
+          {
+            t.tau /= tc_seconds;
+          }
+          else if constexpr (std::is_same_v<T, LorentzData>)
+          {
+            t.omega_0 *= tc_seconds;
+            t.gamma *= tc_seconds;
+          }
+          else if constexpr (std::is_same_v<T, PermittivityPoleData>)
+          {
+            t.pole *= tc_seconds;
+            t.residue *= tc_seconds;
+          }
+          else
+          {
+            t.omega_lower *= tc_seconds;
+            t.omega_upper *= tc_seconds;
+          }
+        },
+        term);
+  }
 }
 
 void Nondimensionalize(const Units &units, ProbeData &data)
@@ -1737,6 +2070,7 @@ void Nondimensionalize(const Units &units, SuperconductorData &data)
 
 void Nondimensionalize(const Units &units, LumpedPortData &data)
 {
+  // The excitation amplitude and phase are dimensionless and need no scaling.
   data.R /= units.GetScaleFactor<Units::ValueType::IMPEDANCE>();
   data.L /= units.GetScaleFactor<Units::ValueType::INDUCTANCE>();
   data.C /= units.GetScaleFactor<Units::ValueType::CAPACITANCE>();

@@ -35,26 +35,23 @@ private:
   const MaterialOperator &mat_op;
 
   // Surface properties for finite conductivity boundary attributes: conductor conductivity
-  // and permeability, and (optionally) thickness.
+  // and permeability, and (optionally) thickness. The attributes are split into those on
+  // the exterior of the domain (or on a cracked interior boundary), where the boundary
+  // condition applies to one side, and those on an interior boundary (a conducting sheet
+  // with two surfaces), where the surface admittance of both surfaces is applied. A
+  // boundary with "External" and a finite thickness is split into two groups when it has
+  // both kinds of attributes, since the thickness correction for exterior surfaces does not
+  // apply to the interior ones.
   struct ConductivityData
   {
     double sigma, mu, h;
-    mfem::Array<int> attr_list;
+    mfem::Array<int> attr_list, ext_attr_list, int_attr_list;
   };
   std::vector<ConductivityData> boundaries;
 
   void SetUpBoundaryProperties(const std::vector<config::ConductivityData> &conductivity,
                                ProblemType problem_type, const mfem::ParMesh &mesh);
   void PrintBoundaryInfo(const Units &units, const mfem::ParMesh &mesh);
-
-  // Per-group complex surface-admittance coefficient i·ω/Z(ω) for the boundary BC,
-  // evaluated at (possibly complex) ω. Z is the skin-depth surface impedance with the
-  // optional finite-thickness HFSS correction. The skin-depth √ and the cosh/cos/sinh/sin
-  // thickness terms accept complex ω directly (analytic continuation ω = -i·λ); for real
-  // ω this returns the same scalar the real-ω stamping always used. The formula lives
-  // here so both AddExtraSystemBdrCoefficients overloads share it.
-  std::complex<double> EvaluateScalarImpl(std::size_t group_idx,
-                                          std::complex<double> omega) const;
 
 public:
   SurfaceConductivityOperator(const std::vector<config::ConductivityData> &conductivity,
@@ -66,16 +63,11 @@ public:
   // Returns array of finite conductivity boundary attributes.
   mfem::Array<int> GetAttrList() const;
 
-  // Add contributions to system matrix for a finite conductivity boundary condition.
-  void AddExtraSystemBdrCoefficients(double omega, MaterialPropertyCoefficient &fbr,
-                                     MaterialPropertyCoefficient &fbi);
-
-  // Complex-ω overload, used by the eigenmode nonlinear solve where the surface-admittance
-  // coefficient i·ω/Z(ω) is evaluated at the genuinely complex eigenvalue (ω = -i·λ). For
-  // real ω (imag = 0) this produces the same (fbr, fbi) split as the double overload.
-  void AddExtraSystemBdrCoefficients(std::complex<double> omega,
-                                     MaterialPropertyCoefficient &fbr,
-                                     MaterialPropertyCoefficient &fbi);
+  // Mesh boundary attributes of attribute group g.
+  const mfem::Array<int> &GetAttrList(std::size_t g) const
+  {
+    return boundaries[g].attr_list;
+  }
 
   // Number of finite-conductivity attribute groups (each with its own σ/μ/h and thus its
   // own frequency-dependent surface admittance i·ω/Z(ω)).
@@ -87,21 +79,19 @@ public:
     return g < boundaries.size() && std::abs(boundaries[g].sigma) > 0.0;
   }
 
-  // Per-group surface-admittance scalar i·ω/Z_g(ω), evaluated at (possibly complex) ω.
-  // Public wrapper so the circuit-synthesis path can sample the scalar for its dispersion
-  // fit (the ω-independent boundary mass is factored out via
-  // SpaceOperator::GetSurfaceConductivityBoundaryMatrix).
+  // Per-group surface-admittance scalar i·ω/Z_g(ω), evaluated at (possibly complex) ω. Z
+  // is the skin-depth surface impedance with the optional finite-thickness HFSS
+  // correction. The skin-depth √ and the cosh/cos/sinh/sin thickness terms accept complex
+  // ω directly (analytic continuation ω = -i·λ).
   std::complex<double> EvaluateScalar(std::size_t group_idx,
-                                      std::complex<double> omega) const
-  {
-    return EvaluateScalarImpl(group_idx, omega);
-  }
+                                      std::complex<double> omega) const;
 
-  // Add the ω-independent unit-coefficient boundary mass for group `g` to a material
-  // property coefficient. The full per-group contribution to the system matrix at ω is
-  // `(i·ω/Z_g(ω))·(this)`. Used to factor out the ω-independent operator for circuit
-  // synthesis, mirroring WavePortOperator::AddBoundaryMassBdrCoefficients.
-  void AddBoundaryMassBdrCoefficients(std::size_t g, MaterialPropertyCoefficient &fb) const;
+  // Add the ω-independent unit-coefficient boundary mass for group `g`, times coeff, to a
+  // material property coefficient. The full per-group contribution to the system matrix at
+  // ω is `(i·ω/Z_g(ω))·(this)` for coeff = 1, mirroring
+  // WavePortOperator::AddBoundaryMassBdrCoefficients.
+  void AddBoundaryMassBdrCoefficients(std::size_t g, MaterialPropertyCoefficient &fb,
+                                      double coeff = 1.0) const;
 };
 
 }  // namespace palace

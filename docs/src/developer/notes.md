@@ -92,10 +92,53 @@ impedance of free space. Similarly, the non-dimensional electric field `E` is
 !!! warning "Finite element considerations"
 
     Changing mesh units requires additional rescaling for fields defined on
-    H(curl) and H(div) spaces to convert them to proper physical units. This is a
-    function of the length scales inherent to the reference element transformations
-    for Nédélec and Raviart Thomas spaces, used for H(curl) and H(div) respectively.
-    See the `ScaleGridFunctions` function in `PostOperator` for details.
+    H(curl), H(div), and L2 spaces with `INTEGRAL` map type (such as the out-of-plane
+    magnetic flux density in 2D) to convert them to proper physical units. Scaling the
+    mesh by ``L`` scales the values of these fields mapped from the reference element by
+    ``L^{-p}``, with ``p = 1`` for H(curl) (Nédélec), ``p = d - 1`` for H(div)
+    (Raviart-Thomas), and ``p = d`` for L2 with `INTEGRAL` map type, for a mesh of
+    dimension ``d``. See `ScaleGridFunction` in `palace/models/postoperator.cpp` for
+    details.
+
+## Phasor and power conventions
+
+Frequency domain solutions (driven, eigenmode, boundary mode) are complex peak phasors: the
+physical field is ``\text{Re}\{\bm{E}\,e^{i\omega t}\}``. Fields, voltages and currents are reported as peak phasors; S and Z are ratios. Every quadratic physical output
+(stored energies, powers, Poynting vectors, dissipation) is reported as the time average over
+one period, which carries a factor of ``1/2`` relative to the same product of the phasors,
+while real-valued (time domain, static) fields are instantaneous and carry no such factor. All
+port excitations (lumped, wave, Floquet) carry unit *time-averaged* incident power (for a
+``50\,\Omega`` lumped port, ``V^{inc} = 10`` V and ``I^{inc} = 0.2`` A peak); time domain
+excitations carry unit instantaneous power at unit pulse amplitude. Stored wave-port modes
+have unit raw overlap ``\vert\int (\bm{E}\times\bm{H}^*)\cdot\bm{n}\,dS\vert=1``:
+0.5 W time-averaged for lossless propagating modes. The incident wave is ``\sqrt{2}``
+times the stored mode. With a lossy cross section, this normalizes the magnitude of
+complex power, not its transported real part (see issue #960).
+
+The convention is defined in exactly one place, `electromagnetics::TimeAverageWeight` and
+`electromagnetics::UnitPowerAmplitude` in `palace/utils/constants.hpp`, and is applied by the
+*owners* of the physical quantities — `DomainPostOperator` (field energies),
+`SurfacePostOperator` (power flux, interface energies), `LumpedPortData`/`WavePortData`
+(port power, incident amplitudes, S-parameter normalization), `PostOperator` (lumped C/L
+energies, `U_e`/`U_m`/`S` visualization densities), `BoundaryModeOperator` (the Poynting
+power of boundary modes) and `linalg/errorestimator.cpp` (energy normalization of the error
+indicators). It is never applied inside generic norms, mass matrices, or mode-overlap
+functionals, which keep their mathematical definitions.
+
+Normalization mistakes of this kind are easy to introduce and hard to notice, because
+ratios (Q, EPR, participation, S) stay correct while absolute values drift. When adding or
+modifying a quadratic output or a port normalization:
+
+ 1. Apply the weight once, at the owner of the physical quantity, using the named helpers
+    (never a literal `0.5` or `sqrt(2)`), and make the header comment state the convention.
+ 2. Add an analytic case to `test/unit/test-timeaverage.cpp`. That test pins the absolute
+    scale of the domain, surface and lumped-port outputs it exercises against values written directly from the physical
+    definitions (uniform ``\bm{E} = (1+i, 0, 0)`` V/m and ``\bm{H} = (0, 2+3i, 0)`` A/m in
+    vacuum) and checks the invariant that a purely real complex phasor gives exactly half of
+    the real instantaneous result. Extend these checks when adding a new output; untested outputs are not covered automatically.
+ 3. Do not regenerate regression references to make the suite pass: the reference CSVs
+    store absolute energies, powers, voltages and currents and are the second line of
+    defense against convention drift.
 
 ## Style guide
 
@@ -203,13 +246,13 @@ tooling can identify the schema without custom extensions.
 SchemaVer uses the format `MODEL-REVISION-ADDITION`:
 
   - MODEL: a breaking change to the schema's model — e.g. removing or renaming a field,
-    tightening validation so a previously-valid config is rejected, or changing the
+    tightening validation so a previously-working config is rejected, or changing the
     meaning or the default of a value.
   - REVISION: a backward-compatible change that extends the model — e.g. a new optional
     field, a new allowed enum value, or relaxing a constraint so previously-invalid
     configs are now accepted.
-  - ADDITION: a change that does not affect which configurations are accepted — e.g.
-    updating a `description`, `title`, or other annotation.
+  - ADDITION: a change that does not affect which configurations are accepted and working
+    — e.g. updating a `description`, `title`, or other annotation.
 
 #### Relationship to the *Palace* version
 
@@ -233,11 +276,12 @@ documentation build generates this table from that file.
 <!-- BEGIN GENERATED SCHEMA COMPATIBILITY TABLE -->
 ```
 
-| Schema version | First *Palace* release | Notes                              |
-|:--------------:|:----------------------:|:---------------------------------- |
-| `1-0-0`        | `0.17.0`               | First explicitly-versioned schema. |
-| `1-6-0`        | `0.18.0`               |                                    |
-| `1-7-0`        | `0.18.1`               |                                    |
+| Schema version | First *Palace* release | Notes                                                                                                                                                                                                                                                                                                                                                                                      |
+|:--------------:|:----------------------:|:------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `1-0-0`        | `0.17.0`               | First explicitly-versioned schema.                                                                                                                                                                                                                                                                                                                                                         |
+| `1-6-0`        | `0.18.0`               |                                                                                                                                                                                                                                                                                                                                                                                            |
+| `1-7-0`        | `0.18.1`               |                                                                                                                                                                                                                                                                                                                                                                                            |
+| `4-1-0`        | `0.19.0`               | Breaking: `FluxLoop` keys renamed ([PR 929](https://github.com/awslabs/palace/pull/929)), `NSamples` removed ([PR 1049](https://github.com/awslabs/palace/pull/1049)), interior boundaries not cracked by default ([PR 994](https://github.com/awslabs/palace/pull/994)); see the [0.19.0 CHANGELOG](https://github.com/awslabs/palace/blob/main/CHANGELOG.md#0190---2026-11-02) for more. |
 
 ```@raw html
 <!-- END GENERATED SCHEMA COMPATIBILITY TABLE -->
@@ -251,12 +295,16 @@ schema version bump in that same PR. This means the repository will accumulate m
 
  1. Determine the bump size. Classify your schema change using the table above:
 
-      + MODEL: removing/renaming a field, tightening validation, changing defaults or
-        semantics (breaking).
+      + MODEL: removing/renaming a field, tightening validation so a previously-working
+        config is rejected, changing defaults or semantics (breaking).
       + REVISION: new optional field, new enum value, relaxing a constraint
         (backward-compatible extension).
       + ADDITION: updating a `description`, `title`, or other annotation (no effect on
-        accepted configurations).
+        accepted configurations). Tightening validation is also an ADDITION, not a MODEL
+        bump, when the newly rejected configurations never produced valid solver output:
+        ones the parser already rejected, or ones that only ran through a silent error
+        (turning a silent error into a loud one is a bug fix, and the accepted set of
+        *working* configurations is unchanged).
 
  2. Bump the `"$id"` version in `scripts/schema/config-schema.json`.
     For example, going from `1-0-0` to `1-1-0`:
@@ -343,8 +391,12 @@ The (average) rows in the table should add up to the Total line at the bottom.
 The categories for breaking down the total simulation time are:
 
 ```
-Initialization                  // < Time spent parsing the configuration file,
-                                //   preprocessing and partitioning the mesh
+Initialization                  // < Time spent initializing the device, parsing the
+                                //   configuration file, and preprocessing and
+                                //   partitioning the mesh
+  MPI Startup                   // < Time spent initializing MPI, which includes waiting
+                                //   for all processes to start (on runs over many
+                                //   nodes, this can dominate Initialization)
 Operator Construction           // < Time spent constructing finite element spaces and
                                 //   setting up linear and bilinear forms on those spaces
   Wave Ports                    // < Time spent configuring and computing the modes
@@ -354,6 +406,8 @@ Linear Solve                    // < Linear solver time
   Preconditioner                // < Preconditioner application time for linear solve
   Coarse Solve                  // < Coarse solve time for geometric multigrid
                                 //   preconditioners
+  Initial Guess                 // < Time spent computing initial guesses from previous
+                                //   solutions (uniform driven frequency sweeps)
 Time Stepping                   // < Time spent in the time integrator for transient
                                 //   simulation types
 Eigenvalue Solve                // < Time spent in the eigenvalue solver (not including
@@ -544,7 +598,7 @@ Release tags (`vX.Y.Z`) build the full microarchitecture matrix instead, so
 a release publishes a tuned image for each target:
 
   - `x86_64_v3`, `x86_64_v4`, `sapphirerapids` (x64)
-  - `aarch64`, `neoverse_v1`, `neoverse_v2` (arm64)
+  - `aarch64`, `neoverse_v1`, `neoverse_v2`, `neoverse_v3` (arm64)
 
 ### Publishing a `dev-<branch>` prototype from a branch
 

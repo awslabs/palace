@@ -53,25 +53,33 @@ private:
     SurfaceFluxData(const config::SurfaceFluxData &data, const mfem::ParMesh &mesh,
                     const mfem::Array<int> &bdr_attr_marker);
 
-    std::unique_ptr<mfem::Coefficient> GetCoefficient(const mfem::ParGridFunction *E,
-                                                      const mfem::ParGridFunction *B,
-                                                      const MaterialOperator &mat_op) const;
+    std::unique_ptr<mfem::Coefficient>
+    GetCoefficient(const mfem::ParGridFunction *E, const mfem::ParGridFunction *B,
+                   const MaterialOperator &mat_op, const mfem::DenseTensor *epsilon) const;
   };
   struct InterfaceDielectricData : public SurfaceData
   {
     InterfaceDielectric type;
     double t, epsilon, tandelta;
 
+    // Marker of boundary attributes of interior boundaries separating the fields on their
+    // two sides (thin metal sheets), for which the energies of both sides are summed.
+    mfem::Array<int> sum_sides_marker;
+
     InterfaceDielectricData(const config::InterfaceDielectricData &data,
                             const mfem::ParMesh &mesh,
                             const mfem::Array<int> &bdr_attr_marker);
 
-    std::unique_ptr<mfem::Coefficient> GetCoefficient(const GridFunction &E,
-                                                      const MaterialOperator &mat_op) const;
+    std::unique_ptr<mfem::Coefficient>
+    GetCoefficient(const GridFunction &E, const MaterialOperator &mat_op,
+                   const mfem::DenseTensor *epsilon_s = nullptr) const;
   };
   struct FarFieldData : public SurfaceData
   {
     std::vector<std::pair<double, double>> thetaphis;
+
+    // Interior surface (not only external boundaries), which requires the libCEED path.
+    bool interior = false;
 
     FarFieldData() = default;
     FarFieldData(const config::FarFieldPostData &data, const mfem::ParMesh &mesh,
@@ -98,8 +106,12 @@ private:
   // constructed lazily per surface index to replace per-call coefficient evaluation and
   // boundary LinearForm assembly in the legacy paths when supported.
   mutable std::map<int, std::unique_ptr<SurfaceFunctional>> flux_funcs, eps_funcs;
+  // Im{ε}-weighted electric flux functionals for complex fields in lossy dielectrics.
+  mutable std::map<int, std::unique_ptr<SurfaceFunctional>> flux_funcs_imag;
   mutable std::unique_ptr<SurfaceFunctional> farfield_func;
   mutable std::vector<std::array<double, 3>> farfield_func_dirs;
+  // Frequency-dependent materials next to the far-field boundaries on any process.
+  std::vector<std::size_t> farfield_models;
 
 public:
   // Data structures for postprocessing the surface with the given type.
@@ -107,27 +119,42 @@ public:
   std::map<int, InterfaceDielectricData> eps_surfs;
   FarFieldData farfield;
 
+  // Interface dielectric energies on interior boundaries with attributes in
+  // sheet_attributes, which separate the fields on their two sides, sum the energies of
+  // both sides.
   SurfacePostOperator(const config::BoundaryPostData &postpro, ProblemType problem_type,
                       const MaterialOperator &mat_op,
                       mfem::ParFiniteElementSpace &h1_fespace,
-                      mfem::ParFiniteElementSpace &nd_fespace);
+                      mfem::ParFiniteElementSpace &nd_fespace,
+                      const std::vector<int> &sheet_attributes = {});
   SurfacePostOperator(const IoData &iodata, const MaterialOperator &mat_op,
                       mfem::ParFiniteElementSpace &h1_fespace,
                       mfem::ParFiniteElementSpace &nd_fespace);
 
-  // Get surface integrals computing electric or magnetic field flux through a boundary.
-  std::complex<double> GetSurfaceFlux(int idx, const GridFunction *E,
-                                      const GridFunction *B) const;
+  // Get surface integrals computing electric or magnetic field flux, or the time-averaged
+  // real power flux, through a boundary. For complex fields the electric flux uses the
+  // complex permittivity D = (Re{ε} + i Im{ε}) E of a lossy dielectric. ω is the real
+  // angular frequency of the fields, 0 for static fields: a frequency-dependent material
+  // uses its complete permittivity ε(iω), and requires ω > 0. The frequency is required,
+  // not defaulted, so that a caller cannot omit it for frequency-domain fields.
+  std::complex<double> GetSurfaceFlux(int idx, const GridFunction *E, const GridFunction *B,
+                                      double omega) const;
 
-  // Batch version for multiple theta/phi pairs
+  // Batch version for multiple theta/phi pairs. A frequency-dependent exterior medium
+  // (next to the far-field boundaries) uses its wave speed at Re ε(i Re{ω}), which must be
+  // positive: the far field assumes a homogeneous, isotropic, lossless exterior.
   std::vector<std::array<std::complex<double>, 3>>
   GetFarFieldrE(const std::vector<std::pair<double, double>> &theta_phi_pairs,
                 const GridFunction &E, const GridFunction &B,
                 std::complex<double> omega) const;
 
-  // Get surface integrals computing interface dielectric energy.
+  // Get surface integrals computing interface dielectric energy (time-averaged for
+  // complex-valued fields).
   double GetInterfaceLossTangent(int idx) const;
-  double GetInterfaceElectricFieldEnergy(int idx, const GridFunction &E) const;
+  // ω is the real angular frequency of the fields, 0 for static fields, required as for
+  // GetSurfaceFlux: a frequency-dependent MS substrate uses |D_n| = |ε(iω)| |E_n|.
+  double GetInterfaceElectricFieldEnergy(int idx, const GridFunction &E,
+                                         double omega) const;
 
   int GetVDim() const { return mat_op.SpaceDimension(); };
 };

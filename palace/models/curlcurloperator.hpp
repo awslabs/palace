@@ -76,6 +76,7 @@ private:
     // Shifted preconditioner for this screened operator, built lazily and kept alive with
     // it.
     std::unique_ptr<Operator> P;
+    std::vector<mfem::Array<int>> h1_dbc_tdof_lists;
   };
   std::deque<ScreenedStiffnessCacheEntry> screened_stiffness_cache;
 
@@ -89,6 +90,25 @@ private:
   FiniteElementSpaceHierarchy nd_fespaces, h1_fespaces;
   FiniteElementSpace rt_fespace;
   std::unique_ptr<FiniteElementSpace> l2_curl_fespace;
+
+  // With two-sided films, the solution spaces on every level are the ND, H1, and RT spaces
+  // broken across the films (see fem/brokenspace.hpp); the unbroken ones remain for
+  // postprocessing and error estimation. dbc_tdof_lists then holds the broken essential
+  // DOFs, and the sheet terms of each level are assembled matrices built on first use.
+  std::vector<int> two_sided_attr;
+  FiniteElementSpaceHierarchy nd_broken_fespaces, h1_broken_fespaces;
+  std::unique_ptr<FiniteElementSpace> rt_broken_fespace;
+  mutable std::vector<std::unique_ptr<mfem::HypreParMatrix>> broken_sheet_mats;
+
+  void SetUpBrokenSpaces();
+
+  // The sheet terms on level l of the broken ND hierarchy.
+  const mfem::HypreParMatrix &GetBrokenSheetMatrix(std::size_t l) const;
+
+  // Add the sheet terms of level l to an operator of the broken hierarchy, eliminated on
+  // its essential true DOFs (nothing to do on unbroken spaces, where the sheet terms are
+  // boundary integrators).
+  void AddBrokenSheetMatrix(std::size_t l, ParOperator &K_l) const;
 
   // Operator for domain material properties.
   MaterialOperator mat_op;
@@ -109,10 +129,15 @@ private:
   // Preconditioner-only gauge shift (config LondonPCShift); see GetPreconditionerMatrix.
   double london_pc_shift_;
 
+  // Whether the shifted preconditioner carries auxiliary (gradient) operators for the
+  // multigrid smoother, and their H1 essential DOFs.
+  bool mg_smooth_aux_;
+  std::vector<mfem::Array<int>> h1_dbc_tdof_lists_;
+
   // Cached sheet-only mass operator M_sheet (the boundary term ∫_Σ (1/L_ksq) A_t·v_t). The
   // London flux excitation RHS = M_sheet·a_h is the Euler-Lagrange source of the shifted
   // penalty ½∫_Σ (1/L_ksq)|A_t − a_h|². Lazily assembled in GetFluxExcitationVector.
-  mutable std::unique_ptr<ParOperator> M_sheet_;
+  mutable std::unique_ptr<Operator> M_sheet_;
 
   // Fluxoid circulation functional c = Curlᵀ·f_hole per London flux loop (f_hole the RT
   // hole-cap flux functional), so cᵀA = ∮_∂hole A·dl by Stokes. Used to normalize the
@@ -125,11 +150,27 @@ private:
   // Assemble the London sheet mass M_sheet = ∫_Σ (1/L_ksq) A_t·v_t on first use.
   void EnsureSheetMass();
 
+  // Assemble the stiffness matrix on every level of the solution space: curl-curl (μ⁻¹),
+  // London domains ((μλ²)⁻¹), the kinetic sheet term (1/L_ksq, unbroken spaces only), and
+  // the gauge shift · (1/µ) ∫|A|² outside the London domains. The domain and boundary mass
+  // coefficients are added to f and fb, for the auxiliary operators.
+  std::vector<std::unique_ptr<Operator>>
+  AssembleStiffness(double shift, MaterialPropertyCoefficient &f,
+                    MaterialPropertyCoefficient &fb) const;
+  std::vector<std::unique_ptr<Operator>> AssembleStiffness() const;
+
+  // True if the shift is positive, with a superconductor (sheet or London domain) or the
+  // auxiliary smoother, whose gradient operator the shift makes definite.
+  bool HasShiftedPreconditioner() const;
+
   // Assemble the London preconditioner (stiffness + shift·(1/µ)∫|A|²) constraining the
-  // given per-level essential DOFs; preconditioner-only, so the extracted inductance is
-  // unchanged.
+  // given per-level essential DOFs (from attributes pc_dbc_attr); preconditioner-only, so
+  // the extracted inductance is unchanged. The auxiliary H1 essential DOFs are written to
+  // h1_dbc_tdof_lists, which must outlive the result.
   std::unique_ptr<Operator>
-  AssembleShiftedPreconditioner(const std::vector<mfem::Array<int>> &pc_dbc_tdof_lists);
+  AssembleShiftedPreconditioner(const std::vector<mfem::Array<int>> &pc_dbc_tdof_lists,
+                                const mfem::Array<int> &pc_dbc_attr,
+                                std::vector<mfem::Array<int>> &h1_dbc_tdof_lists);
 
   mfem::Array<int>
   SetUpBoundaryProperties(const config::PecBoundaryData &pec,
@@ -172,11 +213,42 @@ public:
     return l2_curl_fespace ? *l2_curl_fespace : rt_fespace;
   }
 
+  // Return the solution spaces: the ND, H1, and curl spaces broken across two-sided
+  // superconductor films, if there are any, and otherwise the same as above. The solution
+  // vectors (A, the right-hand sides, and B = curl A) are on their true DOFs.
+  bool IsBroken() const { return nd_broken_fespaces.GetNumLevels() > 0; }
+  auto &GetSolutionNDSpaces() { return IsBroken() ? nd_broken_fespaces : nd_fespaces; }
+  const auto &GetSolutionNDSpaces() const
+  {
+    return IsBroken() ? nd_broken_fespaces : nd_fespaces;
+  }
+  auto &GetSolutionNDSpace() { return GetSolutionNDSpaces().GetFinestFESpace(); }
+  const auto &GetSolutionNDSpace() const
+  {
+    return GetSolutionNDSpaces().GetFinestFESpace();
+  }
+  auto &GetSolutionH1Spaces() { return IsBroken() ? h1_broken_fespaces : h1_fespaces; }
+  const auto &GetSolutionH1Spaces() const
+  {
+    return IsBroken() ? h1_broken_fespaces : h1_fespaces;
+  }
+  auto &GetSolutionCurlSpace() { return IsBroken() ? *rt_broken_fespace : GetCurlSpace(); }
+  const auto &GetSolutionCurlSpace() const
+  {
+    return IsBroken() ? *rt_broken_fespace : GetCurlSpace();
+  }
+
+  // Copy the version 0 of a vector on the true DOFs of a broken solution space (the
+  // original DOFs, exact away from the two-sided films and the field of one of their sides
+  // on them) to a vector on the true DOFs of the unbroken space, for output fields.
+  void GetFirstVersion(const FiniteElementSpace &broken_fespace, const Vector &x,
+                       Vector &y) const;
+
   // Access the underlying mesh object.
   const auto &GetMesh() const { return GetNDSpace().GetMesh(); }
 
-  // Return the number of true (conforming) dofs on the finest ND space.
-  auto GlobalTrueVSize() const { return GetNDSpace().GlobalTrueVSize(); }
+  // Return the number of true (conforming) dofs on the finest ND solution space.
+  auto GlobalTrueVSize() const { return GetSolutionNDSpace().GlobalTrueVSize(); }
 
   // Construct and return system matrix representing discretized curl-curl operator for
   // Ampere's law.
@@ -186,13 +258,15 @@ public:
   // interior gives the shifted-penalty operator a residual 1-D gradient null space.
   bool HasLondonFluxLoops() const { return !london_flux_loops_.empty(); }
 
-  // Construct the preconditioner matrix for the London magnetostatic path: the stiffness
-  // matrix plus a small reluctance-weighted volume mass (london_pc_shift_ · (1/µ) ∫|A|²)
-  // that lifts the residual gradient null space so AMS is SPD-solvable in parallel. This
-  // shift is applied ONLY to the preconditioner, so the operator, solution, and extracted
-  // inductance are unchanged. Returns nullptr when there is no London flux film or the
-  // shift is non-positive, signaling that the stiffness matrix itself should be used as
-  // preconditioner.
+  // True if any domain has a London depth, adding (μλ²)⁻¹ A·v to the stiffness operator.
+  bool HasLondonDomains() const { return mat_op.HasLondonDepth(); }
+
+  // Construct the preconditioner matrix with superconductors or the auxiliary smoother: the
+  // stiffness matrix plus the gauge shift london_pc_shift_ · (1/µ) ∫|A|² outside the London
+  // domains, which lifts the residual gradient null space so AMS is SPD-solvable in
+  // parallel. Only the preconditioner is shifted, so the solution is unchanged. Returns
+  // nullptr otherwise or without a positive shift, in which case the stiffness matrix
+  // preconditions itself.
   std::unique_ptr<Operator> GetPreconditionerMatrix();
 
   // Return the stiffness matrix with extra essential (PEC) attributes beyond those set at
@@ -214,10 +288,10 @@ public:
   // values.
   void ZeroEssentialTrueDofs(const mfem::Array<int> &extra_dbc_attr, Vector &v) const;
 
-  // Construct and return the discrete curl matrix.
+  // Construct and return the discrete curl matrix (between the solution spaces).
   const Operator &GetCurlMatrix() const
   {
-    return GetCurlSpace().GetDiscreteInterpolator(GetNDSpace());
+    return GetSolutionCurlSpace().GetDiscreteInterpolator(GetSolutionNDSpace());
   }
 
   // Apply the sheet mass M_sheet (∫_Σ (1/L_ksq) A_t·v_t), assembling it on first use. Lets

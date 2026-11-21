@@ -7,15 +7,20 @@ SPDX-License-Identifier: Apache-2.0
 
 # Testing
 
-*Palace* comes with two types of tests:
+*Palace* comes with three complementary types of tests:
 
   - Unit tests in `test/unit/` test individual components in isolation
   - Regression tests, registered in `test/unit/regression/cases.cpp`, run
     full Palace solves on fixtures under `test/data/regression/input/`
     and compare generated CSVs against `test/data/regression/ref/`
+  - Numerical verification tests compare computed solutions and convergence
+    rates against mathematical solutions and theoretical predictions
 
-Both types of tests are run automatically as part of the project's continuous
+All three types of tests are run automatically as part of the project's continuous
 integration (CI) workflows.
+
+Mathematical solution and convergence studies are described separately in
+[Numerical Verification](verification.md).
 
 ## Building and running unit tests
 
@@ -30,11 +35,70 @@ cmake -DPALACE_MFEM_USE_EXCEPTIONS=yes ..
 make -j $(nproc) palace-tests
 ```
 
-The `PALACE_MFEM_USE_EXCEPTIONS` option is necessary to properly capture and
-test assertions. If you want to also measure test coverage, turn
-`PALACE_BUILD_WITH_COVERAGE` on. See [Unit test coverage](#Unit-test-coverage)
-for more details on this. For Spack, these are the `mfem+exceptions` and the
-`palace+coverage` variants.
+The `PALACE_MFEM_USE_EXCEPTIONS` option is required: the unit tests check that
+MFEM assertions throw, and the unit-test build stops without it. If you want to
+also measure test coverage, turn `PALACE_BUILD_WITH_COVERAGE` on. See
+[Unit test coverage](#Unit-test-coverage) for more details on this. For Spack,
+these are the `mfem+exceptions` and the `palace+coverage` variants.
+
+### Enzyme-backed MMS tests
+
+The automatic-differentiation MMS tests are optional because they require the
+Enzyme compiler plugin. Enzyme must be built with the same upstream LLVM
+version as the Clang compiler used to build *Palace*, including the LLVM and
+Clang development packages. This integration cannot use the Xcode Apple Clang
+toolchain because it does not provide matching upstream development packages
+for building and loading the plugin. Upstream LLVM and Clang can still be used
+on macOS, for example through Homebrew.
+
+With matching `clang`, `clang++`, and `llvm-config` executables on `PATH`,
+configure the superbuild with:
+
+```bash
+mkdir build && cd build
+cmake -DCMAKE_C_COMPILER=clang \
+      -DCMAKE_CXX_COMPILER=clang++ \
+      -DLLVM_DIR="$(llvm-config --cmakedir)" \
+      -DPALACE_MFEM_USE_EXCEPTIONS=yes \
+      -DPALACE_WITH_ENZYME=yes ..
+make -j $(nproc) palace-tests
+```
+
+On macOS with Homebrew LLVM:
+
+```bash
+LLVM_PREFIX="$(brew --prefix llvm)"
+cmake -DCMAKE_C_COMPILER="$LLVM_PREFIX/bin/clang" \
+      -DCMAKE_CXX_COMPILER="$LLVM_PREFIX/bin/clang++" \
+      -DLLVM_DIR="$("$LLVM_PREFIX/bin/llvm-config" --cmakedir)" \
+      -DPALACE_MFEM_USE_EXCEPTIONS=yes \
+      -DPALACE_WITH_ENZYME=yes ..
+```
+
+The superbuild downloads and installs Enzyme. To reuse an existing compatible
+installation, additionally set `ENZYME_DIR` to its CMake package directory.
+The Enzyme-specific tests are omitted entirely when `PALACE_WITH_ENZYME` is
+disabled.
+
+The analytic electrostatic MMS tests are available in every test-enabled build:
+
+```bash
+bin/palace-unit-tests "[electrostatic][mms][analytic]" --skip-benchmarks
+mpirun -np 2 bin/palace-unit-tests \
+  "[electrostatic][mms][analytic]" --skip-benchmarks
+```
+
+In an Enzyme-enabled build, replace `[analytic]` with `[enzyme]` to run the
+Enzyme-backed tests.
+
+With Palace's local Spack recipe registered, enable `+enzyme`, select a
+supported upstream LLVM compiler, and request root-package tests:
+
+```bash
+spack install --test root local.palace@develop+enzyme %llvm@19
+```
+
+The Clang compiler and Enzyme's `libllvm` versions must match.
 
 Once the build completes, the `palace-unit-tests` executable will be installed
 in the same `bin/` directory as the main `palace` executable, and you can run
@@ -187,13 +251,18 @@ to group cases into separate sweeps.
     and skipped from the default unit-test sweep. Opt in with
     `ctest -L "^regression$"` or
     `palace-unit-tests "[Regression]~[Long]"`. Each case lives in
-    `test/unit/regression/cases.cpp`.
+    `test/unit/regression/cases.cpp`. A `[Parallel]` unit test which needs
+    more MPI processes than `PALACE_TESTS_NUMPROC` (2 in CI) to be meaningful
+    can also be tagged `[Regression]`, so that it runs at
+    `PALACE_REGRESSION_NUMPROC`.
   - `[Long]` is a *modifier* on a regression case for solves that take
     long enough (~10 minutes) that they shouldn't run on every PR.
     These cases are tagged `[Regression][Long]` and registered as
     `long-*` ctest entries (label `long`); the long-tests CI workflow
     runs them via `ctest -L "^long$"` when the `trigger-long-tests`
-    PR label is applied.
+    PR label is applied. In an installed test tree, the `long` label also
+    covers the unit tests on the debug device (`debug-np1-*` and
+    `debug-np2-*`).
 
 Category tags are orthogonal to execution-style tags: a regression case is
 still `[Serial][Parallel][GPU][Regression]` because the same case is valid
@@ -244,6 +313,10 @@ auto path_to_banana = fs::path(PALACE_TEST_DATA_DIR) / "banana.txt"
 Accessing files without using `PALACE_TEST_DATA_DIR` will likely result in
 failing tests on Spack builds (unless you know what you are doing).
 
+For meshes in `test/data/mesh`, use `TestMeshPath("<name>")` from
+`test/unit/test-helpers.hpp`. It also returns a path for the meshes the tests generate
+from stored ones, such as `star-tri.mesh`.
+
 #### Test configuration
 
 The `CMakeLists.txt` in
@@ -252,9 +325,11 @@ important settings:
 
   - The list of files compiled as part of the tests
   - The list of files that need to be compiled with a GPU compiler (`TARGET_SOURCES_DEVICE`)
-  - Path variables used in tests, such as `MFEM_DATA_PATH`
-    `MFEM_DATA_PATH` contains 2D and 3D sample meshes for testing (these meshes come
-    from the [MFEM repository](https://github.com/mfem/mfem/tree/master/data)).
+  - Path variables used in tests, such as `PALACE_TEST_DATA_DIR` (see
+    [Accessing files](#Accessing-files)). Most of the sample meshes in `test/data/mesh`
+    come from the [MFEM repository](https://github.com/mfem/mfem/tree/master/data);
+    [`test/data/mesh/README.md`](https://github.com/awslabs/palace/blob/main/test/data/mesh/README.md)
+    gives the MFEM version and the source of each mesh.
 
 ### Unit test coverage
 
@@ -262,7 +337,9 @@ When *Palace* is built with `PALACE_BUILD_WITH_COVERAGE`, running the unit tests
 generates coverage information that tracks which parts of the codebase are
 exercised by the tests. The `scripts/measure-test-coverage` script automates
 the entire coverage measurement process, handling compiler detection, test
-execution, and report generation.
+execution, and report generation. In CI, the coverage of each run is uploaded to
+[Codecov](https://app.codecov.io/gh/awslabs/palace), which comments on each pull
+request.
 
 !!! warning "Before continuing"
 
@@ -368,7 +445,7 @@ together with a single CMake option:
 
 ```bash
 mkdir build && cd build
-cmake -DPALACE_BUILD_WITH_SANITIZERS=ON ..
+cmake -DPALACE_MFEM_USE_EXCEPTIONS=yes -DPALACE_BUILD_WITH_SANITIZERS=ON ..
 make -j palace-tests
 ```
 
@@ -428,7 +505,12 @@ data rather than reading from the source-tree `examples/` directory.
     GPU runners. Each configuration runs the full unit test suite (serial +
     parallel) and all default regression tests.
  3. Long tests (`long-tests.yml`): Expensive test cases (e.g.,
-    `transmon/transmon_amr`) that are too slow to run on every push.
+    `transmon/transmon_amr`) that are too slow to run on every push. They also
+    run the unit tests on MFEM's debug device (`--device debug`, on 1 and 2
+    processes), which fails on a host access to data whose valid copy is on
+    the device: `operator[]` and `operator()` do not synchronize, so on a GPU
+    such an access reads stale data. Use `HostRead`, `HostWrite`, or
+    `HostReadWrite` in tests too.
 
 The `long-tests` check is required for merging, but long test execution is
 opt-in. The check passes when long testing is deferred. To request an

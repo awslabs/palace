@@ -116,9 +116,11 @@ DivFreeSolver<VecType>::DivFreeSolver(
   }
   Grad = &nd_fespace.GetDiscreteInterpolator(h1_fespaces.GetFinestFESpace());
 
-  // The system matrix for the projection is real and SPD.
+  // The system matrix for the projection is real and SPD. As the coarse solver of
+  // multigrid, the AMG solve is a small problem whose V-cycle is latency bound in parallel:
+  // a second level of aggressive coarsening shortens the hierarchy.
   auto amg = std::make_unique<MfemWrapperSolver<OperType>>(
-      std::make_unique<BoomerAmgSolver>(1, 1, true, 0));
+      std::make_unique<BoomerAmgSolver>(1, 1, (h1_fespaces.GetNumLevels() > 1) ? 2 : 1, 0));
   amg->SetDropSmallEntries(false);
   std::unique_ptr<Solver<OperType>> pc;
   if (h1_fespaces.GetNumLevels() > 1)
@@ -184,6 +186,15 @@ void DivFreeSolver<VecType>::Mult(VecType &y) const
   {
     Grad->AddMult(psi, y, 1.0);
   }
+}
+
+template <typename VecType>
+void DivFreeSolver<VecType>::Mult(VecType &y, double tol) const
+{
+  const double tol0 = ksp->GetRelTol();
+  ksp->SetRelTol(tol);
+  Mult(y);
+  ksp->SetRelTol(tol0);
 }
 
 template class DivFreeSolver<Vector>;

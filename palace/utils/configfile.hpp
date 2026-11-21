@@ -5,10 +5,12 @@
 #define PALACE_UTILS_CONFIG_FILE_HPP
 
 #include <array>
+#include <complex>
 #include <map>
 #include <optional>
 #include <string>
 #include <unordered_set>
+#include <variant>
 #include <vector>
 #include <nlohmann/json_fwd.hpp>
 #include "labels.hpp"
@@ -183,8 +185,12 @@ public:
   bool clean_unused_elements = true;
 
   // Split, or "crack", boundary elements lying on internal boundaries to decouple the
-  // elements on either side.
-  bool crack_bdr_elements = true;
+  // elements on either side. If unset, interior boundaries with boundary conditions which
+  // apply to each side separately (PMC and absorbing) are cracked, as well as impedance,
+  // rational impedance, and conductivity boundaries with "Crack" enabled. If true, all
+  // interior boundaries with boundary conditions except lumped ports are cracked (legacy
+  // behavior, deprecated). If false, no boundaries are cracked.
+  std::optional<bool> crack_bdr_elements = std::nullopt;
 
   // When required, refine elements neighboring a split or crack in order to enable the
   // decoupling.
@@ -236,6 +242,56 @@ public:
   }
 };
 
+// Terms of a frequency-dependent relative permittivity ε(s) = ε∞ + Σₖ χₖ(s), s = iω.
+// Angular rates are in rad/s and times in s until inputs are nondimensionalized. The typed
+// terms are passive polarization models whose parameters are positive by construction;
+// PoleResidue is a general rational term, whose passivity is checked with a warning (see
+// utils/permittivitymodel.hpp).
+struct DrudeData
+{
+public:
+  // Free carriers: χ(s) = ω_p²/(s(s + γ)).
+  double omega_p = 0.0;
+  double gamma = 0.0;
+};
+
+struct DebyeData
+{
+public:
+  // Relaxation: χ(s) = Δε/(1 + sτ).
+  double delta = 0.0;
+  double tau = 0.0;
+};
+
+struct LorentzData
+{
+public:
+  // Bound oscillator: χ(s) = Δε ω₀²/(s² + γs + ω₀²).
+  double delta = 0.0;
+  double omega_0 = 0.0;
+  double gamma = 0.0;
+};
+
+struct PermittivityPoleData
+{
+public:
+  // General term r/(s - p), with its conjugate for an upper-half-plane pole.
+  std::complex<double> pole = 0.0;
+  std::complex<double> residue = 0.0;
+};
+
+struct DjordjevicSarkarData
+{
+public:
+  // Continuum of Debye relaxations: χ(s) = Strength log((s + ω_hi)/(s + ω_lo)).
+  double strength = 0.0;
+  double omega_lower = 0.0;
+  double omega_upper = 0.0;
+};
+
+using PermittivityTermData = std::variant<DrudeData, DebyeData, LorentzData,
+                                          PermittivityPoleData, DjordjevicSarkarData>;
+
 struct MaterialData
 {
 public:
@@ -253,6 +309,16 @@ public:
 
   // London penetration depth [m].
   double lambda_L = 0.0;
+
+  // Additive terms of a frequency-dependent relative permittivity, with ε∞ the scalar
+  // epsilon_r.
+  std::vector<PermittivityTermData> permittivity_terms = {};
+
+  bool HasFrequencyDependentPermittivity() const { return !permittivity_terms.empty(); }
+
+  // The scalar relative permittivity at zero frequency, ε∞ + χ(0), for a
+  // frequency-dependent permittivity. Infinite for a pole at zero (Drude).
+  double StaticPermittivity() const;
 
   // List of domain attributes for this material.
   std::vector<int> attributes = {};
@@ -394,6 +460,18 @@ public:
   // Optional flag for an external boundary surface, relevant for the thickness correction.
   bool external = false;
 
+  // Crack the mesh along this boundary where it lies in the interior of the domain. If
+  // true, the two faces of the sheet are independent surfaces, each with its own current
+  // and no coupling through the sheet (a conductor much thicker than the skin depth), with
+  // the surface impedance of the conductor on each face. If false, the boundary is a thin
+  // sheet with a single tangential electric field on it and the admittance of both faces
+  // (a film thinner than the skin depth).
+  bool crack = false;
+
+  // Whether "Crack" is given in the configuration, to warn about the default sheet model
+  // of interior boundaries (see mesh::Load).
+  bool crack_given = false;
+
   // List of boundary attributes for this surface conductivity boundary condition.
   std::vector<int> attributes = {};
 
@@ -412,6 +490,14 @@ public:
   // List of boundary attributes for this impedance boundary condition.
   std::vector<int> attributes = {};
 
+  // Crack the mesh along this boundary where it lies in the interior of the domain. If
+  // true, the two faces of the sheet are independent surfaces, each with its own current
+  // and no coupling through the sheet (a conductor much thicker than the penetration
+  // depth), each with the given surface impedance. If false, the boundary is a thin sheet
+  // with a single tangential electric field on it (a film much thinner than the
+  // penetration depth).
+  bool crack = false;
+
   ImpedanceData() = default;
   ImpedanceData(const json &boundary);
 };
@@ -427,6 +513,14 @@ public:
 
   // List of boundary attributes for this rational impedance boundary condition.
   std::vector<int> attributes = {};
+
+  // Crack the mesh along this boundary where it lies in the interior of the domain. If
+  // true, the two faces of the sheet are independent surfaces, each with its own current
+  // and no coupling through the sheet (a conductor much thicker than the penetration
+  // depth), each with the given surface impedance. If false, the boundary is a thin sheet
+  // with a single tangential electric field on it (a film much thinner than the
+  // penetration depth).
+  bool crack = false;
 
   RationalImpedanceData() = default;
   RationalImpedanceData(const json &boundary);
@@ -450,6 +544,12 @@ public:
   // List of boundary attributes for this superconductor sheet.
   std::vector<int> attributes = {};
 
+  // Two-port (transfer-matrix) sheet: model the film as two coupled coincident faces so the
+  // tangential field can jump across it, capturing two-sided screening for d ≳ λ. When
+  // false the film is a single shared-A_t sheet. Requires (λ, d). The film is not cracked:
+  // the magnetostatic solution space is broken across it.
+  bool two_sided = false;
+
   SuperconductorData() = default;
   SuperconductorData(const json &boundary);
 };
@@ -471,6 +571,12 @@ public:
   // - Wave/Lumped ports with same index are excited together.
   // - 1-based index if excited; 0 if not excited.
   int excitation = 0;
+
+  // Complex weight a = A exp(i phi) on the unit-power incident wave of this port,
+  // A = "ExcitationAmplitude" (> 0), phi = "ExcitationPhase" in degrees. Dimensionless,
+  // frequency independent. Only valid for excited ports.
+  double excitation_amplitude = 1.0;
+  double excitation_phase = 0.0;  // [deg]
 
   // Flag for boundary damping term in driven and transient simulations.
   bool active = true;
@@ -543,6 +649,10 @@ public:
   // Port offset for de-embedding [m].
   double d_offset = 0.0;
 
+  // Target effective index for the boundary mode eigenvalue solver. When zero, the target
+  // lies just above the bulk propagation constants of the port materials.
+  double target = 0.0;
+
   // Eigenvalue solver type for boundary mode calculation.
   EigenSolverBackend eigen_solver = EigenSolverBackend::DEFAULT;
 
@@ -589,10 +699,9 @@ public:
   // Optional coordinate path for voltage line integral on the port face.
   // When non-empty, enables GetVoltage(). List of points [x, y, z].
   std::vector<std::vector<double>> voltage_path = {};
-  int n_samples = 100;
 
   // Optional pair of parent-mesh boundary attributes [high, low] (signal terminal first,
-  // ground terminal second) used solely to fix the mode polarity (no GSLIB / no Z_PV).
+  // ground terminal second) used solely to fix the mode polarity (no Z_PV).
   // The mode is flipped if needed so that the modal E-field on the port face points from
   // the high-attribute (signal) terminal toward the low-attribute (ground) terminal,
   // matching the lumped-port `Direction` convention and the VoltagePath ordering. A
@@ -724,11 +833,6 @@ public:
   std::vector<std::vector<double>> voltage_path = {};
   std::vector<std::vector<double>> current_path = {};
 
-  // Quadrature order for the coordinate-based line integral. Higher values give more
-  // integration points and better accuracy near field singularities at conductor edges.
-  // Default 100 gives ~50 Gauss-Legendre points, sufficient for typical geometries.
-  int n_samples = 100;
-
   ModeImpedanceData() = default;
   ModeImpedanceData(const json &imp);
 };
@@ -743,9 +847,6 @@ public:
   // attributes). A list of points [x, y(, z)]. The voltage is integrated along the open
   // path V = integral of E . dl from first to last point.
   std::vector<std::vector<double>> voltage_path = {};
-
-  // Quadrature order for the coordinate-based line integral.
-  int n_samples = 100;
 
   ModeVoltageData() = default;
   ModeVoltageData(const json &volt);
@@ -803,6 +904,12 @@ public:
   // Superconductor: models it as the λ→0 London limit (auto-registered SC sheet).
   double pec_lperp = 1.0e-4;
 
+  // Excitation index, as for ports: loops sharing a positive index are driven together
+  // (each at its own flux_amounts) in one magnetostatic solve, 0 holds the loop at zero
+  // fluxoid in every excitation. Defaults to the loop index, so each loop is its own
+  // excitation and the inductance matrix is extracted.
+  int excitation = 0;
+
   FluxLoopData() = default;
   FluxLoopData(const json &fluxloop);
 };
@@ -815,6 +922,13 @@ public:
 
   // List of all boundary attributes affected by mesh cracking.
   std::unordered_set<int> cracked_attributes = {};
+
+  // Cracked boundary attributes whose surface impedance is split between the two faces of
+  // the crack (twice the impedance on each face). This is only the case with the deprecated
+  // config["Model"]["CrackInternalBoundaryElements"] = true, to keep the results of
+  // previous versions: otherwise, each face of a cracked boundary has the given surface
+  // impedance.
+  std::unordered_set<int> split_impedance_attributes = {};
 
   // Boundary objects.
   PecBoundaryData pec = {};
@@ -833,6 +947,24 @@ public:
   PeriodicBoundaryData periodic = {};
   std::map<int, FluxLoopData> fluxloop = {};
   BoundaryPostData postpro = {};
+
+  // Return the boundary attributes of boundary conditions which model sheets carrying a
+  // surface current or charge (conductors, impedance and superconductor sheets, flux loop
+  // films, lumped ports, and surface current sources), across which the fields are
+  // discontinuous when interior. For these, the error estimator allows discontinuous
+  // recovered fluxes, and interface dielectric energies sum the contributions of both faces
+  // (when cracked, the faces are exterior boundaries anyway).
+  std::vector<int> GetSheetAttributes() const;
+
+  // Return the boundary attributes of boundary conditions whose faces, where they meet a 2D
+  // cross-section of the mesh (the face of a wave port, or the cross-section of a boundary
+  // mode problem), become boundary edges of the 2D mesh with their boundary condition (PEC,
+  // wave port PEC, impedance, conductivity, rational impedance, and absorbing boundaries).
+  std::vector<int> GetCrossSectionEdgeAttributes() const;
+
+  // Return the boundary attributes for which the mesh is cracked when interior, given the
+  // value of config::ModelData::crack_bdr_elements.
+  std::vector<int> GetMeshCrackAttributes(std::optional<bool> crack_bdr_elements) const;
 
   BoundaryData() = default;
   BoundaryData(const json &boundaries);
@@ -889,7 +1021,8 @@ public:
   // Eigenvalue solver relative tolerance.
   double tol = 1.0e-6;
 
-  // Maximum iterations for eigenvalue solver.
+  // Maximum iterations for eigenvalue solver (for nonlinear problems, the linear or
+  // quadratic eigenvalue solver of the hybrid approach, or the SLP solver).
   int max_it = -1;
 
   // Eigenvalue solver subspace dimension or maximum dimension before restart.
@@ -943,6 +1076,10 @@ public:
   // Maximum number of failed attempts with a given initial guess in the quasi-Newton
   // nonlinear eigenvalue solver.
   int max_restart = 2;
+
+  // Maximum number of iterations of each attempt to converge an eigenpair in the
+  // quasi-Newton nonlinear eigenvalue solver.
+  int nonlinear_max_it = 100;
 
   EigenSolverData() = default;
   EigenSolverData(const json &eigenmode);
@@ -1145,10 +1282,10 @@ public:
   int ams_singular_op = -1;
 
   // Preconditioner-only gauge shift for the London magnetostatic operator: adds
-  // london_pc_shift · (1/µ) ∫|A|² to the preconditioner matrix only (operator, solution and
-  // extracted inductance unchanged) to lift the shifted-penalty operator's residual
-  // gradient null space so AMS is SPD-solvable in parallel. Ignored when no London sheet is
-  // present.
+  // london_pc_shift · (1/µ) ∫|A|² outside the London domains to the preconditioner matrix
+  // only (operator, solution and extracted inductance unchanged) to lift the residual
+  // gradient null space so AMS is SPD-solvable in parallel. Ignored without superconductor
+  // sheets, London domains, or the auxiliary smoother.
   double london_pc_shift = 1.0e-1;
 
   // Option to use aggressive coarsening for Hypre AMG solves (with BoomerAMG or AMS).
@@ -1157,6 +1294,10 @@ public:
 
   // Maximum number of iterations of the AMS solver.
   int ams_max_it = -1;
+
+  // Target number of rows per process for the agglomeration of the coarse levels of the
+  // auxiliary space AMG hierarchies of the AMS solver during the solve (0: disabled).
+  int ams_agglomeration_target = 2048;
 
   // Relative tolerance for solving linear systems in divergence-free projector.
   double divfree_tol = 1.0e-12;
@@ -1217,8 +1358,8 @@ public:
   SolverData(const json &solver);
 };
 
-// Calculate the number of steps from [start, end) in increments of delta. Will only include
-// end if it is a multiple of delta beyond start.
+// Calculate the number of steps from [start, end) in increments of delta > 0, for end >=
+// start. Will only include end if it is a multiple of delta beyond start.
 int GetNumSteps(double start, double end, double delta);
 
 // Parse a string as a direction vector, returning the direction and coordinate system.

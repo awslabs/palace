@@ -478,7 +478,7 @@ CEED_QFUNCTION(f_integ_surf_flux_p_2_32)(void *__restrict__ ctx_, CeedInt Q,
 // supplied B space. Output: 6N components per element (Re I, Im I per direction, 3
 // each).
 // Inputs: qw, grad_x_f, attr_1, grad_x_1, x, u_1..u_4 = E_re, E_im, B_re, B_im
-// (external boundaries only).
+// (one side, see SurfaceFunctional::AssembleLocal).
 CEED_QFUNCTION(f_integ_surf_farfield_32)(void *__restrict__ ctx_, CeedInt Q,
                                          const CeedScalar *const *in,
                                          CeedScalar *const *out)
@@ -876,8 +876,11 @@ CEED_QFUNCTION(f_eval_bdr_energy_2_32)(void *__restrict__ ctx_, CeedInt Q,
 // does not repeat the volume Piola maps. It writes the packed slices
 // [E(3), B(3), Q_s, J_s(3), U_e, U_m, S(3)] in one pointwise application. Context:
 // [0].second normal sign, [1..5].second Q/J/Ue/Um/S scaling, [6].second side
-// average scale, [7].first epsilon context offset, [8].first inverse-mu context offset.
-// The caller applies one side at a time;
+// average scale, [7].first Re{epsilon} context offset, [8].first inverse-mu context
+// offset, [9].first Im{epsilon} context offset (used by the complex variant only),
+// [10].first stored-energy permittivity context offset (Re{epsilon} for constant
+// materials; the stored energy of the model for a frequency-dependent one). The caller
+// applies one side at a time;
 // averages and oriented jumps are encoded by the side-average factor and normal sign here.
 CEED_QFUNCTION(f_eval_bdr_derived_trace_32)(void *__restrict__ ctx_, CeedInt Q,
                                             const CeedScalar *const *in,
@@ -889,7 +892,7 @@ CEED_QFUNCTION(f_eval_bdr_derived_trace_32)(void *__restrict__ ctx_, CeedInt Q,
 
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
-    CeedScalar J_f_loc[6], n[3], e[3], b[3], eps[9], invmu[9], D[3], H[3];
+    CeedScalar J_f_loc[6], n[3], e[3], b[3], eps[9], invmu[9], eps_w[9], D[3], H[3], W[3];
     MatUnpack32(J_f + i, Q, J_f_loc);
     SurfMeasure32(J_f_loc, n);
     for (CeedInt c = 0; c < 3; c++)
@@ -899,8 +902,10 @@ CEED_QFUNCTION(f_eval_bdr_derived_trace_32)(void *__restrict__ ctx_, CeedInt Q,
     }
     CoeffUnpack3(ctx + ctx[7].first, (CeedInt)attr[i], eps);
     CoeffUnpack3(ctx + ctx[8].first, (CeedInt)attr[i], invmu);
+    CoeffUnpack3(ctx + ctx[10].first, (CeedInt)attr[i], eps_w);
     MultAx33(eps, e, D);
     MultAx33(invmu, b, H);
+    MultAx33(eps_w, e, W);
 
     // Field and energy use one on exterior faces and half on interfaces. Surface
     // charge/current retain their oriented jump sign and have no average factor.
@@ -915,7 +920,7 @@ CEED_QFUNCTION(f_eval_bdr_derived_trace_32)(void *__restrict__ ctx_, CeedInt Q,
     v[i + Q * 8] = ctx[0].second * ctx[2].second * (n[2] * H[0] - n[0] * H[2]);
     v[i + Q * 9] = ctx[0].second * ctx[2].second * (n[0] * H[1] - n[1] * H[0]);
     v[i + Q * 10] =
-        0.5 * ctx[6].second * ctx[3].second * (D[0] * e[0] + D[1] * e[1] + D[2] * e[2]);
+        0.5 * ctx[6].second * ctx[3].second * (W[0] * e[0] + W[1] * e[1] + W[2] * e[2]);
     v[i + Q * 11] =
         0.5 * ctx[6].second * ctx[4].second * (H[0] * b[0] + H[1] * b[1] + H[2] * b[2]);
     v[i + Q * 12] = ctx[6].second * ctx[5].second * (e[1] * H[2] - e[2] * H[1]);
@@ -928,8 +933,10 @@ CEED_QFUNCTION(f_eval_bdr_derived_trace_32)(void *__restrict__ ctx_, CeedInt Q,
 // Batched complex variant of f_eval_bdr_derived_trace_32. Inputs are the component-major
 // real E/B traces followed by their imaginary E/B traces. Output remains component-major:
 // [E_r(3), B_r(3), Q_r, J_r(3), E_i(3), B_i(3), Q_i, J_i(3), U_e, U_m, S(3)].
-// The linear fields retain their individual phase values. U_e, U_m, and S are the exact
-// same-phase sums which the previous two independent applications accumulated.
+// The linear fields retain their individual phase values; the surface charge uses the
+// complex permittivity D = (Re{eps} + i Im{eps}) E of a lossy dielectric. U_e, U_m, and S
+// are the exact same-phase sums which the previous two independent applications
+// accumulated.
 CEED_QFUNCTION(f_eval_bdr_derived_trace_complex_32)(void *__restrict__ ctx_, CeedInt Q,
                                                     const CeedScalar *const *in,
                                                     CeedScalar *const *out)
@@ -941,8 +948,8 @@ CEED_QFUNCTION(f_eval_bdr_derived_trace_complex_32)(void *__restrict__ ctx_, Cee
 
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
-    CeedScalar J_f_loc[6], n[3], e_r[3], b_r[3], e_i[3], b_i[3], eps[9], invmu[9], D_r[3],
-        H_r[3], D_i[3], H_i[3];
+    CeedScalar J_f_loc[6], n[3], e_r[3], b_r[3], e_i[3], b_i[3], eps[9], eps_i[9], invmu[9],
+        eps_w[9], D_r[3], H_r[3], D_i[3], H_i[3], Dq_r[3], Dq_i[3], W_r[3], W_i[3];
     MatUnpack32(J_f + i, Q, J_f_loc);
     SurfMeasure32(J_f_loc, n);
     for (CeedInt c = 0; c < 3; c++)
@@ -954,10 +961,23 @@ CEED_QFUNCTION(f_eval_bdr_derived_trace_complex_32)(void *__restrict__ ctx_, Cee
     }
     CoeffUnpack3(ctx + ctx[7].first, (CeedInt)attr[i], eps);
     CoeffUnpack3(ctx + ctx[8].first, (CeedInt)attr[i], invmu);
+    CoeffUnpack3(ctx + ctx[9].first, (CeedInt)attr[i], eps_i);
+    CoeffUnpack3(ctx + ctx[10].first, (CeedInt)attr[i], eps_w);
     MultAx33(eps, e_r, D_r);
     MultAx33(invmu, b_r, H_r);
     MultAx33(eps, e_i, D_i);
     MultAx33(invmu, b_i, H_i);
+    MultAx33(eps_w, e_r, W_r);
+    MultAx33(eps_w, e_i, W_i);
+    // Surface charge uses the complex permittivity of a lossy dielectric, D = (Re{ε} +
+    // i Im{ε}) E; the electric energy density below uses the stored-energy permittivity.
+    MultAx33(eps_i, e_i, Dq_r);
+    MultAx33(eps_i, e_r, Dq_i);
+    for (CeedInt c = 0; c < 3; c++)
+    {
+      Dq_r[c] = D_r[c] - Dq_r[c];
+      Dq_i[c] = D_i[c] + Dq_i[c];
+    }
 
     for (CeedInt c = 0; c < 3; c++)
     {
@@ -967,19 +987,19 @@ CEED_QFUNCTION(f_eval_bdr_derived_trace_complex_32)(void *__restrict__ ctx_, Cee
       v[i + Q * (13 + c)] = ctx[6].second * b_i[c];
     }
     v[i + Q * 6] =
-        ctx[0].second * ctx[1].second * (D_r[0] * n[0] + D_r[1] * n[1] + D_r[2] * n[2]);
+        ctx[0].second * ctx[1].second * (Dq_r[0] * n[0] + Dq_r[1] * n[1] + Dq_r[2] * n[2]);
     v[i + Q * 7] = ctx[0].second * ctx[2].second * (n[1] * H_r[2] - n[2] * H_r[1]);
     v[i + Q * 8] = ctx[0].second * ctx[2].second * (n[2] * H_r[0] - n[0] * H_r[2]);
     v[i + Q * 9] = ctx[0].second * ctx[2].second * (n[0] * H_r[1] - n[1] * H_r[0]);
     v[i + Q * 16] =
-        ctx[0].second * ctx[1].second * (D_i[0] * n[0] + D_i[1] * n[1] + D_i[2] * n[2]);
+        ctx[0].second * ctx[1].second * (Dq_i[0] * n[0] + Dq_i[1] * n[1] + Dq_i[2] * n[2]);
     v[i + Q * 17] = ctx[0].second * ctx[2].second * (n[1] * H_i[2] - n[2] * H_i[1]);
     v[i + Q * 18] = ctx[0].second * ctx[2].second * (n[2] * H_i[0] - n[0] * H_i[2]);
     v[i + Q * 19] = ctx[0].second * ctx[2].second * (n[0] * H_i[1] - n[1] * H_i[0]);
     // Keep the phase-local arithmetic and final addition order identical to two calls
     // of the one-phase kernel followed by Vector::operator+= in the writer.
-    const CeedScalar ue_r = D_r[0] * e_r[0] + D_r[1] * e_r[1] + D_r[2] * e_r[2];
-    const CeedScalar ue_i = D_i[0] * e_i[0] + D_i[1] * e_i[1] + D_i[2] * e_i[2];
+    const CeedScalar ue_r = W_r[0] * e_r[0] + W_r[1] * e_r[1] + W_r[2] * e_r[2];
+    const CeedScalar ue_i = W_i[0] * e_i[0] + W_i[1] * e_i[1] + W_i[2] * e_i[2];
     const CeedScalar um_r = H_r[0] * b_r[0] + H_r[1] * b_r[1] + H_r[2] * b_r[2];
     const CeedScalar um_i = H_i[0] * b_i[0] + H_i[1] * b_i[1] + H_i[2] * b_i[2];
     const CeedScalar s_r0 = e_r[1] * H_r[2] - e_r[2] * H_r[1];

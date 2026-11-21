@@ -6,7 +6,11 @@
 #
 
 # Force build order
-set(STRUMPACK_DEPENDENCIES scalapack parmetis)
+if(PALACE_WITH_PARMETIS)
+  set(STRUMPACK_DEPENDENCIES scalapack parmetis)
+else()
+  set(STRUMPACK_DEPENDENCIES scalapack metis)
+endif()
 # if(PALACE_WITH_CUDA OR PALACE_WITH_HIP)
 #   list(APPEND STRUMPACK_DEPENDENCIES slate)
 # endif()
@@ -34,6 +38,16 @@ if(PALACE_WITH_STRUMPACK_ZFP)
   string(REPLACE ";" "; " ZFP_OPTIONS_PRINT "${ZFP_OPTIONS}")
   message(STATUS "ZFP_OPTIONS: ${ZFP_OPTIONS_PRINT}")
 
+  # Fix zfp_stream_maximum_size() overflow (https://github.com/LLNL/zfp/issues/270), using
+  # the patch from the Spack build (https://github.com/spack/spack-packages/pull/6879)
+  include(PatchHelpers)
+  set(ZFP_PATCH_FILES)
+  download_patch(ZFP_PATCH_FILES "${CMAKE_BINARY_DIR}/extern/zfp-patches"
+    stream-maximum-size-overflow.patch
+    "https://raw.githubusercontent.com/spack/spack-packages/94ba1d9eb8e89a4e01919a9f41b8c857b5fbe5cc/repos/spack_repo/builtin/packages/zfp/stream-maximum-size-overflow.patch"
+    7ed755650fdcd79208ab165b42c902d64a916187be6dade4643814c09ba6d894
+  )
+
   include(ExternalProject)
   ExternalProject_Add(zfp
     DEPENDS           ${ZFP_DEPENDENCIES}
@@ -44,6 +58,10 @@ if(PALACE_WITH_STRUMPACK_ZFP)
     INSTALL_DIR       ${CMAKE_INSTALL_PREFIX}
     PREFIX            ${CMAKE_BINARY_DIR}/extern/zfp-cmake
     UPDATE_COMMAND    ""
+    PATCH_COMMAND
+      git reset --hard &&
+      git clean -fd &&
+      git apply "${ZFP_PATCH_FILES}"
     CONFIGURE_COMMAND ${CMAKE_COMMAND} <SOURCE_DIR> "${ZFP_OPTIONS}"
     TEST_COMMAND      ""
   )
@@ -145,17 +163,21 @@ list(APPEND STRUMPACK_OPTIONS
   "-DCMAKE_Fortran_COMPILER=${CMAKE_Fortran_COMPILER}"
   "-DCMAKE_Fortran_FLAGS=${CMAKE_Fortran_FLAGS}"
   "-DSTRUMPACK_USE_MPI=ON"
-  "-DTPL_ENABLE_PARMETIS=ON"
+  "-DTPL_ENABLE_PARMETIS=${PALACE_WITH_PARMETIS}"
   "-DTPL_METIS_LIBRARIES=${METIS_LIBRARIES}"
   "-DTPL_METIS_INCLUDE_DIRS=${CMAKE_INSTALL_PREFIX}/include"
-  "-DTPL_PARMETIS_LIBRARIES=${PARMETIS_LIBRARIES}$<SEMICOLON>${METIS_LIBRARIES}"
-  "-DTPL_PARMETIS_INCLUDE_DIRS=${CMAKE_INSTALL_PREFIX}/include"
   "-DTPL_ENABLE_SCOTCH=OFF"
   "-DTPL_ENABLE_PTSCOTCH=OFF"
   "-DTPL_ENABLE_COMBBLAS=OFF"
   "-DTPL_ENABLE_PAPI=OFF"
   "-DTPL_SCALAPACK_LIBRARIES=${SCALAPACK_LIBRARIES}"
 )
+if(PALACE_WITH_PARMETIS)
+  list(APPEND STRUMPACK_OPTIONS
+    "-DTPL_PARMETIS_LIBRARIES=${PARMETIS_LIBRARIES}$<SEMICOLON>${METIS_LIBRARIES}"
+    "-DTPL_PARMETIS_INCLUDE_DIRS=${CMAKE_INSTALL_PREFIX}/include"
+  )
+endif()
 if(PALACE_WITH_STRUMPACK_BUTTERFLYPACK)
   list(APPEND STRUMPACK_OPTIONS
     "-DTPL_ENABLE_BPACK=ON"
@@ -256,6 +278,14 @@ list(APPEND STRUMPACK_OPTIONS
 #   )
 # endif()
 
+# PBLAS block size of the distributed fronts: 128 instead of the STRUMPACK default of 32
+# gives faster factorizations and solves. The value set here would also replace the block
+# size of 512 that STRUMPACK uses with SLATE, which is not built here. Needs the patch for
+# https://github.com/pghysels/STRUMPACK/pull/169 below
+list(APPEND STRUMPACK_OPTIONS
+  "-DSTRUMPACK_PBLAS_BLOCKSIZE=128"
+)
+
 string(REPLACE ";" "; " STRUMPACK_OPTIONS_PRINT "${STRUMPACK_OPTIONS}")
 message(STATUS "STRUMPACK_OPTIONS: ${STRUMPACK_OPTIONS_PRINT}")
 
@@ -263,6 +293,66 @@ message(STATUS "STRUMPACK_OPTIONS: ${STRUMPACK_OPTIONS_PRINT}")
 set(STRUMPACK_PATCH_FILES
   "${CMAKE_SOURCE_DIR}/extern/patch/STRUMPACK/patch_build.diff"
   "${CMAKE_SOURCE_DIR}/extern/patch/STRUMPACK/patch_gpu_init.diff"
+)
+
+# Lower the communication cost of the distributed solve phase
+# (https://github.com/pghysels/STRUMPACK/pull/163)
+include(PatchHelpers)
+download_patch(STRUMPACK_PATCH_FILES "${CMAKE_BINARY_DIR}/extern/STRUMPACK-patches"
+  strumpack_pr163.diff
+  "https://github.com/pghysels/STRUMPACK/commit/4b657da56db958f4e00d2396a8fbb568f5cb3c16.diff?full_index=1"
+  b9a4d57b05a1790c6858f570d7a2c7fb82b7b4b6d6feaa39a364b0d56fefe092
+)
+# Reset the caches of the solve phase when the separators are reordered, which happens
+# again with compression when the matrix values are updated
+# (https://github.com/pghysels/STRUMPACK/pull/164)
+download_patch(STRUMPACK_PATCH_FILES "${CMAKE_BINARY_DIR}/extern/STRUMPACK-patches"
+  strumpack_pr164.diff
+  "https://github.com/pghysels/STRUMPACK/commit/f94faa48ce857905ef68f2826d05d92218a66e26.diff?full_index=1"
+  9e5d099fcb55b2a5630ad2fa2ac961bdccabffe3304282183eb911395da2aa4b
+)
+# Lower-latency distributed triangular solves for a few right-hand sides
+# (https://github.com/pghysels/STRUMPACK/pull/165), without its test and CI changes, which
+# need test infrastructure added after STRUMPACK 8.1.0. These solves handle block sizes up
+# to 32, so they are not used with the block size set above. The patch is kept because the
+# patch for PR 169 below changes its sources
+download_patch(STRUMPACK_PATCH_FILES "${CMAKE_BINARY_DIR}/extern/STRUMPACK-patches"
+  strumpack_pr165.diff
+  "https://raw.githubusercontent.com/awslabs/palace/0bbc11478dd7faa1a5f89b4f52d34c1205273e1f/extern/patch/STRUMPACK/strumpack_pr165.diff"
+  b5032afa23be7511413e4532c85799e2f89d7ed1a379dde23537f8aa5a116294
+)
+# Allow setting the PBLAS block size with CMake, and use the triangular solves of PR 165
+# only for the block sizes they handle (https://github.com/pghysels/STRUMPACK/pull/169),
+# without its change to a test added after STRUMPACK 8.1.0
+list(APPEND STRUMPACK_PATCH_FILES
+  "${CMAKE_SOURCE_DIR}/extern/patch/STRUMPACK/strumpack_pr169.diff"
+)
+# Lower the memory of the distributed solver, whose row to front map and column scaling
+# were stored for the whole matrix on every process
+# (https://github.com/pghysels/STRUMPACK/pull/171), without its test, which needs test
+# infrastructure added after STRUMPACK 8.1.0
+list(APPEND STRUMPACK_PATCH_FILES
+  "${CMAKE_SOURCE_DIR}/extern/patch/STRUMPACK/strumpack_pr171.diff"
+)
+# Fix the pivoting of the distributed BLR fronts: the row interchanges of a diagonal tile
+# were not applied to the tiles of L on its left, which the solve expects, so that with BLR
+# compression on two or more processes the factorization of an indefinite matrix was
+# inaccurate whatever the compression tolerance. These are the changes to
+# src/BLR/BLRMatrix.cpp and src/BLR/BLRMatrixMPI.cpp of the STRUMPACK commits
+# https://github.com/pghysels/STRUMPACK/commit/3f30760de7fdff5d7dd5cf31333ba004460db249
+# and
+# https://github.com/pghysels/STRUMPACK/commit/668cd1b80e741b9ebff486905024e46853164afd
+# by the STRUMPACK maintainer, which came after STRUMPACK 8.1.0, without their tests, which
+# need test infrastructure added after 8.1.0. To be removed with the next STRUMPACK release
+list(APPEND STRUMPACK_PATCH_FILES
+  "${CMAKE_SOURCE_DIR}/extern/patch/STRUMPACK/strumpack_blr_pivoting.diff"
+)
+# Add an option, off by default, to store the fill-reducing permutation of the distributed
+# solver and its inverse once per node, in an MPI shared memory window, instead of on every
+# process (https://github.com/pghysels/STRUMPACK/pull/174), without its tests, which need
+# test infrastructure added after STRUMPACK 8.1.0
+list(APPEND STRUMPACK_PATCH_FILES
+  "${CMAKE_SOURCE_DIR}/extern/patch/STRUMPACK/strumpack_pr174.diff"
 )
 
 include(ExternalProject)
@@ -275,7 +365,10 @@ ExternalProject_Add(strumpack
   INSTALL_DIR       ${CMAKE_INSTALL_PREFIX}
   PREFIX            ${CMAKE_BINARY_DIR}/extern/STRUMPACK-cmake
   UPDATE_COMMAND    ""
-  PATCH_COMMAND     git apply "${STRUMPACK_PATCH_FILES}"
+  PATCH_COMMAND
+    git reset --hard &&
+    git clean -fd &&
+    git apply "${STRUMPACK_PATCH_FILES}"
   CONFIGURE_COMMAND ${CMAKE_COMMAND} <SOURCE_DIR> "${STRUMPACK_OPTIONS}"
   TEST_COMMAND      ""
 )

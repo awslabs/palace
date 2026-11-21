@@ -65,11 +65,13 @@ endif()
 # Configure BLAS/LAPACK
 if(NOT "${BLAS_LAPACK_LIBRARIES}" STREQUAL "")
   string(REPLACE "$<SEMICOLON>" "," PETSC_BLAS_LAPACK_LIBRARIES "${BLAS_LAPACK_LIBRARIES}")
-  string(REPLACE "$<SEMICOLON>" "," PETSC_BLAS_LAPACK_INCLUDE_DIRS "${BLAS_LAPACK_INCLUDE_DIRS}")
   list(APPEND PETSC_OPTIONS
     "--with-blaslapack-lib=[${PETSC_BLAS_LAPACK_LIBRARIES}]"
-    "--with-blaslapack-include=[${BLAS_LAPACK_INCLUDE_DIRS}]"
   )
+  # PETSc detects the optional MKL extensions from the headers
+  if(BLA_VENDOR MATCHES "^Intel" AND NOT MKL_DIR STREQUAL "")
+    list(APPEND PETSC_OPTIONS "--with-blaslapack-include=[${MKL_DIR}/include]")
+  endif()
 endif()
 
 # Configure GPU support
@@ -104,11 +106,22 @@ endif()
 string(REPLACE ";" "; " PETSC_OPTIONS_PRINT "${PETSC_OPTIONS}")
 message(STATUS "PETSC_OPTIONS: ${PETSC_OPTIONS_PRINT}")
 
+# Shallow clones for tag or branch names, since the full histories are large (a commit hash
+# needs the full history)
+foreach(_pkg PETSC SLEPC)
+  if(EXTERN_${_pkg}_GIT_TAG MATCHES "^[0-9a-f]+$")
+    set(${_pkg}_GIT_SHALLOW FALSE)
+  else()
+    set(${_pkg}_GIT_SHALLOW TRUE)
+  endif()
+endforeach()
+
 include(ExternalProject)
 ExternalProject_Add(petsc
   DEPENDS             ${PETSC_DEPENDENCIES}
   GIT_REPOSITORY      ${EXTERN_PETSC_URL}
   GIT_TAG             ${EXTERN_PETSC_GIT_TAG}
+  GIT_SHALLOW         ${PETSC_GIT_SHALLOW}
   SOURCE_DIR          ${CMAKE_BINARY_DIR}/extern/petsc
   INSTALL_DIR         ${CMAKE_INSTALL_PREFIX}
   PREFIX              ${CMAKE_BINARY_DIR}/extern/petsc-cmake
@@ -136,14 +149,15 @@ ExternalProject_Add(slepc
   DEPENDS             ${SLEPC_DEPENDENCIES}
   GIT_REPOSITORY      ${EXTERN_SLEPC_URL}
   GIT_TAG             ${EXTERN_SLEPC_GIT_TAG}
+  GIT_SHALLOW         ${SLEPC_GIT_SHALLOW}
   SOURCE_DIR          ${CMAKE_BINARY_DIR}/extern/slepc
   INSTALL_DIR         ${CMAKE_INSTALL_PREFIX}
   PREFIX              ${CMAKE_BINARY_DIR}/extern/slepc-cmake
   BUILD_IN_SOURCE     TRUE
   UPDATE_COMMAND      ""
   CONFIGURE_COMMAND   SLEPC_DIR=<SOURCE_DIR> PETSC_DIR=${CMAKE_INSTALL_PREFIX} PETSC_ARCH= ./configure ${SLEPC_OPTIONS}
-  BUILD_COMMAND       SLEPC_DIR=<SOURCE_DIR> PETSC_DIR=${CMAKE_INSTALL_PREFIX} PETSC_ARCH= ${CMAKE_MAKE_PROGRAM}
-  INSTALL_COMMAND     SLEPC_DIR=<SOURCE_DIR> PETSC_DIR=${CMAKE_INSTALL_PREFIX} PETSC_ARCH= ${CMAKE_MAKE_PROGRAM} install
+  BUILD_COMMAND       SLEPC_DIR=<SOURCE_DIR> PETSC_DIR=${CMAKE_INSTALL_PREFIX} PETSC_ARCH= ${PALACE_MAKE_COMMAND}
+  INSTALL_COMMAND     SLEPC_DIR=<SOURCE_DIR> PETSC_DIR=${CMAKE_INSTALL_PREFIX} PETSC_ARCH= ${PALACE_MAKE_COMMAND} install
   # TEST_COMMAND        SLEPC_DIR=<SOURCE_DIR> PETSC_DIR=${CMAKE_INSTALL_PREFIX} PETSC_ARCH= ${CMAKE_MAKE_PROGRAM} check
   TEST_COMMAND        ""
   TEST_BEFORE_INSTALL TRUE

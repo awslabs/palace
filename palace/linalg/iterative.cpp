@@ -4,10 +4,14 @@
 #include "iterative.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <limits>
+#include <span>
 #include <string>
+#include <typeinfo>
+#include "linalg/jacobi.hpp"
 #include "linalg/orthog.hpp"
 #include "utils/communication.hpp"
 #include "utils/timer.hpp"
@@ -17,6 +21,66 @@ namespace palace
 
 namespace
 {
+
+// Apply update(i) for all i in [0, N) and return the sum of the terms f(i) after the
+// updates, in one pass over memory: each chunk is updated by a simple loop, which compilers
+// vectorize, and its terms are then summed from cache with several partial sums.
+template <typename UpdateFunction, typename TermFunction>
+double UpdateAndSum(int N, UpdateFunction &&update, TermFunction &&f)
+{
+  constexpr int chunk = 256;
+  double sum = 0.0;
+  for (int begin = 0; begin < N; begin += chunk)
+  {
+    const int end = std::min(begin + chunk, N);
+    for (int i = begin; i < end; i++)
+    {
+      update(i);
+    }
+    sum += linalg::HostSums<1>(begin, end, f)[0];
+  }
+  return sum;
+}
+
+// r -= a z, z = D r, and return the local inner product (z, r), in one pass.
+double CgUpdateJacobi(double a, Vector &r, Vector &z, const Vector &dinv)
+{
+  const int N = r.Size();
+  MFEM_VERIFY(z.Size() == N && dinv.Size() == N, "Size mismatch for fused CG update!");
+  const auto *D = dinv.HostRead();
+  auto *R = r.HostReadWrite(), *Z = z.HostReadWrite();
+  return UpdateAndSum(
+      N,
+      [=](int i)
+      {
+        R[i] -= a * Z[i];
+        Z[i] = D[i] * R[i];
+      },
+      [=](int i) { return std::array{R[i] * Z[i]}; });
+}
+
+// The same for complex vectors and a real D, for which (z, r) = rᴴ D r is real. The step
+// size a is complex unless the operator is Hermitian (and then only up to rounding).
+std::complex<double> CgUpdateJacobi(std::complex<double> a, ComplexVector &r,
+                                    ComplexVector &z, const Vector &dinv)
+{
+  const int N = r.Size();
+  MFEM_VERIFY(z.Size() == N && dinv.Size() == N, "Size mismatch for fused CG update!");
+  const double ar = a.real(), ai = a.imag();
+  const auto *D = dinv.HostRead();
+  auto *RR = r.Real().HostReadWrite(), *RI = r.Imag().HostReadWrite();
+  auto *ZR = z.Real().HostReadWrite(), *ZI = z.Imag().HostReadWrite();
+  return UpdateAndSum(
+      N,
+      [=](int i)
+      {
+        RR[i] -= ar * ZR[i] - ai * ZI[i];
+        RI[i] -= ai * ZR[i] + ar * ZI[i];
+        ZR[i] = D[i] * RR[i];
+        ZI[i] = D[i] * RI[i];
+      },
+      [=](int i) { return std::array{RR[i] * ZR[i] + RI[i] * ZI[i]}; });
+}
 
 template <typename T>
 inline void CheckDot(T dot, const char *msg)
@@ -32,49 +96,11 @@ inline void CheckDot(std::complex<T> dot, const char *msg)
 }
 
 template <typename T>
-inline constexpr T SafeMin()
-{
-  // Originally part of <T>LAPACK.
-  // <T>LAPACK is free software: you can redistribute it and/or modify it under
-  // the terms of the BSD 3-Clause license.
-  //
-  // Copyright (c) 2021-2023, University of Colorado Denver. All rights reserved.
-  // Copyright (c) 2017-2021, University of Tennessee. All rights reserved.
-  //
-  // Original author: Weslley S Pereira, University of Colorado Denver, USA
-  constexpr int fradix = std::numeric_limits<T>::radix;
-  constexpr int expm = std::numeric_limits<T>::min_exponent;
-  constexpr int expM = std::numeric_limits<T>::max_exponent;
-  // Note: pow is not constexpr in C++17 so this actually might not return a constexpr for
-  // all compilers.
-  return std::max(std::pow(fradix, T(expm - 1)), std::pow(fradix, T(1 - expM)));
-}
-
-template <typename T>
-inline constexpr T SafeMax()
-{
-  // Originally part of <T>LAPACK.
-  // <T>LAPACK is free software: you can redistribute it and/or modify it under
-  // the terms of the BSD 3-Clause license.
-  //
-  // Copyright (c) 2021-2023, University of Colorado Denver. All rights reserved.
-  // Copyright (c) 2017-2021, University of Tennessee. All rights reserved.
-  //
-  // Original author: Weslley S Pereira, University of Colorado Denver, USA
-  constexpr int fradix = std::numeric_limits<T>::radix;
-  constexpr int expm = std::numeric_limits<T>::min_exponent;
-  constexpr int expM = std::numeric_limits<T>::max_exponent;
-  // Note: pow is not constexpr in C++17 so this actually might not return a constexpr for
-  // all compilers.
-  return std::min(std::pow(fradix, T(1 - expm)), std::pow(fradix, T(expM - 1)));
-}
-
-template <typename T>
 inline void GeneratePlaneRotation(const T dx, const T dy, T &cs, T &sn)
 {
   // See LAPACK's s/dlartg.
-  const T safmin = SafeMin<T>();
-  const T safmax = SafeMax<T>();
+  const T safmin = std::numeric_limits<T>::min();
+  const T safmax = 1 / safmin;
   const T root_min = std::sqrt(safmin);
   const T root_max = std::sqrt(safmax / 2);
   if (dy == 0.0)
@@ -116,8 +142,8 @@ inline void GeneratePlaneRotation(const std::complex<T> dx, const std::complex<T
   //   [  cs        sn ] [ dx ]  =  [ r ]
   //   [ -conj(sn)  cs ] [ dy ]     [ 0 ]
   // where cs is real and cs² + |sn|² = 1. See LAPACK's c/zlartg.
-  const T safmin = SafeMin<T>();
-  const T safmax = SafeMax<T>();
+  const T safmin = std::numeric_limits<T>::min();
+  const T safmax = 1 / safmin;
   if (dy == 0.0)
   {
     cs = 1.0;
@@ -284,6 +310,101 @@ inline void InitialResidual(PreconditionerSide side, const OperType *A,
   }
 }
 
+// Replaces the nonzero initial guess x by α x, with α = (u, w) / (u, u) minimizing the
+// initial residual r = w - α u in the norm of the stopping test (w = B b and u = B A x for
+// left preconditioning, else w = b and u = A x), sets r, and returns ||w||, the residual
+// norm of a zero initial guess. Then ||r||² = ||w||² - |(u, w)|² / ||u||² ≤ ||w||², and an
+// exact guess stays exact (α = 1); products which are not finite give α = 0. With left
+// preconditioning, u = w - r₁ reuses the residual r₁ = B (b - A x), so B is applied as for
+// the unscaled guess, and r = (1 - α) w + α r₁ carries the rounding error of B relative to
+// about |1 - α| ||w|| + |α| ||r₁|| (relative to ||w|| with u = B A x). That is amplified
+// for |α| > 1 with an inexact preconditioner, so for |α| > 2, the residual B (b - α A x) is
+// computed instead (one more application of A and B).
+template <typename OperType, typename VecType>
+inline double ScaledInitialResidual(MPI_Comm comm, PreconditionerSide side,
+                                    const OperType *A, const Solver<OperType> *B,
+                                    const VecType &b, VecType &x, VecType &r, VecType &z,
+                                    bool use_timer = true)
+{
+  using ScalarType = decltype(linalg::LocalDot(r, r));
+  const bool left = (B && side == PreconditionerSide::LEFT);
+  if (left)
+  {
+    InitialResidual(side, A, B, b, x, r, z, true, use_timer);  // r = r₁
+    ApplyB(B, b, z, use_timer);
+    linalg::AXPBY(1.0, z, -1.0, r);  // r = u
+  }
+  else
+  {
+    A->Mult(x, r);  // r = u
+  }
+  const VecType &w = left ? z : b, &u = r;
+
+  // The inner products (w, w), (u, w) = uᴴ w, and (u, u) in one reduction.
+  ScalarType dot[3] = {linalg::LocalDot(w, w), linalg::LocalDot(w, u),
+                       linalg::LocalDot(u, u)};
+  Mpi::GlobalSum(3, dot, comm);
+  const double uu = std::real(dot[2]);
+  ScalarType alpha = (uu > 0.0) ? ScalarType(dot[1] / uu) : ScalarType(0.0);
+  if (!std::isfinite(std::abs(alpha)))
+  {
+    alpha = 0.0;
+  }
+  if (alpha == 0.0)
+  {
+    x = 0.0;
+    r = w;
+  }
+  else if (left && std::abs(alpha) > 2.0)
+  {
+    x *= alpha;
+    InitialResidual(side, A, B, b, x, r, z, true, use_timer);
+  }
+  else
+  {
+    x *= alpha;
+    linalg::AXPBY(ScalarType(1.0), w, -alpha, r);
+  }
+  return std::sqrt(std::abs(dot[0]));
+}
+
+// Sets the residual r of x at the start of a GMRES cycle and returns its norm. The first
+// cycle starts from zero without an initial guess, else from the initial guess unless it is
+// zero, scaled as above with scale_guess, and sets initial_res, the reference of the
+// stopping test (the residual norm of a zero initial guess).
+template <typename OperType, typename VecType>
+inline double CycleResidual(MPI_Comm comm, PreconditionerSide side, const OperType *A,
+                            const Solver<OperType> *B, const VecType &b, VecType &x,
+                            VecType &r, VecType &z, bool first_cycle, bool initial_guess,
+                            bool scale_guess, double &initial_res, bool use_timer = true)
+{
+  if (first_cycle && initial_guess && linalg::Norml2(comm, x) != 0.0)
+  {
+    if (scale_guess)
+    {
+      initial_res = ScaledInitialResidual(comm, side, A, B, b, x, r, z, use_timer);
+    }
+    else
+    {
+      InitialResidual(side, A, B, b, x, r, z, true, use_timer);
+      const bool left = (B && side == PreconditionerSide::LEFT);
+      if (left)
+      {
+        ApplyB(B, b, z, use_timer);
+      }
+      initial_res = linalg::Norml2(comm, left ? z : b);
+    }
+    return linalg::Norml2(comm, r);
+  }
+  InitialResidual(side, A, B, b, x, r, z, !first_cycle, use_timer);
+  const double beta = linalg::Norml2(comm, r);
+  if (first_cycle)
+  {
+    initial_res = beta;
+  }
+  return beta;
+}
+
 template <typename OperType, typename VecType>
 inline void ApplyBA(PreconditionerSide side, const OperType *A, const Solver<OperType> *B,
                     const VecType &x, VecType &y, VecType &z, bool use_timer = true)
@@ -353,6 +474,14 @@ void CgSolver<OperType>::Mult(const VecType &b, VecType &x) const
   z.UseDevice(true);
   p.UseDevice(true);
 
+  // A Jacobi preconditioner may be applied in the same pass as the residual update and the
+  // inner product (not a subclass, which may change the application).
+  const Vector *dinv = nullptr;
+  if (B && typeid(*B) == typeid(JacobiSmoother<OperType>))
+  {
+    dinv = static_cast<const JacobiSmoother<OperType> *>(B)->GetHostRealScaling();
+  }
+
   // Initialize.
   if (this->initial_guess)
   {
@@ -397,7 +526,8 @@ void CgSolver<OperType>::Mult(const VecType &b, VecType &x) const
   eps = std::max(rel_tol * initial_res, abs_tol);
   converged = (res <= eps);
 
-  // Begin iterations.
+  // Begin iterations. x is updated with each search direction in the same pass as the next
+  // one is computed, and with the last one after the iterations.
   int it = 0;
   if (print_opts.iterations)
   {
@@ -417,7 +547,7 @@ void CgSolver<OperType>::Mult(const VecType &b, VecType &x) const
     }
     else
     {
-      linalg::AXPBY(ScalarType(1.0), z, beta / beta_prev, p);
+      linalg::AXPYAndAYPX(alpha, p, x, beta / beta_prev, z);
     }
 
     A->Mult(p, z);
@@ -427,22 +557,34 @@ void CgSolver<OperType>::Mult(const VecType &b, VecType &x) const
                 "PCG operator is not positive definite: (Ap, p) = " << denom << "!");
     alpha = beta / denom;
 
-    x.Add(alpha, p);
-    r.Add(-alpha, z);
-
     beta_prev = beta;
-    if (B)
+    if (dinv)
     {
-      ApplyB(B, r, z, this->use_timer);
+      // The fused loop costs no more than the residual update and inner product alone, so
+      // it is not timed as a preconditioner application.
+      beta = CgUpdateJacobi(alpha, r, z, *dinv);
+      Mpi::GlobalSum(1, &beta, comm);
     }
     else
     {
-      z = r;
+      r.Add(-alpha, z);
+      if (B)
+      {
+        ApplyB(B, r, z, this->use_timer);
+      }
+      else
+      {
+        z = r;
+      }
+      beta = linalg::Dot(comm, z, r);
     }
-    beta = linalg::Dot(comm, z, r);
     CheckDot(beta, "PCG preconditioner is not positive definite: (Br, r) = ");
     res = std::sqrt(std::abs(beta));
     converged = (res <= eps);
+  }
+  if (it > 0)
+  {
+    x.Add(alpha, p);
   }
   if (print_opts.iterations)
   {
@@ -523,6 +665,29 @@ void GmresSolver<OperType>::Update(int j) const
 }
 
 template <OperatorType OperType>
+typename GmresSolver<OperType>::RealType GmresSolver<OperType>::CorrectionNorm(int j) const
+{
+  // Back substitution with the rotated Hessenberg matrix (upper triangular), on a copy of
+  // the rotated right-hand side: O(j²) scalar operations, no vector operations.
+  std::vector<ScalarType> y(s.begin(), s.begin() + j + 1);
+  for (int i = j; i >= 0; i--)
+  {
+    const ScalarType *Hi = H.data() + i * (max_dim + 1);
+    y[i] /= Hi[i];
+    for (int k = i - 1; k >= 0; k--)
+    {
+      y[k] -= Hi[k] * y[i];
+    }
+  }
+  RealType norm2 = 0.0;
+  for (const auto &yi : y)
+  {
+    norm2 += std::norm(yi);
+  }
+  return std::sqrt(norm2);
+}
+
+template <OperatorType OperType>
 void GmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
 {
   // Set up workspace.
@@ -533,6 +698,15 @@ void GmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
   r.SetSize(A->Height());
   r.UseDevice(true);
   Initialize();
+
+  // Monitor the correction to a nonzero initial guess, if requested: x - x₀ = V y with
+  // orthonormal V for left or no preconditioning (first cycle only). With a correction
+  // limit, the guess is not scaled, so that the correction is to x₀ as given.
+  correction_exceeded = false;
+  RealType x0_norm = 0.0;
+  const bool monitor_correction = max_rel_correction > 0.0 && this->initial_guess &&
+                                  (!B || pc_side == PreconditionerSide::LEFT) &&
+                                  (x0_norm = linalg::Norml2(comm, x)) > 0.0;
 
   // Begin iterations.
   converged = false;
@@ -545,31 +719,13 @@ void GmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
   for (; it < max_it; restart++)
   {
     // Initialize.
-    InitialResidual(pc_side, A, B, b, x, r, V[0], (this->initial_guess || restart > 0),
-                    this->use_timer);
-    true_beta = linalg::Norml2(comm, r);
+    true_beta =
+        CycleResidual(comm, pc_side, A, B, b, x, r, V[0], it == 0, this->initial_guess,
+                      max_rel_correction <= 0.0, initial_res, this->use_timer);
     CheckDot(true_beta, "GMRES residual norm is not valid: beta = ");
     if (it == 0)
     {
-      if (this->initial_guess)
-      {
-        RealType beta_rhs;
-        if (B && pc_side == PreconditionerSide::LEFT)
-        {
-          ApplyB(B, b, V[0], this->use_timer);
-          beta_rhs = linalg::Norml2(comm, V[0]);
-        }
-        else  // !B || pc_side == PreconditionerSide::RIGHT
-        {
-          beta_rhs = linalg::Norml2(comm, b);
-        }
-        CheckDot(beta_rhs, "GMRES residual norm is not valid: beta_rhs = ");
-        initial_res = beta_rhs;
-      }
-      else
-      {
-        initial_res = true_beta;
-      }
+      CheckDot(initial_res, "GMRES residual norm is not valid: initial_res = ");
       eps = std::max(rel_tol * initial_res, abs_tol);
     }
     else if (beta > 0.0 && std::abs(beta - true_beta) > 0.1 * true_beta &&
@@ -609,8 +765,8 @@ void GmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
       ApplyBA(pc_side, A, B, V[j], w, r, this->use_timer);
 
       ScalarType *Hj = H.data() + j * (max_dim + 1);
-      linalg::OrthogonalizeColumn(gs_orthog, comm, V, w, Hj, j + 1);
-      Hj[j + 1] = linalg::Norml2(comm, w);
+      Hj[j + 1] =
+          linalg::OrthogonalizeColumn(gs_orthog, comm, std::span(V).first(j + 2), Hj);
       w *= 1.0 / Hj[j + 1];
 
       for (int k = 0; k < j; k++)
@@ -624,7 +780,12 @@ void GmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
       beta = std::abs(s[j + 1]);
       CheckDot(beta, "GMRES residual norm is not valid: beta = ");
       converged = (beta <= eps);
-      if (converged || j + 1 == max_dim || it + 1 == max_it)
+      if (monitor_correction && restart == 0)
+      {
+        const RealType corr = CorrectionNorm(j);
+        correction_exceeded = (corr > max_rel_correction * (x0_norm + corr));
+      }
+      if (converged || correction_exceeded || j + 1 == max_dim || it + 1 == max_it)
       {
         it++;
         break;
@@ -658,7 +819,7 @@ void GmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
       ApplyB(B, r, V[0], this->use_timer);
       x += V[0];
     }
-    if (converged)
+    if (converged || correction_exceeded)
     {
       break;
     }
@@ -668,7 +829,18 @@ void GmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
     Mpi::Print(comm, "{}{:{}d} (restart {:d}) KSP residual norm {:.6e}\n",
                std::string(tab_width, ' '), it, int_width, restart, beta);
   }
-  if (print_opts.summary || (print_opts.warnings && eps > 0.0 && !converged))
+  if (correction_exceeded)
+  {
+    if (print_opts.summary || print_opts.warnings)
+    {
+      Mpi::Print(
+          comm,
+          "{}GMRES solver stopped in {:d} iteration{}: the correction to the initial "
+          "guess exceeds {:.3e} of the solution\n",
+          std::string(tab_width, ' '), it, (it == 1) ? "" : "s", max_rel_correction);
+    }
+  }
+  else if (print_opts.summary || (print_opts.warnings && eps > 0.0 && !converged))
   {
     Mpi::Print(comm, "{}GMRES solver {} in {:d} iteration{}", std::string(tab_width, ' '),
                converged ? "converged" : "did NOT converge", it, (it == 1) ? "" : "s");
@@ -733,22 +905,13 @@ void FgmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
   for (; it < max_it; restart++)
   {
     // Initialize.
-    InitialResidual(PreconditionerSide::RIGHT, A, B, b, x, Z[0], V[0],
-                    (this->initial_guess || restart > 0), this->use_timer);
-    true_beta = linalg::Norml2(comm, Z[0]);
+    true_beta = CycleResidual(comm, PreconditionerSide::RIGHT, A, B, b, x, Z[0], V[0],
+                              it == 0, this->initial_guess, max_rel_correction <= 0.0,
+                              initial_res, this->use_timer);
     CheckDot(true_beta, "FGMRES residual norm is not valid: beta = ");
     if (it == 0)
     {
-      if (this->initial_guess)
-      {
-        auto beta_rhs = linalg::Norml2(comm, b);
-        CheckDot(beta_rhs, "FGMRES residual norm is not valid: beta_rhs = ");
-        initial_res = beta_rhs;
-      }
-      else
-      {
-        initial_res = true_beta;
-      }
+      CheckDot(initial_res, "FGMRES residual norm is not valid: initial_res = ");
       eps = std::max(rel_tol * initial_res, abs_tol);
     }
     else if (beta > 0.0 && std::abs(beta - true_beta) > 0.1 * true_beta &&
@@ -788,8 +951,8 @@ void FgmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
       ApplyBA(PreconditionerSide::RIGHT, A, B, V[j], w, Z[j], this->use_timer);
 
       ScalarType *Hj = H.data() + j * (max_dim + 1);
-      linalg::OrthogonalizeColumn(gs_orthog, comm, V, w, Hj, j + 1);
-      Hj[j + 1] = linalg::Norml2(comm, w);
+      Hj[j + 1] =
+          linalg::OrthogonalizeColumn(gs_orthog, comm, std::span(V).first(j + 2), Hj);
       w *= 1.0 / Hj[j + 1];
 
       for (int k = 0; k < j; k++)
