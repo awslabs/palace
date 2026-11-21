@@ -755,11 +755,22 @@ CurlCorrectionSolver::CurlCorrectionSolver(const MaterialOperator &mat_op,
     Mpi::GlobalMax(bdr_attr_max, neumann_marker.GetData(), comm);
   }
 
-  // The p-levels of the correction space as for the field solve, with the order-one H1
-  // space for AMS on the coarsest level, broken across the interior Dirichlet boundaries
-  // when the flux space is.
-  nd_fecs = fem::ConstructFECollections<mfem::ND_FECollection>(
-      p_nd, 3, linear.mg_max_levels, linear.mg_coarsening, false);
+  // Two p-levels for the correction space, ND(1) for AMS and ND(p) (one if the multigrid
+  // of the run has one level), with the order-one H1 space for AMS on the coarsest level,
+  // broken across the interior Dirichlet boundaries when the flux space is, and the
+  // smoother of the run on ND(p). The intermediate levels of the run's coarsening would add
+  // their spaces, broken views, operators and work vectors: with them, on a refined mesh of
+  // 4.2M unknowns with an interior boundary at 144 processes, the peak of the estimator
+  // per process exceeds the field solve's (1.01 times, against 0.96), for 8-15% less time
+  // of the correction on refined meshes and 5-37% more on first meshes.
+  nd_fecs = fem::ConstructFECollections<mfem::ND_FECollection>(p_nd, 3, 1,
+                                                               linear.mg_coarsening, false);
+  if (linear.mg_max_levels > 1 && p_nd > 1)
+  {
+    auto coarse = fem::ConstructFECollections<mfem::ND_FECollection>(
+        1, 3, 1, linear.mg_coarsening, false);
+    nd_fecs.insert(nd_fecs.begin(), std::move(coarse.front()));
+  }
   h1_fec = std::make_unique<mfem::H1_FECollection>(nd_fecs.front()->GetOrder(), 3);
   const bool share = shared_nd && &shared_nd->GetMesh() == &primal.GetMesh() &&
                      !shared_nd->IsBroken() && shared_nd->GetVDim() == 1 &&
