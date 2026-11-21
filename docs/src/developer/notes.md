@@ -384,7 +384,17 @@ Estimation                      // < Time spent computing element-wise error est
                                 //   solve
   Solve                         // < Solve time for error estimation global linear solve
 Adaptation                      // < Time spent performing adaptive mesh refinement (AMR)
-  Rebalancing                   // < Rebalancing time for AMR simulations with rebalancing
+  Rebalancing                   // < Rebalancing time for AMR simulations with rebalancing,
+                                //   not counting the three entries below: the balance
+                                //   checks and the gather of the adapted mesh to save it,
+                                //   which can dominate; its write is timed under Disk IO
+    Graph Gather                // < Gathering the graph of the mesh elements on the root
+    Graph Partition             // < Partitioning that graph with METIS on the root, with
+                                //   the broadcast of its outcome and the scatter of the
+                                //   partition to the processes
+    Mesh Redistribution         // < Moving the mesh elements to their new processes; for a
+                                //   nonconforming mesh without a METIS partition, also
+                                //   computing the partition which replaces it
 Postprocessing                  // < Time spent in postprocessing once the field solution
                                 //   has been computed
   Far Fields                    // < Time spent computing surface integrals to extrapolate

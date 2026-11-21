@@ -60,6 +60,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     `Model.Refinement.MaximumImbalance`, so that saving the adapted mesh needs no
     redistribution; the partition, and so round-off, can differ from before.
     [PR 1214](https://github.com/awslabs/palace/pull/1214).
+  - The time report and `ElapsedTime` in `palace.json` get three rows under `Rebalancing`:
+    `Graph Gather`, `Graph Partition` and `Mesh Redistribution` (keys `GraphGather`,
+    `GraphPartition` and `MeshRedistribution`), which `Rebalancing` no longer includes.
+    [PR 1254](https://github.com/awslabs/palace/pull/1254).
+  - When no partition comes back for a conformal adapted mesh, the mesh keeps its
+    distribution, with the warning "Mesh not rebalanced" and the reason.
+    [PR 1254](https://github.com/awslabs/palace/pull/1254).
   - When `Solver.Linear.Type` is `"Default"` (or omitted) for frequency domain problems,
     and for the wave port and boundary mode eigenvalue solves, *Palace* now prefers
     STRUMPACK over SuperLU_DIST, then MUMPS, as the sparse direct solver when built with
@@ -143,6 +150,17 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     refinement tree, and each process refines its roots and reads their nodes, instead of
     every process reading the whole mesh.
     [PR 1215](https://github.com/awslabs/palace/pull/1215).
+  - Nonconforming adapted meshes are now rebalanced with a METIS partition of their element
+    graph instead of MFEM's default partition, which fragments the subdomains. This speeds
+    up adaptive simulations. [PR 1130](https://github.com/awslabs/palace/pull/1130).
+  - Conformal adapted meshes are now rebalanced with the same METIS partitioning routine,
+    and their elements move in parallel; the mesh is gathered on the root only to save it
+    (`"SaveAdaptMesh"`). Partitions, and so results to round-off, differ from before.
+    [PR 1254](https://github.com/awslabs/palace/pull/1254).
+  - Added an MFEM patch for [mfem/mfem#5755](https://github.com/mfem/mfem/pull/5755):
+    `ParMesh::Rebalance` with a partition for conforming meshes of triangles and
+    tetrahedra, which the parallel move needs; it also fixes the MPI requests of the 2D
+    `ParMesh::LocalRefinement`. [PR 1254](https://github.com/awslabs/palace/pull/1254).
   - Added a STRUMPACK patch for
     [pghysels/STRUMPACK#174](https://github.com/pghysels/STRUMPACK/pull/174), which *Palace*
     always enables: the STRUMPACK solvers store their fill-reducing permutation once per

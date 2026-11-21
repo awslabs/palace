@@ -7,6 +7,7 @@
 #include <cmath>
 #include <map>
 #include <memory>
+#include <string>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -367,13 +368,29 @@ struct MeshEntityCounts
   bool valid = false;  // set true only when populated (root, save happened)
 };
 
+// What RebalanceMesh did, the same on all processes: the imbalance ratio (largest over
+// smallest number of elements per process) before and after, and whether a rebalance was
+// applied (moved; not every element need change process). A conformal mesh for which no
+// partition comes back keeps its distribution: its ratio after is the ratio before.
+struct RebalanceResult
+{
+  double ratio_before = 1.0, ratio_after = 1.0;
+  bool moved = false;
+  // Why no partition came back, when a conformal mesh keeps its distribution.
+  std::string reason;
+};
+
+// The line reporting a rebalance which the tolerance `tol` called for, without its
+// indentation: what moved and the new ratio, or that the distribution was kept.
+std::string RebalanceMessage(const RebalanceResult &result, double tol);
+
 // Helper function responsible for rebalancing the mesh, and optionally writing meshes from
-// the intermediate stages to disk. Returns the imbalance ratio before rebalancing. When
+// the intermediate stages to disk. Returns what was done (see RebalanceResult). When
 // `out_counts` is non-null and the adapted mesh is written, geometry-resolved counts are
 // filled on the root rank. Nonconforming vertex and edge counts must then be completed
 // collectively with CompleteMeshEntityCounts.
-double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh,
-                     MeshEntityCounts *out_counts = nullptr);
+RebalanceResult RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh,
+                              MeshEntityCounts *out_counts = nullptr);
 
 // Complete true vertex and edge counts for a nonconforming mesh using distributed
 // lowest-order H1 and ND spaces. This is collective over the mesh communicator and must be
