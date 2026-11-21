@@ -11,11 +11,11 @@ SPDX-License-Identifier: Apache-2.0
 [problem types](../guide/problem.md), with respect to design parameters of the geometry,
 material properties and lumped port properties:
 
-| Problem type    | Quantities                                      |
-|:--------------- |:----------------------------------------------- |
-| `Electrostatic` | the Maxwell capacitance matrix                  |
-| `Magnetostatic` | the inductance matrix                           |
-| `Eigenmode`     | the frequency and quality factor of each mode   |
+| Problem type    | Quantities                                    |
+|:--------------- |:--------------------------------------------- |
+| `Electrostatic` | the Maxwell capacitance matrix                |
+| `Magnetostatic` | the inductance matrix                         |
+| `Eigenmode`     | the frequency and quality factor of each mode |
 
 A design parameter ``p`` moves the nodes of the input mesh with velocities
 ``\mathbf{V}_a``, given in a table, for example as computed by the layout tool which makes

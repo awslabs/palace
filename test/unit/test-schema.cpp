@@ -476,8 +476,9 @@ TEST_CASE("Schema Validation - Sub-schema by Key", "[schema][Serial]")
 
   SECTION("Sensitivity")
   {
-    json sensitivity = {
-        {"Velocities", "velocities.csv"}, {"MaterialProperties", true}, {"LumpedPorts", true}};
+    json sensitivity = {{"Velocities", "velocities.csv"},
+                        {"MaterialProperties", true},
+                        {"LumpedPorts", true}};
     CHECK(ValidateConfig(sensitivity, "Sensitivity").empty());
     CHECK(ValidateConfig(json::object(), "Sensitivity").empty());
 
