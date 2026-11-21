@@ -98,6 +98,8 @@ void ConcretizeLinear(const config::LinearSolverData &linear, json &j_linear)
                 {"AMSAgglomerationTarget", linear.ams_agglomeration_target},
                 {"DivFreeTol", linear.divfree_tol},
                 {"DivFreeMaxIts", linear.divfree_max_it},
+                {"EstimatorType", ToString(linear.estimator_type)},
+                {"EstimatorFluxOrder", ToString(linear.estimator_flux_order)},
                 {"EstimatorTol", linear.estimator_tol},
                 {"EstimatorErrorTol", linear.estimator_error_tol},
                 {"EstimatorMaxIts", linear.estimator_max_it},

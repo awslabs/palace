@@ -52,6 +52,22 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     electrostatic models it now takes 0.62x the time in total, and the element indicators
     change by at most 3e-3. Set it to `0` for the previous behavior. SchemaVer 5-3-0
     [PR 1259](https://github.com/awslabs/palace/pull/1259).
+  - Added `config["Solver"]["Linear"]["EstimatorType"]`, default `"L2ZZ"`. For electrostatic
+    simulations, `"Equilibrated"` recovers the flux in the space of the `"L2ZZ"` estimator
+    with the divergence constraint of the exact flux, which makes the error estimate a
+    guaranteed upper bound of the energy error: lowest-order vertex patch fluxes, a global
+    curl correction solved with the magnetostatic preconditioner (every iterate is a bound),
+    and the best combination of the fluxes of the terminal solves. Its indicator norm bounds
+    the relative error, so `config["Model"]["Refinement"]["Tol"]` bounds the true error at
+    the end of an adaptive refinement, and it gives guaranteed lower bounds of the
+    capacitance matrix, written to `terminal-C-lower.csv`.
+    `config["Solver"]["Linear"]["EstimatorFluxOrder"]` selects the flux space of order p - 1
+    (`"Reduced"`, default) or p (`"Primal"`). SchemaVer 5-4-0
+    [PR NNNN](https://github.com/awslabs/palace/pull/NNNN).
+  - The p-multigrid prolongations and discrete interpolators between finite element spaces
+    broken across interior boundaries (two-sided superconducting films, the equilibrated
+    error estimator) are partially assembled instead of assembled matrices, which at high
+    order had a large memory transient. [PR NNNN](https://github.com/awslabs/palace/pull/NNNN).
 
 #### Interface Changes
 
