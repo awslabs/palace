@@ -544,10 +544,10 @@ struct EstimatorSetup
     constexpr int max_it = 10000, print = 0;
     auto &nd_fespace = nd_fespaces.GetFinestFESpace();
     auto &rt_fespace = rt_fespaces.GetFinestFESpace();
-    GradFluxErrorEstimator<Vector> grad(mat_op, nd_fespace, rt_fespaces, tol, max_it, print,
-                                        use_mg, crack_attr_list);
-    CurlFluxErrorEstimator<Vector> curl(mat_op, rt_fespace, nd_fespaces, tol, max_it, print,
-                                        use_mg, crack_attr_list);
+    GradFluxErrorEstimator<Vector> grad(mat_op, nd_fespace, rt_fespaces, tol, 0.0, max_it,
+                                        print, use_mg, crack_attr_list);
+    CurlFluxErrorEstimator<Vector> curl(mat_op, rt_fespace, nd_fespaces, tol, 0.0, max_it,
+                                        print, use_mg, crack_attr_list);
     ErrorIndicator grad_ind, curl_ind;
     grad.AddErrorIndicator(Interpolate(nd_fespace, E), 0.5, grad_ind);
     curl.AddErrorIndicator(Interpolate(rt_fespace, B), 0.5, curl_ind);
@@ -588,10 +588,10 @@ struct EstimatorSetup2D
     constexpr int max_it = 10000, print = 0;
     constexpr bool use_mg = false;
     auto &nd_fespace = nd_fespaces.GetFinestFESpace();
-    GradFluxErrorEstimator<Vector> grad(mat_op, nd_fespace, rt_fespaces, tol, max_it, print,
-                                        use_mg, crack_attr_list);
-    CurlFluxErrorEstimator<Vector> curl(mat_op, l2_fespace, h1_fespaces, tol, max_it, print,
-                                        use_mg, crack_attr_list);
+    GradFluxErrorEstimator<Vector> grad(mat_op, nd_fespace, rt_fespaces, tol, 0.0, max_it,
+                                        print, use_mg, crack_attr_list);
+    CurlFluxErrorEstimator<Vector> curl(mat_op, l2_fespace, h1_fespaces, tol, 0.0, max_it,
+                                        print, use_mg, crack_attr_list);
     ErrorIndicator grad_ind, curl_ind;
     grad.AddErrorIndicator(Interpolate(nd_fespace, E), 0.5, grad_ind);
     curl.AddErrorIndicator(Interpolate(l2_fespace, B), 0.5, curl_ind);

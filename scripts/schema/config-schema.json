@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:6-0-0",
+  "$id": "urn:palace:schema:6-1-0",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -3366,6 +3366,12 @@
           "description": "Relative tolerance for the flux projection solve used in the error estimate calculation.",
           "minimum": 0.0,
           "default": 1e-06
+        },
+        "EstimatorErrorTol": {
+          "type": "number",
+          "description": "Tolerance for the error of the flux projection solve used in the error estimate calculation, relative to the estimate. The projection stops once its error in the norm of the estimate, estimated from the decrease of the estimate over the iterations, is below this tolerance times the estimate, or at the relative residual `\"EstimatorTol\"`, whichever comes first. The element indicators then differ from those of the converged projection by about this tolerance times the estimate or less in the ℓ² norm over the elements. A tolerance of zero disables this test.",
+          "minimum": 0.0,
+          "default": 0.01
         },
         "EstimatorMaxIts": {
           "type": "integer",
