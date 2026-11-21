@@ -23,6 +23,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     added to the curl-curl operator and the kinetic energy of the supercurrent to the
     extracted inductance, so conductors of any thickness and width can be modeled as
     volumes. SchemaVer 4-4-1 [PR 1111](https://github.com/awslabs/palace/pull/1111).
+  - Added substructuring for electrostatic and magnetostatic simulations
+    (`config["Solver"]["Substructuring"]`): the environment of a region is condensed onto
+    their interface once and saved, and later runs solve only the region, also after a
+    redesign or re-meshing of it, for the capacitance and inductance matrices. SchemaVer
+    5-3-0. [PR 995](https://github.com/awslabs/palace/pull/995).
   - `validate-config` accepts several configuration files and validates them in one Julia
     session. [PR 1180](https://github.com/awslabs/palace/pull/1180).
   - Added `Boundaries.LumpedPort[].ExcitationAmplitude` and `ExcitationPhase` (degrees),
@@ -234,6 +239,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     zero. This saves one halo exchange per level and V-cycle, which is latency bound on the
     coarse levels at high process counts. Results are unchanged.
     [PR 1139](https://github.com/awslabs/palace/pull/1139).
+  - Added a STRUMPACK patch for
+    [pghysels/STRUMPACK#167](https://github.com/pghysels/STRUMPACK/pull/167), which adds a
+    Schur complement interface to its sparse solvers. Without MUMPS, the partial
+    factorization of STRUMPACK then condenses the environment of substructuring, instead of
+    one solve per interface unknown. [PR 995](https://github.com/awslabs/palace/pull/995).
   - Added a STRUMPACK patch for
     [pghysels/STRUMPACK#163](https://github.com/pghysels/STRUMPACK/pull/163), which lowers
     the communication cost of its distributed solve phase: point-to-point exchanges of only
@@ -650,6 +660,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     enabled. Previously it was built only with SuperLU_DIST, STRUMPACK, or MUMPS, so
     configuring with cuDSS as the only sparse direct solver failed.
     [PR 1133](https://github.com/awslabs/palace/pull/1133).
+  - The superbuild and the Spack recipe patch MFEM with
+    [mfem/mfem#5518](https://github.com/mfem/mfem/pull/5518), which fixes the orientation of
+    some shared faces of a parallel `mfem::ParSubMesh`: spaces with several DOFs per face
+    (Nédélec of order 2 and above, H1 of order 4 and above) were wrong across processes, and
+    so were the region error indicators of substructuring.
+    [PR 995](https://github.com/awslabs/palace/pull/995).
   - The superbuild's sub-makes (the unit tests, GSLIB, LIBXSMM, libCEED, SLEPc, and MFEM's
     test step) now inherit the make jobserver, so GNU make 4.3 and later build them in
     parallel instead of serially. The superbuild also skips Eigen's BLAS, LAPACK, and demos,

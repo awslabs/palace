@@ -574,6 +574,22 @@ json IoData::ConcretizeDefaults(const IoData &iodata, json config)
       break;
   }
 
+  if (iodata.solver.substructuring)
+  {
+    const auto &sub = *iodata.solver.substructuring;
+    auto &j_sub = j_solver["Substructuring"];
+    j_sub["Region"]["Attributes"] = sub.region_attributes;
+    if (!sub.environment_attributes.empty())
+    {
+      j_sub["Environment"]["Attributes"] = sub.environment_attributes;
+    }
+    Concretize(j_sub, "Mode", ToString(sub.mode));
+    if (!sub.model_file.empty())
+    {
+      Concretize(j_sub, "ModelFile", sub.model_file);
+    }
+  }
+
   if (config.contains("Domains"))
   {
     ConcretizeDomains(iodata.domains, config["Domains"]);

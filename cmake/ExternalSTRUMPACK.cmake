@@ -354,6 +354,11 @@ list(APPEND STRUMPACK_PATCH_FILES
 list(APPEND STRUMPACK_PATCH_FILES
   "${CMAKE_SOURCE_DIR}/extern/patch/STRUMPACK/strumpack_pr174.diff"
 )
+# A Schur complement interface, for the substructuring condensations: the source changes
+# of https://github.com/pghysels/STRUMPACK/pull/167, onto the patches above
+list(APPEND STRUMPACK_PATCH_FILES
+  "${CMAKE_SOURCE_DIR}/extern/patch/STRUMPACK/strumpack_pr167.diff"
+)
 
 include(ExternalProject)
 ExternalProject_Add(strumpack

@@ -9,7 +9,6 @@
 #include <vector>
 #include <mfem.hpp>
 #include "linalg/vector.hpp"
-#include "utils/labels.hpp"
 
 namespace palace
 {
@@ -17,9 +16,6 @@ namespace palace
 class IoData;
 class Mesh;
 class FiniteElementSpace;
-template <ProblemType T>
-class PostOperator;
-
 namespace config
 {
 struct FluxLoopData;
@@ -73,13 +69,8 @@ public:
   }
 
   // Solve surface curl problem for given flux loop index
-  palace::Vector
-  SolveSurfaceCurlProblem(int idx, const Mesh &mesh, const FiniteElementSpace &nd_fespace,
-                          PostOperator<ProblemType::MAGNETOSTATIC> &post_op) const;
-  void SolveSurfaceCurlProblem(int idx, const Mesh &mesh,
-                               const FiniteElementSpace &nd_fespace,
-                               PostOperator<ProblemType::MAGNETOSTATIC> &post_op,
-                               palace::Vector &result) const;
+  palace::Vector SolveSurfaceCurlProblem(int idx, const Mesh &mesh,
+                                         const FiniteElementSpace &nd_fespace) const;
 };
 
 }  // namespace palace

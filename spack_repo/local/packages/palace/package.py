@@ -203,8 +203,10 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     # 668cd1b8 by the STRUMPACK maintainer, which fix the pivoting of the distributed BLR
     # fronts (to be removed with the next STRUMPACK release), and of the source changes of
     # https://github.com/pghysels/STRUMPACK/pull/174, which add the option to store the
-    # permutation of the distributed solver once per node. Kept off the `with` blocks so
-    # the Palace variants are not folded into the patch condition.
+    # permutation of the distributed solver once per node, and of
+    # https://github.com/pghysels/STRUMPACK/pull/167 for the Schur complements of
+    # substructuring. Kept off the `with` blocks so the Palace variants are not folded
+    # into the patch condition.
     depends_on(
         "strumpack@8.1.0",
         when="@develop+strumpack",
@@ -254,6 +256,13 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 "10662658723d4d16f672c9d9f50540dc8dd732c9/extern/patch/STRUMPACK/"
                 "strumpack_pr174.diff",
                 sha256="9637614a092f57a708ca773a28f8271f8845662e03af5af45376c8ced3b95735",
+                when="@8.1.0",
+            ),
+            patch(
+                "https://raw.githubusercontent.com/awslabs/palace/"
+                "fe392733181ab8b206b3e786f37609318e3b73ef/extern/patch/STRUMPACK/"
+                "strumpack_pr167.diff",
+                sha256="d3e762482fd1a20fc6c90867070ee276c52efeac15c7d391d5ecba911d5acbe6",
                 when="@8.1.0",
             ),
         ],
@@ -586,6 +595,14 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 "c79f309399361b2d6aadc207087ca6dc475513b4.diff?full_index=1",
                 sha256="8e3b016986383d5999c2f83a49aaacb9dae08ca75acc877ba18b1b0bd7844318",
                 when="@4.10:",
+            ),
+            # https://github.com/mfem/mfem/pull/5518
+            patch(
+                "https://github.com/mfem/mfem/compare/"
+                "3001edfcf4fd91535273ebdf450e9fa4c7bd6776..."
+                "ec92e77c63715a2673fdfe415b7935fcfb8d62ce.diff",
+                sha256="7d39edc1f76e05242a30f42a2cd17f8d76bf5d657c1c0a66d251b2024e4601e7",
+                when="@4.10.0",
             ),
             # https://github.com/mfem/mfem/pull/5731: setters for the supernode sizes of
             # SuperLUSolver

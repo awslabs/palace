@@ -19,41 +19,69 @@ namespace
 constexpr auto GSLIB_BB_TOL = 0.01;  // MFEM defaults, slightly reduced bounding box
 constexpr auto GSLIB_NEWTON_TOL = 1.0e-12;
 
-}  // namespace
-
-InterpolationOperator::InterpolationOperator(const std::map<int, config::ProbeData> &probe,
-                                             const Units &units,
-                                             FiniteElementSpace &nd_space)
 #if defined(MFEM_USE_GSLIB)
-  : op(nd_space.GetParMesh().GetComm()), v_dim_fes(nd_space.Get().GetVectorDim())
+// Find the probes with GSLIB, all processes searching for all points: their indices, in the
+// order of the points.
+std::vector<int> FindProbes(mfem::FindPointsGSLIB &op,
+                            const std::map<int, config::ProbeData> &probe,
+                            mfem::ParMesh &mesh)
 {
-  auto &mesh = nd_space.GetParMesh();
-  // Set up probes interpolation. All processes search for all points.
-  if (probe.empty())
-  {
-    return;
-  }
   const int dim = mesh.SpaceDimension();
   MFEM_VERIFY(
       mesh.Dimension() == dim,
       "Probe postprocessing functionality requires mesh dimension == space dimension!");
   const int npts = static_cast<int>(probe.size());
   mfem::Vector xyz(npts * dim);
-  op_idx.resize(npts);
+  std::vector<int> idx(npts);
   int i = 0;
-  for (const auto &[idx, data] : probe)
+  for (const auto &[index, data] : probe)
   {
     for (int d = 0; d < dim; d++)
     {
       // Use default ordering byNODES.
       xyz(d * npts + i) = data.center[d];
     }
-    op_idx[i++] = idx;
+    idx[i++] = index;
   }
   op.Setup(mesh, GSLIB_BB_TOL, GSLIB_NEWTON_TOL, npts);
   op.FindPoints(xyz, mfem::Ordering::byNODES);
+  return idx;
+}
+
+// The submesh of the elements with the given attributes, with nodes for the point search.
+mfem::ParSubMesh DomainSubmesh(const mfem::ParMesh &mesh,
+                               const std::vector<int> &attributes)
+{
+  mfem::Array<int> attr(const_cast<int *>(attributes.data()),
+                        static_cast<int>(attributes.size()));
+  auto submesh = mfem::ParSubMesh::CreateFromDomain(mesh, attr);
+  submesh.EnsureNodes();
+  return submesh;
+}
+#endif
+
+}  // namespace
+
+InterpolationOperator::InterpolationOperator(const std::map<int, config::ProbeData> &probe,
+                                             const Units &units,
+                                             FiniteElementSpace &nd_space,
+                                             const std::vector<int> &domains)
+#if defined(MFEM_USE_GSLIB)
+  : op(nd_space.GetParMesh().GetComm()), v_dim_fes(nd_space.Get().GetVectorDim())
+{
+  // Set up probes interpolation. All processes search for all points.
+  if (probe.empty())
+  {
+    return;
+  }
+  if (!domains.empty())
+  {
+    submesh =
+        std::make_unique<mfem::ParSubMesh>(DomainSubmesh(nd_space.GetParMesh(), domains));
+  }
+  op_idx = FindProbes(op, probe, submesh ? *submesh : nd_space.GetParMesh());
   op.SetDefaultInterpolationValue(0.0);
-  i = 0;
+  int i = 0;
   for (const auto &[idx, data] : probe)
   {
     if (op.GetCode()[i++] == 2)
@@ -68,6 +96,9 @@ InterpolationOperator::InterpolationOperator(const std::map<int, config::ProbeDa
 {
   MFEM_CONTRACT_VAR(GSLIB_BB_TOL);
   MFEM_CONTRACT_VAR(GSLIB_NEWTON_TOL);
+  MFEM_CONTRACT_VAR(units);
+  MFEM_CONTRACT_VAR(nd_space);
+  MFEM_CONTRACT_VAR(domains);
   MFEM_VERIFY(probe.empty(), "InterpolationOperator class requires MFEM_USE_GSLIB!");
 }
 #endif
@@ -81,20 +112,38 @@ InterpolationOperator::InterpolationOperator(const IoData &iodata,
 std::vector<double> InterpolationOperator::ProbeField(const mfem::ParGridFunction &U)
 {
 #if defined(MFEM_USE_GSLIB)
+  // On the submesh of the domains, the field transferred there.
+  const mfem::ParGridFunction *V = &U;
+  if (submesh)
+  {
+    MFEM_ASSERT(U.ParFESpace()->GetParMesh() == submesh->GetParent(),
+                "A probed field must be on the mesh of the probes!");
+    auto &s = submesh_fields[U.ParFESpace()];
+    if (!s.fespace)
+    {
+      const auto &fes = *U.ParFESpace();
+      s.fespace = std::make_unique<mfem::ParFiniteElementSpace>(
+          submesh.get(), fes.FEColl(), fes.GetVDim(), fes.GetOrdering());
+      s.field = std::make_unique<mfem::ParGridFunction>(s.fespace.get());
+      s.transfer = std::make_unique<mfem::ParTransferMap>(fes, *s.fespace);
+    }
+    s.transfer->Transfer(U, *s.field);
+    V = s.field.get();
+  }
   // Interpolated vector values are returned from GSLIB interpolator with the same ordering
   // as the source grid function, which we transform to byVDIM for output.
   const int npts = op.GetCode().Size();
-  const int vdim = U.VectorDim();
+  const int vdim = V->VectorDim();
   std::vector<double> vals(npts * vdim);
-  if (U.FESpace()->GetOrdering() == mfem::Ordering::byVDIM)
+  if (V->FESpace()->GetOrdering() == mfem::Ordering::byVDIM)
   {
     mfem::Vector v(vals.data(), npts * vdim);
-    op.Interpolate(U, v);
+    op.Interpolate(*V, v);
   }
   else
   {
     mfem::Vector v(npts * vdim);
-    op.Interpolate(U, v);
+    op.Interpolate(*V, v);
     for (int d = 0; d < vdim; d++)
     {
       for (int i = 0; i < npts; i++)
@@ -129,6 +178,43 @@ std::vector<std::complex<double>> InterpolationOperator::ProbeField(const GridFu
 
 namespace fem
 {
+
+std::vector<int> ProbesInDomains(const std::map<int, config::ProbeData> &probe,
+                                 const mfem::ParMesh &mesh,
+                                 const std::vector<int> &attributes)
+{
+  std::vector<int> in_domains;
+  if (probe.empty() || attributes.empty())
+  {
+    return in_domains;
+  }
+#if defined(MFEM_USE_GSLIB)
+  MPI_Comm comm = mesh.GetComm();
+  auto submesh = DomainSubmesh(mesh, attributes);
+  mfem::FindPointsGSLIB op(comm);
+  const auto idx = FindProbes(op, probe, submesh);
+  // Each process searches for all points, but the probes are those of the root's search.
+  const int n = static_cast<int>(idx.size());
+  std::vector<int> found(n, 0);
+  for (int i = 0; Mpi::Root(comm) && i < n; i++)
+  {
+    found[i] = (op.GetCode()[i] != 2);
+  }
+  Mpi::Broadcast(n, found.data(), 0, comm);
+  for (int i = 0; i < n; i++)
+  {
+    if (found[i])
+    {
+      in_domains.push_back(idx[i]);
+    }
+  }
+#else
+  MFEM_CONTRACT_VAR(mesh);
+  MFEM_CONTRACT_VAR(attributes);
+  MFEM_ABORT("Probes require MFEM_USE_GSLIB!");
+#endif
+  return in_domains;
+}
 
 void InterpolateFunction(const mfem::GridFunction &U, mfem::GridFunction &V)
 {

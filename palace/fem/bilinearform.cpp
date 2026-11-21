@@ -4,6 +4,7 @@
 #include "bilinearform.hpp"
 
 #include <algorithm>
+#include <iterator>
 #include "fem/fespace.hpp"
 #include "fem/libceed/basis.hpp"
 #include "fem/libceed/ceed.hpp"
@@ -12,6 +13,67 @@
 
 namespace palace
 {
+
+namespace
+{
+
+// Assemble the integrator on the elements of the geometry factor data with one of the
+// given (sorted) libCEED attributes, through restrictions to these elements. Returns null
+// if there are none.
+CeedOperator AssembleOnAttributes(const BilinearFormIntegrator &integ, Ceed ceed,
+                                  mfem::Geometry::Type geom,
+                                  const ceed::CeedGeomFactorData &data,
+                                  const std::vector<int> &attrs,
+                                  const FiniteElementSpace &trial_fespace,
+                                  const FiniteElementSpace &test_fespace,
+                                  CeedBasis trial_basis, CeedBasis test_basis)
+{
+  std::vector<int> positions;
+  for (std::size_t k = 0; k < data.indices.size(); k++)
+  {
+    if (std::binary_search(attrs.begin(), attrs.end(), data.attributes[k]))
+    {
+      positions.push_back(static_cast<int>(k));
+    }
+  }
+  if (positions.empty())
+  {
+    return nullptr;
+  }
+  CeedOperator sub_op;
+  if (positions.size() == data.indices.size())
+  {
+    integ.Assemble(ceed, trial_fespace.GetCeedElemRestriction(ceed, geom, data),
+                   test_fespace.GetCeedElemRestriction(ceed, geom, data), trial_basis,
+                   test_basis, data.geom_data, data.geom_data_restr, &sub_op);
+    return sub_op;
+  }
+  std::vector<int> elements(positions.size());
+  for (std::size_t k = 0; k < positions.size(); k++)
+  {
+    elements[k] = data.indices[positions[k]];
+  }
+  CeedElemRestriction trial_restr =
+      trial_fespace.BuildCeedElemRestriction(ceed, geom, elements);
+  CeedElemRestriction test_restr =
+      (&test_fespace == &trial_fespace)
+          ? trial_restr
+          : test_fespace.BuildCeedElemRestriction(ceed, geom, elements);
+  CeedElemRestriction geom_data_restr = data.BuildGeomDataRestriction(ceed, positions);
+  integ.Assemble(ceed, trial_restr, test_restr, trial_basis, test_basis, data.geom_data,
+                 geom_data_restr, &sub_op);
+
+  // The operator holds references to the restrictions.
+  PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&geom_data_restr));
+  if (test_restr != trial_restr)
+  {
+    PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&test_restr));
+  }
+  PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&trial_restr));
+  return sub_op;
+}
+
+}  // namespace
 
 void BilinearForm::AssembleQuadratureData()
 {
@@ -84,6 +146,38 @@ BilinearForm::PartialAssemble(const FiniteElementSpace &trial_fespace,
   const auto domain_subsets = GetIntegratorSubsets(domain_integs, false);
   const auto boundary_subsets = GetIntegratorSubsets(boundary_integs, true);
 
+  // With assembly domains, the libCEED attributes of the elements on which each integrator
+  // is assembled: those of the domains (of the boundary elements bordering them, for a
+  // boundary integrator) on which its coefficients are nonzero.
+  auto GetIntegratorAttributes = [&](const auto &integs, bool use_bdr)
+  {
+    std::vector<std::vector<int>> integ_attrs;
+    if (!assembly_domains)
+    {
+      return integ_attrs;
+    }
+    const auto loc_attr = use_bdr ? mesh.GetCeedBdrAttributesByNeighbor(*assembly_domains)
+                                  : mesh.GetCeedAttributes(*assembly_domains);
+    std::vector<int> domain_attr(loc_attr.begin(), loc_attr.end());
+    std::sort(domain_attr.begin(), domain_attr.end());
+    for (const auto &integ : integs)
+    {
+      auto &attrs = integ_attrs.emplace_back();
+      if (const auto attr_list = integ->GetNonzeroCoefficientAttributes())
+      {
+        std::set_intersection(domain_attr.begin(), domain_attr.end(), attr_list->begin(),
+                              attr_list->end(), std::back_inserter(attrs));
+      }
+      else
+      {
+        attrs = domain_attr;
+      }
+    }
+    return integ_attrs;
+  };
+  const auto domain_integ_attrs = GetIntegratorAttributes(domain_integs, false);
+  const auto boundary_integ_attrs = GetIntegratorAttributes(boundary_integs, true);
+
   // Assemble the libCEED operator in parallel, each thread builds a composite operator.
   // This should work fine if some threads create an empty operator (no elements or boundary
   // elements).
@@ -111,6 +205,18 @@ BilinearForm::PartialAssemble(const FiniteElementSpace &trial_fespace,
         for (std::size_t i = 0; i < integs.size(); i++)
         {
           const auto &integ = integs[i];
+          if (assembly_domains)
+          {
+            integ->SetMapTypes(trial_map_type, test_map_type);
+            const auto &attrs = use_bdr ? boundary_integ_attrs[i] : domain_integ_attrs[i];
+            if (CeedOperator sub_op =
+                    AssembleOnAttributes(*integ, ceed, geom, data, attrs, trial_fespace,
+                                         test_fespace, trial_basis, test_basis))
+            {
+              op->AddSubOperator(sub_op);
+            }
+            continue;
+          }
           const auto subset = subsets[i];
           if (!subset ||
               (*subset == ceed::CeedElementSubset::Active && data.active_indices.empty()))

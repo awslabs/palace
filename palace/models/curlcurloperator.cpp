@@ -392,16 +392,34 @@ void PrintHeader(const mfem::ParFiniteElementSpace &h1_fespace,
   }
 }
 
+void AddStiffnessIntegrators(BilinearForm &k, const MaterialPropertyCoefficient &df,
+                             const MaterialPropertyCoefficient &f,
+                             const MaterialPropertyCoefficient &fb)
+{
+  if (f.empty())
+  {
+    k.AddDomainIntegrator<CurlCurlIntegrator>(df);
+  }
+  else
+  {
+    k.AddDomainIntegrator<CurlCurlMassIntegrator>(df, f);
+  }
+  if (!fb.empty())
+  {
+    k.AddBoundaryIntegrator<VectorFEMassIntegrator>(fb);
+  }
+}
+
 }  // namespace
 
-std::vector<std::unique_ptr<Operator>>
-CurlCurlOperator::AssembleStiffness(double shift, MaterialPropertyCoefficient &f,
-                                    MaterialPropertyCoefficient &fb) const
+void CurlCurlOperator::AddStiffnessCoefficients(double shift,
+                                                MaterialPropertyCoefficient &df,
+                                                MaterialPropertyCoefficient &f,
+                                                MaterialPropertyCoefficient &fb) const
 {
   // Contribution from material permeability. In 2D, curl is scalar so the curl-curl
   // coefficient is scalar (1x1).
-  MaterialPropertyCoefficient df(mat_op.GetAttributeToMaterial(),
-                                 mat_op.GetCurlCurlInvPermeability());
+  df.AddCoefficient(mat_op.GetAttributeToMaterial(), mat_op.GetCurlCurlInvPermeability());
 
   // Contribution for London superconductors (supercurrent J = −A/(μλ²)), and the gauge
   // shift outside them, where the London mass does not lift the gradients.
@@ -427,30 +445,6 @@ CurlCurlOperator::AssembleStiffness(double shift, MaterialPropertyCoefficient &f
   {
     sc_sheet_op.AddStiffnessBdrCoefficients(1.0, fb);
   }
-
-  BilinearForm k(GetSolutionNDSpace());
-  if (f.empty())
-  {
-    k.AddDomainIntegrator<CurlCurlIntegrator>(df);
-  }
-  else
-  {
-    k.AddDomainIntegrator<CurlCurlMassIntegrator>(df, f);
-  }
-  if (!fb.empty())
-  {
-    k.AddBoundaryIntegrator<VectorFEMassIntegrator>(fb);
-  }
-  // k.AssembleQuadratureData();
-  constexpr bool skip_zeros = false;
-  return k.Assemble(GetSolutionNDSpaces(), skip_zeros);
-}
-
-std::vector<std::unique_ptr<Operator>> CurlCurlOperator::AssembleStiffness() const
-{
-  MaterialPropertyCoefficient f(mat_op.MaxCeedAttribute()),
-      fb(mat_op.MaxCeedBdrAttribute());
-  return AssembleStiffness(0.0, f, fb);
 }
 
 bool CurlCurlOperator::HasShiftedPreconditioner() const
@@ -465,7 +459,10 @@ std::unique_ptr<Operator> CurlCurlOperator::GetStiffnessMatrix()
   // data if the spaces correspond to the same mesh.
   PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
 
-  auto k_vec = AssembleStiffness();
+  constexpr bool skip_zeros = false;
+  const auto form = GetStiffnessForm();
+  // form->k.AssembleQuadratureData();
+  auto k_vec = form->k.Assemble(GetSolutionNDSpaces(), skip_zeros);
   auto K = std::make_unique<MultigridOperator>(GetSolutionNDSpaces().GetNumLevels());
   for (std::size_t l = 0; l < GetSolutionNDSpaces().GetNumLevels(); l++)
   {
@@ -495,6 +492,60 @@ std::unique_ptr<Operator> CurlCurlOperator::GetStiffnessMatrix()
   return K;
 }
 
+std::unique_ptr<CurlCurlOperator::StiffnessForm>
+CurlCurlOperator::GetStiffnessForm(bool volume, bool sheets, double shift) const
+{
+  // The integrators keep pointers to the coefficients, which the form owns.
+  std::unique_ptr<StiffnessForm> form(
+      new StiffnessForm{MaterialPropertyCoefficient(mat_op.MaxCeedAttribute()),
+                        MaterialPropertyCoefficient(mat_op.MaxCeedAttribute()),
+                        MaterialPropertyCoefficient(mat_op.MaxCeedBdrAttribute()),
+                        BilinearForm(GetSolutionNDSpace())});
+  AddStiffnessCoefficients(shift, form->df, form->f, form->fb);
+  if (!volume)
+  {
+    // Zero coefficients on every element, and no domain mass.
+    form->df.RestrictCoefficient(mfem::Array<int>());
+    form->f = MaterialPropertyCoefficient(mat_op.MaxCeedAttribute());
+  }
+  if (!sheets)
+  {
+    form->fb = MaterialPropertyCoefficient(mat_op.MaxCeedBdrAttribute());
+  }
+  AddStiffnessIntegrators(form->k, form->df, form->f, form->fb);
+  assembly_domains.Restrict(form->k);
+  return form;
+}
+
+std::unique_ptr<ParOperator>
+CurlCurlOperator::GetUnconstrainedStiffnessMatrix(bool volume, bool sheets, bool assemble)
+{
+  // Restricted, only the elements of the assembly domains are assembled, and the zero
+  // entries are not stored.
+  const bool skip_zeros = (assembly_domains.Get() != nullptr);
+  const auto form = GetStiffnessForm(volume, sheets);
+  auto K = std::make_unique<ParOperator>(
+      assemble ? std::unique_ptr<Operator>(form->k.FullAssemble(skip_zeros))
+               : form->k.PartialAssemble(),
+      GetSolutionNDSpace());
+  if (sheets && IsBroken())
+  {
+    // On a broken space, the sheet terms of the domains, the faces of the one-sided sheets
+    // assigned by their lower-attribute neighbor as the boundary coefficients.
+    if (const auto *attrs = assembly_domains.Get())
+    {
+      const auto &broken = GetSolutionNDSpace();
+      K->AddParallelMatrix(*sc_sheet_op.AssembleBrokenSheetMatrix(
+          GetNDSpace(), broken, broken.GetMesh().GetCrackSides(two_sided_attr), attrs));
+    }
+    else
+    {
+      K->AddParallelMatrix(GetBrokenSheetMatrix(GetSolutionNDSpaces().GetNumLevels() - 1));
+    }
+  }
+  return K;
+}
+
 std::unique_ptr<Operator> CurlCurlOperator::AssembleShiftedPreconditioner(
     const std::vector<mfem::Array<int>> &pc_dbc_tdof_lists,
     const mfem::Array<int> &pc_dbc_attr, std::vector<mfem::Array<int>> &h1_dbc_tdof_lists)
@@ -502,9 +553,10 @@ std::unique_ptr<Operator> CurlCurlOperator::AssembleShiftedPreconditioner(
   // Assemble K̃_pc = K + london_pc_shift_ · (1/µ) ∫|A|² outside the London domains. The
   // volume mass lifts the gradient modes K leaves in its kernel outside the
   // superconductors, so GᵀK̃_pcG is SPD for AMS.
-  MaterialPropertyCoefficient f(mat_op.MaxCeedAttribute()),
-      fb(mat_op.MaxCeedBdrAttribute());
-  auto k_vec = AssembleStiffness(london_pc_shift_, f, fb);
+  constexpr bool skip_zeros = false;
+  const auto form = GetStiffnessForm(true, true, london_pc_shift_);
+  const auto &f = form->f, &fb = form->fb;
+  auto k_vec = form->k.Assemble(GetSolutionNDSpaces(), skip_zeros);
   auto K = std::make_unique<MultigridOperator>(GetSolutionNDSpaces().GetNumLevels());
   for (std::size_t l = 0; l < GetSolutionNDSpaces().GetNumLevels(); l++)
   {
@@ -528,7 +580,6 @@ std::unique_ptr<Operator> CurlCurlOperator::AssembleShiftedPreconditioner(
     {
       a_aux.AddBoundaryIntegrator<DiffusionIntegrator>(fb);
     }
-    constexpr bool skip_zeros = false;
     auto a_aux_vec = a_aux.Assemble(h1_fespaces_aux, skip_zeros);
     const auto &pmesh = static_cast<const mfem::ParMesh &>(GetMesh());
     auto marker = mesh::BdrAttrToMarker(pmesh, pc_dbc_attr, true);
@@ -613,7 +664,10 @@ CurlCurlOperator::GetScreenedStiffnessMatrix(const mfem::Array<int> &extra_dbc_a
   const auto &pmesh = static_cast<const mfem::ParMesh &>(GetMesh());
   auto merged_marker = mesh::BdrAttrToMarker(pmesh, merged_attr, true);
 
-  auto k_vec = AssembleStiffness();
+  // Same terms as the base stiffness matrix, so shorted-port assemblies carry the same
+  // kinetic inductance.
+  constexpr bool skip_zeros = false;
+  auto k_vec = GetStiffnessForm()->k.Assemble(GetSolutionNDSpaces(), skip_zeros);
 
   // Add the new entry before binding essential DOFs, since SetEssentialTrueDofs keeps a
   // shallow reference to the tdof list and that list must stay put. Drop the older entry
@@ -740,16 +794,7 @@ void CurlCurlOperator::EnsureSheetMass()
   M_sheet_ = std::make_unique<ParOperator>(std::move(m_mat.back()), GetNDSpace());
 }
 
-template <ProblemType T>
 void CurlCurlOperator::GetFluxExcitationVector(int idx, Vector &RHS,
-                                               PostOperator<T> &post_op)
-{
-  GetFluxExcitationVector(idx, RHS, post_op, nullptr);
-}
-
-template <ProblemType T>
-void CurlCurlOperator::GetFluxExcitationVector(int idx, Vector &RHS,
-                                               PostOperator<T> &post_op,
                                                Vector *boundary_values)
 {
   RHS.SetSize(GetSolutionNDSpace().GetTrueVSize());
@@ -761,16 +806,7 @@ void CurlCurlOperator::GetFluxExcitationVector(int idx, Vector &RHS,
   // gradient part the 3D solve absorbs (no spurious penalty energy). Every flux loop is a
   // London sheet (a bare PEC film is auto-registered as a λ→0 Superconductor in iodata), so
   // there is a single path here.
-  Vector flux_solution;
-  if (boundary_values)
-  {
-    SolveSurfaceCurlProblem(idx, post_op, *boundary_values);
-    flux_solution = *boundary_values;  // Use the pre-allocated result
-  }
-  else
-  {
-    flux_solution = SolveSurfaceCurlProblem(idx, post_op);
-  }
+  Vector flux_solution = SolveSurfaceCurlProblem(idx);
   if (IsBroken())
   {
     // a_h is a field of the film surface, the same on both sides of two-sided films.
@@ -780,10 +816,10 @@ void CurlCurlOperator::GetFluxExcitationVector(int idx, Vector &RHS,
         .BuildVersionMap(FiniteElementSpace::VersionMap::ALL)
         ->MultTranspose(flux_solution, a_h);
     flux_solution = std::move(a_h);
-    if (boundary_values)
-    {
-      *boundary_values = flux_solution;
-    }
+  }
+  if (boundary_values)
+  {
+    *boundary_values = flux_solution;
   }
 
   // Early exit if the generator is zero.
@@ -821,30 +857,10 @@ void CurlCurlOperator::GetFluxExcitationVector(int idx, Vector &RHS,
   linalg::SetSubVector(RHS, dbc_tdof_lists.back(), 0.0);
 }
 
-template <ProblemType T>
-Vector CurlCurlOperator::SolveSurfaceCurlProblem(int flux_loop_idx,
-                                                 PostOperator<T> &post_op) const
+Vector CurlCurlOperator::SolveSurfaceCurlProblem(int flux_loop_idx) const
 {
-  // Validate flux loop index exists
   MFEM_VERIFY(surf_flux_op.Size() > 0, "No flux loops configured!");
-  surf_flux_op.GetSource(flux_loop_idx);  // Will throw if not found
-
-  Vector result;
-  surf_flux_op.SolveSurfaceCurlProblem(flux_loop_idx, GetMesh(), GetNDSpace(), post_op,
-                                       result);
-  return result;
-}
-
-template <ProblemType T>
-void CurlCurlOperator::SolveSurfaceCurlProblem(int flux_loop_idx, PostOperator<T> &post_op,
-                                               Vector &result) const
-{
-  // Validate flux loop index exists
-  MFEM_VERIFY(surf_flux_op.Size() > 0, "No flux loops configured!");
-  surf_flux_op.GetSource(flux_loop_idx);  // Will throw if not found
-
-  surf_flux_op.SolveSurfaceCurlProblem(flux_loop_idx, GetMesh(), GetNDSpace(), post_op,
-                                       result);
+  return surf_flux_op.SolveSurfaceCurlProblem(flux_loop_idx, GetMesh(), GetNDSpace());
 }
 
 void CurlCurlOperator::SetUpBrokenSpaces()
@@ -926,20 +942,5 @@ void CurlCurlOperator::GetFirstVersion(const FiniteElementSpace &broken_fespace,
   auto *h_y = y.HostWrite();
   std::copy(h_x, h_x + n, h_y);
 }
-
-// Explicit template instantiations for PostOperator<ProblemType::MAGNETOSTATIC>
-template void CurlCurlOperator::GetFluxExcitationVector<ProblemType::MAGNETOSTATIC>(
-    int idx, Vector &RHS, PostOperator<ProblemType::MAGNETOSTATIC> &post_op);
-
-template void CurlCurlOperator::GetFluxExcitationVector<ProblemType::MAGNETOSTATIC>(
-    int idx, Vector &RHS, PostOperator<ProblemType::MAGNETOSTATIC> &post_op,
-    Vector *boundary_values);
-
-template Vector CurlCurlOperator::SolveSurfaceCurlProblem<ProblemType::MAGNETOSTATIC>(
-    int flux_loop_idx, PostOperator<ProblemType::MAGNETOSTATIC> &post_op) const;
-
-template void CurlCurlOperator::SolveSurfaceCurlProblem<ProblemType::MAGNETOSTATIC>(
-    int flux_loop_idx, PostOperator<ProblemType::MAGNETOSTATIC> &post_op,
-    Vector &result) const;
 
 }  // namespace palace

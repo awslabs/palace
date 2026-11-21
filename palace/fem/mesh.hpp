@@ -4,6 +4,7 @@
 #ifndef PALACE_FEM_MESH_HPP
 #define PALACE_FEM_MESH_HPP
 
+#include <algorithm>
 #include <cstdint>
 #include <map>
 #include <memory>
@@ -40,6 +41,9 @@ struct CeedGeomFactorData
   // when no subset is configured, full-sized when every element is active).
   std::vector<int> indices, active_indices;
 
+  // The libCEED attribute of each element of indices.
+  std::vector<int> attributes;
+
   // Mesh geometry factor data: {attr, w * |J|, adj(J)^T / |J|}. Jacobian matrix is
   // space_dim x dim, stored column-major by component. The vector uses the libCEED
   // backend's strided layout (CEED_STRIDES_BACKEND) and is only accessed through the
@@ -61,6 +65,11 @@ struct CeedGeomFactorData
     }
     return geom_data_restr;
   }
+
+  // Return a new restriction (owned by the caller) of the geometry factors to the elements
+  // at the given positions in indices, which addresses the geom_data vector.
+  CeedElemRestriction BuildGeomDataRestriction(Ceed ceed,
+                                               const std::vector<int> &positions) const;
 };
 
 }  // namespace ceed
@@ -175,6 +184,26 @@ public:
       {
         const auto &bdr_attr_map = loc_bdr_attr.at(attr);
         for (const auto &[nbr_attr, ceed_attr] : bdr_attr_map)
+        {
+          loc_attr_list.Append(ceed_attr);
+        }
+      }
+    }
+    return loc_attr_list;
+  }
+
+  // The process-local libCEED boundary attributes of all boundary elements whose
+  // neighboring domain attribute is in the given list of global domain attributes.
+  template <typename T>
+  auto GetCeedBdrAttributesByNeighbor(const T &domain_attr_list) const
+  {
+    mfem::Array<int> loc_attr_list;
+    for (const auto &[attr, bdr_attr_map] : loc_bdr_attr)
+    {
+      for (const auto &[nbr_attr, ceed_attr] : bdr_attr_map)
+      {
+        if (std::ranges::find(domain_attr_list, nbr_attr) !=
+            std::ranges::end(domain_attr_list))
         {
           loc_attr_list.Append(ceed_attr);
         }

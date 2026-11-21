@@ -999,6 +999,85 @@ trapping flux. Then, the entries of the inductance matrix, ``\bm{M}``, are given
 where ``I_i`` is the excitation current for port ``i``, computed by integrating the source
 surface current ``\bm{J}_s^{inc}`` over the surface of the port.
 
+## Substructuring
+
+[Substructuring](features/substructuring.md) splits the true degrees of freedom of the discrete
+problem into the region interior ``R``, the interface ``\Gamma``, and the environment interior
+``E``. The operators of the region and of the environment are those of the regular simulation
+assembled on their elements, so ``\bm{A} = \bm{A}^R + \bm{A}^E`` with ``\bm{A}^E`` coupling only
+``\Gamma`` and ``E``. With the extension ``\bm{Z} = [\bm{I};\,-\bm{A}_{EE}^{-1}\bm{A}_{E\Gamma}]``
+of interface values into the environment, ``\bm{S}_E = \bm{Z}^T\bm{A}^E\bm{Z}``, and a field
+solves the full problem ``\bm{A}\bm{u} = \bm{b}`` exactly when its region and interface parts
+solve
+
+```math
+\begin{bmatrix} \bm{A}_{RR} & \bm{A}_{R\Gamma} \\
+  \bm{A}_{\Gamma R} & \bm{A}^R_{\Gamma\Gamma} + \bm{S}_E \end{bmatrix}
+\begin{bmatrix} \bm{u}_R \\ \bm{u}_\Gamma \end{bmatrix} =
+\begin{bmatrix} \bm{b}_R \\ \bm{b}_\Gamma + \bm{g} \end{bmatrix},
+\qquad \bm{g} = -\bm{A}_{\Gamma E}\bm{A}_{EE}^{-1}\bm{b}_E ,
+```
+
+with ``\bm{u}_E = \bm{Z}\bm{u}_\Gamma + \bm{w}`` on the environment,
+``\bm{w} = \bm{A}_{EE}^{-1}\bm{b}_E``. The energies ``\bm{u}_i^T\bm{K}\bm{u}_j`` of the energy
+operator ``\bm{K}`` then split into the region's part and the environment's,
+
+```math
+\bm{u}_{\Gamma,i}^T\bm{S}^K\bm{u}_{\Gamma,j} + \bm{u}_{\Gamma,i}^T\bm{h}_j
+  + \bm{h}_i^T\bm{u}_{\Gamma,j} + c_{ij} ,
+\qquad \bm{S}^K = \bm{Z}^T\bm{K}^E\bm{Z} ,
+```
+
+where the couplings ``\bm{h}_k`` and the constants ``c_{ij}`` of the excitations with an
+environment part (their modes) are computed once, with ``\bm{g}_k``, and saved with
+``\bm{S}_E`` and ``\bm{S}^K``. An online run needs no environment solve for them; a mode is
+matched by the index of its excitation and a fingerprint of its environment part.
+
+In electrostatics, ``\bm{K} = \bm{A}`` and the terminal excitations are Dirichlet lifts
+``\bm{x}_k`` (unit potentials). With ``\bm{t}_k = \bm{A}^E\bm{x}_k`` and
+``\bm{w}_k = \bm{A}_{EE}^{-1}\bm{t}_{k,E}``, a terminal loads the region solve with
+``\bm{g}_k = (\bm{t}_k - \bm{A}^E\bm{w}_k)_\Gamma``, and the environment's energy is
+``[\bm{u}_\Gamma;\,\bm{V}]^T[\bm{S}_E,\,\bm{G};\,\bm{G}^T,\,\bm{C}^{mode}][\bm{u}_\Gamma;\,\bm{V}]``
+for the terminal potentials ``\bm{V}``, which gives the Maxwell capacitance matrix of
+[Electrostatic Simulations](#Electrostatic-Simulations) exactly.
+
+In magnetostatics, ``\bm{L} = \bm{K} + \bm{M}_{sheet}``, the curl-curl operator and the London
+terms of the superconducting sheets, is singular: its null space holds the gradients of the
+functions constant on each connected conductor (the `"PEC"` boundaries and the sheets). The
+solves use ``\bm{A} = \bm{L} + \varepsilon\bm{D}``, with ``\bm{D}`` the mass matrix weighted by
+``\mu_r^{-1}`` and scaled by ``1/L'^2``, ``L'`` the extent of the mesh in units of
+[`config["Model"]["Lc"]`](config/reference.md#config-model), so that ``\varepsilon\bm{D}`` scales
+as the curl-curl operator and the results depend on neither ``\mu_r`` nor ``L_c``; the energies
+use ``\bm{L}``, with ``\bm{S}^K = \bm{Z}^T\bm{L}^E\bm{Z}``. A surface current
+``\bm{J}_k``, with ``\bm{u}_k = \bm{A}^{-1}\bm{J}_k``, has the energies
+
+```math
+\mathcal{E}_{ij} = \bm{J}_i^T\bm{u}_j + \bm{J}_j^T\bm{u}_i - \bm{u}_i^T\bm{L}\bm{u}_j ,
+```
+
+stationary in ``\varepsilon``, so their error is ``O(\varepsilon^2)``, provided that the current
+closes: ``\bm{G}^T\bm{J}_k``, ``\bm{G}`` the discrete gradient, vanishes at the nodes off the
+conductors and sums to zero over each conductor. A current that does not close is rejected. The
+part that the quadrature of an excitation leaves incompatible is amplified by
+``1/\varepsilon``, so ``\varepsilon = 10^{-3}`` without sheets, and twice the regularization
+energy ``\bm{J}^T\bm{u} - \bm{u}^T\bm{L}\bm{u}`` bounds the error. A flux loop ``k`` with the
+fluxoid generator ``\bm{a}_k`` drives ``\bm{M}_{sheet}\bm{a}_k``, which is orthogonal to the
+null space, with the London energies
+``\bm{u}_i^T\bm{K}\bm{u}_j + (\bm{u}_i - \bm{a}_i)^T\bm{M}_{sheet}(\bm{u}_j - \bm{a}_j)`` of the
+regular solver, linear in ``\varepsilon``: with sheets, ``\varepsilon = 10^{-7}``. The modes of
+a source ``\bm{b}_k`` with the environment part ``\bm{b}^E_k`` are, with
+``\bm{W}_k = \bm{A}_{EE}^{-1}\bm{b}^E_k``,
+
+```math
+\begin{aligned}
+\bm{g}_k &= (\bm{b}^E_k - \bm{A}^E\bm{W}_k)_\Gamma , \qquad
+\bm{h}_k = \bm{Z}^T\left[(\bm{A}^E - \varepsilon\bm{D}^E)\bm{W}_k - \bm{b}^E_k\right] , \\
+c_{ij} &= \bm{W}_i^T\bm{K}^E\bm{W}_j
+  + (\bm{W}_i - \bm{a}_i)^T\bm{M}^E_{sheet}(\bm{W}_j - \bm{a}_j)
+  - \bm{J}^{E\,T}_i\bm{W}_j - \bm{J}^{E\,T}_j\bm{W}_i .
+\end{aligned}
+```
+
 ## Error estimation and adaptive mesh refinement (AMR)
 
 Error estimation is used to provide element-wise error estimates for AMR, as well as a

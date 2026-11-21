@@ -45,6 +45,10 @@ public:
   // Class that holds mesh scale and converts between SI quantities and normalized values.
   Units units;
 
+  // The configuration this was constructed from, with its defaults resolved
+  // (ConcretizeDefaults); null if constructed from units only.
+  std::shared_ptr<const nlohmann::json> resolved_config;
+
   // What mesh::Load keeps of a mesh file read in parallel, for mesh::Partition.
   std::shared_ptr<mesh::NCMeshFile> nc_mesh_file;
 

@@ -264,6 +264,11 @@ public:
       Ceed ceed, mfem::Geometry::Type geom, const ceed::CeedGeomFactorData &data,
       ceed::CeedElementSubset subset = ceed::CeedElementSubset::Full) const;
 
+  // Return a new element restriction object (owned by the caller) for the given mesh
+  // elements of the given element geometry type.
+  CeedElemRestriction BuildCeedElemRestriction(Ceed ceed, mfem::Geometry::Type geom,
+                                               const std::vector<int> &indices) const;
+
   // If the space has a special element restriction for discrete interpolators, return that.
   // Otherwise return the same restriction as given by GetCeedElemRestriction.
   CeedElemRestriction

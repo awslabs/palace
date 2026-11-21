@@ -290,6 +290,7 @@ IoData::IoData(const nlohmann::json &config, bool print) : units(1.0, 1.0), init
 
   // Check compatibility of configuration file and problem type.
   CheckConfiguration();
+  resolved_config = std::make_shared<const json>(ConcretizeDefaults(*this, config));
 }
 
 IoData::IoData(const char *filename, bool print) : IoData(ParseAndValidate(filename), print)
@@ -696,6 +697,34 @@ void IoData::CheckConfiguration()
       "Superconductor boundary \"TwoSided\" cannot be used with "
       "\"CrackInternalBoundaryElements\": true, which cracks the mesh along the film!");
 
+  // The substructuring factorizations follow a sparse direct solver the configuration
+  // names, not the default resolved below.
+  if (solver.substructuring)
+  {
+    if (solver.linear.type != LinearSolver::DEFAULT &&
+        solver.linear.type != LinearSolver::STRUMPACK &&
+        solver.linear.type != LinearSolver::MUMPS &&
+        solver.linear.type != LinearSolver::SUPERLU)
+    {
+      Mpi::Warning("Substructuring factors with STRUMPACK, MUMPS or SuperLU_DIST only: "
+                   "\"Solver.Linear.Type\" \"{}\" is not used!\n",
+                   ToString(solver.linear.type));
+    }
+    // The factorizations are exact: of the options of the sparse direct solvers, they take
+    // only the column ordering.
+    if (solver.linear.strumpack_compression_type != SparseCompression::NONE)
+    {
+      Mpi::Warning("Substructuring factors exactly: "
+                   "\"Solver.Linear.STRUMPACKCompressionType\" is not used!\n");
+    }
+    if (solver.linear.superlu_3d)
+    {
+      Mpi::Warning("Substructuring factors with the column ordering only: "
+                   "\"Solver.Linear.SuperLU3DCommunicator\" is not used!\n");
+    }
+    solver.substructuring->direct_solver = solver.linear.type;
+  }
+
   // Resolve default values in configuration file.
   if (solver.linear.type == LinearSolver::DEFAULT)
   {
@@ -724,7 +753,7 @@ void IoData::CheckConfiguration()
   }
   if ((solver.linear.type == LinearSolver::STRUMPACK ||
        solver.linear.type == LinearSolver::STRUMPACK_MP) &&
-      problem.type == ProblemType::MAGNETOSTATIC)
+      problem.type == ProblemType::MAGNETOSTATIC && !solver.substructuring)
   {
     Mpi::Warning("STRUMPACK does not support the singular curl-curl operator in "
                  "magnetostatic problems, use AMS or another iterative solver instead!\n");
@@ -992,6 +1021,72 @@ void IoData::CheckConfiguration()
     solver.linear.sym_factorization = SymbolicFactorization::METIS;
   }
 #endif
+
+  // Validate substructuring configuration: region and environment attribute sets must be
+  // nonempty and disjoint (a well-posed complementary split).
+  if (solver.substructuring)
+  {
+    const auto &sub = *solver.substructuring;
+    MFEM_VERIFY(problem.type == ProblemType::ELECTROSTATIC ||
+                    problem.type == ProblemType::MAGNETOSTATIC,
+                "Substructuring is only supported for electrostatic and magnetostatic "
+                "problem types!");
+#if !defined(MFEM_USE_STRUMPACK) && !defined(MFEM_USE_MUMPS) && !defined(MFEM_USE_SUPERLU)
+    MFEM_ABORT("Substructuring factors the environment and the region with a sparse direct "
+               "solver: build Palace with STRUMPACK, MUMPS or SuperLU_DIST!");
+#endif
+    MFEM_VERIFY(!sub.region_attributes.empty(),
+                "Substructuring requires a nonempty Region attribute set!");
+    MFEM_VERIFY(sub.mode != SubstructuringMode::ONLINE || !sub.model_file.empty(),
+                "\"Online\" substructuring requires the saved model path \"ModelFile\"!");
+    // The interface DOFs of a model are matched by their coordinates, which on a periodic
+    // seam depend on the partition.
+    MFEM_VERIFY(boundaries.periodic.boundary_pairs.empty(),
+                "Substructuring does not support \"Periodic\" boundaries!");
+    // Adaptive refinement refines the region of an online run only: the environment was
+    // condensed on its final mesh, and nonconforming refinement without a level constraint
+    // does not spread into it.
+    if (model.refinement.max_it > 0)
+    {
+      MFEM_VERIFY(sub.mode == SubstructuringMode::ONLINE,
+                  "Adaptive mesh refinement with substructuring refines the region of an "
+                  "\"Online\" run; to refine the full model, run the adaptation without "
+                  "\"Solver.Substructuring\" (with \"SaveAdaptMesh\") and condense the "
+                  "saved mesh offline!");
+      MFEM_VERIFY(model.refinement.nonconformal && model.refinement.max_nc_levels == 0,
+                  "Adaptive mesh refinement with substructuring requires nonconforming "
+                  "refinement (\"Nonconformal\": true) without a level constraint "
+                  "(\"MaxNCLevels\": 0), so it does not spread into the environment!");
+    }
+    // The substructured solves postprocess the field of the region (see
+    // SubstructuringSolver::RegionPostprocessing), which gives no far field.
+    MFEM_VERIFY(boundaries.postpro.farfield.empty(),
+                "Substructuring does not compute \"Boundaries.Postprocessing.FarField\": "
+                "remove it, or run without \"Solver.Substructuring\"!");
+    if (problem.type == ProblemType::MAGNETOSTATIC)
+    {
+      // One condensed environment serves every excitation, so inactive surface-current
+      // ports may not be shorted (each would change the essential boundary).
+      for (const auto &[idx, data] : boundaries.current)
+      {
+        MFEM_VERIFY(
+            boundaries.current.size() == 1 ||
+                data.inactive_port_mode.value_or(solver.magnetostatic.inactive_port_mode) !=
+                    InactivePortMode::SHORT,
+            "Magnetostatic substructuring requires \"Open\" inactive surface "
+            "current ports (SurfaceCurrent index "
+                << idx << ")!");
+      }
+    }
+    std::set<int> region_set(sub.region_attributes.begin(), sub.region_attributes.end());
+    for (int a : sub.environment_attributes)
+    {
+      MFEM_VERIFY(region_set.find(a) == region_set.end(),
+                  "Substructuring Region and Environment attribute sets must be disjoint "
+                  "(attribute "
+                      << a << " appears in both)!");
+    }
+  }
 
   // Configure settings for quadrature rules and partial assembly.
   BilinearForm::pa_order_threshold = solver.pa_order_threshold;

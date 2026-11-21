@@ -1323,6 +1323,30 @@ public:
   LinearSolverData(const json &linear);
 };
 
+struct SubstructuringData
+{
+public:
+  // Domain attributes defining the region of interest and the environment (rest of the
+  // domain). The environment is condensed to a boundary (DtN) operator on the shared
+  // interface; the region is solved (and can be redesigned) against it.
+  std::vector<int> region_attributes = {};
+  std::vector<int> environment_attributes = {};  // empty: those not in the region
+
+  // Offline condenses the environment now; Online loads a previously saved model and solves
+  // only the region.
+  SubstructuringMode mode = SubstructuringMode::OFFLINE;
+
+  // Optional path for the serialized environment DtN model (offline/online reuse).
+  std::string model_file = "";
+
+  // The sparse direct solver of the factorizations: config["Solver"]["Linear"]["Type"] as
+  // given (set by IoData before it resolves the default), DEFAULT for Palace's preference.
+  LinearSolver direct_solver = LinearSolver::DEFAULT;
+
+  SubstructuringData() = default;
+  SubstructuringData(const json &substructuring);
+};
+
 struct SolverData
 {
 public:
@@ -1353,6 +1377,9 @@ public:
   TransientSolverData transient = {};
   BoundaryModeSolverData boundary_mode = {};
   LinearSolverData linear = {};
+
+  // Optional domain-decomposition substructuring (region condensation) configuration.
+  std::optional<SubstructuringData> substructuring = std::nullopt;
 
   SolverData() = default;
   SolverData(const json &solver);

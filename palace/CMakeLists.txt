@@ -668,6 +668,38 @@ if(PALACE_WITH_STRUMPACK)
       endif()
     endif()
   endforeach()
+
+  # STRUMPACK's Schur complement interface, for the substructuring condensations (in a
+  # function, whose scope ends CMAKE_TRY_COMPILE_TARGET_TYPE, which the check state does not
+  # restore)
+  function(palace_check_strumpack_schur)
+    include(CheckCXXSourceCompiles)
+    include(CMakePushCheckState)
+    cmake_push_check_state(RESET)
+    set(CMAKE_REQUIRED_QUIET ON)
+    set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
+    if(TARGET strumpack::strumpack)
+      set(CMAKE_REQUIRED_LIBRARIES strumpack::strumpack MPI::MPI_CXX)
+    else()
+      set(CMAKE_REQUIRED_INCLUDES ${STRUMPACK_INCLUDE_DIR})
+      set(CMAKE_REQUIRED_LIBRARIES MPI::MPI_CXX)
+    endif()
+    check_cxx_source_compiles([[
+#include <StrumpackSparseSolverMPIDist.hpp>
+int main()
+{
+  strumpack::SparseSolverMPIDist<double, int> *solver = nullptr;
+  int var = 0;
+  return solver->set_schur_variables(1, &var) == strumpack::ReturnCode::SCHUR_ERROR;
+}
+]] PALACE_WITH_STRUMPACK_SCHUR)
+    cmake_pop_check_state()
+  endfunction()
+  palace_check_strumpack_schur()
+  if(PALACE_WITH_STRUMPACK_SCHUR)
+    message(STATUS "Found the STRUMPACK Schur complement interface")
+    target_compile_definitions(${LIB_TARGET_NAME} PUBLIC PALACE_WITH_STRUMPACK_SCHUR)
+  endif()
 endif()
 
 # Link MUMPS

@@ -8,8 +8,10 @@
 #include <memory>
 #include <vector>
 #include <mfem.hpp>
+#include "fem/bilinearform.hpp"
 #include "fem/fespace.hpp"
 #include "linalg/operator.hpp"
+#include "linalg/rap.hpp"
 #include "linalg/vector.hpp"
 #include "models/materialoperator.hpp"
 
@@ -61,6 +63,18 @@ private:
   // Boundary attributes for each terminal index.
   std::map<int, mfem::Array<int>> source_attr_lists;
 
+  // Optional restriction of the stiffness form to a set of domains.
+  AssemblyDomains assembly_domains;
+
+  // The stiffness form (permittivity) on the finest space, with the coefficient its
+  // integrator points to, assembled on the assembly domains if set.
+  struct StiffnessForm
+  {
+    MaterialPropertyCoefficient epsilon;
+    BilinearForm k;
+  };
+  std::unique_ptr<StiffnessForm> GetStiffnessForm() const;
+
   mfem::Array<int>
   SetUpBoundaryProperties(const config::PecBoundaryData &pec,
                           const std::map<int, config::TerminalData> &terminal,
@@ -73,6 +87,10 @@ public:
                   const std::vector<config::MaterialData> &materials,
                   ProblemType problem_type, const std::vector<std::unique_ptr<Mesh>> &mesh);
   LaplaceOperator(const IoData &iodata, const std::vector<std::unique_ptr<Mesh>> &mesh);
+
+  // The domains to which the stiffness form (GetUnconstrainedStiffnessMatrix) is restricted
+  // while an AssemblyDomains::Restriction is in scope.
+  AssemblyDomains &GetAssemblyDomains() { return assembly_domains; }
 
   // Return material operator for postprocessing.
   const MaterialOperator &GetMaterialOp() const { return mat_op; }
@@ -101,6 +119,12 @@ public:
   // Construct and return system matrix representing discretized Laplace operator for
   // Gauss's law.
   std::unique_ptr<Operator> GetStiffnessMatrix();
+
+  // The stiffness matrix on the finest space without the essential boundary conditions,
+  // for substructuring, which eliminates its own sets of true DOFs and applies the matrix
+  // to Dirichlet data: assembled, or applied matrix-free (partially assembled) if not
+  // assemble.
+  std::unique_ptr<ParOperator> GetUnconstrainedStiffnessMatrix(bool assemble = true);
 
   // Construct and return the discrete gradient matrix.
   const Operator &GetGradMatrix() const

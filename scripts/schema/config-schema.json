@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:5-2-0",
+  "$id": "urn:palace:schema:5-3-0",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -411,6 +411,11 @@
           "$ref": "#/$defs/Linear",
           "title": "Linear Solver",
           "description": "Configuration for the linear solver used by all simulation types."
+        },
+        "Substructuring": {
+          "$ref": "#/$defs/Substructuring",
+          "title": "Substructuring",
+          "description": "Configuration for domain-decomposition substructuring: condense the environment (rest of the domain) to a boundary operator on the interface and solve/redesign the region of interest against it."
         }
       }
     }
@@ -3127,6 +3132,65 @@
           "description": "Number of computed electric field solutions to save to disk for [visualization with ParaView](../guide/postprocessing.md#Visualization), ordered by the entries in the computed capacitance matrix. Files are saved in the `paraview/` (and/or `gridfunction/`) directory under [`/Problem/Output`](@ref config-problem-output).",
           "minimum": 0,
           "default": 0
+        }
+      }
+    },
+    "SubstructuringMode": {
+      "type": "string",
+      "oneOf": [
+        {
+          "const": "Offline",
+          "description": "Condense the environment to a boundary (DtN) operator now."
+        },
+        {
+          "const": "Online",
+          "description": "Load a previously saved environment model and solve only the region."
+        }
+      ]
+    },
+    "Substructuring": {
+      "type": "object",
+      "title": "Substructuring",
+      "description": "Substructuring for electrostatic and magnetostatic simulations: the environment (the rest of the domain) is condensed onto its interface with the region of interest, and the region is solved against the condensed environment. With a saved model, repeated region redesigns reuse it without solving the environment again. Magnetostatic substructuring supports \"FluxLoop\" and \"SurfaceCurrent\" excitations, alone or together.",
+      "additionalProperties": false,
+      "required": ["Region"],
+      "properties": {
+        "Region": {
+          "type": "object",
+          "description": "The region of interest: solved in every run and free to be redesigned or re-meshed.",
+          "additionalProperties": false,
+          "required": ["Attributes"],
+          "properties": {
+            "Attributes": {
+              "type": "array",
+              "items": { "type": "integer", "exclusiveMinimum": 0 },
+              "minItems": 1,
+              "description": "Domain attributes defining the region of interest (redesigned/solved)."
+            }
+          }
+        },
+        "Environment": {
+          "type": "object",
+          "description": "The environment: condensed once onto its interface with the region. By default, the domain attributes of the mesh not in the region.",
+          "additionalProperties": false,
+          "required": ["Attributes"],
+          "properties": {
+            "Attributes": {
+              "type": "array",
+              "items": { "type": "integer", "exclusiveMinimum": 0 },
+              "minItems": 1,
+              "description": "Domain attributes defining the environment (condensed to the interface)."
+            }
+          }
+        },
+        "Mode": {
+          "$ref": "#/$defs/SubstructuringMode",
+          "description": "\"Offline\" condenses the environment (and writes \"ModelFile\" if given); \"Online\" loads the model from \"ModelFile\" (required) and solves only the region. The online run may use a re-meshed region, provided the interface is unchanged.",
+          "default": "Offline"
+        },
+        "ModelFile": {
+          "type": "string",
+          "description": "Path of the environment model file written in \"Offline\" mode and read in \"Online\" mode. An \"Offline\" run on a conforming mesh also writes, and replaces, the mesh of the region next to it (`<stem>_region.mesh` for `<stem>.model`), on which \"Online\" runs read only the region: they tell it from the full mesh by the environment elements it holds."
         }
       }
     },
