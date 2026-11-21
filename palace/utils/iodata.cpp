@@ -526,6 +526,11 @@ void IoData::CheckConfiguration()
                 "yet support Floquet port boundaries. The Floquet Robin dispersion is "
                 "handled in the online PROM sweep but has not been folded into the "
                 "synthesised circuit pencil.\n");
+    // A plane wave is not a port of the synthesized circuit, and its excitation is not
+    // linear in the frequency.
+    MFEM_VERIFY(!solver.driven.adaptive_circuit_synthesis || domains.plane_wave.empty(),
+                "Driven system with circuit synthesis (AdaptiveCircuitSynthesis) does not "
+                "support plane wave excitations (PlaneWave)!\n");
     // The Floquet terms of a wave vector k make the system matrices Hermitian rather than
     // complex symmetric (the transpose of the problem for k is the one for -k), so that the
     // synthesized inverse inductance, inverse resistance, and capacitance matrices would
@@ -676,6 +681,15 @@ void IoData::CheckConfiguration()
           "BoundaryMode problem type does not support surface current excitation!\n");
     }
   }
+
+  // The Stratton-Chu integral of the far field is over the surface of a bounded radiator.
+  // On a periodic domain, the surface of one cell gives only the element factor of an
+  // infinite array, whose far field is concentrated on the directions of its Floquet
+  // orders, and the fields are integrated without their Floquet phase.
+  MFEM_VERIFY(boundaries.postpro.farfield.empty() ||
+                  boundaries.periodic.boundary_pairs.empty(),
+              "Far-field extraction (Postprocessing.FarField) is not available with "
+              "periodic boundaries: the domain is not a bounded radiator!");
 
   // Superconductor sheet boundaries (kinetic inductance) are only meaningful for the
   // magnetostatic total-inductance extraction.
@@ -1032,6 +1046,12 @@ void IoData::NondimensionalizeInputs(std::unique_ptr<mfem::Mesh> &mesh)
 
   // Current dipole location coordinates.
   for (auto &[idx, data] : domains.current_dipole)
+  {
+    config::Nondimensionalize(units, data);
+  }
+
+  // Plane wave phase reference points.
+  for (auto &[idx, data] : domains.plane_wave)
   {
     config::Nondimensionalize(units, data);
   }

@@ -45,6 +45,28 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     usable with gain warnings; a PoleResidue term with a nonzero pole specifies no stored
     electric energy, so the electric energy outputs of a material with one are omitted.
     SchemaVer 5-1-0 [PR 877](https://github.com/awslabs/palace/pull/877).
+  - Far-field extraction (`Boundaries.Postprocessing.FarField`) on interior surfaces, so
+    that far fields can be computed when the outer boundary is not a valid integration
+    surface, or away from the truncation. The fields of each face are taken from the side
+    facing the center of the bounding box of the surface. SchemaVer 4-2-3.
+    [PR 1110](https://github.com/awslabs/palace/pull/1110).
+  - Incident plane wave excitations (`Domains.PlaneWave`) for driven simulations, with the
+    total-field/scattered-field formulation: the plane wave is injected on the boundary of a
+    total-field region given by volume attributes, the unknown is the total field inside and
+    the scattered field outside, and the truncation of the domain only sees the scattered
+    field. The outputs are the total field everywhere, the scattered field is also written
+    for visualization, and the error estimates take the total field inside the region and
+    the scattered field outside. With a far-field surface
+    (`Boundaries.Postprocessing.FarField`), computed from the scattered field, the bistatic
+    radar cross section is written in the far-field directions (`farfield-rcs.csv`), and
+    the monostatic one in the backscattering direction of each plane wave
+    (`rcs-monostatic.csv`). On periodic cells, the envelope of the incident field is used
+    with a Floquet wave vector, which is checked at setup against the wave vector of the
+    plane wave over the lattice translations, for all the frequencies of the sweep. The
+    adaptive frequency sweep supports plane waves, with the exact projection of their
+    excitation at each frequency. See the new example `examples/rcs_coated_sphere`.
+    SchemaVer 5-3-0.
+    [PR 1212](https://github.com/awslabs/palace/pull/1212).
 
 #### Interface Changes
 
@@ -109,14 +131,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     and the results of adaptive sweeps change by about the accuracy of the PROM. Set
     `"InitialGuess": false` to restore the previous default behavior. SchemaVer 5-0-0
     [PR 1126](https://github.com/awslabs/palace/pull/1126).
-
-#### New Features
-
-  - Far-field extraction (`Boundaries.Postprocessing.FarField`) on interior surfaces, so
-    that far fields can be computed when the outer boundary is not a valid integration
-    surface, or away from the truncation. The fields of each face are taken from the side
-    facing the center of the bounding box of the surface. SchemaVer 4-2-3.
-    [PR 1110](https://github.com/awslabs/palace/pull/1110).
+  - Far-field extraction (`Boundaries.Postprocessing.FarField`) is now an error with
+    periodic boundaries (`Boundaries.Periodic`): the surface of one cell does not enclose a
+    bounded radiator, and the fields were integrated without their Floquet phase.
+    [PR 1212](https://github.com/awslabs/palace/pull/1212).
 
 #### Performance Improvements
 

@@ -108,6 +108,13 @@ struct Measurement
 
     // Components of the electric field.
     std::vector<std::array<std::complex<double>, 3>> E_field;
+
+    // Amplitude of the incident plane wave of the excitation (0 if the excitation has no
+    // plane wave), and far field in its backscattering direction, for the radar cross
+    // section.
+    double E0 = 0.0;
+    std::pair<double, double> thetaphi_back = {0.0, 0.0};
+    std::array<std::complex<double>, 3> E_back = {};
   };
 
   // Data for both lumped and wave port.
@@ -439,6 +446,16 @@ protected:
     requires(solver_t == ProblemType::DRIVEN || solver_t == ProblemType::EIGENMODE);
   void PrintFarFieldE(const SurfacePostOperator &surf_post_op)
     requires(solver_t == ProblemType::DRIVEN || solver_t == ProblemType::EIGENMODE);
+
+  // Driven: radar cross section for plane wave excitations, in the far-field directions
+  // and in the backscattering direction of each plane wave.
+  std::optional<TableWithCSVFile> farfield_rcs, rcs_monostatic;
+
+  void InitializeFarFieldRCS(const SpaceOperator &fem_op,
+                             const SurfacePostOperator &surf_post_op)
+    requires(solver_t == ProblemType::DRIVEN);
+  void PrintFarFieldRCS(const SpaceOperator &fem_op)
+    requires(solver_t == ProblemType::DRIVEN);
 
   // Eigenmode.
   std::optional<TableWithCSVFile> eig;

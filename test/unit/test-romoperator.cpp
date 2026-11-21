@@ -5227,3 +5227,125 @@ TEST_CASE("RomOperator-SolveReducedSystem-Parallel", "[romoperator][Serial][Para
     CHECK(x.isZero());
   }
 }
+
+// The PROM excitation of a plane wave, evaluated from the restrictions of D_Xᵀ V to the
+// layer dofs and the incident field on the layer only, is the projection Vᵀ b of the HDM
+// excitation b = (A g_T)_O - (A g_O)_T with A = K + iω C - ω² M. A boundary with a
+// frequency-dependent condition across the boundary of the total-field region couples
+// it to the rest of the domain through A2(ω), which the PROM excitation does not take:
+// it is rejected.
+TEST_CASE("RomOperator plane wave excitation", "[romoperator][Serial][Parallel]")
+{
+  auto MakeConfig = [](int order, const std::vector<int> &tf_attributes)
+  {
+    json config;
+    config["Problem"] = {{"Type", "Driven"}, {"Output", "test_output"}};
+    config["Model"] = {{"Mesh", "test.msh"}, {"L0", 1.0}};  // A wavelength of a few cells
+    config["Domains"] = {{"Materials", {{{"Attributes", {1, 2}}}}},
+                         {"PlaneWave",
+                          {{{"Index", 1},
+                            {"Attributes", tf_attributes},
+                            {"Direction", "+Z"},
+                            {"Polarization", "+X"},
+                            {"Amplitude", 1.0}}}}};
+    config["Boundaries"] = {
+        {"Absorbing", {{"Attributes", {1, 2, 3, 4, 5, 6}}, {"Order", order}}}};
+    config["Solver"] = {
+        {"Order", 2},
+        {"Driven",
+         {{"Samples", {{{"MinFreq", 0.1}, {"MaxFreq", 0.2}, {"FreqStep", 0.05}}}}}}};
+    return config;
+  };
+  // Attribute 1 is the inner cube [1/3, 2/3]^3, or the slab x < 1/3 (on the boundary).
+  auto MakeMesh = [](bool slab)
+  {
+    auto serial_mesh = std::make_unique<mfem::Mesh>(
+        mfem::Mesh::MakeCartesian3D(3, 3, 3, mfem::Element::TETRAHEDRON));
+    mfem::Vector c;
+    for (int e = 0; e < serial_mesh->GetNE(); e++)
+    {
+      serial_mesh->GetElementCenter(e, c);
+      bool inner = true;
+      for (int d = 0; d < 3; d++)
+      {
+        inner = inner && c(d) > 1.0 / 3.0 && c(d) < 2.0 / 3.0;
+      }
+      serial_mesh->SetAttribute(e, (slab ? c(0) < 1.0 / 3.0 : inner) ? 1 : 2);
+    }
+    serial_mesh->SetAttributes();
+    std::vector<std::unique_ptr<Mesh>> mesh;
+    mesh.push_back(std::make_unique<Mesh>(
+        std::make_unique<mfem::ParMesh>(Mpi::World(), *serial_mesh)));
+    return mesh;
+  };
+
+  {
+    IoData iodata(MakeConfig(1, {1}), false);
+    test::IntegrationSettingsGuard settings_guard(iodata.solver);
+    auto mesh = MakeMesh(false);
+    SpaceOperator space_op(iodata.solver, iodata.domains, iodata.boundaries,
+                           iodata.problem.type, iodata.units, mesh);
+    RomOperatorTest prom_op(iodata, space_op, 3);
+    const auto comm = space_op.GetComm();
+    ComplexVector v(space_op.GetNDSpace().GetTrueVSize());
+    v.UseDevice(true);
+    for (int j = 0; j < 3; j++)
+    {
+      v = 0.0;
+      linalg::SetRandom(comm, v.Real(), 1 + j + 3 * Mpi::Rank(comm));
+      prom_op.UpdatePROM(v, "test");
+    }
+    REQUIRE(prom_op.GetReducedDimension() == 3);
+
+    auto K = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
+    auto C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+    auto M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+    REQUIRE(C);
+    ComplexVector b(v.Size());
+    b.UseDevice(true);
+    for (double omega : iodata.solver.driven.sample_f)
+    {
+      CAPTURE(omega);
+      auto A = space_op.GetSystemMatrix(std::complex<double>(1.0, 0.0), 1i * omega,
+                                        std::complex<double>(-omega * omega, 0.0), K.get(),
+                                        C.get(), M.get());
+      b = 0.0;
+      REQUIRE(space_op.AddPlaneWaveExcitationVector(1, omega, *A, b));
+      Eigen::VectorXcd full(3);
+      for (int i = 0; i < 3; i++)
+      {
+        full(i) = {linalg::Dot(comm, prom_op.GetVectors()[i], b.Real()),
+                   linalg::Dot(comm, prom_op.GetVectors()[i], b.Imag())};
+      }
+      REQUIRE(full.norm() > 0.0);
+      prom_op.SolvePROM(omega);
+      const Eigen::VectorXcd reduced = prom_op.GetAr() * prom_op.GetReducedSolution(1);
+      CHECK((reduced - full).norm() <= 1.0e-10 * full.norm());
+
+      // The same for this excitation alone.
+      prom_op.SolvePROM(omega, 1);
+      CHECK((prom_op.GetAr() * prom_op.GetReducedSolution(1) - full).norm() <=
+            1.0e-10 * full.norm());
+    }
+  }
+
+  // The second-order absorbing boundary crosses the boundary of the slab.
+  for (int order : {1, 2})
+  {
+    CAPTURE(order);
+    IoData iodata(MakeConfig(order, {1}), false);
+    test::IntegrationSettingsGuard settings_guard(iodata.solver);
+    auto mesh = MakeMesh(true);
+    SpaceOperator space_op(iodata.solver, iodata.domains, iodata.boundaries,
+                           iodata.problem.type, iodata.units, mesh);
+    if (order == 1)
+    {
+      CHECK_NOTHROW(RomOperatorTest(iodata, space_op, 3));
+    }
+    else
+    {
+      CHECK_THROWS_WITH(RomOperatorTest(iodata, space_op, 3),
+                        ContainsSubstring("must not cross the boundary"));
+    }
+  }
+}

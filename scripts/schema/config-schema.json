@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:5-2-0",
+  "$id": "urn:palace:schema:5-3-0",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -166,6 +166,14 @@
           "additionalItems": false,
           "items": {
             "$ref": "#/$defs/CurrentDipole"
+          }
+        },
+        "PlaneWave": {
+          "type": "array",
+          "description": "Array of incident plane wave excitations, with the total-field/scattered-field formulation: the plane wave is injected on the boundary S of a total-field region given by volume attributes, and the unknown is the total field inside S and the scattered field outside. The outputs are the total field, and the far field is computed from the scattered field. The elements outside of the region which touch S must have one isotropic, lossless, non-dispersive material, which sets the wavenumber of the plane wave. Supported for driven simulations, with a uniform or an adaptive frequency sweep (without circuit synthesis).",
+          "additionalItems": false,
+          "items": {
+            "$ref": "#/$defs/PlaneWave"
           }
         },
         "Postprocessing": {
@@ -906,6 +914,58 @@
               "$ref": "#/$defs/Vector3"
             }
           ]
+        }
+      }
+    },
+    "PlaneWave": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "Index",
+        "Attributes",
+        "Direction",
+        "Polarization"
+      ],
+      "properties": {
+        "Index": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "description": "Excitation index of this plane wave."
+        },
+        "Attributes": {
+          "$ref": "#/$defs/Attributes",
+          "description": "Volume attributes of the total-field region. The elements outside of it which touch its boundary must have one isotropic, lossless, non-dispersive material."
+        },
+        "Direction": {
+          "description": "Propagation direction, as a keyword (`\"+X\"`, ..., `\"-Z\"`) or an array of three values.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DipoleDirection"
+            },
+            {
+              "$ref": "#/$defs/Vector3"
+            }
+          ]
+        },
+        "Polarization": {
+          "description": "Polarization of the incident electric field, as a keyword or an array of three values (the component along the propagation direction is removed).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DipoleDirection"
+            },
+            {
+              "$ref": "#/$defs/Vector3"
+            }
+          ]
+        },
+        "Amplitude": {
+          "type": "number",
+          "default": 1.0,
+          "description": "Amplitude of the incident electric field, V/m."
+        },
+        "Origin": {
+          "$ref": "#/$defs/Vector3",
+          "description": "Point where the incident field has zero phase, in mesh length units. Defaults to the origin."
         }
       }
     },
