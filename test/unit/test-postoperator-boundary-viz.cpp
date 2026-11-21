@@ -1473,9 +1473,12 @@ TEST_CASE_METHOD(test::SharedTempDir,
         mfem::GridFunction Ue_ref(Ue_gf.FESpace());
         Ue_ref.ProjectCoefficient(Ue_legacy);
         ErrorStats stats;
+        const double ref_atol = rtol * Ue_ref.Normlinf();
+        const auto *gf = Ue_gf.HostRead();
+        const auto *ref = Ue_ref.HostRead();
         for (int i = 0; i < Ue_gf.Size(); i++)
         {
-          stats.Add(Ue_gf(i), Ue_ref(i), rtol, rtol * Ue_ref.Normlinf());
+          stats.Add(gf[i], ref[i], rtol, ref_atol);
         }
         CheckStats("U_e grid function", stats);
       }
