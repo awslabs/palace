@@ -46,11 +46,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     `config["Solver"]["Linear"]["Type"]` names factors both instead. Adds a driven example
     in `examples/substructuring` (a 3 x 4 grid of CPW resonators). SchemaVer 6-1-1.
     [PR 1044](https://github.com/awslabs/palace/pull/1044).
-  - Substructuring offline runs also write the interface, as a Gmsh mesh of its faces
+  - Substructuring offline runs also write the interface as a Gmsh mesh of its faces
     (`<model>_interface.msh`), for meshing a redesigned region against it, and online runs
-    take a mesh of the region without the environment elements, adding those of the model's
-    mesh of the region. An online run on an interface which differs from the model's tells
-    where. [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
+    take a mesh of the region alone, adding the environment elements of the model's mesh of
+    the region. An interface which differs from the model's is rejected at a point where it
+    does. [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
   - `validate-config` accepts several configuration files and validates them in one Julia
     session. [PR 1180](https://github.com/awslabs/palace/pull/1180).
   - Added `Boundaries.LumpedPort[].ExcitationAmplitude` and `ExcitationPhase` (degrees),

@@ -1639,9 +1639,8 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
                  "SubstructuringSolver tells where the mesh of the region differs from Γ",
                  "[substructure][Serial][Parallel]")
 {
-  // On the mesh of the region, the vertex of Γ (x = 0.5) at its center, which the collar
-  // does not touch, moved: the online run tells the point of the model's interface DOF
-  // there.
+  // On the mesh of the region, the vertex at the center of Γ (x = 0.5), which the collar
+  // does not touch, moved: the online run tells the model's interface DOF there.
   const std::string model_path = (temp_dir / "substruct_moved.bin").string();
   auto make_config = [&](const std::string &mode)
   {
@@ -1689,11 +1688,9 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
     nodes->FESpace()->GetVertexVDofs(center, vdofs);
     (*nodes)(vdofs[1]) += 0.01;
   }
-  CHECK_THROWS_WITH(
-      capacitance(make_config("Online"),
-                  std::make_unique<mfem::ParMesh>(Mpi::World(), serial)),
-      Catch::Matchers::ContainsSubstring("at (0.5, 0.5, 0.5)") &&
-          Catch::Matchers::ContainsSubstring("has no counterpart in the other"));
+  CHECK_THROWS_WITH(capacitance(make_config("Online"),
+                                std::make_unique<mfem::ParMesh>(Mpi::World(), serial)),
+                    Catch::Matchers::ContainsSubstring("model at (0.5, 0.5, 0.5)"));
 }
 
 TEST_CASE("SubstructuringSolver magnetostatics ignores terminals",

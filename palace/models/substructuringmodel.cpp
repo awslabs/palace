@@ -814,8 +814,7 @@ void SubstructuringSolver::Impl::LoadModel(const std::string &model_path, int si
   // Signature match: the saved interface DOFs on the current ones (dual quantities, S_E
   // and the sections' interface rows, transform as x_cur = M^-T x_saved). H1: a
   // permutation. H(curl): signed matches, and blocks for the DOFs whose basis depends on
-  // the face orientation (second-order face DOFs on tetrahedra). Unmatched, the interfaces
-  // differ where a DOF of one lies at none of the other.
+  // the face orientation (second-order face DOFs on tetrahedra).
   const std::vector<double> signatures = InterfaceSignatures(sig_w);
   bool matches = saved.nG == nG;
   SignatureMap map;
@@ -823,18 +822,9 @@ void SubstructuringSolver::Impl::LoadModel(const std::string &model_path, int si
   {
     map = MatchSignatureBasis(signatures, saved.sig, saved.width, &matches);
   }
-  if (!matches)
-  {
-    if (const auto p = UnmatchedInterfacePoint(signatures, sig_w, saved.sig, saved.width))
-    {
-      MFEM_ABORT(InterfaceDiffersMessage(*p, iodata.units.GetMeshLengthRelativeScale(),
-                                         model_path));
-    }
-    MFEM_ABORT("Saved substructuring model interface ("
-               << saved.nG << " DOFs) does not match this run (" << nG
-               << "); the interface (Gamma) must be identical between the offline and "
-                  "online runs!");
-  }
+  MFEM_VERIFY(matches, InterfaceDiffersMessage(signatures, sig_w, saved.sig, saved.width,
+                                               iodata.units.GetMeshLengthRelativeScale(),
+                                               model_path));
   {
     BlockTimer bt_io(Timer::IO);
     S_rows = ReadRows(model_path, saved.S_pos, map);

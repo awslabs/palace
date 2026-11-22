@@ -325,6 +325,11 @@ std::vector<char> MatchSignaturePoints(const std::vector<double> &candidates, in
   return match;
 }
 
+namespace
+{
+
+// The point of a saved interface DOF at which no current one lies, or else of a current one
+// at which no saved one lies, if any.
 std::optional<std::array<double, 3>>
 UnmatchedInterfacePoint(const std::vector<double> &current, int width,
                         const std::vector<double> &saved, int saved_width)
@@ -343,16 +348,27 @@ UnmatchedInterfacePoint(const std::vector<double> &current, int width,
   return std::nullopt;
 }
 
-std::string InterfaceDiffersMessage(const std::array<double, 3> &p, double length_scale,
-                                    const std::string &model_path)
+}  // namespace
+
+std::string InterfaceDiffersMessage(const std::vector<double> &current, int width,
+                                    const std::vector<double> &saved, int saved_width,
+                                    double length_scale, const std::string &model_path)
 {
-  return fmt::format("The interface (Gamma) differs from that of the saved substructuring "
-                     "model: an interface DOF of this run or of the model at ({:.6g}, "
-                     "{:.6g}, {:.6g}) (in mesh length units) has no counterpart in the "
-                     "other! Mesh a redesigned region against the model's interface ({}), "
-                     "or rerun in \"Offline\" mode to condense the environment again!",
-                     p[0] * length_scale, p[1] * length_scale, p[2] * length_scale,
-                     InterfaceMeshPath(model_path));
+  if (const auto p = UnmatchedInterfacePoint(current, width, saved, saved_width))
+  {
+    return fmt::format("The interface (Gamma) differs from that of the saved "
+                       "substructuring model at ({:.6g}, {:.6g}, {:.6g}) (in mesh length "
+                       "units). Mesh a redesigned region against the model's interface "
+                       "({}), or rerun in \"Offline\" mode to condense the environment "
+                       "again!",
+                       (*p)[0] * length_scale, (*p)[1] * length_scale,
+                       (*p)[2] * length_scale, InterfaceMeshPath(model_path));
+  }
+  return fmt::format(
+      "The interface (Gamma) of this run ({:d} DOFs) differs from that of the "
+      "saved substructuring model ({:d} DOFs): it must be identical between "
+      "the offline and online runs!",
+      current.size() / width, saved.size() / saved_width);
 }
 
 std::vector<int> SignatureMap::SavedRows(int g0, int m) const
@@ -711,15 +727,11 @@ public:
   }
 };
 
-}  // namespace
-
-namespace
-{
-
-// Γ of a serial mesh as a Gmsh 2.2 mesh: its faces between an element of the region and one
-// of the environment (whose attribute may be shifted by shift), with the given attribute,
-// their nodes those of Gmsh's elements of the mesh's geometric order, from the faces'
-// transformations, in mesh length units (coordinates times length_scale).
+// Print Γ, the faces of a serial mesh between an element of the region and one of the
+// environment (whose attribute may be shifted by shift), as a Gmsh 2.2 mesh of these faces
+// with the given attribute, at the mesh's geometric order (2 at most), in mesh length units
+// (coordinates times length_scale). Its nodes are the mesh's vertices and, at order 2, the
+// midpoints of its edges and of the quadrilateral faces.
 void PrintInterfaceMesh(std::ostream &out, mfem::Mesh &mesh,
                         const std::vector<int> &region_attributes,
                         const std::vector<int> &environment_attributes, int shift,
@@ -734,52 +746,13 @@ void PrintInterfaceMesh(std::ostream &out, mfem::Mesh &mesh,
   };
   const int geom_order =
       mesh.GetNodes() ? mesh.GetNodes()->FESpace()->GetMaxElementOrder() : 1;
-  // Gmsh's element types and nodes, on the reference faces of MFEM (as their vertices).
-  struct GmshFace
-  {
-    int type;
-    std::vector<std::array<double, 2>> nodes;
-  };
-  const double t = 1.0 / 3.0;
-  const std::map<std::pair<mfem::Geometry::Type, int>, GmshFace> gmsh_faces = {
-      {{mfem::Geometry::TRIANGLE, 1}, {2, {{0, 0}, {1, 0}, {0, 1}}}},
-      {{mfem::Geometry::TRIANGLE, 2},
-       {9, {{0, 0}, {1, 0}, {0, 1}, {0.5, 0}, {0.5, 0.5}, {0, 0.5}}}},
-      {{mfem::Geometry::TRIANGLE, 3},
-       {21,
-        {{0, 0},
-         {1, 0},
-         {0, 1},
-         {t, 0},
-         {2 * t, 0},
-         {2 * t, t},
-         {t, 2 * t},
-         {0, 2 * t},
-         {0, t},
-         {t, t}}}},
-      {{mfem::Geometry::SQUARE, 1}, {3, {{0, 0}, {1, 0}, {1, 1}, {0, 1}}}},
-      {{mfem::Geometry::SQUARE, 2},
-       {10,
-        {{0, 0},
-         {1, 0},
-         {1, 1},
-         {0, 1},
-         {0.5, 0},
-         {1, 0.5},
-         {0.5, 1},
-         {0, 0.5},
-         {0.5, 0.5}}}}};
-  // The nodes, shared by position (the faces' transformations agree on their edges to
-  // rounding), and the faces by their nodes. The extent is that of the nodes (a gathered
-  // serial mesh holds no vertex coordinates with nodes).
-  mfem::Vector lo, hi;
-  mesh.GetBoundingBox(lo, hi, 0);
-  const double extent = std::max(lo.Normlinf(), hi.Normlinf());
-  const double h = 1.0e-10 * std::max(extent, std::numeric_limits<double>::min());
-  std::map<std::array<long long, 3>, int> node_index;
+  MFEM_ASSERT(geom_order <= 2, "No interface is written at geometric order 3 or more!");
+  // The nodes by the mesh entity (dimension, index) they are the vertex or midpoint of.
+  std::map<std::array<int, 2>, int> index;
   std::vector<std::array<double, 3>> nodes;
   std::vector<std::pair<int, std::vector<int>>> faces;
-  mfem::Vector x(3);
+  mfem::Array<int> fv, fe, fo;
+  mfem::Vector x;
   for (int f = 0; f < mesh.GetNumFaces(); f++)
   {
     int e1, e2;
@@ -794,40 +767,58 @@ void PrintInterfaceMesh(std::ostream &out, mfem::Mesh &mesh,
     {
       continue;
     }
-    const auto it = gmsh_faces.find({mesh.GetFaceGeometry(f), geom_order});
-    MFEM_VERIFY(it != gmsh_faces.end(),
-                "No interface file is written for faces of geometry "
-                    << mesh.GetFaceGeometry(f) << " and order " << geom_order << "!");
+    const auto geom = mesh.GetFaceGeometry(f);
+    const mfem::IntegrationRule &ref = *mfem::Geometries.GetVertices(geom);
     mfem::ElementTransformation &T = *mesh.GetFaceTransformation(f);
     std::vector<int> ids;
-    for (const auto &r : it->second.nodes)
+    auto node = [&](std::array<int, 2> key, const mfem::IntegrationPoint &ip)
     {
-      mfem::IntegrationPoint ip;
-      ip.Set2(r[0], r[1]);
-      x = 0.0;
-      T.Transform(ip, x);
-      std::array<double, 3> c = {x(0) * length_scale, x(1) * length_scale,
-                                 x(2) * length_scale};
-      std::array<long long, 3> k;
-      for (int d = 0; d < 3; d++)
-      {
-        k[d] = std::llround(c[d] / (h * length_scale));
-      }
-      const auto [n, added] = node_index.try_emplace(k, static_cast<int>(nodes.size()) + 1);
+      const auto [it, added] = index.try_emplace(key, static_cast<int>(nodes.size()) + 1);
       if (added)
       {
-        nodes.push_back(c);
+        T.Transform(ip, x);
+        nodes.push_back({length_scale * x(0), length_scale * x(1),
+                         (x.Size() > 2) ? length_scale * x(2) : 0.0});
       }
-      ids.push_back(n->second);
+      ids.push_back(it->second);
+    };
+    mesh.GetFaceVertices(f, fv);
+    for (int i = 0; i < fv.Size(); i++)
+    {
+      node({0, fv[i]}, ref.IntPoint(i));
     }
-    faces.emplace_back(it->second.type, std::move(ids));
+    if (geom_order == 2 && geom == mfem::Geometry::SEGMENT)
+    {
+      node({1, f}, mfem::Geometries.GetCenter(geom));
+    }
+    else if (geom_order == 2)
+    {
+      // Gmsh's edges are MFEM's: between the vertices j and j + 1.
+      mesh.GetFaceEdges(f, fe, fo);
+      for (int j = 0; j < fe.Size(); j++)
+      {
+        const auto &a = ref.IntPoint(j), &b = ref.IntPoint((j + 1) % fe.Size());
+        mfem::IntegrationPoint mid;
+        mid.Set2(0.5 * (a.x + b.x), 0.5 * (a.y + b.y));
+        node({1, fe[j]}, mid);
+      }
+      if (geom == mfem::Geometry::SQUARE)
+      {
+        node({2, f}, mfem::Geometries.GetCenter(geom));
+      }
+    }
+    const int type = (geom == mfem::Geometry::SEGMENT)    ? ((geom_order == 1) ? 1 : 8)
+                     : (geom == mfem::Geometry::TRIANGLE) ? ((geom_order == 1) ? 2 : 9)
+                                                          : ((geom_order == 1) ? 3 : 10);
+    faces.emplace_back(type, std::move(ids));
   }
   out.precision(std::numeric_limits<double>::max_digits10);
   out << "$MeshFormat\n2.2 0 8\n$EndMeshFormat\n";
   out << "$PalaceInterface\nversion " << kInterfaceMeshVersion << "\ngeometric_order "
       << geom_order << "\norder " << order << "\nlength_unit " << length_unit
       << "\n$EndPalaceInterface\n";
-  out << "$PhysicalNames\n1\n2 " << attribute << " \"interface\"\n$EndPhysicalNames\n";
+  out << "$PhysicalNames\n1\n"
+      << mesh.Dimension() - 1 << " " << attribute << " \"interface\"\n$EndPhysicalNames\n";
   out << "$Nodes\n" << nodes.size() << "\n";
   for (std::size_t n = 0; n < nodes.size(); n++)
   {
@@ -933,14 +924,26 @@ std::vector<char> WriteRegionMesh(const std::string &path,
   // plain boundary elements, if any).
   const int gamma_attribute =
       (parent.bdr_attributes.Size() ? parent.bdr_attributes.Max() : 0) + 1;
-  WriteRootOutputFile(interface_path, comm,
-                      [&](std::ostream &out)
-                      {
-                        PrintInterfaceMesh(out, smesh, region_attributes,
-                                           environment_attributes, shift, gamma_attribute,
-                                           length_scale, length_unit,
-                                           fespace.GetMaxElementOrder());
-                      });
+  if (const int geom_order =
+          parent.GetNodes() ? parent.GetNodes()->FESpace()->GetMaxElementOrder() : 1;
+      geom_order <= 2)
+  {
+    WriteRootOutputFile(interface_path, comm,
+                        [&](std::ostream &out)
+                        {
+                          PrintInterfaceMesh(out, smesh, region_attributes,
+                                             environment_attributes, shift, gamma_attribute,
+                                             length_scale, length_unit,
+                                             fespace.GetMaxElementOrder());
+                        });
+  }
+  else
+  {
+    Mpi::Warning(comm,
+                 "No interface is written for redesigns of a mesh of geometric order "
+                 "{:d} (2 at most)!\n",
+                 geom_order);
+  }
   SerialRegionMesh sub(Mpi::Root(comm)
                            ? mfem::Mesh(mfem::SubMesh::CreateFromDomain(smesh, attrs))
                            : mfem::Mesh());
@@ -973,16 +976,15 @@ std::unique_ptr<mfem::Mesh> AddRegionCollar(const mfem::Mesh &mesh,
   const int dim = mesh.Dimension(), sdim = mesh.SpaceDimension();
   MFEM_VERIFY(src.Dimension() == dim && src.SpaceDimension() == sdim && mesh.Conforming() &&
                   src.Conforming(),
-              "A mesh of the region takes the collar of a conforming model's mesh of the "
-              "region of its dimensions only!");
+              "The mesh of the region and the model's mesh of the region must be "
+              "conforming, of the same dimensions!");
   auto order_of = [](const mfem::Mesh &m)
   { return m.GetNodes() ? m.GetNodes()->FESpace()->GetMaxElementOrder() : 1; };
   const int order = order_of(mesh);
-  MFEM_VERIFY(order == order_of(src), "The mesh of the region is of geometric order "
-                                          << order << ", the model's mesh of the region "
-                                          << order_of(src) << "!");
-  MFEM_VERIFY(order <= 2,
-              "A mesh of the region takes a collar at geometric order 2 at most!");
+  MFEM_VERIFY(order == order_of(src), "The geometric orders of the mesh of the region ("
+                                          << order << ") and of the model's mesh of the "
+                                          << "region (" << order_of(src) << ") differ!");
+  MFEM_VERIFY(order <= 2, "The collar is added to meshes of geometric order 2 at most!");
   auto in_region = [&](int a)
   { return std::ranges::find(region_attributes, a) != region_attributes.end(); };
   std::vector<int> collar;
@@ -1000,18 +1002,21 @@ std::unique_ptr<mfem::Mesh> AddRegionCollar(const mfem::Mesh &mesh,
     return nullptr;
   }
 
-  // The vertices of the mesh's boundary faces, by their first coordinate, and the faces.
-  mfem::Array<int> fv;
-  std::set<std::vector<int>> bdr_faces;
-  std::vector<int> bv;
-  double extent = 0.0;
-  for (int v = 0; v < mesh.GetNV(); v++)
+  // The mesh's boundary faces by their sorted vertices, and their vertices by position.
+  using FaceKey = std::array<int, 4>;
+  auto face_key = [](const int *v, int n)
   {
-    for (int d = 0; d < sdim; d++)
-    {
-      extent = std::max(extent, std::abs(mesh.GetVertex(v)[d]));
-    }
-  }
+    FaceKey k;
+    k.fill(-1);
+    std::copy(v, v + n, k.begin());
+    std::sort(k.begin(), k.begin() + n);
+    return k;
+  };
+  std::vector<FaceKey> bdr_faces;
+  mfem::KDTree3D bdr_vertices;
+  std::vector<char> on_bdr(mesh.GetNV(), 0);
+  double extent = 0.0;
+  mfem::Array<int> fv;
   for (int f = 0; f < mesh.GetNumFaces(); f++)
   {
     int e1, e2;
@@ -1021,32 +1026,28 @@ std::unique_ptr<mfem::Mesh> AddRegionCollar(const mfem::Mesh &mesh,
       continue;
     }
     mesh.GetFaceVertices(f, fv);
-    std::vector<int> key(fv.begin(), fv.end());
-    std::ranges::sort(key);
-    bdr_faces.insert(key);
-    bv.insert(bv.end(), fv.begin(), fv.end());
+    bdr_faces.push_back(face_key(fv.GetData(), fv.Size()));
+    for (int v : fv)
+    {
+      if (!on_bdr[v])
+      {
+        on_bdr[v] = 1;
+        bdr_vertices.AddPoint(mesh.GetVertex(v), v);
+        for (int d = 0; d < 3; d++)
+        {
+          extent = std::max(extent, std::abs(mesh.GetVertex(v)[d]));
+        }
+      }
+    }
   }
-  std::ranges::sort(bv);
-  bv.erase(std::unique(bv.begin(), bv.end()), bv.end());
-  std::ranges::sort(bv, {}, [&](int v) { return mesh.GetVertex(v)[0]; });
+  bdr_vertices.Sort();
+  std::ranges::sort(bdr_faces);
   const double tol = 1.0e-9 * extent;
   auto find_vertex = [&](const double *x)
   {
-    auto it = std::lower_bound(bv.begin(), bv.end(), x[0] - tol,
-                               [&](int v, double x0) { return mesh.GetVertex(v)[0] < x0; });
-    for (; it != bv.end() && mesh.GetVertex(*it)[0] <= x[0] + tol; ++it)
-    {
-      double d2 = 0.0;
-      for (int d = 0; d < sdim; d++)
-      {
-        d2 += std::pow(mesh.GetVertex(*it)[d] - x[d], 2);
-      }
-      if (d2 <= tol * tol)
-      {
-        return *it;
-      }
-    }
-    return -1;
+    const int v = bdr_vertices.FindClosestPoint(x);
+    const double *y = mesh.GetVertex(v);
+    return (std::hypot(x[0] - y[0], x[1] - y[1], x[2] - y[2]) <= tol) ? v : -1;
   };
 
   // The collar's vertices: those on Γ are the mesh's, the others are added after them.
@@ -1069,9 +1070,9 @@ std::unique_ptr<mfem::Mesh> AddRegionCollar(const mfem::Mesh &mesh,
       }
     }
   }
-  // The faces between the collar and the region in the model's mesh of the region (Γ under
-  // the collar) must be faces of the mesh's boundary, which they make interior.
-  std::set<std::vector<int>> covered;
+  // Γ under the collar (its faces with the region in the model's mesh of the region) must
+  // be faces of the mesh's boundary, which become interior.
+  std::set<FaceKey> covered;
   for (int f = 0; f < src.GetNumFaces(); f++)
   {
     int e1, e2;
@@ -1081,32 +1082,31 @@ std::unique_ptr<mfem::Mesh> AddRegionCollar(const mfem::Mesh &mesh,
       continue;
     }
     src.GetFaceVertices(f, fv);
-    std::vector<int> key;
+    std::vector<int> mapped;
     double c[3] = {0.0, 0.0, 0.0};
     for (int v : fv)
     {
-      key.push_back(index[v]);
-      for (int d = 0; d < sdim; d++)
+      mapped.push_back(index[v]);
+      for (int d = 0; d < 3; d++)
       {
         c[d] += src.GetVertex(v)[d] / fv.Size();
       }
     }
-    std::ranges::sort(key);
-    MFEM_VERIFY(key.front() >= 0 && key.back() < nv && bdr_faces.contains(key),
-                "The mesh of the region does not match the interface of the model: the "
-                "face of its collar at ("
+    const FaceKey key = face_key(mapped.data(), fv.Size());
+    MFEM_VERIFY(std::ranges::all_of(mapped, [nv](int v) { return v < nv; }) &&
+                    std::ranges::binary_search(bdr_faces, key),
+                "The mesh of the region does not match the model's interface at ("
                     << c[0] << ", " << c[1] << ", " << c[2]
-                    << ") (in mesh length units) on Gamma is no face of the mesh! Mesh the "
-                       "region against the model's interface!");
+                    << ") (in mesh length units), a face of Gamma under the collar. Mesh "
+                       "the region against the model's interface!");
     covered.insert(key);
   }
 
-  // The mesh's elements and those of the collar, the mesh's boundary elements but those
-  // under the collar, and the model's boundary elements bordering the collar (those under
-  // it as the model's mesh of the region has them).
+  // The mesh's elements and the collar's, the mesh's boundary elements but those under the
+  // collar, and the model's boundary elements bordering the collar.
   auto merged = std::make_unique<mfem::Mesh>(dim, nv + added, mesh.GetNE() + collar.size(),
                                              mesh.GetNBE(), sdim);
-  std::vector<const double *> coords(nv + added, nullptr);
+  std::vector<const double *> coords(nv + added);
   for (int v = 0; v < nv; v++)
   {
     coords[v] = mesh.GetVertex(v);
@@ -1143,9 +1143,7 @@ std::unique_ptr<mfem::Mesh> AddRegionCollar(const mfem::Mesh &mesh,
   for (int be = 0; be < mesh.GetNBE(); be++)
   {
     const mfem::Element *el = mesh.GetBdrElement(be);
-    std::vector<int> key(el->GetVertices(), el->GetVertices() + el->GetNVertices());
-    std::ranges::sort(key);
-    if (!covered.contains(key))
+    if (!covered.contains(face_key(el->GetVertices(), el->GetNVertices())))
     {
       merged->AddBdrElement(el->Duplicate(merged.get()));
     }
@@ -1163,7 +1161,7 @@ std::unique_ptr<mfem::Mesh> AddRegionCollar(const mfem::Mesh &mesh,
   merged->Finalize(false, false);
 
   // The nodes of a curved mesh, element by element (of the same vertices, so of the same
-  // local nodes, at order 2 at most).
+  // local nodes at order 2 at most); a collar without nodes is straight.
   if (const mfem::GridFunction *nodes = mesh.GetNodes())
   {
     merged->SetCurvature(order, false, sdim, nodes->FESpace()->GetOrdering());
@@ -1181,7 +1179,7 @@ std::unique_ptr<mfem::Mesh> AddRegionCollar(const mfem::Mesh &mesh,
     {
       copy(mesh, e, e);
     }
-    for (std::size_t i = 0; i < collar.size(); i++)
+    for (std::size_t i = 0; src.GetNodes() && i < collar.size(); i++)
     {
       copy(src, collar[i], mesh.GetNE() + static_cast<int>(i));
     }

@@ -92,18 +92,17 @@ struct SignatureMap
 
 // Which of a set of DOFs (H1 or H(curl) signatures of the given width) lie at the point of
 // one of a saved set of DOFs (of saved_width, 13 with the side moments of split DOFs),
-// within the tolerance of MatchSignatureBasis, and (in saved_matched, if given) which of
-// the saved DOFs one of them lies at.
+// within the tolerance of MatchSignatureBasis, and in saved_matched (if given) which saved
+// DOFs one of them lies at.
 std::vector<char> MatchSignaturePoints(const std::vector<double> &candidates, int width,
                                        const std::vector<double> &saved, int saved_width,
                                        std::vector<char> *saved_matched = nullptr);
 
 // The map from the saved to the current signatures, aborting unless the current signatures
 // equal M times the saved ones within a relative tolerance (H1: a permutation), or with
-// matches given, telling whether they do. A 13th
-// column (width 13) tells the versions of a DOF of a broken space apart, which must match
-// one to one: a side moment, zero for the other DOFs, which flips with the orientation as
-// the others.
+// matches, telling whether they do. A 13th column (width 13) tells the versions of a DOF of
+// a broken space apart, which must match one to one: a side moment, zero for the other
+// DOFs, which flips with the orientation as the others.
 SignatureMap MatchSignatureBasis(const std::vector<double> &current,
                                  const std::vector<double> &saved, int width,
                                  bool *matches = nullptr);
@@ -195,12 +194,11 @@ inline constexpr int kInterfaceMeshVersion = 1;
 // environment elements touching the marked local true DOFs (the collar), with their
 // boundary elements. The local boundary elements marked in plain_bdr (if not empty) are
 // written with the attribute of the boundary faces the submesh generates. Also writes Γ,
-// the faces between the region and the environment, to interface_path as a Gmsh 2.2 mesh
-// of faces of the mesh's geometric order with that attribute, and a $PalaceInterface
-// section (the format version, the geometric and discretization orders, and the length unit
-// of the mesh in m, length_unit),
-// for meshing a redesigned region against it (see AddRegionCollar). Returns the local
-// environment elements written. Collective.
+// the faces between the region and the environment, to interface_path for meshing a
+// redesigned region against it (see AddRegionCollar): a Gmsh 2.2 mesh of these faces with
+// that attribute, at the mesh's geometric order (2 at most), with a $PalaceInterface
+// section of the format version, the geometric and discretization orders and the mesh's
+// length unit (length_unit m). Returns the local environment elements written. Collective.
 std::vector<char> WriteRegionMesh(
     const std::string &path, const std::string &interface_path,
     mfem::ParFiniteElementSpace &fespace, const std::vector<int> &region_attributes,
@@ -211,13 +209,12 @@ std::vector<char> WriteRegionMesh(
 // without the collar of AddRegionCollar).
 bool RegionElementsOnly(const mfem::Mesh &mesh, const std::vector<int> &region_attributes);
 
-// A serial mesh of the region without the collar of environment elements of a mesh of the
-// region (WriteRegionMesh), as a mesher gives for a redesigned region meshed against Γ,
-// with that of the mesh of the region at region_mesh_path added: its elements on Γ share
-// the vertices of the mesh at Γ (and the nodes, of geometric order 2 at most), the others
-// are added apart, and the boundary elements bordering it are those of the mesh of the
-// region (under the collar, Γ's faces are interior, as there). Aborts with a position on Γ
-// unless each face of the collar on Γ is a face of the mesh's boundary.
+// A serial mesh of the region alone (as a mesher meshes a redesigned region against Γ),
+// with the collar of the mesh of the region at region_mesh_path (see WriteRegionMesh)
+// added, or null without a collar: the collar's elements share the mesh's vertices and
+// nodes (geometric order 2 at most) on Γ, and its boundary elements are those of the mesh
+// of the region, under which Γ's faces become interior. Aborts at a face of Γ under the
+// collar which is no boundary face of the mesh.
 std::unique_ptr<mfem::Mesh> AddRegionCollar(const mfem::Mesh &mesh,
                                             const std::string &region_mesh_path,
                                             const std::vector<int> &region_attributes);
@@ -337,18 +334,13 @@ std::vector<char> RegionMeshInterface(mfem::ParFiniteElementSpace &parent_fespac
                                       const std::vector<double> &saved_signatures,
                                       int saved_width);
 
-// The point of a saved interface DOF at which no current interface DOF lies, or else of a
-// current one at which no saved one lies (signatures as for MatchSignaturePoints), if any:
-// where interfaces which MatchSignatureBasis does not match differ, unless they differ by
-// their DOFs at the same points only.
-std::optional<std::array<double, 3>>
-UnmatchedInterfacePoint(const std::vector<double> &current, int width,
-                        const std::vector<double> &saved, int saved_width);
-
-// The message of an interface which differs from that of the saved model at point p (of
-// UnmatchedInterfacePoint, in mesh length units: coordinates times length_scale).
-std::string InterfaceDiffersMessage(const std::array<double, 3> &p, double length_scale,
-                                    const std::string &model_path);
+// The message of a current interface which MatchSignatureBasis does not match to the saved
+// one (signatures as for MatchSignaturePoints): the point of a DOF of one of them at which
+// the other has none (a saved one first), in mesh length units (coordinates times
+// length_scale), or else their sizes.
+std::string InterfaceDiffersMessage(const std::vector<double> &current, int width,
+                                    const std::vector<double> &saved, int saved_width,
+                                    double length_scale, const std::string &model_path);
 
 // Centers for the three fields of FingerprintField, at fixed fractions of the bounding box
 // of the centers of the elements with the given attributes (the origin without any).

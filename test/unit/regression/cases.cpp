@@ -1872,11 +1872,10 @@ palace::test::CustomCheck TestProbePolarization(double tol)
   };
 }
 
-// After an offline run in dir on mesh_file (unrefined) which saved environment_model.bin:
-// the interface it wrote is Γ (the faces between the region and the environment), and
-// environment_model_redesign.mesh is its mesh of the region without the collar of
-// environment elements, as a mesher meshing a redesigned region against Γ writes it (with Γ
-// as boundary elements), to which an online run adds the collar again.
+// After an offline run in dir on mesh_file (unrefined) saving environment_model.bin: its
+// interface file holds the faces of Γ, its mesh of the region gets its collar back, and
+// written without the collar (as a mesher meshing a redesign against Γ would) as
+// environment_model_redesign.mesh.
 void WriteMeshOfRedesign(const std::filesystem::path &dir, const std::string &mesh_file,
                          const std::vector<int> &region_attributes)
 {
@@ -1907,8 +1906,6 @@ void WriteMeshOfRedesign(const std::filesystem::path &dir, const std::string &me
     attrs.Append(a);
   }
   mfem::Mesh redesign(mfem::SubMesh::CreateFromDomain(region, attrs));
-  // With the collar added again, the elements and boundary elements are those of the mesh
-  // of the region.
   const auto merged = palace::AddRegionCollar(
       redesign, (dir / "environment_model_region.mesh").string(), region_attributes);
   REQUIRE(merged);
@@ -1927,6 +1924,7 @@ void WriteMeshOfRedesign(const std::filesystem::path &dir, const std::string &me
   out.precision(std::numeric_limits<double>::max_digits10);
   redesign.Print(out);
 }
+
 }  // namespace
 
 // ===========================================================================
@@ -2298,8 +2296,7 @@ TEST_CASE("substructuring_electrostatic_region", "[Serial][Parallel][GPU][Regres
                                   opts);
 }
 
-// The same on the mesh of the region without its collar, as a redesign meshed against Γ:
-// the online run adds the collar of the model's mesh of the region to it.
+// The same on the mesh of the region without its collar, which the online run adds.
 TEST_CASE("substructuring_electrostatic_redesign", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
@@ -3003,8 +3000,8 @@ TEST_CASE("substructuring_driven_region", "[Serial][Parallel][GPU][Regression]")
                                   "online_region", opts);
 }
 
-// The same on the mesh of the region without its collar, as a redesign meshed against Γ:
-// the online run adds the collar, whose pieces at the environment's ports are apart from Γ.
+// The same on the mesh of the region without its collar, which the online run adds (its
+// pieces at the environment's ports apart from Γ).
 TEST_CASE("substructuring_driven_redesign", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
@@ -3077,8 +3074,8 @@ TEST_CASE("substructuring_driven_box_region", "[Serial][Parallel][GPU][Regressio
                                   "online_region", opts);
 }
 
-// The same on the mesh of the region without its collar: the collar's elements on the edge
-// of Γ where the sheet ends share it with the redesign.
+// The same on the mesh of the region without its collar, which the online run adds (its
+// elements on the edge of Γ where the sheet ends).
 TEST_CASE("substructuring_driven_box_redesign", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;

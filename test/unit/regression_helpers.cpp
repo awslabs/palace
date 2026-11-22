@@ -539,7 +539,7 @@ void RunRegressionCase(std::string_view case_dir, std::string_view config_json,
       }
       REQUIRE(ok);
     }
-    // The setup run or after_setup writes the case's mesh, as the mesh of the region.
+    // The setup run or after_setup may write the case's mesh.
     require_mesh(config, stage.path());
   }
   IoData iodata = LoadCaseIoData(std::move(config), effective_opts);

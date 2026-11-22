@@ -8,10 +8,13 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <limits>
 #include <map>
 #include <memory>
 #include <numeric>
 #include <random>
+#include <sstream>
+#include <string>
 #include <vector>
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -466,26 +469,23 @@ TEST_CASE("H1 DOFs at the points of saved ones", "[substructure][Serial]")
 TEST_CASE("An interface DOF without counterpart is told by its point",
           "[substructure][Serial]")
 {
-  // The saved DOFs matched, and each side told by a DOF the other has not at its point (a
-  // saved one first), in the message in mesh length units.
+  // A saved DOF without a current one at its point first, then a current one without a
+  // saved one, in mesh length units; else the sizes.
   const std::vector<double> saved = {0.1, 0.2, 0.3, 0.5, -0.2, 0.0};
-  CHECK_FALSE(UnmatchedInterfacePoint({0.5, -0.2, 0.0, 0.1, 0.2, 0.3}, 3, saved, 3));
   std::vector<char> saved_matched;
   MatchSignaturePoints({0.5, -0.2, 0.0, 0.1, 0.2, 0.3 + 1.0e-6}, 3, saved, 3,
                        &saved_matched);
   CHECK(saved_matched == std::vector<char>{0, 1});
-  const auto missing =
-      UnmatchedInterfacePoint({0.5, -0.2, 0.0, 0.1, 0.2, 0.4}, 3, saved, 3);
-  REQUIRE(missing);
-  CHECK(*missing == std::array<double, 3>{0.1, 0.2, 0.3});
-  const auto extra =
-      UnmatchedInterfacePoint({0.5, -0.2, 0.0, 0.1, 0.2, 0.3, 0.7, 0.8, 0.9}, 3, saved, 3);
-  REQUIRE(extra);
-  CHECK(*extra == std::array<double, 3>{0.7, 0.8, 0.9});
-  const std::string message = InterfaceDiffersMessage(*missing, 10.0, "postpro/model.bin");
-  CHECK_THAT(message,
-             Catch::Matchers::ContainsSubstring("at (1, 2, 3)") &&
-                 Catch::Matchers::ContainsSubstring("postpro/model_interface.msh"));
+  auto message = [&](const std::vector<double> &current)
+  { return InterfaceDiffersMessage(current, 3, saved, 3, 10.0, "postpro/model.bin"); };
+  using Catch::Matchers::ContainsSubstring;
+  CHECK_THAT(message({0.5, -0.2, 0.0, 0.1, 0.2, 0.4}),
+             ContainsSubstring("at (1, 2, 3)") &&
+                 ContainsSubstring("postpro/model_interface.msh"));
+  CHECK_THAT(message({0.5, -0.2, 0.0, 0.1, 0.2, 0.3, 0.7, 0.8, 0.9}),
+             ContainsSubstring("at (7, 8, 9)"));
+  CHECK_THAT(message({0.1, 0.2, 0.3, 0.5, -0.2, 0.0}),
+             ContainsSubstring("(2 DOFs)") && !ContainsSubstring(" at ("));
 }
 
 TEST_CASE("Saved DOFs are matched in large sets", "[substructure][Serial]")
@@ -711,13 +711,65 @@ TEST_CASE("Eliminated rows without a stored diagonal become identity rows",
   }
 }
 
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "The interface of a curved mesh shares its nodes",
+                 "[substructure][Serial][Parallel]")
+{
+  // Γ of a second-order mesh of n^3 cubes split at x = 0.5 (n^2 squares of two triangles):
+  // six-node triangles on its (n + 1)^2 vertices and 3 n^2 + 2 n edges.
+  constexpr int n = 2;
+  auto serial = mfem::Mesh::MakeCartesian3D(n, n, n, mfem::Element::TETRAHEDRON);
+  for (int e = 0; e < serial.GetNE(); e++)
+  {
+    mfem::Vector c;
+    serial.GetElementCenter(e, c);
+    serial.SetAttribute(e, (c(0) < 0.5) ? 1 : 2);
+  }
+  serial.SetAttributes();
+  serial.SetCurvature(2);
+  mfem::ParMesh mesh(Mpi::World(), serial);
+  mfem::H1_FECollection fec(1, 3);
+  mfem::ParFiniteElementSpace fespace(&mesh, &fec);
+  const auto path = (temp_dir / "curved_interface.msh").string();
+  WriteRegionMesh((temp_dir / "curved_region.mesh").string(), path, fespace, {1}, {2},
+                  std::vector<char>(fespace.GetTrueVSize(), 0), 1.0, 1.0e-6);
+  std::ifstream in(path);
+  std::map<std::string, std::vector<std::string>> sections;
+  for (std::string line, name; std::getline(in, line);)
+  {
+    if (line.starts_with("$End"))
+    {
+      name.clear();
+    }
+    else if (line.starts_with("$"))
+    {
+      name = line;
+    }
+    else
+    {
+      sections[name].push_back(line);
+    }
+  }
+  CHECK(std::stoi(sections["$Nodes"].front()) == (n + 1) * (n + 1) + 3 * n * n + 2 * n);
+  REQUIRE(std::stoi(sections["$Elements"].front()) == 2 * n * n);
+  for (std::size_t i = 1; i < sections["$Elements"].size(); i++)
+  {
+    std::istringstream element(sections["$Elements"][i]);
+    int id, type;
+    element >> id >> type;
+    CHECK(type == 9);
+  }
+  CHECK(sections["$PalaceInterface"] ==
+        std::vector<std::string>{"version 1", "geometric_order 2", "order 1",
+                                 "length_unit 9.9999999999999995e-07"});
+}
+
 TEST_CASE_METHOD(palace::test::SharedTempDir, "A mesh of the region takes its collar back",
                  "[substructure][Serial]")
 {
-  // A curved mesh of the region (1) and of its collar (2) written as the model's mesh of
-  // the region, and its region alone: the collar added gives each element back, with its
-  // nodes, and the boundary elements. With a vertex of Γ moved, the collar's face there is
-  // told.
+  // A curved model's mesh of the region (1) and its collar (2), and the region alone: the
+  // collar added gives back each element with its nodes, and the boundary elements. With a
+  // vertex of Γ moved, the collar's face there is told.
   auto mesh =
       mfem::Mesh::MakeCartesian3D(3, 2, 2, mfem::Element::TETRAHEDRON, 1.5, 1.0, 1.0);
   for (int e = 0; e < mesh.GetNE(); e++)
@@ -739,7 +791,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "A mesh of the region takes its co
   const std::string path = (temp_dir / "collar_region.mesh").string();
   {
     std::ofstream out(path);
-    out.precision(17);
+    out.precision(std::numeric_limits<double>::max_digits10);
     mesh.Print(out);
   }
   mfem::Mesh model(path.c_str(), 1, 0, false);
@@ -806,7 +858,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "A mesh of the region takes its co
   REQUIRE(moved >= 0);
   region.GetVertex(moved)[1] += 1.0e-3;
   CHECK_THROWS_WITH(AddRegionCollar(region, path, {1}),
-                    Catch::Matchers::ContainsSubstring("is no face of the mesh"));
+                    Catch::Matchers::ContainsSubstring("a face of Gamma under the collar"));
 }
 
 TEST_CASE_METHOD(palace::test::SharedTempDir, "Records of a substructuring model file",

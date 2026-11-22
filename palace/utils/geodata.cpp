@@ -46,8 +46,8 @@ constexpr auto MSH_FLT_PRECISION = std::numeric_limits<double>::max_digits10;
 std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &, bool,
                                      const config::BoundaryData &);
 
-// The serial mesh of a redesigned region of an online substructuring run (its elements all
-// in the region), with the collar of the model's mesh of the region (see AddRegionCollar).
+// Add the collar of the model's mesh of the region to the serial mesh of an online
+// substructuring run whose elements are all in the region (see AddRegionCollar).
 void AddModelCollar(std::unique_ptr<mfem::Mesh> &, const IoData &);
 
 // Read a serial mesh from a stream like the mfem::Mesh stream constructor, but removing the
@@ -3057,10 +3057,9 @@ void AddModelCollar(std::unique_ptr<mfem::Mesh> &mesh, const IoData &iodata)
     return;
   }
   const std::string path = RegionMeshPath(sub->model_file);
-  MFEM_VERIFY(fs::exists(path), "The mesh holds the region only, and the model has no mesh "
-                                "of the region ("
-                                    << path
-                                    << ") to take the collar of the environment from!");
+  MFEM_VERIFY(fs::exists(path), "The mesh holds the region only, and the model's mesh of "
+                                "the region ("
+                                    << path << "), which gives the collar, is missing!");
   if (auto merged = AddRegionCollar(*mesh, path, sub->region_attributes))
   {
     Mpi::Print("Added the collar of the model's mesh of the region ({}) to the mesh: {:d} "

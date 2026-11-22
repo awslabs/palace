@@ -87,16 +87,14 @@ A redesign of the region is re-meshed inside the mesh of the region with
 [`examples/substructuring/remesh_region.py`](https://github.com/awslabs/palace/blob/main/examples/substructuring/remesh_region.py)
 and `--region-mesh` (see [Example: qubit lattice](@ref substructuring-lattice-example)).
 
-The offline run also writes the interface, the faces between the region and the environment, as a
-Gmsh 2.2 mesh (`<model>_interface.msh`, in the mesh's length units and at its geometric order, with
-a `$PalaceInterface` section giving its format version, its geometric and discretization orders and
-the mesh's length unit in m), for a mesher to mesh a redesigned region against it. A mesh of the
-region without the environment elements, with the region's elements only and the interface's faces
-as boundary elements, then serves an `"Online"` run too: *Palace* adds the environment elements of
-the model's mesh of the region, which must be next to the model, sharing the vertices (and nodes,
-at geometric order 2 at most) of the mesh on the interface. A face of the interface under these
-elements that the mesh does not have, and an interface which differs from the model's elsewhere,
-are rejected at a point where they differ.
+The offline run also writes the interface, the faces between the region and the environment, for
+a mesher to mesh a redesigned region against: a Gmsh 2.2 mesh (`<model>_interface.msh`) in the
+mesh's length units, at its geometric order (2 at most), with a `$PalaceInterface` section of its
+format version, its geometric and discretization orders and the mesh's length unit in m. An
+`"Online"` run also takes a mesh of the region alone, with the interface's faces as boundary
+elements: *Palace* adds the environment elements of the model's mesh of the region (next to the
+model), which share its vertices and nodes on the interface. An interface which differs from the
+model's is rejected at a point where it does.
 
 In electrostatics and magnetostatics (driven runs are described in
 [Driven problems](#Driven-problems)), the remaining settings (terminals, materials,
