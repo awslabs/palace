@@ -679,7 +679,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
 
 #if defined(MFEM_USE_STRUMPACK)
 TEST_CASE("SubstructuringSolver factors without STRUMPACK compression",
-          "[substructure][Serial][Parallel]")
+          "[substructure][Serial][Parallel][Long]")
 {
   // The factorizations of substructuring are exact, as no Krylov iteration corrects the
   // error of a compressed factor: the block low-rank compression of Solver.Linear leaves
@@ -856,14 +856,8 @@ TEST_CASE("SubstructuringSolver reproduces full-domain magnetostatic energy",
   pcg.Mult(f, u_full);
   Vector t(pfes.GetTrueVSize());
   Kpure->Mult(u_full, t);
-  double local = 0.0;
-  for (int i = 0; i < pfes.GetTrueVSize(); i++)
-  {
-    local += u_full(i) * t(i);
-  }
-  double e_mono = 0.0;
-  MPI_Allreduce(&local, &e_mono, 1, MPI_DOUBLE, MPI_SUM, Mpi::World());
-  e_mono *= 0.5;
+  // On the device the solution and its product are read there (not as host entries).
+  const double e_mono = 0.5 * mfem::InnerProduct(Mpi::World(), u_full, t);
 
   CHECK(e_sub > 0.0);
   CHECK(std::abs(e_sub - e_mono) <= 1.0e-10 * std::abs(e_mono));
@@ -2040,14 +2034,8 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   mfem::Vector u_full, t(pfes.GetTrueVSize());
   xgf.GetTrueDofs(u_full);
   K->Mult(u_full, t);
-  double local = 0.0;
-  for (int i = 0; i < pfes.GetTrueVSize(); i++)
-  {
-    local += u_full(i) * t(i);
-  }
-  double e_mono = 0.0;
-  MPI_Allreduce(&local, &e_mono, 1, MPI_DOUBLE, MPI_SUM, Mpi::World());
-  e_mono *= 0.5;
+  // On the device the solution and its product are read there (not as host entries).
+  const double e_mono = 0.5 * mfem::InnerProduct(Mpi::World(), u_full, t);
 
   CHECK(e_sub > 1.0e-8);
   CHECK(std::abs(e_sub - e_mono) <= 1.0e-10 * std::abs(e_mono));
@@ -2317,7 +2305,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
 }
 
 TEST_CASE("SubstructuringSolver region factored with the environment operator",
-          "[substructure][Serial][Parallel]")
+          "[substructure][Serial][Parallel][Long]")
 {
   // The region is factored with S_E as one sparse system, here with one excitation and an
   // interface of over 1000 DOFs, the dense block of the factorization. Without a Dirichlet
@@ -2532,7 +2520,7 @@ TEST_CASE("SubstructuringSolver sparse direct solver choice",
 }
 
 TEST_CASE_METHOD(palace::test::SharedTempDir, "SubstructuringSolver London sheet energies",
-                 "[substructure][Serial][Parallel]")
+                 "[substructure][Serial][Parallel][Long]")
 {
   // Magnetostatics with a London superconductor sheet (finite penetration depth) on an
   // interior plane crossing the interface: region and environment sheet faces, meeting
@@ -6035,7 +6023,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
 
 TEST_CASE_METHOD(palace::test::SharedTempDir,
                  "SubstructuringSolver online magnetostatic region adaptation",
-                 "[substructure][Serial][Parallel]")
+                 "[substructure][Serial][Parallel][Long]")
 {
   // One step of online adaptive refinement of the region only, for a closed current on
   // tetrahedra: the region error indicators are zero on the environment; nonconforming
