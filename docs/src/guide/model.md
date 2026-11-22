@@ -204,11 +204,12 @@ weight is the model's stored-energy weight ``W(\omega)``, not generally
 ``\operatorname{Re}\epsilon(i\omega)``. Eigenmode postprocessing evaluates material
 properties at the real part of the mode frequency.
 
-The participation ratios of lumped inductive ports and of interface dielectrics, and the
-mode coupling rates, use the electric-side normalization
-``U = (E_\mathrm{stored} + E_{\operatorname{Re}\epsilon})/2 + E_\mathrm{cap}``. The domain
-participations `p_elec[k]` in `domain-E.csv` divide the stored electric energy of each
-domain by the total stored electric energy instead.
+The participation ratios of lumped inductive ports and of interface dielectrics use the
+electric-side normalization
+``U = (E_\mathrm{stored} + E_{\operatorname{Re}\epsilon})/2 + E_\mathrm{cap}``, the
+time-averaged electric energy of the mode, and the mode coupling rates its total stored
+energy ``2U``. The domain participations `p_elec[k]` in `domain-E.csv` divide the stored
+electric energy of each domain by the total stored electric energy instead.
 Here ``E_{\operatorname{Re}\epsilon}`` is the field energy weighted by the real part of
 the permittivity; it equals the magnetic field energy for a lossless mode. This avoids the
 slower convergence of magnetic-field reconstruction and reduces to

@@ -131,12 +131,12 @@ public:
                       mfem::ParFiniteElementSpace &h1_fespace,
                       mfem::ParFiniteElementSpace &nd_fespace);
 
-  // Get surface integrals computing electric or magnetic field flux, or the stationary real
-  // power flux, through a boundary. For complex fields the electric flux uses the complex
-  // permittivity D = (Re{ε} + i Im{ε}) E of a lossy dielectric. ω is the real angular
-  // frequency of the fields, 0 for static fields: a frequency-dependent material uses its
-  // complete permittivity ε(iω), and requires ω > 0. The frequency is required, not
-  // defaulted, so that a caller cannot omit it for frequency-domain fields.
+  // Get surface integrals computing electric or magnetic field flux, or the time-averaged
+  // real power flux, through a boundary. For complex fields the electric flux uses the
+  // complex permittivity D = (Re{ε} + i Im{ε}) E of a lossy dielectric. ω is the real
+  // angular frequency of the fields, 0 for static fields: a frequency-dependent material
+  // uses its complete permittivity ε(iω), and requires ω > 0. The frequency is required,
+  // not defaulted, so that a caller cannot omit it for frequency-domain fields.
   std::complex<double> GetSurfaceFlux(int idx, const GridFunction *E, const GridFunction *B,
                                       double omega) const;
 
@@ -148,7 +148,8 @@ public:
                 const GridFunction &E, const GridFunction &B,
                 std::complex<double> omega) const;
 
-  // Get surface integrals computing interface dielectric energy.
+  // Get surface integrals computing interface dielectric energy (time-averaged for
+  // complex-valued fields).
   double GetInterfaceLossTangent(int idx) const;
   // ω is the real angular frequency of the fields, 0 for static fields, required as for
   // GetSurfaceFlux: a frequency-dependent MS substrate uses |D_n| = |ε(iω)| |E_n|.

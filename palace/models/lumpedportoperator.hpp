@@ -61,7 +61,7 @@ private:
 
 protected:
   // Linear forms for postprocessing integrated quantities on the port.
-  mutable std::unique_ptr<mfem::LinearForm> s, v;
+  mutable std::unique_ptr<mfem::LinearForm> v;
 
   // libCEED surface functionals for port power, voltage, and S-parameter computation,
   // replacing host boundary LinearForm paths when supported.
@@ -131,13 +131,18 @@ public:
   std::complex<double> GetCharacteristicImpedance(double omega = 0.0,
                                                   Branch branch = Branch::TOTAL) const;
 
-  // UNIT-POWER incident quantities of the excited port, which do not include the excitation
-  // weight: the incident power is 1 and the voltage is that of this unit-power wave. Use
-  // these for normalization (for example the S-parameters). For the incident voltage and
-  // current actually applied and reported, which include the weight, use
-  // GetIncidentVoltage and GetIncidentCurrent below.
+  // UNIT-POWER incident wave of an excited port, which does not include the excitation
+  // weight. Excitations are normalized to unit physical incident power referenced to
+  // GetExcitationRefResistance(): unit time-averaged power for a time-harmonic (frequency
+  // domain, peak phasor) excitation, unit instantaneous power at unit pulse amplitude for a
+  // time domain one. The incident voltage and current are the corresponding peak
+  // (time-harmonic) or instantaneous amplitudes: for R_ref = 50 Ω and a time-harmonic
+  // excitation, V_inc = 10 V and I_inc = 0.2 A. Use these for normalization (for example
+  // the S-parameters). For the incident voltage and current actually applied and reported,
+  // which include the weight, use GetIncidentVoltage and GetIncidentCurrent below.
   double GetExcitationPower() const;
-  double GetExcitationVoltage() const;
+  double GetExcitationVoltage(bool time_harmonic) const;
+  double GetExcitationCurrent(bool time_harmonic) const;
 
   // Complex weight a = A exp(i φ) applied to the incident wave of an excited port when the
   // excitation is assembled and when incident quantities are reported; 0 for a port
@@ -154,16 +159,24 @@ public:
     return HasExcitation() && excitation_weight.imag() != 0.0;
   }
 
-  // WEIGHTED incident voltage a V_inc,0 and current a I_inc,0 = a P_inc,0 / V_inc,0 of an
-  // excited port, in internal units, with V_inc,0 = GetExcitationVoltage() the unit-power
-  // value and a = GetExcitationWeight(). These are the incident values applied to the port
-  // and written to the output files.
-  std::complex<double> GetIncidentVoltage() const
+  // WEIGHTED incident voltage a V_inc,0 and current a I_inc,0 of an excited port, in
+  // internal units, with the weight a = GetExcitationWeight() and the unit-power values
+  // V_inc,0 = GetExcitationVoltage(time_harmonic) and I_inc,0 =
+  // GetExcitationCurrent(time_harmonic). The incident power is |a|² times the unit power.
+  // These are the incident values applied to the port and written to the output files.
+  std::complex<double> GetIncidentVoltage(bool time_harmonic) const
   {
-    return GetExcitationWeight() * GetExcitationVoltage();
+    return GetExcitationWeight() * GetExcitationVoltage(time_harmonic);
   }
-  std::complex<double> GetIncidentCurrent() const;
+  std::complex<double> GetIncidentCurrent(bool time_harmonic) const;
 
+  // Peak incident voltage of a time-harmonic wave carrying unit time-averaged power
+  // referenced to the port reference resistance, V_ref = sqrt(2 R_ref). The frequency
+  // domain S-parameter (Kurokawa b-amplitude) of the port is V / V_ref.
+  double GetReferenceVoltage() const;
+
+  // Port power (E x H) ⋅ n integrated over the port surface: instantaneous for real-valued
+  // fields, complex time-averaged power 1/2 ∫ (E x H⋆) ⋅ n dS for complex peak phasors.
   std::complex<double> GetPower(GridFunction &E, GridFunction &B) const;
   std::complex<double> GetPowerLegacy(GridFunction &E, GridFunction &B) const;
   std::complex<double> GetSParameter(GridFunction &E) const;
@@ -174,13 +187,15 @@ public:
   // whether the port is active.
   void AddDampingBdrCoefficients(double coeff, MaterialPropertyCoefficient &fb) const;
 
-  // Time-averaged power dissipated in the resistive sheet of the port,
-  //                           P = 1/2 ∫ |E_t|² / R_s dS,
-  // for the field E on nd_fespace. This is the port contribution to the boundary quadratic
-  // of the damping matrix. For R > 0, the modal voltage gives |V|² / (2R) ≤ P, with
-  // equality only when E_t on each element matches the voltage mode of the port and all
-  // elements have the same voltage: field components orthogonal to that mode do not change
-  // V, but they dissipate power. The boundary operator is assembled on the first call.
+  // Power dissipated in the resistive sheet of the port for the field E on nd_fespace, the
+  // time average
+  //                           P = 1/2 ∫ |E_t|² / R_s dS
+  // for complex peak phasors, and instantaneous (without the 1/2) for real-valued fields.
+  // This is the port contribution to the boundary quadratic of the damping matrix. For
+  // R > 0, the modal voltage gives |V|² / (2R) ≤ P, with equality only when E_t on each
+  // element matches the voltage mode of the port and all elements have the same voltage:
+  // field components orthogonal to that mode do not change V, but they dissipate power.
+  // The boundary operator is assembled on the first call.
   double GetResistorPower(const FiniteElementSpace &nd_fespace,
                           const GridFunction &E) const;
 };
@@ -253,9 +268,11 @@ public:
   // excited port boundaries, -U_inc/(iω) for the real version (versus the full -U_inc for
   // the complex one). The incident field of each port includes its excitation weight, whose
   // real part is added to fbr, usable in the time domain, and whose imaginary part is added
-  // to fbi, for the frequency domain only. Both are frequency independent.
+  // to fbi, for the frequency domain only. Both are frequency independent. Before the
+  // weight, time-harmonic excitations carry unit time-averaged incident power and time
+  // domain ones unit instantaneous power (see LumpedPortData::GetExcitationPower).
   void AddExcitationBdrCoefficients(int excitation_idx, SumVectorCoefficient &fbr,
-                                    SumVectorCoefficient &fbi);
+                                    SumVectorCoefficient &fbi, bool time_harmonic);
 };
 
 }  // namespace palace
