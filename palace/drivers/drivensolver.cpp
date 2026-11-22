@@ -741,6 +741,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
     {
       if (env)
       {
+        BlockTimer bt0(Timer::POSTPRO);
         std::vector<std::complex<double>> e_gamma(
             basis_gamma.empty() ? 0 : basis_gamma.front().size(), 0.0);
         for (std::size_t i = 0; i < basis_gamma.size(); i++)

@@ -483,6 +483,28 @@ std::vector<std::complex<double>> EnvironmentOperator::Coefficients(double omega
   return BarycentricInterpolant::Coefficients(model.omega, model.weights, omega);
 }
 
+namespace
+{
+
+// The combination of a part of the records with their coefficients a at ω.
+template <typename Records, typename Part>
+std::vector<std::complex<double>> Combine(const std::vector<std::complex<double>> &a,
+                                          const Records &records, Part part)
+{
+  std::vector<std::complex<double>> x(part(records[0]).size(), 0.0);
+  for (std::size_t k = 0; k < records.size(); k++)
+  {
+    const auto &y = part(records[k]);
+    for (std::size_t q = 0; q < x.size(); q++)
+    {
+      x[q] += a[k] * y[q];
+    }
+  }
+  return x;
+}
+
+}  // namespace
+
 void EnvironmentOperator::Prepare(double omega)
 {
   if (omega == omega_cur)
@@ -492,38 +514,42 @@ void EnvironmentOperator::Prepare(double omega)
   if (records.empty())
   {
     cur = ReadRecord(FindValue(model.omega, omega));
+    omega_fun = omega;
   }
   else
   {
-    // The combination of the records with their coefficients at ω.
     const auto a = Coefficients(omega);
-    auto combine = [&](auto part)
-    {
-      std::vector<std::complex<double>> x(part(records[0]).size(), 0.0);
-      for (std::size_t k = 0; k < records.size(); k++)
-      {
-        const auto &y = part(records[k]);
-        for (std::size_t q = 0; q < x.size(); q++)
-        {
-          x[q] += a[k] * y[q];
-        }
-      }
-      return x;
-    };
-    cur.S = combine([](const Rows &r) -> const auto & { return r.S; });
-    cur.c = combine([](const Rows &r) -> const auto & { return r.c; });
+    cur.S = Combine(a, records, [](const Rows &r) -> const auto & { return r.S; });
     cur.g.resize(ne);
     for (int e = 0; e < ne; e++)
     {
-      cur.g[e] = combine([e](const Rows &r) -> const auto & { return r.g[e]; });
-    }
-    cur.h.resize(np);
-    for (int j = 0; j < np; j++)
-    {
-      cur.h[j] = combine([j](const Rows &r) -> const auto & { return r.h[j]; });
+      cur.g[e] = Combine(a, records, [e](const Rows &r) -> const auto & { return r.g[e]; });
     }
   }
   omega_cur = omega;
+}
+
+void EnvironmentOperator::PrepareFunctionals(double omega)
+{
+  if (omega == omega_fun)
+  {
+    return;
+  }
+  if (records.empty())
+  {
+    omega_cur = std::numeric_limits<double>::quiet_NaN();
+    Prepare(omega);
+    return;
+  }
+  // The port values need only the functionals: S_E, of |Γ|² entries, is not formed.
+  const auto a = Coefficients(omega);
+  cur.c = Combine(a, records, [](const Rows &r) -> const auto & { return r.c; });
+  cur.h.resize(np);
+  for (int j = 0; j < np; j++)
+  {
+    cur.h[j] = Combine(a, records, [j](const Rows &r) -> const auto & { return r.h[j]; });
+  }
+  omega_fun = omega;
 }
 
 std::vector<std::complex<double>>
@@ -719,7 +745,7 @@ void EnvironmentOperator::PortValues(int excitation_idx, double omega,
   {
     return;
   }
-  Prepare(omega);
+  PrepareFunctionals(omega);
   // V_j = c_jk + h_j^T u_Γ, from the rows of Γ of each process.
   MFEM_VERIFY(e_gamma.size() == gamma_local.size(),
               "The values on the interface do not match its DOFs on this process!");

@@ -175,9 +175,11 @@ private:
     std::vector<std::complex<double>> c;
   };
 
-  // The records of a rational model, and the terms at omega_cur.
+  // The records of a rational model, and the terms at ω: S_E and g at omega_cur, c and h at
+  // omega_fun.
   std::vector<Rows> records;
   double omega_cur = std::numeric_limits<double>::quiet_NaN();
+  double omega_fun = std::numeric_limits<double>::quiet_NaN();
   Rows cur;
 
   // The grid of the dense matrices on Γ, and the global rows and columns of the local part.
@@ -197,8 +199,10 @@ private:
   // the current interface, to the processes holding the entries it adds to. Collective.
   std::vector<std::complex<double>> ReadSchur(long long pos) const;
 
-  // Form the terms at ω, unless they are held.
+  // Form the terms of the operator (S_E and g) at ω, or the port functionals (c and h),
+  // unless they are held (an exact model reads them whole).
   void Prepare(double omega);
+  void PrepareFunctionals(double omega);
 
   // The values of Γ of a vector on this process, in interface order, and those of all of
   // Γ (on every process).
