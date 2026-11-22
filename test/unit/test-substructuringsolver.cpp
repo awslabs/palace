@@ -4574,7 +4574,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
 #if defined(MFEM_USE_GSLIB)
 TEST_CASE_METHOD(palace::test::SharedTempDir,
                  "Driven substructuring writes the probes it interpolates in the region",
-                 "[substructure][Serial][Parallel]")
+                 "[substructure][Serial][Parallel][Long]")
 {
   // Two probes on Γ and one in the region. Online on the full mesh, all three are written,
   // those on Γ with the field of the region, on its side of Γ, where the normal E jumps
@@ -4689,7 +4689,7 @@ TEST_CASE_METHOD(
 TEST_CASE_METHOD(
     palace::test::SharedTempDir,
     "Driven substructuring gives no voltage of the environment's wave port online",
-    "[substructure][Serial][Parallel]")
+    "[substructure][Serial][Parallel][Long]")
 {
   // The voltage and the impedance of a wave port need its field: offline they are those of
   // the environment's port, online, where the port's field is not known, they are NaN, not
@@ -4832,7 +4832,7 @@ TEST_CASE_METHOD(
 
 TEST_CASE_METHOD(palace::test::SharedTempDir,
                  "Driven substructuring checks the environment against the model",
-                 "[substructure][Serial][Parallel]")
+                 "[substructure][Serial][Parallel][Long]")
 {
   // The record of the environment tells the mesh of the region from the full mesh, and
   // rejects an environment refined, with another material, or with another resistance of
@@ -4898,7 +4898,7 @@ TEST_CASE("The record of a driven environment covers its ports", "[substructure]
 TEST_CASE_METHOD(
     palace::test::SharedTempDir,
     "Driven substructuring warns about a rational model which did not converge",
-    "[substructure][Serial][Parallel]")
+    "[substructure][Serial][Parallel][Long]")
 {
   // An online sweep warns about a rational model whose sampling stopped before it met
   // "AdaptiveTol": at "AdaptiveMaxSamples", or in an offline run cut short, which leaves
@@ -5065,7 +5065,7 @@ TEST_CASE_METHOD(
 
 TEST_CASE_METHOD(palace::test::SharedTempDir,
                  "Driven substructuring mesh of the region takes no a priori refinement",
-                 "[substructure][Serial][Parallel]")
+                 "[substructure][Serial][Parallel][Long]")
 {
   // As in the static substructuring, the mesh of the region is written refined: an online
   // run on it takes no a priori refinement, also of the region only (which leaves the
@@ -5289,7 +5289,7 @@ TEST_CASE("DrivenSubstructure rejects attribute sets that do not split the mesh"
 }
 
 TEST_CASE("DrivenSubstructure condenses the environment exactly",
-          "[substructure][Serial][Parallel]")
+          "[substructure][Serial][Parallel][Long]")
 {
   // S_E(ω) from the partial factorization of the environment operator (alone, and with the
   // region) against a dense condensation of the same operator, and the substructured solve
