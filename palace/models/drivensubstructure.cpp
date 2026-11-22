@@ -1007,10 +1007,9 @@ std::vector<int> DrivenSubstructure::InterfaceBoundaryAttributes(
   return attrs;
 }
 
-std::vector<char>
-DrivenSubstructure::WriteRegionMesh(const std::string &path,
-                                    const std::vector<int> &port_attributes,
-                                    double length_scale) const
+std::vector<char> DrivenSubstructure::WriteRegionMesh(
+    const std::string &path, const std::string &interface_path,
+    const std::vector<int> &port_attributes, double length_scale, double length_unit) const
 {
   // The region, and the environment elements touching the DOFs of the environment's ports
   // or the region's Dirichlet DOFs (on Γ, set by boundary conditions of the environment).
@@ -1042,9 +1041,11 @@ DrivenSubstructure::WriteRegionMesh(const std::string &path,
   {
     keep[dl[q]] = keep[dl[q]] || rm[dl[q]];
   }
-  std::vector<char> written =
-      palace::WriteRegionMesh(path, fes, region.attrs, env.attrs, keep, length_scale);
-  Mpi::Print(" Writing the mesh of the region for online runs to {}\n", path);
+  std::vector<char> written = palace::WriteRegionMesh(
+      path, interface_path, fes, region.attrs, env.attrs, keep, length_scale, length_unit);
+  Mpi::Print(" Writing the mesh of the region for online runs to {}, and the interface to "
+             "{}\n",
+             path, interface_path);
   return written;
 }
 

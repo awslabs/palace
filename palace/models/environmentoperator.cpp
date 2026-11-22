@@ -136,14 +136,26 @@ EnvironmentOperator::EnvironmentOperator(const IoData &iodata, SpaceOperator &sp
   ne = static_cast<int>(model.excitations.size());
 
   // The interface, environment and ports of the model.
-  MFEM_VERIFY(model.nG == nG,
-              "Saved substructuring model interface size ("
-                  << model.nG << ") does not match this run (" << nG
-                  << "); the interface (Gamma) must be identical between the offline and "
-                     "online runs.");
-  gamma_map = MatchSignatureBasis(
-      TrueDofSignatures(space_op.GetNDSpace().Get(), ds->InterfaceIndex(), nG),
-      model.signatures, model.sig_w);
+  const auto &nd = space_op.GetNDSpace().Get();
+  const auto signatures = TrueDofSignatures(nd, ds->InterfaceIndex(), nG);
+  bool matches = model.nG == nG;
+  if (matches)
+  {
+    gamma_map = MatchSignatureBasis(signatures, model.signatures, model.sig_w, &matches);
+  }
+  if (!matches)
+  {
+    if (const auto p = UnmatchedInterfacePoint(signatures, SignatureWidth(nd),
+                                               model.signatures, model.sig_w))
+    {
+      MFEM_ABORT(InterfaceDiffersMessage(*p, iodata.units.GetMeshLengthRelativeScale(),
+                                         sub.model_file));
+    }
+    MFEM_ABORT("Saved substructuring model interface ("
+               << model.nG << " DOFs) does not match this run (" << nG
+               << "); the interface (Gamma) must be identical between the offline and "
+                  "online runs.");
+  }
   saved_to_current.resize(nG);
   for (int g = 0; g < nG; g++)
   {

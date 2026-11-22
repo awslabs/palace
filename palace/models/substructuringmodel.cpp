@@ -540,7 +540,9 @@ SubstructuringSolver::Impl::RegionFilmClosure(std::vector<char> &keep,
   return plain;
 }
 
-std::vector<char> SubstructuringSolver::Impl::WriteRegionMesh(const std::string &path)
+std::vector<char>
+SubstructuringSolver::Impl::WriteRegionMesh(const std::string &path,
+                                            const std::string &interface_path)
 {
   BlockTimer bt(Timer::IO);
   if (parent.Nonconforming())
@@ -636,10 +638,12 @@ std::vector<char> SubstructuringSolver::Impl::WriteRegionMesh(const std::string 
   const std::vector<char> plain =
       broken ? RegionFilmClosure(keep, loop_films) : std::vector<char>();
   const auto &sub = *iodata.solver.substructuring;
-  std::vector<char> written =
-      palace::WriteRegionMesh(path, parent_fes, sub.region_attributes, env_attributes, keep,
-                              iodata.units.GetMeshLengthRelativeScale(), plain);
-  Mpi::Print(" Writing the mesh of the region for online runs to {}\n", path);
+  std::vector<char> written = palace::WriteRegionMesh(
+      path, interface_path, parent_fes, sub.region_attributes, env_attributes, keep,
+      iodata.units.GetMeshLengthRelativeScale(), iodata.model.L0, plain);
+  Mpi::Print(" Writing the mesh of the region for online runs to {}, and the interface to "
+             "{}\n",
+             path, interface_path);
   return written;
 }
 
@@ -801,11 +805,6 @@ void SubstructuringSolver::Impl::LoadSections(const std::string &path,
 void SubstructuringSolver::Impl::LoadModel(const std::string &model_path, int sig_w)
 {
   const int nG = nG_global;
-  MFEM_VERIFY(saved.nG == nG,
-              "Saved substructuring model interface size ("
-                  << saved.nG << ") does not match this run (" << nG
-                  << "); the interface (Gamma) must be identical between the offline and "
-                     "online runs!");
   MFEM_VERIFY(saved.width == sig_w,
               "The interface of the saved substructuring model "
                   << ((saved.width == 13) ? "is" : "is not")
@@ -815,9 +814,27 @@ void SubstructuringSolver::Impl::LoadModel(const std::string &model_path, int si
   // Signature match: the saved interface DOFs on the current ones (dual quantities, S_E
   // and the sections' interface rows, transform as x_cur = M^-T x_saved). H1: a
   // permutation. H(curl): signed matches, and blocks for the DOFs whose basis depends on
-  // the face orientation (second-order face DOFs on tetrahedra).
-  const SignatureMap map =
-      MatchSignatureBasis(InterfaceSignatures(sig_w), saved.sig, saved.width);
+  // the face orientation (second-order face DOFs on tetrahedra). Unmatched, the interfaces
+  // differ where a DOF of one lies at none of the other.
+  const std::vector<double> signatures = InterfaceSignatures(sig_w);
+  bool matches = saved.nG == nG;
+  SignatureMap map;
+  if (matches)
+  {
+    map = MatchSignatureBasis(signatures, saved.sig, saved.width, &matches);
+  }
+  if (!matches)
+  {
+    if (const auto p = UnmatchedInterfacePoint(signatures, sig_w, saved.sig, saved.width))
+    {
+      MFEM_ABORT(InterfaceDiffersMessage(*p, iodata.units.GetMeshLengthRelativeScale(),
+                                         model_path));
+    }
+    MFEM_ABORT("Saved substructuring model interface ("
+               << saved.nG << " DOFs) does not match this run (" << nG
+               << "); the interface (Gamma) must be identical between the offline and "
+                  "online runs!");
+  }
   {
     BlockTimer bt_io(Timer::IO);
     S_rows = ReadRows(model_path, saved.S_pos, map);
@@ -854,7 +871,8 @@ void SubstructuringSolver::Impl::SaveModel(const std::string &model_path, int si
     AppendRows(model_path, kSETag, S_rows);  // collective
   }
   AppendEnvFingerprint(model_path);  // collective
-  AppendEnvRecord(model_path, WriteRegionMesh(RegionMeshPath(model_path)));
+  AppendEnvRecord(model_path, WriteRegionMesh(RegionMeshPath(model_path),
+                                              InterfaceMeshPath(model_path)));
   AppendRecord(model_path, kEnvLoopsTag,
                static_cast<long long>(sizeof(int) * env_loops.size()),
                [&](std::ostream &f)

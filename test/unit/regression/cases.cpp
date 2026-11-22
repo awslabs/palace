@@ -36,6 +36,7 @@
 #include "driver.hpp"
 #include "fixtures.hpp"
 
+#include "fem/substructure.hpp"
 #include "fem/substructuremodel.hpp"
 #include "models/drivensubstructure.hpp"
 #include "regression_helpers.hpp"
@@ -1871,6 +1872,61 @@ palace::test::CustomCheck TestProbePolarization(double tol)
   };
 }
 
+// After an offline run in dir on mesh_file (unrefined) which saved environment_model.bin:
+// the interface it wrote is Γ (the faces between the region and the environment), and
+// environment_model_redesign.mesh is its mesh of the region without the collar of
+// environment elements, as a mesher meshing a redesigned region against Γ writes it (with Γ
+// as boundary elements), to which an online run adds the collar again.
+void WriteMeshOfRedesign(const std::filesystem::path &dir, const std::string &mesh_file,
+                         const std::vector<int> &region_attributes)
+{
+  if (!palace::Mpi::Root(palace::Mpi::World()))
+  {
+    return;
+  }
+  mfem::Mesh full((dir / mesh_file).string().c_str(), 1, 0, false);
+  auto in_region = [&](int e)
+  {
+    return std::ranges::find(region_attributes, full.GetAttribute(e)) !=
+           region_attributes.end();
+  };
+  int gamma_faces = 0;
+  for (int f = 0; f < full.GetNumFaces(); f++)
+  {
+    int e1, e2;
+    full.GetFaceElements(f, &e1, &e2);
+    gamma_faces += e1 >= 0 && e2 >= 0 && in_region(e1) != in_region(e2);
+  }
+  mfem::Mesh region((dir / "environment_model_region.mesh").string().c_str(), 1, 0, false);
+  mfem::Mesh gamma((dir / "environment_model_interface.msh").string().c_str());
+  CHECK(gamma.Dimension() == 2);
+  CHECK(gamma.GetNE() == gamma_faces);
+  mfem::Array<int> attrs;
+  for (int a : region_attributes)
+  {
+    attrs.Append(a);
+  }
+  mfem::Mesh redesign(mfem::SubMesh::CreateFromDomain(region, attrs));
+  // With the collar added again, the elements and boundary elements are those of the mesh
+  // of the region.
+  const auto merged = palace::AddRegionCollar(
+      redesign, (dir / "environment_model_region.mesh").string(), region_attributes);
+  REQUIRE(merged);
+  auto count = [](const mfem::Mesh &mesh, bool bdr)
+  {
+    std::map<int, int> n;
+    for (int i = 0; i < (bdr ? mesh.GetNBE() : mesh.GetNE()); i++)
+    {
+      n[bdr ? mesh.GetBdrAttribute(i) : mesh.GetAttribute(i)]++;
+    }
+    return n;
+  };
+  CHECK(count(*merged, false) == count(region, false));
+  CHECK(count(*merged, true) == count(region, true));
+  std::ofstream out(dir / "environment_model_redesign.mesh");
+  out.precision(std::numeric_limits<double>::max_digits10);
+  redesign.Print(out);
+}
 }  // namespace
 
 // ===========================================================================
@@ -2239,6 +2295,23 @@ TEST_CASE("substructuring_electrostatic_region", "[Serial][Parallel][GPU][Regres
   opts.custom_checks["terminal-C.csv"] = TestOfflineRunReproduced("base", opts);
   palace::test::RunRegressionCase("substructuring_electrostatic",
                                   "electrostatic_online_region.json", "online_region",
+                                  opts);
+}
+
+// The same on the mesh of the region without its collar, as a redesign meshed against Γ:
+// the online run adds the collar of the model's mesh of the region to it.
+TEST_CASE("substructuring_electrostatic_redesign", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-6;
+  opts.atol = 1.0e-19;
+  opts.paraview_fields = false;
+  opts.setup_config = "electrostatic.json";
+  opts.after_setup = [](const std::filesystem::path &dir)
+  { WriteMeshOfRedesign(dir, "mesh/cube.msh", {1}); };
+  opts.custom_checks["terminal-C.csv"] = TestOfflineRunReproduced("base", opts);
+  palace::test::RunRegressionCase("substructuring_electrostatic",
+                                  "electrostatic_online_redesign.json", "online_region",
                                   opts);
 }
 
@@ -2930,6 +3003,22 @@ TEST_CASE("substructuring_driven_region", "[Serial][Parallel][GPU][Regression]")
                                   "online_region", opts);
 }
 
+// The same on the mesh of the region without its collar, as a redesign meshed against Γ:
+// the online run adds the collar, whose pieces at the environment's ports are apart from Γ.
+TEST_CASE("substructuring_driven_redesign", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-6;
+  opts.atol = 1.0e-22;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;
+  opts.setup_config = "driven_offline.json";
+  opts.after_setup = [](const std::filesystem::path &dir)
+  { WriteMeshOfRedesign(dir, "mesh/sheet_square.msh", {1}); };
+  palace::test::RunRegressionCase("substructuring_driven", "driven_online_redesign.json",
+                                  "online_region", opts);
+}
+
 // Absorbing walls crossing Γ, of which the mesh of the region holds the region's part only:
 // an online run on it skips their surface fluxes, as the model records (and writes those
 // in the region). The references are a regular simulation, in the online run's columns.
@@ -2986,6 +3075,22 @@ TEST_CASE("substructuring_driven_box_region", "[Serial][Parallel][GPU][Regressio
   opts.setup_config = "driven_offline.json";
   palace::test::RunRegressionCase("substructuring_driven_box", "driven_online_region.json",
                                   "online_region", opts);
+}
+
+// The same on the mesh of the region without its collar: the collar's elements on the edge
+// of Γ where the sheet ends share it with the redesign.
+TEST_CASE("substructuring_driven_box_redesign", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-6;
+  opts.atol = 1.0e-22;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;
+  opts.setup_config = "driven_offline.json";
+  opts.after_setup = [](const std::filesystem::path &dir)
+  { WriteMeshOfRedesign(dir, "mesh/box.mesh", {1}); };
+  palace::test::RunRegressionCase("substructuring_driven_box",
+                                  "driven_online_redesign.json", "online_region", opts);
 }
 
 #endif

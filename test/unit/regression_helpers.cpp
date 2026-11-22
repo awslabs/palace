@@ -519,7 +519,6 @@ void RunRegressionCase(std::string_view case_dir, std::string_view config_json,
     MakeOutputFolder(setup, comm);
     BlockTimer::Reset();
     palace::Run(setup, comm, omp_threads, /*git_tag=*/nullptr);
-    require_mesh(config, stage.path());
     if (effective_opts.after_setup)
     {
       // A step that fails on some ranks (it may run on rank 0 only) fails the case on all.
@@ -540,6 +539,8 @@ void RunRegressionCase(std::string_view case_dir, std::string_view config_json,
       }
       REQUIRE(ok);
     }
+    // The setup run or after_setup writes the case's mesh, as the mesh of the region.
+    require_mesh(config, stage.path());
   }
   IoData iodata = LoadCaseIoData(std::move(config), effective_opts);
   MakeOutputFolder(iodata, comm);
