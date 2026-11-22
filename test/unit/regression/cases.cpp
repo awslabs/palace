@@ -547,8 +547,8 @@ WriteVelocities(std::vector<std::pair<std::string, VelocityField>> fields)
     {
       auto mesh = palace::mesh::ReadInputMesh(iodata);
       mesh->EnsureNodes();
-      const auto &nodes = *mesh->GetNodes();
-      const auto &fespace = *nodes.FESpace();
+      const auto &fespace = *mesh->GetNodes()->FESpace();
+      const auto *nodes = mesh->GetNodes()->HostRead();
       std::ofstream fo(iodata.sensitivity.velocities);
       REQUIRE(fo.is_open());
       fo.precision(17);
@@ -563,7 +563,7 @@ WriteVelocities(std::vector<std::pair<std::string, VelocityField>> fields)
         std::array<double, 3> x = {0.0, 0.0, 0.0};
         for (int c = 0; c < mesh->SpaceDimension(); c++)
         {
-          x[c] = nodes(fespace.DofToVDof(i, c));
+          x[c] = nodes[fespace.DofToVDof(i, c)];
         }
         fo << x[0] << ", " << x[1] << ", " << x[2];
         for (const auto &[name, V] : fields)

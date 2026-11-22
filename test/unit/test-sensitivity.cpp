@@ -88,18 +88,18 @@ std::vector<std::unique_ptr<Mesh>> CubeMesh(IoData &iodata, mfem::Element::Type 
   }
   smesh->SetAttributes();
   smesh->SetCurvature(2);
-  auto &nodes = *smesh->GetNodes();
-  const auto &nodal_fespace = *nodes.FESpace();
+  const auto &nodal_fespace = *smesh->GetNodes()->FESpace();
+  auto *nodes = smesh->GetNodes()->HostReadWrite();
   for (int i = 0; i < nodal_fespace.GetNDofs(); i++)
   {
     double x[3];
     for (int d = 0; d < 3; d++)
     {
-      x[d] = nodes(nodal_fespace.DofToVDof(i, d));
+      x[d] = nodes[nodal_fespace.DofToVDof(i, d)];
     }
     for (int d = 0; d < 3; d++)
     {
-      nodes(nodal_fespace.DofToVDof(i, d)) +=
+      nodes[nodal_fespace.DofToVDof(i, d)] +=
           0.12 * x[d] * (1.0 - x[d]) * std::sin(2.0 * x[(d + 1) % 3] + x[(d + 2) % 3] + d);
     }
   }
@@ -344,15 +344,15 @@ using VelocityField = std::function<std::array<double, 3>(const std::array<doubl
 // A velocity field at the nodes of a serial mesh with nodes.
 mfem::Vector NodalVelocity(const mfem::Mesh &mesh, const VelocityField &V)
 {
-  const auto &nodes = *mesh.GetNodes();
-  const auto &fespace = *nodes.FESpace();
-  mfem::Vector v(nodes.Size());
+  const auto &fespace = *mesh.GetNodes()->FESpace();
+  const auto *nodes = mesh.GetNodes()->HostRead();
+  mfem::Vector v(mesh.GetNodes()->Size());
   for (int i = 0; i < fespace.GetNDofs(); i++)
   {
     std::array<double, 3> x;
     for (int d = 0; d < 3; d++)
     {
-      x[d] = nodes(fespace.DofToVDof(i, d));
+      x[d] = nodes[fespace.DofToVDof(i, d)];
     }
     const auto vi = V(x);
     for (int d = 0; d < 3; d++)
@@ -386,8 +386,8 @@ void WriteVelocityTable(const mfem::Mesh &mesh, const std::string &name,
 {
   if (Mpi::Root(Mpi::World()))
   {
-    const auto &nodes = *mesh.GetNodes();
-    const auto &fespace = *nodes.FESpace();
+    const auto &fespace = *mesh.GetNodes()->FESpace();
+    const auto *nodes = mesh.GetNodes()->HostRead();
     std::ofstream fo(path);
     fo.precision(17);
     fo << fmt::format("x, y, z, {0}.x, {0}.y, {0}.z\n", name);
@@ -395,7 +395,7 @@ void WriteVelocityTable(const mfem::Mesh &mesh, const std::string &name,
     {
       for (int d = 0; d < 3; d++)
       {
-        fo << nodes(fespace.DofToVDof(i, d)) << ", ";
+        fo << nodes[fespace.DofToVDof(i, d)] << ", ";
       }
       for (int d = 0; d < 3; d++)
       {
@@ -762,14 +762,14 @@ TEST_CASE("Magnetostatic inductance sensitivities", "[sensitivity][Serial][Paral
   // A smooth displacement which keeps the source faces planar and their edges off the PEC
   // along x, as the sources must be for their excitations to be compatible.
   const auto &nodal_fespace = dK->GetNodalSpace();
-  const auto &nodes = *mesh.Get().GetNodes();
+  const auto *nodes = mesh.Get().GetNodes()->HostRead();
   mfem::Vector W_l(nodal_fespace.GetVSize());
   for (int i = 0; i < nodal_fespace.GetNDofs(); i++)
   {
     double x[3];
     for (int d = 0; d < 3; d++)
     {
-      x[d] = nodes(nodal_fespace.DofToVDof(i, d));
+      x[d] = nodes[nodal_fespace.DofToVDof(i, d)];
     }
     const double w[3] = {std::sin(2.0 * x[1] + x[2]),
                          x[1] * (1.0 - x[1]) * std::cos(x[0] + 2.0 * x[2]),
@@ -1133,13 +1133,13 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "Input mesh nodes of a Gmsh file",
   }
   auto NodePoints = [](const mfem::Mesh &mesh)
   {
-    const auto &nodes = *mesh.GetNodes();
-    const auto &fespace = *nodes.FESpace();
+    const auto &fespace = *mesh.GetNodes()->FESpace();
+    const auto *nodes = mesh.GetNodes()->HostRead();
     std::vector<Point> points;
     for (int i = 0; i < fespace.GetNDofs(); i++)
     {
-      points.push_back({nodes(fespace.DofToVDof(i, 0)), nodes(fespace.DofToVDof(i, 1)),
-                        nodes(fespace.DofToVDof(i, 2))});
+      points.push_back({nodes[fespace.DofToVDof(i, 0)], nodes[fespace.DofToVDof(i, 1)],
+                        nodes[fespace.DofToVDof(i, 2)]});
     }
     return points;
   };
@@ -1189,10 +1189,11 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "Design velocities",
   const auto &fespace = *nodes.FESpace();
   auto Position = [&](int i)
   {
+    const auto *h_nodes = nodes.HostRead();
     std::array<double, 3> x;
     for (int d = 0; d < 3; d++)
     {
-      x[d] = nodes(fespace.DofToVDof(i, d));
+      x[d] = h_nodes[fespace.DofToVDof(i, d)];
     }
     return x;
   };
@@ -1201,7 +1202,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "Design velocities",
     const auto x = Position(i);
     for (int d = 0; d < 3; d++)
     {
-      nodes(fespace.DofToVDof(i, d)) +=
+      nodes.HostReadWrite()[fespace.DofToVDof(i, d)] +=
           0.12 * x[d] * (1.0 - x[d]) * std::sin(2.0 * x[(d + 1) % 3] + x[(d + 2) % 3] + d);
     }
   }

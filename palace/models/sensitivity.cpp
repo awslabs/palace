@@ -203,8 +203,8 @@ public:
   ElementLocator(mfem::Mesh &mesh) : mesh(mesh), dim(mesh.SpaceDimension())
   {
     // The bounding box of each element, from its nodes, with a margin for curved elements.
-    const auto &nodes = *mesh.GetNodes();
-    const auto &fespace = *nodes.FESpace();
+    const auto &fespace = *mesh.GetNodes()->FESpace();
+    const auto *nodes = mesh.GetNodes()->HostRead();
     std::vector<std::array<Point, 2>> boxes(mesh.GetNE());
     mfem::Array<int> dofs;
     lo.fill(std::numeric_limits<double>::max());
@@ -220,7 +220,7 @@ public:
       {
         for (int c = 0; c < dim; c++)
         {
-          const double x = nodes(fespace.DofToVDof(d, c));
+          const double x = nodes[fespace.DofToVDof(d, c)];
           bmin[c] = std::min(bmin[c], x);
           bmax[c] = std::max(bmax[c], x);
         }
@@ -310,8 +310,8 @@ std::vector<std::vector<double>> EvaluateVelocities(const IoData &iodata,
   auto imesh = mesh::ReadInputMesh(iodata);
   imesh->EnsureNodes();
   const int sdim = imesh->SpaceDimension();
-  const auto &nodes = *imesh->GetNodes();
-  const auto &fespace = *nodes.FESpace();
+  const auto &fespace = *imesh->GetNodes()->FESpace();
+  const auto *nodes = imesh->GetNodes()->HostRead();
 
   // The positions of the nodes of the input mesh, and a tolerance relative to its size.
   std::vector<Point> node_points(fespace.GetNDofs(), Point{0.0, 0.0, 0.0});
@@ -322,7 +322,7 @@ std::vector<std::vector<double>> EvaluateVelocities(const IoData &iodata,
   {
     for (int c = 0; c < sdim; c++)
     {
-      node_points[i][c] = nodes(fespace.DofToVDof(i, c));
+      node_points[i][c] = nodes[fespace.DofToVDof(i, c)];
       lo[c] = std::min(lo[c], node_points[i][c]);
       hi[c] = std::max(hi[c], node_points[i][c]);
     }
@@ -339,9 +339,11 @@ std::vector<std::vector<double>> EvaluateVelocities(const IoData &iodata,
   std::vector<mfem::GridFunction> V(
       table.names.size(),
       mfem::GridFunction(const_cast<mfem::FiniteElementSpace *>(&fespace)));
+  std::vector<double *> h_V;
   for (auto &v : V)
   {
-    v = 0.0;
+    h_V.push_back(v.HostWrite());
+    std::fill_n(h_V.back(), v.Size(), 0.0);
   }
   std::size_t unmatched = 0;
   std::string first_unmatched;
@@ -363,7 +365,7 @@ std::vector<std::vector<double>> EvaluateVelocities(const IoData &iodata,
       {
         for (int c = 0; c < sdim; c++)
         {
-          V[p](fespace.DofToVDof(i, c)) = table.velocities[p][k][c];
+          h_V[p][fespace.DofToVDof(i, c)] = table.velocities[p][k][c];
         }
       }
     }
@@ -395,7 +397,7 @@ std::vector<std::vector<double>> EvaluateVelocities(const IoData &iodata,
       {
         for (int c = 0; c < sdim; c++)
         {
-          v[p][3 * k + c] = V[p](fespace.DofToVDof(found[0], c));
+          v[p][3 * k + c] = h_V[p][fespace.DofToVDof(found[0], c)];
         }
       }
       continue;
