@@ -1,0 +1,72 @@
+diff --git a/mesh/mesh.cpp b/mesh/mesh.cpp
+index acf1374108..b0015af465 100644
+--- a/mesh/mesh.cpp
++++ b/mesh/mesh.cpp
+@@ -5320,7 +5320,12 @@ void Mesh::Loader(std::istream &input, int generate_edges,
+       Nodes = new GridFunction(this, input);
+ 
+       own_nodes = 1;
+-      spaceDim = Nodes->VectorDim();
++      // Query the collection because a parallel partition may have no
++      // elements here (meshgen is reduced later in ParMesh::Load()). Mesh
++      // assumes a scalar nodal space, see NewNodes().
++      MFEM_VERIFY(Nodes->FESpace()->FEColl()->GetRangeType(Dim) ==
++                  FiniteElement::SCALAR, "the nodal space must be scalar");
++      spaceDim = Nodes->FESpace()->GetVDim();
+       if (ncmesh) { ncmesh->spaceDim = spaceDim; }
+ 
+       // Set vertex coordinates from the 'Nodes'
+diff --git a/tests/unit/mesh/test_pmesh.cpp b/tests/unit/mesh/test_pmesh.cpp
+index a444a079f5..475b4d1184 100644
+--- a/tests/unit/mesh/test_pmesh.cpp
++++ b/tests/unit/mesh/test_pmesh.cpp
+@@ -13,6 +13,7 @@
+ #include "unit_tests.hpp"
+ 
+ #include <chrono>
++#include <sstream>
+ #include <thread>
+ #include <vector>
+ 
+@@ -393,6 +394,41 @@ TEST_CASE("ParMeshMakeSimplicial", "[Parallel], [ParMesh]")
+    REQUIRE(x.Normlinf() == MFEM_Approx(0.0));
+ }
+ 
++TEST_CASE("ParMeshPrintLoadEmptyCurvedPartitions", "[Parallel], [ParMesh]")
++{
++   const int dim = GENERATE(2, 3);
++   Mesh mesh = (dim == 2) ?
++               Mesh::MakeCartesian2D(1, 1, Element::QUADRILATERAL) :
++               Mesh::MakeCartesian3D(1, 1, 1, Element::HEXAHEDRON);
++   mesh.SetCurvature(2);
++   ParMesh pmesh(MPI_COMM_WORLD, mesh);
++
++   const int local_empty = pmesh.GetNE() == 0;
++   const auto empty_partitions = pmesh.ReduceInt(local_empty);
++   REQUIRE(empty_partitions == Mpi::WorldSize() - 1);
++
++   std::ostringstream output;
++   pmesh.ParPrint(output);
++   std::istringstream input(output.str());
++   ParMesh recovered(MPI_COMM_WORLD, input);
++
++   REQUIRE(recovered.GetNE() == pmesh.GetNE());
++   REQUIRE(recovered.GetGlobalNE() == 1);
++   REQUIRE(recovered.GetNodes() != nullptr);
++   REQUIRE(recovered.SpaceDimension() == dim);
++   REQUIRE(recovered.GetTypicalElementGeometry() ==
++           (dim == 2 ? Geometry::SQUARE : Geometry::CUBE));
++   REQUIRE(recovered.GetNodes()->Size() == pmesh.GetNodes()->Size());
++
++   if (recovered.GetNodes()->Size() > 0)
++   {
++      Vector node_difference(recovered.GetNodes()->Size());
++      node_difference = *recovered.GetNodes();
++      node_difference -= *pmesh.GetNodes();
++      REQUIRE(node_difference.Normlinf() == MFEM_Approx(0.0));
++   }
++}
++
+ #endif // MFEM_USE_MPI
+ 
+ } // namespace mfem
