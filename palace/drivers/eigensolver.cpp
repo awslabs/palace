@@ -977,7 +977,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       floquet_corr->AddMult(E, B, 1.0 / omega);
     }
 
-    auto total_domain_energy =
+    const double energy_norm =
         post_op.MeasureAndPrintAll(i, E, B, omega, error_abs, error_bkwd, num_report);
     if (const auto [energy_elec, energy_mag] = post_op.GetDomainFieldEnergies();
         energy_mag < longitudinal_tol * energy_elec)
@@ -987,7 +987,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     if (i < num_requested)
     {
       // Frequency-dependent materials use Re{ω} of the eigenvalue, as in postprocessing.
-      estimator.AddErrorIndicator(E, B, total_domain_energy, omega.real(), indicator);
+      estimator.AddErrorIndicator(E, B, energy_norm, omega.real(), indicator);
     }
   }
   if (!longitudinal.empty())

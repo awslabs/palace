@@ -298,6 +298,14 @@ public:
   double GetFrequencyDependentStoredEnergyPermittivity(std::size_t material_idx,
                                                        double omega) const;
 
+  // The modulus |ε(iω)| of the complete permittivity of a frequency-dependent material
+  // (EvaluateFrequencyDependentPermittivity) at real ω > 0: its weight in the energy norm
+  // of the error indicators, in the flux error estimator and in the domain postprocessing
+  // alike. Defined for every model, also without a stored electric energy. Errors at a
+  // singularity, and where ε(iω) = 0, which makes the problem singular.
+  double GetFrequencyDependentPermittivityModulus(std::size_t material_idx,
+                                                  double omega) const;
+
   // Material tensors at the real angular frequency ω > 0, in the layout of
   // GetPermittivityReal() (indexed by the rank-local material, for
   // MaterialPropertyCoefficient). Constant materials keep their entries, Re{ε}, Im{ε} =

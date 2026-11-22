@@ -369,8 +369,8 @@ DomainPostOperator::GetElectricFieldEnergies(const GridFunction &E, double omega
     return d;
   };
   const bool stored = HasStoredElectricFieldEnergy();
-  double energy[2];  // STORED, MATERIAL
-  energy[0] = energy[1] = dot(*M_elec);
+  double energy[3];  // STORED, MATERIAL, energy norm
+  energy[0] = energy[1] = energy[2] = dot(*M_elec);
   for (const auto &[m, op] : M_elec_fd)
   {
     const double d = dot(*op);
@@ -379,11 +379,15 @@ DomainPostOperator::GetElectricFieldEnergies(const GridFunction &E, double omega
       energy[0] += GetFrequencyDependentEnergyWeight(m, omega, ElectricEnergy::STORED) * d;
     }
     energy[1] += GetFrequencyDependentEnergyWeight(m, omega, ElectricEnergy::MATERIAL) * d;
+    // M_elec weights the material by ε∞.
+    energy[2] += (mat_op->GetFrequencyDependentPermittivityModulus(m, omega) -
+                  mat_op->GetFrequencyDependentPermittivityHighFrequency(m)) *
+                 d;
   }
-  Mpi::GlobalSum(2, energy, E.GetComm());
+  Mpi::GlobalSum(3, energy, E.GetComm());
   const double weight = EnergyWeight(E.HasImag());
   return {stored ? std::optional<double>(weight * energy[0]) : std::nullopt,
-          weight * energy[1]};
+          weight * energy[1], weight * energy[2]};
 }
 
 double DomainPostOperator::GetHighFrequencyElectricFieldEnergy(const GridFunction &E) const

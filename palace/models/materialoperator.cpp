@@ -823,6 +823,21 @@ MaterialOperator::GetFrequencyDependentStoredEnergyPermittivity(std::size_t mate
   return w;
 }
 
+double MaterialOperator::GetFrequencyDependentPermittivityModulus(std::size_t material_idx,
+                                                                  double omega) const
+{
+  MFEM_VERIFY(
+      std::isfinite(omega) && omega > 0.0,
+      "The permittivity modulus of a frequency-dependent material requires a finite "
+      "positive frequency!");
+  const double w =
+      std::abs(EvaluateFrequencyDependentPermittivity(material_idx, {0.0, omega}));
+  MFEM_VERIFY(w > 0.0, "The permittivity of frequency-dependent material "
+                           << material_idx << " vanishes at ω = " << omega
+                           << ", which makes the problem singular!");
+  return w;
+}
+
 double
 MaterialOperator::GetFrequencyDependentStoredEnergySusceptibility(std::size_t material_idx,
                                                                   double omega) const

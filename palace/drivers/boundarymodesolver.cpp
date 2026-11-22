@@ -505,7 +505,7 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     const double error_bkwd = eig.GetError(i, EigenvalueSolver::ErrorType::BACKWARD);
     const double error_abs = eig.GetError(i, EigenvalueSolver::ErrorType::ABSOLUTE);
 
-    auto total_domain_energy =
+    const double energy_norm =
         post_op.MeasureAndPrintAll(i, et, en, kn, omega, error_abs, error_bkwd, n_print);
 
     if (i < num_modes && ModeEigenSolver::IsPropagating(kn))
@@ -524,7 +524,7 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       bz.Real() *= 1.0 / omega;
       bz.Imag() = curl_etr;
       bz.Imag() *= -1.0 / omega;
-      estimator.AddErrorIndicator(et, bz, total_domain_energy, omega, indicator);
+      estimator.AddErrorIndicator(et, bz, energy_norm, omega, indicator);
     }
   }
   Mpi::Print("\n");

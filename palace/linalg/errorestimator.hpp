@@ -6,7 +6,6 @@
 
 #include <complex>
 #include <memory>
-#include <optional>
 #include <utility>
 #include <vector>
 #include <mfem.hpp>
@@ -116,12 +115,13 @@ class BoundaryModeFluxErrorEstimator;
 // With a frequency-dependent material (complex fields only), the discontinuous flux is
 // the complete constitutive Dₕ = ε(iω) Eₕ, with the complex permittivity of every
 // material, including the loss tangent of a constant one, and the recovered D its
-// projection. The indicator is η²_K = ∫_K (Dₕ - D)ᴴ W⁻¹ (Dₕ - D) dx, with the positive
-// stored-energy permittivity W(ω) of each model (Re{ε} for a constant material): a
-// positive, energy-scaled recovery indicator, not a stored-energy error bound. W E is not a
-// displacement (εE, not WE, has a continuous normal component), so it is not recovered.
-// A material without a stored electric energy (MaterialOperator::HasStoredElectricEnergy)
-// uses ε∞ instead, a numerical weight, with a warning. Without a frequency-dependent
+// projection. The indicator is η²_K = ∫_K (Dₕ - D)ᴴ W⁻¹ (Dₕ - D) dx, with the weight
+// W = |ε(iω)| of each frequency-dependent material, typed or PoleResidue alike
+// (MaterialOperator::GetFrequencyDependentPermittivityModulus), and W = Re{ε} of a
+// constant material. The indicators are normalized by the energy norm of the fields with
+// the same weights, which the post operator computes (Measurement::FieldEnergyNorm), so
+// they are relative errors in that norm. W E is not a displacement (εE, not WE, has a
+// continuous normal component), so it is not recovered. Without a frequency-dependent
 // material, the established indicator above with Re{ε} is unchanged.
 template <typename VecType = Vector>
 class GradFluxErrorEstimator
@@ -156,12 +156,10 @@ private:
   // Temporary vectors for error estimation.
   mutable VecType E_gf, D, D_gf;
 
-  // Squared elemental indicators, and the squared elemental energy norms of the recovered
-  // flux of the last estimate (for a fallback normalization).
+  // Squared elemental indicators.
   Vector ComputeEstimates(const VecType &E) const;
   Vector ComputeEstimates(const VecType &E, double omega) const
     requires std::is_same_v<VecType, ComplexVector>;
-  Vector RecoveredFluxNorms() const;
   void SetFrequency(double omega) const
     requires std::is_same_v<VecType, ComplexVector>;
 
@@ -182,11 +180,11 @@ public:
   void AddErrorIndicator(const VecType &E, double Et, ErrorIndicator &indicator) const
     requires(!std::is_same_v<VecType, ComplexVector>);
 
-  // The same for complex fields at their required real angular frequency ω. A constant
-  // material does not depend on ω. Et is empty exactly when the total field energy is not
-  // available (MaterialOperator::HasStoredElectricEnergy); the indicators are then
-  // normalized by the energy norm of the recovered flux, a numerical norm.
-  void AddErrorIndicator(const VecType &E, std::optional<double> Et, double omega,
+  // The same for complex fields at their required real angular frequency ω, normalized by
+  // the energy norm Et of the fields (Measurement::FieldEnergyNorm), which is the total
+  // field energy without a frequency-dependent material. A constant material does not
+  // depend on ω.
+  void AddErrorIndicator(const VecType &E, double Et, double omega,
                          ErrorIndicator &indicator) const
     requires std::is_same_v<VecType, ComplexVector>;
 };
@@ -217,7 +215,6 @@ private:
   mutable VecType B_gf, H, H_gf;
 
   Vector ComputeEstimates(const VecType &B) const;
-  Vector RecoveredFluxNorms() const;
 
 public:
   // The recovered H is allowed to be discontinuous across the interior boundaries formed
@@ -256,10 +253,10 @@ public:
                          ErrorIndicator &indicator) const
     requires(!std::is_same_v<VecType, ComplexVector>);
 
-  // The same for complex fields at their required real angular frequency ω, with Et empty
-  // without a total field energy (see GradFluxErrorEstimator).
-  void AddErrorIndicator(const VecType &E, const VecType &B, std::optional<double> Et,
-                         double omega, ErrorIndicator &indicator) const
+  // The same for complex fields at their required real angular frequency ω, normalized by
+  // the energy norm Et of the fields (see GradFluxErrorEstimator).
+  void AddErrorIndicator(const VecType &E, const VecType &B, double Et, double omega,
+                         ErrorIndicator &indicator) const
     requires std::is_same_v<VecType, ComplexVector>;
 };
 
@@ -287,10 +284,11 @@ public:
                          ErrorIndicator &indicator) const
     requires(!std::is_same_v<VecType, ComplexVector>);
 
-  // The same for complex fields at their required real angular frequency ω, with Et empty
-  // without a total field energy (see GradFluxErrorEstimator).
-  void AddErrorIndicator(const VecType &E, const VecType &B, std::optional<double> Et,
-                         double omega, ErrorIndicator &indicator) const
+  // The same for complex fields at their required real angular frequency ω, normalized by
+  // Et, the electric part of the energy norm of the tangential field (the normalization
+  // of mode analysis, see GradFluxErrorEstimator).
+  void AddErrorIndicator(const VecType &E, const VecType &B, double Et, double omega,
+                         ErrorIndicator &indicator) const
     requires std::is_same_v<VecType, ComplexVector>;
 };
 

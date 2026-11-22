@@ -255,12 +255,12 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
         // Switch ParaView subfolders once per excitation, after the first solve.
         post_op.InitializeParaviewDataCollection(excitation_idx);
       }
-      auto total_domain_energy =
+      const double energy_norm =
           post_op.MeasureAndPrintAll(excitation_idx, int(omega_i), E, B, omega);
 
       // Calculate and record the error indicators.
       Mpi::Print(" Updating solution error estimates\n");
-      estimator.AddErrorIndicator(E, B, total_domain_energy, omega, indicator);
+      estimator.AddErrorIndicator(E, B, energy_norm, omega, indicator);
     }
 
     // Final postprocessing & printing. After the last excitation, the solver totals were
@@ -385,10 +385,10 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
           E, B, space_op.GetMaterialOp().HasFloquetFrequencyScaling() ? 1.0 : 1.0 / omega);
     }
 
-    // Measure domain energies for the error indicator only. Don't exchange face_nbr_data,
+    // Measure the energy norm for the error indicator only. Don't exchange face_nbr_data,
     // unless printing paraview fields.
-    auto total_domain_energy = post_op.MeasureDomainFieldEnergyOnly(E, B, omega);
-    estimator.AddErrorIndicator(E, B, total_domain_energy, omega, indicator);
+    const double energy_norm = post_op.MeasureDomainFieldEnergyOnly(E, B, omega);
+    estimator.AddErrorIndicator(E, B, energy_norm, omega, indicator);
     return update.error;
   };
 

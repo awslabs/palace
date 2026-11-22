@@ -902,10 +902,10 @@ namespace
 {
 
 // The gradient flux estimator in a homogeneous frequency-dependent medium (two materials
-// with the same model, one on a single element) against the same estimator in vacuum:
-// the projection commutes with the constant ε(iω), so D_h − D = ε (E − P E) and
-// η² = |ε|² / W η²_vacuum on every element, with the cross-coupled complex ε (not Re ε²)
-// and the positive stored-energy weight W.
+// with the same model, one on a single element) against the same estimator in vacuum, at
+// the same normalization: the projection commutes with the constant ε(iω), so
+// D_h − D = ε (E − P E) and η² = |ε|² / W η²_vacuum on every element, with the
+// cross-coupled complex ε (not Re ε²) and the weight W = |ε(iω)|, so η² = |ε| η²_vacuum.
 void CheckHomogeneousEstimator(int dim, mfem::Element::Type type)
 {
   test::IntegrationSettingsGuard guard;
@@ -961,22 +961,23 @@ void CheckHomogeneousEstimator(int dim, mfem::Element::Type type)
     for (double omega : {0.6, 2.5, 0.6})
     {
       CAPTURE(omega);
-      const double eps_abs2 = std::norm(eps_inf + model.chi(omega));
-      const double W = eps_inf + model.w(omega);
+      const double eps_abs = std::abs(eps_inf + model.chi(omega));
+      CHECK_THAT(mat_op.GetFrequencyDependentPermittivityModulus(0, omega),
+                 WithinRel(eps_abs, 1.0e-12));
       ErrorIndicator ind;
       estimator.AddErrorIndicator(E, 1.0, omega, ind);
-      Check(ind, eps_abs2 / W);
+      Check(ind, eps_abs);
     }
   }
 
   // A material without a stored electric energy, a typed Lorentz term of twice the
-  // strength with half of it taken off by RAW terms (PoleResidue terms specify none),
-  // weights its indicator by ε∞, a numerical weight, and not by a termwise W. At the
-  // resonance, where χ is imaginary, a constant lossy material with the same complex ε(iω)
-  // has Re ε = ε∞. The medium is then homogeneous in ε and in the weight of the flux
-  // recovery (Re ε, and ε∞ of a frequency-dependent material), and every element has
-  // η² = c |ε|² / weight η²_vacuum with one c > 0: the normalization is the numerical
-  // recovered-flux norm, as no total energy is passed.
+  // strength with half of it taken off by RAW terms (PoleResidue terms specify none), has
+  // the weight of any frequency-dependent material, |ε(iω)|, which needs no stored energy.
+  // At the resonance, where χ is imaginary, a constant lossy material with the same complex
+  // ε(iω) has Re ε = ε∞. The medium is then homogeneous in ε and in the weight of the flux
+  // recovery (Re ε, and ε∞ of a frequency-dependent material), and at the same
+  // normalization every element has η² = |ε|² / W η²_vacuum, with W = Re ε for the
+  // constant material and W = |ε| for the other.
   {
     const double omega = 1.0;
     const std::complex<double> eps = eps_inf + LorentzChi(omega);
@@ -996,39 +997,19 @@ void CheckHomogeneousEstimator(int dim, mfem::Element::Type type)
     MaterialOperator compensated_op({lossy, MakeMaterial({2}, compensated_terms)}, periodic,
                                     ProblemType::DRIVEN, mesh);
     REQUIRE_FALSE(compensated_op.HasStoredElectricEnergy(1));
-    REQUIRE_FALSE(compensated_op.HasStoredElectricEnergy());
     GradFluxErrorEstimator<ComplexVector> compensated(compensated_op, nd_fespace,
                                                       rt_fespaces, tol, max_it, 0, false);
     ErrorIndicator ind;
-    compensated.AddErrorIndicator(E, std::nullopt, omega, ind);
-    // A total energy is not accepted without one.
-    {
-      ErrorIndicator unused;
-      CHECK_THROWS(compensated.AddErrorIndicator(E, 1.0, omega, unused));
-    }
+    compensated.AddErrorIndicator(E, 1.0, omega, ind);
     const auto *h = ind.Local().HostRead();
     const auto *h_ref = ref.Local().HostRead();
     REQUIRE(ind.Local().Size() == mesh.GetNE());
-    double c_min = mfem::infinity(), c_max = 0.0;
     for (int e = 0; e < mesh.GetNE(); e++)
     {
       REQUIRE(std::isfinite(h[e]));
-      REQUIRE(h[e] > 0.0);
-      const double weight = (mesh.Get().GetAttribute(e) == 1) ? eps.real() : eps_inf;
-      const double c = (h[e] * h[e]) / (h_ref[e] * h_ref[e]) * weight / std::norm(eps);
-      c_min = std::min(c_min, c);
-      c_max = std::max(c_max, c);
+      const double weight = (mesh.Get().GetAttribute(e) == 1) ? eps.real() : std::abs(eps);
+      CHECK_THAT(h[e], WithinRel(std::sqrt(std::norm(eps) / weight) * h_ref[e], 1.0e-8));
     }
-    Mpi::GlobalMin(1, &c_min, Mpi::World());
-    Mpi::GlobalMax(1, &c_max, Mpi::World());
-    CHECK_THAT(c_max, WithinRel(c_min, 1.0e-8));
-    // An available material does not accept a missing total energy.
-    MaterialOperator lorentz_op({MakeMaterial({1, 2}, Models()[1].terms)}, periodic,
-                                ProblemType::DRIVEN, mesh);
-    GradFluxErrorEstimator<ComplexVector> lorentz_est(lorentz_op, nd_fespace, rt_fespaces,
-                                                      tol, max_it, 0, false);
-    ErrorIndicator unused;
-    CHECK_THROWS(lorentz_est.AddErrorIndicator(E, std::nullopt, omega, unused));
   }
 
   // A frequency-dependent material (attribute 2) next to a constant lossy one (attribute 1)
@@ -1036,8 +1017,8 @@ void CheckHomogeneousEstimator(int dim, mfem::Element::Type type)
   // Lorentz model, where Re ε = ε∞ and the two materials also have the same weight of the
   // flux recovery. The recovered flux is that of the homogeneous medium only if the
   // constant material also projects its loss and the terms have their weights relative to
-  // Re ε, and each element is weighted by its own W, the stored energy of the model or
-  // Re ε of the constant material.
+  // Re ε, and each element is weighted by its own W, |ε| of the model or Re ε of the
+  // constant material.
   const auto lorentz = Models()[1];
   for (double w : {1.0})
   {
@@ -1055,7 +1036,7 @@ void CheckHomogeneousEstimator(int dim, mfem::Element::Type type)
                                                 max_it, 0, false);
     ErrorIndicator mixed_ind;
     mixed.AddErrorIndicator(E, 1.0, w, mixed_ind);
-    const double W = eps_inf + lorentz.w(w);
+    const double W = std::abs(eps_w);
     const auto *h = mixed_ind.Local().HostRead();
     const auto *h_ref = ref.Local().HostRead();
     REQUIRE(mixed_ind.Local().Size() == mesh.GetNE());
@@ -1231,65 +1212,172 @@ double RepeatedEvaluationTolerance(double tol, int max_it, double kappa, double 
   return 2.0 * (tol + max_it * u) * std::sqrt(kappa * s_N);
 }
 
+// The largest relative difference between two evaluations of a field energy uᴴ M u of a
+// space, which need not round alike: with threads or on a device, the element contributions
+// to M u are added at each degree of freedom, at most k of them, and the n products of the
+// local inner product summed, in an order that can differ, and the energies of the
+// processes added. The first two differ by at most 2 (k − 1 + n − 1) u Σ_K |u_K|ᵀ |M_K
+// u_K|, which is at most κ uᴴ M u for the bound κ of the Jacobi-preconditioned element
+// matrices (JacobiMassConditionBound: |y|ᵀ |A y| ≤ λ_max |y|² ≤ κ yᵀ A y), and the positive
+// energies of the processes by at most 2 (n_p − 1) u.
+double RepeatedEnergyTolerance(FiniteElementSpace &fespace, double kappa)
+{
+  auto &pfes = fespace.Get();
+  std::vector<int> count(pfes.GetVSize(), 0);
+  mfem::Array<int> vdofs;
+  for (int e = 0; e < pfes.GetNE(); e++)
+  {
+    pfes.GetElementVDofs(e, vdofs);
+    for (int d : vdofs)
+    {
+      count[(d >= 0) ? d : -1 - d]++;
+    }
+  }
+  int kn[2] = {count.empty() ? 1 : *std::max_element(count.begin(), count.end()),
+               pfes.GetVSize()};
+  Mpi::GlobalMax(2, kn, fespace.GetComm());
+  const double u = 0.5 * std::numeric_limits<double>::epsilon();
+  return 2.0 *
+         ((std::max(kn[0], 1) - 1 + std::max(kn[1], 1) - 1) * kappa +
+          Mpi::Size(fespace.GetComm()) - 1) *
+         u;
+}
+
+// The energy norm of the fields e (and b) which normalizes the error indicators, as the
+// post operator computes it (Measurement::FieldEnergyNorm): the electric part from the
+// domain postprocessing, with |ε(iω)| for each frequency-dependent material, and the
+// magnetic energy.
+double EnergyNorm(const DomainPostOperator &post, FiniteElementSpace &nd_fespace,
+                  FiniteElementSpace &rt_fespace, const ComplexVector &e,
+                  const ComplexVector *b, double omega)
+{
+  GridFunction E(nd_fespace, true);
+  E.Real().SetFromTrueDofs(e.Real());
+  E.Imag().SetFromTrueDofs(e.Imag());
+  double norm = post.GetElectricFieldEnergies(E, omega).energy_norm;
+  if (b)
+  {
+    GridFunction B(rt_fespace, true);
+    B.Real().SetFromTrueDofs(b->Real());
+    B.Imag().SetFromTrueDofs(b->Imag());
+    norm += post.GetMagneticFieldEnergy(B);
+  }
+  return norm;
+}
+
 }  // namespace
 
-TEST_CASE("Flux error estimator without a total energy normalization",
+TEST_CASE("Flux error estimator normalized by the energy norm of the fields",
           "[frequencydependent][errorestimator][Serial][Parallel][GPU]")
 {
-  // Without a stored electric energy (a RAW relaxation, compensated by a typed Debye
-  // term) there is no total energy. The indicator then uses the energy norm of
-  // the recovered fluxes, 1/2 Σ (D*ᴴ W⁻¹ D* + H*ᴴ μ H*), a numerical norm, not 1, NaN, or a
-  // rejection: positive, finite, and invariant to the scale of the fields, unlike a fixed
-  // normalization.
+  // A material without a stored electric energy (a RAW relaxation, compensated by a typed
+  // Debye term) next to a typed model: the energy norm of the fields weights each
+  // frequency-dependent material by |ε(iω)|, as the indicator does, and needs no stored
+  // energy. The normalized indicators are positive, finite, and invariant to the scale of
+  // the fields, with and without B.
   test::IntegrationSettingsGuard guard;
   constexpr int order = 1;
   fem::DefaultIntegrationOrder::p_trial = order;
   auto mesh = MakeBoxMesh(3, 2, mfem::Element::TETRAHEDRON);
   config::PeriodicBoundaryData periodic;
-  MaterialOperator mat_op({MakeMaterial({1}, {config::DebyeData{1.0, 1.0},
-                                              config::PermittivityPoleData{-1.0, -0.5}}),
-                           MakeMaterial({2}, Models()[2].terms)},
-                          periodic, ProblemType::DRIVEN, mesh);
-  REQUIRE_FALSE(mat_op.HasStoredElectricEnergy());
   mfem::ND_FECollection nd_fec(order, 3);
   mfem::RT_FECollection rt_fec(order - 1, 3);
   FiniteElementSpaceHierarchy nd_fespaces(
       std::make_unique<FiniteElementSpace>(mesh, &nd_fec));
   FiniteElementSpaceHierarchy rt_fespaces(
       std::make_unique<FiniteElementSpace>(mesh, &rt_fec));
-  TimeDependentFluxErrorEstimator<ComplexVector> estimator(mat_op, nd_fespaces, rt_fespaces,
-                                                           1.0e-14, 1000, 0, false);
-  ComplexVector E(nd_fespaces.GetFinestFESpace().GetTrueVSize()),
-      B(rt_fespaces.GetFinestFESpace().GetTrueVSize());
+  auto &nd_fespace = nd_fespaces.GetFinestFESpace();
+  auto &rt_fespace = rt_fespaces.GetFinestFESpace();
+  ComplexVector E(nd_fespace.GetTrueVSize()), B(rt_fespace.GetTrueVSize());
   E.UseDevice(true);
   B.UseDevice(true);
   linalg::SetRandom(Mpi::World(), E);
   linalg::SetRandom(Mpi::World(), B);
   const double omega = 1.7;
-  ErrorIndicator fallback, scaled;
-  estimator.AddErrorIndicator(E, B, std::nullopt, omega, fallback);
   {
+    MaterialOperator mat_op({MakeMaterial({1}, {config::DebyeData{1.0, 1.0},
+                                                config::PermittivityPoleData{-1.0, -0.5}}),
+                             MakeMaterial({2}, Models()[2].terms)},
+                            periodic, ProblemType::DRIVEN, mesh);
+    REQUIRE_FALSE(mat_op.HasStoredElectricEnergy());
+    DomainPostOperator post(config::DomainPostData{}, mat_op, nd_fespace, rt_fespace);
+    // A projection tolerance far above the rounding of the CG residual recurrence, so that
+    // it bounds the difference of repeated evaluations (RepeatedEvaluationTolerance).
+    constexpr double tol = 1.0e-10;
+    constexpr int max_it = 1000;
+    TimeDependentFluxErrorEstimator<ComplexVector> estimator(
+        mat_op, nd_fespaces, rt_fespaces, tol, max_it, 0, false);
+    GradFluxErrorEstimator<ComplexVector> grad_estimator(mat_op, nd_fespace, rt_fespaces,
+                                                         tol, max_it, 0, false);
+    {
+      GridFunction E_gf(nd_fespace, true);
+      E_gf.Real().SetFromTrueDofs(E.Real());
+      E_gf.Imag().SetFromTrueDofs(E.Imag());
+      const auto energies = post.GetElectricFieldEnergies(E_gf, omega);
+      CHECK_FALSE(energies.stored);
+      CHECK(std::isfinite(energies.energy_norm));
+      CHECK(energies.energy_norm > 0.0);
+    }
+    // Scaling the fields by 2 is exact, so the scaled fields give the same indicators,
+    // within the bound of two evaluations, which need not round alike: that of the
+    // projections, where the normalized indicators have s N = 1 in the norm of the
+    // indicator, which is within κ_W = max ε∞/|ε| · max |ε|/ε∞ of the norm of the recovery
+    // (weighted by ε∞⁻¹ for a frequency-dependent material), and that of the energy norms,
+    // η_K times the bound of two evaluations of the energies (RepeatedEnergyTolerance)
+    // scaled by ρ_N = max (ε∞ + ||ε| − ε∞|) / |ε|, the ratio of the summed magnitudes of
+    // the energy norm to it.
+    double w_min = mfem::infinity(), w_max = 0.0, rho_n = 0.0;
+    for (std::size_t m : {0, 1})
+    {
+      const double a = mat_op.GetFrequencyDependentPermittivityModulus(m, omega);
+      w_min = std::min(w_min, a / eps_inf);
+      w_max = std::max(w_max, a / eps_inf);
+      rho_n = std::max(rho_n, (eps_inf + std::abs(a - eps_inf)) / a);
+    }
+    const double kappa_m = std::max(JacobiMassConditionBound(rt_fespace),
+                                    JacobiMassConditionBound(nd_fespace));
+    const double atol =
+        RepeatedEvaluationTolerance(tol, max_it, kappa_m * w_max / w_min, 1.0);
+    const double energy_tol =
+        rho_n * std::max(RepeatedEnergyTolerance(nd_fespace, kappa_m),
+                         RepeatedEnergyTolerance(rt_fespace, kappa_m));
     ComplexVector E2(E), B2(B);
     E2 *= 2.0;
     B2 *= 2.0;
-    estimator.AddErrorIndicator(E2, B2, std::nullopt, omega, scaled);
-  }
-  const auto *h = fallback.Local().HostRead();
-  const auto *h_scaled = scaled.Local().HostRead();
-  for (int i = 0; i < fallback.Local().Size(); i++)
-  {
-    REQUIRE(std::isfinite(h[i]));
-    REQUIRE(h[i] > 0.0);
-    CHECK_THAT(h_scaled[i], WithinRel(h[i], 1.0e-8));
-  }
-  {
-    ErrorIndicator unused;
-    CHECK_THROWS(estimator.AddErrorIndicator(E, B, -1.0, omega, unused));
+    for (const bool with_b : {true, false})
+    {
+      CAPTURE(with_b);
+      ErrorIndicator ind, scaled;
+      if (with_b)
+      {
+        estimator.AddErrorIndicator(
+            E, B, EnergyNorm(post, nd_fespace, rt_fespace, E, &B, omega), omega, ind);
+        estimator.AddErrorIndicator(
+            E2, B2, EnergyNorm(post, nd_fespace, rt_fespace, E2, &B2, omega), omega,
+            scaled);
+      }
+      else
+      {
+        grad_estimator.AddErrorIndicator(
+            E, EnergyNorm(post, nd_fespace, rt_fespace, E, nullptr, omega), omega, ind);
+        grad_estimator.AddErrorIndicator(
+            E2, EnergyNorm(post, nd_fespace, rt_fespace, E2, nullptr, omega), omega,
+            scaled);
+      }
+      const auto *h = ind.Local().HostRead();
+      const auto *h_scaled = scaled.Local().HostRead();
+      for (int i = 0; i < ind.Local().Size(); i++)
+      {
+        CAPTURE(i, h[i], h_scaled[i], atol, energy_tol);
+        REQUIRE(std::isfinite(h[i]));
+        REQUIRE(h[i] > 0.0);
+        CHECK(std::abs(h_scaled[i] - h[i]) <= atol + energy_tol * h[i]);
+      }
+    }
   }
 
-  // Without a frequency-dependent material, the normalization is that of the constant
-  // estimators also for a nonpositive energy (a zero field): scale 1, with no fallback to
-  // the recovered fluxes.
+  // Without a frequency-dependent material, the normalization is the established one also
+  // for a nonpositive energy (a zero field): scale 1.
   MaterialOperator constant_op({MakeMaterial({1}, {}), MakeMaterial({2}, {})}, periodic,
                                ProblemType::DRIVEN, mesh);
   // A projection tolerance far above the rounding of the CG residual recurrence, so that
@@ -1542,6 +1630,197 @@ struct EnergyConsumers
 };
 
 }  // namespace
+
+TEST_CASE("Error indicators of a permittivity in typed and PoleResidue form",
+          "[frequencydependent][errorestimator][Serial][Parallel]")
+{
+  // A Drude and a Debye material, each as a typed term and as its PoleResidue terms: only
+  // the typed terms have a stored electric energy, but the indicators depend on a material
+  // only through ε(iω), by the weight |ε(iω)|, the recovered flux of ε(iω) E, and the
+  // energy norm, so the two forms give the same indicators. They evaluate ε(iω) with
+  // different round-off, a relative difference δ (the Drude pole pair cancels at high
+  // frequency), and as two evaluations they need not round alike (with threads or on a
+  // device), which bounds the difference of each normalized indicator by three terms:
+  //  - δ (1 + √κ_W + η_K) for the exact indicators: to first order, a relative change δ of
+  //    each ε(iω) changes the flux and its recovery by δ ‖D_h‖ in the norm of the recovery
+  //    (weighted by ε∞⁻¹), which is within √κ_W of the norm of the indicator (weighted by
+  //    |ε|⁻¹), κ_W = max ε∞/|ε| · max |ε|/ε∞, and the weight and the energy norm by δ;
+  //  - the projection term: each estimator projects by its own CG to the tolerance tol, so
+  //    the two can stop an iteration apart, and each recovered flux is only within the
+  //    projection tolerance of its exact projection: RepeatedEvaluationTolerance with these
+  //    tol and max_it, κ the condition bound of the mass matrices times κ_W, and s N = 1
+  //    for normalized indicators;
+  //  - η_K times the bound ε_N of two evaluations of the energy norm, which has no
+  //    projection: RepeatedEnergyTolerance scaled by ρ_N = max (ε∞ + ||ε| − ε∞|) / |ε|, the
+  //    ratio of the summed magnitudes of the energy norm to it.
+  // The two energy norms differ by the moduli, at most δ + 2u relative, to which the norm
+  // is linear, by the roundings of each sum over the materials, the processes and the
+  // magnetic part, at most (4 ρ_N + n_p + 1) u relative each, and by ε_N. A δ which is not
+  // zero counts as at least one unit u: inputs which differ at all are rounded apart.
+  test::IntegrationSettingsGuard guard;
+  constexpr int order = 1;
+  fem::DefaultIntegrationOrder::p_trial = order;
+  auto serial = std::make_unique<mfem::Mesh>(
+      mfem::Mesh::MakeCartesian3D(2, 2, 2, mfem::Element::TETRAHEDRON, 1.0, 1.3, 0.8));
+  for (int i = 0; i < serial->GetNE(); i++)
+  {
+    mfem::Vector c;
+    serial->GetElementCenter(i, c);
+    serial->SetAttribute(i, (c(0) < 0.5) ? 1 : 2);
+  }
+  serial->SetAttributes();
+  Mesh mesh(std::make_unique<mfem::ParMesh>(Mpi::World(), *serial));
+  config::PeriodicBoundaryData periodic;
+  mfem::ND_FECollection nd_fec(order, 3);
+  mfem::RT_FECollection rt_fec(order - 1, 3);
+  FiniteElementSpaceHierarchy nd_fespaces(
+      std::make_unique<FiniteElementSpace>(mesh, &nd_fec));
+  FiniteElementSpaceHierarchy rt_fespaces(
+      std::make_unique<FiniteElementSpace>(mesh, &rt_fec));
+  auto &nd_fespace = nd_fespaces.GetFinestFESpace();
+  auto &rt_fespace = rt_fespaces.GetFinestFESpace();
+  const auto drude = Models()[0].terms;  // Drude ωp = 3, γ = 0.5
+  const std::vector<config::PermittivityTermData> debye = {config::DebyeData{3.0, 0.7}};
+  MaterialOperator typed_op({MakeMaterial({1}, drude), MakeMaterial({2}, debye)}, periodic,
+                            ProblemType::DRIVEN, mesh);
+  MaterialOperator raw_op(
+      {MakeMaterial({1}, RawTerms(drude)), MakeMaterial({2}, RawTerms(debye))}, periodic,
+      ProblemType::DRIVEN, mesh);
+  REQUIRE(typed_op.HasStoredElectricEnergy());
+  REQUIRE_FALSE(raw_op.HasStoredElectricEnergy());
+  DomainPostOperator typed_post(config::DomainPostData{}, typed_op, nd_fespace, rt_fespace);
+  DomainPostOperator raw_post(config::DomainPostData{}, raw_op, nd_fespace, rt_fespace);
+  constexpr double tol = 1.0e-14;
+  constexpr int max_it = 1000;
+  TimeDependentFluxErrorEstimator<ComplexVector> typed_est(
+      typed_op, nd_fespaces, rt_fespaces, tol, max_it, 0, false);
+  TimeDependentFluxErrorEstimator<ComplexVector> raw_est(raw_op, nd_fespaces, rt_fespaces,
+                                                         tol, max_it, 0, false);
+  const double kappa_m =
+      std::max(JacobiMassConditionBound(rt_fespace), JacobiMassConditionBound(nd_fespace));
+  const int n_p = Mpi::Size(Mpi::World());
+  ComplexVector E(nd_fespace.GetTrueVSize()), B(rt_fespace.GetTrueVSize());
+  E.UseDevice(true);
+  B.UseDevice(true);
+  linalg::SetRandom(Mpi::World(), E);
+  linalg::SetRandom(Mpi::World(), B);
+  constexpr double u = 0.5 * std::numeric_limits<double>::epsilon();
+  for (double omega : {0.6, 2.5, 4.0})
+  {
+    CAPTURE(omega);
+    double delta = 0.0, w_min = mfem::infinity(), w_max = 0.0, rho_n = 0.0;
+    for (std::size_t m : {0, 1})
+    {
+      const auto eps = typed_op.EvaluateFrequencyDependentPermittivity(m, {0.0, omega});
+      delta = std::max(
+          delta,
+          std::abs(raw_op.EvaluateFrequencyDependentPermittivity(m, {0.0, omega}) - eps) /
+              std::abs(eps));
+      const double a = typed_op.GetFrequencyDependentPermittivityModulus(m, omega);
+      w_min = std::min(w_min, a / eps_inf);
+      w_max = std::max(w_max, a / eps_inf);
+      rho_n = std::max(rho_n, (eps_inf + std::abs(a - eps_inf)) / a);
+    }
+    const double d = (delta > 0.0) ? std::max(delta, u) : 0.0;
+    const double kappa_w = w_max / w_min;
+    const double projection =
+        RepeatedEvaluationTolerance(tol, max_it, kappa_m * kappa_w, 1.0);
+    const double energy_tol =
+        rho_n * std::max(RepeatedEnergyTolerance(nd_fespace, kappa_m),
+                         RepeatedEnergyTolerance(rt_fespace, kappa_m));
+    const double tol_n =
+        ((d > 0.0) ? d + 2.0 * u : 0.0) + 2.0 * (4.0 * rho_n + n_p + 1.0) * u + energy_tol;
+    CAPTURE(delta, kappa_w, projection, energy_tol, tol_n);
+    const double N_typed = EnergyNorm(typed_post, nd_fespace, rt_fespace, E, &B, omega);
+    const double N_raw = EnergyNorm(raw_post, nd_fespace, rt_fespace, E, &B, omega);
+    CHECK(std::abs(N_raw - N_typed) <= tol_n * N_typed);
+    ErrorIndicator typed, raw;
+    typed_est.AddErrorIndicator(E, B, N_typed, omega, typed);
+    raw_est.AddErrorIndicator(E, B, N_raw, omega, raw);
+    const auto *h_typed = typed.Local().HostRead();
+    const auto *h_raw = raw.Local().HostRead();
+    REQUIRE(typed.Local().Size() == raw.Local().Size());
+    for (int i = 0; i < typed.Local().Size(); i++)
+    {
+      CAPTURE(i, h_typed[i], h_raw[i]);
+      REQUIRE(h_typed[i] > 0.0);
+      CHECK(std::abs(h_raw[i] - h_typed[i]) <= d * (1.0 + std::sqrt(kappa_w) + h_typed[i]) +
+                                                   projection + energy_tol * h_typed[i]);
+    }
+  }
+}
+
+TEST_CASE("Error indicators of constant materials normalized by the total field energy",
+          "[errorestimator][Serial][Parallel]")
+{
+  // Without a frequency-dependent material, the energy norm of the fields is the total
+  // field energy, bit for bit: in one evaluation, the same products and sums. The drivers
+  // so pass the normalization of before to the unchanged code path of the indicators.
+  // Two evaluations of the indicators need not round alike (with threads or on a device),
+  // so the indicators normalized by the energy norm and by the stored energy agree within
+  // the bound of the projections (RepeatedEvaluationTolerance, with κ_W = 1 as the norm
+  // of the indicator is that of the recovery, and s N = 1).
+  test::IntegrationSettingsGuard guard;
+  constexpr int order = 1;
+  fem::DefaultIntegrationOrder::p_trial = order;
+  auto mesh = MakeBoxMesh(3, 2, mfem::Element::TETRAHEDRON);
+  config::PeriodicBoundaryData periodic;
+  config::MaterialData lossy;
+  lossy.attributes = {1};
+  lossy.epsilon_r.s = {3.0, 3.0, 3.0};
+  lossy.tandelta.s = {0.2, 0.2, 0.2};
+  MaterialOperator mat_op({lossy, MakeMaterial({2}, {})}, periodic, ProblemType::DRIVEN,
+                          mesh);
+  REQUIRE_FALSE(mat_op.HasFrequencyDependentPermittivity());
+  mfem::ND_FECollection nd_fec(order, 3);
+  mfem::RT_FECollection rt_fec(order - 1, 3);
+  FiniteElementSpaceHierarchy nd_fespaces(
+      std::make_unique<FiniteElementSpace>(mesh, &nd_fec));
+  FiniteElementSpaceHierarchy rt_fespaces(
+      std::make_unique<FiniteElementSpace>(mesh, &rt_fec));
+  auto &nd_fespace = nd_fespaces.GetFinestFESpace();
+  auto &rt_fespace = rt_fespaces.GetFinestFESpace();
+  DomainPostOperator post(config::DomainPostData{}, mat_op, nd_fespace, rt_fespace);
+  constexpr double tol = 1.0e-14;
+  constexpr int max_it = 1000;
+  TimeDependentFluxErrorEstimator<ComplexVector> estimator(mat_op, nd_fespaces, rt_fespaces,
+                                                           tol, max_it, 0, false);
+  const double atol = RepeatedEvaluationTolerance(
+      tol, max_it,
+      std::max(JacobiMassConditionBound(rt_fespace), JacobiMassConditionBound(nd_fespace)),
+      1.0);
+  ComplexVector E(nd_fespace.GetTrueVSize()), B(rt_fespace.GetTrueVSize());
+  E.UseDevice(true);
+  B.UseDevice(true);
+  linalg::SetRandom(Mpi::World(), E);
+  linalg::SetRandom(Mpi::World(), B);
+  GridFunction E_gf(nd_fespace, true), B_gf(rt_fespace, true);
+  E_gf.Real().SetFromTrueDofs(E.Real());
+  E_gf.Imag().SetFromTrueDofs(E.Imag());
+  B_gf.Real().SetFromTrueDofs(B.Real());
+  B_gf.Imag().SetFromTrueDofs(B.Imag());
+  for (double omega : {0.6, 2.5})
+  {
+    CAPTURE(omega);
+    const auto energies = post.GetElectricFieldEnergies(E_gf, omega);
+    REQUIRE(energies.stored);
+    CHECK(energies.energy_norm == *energies.stored);
+    const double magnetic = post.GetMagneticFieldEnergy(B_gf);
+    const double total = *energies.stored + magnetic;
+    const double energy_norm = energies.energy_norm + magnetic;
+    CHECK(energy_norm == total);
+    ErrorIndicator established, normalized;
+    estimator.AddErrorIndicator(E, B, total, omega, established);
+    estimator.AddErrorIndicator(E, B, energy_norm, omega, normalized);
+    const auto *a = normalized.Local().HostRead();
+    const auto *b = established.Local().HostRead();
+    for (int i = 0; i < normalized.Local().Size(); i++)
+    {
+      CAPTURE(i, a[i], b[i], atol);
+      CHECK(std::abs(a[i] - b[i]) <= atol);
+    }
+  }
+}
 
 TEST_CASE("Single sections as typed or RAW terms", "[frequencydependent][Serial][Parallel]")
 {
