@@ -15,6 +15,7 @@
 #include <numbers>
 #include <optional>
 #include <vector>
+#include <Eigen/Dense>
 #include <mfem.hpp>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -1161,6 +1162,77 @@ TEST_CASE("Gradient flux estimator of a layered medium with continuous normal D"
   CHECK(Estimate(true) < 1.0e-8 * jump);
 }
 
+namespace
+{
+
+// The time-averaged field energy E_elec + E_mag of the complex fields e and b.
+double FieldEnergy(const DomainPostOperator &post, FiniteElementSpace &nd_fespace,
+                   FiniteElementSpace &rt_fespace, const ComplexVector &e,
+                   const ComplexVector &b, double omega)
+{
+  GridFunction E(nd_fespace, true), B(rt_fespace, true);
+  E.Real().SetFromTrueDofs(e.Real());
+  E.Imag().SetFromTrueDofs(e.Imag());
+  B.Real().SetFromTrueDofs(b.Real());
+  B.Imag().SetFromTrueDofs(b.Imag());
+  return post.GetElectricFieldEnergy(E, omega) + post.GetMagneticFieldEnergy(B);
+}
+
+// An upper bound of the condition number of the Jacobi-preconditioned vector mass matrix
+// D⁻¹M of a space, which the flux projections of the estimators solve with CG: the Rayleigh
+// quotients of D⁻¹M are weighted means of those of the element matrices D_K⁻¹M_K, so its
+// extreme eigenvalues lie within theirs. A constant coefficient on an element does not
+// change D_K⁻¹M_K. The small symmetric eigenproblems are solved with Eigen, as MFEM need
+// not have LAPACK.
+double JacobiMassConditionBound(FiniteElementSpace &fespace)
+{
+  auto &pfes = fespace.Get();
+  mfem::VectorFEMassIntegrator integ;
+  double lambda_min = mfem::infinity(), lambda_max = 0.0;
+  for (int e = 0; e < pfes.GetNE(); e++)
+  {
+    mfem::DenseMatrix M;
+    integ.AssembleElementMatrix(*pfes.GetFE(e), *pfes.GetElementTransformation(e), M);
+    mfem::Vector d(M.Height());
+    for (int i = 0; i < M.Height(); i++)
+    {
+      d(i) = 1.0 / std::sqrt(M(i, i));
+    }
+    for (int i = 0; i < M.Height(); i++)
+    {
+      for (int j = 0; j < M.Width(); j++)
+      {
+        M(i, j) *= d(i) * d(j);
+      }
+    }
+    const Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> eig(
+        Eigen::Map<const Eigen::MatrixXd>(M.Data(), M.Height(), M.Width()),
+        Eigen::EigenvaluesOnly);
+    lambda_min = std::min(lambda_min, eig.eigenvalues().minCoeff());
+    lambda_max = std::max(lambda_max, eig.eigenvalues().maxCoeff());
+  }
+  Mpi::GlobalMin(1, &lambda_min, fespace.GetComm());
+  Mpi::GlobalMax(1, &lambda_max, fespace.GetComm());
+  return lambda_max / lambda_min;
+}
+
+// The largest difference on an element between two evaluations of the same normalized
+// indicators, which need not round alike: with threads or on a device, their reductions and
+// accumulations can run in another order. Each evaluation solves the flux projections by CG
+// to the preconditioned relative residual tol, which puts its recovered fluxes within
+// tol √κ of the exact projections in the energy norm of the recovery (κ the condition
+// number of the Jacobi-preconditioned mass matrix), so the indicators of an element are
+// within 2 tol √κ √(s N) of each other, for the scale s of the squared indicators and the
+// squared norm N of the fluxes of the fields in that norm. The recurred CG residual can
+// depart from the true one by about max_it rounding units, which tol is to exceed by far.
+double RepeatedEvaluationTolerance(double tol, int max_it, double kappa, double s_N)
+{
+  const double u = 0.5 * std::numeric_limits<double>::epsilon();
+  return 2.0 * (tol + max_it * u) * std::sqrt(kappa * s_N);
+}
+
+}  // namespace
+
 TEST_CASE("Flux error estimator without a total energy normalization",
           "[frequencydependent][errorestimator][Serial][Parallel][GPU]")
 {
@@ -1220,10 +1292,23 @@ TEST_CASE("Flux error estimator without a total energy normalization",
   // the recovered fluxes.
   MaterialOperator constant_op({MakeMaterial({1}, {}), MakeMaterial({2}, {})}, periodic,
                                ProblemType::DRIVEN, mesh);
+  // A projection tolerance far above the rounding of the CG residual recurrence, so that
+  // it bounds the difference of repeated evaluations (RepeatedEvaluationTolerance).
+  constexpr double tol = 1.0e-10;
+  constexpr int max_it = 1000;
   TimeDependentFluxErrorEstimator<ComplexVector> constant_estimator(
-      constant_op, nd_fespaces, rt_fespaces, 1.0e-14, 1000, 0, false);
+      constant_op, nd_fespaces, rt_fespaces, tol, max_it, 0, false);
   // The established scale for Et ≤ 0 is 1, that of the time-averaged Et = 0.25 of the
-  // complex fields (ErrorEstimateNormalization).
+  // complex fields (ErrorEstimateNormalization). With scale 1, s N is the squared energy
+  // norm 4 (E_elec + E_mag) of the fluxes.
+  auto &nd_space = nd_fespaces.GetFinestFESpace();
+  auto &rt_space = rt_fespaces.GetFinestFESpace();
+  DomainPostOperator constant_post(config::DomainPostData{}, constant_op, nd_space,
+                                   rt_space);
+  const double atol = RepeatedEvaluationTolerance(
+      tol, max_it,
+      std::max(JacobiMassConditionBound(rt_space), JacobiMassConditionBound(nd_space)),
+      4.0 * FieldEnergy(constant_post, nd_space, rt_space, E, B, omega));
   ErrorIndicator established;
   constant_estimator.AddErrorIndicator(E, B, 0.25, omega, established);
   for (double Et : {0.0, -1.0})
@@ -1235,10 +1320,10 @@ TEST_CASE("Flux error estimator without a total energy normalization",
     const auto *b = established.Local().HostRead();
     for (int i = 0; i < with_omega.Local().Size(); i++)
     {
-      // Two evaluations of the same indicators with the same scale, equal up to roundoff:
-      // device reductions (CUDA/MAGMA) are not bitwise repeatable, and differ by 1-2 ULPs.
-      CAPTURE(i, a[i], b[i]);
-      CHECK_THAT(a[i], Catch::Matchers::WithinULP(b[i], 4));
+      // Two evaluations of the same indicators with the same scale, within the bound of the
+      // projection tolerance: they need not round alike.
+      CAPTURE(i, a[i], b[i], atol);
+      CHECK(std::abs(a[i] - b[i]) <= atol);
     }
   }
 }
