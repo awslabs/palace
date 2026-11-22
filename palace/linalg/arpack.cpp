@@ -165,7 +165,8 @@ ArpackEigenvalueSolver::ArpackEigenvalueSolver(MPI_Comm comm, int print)
 {
   // Initialization.
   info = 0;
-  nev = ncv = n = 0;
+  nev = ncv = 0;
+  n = -1;  // Set by SetOperators, zero on a process without unknowns
   rtol = 0.0;
   arpack_it = 0;
   which_type = WhichType::LARGEST_MAGNITUDE;
@@ -248,7 +249,7 @@ void ArpackEigenvalueSolver::SetShiftInvert(std::complex<double> s, bool precond
 void ArpackEigenvalueSolver::SetInitialSpace(const ComplexVector &v)
 {
   MFEM_VERIFY(
-      n > 0,
+      n >= 0,
       "Must call SetOperators before using SetInitialSpace for ARPACK eigenvalue solver!");
   if (!r)
   {
@@ -310,6 +311,15 @@ int ArpackEigenvalueSolver::SolveInternal(int n, std::complex<double> *r,
                  "SetWhichEigenpairs!");
       break;
   }
+
+  // PARPACK checks that the number of basis vectors does not exceed the local size of the
+  // problem on each process alone, so a process with too few unknowns, or none, would fail
+  // while the others wait for it.
+  int n_min = n;
+  Mpi::GlobalMin(1, &n_min, comm);
+  MFEM_VERIFY(n_min >= ncv, "ARPACK eigenvalue solver requires at least "
+                                << ncv << " unknowns on every process (" << n_min
+                                << " on one)!");
 
   // Allocate work arrays.
   a_int lworkl = 3 * ncv * ncv + 5 * ncv;
@@ -476,7 +486,7 @@ int ArpackEigenvalueSolver::SolveInternal(int n, std::complex<double> *r,
 
 void ArpackEigenvalueSolver::CheckParameters() const
 {
-  MFEM_VERIFY(n > 0, "Operators are not set for ARPACK eigenvalue solver!");
+  MFEM_VERIFY(n >= 0, "Operators are not set for ARPACK eigenvalue solver!");
   MFEM_VERIFY(nev > 0, "Number of requested modes is not positive!");
   MFEM_VERIFY(rtol > 0.0, "Eigensolver tolerance is not positive!");
   MFEM_VERIFY(opInv, "No linear solver provided for operator!");

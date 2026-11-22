@@ -14,6 +14,7 @@
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 #include "fem/fespace.hpp"
 #include "fem/mesh.hpp"
 #include "linalg/eps.hpp"
@@ -157,12 +158,16 @@ struct DiagonalLorentzProblem
   std::vector<long long> gid;  // Global index of each local dof
   std::unique_ptr<ComplexParOperator> K, M;
 
-  explicit DiagonalLorentzProblem(std::vector<double> k_) : k(std::move(k_)), fec(0, 2)
+  // With on_root, all the elements are on the first process.
+  explicit DiagonalLorentzProblem(std::vector<double> k_, bool on_root = false)
+    : k(std::move(k_)), fec(0, 2)
   {
     auto smesh = mfem::Mesh::MakeCartesian2D(static_cast<int>(k.size()), 1,
                                              mfem::Element::QUADRILATERAL, false,
                                              static_cast<double>(k.size()), 1.0);
-    mesh = std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(Mpi::World(), smesh));
+    std::vector<int> partitioning(k.size(), 0);
+    mesh = std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(
+        Mpi::World(), smesh, on_root ? partitioning.data() : nullptr));
     fespace = std::make_unique<FiniteElementSpace>(*mesh, &fec);
     const int n = mesh->Get().GetNE();
     REQUIRE(fespace->GetVSize() == n);
@@ -700,4 +705,47 @@ TEST_CASE("Quasi-Newton on processes without unknowns", "[nleps][Serial][Paralle
   CAPTURE(ls, qn.GetEigenvalue(0));
   CHECK(std::abs(qn.GetEigenvalue(0) - ls) <= 1.0e-8 * std::abs(ls));
   CHECK(qn.GetError(0, EigenvalueSolver::ErrorType::BACKWARD) <= tol);
+}
+
+// PARPACK requires as many unknowns on every process as basis vectors, and checks it on
+// each process alone. With all the dofs on the first process, the others have none: the
+// solver raises the error on every process.
+TEST_CASE("ARPACK requires enough unknowns on every process", "[nleps][Serial][Parallel]")
+{
+#if !defined(PALACE_WITH_ARPACK)
+  SKIP("Requires the ARPACK eigensolver");
+#else
+  const std::vector<double> k = {1.0, 2.0, 3.0, 4.0};
+  const DiagonalLorentzProblem p(k, true);
+  const double sigma = 2.2;
+  std::vector<std::complex<double>> d(p.LocalSize());
+  for (int i = 0; i < p.LocalSize(); i++)
+  {
+    d[i] = k[i] - sigma;
+  }
+  const DiagonalComplexOperator A(std::move(d));
+  auto gmres = std::make_unique<GmresSolver<ComplexOperator>>(Mpi::World(), 0);
+  gmres->SetRelTol(1.0e-14);
+  gmres->SetMaxIter(100);
+  ComplexKspSolver ksp(std::move(gmres), std::make_unique<ScaledDiagonalInverse>(1.0));
+  ksp.SetOperators(A, A);
+  arpack::ArpackEPSSolver eigen(Mpi::World(), 0);
+  eigen.SetOperators(*p.K, *p.M, EigenvalueSolver::ScaleType::NONE);
+  eigen.SetLinearSolver(ksp);
+  eigen.SetShiftInvert(sigma);
+  eigen.SetWhichEigenpairs(EigenvalueSolver::WhichType::LARGEST_MAGNITUDE);
+  eigen.SetNumModes(1, 3);
+  eigen.SetTol(1.0e-10);
+  eigen.SetMaxIter(100);
+  if (Mpi::Size(Mpi::World()) == 1)
+  {
+    REQUIRE(eigen.Solve() >= 1);
+    CHECK(std::abs(eigen.GetEigenvalue(0) - 2.0) <= 1.0e-8);
+  }
+  else
+  {
+    CHECK_THROWS_WITH(eigen.Solve(),
+                      Catch::Matchers::ContainsSubstring("unknowns on every process"));
+  }
+#endif
 }
