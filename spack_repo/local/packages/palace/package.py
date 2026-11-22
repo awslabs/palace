@@ -622,6 +622,23 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 sha256="07c7214581cb5c11a4999e7bc473a67a16ae6a400c7220e1b2d743600fdee6f4",
                 when="@4.10:",
             ),
+            # https://github.com/mfem/mfem/pull/5436: a process without elements reads
+            # the nodes of its part of a mesh
+            patch(
+                "https://raw.githubusercontent.com/awslabs/palace/"
+                "1f3a11ea797c622e9a47f8b3aceaca94a5bf3a25/extern/patch/mfem/"
+                "mfem_pr5436.diff",
+                sha256="5affda3dcb7f749ea6e3f19633f00ec65b469635dc1e421d2517ef0a7c05e081",
+                when="@4.10.0",
+            ),
+            # https://github.com/mfem/mfem/pull/5791: ParMesh::PrintInfo reduces defined
+            # element sizes from a process without elements (narrow to @4.10.0 once
+            # merged upstream and Lookahead flags it)
+            patch(
+                "https://github.com/mfem/mfem/pull/5791.diff?full_index=1",
+                sha256="16843fe49626ded2f85e4f883a65128c2ad218ce56e41c6974f6a9d5828e5850",
+                when="@4.10:",
+            ),
         ],
     )
 
