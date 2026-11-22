@@ -5920,8 +5920,6 @@ int AddInterfaceBdrElements(IoData &iodata, std::unique_ptr<mfem::Mesh> &orig_me
 std::unique_ptr<int[]> GetMeshPartitioning(const mfem::Mesh &mesh, int size,
                                            const std::string &part_file, bool print)
 {
-  MFEM_VERIFY(size <= mesh.GetNE(), "Mesh partitioning must have parts <= mesh elements ("
-                                        << size << " vs. " << mesh.GetNE() << ")!");
   if (part_file.length() == 0)
   {
     const int part_method = 1;

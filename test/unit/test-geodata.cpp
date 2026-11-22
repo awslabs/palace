@@ -850,6 +850,47 @@ TEST_CASE("CrackQuadrilateralCorners", "[geodata][Serial]")
   fs::remove(mesh_path);
 }
 
+TEST_CASE("Mesh with fewer elements than processes", "[geodata][Serial][Parallel]")
+{
+  // A mesh of a single hexahedron: on more processes, the others have no elements. The
+  // conformal mesh is distributed by parts, the nonconformal one for adaptation whole. A
+  // process without elements makes the rebalancing of either due.
+  const bool nonconformal = GENERATE(false, true);
+  CAPTURE(nonconformal);
+  const auto mesh_path =
+      fs::path(PALACE_TEST_DATA_DIR) / "lumpedport_mesh" / "cube_mesh_1_1_1_hex.msh";
+  json config = {{"Problem", {{"Type", "Electrostatic"}, {"Verbose", 0}}},
+                 {"Model", {{"Mesh", mesh_path.string()}}},
+                 {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                 {"Boundaries",
+                  {{"Ground", {{"Attributes", {100}}}},
+                   {"Terminal", {{{"Index", 1}, {"Attributes", {101}}}}}}}};
+  if (nonconformal)
+  {
+    config["Model"]["Refinement"] = {{"MaxIts", 1}, {"Nonconformal", true}};
+  }
+  IoData iodata(config, false);
+  MPI_Comm comm = Mpi::World();
+  auto mesh = mesh::ReadMesh(iodata, comm);
+  REQUIRE(mesh);
+  CHECK(mesh->Nonconforming() == nonconformal);
+  CHECK(mesh->GetGlobalNE() == 1);
+  CHECK(mesh->GetNE() == (Mpi::Root(comm) ? 1 : 0));
+  REQUIRE(mesh->GetNodes());
+  CHECK(mesh->SpaceDimension() == 3);
+
+  const double ratio = mesh::RebalanceMesh(iodata, mesh);
+  CHECK((ratio > iodata.model.refinement.maximum_imbalance) == (Mpi::Size(comm) > 1));
+  CHECK(mesh->Nonconforming() == nonconformal);
+  CHECK(mesh->GetGlobalNE() == 1);
+  int ne = mesh->GetNE();
+  Mpi::GlobalSum(1, &ne, comm);
+  CHECK(ne == 1);
+  REQUIRE(mesh->GetNodes());
+  CHECK_THAT(mesh::GetVolume(*mesh, mesh::AttrToMarker(1, std::vector<int>{1})),
+             WithinRel(1.0, 1.0e-12));
+}
+
 TEST_CASE("Default IOData", "[iodata][Serial]")
 {
   config::MaterialData material;
