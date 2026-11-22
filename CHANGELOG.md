@@ -50,7 +50,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     (`<model>_interface.msh`), for meshing a redesigned region against it, and online runs
     take a mesh of the region alone, adding the environment elements of the model's mesh of
     the region. An interface which differs from the model's is rejected at a point where it
-    does. [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
+    does. [PR 1275](https://github.com/awslabs/palace/pull/1275).
   - `validate-config` accepts several configuration files and validates them in one Julia
     session. [PR 1180](https://github.com/awslabs/palace/pull/1180).
   - Added `Boundaries.LumpedPort[].ExcitationAmplitude` and `ExcitationPhase` (degrees),
